@@ -361,30 +361,34 @@ happens during LLD writing (Phase 2c) and at Stage 2 close-out (Phase 2e).
 **Phase 2b (HLD review) — COMPLETE.** Arthur reviewed and approved all
 four HLDs.
 
-**Phase 2c (LLD writing) — IN FLIGHT.** 15 LLD writers dispatched in
-parallel per the pre-staged plan in `notes/vp9-analysis/_stage2-dispatch-prep.md`.
-Each prompt embeds the locked scope guardrails (D-01 / D-05 / D-13 /
-R-06 RESOLVED) plus a module-specific focus paragraph.
+**Phase 2c (LLD writing) — COMPLETE.** All 15 LLD writers landed via
+async agents. Total LLD content: **27,397 lines** across `notes/lld/`.
+Per `check-lld-format` (run from `target/release/`): all 15 LLDs
+structurally OK (every required §1-§9 present, populated §7, citation
+counts in 69-167 range). Two non-blocking TBD-substring matches
+remained (`bitstream.md:151` is a meta-prose mention of the string
+"`TBD`" inside backticks; `quant.md:1187` is a cross-LLD `§X (TBD)`
+section-number placeholder); neither blocks Stage 3.
 
-Live LLD status (as of last log update):
+Final LLD status:
 
-| LLD | Status | Lines | Notes |
+| LLD | Lines | Cites | Notes |
 |---|---|---|---|
-| `bitstream.md`        | ✅ landed | 1608 | 9 §7 entries; 13 §8 non-blocking |
-| `entropy.md`          | ✅ landed | 1555 | 6 §7 entries; cost framework via D-14 patch |
-| `transforms.md`       | ✅ landed | 1544 | L-71 4×4 reachability confirmed; lossless decoder-only; SSSE3 required note |
-| `intra-pred.md`       | ✅ landed | 1305 | (format checker confirms §1-§9 + §7 + 87 citations) |
-| `quant.md`            | ⏳ running | — | A5+A4 primary |
-| `loopfilter.md`       | ⏳ running | — | may flag Stage 1.5 re-dispatch per Stage 1 thin coverage |
-| `frame-buffers.md`    | ⏳ running | — | BufferPool, Arc-pool |
-| `motion-estimation.md`| ⏳ running | — | A3 primary; L-05/L-08 stubs |
-| `mode-decision.md`    | ⏳ running | — | non-RD pick-mode + Laplacian R-D |
-| `partition.md`        | ⏳ running | — | variance-tree + Morton order |
-| `rate-control.md`     | ⏳ running | — | EXT_RATECTRL trait, no altref |
-| `denoiser.md`         | ⏳ running | — | L-22 bit-parity divergence load-bearing |
-| `aq.md`               | ⏳ running | — | CYCLIC_REFRESH only |
-| `svc.md`              | ⏳ running | — | layer state contexts |
-| `tile-threading.md`   | ⏳ running | — | most subtle unsafe |
+| `bitstream.md`        | 1608 |  82 | 9 §7 entries; 13 §8 non-blocking |
+| `entropy.md`          | 1555 | 128 | 6 §7 entries; cost framework via D-14 patch |
+| `transforms.md`       | 1544 | 102 | L-71 4×4 reachable confirmed; lossless decoder-only; SSSE3 required |
+| `quant.md`            | 1337 |  69 | — |
+| `intra-pred.md`       | 1278 |  86 | 5 §7 entries; 0 blockers |
+| `loopfilter.md`       | 1499 | 121 | **Stage 1.5 re-dispatch flag LOWERED** — agent read libvpx loopfilter.c directly |
+| `frame-buffers.md`    | 1534 | 165 | — |
+| `motion-estimation.md`| 1836 | 144 | — |
+| `mode-decision.md`    | 2369 |  80 | 12 §7 entries; L-40 RESOLVED (30-iter → ≤16 in v1) |
+| `partition.md`        | 2503 |  80 | — |
+| `rate-control.md`     | 2164 |  85 | EXT_RATECTRL trait; no altref |
+| `denoiser.md`         | 1540 |  93 | L-22 bit-parity divergence |
+| `aq.md`               | 1460 | 106 | CYCLIC_REFRESH only |
+| `svc.md`              | 2275 | 118 | 10 §7 entries; L-58/L-61/L-68/L-69/L-75/L-77 resolved |
+| `tile-threading.md`   | 2895 | 105 | largest LLD; most subtle unsafe |
 
 **Stage 2 prep work landed during the wait** (committed):
 
@@ -403,10 +407,15 @@ Live LLD status (as of last log update):
   (validates §1-§9 + populated §7 + citation count per LLD).
 - `2cce146` `bdrate.rs --csv` output for Stage 4a CI ingestion.
 
-**Phases 2d (Arthur LLD review) and 2e (Stage 2 close-out): pending**
-until all 15 LLDs land. At Phase 2e: divergence ledger gets the §7
-entries from every LLD merged in; Stage 3/4 task lists refined based
-on what the LLDs surface (per PLAN.md §6 exit criteria).
+**Phase 2d (Arthur LLD review): READY.** All 15 LLDs are on disk and
+pass `check-lld-format` (zero structural failures). Arthur sign-off
+gates entry to Phase 2e and onward to Stage 3.
+
+**Phase 2e (Stage 2 close-out): pending Arthur's Phase 2d sign-off.**
+At Phase 2e: divergence ledger gets the ~50+ §7 entries from every
+LLD merged in (currently seeded with 10); Stage 3/4 task lists
+refined based on what the LLDs surfaced (per PLAN.md §6 exit criteria);
+`_stage2-dispatch-prep.md` scratchpad archived.
 
 ---
 
