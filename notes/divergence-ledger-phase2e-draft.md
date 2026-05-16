@@ -19,11 +19,11 @@
 | `loopfilter.md` | 1215 | 6385 |
 | `mode-decision.md` | 1871 | 8643 |
 | `motion-estimation.md` | 1471 | 5579 |
-| `partition.md` | 1970 | 8401 |
+| `partition.md` | 1073 | 5707 |
 | `quant.md` | 872 | 6961 |
 | `rate-control.md` | 1740 | 7869 |
 | `svc.md` | 1887 | 8676 |
-| `tile-threading.md` | 1790 | 9488 |
+| `tile-threading.md` | 1440 | 6054 |
 | `transforms.md` | 1116 | 6878 |
 
 ---
@@ -1408,184 +1408,130 @@ additive change. Decision: **L-06 RESOLVED**.
 
 ---
 
-## From `notes/lld/partition.md` (§7 at line 1970)
+## From `notes/lld/partition.md` (§7 at line 1073)
 
 ### §7 — Deliberate divergences (from `partition.md`)
 
-Each entry feeds `notes/divergence-ledger.md`. Format follows the
-ledger's `§1 Entries` template.
+Each entry is a draft for `notes/divergence-ledger.md`. Format per
+the ledger's `§Format` block.
 
-### 7.1 `choose_partitioning` return type: `Result<()>` instead of `int (always 0)`
+### 7.1 `choose_partitioning` returns `Result<()>` instead of `int (always 0)`
 
-**Where:** `rvp9_encoder::partition::choose_partitioning` returns
-`Result<(), EncodeError>`. libvpx: `vp9/encoder/vp9_encodeframe.c:1261`
-returns `int`, always `0` in every path.
-**What libvpx does:** declares the function as returning `int` (legacy
-signature dating from when it returned a partition-type flag); always
-returns `0`.
-**What rvp9 does:** returns `Result<(), EncodeError>` with no caller
-that ever observes `Err` in v1.
-**Why:** HLD-arch §4 commits the encoder to `Result`-typed fallibility
-end-to-end. Forward-compat lets future error surfaces (e.g. SVC
-partition-copy from a missing low-res layer) emerge without a signature
-break.
-**Byte-parity impact:** none.
-**Compression-efficiency impact:** none.
-**Future plan:** keep. The first `Err` site lands when `svc.md`
-introduces low-res-layer partition copy validation.
+**Where:** `partition::choose_partitioning`. libvpx: `vp9_encodeframe.c:1261`.
+**What libvpx does:** declares `int` return; every path returns `0`.
+**What rvp9 does:** `Result<(), EncodeError>`; no v1 path returns `Err`.
+**Why:** HLD-arch §4 — `Result`-typed fallibility end-to-end.
+Forward-compat for future SVC partition-copy validation.
+**Byte-parity impact:** none. **Compression-efficiency impact:** none.
+**Future plan:** first real `Err` site lands when `svc.md` introduces
+low-res partition-copy validation.
 
-### 7.2 `vt2` (4×4-downsample scratch) hoisted to per-tile, allocated lazily
+### 7.2 `vt2` (4×4-downsample scratch) hoisted to per-tile, lazy-alloc
 
-**Where:** `rvp9_encoder::partition::SbContext::scratch_4x4:
-&'frame mut Option<V16x16Array>`. libvpx: `vp9_encodeframe.c:1556`
-calls `vpx_calloc(sizeof(*vt2) * 16, ...)` **per SB** when 4×4
-downsample is needed; the buffer is freed at line 1764.
-**What libvpx does:** dynamic allocation per SB (`vpx_calloc` + `vpx_free`),
-~5 KB allocation + ~5 KB zero-fill on the hot path whenever a single 16×16
-needs the downsample.
-**What rvp9 does:** the `Option<V16x16Array>` lives in `PartitionScratch`
-(per-tile-worker, per-frame). First use within a tile allocates the
-`Box`; subsequent SBs in the same tile reuse it. The contents are
-written-before-read inside `fill_variance_4x4avg`, so no zeroing
-needed.
-**Why:** removes ~50 KB/sec of alloc/free traffic on 1080p30 at speed
-8 on key frames or low-res inter frames. Rust's allocator does not
-have libvpx's `vpx_calloc`-tier perf guarantees, and this path is
-called every SB on key frames.
-**Byte-parity impact:** none — the content of the buffer is
-write-before-read in both impls.
-**Compression-efficiency impact:** none.
-**Future plan:** if profile shows the `Box` allocation itself is a
-hotspot on the first key frame, pre-allocate in `WorkerPool::new` and
-flip `Option` to always-`Some`.
+**Where:** `SbContext::scratch_4x4: &'frame mut Option<V16x16Array>`.
+libvpx: `vp9_encodeframe.c:1556` (`vpx_calloc`) + 1764 (`vpx_free`).
+**What libvpx does:** ~5 KB alloc + zero per SB whenever any 16×16
+needs 4×4 downsample.
+**What rvp9 does:** lazy `Box<[V16x16; 16]>` per tile worker, reused
+across SBs. Write-before-read inside `fill_variance_4x4avg`, no zero.
+**Why:** removes ~50 KB/s alloc/free traffic at 1080p30 speed 8 key
+frames.
+**Byte-parity impact:** none. **Compression-efficiency impact:** none.
+**Future plan:** pre-allocate in `WorkerPool::new` if first-SB
+`Box::new` shows in profiles.
 
-### 7.3 `set_block_size` panic on out-of-bounds is `debug_assert`, not silent guard
+### 7.3 `set_block_size` is `debug_assert!`-guarded for non-edge callers
 
-**Where:** `partition::sb_grid::set_block_size`. libvpx:
-`vp9_encodeframe.c:338`.
-**What libvpx does:** silently no-ops when `mi_col >= cm->mi_cols ||
-mi_row >= cm->mi_rows`.
-**What rvp9 does:** the **safe** wrapper still no-ops (mirrors libvpx
-exactly). But an internal `debug_assert!(grid.is_inside(mi_row,
-mi_col))` traps when called from non-`choose_partitioning` sites
-(other callers, mostly `set_fixed_partitioning` and
-`set_partial_b64x64_partition`, are required to bounds-check before
-calling).
-**Why:** libvpx's silent guard is defensive C; in Rust we want
-out-of-bounds to be a debug-build crash for any caller that doesn't
-expect partial SBs. `choose_partitioning` IS allowed (the partial-SB
-case is exactly its job, gated by `mi_col + 8 > cm.mi_cols`).
-**Byte-parity impact:** none — release builds match libvpx exactly.
-**Compression-efficiency impact:** none.
+**Where:** `partition::sb_grid::set_block_size`. libvpx: `vp9_encodeframe.c:338`.
+**What libvpx does:** silently no-ops on out-of-frame writes.
+**What rvp9 does:** safe wrapper still no-ops (libvpx match);
+`debug_assert!` in non-`choose_partitioning` callers that they
+bounds-check upstream.
+**Why:** trap unexpected OOB in debug builds. Release matches libvpx.
+**Byte-parity impact:** none. **Compression-efficiency impact:** none.
 **Future plan:** keep.
 
-### 7.4 `PartitionScratch` is not `Copy` despite POD fields
+### 7.4 `PartitionScratch` is not `Copy`
 
 **Where:** `partition::PartitionScratch`.
-**What libvpx does:** the per-SB `v64x64 vt` and `int force_split[21]`
-are stack-allocated locals; "copy" semantics is implicit on entry.
-**What rvp9 does:** `PartitionScratch` is owned by `ThreadData`, never
-cloned. We deliberately do not derive `Copy` so accidental copies in
-benchmarks trip the borrow checker.
-**Why:** Rust ergonomics. ~5 KB struct with `Copy` is a foot-gun;
-we'd rather a `Clone` if anyone genuinely needs one (none do in v1).
-**Byte-parity impact:** none.
-**Compression-efficiency impact:** none.
+**What libvpx does:** stack `v64x64 vt` + `int force_split[21]` inside
+`choose_partitioning`.
+**What rvp9 does:** owned by `ThreadData`, never cloned. No `Copy`.
+**Why:** ~5 KB `Copy` is a foot-gun; no code path needs cloning.
+**Byte-parity impact:** none. **Compression-efficiency impact:** none.
 **Future plan:** keep.
 
 ### 7.5 Drop `variance_node` + `tree_to_node` indirection
 
-**Where:** `partition::tree::VarianceTreeNode<'a>` enum replaces both.
-libvpx: `vp9_encodeframe.c:386-438`.
-**What libvpx does:** `variance_node { partition_variance *part_variances;
-Var *split[4]; }` plus a `switch (bsize)` populator
-(`tree_to_node`) that runs every time `set_vt_partitioning` is
-called.
-**What rvp9 does:** typed enum carrying a `&mut` to the right level
-struct. Same dispatch arithmetic, no runtime pointer setup.
-**Why:** Rust enums lower to the same jump table; no need for the
-intermediate `*part_variances` pointer-of-pointer indirection. Also
-makes the lifetime story explicit (the enum's lifetime annotation
-documents that the borrow is valid for the duration of the
-`set_vt_partitioning` call).
-**Byte-parity impact:** none.
-**Compression-efficiency impact:** none.
-**Future plan:** keep. The libvpx pattern only existed because C
-lacks tagged unions.
+**Where:** `partition::tree::VarianceTreeNode<'a>`. libvpx:
+`vp9_encodeframe.c:386-438`.
+**What libvpx does:** `variance_node` (pointer-of-pointer struct) +
+`switch(bsize)` populator on every `set_vt_partitioning` call.
+**What rvp9 does:** typed enum carrying a `&mut` to the right level.
+**Why:** Rust enums lower to the same jump table; pointer-setup
+redundant. Lifetime makes the borrow scope explicit.
+**Byte-parity impact:** none. **Compression-efficiency impact:** none.
+**Future plan:** keep. C used the pattern only for lack of tagged
+unions.
 
-### 7.6 Lazy `Var::finalize` instead of always-eager
+### 7.6 Explicit `Var::finalize` instead of always-eager `get_variance`
 
-**Where:** `partition::tree::Var`. libvpx: `vp9_encodeframe.c:446-452`
-calls `get_variance` at every consumer.
-**What libvpx does:** `Var::variance` field is set every time
-`get_variance` runs; readers can call `get_variance` redundantly (no
-side effect of re-running on already-finalised data because the
-input fields don't change).
-**What rvp9 does:** `Var::finalize` mutates in-place; callers must
-call before reading `variance`. Strict in debug
-(`debug_assert!(variance != 0 || sum_square_error == 0)` could be
-added but might fire in pathological all-zero cases — we don't).
-**Why:** explicit lifecycle. Aligns with HLD-arch's "no hidden side
-effects" rule.
-**Byte-parity impact:** none if every site that reads `Var::variance`
-has finalised first. **§9.3** verifies via a property test.
-**Compression-efficiency impact:** none.
+**Where:** `partition::tree::Var::finalize`. libvpx: `vp9_encodeframe.c:446-452`.
+**What libvpx does:** consumers call `get_variance` redundantly; no
+side effect (output overwritten with the same value each time).
+**What rvp9 does:** mutating method; readers must finalise before
+reading `variance`. No automatic refresh.
+**Why:** explicit lifecycle. HLD-arch "no hidden side effects".
+**Byte-parity impact:** none if every reader finalises first. §9.3
+property test guards. **Compression-efficiency impact:** none.
 **Future plan:** keep.
 
-### 7.7 Speed-6 confirmed in `scale_part_thresh_sumdiff` (L-45)
+### 7.7 Speed-6 fall-through in `scale_part_thresh_sumdiff` documented (L-45)
 
-**Where:** `partition::thresholds::scale_part_thresh_sumdiff`.
-**What libvpx does:** at speed 6, falls through and returns
-`threshold_base` unchanged (no content-state scaling). Not a bug.
-**What rvp9 does:** mirrors exactly. Doc-comment explicitly notes
-the fall-through.
-**Why:** L-45 audit confirmed intentional. Future readers might
-"fix" this as an apparent missing arm; the doc-comment prevents.
-**Byte-parity impact:** none.
-**Compression-efficiency impact:** none.
+**Where:** `partition::thresholds::scale_part_thresh_sumdiff`. libvpx:
+`vp9_encodeframe.c:549-567`.
+**What libvpx does:** at speed 6, no arm matches → returns
+`threshold_base` unchanged.
+**What rvp9 does:** mirrors. Doc-comment explicitly notes the
+fall-through.
+**Why:** L-45 audit confirmed intentional. Doc-comment prevents
+future "fix this missing arm" regressions.
+**Byte-parity impact:** none. **Compression-efficiency impact:** none.
 **Future plan:** keep with prominent doc-comment.
 
-### 7.8 `cpi->vbp_thresholds[3]` cross-frame retention (the inter-frame branch)
+### 7.8 `vbp_thresholds[3]` cross-frame retention (inter-frame branch)
 
-**Where:** `partition::thresholds::set_vbp_thresholds`.
-**What libvpx does:** on inter frames, `thresholds[3]` is **not
-written** (line 614-635); it retains the value last assigned by the
-preceding key frame.
-**What rvp9 does:** mirror exactly. `VbpFrameThresholds.thresholds[3]`
-is initialised at encoder construction to `threshold_base << 2` with
-`q = 0` (matching libvpx's fresh-allocation-zeroed state followed by
-the first key-frame call) and re-written on every key frame; inter
-frames leave it alone.
-**Why:** this is a real cross-frame state dependency. Failing to
-mirror it would diverge on the `use_4x4_partition && key` path's
-`thresholds[3]` reads at `vp9_encodeframe.c:1733`.
+**Where:** `partition::thresholds::set_vbp_thresholds`. libvpx:
+`vp9_encodeframe.c:614-635`.
+**What libvpx does:** inter frames don't touch `thresholds[3]`; it
+retains the last key-frame value (`threshold_base << 2`).
+**What rvp9 does:** mirror. `VbpFrameThresholds::thresholds[3]` is
+initialised at construction and re-written only on key frames.
+**Why:** real cross-frame dependency. Diverging would break the
+`use_4x4_partition && key` path's `thresholds[3]` reads (line 1733).
 **Byte-parity impact:** would diverge on multi-frame sequences with
-key frames; mirroring keeps parity. **§9.5 tests.**
-**Compression-efficiency impact:** none.
-**Future plan:** keep. Comment the cross-frame dependency in
-`VbpFrameThresholds::thresholds[3]` doc.
+key frames. §9.5 tests. **Compression-efficiency impact:** none.
+**Future plan:** keep. Document the cross-frame dependency on the
+field's doc comment.
 
-### 7.9 `force_split` is `[bool; 21]` not `[i32; 21]`
+### 7.9 `force_split: [bool; 21]` instead of `int[21]`
 
 **Where:** `partition::ForceSplit`.
-**What libvpx does:** `int force_split[21]` (4 bytes per flag, 84 bytes).
-**What rvp9 does:** `[bool; 21]` (21 bytes).
-**Why:** trivial type narrowing; the C array only ever holds 0 or 1.
-**Byte-parity impact:** none.
-**Compression-efficiency impact:** none.
+**What libvpx does:** `int force_split[21]` (84 bytes).
+**What rvp9 does:** `[bool; 21]` (21 bytes); entries only ever 0/1.
+**Why:** trivial type narrowing.
+**Byte-parity impact:** none. **Compression-efficiency impact:** none.
 **Future plan:** keep.
 
-### 7.10 `variance_low[25]` stays `[u8; 25]` (L-39)
+### 7.10 `variance_low: [u8; 25]` Morton-order traceability (L-39)
 
-**Where:** `MacroBlock::variance_low: [u8; 25]`.
-**What libvpx does:** `uint8_t variance_low[25]` (`vp9_block.h:202`).
-**What rvp9 does:** identical type, identical layout. Morton-order on
-indices [9..=24] documented in struct doc-comment per L-39.
-**Why:** byte parity. Not a divergence — listed here for traceability
-because L-39 considered (and rejected) packing to bits.
-**Byte-parity impact:** none.
-**Compression-efficiency impact:** none.
-**Future plan:** none.
+**Where:** `MacroBlock::variance_low: [u8; 25]`. libvpx: `vp9_block.h:202`.
+**What libvpx does:** identical type + layout. **(Not a divergence —
+listed for L-39 traceability.)** L-39 considered (and rejected)
+packing to 25 bits.
+**What rvp9 does:** identical.
+**Byte-parity impact:** none. **Compression-efficiency impact:** none.
+**Future plan:** keep.
 
 ---
 
@@ -2167,227 +2113,161 @@ overrides bounds.
 
 ---
 
-## From `notes/lld/tile-threading.md` (§7 at line 1790)
+## From `notes/lld/tile-threading.md` (§7 at line 1440)
 
 ### §7 — Deliberate divergences (from `tile-threading.md`)
 
-HLD-threading queued seven entries (HLD-threading §11). This LLD
-preserves and elaborates them; LLDs feed
-`notes/divergence-ledger.md`. Each entry below is the rvp9 wording
-for the ledger.
+HLD-threading queued seven entries (HLD-threading §11). Each entry
+below is the rvp9 wording for `notes/divergence-ledger.md`.
 
 ### DV-TT-01 — `tile_rows > 1` panics in v1 (L-62)
 
-**Where:** `rvp9_encoder::threading::tile::TileGrid::split_for_frame`
-panics on `log2_tile_rows > 0`. libvpx counterpart: encoder allows
-`log2_tile_rows ∈ [0, 2]` via `MAX_NUM_TILE_ROWS = 4` at
-`vp9/encoder/vp9_ethread.h:19` and the row-MT job queue handles
-`tile_row` advancement at `vp9/encoder/vp9_multi_thread.c:282-288`.
+**Where:** `TileGrid::split_for_frame` panics on `log2_tile_rows > 0`.
+libvpx counterpart: `MAX_NUM_TILE_ROWS = 4` at `vp9_ethread.h:19`;
+row-MT job queue advances `tile_row` at `vp9_multi_thread.c:282-288`.
 
-**What libvpx does:** supports multi-tile-row frames in encoder and
-decoder, though real-time mode never sets `log2_tile_rows > 0` per
-`06-threading-svc.md` §7.12 (decoder row-MT asserts
-`log2_tile_rows == 0` at `vp9/decoder/vp9_decodeframe.c:2343`).
+**What libvpx does:** supports multi-tile-row frames; real-time mode
+never sets `log2_tile_rows > 0` (06-threading-svc §7.12; decoder
+asserts `log2_tile_rows == 0` at `vp9_decodeframe.c:2343`).
 
-**What rvp9 does:** accept only `log2_tile_rows == 0` in v1. Encoder
-config validation rejects at `Encoder::reconfigure` time; the LLD
-panic in `split_for_frame` is a backstop.
+**What rvp9 does:** reject `log2_tile_rows > 0` at config validation;
+panic backstop in `split_for_frame`.
 
-**Why:** D1 (real-time priority) and PLAN.md §2 (720p30/1080p30/1080p60)
-never need tile rows. Tile rows are useful for very high-res content
-(4K+) where the per-tile decode budget might exceed real-time. Out of
-v1 scope.
+**Why:** D1 (real-time) at PLAN.md §2 res/fps never needs tile rows.
+Tile rows useful at 4K+; out of v1 scope.
 
-**Byte-parity impact:** none for our target configs (libvpx itself
-sets `log2_tile_rows = 0` in real-time mode).
+**Byte-parity:** none (matched configs). **Compression:** none.
 
-**Compression-efficiency impact:** none in matched configs.
+**Future:** v2 expansion. `RowMtCtx` already carries `tile_row`
+per-job; v2 work is propagating through the partition loop and
+sharing `RowSync` across tile rows in the same column.
 
-**Future plan:** v2 expansion. The `RowMtCtx` job queue already
-carries `tile_row` per-job (`vp9/encoder/vp9_multi_thread.c:262-297`);
-the v2 work is propagating tile_row through the partition loop and
-adjusting `RowSync.rows` to span all tile rows in the same column.
+### DV-TT-02 — Determinism flag forces `adaptive_rd_thresh_row_mt = 1`
 
-### DV-TT-02 — Determinism-mode forces `adaptive_rd_thresh_row_mt = 1`
+**Where:** `row_mt_deterministic_mode` (§4.6.1) gates
+`sf.adaptive_rd_thresh_row_mt = 1` + disables work stealing. libvpx
+counterpart: `vp9_speed_features.c:910-912, 1090-1092` zeros
+`adaptive_rd_thresh` when `!adaptive_rd_thresh_row_mt &&
+row_mt_bit_exact && max_threads > 1`.
 
-**Where:** `rvp9_encoder::threading::row_mt_deterministic_mode`
-returns true when `cfg.row_mt_bit_exact || env(RVP9_DETERMINISTIC_ROW_MT
-== 1)`; this forces `sf.adaptive_rd_thresh_row_mt = 1` and disables
-work stealing. libvpx counterpart:
-`vp9/encoder/vp9_speed_features.c:910-912, 1090-1092` zeros
-`adaptive_rd_thresh` when `!sf->adaptive_rd_thresh_row_mt &&
-cpi->row_mt_bit_exact && max_threads > 1`.
+**What libvpx does:** `row_mt_bit_exact` is a debug knob; non-exact
+mode races `thresh_freq_fact[][]` for marginal BD-rate.
 
-**What libvpx does:** treats `row_mt_bit_exact` as a debug knob;
-non-bit-exact mode keeps `thresh_freq_fact[][]` racing across
-workers in row-MT for marginal BD-rate gain.
-
-**What rvp9 does:** when determinism is requested (default for
-bit-parity tests, off in production unless env var set), force
+**What rvp9 does:** when determinism requested
+(`cfg.row_mt_bit_exact || RVP9_DETERMINISTIC_ROW_MT=1`), force
 `adaptive_rd_thresh_row_mt = 1` AND disable work stealing.
 
-**Why:** R-08 originally flagged non-determinism in
-`thresh_freq_fact`; async A7 #11 clarified that at cpu-used 6 default
-config, `adaptive_rd_thresh_row_mt = 0` and `thresh_freq_fact` writes
-are not exposed to races. The risk surfaces only at cpu-used 7/8 with
-`adaptive_rd_thresh_row_mt = 1`. We codify the determinism guarantee
-as a flag for the diff harness; production uses the libvpx default.
+**Why:** Async A7 #11 clarified non-determinism surfaces only at
+cpu-used 7/8 with `adaptive_rd_thresh_row_mt = 1`. We codify the
+determinism guarantee for the diff harness; production uses libvpx
+default.
 
-**Byte-parity impact:** minor — `<0.3%` BD-rate cost in determinism
-mode, per HLD-threading §4.4.
+**Byte-parity:** zero in matched (non-determinism) configs. With
+determinism flag: `<0.3%` BD-rate cost (HLD-threading §4.4).
+**Compression:** same.
 
-**Compression-efficiency impact:** `<0.3%` BD-rate when determinism
-enabled; zero otherwise.
+**Future:** revisit at Stage 4a; if cost is acceptable, default on.
 
-**Future plan:** revisit at Stage 4a when we have differential test
-data. If the determinism cost is acceptable, make it always-on; if
-not, accept ULP-level differences in differential tests on row-MT
-paths.
+### DV-TT-03 — Workers never invoke `vpx_internal_error`
 
-### DV-TT-03 — Encoder workers never invoke `vpx_internal_error`
+**Where:** workers use `Result<(), WorkerError>`; no setjmp analogue.
+libvpx counterpart: encoder workers never call `vpx_internal_error`
+in practice (01-architecture.md §3.7).
 
-**Where:** `rvp9_encoder::threading` workers never `setjmp` or
-`longjmp` analogues; all error paths use `Result<(), WorkerError>`.
-libvpx counterpart: encoder workers do not call `vpx_internal_error`
-in practice (01-architecture.md §3.7), but the framework allows it
-(every worker thread has access to `cm->error` and the main thread's
-`setjmp` would theoretically catch it).
+**What libvpx does:** workers never raise `vpx_internal_error`;
+theoretical capability exists.
 
-**What libvpx does:** workers never raise `vpx_internal_error` per
-A1 §3.7; theoretical capability exists, never exercised in production.
+**What rvp9 does:** all allocation on main thread before worker spawn;
+`Result` propagates; `catch_unwind` bounds panics.
 
-**What rvp9 does:** all allocation happens on the main thread before
-worker spawn. Workers' only failure modes are panic (caught) and
-internal-logic errors returned via `Result`. No setjmp analogue.
+**Why:** main-thread allocation is the natural Rust pattern; `Result`
+is idiomatic; `catch_unwind` doesn't disturb OS signal semantics.
 
-**Why:** allocation on main thread is a natural Rust pattern;
-`Result` propagates cleanly; `catch_unwind` bounds panic blast
-radius without disturbing OS signal semantics. HLD-threading §8.
+**Byte-parity:** none on success path. **Compression:** none.
 
-**Byte-parity impact:** none on success path (workers don't fail in
-practice).
+**Future:** none. Stable Rust has no setjmp.
 
-**Compression-efficiency impact:** none.
+### DV-TT-04 — Pool tears down + rebuilds on `num_workers` change
 
-**Future plan:** none. Stable Rust offers no setjmp; the constraint
-"workers don't allocate" is already true in libvpx.
+**Where:** `WorkerPool::ensure_sized` calls `shutdown` then respawns
+on `target != current`. libvpx counterpart: `vp9_ethread.c:92-95`
+shows conditional rebuild.
 
-### DV-TT-04 — Pool tears down + rebuilds on any `num_workers` change
+**What libvpx does:** rebuild only when `num_workers` differs; same
+as us in the same-size case. For shrinkage both libvpx and rvp9
+rebuild rather than reuse a subset.
 
-**Where:** `WorkerPool::ensure_sized` calls `shutdown` then re-spawns
-when `target != current`. libvpx counterpart:
-`vp9/encoder/vp9_ethread.c:92-95` shows conditional rebuild (only
-when `num_workers` actually differs from previously allocated).
+**What rvp9 does:** same as libvpx; on shrink, full rebuild.
 
-**What libvpx does:** rebuild only on actual `num_workers` change;
-no-op otherwise. Same as us.
+**Why:** subset-reuse is more complex (in-flight closures, partial
+pool state). Rebuild cost = pthread spawn × N workers = microseconds,
+negligible at 33 ms frame budget.
 
-**What rvp9 does:** same as libvpx for the same-size case. For the
-**shrink** case, libvpx and rvp9 both rebuild rather than reuse a
-subset.
+**Byte-parity:** none. **Compression:** none.
 
-**Why:** shrinking the pool while reusing a subset of the existing
-workers is more complex than rebuilding (existing workers may have
-in-flight closures; coordinating which subset to keep is tricky).
-Rebuild cost is bounded by pthread spawn overhead × N workers, which
-is microseconds. Negligible at the frame granularity (33 ms budget).
-
-**Byte-parity impact:** none.
-
-**Compression-efficiency impact:** none.
-
-**Future plan:** monitor at Stage 4a; if pool reconfiguration becomes
-a hotspot under SVC dynamic-resize, revisit.
+**Future:** monitor at Stage 4a under SVC dynamic-resize; revisit if
+reconfiguration becomes a hotspot.
 
 ### DV-TT-05 — Mirror libvpx's `FRAME_COUNTS` accumulation bias (L-57)
 
-**Where:** `accumulate_frame_counts` in
-`rvp9_encoder::threading::accumulate_frame_counts`. libvpx
-counterpart: `vp9_accumulate_frame_counts` at
-`vp9/common/vp9_thread_common.c:488`, called from
-`vp9/encoder/vp9_ethread.c:243-247`.
+**Where:** `accumulate_frame_counts` (§5.7). libvpx counterpart:
+`vp9_accumulate_frame_counts` at `vp9_thread_common.c:488`, called
+from `vp9_ethread.c:243-247`.
 
 **What libvpx does:** sums per-worker `td->counts` into `cm->counts`
-where `cm->counts` already holds the pre-frame baseline (memcpy'd
-into each worker at frame start). For `N >= 2` OS-thread workers,
-the baseline is therefore counted `1 + (N - 1) = N` times in the
-final `cm->counts` instead of once. Statistical bias on backward
-probability adaptation.
+which already holds the pre-frame baseline (memcpy'd into each
+worker). For `N >= 2` OS-workers the baseline is counted N times.
 
-**What rvp9 does:** mirror exactly. Inline worker (N-1) does **not**
-have the bias (its `counts` storage IS `cm.counts`, no memcpy
-in); OS-thread workers (0..N-1) accumulate with the bias.
+**What rvp9 does:** mirror exactly. Inline (N-1) has no bias (its
+storage IS `cm.counts`); OS-workers (0..N-1) accumulate with bias.
 
-**Why:** byte-parity priority for the Stage 4a diff harness. The
-bias is small (probabilities are updated additively from large counts,
-so an extra `(N-1) × baseline` is a fractional perturbation on
-near-converged probs) and consistent across libvpx-matched configs.
+**Why:** byte-parity priority for Stage 4a diff harness. Bias is
+sub-0.1% BD-rate per HLD-threading §5.6; near-converged probs absorb
+the extra `(N-1) × baseline` fractional perturbation.
 
-**Byte-parity impact:** zero (matches libvpx).
+**Byte-parity:** zero (matches libvpx). **Compression:** identical
+to libvpx; vs. unbiased impl, sub-0.1% BD-rate delta.
 
-**Compression-efficiency impact:** identical to libvpx (we share the
-quirk). Versus a "correct" implementation that subtracts baseline
-before sum, BD-rate delta is sub-0.1% per HLD-threading §5.6.
-
-**Future plan:** at Stage 5 hardening, evaluate whether to switch to
-the unbiased sum. If yes, becomes a new divergence entry with
-positive BD-rate expectation. Defer until empirical data justifies.
+**Future:** at Stage 5, evaluate switching to unbiased sum.
 
 ### DV-TT-06 — Worker thread priority not elevated (L-63)
 
-**Where:** `WorkerPool::ensure_sized` calls
-`thread::Builder::new().spawn(...)` with no priority adjustment.
-libvpx counterpart: `vpx_util/vpx_thread.h:90` calls
-`SetThreadPriority(THREAD_PRIORITY_ABOVE_NORMAL)` on Windows.
+**Where:** `WorkerPool::ensure_sized` calls `thread::Builder::spawn`
+with no priority adjustment. libvpx counterpart: `vpx_thread.h:90`
+calls `SetThreadPriority(THREAD_PRIORITY_ABOVE_NORMAL)` on Windows.
 
-**What libvpx does:** elevates worker priority on Windows only.
-Linux/macOS/iOS: no priority change.
+**What libvpx does:** Windows-only priority elevation.
 
 **What rvp9 does:** no priority change on any platform.
 
-**Why:** stable Rust has no portable priority API. Adding
-Windows-specific code via `windows-sys` is feasible but adds a
-build dependency for a marginal benefit (priority promotion gives
-~2-5% throughput in CPU-saturated multi-encoder scenarios, less in
-single-encoder real-time mode where the encoder is rarely
-CPU-saturated). Defer to v2.
+**Why:** stable Rust has no portable priority API; `windows-sys`
+adds a dep for marginal benefit (~2-5% in CPU-saturated scenarios,
+less in single-encoder real-time).
 
-**Byte-parity impact:** none.
+**Byte-parity:** none. **Compression:** none (scheduling concern).
 
-**Compression-efficiency impact:** none (this is a scheduling concern).
-
-**Future plan:** add platform-specific priority hook in v2 if profiling
-shows worker thread starvation in shared deployments.
+**Future:** add platform-specific hook in v2 if profiling shows
+starvation.
 
 ### DV-TT-07 — No frame-parallel encoding in v1 (Q4 deferred)
 
 **Where:** `Encoder::encode_frame` is single-frame-in-flight; no
-`Encoder::enqueue_frame` API. libvpx counterpart:
-`vp9/encoder/vp9_encoder.c` — `vp9_encode` is single-frame-in-flight
-per A6 §1.
+`Encoder::enqueue_frame`. libvpx counterpart: `vp9_encode` is
+single-frame-in-flight per A6 §1.
 
-**What libvpx does:** encoder is single-frame-in-flight (06-threading-svc
-§1 explicit; A8 §5 #6 confirmation; PLAN.md §2 Stage 1 surprising
-finding #2). The `cm->frame_parallel_decoding_mode` bit is a
-decoder-side hint, not an encoder threading mode.
+**What libvpx does:** encoder is single-frame-in-flight
+(06-threading-svc §1; A8 §5 #6). `cm->frame_parallel_decoding_mode`
+is a decoder-side hint, not an encoder mode.
 
-**What rvp9 does:** same as libvpx — single-frame-in-flight. Intra-frame
-parallelism via tile-MT and row-MT only.
+**What rvp9 does:** same — single-frame-in-flight. Intra-frame
+parallelism via tile-MT + row-MT only.
 
-**Why:** D6 mirrors libvpx; Q4 (PLAN.md) is a design question not a
-port question; designing frame-parallel encode from scratch is a v2
-endeavour. HLD-threading §2.2.
+**Why:** D6 mirrors libvpx; Q4 has no libvpx precedent.
 
-**Byte-parity impact:** none (matches libvpx).
+**Byte-parity:** none. **Compression:** none.
 
-**Compression-efficiency impact:** none in matched configs. Versus a
-hypothetical v2 frame-parallel encoder, latency improves at the cost
-of memory and worker count; BD-rate parity is the constraint, latency
-is downstream.
-
-**Future plan:** v2 design when the 1080p60 budget squeezes us.
-`LayerScope::Frame` annotations in HLD-threading §2.3 are the v2
-expansion checklist.
+**Future:** v2 design when 1080p60 budget squeezes. HLD-threading
+§2.3 `LayerScope::Frame` annotations are the v2 expansion checklist.
 
 ---
 
