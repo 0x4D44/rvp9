@@ -18,8 +18,11 @@
 //! in the kernel layer once it lands; no per-mode RDO loop is exposed
 //! from this module.
 
+pub mod constants;
+pub mod inverse;
 pub mod scans;
 pub mod types;
 
+pub use inverse::{idct4, idct4x4_1_add, idct4x4_16_add};
 pub use scans::{DEFAULT_ISCAN_4X4, DEFAULT_SCAN_4X4, DEFAULT_SCAN_4X4_NEIGHBORS, ScanOrder, default_scan_4x4};
 pub use types::{MAX_NEIGHBORS, TxMode, TxSize, TxType};
