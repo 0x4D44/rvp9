@@ -22,4 +22,8 @@ path = "src/bin/diff_bitstream.rs"
 name = "check-lld-format"
 path = "src/bin/check_lld_format.rs"
 
+[[bin]]
+name = "extract-divergences"
+path = "src/bin/extract_divergences.rs"
+
 [dependencies]
