@@ -34,12 +34,14 @@ A stage gates to the next stage only when its criteria pass. The project gates t
 - [ ] **1080p60**: ≤16ms/frame median, ≤25ms p99, on 4–8 cores.
 
 ### Features
-- [ ] 1-pass CBR + VBR rate control with buffer-model compliance.
-- [ ] Adaptive quantization (3 AQ modes, matching libvpx).
+- [ ] 1-pass CBR + VBR-RT rate control with buffer-model compliance. (No altref — directly contradicts real-time; revisit for a future near-RT livestream preset.)
+- [ ] Adaptive quantization (CYCLIC_REFRESH / AQ mode 3 only — modes 1/2 are guarded by `!CONFIG_REALTIME_ONLY` in libvpx and unreachable at cpu-used 5-8).
 - [ ] Temporal SVC (2- and 3-layer).
 - [ ] Spatial SVC (2- and 3-layer).
 - [ ] Content-aware denoiser.
 - [ ] Frame dropping under load.
+- [ ] EXT_RATECTRL plug-in interface (required for libwebrtc integration).
+- [ ] 8-bit (Profile 0) only in v1. High-bit-depth (10/12-bit, Profiles 2/3) deferred to Stage 6+.
 
 ### Aspirational (not gating)
 - [ ] Byte-identical output to libvpx vpxenc at matched config on a curated test set. Used as a **diagnostic tool** for finding divergence, not a release gate.
@@ -70,7 +72,7 @@ These will be resolved at the stage indicated. Do not pre-decide.
 
 | # | Decision | Resolve in |
 |---|---|---|
-| Q1 | High-bit-depth (10/12-bit) support in v1 | Stage 2 (LLDs) |
+| Q1 | ~~High-bit-depth (10/12-bit) support in v1~~ — **RESOLVED 2026-05-16: 8-bit only in v1; HBD deferred to Stage 6+.** | — |
 | Q2 | RTCD dispatch table: hand-written Rust vs `build.rs` generator from `vpx_dsp_rtcd_defs.pl` | Stage 2 (LLDs) |
 | Q3 | Tile-threading primitives: `std::thread` + `Mutex`/`Condvar`/`Barrier` vs alternatives | Stage 2 (LLDs) |
 | Q4 | Frame-parallel encoding (multiple frames in flight) in v1 vs v2 | Stage 2 (LLDs) |
@@ -289,10 +291,10 @@ Re-dispatches performed during Stage 1:
 Surprising findings (high-signal items that change PLAN.md):
 
 1. **AQ modes 1/2 unreachable in `CONFIG_REALTIME_ONLY` builds** (A5
-   Q-RC-15). PLAN.md §2 commits to "3 AQ modes matching libvpx" but
-   only mode 3 (CYCLIC_REFRESH_AQ) is real-time-reachable in libvpx
-   itself. Decision in Stage 2: un-gate AQ 1/2 in our port (extra
-   work) or drop them from v1 (simpler).
+   Q-RC-15). PLAN.md §2 originally committed to "3 AQ modes matching
+   libvpx" but only mode 3 (CYCLIC_REFRESH_AQ) is real-time-reachable in
+   libvpx itself. **RESOLVED 2026-05-16: drop modes 1/2 from v1; PLAN.md
+   §2 amended to "CYCLIC_REFRESH only".**
 2. **Encoder-side frame-parallel encoding does NOT exist in libvpx**
    (A6 key finding). PLAN.md Q4 is therefore a v2-design question,
    not a libvpx-mirror question.
@@ -310,7 +312,7 @@ Surprising findings (high-signal items that change PLAN.md):
 Stage 1 deferred to Stage 2 (per devil's-advocate disposition):
 
 - D-12 `cpi->td` exhaustive aliasing catalogue (HLD-threading)
-- D-13 REALTIME-VBR + altref support (Arthur scope question)
+- ~~D-13 REALTIME-VBR + altref support~~ **RESOLVED 2026-05-16: CBR + VBR-RT, NO altref.**
 - L-65 conformance vector coverage expansion (Stage 3)
 - L-66 `setjmp` × worker threads (HLD-threading)
 - L-67 cyclic-refresh segmentation map ownership (HLD-threading)
@@ -343,23 +345,22 @@ Arthur sign-off: ⏳ pending (the irreducible human gate per PLAN.md §6).
 
 **Tasks:**
 
-1. Write `notes/hld/00-architecture.md`: top-level Rust architecture, crate boundaries, module graph, type-system overview, error model, `unsafe` policy.
+1. Write `notes/hld/00-architecture.md`: top-level Rust architecture, crate boundaries, module graph, type-system overview, error model, `unsafe` policy. (Q1 RESOLVED to 8-bit only; HLD-arch states the pixel-type policy in a paragraph rather than a separate doc — `03-bit-depth.md` is no longer needed.)
 2. Write `notes/hld/01-threading.md`: tile-based threading design in Rust, `Send`/`Sync` strategy, `UnsafeCell` usage policy, synchronization primitives, frame-parallel encoding decision (Q4).
 3. Write `notes/hld/02-simd-dispatch.md`: RTCD-equivalent design (Q2), per-arch intrinsics organization, runtime feature detection, scalar-fallback policy, test strategy for SIMD-vs-scalar equivalence.
-4. Write `notes/hld/03-bit-depth.md`: 10/12-bit support decision (Q1). If in scope, design pattern (generics over pixel type vs separate code paths).
-5. Write `notes/hld/04-svc.md`: SVC layer pipeline, reference dependency tracking, rate control across layers.
-6. Resolve all remaining `decisions-needed.md` items from Stage 1.
-7. Write per-module LLDs in `notes/lld/`:
+4. Write `notes/hld/04-svc.md`: SVC layer pipeline, reference dependency tracking, rate control across layers (includes EXT_RATECTRL plug-in interface per R-06).
+5. Resolve all remaining `decisions-needed.md` items from Stage 1.
+6. Write per-module LLDs in `notes/lld/`:
    - `bitstream.md`, `entropy.md`, `transforms.md`, `quant.md`, `intra-pred.md`, `loopfilter.md`, `frame-buffers.md`
    - `motion-estimation.md`, `mode-decision.md`, `partition.md`
-   - `rate-control.md`, `denoiser.md`, `aq.md`
+   - `rate-control.md`, `denoiser.md`, `aq.md` (mode 3 only)
    - `svc.md`, `tile-threading.md`
    - Each LLD: types, public API, internal algorithm, libvpx file/line origin, divergence notes
-8. Start `notes/divergence-ledger.md`: every place we deliberately depart from libvpx, with rationale and impact on byte parity.
-9. Arthur reviews each LLD and signs off before Stage 3 may proceed for that module.
+7. Start `notes/divergence-ledger.md`: every place we deliberately depart from libvpx, with rationale and impact on byte parity.
+8. Arthur reviews each LLD and signs off before Stage 3 may proceed for that module.
 
 **Deliverables:**
-- ~5 HLD docs.
+- 4 HLD docs.
 - ~15 LLDs.
 - Populated divergence ledger.
 - Updated `PLAN.md` with refined Stage 3/4 task breakdowns informed by the LLDs.
@@ -396,7 +397,7 @@ Arthur sign-off: ⏳ pending (the irreducible human gate per PLAN.md §6).
 9. Run VP9 conformance vectors. Fix until 100%.
 
 **Deliverables:**
-- `rvp9-core` and `rvp9-decoder` crates feature-complete for VP9 Profile 0 (8-bit 4:2:0). Profile 2 (10-bit) decision per Q1.
+- `rvp9-core` and `rvp9-decoder` crates feature-complete for VP9 Profile 0 (8-bit 4:2:0). Profiles 2/3 (10/12-bit) deferred to Stage 6+ per D-01 RESOLVED.
 - All shared kernels have scalar + SSE2 + SSE4.1 + AVX2 (x86_64) and NEON (aarch64) implementations.
 - All shared kernels have differential tests (SIMD-vs-scalar) and conformance coverage.
 - `tests/conformance/runner.rs` runs against our decoder, not just `vpxdec`.
@@ -412,7 +413,7 @@ Arthur sign-off: ⏳ pending (the irreducible human gate per PLAN.md §6).
 
 **Risks:**
 - Bit-exact transforms are finicky. Budget extra time for SIMD-vs-scalar debugging.
-- High-bit-depth (if in scope) roughly doubles kernel count.
+- (8-bit only in v1 — HBD-related kernel doubling avoided.)
 
 ---
 
@@ -456,23 +457,21 @@ Arthur sign-off: ⏳ pending (the irreducible human gate per PLAN.md §6).
 
 ### Stage 4b — Adaptive Quantization (AQ)
 
-**Goal:** Add AQ modes (libvpx AQ modes 1, 2, 3) and demonstrate BD-rate improvement consistent with libvpx's gain.
+**Goal:** Add cyclic-refresh AQ (libvpx mode 3) and demonstrate BD-rate improvement consistent with libvpx's gain. (Modes 1/2 dropped per D-05 RESOLVED 2026-05-16 — `!CONFIG_REALTIME_ONLY` dead code in our config.)
 
 **Inputs:** Stage 4a complete.
 
 **Tasks:**
 
-1. Implement variance-based AQ (mode 1).
-2. Implement complexity-based AQ (mode 2).
-3. Implement cyclic refresh AQ (mode 3).
-4. Integrate with rate control.
-5. Regression: ensure 4a real-time targets still hit.
+1. Implement cyclic refresh AQ (mode 3) and its segmentation map.
+2. Integrate with rate control.
+3. Regression: ensure 4a real-time targets still hit.
 
 **Exit criteria:**
-- [ ] BD-rate gain from AQ on test corpus matches libvpx's gain to within 0.3%.
+- [ ] BD-rate gain from AQ-3 on test corpus matches libvpx's gain to within 0.3%.
 - [ ] 720p30 real-time still passes.
 
-**Estimated effort:** 3–4 weeks.
+**Estimated effort:** 2 weeks (down from 3–4 — modes 1/2 elided).
 
 ---
 

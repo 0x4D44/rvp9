@@ -16,6 +16,25 @@ Numbering convention (per `_stage2-dispatch-prep.md`):
 
 ---
 
+## Stage 2 entry — Arthur scope (RESOLVED 2026-05-16)
+
+Final scope locked after round-1 pushback. Arthur agreed with assistant's
+recommendations on 3 items; accepted EXT_RATECTRL as originally answered.
+
+| Item | Final scope |
+|---|---|
+| **D-01** (HBD) | **8-bit only in v1.** HBD deferred to Stage 6+. Rationale: ~2× scope multiplier on every pixel-touching path (separate u8/u16 kernels, transforms, predictors, SIMD); profile 3 has near-zero real-time demand. |
+| **D-05** (AQ 1/2) | **CYCLIC_REFRESH (mode 3) only.** Modes 1 (variance) and 2 (complexity) are guarded by `!CONFIG_REALTIME_ONLY` in libvpx — unreachable at cpu-used 5-8 and dead code in our scope. PLAN.md §2 amended from "3 AQ modes" to "1 AQ mode (CYCLIC_REFRESH)". |
+| **D-13** (VBR-RT + altref) | **CBR + VBR-RT, NO altref.** Altref requires `lag-in-frames > 0` (look-ahead) and directly contradicts real-time / WebRTC. Our harness already sets `lag-in-frames=0`. Altref considered for a future "near-real-time livestream" preset (out of v1 scope). |
+| **R-06** (EXT_RATECTRL) | **Include in v1.** Required for libwebrtc integration. Mechanical work; defines a callback-based RC interface. |
+
+**Effect on Stage 2 dispatch:** the four HLD writers proceed with this
+scope. The individual D-01 / D-05 / D-13 / R-06 entries below remain
+intact for traceability but their "Decision needed by" status is now
+**RESOLVED**.
+
+---
+
 ## D — Stage 3 blockers (decide before Stage 2 exits)
 
 ### D-01 — High-bit-depth (10/12-bit) support in v1 scope?
@@ -36,6 +55,8 @@ handling also branches).
 us. PLAN.md target use cases don't strictly require HBD in v1.
 
 **Decision needed by:** start of Stage 2 (HLD-arch will commit to one).
+
+**RESOLVED 2026-05-16:** **8-bit only in v1.** HBD deferred to Stage 6+.
 
 ### D-02 — RTCD dispatch table: hand-written vs build.rs generator?
 
@@ -94,6 +115,11 @@ modes 1/2. Only mode 3 (CYCLIC_REFRESH_AQ) is real-time-reachable.
 **Recommendation:** option 1 or 3 (skip in v1).
 
 **Decision needed by:** Stage 4b entry.
+
+**RESOLVED 2026-05-16:** **CYCLIC_REFRESH (mode 3) only** in v1. Modes 1/2
+are dead code in our cpu-used 6-8 config (guarded by `!CONFIG_REALTIME_ONLY`).
+PLAN.md §2 amended from "3 AQ modes matching libvpx" to "1 AQ mode
+(CYCLIC_REFRESH)".
 
 ### D-06 — Region-of-interest (ROI) / segmentation API in v1?
 
