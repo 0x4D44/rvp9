@@ -238,11 +238,80 @@ encoder; high risk of silent BD-rate drift if implemented wrong.
 
 ---
 
-## Items still missing (await A1, A2, A6)
+---
 
-- L-NN for architecture decisions (A1) — error model, panic policy
-- L-NN for encoder mode-decision (A2) — non-RD cost approximations,
-  partition decision tree, skip detection
-- L-NN for threading + SVC + speed features (A6) — UnsafeCell catalogue,
-  Send/Sync boundary, speed-feature flag enumeration
-- All A7 challenges that result in DEFERRED entries here
+## Additional entries — A1 + A2 + A6 contributions
+
+The following are summary entries; see each specialist's §7 for full
+rationale + file:line citations. A8 will synthesize and finalise.
+
+### A1 (architecture) contributions
+
+| Tag | Topic | Source |
+|---|---|---|
+| D-08 | Frame-buffer pool ownership: expose to public API or hide behind `Encoder` type? | A1 §7.1 |
+| L-29 | `VP9_COMP` decomposition strategy: subsystem split vs flat mega-struct | A1 §7.2 |
+| L-30 | Lookahead bypass when `lag_in_frames == 0`: keep thin wrapper vs skip | A1 §7.3 + A5 |
+| D-09 | `setjmp`/`longjmp` panic path: `Result<T,_>` chain vs `panic = abort` | A1 §7.4 |
+| L-31 | Worker-pool sizing: eager (at `Encoder::new`) vs lazy (libvpx behaviour) | A1 §7.5 + A6 §7 |
+| L-32 | Pin encoder to `REALTIME` mode at construction (drop `GOOD` mode dispatch) | A1 §7.6 |
+| R-06 | External rate-control plug-in (`EXT_RATECTRL`) — WebRTC dependency, in v1 or v1.1? | A1 §7.7 + A5 |
+| L-33 | Drop libvpx build-time `#ifdef` knobs (CONFIG_RATE_CTRL etc.); document in divergence ledger | A1 §7.8 |
+| L-34 | Confirm `encode_with_recode_loop` is dropped (real-time uses single-pass only) | A1 §7.9 |
+| L-35 | Bitstream packing threading: scalar-only in v1 (no parallel pack) | A1 §7.10 + A4 |
+| L-36 | SVC reference-slot management: 8-slot map shared across spatial + temporal layers | A1 §7.11 + A6 |
+| L-37 | Arc<FrameBuf> vs Rc<FrameBuf> for the ref-counted frame pool | A1 §7.1 |
+
+### A2 (encoder core / non-RD path) contributions
+
+A2 surfaced 20 LLD-bound questions; cross-references below.
+
+| Tag | Topic | Source |
+|---|---|---|
+| L-38 | Variance-tree representation in Rust (nested structs vs flat array) | A2 §7 Q1 |
+| L-39 | `x->variance_low[25]` indexing and packing | A2 §7 Q2 + Q14 |
+| L-40 | `vp9_pick_inter_mode` 30-iteration loop control flow: refactor vs byte-parity | A2 §7 Q3 |
+| L-41 | `block_yrd` fast-path bypass at speed ≥ 7 | A2 §7 Q4 |
+| L-42 | Laplacian R-D table `rate_tab_q10` / `dist_tab_q10` ownership (A2 or A4 patch) | A2 §7 Q5; R-07 below |
+| L-43 | `vp9_NEWMV_diff_bias` semantics + ordering relative to `encode_breakout_test` | A2 §7 Q6 + Q16 |
+| L-44 | `set_low_temp_var_flag` 32×32 threshold expression | A2 §7 Q7 |
+| L-45 | `scale_part_thresh_sumdiff` behaviour at speed 6 | A2 §7 Q8 |
+| L-46 | Compound mode handling — `comp_modes` in `vp9_pick_inter_mode` | A2 §7 Q9; defer to v2? |
+| L-47 | `sub8x8` chosen-mode-from-bmi[3] semantics (libvpx picks LAST sub-block's mode) | A2 §7 Q10 |
+| L-48 | Filter-ref selection in `search_filter_ref` for non-RD path | A2 §7 Q11 |
+| L-49 | Threshold-freq-fact storage layout (per-frame vs per-tile) | A2 §7 Q12 |
+| L-50 | `reuse_inter_pred_sby` 4-entry buffer pool | A2 §7 Q13 |
+| L-51 | `encode_breakout_test` chroma path conditional | A2 §7 Q15 |
+| L-52 | `set_vt_partitioning` block_height == block_width invariant | A2 §7 Q17 |
+| L-53 | Partition decision at frame edges (cropping behaviour) | A2 §7 Q18 |
+| L-54 | `cpi->vbp_thresholds[4]` location (per-frame vs init) | A2 §7 Q19 |
+| L-55 | `ref_mode_set[12]` Rust representation (const array vs enum) | A2 §7 Q20 |
+| R-07 | Laplacian R-D tables NOT transcribed by any specialist — gap | A2 §5.4 declares this; A7 hypothesis test H2 |
+
+### A6 (threading + SVC + speed features) contributions
+
+A6 surfaced 14 LLD-bound questions, several covering load-bearing
+aliasing patterns the Rust port must mirror.
+
+| Tag | Topic | Source |
+|---|---|---|
+| D-10 | `SPEED_FEATURES` representation: snapshot-per-frame (immutable) vs `UnsafeCell` | A6 §7.1 |
+| D-11 | `ThreadData::mb` (`MACROBLOCK`) aliasing: `tile_split + std::thread::scope` for tile-MT; `UnsafeCell + raw pointers` for row-MT (A6 recommendation) | A6 §7.2 |
+| L-56 | `VPxWorker` → `std::thread::scope` mapping (A6 recommends over rayon) | A6 §7.3 |
+| L-57 | Per-worker `FRAME_COUNTS` allocation strategy + accumulation back to main | A6 §7.4 + §7.6 |
+| L-58 | SVC layer-context swap ordering (between recode loops and frame loops) | A6 §7.5 |
+| L-59 | `cpi->row_mt` vs `cpi->oxcf.max_threads` distinct knobs modelling | A6 §7.7 |
+| L-60 | Decoder parse/recon split (`tile_worker_hook` vs `row_decode_worker_hook`) | A6 §7.8 |
+| L-61 | SVC max-tile-cols sizing under thread pool: pool sized to top-resolution layer? | A6 §7.11 |
+| L-62 | Assert `log2_tile_rows == 0` in v1 (real-time never uses tile rows) | A6 §7.12 |
+| L-63 | Worker thread priority elevation | A6 §7.13 |
+| L-64 | Golden-file test for `SPEED_FEATURES` byte-parity per (speed, framesize, frame_type) tuple | A6 §7.14 |
+| R-08 | `adaptive_rd_thresh_row_mt` non-determinism at cpu-used 6 default; A6 recommends bit-exact-by-default (divergence-ledger entry) | A6 §7.7 + §7 |
+| R-09 | RTCD must complete before any worker spawns (init-order invariant) | A6 §7.10 + A1 §7.5 |
+| R-10 | Speed-feature setter depends on per-frame condition tuple — byte-parity testing must be condition-tuple based, not just `(speed, w, h)` | A6 key finding |
+
+### Items still missing (await A7 + A8)
+
+- A7's challenges that result in DEFERRED entries here
+- A8's resolution of any cross-cutting concerns that surface decisions
+- Final cross-check: does each L-NN have a clear LLD owner?
