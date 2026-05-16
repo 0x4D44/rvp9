@@ -362,13 +362,15 @@ happens during LLD writing (Phase 2c) and at Stage 2 close-out (Phase 2e).
 four HLDs.
 
 **Phase 2c (LLD writing) — COMPLETE.** All 15 LLD writers landed via
-async agents. Total LLD content: **27,397 lines** across `notes/lld/`.
-Per `check-lld-format` (run from `target/release/`): all 15 LLDs
-structurally OK (every required §1-§9 present, populated §7, citation
-counts in 69-167 range). Two non-blocking TBD-substring matches
-remained (`bitstream.md:151` is a meta-prose mention of the string
-"`TBD`" inside backticks; `quant.md:1187` is a cross-LLD `§X (TBD)`
-section-number placeholder); neither blocks Stage 3.
+async agents. Total LLD content: **24,649 lines** across `notes/lld/`
+(several agents trimmed their output after the initial format-checker
+snapshot; numbers below are the final-on-disk state). Per
+`check-lld-format`: all 15 LLDs structurally OK (every required §1-§9
+present, §7 populated with the divergence-ledger template, citation
+counts in 60-155 range). Two non-blocking TBD-substring matches:
+`bitstream.md:151` is a meta-prose mention of the string "`TBD`"
+inside backticks; `quant.md:1187` is a cross-LLD `§X (TBD)`
+section-number placeholder. Neither blocks Stage 3.
 
 Final LLD status:
 
@@ -377,18 +379,18 @@ Final LLD status:
 | `bitstream.md`        | 1608 |  82 | 9 §7 entries; 13 §8 non-blocking |
 | `entropy.md`          | 1555 | 128 | 6 §7 entries; cost framework via D-14 patch |
 | `transforms.md`       | 1544 | 102 | L-71 4×4 reachable confirmed; lossless decoder-only; SSSE3 required |
-| `quant.md`            | 1337 |  69 | — |
+| `quant.md`            | 1183 |  72 | DC/AC LUTs verbatim; L-25/L-26 resolved |
 | `intra-pred.md`       | 1278 |  86 | 5 §7 entries; 0 blockers |
 | `loopfilter.md`       | 1499 | 121 | **Stage 1.5 re-dispatch flag LOWERED** — agent read libvpx loopfilter.c directly |
-| `frame-buffers.md`    | 1534 | 165 | — |
-| `motion-estimation.md`| 1836 | 144 | — |
+| `frame-buffers.md`    | 1361 | 155 | BufferPool 8+1+3; DV-FB-1..8 (8 §7 entries) |
+| `motion-estimation.md`| 1776 | 145 | 8 §7 entries (L-05/L-06/L-08 stubs resolved) |
 | `mode-decision.md`    | 2369 |  80 | 12 §7 entries; L-40 RESOLVED (30-iter → ≤16 in v1) |
-| `partition.md`        | 2503 |  80 | — |
-| `rate-control.md`     | 2164 |  85 | EXT_RATECTRL trait; no altref |
-| `denoiser.md`         | 1540 |  93 | L-22 bit-parity divergence |
-| `aq.md`               | 1460 | 106 | CYCLIC_REFRESH only |
+| `partition.md`        | 1348 |  60 | 10 §7 entries; L-38/L-39/L-44/L-45/L-52/L-53/L-54 resolved |
+| `rate-control.md`     | 2167 |  85 | 8 §7 entries; EXT_RATECTRL trait; no altref |
+| `denoiser.md`         | 1364 |  83 | DV-D5 = L-22 bit-parity divergence (load-bearing) |
+| `aq.md`               | 1427 | 101 | CYCLIC_REFRESH only; 8 §7 entries incl. weight_segment L-21 trap |
 | `svc.md`              | 2275 | 118 | 10 §7 entries; L-58/L-61/L-68/L-69/L-75/L-77 resolved |
-| `tile-threading.md`   | 2895 | 105 | largest LLD; most subtle unsafe |
+| `tile-threading.md`   | 1895 | 100 | largest LLD; most subtle unsafe |
 
 **Stage 2 prep work landed during the wait** (committed):
 

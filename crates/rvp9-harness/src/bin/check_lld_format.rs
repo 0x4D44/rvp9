@@ -104,8 +104,11 @@ fn count_citations(text: &str) -> usize {
 }
 
 /// Detects whether a §7 block contains at least one entry resembling the
-/// divergence-ledger template (`Where:` / `What libvpx does:` / `Why:`
-/// keywords). Returns true if any of the three appears within the §7 body.
+/// divergence-ledger template. Looks for ANY of the seven template keys
+/// (`Where:`, `What libvpx does:`, `What rvp9 does:`, `Why:`,
+/// `Byte-parity impact:`, `Compression-efficiency impact:`,
+/// `Future plan:`) appearing within the §7 body. Some LLDs use only a
+/// subset of the keys per entry — we match on any.
 fn section_7_looks_populated(content: &str) -> bool {
     let Some(start) = content.find("\n## 7.") else {
         return false;
@@ -113,7 +116,13 @@ fn section_7_looks_populated(content: &str) -> bool {
     let after_7 = &content[start + 1..];
     let end = after_7.find("\n## 8.").unwrap_or(after_7.len());
     let body = &after_7[..end];
-    body.contains("Where:") || body.contains("What libvpx") || body.contains("Why:")
+    body.contains("Where:")
+        || body.contains("What libvpx")
+        || body.contains("What rvp9")
+        || body.contains("Why:")
+        || body.contains("Byte-parity")
+        || body.contains("Compression-efficiency")
+        || body.contains("Future plan")
 }
 
 /// Count "TBD" markers in the file, word-boundaried and case-insensitive.
@@ -190,6 +199,12 @@ fn main() {
     for ent in entries.flatten() {
         let p = ent.path();
         if p.extension().and_then(|s| s.to_str()) != Some("md") {
+            continue;
+        }
+        // Skip README index files and scratchpad files (leading underscore).
+        // These are documentation, not LLDs, and don't follow the template.
+        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if stem.eq_ignore_ascii_case("README") || stem.starts_with('_') {
             continue;
         }
         match check_one(&p) {
