@@ -249,29 +249,82 @@ After all six complete:
 - Agent output quality varies. Expect to re-dispatch 1–2 specialists for depth.
 - libvpx's threading model has subtle invariants that may not surface from static reading. Will need cross-checking against runtime instrumentation in Stage 2.
 
-**Stage 1 — in-flight status:**
+**Stage 1 — completion log (2026-05-16):**
 
-- Six specialists (A1-A6) dispatched as background general-purpose agents
-  against `third_party/libvpx/` at v1.14.1. Output paths:
-  `notes/vp9-analysis/01-architecture.md` through
-  `notes/vp9-analysis/06-threading-svc.md`. Each agent's full prompt is
-  preserved in this PLAN.md (see Stage 1 dispatch plan in
-  `notes/vp9-analysis/README.md`).
-- A7 (devil's advocate) and A8 (synthesizer) prompts pre-drafted in
-  `notes/vp9-analysis/_dispatch-prep.md`, ready to fire when A1-A6 pass
-  review.
-- Stage 2 dispatch plan pre-staged in
-  `notes/vp9-analysis/_stage2-dispatch-prep.md` (HLD prompts + LLD
-  template + LLD-to-specialist owner map) so Stage 2 can dispatch
-  immediately after Arthur's Stage 1 sign-off.
-- Stage 1 completion-log template pre-staged in
-  `notes/vp9-analysis/_stage1-completion-template.md` with numeric
-  checks (word count, citation count) to run on each specialist's
-  output during review.
+What landed:
 
-Tasks 1-11 in the task tracker mirror this pipeline. The remaining work is
-bounded by agent wall-clock for A1-A6 (deep-read of libvpx + verbatim
-table transcription is hours-long, not minutes).
+- Six specialist deep-dives in `notes/vp9-analysis/`:
+  - `01-architecture.md`     (3081 ll, 173 file:line citations) — A1
+  - `02-encoder-core.md`     (2311 ll, 120 citations) — A2
+  - `03-motion-estimation.md` (1896 ll, 133 citations) — A3
+  - `04-bitstream-entropy.md` (4556 ll, 294 citations) — A4 (async
+    initially truncated at §5; final rewrite by async A4 agent after
+    a longer second pass produced the canonical version)
+  - `05-rate-control.md`     (1979 ll, 175 citations) — A5
+  - `06-threading-svc.md`    (2002 ll, 119 citations) — A6
+- `07-devils-advocate.md` (480 ll, 32 challenges by severity): 1
+  Blocker, 10 High (2 RESOLVED by A4 rewrite), 15 Medium, 8 Low.
+  **Manual fallback** by the Stage 1 driver while async A7 ran in
+  background; preserved at `07-devils-advocate-driver.md` against
+  potential async overwrite.
+- `00-overview.md` (503 ll): cross-cutting synthesis with all 7
+  mandated sections (architecture diagram, per-frame timeline, state
+  graph, cross-cutting concerns, devil's-advocate disposition,
+  verified Stage 0 assumptions, Stage 2 entry briefing). **Manual
+  fallback** by the Stage 1 driver; preserved at `00-overview-driver.md`.
+- `decisions-needed.md` (489 ll): 13 D-prefix (Stage 3 blockers), 41
+  L-prefix (LLD decisions), 10 R-prefix (risks; R-01 RESOLVED).
+
+Re-dispatches performed during Stage 1:
+- A4 async agent self-re-dispatched after producing a truncated first
+  pass; the second pass produced the canonical 4556-line version.
+
+Surprising findings (high-signal items that change PLAN.md):
+
+1. **AQ modes 1/2 unreachable in `CONFIG_REALTIME_ONLY` builds** (A5
+   Q-RC-15). PLAN.md §2 commits to "3 AQ modes matching libvpx" but
+   only mode 3 (CYCLIC_REFRESH_AQ) is real-time-reachable in libvpx
+   itself. Decision in Stage 2: un-gate AQ 1/2 in our port (extra
+   work) or drop them from v1 (simpler).
+2. **Encoder-side frame-parallel encoding does NOT exist in libvpx**
+   (A6 key finding). PLAN.md Q4 is therefore a v2-design question,
+   not a libvpx-mirror question.
+3. **`cpu-used 5` is the qualitative split** between RD-loop and
+   non-RD-loop encoding (`sf->use_nonrd_pick_mode = 1`). PLAN.md D1's
+   "cpu-used 6-8" priority is well-defined.
+4. **`vp9_encodedframe_overshoot`** (A5 Q-RC-20) is a massive
+   post-tentative-pack state mutation that's both critical for
+   scene-change recovery AND the single most opaque step in the
+   encoder. Stage 4a will need extensive byte-parity testing here.
+5. **BufferPool lives OUTSIDE VP9_COMP** (A1 §7.1) — 12 slots (8 ref
+   + 1 new + 3 scaled). The "3 scaled" are libvpx-internal for SVC
+   inter-layer prediction; our public API should not expose them.
+
+Stage 1 deferred to Stage 2 (per devil's-advocate disposition):
+
+- D-12 `cpi->td` exhaustive aliasing catalogue (HLD-threading)
+- D-13 REALTIME-VBR + altref support (Arthur scope question)
+- L-65 conformance vector coverage expansion (Stage 3)
+- L-66 `setjmp` × worker threads (HLD-threading)
+- L-67 cyclic-refresh segmentation map ownership (HLD-threading)
+- L-68 `vp9_scene_detection_onepass` per-layer behaviour (LLD-svc)
+- L-69 SVC cross-layer frame-drop interactions (LLD-svc)
+- L-70 `vp9_change_config` reallocation (LLD-arch)
+- L-71 4×4 transform reachability in real-time (LLD-transforms)
+- L-72 VP9_COMP per-field commentary expansion (LLD-arch)
+
+Stage 1 follow-ups (not blocking Stage 2):
+
+- **Loop filter** got light coverage (only A1 §3 mentions it in passing).
+  When LLD-loopfilter starts, a Stage 1.5 re-dispatch may be needed.
+- **Laplacian R-D tables `rate_tab_q10`/`dist_tab_q10`** (in
+  `vp9/encoder/vp9_rd.c`): A2 declared the gap, A4 covered everything
+  in `vp9/common/` but these are encoder-internal. A2 patch needed in
+  Stage 2.
+- **Async A7 + A8 may still complete** and could supersede the manual
+  fallbacks. If so, compare/merge with the `*-driver.md` versions.
+
+Arthur sign-off: ⏳ pending (the irreducible human gate per PLAN.md §6).
 
 ---
 
