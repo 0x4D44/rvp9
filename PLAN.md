@@ -262,18 +262,25 @@ What landed:
     a longer second pass produced the canonical version)
   - `05-rate-control.md`     (1979 ll, 175 citations) — A5
   - `06-threading-svc.md`    (2002 ll, 119 citations) — A6
-- `07-devils-advocate.md` (480 ll, 32 challenges by severity): 1
-  Blocker, 10 High (2 RESOLVED by A4 rewrite), 15 Medium, 8 Low.
-  **Manual fallback** by the Stage 1 driver while async A7 ran in
-  background; preserved at `07-devils-advocate-driver.md` against
-  potential async overwrite.
-- `00-overview.md` (503 ll): cross-cutting synthesis with all 7
-  mandated sections (architecture diagram, per-frame timeline, state
-  graph, cross-cutting concerns, devil's-advocate disposition,
-  verified Stage 0 assumptions, Stage 2 entry briefing). **Manual
-  fallback** by the Stage 1 driver; preserved at `00-overview-driver.md`.
-- `decisions-needed.md` (489 ll): 13 D-prefix (Stage 3 blockers), 41
-  L-prefix (LLD decisions), 10 R-prefix (risks; R-01 RESOLVED).
+- `07-devils-advocate.md` (1488 ll, 45 challenges): canonical async A7.
+  Manual driver fallback (480 ll, 32 challenges) preserved at
+  `07-devils-advocate-driver.md` for audit. Severity distribution
+  in async A7: 1 Blocker (vp9_prob_cost[256] missing), 9 High
+  (5 ACCEPTED for Stage 2 LLD, 4 RESOLVED or REJECTED), ~22 Medium,
+  ~9 Low, 4 CONFIRMED (specialist claims validated), 4 REJECTED.
+- `00-overview.md` (867 ll): canonical async A8 synthesis with all 7
+  mandated sections + bonus Cross-references. Manual driver fallback
+  (503 ll) preserved at `00-overview-driver.md` for audit. NOTE:
+  A8 read my manual A7 (32 challenges) before async A7 landed; A8's
+  §5 disposition covers those 32. The 13 additional challenges from
+  async A7 are dispositioned in decisions-needed.md "Updates from
+  async A7" section. Addendum at the top of 00-overview.md flags
+  this.
+- `decisions-needed.md` (~700 ll): 15+ D-prefix (Stage 3 blockers,
+  including new D-14 vp9_prob_cost[256] and D-15 worker-fields
+  catalogue), ~45 L-prefix (LLD decisions, including new L-74 through
+  L-77 from async A7), 10 R-prefix (risks; R-01 RESOLVED, R-08 likely
+  a non-issue per async A7 correction).
 
 Re-dispatches performed during Stage 1:
 - A4 async agent self-re-dispatched after producing a truncated first
