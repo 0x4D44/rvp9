@@ -10,9 +10,9 @@
 //! In Stage 4 we point `--test-encoder` at `rvp9enc` and require BD-rate
 //! within the limits stated in `PLAN.md` §2.
 //!
-//! Stage 0 status: SKELETON. Performs the encode sweep and produces an RD
-//! table; the BD-rate curve fit is implemented but exercised end-to-end only
-//! once decode+PSNR machinery lands (TODO below).
+//! Stage 0 status: end-to-end functional. Encode sweep, vpxdec-driven Y4M
+//! decode, mean luma PSNR vs the source Y4M, cubic Bjontegaard fit, BD-rate
+//! reported. (PSNR machinery lives in `rvp9_bench::mean_y_psnr`.)
 //!
 //! Usage:
 //!   cargo run --release --bin bdrate -- \
@@ -99,13 +99,27 @@ fn encode(encoder: &Path, input: &Path, cpu_used: u32, bitrate_kbps: u32, tag: &
     out
 }
 
-/// TODO(Stage 0 follow-up): decode `ivf` with `decoder`, run pixel-wise PSNR
-/// against `source_y4m`, return PSNR_Y in dB. Stub for now.
-fn decode_and_psnr(_decoder: &Path, _ivf: &Path, _source_y4m: &Path) -> f64 {
-    // Stage 0 leaves this stubbed because the PSNR machinery needs a Y4M
-    // reader and YUV math. Will be filled in alongside the first round of
-    // rvp9 vs libvpx BD-rate runs in Stage 4a.
-    f64::NAN
+/// Decode `ivf` with `decoder` (writing a tmp Y4M), then compute the
+/// mean luma PSNR vs `source_y4m`. Returns `NaN` on any failure so the
+/// caller's NaN-guard can detect harness problems without aborting.
+fn decode_and_psnr(decoder: &Path, ivf: &Path, source_y4m: &Path) -> f64 {
+    let stem = ivf
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("rvp9_bdrate_decode");
+    let y4m_out = std::env::temp_dir().join(format!("{stem}.dec.y4m"));
+    let status = Command::new(decoder)
+        .arg("-o")
+        .arg(&y4m_out)
+        .arg(ivf)
+        .status();
+    let Ok(status) = status else {
+        return f64::NAN;
+    };
+    if !status.success() {
+        return f64::NAN;
+    }
+    rvp9_bench::mean_y_psnr(source_y4m, &y4m_out).unwrap_or(f64::NAN)
 }
 
 /// File size of `ivf` in kilobits, divided by clip duration in seconds.
@@ -220,9 +234,13 @@ fn main() {
     println!("input:  {}", args.input.display());
     println!();
 
-    // TODO(Stage 0 follow-up): parse the y4m header to learn fps + frame
-    // count instead of hard-coding 30.0. Acceptable Stage 0 limitation.
-    let fps = 30.0;
+    // Parse fps from the source Y4M header so realised-bitrate math is
+    // accurate for non-30fps clips. Fall back to 30.0 if the header
+    // can't be read for some reason.
+    let fps = std::fs::read(&args.input)
+        .ok()
+        .and_then(|d| rvp9_bench::parse_y4m_header(&d).map(|(h, _)| h.fps()))
+        .unwrap_or(30.0);
 
     let mut anchor_rd: Vec<RdPoint> = Vec::new();
     let mut test_rd: Vec<RdPoint> = Vec::new();
