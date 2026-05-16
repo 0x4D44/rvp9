@@ -4095,8 +4095,68 @@ These are precomputed bit-cost tables used by mode decision to estimate
 the cost of writing a token *without* actually invoking the boolean
 coder. They are not part of the bitstream proper, but they are
 load-bearing for rate-distortion decisions in the encoder.
-`VP9_PROB_COST_SHIFT = 9` (see `vp9_cost.h` --- A2 owns the cost
-framework; cited here for table-grouping purposes only).
+`VP9_PROB_COST_SHIFT = 9` (see `vp9_cost.h`).
+
+#### 5.11.0 `vp9_prob_cost[256]` --- the foundational cost-of-bit LUT (D-14 patch)
+
+> **Status:** Patched in by stage-2 prep work resolving **D-14 Blocker**.
+> Originally flagged by async A7 #3 as missing from all six Stage 1
+> specialist docs. Source: `vp9/encoder/vp9_cost.c:16-37`, declared in
+> `vp9/encoder/vp9_cost.h:21`.
+
+`vp9_prob_cost` is the universal cost-of-bit lookup used by every cost
+computation in the encoder --- mode decision, RDO, non-RD pick-mode,
+trellis-quant, all of them. Without it, every cost calculation silently
+diverges from libvpx; bit-parity would be impossible.
+
+The values are `round(-log2(i/256) * (1 << VP9_PROB_COST_SHIFT))` =
+`round(-log2(i/256) * 512)` for `i` in `[1, 255]`. Entry `[0]` is a
+bogus placeholder so that the lookup can be unconditionally indexed by
+an 8-bit probability value (probabilities are nominally in `[1, 255]`
+because `0` is forbidden --- see §4.9).
+
+The three cost macros (in `vp9_cost.h:26-30`) are:
+
+```c
+#define vp9_cost_zero(prob) (vp9_prob_cost[prob])
+#define vp9_cost_one(prob)  vp9_cost_zero(256 - (prob))
+#define vp9_cost_bit(prob, bit) \
+    vp9_cost_zero((bit) ? 256 - (prob) : (prob))
+```
+
+The table itself (`vp9/encoder/vp9_cost.c:16-37`) --- verbatim, 256
+entries, leading `4096` is the bogus placeholder:
+
+```c
+const uint16_t vp9_prob_cost[256] = {
+  4096, 4096, 3584, 3284, 3072, 2907, 2772, 2659, 2560, 2473, 2395, 2325, 2260,
+  2201, 2147, 2096, 2048, 2003, 1961, 1921, 1883, 1847, 1813, 1780, 1748, 1718,
+  1689, 1661, 1635, 1609, 1584, 1559, 1536, 1513, 1491, 1470, 1449, 1429, 1409,
+  1390, 1371, 1353, 1335, 1318, 1301, 1284, 1268, 1252, 1236, 1221, 1206, 1192,
+  1177, 1163, 1149, 1136, 1123, 1110, 1097, 1084, 1072, 1059, 1047, 1036, 1024,
+  1013, 1001, 990,  979,  968,  958,  947,  937,  927,  917,  907,  897,  887,
+  878,  868,  859,  850,  841,  832,  823,  814,  806,  797,  789,  780,  772,
+  764,  756,  748,  740,  732,  724,  717,  709,  702,  694,  687,  680,  673,
+  665,  658,  651,  644,  637,  631,  624,  617,  611,  604,  598,  591,  585,
+  578,  572,  566,  560,  554,  547,  541,  535,  530,  524,  518,  512,  506,
+  501,  495,  489,  484,  478,  473,  467,  462,  456,  451,  446,  441,  435,
+  430,  425,  420,  415,  410,  405,  400,  395,  390,  385,  380,  375,  371,
+  366,  361,  356,  352,  347,  343,  338,  333,  329,  324,  320,  316,  311,
+  307,  302,  298,  294,  289,  285,  281,  277,  273,  268,  264,  260,  256,
+  252,  248,  244,  240,  236,  232,  228,  224,  220,  216,  212,  209,  205,
+  201,  197,  194,  190,  186,  182,  179,  175,  171,  168,  164,  161,  157,
+  153,  150,  146,  143,  139,  136,  132,  129,  125,  122,  119,  115,  112,
+  109,  105,  102,  99,   95,   92,   89,   86,   82,   79,   76,   73,   70,
+  66,   63,   60,   57,   54,   51,   48,   45,   42,   38,   35,   32,   29,
+  26,   23,   20,   18,   15,   12,   9,    6,    3
+};
+```
+
+**Rust port:** `pub static VP9_PROB_COST: [u16; 256] = [...]` in
+`rvp9_core::cost`. The three macros become `#[inline] const fn`s on a
+private newtype wrapper (or free functions over `u8` probabilities).
+Used by every rvp9-encoder cost computation; pure read-only after init,
+so trivially `Sync`.
 
 #### 5.11.1 `dct_cat_lt_10_value_tokens` --- token+extra for small magnitudes
 
@@ -4213,9 +4273,9 @@ const uint16_t vp9_cat6_high_cost[64] = {
 The 10-bit (`vp9_cat6_high10_high_cost[256]`) and 12-bit
 (`vp9_cat6_high12_high_cost[1024]`) tables also live in
 `vp9_tokenize.c` (lines 136-161 and 162-257 respectively) under
-`CONFIG_VP9_HIGHBITDEPTH`. They are large; cited by line range rather
-than transcribed here. The Q1 high-bit-depth decision (Stage 2) will
-determine whether the Rust port needs them.
+`CONFIG_VP9_HIGHBITDEPTH`. **D-01 RESOLVED 2026-05-16: 8-bit only in v1;
+HBD deferred to Stage 6+.** These tables are out of scope for v1 and
+left as line-range citations only.
 
 ---
 

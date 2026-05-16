@@ -1634,13 +1634,99 @@ static const uint8_t VP9_VAR_OFFS[64] = {
 
 ### 5.4 `vp9_model_rd_from_var_lapndz` lookup tables (vp9_rd.c)
 
-`MAX_XSQ_Q10 = 245727` (`vp9_rd.c:516`). The model uses two
-table-lookup arrays `rate_tab_q10` and `dist_tab_q10` indexed by
-`xsq_q10`'s top bits inside `model_rd_norm` (above `vp9_model_rd_from_var_lapndz`
-at lines 490-514). These are large numerical tables — keep them
-verbatim. (Transcribed via cross-reference: see A4's transform/entropy
-docs if not separately captured; if A4 doesn't own them, A2 will need
-to extract them in a Stage-2 patch.)
+> **Status:** Patched verbatim by stage-2 prep work resolving
+> **R-07 Blocker** (async A7 #2). Tables sourced from
+> `vp9/encoder/vp9_rd.c:462-503`.
+
+`MAX_XSQ_Q10 = 245727` (`vp9_rd.c:516`). The model uses three
+table-lookup arrays `rate_tab_q10[100]`, `dist_tab_q10[100]`, and
+`xsq_iq_q10[105]`, all indexed by `xsq_q10`'s top bits inside
+`model_rd_norm` (`vp9_rd.c:505-514`). These are load-bearing for every
+mode-decision rate/distortion estimate via `vp9_model_rd_from_var_lapndz`.
+
+The closed-form derivation (from the comment block at `vp9_rd.c:452-461`):
+the functions are sampled at the four most significant bits of
+`x^2 + 8 / 256`. Normalized rate is `Rn(x) = H(sqrt(r)) +
+sqrt(r) * [1 + H(r)/(1 - r)]` where `r = exp(-sqrt(2) * x)` and
+`x = qpstep / sqrt(variance)`. Normalized distortion is
+`Dn(x) = 1 - 1/sqrt(2) * x / sinh(x / sqrt(2))`. Actual distortion is
+`Dn * variance`.
+
+**`rate_tab_q10[100]`** (`vp9_rd.c:462-471`):
+
+```c
+static const int rate_tab_q10[] = {
+  65536, 6086, 5574, 5275, 5063, 4899, 4764, 4651, 4553, 4389, 4255, 4142, 4044,
+  3958,  3881, 3811, 3748, 3635, 3538, 3453, 3376, 3307, 3244, 3186, 3133, 3037,
+  2952,  2877, 2809, 2747, 2690, 2638, 2589, 2501, 2423, 2353, 2290, 2232, 2179,
+  2130,  2084, 2001, 1928, 1862, 1802, 1748, 1698, 1651, 1608, 1530, 1460, 1398,
+  1342,  1290, 1243, 1199, 1159, 1086, 1021, 963,  911,  864,  821,  781,  745,
+  680,   623,  574,  530,  490,  455,  424,  395,  345,  304,  269,  239,  213,
+  190,   171,  154,  126,  104,  87,   73,   61,   52,   44,   38,   28,   21,
+  16,    12,   10,   8,    6,    5,    3,    2,    1,    1,    1,    0,    0,
+};
+```
+
+**`dist_tab_q10[100]`** (`vp9_rd.c:480-489`):
+
+```c
+static const int dist_tab_q10[] = {
+  0,    0,    1,    1,    1,    2,    2,    2,    3,    3,    4,    5,    5,
+  6,    7,    7,    8,    9,    11,   12,   13,   15,   16,   17,   18,   21,
+  24,   26,   29,   31,   34,   36,   39,   44,   49,   54,   59,   64,   69,
+  73,   78,   88,   97,   106,  115,  124,  133,  142,  151,  167,  184,  200,
+  215,  231,  245,  260,  274,  301,  327,  351,  375,  397,  418,  439,  458,
+  495,  528,  559,  587,  613,  637,  659,  680,  717,  749,  777,  801,  823,
+  842,  859,  874,  899,  919,  936,  949,  960,  969,  977,  983,  994,  1001,
+  1006, 1010, 1013, 1015, 1017, 1018, 1020, 1022, 1022, 1023, 1023, 1023, 1024,
+};
+```
+
+**`xsq_iq_q10[105]`** (`vp9_rd.c:490-503`):
+
+```c
+static const int xsq_iq_q10[] = {
+  0,      4,      8,      12,     16,     20,     24,     28,     32,
+  40,     48,     56,     64,     72,     80,     88,     96,     112,
+  128,    144,    160,    176,    192,    208,    224,    256,    288,
+  320,    352,    384,    416,    448,    480,    544,    608,    672,
+  736,    800,    864,    928,    992,    1120,   1248,   1376,   1504,
+  1632,   1760,   1888,   2016,   2272,   2528,   2784,   3040,   3296,
+  3552,   3808,   4064,   4576,   5088,   5600,   6112,   6624,   7136,
+  7648,   8160,   9184,   10208,  11232,  12256,  13280,  14304,  15328,
+  16352,  18400,  20448,  22496,  24544,  26592,  28640,  30688,  32736,
+  36832,  40928,  45024,  49120,  53216,  57312,  61408,  65504,  73696,
+  81888,  90080,  98272,  106464, 114656, 122848, 131040, 147424, 163808,
+  180192, 196576, 212960, 229344, 245728,
+};
+```
+
+**Consumer (`vp9_rd.c:505-514`)** — for context, the interpolation kernel
+that turns `xsq_q10` into `(r_q10, d_q10)`:
+
+```c
+static void model_rd_norm(int xsq_q10, int *r_q10, int *d_q10) {
+  const int tmp = (xsq_q10 >> 2) + 8;
+  const int k = get_msb(tmp) - 3;
+  const int xq = (k << 3) + ((tmp >> k) & 0x7);
+  const int one_q10 = 1 << 10;
+  const int a_q10 = ((xsq_q10 - xsq_iq_q10[xq]) << 10) >> (2 + k);
+  const int b_q10 = one_q10 - a_q10;
+  *r_q10 = (rate_tab_q10[xq] * b_q10 + rate_tab_q10[xq + 1] * a_q10) >> 10;
+  *d_q10 = (dist_tab_q10[xq] * b_q10 + dist_tab_q10[xq + 1] * a_q10) >> 10;
+}
+```
+
+**Byte-parity trap:** the `(rate_tab_q10[xq] * b_q10 + ...) >> 10`
+arithmetic is signed int; on 32-bit targets the intermediate product
+fits in i32 (max `65536 * 1024 ≈ 6.7e7`). Rust port: keep `i32`
+throughout; do **not** widen to `i64` "for safety" — that changes the
+shift-right rounding behaviour silently. Use `wrapping_*` per D7 just
+in case, but the math is safely within i32.
+
+**Rust port:** three `pub static` arrays of `i32` in
+`rvp9_encoder::rd::laplacian`. `MAX_XSQ_Q10` as a `pub const`.
+`model_rd_norm` as a free function with the same arithmetic shape.
 
 ### 5.5 `THR_MODES` enum (vp9_rd.h:53-93)
 
@@ -2183,13 +2269,13 @@ per filter) and `model_rd_for_sb_y[_large]` runs immediately after.
    different return types (skip-or-not) — best modelled as
    `Option<BlockYRD>` or a dedicated `BlockYrdResult` enum.
 
-5. **`vp9_model_rd_from_var_lapndz` Laplacian R-D model.** The
+5. **`vp9_model_rd_from_var_lapndz` Laplacian R-D model.** ~~The
    `rate_tab_q10` and `dist_tab_q10` lookup tables aren't transcribed
-   here (they live in `vp9_rd.c` above `model_rd_norm`); these are
-   ~256-element fixed tables. Should they be regenerated at port time
-   (from the published Laplacian closed form) or transcribed bit-exact?
-   **Recommendation:** transcribe verbatim; the closed form has
-   non-trivial rounding.
+   here~~ **RESOLVED 2026-05-16: tables transcribed verbatim in §5.4
+   (Stage 2 prep patch resolving R-07 Blocker per async A7 #2). Three
+   tables (rate_tab_q10[100], dist_tab_q10[100], xsq_iq_q10[105]),
+   model_rd_norm consumer, and a byte-parity note on the i32-vs-i64
+   intermediate are all in §5.4.**
 
 6. **NEWMV neighbour-difference bias** (`vp9_NEWMV_diff_bias`): The
    "above + left averaging" path falls through specific cases when one

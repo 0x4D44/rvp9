@@ -425,9 +425,14 @@ After A1–A7 integration (A8 pending):
 ### Resolved entries (kept for audit trail; remove when archiving)
 
 - **R-01** A4 truncation — RESOLVED 2026-05-16 by async A4 rewrite (4556 ll).
-- **R-07** Laplacian R-D tables: CONFIRMED still missing by async A7 (#2);
-  located at `vp9_rd.c:462-503` (`rate_tab_q10[100]`, `dist_tab_q10[100]`,
-  `xsq_iq_q10[105]`). A8 will patch A2 §5.4 directly; no agent re-dispatch.
+- **R-07** Laplacian R-D tables — **RESOLVED 2026-05-16** by Stage 2 prep
+  patch to `02-encoder-core.md` §5.4. `rate_tab_q10[100]`, `dist_tab_q10[100]`,
+  `xsq_iq_q10[105]` all transcribed verbatim from `vp9_rd.c:462-503` plus
+  the `model_rd_norm` consumer and a byte-parity note on i32 intermediates.
+- **D-14** `vp9_prob_cost[256]` — **RESOLVED 2026-05-16** by Stage 2 prep
+  patch to `04-bitstream-entropy.md` §5.11.0. 256-entry `uint16_t` LUT
+  transcribed verbatim from `vp9_cost.c:16-37` plus the three cost macros
+  (`vp9_cost_zero`/`vp9_cost_one`/`vp9_cost_bit`).
 
 ---
 
@@ -454,11 +459,9 @@ corrections / additions over the manual version:
 
 ### New Blocker
 
-- **D-14 (Blocker): `vp9_prob_cost[256]` lookup table not transcribed by
-  any specialist** (async A7 #3). Used by every cost-of-bit computation
-  in the encoder (`vp9/encoder/vp9_cost.h:38`). Owner: A8 patches A4 §5
-  directly OR Stage 2 LLD-entropy includes verbatim. Without it, every
-  RDO/non-RD cost calculation will silently diverge.
+- **D-14 (Blocker): `vp9_prob_cost[256]`** — **RESOLVED 2026-05-16** by
+  Stage 2 prep patch to `04-bitstream-entropy.md` §5.11.0. See "Resolved
+  entries" section above for details.
 
 ### New High items (5)
 
