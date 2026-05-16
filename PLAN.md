@@ -249,6 +249,30 @@ After all six complete:
 - Agent output quality varies. Expect to re-dispatch 1–2 specialists for depth.
 - libvpx's threading model has subtle invariants that may not surface from static reading. Will need cross-checking against runtime instrumentation in Stage 2.
 
+**Stage 1 — in-flight status:**
+
+- Six specialists (A1-A6) dispatched as background general-purpose agents
+  against `third_party/libvpx/` at v1.14.1. Output paths:
+  `notes/vp9-analysis/01-architecture.md` through
+  `notes/vp9-analysis/06-threading-svc.md`. Each agent's full prompt is
+  preserved in this PLAN.md (see Stage 1 dispatch plan in
+  `notes/vp9-analysis/README.md`).
+- A7 (devil's advocate) and A8 (synthesizer) prompts pre-drafted in
+  `notes/vp9-analysis/_dispatch-prep.md`, ready to fire when A1-A6 pass
+  review.
+- Stage 2 dispatch plan pre-staged in
+  `notes/vp9-analysis/_stage2-dispatch-prep.md` (HLD prompts + LLD
+  template + LLD-to-specialist owner map) so Stage 2 can dispatch
+  immediately after Arthur's Stage 1 sign-off.
+- Stage 1 completion-log template pre-staged in
+  `notes/vp9-analysis/_stage1-completion-template.md` with numeric
+  checks (word count, citation count) to run on each specialist's
+  output during review.
+
+Tasks 1-11 in the task tracker mirror this pipeline. The remaining work is
+bounded by agent wall-clock for A1-A6 (deep-read of libvpx + verbatim
+table transcription is hours-long, not minutes).
+
 ---
 
 ### Stage 2 — HLD + per-module LLDs
