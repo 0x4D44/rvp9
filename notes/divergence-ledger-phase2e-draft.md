@@ -23,7 +23,7 @@
 | `quant.md` | 872 | 6961 |
 | `rate-control.md` | 1740 | 7869 |
 | `svc.md` | 1887 | 8676 |
-| `tile-threading.md` | 1440 | 6054 |
+| `tile-threading.md` | 1582 | 6054 |
 | `transforms.md` | 1116 | 6878 |
 
 ---
@@ -2113,7 +2113,7 @@ overrides bounds.
 
 ---
 
-## From `notes/lld/tile-threading.md` (§7 at line 1440)
+## From `notes/lld/tile-threading.md` (§7 at line 1582)
 
 ### §7 — Deliberate divergences (from `tile-threading.md`)
 

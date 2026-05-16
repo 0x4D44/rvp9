@@ -362,9 +362,10 @@ happens during LLD writing (Phase 2c) and at Stage 2 close-out (Phase 2e).
 four HLDs.
 
 **Phase 2c (LLD writing) — COMPLETE.** All 15 LLD writers landed via
-async agents. Total LLD content: **24,649 lines** across `notes/lld/`
+async agents. Total LLD content: **24,754 lines** across `notes/lld/`
 (several agents trimmed their output after the initial format-checker
-snapshot; numbers below are the final-on-disk state). Per
+snapshot; tile-threading.md grew to 2000 after its last post-summary
+edit; numbers below are the final-on-disk state). Per
 `check-lld-format`: all 15 LLDs structurally OK (every required §1-§9
 present, §7 populated with the divergence-ledger template, citation
 counts in 60-155 range). Two non-blocking TBD-substring matches:
@@ -390,7 +391,7 @@ Final LLD status:
 | `denoiser.md`         | 1364 |  83 | DV-D5 = L-22 bit-parity divergence (load-bearing) |
 | `aq.md`               | 1427 | 101 | CYCLIC_REFRESH only; 8 §7 entries incl. weight_segment L-21 trap |
 | `svc.md`              | 2275 | 118 | 10 §7 entries; L-58/L-61/L-68/L-69/L-75/L-77 resolved |
-| `tile-threading.md`   | 1895 | 100 | largest LLD; most subtle unsafe |
+| `tile-threading.md`   | 2000 | 104 | largest LLD; most subtle unsafe; DV-TT-01..07 + load-bearing §6.5 MacroBlock re-wire SAFETY block |
 
 **Stage 2 prep work landed during the wait** (committed):
 
