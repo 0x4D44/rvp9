@@ -390,9 +390,14 @@ vp9/encoder/vp9_block.h:206
 - `[1..2]` — 64×32 (top, bottom)
 - `[3..4]` — 32×64 (left, right)
 - `[5..8]` — 32×32 (TL, TR, BL, BR)
-- `[9..24]` — 16×16 in row-major order through the 4×4 grid of 16×16
-  blocks within the 64×64 SB. Indexing is via `pos_shift_16x16[i][j]`
-  in `get_force_skip_low_temp_var` (line 1472).
+- `[9..24]` — 16×16 indices, traversed as **2×2 sub-quadrants in Z-order
+  (Morton), row-major within each 2×2 block**, NOT pure row-major.
+  Indexing is via `pos_shift_16x16[i][j]` in `get_force_skip_low_temp_var`
+  (line 1472). Inspect the table in §5.1: TL 2×2 → {9, 10, 11, 12}, TR
+  2×2 → {13, 14, 15, 16}, BL → {17, 18, 19, 20}, BR → {21, 22, 23, 24}.
+  This matches libvpx's quad-tree partition walk, not naïve row-major.
+  *(Async A7 #17 caught the prior "row-major" prose error here; one-word
+  fix doesn't change L-39's layout-question status.)*
 
 ### 2.10 `CONTENT_STATE_SB`
 
