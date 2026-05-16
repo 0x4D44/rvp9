@@ -350,24 +350,36 @@ Each writer's prompt template:
 You are LLD writer for `<module-name>` in Stage 2 of rvp9-2.
 
 Working directory: D:\language\rvp9-2. Read in order:
-- PLAN.md
+- PLAN.md  (note the locked scope: D-01 RESOLVED -> 8-bit only;
+  D-05 RESOLVED -> AQ mode 3 only; D-13 RESOLVED -> CBR + VBR-RT,
+  NO altref; R-06 RESOLVED -> EXT_RATECTRL in v1)
 - notes/vp9-analysis/<relevant specialist>.md (specific to module)
 - notes/vp9-analysis/00-overview.md
 - notes/vp9-analysis/decisions-needed.md
-- ALL four HLDs in notes/hld/
+- ALL four HLDs in notes/hld/  (00-architecture, 01-threading,
+  02-simd-dispatch, 04-svc)
 
 YOUR TASK: write notes/lld/<module-name>.md following the LLD template
 documented in notes/vp9-analysis/_stage2-dispatch-prep.md "LLD template".
 
-Specific module focus: <one paragraph from the table below>
+Specific module focus: <focus paragraph from the section below>
+
+SCOPE GUARDRAILS (apply throughout):
+- 8-bit only (no `u16` pixel-type paths, no HBD-specific kernels).
+  If a libvpx file you cite has #if CONFIG_VP9_HIGHBITDEPTH branches,
+  document only the non-HBD path; cite line ranges for the HBD path
+  but mark "v2".
+- No altref (no lag-in-frames > 0; no alt-ref-frame buffer; no
+  GF_GROUP altref slots).
+- AQ: only the cyclic-refresh path is in scope unless your LLD is
+  explicitly `aq.md`.
 
 QUALITY BAR: file:line citations for every algorithmic claim. Concrete
-types and signatures (no "TBD" markers without an explicit Arthur ask).
-List entries for the divergence ledger.
+Rust types and signatures (no "TBD" markers without an explicit Arthur
+ask). List entries for the divergence ledger in §7.
 ```
 
-LLD module → Stage 1 specialist owner map (for the per-LLD prompt's
-"relevant specialist" pointer):
+LLD module → Stage 1 specialist owner map:
 
 | LLD | Primary specialist | Secondary |
 |---|---|---|
@@ -389,6 +401,166 @@ LLD module → Stage 1 specialist owner map (for the per-LLD prompt's
 
 If any LLD's primary specialist didn't cover sufficient depth, that's a
 Stage 1 re-dispatch signal — the synthesizer (A8) should have caught it.
+
+---
+
+## Per-LLD focus paragraphs (drop into the "Specific module focus" slot)
+
+### bitstream.md
+The bitstream-layout LLD: uncompressed header, compressed header,
+tile-data layout, superframe index. Primary source A4 §3.1-3.4 and
+§5.1 (sync codes, profile codes, markers). API: `BitstreamWriter`
+streaming-out interface; per-tile buffer ownership (L-13, L-35);
+superframe index assembly (L-14); `show_existing_frame` wire format
+(L-15). Bit-exactness is mandatory (D8); cite §4.9 (bit-exact contract).
+EXT_RATECTRL doesn't touch this LLD directly but its Q-decisions
+upstream affect what gets serialized; document the boundary.
+
+### entropy.md
+Boolean coder + frame-context probability machinery. Primary A4 §2.1
+(vpx_writer), §2.2 (vpx_reader), §2.6 (FRAME_CONTEXT), §2.7
+(FRAME_COUNTS), §4.1-4.2 (encode/decode pseudocode), §4.8 (merge_probs),
+§4.9 (bit-exact contract). Includes the cost framework: §5.11.0
+**vp9_prob_cost[256]** (just patched in by Stage 2 prep work — D-14
+RESOLVED) and the three cost macros. §2.5 prob/tree convention.
+§2.10 VP9BitstreamWorkerData per-tile state. Probability sharing
+strategy across encoder/decoder per L-09 (locked: share via rvp9-core).
+Bit-exactness mandatory.
+
+### transforms.md
+The DCT/ADST/iDCT/iADST forward and inverse transform pipeline at
+4×4/8×8/16×16/32×32. Primary A4 §5.10 (scan/iscan/neighbor tables —
+all four block sizes verbatim) plus A2 §3-§4 for coeff handling
+context. Scan-order tables are load-bearing; transcribe references.
+SIMD dispatch reaches into HLD-simd kernel catalogue. **8-bit only —
+no `vpx_highbd_*` variants.** Trellis-quant (`vp9_optimize_b`) is
+gated off at cpu-used 6-8 per L-28; document the gate but skip the
+implementation (defer to a quality-preset LLD). 4×4 reachability
+under real-time per L-71 must be confirmed (intra-only / KF paths).
+
+### quant.md
+Quantizer machinery: q_index tables (`vp9_quant.c`), dequant tables,
+the qindex→qstep mapping, AC/DC quant pairs, segmentation-feature
+delta application. Primary A5 (quant tables shipped with rate
+control); secondary A4 for the bitstream-side qindex serialization.
+Per-segment quant deltas tie into AQ-3 (cyclic refresh). **8-bit only:
+no `vp9_*_quant_b_high*` paths.** The qindex resolution-change
+preservation per L-25 (`rate_correction_factors[]` × `rcf_mult[]`) is
+upstream RC concern; this LLD only needs the qindex→quant arithmetic.
+
+### intra-pred.md
+The ten intra-prediction modes (DC, V, H, D45, D135, D117, D153,
+D207, D63, TM) at 4×4/8×8/16×16/32×32. Primary A2 (mode decision
+calls intra-pred during pick-mode); the actual predictor kernels are
+shared with the decoder and live in vp9/common/vp9_reconintra.c
+(line range citations sufficient — the math is local). SIMD per
+HLD-simd. **8-bit only.** Edge-pixel availability and replication
+rules at frame boundaries (L-53 partition-at-edges is related).
+
+### loopfilter.md
+Deblocking loop filter: per-mode/per-ref filter-level selection, the
+edge-strength × filter-strength × filter-mask machinery, vertical
+then horizontal passes. **Stage 1 coverage on this is thin — A1 §3
+mentions it in passing only.** If primary-specialist read is
+insufficient, the LLD writer should escalate as a Stage 1.5
+re-dispatch signal (per the owner-map note). Source files:
+vp9/common/vp9_loopfilter.c (parameters), vp9/encoder/vp9_pickmode.c
++ vp9_encoder.c (per-frame filter-level RDO bypass at non-RD).
+**8-bit only.** SIMD dispatch reaches into HLD-simd.
+
+### frame-buffers.md
+The BufferPool (A1 §7.1): 12-slot pool (8 ref + 1 new + 3 scaled).
+Primary A1 (lifecycle), secondary A6 (cross-thread sync). The "3
+scaled" slots are libvpx-internal for SVC inter-layer prediction;
+**do not expose in public API** per A1 §7.11 / L-36. Reference-frame
+slot map is shared across spatial + temporal SVC layers. Arc<FrameBuf>
+vs Rc<FrameBuf> per L-37 (Arc — workers cross threads). Frame
+padding/alignment matching libvpx (load-bearing for SIMD predictors).
+8-bit only (so the buffer type is `Box<[u8]>` not generic over Pixel).
+
+### motion-estimation.md
+Full ME pipeline at cpu-used 6-8 (non-RD speed). Primary A3
+(verbatim search patterns, sub-pel variants, cost-list invariants).
+Diamond → full-pel → sub-pel halve/quarter pipeline. Reference
+masking via `pred_mv_sad << 1` threshold per L-06. Sub-pel cost-list
+4-entry layout per L-07. `accurate_sub_pel_search` stubbed off at
+cpu-used 6-8 per L-05; document the gate. `vp9_refining_search_8p_c`
+dead code (compound search) per L-08 — stub. **8-bit only — no
+`comp_avg_pred_highbd` SIMD.** NEWMV neighbour-difference bias
+(`vp9_NEWMV_diff_bias`) per L-43.
+
+### mode-decision.md
+The non-RD pick-mode path: 30-iteration ref×mode loop, mode-set
+selection, `block_yrd` fast-path bypass at speed ≥ 7. Primary A2 §2-§4
+(verbatim). The 30-iteration claim must be validated (L-40).
+`ref_mode_set[12]` per L-55 (const array vs enum). `vp9_NEWMV_diff_bias`
+× `encode_breakout_test` ordering per L-43. Filter-ref selection in
+non-RD path per L-48. Compound modes deferred to v2 per L-46. Uses
+the Laplacian R-D model (02-encoder-core.md §5.4, just patched —
+R-07 RESOLVED). EXT_RATECTRL Q-decisions enter here as inputs.
+
+### partition.md
+The variance-tree partition machinery: `choose_partitioning`,
+`set_vt_partitioning`, `vbp_thresholds[4]`, `variance_low[25]`
+(Morton-order — async A7 #17), `scale_part_thresh_sumdiff` at speed 6,
+`set_low_temp_var_flag` 32×32 threshold expressions per L-44. Primary
+A2 §2-§4. Partition at frame edges (cropping) per L-53.
+`set_vt_partitioning` block_height == block_width invariant per L-52.
+`coord_lookup` (32×32 → 16×16 sub-positions in 64×64 SB) per A2 §5.14.
+
+### rate-control.md
+Single-pass CBR + VBR-RT rate control: buffer-model arithmetic, frame
+drop, qindex-from-bits inverse, rate_correction_factors, the
+"small image format" Q-adjustment (L-17), the buffer critical_level
+= optimal/8 constant (L-18), `vp9_encodedframe_overshoot` huge state
+mutation (L-19, L-74). **No altref** per D-13 (RESOLVED) — skip
+GF_GROUP altref slot logic entirely. Primary A5. `rate_correction_factors[]`
+resolution-change preservation per L-25 (off-by-one trap).
+**EXT_RATECTRL plug-in interface** per R-06 (RESOLVED) — Rust-trait
+callback surface for libwebrtc consumers; the per-HLD-svc design
+states the trait shape, this LLD wires it into the RC loop.
+Float-determinism caveat per L-04 / R-04 (libm log10 calls).
+
+### denoiser.md
+Content-aware denoiser: spatial + temporal denoising, mode-decision
+integration. Primary A5 §denoiser, secondary A2 for the mode-integration
+boundary. **SIMD bit-parity caveat** per R-03 / L-22:
+`increase_denoising=1` is not bit-exact across scalar / SSE2 / NEON
+even within libvpx itself. The LLD must pick a canonical impl OR
+explicitly allow ULP differences in differential tests, AND document
+the choice as a divergence-ledger entry. **8-bit only — no HBD
+denoiser variants.** Cyclic-refresh segmentation map ownership per L-67
+(also a threading HLD concern).
+
+### aq.md
+**CYCLIC_REFRESH (AQ mode 3) only** per D-05 (RESOLVED). Modes 1
+(variance) and 2 (complexity) are dropped from v1 — do **not** port.
+Primary A5. The cyclic-refresh state machine: refresh-period
+scheduling, segment-Q assignment, segmentation map maintenance,
+screen-content gate per L-24 (`vp9_cyclic_refresh_limit_q`),
+`weight_segment` smoothing math per L-21 (sub-0.3% BD-rate trap),
+`time_for_refresh` dead field per L-03 (drop). Integrates with
+rate-control.md for Q-delta application.
+
+### svc.md
+SVC layer pipeline implementation: per-layer state contexts, layer
+swap ordering (L-58), max-tile-cols sizing under SVC top-resolution
+layer per L-61, `vp9_scene_detection_onepass` per-layer behaviour per
+L-68, cross-layer frame-drop chain per L-69 / L-75, temporal_layering
+× per-layer RC per L-77. Primary A6, secondary A5 for the cross-layer
+RC math. **No altref** per D-13 (RESOLVED) — skip altref × SVC
+interactions. EXT_RATECTRL gets per-layer hooks from HLD-svc; this
+LLD wires them into the per-layer Q assignment.
+
+### tile-threading.md
+The tile-MT + row-MT worker pool, primary A6 §1-§4 plus §7.2-§7.4.
+ThreadData::mb aliasing per D-11 (RESOLVED in HLD-threading; this LLD
+implements the chosen pattern). FRAME_COUNTS per-worker allocation
++ accumulation per L-57. RTCD-init-before-worker-spawn per R-09.
+Worker thread priority per L-63. Assert log2_tile_rows == 0 in v1
+per L-62 (real-time never uses tile rows). `cpi->row_mt` vs
+`cpi->oxcf.max_threads` modelling per L-59. Bitstream packing scalar
+only per L-35.
 
 ---
 
