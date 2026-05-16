@@ -18,4 +18,8 @@ path = "src/bin/conformance.rs"
 name = "diff-bitstream"
 path = "src/bin/diff_bitstream.rs"
 
+[[bin]]
+name = "check-lld-format"
+path = "src/bin/check_lld_format.rs"
+
 [dependencies]
