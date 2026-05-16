@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Download official VP9 conformance test vectors into tests/conformance/vectors/.
+#
+# Source: WebM Project's public test data bucket.
+# Each vector ships with a .md5 file containing the expected decoded YUV MD5.
+#
+# Stage 0 seeds a small starter set (~50 MB) enough to validate the harness.
+# Stage 3 will extend this list to the full upstream conformance set.
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+DEST="$REPO_ROOT/tests/conformance/vectors"
+mkdir -p "$DEST"
+
+BASE_URL="https://storage.googleapis.com/downloads.webmproject.org/test_data/libvpx"
+
+VECTORS=(
+    "vp90-2-00-quantizer-00.ivf"
+    "vp90-2-00-quantizer-26.ivf"
+    "vp90-2-00-quantizer-63.ivf"
+    "vp90-2-01-sharpness-1.ivf"
+    "vp90-2-01-sharpness-7.ivf"
+    "vp90-2-02-size-08x08.ivf"
+    "vp90-2-02-size-32x32.ivf"
+    "vp90-2-02-size-202x202.ivf"
+    "vp90-2-03-deltaq.ivf"
+    "vp90-2-05-resize.ivf"
+    "vp90-2-08-tile_1x2.ivf"
+    "vp90-2-08-tile_1x4.ivf"
+    "vp90-2-08-tile_1x8.ivf"
+    "vp90-2-09-aq2.ivf"
+    "vp90-2-10-show-existing-frame.ivf"
+)
+
+fetched=0
+skipped=0
+failed=0
+
+for v in "${VECTORS[@]}"; do
+    for suffix in "" ".md5"; do
+        target="$DEST/$v$suffix"
+        if [ -s "$target" ]; then
+            skipped=$((skipped + 1))
+            continue
+        fi
+        printf "  fetch %s%s ... " "$v" "$suffix"
+        if curl -fsSL --retry 3 -o "$target" "$BASE_URL/$v$suffix"; then
+            echo "ok"
+            fetched=$((fetched + 1))
+        else
+            echo "FAILED"
+            rm -f "$target"
+            failed=$((failed + 1))
+        fi
+    done
+done
+
+echo
+echo "Vectors: $fetched fetched, $skipped already present, $failed failed."
+echo "Stored in: $DEST"
+if [ "$failed" -gt 0 ]; then
+    exit 1
+fi
