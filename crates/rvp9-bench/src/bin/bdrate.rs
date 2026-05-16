@@ -21,7 +21,13 @@
 //!       --decoder        D:/language/libvpx-stock/vpxdec.exe \
 //!       --input          tests/corpus/parkrun_720p30.y4m \
 //!       --cpu-used       7 \
-//!       --bitrates       500,1000,1500,2000,3000,4500
+//!       --bitrates       500,1000,1500,2000,3000,4500 \
+//!       [--csv           bdrate.csv]
+//!
+//! With `--csv <path>`, also emits a machine-readable CSV with the schema
+//!   role,target_kbps,measured_kbps,psnr_db
+//! plus a trailing `bdrate_pct,<v>` summary row. Designed for CI ingestion
+//! so Stage 4a regressions can gate the build.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -33,6 +39,8 @@ struct Args {
     input: PathBuf,
     cpu_used: u32,
     bitrates_kbps: Vec<u32>,
+    /// Optional CSV output path for CI ingestion.
+    csv: Option<PathBuf>,
 }
 
 fn parse_args() -> Args {
@@ -64,6 +72,7 @@ fn parse_args() -> Args {
                     .collect()
             })
             .unwrap_or_else(|| vec![500, 1000, 1500, 2000, 3000, 4500]),
+        csv: get("--csv").map(PathBuf::from),
     }
 }
 
@@ -264,13 +273,54 @@ fn main() {
         test_rd.push(RdPoint { bitrate_kbps: t_br, psnr_db: t_psnr });
     }
 
-    if anchor_rd.iter().any(|p| p.psnr_db.is_nan()) || test_rd.iter().any(|p| p.psnr_db.is_nan()) {
-        println!("\nBD-rate: SKIP (PSNR not yet wired; see decode_and_psnr stub)");
-        return;
-    }
+    let bd = if anchor_rd.iter().any(|p| p.psnr_db.is_nan())
+        || test_rd.iter().any(|p| p.psnr_db.is_nan())
+    {
+        println!("\nBD-rate: SKIP (PSNR yielded NaN — check vpxdec invocation)");
+        None
+    } else {
+        let result = bd_rate(&anchor_rd, &test_rd);
+        match result {
+            Some(bd) => println!("\nBD-rate: {bd:+.3}%  (anchor → test)"),
+            None => println!("\nBD-rate: insufficient points"),
+        }
+        result
+    };
 
-    match bd_rate(&anchor_rd, &test_rd) {
-        Some(bd) => println!("\nBD-rate: {bd:+.3}%  (anchor → test)"),
-        None => println!("\nBD-rate: insufficient points"),
+    // Optional CSV output. Schema is stable so CI can ingest:
+    //   role,target_kbps,measured_kbps,psnr_db
+    // then a trailing one-row summary:
+    //   bdrate_pct,<value-or-empty>
+    if let Some(csv_path) = &args.csv {
+        if let Err(e) = write_csv(csv_path, &args.bitrates_kbps, &anchor_rd, &test_rd, bd) {
+            eprintln!("warn: --csv write failed: {e}");
+        } else {
+            println!("\ncsv: {}", csv_path.display());
+        }
     }
+}
+
+fn write_csv(
+    path: &Path,
+    targets: &[u32],
+    anchor: &[RdPoint],
+    test: &[RdPoint],
+    bdrate_pct: Option<f64>,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut f = std::fs::File::create(path)?;
+    writeln!(f, "role,target_kbps,measured_kbps,psnr_db")?;
+    for (i, &t) in targets.iter().enumerate() {
+        if let Some(p) = anchor.get(i) {
+            writeln!(f, "anchor,{t},{:.3},{:.4}", p.bitrate_kbps, p.psnr_db)?;
+        }
+        if let Some(p) = test.get(i) {
+            writeln!(f, "test,{t},{:.3},{:.4}", p.bitrate_kbps, p.psnr_db)?;
+        }
+    }
+    writeln!(f, "bdrate_pct,{}", match bdrate_pct {
+        Some(v) => format!("{v:.4}"),
+        None => String::new(),
+    })?;
+    Ok(())
 }
