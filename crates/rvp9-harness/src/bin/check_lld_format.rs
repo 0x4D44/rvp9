@@ -33,6 +33,10 @@ struct LldReport {
     missing_sections: Vec<u8>,
     section_7_has_divergence: bool,
     citation_count: usize,
+    /// Count of literal "TBD" markers in the file (case-insensitive,
+    /// word-boundaried). Per PLAN.md §6 Stage 2 exit: "No TBD markers
+    /// in any LLD that block Stage 3 work."
+    tbd_count: usize,
 }
 
 impl LldReport {
@@ -112,6 +116,31 @@ fn section_7_looks_populated(content: &str) -> bool {
     body.contains("Where:") || body.contains("What libvpx") || body.contains("Why:")
 }
 
+/// Count "TBD" markers in the file, word-boundaried and case-insensitive.
+/// Mentions inside `code`/```code fences``` still count (we want to flag
+/// them in code-block stubs too).
+fn count_tbd(content: &str) -> usize {
+    let lower = content.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+    let pat = b"tbd";
+    let mut count = 0;
+    let mut i = 0;
+    while i + pat.len() <= bytes.len() {
+        if &bytes[i..i + pat.len()] == pat {
+            let before_ok = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
+            let after_idx = i + pat.len();
+            let after_ok = after_idx == bytes.len() || !bytes[after_idx].is_ascii_alphanumeric();
+            if before_ok && after_ok {
+                count += 1;
+            }
+            i += pat.len();
+        } else {
+            i += 1;
+        }
+    }
+    count
+}
+
 fn check_one(path: &Path) -> std::io::Result<LldReport> {
     let content = fs::read_to_string(path)?;
     let lines = content.lines().count();
@@ -134,6 +163,7 @@ fn check_one(path: &Path) -> std::io::Result<LldReport> {
         missing_sections: missing,
         section_7_has_divergence: section_7_looks_populated(&content),
         citation_count: count_citations(&content),
+        tbd_count: count_tbd(&content),
     })
 }
 
@@ -173,12 +203,12 @@ fn main() {
     println!("dir: {}", lld_dir.display());
     println!();
     println!(
-        "{:30} {:>6}  {:^9}  {:^7}  {:>5}",
-        "file", "lines", "sections", "  §7   ", "cites"
+        "{:30} {:>6}  {:^9}  {:^7}  {:>5}  {:>4}",
+        "file", "lines", "sections", "  §7   ", "cites", "tbd"
     );
     println!(
-        "{:30} {:>6}  {:^9}  {:^7}  {:>5}",
-        "----", "-----", "--------", "-------", "-----"
+        "{:30} {:>6}  {:^9}  {:^7}  {:>5}  {:>4}",
+        "----", "-----", "--------", "-------", "-----", "---"
     );
     let mut any_failures = false;
     for r in &reports {
@@ -194,8 +224,8 @@ fn main() {
             " EMPTY "
         };
         println!(
-            "{:30} {:>6}  {:^9}  {:^7}  {:>5}",
-            r.name, r.lines, sect, s7, r.citation_count
+            "{:30} {:>6}  {:^9}  {:^7}  {:>5}  {:>4}",
+            r.name, r.lines, sect, s7, r.citation_count, r.tbd_count
         );
         if !r.structurally_ok() {
             any_failures = true;
@@ -204,10 +234,11 @@ fn main() {
 
     println!();
     println!(
-        "summary: {} file(s); {} structurally OK, {} with missing sections",
+        "summary: {} file(s); {} structurally OK, {} with missing sections, {} total TBDs",
         reports.len(),
         reports.iter().filter(|r| r.structurally_ok()).count(),
-        reports.iter().filter(|r| !r.structurally_ok()).count()
+        reports.iter().filter(|r| !r.structurally_ok()).count(),
+        reports.iter().map(|r| r.tbd_count).sum::<usize>(),
     );
 
     if any_failures {
@@ -249,5 +280,21 @@ mod tests {
     fn section_7_missing_returns_false() {
         let body = "## 7. Divergences\n\nNothing here yet.\n## 8. Open\n";
         assert!(!section_7_looks_populated(body));
+    }
+
+    #[test]
+    fn tbd_word_boundary() {
+        // Word-boundaried, case-insensitive. "tbd" and "TBD" count;
+        // "tbdfoo", "atbd" do not.
+        assert_eq!(count_tbd("nothing here"), 0);
+        assert_eq!(count_tbd("foo TBD bar"), 1);
+        assert_eq!(count_tbd("Foo tbd; bar TBD!"), 2);
+        // Boundary failures:
+        assert_eq!(count_tbd("rotbd or atbd"), 0); // 'tbd' is interior
+        assert_eq!(count_tbd("TBDfoo"), 0); // alphanumeric immediately after
+        // At start/end:
+        assert_eq!(count_tbd("TBD"), 1);
+        assert_eq!(count_tbd("xx TBD"), 1);
+        assert_eq!(count_tbd("TBD xx"), 1);
     }
 }
