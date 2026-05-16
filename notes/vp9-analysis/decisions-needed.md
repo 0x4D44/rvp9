@@ -398,8 +398,84 @@ After A1–A7 integration (A8 pending):
 
 ### Resolved entries (kept for audit trail; remove when archiving)
 
-- **R-01** A4 truncation — RESOLVED 2026-05-16 by async A4 rewrite.
-- **R-07** Laplacian R-D tables NOT transcribed — A4 likewise expanded;
-  verify if A4's §5.7 or §5.8 covers `rate_tab_q10`/`dist_tab_q10` (they
-  live in `vp9/encoder/vp9_rd.c`, possibly out of A4 scope). If still
-  missing, A2 patch remains needed (per **L-42**).
+- **R-01** A4 truncation — RESOLVED 2026-05-16 by async A4 rewrite (4556 ll).
+- **R-07** Laplacian R-D tables: CONFIRMED still missing by async A7 (#2);
+  located at `vp9_rd.c:462-503` (`rate_tab_q10[100]`, `dist_tab_q10[100]`,
+  `xsq_iq_q10[105]`). A8 will patch A2 §5.4 directly; no agent re-dispatch.
+
+---
+
+## Updates from async A7 (1488 ll, 45 challenges) — 2026-05-16
+
+The async A7 agent landed after my manual fallback and supersedes it. Key
+corrections / additions over the manual version:
+
+### Corrections
+
+- **My manual #1, #30 (A4 truncation; missing inter-mode probs) are
+  INVALID** — async A7 confirms A4's rewrite covers §5.4–§5.10 fully.
+  The "missing inter-mode probs" claim was based on the truncated 1599-line
+  A4. RESOLVED.
+- **A6's `adaptive_rd_thresh_row_mt` non-determinism claim is wrong**
+  (async A7 #11). At cpu-used 6 with default `row_mt`, value is 0 and
+  fully deterministic. R-08 needs revision: the real non-determinism case
+  is `tile_data` shared across tile-MT workers when `num_workers <
+  tile_cols`, which is also deterministic per-tile-slot. **R-08 likely
+  becomes a non-issue;** A8 should review A6 §7.7's claim.
+- **A2's `variance_low[25]` prose says "row-major"** but the
+  `pos_shift_16x16` table A2 itself transcribed shows Morton order
+  (async A7 #17). One-word patch to A2 §2.9; doesn't change L-39.
+
+### New Blocker
+
+- **D-14 (Blocker): `vp9_prob_cost[256]` lookup table not transcribed by
+  any specialist** (async A7 #3). Used by every cost-of-bit computation
+  in the encoder (`vp9/encoder/vp9_cost.h:38`). Owner: A8 patches A4 §5
+  directly OR Stage 2 LLD-entropy includes verbatim. Without it, every
+  RDO/non-RD cost calculation will silently diverge.
+
+### New High items (5)
+
+- **L-74** Async A7 #7: `vp9_encodedframe_overshoot` has FIVE additional
+  state mutations not covered by A5 Q-RC-20:
+  1. Pre-encode call site (`frame_size = -1` path)
+  2. `hybrid_intra_scene_change` flag set
+  3. Per-SVC-layer `force_max_q = 1` propagation
+  4. **Only `INTER_NORMAL` rate-factor mutated** (not all 5 RATE_FACTOR_LEVELs)
+  5. Caller's CR-map zero on re-encode (`vp9_encoder.c:4266-4274`)
+  Owner: LLD-rate-control must mirror all five exactly.
+
+- **L-75** Async A7 #21: SVC frame-drop chain semantics not covered.
+  A5 §4.8 + A6 §5.4 don't trace what happens to *dependent* layers
+  when an upstream layer drops. WebRTC-critical. Owner: LLD-svc.
+
+- **L-76** Async A7 #22 (confirms D-13): VBR-RT + `lag_in_frames ≥ 4`
+  enables altref. A1 §3.9 mentions but A2/A3 do not trace altref-aware
+  ME/mode-decision paths. **PLAN.md commits to VBR-RT in v1; if VBR-RT
+  needs altref, our scope grows substantially.** Owner: Arthur decides
+  (default: keep altref in v1 only if VBR-RT is in v1).
+
+- **L-77** Async A7 #42: `temporal_layering_mode × per-layer RC`
+  interaction is the biggest gap between A5 and A6. Owner: cross-LLD
+  (rate-control + svc) coordination in Stage 2.
+
+- **D-15** Async A7's worker-mutated-fields catalogue (#9): A1/A6 left
+  many cpi->td fields undocumented. **Re-dispatch A1 or A6** with
+  focused scope, OR Stage 2 HLD-threading must produce the exhaustive
+  map. Same intent as D-12 but async A7 specifically lists which fields
+  are missing — promote D-12 to D-15 with the concrete list, or merge.
+
+### New Medium/Low items (~22 more)
+
+Async A7 surfaced additional Medium and Low challenges. Rather than
+duplicate them here, see `notes/vp9-analysis/07-devils-advocate.md`
+directly. Each has Severity + Resolution explicitly. A8's synthesis
+(`00-overview.md` §5) is the authoritative disposition.
+
+### Disposition note for Arthur
+
+The async A7's 45 challenges are stricter and more accurate than my
+manual 32. **For Stage 2 entry, use async A7 (`07-devils-advocate.md`)
+as the canonical devil's-advocate review.** The manual version
+(`07-devils-advocate-driver.md`) is preserved as a historical record
+but should not gate Stage 2 decisions.
