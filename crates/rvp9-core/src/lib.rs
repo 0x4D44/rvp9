@@ -25,6 +25,7 @@ pub mod bitstream;
 pub mod dsp;
 pub mod entropy;
 pub mod quant;
+pub mod transforms;
 
 /// The pixel type. Per **D-01 RESOLVED** (PLAN.md §3): 8-bit only in v1.
 /// HBD (10-bit / 12-bit) is deferred to Stage 6+; v1 ships a concrete `u8`

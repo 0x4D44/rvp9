@@ -1,0 +1,157 @@
+//! Coefficient scan-order tables.
+//!
+//! `ScanOrder` couples three parallel arrays for one (TxSize, TxType)
+//! pair:
+//!
+//! - `scan[k]` is the raster position of the k-th coefficient in scan
+//!   order. Used by the encoder when packing coefficients and by the
+//!   decoder when laying out received coefficients.
+//! - `iscan[p]` is `scan_index(p) + 1` (EOB-position semantics; see
+//!   libvpx `vp9_scan.c:514`). The `+1` lets the encoder write an EOB
+//!   marker as a sentinel.
+//! - `neighbors[2k..2k+1]` is the {top, left} pair of raster positions
+//!   used to derive the coefficient-coding context (`get_coef_context`
+//!   in libvpx `vp9_scan.h:32-40`).
+//!
+//! `MAX_NEIGHBORS` (`= 2`, see [`super::MAX_NEIGHBORS`]) is the second
+//! index of `neighbors[(n_coeffs + 1) * MAX_NEIGHBORS]`. The extra `+1`
+//! slot at the end is the EOB sentinel.
+//!
+//! Sources (libvpx `vp9/common/vp9_scan.c`):
+//!
+//! - `default_scan_4x4` at line 15-17.
+//! - `vp9_default_iscan_4x4` at line 19-21 (above
+//!   `vp9_col_iscan_4x4`).
+//! - `default_scan_4x4_neighbors` at lines 195-198.
+//!
+//! ## Status
+//!
+//! Stage 3 task 3a lands only the 4×4 default scan. Per-`TxType` 4×4
+//! variants (`col_scan_4x4`, `row_scan_4x4`) and the larger sizes
+//! (8×8 / 16×16 / 32×32 + their type variants) arrive in follow-up
+//! sub-tasks. The dispatch helpers `default_scan(TxSize)` and
+//! `scan_for(TxSize, TxType)` will land once all tables are present.
+
+/// Triple of `(scan, iscan, neighbors)` slices that fully describes the
+/// coefficient ordering and coding context for one (TxSize, TxType)
+/// pair. All slices are `&'static` references to static arrays in this
+/// module. `ScanOrder` is `Copy`.
+///
+/// Mirrors libvpx `struct scan_order` (`vp9_scan.h:26-30`).
+#[derive(Copy, Clone, Debug)]
+pub struct ScanOrder {
+    /// `scan[k]` = raster index of the k-th coefficient. Length is
+    /// `TxSize::n_coeffs()`.
+    pub scan: &'static [i16],
+    /// `iscan[p]` = scan index of position `p` plus 1. Length is
+    /// `TxSize::n_coeffs()`.
+    pub iscan: &'static [i16],
+    /// {top, left} neighbour raster positions per coefficient, then a
+    /// trailing EOB sentinel pair. Length is
+    /// `(TxSize::n_coeffs() + 1) * MAX_NEIGHBORS`.
+    pub neighbors: &'static [i16],
+}
+
+/// 4×4 default scan (zig-zag-ish from top-left). 16 entries verbatim
+/// from libvpx `vp9/common/vp9_scan.c:15-17` line 16.
+#[rustfmt::skip]
+pub static DEFAULT_SCAN_4X4: [i16; 16] = [
+    0, 4, 1, 5, 8, 2, 12, 9, 3, 6, 13, 10, 7, 14, 11, 15,
+];
+
+/// 4×4 default inverse scan. `iscan[p] = (scan_position_of_raster_p) + 1`.
+/// 16 entries verbatim from libvpx `vp9_scan.c:19-21` (the
+/// `vp9_default_iscan_4x4` block).
+#[rustfmt::skip]
+pub static DEFAULT_ISCAN_4X4: [i16; 16] = [
+    1, 3, 6, 9, 2, 4, 10, 13, 5, 8, 12, 15, 7, 11, 14, 16,
+];
+
+/// 4×4 default neighbours table. `(16 + 1) * MAX_NEIGHBORS = 34`
+/// entries. The trailing `0, 0` pair is the EOB sentinel.
+/// Verbatim from libvpx `vp9_scan.c:195-198`.
+#[rustfmt::skip]
+pub static DEFAULT_SCAN_4X4_NEIGHBORS: [i16; 34] = [
+    0, 0, 0, 0, 0,  0, 1, 4, 4, 4,  1,  1, 8,  8,  5,  8, 2,
+    2, 2, 5, 9, 12, 6, 9, 3, 6, 10, 13, 7, 10, 11, 14, 0, 0,
+];
+
+/// The 4×4 default `ScanOrder` triple. Wired to the three static arrays
+/// above. Mirrors the `vp9_default_scan_orders[Tx4x4]` slot in libvpx
+/// `vp9_scan.c:691`.
+#[inline]
+#[must_use]
+pub const fn default_scan_4x4() -> ScanOrder {
+    ScanOrder {
+        scan: &DEFAULT_SCAN_4X4,
+        iscan: &DEFAULT_ISCAN_4X4,
+        neighbors: &DEFAULT_SCAN_4X4_NEIGHBORS,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transforms::types::{MAX_NEIGHBORS, TxSize};
+
+    #[test]
+    fn scan_4x4_length_matches_tx_size() {
+        assert_eq!(DEFAULT_SCAN_4X4.len(), TxSize::Tx4x4.n_coeffs());
+        assert_eq!(DEFAULT_ISCAN_4X4.len(), TxSize::Tx4x4.n_coeffs());
+    }
+
+    #[test]
+    fn neighbors_4x4_length_matches_formula() {
+        assert_eq!(
+            DEFAULT_SCAN_4X4_NEIGHBORS.len(),
+            (TxSize::Tx4x4.n_coeffs() + 1) * MAX_NEIGHBORS
+        );
+    }
+
+    /// `scan[k]` is a permutation of `0..n_coeffs`. Every raster
+    /// position appears exactly once.
+    #[test]
+    fn scan_is_a_permutation() {
+        let n = TxSize::Tx4x4.n_coeffs();
+        let mut seen = vec![false; n];
+        for &raster in DEFAULT_SCAN_4X4.iter() {
+            let i = raster as usize;
+            assert!(i < n, "scan value {raster} out of range");
+            assert!(!seen[i], "scan value {raster} duplicated");
+            seen[i] = true;
+        }
+        assert!(seen.iter().all(|&s| s), "not all raster positions hit");
+    }
+
+    /// `iscan[scan[k]] = k + 1` — the libvpx EOB-position convention.
+    #[test]
+    fn iscan_is_inverse_of_scan_plus_one() {
+        for (k, &raster) in DEFAULT_SCAN_4X4.iter().enumerate() {
+            assert_eq!(
+                DEFAULT_ISCAN_4X4[raster as usize],
+                (k as i16) + 1,
+                "iscan[{raster}] should be {} (scan-index {k} + 1)",
+                k + 1
+            );
+        }
+    }
+
+    /// The trailing two entries of `neighbors` are the `(0, 0)` EOB
+    /// sentinel.
+    #[test]
+    fn neighbors_trailing_sentinel() {
+        let n = DEFAULT_SCAN_4X4_NEIGHBORS.len();
+        assert_eq!(DEFAULT_SCAN_4X4_NEIGHBORS[n - 2], 0);
+        assert_eq!(DEFAULT_SCAN_4X4_NEIGHBORS[n - 1], 0);
+    }
+
+    /// `default_scan_4x4()` wires up the three statics correctly. We
+    /// compare slice pointers via `as_ptr` since `ScanOrder` is `Copy`.
+    #[test]
+    fn default_scan_4x4_wires_to_statics() {
+        let s = default_scan_4x4();
+        assert_eq!(s.scan.as_ptr(), DEFAULT_SCAN_4X4.as_ptr());
+        assert_eq!(s.iscan.as_ptr(), DEFAULT_ISCAN_4X4.as_ptr());
+        assert_eq!(s.neighbors.as_ptr(), DEFAULT_SCAN_4X4_NEIGHBORS.as_ptr());
+    }
+}
