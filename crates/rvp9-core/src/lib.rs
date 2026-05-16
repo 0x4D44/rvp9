@@ -21,6 +21,7 @@
 #![deny(missing_docs)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
+pub mod bitstream;
 pub mod dsp;
 
 /// The pixel type. Per **D-01 RESOLVED** (PLAN.md §3): 8-bit only in v1.
