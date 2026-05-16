@@ -337,6 +337,79 @@ Arthur sign-off: ⏳ pending (the irreducible human gate per PLAN.md §6).
 
 ---
 
+### Stage 2 progress log — UPDATED 2026-05-16
+
+This subsection records the live state of Stage 2 so PLAN.md is a
+single source of truth across compactions and context resets. The
+forward-looking task list and exit criteria are unchanged below.
+
+**Phase 2a (HLD writing) — COMPLETE.** Four HLDs landed via async
+agents, signed off by Arthur at Phase 2b:
+
+| File | Lines | Author note |
+|---|---|---|
+| `notes/hld/00-architecture.md`     | 1213 | Crates, modules, types, errors, unsafe policy, 8-bit pixel-type policy, EXT_RATECTRL trait surface. |
+| `notes/hld/01-threading.md`        | 1517 | Q3 = `std::thread`+`Mutex`+`Condvar` (option D); Q4 = frame-parallel deferred to v2; D-10/D-11/D-12/D-15/L-66 resolved. |
+| `notes/hld/02-simd-dispatch.md`    | 2189 | Q2 = hand-written dispatch tables; ~243 kernels catalogued; OnceLock R-09 init invariant. |
+| `notes/hld/04-svc.md`              | 1500 | Temporal + spatial SVC; cross-layer RC; L-69/L-75/L-77 resolved; EXT_RATECTRL trait surface (R-06). |
+
+`03-bit-depth.md` was *not* written — Q1 RESOLVED to 8-bit only is
+inlined as a paragraph in HLD-arch §7 rather than a standalone doc.
+HLDs surface 24 cross-HLD assumptions / open questions; reconciliation
+happens during LLD writing (Phase 2c) and at Stage 2 close-out (Phase 2e).
+
+**Phase 2b (HLD review) — COMPLETE.** Arthur reviewed and approved all
+four HLDs.
+
+**Phase 2c (LLD writing) — IN FLIGHT.** 15 LLD writers dispatched in
+parallel per the pre-staged plan in `notes/vp9-analysis/_stage2-dispatch-prep.md`.
+Each prompt embeds the locked scope guardrails (D-01 / D-05 / D-13 /
+R-06 RESOLVED) plus a module-specific focus paragraph.
+
+Live LLD status (as of last log update):
+
+| LLD | Status | Lines | Notes |
+|---|---|---|---|
+| `bitstream.md`        | ✅ landed | 1608 | 9 §7 entries; 13 §8 non-blocking |
+| `entropy.md`          | ✅ landed | 1555 | 6 §7 entries; cost framework via D-14 patch |
+| `transforms.md`       | ✅ landed | 1544 | L-71 4×4 reachability confirmed; lossless decoder-only; SSSE3 required note |
+| `intra-pred.md`       | ✅ landed | 1305 | (format checker confirms §1-§9 + §7 + 87 citations) |
+| `quant.md`            | ⏳ running | — | A5+A4 primary |
+| `loopfilter.md`       | ⏳ running | — | may flag Stage 1.5 re-dispatch per Stage 1 thin coverage |
+| `frame-buffers.md`    | ⏳ running | — | BufferPool, Arc-pool |
+| `motion-estimation.md`| ⏳ running | — | A3 primary; L-05/L-08 stubs |
+| `mode-decision.md`    | ⏳ running | — | non-RD pick-mode + Laplacian R-D |
+| `partition.md`        | ⏳ running | — | variance-tree + Morton order |
+| `rate-control.md`     | ⏳ running | — | EXT_RATECTRL trait, no altref |
+| `denoiser.md`         | ⏳ running | — | L-22 bit-parity divergence load-bearing |
+| `aq.md`               | ⏳ running | — | CYCLIC_REFRESH only |
+| `svc.md`              | ⏳ running | — | layer state contexts |
+| `tile-threading.md`   | ⏳ running | — | most subtle unsafe |
+
+**Stage 2 prep work landed during the wait** (committed):
+
+- `3bcc483` Stage 1 scope lock (8-bit, AQ-3, no altref, EXT_RATECTRL).
+- `a3c9f2d` D-14 (`vp9_prob_cost[256]`) + R-07 Laplacian R-D tables
+  patched into Stage 1 specialist docs so LLD-entropy / LLD-mode-decision
+  don't hit gaps.
+- `c7f9e9d` Phase 2c LLD prompts pre-staged with locked-scope guardrails
+  + 15 per-LLD focus paragraphs.
+- `ef79cae` A2 variance_low Morton-order prose fix (async A7 #17).
+- `2c7a103` `notes/divergence-ledger.md` seeded with 10 confirmed
+  entries from scope decisions and Stage 1 findings.
+- `f99b15b` Y4M reader + Y-PSNR in `rvp9-bench`; `bdrate.rs`
+  end-to-end functional (PSNR no longer stubbed).
+- `78f79ce` `check-lld-format` harness binary for Phase 2d pre-review
+  (validates §1-§9 + populated §7 + citation count per LLD).
+- `2cce146` `bdrate.rs --csv` output for Stage 4a CI ingestion.
+
+**Phases 2d (Arthur LLD review) and 2e (Stage 2 close-out): pending**
+until all 15 LLDs land. At Phase 2e: divergence ledger gets the §7
+entries from every LLD merged in; Stage 3/4 task lists refined based
+on what the LLDs surface (per PLAN.md §6 exit criteria).
+
+---
+
 ### Stage 2 — HLD + per-module LLDs
 
 **Goal:** Translate the libvpx understanding from Stage 1 into a concrete Rust design that we can implement against, including resolution of all deferred decisions.
