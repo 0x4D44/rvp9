@@ -1,0 +1,14 @@
+[package]
+name = "rvp9-decoder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "VP9 video decoder. Spec-conformant; validated against the official VP9 test vectors."
+
+[lints]
+workspace = true
+
+[dependencies]
+rvp9-core = { path = "../rvp9-core" }

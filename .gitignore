@@ -1,0 +1,39 @@
+# Cargo / Rust
+target/
+target_ci/
+**/*.rs.bk
+Cargo.lock.bak
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Build artifacts from old layout (pre-workspace) — anchored to repo root
+# so Cargo's src/bin/ directories are NOT excluded.
+/bin/
+/obj/
+venv/
+.venv/
+env/
+*.tmp
+*.log
+
+# Test data — gitignored, fetched by scripts/
+tests/conformance/vectors/
+tests/corpus/
+
+# Benchmark output
+bench/results/
+
+# Submodule build artifacts
+third_party/libvpx/build/
+third_party/libvpx/*.exe
+third_party/libvpx/*.o
+third_party/libvpx/*.a
+third_party/libvpx/*.d

@@ -1,0 +1,5 @@
+[toolchain]
+# Pin to 1.95.0 explicitly — workspace edition 2024 + rust-version 1.95 in
+# Cargo.toml requires this. Bump in lockstep with workspace.rust-version.
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]

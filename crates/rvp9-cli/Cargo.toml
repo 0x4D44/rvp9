@@ -1,0 +1,24 @@
+[package]
+name = "rvp9-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Command-line tools: rvp9enc (encoder) and rvp9dec (decoder). Mirror libvpx vpxenc/vpxdec interfaces where practical."
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "rvp9enc"
+path = "src/bin/rvp9enc.rs"
+
+[[bin]]
+name = "rvp9dec"
+path = "src/bin/rvp9dec.rs"
+
+[dependencies]
+rvp9-core = { path = "../rvp9-core" }
+rvp9-decoder = { path = "../rvp9-decoder" }
+rvp9-encoder = { path = "../rvp9-encoder" }

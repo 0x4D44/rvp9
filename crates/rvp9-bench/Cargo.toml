@@ -1,0 +1,21 @@
+[package]
+name = "rvp9-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Performance benchmarks: real-time latency (ms/frame) and BD-rate measurement against libvpx."
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "realtime"
+path = "src/bin/realtime.rs"
+
+[[bin]]
+name = "bdrate"
+path = "src/bin/bdrate.rs"
+
+[dependencies]

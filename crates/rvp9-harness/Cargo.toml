@@ -1,0 +1,21 @@
+[package]
+name = "rvp9-harness"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Test harnesses: VP9 conformance runner and bitstream differential diff tool."
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "conformance"
+path = "src/bin/conformance.rs"
+
+[[bin]]
+name = "diff-bitstream"
+path = "src/bin/diff_bitstream.rs"
+
+[dependencies]

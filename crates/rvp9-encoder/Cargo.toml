@@ -1,0 +1,14 @@
+[package]
+name = "rvp9-encoder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "VP9 real-time video encoder. Mirrors libvpx tile-threaded architecture; targets WebRTC and livestream use cases."
+
+[lints]
+workspace = true
+
+[dependencies]
+rvp9-core = { path = "../rvp9-core" }
