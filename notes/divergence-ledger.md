@@ -207,17 +207,201 @@ state machine works without it.
 
 ---
 
-_More entries land as Stage 2 LLDs surface deliberate departures
-(template at §1 above — every LLD §7 feeds this ledger)._
+## Stage 2 LLD-surfaced divergences — index (Phase 2e merge, 2026-05-16)
 
-### Categories anticipated
+The 15 LLDs surfaced **89 additional divergence entries** in their §7
+sections beyond the 10 master entries above. Rather than duplicating
+them here (which would balloon this file to 5000+ lines), this section
+indexes each LLD's §7 entries by ID + title with a cross-reference to
+the LLD. Canonical detail lives in the LLD's §7.N stanza.
+
+Format per row: `<§7.id> — <title>` (cross-reference: `notes/lld/<file>.md#NN`
+sub-section). Entries cross-referencing a master entry above are marked
+`(→ master entry <YYYY-MM-DD>)`.
+
+The aggregated text of every §7 entry is captured in
+`notes/divergence-ledger-phase2e-draft.md` (auto-generated; rerun
+`cargo run --release -p rvp9-harness --bin extract-divergences` after
+LLD edits).
+
+### `notes/lld/aq.md` — 8 entries
+
+- §7.1 AQ modes 1 and 2 not ported *(→ master 2026-05-16 AQ modes 1/2)*
+- §7.2 `time_for_refresh` field dropped *(→ master 2026-05-16 cyclic-refresh)*
+- §7.3 `weight_segment` integer-shift order preserved (L-21 RESOLVED — sub-0.3% BD-rate trap)
+- §7.4 `vp9_cyclic_refresh_limit_q` only active for screen content (L-24 RESOLVED)
+- §7.5 `PostEncodeDecision` returned, not mutated through `cpi` pointer
+- §7.6 `vpx_clear_system_state` dropped from `setup` (no x87)
+- §7.7 `Last_Source` stride quirk preserved in `is_superblock_flat_static` (bug-for-bug)
+- §7.8 AQ-3 ships no SIMD kernels
+
+### `notes/lld/bitstream.md` — 9 entries
+
+- §7.1 Drop parallel tile-packing *(L-35 RESOLVED)*
+- §7.2 Replace `setjmp`/`longjmp` error model with `Result` *(D-09)*
+- §7.3 Drop altref-driven multi-frame superframes *(→ master 2026-05-16 altref)*
+- §7.4 Per-tile output is owned `Vec<u8>`, not `&mut [u8]` into a shared arena
+- §7.5 `show_existing_frame` is `Option<u8>`, not "bit + literal"
+- §7.6 `BitstreamError::CompressedHeaderTooLarge` carries the actual size
+- §7.7 No callback-based error handler on the raw-bit reader
+- §7.8 Typed `SuperframeBuilder` rather than per-frame mutate of `ctx->pending_*`
+- §7.9 `tile_buffer.buf` is byte-tight, not over-allocated to libvpx's worst-case constant
+
+### `notes/lld/denoiser.md` — 6 entries
+
+- §7-D1 `running_avg_y` indexing flattened to `[layer][ref]`
+- §7-D2 Rename "slot 0" of `running_avg_y` to `current_denoised_frame`
+- §7-D3 Move `running_avg_y[]` re-init from post-encode to pre-encode
+- §7-D4 Denoiser does NOT read or write the segmentation map (L-67 RESOLVED)
+- §7-D5 **Denoiser SIMD bit-parity caveat (L-22 / R-03 — load-bearing)** — scalar Rust matches libvpx-C verbatim per ISA; cross-ISA ULP epsilon allowed only within rvp9 when `increase_denoising=1`. Shares L-RTCD-04 with HLD-simd §5.5.
+- §7-D6 Skin detection moved to mode-decision LLD
+
+### `notes/lld/entropy.md` — 6 entries
+
+- §7.1 Boolean reader hardcoded to 64-bit `BD_VALUE` (32-bit out of scope)
+- §7.2 Decryption callback fields not ported
+- §7.3 BoolWriter panic-mid-write is not poison-safe
+- §7.4 Counts-baseline double-count quirk preserved (per HLD-threading §5.6)
+- §7.5 Bitstream-pack scalar in v1 *(L-35)*
+- §7.6 `LOTS_OF_BITS` and EOF semantics preserved
+
+### `notes/lld/frame-buffers.md` — 8 entries
+
+- §7.DV-FB-1 `FrameBuf` refcount uses `Arc::strong_count`, not an integer
+- §7.DV-FB-2 3 scaled slots hidden from public API *(L-36 / D-08)*
+- §7.DV-FB-3 `Yv12Buffer` drops alpha / HBD / color-meta / corrupted fields
+- §7.DV-FB-4 Plane offsets stored as `usize`, not raw pointers
+- §7.DV-FB-5 External `vpx_codec_frame_buffer_t` callback path not implemented
+- §7.DV-FB-6 Legacy `vp8_yv12_*` allocator not ported
+- §7.DV-FB-7 `FrameBuf::mvs` owned, not pointer
+- §7.DV-FB-8 Pool slot scan order **frozen** to match libvpx exactly
+
+### `notes/lld/intra-pred.md` — 5 entries
+
+- §7.1 HBD code path removed entirely *(→ master 2026-05-16 HBD)*
+- §7.2 4×4 zero-copy `above_row` alias remains a raw-pointer alias
+- §7.3 `EdgeScratch` aligned struct vs C `DECLARE_ALIGNED`
+- §7.4 Mode→tx-type lookup table re-exported (documentation, not a real divergence)
+- §7.5 No `vp9_init_intra_predictors` lazy-once pattern (eager init)
+
+### `notes/lld/loopfilter.md` — 7 entries
+
+- §7.L-LPF-1 `LpfPickMethod::FromFullImage` / `FromSubImage` deferred (RT only ever uses `FromQ`)
+- §7.L-LPF-2 `LF_PATH_SLOW` (non-4:2:0) decoder-only
+- §7.L-LPF-3 `loopfilter_ctrl` field always present on encoder API
+- §7.L-LPF-4 `lfm` array owned by `LoopFilterState` (boxed slice, not pointer)
+- §7.L-LPF-5 `lf->mode_ref_delta_update = 0` post-pack
+- §7.L-LPF-6 `LfSync` decoder-extra fields moved to `rvp9-decoder`
+- §7.L-LPF-7 `last_frame_uf` buffer not allocated in RT
+
+### `notes/lld/mode-decision.md` — 12 entries
+
+- §7.1 Compound modes deferred to v2 *(L-46)*
+- §7.2 Altref iterations 8..11 in `REF_MODE_SET` kept but always skip *(→ master 2026-05-16 altref)*
+- §7.3 `intra_cost_penalty` `BITS_8` assumption *(→ master 2026-05-16 HBD)*
+- §7.4 No `EightTapSharp` in filter-ref search
+- §7.5 NEWMV diff-bias constants hardcoded *(L-43)*
+- §7.6 30-iteration claim corrected to 16 *(L-40 RESOLVED — 12 inter + 4 intra)*
+- §7.7 `BlockYrdOutcome` enum boundary *(L-41 fast-path bypass at speed ≥ 7)*
+- §7.8 `variance_low[25]` indexing helper *(L-39)*
+- §7.9 `PredBufferHandle` RAII wrapper
+- §7.10 Cost LUT location in encoder, not core
+- §7.11 cpu-used 5 dispatch excluded from this LLD's scope
+- §7.12 Iteration-index-based `mode_rd_thresh` table
+
+### `notes/lld/motion-estimation.md` — 8 entries
+
+- §7.1 `vp9_refining_search_8p_c` not ported (compound NEWMV) *(L-08; → master 2026-05-16 compound search)*
+- §7.2 `accurate_sub_pel_search` stubbed (only USE_2_TAPS) *(L-05; → master 2026-05-16 sub-pel variants)*
+- §7.3 `vp9_find_best_sub_pixel_tree_pruned[_more,_evenmore]` stubbed *(L-05)*
+- §7.4 `vp9_skip_sub_pixel_tree` stubbed *(L-05)*
+- §7.5 Exhaustive mesh search stubbed
+- §7.6 `vp9_diamond_search_sad` NEON specialisation dropped *(L-RTCD-03 in HLD-simd)*
+- §7.7 `vp9_init_dsmotion_compensation` (4-site init) not ported
+- §7.8 `reference_masking` threshold frozen at 2× *(L-06)*
+
+### `notes/lld/partition.md` — 10 entries
+
+- §7.1 `choose_partitioning` returns `Result<()>` instead of `int (always 0)`
+- §7.2 `vt2` (4×4-downsample scratch) hoisted to per-tile, lazy-alloc
+- §7.3 `set_block_size` is `debug_assert!`-guarded for non-edge callers
+- §7.4 `PartitionScratch` is not `Copy`
+- §7.5 Drop `variance_node` + `tree_to_node` indirection (typed enum)
+- §7.6 Explicit `Var::finalize` instead of always-eager `get_variance`
+- §7.7 Speed-6 fall-through in `scale_part_thresh_sumdiff` documented *(L-45)*
+- §7.8 `vbp_thresholds[3]` cross-frame retention on inter frames
+- §7.9 `force_split: [bool; 21]` instead of `int[21]`
+- §7.10 `variance_low: [u8; 25]` Morton-order traceability *(L-39; not a divergence — record)*
+
+### `notes/lld/quant.md` — 6 entries
+
+- §7.1 Drop `vpx_bit_depth_t` parameter from quant API *(→ master 2026-05-16 HBD)*
+- §7.2 `Quants` / `Dequants` are split structs, not merged
+- §7.3 `vp9_init_plane_quantizers` returns lifetime-bound borrowed view, not raw pointers
+- §7.4 `vp9_compute_qdelta_by_rate` parameters explicit (no `RATE_CONTROL` god-struct)
+- §7.5 `vp9_quantizer_to_qindex` / `vp9_qindex_to_quantizer` only on encoder API
+- §7.6 L-25 trap is documented here but enforced in rate-control (cross-LLD)
+
+### `notes/lld/rate-control.md` — 8 entries
+
+- §7.1 `buffer_level` / `bits_off_target` consolidation *(L-01)*
+- §7.2 No altref / no `lag_in_frames > 0` *(→ master 2026-05-16 altref; L-76)*
+- §7.3 EXT_RATECTRL `max_frame_size = Bits(_)` ignored
+- §7.4 Min-Q LUTs baked, not generated at init
+- §7.5 `post_encode_drop_cbr` not byte-parity-tested in v1 *(D-07)*
+- §7.6 Dead altref fields elided from the on-disk `RateControl` layout
+- §7.7 Linear qindex search retained (Q-RC-4)
+- §7.8 Float determinism — single libm choice *(L-04 / R-04)*
+
+### `notes/lld/svc.md` — 10 entries
+
+- §7.1 No altref → drop `lc->alt_ref_source`, `lc->alt_ref_idx`, `lc->has_alt_frame`, `lc->gold_ref_idx` *(→ master 2026-05-16 altref)*
+- §7.2 `svc.scaled_frames[MAX_LAG_BUFFERS]` collapsed to 1-buffer-per-layer
+- §7.3 Scene detection moved one level up (called once per superframe) *(L-68 RESOLVED)*
+- §7.4 `test_drop_readonly` for ConstrainedFromAbove precheck (no side-effect mutation)
+- §7.5 Single call-site for `inc_frame_in_layer`
+- §7.6 Layer-context swap uses `std::mem::swap` (not C-style assignment) *(L-58)*
+- §7.7 `MAX_LAYERS = 9` (tight) vs libvpx's 12
+- §7.8 ConstrainedFromAbove drop-chain at top-of-superframe (not per-layer) *(L-69 / L-75 RESOLVED)*
+- §7.9 EXT_RATECTRL Q-clamp to layer min/max
+- §7.10 No-op for `lc->alt_ref_source = NULL` initialisation
+
+### `notes/lld/tile-threading.md` — 7 entries (DV-TT-01..07)
+
+- §7.DV-TT-01 `tile_rows > 1` panics in v1 *(L-62 RESOLVED)*
+- §7.DV-TT-02 Determinism flag forces `adaptive_rd_thresh_row_mt = 1` *(R-08 RESOLVED via bit-exact-by-default)*
+- §7.DV-TT-03 Workers never invoke `vpx_internal_error` (`Result<>` only)
+- §7.DV-TT-04 Pool tears down + rebuilds on `num_workers` change
+- §7.DV-TT-05 Mirror libvpx's `FRAME_COUNTS` accumulation bias *(L-57 — bug-for-bug counts)*
+- §7.DV-TT-06 Worker thread priority not elevated *(L-63)*
+- §7.DV-TT-07 No frame-parallel encoding in v1 *(Q4 deferred → v2)*
+
+### `notes/lld/transforms.md` — 8 entries
+
+- §7.1 Trellis-quant (`vp9_optimize_b`) not ported *(→ master 2026-05-16 trellis-quant)*
+- §7.2 Lossless encoder path not built; decoder honors lossless
+- §7.3 Hybrid scan for 32×32: dispatch redundancy preserved
+- §7.4 SSSE3 promoted to required for three inverse-DCT kernels on x86_64
+- §7.5 EOB-bucket dispatch centralised in `EobBucket::for_size`
+- §7.6 Scan-order tables: alignment via `#[repr(align(16))]`
+- §7.7 32×32 hybrid (`vp9_fht32x32` / `vp9_iht32x32`) absent
+- §7.8 Forward 32×32 `_rd` vs full split
+
+---
+
+### Categories anticipated (forward-looking)
 
 - **Threading primitives** — D6 commits to mirroring libvpx tile-worker
   threading. Where Rust's aliasing rules force a different shape, note it
-  here.
+  here. *(Stage 2: see `tile-threading.md` §7 — 7 entries cover the
+  rebuilt pool, panic semantics, determinism flag.)*
 - **Integer overflow behaviour** — D7 commits to mirroring widths.
-  `wrapping_*` site catalogue lands here.
+  `wrapping_*` site catalogue lands here. *(Stage 2: covered per-LLD
+  in §3/§4 type signatures; ledger entries added as Stage 3 land.)*
 - **Bug-for-bug compatibility** — places where libvpx has a known bug
-  we **choose not** to replicate.
+  we **choose not** to replicate, or **choose to** replicate.
+  *(Stage 2: `aq.md` §7.7 Last_Source stride; `tile-threading.md`
+  §7.DV-TT-05 FRAME_COUNTS bias.)*
 - **Heuristic improvements** — places where we make a different
   heuristic decision in the non-RD path (informed by Stage 1 analysis).
+  *(Stage 2: none yet; LLDs preserve libvpx heuristics exactly.)*

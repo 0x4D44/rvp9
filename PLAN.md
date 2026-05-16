@@ -410,15 +410,37 @@ Final LLD status:
   (validates §1-§9 + populated §7 + citation count per LLD).
 - `2cce146` `bdrate.rs --csv` output for Stage 4a CI ingestion.
 
-**Phase 2d (Arthur LLD review): READY.** All 15 LLDs are on disk and
-pass `check-lld-format` (zero structural failures). Arthur sign-off
-gates entry to Phase 2e and onward to Stage 3.
+**Phase 2d (Arthur LLD review) — COMPLETE.** Arthur signed off all
+15 LLDs at 2026-05-16: "All good. Signed off."
 
-**Phase 2e (Stage 2 close-out): pending Arthur's Phase 2d sign-off.**
-At Phase 2e: divergence ledger gets the ~50+ §7 entries from every
-LLD merged in (currently seeded with 10); Stage 3/4 task lists
-refined based on what the LLDs surfaced (per PLAN.md §6 exit criteria);
-`_stage2-dispatch-prep.md` scratchpad archived.
+**Phase 2e (Stage 2 close-out) — COMPLETE.** Four close-out tasks done:
+1. **Divergence ledger merge**: `notes/divergence-ledger.md` extended
+   with an index-style "Stage 2 LLD-surfaced divergences" section
+   cataloguing all **89 §7 entries** across the 15 LLDs by ID + title
+   with cross-references back to each LLD. Master entries (full
+   template-form) retained for the 10 scope-defining departures.
+   Aggregated source text in `notes/divergence-ledger-phase2e-draft.md`.
+2. **Scratchpads archived**: `_decisions-needed-draft.md`,
+   `_dispatch-prep.md`, `_stage1-completion-template.md`,
+   `_stage2-dispatch-prep.md` removed via `git rm`; git history
+   preserves them.
+3. **Stage 3 / Stage 4a task lists refined** below per LLD anchors;
+   each task now cites its primary LLD by file + line count, with
+   pointers to load-bearing §7 entries (e.g. tile-threading §6.5
+   MacroBlock re-wire SAFETY block) and master-ledger entries.
+4. **Exit-criteria check** (per the bullets below this subsection):
+   - [x] All HLDs and LLDs written and Arthur-approved.
+   - [x] All Stage 1 deferred decisions (Q1-Q6) resolved (Q1=8-bit,
+         Q2=hand-written RTCD, Q3=std::thread+Mutex+Condvar,
+         Q4=frame-parallel deferred to v2, Q5=six-crate workspace
+         locked, Q6=test corpus defined in Stage 0).
+   - [x] Divergence ledger has an entry (master full-form OR index
+         cross-reference) for every deliberate departure surfaced.
+   - [x] No "TBD" markers in any LLD that block Stage 3 work
+         (2 known false positives are meta-prose, not blockers).
+
+**STAGE 2 COMPLETE 2026-05-16.** Stage 3 (shared infrastructure +
+decoder) is unblocked.
 
 ---
 
@@ -467,19 +489,20 @@ refined based on what the LLDs surfaced (per PLAN.md §6 exit criteria);
 
 **Goal:** Build a working VP9 decoder that passes 100% of the conformance test vectors. Side effect: every shared kernel (transforms, entropy, intra pred, loop filter, frame management) is built and validated bit-exactly. This makes Stage 4 dramatically lower-risk.
 
-**Inputs:** Stage 2 complete; all per-module LLDs in scope for shared infrastructure approved.
+**Inputs:** Stage 2 complete; all per-module LLDs Arthur-approved (Phase 2d signed off 2026-05-16). The 15 LLDs in `notes/lld/` are the spec; PLAN.md tasks below cite them by anchor.
 
-**Tasks (rough ordering — refine per LLD outputs):**
+**Tasks (refined per LLD outputs at Phase 2e):**
 
-1. `rvp9-core::bitstream`: byte reader/writer, arithmetic decoder/encoder, header parsing.
-2. `rvp9-core::entropy`: probability tables (verbatim from libvpx), context modeling, coefficient parsing/encoding.
-3. `rvp9-core::transforms`: forward + inverse DCT/ADST at 4×4, 8×8, 16×16, 32×32. Scalar reference first, then SSE2/SSE4.1/AVX2 + NEON. Differential test each SIMD impl against scalar.
-4. `rvp9-core::quant`: quantizer tables, quant/dequant logic.
-5. `rvp9-core::intra_pred`: 10 intra modes × 4 block sizes. Scalar + SIMD.
-6. `rvp9-core::loopfilter`: deblocking filter. Scalar + SIMD.
-7. `rvp9-core::frame`: frame buffer mgmt, reference frame pool, padding/alignment matching libvpx.
-8. `rvp9-decoder`: pull together the above, implement frame decode loop.
-9. Run VP9 conformance vectors. Fix until 100%.
+0. **`rvp9-core::simd` RTCD init scaffolding** (HLD-simd; R-09 invariant) — `OnceLock<SimdDispatch>` populated by `Encoder::new()` / `Decoder::new()` before any worker spawn. Hand-written dispatch tables per Q2 RESOLVED. Type-system enforcement via `WorkerPool::new(&'static SimdDispatch)` (tile-threading §6.5). **Precondition for every other task in this stage.**
+1. **`rvp9-core::bitstream`** (LLD `notes/lld/bitstream.md`, 1608 ll) — `RawBitWriter` / `RawBitReader` / `FrameHeader` / `LoopFilterHeader` / `QuantizationHeader` / `SegmentationHeader` / `TileBuffer` / `SuperframeBuilder` per the LLD §3-§4 API. Bit-exact per A4 §4.9. No setjmp/longjmp; `Result<_, BitstreamError>` propagation.
+2. **`rvp9-core::entropy`** (LLD `notes/lld/entropy.md`, 1555 ll) — `BoolWriter` / `BoolReader`, `FrameContext`, `FrameCounts`, cost framework with `VP9_PROB_COST[256]` (D-14 RESOLVED), the 11 trees, `merge_probs` adaptation, `adapt_coef_probs` / `adapt_mode_probs` / `adapt_mv_probs`. Bit-exact contract per A4 §4.9. **Counts double-count quirk preserved bug-for-bug** (entropy §7.4; threading §5.6).
+3. **`rvp9-core::transforms`** (LLD `notes/lld/transforms.md`, 1544 ll) — Forward + inverse DCT/ADST at 4×4 / 8×8 / 16×16 / 32×32. Scalar reference, then SSE2 / SSE4.1 / AVX2 / NEON kernels per HLD-simd §3. **SSSE3 promoted to required** for three inverse-DCT kernels on x86_64 (transforms §7.4 divergence). Trellis-quant (`vp9_optimize_b`) NOT ported (master entry — L-28). Lossless: decoder honours, encoder doesn't produce.
+4. **`rvp9-core::quant`** (LLD `notes/lld/quant.md`, 1183 ll) — DC_QLOOKUP[256] + AC_QLOOKUP[256] verbatim (8-bit only), QUANTIZER_TO_QINDEX[64], `Quants` / `Dequants` split structs, `vp9_compute_qdelta_by_rate` exhaustive match per L-26.
+5. **`rvp9-core::intra_pred`** (LLD `notes/lld/intra-pred.md`, 1278 ll) — 10 modes (DC, V, H, D45, D135, D117, D153, D207, D63, TM) × 4 sizes. Edge-pixel availability with 127/129 boundary constants. Eager `IntraPredDispatch` init (no lazy `once()`). FFI-vs-intrinsics path noted in §6.
+6. **`rvp9-core::loopfilter`** (LLD `notes/lld/loopfilter.md`, 1499 ll) — Filter-level cube, edge×filter×mask machinery, vertical-then-horizontal pass order (correctness-critical), per-frame RDO bypass at non-RD (`LPF_PICK_FROM_Q` only path at cpu-used 6-8).
+7. **`rvp9-core::frame`** (LLD `notes/lld/frame-buffers.md`, 1361 ll) — BufferPool with 12 slots (8 ref public + 1 new + 3 scaled `pub(crate)`). `Arc<FrameBuf>` per L-37. Border-extend invariant, stride arithmetic verbatim from `yv12config.c:152-290`. **`Send`/`Sync` discipline**: tile workers receive `TilePlanesMut` / `TilePlanes` views under documented aliasing contract (mirror HLD-threading §6.2 strategy B).
+8. **`rvp9-decoder`** — Decoder frame loop integrating tasks 1-7. Decoder-only items: `LF_PATH_SLOW` non-4:2:0 (loopfilter §7.L-LPF-2), `LfSync` decoder-extra fields, decryption callback fields NOT ported (entropy §7.2). Profile 0 only (Profile 1/2/3 deferred to v2).
+9. **Differential gate against `vpxdec`**: every conformance vector decodes byte-identically to `vpxdec --md5`. Workspace `cargo clippy -D warnings`, `cargo test`, Miri on `rvp9-core` shared-state primitives.
 
 **Deliverables:**
 - `rvp9-core` and `rvp9-decoder` crates feature-complete for VP9 Profile 0 (8-bit 4:2:0). Profiles 2/3 (10/12-bit) deferred to Stage 6+ per D-01 RESOLVED.
@@ -508,18 +531,19 @@ refined based on what the LLDs surfaced (per PLAN.md §6 exit criteria);
 
 **Inputs:** Stage 3 complete and decoder conformant.
 
-**Tasks:**
+**Tasks (refined per LLD outputs at Phase 2e):**
 
-1. `rvp9-encoder::bitstream_writer`: full VP9 header + frame data writer. Validate by round-tripping through our decoder.
-2. `rvp9-encoder::rate_control`: 1-pass CBR with buffer model. Single-layer, no frame dropping yet.
-3. `rvp9-encoder::partition`: superblock + sub-block partition selection (real-time variant).
-4. `rvp9-encoder::mode_decision`: non-RD intra/inter mode picker (real-time variant).
-5. `rvp9-encoder::motion_estimation`: non-RD ME (real-time variant), sub-pixel refinement, MV prediction.
-6. `rvp9-encoder::loopfilter_level`: per-frame deblocking strength selection.
-7. `rvp9-encoder::tile_threading`: single-tile, single-thread first; multi-tile when scalar baseline works.
-8. End-to-end: encode test corpus, decode under our decoder + libvpx, measure BD-rate vs libvpx, measure ms/frame.
-9. Hit 720p30 real-time on a single core (scalar), then on multi-core (tile threading).
-10. Run differential bitstream tests against libvpx. Find divergence points. Per divergence: match libvpx, or document in `divergence-ledger.md`.
+1. **`rvp9-encoder::bitstream_writer`** — Encoder-side `pack_frame` per LLD-bitstream §3.1, integrating §3.2 `SuperframeBuilder` and §3.3 per-tile `Vec<u8>` arenas. Validate by round-tripping through our decoder + `vpxdec`. **No altref-driven superframes** (bitstream §7.3).
+2. **`rvp9-encoder::motion_estimation`** (LLD `motion-estimation.md`, 1776 ll) — Diamond / full-pel / sub-pel pipeline; `combined_motion_search`, `find_mv_refs_rt`, `mv_pred`. Reference masking threshold frozen at 2× (L-06). `accurate_sub_pel_search` stubbed (L-05). `vp9_refining_search_8p_c` not ported (L-08). NEWMV diff-bias with hardcoded 48/8/16 thresholds (L-43).
+3. **`rvp9-encoder::partition`** (LLD `partition.md`, 1348 ll) — Variance-tree `choose_partitioning`, `pos_shift_16x16` Morton-order indexing into `variance_low[25]` (L-39), `vbp_thresholds[4]` per-frame on `Encoder::vbp`, `set_vt_partitioning` with `block_height == block_width` debug assertion (L-52), frame-edge cropping (L-53).
+4. **`rvp9-encoder::mode_decision`** (LLD `mode-decision.md`, 2369 ll, **largest encoder LLD**) — Non-RD pick-mode with corrected 16-iter (not 30) loop (L-40 RESOLVED). `BlockYrdOutcome::Bypass` at speed ≥ 7 (L-41). Filter-ref search restricted to EIGHTTAP / EIGHTTAP_SMOOTH (L-48). Compound modes return `unreachable!()` (L-46). Uses Laplacian R-D model (R-07 patch in 02-encoder-core.md §5.4).
+5. **`rvp9-encoder::rate_control`** (LLD `rate-control.md`, 2167 ll) — CBR + VBR-RT only; **NO altref / NO `lag_in_frames > 0`** (master entry). `buffer_level` / `bits_off_target` consolidation (L-01). **`vp9_encodedframe_overshoot` 9-step state mutation byte-parity gate** (L-19 / L-74). `rate_correction_factors` × `rcf_mult[]` resolution preservation (L-25). EXT_RATECTRL trait surface (R-06).
+6. **`rvp9-encoder::aq`** (LLD `aq.md`, 1427 ll) — **CYCLIC_REFRESH only** per D-05. `weight_segment` integer-shift order preserved exactly (L-21 sub-0.3% BD-rate trap). `vp9_cyclic_refresh_limit_q` screen-content gate (L-24). `Last_Source` stride quirk preserved bug-for-bug (aq §7.7).
+7. **`rvp9-encoder::tile_threading`** (LLD `tile-threading.md`, 2000 ll, **largest LLD**) — Persistent `WorkerPool` + per-frame `FrameScope<'frame>` per HLD-threading §1.2. `JobQueue` + `RowSync` row-MT sync. **§6.5 MacroBlock re-wire SAFETY block — most subtle unsafe in the codebase.** `tile_rows > 1` panics in v1 (L-62). FRAME_COUNTS accumulation bias preserved bug-for-bug (L-57 / DV-TT-05). RTCD init enforced by type system (DV-TT R-09).
+8. **`rvp9-encoder::loopfilter_level`** — Encoder-side `LPF_PICK_FROM_Q` only at cpu-used 6-8; defers to `rvp9-core::loopfilter` for the actual filter.
+9. **End-to-end loop**: encode test corpus → decode under our decoder + libvpx → BD-rate vs libvpx via `cargo run -p rvp9-bench --bin bdrate -- --csv` → ms/frame via `cargo run -p rvp9-bench --bin realtime`.
+10. **Hit 720p30 real-time** on a single core (scalar fallback), then on 2-4 cores with tile threading at 1080p30.
+11. **Differential bitstream gate**: `cargo run -p rvp9-harness --bin diff-bitstream` against libvpx. Every divergence either fixed or recorded in `notes/divergence-ledger.md`.
 
 **Deliverables:**
 - Working real-time encoder for the minimal config.
