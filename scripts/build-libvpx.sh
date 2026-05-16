@@ -12,9 +12,57 @@
 
 set -euo pipefail
 
+# On Windows / Git Bash, MSYS2's `make` lives in /c/msys64/usr/bin which is
+# not on the default Git Bash PATH. Prepend MSYS2 paths if they exist.
+case "$(uname -s)" in
+    MINGW*|MSYS*)
+        for p in /c/msys64/usr/bin /c/msys64/mingw64/bin; do
+            if [ -d "$p" ] && [[ ":$PATH:" != *":$p:"* ]]; then
+                PATH="$p:$PATH"
+            fi
+        done
+        export PATH
+        # libvpx's configure invokes gcc with hardcoded /tmp/... paths.
+        # On Windows the inherited TMP/TEMP may point at C:\windows\ which
+        # is read-only for normal users, breaking every compile probe.
+        # Force a writable temp.
+        TMPDIR="${TMPDIR:-/tmp}"
+        TMP="$TMPDIR"
+        TEMP="$TMPDIR"
+        mkdir -p "$TMPDIR"
+        export TMPDIR TMP TEMP
+        ;;
+esac
+
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 LIBVPX_SRC="$REPO_ROOT/third_party/libvpx"
-BUILD_DIR="$LIBVPX_SRC/build"
+BUILD_DIR="$REPO_ROOT/build/libvpx"
+
+# Known-issue on Windows / Git Bash: libvpx's configure + Makefile assume
+# a Linux-like environment and intermittently mis-handle paths and TMPDIR
+# inheritance. If a prebuilt v1.14.1 vpxenc/vpxdec is already present at
+# RVP9_LIBVPX_PREBUILT_DIR (env var) or the conventional D:/language/
+# libvpx-stock location, copy them in instead of attempting to build.
+#
+# Followup work tracked in PLAN.md Stage 0 follow-ups.
+case "$(uname -s)" in
+    MINGW*|MSYS*)
+        for cand in "${RVP9_LIBVPX_PREBUILT_DIR:-}" \
+                    "/d/language/libvpx-stock" \
+                    "/d/language/libvpx-build-release"; do
+            if [ -n "$cand" ] && [ -x "$cand/vpxenc.exe" ] && [ -x "$cand/vpxdec.exe" ]; then
+                echo "Using prebuilt libvpx binaries from: $cand"
+                mkdir -p "$BUILD_DIR"
+                cp "$cand/vpxenc.exe" "$cand/vpxdec.exe" "$BUILD_DIR/"
+                ls -lh "$BUILD_DIR"
+                exit 0
+            fi
+        done
+        echo "No prebuilt libvpx found; attempting build from submodule." >&2
+        echo "If this fails, build vpxenc/vpxdec manually under MSYS2"      >&2
+        echo "mingw64 shell and copy them to $BUILD_DIR."                   >&2
+        ;;
+esac
 
 if [ ! -e "$LIBVPX_SRC/.git" ]; then
     echo "libvpx submodule not initialised. Run:" >&2
@@ -55,9 +103,10 @@ CFLAGS="-O3 -fomit-frame-pointer" \
     --enable-vp9-highbitdepth \
     --enable-pic \
     --disable-docs \
-    --disable-examples \
     --disable-tools \
     --disable-unit-tests
+# Note: NOT passing --disable-examples; vpxenc + vpxdec live under
+# examples/ in libvpx and are exactly what we need.
 
 JOBS="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 echo "Building with -j$JOBS ..."

@@ -77,12 +77,12 @@ cargo build --workspace --release
 
 # 5. Sanity-check the harness against libvpx.
 cargo run --release --bin conformance -- `
-    --decoder third_party/libvpx/build/vpxdec.exe `
+    --decoder build/libvpx/vpxdec.exe `
     --vectors-dir tests/conformance/vectors `
     --limit 5
 
 cargo run --release --bin realtime -- `
-    --encoder third_party/libvpx/build/vpxenc.exe `
+    --encoder build/libvpx/vpxenc.exe `
     --input tests/corpus/parkrun_720p.y4m `
     --cpu-used 7 --budget-ms 33.333
 ```

@@ -15,22 +15,26 @@ mkdir -p "$DEST"
 
 BASE_URL="https://storage.googleapis.com/downloads.webmproject.org/test_data/libvpx"
 
+# libvpx uses .webm containers for VP9 test vectors (not raw .ivf). Each
+# vector has a paired .md5 file containing the MD5 of the decoded YUV.
+# Full canonical list lives at third_party/libvpx/test/test-data.sha1 (~430
+# VP9 vectors). Stage 0 seeds a small representative set.
 VECTORS=(
-    "vp90-2-00-quantizer-00.ivf"
-    "vp90-2-00-quantizer-26.ivf"
-    "vp90-2-00-quantizer-63.ivf"
-    "vp90-2-01-sharpness-1.ivf"
-    "vp90-2-01-sharpness-7.ivf"
-    "vp90-2-02-size-08x08.ivf"
-    "vp90-2-02-size-32x32.ivf"
-    "vp90-2-02-size-202x202.ivf"
-    "vp90-2-03-deltaq.ivf"
+    "vp90-2-00-quantizer-00.webm"
+    "vp90-2-00-quantizer-26.webm"
+    "vp90-2-00-quantizer-63.webm"
+    "vp90-2-01-sharpness-1.webm"
+    "vp90-2-01-sharpness-7.webm"
+    "vp90-2-02-size-08x08.webm"
+    "vp90-2-02-size-32x32.webm"
+    "vp90-2-02-size-202x202.webm"
+    "vp90-2-03-deltaq.webm"
     "vp90-2-05-resize.ivf"
-    "vp90-2-08-tile_1x2.ivf"
-    "vp90-2-08-tile_1x4.ivf"
-    "vp90-2-08-tile_1x8.ivf"
-    "vp90-2-09-aq2.ivf"
-    "vp90-2-10-show-existing-frame.ivf"
+    "vp90-2-08-tile_1x2.webm"
+    "vp90-2-08-tile_1x4.webm"
+    "vp90-2-08-tile_1x8.webm"
+    "vp90-2-09-aq2.webm"
+    "vp90-2-10-show-existing-frame.webm"
 )
 
 fetched=0

@@ -31,8 +31,9 @@ tests/corpus/
 # Benchmark output
 bench/results/
 
-# Submodule build artifacts
-third_party/libvpx/build/
+# libvpx build outputs live at /build/libvpx/ (NOT inside the submodule —
+# that path collides with libvpx's source-tree `build/` directory).
+/build/
 third_party/libvpx/*.exe
 third_party/libvpx/*.o
 third_party/libvpx/*.a

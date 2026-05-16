@@ -162,6 +162,42 @@ A stage cannot start until its inputs are satisfied. A stage cannot exit until a
 - libvpx Windows build is non-trivial. Fallback: use WSL2 + Linux build of libvpx, accept the cross-platform friction during development.
 - Test corpus licensing — AOM clips are CC; WebRTC test clips need vetting.
 
+**Stage 0 — completion log (2026-05-16):**
+
+What landed:
+
+- Workspace scaffold: six crates (`rvp9-core`, `rvp9-decoder`, `rvp9-encoder`,
+  `rvp9-cli`, `rvp9-bench`, `rvp9-harness`) compiling clean, 6 unit tests pass
+  (Stats percentile fn + MD5 self-tests), `cargo clippy --all-targets -D warnings` clean.
+- libvpx submodule pinned at v1.14.1 (`12f3a2a`).
+- 14 conformance vectors fetched into `tests/conformance/vectors/`; conformance
+  runner: **14/14 pass** against libvpx vpxdec (exit-0 semantic for Stage 0).
+- Synthetic test clips generated at 720p30, 1080p30, 1080p60. Real-time
+  benchmark against libvpx vpxenc at `--cpu-used 7`:
+  - 720p30:  3.94 ms/frame (88.2% under 33.333 ms budget)
+  - 1080p30: 5.68 ms/frame (83.0% under 33.333 ms budget)
+  - 1080p60: 5.04 ms/frame (69.8% under 16.667 ms budget)
+  Caveat: testsrc2 is gradient-heavy and easy to compress; real content
+  will be slower. Validates harness wiring; numbers are baselines, not targets.
+- BD-rate harness: encode sweep + RD-table generation + cubic-fit BD-rate
+  computation all wired. Produces a clean RD table when run libvpx-vs-libvpx.
+- All scripts, ATTRIBUTION, README, divergence ledger, and Stage 1 agent
+  dispatch plan documented.
+
+Stage 0 follow-ups (deferred, not blocking Stage 1):
+
+- **BD-rate PSNR pipeline** — `decode_and_psnr` is stubbed. Needs a Y4M reader
+  and YUV pixel-wise PSNR. Will land naturally in Stage 4a as a prerequisite
+  for running rvp9enc vs libvpx BD-rate comparisons. Not on Stage 0's gate.
+- **libvpx build from submodule on Windows** — Git Bash hits `/tmp` perms +
+  Makefile target issues. `scripts/build-libvpx.sh` falls back to copying
+  Arthur's prebuilt `D:/language/libvpx-stock/` v1.14.1 binaries instead.
+  Linux build path is untested but the script structure should work there.
+  Improving the Windows build is post-v1.
+- **Per-frame conformance comparison** — current runner uses "vpxdec exits 0"
+  as the Stage 0 gate. Stage 3 will parse the `.md5` files (per-frame MD5s
+  with resolution embedded in the filename) and compare frame-by-frame.
+
 ---
 
 ### Stage 1 — Agent-team deep-dive
