@@ -37,6 +37,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 pub mod detokenize;
+pub mod reconstruct;
 pub mod tile_ctx;
 
 use rvp9_core::bitstream::{
