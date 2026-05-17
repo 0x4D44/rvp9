@@ -22,6 +22,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 pub mod bitstream;
+pub mod block;
 pub mod dsp;
 pub mod entropy;
 pub mod frame;
