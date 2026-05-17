@@ -176,6 +176,102 @@ impl BlockSize {
     }
 }
 
+/// VP9 partition type. The 4-leaf decision the partition-tree
+/// decoder writes for every superblock down to 8×8. Mirrors libvpx
+/// `PARTITION_TYPE` (`vp9_enums.h:63-69`).
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[repr(u8)]
+pub enum PartitionType {
+    /// No split — the block stays at its parent size.
+    None = 0,
+    /// Horizontal split: top half + bottom half, each `parent.width
+    /// × parent.height/2`.
+    Horz = 1,
+    /// Vertical split: left half + right half, each `parent.width/2
+    /// × parent.height`.
+    Vert = 2,
+    /// 4-way split into quarter-sized sub-blocks.
+    Split = 3,
+}
+
+/// Number of partition types (`PARTITION_TYPES = 4` in libvpx).
+pub const PARTITION_TYPES: usize = 4;
+
+impl PartitionType {
+    /// Numeric index for table indexing (`0..4`).
+    #[inline]
+    #[must_use]
+    pub const fn idx(self) -> usize {
+        self as usize
+    }
+
+    /// Map a 2-bit value from the bitstream tree decoder to a
+    /// `PartitionType`. Returns `None` for invalid values (which
+    /// shouldn't occur in valid streams since the tree decoder
+    /// always lands at one of 0..3).
+    #[inline]
+    #[must_use]
+    pub const fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::None),
+            1 => Some(Self::Horz),
+            2 => Some(Self::Vert),
+            3 => Some(Self::Split),
+            _ => None,
+        }
+    }
+}
+
+/// Given a parent [`BlockSize`] and a [`PartitionType`], the child
+/// block size. Returns `None` for invalid combinations (e.g. you
+/// can't split a `Block4x4` further; you can only `None`-leave it).
+/// Mirrors libvpx `subsize_lookup[PARTITION_TYPES][BLOCK_SIZES]`
+/// (`vp9_common_data.c:71-88`).
+#[must_use]
+pub const fn subsize(parent: BlockSize, part: PartitionType) -> Option<BlockSize> {
+    use BlockSize::*;
+    use PartitionType::*;
+    let result = match (part, parent) {
+        // PARTITION_NONE: child == parent.
+        (None, p) => return Some(p),
+
+        // PARTITION_HORZ.
+        (Horz, Block8x8) => Block8x4,
+        (Horz, Block16x16) => Block16x8,
+        (Horz, Block32x32) => Block32x16,
+        (Horz, Block64x64) => Block64x32,
+
+        // PARTITION_VERT.
+        (Vert, Block8x8) => Block4x8,
+        (Vert, Block16x16) => Block8x16,
+        (Vert, Block32x32) => Block16x32,
+        (Vert, Block64x64) => Block32x64,
+
+        // PARTITION_SPLIT.
+        (Split, Block8x8) => Block4x4,
+        (Split, Block16x16) => Block8x8,
+        (Split, Block32x32) => Block16x16,
+        (Split, Block64x64) => Block32x32,
+
+        _ => return Option::None,
+    };
+    Some(result)
+}
+
+/// Maximum TX size for a given block size. Mirrors libvpx
+/// `max_txsize_lookup[BLOCK_SIZES]` (`vp9_common_data.c:90-93`).
+#[must_use]
+pub const fn max_txsize(bs: BlockSize) -> crate::transforms::TxSize {
+    use BlockSize::*;
+    use crate::transforms::TxSize;
+    match bs {
+        Block4x4 | Block4x8 | Block8x4 => TxSize::Tx4x4,
+        Block8x8 | Block8x16 | Block16x8 => TxSize::Tx8x8,
+        Block16x16 | Block16x32 | Block32x16 => TxSize::Tx16x16,
+        Block32x32 | Block32x64 | Block64x32 | Block64x64 => TxSize::Tx32x32,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,5 +379,102 @@ mod tests {
     fn idx_matches_repr() {
         assert_eq!(BlockSize::Block4x4.idx(), 0);
         assert_eq!(BlockSize::Block64x64.idx(), 12);
+    }
+
+    /// PartitionType enum values pin to libvpx.
+    #[test]
+    fn partition_type_indices_match_libvpx() {
+        assert_eq!(PartitionType::None as u8, 0);
+        assert_eq!(PartitionType::Horz as u8, 1);
+        assert_eq!(PartitionType::Vert as u8, 2);
+        assert_eq!(PartitionType::Split as u8, 3);
+        assert_eq!(PARTITION_TYPES, 4);
+    }
+
+    /// `PartitionType::from_u8` round-trips every legal value.
+    #[test]
+    fn partition_type_from_u8() {
+        assert_eq!(PartitionType::from_u8(0), Some(PartitionType::None));
+        assert_eq!(PartitionType::from_u8(1), Some(PartitionType::Horz));
+        assert_eq!(PartitionType::from_u8(2), Some(PartitionType::Vert));
+        assert_eq!(PartitionType::from_u8(3), Some(PartitionType::Split));
+        assert_eq!(PartitionType::from_u8(4), None);
+        assert_eq!(PartitionType::from_u8(255), None);
+    }
+
+    /// `subsize` matches libvpx `subsize_lookup` for the 4 legal
+    /// parent block sizes that can be split (8×8, 16×16, 32×32,
+    /// 64×64).
+    #[test]
+    fn subsize_legal_parents() {
+        use BlockSize::*;
+        use PartitionType::*;
+
+        for &parent in &[Block8x8, Block16x16, Block32x32, Block64x64] {
+            // NONE: child == parent.
+            assert_eq!(subsize(parent, None), Some(parent));
+        }
+
+        // HORZ (parent.width × parent.height/2).
+        assert_eq!(subsize(Block8x8, Horz), Some(Block8x4));
+        assert_eq!(subsize(Block16x16, Horz), Some(Block16x8));
+        assert_eq!(subsize(Block32x32, Horz), Some(Block32x16));
+        assert_eq!(subsize(Block64x64, Horz), Some(Block64x32));
+
+        // VERT (parent.width/2 × parent.height).
+        assert_eq!(subsize(Block8x8, Vert), Some(Block4x8));
+        assert_eq!(subsize(Block16x16, Vert), Some(Block8x16));
+        assert_eq!(subsize(Block32x32, Vert), Some(Block16x32));
+        assert_eq!(subsize(Block64x64, Vert), Some(Block32x64));
+
+        // SPLIT (quarter).
+        assert_eq!(subsize(Block8x8, Split), Some(Block4x4));
+        assert_eq!(subsize(Block16x16, Split), Some(Block8x8));
+        assert_eq!(subsize(Block32x32, Split), Some(Block16x16));
+        assert_eq!(subsize(Block64x64, Split), Some(Block32x32));
+    }
+
+    /// `subsize` returns None for non-square or sub-8 parents
+    /// combined with HORZ / VERT / SPLIT (only PARTITION_NONE is
+    /// legal there). Mirrors libvpx's BLOCK_INVALID entries.
+    #[test]
+    fn subsize_rejects_illegal_combinations() {
+        use BlockSize::*;
+        use PartitionType::*;
+
+        // 4x4 is too small to split.
+        assert_eq!(subsize(Block4x4, Horz), Option::None);
+        assert_eq!(subsize(Block4x4, Vert), Option::None);
+        assert_eq!(subsize(Block4x4, Split), Option::None);
+        // Non-square parents (libvpx never asks subsize for these).
+        assert_eq!(subsize(Block16x8, Horz), Option::None);
+        assert_eq!(subsize(Block32x16, Split), Option::None);
+        assert_eq!(subsize(Block16x32, Vert), Option::None);
+        assert_eq!(subsize(Block8x16, Horz), Option::None);
+        // But PARTITION_NONE works for all parents.
+        assert_eq!(subsize(Block4x4, None), Some(Block4x4));
+        assert_eq!(subsize(Block16x8, None), Some(Block16x8));
+        assert_eq!(subsize(Block8x16, None), Some(Block8x16));
+    }
+
+    /// `max_txsize` pins libvpx `max_txsize_lookup`
+    /// (`vp9_common_data.c:90-93`).
+    #[test]
+    fn max_txsize_pin_libvpx() {
+        use BlockSize::*;
+        use crate::transforms::TxSize;
+        assert_eq!(max_txsize(Block4x4), TxSize::Tx4x4);
+        assert_eq!(max_txsize(Block4x8), TxSize::Tx4x4);
+        assert_eq!(max_txsize(Block8x4), TxSize::Tx4x4);
+        assert_eq!(max_txsize(Block8x8), TxSize::Tx8x8);
+        assert_eq!(max_txsize(Block8x16), TxSize::Tx8x8);
+        assert_eq!(max_txsize(Block16x8), TxSize::Tx8x8);
+        assert_eq!(max_txsize(Block16x16), TxSize::Tx16x16);
+        assert_eq!(max_txsize(Block16x32), TxSize::Tx16x16);
+        assert_eq!(max_txsize(Block32x16), TxSize::Tx16x16);
+        assert_eq!(max_txsize(Block32x32), TxSize::Tx32x32);
+        assert_eq!(max_txsize(Block32x64), TxSize::Tx32x32);
+        assert_eq!(max_txsize(Block64x32), TxSize::Tx32x32);
+        assert_eq!(max_txsize(Block64x64), TxSize::Tx32x32);
     }
 }
