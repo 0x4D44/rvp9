@@ -48,7 +48,8 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 2b.5 (MV probability tables + FRAME_CONTEXT struct) | ✅ done | `6f4bd65` |
 | **Entropy probability layer COMPLETE** | ✅ | |
 | 7.1 (`frame::Yv12Buffer` + plane accessors) | ✅ done | `3e957d5` |
-| 7.2-4 (`FrameBuf`/`FramePool`/tile views) | ⏸️ |
+| 7.2 (`FrameBuf` + `DecoderFramePool`) | ✅ done | `79533bc` |
+| 7.3-4 (encoder 12-slot pool, tile-disjoint views) | ⏸️ |
 | 1e (compressed-header parser, depends on 2b.*) | ⏸️ |
 | 1f (tile-buffer parser) | ✅ done | `71b1643` |
 | 1g (superframe-index parser) | ✅ done | `7c45350` |
@@ -66,16 +67,15 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 8 (decoder integration) | ⏸️ |
 | 9 (vpxdec conformance gate) | ⏸️ |
 
-rvp9-core: 265 unit tests passing, ~13000 lines of bit-exact-mirrored
+rvp9-core: 275 unit tests passing, ~13300 lines of bit-exact-mirrored
 code. `cargo test`, `cargo clippy -D warnings` clean.
 
 **Intra-pred kernels are complete** — all 10 VP9 modes implemented.
-**Loop-filter math layer is complete**: all 12 edge kernels (4-tap,
-8-tap, 16-tap × horizontal/vertical × single/dual), per-level
-threshold tables, AND per-frame `[seg][ref][mode]` level resolution
-(`resolve_filter_levels`). Only the edge-mask machinery
-(Task 6.3 — which determines _which_ edges need filtering, not how
-to filter them) remains for the loop-filter layer.
+**Loop-filter math layer is complete** (12 edge kernels + thresholds
++ per-frame level resolution).
+**Decoder frame-buffer pool is in place** — `FrameBuf = Arc<Yv12Buffer>`
+handle plus a 9-slot `DecoderFramePool` with libvpx-equivalent
+acquire/assign/release/recycling semantics via `Arc::strong_count`.
 
 **Entropy probability-table layer is now complete.** The `FrameContext`
 struct aggregates every default probability table the decoder needs;
