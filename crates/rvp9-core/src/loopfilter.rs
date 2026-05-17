@@ -50,16 +50,19 @@
 //!   per-partition shift bookkeeping. Mirrors libvpx
 //!   `vp9_setup_mask` (`vp9_loopfilter.c:880-1010`).
 //!
-//! ## Deferred
+//! ## Task 6.3.5 — `adjust_mask` post-pass
 //!
-//! - `vp9_adjust_mask` — frame-edge adjustments (TX_32X32 → TX_16X16
-//!   merge, 4×4-border promotion, frame-edge clear). Lands in a
-//!   separate Task 6.3.5.
+//! - [`adjust_mask`] — the post-pass that merges TX_32X32 into
+//!   TX_16X16, promotes 4×4-border edges to 8×8, and masks off
+//!   frame-edge cells (right/bottom clamps + left-column clear).
+//!   Mirrors libvpx `vp9_adjust_mask` (`vp9_loopfilter.c:766-878`).
 
+pub mod adjust_mask;
 pub mod mask;
 pub mod mask_tables;
 pub mod setup_mask;
 
+pub use adjust_mask::adjust_mask;
 pub use mask::{BuildMaskInputs, LoopFilterMask, build_masks, build_y_mask, uv_txsize_420};
 pub use setup_mask::setup_mask;
 pub use mask_tables::{
