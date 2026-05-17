@@ -23,18 +23,19 @@
 //!
 //! ## Directional modes
 //!
-//! Task 5.2 adds three of the six directional intra modes —
-//! [`d45_predictor`], [`d63_predictor`], [`d207_predictor`] — that
-//! use only `above` OR only `left` neighbours. The three corner
-//! directionals (`D117 / D135 / D153`) need the top-left pixel
-//! plus `above` AND `left`; they land in Task 5.3.
+//! Task 5.2a added three directional intra modes — [`d45_predictor`],
+//! [`d63_predictor`], [`d207_predictor`] — that use only `above` OR
+//! only `left` neighbours. Task 5.2b adds the three corner
+//! directionals — [`d117_predictor`], [`d135_predictor`],
+//! [`d153_predictor`] — that consume `above + left + above_left`
+//! simultaneously.
 //!
-//! Directional kernels read `above` pixels past the current block
-//! (i.e. `above[bs..2*bs]` — the "above-right" pixels of the block
-//! to the right of the current one). Callers must populate a
-//! `2 * bs`-byte `above` slice when invoking a directional predictor;
-//! if the right neighbour hasn't been decoded yet, callers pad with
-//! the rightmost real `above` pixel (libvpx
+//! Directional kernels (D45 / D63) read `above` pixels past the
+//! current block (i.e. `above[bs..2*bs]` — the "above-right" pixels
+//! of the block to the right of the current one). Callers must
+//! populate a `2 * bs`-byte `above` slice when invoking those
+//! predictors; if the right neighbour hasn't been decoded yet,
+//! callers pad with the rightmost real `above` pixel (libvpx
 //! `vp9_intra_predict_top_pixels` convention).
 //!
 //! ## API conventions
@@ -263,6 +264,161 @@ pub fn d63_predictor(dst: &mut [u8], stride: usize, bs: usize, above: &[u8]) {
         }
         r += 2;
         size -= 1;
+    }
+}
+
+/// D117 — 117-degree edge (close to vertical, leaning right). Uses
+/// `above[0..bs]`, `left[0..bs]`, and `above_left`.
+///
+/// Mirrors libvpx `d117_predictor` (`intrapred.c:81-104`). libvpx
+/// reads `above[c - 1]` at `c == 0`, which is `above[-1]` —
+/// equivalent to our `above_left`; we handle the boundary explicitly.
+#[allow(clippy::needless_range_loop)]
+pub fn d117_predictor(dst: &mut [u8], stride: usize, bs: usize, ctx: PredCtx<'_>) {
+    debug_assert!(ctx.above.len() >= bs);
+    debug_assert!(ctx.left.len() >= bs);
+    let al = ctx.above_left;
+
+    // Row 0: AVG2(above[c-1], above[c]) where above[-1] = above_left.
+    dst[0] = avg2(al, ctx.above[0]);
+    for c in 1..bs {
+        dst[c] = avg2(ctx.above[c - 1], ctx.above[c]);
+    }
+
+    // Row 1: AVG3, first cell uses left[0] / above_left / above[0].
+    let r1 = stride;
+    dst[r1] = avg3(ctx.left[0], al, ctx.above[0]);
+    // Row 1, c = 1: AVG3(above[-1], above[0], above[1]) — note above[-1] = al.
+    if bs >= 2 {
+        dst[r1 + 1] = avg3(al, ctx.above[0], ctx.above[1]);
+    }
+    for c in 2..bs {
+        dst[r1 + c] = avg3(ctx.above[c - 2], ctx.above[c - 1], ctx.above[c]);
+    }
+
+    // First column for rows 2..bs (the libvpx pre-fill of the leading
+    // column before the recursive copy block). Row 2 col 0 uses
+    // (above_left, left[0], left[1]). Subsequent: AVG3 along left.
+    if bs >= 3 {
+        dst[2 * stride] = avg3(al, ctx.left[0], ctx.left[1]);
+        for r in 3..bs {
+            dst[r * stride] = avg3(ctx.left[r - 3], ctx.left[r - 2], ctx.left[r - 1]);
+        }
+    }
+
+    // Remaining cells: dst[r][c] = dst[r-2][c-1] for r >= 2, c >= 1.
+    for r in 2..bs {
+        for c in 1..bs {
+            dst[r * stride + c] = dst[(r - 2) * stride + c - 1];
+        }
+    }
+}
+
+/// D135 — 135-degree edge (diagonal down-right from top-left corner).
+/// Uses `above[0..bs]`, `left[0..bs]`, and `above_left`.
+///
+/// Mirrors libvpx `d135_predictor` (`intrapred.c:106-132`). The
+/// libvpx implementation precomputes a `bs + bs - 1` "border" running
+/// from bottom-left through `above_left` to top-right, then each row
+/// of `dst` is a `bs`-byte window into that border (shifting one cell
+/// right per row).
+#[allow(clippy::needless_range_loop)]
+pub fn d135_predictor(dst: &mut [u8], stride: usize, bs: usize, ctx: PredCtx<'_>) {
+    debug_assert!(ctx.above.len() >= bs);
+    debug_assert!(ctx.left.len() >= bs);
+    let al = ctx.above_left;
+
+    // libvpx uses border[2*bs - 1] (= 32+32-1 = 63 max for 32x32).
+    // We use a runtime-sized Vec since bs is dynamic; max 63 entries.
+    let mut border = vec![0u8; 2 * bs - 1];
+
+    // border[0..bs-2]: AVG3 along left, indexed bottom-up
+    // (border[0] = AVG3(left[bs-3], left[bs-2], left[bs-1]); etc.)
+    if bs >= 3 {
+        for i in 0..bs - 2 {
+            border[i] = avg3(
+                ctx.left[bs - 3 - i],
+                ctx.left[bs - 2 - i],
+                ctx.left[bs - 1 - i],
+            );
+        }
+    }
+    // border[bs - 2] = AVG3(above_left, left[0], left[1]).
+    if bs >= 2 {
+        border[bs - 2] = avg3(al, ctx.left[0], ctx.left[1]);
+    }
+    // border[bs - 1] = AVG3(left[0], above_left, above[0]).
+    border[bs - 1] = avg3(ctx.left[0], al, ctx.above[0]);
+    // border[bs] = AVG3(above_left, above[0], above[1]).
+    if bs >= 2 {
+        border[bs] = avg3(al, ctx.above[0], ctx.above[1]);
+    }
+    // border[bs + 1..]: AVG3 along above, indexed ascending.
+    if bs >= 3 {
+        for i in 0..bs - 2 {
+            border[bs + 1 + i] = avg3(ctx.above[i], ctx.above[i + 1], ctx.above[i + 2]);
+        }
+    }
+
+    // Each row of dst is a bs-byte window into border, shifted right
+    // by 1 per row: row i copies border[bs - 1 - i .. bs - 1 - i + bs].
+    for i in 0..bs {
+        let start = bs - 1 - i;
+        dst[i * stride..i * stride + bs].copy_from_slice(&border[start..start + bs]);
+    }
+}
+
+/// D153 — 153-degree edge (close to horizontal, leaning down). Uses
+/// `above[0..bs]`, `left[0..bs]`, and `above_left`.
+///
+/// Mirrors libvpx `d153_predictor` (`intrapred.c:134-155`).
+#[allow(clippy::needless_range_loop)]
+pub fn d153_predictor(dst: &mut [u8], stride: usize, bs: usize, ctx: PredCtx<'_>) {
+    debug_assert!(ctx.above.len() >= bs);
+    debug_assert!(ctx.left.len() >= bs);
+    let al = ctx.above_left;
+
+    // Column 0 across all rows. Top cell: AVG2(above_left, left[0]).
+    // Subsequent: AVG2 along left.
+    dst[0] = avg2(al, ctx.left[0]);
+    for r in 1..bs {
+        dst[r * stride] = avg2(ctx.left[r - 1], ctx.left[r]);
+    }
+
+    // Column 1.
+    if bs >= 2 {
+        dst[1] = avg3(ctx.left[0], al, ctx.above[0]);
+        dst[stride + 1] = avg3(al, ctx.left[0], ctx.left[1]);
+        for r in 2..bs {
+            dst[r * stride + 1] = avg3(ctx.left[r - 2], ctx.left[r - 1], ctx.left[r]);
+        }
+    }
+
+    // Row 0 columns 2..bs: AVG3 along above (handling above[-1] for c=2).
+    // libvpx: dst[c] = AVG3(above[c-1], above[c], above[c+1])
+    //   with c starting at 0 of the (already +2'd) cursor.
+    // We start c at 2 (real column index) and read above[c-2..=c].
+    // Specifically: c=2 → AVG3(above[1], above[2], above[3])? No.
+    // Re-reading libvpx :147-148:
+    //   for c in 0..bs-2: dst[c] = AVG3(above[c-1], above[c], above[c+1])
+    //   where the dst cursor has already been advanced 2 columns.
+    // So at our column 2: AVG3(above[-1], above[0], above[1]) — uses al.
+    // At our column 3: AVG3(above[0], above[1], above[2]).
+    // At our column c (>= 2): AVG3(above[c-3], above[c-2], above[c-1])
+    //   with above[-1] = al for the c=2 case.
+    if bs >= 3 {
+        // c = 2 boundary: above[c-3] = above[-1] = al.
+        dst[2] = avg3(al, ctx.above[0], ctx.above[1]);
+        for c in 3..bs {
+            dst[c] = avg3(ctx.above[c - 3], ctx.above[c - 2], ctx.above[c - 1]);
+        }
+    }
+
+    // Remaining cells: dst[r][c] = dst[r-1][c-2] for r >= 1, c >= 2.
+    for r in 1..bs {
+        for c in 2..bs {
+            dst[r * stride + c] = dst[(r - 1) * stride + c - 2];
+        }
     }
 }
 
@@ -532,6 +688,128 @@ mod tests {
         // Row 0 col 2 = row 1 col 0 = 40. Row 0 col 3 = row 1 col 1 = 50.
         assert_eq!(at(0, 2), 40);
         assert_eq!(at(0, 3), 50);
+    }
+
+    #[test]
+    fn d117_predictor_constant_input_is_constant() {
+        // Constant neighbours (above_left = above = left = 100) should
+        // yield a constant 100 block: every AVG2/AVG3 of 100s is 100.
+        let above = [100u8; 8];
+        let left = [100u8; 4];
+        let ctx = PredCtx { above: &above, left: &left, above_left: 100 };
+        let mut dst = [0u8; 16];
+        d117_predictor(&mut dst, 4, 4, ctx);
+        assert_eq!(dst, [100u8; 16]);
+    }
+
+    #[test]
+    fn d117_predictor_4x4_hand_traced_row_0_and_col_0() {
+        // above_left = 10, above = [20, 30, 40, 50], left = [60, 70, 80, 90].
+        // Row 0: AVG2 of pairs starting from above_left.
+        //   dst[0] = AVG2(10, 20) = (10+20+1)>>1 = 15
+        //   dst[1] = AVG2(20, 30) = 25
+        //   dst[2] = AVG2(30, 40) = 35
+        //   dst[3] = AVG2(40, 50) = 45
+        // Row 1 col 0: AVG3(left[0]=60, above_left=10, above[0]=20)
+        //            = (60 + 20 + 20 + 2) >> 2 = 102 >> 2 = 25
+        // Row 1 col 1: AVG3(above_left=10, above[0]=20, above[1]=30)
+        //            = (10 + 40 + 30 + 2) >> 2 = 82 >> 2 = 20
+        // Row 1 col 2: AVG3(above[0]=20, above[1]=30, above[2]=40)
+        //            = (20 + 60 + 40 + 2) >> 2 = 122 >> 2 = 30
+        // Row 1 col 3: AVG3(above[1]=30, above[2]=40, above[3]=50)
+        //            = (30 + 80 + 50 + 2) >> 2 = 162 >> 2 = 40
+        // Row 2 col 0: AVG3(above_left=10, left[0]=60, left[1]=70)
+        //            = (10 + 120 + 70 + 2) >> 2 = 202 >> 2 = 50
+        // Row 3 col 0: AVG3(left[0]=60, left[1]=70, left[2]=80)
+        //            = (60 + 140 + 80 + 2) >> 2 = 282 >> 2 = 70
+        let above = [20u8, 30, 40, 50];
+        let left = [60u8, 70, 80, 90];
+        let ctx = PredCtx { above: &above, left: &left, above_left: 10 };
+        let mut dst = [0u8; 16];
+        d117_predictor(&mut dst, 4, 4, ctx);
+        let at = |r: usize, c: usize| dst[r * 4 + c];
+        assert_eq!([at(0, 0), at(0, 1), at(0, 2), at(0, 3)], [15, 25, 35, 45]);
+        assert_eq!(at(1, 0), 25);
+        assert_eq!(at(1, 1), 20);
+        assert_eq!(at(1, 2), 30);
+        assert_eq!(at(1, 3), 40);
+        assert_eq!(at(2, 0), 50);
+        assert_eq!(at(3, 0), 70);
+    }
+
+    #[test]
+    fn d135_predictor_constant_input_is_constant() {
+        let above = [100u8; 4];
+        let left = [100u8; 4];
+        let ctx = PredCtx { above: &above, left: &left, above_left: 100 };
+        let mut dst = [0u8; 16];
+        d135_predictor(&mut dst, 4, 4, ctx);
+        assert_eq!(dst, [100u8; 16]);
+    }
+
+    #[test]
+    fn d135_predictor_4x4_diagonal_property() {
+        // libvpx D135 is a true 135° diagonal. With distinctive
+        // above_left = 50, above row = [60, 70, 80, 90], left col
+        // = [40, 30, 20, 10], the diagonal cells dst[i][i] should
+        // all carry roughly the smoothed above_left value
+        // AVG3(left[0], above_left, above[0])
+        //   = (40 + 100 + 60 + 2) >> 2 = 202 >> 2 = 50.
+        let above = [60u8, 70, 80, 90];
+        let left = [40u8, 30, 20, 10];
+        let ctx = PredCtx { above: &above, left: &left, above_left: 50 };
+        let mut dst = [0u8; 16];
+        d135_predictor(&mut dst, 4, 4, ctx);
+        let at = |r: usize, c: usize| dst[r * 4 + c];
+        // Diagonal from (0,0) all carries border[bs-1] = AVG3 of
+        // (left[0]=40, above_left=50, above[0]=60) = (40+100+60+2)>>2 = 50.
+        assert_eq!(at(0, 0), 50);
+        assert_eq!(at(1, 1), 50);
+        assert_eq!(at(2, 2), 50);
+        assert_eq!(at(3, 3), 50);
+    }
+
+    #[test]
+    fn d153_predictor_constant_input_is_constant() {
+        let above = [100u8; 4];
+        let left = [100u8; 4];
+        let ctx = PredCtx { above: &above, left: &left, above_left: 100 };
+        let mut dst = [0u8; 16];
+        d153_predictor(&mut dst, 4, 4, ctx);
+        assert_eq!(dst, [100u8; 16]);
+    }
+
+    #[test]
+    fn d153_predictor_4x4_col_0_and_col_1_hand_traced() {
+        // above_left = 10, above = [20, 30, 40, 50], left = [60, 70, 80, 90].
+        // Col 0:
+        //   dst[0][0] = AVG2(above_left=10, left[0]=60) = (10+60+1)>>1 = 35
+        //   dst[1][0] = AVG2(left[0]=60, left[1]=70) = (60+70+1)>>1 = 65
+        //   dst[2][0] = AVG2(left[1]=70, left[2]=80) = 75
+        //   dst[3][0] = AVG2(left[2]=80, left[3]=90) = 85
+        // Col 1:
+        //   dst[0][1] = AVG3(left[0]=60, above_left=10, above[0]=20)
+        //             = (60+20+20+2)>>2 = 102>>2 = 25
+        //   dst[1][1] = AVG3(above_left=10, left[0]=60, left[1]=70)
+        //             = (10+120+70+2)>>2 = 202>>2 = 50
+        //   dst[2][1] = AVG3(left[0]=60, left[1]=70, left[2]=80)
+        //             = (60+140+80+2)>>2 = 70
+        //   dst[3][1] = AVG3(left[1]=70, left[2]=80, left[3]=90)
+        //             = (70+160+90+2)>>2 = 80
+        let above = [20u8, 30, 40, 50];
+        let left = [60u8, 70, 80, 90];
+        let ctx = PredCtx { above: &above, left: &left, above_left: 10 };
+        let mut dst = [0u8; 16];
+        d153_predictor(&mut dst, 4, 4, ctx);
+        let at = |r: usize, c: usize| dst[r * 4 + c];
+        assert_eq!(at(0, 0), 35);
+        assert_eq!(at(1, 0), 65);
+        assert_eq!(at(2, 0), 75);
+        assert_eq!(at(3, 0), 85);
+        assert_eq!(at(0, 1), 25);
+        assert_eq!(at(1, 1), 50);
+        assert_eq!(at(2, 1), 70);
+        assert_eq!(at(3, 1), 80);
     }
 
     #[test]
