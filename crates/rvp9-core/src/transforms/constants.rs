@@ -137,6 +137,22 @@ pub const COSPI_29_64: i32 = 2404;
 /// `txfm_common.h:58`.
 pub const COSPI_31_64: i32 = 804;
 
+/// `round(sin(1 * pi / 9) * (1 << 14))` = 5283. Used by the 4-point
+/// inverse ADST. Mirrors libvpx `txfm_common.h:61`.
+pub const SINPI_1_9: i32 = 5283;
+
+/// `round(sin(2 * pi / 9) * (1 << 14))` = 9929. Mirrors libvpx
+/// `txfm_common.h:62`.
+pub const SINPI_2_9: i32 = 9929;
+
+/// `round(sin(3 * pi / 9) * (1 << 14))` = 13377. Mirrors libvpx
+/// `txfm_common.h:63`.
+pub const SINPI_3_9: i32 = 13377;
+
+/// `round(sin(4 * pi / 9) * (1 << 14))` = 15212. Mirrors libvpx
+/// `txfm_common.h:64`.
+pub const SINPI_4_9: i32 = 15212;
+
 /// Symmetric rounding right-shift by `DCT_CONST_BITS`. Mirrors libvpx
 /// `dct_const_round_shift` (`inv_txfm.h:38-41`).
 #[inline]

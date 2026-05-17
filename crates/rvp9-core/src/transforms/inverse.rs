@@ -15,21 +15,25 @@
 //! - [`idct32`] / [`idct32x32_1024_add`] / [`idct32x32_1_add`] — mirrors
 //!   `idct32_c`, `vpx_idct32x32_1024_add_c`, `vpx_idct32x32_1_add_c`
 //!   (`vpx_dsp/inv_txfm.c:813-1276`).
+//! - [`iadst4`] / [`iadst8`] / [`iadst16`] — 1D inverse asymmetric
+//!   discrete sine transforms. Mirror libvpx `iadst4_c`, `iadst8_c`,
+//!   `iadst16_c` (`vpx_dsp/inv_txfm.c:96, 196, 389`).
 //!
 //! All kernels apply [`wraplow`] (i16 modular truncation) at every site
 //! where the C source assigns a `dct_const_round_shift` result into an
 //! `int16_t step[]` slot. This preserves bit-exactness against libvpx
 //! for inputs whose intermediates exceed 16 bits.
 //!
-//! The iadst 4/8/16 family and the hybrid 4×4/8×8/16×16 transforms
-//! land in follow-up sub-tasks.
+//! The hybrid 4×4/8×8/16×16 transforms (iht family) land in follow-up
+//! sub-tasks.
 
 use super::constants::{
     COSPI_1_64, COSPI_2_64, COSPI_3_64, COSPI_4_64, COSPI_5_64, COSPI_6_64, COSPI_7_64, COSPI_8_64,
     COSPI_9_64, COSPI_10_64, COSPI_11_64, COSPI_12_64, COSPI_13_64, COSPI_14_64, COSPI_15_64,
     COSPI_16_64, COSPI_17_64, COSPI_18_64, COSPI_19_64, COSPI_20_64, COSPI_21_64, COSPI_22_64,
     COSPI_23_64, COSPI_24_64, COSPI_25_64, COSPI_26_64, COSPI_27_64, COSPI_28_64, COSPI_29_64,
-    COSPI_30_64, COSPI_31_64, clip_pixel_add, dct_const_round_shift, wraplow,
+    COSPI_30_64, COSPI_31_64, SINPI_1_9, SINPI_2_9, SINPI_3_9, SINPI_4_9, clip_pixel_add,
+    dct_const_round_shift, wraplow,
 };
 
 /// 1D 4-point inverse DCT. Output values are stored as `i32` but each
@@ -902,6 +906,305 @@ pub fn idct32x32_1_add(input: i32, dest: &mut [u8], stride: usize) {
     }
 }
 
+/// 1D 4-point inverse ADST (asymmetric discrete sine transform).
+///
+/// Mirrors libvpx `iadst4_c` (`vpx_dsp/inv_txfm.c:96-131`). Uses the
+/// `sinpi_*_9` constants. The all-zero early-out short-circuit from
+/// libvpx is preserved.
+#[inline]
+pub fn iadst4(input: &[i32; 4], output: &mut [i32; 4]) {
+    let x0 = input[0];
+    let x1 = input[1];
+    let x2 = input[2];
+    let x3 = input[3];
+
+    if (x0 | x1 | x2 | x3) == 0 {
+        output.fill(0);
+        return;
+    }
+
+    // Stage 1 multiplications — products fit comfortably in i64.
+    let s0_a = SINPI_1_9 as i64 * x0 as i64;
+    let s1_a = SINPI_2_9 as i64 * x0 as i64;
+    let s2_a = SINPI_3_9 as i64 * x1 as i64;
+    let s3_a = SINPI_4_9 as i64 * x2 as i64;
+    let s4_a = SINPI_1_9 as i64 * x2 as i64;
+    let s5_a = SINPI_2_9 as i64 * x3 as i64;
+    let s6_a = SINPI_4_9 as i64 * x3 as i64;
+    // libvpx: s7 = WRAPLOW(x0 - x2 + x3); kept as i32 (then sinpi-mul to i64).
+    let s7 = wraplow(x0 - x2 + x3);
+
+    let s0 = s0_a + s3_a + s5_a;
+    let s1 = s1_a - s4_a - s6_a;
+    let s3 = s2_a;
+    let s2 = SINPI_3_9 as i64 * s7 as i64;
+
+    // 1-D scaling factor sqrt(2); output truncated to i16 via wraplow.
+    output[0] = wraplow(dct_const_round_shift(s0 + s3) as i32);
+    output[1] = wraplow(dct_const_round_shift(s1 + s3) as i32);
+    output[2] = wraplow(dct_const_round_shift(s2) as i32);
+    output[3] = wraplow(dct_const_round_shift(s0 + s1 - s3) as i32);
+}
+
+/// 1D 8-point inverse ADST.
+///
+/// Mirrors libvpx `iadst8_c` (`vpx_dsp/inv_txfm.c:196-269`). Three-stage
+/// butterfly using cospi_*_64 at the 2/6/10/14/18/22/26/30 (stage 1),
+/// 8/24 (stage 2), and 16 (stage 3) frequencies, plus a final
+/// permutation+sign-flip pattern on the output. The all-zero early-out
+/// is preserved.
+#[inline]
+pub fn iadst8(input: &[i32; 8], output: &mut [i32; 8]) {
+    let mut x0: i32 = input[7];
+    let mut x1: i32 = input[0];
+    let mut x2: i32 = input[5];
+    let mut x3: i32 = input[2];
+    let mut x4: i32 = input[3];
+    let mut x5: i32 = input[4];
+    let mut x6: i32 = input[1];
+    let mut x7: i32 = input[6];
+
+    if (x0 | x1 | x2 | x3 | x4 | x5 | x6 | x7) == 0 {
+        output.fill(0);
+        return;
+    }
+
+    // Stage 1 — libvpx assigns the i64 products to `int` s-vars, which
+    // implicitly truncates to i32. Mirror with `as i32`.
+    let s0 = (COSPI_2_64 as i64 * x0 as i64 + COSPI_30_64 as i64 * x1 as i64) as i32;
+    let s1 = (COSPI_30_64 as i64 * x0 as i64 - COSPI_2_64 as i64 * x1 as i64) as i32;
+    let s2 = (COSPI_10_64 as i64 * x2 as i64 + COSPI_22_64 as i64 * x3 as i64) as i32;
+    let s3 = (COSPI_22_64 as i64 * x2 as i64 - COSPI_10_64 as i64 * x3 as i64) as i32;
+    let s4 = (COSPI_18_64 as i64 * x4 as i64 + COSPI_14_64 as i64 * x5 as i64) as i32;
+    let s5 = (COSPI_14_64 as i64 * x4 as i64 - COSPI_18_64 as i64 * x5 as i64) as i32;
+    let s6 = (COSPI_26_64 as i64 * x6 as i64 + COSPI_6_64 as i64 * x7 as i64) as i32;
+    let s7 = (COSPI_6_64 as i64 * x6 as i64 - COSPI_26_64 as i64 * x7 as i64) as i32;
+
+    x0 = wraplow(dct_const_round_shift(s0 as i64 + s4 as i64) as i32);
+    x1 = wraplow(dct_const_round_shift(s1 as i64 + s5 as i64) as i32);
+    x2 = wraplow(dct_const_round_shift(s2 as i64 + s6 as i64) as i32);
+    x3 = wraplow(dct_const_round_shift(s3 as i64 + s7 as i64) as i32);
+    x4 = wraplow(dct_const_round_shift(s0 as i64 - s4 as i64) as i32);
+    x5 = wraplow(dct_const_round_shift(s1 as i64 - s5 as i64) as i32);
+    x6 = wraplow(dct_const_round_shift(s2 as i64 - s6 as i64) as i32);
+    x7 = wraplow(dct_const_round_shift(s3 as i64 - s7 as i64) as i32);
+
+    // Stage 2 — same i64→i32 truncation pattern.
+    let s0 = x0;
+    let s1 = x1;
+    let s2 = x2;
+    let s3 = x3;
+    let s4 = (COSPI_8_64 as i64 * x4 as i64 + COSPI_24_64 as i64 * x5 as i64) as i32;
+    let s5 = (COSPI_24_64 as i64 * x4 as i64 - COSPI_8_64 as i64 * x5 as i64) as i32;
+    let s6 = (-(COSPI_24_64 as i64) * x6 as i64 + COSPI_8_64 as i64 * x7 as i64) as i32;
+    let s7 = (COSPI_8_64 as i64 * x6 as i64 + COSPI_24_64 as i64 * x7 as i64) as i32;
+
+    x0 = wraplow(s0 + s2);
+    x1 = wraplow(s1 + s3);
+    x2 = wraplow(s0 - s2);
+    x3 = wraplow(s1 - s3);
+    x4 = wraplow(dct_const_round_shift(s4 as i64 + s6 as i64) as i32);
+    x5 = wraplow(dct_const_round_shift(s5 as i64 + s7 as i64) as i32);
+    x6 = wraplow(dct_const_round_shift(s4 as i64 - s6 as i64) as i32);
+    x7 = wraplow(dct_const_round_shift(s5 as i64 - s7 as i64) as i32);
+
+    // Stage 3.
+    let s2 = (COSPI_16_64 as i64 * (x2 as i64 + x3 as i64)) as i32;
+    let s3 = (COSPI_16_64 as i64 * (x2 as i64 - x3 as i64)) as i32;
+    let s6 = (COSPI_16_64 as i64 * (x6 as i64 + x7 as i64)) as i32;
+    let s7 = (COSPI_16_64 as i64 * (x6 as i64 - x7 as i64)) as i32;
+
+    x2 = wraplow(dct_const_round_shift(s2 as i64) as i32);
+    x3 = wraplow(dct_const_round_shift(s3 as i64) as i32);
+    x6 = wraplow(dct_const_round_shift(s6 as i64) as i32);
+    x7 = wraplow(dct_const_round_shift(s7 as i64) as i32);
+
+    // Output permutation + sign flips (mirrors libvpx :261-268).
+    output[0] = wraplow(x0);
+    output[1] = wraplow(-x4);
+    output[2] = wraplow(x6);
+    output[3] = wraplow(-x2);
+    output[4] = wraplow(x3);
+    output[5] = wraplow(-x7);
+    output[6] = wraplow(x5);
+    output[7] = wraplow(-x1);
+}
+
+/// 1D 16-point inverse ADST.
+///
+/// Mirrors libvpx `iadst16_c` (`vpx_dsp/inv_txfm.c:389-555`). Four-stage
+/// butterfly using cospi at frequencies 1/3/5/7/9/11/13/15/17/19/21/23/
+/// 25/27/29/31 (stage 1), 4/12/20/28 (stage 2), 8/24 (stage 3),
+/// 16 (stage 4), plus output permutation with sign flips.
+#[inline]
+pub fn iadst16(input: &[i32; 16], output: &mut [i32; 16]) {
+    let mut x0: i32 = input[15];
+    let mut x1: i32 = input[0];
+    let mut x2: i32 = input[13];
+    let mut x3: i32 = input[2];
+    let mut x4: i32 = input[11];
+    let mut x5: i32 = input[4];
+    let mut x6: i32 = input[9];
+    let mut x7: i32 = input[6];
+    let mut x8: i32 = input[7];
+    let mut x9: i32 = input[8];
+    let mut x10: i32 = input[5];
+    let mut x11: i32 = input[10];
+    let mut x12: i32 = input[3];
+    let mut x13: i32 = input[12];
+    let mut x14: i32 = input[1];
+    let mut x15: i32 = input[14];
+
+    if (x0 | x1 | x2 | x3 | x4 | x5 | x6 | x7 | x8 | x9 | x10 | x11 | x12 | x13 | x14 | x15)
+        == 0
+    {
+        output.fill(0);
+        return;
+    }
+
+    // Stage 1.
+    let s0 = x0 as i64 * COSPI_1_64 as i64 + x1 as i64 * COSPI_31_64 as i64;
+    let s1 = x0 as i64 * COSPI_31_64 as i64 - x1 as i64 * COSPI_1_64 as i64;
+    let s2 = x2 as i64 * COSPI_5_64 as i64 + x3 as i64 * COSPI_27_64 as i64;
+    let s3 = x2 as i64 * COSPI_27_64 as i64 - x3 as i64 * COSPI_5_64 as i64;
+    let s4 = x4 as i64 * COSPI_9_64 as i64 + x5 as i64 * COSPI_23_64 as i64;
+    let s5 = x4 as i64 * COSPI_23_64 as i64 - x5 as i64 * COSPI_9_64 as i64;
+    let s6 = x6 as i64 * COSPI_13_64 as i64 + x7 as i64 * COSPI_19_64 as i64;
+    let s7 = x6 as i64 * COSPI_19_64 as i64 - x7 as i64 * COSPI_13_64 as i64;
+    let s8 = x8 as i64 * COSPI_17_64 as i64 + x9 as i64 * COSPI_15_64 as i64;
+    let s9 = x8 as i64 * COSPI_15_64 as i64 - x9 as i64 * COSPI_17_64 as i64;
+    let s10 = x10 as i64 * COSPI_21_64 as i64 + x11 as i64 * COSPI_11_64 as i64;
+    let s11 = x10 as i64 * COSPI_11_64 as i64 - x11 as i64 * COSPI_21_64 as i64;
+    let s12 = x12 as i64 * COSPI_25_64 as i64 + x13 as i64 * COSPI_7_64 as i64;
+    let s13 = x12 as i64 * COSPI_7_64 as i64 - x13 as i64 * COSPI_25_64 as i64;
+    let s14 = x14 as i64 * COSPI_29_64 as i64 + x15 as i64 * COSPI_3_64 as i64;
+    let s15 = x14 as i64 * COSPI_3_64 as i64 - x15 as i64 * COSPI_29_64 as i64;
+
+    x0 = wraplow(dct_const_round_shift(s0 + s8) as i32);
+    x1 = wraplow(dct_const_round_shift(s1 + s9) as i32);
+    x2 = wraplow(dct_const_round_shift(s2 + s10) as i32);
+    x3 = wraplow(dct_const_round_shift(s3 + s11) as i32);
+    x4 = wraplow(dct_const_round_shift(s4 + s12) as i32);
+    x5 = wraplow(dct_const_round_shift(s5 + s13) as i32);
+    x6 = wraplow(dct_const_round_shift(s6 + s14) as i32);
+    x7 = wraplow(dct_const_round_shift(s7 + s15) as i32);
+    x8 = wraplow(dct_const_round_shift(s0 - s8) as i32);
+    x9 = wraplow(dct_const_round_shift(s1 - s9) as i32);
+    x10 = wraplow(dct_const_round_shift(s2 - s10) as i32);
+    x11 = wraplow(dct_const_round_shift(s3 - s11) as i32);
+    x12 = wraplow(dct_const_round_shift(s4 - s12) as i32);
+    x13 = wraplow(dct_const_round_shift(s5 - s13) as i32);
+    x14 = wraplow(dct_const_round_shift(s6 - s14) as i32);
+    x15 = wraplow(dct_const_round_shift(s7 - s15) as i32);
+
+    // Stage 2.
+    let s0 = x0;
+    let s1 = x1;
+    let s2 = x2;
+    let s3 = x3;
+    let s4 = x4;
+    let s5 = x5;
+    let s6 = x6;
+    let s7 = x7;
+    let s8 = x8 as i64 * COSPI_4_64 as i64 + x9 as i64 * COSPI_28_64 as i64;
+    let s9 = x8 as i64 * COSPI_28_64 as i64 - x9 as i64 * COSPI_4_64 as i64;
+    let s10 = x10 as i64 * COSPI_20_64 as i64 + x11 as i64 * COSPI_12_64 as i64;
+    let s11 = x10 as i64 * COSPI_12_64 as i64 - x11 as i64 * COSPI_20_64 as i64;
+    let s12 = -(x12 as i64) * COSPI_28_64 as i64 + x13 as i64 * COSPI_4_64 as i64;
+    let s13 = x12 as i64 * COSPI_4_64 as i64 + x13 as i64 * COSPI_28_64 as i64;
+    let s14 = -(x14 as i64) * COSPI_12_64 as i64 + x15 as i64 * COSPI_20_64 as i64;
+    let s15 = x14 as i64 * COSPI_20_64 as i64 + x15 as i64 * COSPI_12_64 as i64;
+
+    x0 = wraplow(s0 + s4);
+    x1 = wraplow(s1 + s5);
+    x2 = wraplow(s2 + s6);
+    x3 = wraplow(s3 + s7);
+    x4 = wraplow(s0 - s4);
+    x5 = wraplow(s1 - s5);
+    x6 = wraplow(s2 - s6);
+    x7 = wraplow(s3 - s7);
+    x8 = wraplow(dct_const_round_shift(s8 + s12) as i32);
+    x9 = wraplow(dct_const_round_shift(s9 + s13) as i32);
+    x10 = wraplow(dct_const_round_shift(s10 + s14) as i32);
+    x11 = wraplow(dct_const_round_shift(s11 + s15) as i32);
+    x12 = wraplow(dct_const_round_shift(s8 - s12) as i32);
+    x13 = wraplow(dct_const_round_shift(s9 - s13) as i32);
+    x14 = wraplow(dct_const_round_shift(s10 - s14) as i32);
+    x15 = wraplow(dct_const_round_shift(s11 - s15) as i32);
+
+    // Stage 3.
+    let s0 = x0;
+    let s1 = x1;
+    let s2 = x2;
+    let s3 = x3;
+    let s4 = x4 as i64 * COSPI_8_64 as i64 + x5 as i64 * COSPI_24_64 as i64;
+    let s5 = x4 as i64 * COSPI_24_64 as i64 - x5 as i64 * COSPI_8_64 as i64;
+    let s6 = -(x6 as i64) * COSPI_24_64 as i64 + x7 as i64 * COSPI_8_64 as i64;
+    let s7 = x6 as i64 * COSPI_8_64 as i64 + x7 as i64 * COSPI_24_64 as i64;
+    let s8 = x8;
+    let s9 = x9;
+    let s10 = x10;
+    let s11 = x11;
+    let s12 = x12 as i64 * COSPI_8_64 as i64 + x13 as i64 * COSPI_24_64 as i64;
+    let s13 = x12 as i64 * COSPI_24_64 as i64 - x13 as i64 * COSPI_8_64 as i64;
+    let s14 = -(x14 as i64) * COSPI_24_64 as i64 + x15 as i64 * COSPI_8_64 as i64;
+    let s15 = x14 as i64 * COSPI_8_64 as i64 + x15 as i64 * COSPI_24_64 as i64;
+
+    x0 = wraplow(s0 + s2);
+    x1 = wraplow(s1 + s3);
+    x2 = wraplow(s0 - s2);
+    x3 = wraplow(s1 - s3);
+    x4 = wraplow(dct_const_round_shift(s4 + s6) as i32);
+    x5 = wraplow(dct_const_round_shift(s5 + s7) as i32);
+    x6 = wraplow(dct_const_round_shift(s4 - s6) as i32);
+    x7 = wraplow(dct_const_round_shift(s5 - s7) as i32);
+    x8 = wraplow(s8 + s10);
+    x9 = wraplow(s9 + s11);
+    x10 = wraplow(s8 - s10);
+    x11 = wraplow(s9 - s11);
+    x12 = wraplow(dct_const_round_shift(s12 + s14) as i32);
+    x13 = wraplow(dct_const_round_shift(s13 + s15) as i32);
+    x14 = wraplow(dct_const_round_shift(s12 - s14) as i32);
+    x15 = wraplow(dct_const_round_shift(s13 - s15) as i32);
+
+    // Stage 4.
+    let s2 = -(COSPI_16_64 as i64) * (x2 as i64 + x3 as i64);
+    let s3 = COSPI_16_64 as i64 * (x2 as i64 - x3 as i64);
+    let s6 = COSPI_16_64 as i64 * (x6 as i64 + x7 as i64);
+    let s7 = COSPI_16_64 as i64 * (-(x6 as i64) + x7 as i64);
+    let s10 = COSPI_16_64 as i64 * (x10 as i64 + x11 as i64);
+    let s11 = COSPI_16_64 as i64 * (-(x10 as i64) + x11 as i64);
+    let s14 = -(COSPI_16_64 as i64) * (x14 as i64 + x15 as i64);
+    let s15 = COSPI_16_64 as i64 * (x14 as i64 - x15 as i64);
+
+    x2 = wraplow(dct_const_round_shift(s2) as i32);
+    x3 = wraplow(dct_const_round_shift(s3) as i32);
+    x6 = wraplow(dct_const_round_shift(s6) as i32);
+    x7 = wraplow(dct_const_round_shift(s7) as i32);
+    x10 = wraplow(dct_const_round_shift(s10) as i32);
+    x11 = wraplow(dct_const_round_shift(s11) as i32);
+    x14 = wraplow(dct_const_round_shift(s14) as i32);
+    x15 = wraplow(dct_const_round_shift(s15) as i32);
+
+    // Output permutation + sign flips (mirrors libvpx :539-554).
+    output[0] = wraplow(x0);
+    output[1] = wraplow(-x8);
+    output[2] = wraplow(x12);
+    output[3] = wraplow(-x4);
+    output[4] = wraplow(x6);
+    output[5] = wraplow(x14);
+    output[6] = wraplow(x10);
+    output[7] = wraplow(x2);
+    output[8] = wraplow(x3);
+    output[9] = wraplow(x11);
+    output[10] = wraplow(x15);
+    output[11] = wraplow(x7);
+    output[12] = wraplow(x5);
+    output[13] = wraplow(-x13);
+    output[14] = wraplow(x9);
+    output[15] = wraplow(-x1);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1341,5 +1644,93 @@ mod tests {
         let any_above = dest.iter().any(|&v| v > 128);
         let any_below = dest.iter().any(|&v| v < 128);
         assert!(any_above && any_below, "AC should produce both signs");
+    }
+
+    // ---- iadst family ----
+
+    /// Zero input → zero output (4-point ADST early-out).
+    #[test]
+    fn iadst4_zero_in_zero_out() {
+        let input = [0i32; 4];
+        let mut output = [99i32; 4];
+        iadst4(&input, &mut output);
+        assert_eq!(output, [0; 4]);
+    }
+
+    /// iadst4 with `x = [1024, 0, 0, 0]`. Hand-computed trace.
+    ///
+    /// Inputs after libvpx's identity permutation: x0=1024, x1=x2=x3=0
+    /// (non-zero — no early-out).
+    ///
+    /// Stage-1 products: `s0_a = 5283 * 1024 = 5_409_792`,
+    /// `s1_a = 9929 * 1024 = 10_167_296`, all others zero. `s7 =
+    /// wraplow(1024 - 0 + 0) = 1024`. Then `s0 = s0_a + s3_a + s5_a =
+    /// 5_409_792`, `s1 = s1_a - s4_a - s6_a = 10_167_296`, `s3 = s2_a
+    /// = 0`, `s2 = SINPI_3_9 * s7 = 13377 * 1024 = 13_698_048`.
+    ///
+    /// Output via `wraplow(round_shift(_))`:
+    ///
+    /// `output[0]`: `round_shift(5_409_792) = (5_409_792 + 8192) >> 14
+    /// = 5_417_984 >> 14 = 330`.
+    ///
+    /// `output[1]`: `round_shift(10_167_296) = (10_167_296 + 8192) >> 14
+    /// = 10_175_488 >> 14 = 621`.
+    ///
+    /// `output[2]`: `round_shift(13_698_048) = (13_698_048 + 8192) >> 14
+    /// = 13_706_240 >> 14 = 836`.
+    ///
+    /// `output[3]`: `round_shift(5_409_792 + 10_167_296 - 0)
+    /// = round_shift(15_577_088) = (15_577_088 + 8192) >> 14
+    /// = 15_585_280 >> 14 = 951`.
+    #[test]
+    fn iadst4_x0_only_known_value() {
+        let input = [1024_i32, 0, 0, 0];
+        let mut output = [0i32; 4];
+        iadst4(&input, &mut output);
+        assert_eq!(output, [330, 621, 836, 951]);
+    }
+
+    /// Zero input → zero output (8-point ADST early-out).
+    #[test]
+    fn iadst8_zero_in_zero_out() {
+        let input = [0i32; 8];
+        let mut output = [99i32; 8];
+        iadst8(&input, &mut output);
+        assert_eq!(output, [0; 8]);
+    }
+
+    /// iadst8 single non-zero input produces a non-zero output vector.
+    #[test]
+    fn iadst8_nonzero_input_produces_nonzero_output() {
+        let mut input = [0i32; 8];
+        input[0] = 1024; // maps to x1 per libvpx input permutation
+        let mut output = [0i32; 8];
+        iadst8(&input, &mut output);
+        assert!(
+            output.iter().any(|&v| v != 0),
+            "non-zero input should yield non-zero output"
+        );
+    }
+
+    /// Zero input → zero output (16-point ADST early-out).
+    #[test]
+    fn iadst16_zero_in_zero_out() {
+        let input = [0i32; 16];
+        let mut output = [99i32; 16];
+        iadst16(&input, &mut output);
+        assert_eq!(output, [0; 16]);
+    }
+
+    /// iadst16 single non-zero input produces a non-zero output vector.
+    #[test]
+    fn iadst16_nonzero_input_produces_nonzero_output() {
+        let mut input = [0i32; 16];
+        input[0] = 2048;
+        let mut output = [0i32; 16];
+        iadst16(&input, &mut output);
+        assert!(
+            output.iter().any(|&v| v != 0),
+            "non-zero input should yield non-zero output"
+        );
     }
 }
