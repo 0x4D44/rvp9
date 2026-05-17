@@ -38,14 +38,21 @@
 //! - [`mask_tables`] — the 10 lookup tables `build_masks` consults
 //!   (Y-plane `u64` + UV-plane `u16` per-block / per-TX-size
 //!   patterns). Task 6.3.2.
+//! - [`mask`] — [`mask::LoopFilterMask`] struct +
+//!   [`mask::build_masks`] / [`mask::build_y_mask`] functions.
+//!   Task 6.3.3.
 //!
 //! ## Deferred
 //!
-//! - `build_masks` + `build_y_mask` (the per-block mask-building
-//!   functions that consume the Task 6.3.2 tables) — Task 6.3.3+.
+//! - `vp9_setup_mask` — the top-level partition-tree walker that
+//!   calls `build_masks` per leaf and handles the per-partition
+//!   shift bookkeeping. Lands in Task 6.3.4 once the partition-
+//!   tree decoder is in place (Task 8.2+).
 
+pub mod mask;
 pub mod mask_tables;
 
+pub use mask::{BuildMaskInputs, LoopFilterMask, build_masks, build_y_mask, uv_txsize_420};
 pub use mask_tables::{
     ABOVE_64X64_TXFORM_MASK_UV, ABOVE_64X64_TXFORM_MASK_Y, ABOVE_BORDER_UV, ABOVE_BORDER_Y,
     ABOVE_PREDICTION_MASK_UV, ABOVE_PREDICTION_MASK_Y, LEFT_64X64_TXFORM_MASK_UV,
