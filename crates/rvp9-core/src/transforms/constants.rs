@@ -25,6 +25,22 @@ pub const COSPI_16_64: i32 = 11585;
 /// `txfm_common.h:51`.
 pub const COSPI_24_64: i32 = 6270;
 
+/// `round(cos(4 * pi / 64) * (1 << 14))` = 16069. Mirrors libvpx
+/// `txfm_common.h:31`.
+pub const COSPI_4_64: i32 = 16069;
+
+/// `round(cos(12 * pi / 64) * (1 << 14))` = 13623. Mirrors libvpx
+/// `txfm_common.h:39`.
+pub const COSPI_12_64: i32 = 13623;
+
+/// `round(cos(20 * pi / 64) * (1 << 14))` = 9102. Mirrors libvpx
+/// `txfm_common.h:47`.
+pub const COSPI_20_64: i32 = 9102;
+
+/// `round(cos(28 * pi / 64) * (1 << 14))` = 3196. Mirrors libvpx
+/// `txfm_common.h:55`.
+pub const COSPI_28_64: i32 = 3196;
+
 /// Symmetric rounding right-shift by `DCT_CONST_BITS`. Mirrors libvpx
 /// `dct_const_round_shift` (`inv_txfm.h:38-41`).
 #[inline]
