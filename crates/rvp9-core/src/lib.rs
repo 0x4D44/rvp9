@@ -26,6 +26,7 @@ pub mod dsp;
 pub mod entropy;
 pub mod frame;
 pub mod intra_pred;
+pub mod loopfilter;
 pub mod quant;
 pub mod transforms;
 
