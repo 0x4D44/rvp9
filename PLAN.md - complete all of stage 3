@@ -56,15 +56,19 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 5.2a (intra-pred: D45 / D63 / D207) | ✅ done | `9671380` |
 | 5.2b (intra-pred: D117 / D135 / D153 — corner directionals) | ✅ done | `fe1b379` |
 | **Intra-pred kernels COMPLETE (all 10 VP9 modes)** | ✅ | |
-| 6 (loopfilter) | ⏸️ |
+| 6.1 (loopfilter: per-level threshold tables) | ✅ done | `bf82548` |
+| 6.2-4 (loopfilter: kernels, mask machinery, frame init) | ⏸️ |
 | 8 (decoder integration) | ⏸️ |
 | 9 (vpxdec conformance gate) | ⏸️ |
 
-rvp9-core: 226 unit tests passing, ~11300 lines of bit-exact-mirrored
+rvp9-core: 237 unit tests passing, ~11600 lines of bit-exact-mirrored
 code. `cargo test`, `cargo clippy -D warnings` clean.
 
-**Intra-pred kernels are complete** — all 10 VP9 modes implemented:
-DC + 3 DC fallbacks, V, H, TM, D45, D63, D207, D117, D135, D153.
+**Intra-pred kernels are complete** — all 10 VP9 modes implemented.
+**Loop-filter threshold tables are in place** — `LoopFilterInfo`
+covers all 64 filter levels with `compute_thresholds(lvl, sharpness)`
+mirroring libvpx's `update_sharpness` formula. Edge-filter kernels
+themselves are deferred to Task 6.2.
 
 **Entropy probability-table layer is now complete.** The `FrameContext`
 struct aggregates every default probability table the decoder needs;
