@@ -36,6 +36,8 @@
 #![deny(missing_docs)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
+pub mod tile_ctx;
+
 use rvp9_core::bitstream::{
     BitstreamError, CompressedHeaderOptions, CompressedHeaderResult, FrameKind, InterpFilter,
     RefFrameSizes, Superframe, UncompressedHeader, parse_compressed_header,

@@ -254,10 +254,19 @@ pub fn read_partition(r: &mut BoolReader<'_>, probs: &[u8; PARTITION_TYPES - 1])
 ///
 /// **Downstream wiring:** the per-block decoder must thread the
 /// actual above/left [`ModeInfo`] neighbours into this function.
-/// Until the neighbour grid (`above_mi` / `left_mi`) is plumbed
-/// in by Wave 2 task D, callers should stub `above = None, left
-/// = None`.
-// TODO(overnight-2026-05-17): wire above/left ctx — see Wave 2 task D.
+/// The neighbour grid lives in
+/// `rvp9_decoder::tile_ctx::TileDecodeCtx` (Wave 2 D / Stage 3
+/// Task 8.2.6). The first real caller will be the per-block
+/// decode loop landed by Wave 3 K (Stage 3 Task 8.3 — decoder
+/// integration). The mapping is:
+///
+/// ```ignore
+/// let above = ctx.above(mi_col).map(|m| (m.tx_size, m.skip));
+/// let left  = ctx.left(mi_row_in_sb).map(|m| (m.tx_size, m.skip));
+/// let tx_ctx = get_tx_size_context(above, left, max_tx_size);
+/// ```
+// TODO(overnight-2026-05-17): callers — wire via TileDecodeCtx
+// when Wave 3 K (per-block decode loop) lands.
 #[inline]
 #[must_use]
 pub fn get_tx_size_context(
