@@ -54,7 +54,8 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 8.1b (`decode_show_existing_frame` end-to-end path) | ✅ done | `0bd87d9` |
 | 8.2+ (compressed-header → tile decode → pixel reconstruction) | ⏸️ |
 | 1e.1 (`vp9_diff_update_prob` building block) | ✅ done | `51178fa` |
-| 1e.2+ (compressed-header parser entry point + sub-parsers) | ⏸️ |
+| 1e.2 (compressed-header scalar-prob sub-parsers) | ✅ done | `4d9350c` |
+| 1e.3+ (read_coef_probs + inter-frame sub-parsers + top-level) | ⏸️ |
 | 1f (tile-buffer parser) | ✅ done | `71b1643` |
 | 1g (superframe-index parser) | ✅ done | `7c45350` |
 | 5.1 (intra-pred: DC / V / H / TM + DC fallbacks) | ✅ done | `ed26428` |
@@ -73,8 +74,8 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 8 (decoder integration) | ⏸️ |
 | 9 (vpxdec conformance gate) | ⏸️ |
 
-rvp9-core: 286 unit tests + rvp9-decoder: 8 unit tests = **294 total**.
-~13900 lines in rvp9-core + ~580 lines in rvp9-decoder.
+rvp9-core: 291 unit tests + rvp9-decoder: 8 unit tests = **299 total**.
+~14100 lines in rvp9-core + ~580 lines in rvp9-decoder.
 `cargo test`, `cargo clippy -D warnings` clean.
 
 **The rvp9-decoder skeleton is live with the first complete decode
