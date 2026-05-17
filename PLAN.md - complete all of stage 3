@@ -42,8 +42,8 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 1d.3 (sub-parser wire-up + tail + first_partition_size) | ✅ done | `6274612` |
 | **Uncompressed-header parser COMPLETE** | ✅ | |
 | 2b.1 (small default mode probs) | ✅ done | `69896f3` |
-| 2b.2 (keyframe mode probs) | ⏸️ |
-| 2b.3 (Pareto8 distribution) | ⏸️ |
+| 2b.2 (keyframe mode probs) | ✅ done | `edb5c26` |
+| 2b.3 (Pareto8 distribution) | ✅ done | `4469cef` |
 | 2b.4 (coefficient probability tables) | ⏸️ |
 | 2b.5 (MV probability tables + FRAME_CONTEXT struct) | ⏸️ |
 | 1e (compressed-header parser, depends on 2b.*) | ⏸️ |
@@ -54,7 +54,7 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 8 (decoder integration) | ⏸️ |
 | 9 (vpxdec conformance gate) | ⏸️ |
 
-rvp9-core: 160 unit tests passing, ~7600 lines of bit-exact-mirrored
+rvp9-core: 167 unit tests passing, ~8200 lines of bit-exact-mirrored
 code. `cargo test`, `cargo clippy -D warnings` clean.
 
 **The uncompressed-header parser is complete.** Every byte libvpx
