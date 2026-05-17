@@ -77,6 +77,11 @@ pub enum BitstreamError {
         /// The decoded `log2_tile_cols` value.
         log2_tile_cols: u8,
     },
+
+    /// The 16-bit `first_partition_size` field at the end of the
+    /// uncompressed header decoded to `0`. libvpx rejects this with
+    /// `Invalid header size` (`vp9_decodeframe.c:2856-2858`).
+    InvalidFirstPartitionSize,
 }
 
 impl fmt::Display for BitstreamError {
@@ -104,6 +109,9 @@ impl fmt::Display for BitstreamError {
             Self::InconsistentSrgb => f.write_str("sRGB color space requires Profile 1/3 with 4:4:4 sampling"),
             Self::InvalidTileCols { log2_tile_cols } => {
                 write!(f, "invalid log2_tile_cols: {log2_tile_cols} (max 6)")
+            }
+            Self::InvalidFirstPartitionSize => {
+                f.write_str("invalid first_partition_size: 0 (compressed header must be non-empty)")
             }
         }
     }

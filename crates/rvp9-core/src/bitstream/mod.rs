@@ -34,7 +34,10 @@ pub use frame::{
     BitDepth, ChromaFormat, ColorRange, ColorSpace, FrameType, InterpFilter, MAX_INTER_REFS,
     Profile, REF_FRAMES, REF_FRAMES_LOG2,
 };
-pub use header::{FrameKind, RefFrameSizes, UncompressedHeader, parse_uncompressed_header};
+pub use header::{
+    FRAME_CONTEXTS_LOG2, FrameKind, HeaderTail, RefFrameSizes, UncompressedHeader,
+    parse_uncompressed_header,
+};
 pub use raw::{RawBitReader, RawBitWriter};
 pub use sub_parsers::{
     LoopFilterParams, QuantizationParams, SegFeature, SegmentationParams, TileInfo, parse_loopfilter,

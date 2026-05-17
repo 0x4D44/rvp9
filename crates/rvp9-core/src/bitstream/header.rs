@@ -38,6 +38,15 @@ use super::frame::{
     Profile, REF_FRAMES, REF_FRAMES_LOG2, sync,
 };
 use super::raw::RawBitReader;
+use super::sub_parsers::{
+    LoopFilterParams, QuantizationParams, SegmentationParams, TileInfo, parse_loopfilter,
+    parse_quantization, parse_segmentation, parse_tile_info,
+};
+
+/// Number of `FRAME_CONTEXTS_LOG2` bits used by `frame_context_idx`
+/// (libvpx `vp9_entropymode.h` — `FRAME_CONTEXTS = 4`,
+/// `FRAME_CONTEXTS_LOG2 = 2`).
+pub const FRAME_CONTEXTS_LOG2: u8 = 2;
 
 /// Decoded uncompressed-header. One value per VP9 frame. Field set
 /// depends on `kind`:
@@ -82,6 +91,38 @@ pub struct UncompressedHeader {
     /// signalled a render-size-different-from-frame-size; otherwise
     /// `None` (callers treat as identical to `(width, height)`).
     pub render_size: Option<(u32, u32)>,
+    /// Post-disposition fields (refresh_frame_context, the four
+    /// sub-blocks, and the trailing first_partition_size). `None` for
+    /// `ShowExistingFrame` since libvpx returns 0 immediately after
+    /// resolving the show slot; otherwise populated.
+    pub tail: Option<HeaderTail>,
+}
+
+/// Post-disposition fields of the uncompressed header — present for
+/// every frame except `ShowExistingFrame`. Mirrors libvpx
+/// `vp9_decodeframe.c:2781-2860`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HeaderTail {
+    /// `refresh_frame_context` (1 bit; 0 if `error_resilient_mode`).
+    /// libvpx :2782 / :2786.
+    pub refresh_frame_context: bool,
+    /// `frame_parallel_decoding_mode` (1 bit; forced to `true` if
+    /// `error_resilient_mode`). libvpx :2783 / :2787.
+    pub frame_parallel_decoding_mode: bool,
+    /// `frame_context_idx` (2 bits; index into the four frame context
+    /// banks). libvpx :2792.
+    pub frame_context_idx: u8,
+    /// Decoded loop-filter parameters.
+    pub loop_filter: LoopFilterParams,
+    /// Decoded quantization parameters.
+    pub quantization: QuantizationParams,
+    /// Decoded segmentation parameters.
+    pub segmentation: SegmentationParams,
+    /// Decoded tile-info parameters.
+    pub tile_info: TileInfo,
+    /// `first_partition_size`: byte length of the compressed (boolean
+    /// coder) header partition. libvpx :2854-2858.
+    pub first_partition_size: u16,
 }
 
 /// Frame-kind variants. Mirrors the disposition libvpx makes after
@@ -183,7 +224,7 @@ pub fn parse_uncompressed_header(
     };
 
     // show_existing_frame branch — early return without populating
-    // bit-depth / color / size. libvpx :2663-2679.
+    // bit-depth / color / size / tail. libvpx :2663-2679.
     if rb.read_bit()? != 0 {
         let slot = rb.read_literal(3)? as u8;
         return Ok((
@@ -199,6 +240,7 @@ pub fn parse_uncompressed_header(
                 width: 0,
                 height: 0,
                 render_size: None,
+                tail: None,
             },
             rb.bytes_consumed(),
         ));
@@ -210,144 +252,164 @@ pub fn parse_uncompressed_header(
     let show_frame = rb.read_bit()? != 0;
     let error_resilient = rb.read_bit()? != 0;
 
+    // Each branch below populates (kind, color, width, height, render_size)
+    // and falls through to the shared post-disposition tail block.
+    let kind: FrameKind;
+    let color: ColorConfig;
+    let width: u32;
+    let height: u32;
+    let render_size: Option<(u32, u32)>;
+
     if frame_type == FrameType::Key {
         // Keyframe path. libvpx :2685-2703.
         read_sync_code(&mut rb)?;
-        let color = read_bitdepth_colorspace_sampling(&mut rb, profile)?;
-        let (width, height) = read_frame_size(&mut rb)?;
-        let render_size = read_render_size(&mut rb, width, height)?;
-        return Ok((
-            UncompressedHeader {
-                kind: FrameKind::KeyFrame,
-                profile,
-                show_frame,
-                error_resilient,
-                bit_depth: color.bit_depth,
-                color_space: color.color_space,
-                color_range: color.color_range,
-                chroma: color.chroma,
-                width,
-                height,
-                render_size,
-            },
-            rb.bytes_consumed(),
-        ));
-    }
-
-    // Inter-frame branch. libvpx :2704-2766.
-    let intra_only = if show_frame {
-        false
+        color = read_bitdepth_colorspace_sampling(&mut rb, profile)?;
+        (width, height) = read_frame_size(&mut rb)?;
+        render_size = read_render_size(&mut rb, width, height)?;
+        kind = FrameKind::KeyFrame;
     } else {
-        rb.read_bit()? != 0
-    };
-    let reset_frame_context = if error_resilient {
-        0
-    } else {
-        rb.read_literal(2)? as u8
-    };
 
-    if intra_only {
-        // Intra-only inter frame: sync code + maybe color config +
-        // refresh_frame_flags + frame_size. libvpx :2710-2735.
-        read_sync_code(&mut rb)?;
-        let color = if profile != Profile::Profile0 {
-            read_bitdepth_colorspace_sampling(&mut rb, profile)?
+        // Inter-frame branch. libvpx :2704-2766.
+        let intra_only = if show_frame {
+            false
         } else {
-            // Profile 0 intra-only inherits defaults per spec.
-            ColorConfig {
+            rb.read_bit()? != 0
+        };
+        let reset_frame_context = if error_resilient {
+            0
+        } else {
+            rb.read_literal(2)? as u8
+        };
+
+        if intra_only {
+            // Intra-only inter frame: sync code + maybe color config +
+            // refresh_frame_flags + frame_size. libvpx :2710-2735.
+            read_sync_code(&mut rb)?;
+            color = if profile != Profile::Profile0 {
+                read_bitdepth_colorspace_sampling(&mut rb, profile)?
+            } else {
+                // Profile 0 intra-only inherits defaults per spec.
+                ColorConfig {
+                    bit_depth: BitDepth::Eight,
+                    color_space: ColorSpace::Bt601,
+                    color_range: ColorRange::Studio,
+                    chroma: ChromaFormat::Yuv420,
+                }
+            };
+            let refresh_frame_flags = rb.read_literal(REF_FRAMES as u8)? as u8;
+            (width, height) = read_frame_size(&mut rb)?;
+            render_size = read_render_size(&mut rb, width, height)?;
+            kind = FrameKind::IntraOnly {
+                reset_frame_context,
+                refresh_frame_flags,
+            };
+        } else {
+            // Full inter-frame parse. Mirrors libvpx :2737-2765.
+            let refresh_frame_flags = rb.read_literal(REF_FRAMES as u8)? as u8;
+
+            let mut ref_frame_indices = [0u8; MAX_INTER_REFS];
+            let mut ref_frame_sign_biases = [false; MAX_INTER_REFS];
+            for i in 0..MAX_INTER_REFS {
+                ref_frame_indices[i] = rb.read_literal(REF_FRAMES_LOG2 as u8)? as u8;
+                ref_frame_sign_biases[i] = rb.read_bit()? != 0;
+            }
+
+            // setup_frame_size_with_refs. libvpx :1553-1604.
+            // For each ref: read 1 bit; if set AND that ref has a known size,
+            // inherit width/height. Otherwise fall through to a fresh
+            // frame_size read.
+            let mut inherited: Option<(u32, u32)> = None;
+            for ref_slot in ref_sizes.iter() {
+                let use_size = rb.read_bit()? != 0;
+                if use_size
+                    && inherited.is_none()
+                    && let Some(sz) = ref_slot
+                {
+                    inherited = Some(*sz);
+                }
+            }
+            (width, height) = if let Some(sz) = inherited {
+                sz
+            } else {
+                read_frame_size(&mut rb)?
+            };
+            render_size = read_render_size(&mut rb, width, height)?;
+
+            let allow_high_precision_mv = rb.read_bit()? != 0;
+            let interp_filter = read_interp_filter(&mut rb)?;
+
+            // Bit-depth and color inherit from the most recent
+            // key/intra-only frame; libvpx pulls them from `cm->`.
+            // The parser doesn't re-encode them here.
+            color = ColorConfig {
                 bit_depth: BitDepth::Eight,
-                color_space: ColorSpace::Bt601,
+                color_space: ColorSpace::Unknown,
                 color_range: ColorRange::Studio,
                 chroma: ChromaFormat::Yuv420,
-            }
-        };
-        let refresh_frame_flags = rb.read_literal(REF_FRAMES as u8)? as u8;
-        let (width, height) = read_frame_size(&mut rb)?;
-        let render_size = read_render_size(&mut rb, width, height)?;
-        return Ok((
-            UncompressedHeader {
-                kind: FrameKind::IntraOnly {
-                    reset_frame_context,
-                    refresh_frame_flags,
-                },
-                profile,
-                show_frame,
-                error_resilient,
-                bit_depth: color.bit_depth,
-                color_space: color.color_space,
-                color_range: color.color_range,
-                chroma: color.chroma,
-                width,
-                height,
-                render_size,
-            },
-            rb.bytes_consumed(),
-        ));
-    }
-
-    // Full inter-frame parse. Mirrors libvpx :2737-2765.
-    let refresh_frame_flags = rb.read_literal(REF_FRAMES as u8)? as u8;
-
-    let mut ref_frame_indices = [0u8; MAX_INTER_REFS];
-    let mut ref_frame_sign_biases = [false; MAX_INTER_REFS];
-    for i in 0..MAX_INTER_REFS {
-        ref_frame_indices[i] = rb.read_literal(REF_FRAMES_LOG2 as u8)? as u8;
-        ref_frame_sign_biases[i] = rb.read_bit()? != 0;
-    }
-
-    // setup_frame_size_with_refs. libvpx :1553-1604.
-    // For each ref: read 1 bit; if set AND that ref has a known size,
-    // inherit width/height and break. Otherwise fall through to a
-    // fresh frame_size read.
-    let mut inherited: Option<(u32, u32)> = None;
-    for ref_slot in ref_sizes.iter() {
-        let use_size = rb.read_bit()? != 0;
-        if use_size && inherited.is_none() {
-            // Lookup via ref_frame_indices is the next layer's job;
-            // here we use the caller-supplied slot. libvpx breaks out
-            // of the loop on first-found, but the bit stream still
-            // emits exactly REFS_PER_FRAME size-in-found bits — so we
-            // continue iterating to keep the bit cursor in sync,
-            // just no longer overwriting `inherited`.
-            if let Some(sz) = ref_slot {
-                inherited = Some(*sz);
-            }
-        }
-    }
-    let (width, height) = if let Some(sz) = inherited {
-        sz
-    } else {
-        read_frame_size(&mut rb)?
-    };
-    let render_size = read_render_size(&mut rb, width, height)?;
-
-    let allow_high_precision_mv = rb.read_bit()? != 0;
-    let interp_filter = read_interp_filter(&mut rb)?;
-
-    Ok((
-        UncompressedHeader {
-            kind: FrameKind::InterFrame {
+            };
+            kind = FrameKind::InterFrame {
                 reset_frame_context,
                 refresh_frame_flags,
                 ref_frame_indices,
                 ref_frame_sign_biases,
                 allow_high_precision_mv,
                 interp_filter,
-            },
+            };
+        }
+    }
+
+    // ----- Shared post-disposition tail. libvpx :2781-2858. -----
+
+    // refresh_frame_context / frame_parallel_decoding_mode (libvpx :2781-2788).
+    let (refresh_frame_context, frame_parallel_decoding_mode) = if error_resilient {
+        (false, true)
+    } else {
+        let rfc = rb.read_bit()? != 0;
+        let fpdm = rb.read_bit()? != 0;
+        (rfc, fpdm)
+    };
+
+    // frame_context_idx (libvpx :2792).
+    let frame_context_idx = rb.read_literal(FRAME_CONTEXTS_LOG2)? as u8;
+
+    // Sub-block parsers (libvpx :2819-2824).
+    let loop_filter = parse_loopfilter(&mut rb)?;
+    let quantization = parse_quantization(&mut rb)?;
+    let segmentation = parse_segmentation(&mut rb)?;
+    // mi_cols for tile_info — `(width + 7) >> 3` per libvpx
+    // mi-unit convention (`MI_SIZE_LOG2 = 3`).
+    let mi_cols = ((width + 7) >> 3) as i32;
+    let tile_info = parse_tile_info(&mut rb, mi_cols)?;
+
+    // first_partition_size: 16-bit, must be non-zero (libvpx :2854-2858).
+    let first_partition_size = rb.read_literal(16)? as u16;
+    if first_partition_size == 0 {
+        return Err(BitstreamError::InvalidFirstPartitionSize);
+    }
+
+    Ok((
+        UncompressedHeader {
+            kind,
             profile,
             show_frame,
             error_resilient,
-            // Bit-depth and color config inherit from the most recent
-            // key/intra-only frame; the parser doesn't re-encode them
-            // here (libvpx pulls them from `cm->` which the decoder
-            // state machine maintains across frames).
-            bit_depth: BitDepth::Eight,
-            color_space: ColorSpace::Unknown,
-            color_range: ColorRange::Studio,
-            chroma: ChromaFormat::Yuv420,
+            bit_depth: color.bit_depth,
+            color_space: color.color_space,
+            color_range: color.color_range,
+            chroma: color.chroma,
             width,
             height,
             render_size,
+            tail: Some(HeaderTail {
+                refresh_frame_context,
+                frame_parallel_decoding_mode,
+                frame_context_idx,
+                loop_filter,
+                quantization,
+                segmentation,
+                tile_info,
+                first_partition_size,
+            }),
         },
         rb.bytes_consumed(),
     ))
@@ -487,6 +549,7 @@ fn read_render_size(
 mod tests {
     use super::*;
     use crate::bitstream::raw::RawBitWriter;
+    use crate::bitstream::sub_parsers::get_tile_n_bits;
 
     /// Convenience: "no reference frames currently resolved" — the
     /// state at decoder boot and after a `need_resync`. Equivalent to
@@ -505,6 +568,42 @@ mod tests {
         let used = w.bytes_written();
         buf.truncate(used + 8); // tail padding for the byte-aligned reader
         buf
+    }
+
+    /// Append a minimal "all zeros" post-disposition tail to the
+    /// writer: 2 refresh/fpdm bits + 2 frame_context_idx bits + 10
+    /// loopfilter bits + 11 quantization bits + 1 segmentation
+    /// "disabled" bit + the right number of tile bits for `width` +
+    /// 16 bits first_partition_size = 1. Used by every test that
+    /// builds a non-show-existing valid header.
+    fn write_minimal_tail(w: &mut RawBitWriter, width: u32) {
+        // refresh_frame_context (1) + frame_parallel_decoding_mode (1)
+        w.write_bit(0);
+        w.write_bit(0);
+        // frame_context_idx (2 bits)
+        w.write_literal(0, 2);
+        // loopfilter: filter_level (6) + sharpness (3) + delta_enabled (1) = 10 bits
+        w.write_literal(0, 6);
+        w.write_literal(0, 3);
+        w.write_bit(0);
+        // quantization: base_qindex (8) + three "no delta" 1-bit flags
+        w.write_literal(0, 8);
+        w.write_bit(0);
+        w.write_bit(0);
+        w.write_bit(0);
+        // segmentation enabled = 0
+        w.write_bit(0);
+        // tile_info increment bits: the parser's loop terminates on
+        // the first 0 bit, so we only need to emit ONE zero (or zero
+        // bits if min == max). Then 1 zero for log2_tile_rows.
+        let mi_cols = ((width + 7) >> 3) as i32;
+        let (min_log2, max_log2) = get_tile_n_bits(mi_cols);
+        if max_log2 - min_log2 > 0 {
+            w.write_bit(0); // stops the column-increment loop on iteration 1
+        }
+        w.write_bit(0); // log2_tile_rows = 0
+        // first_partition_size = 1 (non-zero).
+        w.write_literal(1, 16);
     }
 
     #[test]
@@ -583,6 +682,7 @@ mod tests {
             w.write_literal(319, 16);
             w.write_literal(239, 16);
             w.write_bit(0); // render_and_frame_size_different = 0
+            write_minimal_tail(w, 320);
             // Pad.
             for _ in 0..8 {
                 w.write_literal(0, 8);
@@ -600,6 +700,16 @@ mod tests {
         assert_eq!(hdr.width, 320);
         assert_eq!(hdr.height, 240);
         assert_eq!(hdr.render_size, None);
+        let tail = hdr.tail.expect("non-show-existing frames must carry a tail");
+        assert!(!tail.refresh_frame_context);
+        assert!(!tail.frame_parallel_decoding_mode);
+        assert_eq!(tail.frame_context_idx, 0);
+        assert_eq!(tail.first_partition_size, 1);
+        assert!(!tail.loop_filter.mode_ref_delta_enabled);
+        assert!(tail.quantization.is_lossless());
+        assert!(!tail.segmentation.enabled);
+        assert_eq!(tail.tile_info.log2_tile_cols, 0);
+        assert_eq!(tail.tile_info.log2_tile_rows, 0);
     }
 
     #[test]
@@ -622,6 +732,7 @@ mod tests {
             w.write_bit(1); // render different
             w.write_literal(639, 16); // render 640x360
             w.write_literal(359, 16);
+            write_minimal_tail(w, 1920);
             for _ in 0..8 {
                 w.write_literal(0, 8);
             }
@@ -633,6 +744,7 @@ mod tests {
         assert_eq!(hdr.color_space, ColorSpace::Bt709);
         assert_eq!(hdr.color_range, ColorRange::Full);
         assert_eq!(hdr.render_size, Some((640, 360)));
+        assert!(hdr.tail.is_some());
     }
 
     #[test]
@@ -681,6 +793,7 @@ mod tests {
             w.write_literal(319, 16); // width-1
             w.write_literal(239, 16); // height-1
             w.write_bit(0); // no render size
+            write_minimal_tail(w, 320);
             for _ in 0..8 {
                 w.write_literal(0, 8);
             }
@@ -734,6 +847,7 @@ mod tests {
             w.write_bit(0); // no render size
             w.write_bit(1); // allow_high_precision_mv
             w.write_bit(1); // interp_filter = Switchable
+            write_minimal_tail(w, 640);
             for _ in 0..8 {
                 w.write_literal(0, 8);
             }
@@ -793,6 +907,7 @@ mod tests {
             // interp_filter = literal index 1 → EightTap.
             w.write_bit(0); // not switchable
             w.write_literal(1, 2); // literal index → EightTap
+            write_minimal_tail(w, 1920);
             for _ in 0..8 {
                 w.write_literal(0, 8);
             }
@@ -844,6 +959,7 @@ mod tests {
             w.write_bit(0);
             w.write_bit(0);
             w.write_literal(2, 2); // EightTapSharp
+            write_minimal_tail(w, 256);
             for _ in 0..8 {
                 w.write_literal(0, 8);
             }
@@ -851,5 +967,48 @@ mod tests {
         let (hdr, _) = parse_uncompressed_header(&buf, &NO_REFS).expect("falls through");
         assert_eq!(hdr.width, 256);
         assert_eq!(hdr.height, 256);
+    }
+
+    /// `first_partition_size = 0` triggers `InvalidFirstPartitionSize`
+    /// (libvpx :2856-2858).
+    #[test]
+    fn invalid_first_partition_size_rejected() {
+        let buf = build_header(|w| {
+            // Minimal keyframe up through render-size = 0.
+            w.write_literal(sync::FRAME_MARKER as u32, 2);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(1);
+            w.write_bit(0);
+            w.write_literal(sync::SYNC_CODE_0 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_1 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_2 as u32, 8);
+            w.write_literal(ColorSpace::Bt601 as u32, 3);
+            w.write_bit(0); // studio
+            w.write_literal(319, 16);
+            w.write_literal(239, 16);
+            w.write_bit(0); // no render size
+            // Tail with first_partition_size = 0.
+            w.write_bit(0); // refresh_frame_context
+            w.write_bit(0); // frame_parallel_decoding_mode
+            w.write_literal(0, 2); // frame_context_idx
+            w.write_literal(0, 6); // loopfilter filter_level
+            w.write_literal(0, 3); // sharpness
+            w.write_bit(0); // delta_enabled
+            w.write_literal(0, 8); // base_qindex
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(0); // segmentation disabled
+            w.write_bit(0); // log2_tile_rows = 0 (no col bits for width 320)
+            w.write_literal(0, 16); // first_partition_size = 0 → reject
+            for _ in 0..8 {
+                w.write_literal(0, 8);
+            }
+        });
+        let err = parse_uncompressed_header(&buf, &NO_REFS).unwrap_err();
+        assert_eq!(err, BitstreamError::InvalidFirstPartitionSize);
     }
 }
