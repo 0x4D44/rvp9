@@ -92,6 +92,19 @@ pub enum BitstreamError {
         reason: super::superframe::SuperframeIndexErrorReason,
     },
 
+    /// The compressed-header boolean decoder failed to initialise:
+    /// the leading marker bit at probability 128 wasn't zero.
+    /// Mirrors libvpx's bool-coder init failure at
+    /// `vpx_dsp/bitreader.c:21-36`, surfaced as `VPX_CODEC_MEM_ERROR`
+    /// in `vp9_decodeframe.c:2871-2874`.
+    CompressedHeaderInvalidMarker,
+
+    /// The compressed-header boolean decoder ran past the end of its
+    /// partition during parse. Mirrors libvpx's
+    /// `vpx_reader_has_error` post-decode check at
+    /// `vp9_decodeframe.c:2910`.
+    CompressedHeaderReaderError,
+
     /// A per-tile size prefix declared more bytes than the input
     /// slice had remaining. Mirrors libvpx
     /// `vp9_decodeframe.c:1669-1671`
@@ -136,6 +149,12 @@ impl fmt::Display for BitstreamError {
             }
             Self::InvalidFirstPartitionSize => {
                 f.write_str("invalid first_partition_size: 0 (compressed header must be non-empty)")
+            }
+            Self::CompressedHeaderInvalidMarker => {
+                f.write_str("compressed-header boolean decoder: invalid marker bit")
+            }
+            Self::CompressedHeaderReaderError => {
+                f.write_str("compressed-header boolean decoder: read past end of partition")
             }
             Self::InvalidTileSize {
                 tile_row,

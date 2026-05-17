@@ -39,24 +39,64 @@
 //!   a different wire format ("update bit at `MV_UPDATE_PROB`,
 //!   then a 7-bit literal forced odd") and **not** `diff_update_prob`.
 //!
-//! ## Deferred
+//! ## Top-level driver (Task 1e.5)
 //!
-//! - Task 1e.5: top-level [`parse_compressed_header`] that composes
-//!   all of the above given a `FrameContext`, `lossless`,
-//!   `intra_only`, `tx_mode` (for non-lossless frames),
-//!   `interp_filter`, `compound_allowed`, `allow_high_precision_mv`.
+//! - [`parse_compressed_header`] composes every sub-parser above
+//!   in the order libvpx `read_compressed_header`
+//!   (`vp9_decodeframe.c:2863-2911`) does. Takes the
+//!   compressed-header byte slice + the active [`FrameContext`] +
+//!   a [`CompressedHeaderOptions`] descriptor; returns
+//!   `(tx_mode, reference_mode)` as a [`CompressedHeaderResult`].
 
 use super::error::BitstreamError;
-use super::frame::ReferenceMode;
+use super::frame::{InterpFilter, ReferenceMode};
 use crate::entropy::{
     BLOCK_SIZE_GROUPS, BoolReader, CLASS0_SIZE, COEF_BANDS, COEFF_CONTEXTS, COMP_INTER_CONTEXTS,
-    CoeffProbsModel, DefaultTxProbs, INTER_MODE_CONTEXTS, INTER_MODES, INTRA_INTER_CONTEXTS,
-    INTRA_MODES, MV_CLASSES, MV_FP_SIZE, MV_JOINTS, MV_OFFSET_BITS, NmvContext,
-    PARTITION_CONTEXTS, PARTITION_TYPES, PLANE_TYPES, REF_CONTEXTS, REF_TYPES, SKIP_CONTEXTS,
-    SWITCHABLE_FILTER_CONTEXTS, SWITCHABLE_FILTERS, TX_SIZES, UNCONSTRAINED_NODES,
+    CoeffProbsModel, DefaultTxProbs, FrameContext, INTER_MODE_CONTEXTS, INTER_MODES,
+    INTRA_INTER_CONTEXTS, INTRA_MODES, MV_CLASSES, MV_FP_SIZE, MV_JOINTS, MV_OFFSET_BITS,
+    NmvContext, PARTITION_CONTEXTS, PARTITION_TYPES, PLANE_TYPES, REF_CONTEXTS, REF_TYPES,
+    SKIP_CONTEXTS, SWITCHABLE_FILTER_CONTEXTS, SWITCHABLE_FILTERS, TX_SIZES, UNCONSTRAINED_NODES,
     diff_update_prob,
 };
 use crate::transforms::TxMode;
+
+/// Per-frame state the compressed-header parser needs from the
+/// uncompressed-header parser. All five fields are derived from
+/// values the uncompressed header decodes.
+#[derive(Copy, Clone, Debug)]
+pub struct CompressedHeaderOptions {
+    /// Lossless mode (`base_qindex == 0 && y_dc_delta_q == 0 &&
+    /// uv_dc_delta_q == 0 && uv_ac_delta_q == 0`). When set,
+    /// `tx_mode` is forced to `OnlyTx4x4` (the field is not read
+    /// from the stream).
+    pub lossless: bool,
+    /// True for keyframes and intra-only frames. When set, the
+    /// inter-frame branch of `read_compressed_header` is skipped
+    /// entirely. Mirrors libvpx `frame_is_intra_only`.
+    pub intra_only: bool,
+    /// Interp filter from the uncompressed header. The
+    /// switchable-interp-probs sub-parser is only invoked when
+    /// this is [`InterpFilter::Switchable`].
+    pub interp_filter: InterpFilter,
+    /// True iff the active reference frames allow compound
+    /// reference (at least two go in opposite time directions).
+    /// Mirrors libvpx `vp9_compound_reference_allowed`.
+    pub compound_allowed: bool,
+    /// `allow_high_precision_mv` from the uncompressed header.
+    pub allow_high_precision_mv: bool,
+}
+
+/// Result of [`parse_compressed_header`] — the two frame-scope
+/// values that the per-block decoder needs.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct CompressedHeaderResult {
+    /// `cm->tx_mode` (see [`TxMode`]).
+    pub tx_mode: TxMode,
+    /// `cm->reference_mode` (see [`ReferenceMode`]). Always
+    /// [`ReferenceMode::Single`] for intra-only frames (the
+    /// inter branch never runs).
+    pub reference_mode: ReferenceMode,
+}
 
 /// libvpx `MV_UPDATE_PROB` (`vp9_entropymv.h:35`). The threshold the
 /// boolean coder uses for each MV-prob's update gate bit. Numerically
@@ -424,6 +464,95 @@ pub fn read_mv_probs(
         }
     }
     Ok(())
+}
+
+/// Parse a complete compressed-header partition over `data` and
+/// apply every diff_update to `fc`. Mirrors libvpx
+/// `read_compressed_header` (`vp9_decodeframe.c:2863-2911`).
+///
+/// Walk order (must remain byte-for-byte identical to libvpx):
+///
+/// 1. `tx_mode = lossless ? OnlyTx4x4 : read_tx_mode(r)`.
+/// 2. If `tx_mode == TxModeSelect`, `read_tx_mode_probs(&fc.tx_probs)`.
+/// 3. `read_coef_probs(&fc.coef_probs, tx_mode)`.
+/// 4. `read_skip_probs(&fc.skip_probs)`.
+/// 5. If `!intra_only`, in this order:
+///    `read_inter_mode_probs` → (if `Switchable`)
+///    `read_switchable_interp_probs` → `read_intra_inter_probs` →
+///    `read_frame_reference_mode` → `read_frame_reference_mode_probs`
+///    → `read_y_mode_probs` → `read_partition_probs` →
+///    `read_mv_probs`.
+///
+/// Returns the `(tx_mode, reference_mode)` pair the per-block
+/// decoder consumes.
+///
+/// # Errors
+///
+/// - [`BitstreamError::CompressedHeaderInvalidMarker`] if the
+///   boolean decoder's marker-bit check fails on init.
+/// - [`BitstreamError::CompressedHeaderReaderError`] if the
+///   decoder ran past the end of `data` during parse.
+pub fn parse_compressed_header(
+    data: &[u8],
+    fc: &mut FrameContext,
+    opts: CompressedHeaderOptions,
+) -> Result<CompressedHeaderResult, BitstreamError> {
+    let mut r = BoolReader::new(data).map_err(|_| BitstreamError::CompressedHeaderInvalidMarker)?;
+
+    // 1. tx_mode (forced to OnlyTx4x4 in lossless frames).
+    let tx_mode = if opts.lossless {
+        TxMode::OnlyTx4x4
+    } else {
+        read_tx_mode(&mut r)
+    };
+
+    // 2. tx_mode probs (only for TxModeSelect).
+    if tx_mode == TxMode::TxModeSelect {
+        read_tx_mode_probs(&mut r, &mut fc.tx_probs)?;
+    }
+
+    // 3. Coef probs (gated per TX size by tx_mode).
+    read_coef_probs(&mut r, &mut fc.coef_probs, tx_mode)?;
+
+    // 4. Skip probs.
+    read_skip_probs(&mut r, &mut fc.skip_probs)?;
+
+    // 5. Inter-only branch.
+    let reference_mode = if opts.intra_only {
+        ReferenceMode::Single
+    } else {
+        read_inter_mode_probs(&mut r, &mut fc.inter_mode_probs)?;
+
+        if opts.interp_filter == InterpFilter::Switchable {
+            read_switchable_interp_probs(&mut r, &mut fc.switchable_interp_prob)?;
+        }
+
+        read_intra_inter_probs(&mut r, &mut fc.intra_inter_prob)?;
+
+        let reference_mode = read_frame_reference_mode(&mut r, opts.compound_allowed);
+        read_frame_reference_mode_probs(
+            &mut r,
+            reference_mode,
+            &mut fc.comp_inter_prob,
+            &mut fc.single_ref_prob,
+            &mut fc.comp_ref_prob,
+        )?;
+
+        read_y_mode_probs(&mut r, &mut fc.y_mode_prob)?;
+        read_partition_probs(&mut r, &mut fc.partition_prob)?;
+        read_mv_probs(&mut r, &mut fc.nmvc, opts.allow_high_precision_mv)?;
+
+        reference_mode
+    };
+
+    if r.has_error() {
+        return Err(BitstreamError::CompressedHeaderReaderError);
+    }
+
+    Ok(CompressedHeaderResult {
+        tx_mode,
+        reference_mode,
+    })
 }
 
 /// Per-TX-size body of [`read_coef_probs`]. Mirrors libvpx
@@ -965,6 +1094,314 @@ mod tests {
         let mut ctx = DEFAULT_NMV_CONTEXT;
         read_mv_probs(&mut r, &mut ctx, true).expect("ok");
         assert_eq!(ctx, DEFAULT_NMV_CONTEXT);
+    }
+
+    // ---- Top-level parse_compressed_header (Task 1e.5) ----
+
+    /// Helper: build a compressed-header byte slice the slow way —
+    /// by re-writing every sub-parser's wire format via `BoolWriter`.
+    /// Used by the integration tests below.
+    fn build_compressed_header<F>(f: F) -> Vec<u8>
+    where
+        F: FnOnce(&mut BoolWriter),
+    {
+        let mut buf = vec![0u8; 4096];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        f(&mut w);
+        let size = w.stop_encode().expect("ok");
+        buf.truncate(size);
+        buf
+    }
+
+    /// `parse_compressed_header` over a lossless intra-only frame
+    /// with every sub-parser's gate bit = 0:
+    /// - `tx_mode` forced to `OnlyTx4x4` (no field read).
+    /// - `read_coef_probs` visits TX_4×4 only with a 0 gate bit.
+    /// - `read_skip_probs` visits 3 slots with 0 gate bits.
+    /// - Inter branch skipped (`intra_only == true`).
+    ///
+    /// Result: `(OnlyTx4x4, Single)`; `fc` unchanged.
+    #[test]
+    fn parse_compressed_header_lossless_intra_only_no_update() {
+        use crate::entropy::{DIFF_UPDATE_PROB, FrameContext};
+
+        let buf = build_compressed_header(|w| {
+            // Coef-probs gate for TX_4×4 = 0 (skip).
+            w.write_bit(0);
+            // Skip probs: 3 zero gates.
+            for _ in 0..SKIP_CONTEXTS {
+                w.write(0, DIFF_UPDATE_PROB);
+            }
+            // Pad with zero bits — the BoolReader's marker bit check
+            // happens at construction.
+            for _ in 0..16 {
+                w.write_bit(0);
+            }
+        });
+
+        let mut fc = FrameContext::new_default();
+        let original = fc.clone();
+        let opts = CompressedHeaderOptions {
+            lossless: true,
+            intra_only: true,
+            interp_filter: InterpFilter::EightTap, // ignored on intra
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+        let result = parse_compressed_header(&buf, &mut fc, opts).expect("ok");
+        assert_eq!(result.tx_mode, TxMode::OnlyTx4x4);
+        assert_eq!(result.reference_mode, ReferenceMode::Single);
+        assert_eq!(fc, original);
+    }
+
+    /// `parse_compressed_header` over a non-lossless intra-only frame
+    /// with `tx_mode = OnlyTx4x4` (the smallest non-lossless case).
+    /// Pins:
+    /// - 2-bit tx_mode literal = `0` (decoded to `OnlyTx4x4`).
+    /// - No tx_mode_probs (only fires on `TxModeSelect`).
+    /// - 1 coef-probs gate for TX_4×4.
+    /// - 3 skip-probs gates.
+    /// - No inter branch.
+    #[test]
+    fn parse_compressed_header_non_lossless_intra_only_tx4x4() {
+        use crate::entropy::{DIFF_UPDATE_PROB, FrameContext};
+
+        let buf = build_compressed_header(|w| {
+            // tx_mode = 0 (OnlyTx4x4), 2-bit literal.
+            w.write_literal(0, 2);
+            // Coef probs gate = 0.
+            w.write_bit(0);
+            // Skip probs: 3 zero gates.
+            for _ in 0..SKIP_CONTEXTS {
+                w.write(0, DIFF_UPDATE_PROB);
+            }
+            for _ in 0..16 {
+                w.write_bit(0);
+            }
+        });
+
+        let mut fc = FrameContext::new_default();
+        let original = fc.clone();
+        let opts = CompressedHeaderOptions {
+            lossless: false,
+            intra_only: true,
+            interp_filter: InterpFilter::EightTap,
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+        let result = parse_compressed_header(&buf, &mut fc, opts).expect("ok");
+        assert_eq!(result.tx_mode, TxMode::OnlyTx4x4);
+        assert_eq!(result.reference_mode, ReferenceMode::Single);
+        assert_eq!(fc, original);
+    }
+
+    /// `parse_compressed_header` with `tx_mode = TxModeSelect` (2-bit
+    /// literal = 3 + extra bit = 1) triggers `read_tx_mode_probs`
+    /// (12 extra slots). All gates zero → fc unchanged.
+    #[test]
+    fn parse_compressed_header_tx_mode_select_visits_tx_mode_probs() {
+        use crate::entropy::{DIFF_UPDATE_PROB, FrameContext};
+
+        let buf = build_compressed_header(|w| {
+            // tx_mode = TxModeSelect (literal 3 then extra-bit 1).
+            w.write_literal(3, 2);
+            w.write_bit(1);
+            // read_tx_mode_probs: 12 zero gates.
+            for _ in 0..12 {
+                w.write(0, DIFF_UPDATE_PROB);
+            }
+            // Coef probs gate per TX size: all zero (4 gates).
+            for _ in 0..TX_SIZES {
+                w.write_bit(0);
+            }
+            // Skip probs: 3 zero gates.
+            for _ in 0..SKIP_CONTEXTS {
+                w.write(0, DIFF_UPDATE_PROB);
+            }
+            for _ in 0..16 {
+                w.write_bit(0);
+            }
+        });
+
+        let mut fc = FrameContext::new_default();
+        let original = fc.clone();
+        let opts = CompressedHeaderOptions {
+            lossless: false,
+            intra_only: true,
+            interp_filter: InterpFilter::EightTap,
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+        let result = parse_compressed_header(&buf, &mut fc, opts).expect("ok");
+        assert_eq!(result.tx_mode, TxMode::TxModeSelect);
+        assert_eq!(result.reference_mode, ReferenceMode::Single);
+        assert_eq!(fc, original);
+    }
+
+    /// `parse_compressed_header` over an inter frame with every
+    /// sub-parser's gate bit = 0 and `interp_filter = Switchable`
+    /// (forces the switchable-interp-probs sub-parser to run).
+    /// Compound-disallowed → reference_mode = Single.
+    /// allow_hp = false → no MV high-precision sub-walk.
+    /// All gates 0 → fc unchanged.
+    #[test]
+    fn parse_compressed_header_inter_no_update_compound_disallowed() {
+        use crate::entropy::{DIFF_UPDATE_PROB, FrameContext};
+
+        // Slot counts:
+        //   inter_mode_probs: 21
+        //   switchable_interp_probs: 8 (interp_filter == Switchable)
+        //   intra_inter_prob: 4
+        //   reference_mode: 0 bits (compound_disallowed → Single)
+        //   reference_mode_probs (Single): 10 (REF_CONTEXTS*2)
+        //   y_mode_probs: 36
+        //   partition_probs: 48
+        //   mv_probs (no HP): 65
+        let buf = build_compressed_header(|w| {
+            // tx_mode = 0 (OnlyTx4x4).
+            w.write_literal(0, 2);
+            // Coef probs gate = 0.
+            w.write_bit(0);
+            // Skip probs.
+            for _ in 0..SKIP_CONTEXTS {
+                w.write(0, DIFF_UPDATE_PROB);
+            }
+            // Inter mode probs: 21 zero gates.
+            for _ in 0..21 {
+                w.write(0, DIFF_UPDATE_PROB);
+            }
+            // Switchable interp probs: 8 zero gates.
+            for _ in 0..8 {
+                w.write(0, DIFF_UPDATE_PROB);
+            }
+            // Intra/inter probs: 4 zero gates.
+            for _ in 0..INTRA_INTER_CONTEXTS {
+                w.write(0, DIFF_UPDATE_PROB);
+            }
+            // No reference_mode bits (compound_allowed = false).
+            // reference_mode_probs (Single): single_ref only, 10 gates.
+            for _ in 0..(REF_CONTEXTS * 2) {
+                w.write(0, DIFF_UPDATE_PROB);
+            }
+            // y_mode probs: 36 zero gates.
+            for _ in 0..36 {
+                w.write(0, DIFF_UPDATE_PROB);
+            }
+            // partition probs: 48 zero gates.
+            for _ in 0..48 {
+                w.write(0, DIFF_UPDATE_PROB);
+            }
+            // MV probs: 65 zero gates (no HP).
+            for _ in 0..65 {
+                w.write(0, MV_UPDATE_PROB);
+            }
+            for _ in 0..16 {
+                w.write_bit(0);
+            }
+        });
+
+        let mut fc = FrameContext::new_default();
+        let original = fc.clone();
+        let opts = CompressedHeaderOptions {
+            lossless: false,
+            intra_only: false,
+            interp_filter: InterpFilter::Switchable,
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+        let result = parse_compressed_header(&buf, &mut fc, opts).expect("ok");
+        assert_eq!(result.tx_mode, TxMode::OnlyTx4x4);
+        assert_eq!(result.reference_mode, ReferenceMode::Single);
+        assert_eq!(fc, original);
+    }
+
+    /// `parse_compressed_header` over an inter frame with
+    /// `compound_allowed = true` and the 2-bit reference-mode field
+    /// = `(1, 1)` → `ReferenceMode::Select`. This forces the full
+    /// reference-mode-probs walk (all 3 sub-tables: 5 + 10 + 5 = 20
+    /// gates). `interp_filter = Bilinear` (not switchable) skips
+    /// the switchable-interp-probs sub-parser. `allow_hp = true`
+    /// triggers the 4 extra MV-HP gates (69 total).
+    #[test]
+    fn parse_compressed_header_inter_select_with_hp_no_update() {
+        use crate::entropy::{DIFF_UPDATE_PROB, FrameContext};
+
+        let buf = build_compressed_header(|w| {
+            // tx_mode = 0.
+            w.write_literal(0, 2);
+            w.write_bit(0); // coef-probs gate
+            for _ in 0..SKIP_CONTEXTS {
+                w.write(0, DIFF_UPDATE_PROB);
+            }
+            for _ in 0..21 {
+                w.write(0, DIFF_UPDATE_PROB); // inter_mode_probs
+            }
+            // No switchable_interp_probs (interp_filter != Switchable)
+            for _ in 0..INTRA_INTER_CONTEXTS {
+                w.write(0, DIFF_UPDATE_PROB); // intra_inter
+            }
+            // reference_mode = Select: first bit 1, second bit 1.
+            w.write_bit(1);
+            w.write_bit(1);
+            // reference_mode_probs (Select): visit all 3 tables.
+            for _ in 0..COMP_INTER_CONTEXTS {
+                w.write(0, DIFF_UPDATE_PROB);
+            }
+            for _ in 0..(REF_CONTEXTS * 2) {
+                w.write(0, DIFF_UPDATE_PROB);
+            }
+            for _ in 0..REF_CONTEXTS {
+                w.write(0, DIFF_UPDATE_PROB);
+            }
+            for _ in 0..36 {
+                w.write(0, DIFF_UPDATE_PROB); // y_mode
+            }
+            for _ in 0..48 {
+                w.write(0, DIFF_UPDATE_PROB); // partition
+            }
+            for _ in 0..69 {
+                w.write(0, MV_UPDATE_PROB); // mv with HP
+            }
+            for _ in 0..16 {
+                w.write_bit(0);
+            }
+        });
+
+        let mut fc = FrameContext::new_default();
+        let original = fc.clone();
+        let opts = CompressedHeaderOptions {
+            lossless: false,
+            intra_only: false,
+            interp_filter: InterpFilter::Bilinear,
+            compound_allowed: true,
+            allow_high_precision_mv: true,
+        };
+        let result = parse_compressed_header(&buf, &mut fc, opts).expect("ok");
+        assert_eq!(result.tx_mode, TxMode::OnlyTx4x4);
+        assert_eq!(result.reference_mode, ReferenceMode::Select);
+        assert_eq!(fc, original);
+    }
+
+    /// A buffer whose first byte has its high bit set causes the
+    /// bool-reader marker-bit check to fail (the first read at prob
+    /// 128 returns 1, libvpx convention says marker-bit-must-be-zero).
+    /// `parse_compressed_header` maps this to
+    /// `CompressedHeaderInvalidMarker`.
+    #[test]
+    fn parse_compressed_header_bad_marker_returns_invalid_marker() {
+        use crate::entropy::FrameContext;
+        let mut fc = FrameContext::new_default();
+        let opts = CompressedHeaderOptions {
+            lossless: false,
+            intra_only: true,
+            interp_filter: InterpFilter::EightTap,
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+        // First byte = 0xff → marker bit (first MSB) = 1.
+        let err = parse_compressed_header(&[0xff, 0, 0, 0], &mut fc, opts)
+            .expect_err("must fail");
+        assert!(matches!(err, BitstreamError::CompressedHeaderInvalidMarker));
     }
 
     /// MV-prob update wire format: gate=1, literal=`v` → slot becomes

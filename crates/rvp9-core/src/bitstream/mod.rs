@@ -33,7 +33,8 @@ pub mod superframe;
 pub mod tile;
 
 pub use compressed_header::{
-    MV_UPDATE_PROB, TX_SIZE_CONTEXTS, read_coef_probs, read_frame_reference_mode,
+    CompressedHeaderOptions, CompressedHeaderResult, MV_UPDATE_PROB, TX_SIZE_CONTEXTS,
+    parse_compressed_header, read_coef_probs, read_frame_reference_mode,
     read_frame_reference_mode_probs, read_inter_mode_probs, read_intra_inter_probs, read_mv_probs,
     read_partition_probs, read_skip_probs, read_switchable_interp_probs, read_tx_mode,
     read_tx_mode_probs, read_y_mode_probs, tx_mode_to_biggest_tx_size,
