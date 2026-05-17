@@ -52,6 +52,7 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 7.3-4 (encoder 12-slot pool, tile-disjoint views) | ⏸️ |
 | 8.1 (rvp9-decoder skeleton wiring bitstream layer) | ✅ done | `64c3cc5` |
 | 8.1b (`decode_show_existing_frame` end-to-end path) | ✅ done | `0bd87d9` |
+| 8.1c (`Decoder::parse_compressed_partition` wires Task 1e in) | ✅ done | `20bc60d` |
 | 8.2+ (compressed-header → tile decode → pixel reconstruction) | ⏸️ |
 | 1e.1 (`vp9_diff_update_prob` building block) | ✅ done | `51178fa` |
 | 1e.2 (compressed-header scalar-prob sub-parsers) | ✅ done | `4d9350c` |
@@ -80,8 +81,8 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 8 (decoder integration) | ⏸️ |
 | 9 (vpxdec conformance gate) | ⏸️ |
 
-rvp9-core: 336 unit tests + rvp9-decoder: 8 unit tests = **344 total**.
-~16500 lines in rvp9-core + ~580 lines in rvp9-decoder.
+rvp9-core: 336 unit tests + rvp9-decoder: 10 unit tests = **346 total**.
+~16500 lines in rvp9-core + ~770 lines in rvp9-decoder.
 `cargo test`, `cargo clippy -D warnings` clean.
 
 **The rvp9-decoder skeleton is live with the first complete decode
