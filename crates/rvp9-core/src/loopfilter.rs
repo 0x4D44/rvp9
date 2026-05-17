@@ -42,17 +42,26 @@
 //!   [`mask::build_masks`] / [`mask::build_y_mask`] functions.
 //!   Task 6.3.3.
 //!
+//! ## Task 6.3.4 — `setup_mask` partition-tree walker
+//!
+//! - [`setup_mask`] — the top-level partition-tree walker that
+//!   calls `build_masks` / `build_y_mask` per leaf, switching on
+//!   `mip[0]->sb_type` at the 32 / 16 / 8 levels and handling the
+//!   per-partition shift bookkeeping. Mirrors libvpx
+//!   `vp9_setup_mask` (`vp9_loopfilter.c:880-1010`).
+//!
 //! ## Deferred
 //!
-//! - `vp9_setup_mask` — the top-level partition-tree walker that
-//!   calls `build_masks` per leaf and handles the per-partition
-//!   shift bookkeeping. Lands in Task 6.3.4 once the partition-
-//!   tree decoder is in place (Task 8.2+).
+//! - `vp9_adjust_mask` — frame-edge adjustments (TX_32X32 → TX_16X16
+//!   merge, 4×4-border promotion, frame-edge clear). Lands in a
+//!   separate Task 6.3.5.
 
 pub mod mask;
 pub mod mask_tables;
+pub mod setup_mask;
 
 pub use mask::{BuildMaskInputs, LoopFilterMask, build_masks, build_y_mask, uv_txsize_420};
+pub use setup_mask::setup_mask;
 pub use mask_tables::{
     ABOVE_64X64_TXFORM_MASK_UV, ABOVE_64X64_TXFORM_MASK_Y, ABOVE_BORDER_UV, ABOVE_BORDER_Y,
     ABOVE_PREDICTION_MASK_UV, ABOVE_PREDICTION_MASK_Y, LEFT_64X64_TXFORM_MASK_UV,
