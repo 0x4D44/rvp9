@@ -45,7 +45,8 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 2b.2 (keyframe mode probs) | ✅ done | `edb5c26` |
 | 2b.3 (Pareto8 distribution) | ✅ done | `4469cef` |
 | 2b.4 (coefficient probability tables) | ✅ done | `581198c` |
-| 2b.5 (MV probability tables + FRAME_CONTEXT struct) | ⏸️ |
+| 2b.5 (MV probability tables + FRAME_CONTEXT struct) | ✅ done | `6f4bd65` |
+| **Entropy probability layer COMPLETE** | ✅ | |
 | 1e (compressed-header parser, depends on 2b.*) | ⏸️ |
 | 1f-g (tile-buffer, superframe) | ⏸️ |
 | 5 (intra_pred) | ⏸️ |
@@ -54,8 +55,14 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 8 (decoder integration) | ⏸️ |
 | 9 (vpxdec conformance gate) | ⏸️ |
 
-rvp9-core: 171 unit tests passing, ~8800 lines of bit-exact-mirrored
+rvp9-core: 180 unit tests passing, ~9100 lines of bit-exact-mirrored
 code. `cargo test`, `cargo clippy -D warnings` clean.
+
+**Entropy probability-table layer is now complete.** The `FrameContext`
+struct aggregates every default probability table the decoder needs;
+`FrameContext::new_default()` constructs a fully-populated bank.
+Backward adaptation (`vp9_adapt_*_probs` / `merge_probs`) is the
+boolean-coder driver's responsibility and lands in Task 1e.
 
 **The uncompressed-header parser is complete.** Every byte libvpx
 `read_uncompressed_header` reads is now handled:
