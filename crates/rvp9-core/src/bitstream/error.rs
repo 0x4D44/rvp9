@@ -91,6 +91,21 @@ pub enum BitstreamError {
         /// Sub-reason — see [`super::superframe::SuperframeIndexErrorReason`].
         reason: super::superframe::SuperframeIndexErrorReason,
     },
+
+    /// A per-tile size prefix declared more bytes than the input
+    /// slice had remaining. Mirrors libvpx
+    /// `vp9_decodeframe.c:1669-1671`
+    /// ("Truncated packet or corrupt tile size").
+    InvalidTileSize {
+        /// Tile row index where the failure occurred.
+        tile_row: u32,
+        /// Tile column index where the failure occurred.
+        tile_col: u32,
+        /// The size the 4-byte BE prefix decoded to.
+        declared: usize,
+        /// Bytes actually remaining when the prefix was read.
+        available: usize,
+    },
 }
 
 impl fmt::Display for BitstreamError {
@@ -122,6 +137,15 @@ impl fmt::Display for BitstreamError {
             Self::InvalidFirstPartitionSize => {
                 f.write_str("invalid first_partition_size: 0 (compressed header must be non-empty)")
             }
+            Self::InvalidTileSize {
+                tile_row,
+                tile_col,
+                declared,
+                available,
+            } => write!(
+                f,
+                "invalid tile size at row {tile_row}, col {tile_col}: declared {declared} bytes, only {available} available"
+            ),
             Self::InvalidSuperframeIndex { reason } => match reason {
                 super::superframe::SuperframeIndexErrorReason::TruncatedIndex {
                     declared,

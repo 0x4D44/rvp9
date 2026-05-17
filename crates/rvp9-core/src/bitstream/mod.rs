@@ -29,6 +29,7 @@ pub mod header;
 pub mod raw;
 pub mod sub_parsers;
 pub mod superframe;
+pub mod tile;
 
 pub use error::BitstreamError;
 pub use frame::{
@@ -44,6 +45,7 @@ pub use superframe::{
     MAX_SIZE_FIELD_BYTES, MAX_SUPERFRAME_FRAMES, Superframe, SuperframeIndexErrorReason,
     parse_superframe_index,
 };
+pub use tile::{TileBuffer, parse_tile_buffers};
 pub use sub_parsers::{
     LoopFilterParams, QuantizationParams, SegFeature, SegmentationParams, TileInfo, parse_loopfilter,
     parse_quantization, parse_segmentation, parse_tile_info,
