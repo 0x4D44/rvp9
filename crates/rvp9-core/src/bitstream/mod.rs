@@ -16,12 +16,20 @@
 //! - [`raw::RawBitWriter`] / [`raw::RawBitReader`] — MSB-first byte-level
 //!   bit packing, mirrors libvpx `vpx_dsp/bitwriter_buffer.{h,c}` and
 //!   `bitreader_buffer.{h,c}` bit-for-bit.
+//! - [`frame`] — frame-header type definitions (Profile / FrameType /
+//!   ColorSpace / ColorRange / BitDepth / ChromaFormat + sync constants).
 //!
-//! Frame header / compressed-header / tile-buffer / superframe assembly
-//! will land in follow-up commits to this Stage 3 task.
+//! Frame-header parser (the function that consumes a byte slice and
+//! produces a populated header struct), compressed-header glue,
+//! tile-buffer, and superframe assembly will land in follow-up commits.
 
 pub mod error;
+pub mod frame;
 pub mod raw;
 
 pub use error::BitstreamError;
+pub use frame::{
+    BitDepth, ChromaFormat, ColorRange, ColorSpace, FrameType, MAX_INTER_REFS, Profile,
+    REF_FRAMES, REF_FRAMES_LOG2,
+};
 pub use raw::{RawBitReader, RawBitWriter};
