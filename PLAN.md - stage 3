@@ -19,16 +19,26 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 4a (`quant` LUTs) | ✅ done | `b4960e2` |
 | 3a (`transforms` types + 4×4 scan) | ✅ done | `d8fbb04` |
 | 3b (`transforms` idct4×4) | ✅ done | `ddce967` |
+| 3c (`transforms` idct8×8) | ✅ done | `1a2eed4` |
+| 3d (`transforms` idct16×16 + wraplow fix) | ✅ done | `2b7c317` |
 | 1b-g (bitstream headers, tile, superframe) | ⏸️ |
 | 2b (entropy FRAME_CONTEXT + prob tables) | ⏸️ |
-| 3c+ (idct8/16/32, iadst, iht, larger scans) | ⏸️ |
+| 3e+ (idct32, iadst, iht, larger scans) | ⏸️ |
 | 5 (intra_pred) | ⏸️ |
 | 6 (loopfilter) | ⏸️ |
 | 7 (frame buffers) | ⏸️ |
 | 8 (decoder integration) | ⏸️ |
 | 9 (vpxdec conformance gate) | ⏸️ |
 
-rvp9-core: 52 unit tests passing, ~2300 ll of bit-exact-mirrored code.
-`cargo test`, `cargo clippy -D warnings` clean.
+rvp9-core: 69 unit tests passing, ~2900 lines of bit-exact-mirrored
+code. `cargo test`, `cargo clippy -D warnings` clean.
+
+Task 3d note: while implementing idct16 we discovered that the
+previously-committed idct4/idct8 lacked the implicit
+`int16_t step[]` truncation that libvpx relies on. Introduced
+`wraplow(x) = x as i16 as i32` helper and retrofitted all
+inverse-DCT kernels. Pinned by regression test
+`idct4x4_1_add_wraplow_truncation_boundary`. See divergence-ledger
+entry "2026-05-17 — Inverse-DCT step storage".
 
 Remove this file when /goal is cleared or reset.
