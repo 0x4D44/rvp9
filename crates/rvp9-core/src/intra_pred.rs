@@ -620,6 +620,300 @@ pub fn dc_predict_with_availability(
     }
 }
 
+// ============================================================================
+// Edge-builder
+// ============================================================================
+
+/// Maximum block side (`Tx32x32`) — used to size [`EdgeBuffers`].
+const MAX_BS: usize = 32;
+
+/// Sentinel for missing-above neighbours. Mirrors libvpx's `127` fill
+/// at `vp9_reconintra.c:345-346, 391-392`.
+pub const ABOVE_UNAVAILABLE_FILL: u8 = 127;
+
+/// Sentinel for missing-left neighbours. Mirrors libvpx's `129` fill
+/// at `vp9_reconintra.c:318, 343, 389`.
+pub const LEFT_UNAVAILABLE_FILL: u8 = 129;
+
+/// Scratch storage for the intra-pred edge-builder.
+///
+/// Mirrors libvpx's two stack-local arrays at
+/// `vp9_reconintra.c:270-272`:
+///
+/// ```c
+/// DECLARE_ALIGNED(16, uint8_t, left_col[32]);
+/// DECLARE_ALIGNED(16, uint8_t, above_data[64 + 16]);
+/// uint8_t *above_row = above_data + 16;
+/// ```
+///
+/// The combined layout matches libvpx so [`build_intra_predictors`]
+/// can write `above_row[-1]` (the top-left corner) into the byte at
+/// `above_data[15]`. The kernels consume `above` as a slice starting
+/// at `above_data[16]`, with up to `2 * bs == 64` valid bytes (D45 /
+/// D63 above-right extension).
+///
+/// Callers materialise an `EdgeBuffers` on the stack, hand it to
+/// [`build_intra_predictors`], and convert to a [`PredCtx`] via
+/// [`EdgeBuffers::pred_ctx`] for [`intra_predict`].
+#[repr(C, align(16))]
+#[derive(Copy, Clone)]
+pub struct EdgeBuffers {
+    /// 16 bytes of leading padding; byte `[15]` holds `above_left`
+    /// (libvpx's `above_row[-1]`). Bytes `[16..16 + 2*bs]` hold the
+    /// above row plus above-right extension.
+    pub above_data: [u8; MAX_BS * 2 + 16],
+    /// Left column. `bs` entries are written; trailing bytes are
+    /// untouched.
+    pub left_col: [u8; MAX_BS],
+}
+
+impl Default for EdgeBuffers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl EdgeBuffers {
+    /// Allocate a zeroed pair of scratch buffers.
+    #[inline]
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            above_data: [0u8; MAX_BS * 2 + 16],
+            left_col: [0u8; MAX_BS],
+        }
+    }
+
+    /// Borrow this buffer as a [`PredCtx`] for `bs`-pixel blocks. The
+    /// returned `above` slice spans `2 * bs` bytes (sufficient for the
+    /// `D45 / D63` above-right consumers); the `left` slice spans
+    /// `bs` bytes; `above_left` is read from `above_data[15]`.
+    #[inline]
+    #[must_use]
+    pub fn pred_ctx(&self, bs: usize) -> PredCtx<'_> {
+        debug_assert!(bs <= MAX_BS);
+        PredCtx {
+            above: &self.above_data[16..16 + 2 * bs],
+            left: &self.left_col[..bs],
+            above_left: self.above_data[15],
+        }
+    }
+}
+
+/// Mode → neighbour-need bitmask. Mirrors libvpx's `extend_modes`
+/// table at `vp9_reconintra.c:43-54`.
+const NEED_LEFT: u8 = 1 << 1;
+const NEED_ABOVE: u8 = 1 << 2;
+const NEED_ABOVERIGHT: u8 = 1 << 3;
+
+const fn extend_mask(mode: IntraMode) -> u8 {
+    match mode {
+        IntraMode::Dc => NEED_ABOVE | NEED_LEFT,
+        IntraMode::V => NEED_ABOVE,
+        IntraMode::H => NEED_LEFT,
+        IntraMode::D45 => NEED_ABOVERIGHT,
+        IntraMode::D135 => NEED_LEFT | NEED_ABOVE,
+        IntraMode::D117 => NEED_LEFT | NEED_ABOVE,
+        IntraMode::D153 => NEED_LEFT | NEED_ABOVE,
+        IntraMode::D207 => NEED_LEFT,
+        IntraMode::D63 => NEED_ABOVERIGHT,
+        IntraMode::Tm => NEED_LEFT | NEED_ABOVE,
+    }
+}
+
+/// Populate `edges` (above / left / above-left) from already-reconstructed
+/// pixels in `dst_plane`, applying the 127 / 129 unavailable-neighbour
+/// rules and the directional-mode `2 * bs` above-right extension.
+///
+/// Mirrors libvpx `build_intra_predictors` at
+/// `vp9/common/vp9_reconintra.c:263-403` for the 8-bit (non-HBD) path.
+///
+/// # Parameters
+///
+/// - `dst_plane`: read-only view of the destination plane. Must cover
+///   at least `dst_stride * (px_y + bs)` bytes (or `px_y` rows if
+///   `have_top` is false). `dst_plane[(px_y - 1) * dst_stride .. ]`
+///   is the row above; `dst_plane[r * dst_stride + (px_x - 1)]` is the
+///   leftward column.
+/// - `dst_stride`: plane stride in bytes.
+/// - `px_x`, `px_y`: top-left of the block being predicted, in
+///   plane-sample units.
+/// - `plane_width`, `plane_height`: plane dimensions in the same units
+///   (used to derive `right_clipped` / `bottom_clipped` per libvpx
+///   `vp9_reconintra.c:286-297, 302, 326, 354`).
+/// - `tx_size`: the transform size of the block.
+/// - `mode`: the prediction mode; selects which edges are populated
+///   via [`extend_mask`].
+/// - `have_top`: whether the row above is in-frame **and** already
+///   decoded. Mirrors libvpx `up_available` (`vp9_reconintra.c:411`).
+/// - `have_left`: whether the column to the left is in-frame and
+///   already decoded. Mirrors libvpx `left_available`.
+/// - `have_right`: whether the **top-right** neighbour TX block is
+///   in-frame and decoded — used by libvpx only for the `bs == 4`
+///   above-right fast path (`vp9_reconintra.c:337, 357-358, 365,
+///   379-385`). For TX blocks with `bs > 4` this flag is unused.
+/// - `edges`: scratch buffer overwritten by this call.
+///
+/// After the call, [`EdgeBuffers::pred_ctx`] returns a [`PredCtx`]
+/// ready for [`intra_predict`].
+#[allow(clippy::too_many_arguments)] // mirrors libvpx 1:1
+pub fn build_intra_predictors(
+    dst_plane: &[u8],
+    dst_stride: usize,
+    px_x: usize,
+    px_y: usize,
+    plane_width: usize,
+    plane_height: usize,
+    tx_size: crate::transforms::TxSize,
+    mode: IntraMode,
+    have_top: bool,
+    have_left: bool,
+    have_right: bool,
+    edges: &mut EdgeBuffers,
+) {
+    let bs = tx_size.side();
+    debug_assert!(bs <= MAX_BS);
+    debug_assert!(px_x < plane_width, "block top-left must be in-frame (x)");
+    debug_assert!(px_y < plane_height, "block top-left must be in-frame (y)");
+
+    let mask = extend_mask(mode);
+
+    // NEED_LEFT — mirrors vp9_reconintra.c:299-320.
+    if (mask & NEED_LEFT) != 0 {
+        if have_left {
+            // `ref = dst_plane[px_y * dst_stride + px_x]`; the leftward
+            // column we read is at `ref + i * ref_stride - 1`.
+            let base = px_y * dst_stride + px_x;
+            // Slow path if the block extends past the frame bottom
+            // (libvpx checks `xd->mb_to_bottom_edge < 0`, equivalent).
+            let extend_bottom_full = px_y + bs <= plane_height;
+            if extend_bottom_full {
+                for i in 0..bs {
+                    edges.left_col[i] = dst_plane[base + i * dst_stride - 1];
+                }
+            } else {
+                let extend_bottom = plane_height - px_y;
+                for i in 0..extend_bottom {
+                    edges.left_col[i] = dst_plane[base + i * dst_stride - 1];
+                }
+                // Replicate the last in-frame sample down. Mirrors
+                // vp9_reconintra.c:310-311.
+                let last = dst_plane[base + (extend_bottom - 1) * dst_stride - 1];
+                for i in extend_bottom..bs {
+                    edges.left_col[i] = last;
+                }
+            }
+        } else {
+            edges.left_col[..bs].fill(LEFT_UNAVAILABLE_FILL);
+        }
+    }
+
+    // NEED_ABOVE — mirrors vp9_reconintra.c:322-348.
+    if (mask & NEED_ABOVE) != 0 {
+        if have_top {
+            let above_ref_start = (px_y - 1) * dst_stride + px_x;
+            let right_clipped = px_x + bs > plane_width;
+            if right_clipped {
+                // Slow path: copy what's in-frame and replicate the
+                // last in-frame sample to fill `bs`.
+                // libvpx vp9_reconintra.c:328-334. Note libvpx skips
+                // the write entirely when `px_x > plane_width`, leaving
+                // `above_row` uninitialised; per LLD §8.3 the partition
+                // driver never asks intra-pred to predict a block whose
+                // top-left is outside the frame, so `px_x <= plane_width`
+                // holds.
+                let r = plane_width - px_x; // in [1, bs)
+                edges.above_data[16..16 + r]
+                    .copy_from_slice(&dst_plane[above_ref_start..above_ref_start + r]);
+                let last = edges.above_data[16 + r - 1];
+                edges.above_data[16 + r..16 + bs].fill(last);
+            } else {
+                edges.above_data[16..16 + bs]
+                    .copy_from_slice(&dst_plane[above_ref_start..above_ref_start + bs]);
+            }
+            // above_row[-1] — vp9_reconintra.c:343.
+            edges.above_data[15] = if have_left {
+                dst_plane[above_ref_start - 1]
+            } else {
+                LEFT_UNAVAILABLE_FILL
+            };
+        } else {
+            edges.above_data[16..16 + bs].fill(ABOVE_UNAVAILABLE_FILL);
+            edges.above_data[15] = ABOVE_UNAVAILABLE_FILL;
+        }
+    }
+
+    // NEED_ABOVERIGHT — mirrors vp9_reconintra.c:350-394.
+    if (mask & NEED_ABOVERIGHT) != 0 {
+        if have_top {
+            let above_ref_start = (px_y - 1) * dst_stride + px_x;
+            let right_clipped = px_x + bs > plane_width;
+            if right_clipped {
+                // Three sub-cases per libvpx vp9_reconintra.c:355-376.
+                if px_x + 2 * bs <= plane_width {
+                    // Full 2*bs above pixels are in-frame.
+                    if have_right && bs == 4 {
+                        edges.above_data[16..16 + 2 * bs].copy_from_slice(
+                            &dst_plane[above_ref_start..above_ref_start + 2 * bs],
+                        );
+                    } else {
+                        edges.above_data[16..16 + bs].copy_from_slice(
+                            &dst_plane[above_ref_start..above_ref_start + bs],
+                        );
+                        let last = edges.above_data[16 + bs - 1];
+                        edges.above_data[16 + bs..16 + 2 * bs].fill(last);
+                    }
+                } else if px_x + bs <= plane_width {
+                    // `bs` pixels in-frame; replicate to fill 2*bs.
+                    let r = plane_width - px_x; // in [bs, 2*bs)
+                    if have_right && bs == 4 {
+                        edges.above_data[16..16 + r].copy_from_slice(
+                            &dst_plane[above_ref_start..above_ref_start + r],
+                        );
+                        let last = edges.above_data[16 + r - 1];
+                        edges.above_data[16 + r..16 + 2 * bs].fill(last);
+                    } else {
+                        edges.above_data[16..16 + bs].copy_from_slice(
+                            &dst_plane[above_ref_start..above_ref_start + bs],
+                        );
+                        let last = edges.above_data[16 + bs - 1];
+                        edges.above_data[16 + bs..16 + 2 * bs].fill(last);
+                    }
+                } else {
+                    // Fewer than `bs` pixels in-frame.
+                    let r = plane_width - px_x; // in [1, bs)
+                    edges.above_data[16..16 + r].copy_from_slice(
+                        &dst_plane[above_ref_start..above_ref_start + r],
+                    );
+                    let last = edges.above_data[16 + r - 1];
+                    edges.above_data[16 + r..16 + 2 * bs].fill(last);
+                }
+            } else {
+                // Fast path: 2*bs above pixels available without clip.
+                edges.above_data[16..16 + bs]
+                    .copy_from_slice(&dst_plane[above_ref_start..above_ref_start + bs]);
+                if bs == 4 && have_right {
+                    edges.above_data[16 + bs..16 + 2 * bs].copy_from_slice(
+                        &dst_plane[above_ref_start + bs..above_ref_start + 2 * bs],
+                    );
+                } else {
+                    let last = edges.above_data[16 + bs - 1];
+                    edges.above_data[16 + bs..16 + 2 * bs].fill(last);
+                }
+            }
+            // above_row[-1] — vp9_reconintra.c:389.
+            edges.above_data[15] = if have_left {
+                dst_plane[above_ref_start - 1]
+            } else {
+                LEFT_UNAVAILABLE_FILL
+            };
+        } else {
+            edges.above_data[16..16 + 2 * bs].fill(ABOVE_UNAVAILABLE_FILL);
+            edges.above_data[15] = ABOVE_UNAVAILABLE_FILL;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1169,5 +1463,315 @@ mod tests {
             let dc = ((sum + bs as u32) / (2 * bs as u32)) as u8;
             assert!(dst.iter().all(|&v| v == dc));
         }
+    }
+
+    // -------- Edge-builder (`build_intra_predictors`) --------
+
+    use crate::transforms::TxSize;
+
+    /// Synthesise a plane: stride 64, height 64, fill cell `(y, x)` with
+    /// `(10 + y * 3 + x * 5) as u8` so every cell is uniquely identifiable.
+    fn synth_plane() -> (Vec<u8>, usize, usize, usize) {
+        let stride = 64;
+        let width = 64;
+        let height = 64;
+        let mut buf = vec![0u8; stride * height];
+        for y in 0..height {
+            for x in 0..width {
+                buf[y * stride + x] = (10u32 + y as u32 * 3 + x as u32 * 5) as u8;
+            }
+        }
+        (buf, stride, width, height)
+    }
+
+    #[test]
+    fn build_predictors_all_unavailable_yields_127_129() {
+        // Top-left frame corner with neither neighbour available — DC mode
+        // (NEED_ABOVE | NEED_LEFT). above and above_left should be 127;
+        // left should be 129. (Note: when have_top=false AND have_left=false,
+        // above_data[15] is set to 127 because the NEED_ABOVE branch sets it.)
+        let (plane, stride, w, h) = synth_plane();
+        let mut edges = EdgeBuffers::new();
+        // Use (1, 1) so the plane bounds-check still passes; but with
+        // have_top = have_left = false the function must NOT read pixels.
+        build_intra_predictors(
+            &plane, stride, /*px_x=*/ 1, /*px_y=*/ 1, w, h,
+            TxSize::Tx4x4, IntraMode::Dc,
+            /*have_top=*/ false, /*have_left=*/ false, /*have_right=*/ false,
+            &mut edges,
+        );
+        let ctx = edges.pred_ctx(4);
+        // DC mode (NEED_ABOVE | NEED_LEFT) only fills `bs` above samples;
+        // the trailing `bs` slots in the 2*bs window are not touched by
+        // the edge-builder. Compare only the bytes the kernel will read.
+        assert_eq!(&ctx.above[..4], &[127u8; 4][..]);
+        assert_eq!(ctx.left, &[129u8; 4][..]);
+        assert_eq!(ctx.above_left, 127);
+    }
+
+    #[test]
+    fn build_predictors_top_only_above_from_plane_left_is_129() {
+        let (plane, stride, w, h) = synth_plane();
+        let mut edges = EdgeBuffers::new();
+        let bs = 4;
+        let (px_x, px_y) = (10, 5);
+        build_intra_predictors(
+            &plane, stride, px_x, px_y, w, h,
+            TxSize::Tx4x4, IntraMode::Dc,
+            true, false, false, &mut edges,
+        );
+        let ctx = edges.pred_ctx(bs);
+        // above row = plane[(px_y - 1) * stride + px_x .. + bs]
+        let expected_above: Vec<u8> = (0..bs)
+            .map(|i| plane[(px_y - 1) * stride + px_x + i])
+            .collect();
+        assert_eq!(&ctx.above[..bs], &expected_above[..]);
+        assert_eq!(ctx.left, &[129u8; 4][..]);
+        // above_left: have_left=false → 129.
+        assert_eq!(ctx.above_left, 129);
+    }
+
+    #[test]
+    fn build_predictors_left_only_left_from_plane_above_is_127() {
+        let (plane, stride, w, h) = synth_plane();
+        let mut edges = EdgeBuffers::new();
+        let bs = 4;
+        let (px_x, px_y) = (8, 8);
+        build_intra_predictors(
+            &plane, stride, px_x, px_y, w, h,
+            TxSize::Tx4x4, IntraMode::Dc,
+            false, true, false, &mut edges,
+        );
+        let ctx = edges.pred_ctx(bs);
+        assert_eq!(&ctx.above[..bs], &[127u8; 4][..]);
+        let expected_left: Vec<u8> = (0..bs)
+            .map(|i| plane[(px_y + i) * stride + px_x - 1])
+            .collect();
+        assert_eq!(ctx.left, &expected_left[..]);
+        // NEED_ABOVE branch fires → above_left = 127.
+        assert_eq!(ctx.above_left, 127);
+    }
+
+    #[test]
+    fn build_predictors_both_available_above_left_from_plane() {
+        let (plane, stride, w, h) = synth_plane();
+        let mut edges = EdgeBuffers::new();
+        let bs = 4;
+        let (px_x, px_y) = (8, 8);
+        build_intra_predictors(
+            &plane, stride, px_x, px_y, w, h,
+            TxSize::Tx4x4, IntraMode::Dc,
+            true, true, false, &mut edges,
+        );
+        let ctx = edges.pred_ctx(bs);
+        let expected_above: Vec<u8> = (0..bs)
+            .map(|i| plane[(px_y - 1) * stride + px_x + i])
+            .collect();
+        let expected_left: Vec<u8> = (0..bs)
+            .map(|i| plane[(px_y + i) * stride + px_x - 1])
+            .collect();
+        assert_eq!(&ctx.above[..bs], &expected_above[..]);
+        assert_eq!(ctx.left, &expected_left[..]);
+        // above_left = plane[(px_y - 1) * stride + (px_x - 1)].
+        assert_eq!(ctx.above_left, plane[(px_y - 1) * stride + (px_x - 1)]);
+    }
+
+    #[test]
+    fn build_predictors_d45_above_right_replicated_without_have_right() {
+        // D45 needs 2*bs above pixels; with bs=8 the bs==4 fast-path
+        // does not apply, so above[bs..2*bs] are replicated from
+        // above[bs-1] regardless of `have_right`.
+        let (plane, stride, w, h) = synth_plane();
+        let mut edges = EdgeBuffers::new();
+        let bs = 8;
+        let (px_x, px_y) = (16, 8);
+        build_intra_predictors(
+            &plane, stride, px_x, px_y, w, h,
+            TxSize::Tx8x8, IntraMode::D45,
+            true, true, /*have_right=*/ false, &mut edges,
+        );
+        let ctx = edges.pred_ctx(bs);
+        let above_ref_start = (px_y - 1) * stride + px_x;
+        // Above row [0..bs] is the in-frame row.
+        for i in 0..bs {
+            assert_eq!(ctx.above[i], plane[above_ref_start + i]);
+        }
+        // Above row [bs..2*bs] is the replicated last byte.
+        let last = plane[above_ref_start + bs - 1];
+        for i in bs..2 * bs {
+            assert_eq!(ctx.above[i], last, "above[{i}] should be replicated");
+        }
+        assert_eq!(ctx.above_left, plane[above_ref_start - 1]);
+    }
+
+    #[test]
+    fn build_predictors_d45_4x4_have_right_reads_above_right_pixels() {
+        // bs == 4 + have_right + not right_clipped → libvpx fast path
+        // copies the next bs pixels from the plane (vp9_reconintra.c:383-384).
+        let (plane, stride, w, h) = synth_plane();
+        let mut edges = EdgeBuffers::new();
+        let bs = 4;
+        let (px_x, px_y) = (8, 4);
+        build_intra_predictors(
+            &plane, stride, px_x, px_y, w, h,
+            TxSize::Tx4x4, IntraMode::D45,
+            true, true, /*have_right=*/ true, &mut edges,
+        );
+        let ctx = edges.pred_ctx(bs);
+        let above_ref_start = (px_y - 1) * stride + px_x;
+        for i in 0..2 * bs {
+            assert_eq!(
+                ctx.above[i],
+                plane[above_ref_start + i],
+                "above[{i}] should come from plane (have_right fast path)"
+            );
+        }
+    }
+
+    #[test]
+    fn build_predictors_left_unavailable_above_left_falls_to_129() {
+        // V_PRED only sets above/above_left (NEED_ABOVE, no NEED_LEFT).
+        // With have_left=false, above_left should be 129.
+        let (plane, stride, w, h) = synth_plane();
+        let mut edges = EdgeBuffers::new();
+        let bs = 8;
+        let (px_x, px_y) = (0, 8);
+        build_intra_predictors(
+            &plane, stride, px_x, px_y, w, h,
+            TxSize::Tx8x8, IntraMode::V,
+            /*have_top=*/ true, /*have_left=*/ false, false, &mut edges,
+        );
+        let ctx = edges.pred_ctx(bs);
+        assert_eq!(ctx.above_left, 129);
+        // The above row comes from the plane.
+        let above_ref_start = (px_y - 1) * stride + px_x;
+        for i in 0..bs {
+            assert_eq!(ctx.above[i], plane[above_ref_start + i]);
+        }
+    }
+
+    #[test]
+    fn build_predictors_right_clipped_replicates_last_in_frame_sample() {
+        // px_x + bs > plane_width forces the slow path. We use a
+        // narrower synthetic plane.
+        let stride = 32;
+        let width = 12;
+        let height = 32;
+        let mut plane = vec![0u8; stride * height];
+        for y in 0..height {
+            for x in 0..width {
+                plane[y * stride + x] = (y as u32 * 7 + x as u32 * 11 + 3) as u8;
+            }
+        }
+        let mut edges = EdgeBuffers::new();
+        let bs = 8;
+        // Block at (px_x=8, px_y=8): px_x + bs = 16 > width=12 → slow path.
+        let (px_x, px_y) = (8, 8);
+        build_intra_predictors(
+            &plane, stride, px_x, px_y, width, height,
+            TxSize::Tx8x8, IntraMode::V,
+            true, true, false, &mut edges,
+        );
+        let ctx = edges.pred_ctx(bs);
+        let above_ref_start = (px_y - 1) * stride + px_x;
+        let r = width - px_x; // 4 in-frame samples
+        for i in 0..r {
+            assert_eq!(ctx.above[i], plane[above_ref_start + i]);
+        }
+        let last = plane[above_ref_start + r - 1];
+        for i in r..bs {
+            assert_eq!(ctx.above[i], last, "above[{i}] replicated");
+        }
+    }
+
+    #[test]
+    fn build_predictors_bottom_clipped_replicates_last_left_sample() {
+        // px_y + bs > plane_height forces the slow left-column path.
+        let stride = 32;
+        let width = 32;
+        let height = 12;
+        let mut plane = vec![0u8; stride * height];
+        for y in 0..height {
+            for x in 0..width {
+                plane[y * stride + x] = (y as u32 * 13 + x as u32 * 17 + 1) as u8;
+            }
+        }
+        let mut edges = EdgeBuffers::new();
+        let bs = 8;
+        // Block at (px_x=4, px_y=8): px_y + bs = 16 > height=12 → slow.
+        let (px_x, px_y) = (4, 8);
+        build_intra_predictors(
+            &plane, stride, px_x, px_y, width, height,
+            TxSize::Tx8x8, IntraMode::H,
+            true, true, false, &mut edges,
+        );
+        let ctx = edges.pred_ctx(bs);
+        let extend_bottom = height - px_y; // 4 in-frame rows
+        for i in 0..extend_bottom {
+            let want = plane[(px_y + i) * stride + (px_x - 1)];
+            assert_eq!(ctx.left[i], want, "left[{i}] in-frame");
+        }
+        let last = plane[(px_y + extend_bottom - 1) * stride + (px_x - 1)];
+        for i in extend_bottom..bs {
+            assert_eq!(ctx.left[i], last, "left[{i}] replicated");
+        }
+    }
+
+    #[test]
+    fn build_predictors_tx16x16_full_in_frame() {
+        // Larger tx_size — 16x16, fully in frame, both neighbours.
+        let (plane, stride, w, h) = synth_plane();
+        let mut edges = EdgeBuffers::new();
+        let bs = 16;
+        let (px_x, px_y) = (16, 16);
+        build_intra_predictors(
+            &plane, stride, px_x, px_y, w, h,
+            TxSize::Tx16x16, IntraMode::Tm,
+            true, true, false, &mut edges,
+        );
+        let ctx = edges.pred_ctx(bs);
+        let above_ref_start = (px_y - 1) * stride + px_x;
+        for i in 0..bs {
+            assert_eq!(ctx.above[i], plane[above_ref_start + i], "above[{i}]");
+        }
+        for i in 0..bs {
+            assert_eq!(
+                ctx.left[i],
+                plane[(px_y + i) * stride + px_x - 1],
+                "left[{i}]"
+            );
+        }
+        assert_eq!(ctx.above_left, plane[above_ref_start - 1]);
+    }
+
+    #[test]
+    fn build_predictors_then_intra_predict_round_trip() {
+        // End-to-end: build_intra_predictors → intra_predict produces
+        // the same V_PRED output as calling intra_predict with a
+        // hand-constructed PredCtx.
+        let (plane, stride, w, h) = synth_plane();
+        let mut edges = EdgeBuffers::new();
+        let bs = 4;
+        let (px_x, px_y) = (4, 4);
+        build_intra_predictors(
+            &plane, stride, px_x, px_y, w, h,
+            TxSize::Tx4x4, IntraMode::V,
+            true, true, false, &mut edges,
+        );
+        let mut dst_from_builder = [0u8; 16];
+        intra_predict(IntraMode::V, &mut dst_from_builder, 4, bs, edges.pred_ctx(bs));
+
+        // Reference path: build PredCtx by hand.
+        let above_ref_start = (px_y - 1) * stride + px_x;
+        let above: Vec<u8> = (0..bs).map(|i| plane[above_ref_start + i]).collect();
+        let left: Vec<u8> = (0..bs).map(|i| plane[(px_y + i) * stride + px_x - 1]).collect();
+        let manual_ctx = PredCtx {
+            above: &above,
+            left: &left,
+            above_left: plane[above_ref_start - 1],
+        };
+        let mut dst_manual = [0u8; 16];
+        intra_predict(IntraMode::V, &mut dst_manual, 4, bs, manual_ctx);
+        assert_eq!(dst_from_builder, dst_manual);
     }
 }
