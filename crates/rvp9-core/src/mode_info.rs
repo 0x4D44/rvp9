@@ -23,11 +23,14 @@
 //! per-block decoder pattern-match on `BlockMode` rather than
 //! threading a separate `is_inter` boolean.
 
-use crate::bitstream::{InterpFilter, MAX_SEGMENTS, SEG_TREE_PROBS};
+use crate::bitstream::{InterpFilter, MAX_SEGMENTS, SEG_TREE_PROBS, tx_mode_to_biggest_tx_size};
 use crate::block::{BlockSize, PARTITION_TYPES, PartitionType};
-use crate::entropy::{BoolReader, COMP_INTER_CONTEXTS, INTRA_INTER_CONTEXTS, REF_CONTEXTS, SKIP_CONTEXTS};
+use crate::entropy::{
+    BoolReader, COMP_INTER_CONTEXTS, DefaultTxProbs, INTRA_INTER_CONTEXTS, REF_CONTEXTS,
+    SKIP_CONTEXTS,
+};
 use crate::intra_pred::IntraMode;
-use crate::transforms::TxSize;
+use crate::transforms::{TxMode, TxSize};
 
 /// libvpx `vp9_segment_tree` (`vp9_seg_common.c:58-60`). A
 /// 14-entry balanced binary tree over the 8 segment IDs. Indexed
@@ -226,6 +229,163 @@ pub fn read_partition(r: &mut BoolReader<'_>, probs: &[u8; PARTITION_TYPES - 1])
     // Safety: PARTITION_TREE only contains negations of valid
     // PartitionType discriminants, so `from_u8` always succeeds.
     PartitionType::from_u8(raw as u8).expect("partition tree returns valid PartitionType")
+}
+
+/// Compute the 0..=1 `tx_size` context from the above + left
+/// [`ModeInfo`] neighbours. Mirrors libvpx `get_tx_size_context`
+/// (`vp9_pred_common.h:156-171`).
+///
+///
+/// The libvpx algorithm:
+/// - `above_ctx` = above neighbour's `tx_size` if the neighbour
+///   exists and is not skipped; else `max_tx_size`.
+/// - `left_ctx`  = same, for the left neighbour.
+/// - If either neighbour is missing, that side mirrors the other.
+/// - Result: `(above_ctx + left_ctx) > max_tx_size`.
+///
+/// This implementation accepts `Option<(TxSize, bool)>` for each
+/// neighbour (`Some((tx_size, skip))` if the block exists; `None`
+/// at the frame edge). The two-`Option<>`s are kept independent so
+/// the caller doesn't have to fabricate sentinels.
+///
+/// Note: only meaningful when `max_tx_size >= TX_8X8` — sub-8 blocks
+/// never reach the `read_selected_tx_size` path so don't need a
+/// context.
+///
+/// **Downstream wiring:** the per-block decoder must thread the
+/// actual above/left [`ModeInfo`] neighbours into this function.
+/// Until the neighbour grid (`above_mi` / `left_mi`) is plumbed
+/// in by Wave 2 task D, callers should stub `above = None, left
+/// = None`.
+// TODO(overnight-2026-05-17): wire above/left ctx — see Wave 2 task D.
+#[inline]
+#[must_use]
+pub fn get_tx_size_context(
+    above: Option<(TxSize, bool)>,
+    left: Option<(TxSize, bool)>,
+    max_tx_size: TxSize,
+) -> usize {
+    let neighbour_ctx = |n: Option<(TxSize, bool)>| -> Option<u8> {
+        n.map(|(tx, skip)| if skip { max_tx_size as u8 } else { tx as u8 })
+    };
+    let above_n = neighbour_ctx(above);
+    let left_n = neighbour_ctx(left);
+    // If a side is missing, it mirrors the other (libvpx
+    // `if (!has_left) left_ctx = above_ctx;` and converse).
+    let (above_ctx, left_ctx) = match (above_n, left_n) {
+        (Some(a), Some(l)) => (a, l),
+        (Some(a), None) => (a, a),
+        (None, Some(l)) => (l, l),
+        // Both missing: libvpx's MACROBLOCKD has the dummy zeroed
+        // border row/col, so `above_mi` / `left_mi` are non-null
+        // at the very top-left only when the frame has them. With
+        // truly no neighbours, both sides collapse to `max_tx_size`
+        // (the "skipped" default) — and the test reduces to
+        // `(2 * max_tx_size) > max_tx_size`, always `true` for
+        // `max_tx_size > 0`.
+        (None, None) => (max_tx_size as u8, max_tx_size as u8),
+    };
+    usize::from(u32::from(above_ctx) + u32::from(left_ctx) > u32::from(max_tx_size as u8))
+}
+
+/// Look up the tx-size probability slice for a given
+/// `(max_tx_size, ctx)` pair. Mirrors libvpx `get_tx_probs`
+/// (`vp9_pred_common.h:173-181`). Returns `None` if
+/// `max_tx_size == TX_4X4` (libvpx asserts on that case — sub-8
+/// blocks never reach the selected-tx-size path).
+#[inline]
+#[must_use]
+fn get_tx_probs(
+    tx_probs: &DefaultTxProbs,
+    max_tx_size: TxSize,
+    ctx: usize,
+) -> Option<&[u8]> {
+    match max_tx_size {
+        TxSize::Tx8x8 => Some(&tx_probs.p8x8[ctx]),
+        TxSize::Tx16x16 => Some(&tx_probs.p16x16[ctx]),
+        TxSize::Tx32x32 => Some(&tx_probs.p32x32[ctx]),
+        TxSize::Tx4x4 => None,
+    }
+}
+
+/// Read a per-block transform size from the boolean reader. Mirrors
+/// libvpx `read_tx_size` + `read_selected_tx_size`
+/// (`vp9_decodemv.c:64-89`).
+///
+/// Parameters:
+/// - `tx_probs`: the frame's `fc->tx_probs` bank.
+/// - `tx_mode`:  the frame-level tx-mode (from the compressed
+///   header).
+/// - `max_tx_size`: the block's `max_txsize_lookup[sb_type]`
+///   (computed by the caller via [`crate::block::max_txsize`]).
+/// - `allow_select`: libvpx's `allow_select` flag. For intra
+///   blocks libvpx hardcodes `1`. For inter blocks it's `!skip ||
+///   !inter_block` — i.e. only intra-coded inter blocks (in
+///   "skip" mode, they're effectively intra-residual). The
+///   caller computes this.
+/// - `ctx`: the 0..=1 tx-size context from
+///   [`get_tx_size_context`].
+///
+/// Algorithm:
+/// - If `allow_select && tx_mode == TxModeSelect && max_tx_size >=
+///   Tx8x8`, walk the tx-size tree against `tx_probs[max_tx_size]
+///   [ctx]`:
+///     - Read bit 0: if 1, tx_size becomes 1.
+///     - If `tx_size != Tx4x4 && max_tx_size >= Tx16x16`, read bit
+///       1; if 1, tx_size += 1.
+///     - If `tx_size != Tx8x8 && max_tx_size >= Tx32x32`, read bit
+///       2; if 1, tx_size += 1.
+/// - Otherwise, return `min(max_tx_size,
+///   tx_mode_to_biggest_tx_size(tx_mode))`.
+///
+/// # Panics
+///
+/// Panics in debug builds if the algorithm tries to read selected
+/// tx_size with `max_tx_size == Tx4x4`, which is libvpx's `assert(0
+/// && "Invalid max_tx_size")` case (the caller must gate this on
+/// `bsize >= BLOCK_8X8` ↔ `max_tx_size >= Tx8x8`).
+#[inline]
+#[must_use]
+pub fn read_tx_size(
+    r: &mut BoolReader<'_>,
+    tx_probs: &DefaultTxProbs,
+    tx_mode: TxMode,
+    max_tx_size: TxSize,
+    allow_select: bool,
+    ctx: usize,
+) -> TxSize {
+    if allow_select && tx_mode == TxMode::TxModeSelect && max_tx_size >= TxSize::Tx8x8 {
+        let probs = get_tx_probs(tx_probs, max_tx_size, ctx)
+            .expect("read_selected_tx_size requires max_tx_size >= Tx8x8");
+        let mut raw: u8 = r.read(probs[0]);
+        if raw != TxSize::Tx4x4 as u8 && max_tx_size >= TxSize::Tx16x16 {
+            raw += r.read(probs[1]);
+            if raw != TxSize::Tx8x8 as u8 && max_tx_size >= TxSize::Tx32x32 {
+                raw += r.read(probs[2]);
+            }
+        }
+        match raw {
+            0 => TxSize::Tx4x4,
+            1 => TxSize::Tx8x8,
+            2 => TxSize::Tx16x16,
+            3 => TxSize::Tx32x32,
+            // Unreachable: read_selected_tx_size accumulates at most 3
+            // single-bit increments starting from 0.
+            _ => unreachable!("tx_size tree walk produced {raw}"),
+        }
+    } else {
+        // tx_mode-driven cap.
+        let cap = tx_mode_to_biggest_tx_size(tx_mode) as u8;
+        let raw = core::cmp::min(max_tx_size as u8, cap);
+        match raw {
+            0 => TxSize::Tx4x4,
+            1 => TxSize::Tx8x8,
+            2 => TxSize::Tx16x16,
+            3 => TxSize::Tx32x32,
+            // Unreachable: both inputs are TxSize-derived (0..=3).
+            _ => unreachable!("min of TxSize values out of range: {raw}"),
+        }
+    }
 }
 
 /// VP9 inter-prediction mode. Mirrors libvpx's
@@ -979,5 +1139,340 @@ mod tests {
         };
         assert!(!inter_mi.is_intra());
         assert!(inter_mi.is_inter());
+    }
+
+    /// `get_tx_size_context`: with both above + left present and
+    /// not skipped, the result is `(above.tx_size + left.tx_size) >
+    /// max_tx_size`.
+    #[test]
+    fn get_tx_size_context_both_present() {
+        // max = Tx32x32 (3). Sum = 0 + 0 = 0 < 3 → ctx 0.
+        assert_eq!(
+            get_tx_size_context(
+                Some((TxSize::Tx4x4, false)),
+                Some((TxSize::Tx4x4, false)),
+                TxSize::Tx32x32,
+            ),
+            0
+        );
+        // Sum = 2 + 2 = 4 > 3 → ctx 1.
+        assert_eq!(
+            get_tx_size_context(
+                Some((TxSize::Tx16x16, false)),
+                Some((TxSize::Tx16x16, false)),
+                TxSize::Tx32x32,
+            ),
+            1
+        );
+        // Sum = 1 + 2 = 3 == max → NOT greater → ctx 0.
+        assert_eq!(
+            get_tx_size_context(
+                Some((TxSize::Tx8x8, false)),
+                Some((TxSize::Tx16x16, false)),
+                TxSize::Tx32x32,
+            ),
+            0
+        );
+        // Sum = 2 + 2 = 4 > max=2 → ctx 1.
+        assert_eq!(
+            get_tx_size_context(
+                Some((TxSize::Tx16x16, false)),
+                Some((TxSize::Tx16x16, false)),
+                TxSize::Tx16x16,
+            ),
+            1
+        );
+    }
+
+    /// `get_tx_size_context`: skipped neighbours contribute
+    /// `max_tx_size` instead of their actual tx_size.
+    #[test]
+    fn get_tx_size_context_skipped_neighbour() {
+        // Above is Tx4x4 but skipped → treated as max_tx_size=3.
+        // Left is Tx4x4 unskipped → contributes 0. Sum = 3 + 0 = 3
+        // = max → ctx 0.
+        assert_eq!(
+            get_tx_size_context(
+                Some((TxSize::Tx4x4, true)),
+                Some((TxSize::Tx4x4, false)),
+                TxSize::Tx32x32,
+            ),
+            0
+        );
+        // Both skipped → both contribute max=3. Sum=6 > 3 → ctx 1.
+        assert_eq!(
+            get_tx_size_context(
+                Some((TxSize::Tx4x4, true)),
+                Some((TxSize::Tx4x4, true)),
+                TxSize::Tx32x32,
+            ),
+            1
+        );
+    }
+
+    /// `get_tx_size_context`: a missing neighbour mirrors the
+    /// present one.
+    #[test]
+    fn get_tx_size_context_missing_neighbour() {
+        // Left missing → mirrors above. Sum = above + above = 2*0
+        // = 0 < 3 → ctx 0.
+        assert_eq!(
+            get_tx_size_context(
+                Some((TxSize::Tx4x4, false)),
+                None,
+                TxSize::Tx32x32,
+            ),
+            0
+        );
+        // Left missing, above = Tx32x32. Sum = 3 + 3 = 6 > 3 → ctx 1.
+        assert_eq!(
+            get_tx_size_context(
+                Some((TxSize::Tx32x32, false)),
+                None,
+                TxSize::Tx32x32,
+            ),
+            1
+        );
+        // Above missing → mirrors left.
+        assert_eq!(
+            get_tx_size_context(
+                None,
+                Some((TxSize::Tx32x32, false)),
+                TxSize::Tx32x32,
+            ),
+            1
+        );
+    }
+
+    /// `get_tx_size_context`: both neighbours missing → both
+    /// collapse to `max_tx_size`. Result is `2*max > max`, always
+    /// `1` for `max_tx_size > 0`.
+    #[test]
+    fn get_tx_size_context_no_neighbours() {
+        assert_eq!(
+            get_tx_size_context(None, None, TxSize::Tx32x32),
+            1
+        );
+        assert_eq!(
+            get_tx_size_context(None, None, TxSize::Tx16x16),
+            1
+        );
+        assert_eq!(
+            get_tx_size_context(None, None, TxSize::Tx8x8),
+            1
+        );
+    }
+
+    /// `read_tx_size` non-select path: returns `min(max_tx_size,
+    /// tx_mode_to_biggest)` without consuming any bool reader bits.
+    #[test]
+    fn read_tx_size_capped_path() {
+        let fc = crate::entropy::FrameContext::new_default();
+        // We need a BoolReader but the capped path consumes 0 bits.
+        // Build a tiny dummy stream.
+        let buf = [0u8; 4];
+        let cases = [
+            // (tx_mode, max_tx_size, expected)
+            (TxMode::OnlyTx4x4, TxSize::Tx32x32, TxSize::Tx4x4),
+            (TxMode::OnlyTx4x4, TxSize::Tx4x4, TxSize::Tx4x4),
+            (TxMode::AllowTx8x8, TxSize::Tx32x32, TxSize::Tx8x8),
+            (TxMode::AllowTx8x8, TxSize::Tx4x4, TxSize::Tx4x4),
+            (TxMode::AllowTx16x16, TxSize::Tx8x8, TxSize::Tx8x8),
+            (TxMode::AllowTx16x16, TxSize::Tx32x32, TxSize::Tx16x16),
+            (TxMode::AllowTx32x32, TxSize::Tx16x16, TxSize::Tx16x16),
+            (TxMode::AllowTx32x32, TxSize::Tx32x32, TxSize::Tx32x32),
+            // TxModeSelect but max_tx_size < Tx8x8 → still capped.
+            (TxMode::TxModeSelect, TxSize::Tx4x4, TxSize::Tx4x4),
+        ];
+        for (tx_mode, max_tx, expected) in cases {
+            let mut r = BoolReader::new(&buf).expect("init");
+            let got = read_tx_size(&mut r, &fc.tx_probs, tx_mode, max_tx, true, 0);
+            assert_eq!(got, expected, "tx_mode={tx_mode:?} max={max_tx:?}");
+        }
+    }
+
+    /// `read_tx_size`: `allow_select == false` forces the capped
+    /// path even when `tx_mode == TxModeSelect`.
+    #[test]
+    fn read_tx_size_allow_select_false_caps() {
+        let fc = crate::entropy::FrameContext::new_default();
+        let buf = [0u8; 4];
+        let mut r = BoolReader::new(&buf).expect("init");
+        // Capped: min(Tx32x32, biggest(TxModeSelect)=3) = Tx32x32.
+        let got =
+            read_tx_size(&mut r, &fc.tx_probs, TxMode::TxModeSelect, TxSize::Tx32x32, false, 0);
+        assert_eq!(got, TxSize::Tx32x32);
+    }
+
+    /// `read_tx_size` selected path: at `max_tx_size = Tx8x8`,
+    /// a single bit chooses Tx4x4 (bit=0) or Tx8x8 (bit=1) against
+    /// `tx_probs.p8x8[ctx][0]`.
+    #[test]
+    fn read_tx_size_selected_tx8x8_round_trip() {
+        use crate::entropy::BoolWriter;
+
+        let fc = crate::entropy::FrameContext::new_default();
+
+        for (bit, expected) in [(0u8, TxSize::Tx4x4), (1u8, TxSize::Tx8x8)] {
+            for ctx in 0..2 {
+                let mut buf = vec![0u8; 32];
+                let mut w = BoolWriter::start_encode(&mut buf);
+                w.write(bit, fc.tx_probs.p8x8[ctx][0]);
+                for _ in 0..16 {
+                    w.write_bit(0);
+                }
+                let size = w.stop_encode().expect("ok");
+                buf.truncate(size);
+
+                let mut r = BoolReader::new(&buf).expect("init");
+                let got = read_tx_size(
+                    &mut r,
+                    &fc.tx_probs,
+                    TxMode::TxModeSelect,
+                    TxSize::Tx8x8,
+                    true,
+                    ctx,
+                );
+                assert_eq!(got, expected, "bit={bit} ctx={ctx}");
+            }
+        }
+    }
+
+    /// `read_tx_size` selected path at `max_tx_size = Tx16x16`:
+    /// 2-bit tree.
+    /// - bit0=0 → Tx4x4 (1 bit consumed).
+    /// - bit0=1, bit1=0 → Tx8x8 (2 bits consumed).
+    /// - bit0=1, bit1=1 → Tx16x16 (2 bits consumed).
+    #[test]
+    fn read_tx_size_selected_tx16x16_round_trip() {
+        use crate::entropy::BoolWriter;
+
+        let fc = crate::entropy::FrameContext::new_default();
+        let ctx = 1usize;
+        let p = &fc.tx_probs.p16x16[ctx];
+
+        let cases: &[(&[(u8, u8)], TxSize)] = &[
+            (&[(0, p[0])], TxSize::Tx4x4),
+            (&[(1, p[0]), (0, p[1])], TxSize::Tx8x8),
+            (&[(1, p[0]), (1, p[1])], TxSize::Tx16x16),
+        ];
+
+        for (bits, expected) in cases {
+            let mut buf = vec![0u8; 32];
+            let mut w = BoolWriter::start_encode(&mut buf);
+            for (bit, prob) in *bits {
+                w.write(*bit, *prob);
+            }
+            for _ in 0..16 {
+                w.write_bit(0);
+            }
+            let size = w.stop_encode().expect("ok");
+            buf.truncate(size);
+
+            let mut r = BoolReader::new(&buf).expect("init");
+            let got = read_tx_size(
+                &mut r,
+                &fc.tx_probs,
+                TxMode::TxModeSelect,
+                TxSize::Tx16x16,
+                true,
+                ctx,
+            );
+            assert_eq!(got, *expected, "bits={bits:?}");
+        }
+    }
+
+    /// `read_tx_size` selected path at `max_tx_size = Tx32x32`:
+    /// full 3-bit tree.
+    /// - bit0=0 → Tx4x4 (1 bit).
+    /// - bit0=1, bit1=0 → Tx8x8 (2 bits).
+    /// - bit0=1, bit1=1, bit2=0 → Tx16x16 (3 bits).
+    /// - bit0=1, bit1=1, bit2=1 → Tx32x32 (3 bits).
+    #[test]
+    fn read_tx_size_selected_tx32x32_round_trip() {
+        use crate::entropy::BoolWriter;
+
+        let fc = crate::entropy::FrameContext::new_default();
+        let ctx = 0usize;
+        let p = &fc.tx_probs.p32x32[ctx];
+
+        let cases: &[(&[(u8, u8)], TxSize)] = &[
+            (&[(0, p[0])], TxSize::Tx4x4),
+            (&[(1, p[0]), (0, p[1])], TxSize::Tx8x8),
+            (&[(1, p[0]), (1, p[1]), (0, p[2])], TxSize::Tx16x16),
+            (&[(1, p[0]), (1, p[1]), (1, p[2])], TxSize::Tx32x32),
+        ];
+
+        for (bits, expected) in cases {
+            let mut buf = vec![0u8; 32];
+            let mut w = BoolWriter::start_encode(&mut buf);
+            for (bit, prob) in *bits {
+                w.write(*bit, *prob);
+            }
+            for _ in 0..16 {
+                w.write_bit(0);
+            }
+            let size = w.stop_encode().expect("ok");
+            buf.truncate(size);
+
+            let mut r = BoolReader::new(&buf).expect("init");
+            let got = read_tx_size(
+                &mut r,
+                &fc.tx_probs,
+                TxMode::TxModeSelect,
+                TxSize::Tx32x32,
+                true,
+                ctx,
+            );
+            assert_eq!(got, *expected, "bits={bits:?}");
+        }
+    }
+
+    /// `read_tx_size` selected path exercises both contexts. We
+    /// only need to verify the prob slot picked differs by `ctx`;
+    /// using different per-context bits forces the test to fail
+    /// if the function used the wrong row.
+    #[test]
+    fn read_tx_size_selected_uses_correct_context() {
+        use crate::entropy::BoolWriter;
+
+        // Build a custom tx_probs where ctx 0 forces Tx4x4 (prob
+        // high → near-deterministic 0-bit), ctx 1 forces Tx8x8
+        // (prob low → near-deterministic 1-bit).
+        // Using p=1 (almost always 0) and p=255 (almost always 1)
+        // makes raw-bit encoding deterministic.
+        let custom_tx = DefaultTxProbs {
+            p32x32: [[128; 3]; 2],
+            p16x16: [[128; 2]; 2],
+            p8x8: [[255], [1]], // ctx 0: prob=255 → P(bit=0)≈1; ctx 1: prob=1 → P(bit=0)≈0.
+        };
+
+        // ctx 0: encode bit=0 at p=255.
+        let mut buf = vec![0u8; 32];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        w.write(0, 255);
+        for _ in 0..16 {
+            w.write_bit(0);
+        }
+        let size = w.stop_encode().expect("ok");
+        buf.truncate(size);
+        let mut r = BoolReader::new(&buf).expect("init");
+        let got =
+            read_tx_size(&mut r, &custom_tx, TxMode::TxModeSelect, TxSize::Tx8x8, true, 0);
+        assert_eq!(got, TxSize::Tx4x4, "ctx=0 should pick Tx4x4");
+
+        // ctx 1: encode bit=1 at p=1.
+        let mut buf = vec![0u8; 32];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        w.write(1, 1);
+        for _ in 0..16 {
+            w.write_bit(0);
+        }
+        let size = w.stop_encode().expect("ok");
+        buf.truncate(size);
+        let mut r = BoolReader::new(&buf).expect("init");
+        let got =
+            read_tx_size(&mut r, &custom_tx, TxMode::TxModeSelect, TxSize::Tx8x8, true, 1);
+        assert_eq!(got, TxSize::Tx8x8, "ctx=1 should pick Tx8x8");
     }
 }
