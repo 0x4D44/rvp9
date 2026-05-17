@@ -38,8 +38,10 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 1b (bitstream frame-header types) | ✅ done | `9805244` |
 | 1c (uncompressed-header parser — intra paths) | ✅ done | `ca78a87` |
 | 1d.1 (sub-parsers: loopfilter / quant / seg / tile) | ✅ done | `28f91d8` |
-| 1d.2 (uncompressed-header parser — inter paths) | ⏸️ |
-| 1e-g (compressed-header glue, tile-buffer, superframe) | ⏸️ |
+| 1d.2 (uncompressed-header parser — inter paths) | ✅ done | `9320596` |
+| 1d.3 (refresh/parallel/frame_context_idx + first_partition_size) | ⏸️ |
+| 1e (compressed-header parser) | ⏸️ |
+| 1f-g (tile-buffer, superframe) | ⏸️ |
 | 2b (entropy FRAME_CONTEXT + prob tables) | ⏸️ |
 | 5 (intra_pred) | ⏸️ |
 | 6 (loopfilter) | ⏸️ |
@@ -47,8 +49,13 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 8 (decoder integration) | ⏸️ |
 | 9 (vpxdec conformance gate) | ⏸️ |
 
-rvp9-core: 152 unit tests passing, ~6800 lines of bit-exact-mirrored
+rvp9-core: 156 unit tests passing, ~7100 lines of bit-exact-mirrored
 code. `cargo test`, `cargo clippy -D warnings` clean.
+
+**The top-level `parse_uncompressed_header` now handles every libvpx
+frame disposition**: ShowExistingFrame / KeyFrame / IntraOnly /
+InterFrame. The four sub-parsers (loopfilter / quant / seg / tile)
+are present but not yet wired in — that's Task 1d.3.
 
 **Transforms module is feature-complete for the decoder.**
 
