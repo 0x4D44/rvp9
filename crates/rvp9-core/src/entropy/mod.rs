@@ -28,6 +28,7 @@ pub mod bool_reader;
 pub mod bool_writer;
 pub mod coef_probs;
 pub mod default_probs;
+pub mod detokenize;
 pub mod diff_update;
 pub mod frame_context;
 pub mod kf_probs;
@@ -37,6 +38,11 @@ pub mod tables;
 
 pub use bool_reader::BoolReader;
 pub use bool_writer::BoolWriter;
+pub use detokenize::{
+    CoefBandCtxProbs, CoefCountsBlock, DecodeCoefCounts, EOB_MODEL_TOKEN, EobBranchCountsBlock,
+    ONE_TOKEN, TWO_TOKEN, VP9_CAT1_PROB, VP9_CAT2_PROB, VP9_CAT3_PROB, VP9_CAT4_PROB, VP9_CAT5_PROB,
+    VP9_CAT6_PROB, VP9_COEFBAND_TRANS_4X4, VP9_COEFBAND_TRANS_8X8PLUS, ZERO_TOKEN, decode_coefs,
+};
 pub use diff_update::{DIFF_UPDATE_PROB, diff_update_prob, inv_remap_prob};
 pub use default_probs::{
     BLOCK_SIZE_GROUPS, COMP_INTER_CONTEXTS, DEFAULT_COMP_INTER_PROB, DEFAULT_COMP_REF_PROB,
