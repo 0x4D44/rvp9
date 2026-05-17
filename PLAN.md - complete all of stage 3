@@ -51,6 +51,7 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 7.2 (`FrameBuf` + `DecoderFramePool`) | ✅ done | `79533bc` |
 | 7.3-4 (encoder 12-slot pool, tile-disjoint views) | ⏸️ |
 | 8.1 (rvp9-decoder skeleton wiring bitstream layer) | ✅ done | `64c3cc5` |
+| 8.1b (`decode_show_existing_frame` end-to-end path) | ✅ done | `0bd87d9` |
 | 8.2+ (compressed-header → tile decode → pixel reconstruction) | ⏸️ |
 | 1e (compressed-header parser, depends on 2b.*) | ⏸️ |
 | 1f (tile-buffer parser) | ✅ done | `71b1643` |
@@ -71,17 +72,21 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 8 (decoder integration) | ⏸️ |
 | 9 (vpxdec conformance gate) | ⏸️ |
 
-rvp9-core: 281 unit tests + rvp9-decoder: 5 unit tests = **286 total**.
-~13600 lines in rvp9-core + ~440 lines in rvp9-decoder.
+rvp9-core: 281 unit tests + rvp9-decoder: 8 unit tests = **289 total**.
+~13600 lines in rvp9-core + ~580 lines in rvp9-decoder.
 `cargo test`, `cargo clippy -D warnings` clean.
 
-**The rvp9-decoder skeleton is now live.** `Decoder::new()` initializes
-all 4 FrameContext banks + the 9-slot frame pool + the
-loop-filter delta state. `Decoder::parse_packet(data)` splits a
-transport packet into 1..=8 frames via the superframe index and
-parses each frame's uncompressed header. The compressed-header
-(boolean-coder) layer that consumes the entropy probability tables
-remains to land before actual coefficient decoding can begin.
+**The rvp9-decoder skeleton is live with the first complete decode
+path.** `Decoder::new()` initializes all 4 FrameContext banks + the
+9-slot frame pool + the loop-filter delta state.
+`Decoder::parse_packet(data)` splits a transport packet into
+1..=8 frames and parses each uncompressed header.
+`Decoder::decode_show_existing_frame(&header)` is the first complete
+end-to-end decode entry point: given a `ShowExistingFrame` header, it
+looks up the referenced slot in the pool and returns the matching
+`FrameBuf`. Keyframe / intra-only / inter-frame decode paths need the
+compressed-header boolean-coder driver (Task 1e) and tile-level
+coefficient decode (Task 8.2+).
 
 **Intra-pred layer is complete** — all 10 VP9 modes implemented
 plus the `IntraMode → TxType` lookup that bridges intra prediction
