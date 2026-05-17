@@ -25,6 +25,7 @@ pub mod bitstream;
 pub mod dsp;
 pub mod entropy;
 pub mod frame;
+pub mod intra_pred;
 pub mod quant;
 pub mod transforms;
 
