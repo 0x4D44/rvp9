@@ -21,16 +21,17 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 3b (`transforms` idct4×4) | ✅ done | `ddce967` |
 | 3c (`transforms` idct8×8) | ✅ done | `1a2eed4` |
 | 3d (`transforms` idct16×16 + wraplow fix) | ✅ done | `2b7c317` |
+| 3e (`transforms` idct32×32) | ✅ done | `b6ccaf8` |
 | 1b-g (bitstream headers, tile, superframe) | ⏸️ |
 | 2b (entropy FRAME_CONTEXT + prob tables) | ⏸️ |
-| 3e+ (idct32, iadst, iht, larger scans) | ⏸️ |
+| 3f+ (iadst 4/8/16, iht hybrid, larger scans) | ⏸️ |
 | 5 (intra_pred) | ⏸️ |
 | 6 (loopfilter) | ⏸️ |
 | 7 (frame buffers) | ⏸️ |
 | 8 (decoder integration) | ⏸️ |
 | 9 (vpxdec conformance gate) | ⏸️ |
 
-rvp9-core: 69 unit tests passing, ~2900 lines of bit-exact-mirrored
+rvp9-core: 77 unit tests passing, ~3500 lines of bit-exact-mirrored
 code. `cargo test`, `cargo clippy -D warnings` clean.
 
 Task 3d note: while implementing idct16 we discovered that the
