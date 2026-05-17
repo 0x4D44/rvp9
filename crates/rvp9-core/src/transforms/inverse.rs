@@ -18,15 +18,19 @@
 //! - [`iadst4`] / [`iadst8`] / [`iadst16`] — 1D inverse asymmetric
 //!   discrete sine transforms. Mirror libvpx `iadst4_c`, `iadst8_c`,
 //!   `iadst16_c` (`vpx_dsp/inv_txfm.c:96, 196, 389`).
+//! - [`iht4x4_16_add`] / [`iht8x8_64_add`] / [`iht16x16_256_add`] —
+//!   hybrid 2D inverse transforms that dispatch on
+//!   [`super::TxType`] (`DCT_DCT` / `ADST_DCT` / `DCT_ADST` /
+//!   `ADST_ADST`). Mirror libvpx `vp9_iht4x4_16_add_c`,
+//!   `vp9_iht8x8_64_add_c`, `vp9_iht16x16_256_add_c`
+//!   (`vp9/common/vp9_idct.c:20, 59, 92`).
 //!
 //! All kernels apply [`wraplow`] (i16 modular truncation) at every site
 //! where the C source assigns a `dct_const_round_shift` result into an
 //! `int16_t step[]` slot. This preserves bit-exactness against libvpx
 //! for inputs whose intermediates exceed 16 bits.
-//!
-//! The hybrid 4×4/8×8/16×16 transforms (iht family) land in follow-up
-//! sub-tasks.
 
+use super::types::TxType;
 use super::constants::{
     COSPI_1_64, COSPI_2_64, COSPI_3_64, COSPI_4_64, COSPI_5_64, COSPI_6_64, COSPI_7_64, COSPI_8_64,
     COSPI_9_64, COSPI_10_64, COSPI_11_64, COSPI_12_64, COSPI_13_64, COSPI_14_64, COSPI_15_64,
@@ -1205,6 +1209,157 @@ pub fn iadst16(input: &[i32; 16], output: &mut [i32; 16]) {
     output[15] = wraplow(-x1);
 }
 
+/// Function-pointer type for a fixed-size 1D inverse transform.
+type Transform1D<const N: usize> = fn(&[i32; N], &mut [i32; N]);
+
+/// `(row_xform, col_xform)` pair returned by an `iht_N_dispatch`.
+type TransformPair<const N: usize> = (Transform1D<N>, Transform1D<N>);
+
+/// Return the (row_xform, col_xform) function pair for an N=4 hybrid
+/// transform. The libvpx `transform_2d` struct lays out `rows` first,
+/// then `cols`; we follow.
+#[inline]
+fn iht_4_dispatch(tx_type: TxType) -> TransformPair<4> {
+    match tx_type {
+        TxType::DctDct => (idct4, idct4),
+        TxType::AdstDct => (iadst4, idct4),
+        TxType::DctAdst => (idct4, iadst4),
+        TxType::AdstAdst => (iadst4, iadst4),
+    }
+}
+
+#[inline]
+fn iht_8_dispatch(tx_type: TxType) -> TransformPair<8> {
+    match tx_type {
+        TxType::DctDct => (idct8, idct8),
+        TxType::AdstDct => (iadst8, idct8),
+        TxType::DctAdst => (idct8, iadst8),
+        TxType::AdstAdst => (iadst8, iadst8),
+    }
+}
+
+#[inline]
+fn iht_16_dispatch(tx_type: TxType) -> TransformPair<16> {
+    match tx_type {
+        TxType::DctDct => (idct16, idct16),
+        TxType::AdstDct => (iadst16, idct16),
+        TxType::DctAdst => (idct16, iadst16),
+        TxType::AdstAdst => (iadst16, iadst16),
+    }
+}
+
+/// 2D 4×4 hybrid inverse transform with residual add.
+///
+/// Per `tx_type`:
+/// - `DctDct`: row=idct4, col=idct4 (equivalent to [`idct4x4_16_add`]).
+/// - `AdstDct`: row=iadst4, col=idct4.
+/// - `DctAdst`: row=idct4, col=iadst4.
+/// - `AdstAdst`: row=iadst4, col=iadst4.
+///
+/// Column-pass shift is `ROUND_POWER_OF_TWO(_, 4)` per libvpx
+/// `vp9/common/vp9_idct.c:46`.
+///
+/// Mirrors `vp9_iht4x4_16_add_c` (`vp9/common/vp9_idct.c:20-50`).
+pub fn iht4x4_16_add(input: &[i32; 16], dest: &mut [u8], stride: usize, tx_type: TxType) {
+    debug_assert!(dest.len() >= stride * 3 + 4, "dest too small for 4x4 add");
+
+    let (row_xform, col_xform) = iht_4_dispatch(tx_type);
+    let mut intermediate = [0i32; 16];
+
+    // Row pass.
+    for r in 0..4 {
+        let row_in: &[i32; 4] = input[r * 4..r * 4 + 4].try_into().unwrap();
+        let row_out_mut: &mut [i32; 4] = (&mut intermediate[r * 4..r * 4 + 4])
+            .try_into()
+            .unwrap();
+        row_xform(row_in, row_out_mut);
+    }
+
+    // Column pass + residual add.
+    for c in 0..4 {
+        let col_in: [i32; 4] = [
+            intermediate[c],
+            intermediate[4 + c],
+            intermediate[8 + c],
+            intermediate[12 + c],
+        ];
+        let mut col_out = [0i32; 4];
+        col_xform(&col_in, &mut col_out);
+        for r in 0..4 {
+            let shifted = (col_out[r] as i64 + 8) >> 4;
+            dest[r * stride + c] = clip_pixel_add(dest[r * stride + c], shifted);
+        }
+    }
+}
+
+/// 2D 8×8 hybrid inverse transform with residual add.
+///
+/// Same dispatch pattern as [`iht4x4_16_add`] at the 8×8 size; column
+/// shift is `ROUND_POWER_OF_TWO(_, 5)`.
+///
+/// Mirrors `vp9_iht8x8_64_add_c` (`vp9/common/vp9_idct.c:59-83`).
+pub fn iht8x8_64_add(input: &[i32; 64], dest: &mut [u8], stride: usize, tx_type: TxType) {
+    debug_assert!(dest.len() >= stride * 7 + 8, "dest too small for 8x8 add");
+
+    let (row_xform, col_xform) = iht_8_dispatch(tx_type);
+    let mut intermediate = [0i32; 64];
+
+    for r in 0..8 {
+        let row_in: &[i32; 8] = input[r * 8..r * 8 + 8].try_into().unwrap();
+        let row_out_mut: &mut [i32; 8] = (&mut intermediate[r * 8..r * 8 + 8])
+            .try_into()
+            .unwrap();
+        row_xform(row_in, row_out_mut);
+    }
+
+    let mut col_in = [0i32; 8];
+    let mut col_out = [0i32; 8];
+    for c in 0..8 {
+        for r in 0..8 {
+            col_in[r] = intermediate[r * 8 + c];
+        }
+        col_xform(&col_in, &mut col_out);
+        for r in 0..8 {
+            let shifted = (col_out[r] as i64 + 16) >> 5;
+            dest[r * stride + c] = clip_pixel_add(dest[r * stride + c], shifted);
+        }
+    }
+}
+
+/// 2D 16×16 hybrid inverse transform with residual add.
+///
+/// Same dispatch pattern as [`iht4x4_16_add`] at the 16×16 size; column
+/// shift is `ROUND_POWER_OF_TWO(_, 6)`.
+///
+/// Mirrors `vp9_iht16x16_256_add_c` (`vp9/common/vp9_idct.c:92-116`).
+pub fn iht16x16_256_add(input: &[i32; 256], dest: &mut [u8], stride: usize, tx_type: TxType) {
+    debug_assert!(dest.len() >= stride * 15 + 16, "dest too small for 16x16 add");
+
+    let (row_xform, col_xform) = iht_16_dispatch(tx_type);
+    let mut intermediate = [0i32; 256];
+
+    for r in 0..16 {
+        let row_in: &[i32; 16] = input[r * 16..r * 16 + 16].try_into().unwrap();
+        let row_out_mut: &mut [i32; 16] = (&mut intermediate[r * 16..r * 16 + 16])
+            .try_into()
+            .unwrap();
+        row_xform(row_in, row_out_mut);
+    }
+
+    let mut col_in = [0i32; 16];
+    let mut col_out = [0i32; 16];
+    for c in 0..16 {
+        for r in 0..16 {
+            col_in[r] = intermediate[r * 16 + c];
+        }
+        col_xform(&col_in, &mut col_out);
+        for r in 0..16 {
+            let shifted = (col_out[r] as i64 + 32) >> 6;
+            dest[r * stride + c] = clip_pixel_add(dest[r * stride + c], shifted);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1732,5 +1887,124 @@ mod tests {
             output.iter().any(|&v| v != 0),
             "non-zero input should yield non-zero output"
         );
+    }
+
+    // ---- iht (hybrid) family ----
+
+    /// `iht4x4_16_add` with `DctDct` is bit-identical to
+    /// `idct4x4_16_add` (DCT row, DCT col → same path).
+    #[test]
+    fn iht4x4_dct_dct_matches_idct4x4_16_add() {
+        let mut input = [0i32; 16];
+        input[0] = 1024;
+        input[1] = 256;
+        input[5] = -128;
+        let mut dest_iht = [50u8; 16];
+        let mut dest_idct = [50u8; 16];
+        iht4x4_16_add(&input, &mut dest_iht, 4, TxType::DctDct);
+        idct4x4_16_add(&input, &mut dest_idct, 4);
+        assert_eq!(dest_iht, dest_idct, "DctDct must match pure idct 4x4");
+    }
+
+    /// `iht8x8_64_add` with `DctDct` matches `idct8x8_64_add`.
+    #[test]
+    fn iht8x8_dct_dct_matches_idct8x8_64_add() {
+        let mut input = [0i32; 64];
+        input[0] = 512;
+        input[1] = 200;
+        input[9] = -64;
+        let mut dest_iht = [80u8; 64];
+        let mut dest_idct = [80u8; 64];
+        iht8x8_64_add(&input, &mut dest_iht, 8, TxType::DctDct);
+        idct8x8_64_add(&input, &mut dest_idct, 8);
+        assert_eq!(dest_iht, dest_idct, "DctDct must match pure idct 8x8");
+    }
+
+    /// `iht16x16_256_add` with `DctDct` matches `idct16x16_256_add`.
+    #[test]
+    fn iht16x16_dct_dct_matches_idct16x16_256_add() {
+        let mut input = [0i32; 256];
+        input[0] = 1024;
+        input[1] = 128;
+        input[17] = -32;
+        let mut dest_iht = vec![100u8; 256];
+        let mut dest_idct = vec![100u8; 256];
+        iht16x16_256_add(&input, &mut dest_iht, 16, TxType::DctDct);
+        idct16x16_256_add(&input, &mut dest_idct, 16);
+        assert_eq!(dest_iht, dest_idct, "DctDct must match pure idct 16x16");
+    }
+
+    /// `iht4x4_16_add` with all-zero input preserves `dest` for every
+    /// TxType.
+    #[test]
+    fn iht4x4_zero_preserves_dest_all_tx_types() {
+        for tx_type in [
+            TxType::DctDct,
+            TxType::AdstDct,
+            TxType::DctAdst,
+            TxType::AdstAdst,
+        ] {
+            let input = [0i32; 16];
+            let mut dest = [128u8; 16];
+            iht4x4_16_add(&input, &mut dest, 4, tx_type);
+            assert_eq!(dest, [128; 16], "tx_type {tx_type:?} did not preserve zero-input dest");
+        }
+    }
+
+    /// `iht8x8_64_add` with all-zero input preserves `dest` for every
+    /// TxType.
+    #[test]
+    fn iht8x8_zero_preserves_dest_all_tx_types() {
+        for tx_type in [
+            TxType::DctDct,
+            TxType::AdstDct,
+            TxType::DctAdst,
+            TxType::AdstAdst,
+        ] {
+            let input = [0i32; 64];
+            let mut dest = [128u8; 64];
+            iht8x8_64_add(&input, &mut dest, 8, tx_type);
+            assert_eq!(dest, [128; 64], "tx_type {tx_type:?} did not preserve zero-input dest");
+        }
+    }
+
+    /// `iht16x16_256_add` with all-zero input preserves `dest` for
+    /// every TxType.
+    #[test]
+    fn iht16x16_zero_preserves_dest_all_tx_types() {
+        for tx_type in [
+            TxType::DctDct,
+            TxType::AdstDct,
+            TxType::DctAdst,
+            TxType::AdstAdst,
+        ] {
+            let input = [0i32; 256];
+            let mut dest = vec![128u8; 256];
+            iht16x16_256_add(&input, &mut dest, 16, tx_type);
+            assert!(
+                dest.iter().all(|&v| v == 128),
+                "tx_type {tx_type:?} did not preserve zero-input dest"
+            );
+        }
+    }
+
+    /// The three non-DCT-DCT TxTypes produce different output from
+    /// DctDct for the same non-trivial input (sanity check that the
+    /// dispatch actually changes behaviour).
+    #[test]
+    fn iht4x4_adst_variants_diverge_from_dct_dct() {
+        let mut input = [0i32; 16];
+        input[0] = 1024;
+        input[5] = 256;
+        let mut base = [50u8; 16];
+        iht4x4_16_add(&input, &mut base, 4, TxType::DctDct);
+        for tx_type in [TxType::AdstDct, TxType::DctAdst, TxType::AdstAdst] {
+            let mut other = [50u8; 16];
+            iht4x4_16_add(&input, &mut other, 4, tx_type);
+            assert_ne!(
+                base, other,
+                "tx_type {tx_type:?} should diverge from DctDct"
+            );
+        }
     }
 }
