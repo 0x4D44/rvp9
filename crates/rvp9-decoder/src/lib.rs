@@ -38,16 +38,19 @@
 
 pub mod detokenize;
 pub mod reconstruct;
+pub mod tile;
 pub mod tile_ctx;
 
 use rvp9_core::bitstream::{
-    BitstreamError, CompressedHeaderOptions, CompressedHeaderResult, FrameKind, InterpFilter,
-    RefFrameSizes, Superframe, UncompressedHeader, parse_compressed_header,
-    parse_superframe_index, parse_uncompressed_header,
+    BitstreamError, ChromaFormat, CompressedHeaderOptions, CompressedHeaderResult, FrameKind,
+    InterpFilter, RefFrameSizes, Superframe, UncompressedHeader, parse_compressed_header,
+    parse_superframe_index, parse_tile_buffers, parse_uncompressed_header,
 };
 use rvp9_core::entropy::{FRAME_CONTEXTS, FrameContext};
-use rvp9_core::frame::{DecoderFramePool, FrameBuf};
+use rvp9_core::frame::{BorderUsage, ByteAlignment, DecoderFramePool, FrameBuf, Yv12Buffer};
 use rvp9_core::loopfilter::ResolvedLfDeltas;
+
+use crate::tile::{FrameDecodeParams, TileDecodeError, decode_tile_intra, tile_bounds};
 
 /// Top-level VP9 decoder state.
 ///
@@ -373,9 +376,7 @@ impl Decoder {
     pub fn decode_frame(&mut self, frame: &ParsedFrame<'_>) -> Result<FrameBuf, DecodeError> {
         match frame.header.kind {
             FrameKind::ShowExistingFrame { .. } => self.decode_show_existing_frame(&frame.header),
-            FrameKind::KeyFrame => Err(DecodeError::Unimplemented {
-                reason: "keyframe decode (compressed header + tile decode + reconstruction)",
-            }),
+            FrameKind::KeyFrame => self.decode_keyframe(frame),
             FrameKind::IntraOnly { .. } => Err(DecodeError::Unimplemented {
                 reason: "intra-only frame decode (compressed header + tile decode + reconstruction)",
             }),
@@ -383,6 +384,105 @@ impl Decoder {
                 reason: "inter frame decode (compressed header + tile decode + reconstruction)",
             }),
         }
+    }
+
+    /// Decode a keyframe end-to-end, returning the freshly-allocated
+    /// [`FrameBuf`] that holds the reconstructed pixels.
+    ///
+    /// Mirrors libvpx's keyframe decode driver from
+    /// `vp9/decoder/vp9_decodeframe.c:read_compressed_header` →
+    /// `decode_tiles` for the `tile_cols == 1 && tile_rows == 1` path
+    /// only (multi-tile vectors surface as
+    /// [`DecodeError::TileDecode`]).
+    ///
+    /// ## Stage K2 status
+    ///
+    /// - **K2.a (this commit)** wires the partition+tile walker, reads
+    ///   per-block ModeInfo, and writes neighbour-context state.
+    ///   Pixels are NOT yet reconstructed; the returned `FrameBuf`'s
+    ///   plane contents are still the all-zero allocation.
+    /// - **K2.b** adds per-plane prediction + token decode + IT-add.
+    /// - **K2.c** wires loop-filter apply (gated on J landing).
+    fn decode_keyframe(&mut self, frame: &ParsedFrame<'_>) -> Result<FrameBuf, DecodeError> {
+        let tail = frame
+            .header
+            .tail
+            .as_ref()
+            .ok_or(DecodeError::WrongFrameKind)?;
+
+        // 1. Parse the compressed header into the selected FrameContext
+        //    bank to get `tx_mode` (and the coef-prob updates etc.).
+        let compressed_result = self.parse_compressed_partition(frame)?;
+
+        // 2. Slice out the tile data (everything past the compressed
+        //    header).
+        let header_end = frame.header_end_byte;
+        let fps = tail.first_partition_size as usize;
+        let tile_data_start = header_end + fps;
+        let total = frame.full_frame_data.len();
+        if tile_data_start > total {
+            return Err(DecodeError::TruncatedCompressedHeader {
+                declared: tile_data_start,
+                available: total,
+            });
+        }
+        let tile_section = &frame.full_frame_data[tile_data_start..];
+
+        // 3. Compute frame mi-dimensions + tile-count.
+        let mi_cols = ((frame.header.width as usize) + 7) >> 3;
+        let mi_rows = ((frame.header.height as usize) + 7) >> 3;
+        let tile_cols = 1u32 << tail.tile_info.log2_tile_cols;
+        let tile_rows = 1u32 << tail.tile_info.log2_tile_rows;
+
+        // 4. Reject multi-tile in v1.
+        if tile_cols > 1 || tile_rows > 1 {
+            return Err(DecodeError::TileDecode(TileDecodeError::MultiTileUnsupported {
+                log2_tile_cols: tail.tile_info.log2_tile_cols,
+                log2_tile_rows: tail.tile_info.log2_tile_rows,
+            }));
+        }
+
+        // 5. Parse tile buffers (single tile: takes the whole tile
+        //    section).
+        let buffers = parse_tile_buffers(tile_section, tile_cols, tile_rows)
+            .map_err(DecodeError::Bitstream)?;
+        let tile_buf = buffers
+            .first()
+            .ok_or(DecodeError::Bitstream(BitstreamError::Truncated {
+                needed: 1,
+                available: 0,
+            }))?;
+
+        // 6. Allocate the destination FrameBuf.
+        let yv12 = Yv12Buffer::alloc(
+            frame.header.width,
+            frame.header.height,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .map_err(|_| DecodeError::FrameAlloc)?;
+        let frame_buf: FrameBuf = std::sync::Arc::new(yv12);
+
+        // 7. Drive the tile decode loop.
+        let bounds = tile_bounds(&tail.tile_info, mi_cols, mi_rows, 0, 0);
+        let params = FrameDecodeParams {
+            mi_cols,
+            mi_rows,
+            tx_mode: compressed_result.tx_mode,
+            segmentation_update_map: tail.segmentation.enabled && tail.segmentation.update_map,
+            seg_tree_probs: tail.segmentation.tree_probs,
+            lossless: tail.quantization.is_lossless(),
+        };
+        let fc_idx = tail.frame_context_idx as usize;
+        let fc = &self.frame_contexts[fc_idx];
+        decode_tile_intra(tile_buf.data, bounds, &params, fc).map_err(DecodeError::TileDecode)?;
+
+        // 8. TODO(overnight-2026-05-17): wire J (loop-filter apply)
+        //    once it lands.
+
+        self.have_resync = false;
+        Ok(frame_buf)
     }
 }
 
@@ -423,6 +523,12 @@ pub enum DecodeError {
         /// Short human-readable description of the missing path.
         reason: &'static str,
     },
+    /// A tile-decode-layer error surfaced during keyframe decode.
+    /// Carries the underlying [`TileDecodeError`] for diagnostics.
+    TileDecode(TileDecodeError),
+    /// Failed to allocate the destination [`FrameBuf`]. Surfaces e.g.
+    /// dimensions exceeding the safety cap in [`Yv12Buffer::alloc`].
+    FrameAlloc,
 }
 
 impl core::fmt::Display for DecodeError {
@@ -443,6 +549,8 @@ impl core::fmt::Display for DecodeError {
             ),
             Self::Bitstream(e) => write!(f, "bitstream error: {e}"),
             Self::Unimplemented { reason } => write!(f, "unimplemented: {reason}"),
+            Self::TileDecode(e) => write!(f, "tile decode: {e}"),
+            Self::FrameAlloc => f.write_str("frame allocation failed"),
         }
     }
 }
