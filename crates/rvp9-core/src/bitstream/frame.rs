@@ -269,6 +269,26 @@ impl InterpFilter {
     }
 }
 
+/// Frame-level reference-mode selector. Mirrors libvpx
+/// `REFERENCE_MODE` (`vp9_onyxc_int.h:54-59`). Set by the
+/// compressed-header parser via `read_frame_reference_mode`.
+///
+/// - [`Single`](Self::Single): only single-reference inter modes.
+/// - [`Compound`](Self::Compound): only compound-reference inter
+///   modes.
+/// - [`Select`](Self::Select): per-block selection between single
+///   and compound, encoded in the bitstream.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum ReferenceMode {
+    /// `SINGLE_REFERENCE` — single-ref only.
+    Single = 0,
+    /// `COMPOUND_REFERENCE` — compound-ref only.
+    Compound = 1,
+    /// `REFERENCE_MODE_SELECT` — per-block selection.
+    Select = 2,
+}
+
 /// VP9 sync-byte sequence at the start of every uncompressed header.
 /// Profile 0/1 → `0x49 0x83 0x42`, Profile 2/3 → `0x49 0x83 0x43`.
 /// Encoded as a 2-bit `profile_low_bit | profile_high_bit << 1` plus
