@@ -28,7 +28,9 @@ pub mod bool_reader;
 pub mod bool_writer;
 pub mod coef_probs;
 pub mod default_probs;
+pub mod frame_context;
 pub mod kf_probs;
+pub mod mv_probs;
 pub mod pareto;
 pub mod tables;
 
@@ -47,7 +49,12 @@ pub use coef_probs::{
     DEFAULT_COEF_PROBS_32X32, DEFAULT_COEF_PROBS_4X4, DEFAULT_COEF_PROBS_8X8, PLANE_TYPES,
     REF_TYPES, UNCONSTRAINED_NODES,
 };
+pub use frame_context::{FRAME_CONTEXTS, FRAME_CONTEXTS_LOG2, FrameContext, TX_SIZES};
 pub use kf_probs::{VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB};
+pub use mv_probs::{
+    CLASS0_BITS, CLASS0_SIZE, DEFAULT_NMV_CONTEXT, MV_CLASSES, MV_FP_SIZE, MV_JOINTS,
+    MV_OFFSET_BITS, NmvComponent, NmvContext,
+};
 pub use pareto::{COEFF_PROB_MODELS, MODEL_NODES, VP9_PARETO8_FULL};
 pub use tables::VPX_NORM;
 
