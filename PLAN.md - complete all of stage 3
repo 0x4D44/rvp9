@@ -73,13 +73,14 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 6.2c (loopfilter: 16-tap edge-filter kernels) | ✅ done | `dd257ce` |
 | **All 12 loop-filter edge kernels COMPLETE** | ✅ | |
 | 6.3.1 (loopfilter: BlockSize enum + size lookups) | ✅ done | `4f2e42f` |
-| 6.3.2+ (loopfilter: edge-mask machinery — tables + build_masks) | ⏸️ |
+| 6.3.2 (loopfilter: 10 edge-mask lookup tables Y+UV) | ✅ done | `8088e06` |
+| 6.3.3+ (loopfilter: build_masks + LoopFilterMask struct) | ⏸️ |
 | 6.4 (loopfilter: per-frame filter-level resolution) | ✅ done | `e280636` |
 | 8 (decoder integration) | ⏸️ |
 | 9 (vpxdec conformance gate) | ⏸️ |
 
-rvp9-core: 321 unit tests + rvp9-decoder: 8 unit tests = **329 total**.
-~15700 lines in rvp9-core + ~580 lines in rvp9-decoder.
+rvp9-core: 328 unit tests + rvp9-decoder: 8 unit tests = **336 total**.
+~16000 lines in rvp9-core + ~580 lines in rvp9-decoder.
 `cargo test`, `cargo clippy -D warnings` clean.
 
 **The rvp9-decoder skeleton is live with the first complete decode
