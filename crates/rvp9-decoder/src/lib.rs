@@ -37,11 +37,11 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 use rvp9_core::bitstream::{
-    BitstreamError, RefFrameSizes, Superframe, UncompressedHeader, parse_superframe_index,
-    parse_uncompressed_header,
+    BitstreamError, FrameKind, RefFrameSizes, Superframe, UncompressedHeader,
+    parse_superframe_index, parse_uncompressed_header,
 };
 use rvp9_core::entropy::{FRAME_CONTEXTS, FrameContext};
-use rvp9_core::frame::DecoderFramePool;
+use rvp9_core::frame::{DecoderFramePool, FrameBuf};
 use rvp9_core::loopfilter::ResolvedLfDeltas;
 
 /// Top-level VP9 decoder state.
@@ -229,7 +229,68 @@ impl Decoder {
     pub fn lf_deltas(&self) -> ResolvedLfDeltas {
         self.lf_deltas
     }
+
+    /// Handle a `show_existing_frame` parsed header by looking up
+    /// the referenced slot in the frame pool and returning its
+    /// [`FrameBuf`]. This is the simplest possible decoder output
+    /// path — no compressed-header / tile decoding required.
+    ///
+    /// Mirrors libvpx's `vp9_decodeframe.c:2664-2679` early-exit:
+    /// after recording the show-existing buffer index, libvpx
+    /// returns the buffer at that slot.
+    ///
+    /// # Errors
+    ///
+    /// - [`DecodeError::WrongFrameKind`] if `header.kind` is not
+    ///   `FrameKind::ShowExistingFrame`.
+    /// - [`DecodeError::EmptySlot`] if the referenced slot is empty
+    ///   (libvpx's "Buffer N does not contain a decoded frame"
+    ///   rejection at `vp9_decodeframe.c:2667`).
+    pub fn decode_show_existing_frame(
+        &self,
+        header: &UncompressedHeader,
+    ) -> Result<FrameBuf, DecodeError> {
+        let slot = match header.kind {
+            FrameKind::ShowExistingFrame { slot } => slot,
+            _ => return Err(DecodeError::WrongFrameKind),
+        };
+        let slot_usize = slot as usize;
+        self.frame_pool
+            .get(slot_usize)
+            .ok_or(DecodeError::EmptySlot { slot })
+    }
 }
+
+/// Errors from the per-frame decode entry points.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum DecodeError {
+    /// `decode_show_existing_frame` was called on a header whose
+    /// `kind` is not `FrameKind::ShowExistingFrame`.
+    WrongFrameKind,
+    /// `decode_show_existing_frame` referenced an empty slot.
+    /// Mirrors libvpx's `vp9_decodeframe.c:2667` corrupt-frame
+    /// rejection ("Buffer N does not contain a decoded frame").
+    EmptySlot {
+        /// The 3-bit slot index that was requested.
+        slot: u8,
+    },
+}
+
+impl core::fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::WrongFrameKind => f.write_str(
+                "expected FrameKind::ShowExistingFrame; this entry point is show-existing only",
+            ),
+            Self::EmptySlot { slot } => {
+                write!(f, "frame pool slot {slot} contains no decoded frame")
+            }
+        }
+    }
+}
+
+impl std::error::Error for DecodeError {}
 
 /// One frame extracted from a transport packet by
 /// [`Decoder::parse_packet`].
@@ -416,6 +477,79 @@ mod tests {
         assert_eq!(deltas.ref_deltas[3], 0);
         assert_eq!(deltas.mode_deltas[0], 0);
         assert_eq!(deltas.mode_deltas[1], 1);
+    }
+
+    /// Build a single byte-buffer for a `show_existing_frame` header
+    /// pointing at the given slot. Profile 0, marker correct,
+    /// show_existing = 1, then 3 bits for the slot.
+    fn build_show_existing_frame(slot: u8) -> Vec<u8> {
+        let mut buf = vec![0u8; 16];
+        let mut w = RawBitWriter::new(&mut buf);
+        w.write_literal(sync::FRAME_MARKER as u32, 2);
+        w.write_bit(0); // profile low
+        w.write_bit(0); // profile high → Profile 0
+        w.write_bit(1); // show_existing_frame = 1
+        w.write_literal(slot as u32, 3);
+        // Pad.
+        for _ in 0..4 {
+            w.write_literal(0, 8);
+        }
+        let used = w.bytes_written();
+        buf.truncate(used + 4);
+        buf
+    }
+
+    #[test]
+    fn decode_show_existing_frame_emits_slot() {
+        use rvp9_core::bitstream::ChromaFormat;
+        use rvp9_core::frame::{BorderUsage, ByteAlignment, FrameBuf, Yv12Buffer};
+        use std::sync::Arc;
+
+        let mut dec = Decoder::new();
+        // Populate slot 4 with a frame.
+        let f: FrameBuf = Arc::new(
+            Yv12Buffer::alloc(
+                320,
+                240,
+                ChromaFormat::Yuv420,
+                BorderUsage::Decoder,
+                ByteAlignment::Legacy,
+            )
+            .unwrap(),
+        );
+        dec.frame_pool_mut().assign_slot(4, f.clone()).unwrap();
+
+        // Build a packet pointing at slot 4.
+        let buf = build_show_existing_frame(4);
+        let parsed = dec.parse_packet(&buf).expect("valid");
+        assert_eq!(parsed.count(), 1);
+        let frame = &parsed.frames()[0];
+        assert_eq!(frame.header.kind, FrameKind::ShowExistingFrame { slot: 4 });
+
+        // Decode emits the existing FrameBuf.
+        let out = dec.decode_show_existing_frame(&frame.header).unwrap();
+        assert!(Arc::ptr_eq(&out, &f));
+    }
+
+    #[test]
+    fn decode_show_existing_frame_empty_slot_rejected() {
+        let dec = Decoder::new();
+        // No slots populated.
+        let buf = build_show_existing_frame(2);
+        let parsed = dec.parse_packet(&buf).unwrap();
+        let frame = &parsed.frames()[0];
+        let err = dec.decode_show_existing_frame(&frame.header).unwrap_err();
+        assert_eq!(err, DecodeError::EmptySlot { slot: 2 });
+    }
+
+    #[test]
+    fn decode_show_existing_frame_rejects_non_show_existing() {
+        let dec = Decoder::new();
+        let buf = build_minimal_keyframe();
+        let parsed = dec.parse_packet(&buf).unwrap();
+        let kf = &parsed.frames()[0];
+        let err = dec.decode_show_existing_frame(&kf.header).unwrap_err();
+        assert_eq!(err, DecodeError::WrongFrameKind);
     }
 
     #[test]
