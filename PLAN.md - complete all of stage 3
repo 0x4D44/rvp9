@@ -47,15 +47,16 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 2b.4 (coefficient probability tables) | ✅ done | `581198c` |
 | 2b.5 (MV probability tables + FRAME_CONTEXT struct) | ✅ done | `6f4bd65` |
 | **Entropy probability layer COMPLETE** | ✅ | |
+| 7.1 (`frame::Yv12Buffer` + plane accessors) | ✅ done | `3e957d5` |
+| 7.2-4 (`FrameBuf`/`FramePool`/tile views) | ⏸️ |
 | 1e (compressed-header parser, depends on 2b.*) | ⏸️ |
 | 1f-g (tile-buffer, superframe) | ⏸️ |
 | 5 (intra_pred) | ⏸️ |
 | 6 (loopfilter) | ⏸️ |
-| 7 (frame buffers) | ⏸️ |
 | 8 (decoder integration) | ⏸️ |
 | 9 (vpxdec conformance gate) | ⏸️ |
 
-rvp9-core: 180 unit tests passing, ~9100 lines of bit-exact-mirrored
+rvp9-core: 190 unit tests passing, ~9800 lines of bit-exact-mirrored
 code. `cargo test`, `cargo clippy -D warnings` clean.
 
 **Entropy probability-table layer is now complete.** The `FrameContext`
