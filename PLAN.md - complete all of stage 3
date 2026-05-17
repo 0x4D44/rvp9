@@ -53,13 +53,19 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 1f (tile-buffer parser) | ✅ done | `71b1643` |
 | 1g (superframe-index parser) | ✅ done | `7c45350` |
 | 5.1 (intra-pred: DC / V / H / TM + DC fallbacks) | ✅ done | `ed26428` |
-| 5.2 (intra-pred: 6 directional modes) | ⏸️ |
+| 5.2a (intra-pred: D45 / D63 / D207) | ✅ done | `9671380` |
+| 5.2b (intra-pred: D117 / D135 / D153 — corner directionals) | ⏸️ |
 | 6 (loopfilter) | ⏸️ |
 | 8 (decoder integration) | ⏸️ |
 | 9 (vpxdec conformance gate) | ⏸️ |
 
-rvp9-core: 216 unit tests passing, ~10800 lines of bit-exact-mirrored
+rvp9-core: 220 unit tests passing, ~11000 lines of bit-exact-mirrored
 code. `cargo test`, `cargo clippy -D warnings` clean.
+
+Intra-pred status: 7 of 10 modes done (DC + 3 fallback variants,
+V, H, TM, D45, D63, D207). Remaining: D117, D135, D153 — the three
+"corner" directional modes that consume above + left + above_left
+simultaneously.
 
 **Entropy probability-table layer is now complete.** The `FrameContext`
 struct aggregates every default probability table the decoder needs;
