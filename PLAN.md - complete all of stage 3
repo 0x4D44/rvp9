@@ -56,7 +56,8 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 5.1 (intra-pred: DC / V / H / TM + DC fallbacks) | ✅ done | `ed26428` |
 | 5.2a (intra-pred: D45 / D63 / D207) | ✅ done | `9671380` |
 | 5.2b (intra-pred: D117 / D135 / D153 — corner directionals) | ✅ done | `fe1b379` |
-| **Intra-pred kernels COMPLETE (all 10 VP9 modes)** | ✅ | |
+| 5.3 (intra-pred: IntraMode enum + tx_type lookup) | ✅ done | `a003f2b` |
+| **Intra-pred layer COMPLETE (10 modes + IntraMode→TxType bridge)** | ✅ | |
 | 6.1 (loopfilter: per-level threshold tables) | ✅ done | `bf82548` |
 | 6.2a (loopfilter: 4-tap edge-filter kernels) | ✅ done | `5cfaafc` |
 | 6.2b (loopfilter: 8-tap edge-filter kernels) | ✅ done | `1ddabef` |
@@ -67,10 +68,12 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 8 (decoder integration) | ⏸️ |
 | 9 (vpxdec conformance gate) | ⏸️ |
 
-rvp9-core: 275 unit tests passing, ~13300 lines of bit-exact-mirrored
+rvp9-core: 279 unit tests passing, ~13400 lines of bit-exact-mirrored
 code. `cargo test`, `cargo clippy -D warnings` clean.
 
-**Intra-pred kernels are complete** — all 10 VP9 modes implemented.
+**Intra-pred layer is complete** — all 10 VP9 modes implemented
+plus the `IntraMode → TxType` lookup that bridges intra prediction
+to hybrid transform dispatch.
 **Loop-filter math layer is complete** (12 edge kernels + thresholds
 + per-frame level resolution).
 **Decoder frame-buffer pool is in place** — `FrameBuf = Arc<Yv12Buffer>`
