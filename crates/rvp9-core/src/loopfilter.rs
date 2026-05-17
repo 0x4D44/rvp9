@@ -33,10 +33,25 @@
 //! (`vp9_loopfilter.c:252-295`) — produces the `[seg][ref][mode]`
 //! filter-level table that each block's loop-filter dispatch reads.
 //!
+//! ## Edge-mask machinery (Task 6.3)
+//!
+//! - [`mask_tables`] — the 10 lookup tables `build_masks` consults
+//!   (Y-plane `u64` + UV-plane `u16` per-block / per-TX-size
+//!   patterns). Task 6.3.2.
+//!
 //! ## Deferred
 //!
-//! - Edge-mask machinery (`build_masks` and the
-//!   `vp9_get_loop_filter_mask` function family) — Task 6.3.
+//! - `build_masks` + `build_y_mask` (the per-block mask-building
+//!   functions that consume the Task 6.3.2 tables) — Task 6.3.3+.
+
+pub mod mask_tables;
+
+pub use mask_tables::{
+    ABOVE_64X64_TXFORM_MASK_UV, ABOVE_64X64_TXFORM_MASK_Y, ABOVE_BORDER_UV, ABOVE_BORDER_Y,
+    ABOVE_PREDICTION_MASK_UV, ABOVE_PREDICTION_MASK_Y, LEFT_64X64_TXFORM_MASK_UV,
+    LEFT_64X64_TXFORM_MASK_Y, LEFT_BORDER_UV, LEFT_BORDER_Y, LEFT_PREDICTION_MASK_UV,
+    LEFT_PREDICTION_MASK_Y, SIZE_MASK_UV, SIZE_MASK_Y,
+};
 
 /// Maximum filter level. Mirrors libvpx `MAX_LOOP_FILTER`
 /// (`vp9_loopfilter.h:24`).
