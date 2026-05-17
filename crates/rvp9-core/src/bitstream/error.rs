@@ -30,6 +30,45 @@ pub enum BitstreamError {
         /// Bytes actually available in the reader's slice.
         available: usize,
     },
+
+    /// Top 2 bits of the first header byte were not `VP9_FRAME_MARKER`
+    /// (= 2). Mirrors libvpx's `Invalid frame marker` rejection at
+    /// `vp9_decodeframe.c:2648`.
+    InvalidFrameMarker {
+        /// The two bits actually read.
+        found: u8,
+    },
+
+    /// The bitstream profile field decoded to a value the decoder
+    /// rejects. In rvp9 v1 we reject everything except `Profile0`
+    /// (D-01 RESOLVED: HBD deferred). Profile 4+ (reserved) is also
+    /// rejected at libvpx parity (`vp9_decodeframe.c:2654`).
+    UnsupportedProfile {
+        /// The raw profile value as decoded from the header (0..=3 if
+        /// representable; 4 is the sentinel for "out-of-range").
+        profile: u8,
+    },
+
+    /// The 24-bit sync-code field did not match `0x49 0x83 0x42`.
+    /// Mirrors libvpx's `Invalid frame sync code` rejection at
+    /// `vp9_decodeframe.c:2688`.
+    InvalidSyncCode {
+        /// The three sync bytes actually read.
+        found: [u8; 3],
+    },
+
+    /// The decoded `bit_depth` field was not one of `{8, 10, 12}`.
+    /// VP9 only defines those three; any other value is malformed.
+    UnsupportedBitDepth {
+        /// The raw 2-bit `bit_depth_one_more_than_8` field decoded
+        /// (0 → 8-bit, 1 → 10-bit, 2 → 12-bit, 3 → reserved).
+        raw: u8,
+    },
+
+    /// The decoded color space was `Srgb` but the profile or chroma
+    /// subsampling is inconsistent with it. Per spec §6.2 `Srgb`
+    /// requires Profile 1/3 + 4:4:4.
+    InconsistentSrgb,
 }
 
 impl fmt::Display for BitstreamError {
@@ -40,6 +79,21 @@ impl fmt::Display for BitstreamError {
                 f,
                 "raw bit reader truncated: needed {needed} bytes, only {available} available"
             ),
+            Self::InvalidFrameMarker { found } => {
+                write!(f, "invalid VP9 frame marker: expected 0b10, found 0b{found:02b}")
+            }
+            Self::UnsupportedProfile { profile } => {
+                write!(f, "unsupported VP9 bitstream profile: {profile}")
+            }
+            Self::InvalidSyncCode { found } => write!(
+                f,
+                "invalid VP9 sync code: expected 0x49 0x83 0x42, found 0x{:02x} 0x{:02x} 0x{:02x}",
+                found[0], found[1], found[2]
+            ),
+            Self::UnsupportedBitDepth { raw } => {
+                write!(f, "unsupported bit depth raw value: {raw}")
+            }
+            Self::InconsistentSrgb => f.write_str("sRGB color space requires Profile 1/3 with 4:4:4 sampling"),
         }
     }
 }

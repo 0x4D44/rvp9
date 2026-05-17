@@ -25,6 +25,7 @@
 
 pub mod error;
 pub mod frame;
+pub mod header;
 pub mod raw;
 
 pub use error::BitstreamError;
@@ -32,4 +33,5 @@ pub use frame::{
     BitDepth, ChromaFormat, ColorRange, ColorSpace, FrameType, MAX_INTER_REFS, Profile,
     REF_FRAMES, REF_FRAMES_LOG2,
 };
+pub use header::{FrameKind, UncompressedHeader, parse_uncompressed_header};
 pub use raw::{RawBitReader, RawBitWriter};
