@@ -32,7 +32,10 @@ pub mod sub_parsers;
 pub mod superframe;
 pub mod tile;
 
-pub use compressed_header::{TX_SIZE_CONTEXTS, read_skip_probs, read_tx_mode, read_tx_mode_probs};
+pub use compressed_header::{
+    TX_SIZE_CONTEXTS, read_coef_probs, read_skip_probs, read_tx_mode, read_tx_mode_probs,
+    tx_mode_to_biggest_tx_size,
+};
 pub use error::BitstreamError;
 pub use frame::{
     BitDepth, ChromaFormat, ColorRange, ColorSpace, FrameType, InterpFilter, MAX_INTER_REFS,
