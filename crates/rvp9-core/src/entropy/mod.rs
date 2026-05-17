@@ -28,6 +28,7 @@ pub mod bool_reader;
 pub mod bool_writer;
 pub mod default_probs;
 pub mod kf_probs;
+pub mod pareto;
 pub mod tables;
 
 pub use bool_reader::BoolReader;
@@ -41,6 +42,7 @@ pub use default_probs::{
     REF_CONTEXTS, SKIP_CONTEXTS, SWITCHABLE_FILTER_CONTEXTS, SWITCHABLE_FILTERS,
 };
 pub use kf_probs::{VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB};
+pub use pareto::{COEFF_PROB_MODELS, MODEL_NODES, VP9_PARETO8_FULL};
 pub use tables::VPX_NORM;
 
 /// The probability value `128` — the maximum-entropy point that
