@@ -57,18 +57,21 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 5.2b (intra-pred: D117 / D135 / D153 — corner directionals) | ✅ done | `fe1b379` |
 | **Intra-pred kernels COMPLETE (all 10 VP9 modes)** | ✅ | |
 | 6.1 (loopfilter: per-level threshold tables) | ✅ done | `bf82548` |
-| 6.2-4 (loopfilter: kernels, mask machinery, frame init) | ⏸️ |
+| 6.2a (loopfilter: 4-tap edge-filter kernels) | ✅ done | `5cfaafc` |
+| 6.2b-c (loopfilter: 8-tap and 16-tap kernels) | ⏸️ |
+| 6.3 (loopfilter: edge-mask machinery) | ⏸️ |
+| 6.4 (loopfilter: per-frame filter-level resolution) | ⏸️ |
 | 8 (decoder integration) | ⏸️ |
 | 9 (vpxdec conformance gate) | ⏸️ |
 
-rvp9-core: 237 unit tests passing, ~11600 lines of bit-exact-mirrored
+rvp9-core: 243 unit tests passing, ~11900 lines of bit-exact-mirrored
 code. `cargo test`, `cargo clippy -D warnings` clean.
 
 **Intra-pred kernels are complete** — all 10 VP9 modes implemented.
-**Loop-filter threshold tables are in place** — `LoopFilterInfo`
-covers all 64 filter levels with `compute_thresholds(lvl, sharpness)`
-mirroring libvpx's `update_sharpness` formula. Edge-filter kernels
-themselves are deferred to Task 6.2.
+**Loop-filter foundation is in place**: per-level threshold tables
+plus the four 4-tap edge-filter kernels (horizontal/vertical
+single + dual variants). The 8-tap and 16-tap kernels (used at
+coarser block boundaries) are deferred to Task 6.2b-c.
 
 **Entropy probability-table layer is now complete.** The `FrameContext`
 struct aggregates every default probability table the decoder needs;
