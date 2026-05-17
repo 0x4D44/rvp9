@@ -36,3 +36,7 @@ dependencies = [
 [[package]]
 name = "rvp9-harness"
 version = "0.1.0"
+dependencies = [
+ "rvp9-core",
+ "rvp9-decoder",
+]

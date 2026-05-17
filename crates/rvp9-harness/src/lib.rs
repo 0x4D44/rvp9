@@ -4,6 +4,10 @@
 
 #![allow(missing_docs)]
 
+pub mod container;
+pub mod md5file;
+
+use rvp9_core::frame::Yv12Buffer;
 use std::path::Path;
 
 /// MD5 of a file. Computed in-process so we don't depend on an external
@@ -89,6 +93,40 @@ pub fn hex16(bytes: [u8; 16]) -> String {
         s.push_str(&format!("{b:02x}"));
     }
     s
+}
+
+/// MD5 of a decoded YV12 buffer in the order/dimensions libvpx's
+/// `vpxdec --md5` uses: Y, then U, then V, each row hashed in raster
+/// order over the **visible** (cropped) plane width only — border and
+/// stride padding are excluded. For 4:2:0, U/V dimensions are
+/// `((crop_w + 1) / 2, (crop_h + 1) / 2)`.
+///
+/// Reference: `vpxdec.c:update_image_md5` (loops `Y, U, V` planes,
+/// hashing `vpx_img_plane_width(img, plane)` bytes per row for
+/// `vpx_img_plane_height(img, plane)` rows) + `tools_common.c:
+/// vpx_img_plane_width/height` (rounding-up halve for chroma).
+pub fn md5_of_yv12_visible(buf: &Yv12Buffer) -> [u8; 16] {
+    use rvp9_core::frame::PlaneRef;
+
+    let crop_w = buf.width() as usize;
+    let crop_h = buf.height() as usize;
+    let uv_w = crop_w.div_ceil(2);
+    let uv_h = crop_h.div_ceil(2);
+
+    // Pre-size: Y + 2 × chroma.
+    let mut bytes: Vec<u8> = Vec::with_capacity(crop_w * crop_h + 2 * uv_w * uv_h);
+    let push_plane = |dst: &mut Vec<u8>, plane: PlaneRef<'_>, w: usize, h: usize| {
+        let stride = plane.stride();
+        let data = plane.data();
+        for r in 0..h {
+            let start = r * stride;
+            dst.extend_from_slice(&data[start..start + w]);
+        }
+    };
+    push_plane(&mut bytes, buf.y_plane(), crop_w, crop_h);
+    push_plane(&mut bytes, buf.u_plane(), uv_w, uv_h);
+    push_plane(&mut bytes, buf.v_plane(), uv_w, uv_h);
+    md5(&bytes)
 }
 
 #[cfg(test)]

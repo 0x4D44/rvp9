@@ -347,6 +347,39 @@ impl Decoder {
             .get(slot_usize)
             .ok_or(DecodeError::EmptySlot { slot })
     }
+
+    /// Drive one parsed frame end-to-end and return the decoded
+    /// [`FrameBuf`] that should be shown (or `Ok(None)` for a
+    /// not-shown frame whose payload still references something).
+    ///
+    /// This is the single entry point the conformance harness uses
+    /// to walk a packet's worth of frames. Today only the
+    /// `ShowExistingFrame` path is plumbed through; all other paths
+    /// return [`DecodeError::Unimplemented`] with a short reason
+    /// string. As the decoder fills in across Stage 3 (compressed-
+    /// header parse, tile decode, pixel reconstruction, loopfilter)
+    /// those branches will be replaced with real decode paths.
+    ///
+    /// # Errors
+    ///
+    /// - [`DecodeError::Unimplemented`] for every non-`ShowExistingFrame`
+    ///   path until the wiring lands.
+    /// - [`DecodeError::EmptySlot`] from the `ShowExistingFrame`
+    ///   sub-path.
+    pub fn decode_frame(&mut self, frame: &ParsedFrame<'_>) -> Result<FrameBuf, DecodeError> {
+        match frame.header.kind {
+            FrameKind::ShowExistingFrame { .. } => self.decode_show_existing_frame(&frame.header),
+            FrameKind::KeyFrame => Err(DecodeError::Unimplemented {
+                reason: "keyframe decode (compressed header + tile decode + reconstruction)",
+            }),
+            FrameKind::IntraOnly { .. } => Err(DecodeError::Unimplemented {
+                reason: "intra-only frame decode (compressed header + tile decode + reconstruction)",
+            }),
+            FrameKind::InterFrame { .. } => Err(DecodeError::Unimplemented {
+                reason: "inter frame decode (compressed header + tile decode + reconstruction)",
+            }),
+        }
+    }
 }
 
 /// Errors from the per-frame decode entry points.
@@ -378,6 +411,14 @@ pub enum DecodeError {
     /// parsing. Carries the underlying `BitstreamError` for
     /// diagnostics.
     Bitstream(BitstreamError),
+    /// A decode path that has not yet been implemented in this
+    /// stage of the Stage 3 build-out. The `reason` describes which
+    /// path. Used by [`Decoder::decode_frame`] for non-show-existing
+    /// branches until the full pipeline lands.
+    Unimplemented {
+        /// Short human-readable description of the missing path.
+        reason: &'static str,
+    },
 }
 
 impl core::fmt::Display for DecodeError {
@@ -397,6 +438,7 @@ impl core::fmt::Display for DecodeError {
                 "compressed header declared {declared} bytes but only {available} available"
             ),
             Self::Bitstream(e) => write!(f, "bitstream error: {e}"),
+            Self::Unimplemented { reason } => write!(f, "unimplemented: {reason}"),
         }
     }
 }
