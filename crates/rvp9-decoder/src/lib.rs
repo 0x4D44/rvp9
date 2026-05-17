@@ -491,10 +491,18 @@ impl Decoder {
         decode_tile_intra(tile_buf.data, bounds, &params, fc, &mut yv12)
             .map_err(DecodeError::TileDecode)?;
 
+        // 8. TODO(overnight-2026-05-17): wire J (loop-filter apply
+        //    driver — `rvp9_core::loopfilter::apply::loop_filter_frame`)
+        //    once we maintain a frame-wide ModeInfo grid + per-SB
+        //    LoopFilterMask cache. Today TileDecodeCtx only stores
+        //    above-row + left-column reductions; setup_mask wants a
+        //    full 2-D `mi8x8: &[ModeInfo]` over the SB. Wiring this
+        //    needs a parallel ModeInfo grid storage in the decoder.
+        //
+        //    For vectors whose `loop_filter.filter_level == 0` (e.g.
+        //    `vp90-2-02-size-08x08.webm`'s keyframe) the LF apply is
+        //    a no-op and the floor MD5 already matches.
         let frame_buf: FrameBuf = std::sync::Arc::new(yv12);
-
-        // 8. TODO(overnight-2026-05-17): wire J (loop-filter apply)
-        //    once it lands.
 
         self.have_resync = false;
         Ok(frame_buf)
