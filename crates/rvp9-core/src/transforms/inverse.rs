@@ -12,19 +12,24 @@
 //! - [`idct16`] / [`idct16x16_256_add`] / [`idct16x16_1_add`] — mirrors
 //!   `idct16_c`, `vpx_idct16x16_256_add_c`, `vpx_idct16x16_1_add_c`
 //!   (`vpx_dsp/inv_txfm.c:557-811`).
+//! - [`idct32`] / [`idct32x32_1024_add`] / [`idct32x32_1_add`] — mirrors
+//!   `idct32_c`, `vpx_idct32x32_1024_add_c`, `vpx_idct32x32_1_add_c`
+//!   (`vpx_dsp/inv_txfm.c:813-1276`).
 //!
 //! All kernels apply [`wraplow`] (i16 modular truncation) at every site
 //! where the C source assigns a `dct_const_round_shift` result into an
 //! `int16_t step[]` slot. This preserves bit-exactness against libvpx
 //! for inputs whose intermediates exceed 16 bits.
 //!
-//! 32×32 inverse DCT, the iadst 4/8/16 family and the hybrid
-//! 4×4/8×8/16×16 transforms land in follow-up sub-tasks.
+//! The iadst 4/8/16 family and the hybrid 4×4/8×8/16×16 transforms
+//! land in follow-up sub-tasks.
 
 use super::constants::{
-    COSPI_2_64, COSPI_4_64, COSPI_6_64, COSPI_8_64, COSPI_10_64, COSPI_12_64, COSPI_14_64,
-    COSPI_16_64, COSPI_18_64, COSPI_20_64, COSPI_22_64, COSPI_24_64, COSPI_26_64, COSPI_28_64,
-    COSPI_30_64, clip_pixel_add, dct_const_round_shift, wraplow,
+    COSPI_1_64, COSPI_2_64, COSPI_3_64, COSPI_4_64, COSPI_5_64, COSPI_6_64, COSPI_7_64, COSPI_8_64,
+    COSPI_9_64, COSPI_10_64, COSPI_11_64, COSPI_12_64, COSPI_13_64, COSPI_14_64, COSPI_15_64,
+    COSPI_16_64, COSPI_17_64, COSPI_18_64, COSPI_19_64, COSPI_20_64, COSPI_21_64, COSPI_22_64,
+    COSPI_23_64, COSPI_24_64, COSPI_25_64, COSPI_26_64, COSPI_27_64, COSPI_28_64, COSPI_29_64,
+    COSPI_30_64, COSPI_31_64, clip_pixel_add, dct_const_round_shift, wraplow,
 };
 
 /// 1D 4-point inverse DCT. Output values are stored as `i32` but each
@@ -460,6 +465,443 @@ pub fn idct16x16_1_add(input: i32, dest: &mut [u8], stride: usize) {
     }
 }
 
+/// 1D 32-point inverse DCT.
+///
+/// Mirrors libvpx `idct32_c` (`vpx_dsp/inv_txfm.c:813-1178`). Eight-stage
+/// butterfly using cospi at every frequency 1..32 (excluding 0). Every
+/// `step1[]`/`step2[]` store applies [`wraplow`].
+#[inline]
+pub fn idct32(input: &[i32; 32], output: &mut [i32; 32]) {
+    let mut step1 = [0i32; 32];
+    let mut step2 = [0i32; 32];
+
+    // stage 1 — bit-reversed input load for lo 16; high-frequency cosine
+    // butterflies for hi 16 (mirrors libvpx :817-873).
+    step1[0] = input[0];
+    step1[1] = input[16];
+    step1[2] = input[8];
+    step1[3] = input[24];
+    step1[4] = input[4];
+    step1[5] = input[20];
+    step1[6] = input[12];
+    step1[7] = input[28];
+    step1[8] = input[2];
+    step1[9] = input[18];
+    step1[10] = input[10];
+    step1[11] = input[26];
+    step1[12] = input[6];
+    step1[13] = input[22];
+    step1[14] = input[14];
+    step1[15] = input[30];
+
+    let temp1 = input[1] as i64 * COSPI_31_64 as i64 - input[31] as i64 * COSPI_1_64 as i64;
+    let temp2 = input[1] as i64 * COSPI_1_64 as i64 + input[31] as i64 * COSPI_31_64 as i64;
+    step1[16] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[31] = wraplow(dct_const_round_shift(temp2) as i32);
+
+    let temp1 = input[17] as i64 * COSPI_15_64 as i64 - input[15] as i64 * COSPI_17_64 as i64;
+    let temp2 = input[17] as i64 * COSPI_17_64 as i64 + input[15] as i64 * COSPI_15_64 as i64;
+    step1[17] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[30] = wraplow(dct_const_round_shift(temp2) as i32);
+
+    let temp1 = input[9] as i64 * COSPI_23_64 as i64 - input[23] as i64 * COSPI_9_64 as i64;
+    let temp2 = input[9] as i64 * COSPI_9_64 as i64 + input[23] as i64 * COSPI_23_64 as i64;
+    step1[18] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[29] = wraplow(dct_const_round_shift(temp2) as i32);
+
+    let temp1 = input[25] as i64 * COSPI_7_64 as i64 - input[7] as i64 * COSPI_25_64 as i64;
+    let temp2 = input[25] as i64 * COSPI_25_64 as i64 + input[7] as i64 * COSPI_7_64 as i64;
+    step1[19] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[28] = wraplow(dct_const_round_shift(temp2) as i32);
+
+    let temp1 = input[5] as i64 * COSPI_27_64 as i64 - input[27] as i64 * COSPI_5_64 as i64;
+    let temp2 = input[5] as i64 * COSPI_5_64 as i64 + input[27] as i64 * COSPI_27_64 as i64;
+    step1[20] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[27] = wraplow(dct_const_round_shift(temp2) as i32);
+
+    let temp1 = input[21] as i64 * COSPI_11_64 as i64 - input[11] as i64 * COSPI_21_64 as i64;
+    let temp2 = input[21] as i64 * COSPI_21_64 as i64 + input[11] as i64 * COSPI_11_64 as i64;
+    step1[21] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[26] = wraplow(dct_const_round_shift(temp2) as i32);
+
+    let temp1 = input[13] as i64 * COSPI_19_64 as i64 - input[19] as i64 * COSPI_13_64 as i64;
+    let temp2 = input[13] as i64 * COSPI_13_64 as i64 + input[19] as i64 * COSPI_19_64 as i64;
+    step1[22] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[25] = wraplow(dct_const_round_shift(temp2) as i32);
+
+    let temp1 = input[29] as i64 * COSPI_3_64 as i64 - input[3] as i64 * COSPI_29_64 as i64;
+    let temp2 = input[29] as i64 * COSPI_29_64 as i64 + input[3] as i64 * COSPI_3_64 as i64;
+    step1[23] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[24] = wraplow(dct_const_round_shift(temp2) as i32);
+
+    // stage 2 (mirrors libvpx :875-920).
+    step2[0] = step1[0];
+    step2[1] = step1[1];
+    step2[2] = step1[2];
+    step2[3] = step1[3];
+    step2[4] = step1[4];
+    step2[5] = step1[5];
+    step2[6] = step1[6];
+    step2[7] = step1[7];
+
+    let temp1 = step1[8] as i64 * COSPI_30_64 as i64 - step1[15] as i64 * COSPI_2_64 as i64;
+    let temp2 = step1[8] as i64 * COSPI_2_64 as i64 + step1[15] as i64 * COSPI_30_64 as i64;
+    step2[8] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[15] = wraplow(dct_const_round_shift(temp2) as i32);
+
+    let temp1 = step1[9] as i64 * COSPI_14_64 as i64 - step1[14] as i64 * COSPI_18_64 as i64;
+    let temp2 = step1[9] as i64 * COSPI_18_64 as i64 + step1[14] as i64 * COSPI_14_64 as i64;
+    step2[9] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[14] = wraplow(dct_const_round_shift(temp2) as i32);
+
+    let temp1 = step1[10] as i64 * COSPI_22_64 as i64 - step1[13] as i64 * COSPI_10_64 as i64;
+    let temp2 = step1[10] as i64 * COSPI_10_64 as i64 + step1[13] as i64 * COSPI_22_64 as i64;
+    step2[10] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[13] = wraplow(dct_const_round_shift(temp2) as i32);
+
+    let temp1 = step1[11] as i64 * COSPI_6_64 as i64 - step1[12] as i64 * COSPI_26_64 as i64;
+    let temp2 = step1[11] as i64 * COSPI_26_64 as i64 + step1[12] as i64 * COSPI_6_64 as i64;
+    step2[11] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[12] = wraplow(dct_const_round_shift(temp2) as i32);
+
+    step2[16] = wraplow(step1[16] + step1[17]);
+    step2[17] = wraplow(step1[16] - step1[17]);
+    step2[18] = wraplow(-step1[18] + step1[19]);
+    step2[19] = wraplow(step1[18] + step1[19]);
+    step2[20] = wraplow(step1[20] + step1[21]);
+    step2[21] = wraplow(step1[20] - step1[21]);
+    step2[22] = wraplow(-step1[22] + step1[23]);
+    step2[23] = wraplow(step1[22] + step1[23]);
+    step2[24] = wraplow(step1[24] + step1[25]);
+    step2[25] = wraplow(step1[24] - step1[25]);
+    step2[26] = wraplow(-step1[26] + step1[27]);
+    step2[27] = wraplow(step1[26] + step1[27]);
+    step2[28] = wraplow(step1[28] + step1[29]);
+    step2[29] = wraplow(step1[28] - step1[29]);
+    step2[30] = wraplow(-step1[30] + step1[31]);
+    step2[31] = wraplow(step1[30] + step1[31]);
+
+    // stage 3 (mirrors libvpx :922-969).
+    step1[0] = step2[0];
+    step1[1] = step2[1];
+    step1[2] = step2[2];
+    step1[3] = step2[3];
+
+    let temp1 = step2[4] as i64 * COSPI_28_64 as i64 - step2[7] as i64 * COSPI_4_64 as i64;
+    let temp2 = step2[4] as i64 * COSPI_4_64 as i64 + step2[7] as i64 * COSPI_28_64 as i64;
+    step1[4] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[7] = wraplow(dct_const_round_shift(temp2) as i32);
+    let temp1 = step2[5] as i64 * COSPI_12_64 as i64 - step2[6] as i64 * COSPI_20_64 as i64;
+    let temp2 = step2[5] as i64 * COSPI_20_64 as i64 + step2[6] as i64 * COSPI_12_64 as i64;
+    step1[5] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[6] = wraplow(dct_const_round_shift(temp2) as i32);
+
+    step1[8] = wraplow(step2[8] + step2[9]);
+    step1[9] = wraplow(step2[8] - step2[9]);
+    step1[10] = wraplow(-step2[10] + step2[11]);
+    step1[11] = wraplow(step2[10] + step2[11]);
+    step1[12] = wraplow(step2[12] + step2[13]);
+    step1[13] = wraplow(step2[12] - step2[13]);
+    step1[14] = wraplow(-step2[14] + step2[15]);
+    step1[15] = wraplow(step2[14] + step2[15]);
+
+    step1[16] = step2[16];
+    step1[31] = step2[31];
+    let temp1 = -(step2[17] as i64) * COSPI_4_64 as i64 + step2[30] as i64 * COSPI_28_64 as i64;
+    let temp2 = step2[17] as i64 * COSPI_28_64 as i64 + step2[30] as i64 * COSPI_4_64 as i64;
+    step1[17] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[30] = wraplow(dct_const_round_shift(temp2) as i32);
+    let temp1 = -(step2[18] as i64) * COSPI_28_64 as i64 - step2[29] as i64 * COSPI_4_64 as i64;
+    let temp2 = -(step2[18] as i64) * COSPI_4_64 as i64 + step2[29] as i64 * COSPI_28_64 as i64;
+    step1[18] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[29] = wraplow(dct_const_round_shift(temp2) as i32);
+    step1[19] = step2[19];
+    step1[20] = step2[20];
+    let temp1 = -(step2[21] as i64) * COSPI_20_64 as i64 + step2[26] as i64 * COSPI_12_64 as i64;
+    let temp2 = step2[21] as i64 * COSPI_12_64 as i64 + step2[26] as i64 * COSPI_20_64 as i64;
+    step1[21] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[26] = wraplow(dct_const_round_shift(temp2) as i32);
+    let temp1 = -(step2[22] as i64) * COSPI_12_64 as i64 - step2[25] as i64 * COSPI_20_64 as i64;
+    let temp2 = -(step2[22] as i64) * COSPI_20_64 as i64 + step2[25] as i64 * COSPI_12_64 as i64;
+    step1[22] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[25] = wraplow(dct_const_round_shift(temp2) as i32);
+    step1[23] = step2[23];
+    step1[24] = step2[24];
+    step1[27] = step2[27];
+    step1[28] = step2[28];
+
+    // stage 4 (mirrors libvpx :971-1014).
+    let temp1 = (step1[0] as i64 + step1[1] as i64) * COSPI_16_64 as i64;
+    let temp2 = (step1[0] as i64 - step1[1] as i64) * COSPI_16_64 as i64;
+    step2[0] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[1] = wraplow(dct_const_round_shift(temp2) as i32);
+    let temp1 = step1[2] as i64 * COSPI_24_64 as i64 - step1[3] as i64 * COSPI_8_64 as i64;
+    let temp2 = step1[2] as i64 * COSPI_8_64 as i64 + step1[3] as i64 * COSPI_24_64 as i64;
+    step2[2] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[3] = wraplow(dct_const_round_shift(temp2) as i32);
+    step2[4] = wraplow(step1[4] + step1[5]);
+    step2[5] = wraplow(step1[4] - step1[5]);
+    step2[6] = wraplow(-step1[6] + step1[7]);
+    step2[7] = wraplow(step1[6] + step1[7]);
+
+    step2[8] = step1[8];
+    step2[15] = step1[15];
+    let temp1 = -(step1[9] as i64) * COSPI_8_64 as i64 + step1[14] as i64 * COSPI_24_64 as i64;
+    let temp2 = step1[9] as i64 * COSPI_24_64 as i64 + step1[14] as i64 * COSPI_8_64 as i64;
+    step2[9] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[14] = wraplow(dct_const_round_shift(temp2) as i32);
+    let temp1 = -(step1[10] as i64) * COSPI_24_64 as i64 - step1[13] as i64 * COSPI_8_64 as i64;
+    let temp2 = -(step1[10] as i64) * COSPI_8_64 as i64 + step1[13] as i64 * COSPI_24_64 as i64;
+    step2[10] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[13] = wraplow(dct_const_round_shift(temp2) as i32);
+    step2[11] = step1[11];
+    step2[12] = step1[12];
+
+    step2[16] = wraplow(step1[16] + step1[19]);
+    step2[17] = wraplow(step1[17] + step1[18]);
+    step2[18] = wraplow(step1[17] - step1[18]);
+    step2[19] = wraplow(step1[16] - step1[19]);
+    step2[20] = wraplow(-step1[20] + step1[23]);
+    step2[21] = wraplow(-step1[21] + step1[22]);
+    step2[22] = wraplow(step1[21] + step1[22]);
+    step2[23] = wraplow(step1[20] + step1[23]);
+
+    step2[24] = wraplow(step1[24] + step1[27]);
+    step2[25] = wraplow(step1[25] + step1[26]);
+    step2[26] = wraplow(step1[25] - step1[26]);
+    step2[27] = wraplow(step1[24] - step1[27]);
+    step2[28] = wraplow(-step1[28] + step1[31]);
+    step2[29] = wraplow(-step1[29] + step1[30]);
+    step2[30] = wraplow(step1[29] + step1[30]);
+    step2[31] = wraplow(step1[28] + step1[31]);
+
+    // stage 5 (mirrors libvpx :1016-1060).
+    step1[0] = wraplow(step2[0] + step2[3]);
+    step1[1] = wraplow(step2[1] + step2[2]);
+    step1[2] = wraplow(step2[1] - step2[2]);
+    step1[3] = wraplow(step2[0] - step2[3]);
+    step1[4] = step2[4];
+    let temp1 = (step2[6] as i64 - step2[5] as i64) * COSPI_16_64 as i64;
+    let temp2 = (step2[5] as i64 + step2[6] as i64) * COSPI_16_64 as i64;
+    step1[5] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[6] = wraplow(dct_const_round_shift(temp2) as i32);
+    step1[7] = step2[7];
+
+    step1[8] = wraplow(step2[8] + step2[11]);
+    step1[9] = wraplow(step2[9] + step2[10]);
+    step1[10] = wraplow(step2[9] - step2[10]);
+    step1[11] = wraplow(step2[8] - step2[11]);
+    step1[12] = wraplow(-step2[12] + step2[15]);
+    step1[13] = wraplow(-step2[13] + step2[14]);
+    step1[14] = wraplow(step2[13] + step2[14]);
+    step1[15] = wraplow(step2[12] + step2[15]);
+
+    step1[16] = step2[16];
+    step1[17] = step2[17];
+    let temp1 = -(step2[18] as i64) * COSPI_8_64 as i64 + step2[29] as i64 * COSPI_24_64 as i64;
+    let temp2 = step2[18] as i64 * COSPI_24_64 as i64 + step2[29] as i64 * COSPI_8_64 as i64;
+    step1[18] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[29] = wraplow(dct_const_round_shift(temp2) as i32);
+    let temp1 = -(step2[19] as i64) * COSPI_8_64 as i64 + step2[28] as i64 * COSPI_24_64 as i64;
+    let temp2 = step2[19] as i64 * COSPI_24_64 as i64 + step2[28] as i64 * COSPI_8_64 as i64;
+    step1[19] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[28] = wraplow(dct_const_round_shift(temp2) as i32);
+    let temp1 = -(step2[20] as i64) * COSPI_24_64 as i64 - step2[27] as i64 * COSPI_8_64 as i64;
+    let temp2 = -(step2[20] as i64) * COSPI_8_64 as i64 + step2[27] as i64 * COSPI_24_64 as i64;
+    step1[20] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[27] = wraplow(dct_const_round_shift(temp2) as i32);
+    let temp1 = -(step2[21] as i64) * COSPI_24_64 as i64 - step2[26] as i64 * COSPI_8_64 as i64;
+    let temp2 = -(step2[21] as i64) * COSPI_8_64 as i64 + step2[26] as i64 * COSPI_24_64 as i64;
+    step1[21] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[26] = wraplow(dct_const_round_shift(temp2) as i32);
+    step1[22] = step2[22];
+    step1[23] = step2[23];
+    step1[24] = step2[24];
+    step1[25] = step2[25];
+    step1[30] = step2[30];
+    step1[31] = step2[31];
+
+    // stage 6 (mirrors libvpx :1062-1100).
+    step2[0] = wraplow(step1[0] + step1[7]);
+    step2[1] = wraplow(step1[1] + step1[6]);
+    step2[2] = wraplow(step1[2] + step1[5]);
+    step2[3] = wraplow(step1[3] + step1[4]);
+    step2[4] = wraplow(step1[3] - step1[4]);
+    step2[5] = wraplow(step1[2] - step1[5]);
+    step2[6] = wraplow(step1[1] - step1[6]);
+    step2[7] = wraplow(step1[0] - step1[7]);
+    step2[8] = step1[8];
+    step2[9] = step1[9];
+    let temp1 = (-(step1[10] as i64) + step1[13] as i64) * COSPI_16_64 as i64;
+    let temp2 = (step1[10] as i64 + step1[13] as i64) * COSPI_16_64 as i64;
+    step2[10] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[13] = wraplow(dct_const_round_shift(temp2) as i32);
+    let temp1 = (-(step1[11] as i64) + step1[12] as i64) * COSPI_16_64 as i64;
+    let temp2 = (step1[11] as i64 + step1[12] as i64) * COSPI_16_64 as i64;
+    step2[11] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[12] = wraplow(dct_const_round_shift(temp2) as i32);
+    step2[14] = step1[14];
+    step2[15] = step1[15];
+
+    step2[16] = wraplow(step1[16] + step1[23]);
+    step2[17] = wraplow(step1[17] + step1[22]);
+    step2[18] = wraplow(step1[18] + step1[21]);
+    step2[19] = wraplow(step1[19] + step1[20]);
+    step2[20] = wraplow(step1[19] - step1[20]);
+    step2[21] = wraplow(step1[18] - step1[21]);
+    step2[22] = wraplow(step1[17] - step1[22]);
+    step2[23] = wraplow(step1[16] - step1[23]);
+
+    step2[24] = wraplow(-step1[24] + step1[31]);
+    step2[25] = wraplow(-step1[25] + step1[30]);
+    step2[26] = wraplow(-step1[26] + step1[29]);
+    step2[27] = wraplow(-step1[27] + step1[28]);
+    step2[28] = wraplow(step1[27] + step1[28]);
+    step2[29] = wraplow(step1[26] + step1[29]);
+    step2[30] = wraplow(step1[25] + step1[30]);
+    step2[31] = wraplow(step1[24] + step1[31]);
+
+    // stage 7 (mirrors libvpx :1102-1143).
+    step1[0] = wraplow(step2[0] + step2[15]);
+    step1[1] = wraplow(step2[1] + step2[14]);
+    step1[2] = wraplow(step2[2] + step2[13]);
+    step1[3] = wraplow(step2[3] + step2[12]);
+    step1[4] = wraplow(step2[4] + step2[11]);
+    step1[5] = wraplow(step2[5] + step2[10]);
+    step1[6] = wraplow(step2[6] + step2[9]);
+    step1[7] = wraplow(step2[7] + step2[8]);
+    step1[8] = wraplow(step2[7] - step2[8]);
+    step1[9] = wraplow(step2[6] - step2[9]);
+    step1[10] = wraplow(step2[5] - step2[10]);
+    step1[11] = wraplow(step2[4] - step2[11]);
+    step1[12] = wraplow(step2[3] - step2[12]);
+    step1[13] = wraplow(step2[2] - step2[13]);
+    step1[14] = wraplow(step2[1] - step2[14]);
+    step1[15] = wraplow(step2[0] - step2[15]);
+
+    step1[16] = step2[16];
+    step1[17] = step2[17];
+    step1[18] = step2[18];
+    step1[19] = step2[19];
+    let temp1 = (-(step2[20] as i64) + step2[27] as i64) * COSPI_16_64 as i64;
+    let temp2 = (step2[20] as i64 + step2[27] as i64) * COSPI_16_64 as i64;
+    step1[20] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[27] = wraplow(dct_const_round_shift(temp2) as i32);
+    let temp1 = (-(step2[21] as i64) + step2[26] as i64) * COSPI_16_64 as i64;
+    let temp2 = (step2[21] as i64 + step2[26] as i64) * COSPI_16_64 as i64;
+    step1[21] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[26] = wraplow(dct_const_round_shift(temp2) as i32);
+    let temp1 = (-(step2[22] as i64) + step2[25] as i64) * COSPI_16_64 as i64;
+    let temp2 = (step2[22] as i64 + step2[25] as i64) * COSPI_16_64 as i64;
+    step1[22] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[25] = wraplow(dct_const_round_shift(temp2) as i32);
+    let temp1 = (-(step2[23] as i64) + step2[24] as i64) * COSPI_16_64 as i64;
+    let temp2 = (step2[23] as i64 + step2[24] as i64) * COSPI_16_64 as i64;
+    step1[23] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[24] = wraplow(dct_const_round_shift(temp2) as i32);
+    step1[28] = step2[28];
+    step1[29] = step2[29];
+    step1[30] = step2[30];
+    step1[31] = step2[31];
+
+    // final stage (mirrors libvpx :1145-1177).
+    output[0] = wraplow(step1[0] + step1[31]);
+    output[1] = wraplow(step1[1] + step1[30]);
+    output[2] = wraplow(step1[2] + step1[29]);
+    output[3] = wraplow(step1[3] + step1[28]);
+    output[4] = wraplow(step1[4] + step1[27]);
+    output[5] = wraplow(step1[5] + step1[26]);
+    output[6] = wraplow(step1[6] + step1[25]);
+    output[7] = wraplow(step1[7] + step1[24]);
+    output[8] = wraplow(step1[8] + step1[23]);
+    output[9] = wraplow(step1[9] + step1[22]);
+    output[10] = wraplow(step1[10] + step1[21]);
+    output[11] = wraplow(step1[11] + step1[20]);
+    output[12] = wraplow(step1[12] + step1[19]);
+    output[13] = wraplow(step1[13] + step1[18]);
+    output[14] = wraplow(step1[14] + step1[17]);
+    output[15] = wraplow(step1[15] + step1[16]);
+    output[16] = wraplow(step1[15] - step1[16]);
+    output[17] = wraplow(step1[14] - step1[17]);
+    output[18] = wraplow(step1[13] - step1[18]);
+    output[19] = wraplow(step1[12] - step1[19]);
+    output[20] = wraplow(step1[11] - step1[20]);
+    output[21] = wraplow(step1[10] - step1[21]);
+    output[22] = wraplow(step1[9] - step1[22]);
+    output[23] = wraplow(step1[8] - step1[23]);
+    output[24] = wraplow(step1[7] - step1[24]);
+    output[25] = wraplow(step1[6] - step1[25]);
+    output[26] = wraplow(step1[5] - step1[26]);
+    output[27] = wraplow(step1[4] - step1[27]);
+    output[28] = wraplow(step1[3] - step1[28]);
+    output[29] = wraplow(step1[2] - step1[29]);
+    output[30] = wraplow(step1[1] - step1[30]);
+    output[31] = wraplow(step1[0] - step1[31]);
+}
+
+/// 2D 1024-coefficient inverse 32×32 DCT with residual add to `dest`.
+///
+/// `input[1024]` is the dequantised coefficients in raster order;
+/// `dest[r * stride + c]` is the destination plane. Output is added to
+/// `dest` and saturated to `[0, 255]`. The column pass uses
+/// `ROUND_POWER_OF_TWO(_, 6)` per `vpx_idct32x32_1024_add_c`
+/// (`vpx_dsp/inv_txfm.c:1180-1209`).
+///
+/// Implements libvpx's per-row zero-coeff fast-skip: if all 32
+/// coefficients of a row are zero, the row pass is replaced by a
+/// memset(0).
+pub fn idct32x32_1024_add(input: &[i32; 1024], dest: &mut [u8], stride: usize) {
+    debug_assert!(dest.len() >= stride * 31 + 32, "dest too small for 32x32 add");
+
+    let mut intermediate = [0i32; 1024];
+
+    // Row pass with per-row zero-skip.
+    for r in 0..32 {
+        let row_in: &[i32; 32] = input[r * 32..r * 32 + 32].try_into().unwrap();
+        // OR-reduce to detect all-zero row (matches libvpx zero_coeff check).
+        let any_nonzero = row_in.iter().any(|&v| v != 0);
+        let row_out_mut: &mut [i32; 32] = (&mut intermediate[r * 32..r * 32 + 32])
+            .try_into()
+            .unwrap();
+        if any_nonzero {
+            idct32(row_in, row_out_mut);
+        }
+        // else: leave as zero (already from initialiser).
+    }
+
+    // Column pass + residual add (ROUND_POWER_OF_TWO with shift 6).
+    let mut col_in = [0i32; 32];
+    let mut col_out = [0i32; 32];
+    for c in 0..32 {
+        for r in 0..32 {
+            col_in[r] = intermediate[r * 32 + c];
+        }
+        idct32(&col_in, &mut col_out);
+        for r in 0..32 {
+            let shifted = (col_out[r] as i64 + 32) >> 6;
+            dest[r * stride + c] = clip_pixel_add(dest[r * stride + c], shifted);
+        }
+    }
+}
+
+/// 2D 1-coefficient inverse 32×32 DCT (DC-only fast path).
+///
+/// Mirrors `vpx_idct32x32_1_add_c` (`vpx_dsp/inv_txfm.c:1263-1276`). Two
+/// `cospi_16_64` passes (each `wraplow`-truncated) then
+/// `ROUND_POWER_OF_TWO(_, 6)`.
+pub fn idct32x32_1_add(input: i32, dest: &mut [u8], stride: usize) {
+    debug_assert!(dest.len() >= stride * 31 + 32, "dest too small for 32x32 add");
+
+    let out1 = wraplow(dct_const_round_shift((input as i64) * (COSPI_16_64 as i64)) as i32);
+    let out2 = wraplow(dct_const_round_shift((out1 as i64) * (COSPI_16_64 as i64)) as i32);
+    let a1 = ((out2 as i64) + 32) >> 6;
+    for r in 0..32 {
+        for c in 0..32 {
+            dest[r * stride + c] = clip_pixel_add(dest[r * stride + c], a1);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -801,6 +1243,101 @@ mod tests {
         input[1] = 4096;
         let mut dest = [128u8; 256];
         idct16x16_256_add(&input, &mut dest, 16);
+        let any_above = dest.iter().any(|&v| v > 128);
+        let any_below = dest.iter().any(|&v| v < 128);
+        assert!(any_above && any_below, "AC should produce both signs");
+    }
+
+    // ---- 32x32 family ----
+
+    /// Zero input → zero output (1D).
+    #[test]
+    fn idct32_zero_in_zero_out() {
+        let input = [0i32; 32];
+        let mut output = [99i32; 32];
+        idct32(&input, &mut output);
+        assert_eq!(output, [0; 32]);
+    }
+
+    /// Zero input → unchanged dest. `(0 + 32) >> 6 = 0`.
+    #[test]
+    fn idct32x32_1024_add_zero_preserves_dest() {
+        let input = [0i32; 1024];
+        let mut dest = vec![128u8; 1024];
+        idct32x32_1024_add(&input, &mut dest, 32);
+        assert!(dest.iter().all(|&v| v == 128));
+    }
+
+    /// DC-only fast path must match full path when only `input[0]` is set.
+    #[test]
+    fn idct32x32_1_add_matches_1024_add_for_dc_only() {
+        let dc: i32 = 256;
+        let mut input = [0i32; 1024];
+        input[0] = dc;
+        let mut dest_full = vec![50u8; 1024];
+        let mut dest_dc = vec![50u8; 1024];
+        idct32x32_1024_add(&input, &mut dest_full, 32);
+        idct32x32_1_add(dc, &mut dest_dc, 32);
+        assert_eq!(
+            dest_full, dest_dc,
+            "DC-only fast path must match full path for DC-only input"
+        );
+    }
+
+    /// Hand-computed DC differential for `idct32x32_1_add(1024)`.
+    ///
+    /// Trace (with `wraplow`, no truncation observed for these
+    /// magnitudes):
+    /// - `out1 = round_shift(1024 * 11585) = 724`.
+    /// - `out2 = round_shift(724 * 11585) = 512`.
+    /// - `a1 = (512 + 32) >> 6 = 544 >> 6 = 8`.
+    /// - Add 8 to dest=0 everywhere → 8.
+    ///
+    /// Identical to the 16×16 DC case (same two cospi_16_64 passes
+    /// and `>>6` shift).
+    #[test]
+    fn idct32x32_1_add_dc_known_value() {
+        let mut dest = vec![0u8; 1024];
+        idct32x32_1_add(1024, &mut dest, 32);
+        assert!(dest.iter().all(|&v| v == 8));
+    }
+
+    /// DC saturation: large positive DC clips at 255.
+    #[test]
+    fn idct32x32_1_add_saturates_high() {
+        let mut dest = vec![200u8; 1024];
+        idct32x32_1_add(20_000, &mut dest, 32);
+        assert!(dest.iter().all(|&v| v == 255));
+    }
+
+    /// DC saturation: large negative DC clips at 0.
+    #[test]
+    fn idct32x32_1_add_saturates_low() {
+        let mut dest = vec![100u8; 1024];
+        idct32x32_1_add(-20_000, &mut dest, 32);
+        assert!(dest.iter().all(|&v| v == 0));
+    }
+
+    /// idct32 with single AC coefficient produces a varied 32-vector.
+    #[test]
+    fn idct32_ac_input_produces_varied_output() {
+        let mut input = [0i32; 32];
+        input[1] = 1024;
+        let mut output = [0i32; 32];
+        idct32(&input, &mut output);
+        let any_nonzero = output.iter().any(|&v| v != 0);
+        let varied = output.iter().any(|&v| v != output[0]);
+        assert!(any_nonzero && varied, "AC input → flat/zero output");
+    }
+
+    /// 32×32 full path with one AC coefficient produces both signs of
+    /// residual.
+    #[test]
+    fn idct32x32_1024_add_ac_modulates_pixels() {
+        let mut input = [0i32; 1024];
+        input[1] = 4096;
+        let mut dest = vec![128u8; 1024];
+        idct32x32_1024_add(&input, &mut dest, 32);
         let any_above = dest.iter().any(|&v| v > 128);
         let any_below = dest.iter().any(|&v| v < 128);
         assert!(any_above && any_below, "AC should produce both signs");
