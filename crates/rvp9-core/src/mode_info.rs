@@ -24,9 +24,54 @@
 //! threading a separate `is_inter` boolean.
 
 use crate::bitstream::InterpFilter;
-use crate::block::BlockSize;
+use crate::block::{BlockSize, PARTITION_TYPES, PartitionType};
+use crate::entropy::BoolReader;
 use crate::intra_pred::IntraMode;
 use crate::transforms::TxSize;
+
+/// libvpx `vp9_partition_tree` (`vp9_entropymode.c:262-264`):
+///
+/// ```text
+///         node 0
+///        /       \
+///    NONE         node 2
+///                /      \
+///            HORZ       node 4
+///                       /     \
+///                    VERT    SPLIT
+/// ```
+///
+/// Flat representation: positive entries are next-node indices,
+/// negative entries `-leaf` are `PartitionType` terminals.
+#[rustfmt::skip]
+pub static PARTITION_TREE: [i8; 2 * PARTITION_TYPES - 2] = [
+    -(PartitionType::None as i8),
+    2,
+    -(PartitionType::Horz as i8),
+    4,
+    -(PartitionType::Vert as i8),
+    -(PartitionType::Split as i8),
+];
+
+/// Decode one [`PartitionType`] from the boolean reader given a
+/// 3-entry context probability slot. Mirrors libvpx
+/// `read_partition` (`vp9_decodemv.c:467-479`) — the tree-decode
+/// part. The caller provides the right context's probability slot
+/// by computing the 16-way `partition_plane_context`.
+///
+/// `probs` is `&fc.partition_prob[ctx]` (3 probabilities).
+///
+/// For block sizes < 8×8 (where `Block8x8` is the smallest
+/// partitionable parent), libvpx forces `PARTITION_NONE` and
+/// skips the tree decode entirely. The caller handles that case.
+#[inline]
+#[must_use]
+pub fn read_partition(r: &mut BoolReader<'_>, probs: &[u8; PARTITION_TYPES - 1]) -> PartitionType {
+    let raw = r.read_tree(&PARTITION_TREE, probs);
+    // Safety: PARTITION_TREE only contains negations of valid
+    // PartitionType discriminants, so `from_u8` always succeeds.
+    PartitionType::from_u8(raw as u8).expect("partition tree returns valid PartitionType")
+}
 
 /// VP9 inter-prediction mode. Mirrors libvpx's
 /// `NEARESTMV..=NEWMV` (`vp9_enums.h:120-123`); numeric values
@@ -421,6 +466,65 @@ mod tests {
         };
         for block in 0..4 {
             assert_eq!(mi_inter.y_mode_for_subblock(block), None);
+        }
+    }
+
+    /// `PARTITION_TREE` is the libvpx-shaped 6-entry table.
+    /// Hand-verified against `vp9_entropymode.c:262-264`.
+    #[test]
+    fn partition_tree_shape() {
+        assert_eq!(PARTITION_TREE.len(), 6);
+        // node 0: [-NONE, 2]
+        assert_eq!(PARTITION_TREE[0], -(PartitionType::None as i8));
+        assert_eq!(PARTITION_TREE[1], 2);
+        // node 2: [-HORZ, 4]
+        assert_eq!(PARTITION_TREE[2], -(PartitionType::Horz as i8));
+        assert_eq!(PARTITION_TREE[3], 4);
+        // node 4: [-VERT, -SPLIT]
+        assert_eq!(PARTITION_TREE[4], -(PartitionType::Vert as i8));
+        assert_eq!(PARTITION_TREE[5], -(PartitionType::Split as i8));
+    }
+
+    /// `read_partition` round-trips every PartitionType for an
+    /// arbitrary context. The boolean tree encodes:
+    /// - PARTITION_NONE  via bit sequence `0`
+    /// - PARTITION_HORZ  via `1 0`
+    /// - PARTITION_VERT  via `1 1 0`
+    /// - PARTITION_SPLIT via `1 1 1`
+    #[test]
+    fn read_partition_round_trip() {
+        use crate::entropy::BoolWriter;
+
+        // We need a specific probs layout: use p=128 (max-entropy)
+        // for every node so the encoder bits encode directly.
+        let probs: [u8; 3] = [128, 128, 128];
+
+        // Build, for each PartitionType, a buffer with the
+        // appropriate bit sequence; verify the decoder returns
+        // the expected value.
+        let cases = [
+            (PartitionType::None, vec![(0u8, probs[0])]),
+            (PartitionType::Horz, vec![(1, probs[0]), (0, probs[1])]),
+            (PartitionType::Vert, vec![(1, probs[0]), (1, probs[1]), (0, probs[2])]),
+            (PartitionType::Split, vec![(1, probs[0]), (1, probs[1]), (1, probs[2])]),
+        ];
+
+        for (expected, bits) in cases {
+            let mut buf = vec![0u8; 64];
+            let mut w = BoolWriter::start_encode(&mut buf);
+            for (bit, prob) in &bits {
+                w.write(*bit, *prob);
+            }
+            // Pad.
+            for _ in 0..16 {
+                w.write_bit(0);
+            }
+            let size = w.stop_encode().expect("ok");
+            buf.truncate(size);
+
+            let mut r = BoolReader::new(&buf).expect("init");
+            let got = read_partition(&mut r, &probs);
+            assert_eq!(got, expected, "round-trip {expected:?}");
         }
     }
 

@@ -133,6 +133,39 @@ impl<'a> BoolReader<'a> {
         lit
     }
 
+    /// Decode a value by walking a libvpx-format probability tree.
+    /// Mirrors libvpx `vpx_read_tree` (`vpx_dsp/bitreader.h:150-156`).
+    ///
+    /// `tree` is the flat libvpx tree representation: positive
+    /// entries are next-node indices; negative entries `-leaf` are
+    /// terminal leaves whose returned value is `leaf` (the negation
+    /// recovers the positive enum value). `probs` are the
+    /// non-leaf-node probabilities; `probs[i >> 1]` gates the
+    /// branch decision at tree node `i`.
+    ///
+    /// Example (`vp9_partition_tree`):
+    /// ```text
+    /// tree = [-NONE, 2, -HORZ, 4, -VERT, -SPLIT]
+    /// probs = [p_node0, p_node2, p_node4]
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics on malformed trees (positive index out of bounds) in
+    /// debug builds; release builds rely on the caller passing a
+    /// libvpx-shaped tree.
+    #[inline]
+    pub fn read_tree(&mut self, tree: &[i8], probs: &[u8]) -> i8 {
+        let mut i: i8 = 0;
+        loop {
+            let bit = self.read(probs[(i >> 1) as usize]);
+            i = tree[i as usize + bit as usize];
+            if i <= 0 {
+                return -i;
+            }
+        }
+    }
+
     /// Check whether the reader has crossed EOF. Returns `true` if **any
     /// `read` since `new` consumed bits beyond the user buffer**.
     ///
