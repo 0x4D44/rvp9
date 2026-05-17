@@ -27,12 +27,16 @@
 //! 4-pixel-flatness pre-check (`flat_mask4`) fails. This mirrors
 //! libvpx's `filter16 → filter8 → filter4` cascade.
 //!
+//! ## Per-frame filter-level resolution
+//!
+//! [`resolve_filter_levels`] mirrors libvpx `vp9_loop_filter_frame_init`
+//! (`vp9_loopfilter.c:252-295`) — produces the `[seg][ref][mode]`
+//! filter-level table that each block's loop-filter dispatch reads.
+//!
 //! ## Deferred
 //!
 //! - Edge-mask machinery (`build_masks` and the
 //!   `vp9_get_loop_filter_mask` function family) — Task 6.3.
-//! - Per-segment / per-ref / per-mode filter-level resolution
-//!   (`vp9_loop_filter_frame_init`) — Task 6.4.
 
 /// Maximum filter level. Mirrors libvpx `MAX_LOOP_FILTER`
 /// (`vp9_loopfilter.h:24`).
@@ -1028,7 +1032,157 @@ pub fn lpf_vertical_16_dual(
     mb_lpf_vertical_edge_w(pixels, s_index, pitch, blimit, limit, thresh, 16);
 }
 
+// ============================================================================
+// Per-frame filter-level resolution
+// ============================================================================
+
+/// Maximum segments per frame (mirrors libvpx `MAX_SEGMENTS`).
+pub const MAX_SEGMENTS: usize = 8;
+
+/// Maximum reference frames including intra
+/// (mirrors libvpx `MAX_REF_FRAMES`):
+/// `INTRA_FRAME = 0`, `LAST_FRAME = 1`, `GOLDEN_FRAME = 2`,
+/// `ALTREF_FRAME = 3`.
+pub const MAX_REF_FRAMES: usize = 4;
+
+/// Maximum mode delta slots (mirrors libvpx `MAX_MODE_LF_DELTAS`).
+pub const MAX_MODE_LF_DELTAS: usize = 2;
+
+/// Index of the `AltLf` segment feature (`SEG_LVL_ALT_LF` in libvpx).
+pub const SEG_LVL_ALT_LF: usize = 1;
+
+/// Ref-frame index constants. Index 0 (`INTRA_FRAME`) only consumes
+/// the `[mode = 0]` slot; the inter refs use both mode slots.
+pub const INTRA_FRAME: usize = 0;
+/// LAST reference frame index.
+pub const LAST_FRAME: usize = 1;
+
+/// Per-frame `[segment][ref][mode]` filter-level table. One byte per
+/// (segment, ref, mode) combination — `8 × 4 × 2 = 64` bytes.
+///
+/// Mirrors libvpx `loop_filter_info_n::lvl`
+/// (`vp9_loopfilter.h`).
+pub type FrameFilterLevels = [[[u8; MAX_MODE_LF_DELTAS]; MAX_REF_FRAMES]; MAX_SEGMENTS];
+
+/// Inputs to [`resolve_filter_levels`]. Carries the post-parse
+/// (resolved) loop-filter deltas. Where [`LoopFilterParams`] holds
+/// `Option<i8>` per slot (`None` = "no update this frame, keep
+/// previous"), this struct holds the resolved `i8` value the decoder
+/// is currently using for each slot.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
+pub struct ResolvedLfDeltas {
+    /// Per-ref-frame delta, indexed by `[INTRA_FRAME, LAST_FRAME,
+    /// GOLDEN_FRAME, ALTREF_FRAME]`.
+    pub ref_deltas: [i8; MAX_REF_FRAMES],
+    /// Per-mode delta. Mode 0 = ZEROMV (no MV), mode 1 = NEW/NEAR/etc.
+    pub mode_deltas: [i8; MAX_MODE_LF_DELTAS],
+    /// `mode_ref_delta_enabled` from the current frame's header.
+    pub enabled: bool,
+}
+
+/// Subset of segmentation parameters needed by the loop-filter
+/// resolver. Smaller and more focused than the full
+/// [`crate::bitstream::SegmentationParams`] — only the AltLf feature
+/// data + the `abs_delta` flag matter for filter-level computation.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
+pub struct SegmentationLfView {
+    /// `feature_data[seg][SEG_LVL_ALT_LF]`. `Some(value)` if the
+    /// AltLf feature is enabled for that segment; `None` otherwise.
+    pub alt_lf: [Option<i16>; MAX_SEGMENTS],
+    /// Segmentation `abs_delta` flag. When `true`, the `alt_lf` value
+    /// replaces the filter level (absolute); when `false`, it is
+    /// added as a delta.
+    pub abs_delta: bool,
+}
+
+impl SegmentationLfView {
+    /// Build a view from the parser's full [`SegmentationParams`].
+    /// Falls back to `None` for every segment when segmentation is
+    /// disabled.
+    #[must_use]
+    pub fn from_segmentation(seg: &crate::bitstream::SegmentationParams) -> Self {
+        let mut alt_lf = [None; MAX_SEGMENTS];
+        if seg.enabled {
+            for (i, s) in seg.feature_data.iter().enumerate() {
+                alt_lf[i] = s[SEG_LVL_ALT_LF];
+            }
+        }
+        Self {
+            alt_lf,
+            abs_delta: seg.abs_delta,
+        }
+    }
+}
+
+/// Build the per-frame `[seg][ref][mode]` filter-level table.
+///
+/// Mirrors libvpx `vp9_loop_filter_frame_init`
+/// (`vp9_loopfilter.c:252-295`). The `update_sharpness` re-init that
+/// libvpx performs when `last_sharpness_level` changed is handled by
+/// the caller (rebuild the [`LoopFilterInfo`]); this function only
+/// produces the `lvl[]` table.
+///
+/// `default_filt_lvl` is the frame's parsed `loop_filter.filter_level`.
+/// Per-block lookup is `levels[seg_id][ref][mode]`.
+#[must_use]
+#[allow(clippy::needless_range_loop)]
+pub fn resolve_filter_levels(
+    default_filt_lvl: u8,
+    deltas: ResolvedLfDeltas,
+    seg: SegmentationLfView,
+) -> FrameFilterLevels {
+    let mut levels: FrameFilterLevels = [[[0u8; MAX_MODE_LF_DELTAS]; MAX_REF_FRAMES]; MAX_SEGMENTS];
+    let dfl = default_filt_lvl as i32;
+    // n_shift / scale: 1 for filter_lvl in [0, 31]; 2 for [32, 63].
+    let scale: i32 = 1 << (default_filt_lvl >> 5);
+
+    for seg_id in 0..MAX_SEGMENTS {
+        // Per-segment base level. If AltLf is enabled for this
+        // segment, replace (abs_delta == true) or offset (false) the
+        // default.
+        let lvl_seg: i32 = if let Some(data) = seg.alt_lf[seg_id] {
+            let computed = if seg.abs_delta {
+                data as i32
+            } else {
+                dfl + data as i32
+            };
+            computed.clamp(0, MAX_LOOP_FILTER as i32)
+        } else {
+            dfl
+        };
+
+        if !deltas.enabled {
+            // Without delta adjustments, every (ref, mode) cell gets
+            // the same level.
+            for ref_idx in 0..MAX_REF_FRAMES {
+                for mode_idx in 0..MAX_MODE_LF_DELTAS {
+                    levels[seg_id][ref_idx][mode_idx] = lvl_seg as u8;
+                }
+            }
+        } else {
+            // INTRA_FRAME only uses mode index 0. libvpx hard-codes
+            // `lvl[seg][INTRA_FRAME][0]`.
+            let intra_lvl = lvl_seg + deltas.ref_deltas[INTRA_FRAME] as i32 * scale;
+            levels[seg_id][INTRA_FRAME][0] = intra_lvl.clamp(0, MAX_LOOP_FILTER as i32) as u8;
+
+            // Inter refs (LAST, GOLDEN, ALTREF) use both mode slots.
+            for ref_idx in LAST_FRAME..MAX_REF_FRAMES {
+                for mode_idx in 0..MAX_MODE_LF_DELTAS {
+                    let inter_lvl = lvl_seg
+                        + deltas.ref_deltas[ref_idx] as i32 * scale
+                        + deltas.mode_deltas[mode_idx] as i32 * scale;
+                    levels[seg_id][ref_idx][mode_idx] =
+                        inter_lvl.clamp(0, MAX_LOOP_FILTER as i32) as u8;
+                }
+            }
+        }
+    }
+
+    levels
+}
+
 #[cfg(test)]
+#[allow(clippy::needless_range_loop, clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 
@@ -1552,5 +1706,136 @@ mod tests {
         lpf_horizontal_4(&mut b, 4 * 8 + 8, 8, 200, 20, 4);
 
         assert_eq!(a, b);
+    }
+
+    // ---- Per-frame filter-level resolution ----
+
+    /// No deltas, no segmentation: every (seg, ref, mode) cell gets
+    /// the default level.
+    #[test]
+    fn resolve_filter_levels_no_deltas_no_seg() {
+        let deltas = ResolvedLfDeltas::default();
+        let seg = SegmentationLfView::default();
+        let levels = resolve_filter_levels(20, deltas, seg);
+        for s in 0..MAX_SEGMENTS {
+            for r in 0..MAX_REF_FRAMES {
+                for m in 0..MAX_MODE_LF_DELTAS {
+                    assert_eq!(levels[s][r][m], 20, "({s},{r},{m})");
+                }
+            }
+        }
+    }
+
+    /// Mode-ref deltas enabled with ref_delta[LAST] = +2, default
+    /// level 20, scale = 1 (since 20 >> 5 = 0): lvl[seg][LAST][mode]
+    /// = 20 + 2 + mode_delta[mode] * 1.
+    #[test]
+    fn resolve_filter_levels_with_ref_and_mode_deltas() {
+        let deltas = ResolvedLfDeltas {
+            ref_deltas: [0, 2, 0, 0], // LAST = +2
+            mode_deltas: [0, 3],      // mode 1 = +3
+            enabled: true,
+        };
+        let seg = SegmentationLfView::default();
+        let levels = resolve_filter_levels(20, deltas, seg);
+
+        // Segment 0, ref LAST, mode 0: 20 + 2 + 0 = 22.
+        assert_eq!(levels[0][LAST_FRAME][0], 22);
+        // Segment 0, ref LAST, mode 1: 20 + 2 + 3 = 25.
+        assert_eq!(levels[0][LAST_FRAME][1], 25);
+        // INTRA_FRAME mode 0: 20 + 0 = 20 (intra ignores mode delta).
+        assert_eq!(levels[0][INTRA_FRAME][0], 20);
+    }
+
+    /// At default_filt_lvl >= 32, `scale` doubles to 2.
+    #[test]
+    fn resolve_filter_levels_scale_doubles_above_31() {
+        let deltas = ResolvedLfDeltas {
+            ref_deltas: [0, 1, 0, 0],
+            mode_deltas: [0, 0],
+            enabled: true,
+        };
+        let levels = resolve_filter_levels(32, deltas, SegmentationLfView::default());
+        // 32 + 1 * (1 << (32 >> 5)) = 32 + 1 * 2 = 34.
+        assert_eq!(levels[0][LAST_FRAME][0], 34);
+    }
+
+    /// Clamp to MAX_LOOP_FILTER on the high end.
+    #[test]
+    fn resolve_filter_levels_clamps_to_max() {
+        let deltas = ResolvedLfDeltas {
+            ref_deltas: [0, 100, 0, 0],
+            mode_deltas: [0, 0],
+            enabled: true,
+        };
+        let levels = resolve_filter_levels(50, deltas, SegmentationLfView::default());
+        // 50 + 100 * 2 = 250 → clamped to MAX_LOOP_FILTER = 63.
+        assert_eq!(levels[0][LAST_FRAME][0], MAX_LOOP_FILTER);
+    }
+
+    /// Clamp to 0 on the low end.
+    #[test]
+    fn resolve_filter_levels_clamps_to_zero() {
+        let deltas = ResolvedLfDeltas {
+            ref_deltas: [0, -100, 0, 0],
+            mode_deltas: [0, 0],
+            enabled: true,
+        };
+        let levels = resolve_filter_levels(50, deltas, SegmentationLfView::default());
+        // 50 + (-100) * 2 = -150 → clamped to 0.
+        assert_eq!(levels[0][LAST_FRAME][0], 0);
+    }
+
+    /// Segmentation with `abs_delta = false` (relative): the AltLf
+    /// value is added as an offset to default_filt_lvl.
+    #[test]
+    fn resolve_filter_levels_segmentation_relative_delta() {
+        let mut seg = SegmentationLfView::default();
+        seg.abs_delta = false;
+        seg.alt_lf[3] = Some(5); // segment 3 adds +5 to default level
+        let levels = resolve_filter_levels(20, ResolvedLfDeltas::default(), seg);
+        // Segment 0 (no AltLf): 20.
+        assert_eq!(levels[0][0][0], 20);
+        // Segment 3 (AltLf = +5): 25.
+        assert_eq!(levels[3][0][0], 25);
+    }
+
+    /// Segmentation with `abs_delta = true`: the AltLf value
+    /// replaces the level entirely.
+    #[test]
+    fn resolve_filter_levels_segmentation_absolute_data() {
+        let mut seg = SegmentationLfView::default();
+        seg.abs_delta = true;
+        seg.alt_lf[3] = Some(45); // segment 3 → absolute level 45
+        let levels = resolve_filter_levels(20, ResolvedLfDeltas::default(), seg);
+        // Segment 0 (no AltLf): 20.
+        assert_eq!(levels[0][0][0], 20);
+        // Segment 3 (AltLf = 45 abs): 45, NOT 20+45.
+        assert_eq!(levels[3][0][0], 45);
+    }
+
+    /// `SegmentationLfView::from_segmentation` extracts the AltLf
+    /// slot (index 1) of the parser's feature_data table.
+    #[test]
+    fn segmentation_lf_view_from_full_segmentation() {
+        use crate::bitstream::SegmentationParams;
+        let mut s = SegmentationParams {
+            enabled: true,
+            abs_delta: true,
+            ..Default::default()
+        };
+        s.feature_data[2][SEG_LVL_ALT_LF] = Some(33);
+        s.feature_data[2][0] = Some(99); // AltQ — should not surface in view.
+
+        let view = SegmentationLfView::from_segmentation(&s);
+        assert!(view.abs_delta);
+        assert_eq!(view.alt_lf[2], Some(33));
+        assert_eq!(view.alt_lf[0], None);
+        // Disabled segmentation → all None.
+        let disabled = SegmentationParams::default();
+        let view2 = SegmentationLfView::from_segmentation(&disabled);
+        for slot in view2.alt_lf.iter() {
+            assert_eq!(*slot, None);
+        }
     }
 }
