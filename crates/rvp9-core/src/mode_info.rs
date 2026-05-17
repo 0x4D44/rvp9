@@ -23,11 +23,98 @@
 //! per-block decoder pattern-match on `BlockMode` rather than
 //! threading a separate `is_inter` boolean.
 
-use crate::bitstream::InterpFilter;
+use crate::bitstream::{InterpFilter, MAX_SEGMENTS, SEG_TREE_PROBS};
 use crate::block::{BlockSize, PARTITION_TYPES, PartitionType};
-use crate::entropy::BoolReader;
+use crate::entropy::{BoolReader, COMP_INTER_CONTEXTS, INTRA_INTER_CONTEXTS, REF_CONTEXTS, SKIP_CONTEXTS};
 use crate::intra_pred::IntraMode;
 use crate::transforms::TxSize;
+
+/// libvpx `vp9_segment_tree` (`vp9_seg_common.c:58-60`). A
+/// 14-entry balanced binary tree over the 8 segment IDs. Indexed
+/// by 7 probabilities in `seg.tree_probs[0..7]`.
+#[rustfmt::skip]
+pub static SEGMENT_TREE: [i8; 2 * MAX_SEGMENTS - 2] = [
+    2, 4, 6, 8, 10, 12, 0, -1, -2, -3, -4, -5, -6, -7,
+];
+
+/// Decode the per-block segment ID by walking [`SEGMENT_TREE`].
+/// Mirrors libvpx `read_segment_id` (`vp9_decodemv.c:60-62`).
+///
+/// Returns a value in `0..MAX_SEGMENTS = 0..=7`. Caller is the
+/// per-block segmentation-map decode path; the result indexes into
+/// the feature_data table that drives per-segment quantizer + LF
+/// deltas.
+#[inline]
+#[must_use]
+pub fn read_segment_id(r: &mut BoolReader<'_>, tree_probs: &[u8; SEG_TREE_PROBS]) -> u8 {
+    r.read_tree(&SEGMENT_TREE, tree_probs) as u8
+}
+
+/// Decode the per-block `skip` flag. Mirrors libvpx `read_skip`
+/// (`vp9_decodemv.c:226-234`).
+///
+/// `ctx` is the 0..=2 skip-context index from the above + left
+/// neighbours' skip flags (computed at the per-block level by the
+/// caller). `probs = &fc.skip_probs`.
+#[inline]
+#[must_use]
+pub fn read_skip(r: &mut BoolReader<'_>, probs: &[u8; SKIP_CONTEXTS], ctx: usize) -> bool {
+    r.read(probs[ctx]) != 0
+}
+
+/// Decode the per-block intra/inter classification bit. Mirrors
+/// libvpx `read_is_inter_block` (`vp9_decodemv.c:546-554`).
+///
+/// Returns `true` for an inter block. `ctx` is the 0..=3
+/// intra-inter context computed from neighbours' is_inter flags.
+#[inline]
+#[must_use]
+pub fn read_is_inter(
+    r: &mut BoolReader<'_>,
+    probs: &[u8; INTRA_INTER_CONTEXTS],
+    ctx: usize,
+) -> bool {
+    r.read(probs[ctx]) != 0
+}
+
+/// Decode the per-block compound-vs-single reference selection.
+/// Mirrors libvpx `read_block_reference_mode` (`vp9_decodemv.c:457-464`).
+///
+/// Only called when the frame's `reference_mode == Select`.
+/// Returns `true` for compound, `false` for single. `ctx` is the
+/// 0..=4 compound-inter context computed from neighbour
+/// references' time-direction agreement.
+#[inline]
+#[must_use]
+pub fn read_is_compound(
+    r: &mut BoolReader<'_>,
+    probs: &[u8; COMP_INTER_CONTEXTS],
+    ctx: usize,
+) -> bool {
+    r.read(probs[ctx]) != 0
+}
+
+/// Decode one bit of the single-ref selection. Mirrors libvpx
+/// `read_ref_frames` single-ref path (`vp9_decodemv.c:497-516`).
+///
+/// VP9 single-ref selection is two sequential boolean choices:
+/// - First bit (`single_ref_prob[ctx][0]`): "is this NOT
+///   LAST_FRAME?"
+/// - If yes, second bit (`single_ref_prob[ctx][1]`): "is this
+///   ALTREF_FRAME?" (otherwise GOLDEN_FRAME).
+///
+/// This helper reads one such bit at a specific
+/// `single_ref_prob[ctx][slot]` slot. `slot` is `0` or `1`.
+#[inline]
+#[must_use]
+pub fn read_single_ref_bit(
+    r: &mut BoolReader<'_>,
+    probs: &[[u8; 2]; REF_CONTEXTS],
+    ctx: usize,
+    slot: usize,
+) -> bool {
+    r.read(probs[ctx][slot]) != 0
+}
 
 /// libvpx `vp9_partition_tree` (`vp9_entropymode.c:262-264`):
 ///
@@ -551,6 +638,127 @@ mod tests {
         // node 4: [-VERT, -SPLIT]
         assert_eq!(PARTITION_TREE[4], -(PartitionType::Vert as i8));
         assert_eq!(PARTITION_TREE[5], -(PartitionType::Split as i8));
+    }
+
+    /// `SEGMENT_TREE` shape: 14 entries, structured as a balanced
+    /// binary tree over 8 segment values.
+    #[test]
+    fn segment_tree_shape() {
+        assert_eq!(SEGMENT_TREE.len(), 14);
+        // Internal nodes
+        assert_eq!(SEGMENT_TREE[0], 2);
+        assert_eq!(SEGMENT_TREE[1], 4);
+        assert_eq!(SEGMENT_TREE[2], 6);
+        assert_eq!(SEGMENT_TREE[3], 8);
+        assert_eq!(SEGMENT_TREE[4], 10);
+        assert_eq!(SEGMENT_TREE[5], 12);
+        // Leaves (node 6: [0, -1], node 8: [-2, -3], etc.)
+        assert_eq!(SEGMENT_TREE[6], 0);
+        assert_eq!(SEGMENT_TREE[7], -1);
+        assert_eq!(SEGMENT_TREE[13], -7);
+    }
+
+    /// `read_segment_id` round-trips every segment value 0..=7 at
+    /// p=128.
+    #[test]
+    fn read_segment_id_round_trip() {
+        use crate::entropy::BoolWriter;
+
+        let probs = [128u8; SEG_TREE_PROBS];
+
+        for target in 0u8..8 {
+            // Encode by walking the tree to the target leaf.
+            let mut buf = vec![0u8; 64];
+            let mut w = BoolWriter::start_encode(&mut buf);
+            let mut i: i32 = 0;
+            loop {
+                // Determine which child (left=tree[i], right=tree[i+1])
+                // contains the target leaf via DFS.
+                fn subtree_contains(tree: &[i8], node: i8, target: u8) -> bool {
+                    if node <= 0 {
+                        (-node) as u8 == target
+                    } else {
+                        let i = node as usize;
+                        subtree_contains(tree, tree[i], target)
+                            || subtree_contains(tree, tree[i + 1], target)
+                    }
+                }
+                let left = SEGMENT_TREE[i as usize];
+                let right = SEGMENT_TREE[i as usize + 1];
+                let bit = if subtree_contains(&SEGMENT_TREE, left, target) { 0 } else { 1 };
+                w.write(bit, probs[(i >> 1) as usize]);
+                let next = if bit == 0 { left } else { right };
+                if next <= 0 {
+                    break;
+                }
+                i = next as i32;
+            }
+            for _ in 0..16 {
+                w.write_bit(0);
+            }
+            let size = w.stop_encode().expect("ok");
+            buf.truncate(size);
+
+            let mut r = BoolReader::new(&buf).expect("init");
+            let got = read_segment_id(&mut r, &probs);
+            assert_eq!(got, target, "round-trip segment_id={target}");
+        }
+    }
+
+    /// `read_skip` / `read_is_inter` / `read_is_compound` /
+    /// `read_single_ref_bit` are all 1-bit boolean reads. Verify
+    /// both possible values round-trip cleanly.
+    #[test]
+    fn one_bit_leaf_decoders_round_trip() {
+        use crate::entropy::BoolWriter;
+
+        fn build(bit: u8, prob: u8) -> Vec<u8> {
+            let mut buf = vec![0u8; 32];
+            let mut w = BoolWriter::start_encode(&mut buf);
+            w.write(bit, prob);
+            for _ in 0..16 {
+                w.write_bit(0);
+            }
+            let size = w.stop_encode().expect("ok");
+            buf.truncate(size);
+            buf
+        }
+
+        // read_skip.
+        let skip_probs = [200u8; SKIP_CONTEXTS];
+        let buf = build(0, skip_probs[1]);
+        let mut r = BoolReader::new(&buf).expect("init");
+        assert!(!read_skip(&mut r, &skip_probs, 1));
+        let buf = build(1, skip_probs[2]);
+        let mut r = BoolReader::new(&buf).expect("init");
+        assert!(read_skip(&mut r, &skip_probs, 2));
+
+        // read_is_inter.
+        let ii_probs = [128u8; INTRA_INTER_CONTEXTS];
+        let buf = build(0, ii_probs[0]);
+        let mut r = BoolReader::new(&buf).expect("init");
+        assert!(!read_is_inter(&mut r, &ii_probs, 0));
+        let buf = build(1, ii_probs[3]);
+        let mut r = BoolReader::new(&buf).expect("init");
+        assert!(read_is_inter(&mut r, &ii_probs, 3));
+
+        // read_is_compound.
+        let ci_probs = [100u8; COMP_INTER_CONTEXTS];
+        let buf = build(0, ci_probs[2]);
+        let mut r = BoolReader::new(&buf).expect("init");
+        assert!(!read_is_compound(&mut r, &ci_probs, 2));
+        let buf = build(1, ci_probs[4]);
+        let mut r = BoolReader::new(&buf).expect("init");
+        assert!(read_is_compound(&mut r, &ci_probs, 4));
+
+        // read_single_ref_bit.
+        let sr_probs = [[120u8, 80u8]; REF_CONTEXTS];
+        let buf = build(0, sr_probs[1][0]);
+        let mut r = BoolReader::new(&buf).expect("init");
+        assert!(!read_single_ref_bit(&mut r, &sr_probs, 1, 0));
+        let buf = build(1, sr_probs[3][1]);
+        let mut r = BoolReader::new(&buf).expect("init");
+        assert!(read_single_ref_bit(&mut r, &sr_probs, 3, 1));
     }
 
     /// `INTRA_MODE_TREE` shape matches libvpx
