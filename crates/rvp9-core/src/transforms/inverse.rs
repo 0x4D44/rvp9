@@ -1,52 +1,57 @@
 //! Inverse transform scalar reference kernels (decoder + encoder
 //! reconstruction).
 //!
-//! Currently lands the 4×4 family only:
+//! Currently lands the 4×4, 8×8 and 16×16 inverse-DCT family:
 //!
-//! - [`idct4`] — 1D 4-point inverse DCT. Mirrors libvpx `idct4_c`
-//!   (`vpx_dsp/inv_txfm.c:133-152`).
-//! - [`idct4x4_16_add`] — 2D 16-coefficient inverse 4×4 DCT with
-//!   residual add. Mirrors `vpx_idct4x4_16_add_c`
-//!   (`vpx_dsp/inv_txfm.c:154-176`).
-//! - [`idct4x4_1_add`] — DC-only fast path. Mirrors
-//!   `vpx_idct4x4_1_add_c` (`vpx_dsp/inv_txfm.c:178-195`).
+//! - [`idct4`] / [`idct4x4_16_add`] / [`idct4x4_1_add`] — mirrors
+//!   libvpx `idct4_c`, `vpx_idct4x4_16_add_c`, `vpx_idct4x4_1_add_c`
+//!   (`vpx_dsp/inv_txfm.c:133-195`).
+//! - [`idct8`] / [`idct8x8_64_add`] / [`idct8x8_1_add`] — mirrors
+//!   `idct8_c`, `vpx_idct8x8_64_add_c`, `vpx_idct8x8_1_add_c`
+//!   (`vpx_dsp/inv_txfm.c:271-387`).
+//! - [`idct16`] / [`idct16x16_256_add`] / [`idct16x16_1_add`] — mirrors
+//!   `idct16_c`, `vpx_idct16x16_256_add_c`, `vpx_idct16x16_1_add_c`
+//!   (`vpx_dsp/inv_txfm.c:557-811`).
 //!
-//! 8×8 / 16×16 / 32×32 inverse DCT, plus the iadst 4/8/16 family and
-//! the hybrid 4×4/8×8/16×16 transforms, land in follow-up sub-tasks.
+//! All kernels apply [`wraplow`] (i16 modular truncation) at every site
+//! where the C source assigns a `dct_const_round_shift` result into an
+//! `int16_t step[]` slot. This preserves bit-exactness against libvpx
+//! for inputs whose intermediates exceed 16 bits.
+//!
+//! 32×32 inverse DCT, the iadst 4/8/16 family and the hybrid
+//! 4×4/8×8/16×16 transforms land in follow-up sub-tasks.
 
 use super::constants::{
-    COSPI_4_64, COSPI_8_64, COSPI_12_64, COSPI_16_64, COSPI_20_64, COSPI_24_64, COSPI_28_64,
-    clip_pixel_add, dct_const_round_shift,
+    COSPI_2_64, COSPI_4_64, COSPI_6_64, COSPI_8_64, COSPI_10_64, COSPI_12_64, COSPI_14_64,
+    COSPI_16_64, COSPI_18_64, COSPI_20_64, COSPI_22_64, COSPI_24_64, COSPI_26_64, COSPI_28_64,
+    COSPI_30_64, clip_pixel_add, dct_const_round_shift, wraplow,
 };
 
-/// 1D 4-point inverse DCT. Output values are in the
-/// post-`WRAPLOW`-and-shift domain (effectively 16-bit signed, but we
-/// hold them in `i32` to avoid spurious truncation between the row and
-/// column passes).
+/// 1D 4-point inverse DCT. Output values are stored as `i32` but each
+/// step and output assignment is `wraplow`-truncated to mirror the
+/// implicit `int16_t step[]` storage in libvpx.
 ///
-/// Mirrors libvpx `idct4_c` (`vpx_dsp/inv_txfm.c:133-152`) for the
-/// non-HBD path (`WRAPLOW` is a no-op outside `CONFIG_EMULATE_HARDWARE`
-/// in libvpx default builds — `inv_txfm.h:87`).
+/// Mirrors libvpx `idct4_c` (`vpx_dsp/inv_txfm.c:133-152`).
 #[inline]
 pub fn idct4(input: &[i32; 4], output: &mut [i32; 4]) {
-    // stage 1
-    // temp1 = (input[0] + input[2]) * COSPI_16_64
+    // stage 1 — libvpx stores into `int16_t step[4]`; we mirror with `wraplow`.
     let temp1: i64 = (input[0] as i64 + input[2] as i64) * COSPI_16_64 as i64;
     let temp2: i64 = (input[0] as i64 - input[2] as i64) * COSPI_16_64 as i64;
-    let step0: i32 = dct_const_round_shift(temp1) as i32;
-    let step1: i32 = dct_const_round_shift(temp2) as i32;
+    let step0: i32 = wraplow(dct_const_round_shift(temp1) as i32);
+    let step1: i32 = wraplow(dct_const_round_shift(temp2) as i32);
     let temp1: i64 =
         input[1] as i64 * COSPI_24_64 as i64 - input[3] as i64 * COSPI_8_64 as i64;
     let temp2: i64 =
         input[1] as i64 * COSPI_8_64 as i64 + input[3] as i64 * COSPI_24_64 as i64;
-    let step2: i32 = dct_const_round_shift(temp1) as i32;
-    let step3: i32 = dct_const_round_shift(temp2) as i32;
+    let step2: i32 = wraplow(dct_const_round_shift(temp1) as i32);
+    let step3: i32 = wraplow(dct_const_round_shift(temp2) as i32);
 
-    // stage 2
-    output[0] = step0 + step3;
-    output[1] = step1 + step2;
-    output[2] = step1 - step2;
-    output[3] = step0 - step3;
+    // stage 2 — `output` is `tran_low_t` (`int16_t` in default libvpx
+    // build), so each store also truncates.
+    output[0] = wraplow(step0 + step3);
+    output[1] = wraplow(step1 + step2);
+    output[2] = wraplow(step1 - step2);
+    output[3] = wraplow(step0 - step3);
 }
 
 /// 2D 16-coefficient inverse 4×4 DCT with residual add to `dest`.
@@ -96,12 +101,12 @@ pub fn idct4x4_16_add(input: &[i32; 16], dest: &mut [u8], stride: usize) {
 pub fn idct4x4_1_add(input: i32, dest: &mut [u8], stride: usize) {
     debug_assert!(dest.len() >= stride * 3 + 4, "dest too small for 4x4 add");
 
-    // Two passes of (input * COSPI_16_64) and a >>4 final shift:
-    // out = dct_const_round_shift(dct_const_round_shift(input * cospi_16_64) * cospi_16_64)
-    // a1  = (out + 8) >> 4
-    let out1 = dct_const_round_shift((input as i64) * (COSPI_16_64 as i64));
-    let out2 = dct_const_round_shift(out1 * (COSPI_16_64 as i64));
-    let a1 = (out2 + 8) >> 4;
+    // Two passes of (input * COSPI_16_64) with `wraplow` truncation to
+    // mirror libvpx `tran_low_t out` (int16_t in default build), then
+    // a >>4 final shift.
+    let out1 = wraplow(dct_const_round_shift((input as i64) * (COSPI_16_64 as i64)) as i32);
+    let out2 = wraplow(dct_const_round_shift((out1 as i64) * (COSPI_16_64 as i64)) as i32);
+    let a1 = ((out2 as i64) + 8) >> 4;
     for r in 0..4 {
         for c in 0..4 {
             dest[r * stride + c] = clip_pixel_add(dest[r * stride + c], a1);
@@ -111,63 +116,64 @@ pub fn idct4x4_1_add(input: i32, dest: &mut [u8], stride: usize) {
 
 /// 1D 8-point inverse DCT.
 ///
-/// Mirrors libvpx `idct8_c` (`vpx_dsp/inv_txfm.c:271-324`) for the
-/// non-HBD path. The four-stage butterfly uses the cospi_*_64 constants
-/// at 4/8/12/16/20/24/28 frequencies.
+/// Mirrors libvpx `idct8_c` (`vpx_dsp/inv_txfm.c:271-324`). Every
+/// `step1[]` / `step2[]` store applies [`wraplow`] to preserve libvpx's
+/// implicit `int16_t` storage truncation.
 #[inline]
 pub fn idct8(input: &[i32; 8], output: &mut [i32; 8]) {
     let mut step1 = [0i32; 8];
     let mut step2 = [0i32; 8];
 
-    // stage 1
+    // stage 1 — store inputs directly; values are `tran_low_t`
+    // (already int16 in default libvpx).
     step1[0] = input[0];
     step1[2] = input[4];
     step1[1] = input[2];
     step1[3] = input[6];
     let temp1 = input[1] as i64 * COSPI_28_64 as i64 - input[7] as i64 * COSPI_4_64 as i64;
     let temp2 = input[1] as i64 * COSPI_4_64 as i64 + input[7] as i64 * COSPI_28_64 as i64;
-    step1[4] = dct_const_round_shift(temp1) as i32;
-    step1[7] = dct_const_round_shift(temp2) as i32;
+    step1[4] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[7] = wraplow(dct_const_round_shift(temp2) as i32);
     let temp1 = input[5] as i64 * COSPI_12_64 as i64 - input[3] as i64 * COSPI_20_64 as i64;
     let temp2 = input[5] as i64 * COSPI_20_64 as i64 + input[3] as i64 * COSPI_12_64 as i64;
-    step1[5] = dct_const_round_shift(temp1) as i32;
-    step1[6] = dct_const_round_shift(temp2) as i32;
+    step1[5] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[6] = wraplow(dct_const_round_shift(temp2) as i32);
 
     // stage 2
     let temp1 = (step1[0] as i64 + step1[2] as i64) * COSPI_16_64 as i64;
     let temp2 = (step1[0] as i64 - step1[2] as i64) * COSPI_16_64 as i64;
-    step2[0] = dct_const_round_shift(temp1) as i32;
-    step2[1] = dct_const_round_shift(temp2) as i32;
+    step2[0] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[1] = wraplow(dct_const_round_shift(temp2) as i32);
     let temp1 = step1[1] as i64 * COSPI_24_64 as i64 - step1[3] as i64 * COSPI_8_64 as i64;
     let temp2 = step1[1] as i64 * COSPI_8_64 as i64 + step1[3] as i64 * COSPI_24_64 as i64;
-    step2[2] = dct_const_round_shift(temp1) as i32;
-    step2[3] = dct_const_round_shift(temp2) as i32;
-    step2[4] = step1[4] + step1[5];
-    step2[5] = step1[4] - step1[5];
-    step2[6] = -step1[6] + step1[7];
-    step2[7] = step1[6] + step1[7];
+    step2[2] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[3] = wraplow(dct_const_round_shift(temp2) as i32);
+    step2[4] = wraplow(step1[4] + step1[5]);
+    step2[5] = wraplow(step1[4] - step1[5]);
+    step2[6] = wraplow(-step1[6] + step1[7]);
+    step2[7] = wraplow(step1[6] + step1[7]);
 
     // stage 3
-    step1[0] = step2[0] + step2[3];
-    step1[1] = step2[1] + step2[2];
-    step1[2] = step2[1] - step2[2];
-    step1[3] = step2[0] - step2[3];
+    step1[0] = wraplow(step2[0] + step2[3]);
+    step1[1] = wraplow(step2[1] + step2[2]);
+    step1[2] = wraplow(step2[1] - step2[2]);
+    step1[3] = wraplow(step2[0] - step2[3]);
     step1[4] = step2[4];
     let temp1 = (step2[6] as i64 - step2[5] as i64) * COSPI_16_64 as i64;
     let temp2 = (step2[5] as i64 + step2[6] as i64) * COSPI_16_64 as i64;
-    step1[5] = dct_const_round_shift(temp1) as i32;
-    step1[6] = dct_const_round_shift(temp2) as i32;
+    step1[5] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[6] = wraplow(dct_const_round_shift(temp2) as i32);
     step1[7] = step2[7];
 
-    // stage 4
-    output[0] = step1[0] + step1[7];
-    output[1] = step1[1] + step1[6];
-    output[2] = step1[2] + step1[5];
-    output[3] = step1[3] + step1[4];
-    output[4] = step1[3] - step1[4];
-    output[5] = step1[2] - step1[5];
-    output[6] = step1[1] - step1[6];
-    output[7] = step1[0] - step1[7];
+    // stage 4 — output is `tran_low_t`, truncate on store.
+    output[0] = wraplow(step1[0] + step1[7]);
+    output[1] = wraplow(step1[1] + step1[6]);
+    output[2] = wraplow(step1[2] + step1[5]);
+    output[3] = wraplow(step1[3] + step1[4]);
+    output[4] = wraplow(step1[3] - step1[4]);
+    output[5] = wraplow(step1[2] - step1[5]);
+    output[6] = wraplow(step1[1] - step1[6]);
+    output[7] = wraplow(step1[0] - step1[7]);
 }
 
 /// 2D 64-coefficient inverse 8×8 DCT with residual add to `dest`.
@@ -219,11 +225,236 @@ pub fn idct8x8_64_add(input: &[i32; 64], dest: &mut [u8], stride: usize) {
 pub fn idct8x8_1_add(input: i32, dest: &mut [u8], stride: usize) {
     debug_assert!(dest.len() >= stride * 7 + 8, "dest too small for 8x8 add");
 
-    let out1 = dct_const_round_shift((input as i64) * (COSPI_16_64 as i64));
-    let out2 = dct_const_round_shift(out1 * (COSPI_16_64 as i64));
-    let a1 = (out2 + 16) >> 5;
+    let out1 = wraplow(dct_const_round_shift((input as i64) * (COSPI_16_64 as i64)) as i32);
+    let out2 = wraplow(dct_const_round_shift((out1 as i64) * (COSPI_16_64 as i64)) as i32);
+    let a1 = ((out2 as i64) + 16) >> 5;
     for r in 0..8 {
         for c in 0..8 {
+            dest[r * stride + c] = clip_pixel_add(dest[r * stride + c], a1);
+        }
+    }
+}
+
+/// 1D 16-point inverse DCT.
+///
+/// Mirrors libvpx `idct16_c` (`vpx_dsp/inv_txfm.c:557-720`). Seven-stage
+/// butterfly using cospi at frequencies 2/4/6/8/10/12/14/16/18/20/22/
+/// 24/26/28/30. Every `step1[]`/`step2[]` store applies [`wraplow`].
+#[inline]
+pub fn idct16(input: &[i32; 16], output: &mut [i32; 16]) {
+    let mut step1 = [0i32; 16];
+    let mut step2 = [0i32; 16];
+
+    // stage 1 — bit-reversed input load (mirrors libvpx :562-577).
+    step1[0] = input[0];
+    step1[1] = input[8];
+    step1[2] = input[4];
+    step1[3] = input[12];
+    step1[4] = input[2];
+    step1[5] = input[10];
+    step1[6] = input[6];
+    step1[7] = input[14];
+    step1[8] = input[1];
+    step1[9] = input[9];
+    step1[10] = input[5];
+    step1[11] = input[13];
+    step1[12] = input[3];
+    step1[13] = input[11];
+    step1[14] = input[7];
+    step1[15] = input[15];
+
+    // stage 2 — high-frequency butterflies.
+    step2[0] = step1[0];
+    step2[1] = step1[1];
+    step2[2] = step1[2];
+    step2[3] = step1[3];
+    step2[4] = step1[4];
+    step2[5] = step1[5];
+    step2[6] = step1[6];
+    step2[7] = step1[7];
+
+    let temp1 = step1[8] as i64 * COSPI_30_64 as i64 - step1[15] as i64 * COSPI_2_64 as i64;
+    let temp2 = step1[8] as i64 * COSPI_2_64 as i64 + step1[15] as i64 * COSPI_30_64 as i64;
+    step2[8] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[15] = wraplow(dct_const_round_shift(temp2) as i32);
+
+    let temp1 = step1[9] as i64 * COSPI_14_64 as i64 - step1[14] as i64 * COSPI_18_64 as i64;
+    let temp2 = step1[9] as i64 * COSPI_18_64 as i64 + step1[14] as i64 * COSPI_14_64 as i64;
+    step2[9] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[14] = wraplow(dct_const_round_shift(temp2) as i32);
+
+    let temp1 = step1[10] as i64 * COSPI_22_64 as i64 - step1[13] as i64 * COSPI_10_64 as i64;
+    let temp2 = step1[10] as i64 * COSPI_10_64 as i64 + step1[13] as i64 * COSPI_22_64 as i64;
+    step2[10] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[13] = wraplow(dct_const_round_shift(temp2) as i32);
+
+    let temp1 = step1[11] as i64 * COSPI_6_64 as i64 - step1[12] as i64 * COSPI_26_64 as i64;
+    let temp2 = step1[11] as i64 * COSPI_26_64 as i64 + step1[12] as i64 * COSPI_6_64 as i64;
+    step2[11] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[12] = wraplow(dct_const_round_shift(temp2) as i32);
+
+    // stage 3
+    step1[0] = step2[0];
+    step1[1] = step2[1];
+    step1[2] = step2[2];
+    step1[3] = step2[3];
+
+    let temp1 = step2[4] as i64 * COSPI_28_64 as i64 - step2[7] as i64 * COSPI_4_64 as i64;
+    let temp2 = step2[4] as i64 * COSPI_4_64 as i64 + step2[7] as i64 * COSPI_28_64 as i64;
+    step1[4] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[7] = wraplow(dct_const_round_shift(temp2) as i32);
+    let temp1 = step2[5] as i64 * COSPI_12_64 as i64 - step2[6] as i64 * COSPI_20_64 as i64;
+    let temp2 = step2[5] as i64 * COSPI_20_64 as i64 + step2[6] as i64 * COSPI_12_64 as i64;
+    step1[5] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[6] = wraplow(dct_const_round_shift(temp2) as i32);
+
+    step1[8] = wraplow(step2[8] + step2[9]);
+    step1[9] = wraplow(step2[8] - step2[9]);
+    step1[10] = wraplow(-step2[10] + step2[11]);
+    step1[11] = wraplow(step2[10] + step2[11]);
+    step1[12] = wraplow(step2[12] + step2[13]);
+    step1[13] = wraplow(step2[12] - step2[13]);
+    step1[14] = wraplow(-step2[14] + step2[15]);
+    step1[15] = wraplow(step2[14] + step2[15]);
+
+    // stage 4
+    let temp1 = (step1[0] as i64 + step1[1] as i64) * COSPI_16_64 as i64;
+    let temp2 = (step1[0] as i64 - step1[1] as i64) * COSPI_16_64 as i64;
+    step2[0] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[1] = wraplow(dct_const_round_shift(temp2) as i32);
+    let temp1 = step1[2] as i64 * COSPI_24_64 as i64 - step1[3] as i64 * COSPI_8_64 as i64;
+    let temp2 = step1[2] as i64 * COSPI_8_64 as i64 + step1[3] as i64 * COSPI_24_64 as i64;
+    step2[2] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[3] = wraplow(dct_const_round_shift(temp2) as i32);
+    step2[4] = wraplow(step1[4] + step1[5]);
+    step2[5] = wraplow(step1[4] - step1[5]);
+    step2[6] = wraplow(-step1[6] + step1[7]);
+    step2[7] = wraplow(step1[6] + step1[7]);
+
+    step2[8] = step1[8];
+    step2[15] = step1[15];
+    let temp1 = -(step1[9] as i64) * COSPI_8_64 as i64 + step1[14] as i64 * COSPI_24_64 as i64;
+    let temp2 = step1[9] as i64 * COSPI_24_64 as i64 + step1[14] as i64 * COSPI_8_64 as i64;
+    step2[9] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[14] = wraplow(dct_const_round_shift(temp2) as i32);
+    let temp1 = -(step1[10] as i64) * COSPI_24_64 as i64 - step1[13] as i64 * COSPI_8_64 as i64;
+    let temp2 = -(step1[10] as i64) * COSPI_8_64 as i64 + step1[13] as i64 * COSPI_24_64 as i64;
+    step2[10] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[13] = wraplow(dct_const_round_shift(temp2) as i32);
+    step2[11] = step1[11];
+    step2[12] = step1[12];
+
+    // stage 5
+    step1[0] = wraplow(step2[0] + step2[3]);
+    step1[1] = wraplow(step2[1] + step2[2]);
+    step1[2] = wraplow(step2[1] - step2[2]);
+    step1[3] = wraplow(step2[0] - step2[3]);
+    step1[4] = step2[4];
+    let temp1 = (step2[6] as i64 - step2[5] as i64) * COSPI_16_64 as i64;
+    let temp2 = (step2[5] as i64 + step2[6] as i64) * COSPI_16_64 as i64;
+    step1[5] = wraplow(dct_const_round_shift(temp1) as i32);
+    step1[6] = wraplow(dct_const_round_shift(temp2) as i32);
+    step1[7] = step2[7];
+
+    step1[8] = wraplow(step2[8] + step2[11]);
+    step1[9] = wraplow(step2[9] + step2[10]);
+    step1[10] = wraplow(step2[9] - step2[10]);
+    step1[11] = wraplow(step2[8] - step2[11]);
+    step1[12] = wraplow(-step2[12] + step2[15]);
+    step1[13] = wraplow(-step2[13] + step2[14]);
+    step1[14] = wraplow(step2[13] + step2[14]);
+    step1[15] = wraplow(step2[12] + step2[15]);
+
+    // stage 6
+    step2[0] = wraplow(step1[0] + step1[7]);
+    step2[1] = wraplow(step1[1] + step1[6]);
+    step2[2] = wraplow(step1[2] + step1[5]);
+    step2[3] = wraplow(step1[3] + step1[4]);
+    step2[4] = wraplow(step1[3] - step1[4]);
+    step2[5] = wraplow(step1[2] - step1[5]);
+    step2[6] = wraplow(step1[1] - step1[6]);
+    step2[7] = wraplow(step1[0] - step1[7]);
+    step2[8] = step1[8];
+    step2[9] = step1[9];
+    let temp1 = (-(step1[10] as i64) + step1[13] as i64) * COSPI_16_64 as i64;
+    let temp2 = (step1[10] as i64 + step1[13] as i64) * COSPI_16_64 as i64;
+    step2[10] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[13] = wraplow(dct_const_round_shift(temp2) as i32);
+    let temp1 = (-(step1[11] as i64) + step1[12] as i64) * COSPI_16_64 as i64;
+    let temp2 = (step1[11] as i64 + step1[12] as i64) * COSPI_16_64 as i64;
+    step2[11] = wraplow(dct_const_round_shift(temp1) as i32);
+    step2[12] = wraplow(dct_const_round_shift(temp2) as i32);
+    step2[14] = step1[14];
+    step2[15] = step1[15];
+
+    // stage 7 — output is `tran_low_t`, truncate on store.
+    output[0] = wraplow(step2[0] + step2[15]);
+    output[1] = wraplow(step2[1] + step2[14]);
+    output[2] = wraplow(step2[2] + step2[13]);
+    output[3] = wraplow(step2[3] + step2[12]);
+    output[4] = wraplow(step2[4] + step2[11]);
+    output[5] = wraplow(step2[5] + step2[10]);
+    output[6] = wraplow(step2[6] + step2[9]);
+    output[7] = wraplow(step2[7] + step2[8]);
+    output[8] = wraplow(step2[7] - step2[8]);
+    output[9] = wraplow(step2[6] - step2[9]);
+    output[10] = wraplow(step2[5] - step2[10]);
+    output[11] = wraplow(step2[4] - step2[11]);
+    output[12] = wraplow(step2[3] - step2[12]);
+    output[13] = wraplow(step2[2] - step2[13]);
+    output[14] = wraplow(step2[1] - step2[14]);
+    output[15] = wraplow(step2[0] - step2[15]);
+}
+
+/// 2D 256-coefficient inverse 16×16 DCT with residual add to `dest`.
+///
+/// `input[256]` is the dequantised coefficients in raster order;
+/// `dest[r * stride + c]` is the destination plane. Output is added to
+/// `dest` and saturated to `[0, 255]`. The column-pass uses
+/// `ROUND_POWER_OF_TWO(_, 6)` per `vpx_idct16x16_256_add_c`
+/// (`vpx_dsp/inv_txfm.c:722-745`).
+pub fn idct16x16_256_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
+    debug_assert!(dest.len() >= stride * 15 + 16, "dest too small for 16x16 add");
+
+    let mut intermediate = [0i32; 256];
+
+    // Row pass.
+    for r in 0..16 {
+        let row_in: &[i32; 16] = input[r * 16..r * 16 + 16].try_into().unwrap();
+        let row_out_mut: &mut [i32; 16] = (&mut intermediate[r * 16..r * 16 + 16])
+            .try_into()
+            .unwrap();
+        idct16(row_in, row_out_mut);
+    }
+
+    // Column pass + residual add (ROUND_POWER_OF_TWO with shift 6).
+    let mut col_in = [0i32; 16];
+    let mut col_out = [0i32; 16];
+    for c in 0..16 {
+        for r in 0..16 {
+            col_in[r] = intermediate[r * 16 + c];
+        }
+        idct16(&col_in, &mut col_out);
+        for r in 0..16 {
+            let shifted = (col_out[r] as i64 + 32) >> 6;
+            dest[r * stride + c] = clip_pixel_add(dest[r * stride + c], shifted);
+        }
+    }
+}
+
+/// 2D 1-coefficient inverse 16×16 DCT (DC-only fast path).
+///
+/// Mirrors `vpx_idct16x16_1_add_c` (`vpx_dsp/inv_txfm.c:799-811`). Two
+/// `cospi_16_64` passes (each `wraplow`-truncated) then
+/// `ROUND_POWER_OF_TWO(_, 6)`.
+pub fn idct16x16_1_add(input: i32, dest: &mut [u8], stride: usize) {
+    debug_assert!(dest.len() >= stride * 15 + 16, "dest too small for 16x16 add");
+
+    let out1 = wraplow(dct_const_round_shift((input as i64) * (COSPI_16_64 as i64)) as i32);
+    let out2 = wraplow(dct_const_round_shift((out1 as i64) * (COSPI_16_64 as i64)) as i32);
+    let a1 = ((out2 as i64) + 32) >> 6;
+    for r in 0..16 {
+        for c in 0..16 {
             dest[r * stride + c] = clip_pixel_add(dest[r * stride + c], a1);
         }
     }
@@ -433,6 +664,143 @@ mod tests {
         let mut dest = [128u8; 64];
         idct8x8_64_add(&input, &mut dest, 8);
         // Some pixels increased, some decreased relative to 128.
+        let any_above = dest.iter().any(|&v| v > 128);
+        let any_below = dest.iter().any(|&v| v < 128);
+        assert!(any_above && any_below, "AC should produce both signs");
+    }
+
+    /// Regression: `wraplow` (i16 modular truncation) is applied at
+    /// every libvpx-`int16_t step[]` storage site. For an input whose
+    /// post-`dct_const_round_shift` value crosses the i16 boundary, the
+    /// output must match the wrapped value, NOT the untruncated value.
+    ///
+    /// Construction: pick `input[0]` such that
+    /// `round_shift(input[0] * 11585)` equals exactly `i16::MAX + 1`
+    /// (= 32768) post-rounding. That value, stored into `int16_t step`,
+    /// wraps to `-32768`. Across the second cospi-16 pass and the >>4
+    /// final shift, the wrapped output is observably different from
+    /// what an i32-throughout implementation would produce.
+    ///
+    /// Working: `round_shift(x * 11585) = 32768` requires
+    /// `(x * 11585 + 8192) >> 14 = 32768`, i.e. `x * 11585` in
+    /// `[32768*16384 - 8192, 32768*16384 + 16383]`
+    /// = `[536862720, 536887295]`. `x = 536862720 / 11585 ≈ 46341.18`,
+    /// so `x = 46341` gives `46341 * 11585 = 536860485` → round_shift
+    /// = `(536860485 + 8192) >> 14 = 536868677 >> 14 = 32767` (i16
+    /// max, no wrap). `x = 46342` gives `46342 * 11585 = 536872070` →
+    /// `(536872070 + 8192) >> 14 = 536880262 >> 14 = 32768` → wraps to
+    /// `-32768` under i16 truncation.
+    ///
+    /// With wrapped `out1 = -32768`:
+    /// `out2 = round_shift(-32768 * 11585) = (-379617280 + 8192) >> 14
+    ///       = -379609088 >> 14 = -23170`. Fits in i16, no further wrap.
+    /// `a1 = (-23170 + 8) >> 4 = -23162 >> 4 = -1448`. Add to dest=200:
+    /// `200 + (-1448) = -1248`, clipped to 0.
+    ///
+    /// Without wrap (the old i32-storage implementation) `out1 = 32768`,
+    /// `out2 = 23170`, `a1 = 1448`, dest = clip(200+1448) = 255.
+    ///
+    /// This test pins us to the wrapped (libvpx-bit-exact) output.
+    #[test]
+    fn idct4x4_1_add_wraplow_truncation_boundary() {
+        let mut dest = [200u8; 16];
+        idct4x4_1_add(46342, &mut dest, 4);
+        assert_eq!(
+            dest, [0u8; 16],
+            "wraplow truncation at i16 boundary should sign-flip the residual"
+        );
+    }
+
+    // ---- 16x16 family ----
+
+    /// Zero input → zero output (1D).
+    #[test]
+    fn idct16_zero_in_zero_out() {
+        let input = [0i32; 16];
+        let mut output = [99i32; 16];
+        idct16(&input, &mut output);
+        assert_eq!(output, [0; 16]);
+    }
+
+    /// Zero input → unchanged dest. `(0 + 32) >> 6 = 0`.
+    #[test]
+    fn idct16x16_256_add_zero_preserves_dest() {
+        let input = [0i32; 256];
+        let mut dest = [128u8; 256];
+        idct16x16_256_add(&input, &mut dest, 16);
+        assert_eq!(dest, [128; 256]);
+    }
+
+    /// DC-only fast path must match full path when only `input[0]` is set.
+    #[test]
+    fn idct16x16_1_add_matches_256_add_for_dc_only() {
+        let dc: i32 = 512;
+        let mut input = [0i32; 256];
+        input[0] = dc;
+        let mut dest_full = [50u8; 256];
+        let mut dest_dc = [50u8; 256];
+        idct16x16_256_add(&input, &mut dest_full, 16);
+        idct16x16_1_add(dc, &mut dest_dc, 16);
+        assert_eq!(
+            dest_full, dest_dc,
+            "DC-only fast path must match full path for DC-only input"
+        );
+    }
+
+    /// Hand-computed DC differential for `idct16x16_1_add(1024)`.
+    ///
+    /// Trace (with `wraplow`, no truncation observed for these
+    /// magnitudes):
+    /// - `out1 = round_shift(1024 * 11585) = round_shift(11862784)
+    ///         = (11862784 + 8192) >> 14 = 11870976 >> 14 = 724`.
+    /// - `out2 = round_shift(724 * 11585) = round_shift(8387540)
+    ///         = (8387540 + 8192) >> 14 = 8395732 >> 14 = 512`.
+    /// - `a1 = (512 + 32) >> 6 = 544 >> 6 = 8`.
+    /// - Add 8 to dest=0 everywhere → 8.
+    #[test]
+    fn idct16x16_1_add_dc_known_value() {
+        let mut dest = [0u8; 256];
+        idct16x16_1_add(1024, &mut dest, 16);
+        assert_eq!(dest, [8u8; 256]);
+    }
+
+    /// DC saturation: large positive DC clips at 255.
+    #[test]
+    fn idct16x16_1_add_saturates_high() {
+        let mut dest = [200u8; 256];
+        idct16x16_1_add(20_000, &mut dest, 16);
+        assert_eq!(dest, [255; 256]);
+    }
+
+    /// DC saturation: large negative DC clips at 0.
+    #[test]
+    fn idct16x16_1_add_saturates_low() {
+        let mut dest = [100u8; 256];
+        idct16x16_1_add(-20_000, &mut dest, 16);
+        assert_eq!(dest, [0; 256]);
+    }
+
+    /// idct16 with single AC coefficient: output is non-zero and not
+    /// flat (would be flat for DC).
+    #[test]
+    fn idct16_ac_input_produces_varied_output() {
+        let mut input = [0i32; 16];
+        input[1] = 1024;
+        let mut output = [0i32; 16];
+        idct16(&input, &mut output);
+        let any_nonzero = output.iter().any(|&v| v != 0);
+        let varied = output.iter().any(|&v| v != output[0]);
+        assert!(any_nonzero && varied, "AC input → flat/zero output");
+    }
+
+    /// 16×16 full path with one AC coefficient produces both signs of
+    /// residual.
+    #[test]
+    fn idct16x16_256_add_ac_modulates_pixels() {
+        let mut input = [0i32; 256];
+        input[1] = 4096;
+        let mut dest = [128u8; 256];
+        idct16x16_256_add(&input, &mut dest, 16);
         let any_above = dest.iter().any(|&v| v > 128);
         let any_below = dest.iter().any(|&v| v < 128);
         assert!(any_above && any_below, "AC should produce both signs");

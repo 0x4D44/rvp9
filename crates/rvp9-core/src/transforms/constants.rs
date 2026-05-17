@@ -41,6 +41,38 @@ pub const COSPI_20_64: i32 = 9102;
 /// `txfm_common.h:55`.
 pub const COSPI_28_64: i32 = 3196;
 
+/// `round(cos(2 * pi / 64) * (1 << 14))` = 16305. Mirrors libvpx
+/// `txfm_common.h:29`.
+pub const COSPI_2_64: i32 = 16305;
+
+/// `round(cos(6 * pi / 64) * (1 << 14))` = 15679. Mirrors libvpx
+/// `txfm_common.h:33`.
+pub const COSPI_6_64: i32 = 15679;
+
+/// `round(cos(10 * pi / 64) * (1 << 14))` = 14449. Mirrors libvpx
+/// `txfm_common.h:37`.
+pub const COSPI_10_64: i32 = 14449;
+
+/// `round(cos(14 * pi / 64) * (1 << 14))` = 12665. Mirrors libvpx
+/// `txfm_common.h:41`.
+pub const COSPI_14_64: i32 = 12665;
+
+/// `round(cos(18 * pi / 64) * (1 << 14))` = 10394. Mirrors libvpx
+/// `txfm_common.h:45`.
+pub const COSPI_18_64: i32 = 10394;
+
+/// `round(cos(22 * pi / 64) * (1 << 14))` = 7723. Mirrors libvpx
+/// `txfm_common.h:49`.
+pub const COSPI_22_64: i32 = 7723;
+
+/// `round(cos(26 * pi / 64) * (1 << 14))` = 4756. Mirrors libvpx
+/// `txfm_common.h:53`.
+pub const COSPI_26_64: i32 = 4756;
+
+/// `round(cos(30 * pi / 64) * (1 << 14))` = 1606. Mirrors libvpx
+/// `txfm_common.h:57`.
+pub const COSPI_30_64: i32 = 1606;
+
 /// Symmetric rounding right-shift by `DCT_CONST_BITS`. Mirrors libvpx
 /// `dct_const_round_shift` (`inv_txfm.h:38-41`).
 #[inline]
@@ -48,6 +80,28 @@ pub const COSPI_28_64: i32 = 3196;
 pub const fn dct_const_round_shift(x: i64) -> i64 {
     let rounding = 1_i64 << (DCT_CONST_BITS - 1);
     (x + rounding) >> DCT_CONST_BITS
+}
+
+/// `WRAPLOW(x)` — modular truncation to 16 bits (sign-extended back to
+/// `i32`). Mirrors libvpx `WRAPLOW` (`inv_txfm.h:87`) **plus the implicit
+/// `int16_t step[]` storage truncation** that happens on every store of
+/// a `dct_const_round_shift` result in the C kernels.
+///
+/// In default libvpx builds (`CONFIG_EMULATE_HARDWARE=0`) the textual
+/// `WRAPLOW(x)` macro is itself a no-op `(int32_t)x` cast — but the
+/// step arrays are declared `int16_t`, so each `step[i] = WRAPLOW(...)`
+/// assignment implicitly truncates `int32 → int16` (C 6.3.1.3, two's
+/// complement modular reduction on every conforming compiler). We
+/// reproduce that behaviour explicitly via `as i16 as i32`.
+///
+/// For typical spec-conformant coefficient magnitudes (post
+/// `dct_const_round_shift`, values fit in 16 bits), this is a no-op.
+/// For adversarial or out-of-range inputs it preserves bit-exactness
+/// against libvpx.
+#[inline]
+#[must_use]
+pub const fn wraplow(x: i32) -> i32 {
+    x as i16 as i32
 }
 
 /// `clip_pixel_add(dest, trans)`: residual-add with saturation to

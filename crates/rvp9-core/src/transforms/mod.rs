@@ -23,6 +23,9 @@ pub mod inverse;
 pub mod scans;
 pub mod types;
 
-pub use inverse::{idct4, idct4x4_1_add, idct4x4_16_add, idct8, idct8x8_1_add, idct8x8_64_add};
+pub use inverse::{
+    idct4, idct4x4_1_add, idct4x4_16_add, idct8, idct8x8_1_add, idct8x8_64_add, idct16,
+    idct16x16_1_add, idct16x16_256_add,
+};
 pub use scans::{DEFAULT_ISCAN_4X4, DEFAULT_SCAN_4X4, DEFAULT_SCAN_4X4_NEIGHBORS, ScanOrder, default_scan_4x4};
 pub use types::{MAX_NEIGHBORS, TxMode, TxSize, TxType};

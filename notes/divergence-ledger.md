@@ -205,6 +205,44 @@ state machine works without it.
 **Compression-efficiency impact:** none.
 **Future plan:** none. Decision: L-03.
 
+### 2026-05-17 — Inverse-DCT step storage: explicit `wraplow` (not implicit)
+**Where:** `rvp9-core::transforms::inverse::{idct4, idct8, idct16}` and the
+1-coefficient DC fast paths (`idct4x4_1_add`, `idct8x8_1_add`,
+`idct16x16_1_add`). libvpx counterpart: `vpx_dsp/inv_txfm.c` —
+`idct4_c` (:133), `idct8_c` (:271), `idct16_c` (:557), and the matching
+`vpx_idctNxN_1_add_c` paths.
+**What libvpx does:** declares `int16_t step[N]` (and `int16_t step1[N]`/
+`step2[N]` for the bigger sizes), then computes `step[i] = WRAPLOW(...)`.
+In default builds (`CONFIG_EMULATE_HARDWARE=0`) the textual `WRAPLOW`
+macro is a no-op `(int32_t)x` cast — but the implicit `int32 → int16`
+truncation on the `int16_t step[]` assignment is what actually clamps
+intermediate values to 16 bits. The truncation is part of the
+specification of the kernel, not an artefact.
+**What rvp9 does:** stores step values in `i32` (chosen so we don't
+truncate spuriously between row and column passes), and applies
+[`wraplow(x) = x as i16 as i32`] explicitly at every libvpx-`step[i] =
+WRAPLOW(...)` assignment site. The output of each 1D function — which
+libvpx writes back into `tran_low_t` (= `int16_t` at our 8-bit profile)
+— is also `wraplow`'d on store.
+**Why:** Rust does not implicitly truncate i32 → i16 on assignment to
+an `i32` slot. To preserve libvpx's bit-exact intermediate-storage
+behaviour we must reproduce the truncation explicitly. Discovered when
+extending the family to `idct16` — for the 4×4/8×8 sizes the truncation
+is a no-op on typical coefficient magnitudes, but at 16×16 (and
+especially 32×32) intermediate sums can plausibly cross the i16
+boundary, making the truncation observable.
+**Byte-parity impact:** none for well-formed coefficient inputs (the
+truncation is a no-op at typical magnitudes); strict bit-exactness
+preserved for adversarial or out-of-spec inputs. Pinned by regression
+test `idct4x4_1_add_wraplow_truncation_boundary`.
+**Compression-efficiency impact:** none.
+**Future plan:** apply the same `wraplow` pattern to `idct32`, the
+`iadst{4,8,16}` family, and the hybrid `iht*` kernels as they land.
+The forward DCT/ADST kernels in `rvp9-encoder::transforms` will need
+the same treatment for the encoder reconstruction loop's bit-exactness
+against libvpx. Decision: developer judgement (not a numbered LLD
+decision — caught during Task 3d implementation).
+
 ---
 
 ## Stage 2 LLD-surfaced divergences — index (Phase 2e merge, 2026-05-16)
