@@ -30,17 +30,28 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 3e (`transforms` idct32×32) | ✅ done | `b6ccaf8` |
 | 3f (`transforms` iadst 4/8/16) | ✅ done | `96c968a` |
 | 3g (`transforms` iht hybrid 4/8/16) | ✅ done | `7b48e56` |
+| 3h.1 (`transforms` 4×4 col/row scans + dispatch) | ✅ done | `9290932` |
+| 3h.2 (`transforms` 8×8 scan family) | ✅ done | `95430a5` |
+| 3h.3 (`transforms` 16×16 scan family) | ✅ done | `0563d37` |
 | 1b-g (bitstream headers, tile, superframe) | ⏸️ |
 | 2b (entropy FRAME_CONTEXT + prob tables) | ⏸️ |
-| 3h+ (larger scan tables 8×8/16×16/32×32 + per-TxType scans) | ⏸️ |
+| 3h.4 (`transforms` 32×32 scan family + top-level dispatch) | ⏸️ |
 | 5 (intra_pred) | ⏸️ |
 | 6 (loopfilter) | ⏸️ |
 | 7 (frame buffers) | ⏸️ |
 | 8 (decoder integration) | ⏸️ |
 | 9 (vpxdec conformance gate) | ⏸️ |
 
-rvp9-core: 90 unit tests passing, ~4200 lines of bit-exact-mirrored
+rvp9-core: 117 unit tests passing, ~5000 lines of bit-exact-mirrored
 code. `cargo test`, `cargo clippy -D warnings` clean.
+
+Inverse-transform layer (`transforms::inverse`) is feature-complete
+for the decoder: idct{4,8,16,32}, iadst{4,8,16}, iht{4,8,16}_*_add
+with per-TxType dispatch, all wraplow-truncated.
+
+Scan-table layer: 4×4 / 8×8 / 16×16 all three TxType variants done.
+32×32 default-only + a top-level `scan_for(TxSize, TxType)` dispatch
+remain (Task 3h.4).
 
 Task 3d note: while implementing idct16 we discovered that the
 previously-committed idct4/idct8 lacked the implicit
