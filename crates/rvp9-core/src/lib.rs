@@ -28,6 +28,7 @@ pub mod entropy;
 pub mod frame;
 pub mod intra_pred;
 pub mod loopfilter;
+pub mod mode_info;
 pub mod quant;
 pub mod transforms;
 
