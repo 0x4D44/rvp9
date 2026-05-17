@@ -37,7 +37,8 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 use rvp9_core::bitstream::{
-    BitstreamError, FrameKind, RefFrameSizes, Superframe, UncompressedHeader,
+    BitstreamError, CompressedHeaderOptions, CompressedHeaderResult, FrameKind, InterpFilter,
+    RefFrameSizes, Superframe, UncompressedHeader, parse_compressed_header,
     parse_superframe_index, parse_uncompressed_header,
 };
 use rvp9_core::entropy::{FRAME_CONTEXTS, FrameContext};
@@ -230,6 +231,93 @@ impl Decoder {
         self.lf_deltas
     }
 
+    /// Parse the compressed-header (first-partition) bytes of a
+    /// non-show-existing frame into the decoder's selected
+    /// `FrameContext` bank. Mirrors libvpx's call sequence at
+    /// `vp9_decodeframe.c:2944-2948`:
+    ///
+    ///     read_uncompressed_header(...);
+    ///     // ...
+    ///     read_compressed_header(...);    // ← this method
+    ///     // ...
+    ///     decode_tiles(...);
+    ///
+    /// The selected bank is `frame_contexts[header.tail.frame_context_idx]`.
+    /// The compressed-header byte slice is `frame.full_frame_data
+    /// [header_end_byte .. header_end_byte + first_partition_size]`.
+    ///
+    /// The `compound_allowed` input to `parse_compressed_header` is
+    /// conservatively set to `false` for now — proper POC-direction
+    /// tracking lands with the reference-frame plumbing in Task 8.2+.
+    /// This matches libvpx behaviour for keyframes / intra-only
+    /// frames (where compound is always disallowed) but is
+    /// conservative for inter frames.
+    ///
+    /// Returns `(tx_mode, reference_mode)` so the caller can wire
+    /// them into per-block decode.
+    ///
+    /// # Errors
+    ///
+    /// - [`DecodeError::WrongFrameKind`] if `frame.header.kind` is
+    ///   `ShowExistingFrame` (those frames have no compressed
+    ///   header).
+    /// - [`DecodeError::TruncatedCompressedHeader`] if the declared
+    ///   `first_partition_size` extends past the frame's data slice.
+    /// - [`DecodeError::Bitstream`] for any error surfaced by
+    ///   [`parse_compressed_header`] (marker-bit fail / read past end).
+    pub fn parse_compressed_partition(
+        &mut self,
+        frame: &ParsedFrame<'_>,
+    ) -> Result<CompressedHeaderResult, DecodeError> {
+        let tail = frame.header.tail.as_ref().ok_or(DecodeError::WrongFrameKind)?;
+
+        // Slice out [header_end .. header_end + first_partition_size].
+        let header_end = frame.header_end_byte;
+        let fps = tail.first_partition_size as usize;
+        let total = frame.full_frame_data.len();
+        let needed_end = header_end
+            .checked_add(fps)
+            .ok_or(DecodeError::TruncatedCompressedHeader {
+                declared: usize::MAX,
+                available: total,
+            })?;
+        if needed_end > total {
+            return Err(DecodeError::TruncatedCompressedHeader {
+                declared: needed_end,
+                available: total,
+            });
+        }
+        let compressed = &frame.full_frame_data[header_end..needed_end];
+
+        // Compute parser options from the uncompressed header.
+        let lossless = tail.quantization.is_lossless();
+        let intra_only = frame.header.kind.is_intra();
+        let (interp_filter, allow_high_precision_mv) = match frame.header.kind {
+            FrameKind::InterFrame {
+                interp_filter,
+                allow_high_precision_mv,
+                ..
+            } => (interp_filter, allow_high_precision_mv),
+            // Intra-only / keyframe: these fields are unused — pass
+            // any sane defaults. `parse_compressed_header` ignores
+            // them when `intra_only == true`.
+            _ => (InterpFilter::EightTap, false),
+        };
+        let opts = CompressedHeaderOptions {
+            lossless,
+            intra_only,
+            interp_filter,
+            // Conservative pending POC tracking (Task 8.2+).
+            compound_allowed: false,
+            allow_high_precision_mv,
+        };
+
+        // Drive the parser against the selected FrameContext bank.
+        let idx = tail.frame_context_idx as usize;
+        let fc = &mut self.frame_contexts[idx];
+        parse_compressed_header(compressed, fc, opts).map_err(DecodeError::Bitstream)
+    }
+
     /// Handle a `show_existing_frame` parsed header by looking up
     /// the referenced slot in the frame pool and returning its
     /// [`FrameBuf`]. This is the simplest possible decoder output
@@ -262,11 +350,14 @@ impl Decoder {
 }
 
 /// Errors from the per-frame decode entry points.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum DecodeError {
-    /// `decode_show_existing_frame` was called on a header whose
-    /// `kind` is not `FrameKind::ShowExistingFrame`.
+    /// Called against a header whose `kind` was inappropriate for
+    /// the entry point. Examples:
+    /// - `decode_show_existing_frame` on a non-`ShowExistingFrame`.
+    /// - `parse_compressed_partition` on a `ShowExistingFrame`
+    ///   (which has no `tail` / compressed header).
     WrongFrameKind,
     /// `decode_show_existing_frame` referenced an empty slot.
     /// Mirrors libvpx's `vp9_decodeframe.c:2667` corrupt-frame
@@ -275,17 +366,37 @@ pub enum DecodeError {
         /// The 3-bit slot index that was requested.
         slot: u8,
     },
+    /// `parse_compressed_partition` saw a `first_partition_size`
+    /// that runs past the end of the frame's byte slice.
+    TruncatedCompressedHeader {
+        /// The declared end offset (`header_end + first_partition_size`).
+        declared: usize,
+        /// The frame's actual data length.
+        available: usize,
+    },
+    /// A bitstream-layer error surfaced during compressed-header
+    /// parsing. Carries the underlying `BitstreamError` for
+    /// diagnostics.
+    Bitstream(BitstreamError),
 }
 
 impl core::fmt::Display for DecodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::WrongFrameKind => f.write_str(
-                "expected FrameKind::ShowExistingFrame; this entry point is show-existing only",
+                "frame kind is inappropriate for this entry point",
             ),
             Self::EmptySlot { slot } => {
                 write!(f, "frame pool slot {slot} contains no decoded frame")
             }
+            Self::TruncatedCompressedHeader {
+                declared,
+                available,
+            } => write!(
+                f,
+                "compressed header declared {declared} bytes but only {available} available"
+            ),
+            Self::Bitstream(e) => write!(f, "bitstream error: {e}"),
         }
     }
 }
@@ -420,6 +531,117 @@ mod tests {
         assert_eq!(f.header.height, 240);
         assert!(f.header_end_byte > 0);
         assert!(f.full_frame_data.len() >= f.header_end_byte);
+    }
+
+    /// Build a lossless keyframe with `first_partition_size = N`
+    /// bytes of zero-padded compressed-header. The 1-byte minimal
+    /// version produced by [`build_minimal_keyframe`] is too small
+    /// for the bool reader to parse without crossing EOF; this
+    /// helper gives the parser breathing room.
+    fn build_lossless_keyframe_with_compressed_size(n: u16) -> Vec<u8> {
+        let mut buf = vec![0u8; 256];
+        let mut w = RawBitWriter::new(&mut buf);
+        w.write_literal(sync::FRAME_MARKER as u32, 2);
+        w.write_bit(0); // profile low
+        w.write_bit(0); // profile high → Profile 0
+        w.write_bit(0); // show_existing = 0
+        w.write_bit(0); // frame_type = KEY
+        w.write_bit(1); // show_frame = 1
+        w.write_bit(0); // error_resilient = 0
+        w.write_literal(sync::SYNC_CODE_0 as u32, 8);
+        w.write_literal(sync::SYNC_CODE_1 as u32, 8);
+        w.write_literal(sync::SYNC_CODE_2 as u32, 8);
+        w.write_literal(ColorSpace::Bt601 as u32, 3);
+        w.write_bit(0); // color_range = Studio
+        w.write_literal(319, 16);
+        w.write_literal(239, 16);
+        w.write_bit(0); // no render size
+        // Tail.
+        w.write_bit(0);
+        w.write_bit(0);
+        w.write_literal(0, 2);
+        w.write_literal(0, 6);
+        w.write_literal(0, 3);
+        w.write_bit(0);
+        w.write_literal(0, 8);
+        w.write_bit(0);
+        w.write_bit(0);
+        w.write_bit(0);
+        w.write_bit(0);
+        w.write_bit(0);
+        w.write_literal(u32::from(n), 16);
+        let used = w.bytes_written();
+        buf.truncate(used + n as usize + 4);
+        buf
+    }
+
+    /// `parse_compressed_partition` on a lossless keyframe with a
+    /// 16-byte zero-padded compressed-header (plenty of room for
+    /// the bool reader to issue all "no-update" gates):
+    /// - Returns `tx_mode = OnlyTx4x4` (lossless forces this).
+    /// - Returns `reference_mode = Single` (intra branch).
+    /// - Leaves the selected FrameContext bank at its libvpx defaults.
+    #[test]
+    fn parse_compressed_partition_lossless_keyframe_no_updates() {
+        use rvp9_core::bitstream::ReferenceMode;
+        use rvp9_core::transforms::TxMode;
+
+        let buf = build_lossless_keyframe_with_compressed_size(16);
+        let mut dec = Decoder::new();
+
+        let frames = dec.parse_packet(&buf).expect("valid keyframe");
+        let header = frames.frames()[0].header.clone();
+        let header_end = frames.frames()[0].header_end_byte;
+        let frame_data: Vec<u8> = frames.frames()[0].full_frame_data.to_vec();
+        drop(frames);
+
+        let parsed = ParsedFrame {
+            header,
+            header_end_byte: header_end,
+            full_frame_data: &frame_data,
+        };
+
+        let original = dec.frame_context(0).clone();
+        let result = dec
+            .parse_compressed_partition(&parsed)
+            .expect("compressed header parse");
+
+        assert_eq!(result.tx_mode, TxMode::OnlyTx4x4);
+        assert_eq!(result.reference_mode, ReferenceMode::Single);
+        assert_eq!(dec.frame_context(0), &original);
+    }
+
+    /// `parse_compressed_partition` on a `ShowExistingFrame` header
+    /// fails with `WrongFrameKind` (those frames have no tail and
+    /// no compressed header).
+    #[test]
+    fn parse_compressed_partition_show_existing_rejected() {
+        // Build a tiny `show_existing_frame` packet: 1 byte with the
+        // marker (0b10) + show_existing_flag (1) + slot (0..7=3 bits).
+        let mut buf = vec![0u8; 16];
+        let mut w = RawBitWriter::new(&mut buf);
+        w.write_literal(sync::FRAME_MARKER as u32, 2);
+        w.write_bit(0); // profile low
+        w.write_bit(0); // profile high → Profile 0
+        w.write_bit(1); // show_existing = 1
+        w.write_literal(2, 3); // slot = 2
+        let used = w.bytes_written();
+        buf.truncate(used);
+
+        let mut dec = Decoder::new();
+        let frames = dec.parse_packet(&buf).expect("valid show-existing");
+        let header = frames.frames()[0].header.clone();
+        let header_end = frames.frames()[0].header_end_byte;
+        let frame_data: Vec<u8> = frames.frames()[0].full_frame_data.to_vec();
+        drop(frames);
+
+        let parsed = ParsedFrame {
+            header,
+            header_end_byte: header_end,
+            full_frame_data: &frame_data,
+        };
+        let err = dec.parse_compressed_partition(&parsed).expect_err("must fail");
+        assert_eq!(err, DecodeError::WrongFrameKind);
     }
 
     #[test]
