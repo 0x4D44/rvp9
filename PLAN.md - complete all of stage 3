@@ -56,7 +56,8 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 8.2.0 (PartitionType + subsize_lookup + max_txsize foundation) | ✅ done | `9630c98` |
 | 8.2.1 (ModeInfo struct + InterMode + RefFrame + Mv + BlockMode) | ✅ done | `e6e5d58` |
 | 8.2.2 (BoolReader::read_tree + PARTITION_TREE + read_partition) | ✅ done | `7cba016` |
-| 8.2.3+ (intra-mode trees + tile loop + full per-block decode) | ⏸️ |
+| 8.2.3 (INTRA_MODE_TREE + INTER_MODE_TREE + read_intra/inter_mode) | ✅ done | `b26fd9b` |
+| 8.2.4+ (segment-id / tx-size / skip / ref-frame decoders + tile loop) | ⏸️ |
 | 1e.1 (`vp9_diff_update_prob` building block) | ✅ done | `51178fa` |
 | 1e.2 (compressed-header scalar-prob sub-parsers) | ✅ done | `4d9350c` |
 | 1e.3 (read_coef_probs — biggest per-TX-size sub-parser) | ✅ done | `90d711f` |
@@ -84,8 +85,8 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 8 (decoder integration) | ⏸️ |
 | 9 (vpxdec conformance gate) | ⏸️ |
 
-rvp9-core: 352 unit tests + rvp9-decoder: 10 unit tests = **362 total**.
-~17200 lines in rvp9-core + ~770 lines in rvp9-decoder.
+rvp9-core: 356 unit tests + rvp9-decoder: 10 unit tests = **366 total**.
+~17400 lines in rvp9-core + ~770 lines in rvp9-decoder.
 `cargo test`, `cargo clippy -D warnings` clean.
 
 **The rvp9-decoder skeleton is live with the first complete decode
