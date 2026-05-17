@@ -230,6 +230,45 @@ pub const REF_FRAMES_LOG2: u32 = 3;
 /// `MAX_REF_FRAMES`.
 pub const MAX_INTER_REFS: usize = 3;
 
+/// Sub-pel interpolation filter, as decoded from the inter-frame
+/// header (libvpx `read_interp_filter`, `vp9_decodeframe.c:1454-1459`).
+///
+/// Values match libvpx `vp9_filter.h:23-32`. The `Switchable` variant
+/// means the filter is selected per-block during entropy decoding;
+/// the other three are frame-level fixed choices.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[repr(u8)]
+pub enum InterpFilter {
+    /// EIGHTTAP — standard 8-tap interpolation. `EIGHTTAP = 0` in
+    /// libvpx (`vp9_filter.h:23`).
+    EightTap = 0,
+    /// EIGHTTAP_SMOOTH — smoother 8-tap (`vp9_filter.h:24`).
+    EightTapSmooth = 1,
+    /// EIGHTTAP_SHARP — sharper 8-tap (`vp9_filter.h:25`).
+    EightTapSharp = 2,
+    /// BILINEAR — 2-tap bilinear (`vp9_filter.h:27`).
+    Bilinear = 3,
+    /// SWITCHABLE — per-block filter (`vp9_filter.h:32`).
+    Switchable = 4,
+}
+
+impl InterpFilter {
+    /// Decode the 2-bit `literal_to_filter` index used by libvpx
+    /// `read_interp_filter` (`vp9_decodeframe.c:1455-1458`):
+    ///
+    /// `[EIGHTTAP_SMOOTH, EIGHTTAP, EIGHTTAP_SHARP, BILINEAR]`.
+    #[inline]
+    #[must_use]
+    pub const fn from_literal(v: u8) -> Self {
+        match v & 0b11 {
+            0 => Self::EightTapSmooth,
+            1 => Self::EightTap,
+            2 => Self::EightTapSharp,
+            _ => Self::Bilinear,
+        }
+    }
+}
+
 /// VP9 sync-byte sequence at the start of every uncompressed header.
 /// Profile 0/1 → `0x49 0x83 0x42`, Profile 2/3 → `0x49 0x83 0x43`.
 /// Encoded as a 2-bit `profile_low_bit | profile_high_bit << 1` plus
@@ -348,5 +387,24 @@ mod tests {
         assert_eq!(sync::SYNC_CODE_0, 0x49);
         assert_eq!(sync::SYNC_CODE_1, 0x83);
         assert_eq!(sync::SYNC_CODE_2, 0x42);
+    }
+
+    /// libvpx `literal_to_filter[]` maps `[0,1,2,3]` to
+    /// `[EIGHTTAP_SMOOTH=1, EIGHTTAP=0, EIGHTTAP_SHARP=2, BILINEAR=3]`.
+    #[test]
+    fn interp_filter_literal_map_matches_libvpx() {
+        assert_eq!(InterpFilter::from_literal(0), InterpFilter::EightTapSmooth);
+        assert_eq!(InterpFilter::from_literal(1), InterpFilter::EightTap);
+        assert_eq!(InterpFilter::from_literal(2), InterpFilter::EightTapSharp);
+        assert_eq!(InterpFilter::from_literal(3), InterpFilter::Bilinear);
+    }
+
+    #[test]
+    fn interp_filter_discriminants_match_libvpx() {
+        assert_eq!(InterpFilter::EightTap as u8, 0);
+        assert_eq!(InterpFilter::EightTapSmooth as u8, 1);
+        assert_eq!(InterpFilter::EightTapSharp as u8, 2);
+        assert_eq!(InterpFilter::Bilinear as u8, 3);
+        assert_eq!(InterpFilter::Switchable as u8, 4);
     }
 }

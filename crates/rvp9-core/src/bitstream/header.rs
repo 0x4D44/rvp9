@@ -6,7 +6,7 @@
 //! populated [`UncompressedHeader`] plus the byte offset at which the
 //! compressed header begins.
 //!
-//! ## Scope of this commit (Task 1c.1)
+//! ## Scope (Tasks 1c + 1d.2)
 //!
 //! Full support for:
 //!
@@ -17,24 +17,25 @@
 //! - keyframe decoding through `setup_frame_size`
 //!   (`:2685-2703`): sync code, bit-depth / color-space / sampling, frame
 //!   size, render size,
-//! - intra-only frame decoding through the same `setup_frame_size`
-//!   point (`:2710-2735`).
+//! - intra-only frame decoding through `setup_frame_size`
+//!   (`:2710-2735`),
+//! - inter-frame decoding: ref-index loop, `setup_frame_size_with_refs`
+//!   (`:1553-1604`), `allow_high_precision_mv`, `read_interp_filter`
+//!   (`:1454-1459`).
 //!
-//! **Not in this commit (deferred to Task 1d):**
-//! - inter-frame ref-index and `setup_frame_size_with_refs` paths,
-//! - loop filter / quantization / segmentation sub-parsers,
-//! - tile-info parser,
-//! - the trailing `first_partition_size` u16,
-//! - the compressed-header boolean-coder driver.
-//!
-//! For now, encountering a non-key / non-show-existing / non-intra-only
-//! frame returns [`UncompressedHeader::kind`] =
-//! [`FrameKind::InterFrameTodo`] — a sentinel so callers can recognise
-//! it and avoid feeding partial state to the rest of the decoder.
+//! **Not in this function (handled separately):**
+//! - loop filter / quantization / segmentation / tile-info parsers
+//!   ([`super::sub_parsers`]),
+//! - `refresh_frame_context` / `frame_parallel_decoding_mode` /
+//!   `frame_context_idx` (the post-tile-info block in libvpx
+//!   `:2781-2792` — Task 1d.3),
+//! - the trailing `first_partition_size` u16 (Task 1d.3),
+//! - the compressed-header boolean-coder driver (Task 1e).
 
 use super::error::BitstreamError;
 use super::frame::{
-    BitDepth, ChromaFormat, ColorRange, ColorSpace, FrameType, Profile, REF_FRAMES, sync,
+    BitDepth, ChromaFormat, ColorRange, ColorSpace, FrameType, InterpFilter, MAX_INTER_REFS,
+    Profile, REF_FRAMES, REF_FRAMES_LOG2, sync,
 };
 use super::raw::RawBitReader;
 
@@ -104,8 +105,24 @@ pub enum FrameKind {
         refresh_frame_flags: u8,
     },
     /// `frame_type == INTER_FRAME && (show_frame || intra_only == 0)`
-    /// — full inter-frame parsing is not yet implemented.
-    InterFrameTodo,
+    /// — full inter-frame parsing.
+    InterFrame {
+        /// The 2-bit `reset_frame_context` field (0 if
+        /// `error_resilient_mode`).
+        reset_frame_context: u8,
+        /// 8-bit `refresh_frame_flags` mask.
+        refresh_frame_flags: u8,
+        /// 3-bit ref-frame indices (one per
+        /// [`MAX_INTER_REFS`] slot: LAST / GOLDEN / ALTREF).
+        ref_frame_indices: [u8; MAX_INTER_REFS],
+        /// Per-ref sign-bias bits (sign of the relative POC offset
+        /// between reference and current frame).
+        ref_frame_sign_biases: [bool; MAX_INTER_REFS],
+        /// `true` if the header signalled 1/8-pel MV precision.
+        allow_high_precision_mv: bool,
+        /// Sub-pel interpolation filter for this frame.
+        interp_filter: InterpFilter,
+    },
 }
 
 impl FrameKind {
@@ -116,20 +133,34 @@ impl FrameKind {
     }
 }
 
+/// Resolved sizes of the previously-decoded reference frames at the
+/// time we're parsing the current frame. `[None; MAX_INTER_REFS]` if
+/// no refs are currently available (the parser will then always read
+/// fresh frame_size bits — this matches libvpx's behaviour when
+/// `cm->frame_refs[i].idx == INVALID_IDX`).
+pub type RefFrameSizes = [Option<(u32, u32)>; MAX_INTER_REFS];
+
 /// Decode a VP9 uncompressed header from `data`. Returns the populated
 /// header and the byte offset (one past the last header byte) at which
 /// the compressed-header partition begins.
 ///
-/// **Caveat**: while Task 1d is pending, callers that hit
-/// `kind == FrameKind::InterFrameTodo` should treat the returned
-/// header as opaque — only `profile` and the byte-stream-position
-/// fields are valid.
+/// `ref_sizes` provides the (luma width, luma height) of each
+/// currently-decoded reference frame in the buffer pool, indexed by
+/// `LAST=0 / GOLDEN=1 / ALTREF=2`. Each slot may be `None` if the
+/// corresponding ref isn't currently available (parses that try to
+/// inherit a size from a `None` ref will fall through to reading
+/// fresh `frame_size` bits, matching libvpx's behaviour at
+/// `vp9_decodeframe.c:1559-1574`).
 ///
-/// Mirrors `read_uncompressed_header` (`vp9_decodeframe.c:2637-2861`).
-/// The returned `usize` is the bit-reader's byte cursor at the point
-/// where libvpx's parser would call `setup_loopfilter`.
+/// Mirrors `read_uncompressed_header` (`vp9_decodeframe.c:2637-2861`)
+/// up to and including the ref-frame loop and
+/// `setup_frame_size_with_refs` (`:1553-1604`). The trailing sub-block
+/// parsers (loopfilter / quant / segmentation / tile + the 16-bit
+/// `first_partition_size`) are exposed separately via
+/// [`super::sub_parsers`].
 pub fn parse_uncompressed_header(
     data: &[u8],
+    ref_sizes: &RefFrameSizes,
 ) -> Result<(UncompressedHeader, usize), BitstreamError> {
     let mut rb = RawBitReader::new(data);
 
@@ -209,7 +240,7 @@ pub fn parse_uncompressed_header(
     } else {
         rb.read_bit()? != 0
     };
-    let _reset_frame_context = if error_resilient {
+    let reset_frame_context = if error_resilient {
         0
     } else {
         rb.read_literal(2)? as u8
@@ -236,7 +267,7 @@ pub fn parse_uncompressed_header(
         return Ok((
             UncompressedHeader {
                 kind: FrameKind::IntraOnly {
-                    reset_frame_context: _reset_frame_context,
+                    reset_frame_context,
                     refresh_frame_flags,
                 },
                 profile,
@@ -254,23 +285,83 @@ pub fn parse_uncompressed_header(
         ));
     }
 
-    // Full inter-frame parse — Task 1d. Return sentinel.
+    // Full inter-frame parse. Mirrors libvpx :2737-2765.
+    let refresh_frame_flags = rb.read_literal(REF_FRAMES as u8)? as u8;
+
+    let mut ref_frame_indices = [0u8; MAX_INTER_REFS];
+    let mut ref_frame_sign_biases = [false; MAX_INTER_REFS];
+    for i in 0..MAX_INTER_REFS {
+        ref_frame_indices[i] = rb.read_literal(REF_FRAMES_LOG2 as u8)? as u8;
+        ref_frame_sign_biases[i] = rb.read_bit()? != 0;
+    }
+
+    // setup_frame_size_with_refs. libvpx :1553-1604.
+    // For each ref: read 1 bit; if set AND that ref has a known size,
+    // inherit width/height and break. Otherwise fall through to a
+    // fresh frame_size read.
+    let mut inherited: Option<(u32, u32)> = None;
+    for ref_slot in ref_sizes.iter() {
+        let use_size = rb.read_bit()? != 0;
+        if use_size && inherited.is_none() {
+            // Lookup via ref_frame_indices is the next layer's job;
+            // here we use the caller-supplied slot. libvpx breaks out
+            // of the loop on first-found, but the bit stream still
+            // emits exactly REFS_PER_FRAME size-in-found bits — so we
+            // continue iterating to keep the bit cursor in sync,
+            // just no longer overwriting `inherited`.
+            if let Some(sz) = ref_slot {
+                inherited = Some(*sz);
+            }
+        }
+    }
+    let (width, height) = if let Some(sz) = inherited {
+        sz
+    } else {
+        read_frame_size(&mut rb)?
+    };
+    let render_size = read_render_size(&mut rb, width, height)?;
+
+    let allow_high_precision_mv = rb.read_bit()? != 0;
+    let interp_filter = read_interp_filter(&mut rb)?;
+
     Ok((
         UncompressedHeader {
-            kind: FrameKind::InterFrameTodo,
+            kind: FrameKind::InterFrame {
+                reset_frame_context,
+                refresh_frame_flags,
+                ref_frame_indices,
+                ref_frame_sign_biases,
+                allow_high_precision_mv,
+                interp_filter,
+            },
             profile,
             show_frame,
             error_resilient,
+            // Bit-depth and color config inherit from the most recent
+            // key/intra-only frame; the parser doesn't re-encode them
+            // here (libvpx pulls them from `cm->` which the decoder
+            // state machine maintains across frames).
             bit_depth: BitDepth::Eight,
             color_space: ColorSpace::Unknown,
             color_range: ColorRange::Studio,
             chroma: ChromaFormat::Yuv420,
-            width: 0,
-            height: 0,
-            render_size: None,
+            width,
+            height,
+            render_size,
         },
         rb.bytes_consumed(),
     ))
+}
+
+/// Read the sub-pel interpolation filter. Mirrors libvpx
+/// `read_interp_filter` (`vp9_decodeframe.c:1454-1459`).
+fn read_interp_filter(rb: &mut RawBitReader<'_>) -> Result<InterpFilter, BitstreamError> {
+    if rb.read_bit()? != 0 {
+        Ok(InterpFilter::Switchable)
+    } else {
+        let literal = rb.read_literal(2)? as u8;
+        Ok(InterpFilter::from_literal(literal))
+    }
 }
 
 /// Read the profile field using libvpx's variable-width encoding
@@ -397,6 +488,11 @@ mod tests {
     use super::*;
     use crate::bitstream::raw::RawBitWriter;
 
+    /// Convenience: "no reference frames currently resolved" — the
+    /// state at decoder boot and after a `need_resync`. Equivalent to
+    /// `cm->frame_refs[i].idx == INVALID_IDX` for every slot.
+    const NO_REFS: RefFrameSizes = [None; MAX_INTER_REFS];
+
     /// Helper: build a header byte sequence by writing fields with a
     /// `RawBitWriter`, then return the populated buffer.
     fn build_header<F>(f: F) -> Vec<u8>
@@ -419,7 +515,7 @@ mod tests {
             // Pad enough bytes for the reader to attempt the next reads.
             w.write_literal(0, 8);
         });
-        let err = parse_uncompressed_header(&buf).unwrap_err();
+        let err = parse_uncompressed_header(&buf, &NO_REFS).unwrap_err();
         assert!(matches!(
             err,
             BitstreamError::InvalidFrameMarker { found: 3 }
@@ -440,7 +536,7 @@ mod tests {
                 w.write_literal(0, 8);
             }
         });
-        let err = parse_uncompressed_header(&buf).unwrap_err();
+        let err = parse_uncompressed_header(&buf, &NO_REFS).unwrap_err();
         assert!(matches!(
             err,
             BitstreamError::UnsupportedProfile { profile: 4 }
@@ -458,7 +554,7 @@ mod tests {
             // Pad bytes (reader requires valid byte access for byte_cursor).
             w.write_literal(0, 8);
         });
-        let (hdr, _) = parse_uncompressed_header(&buf).expect("valid header");
+        let (hdr, _) = parse_uncompressed_header(&buf, &NO_REFS).expect("valid header");
         assert_eq!(hdr.kind, FrameKind::ShowExistingFrame { slot: 5 });
         assert_eq!(hdr.profile, Profile::Profile0);
         assert!(hdr.show_frame);
@@ -492,7 +588,7 @@ mod tests {
                 w.write_literal(0, 8);
             }
         });
-        let (hdr, _cursor) = parse_uncompressed_header(&buf).expect("valid keyframe");
+        let (hdr, _cursor) = parse_uncompressed_header(&buf, &NO_REFS).expect("valid keyframe");
         assert_eq!(hdr.kind, FrameKind::KeyFrame);
         assert_eq!(hdr.profile, Profile::Profile0);
         assert!(hdr.show_frame);
@@ -530,7 +626,7 @@ mod tests {
                 w.write_literal(0, 8);
             }
         });
-        let (hdr, _) = parse_uncompressed_header(&buf).expect("valid keyframe");
+        let (hdr, _) = parse_uncompressed_header(&buf, &NO_REFS).expect("valid keyframe");
         assert_eq!(hdr.kind, FrameKind::KeyFrame);
         assert_eq!(hdr.width, 1920);
         assert_eq!(hdr.height, 1080);
@@ -557,7 +653,7 @@ mod tests {
                 w.write_literal(0, 8);
             }
         });
-        let err = parse_uncompressed_header(&buf).unwrap_err();
+        let err = parse_uncompressed_header(&buf, &NO_REFS).unwrap_err();
         assert!(matches!(
             err,
             BitstreamError::InvalidSyncCode { found: [0xff, 0x83, 0x42] }
@@ -589,7 +685,7 @@ mod tests {
                 w.write_literal(0, 8);
             }
         });
-        let (hdr, _) = parse_uncompressed_header(&buf).expect("valid intra-only");
+        let (hdr, _) = parse_uncompressed_header(&buf, &NO_REFS).expect("valid intra-only");
         assert_eq!(
             hdr.kind,
             FrameKind::IntraOnly {
@@ -606,25 +702,154 @@ mod tests {
     }
 
     #[test]
-    fn inter_frame_returns_todo_sentinel() {
-        // frame_type = INTER (1), show_frame = 1 → intra_only forced to
-        // 0; full inter parse not yet implemented.
+    fn inter_frame_no_refs_reads_fresh_size() {
+        // frame_type = INTER, show_frame = 1 (so intra_only = 0 by
+        // construction). No refs available → setup_frame_size_with_refs
+        // falls through to reading 32 bits of fresh frame size.
         let buf = build_header(|w| {
             w.write_literal(sync::FRAME_MARKER as u32, 2);
-            w.write_bit(0);
-            w.write_bit(0);
+            w.write_bit(0); // profile low → 0
+            w.write_bit(0); // profile high → 0
             w.write_bit(0); // show_existing = 0
             w.write_bit(1); // frame_type = INTER
             w.write_bit(1); // show_frame = 1
             w.write_bit(0); // error_resilient = 0
-            // reset_frame_context (2 bits) — not error_resilient → read.
-            w.write_literal(0, 2);
+            w.write_literal(0b10, 2); // reset_frame_context = 2
+            w.write_literal(0b00010101, 8); // refresh_frame_flags
+            // Three ref slots: each is 3 bits index + 1 bit sign bias.
+            // refs = [0, 4, 7]; sign_biases = [false, true, false].
+            w.write_literal(0, 3);
+            w.write_bit(0);
+            w.write_literal(4, 3);
+            w.write_bit(1);
+            w.write_literal(7, 3);
+            w.write_bit(0);
+            // setup_frame_size_with_refs: 3 "size_in_found" bits — all
+            // 0 because NO_REFS. Then 16+16 fresh size.
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_literal(639, 16); // width 640
+            w.write_literal(479, 16); // height 480
+            w.write_bit(0); // no render size
+            w.write_bit(1); // allow_high_precision_mv
+            w.write_bit(1); // interp_filter = Switchable
             for _ in 0..8 {
                 w.write_literal(0, 8);
             }
         });
-        let (hdr, _) = parse_uncompressed_header(&buf).expect("valid header prefix");
-        assert_eq!(hdr.kind, FrameKind::InterFrameTodo);
-        assert_eq!(hdr.profile, Profile::Profile0);
+        let (hdr, _) = parse_uncompressed_header(&buf, &NO_REFS).expect("valid inter frame");
+        match hdr.kind {
+            FrameKind::InterFrame {
+                reset_frame_context,
+                refresh_frame_flags,
+                ref_frame_indices,
+                ref_frame_sign_biases,
+                allow_high_precision_mv,
+                interp_filter,
+            } => {
+                assert_eq!(reset_frame_context, 2);
+                assert_eq!(refresh_frame_flags, 0b00010101);
+                assert_eq!(ref_frame_indices, [0, 4, 7]);
+                assert_eq!(ref_frame_sign_biases, [false, true, false]);
+                assert!(allow_high_precision_mv);
+                assert_eq!(interp_filter, InterpFilter::Switchable);
+            }
+            other => panic!("expected InterFrame, got {other:?}"),
+        }
+        assert_eq!(hdr.width, 640);
+        assert_eq!(hdr.height, 480);
+        assert_eq!(hdr.render_size, None);
+    }
+
+    #[test]
+    fn inter_frame_inherits_size_from_ref() {
+        // Ref slot 1 (GOLDEN) has 1920x1080. We set size_in_found bits
+        // [0, 1, 0] → inherit from ref 1.
+        let refs: RefFrameSizes = [None, Some((1920, 1080)), None];
+        let buf = build_header(|w| {
+            w.write_literal(sync::FRAME_MARKER as u32, 2);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(1); // INTER
+            w.write_bit(1); // show_frame = 1
+            w.write_bit(0); // error_resilient = 0
+            w.write_literal(0, 2); // reset_frame_context = 0
+            w.write_literal(0xFF, 8); // refresh_frame_flags
+            // Refs: indices [1, 1, 1], sign_biases [false, false, false].
+            for _ in 0..3 {
+                w.write_literal(1, 3);
+                w.write_bit(0);
+            }
+            // size_in_found bits: skip first ref, inherit second, skip
+            // third. The parser reads all 3 bits.
+            w.write_bit(0);
+            w.write_bit(1);
+            w.write_bit(0);
+            // No fresh size — inherited from ref 1.
+            w.write_bit(0); // no render size
+            w.write_bit(0); // allow_high_precision_mv = 0
+            // interp_filter = literal index 1 → EightTap.
+            w.write_bit(0); // not switchable
+            w.write_literal(1, 2); // literal index → EightTap
+            for _ in 0..8 {
+                w.write_literal(0, 8);
+            }
+        });
+        let (hdr, _) = parse_uncompressed_header(&buf, &refs).expect("valid inter frame");
+        assert_eq!(hdr.width, 1920);
+        assert_eq!(hdr.height, 1080);
+        match hdr.kind {
+            FrameKind::InterFrame {
+                allow_high_precision_mv,
+                interp_filter,
+                ..
+            } => {
+                assert!(!allow_high_precision_mv);
+                assert_eq!(interp_filter, InterpFilter::EightTap);
+            }
+            _ => panic!("expected InterFrame"),
+        }
+    }
+
+    /// If a `size_in_found` bit is set but the corresponding ref slot
+    /// is `None`, libvpx would error; our parser falls through to a
+    /// fresh size read (lenient — the decoder catches the resulting
+    /// inconsistency at a higher layer when it sees `idx == INVALID`).
+    /// This pins the parse-doesn't-panic behaviour.
+    #[test]
+    fn inter_frame_size_in_found_with_missing_ref_falls_through() {
+        let buf = build_header(|w| {
+            w.write_literal(sync::FRAME_MARKER as u32, 2);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(1);
+            w.write_bit(1);
+            w.write_bit(0);
+            w.write_literal(0, 2);
+            w.write_literal(0, 8);
+            for _ in 0..3 {
+                w.write_literal(0, 3);
+                w.write_bit(0);
+            }
+            // All size_in_found bits set, but all refs None → fall through.
+            w.write_bit(1);
+            w.write_bit(1);
+            w.write_bit(1);
+            w.write_literal(255, 16); // width 256
+            w.write_literal(255, 16); // height 256
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_literal(2, 2); // EightTapSharp
+            for _ in 0..8 {
+                w.write_literal(0, 8);
+            }
+        });
+        let (hdr, _) = parse_uncompressed_header(&buf, &NO_REFS).expect("falls through");
+        assert_eq!(hdr.width, 256);
+        assert_eq!(hdr.height, 256);
     }
 }
