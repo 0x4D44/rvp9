@@ -454,7 +454,7 @@ impl Decoder {
             }))?;
 
         // 6. Allocate the destination FrameBuf.
-        let yv12 = Yv12Buffer::alloc(
+        let mut yv12 = Yv12Buffer::alloc(
             frame.header.width,
             frame.header.height,
             ChromaFormat::Yuv420,
@@ -462,10 +462,16 @@ impl Decoder {
             ByteAlignment::Legacy,
         )
         .map_err(|_| DecodeError::FrameAlloc)?;
-        let frame_buf: FrameBuf = std::sync::Arc::new(yv12);
 
-        // 7. Drive the tile decode loop.
+        // 7. Drive the tile decode loop, writing into `yv12`.
         let bounds = tile_bounds(&tail.tile_info, mi_cols, mi_rows, 0, 0);
+        // Per-segment alt-Q feature data: feature_data[seg][SEG_LVL_ALT_Q].
+        let mut seg_alt_q = [None; rvp9_core::loopfilter::MAX_SEGMENTS];
+        if tail.segmentation.enabled {
+            for (i, s) in tail.segmentation.feature_data.iter().enumerate() {
+                seg_alt_q[i] = s[0]; // SEG_LVL_ALT_Q == 0
+            }
+        }
         let params = FrameDecodeParams {
             mi_cols,
             mi_rows,
@@ -473,10 +479,19 @@ impl Decoder {
             segmentation_update_map: tail.segmentation.enabled && tail.segmentation.update_map,
             seg_tree_probs: tail.segmentation.tree_probs,
             lossless: tail.quantization.is_lossless(),
+            base_qindex: i32::from(tail.quantization.base_qindex),
+            y_dc_delta_q: i32::from(tail.quantization.y_dc_delta_q),
+            uv_dc_delta_q: i32::from(tail.quantization.uv_dc_delta_q),
+            uv_ac_delta_q: i32::from(tail.quantization.uv_ac_delta_q),
+            seg_alt_q,
+            seg_abs_delta: tail.segmentation.abs_delta,
         };
         let fc_idx = tail.frame_context_idx as usize;
         let fc = &self.frame_contexts[fc_idx];
-        decode_tile_intra(tile_buf.data, bounds, &params, fc).map_err(DecodeError::TileDecode)?;
+        decode_tile_intra(tile_buf.data, bounds, &params, fc, &mut yv12)
+            .map_err(DecodeError::TileDecode)?;
+
+        let frame_buf: FrameBuf = std::sync::Arc::new(yv12);
 
         // 8. TODO(overnight-2026-05-17): wire J (loop-filter apply)
         //    once it lands.

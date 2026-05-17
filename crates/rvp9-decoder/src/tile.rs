@@ -36,11 +36,14 @@ use rvp9_core::bitstream::TileInfo;
 use rvp9_core::block::{BlockSize, PartitionType, max_txsize, subsize};
 use rvp9_core::entropy::{BoolReader, FrameContext, VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB,
     VP9_KF_Y_MODE_PROB};
-use rvp9_core::intra_pred::IntraMode;
+use rvp9_core::frame::Yv12Buffer;
+use rvp9_core::intra_pred::{EdgeBuffers, IntraMode, build_intra_predictors};
 use rvp9_core::mode_info::{BlockMode, BmiInfo, ModeInfo, read_intra_mode, read_partition,
     read_segment_id, read_skip, read_tx_size, get_tx_size_context};
+use rvp9_core::quant::{ac_quant, dc_quant, get_qindex};
 use rvp9_core::transforms::{TxMode, TxSize};
 
+use crate::reconstruct::reconstruct_intra_block;
 use crate::tile_ctx::{TileCoefCtx, TileDecodeCtx};
 
 /// `MI_BLOCK_SIZE` from libvpx (`vp9_enums.h:25`) — each 64×64
@@ -251,13 +254,51 @@ pub struct FrameDecodeParams {
     /// `true` ⇒ frame is in lossless mode (`base_qindex == 0` etc.).
     /// Drives the `allow_select == false` path in `read_tx_size`.
     pub lossless: bool,
+    /// Base qindex from the quantization header (`0..=255`).
+    pub base_qindex: i32,
+    /// Luma DC delta-q from the quantization header (`-15..=15`).
+    pub y_dc_delta_q: i32,
+    /// Chroma DC delta-q from the quantization header (`-15..=15`).
+    pub uv_dc_delta_q: i32,
+    /// Chroma AC delta-q from the quantization header (`-15..=15`).
+    pub uv_ac_delta_q: i32,
+    /// Per-segment alt-Q feature data. `None` for disabled segments.
+    /// When `Some(v)`, the resolved qindex for that segment is
+    /// `get_qindex(v, seg_abs_delta, base_qindex)`.
+    pub seg_alt_q: [Option<i16>; rvp9_core::loopfilter::MAX_SEGMENTS],
+    /// `abs_delta` from the segmentation header.
+    pub seg_abs_delta: bool,
+}
+
+/// Per-plane geometry derived from the frame's chroma subsampling
+/// (4:2:0 in v1 — D-01 RESOLVED).
+const SUBSAMPLING_X: [usize; 3] = [0, 1, 1];
+const SUBSAMPLING_Y: [usize; 3] = [0, 1, 1];
+
+/// Compute the dequant pair `(dc, ac)` for `(plane, segment_id)`.
+/// Mirrors libvpx `vp9_init_plane_quantizers`
+/// (`vp9_quantize.c:204-245`) for the 8-bit path.
+fn plane_dequant(params: &FrameDecodeParams, plane: usize, segment_id: u8) -> (i32, i32) {
+    let qindex = if let Some(alt) = params.seg_alt_q.get(segment_id as usize).copied().flatten() {
+        get_qindex(alt as i32, params.seg_abs_delta, params.base_qindex)
+    } else {
+        params.base_qindex
+    };
+    let (dc_delta, ac_delta) = if plane == 0 {
+        (params.y_dc_delta_q, 0)
+    } else {
+        (params.uv_dc_delta_q, params.uv_ac_delta_q)
+    };
+    let dc = dc_quant(qindex, dc_delta) as i32;
+    let ac = ac_quant(qindex, ac_delta) as i32;
+    (dc, ac)
 }
 
 /// Run the per-tile decode loop for a keyframe / intra-only frame.
 ///
 /// Walks the tile's SBs row-by-row, recursively decoding partitions
-/// and leaf blocks. Per K2.a this only reads ModeInfo + writes to the
-/// per-tile contexts; pixel reconstruction lands in K2.b.
+/// and leaf blocks. After K2.b lands, this also drives per-plane
+/// intra prediction + token decode + IT-add into `dst_frame`.
 ///
 /// # Errors
 ///
@@ -268,6 +309,7 @@ pub fn decode_tile_intra(
     bounds: TileBounds,
     params: &FrameDecodeParams,
     fc: &FrameContext,
+    dst_frame: &mut Yv12Buffer,
 ) -> Result<(), TileDecodeError> {
     let mut reader =
         BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;
@@ -294,6 +336,7 @@ pub fn decode_tile_intra(
                 &mut decode_ctx,
                 &mut coef_ctx,
                 &mut part_ctx,
+                dst_frame,
                 mi_row,
                 mi_col,
                 BlockSize::Block64x64,
@@ -321,6 +364,7 @@ fn decode_partition(
     decode_ctx: &mut TileDecodeCtx,
     coef_ctx: &mut TileCoefCtx,
     part_ctx: &mut PartitionCtx,
+    dst_frame: &mut Yv12Buffer,
     mi_row: usize,
     mi_col: usize,
     bsize: BlockSize,
@@ -372,99 +416,57 @@ fn decode_partition(
         // bsize is BLOCK_8x8 partitioning into 4x4/4x8/8x4. Always one
         // call into decode_block, mi-width = mi-height = 1.
         decode_block(
-            reader,
-            fc,
-            params,
-            bounds,
-            decode_ctx,
-            coef_ctx,
-            mi_row,
-            mi_col,
-            sub,
+            reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
+            mi_row, mi_col, sub,
         );
     } else {
         match partition {
             PartitionType::None => {
                 decode_block(
-                    reader,
-                    fc,
-                    params,
-                    bounds,
-                    decode_ctx,
-                    coef_ctx,
-                    mi_row,
-                    mi_col,
-                    sub,
+                    reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
+                    mi_row, mi_col, sub,
                 );
             }
             PartitionType::Horz => {
                 decode_block(
-                    reader,
-                    fc,
-                    params,
-                    bounds,
-                    decode_ctx,
-                    coef_ctx,
-                    mi_row,
-                    mi_col,
-                    sub,
+                    reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
+                    mi_row, mi_col, sub,
                 );
                 if has_rows {
                     decode_block(
-                        reader,
-                        fc,
-                        params,
-                        bounds,
-                        decode_ctx,
-                        coef_ctx,
-                        mi_row + hbs,
-                        mi_col,
-                        sub,
+                        reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
+                        mi_row + hbs, mi_col, sub,
                     );
                 }
             }
             PartitionType::Vert => {
                 decode_block(
-                    reader,
-                    fc,
-                    params,
-                    bounds,
-                    decode_ctx,
-                    coef_ctx,
-                    mi_row,
-                    mi_col,
-                    sub,
+                    reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
+                    mi_row, mi_col, sub,
                 );
                 if has_cols {
                     decode_block(
-                        reader,
-                        fc,
-                        params,
-                        bounds,
-                        decode_ctx,
-                        coef_ctx,
-                        mi_row,
-                        mi_col + hbs,
-                        sub,
+                        reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
+                        mi_row, mi_col + hbs, sub,
                     );
                 }
             }
             PartitionType::Split => {
                 decode_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
-                    mi_row, mi_col, sub, n8x8_l2,
+                    dst_frame, mi_row, mi_col, sub, n8x8_l2,
                 );
                 decode_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
-                    mi_row, mi_col + hbs, sub, n8x8_l2,
+                    dst_frame, mi_row, mi_col + hbs, sub, n8x8_l2,
                 );
                 decode_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
-                    mi_row + hbs, mi_col, sub, n8x8_l2,
+                    dst_frame, mi_row + hbs, mi_col, sub, n8x8_l2,
                 );
                 decode_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
-                    mi_row + hbs, mi_col + hbs, sub, n8x8_l2,
+                    dst_frame, mi_row + hbs, mi_col + hbs, sub, n8x8_l2,
                 );
             }
         }
@@ -481,21 +483,27 @@ fn decode_partition(
 }
 
 /// Decode one leaf coding block at `(mi_row, mi_col)` with size
-/// `bsize`. Reads ModeInfo, writes it into `decode_ctx`, and (in
-/// K2.b+) drives per-plane prediction + token decode + IT-add.
+/// `bsize`. Reads the per-block ModeInfo, writes it into `decode_ctx`,
+/// then drives per-plane intra prediction + token decode + IT-add
+/// into `dst_frame`.
 ///
-/// For K2.a this is the parse-only stub: it reads all per-block syntax
-/// (segment_id / skip / tx_size / Y intra mode / UV intra mode) and
-/// stores the resulting ModeInfo into `decode_ctx`. No pixels are
-/// touched yet.
-#[allow(clippy::too_many_arguments)]
+/// Mirrors libvpx `decode_block` (`vp9_decodeframe.c:911-1027`) for the
+/// intra-only path:
+///
+/// 1. `vp9_read_mode_info` → reads segment_id / skip / tx_size /
+///    intra modes.
+/// 2. `dec_reset_skip_context` if `mi.skip`.
+/// 3. For each plane × TX position: `predict_and_reconstruct_intra_block`
+///    (= K1 edge-builder + H predict + decode + IT-add).
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 fn decode_block(
     reader: &mut BoolReader<'_>,
     fc: &FrameContext,
     params: &FrameDecodeParams,
     bounds: &TileBounds,
     decode_ctx: &mut TileDecodeCtx,
-    _coef_ctx: &mut TileCoefCtx,
+    coef_ctx: &mut TileCoefCtx,
+    dst_frame: &mut Yv12Buffer,
     mi_row: usize,
     mi_col: usize,
     bsize: BlockSize,
@@ -507,22 +515,18 @@ fn decode_block(
     // --- Read intra-frame mode info (libvpx
     //     `read_intra_frame_mode_info`, `vp9_decodemv.c:192-233`).
 
-    // Segment ID — only meaningful when segmentation is enabled AND
-    // `update_map` is set. Otherwise libvpx returns 0.
     let segment_id = if params.segmentation_update_map {
         read_segment_id(reader, &params.seg_tree_probs)
     } else {
         0
     };
 
-    // Skip flag — context is `above_skip + left_skip`.
-    let above = decode_ctx.above(mi_col_in_tile);
-    let left = decode_ctx.left(mi_row_in_sb);
+    let above = decode_ctx.above(mi_col_in_tile).copied();
+    let left = decode_ctx.left(mi_row_in_sb).copied();
     let skip_ctx = usize::from(above.is_some_and(|m| m.skip))
         + usize::from(left.is_some_and(|m| m.skip));
     let skip = read_skip(reader, &fc.skip_probs, skip_ctx);
 
-    // TX size — driven by frame-level tx_mode + block's max_txsize.
     let max_tx = max_txsize(bsize);
     let above_tx_pair = above.map(|m| (m.tx_size, m.skip));
     let left_tx_pair = left.map(|m| (m.tx_size, m.skip));
@@ -540,12 +544,6 @@ fn decode_block(
         tx_ctx,
     );
 
-    // --- Y intra mode(s) ---
-    //
-    // Keyframe Y mode uses the (above, left) neighbour-mode pair as
-    // context. For sub-8×8 (`Block4x4 / Block4x8 / Block8x4`) the
-    // block carries 1..4 separate per-4×4 modes in `bmi[]`; the parent
-    // `mode` field holds the last decoded sub-block mode.
     let (y_mode, bmi) = read_keyframe_y_mode(
         reader,
         bsize,
@@ -553,11 +551,8 @@ fn decode_block(
         left.map(|m| (m.mode, m.bmi)),
     );
 
-    // --- UV intra mode --- conditional on the Y mode (libvpx
-    // `read_intra_mode(r, vp9_kf_uv_mode_prob[mi->mode])`).
     let uv_mode = read_intra_mode(reader, &VP9_KF_UV_MODE_PROB[y_mode as usize]);
 
-    // Assemble + write back.
     let mi = ModeInfo {
         block_size: bsize,
         tx_size,
@@ -568,14 +563,249 @@ fn decode_block(
         bmi,
     };
 
-    // Clamp the in-mi-grid write to the tile bounds (libvpx
-    // `x_mis/y_mis` clamp at `vp9_decodeframe.c:917-918`).
+    // Write the ModeInfo into the neighbour grid before we descend into
+    // per-plane reconstruction (mirrors libvpx's `set_offsets` storing
+    // the parent `mi` into the grid via x_mis/y_mis).
     let bw_mi = usize::from(bsize.n_8x8_wide());
     let bh_mi = usize::from(bsize.n_8x8_high());
     let x_mis = bw_mi.min(params.mi_cols - mi_col);
     let y_mis = bh_mi.min(params.mi_rows - mi_row);
     decode_ctx.write_block(mi_row_in_sb, mi_col_in_tile, x_mis, y_mis, &mi);
+
+    // --- Reconstruction ----------------------------------------------
+
+    if mi.skip {
+        // libvpx `dec_reset_skip_context` — zero the per-plane above/
+        // left coef-context cells covering the block. Equivalent to
+        // splatting `(eob > 0) == 0` across the coding-block region.
+        reset_skip_context(coef_ctx, &mi, mi_row_in_tile, mi_col_in_tile);
+    }
+
+    // Whether per-block coding-block-level neighbours exist. Mirrors
+    // libvpx `xd->above_mi != NULL` / `xd->left_mi != NULL` — for
+    // keyframes these come from the parent coding block's neighbour
+    // grid via the row+col reduction we keep in TileDecodeCtx.
+    //
+    // NB: read AFTER `write_block` only for tile-edge / above-edge
+    // semantics — the values stored above by `write_block` cover the
+    // current block's outgoing slot, not its incoming neighbour. So
+    // for the incoming neighbour we re-read from `decode_ctx` BUT
+    // remember `decode_ctx.above` is the pre-write state for cells
+    // outside the just-written span. For a block at `mi_col_in_tile`
+    // the row above us comes from `mi_col_in_tile - 1` etc; libvpx
+    // checks `xd->above_mi == NULL` based on frame-top semantics, not
+    // current-block self-reference.
+    //
+    // We snapshot the inbound flags here, before the per-plane loop.
+    let have_above_block = above.is_some();
+    let have_left_block = left.is_some();
+
+    let dequant_y = plane_dequant(params, 0, segment_id);
+    let dequant_u = plane_dequant(params, 1, segment_id);
+    let dequant_v = plane_dequant(params, 2, segment_id);
+
+    let mut edges = EdgeBuffers::new();
+    for plane in 0..3 {
+        let ss_x = SUBSAMPLING_X[plane];
+        let ss_y = SUBSAMPLING_Y[plane];
+
+        // libvpx `get_uv_tx_size` (`vp9_blockd.h:265-267`):
+        // chroma tx_size = min(mi->tx_size, max_txsize_lookup[plane_bsize]).
+        let plane_tx = if plane == 0 {
+            tx_size
+        } else {
+            uv_plane_tx_size(bsize, tx_size)
+        };
+        let plane_bsize = if plane == 0 {
+            bsize
+        } else {
+            uv_plane_block_size(bsize)
+        };
+        let plane_bw_4x4 = plane_bsize.n_4x4_wide() as usize;
+        let plane_bh_4x4 = plane_bsize.n_4x4_high() as usize;
+        let tx_step_4x4 = 1usize << (plane_tx as usize);
+
+        // Pixel coords of the block's top-left in plane-sample space.
+        let plane_px_x = (mi_col * 8) >> ss_x;
+        let plane_px_y = (mi_row * 8) >> ss_y;
+
+        // Plane-local block coordinates (4×4-cell base for the
+        // coef-context arrays — which are indexed in 4×4 sub-block
+        // units, plane-relative).
+        let plane_x4_base = (mi_col_in_tile * 2) >> ss_x;
+        let plane_y4_in_sb_base = ((mi_row_in_sb) * 2) >> ss_y;
+
+        // Extract plane-mutable view + dimensions for this plane.
+        // The temporary `PlaneMut` is dropped before we exit the
+        // block, but `data_mut()` re-borrows into a slice that lives
+        // for the rest of the per-plane loop. We bind the
+        // intermediate to keep its lifetime explicit.
+        let mut plane_view = match plane {
+            0 => dst_frame.y_plane_mut(),
+            1 => dst_frame.u_plane_mut(),
+            _ => dst_frame.v_plane_mut(),
+        };
+        let plane_stride = plane_view.stride();
+        let plane_width_px = plane_view.width();
+        let plane_height_px = plane_view.height();
+        let plane_data: &mut [u8] = plane_view.data_mut();
+
+        let plane_dequant_pair = match plane {
+            0 => dequant_y,
+            1 => dequant_u,
+            _ => dequant_v,
+        };
+        let plane_intra_mode = if plane == 0 { y_mode } else { uv_mode };
+
+        // Iterate TX positions inside the plane's coding block.
+        let mut loff = 0usize;
+        while loff < plane_bh_4x4 {
+            let mut aoff = 0usize;
+            while aoff < plane_bw_4x4 {
+                // Pixel coordinates of this TX block.
+                let tx_px_x = plane_px_x + aoff * 4;
+                let tx_px_y = plane_px_y + loff * 4;
+
+                // Skip TX blocks whose top-left is outside the plane
+                // (block straddles the right/bottom frame edge).
+                if tx_px_x >= plane_width_px || tx_px_y >= plane_height_px {
+                    aoff += tx_step_4x4;
+                    continue;
+                }
+
+                let bw_in_4x4 = plane_bw_4x4; // parent block width in 4×4
+                let have_top = loff > 0 || have_above_block;
+                let have_left = aoff > 0 || have_left_block;
+                let have_right = (aoff + tx_step_4x4) < bw_in_4x4;
+
+                // Resolve per-sub-block Y intra mode for sub-8 (bmi).
+                let mode_for_this_tx = if plane == 0 && bsize < BlockSize::Block8x8 {
+                    let bi = (loff << 1) | aoff; // libvpx (row << 1) + col
+                    IntraMode::from_u8(bmi[bi].as_mode).unwrap_or(plane_intra_mode)
+                } else {
+                    plane_intra_mode
+                };
+
+                // Build edges from already-reconstructed pixels.
+                // `plane_data` is borrowed immutably here.
+                build_intra_predictors(
+                    plane_data,
+                    plane_stride,
+                    tx_px_x,
+                    tx_px_y,
+                    plane_width_px,
+                    plane_height_px,
+                    plane_tx,
+                    mode_for_this_tx,
+                    have_top,
+                    have_left,
+                    have_right,
+                    &mut edges,
+                );
+
+                // Reconstruct (predict + decode tokens + IT-add).
+                let pred_ctx = edges.pred_ctx(plane_tx.side());
+                let dst_offset = tx_px_y * plane_stride + tx_px_x;
+                let dst_slice = &mut plane_data[dst_offset..];
+
+                if mi.skip {
+                    // libvpx: no token decode; predicted samples are
+                    // the final reconstruction. We still need to
+                    // write the prediction into `dst`.
+                    rvp9_core::intra_pred::intra_predict(
+                        mode_for_this_tx,
+                        dst_slice,
+                        plane_stride,
+                        plane_tx.side(),
+                        pred_ctx,
+                    );
+                } else {
+                    let seg_eob = plane_tx.n_coeffs();
+                    let _eob = reconstruct_intra_block(
+                        reader,
+                        fc,
+                        /* counts = */ None,
+                        coef_ctx,
+                        plane,
+                        plane_x4_base + aoff,
+                        plane_y4_in_sb_base + loff,
+                        plane_tx,
+                        mode_for_this_tx,
+                        pred_ctx,
+                        dst_slice,
+                        plane_stride,
+                        seg_eob,
+                        plane_dequant_pair,
+                        params.lossless && plane_tx == TxSize::Tx4x4,
+                    );
+                }
+
+                aoff += tx_step_4x4;
+            }
+            loff += tx_step_4x4;
+        }
+    }
 }
+
+/// libvpx `dec_reset_skip_context` (`vp9_decodeframe.c:783-790`):
+/// zero the per-plane above + left coef-context cells covering the
+/// coding block when the block was marked `skip` (no residual). The
+/// span is the plane's `n4_w × n4_h` 4×4 cells.
+fn reset_skip_context(
+    coef_ctx: &mut TileCoefCtx,
+    mi: &ModeInfo,
+    mi_row_in_tile: usize,
+    mi_col_in_tile: usize,
+) {
+    let mi_row_in_sb = mi_row_in_tile & MI_MASK;
+    for plane in 0..3 {
+        let ss_x = SUBSAMPLING_X[plane];
+        let ss_y = SUBSAMPLING_Y[plane];
+        let plane_bsize = if plane == 0 {
+            mi.block_size
+        } else {
+            uv_plane_block_size(mi.block_size)
+        };
+        let n4_w = plane_bsize.n_4x4_wide() as usize;
+        let n4_h = plane_bsize.n_4x4_high() as usize;
+        let x4_base = (mi_col_in_tile * 2) >> ss_x;
+        let y4_base = (mi_row_in_sb * 2) >> ss_y;
+        coef_ctx.set_coef_flags(plane, x4_base, y4_base, n4_w, n4_h, false);
+    }
+}
+
+/// Compute the chroma plane's block size for the given luma `bsize`,
+/// assuming 4:2:0 (D-01 RESOLVED). Mirrors libvpx's
+/// `ss_size_lookup[bsize][1][1]`. For sub-8 luma blocks, libvpx pins
+/// the chroma plane to `BLOCK_8X8` (the chroma can't subdivide below
+/// 4×4 in 4:2:0).
+fn uv_plane_block_size(bsize: BlockSize) -> BlockSize {
+    use BlockSize::*;
+    match bsize {
+        Block4x4 | Block4x8 | Block8x4 | Block8x8 => Block4x4,
+        Block8x16 => Block4x8,
+        Block16x8 => Block8x4,
+        Block16x16 => Block8x8,
+        Block16x32 => Block8x16,
+        Block32x16 => Block16x8,
+        Block32x32 => Block16x16,
+        Block32x64 => Block16x32,
+        Block64x32 => Block32x16,
+        Block64x64 => Block32x32,
+    }
+}
+
+/// libvpx `get_uv_tx_size` (`vp9_blockd.h:262-267`): chroma TX size is
+/// `min(mi->tx_size, max_txsize_lookup[plane_bsize])`.
+fn uv_plane_tx_size(bsize: BlockSize, luma_tx: TxSize) -> TxSize {
+    let cap = max_txsize(uv_plane_block_size(bsize));
+    if (luma_tx as u8) < (cap as u8) {
+        luma_tx
+    } else {
+        cap
+    }
+}
+
 
 /// Keyframe Y-mode reader. Mirrors libvpx's per-`bsize` dispatch at
 /// `vp9_decodemv.c:209-230`. Returns `(parent_y_mode, bmi)` where
