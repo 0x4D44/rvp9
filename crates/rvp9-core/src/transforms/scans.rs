@@ -179,6 +179,156 @@ pub const fn scan_order_4x4(tx_type: super::types::TxType) -> ScanOrder {
     }
 }
 
+// ============================================================================
+// 8×8 scan family
+// ============================================================================
+
+/// 8×8 default scan. 64 entries verbatim from libvpx
+/// `vp9/common/vp9_scan.c:27-32`.
+#[rustfmt::skip]
+pub static DEFAULT_SCAN_8X8: [i16; 64] = [
+    0,  8,  1,  16, 9,  2,  17, 24, 10, 3,  18, 25, 32, 11, 4,  26,
+    33, 19, 40, 12, 34, 27, 5,  41, 20, 48, 13, 35, 42, 28, 21, 6,
+    49, 56, 36, 43, 29, 7,  14, 50, 57, 44, 22, 37, 15, 51, 58, 30,
+    45, 23, 52, 59, 38, 31, 60, 53, 46, 39, 61, 54, 47, 62, 55, 63,
+];
+
+/// 8×8 column scan. 64 entries verbatim from libvpx `vp9_scan.c:34-39`.
+#[rustfmt::skip]
+pub static COL_SCAN_8X8: [i16; 64] = [
+    0,  8,  16, 1,  24, 9,  32, 17, 2,  40, 25, 10, 33, 18, 48, 3,
+    26, 41, 11, 56, 19, 34, 4,  49, 27, 42, 12, 35, 20, 57, 50, 28,
+    5,  43, 13, 36, 58, 51, 21, 44, 6,  29, 59, 37, 14, 52, 22, 7,
+    45, 60, 30, 15, 38, 53, 23, 46, 31, 61, 39, 54, 47, 62, 55, 63,
+];
+
+/// 8×8 row scan. 64 entries verbatim from libvpx `vp9_scan.c:41-46`.
+#[rustfmt::skip]
+pub static ROW_SCAN_8X8: [i16; 64] = [
+    0,  1,  2,  8,  9,  3,  16, 10, 4,  17, 11, 24, 5,  18, 25, 12,
+    19, 26, 32, 6,  13, 20, 33, 27, 7,  34, 40, 21, 28, 41, 14, 35,
+    48, 42, 29, 36, 49, 22, 43, 15, 56, 37, 50, 44, 30, 57, 23, 51,
+    58, 45, 38, 52, 31, 59, 53, 46, 60, 39, 61, 47, 54, 55, 62, 63,
+];
+
+/// 8×8 default inverse scan. 64 entries verbatim from libvpx
+/// `vp9_scan.c:541-546` (`vp9_default_iscan_8x8`).
+#[rustfmt::skip]
+pub static DEFAULT_ISCAN_8X8: [i16; 64] = [
+    1,  3,  6,  10, 15, 23, 32, 38, 2,  5,  9,  14, 20, 27, 39, 45,
+    4,  7,  11, 18, 25, 31, 43, 50, 8,  12, 16, 22, 30, 37, 48, 54,
+    13, 17, 21, 28, 35, 44, 53, 58, 19, 24, 29, 36, 42, 49, 57, 61,
+    26, 33, 40, 46, 51, 56, 60, 63, 34, 41, 47, 52, 55, 59, 62, 64,
+];
+
+/// 8×8 column inverse scan. 64 entries verbatim from libvpx
+/// `vp9_scan.c:527-532` (`vp9_col_iscan_8x8`).
+#[rustfmt::skip]
+pub static COL_ISCAN_8X8: [i16; 64] = [
+    1,  4,  9,  16, 23, 33, 41, 48, 2,  6,  12, 19, 27, 35, 45, 52,
+    3,  8,  14, 21, 29, 39, 47, 55, 5,  11, 17, 25, 32, 42, 51, 57,
+    7,  13, 22, 28, 36, 44, 53, 59, 10, 18, 26, 34, 40, 49, 56, 61,
+    15, 24, 31, 38, 46, 54, 60, 63, 20, 30, 37, 43, 50, 58, 62, 64,
+];
+
+/// 8×8 row inverse scan. 64 entries verbatim from libvpx
+/// `vp9_scan.c:534-539` (`vp9_row_iscan_8x8`).
+#[rustfmt::skip]
+pub static ROW_ISCAN_8X8: [i16; 64] = [
+    1,  2,  3,  6,  9,  13, 20, 25, 4,  5,  8,  11, 16, 21, 31, 40,
+    7,  10, 14, 17, 22, 28, 38, 47, 12, 15, 18, 24, 29, 35, 45, 53,
+    19, 23, 26, 32, 36, 42, 51, 58, 27, 30, 34, 39, 44, 50, 56, 60,
+    33, 37, 43, 48, 52, 55, 61, 62, 41, 46, 49, 54, 57, 59, 63, 64,
+];
+
+/// 8×8 default scan neighbours. 130 entries (`(64 + 1) * 2`) from
+/// libvpx `vp9_scan.c:235-244` (`default_scan_8x8_neighbors`).
+#[rustfmt::skip]
+pub static DEFAULT_SCAN_8X8_NEIGHBORS: [i16; 130] = [
+    0,  0,  0,  0,  0,  0,  8,  8,  1,  8,  1,  1,  9,  16, 16, 16, 2,  9,  2,
+    2,  10, 17, 17, 24, 24, 24, 3,  10, 3,  3,  18, 25, 25, 32, 11, 18, 32, 32,
+    4,  11, 26, 33, 19, 26, 4,  4,  33, 40, 12, 19, 40, 40, 5,  12, 27, 34, 34,
+    41, 20, 27, 13, 20, 5,  5,  41, 48, 48, 48, 28, 35, 35, 42, 21, 28, 6,  6,
+    6,  13, 42, 49, 49, 56, 36, 43, 14, 21, 29, 36, 7,  14, 43, 50, 50, 57, 22,
+    29, 37, 44, 15, 22, 44, 51, 51, 58, 30, 37, 23, 30, 52, 59, 45, 52, 38, 45,
+    31, 38, 53, 60, 46, 53, 39, 46, 54, 61, 47, 54, 55, 62, 0,  0,
+];
+
+/// 8×8 column scan neighbours. 130 entries from libvpx
+/// `vp9_scan.c:213-222` (`col_scan_8x8_neighbors`).
+#[rustfmt::skip]
+pub static COL_SCAN_8X8_NEIGHBORS: [i16; 130] = [
+    0,  0,  0,  0,  8,  8,  0,  0,  16, 16, 1,  1,  24, 24, 9,  9,  1,  1,  32,
+    32, 17, 17, 2,  2,  25, 25, 10, 10, 40, 40, 2,  2,  18, 18, 33, 33, 3,  3,
+    48, 48, 11, 11, 26, 26, 3,  3,  41, 41, 19, 19, 34, 34, 4,  4,  27, 27, 12,
+    12, 49, 49, 42, 42, 20, 20, 4,  4,  35, 35, 5,  5,  28, 28, 50, 50, 43, 43,
+    13, 13, 36, 36, 5,  5,  21, 21, 51, 51, 29, 29, 6,  6,  44, 44, 14, 14, 6,
+    6,  37, 37, 52, 52, 22, 22, 7,  7,  30, 30, 45, 45, 15, 15, 38, 38, 23, 23,
+    53, 53, 31, 31, 46, 46, 39, 39, 54, 54, 47, 47, 55, 55, 0,  0,
+];
+
+/// 8×8 row scan neighbours. 130 entries from libvpx
+/// `vp9_scan.c:224-233` (`row_scan_8x8_neighbors`).
+#[rustfmt::skip]
+pub static ROW_SCAN_8X8_NEIGHBORS: [i16; 130] = [
+    0,  0,  0,  0,  1,  1,  0,  0,  8,  8,  2,  2,  8,  8,  9,  9,  3,  3,  16,
+    16, 10, 10, 16, 16, 4,  4,  17, 17, 24, 24, 11, 11, 18, 18, 25, 25, 24, 24,
+    5,  5,  12, 12, 19, 19, 32, 32, 26, 26, 6,  6,  33, 33, 32, 32, 20, 20, 27,
+    27, 40, 40, 13, 13, 34, 34, 40, 40, 41, 41, 28, 28, 35, 35, 48, 48, 21, 21,
+    42, 42, 14, 14, 48, 48, 36, 36, 49, 49, 43, 43, 29, 29, 56, 56, 22, 22, 50,
+    50, 57, 57, 44, 44, 37, 37, 51, 51, 30, 30, 58, 58, 52, 52, 45, 45, 59, 59,
+    38, 38, 60, 60, 46, 46, 53, 53, 54, 54, 61, 61, 62, 62, 0,  0,
+];
+
+/// 8×8 default `ScanOrder`. Mirrors `vp9_default_scan_orders[Tx8x8]`
+/// at libvpx `vp9_scan.c:693`.
+#[inline]
+#[must_use]
+pub const fn default_scan_8x8() -> ScanOrder {
+    ScanOrder {
+        scan: &DEFAULT_SCAN_8X8,
+        iscan: &DEFAULT_ISCAN_8X8,
+        neighbors: &DEFAULT_SCAN_8X8_NEIGHBORS,
+    }
+}
+
+/// 8×8 column `ScanOrder` (for `TxType::DctAdst`).
+#[inline]
+#[must_use]
+pub const fn col_scan_8x8() -> ScanOrder {
+    ScanOrder {
+        scan: &COL_SCAN_8X8,
+        iscan: &COL_ISCAN_8X8,
+        neighbors: &COL_SCAN_8X8_NEIGHBORS,
+    }
+}
+
+/// 8×8 row `ScanOrder` (for `TxType::AdstDct`).
+#[inline]
+#[must_use]
+pub const fn row_scan_8x8() -> ScanOrder {
+    ScanOrder {
+        scan: &ROW_SCAN_8X8,
+        iscan: &ROW_ISCAN_8X8,
+        neighbors: &ROW_SCAN_8X8_NEIGHBORS,
+    }
+}
+
+/// Return the 8×8 `ScanOrder` for the given `TxType`. Mirrors
+/// `vp9_scan_orders[Tx8x8][tx_type]` at libvpx `vp9_scan.c:705-708`
+/// (same dispatch pattern as 4×4).
+#[inline]
+#[must_use]
+pub const fn scan_order_8x8(tx_type: super::types::TxType) -> ScanOrder {
+    use super::types::TxType;
+    match tx_type {
+        TxType::DctDct => default_scan_8x8(),
+        TxType::AdstDct => row_scan_8x8(),
+        TxType::DctAdst => col_scan_8x8(),
+        TxType::AdstAdst => default_scan_8x8(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -323,5 +473,99 @@ mod tests {
         // ADST_ADST falls back to default (libvpx :703).
         let adst_adst = scan_order_4x4(TxType::AdstAdst);
         assert_eq!(adst_adst.scan.as_ptr(), DEFAULT_SCAN_4X4.as_ptr());
+    }
+
+    // ---- 8x8 family ----
+
+    #[test]
+    fn default_scan_8x8_is_a_permutation() {
+        assert_scan_is_permutation(&DEFAULT_SCAN_8X8, TxSize::Tx8x8.n_coeffs());
+    }
+
+    #[test]
+    fn col_scan_8x8_is_a_permutation() {
+        assert_scan_is_permutation(&COL_SCAN_8X8, TxSize::Tx8x8.n_coeffs());
+    }
+
+    #[test]
+    fn row_scan_8x8_is_a_permutation() {
+        assert_scan_is_permutation(&ROW_SCAN_8X8, TxSize::Tx8x8.n_coeffs());
+    }
+
+    #[test]
+    fn default_iscan_8x8_is_inverse_of_default_scan() {
+        assert_iscan_is_inverse_of_scan_plus_one(&DEFAULT_SCAN_8X8, &DEFAULT_ISCAN_8X8);
+    }
+
+    #[test]
+    fn col_iscan_8x8_is_inverse_of_col_scan() {
+        assert_iscan_is_inverse_of_scan_plus_one(&COL_SCAN_8X8, &COL_ISCAN_8X8);
+    }
+
+    #[test]
+    fn row_iscan_8x8_is_inverse_of_row_scan() {
+        assert_iscan_is_inverse_of_scan_plus_one(&ROW_SCAN_8X8, &ROW_ISCAN_8X8);
+    }
+
+    #[test]
+    fn default_scan_8x8_neighbors_length() {
+        assert_eq!(
+            DEFAULT_SCAN_8X8_NEIGHBORS.len(),
+            (TxSize::Tx8x8.n_coeffs() + 1) * MAX_NEIGHBORS
+        );
+    }
+
+    #[test]
+    fn col_scan_8x8_neighbors_length() {
+        assert_eq!(
+            COL_SCAN_8X8_NEIGHBORS.len(),
+            (TxSize::Tx8x8.n_coeffs() + 1) * MAX_NEIGHBORS
+        );
+    }
+
+    #[test]
+    fn row_scan_8x8_neighbors_length() {
+        assert_eq!(
+            ROW_SCAN_8X8_NEIGHBORS.len(),
+            (TxSize::Tx8x8.n_coeffs() + 1) * MAX_NEIGHBORS
+        );
+    }
+
+    /// 8×8 neighbours arrays must all end with the (0, 0) EOB sentinel.
+    #[test]
+    fn neighbors_8x8_trailing_sentinel() {
+        for arr in [
+            &DEFAULT_SCAN_8X8_NEIGHBORS[..],
+            &COL_SCAN_8X8_NEIGHBORS[..],
+            &ROW_SCAN_8X8_NEIGHBORS[..],
+        ] {
+            let n = arr.len();
+            assert_eq!(arr[n - 2], 0);
+            assert_eq!(arr[n - 1], 0);
+        }
+    }
+
+    /// `scan_order_8x8` dispatch matches libvpx's
+    /// `vp9_scan_orders[Tx8x8][tx_type]` table at lines 705-708.
+    #[test]
+    fn scan_order_8x8_dispatch() {
+        use crate::transforms::types::TxType;
+
+        assert_eq!(
+            scan_order_8x8(TxType::DctDct).scan.as_ptr(),
+            DEFAULT_SCAN_8X8.as_ptr()
+        );
+        assert_eq!(
+            scan_order_8x8(TxType::AdstDct).scan.as_ptr(),
+            ROW_SCAN_8X8.as_ptr()
+        );
+        assert_eq!(
+            scan_order_8x8(TxType::DctAdst).scan.as_ptr(),
+            COL_SCAN_8X8.as_ptr()
+        );
+        assert_eq!(
+            scan_order_8x8(TxType::AdstAdst).scan.as_ptr(),
+            DEFAULT_SCAN_8X8.as_ptr()
+        );
     }
 }

@@ -29,8 +29,11 @@ pub use inverse::{
     idct32x32_1024_add, iht4x4_16_add, iht8x8_64_add, iht16x16_256_add,
 };
 pub use scans::{
-    COL_ISCAN_4X4, COL_SCAN_4X4, COL_SCAN_4X4_NEIGHBORS, DEFAULT_ISCAN_4X4, DEFAULT_SCAN_4X4,
-    DEFAULT_SCAN_4X4_NEIGHBORS, ROW_ISCAN_4X4, ROW_SCAN_4X4, ROW_SCAN_4X4_NEIGHBORS, ScanOrder,
-    col_scan_4x4, default_scan_4x4, row_scan_4x4, scan_order_4x4,
+    COL_ISCAN_4X4, COL_ISCAN_8X8, COL_SCAN_4X4, COL_SCAN_4X4_NEIGHBORS, COL_SCAN_8X8,
+    COL_SCAN_8X8_NEIGHBORS, DEFAULT_ISCAN_4X4, DEFAULT_ISCAN_8X8, DEFAULT_SCAN_4X4,
+    DEFAULT_SCAN_4X4_NEIGHBORS, DEFAULT_SCAN_8X8, DEFAULT_SCAN_8X8_NEIGHBORS, ROW_ISCAN_4X4,
+    ROW_ISCAN_8X8, ROW_SCAN_4X4, ROW_SCAN_4X4_NEIGHBORS, ROW_SCAN_8X8, ROW_SCAN_8X8_NEIGHBORS,
+    ScanOrder, col_scan_4x4, col_scan_8x8, default_scan_4x4, default_scan_8x8, row_scan_4x4,
+    row_scan_8x8, scan_order_4x4, scan_order_8x8,
 };
 pub use types::{MAX_NEIGHBORS, TxMode, TxSize, TxType};
