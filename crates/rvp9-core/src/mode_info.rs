@@ -53,6 +53,74 @@ pub static PARTITION_TREE: [i8; 2 * PARTITION_TYPES - 2] = [
     -(PartitionType::Split as i8),
 ];
 
+/// libvpx `vp9_intra_mode_tree` (`vp9_entropymode.c:245-255`).
+/// 18-entry flat tree that decodes one of the 10 [`IntraMode`]
+/// values from 9 boolean probabilities. The associated `probs`
+/// slice has shape `[u8; INTRA_MODES - 1] = [u8; 9]`.
+#[rustfmt::skip]
+pub static INTRA_MODE_TREE: [i8; 2 * 10 - 2] = [
+    // 0 = DC_NODE
+    -(IntraMode::Dc as i8), 2,
+    // 1 = TM_NODE
+    -(IntraMode::Tm as i8), 4,
+    // 2 = V_NODE
+    -(IntraMode::V as i8), 6,
+    // 3 = COM_NODE
+    8, 12,
+    // 4 = H_NODE
+    -(IntraMode::H as i8), 10,
+    // 5 = D135_NODE
+    -(IntraMode::D135 as i8), -(IntraMode::D117 as i8),
+    // 6 = D45_NODE
+    -(IntraMode::D45 as i8), 14,
+    // 7 = D63_NODE
+    -(IntraMode::D63 as i8), 16,
+    // 8 = D153_NODE
+    -(IntraMode::D153 as i8), -(IntraMode::D207 as i8),
+];
+
+/// libvpx `vp9_inter_mode_tree` (`vp9_entropymode.c:257-260`).
+/// 6-entry flat tree that decodes one of the 4 [`InterMode`]
+/// indices (0..=3). The leaves are `INTER_OFFSET(mode) = mode -
+/// NEARESTMV`, so the tree returns a value in `0..=3` that maps to
+/// [`InterMode`] via [`InterMode::from_idx`].
+#[rustfmt::skip]
+pub static INTER_MODE_TREE: [i8; 2 * NUM_INTER_MODES - 2] = [
+    // INTER_OFFSET(ZEROMV) = 2
+    -(InterMode::ZeroMv.idx() as i8), 2,
+    // INTER_OFFSET(NEARESTMV) = 0
+    -(InterMode::NearestMv.idx() as i8), 4,
+    // INTER_OFFSET(NEARMV) = 1
+    -(InterMode::NearMv.idx() as i8),
+    // INTER_OFFSET(NEWMV) = 3
+    -(InterMode::NewMv.idx() as i8),
+];
+
+/// Decode an intra-prediction mode by walking [`INTRA_MODE_TREE`]
+/// against the given 9-entry probability slot. Used for
+/// non-keyframe Y/UV modes (`fc.y_mode_prob[block_size_group]`
+/// or `fc.uv_mode_prob[y_mode]`) and for keyframe modes
+/// (`vp9_kf_y_mode_prob` / `vp9_kf_uv_mode_prob`).
+#[inline]
+#[must_use]
+pub fn read_intra_mode(r: &mut BoolReader<'_>, probs: &[u8; 10 - 1]) -> IntraMode {
+    let raw = r.read_tree(&INTRA_MODE_TREE, probs);
+    IntraMode::from_u8(raw as u8).expect("intra mode tree returns valid IntraMode")
+}
+
+/// Decode an inter-prediction mode by walking [`INTER_MODE_TREE`]
+/// against the given 3-entry probability slot
+/// (`fc.inter_mode_probs[ctx]`).
+#[inline]
+#[must_use]
+pub fn read_inter_mode(
+    r: &mut BoolReader<'_>,
+    probs: &[u8; NUM_INTER_MODES - 1],
+) -> InterMode {
+    let raw = r.read_tree(&INTER_MODE_TREE, probs);
+    InterMode::from_idx(raw as u8).expect("inter mode tree returns valid InterMode")
+}
+
 /// Decode one [`PartitionType`] from the boolean reader given a
 /// 3-entry context probability slot. Mirrors libvpx
 /// `read_partition` (`vp9_decodemv.c:467-479`) — the tree-decode
@@ -483,6 +551,147 @@ mod tests {
         // node 4: [-VERT, -SPLIT]
         assert_eq!(PARTITION_TREE[4], -(PartitionType::Vert as i8));
         assert_eq!(PARTITION_TREE[5], -(PartitionType::Split as i8));
+    }
+
+    /// `INTRA_MODE_TREE` shape matches libvpx
+    /// (`vp9_entropymode.c:245-255`).
+    #[test]
+    fn intra_mode_tree_shape() {
+        assert_eq!(INTRA_MODE_TREE.len(), 18);
+        // node 0 = DC_NODE
+        assert_eq!(INTRA_MODE_TREE[0], -(IntraMode::Dc as i8));
+        assert_eq!(INTRA_MODE_TREE[1], 2);
+        // node 1 = TM_NODE
+        assert_eq!(INTRA_MODE_TREE[2], -(IntraMode::Tm as i8));
+        assert_eq!(INTRA_MODE_TREE[3], 4);
+        // node 5 = D135_NODE (D135 left, D117 right)
+        assert_eq!(INTRA_MODE_TREE[10], -(IntraMode::D135 as i8));
+        assert_eq!(INTRA_MODE_TREE[11], -(IntraMode::D117 as i8));
+        // node 8 = D153_NODE (D153 left, D207 right)
+        assert_eq!(INTRA_MODE_TREE[16], -(IntraMode::D153 as i8));
+        assert_eq!(INTRA_MODE_TREE[17], -(IntraMode::D207 as i8));
+    }
+
+    /// `read_intra_mode` round-trips every IntraMode at p=128.
+    /// Verified by encoding the canonical bit path for each mode
+    /// and reading it back.
+    #[test]
+    fn read_intra_mode_round_trip() {
+        use crate::entropy::BoolWriter;
+
+        let probs = [128u8; 9];
+
+        // Build a buffer that drives the tree to the target mode
+        // by replaying the read_tree algorithm in the writer.
+        fn encode_for_mode(target: IntraMode, probs: &[u8; 9]) -> Vec<u8> {
+            let mut buf = vec![0u8; 64];
+            let mut w = BoolWriter::start_encode(&mut buf);
+            let mut i: usize = 0;
+            loop {
+                let prob = probs[i >> 1];
+                let left = INTRA_MODE_TREE[i];
+                let right = INTRA_MODE_TREE[i + 1];
+                // Choose bit = 0 if left subtree reaches target;
+                // else bit = 1.
+                let bit = if subtree_contains(left, target) { 0 } else { 1 };
+                w.write(bit, prob);
+                let next = if bit == 0 { left } else { right };
+                if next <= 0 {
+                    break;
+                }
+                i = next as usize;
+            }
+            // Pad.
+            for _ in 0..16 {
+                w.write_bit(0);
+            }
+            let size = w.stop_encode().expect("ok");
+            buf.truncate(size);
+            buf
+        }
+
+        // Recursive subtree-contains check.
+        fn subtree_contains(node: i8, target: IntraMode) -> bool {
+            if node <= 0 {
+                (-node) as u8 == target as u8
+            } else {
+                let i = node as usize;
+                subtree_contains(INTRA_MODE_TREE[i], target)
+                    || subtree_contains(INTRA_MODE_TREE[i + 1], target)
+            }
+        }
+
+        for target in [
+            IntraMode::Dc,
+            IntraMode::V,
+            IntraMode::H,
+            IntraMode::D45,
+            IntraMode::D135,
+            IntraMode::D117,
+            IntraMode::D153,
+            IntraMode::D207,
+            IntraMode::D63,
+            IntraMode::Tm,
+        ] {
+            let buf = encode_for_mode(target, &probs);
+            let mut r = BoolReader::new(&buf).expect("init");
+            let got = read_intra_mode(&mut r, &probs);
+            assert_eq!(got, target, "round-trip {target:?}");
+        }
+    }
+
+    /// `INTER_MODE_TREE` shape matches libvpx
+    /// (`vp9_entropymode.c:257-260`). Leaf values are
+    /// `INTER_OFFSET(mode)` (0..=3).
+    #[test]
+    fn inter_mode_tree_shape() {
+        assert_eq!(INTER_MODE_TREE.len(), 6);
+        // node 0: [-ZEROMV(idx=2), 2]
+        assert_eq!(INTER_MODE_TREE[0], -(InterMode::ZeroMv.idx() as i8));
+        assert_eq!(INTER_MODE_TREE[1], 2);
+        // node 2: [-NEARESTMV(idx=0), 4]
+        assert_eq!(INTER_MODE_TREE[2], -(InterMode::NearestMv.idx() as i8));
+        assert_eq!(INTER_MODE_TREE[3], 4);
+        // node 4: [-NEARMV(idx=1), -NEWMV(idx=3)]
+        assert_eq!(INTER_MODE_TREE[4], -(InterMode::NearMv.idx() as i8));
+        assert_eq!(INTER_MODE_TREE[5], -(InterMode::NewMv.idx() as i8));
+    }
+
+    /// `read_inter_mode` round-trips every InterMode at p=128.
+    /// Tree paths:
+    /// - ZEROMV   = `0`
+    /// - NEARESTMV = `1 0`
+    /// - NEARMV   = `1 1 0`
+    /// - NEWMV    = `1 1 1`
+    #[test]
+    fn read_inter_mode_round_trip() {
+        use crate::entropy::BoolWriter;
+
+        let probs = [128u8; 3];
+
+        let cases = [
+            (InterMode::ZeroMv, vec![0u8]),
+            (InterMode::NearestMv, vec![1, 0]),
+            (InterMode::NearMv, vec![1, 1, 0]),
+            (InterMode::NewMv, vec![1, 1, 1]),
+        ];
+
+        for (expected, bits) in cases {
+            let mut buf = vec![0u8; 64];
+            let mut w = BoolWriter::start_encode(&mut buf);
+            for (i, bit) in bits.iter().enumerate() {
+                w.write(*bit, probs[i]);
+            }
+            for _ in 0..16 {
+                w.write_bit(0);
+            }
+            let size = w.stop_encode().expect("ok");
+            buf.truncate(size);
+
+            let mut r = BoolReader::new(&buf).expect("init");
+            let got = read_inter_mode(&mut r, &probs);
+            assert_eq!(got, expected, "round-trip {expected:?}");
+        }
     }
 
     /// `read_partition` round-trips every PartitionType for an
