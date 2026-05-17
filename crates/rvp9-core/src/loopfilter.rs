@@ -17,19 +17,18 @@
 //!
 //! ## Edge-filter kernels
 //!
-//! Task 6.2a/b adds the eight 4-tap and 8-tap edge filters —
-//! [`lpf_horizontal_4`], [`lpf_horizontal_4_dual`],
-//! [`lpf_vertical_4`], [`lpf_vertical_4_dual`],
-//! [`lpf_horizontal_8`], [`lpf_horizontal_8_dual`],
-//! [`lpf_vertical_8`], [`lpf_vertical_8_dual`].
+//! All 12 VP9 loop-filter kernels are implemented: 4-tap, 8-tap,
+//! and 16-tap variants, each in horizontal/vertical and
+//! single-edge/dual-edge forms.
 //!
-//! The 4-tap kernels are the basis for every coarser filter — their
-//! `filter4` inner loop is what the 8- and 16-tap kernels invoke when
-//! the "flat" pre-check fails.
+//! The kernels nest: the 16-tap kernel falls back to the 8-tap
+//! filter when the wider-flatness pre-check (`flat_mask5`) fails,
+//! which in turn falls back to the 4-tap filter when the
+//! 4-pixel-flatness pre-check (`flat_mask4`) fails. This mirrors
+//! libvpx's `filter16 → filter8 → filter4` cascade.
 //!
 //! ## Deferred
 //!
-//! - The 16-tap edge filters (`lpf_*_16`) — Task 6.2c.
 //! - Edge-mask machinery (`build_masks` and the
 //!   `vp9_get_loop_filter_mask` function family) — Task 6.3.
 //! - Per-segment / per-ref / per-mode filter-level resolution
@@ -666,6 +665,369 @@ pub fn lpf_vertical_8_dual(
     lpf_vertical_8(pixels, s_index + 8 * pitch, pitch, blimit1, limit1, thresh1);
 }
 
+// ---------- 16-tap kernels ----------
+
+/// Wider "flat" mask — checks 4 extra taps on each side beyond
+/// [`flat_mask4`]. Returns `0xff` if the 8-pixel window around the
+/// edge is "extremely flat" (every neighbour difference is `≤ thresh`).
+///
+/// Used as the secondary gate for the 15-tap smoothing filter —
+/// only applied when both the 4-pixel and the 8-pixel
+/// neighbourhoods around the edge are flat.
+///
+/// Mirrors libvpx `flat_mask5` (`vpx_dsp/loopfilter.c:61-69`).
+#[inline]
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+const fn flat_mask5(
+    thresh: u8,
+    p4: u8,
+    p3: u8,
+    p2: u8,
+    p1: u8,
+    p0: u8,
+    q0: u8,
+    q1: u8,
+    q2: u8,
+    q3: u8,
+    q4: u8,
+) -> i8 {
+    let inner = flat_mask4(thresh, p3, p2, p1, p0, q0, q1, q2, q3);
+    let mut mask: i32 = !(inner as i32) & 0xff;
+    let t = thresh as i32;
+    if (p4 as i32 - p0 as i32).unsigned_abs() as i32 > t {
+        mask = -1;
+    }
+    if (q4 as i32 - q0 as i32).unsigned_abs() as i32 > t {
+        mask = -1;
+    }
+    !(mask as i8)
+}
+
+/// Round to nearest, halves up: `(x + 8) >> 4` for `n = 4`.
+#[inline]
+const fn round_power_of_two_4(x: u32) -> u8 {
+    ((x + 8) >> 4) as u8
+}
+
+/// Core 16-tap filter applied across one transverse column-of-16
+/// over the edge. When both `flat` and `flat2` are set, applies the
+/// 15-tap smoothing filter `[1,1,1,1,1,1,1,2,1,1,1,1,1,1,1]` to
+/// `op6..oq6`. Otherwise falls back to `filter8` (which itself falls
+/// back to `filter4` when its own flatness check fails).
+///
+/// Mirrors libvpx `filter16` (`vpx_dsp/loopfilter.c:235-287`).
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn filter16(
+    mask: i8,
+    thresh: u8,
+    flat: i8,
+    flat2: i8,
+    op7: &mut u8,
+    op6: &mut u8,
+    op5: &mut u8,
+    op4: &mut u8,
+    op3: &mut u8,
+    op2: &mut u8,
+    op1: &mut u8,
+    op0: &mut u8,
+    oq0: &mut u8,
+    oq1: &mut u8,
+    oq2: &mut u8,
+    oq3: &mut u8,
+    oq4: &mut u8,
+    oq5: &mut u8,
+    oq6: &mut u8,
+    oq7: &mut u8,
+) {
+    if flat2 != 0 && flat != 0 && mask != 0 {
+        let p7 = *op7 as u32;
+        let p6 = *op6 as u32;
+        let p5 = *op5 as u32;
+        let p4 = *op4 as u32;
+        let p3 = *op3 as u32;
+        let p2 = *op2 as u32;
+        let p1 = *op1 as u32;
+        let p0 = *op0 as u32;
+        let q0 = *oq0 as u32;
+        let q1 = *oq1 as u32;
+        let q2 = *oq2 as u32;
+        let q3 = *oq3 as u32;
+        let q4 = *oq4 as u32;
+        let q5 = *oq5 as u32;
+        let q6 = *oq6 as u32;
+        let q7 = *oq7 as u32;
+
+        // 15-tap [1,1,1,1,1,1,1,2,1,1,1,1,1,1,1].
+        *op6 = round_power_of_two_4(p7 * 7 + p6 * 2 + p5 + p4 + p3 + p2 + p1 + p0 + q0);
+        *op5 = round_power_of_two_4(p7 * 6 + p6 + p5 * 2 + p4 + p3 + p2 + p1 + p0 + q0 + q1);
+        *op4 = round_power_of_two_4(
+            p7 * 5 + p6 + p5 + p4 * 2 + p3 + p2 + p1 + p0 + q0 + q1 + q2,
+        );
+        *op3 = round_power_of_two_4(
+            p7 * 4 + p6 + p5 + p4 + p3 * 2 + p2 + p1 + p0 + q0 + q1 + q2 + q3,
+        );
+        *op2 = round_power_of_two_4(
+            p7 * 3 + p6 + p5 + p4 + p3 + p2 * 2 + p1 + p0 + q0 + q1 + q2 + q3 + q4,
+        );
+        *op1 = round_power_of_two_4(
+            p7 * 2 + p6 + p5 + p4 + p3 + p2 + p1 * 2 + p0 + q0 + q1 + q2 + q3 + q4 + q5,
+        );
+        *op0 = round_power_of_two_4(
+            p7 + p6 + p5 + p4 + p3 + p2 + p1 + p0 * 2 + q0 + q1 + q2 + q3 + q4 + q5 + q6,
+        );
+        *oq0 = round_power_of_two_4(
+            p6 + p5 + p4 + p3 + p2 + p1 + p0 + q0 * 2 + q1 + q2 + q3 + q4 + q5 + q6 + q7,
+        );
+        *oq1 = round_power_of_two_4(
+            p5 + p4 + p3 + p2 + p1 + p0 + q0 + q1 * 2 + q2 + q3 + q4 + q5 + q6 + q7 * 2,
+        );
+        *oq2 = round_power_of_two_4(
+            p4 + p3 + p2 + p1 + p0 + q0 + q1 + q2 * 2 + q3 + q4 + q5 + q6 + q7 * 3,
+        );
+        *oq3 = round_power_of_two_4(
+            p3 + p2 + p1 + p0 + q0 + q1 + q2 + q3 * 2 + q4 + q5 + q6 + q7 * 4,
+        );
+        *oq4 = round_power_of_two_4(
+            p2 + p1 + p0 + q0 + q1 + q2 + q3 + q4 * 2 + q5 + q6 + q7 * 5,
+        );
+        *oq5 = round_power_of_two_4(p1 + p0 + q0 + q1 + q2 + q3 + q4 + q5 * 2 + q6 + q7 * 6);
+        *oq6 = round_power_of_two_4(p0 + q0 + q1 + q2 + q3 + q4 + q5 + q6 * 2 + q7 * 7);
+    } else {
+        filter8(mask, thresh, flat, op3, op2, op1, op0, oq0, oq1, oq2, oq3);
+    }
+}
+
+/// Inner driver for the 16-tap horizontal kernels — applies the
+/// 15-tap filter (or its 7-tap / 4-tap fallbacks) across `8 * count`
+/// columns. Mirrors libvpx `mb_lpf_horizontal_edge_w`
+/// (`vpx_dsp/loopfilter.c:289-316`).
+fn mb_lpf_horizontal_edge_w(
+    pixels: &mut [u8],
+    s_index: usize,
+    pitch: usize,
+    blimit: u8,
+    limit: u8,
+    thresh: u8,
+    count: usize,
+) {
+    debug_assert!(s_index >= 8 * pitch);
+    let total_cols = 8 * count;
+    for col in 0..total_cols {
+        let s = s_index + col;
+        let p3 = pixels[s - 4 * pitch];
+        let p2 = pixels[s - 3 * pitch];
+        let p1 = pixels[s - 2 * pitch];
+        let p0 = pixels[s - pitch];
+        let q0 = pixels[s];
+        let q1 = pixels[s + pitch];
+        let q2 = pixels[s + 2 * pitch];
+        let q3 = pixels[s + 3 * pitch];
+        let mask = filter_mask(limit, blimit, p3, p2, p1, p0, q0, q1, q2, q3);
+        let flat = flat_mask4(1, p3, p2, p1, p0, q0, q1, q2, q3);
+        let flat2 = flat_mask5(
+            1,
+            pixels[s - 8 * pitch],
+            pixels[s - 7 * pitch],
+            pixels[s - 6 * pitch],
+            pixels[s - 5 * pitch],
+            p0,
+            q0,
+            pixels[s + 4 * pitch],
+            pixels[s + 5 * pitch],
+            pixels[s + 6 * pitch],
+            pixels[s + 7 * pitch],
+        );
+
+        // Load the 16-pixel window.
+        let mut op7 = pixels[s - 8 * pitch];
+        let mut op6 = pixels[s - 7 * pitch];
+        let mut op5 = pixels[s - 6 * pitch];
+        let mut op4 = pixels[s - 5 * pitch];
+        let mut op3 = pixels[s - 4 * pitch];
+        let mut op2 = pixels[s - 3 * pitch];
+        let mut op1 = pixels[s - 2 * pitch];
+        let mut op0 = pixels[s - pitch];
+        let mut oq0 = pixels[s];
+        let mut oq1 = pixels[s + pitch];
+        let mut oq2 = pixels[s + 2 * pitch];
+        let mut oq3 = pixels[s + 3 * pitch];
+        let mut oq4 = pixels[s + 4 * pitch];
+        let mut oq5 = pixels[s + 5 * pitch];
+        let mut oq6 = pixels[s + 6 * pitch];
+        let mut oq7 = pixels[s + 7 * pitch];
+
+        filter16(
+            mask, thresh, flat, flat2, &mut op7, &mut op6, &mut op5, &mut op4, &mut op3,
+            &mut op2, &mut op1, &mut op0, &mut oq0, &mut oq1, &mut oq2, &mut oq3, &mut oq4,
+            &mut oq5, &mut oq6, &mut oq7,
+        );
+
+        pixels[s - 8 * pitch] = op7;
+        pixels[s - 7 * pitch] = op6;
+        pixels[s - 6 * pitch] = op5;
+        pixels[s - 5 * pitch] = op4;
+        pixels[s - 4 * pitch] = op3;
+        pixels[s - 3 * pitch] = op2;
+        pixels[s - 2 * pitch] = op1;
+        pixels[s - pitch] = op0;
+        pixels[s] = oq0;
+        pixels[s + pitch] = oq1;
+        pixels[s + 2 * pitch] = oq2;
+        pixels[s + 3 * pitch] = oq3;
+        pixels[s + 4 * pitch] = oq4;
+        pixels[s + 5 * pitch] = oq5;
+        pixels[s + 6 * pitch] = oq6;
+        pixels[s + 7 * pitch] = oq7;
+    }
+}
+
+/// 16-tap horizontal edge filter — applies the 15-tap smoothing
+/// filter (with 7-tap and 4-tap fallbacks) across 8 columns of the
+/// edge. Mirrors libvpx `vpx_lpf_horizontal_16_c`
+/// (`vpx_dsp/loopfilter.c:318-321`).
+pub fn lpf_horizontal_16(
+    pixels: &mut [u8],
+    s_index: usize,
+    pitch: usize,
+    blimit: u8,
+    limit: u8,
+    thresh: u8,
+) {
+    mb_lpf_horizontal_edge_w(pixels, s_index, pitch, blimit, limit, thresh, 1);
+}
+
+/// Dual 16-tap horizontal filter — applies the 15-tap smoothing
+/// filter (with 7-tap and 4-tap fallbacks) across 16 columns of the
+/// edge. Mirrors libvpx `vpx_lpf_horizontal_16_dual_c`
+/// (`vpx_dsp/loopfilter.c:323-326`). Note libvpx's "dual" here
+/// shares one threshold set across both halves (vs the
+/// independent-threshold convention used by the 4/8-tap duals).
+pub fn lpf_horizontal_16_dual(
+    pixels: &mut [u8],
+    s_index: usize,
+    pitch: usize,
+    blimit: u8,
+    limit: u8,
+    thresh: u8,
+) {
+    mb_lpf_horizontal_edge_w(pixels, s_index, pitch, blimit, limit, thresh, 2);
+}
+
+/// Inner driver for the 16-tap vertical kernels — applies the 15-tap
+/// filter (or its fallbacks) down `count` rows. Mirrors libvpx
+/// `mb_lpf_vertical_edge_w` (`vpx_dsp/loopfilter.c:328-347`).
+fn mb_lpf_vertical_edge_w(
+    pixels: &mut [u8],
+    s_index: usize,
+    pitch: usize,
+    blimit: u8,
+    limit: u8,
+    thresh: u8,
+    count: usize,
+) {
+    debug_assert!(s_index >= 8);
+    let mut s = s_index;
+    for _ in 0..count {
+        let p3 = pixels[s - 4];
+        let p2 = pixels[s - 3];
+        let p1 = pixels[s - 2];
+        let p0 = pixels[s - 1];
+        let q0 = pixels[s];
+        let q1 = pixels[s + 1];
+        let q2 = pixels[s + 2];
+        let q3 = pixels[s + 3];
+        let mask = filter_mask(limit, blimit, p3, p2, p1, p0, q0, q1, q2, q3);
+        let flat = flat_mask4(1, p3, p2, p1, p0, q0, q1, q2, q3);
+        let flat2 = flat_mask5(
+            1,
+            pixels[s - 8],
+            pixels[s - 7],
+            pixels[s - 6],
+            pixels[s - 5],
+            p0,
+            q0,
+            pixels[s + 4],
+            pixels[s + 5],
+            pixels[s + 6],
+            pixels[s + 7],
+        );
+
+        let mut op7 = pixels[s - 8];
+        let mut op6 = pixels[s - 7];
+        let mut op5 = pixels[s - 6];
+        let mut op4 = pixels[s - 5];
+        let mut op3 = pixels[s - 4];
+        let mut op2 = pixels[s - 3];
+        let mut op1 = pixels[s - 2];
+        let mut op0 = pixels[s - 1];
+        let mut oq0 = pixels[s];
+        let mut oq1 = pixels[s + 1];
+        let mut oq2 = pixels[s + 2];
+        let mut oq3 = pixels[s + 3];
+        let mut oq4 = pixels[s + 4];
+        let mut oq5 = pixels[s + 5];
+        let mut oq6 = pixels[s + 6];
+        let mut oq7 = pixels[s + 7];
+
+        filter16(
+            mask, thresh, flat, flat2, &mut op7, &mut op6, &mut op5, &mut op4, &mut op3,
+            &mut op2, &mut op1, &mut op0, &mut oq0, &mut oq1, &mut oq2, &mut oq3, &mut oq4,
+            &mut oq5, &mut oq6, &mut oq7,
+        );
+
+        pixels[s - 8] = op7;
+        pixels[s - 7] = op6;
+        pixels[s - 6] = op5;
+        pixels[s - 5] = op4;
+        pixels[s - 4] = op3;
+        pixels[s - 3] = op2;
+        pixels[s - 2] = op1;
+        pixels[s - 1] = op0;
+        pixels[s] = oq0;
+        pixels[s + 1] = oq1;
+        pixels[s + 2] = oq2;
+        pixels[s + 3] = oq3;
+        pixels[s + 4] = oq4;
+        pixels[s + 5] = oq5;
+        pixels[s + 6] = oq6;
+        pixels[s + 7] = oq7;
+
+        s += pitch;
+    }
+}
+
+/// 16-tap vertical edge filter — applies the 15-tap smoothing filter
+/// (with 7-tap and 4-tap fallbacks) down 8 rows of the edge. Mirrors
+/// libvpx `vpx_lpf_vertical_16_c` (`vpx_dsp/loopfilter.c:349-352`).
+pub fn lpf_vertical_16(
+    pixels: &mut [u8],
+    s_index: usize,
+    pitch: usize,
+    blimit: u8,
+    limit: u8,
+    thresh: u8,
+) {
+    mb_lpf_vertical_edge_w(pixels, s_index, pitch, blimit, limit, thresh, 8);
+}
+
+/// Dual 16-tap vertical filter — applies the 15-tap smoothing filter
+/// (with fallbacks) down 16 rows. Mirrors libvpx
+/// `vpx_lpf_vertical_16_dual_c` (`vpx_dsp/loopfilter.c:354-357`).
+/// Like `lpf_horizontal_16_dual`, libvpx shares one threshold set
+/// across both halves.
+pub fn lpf_vertical_16_dual(
+    pixels: &mut [u8],
+    s_index: usize,
+    pitch: usize,
+    blimit: u8,
+    limit: u8,
+    thresh: u8,
+) {
+    mb_lpf_vertical_edge_w(pixels, s_index, pitch, blimit, limit, thresh, 16);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1029,6 +1391,147 @@ mod tests {
         assert_eq!(flat_mask4(1, 0, 5, 0, 0, 0, 0, 0, 0), 0);
         // At thresh = 10, the same |p2 - p0| = 5 IS within → flat.
         assert_eq!(flat_mask4(10, 0, 5, 0, 0, 0, 0, 0, 0), -1);
+    }
+
+    // ---- 16-tap edge-filter kernels ----
+
+    /// Constant input survives the 16-tap filter unchanged.
+    #[test]
+    fn lpf_horizontal_16_constant_input_unchanged() {
+        let mut pixels = [128u8; 16 * 8];
+        let original = pixels;
+        lpf_horizontal_16(&mut pixels, 8 * 8, 8, 20, 10, 4);
+        assert_eq!(pixels, original);
+    }
+
+    #[test]
+    fn lpf_vertical_16_constant_input_unchanged() {
+        let mut pixels = [128u8; 16 * 16];
+        let original = pixels;
+        lpf_vertical_16(&mut pixels, 8, 16, 20, 10, 4);
+        assert_eq!(pixels, original);
+    }
+
+    /// Step edge with both flatness checks passing: the 15-tap
+    /// filter is applied. Verify rows further out (op4..op6, oq4..oq6)
+    /// are touched — these are only changed by the 15-tap path.
+    #[test]
+    fn lpf_horizontal_16_smooths_widest_step_edge() {
+        let mut pixels = [0u8; 16 * 8];
+        for r in 0..16 {
+            for c in 0..8 {
+                pixels[r * 8 + c] = if r < 8 { 100 } else { 150 };
+            }
+        }
+        // Every neighbour difference is 0 (within each side of the
+        // step), so both flat_mask4 and flat_mask5 pass. blimit
+        // must allow |p0-q0|*2 + |p1-q1|/2 = 100 + 25 = 125. Use 200.
+        lpf_horizontal_16(&mut pixels, 8 * 8, 8, 200, 20, 4);
+        // op4 row (index 4) and oq4 row (index 11) should differ
+        // from their original values.
+        assert_ne!(pixels[4 * 8], 100, "op4 row should change");
+        assert_ne!(pixels[11 * 8], 150, "oq4 row should change");
+        // op6 (index 2) and oq6 (index 13) should also change.
+        assert_ne!(pixels[2 * 8], 100, "op6 row should change");
+        assert_ne!(pixels[13 * 8], 150, "oq6 row should change");
+    }
+
+    /// When the wider flatness check fails, the 16-tap kernel falls
+    /// back to the 8-tap filter. Verify that p4..p6 / q4..q6 are
+    /// unchanged because the 8-tap kernel doesn't touch them.
+    #[test]
+    fn lpf_horizontal_16_falls_back_to_8_when_wide_not_flat() {
+        // Construct an input where flat_mask4 passes (inner 4 taps
+        // are flat on each side of the edge) but flat_mask5 fails
+        // (outer taps p4..p7 / q4..q7 have variance).
+        let mut pixels = [0u8; 16 * 8];
+        for r in 0..16 {
+            let v = if r < 4 {
+                30
+            } else if r < 8 {
+                100
+            } else if r < 12 {
+                150
+            } else {
+                250
+            };
+            for c in 0..8 {
+                pixels[r * 8 + c] = v;
+            }
+        }
+        // For p0=100, p4=30 (s-5*pitch): |p4 - p0| = 70 > thresh=1 → flat_mask5 fails.
+        // For p3..p0 all = 100: flat_mask4 passes.
+        // The 8-tap kernel still updates p2..q2.
+        let p6_before = pixels[2 * 8];
+        let q6_before = pixels[13 * 8];
+        lpf_horizontal_16(&mut pixels, 8 * 8, 8, 200, 80, 4);
+        // p6 and q6 unchanged because filter8 doesn't touch op4..op6/oq4..oq6.
+        assert_eq!(pixels[2 * 8], p6_before);
+        assert_eq!(pixels[13 * 8], q6_before);
+    }
+
+    /// Horizontal/vertical transpose equivalence at the 16-tap level.
+    #[test]
+    fn lpf_vertical_16_consistent_with_horizontal_under_transpose() {
+        let mut h_pixels = [0u8; 16 * 8];
+        for r in 0..16 {
+            for c in 0..8 {
+                h_pixels[r * 8 + c] = if r < 8 { 100 } else { 150 };
+            }
+        }
+        lpf_horizontal_16(&mut h_pixels, 8 * 8, 8, 200, 20, 4);
+
+        // Vertical: stride = 16, payload = 16 rows × 16 cols.
+        let mut v_pixels = [0u8; 16 * 16];
+        for r in 0..16 {
+            for c in 0..16 {
+                v_pixels[r * 16 + c] = if c < 8 { 100 } else { 150 };
+            }
+        }
+        lpf_vertical_16(&mut v_pixels, 8, 16, 200, 20, 4);
+
+        // Compare h_pixels[r * 8 + c] vs v_pixels[c * 16 + r] for
+        // the central 16-column × 8-row region.
+        for r in 0..16 {
+            for c in 0..8 {
+                assert_eq!(
+                    h_pixels[r * 8 + c],
+                    v_pixels[c * 16 + r],
+                    "h({r},{c}) vs v({c},{r})"
+                );
+            }
+        }
+    }
+
+    /// `flat_mask5` flatness gate: same threshold-cutoff semantics
+    /// as `flat_mask4` but with two extra outer taps.
+    #[test]
+    fn flat_mask5_helper() {
+        // All zeros → fully flat (both inner and outer checks pass).
+        assert_eq!(flat_mask5(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), -1);
+        // Outer tap p4 = 10, thresh = 1: |p4 - p0| > 1 → not flat.
+        assert_eq!(flat_mask5(1, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0), 0);
+        // Same p4 = 10 but thresh = 20: within → flat.
+        assert_eq!(flat_mask5(20, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0), -1);
+        // Inner tap (via flat_mask4) high-variance → not flat.
+        assert_eq!(flat_mask5(1, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0), 0);
+    }
+
+    /// `_dual` 16-tap variants apply across twice the longitudinal
+    /// extent. Since libvpx shares one threshold set across both
+    /// halves, the dual is observationally equivalent to running
+    /// the single-edge filter twice with the same thresholds — at
+    /// adjacent positions in the same call frame.
+    #[test]
+    fn lpf_horizontal_16_dual_doubles_the_range() {
+        // 16 rows tall (p7..p0 + q0..q7), 16 cols wide. The dual
+        // covers all 16 columns.
+        let mut a = [128u8; 16 * 16];
+        let mut b = a;
+        lpf_horizontal_16_dual(&mut a, 8 * 16, 16, 20, 10, 4);
+        lpf_horizontal_16(&mut b, 8 * 16, 16, 20, 10, 4);
+        lpf_horizontal_16(&mut b, 8 * 16 + 8, 16, 20, 10, 4);
+        assert_eq!(a, b);
     }
 
     /// `_dual` variants apply the single-edge filter to the two
