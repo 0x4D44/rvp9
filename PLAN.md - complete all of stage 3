@@ -35,7 +35,8 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 3h.3 (`transforms` 16×16 scan family) | ✅ done | `0563d37` |
 | 3h.4 (`transforms` 32×32 scans + top-level dispatch) | ✅ done | `920b24e` |
 | **Transforms layer COMPLETE** | ✅ | |
-| 1b-g (bitstream headers, tile, superframe) | ⏸️ |
+| 1b (bitstream frame-header types) | ✅ done | `9805244` |
+| 1c-g (uncompressed-header parser, compressed-header glue, tile, superframe) | ⏸️ |
 | 2b (entropy FRAME_CONTEXT + prob tables) | ⏸️ |
 | 5 (intra_pred) | ⏸️ |
 | 6 (loopfilter) | ⏸️ |
@@ -43,7 +44,7 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 8 (decoder integration) | ⏸️ |
 | 9 (vpxdec conformance gate) | ⏸️ |
 
-rvp9-core: 124 unit tests passing, ~5600 lines of bit-exact-mirrored
+rvp9-core: 133 unit tests passing, ~5800 lines of bit-exact-mirrored
 code. `cargo test`, `cargo clippy -D warnings` clean.
 
 **Transforms module is feature-complete for the decoder.**
