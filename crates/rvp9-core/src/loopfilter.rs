@@ -58,11 +58,13 @@
 //!   Mirrors libvpx `vp9_adjust_mask` (`vp9_loopfilter.c:766-878`).
 
 pub mod adjust_mask;
+pub mod apply;
 pub mod mask;
 pub mod mask_tables;
 pub mod setup_mask;
 
 pub use adjust_mask::adjust_mask;
+pub use apply::loop_filter_frame;
 pub use mask::{BuildMaskInputs, LoopFilterMask, build_masks, build_y_mask, uv_txsize_420};
 pub use setup_mask::setup_mask;
 pub use mask_tables::{

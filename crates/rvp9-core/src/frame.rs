@@ -699,6 +699,17 @@ impl<'a> PlaneMut<'a> {
     pub fn height(&self) -> usize {
         self.height
     }
+    /// Raw mutable byte slice covering the plane (top-left visible
+    /// pixel onward). The slice extends through the right and bottom
+    /// border padding, so callers may safely index past the visible
+    /// region up to the border width. Pair with [`stride`] for
+    /// row-major indexing.
+    ///
+    /// [`stride`]: PlaneMut::stride
+    #[inline]
+    pub fn data_mut(&mut self) -> &mut [u8] {
+        self.data
+    }
     /// Row `r` (0..height) — `width` bytes, mutable.
     #[inline]
     pub fn row_mut(&mut self, r: usize) -> &mut [u8] {
