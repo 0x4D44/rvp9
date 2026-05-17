@@ -23,6 +23,7 @@
 //! produces a populated header struct), compressed-header glue,
 //! tile-buffer, and superframe assembly will land in follow-up commits.
 
+pub mod compressed_header;
 pub mod error;
 pub mod frame;
 pub mod header;
@@ -31,6 +32,7 @@ pub mod sub_parsers;
 pub mod superframe;
 pub mod tile;
 
+pub use compressed_header::{TX_SIZE_CONTEXTS, read_skip_probs, read_tx_mode, read_tx_mode_probs};
 pub use error::BitstreamError;
 pub use frame::{
     BitDepth, ChromaFormat, ColorRange, ColorSpace, FrameType, InterpFilter, MAX_INTER_REFS,
