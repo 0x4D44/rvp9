@@ -57,7 +57,8 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 1e.2 (compressed-header scalar-prob sub-parsers) | ✅ done | `4d9350c` |
 | 1e.3 (read_coef_probs — biggest per-TX-size sub-parser) | ✅ done | `90d711f` |
 | 1e.4 (inter-frame sub-parsers + MV probs + ReferenceMode) | ✅ done | `322f768` |
-| 1e.5 (top-level parse_compressed_header composition) | ⏸️ |
+| 1e.5 (top-level parse_compressed_header composition) | ✅ done | `e115983` |
+| **Compressed-header parser COMPLETE** | ✅ | |
 | 1f (tile-buffer parser) | ✅ done | `71b1643` |
 | 1g (superframe-index parser) | ✅ done | `7c45350` |
 | 5.1 (intra-pred: DC / V / H / TM + DC fallbacks) | ✅ done | `ed26428` |
@@ -76,8 +77,8 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 8 (decoder integration) | ⏸️ |
 | 9 (vpxdec conformance gate) | ⏸️ |
 
-rvp9-core: 309 unit tests + rvp9-decoder: 8 unit tests = **317 total**.
-~15000 lines in rvp9-core + ~580 lines in rvp9-decoder.
+rvp9-core: 315 unit tests + rvp9-decoder: 8 unit tests = **323 total**.
+~15400 lines in rvp9-core + ~580 lines in rvp9-decoder.
 `cargo test`, `cargo clippy -D warnings` clean.
 
 **The rvp9-decoder skeleton is live with the first complete decode
@@ -118,9 +119,18 @@ boolean-coder driver's responsibility and lands in Task 1e.
   frame_parallel_decoding_mode, frame_context_idx, loop filter,
   quantization, segmentation, tile info, first_partition_size
 
-Next: Task 1e — compressed-header parser (the boolean-coder driver
-over `tx_mode`, `read_coef_probs`, frame reference mode, intra/inter
-probs, MV probs).
+**The compressed-header parser is now COMPLETE.** Task 1e's full
+arc landed across 5 commits (`51178fa` → `e115983`):
+`diff_update_prob` building block → scalar-prob sub-parsers →
+`read_coef_probs` (396-slot per-TX walk) → inter-frame sub-parsers
++ MV probs + `ReferenceMode` → top-level `parse_compressed_header`
+driver. Every libvpx call in `read_compressed_header` has a Rust
+counterpart in `bitstream/compressed_header.rs` with hand-traced
+tests pinning the wire format.
+
+Next: Task 6.3 (loop-filter edge-mask machinery), Task 8.2+
+(tile decode + pixel reconstruction), Task 9 (vpxdec conformance
+gate).
 
 **Transforms module is feature-complete for the decoder.**
 
