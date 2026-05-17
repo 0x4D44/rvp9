@@ -39,7 +39,8 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 1c (uncompressed-header parser — intra paths) | ✅ done | `ca78a87` |
 | 1d.1 (sub-parsers: loopfilter / quant / seg / tile) | ✅ done | `28f91d8` |
 | 1d.2 (uncompressed-header parser — inter paths) | ✅ done | `9320596` |
-| 1d.3 (refresh/parallel/frame_context_idx + first_partition_size) | ⏸️ |
+| 1d.3 (sub-parser wire-up + tail + first_partition_size) | ✅ done | `6274612` |
+| **Uncompressed-header parser COMPLETE** | ✅ | |
 | 1e (compressed-header parser) | ⏸️ |
 | 1f-g (tile-buffer, superframe) | ⏸️ |
 | 2b (entropy FRAME_CONTEXT + prob tables) | ⏸️ |
@@ -49,13 +50,23 @@ Per `PLAN.md §6 Stage 2 progress log` and recent commits:
 | 8 (decoder integration) | ⏸️ |
 | 9 (vpxdec conformance gate) | ⏸️ |
 
-rvp9-core: 156 unit tests passing, ~7100 lines of bit-exact-mirrored
+rvp9-core: 157 unit tests passing, ~7300 lines of bit-exact-mirrored
 code. `cargo test`, `cargo clippy -D warnings` clean.
 
-**The top-level `parse_uncompressed_header` now handles every libvpx
-frame disposition**: ShowExistingFrame / KeyFrame / IntraOnly /
-InterFrame. The four sub-parsers (loopfilter / quant / seg / tile)
-are present but not yet wired in — that's Task 1d.3.
+**The uncompressed-header parser is complete.** Every byte libvpx
+`read_uncompressed_header` reads is now handled:
+
+- Frame marker / profile / show-existing
+- Frame disposition (Key / IntraOnly / Inter) with full per-branch
+  decoding (sync code, color config, frame size, ref loop,
+  setup_frame_size_with_refs, interp_filter)
+- Shared post-disposition tail: refresh_frame_context,
+  frame_parallel_decoding_mode, frame_context_idx, loop filter,
+  quantization, segmentation, tile info, first_partition_size
+
+Next: Task 1e — compressed-header parser (the boolean-coder driver
+over `tx_mode`, `read_coef_probs`, frame reference mode, intra/inter
+probs, MV probs).
 
 **Transforms module is feature-complete for the decoder.**
 
