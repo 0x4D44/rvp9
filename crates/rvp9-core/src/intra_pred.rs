@@ -48,6 +48,86 @@
 //! convention that `above` starts at the top-left pixel — equivalent
 //! to libvpx's `above[-1]`).
 
+/// VP9 intra-prediction modes. Discriminant values match libvpx's
+/// `#define` values in `vp9_enums.h:110-119`.
+///
+/// Indexed by the 4-bit `y_mode` / `uv_mode` field from the entropy
+/// decoder.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[repr(u8)]
+pub enum IntraMode {
+    /// DC_PRED — average of above + left neighbours.
+    Dc = 0,
+    /// V_PRED — copy `above` row.
+    V = 1,
+    /// H_PRED — broadcast `left[r]`.
+    H = 2,
+    /// D45_PRED — 45-degree downward-right edge.
+    D45 = 3,
+    /// D135_PRED — 135-degree edge (diagonal down-right from corner).
+    D135 = 4,
+    /// D117_PRED — 117-degree edge (close to vertical).
+    D117 = 5,
+    /// D153_PRED — 153-degree edge (close to horizontal).
+    D153 = 6,
+    /// D207_PRED — 207-degree edge (down-left).
+    D207 = 7,
+    /// D63_PRED — 63-degree downward-right edge (steeper than D45).
+    D63 = 8,
+    /// TM_PRED — true motion (clip(left[r] + above[c] - above_left)).
+    Tm = 9,
+}
+
+/// Number of distinct VP9 intra modes (= `INTRA_MODES` in libvpx).
+pub const NUM_INTRA_MODES: usize = 10;
+
+impl IntraMode {
+    /// Decode a raw 4-bit `y_mode` / `uv_mode` field. Returns `None`
+    /// for values outside `0..=9`.
+    #[inline]
+    #[must_use]
+    pub const fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::Dc),
+            1 => Some(Self::V),
+            2 => Some(Self::H),
+            3 => Some(Self::D45),
+            4 => Some(Self::D135),
+            5 => Some(Self::D117),
+            6 => Some(Self::D153),
+            7 => Some(Self::D207),
+            8 => Some(Self::D63),
+            9 => Some(Self::Tm),
+            _ => None,
+        }
+    }
+
+    /// The hybrid-transform type ([`crate::transforms::TxType`]) used
+    /// for intra blocks predicted with this mode. Mirrors libvpx
+    /// `intra_mode_to_tx_type_lookup` (`vp9_reconintra.c:24-35`).
+    ///
+    /// This drives the decoder's selection of `iht4x4_16_add` /
+    /// `iht8x8_64_add` / `iht16x16_256_add` and the matching
+    /// scan-order from [`crate::transforms::scan_for`].
+    #[inline]
+    #[must_use]
+    pub const fn tx_type(self) -> crate::transforms::TxType {
+        use crate::transforms::TxType;
+        match self {
+            Self::Dc => TxType::DctDct,
+            Self::V => TxType::AdstDct,
+            Self::H => TxType::DctAdst,
+            Self::D45 => TxType::DctDct,
+            Self::D135 => TxType::AdstAdst,
+            Self::D117 => TxType::AdstDct,
+            Self::D153 => TxType::DctAdst,
+            Self::D207 => TxType::DctAdst,
+            Self::D63 => TxType::AdstDct,
+            Self::Tm => TxType::AdstAdst,
+        }
+    }
+}
+
 /// Inputs to a per-block intra predictor. The block above and the
 /// block to the left are already-decoded neighbours; `above_left` is
 /// the top-left corner pixel shared by both.
@@ -464,6 +544,53 @@ mod tests {
 
     fn make_dst(bs: usize, stride: usize) -> Vec<u8> {
         vec![0u8; stride * bs]
+    }
+
+    #[test]
+    fn intra_mode_discriminants_match_libvpx() {
+        // libvpx vp9_enums.h:110-119
+        assert_eq!(IntraMode::Dc as u8, 0);
+        assert_eq!(IntraMode::V as u8, 1);
+        assert_eq!(IntraMode::H as u8, 2);
+        assert_eq!(IntraMode::D45 as u8, 3);
+        assert_eq!(IntraMode::D135 as u8, 4);
+        assert_eq!(IntraMode::D117 as u8, 5);
+        assert_eq!(IntraMode::D153 as u8, 6);
+        assert_eq!(IntraMode::D207 as u8, 7);
+        assert_eq!(IntraMode::D63 as u8, 8);
+        assert_eq!(IntraMode::Tm as u8, 9);
+    }
+
+    #[test]
+    fn intra_mode_from_u8_round_trip() {
+        for v in 0u8..=9 {
+            let m = IntraMode::from_u8(v).expect("0..=9 valid");
+            assert_eq!(m as u8, v);
+        }
+        assert_eq!(IntraMode::from_u8(10), None);
+        assert_eq!(IntraMode::from_u8(255), None);
+    }
+
+    #[test]
+    fn intra_mode_tx_type_lookup_matches_libvpx() {
+        // Mirrors libvpx vp9_reconintra.c:24-35 exactly.
+        use crate::transforms::TxType;
+        assert_eq!(IntraMode::Dc.tx_type(), TxType::DctDct);
+        assert_eq!(IntraMode::V.tx_type(), TxType::AdstDct);
+        assert_eq!(IntraMode::H.tx_type(), TxType::DctAdst);
+        assert_eq!(IntraMode::D45.tx_type(), TxType::DctDct);
+        assert_eq!(IntraMode::D135.tx_type(), TxType::AdstAdst);
+        assert_eq!(IntraMode::D117.tx_type(), TxType::AdstDct);
+        assert_eq!(IntraMode::D153.tx_type(), TxType::DctAdst);
+        assert_eq!(IntraMode::D207.tx_type(), TxType::DctAdst);
+        assert_eq!(IntraMode::D63.tx_type(), TxType::AdstDct);
+        assert_eq!(IntraMode::Tm.tx_type(), TxType::AdstAdst);
+    }
+
+    /// `NUM_INTRA_MODES` matches the enum's variant count.
+    #[test]
+    fn num_intra_modes_constant() {
+        assert_eq!(NUM_INTRA_MODES, 10);
     }
 
     #[test]
