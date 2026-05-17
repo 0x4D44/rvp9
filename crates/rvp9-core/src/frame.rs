@@ -5,19 +5,22 @@
 //! (`yv12config.c:152-290`). Per LLD `notes/lld/frame-buffers.md`:
 //! 8-bit only, owned `Box<[u8]>` backing, no callback-allocation path.
 //!
-//! ## Scope of this commit (Task 7.1)
+//! ## Scope of this commit (Task 7.1 + 7.2)
 //!
-//! Lands the [`Yv12Buffer`] struct + allocation, dimension/stride
-//! accessors, and plane accessors via [`PlaneRef`] / [`PlaneMut`].
+//! Task 7.1 landed the [`Yv12Buffer`] struct + allocation,
+//! dimension/stride accessors, and plane accessors via [`PlaneRef`] /
+//! [`PlaneMut`]. Task 7.2 adds the [`FrameBuf`] reference-counted
+//! handle and the [`DecoderFramePool`] slot-recycling allocator.
 //!
 //! **Not in this commit (deferred):**
-//! - `FrameBuf` (the `Arc<FrameBuf>` ref-counted handle) — Task 7.2.
-//! - `FramePool` (the 12-slot / 8+1-slot recycling allocator) — Task 7.3.
 //! - `RefFrames` / `TilePlanes{,Mut}` tile-disjoint views — Task 7.4
 //!   (requires the `UnsafeCell` aliasing contract from
 //!   `notes/hld/01-threading.md §6.2`).
+//! - The 12-slot encoder pool — Task 7.3 (the decoder only needs
+//!   8 ref + 1 current = 9 slots; the extra 3 scaled slots are
+//!   encoder-only).
 //! - Border extension (`extend_borders` / `copy_and_extend_from`) —
-//!   Task 7.2 (needed once we have the pool to test against).
+//!   needed once we have inter-prediction code to test against.
 
 use crate::bitstream::{ChromaFormat, ColorRange, ColorSpace};
 
@@ -511,6 +514,164 @@ impl<'a> PlaneRef<'a> {
     }
 }
 
+// ============================================================================
+// Frame-buffer pool (decoder side)
+// ============================================================================
+
+use std::sync::Arc;
+
+/// Reference-counted handle to a decoded frame. Cheap to clone (it's
+/// `Arc<Yv12Buffer>` under the hood); `Arc::clone` is libvpx's
+/// `++ref_count` and `Arc::drop` is `--ref_count`.
+pub type FrameBuf = Arc<Yv12Buffer>;
+
+/// Number of reference frames VP9 keeps in the buffer pool
+/// (`REF_FRAMES` = 8 per `crate::bitstream::REF_FRAMES`).
+pub const DECODER_REF_FRAMES: usize = 8;
+
+/// Total slots in the decoder's pool: 8 ref slots + 1 "currently
+/// being decoded" slot. Mirrors libvpx
+/// `FRAME_BUFFERS = REF_FRAMES + 1` for the decoder configuration
+/// (the encoder reserves an extra 3 scaled slots — not needed for
+/// the decoder per LLD-frame-buffers §3).
+pub const DECODER_FRAME_BUFFERS: usize = DECODER_REF_FRAMES + 1;
+
+/// Errors from [`DecoderFramePool`] slot operations.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum FramePoolError {
+    /// No free slot was available (every slot has an outstanding
+    /// reference from somewhere). Mirrors libvpx `get_free_fb`
+    /// returning `INVALID_IDX`.
+    NoFreeSlot,
+    /// `slot` is outside `0..DECODER_FRAME_BUFFERS`.
+    SlotOutOfRange {
+        /// The bad slot index.
+        slot: usize,
+    },
+}
+
+impl core::fmt::Display for FramePoolError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NoFreeSlot => f.write_str("no free frame-pool slot available"),
+            Self::SlotOutOfRange { slot } => {
+                write!(f, "frame-pool slot {slot} out of range (0..{DECODER_FRAME_BUFFERS})")
+            }
+        }
+    }
+}
+
+impl std::error::Error for FramePoolError {}
+
+/// 9-slot recycling pool of decoded frames for the decoder.
+///
+/// Each slot holds either nothing (`None`) or a `FrameBuf` (an
+/// `Arc<Yv12Buffer>`). A slot is "free" when either:
+///
+/// - the slot is `None`, or
+/// - the slot's `Arc` has refcount 1 (only the pool holds the
+///   reference, so it's safe to recycle the underlying buffer).
+///
+/// libvpx counterpart: `BufferPool::frame_bufs` plus the
+/// `ref_count`/`ref_cnt_fb`/`get_free_fb` family at
+/// `vp9_onyxc_int.h:66-365`. The reference-count semantics translate
+/// directly: `Arc::strong_count` is `frame_bufs[i].ref_count`.
+///
+/// **Concurrency**: only the main decoder thread mutates the pool
+/// (per HLD-threading §5.4); tile workers hold cloned `FrameBuf`
+/// handles. The pool itself is `Sync` because every public method
+/// takes `&mut self` — sharing must go through an external lock,
+/// which matches libvpx's "main-thread mutates `buffer_pool`" rule.
+#[derive(Debug, Default)]
+pub struct DecoderFramePool {
+    slots: [Option<FrameBuf>; DECODER_FRAME_BUFFERS],
+}
+
+impl DecoderFramePool {
+    /// Build an empty pool (every slot `None`).
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Number of currently-occupied slots.
+    #[must_use]
+    pub fn occupied_count(&self) -> usize {
+        self.slots.iter().filter(|s| s.is_some()).count()
+    }
+
+    /// Borrow the `FrameBuf` at `slot` (clones the `Arc`, doesn't
+    /// remove). Returns `None` if the slot is empty.
+    #[must_use]
+    pub fn get(&self, slot: usize) -> Option<FrameBuf> {
+        self.slots.get(slot).and_then(|s| s.clone())
+    }
+
+    /// Acquire a free slot, populating it with `frame`. Returns the
+    /// slot index. Mirrors libvpx `get_free_fb`.
+    ///
+    /// A slot is "free" if it's empty OR its `Arc` has refcount 1
+    /// (only the pool holds it). If no slot is free,
+    /// [`FramePoolError::NoFreeSlot`] is returned — at that point the
+    /// caller has held too many refs (a bug).
+    ///
+    /// # Errors
+    ///
+    /// [`FramePoolError::NoFreeSlot`] when every slot has an
+    /// outstanding external reference.
+    pub fn acquire_free(&mut self, frame: FrameBuf) -> Result<usize, FramePoolError> {
+        for (i, slot) in self.slots.iter_mut().enumerate() {
+            let is_free = match slot {
+                None => true,
+                Some(arc) => Arc::strong_count(arc) == 1,
+            };
+            if is_free {
+                *slot = Some(frame);
+                return Ok(i);
+            }
+        }
+        Err(FramePoolError::NoFreeSlot)
+    }
+
+    /// Replace the frame at `slot` with `frame`. Mirrors libvpx
+    /// `ref_cnt_fb` in its "set to a new buffer" mode — releases
+    /// any existing reference (decrementing its Arc count) and
+    /// installs the new one.
+    ///
+    /// # Errors
+    ///
+    /// [`FramePoolError::SlotOutOfRange`] when `slot >= 9`.
+    pub fn assign_slot(&mut self, slot: usize, frame: FrameBuf) -> Result<(), FramePoolError> {
+        if slot >= DECODER_FRAME_BUFFERS {
+            return Err(FramePoolError::SlotOutOfRange { slot });
+        }
+        self.slots[slot] = Some(frame);
+        Ok(())
+    }
+
+    /// Release the frame at `slot` (drop the pool's reference).
+    /// External refs persist until their `Arc` drops.
+    ///
+    /// # Errors
+    ///
+    /// [`FramePoolError::SlotOutOfRange`] when `slot >= 9`.
+    pub fn release_slot(&mut self, slot: usize) -> Result<(), FramePoolError> {
+        if slot >= DECODER_FRAME_BUFFERS {
+            return Err(FramePoolError::SlotOutOfRange { slot });
+        }
+        self.slots[slot] = None;
+        Ok(())
+    }
+
+    /// Reset the pool to empty.
+    pub fn clear(&mut self) {
+        for slot in self.slots.iter_mut() {
+            *slot = None;
+        }
+    }
+}
+
 /// Mutable plane view.
 pub struct PlaneMut<'a> {
     data: &'a mut [u8],
@@ -717,5 +878,150 @@ mod tests {
         assert_eq!(b.y_plane().row(5), [0x42u8; 16]);
         // Other rows untouched.
         assert_eq!(b.y_plane().row(4), [0u8; 16]);
+    }
+
+    // ---- DecoderFramePool ----
+
+    fn make_frame(w: u32, h: u32) -> FrameBuf {
+        Arc::new(
+            Yv12Buffer::alloc(
+                w,
+                h,
+                ChromaFormat::Yuv420,
+                BorderUsage::Decoder,
+                ByteAlignment::Legacy,
+            )
+            .expect("alloc"),
+        )
+    }
+
+    #[test]
+    fn pool_constants_match_libvpx() {
+        assert_eq!(DECODER_REF_FRAMES, 8);
+        assert_eq!(DECODER_FRAME_BUFFERS, 9);
+    }
+
+    #[test]
+    fn pool_new_is_empty() {
+        let pool = DecoderFramePool::new();
+        assert_eq!(pool.occupied_count(), 0);
+        for i in 0..DECODER_FRAME_BUFFERS {
+            assert!(pool.get(i).is_none());
+        }
+    }
+
+    #[test]
+    fn pool_acquire_fills_first_free_slot() {
+        let mut pool = DecoderFramePool::new();
+        let f0 = make_frame(64, 64);
+        let slot = pool.acquire_free(f0.clone()).expect("free slot");
+        assert_eq!(slot, 0);
+        assert_eq!(pool.occupied_count(), 1);
+        let got = pool.get(0).unwrap();
+        assert!(Arc::ptr_eq(&got, &f0));
+    }
+
+    #[test]
+    fn pool_acquire_uses_recyclable_slot() {
+        let mut pool = DecoderFramePool::new();
+        // Fill all 9 slots distinctly by holding external refs alive
+        // (mirrors a real decoder: each acquired slot is "in use" by
+        // the caller who just received it).
+        let mut external: Vec<FrameBuf> = Vec::new();
+        for _ in 0..DECODER_FRAME_BUFFERS {
+            let f = make_frame(16, 16);
+            pool.acquire_free(f.clone()).expect("free");
+            external.push(f);
+        }
+        assert_eq!(pool.occupied_count(), DECODER_FRAME_BUFFERS);
+        // Every slot has external refcount > 1 ⇒ acquire fails.
+        assert_eq!(
+            pool.acquire_free(make_frame(16, 16)).unwrap_err(),
+            FramePoolError::NoFreeSlot
+        );
+        // Drop the external ref for slot 3 ⇒ that slot's Arc refcount
+        // falls back to 1 (only pool holds it) and becomes recyclable.
+        let ptr_before_recycle = Arc::as_ptr(&external[3]);
+        external.swap_remove(3);
+        let new_frame = make_frame(16, 16);
+        let slot = pool.acquire_free(new_frame.clone()).expect("recycles slot 3");
+        assert_eq!(slot, 3);
+        // The replaced slot now holds the new Arc, not the old.
+        assert!(Arc::ptr_eq(&pool.get(3).unwrap(), &new_frame));
+        assert_ne!(Arc::as_ptr(&new_frame), ptr_before_recycle);
+    }
+
+    #[test]
+    fn pool_acquire_errors_when_no_free_slot() {
+        let mut pool = DecoderFramePool::new();
+        // Fill every slot AND hold an extra reference so the pool
+        // can't recycle it.
+        let mut external_refs: Vec<FrameBuf> = Vec::new();
+        for _ in 0..DECODER_FRAME_BUFFERS {
+            let f = make_frame(16, 16);
+            pool.acquire_free(f.clone()).expect("free");
+            external_refs.push(f);
+        }
+        // Now every slot has refcount = 2 (pool + external_refs[i]).
+        // Acquire must fail.
+        let f_new = make_frame(16, 16);
+        let err = pool.acquire_free(f_new).unwrap_err();
+        assert_eq!(err, FramePoolError::NoFreeSlot);
+    }
+
+    #[test]
+    fn pool_assign_and_release_round_trip() {
+        let mut pool = DecoderFramePool::new();
+        let f = make_frame(32, 32);
+        pool.assign_slot(3, f.clone()).expect("ok");
+        assert!(Arc::ptr_eq(&pool.get(3).unwrap(), &f));
+        pool.release_slot(3).expect("ok");
+        assert!(pool.get(3).is_none());
+    }
+
+    #[test]
+    fn pool_assign_replaces_existing_slot() {
+        let mut pool = DecoderFramePool::new();
+        let f1 = make_frame(32, 32);
+        let f2 = make_frame(32, 32);
+        pool.assign_slot(2, f1.clone()).unwrap();
+        pool.assign_slot(2, f2.clone()).unwrap();
+        // f1 should now have only the external test ref (we don't
+        // hold a second), so its strong count is 1.
+        assert_eq!(Arc::strong_count(&f1), 1);
+        assert!(Arc::ptr_eq(&pool.get(2).unwrap(), &f2));
+    }
+
+    #[test]
+    fn pool_assign_out_of_range_rejected() {
+        let mut pool = DecoderFramePool::new();
+        let f = make_frame(16, 16);
+        let err = pool.assign_slot(99, f).unwrap_err();
+        assert_eq!(err, FramePoolError::SlotOutOfRange { slot: 99 });
+    }
+
+    #[test]
+    fn pool_release_out_of_range_rejected() {
+        let mut pool = DecoderFramePool::new();
+        let err = pool.release_slot(99).unwrap_err();
+        assert_eq!(err, FramePoolError::SlotOutOfRange { slot: 99 });
+    }
+
+    #[test]
+    fn pool_clear_drops_all_slots() {
+        let mut pool = DecoderFramePool::new();
+        // Use 5 distinct slots — hold external refs so the pool
+        // doesn't recycle slot 0 every iteration.
+        let mut external: Vec<FrameBuf> = Vec::new();
+        for _ in 0..5 {
+            let f = make_frame(16, 16);
+            pool.acquire_free(f.clone()).unwrap();
+            external.push(f);
+        }
+        assert_eq!(pool.occupied_count(), 5);
+        pool.clear();
+        assert_eq!(pool.occupied_count(), 0);
+        // External refs still alive even after clear (Arc semantics).
+        assert_eq!(external.len(), 5);
     }
 }
