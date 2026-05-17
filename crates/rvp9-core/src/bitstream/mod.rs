@@ -28,6 +28,7 @@ pub mod frame;
 pub mod header;
 pub mod raw;
 pub mod sub_parsers;
+pub mod superframe;
 
 pub use error::BitstreamError;
 pub use frame::{
@@ -39,6 +40,10 @@ pub use header::{
     parse_uncompressed_header,
 };
 pub use raw::{RawBitReader, RawBitWriter};
+pub use superframe::{
+    MAX_SIZE_FIELD_BYTES, MAX_SUPERFRAME_FRAMES, Superframe, SuperframeIndexErrorReason,
+    parse_superframe_index,
+};
 pub use sub_parsers::{
     LoopFilterParams, QuantizationParams, SegFeature, SegmentationParams, TileInfo, parse_loopfilter,
     parse_quantization, parse_segmentation, parse_tile_info,

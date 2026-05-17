@@ -82,6 +82,15 @@ pub enum BitstreamError {
     /// uncompressed header decoded to `0`. libvpx rejects this with
     /// `Invalid header size` (`vp9_decodeframe.c:2856-2858`).
     InvalidFirstPartitionSize,
+
+    /// The trailing superframe-index byte indicated a multi-frame
+    /// packet but the index was malformed (truncated or marker
+    /// mismatch). Mirrors the `VPX_CODEC_CORRUPT_FRAME` returns at
+    /// `vp9/decoder/vp9_decoder.c:550, 559`.
+    InvalidSuperframeIndex {
+        /// Sub-reason — see [`super::superframe::SuperframeIndexErrorReason`].
+        reason: super::superframe::SuperframeIndexErrorReason,
+    },
 }
 
 impl fmt::Display for BitstreamError {
@@ -113,6 +122,22 @@ impl fmt::Display for BitstreamError {
             Self::InvalidFirstPartitionSize => {
                 f.write_str("invalid first_partition_size: 0 (compressed header must be non-empty)")
             }
+            Self::InvalidSuperframeIndex { reason } => match reason {
+                super::superframe::SuperframeIndexErrorReason::TruncatedIndex {
+                    declared,
+                    available,
+                } => write!(
+                    f,
+                    "invalid superframe index: declared {declared} bytes, only {available} available"
+                ),
+                super::superframe::SuperframeIndexErrorReason::MarkerMismatch {
+                    leading,
+                    trailing,
+                } => write!(
+                    f,
+                    "invalid superframe index: leading marker 0x{leading:02x} != trailing 0x{trailing:02x}"
+                ),
+            },
         }
     }
 }
