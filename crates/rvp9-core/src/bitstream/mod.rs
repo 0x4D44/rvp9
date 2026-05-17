@@ -27,6 +27,7 @@ pub mod error;
 pub mod frame;
 pub mod header;
 pub mod raw;
+pub mod sub_parsers;
 
 pub use error::BitstreamError;
 pub use frame::{
@@ -35,3 +36,7 @@ pub use frame::{
 };
 pub use header::{FrameKind, UncompressedHeader, parse_uncompressed_header};
 pub use raw::{RawBitReader, RawBitWriter};
+pub use sub_parsers::{
+    LoopFilterParams, QuantizationParams, SegFeature, SegmentationParams, TileInfo, parse_loopfilter,
+    parse_quantization, parse_segmentation, parse_tile_info,
+};

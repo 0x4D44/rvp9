@@ -69,6 +69,14 @@ pub enum BitstreamError {
     /// subsampling is inconsistent with it. Per spec §6.2 `Srgb`
     /// requires Profile 1/3 + 4:4:4.
     InconsistentSrgb,
+
+    /// `log2_tile_cols` exceeded 6 after applying the increment-bit
+    /// chain (libvpx rejects this at `vp9_decodeframe.c:1638-1640`).
+    /// 6 is the spec-imposed maximum (64 tile columns).
+    InvalidTileCols {
+        /// The decoded `log2_tile_cols` value.
+        log2_tile_cols: u8,
+    },
 }
 
 impl fmt::Display for BitstreamError {
@@ -94,6 +102,9 @@ impl fmt::Display for BitstreamError {
                 write!(f, "unsupported bit depth raw value: {raw}")
             }
             Self::InconsistentSrgb => f.write_str("sRGB color space requires Profile 1/3 with 4:4:4 sampling"),
+            Self::InvalidTileCols { log2_tile_cols } => {
+                write!(f, "invalid log2_tile_cols: {log2_tile_cols} (max 6)")
+            }
         }
     }
 }
