@@ -19,8 +19,10 @@
 //! - The 12-slot encoder pool — Task 7.3 (the decoder only needs
 //!   8 ref + 1 current = 9 slots; the extra 3 scaled slots are
 //!   encoder-only).
-//! - Border extension (`extend_borders` / `copy_and_extend_from`) —
-//!   needed once we have inter-prediction code to test against.
+//! - Encoder-side `copy_and_extend_from` — only needed when the
+//!   encoder shell lands. (Stage 3 Task C.3 added the decoder-side
+//!   [`Yv12Buffer::extend_borders`] / [`extend_frame_borders`] for
+//!   inter-prediction halos.)
 
 use crate::bitstream::{ChromaFormat, ColorRange, ColorSpace};
 
@@ -460,6 +462,158 @@ impl Yv12Buffer {
             width,
             height,
         }
+    }
+
+    /// Replicate edge pixels into each plane's border, so that
+    /// motion-comp halos can read out-of-visible-region positions
+    /// without bounds checks.
+    ///
+    /// Mirrors `vpx_extend_frame_borders_c` (`yv12extend.c:169`):
+    /// `extend_frame(ybf, ybf->border)` with per-plane edge replication.
+    /// For each plane:
+    ///
+    /// 1. Horizontal pass — for every visible row, fill the `border`
+    ///    pixels left of column 0 with the row's first visible pixel
+    ///    and the `border + (aligned_width - crop_width)` pixels right
+    ///    of the last visible column with the row's last visible pixel.
+    ///    The right pad also covers the mi-alignment padding between
+    ///    `crop_width` and `aligned_width`.
+    /// 2. Vertical pass — replicate the (now horizontally-extended)
+    ///    top row into the `border` rows above, and the
+    ///    horizontally-extended bottom visible row into the
+    ///    `border + (aligned_height - crop_height)` rows below.
+    ///
+    /// Idempotent: calling twice on the same buffer is a no-op the
+    /// second time (the borders already hold the edge values).
+    ///
+    /// Free-function form: see [`extend_frame_borders`].
+    pub fn extend_borders(&mut self) {
+        let border = self.border as usize;
+        let ss_x = u32::from(self.chroma.subsampling_x());
+        let ss_y = u32::from(self.chroma.subsampling_y());
+
+        // Y plane.
+        let y_crop_w = self.crop_width as usize;
+        let y_crop_h = self.crop_height as usize;
+        let y_w = self.y_width as usize;
+        let y_h = self.y_height as usize;
+        extend_plane(
+            &mut self.buffer_alloc,
+            self.y_offset,
+            self.y_stride as usize,
+            y_crop_w,
+            y_crop_h,
+            border,
+            border,
+            border + (y_h - y_crop_h),
+            border + (y_w - y_crop_w),
+        );
+
+        // UV planes — crop dimensions follow libvpx
+        // `(crop + ss) >> ss` (yv12config.c:254-255). Border halves
+        // along each subsampled axis.
+        let uv_border_w = border >> ss_x;
+        let uv_border_h = border >> ss_y;
+        let uv_crop_w = (self.crop_width as usize + ss_x as usize) >> ss_x;
+        let uv_crop_h = (self.crop_height as usize + ss_y as usize) >> ss_y;
+        let uv_w = self.uv_width as usize;
+        let uv_h = self.uv_height as usize;
+        let uv_stride = self.uv_stride as usize;
+        extend_plane(
+            &mut self.buffer_alloc,
+            self.u_offset,
+            uv_stride,
+            uv_crop_w,
+            uv_crop_h,
+            uv_border_h,
+            uv_border_w,
+            uv_border_h + (uv_h - uv_crop_h),
+            uv_border_w + (uv_w - uv_crop_w),
+        );
+        extend_plane(
+            &mut self.buffer_alloc,
+            self.v_offset,
+            uv_stride,
+            uv_crop_w,
+            uv_crop_h,
+            uv_border_h,
+            uv_border_w,
+            uv_border_h + (uv_h - uv_crop_h),
+            uv_border_w + (uv_w - uv_crop_w),
+        );
+    }
+}
+
+/// Replicate edge pixels into each plane's border so motion-comp
+/// halos can read out-of-visible-region positions without bounds
+/// checks. Free-function wrapper around [`Yv12Buffer::extend_borders`].
+///
+/// Mirrors `vpx_extend_frame_borders_c` (`yv12extend.c:169`). Call
+/// once per frame, after recon + loop-filter, before the frame
+/// becomes a reference for subsequent inter prediction.
+#[inline]
+pub fn extend_frame_borders(yv12: &mut Yv12Buffer) {
+    yv12.extend_borders();
+}
+
+/// Per-plane edge replication. Mirrors the static `extend_plane`
+/// helper in libvpx `yv12extend.c:22-60`.
+///
+/// `origin` is the byte offset in `alloc` of the visible (0, 0)
+/// pixel. `width`/`height` are the visible dimensions in pixels.
+/// `extend_top`/`extend_left`/`extend_bottom`/`extend_right` are
+/// the per-edge replication widths (in pixels); for the right
+/// edge, libvpx folds the mi-alignment padding into `extend_right`
+/// — same here.
+#[allow(clippy::too_many_arguments)] // mirrors libvpx's argument list 1:1
+fn extend_plane(
+    alloc: &mut [u8],
+    origin: usize,
+    stride: usize,
+    width: usize,
+    height: usize,
+    extend_top: usize,
+    extend_left: usize,
+    extend_bottom: usize,
+    extend_right: usize,
+) {
+    // --- Horizontal pass: fill left/right border on every visible row.
+    // Each row's leftmost byte is `origin + r*stride`; we write the
+    // `extend_left` bytes immediately preceding it, and the
+    // `extend_right` bytes starting at column `width`.
+    for r in 0..height {
+        let row_start = origin + r * stride;
+        let left_pixel = alloc[row_start];
+        let right_pixel = alloc[row_start + width - 1];
+        // Left border: bytes [row_start - extend_left, row_start).
+        let left_dst = row_start - extend_left;
+        alloc[left_dst..row_start].fill(left_pixel);
+        // Right border: bytes [row_start + width, row_start + width + extend_right).
+        let right_dst = row_start + width;
+        alloc[right_dst..right_dst + extend_right].fill(right_pixel);
+    }
+
+    // --- Vertical pass: replicate the first / last visible row (now
+    // already extended horizontally) into the border rows above
+    // and below. The replicated line covers
+    // `extend_left + width + extend_right` bytes.
+    let linesize = extend_left + width + extend_right;
+    // First visible row, starting at its leftmost extended byte.
+    let top_src = origin - extend_left;
+    // Last visible row, starting at its leftmost extended byte.
+    let bot_src = origin + (height - 1) * stride - extend_left;
+    // First top-border row (at offset `-extend_top * stride - extend_left`
+    // from the origin).
+    let top_dst_first = origin - extend_top * stride - extend_left;
+    // First bottom-border row (immediately after the last visible row).
+    let bot_dst_first = origin + height * stride - extend_left;
+    for k in 0..extend_top {
+        let dst = top_dst_first + k * stride;
+        alloc.copy_within(top_src..top_src + linesize, dst);
+    }
+    for k in 0..extend_bottom {
+        let dst = bot_dst_first + k * stride;
+        alloc.copy_within(bot_src..bot_src + linesize, dst);
     }
 }
 
@@ -1016,6 +1170,317 @@ mod tests {
         let mut pool = DecoderFramePool::new();
         let err = pool.release_slot(99).unwrap_err();
         assert_eq!(err, FramePoolError::SlotOutOfRange { slot: 99 });
+    }
+
+    // ---- extend_borders ----
+
+    /// Helper: read a single byte from the Y plane at signed
+    /// (row, col) — where `(0, 0)` is the visible origin and
+    /// negative coordinates reach into the border.
+    fn read_y_at(buf: &Yv12Buffer, row: i32, col: i32) -> u8 {
+        let stride = buf.y_stride as i32;
+        let idx = buf.y_offset as i32 + row * stride + col;
+        buf.buffer_alloc[idx as usize]
+    }
+    fn read_u_at(buf: &Yv12Buffer, row: i32, col: i32) -> u8 {
+        let stride = buf.uv_stride as i32;
+        let idx = buf.u_offset as i32 + row * stride + col;
+        buf.buffer_alloc[idx as usize]
+    }
+    fn read_v_at(buf: &Yv12Buffer, row: i32, col: i32) -> u8 {
+        let stride = buf.uv_stride as i32;
+        let idx = buf.v_offset as i32 + row * stride + col;
+        buf.buffer_alloc[idx as usize]
+    }
+
+    #[test]
+    fn extend_borders_constant_fill() {
+        // Solid-128 visible region → border is all 128.
+        let mut b = Yv12Buffer::alloc(
+            64,
+            48,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .expect("alloc");
+        b.y_plane_mut().fill(128);
+        b.u_plane_mut().fill(64);
+        b.v_plane_mut().fill(200);
+        b.extend_borders();
+
+        let border = b.border() as i32;
+        // Sample 4 corners of each border ring.
+        for &(r, c) in &[(-border, -border), (-1, -1), (47, 64), (47 + border - 1, 64 + border - 1)] {
+            assert_eq!(read_y_at(&b, r, c), 128, "Y at ({r},{c})");
+        }
+        let uv_border = (b.border() >> 1) as i32; // 4:2:0
+        let uv_h_last = (b.crop_height as i32 / 2) - 1;
+        let uv_w_last = b.crop_width as i32 / 2;
+        for &(r, c) in &[
+            (-uv_border, -uv_border),
+            (-1, -1),
+            (uv_h_last, uv_w_last),
+            (uv_h_last + uv_border, uv_w_last + uv_border - 1),
+        ] {
+            assert_eq!(read_u_at(&b, r, c), 64, "U at ({r},{c})");
+            assert_eq!(read_v_at(&b, r, c), 200, "V at ({r},{c})");
+        }
+    }
+
+    #[test]
+    fn extend_borders_corner_pixel() {
+        // (0,0) = 99, rest = 0. After extension, the entire
+        // top-left border quadrant must be 99 (top row of the
+        // visible region is 99 at col 0; left border of row 0
+        // replicates 99; top border replicates that extended row).
+        let mut b = Yv12Buffer::alloc(
+            32,
+            32,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .expect("alloc");
+        b.y_plane_mut().row_mut(0)[0] = 99;
+        b.extend_borders();
+        let border = b.border() as i32;
+        // Entire top-left corner of border = 99 (because row 0 col
+        // 0 is 99, gets replicated left, and the extended row 0 is
+        // replicated up).
+        for r in -border..=0 {
+            for c in -border..=0 {
+                assert_eq!(read_y_at(&b, r, c), 99, "TL corner at ({r},{c})");
+            }
+        }
+        // Top-right corner (col >= 1 in the top border) replicates
+        // row 0's last visible pixel = 0 (we only set col 0).
+        assert_eq!(read_y_at(&b, -border, 1), 0);
+        assert_eq!(read_y_at(&b, -1, 31), 0);
+    }
+
+    #[test]
+    fn extend_borders_edge_row_and_col() {
+        // Row 0 = 1s, col 0 = 2s (except (0,0) which is 2 — col
+        // wins because we set col 0 after row 0). After extension:
+        //   * top border above col >=1: row-0's value at that col = 1
+        //   * left border row >=1: col-0's value at that row = 2
+        //   * top-left border quadrant: (0,0) = 2 (col 0 won)
+        let mut b = Yv12Buffer::alloc(
+            16,
+            16,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .expect("alloc");
+        for c in 0..16 {
+            b.y_plane_mut().row_mut(0)[c] = 1;
+        }
+        for r in 0..16 {
+            b.y_plane_mut().row_mut(r)[0] = 2;
+        }
+        b.extend_borders();
+        // Top border above column 5 = row-0's column-5 value = 1.
+        assert_eq!(read_y_at(&b, -1, 5), 1);
+        assert_eq!(read_y_at(&b, -32, 5), 1);
+        // Left border left of row 5 = row-5's column-0 value = 2.
+        assert_eq!(read_y_at(&b, 5, -1), 2);
+        assert_eq!(read_y_at(&b, 5, -32), 2);
+        // Top-left quadrant — (0,0) is 2 (col 0 overwrote it), so
+        // the whole TL border quadrant is 2.
+        assert_eq!(read_y_at(&b, -1, -1), 2);
+        assert_eq!(read_y_at(&b, -32, -32), 2);
+    }
+
+    #[test]
+    fn extend_borders_planes_independent() {
+        // Distinct fills for Y / U / V must each end up replicated
+        // into that plane's own border without cross-talk.
+        let mut b = Yv12Buffer::alloc(
+            16,
+            16,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .expect("alloc");
+        b.y_plane_mut().fill(10);
+        b.u_plane_mut().fill(20);
+        b.v_plane_mut().fill(30);
+        b.extend_borders();
+        assert_eq!(read_y_at(&b, -1, -1), 10);
+        assert_eq!(read_u_at(&b, -1, -1), 20);
+        assert_eq!(read_v_at(&b, -1, -1), 30);
+        assert_eq!(read_y_at(&b, 16, 16), 10);
+        assert_eq!(read_u_at(&b, 8, 8), 20);
+        assert_eq!(read_v_at(&b, 8, 8), 30);
+    }
+
+    #[test]
+    fn extend_borders_awkward_stride() {
+        // 1923×1077: aligned to 1928×1080 (mi-multiple of 8); the
+        // 5-pixel right gap and 3-pixel bottom gap must be folded
+        // into extend_right / extend_bottom so it's also filled
+        // with the edge pixel.
+        let mut b = Yv12Buffer::alloc(
+            1923,
+            1077,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .expect("alloc");
+        // Fill the visible region with a row-indexed pattern so
+        // each row has a distinct right-edge value.
+        {
+            let mut y = b.y_plane_mut();
+            for r in 0..1077 {
+                let row = y.row_mut(r);
+                // Last visible pixel = r as u8.
+                row[1922] = (r & 0xff) as u8;
+                // First visible pixel = (r + 17) as u8.
+                row[0] = ((r + 17) & 0xff) as u8;
+            }
+        }
+        b.extend_borders();
+        // Row 100's right border (including the alignment gap)
+        // must all read as 100. The first alignment-gap byte sits
+        // at col 1923 (the first byte past the crop), and the
+        // last extended byte sits at col 1923 + (border + 5) - 1.
+        let border = b.border() as i32;
+        let first_pad = 1923i32;
+        let last_pad = 1923 + (border + 5) - 1;
+        for c in first_pad..=last_pad {
+            assert_eq!(read_y_at(&b, 100, c), 100, "row 100 col {c}");
+        }
+        // Left border of row 100 = (100 + 17) = 117.
+        for c in -border..0 {
+            assert_eq!(read_y_at(&b, 100, c), 117, "row 100 col {c}");
+        }
+    }
+
+    #[test]
+    fn extend_borders_idempotent() {
+        // Running extend twice produces the same buffer as once.
+        let mut a = Yv12Buffer::alloc(
+            48,
+            32,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .expect("alloc");
+        for r in 0..32 {
+            for c in 0..48 {
+                a.y_plane_mut().row_mut(r)[c] = ((r * 7 + c * 13) & 0xff) as u8;
+            }
+        }
+        for r in 0..16 {
+            for c in 0..24 {
+                a.u_plane_mut().row_mut(r)[c] = ((r * 3 + c * 5) & 0xff) as u8;
+                a.v_plane_mut().row_mut(r)[c] = ((r * 11 + c * 17) & 0xff) as u8;
+            }
+        }
+        let mut b = Yv12Buffer::alloc(
+            48,
+            32,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .expect("alloc");
+        // Copy a's visible region into b before extension (so
+        // border bytes start matching post-extend a).
+        for r in 0..32 {
+            b.y_plane_mut().row_mut(r).copy_from_slice(a.y_plane().row(r));
+        }
+        for r in 0..16 {
+            b.u_plane_mut().row_mut(r).copy_from_slice(a.u_plane().row(r));
+            b.v_plane_mut().row_mut(r).copy_from_slice(a.v_plane().row(r));
+        }
+        a.extend_borders();
+        b.extend_borders();
+        b.extend_borders(); // a second call — must be a no-op.
+        assert_eq!(a.buffer_alloc, b.buffer_alloc);
+    }
+
+    #[test]
+    fn extend_borders_free_fn_alias() {
+        let mut b = Yv12Buffer::alloc(
+            16,
+            16,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .expect("alloc");
+        b.y_plane_mut().fill(0xAB);
+        extend_frame_borders(&mut b);
+        assert_eq!(read_y_at(&b, -1, -1), 0xAB);
+        assert_eq!(read_y_at(&b, 16, 16), 0xAB);
+    }
+
+    #[test]
+    fn extend_borders_convolve8_halo_round_trip() {
+        // End-to-end check: after extend_borders, a convolve8_horiz
+        // whose 8-tap halo reads 3 pixels into the left border must
+        // produce the same output as the same convolve on a manually
+        // edge-replicated reference. Uses the C.1 scalar 8-tap kernel.
+        use crate::inter::filter::{convolve8_horiz, EIGHTTAP_KERNEL};
+
+        let w = 16usize;
+        let h = 8usize;
+        let mut b = Yv12Buffer::alloc(
+            w as u32,
+            h as u32,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .expect("alloc");
+        // Fill the visible region with a row-distinctive pattern.
+        for r in 0..h {
+            for c in 0..w {
+                b.y_plane_mut().row_mut(r)[c] = ((r * 11 + c * 3 + 17) & 0xff) as u8;
+            }
+        }
+        b.extend_borders();
+
+        // Reference: a flat (stride = w + 8, height = h) buffer
+        // where each row is manually edge-extended by 3 left + 5
+        // right. The 8-tap horizontal convolve reads `src[col + k]`
+        // for `k ∈ 0..8` with caller-shifted src, so to produce
+        // outputs at cols 0..w it needs taps up to col `w + 4`.
+        let ref_stride = w + 8;
+        let mut reference = vec![0u8; ref_stride * h];
+        for r in 0..h {
+            let edge_l = ((r * 11) + 17) as u8;
+            for c in 0..3 {
+                reference[r * ref_stride + c] = edge_l;
+            }
+            for c in 0..w {
+                reference[r * ref_stride + 3 + c] = ((r * 11 + c * 3 + 17) & 0xff) as u8;
+            }
+            let edge_r = ((r * 11 + (w - 1) * 3 + 17) & 0xff) as u8;
+            for c in 0..(ref_stride - 3 - w) {
+                reference[r * ref_stride + 3 + w + c] = edge_r;
+            }
+        }
+
+        // Compute convolve outputs from both buffers and compare.
+        let phase = &EIGHTTAP_KERNEL[8]; // half-pel
+        let stride = b.y_stride() as usize;
+
+        let mut dst_a = vec![0u8; w * h];
+        // Point src at (row 0, col -3) so the kernel's k=0 tap
+        // reads the leftmost border byte.
+        let src_a = &b.buffer_alloc[b.y_offset - 3..];
+        convolve8_horiz(src_a, stride, &mut dst_a, w, phase, w, h);
+
+        let mut dst_b = vec![0u8; w * h];
+        convolve8_horiz(&reference, ref_stride, &mut dst_b, w, phase, w, h);
+        assert_eq!(dst_a, dst_b);
     }
 
     #[test]
