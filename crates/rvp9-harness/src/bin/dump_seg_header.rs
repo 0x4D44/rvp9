@@ -25,17 +25,20 @@ fn main() {
             if let Some(tail) = frame.header.tail.as_ref() {
                 let s = &tail.segmentation;
                 println!(
-                    "frame {frame_idx}: show={} kind={:?} en={} upd_map={} t_upd={} upd_data={} abs={} feat[0,Q]={:?} feat[1,Q]={:?} feat[2,Q]={:?} tree_probs={:?} pred_probs={:?}",
+                    "frame {frame_idx}: show={} kind={:?} refresh_fc={} frame_par={} fc_idx={} en={} upd_map={} t_upd={} upd_data={} abs={} feat[0]={:?} feat[1]={:?} feat[2]={:?} tree_probs={:?} pred_probs={:?}",
                     frame.header.show_frame,
                     frame.header.kind,
+                    tail.refresh_frame_context,
+                    tail.frame_parallel_decoding_mode,
+                    tail.frame_context_idx,
                     s.enabled,
                     s.update_map,
                     s.temporal_update,
                     s.update_data,
                     s.abs_delta,
-                    s.feature_data[0][0],
-                    s.feature_data[1][0],
-                    s.feature_data[2][0],
+                    s.feature_data[0],
+                    s.feature_data[1],
+                    s.feature_data[2],
                     s.tree_probs,
                     s.pred_probs,
                 );
