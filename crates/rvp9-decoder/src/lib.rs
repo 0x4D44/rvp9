@@ -38,6 +38,7 @@
 
 pub mod detokenize;
 pub mod reconstruct;
+pub mod reconstruct_inter;
 pub mod tile;
 pub mod tile_ctx;
 

@@ -422,6 +422,64 @@ impl Yv12Buffer {
         }
     }
 
+    /// Read-only "with-border" view of plane `0`/`1`/`2` (Y/U/V). The
+    /// returned [`BorderedPlaneRef`] exposes a slice starting at the
+    /// border's top-left (i.e. `border` pixels above and left of the
+    /// visible top-left) plus the per-plane border width and the
+    /// visible / aligned dimensions. Motion-compensation kernels use
+    /// this to index reference-frame pixels at MV-induced positions
+    /// that fall outside the visible region — [`Self::extend_borders`]
+    /// must have been called on this buffer first.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `plane > 2`.
+    #[inline]
+    #[must_use]
+    pub fn plane_with_border(&self, plane: usize) -> BorderedPlaneRef<'_> {
+        let ss_x = u32::from(self.chroma.subsampling_x());
+        let ss_y = u32::from(self.chroma.subsampling_y());
+        let (offset, stride, w, h, border_w, border_h) = match plane {
+            0 => (
+                self.y_offset,
+                self.y_stride as usize,
+                self.y_width as usize,
+                self.y_height as usize,
+                self.border as usize,
+                self.border as usize,
+            ),
+            1 => (
+                self.u_offset,
+                self.uv_stride as usize,
+                self.uv_width as usize,
+                self.uv_height as usize,
+                (self.border >> ss_x) as usize,
+                (self.border >> ss_y) as usize,
+            ),
+            2 => (
+                self.v_offset,
+                self.uv_stride as usize,
+                self.uv_width as usize,
+                self.uv_height as usize,
+                (self.border >> ss_x) as usize,
+                (self.border >> ss_y) as usize,
+            ),
+            _ => panic!("plane index {plane} out of range (0..=2)"),
+        };
+        // Slice base is `border_h` rows above and `border_w` columns
+        // left of the visible top-left (= origin of the bordered
+        // region in `buffer_alloc`).
+        let base = offset - border_h * stride - border_w;
+        BorderedPlaneRef {
+            data: &self.buffer_alloc[base..],
+            stride,
+            border_w,
+            border_h,
+            width: w,
+            height: h,
+        }
+    }
+
     /// Mutable view of the Y plane.
     #[inline]
     pub fn y_plane_mut(&mut self) -> PlaneMut<'_> {
@@ -615,6 +673,38 @@ fn extend_plane(
         let dst = bot_dst_first + k * stride;
         alloc.copy_within(bot_src..bot_src + linesize, dst);
     }
+}
+
+/// Read-only "with-border" plane view. The `data` slice starts at the
+/// border's top-left corner (= `border_w` columns left and `border_h`
+/// rows above the visible top-left). Motion-compensation kernels use
+/// this to read reference-frame pixels at MV-induced positions that
+/// fall outside the visible region.
+///
+/// To address visible pixel `(x, y)` (0-indexed inside the visible
+/// area), use `data[(border_h + y) * stride + (border_w + x)]`. For
+/// out-of-visible reads (e.g. when an MV pushes the kernel footprint
+/// into the border), `x` and `y` may go negative as long as
+/// `border_w + x >= 0` and `border_h + y >= 0` —
+/// [`Yv12Buffer::extend_borders`] populates those cells with the
+/// replicated edge values.
+#[derive(Copy, Clone)]
+pub struct BorderedPlaneRef<'a> {
+    /// Underlying slice starting at the bordered region's top-left.
+    pub data: &'a [u8],
+    /// Bytes per row.
+    pub stride: usize,
+    /// Border width in pixels (= `border` for Y, `border >> ss_x` for
+    /// chroma).
+    pub border_w: usize,
+    /// Border height in pixels (= `border` for Y, `border >> ss_y` for
+    /// chroma).
+    pub border_h: usize,
+    /// Aligned plane width in pixels (= [`Yv12Buffer::aligned_y_width`]
+    /// for Y, `>> ss_x` for chroma).
+    pub width: usize,
+    /// Aligned plane height in pixels.
+    pub height: usize,
 }
 
 /// Read-only plane view: a slice into the backing buffer plus stride
