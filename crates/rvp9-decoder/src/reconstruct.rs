@@ -37,7 +37,7 @@
 //!   `vp9_reconintra.c:263-403` is **not** in scope here; it lives in
 //!   the K driver / intra-pred wrapper landing later.
 
-use rvp9_core::entropy::detokenize::DecodeCoefCounts;
+use rvp9_core::entropy::adapt::CoefCountsBank;
 use rvp9_core::entropy::{BoolReader, FrameContext};
 use rvp9_core::intra_pred::{DcAvailability, IntraMode, PredCtx, intra_predict};
 use rvp9_core::transforms::inverse::{
@@ -88,9 +88,10 @@ pub fn resolve_tx_type(plane: usize, lossless: bool, intra_mode: IntraMode) -> T
 /// - `reader`: bool-coder positioned at the first token bit of this
 ///   block; advanced by however many bits the decode consumes.
 /// - `fc`: per-frame probability bank.
-/// - `counts`: optional per-block count buckets for backward
-///   adaptation; the K driver passes `None` until Task 1f wires
-///   adaptation.
+/// - `coef_counts`: optional [`CoefCountsBank`] for backward-adaptation
+///   accumulation. Stage 3 Task E.1.b wires this through the keyframe
+///   and intra-in-inter decode loops; pass `None` to disable count
+///   accumulation (e.g. in unit tests).
 /// - `coef_ctx`: per-tile (above/left) coef-context state.
 /// - `plane`: `0` / `1` / `2` for Y / U / V.
 /// - `x4`, `y4_in_sb`: top-left 4×4 column / row of the TX block
@@ -133,7 +134,7 @@ pub fn resolve_tx_type(plane: usize, lossless: bool, intra_mode: IntraMode) -> T
 pub fn reconstruct_intra_block(
     reader: &mut BoolReader<'_>,
     fc: &FrameContext,
-    counts: Option<&mut DecodeCoefCounts<'_>>,
+    coef_counts: Option<&mut CoefCountsBank>,
     coef_ctx: &mut TileCoefCtx,
     plane: usize,
     x4: usize,
@@ -171,7 +172,7 @@ pub fn reconstruct_intra_block(
     let eob = decode_block_tokens(
         reader,
         fc,
-        counts,
+        coef_counts,
         coef_ctx,
         plane,
         x4,

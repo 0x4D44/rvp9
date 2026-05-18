@@ -30,6 +30,7 @@
 //! prediction, inverse transform, or pixel reconstruction; those land
 //! later (Wave 3 H = `reconstruct_intra_block` and onwards).
 
+use rvp9_core::entropy::adapt::CoefCountsBank;
 use rvp9_core::entropy::detokenize::{CoefBandCtxProbs, DecodeCoefCounts, decode_coefs};
 use rvp9_core::entropy::{BoolReader, FrameContext};
 use rvp9_core::transforms::scans::{ScanOrder, scan_for};
@@ -81,9 +82,11 @@ fn fold_any_nonzero(coef_ctx: &TileCoefCtx, plane: usize, start: usize, n: usize
 /// - `fc`: the active per-frame probability bank — we slice
 ///   `fc.coef_probs[tx_size][plane_type][ref_type]` to get the
 ///   per-`(tx, plane_type, ref)` table [`decode_coefs`] expects.
-/// - `counts`: optional per-block count buckets for backward
-///   adaptation. Wave 3 K passes `None` for now (Task 1f wires
-///   adaptation later).
+/// - `coef_counts`: optional per-frame [`CoefCountsBank`] for backward
+///   adaptation accumulation. The wrapper slices the bank by
+///   `(tx_size, plane_type, ref_type)` to feed [`decode_coefs`] — the
+///   caller doesn't need to build a [`DecodeCoefCounts`] view itself.
+///   Pass `None` to disable count accumulation (e.g. in unit tests).
 /// - `coef_ctx`: per-tile coefficient-context state — read for the
 ///   initial `pt`, written for the post-decode `(eob > 0)` flag.
 /// - `plane`: `0` / `1` / `2` for Y / U / V.
@@ -122,7 +125,7 @@ fn fold_any_nonzero(coef_ctx: &TileCoefCtx, plane: usize, start: usize, n: usize
 pub fn decode_block_tokens(
     reader: &mut BoolReader<'_>,
     fc: &FrameContext,
-    counts: Option<&mut DecodeCoefCounts<'_>>,
+    coef_counts: Option<&mut CoefCountsBank>,
     coef_ctx: &mut TileCoefCtx,
     plane: usize,
     x4: usize,
@@ -139,6 +142,18 @@ pub fn decode_block_tokens(
     // (`vp9_detokenize.c:159-161`).
     let coef_probs: &CoefBandCtxProbs =
         &fc.coef_probs[tx_size as usize][plane_type][ref_type];
+
+    // Slice the per-(tx_size, plane_type, ref_type) count buckets out
+    // of the bank, matching libvpx's `cm->counts.coef[tx][type][ref]`
+    // + `cm->counts.eob_branch[tx][type][ref]` indexing at
+    // `vp9_detokenize.c:155-157`. Holding the slice in a stack-local
+    // `DecodeCoefCounts` lets us pass an `Option<&mut DecodeCoefCounts>`
+    // into `decode_coefs` without forcing every caller to manage a
+    // separate slice handle.
+    let mut counts_slice = coef_counts.map(|bank| DecodeCoefCounts {
+        coef_counts: &mut bank.coef[tx_size as usize][plane_type][ref_type],
+        eob_branch_counts: &mut bank.eob_branch[tx_size as usize][plane_type][ref_type],
+    });
 
     // libvpx `vp9_scan_orders[tx_size][tx_type]`
     // (`vp9_decodeframe.c:326-328`).
@@ -200,7 +215,7 @@ pub fn decode_block_tokens(
     let eob = decode_coefs(
         reader,
         coef_probs,
-        counts,
+        counts_slice.as_mut(),
         &scan,
         initial_pt,
         tx_size,
