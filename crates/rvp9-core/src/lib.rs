@@ -26,6 +26,7 @@ pub mod block;
 pub mod dsp;
 pub mod entropy;
 pub mod frame;
+pub mod inter;
 pub mod intra_pred;
 pub mod loopfilter;
 pub mod mode_info;

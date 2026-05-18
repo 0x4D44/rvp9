@@ -103,6 +103,46 @@ pub const DEFAULT_NMV_CONTEXT: NmvContext = NmvContext {
     ],
 };
 
+/// Per-axis MV-component count bank for backward adaptation.
+/// Mirrors libvpx `nmv_component_counts` (`vp9_entropymv.h:114-123`).
+///
+/// Each field counts how often a particular boolean choice was decoded
+/// (or encoded). The decoder's per-block MV-read path increments these
+/// when `counts.is_some()`; at frame end the merged probs feed
+/// `vp9_adapt_mv_probs`.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct NmvComponentCounts {
+    /// Sign bit observations (`[#neg, #pos]` mapping to libvpx's
+    /// `sign[2]`, where index `0` is "positive / not negated" and
+    /// index `1` is "negative", matching `s = v < 0`).
+    pub sign: [u32; 2],
+    /// Magnitude-class hits, one slot per `MV_CLASS_*`.
+    pub classes: [u32; MV_CLASSES],
+    /// Class-0 integer-bit hits.
+    pub class0: [u32; CLASS0_SIZE],
+    /// Per-bit binary observations for the non-class-0 magnitude tail.
+    /// `bits[i][0]` is "saw a 0 at offset bit i"; `bits[i][1]` is "saw a 1".
+    pub bits: [[u32; 2]; MV_OFFSET_BITS],
+    /// Class-0 fractional-pel observations, one row per `class0` value.
+    pub class0_fp: [[u32; MV_FP_SIZE]; CLASS0_SIZE],
+    /// Non-class-0 fractional-pel observations.
+    pub fp: [u32; MV_FP_SIZE],
+    /// Class-0 high-precision bit observations (`[#0, #1]`).
+    pub class0_hp: [u32; 2],
+    /// Non-class-0 high-precision bit observations (`[#0, #1]`).
+    pub hp: [u32; 2],
+}
+
+/// Full MV count bank: joint counts + per-axis component counts.
+/// Mirrors libvpx `nmv_context_counts` (`vp9_entropymv.h:125-128`).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct NmvCounts {
+    /// Joint-tree leaf counts (`MV_JOINT_*`).
+    pub joints: [u32; MV_JOINTS],
+    /// Per-axis component counts: `[vertical, horizontal]`.
+    pub comps: [NmvComponentCounts; 2],
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -61,7 +61,7 @@ pub use frame_context::{FRAME_CONTEXTS, FRAME_CONTEXTS_LOG2, FrameContext, TX_SI
 pub use kf_probs::{VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB};
 pub use mv_probs::{
     CLASS0_BITS, CLASS0_SIZE, DEFAULT_NMV_CONTEXT, MV_CLASSES, MV_FP_SIZE, MV_JOINTS,
-    MV_OFFSET_BITS, NmvComponent, NmvContext,
+    MV_OFFSET_BITS, NmvComponent, NmvComponentCounts, NmvContext, NmvCounts,
 };
 pub use pareto::{COEFF_PROB_MODELS, MODEL_NODES, VP9_PARETO8_FULL};
 pub use tables::VPX_NORM;
