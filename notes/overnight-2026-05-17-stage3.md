@@ -245,7 +245,7 @@ Arthur triages all `WEDGED` and `WEDGED-BLOCKED` entries on wake.
 
 ---
 
-## D.15 returned — sub-8 luma skip-context shrinks n4 to 1 instead of 2 (FIXED, +9 keyframes)
+## D.15 returned — sub-8 luma skip-context shrinks n4 to 1 instead of 2 (FIXED, +9 keyframes; commit `2598b25`)
 
 - **Target:** `vp90-2-00-quantizer-63.webm` frame 1 (the D.14 wedge),
   plus the cascade across all 352×288/352×240 keyframes that share the
