@@ -629,30 +629,10 @@ fn decode_block(
     decode_ctx.write_block(mi_row_in_tile, mi_row_in_sb, mi_col_in_tile, x_mis, y_mis, &mi);
 
     // --- Reconstruction ----------------------------------------------
-
-    if mi.skip {
-        // libvpx `dec_reset_skip_context` — zero the per-plane above/
-        // left coef-context cells covering the block. Equivalent to
-        // splatting `(eob > 0) == 0` across the coding-block region.
-        reset_skip_context(coef_ctx, &mi, mi_row_in_tile, mi_col_in_tile);
-    }
-
-    // Whether per-block coding-block-level neighbours exist. Mirrors
-    // libvpx `xd->above_mi != NULL` / `xd->left_mi != NULL` — for
-    // keyframes these come from the parent coding block's neighbour
-    // grid via the row+col reduction we keep in TileDecodeCtx.
     //
-    // NB: read AFTER `write_block` only for tile-edge / above-edge
-    // semantics — the values stored above by `write_block` cover the
-    // current block's outgoing slot, not its incoming neighbour. So
-    // for the incoming neighbour we re-read from `decode_ctx` BUT
-    // remember `decode_ctx.above` is the pre-write state for cells
-    // outside the just-written span. For a block at `mi_col_in_tile`
-    // the row above us comes from `mi_col_in_tile - 1` etc; libvpx
-    // checks `xd->above_mi == NULL` based on frame-top semantics, not
-    // current-block self-reference.
-    //
-    // We snapshot the inbound flags here, before the per-plane loop.
+    // Snapshot inbound neighbour flags BEFORE write_block: libvpx checks
+    // `xd->above_mi != NULL` / `xd->left_mi != NULL` based on
+    // frame/tile-edge semantics, not the just-written self-cell.
     let have_above_block = above.is_some();
     let have_left_block = left.is_some();
 
@@ -660,161 +640,27 @@ fn decode_block(
     let dequant_u = plane_dequant(params, 1, segment_id);
     let dequant_v = plane_dequant(params, 2, segment_id);
 
-    let mut edges = EdgeBuffers::new();
-    for plane in 0..3 {
-        let ss_x = SUBSAMPLING_X[plane];
-        let ss_y = SUBSAMPLING_Y[plane];
-
-        // libvpx `get_uv_tx_size` (`vp9_blockd.h:265-267`):
-        // chroma tx_size = min(mi->tx_size, max_txsize_lookup[plane_bsize]).
-        let plane_tx = if plane == 0 {
-            tx_size
-        } else {
-            uv_plane_tx_size(bsize, tx_size)
-        };
-        let plane_bsize = if plane == 0 {
-            bsize
-        } else {
-            uv_plane_block_size(bsize)
-        };
-        // libvpx pd->n4_w / n4_h (vp9_decodeframe.c:796-797): for the
-        // sub-8 coding-block path, `decode_partition` calls
-        // `decode_block(..., subsize, 1, 1)` (vp9_decodeframe.c:1192),
-        // so `bw = bh = 1` mi-unit and `n4_w = n4_h = (1 << 1) >> ss = 2 >> ss`
-        // regardless of the actual sub-8 subsize (Block4x4 / Block4x8 /
-        // Block8x4). The four 4×4 sub-positions are all iterated, with
-        // per-bmi modes selected inside the loop. For block_size ≥ 8×8
-        // the iteration extent follows `plane_bsize.n_4x4_*()` as usual.
-        let (plane_bw_4x4, plane_bh_4x4) = if bsize < BlockSize::Block8x8 {
-            (2 >> ss_x, 2 >> ss_y)
-        } else {
-            (
-                plane_bsize.n_4x4_wide() as usize,
-                plane_bsize.n_4x4_high() as usize,
-            )
-        };
-        let tx_step_4x4 = 1usize << (plane_tx as usize);
-
-        // Pixel coords of the block's top-left in plane-sample space.
-        let plane_px_x = (mi_col * 8) >> ss_x;
-        let plane_px_y = (mi_row * 8) >> ss_y;
-
-        // Plane-local block coordinates (4×4-cell base for the
-        // coef-context arrays — which are indexed in 4×4 sub-block
-        // units, plane-relative).
-        let plane_x4_base = (mi_col_in_tile * 2) >> ss_x;
-        let plane_y4_in_sb_base = ((mi_row_in_sb) * 2) >> ss_y;
-
-        // Extract plane-mutable view + dimensions for this plane.
-        // The temporary `PlaneMut` is dropped before we exit the
-        // block, but `data_mut()` re-borrows into a slice that lives
-        // for the rest of the per-plane loop. We bind the
-        // intermediate to keep its lifetime explicit.
-        let mut plane_view = match plane {
-            0 => dst_frame.y_plane_mut(),
-            1 => dst_frame.u_plane_mut(),
-            _ => dst_frame.v_plane_mut(),
-        };
-        let plane_stride = plane_view.stride();
-        let plane_width_px = plane_view.width();
-        let plane_height_px = plane_view.height();
-        let plane_data: &mut [u8] = plane_view.data_mut();
-
-        let plane_dequant_pair = match plane {
-            0 => dequant_y,
-            1 => dequant_u,
-            _ => dequant_v,
-        };
-        let plane_intra_mode = if plane == 0 { y_mode } else { uv_mode };
-
-        // Iterate TX positions inside the plane's coding block.
-        let mut loff = 0usize;
-        while loff < plane_bh_4x4 {
-            let mut aoff = 0usize;
-            while aoff < plane_bw_4x4 {
-                // Pixel coordinates of this TX block.
-                let tx_px_x = plane_px_x + aoff * 4;
-                let tx_px_y = plane_px_y + loff * 4;
-
-                // Skip TX blocks whose top-left is outside the plane
-                // (block straddles the right/bottom frame edge).
-                if tx_px_x >= plane_width_px || tx_px_y >= plane_height_px {
-                    aoff += tx_step_4x4;
-                    continue;
-                }
-
-                let bw_in_4x4 = plane_bw_4x4; // parent block width in 4×4
-                let have_top = loff > 0 || have_above_block;
-                let have_left = aoff > 0 || have_left_block;
-                let have_right = (aoff + tx_step_4x4) < bw_in_4x4;
-
-                // Resolve per-sub-block Y intra mode for sub-8 (bmi).
-                let mode_for_this_tx = if plane == 0 && bsize < BlockSize::Block8x8 {
-                    let bi = (loff << 1) | aoff; // libvpx (row << 1) + col
-                    IntraMode::from_u8(bmi[bi].as_mode).unwrap_or(plane_intra_mode)
-                } else {
-                    plane_intra_mode
-                };
-
-                // Build edges from already-reconstructed pixels.
-                // `plane_data` is borrowed immutably here.
-                build_intra_predictors(
-                    plane_data,
-                    plane_stride,
-                    tx_px_x,
-                    tx_px_y,
-                    plane_width_px,
-                    plane_height_px,
-                    plane_tx,
-                    mode_for_this_tx,
-                    have_top,
-                    have_left,
-                    have_right,
-                    &mut edges,
-                );
-
-                // Reconstruct (predict + decode tokens + IT-add).
-                let pred_ctx = edges.pred_ctx(plane_tx.side());
-                let dst_offset = tx_px_y * plane_stride + tx_px_x;
-                let dst_slice = &mut plane_data[dst_offset..];
-
-                if mi.skip {
-                    // libvpx: no token decode; predicted samples are
-                    // the final reconstruction. We still need to
-                    // write the prediction into `dst`.
-                    rvp9_core::intra_pred::intra_predict(
-                        mode_for_this_tx,
-                        dst_slice,
-                        plane_stride,
-                        plane_tx.side(),
-                        pred_ctx,
-                    );
-                } else {
-                    let seg_eob = plane_tx.n_coeffs();
-                    let _eob = reconstruct_intra_block(
-                        reader,
-                        fc,
-                        /* counts = */ None,
-                        coef_ctx,
-                        plane,
-                        plane_x4_base + aoff,
-                        plane_y4_in_sb_base + loff,
-                        plane_tx,
-                        mode_for_this_tx,
-                        pred_ctx,
-                        dst_slice,
-                        plane_stride,
-                        seg_eob,
-                        plane_dequant_pair,
-                        params.lossless && plane_tx == TxSize::Tx4x4,
-                    );
-                }
-
-                aoff += tx_step_4x4;
-            }
-            loff += tx_step_4x4;
-        }
-    }
+    reconstruct_intra_planes(
+        reader,
+        fc,
+        coef_ctx,
+        dst_frame,
+        &mi,
+        y_mode,
+        uv_mode,
+        &bmi,
+        mi_row,
+        mi_col,
+        mi_row_in_tile,
+        mi_col_in_tile,
+        mi_row_in_sb,
+        have_above_block,
+        have_left_block,
+        dequant_y,
+        dequant_u,
+        dequant_v,
+        params.lossless,
+    );
 }
 
 /// libvpx `dec_reset_skip_context` (`vp9_decodeframe.c:783-790`):
@@ -873,6 +719,190 @@ fn uv_plane_tx_size(bsize: BlockSize, luma_tx: TxSize) -> TxSize {
         luma_tx
     } else {
         cap
+    }
+}
+
+/// Per-plane intra reconstruction loop, shared between keyframe
+/// [`decode_block`] (true intra frame) and the intra-in-inter arm of
+/// [`decode_inter_block`] (D.4).
+///
+/// Mirrors the inner per-plane / per-TX iteration of libvpx's
+/// `predict_and_reconstruct_intra_block` plus the surrounding
+/// `dec_reset_skip_context` (`vp9_decodeframe.c:235-294, 783-790`).
+/// The mode-info reader before this point differs between keyframe
+/// (uses `vp9_kf_y_mode_prob[above][left]`) and inter-frame intra
+/// (uses `fc.y_mode_prob[size_group]`), so the caller pre-resolves
+/// `(y_mode, uv_mode, bmi, tx_size, skip)` and passes them in.
+///
+/// Inputs:
+/// - `(have_above_block, have_left_block)` snapshot the inbound
+///   neighbour-exists flags BEFORE the caller's `write_block` call,
+///   matching libvpx's `xd->above_mi != NULL` / `xd->left_mi != NULL`.
+/// - `(dequant_y, dequant_u, dequant_v)` are the per-plane
+///   `(dc, ac)` dequant pairs from `plane_dequant` (already includes
+///   segmentation-aware qindex resolution).
+/// - `frame_lossless` propagates the frame-level `lossless` flag —
+///   `reconstruct_intra_block` will be called with
+///   `frame_lossless && plane_tx == TxSize::Tx4x4` to match libvpx's
+///   `inverse_transform_block_intra:280` WHT-vs-IDCT switch.
+#[allow(clippy::too_many_arguments)] // mirrors the inlined libvpx loop
+fn reconstruct_intra_planes(
+    reader: &mut BoolReader<'_>,
+    fc: &FrameContext,
+    coef_ctx: &mut TileCoefCtx,
+    dst_frame: &mut Yv12Buffer,
+    mi: &ModeInfo,
+    y_mode: IntraMode,
+    uv_mode: IntraMode,
+    bmi: &[BmiInfo; 4],
+    mi_row: usize,
+    mi_col: usize,
+    mi_row_in_tile: usize,
+    mi_col_in_tile: usize,
+    mi_row_in_sb: usize,
+    have_above_block: bool,
+    have_left_block: bool,
+    dequant_y: (i32, i32),
+    dequant_u: (i32, i32),
+    dequant_v: (i32, i32),
+    frame_lossless: bool,
+) {
+    let bsize = mi.block_size;
+    let tx_size = mi.tx_size;
+
+    if mi.skip {
+        // libvpx `dec_reset_skip_context` — zero the per-plane above/
+        // left coef-context cells covering the block.
+        reset_skip_context(coef_ctx, mi, mi_row_in_tile, mi_col_in_tile);
+    }
+
+    let mut edges = EdgeBuffers::new();
+    for plane in 0..3 {
+        let ss_x = SUBSAMPLING_X[plane];
+        let ss_y = SUBSAMPLING_Y[plane];
+
+        // libvpx `get_uv_tx_size` — chroma TX size = min(luma_tx, max_txsize(plane_bsize)).
+        let plane_tx = if plane == 0 {
+            tx_size
+        } else {
+            uv_plane_tx_size(bsize, tx_size)
+        };
+        let plane_bsize = if plane == 0 {
+            bsize
+        } else {
+            uv_plane_block_size(bsize)
+        };
+        // libvpx pd->n4_w / n4_h: sub-8 coding-block path uses (2 >> ss)
+        // regardless of subsize; ≥ 8×8 uses the plane_bsize 4×4 extent.
+        let (plane_bw_4x4, plane_bh_4x4) = if bsize < BlockSize::Block8x8 {
+            (2 >> ss_x, 2 >> ss_y)
+        } else {
+            (
+                plane_bsize.n_4x4_wide() as usize,
+                plane_bsize.n_4x4_high() as usize,
+            )
+        };
+        let tx_step_4x4 = 1usize << (plane_tx as usize);
+
+        let plane_px_x = (mi_col * 8) >> ss_x;
+        let plane_px_y = (mi_row * 8) >> ss_y;
+
+        let plane_x4_base = (mi_col_in_tile * 2) >> ss_x;
+        let plane_y4_in_sb_base = (mi_row_in_sb * 2) >> ss_y;
+
+        let mut plane_view = match plane {
+            0 => dst_frame.y_plane_mut(),
+            1 => dst_frame.u_plane_mut(),
+            _ => dst_frame.v_plane_mut(),
+        };
+        let plane_stride = plane_view.stride();
+        let plane_width_px = plane_view.width();
+        let plane_height_px = plane_view.height();
+        let plane_data: &mut [u8] = plane_view.data_mut();
+
+        let plane_dequant_pair = match plane {
+            0 => dequant_y,
+            1 => dequant_u,
+            _ => dequant_v,
+        };
+        let plane_intra_mode = if plane == 0 { y_mode } else { uv_mode };
+
+        let mut loff = 0usize;
+        while loff < plane_bh_4x4 {
+            let mut aoff = 0usize;
+            while aoff < plane_bw_4x4 {
+                let tx_px_x = plane_px_x + aoff * 4;
+                let tx_px_y = plane_px_y + loff * 4;
+
+                if tx_px_x >= plane_width_px || tx_px_y >= plane_height_px {
+                    aoff += tx_step_4x4;
+                    continue;
+                }
+
+                let bw_in_4x4 = plane_bw_4x4;
+                let have_top = loff > 0 || have_above_block;
+                let have_left = aoff > 0 || have_left_block;
+                let have_right = (aoff + tx_step_4x4) < bw_in_4x4;
+
+                let mode_for_this_tx = if plane == 0 && bsize < BlockSize::Block8x8 {
+                    let bi = (loff << 1) | aoff;
+                    IntraMode::from_u8(bmi[bi].as_mode).unwrap_or(plane_intra_mode)
+                } else {
+                    plane_intra_mode
+                };
+
+                build_intra_predictors(
+                    plane_data,
+                    plane_stride,
+                    tx_px_x,
+                    tx_px_y,
+                    plane_width_px,
+                    plane_height_px,
+                    plane_tx,
+                    mode_for_this_tx,
+                    have_top,
+                    have_left,
+                    have_right,
+                    &mut edges,
+                );
+
+                let pred_ctx = edges.pred_ctx(plane_tx.side());
+                let dst_offset = tx_px_y * plane_stride + tx_px_x;
+                let dst_slice = &mut plane_data[dst_offset..];
+
+                if mi.skip {
+                    rvp9_core::intra_pred::intra_predict(
+                        mode_for_this_tx,
+                        dst_slice,
+                        plane_stride,
+                        plane_tx.side(),
+                        pred_ctx,
+                    );
+                } else {
+                    let seg_eob = plane_tx.n_coeffs();
+                    let _eob = reconstruct_intra_block(
+                        reader,
+                        fc,
+                        /* counts = */ None,
+                        coef_ctx,
+                        plane,
+                        plane_x4_base + aoff,
+                        plane_y4_in_sb_base + loff,
+                        plane_tx,
+                        mode_for_this_tx,
+                        pred_ctx,
+                        dst_slice,
+                        plane_stride,
+                        seg_eob,
+                        plane_dequant_pair,
+                        frame_lossless && plane_tx == TxSize::Tx4x4,
+                    );
+                }
+
+                aoff += tx_step_4x4;
+            }
+            loff += tx_step_4x4;
+        }
     }
 }
 
@@ -1486,20 +1516,14 @@ fn decode_inter_block(
 
         decode_ctx.write_block(mi_row_in_tile, mi_row_in_sb, mi_col_in_tile, x_mis, y_mis, &mi);
     } else {
-        // Intra-in-inter-frame path. Not yet wired — D.3.a scaffold
-        // only ports the inter arm. Mirror the keyframe path's
-        // ModeInfo population but with non-keyframe Y-mode probs
-        // (fc.y_mode_prob — different table from VP9_KF_Y_MODE_PROB).
-        // For now we read the mode bits to keep the bool-coder in sync
-        // but skip pixel reconstruction; the resulting frame will
-        // contain zeros for intra-in-inter blocks. This is sufficient
-        // for the conformance ratchet (those frames will mismatch
-        // until D.4 lands a real intra-in-inter path).
-        //
-        // libvpx `read_intra_block_mode_info` (`vp9_decodemv.c:354-403`):
-        // reads ref_frame[0] = INTRA (already implied), then y_mode
-        // (per-bmi for sub-8), then uv_mode.
-        read_intra_in_inter_mode_info(reader, fc, bsize);
+        // Intra-in-inter-frame path (D.4). libvpx
+        // `read_intra_block_mode_info` (`vp9_decodemv.c:354-387`) reads
+        // y_mode (per-`bmi` for sub-8) then uv_mode, using
+        // `fc.y_mode_prob` (4-row size-group table) NOT the keyframe
+        // `vp9_kf_y_mode_prob[above][left]` 2-D conditional. Pixel
+        // recon uses the same per-plane TX loop as keyframe intra,
+        // factored into `reconstruct_intra_planes`.
+        let (y_mode, uv_mode, bmi) = read_intra_in_inter_mode_info(reader, fc, bsize);
 
         let mi = ModeInfo {
             block_size: bsize,
@@ -1507,19 +1531,38 @@ fn decode_inter_block(
             skip,
             segment_id,
             seg_id_predicted: false,
-            mode: BlockMode::Intra {
-                y_mode: IntraMode::Dc,
-                uv_mode: IntraMode::Dc,
-            },
-            bmi: [BmiInfo::default(); 4],
+            mode: BlockMode::Intra { y_mode, uv_mode },
+            bmi,
         };
         decode_ctx.write_block(mi_row_in_tile, mi_row_in_sb, mi_col_in_tile, x_mis, y_mis, &mi);
 
-        // No reconstruction — pixels remain at their initial zero
-        // allocation. The conformance harness will surface these as
-        // mismatches until D.4 wires real intra-in-inter pred + recon.
-        let _ = coef_ctx;
-        let _ = dst_frame;
+        let have_above_block = above.is_some();
+        let have_left_block = left.is_some();
+        let dequant_y = plane_dequant(&params.base, 0, segment_id);
+        let dequant_u = plane_dequant(&params.base, 1, segment_id);
+        let dequant_v = plane_dequant(&params.base, 2, segment_id);
+
+        reconstruct_intra_planes(
+            reader,
+            fc,
+            coef_ctx,
+            dst_frame,
+            &mi,
+            y_mode,
+            uv_mode,
+            &bmi,
+            mi_row,
+            mi_col,
+            mi_row_in_tile,
+            mi_col_in_tile,
+            mi_row_in_sb,
+            have_above_block,
+            have_left_block,
+            dequant_y,
+            dequant_u,
+            dequant_v,
+            params.base.lossless,
+        );
     }
 }
 
@@ -1642,18 +1685,23 @@ fn clamp_block_mvs(
 }
 
 /// Read the per-block intra-frame mode info inside an inter frame.
-/// Mirrors libvpx `read_intra_block_mode_info` (`vp9_decodemv.c:354-403`)
-/// for the bitstream-sync side only — we consume the y_mode + uv_mode
-/// bits to keep the bool-coder cursor in step, but do NOT yet plumb
-/// the resolved modes into reconstruction. That comes with D.4.
+/// Mirrors libvpx `read_intra_block_mode_info` (`vp9_decodemv.c:354-387`).
 ///
 /// Probabilities: `fc.y_mode_prob[size_group]` (different table from
 /// the keyframe `VP9_KF_Y_MODE_PROB`), and `fc.uv_mode_prob[y_mode]`.
+/// Sub-8 reads pass `size_group = 0` per libvpx — the BLOCK_4X4 /
+/// BLOCK_4X8 / BLOCK_8X4 arms read 4 / 2 / 2 per-`bmi` modes using
+/// the `fc.y_mode_prob[0]` row.
+///
+/// Returns `(y_mode, uv_mode, bmi)`. For sub-8 sizes the `bmi[0..4]`
+/// array is populated with the per-4×4 mode duplicates exactly as
+/// libvpx does (`mi->bmi[i].as_mode`); for >= 8×8 only the parent
+/// `y_mode` is meaningful and `bmi` is zero-initialised.
 fn read_intra_in_inter_mode_info(
     reader: &mut BoolReader<'_>,
     fc: &FrameContext,
     bsize: BlockSize,
-) {
+) -> (IntraMode, IntraMode, [BmiInfo; 4]) {
     // libvpx `size_group_lookup` (`vp9_common_data.c:14-19`).
     let size_group = match bsize {
         BlockSize::Block4x4 | BlockSize::Block4x8 | BlockSize::Block8x4
@@ -1662,22 +1710,44 @@ fn read_intra_in_inter_mode_info(
         BlockSize::Block16x32 | BlockSize::Block32x16 | BlockSize::Block32x32 => 2,
         BlockSize::Block32x64 | BlockSize::Block64x32 | BlockSize::Block64x64 => 3,
     };
-    let y_mode = if bsize >= BlockSize::Block8x8 {
-        read_intra_mode(reader, &fc.y_mode_prob[size_group])
-    } else {
-        // Sub-8: per-bmi y_mode. libvpx reads 1, 2, or 4 modes.
-        let count = match bsize {
-            BlockSize::Block4x4 => 4,
-            BlockSize::Block4x8 | BlockSize::Block8x4 => 2,
-            _ => 1,
-        };
-        let mut last = IntraMode::Dc;
-        for _ in 0..count {
-            last = read_intra_mode(reader, &fc.y_mode_prob[size_group]);
+
+    let mut bmi = [BmiInfo::default(); 4];
+
+    // libvpx `read_intra_block_mode_info` arms — for sub-8 sizes the
+    // size_group passed to `read_intra_mode_y` is hard-coded to 0,
+    // NOT `size_group_lookup[bsize]`. See `vp9_decodemv.c:363-374`.
+    let y_mode = match bsize {
+        BlockSize::Block4x4 => {
+            for slot in bmi.iter_mut() {
+                let m = read_intra_mode(reader, &fc.y_mode_prob[0]);
+                slot.as_mode = m as u8;
+            }
+            // libvpx: `mi->mode = mi->bmi[3].as_mode`.
+            IntraMode::from_u8(bmi[3].as_mode).expect("legal mode")
         }
-        last
+        BlockSize::Block4x8 => {
+            let m0 = read_intra_mode(reader, &fc.y_mode_prob[0]);
+            bmi[0].as_mode = m0 as u8;
+            bmi[2].as_mode = m0 as u8;
+            let m1 = read_intra_mode(reader, &fc.y_mode_prob[0]);
+            bmi[1].as_mode = m1 as u8;
+            bmi[3].as_mode = m1 as u8;
+            m1
+        }
+        BlockSize::Block8x4 => {
+            let m0 = read_intra_mode(reader, &fc.y_mode_prob[0]);
+            bmi[0].as_mode = m0 as u8;
+            bmi[1].as_mode = m0 as u8;
+            let m2 = read_intra_mode(reader, &fc.y_mode_prob[0]);
+            bmi[2].as_mode = m2 as u8;
+            bmi[3].as_mode = m2 as u8;
+            m2
+        }
+        _ => read_intra_mode(reader, &fc.y_mode_prob[size_group]),
     };
-    let _uv = read_intra_mode(reader, &fc.uv_mode_prob[y_mode as usize]);
+
+    let uv_mode = read_intra_mode(reader, &fc.uv_mode_prob[y_mode as usize]);
+    (y_mode, uv_mode, bmi)
 }
 
 #[cfg(test)]
@@ -1780,5 +1850,207 @@ mod tests {
         assert_eq!(PARTITION_CONTEXT_LOOKUP[BlockSize::Block16x16 as usize], (12, 12));
         assert_eq!(PARTITION_CONTEXT_LOOKUP[BlockSize::Block32x32 as usize], (8, 8));
         assert_eq!(PARTITION_CONTEXT_LOOKUP[BlockSize::Block64x64 as usize], (0, 0));
+    }
+
+    /// D.4 — `read_intra_in_inter_mode_info` for a ≥ 8×8 block uses
+    /// `fc.y_mode_prob[size_group_lookup[bsize]]` (NOT the keyframe
+    /// `VP9_KF_Y_MODE_PROB[above][left]` 2-D conditional). Encode a
+    /// bitstream that drives the inter-intra Y tree to `IntraMode::H`
+    /// against the `default_if_y_probs` size-group-3 row, then verify
+    /// the reader picks the same mode (and that the keyframe-table
+    /// decode would NOT match — the prob tables differ).
+    #[test]
+    fn intra_in_inter_uses_default_if_y_probs_for_64x64() {
+        use rvp9_core::entropy::{BoolWriter, FrameContext};
+        use rvp9_core::mode_info::INTRA_MODE_TREE;
+
+        fn subtree_contains(node: i8, target: IntraMode) -> bool {
+            if node <= 0 {
+                (-node) as u8 == target as u8
+            } else {
+                let i = node as usize;
+                subtree_contains(INTRA_MODE_TREE[i], target)
+                    || subtree_contains(INTRA_MODE_TREE[i + 1], target)
+            }
+        }
+        fn encode_intra_mode(target: IntraMode, probs: &[u8; 9], w: &mut BoolWriter) {
+            let mut i: usize = 0;
+            loop {
+                let prob = probs[i >> 1];
+                let left = INTRA_MODE_TREE[i];
+                let right = INTRA_MODE_TREE[i + 1];
+                let bit = if subtree_contains(left, target) { 0 } else { 1 };
+                w.write(bit, prob);
+                let next = if bit == 0 { left } else { right };
+                if next <= 0 {
+                    break;
+                }
+                i = next as usize;
+            }
+        }
+
+        let fc = FrameContext::new_default();
+        // BLOCK_64X64 → size_group_lookup = 3.
+        let y_probs = fc.y_mode_prob[3];
+
+        let mut buf = vec![0u8; 64];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        encode_intra_mode(IntraMode::H, &y_probs, &mut w);
+        // uv_mode uses fc.uv_mode_prob[y_mode]; encode H here too for
+        // determinism.
+        encode_intra_mode(IntraMode::H, &fc.uv_mode_prob[IntraMode::H as usize], &mut w);
+        for _ in 0..16 {
+            w.write_bit(0);
+        }
+        let n = w.stop_encode().expect("encode");
+        buf.truncate(n);
+
+        let mut r = BoolReader::new(&buf).expect("init");
+        let (y_mode, uv_mode, bmi) =
+            read_intra_in_inter_mode_info(&mut r, &fc, BlockSize::Block64x64);
+        assert_eq!(y_mode, IntraMode::H, "y_mode round-trip via default_if_y_probs");
+        assert_eq!(uv_mode, IntraMode::H);
+        // ≥ 8×8: bmi is zero-init (libvpx never writes per-bmi modes).
+        for slot in &bmi {
+            assert_eq!(slot.as_mode, 0);
+        }
+
+        // Negative: the same bitstream decoded via VP9_KF_Y_MODE_PROB
+        // (e.g. [above=Dc, left=Dc] row used at frame top-left for
+        // keyframes) yields a DIFFERENT mode — confirming this code
+        // path picked the inter-intra table, not the kf table.
+        let kf_probs = VP9_KF_Y_MODE_PROB[IntraMode::Dc as usize][IntraMode::Dc as usize];
+        if kf_probs != y_probs {
+            let mut r2 = BoolReader::new(&buf).expect("init");
+            let alt = read_intra_mode(&mut r2, &kf_probs);
+            assert_ne!(
+                alt,
+                IntraMode::H,
+                "kf_probs decode should diverge from inter-intra path \
+                 (else the test does not distinguish the two tables)",
+            );
+        }
+    }
+
+    /// D.4 — sub-8 BLOCK_4X4 reads four per-`bmi` y_mode entries via
+    /// `fc.y_mode_prob[0]` (libvpx hard-codes `size_group = 0` for the
+    /// per-bmi loop, regardless of bsize). Verify all four 4×4
+    /// sub-modes round-trip and `mi->mode` = `bmi[3].as_mode`.
+    #[test]
+    fn intra_in_inter_block4x4_reads_four_bmi_via_size_group_0() {
+        use rvp9_core::entropy::{BoolWriter, FrameContext};
+        use rvp9_core::mode_info::INTRA_MODE_TREE;
+
+        fn subtree_contains(node: i8, target: IntraMode) -> bool {
+            if node <= 0 {
+                (-node) as u8 == target as u8
+            } else {
+                let i = node as usize;
+                subtree_contains(INTRA_MODE_TREE[i], target)
+                    || subtree_contains(INTRA_MODE_TREE[i + 1], target)
+            }
+        }
+        fn encode_intra_mode(target: IntraMode, probs: &[u8; 9], w: &mut BoolWriter) {
+            let mut i: usize = 0;
+            loop {
+                let prob = probs[i >> 1];
+                let left = INTRA_MODE_TREE[i];
+                let right = INTRA_MODE_TREE[i + 1];
+                let bit = if subtree_contains(left, target) { 0 } else { 1 };
+                w.write(bit, prob);
+                let next = if bit == 0 { left } else { right };
+                if next <= 0 {
+                    break;
+                }
+                i = next as usize;
+            }
+        }
+
+        let fc = FrameContext::new_default();
+        let y_probs = fc.y_mode_prob[0];
+        let modes = [IntraMode::Dc, IntraMode::V, IntraMode::H, IntraMode::Tm];
+
+        let mut buf = vec![0u8; 128];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        for m in &modes {
+            encode_intra_mode(*m, &y_probs, &mut w);
+        }
+        // uv_mode follows mi->mode = bmi[3] = Tm.
+        encode_intra_mode(IntraMode::Dc, &fc.uv_mode_prob[IntraMode::Tm as usize], &mut w);
+        for _ in 0..16 {
+            w.write_bit(0);
+        }
+        let n = w.stop_encode().expect("encode");
+        buf.truncate(n);
+
+        let mut r = BoolReader::new(&buf).expect("init");
+        let (y_mode, uv_mode, bmi) =
+            read_intra_in_inter_mode_info(&mut r, &fc, BlockSize::Block4x4);
+        // libvpx: mi->mode = mi->bmi[3].as_mode.
+        assert_eq!(y_mode, IntraMode::Tm);
+        assert_eq!(uv_mode, IntraMode::Dc);
+        assert_eq!(bmi[0].as_mode, IntraMode::Dc as u8);
+        assert_eq!(bmi[1].as_mode, IntraMode::V as u8);
+        assert_eq!(bmi[2].as_mode, IntraMode::H as u8);
+        assert_eq!(bmi[3].as_mode, IntraMode::Tm as u8);
+    }
+
+    /// D.4 — BLOCK_8X4 reads two per-`bmi` modes (rows 0+1 share
+    /// `bmi[0]`, rows 2+3 share `bmi[2]`), both via
+    /// `fc.y_mode_prob[0]`. libvpx `vp9_decodemv.c:371-375`.
+    #[test]
+    fn intra_in_inter_block8x4_duplicates_bmi_rows() {
+        use rvp9_core::entropy::{BoolWriter, FrameContext};
+        use rvp9_core::mode_info::INTRA_MODE_TREE;
+
+        fn subtree_contains(node: i8, target: IntraMode) -> bool {
+            if node <= 0 {
+                (-node) as u8 == target as u8
+            } else {
+                let i = node as usize;
+                subtree_contains(INTRA_MODE_TREE[i], target)
+                    || subtree_contains(INTRA_MODE_TREE[i + 1], target)
+            }
+        }
+        fn encode_intra_mode(target: IntraMode, probs: &[u8; 9], w: &mut BoolWriter) {
+            let mut i: usize = 0;
+            loop {
+                let prob = probs[i >> 1];
+                let left = INTRA_MODE_TREE[i];
+                let right = INTRA_MODE_TREE[i + 1];
+                let bit = if subtree_contains(left, target) { 0 } else { 1 };
+                w.write(bit, prob);
+                let next = if bit == 0 { left } else { right };
+                if next <= 0 {
+                    break;
+                }
+                i = next as usize;
+            }
+        }
+
+        let fc = FrameContext::new_default();
+        let y_probs = fc.y_mode_prob[0];
+
+        let mut buf = vec![0u8; 64];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        encode_intra_mode(IntraMode::V, &y_probs, &mut w);
+        encode_intra_mode(IntraMode::H, &y_probs, &mut w);
+        encode_intra_mode(IntraMode::Dc, &fc.uv_mode_prob[IntraMode::H as usize], &mut w);
+        for _ in 0..16 {
+            w.write_bit(0);
+        }
+        let n = w.stop_encode().expect("encode");
+        buf.truncate(n);
+
+        let mut r = BoolReader::new(&buf).expect("init");
+        let (y_mode, _uv, bmi) =
+            read_intra_in_inter_mode_info(&mut r, &fc, BlockSize::Block8x4);
+        // libvpx: mi->bmi[0] = bmi[1] = first read; bmi[2] = bmi[3] =
+        // second read; mi->mode = bmi[2] (= second read).
+        assert_eq!(y_mode, IntraMode::H);
+        assert_eq!(bmi[0].as_mode, IntraMode::V as u8);
+        assert_eq!(bmi[1].as_mode, IntraMode::V as u8);
+        assert_eq!(bmi[2].as_mode, IntraMode::H as u8);
+        assert_eq!(bmi[3].as_mode, IntraMode::H as u8);
     }
 }
