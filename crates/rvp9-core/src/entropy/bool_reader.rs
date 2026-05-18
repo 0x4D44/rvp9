@@ -238,6 +238,17 @@ impl<'a> BoolReader<'a> {
         (self.range, self.value, self.count, self.pos)
     }
 
+    /// Diagnostic view of the underlying byte buffer. Used by the Stage 3
+    /// stretch M.8 oracle-export hook to dump the bitstream slice that a
+    /// captured snapshot was taken from, so an independent libvpx oracle
+    /// can be initialised with the same `(range, value, count, pos)` and
+    /// `buffer` pointer.
+    #[inline]
+    #[must_use]
+    pub fn buffer(&self) -> &[u8] {
+        self.buffer
+    }
+
     /// Snapshot the full register state for later restoration. Mirrors a
     /// hand-rolled `memcpy(&saved, &reader, sizeof(reader))` pattern that
     /// libvpx debug builds use to rewind the reader for differential
@@ -289,6 +300,21 @@ impl BoolReaderSnapshot {
     #[must_use]
     pub fn cursor_state(&self) -> (u32, u64, i32, usize) {
         (self.range, self.value, self.count, self.pos)
+    }
+
+    /// Construct a snapshot from raw register values. Used by Stage 3
+    /// stretch M.8's oracle diff harness to re-create a previously
+    /// captured reader pre-state so we can replay `decode_coefs`
+    /// against a libvpx C oracle on the same inputs.
+    #[inline]
+    #[must_use]
+    pub fn from_parts(value: u64, range: u32, count: i32, pos: usize) -> Self {
+        Self {
+            value,
+            range,
+            count,
+            pos,
+        }
     }
 }
 

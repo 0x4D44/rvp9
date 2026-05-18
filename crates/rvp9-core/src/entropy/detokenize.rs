@@ -461,6 +461,41 @@ pub fn decode_coefs(
                 &scan.scan[..6.min(scan.scan.len())],
                 &dq_coefs_out[..seg_eob],
             );
+            // Stage 3 stretch M.8 — bitstream-bytes dump for the C oracle.
+            // Triggered ONLY for the failing block (Tx4x4 + initial_pt=1 +
+            // dq=(177, 231)) — that's the M.6-captured 32x32 frame-1 sub-1
+            // signature. Dumping every call would flood the log; we only
+            // need the one block. Mirrors the snapshot.h format the oracle
+            // ingests.
+            if matches!(tx_size, TxSize::Tx4x4)
+                && initial_pt == 1
+                && dequant == (177, 231)
+            {
+                let buf = reader.buffer();
+                eprintln!(
+                    "RVP9_TRACE_BYTES decode_coefs(tx=Tx4x4, pt=1, dq=(177,231)) \
+                     buffer_len={} pre_pos={r_pos} pre_range={r_range} \
+                     pre_value=0x{r_value:016x} pre_count={r_count}",
+                    buf.len(),
+                );
+                eprint!("RVP9_TRACE_BYTES_HEX ");
+                for &b in buf {
+                    eprint!("{b:02x}");
+                }
+                eprintln!();
+                // Also dump probs flattened for the oracle. The harness
+                // can re-derive these from libvpx defaults, but dumping
+                // them here removes one source of mismatch ambiguity.
+                eprint!("RVP9_TRACE_PROBS coef_probs[Tx4x4][PLY][REF]= ");
+                for band in coef_probs.iter() {
+                    for ctx in band.iter() {
+                        for &p in ctx.iter() {
+                            eprint!("{p:02x}");
+                        }
+                    }
+                }
+                eprintln!();
+            }
         }
         let prod_eob = c;
         let prod_dq: Vec<i32> = dq_coefs_out[..seg_eob].to_vec();

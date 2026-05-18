@@ -1220,40 +1220,54 @@ type TransformPair<const N: usize> = (Transform1D<N>, Transform1D<N>);
 /// then `cols`; we follow.
 #[inline]
 fn iht_4_dispatch(tx_type: TxType) -> TransformPair<4> {
+    // Returns `(row_xform, col_xform)`.
+    //
+    // libvpx's `transform_2d` struct is `{ transform_1d cols, rows; }` —
+    // `cols` is the FIRST field. So `IHT_4[ADST_DCT] = { iadst4_c, idct4_c }`
+    // means `cols=iadst4`, `rows=idct4`, which is `(row=idct4, col=iadst4)`
+    // in our tuple order. Stage 3 stretch M.8 caught this — the original
+    // dispatch mis-interpreted the brace-initializer order as
+    // `{rows, cols}` (the natural reading order in English), and the M.3
+    // reference port made the same mistake, so the N=100 differential
+    // couldn't catch it. See M.8 oracle-diff binary for the localization.
     match tx_type {
         TxType::DctDct => (idct4, idct4),
-        TxType::AdstDct => (iadst4, idct4),
-        TxType::DctAdst => (idct4, iadst4),
+        TxType::AdstDct => (idct4, iadst4),
+        TxType::DctAdst => (iadst4, idct4),
         TxType::AdstAdst => (iadst4, iadst4),
     }
 }
 
 #[inline]
 fn iht_8_dispatch(tx_type: TxType) -> TransformPair<8> {
+    // See note on [`iht_4_dispatch`] — libvpx struct order is `{cols, rows}`.
     match tx_type {
         TxType::DctDct => (idct8, idct8),
-        TxType::AdstDct => (iadst8, idct8),
-        TxType::DctAdst => (idct8, iadst8),
+        TxType::AdstDct => (idct8, iadst8),
+        TxType::DctAdst => (iadst8, idct8),
         TxType::AdstAdst => (iadst8, iadst8),
     }
 }
 
 #[inline]
 fn iht_16_dispatch(tx_type: TxType) -> TransformPair<16> {
+    // See note on [`iht_4_dispatch`] — libvpx struct order is `{cols, rows}`.
     match tx_type {
         TxType::DctDct => (idct16, idct16),
-        TxType::AdstDct => (iadst16, idct16),
-        TxType::DctAdst => (idct16, iadst16),
+        TxType::AdstDct => (idct16, iadst16),
+        TxType::DctAdst => (iadst16, idct16),
         TxType::AdstAdst => (iadst16, iadst16),
     }
 }
 
 /// 2D 4×4 hybrid inverse transform with residual add.
 ///
-/// Per `tx_type`:
+/// Per `tx_type` (libvpx struct `transform_2d { cols, rows }` — `cols`
+/// is the first field, see Stage 3 stretch M.8 note on
+/// [`iht_4_dispatch`]):
 /// - `DctDct`: row=idct4, col=idct4 (equivalent to [`idct4x4_16_add`]).
-/// - `AdstDct`: row=iadst4, col=idct4.
-/// - `DctAdst`: row=idct4, col=iadst4.
+/// - `AdstDct`: row=idct4, col=iadst4.
+/// - `DctAdst`: row=iadst4, col=idct4.
 /// - `AdstAdst`: row=iadst4, col=iadst4.
 ///
 /// Column-pass shift is `ROUND_POWER_OF_TWO(_, 4)` per libvpx
@@ -1990,88 +2004,63 @@ mod tests {
 
     /// `iht4x4_16_add(DctAdst, ...)` with `dq_coefs = [64, 0, 0, ..., 0]`.
     /// Hand-traced oracle test for M.2 bisect of the H-mode (DCT_ADST)
-    /// residual divergence.
+    /// residual divergence — UPDATED post Stage 3 stretch M.8.
     ///
-    /// Trace:
-    /// - Row pass (idct4) on row 0 of input = [64, 0, 0, 0]:
-    ///   - temp1 = (64+0) * 11585 = 741_440 → round_shift = (741_440 + 8192) >> 14
-    ///     = 749_632 >> 14 = 45 → step0 = step1 = 45.
-    ///   - temp1/2 for input[1], input[3] are zero → step2 = step3 = 0.
-    ///   - output = [45, 45, 45, 45].
-    /// - Rows 1..3 are zero in, so intermediate rows 1..3 = [0, 0, 0, 0].
-    /// - Column pass (iadst4) on column c (any c, all four are identical):
-    ///   col_in = [45, 0, 0, 0]
-    ///   - s0_a = 5283 * 45 = 237_735
-    ///   - s1_a = 9929 * 45 = 446_805
-    ///   - s7 = 45 ; s2 = 13377 * 45 = 601_965
-    ///   - s0 = 237_735, s1 = 446_805, s3 = 0
-    ///   - out[0] = round_shift(237_735) = (237_735 + 8192) >> 14 = 15
-    ///   - out[1] = round_shift(446_805) = 27
-    ///   - out[2] = round_shift(601_965) = 36 (NOT 37 — `601965+8192=610157 >> 14 = 37`)
-    ///     Actually 610_157 / 16384 = 37.24 → integer >> 14 = 37.
-    ///   - out[3] = round_shift(237_735 + 446_805) = round_shift(684_540) = 42
-    /// - ROUND_POWER_OF_TWO(out, 4) added to dest (init 0):
-    ///   - row 0: (15+8)>>4 = 1
-    ///   - row 1: (27+8)>>4 = 2
-    ///   - row 2: (37+8)>>4 = 2
-    ///   - row 3: (42+8)>>4 = 3
-    /// - Each row is filled identically across columns (since each
-    ///   column has the same input post-row-pass).
+    /// libvpx's `IHT_4[DCT_ADST] = { idct4_c, iadst4_c }` is
+    /// `{cols, rows}` order, so for DctAdst: rows=iadst4, cols=idct4.
+    ///
+    /// Trace (row pass iadst4 on [64, 0, 0, 0]):
+    ///   - s0_a = 5283 * 64 = 338_112
+    ///   - s1_a = 9929 * 64 = 635_456
+    ///   - s7 = 64 ; s2 = 13377 * 64 = 856_128
+    ///   - s0 = 338_112; s1 = 635_456; s3 = 0
+    ///   - out[0] = (338_112 + 8192) >> 14 = 21
+    ///   - out[1] = (635_456 + 8192) >> 14 = 39
+    ///   - out[2] = (856_128 + 8192) >> 14 = 52
+    ///   - out[3] = (338_112 + 635_456 + 8192) >> 14 = 59
+    /// - intermediate row 0 = [21, 39, 52, 59]; rows 1..3 = 0.
+    /// - Column pass idct4 on col 0 = [21, 0, 0, 0] gives [15, 15, 15, 15].
+    /// - Column 1 idct4([39, 0, 0, 0]) gives [28; 4]. Column 2 [37; 4]. Column 3 [42; 4].
+    /// - ROUND_POWER_OF_TWO each: col0=1, col1=2, col2=2, col3=3.
+    /// - Each row gets [1, 2, 2, 3].
     #[test]
     fn iht4x4_dct_adst_dc_only_known_value() {
         let mut input = [0i32; 16];
         input[0] = 64;
         let mut dest = [0u8; 16];
         iht4x4_16_add(&input, &mut dest, 4, TxType::DctAdst);
-        let expected: [u8; 16] = [
-            1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3,
-        ];
-        assert_eq!(dest, expected);
-    }
-
-    /// `iht4x4_16_add(AdstDct, ...)` with `dq_coefs = [64, 0, 0, ..., 0]`.
-    /// Companion hand-traced oracle. AdstDct does iadst on rows and
-    /// idct on columns — input row 0 is iadst4([64,0,0,0]) which
-    /// produces a *non-constant* output, and other rows stay zero;
-    /// then idct on each column.
-    ///
-    /// Trace (row pass iadst4 on [64,0,0,0]):
-    ///   - s0_a = 5283 * 64 = 338_112
-    ///   - s1_a = 9929 * 64 = 635_456
-    ///   - s7 = 64 ; s2 = 13377 * 64 = 856_128
-    ///   - s0 = 338_112; s1 = 635_456; s3 = 0
-    ///   - out[0] = (338_112 + 8192) >> 14 = 346_304 >> 14 = 21
-    ///   - out[1] = (635_456 + 8192) >> 14 = 643_648 >> 14 = 39
-    ///   - out[2] = (856_128 + 8192) >> 14 = 864_320 >> 14 = 52
-    ///   - out[3] = (338_112 + 635_456 + 8192) >> 14 = 981_760 >> 14 = 59
-    /// - intermediate row 0 = [21, 39, 52, 59]; rows 1..3 = 0.
-    /// - Column pass idct4 on col 0 = [21, 0, 0, 0]:
-    ///   - temp1 = (21+0)*11585 = 243_285 → step0 = step1 = (243_285+8192)>>14 = 251_477 >> 14 = 15
-    ///   - step2 = step3 = 0
-    ///   - col_out = [15, 15, 15, 15]
-    ///   - rounded (col_out + 8) >> 4 = (15+8)>>4 = 1 — all 4 rows get +1.
-    /// - Column 1 idct4([39, 0, 0, 0]):
-    ///   - temp1 = 39 * 11585 = 451_815 → step = (451_815+8192)>>14 = 460_007>>14 = 28
-    ///   - col_out = [28; 4] → (28+8)>>4 = 36>>4 = 2.
-    /// - Column 2 idct4([52, 0, 0, 0]):
-    ///   - 52 * 11585 = 602_420 → (602_420+8192)>>14 = 610_612>>14 = 37
-    ///   - (37+8)>>4 = 45>>4 = 2.
-    /// - Column 3 idct4([59, 0, 0, 0]):
-    ///   - 59 * 11585 = 683_515 → (683_515+8192)>>14 = 691_707>>14 = 42
-    ///   - (42+8)>>4 = 50>>4 = 3.
-    /// - Each row gets [1, 2, 2, 3] (constant across all rows since col_out is uniform).
-    #[test]
-    fn iht4x4_adst_dct_dc_only_known_value() {
-        let mut input = [0i32; 16];
-        input[0] = 64;
-        let mut dest = [0u8; 16];
-        iht4x4_16_add(&input, &mut dest, 4, TxType::AdstDct);
         let row = [1u8, 2, 2, 3];
         let expected: [u8; 16] = [
             row[0], row[1], row[2], row[3],
             row[0], row[1], row[2], row[3],
             row[0], row[1], row[2], row[3],
             row[0], row[1], row[2], row[3],
+        ];
+        assert_eq!(dest, expected);
+    }
+
+    /// `iht4x4_16_add(AdstDct, ...)` with `dq_coefs = [64, 0, 0, ..., 0]`.
+    /// Hand-traced oracle test — UPDATED post Stage 3 stretch M.8.
+    ///
+    /// libvpx's `IHT_4[ADST_DCT] = { iadst4_c, idct4_c }` is
+    /// `{cols, rows}` order, so for AdstDct: rows=idct4, cols=iadst4.
+    ///
+    /// Trace (row pass idct4 on [64, 0, 0, 0]):
+    ///   - temp1 = (64+0) * 11585 = 741_440 → (741_440+8192) >> 14 = 45
+    ///   - step0 = step1 = 45, step2 = step3 = 0
+    ///   - output = [45, 45, 45, 45]
+    /// - intermediate row 0 = [45, 45, 45, 45]; rows 1..3 = [0; 4].
+    /// - Column pass iadst4 on each col = [45, 0, 0, 0] gives [15, 27, 37, 42].
+    /// - ROUND_POWER_OF_TWO each: row 0=1, row 1=2, row 2=2, row 3=3.
+    /// - Each row is filled identically across columns.
+    #[test]
+    fn iht4x4_adst_dct_dc_only_known_value() {
+        let mut input = [0i32; 16];
+        input[0] = 64;
+        let mut dest = [0u8; 16];
+        iht4x4_16_add(&input, &mut dest, 4, TxType::AdstDct);
+        let expected: [u8; 16] = [
+            1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3,
         ];
         assert_eq!(dest, expected);
     }
@@ -2219,10 +2208,15 @@ mod tests {
         tx_type: TxType,
     ) {
         type Xform = fn(&[i32; 4], &mut [i32; 4]);
+        // Stage 3 stretch M.8 fix: libvpx's `transform_2d` struct is
+        // `{ transform_1d cols, rows; }`. Brace-initializer order is
+        // `{cols, rows}`, so `IHT_4[ADST_DCT] = {iadst4_c, idct4_c}`
+        // means cols=iadst4, rows=idct4 — i.e. row-pass = idct4,
+        // col-pass = iadst4.
         let (rows, cols): (Xform, Xform) = match tx_type {
             TxType::DctDct => (ref_idct4, ref_idct4),
-            TxType::AdstDct => (ref_iadst4, ref_idct4),
-            TxType::DctAdst => (ref_idct4, ref_iadst4),
+            TxType::AdstDct => (ref_idct4, ref_iadst4),
+            TxType::DctAdst => (ref_iadst4, ref_idct4),
             TxType::AdstAdst => (ref_iadst4, ref_iadst4),
         };
 
