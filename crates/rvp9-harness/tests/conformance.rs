@@ -130,7 +130,13 @@ fn conformance_runner_walks_all_vectors() {
     // == 0`, but while we iterate on the mismatched keyframes the
     // ratchet keeps regression signal visible: lowering `MAX_MISMATCHES`
     // as we fix bugs, raising `MIN_PASSES` as we light up frames.
-    const MIN_PASSES: usize = 8;
+    const MIN_PASSES: usize = 11;
+    // D.8 (2026-05-18): wire the loop-filter apply driver into the
+    // inter-frame path (matches the K2.c keyframe wireup). libvpx's
+    // `vpxdec --i420` reference output is post-LF; without this the
+    // inter frames were being MD5'd as pre-LF. Conformance moves from
+    // 8/153/40 → 11/150/40 — three additional inter frames light up,
+    // including frames 2/3/4 of `vp90-2-02-size-32x32.webm`.
     // D.7 (2026-05-18): inter-frame cascade work (mv_ref + decoder
     // ref-pool / tile decode tweaks) lights up 2 additional frames.
     // Conformance moves from 6/155/40 → 8/153/40.
@@ -139,7 +145,7 @@ fn conformance_runner_walks_all_vectors() {
     // D.5 (2026-05-18): `extend_mc_border` scratch-buffer fallback.
     // Conformance: 2/159/40 → 3/158/40.
     // Pre-D.3.a baseline: 1/9/191.
-    const MAX_MISMATCHES: usize = 153;
+    const MAX_MISMATCHES: usize = 150;
     assert!(
         total_passed >= MIN_PASSES,
         "regression: expected at least {MIN_PASSES} passed, got {total_passed}",

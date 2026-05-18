@@ -1245,7 +1245,7 @@ pub fn decode_tile_inter(
     mut mode_counts: Option<&mut rvp9_core::entropy::adapt::FrameCounts>,
     prev_mv_grid: Option<&[rvp9_core::inter::mv_ref::PrevFrameMvRef]>,
     cur_mv_grid: &mut [rvp9_core::inter::mv_ref::PrevFrameMvRef],
-) -> Result<(), TileDecodeError> {
+) -> Result<TileDecodeCtx, TileDecodeError> {
     let mut reader =
         BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;
     let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
@@ -1285,7 +1285,7 @@ pub fn decode_tile_inter(
         }
         mi_row += MI_BLOCK_SIZE;
     }
-    Ok(())
+    Ok(decode_ctx)
 }
 
 /// Recursively decode one partition starting at `(mi_row, mi_col)`

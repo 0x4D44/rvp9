@@ -1032,7 +1032,7 @@ impl Decoder {
 
         let fc_idx = tail.frame_context_idx as usize;
         let bounds = tile_bounds(&tail.tile_info, mi_cols, mi_rows, 0, 0);
-        {
+        let decode_ctx = {
             let fc = &self.frame_contexts[fc_idx];
             decode_tile_inter(
                 tile_buf.data,
@@ -1046,8 +1046,8 @@ impl Decoder {
                 prev_mv_grid,
                 &mut cur_mv_grid,
             )
-            .map_err(DecodeError::TileDecode)?;
-        }
+            .map_err(DecodeError::TileDecode)?
+        };
 
         // Backward-adapt the per-frame probability banks per
         // `vp9_adapt_*_probs` (`vp9_decodeframe.c:3046-3053`). Same gate
@@ -1105,6 +1105,34 @@ impl Decoder {
                 allow_high_precision_mv,
             );
             self.frame_contexts[fc_idx].nmvc = new_nmvc;
+        }
+
+        // D.8 — loop-filter apply (inter path). Mirrors the keyframe
+        // wireup at the top of `decode_keyframe`: build per-SB filter
+        // masks via `setup_mask` + `adjust_mask`, then dispatch
+        // `loop_filter_frame`. libvpx applies the LF for inter frames
+        // through the same `vp9_loopfilter.c:vp9_loop_filter_frame`
+        // entry point as keyframes (`vp9_decodeframe.c:2867`).
+        //
+        // Without this wireup the inter pre-LF reconstruction was
+        // being MD5'd against libvpx's post-LF dump — a per-frame +5/-5
+        // edge-smoothing diff cascading across the whole frame. Same
+        // pattern as M.9's "filter_level > 0 keyframes fail" finding,
+        // here for the inter path.
+        self.merge_lf_params(&tail.loop_filter);
+        let filter_level = tail.loop_filter.filter_level;
+        let lf_disabled = std::env::var("RVP9_DISABLE_LF").is_ok();
+        if filter_level > 0 && !lf_disabled {
+            apply_loop_filter_to_frame(
+                &mut yv12,
+                &decode_ctx,
+                mi_rows,
+                mi_cols,
+                filter_level,
+                tail.loop_filter.sharpness_level,
+                self.lf_deltas,
+                SegmentationLfView::from_segmentation(&tail.segmentation),
+            );
         }
 
         // D.3.c — frame finalisation:
