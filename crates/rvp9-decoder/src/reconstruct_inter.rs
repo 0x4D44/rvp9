@@ -44,7 +44,7 @@
 use rvp9_core::bitstream::InterpFilter;
 use rvp9_core::block::BlockSize;
 use rvp9_core::entropy::{BoolReader, FrameContext};
-use rvp9_core::entropy::detokenize::DecodeCoefCounts;
+use rvp9_core::entropy::adapt::CoefCountsBank;
 use rvp9_core::frame::{BorderedPlaneRef, Yv12Buffer};
 use rvp9_core::inter::mode_info::{InterModeReadParams, read_inter_block_mode_info};
 use rvp9_core::inter::mv_ref::{BlockBounds, NeighbourLookup, PrevFrameMvRef};
@@ -100,6 +100,10 @@ pub struct InterBlockInputs<'a> {
 ///   decode consumes. `mi.skip == true` ⇒ reader is not advanced
 ///   (Stage D.2.b).
 /// - `fc`: per-frame probability bank.
+/// - `coef_counts`: optional [`CoefCountsBank`] for backward-adaptation
+///   accumulation. Stage 3 Task E.1.b wires this through the inter
+///   recon residual decode loop; pass `None` to disable count
+///   accumulation (e.g. in unit tests).
 /// - `coef_ctx`: per-tile coef-context state for residual decode.
 /// - `mi`: the [`ModeInfo`] resolved by the per-block mode reader. The
 ///   driver requires `mi.is_inter()`.
@@ -125,7 +129,7 @@ pub struct InterBlockInputs<'a> {
 pub fn reconstruct_inter_block(
     reader: &mut BoolReader<'_>,
     fc: &FrameContext,
-    _counts: Option<&mut DecodeCoefCounts<'_>>,
+    mut coef_counts: Option<&mut CoefCountsBank>,
     coef_ctx: &mut TileCoefCtx,
     mi: &ModeInfo,
     mi_row: usize,
@@ -374,7 +378,7 @@ pub fn reconstruct_inter_block(
                     let eob = decode_block_tokens(
                         reader,
                         fc,
-                        /* counts = */ None,
+                        coef_counts.as_deref_mut(),
                         coef_ctx,
                         plane,
                         plane_x4_base + aoff,
@@ -466,7 +470,7 @@ pub fn decode_and_reconstruct_inter_block<N: NeighbourLookup>(
     reconstruct_inter_block(
         reader,
         fc,
-        /* counts = */ None,
+        /* coef_counts = */ None,
         coef_ctx,
         mi,
         mi_row,
