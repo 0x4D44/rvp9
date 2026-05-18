@@ -70,6 +70,14 @@ fn conformance_runner_walks_all_vectors() {
         let md5_entries = read_md5_file(&md5_path).expect(".md5 parse");
         total_expected += md5_entries.len();
 
+        // Per-vector tally — only printed under
+        // `RVP9_CONFORMANCE_PER_VECTOR=1` (off by default to keep the
+        // CI log small).
+        let report_per_vector = std::env::var("RVP9_CONFORMANCE_PER_VECTOR").is_ok();
+        let mut v_passed = 0usize;
+        let mut v_mismatched = 0usize;
+        let mut v_skipped = 0usize;
+
         let mut decoder = Decoder::new();
         let mut shown_idx: usize = 0;
         for range in &packets {
@@ -97,25 +105,39 @@ fn conformance_runner_walks_all_vectors() {
                         let got_hex = hex16(md5_of_yv12_visible(&buf));
                         let want = md5_entries.get(shown_idx);
                         match want {
-                            Some(e) if e.md5_hex == got_hex => total_passed += 1,
-                            _ => total_mismatched += 1,
+                            Some(e) if e.md5_hex == got_hex => {
+                                total_passed += 1;
+                                v_passed += 1;
+                            }
+                            _ => {
+                                total_mismatched += 1;
+                                v_mismatched += 1;
+                            }
                         }
                         shown_idx += 1;
                     }
                     Err(DecodeError::Unimplemented { .. }) => {
                         if shown {
                             total_skipped += 1;
+                            v_skipped += 1;
                             shown_idx += 1;
                         }
                     }
                     Err(_) => {
                         if shown {
                             total_skipped += 1;
+                            v_skipped += 1;
                             shown_idx += 1;
                         }
                     }
                 }
             }
+        }
+        if report_per_vector {
+            println!(
+                "  {}: {v_passed} passed / {v_mismatched} mismatched / {v_skipped} skipped",
+                vector.file_name().unwrap_or_default().to_string_lossy(),
+            );
         }
     }
 

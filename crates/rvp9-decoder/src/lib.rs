@@ -180,6 +180,44 @@ pub struct Decoder {
     /// must be shown) and most inter frames; false for ALTREF /
     /// non-shown frames.
     last_show_frame: bool,
+    /// Previous frame's per-`(mi_row, mi_col)` segment_id grid, row-
+    /// major in 8×8 mi units at stride `last_frame_mi_cols`. Used by
+    /// inter frames as the `predicted_segment_id` source for
+    /// segmentation inheritance (libvpx
+    /// `cm->last_frame_seg_map`, `vp9_decodemv.c:115-126`).
+    ///
+    /// D.10 (Wave 5) — populated at frame end by swapping the just-
+    /// decoded `current_segment_ids` slab into this field. Keyframes
+    /// and intra-only frames zero this field at frame end (mirroring
+    /// libvpx's `vp9_setup_past_independence` at
+    /// `vp9_entropymode.c:424-437`).
+    ///
+    /// Empty (`Vec::new`) before any frame has decoded; in that state
+    /// the inter segment-id reader treats every cell as zero (matches
+    /// libvpx `cm->last_frame_seg_map == NULL`).
+    prev_segment_ids: Vec<u8>,
+    /// `(mi_rows, mi_cols)` of `prev_segment_ids`. Used to detect
+    /// resize / frame-dim mismatch — when the new frame's mi-dims
+    /// differ, the prev-frame seg map is treated as all-zeros
+    /// (matches libvpx, which reallocates `last_frame_seg_map` on
+    /// resize and the new allocation is zeroed).
+    prev_segment_ids_dims: (usize, usize),
+    /// Persistent segmentation feature data across frames. libvpx's
+    /// `setup_segmentation` (`vp9_decodeframe.c:1332-1383`) mutates
+    /// `cm->seg` in place and only rewrites `feature_data` /
+    /// `abs_delta` when the per-frame `update_data` bit is set; on
+    /// frames with `update_data == 0` the feature data INHERITS from
+    /// the previous frame. Our parser returns a fresh
+    /// [`SegmentationParams`] per frame, so we maintain this running
+    /// copy here and overlay it onto the parsed value when
+    /// `update_data == false`. Needed for AQ-2 vectors where the
+    /// keyframe writes the per-segment alt_Q (cyclic refresh) and
+    /// every subsequent inter frame leaves the data untouched.
+    seg_feature_data: [[Option<i16>; rvp9_core::bitstream::SEG_LVL_MAX];
+        rvp9_core::bitstream::MAX_SEGMENTS],
+    /// `abs_delta` companion to [`Self::seg_feature_data`]. Same
+    /// inheritance semantics.
+    seg_abs_delta: bool,
 }
 
 impl Default for Decoder {
@@ -218,6 +256,11 @@ impl Decoder {
             last_frame_size: None,
             last_intra_only: false,
             last_show_frame: false,
+            prev_segment_ids: Vec::new(),
+            prev_segment_ids_dims: (0, 0),
+            seg_feature_data: [[None; rvp9_core::bitstream::SEG_LVL_MAX];
+                rvp9_core::bitstream::MAX_SEGMENTS],
+            seg_abs_delta: false,
         }
     }
 
@@ -650,10 +693,18 @@ impl Decoder {
 
         // 7. Drive the tile decode loop, writing into `yv12`.
         let bounds = tile_bounds(&tail.tile_info, mi_cols, mi_rows, 0, 0);
+        // D.10 — resolve the per-frame segmentation against the
+        // running state, then use the RESOLVED view everywhere
+        // downstream (per-segment alt_Q lookup + the loop-filter
+        // segmentation view). Without this, AQ-2 inter frames lose
+        // the keyframe's `feature_data` (encoder sets it once at the
+        // keyframe with `update_data = 1`, then leaves it alone on
+        // every inter frame).
+        let resolved_seg = self.resolve_segmentation(&tail.segmentation, /* is_keyframe = */ true);
         // Per-segment alt-Q feature data: feature_data[seg][SEG_LVL_ALT_Q].
         let mut seg_alt_q = [None; rvp9_core::loopfilter::MAX_SEGMENTS];
-        if tail.segmentation.enabled {
-            for (i, s) in tail.segmentation.feature_data.iter().enumerate() {
+        if resolved_seg.enabled {
+            for (i, s) in resolved_seg.feature_data.iter().enumerate() {
                 seg_alt_q[i] = s[0]; // SEG_LVL_ALT_Q == 0
             }
         }
@@ -661,15 +712,18 @@ impl Decoder {
             mi_cols,
             mi_rows,
             tx_mode: compressed_result.tx_mode,
-            segmentation_update_map: tail.segmentation.enabled && tail.segmentation.update_map,
-            seg_tree_probs: tail.segmentation.tree_probs,
+            segmentation_update_map: resolved_seg.enabled && resolved_seg.update_map,
+            segmentation_enabled: resolved_seg.enabled,
+            segmentation_temporal_update: resolved_seg.temporal_update,
+            seg_tree_probs: resolved_seg.tree_probs,
+            seg_pred_probs: resolved_seg.pred_probs,
             lossless: tail.quantization.is_lossless(),
             base_qindex: i32::from(tail.quantization.base_qindex),
             y_dc_delta_q: i32::from(tail.quantization.y_dc_delta_q),
             uv_dc_delta_q: i32::from(tail.quantization.uv_dc_delta_q),
             uv_ac_delta_q: i32::from(tail.quantization.uv_ac_delta_q),
             seg_alt_q,
-            seg_abs_delta: tail.segmentation.abs_delta,
+            seg_abs_delta: resolved_seg.abs_delta,
         };
         // Stage 3 Task E.1.b — zero the coef counts at the start of
         // every frame and pass an accumulator into the tile decoder.
@@ -679,6 +733,12 @@ impl Decoder {
         // flag yet (treated as 0), so we zero unconditionally — matches
         // libvpx's behaviour on the single-decoder conformance gate.
         self.coef_counts = rvp9_core::entropy::adapt::CoefCountsBank::default();
+        // D.10 — allocate the current frame's segment_id slab. Keyframes
+        // either write a fresh ID per block (when `update_map = true`)
+        // or default every cell to 0. After decode finishes we wipe
+        // `prev_segment_ids` (libvpx `vp9_setup_past_independence` at
+        // `vp9_entropymode.c:424-437`) — keyframes RESET the seg map.
+        let mut cur_segment_ids = vec![0u8; mi_rows * mi_cols];
         let decode_ctx = {
             let fc = &self.frame_contexts[fc_idx];
             decode_tile_intra(
@@ -688,6 +748,7 @@ impl Decoder {
                 fc,
                 &mut yv12,
                 Some(&mut self.coef_counts),
+                &mut cur_segment_ids,
             )
             .map_err(DecodeError::TileDecode)?
         };
@@ -749,7 +810,7 @@ impl Decoder {
                 filter_level,
                 tail.loop_filter.sharpness_level,
                 self.lf_deltas,
-                SegmentationLfView::from_segmentation(&tail.segmentation),
+                SegmentationLfView::from_segmentation(&resolved_seg),
             );
         }
 
@@ -789,6 +850,25 @@ impl Decoder {
         self.last_frame_size = Some((frame.header.width, frame.header.height));
         self.last_intra_only = false; // keyframes are not intra-only
         self.last_show_frame = frame.header.show_frame;
+        // D.10 — promote the keyframe's just-decoded seg map into
+        // `prev_segment_ids` so the next inter frame's
+        // `read_inter_segment_id` inherits from it (when
+        // `update_map = false`). This mirrors libvpx's per-frame
+        // `vp9_swap_current_and_last_seg_map` at
+        // `vp9_decoder.c:479`, which fires after every (shown) decode
+        // whose `seg.enabled == true`. The keyframe's
+        // `vp9_setup_past_independence` at frame START already zeroed
+        // both maps; we then decoded into `cur_segment_ids`, so the
+        // swap-equivalent is just a move into `prev_segment_ids`.
+        if std::env::var("RVP9_TRACE_SEG").is_ok() {
+            let nz = cur_segment_ids.iter().filter(|&&v| v != 0).count();
+            eprintln!(
+                "[rvp9_seg] keyframe end: mi={}x{} non-zero seg cells = {} / {}",
+                mi_rows, mi_cols, nz, cur_segment_ids.len()
+            );
+        }
+        self.prev_segment_ids = cur_segment_ids;
+        self.prev_segment_ids_dims = (mi_rows, mi_cols);
         Ok(frame_buf)
     }
 
@@ -974,10 +1054,15 @@ impl Decoder {
             sign_bias,
         };
 
-        // 7. Seg alt-Q feature data.
+        // 7. D.10 — resolve per-frame segmentation against the running
+        // state (inherits `feature_data` / `abs_delta` when the parsed
+        // value's `update_data == false`).
+        let resolved_seg = self.resolve_segmentation(&tail.segmentation, /* is_keyframe = */ false);
+
+        // Per-segment alt-Q from the RESOLVED feature data.
         let mut seg_alt_q = [None; rvp9_core::loopfilter::MAX_SEGMENTS];
-        if tail.segmentation.enabled {
-            for (i, s) in tail.segmentation.feature_data.iter().enumerate() {
+        if resolved_seg.enabled {
+            for (i, s) in resolved_seg.feature_data.iter().enumerate() {
                 seg_alt_q[i] = s[0];
             }
         }
@@ -986,15 +1071,18 @@ impl Decoder {
             mi_cols,
             mi_rows,
             tx_mode: compressed_result.tx_mode,
-            segmentation_update_map: tail.segmentation.enabled && tail.segmentation.update_map,
-            seg_tree_probs: tail.segmentation.tree_probs,
+            segmentation_update_map: resolved_seg.enabled && resolved_seg.update_map,
+            segmentation_enabled: resolved_seg.enabled,
+            segmentation_temporal_update: resolved_seg.temporal_update,
+            seg_tree_probs: resolved_seg.tree_probs,
+            seg_pred_probs: resolved_seg.pred_probs,
             lossless: tail.quantization.is_lossless(),
             base_qindex: i32::from(tail.quantization.base_qindex),
             y_dc_delta_q: i32::from(tail.quantization.y_dc_delta_q),
             uv_dc_delta_q: i32::from(tail.quantization.uv_dc_delta_q),
             uv_ac_delta_q: i32::from(tail.quantization.uv_ac_delta_q),
             seg_alt_q,
-            seg_abs_delta: tail.segmentation.abs_delta,
+            seg_abs_delta: resolved_seg.abs_delta,
         };
 
         // Borrow refs as &Yv12Buffer for InterFrameDecodeParams. The
@@ -1065,6 +1153,29 @@ impl Decoder {
             mi_rows * mi_cols
         ];
 
+        // D.10 — populate `prev_segment_ids` view for segment-id
+        // inheritance and allocate the current frame's seg-id slab.
+        //
+        // Libvpx's `read_inter_segment_id` reads `cm->last_frame_seg_map`;
+        // when that pointer is NULL (first frame after past-independence
+        // reset, or right after allocation) every cell behaves as zero
+        // (`predicted_segment_id = cm->last_frame_seg_map ? ... : 0` at
+        // `vp9_decodemv.c:156-159`). We model NULL as an empty slice.
+        //
+        // Resize check: if the prev seg map's dims don't match this
+        // frame's mi-dims, treat it as missing — libvpx reallocates +
+        // zero-fills `last_frame_seg_map` whenever mi_rows / mi_cols
+        // change (`vp9_alloccommon.c:vp9_alloc_context_buffers`).
+        let prev_seg_ids_slice: &[u8] =
+            if self.prev_segment_ids_dims == (mi_rows, mi_cols)
+                && self.prev_segment_ids.len() == mi_rows * mi_cols
+            {
+                &self.prev_segment_ids
+            } else {
+                &[]
+            };
+        let mut cur_segment_ids = vec![0u8; mi_rows * mi_cols];
+
         let bounds = tile_bounds(&tail.tile_info, mi_cols, mi_rows, 0, 0);
         let decode_ctx = {
             let fc = &self.frame_contexts[fc_idx];
@@ -1079,6 +1190,8 @@ impl Decoder {
                 Some(&mut self.mode_counts),
                 prev_mv_grid,
                 &mut cur_mv_grid,
+                prev_seg_ids_slice,
+                &mut cur_segment_ids,
             )
             .map_err(DecodeError::TileDecode)?
         };
@@ -1176,7 +1289,7 @@ impl Decoder {
                 filter_level,
                 tail.loop_filter.sharpness_level,
                 self.lf_deltas,
-                SegmentationLfView::from_segmentation(&tail.segmentation),
+                SegmentationLfView::from_segmentation(&resolved_seg),
             );
         }
 
@@ -1216,7 +1329,59 @@ impl Decoder {
         self.last_frame_size = Some((frame.header.width, frame.header.height));
         self.last_intra_only = false;
         self.last_show_frame = frame.header.show_frame;
+        // D.10 — swap the just-decoded segment_id slab into
+        // `prev_segment_ids` for the next frame's inheritance reads.
+        // Mirrors libvpx's seg-map double-buffer at end-of-frame
+        // (`vp9_alloccommon.c:vp9_swap_current_and_last_seg_map`).
+        if std::env::var("RVP9_TRACE_SEG").is_ok() {
+            let nz = cur_segment_ids.iter().filter(|&&v| v != 0).count();
+            eprintln!(
+                "[rvp9_seg] inter end: mi={}x{} non-zero seg cells = {} / {}",
+                mi_rows, mi_cols, nz, cur_segment_ids.len()
+            );
+        }
+        self.prev_segment_ids = cur_segment_ids;
+        self.prev_segment_ids_dims = (mi_rows, mi_cols);
         Ok(frame_buf)
+    }
+
+    /// D.10 — resolve the per-frame segmentation by overlaying the
+    /// running `seg_feature_data` / `seg_abs_delta` onto the parsed
+    /// `tail.segmentation` when this frame did NOT update those fields
+    /// (`update_data == false`). Also refreshes the running copy when
+    /// this frame DID update them. Mirrors libvpx's in-place mutation
+    /// of `cm->seg` in `setup_segmentation`
+    /// (`vp9_decodeframe.c:1332-1383`).
+    ///
+    /// Keyframes always start fresh: libvpx's
+    /// `vp9_setup_past_independence` calls `vp9_clearall_segfeatures`
+    /// before `setup_segmentation` runs, so any prior feature data is
+    /// wiped. Callers should pass `is_keyframe = true` to mirror that.
+    fn resolve_segmentation(
+        &mut self,
+        parsed: &rvp9_core::bitstream::SegmentationParams,
+        is_keyframe: bool,
+    ) -> rvp9_core::bitstream::SegmentationParams {
+        if is_keyframe {
+            self.seg_feature_data =
+                [[None; rvp9_core::bitstream::SEG_LVL_MAX]; rvp9_core::bitstream::MAX_SEGMENTS];
+            self.seg_abs_delta = false;
+        }
+
+        let mut resolved = parsed.clone();
+        if resolved.enabled {
+            if resolved.update_data {
+                // This frame's parser already filled `feature_data` /
+                // `abs_delta`; refresh our running copy from it.
+                self.seg_feature_data = resolved.feature_data;
+                self.seg_abs_delta = resolved.abs_delta;
+            } else {
+                // Inherit from the running state.
+                resolved.feature_data = self.seg_feature_data;
+                resolved.abs_delta = self.seg_abs_delta;
+            }
+        }
+        resolved
     }
 
     /// Parse the compressed-header for an inter frame with the

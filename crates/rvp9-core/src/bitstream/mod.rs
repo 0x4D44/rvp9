@@ -55,7 +55,7 @@ pub use superframe::{
 };
 pub use tile::{TileBuffer, parse_tile_buffers};
 pub use sub_parsers::{
-    LoopFilterParams, MAX_SEGMENTS, QuantizationParams, SEG_TREE_PROBS, SegFeature,
-    SegmentationParams, TileInfo, parse_loopfilter, parse_quantization, parse_segmentation,
-    parse_tile_info,
+    LoopFilterParams, MAX_SEGMENTS, PREDICTION_PROBS, QuantizationParams, SEG_LVL_MAX,
+    SEG_TREE_PROBS, SegFeature, SegmentationParams, TileInfo, parse_loopfilter,
+    parse_quantization, parse_segmentation, parse_tile_info,
 };

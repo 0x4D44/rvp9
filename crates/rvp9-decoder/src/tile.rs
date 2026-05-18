@@ -41,8 +41,9 @@ use rvp9_core::inter::mode_info::{InterModeReadParams, get_intra_inter_context,
     read_inter_block_mode_info};
 use rvp9_core::inter::mv_ref::BlockBounds;
 use rvp9_core::intra_pred::{DcAvailability, EdgeBuffers, IntraMode, build_intra_predictors};
-use rvp9_core::mode_info::{BlockMode, BmiInfo, InterMode, ModeInfo, Mv, RefFrame, read_intra_mode,
-    read_is_inter, read_partition, read_segment_id, read_skip, read_tx_size, get_tx_size_context};
+use rvp9_core::mode_info::{BlockMode, BmiInfo, InterMode, ModeInfo, Mv, RefFrame,
+    SegmentationReadParams, read_inter_segment_id, read_intra_mode, read_is_inter, read_partition,
+    read_segment_id, read_skip, read_tx_size, get_tx_size_context};
 use rvp9_core::quant::{ac_quant, dc_quant, get_qindex};
 use rvp9_core::transforms::{TxMode, TxSize};
 
@@ -252,9 +253,23 @@ pub struct FrameDecodeParams {
     /// segment-id parser needs both flags. (For Stage 3 floor we
     /// surface a simpler combined flag.)
     pub segmentation_update_map: bool,
+    /// `true` when the segmentation header was enabled. Needed
+    /// separately from `segmentation_update_map` for the inter
+    /// segment-id read state machine (`!enabled` ⇒ segment_id = 0,
+    /// regardless of any other knob — see libvpx
+    /// `read_inter_segment_id` at `vp9_decodemv.c:154`).
+    pub segmentation_enabled: bool,
+    /// `seg.temporal_update` from the segmentation header. Drives the
+    /// `update_map && temporal_update` arm of libvpx's
+    /// `read_inter_segment_id` (`vp9_decodemv.c:167`).
+    pub segmentation_temporal_update: bool,
     /// Segmentation tree probabilities — used only when
     /// `segmentation_update_map == true`.
     pub seg_tree_probs: [u8; rvp9_core::bitstream::SEG_TREE_PROBS],
+    /// Segmentation pred probabilities — used only when
+    /// `segmentation_update_map && segmentation_temporal_update`.
+    /// Mirrors `seg.pred_probs` from the segmentation header.
+    pub seg_pred_probs: [u8; rvp9_core::bitstream::PREDICTION_PROBS],
     /// `true` ⇒ frame is in lossless mode (`base_qindex == 0` etc.).
     /// Drives the `allow_select == false` path in `read_tx_size`.
     pub lossless: bool,
@@ -319,6 +334,7 @@ pub fn decode_tile_intra(
     fc: &FrameContext,
     dst_frame: &mut Yv12Buffer,
     mut coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
+    cur_segment_ids: &mut [u8],
 ) -> Result<TileDecodeCtx, TileDecodeError> {
     let mut reader =
         BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;
@@ -352,6 +368,7 @@ pub fn decode_tile_intra(
                 BlockSize::Block64x64,
                 4, // n4x4_l2 for 64×64 = log2(16) = 4
                 coef_counts.as_deref_mut(),
+                cur_segment_ids,
             );
             mi_col += MI_BLOCK_SIZE;
         }
@@ -381,6 +398,7 @@ fn decode_partition(
     bsize: BlockSize,
     n4x4_l2: u8,
     mut coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
+    cur_segment_ids: &mut [u8],
 ) {
     if mi_row >= params.mi_rows || mi_col >= params.mi_cols {
         return;
@@ -432,6 +450,7 @@ fn decode_partition(
         decode_block(
             reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
             mi_row, mi_col, sub, coef_counts.as_deref_mut(),
+            cur_segment_ids,
         );
     } else {
         match partition {
@@ -439,17 +458,20 @@ fn decode_partition(
                 decode_block(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
                     mi_row, mi_col, sub, coef_counts.as_deref_mut(),
+                    cur_segment_ids,
                 );
             }
             PartitionType::Horz => {
                 decode_block(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
                     mi_row, mi_col, sub, coef_counts.as_deref_mut(),
+                    cur_segment_ids,
                 );
                 if has_rows {
                     decode_block(
                         reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
                         mi_row + hbs, mi_col, sub, coef_counts.as_deref_mut(),
+                        cur_segment_ids,
                     );
                 }
             }
@@ -457,11 +479,13 @@ fn decode_partition(
                 decode_block(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
                     mi_row, mi_col, sub, coef_counts.as_deref_mut(),
+                    cur_segment_ids,
                 );
                 if has_cols {
                     decode_block(
                         reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
                         mi_row, mi_col + hbs, sub, coef_counts.as_deref_mut(),
+                        cur_segment_ids,
                     );
                 }
             }
@@ -470,21 +494,25 @@ fn decode_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row, mi_col, sub, n8x8_l2,
                     coef_counts.as_deref_mut(),
+                    cur_segment_ids,
                 );
                 decode_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row, mi_col + hbs, sub, n8x8_l2,
                     coef_counts.as_deref_mut(),
+                    cur_segment_ids,
                 );
                 decode_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row + hbs, mi_col, sub, n8x8_l2,
                     coef_counts.as_deref_mut(),
+                    cur_segment_ids,
                 );
                 decode_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row + hbs, mi_col + hbs, sub, n8x8_l2,
                     coef_counts,
+                    cur_segment_ids,
                 );
             }
         }
@@ -526,6 +554,7 @@ fn decode_block(
     mi_col: usize,
     bsize: BlockSize,
     coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
+    cur_segment_ids: &mut [u8],
 ) {
     let mi_row_in_tile = mi_row - bounds.mi_row_start;
     let mi_col_in_tile = mi_col - bounds.mi_col_start;
@@ -640,6 +669,21 @@ fn decode_block(
     let x_mis = bw_mi.min(params.mi_cols - mi_col);
     let y_mis = bh_mi.min(params.mi_rows - mi_row);
     decode_ctx.write_block(mi_row_in_tile, mi_row_in_sb, mi_col_in_tile, x_mis, y_mis, &mi);
+    // D.10 — splat the just-decoded segment_id into the current frame's
+    // seg map. Keyframes either read a fresh ID via `read_segment_id`
+    // (`update_map = true`) or default to 0 (`update_map = false`).
+    // Mirrors libvpx `set_segment_id` (`vp9_decodemv.c:104-113`),
+    // invoked unconditionally from `read_intra_segment_id`
+    // (`vp9_decodemv.c:128-144`).
+    splat_segment_id(
+        cur_segment_ids,
+        params.mi_cols,
+        mi_row,
+        mi_col,
+        x_mis,
+        y_mis,
+        segment_id,
+    );
 
     // --- Reconstruction ----------------------------------------------
     //
@@ -1245,6 +1289,8 @@ pub fn decode_tile_inter(
     mut mode_counts: Option<&mut rvp9_core::entropy::adapt::FrameCounts>,
     prev_mv_grid: Option<&[rvp9_core::inter::mv_ref::PrevFrameMvRef]>,
     cur_mv_grid: &mut [rvp9_core::inter::mv_ref::PrevFrameMvRef],
+    prev_segment_ids: &[u8],
+    cur_segment_ids: &mut [u8],
 ) -> Result<TileDecodeCtx, TileDecodeError> {
     let mut reader =
         BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;
@@ -1280,6 +1326,8 @@ pub fn decode_tile_inter(
                 mode_counts.as_deref_mut(),
                 prev_mv_grid,
                 cur_mv_grid,
+                prev_segment_ids,
+                cur_segment_ids,
             );
             mi_col += MI_BLOCK_SIZE;
         }
@@ -1312,6 +1360,8 @@ fn decode_inter_partition(
     mut mode_counts: Option<&mut rvp9_core::entropy::adapt::FrameCounts>,
     prev_mv_grid: Option<&[rvp9_core::inter::mv_ref::PrevFrameMvRef]>,
     cur_mv_grid: &mut [rvp9_core::inter::mv_ref::PrevFrameMvRef],
+    prev_segment_ids: &[u8],
+    cur_segment_ids: &mut [u8],
 ) {
     if mi_row >= params.base.mi_rows || mi_col >= params.base.mi_cols {
         return;
@@ -1367,6 +1417,7 @@ fn decode_inter_partition(
             mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
             mode_counts.as_deref_mut(),
             prev_mv_grid, cur_mv_grid,
+            prev_segment_ids, cur_segment_ids,
         );
     } else {
         match partition {
@@ -1377,6 +1428,7 @@ fn decode_inter_partition(
                     mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                     mode_counts.as_deref_mut(),
                     prev_mv_grid, cur_mv_grid,
+                    prev_segment_ids, cur_segment_ids,
                 );
             }
             PartitionType::Horz => {
@@ -1386,6 +1438,7 @@ fn decode_inter_partition(
                     mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                     mode_counts.as_deref_mut(),
                     prev_mv_grid, cur_mv_grid,
+                    prev_segment_ids, cur_segment_ids,
                 );
                 if has_rows {
                     decode_inter_block(
@@ -1394,6 +1447,7 @@ fn decode_inter_partition(
                         mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                         mode_counts.as_deref_mut(),
                         prev_mv_grid, cur_mv_grid,
+                        prev_segment_ids, cur_segment_ids,
                     );
                 }
             }
@@ -1404,6 +1458,7 @@ fn decode_inter_partition(
                     mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                     mode_counts.as_deref_mut(),
                     prev_mv_grid, cur_mv_grid,
+                    prev_segment_ids, cur_segment_ids,
                 );
                 if has_cols {
                     decode_inter_block(
@@ -1412,6 +1467,7 @@ fn decode_inter_partition(
                         mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                         mode_counts.as_deref_mut(),
                         prev_mv_grid, cur_mv_grid,
+                        prev_segment_ids, cur_segment_ids,
                     );
                 }
             }
@@ -1422,6 +1478,7 @@ fn decode_inter_partition(
                     mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                     mode_counts.as_deref_mut(),
                     prev_mv_grid, cur_mv_grid,
+                    prev_segment_ids, cur_segment_ids,
                 );
                 decode_inter_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
@@ -1429,6 +1486,7 @@ fn decode_inter_partition(
                     mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                     mode_counts.as_deref_mut(),
                     prev_mv_grid, cur_mv_grid,
+                    prev_segment_ids, cur_segment_ids,
                 );
                 decode_inter_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
@@ -1436,12 +1494,14 @@ fn decode_inter_partition(
                     mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                     mode_counts.as_deref_mut(),
                     prev_mv_grid, cur_mv_grid,
+                    prev_segment_ids, cur_segment_ids,
                 );
                 decode_inter_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row + hbs, mi_col + hbs, sub, n8x8_l2,
                     mv_counts, coef_counts, mode_counts,
                     prev_mv_grid, cur_mv_grid,
+                    prev_segment_ids, cur_segment_ids,
                 );
             }
         }
@@ -1485,19 +1545,68 @@ fn decode_inter_block(
     mut mode_counts: Option<&mut rvp9_core::entropy::adapt::FrameCounts>,
     prev_mv_grid: Option<&[rvp9_core::inter::mv_ref::PrevFrameMvRef]>,
     cur_mv_grid: &mut [rvp9_core::inter::mv_ref::PrevFrameMvRef],
+    prev_segment_ids: &[u8],
+    cur_segment_ids: &mut [u8],
 ) {
     let mi_row_in_tile = mi_row - bounds.mi_row_start;
     let mi_col_in_tile = mi_col - bounds.mi_col_start;
     let mi_row_in_sb = mi_row_in_tile & MI_MASK;
 
-    // 1. segment_id — same as keyframe path (Stage 3 scope only wires
-    //    `update_map = true`; the `temporal_update` / inheritance from
-    //    last frame's seg map are out of scope).
-    let segment_id = if params.base.segmentation_update_map {
-        read_segment_id(reader, &params.base.seg_tree_probs)
-    } else {
-        0
+    // Compute the block's covered cell counts up-front: the inter
+    // segment-id reader needs them to walk the previous frame's seg
+    // map, and we also need them to splat the chosen segment_id into
+    // `cur_segment_ids` afterwards.
+    let bw_mi_pre = usize::from(bsize.n_8x8_wide());
+    let bh_mi_pre = usize::from(bsize.n_8x8_high());
+    let x_mis_pre = bw_mi_pre.min(params.base.mi_cols - mi_col);
+    let y_mis_pre = bh_mi_pre.min(params.base.mi_rows - mi_row);
+
+    // 1. segment_id — full libvpx state machine via
+    //    `read_inter_segment_id` (`vp9_decodemv.c:146-177`):
+    //    * `!enabled` ⇒ 0;
+    //    * `!update_map` ⇒ pure inheritance from `prev_segment_ids`;
+    //    * `update_map && temporal_update` ⇒ pred-flag against
+    //      `pred_probs[ctx]`, with inheritance on flag=1 / tree
+    //      decode on flag=0;
+    //    * `update_map && !temporal_update` ⇒ tree decode.
+    let seg_params = SegmentationReadParams {
+        enabled: params.base.segmentation_enabled,
+        update_map: params.base.segmentation_update_map,
+        temporal_update: params.base.segmentation_temporal_update,
+        tree_probs: params.base.seg_tree_probs,
+        pred_probs: params.base.seg_pred_probs,
     };
+    let above_seg_id_pred = decode_ctx
+        .above(mi_col_in_tile)
+        .map(|m| usize::from(m.seg_id_predicted))
+        .unwrap_or(0);
+    let left_seg_id_pred = decode_ctx
+        .left(mi_row_in_sb)
+        .map(|m| usize::from(m.seg_id_predicted))
+        .unwrap_or(0);
+    let seg_id_pred_ctx = above_seg_id_pred + left_seg_id_pred;
+    let (segment_id, seg_id_predicted) = read_inter_segment_id(
+        reader,
+        &seg_params,
+        prev_segment_ids,
+        params.base.mi_cols,
+        mi_row,
+        mi_col,
+        x_mis_pre,
+        y_mis_pre,
+        seg_id_pred_ctx,
+    );
+    // Splat the chosen segment_id into the current frame's seg map
+    // (libvpx `set_segment_id`, `vp9_decodemv.c:104-113`).
+    splat_segment_id(
+        cur_segment_ids,
+        params.base.mi_cols,
+        mi_row,
+        mi_col,
+        x_mis_pre,
+        y_mis_pre,
+        segment_id,
+    );
 
     // 2. skip flag.
     let above = decode_ctx.above(mi_col_in_tile).copied();
@@ -1536,11 +1645,12 @@ fn decode_inter_block(
         mode_counts.as_deref_mut(),
     );
 
-    // 5. dispatch to inter vs intra mode-info reader.
-    let bw_mi = usize::from(bsize.n_8x8_wide());
-    let bh_mi = usize::from(bsize.n_8x8_high());
-    let x_mis = bw_mi.min(params.base.mi_cols - mi_col);
-    let y_mis = bh_mi.min(params.base.mi_rows - mi_row);
+    // 5. dispatch to inter vs intra mode-info reader. Block-cell
+    //    counts already computed up-front for the segment-id splat.
+    let bw_mi = bw_mi_pre;
+    let bh_mi = bh_mi_pre;
+    let x_mis = x_mis_pre;
+    let y_mis = y_mis_pre;
 
     if is_inter {
         // D.3.b: read inter-block mode info, then drive per-plane
@@ -1557,7 +1667,7 @@ fn decode_inter_block(
             tx_size,
             skip,
             segment_id,
-            seg_id_predicted: false,
+            seg_id_predicted,
             mode: BlockMode::Inter {
                 mode: InterMode::NearestMv,
                 ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
@@ -1708,7 +1818,7 @@ fn decode_inter_block(
             tx_size,
             skip,
             segment_id,
-            seg_id_predicted: false,
+            seg_id_predicted,
             mode: BlockMode::Intra { y_mode, uv_mode },
             bmi,
         };
@@ -1788,6 +1898,32 @@ fn write_mv_grid_block(
             let idx = row * mi_cols + col;
             if let Some(slot) = grid.get_mut(idx) {
                 *slot = entry;
+            }
+        }
+    }
+}
+
+/// Splat a single `segment_id` value across every `(r, c)` cell in the
+/// `[mi_row..mi_row+y_mis][mi_col..mi_col+x_mis]` rectangle of the
+/// frame-sized seg map. Mirrors libvpx `set_segment_id`
+/// (`vp9_decodemv.c:104-113`). Out-of-bounds cells are silently
+/// skipped (frame-edge clamp).
+fn splat_segment_id(
+    seg_map: &mut [u8],
+    mi_cols: usize,
+    mi_row: usize,
+    mi_col: usize,
+    x_mis: usize,
+    y_mis: usize,
+    segment_id: u8,
+) {
+    for r in 0..y_mis {
+        let row = mi_row + r;
+        for c in 0..x_mis {
+            let col = mi_col + c;
+            let idx = row * mi_cols + col;
+            if let Some(slot) = seg_map.get_mut(idx) {
+                *slot = segment_id;
             }
         }
     }

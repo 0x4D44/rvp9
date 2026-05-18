@@ -23,7 +23,9 @@
 //! per-block decoder pattern-match on `BlockMode` rather than
 //! threading a separate `is_inter` boolean.
 
-use crate::bitstream::{InterpFilter, MAX_SEGMENTS, SEG_TREE_PROBS, tx_mode_to_biggest_tx_size};
+use crate::bitstream::{
+    InterpFilter, MAX_SEGMENTS, PREDICTION_PROBS, SEG_TREE_PROBS, tx_mode_to_biggest_tx_size,
+};
 use crate::block::{BlockSize, PARTITION_TYPES, PartitionType};
 use crate::entropy::adapt::FrameCounts;
 use crate::entropy::{
@@ -52,6 +54,116 @@ pub static SEGMENT_TREE: [i8; 2 * MAX_SEGMENTS - 2] = [
 #[must_use]
 pub fn read_segment_id(r: &mut BoolReader<'_>, tree_probs: &[u8; SEG_TREE_PROBS]) -> u8 {
     r.read_tree(&SEGMENT_TREE, tree_probs) as u8
+}
+
+/// Inter-frame segmentation-map params: the four-state knob libvpx
+/// extracts from `cm->seg` (`vp9_seg_common.h:42-65`) at the per-block
+/// segment-id decode site.
+///
+/// Mirrors `read_inter_segment_id` (`vp9_decodemv.c:146-177`):
+/// - `enabled == false` ⇒ segment_id is always 0; bitstream consumes
+///   no bits.
+/// - `update_map == false` ⇒ inherit `predicted_segment_id` from the
+///   previous frame's seg map (zero before any frame).
+/// - `update_map == true && temporal_update == false` ⇒ tree decode
+///   via `tree_probs`.
+/// - `update_map == true && temporal_update == true` ⇒ read a single
+///   pred-flag bit against `pred_probs[ctx]`; on true inherit the
+///   predicted ID, otherwise tree decode.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct SegmentationReadParams {
+    /// `seg.enabled`.
+    pub enabled: bool,
+    /// `seg.update_map`.
+    pub update_map: bool,
+    /// `seg.temporal_update`.
+    pub temporal_update: bool,
+    /// `seg.tree_probs`.
+    pub tree_probs: [u8; SEG_TREE_PROBS],
+    /// `seg.pred_probs`.
+    pub pred_probs: [u8; PREDICTION_PROBS],
+}
+
+/// Decode the per-block segment ID for an inter frame. Mirrors
+/// libvpx `read_inter_segment_id` (`vp9_decodemv.c:146-177`):
+///
+/// 1. `predicted_segment_id` = min over the previous-frame seg-map
+///    cells that this block covers. (Matches libvpx
+///    `dec_get_segment_id` at `vp9_decodemv.c:91-102`.)
+/// 2. If `!seg.update_map`: pure inheritance — return
+///    `predicted_segment_id` (no bits consumed).
+/// 3. If `seg.update_map && seg.temporal_update`: read one bit against
+///    `pred_probs[seg_id_pred_ctx]`. On true return
+///    `predicted_segment_id`; on false fall through to the tree
+///    decode. The caller is responsible for stashing the read flag in
+///    `mi.seg_id_predicted` (returned as the second tuple element).
+/// 4. If `seg.update_map && !seg.temporal_update`: tree decode via
+///    `tree_probs` (no `seg_id_predicted` bit consumed; caller should
+///    leave `mi.seg_id_predicted == false`).
+///
+/// Returns `(segment_id, seg_id_predicted)`. `seg_id_predicted` is the
+/// value to store in `mi.seg_id_predicted` (the seg-id-predicted bit
+/// participates in the next block's `seg_id_pred_ctx`).
+///
+/// `prev_segment_ids` is the previous frame's seg map at frame stride
+/// `mi_stride` (= frame mi_cols). Pass an empty slice if no prev map
+/// is available (matches libvpx's `cm->last_frame_seg_map == NULL`
+/// path — `predicted_segment_id` collapses to 0). `mi_row` / `mi_col`
+/// are absolute, in 8×8 mi units; `x_mis` / `y_mis` are the block's
+/// covered cell counts.
+#[inline]
+#[must_use]
+#[allow(clippy::too_many_arguments)] // mirrors libvpx's `read_inter_segment_id` 1:1.
+pub fn read_inter_segment_id(
+    r: &mut BoolReader<'_>,
+    seg: &SegmentationReadParams,
+    prev_segment_ids: &[u8],
+    mi_stride: usize,
+    mi_row: usize,
+    mi_col: usize,
+    x_mis: usize,
+    y_mis: usize,
+    seg_id_pred_ctx: usize,
+) -> (u8, bool) {
+    if !seg.enabled {
+        return (0, false);
+    }
+
+    // 1. Predicted segment_id = min over covered prev-frame cells.
+    //    Mirrors libvpx `dec_get_segment_id`.
+    let predicted_segment_id = if prev_segment_ids.is_empty() {
+        0
+    } else {
+        let mut acc: u8 = (MAX_SEGMENTS as u8) - 1;
+        let base = mi_row * mi_stride + mi_col;
+        for y in 0..y_mis {
+            let row_off = base + y * mi_stride;
+            for x in 0..x_mis {
+                let v = prev_segment_ids[row_off + x];
+                if v < acc {
+                    acc = v;
+                }
+            }
+        }
+        acc
+    };
+
+    if !seg.update_map {
+        // Pure inheritance — no bits consumed.
+        return (predicted_segment_id, false);
+    }
+
+    if seg.temporal_update {
+        let pred_prob = seg.pred_probs[seg_id_pred_ctx];
+        let pred_flag = r.read(pred_prob) != 0;
+        if pred_flag {
+            (predicted_segment_id, true)
+        } else {
+            (read_segment_id(r, &seg.tree_probs), false)
+        }
+    } else {
+        (read_segment_id(r, &seg.tree_probs), false)
+    }
 }
 
 /// Decode the per-block `skip` flag. Mirrors libvpx `read_skip`
@@ -1790,5 +1902,275 @@ mod tests {
         let got =
             read_tx_size(&mut r, &custom_tx, TxMode::TxModeSelect, TxSize::Tx8x8, true, 1, None);
         assert_eq!(got, TxSize::Tx8x8, "ctx=1 should pick Tx8x8");
+    }
+
+    /// Helpers shared by the `read_inter_segment_id` tests. Encodes a
+    /// segment_id leaf via the libvpx tree walk using
+    /// `tree_probs = [128; 7]`; appends trailing zero bits so the
+    /// bool-reader has padding.
+    #[cfg(test)]
+    fn encode_segment_id_leaf(target: u8, tree_probs: &[u8; SEG_TREE_PROBS]) -> Vec<u8> {
+        use crate::entropy::BoolWriter;
+
+        let mut buf = vec![0u8; 64];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        let mut i: i32 = 0;
+        fn subtree_contains(tree: &[i8], node: i8, target: u8) -> bool {
+            if node <= 0 {
+                (-node) as u8 == target
+            } else {
+                let idx = node as usize;
+                subtree_contains(tree, tree[idx], target)
+                    || subtree_contains(tree, tree[idx + 1], target)
+            }
+        }
+        loop {
+            let left = SEGMENT_TREE[i as usize];
+            let right = SEGMENT_TREE[i as usize + 1];
+            let bit = if subtree_contains(&SEGMENT_TREE, left, target) { 0 } else { 1 };
+            w.write(bit, tree_probs[(i >> 1) as usize]);
+            let next = if bit == 0 { left } else { right };
+            if next <= 0 {
+                break;
+            }
+            i = next as i32;
+        }
+        for _ in 0..16 {
+            w.write_bit(0);
+        }
+        let size = w.stop_encode().expect("ok");
+        buf.truncate(size);
+        buf
+    }
+
+    /// D.10 — `read_inter_segment_id` with `update_map == false`
+    /// inherits the predicted segment_id from `prev_segment_ids` and
+    /// consumes ZERO bits from the bool-reader. The cursor must remain
+    /// untouched (verified by reading a sentinel bit afterwards).
+    #[test]
+    fn read_inter_segment_id_pure_inheritance() {
+        use crate::entropy::BoolWriter;
+
+        let seg = SegmentationReadParams {
+            enabled: true,
+            update_map: false,
+            temporal_update: false,
+            tree_probs: [128; SEG_TREE_PROBS],
+            pred_probs: [128; PREDICTION_PROBS],
+        };
+
+        // Sentinel bit-1 at p=128 follows. If `read_inter_segment_id`
+        // pulled any bits, the sentinel would decode as 0 instead.
+        let mut buf = vec![0u8; 32];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        w.write(1, 128);
+        for _ in 0..16 {
+            w.write_bit(0);
+        }
+        let size = w.stop_encode().expect("ok");
+        buf.truncate(size);
+
+        // Prev seg map: 4×4 mi grid, the 2×2 block at (0,0) reads as
+        // min(3,5,5,5) == 3.
+        let mi_stride = 4;
+        let prev: [u8; 16] = [3, 5, 0, 0, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+        let mut r = BoolReader::new(&buf).expect("init");
+        let (got_id, seg_pred) =
+            read_inter_segment_id(&mut r, &seg, &prev, mi_stride, 0, 0, 2, 2, 0);
+        assert_eq!(got_id, 3, "min over 2×2 prev cells = 3");
+        assert!(!seg_pred, "no seg_id_predicted bit on the inheritance path");
+        // Sentinel still bit-1 ⇒ bool-coder cursor is intact.
+        assert_eq!(r.read(128), 1, "no bool-coder bits consumed");
+    }
+
+    /// D.10 — `update_map == true`, `temporal_update == true`,
+    /// pred_flag bit reads as 1 ⇒ inherit `predicted_segment_id`.
+    #[test]
+    fn read_inter_segment_id_temporal_update_pred_flag_true() {
+        use crate::entropy::BoolWriter;
+
+        let seg = SegmentationReadParams {
+            enabled: true,
+            update_map: true,
+            temporal_update: true,
+            tree_probs: [128; SEG_TREE_PROBS],
+            pred_probs: [200, 100, 50],
+        };
+
+        // Encode pred_flag = 1 against `pred_probs[ctx=1] = 100`.
+        let mut buf = vec![0u8; 32];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        w.write(1, 100);
+        for _ in 0..16 {
+            w.write_bit(0);
+        }
+        let size = w.stop_encode().expect("ok");
+        buf.truncate(size);
+
+        let mi_stride = 2;
+        let prev: [u8; 4] = [5, 5, 5, 5];
+
+        let mut r = BoolReader::new(&buf).expect("init");
+        let (got_id, seg_pred) =
+            read_inter_segment_id(&mut r, &seg, &prev, mi_stride, 0, 0, 2, 2, /* ctx = */ 1);
+        assert_eq!(got_id, 5, "inherited segment_id");
+        assert!(seg_pred, "seg_id_predicted bit fires for pred_flag = 1");
+    }
+
+    /// D.10 — `update_map == true`, `temporal_update == true`,
+    /// pred_flag bit reads as 0 ⇒ tree decode. Verify it picks up the
+    /// encoded leaf and the seg_id_predicted bit is `false`.
+    #[test]
+    fn read_inter_segment_id_temporal_update_pred_flag_false() {
+        use crate::entropy::BoolWriter;
+
+        let tree_probs = [128u8; SEG_TREE_PROBS];
+        // Pre-build the tree-decode payload for segment_id = 4 and
+        // prepend a pred_flag = 0 bit against pred_probs[2] = 50.
+        let mut buf = vec![0u8; 64];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        w.write(0, 50); // pred_flag = 0
+        // Tree walk for target = 4. Reuse the same algorithm as
+        // `encode_segment_id_leaf` inline.
+        fn subtree_contains(tree: &[i8], node: i8, target: u8) -> bool {
+            if node <= 0 {
+                (-node) as u8 == target
+            } else {
+                let idx = node as usize;
+                subtree_contains(tree, tree[idx], target)
+                    || subtree_contains(tree, tree[idx + 1], target)
+            }
+        }
+        let target: u8 = 4;
+        let mut i: i32 = 0;
+        loop {
+            let left = SEGMENT_TREE[i as usize];
+            let right = SEGMENT_TREE[i as usize + 1];
+            let bit = if subtree_contains(&SEGMENT_TREE, left, target) { 0 } else { 1 };
+            w.write(bit, tree_probs[(i >> 1) as usize]);
+            let next = if bit == 0 { left } else { right };
+            if next <= 0 {
+                break;
+            }
+            i = next as i32;
+        }
+        for _ in 0..16 {
+            w.write_bit(0);
+        }
+        let size = w.stop_encode().expect("ok");
+        buf.truncate(size);
+
+        let seg = SegmentationReadParams {
+            enabled: true,
+            update_map: true,
+            temporal_update: true,
+            tree_probs,
+            pred_probs: [200, 100, 50],
+        };
+        // Prev cells deliberately != target so we'd detect a wrongly-
+        // taken inheritance branch.
+        let prev: [u8; 4] = [7, 7, 7, 7];
+
+        let mut r = BoolReader::new(&buf).expect("init");
+        let (got_id, seg_pred) =
+            read_inter_segment_id(&mut r, &seg, &prev, 2, 0, 0, 2, 2, /* ctx = */ 2);
+        assert_eq!(got_id, target, "tree-decoded segment_id");
+        assert!(!seg_pred, "seg_id_predicted bit stays false on tree-decode arm");
+    }
+
+    /// D.10 — `update_map == true`, `temporal_update == false`:
+    /// straight tree decode, prev_segment_ids ignored.
+    #[test]
+    fn read_inter_segment_id_update_map_no_temporal() {
+        let tree_probs = [128u8; SEG_TREE_PROBS];
+        let buf = encode_segment_id_leaf(2, &tree_probs);
+
+        let seg = SegmentationReadParams {
+            enabled: true,
+            update_map: true,
+            temporal_update: false,
+            tree_probs,
+            pred_probs: [200; PREDICTION_PROBS],
+        };
+        let prev: [u8; 4] = [7, 7, 7, 7];
+
+        let mut r = BoolReader::new(&buf).expect("init");
+        let (got_id, seg_pred) =
+            read_inter_segment_id(&mut r, &seg, &prev, 2, 0, 0, 2, 2, 0);
+        assert_eq!(got_id, 2);
+        assert!(!seg_pred);
+    }
+
+    /// D.10 — inheritance over a 2x2 block must pick the MIN cell, not
+    /// the top-left cell. Mirrors libvpx `dec_get_segment_id`.
+    #[test]
+    fn read_inter_segment_id_inheritance_takes_min_across_block() {
+        let seg = SegmentationReadParams {
+            enabled: true,
+            update_map: false,
+            temporal_update: false,
+            tree_probs: [128; SEG_TREE_PROBS],
+            pred_probs: [128; PREDICTION_PROBS],
+        };
+
+        // 4x4 mi grid. Block at (1,1) of size 2x2 covers cells
+        // {(1,1)=7, (1,2)=3, (2,1)=4, (2,2)=5} ⇒ min = 3.
+        let mi_stride = 4;
+        let mut prev = [0u8; 16];
+        prev[mi_stride + 1] = 7;
+        prev[mi_stride + 2] = 3;
+        prev[2 * mi_stride + 1] = 4;
+        prev[2 * mi_stride + 2] = 5;
+
+        // No bool-coder reads happen on this path; use a 1-byte dummy
+        // buffer. We need a valid bool-reader initial state, so write
+        // a single bit first.
+        use crate::entropy::BoolWriter;
+        let mut buf = vec![0u8; 16];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        for _ in 0..16 {
+            w.write_bit(0);
+        }
+        let size = w.stop_encode().expect("ok");
+        buf.truncate(size);
+
+        let mut r = BoolReader::new(&buf).expect("init");
+        let (got_id, _) = read_inter_segment_id(&mut r, &seg, &prev, mi_stride, 1, 1, 2, 2, 0);
+        assert_eq!(got_id, 3, "MIN over the covered block, not just top-left");
+    }
+
+    /// D.10 — segmentation disabled ⇒ segment_id is always 0,
+    /// regardless of prev_segment_ids, `update_map`, or
+    /// `temporal_update`. Mirrors libvpx `if (!seg->enabled) return 0`.
+    #[test]
+    fn read_inter_segment_id_disabled_returns_zero() {
+        use crate::entropy::BoolWriter;
+
+        let seg = SegmentationReadParams {
+            enabled: false,
+            update_map: true,
+            temporal_update: true,
+            tree_probs: [128; SEG_TREE_PROBS],
+            pred_probs: [128; PREDICTION_PROBS],
+        };
+
+        let prev: [u8; 4] = [7, 7, 7, 7];
+        let mut buf = vec![0u8; 16];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        w.write(1, 200);
+        for _ in 0..16 {
+            w.write_bit(0);
+        }
+        let size = w.stop_encode().expect("ok");
+        buf.truncate(size);
+
+        let mut r = BoolReader::new(&buf).expect("init");
+        let (got_id, seg_pred) =
+            read_inter_segment_id(&mut r, &seg, &prev, 2, 0, 0, 2, 2, 0);
+        assert_eq!(got_id, 0);
+        assert!(!seg_pred);
+        // Bool-reader still pristine — verifies no bits were consumed.
+        assert_eq!(r.read(200), 1);
     }
 }
