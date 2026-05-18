@@ -575,6 +575,49 @@ pub fn intra_predict(
         IntraMode::D63 => d63_predictor(dst, stride, bs, ctx.above),
         IntraMode::Tm => tm_predictor(dst, stride, bs, ctx),
     }
+
+    // Stage 3 stretch M.9 — env-gated trace. Dumps mode + edge inputs +
+    // prediction output for blocks matching the filter. Used to localize
+    // post-iht-fix divergences (e.g. 32×32 keyframe at col=4..7 row=0..3).
+    // Filter is hard-coded by env var content:
+    //   RVP9_TRACE_INTRA=all       — every call (very noisy)
+    //   RVP9_TRACE_INTRA=4x4       — only 4x4 calls
+    //   (unset → no trace)
+    if let Ok(filter) = std::env::var("RVP9_TRACE_INTRA") {
+        let want = filter == "all" || (filter == "4x4" && bs == 4);
+        if want {
+            eprint!(
+                "RVP9_TRACE_INTRA mode={mode:?} bs={bs} above_left={} above=[",
+                ctx.above_left
+            );
+            for (i, &v) in ctx.above.iter().take(2 * bs).enumerate() {
+                if i > 0 {
+                    eprint!(",");
+                }
+                eprint!("{v}");
+            }
+            eprint!("] left=[");
+            for (i, &v) in ctx.left.iter().take(bs).enumerate() {
+                if i > 0 {
+                    eprint!(",");
+                }
+                eprint!("{v}");
+            }
+            eprint!("] pred=[");
+            for r in 0..bs {
+                if r > 0 {
+                    eprint!(";");
+                }
+                for c in 0..bs {
+                    if c > 0 {
+                        eprint!(",");
+                    }
+                    eprint!("{}", dst[r * stride + c]);
+                }
+            }
+            eprintln!("]");
+        }
+    }
 }
 
 /// Neighbour-availability hint for the DC predictor family. The

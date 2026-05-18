@@ -447,5 +447,96 @@ int main(int argc, char **argv) {
     }
   }
 
+  /* ===================================================================
+   * M.9 probe — run libvpx's pred[mode][TX_4X4] on the captured sub-1
+   * inputs and print each row, then add the captured residual. This
+   * tells us EXACTLY which mode libvpx is using for the sub-1 block.
+   * Inputs captured 2026-05-18 from rvp9 trace for vp90-2-02-size-32x32
+   * frame 1 sub-1: above_left=127, above=[127,127,127,127,127,127,127,127],
+   * left=[34, 218, 103, 113]. The residual from the iht above is
+   * [[+2,+2,-14,-3],[-42,-58,-13,-28],[+17,+26,-8,+21],[+33,+49,+60,+38]].
+   * Expected reconstruction (from vpxdec): row0 = [36,36,20,28]
+   *                                        row1 = [176,160,205,190]
+   *                                        row2 = [120,129,95,124]
+   *                                        row3 = [146,162,173,151]
+   * So libvpx's pred row 0 must be [34,34,34,31] — and we need to find
+   * which mode produces that.
+   * =================================================================== */
+  {
+    extern void vpx_dc_predictor_4x4_c(uint8_t *dst, ptrdiff_t stride,
+                                       const uint8_t *above, const uint8_t *left);
+    extern void vpx_dc_left_predictor_4x4_c(uint8_t *dst, ptrdiff_t stride,
+                                            const uint8_t *above, const uint8_t *left);
+    extern void vpx_dc_top_predictor_4x4_c(uint8_t *dst, ptrdiff_t stride,
+                                           const uint8_t *above, const uint8_t *left);
+    extern void vpx_dc_128_predictor_4x4_c(uint8_t *dst, ptrdiff_t stride,
+                                           const uint8_t *above, const uint8_t *left);
+    extern void vpx_v_predictor_4x4_c(uint8_t *dst, ptrdiff_t stride,
+                                      const uint8_t *above, const uint8_t *left);
+    extern void vpx_h_predictor_4x4_c(uint8_t *dst, ptrdiff_t stride,
+                                      const uint8_t *above, const uint8_t *left);
+    extern void vpx_tm_predictor_4x4_c(uint8_t *dst, ptrdiff_t stride,
+                                       const uint8_t *above, const uint8_t *left);
+    extern void vpx_d45_predictor_4x4_c(uint8_t *dst, ptrdiff_t stride,
+                                        const uint8_t *above, const uint8_t *left);
+    extern void vpx_d135_predictor_4x4_c(uint8_t *dst, ptrdiff_t stride,
+                                         const uint8_t *above, const uint8_t *left);
+    extern void vpx_d117_predictor_4x4_c(uint8_t *dst, ptrdiff_t stride,
+                                         const uint8_t *above, const uint8_t *left);
+    extern void vpx_d153_predictor_4x4_c(uint8_t *dst, ptrdiff_t stride,
+                                         const uint8_t *above, const uint8_t *left);
+    extern void vpx_d207_predictor_4x4_c(uint8_t *dst, ptrdiff_t stride,
+                                         const uint8_t *above, const uint8_t *left);
+    extern void vpx_d63_predictor_4x4_c(uint8_t *dst, ptrdiff_t stride,
+                                        const uint8_t *above, const uint8_t *left);
+
+    /* The captured inputs from the rvp9 trace for sub-1.  The above_data
+     * layout matches libvpx: above_data[16..] is the above row of length
+     * 2*bs; above_data[15] is above_left.  We pass `above = above_data+16`. */
+    uint8_t above_data[8 + 16];
+    memset(above_data, 0, sizeof(above_data));
+    above_data[15] = 127;  /* above_left */
+    for (int i = 0; i < 8; ++i) above_data[16 + i] = 127;  /* above + above-right */
+    const uint8_t *above = above_data + 16;
+    uint8_t left[4] = {34, 218, 103, 113};
+
+    struct { const char *name;
+             void (*pred)(uint8_t *, ptrdiff_t, const uint8_t *, const uint8_t *); }
+    modes[] = {
+      {"DC",   vpx_dc_predictor_4x4_c},
+      {"DC_L", vpx_dc_left_predictor_4x4_c},
+      {"DC_T", vpx_dc_top_predictor_4x4_c},
+      {"DC128",vpx_dc_128_predictor_4x4_c},
+      {"V",    vpx_v_predictor_4x4_c},
+      {"H",    vpx_h_predictor_4x4_c},
+      {"TM",   vpx_tm_predictor_4x4_c},
+      {"D45",  vpx_d45_predictor_4x4_c},
+      {"D135", vpx_d135_predictor_4x4_c},
+      {"D117", vpx_d117_predictor_4x4_c},
+      {"D153", vpx_d153_predictor_4x4_c},
+      {"D207", vpx_d207_predictor_4x4_c},
+      {"D63",  vpx_d63_predictor_4x4_c},
+    };
+
+    int target_row0[4] = {34, 34, 34, 31};
+    printf("\n=== M.9 probe — libvpx intra predictors for sub-1 ===\n");
+    printf("  above_left=%u above=[%u,%u,%u,%u,%u,%u,%u,%u] left=[%u,%u,%u,%u]\n",
+           above_data[15],
+           above[0], above[1], above[2], above[3],
+           above[4], above[5], above[6], above[7],
+           left[0], left[1], left[2], left[3]);
+    printf("  TARGET row 0 = [34, 34, 34, 31] (from libvpx_expected - residual)\n");
+    for (size_t mi = 0; mi < sizeof(modes)/sizeof(modes[0]); ++mi) {
+      uint8_t dst[16];
+      memset(dst, 0xCC, sizeof(dst));
+      modes[mi].pred(dst, /*stride=*/4, above, left);
+      printf("  %-6s row 0=[%3u,%3u,%3u,%3u] %s\n",
+             modes[mi].name, dst[0], dst[1], dst[2], dst[3],
+             ((int)dst[0]==target_row0[0] && (int)dst[1]==target_row0[1] &&
+              (int)dst[2]==target_row0[2] && (int)dst[3]==target_row0[3])
+                 ? " <-- MATCHES TARGET" : "");
+    }
+  }
+
   return match ? 0 : 1;
 }
