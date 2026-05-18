@@ -1381,6 +1381,17 @@ fn decode_inter_partition(
     // Inter frames: per-frame `partition_prob[ctx]` (3 entries) drives
     // the partition tree, NOT the static keyframe table.
     let probs = &fc.partition_prob[ctx];
+    // D.11 trace — log partition decisions when
+    // `RVP9_TRACE_PARTITION=1` for the first SB row.
+    let trace_part = std::env::var("RVP9_TRACE_PARTITION").is_ok()
+        && mi_row < 8;
+    if trace_part {
+        let (range, value, count, pos) = reader.cursor_state();
+        eprintln!(
+            "[rvp9_partition_pre] mi=({mi_row},{mi_col}) bsize={bsize:?} ctx={ctx} \
+             probs={probs:?} range={range} value=0x{value:016x} count={count} pos={pos}",
+        );
+    }
     let partition = if has_rows && has_cols {
         read_partition(reader, probs, ctx, mode_counts.as_deref_mut())
     } else if !has_rows && has_cols {
@@ -1406,6 +1417,14 @@ fn decode_inter_partition(
         && let Some(c) = mode_counts.as_deref_mut()
     {
         c.partition[ctx][partition as usize] += 1;
+    }
+
+    if trace_part {
+        let (range, value, count, pos) = reader.cursor_state();
+        eprintln!(
+            "[rvp9_partition_post] mi=({mi_row},{mi_col}) partition={partition:?} \
+             range={range} value=0x{value:016x} count={count} pos={pos}",
+        );
     }
 
     let sub = subsize(bsize, partition).unwrap_or(bsize);
@@ -1613,16 +1632,74 @@ fn decode_inter_block(
     let left = decode_ctx.left(mi_row_in_sb).copied();
     let skip_ctx = usize::from(above.is_some_and(|m| m.skip))
         + usize::from(left.is_some_and(|m| m.skip));
+    // D.11 trace — capture pre-skip bool-reader state so the
+    // libvpx oracle can replay the same bytes against the same
+    // probs. Filters on `RVP9_TRACE_ISINTER="mi_row,mi_col"`.
+    let trace_isinter = std::env::var("RVP9_TRACE_ISINTER").ok();
+    if let Some(filt) = trace_isinter.as_deref()
+        && let Some((tr, tc)) = filt.split_once(',')
+        && let (Ok(tr), Ok(tc)) = (tr.parse::<usize>(), tc.parse::<usize>())
+        && tr == mi_row
+        && tc == mi_col
+    {
+        let (range, value, count, pos) = reader.cursor_state();
+        eprintln!(
+            "[rvp9_isinter_pre] mi=({mi_row},{mi_col}) bsize={bsize:?} range={range} \
+             value=0x{value:016x} count={count} pos={pos} skip_ctx={skip_ctx} \
+             skip_probs={:?} intra_inter_probs={:?}",
+            fc.skip_probs, fc.intra_inter_prob,
+        );
+        eprintln!(
+            "[rvp9_isinter_pre] above_is_inter={} left_is_inter={} above_skip={} left_skip={}",
+            above
+                .as_ref()
+                .map(|m| matches!(m.mode, rvp9_core::mode_info::BlockMode::Inter { .. }))
+                .map_or(0u8, u8::from),
+            left
+                .as_ref()
+                .map(|m| matches!(m.mode, rvp9_core::mode_info::BlockMode::Inter { .. }))
+                .map_or(0u8, u8::from),
+            above.as_ref().map_or(0u8, |m| u8::from(m.skip)),
+            left.as_ref().map_or(0u8, |m| u8::from(m.skip)),
+        );
+    }
     let skip = read_skip(reader, &fc.skip_probs, skip_ctx, mode_counts.as_deref_mut());
 
     // 3. is_inter classification.
     let intra_inter_ctx = get_intra_inter_context(above.as_ref(), left.as_ref());
+    if let Some(filt) = trace_isinter.as_deref()
+        && let Some((tr, tc)) = filt.split_once(',')
+        && let (Ok(tr), Ok(tc)) = (tr.parse::<usize>(), tc.parse::<usize>())
+        && tr == mi_row
+        && tc == mi_col
+    {
+        let (range, value, count, pos) = reader.cursor_state();
+        eprintln!(
+            "[rvp9_isinter_at] mi=({mi_row},{mi_col}) skip={skip} \
+             intra_inter_ctx={intra_inter_ctx} \
+             intra_inter_p[{intra_inter_ctx}]={} \
+             range={range} value=0x{value:016x} count={count} pos={pos}",
+            fc.intra_inter_prob[intra_inter_ctx],
+        );
+    }
     let is_inter = read_is_inter(
         reader,
         &fc.intra_inter_prob,
         intra_inter_ctx,
         mode_counts.as_deref_mut(),
     );
+    if let Some(filt) = trace_isinter.as_deref()
+        && let Some((tr, tc)) = filt.split_once(',')
+        && let (Ok(tr), Ok(tc)) = (tr.parse::<usize>(), tc.parse::<usize>())
+        && tr == mi_row
+        && tc == mi_col
+    {
+        let (range, value, count, pos) = reader.cursor_state();
+        eprintln!(
+            "[rvp9_isinter_post] mi=({mi_row},{mi_col}) is_inter={is_inter} \
+             range={range} value=0x{value:016x} count={count} pos={pos}",
+        );
+    }
 
     // 4. tx_size. allow_select gate matches libvpx
     //    `vp9_decodemv.c:800`: `!mi->skip || !inter_block`.
