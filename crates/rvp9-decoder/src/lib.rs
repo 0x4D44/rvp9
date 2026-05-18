@@ -56,6 +56,7 @@ use rvp9_core::loopfilter::{
     LoopFilterInfo, LoopFilterMask, ResolvedLfDeltas, SegmentationLfView, adjust_mask,
     loop_filter_frame, resolve_filter_levels, setup_mask,
 };
+use rvp9_core::block::BlockSize;
 use rvp9_core::mode_info::ModeInfo;
 
 use crate::tile::{
@@ -990,6 +991,7 @@ fn apply_loop_filter_to_frame(
                 mi_cols as u32,
                 lfm,
             );
+            dump_lf_masks(lfm, &frame_mi, mi_stride, mi_rows, mi_cols, sb_row, sb_col);
         }
     }
 
@@ -1005,6 +1007,73 @@ fn apply_loop_filter_to_frame(
         0,
         mi_rows,
     );
+}
+
+/// Stage 3 stretch M.10 diagnostic: dump the per-SB
+/// [`LoopFilterMask`] + the visible mi-grid block-size tile, gated by
+/// `RVP9_DUMP_LF_MASKS=1`. Used to audit K2.c's wireup against
+/// libvpx's `vp9_setup_mask` + `vp9_adjust_mask` output. Cheap when
+/// the env var is unset (one `std::env::var` lookup per SB).
+fn dump_lf_masks(
+    lfm: &LoopFilterMask,
+    frame_mi: &[ModeInfo],
+    mi_stride: usize,
+    mi_rows: usize,
+    mi_cols: usize,
+    sb_row: usize,
+    sb_col: usize,
+) {
+    if std::env::var("RVP9_DUMP_LF_MASKS").is_err() {
+        return;
+    }
+    let mi_row = sb_row * SB_MI_SIZE;
+    let mi_col = sb_col * SB_MI_SIZE;
+    eprintln!(
+        "SB ({sb_row},{sb_col}) mi=({mi_row},{mi_col}) mi_rows={mi_rows} mi_cols={mi_cols}"
+    );
+    eprintln!(
+        "  left_y    = [{:#018x}, {:#018x}, {:#018x}, {:#018x}]",
+        lfm.left_y[0], lfm.left_y[1], lfm.left_y[2], lfm.left_y[3]
+    );
+    eprintln!(
+        "  above_y   = [{:#018x}, {:#018x}, {:#018x}, {:#018x}]",
+        lfm.above_y[0], lfm.above_y[1], lfm.above_y[2], lfm.above_y[3]
+    );
+    eprintln!("  int_4x4_y = {:#018x}", lfm.int_4x4_y);
+    eprintln!(
+        "  left_uv   = [{:#06x}, {:#06x}, {:#06x}, {:#06x}]",
+        lfm.left_uv[0], lfm.left_uv[1], lfm.left_uv[2], lfm.left_uv[3]
+    );
+    eprintln!(
+        "  above_uv  = [{:#06x}, {:#06x}, {:#06x}, {:#06x}]",
+        lfm.above_uv[0], lfm.above_uv[1], lfm.above_uv[2], lfm.above_uv[3]
+    );
+    eprintln!("  int_4x4_uv= {:#06x}", lfm.int_4x4_uv);
+    eprintln!("  lfl_y     = {:?}", lfm.lfl_y);
+    eprintln!("  mi_grid block_size (visible only):");
+    for r in 0..mi_rows {
+        let mut row_str = String::new();
+        for c in 0..mi_cols {
+            let mi = &frame_mi[r * mi_stride + c];
+            let tag = match mi.block_size {
+                BlockSize::Block4x4 => "4x4 ",
+                BlockSize::Block8x8 => "8x8 ",
+                BlockSize::Block16x16 => "16x16",
+                BlockSize::Block32x32 => "32x32",
+                BlockSize::Block64x64 => "64x64",
+                BlockSize::Block4x8 => "4x8 ",
+                BlockSize::Block8x4 => "8x4 ",
+                BlockSize::Block8x16 => "8x16",
+                BlockSize::Block16x8 => "16x8",
+                BlockSize::Block16x32 => "16x32",
+                BlockSize::Block32x16 => "32x16",
+                BlockSize::Block32x64 => "32x64",
+                BlockSize::Block64x32 => "64x32",
+            };
+            row_str.push_str(&format!(" {tag}"));
+        }
+        eprintln!("    r{r}: {row_str}");
+    }
 }
 
 /// Placeholder [`ModeInfo`] for the rare path where the entire mi
