@@ -458,6 +458,7 @@ pub fn decode_and_reconstruct_inter_block<N: NeighbourLookup>(
         reader,
         fc,
         /* counts = */ None,
+        /* mode_counts = */ None,
         params,
         neighbours,
         mi.block_size,

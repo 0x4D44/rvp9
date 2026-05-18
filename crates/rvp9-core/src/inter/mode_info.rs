@@ -188,23 +188,33 @@ pub fn get_pred_context_switchable_interp(
 /// Read the per-block switchable-interpolation filter. Mirrors libvpx
 /// `read_switchable_interp_filter` (`vp9_decodemv.c:343-352`). Only
 /// called when the frame's `interp_filter == Switchable`.
+///
+/// `mode_counts`, when `Some`, accumulates
+/// `switchable_interp[ctx][filter]` for backward adaptation. Mirrors
+/// libvpx `++counts->switchable_interp[ctx][type]`
+/// (`vp9_decodemv.c:350`).
 #[must_use]
 pub fn read_switchable_interp_filter(
     reader: &mut BoolReader<'_>,
     fc: &FrameContext,
     above: Option<&ModeInfo>,
     left: Option<&ModeInfo>,
+    mode_counts: Option<&mut crate::entropy::adapt::FrameCounts>,
 ) -> InterpFilter {
     let ctx = get_pred_context_switchable_interp(above, left);
     let probs = &fc.switchable_interp_prob[ctx];
     let raw = reader.read_tree(&SWITCHABLE_INTERP_TREE, probs);
-    match raw {
+    let filter = match raw {
         0 => InterpFilter::EightTap,
         1 => InterpFilter::EightTapSmooth,
         2 => InterpFilter::EightTapSharp,
         // Unreachable: SWITCHABLE_INTERP_TREE only emits leaves 0..=2.
         _ => unreachable!("switchable interp tree produced {raw}"),
+    };
+    if let Some(c) = mode_counts {
+        c.switchable_interp[ctx][raw as usize] += 1;
     }
+    filter
 }
 
 /// libvpx `has_second_ref` (`vp9_blockd.h:107-109`): `true` iff the
@@ -554,6 +564,7 @@ pub fn read_ref_frames(
     params: &InterModeReadParams,
     above: Option<&ModeInfo>,
     left: Option<&ModeInfo>,
+    mut mode_counts: Option<&mut crate::entropy::adapt::FrameCounts>,
 ) -> (RefFrame, RefFrame, bool) {
     // First: read or infer the block reference mode (Single vs
     // Compound). `Select` triggers a read; the other two are
@@ -562,7 +573,11 @@ pub fn read_ref_frames(
         ReferenceMode::Select => {
             let ctx = get_reference_mode_context(above, left, params.comp_fixed_ref);
             debug_assert!(ctx < COMP_INTER_CONTEXTS);
-            reader.read(fc.comp_inter_prob[ctx]) != 0
+            let bit = reader.read(fc.comp_inter_prob[ctx]);
+            if let Some(c) = mode_counts.as_deref_mut() {
+                c.comp_inter[ctx][bit as usize] += 1;
+            }
+            bit != 0
         }
         ReferenceMode::Compound => true,
         ReferenceMode::Single => false,
@@ -580,6 +595,9 @@ pub fn read_ref_frames(
             );
             debug_assert!(ctx < REF_CONTEXTS);
             let bit = reader.read(fc.comp_ref_prob[ctx]);
+            if let Some(c) = mode_counts {
+                c.comp_ref[ctx][bit as usize] += 1;
+            }
             let var = params.comp_var_ref[bit as usize];
             let mut ref_frames = [RefFrame::NoRefFrame; 2];
             ref_frames[idx] = params.comp_fixed_ref;
@@ -591,10 +609,16 @@ pub fn read_ref_frames(
             let ctx0 = get_pred_context_single_ref_p1(above, left);
             debug_assert!(ctx0 < REF_CONTEXTS);
             let bit0 = reader.read(fc.single_ref_prob[ctx0][0]);
+            if let Some(c) = mode_counts.as_deref_mut() {
+                c.single_ref[ctx0][0][bit0 as usize] += 1;
+            }
             let r0 = if bit0 != 0 {
                 let ctx1 = get_pred_context_single_ref_p2(above, left);
                 debug_assert!(ctx1 < REF_CONTEXTS);
                 let bit1 = reader.read(fc.single_ref_prob[ctx1][1]);
+                if let Some(c) = mode_counts {
+                    c.single_ref[ctx1][1][bit1 as usize] += 1;
+                }
                 if bit1 != 0 {
                     RefFrame::AltrefFrame
                 } else {
@@ -737,6 +761,7 @@ pub fn read_inter_block_mode_info<N: NeighbourLookup>(
     reader: &mut BoolReader<'_>,
     fc: &FrameContext,
     counts: Option<&mut NmvCounts>,
+    mut mode_counts: Option<&mut crate::entropy::adapt::FrameCounts>,
     params: &InterModeReadParams,
     neighbours: &N,
     block_size: BlockSize,
@@ -749,7 +774,7 @@ pub fn read_inter_block_mode_info<N: NeighbourLookup>(
 
     // 1. Reference frames.
     let (ref0, ref1, is_compound) =
-        read_ref_frames(reader, fc, params, above, left);
+        read_ref_frames(reader, fc, params, above, left, mode_counts.as_deref_mut());
 
     // 2. Parent inter mode + interpolation filter. For sub-8
     //    libvpx reads `b_mode` per-bmi later; the parent `mi->mode`
@@ -757,13 +782,18 @@ pub fn read_inter_block_mode_info<N: NeighbourLookup>(
     let inter_mode_ctx = get_mode_context(block_size, neighbours);
     debug_assert!(inter_mode_ctx < INTER_MODE_CONTEXTS);
     let parent_mode = if (block_size as u8) >= (BlockSize::Block8x8 as u8) {
-        read_inter_mode(reader, &fc.inter_mode_probs[inter_mode_ctx])
+        read_inter_mode(
+            reader,
+            &fc.inter_mode_probs[inter_mode_ctx],
+            inter_mode_ctx,
+            mode_counts.as_deref_mut(),
+        )
     } else {
         InterMode::NearestMv // placeholder — overwritten per-bmi below
     };
 
     let interp_filter = if params.interp_filter == InterpFilter::Switchable {
-        read_switchable_interp_filter(reader, fc, above, left)
+        read_switchable_interp_filter(reader, fc, above, left, mode_counts.as_deref_mut())
     } else {
         params.interp_filter
     };
@@ -789,6 +819,7 @@ pub fn read_inter_block_mode_info<N: NeighbourLookup>(
             reader,
             fc,
             counts,
+            mode_counts,
             params,
             neighbours,
             block_size,
@@ -891,6 +922,7 @@ fn resolve_sub8_bmi<N: NeighbourLookup>(
     reader: &mut BoolReader<'_>,
     fc: &FrameContext,
     mut counts: Option<&mut NmvCounts>,
+    mut mode_counts: Option<&mut crate::entropy::adapt::FrameCounts>,
     params: &InterModeReadParams,
     neighbours: &N,
     block_size: BlockSize,
@@ -928,7 +960,12 @@ fn resolve_sub8_bmi<N: NeighbourLookup>(
         let mut idx = 0usize;
         while idx < 2 {
             let j = idy * 2 + idx;
-            let b_mode = read_inter_mode(reader, &fc.inter_mode_probs[inter_mode_ctx]);
+            let b_mode = read_inter_mode(
+                reader,
+                &fc.inter_mode_probs[inter_mode_ctx],
+                inter_mode_ctx,
+                mode_counts.as_deref_mut(),
+            );
 
             let mut best_sub8x8 = [Mv::ZERO; 2];
 
@@ -1231,6 +1268,7 @@ mod tests {
             &mut reader,
             &fc,
             None,
+            None,
             &params,
             &nb,
             bsize,
@@ -1285,6 +1323,7 @@ mod tests {
             &mut reader,
             &fc,
             None,
+            None,
             &params,
             &nb,
             bsize,
@@ -1337,6 +1376,7 @@ mod tests {
         read_inter_block_mode_info(
             &mut reader,
             &fc,
+            None,
             None,
             &params,
             &nb,
@@ -1430,6 +1470,7 @@ mod tests {
             &mut reader,
             &fc,
             None,
+            None,
             &params,
             &nb,
             bsize,
@@ -1470,7 +1511,7 @@ mod tests {
         buf.truncate(size);
 
         let mut reader = BoolReader::new(&buf).expect("init");
-        let got = read_switchable_interp_filter(&mut reader, &fc, nb_above, nb_left);
+        let got = read_switchable_interp_filter(&mut reader, &fc, nb_above, nb_left, None);
         assert_eq!(got, InterpFilter::EightTapSmooth);
     }
 
@@ -1591,6 +1632,7 @@ mod tests {
             &mut reader,
             &fc,
             None,
+            None,
             &params,
             &nb,
             bsize,
@@ -1650,6 +1692,7 @@ mod tests {
         read_inter_block_mode_info(
             &mut reader,
             &fc,
+            None,
             None,
             &params,
             &nb,
@@ -1732,6 +1775,7 @@ mod tests {
             &mut reader,
             &fc,
             None,
+            None,
             &params,
             &nb,
             bsize,
@@ -1748,5 +1792,67 @@ mod tests {
             }
             _ => panic!("expected Inter"),
         }
+    }
+
+    /// Stage 3 Task E.1.c.2/.3: `read_inter_block_mode_info` populates
+    /// `mode_counts.single_ref[ctx0][0][bit0]` /
+    /// `mode_counts.inter_mode[inter_ctx][mode_idx]` /
+    /// `mode_counts.switchable_interp[interp_ctx][interp]` when fed a
+    /// non-`None` sink. Verifies the wireup at the higher-level
+    /// function entry point, mirroring the leaf-level test in
+    /// `crate::mode_info::tests::leaf_decoders_populate_frame_counts`.
+    #[test]
+    fn read_inter_block_mode_info_populates_mode_counts() {
+        use crate::entropy::adapt::FrameCounts;
+
+        let fc = FrameContext::new_default();
+        let params = default_params();
+        let bsize = BlockSize::Block16x16;
+        let nbmv = Mv { row: 10, col: -8 };
+        let above = inter_neighbour(bsize, nbmv);
+        let nb = ListNeighbours::new().with(Position { row: -1, col: 0 }, &above);
+        let bounds = loose_bounds();
+
+        let mut buf = vec![0u8; 64];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        // Single-ref → bit0=0 path (LAST).
+        let ctx0 = get_pred_context_single_ref_p1(Some(&above), None);
+        write_single_ref_bits(&mut w, RefFrame::LastFrame, fc.single_ref_prob[ctx0][0], 0);
+        let inter_ctx = get_mode_context(bsize, &nb);
+        write_inter_mode_bits(
+            &mut w,
+            InterMode::NearestMv,
+            &fc.inter_mode_probs[inter_ctx],
+        );
+        let size = finalise(w);
+        buf.truncate(size);
+
+        let mut reader = BoolReader::new(&buf).expect("init");
+        let mut mi = skeleton_mi(bsize);
+        let mut mode_counts = FrameCounts::default();
+        read_inter_block_mode_info(
+            &mut reader,
+            &fc,
+            None,
+            Some(&mut mode_counts),
+            &params,
+            &nb,
+            bsize,
+            &bounds,
+            None,
+            &mut mi,
+        );
+        // Single-ref path: ctx0 sees bit0=0 (LastFrame).
+        assert_eq!(mode_counts.single_ref[ctx0][0][0], 1);
+        // Inter mode: ctx=`inter_ctx`, mode=NearestMv (idx 0).
+        assert_eq!(mode_counts.inter_mode[inter_ctx][InterMode::NearestMv.idx()], 1);
+        // No comp_inter / comp_ref / switchable_interp reads happen
+        // here (reference_mode=Single, interp_filter≠Switchable).
+        assert_eq!(mode_counts.comp_inter, FrameCounts::default().comp_inter);
+        assert_eq!(mode_counts.comp_ref, FrameCounts::default().comp_ref);
+        assert_eq!(
+            mode_counts.switchable_interp,
+            FrameCounts::default().switchable_interp
+        );
     }
 }

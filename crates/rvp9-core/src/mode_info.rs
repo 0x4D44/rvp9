@@ -25,6 +25,7 @@
 
 use crate::bitstream::{InterpFilter, MAX_SEGMENTS, SEG_TREE_PROBS, tx_mode_to_biggest_tx_size};
 use crate::block::{BlockSize, PARTITION_TYPES, PartitionType};
+use crate::entropy::adapt::FrameCounts;
 use crate::entropy::{
     BoolReader, COMP_INTER_CONTEXTS, DefaultTxProbs, INTRA_INTER_CONTEXTS, REF_CONTEXTS,
     SKIP_CONTEXTS,
@@ -59,10 +60,24 @@ pub fn read_segment_id(r: &mut BoolReader<'_>, tree_probs: &[u8; SEG_TREE_PROBS]
 /// `ctx` is the 0..=2 skip-context index from the above + left
 /// neighbours' skip flags (computed at the per-block level by the
 /// caller). `probs = &fc.skip_probs`.
+///
+/// `counts`, when `Some`, accumulates a `skip[ctx][skip_bit]` tally
+/// for backward adaptation
+/// ([`adapt_mode_probs`](crate::entropy::adapt::adapt_mode_probs)).
+/// Mirrors libvpx `++counts->skip[ctx][skip]` (`vp9_decodemv.c:187`).
 #[inline]
 #[must_use]
-pub fn read_skip(r: &mut BoolReader<'_>, probs: &[u8; SKIP_CONTEXTS], ctx: usize) -> bool {
-    r.read(probs[ctx]) != 0
+pub fn read_skip(
+    r: &mut BoolReader<'_>,
+    probs: &[u8; SKIP_CONTEXTS],
+    ctx: usize,
+    counts: Option<&mut FrameCounts>,
+) -> bool {
+    let bit = r.read(probs[ctx]);
+    if let Some(c) = counts {
+        c.skip[ctx][bit as usize] += 1;
+    }
+    bit != 0
 }
 
 /// Decode the per-block intra/inter classification bit. Mirrors
@@ -70,14 +85,23 @@ pub fn read_skip(r: &mut BoolReader<'_>, probs: &[u8; SKIP_CONTEXTS], ctx: usize
 ///
 /// Returns `true` for an inter block. `ctx` is the 0..=3
 /// intra-inter context computed from neighbours' is_inter flags.
+///
+/// `counts`, when `Some`, accumulates `intra_inter[ctx][is_inter]`
+/// for backward adaptation. Mirrors libvpx
+/// `++counts->intra_inter[ctx][is_inter]` (`vp9_decodemv.c:444`).
 #[inline]
 #[must_use]
 pub fn read_is_inter(
     r: &mut BoolReader<'_>,
     probs: &[u8; INTRA_INTER_CONTEXTS],
     ctx: usize,
+    counts: Option<&mut FrameCounts>,
 ) -> bool {
-    r.read(probs[ctx]) != 0
+    let bit = r.read(probs[ctx]);
+    if let Some(c) = counts {
+        c.intra_inter[ctx][bit as usize] += 1;
+    }
+    bit != 0
 }
 
 /// Decode the per-block compound-vs-single reference selection.
@@ -87,14 +111,23 @@ pub fn read_is_inter(
 /// Returns `true` for compound, `false` for single. `ctx` is the
 /// 0..=4 compound-inter context computed from neighbour
 /// references' time-direction agreement.
+///
+/// `counts`, when `Some`, accumulates `comp_inter[ctx][is_compound]`
+/// for backward adaptation. Mirrors libvpx
+/// `++counts->comp_inter[ctx][mode]` (`vp9_decodemv.c:295`).
 #[inline]
 #[must_use]
 pub fn read_is_compound(
     r: &mut BoolReader<'_>,
     probs: &[u8; COMP_INTER_CONTEXTS],
     ctx: usize,
+    counts: Option<&mut FrameCounts>,
 ) -> bool {
-    r.read(probs[ctx]) != 0
+    let bit = r.read(probs[ctx]);
+    if let Some(c) = counts {
+        c.comp_inter[ctx][bit as usize] += 1;
+    }
+    bit != 0
 }
 
 /// Decode one bit of the single-ref selection. Mirrors libvpx
@@ -108,6 +141,11 @@ pub fn read_is_compound(
 ///
 /// This helper reads one such bit at a specific
 /// `single_ref_prob[ctx][slot]` slot. `slot` is `0` or `1`.
+///
+/// `counts`, when `Some`, accumulates
+/// `single_ref[ctx][slot][bit]` for backward adaptation. Mirrors
+/// libvpx `++counts->single_ref[ctx0][0][bit0]` /
+/// `++counts->single_ref[ctx1][1][bit1]` (`vp9_decodemv.c:326,330`).
 #[inline]
 #[must_use]
 pub fn read_single_ref_bit(
@@ -115,8 +153,13 @@ pub fn read_single_ref_bit(
     probs: &[[u8; 2]; REF_CONTEXTS],
     ctx: usize,
     slot: usize,
+    counts: Option<&mut FrameCounts>,
 ) -> bool {
-    r.read(probs[ctx][slot]) != 0
+    let bit = r.read(probs[ctx][slot]);
+    if let Some(c) = counts {
+        c.single_ref[ctx][slot][bit as usize] += 1;
+    }
+    bit != 0
 }
 
 /// libvpx `vp9_partition_tree` (`vp9_entropymode.c:262-264`):
@@ -191,6 +234,16 @@ pub static INTER_MODE_TREE: [i8; 2 * NUM_INTER_MODES - 2] = [
 /// non-keyframe Y/UV modes (`fc.y_mode_prob[block_size_group]`
 /// or `fc.uv_mode_prob[y_mode]`) and for keyframe modes
 /// (`vp9_kf_y_mode_prob` / `vp9_kf_uv_mode_prob`).
+///
+/// **Note:** this primitive returns only the decoded mode; the caller
+/// is responsible for incrementing the appropriate count slot
+/// (`y_mode[size_group][mode]` or `uv_mode[y_mode][uv_mode]`). The
+/// count is not threaded through here because the same primitive
+/// serves both Y and UV reads with different count axes, and the
+/// keyframe path (which uses `vp9_kf_*_prob` and is NOT adapted)
+/// would otherwise need to suppress the count. See
+/// [`read_intra_mode_y`] and [`read_intra_mode_uv`] for count-aware
+/// variants.
 #[inline]
 #[must_use]
 pub fn read_intra_mode(r: &mut BoolReader<'_>, probs: &[u8; 10 - 1]) -> IntraMode {
@@ -198,37 +251,107 @@ pub fn read_intra_mode(r: &mut BoolReader<'_>, probs: &[u8; 10 - 1]) -> IntraMod
     IntraMode::from_u8(raw as u8).expect("intra mode tree returns valid IntraMode")
 }
 
+/// Decode the per-block intra Y mode for the non-keyframe path.
+/// Mirrors libvpx `read_intra_mode_y` (`vp9_decodemv.c:30-37`).
+///
+/// `probs = &fc.y_mode_prob[size_group]` (9-entry slot per the
+/// libvpx `size_group_lookup` mapping; sub-8 blocks use slot 0).
+/// `size_group` is the 0..=3 lookup index, used to address the
+/// per-frame count slot `y_mode[size_group][mode]`.
+#[inline]
+#[must_use]
+pub fn read_intra_mode_y(
+    r: &mut BoolReader<'_>,
+    probs: &[u8; 10 - 1],
+    size_group: usize,
+    counts: Option<&mut FrameCounts>,
+) -> IntraMode {
+    let mode = read_intra_mode(r, probs);
+    if let Some(c) = counts {
+        c.y_mode[size_group][mode as usize] += 1;
+    }
+    mode
+}
+
+/// Decode the per-block intra UV mode for the non-keyframe path.
+/// Mirrors libvpx `read_intra_mode_uv` (`vp9_decodemv.c:40-47`).
+///
+/// `probs = &fc.uv_mode_prob[y_mode]` (9-entry slot per Y mode).
+/// `y_mode` is the parent Y mode value, used to address the
+/// per-frame count slot `uv_mode[y_mode][uv_mode]`.
+#[inline]
+#[must_use]
+pub fn read_intra_mode_uv(
+    r: &mut BoolReader<'_>,
+    probs: &[u8; 10 - 1],
+    y_mode: IntraMode,
+    counts: Option<&mut FrameCounts>,
+) -> IntraMode {
+    let mode = read_intra_mode(r, probs);
+    if let Some(c) = counts {
+        c.uv_mode[y_mode as usize][mode as usize] += 1;
+    }
+    mode
+}
+
 /// Decode an inter-prediction mode by walking [`INTER_MODE_TREE`]
 /// against the given 3-entry probability slot
 /// (`fc.inter_mode_probs[ctx]`).
+///
+/// `counts`, when `Some`, accumulates `inter_mode[ctx][mode_idx]`
+/// for backward adaptation. Mirrors libvpx
+/// `++counts->inter_mode[ctx][INTER_OFFSET(mode)]`
+/// (`vp9_decodemv.c:55`). `mode_idx` is the libvpx INTER_OFFSET
+/// (0..=3, matching [`InterMode::idx`]).
 #[inline]
 #[must_use]
 pub fn read_inter_mode(
     r: &mut BoolReader<'_>,
     probs: &[u8; NUM_INTER_MODES - 1],
+    ctx: usize,
+    counts: Option<&mut FrameCounts>,
 ) -> InterMode {
     let raw = r.read_tree(&INTER_MODE_TREE, probs);
-    InterMode::from_idx(raw as u8).expect("inter mode tree returns valid InterMode")
+    let mode = InterMode::from_idx(raw as u8).expect("inter mode tree returns valid InterMode");
+    if let Some(c) = counts {
+        c.inter_mode[ctx][mode.idx()] += 1;
+    }
+    mode
 }
 
 /// Decode one [`PartitionType`] from the boolean reader given a
 /// 3-entry context probability slot. Mirrors libvpx
-/// `read_partition` (`vp9_decodemv.c:467-479`) — the tree-decode
+/// `read_partition` (`vp9_decodeframe.c:1147-1168`) — the tree-decode
 /// part. The caller provides the right context's probability slot
 /// by computing the 16-way `partition_plane_context`.
 ///
-/// `probs` is `&fc.partition_prob[ctx]` (3 probabilities).
+/// `probs` is `&fc.partition_prob[ctx]` (3 probabilities), OR
+/// `&vp9_kf_partition_probs[ctx]` on keyframes (libvpx
+/// `set_partition_probs`).
 ///
 /// For block sizes < 8×8 (where `Block8x8` is the smallest
 /// partitionable parent), libvpx forces `PARTITION_NONE` and
 /// skips the tree decode entirely. The caller handles that case.
+///
+/// `counts`, when `Some`, accumulates `partition[ctx][partition_type]`
+/// for backward adaptation. Mirrors libvpx
+/// `++counts->partition[ctx][p]` (`vp9_decodeframe.c:1165`).
 #[inline]
 #[must_use]
-pub fn read_partition(r: &mut BoolReader<'_>, probs: &[u8; PARTITION_TYPES - 1]) -> PartitionType {
+pub fn read_partition(
+    r: &mut BoolReader<'_>,
+    probs: &[u8; PARTITION_TYPES - 1],
+    ctx: usize,
+    counts: Option<&mut FrameCounts>,
+) -> PartitionType {
     let raw = r.read_tree(&PARTITION_TREE, probs);
     // Safety: PARTITION_TREE only contains negations of valid
     // PartitionType discriminants, so `from_u8` always succeeds.
-    PartitionType::from_u8(raw as u8).expect("partition tree returns valid PartitionType")
+    let p = PartitionType::from_u8(raw as u8).expect("partition tree returns valid PartitionType");
+    if let Some(c) = counts {
+        c.partition[ctx][p as usize] += 1;
+    }
+    p
 }
 
 /// Compute the 0..=1 `tx_size` context from the above + left
@@ -334,6 +457,12 @@ fn get_tx_probs(
 ///   caller computes this.
 /// - `ctx`: the 0..=1 tx-size context from
 ///   [`get_tx_size_context`].
+/// - `counts`: when `Some`, the read-selected branch accumulates
+///   `tx.p{8x8,16x16,32x32}[ctx][selected]` for backward
+///   adaptation. Mirrors libvpx
+///   `++get_tx_counts(max_tx_size, ctx, &counts->tx)[tx_size]`
+///   (`vp9_decodemv.c:76`). The non-select branch does not adapt
+///   tx probs — libvpx skips the increment.
 ///
 /// Algorithm:
 /// - If `allow_select && tx_mode == TxModeSelect && max_tx_size >=
@@ -362,6 +491,7 @@ pub fn read_tx_size(
     max_tx_size: TxSize,
     allow_select: bool,
     ctx: usize,
+    counts: Option<&mut FrameCounts>,
 ) -> TxSize {
     if allow_select && tx_mode == TxMode::TxModeSelect && max_tx_size >= TxSize::Tx8x8 {
         let probs = get_tx_probs(tx_probs, max_tx_size, ctx)
@@ -373,7 +503,7 @@ pub fn read_tx_size(
                 raw += r.read(probs[2]);
             }
         }
-        match raw {
+        let tx = match raw {
             0 => TxSize::Tx4x4,
             1 => TxSize::Tx8x8,
             2 => TxSize::Tx16x16,
@@ -381,9 +511,22 @@ pub fn read_tx_size(
             // Unreachable: read_selected_tx_size accumulates at most 3
             // single-bit increments starting from 0.
             _ => unreachable!("tx_size tree walk produced {raw}"),
+        };
+        if let Some(c) = counts {
+            let idx = tx as usize;
+            match max_tx_size {
+                TxSize::Tx8x8 => c.tx.p8x8[ctx][idx] += 1,
+                TxSize::Tx16x16 => c.tx.p16x16[ctx][idx] += 1,
+                TxSize::Tx32x32 => c.tx.p32x32[ctx][idx] += 1,
+                // Unreachable: the outer gate excludes Tx4x4.
+                TxSize::Tx4x4 => unreachable!("read_selected_tx_size gate excludes Tx4x4"),
+            }
         }
+        tx
     } else {
-        // tx_mode-driven cap.
+        // tx_mode-driven cap. Libvpx does NOT increment tx_counts in
+        // this branch.
+        let _ = counts;
         let cap = tx_mode_to_biggest_tx_size(tx_mode) as u8;
         let raw = core::cmp::min(max_tx_size as u8, cap);
         match raw {
@@ -897,37 +1040,37 @@ mod tests {
         let skip_probs = [200u8; SKIP_CONTEXTS];
         let buf = build(0, skip_probs[1]);
         let mut r = BoolReader::new(&buf).expect("init");
-        assert!(!read_skip(&mut r, &skip_probs, 1));
+        assert!(!read_skip(&mut r, &skip_probs, 1, None));
         let buf = build(1, skip_probs[2]);
         let mut r = BoolReader::new(&buf).expect("init");
-        assert!(read_skip(&mut r, &skip_probs, 2));
+        assert!(read_skip(&mut r, &skip_probs, 2, None));
 
         // read_is_inter.
         let ii_probs = [128u8; INTRA_INTER_CONTEXTS];
         let buf = build(0, ii_probs[0]);
         let mut r = BoolReader::new(&buf).expect("init");
-        assert!(!read_is_inter(&mut r, &ii_probs, 0));
+        assert!(!read_is_inter(&mut r, &ii_probs, 0, None));
         let buf = build(1, ii_probs[3]);
         let mut r = BoolReader::new(&buf).expect("init");
-        assert!(read_is_inter(&mut r, &ii_probs, 3));
+        assert!(read_is_inter(&mut r, &ii_probs, 3, None));
 
         // read_is_compound.
         let ci_probs = [100u8; COMP_INTER_CONTEXTS];
         let buf = build(0, ci_probs[2]);
         let mut r = BoolReader::new(&buf).expect("init");
-        assert!(!read_is_compound(&mut r, &ci_probs, 2));
+        assert!(!read_is_compound(&mut r, &ci_probs, 2, None));
         let buf = build(1, ci_probs[4]);
         let mut r = BoolReader::new(&buf).expect("init");
-        assert!(read_is_compound(&mut r, &ci_probs, 4));
+        assert!(read_is_compound(&mut r, &ci_probs, 4, None));
 
         // read_single_ref_bit.
         let sr_probs = [[120u8, 80u8]; REF_CONTEXTS];
         let buf = build(0, sr_probs[1][0]);
         let mut r = BoolReader::new(&buf).expect("init");
-        assert!(!read_single_ref_bit(&mut r, &sr_probs, 1, 0));
+        assert!(!read_single_ref_bit(&mut r, &sr_probs, 1, 0, None));
         let buf = build(1, sr_probs[3][1]);
         let mut r = BoolReader::new(&buf).expect("init");
-        assert!(read_single_ref_bit(&mut r, &sr_probs, 3, 1));
+        assert!(read_single_ref_bit(&mut r, &sr_probs, 3, 1, None));
     }
 
     /// `INTRA_MODE_TREE` shape matches libvpx
@@ -1066,7 +1209,7 @@ mod tests {
             buf.truncate(size);
 
             let mut r = BoolReader::new(&buf).expect("init");
-            let got = read_inter_mode(&mut r, &probs);
+            let got = read_inter_mode(&mut r, &probs, 0, None);
             assert_eq!(got, expected, "round-trip {expected:?}");
         }
     }
@@ -1109,9 +1252,163 @@ mod tests {
             buf.truncate(size);
 
             let mut r = BoolReader::new(&buf).expect("init");
-            let got = read_partition(&mut r, &probs);
+            let got = read_partition(&mut r, &probs, 0, None);
             assert_eq!(got, expected, "round-trip {expected:?}");
         }
+    }
+
+    /// Stage 3 Task E.1.c.2 / .3: leaf decoders increment the
+    /// correct [`FrameCounts`] slot when fed a non-`None` sink.
+    /// Verifies plumbing for: read_skip, read_is_inter, read_is_compound,
+    /// read_single_ref_bit, read_partition, read_intra_mode_y,
+    /// read_intra_mode_uv, read_inter_mode, read_tx_size (selected path).
+    #[test]
+    fn leaf_decoders_populate_frame_counts() {
+        use crate::entropy::BoolWriter;
+        use crate::entropy::adapt::FrameCounts;
+
+        fn build_one_bit(bit: u8, prob: u8) -> Vec<u8> {
+            let mut buf = vec![0u8; 32];
+            let mut w = BoolWriter::start_encode(&mut buf);
+            w.write(bit, prob);
+            for _ in 0..16 {
+                w.write_bit(0);
+            }
+            let size = w.stop_encode().expect("ok");
+            buf.truncate(size);
+            buf
+        }
+
+        // read_skip: ctx=1, bit=1 → counts.skip[1][1] += 1.
+        let mut counts = FrameCounts::default();
+        let skip_probs = [200u8; SKIP_CONTEXTS];
+        let buf = build_one_bit(1, skip_probs[1]);
+        let mut r = BoolReader::new(&buf).expect("init");
+        assert!(read_skip(&mut r, &skip_probs, 1, Some(&mut counts)));
+        assert_eq!(counts.skip[1][1], 1);
+        assert_eq!(counts.skip[1][0], 0);
+
+        // read_is_inter: ctx=2, bit=0 → counts.intra_inter[2][0] += 1.
+        let mut counts = FrameCounts::default();
+        let ii_probs = [128u8; INTRA_INTER_CONTEXTS];
+        let buf = build_one_bit(0, ii_probs[2]);
+        let mut r = BoolReader::new(&buf).expect("init");
+        assert!(!read_is_inter(&mut r, &ii_probs, 2, Some(&mut counts)));
+        assert_eq!(counts.intra_inter[2][0], 1);
+
+        // read_is_compound: ctx=3, bit=1 → counts.comp_inter[3][1] += 1.
+        let mut counts = FrameCounts::default();
+        let ci_probs = [100u8; COMP_INTER_CONTEXTS];
+        let buf = build_one_bit(1, ci_probs[3]);
+        let mut r = BoolReader::new(&buf).expect("init");
+        assert!(read_is_compound(&mut r, &ci_probs, 3, Some(&mut counts)));
+        assert_eq!(counts.comp_inter[3][1], 1);
+
+        // read_single_ref_bit: ctx=4, slot=1, bit=1 →
+        // counts.single_ref[4][1][1] += 1.
+        let mut counts = FrameCounts::default();
+        let sr_probs = [[120u8, 80u8]; REF_CONTEXTS];
+        let buf = build_one_bit(1, sr_probs[4][1]);
+        let mut r = BoolReader::new(&buf).expect("init");
+        assert!(read_single_ref_bit(&mut r, &sr_probs, 4, 1, Some(&mut counts)));
+        assert_eq!(counts.single_ref[4][1][1], 1);
+
+        // read_partition: ctx=7, encoded as PartitionType::Horz (`1 0`).
+        let mut counts = FrameCounts::default();
+        let probs = [128u8, 128u8, 128u8];
+        let mut buf = vec![0u8; 32];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        w.write(1, probs[0]);
+        w.write(0, probs[1]);
+        for _ in 0..16 {
+            w.write_bit(0);
+        }
+        let size = w.stop_encode().expect("ok");
+        buf.truncate(size);
+        let mut r = BoolReader::new(&buf).expect("init");
+        let p = read_partition(&mut r, &probs, 7, Some(&mut counts));
+        assert_eq!(p, PartitionType::Horz);
+        assert_eq!(counts.partition[7][PartitionType::Horz as usize], 1);
+
+        // read_intra_mode_y / read_intra_mode_uv: encode the
+        // canonical bit path for IntraMode::Dc (left-most leaf:
+        // bit 0 at node 0).
+        let mut counts = FrameCounts::default();
+        let probs = [128u8; 9];
+        let mut buf = vec![0u8; 32];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        w.write(0, probs[0]);
+        for _ in 0..16 {
+            w.write_bit(0);
+        }
+        let size = w.stop_encode().expect("ok");
+        buf.truncate(size);
+        let mut r = BoolReader::new(&buf).expect("init");
+        let m = read_intra_mode_y(&mut r, &probs, /* size_group = */ 2, Some(&mut counts));
+        assert_eq!(m, IntraMode::Dc);
+        assert_eq!(counts.y_mode[2][IntraMode::Dc as usize], 1);
+
+        let mut counts = FrameCounts::default();
+        let mut buf = vec![0u8; 32];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        w.write(0, probs[0]);
+        for _ in 0..16 {
+            w.write_bit(0);
+        }
+        let size = w.stop_encode().expect("ok");
+        buf.truncate(size);
+        let mut r = BoolReader::new(&buf).expect("init");
+        let m =
+            read_intra_mode_uv(&mut r, &probs, /* y_mode = */ IntraMode::H, Some(&mut counts));
+        assert_eq!(m, IntraMode::Dc);
+        assert_eq!(
+            counts.uv_mode[IntraMode::H as usize][IntraMode::Dc as usize],
+            1
+        );
+
+        // read_inter_mode: encode InterMode::ZeroMv (single bit 0 at
+        // node 0 of INTER_MODE_TREE).
+        let mut counts = FrameCounts::default();
+        let probs = [128u8; NUM_INTER_MODES - 1];
+        let mut buf = vec![0u8; 32];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        w.write(0, probs[0]);
+        for _ in 0..16 {
+            w.write_bit(0);
+        }
+        let size = w.stop_encode().expect("ok");
+        buf.truncate(size);
+        let mut r = BoolReader::new(&buf).expect("init");
+        let m = read_inter_mode(&mut r, &probs, /* ctx = */ 5, Some(&mut counts));
+        assert_eq!(m, InterMode::ZeroMv);
+        assert_eq!(counts.inter_mode[5][InterMode::ZeroMv.idx()], 1);
+
+        // read_tx_size (selected path, max=Tx16x16): encode 1 0 →
+        // Tx8x8 → counts.tx.p16x16[ctx][Tx8x8 as usize] += 1.
+        let fc = crate::entropy::FrameContext::new_default();
+        let mut counts = FrameCounts::default();
+        let p = &fc.tx_probs.p16x16[1];
+        let mut buf = vec![0u8; 32];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        w.write(1, p[0]);
+        w.write(0, p[1]);
+        for _ in 0..16 {
+            w.write_bit(0);
+        }
+        let size = w.stop_encode().expect("ok");
+        buf.truncate(size);
+        let mut r = BoolReader::new(&buf).expect("init");
+        let got = read_tx_size(
+            &mut r,
+            &fc.tx_probs,
+            TxMode::TxModeSelect,
+            TxSize::Tx16x16,
+            true,
+            1,
+            Some(&mut counts),
+        );
+        assert_eq!(got, TxSize::Tx8x8);
+        assert_eq!(counts.tx.p16x16[1][TxSize::Tx8x8 as usize], 1);
     }
 
     /// `ModeInfo::is_intra` / `is_inter` delegates to `BlockMode`.
@@ -1295,7 +1592,7 @@ mod tests {
         ];
         for (tx_mode, max_tx, expected) in cases {
             let mut r = BoolReader::new(&buf).expect("init");
-            let got = read_tx_size(&mut r, &fc.tx_probs, tx_mode, max_tx, true, 0);
+            let got = read_tx_size(&mut r, &fc.tx_probs, tx_mode, max_tx, true, 0, None);
             assert_eq!(got, expected, "tx_mode={tx_mode:?} max={max_tx:?}");
         }
     }
@@ -1308,8 +1605,15 @@ mod tests {
         let buf = [0u8; 4];
         let mut r = BoolReader::new(&buf).expect("init");
         // Capped: min(Tx32x32, biggest(TxModeSelect)=3) = Tx32x32.
-        let got =
-            read_tx_size(&mut r, &fc.tx_probs, TxMode::TxModeSelect, TxSize::Tx32x32, false, 0);
+        let got = read_tx_size(
+            &mut r,
+            &fc.tx_probs,
+            TxMode::TxModeSelect,
+            TxSize::Tx32x32,
+            false,
+            0,
+            None,
+        );
         assert_eq!(got, TxSize::Tx32x32);
     }
 
@@ -1341,6 +1645,7 @@ mod tests {
                     TxSize::Tx8x8,
                     true,
                     ctx,
+                    None,
                 );
                 assert_eq!(got, expected, "bit={bit} ctx={ctx}");
             }
@@ -1386,6 +1691,7 @@ mod tests {
                 TxSize::Tx16x16,
                 true,
                 ctx,
+                None,
             );
             assert_eq!(got, *expected, "bits={bits:?}");
         }
@@ -1432,6 +1738,7 @@ mod tests {
                 TxSize::Tx32x32,
                 true,
                 ctx,
+                None,
             );
             assert_eq!(got, *expected, "bits={bits:?}");
         }
@@ -1467,7 +1774,7 @@ mod tests {
         buf.truncate(size);
         let mut r = BoolReader::new(&buf).expect("init");
         let got =
-            read_tx_size(&mut r, &custom_tx, TxMode::TxModeSelect, TxSize::Tx8x8, true, 0);
+            read_tx_size(&mut r, &custom_tx, TxMode::TxModeSelect, TxSize::Tx8x8, true, 0, None);
         assert_eq!(got, TxSize::Tx4x4, "ctx=0 should pick Tx4x4");
 
         // ctx 1: encode bit=1 at p=1.
@@ -1481,7 +1788,7 @@ mod tests {
         buf.truncate(size);
         let mut r = BoolReader::new(&buf).expect("init");
         let got =
-            read_tx_size(&mut r, &custom_tx, TxMode::TxModeSelect, TxSize::Tx8x8, true, 1);
+            read_tx_size(&mut r, &custom_tx, TxMode::TxModeSelect, TxSize::Tx8x8, true, 1, None);
         assert_eq!(got, TxSize::Tx8x8, "ctx=1 should pick Tx8x8");
     }
 }

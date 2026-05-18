@@ -936,6 +936,7 @@ impl Decoder {
                 &mut yv12,
                 Some(&mut self.mv_counts),
                 Some(&mut self.coef_counts),
+                Some(&mut self.mode_counts),
             )
             .map_err(DecodeError::TileDecode)?;
         }
