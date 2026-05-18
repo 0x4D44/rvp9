@@ -204,6 +204,23 @@ pub fn reconstruct_intra_block(
         );
     }
 
+    // Stage 3 stretch M.13 — log dq_coefs for any Tx4x4 plane-0 block at
+    // a caller-specified position. Used to capture the cascade-source
+    // residual for the V block at (mi_col=3, mi_row=1) sub-2 on the
+    // 32×32 vector frame 1.
+    if plane == 0
+        && tx_size == TxSize::Tx4x4
+        && std::env::var("RVP9_DEBUG_DQCOEFS").is_ok_and(|v| v == "all")
+    {
+        eprintln!(
+            "RVP9_DBG_ALL dq_coefs plane=0 tx=4x4 x4={x4} y4_in_sb={y4_in_sb} \
+             tx_type={tx_type:?} eob={eob} mode={intra_mode:?} \
+             dq=({},{}) dq_coefs={:?}",
+            dequant.0, dequant.1,
+            &dq_coefs[..n]
+        );
+    }
+
     // 3. If non-empty, apply IT-add into `dst` (reads prediction, adds
     // IT(dq_coefs), writes back).
     if eob > 0 {

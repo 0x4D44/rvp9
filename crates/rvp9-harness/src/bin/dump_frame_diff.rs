@@ -211,6 +211,31 @@ fn main() {
         }
         println!();
     }
+    // M.13 probe — dump rows 8..24 cols 22..32 to inspect upstream cascade.
+    if std::env::var("RVP9_DUMP_PATCH").is_ok() {
+        let r_lo: usize = 8;
+        let r_hi: usize = 24.min(crop_h);
+        let c_lo: usize = 22.min(crop_w);
+        let c_hi: usize = 32.min(crop_w);
+        println!("---- Y rows {r_lo}..{r_hi} cols {c_lo}..{c_hi}: got | exp | diff ----");
+        for r in r_lo..r_hi {
+            print!("  r{r:2} got: ");
+            for c in c_lo..c_hi {
+                print!("{:4} ", y_got[r * crop_w + c]);
+            }
+            print!("  | exp: ");
+            for c in c_lo..c_hi {
+                print!("{:4} ", y_exp[r * crop_w + c]);
+            }
+            print!("  | diff: ");
+            for c in c_lo..c_hi {
+                let g = y_got[r * crop_w + c] as i32;
+                let e = y_exp[r * crop_w + c] as i32;
+                print!("{:+4} ", g - e);
+            }
+            println!();
+        }
+    }
     if let Some((bc, br)) = found_block {
         let bx0 = bc * 4;
         let by0 = br * 4;

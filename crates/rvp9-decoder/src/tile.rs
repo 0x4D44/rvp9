@@ -867,6 +867,40 @@ fn reconstruct_intra_planes(
                 );
 
                 let pred_ctx = edges.pred_ctx(plane_tx.side());
+
+                // Stage 3 stretch M.13 — positional intra-pred trace,
+                // filtered to (plane, tx_px_x, tx_px_y) range. Used to
+                // localize the bottom-right cascade post-M.12 on the
+                // 32×32 vector frame 1. Filter format:
+                //   RVP9_TRACE_INTRA_AT="plane,x,y" → exact-pixel match
+                //   RVP9_TRACE_INTRA_AT="plane,x..,y.."→ "at-or-after" probe
+                //   (unset → no trace)
+                if let Ok(filter) = std::env::var("RVP9_TRACE_INTRA_AT") {
+                    let parts: Vec<&str> = filter.split(',').collect();
+                    if parts.len() == 3 {
+                        let p_ok = parts[0].parse::<usize>().ok() == Some(plane);
+                        fn at_or_after(spec: &str, v: usize) -> bool {
+                            if let Some(stripped) = spec.strip_suffix("..") {
+                                stripped.parse::<usize>().map(|t| v >= t).unwrap_or(false)
+                            } else {
+                                spec.parse::<usize>().ok() == Some(v)
+                            }
+                        }
+                        let x_ok = at_or_after(parts[1], tx_px_x);
+                        let y_ok = at_or_after(parts[2], tx_px_y);
+                        if p_ok && x_ok && y_ok {
+                            let bs = plane_tx.side();
+                            eprintln!(
+                                "RVP9_TRACE_INTRA_AT plane={plane} tx_px=({tx_px_x},{tx_px_y}) bsize={:?} tx_size={:?} mode={mode_for_this_tx:?} have_top={have_top} have_left={have_left} have_right={have_right} aoff={aoff} loff={loff} bw_4x4={bw_in_4x4} above_left={} above={:?} left={:?}",
+                                bsize,
+                                plane_tx,
+                                pred_ctx.above_left,
+                                &pred_ctx.above[..2 * bs],
+                                &pred_ctx.left[..bs],
+                            );
+                        }
+                    }
+                }
                 let dst_offset = tx_px_y * plane_stride + tx_px_x;
                 let dst_slice = &mut plane_data[dst_offset..];
 

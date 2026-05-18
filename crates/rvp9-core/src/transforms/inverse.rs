@@ -1387,6 +1387,38 @@ mod tests {
         assert_eq!(output, [0; 4]);
     }
 
+    /// Stage 3 stretch M.13 probe: capture the V-block (24,12) iht4x4
+    /// output for the 32×32 vector frame 1 cascade analysis. With above
+    /// = [88, 96, 101, 109] (V mode → every row replicates above) and
+    /// the captured dq_coefs (eob=11), prints the post-add destination.
+    /// Not an assertion — manually compared against vpxdec post-LF +
+    /// the libvpx oracle iht run.
+    #[test]
+    fn m13_v_block_24_12_iht4x4_probe() {
+        let dq_coefs: [i32; 16] =
+            [0, 231, -231, 231, -231, 0, 231, 0, 0, 0, 0, 0, 231, 0, 0, 0];
+        let mut dst = [
+            88u8, 96, 101, 109,
+            88,   96, 101, 109,
+            88,   96, 101, 109,
+            88,   96, 101, 109,
+        ];
+        iht4x4_16_add(&dq_coefs, &mut dst, 4, TxType::AdstDct);
+        eprintln!("M13 V-block (24,12) iht4x4 output:");
+        for r in 0..4 {
+            eprint!("  row {}: ", r);
+            for c in 0..4 {
+                eprint!("{:3} ", dst[r * 4 + c]);
+            }
+            eprintln!();
+        }
+        eprintln!(
+            "M13 row 3 col 3 (= pre-LF col=27, row=15) = {}; \
+             trace says it should be 79",
+            dst[15]
+        );
+    }
+
     /// Zero input → unchanged dest (2D, since add of 0+rounding).
     /// `(0 + 8) >> 4 = 0`, so dest is preserved.
     #[test]

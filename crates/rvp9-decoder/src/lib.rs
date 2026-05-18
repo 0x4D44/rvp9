@@ -603,7 +603,11 @@ impl Decoder {
         };
         self.merge_lf_params(&tail.loop_filter);
         let filter_level = tail.loop_filter.filter_level;
-        if filter_level > 0 {
+        // Stage 3 stretch M.13 — `RVP9_DISABLE_LF=1` skips the loop-filter
+        // apply driver, exposing pre-LF reconstruction for cascade
+        // analysis (dump_frame_diff vs vpxdec's post-LF YUV).
+        let lf_disabled = std::env::var("RVP9_DISABLE_LF").is_ok();
+        if filter_level > 0 && !lf_disabled {
             apply_loop_filter_to_frame(
                 &mut yv12,
                 &decode_ctx,

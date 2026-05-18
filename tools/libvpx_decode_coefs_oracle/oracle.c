@@ -538,5 +538,66 @@ int main(int argc, char **argv) {
     }
   }
 
+  /* ===================================================================
+   * Stage 3 stretch M.13 probe — V block at MI(1, 3) sub-2 (= pixel
+   * (24, 12)) on vp90-2-02-size-32x32.webm frame 1.
+   *
+   * Captured via `RVP9_DEBUG_DQCOEFS=all`:
+   *   dq_coefs = [0, 231, -231, 231, -231, 0, 231, 0, 0, 0, 0, 0,
+   *               231, 0, 0, 0]
+   *   eob = 11, tx_type = ADST_DCT, dq = (177, 231).
+   *
+   * V mode prediction with above=[88, 96, 101, 109] replicates above
+   * to every row of the 4×4 block. Adding libvpx's `vp9_iht4x4_16_add_c
+   * (input, dest, 4, ADST_DCT)` yields the pre-LF reconstruction at
+   * (col 24..27, row 12..15).
+   *
+   * rvp9's standalone iht test (`m13_v_block_24_12_iht4x4_probe` in
+   * `crates/rvp9-core/src/transforms/inverse.rs`) produces row 3 =
+   * [93, 112, 131, 79]. Final pre-LF at (col=27, row=15) = 79.
+   *
+   * The downstream cascade (block (24, 16) D63 reads above[3] = 79 →
+   * its row 2 col 3 = above[3] = 79; expected post-LF = 93 implies
+   * libvpx's above[3] for that block = 84). So this probe pins
+   * libvpx's iht output at row 3 col 3 — if libvpx also outputs 79
+   * here, the cascade is in our LF (not pre-LF). If libvpx outputs
+   * 84, the cascade is in our iht4x4(AdstDct) on this exact pattern.
+   * =================================================================== */
+  {
+    extern void vp9_iht4x4_16_add_c(const tran_low_t *input, uint8_t *dest,
+                                    int stride, int tx_type);
+    tran_low_t v_input[16] = {
+        0, 231, -231, 231, -231, 0, 231, 0,
+        0, 0, 0, 0, 231, 0, 0, 0
+    };
+    uint8_t v_dest[16] = {
+        88, 96, 101, 109,
+        88, 96, 101, 109,
+        88, 96, 101, 109,
+        88, 96, 101, 109,
+    };
+    vp9_iht4x4_16_add_c(v_input, v_dest, /*stride=*/4, /*tx_type=*/ADST_DCT);
+
+    printf("\n=== M.13 V-block (24,12) iht4x4 probe ===\n");
+    printf("Inputs: dq_coefs=[0,231,-231,231,-231,0,231,0,0,0,0,0,231,0,0,0]\n");
+    printf("        above=[88,96,101,109] (V mode → replicate to all 4 rows)\n");
+    printf("        tx_type=ADST_DCT\n");
+    printf("libvpx vp9_iht4x4_16_add_c output:\n");
+    for (int row = 0; row < 4; ++row) {
+      printf("  row %d: [%3u, %3u, %3u, %3u]\n",
+             row,
+             v_dest[row * 4 + 0], v_dest[row * 4 + 1],
+             v_dest[row * 4 + 2], v_dest[row * 4 + 3]);
+    }
+    printf("Compare row 3 col 3 (= pre-LF col=27, row=15):\n");
+    printf("  libvpx output = %u\n", v_dest[15]);
+    printf("  rvp9 output   = 79 (from m13_v_block_24_12_iht4x4_probe)\n");
+    if (v_dest[15] == 79) {
+      printf("  -> MATCH. Cascade is NOT in iht4x4(AdstDct).\n");
+    } else {
+      printf("  -> DIVERGE. Cascade IS in our iht4x4(AdstDct).\n");
+    }
+  }
+
   return match ? 0 : 1;
 }
