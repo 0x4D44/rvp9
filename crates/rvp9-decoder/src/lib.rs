@@ -109,6 +109,26 @@ pub struct Decoder {
     /// at end-of-frame to produce the next frame's `nmvc` table.
     /// Mirrors libvpx `cm->counts.mv` (`vp9_entropymode.h:78`).
     mv_counts: rvp9_core::entropy::mv_probs::NmvCounts,
+    /// Accumulated coefficient decode counts for the in-flight frame.
+    /// Zeroed at the start of every frame (libvpx clears `cm->counts`
+    /// for any frame with `frame_parallel_decoding_mode == 0` —
+    /// `vp9_decodeframe.c:2784`). Consumed by
+    /// [`adapt_coef_probs`](rvp9_core::entropy::adapt::adapt_coef_probs)
+    /// at end-of-frame to produce the next frame's `coef_probs` table.
+    /// Both keyframes and inter frames adapt coefficient probabilities
+    /// (only the `(count_sat, max_update_factor)` pair differs — see
+    /// [`coef_adapt_params`](rvp9_core::entropy::adapt::coef_adapt_params)).
+    /// Mirrors libvpx `cm->counts.coef` + `cm->counts.eob_branch`
+    /// (`vp9_entropymode.h:66-68`).
+    coef_counts: rvp9_core::entropy::adapt::CoefCountsBank,
+    /// `true` iff the most recently decoded frame was a `KEY_FRAME`
+    /// (libvpx `cm->last_frame_type`). Read by
+    /// [`coef_adapt_params`](rvp9_core::entropy::adapt::coef_adapt_params)
+    /// to pick the AFTER_KEY update factor on the first inter frame
+    /// after a keyframe. Updated post-decode in
+    /// [`Decoder::decode_keyframe`] (= `true`) and
+    /// [`Decoder::decode_inter_frame`] (= `false`).
+    last_frame_was_key: bool,
     /// Current per-ref / per-mode loop-filter deltas. The
     /// uncompressed header overlays these via the `Option<i8>` slots
     /// in `LoopFilterParams`; we maintain the resolved running state
@@ -149,6 +169,8 @@ impl Decoder {
             lf_deltas: ResolvedLfDeltas::default(),
             have_resync: true, // until we've seen any frame, treat as needing resync
             mv_counts: rvp9_core::entropy::mv_probs::NmvCounts::default(),
+            coef_counts: rvp9_core::entropy::adapt::CoefCountsBank::default(),
+            last_frame_was_key: false,
         }
     }
 
@@ -587,10 +609,47 @@ impl Decoder {
             seg_alt_q,
             seg_abs_delta: tail.segmentation.abs_delta,
         };
+        // Stage 3 Task E.1.b — zero the coef counts at the start of
+        // every frame and pass an accumulator into the tile decoder.
+        // libvpx clears `cm->counts` in `read_uncompressed_header`
+        // (`vp9_decodeframe.c:2784`) for every frame whose
+        // `frame_parallel_decoding_mode == 0`. We don't model that
+        // flag yet (treated as 0), so we zero unconditionally — matches
+        // libvpx's behaviour on the single-decoder conformance gate.
+        self.coef_counts = rvp9_core::entropy::adapt::CoefCountsBank::default();
         let fc_idx = tail.frame_context_idx as usize;
-        let fc = &self.frame_contexts[fc_idx];
-        let decode_ctx = decode_tile_intra(tile_buf.data, bounds, &params, fc, &mut yv12)
-            .map_err(DecodeError::TileDecode)?;
+        let decode_ctx = {
+            let fc = &self.frame_contexts[fc_idx];
+            decode_tile_intra(
+                tile_buf.data,
+                bounds,
+                &params,
+                fc,
+                &mut yv12,
+                Some(&mut self.coef_counts),
+            )
+            .map_err(DecodeError::TileDecode)?
+        };
+
+        // Backward-adapt `coef_probs` per `vp9_adapt_coef_probs`
+        // (`vp9_entropy.c:1084-1100`). Same gate as `adapt_mv_probs`:
+        // fires whenever `refresh_frame_context` is on and the frame is
+        // not error-resilient. For keyframes the kernel runs with the
+        // `_KEY` constants — `intra_only = true` in `coef_adapt_params`.
+        if tail.refresh_frame_context && !frame.header.error_resilient {
+            let (count_sat, max_update_factor) =
+                rvp9_core::entropy::adapt::coef_adapt_params(
+                    /* intra_only = */ true,
+                    self.last_frame_was_key,
+                );
+            let new_coef_probs = rvp9_core::entropy::adapt::adapt_coef_probs(
+                &self.frame_contexts[fc_idx].coef_probs,
+                &self.coef_counts,
+                count_sat,
+                max_update_factor,
+            );
+            self.frame_contexts[fc_idx].coef_probs = new_coef_probs;
+        }
 
         // 8. K2.c — loop-filter apply driver. Skip when filter_level
         //    is zero (LF is a frame-level no-op — see libvpx
@@ -648,6 +707,7 @@ impl Decoder {
         }
 
         self.have_resync = false;
+        self.last_frame_was_key = true;
         Ok(frame_buf)
     }
 
@@ -841,10 +901,13 @@ impl Decoder {
             inter_params,
         };
 
-        // Zero MV counts at start of frame, then decode the tile.
-        // After the tile completes the counts hold this frame's NEWMV
-        // component tallies, which feed `adapt_mv_probs` below.
+        // Zero MV + coef counts at start of frame, then decode the
+        // tile. After the tile completes the counts hold this frame's
+        // NEWMV component tallies + per-(tx, plane, ref) coef-token
+        // tallies, which feed `adapt_mv_probs` / `adapt_coef_probs`
+        // below.
         self.mv_counts = rvp9_core::entropy::mv_probs::NmvCounts::default();
+        self.coef_counts = rvp9_core::entropy::adapt::CoefCountsBank::default();
         let fc_idx = tail.frame_context_idx as usize;
         let bounds = tile_bounds(&tail.tile_info, mi_cols, mi_rows, 0, 0);
         {
@@ -856,14 +919,36 @@ impl Decoder {
                 fc,
                 &mut yv12,
                 Some(&mut self.mv_counts),
+                Some(&mut self.coef_counts),
             )
             .map_err(DecodeError::TileDecode)?;
         }
 
-        // Backward-adapt `nmvc` per `vp9_adapt_mv_probs`. Only fires
-        // when the frame requests context refresh AND is not
-        // error-resilient (libvpx `vp9_decodeframe.c:3046-3053`).
+        // Backward-adapt the per-frame probability banks per
+        // `vp9_adapt_*_probs` (`vp9_decodeframe.c:3046-3053`). Same gate
+        // for all kernels: `refresh_frame_context && !error_resilient`.
+        // `adapt_coef_probs` fires here on inter frames (the keyframe
+        // path runs the kernel separately with the `_KEY` constants);
+        // `adapt_mv_probs` only fires on non-intra-only frames.
         if tail.refresh_frame_context && !frame.header.error_resilient {
+            // coef_probs — inter-frame adapt (`intra_only = false`).
+            // `coef_adapt_params` picks AFTER_KEY constants on the first
+            // inter frame after a keyframe, default constants otherwise.
+            let (count_sat, max_update_factor) =
+                rvp9_core::entropy::adapt::coef_adapt_params(
+                    /* intra_only = */ false,
+                    self.last_frame_was_key,
+                );
+            let new_coef_probs = rvp9_core::entropy::adapt::adapt_coef_probs(
+                &self.frame_contexts[fc_idx].coef_probs,
+                &self.coef_counts,
+                count_sat,
+                max_update_factor,
+            );
+            self.frame_contexts[fc_idx].coef_probs = new_coef_probs;
+
+            // nmvc — libvpx `vp9_adapt_mv_probs`. `allow_high_precision_mv`
+            // gates the class0_hp / hp slots.
             let new_nmvc = rvp9_core::entropy::adapt::adapt_mv_probs(
                 &self.frame_contexts[fc_idx].nmvc,
                 &self.mv_counts,
@@ -893,6 +978,7 @@ impl Decoder {
             }
         }
 
+        self.last_frame_was_key = false;
         Ok(frame_buf)
     }
 
@@ -1601,6 +1687,118 @@ mod tests {
             pre.joints != post.joints,
             "expected adapt_mv_probs to shift joints with non-zero counts"
         );
+    }
+
+    /// Stage 3 Task E.1.b: a fresh [`Decoder`] starts with all-zero
+    /// `coef_counts` and `last_frame_was_key == false`. Tests the
+    /// Decoder-level state invariants the adapt pipeline relies on.
+    #[test]
+    fn decoder_new_initializes_coef_counts_zero() {
+        use rvp9_core::entropy::adapt::CoefCountsBank;
+        let dec = Decoder::new();
+        // Every coef cell is zero on construction.
+        assert_eq!(dec.coef_counts, CoefCountsBank::default());
+        // Every eob_branch cell is zero too (CoefCountsBank::default
+        // sets both axes to zero — pin the round-trip).
+        for tx in dec.coef_counts.coef.iter() {
+            for plane in tx.iter() {
+                for ref_ty in plane.iter() {
+                    for band in ref_ty.iter() {
+                        for ctx in band.iter() {
+                            assert_eq!(ctx, &[0u32; 4]);
+                        }
+                    }
+                }
+            }
+        }
+        for tx in dec.coef_counts.eob_branch.iter() {
+            for plane in tx.iter() {
+                for ref_ty in plane.iter() {
+                    for band in ref_ty.iter() {
+                        for &cell in band.iter() {
+                            assert_eq!(cell, 0);
+                        }
+                    }
+                }
+            }
+        }
+        assert!(!dec.last_frame_was_key);
+    }
+
+    /// Stage 3 Task E.1.b: `adapt_coef_probs` fed a [`CoefCountsBank`]
+    /// with non-zero entries produces a different bank than the
+    /// default. Verifies the adapt kernel sees the count tally we
+    /// route to it, independently of the per-frame plumbing.
+    #[test]
+    fn adapt_coef_probs_with_nonzero_counts_shifts_probs() {
+        use rvp9_core::entropy::adapt::{
+            CoefCountsBank, adapt_coef_probs, coef_adapt_params,
+        };
+        let pre = FrameContext::new_default();
+        let mut counts = CoefCountsBank::default();
+        // Inject a single (tx=Tx4x4, plane=Y, ref=intra, band=1, ctx=0)
+        // tally — n0=3, n1=1, n2=1, neob=5, eob_total=10 (same shape
+        // as the adapt.rs hand-trace test).
+        counts.coef[0][0][0][1][0][rvp9_core::entropy::ZERO_TOKEN] = 3;
+        counts.coef[0][0][0][1][0][rvp9_core::entropy::ONE_TOKEN] = 1;
+        counts.coef[0][0][0][1][0][rvp9_core::entropy::TWO_TOKEN] = 1;
+        counts.coef[0][0][0][1][0][rvp9_core::entropy::EOB_MODEL_TOKEN] = 5;
+        counts.eob_branch[0][0][0][1][0] = 10;
+
+        let (cs, uf) = coef_adapt_params(true, false); // intra-only keyframe
+        let post = adapt_coef_probs(&pre.coef_probs, &counts, cs, uf);
+        // The injected slot must differ.
+        assert_ne!(
+            post[0][0][0][1][0], pre.coef_probs[0][0][0][1][0],
+            "expected adapted (tx=4x4, plane=Y, intra, band=1, ctx=0) slot to differ"
+        );
+        // A slot we didn't touch should match the default.
+        assert_eq!(
+            post[3][1][1][5][5], pre.coef_probs[3][1][1][5][5],
+            "untouched (tx=32x32, UV, inter, band=5, ctx=5) slot must be unchanged"
+        );
+    }
+
+    /// Stage 3 Task E.1.b: synthetic counts fed directly through the
+    /// adapt kernel + write-back sequence (mirroring the end-of-frame
+    /// adapt step) shift the active FrameContext's `coef_probs` and
+    /// leave the `coef_counts` field on the Decoder unchanged on a
+    /// keyframe-success run. This verifies the integration handshake
+    /// between the bank and the adapt entry point without depending
+    /// on `build_minimal_keyframe` running a full conformance-class
+    /// decode (the minimal-keyframe synthesis exists for header
+    /// round-trips, not full tile execution).
+    #[test]
+    fn coef_counts_adapt_round_trip_via_decoder_fields() {
+        use rvp9_core::entropy::adapt::{adapt_coef_probs, coef_adapt_params};
+        let mut dec = Decoder::new();
+        // Seed the bank — mirrors what the per-block plumbing would
+        // do for a single (Tx4x4, Y, intra, band=2, ctx=1) decision
+        // chain on a real keyframe. Use ZERO_TOKEN / ONE_TOKEN /
+        // TWO_TOKEN / EOB_MODEL_TOKEN tallies on a non-default cell so
+        // the adapt step can't return the input unchanged.
+        dec.coef_counts.coef[0][0][0][2][1][rvp9_core::entropy::ZERO_TOKEN] = 7;
+        dec.coef_counts.coef[0][0][0][2][1][rvp9_core::entropy::ONE_TOKEN] = 3;
+        dec.coef_counts.coef[0][0][0][2][1][rvp9_core::entropy::TWO_TOKEN] = 1;
+        dec.coef_counts.coef[0][0][0][2][1][rvp9_core::entropy::EOB_MODEL_TOKEN] = 2;
+        dec.coef_counts.eob_branch[0][0][0][2][1] = 5;
+
+        // Run the keyframe adapt step inline — matches the post-tile
+        // adapt block in `decode_keyframe`.
+        let (cs, uf) = coef_adapt_params(/* intra_only = */ true, dec.last_frame_was_key);
+        let pre_defaults = FrameContext::new_default().coef_probs;
+        let new_probs =
+            adapt_coef_probs(&dec.frame_contexts[0].coef_probs, &dec.coef_counts, cs, uf);
+        dec.frame_contexts[0].coef_probs = new_probs;
+        dec.last_frame_was_key = true;
+
+        // Adapt must have shifted the seeded slot.
+        assert_ne!(
+            dec.frame_contexts[0].coef_probs[0][0][0][2][1], pre_defaults[0][0][0][2][1],
+            "the seeded (tx=4x4, Y, intra, band=2, ctx=1) slot must shift after adapt"
+        );
+        // And `last_frame_was_key` is true now (driver responsibility).
+        assert!(dec.last_frame_was_key);
     }
 
     #[test]

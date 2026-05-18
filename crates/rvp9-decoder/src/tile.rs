@@ -318,6 +318,7 @@ pub fn decode_tile_intra(
     params: &FrameDecodeParams,
     fc: &FrameContext,
     dst_frame: &mut Yv12Buffer,
+    mut coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
 ) -> Result<TileDecodeCtx, TileDecodeError> {
     let mut reader =
         BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;
@@ -350,6 +351,7 @@ pub fn decode_tile_intra(
                 mi_col,
                 BlockSize::Block64x64,
                 4, // n4x4_l2 for 64×64 = log2(16) = 4
+                coef_counts.as_deref_mut(),
             );
             mi_col += MI_BLOCK_SIZE;
         }
@@ -378,6 +380,7 @@ fn decode_partition(
     mi_col: usize,
     bsize: BlockSize,
     n4x4_l2: u8,
+    mut coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
 ) {
     if mi_row >= params.mi_rows || mi_col >= params.mi_cols {
         return;
@@ -426,37 +429,37 @@ fn decode_partition(
         // call into decode_block, mi-width = mi-height = 1.
         decode_block(
             reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-            mi_row, mi_col, sub,
+            mi_row, mi_col, sub, coef_counts.as_deref_mut(),
         );
     } else {
         match partition {
             PartitionType::None => {
                 decode_block(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                    mi_row, mi_col, sub,
+                    mi_row, mi_col, sub, coef_counts.as_deref_mut(),
                 );
             }
             PartitionType::Horz => {
                 decode_block(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                    mi_row, mi_col, sub,
+                    mi_row, mi_col, sub, coef_counts.as_deref_mut(),
                 );
                 if has_rows {
                     decode_block(
                         reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                        mi_row + hbs, mi_col, sub,
+                        mi_row + hbs, mi_col, sub, coef_counts.as_deref_mut(),
                     );
                 }
             }
             PartitionType::Vert => {
                 decode_block(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                    mi_row, mi_col, sub,
+                    mi_row, mi_col, sub, coef_counts.as_deref_mut(),
                 );
                 if has_cols {
                     decode_block(
                         reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                        mi_row, mi_col + hbs, sub,
+                        mi_row, mi_col + hbs, sub, coef_counts.as_deref_mut(),
                     );
                 }
             }
@@ -464,18 +467,22 @@ fn decode_partition(
                 decode_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row, mi_col, sub, n8x8_l2,
+                    coef_counts.as_deref_mut(),
                 );
                 decode_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row, mi_col + hbs, sub, n8x8_l2,
+                    coef_counts.as_deref_mut(),
                 );
                 decode_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row + hbs, mi_col, sub, n8x8_l2,
+                    coef_counts.as_deref_mut(),
                 );
                 decode_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row + hbs, mi_col + hbs, sub, n8x8_l2,
+                    coef_counts,
                 );
             }
         }
@@ -516,6 +523,7 @@ fn decode_block(
     mi_row: usize,
     mi_col: usize,
     bsize: BlockSize,
+    coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
 ) {
     let mi_row_in_tile = mi_row - bounds.mi_row_start;
     let mi_col_in_tile = mi_col - bounds.mi_col_start;
@@ -660,6 +668,7 @@ fn decode_block(
         dequant_u,
         dequant_v,
         params.lossless,
+        coef_counts,
     );
 }
 
@@ -766,6 +775,7 @@ fn reconstruct_intra_planes(
     dequant_u: (i32, i32),
     dequant_v: (i32, i32),
     frame_lossless: bool,
+    mut coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
 ) {
     let bsize = mi.block_size;
     let tx_size = mi.tx_size;
@@ -930,7 +940,7 @@ fn reconstruct_intra_planes(
                     let _eob = reconstruct_intra_block(
                         reader,
                         fc,
-                        /* counts = */ None,
+                        coef_counts.as_deref_mut(),
                         coef_ctx,
                         plane,
                         plane_x4_base + aoff,
@@ -1225,6 +1235,7 @@ pub fn decode_tile_inter(
     fc: &FrameContext,
     dst_frame: &mut Yv12Buffer,
     mut mv_counts: Option<&mut rvp9_core::entropy::mv_probs::NmvCounts>,
+    mut coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
 ) -> Result<(), TileDecodeError> {
     let mut reader =
         BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;
@@ -1256,6 +1267,7 @@ pub fn decode_tile_inter(
                 BlockSize::Block64x64,
                 4,
                 mv_counts.as_deref_mut(),
+                coef_counts.as_deref_mut(),
             );
             mi_col += MI_BLOCK_SIZE;
         }
@@ -1284,6 +1296,7 @@ fn decode_inter_partition(
     bsize: BlockSize,
     n4x4_l2: u8,
     mut mv_counts: Option<&mut rvp9_core::entropy::mv_probs::NmvCounts>,
+    mut coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
 ) {
     if mi_row >= params.base.mi_rows || mi_col >= params.base.mi_cols {
         return;
@@ -1326,37 +1339,43 @@ fn decode_inter_partition(
     if hbs == 0 {
         decode_inter_block(
             reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-            mi_row, mi_col, sub, mv_counts.as_deref_mut(),
+            mi_row, mi_col, sub,
+            mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
         );
     } else {
         match partition {
             PartitionType::None => {
                 decode_inter_block(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                    mi_row, mi_col, sub, mv_counts.as_deref_mut(),
+                    mi_row, mi_col, sub,
+                    mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                 );
             }
             PartitionType::Horz => {
                 decode_inter_block(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                    mi_row, mi_col, sub, mv_counts.as_deref_mut(),
+                    mi_row, mi_col, sub,
+                    mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                 );
                 if has_rows {
                     decode_inter_block(
                         reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                        mi_row + hbs, mi_col, sub, mv_counts.as_deref_mut(),
+                        mi_row + hbs, mi_col, sub,
+                        mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                     );
                 }
             }
             PartitionType::Vert => {
                 decode_inter_block(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                    mi_row, mi_col, sub, mv_counts.as_deref_mut(),
+                    mi_row, mi_col, sub,
+                    mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                 );
                 if has_cols {
                     decode_inter_block(
                         reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                        mi_row, mi_col + hbs, sub, mv_counts.as_deref_mut(),
+                        mi_row, mi_col + hbs, sub,
+                        mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                     );
                 }
             }
@@ -1364,22 +1383,22 @@ fn decode_inter_partition(
                 decode_inter_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row, mi_col, sub, n8x8_l2,
-                    mv_counts.as_deref_mut(),
+                    mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                 );
                 decode_inter_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row, mi_col + hbs, sub, n8x8_l2,
-                    mv_counts.as_deref_mut(),
+                    mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                 );
                 decode_inter_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row + hbs, mi_col, sub, n8x8_l2,
-                    mv_counts.as_deref_mut(),
+                    mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                 );
                 decode_inter_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row + hbs, mi_col + hbs, sub, n8x8_l2,
-                    mv_counts,
+                    mv_counts, coef_counts,
                 );
             }
         }
@@ -1419,6 +1438,7 @@ fn decode_inter_block(
     mi_col: usize,
     bsize: BlockSize,
     mv_counts: Option<&mut rvp9_core::entropy::mv_probs::NmvCounts>,
+    coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
 ) {
     let mi_row_in_tile = mi_row - bounds.mi_row_start;
     let mi_col_in_tile = mi_col - bounds.mi_col_start;
@@ -1560,7 +1580,7 @@ fn decode_inter_block(
             reconstruct_inter_block(
                 reader,
                 fc,
-                None,
+                coef_counts,
                 coef_ctx,
                 &mi,
                 mi_row,
@@ -1621,6 +1641,7 @@ fn decode_inter_block(
             dequant_u,
             dequant_v,
             params.base.lossless,
+            coef_counts,
         );
     }
 }
