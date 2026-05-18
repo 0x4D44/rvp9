@@ -314,7 +314,8 @@ pub fn decode_tile_intra(
     let mut reader =
         BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;
     let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
-    let mut decode_ctx = TileDecodeCtx::new(tile_mi_cols);
+    let tile_mi_rows = bounds.mi_row_end - bounds.mi_row_start;
+    let mut decode_ctx = TileDecodeCtx::new_with_grid(tile_mi_cols, tile_mi_rows);
     let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
     let mut part_ctx = PartitionCtx::new(tile_mi_cols);
 
@@ -617,7 +618,7 @@ fn decode_block(
     let bh_mi = usize::from(bsize.n_8x8_high());
     let x_mis = bw_mi.min(params.mi_cols - mi_col);
     let y_mis = bh_mi.min(params.mi_rows - mi_row);
-    decode_ctx.write_block(mi_row_in_sb, mi_col_in_tile, x_mis, y_mis, &mi);
+    decode_ctx.write_block(mi_row_in_tile, mi_row_in_sb, mi_col_in_tile, x_mis, y_mis, &mi);
 
     // --- Reconstruction ----------------------------------------------
 

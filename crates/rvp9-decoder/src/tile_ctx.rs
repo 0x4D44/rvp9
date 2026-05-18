@@ -71,9 +71,10 @@
 //!     max_tx_size,
 //! );
 //! // ... decode block ...
-//! ctx.write_block(mi_row_in_sb, mi_col, n_8x8_wide, n_8x8_high, &decoded_mi);
+//! ctx.write_block(mi_row, mi_row_in_sb, mi_col, n_8x8_wide, n_8x8_high, &decoded_mi);
 //! ```
 
+use rvp9_core::inter::mv_ref::{NeighbourLookup, Position};
 use rvp9_core::mode_info::ModeInfo;
 
 /// libvpx `MI_BLOCK_SIZE` (`vp9_enums.h:25`). Each 64×64 superblock
@@ -128,6 +129,29 @@ pub fn combine_entropy_contexts(a: u8, l: u8) -> usize {
 /// One instance per tile. The `above` row persists across SB rows
 /// within the tile; the `left` column resets at the start of each
 /// new SB row via [`TileDecodeCtx::reset_left`].
+///
+/// ## 2D mi grid (Phase B.3)
+///
+/// Alongside the row+column reduction, this struct optionally carries
+/// the full 2D `mi_grid_visible`-equivalent (libvpx
+/// `vp9_alloccommon.c:vp9_alloc_context_buffers`,
+/// `vp9_onyxc_int.h:mi_grid_visible`). This is needed by
+/// [`NeighbourLookup`] callers that scan positions like
+/// `Position { row: -1, col: 6 }` (top-right of a 64×64 SB) which the
+/// row+col reduction can't supply.
+///
+/// The grid is `tile_mi_rows × tile_mi_cols` in size, addressed by
+/// absolute tile-relative `(mi_row, mi_col)` coordinates and stored
+/// in row-major order with `mi_stride = tile_mi_cols`. Each cell is
+/// `Option<ModeInfo>`: `None` for frame-edge / not-yet-decoded
+/// positions, `Some(mi)` for cells covered by a decoded block.
+/// libvpx replicates the parent's `MODE_INFO*` across every covered
+/// 8×8 cell so accessors at any sub-position return the same parent
+/// — we mirror that splat.
+///
+/// Constructed without a grid via [`Self::new`] (legacy 1-D paths)
+/// and with a grid via [`Self::new_with_grid`]. The legacy
+/// `above` / `left` accessors continue to work either way.
 #[derive(Clone, Debug)]
 pub struct TileDecodeCtx {
     /// Above-row neighbour storage — one slot per 8×8 column in the
@@ -141,6 +165,13 @@ pub struct TileDecodeCtx {
     /// left in this row yet" (libvpx's `left_mi == NULL` at tile
     /// left edge).
     left: Vec<Option<ModeInfo>>,
+    /// 2D mi grid, row-major `tile_mi_rows * tile_mi_cols`. Empty
+    /// when this context was constructed via [`Self::new`] (legacy
+    /// paths that don't need the grid). See struct docs.
+    mi_grid: Vec<Option<ModeInfo>>,
+    /// Number of rows in the 2D grid. `0` when no grid was
+    /// allocated. Equals `mi_row_end - mi_row_start` for the tile.
+    tile_mi_rows: usize,
 }
 
 impl TileDecodeCtx {
@@ -151,6 +182,12 @@ impl TileDecodeCtx {
     /// units), i.e. `tile.mi_col_end - tile.mi_col_start`. The
     /// `left` column always has length `MI_BLOCK_SIZE = 8` (one per
     /// 8×8 row inside the current SB row).
+    ///
+    /// This constructor does NOT allocate the 2D mi grid (see struct
+    /// docs); [`Self::mi_at`] and [`Self::mi_at_relative`] will
+    /// always return `None`. Use [`Self::new_with_grid`] when a
+    /// caller (e.g. [`NeighbourLookup`] consumers in
+    /// `find_mv_refs`) needs the full grid.
     ///
     /// # Panics
     ///
@@ -165,6 +202,39 @@ impl TileDecodeCtx {
         Self {
             above: vec![None; tile_mi_cols],
             left: vec![None; MI_BLOCK_SIZE],
+            mi_grid: Vec::new(),
+            tile_mi_rows: 0,
+        }
+    }
+
+    /// Create a fresh per-tile context with the full 2D mi grid
+    /// allocated alongside the row+column reduction.
+    ///
+    /// `tile_mi_cols` / `tile_mi_rows` are the tile's dimensions in
+    /// mi-units (8-px units), i.e.
+    /// `tile.mi_col_end - tile.mi_col_start` /
+    /// `tile.mi_row_end - tile.mi_row_start`. All grid cells start
+    /// `None` (libvpx's `mi_grid_visible` post-`vpx_calloc` state).
+    ///
+    /// # Panics
+    ///
+    /// If `tile_mi_cols == 0` or `tile_mi_rows == 0` — every legal
+    /// VP9 tile spans at least one SB row and column.
+    #[must_use]
+    pub fn new_with_grid(tile_mi_cols: usize, tile_mi_rows: usize) -> Self {
+        assert!(
+            tile_mi_cols > 0,
+            "tile must span at least one 8×8 mode-info column"
+        );
+        assert!(
+            tile_mi_rows > 0,
+            "tile must span at least one 8×8 mode-info row"
+        );
+        Self {
+            above: vec![None; tile_mi_cols],
+            left: vec![None; MI_BLOCK_SIZE],
+            mi_grid: vec![None; tile_mi_cols * tile_mi_rows],
+            tile_mi_rows,
         }
     }
 
@@ -172,6 +242,61 @@ impl TileDecodeCtx {
     #[must_use]
     pub fn tile_mi_cols(&self) -> usize {
         self.above.len()
+    }
+
+    /// Number of 8×8 rows covered by this tile's 2D mi grid. Returns
+    /// `0` when the context was constructed via [`Self::new`] (no
+    /// grid allocated).
+    #[must_use]
+    pub fn tile_mi_rows(&self) -> usize {
+        self.tile_mi_rows
+    }
+
+    /// Read the [`ModeInfo`] at absolute tile-relative
+    /// `(mi_row, mi_col)`. Returns `None` if the position is outside
+    /// the tile (frame top / bottom / left / right edge equivalent)
+    /// or has not yet been written by a decoded block. Also returns
+    /// `None` when the context was constructed without a grid (legacy
+    /// 1-D paths via [`Self::new`]).
+    ///
+    /// This mirrors libvpx `xd->mi[row * mi_stride + col]` indexing
+    /// (`vp9_onyxc_int.h:mi_grid_visible`), gated by libvpx's
+    /// `is_inside(tile, ...)` predicate
+    /// (`vp9_mvref_common.h:is_inside`).
+    #[must_use]
+    pub fn mi_at(&self, mi_row: usize, mi_col: usize) -> Option<&ModeInfo> {
+        if mi_row >= self.tile_mi_rows || mi_col >= self.above.len() {
+            return None;
+        }
+        let stride = self.above.len();
+        self.mi_grid.get(mi_row * stride + mi_col)?.as_ref()
+    }
+
+    /// Read the [`ModeInfo`] at `(base_row + delta_row,
+    /// base_col + delta_col)`. Returns `None` if the resulting
+    /// position is outside the tile (negative or beyond
+    /// `tile_mi_rows` / `tile_mi_cols`), or if the cell has not yet
+    /// been written, or if no grid was allocated.
+    ///
+    /// Signed arithmetic: the libvpx `find_mv_refs` neighbour table
+    /// (`vp9_mvref_common.h:mv_ref_blocks`) includes positions like
+    /// `Position { row: -1, col: 6 }` (top-right of a 64×64 SB) and
+    /// `Position { row: 4, col: -1 }` (bottom-left of a 32×64 SB)
+    /// — both of which translate to signed mi-row / mi-col offsets.
+    #[must_use]
+    pub fn mi_at_relative(
+        &self,
+        base_row: i32,
+        base_col: i32,
+        delta_row: i32,
+        delta_col: i32,
+    ) -> Option<&ModeInfo> {
+        let row = base_row.checked_add(delta_row)?;
+        let col = base_col.checked_add(delta_col)?;
+        if row < 0 || col < 0 {
+            return None;
+        }
+        self.mi_at(row as usize, col as usize)
     }
 
     /// Read the above-row neighbour at tile-relative column
@@ -238,8 +363,17 @@ impl TileDecodeCtx {
     /// We clamp writes to the tile bounds; out-of-bounds slots are
     /// silently dropped. (libvpx's `x_mis`/`y_mis` clamp is the
     /// equivalent guard at `vp9_decodeframe.c:920`.)
+    ///
+    /// When the context was constructed via [`Self::new_with_grid`],
+    /// the same `mi` is also splatted across every covered cell of
+    /// the 2D grid at absolute (tile-relative) row
+    /// `mi_row..mi_row + n_8x8_high` and column
+    /// `mi_col..mi_col + n_8x8_wide`. Mirrors libvpx's
+    /// `vp9_decodeframe.c:set_offsets` writing `xd->mi[...] = mi` for
+    /// every covered slot in `mi_grid_visible`.
     pub fn write_block(
         &mut self,
+        mi_row: usize,
         mi_row_in_sb: usize,
         mi_col: usize,
         n_8x8_wide: usize,
@@ -262,6 +396,75 @@ impl TileDecodeCtx {
         for slot in &mut self.left[mi_row_in_sb..row_end] {
             *slot = Some(*mi);
         }
+
+        // 2D grid splat: replicate the parent's `mi` across every
+        // covered (row, col) cell. Skipped when no grid was
+        // allocated (legacy `new` path). Mirrors libvpx
+        // `mi_grid_visible[y * mi_stride + x] = mi` over the
+        // `x_mis × y_mis` covered region.
+        if !self.mi_grid.is_empty() {
+            let stride = self.above.len();
+            let row_end_grid = (mi_row + n_8x8_high).min(self.tile_mi_rows);
+            let col_end_grid = (mi_col + n_8x8_wide).min(stride);
+            for r in mi_row..row_end_grid {
+                let base = r * stride;
+                for slot in &mut self.mi_grid[base + mi_col..base + col_end_grid] {
+                    *slot = Some(*mi);
+                }
+            }
+        }
+    }
+}
+
+/// Bridge adapter that lets a [`TileDecodeCtx`]'s 2D mi grid satisfy
+/// [`rvp9_core::inter::mv_ref::NeighbourLookup`]. The trait's
+/// `get(pos)` callback receives positions relative to a per-block
+/// origin; the wrapper captures that origin (`base_mi_row` /
+/// `base_mi_col`, in tile-relative mi-units) and forwards through
+/// [`TileDecodeCtx::mi_at_relative`].
+///
+/// Constructed per-block at the start of the inter-mode neighbour
+/// scan (Phase D wireup). The wrapper holds a borrow of the tile
+/// context, so the underlying `mi_grid` cannot be mutated for the
+/// lifetime of the wrapper — neighbour lookups always read the
+/// already-decoded predecessors.
+///
+/// ## Position semantics
+///
+/// `Position { row, col }` from
+/// [`rvp9_core::inter::mv_ref::MV_REF_BLOCKS`] is interpreted as a
+/// signed offset in 8×8 MI units from the current block's top-left
+/// corner. `Position { row: -1, col: 0 }` is "directly above";
+/// `Position { row: -1, col: 6 }` is "top-right of a 64×64 SB" —
+/// both reach into the already-decoded area and resolve through
+/// [`TileDecodeCtx::mi_at_relative`] which clamps to tile bounds.
+pub struct TileNeighbourLookup<'a> {
+    ctx: &'a TileDecodeCtx,
+    base_mi_row: i32,
+    base_mi_col: i32,
+}
+
+impl<'a> TileNeighbourLookup<'a> {
+    /// Construct a wrapper anchored at the given block's top-left
+    /// `(mi_row, mi_col)` (tile-relative, in 8×8 MI units).
+    #[must_use]
+    pub fn new(ctx: &'a TileDecodeCtx, base_mi_row: i32, base_mi_col: i32) -> Self {
+        Self {
+            ctx,
+            base_mi_row,
+            base_mi_col,
+        }
+    }
+}
+
+impl NeighbourLookup for TileNeighbourLookup<'_> {
+    fn get(&self, pos: Position) -> Option<&ModeInfo> {
+        self.ctx.mi_at_relative(
+            self.base_mi_row,
+            self.base_mi_col,
+            i32::from(pos.row),
+            i32::from(pos.col),
+        )
     }
 }
 
@@ -581,7 +784,7 @@ mod tests {
     fn write_8x8_block_at_origin() {
         let mut ctx = TileDecodeCtx::new(8);
         let mi = mk_intra(TxSize::Tx4x4, false, 0);
-        ctx.write_block(0, 0, 1, 1, &mi);
+        ctx.write_block(0, 0, 0, 1, 1, &mi);
 
         // The block to the right (mi_col=1, mi_row_in_sb=0) sees
         // `mi` as its left neighbour and `None` as its above
@@ -628,7 +831,7 @@ mod tests {
     fn top_edge_reads_left_only() {
         let mut ctx = TileDecodeCtx::new(8);
         let left_mi = mk_intra(TxSize::Tx4x4, false, 0);
-        ctx.write_block(0, 0, 1, 1, &left_mi);
+        ctx.write_block(0, 0, 0, 1, 1, &left_mi);
         // Block at (mi_row_in_sb=0, mi_col=1): above[1] hasn't been
         // written to (no block in column 1 yet), left[0] has.
         assert!(ctx.above(1).is_none(), "top-edge: above neighbour absent");
@@ -646,7 +849,7 @@ mod tests {
         let above_mi = mk_intra(TxSize::Tx8x8, false, 0);
         // Pretend we decoded a block at column 0 in the previous
         // SB row — it left a trail in `above[0]`.
-        ctx.write_block(7, 0, 1, 1, &above_mi);
+        ctx.write_block(7, 7, 0, 1, 1, &above_mi);
         // Now we move to the next SB row: reset left.
         ctx.reset_left();
         // Block at (mi_row_in_sb=0, mi_col=0): above[0] from the
@@ -664,9 +867,9 @@ mod tests {
         let mi_a = mk_intra(TxSize::Tx16x16, true, 5);
         let mi_b = mk_intra(TxSize::Tx8x8, false, 2);
         // mi_a at (mi_row=0, mi_col=3): writes above[3] and left[0].
-        ctx.write_block(0, 3, 1, 1, &mi_a);
+        ctx.write_block(0, 0, 3, 1, 1, &mi_a);
         // mi_b at (mi_row=2, mi_col=0): writes above[0] and left[2].
-        ctx.write_block(2, 0, 1, 1, &mi_b);
+        ctx.write_block(2, 2, 0, 1, 1, &mi_b);
         assert_eq!(ctx.above(3), Some(&mi_a));
         assert_eq!(ctx.above(0), Some(&mi_b));
         assert_eq!(ctx.left(0), Some(&mi_a));
@@ -688,7 +891,7 @@ mod tests {
         let mut ctx = TileDecodeCtx::new(8);
         let mi = mk_intra_16x16(TxSize::Tx16x16, false);
         // 16×16 block at (mi_row_in_sb=2, mi_col=4).
-        ctx.write_block(2, 4, 2, 2, &mi);
+        ctx.write_block(2, 2, 4, 2, 2, &mi);
 
         // Above row [4..6] populated; outside not touched.
         assert!(ctx.above(3).is_none());
@@ -709,7 +912,7 @@ mod tests {
     fn write_16x8_block_splatter() {
         let mut ctx = TileDecodeCtx::new(8);
         let mi = mk_inter_16x8();
-        ctx.write_block(3, 1, 2, 1, &mi);
+        ctx.write_block(3, 3, 1, 2, 1, &mi);
 
         assert!(ctx.above(0).is_none());
         assert_eq!(ctx.above(1), Some(&mi));
@@ -730,7 +933,7 @@ mod tests {
         let mi = mk_intra_16x16(TxSize::Tx16x16, false);
         // 16×16 block straddling the right edge: starts at col=3,
         // would write cols 3 and 4 but tile only has cols 0..4.
-        ctx.write_block(0, 3, 2, 2, &mi);
+        ctx.write_block(0, 0, 3, 2, 2, &mi);
         assert!(ctx.above(2).is_none());
         assert_eq!(ctx.above(3), Some(&mi));
         // col 4 doesn't exist; just verify no panic + accessor returns None.
@@ -745,7 +948,7 @@ mod tests {
         let mi = mk_intra(TxSize::Tx4x4, false, 0);
         // Pretend a block tries to write rows 6..10 (impossible in
         // practice — max block height is 8 mi). Verify clamping.
-        ctx.write_block(6, 0, 1, 4, &mi);
+        ctx.write_block(6, 6, 0, 1, 4, &mi);
         assert!(ctx.left(5).is_none());
         assert_eq!(ctx.left(6), Some(&mi));
         assert_eq!(ctx.left(7), Some(&mi));
@@ -761,9 +964,9 @@ mod tests {
         let mut ctx = TileDecodeCtx::new(8);
         let mi_a = mk_intra(TxSize::Tx4x4, false, 1);
         let mi_b = mk_intra(TxSize::Tx16x16, true, 7);
-        ctx.write_block(0, 2, 1, 1, &mi_a);
+        ctx.write_block(0, 0, 2, 1, 1, &mi_a);
         assert_eq!(ctx.above(2), Some(&mi_a));
-        ctx.write_block(0, 2, 1, 1, &mi_b);
+        ctx.write_block(0, 0, 2, 1, 1, &mi_b);
         assert_eq!(ctx.above(2), Some(&mi_b));
         assert_eq!(ctx.left(0), Some(&mi_b));
     }
@@ -785,7 +988,7 @@ mod tests {
         let mut ctx = TileDecodeCtx::new(8);
         // Decode a Tx16x16 / not-skipped block at (0, 0).
         let mi_corner = mk_intra(TxSize::Tx16x16, false, 0);
-        ctx.write_block(0, 0, 1, 1, &mi_corner);
+        ctx.write_block(0, 0, 0, 1, 1, &mi_corner);
 
         // Block at (0, 1): above=None (top edge), left=Some(Tx16x16, false).
         let above = ctx.above(1).map(|m| (m.tx_size, m.skip));
@@ -796,7 +999,7 @@ mod tests {
 
         // Decode another Tx4x4 / skipped block at (0, 1).
         let mi_right = mk_intra(TxSize::Tx4x4, true, 0);
-        ctx.write_block(0, 1, 1, 1, &mi_right);
+        ctx.write_block(0, 0, 1, 1, 1, &mi_right);
         // Block at (1, 0): above=Some(Tx4x4, true), left=None (SB
         // wasn't reset; we're still in row 0 of the SB). Wait —
         // (1, 0) is in the SAME SB row, so left[1] is the left
@@ -822,6 +1025,233 @@ mod tests {
         // > 3 → ctx 1.
         let c = get_tx_size_context(above, left, TxSize::Tx32x32);
         assert_eq!(c, 1, "left-edge with above=Tx16x16 → ctx 1");
+    }
+
+    // ===================================================================
+    // 2D mi grid tests (Stage 3 Phase B.3)
+    // ===================================================================
+
+    /// Construct a grid, write a single 8×8 block at (0, 0), read it
+    /// back via `mi_at(0, 0)`. The adjacent cell (0, 1) stays `None`
+    /// — the splat covers only the block's `n_8x8 × n_8x8` region.
+    #[test]
+    fn mi_grid_write_single_8x8_at_origin() {
+        let mut ctx = TileDecodeCtx::new_with_grid(8, 8);
+        let mi = mk_intra(TxSize::Tx4x4, false, 0);
+        ctx.write_block(0, 0, 0, 1, 1, &mi);
+
+        assert_eq!(ctx.mi_at(0, 0), Some(&mi));
+        assert!(ctx.mi_at(0, 1).is_none(), "adjacent column untouched");
+        assert!(ctx.mi_at(1, 0).is_none(), "adjacent row untouched");
+    }
+
+    /// 16×16 block at (4, 4): the splat covers a 2×2 region of mi
+    /// cells; every cell returns the same parent ModeInfo. Mirrors
+    /// libvpx's `mi_grid_visible[r * mi_stride + c] = mi` over the
+    /// whole `x_mis × y_mis` region.
+    #[test]
+    fn mi_grid_16x16_splats_across_2x2() {
+        let mut ctx = TileDecodeCtx::new_with_grid(8, 8);
+        let mi = mk_intra_16x16(TxSize::Tx16x16, false);
+        ctx.write_block(4, 4, 4, 2, 2, &mi);
+
+        assert_eq!(ctx.mi_at(4, 4), Some(&mi));
+        assert_eq!(ctx.mi_at(4, 5), Some(&mi));
+        assert_eq!(ctx.mi_at(5, 4), Some(&mi));
+        assert_eq!(ctx.mi_at(5, 5), Some(&mi));
+        // The cells just outside the splat region stay None.
+        assert!(ctx.mi_at(3, 4).is_none());
+        assert!(ctx.mi_at(6, 4).is_none());
+        assert!(ctx.mi_at(4, 3).is_none());
+        assert!(ctx.mi_at(4, 6).is_none());
+    }
+
+    /// `mi_at_relative` with negative deltas: reading at base=(0, 0)
+    /// with delta=(-1, 0) is "directly above the top-left block" —
+    /// must return None (out of tile via signed-int arithmetic).
+    /// Mirrors libvpx's `is_inside` failure for `mv_ref->row + mi_row
+    /// < 0`.
+    #[test]
+    fn mi_at_relative_negative_returns_none() {
+        let ctx = TileDecodeCtx::new_with_grid(8, 8);
+        assert!(ctx.mi_at_relative(0, 0, -1, 0).is_none());
+        assert!(ctx.mi_at_relative(0, 0, 0, -1).is_none());
+        assert!(ctx.mi_at_relative(0, 0, -1, -1).is_none());
+        // mi_at with usize-cast equivalents of negative positions
+        // also returns None (we test the i32-path here; the
+        // accessor doesn't accept signed coords, so this is the
+        // only path callers can use).
+    }
+
+    /// Reading past the tile bottom / right returns None. Combined
+    /// with the negative-delta test this covers all four tile-edge
+    /// cases.
+    #[test]
+    fn mi_at_returns_none_outside_tile() {
+        let ctx = TileDecodeCtx::new_with_grid(4, 4);
+        assert!(ctx.mi_at(4, 0).is_none(), "row == tile_mi_rows");
+        assert!(ctx.mi_at(0, 4).is_none(), "col == tile_mi_cols");
+        assert!(ctx.mi_at(99, 99).is_none(), "far out of range");
+    }
+
+    /// libvpx `mv_ref_blocks[Block64x64][7] = (-1, 6)`: a 64×64 SB
+    /// scans its top-right neighbour at row -1, col base+6. From the
+    /// SB origin (mi_row=0), that resolves to row=-1 which is above
+    /// the tile → must return None. Pins B.2's gap that this 2D
+    /// grid closes.
+    #[test]
+    fn mi_at_relative_top_right_of_64x64_returns_none_at_top() {
+        let ctx = TileDecodeCtx::new_with_grid(16, 16);
+        // SB top-left at (0, 0); `Position { row: -1, col: 6 }`.
+        assert!(ctx.mi_at_relative(0, 0, -1, 6).is_none());
+        // From row >= 1 the same delta resolves to a valid row but
+        // an unwritten cell — still None until the block is written.
+        assert!(ctx.mi_at_relative(8, 0, -1, 6).is_none());
+    }
+
+    /// `mi_at_relative` does the addition: base=(5, 10) +
+    /// delta=(-1, 0) reads (4, 10). Confirms the math is the simple
+    /// signed addition libvpx uses, not e.g. coordinate scaling.
+    #[test]
+    fn mi_at_relative_math_pins_base_plus_delta() {
+        let mut ctx = TileDecodeCtx::new_with_grid(16, 16);
+        let mi = mk_intra(TxSize::Tx8x8, false, 0);
+        // Write a block at (4, 10).
+        ctx.write_block(4, 4, 10, 1, 1, &mi);
+        // base=(5, 10) + delta=(-1, 0) → row=4, col=10.
+        assert_eq!(ctx.mi_at_relative(5, 10, -1, 0), Some(&mi));
+        // base=(5, 10) + delta=(0, -1) → row=5, col=9 (unwritten).
+        assert!(ctx.mi_at_relative(5, 10, 0, -1).is_none());
+    }
+
+    /// Backward-compat: `TileDecodeCtx::new` (no grid) returns None
+    /// from `mi_at` / `mi_at_relative` even after writes, because
+    /// the grid wasn't allocated. The row+column reduction still
+    /// works.
+    #[test]
+    fn mi_at_returns_none_when_no_grid_allocated() {
+        let mut ctx = TileDecodeCtx::new(8);
+        let mi = mk_intra(TxSize::Tx4x4, false, 0);
+        ctx.write_block(0, 0, 0, 1, 1, &mi);
+        // Row+col reduction still works.
+        assert_eq!(ctx.above(0), Some(&mi));
+        assert_eq!(ctx.left(0), Some(&mi));
+        // But the grid accessors return None.
+        assert!(ctx.mi_at(0, 0).is_none());
+        assert!(ctx.mi_at_relative(1, 0, -1, 0).is_none());
+        assert_eq!(ctx.tile_mi_rows(), 0);
+    }
+
+    /// NeighbourLookup bridge: drive `find_mv_refs` through the
+    /// `TileNeighbourLookup` adapter. The 64×64 candidate-walk
+    /// includes `(-1, 6)` (top-right) — from the tile origin that
+    /// resolves to None and the walk completes without panic. This
+    /// pins the wedge that B.2 flagged.
+    #[test]
+    fn neighbour_lookup_bridge_handles_out_of_tile_positions() {
+        use rvp9_core::block::BlockSize;
+        use rvp9_core::inter::mv_ref::{find_mv_refs, BlockBounds};
+        use rvp9_core::mode_info::{InterMode, RefFrame};
+
+        let ctx = TileDecodeCtx::new_with_grid(16, 16);
+        let lookup = TileNeighbourLookup::new(&ctx, 0, 0);
+        let bounds = BlockBounds {
+            left: 0,
+            right: 1024,
+            top: 0,
+            bottom: 1024,
+        };
+        let sign_bias = [false; 4];
+
+        // Empty tile, every neighbour position resolves to None
+        // (including the `(-1, 6)` top-right scan for 64×64).
+        // No panic, returns the zero-filled list.
+        let list = find_mv_refs(
+            InterMode::NearMv,
+            BlockSize::Block64x64,
+            RefFrame::LastFrame,
+            &lookup,
+            &sign_bias,
+            &bounds,
+            None,
+        );
+        // NEARMV → count = 2 with zeros (the loop falls through).
+        assert_eq!(list.count, 2);
+    }
+
+    /// NeighbourLookup bridge: a real `(-1, 0)` (directly above)
+    /// neighbour written into the grid is returned to
+    /// `find_mv_refs`, which folds its MV into the candidate list.
+    /// Confirms the bridge actually passes ModeInfo through, not
+    /// just None.
+    #[test]
+    fn neighbour_lookup_bridge_returns_written_block() {
+        use rvp9_core::bitstream::InterpFilter;
+        use rvp9_core::block::BlockSize;
+        use rvp9_core::inter::mv_ref::{find_mv_refs, BlockBounds};
+        use rvp9_core::mode_info::{BlockMode, InterMode, Mv, RefFrame};
+
+        let mut ctx = TileDecodeCtx::new_with_grid(16, 16);
+        let mv = Mv { row: 24, col: -16 };
+        let above = ModeInfo {
+            block_size: BlockSize::Block16x16,
+            tx_size: TxSize::Tx8x8,
+            skip: false,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Inter {
+                mode: InterMode::NewMv,
+                ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                mvs: [mv, Mv::ZERO],
+                interp_filter: InterpFilter::EightTap,
+            },
+            bmi: Default::default(),
+        };
+        // Above neighbour at (mi_row=0, mi_col=0..2) — a 16×16 block.
+        ctx.write_block(0, 0, 0, 2, 2, &above);
+
+        // Current block at (mi_row=2, mi_col=0); `(-1, 0)` resolves
+        // to (mi_row=1, mi_col=0), which is INSIDE the 16×16 splat.
+        let lookup = TileNeighbourLookup::new(&ctx, 2, 0);
+        let bounds = BlockBounds {
+            left: 0,
+            right: 1024,
+            top: 0,
+            bottom: 1024,
+        };
+        let sign_bias = [false; 4];
+        let list = find_mv_refs(
+            InterMode::NearestMv,
+            BlockSize::Block16x16,
+            RefFrame::LastFrame,
+            &lookup,
+            &sign_bias,
+            &bounds,
+            None,
+        );
+        assert_eq!(list.mvs[0], mv, "above neighbour's MV propagated through bridge");
+        assert_eq!(list.count, 1);
+    }
+
+    /// Cross-grid splat is clamped at the tile right / bottom edge.
+    /// A 32×32 block at (mi_row=6, mi_col=6) in an 8×8 tile would
+    /// cover (6..10, 6..10), but only (6..8, 6..8) lies inside the
+    /// tile. No panic; the in-tile cells are populated.
+    #[test]
+    fn mi_grid_splat_clamps_at_tile_edges() {
+        let mut ctx = TileDecodeCtx::new_with_grid(8, 8);
+        let mi = mk_intra_16x16(TxSize::Tx16x16, false);
+        // Pretend a 32×32 block at (mi_row=6, mi_col=6): would write
+        // (6..10) × (6..10). Tile is 8×8, so only (6..8) × (6..8)
+        // fit.
+        ctx.write_block(6, 6, 6, 4, 4, &mi);
+        for r in 6..8 {
+            for c in 6..8 {
+                assert_eq!(ctx.mi_at(r, c), Some(&mi), "in-tile cell ({r}, {c})");
+            }
+        }
+        // No panic for the out-of-range readback.
+        assert!(ctx.mi_at(8, 8).is_none());
     }
 
     // ===================================================================
