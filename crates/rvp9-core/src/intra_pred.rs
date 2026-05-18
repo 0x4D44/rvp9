@@ -556,15 +556,28 @@ pub fn d207_predictor(dst: &mut [u8], stride: usize, bs: usize, left: &[u8]) {
 ///
 /// Mirrors libvpx's `pred[mode][txsz]` dispatch table at
 /// `vp9_reconintra.c:351`.
+///
+/// `dc_avail` selects the DC variant when `mode == IntraMode::Dc`,
+/// mirroring libvpx's `dc_pred[left_available][up_available][tx_size]`
+/// dispatch at `vp9_reconintra.c:398`. For non-DC modes the flag is
+/// ignored; libvpx's `build_intra_predictors` has already filled
+/// `ctx.above` / `ctx.left` with the 127 / 129 unavailable-neighbour
+/// values, so V / H / TM / directional kernels can be invoked
+/// unconditionally on the materialised edges. DC is special because
+/// libvpx swaps in a different kernel that averages only the
+/// available neighbours instead of mixing in the 129 fill bytes.
 pub fn intra_predict(
     mode: IntraMode,
     dst: &mut [u8],
     stride: usize,
     bs: usize,
     ctx: PredCtx<'_>,
+    dc_avail: DcAvailability,
 ) {
     match mode {
-        IntraMode::Dc => dc_predictor(dst, stride, bs, ctx),
+        IntraMode::Dc => {
+            dc_predict_with_availability(dst, stride, bs, ctx.above, ctx.left, dc_avail);
+        }
         IntraMode::V => v_predictor(dst, stride, bs, ctx),
         IntraMode::H => h_predictor(dst, stride, bs, ctx),
         IntraMode::D45 => d45_predictor(dst, stride, bs, ctx.above),
@@ -1031,9 +1044,20 @@ mod tests {
         for raw_mode in 0u8..=9 {
             let mode = IntraMode::from_u8(raw_mode).unwrap();
 
-            // Dispatched call.
+            // Dispatched call. With both neighbours available the DC arm
+            // is identical to the legacy `dc_predictor`.
             let mut dst_disp = [0u8; 16];
-            intra_predict(mode, &mut dst_disp, 4, 4, ctx);
+            intra_predict(
+                mode,
+                &mut dst_disp,
+                4,
+                4,
+                ctx,
+                DcAvailability {
+                    above_available: true,
+                    left_available: true,
+                },
+            );
 
             // Direct kernel call.
             let mut dst_direct = [0u8; 16];
@@ -1120,6 +1144,93 @@ mod tests {
             },
         );
         assert!(dst.iter().all(|&v| v == 128));
+    }
+
+    /// `intra_predict(Dc, ..., dc_avail)` routes to the correct
+    /// `dc_*_predictor` variant per libvpx
+    /// `dc_pred[left_available][up_available]`
+    /// (`vp9_reconintra.c:398`). Regression for Stage 3 stretch M.12 —
+    /// the unconditional `dc_predictor` dispatch produced a +1 bias on
+    /// frame-edge sub-8 blocks (32×32 vector frame 1, sub-0 at
+    /// `mi_row=1, mi_col=0`, plane Y) because the `left` slice was
+    /// pre-filled with `LEFT_UNAVAILABLE_FILL = 129` and dragged the
+    /// DC average up.
+    #[test]
+    fn intra_predict_dc_routes_via_availability() {
+        let above = [16u8, 16, 16, 16];
+        // libvpx `build_intra_predictors` fills the left col with
+        // `LEFT_UNAVAILABLE_FILL = 129` when `left_available == 0`.
+        // The legacy `dc_predictor` would mix that 129 into the
+        // average; `dc_top_predictor` ignores it.
+        let left = [129u8, 129, 129, 129];
+        let ctx = PredCtx {
+            above: &above,
+            left: &left,
+            above_left: 129,
+        };
+
+        // (above_only) → dc_top_predictor: (16*4 + 2) / 4 = 16.
+        let mut dst = [0u8; 16];
+        intra_predict(
+            IntraMode::Dc,
+            &mut dst,
+            4,
+            4,
+            ctx,
+            DcAvailability {
+                above_available: true,
+                left_available: false,
+            },
+        );
+        assert!(
+            dst.iter().all(|&v| v == 16),
+            "above-only → 16; mixing left=129 would give 73",
+        );
+
+        // (left_only) → dc_left_predictor: (129*4 + 2) / 4 = 129.
+        let mut dst = [0u8; 16];
+        intra_predict(
+            IntraMode::Dc,
+            &mut dst,
+            4,
+            4,
+            ctx,
+            DcAvailability {
+                above_available: false,
+                left_available: true,
+            },
+        );
+        assert!(dst.iter().all(|&v| v == 129));
+
+        // (neither) → dc_128_predictor: 128.
+        let mut dst = [0u8; 16];
+        intra_predict(
+            IntraMode::Dc,
+            &mut dst,
+            4,
+            4,
+            ctx,
+            DcAvailability {
+                above_available: false,
+                left_available: false,
+            },
+        );
+        assert!(dst.iter().all(|&v| v == 128));
+
+        // (both) → dc_predictor: (16*4 + 129*4 + 4) / 8 = 584/8 = 73.
+        let mut dst = [0u8; 16];
+        intra_predict(
+            IntraMode::Dc,
+            &mut dst,
+            4,
+            4,
+            ctx,
+            DcAvailability {
+                above_available: true,
+                left_available: true,
+            },
+        );
+        assert!(dst.iter().all(|&v| v == 73));
     }
 
     #[test]
@@ -1802,7 +1913,11 @@ mod tests {
             true, true, false, &mut edges,
         );
         let mut dst_from_builder = [0u8; 16];
-        intra_predict(IntraMode::V, &mut dst_from_builder, 4, bs, edges.pred_ctx(bs));
+        let avail = DcAvailability {
+            above_available: true,
+            left_available: true,
+        };
+        intra_predict(IntraMode::V, &mut dst_from_builder, 4, bs, edges.pred_ctx(bs), avail);
 
         // Reference path: build PredCtx by hand.
         let above_ref_start = (px_y - 1) * stride + px_x;
@@ -1814,7 +1929,7 @@ mod tests {
             above_left: plane[above_ref_start - 1],
         };
         let mut dst_manual = [0u8; 16];
-        intra_predict(IntraMode::V, &mut dst_manual, 4, bs, manual_ctx);
+        intra_predict(IntraMode::V, &mut dst_manual, 4, bs, manual_ctx, avail);
         assert_eq!(dst_from_builder, dst_manual);
     }
 }

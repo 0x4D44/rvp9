@@ -39,7 +39,7 @@
 
 use rvp9_core::entropy::detokenize::DecodeCoefCounts;
 use rvp9_core::entropy::{BoolReader, FrameContext};
-use rvp9_core::intra_pred::{IntraMode, PredCtx, intra_predict};
+use rvp9_core::intra_pred::{DcAvailability, IntraMode, PredCtx, intra_predict};
 use rvp9_core::transforms::inverse::{
     idct4x4_1_add, idct4x4_16_add, idct8x8_1_add, idct8x8_64_add, idct16x16_1_add,
     idct16x16_256_add, idct32x32_1_add, idct32x32_1024_add, iht4x4_16_add, iht8x8_64_add,
@@ -103,6 +103,9 @@ pub fn resolve_tx_type(plane: usize, lossless: bool, intra_mode: IntraMode) -> T
 /// - `pred_ctx`: pre-materialised neighbour pixels (above / left /
 ///   above-left). For directional modes (D45/D63 etc.) `above` must
 ///   already include the `2 * bs` pixels per the intra-pred LLD §3.2.
+/// - `dc_avail`: neighbour-availability flags for the DC predictor
+///   dispatch. Mirrors libvpx `dc_pred[left_available][up_available]`
+///   at `vp9_reconintra.c:398`. For non-DC modes the flag is unused.
 /// - `dst`: mutable slice into the destination plane, starting at the
 ///   block's top-left pixel.
 /// - `dst_stride`: plane stride in bytes.
@@ -138,6 +141,7 @@ pub fn reconstruct_intra_block(
     tx_size: TxSize,
     intra_mode: IntraMode,
     pred_ctx: PredCtx<'_>,
+    dc_avail: DcAvailability,
     dst: &mut [u8],
     dst_stride: usize,
     seg_eob: usize,
@@ -156,7 +160,7 @@ pub fn reconstruct_intra_block(
     );
 
     // 1. Intra prediction — writes prediction samples into `dst`.
-    intra_predict(intra_mode, dst, dst_stride, bs, pred_ctx);
+    intra_predict(intra_mode, dst, dst_stride, bs, pred_ctx, dc_avail);
 
     // 2. Resolve TX type and decode the residual.
     let tx_type = resolve_tx_type(plane, lossless, intra_mode);
@@ -297,6 +301,15 @@ mod tests {
     use super::*;
     use rvp9_core::entropy::BoolWriter;
     use rvp9_core::entropy::coef_probs::{COEF_BANDS, COEFF_CONTEXTS};
+
+    /// Default `DcAvailability` for tests that exercise non-edge
+    /// blocks — both neighbours present, so `intra_predict(Dc, ...)`
+    /// routes through `dc_predictor` exactly like the legacy
+    /// unconditional dispatch.
+    const BOTH_AVAIL: DcAvailability = DcAvailability {
+        above_available: true,
+        left_available: true,
+    };
 
     // ---- Helpers ----------------------------------------------------
 
@@ -443,6 +456,7 @@ mod tests {
             TxSize::Tx4x4,
             IntraMode::V,
             pred_ctx,
+            BOTH_AVAIL,
             &mut dst,
             stride,
             16,
@@ -501,6 +515,7 @@ mod tests {
             TxSize::Tx4x4,
             IntraMode::Dc,
             pred_ctx,
+            BOTH_AVAIL,
             &mut dst_wrapper,
             stride,
             16,
@@ -512,7 +527,7 @@ mod tests {
         // Reference: separately predict into a fresh buffer, then run
         // the matching IT-add (idct4x4_1_add — DCT_DCT for DC, eob = 1).
         let mut dst_ref = alloc_dst(bs, stride);
-        intra_predict(IntraMode::Dc, &mut dst_ref, stride, bs, pred_ctx);
+        intra_predict(IntraMode::Dc, &mut dst_ref, stride, bs, pred_ctx, BOTH_AVAIL);
         // dq_coef[0] = 1 * dc_dq = 8 for Tx4x4 (no dq_shift).
         idct4x4_1_add(8, &mut dst_ref, stride);
 
@@ -549,6 +564,7 @@ mod tests {
             TxSize::Tx4x4,
             IntraMode::Tm,
             pred_ctx,
+            BOTH_AVAIL,
             &mut dst,
             stride,
             16,
@@ -558,7 +574,7 @@ mod tests {
         assert_eq!(eob, 0);
 
         let mut dst_ref = alloc_dst(bs, stride);
-        intra_predict(IntraMode::Tm, &mut dst_ref, stride, bs, pred_ctx);
+        intra_predict(IntraMode::Tm, &mut dst_ref, stride, bs, pred_ctx, BOTH_AVAIL);
 
         for r_idx in 0..bs {
             assert_eq!(
@@ -599,6 +615,7 @@ mod tests {
             TxSize::Tx16x16,
             IntraMode::H,
             pred_ctx,
+            BOTH_AVAIL,
             &mut dst,
             stride,
             256,
@@ -608,7 +625,7 @@ mod tests {
         assert_eq!(eob, 0);
 
         let mut dst_ref = alloc_dst(bs, stride);
-        intra_predict(IntraMode::H, &mut dst_ref, stride, bs, pred_ctx);
+        intra_predict(IntraMode::H, &mut dst_ref, stride, bs, pred_ctx, BOTH_AVAIL);
 
         for r_idx in 0..bs {
             assert_eq!(
@@ -650,6 +667,7 @@ mod tests {
             TxSize::Tx32x32,
             IntraMode::V,
             pred_ctx,
+            BOTH_AVAIL,
             &mut dst,
             stride,
             1024,
@@ -671,7 +689,7 @@ mod tests {
         // (At Tx32x32 the IT dispatch ignores tx_type anyway.)
 
         let mut dst_ref = alloc_dst(bs, stride);
-        intra_predict(IntraMode::V, &mut dst_ref, stride, bs, pred_ctx);
+        intra_predict(IntraMode::V, &mut dst_ref, stride, bs, pred_ctx, BOTH_AVAIL);
 
         for r_idx in 0..bs {
             assert_eq!(
@@ -716,6 +734,7 @@ mod tests {
             TxSize::Tx8x8,
             IntraMode::H,
             pred_ctx,
+            BOTH_AVAIL,
             &mut dst,
             stride,
             64,
@@ -728,7 +747,7 @@ mod tests {
         assert_eq!(resolve_tx_type(1, false, IntraMode::H), TxType::DctDct);
 
         let mut dst_ref = alloc_dst(bs, stride);
-        intra_predict(IntraMode::H, &mut dst_ref, stride, bs, pred_ctx);
+        intra_predict(IntraMode::H, &mut dst_ref, stride, bs, pred_ctx, BOTH_AVAIL);
         for r_idx in 0..bs {
             assert_eq!(
                 &dst[r_idx * stride..r_idx * stride + bs],

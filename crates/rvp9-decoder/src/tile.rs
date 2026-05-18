@@ -40,7 +40,7 @@ use rvp9_core::frame::Yv12Buffer;
 use rvp9_core::inter::mode_info::{InterModeReadParams, get_intra_inter_context,
     read_inter_block_mode_info};
 use rvp9_core::inter::mv_ref::BlockBounds;
-use rvp9_core::intra_pred::{EdgeBuffers, IntraMode, build_intra_predictors};
+use rvp9_core::intra_pred::{DcAvailability, EdgeBuffers, IntraMode, build_intra_predictors};
 use rvp9_core::mode_info::{BlockMode, BmiInfo, InterMode, ModeInfo, Mv, RefFrame, read_intra_mode,
     read_is_inter, read_partition, read_segment_id, read_skip, read_tx_size, get_tx_size_context};
 use rvp9_core::quant::{ac_quant, dc_quant, get_qindex};
@@ -870,6 +870,18 @@ fn reconstruct_intra_planes(
                 let dst_offset = tx_px_y * plane_stride + tx_px_x;
                 let dst_slice = &mut plane_data[dst_offset..];
 
+                // libvpx `dc_pred[left_available][up_available]` dispatch
+                // (`vp9_reconintra.c:398`). For DC mode the kernel choice
+                // (dc / dc_top / dc_left / dc_128) depends on which
+                // neighbours are real; mixing the 129-fill into the
+                // average shifts the DC value by ~1 per missing edge,
+                // which propagates as a per-block constant cascade
+                // through every downstream intra-pred read (M.12).
+                let dc_avail = DcAvailability {
+                    above_available: have_top,
+                    left_available: have_left,
+                };
+
                 if mi.skip {
                     rvp9_core::intra_pred::intra_predict(
                         mode_for_this_tx,
@@ -877,6 +889,7 @@ fn reconstruct_intra_planes(
                         plane_stride,
                         plane_tx.side(),
                         pred_ctx,
+                        dc_avail,
                     );
                 } else {
                     let seg_eob = plane_tx.n_coeffs();
@@ -891,6 +904,7 @@ fn reconstruct_intra_planes(
                         plane_tx,
                         mode_for_this_tx,
                         pred_ctx,
+                        dc_avail,
                         dst_slice,
                         plane_stride,
                         seg_eob,
