@@ -476,6 +476,277 @@ pub fn convolve_avg(
     }
 }
 
+// =====================================================================
+// Scaled variants (`vpx_scaled_*` / `vpx_convolve8_*` with non-16 step)
+// ---------------------------------------------------------------------
+//
+// When the reference frame has different dimensions to the current
+// frame (resize / spatial SVC), each output pixel samples a different
+// sub-pel offset within the reference: `x_q4 += x_step_q4` per column
+// (and similarly per row), where `x_step_q4 != SUBPEL_SHIFTS`.
+//
+// libvpx keeps the scaled and unscaled paths separate because the
+// unscaled path is hot — a tight inner loop with a fixed filter row.
+// The scaled path re-loads the filter row each sample (`filters[x_q4 &
+// SUBPEL_MASK]`). We mirror that separation; the unscaled kernels
+// above stay unchanged.
+//
+// Mirrors libvpx's `convolve_horiz` / `convolve_vert` /
+// `convolve_avg_horiz` / `convolve_avg_vert` /
+// `vpx_convolve8_c` / `vpx_convolve8_avg_c`
+// (`vpx_dsp/vpx_convolve.c:22-204`) — when called with the step
+// arguments libvpx threads through.
+//
+// ## Layout
+//
+// As with the unscaled path, callers pre-shift `src` by
+// `SUBPEL_TAPS / 2 - 1 = 3` columns (horiz) and / or rows (vert) so
+// the first tap aligns with the destination origin. The starting
+// sub-pel offset is `x0_q4` (or `y0_q4`), and the per-sample increment
+// is `x_step_q4` (or `y_step_q4`). The scaled inner loop walks
+// `x_q4 = x0_q4 + col * x_step_q4`, fetches the integer-pel base via
+// `x_q4 >> SUBPEL_BITS`, and the filter row via
+// `x_q4 & SUBPEL_MASK`.
+
+/// libvpx `SUBPEL_MASK` (`vpx_filter.h:24`). Lower-bits selector
+/// extracting the sub-pel offset from a q4 position.
+pub const SUBPEL_MASK: i32 = (1 << SUBPEL_BITS) - 1;
+
+/// Scaled horizontal 8-tap convolution.
+///
+/// Mirrors libvpx `convolve_horiz` / `vpx_convolve8_horiz_c` with the
+/// step argument threaded through. Compared with [`convolve8_horiz`],
+/// the filter row is selected per-column from `x_q4 & SUBPEL_MASK`
+/// rather than fixed across the row.
+#[allow(clippy::too_many_arguments)] // mirrors libvpx's argument list 1:1
+pub fn convolve8_scaled_horiz(
+    src: &[u8],
+    src_stride: usize,
+    dst: &mut [u8],
+    dst_stride: usize,
+    filters: &[[i16; 8]; SUBPEL_SHIFTS],
+    x0_q4: i32,
+    x_step_q4: i32,
+    w: usize,
+    h: usize,
+) {
+    for y in 0..h {
+        let src_row = &src[y * src_stride..];
+        let mut x_q4 = x0_q4;
+        for x in 0..w {
+            let int_off = (x_q4 >> SUBPEL_BITS) as usize;
+            let filter = &filters[(x_q4 & SUBPEL_MASK) as usize];
+            let sum = convolve_horiz_sample(src_row, int_off, filter);
+            dst[y * dst_stride + x] = round_clip(sum);
+            x_q4 += x_step_q4;
+        }
+    }
+}
+
+/// Scaled vertical 8-tap convolution.
+///
+/// Mirrors libvpx `convolve_vert` / `vpx_convolve8_vert_c`.
+#[allow(clippy::too_many_arguments)] // mirrors libvpx's argument list 1:1
+pub fn convolve8_scaled_vert(
+    src: &[u8],
+    src_stride: usize,
+    dst: &mut [u8],
+    dst_stride: usize,
+    filters: &[[i16; 8]; SUBPEL_SHIFTS],
+    y0_q4: i32,
+    y_step_q4: i32,
+    w: usize,
+    h: usize,
+) {
+    for x in 0..w {
+        let mut y_q4 = y0_q4;
+        for y in 0..h {
+            let int_row = (y_q4 >> SUBPEL_BITS) as usize;
+            let filter = &filters[(y_q4 & SUBPEL_MASK) as usize];
+            let sum = convolve_vert_sample(src, src_stride, int_row, x, filter);
+            dst[y * dst_stride + x] = round_clip(sum);
+            y_q4 += y_step_q4;
+        }
+    }
+}
+
+/// Scaled horizontal `_avg` — convolve into a temporary pixel then
+/// average against the existing `dst`.
+///
+/// Mirrors libvpx `convolve_avg_horiz` / `vpx_convolve8_avg_horiz_c`.
+#[allow(clippy::too_many_arguments)] // mirrors libvpx's argument list 1:1
+pub fn convolve8_scaled_avg_horiz(
+    src: &[u8],
+    src_stride: usize,
+    dst: &mut [u8],
+    dst_stride: usize,
+    filters: &[[i16; 8]; SUBPEL_SHIFTS],
+    x0_q4: i32,
+    x_step_q4: i32,
+    w: usize,
+    h: usize,
+) {
+    for y in 0..h {
+        let src_row = &src[y * src_stride..];
+        let mut x_q4 = x0_q4;
+        for x in 0..w {
+            let int_off = (x_q4 >> SUBPEL_BITS) as usize;
+            let filter = &filters[(x_q4 & SUBPEL_MASK) as usize];
+            let sum = convolve_horiz_sample(src_row, int_off, filter);
+            let pred = round_clip(sum);
+            let idx = y * dst_stride + x;
+            dst[idx] = round_avg(dst[idx], pred);
+            x_q4 += x_step_q4;
+        }
+    }
+}
+
+/// Scaled vertical `_avg`.
+///
+/// Mirrors libvpx `convolve_avg_vert` / `vpx_convolve8_avg_vert_c`.
+#[allow(clippy::too_many_arguments)] // mirrors libvpx's argument list 1:1
+pub fn convolve8_scaled_avg_vert(
+    src: &[u8],
+    src_stride: usize,
+    dst: &mut [u8],
+    dst_stride: usize,
+    filters: &[[i16; 8]; SUBPEL_SHIFTS],
+    y0_q4: i32,
+    y_step_q4: i32,
+    w: usize,
+    h: usize,
+) {
+    for x in 0..w {
+        let mut y_q4 = y0_q4;
+        for y in 0..h {
+            let int_row = (y_q4 >> SUBPEL_BITS) as usize;
+            let filter = &filters[(y_q4 & SUBPEL_MASK) as usize];
+            let sum = convolve_vert_sample(src, src_stride, int_row, x, filter);
+            let pred = round_clip(sum);
+            let idx = y * dst_stride + x;
+            dst[idx] = round_avg(dst[idx], pred);
+            y_q4 += y_step_q4;
+        }
+    }
+}
+
+/// Full 2-D scaled 8-tap convolution.
+///
+/// Mirrors libvpx `vpx_convolve8_c` (`vpx_dsp/vpx_convolve.c:158-190`)
+/// — same separable two-pass structure as [`convolve8`], but the
+/// intermediate buffer height grows with `y_step_q4` and the
+/// per-sample filter row is reselected from `*_q4 & SUBPEL_MASK`.
+///
+/// # Intermediate buffer
+///
+/// `intermediate_height = ((h - 1) * y_step_q4 + y0_q4) >> SUBPEL_BITS
+/// + SUBPEL_TAPS`. Worst-case `64 * 135` matches libvpx's static
+/// `uint8_t temp[64 * 135]`.
+///
+/// # Panics
+///
+/// Panics if `w > 64`, `h > 64`, or the intermediate height exceeds
+/// 135 (libvpx's `assert(y_step_q4 <= 32 || (y_step_q4 <= 64 && h <=
+/// 32))` envelope).
+#[allow(clippy::too_many_arguments)] // mirrors libvpx's argument list 1:1
+pub fn convolve8_scaled(
+    src: &[u8],
+    src_stride: usize,
+    dst: &mut [u8],
+    dst_stride: usize,
+    filters: &[[i16; 8]; SUBPEL_SHIFTS],
+    x0_q4: i32,
+    x_step_q4: i32,
+    y0_q4: i32,
+    y_step_q4: i32,
+    w: usize,
+    h: usize,
+) {
+    assert!(w <= 64, "convolve8_scaled: w must be <= 64");
+    assert!(h <= 64, "convolve8_scaled: h must be <= 64");
+    let intermediate_height =
+        (((h as i32 - 1) * y_step_q4 + y0_q4) >> SUBPEL_BITS) as usize + FILTER_TAPS;
+    assert!(
+        intermediate_height <= 135,
+        "convolve8_scaled: intermediate_height {intermediate_height} > 135"
+    );
+    let intermediate_stride = 64;
+    let mut intermediate = [0u8; 64 * 135];
+
+    // Horizontal pass: filter `intermediate_height` rows. Caller has
+    // pre-shifted `src` up by 3 rows so row 0 of `src` lines up with
+    // row 0 of the intermediate (`temp`) buffer.
+    for y in 0..intermediate_height {
+        let src_row = &src[y * src_stride..];
+        let mut x_q4 = x0_q4;
+        for x in 0..w {
+            let int_off = (x_q4 >> SUBPEL_BITS) as usize;
+            let filter = &filters[(x_q4 & SUBPEL_MASK) as usize];
+            let sum = convolve_horiz_sample(src_row, int_off, filter);
+            intermediate[y * intermediate_stride + x] = round_clip(sum);
+            x_q4 += x_step_q4;
+        }
+    }
+
+    // Vertical pass over the intermediate. `convolve8_scaled_vert`
+    // expects its `src` pre-shifted up by 3 rows; the intermediate
+    // already plays that role.
+    convolve8_scaled_vert(
+        &intermediate,
+        intermediate_stride,
+        dst,
+        dst_stride,
+        filters,
+        y0_q4,
+        y_step_q4,
+        w,
+        h,
+    );
+}
+
+/// Full 2-D scaled 8-tap `_avg`: convolve into a scratch buffer, then
+/// average into `dst`.
+///
+/// Mirrors libvpx `vpx_convolve8_avg_c` (`vpx_convolve.c:192-204`).
+#[allow(clippy::too_many_arguments)] // mirrors libvpx's argument list 1:1
+pub fn convolve8_scaled_avg(
+    src: &[u8],
+    src_stride: usize,
+    dst: &mut [u8],
+    dst_stride: usize,
+    filters: &[[i16; 8]; SUBPEL_SHIFTS],
+    x0_q4: i32,
+    x_step_q4: i32,
+    y0_q4: i32,
+    y_step_q4: i32,
+    w: usize,
+    h: usize,
+) {
+    assert!(w <= 64, "convolve8_scaled_avg: w must be <= 64");
+    assert!(h <= 64, "convolve8_scaled_avg: h must be <= 64");
+    let mut pred = [0u8; 64 * 64];
+    let pred_stride = 64;
+    convolve8_scaled(
+        src,
+        src_stride,
+        &mut pred,
+        pred_stride,
+        filters,
+        x0_q4,
+        x_step_q4,
+        y0_q4,
+        y_step_q4,
+        w,
+        h,
+    );
+    for y in 0..h {
+        for x in 0..w {
+            let idx = y * dst_stride + x;
+            dst[idx] = round_avg(dst[idx], pred[y * pred_stride + x]);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
