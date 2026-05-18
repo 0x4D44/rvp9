@@ -621,8 +621,22 @@ fn decode_block(
         } else {
             uv_plane_block_size(bsize)
         };
-        let plane_bw_4x4 = plane_bsize.n_4x4_wide() as usize;
-        let plane_bh_4x4 = plane_bsize.n_4x4_high() as usize;
+        // libvpx pd->n4_w / n4_h (vp9_decodeframe.c:796-797): for the
+        // sub-8 coding-block path, `decode_partition` calls
+        // `decode_block(..., subsize, 1, 1)` (vp9_decodeframe.c:1192),
+        // so `bw = bh = 1` mi-unit and `n4_w = n4_h = (1 << 1) >> ss = 2 >> ss`
+        // regardless of the actual sub-8 subsize (Block4x4 / Block4x8 /
+        // Block8x4). The four 4×4 sub-positions are all iterated, with
+        // per-bmi modes selected inside the loop. For block_size ≥ 8×8
+        // the iteration extent follows `plane_bsize.n_4x4_*()` as usual.
+        let (plane_bw_4x4, plane_bh_4x4) = if bsize < BlockSize::Block8x8 {
+            (2 >> ss_x, 2 >> ss_y)
+        } else {
+            (
+                plane_bsize.n_4x4_wide() as usize,
+                plane_bsize.n_4x4_high() as usize,
+            )
+        };
         let tx_step_4x4 = 1usize << (plane_tx as usize);
 
         // Pixel coords of the block's top-left in plane-sample space.
