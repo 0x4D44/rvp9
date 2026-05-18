@@ -49,9 +49,14 @@ use rvp9_core::bitstream::{
 };
 use rvp9_core::entropy::{FRAME_CONTEXTS, FrameContext};
 use rvp9_core::frame::{BorderUsage, ByteAlignment, DecoderFramePool, FrameBuf, Yv12Buffer};
+use rvp9_core::inter::mode_info::{InterModeReadParams, setup_compound_reference_mode};
+use rvp9_core::inter::mv_ref::sign_bias_from_header;
 use rvp9_core::loopfilter::ResolvedLfDeltas;
 
-use crate::tile::{FrameDecodeParams, TileDecodeError, decode_tile_intra, tile_bounds};
+use crate::tile::{
+    FrameDecodeParams, InterFrameDecodeParams, TileDecodeError, decode_tile_inter,
+    decode_tile_intra, tile_bounds,
+};
 
 /// Top-level VP9 decoder state.
 ///
@@ -65,6 +70,16 @@ use crate::tile::{FrameDecodeParams, TileDecodeError, decode_tile_intra, tile_bo
 pub struct Decoder {
     /// 9-slot pool of decoded reference frames.
     frame_pool: DecoderFramePool,
+    /// 8-slot reference-frame map. `ref_frame_map[i]` is the
+    /// [`FrameBuf`] currently bound to logical ref slot `i`, or
+    /// `None` if that slot has never been written. Mirrors libvpx's
+    /// `cm->ref_frame_map[i]` — see `vp9_decodeframe.c:2940`'s
+    /// `cm->frame_refs[i].buf = &cm->buffer_pool->frame_bufs[
+    /// cm->ref_frame_map[ref_idx]].buf`. Updated post-decode in
+    /// [`Decoder::decode_keyframe`] (every slot per
+    /// `refresh_frame_flags = 0xFF`) and [`Decoder::decode_inter_frame`]
+    /// (per the parsed `refresh_frame_flags` mask).
+    ref_frame_map: [Option<FrameBuf>; rvp9_core::bitstream::REF_FRAMES],
     /// Cached (width, height) of every frame currently held in the
     /// 8-slot reference-frame-map. `None` means the corresponding
     /// ref-map slot has no decoded frame yet. Mirrors the
@@ -115,6 +130,7 @@ impl Decoder {
         ];
         Self {
             frame_pool: DecoderFramePool::new(),
+            ref_frame_map: Default::default(),
             ref_frame_sizes: [None; rvp9_core::bitstream::REF_FRAMES],
             frame_contexts,
             lf_deltas: ResolvedLfDeltas::default(),
@@ -430,9 +446,7 @@ impl Decoder {
             FrameKind::IntraOnly { .. } => Err(DecodeError::Unimplemented {
                 reason: "intra-only frame decode (compressed header + tile decode + reconstruction)",
             }),
-            FrameKind::InterFrame { .. } => Err(DecodeError::Unimplemented {
-                reason: "inter frame decode (compressed header + tile decode + reconstruction)",
-            }),
+            FrameKind::InterFrame { .. } => self.decode_inter_frame(frame),
         }
     }
 
@@ -568,8 +582,258 @@ impl Decoder {
         // Note: ref_frame_sizes is already populated by
         // `parse_packet -> refresh_ref_frame_sizes`; no work here.
 
+        // Keyframes refresh every ref-map slot (libvpx implicit
+        // `refresh_frame_flags = 0xFF` for FRAME_TYPE_KEY at
+        // `vp9_decodeframe.c:2691`). Splat the new FrameBuf across all
+        // eight slots so subsequent inter frames can resolve any
+        // ref_frame_indices[i] against this keyframe.
+        for slot in &mut self.ref_frame_map {
+            *slot = Some(frame_buf.clone());
+        }
+
         self.have_resync = false;
         Ok(frame_buf)
+    }
+
+    /// Decode an inter frame end-to-end, returning the freshly-
+    /// allocated [`FrameBuf`] that holds the reconstructed pixels.
+    ///
+    /// Mirrors libvpx's inter-frame decode driver:
+    /// `read_compressed_header` → `decode_tiles` (`vp9_decodeframe.c`)
+    /// for the single-tile path. Multi-tile vectors surface as
+    /// [`DecodeError::TileDecode`].
+    ///
+    /// ## Stage D.3 status
+    ///
+    /// - **D.3.a (this commit)** wires the partition+tile walker, the
+    ///   per-block ModeInfo reader, and (via D.2) the per-inter-block
+    ///   reconstruction primitive. Intra-in-inter blocks consume their
+    ///   bitstream bits but skip pixel reconstruction (deferred to
+    ///   D.4). Lossless and any frame referencing a ref slot whose
+    ///   pool entry is `None` returns [`DecodeError::Unimplemented`].
+    /// - **D.3.b** rewires the per-block refs from "single-ref LAST
+    ///   only" to the actual decoded `ref_frames` pair.
+    /// - **D.3.c** wires `extend_frame_borders` + `refresh_frame_flags`
+    ///   handling.
+    fn decode_inter_frame(&mut self, frame: &ParsedFrame<'_>) -> Result<FrameBuf, DecodeError> {
+        let tail = frame
+            .header
+            .tail
+            .as_ref()
+            .ok_or(DecodeError::WrongFrameKind)?;
+
+        let (ref_frame_indices, ref_frame_sign_biases, interp_filter, allow_high_precision_mv) =
+            match frame.header.kind {
+                FrameKind::InterFrame {
+                    ref_frame_indices,
+                    ref_frame_sign_biases,
+                    interp_filter,
+                    allow_high_precision_mv,
+                    ..
+                } => (
+                    ref_frame_indices,
+                    ref_frame_sign_biases,
+                    interp_filter,
+                    allow_high_precision_mv,
+                ),
+                _ => return Err(DecodeError::WrongFrameKind),
+            };
+
+        // Lossless inter not yet wired (mirrors keyframe gating).
+        if tail.quantization.is_lossless() {
+            return Err(DecodeError::Unimplemented {
+                reason: "lossless inter frame decode (WHT inverse transform path)",
+            });
+        }
+
+        // 1. Resolve the three logical inter refs (LAST / GOLDEN /
+        //    ALTREF) into actual FrameBuf handles via ref_frame_map.
+        //    Empty slots surface as Unimplemented for now (libvpx would
+        //    treat as bitstream-corrupt; in practice every real stream
+        //    populates these via the prior keyframe).
+        let mut refs: [Option<FrameBuf>; 3] = [None, None, None];
+        for (i, &ref_idx) in ref_frame_indices.iter().enumerate() {
+            let slot_idx = ref_idx as usize;
+            let buf = self
+                .ref_frame_map
+                .get(slot_idx)
+                .and_then(|slot| slot.clone());
+            match buf {
+                Some(b) => refs[i] = Some(b),
+                None => {
+                    return Err(DecodeError::Unimplemented {
+                        reason: "inter frame referenced empty ref_frame_map slot",
+                    });
+                }
+            }
+        }
+
+        // 2. Compute compound_allowed (libvpx
+        //    `vp9_compound_reference_allowed`): true iff any two of
+        //    the three sign biases differ.
+        let compound_allowed = ref_frame_sign_biases[1] != ref_frame_sign_biases[0]
+            || ref_frame_sign_biases[2] != ref_frame_sign_biases[0];
+
+        // 3. Parse compressed header into the selected FC bank.
+        let compressed_result = self.parse_compressed_partition_inter(
+            frame,
+            compound_allowed,
+            interp_filter,
+            allow_high_precision_mv,
+        )?;
+
+        // 4. Slice tile data (everything past the compressed header).
+        let header_end = frame.header_end_byte;
+        let fps = tail.first_partition_size as usize;
+        let tile_data_start = header_end + fps;
+        let total = frame.full_frame_data.len();
+        if tile_data_start > total {
+            return Err(DecodeError::TruncatedCompressedHeader {
+                declared: tile_data_start,
+                available: total,
+            });
+        }
+        let tile_section = &frame.full_frame_data[tile_data_start..];
+
+        let mi_cols = ((frame.header.width as usize) + 7) >> 3;
+        let mi_rows = ((frame.header.height as usize) + 7) >> 3;
+        let tile_cols = 1u32 << tail.tile_info.log2_tile_cols;
+        let tile_rows = 1u32 << tail.tile_info.log2_tile_rows;
+        if tile_cols > 1 || tile_rows > 1 {
+            return Err(DecodeError::TileDecode(TileDecodeError::MultiTileUnsupported {
+                log2_tile_cols: tail.tile_info.log2_tile_cols,
+                log2_tile_rows: tail.tile_info.log2_tile_rows,
+            }));
+        }
+        let buffers = parse_tile_buffers(tile_section, tile_cols, tile_rows)
+            .map_err(DecodeError::Bitstream)?;
+        let tile_buf = buffers
+            .first()
+            .ok_or(DecodeError::Bitstream(BitstreamError::Truncated {
+                needed: 1,
+                available: 0,
+            }))?;
+
+        // 5. Allocate destination FrameBuf.
+        let mut yv12 = Yv12Buffer::alloc(
+            frame.header.width,
+            frame.header.height,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .map_err(|_| DecodeError::FrameAlloc)?;
+
+        let cur_y_width = yv12.aligned_y_width();
+        let cur_y_height = yv12.aligned_y_height();
+
+        // 6. Per-frame inter params.
+        let sign_bias = sign_bias_from_header(&ref_frame_sign_biases);
+        let (comp_fixed_ref, comp_var_ref) = setup_compound_reference_mode(&sign_bias);
+        let inter_params = InterModeReadParams {
+            allow_high_precision_mv,
+            interp_filter,
+            reference_mode: compressed_result.reference_mode,
+            comp_fixed_ref,
+            comp_var_ref,
+            sign_bias,
+        };
+
+        // 7. Seg alt-Q feature data.
+        let mut seg_alt_q = [None; rvp9_core::loopfilter::MAX_SEGMENTS];
+        if tail.segmentation.enabled {
+            for (i, s) in tail.segmentation.feature_data.iter().enumerate() {
+                seg_alt_q[i] = s[0];
+            }
+        }
+
+        let base = FrameDecodeParams {
+            mi_cols,
+            mi_rows,
+            tx_mode: compressed_result.tx_mode,
+            segmentation_update_map: tail.segmentation.enabled && tail.segmentation.update_map,
+            seg_tree_probs: tail.segmentation.tree_probs,
+            lossless: tail.quantization.is_lossless(),
+            base_qindex: i32::from(tail.quantization.base_qindex),
+            y_dc_delta_q: i32::from(tail.quantization.y_dc_delta_q),
+            uv_dc_delta_q: i32::from(tail.quantization.uv_dc_delta_q),
+            uv_ac_delta_q: i32::from(tail.quantization.uv_ac_delta_q),
+            seg_alt_q,
+            seg_abs_delta: tail.segmentation.abs_delta,
+        };
+
+        // Borrow refs as &Yv12Buffer for InterFrameDecodeParams. The
+        // FrameBufs we cloned above keep the underlying allocations
+        // alive for the lifetime of this scope.
+        let refs_borrowed: [Option<&Yv12Buffer>; 3] = [
+            refs[0].as_deref(),
+            refs[1].as_deref(),
+            refs[2].as_deref(),
+        ];
+        let params = InterFrameDecodeParams {
+            base,
+            cur_y_width,
+            cur_y_height,
+            refs: refs_borrowed,
+            inter_params,
+        };
+
+        let fc_idx = tail.frame_context_idx as usize;
+        let fc = &self.frame_contexts[fc_idx];
+        let bounds = tile_bounds(&tail.tile_info, mi_cols, mi_rows, 0, 0);
+        decode_tile_inter(tile_buf.data, bounds, &params, fc, &mut yv12)
+            .map_err(DecodeError::TileDecode)?;
+
+        let frame_buf: FrameBuf = std::sync::Arc::new(yv12);
+
+        // D.3.c will wire `extend_frame_borders` + `refresh_frame_flags`
+        // here. For D.3.a we leave both no-op.
+
+        Ok(frame_buf)
+    }
+
+    /// Parse the compressed-header for an inter frame with the
+    /// supplied `compound_allowed` / `interp_filter` /
+    /// `allow_high_precision_mv` overrides. Companion to
+    /// [`Decoder::parse_compressed_partition`] which conservatively
+    /// pins `compound_allowed = false`.
+    fn parse_compressed_partition_inter(
+        &mut self,
+        frame: &ParsedFrame<'_>,
+        compound_allowed: bool,
+        interp_filter: InterpFilter,
+        allow_high_precision_mv: bool,
+    ) -> Result<CompressedHeaderResult, DecodeError> {
+        let tail = frame.header.tail.as_ref().ok_or(DecodeError::WrongFrameKind)?;
+
+        let header_end = frame.header_end_byte;
+        let fps = tail.first_partition_size as usize;
+        let total = frame.full_frame_data.len();
+        let needed_end = header_end
+            .checked_add(fps)
+            .ok_or(DecodeError::TruncatedCompressedHeader {
+                declared: usize::MAX,
+                available: total,
+            })?;
+        if needed_end > total {
+            return Err(DecodeError::TruncatedCompressedHeader {
+                declared: needed_end,
+                available: total,
+            });
+        }
+        let compressed = &frame.full_frame_data[header_end..needed_end];
+
+        let opts = CompressedHeaderOptions {
+            lossless: tail.quantization.is_lossless(),
+            intra_only: false,
+            interp_filter,
+            compound_allowed,
+            allow_high_precision_mv,
+        };
+
+        let idx = tail.frame_context_idx as usize;
+        let fc = &mut self.frame_contexts[idx];
+        parse_compressed_header(compressed, fc, opts).map_err(DecodeError::Bitstream)
     }
 }
 

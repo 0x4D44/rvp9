@@ -37,14 +37,17 @@ use rvp9_core::block::{BlockSize, PartitionType, max_txsize, subsize};
 use rvp9_core::entropy::{BoolReader, FrameContext, VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB,
     VP9_KF_Y_MODE_PROB};
 use rvp9_core::frame::Yv12Buffer;
+use rvp9_core::inter::mode_info::{InterModeReadParams, get_intra_inter_context,
+    read_inter_block_mode_info};
+use rvp9_core::inter::mv_ref::BlockBounds;
 use rvp9_core::intra_pred::{EdgeBuffers, IntraMode, build_intra_predictors};
-use rvp9_core::mode_info::{BlockMode, BmiInfo, ModeInfo, read_intra_mode, read_partition,
-    read_segment_id, read_skip, read_tx_size, get_tx_size_context};
+use rvp9_core::mode_info::{BlockMode, BmiInfo, InterMode, ModeInfo, Mv, RefFrame, read_intra_mode,
+    read_is_inter, read_partition, read_segment_id, read_skip, read_tx_size, get_tx_size_context};
 use rvp9_core::quant::{ac_quant, dc_quant, get_qindex};
 use rvp9_core::transforms::{TxMode, TxSize};
 
 use crate::reconstruct::reconstruct_intra_block;
-use crate::tile_ctx::{TileCoefCtx, TileDecodeCtx};
+use crate::tile_ctx::{TileCoefCtx, TileDecodeCtx, TileNeighbourLookup};
 
 /// `MI_BLOCK_SIZE` from libvpx (`vp9_enums.h:25`) — each 64×64
 /// superblock covers an 8×8 mode-info grid.
@@ -1070,6 +1073,443 @@ fn left_block_mode(
         // block in {1, 3}: read from current parent's bmi[block - 1].
         IntraMode::from_u8(cur_bmi[block - 1].as_mode).unwrap_or(IntraMode::Dc)
     }
+}
+
+// =========================================================================
+// Inter-frame driver (Phase D.3)
+// =========================================================================
+//
+// Mirrors the inter arm of libvpx `decode_tile` / `decode_partition` /
+// `decode_block` (`vp9_decodeframe.c:911-1027`). Inter frames differ from
+// the keyframe path in three ways:
+//
+// 1. Partition probabilities come from the per-frame
+//    `fc.partition_prob[ctx]` (3 entries) instead of the
+//    [`VP9_KF_PARTITION_PROBS`] table.
+// 2. The per-block ModeInfo header sequence is `read_inter_frame_mode_info`
+//    (`vp9_decodemv.c:788-806`): seg_id → skip → is_inter → tx_size → then
+//    either `read_intra_block_mode_info` (non-key intra) or
+//    `read_inter_block_mode_info` (which D.1 already ports).
+// 3. The reconstruction path is `dec_build_inter_predictors_sb` + the
+//    per-plane residual decode — D.2 already ports that as
+//    [`decode_and_reconstruct_inter_block`].
+
+/// Per-frame inter-decode parameters. Mirrors the shape of
+/// [`FrameDecodeParams`] but carries the inter-only fields the
+/// per-block reader needs: the resolved reference frames (Y'CbCr buffers
+/// for LAST / GOLDEN / ALTREF), the inter mode read params, and the
+/// current frame's aligned luma dimensions for the [`ScaleFactors`]
+/// build inside [`decode_and_reconstruct_inter_block`].
+#[derive(Clone, Debug)]
+pub struct InterFrameDecodeParams<'a> {
+    /// Shared base (mi_cols / tx_mode / segmentation / quant).
+    pub base: FrameDecodeParams,
+    /// Frame's aligned luma width (matches `cur_y_width` in
+    /// [`InterBlockInputs`]).
+    pub cur_y_width: u32,
+    /// Frame's aligned luma height (matches `cur_y_height` in
+    /// [`InterBlockInputs`]).
+    pub cur_y_height: u32,
+    /// Per-logical-ref reference frames (`[LAST, GOLDEN, ALTREF]`).
+    /// `None` slots indicate the corresponding pool entry is empty —
+    /// libvpx treats those as bitstream errors, but for now we let the
+    /// per-block reader either avoid the ref (single-ref blocks pinning
+    /// LAST) or panic if a missing ref is selected.
+    pub refs: [Option<&'a Yv12Buffer>; 3],
+    /// Inter mode read params (sign bias / compound fixed/var refs /
+    /// reference_mode / interp_filter / allow_high_precision_mv).
+    pub inter_params: InterModeReadParams,
+}
+
+/// Run the per-tile decode loop for an inter frame. Mirrors
+/// [`decode_tile_intra`] but threads the inter ref pool + per-frame
+/// inter params and dispatches per-block to [`decode_inter_block`].
+///
+/// # Errors
+///
+/// Returns [`TileDecodeError::InvalidTilePayload`] if the tile bytes
+/// don't open with a valid bool-coder marker bit.
+pub fn decode_tile_inter(
+    tile_data: &[u8],
+    bounds: TileBounds,
+    params: &InterFrameDecodeParams<'_>,
+    fc: &FrameContext,
+    dst_frame: &mut Yv12Buffer,
+) -> Result<(), TileDecodeError> {
+    let mut reader =
+        BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;
+    let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
+    let tile_mi_rows = bounds.mi_row_end - bounds.mi_row_start;
+    let mut decode_ctx = TileDecodeCtx::new_with_grid(tile_mi_cols, tile_mi_rows);
+    let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
+    let mut part_ctx = PartitionCtx::new(tile_mi_cols);
+
+    let mut mi_row = bounds.mi_row_start;
+    while mi_row < bounds.mi_row_end {
+        decode_ctx.reset_left();
+        coef_ctx.reset_left_coef();
+        part_ctx.reset_left();
+
+        let mut mi_col = bounds.mi_col_start;
+        while mi_col < bounds.mi_col_end {
+            decode_inter_partition(
+                &mut reader,
+                fc,
+                params,
+                &bounds,
+                &mut decode_ctx,
+                &mut coef_ctx,
+                &mut part_ctx,
+                dst_frame,
+                mi_row,
+                mi_col,
+                BlockSize::Block64x64,
+                4,
+            );
+            mi_col += MI_BLOCK_SIZE;
+        }
+        mi_row += MI_BLOCK_SIZE;
+    }
+    Ok(())
+}
+
+/// Recursively decode one partition starting at `(mi_row, mi_col)`
+/// with parent block-size `bsize`. Mirrors libvpx `decode_partition`
+/// (`vp9_decodeframe.c:1171-1225`) for inter frames — partition probs
+/// come from `fc.partition_prob[ctx]` (3 entries) instead of the
+/// keyframe table.
+#[allow(clippy::too_many_arguments)]
+fn decode_inter_partition(
+    reader: &mut BoolReader<'_>,
+    fc: &FrameContext,
+    params: &InterFrameDecodeParams<'_>,
+    bounds: &TileBounds,
+    decode_ctx: &mut TileDecodeCtx,
+    coef_ctx: &mut TileCoefCtx,
+    part_ctx: &mut PartitionCtx,
+    dst_frame: &mut Yv12Buffer,
+    mi_row: usize,
+    mi_col: usize,
+    bsize: BlockSize,
+    n4x4_l2: u8,
+) {
+    if mi_row >= params.base.mi_rows || mi_col >= params.base.mi_cols {
+        return;
+    }
+
+    let n8x8_l2 = n4x4_l2.saturating_sub(1);
+    let num_8x8_wh: usize = 1 << n8x8_l2;
+    let hbs = num_8x8_wh >> 1;
+    let has_rows = mi_row + hbs < params.base.mi_rows;
+    let has_cols = mi_col + hbs < params.base.mi_cols;
+
+    let mi_row_in_tile = mi_row - bounds.mi_row_start;
+    let mi_col_in_tile = mi_col - bounds.mi_col_start;
+    let bsl = n8x8_l2 as usize;
+    let ctx = part_ctx.context(mi_row_in_tile, mi_col_in_tile, bsl);
+
+    // Inter frames: per-frame `partition_prob[ctx]` (3 entries) drives
+    // the partition tree, NOT the static keyframe table.
+    let probs = &fc.partition_prob[ctx];
+    let partition = if has_rows && has_cols {
+        read_partition(reader, probs)
+    } else if !has_rows && has_cols {
+        if reader.read(probs[1]) != 0 {
+            PartitionType::Split
+        } else {
+            PartitionType::Horz
+        }
+    } else if has_rows && !has_cols {
+        if reader.read(probs[2]) != 0 {
+            PartitionType::Split
+        } else {
+            PartitionType::Vert
+        }
+    } else {
+        PartitionType::Split
+    };
+
+    let sub = subsize(bsize, partition).unwrap_or(bsize);
+
+    if hbs == 0 {
+        decode_inter_block(
+            reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
+            mi_row, mi_col, sub,
+        );
+    } else {
+        match partition {
+            PartitionType::None => {
+                decode_inter_block(
+                    reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
+                    mi_row, mi_col, sub,
+                );
+            }
+            PartitionType::Horz => {
+                decode_inter_block(
+                    reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
+                    mi_row, mi_col, sub,
+                );
+                if has_rows {
+                    decode_inter_block(
+                        reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
+                        mi_row + hbs, mi_col, sub,
+                    );
+                }
+            }
+            PartitionType::Vert => {
+                decode_inter_block(
+                    reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
+                    mi_row, mi_col, sub,
+                );
+                if has_cols {
+                    decode_inter_block(
+                        reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
+                        mi_row, mi_col + hbs, sub,
+                    );
+                }
+            }
+            PartitionType::Split => {
+                decode_inter_partition(
+                    reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
+                    dst_frame, mi_row, mi_col, sub, n8x8_l2,
+                );
+                decode_inter_partition(
+                    reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
+                    dst_frame, mi_row, mi_col + hbs, sub, n8x8_l2,
+                );
+                decode_inter_partition(
+                    reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
+                    dst_frame, mi_row + hbs, mi_col, sub, n8x8_l2,
+                );
+                decode_inter_partition(
+                    reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
+                    dst_frame, mi_row + hbs, mi_col + hbs, sub, n8x8_l2,
+                );
+            }
+        }
+    }
+
+    if bsize as u8 >= BlockSize::Block8x8 as u8
+        && (bsize == BlockSize::Block8x8 || partition != PartitionType::Split)
+    {
+        part_ctx.update(mi_row_in_tile, mi_col_in_tile, sub, num_8x8_wh);
+    }
+}
+
+/// Decode one inter-frame leaf coding block at `(mi_row, mi_col)`.
+/// Mirrors libvpx `read_inter_frame_mode_info` + the inter arm of
+/// `decode_block` (`vp9_decodeframe.c:911-1027`):
+///
+/// 1. `read_inter_segment_id` (only `update_map == true` path wired
+///    today; the temporal-update path is stubbed as zero).
+/// 2. `read_skip(ctx)` against `fc.skip_probs`.
+/// 3. `read_is_inter_block(ctx)` against `fc.intra_inter_prob` to
+///    classify intra-in-inter vs true inter.
+/// 4. `read_tx_size(allow_select = !skip || !inter)` against
+///    `fc.tx_probs`.
+/// 5. If inter: [`decode_and_reconstruct_inter_block`] (D.2).
+/// 6. If intra-in-inter: deferred — returns Ok with no pixels written
+///    today (D.3.a scaffold). Future work surfaces D-XXX.
+#[allow(clippy::too_many_arguments)]
+fn decode_inter_block(
+    reader: &mut BoolReader<'_>,
+    fc: &FrameContext,
+    params: &InterFrameDecodeParams<'_>,
+    bounds: &TileBounds,
+    decode_ctx: &mut TileDecodeCtx,
+    coef_ctx: &mut TileCoefCtx,
+    dst_frame: &mut Yv12Buffer,
+    mi_row: usize,
+    mi_col: usize,
+    bsize: BlockSize,
+) {
+    let mi_row_in_tile = mi_row - bounds.mi_row_start;
+    let mi_col_in_tile = mi_col - bounds.mi_col_start;
+    let mi_row_in_sb = mi_row_in_tile & MI_MASK;
+
+    // 1. segment_id — same as keyframe path (Stage 3 scope only wires
+    //    `update_map = true`; the `temporal_update` / inheritance from
+    //    last frame's seg map are out of scope).
+    let segment_id = if params.base.segmentation_update_map {
+        read_segment_id(reader, &params.base.seg_tree_probs)
+    } else {
+        0
+    };
+
+    // 2. skip flag.
+    let above = decode_ctx.above(mi_col_in_tile).copied();
+    let left = decode_ctx.left(mi_row_in_sb).copied();
+    let skip_ctx = usize::from(above.is_some_and(|m| m.skip))
+        + usize::from(left.is_some_and(|m| m.skip));
+    let skip = read_skip(reader, &fc.skip_probs, skip_ctx);
+
+    // 3. is_inter classification.
+    let intra_inter_ctx = get_intra_inter_context(above.as_ref(), left.as_ref());
+    let is_inter = read_is_inter(reader, &fc.intra_inter_prob, intra_inter_ctx);
+
+    // 4. tx_size. allow_select gate matches libvpx
+    //    `vp9_decodemv.c:800`: `!mi->skip || !inter_block`.
+    let allow_select = (!skip || !is_inter) && !params.base.lossless;
+    let max_tx = max_txsize(bsize);
+    let above_tx_pair = above.map(|m| (m.tx_size, m.skip));
+    let left_tx_pair = left.map(|m| (m.tx_size, m.skip));
+    let tx_ctx = if max_tx >= TxSize::Tx8x8 {
+        get_tx_size_context(above_tx_pair, left_tx_pair, max_tx)
+    } else {
+        0
+    };
+    let tx_size = read_tx_size(
+        reader,
+        &fc.tx_probs,
+        params.base.tx_mode,
+        max_tx,
+        allow_select,
+        tx_ctx,
+    );
+
+    // 5. dispatch to inter vs intra mode-info reader.
+    let bw_mi = usize::from(bsize.n_8x8_wide());
+    let bh_mi = usize::from(bsize.n_8x8_high());
+    let x_mis = bw_mi.min(params.base.mi_cols - mi_col);
+    let y_mis = bh_mi.min(params.base.mi_rows - mi_row);
+
+    if is_inter {
+        // D.3.a scaffold: read the inter-block mode info into the
+        // ModeInfo grid, but DON'T yet drive per-plane MC + residual
+        // reconstruction. The bool-coder cursor is advanced through
+        // the mode-info section (ref frames + inter mode + interp
+        // filter + MVs), so all downstream blocks see the correct
+        // bitstream position. Pixel reconstruction lands in D.3.b
+        // (which switches this branch to D.2's
+        // `decode_and_reconstruct_inter_block`).
+        let mut mi = ModeInfo {
+            block_size: bsize,
+            tx_size,
+            skip,
+            segment_id,
+            seg_id_predicted: false,
+            mode: BlockMode::Inter {
+                mode: InterMode::NearestMv,
+                ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                mvs: [Mv::ZERO; 2],
+                interp_filter: params.inter_params.interp_filter,
+            },
+            bmi: [BmiInfo::default(); 4],
+        };
+
+        let bounds_block = BlockBounds::new(
+            mi_row as i32,
+            mi_col as i32,
+            params.base.mi_rows as i32,
+            params.base.mi_cols as i32,
+            bw_mi as i32,
+            bh_mi as i32,
+        );
+
+        {
+            let lookup = TileNeighbourLookup::new(
+                decode_ctx,
+                mi_row_in_tile as i32,
+                mi_col_in_tile as i32,
+            );
+            read_inter_block_mode_info(
+                reader,
+                fc,
+                None, // no NmvCounts sink in v1
+                &params.inter_params,
+                &lookup,
+                bsize,
+                &bounds_block,
+                None, // no prev-frame MV grid yet
+                &mut mi,
+            );
+        }
+
+        // No residual decode in D.3.a — the leaf block produces no
+        // tokens. (D.3.b adds the per-plane residual path via D.2's
+        // primitive.)
+        let _ = coef_ctx;
+        let _ = dst_frame;
+        let _ = params.refs;
+        let _ = params.cur_y_width;
+        let _ = params.cur_y_height;
+
+        decode_ctx.write_block(mi_row_in_tile, mi_row_in_sb, mi_col_in_tile, x_mis, y_mis, &mi);
+    } else {
+        // Intra-in-inter-frame path. Not yet wired — D.3.a scaffold
+        // only ports the inter arm. Mirror the keyframe path's
+        // ModeInfo population but with non-keyframe Y-mode probs
+        // (fc.y_mode_prob — different table from VP9_KF_Y_MODE_PROB).
+        // For now we read the mode bits to keep the bool-coder in sync
+        // but skip pixel reconstruction; the resulting frame will
+        // contain zeros for intra-in-inter blocks. This is sufficient
+        // for the conformance ratchet (those frames will mismatch
+        // until D.4 lands a real intra-in-inter path).
+        //
+        // libvpx `read_intra_block_mode_info` (`vp9_decodemv.c:354-403`):
+        // reads ref_frame[0] = INTRA (already implied), then y_mode
+        // (per-bmi for sub-8), then uv_mode.
+        read_intra_in_inter_mode_info(reader, fc, bsize);
+
+        let mi = ModeInfo {
+            block_size: bsize,
+            tx_size,
+            skip,
+            segment_id,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: [BmiInfo::default(); 4],
+        };
+        decode_ctx.write_block(mi_row_in_tile, mi_row_in_sb, mi_col_in_tile, x_mis, y_mis, &mi);
+
+        // No reconstruction — pixels remain at their initial zero
+        // allocation. The conformance harness will surface these as
+        // mismatches until D.4 wires real intra-in-inter pred + recon.
+        let _ = coef_ctx;
+        let _ = dst_frame;
+    }
+}
+
+/// Read the per-block intra-frame mode info inside an inter frame.
+/// Mirrors libvpx `read_intra_block_mode_info` (`vp9_decodemv.c:354-403`)
+/// for the bitstream-sync side only — we consume the y_mode + uv_mode
+/// bits to keep the bool-coder cursor in step, but do NOT yet plumb
+/// the resolved modes into reconstruction. That comes with D.4.
+///
+/// Probabilities: `fc.y_mode_prob[size_group]` (different table from
+/// the keyframe `VP9_KF_Y_MODE_PROB`), and `fc.uv_mode_prob[y_mode]`.
+fn read_intra_in_inter_mode_info(
+    reader: &mut BoolReader<'_>,
+    fc: &FrameContext,
+    bsize: BlockSize,
+) {
+    // libvpx `size_group_lookup` (`vp9_common_data.c:14-19`).
+    let size_group = match bsize {
+        BlockSize::Block4x4 | BlockSize::Block4x8 | BlockSize::Block8x4
+        | BlockSize::Block8x8 => 0,
+        BlockSize::Block8x16 | BlockSize::Block16x8 | BlockSize::Block16x16 => 1,
+        BlockSize::Block16x32 | BlockSize::Block32x16 | BlockSize::Block32x32 => 2,
+        BlockSize::Block32x64 | BlockSize::Block64x32 | BlockSize::Block64x64 => 3,
+    };
+    let y_mode = if bsize >= BlockSize::Block8x8 {
+        read_intra_mode(reader, &fc.y_mode_prob[size_group])
+    } else {
+        // Sub-8: per-bmi y_mode. libvpx reads 1, 2, or 4 modes.
+        let count = match bsize {
+            BlockSize::Block4x4 => 4,
+            BlockSize::Block4x8 | BlockSize::Block8x4 => 2,
+            _ => 1,
+        };
+        let mut last = IntraMode::Dc;
+        for _ in 0..count {
+            last = read_intra_mode(reader, &fc.y_mode_prob[size_group]);
+        }
+        last
+    };
+    let _uv = read_intra_mode(reader, &fc.uv_mode_prob[y_mode as usize]);
 }
 
 #[cfg(test)]
