@@ -209,6 +209,16 @@ fn read_coeff_bits(reader: &mut BoolReader<'_>, probs: &[u8]) -> i32 {
 /// Mirrors libvpx `decode_coefs` (`vp9/decoder/vp9_detokenize.c:115-261`)
 /// for the 8-bit (non-`CONFIG_VP9_HIGHBITDEPTH`) path.
 ///
+/// ## Runtime differential (Stage 3 stretch M.6)
+///
+/// When the environment variable `RVP9_DEBUG_REFCOEFS=1` is set, this
+/// function snapshots the [`BoolReader`] register state on entry, runs the
+/// normal production decode, then restores the snapshot and re-runs the
+/// libvpx verbatim reference port ([`decode_coefs_libvpx_ref`]) on
+/// identical inputs. If `(eob, dq_coefs)` disagree, the function panics
+/// with a full input + output dump. Unset (the default), the env var
+/// lookup is one extra branch and nothing else.
+///
 /// # Parameters
 /// - `reader`: the [`BoolReader`] positioned at the first token bit.
 ///   Advances by however many bits the block decode consumes.
@@ -301,7 +311,29 @@ pub fn decode_coefs(
     // `:171,254`).
     let mut dqv = dc_dq;
 
-    while c < seg_eob {
+    // Stage 3 stretch M.6 — runtime differential against the libvpx
+    // verbatim reference port. Gated by `RVP9_DEBUG_REFCOEFS=1`. When
+    // active: snapshot the reader's register state before the decode loop,
+    // run production as normal, then restore the snapshot and re-run the
+    // reference port on the same inputs. If `(eob, dq_coefs)` diverge,
+    // panic with a full input + output dump — the smoking gun for any
+    // production/oracle divergence in real conformance bitstreams.
+    //
+    // `RVP9_DEBUG_REFCOEFS=trace` is the same differential check PLUS a
+    // per-call dump of inputs, pre-reader-state, and outputs — used to
+    // hand-trace a specific failing block against libvpx's actual bit
+    // consumption when the differential alone agrees but the result is
+    // still wrong (i.e., a transcription bug shared by prod + ref port).
+    let m6_mode = std::env::var("RVP9_DEBUG_REFCOEFS").ok();
+    let m6_active = matches!(m6_mode.as_deref(), Some("1") | Some("trace"));
+    let m6_trace = matches!(m6_mode.as_deref(), Some("trace"));
+    let m6_pre_snap = if m6_active {
+        Some(reader.snapshot())
+    } else {
+        None
+    };
+
+    'outer: while c < seg_eob {
         let band = band_translate[c] as usize;
         let prob = &coef_probs[band][ctx];
 
@@ -329,8 +361,10 @@ pub fn decode_coefs(
             token_cache[scan.scan[c] as usize] = 0;
             c += 1;
             if c >= seg_eob {
-                // Loop exits naturally (no EOB token consumed).
-                return c;
+                // Loop exits naturally (no EOB token consumed). Use a
+                // labelled break (not `return c`) so the M.6 differential
+                // gate at the function tail still runs.
+                break 'outer;
             }
             ctx = get_coef_context(scan.neighbors, &token_cache, c);
             band_local = band_translate[c] as usize;
@@ -408,8 +442,205 @@ pub fn decode_coefs(
         dqv = ac_dq;
     }
 
+    // Stage 3 stretch M.6 — post-decode differential. The reference port
+    // was deliberately frozen back at M.4 (verbatim transcription of
+    // libvpx `decode_coefs`, N=100 fuzz-clean). If production and ref
+    // disagree on the same bitstream + inputs, we have a smoking-gun
+    // localization: the divergence is here (not in any upstream cursor
+    // alignment), at this exact transform-block call.
+    if let Some(snap) = m6_pre_snap {
+        if m6_trace {
+            let (r_range, r_value, r_count, r_pos) = snap.cursor_state();
+            let probs_b0 = &coef_probs[0][initial_pt];
+            eprintln!(
+                "RVP9_TRACE decode_coefs(tx={tx_size:?}, initial_pt={initial_pt}, \
+                 seg_eob={seg_eob}, dq={dequant:?}, scan[0..6]={:?}) \
+                 pre=(r={r_range},v=0x{r_value:016x},c={r_count},p={r_pos}) \
+                 probs[b=0][ctx={initial_pt}]={probs_b0:?} \
+                 eob={c} dq={:?}",
+                &scan.scan[..6.min(scan.scan.len())],
+                &dq_coefs_out[..seg_eob],
+            );
+        }
+        let prod_eob = c;
+        let prod_dq: Vec<i32> = dq_coefs_out[..seg_eob].to_vec();
+        let post_snap = reader.snapshot();
+        // Rewind reader and re-run the libvpx reference port on the same
+        // bitstream + inputs.
+        reader.restore(&snap);
+        let mut ref_dq = vec![0i32; seg_eob];
+        let ref_eob = decode_coefs_libvpx_ref(
+            reader,
+            coef_probs,
+            tx_size,
+            dequant,
+            initial_pt,
+            scan.scan,
+            scan.neighbors,
+            &mut ref_dq,
+            seg_eob,
+        );
+        if ref_eob != prod_eob || ref_dq[..] != prod_dq[..] {
+            let (r_range, r_value, r_count, r_pos) = snap.cursor_state();
+            let probs_b0 = &coef_probs[0][initial_pt];
+            eprintln!(
+                "RVP9_DEBUG_REFCOEFS: divergence detected\n  \
+                 inputs: tx_size={tx_size:?} initial_pt={initial_pt} seg_eob={seg_eob} dequant={dequant:?}\n  \
+                 reader-pre: range={r_range} value=0x{r_value:016x} count={r_count} pos={r_pos}\n  \
+                 probs[band=0][ctx={initial_pt}]={probs_b0:?}\n  \
+                 scan[0..6]={:?}\n  \
+                 production: eob={prod_eob} dq_coefs={prod_dq:?}\n  \
+                 ref-port:   eob={ref_eob} dq_coefs={ref_dq:?}",
+                &scan.scan[..6.min(scan.scan.len())]
+            );
+            panic!(
+                "decode_coefs production diverges from libvpx ref port \
+                 (prod_eob={prod_eob}, ref_eob={ref_eob})"
+            );
+        }
+        // Restore the reader to the production-final state so the caller
+        // sees no observable change.
+        reader.restore(&post_snap);
+    }
+
     c
 }
+
+/// Verbatim transcription of libvpx `decode_coefs`
+/// (`third_party/libvpx/vp9/decoder/vp9_detokenize.c:115-261`). Lifted out
+/// of the test module (where it lived at M.4 dispatch) so the M.6 runtime
+/// differential in [`decode_coefs`] can call it on real conformance
+/// bitstreams. The implementation is intentionally a line-by-line mirror
+/// of libvpx — not idiomatic Rust — because its job is to be *obviously*
+/// correct by direct comparison with the source-of-truth C.
+///
+/// The differential property under M.4: for any `(coef_probs, tx_size, dq,
+/// initial_pt, scan, nb, seg_eob, bitstream)` tuple, this function
+/// produces the same `(eob, dq_coefs)` as [`decode_coefs`] (N=100 random
+/// fuzz tested across all tx sizes and scan orders).
+///
+/// `dq` is the libvpx `[dc, ac]` pair. `nb` is the scan's neighbour table
+/// (length `MAX_NEIGHBORS * tx_size.n_coeffs()`).
+#[allow(clippy::too_many_arguments)] // matches libvpx 1:1
+#[must_use]
+pub fn decode_coefs_libvpx_ref(
+    reader: &mut BoolReader<'_>,
+    coef_probs: &CoefBandCtxProbs,
+    tx_size: TxSize,
+    dq: (i32, i32),
+    mut ctx: usize,
+    scan: &[i16],
+    nb: &[i16],
+    dq_coefs_out: &mut [i32],
+    seg_eob: usize,
+) -> usize {
+    // libvpx: int max_eob = 16 << (tx_size << 1);  → 16 / 64 / 256 / 1024
+    let max_eob = tx_size.n_coeffs();
+    let max_eob = max_eob.min(seg_eob); // seg_eob cap for SEG_LVL_SKIP
+
+    // Zero the output (caller-side memset in libvpx).
+    for slot in &mut dq_coefs_out[..max_eob] {
+        *slot = 0;
+    }
+
+    // band_translate: 4x4 or 8x8plus
+    let band_translate: &[u8] = if matches!(tx_size, TxSize::Tx4x4) {
+        &VP9_COEFBAND_TRANS_4X4
+    } else {
+        &VP9_COEFBAND_TRANS_8X8PLUS
+    };
+    let dq_shift: u32 = if matches!(tx_size, TxSize::Tx32x32) { 1 } else { 0 };
+
+    let mut token_cache = vec![0u8; tx_size.n_coeffs()];
+
+    let mut c: usize = 0;
+    let mut bt_idx: usize = 0; // mirrors libvpx's post-increment
+    let mut dqv: i32 = dq.0;
+
+    while c < max_eob {
+        // libvpx: band = *band_translate++;
+        let mut band = band_translate[bt_idx] as usize;
+        bt_idx += 1;
+        // libvpx: prob = coef_probs[band][ctx];
+        let mut prob = &coef_probs[band][ctx];
+
+        // libvpx: if (!read_bool(EOB_CONTEXT_NODE)) break;
+        if reader.read(prob[EOB_CONTEXT_NODE]) == 0 {
+            break;
+        }
+
+        // libvpx: while (!read_bool(ZERO_CONTEXT_NODE)) { ... }
+        while reader.read(prob[ZERO_CONTEXT_NODE]) == 0 {
+            dqv = dq.1;
+            token_cache[scan[c] as usize] = 0;
+            c += 1;
+            if c >= max_eob {
+                return c;
+            }
+            let nb0 = nb[MAX_NEIGHBORS * c] as usize;
+            let nb1 = nb[MAX_NEIGHBORS * c + 1] as usize;
+            ctx = (1 + usize::from(token_cache[nb0]) + usize::from(token_cache[nb1])) >> 1;
+            band = band_translate[bt_idx] as usize;
+            bt_idx += 1;
+            prob = &coef_probs[band][ctx];
+        }
+
+        // libvpx: if (read_bool(ONE_CONTEXT_NODE)) { ... }
+        let v: i32;
+        if reader.read(prob[ONE_CONTEXT_NODE]) != 0 {
+            let p = &VP9_PARETO8_FULL[(prob[PIVOT_NODE] - 1) as usize];
+            if reader.read(p[0]) != 0 {
+                if reader.read(p[3]) != 0 {
+                    token_cache[scan[c] as usize] = 5;
+                    let val = if reader.read(p[5]) != 0 {
+                        if reader.read(p[7]) != 0 {
+                            CAT6_MIN_VAL + read_coeff_bits(reader, &VP9_CAT6_PROB)
+                        } else {
+                            CAT5_MIN_VAL + read_coeff_bits(reader, &VP9_CAT5_PROB)
+                        }
+                    } else if reader.read(p[6]) != 0 {
+                        CAT4_MIN_VAL + read_coeff_bits(reader, &VP9_CAT4_PROB)
+                    } else {
+                        CAT3_MIN_VAL + read_coeff_bits(reader, &VP9_CAT3_PROB)
+                    };
+                    v = (val * dqv) >> dq_shift;
+                } else {
+                    token_cache[scan[c] as usize] = 4;
+                    let val = if reader.read(p[4]) != 0 {
+                        CAT2_MIN_VAL + read_coeff_bits(reader, &VP9_CAT2_PROB)
+                    } else {
+                        CAT1_MIN_VAL + read_coeff_bits(reader, &VP9_CAT1_PROB)
+                    };
+                    v = (val * dqv) >> dq_shift;
+                }
+            } else if reader.read(p[1]) != 0 {
+                token_cache[scan[c] as usize] = 3;
+                let three_or_four = 3 + i32::from(reader.read(p[2]));
+                v = (three_or_four * dqv) >> dq_shift;
+            } else {
+                token_cache[scan[c] as usize] = 2;
+                v = (2 * dqv) >> dq_shift;
+            }
+        } else {
+            token_cache[scan[c] as usize] = 1;
+            v = dqv >> dq_shift;
+        }
+
+        let signed_v = if reader.read_bit() != 0 { -v } else { v };
+        dq_coefs_out[scan[c] as usize] = signed_v;
+
+        c += 1;
+        if c < max_eob {
+            let nb0 = nb[MAX_NEIGHBORS * c] as usize;
+            let nb1 = nb[MAX_NEIGHBORS * c + 1] as usize;
+            ctx = (1 + usize::from(token_cache[nb0]) + usize::from(token_cache[nb1])) >> 1;
+        }
+        dqv = dq.1;
+    }
+
+    c
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -1059,168 +1290,11 @@ mod tests {
     // ===================================================================
     // Stage 3 stretch Task M.4 — verbatim libvpx reference port.
     //
-    // Direct line-by-line transcription of `decode_coefs`
-    // (`third_party/libvpx/vp9/decoder/vp9_detokenize.c:115-261`). The
-    // job of this reference is to be *obviously* correct by direct
-    // comparison with libvpx, NOT to be idiomatic Rust. We then
-    // differential-test our production [`decode_coefs`] against this
-    // reference on randomly-synthesised bitstreams to localize any
-    // divergence to the bit level.
-    //
-    // Differs from libvpx only in superficial host-language ways:
-    //   - Uses our `BoolReader` directly via `read(prob)` instead of
-    //     libvpx's inlined `read_bool` register-cached variant. Both
-    //     produce identical bit sequences (same arithmetic coder).
-    //   - Indexes `band_translate` via `c` instead of post-incrementing
-    //     a pointer. Functionally equivalent: libvpx reads
-    //     `band = *band_translate++` once per outer iteration AND once
-    //     per inner zero-loop iteration; in both cases the pointer
-    //     advances at exactly the same scan positions `c` does, so
-    //     `band_translate[c]` is the same value.
-    //   - No counts-bumping (we exercise the decoded outputs only, not
-    //     the backward-adaptation tallies — those have separate tests).
-    //   - No coefficient-range-checking; that's libvpx's
-    //     `CONFIG_COEFFICIENT_RANGE_CHECKING` debug guard, disabled in
-    //     conformance builds anyway.
+    // The reference port was lifted out of the test module at M.6 so the
+    // runtime-differential hook in production `decode_coefs` (gated by
+    // `RVP9_DEBUG_REFCOEFS=1`) can call it on real conformance bitstreams.
+    // See [`decode_coefs_libvpx_ref`] in the parent module for the port.
     // ===================================================================
-
-    /// Verbatim transcription of libvpx `decode_coefs`
-    /// (`vp9_detokenize.c:115-261`).
-    ///
-    /// `dq` is the libvpx `[dc, ac]` pair. `nb` is the scan's neighbour
-    /// table.
-    #[allow(clippy::too_many_arguments)]
-    fn decode_coefs_libvpx_ref(
-        reader: &mut BoolReader<'_>,
-        coef_probs: &CoefBandCtxProbs,
-        tx_size: TxSize,
-        dq: (i32, i32),
-        mut ctx: usize,
-        scan: &[i16],
-        nb: &[i16],
-        dq_coefs_out: &mut [i32],
-        seg_eob: usize,
-    ) -> usize {
-        // libvpx: int max_eob = 16 << (tx_size << 1);  → 16 / 64 / 256 / 1024
-        let max_eob = tx_size.n_coeffs();
-        let max_eob = max_eob.min(seg_eob); // seg_eob cap for SEG_LVL_SKIP
-
-        // Zero the output (caller-side memset in libvpx).
-        for slot in &mut dq_coefs_out[..max_eob] {
-            *slot = 0;
-        }
-
-        // band_translate: 4x4 or 8x8plus
-        let band_translate: &[u8] = if matches!(tx_size, TxSize::Tx4x4) {
-            &VP9_COEFBAND_TRANS_4X4
-        } else {
-            &VP9_COEFBAND_TRANS_8X8PLUS
-        };
-        let dq_shift: u32 = if matches!(tx_size, TxSize::Tx32x32) { 1 } else { 0 };
-
-        let mut token_cache = vec![0u8; tx_size.n_coeffs()];
-
-        let mut c: usize = 0;
-        let mut bt_idx: usize = 0; // mirrors libvpx's post-increment
-        let mut dqv: i32 = dq.0;
-
-        while c < max_eob {
-            // libvpx: band = *band_translate++;
-            let mut band = band_translate[bt_idx] as usize;
-            bt_idx += 1;
-            // libvpx: prob = coef_probs[band][ctx];
-            let mut prob = &coef_probs[band][ctx];
-
-            // libvpx: if (!read_bool(EOB_CONTEXT_NODE)) break;
-            if reader.read(prob[EOB_CONTEXT_NODE]) == 0 {
-                break;
-            }
-
-            // libvpx: while (!read_bool(ZERO_CONTEXT_NODE)) {
-            //          dqv = dq[1];
-            //          token_cache[scan[c]] = 0;
-            //          ++c;
-            //          if (c >= max_eob) return c;
-            //          ctx = get_coef_context(nb, token_cache, c);
-            //          band = *band_translate++;
-            //          prob = coef_probs[band][ctx];
-            //        }
-            while reader.read(prob[ZERO_CONTEXT_NODE]) == 0 {
-                dqv = dq.1;
-                token_cache[scan[c] as usize] = 0;
-                c += 1;
-                if c >= max_eob {
-                    return c;
-                }
-                // get_coef_context: (1 + nb[2c] + nb[2c+1]) >> 1
-                let nb0 = nb[MAX_NEIGHBORS * c] as usize;
-                let nb1 = nb[MAX_NEIGHBORS * c + 1] as usize;
-                ctx = (1 + usize::from(token_cache[nb0]) + usize::from(token_cache[nb1])) >> 1;
-                band = band_translate[bt_idx] as usize;
-                bt_idx += 1;
-                prob = &coef_probs[band][ctx];
-            }
-
-            // libvpx: if (read_bool(ONE_CONTEXT_NODE)) {
-            let v: i32;
-            if reader.read(prob[ONE_CONTEXT_NODE]) != 0 {
-                // libvpx: p = vp9_pareto8_full[prob[PIVOT_NODE] - 1];
-                let p = &VP9_PARETO8_FULL[(prob[PIVOT_NODE] - 1) as usize];
-                if reader.read(p[0]) != 0 {
-                    if reader.read(p[3]) != 0 {
-                        token_cache[scan[c] as usize] = 5;
-                        let val = if reader.read(p[5]) != 0 {
-                            if reader.read(p[7]) != 0 {
-                                // CAT6: 14 ext bits @ vp9_cat6_prob (8-bit)
-                                CAT6_MIN_VAL + read_coeff_bits(reader, &VP9_CAT6_PROB)
-                            } else {
-                                CAT5_MIN_VAL + read_coeff_bits(reader, &VP9_CAT5_PROB)
-                            }
-                        } else if reader.read(p[6]) != 0 {
-                            CAT4_MIN_VAL + read_coeff_bits(reader, &VP9_CAT4_PROB)
-                        } else {
-                            CAT3_MIN_VAL + read_coeff_bits(reader, &VP9_CAT3_PROB)
-                        };
-                        v = (val * dqv) >> dq_shift;
-                    } else {
-                        token_cache[scan[c] as usize] = 4;
-                        let val = if reader.read(p[4]) != 0 {
-                            CAT2_MIN_VAL + read_coeff_bits(reader, &VP9_CAT2_PROB)
-                        } else {
-                            CAT1_MIN_VAL + read_coeff_bits(reader, &VP9_CAT1_PROB)
-                        };
-                        v = (val * dqv) >> dq_shift;
-                    }
-                } else if reader.read(p[1]) != 0 {
-                    token_cache[scan[c] as usize] = 3;
-                    let three_or_four = 3 + i32::from(reader.read(p[2]));
-                    v = (three_or_four * dqv) >> dq_shift;
-                } else {
-                    token_cache[scan[c] as usize] = 2;
-                    v = (2 * dqv) >> dq_shift;
-                }
-            } else {
-                token_cache[scan[c] as usize] = 1;
-                v = dqv >> dq_shift;
-            }
-
-            // libvpx: dqcoeff[scan[c]] = read_bool(128) ? -v : v;
-            let signed_v = if reader.read_bit() != 0 { -v } else { v };
-            dq_coefs_out[scan[c] as usize] = signed_v;
-
-            c += 1;
-            // libvpx: ctx = get_coef_context(nb, token_cache, c);
-            if c < max_eob {
-                let nb0 = nb[MAX_NEIGHBORS * c] as usize;
-                let nb1 = nb[MAX_NEIGHBORS * c + 1] as usize;
-                ctx = (1 + usize::from(token_cache[nb0]) + usize::from(token_cache[nb1])) >> 1;
-            }
-            // libvpx: dqv = dq[1];
-            dqv = dq.1;
-        }
-
-        c
-    }
 
     /// Tiny deterministic PRNG (xorshift64*) — keeps the differential
     /// test reproducible without a `rand` dep.

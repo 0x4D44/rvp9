@@ -36,7 +36,7 @@ pub mod mv_probs;
 pub mod pareto;
 pub mod tables;
 
-pub use bool_reader::BoolReader;
+pub use bool_reader::{BoolReader, BoolReaderSnapshot};
 pub use bool_writer::BoolWriter;
 pub use detokenize::{
     CoefBandCtxProbs, CoefCountsBlock, DecodeCoefCounts, EOB_MODEL_TOKEN, EobBranchCountsBlock,

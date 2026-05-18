@@ -237,6 +237,59 @@ impl<'a> BoolReader<'a> {
     pub fn cursor_state(&self) -> (u32, u64, i32, usize) {
         (self.range, self.value, self.count, self.pos)
     }
+
+    /// Snapshot the full register state for later restoration. Mirrors a
+    /// hand-rolled `memcpy(&saved, &reader, sizeof(reader))` pattern that
+    /// libvpx debug builds use to rewind the reader for differential
+    /// re-decode against an oracle. Used by the M.6 runtime-differential
+    /// hook (`RVP9_DEBUG_REFCOEFS=1`) to replay `decode_coefs` against the
+    /// libvpx reference port on identical input.
+    #[inline]
+    #[must_use]
+    pub fn snapshot(&self) -> BoolReaderSnapshot {
+        BoolReaderSnapshot {
+            value: self.value,
+            range: self.range,
+            count: self.count,
+            pos: self.pos,
+        }
+    }
+
+    /// Restore a previously [`snapshot`]ed register state. The buffer
+    /// reference is unchanged (snapshots are only valid against the same
+    /// underlying buffer slice the snapshot was taken from).
+    ///
+    /// [`snapshot`]: BoolReader::snapshot
+    #[inline]
+    pub fn restore(&mut self, snap: &BoolReaderSnapshot) {
+        self.value = snap.value;
+        self.range = snap.range;
+        self.count = snap.count;
+        self.pos = snap.pos;
+    }
+}
+
+/// Opaque register snapshot for [`BoolReader::snapshot`] /
+/// [`BoolReader::restore`]. Holds the four words that fully determine
+/// reader state relative to its buffer; rewinding to a snapshot reproduces
+/// the same bit sequence on re-reads.
+#[derive(Clone, Copy, Debug)]
+pub struct BoolReaderSnapshot {
+    value: u64,
+    range: u32,
+    count: i32,
+    pos: usize,
+}
+
+impl BoolReaderSnapshot {
+    /// Diagnostic view of the captured register: `(range, value, count, pos)`.
+    /// Same shape as [`BoolReader::cursor_state`]; lets the M.6 differential
+    /// hook dump the pre-decode state on a divergence panic.
+    #[inline]
+    #[must_use]
+    pub fn cursor_state(&self) -> (u32, u64, i32, usize) {
+        (self.range, self.value, self.count, self.pos)
+    }
 }
 
 #[cfg(test)]
