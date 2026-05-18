@@ -2095,4 +2095,261 @@ mod tests {
             );
         }
     }
+
+    // -----------------------------------------------------------------
+    // Phase-1 differential oracle — Stage 3 stretch M.3
+    //
+    // Goal: confirm that the production `iht4x4_16_add` matches a
+    // bit-for-bit independently-transcribed port of libvpx's
+    // `vp9_iht4x4_16_add_c` on multi-coef inputs. M.2's tests already
+    // covered DC-only inputs; this fills in the multi-coef gap.
+    //
+    // The reference port deliberately re-implements `iadst4`, `idct4`
+    // and the 16-iter driver from libvpx C source (`vp9_idct.c:20` +
+    // `vpx_dsp/inv_txfm.c:96, 133`) using primitive ops only — no
+    // shared helpers with the production code (`wraplow`,
+    // `dct_const_round_shift`, `clip_pixel_add` are all re-inlined).
+    //
+    // If both sides agree across 100 randomised inputs, we can
+    // localise the cascade bug elsewhere (dq_coefs production).
+    // -----------------------------------------------------------------
+
+    /// `sinpi_*_9` constants — libvpx `vpx_dsp/txfm_common.h:61-64`.
+    const REF_SINPI_1_9: i64 = 5283;
+    const REF_SINPI_2_9: i64 = 9929;
+    const REF_SINPI_3_9: i64 = 13377;
+    const REF_SINPI_4_9: i64 = 15212;
+
+    /// `cospi_*_64` constants — libvpx `vpx_dsp/txfm_common.h:35-51`.
+    const REF_COSPI_8_64: i64 = 15137;
+    const REF_COSPI_16_64: i64 = 11585;
+    const REF_COSPI_24_64: i64 = 6270;
+
+    /// `DCT_CONST_BITS = 14`. Reference port of
+    /// `dct_const_round_shift(x) = ROUND_POWER_OF_TWO(x, 14)`
+    /// (`vpx_dsp/inv_txfm.h:38-41`).
+    fn ref_dct_const_round_shift(x: i64) -> i64 {
+        // ROUND_POWER_OF_TWO(value, n) is `((value) + (((1 << (n)) >> 1))) >> (n)`.
+        // We're operating on signed arithmetic where the C type is
+        // `tran_high_t` (int64_t).
+        (x + (1 << 13)) >> 14
+    }
+
+    /// `WRAPLOW(x)` non-emulate-hardware branch — `(int32_t)x`. Our
+    /// inputs are already i32, so this is a no-op cast.
+    /// (`vpx_dsp/inv_txfm.h:87`).
+    fn ref_wraplow(x: i64) -> i32 {
+        x as i32
+    }
+
+    /// `clip_pixel_add(dest, trans)` — `vpx_dsp/inv_txfm.h:117-120`.
+    fn ref_clip_pixel_add(dest: u8, trans: i64) -> u8 {
+        let trans = ref_wraplow(trans) as i64;
+        let v = dest as i64 + trans;
+        if v < 0 {
+            0
+        } else if v > 255 {
+            255
+        } else {
+            v as u8
+        }
+    }
+
+    /// Reference `iadst4_c` — `vpx_dsp/inv_txfm.c:96-131`.
+    fn ref_iadst4(input: &[i32; 4], output: &mut [i32; 4]) {
+        let x0 = input[0] as i64;
+        let x1 = input[1] as i64;
+        let x2 = input[2] as i64;
+        let x3 = input[3] as i64;
+
+        if (x0 | x1 | x2 | x3) == 0 {
+            *output = [0; 4];
+            return;
+        }
+
+        let s0 = REF_SINPI_1_9 * x0;
+        let s1 = REF_SINPI_2_9 * x0;
+        let s2 = REF_SINPI_3_9 * x1;
+        let s3 = REF_SINPI_4_9 * x2;
+        let s4 = REF_SINPI_1_9 * x2;
+        let s5 = REF_SINPI_2_9 * x3;
+        let s6 = REF_SINPI_4_9 * x3;
+        // libvpx: `s7 = WRAPLOW(x0 - x2 + x3);` — i32 truncation point.
+        let s7 = ref_wraplow(x0 - x2 + x3) as i64;
+
+        let s0p = s0 + s3 + s5;
+        let s1p = s1 - s4 - s6;
+        let s3p = s2;
+        let s2p = REF_SINPI_3_9 * s7;
+
+        output[0] = ref_wraplow(ref_dct_const_round_shift(s0p + s3p));
+        output[1] = ref_wraplow(ref_dct_const_round_shift(s1p + s3p));
+        output[2] = ref_wraplow(ref_dct_const_round_shift(s2p));
+        output[3] = ref_wraplow(ref_dct_const_round_shift(s0p + s1p - s3p));
+    }
+
+    /// Reference `idct4_c` — `vpx_dsp/inv_txfm.c:133-152`.
+    /// libvpx stores `step[]` as `int16_t`; our reference uses an
+    /// explicit `as i16 as i32` round-trip at that point to mirror
+    /// the implicit truncation. The input is already i16-range so the
+    /// `(int16_t)input[i]` reads in the C source are no-ops.
+    fn ref_idct4(input: &[i32; 4], output: &mut [i32; 4]) {
+        let temp1 = (input[0] as i64 + input[2] as i64) * REF_COSPI_16_64;
+        let temp2 = (input[0] as i64 - input[2] as i64) * REF_COSPI_16_64;
+        let step0 = ref_wraplow(ref_dct_const_round_shift(temp1)) as i16 as i32;
+        let step1 = ref_wraplow(ref_dct_const_round_shift(temp2)) as i16 as i32;
+        let temp1 =
+            input[1] as i64 * REF_COSPI_24_64 - input[3] as i64 * REF_COSPI_8_64;
+        let temp2 =
+            input[1] as i64 * REF_COSPI_8_64 + input[3] as i64 * REF_COSPI_24_64;
+        let step2 = ref_wraplow(ref_dct_const_round_shift(temp1)) as i16 as i32;
+        let step3 = ref_wraplow(ref_dct_const_round_shift(temp2)) as i16 as i32;
+
+        output[0] = ref_wraplow(step0 as i64 + step3 as i64);
+        output[1] = ref_wraplow(step1 as i64 + step2 as i64);
+        output[2] = ref_wraplow(step1 as i64 - step2 as i64);
+        output[3] = ref_wraplow(step0 as i64 - step3 as i64);
+    }
+
+    /// Reference `vp9_iht4x4_16_add_c` — `vp9/common/vp9_idct.c:20-50`.
+    fn ref_iht4x4_16_add(
+        input: &[i32; 16],
+        dest: &mut [u8],
+        stride: usize,
+        tx_type: TxType,
+    ) {
+        type Xform = fn(&[i32; 4], &mut [i32; 4]);
+        let (rows, cols): (Xform, Xform) = match tx_type {
+            TxType::DctDct => (ref_idct4, ref_idct4),
+            TxType::AdstDct => (ref_iadst4, ref_idct4),
+            TxType::DctAdst => (ref_idct4, ref_iadst4),
+            TxType::AdstAdst => (ref_iadst4, ref_iadst4),
+        };
+
+        let mut out = [0i32; 16];
+
+        // Row pass.
+        for i in 0..4 {
+            let row_in: &[i32; 4] = input[i * 4..i * 4 + 4].try_into().unwrap();
+            let row_out: &mut [i32; 4] =
+                (&mut out[i * 4..i * 4 + 4]).try_into().unwrap();
+            rows(row_in, row_out);
+        }
+
+        // Col pass + add. libvpx: `ROUND_POWER_OF_TWO(temp_out[j], 4)`.
+        for i in 0..4 {
+            let mut temp_in = [0i32; 4];
+            for j in 0..4 {
+                temp_in[j] = out[j * 4 + i];
+            }
+            let mut temp_out = [0i32; 4];
+            cols(&temp_in, &mut temp_out);
+            for j in 0..4 {
+                let rounded = (temp_out[j] as i64 + 8) >> 4;
+                dest[j * stride + i] =
+                    ref_clip_pixel_add(dest[j * stride + i], rounded);
+            }
+        }
+    }
+
+    /// Deterministic LCG — keeps the test hermetic so failures
+    /// reproduce. Same seed every run.
+    fn lcg_next(state: &mut u64) -> u64 {
+        // Numerical Recipes parameters.
+        *state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        *state
+    }
+
+    /// N=100 random `[i32; 16]` inputs in the realistic dequant range
+    /// `[-256, +256]`. Differential test the production
+    /// `iht4x4_16_add` against the bit-for-bit `ref_iht4x4_16_add`
+    /// reference port for every TxType. Pixel-exact match required.
+    #[test]
+    fn iht4x4_16_add_matches_libvpx_reference_random_inputs() {
+        const N: usize = 100;
+        const STRIDE: usize = 4;
+        let mut state: u64 = 0xC0DE_FACE_DEAD_BEEF;
+
+        for sample in 0..N {
+            // Realistic dequant range: small AC coefficients dominate.
+            // Mix in a wider range every ~5 samples to stress edges.
+            let range: i32 = if sample % 5 == 0 { 1024 } else { 256 };
+            let mut input = [0i32; 16];
+            for slot in input.iter_mut() {
+                let r = lcg_next(&mut state) as i32;
+                // Map u32→i32 in `[-range, range]`.
+                let signed = ((r as i64 % (2 * range as i64 + 1)) - range as i64) as i32;
+                *slot = signed;
+            }
+            // Pre-existing pixel content (non-zero) to catch any
+            // saturation / clip_pixel_add divergence as well as the
+            // residual numerics. Use a deterministic pattern.
+            let mut dest_seed = [0u8; 16];
+            for (k, slot) in dest_seed.iter_mut().enumerate() {
+                *slot = ((sample.wrapping_mul(7) + k * 13) & 0xFF) as u8;
+            }
+
+            for tx_type in [
+                TxType::DctDct,
+                TxType::AdstDct,
+                TxType::DctAdst,
+                TxType::AdstAdst,
+            ] {
+                let mut dest_prod = dest_seed;
+                let mut dest_ref = dest_seed;
+                iht4x4_16_add(&input, &mut dest_prod, STRIDE, tx_type);
+                ref_iht4x4_16_add(&input, &mut dest_ref, STRIDE, tx_type);
+                assert_eq!(
+                    dest_prod, dest_ref,
+                    "iht4x4_16_add divergence at sample {sample}, tx_type {tx_type:?}\n\
+                     input = {input:?}\n\
+                     dest_seed = {dest_seed:?}\n\
+                     prod = {dest_prod:?}\n\
+                     ref  = {dest_ref:?}"
+                );
+            }
+        }
+    }
+
+    /// Targeted probe at the H-mode cascade pattern reported by M.1 /
+    /// M.2: TxType::DctAdst (H-mode → col_scan), small AC coefficients
+    /// such as might emerge from a real 4×4 H-mode residual. This is
+    /// the realistic failure shape, not a synthetic stress test.
+    #[test]
+    fn iht4x4_dct_adst_h_mode_pattern_matches_reference() {
+        // Hand-picked inputs that probe the iadst4 (column pass) on
+        // patterns with non-trivial dq_coefs across multiple
+        // scan-positions. Includes the cascade-suspect pattern.
+        let inputs: &[[i32; 16]] = &[
+            // DC + a few small AC. Realistic H-mode 4×4 residual shape.
+            [16, -8, 4, 0,
+              0,  0, 0, 0,
+              0,  0, 0, 0,
+              0,  0, 0, 0],
+            // A negative DC + scan-position-1 col_scan pattern.
+            [-32, 16, 0, 0,
+              -8,  4, 0, 0,
+              0,   0, 0, 0,
+              0,   0, 0, 0],
+            // The kind of coef distribution that produces the
+            // M.1-reported residual `[+0f, +09, -10, +03]` order
+            // of magnitude.
+            [64, -16, 8, -4,
+              0,   0, 0,  0,
+              0,   0, 0,  0,
+              0,   0, 0,  0],
+        ];
+
+        for (idx, input) in inputs.iter().enumerate() {
+            let mut dst_prod = [128u8; 16];
+            let mut dst_ref = [128u8; 16];
+            iht4x4_16_add(input, &mut dst_prod, 4, TxType::DctAdst);
+            ref_iht4x4_16_add(input, &mut dst_ref, 4, TxType::DctAdst);
+            assert_eq!(
+                dst_prod, dst_ref,
+                "H-mode pattern {idx}: prod != ref\n\
+                 input = {input:?}\nprod = {dst_prod:?}\nref = {dst_ref:?}"
+            );
+        }
+    }
 }
