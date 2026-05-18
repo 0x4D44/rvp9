@@ -582,6 +582,21 @@ impl Decoder {
 
         // 1. Parse the compressed header into the selected FrameContext
         //    bank to get `tx_mode` (and the coef-prob updates etc.).
+        //
+        // **D.9 (cascade-fix preamble):** snapshot the bank *before* the
+        // compressed-header diff-updates land, so the backward-adapt
+        // pass below can use it as the `pre` baseline. libvpx's
+        // `read_compressed_header` operates on a working copy `cm->fc`
+        // (loaded from the bank at the top of `vp9_decode_frame`), and
+        // `vp9_adapt_coef_probs` then reads `pre_fc = cm->frame_contexts
+        // [frame_context_idx]` — the original bank value, *unaffected*
+        // by the compressed-header deltas (`vp9_entropy.c:1058`). Our
+        // [`parse_compressed_partition`] mutates the bank in place, so
+        // without this snapshot the adapt pass would use the modified
+        // bank as `pre`, causing the chained-merge baseline to drift
+        // away from libvpx after every frame.
+        let fc_idx = tail.frame_context_idx as usize;
+        let pre_fc = self.frame_contexts[fc_idx].clone();
         let compressed_result = self.parse_compressed_partition(frame)?;
 
         // 2. Slice out the tile data (everything past the compressed
@@ -664,7 +679,6 @@ impl Decoder {
         // flag yet (treated as 0), so we zero unconditionally — matches
         // libvpx's behaviour on the single-decoder conformance gate.
         self.coef_counts = rvp9_core::entropy::adapt::CoefCountsBank::default();
-        let fc_idx = tail.frame_context_idx as usize;
         let decode_ctx = {
             let fc = &self.frame_contexts[fc_idx];
             decode_tile_intra(
@@ -683,6 +697,12 @@ impl Decoder {
         // fires whenever `refresh_frame_context` is on and the frame is
         // not error-resilient. For keyframes the kernel runs with the
         // `_KEY` constants — `intra_only = true` in `coef_adapt_params`.
+        //
+        // D.9 — use `pre_fc` (snapshot taken before
+        // `parse_compressed_partition`) as the `pre` baseline. libvpx's
+        // `pre_fc = cm->frame_contexts[fc_idx]` carries the *prior*
+        // adapt result, unaffected by this frame's compressed-header
+        // diff-updates (see snapshot comment above).
         if tail.refresh_frame_context && !frame.header.error_resilient {
             let (count_sat, max_update_factor) =
                 rvp9_core::entropy::adapt::coef_adapt_params(
@@ -690,7 +710,7 @@ impl Decoder {
                     self.last_frame_was_key,
                 );
             let new_coef_probs = rvp9_core::entropy::adapt::adapt_coef_probs(
-                &self.frame_contexts[fc_idx].coef_probs,
+                &pre_fc.coef_probs,
                 &self.coef_counts,
                 count_sat,
                 max_update_factor,
@@ -874,6 +894,21 @@ impl Decoder {
         let compound_allowed = ref_frame_sign_biases[1] != ref_frame_sign_biases[0]
             || ref_frame_sign_biases[2] != ref_frame_sign_biases[0];
 
+        // D.9 — snapshot the bank *before* compressed-header diff-updates
+        // land, so the backward-adapt block below can use it as `pre_fc`
+        // (libvpx `vp9_entropy.c:1058` / `vp9_entropymode.c:343-407`,
+        // where `pre_fc = cm->frame_contexts[cm->frame_context_idx]`).
+        // Our [`parse_compressed_partition_inter`] mutates the bank in
+        // place — without the snapshot the adapt pass would chain-merge
+        // from the bank's *post-diff* value, accumulating drift across
+        // inter frames. This was the 32×32 "4 pass then cascade"
+        // pattern: by frame 5 the probability tables had drifted enough
+        // that the parent-mode bool-decode took a wrong branch, putting
+        // the cursor out of sync and producing a wholly-wrong block at
+        // mi=(1, 3).
+        let fc_idx = tail.frame_context_idx as usize;
+        let pre_fc = self.frame_contexts[fc_idx].clone();
+
         // 3. Parse compressed header into the selected FC bank.
         let compressed_result = self.parse_compressed_partition_inter(
             frame,
@@ -1030,7 +1065,6 @@ impl Decoder {
             mi_rows * mi_cols
         ];
 
-        let fc_idx = tail.frame_context_idx as usize;
         let bounds = tile_bounds(&tail.tile_info, mi_cols, mi_rows, 0, 0);
         let decode_ctx = {
             let fc = &self.frame_contexts[fc_idx];
@@ -1056,6 +1090,17 @@ impl Decoder {
         // path runs the kernel separately with the `_KEY` constants);
         // `adapt_mode_probs` / `adapt_mv_probs` only fire on
         // non-intra-only frames.
+        //
+        // D.9 — use `pre_fc` (snapshot taken before
+        // `parse_compressed_partition_inter`) as the `pre` baseline.
+        // libvpx's adapt kernels read `pre_fc = cm->frame_contexts
+        // [frame_context_idx]` — the bank value at frame *start*,
+        // *unaffected* by the compressed-header diff-updates that
+        // `read_compressed_header` applies to its working copy `cm->fc`.
+        // Because [`parse_compressed_partition_inter`] mutates the bank
+        // in place, reading `&self.frame_contexts[fc_idx]` here would
+        // give the bank *plus* this frame's diff updates — drifting
+        // the chained-merge baseline away from libvpx each frame.
         if tail.refresh_frame_context && !frame.header.error_resilient {
             // mode_probs — libvpx `vp9_adapt_mode_probs`. Returns a
             // freshly built FrameContext with the mode / partition /
@@ -1074,7 +1119,7 @@ impl Decoder {
                 rvp9_core::transforms::TxMode::TxModeSelect
             );
             let new_fc = rvp9_core::entropy::adapt::adapt_mode_probs(
-                &self.frame_contexts[fc_idx],
+                &pre_fc,
                 &self.mode_counts,
                 interp_switchable,
                 tx_mode_select,
@@ -1090,7 +1135,7 @@ impl Decoder {
                     self.last_frame_was_key,
                 );
             let new_coef_probs = rvp9_core::entropy::adapt::adapt_coef_probs(
-                &self.frame_contexts[fc_idx].coef_probs,
+                &pre_fc.coef_probs,
                 &self.coef_counts,
                 count_sat,
                 max_update_factor,
@@ -1100,7 +1145,7 @@ impl Decoder {
             // nmvc — libvpx `vp9_adapt_mv_probs`. `allow_high_precision_mv`
             // gates the class0_hp / hp slots.
             let new_nmvc = rvp9_core::entropy::adapt::adapt_mv_probs(
-                &self.frame_contexts[fc_idx].nmvc,
+                &pre_fc.nmvc,
                 &self.mv_counts,
                 allow_high_precision_mv,
             );
@@ -2040,6 +2085,73 @@ mod tests {
         // them through (separate kernels handle those).
         assert_eq!(dec.frame_contexts[0].coef_probs, pre.coef_probs);
         assert_eq!(dec.frame_contexts[0].nmvc, pre.nmvc);
+    }
+
+    /// Stage 3 stretch D.9: the backward-adapt `pre` baseline must be
+    /// the FrameContext value *before* the compressed-header diff-updates
+    /// land, not after. Mirrors libvpx's
+    /// `pre_fc = cm->frame_contexts[cm->frame_context_idx]` in
+    /// `adapt_coef_probs` (`vp9_entropy.c:1058`) — `pre_fc` reads from
+    /// `cm->frame_contexts[fc_idx]` while `cm->fc` (the working copy
+    /// that the compressed-header parser mutates) is separate. Without
+    /// the pre-snapshot, our adapt would chain-merge from `bank +
+    /// current_frame_diff_updates`, accumulating drift across inter
+    /// frames and (in the 32×32 conformance vector) corrupting the
+    /// bool-coder cursor by frame 5.
+    ///
+    /// This test exercises the snapshot-vs-mutated-bank distinction at
+    /// the adapt kernel level: same counts, same write-back target,
+    /// but two different `pre` inputs (snapshot vs. mutated bank)
+    /// produce two distinguishable adapt results.
+    #[test]
+    fn adapt_pre_snapshot_diverges_from_mutated_bank() {
+        use rvp9_core::entropy::adapt::{adapt_coef_probs, coef_adapt_params};
+        let mut dec = Decoder::new();
+        // Seed counts so adapt is forced to merge (zero counts would
+        // produce `merge_probs(pre, _, _) == pre`, masking the
+        // distinction this test wants to surface).
+        dec.coef_counts.coef[0][0][0][2][1][rvp9_core::entropy::ZERO_TOKEN] = 6;
+        dec.coef_counts.coef[0][0][0][2][1][rvp9_core::entropy::ONE_TOKEN] = 2;
+        dec.coef_counts.coef[0][0][0][2][1][rvp9_core::entropy::TWO_TOKEN] = 1;
+        dec.coef_counts.coef[0][0][0][2][1][rvp9_core::entropy::EOB_MODEL_TOKEN] = 3;
+        dec.coef_counts.eob_branch[0][0][0][2][1] = 4;
+
+        // Snapshot the bank BEFORE the simulated compressed-header
+        // delta. This is what D.9's `pre_fc` captures.
+        let pre_snapshot = dec.frame_contexts[0].clone();
+
+        // Simulate the compressed-header diff-update: bump one
+        // coef_probs cell by a small delta directly on the bank.
+        // libvpx applies these to `cm->fc` (working copy); we apply
+        // them in place on the bank, matching our actual decode path.
+        let delta_cell = (0usize, 0, 0, 2, 1, 0);
+        let original = dec.frame_contexts[0].coef_probs[delta_cell.0][delta_cell.1]
+            [delta_cell.2][delta_cell.3][delta_cell.4][delta_cell.5];
+        dec.frame_contexts[0].coef_probs[delta_cell.0][delta_cell.1][delta_cell.2]
+            [delta_cell.3][delta_cell.4][delta_cell.5] = original.saturating_sub(20);
+
+        let (cs, uf) = coef_adapt_params(/* intra_only = */ false, /* last_was_key = */ true);
+
+        // The D.9 codepath: adapt uses the pre-snapshot as the `pre`
+        // baseline.
+        let adapt_from_snapshot =
+            adapt_coef_probs(&pre_snapshot.coef_probs, &dec.coef_counts, cs, uf);
+        // The pre-D.9 (buggy) codepath: adapt would use the post-
+        // compressed-header bank as the `pre` baseline.
+        let adapt_from_mutated_bank =
+            adapt_coef_probs(&dec.frame_contexts[0].coef_probs, &dec.coef_counts, cs, uf);
+
+        // The two must differ — same counts, same merge kernel, but
+        // different `pre` inputs ⇒ different merged outputs.
+        assert_ne!(
+            adapt_from_snapshot[delta_cell.0][delta_cell.1][delta_cell.2][delta_cell.3]
+                [delta_cell.4][delta_cell.5],
+            adapt_from_mutated_bank[delta_cell.0][delta_cell.1][delta_cell.2][delta_cell.3]
+                [delta_cell.4][delta_cell.5],
+            "adapt result must differ between snapshot-as-pre and \
+             mutated-bank-as-pre — D.9's snapshot guards against the \
+             compressed-header-diff drift cascade"
+        );
     }
 
     #[test]

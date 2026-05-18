@@ -130,7 +130,18 @@ fn conformance_runner_walks_all_vectors() {
     // == 0`, but while we iterate on the mismatched keyframes the
     // ratchet keeps regression signal visible: lowering `MAX_MISMATCHES`
     // as we fix bugs, raising `MIN_PASSES` as we light up frames.
-    const MIN_PASSES: usize = 11;
+    const MIN_PASSES: usize = 22;
+    // D.9 (2026-05-18): backward-adapt now uses a pre-compressed-header
+    // FrameContext snapshot as the `pre` baseline (mirroring libvpx's
+    // `pre_fc = cm->frame_contexts[fc_idx]` while compressed-header
+    // diff-updates land on `cm->fc` — a working copy our code didn't
+    // model). Without the snapshot, every inter frame's adapt was
+    // chaining from `bank + this_frame's_diff_updates`, accumulating
+    // probability-table drift that corrupted the bool-coder cursor
+    // after several frames. Conformance moves from 11/150/40 →
+    // 22/139/40 — `vp90-2-02-size-08x08.webm` lights up frames 5-10
+    // (now full 10/10) and `vp90-2-02-size-32x32.webm` lights up
+    // frames 5-9 (9/10, only frame 10 still mismatches).
     // D.8 (2026-05-18): wire the loop-filter apply driver into the
     // inter-frame path (matches the K2.c keyframe wireup). libvpx's
     // `vpxdec --i420` reference output is post-LF; without this the
@@ -145,7 +156,7 @@ fn conformance_runner_walks_all_vectors() {
     // D.5 (2026-05-18): `extend_mc_border` scratch-buffer fallback.
     // Conformance: 2/159/40 → 3/158/40.
     // Pre-D.3.a baseline: 1/9/191.
-    const MAX_MISMATCHES: usize = 150;
+    const MAX_MISMATCHES: usize = 139;
     assert!(
         total_passed >= MIN_PASSES,
         "regression: expected at least {MIN_PASSES} passed, got {total_passed}",
