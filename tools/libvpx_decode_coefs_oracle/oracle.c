@@ -599,5 +599,120 @@ int main(int argc, char **argv) {
     }
   }
 
+  /* ===================================================================
+   * Stage 3 stretch M.15 — verify pre-LF reconstruction for the two
+   * cascade-suspect sub-8 blocks on vp90-2-02-size-32x32.webm frame 1:
+   *
+   *   block (24,16) sub-0 D63  (tx_type=ADST_DCT)
+   *   block (28,16) sub-1 H    (tx_type=DCT_ADST)
+   *
+   * For each block we (a) call libvpx's predictor with our captured
+   * edges, (b) call libvpx's iht4x4_16_add with the captured dq_coefs
+   * on top of the prediction, and (c) print pre-LF rows. Comparing
+   * against rvp9's pre-LF output pinpoints which kernel diverges.
+   *
+   * Edges captured 2026-05-18 via RVP9_TRACE_INTRA_AT="0,24,16" and
+   * RVP9_TRACE_INTRA_AT="0,28,16" with RVP9_DISABLE_LF=1.
+   * dq_coefs captured via RVP9_DEBUG_DQCOEFS=all on the same run.
+   * =================================================================== */
+  {
+    extern void vp9_iht4x4_16_add_c(const tran_low_t *input, uint8_t *dest,
+                                    int stride, int tx_type);
+    extern void vpx_d63_predictor_4x4_c(uint8_t *dst, ptrdiff_t stride,
+                                        const uint8_t *above, const uint8_t *left);
+    extern void vpx_h_predictor_4x4_c(uint8_t *dst, ptrdiff_t stride,
+                                      const uint8_t *above, const uint8_t *left);
+
+    printf("\n=== M.15 sub-8 intra-pred probe: D63 sub-0 + H sub-1 ===\n");
+
+    /* --- Block (24,16) sub-0: D63. --- */
+    {
+      /* libvpx d63_predictor_4x4 reads above[0..bs+1] minimum, but with
+         bs=4 size=2 it also touches above[bs-1] = above[3] for the pad
+         memset and above[c+2] at c=bs-1=3 (= above[5]). Our trace
+         captured 8 above samples (the 2*bs slice). */
+      uint8_t above_sub0[8] = {93, 112, 131, 79, 82, 85, 87, 88};
+      uint8_t left_dummy[4] = {0, 0, 0, 0};
+
+      uint8_t pred_d63[16];
+      memset(pred_d63, 0xCC, sizeof(pred_d63));
+      vpx_d63_predictor_4x4_c(pred_d63, /*stride=*/4, above_sub0, left_dummy);
+
+      printf("\n[D63 sub-0 (24,16)] above=[%u,%u,%u,%u,%u,%u,%u,%u]\n",
+             above_sub0[0], above_sub0[1], above_sub0[2], above_sub0[3],
+             above_sub0[4], above_sub0[5], above_sub0[6], above_sub0[7]);
+      printf("  libvpx D63 prediction:\n");
+      for (int row = 0; row < 4; ++row) {
+        printf("    row %d: [%3u, %3u, %3u, %3u]\n",
+               row,
+               pred_d63[row * 4 + 0], pred_d63[row * 4 + 1],
+               pred_d63[row * 4 + 2], pred_d63[row * 4 + 3]);
+      }
+
+      /* Captured dq_coefs from rvp9 (RVP9_DEBUG_DQCOEFS=all): */
+      tran_low_t d63_coefs[16] = {
+          0, -231, -231, -231, -231, 0, 462, 462,
+          231, 231, 0, -231, 0, 0, 231, 231
+      };
+      uint8_t d63_dest[16];
+      memcpy(d63_dest, pred_d63, sizeof(d63_dest));
+      vp9_iht4x4_16_add_c(d63_coefs, d63_dest, /*stride=*/4, /*tx_type=*/ADST_DCT);
+
+      printf("  libvpx iht4x4_16_add(AdstDct) + D63 pred:\n");
+      for (int row = 0; row < 4; ++row) {
+        printf("    row %d: [%3u, %3u, %3u, %3u]\n",
+               row,
+               d63_dest[row * 4 + 0], d63_dest[row * 4 + 1],
+               d63_dest[row * 4 + 2], d63_dest[row * 4 + 3]);
+      }
+      printf("  libvpx col 3 (= frame col 27): rows 0..3 = [%u, %u, %u, %u]\n",
+             d63_dest[3], d63_dest[7], d63_dest[11], d63_dest[15]);
+      printf("  rvp9 pre-LF col 27 rows 16..19: [unknown, unknown, 88, ?] "
+             "(M.14 traced row 18 col 27 = 88)\n");
+    }
+
+    /* --- Block (28,16) sub-1: H mode. --- */
+    {
+      /* H predictor only reads left[0..bs]. We pass the captured 4-tap
+         left buffer. above is irrelevant for H mode but pass a sane
+         value so the function signature is happy. */
+      uint8_t above_dummy[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+      uint8_t left_sub1[4] = {88, 81, 88, 88};
+
+      uint8_t pred_h[16];
+      memset(pred_h, 0xCC, sizeof(pred_h));
+      vpx_h_predictor_4x4_c(pred_h, /*stride=*/4, above_dummy, left_sub1);
+
+      printf("\n[H sub-1 (28,16)] left=[%u,%u,%u,%u]\n",
+             left_sub1[0], left_sub1[1], left_sub1[2], left_sub1[3]);
+      printf("  libvpx H prediction:\n");
+      for (int row = 0; row < 4; ++row) {
+        printf("    row %d: [%3u, %3u, %3u, %3u]\n",
+               row,
+               pred_h[row * 4 + 0], pred_h[row * 4 + 1],
+               pred_h[row * 4 + 2], pred_h[row * 4 + 3]);
+      }
+
+      /* Captured dq_coefs from rvp9 (RVP9_DEBUG_DQCOEFS=all): */
+      tran_low_t h_coefs[16] = {
+          531, 0, 0, 231, 231, 0, 0, 0,
+          -693, 0, 0, -231, -462, 0, -462, -231
+      };
+      uint8_t h_dest[16];
+      memcpy(h_dest, pred_h, sizeof(h_dest));
+      vp9_iht4x4_16_add_c(h_coefs, h_dest, /*stride=*/4, /*tx_type=*/DCT_ADST);
+
+      printf("  libvpx iht4x4_16_add(DctAdst) + H pred:\n");
+      for (int row = 0; row < 4; ++row) {
+        printf("    row %d: [%3u, %3u, %3u, %3u]\n",
+               row,
+               h_dest[row * 4 + 0], h_dest[row * 4 + 1],
+               h_dest[row * 4 + 2], h_dest[row * 4 + 3]);
+      }
+      printf("  rvp9 pre-LF row 18 cols 28..31 = [75, 103, 133, 90]\n");
+      printf("  libvpx expected row 18 cols 28..31 (post-LF dump) = [80, 108, 138, 95]\n");
+    }
+  }
+
   return match ? 0 : 1;
 }

@@ -271,11 +271,60 @@ const fn avg2(a: u8, b: u8) -> u8 {
     ((a as u32 + b as u32 + 1) >> 1) as u8
 }
 
+/// D45 4×4 specialization — bit-for-bit port of libvpx
+/// `vpx_d45_predictor_4x4_c` (`intrapred.c:346-365`).
+///
+/// libvpx defines `intra_pred_no_4x4(d45)` so the generic
+/// [`d45_predictor`] is **only** invoked for 8×8 / 16×16 / 32×32; the
+/// 4×4 path uses this hand-unrolled version which differs from the
+/// generic. In particular `DST(3, 0) = AVG3(D, E, F)` rather than the
+/// generic's `above_right = above[bs - 1] = D` (and analogous
+/// differences for the other right-pad cells). Using the generic at
+/// `bs == 4` produces a per-row constant offset that cascades through
+/// downstream sub-8 intra-pred reads.
+///
+/// Reads `above[0..=7]` — caller must provide 2*bs = 8 valid samples.
+pub fn d45_predictor_4x4(dst: &mut [u8], stride: usize, above: &[u8]) {
+    debug_assert!(above.len() >= 8);
+    let a = above[0];
+    let b = above[1];
+    let c = above[2];
+    let d = above[3];
+    let e = above[4];
+    let f = above[5];
+    let g = above[6];
+    let h = above[7];
+
+    // row 0
+    dst[0] = avg3(a, b, c);
+    dst[1] = avg3(b, c, d);
+    dst[2] = avg3(c, d, e);
+    dst[3] = avg3(d, e, f);
+    // row 1
+    dst[stride] = avg3(b, c, d);
+    dst[stride + 1] = avg3(c, d, e);
+    dst[stride + 2] = avg3(d, e, f);
+    dst[stride + 3] = avg3(e, f, g);
+    // row 2
+    dst[2 * stride] = avg3(c, d, e);
+    dst[2 * stride + 1] = avg3(d, e, f);
+    dst[2 * stride + 2] = avg3(e, f, g);
+    dst[2 * stride + 3] = avg3(f, g, h);
+    // row 3
+    dst[3 * stride] = avg3(d, e, f);
+    dst[3 * stride + 1] = avg3(e, f, g);
+    dst[3 * stride + 2] = avg3(f, g, h);
+    dst[3 * stride + 3] = h;
+}
+
 /// D45 — predict using a 45-degree downward-right edge from the
 /// top-row neighbours. Reads `above[0..=2*bs - 1]` (so `above` must
 /// have at least `2 * bs` pixels). Does not use `left` or `above_left`.
 ///
-/// Mirrors libvpx `d45_predictor` (`intrapred.c:62-79`).
+/// Mirrors libvpx `d45_predictor` (`intrapred.c:62-79`). **Only used
+/// for bs ∈ {8, 16, 32}** — for bs == 4, call [`d45_predictor_4x4`]
+/// (libvpx `intra_pred_no_4x4(d45)` confirms the generic is not in the
+/// 4x4 dispatch table).
 pub fn d45_predictor(dst: &mut [u8], stride: usize, bs: usize, above: &[u8]) {
     debug_assert!(above.len() >= 2 * bs);
     let above_right = above[bs - 1];
@@ -299,12 +348,61 @@ pub fn d45_predictor(dst: &mut [u8], stride: usize, bs: usize, above: &[u8]) {
     }
 }
 
+/// D63 4×4 specialization — bit-for-bit port of libvpx
+/// `vpx_d63_predictor_4x4_c` (`intrapred.c:299-320`).
+///
+/// libvpx defines `intra_pred_no_4x4(d63)` so the generic
+/// [`d63_predictor`] is **only** invoked for 8×8 / 16×16 / 32×32; the
+/// 4×4 path uses this hand-unrolled version which differs from the
+/// generic. Critically, `DST(3, 2) = AVG2(E, F)` and
+/// `DST(3, 3) = AVG3(E, F, G)`, **not** the generic's
+/// `memset(..., above[bs - 1], ...)` = above[3] right-pad. Using the
+/// generic at `bs == 4` shifts the bottom-right cells by an arbitrary
+/// amount (up to ±5 typically) that then cascades through downstream
+/// sub-8 H-mode reads of those cells via `left[r]`.
+///
+/// Reads `above[0..=6]` (A..G). Caller passes the 2*bs=8-byte above row.
+pub fn d63_predictor_4x4(dst: &mut [u8], stride: usize, above: &[u8]) {
+    debug_assert!(above.len() >= 7);
+    let a = above[0];
+    let b = above[1];
+    let c = above[2];
+    let d = above[3];
+    let e = above[4];
+    let f = above[5];
+    let g = above[6];
+
+    // Row 0 (DST(c, 0)).
+    dst[0] = avg2(a, b);
+    dst[1] = avg2(b, c);
+    dst[2] = avg2(c, d);
+    dst[3] = avg2(d, e);
+    // Row 1 (DST(c, 1)).
+    dst[stride] = avg3(a, b, c);
+    dst[stride + 1] = avg3(b, c, d);
+    dst[stride + 2] = avg3(c, d, e);
+    dst[stride + 3] = avg3(d, e, f);
+    // Row 2 (DST(c, 2)).
+    dst[2 * stride] = avg2(b, c); // DST(0, 2) = DST(1, 0)
+    dst[2 * stride + 1] = avg2(c, d); // DST(1, 2) = DST(2, 0)
+    dst[2 * stride + 2] = avg2(d, e); // DST(2, 2) = DST(3, 0)
+    dst[2 * stride + 3] = avg2(e, f); // DST(3, 2) — was above[bs-1] in generic
+    // Row 3 (DST(c, 3)).
+    dst[3 * stride] = avg3(b, c, d); // DST(0, 3) = DST(1, 1)
+    dst[3 * stride + 1] = avg3(c, d, e); // DST(1, 3) = DST(2, 1)
+    dst[3 * stride + 2] = avg3(d, e, f); // DST(2, 3) = DST(3, 1)
+    dst[3 * stride + 3] = avg3(e, f, g); // DST(3, 3) — was above[bs-1] in generic
+}
+
 /// D63 — predict using a 63-degree downward-right edge. Reads
 /// `above[0..=bs + 1]` minimum (the `c + 2 == bs + 1` boundary at
 /// `c = bs - 1`); caller should supply `2 * bs` pixels for safety.
 /// Does not use `left` or `above_left`.
 ///
-/// Mirrors libvpx `d63_predictor` (`intrapred.c:45-60`).
+/// Mirrors libvpx `d63_predictor` (`intrapred.c:45-60`). **Only used
+/// for bs ∈ {8, 16, 32}** — for bs == 4, call [`d63_predictor_4x4`]
+/// (libvpx `intra_pred_no_4x4(d63)` confirms the generic is not in the
+/// 4x4 dispatch table).
 pub fn d63_predictor(dst: &mut [u8], stride: usize, bs: usize, above: &[u8]) {
     debug_assert!(above.len() >= 2 * bs);
     // Rows 0 and 1 are filtered from above.
@@ -502,10 +600,56 @@ pub fn d153_predictor(dst: &mut [u8], stride: usize, bs: usize, ctx: PredCtx<'_>
     }
 }
 
+/// D207 4×4 specialization — bit-for-bit port of libvpx
+/// `vpx_d207_predictor_4x4_c` (`intrapred.c:283-297`).
+///
+/// libvpx defines `intra_pred_no_4x4(d207)` so the generic
+/// [`d207_predictor`] is **only** invoked for 8×8 / 16×16 / 32×32; the
+/// 4×4 path uses this hand-unrolled version. Notably DST(3, 1) uses
+/// `AVG3(K, L, L)` (rather than AVG3(left[bs-2], left[bs-1],
+/// left[bs-1]) — these happen to coincide, but the placement of the
+/// "saturated" cells differs from the generic walk).
+///
+/// Reads `left[0..=3]`.
+pub fn d207_predictor_4x4(dst: &mut [u8], stride: usize, left: &[u8]) {
+    debug_assert!(left.len() >= 4);
+    let i = left[0];
+    let j = left[1];
+    let k = left[2];
+    let l = left[3];
+
+    // DST(0, 0) = AVG2(I, J)
+    dst[0] = avg2(i, j);
+    // DST(2, 0) = DST(0, 1) = AVG2(J, K)
+    dst[2] = avg2(j, k);
+    dst[stride] = avg2(j, k);
+    // DST(2, 1) = DST(0, 2) = AVG2(K, L)
+    dst[stride + 2] = avg2(k, l);
+    dst[2 * stride] = avg2(k, l);
+    // DST(1, 0) = AVG3(I, J, K)
+    dst[1] = avg3(i, j, k);
+    // DST(3, 0) = DST(1, 1) = AVG3(J, K, L)
+    dst[3] = avg3(j, k, l);
+    dst[stride + 1] = avg3(j, k, l);
+    // DST(3, 1) = DST(1, 2) = AVG3(K, L, L)
+    dst[stride + 3] = avg3(k, l, l);
+    dst[2 * stride + 1] = avg3(k, l, l);
+    // DST(3, 2) = DST(2, 2) = DST(0, 3) = DST(1, 3) = DST(2, 3) = DST(3, 3) = L
+    dst[2 * stride + 2] = l;
+    dst[2 * stride + 3] = l;
+    dst[3 * stride] = l;
+    dst[3 * stride + 1] = l;
+    dst[3 * stride + 2] = l;
+    dst[3 * stride + 3] = l;
+}
+
 /// D207 — predict using a 207-degree (i.e. 27-degree above horizontal,
 /// downward-left) edge. Uses only `left`. Reads `left[0..bs]`.
 ///
-/// Mirrors libvpx `d207_predictor` (`intrapred.c:21-43`).
+/// Mirrors libvpx `d207_predictor` (`intrapred.c:21-43`). **Only used
+/// for bs ∈ {8, 16, 32}** — for bs == 4, call [`d207_predictor_4x4`]
+/// (libvpx `intra_pred_no_4x4(d207)` confirms the generic is not in
+/// the 4x4 dispatch table).
 pub fn d207_predictor(dst: &mut [u8], stride: usize, bs: usize, left: &[u8]) {
     debug_assert!(left.len() >= bs);
     // First column: AVG2 along left; last entry just copies left[bs-1].
@@ -574,19 +718,39 @@ pub fn intra_predict(
     ctx: PredCtx<'_>,
     dc_avail: DcAvailability,
 ) {
-    match mode {
-        IntraMode::Dc => {
+    // Per libvpx `intra_pred_no_4x4(d{45,63,117,135,153,207})` the
+    // bs == 4 path uses hand-unrolled specializations that differ from
+    // the generic kernels at the bottom-right boundary. Most notably:
+    //   D45  generic dst[bs-1] = above[bs-1]    (D, in 4x4 letter terms)
+    //   D45  spec    DST(3, 0) = AVG3(D, E, F)  ← reads above[4..6]
+    //   D63  generic right-pad memset uses above[bs-1] = D
+    //   D63  spec    DST(3, 2) = AVG2(E, F), DST(3, 3) = AVG3(E, F, G)
+    //   D207 generic and spec coincide except for an in-bound walk
+    //         order; spec is explicit.
+    // M.15 traced a +5 row-18 cols-28..31 cascade on
+    // vp90-2-02-size-32x32.webm frame 1 to the D63 above-right pad
+    // divergence: our generic produced row 2 col 3 = above[3] = 79
+    // where libvpx's 4x4 spec produces AVG2(E, F) = AVG2(82, 85) = 84
+    // — Δ=5 that propagates through downstream H-mode sub-1 reads.
+    // The bs >= 8 path still uses the generic kernels which libvpx
+    // also uses for those sizes (the macro is `intra_pred_no_4x4`,
+    // not `intra_pred_only_4x4`).
+    match (mode, bs == 4) {
+        (IntraMode::Dc, _) => {
             dc_predict_with_availability(dst, stride, bs, ctx.above, ctx.left, dc_avail);
         }
-        IntraMode::V => v_predictor(dst, stride, bs, ctx),
-        IntraMode::H => h_predictor(dst, stride, bs, ctx),
-        IntraMode::D45 => d45_predictor(dst, stride, bs, ctx.above),
-        IntraMode::D135 => d135_predictor(dst, stride, bs, ctx),
-        IntraMode::D117 => d117_predictor(dst, stride, bs, ctx),
-        IntraMode::D153 => d153_predictor(dst, stride, bs, ctx),
-        IntraMode::D207 => d207_predictor(dst, stride, bs, ctx.left),
-        IntraMode::D63 => d63_predictor(dst, stride, bs, ctx.above),
-        IntraMode::Tm => tm_predictor(dst, stride, bs, ctx),
+        (IntraMode::V, _) => v_predictor(dst, stride, bs, ctx),
+        (IntraMode::H, _) => h_predictor(dst, stride, bs, ctx),
+        (IntraMode::D45, true) => d45_predictor_4x4(dst, stride, ctx.above),
+        (IntraMode::D45, false) => d45_predictor(dst, stride, bs, ctx.above),
+        (IntraMode::D135, _) => d135_predictor(dst, stride, bs, ctx),
+        (IntraMode::D117, _) => d117_predictor(dst, stride, bs, ctx),
+        (IntraMode::D153, _) => d153_predictor(dst, stride, bs, ctx),
+        (IntraMode::D207, true) => d207_predictor_4x4(dst, stride, ctx.left),
+        (IntraMode::D207, false) => d207_predictor(dst, stride, bs, ctx.left),
+        (IntraMode::D63, true) => d63_predictor_4x4(dst, stride, ctx.above),
+        (IntraMode::D63, false) => d63_predictor(dst, stride, bs, ctx.above),
+        (IntraMode::Tm, _) => tm_predictor(dst, stride, bs, ctx),
     }
 
     // Stage 3 stretch M.9 — env-gated trace. Dumps mode + edge inputs +
@@ -1059,18 +1223,20 @@ mod tests {
                 },
             );
 
-            // Direct kernel call.
+            // Direct kernel call. The bs == 4 dispatch goes through the
+            // libvpx 4x4 specialization (M.15), so the direct comparison
+            // for D45 / D63 / D207 must invoke the same specialization.
             let mut dst_direct = [0u8; 16];
             match mode {
                 IntraMode::Dc => dc_predictor(&mut dst_direct, 4, 4, ctx),
                 IntraMode::V => v_predictor(&mut dst_direct, 4, 4, ctx),
                 IntraMode::H => h_predictor(&mut dst_direct, 4, 4, ctx),
-                IntraMode::D45 => d45_predictor(&mut dst_direct, 4, 4, &above),
+                IntraMode::D45 => d45_predictor_4x4(&mut dst_direct, 4, &above),
                 IntraMode::D135 => d135_predictor(&mut dst_direct, 4, 4, ctx),
                 IntraMode::D117 => d117_predictor(&mut dst_direct, 4, 4, ctx),
                 IntraMode::D153 => d153_predictor(&mut dst_direct, 4, 4, ctx),
-                IntraMode::D207 => d207_predictor(&mut dst_direct, 4, 4, &left),
-                IntraMode::D63 => d63_predictor(&mut dst_direct, 4, 4, &above),
+                IntraMode::D207 => d207_predictor_4x4(&mut dst_direct, 4, &left),
+                IntraMode::D63 => d63_predictor_4x4(&mut dst_direct, 4, &above),
                 IntraMode::Tm => tm_predictor(&mut dst_direct, 4, 4, ctx),
             }
 
@@ -1416,6 +1582,86 @@ mod tests {
         assert_eq!(&dst[8..12], &[30, 50, 60, 60]);
         // r=3: size=2; copy from row 1 starting at offset 1 → [40, 60], pad rest with 60.
         assert_eq!(&dst[12..16], &[40, 60, 60, 60]);
+    }
+
+    /// Stage 3 stretch M.15 — load-bearing differential. The libvpx 4x4
+    /// specializations (`vpx_d{45,63,207}_predictor_4x4_c`) differ from
+    /// the generic kernels at the bottom-right boundary; on
+    /// `vp90-2-02-size-32x32.webm` frame 1 the M.15 oracle pinned the
+    /// pre-LF row-18 cols-28..31 +5 uniform Δ to D63 sub-0's
+    /// `DST(3, 2) = AVG2(E, F)` cell — generic produced
+    /// `above[bs-1] = above[3] = 79` where the spec produces
+    /// `AVG2(82, 85) = 84`.
+    #[test]
+    fn d63_predictor_4x4_m15_smoking_gun() {
+        // Captured trace: vp90-2-02-size-32x32.webm frame 1 block
+        // (24, 16) sub-0 D63 inputs.
+        let above = [93u8, 112, 131, 79, 82, 85, 87, 88];
+        let mut dst = [0u8; 16];
+        d63_predictor_4x4(&mut dst, 4, &above);
+
+        // libvpx vpx_d63_predictor_4x4_c output (verified by extending
+        // tools/libvpx_decode_coefs_oracle/oracle.c with an M.15 probe
+        // that calls the libvpx-stock predictor on these exact inputs):
+        //   row 0: [103, 122, 105,  81]
+        //   row 1: [112, 113,  93,  82]
+        //   row 2: [122, 105,  81,  84]  ← col 3 = AVG2(E, F) = AVG2(82, 85) = 84
+        //   row 3: [113,  93,  82,  85]
+        let expected: [u8; 16] = [
+            103, 122, 105, 81, // row 0
+            112, 113, 93, 82, // row 1
+            122, 105, 81, 84, // row 2 — load-bearing col 3
+            113, 93, 82, 85, // row 3
+        ];
+        assert_eq!(dst, expected);
+    }
+
+    /// Stage 3 stretch M.15 — D45 4x4 specialization.
+    /// libvpx `vpx_d45_predictor_4x4_c` uses `DST(3, 0) = AVG3(D, E, F)`
+    /// rather than the generic's right-pad = `above[bs - 1] = D`.
+    #[test]
+    fn d45_predictor_4x4_libvpx_specialization() {
+        // a=10 b=20 c=30 d=40 e=50 f=60 g=70 h=80
+        let above = [10u8, 20, 30, 40, 50, 60, 70, 80];
+        let mut dst = [0u8; 16];
+        d45_predictor_4x4(&mut dst, 4, &above);
+        // AVG3(a,b,c)=20, AVG3(b,c,d)=30, AVG3(c,d,e)=40, AVG3(d,e,f)=50.
+        // AVG3(e,f,g)=60, AVG3(f,g,h)=70.
+        // DST(3, 3) = h = 80.
+        let expected: [u8; 16] = [
+            20, 30, 40, 50, // row 0 — col 3 = AVG3(d,e,f)=50 (generic = D = 40)
+            30, 40, 50, 60, // row 1
+            40, 50, 60, 70, // row 2
+            50, 60, 70, 80, // row 3 — col 3 = h = 80
+        ];
+        assert_eq!(dst, expected);
+    }
+
+    /// Stage 3 stretch M.15 — D207 4x4 specialization.
+    /// libvpx `vpx_d207_predictor_4x4_c` writes the bottom-right 2x2
+    /// block as solid `L = left[3]` (incl. DST(2, 2) and DST(2, 3)),
+    /// which matches the generic for left walks where `left[bs-1]`
+    /// dominates — but the cell-by-cell write order is explicit.
+    #[test]
+    fn d207_predictor_4x4_libvpx_specialization() {
+        // i=10 j=20 k=30 l=40
+        let left = [10u8, 20, 30, 40];
+        let mut dst = [0u8; 16];
+        d207_predictor_4x4(&mut dst, 4, &left);
+        // DST(0, 0)=AVG2(I, J)=15
+        // DST(1, 0)=AVG3(I, J, K)=(10+40+30+2)>>2=20
+        // DST(2, 0)=DST(0, 1)=AVG2(J, K)=25
+        // DST(3, 0)=DST(1, 1)=AVG3(J, K, L)=(20+60+40+2)>>2=30
+        // DST(2, 1)=DST(0, 2)=AVG2(K, L)=35
+        // DST(3, 1)=DST(1, 2)=AVG3(K, L, L)=(30+80+40+2)>>2=38
+        // DST(2, 2..3)=DST(3, 2..3)=DST(0..1, 3)=L=40
+        let expected: [u8; 16] = [
+            15, 20, 25, 30, // row 0
+            25, 30, 35, 38, // row 1
+            35, 38, 40, 40, // row 2
+            40, 40, 40, 40, // row 3
+        ];
+        assert_eq!(dst, expected);
     }
 
     #[test]
