@@ -226,6 +226,17 @@ impl<'a> BoolReader<'a> {
     pub fn bytes_consumed(&self) -> usize {
         self.pos
     }
+
+    /// Diagnostic view of the bool-coder register: `(range, value, count, pos)`.
+    /// Mirrors libvpx's internal `vpx_reader::{range,value,count,buffer}`. Used
+    /// by the M.5 cursor-state instrumentation hook to checkpoint reader state
+    /// at each step in `decode_block` (`RVP9_DEBUG_BOOLCURSOR=1`). Cheap
+    /// (4 word copies); not on any hot path.
+    #[inline]
+    #[must_use]
+    pub fn cursor_state(&self) -> (u32, u64, i32, usize) {
+        (self.range, self.value, self.count, self.pos)
+    }
 }
 
 #[cfg(test)]

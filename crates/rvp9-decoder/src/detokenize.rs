@@ -161,6 +161,11 @@ pub fn decode_block_tokens(
     // kind, the tx_type, the dequant pair, and the coef_probs[band=0]
     // [ctx=initial_pt] row to allow a hand-trace of the first token
     // read against libvpx.
+    //
+    // Stage 3 stretch M.5 — also captures `(range, value, count, pos)`
+    // immediately before the decode_coefs call when `RVP9_DEBUG_BOOLCURSOR=1`
+    // is set, so callers can diff the bool-coder state vs libvpx's
+    // dump at the same per-sub-block break-point.
     if plane == 0
         && tx_size == TxSize::Tx4x4
         && x4 < 2
@@ -177,6 +182,18 @@ pub fn decode_block_tokens(
              initial_pt={initial_pt} dequant={dequant:?} \
              scan[0..6]={:?} probs[b=0][ctx={initial_pt}]={prob_b0:?}",
             &scan.scan[..6.min(scan.scan.len())]
+        );
+    }
+    if plane == 0
+        && tx_size == TxSize::Tx4x4
+        && x4 < 2
+        && y4_in_sb < 2
+        && std::env::var("RVP9_DEBUG_BOOLCURSOR").is_ok_and(|v| v == "1")
+    {
+        let (range, value, count, pos) = reader.cursor_state();
+        eprintln!(
+            "RVP9_DBG cursor before decode_coefs (plane=0, tx=4x4, x4={x4}, y4_in_sb={y4_in_sb}) \
+             (range={range}, value=0x{value:016x}, count={count}, pos={pos})"
         );
     }
 

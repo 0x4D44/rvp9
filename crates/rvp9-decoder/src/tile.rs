@@ -512,6 +512,32 @@ fn decode_block(
     let mi_col_in_tile = mi_col - bounds.mi_col_start;
     let mi_row_in_sb = mi_row_in_tile & MI_MASK;
 
+    // Stage 3 stretch M.5 cursor-state instrumentation. Gated by
+    // `RVP9_DEBUG_BOOLCURSOR=1`. Logs `(range, value, count, pos)` from
+    // the bool-coder before / after each leaf read in `decode_block`
+    // for the first Block4x4 of the first SB (`mi_row == 0 && mi_col ==
+    // 0 && bsize == Block4x4`). The output is one line per checkpoint
+    // — `RVP9_DBG cursor <where> after=(<range>,<value>,<count>,<pos>)`.
+    // Companion to the M.4 dq_coefs dump (`RVP9_DEBUG_DQCOEFS=1/2`)
+    // landed in `reconstruct.rs` / `detokenize.rs`.
+    let trace_cursor = mi_row == bounds.mi_row_start
+        && mi_col == bounds.mi_col_start
+        && bsize == BlockSize::Block4x4
+        && std::env::var("RVP9_DEBUG_BOOLCURSOR").is_ok_and(|v| v == "1");
+    macro_rules! dbg_cursor {
+        ($reader:expr, $label:literal) => {
+            if trace_cursor {
+                let (range, value, count, pos) = $reader.cursor_state();
+                eprintln!(
+                    "RVP9_DBG cursor {} (range={range}, value=0x{value:016x}, count={count}, pos={pos})",
+                    $label
+                );
+            }
+        };
+    }
+
+    dbg_cursor!(reader, "enter decode_block");
+
     // --- Read intra-frame mode info (libvpx
     //     `read_intra_frame_mode_info`, `vp9_decodemv.c:192-233`).
 
@@ -520,12 +546,17 @@ fn decode_block(
     } else {
         0
     };
+    dbg_cursor!(reader, "after read_segment_id");
 
     let above = decode_ctx.above(mi_col_in_tile).copied();
     let left = decode_ctx.left(mi_row_in_sb).copied();
     let skip_ctx = usize::from(above.is_some_and(|m| m.skip))
         + usize::from(left.is_some_and(|m| m.skip));
     let skip = read_skip(reader, &fc.skip_probs, skip_ctx);
+    if trace_cursor {
+        eprintln!("RVP9_DBG decode_block skip_ctx={skip_ctx} skip={skip}");
+    }
+    dbg_cursor!(reader, "after read_skip");
 
     let max_tx = max_txsize(bsize);
     let above_tx_pair = above.map(|m| (m.tx_size, m.skip));
@@ -543,15 +574,31 @@ fn decode_block(
         /* allow_select = */ !params.lossless,
         tx_ctx,
     );
+    if trace_cursor {
+        eprintln!("RVP9_DBG decode_block max_tx={max_tx:?} tx_ctx={tx_ctx} tx_size={tx_size:?}");
+    }
+    dbg_cursor!(reader, "after read_tx_size");
 
-    let (y_mode, bmi) = read_keyframe_y_mode(
+    let (y_mode, bmi) = read_keyframe_y_mode_traced(
         reader,
         bsize,
         above.map(|m| (m.mode, m.bmi)),
         left.map(|m| (m.mode, m.bmi)),
+        trace_cursor,
     );
+    if trace_cursor {
+        eprintln!(
+            "RVP9_DBG decode_block y_mode={y_mode:?} bmi=[{:?},{:?},{:?},{:?}]",
+            bmi[0].as_mode, bmi[1].as_mode, bmi[2].as_mode, bmi[3].as_mode
+        );
+    }
+    dbg_cursor!(reader, "after read_keyframe_y_mode");
 
     let uv_mode = read_intra_mode(reader, &VP9_KF_UV_MODE_PROB[y_mode as usize]);
+    if trace_cursor {
+        eprintln!("RVP9_DBG decode_block uv_mode={uv_mode:?}");
+    }
+    dbg_cursor!(reader, "after read_intra_mode(uv_mode)");
 
     let mi = ModeInfo {
         block_size: bsize,
@@ -829,21 +876,57 @@ fn uv_plane_tx_size(bsize: BlockSize, luma_tx: TxSize) -> TxSize {
 /// `vp9_kf_y_mode_prob[above][left]` via the libvpx convention
 /// implemented in `vp9_(above|left)_block_mode`
 /// (`vp9_blockd.c:13-35`).
+#[allow(dead_code)] // retained for tests; live callers use `_traced`
 fn read_keyframe_y_mode(
     reader: &mut BoolReader<'_>,
     bsize: BlockSize,
     above: Option<(BlockMode, [BmiInfo; 4])>,
     left: Option<(BlockMode, [BmiInfo; 4])>,
 ) -> (IntraMode, [BmiInfo; 4]) {
+    read_keyframe_y_mode_traced(reader, bsize, above, left, false)
+}
+
+/// As [`read_keyframe_y_mode`], but with optional per-bmi instrumentation
+/// for the Stage 3 stretch M.5 cursor-state trace. When `trace == true`
+/// every bmi-mode read is logged with the resolved `(above_mode,
+/// left_mode)` neighbour-mode pair, the 9-entry probs slice indexed by
+/// that pair, and the decoded mode. Callers gate `trace` on the
+/// per-block `RVP9_DEBUG_BOOLCURSOR` check.
+fn read_keyframe_y_mode_traced(
+    reader: &mut BoolReader<'_>,
+    bsize: BlockSize,
+    above: Option<(BlockMode, [BmiInfo; 4])>,
+    left: Option<(BlockMode, [BmiInfo; 4])>,
+    trace: bool,
+) -> (IntraMode, [BmiInfo; 4]) {
     // For BLOCK_4X4 / BLOCK_4X8 / BLOCK_8X4, libvpx subdivides into
     // up to 4 per-4×4 modes. The current commit handles all four
     // bsize arms 1:1 with `read_intra_frame_mode_info`.
     let mut bmi = [BmiInfo::default(); 4];
+    let log_bmi = |i: usize, am: IntraMode, lm: IntraMode, probs: &[u8; 9],
+                   m: IntraMode, before: (u32, u64, i32, usize),
+                   after: (u32, u64, i32, usize)| {
+        eprintln!(
+            "RVP9_DBG read_intra_mode bmi[{i}] above={am:?} left={lm:?} \
+             probs={probs:?} -> {m:?} \
+             before=(r={},v=0x{:016x},c={},p={}) \
+             after=(r={},v=0x{:016x},c={},p={})",
+            before.0, before.1, before.2, before.3,
+            after.0, after.1, after.2, after.3,
+        );
+    };
     match bsize {
         BlockSize::Block4x4 => {
             for i in 0..4 {
-                let probs = kf_y_mode_probs_for(i, &bmi, above, left);
+                let above_m = above_block_mode(i, &bmi, above);
+                let left_m = left_block_mode(i, &bmi, left);
+                let probs = VP9_KF_Y_MODE_PROB[above_m as usize][left_m as usize];
+                let before = reader.cursor_state();
                 let m = read_intra_mode(reader, &probs);
+                let after = reader.cursor_state();
+                if trace {
+                    log_bmi(i, above_m, left_m, &probs, m, before, after);
+                }
                 bmi[i].as_mode = m as u8;
             }
             // libvpx: `mi->mode = mi->bmi[3].as_mode`.
@@ -851,23 +934,43 @@ fn read_keyframe_y_mode(
             (parent, bmi)
         }
         BlockSize::Block4x8 => {
-            let p0 = kf_y_mode_probs_for(0, &bmi, above, left);
+            let above0 = above_block_mode(0, &bmi, above);
+            let left0 = left_block_mode(0, &bmi, left);
+            let p0 = VP9_KF_Y_MODE_PROB[above0 as usize][left0 as usize];
+            let before0 = reader.cursor_state();
             let m0 = read_intra_mode(reader, &p0);
+            let after0 = reader.cursor_state();
+            if trace { log_bmi(0, above0, left0, &p0, m0, before0, after0); }
             bmi[0].as_mode = m0 as u8;
             bmi[2].as_mode = m0 as u8;
-            let p1 = kf_y_mode_probs_for(1, &bmi, above, left);
+            let above1 = above_block_mode(1, &bmi, above);
+            let left1 = left_block_mode(1, &bmi, left);
+            let p1 = VP9_KF_Y_MODE_PROB[above1 as usize][left1 as usize];
+            let before1 = reader.cursor_state();
             let m1 = read_intra_mode(reader, &p1);
+            let after1 = reader.cursor_state();
+            if trace { log_bmi(1, above1, left1, &p1, m1, before1, after1); }
             bmi[1].as_mode = m1 as u8;
             bmi[3].as_mode = m1 as u8;
             (m1, bmi)
         }
         BlockSize::Block8x4 => {
-            let p0 = kf_y_mode_probs_for(0, &bmi, above, left);
+            let above0 = above_block_mode(0, &bmi, above);
+            let left0 = left_block_mode(0, &bmi, left);
+            let p0 = VP9_KF_Y_MODE_PROB[above0 as usize][left0 as usize];
+            let before0 = reader.cursor_state();
             let m0 = read_intra_mode(reader, &p0);
+            let after0 = reader.cursor_state();
+            if trace { log_bmi(0, above0, left0, &p0, m0, before0, after0); }
             bmi[0].as_mode = m0 as u8;
             bmi[1].as_mode = m0 as u8;
-            let p2 = kf_y_mode_probs_for(2, &bmi, above, left);
+            let above2 = above_block_mode(2, &bmi, above);
+            let left2 = left_block_mode(2, &bmi, left);
+            let p2 = VP9_KF_Y_MODE_PROB[above2 as usize][left2 as usize];
+            let before2 = reader.cursor_state();
             let m2 = read_intra_mode(reader, &p2);
+            let after2 = reader.cursor_state();
+            if trace { log_bmi(2, above2, left2, &p2, m2, before2, after2); }
             bmi[2].as_mode = m2 as u8;
             bmi[3].as_mode = m2 as u8;
             (m2, bmi)
