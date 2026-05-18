@@ -152,7 +152,19 @@ fn conformance_runner_walks_all_vectors() {
     // == 0`, but while we iterate on the mismatched keyframes the
     // ratchet keeps regression signal visible: lowering `MAX_MISMATCHES`
     // as we fix bugs, raising `MIN_PASSES` as we light up frames.
-    const MIN_PASSES: usize = 22;
+    const MIN_PASSES: usize = 31;
+    // D.15 (2026-05-18): sub-8 luma `dec_reset_skip_context` now pins
+    // the entropy-context span to the parent 8×8 mi cell (n4 = 2 in
+    // each axis), matching libvpx's `set_plane_n4(bwl=bhl=1)` for any
+    // sub-8 child of a Block8×8 parent. Previously we used
+    // `plane_bsize.n_4x4_*` which is 1×1 / 1×2 / 2×1 / 2×2 for
+    // sub-8 — leaving one cell of `left_coef` un-cleared on every
+    // sub-8 skip, which poisoned `initial_pt` for the next
+    // decode_coefs at the same SB-row y-offset. Lights up all 6 of the
+    // failing 352×288/352×240 keyframes (q26, q63, sharpness-1/7,
+    // deltaq, resize) — frame 1 of each now MD5-matches libvpx. The
+    // 2-tile keyframes (1x2 / 1x4 / 1x8) already matched (no sub-8
+    // luma blocks in those frames). Conformance 22/169/10 → 31/160/10.
     // E.2 (2026-05-18): single-threaded multi-tile decode wired up.
     // Removes the `MultiTileUnsupported` reject on the 1x2/1x4/1x8
     // tile vectors (30 previously-skipped frames). All 30 now DECODE
@@ -188,7 +200,7 @@ fn conformance_runner_walks_all_vectors() {
     // D.5 (2026-05-18): `extend_mc_border` scratch-buffer fallback.
     // Conformance: 2/159/40 → 3/158/40.
     // Pre-D.3.a baseline: 1/9/191.
-    const MAX_MISMATCHES: usize = 169;
+    const MAX_MISMATCHES: usize = 160;
     assert!(
         total_passed >= MIN_PASSES,
         "regression: expected at least {MIN_PASSES} passed, got {total_passed}",

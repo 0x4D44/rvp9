@@ -602,6 +602,30 @@ fn decode_block(
         && mi_col == bounds.mi_col_start
         && bsize == BlockSize::Block4x4
         && std::env::var("RVP9_DEBUG_BOOLCURSOR").is_ok_and(|v| v == "1");
+
+    // D.15 per-leaf cursor trace. Gated by `RVP9_TRACE_KFLEAF=1`. Dumps
+    // the cursor state at the entry to every `decode_block` AND prints
+    // each per-syntax-element checkpoint inside the read. Used to
+    // localize the per-SB cursor over-consumption to a specific
+    // (sub-)block + syntax element on q63 frame 1.
+    let trace_kfleaf = std::env::var("RVP9_TRACE_KFLEAF").is_ok_and(|v| v == "1");
+    if trace_kfleaf {
+        let (range, value, count, pos) = reader.cursor_state();
+        eprintln!(
+            "RVP9_DBG kfleaf mi=({mi_row},{mi_col}) bsize={bsize:?} enter (range={range}, value=0x{value:016x}, count={count}, pos={pos})"
+        );
+    }
+    macro_rules! dbg_kfleaf {
+        ($reader:expr, $label:literal) => {
+            if trace_kfleaf {
+                let (range, value, count, pos) = $reader.cursor_state();
+                eprintln!(
+                    "RVP9_DBG kfleaf mi=({mi_row},{mi_col}) {} (range={range}, value=0x{value:016x}, count={count}, pos={pos})",
+                    $label
+                );
+            }
+        };
+    }
     macro_rules! dbg_cursor {
         ($reader:expr, $label:literal) => {
             if trace_cursor {
@@ -625,6 +649,7 @@ fn decode_block(
         0
     };
     dbg_cursor!(reader, "after read_segment_id");
+    dbg_kfleaf!(reader, "after read_segment_id");
 
     let above = decode_ctx.above(mi_col_in_tile).copied();
     let left = decode_ctx.left(mi_row_in_sb).copied();
@@ -636,7 +661,13 @@ fn decode_block(
     if trace_cursor {
         eprintln!("RVP9_DBG decode_block skip_ctx={skip_ctx} skip={skip}");
     }
+    if trace_kfleaf {
+        eprintln!(
+            "RVP9_DBG kfleaf mi=({mi_row},{mi_col}) skip_ctx={skip_ctx} skip={skip}"
+        );
+    }
     dbg_cursor!(reader, "after read_skip");
+    dbg_kfleaf!(reader, "after read_skip");
 
     let max_tx = max_txsize(bsize);
     let above_tx_pair = above.map(|m| (m.tx_size, m.skip));
@@ -658,7 +689,13 @@ fn decode_block(
     if trace_cursor {
         eprintln!("RVP9_DBG decode_block max_tx={max_tx:?} tx_ctx={tx_ctx} tx_size={tx_size:?}");
     }
+    if trace_kfleaf {
+        eprintln!(
+            "RVP9_DBG kfleaf mi=({mi_row},{mi_col}) max_tx={max_tx:?} tx_ctx={tx_ctx} tx_size={tx_size:?}"
+        );
+    }
     dbg_cursor!(reader, "after read_tx_size");
+    dbg_kfleaf!(reader, "after read_tx_size");
 
     let (y_mode, bmi) = read_keyframe_y_mode_traced(
         reader,
@@ -673,13 +710,26 @@ fn decode_block(
             bmi[0].as_mode, bmi[1].as_mode, bmi[2].as_mode, bmi[3].as_mode
         );
     }
+    if trace_kfleaf {
+        eprintln!(
+            "RVP9_DBG kfleaf mi=({mi_row},{mi_col}) y_mode={y_mode:?} bmi=[{:?},{:?},{:?},{:?}]",
+            bmi[0].as_mode, bmi[1].as_mode, bmi[2].as_mode, bmi[3].as_mode
+        );
+    }
     dbg_cursor!(reader, "after read_keyframe_y_mode");
+    dbg_kfleaf!(reader, "after read_keyframe_y_mode");
 
     let uv_mode = read_intra_mode(reader, &VP9_KF_UV_MODE_PROB[y_mode as usize]);
     if trace_cursor {
         eprintln!("RVP9_DBG decode_block uv_mode={uv_mode:?}");
     }
+    if trace_kfleaf {
+        eprintln!(
+            "RVP9_DBG kfleaf mi=({mi_row},{mi_col}) uv_mode={uv_mode:?}"
+        );
+    }
     dbg_cursor!(reader, "after read_intra_mode(uv_mode)");
+    dbg_kfleaf!(reader, "after read_intra_mode(uv_mode)");
 
     let mi = ModeInfo {
         block_size: bsize,
@@ -755,6 +805,15 @@ fn decode_block(
 /// zero the per-plane above + left coef-context cells covering the
 /// coding block when the block was marked `skip` (no residual). The
 /// span is the plane's `n4_w × n4_h` 4×4 cells.
+///
+/// D.15 — for sub-8 luma blocks the entropy-context span libvpx uses is
+/// pinned to the **parent 8×8 mi cell** (n4_w = n4_h = 2 at plane=0),
+/// NOT the sub-block's `plane_bsize.n_4x4_*`. This mirrors libvpx's
+/// `decode_partition`/`decode_block` passing `bwl = bhl = 1` to
+/// `set_plane_n4` when `hbs == 0` (Block8×8 parent of any sub-8
+/// child). Chroma keeps the sub-block extent (uv plane block-size of
+/// `Block4×4` → 1 cell) because the chroma context is already aligned
+/// to the 8×8-luma boundary.
 fn reset_skip_context(
     coef_ctx: &mut TileCoefCtx,
     mi: &ModeInfo,
@@ -762,16 +821,25 @@ fn reset_skip_context(
     mi_col_in_tile: usize,
 ) {
     let mi_row_in_sb = mi_row_in_tile & MI_MASK;
+    let sub8_luma = (mi.block_size as u8) < (BlockSize::Block8x8 as u8);
     for plane in 0..3 {
         let ss_x = SUBSAMPLING_X[plane];
         let ss_y = SUBSAMPLING_Y[plane];
-        let plane_bsize = if plane == 0 {
-            mi.block_size
+        let (n4_w, n4_h) = if sub8_luma && plane == 0 {
+            // libvpx pads the sub-8 luma entropy context to the parent
+            // 8×8 mi cell — i.e. always two 4×4 cells in each axis.
+            (2usize, 2usize)
         } else {
-            uv_plane_block_size(mi.block_size)
+            let plane_bsize = if plane == 0 {
+                mi.block_size
+            } else {
+                uv_plane_block_size(mi.block_size)
+            };
+            (
+                plane_bsize.n_4x4_wide() as usize,
+                plane_bsize.n_4x4_high() as usize,
+            )
         };
-        let n4_w = plane_bsize.n_4x4_wide() as usize;
-        let n4_h = plane_bsize.n_4x4_high() as usize;
         let x4_base = (mi_col_in_tile * 2) >> ss_x;
         let y4_base = (mi_row_in_sb * 2) >> ss_y;
         coef_ctx.set_coef_flags(plane, x4_base, y4_base, n4_w, n4_h, false);
@@ -1005,6 +1073,15 @@ fn reconstruct_intra_planes(
                     left_available: have_left,
                 };
 
+                // D.15 per-plane / per-tx cursor pre-trace. Gated by
+                // RVP9_TRACE_KFLEAF=1; mirrors libvpx side at
+                // vp9_decodeframe.c::decode_block per-plane loop.
+                if std::env::var("RVP9_TRACE_KFLEAF").is_ok_and(|v| v == "1") {
+                    let (range, value, count, pos) = reader.cursor_state();
+                    eprintln!(
+                        "RVP9_DBG kfleaf mi=({mi_row},{mi_col}) plane={plane} row={loff} col={aoff} tx={plane_tx:?} pre (range={range}, value=0x{value:016x}, count={count}, pos={pos})"
+                    );
+                }
                 if mi.skip {
                     rvp9_core::intra_pred::intra_predict(
                         mode_for_this_tx,

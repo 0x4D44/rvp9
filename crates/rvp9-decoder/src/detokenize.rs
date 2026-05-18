@@ -168,6 +168,25 @@ pub fn decode_block_tokens(
     let l_any = fold_any_nonzero(coef_ctx, plane, y4_in_sb, n, false);
     let initial_pt = combine_entropy_contexts(a_any, l_any);
 
+    // D.15 kfleaf trace: dump initial_pt + raw above/left cells used by
+    // the fold. Gated by RVP9_TRACE_KFLEAF=1 to keep the dump scoped.
+    if std::env::var("RVP9_TRACE_KFLEAF").is_ok_and(|v| v == "1") {
+        let above_cells: Vec<u8> = (0..n)
+            .map(|i| coef_ctx.above_coef(plane, x4 + i))
+            .collect();
+        let left_cells: Vec<u8> = (0..n)
+            .map(|i| coef_ctx.left_coef(plane, y4_in_sb + i))
+            .collect();
+        eprintln!(
+            "RVP9_DBG kfleaf_pt plane={plane} x4={x4} y4_in_sb={y4_in_sb} \
+             tx={tx_size:?} tx_type={tx_type:?} \
+             above[{x4}..{}]={above_cells:?} left[{y4_in_sb}..{}]={left_cells:?} \
+             a_any={a_any} l_any={l_any} initial_pt={initial_pt} \
+             dequant=({},{})",
+            x4 + n, y4_in_sb + n, dequant.0, dequant.1,
+        );
+    }
+
     // Stage 3 stretch M.4 — log call-site inputs for the first Block4x4
     // of the first SB. Gated by `RVP9_DEBUG_DQCOEFS=2` so it's a no-op
     // in normal runs. Companion to the dq_coefs dump in

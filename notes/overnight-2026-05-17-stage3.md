@@ -244,3 +244,88 @@ Arthur triages all `WEDGED` and `WEDGED-BLOCKED` entries on wake.
      wrong many SBs earlier.
 
 ---
+
+## D.15 returned — sub-8 luma skip-context shrinks n4 to 1 instead of 2 (FIXED, +9 keyframes)
+
+- **Target:** `vp90-2-00-quantizer-63.webm` frame 1 (the D.14 wedge),
+  plus the cascade across all 352×288/352×240 keyframes that share the
+  same partition-tree shape.
+- **Approach:** built a libvpx-side per-SB cursor dump by patching
+  `libvpx-stock/vp9/decoder/vp9_decodeframe.c` (env-gated
+  `RVP9_TRACE_KFSB=1` `fprintf` at the entry to `decode_partition`
+  for `bsize == BLOCK_64X64`) + rebuilt `vpxdec.exe` against the
+  modified `libvpx.a`. Diff'd against rvp9's matching trace.
+- **Bisect 1 — per-SB cursor:** SBs (0,0) through (16,32) match
+  bit-for-bit; SB(16,40) diverges (rvp9 already at EOS pos=876, libvpx
+  at pos=785). **Bug origin = inside SB(16,32).**
+- **Bisect 2 — per-decode_block cursor:** added matching
+  `RVP9_TRACE_KFLEAF=1` traces on both sides. Within SB(16,32), the
+  divergence appears at the (20,32) Block16×16 plane-0 Tx16×16
+  decode_coefs: libvpx consumes ~50 bits, rvp9 consumes ~10. eob differs
+  → cursor diverges.
+- **Bisect 3 — per-decode_coefs inputs:** dumped `ctx` (initial pt) +
+  the raw above/left coef-context cells on both sides at decode_coefs
+  entry. **rvp9: `a=[1,1,1,1] l=[0,1,0,0] ctx=2`. libvpx:
+  `a=[1,1,1,1] l=[0,0,0,0] ctx=1`.** The stray `left[9]=1` flag in rvp9
+  flips the initial_pt up by one, picks a totally different
+  `coef_probs[band][ctx]` slice, decode_coefs takes a different path.
+- **Root cause:** for sub-8 luma blocks (Block4×4 / Block4×8 / Block8×4)
+  libvpx's `decode_partition` `hbs == 0` branch calls
+  `decode_block(... bwl=bhl=1)` — i.e., it pins `bw = bh = 1` mi and
+  thus `pd->n4_w = pd->n4_h = 2` 4×4 cells for plane 0 regardless of
+  the sub-block's actual 4×{4,8} or {4,8}×4 shape. rvp9's
+  `reset_skip_context` was using `plane_bsize.n_4x4_*` which returns
+  1×1 / 1×2 / 2×1 / 2×2 for sub-8 — short by one cell in at least one
+  axis on every sub-8 skip block. The un-cleared cell stayed `1` from
+  the previous (non-skip) decode at the same y-offset, poisoning
+  `initial_pt` for the next decode_coefs that lands on the same SB-row
+  y-offset.
+- **Fix:** `crates/rvp9-decoder/src/tile.rs::reset_skip_context` —
+  for `bsize < Block8×8` && `plane == 0`, force `n4_w = n4_h = 2`.
+  Chroma stays at `uv_plane_block_size(Block4×4).n_4x4_*` = 1 (already
+  matches libvpx's `(1<<1) >> ss = 1` for ss=1). 6-line change inside
+  the existing function; companion comment explaining the libvpx call
+  pattern.
+- **Conformance: 22 / 169 / 10 → 31 / 160 / 10** (+9 frames). Every
+  previously-failing 352×288/352×240 **keyframe** now passes:
+  `vp90-2-00-quantizer-26.webm`, `vp90-2-00-quantizer-63.webm`,
+  `vp90-2-01-sharpness-1.webm`, `vp90-2-01-sharpness-7.webm`,
+  `vp90-2-03-deltaq.webm`, `vp90-2-05-resize.ivf`. Plus
+  `vp90-2-02-size-32x32.webm` lights up frames 2-9 (9/10, only frame
+  10 still mismatches). Tests + clippy clean. Ratchet tightened
+  (`MIN_PASSES=31`, `MAX_MISMATCHES=160`).
+- **Deliverables (committed):**
+  - `crates/rvp9-decoder/src/tile.rs` — the fix + a `RVP9_TRACE_KFLEAF=1`
+    per-decode_block cursor + (per-syntax-element) checkpoint trace.
+    Companion to D.14's per-SB `RVP9_TRACE_KFSB=1`.
+  - `crates/rvp9-decoder/src/detokenize.rs` — a `RVP9_TRACE_KFLEAF=1`
+    per-decode_coefs-call `(initial_pt, above-cells, left-cells)` dump
+    for diff vs the libvpx-side `kfleaf_al` line.
+  - `libvpx-stock/vp9/decoder/{vp9_decodeframe.c,vp9_detokenize.c}`
+    (separate tree, NOT in this repo): per-SB + per-decode_block +
+    per-decode_coefs `RVP9_TRACE_KFSB=1` / `RVP9_TRACE_KFLEAF=1`
+    fprintf traces. Rebuilds `vpxdec.exe` with the instrumentation
+    when env unset → behaves like stock vpxdec. Reusable for any
+    future keyframe cursor-drift hunt; mirrors rvp9's trace format
+    line-for-line.
+- **Cascade NOT lit up (suspect — independent bugs):** inter frames
+  (`q26 f2+`, `sharpness f2+`, `deltaq f2+`, `resize f2+`, `aq2 f2+`,
+  `tile_*` f2+) all still mismatch. The keyframe-adapt path may be
+  miscounting now-correct coef-flag transitions, OR there's a separate
+  inter-frame bug. D.13's investigation suggested keyframe-adapt
+  produces wrong probs for frame 2 — that finding now needs re-running
+  against the post-D.15 frame 1.
+- **Next agent recipe for D.16:**
+  1. Re-run D.13's frame-context dump on `vp90-2-09-aq2.webm` frame 1
+     end-of-keyframe-adapt and `vp90-2-00-quantizer-26.webm` frame 1
+     end-of-keyframe-adapt. Compare against libvpx's adapt result.
+  2. If keyframe-adapt produces correct probs but frame 2 still
+     mismatches, fall back to the same per-SB / per-decode_block /
+     per-decode_coefs differential infra D.15 added but for the
+     **inter** path — likely the bug is now in `read_inter_block_mode_info`
+     neighbour cells or in the per-block coef-context for inter blocks.
+  3. The size-32x32 frame 10 is the lone interior mismatch with the
+     rest of that vector passing — likely a small downstream bug
+     (probably also a coef-context edge case at a frame boundary).
+     Tractable; useful single-frame test target for any inter cascade
+     investigation.
