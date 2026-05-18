@@ -410,6 +410,17 @@ impl Decoder {
             .as_ref()
             .ok_or(DecodeError::WrongFrameKind)?;
 
+        // Lossless decode (WHT) not yet wired in Task H — gracefully
+        // return Unimplemented rather than letting H's debug_assert
+        // fire downstream. See `notes/overnight-2026-05-17-stage3.md`
+        // for the lossless follow-up tracking; this is an explicit
+        // skip rather than a wedge.
+        if tail.quantization.is_lossless() {
+            return Err(DecodeError::Unimplemented {
+                reason: "lossless decode (WHT inverse transform path) not yet wired",
+            });
+        }
+
         // 1. Parse the compressed header into the selected FrameContext
         //    bank to get `tx_mode` (and the coef-prob updates etc.).
         let compressed_result = self.parse_compressed_partition(frame)?;
