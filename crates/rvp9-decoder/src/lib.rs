@@ -129,6 +129,19 @@ pub struct Decoder {
     /// [`Decoder::decode_keyframe`] (= `true`) and
     /// [`Decoder::decode_inter_frame`] (= `false`).
     last_frame_was_key: bool,
+    /// Accumulated mode / partition / skip / inter / ref / tx
+    /// counts for the in-flight inter frame. Zeroed at the start of
+    /// each inter frame; consumed by
+    /// [`adapt_mode_probs`](rvp9_core::entropy::adapt::adapt_mode_probs)
+    /// at end-of-frame to produce the next frame's mode probabilities.
+    /// Mirrors libvpx `cm->counts` (the y_mode / uv_mode / partition /
+    /// inter_mode / intra_inter / comp_inter / comp_ref / single_ref /
+    /// switchable_interp / skip / tx fields of `vp9_entropymode.h`
+    /// `FRAME_COUNTS`). Keyframes do not call `adapt_mode_probs` (libvpx
+    /// `vp9_decodeframe.c:3050`: gated on `!frame_is_intra_only(cm)`),
+    /// so this field is only meaningfully populated on inter-frame
+    /// decode.
+    mode_counts: rvp9_core::entropy::adapt::FrameCounts,
     /// Current per-ref / per-mode loop-filter deltas. The
     /// uncompressed header overlays these via the `Option<i8>` slots
     /// in `LoopFilterParams`; we maintain the resolved running state
@@ -171,6 +184,7 @@ impl Decoder {
             mv_counts: rvp9_core::entropy::mv_probs::NmvCounts::default(),
             coef_counts: rvp9_core::entropy::adapt::CoefCountsBank::default(),
             last_frame_was_key: false,
+            mode_counts: rvp9_core::entropy::adapt::FrameCounts::default(),
         }
     }
 
@@ -901,13 +915,15 @@ impl Decoder {
             inter_params,
         };
 
-        // Zero MV + coef counts at start of frame, then decode the
-        // tile. After the tile completes the counts hold this frame's
-        // NEWMV component tallies + per-(tx, plane, ref) coef-token
-        // tallies, which feed `adapt_mv_probs` / `adapt_coef_probs`
-        // below.
+        // Zero MV + coef + mode counts at start of frame, then decode
+        // the tile. After the tile completes the counts hold this
+        // frame's NEWMV component tallies + per-(tx, plane, ref)
+        // coef-token tallies + per-block mode/partition/skip/inter/ref/
+        // tx tallies, which feed `adapt_mv_probs` / `adapt_coef_probs`
+        // / `adapt_mode_probs` below.
         self.mv_counts = rvp9_core::entropy::mv_probs::NmvCounts::default();
         self.coef_counts = rvp9_core::entropy::adapt::CoefCountsBank::default();
+        self.mode_counts = rvp9_core::entropy::adapt::FrameCounts::default();
         let fc_idx = tail.frame_context_idx as usize;
         let bounds = tile_bounds(&tail.tile_info, mi_cols, mi_rows, 0, 0);
         {
@@ -929,8 +945,33 @@ impl Decoder {
         // for all kernels: `refresh_frame_context && !error_resilient`.
         // `adapt_coef_probs` fires here on inter frames (the keyframe
         // path runs the kernel separately with the `_KEY` constants);
-        // `adapt_mv_probs` only fires on non-intra-only frames.
+        // `adapt_mode_probs` / `adapt_mv_probs` only fire on
+        // non-intra-only frames.
         if tail.refresh_frame_context && !frame.header.error_resilient {
+            // mode_probs — libvpx `vp9_adapt_mode_probs`. Returns a
+            // freshly built FrameContext with the mode / partition /
+            // skip / tx / intra_inter / comp_inter / single_ref /
+            // comp_ref / inter_mode / y_mode / uv_mode /
+            // switchable_interp fields folded; `coef_probs` and `nmvc`
+            // are copied through unchanged from `pre_fc` (see
+            // `adapt_mode_probs` docs) — we re-install the coef / mv
+            // adapts on top of this baseline below.
+            let interp_switchable = matches!(
+                params.inter_params.interp_filter,
+                rvp9_core::bitstream::InterpFilter::Switchable
+            );
+            let tx_mode_select = matches!(
+                params.base.tx_mode,
+                rvp9_core::transforms::TxMode::TxModeSelect
+            );
+            let new_fc = rvp9_core::entropy::adapt::adapt_mode_probs(
+                &self.frame_contexts[fc_idx],
+                &self.mode_counts,
+                interp_switchable,
+                tx_mode_select,
+            );
+            self.frame_contexts[fc_idx] = new_fc;
+
             // coef_probs — inter-frame adapt (`intra_only = false`).
             // `coef_adapt_params` picks AFTER_KEY constants on the first
             // inter frame after a keyframe, default constants otherwise.
@@ -1799,6 +1840,55 @@ mod tests {
         );
         // And `last_frame_was_key` is true now (driver responsibility).
         assert!(dec.last_frame_was_key);
+    }
+
+    /// Stage 3 Task E.1.c.1: a fresh [`Decoder`] starts with all-zero
+    /// `mode_counts`. Mirrors the analogous coef-counts init test.
+    #[test]
+    fn decoder_new_initializes_mode_counts_zero() {
+        use rvp9_core::entropy::adapt::FrameCounts;
+        let dec = Decoder::new();
+        assert_eq!(dec.mode_counts, FrameCounts::default());
+    }
+
+    /// Stage 3 Task E.1.c.1: feed synthetic `mode_counts` through
+    /// `adapt_mode_probs` + write-back and verify the active
+    /// FrameContext's mode-related fields shift. Mirrors the
+    /// `coef_counts_adapt_round_trip_via_decoder_fields` pattern for
+    /// the third (and final) adapt kernel.
+    #[test]
+    fn mode_counts_adapt_round_trip_via_decoder_fields() {
+        use rvp9_core::entropy::adapt::adapt_mode_probs;
+        let mut dec = Decoder::new();
+        // Inject a non-zero skip[0] tally — synthesises one block per
+        // skip-context decision. `adapt_mode_probs` uses
+        // `mode_mv_merge_probs` for skip; non-zero counts ⇒ shift.
+        dec.mode_counts.skip[0] = [4, 6];
+        // Inject a non-zero intra_inter[1] tally too — exercises a
+        // second `mode_mv_merge_probs` slot.
+        dec.mode_counts.intra_inter[1] = [5, 3];
+
+        let pre = dec.frame_contexts[0].clone();
+        let new_fc = adapt_mode_probs(
+            &dec.frame_contexts[0],
+            &dec.mode_counts,
+            /* interp_switchable = */ false,
+            /* tx_mode_select   = */ false,
+        );
+        dec.frame_contexts[0] = new_fc;
+
+        assert_ne!(
+            dec.frame_contexts[0].skip_probs[0], pre.skip_probs[0],
+            "skip_probs[0] must shift after adapt with non-zero counts"
+        );
+        assert_ne!(
+            dec.frame_contexts[0].intra_inter_prob[1], pre.intra_inter_prob[1],
+            "intra_inter_prob[1] must shift after adapt with non-zero counts"
+        );
+        // coef_probs / nmvc must be unchanged — adapt_mode_probs copies
+        // them through (separate kernels handle those).
+        assert_eq!(dec.frame_contexts[0].coef_probs, pre.coef_probs);
+        assert_eq!(dec.frame_contexts[0].nmvc, pre.nmvc);
     }
 
     #[test]
