@@ -1782,6 +1782,105 @@ mod tests {
         assert_eq!(at(3, 3), 50);
     }
 
+    /// Stage 3 stretch M.18 — verify our generic [`d135_predictor`] at
+    /// bs=4 produces the exact bytes that libvpx's hand-unrolled
+    /// `vpx_d135_predictor_4x4_c` emits for the captured edges of
+    /// vp90-2-05-resize frame 1 Block4x8 D135 at (px 276, row 0).
+    ///
+    /// libvpx wires `vpx_d135_predictor_4x4_c` (intrapred.c:411-430) into
+    /// `pred[D135][TX_4X4]` via `intra_pred_no_4x4(d135)` — bs=4 D135 in
+    /// libvpx **never** runs through the generic kernel.  M.15's claim
+    /// that the spec "coincides with generic" was a hand-trace; M.18
+    /// mechanically verifies it for these specific edges via the C
+    /// oracle (see `tools/libvpx_decode_coefs_oracle/oracle.c` M.18 block).
+    /// This unit test pins the rvp9 side of that mechanical equality.
+    ///
+    /// Sub-0 (rows 0..3 of the Block4x8):
+    ///   above_left=127, above=[127,127,127,127], left=[73,73,73,73].
+    /// Expected output (from libvpx oracle):
+    ///   row 0: [114, 127, 127, 127]
+    ///   row 1: [ 87, 114, 127, 127]
+    ///   row 2: [ 73,  87, 114, 127]
+    ///   row 3: [ 73,  73,  87, 114]
+    #[test]
+    fn d135_predictor_4x4_matches_libvpx_spec_m18_resize_sub0() {
+        let above = [127u8, 127, 127, 127];
+        let left = [73u8, 73, 73, 73];
+        let ctx = PredCtx { above: &above, left: &left, above_left: 127 };
+        let mut dst = [0u8; 16];
+        d135_predictor(&mut dst, 4, 4, ctx);
+        let expect: [u8; 16] = [
+            114, 127, 127, 127,
+             87, 114, 127, 127,
+             73,  87, 114, 127,
+             73,  73,  87, 114,
+        ];
+        assert_eq!(dst, expect, "D135 4x4 must match libvpx vpx_d135_predictor_4x4_c");
+    }
+
+    /// Stage 3 stretch M.18 — second sub-block (rows 4..7) of the same
+    /// Block4x8 D135 at (px 276, row 0).  Edges:
+    ///   above_left=73, above=[85,76,60,61], left=[49,49,49,49].
+    /// Expected from libvpx oracle:
+    ///   row 0: [70, 80, 74, 64]   row 1: [55, 70, 80, 74]
+    ///   row 2: [49, 55, 70, 80]   row 3: [49, 49, 55, 70]
+    #[test]
+    fn d135_predictor_4x4_matches_libvpx_spec_m18_resize_sub1() {
+        let above = [85u8, 76, 60, 61];
+        let left = [49u8, 49, 49, 49];
+        let ctx = PredCtx { above: &above, left: &left, above_left: 73 };
+        let mut dst = [0u8; 16];
+        d135_predictor(&mut dst, 4, 4, ctx);
+        let expect: [u8; 16] = [
+            70, 80, 74, 64,
+            55, 70, 80, 74,
+            49, 55, 70, 80,
+            49, 49, 55, 70,
+        ];
+        assert_eq!(dst, expect, "D135 4x4 must match libvpx vpx_d135_predictor_4x4_c");
+    }
+
+    /// Stage 3 stretch M.18 — paranoia cross-check for D117 and D153
+    /// 4×4 specs.  M.15 hand-claimed both "coincide with generic at
+    /// bs=4"; M.18 picks arbitrary non-trivial edges (al=11,
+    /// above=[37,53,71,89], left=[17,23,29,41]) and pins our generic
+    /// kernels' output against libvpx's hand-unrolled spec values
+    /// captured by the oracle.  If a future libvpx revision diverges,
+    /// these tests trip immediately.
+    #[test]
+    fn d117_predictor_4x4_coincides_with_libvpx_spec() {
+        let above = [37u8, 53, 71, 89];
+        let left = [17u8, 23, 29, 41];
+        let ctx = PredCtx { above: &above, left: &left, above_left: 11 };
+        let mut dst = [0u8; 16];
+        d117_predictor(&mut dst, 4, 4, ctx);
+        // Values captured from vpx_d117_predictor_4x4_c via M.18 oracle.
+        let expect: [u8; 16] = [
+            24, 45, 62, 80,
+            19, 35, 54, 71,
+            17, 24, 45, 62,
+            23, 19, 35, 54,
+        ];
+        assert_eq!(dst, expect, "D117 generic at bs=4 must match libvpx 4x4 spec");
+    }
+
+    #[test]
+    fn d153_predictor_4x4_coincides_with_libvpx_spec() {
+        let above = [37u8, 53, 71, 89];
+        let left = [17u8, 23, 29, 41];
+        let ctx = PredCtx { above: &above, left: &left, above_left: 11 };
+        let mut dst = [0u8; 16];
+        d153_predictor(&mut dst, 4, 4, ctx);
+        // Values captured from vpx_d153_predictor_4x4_c via M.18 oracle.
+        let expect: [u8; 16] = [
+            14, 19, 35, 54,
+            20, 17, 14, 19,
+            26, 23, 20, 17,
+            35, 31, 26, 23,
+        ];
+        assert_eq!(dst, expect, "D153 generic at bs=4 must match libvpx 4x4 spec");
+    }
+
     #[test]
     fn d153_predictor_constant_input_is_constant() {
         let above = [100u8; 4];

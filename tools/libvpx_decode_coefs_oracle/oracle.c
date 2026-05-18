@@ -715,6 +715,171 @@ int main(int argc, char **argv) {
   }
 
   /* =====================================================================
+   * Stage 3 stretch M.18 — vp90-2-05-resize frame 1 Block4x8 D135 at
+   * (px 276, row 0).  M.17 narrowed the resize keyframe cascade to
+   * "pre-LF col 279 of the previous block (Block4x8 D135) diverges
+   * from libvpx → wrong left → wrong DC pred at (px 280, row 0)".
+   * The Block4x8 = two stacked 4×4 sub-blocks.  libvpx wires
+   * vpx_d135_predictor_4x4_c (a hand-unrolled spec) into pred[D135][TX_4X4]
+   * via `intra_pred_no_4x4(d135)` in intrapred.c:907.  M.15 hand-claimed
+   * the 4×4 spec "coincides with the generic kernel"; M.18 mechanically
+   * verifies that claim on the captured edges for THIS block.
+   *
+   * Edges captured 2026-05-18 via
+   *   RVP9_TRACE_INTRA_AT="0,276,0.." RVP9_DISABLE_LF=1
+   *   ./target/release/dump_frame_diff --vector vp90-2-05-resize.ivf ...
+   * Sub-0 (rows 0..3): above_left=127, above=[127,127,127,127],
+   *                    left=[73,73,73,73].
+   * Sub-1 (rows 4..7): above_left=73,  above=[85,76,60,61],
+   *                    left=[49,49,49,49].
+   *
+   * If libvpx D135 4×4 spec output equals rvp9's d135_predictor generic
+   * output (verified by mirroring the kernel here in pure C against
+   * captured edges), then D135 spec is innocent at this block and the
+   * cascade is upstream — M.17 hypothesis #1 (cumulative bool-reader
+   * cursor drift surfacing at (280, 0)) or hypothesis #3 (some other
+   * input field diverges).
+   * ===================================================================== */
+  {
+    extern void vpx_d135_predictor_4x4_c(uint8_t *dst, ptrdiff_t stride,
+                                         const uint8_t *above, const uint8_t *left);
+    extern void vpx_d117_predictor_4x4_c(uint8_t *dst, ptrdiff_t stride,
+                                         const uint8_t *above, const uint8_t *left);
+    extern void vpx_d153_predictor_4x4_c(uint8_t *dst, ptrdiff_t stride,
+                                         const uint8_t *above, const uint8_t *left);
+
+    printf("\n=== Stage 3 stretch M.18 — vp90-2-05-resize frame 1, "
+           "block (px 276, row 0) Block4x8 D135 ===\n");
+
+    /* --- Sub-0 (rows 0..3 of the Block4x8). --- */
+    {
+      /* Mirror libvpx layout: above_data[15] = above_left, above_data+16
+       * is the bs-wide above row. d135_4x4 reads above[-1..3] and
+       * left[0..3] only. */
+      uint8_t above_data[8 + 16];
+      memset(above_data, 0, sizeof(above_data));
+      above_data[15] = 127;  /* above_left */
+      for (int i = 0; i < 4; ++i) above_data[16 + i] = 127;  /* above */
+      const uint8_t *above = above_data + 16;
+      uint8_t left[4] = {73, 73, 73, 73};
+
+      uint8_t pred[16];
+      memset(pred, 0xCC, sizeof(pred));
+      vpx_d135_predictor_4x4_c(pred, /*stride=*/4, above, left);
+
+      printf("\n[D135 sub-0 (276,0)] above_left=%u above=[%u,%u,%u,%u] left=[%u,%u,%u,%u]\n",
+             above_data[15], above[0], above[1], above[2], above[3],
+             left[0], left[1], left[2], left[3]);
+      printf("  libvpx vpx_d135_predictor_4x4_c output:\n");
+      for (int row = 0; row < 4; ++row) {
+        printf("    row %d: [%3u, %3u, %3u, %3u]\n", row,
+               pred[row * 4 + 0], pred[row * 4 + 1],
+               pred[row * 4 + 2], pred[row * 4 + 3]);
+      }
+      /* Hand-traced expectation for rvp9 d135_predictor generic at bs=4:
+       * border[0..6] = [73,73,87,114,127,127,127]; row windows:
+       * row 0 [114,127,127,127] row 1 [87,114,127,127]
+       * row 2 [73,87,114,127]   row 3 [73,73,87,114]. */
+      uint8_t expect[16] = {114,127,127,127,  87,114,127,127,
+                             73, 87,114,127,  73, 73, 87,114};
+      int match_sub0 = !memcmp(pred, expect, 16);
+      printf("  rvp9 d135_predictor (generic, bs=4) hand-traced match: %s\n",
+             match_sub0 ? "MATCH" : "DIVERGE");
+      if (!match_sub0) {
+        for (int i = 0; i < 16; ++i) {
+          if (pred[i] != expect[i]) {
+            printf("    first diff @ idx %d (row %d col %d): libvpx=%u rvp9=%u\n",
+                   i, i / 4, i % 4, pred[i], expect[i]);
+          }
+        }
+      }
+    }
+
+    /* --- Sub-1 (rows 4..7 of the Block4x8). --- */
+    {
+      uint8_t above_data[8 + 16];
+      memset(above_data, 0, sizeof(above_data));
+      above_data[15] = 73;  /* above_left */
+      above_data[16 + 0] = 85;
+      above_data[16 + 1] = 76;
+      above_data[16 + 2] = 60;
+      above_data[16 + 3] = 61;
+      const uint8_t *above = above_data + 16;
+      uint8_t left[4] = {49, 49, 49, 49};
+
+      uint8_t pred[16];
+      memset(pred, 0xCC, sizeof(pred));
+      vpx_d135_predictor_4x4_c(pred, /*stride=*/4, above, left);
+
+      printf("\n[D135 sub-1 (276,4)] above_left=%u above=[%u,%u,%u,%u] left=[%u,%u,%u,%u]\n",
+             above_data[15], above[0], above[1], above[2], above[3],
+             left[0], left[1], left[2], left[3]);
+      printf("  libvpx vpx_d135_predictor_4x4_c output:\n");
+      for (int row = 0; row < 4; ++row) {
+        printf("    row %d: [%3u, %3u, %3u, %3u]\n", row,
+               pred[row * 4 + 0], pred[row * 4 + 1],
+               pred[row * 4 + 2], pred[row * 4 + 3]);
+      }
+      /* Hand-traced expectation: border = [49,49,55,70,80,74,64]; rows:
+       * row 0 [70,80,74,64] row 1 [55,70,80,74]
+       * row 2 [49,55,70,80] row 3 [49,49,55,70]. */
+      uint8_t expect[16] = {70,80,74,64,  55,70,80,74,
+                            49,55,70,80,  49,49,55,70};
+      int match_sub1 = !memcmp(pred, expect, 16);
+      printf("  rvp9 d135_predictor (generic, bs=4) hand-traced match: %s\n",
+             match_sub1 ? "MATCH" : "DIVERGE");
+      if (!match_sub1) {
+        for (int i = 0; i < 16; ++i) {
+          if (pred[i] != expect[i]) {
+            printf("    first diff @ idx %d (row %d col %d): libvpx=%u rvp9=%u\n",
+                   i, i / 4, i % 4, pred[i], expect[i]);
+          }
+        }
+      }
+    }
+
+    /* --- D117 and D153 4×4 spec coincidence probe (paranoid cross-check
+     *     for the next investigator).  Picks arbitrary varied edges to
+     *     catch any non-trivial divergence between generic and 4×4 spec
+     *     beyond the symmetric AVG3 args. --- */
+    {
+      uint8_t above_data[8 + 16];
+      memset(above_data, 0, sizeof(above_data));
+      above_data[15] = 11;  /* above_left */
+      uint8_t avals[8] = {37, 53, 71, 89, 0, 0, 0, 0};
+      memcpy(above_data + 16, avals, 8);
+      const uint8_t *above = above_data + 16;
+      uint8_t left[4] = {17, 23, 29, 41};
+
+      uint8_t pred_d117[16];
+      uint8_t pred_d153[16];
+      memset(pred_d117, 0xCC, sizeof(pred_d117));
+      memset(pred_d153, 0xCC, sizeof(pred_d153));
+      vpx_d117_predictor_4x4_c(pred_d117, /*stride=*/4, above, left);
+      vpx_d153_predictor_4x4_c(pred_d153, /*stride=*/4, above, left);
+
+      printf("\n[D117/D153 4x4 spec paranoia probe] al=%u above=[%u,%u,%u,%u] left=[%u,%u,%u,%u]\n",
+             above_data[15], above[0], above[1], above[2], above[3],
+             left[0], left[1], left[2], left[3]);
+      printf("  libvpx D117 row 0..3 (per-row 4 cols):\n");
+      for (int row = 0; row < 4; ++row) {
+        printf("    [%3u, %3u, %3u, %3u]\n",
+               pred_d117[row * 4 + 0], pred_d117[row * 4 + 1],
+               pred_d117[row * 4 + 2], pred_d117[row * 4 + 3]);
+      }
+      printf("  libvpx D153 row 0..3:\n");
+      for (int row = 0; row < 4; ++row) {
+        printf("    [%3u, %3u, %3u, %3u]\n",
+               pred_d153[row * 4 + 0], pred_d153[row * 4 + 1],
+               pred_d153[row * 4 + 2], pred_d153[row * 4 + 3]);
+      }
+      printf("  (Cross-check expected values in rvp9 unit test, see\n"
+             "   d117_predictor_4x4_coincides_with_libvpx_spec /\n"
+             "   d153_predictor_4x4_coincides_with_libvpx_spec.)\n");
+    }
+  }
+
+  /* =====================================================================
    * Stage 3 stretch M.17 — vp90-2-05-resize frame 1 Block8x8 Dc at
    * (px 280, row 0).
    *
