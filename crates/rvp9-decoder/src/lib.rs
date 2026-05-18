@@ -51,12 +51,18 @@ use rvp9_core::entropy::{FRAME_CONTEXTS, FrameContext};
 use rvp9_core::frame::{BorderUsage, ByteAlignment, DecoderFramePool, FrameBuf, Yv12Buffer};
 use rvp9_core::inter::mode_info::{InterModeReadParams, setup_compound_reference_mode};
 use rvp9_core::inter::mv_ref::sign_bias_from_header;
-use rvp9_core::loopfilter::ResolvedLfDeltas;
+use rvp9_core::frame::extend_frame_borders;
+use rvp9_core::loopfilter::{
+    LoopFilterInfo, LoopFilterMask, ResolvedLfDeltas, SegmentationLfView, adjust_mask,
+    loop_filter_frame, resolve_filter_levels, setup_mask,
+};
+use rvp9_core::mode_info::ModeInfo;
 
 use crate::tile::{
     FrameDecodeParams, InterFrameDecodeParams, TileDecodeError, decode_tile_inter,
     decode_tile_intra, tile_bounds,
 };
+use crate::tile_ctx::TileDecodeCtx;
 
 /// Top-level VP9 decoder state.
 ///
@@ -264,11 +270,23 @@ impl Decoder {
                     }
                 }
             }
-            // Inter frames refresh slots too, but their width/height
-            // is already derived (potentially inherited) by the parser;
-            // we'll update once decode_frame succeeds for them (Stage
-            // 3+ inter decode). Show-existing carries no width.
-            FrameKind::InterFrame { .. } | FrameKind::ShowExistingFrame { .. } => {}
+            FrameKind::InterFrame {
+                refresh_frame_flags,
+                ..
+            } => {
+                // Inter frames refresh slots per the mask. The width
+                // and height stored here is the frame's decoded /
+                // inherited (width, height) — see `parse_uncompressed
+                // _header`. This lets subsequent inter frames in the
+                // same packet resolve `setup_frame_size_with_refs`.
+                let size = (header.width, header.height);
+                for (i, slot) in self.ref_frame_sizes.iter_mut().enumerate() {
+                    if (refresh_frame_flags >> i) & 1 != 0 {
+                        *slot = Some(size);
+                    }
+                }
+            }
+            FrameKind::ShowExistingFrame { .. } => {}
         }
     }
 
@@ -563,20 +581,46 @@ impl Decoder {
         };
         let fc_idx = tail.frame_context_idx as usize;
         let fc = &self.frame_contexts[fc_idx];
-        decode_tile_intra(tile_buf.data, bounds, &params, fc, &mut yv12)
+        let decode_ctx = decode_tile_intra(tile_buf.data, bounds, &params, fc, &mut yv12)
             .map_err(DecodeError::TileDecode)?;
 
-        // 8. TODO(overnight-2026-05-17): wire J (loop-filter apply
-        //    driver — `rvp9_core::loopfilter::apply::loop_filter_frame`)
-        //    once we maintain a frame-wide ModeInfo grid + per-SB
-        //    LoopFilterMask cache. Today TileDecodeCtx only stores
-        //    above-row + left-column reductions; setup_mask wants a
-        //    full 2-D `mi8x8: &[ModeInfo]` over the SB. Wiring this
-        //    needs a parallel ModeInfo grid storage in the decoder.
+        // 8. K2.c — loop-filter apply driver. Skip when filter_level
+        //    is zero (LF is a frame-level no-op — see libvpx
+        //    `vp9_loopfilter.c:1422-1427`).
         //
-        //    For vectors whose `loop_filter.filter_level == 0` (e.g.
-        //    `vp90-2-02-size-08x08.webm`'s keyframe) the LF apply is
-        //    a no-op and the floor MD5 already matches.
+        //    Keyframes invoke libvpx's `vp9_setup_past_independence`
+        //    (`vp9_entropymode.c:424-469`), which resets the LF deltas
+        //    to the keyframe defaults `{INTRA:+1, LAST:0, GOLDEN:-1,
+        //    ALTREF:-1}` with `mode_ref_delta_enabled = true` BEFORE
+        //    `setup_loopfilter` parses the header. We mirror that
+        //    here so the header's "no update" path inherits the
+        //    correct baseline rather than the all-zeros startup state.
+        self.lf_deltas = ResolvedLfDeltas {
+            ref_deltas: [1, 0, -1, -1],
+            mode_deltas: [0, 0],
+            enabled: true,
+        };
+        self.merge_lf_params(&tail.loop_filter);
+        let filter_level = tail.loop_filter.filter_level;
+        if filter_level > 0 {
+            apply_loop_filter_to_frame(
+                &mut yv12,
+                &decode_ctx,
+                mi_rows,
+                mi_cols,
+                filter_level,
+                tail.loop_filter.sharpness_level,
+                self.lf_deltas,
+                SegmentationLfView::from_segmentation(&tail.segmentation),
+            );
+        }
+
+        // 9. Extend the frame's borders so future inter frames using
+        //    this keyframe as a reference can read MC halos past the
+        //    visible region (libvpx `vpx_extend_frame_borders_c`,
+        //    `yv12extend.c:169`).
+        extend_frame_borders(&mut yv12);
+
         let frame_buf: FrameBuf = std::sync::Arc::new(yv12);
 
         // Note: ref_frame_sizes is already populated by
@@ -622,22 +666,29 @@ impl Decoder {
             .as_ref()
             .ok_or(DecodeError::WrongFrameKind)?;
 
-        let (ref_frame_indices, ref_frame_sign_biases, interp_filter, allow_high_precision_mv) =
-            match frame.header.kind {
-                FrameKind::InterFrame {
-                    ref_frame_indices,
-                    ref_frame_sign_biases,
-                    interp_filter,
-                    allow_high_precision_mv,
-                    ..
-                } => (
-                    ref_frame_indices,
-                    ref_frame_sign_biases,
-                    interp_filter,
-                    allow_high_precision_mv,
-                ),
-                _ => return Err(DecodeError::WrongFrameKind),
-            };
+        let (
+            ref_frame_indices,
+            ref_frame_sign_biases,
+            interp_filter,
+            allow_high_precision_mv,
+            refresh_frame_flags,
+        ) = match frame.header.kind {
+            FrameKind::InterFrame {
+                ref_frame_indices,
+                ref_frame_sign_biases,
+                interp_filter,
+                allow_high_precision_mv,
+                refresh_frame_flags,
+                ..
+            } => (
+                ref_frame_indices,
+                ref_frame_sign_biases,
+                interp_filter,
+                allow_high_precision_mv,
+                refresh_frame_flags,
+            ),
+            _ => return Err(DecodeError::WrongFrameKind),
+        };
 
         // Lossless inter not yet wired (mirrors keyframe gating).
         if tail.quantization.is_lossless() {
@@ -784,10 +835,26 @@ impl Decoder {
         decode_tile_inter(tile_buf.data, bounds, &params, fc, &mut yv12)
             .map_err(DecodeError::TileDecode)?;
 
+        // D.3.c — frame finalisation:
+        //
+        // 1. Extend the frame's borders so future inter frames using
+        //    this frame as a reference can read MC halos past the
+        //    visible region (libvpx `vpx_extend_frame_borders_c`,
+        //    `yv12extend.c:169`).
+        extend_frame_borders(&mut yv12);
+
         let frame_buf: FrameBuf = std::sync::Arc::new(yv12);
 
-        // D.3.c will wire `extend_frame_borders` + `refresh_frame_flags`
-        // here. For D.3.a we leave both no-op.
+        // 2. Update `ref_frame_map` per `refresh_frame_flags` mask
+        //    (libvpx `vp9_decodeframe.c:2914` — for each bit `i` set in
+        //    the mask, `cm->ref_frame_map[i] = cm->new_fb_idx`). We
+        //    splat the freshly-decoded FrameBuf into every slot the
+        //    mask selects.
+        for (i, slot) in self.ref_frame_map.iter_mut().enumerate() {
+            if (refresh_frame_flags >> i) & 1 != 0 {
+                *slot = Some(frame_buf.clone());
+            }
+        }
 
         Ok(frame_buf)
     }
@@ -834,6 +901,135 @@ impl Decoder {
         let idx = tail.frame_context_idx as usize;
         let fc = &mut self.frame_contexts[idx];
         parse_compressed_header(compressed, fc, opts).map_err(DecodeError::Bitstream)
+    }
+}
+
+/// Mode-info side length of a 64×64 superblock (mirrors libvpx
+/// `MI_BLOCK_SIZE` at `vp9_enums.h:25`).
+const SB_MI_SIZE: usize = 8;
+
+/// Drive the per-SB loop-filter mask build + frame-wide apply. Mirrors
+/// the libvpx sequence in `vp9_loop_filter_frame` →
+/// `loop_filter_rows` (`vp9_loopfilter.c:1422-1483`): build the
+/// `[seg][ref][mode]` filter-level cube once per frame, walk each
+/// superblock to populate its [`LoopFilterMask`] via `setup_mask` +
+/// `adjust_mask`, then dispatch [`loop_filter_frame`] in place on the
+/// reconstructed planes.
+///
+/// `decode_ctx` carries the per-tile (which equals per-frame for the
+/// single-tile path) mi grid produced by [`decode_tile_intra`].
+#[allow(clippy::too_many_arguments)]
+fn apply_loop_filter_to_frame(
+    yv12: &mut Yv12Buffer,
+    decode_ctx: &TileDecodeCtx,
+    mi_rows: usize,
+    mi_cols: usize,
+    filter_level: u8,
+    sharpness_level: u8,
+    lf_deltas: ResolvedLfDeltas,
+    seg_view: SegmentationLfView,
+) {
+    let levels = resolve_filter_levels(filter_level, lf_deltas, seg_view);
+    let info = LoopFilterInfo::new(sharpness_level);
+
+    let sb_rows = mi_rows.div_ceil(SB_MI_SIZE);
+    let sb_cols = mi_cols.div_ceil(SB_MI_SIZE);
+    let mi_stride = decode_ctx.tile_mi_cols();
+    let mi_grid = decode_ctx.mi_grid();
+
+    // Materialise the full-frame ModeInfo grid (one entry per 8×8
+    // luma cell, row-major with stride = mi_stride). `setup_mask`
+    // expects a flat `&[ModeInfo]` indexed as `mi[r*stride + c]`,
+    // mirroring libvpx's `cm->mi_grid_visible` pointer array
+    // (`vp9_onyxc_int.h:mi_grid_visible`). For the single-tile path
+    // the tile grid IS the frame grid.
+    //
+    // Cells the partition walker won't reach (past-frame quadrants,
+    // bounded by `mi_rows` / `mi_cols`) get a placeholder; the
+    // walker's `max_rows` / `max_cols` clamp guarantees those cells
+    // are never read. Sub-leaf MI cells inside a >8×8 partition that
+    // weren't explicitly written by the decoder (libvpx's "mi pointer
+    // duplication" convention) likewise stay as the placeholder, but
+    // `setup_mask` only reads the partition leaf's top-left MI at
+    // each leaf boundary, so the duplication isn't required.
+    let placeholder = mi_grid
+        .iter()
+        .find_map(|cell| cell.as_ref().cloned())
+        .unwrap_or_else(default_padding_modeinfo);
+    let mut frame_mi: Vec<ModeInfo> = Vec::with_capacity(mi_grid.len().max(1));
+    for cell in mi_grid {
+        match cell {
+            Some(mi) => frame_mi.push(*mi),
+            None => frame_mi.push(placeholder),
+        }
+    }
+
+    let mut lfm_grid: Vec<LoopFilterMask> =
+        vec![LoopFilterMask::default(); sb_rows * sb_cols];
+
+    for sb_row in 0..sb_rows {
+        for sb_col in 0..sb_cols {
+            let mi_row = sb_row * SB_MI_SIZE;
+            let mi_col = sb_col * SB_MI_SIZE;
+
+            let lfm = &mut lfm_grid[sb_row * sb_cols + sb_col];
+            setup_mask(
+                mi_row as u32,
+                mi_col as u32,
+                &frame_mi,
+                mi_stride,
+                mi_rows as u32,
+                mi_cols as u32,
+                &levels,
+                lfm,
+            );
+            adjust_mask(
+                mi_row as u32,
+                mi_col as u32,
+                mi_rows as u32,
+                mi_cols as u32,
+                lfm,
+            );
+        }
+    }
+
+    loop_filter_frame(
+        yv12,
+        &lfm_grid,
+        sb_cols,
+        sb_rows,
+        sb_cols,
+        mi_rows,
+        mi_cols,
+        &info,
+        0,
+        mi_rows,
+    );
+}
+
+/// Placeholder [`ModeInfo`] for the rare path where the entire mi
+/// grid is empty (e.g. a degenerate tile that produced no leaves).
+/// Mirrors libvpx's `vpx_calloc`-initialised `MODE_INFO` slot
+/// (`vp9_onyxc_int.h:setup_mi`): an intra DC 8×8 block with
+/// segment_id = 0. The partition walker in `setup_mask` only reads
+/// this slot if `max_rows == 0 || max_cols == 0`, in which case the
+/// walker early-exits before touching the data.
+fn default_padding_modeinfo() -> ModeInfo {
+    use rvp9_core::block::BlockSize;
+    use rvp9_core::intra_pred::IntraMode;
+    use rvp9_core::mode_info::BlockMode;
+    use rvp9_core::transforms::TxSize;
+    ModeInfo {
+        block_size: BlockSize::Block8x8,
+        tx_size: TxSize::Tx4x4,
+        skip: false,
+        segment_id: 0,
+        seg_id_predicted: false,
+        mode: BlockMode::Intra {
+            y_mode: IntraMode::Dc,
+            uv_mode: IntraMode::Dc,
+        },
+        bmi: Default::default(),
     }
 }
 
