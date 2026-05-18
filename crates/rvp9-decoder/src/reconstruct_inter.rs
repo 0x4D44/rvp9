@@ -46,6 +46,8 @@ use rvp9_core::block::BlockSize;
 use rvp9_core::entropy::{BoolReader, FrameContext};
 use rvp9_core::entropy::detokenize::DecodeCoefCounts;
 use rvp9_core::frame::{BorderedPlaneRef, Yv12Buffer};
+use rvp9_core::inter::mode_info::{InterModeReadParams, read_inter_block_mode_info};
+use rvp9_core::inter::mv_ref::{BlockBounds, NeighbourLookup, PrevFrameMvRef};
 use rvp9_core::inter::scale::{ScaleFactors, inter_predictor};
 use rvp9_core::inter::filter::{SUBPEL_BITS, SUBPEL_MASK};
 use rvp9_core::mode_info::{BlockMode, ModeInfo, Mv, RefFrame};
@@ -401,6 +403,83 @@ pub fn reconstruct_inter_block(
         }
         let _ = inputs.lossless; // unused (no lossless inter yet)
     }
+}
+
+/// End-to-end per-inter-block decode + reconstruction. Stitches the
+/// libvpx call sequence at `vp9/decoder/vp9_decodeframe.c:455-505`
+/// (the inter arm of `decode_block`) into a single entry point that
+/// reads mode-info from the bool-coder then drives reconstruction.
+///
+/// The eventual inter-frame driver (the analogue of
+/// [`crate::tile::decode_tile_intra`]) wires the per-plane segments,
+/// edges, and neighbour lookups; this helper consolidates the
+/// per-block step.
+///
+/// `mi` must have its non-inter fields (`block_size`, `tx_size`,
+/// `skip`, `segment_id`) populated by the caller before invocation,
+/// and `mi.mode` initialised to a placeholder — `read_inter_block_mode_info`
+/// will fully populate `mi.mode` and `mi.bmi`.
+///
+/// `decode_block` integration (Stage D.2.e): the future
+/// `decode_interframe` driver should call this helper from the inter
+/// branch of `decode_block`. Today there's no live inter-frame driver
+/// (`Decoder::decode_frame` returns
+/// [`crate::DecodeError::Unimplemented`] for `FrameKind::InterFrame`),
+/// so this helper is exercised via unit tests only. When the driver
+/// lands, replacing its `Unimplemented` arm with a call to this
+/// helper is the only wiring change required.
+///
+/// # Panics
+///
+/// - If `read_inter_block_mode_info` populates `mi.mode` with an
+///   intra variant (would indicate a bitstream / context bug).
+/// - Inherits panics from [`reconstruct_inter_block`].
+#[allow(clippy::too_many_arguments)]
+pub fn decode_and_reconstruct_inter_block<N: NeighbourLookup>(
+    reader: &mut BoolReader<'_>,
+    fc: &FrameContext,
+    coef_ctx: &mut TileCoefCtx,
+    params: &InterModeReadParams,
+    neighbours: &N,
+    bounds: &BlockBounds,
+    prev_mv: Option<PrevFrameMvRef>,
+    mi: &mut ModeInfo,
+    mi_row: usize,
+    mi_col: usize,
+    mi_row_in_tile: usize,
+    mi_col_in_tile: usize,
+    mi_row_in_sb: usize,
+    inputs: &InterBlockInputs<'_>,
+    dst_frame: &mut Yv12Buffer,
+) {
+    // 1. Read inter-block mode info (refs, mode, MVs, filter).
+    read_inter_block_mode_info(
+        reader,
+        fc,
+        /* counts = */ None,
+        params,
+        neighbours,
+        mi.block_size,
+        bounds,
+        prev_mv,
+        mi,
+    );
+
+    // 2. Per-block reconstruction.
+    reconstruct_inter_block(
+        reader,
+        fc,
+        /* counts = */ None,
+        coef_ctx,
+        mi,
+        mi_row,
+        mi_col,
+        mi_row_in_tile,
+        mi_col_in_tile,
+        mi_row_in_sb,
+        inputs,
+        dst_frame,
+    );
 }
 
 /// libvpx `round_mv_comp_q4` (`vp9_reconinter.c:61-63`). Rounds the sum
@@ -914,6 +993,140 @@ mod tests {
                 let v = dst_v.data()[(4 + row) * dst_v.stride() + 4 + col];
                 assert_eq!(v, 0x40, "V[{row},{col}] compound avg");
             }
+        }
+    }
+
+    /// D.2.e: end-to-end integration. Drive
+    /// `decode_and_reconstruct_inter_block` against a hand-encoded
+    /// stream that produces a single-ref ZEROMV Block16x16 with
+    /// skip = true. The reconstructed dst region must match the ref
+    /// region (because Mv = 0 + identity scale + skip = direct copy).
+    #[test]
+    fn integration_zeromv_skip_single_ref_block16x16_copies_ref() {
+        use rvp9_core::bitstream::ReferenceMode;
+        use rvp9_core::inter::mv_ref::{BlockBounds, NeighbourLookup, Position, sign_bias_from_header};
+        use rvp9_core::intra_pred::IntraMode;
+        use rvp9_core::mode_info::BlockMode;
+
+        // Empty neighbours — all contexts collapse to frame-edge defaults.
+        struct NoNeighbours;
+        impl NeighbourLookup for NoNeighbours {
+            fn get(&self, _pos: Position) -> Option<&ModeInfo> {
+                None
+            }
+        }
+
+        // 1. Build a frame context + inter params.
+        let fc = fc_flat_eob_inter();
+        let sign_bias = sign_bias_from_header(&[false, false, false]);
+        let (fixed, var) =
+            rvp9_core::inter::mode_info::setup_compound_reference_mode(&sign_bias);
+        let params = InterModeReadParams {
+            allow_high_precision_mv: false,
+            interp_filter: InterpFilter::EightTap,
+            reference_mode: ReferenceMode::Single,
+            comp_fixed_ref: fixed,
+            comp_var_ref: var,
+            sign_bias,
+        };
+
+        // 2. Hand-encode the stream: single-ref LAST + ZEROMV. The
+        //    bitstream prefix (segment_id / skip / tx_size / is_inter)
+        //    is read by `decode_block` (NOT by
+        //    `read_inter_block_mode_info`), so we start the stream at
+        //    the ref-frame bits.
+        let mut buf = vec![0u8; 64];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        // Single-ref single_ref_p1 ctx = 2 (no neighbours), bit = 0 -> LAST.
+        let p_single = fc.single_ref_prob[2][0];
+        w.write(0, p_single);
+        // Inter mode: ctx = 0 (BOTH_PREDICTED from no neighbours).
+        // ZEROMV tree path = bit 0.
+        let p_inter0 = fc.inter_mode_probs[0][0];
+        w.write(0, p_inter0);
+        // Pad and close.
+        for _ in 0..16 {
+            w.write_bit(0);
+        }
+        let size = w.stop_encode().expect("stop_encode");
+        buf.truncate(size);
+
+        // 3. Build a ref frame with a recognisable pattern.
+        let cur_w = 64u32;
+        let cur_h = 64u32;
+        let ref_buf = make_ref(cur_w, cur_h);
+        let mut dst = Yv12Buffer::alloc(
+            cur_w, cur_h, ChromaFormat::Yuv420,
+            BorderUsage::Decoder, ByteAlignment::Legacy,
+        ).unwrap();
+        dst.y_plane_mut().fill(0xCC); // sentinel
+
+        // 4. Skeleton mi — only block_size / tx_size / skip set; the
+        //    inter reader fills in the rest.
+        let mut mi = ModeInfo {
+            block_size: BlockSize::Block16x16,
+            tx_size: TxSize::Tx16x16,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: [BmiInfo::default(); 4],
+        };
+
+        // 5. Drive.
+        let mut reader = BoolReader::new(&buf).expect("init");
+        let mut coef_ctx = TileCoefCtx::new(cur_w as usize / 8);
+        let bounds = BlockBounds::new(
+            /* mi_row */ 0, /* mi_col */ 0,
+            /* mi_rows */ 8, /* mi_cols */ 8,
+            /* bw */ 2, /* bh */ 2,
+        );
+        let inputs = InterBlockInputs {
+            cur_y_width: cur_w,
+            cur_y_height: cur_h,
+            refs: [Some(&ref_buf), None],
+            dequant_per_plane: [(8, 16); 3],
+            lossless: false,
+        };
+
+        decode_and_reconstruct_inter_block(
+            &mut reader,
+            &fc,
+            &mut coef_ctx,
+            &params,
+            &NoNeighbours,
+            &bounds,
+            None,
+            &mut mi,
+            /* mi_row */ 0,
+            /* mi_col */ 0,
+            /* mi_row_in_tile */ 0,
+            /* mi_col_in_tile */ 0,
+            /* mi_row_in_sb */ 0,
+            &inputs,
+            &mut dst,
+        );
+
+        // 6. Confirm mi.mode is Inter with expected values.
+        match mi.mode {
+            BlockMode::Inter { mode, ref_frames, mvs, .. } => {
+                assert_eq!(mode, InterMode::ZeroMv);
+                assert_eq!(ref_frames, [RefFrame::LastFrame, RefFrame::NoRefFrame]);
+                assert_eq!(mvs, [Mv::ZERO, Mv::ZERO]);
+            }
+            _ => panic!("expected Inter mode after decode"),
+        }
+
+        // 7. Reconstructed Y region at (0, 0) equals ref Y region.
+        let dst_y = dst.y_plane();
+        let ref_y = ref_buf.y_plane();
+        for row in 0..16 {
+            let dst_row = &dst_y.data()[row * dst_y.stride()..];
+            let ref_row = &ref_y.data()[row * ref_y.stride()..];
+            assert_eq!(&dst_row[..16], &ref_row[..16], "Y row {row}");
         }
     }
 
