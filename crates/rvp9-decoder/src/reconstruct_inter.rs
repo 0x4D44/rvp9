@@ -147,10 +147,7 @@ pub fn reconstruct_inter_block(
     };
     let _ = mode; // mode not consumed in D.2.a (no per-bmi yet)
 
-    debug_assert!(
-        (mi.block_size as u8) >= (BlockSize::Block8x8 as u8),
-        "D.2.a/b/c does not handle sub-8 inter blocks — landed in D.2.d"
-    );
+    let is_sub8 = (mi.block_size as u8) < (BlockSize::Block8x8 as u8);
 
     // Active references and per-ref scale factors. `is_compound` =>
     // both refs valid (libvpx `has_second_ref`). Single-ref blocks
@@ -192,8 +189,19 @@ pub fn reconstruct_inter_block(
         } else {
             uv_plane_tx_size(bsize, mi.tx_size)
         };
-        let plane_bw_4x4 = plane_bsize.n_4x4_wide() as usize;
-        let plane_bh_4x4 = plane_bsize.n_4x4_high() as usize;
+        // libvpx pd->n4_w / n4_h (vp9_decodeframe.c:796-797). For sub-8
+        // luma the coding-block-level iterations follow the parent's
+        // `(2 >> ss)` extent (luma covers 2×2 4×4 cells; chroma covers
+        // 1×1 under 4:2:0). For ≥8×8 the extent follows the plane_bsize
+        // directly. This mirrors the intra path's pinning in tile.rs.
+        let (plane_bw_4x4, plane_bh_4x4) = if is_sub8 {
+            (2 >> ss_x, 2 >> ss_y)
+        } else {
+            (
+                plane_bsize.n_4x4_wide() as usize,
+                plane_bsize.n_4x4_high() as usize,
+            )
+        };
         let tx_step_4x4 = 1usize << (plane_tx as usize);
 
         // Plane-pixel coord of block's top-left.
@@ -207,6 +215,22 @@ pub fn reconstruct_inter_block(
         // Pixel width / height of the block in this plane.
         let block_w_px = plane_bw_4x4 * 4;
         let block_h_px = plane_bh_4x4 * 4;
+
+        // For sub-8 luma we iterate the four 4×4 bmi sub-blocks; for
+        // sub-8 chroma we collapse all four luma MVs into one averaged
+        // chroma MV (libvpx `average_split_mvs`, `vp9_reconinter.c:112-
+        // 124`, ss_idx == 3). For ≥8×8 (`!is_sub8`) we iterate once
+        // over the full block.
+        let mc_sub_iter_count_w = if is_sub8 && plane == 0 { 2 } else { 1 };
+        let mc_sub_iter_count_h = if is_sub8 && plane == 0 { 2 } else { 1 };
+        let mc_step_px = if is_sub8 && plane == 0 {
+            4
+        } else {
+            block_w_px.max(block_h_px) // unused — single iteration
+        };
+        let _ = mc_step_px;
+        let mc_w_px = if is_sub8 && plane == 0 { 4 } else { block_w_px };
+        let mc_h_px = if is_sub8 && plane == 0 { 4 } else { block_h_px };
 
         // -- Motion compensation -------------------------------------
         //
@@ -226,57 +250,89 @@ pub fn reconstruct_inter_block(
         };
         let dst_stride = dst_plane.stride();
         let dst_slice: &mut [u8] = dst_plane.data_mut();
-        let dst_offset = plane_px_y * dst_stride + plane_px_x;
 
-        for r in 0..num_refs {
-            let ref_buf = inputs.refs[r].expect("ref already validated");
-            let sf = sfs[r].expect("sf already validated");
-            let mv = mvs[r];
+        // Iterate per-bmi for sub-8 luma; once for ≥8×8 / chroma. For
+        // each (y, x) sub-position we run MC over `(mc_w_px, mc_h_px)`
+        // at the matching pixel offset.
+        for sub_y in 0..mc_sub_iter_count_h {
+            for sub_x in 0..mc_sub_iter_count_w {
+                let bmi_idx = sub_y * 2 + sub_x;
+                let sub_px_x = plane_px_x + sub_x * 4;
+                let sub_px_y = plane_px_y + sub_y * 4;
+                let sub_dst_offset = sub_px_y * dst_stride + sub_px_x;
 
-            // Convert Q3 (1/8-pel, luma) to Q4 (1/16-pel, ref-coord).
-            // For chroma without sub-8, the same MV applies but doubled
-            // along each subsampled axis: `mv_q4 = mv * (1 << (1 - ss))`.
-            let mv_q4_row = i32::from(mv.row) * (1i32 << (1 - ss_y as i32));
-            let mv_q4_col = i32::from(mv.col) * (1i32 << (1 - ss_x as i32));
+                for r in 0..num_refs {
+                    let ref_buf = inputs.refs[r].expect("ref already validated");
+                    let sf = sfs[r].expect("sf already validated");
 
-            // Combine plane-pixel origin + Q4 MV into a Q4 sample
-            // position in the reference frame.
-            let total_x_q4 = sf.scaled_x_q4(plane_px_x as i32, mv_q4_col as i16);
-            let total_y_q4 = sf.scaled_y_q4(plane_px_y as i32, mv_q4_row as i16);
+                    // MV selection: luma sub-8 reads bmi[bmi_idx].as_mv[r];
+                    // chroma sub-8 averages all four bmis (libvpx
+                    // `average_split_mvs` for ss_idx == 3); ≥8×8 reads
+                    // `mi->mv[r]` directly.
+                    let mv = if is_sub8 {
+                        if plane == 0 {
+                            mi.bmi[bmi_idx].as_mv[r]
+                        } else {
+                            avg_split_mv_q4_4x4(&mi.bmi, r)
+                        }
+                    } else {
+                        mvs[r]
+                    };
 
-            let int_x = total_x_q4 >> SUBPEL_BITS;
-            let int_y = total_y_q4 >> SUBPEL_BITS;
-            let subpel_x_q4 = total_x_q4 & SUBPEL_MASK;
-            let subpel_y_q4 = total_y_q4 & SUBPEL_MASK;
+                    // Convert Q3 (1/8-pel, luma) to Q4 (1/16-pel,
+                    // ref-coord). Chroma without sub-8 doubles per the
+                    // subsampling axis: `mv_q4 = mv * (1 << (1 - ss))`.
+                    // For sub-8 chroma the averaging in
+                    // `avg_split_mv_q4_4x4` already produces a Q3 value
+                    // expressed at the chroma plane's resolution, so we
+                    // still apply the same `(1 << (1 - ss))` doubling
+                    // (mirrors libvpx's `mv_q4 = mv.row * 1` for
+                    // ss_y == 1 — the average IS the doubled chroma MV).
+                    let mv_q4_row = if is_sub8 && plane > 0 {
+                        i32::from(mv.row)
+                    } else {
+                        i32::from(mv.row) * (1i32 << (1 - ss_y as i32))
+                    };
+                    let mv_q4_col = if is_sub8 && plane > 0 {
+                        i32::from(mv.col)
+                    } else {
+                        i32::from(mv.col) * (1i32 << (1 - ss_x as i32))
+                    };
 
-            let ref_plane: BorderedPlaneRef<'_> = ref_buf.plane_with_border(plane);
-            let src_base = (ref_plane.border_h as i32 + int_y) as usize
-                * ref_plane.stride
-                + (ref_plane.border_w as i32 + int_x) as usize;
-            let src = &ref_plane.data[src_base..];
-            let src_stride = ref_plane.stride;
+                    let total_x_q4 = sf.scaled_x_q4(sub_px_x as i32, mv_q4_col as i16);
+                    let total_y_q4 = sf.scaled_y_q4(sub_px_y as i32, mv_q4_row as i16);
 
-            // Re-borrow the destination slice for this inner ref
-            // iteration. Each `inter_predictor` call takes the slice
-            // mutably; we drop the borrow at end of statement.
-            let dst_for_mc = &mut dst_slice[dst_offset..];
+                    let int_x = total_x_q4 >> SUBPEL_BITS;
+                    let int_y = total_y_q4 >> SUBPEL_BITS;
+                    let subpel_x_q4 = total_x_q4 & SUBPEL_MASK;
+                    let subpel_y_q4 = total_y_q4 & SUBPEL_MASK;
 
-            // ref 0: write prediction; ref 1: average with existing dst.
-            let is_compound_avg = r > 0;
+                    let ref_plane: BorderedPlaneRef<'_> =
+                        ref_buf.plane_with_border(plane);
+                    let src_base = (ref_plane.border_h as i32 + int_y) as usize
+                        * ref_plane.stride
+                        + (ref_plane.border_w as i32 + int_x) as usize;
+                    let src = &ref_plane.data[src_base..];
+                    let src_stride = ref_plane.stride;
 
-            inter_predictor(
-                src,
-                src_stride,
-                dst_for_mc,
-                dst_stride,
-                subpel_x_q4,
-                subpel_y_q4,
-                &sf,
-                interp_filter,
-                block_w_px,
-                block_h_px,
-                is_compound_avg,
-            );
+                    let dst_for_mc = &mut dst_slice[sub_dst_offset..];
+                    let is_compound_avg = r > 0;
+
+                    inter_predictor(
+                        src,
+                        src_stride,
+                        dst_for_mc,
+                        dst_stride,
+                        subpel_x_q4,
+                        subpel_y_q4,
+                        &sf,
+                        interp_filter,
+                        mc_w_px,
+                        mc_h_px,
+                        is_compound_avg,
+                    );
+                }
+            }
         }
 
         // -- Residual decode + IT-add -------------------------------
@@ -344,6 +400,37 @@ pub fn reconstruct_inter_block(
             }
         }
         let _ = inputs.lossless; // unused (no lossless inter yet)
+    }
+}
+
+/// libvpx `round_mv_comp_q4` (`vp9_reconinter.c:61-63`). Rounds the sum
+/// of four Q3 MV components into a Q4 chroma MV component, with the
+/// sign-aware "round to nearest" rule.
+#[inline]
+fn round_mv_comp_q4(value: i32) -> i32 {
+    if value < 0 {
+        (value - 2) / 4
+    } else {
+        (value + 2) / 4
+    }
+}
+
+/// libvpx `mi_mv_pred_q4` (`vp9_reconinter.c:65-75`). For a 4:2:0 chroma
+/// sub-8 block (ss_idx == 3), averages all four bmi MVs for ref `idx`
+/// into a single Q4 chroma MV.
+#[inline]
+fn avg_split_mv_q4_4x4(bmi: &[rvp9_core::mode_info::BmiInfo; 4], idx: usize) -> Mv {
+    let row_sum = i32::from(bmi[0].as_mv[idx].row)
+        + i32::from(bmi[1].as_mv[idx].row)
+        + i32::from(bmi[2].as_mv[idx].row)
+        + i32::from(bmi[3].as_mv[idx].row);
+    let col_sum = i32::from(bmi[0].as_mv[idx].col)
+        + i32::from(bmi[1].as_mv[idx].col)
+        + i32::from(bmi[2].as_mv[idx].col)
+        + i32::from(bmi[3].as_mv[idx].col);
+    Mv {
+        row: round_mv_comp_q4(row_sum) as i16,
+        col: round_mv_comp_q4(col_sum) as i16,
     }
 }
 
@@ -828,6 +915,112 @@ mod tests {
                 assert_eq!(v, 0x40, "V[{row},{col}] compound avg");
             }
         }
+    }
+
+    /// D.2.d: sub-8 inter block (`Block4x4`) with four distinct
+    /// per-bmi MVs. The luma plane runs four 4×4 MC passes — one per
+    /// bmi — and the chroma plane runs ONE pass over a 4×4 region with
+    /// the four MVs averaged. We use Mv = 0 on all bmis so each sub
+    /// region is a copy of the ref. The test also confirms the parent
+    /// `mi.skip = true` path skips residual decode.
+    #[test]
+    fn sub8_block4x4_per_bmi_mc_zero_mvs() {
+        let cur_w = 64u32;
+        let cur_h = 64u32;
+        let ref_buf = make_ref(cur_w, cur_h);
+        let mut dst = Yv12Buffer::alloc(
+            cur_w, cur_h, ChromaFormat::Yuv420,
+            BorderUsage::Decoder, ByteAlignment::Legacy,
+        ).unwrap();
+        dst.y_plane_mut().fill(0x55);
+        dst.u_plane_mut().fill(0x66);
+        dst.v_plane_mut().fill(0x77);
+
+        let fc = fc_flat_eob_inter();
+        let bytes = vec![0u8; 4];
+        let mut reader = BoolReader::new(&bytes).unwrap();
+        let mut coef_ctx = TileCoefCtx::new(cur_w as usize / 8);
+
+        // Sub-8 mi with skip = true (avoid residual path; we exercise
+        // it in the next test).
+        let mut mi = ModeInfo {
+            block_size: BlockSize::Block4x4,
+            tx_size: TxSize::Tx4x4,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Inter {
+                mode: InterMode::NearestMv,
+                ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                mvs: [Mv::ZERO; 2],
+                interp_filter: InterpFilter::EightTap,
+            },
+            bmi: [BmiInfo::default(); 4],
+        };
+        // All four bmis hold Mv = 0.
+        for bmi in &mut mi.bmi {
+            bmi.as_mv = [Mv::ZERO; 2];
+        }
+
+        let inputs = InterBlockInputs {
+            cur_y_width: cur_w,
+            cur_y_height: cur_h,
+            refs: [Some(&ref_buf), None],
+            dequant_per_plane: [(8, 16); 3],
+            lossless: false,
+        };
+
+        reconstruct_inter_block(
+            &mut reader, &fc, None, &mut coef_ctx, &mi,
+            /* mi_row */ 1, /* mi_col */ 1,
+            1, 1, 1, &inputs, &mut dst,
+        );
+
+        // Y region at pixel (8, 8) is 8×8 (4 bmis * 4×4 each).
+        let dst_y = dst.y_plane();
+        let ref_y = ref_buf.y_plane();
+        for row in 0..8 {
+            let dst_row = &dst_y.data()[(8 + row) * dst_y.stride() + 8..];
+            let ref_row = &ref_y.data()[(8 + row) * ref_y.stride() + 8..];
+            assert_eq!(&dst_row[..8], &ref_row[..8], "Y row {row}");
+        }
+
+        // Chroma U at (4, 4) — 4×4 region.
+        let dst_u = dst.u_plane();
+        let ref_u = ref_buf.u_plane();
+        for row in 0..4 {
+            let dst_row = &dst_u.data()[(4 + row) * dst_u.stride() + 4..];
+            let ref_row = &ref_u.data()[(4 + row) * ref_u.stride() + 4..];
+            assert_eq!(&dst_row[..4], &ref_row[..4], "U row {row}");
+        }
+    }
+
+    /// D.2.d helper unit: `round_mv_comp_q4` matches libvpx's
+    /// sign-aware "round to nearest" rule.
+    #[test]
+    fn round_mv_comp_q4_matches_libvpx() {
+        assert_eq!(super::round_mv_comp_q4(0), 0);
+        assert_eq!(super::round_mv_comp_q4(2), 1);
+        assert_eq!(super::round_mv_comp_q4(4), 1);
+        assert_eq!(super::round_mv_comp_q4(8), 2);
+        assert_eq!(super::round_mv_comp_q4(-2), -1);
+        assert_eq!(super::round_mv_comp_q4(-4), -1);
+        assert_eq!(super::round_mv_comp_q4(-8), -2);
+    }
+
+    /// D.2.d helper: `avg_split_mv_q4_4x4` averages 4 Q3 MVs to one Q4 MV.
+    #[test]
+    fn avg_split_mv_q4_matches_libvpx() {
+        let bmi = [
+            BmiInfo { as_mode: 0, as_mv: [Mv { row: 8, col: -4 }, Mv::ZERO] },
+            BmiInfo { as_mode: 0, as_mv: [Mv { row: 4, col: -8 }, Mv::ZERO] },
+            BmiInfo { as_mode: 0, as_mv: [Mv { row: 4, col: -4 }, Mv::ZERO] },
+            BmiInfo { as_mode: 0, as_mv: [Mv { row: 8, col: -8 }, Mv::ZERO] },
+        ];
+        // row_sum = 24, col_sum = -24. round((+ or - 2)) / 4.
+        // row: 24 -> (24+2)/4 = 6. col: -24 -> (-24-2)/4 = -6.
+        let mv = super::avg_split_mv_q4_4x4(&bmi, 0);
+        assert_eq!(mv, Mv { row: 6, col: -6 });
     }
 
     /// D.2.a coverage: non-zero MV with sub-pel offset. With identity
