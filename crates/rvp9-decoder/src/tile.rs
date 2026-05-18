@@ -1243,6 +1243,8 @@ pub fn decode_tile_inter(
     mut mv_counts: Option<&mut rvp9_core::entropy::mv_probs::NmvCounts>,
     mut coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
     mut mode_counts: Option<&mut rvp9_core::entropy::adapt::FrameCounts>,
+    prev_mv_grid: Option<&[rvp9_core::inter::mv_ref::PrevFrameMvRef]>,
+    cur_mv_grid: &mut [rvp9_core::inter::mv_ref::PrevFrameMvRef],
 ) -> Result<(), TileDecodeError> {
     let mut reader =
         BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;
@@ -1276,6 +1278,8 @@ pub fn decode_tile_inter(
                 mv_counts.as_deref_mut(),
                 coef_counts.as_deref_mut(),
                 mode_counts.as_deref_mut(),
+                prev_mv_grid,
+                cur_mv_grid,
             );
             mi_col += MI_BLOCK_SIZE;
         }
@@ -1306,6 +1310,8 @@ fn decode_inter_partition(
     mut mv_counts: Option<&mut rvp9_core::entropy::mv_probs::NmvCounts>,
     mut coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
     mut mode_counts: Option<&mut rvp9_core::entropy::adapt::FrameCounts>,
+    prev_mv_grid: Option<&[rvp9_core::inter::mv_ref::PrevFrameMvRef]>,
+    cur_mv_grid: &mut [rvp9_core::inter::mv_ref::PrevFrameMvRef],
 ) {
     if mi_row >= params.base.mi_rows || mi_col >= params.base.mi_cols {
         return;
@@ -1360,6 +1366,7 @@ fn decode_inter_partition(
             mi_row, mi_col, sub,
             mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
             mode_counts.as_deref_mut(),
+            prev_mv_grid, cur_mv_grid,
         );
     } else {
         match partition {
@@ -1369,6 +1376,7 @@ fn decode_inter_partition(
                     mi_row, mi_col, sub,
                     mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                     mode_counts.as_deref_mut(),
+                    prev_mv_grid, cur_mv_grid,
                 );
             }
             PartitionType::Horz => {
@@ -1377,6 +1385,7 @@ fn decode_inter_partition(
                     mi_row, mi_col, sub,
                     mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                     mode_counts.as_deref_mut(),
+                    prev_mv_grid, cur_mv_grid,
                 );
                 if has_rows {
                     decode_inter_block(
@@ -1384,6 +1393,7 @@ fn decode_inter_partition(
                         mi_row + hbs, mi_col, sub,
                         mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                         mode_counts.as_deref_mut(),
+                        prev_mv_grid, cur_mv_grid,
                     );
                 }
             }
@@ -1393,6 +1403,7 @@ fn decode_inter_partition(
                     mi_row, mi_col, sub,
                     mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                     mode_counts.as_deref_mut(),
+                    prev_mv_grid, cur_mv_grid,
                 );
                 if has_cols {
                     decode_inter_block(
@@ -1400,6 +1411,7 @@ fn decode_inter_partition(
                         mi_row, mi_col + hbs, sub,
                         mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                         mode_counts.as_deref_mut(),
+                        prev_mv_grid, cur_mv_grid,
                     );
                 }
             }
@@ -1409,23 +1421,27 @@ fn decode_inter_partition(
                     dst_frame, mi_row, mi_col, sub, n8x8_l2,
                     mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                     mode_counts.as_deref_mut(),
+                    prev_mv_grid, cur_mv_grid,
                 );
                 decode_inter_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row, mi_col + hbs, sub, n8x8_l2,
                     mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                     mode_counts.as_deref_mut(),
+                    prev_mv_grid, cur_mv_grid,
                 );
                 decode_inter_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row + hbs, mi_col, sub, n8x8_l2,
                     mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
                     mode_counts.as_deref_mut(),
+                    prev_mv_grid, cur_mv_grid,
                 );
                 decode_inter_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row + hbs, mi_col + hbs, sub, n8x8_l2,
                     mv_counts, coef_counts, mode_counts,
+                    prev_mv_grid, cur_mv_grid,
                 );
             }
         }
@@ -1467,6 +1483,8 @@ fn decode_inter_block(
     mv_counts: Option<&mut rvp9_core::entropy::mv_probs::NmvCounts>,
     coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
     mut mode_counts: Option<&mut rvp9_core::entropy::adapt::FrameCounts>,
+    prev_mv_grid: Option<&[rvp9_core::inter::mv_ref::PrevFrameMvRef]>,
+    cur_mv_grid: &mut [rvp9_core::inter::mv_ref::PrevFrameMvRef],
 ) {
     let mi_row_in_tile = mi_row - bounds.mi_row_start;
     let mi_col_in_tile = mi_col - bounds.mi_col_start;
@@ -1562,6 +1580,20 @@ fn decode_inter_block(
         //    MVs / interp_filter) and mi.bmi. `mv_counts` (when Some)
         //    accumulates the NEW-MV component reads for backward
         //    adaptation (`vp9_adapt_mv_probs`).
+        //
+        // D.7: when `use_prev_frame_mvs` fires upstream, pull the
+        // collocated `PrevFrameMvRef` from the LAST_FRAME ref slot's
+        // captured grid and pass it to `read_inter_block_mode_info` so
+        // `find_mv_refs` can salvage prev-frame MV candidates. Mirrors
+        // libvpx `vp9_mvref_common.c:25-28` —
+        //   prev_frame_mvs = cm->use_prev_frame_mvs
+        //     ? cm->prev_frame->mvs + mi_row * cm->mi_cols + mi_col
+        //     : NULL;
+        // The libvpx pointer points at a single MV_REF (a 2-tuple of
+        // `(mv[2], ref_frame[2])`); we materialise that as a
+        // `PrevFrameMvRef` value by indexing the row-major grid.
+        let prev_mv = prev_mv_grid
+            .and_then(|g| g.get(mi_row * params.base.mi_cols + mi_col).copied());
         {
             let lookup = TileNeighbourLookup::new(
                 decode_ctx,
@@ -1577,11 +1609,21 @@ fn decode_inter_block(
                 &lookup,
                 bsize,
                 &bounds_block,
-                None,
+                prev_mv,
                 &mut mi,
             );
         }
 
+        if std::env::var("RVP9_TRACE_INTER_MV").is_ok()
+            && let BlockMode::Inter { mode, ref_frames, mvs, .. } = mi.mode
+        {
+            eprintln!(
+                "[rvp9_inter] mi=({mi_row},{mi_col}) bsize={:?} mode={:?} ref=[{:?},{:?}] mvs=[({},{}),({},{})] prev_mv={:?}",
+                bsize, mode, ref_frames[0], ref_frames[1],
+                mvs[0].row, mvs[0].col, mvs[1].row, mvs[1].col,
+                prev_mv,
+            );
+        }
         // 2. Resolve per-block refs against params.refs (LAST=0,
         //    GOLDEN=1, ALTREF=2) and the decoded mi.ref_frames pair.
         let block_refs = match mi.mode {
@@ -1629,6 +1671,27 @@ fn decode_inter_block(
         }
 
         decode_ctx.write_block(mi_row_in_tile, mi_row_in_sb, mi_col_in_tile, x_mis, y_mis, &mi);
+
+        // D.7 — write the decoded `(mv[2], ref_frame[2])` pair into the
+        // current frame's MV grid, replicating across every (r, c) in
+        // [mi_row..mi_row+y_mis][mi_col..mi_col+x_mis]. Mirrors libvpx
+        // `vp9_decodemv.c:835-842` — the loop that splats the just-
+        // decoded MV/ref pair across the block's covered mi cells.
+        if let BlockMode::Inter { ref_frames, mvs, .. } = mi.mode {
+            let entry = rvp9_core::inter::mv_ref::PrevFrameMvRef {
+                mvs,
+                ref_frames,
+            };
+            write_mv_grid_block(
+                cur_mv_grid,
+                params.base.mi_cols,
+                mi_row,
+                mi_col,
+                x_mis,
+                y_mis,
+                entry,
+            );
+        }
     } else {
         // Intra-in-inter-frame path (D.4). libvpx
         // `read_intra_block_mode_info` (`vp9_decodemv.c:354-387`) reads
@@ -1650,6 +1713,28 @@ fn decode_inter_block(
             bmi,
         };
         decode_ctx.write_block(mi_row_in_tile, mi_row_in_sb, mi_col_in_tile, x_mis, y_mis, &mi);
+
+        // D.7 — intra-in-inter blocks write `(0, IntraFrame)` to the
+        // MV grid so the next frame's `find_mv_refs` salvage pass
+        // treats this block as intra (no MV candidate). Mirrors
+        // libvpx's same splat path — `mi->ref_frame[0] = INTRA_FRAME`
+        // and `mi->mv = {0}` for intra blocks.
+        let intra_entry = rvp9_core::inter::mv_ref::PrevFrameMvRef {
+            mvs: [rvp9_core::mode_info::Mv::ZERO; 2],
+            ref_frames: [
+                rvp9_core::mode_info::RefFrame::IntraFrame,
+                rvp9_core::mode_info::RefFrame::NoRefFrame,
+            ],
+        };
+        write_mv_grid_block(
+            cur_mv_grid,
+            params.base.mi_cols,
+            mi_row,
+            mi_col,
+            x_mis,
+            y_mis,
+            intra_entry,
+        );
 
         let have_above_block = above.is_some();
         let have_left_block = left.is_some();
@@ -1679,6 +1764,32 @@ fn decode_inter_block(
             params.base.lossless,
             coef_counts,
         );
+    }
+}
+
+/// Splat a single `PrevFrameMvRef` entry across every `(r, c)` cell
+/// in the `[mi_row..mi_row+y_mis][mi_col..mi_col+x_mis]` rectangle of
+/// the frame-sized MV grid. Mirrors libvpx's
+/// `vp9_decodemv.c:835-842` write loop. Out-of-bounds cells are
+/// silently skipped (frame-edge clamp).
+fn write_mv_grid_block(
+    grid: &mut [rvp9_core::inter::mv_ref::PrevFrameMvRef],
+    mi_cols: usize,
+    mi_row: usize,
+    mi_col: usize,
+    x_mis: usize,
+    y_mis: usize,
+    entry: rvp9_core::inter::mv_ref::PrevFrameMvRef,
+) {
+    for r in 0..y_mis {
+        let row = mi_row + r;
+        for c in 0..x_mis {
+            let col = mi_col + c;
+            let idx = row * mi_cols + col;
+            if let Some(slot) = grid.get_mut(idx) {
+                *slot = entry;
+            }
+        }
     }
 }
 

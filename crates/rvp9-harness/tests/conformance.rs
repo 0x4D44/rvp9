@@ -130,19 +130,16 @@ fn conformance_runner_walks_all_vectors() {
     // == 0`, but while we iterate on the mismatched keyframes the
     // ratchet keeps regression signal visible: lowering `MAX_MISMATCHES`
     // as we fix bugs, raising `MIN_PASSES` as we light up frames.
-    const MIN_PASSES: usize = 6;
+    const MIN_PASSES: usize = 8;
+    // D.7 (2026-05-18): inter-frame cascade work (mv_ref + decoder
+    // ref-pool / tile decode tweaks) lights up 2 additional frames.
+    // Conformance moves from 6/155/40 → 8/153/40.
     // M.15 (2026-05-18): added libvpx 4x4 specializations for
-    // D45 / D63 / D207 intra-pred. `intra_pred_no_4x4(d{45,63,207})` in
-    // libvpx confirms the generic kernels are NOT used for bs == 4 —
-    // the spec walks differ at the bottom-right boundary
-    // (`DST(3, 0) = AVG3(D, E, F)` vs generic's `above_right = D`).
-    // Conformance moves from 3/158/40 → 6/155/40.
-    // D.5 (2026-05-18): `extend_mc_border` scratch-buffer fallback
-    // lands alongside M.11/M.13 intra-pred fixes; conformance moves
-    // from 2/159/40 → 3/158/40. The ratchet retains the inter-frame
-    // mismatch count as headroom for the cascade-bug work in M.X / D.4.
+    // D45 / D63 / D207 intra-pred. Conformance: 3/158/40 → 6/155/40.
+    // D.5 (2026-05-18): `extend_mc_border` scratch-buffer fallback.
+    // Conformance: 2/159/40 → 3/158/40.
     // Pre-D.3.a baseline: 1/9/191.
-    const MAX_MISMATCHES: usize = 155;
+    const MAX_MISMATCHES: usize = 153;
     assert!(
         total_passed >= MIN_PASSES,
         "regression: expected at least {MIN_PASSES} passed, got {total_passed}",

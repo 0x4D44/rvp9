@@ -151,6 +151,35 @@ pub struct Decoder {
     /// `parse_packet` blocks inter-frame headers from being acted on
     /// before a keyframe (libvpx `pbi->need_resync`).
     have_resync: bool,
+    /// Per-ref-slot collocated-MV grid. Parallel to
+    /// [`Decoder::ref_frame_map`]; `mv_grids[i]` holds the MV grid that
+    /// was written by the frame currently bound at ref slot `i`. Used
+    /// to populate the `prev_mv` parameter of
+    /// [`read_inter_block_mode_info`](rvp9_core::inter::mode_info::read_inter_block_mode_info)
+    /// when `use_prev_frame_mvs` fires.
+    ///
+    /// Mirrors libvpx `cm->cur_frame->mvs` + the
+    /// `cm->prev_frame = cm->cur_frame` swap that happens after each
+    /// frame finishes decoding (`vp9_decoder.c:478`). We store one grid
+    /// per ref slot rather than a single "prev_frame" pointer because
+    /// the libvpx model swaps before `refresh_frame_flags` is applied,
+    /// so the prev frame is just whatever was at LAST_FRAME's slot
+    /// last cycle.
+    mv_grids: [Option<std::sync::Arc<Vec<rvp9_core::inter::mv_ref::PrevFrameMvRef>>>;
+        rvp9_core::bitstream::REF_FRAMES],
+    /// Width / height of the most recently decoded frame. Used by
+    /// `decode_inter_frame` to compute `use_prev_frame_mvs` per libvpx
+    /// `vp9_decodeframe.c:2983`. `None` before any frame decodes.
+    last_frame_size: Option<(u32, u32)>,
+    /// `true` iff the most recently decoded frame was `intra_only`
+    /// (libvpx `cm->last_intra_only`). Bypasses the prev-frame-MV
+    /// salvage for the frame after an intra-only.
+    last_intra_only: bool,
+    /// `true` iff the most recently decoded frame was a shown frame
+    /// (libvpx `cm->last_show_frame`). Always true for keyframes (which
+    /// must be shown) and most inter frames; false for ALTREF /
+    /// non-shown frames.
+    last_show_frame: bool,
 }
 
 impl Default for Decoder {
@@ -185,6 +214,10 @@ impl Decoder {
             coef_counts: rvp9_core::entropy::adapt::CoefCountsBank::default(),
             last_frame_was_key: false,
             mode_counts: rvp9_core::entropy::adapt::FrameCounts::default(),
+            mv_grids: Default::default(),
+            last_frame_size: None,
+            last_intra_only: false,
+            last_show_frame: false,
         }
     }
 
@@ -719,9 +752,23 @@ impl Decoder {
         for slot in &mut self.ref_frame_map {
             *slot = Some(frame_buf.clone());
         }
+        // Keyframes don't populate the MV grid — libvpx never reads
+        // `cm->cur_frame->mvs` for intra frames in `vp9_read_mode_info`
+        // (the `frame_is_intra_only` early-return at
+        // `vp9_decodemv.c:822`). Clear every ref-slot MV grid so the
+        // first inter frame after this keyframe finds no salvageable
+        // collocated MVs and falls through to the default zero-init
+        // (matching libvpx `use_prev_frame_mvs == false` for
+        // `cm->last_frame_type == KEY_FRAME`).
+        for slot in &mut self.mv_grids {
+            *slot = None;
+        }
 
         self.have_resync = false;
         self.last_frame_was_key = true;
+        self.last_frame_size = Some((frame.header.width, frame.header.height));
+        self.last_intra_only = false; // keyframes are not intra-only
+        self.last_show_frame = frame.header.show_frame;
         Ok(frame_buf)
     }
 
@@ -775,6 +822,22 @@ impl Decoder {
             ),
             _ => return Err(DecodeError::WrongFrameKind),
         };
+
+        if std::env::var("RVP9_TRACE_INTER_MV").is_ok() {
+            eprintln!(
+                "[rvp9_inter_frame] indices={:?} sign_biases={:?} refresh=0x{:02x} last_key={} last_size={:?}",
+                ref_frame_indices, ref_frame_sign_biases, refresh_frame_flags,
+                self.last_frame_was_key, self.last_frame_size,
+            );
+            for i in 0..rvp9_core::bitstream::REF_FRAMES {
+                let row0: Option<Vec<u8>> = self.ref_frame_map[i].as_ref().map(|b| {
+                    let yp = b.y_plane();
+                    let stride = yp.stride();
+                    yp.data()[..stride.min(8)].to_vec()
+                });
+                eprintln!("  ref_frame_map[{i}] row0={:?}", row0);
+            }
+        }
 
         // Lossless inter not yet wired (mirrors keyframe gating).
         if tail.quantization.is_lossless() {
@@ -924,6 +987,49 @@ impl Decoder {
         self.mv_counts = rvp9_core::entropy::mv_probs::NmvCounts::default();
         self.coef_counts = rvp9_core::entropy::adapt::CoefCountsBank::default();
         self.mode_counts = rvp9_core::entropy::adapt::FrameCounts::default();
+
+        // D.7 — compute `use_prev_frame_mvs` per libvpx
+        // `vp9_decodeframe.c:2983-2986`:
+        //   !error_resilient && width == last_width && height ==
+        //   last_height && !last_intra_only && last_show_frame &&
+        //   last_frame_type != KEY_FRAME.
+        //
+        // If the gate fires, look up the LAST_FRAME ref slot's MV grid
+        // and pass it to the tile decoder so `find_mv_refs` can salvage
+        // collocated MV candidates. Otherwise pass `None` (matching
+        // pre-D.7 behaviour).
+        let use_prev_frame_mvs = !frame.header.error_resilient
+            && self
+                .last_frame_size
+                .map(|(w, h)| w == frame.header.width && h == frame.header.height)
+                .unwrap_or(false)
+            && !self.last_intra_only
+            && self.last_show_frame
+            && !self.last_frame_was_key;
+        let prev_mv_grid: Option<&[rvp9_core::inter::mv_ref::PrevFrameMvRef]> =
+            if use_prev_frame_mvs {
+                // libvpx pulls `cm->prev_frame` which is the just-
+                // decoded frame's buffer, swapped from `cm->cur_frame`.
+                // For our model that's whichever frame the last cycle
+                // ended up storing — equivalent to the LAST_FRAME ref
+                // slot's grid (slot index = ref_frame_indices[0]).
+                let last_slot = ref_frame_indices[0] as usize;
+                self.mv_grids
+                    .get(last_slot)
+                    .and_then(|s| s.as_ref())
+                    .map(|g| g.as_slice())
+            } else {
+                None
+            };
+        // Verify the prev grid is correctly sized for this frame.
+        let prev_mv_grid = prev_mv_grid.filter(|g| g.len() >= mi_rows * mi_cols);
+        // Allocate fresh current-frame MV grid (zero-init = all
+        // `(NoRefFrame, NoRefFrame)` entries with zero MVs).
+        let mut cur_mv_grid = vec![
+            rvp9_core::inter::mv_ref::PrevFrameMvRef::default();
+            mi_rows * mi_cols
+        ];
+
         let fc_idx = tail.frame_context_idx as usize;
         let bounds = tile_bounds(&tail.tile_info, mi_cols, mi_rows, 0, 0);
         {
@@ -937,6 +1043,8 @@ impl Decoder {
                 Some(&mut self.mv_counts),
                 Some(&mut self.coef_counts),
                 Some(&mut self.mode_counts),
+                prev_mv_grid,
+                &mut cur_mv_grid,
             )
             .map_err(DecodeError::TileDecode)?;
         }
@@ -1008,19 +1116,33 @@ impl Decoder {
         extend_frame_borders(&mut yv12);
 
         let frame_buf: FrameBuf = std::sync::Arc::new(yv12);
+        let cur_mv_grid_arc: std::sync::Arc<
+            Vec<rvp9_core::inter::mv_ref::PrevFrameMvRef>,
+        > = std::sync::Arc::new(cur_mv_grid);
 
         // 2. Update `ref_frame_map` per `refresh_frame_flags` mask
         //    (libvpx `vp9_decodeframe.c:2914` — for each bit `i` set in
         //    the mask, `cm->ref_frame_map[i] = cm->new_fb_idx`). We
         //    splat the freshly-decoded FrameBuf into every slot the
-        //    mask selects.
-        for (i, slot) in self.ref_frame_map.iter_mut().enumerate() {
+        //    mask selects. The parallel `mv_grids` array gets the same
+        //    splat so the next inter frame can salvage collocated MVs
+        //    via `use_prev_frame_mvs`.
+        for (i, (slot, mv_slot)) in self
+            .ref_frame_map
+            .iter_mut()
+            .zip(self.mv_grids.iter_mut())
+            .enumerate()
+        {
             if (refresh_frame_flags >> i) & 1 != 0 {
                 *slot = Some(frame_buf.clone());
+                *mv_slot = Some(cur_mv_grid_arc.clone());
             }
         }
 
         self.last_frame_was_key = false;
+        self.last_frame_size = Some((frame.header.width, frame.header.height));
+        self.last_intra_only = false;
+        self.last_show_frame = frame.header.show_frame;
         Ok(frame_buf)
     }
 

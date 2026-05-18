@@ -652,6 +652,21 @@ pub struct PrevFrameMvRef {
     pub ref_frames: [RefFrame; 2],
 }
 
+impl Default for PrevFrameMvRef {
+    /// Zero-init form used by callers that pre-allocate a frame-sized
+    /// grid before the per-block writes. Matches libvpx's
+    /// `vpx_calloc(...)` of `MV_REF` arrays (`vp9_decodeframe.c:1472`)
+    /// — all MVs zero, both ref slots set to `NO_REF_FRAME` so the
+    /// `dec_find_mv_refs` "salvage from prev frame" passes treat
+    /// unwritten cells as non-candidates.
+    fn default() -> Self {
+        Self {
+            mvs: [Mv::ZERO; 2],
+            ref_frames: [RefFrame::NoRefFrame; 2],
+        }
+    }
+}
+
 /// Public parent-block API. Calls [`dec_find_mv_refs`] with
 /// `block = -1`. Use this from the parent (≥8×8) inter-mode decoder.
 #[allow(clippy::too_many_arguments)]
