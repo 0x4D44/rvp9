@@ -24,6 +24,7 @@
 //!   adaptation, not the bool codec itself; documented here for the
 //!   record.
 
+pub mod adapt;
 pub mod bool_reader;
 pub mod bool_writer;
 pub mod coef_probs;
@@ -36,6 +37,11 @@ pub mod mv_probs;
 pub mod pareto;
 pub mod tables;
 
+pub use adapt::{
+    CoefCountsBank, FrameCounts, MODE_MV_COUNT_SAT, TX_SIZE_CONTEXTS, TxCounts, adapt_coef_probs,
+    adapt_mode_probs, adapt_mv_probs, coef_adapt_params, get_binary_prob, get_prob, merge_probs,
+    mode_mv_merge_probs, tree_merge_probs, weighted_prob,
+};
 pub use bool_reader::{BoolReader, BoolReaderSnapshot};
 pub use bool_writer::BoolWriter;
 pub use detokenize::{
