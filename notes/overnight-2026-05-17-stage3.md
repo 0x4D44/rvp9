@@ -143,4 +143,104 @@ Arthur triages all `WEDGED` and `WEDGED-BLOCKED` entries on wake.
   - **Bonus drive-by:** doc-comments on `col_scan_4x4()` and `row_scan_4x4()` in `scans.rs:137-156` are swapped (dispatch behaviour correct). Lead can fix this drive-by later.
 - **M.2 dispatched** — bisect via hand-traced unit tests: validate decode_coefs with col_scan; then validate iht4x4 on synthetic input; then localize on the actual failing case. Background.
 
+## D.14 returned — q63 keyframe cursor drift is CUMULATIVE per-SB (NEGATIVE-with-instrumentation)
+
+- **Target:** `vp90-2-00-quantizer-63.webm` frame 1 — 352x288 keyframe,
+  876-byte tile buffer, no segmentation, no tile split. One of the four
+  failing keyframes per M.17/M.18.
+- **Approach:** added `RVP9_TRACE_KFSB=1` cursor-state checkpoint in
+  `decode_tile_intra` that logs `(range, value, count, pos)` before
+  every SB's `decode_partition`. Ran on q63 f1 and observed bool-reader
+  byte position per SB.
+- **Smoking-gun finding:** the bool-reader is **fully exhausted by
+  mi=(16, 40)** (= SB(row=2, col=5), the rightmost SB of the 3rd SB
+  row). At that point `pos=876` (= tile_data.len()) and `value=0`,
+  `count=LOTS_OF_BITS` — the in-range end-of-stream state. Every SB
+  thereafter (rows 2..4 cols 0..5) starts at pos=876 → all subsequent
+  decode_coefs reads return 0 → DC-only-no-residual reconstruction →
+  the constant-block-of-4 pre-LF pattern at row 128+ (mi_col≥40) seen
+  in `dump_frame_diff RVP9_DISABLE_LF=1` cols 320..351.
+- **Cursor drift is CUMULATIVE, not localized.** Per-SB byte consumption
+  pattern (cumulative pos at SB-entry):
+  ```
+  SB row 0: 8 → 78 → 134 → 204 → 274 → 337 → 372  (avg 60 B/SB)
+  SB row 1: 372 → 428 → 477 → 526 → 582 → 617 → 645  (avg 49 B/SB)
+  SB row 2: 645 → 666 → 687 → 708 → 757 → 876 (EOS)  (last SB ate 119 B)
+  ```
+  Total budget: 876 B / 30 SBs = 29 B/SB. We're consuming 60 B/SB in
+  row 0 — **double the available budget**. This is a per-SB drift, not
+  a single-block bug.
+- **Hypothesis confirmed by passing-keyframe characterisation.** The
+  two passing keyframes (`vp90-2-02-size-08x08`, `vp90-2-02-size-32x32`)
+  are **trivially small** — single SB each. **Cursor drift cannot
+  manifest within a single SB (no cumulative effect).** Every failing
+  keyframe (q63, sharpness-1, sharpness-7, deltaq, resize, three tile
+  vectors) is 352x288 (or 1920x1080 for tiles) — multi-SB. **This
+  pins the bug class to a per-SB cumulative consumer** (something
+  inside `decode_block`/`reconstruct_intra_planes` that reads more bits
+  than libvpx for typical Q63 high-quantizer skip-heavy blocks).
+- **Top suspects (post-M.16/M.17/M.18 narrowing — kernels + decode_coefs
+  cleared, so the over-consumption is in the syntax-element reads or
+  the per-block token decode invocation pattern):**
+  1. **Skip path over-consumption.** Q63 has very high quantizer → most
+     blocks have `skip=1` → no token reads. But our `decode_block`
+     ALWAYS calls `reset_skip_context` then iterates planes; if
+     `mi.skip` is true we skip the `reconstruct_intra_block`
+     (token-reading) call but still run `intra_predict`. The skip
+     short-circuit looks correct (lines 1008-1016 in
+     `reconstruct.rs`). Worth verifying: is `mi.skip` being read
+     correctly? At high Q the bitstream is dominated by skip-bit
+     reads, so a wrong context (`skip_ctx`) or wrong `skip_probs`
+     entry would systematically over-consume.
+  2. **`get_tx_size_context` neighbour disagreement.** Our gate
+     `if max_tx >= TxSize::Tx8x8` is equivalent to libvpx's
+     `if bsize >= BLOCK_8X8`, but the per-neighbour `(tx_size, skip)`
+     pair fed in might differ in a frame-edge case. For Block8x8
+     blocks (very common at high Q) `max_tx = Tx8x8` → tx_ctx is read.
+     If `above_tx_pair`/`left_tx_pair` disagree with libvpx, the
+     `tx_probs[max_tx][ctx]` row diverges, the wrong tree-walk
+     consumes the wrong bits.
+  3. **Coef-context iteration when `bsize < BLOCK_8X8`** (the per-bmi
+     2x2 sub-block walk at lines 886-893 of `reconstruct.rs`). Our
+     `plane_bw_4x4 = (2 >> ss_x)` matches libvpx's `pd->n4_w` for
+     sub-8 luma, but the chroma `plane_bw_4x4` for sub-8 might not.
+     If Y reads 4 sub-blocks but UV reads 1 or 2 (instead of 1), the
+     decode_block_tokens call count diverges.
+  4. **`uv_mode` read ordering.** Our code reads `y_mode` then
+     `uv_mode` (matches libvpx). But the prob row used —
+     `VP9_KF_UV_MODE_PROB[y_mode as usize]` — depends on `y_mode`
+     numerically. If our `IntraMode::from_u8` ordering differs from
+     libvpx's `PREDICTION_MODE` enum, the prob row is wrong.
+- **No fix committed.** D.14 produced one diagnostic deliverable:
+  - `crates/rvp9-decoder/src/tile.rs` — `RVP9_TRACE_KFSB=1` env-gated
+    per-SB bool-cursor checkpoint trace in `decode_tile_intra`.
+    Reusable for any future keyframe cursor-drift investigation (and
+    needed by the next agent to compare against a libvpx-side per-SB
+    dump). Output format:
+    ```
+    RVP9_DBG kfsb tile_data.len=876 bounds=mi_row[0..36] mi_col[0..44]
+    RVP9_DBG kfsb mi=(0,0) (range=128, value=0x79..., count=56, pos=8)
+    RVP9_DBG kfsb mi=(0,8) ...
+    ```
+- **Conformance unchanged:** 22 / 169 / 10 / 201. Tests + clippy clean.
+- **Recommendation for D.15:**
+  1. Hack a libvpx debug build to dump `(range, value, count, buffer_pos)`
+     at the entry to `decode_partition` in `vp9_decodeframe.c` for
+     every SB on q63 f1. Diff against our `RVP9_TRACE_KFSB=1` output.
+     **First divergent SB = bug origin.**
+  2. Inside that SB, bisect by adding bool-reader register dumps at
+     finer-grained intervals — at the entry to `decode_block`
+     (mode-info read), then after each leaf read (segment_id, skip,
+     tx_size, y_mode, uv_mode). The smallest-magnitude divergence will
+     point at the specific syntax element being read incorrectly.
+  3. Prioritize suspects (1) and (2) above — q63 is dominated by skip=1
+     blocks at the maximum quantizer, so the skip + tx_size reads are
+     the highest-bandwidth syntax elements in this bitstream.
+  4. Note `dump_frame_diff` first-divergence pixel was at
+     (col=320, row=127) — but that's the POST-LF effect of pre-LF
+     SB(2, 5) being decoded with EOS-cursor (constant blocks). The
+     ACTUAL drift starts at SB(0, 0) (60 B vs ~29 B budget). Don't
+     waste time drilling on (320, 127) — the cursor was already
+     wrong many SBs earlier.
+
 ---

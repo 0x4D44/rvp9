@@ -355,6 +355,19 @@ pub fn decode_tile_intra(
     let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
     let mut part_ctx = PartitionCtx::new(tile_mi_cols);
 
+    // D.14 cursor-state instrumentation for keyframe SB walk. Gated by
+    // `RVP9_TRACE_KFSB=1`; logs `(range, value, count, pos)` before
+    // every SB's `decode_partition` so a libvpx-side dump at the same
+    // checkpoint can localize cursor drift to a specific SB.
+    let trace_kfsb = std::env::var("RVP9_TRACE_KFSB").is_ok_and(|v| v == "1");
+    if trace_kfsb {
+        eprintln!(
+            "RVP9_DBG kfsb tile_data.len={} bounds=mi_row[{}..{}] mi_col[{}..{}]",
+            tile_data.len(), bounds.mi_row_start, bounds.mi_row_end,
+            bounds.mi_col_start, bounds.mi_col_end,
+        );
+    }
+
     let mut mi_row = bounds.mi_row_start;
     while mi_row < bounds.mi_row_end {
         // Reset per-SB-row state (mirrors libvpx
@@ -365,6 +378,12 @@ pub fn decode_tile_intra(
 
         let mut mi_col = bounds.mi_col_start;
         while mi_col < bounds.mi_col_end {
+            if trace_kfsb {
+                let (range, value, count, pos) = reader.cursor_state();
+                eprintln!(
+                    "RVP9_DBG kfsb mi=({mi_row},{mi_col}) (range={range}, value=0x{value:016x}, count={count}, pos={pos})"
+                );
+            }
             decode_partition(
                 &mut reader,
                 fc,
