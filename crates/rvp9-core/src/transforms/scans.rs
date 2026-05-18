@@ -133,7 +133,9 @@ pub static ROW_SCAN_4X4_NEIGHBORS: [i16; 34] = [
     8, 6, 6, 8, 8, 9, 9, 12, 12, 10, 10, 13, 13, 14, 14, 0, 0,
 ];
 
-/// 4×4 column `ScanOrder` (used for `TxType::AdstDct`).
+/// 4×4 column `ScanOrder` (used for `TxType::DctAdst`).
+///
+/// Matches `scan_order_4x4` dispatch below: `DCT_ADST → col_scan`.
 #[inline]
 #[must_use]
 pub const fn col_scan_4x4() -> ScanOrder {
@@ -144,7 +146,9 @@ pub const fn col_scan_4x4() -> ScanOrder {
     }
 }
 
-/// 4×4 row `ScanOrder` (used for `TxType::DctAdst`).
+/// 4×4 row `ScanOrder` (used for `TxType::AdstDct`).
+///
+/// Matches `scan_order_4x4` dispatch below: `ADST_DCT → row_scan`.
 #[inline]
 #[must_use]
 pub const fn row_scan_4x4() -> ScanOrder {
