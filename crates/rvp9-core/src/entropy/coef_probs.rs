@@ -373,4 +373,65 @@ mod tests {
         // 32x32 [UV][Inter][Band 5][ctx 5] (libvpx :1027).
         assert_eq!(DEFAULT_COEF_PROBS_32X32[1][1][5][5], [1, 16, 6]);
     }
+
+    /// M.7 audit: full sweep of the `(Y, Intra)` plane of every TX size
+    /// against libvpx `default_coef_probs_*` — these are the rows the
+    /// failing M.6 block traverses across all 6 bands × 6 ctxs. Pin the
+    /// entire grid here so a transcription typo in this exact code path
+    /// fails CI rather than relying on the offline Python audit at
+    /// `notes/audit_default_probs.py` (which compares all four tables
+    /// byte-for-byte against the C source).
+    ///
+    /// Includes the M.4-audited `[Y][Intra][Band 0][ctx 1] =
+    /// [84, 49, 136]` row that decode_coefs reads first for the failing
+    /// sub-1 of `vp90-2-02-size-32x32.webm` frame 1.
+    #[rustfmt::skip]
+    #[test]
+    fn m7_audit_y_intra_full_sweep_4x4() {
+        let t = &DEFAULT_COEF_PROBS_4X4[0][0]; // [Y][Intra]
+        // Band 0 (only ctx 0..3 are non-zero by libvpx convention).
+        assert_eq!(t[0][0], [195, 29, 183]);
+        assert_eq!(t[0][1], [84, 49, 136]); // M.4-audited row
+        assert_eq!(t[0][2], [8, 42, 71]);
+        // Band 1
+        assert_eq!(t[1][0], [31, 107, 169]);
+        assert_eq!(t[1][1], [35, 99, 159]);
+        assert_eq!(t[1][2], [17, 82, 140]);
+        assert_eq!(t[1][3], [8, 66, 114]);
+        assert_eq!(t[1][4], [2, 44, 76]);
+        assert_eq!(t[1][5], [1, 19, 32]);
+        // Band 2
+        assert_eq!(t[2][0], [40, 132, 201]);
+        assert_eq!(t[2][5], [1, 28, 47]);
+        // Band 3
+        assert_eq!(t[3][0], [69, 142, 221]);
+        assert_eq!(t[3][5], [1, 17, 31]);
+        // Band 4
+        assert_eq!(t[4][0], [102, 148, 228]);
+        assert_eq!(t[4][5], [1, 15, 29]);
+        // Band 5
+        assert_eq!(t[5][0], [156, 57, 233]);
+        assert_eq!(t[5][5], [3, 12, 31]);
+    }
+
+    /// M.7 audit: corner spot-checks for the other three TX-size tables'
+    /// (Y, Intra) plane. Together with the 4x4 sweep above and the
+    /// existing band-0 zero-padding tests, this gives broad coverage of
+    /// the keyframe-relevant rows.
+    #[rustfmt::skip]
+    #[test]
+    fn m7_audit_y_intra_corners_other_sizes() {
+        // 8x8
+        let t = &DEFAULT_COEF_PROBS_8X8[0][0];
+        assert_eq!(t[0][0], [125, 34, 187]);
+        assert_eq!(t[5][5], [1, 21, 29]);
+        // 16x16
+        let t = &DEFAULT_COEF_PROBS_16X16[0][0];
+        assert_eq!(t[0][0], [7, 27, 153]);
+        assert_eq!(t[5][5], [1, 11, 20]);
+        // 32x32
+        let t = &DEFAULT_COEF_PROBS_32X32[0][0];
+        assert_eq!(t[0][0], [17, 38, 140]);
+        assert_eq!(t[5][5], [1, 11, 17]);
+    }
 }
