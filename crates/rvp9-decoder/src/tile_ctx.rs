@@ -252,6 +252,17 @@ impl TileDecodeCtx {
         self.tile_mi_rows
     }
 
+    /// Borrow the raw 2D mi grid (row-major, stride =
+    /// [`Self::tile_mi_cols`]). Empty slice when the context was
+    /// constructed via [`Self::new`] (no grid allocated).
+    ///
+    /// Mirrors libvpx's `mi_grid_visible` access for callers that need
+    /// to walk the whole tile (e.g. K2.c's loop-filter mask builder).
+    #[must_use]
+    pub fn mi_grid(&self) -> &[Option<ModeInfo>] {
+        &self.mi_grid
+    }
+
     /// Read the [`ModeInfo`] at absolute tile-relative
     /// `(mi_row, mi_col)`. Returns `None` if the position is outside
     /// the tile (frame top / bottom / left / right edge equivalent)
