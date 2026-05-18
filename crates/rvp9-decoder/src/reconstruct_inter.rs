@@ -49,7 +49,7 @@ use rvp9_core::frame::{BorderedPlaneRef, Yv12Buffer};
 use rvp9_core::inter::mode_info::{InterModeReadParams, read_inter_block_mode_info};
 use rvp9_core::inter::mv_ref::{BlockBounds, NeighbourLookup, PrevFrameMvRef};
 use rvp9_core::inter::scale::{ScaleFactors, inter_predictor};
-use rvp9_core::inter::filter::{SUBPEL_BITS, SUBPEL_MASK};
+use rvp9_core::inter::filter::{SUBPEL_BITS, SUBPEL_MASK, SUBPEL_SHIFTS};
 use rvp9_core::mode_info::{BlockMode, ModeInfo, Mv, RefFrame};
 use rvp9_core::transforms::inverse::{
     idct4x4_1_add, idct4x4_16_add, idct8x8_1_add, idct8x8_64_add, idct16x16_1_add,
@@ -304,49 +304,28 @@ pub fn reconstruct_inter_block(
                     let total_x_q4 = sf.scaled_x_q4(sub_px_x as i32, mv_q4_col as i16);
                     let total_y_q4 = sf.scaled_y_q4(sub_px_y as i32, mv_q4_row as i16);
 
-                    let int_x = total_x_q4 >> SUBPEL_BITS;
-                    let int_y = total_y_q4 >> SUBPEL_BITS;
-                    let subpel_x_q4 = total_x_q4 & SUBPEL_MASK;
-                    let subpel_y_q4 = total_y_q4 & SUBPEL_MASK;
-
                     let ref_plane: BorderedPlaneRef<'_> =
                         ref_buf.plane_with_border(plane);
-                    // libvpx pre-shifts `src` by `-3 rows / -3 cols`
-                    // for the filtered kernels (convolve8 / its
-                    // horiz/vert sub-cases) so `src[0]` is the top-
-                    // left corner of the 8-tap 2-D footprint. The
-                    // unscaled `convolve_copy` / `convolve_avg`
-                    // sub-cases do NOT want this offset — they read
-                    // `src[r*stride+c]` for `r,c in 0..h/0..w` and
-                    // expect `src[0]` at the integer-pel base.
-                    //
-                    // Per-axis pre-shift: convolve8_horiz only needs
-                    // the column shift; convolve8_vert only needs the
-                    // row shift. We apply the shift on each axis only
-                    // when its subpel is non-zero, matching the
-                    // tightness of the kernel's actual read footprint.
-                    let row_pre = if subpel_y_q4 != 0 { -3 } else { 0 };
-                    let col_pre = if subpel_x_q4 != 0 { -3 } else { 0 };
-                    let row_base =
-                        (ref_plane.border_h as i32 + int_y + row_pre) as usize;
-                    let col_base =
-                        (ref_plane.border_w as i32 + int_x + col_pre) as usize;
-                    let src_base = row_base * ref_plane.stride + col_base;
-                    let src = &ref_plane.data[src_base..];
-                    let src_stride = ref_plane.stride;
+                    let crop = RefPlaneCrop::for_plane(ref_buf, plane);
 
                     let dst_for_mc = &mut dst_slice[sub_dst_offset..];
                     let is_compound_avg = r > 0;
 
-                    inter_predictor(
-                        src,
-                        src_stride,
-                        dst_for_mc,
-                        dst_stride,
-                        subpel_x_q4,
-                        subpel_y_q4,
+                    // Phase D.5: route through `build_inter_predictor_with_mc_border`
+                    // so wide-MV blocks that point beyond the
+                    // pre-extended static border fall back to a
+                    // scratch buffer with edge replication. Mirrors
+                    // libvpx `dec_build_inter_predictors`
+                    // (`vp9_decodeframe.c:660-697`).
+                    build_inter_predictor_with_mc_border(
+                        &ref_plane,
+                        crop,
+                        total_x_q4,
+                        total_y_q4,
                         &sf,
                         interp_filter,
+                        dst_for_mc,
+                        dst_stride,
                         mc_w_px,
                         mc_h_px,
                         is_compound_avg,
@@ -604,6 +583,318 @@ fn inverse_transform_add_dct(
             }
         }
     }
+}
+
+/// Maximum dimension of the MC scratch buffer along either axis. The
+/// largest block any one MC call writes is 64×64 (Y plane, ≥8×8
+/// `bsize`), and the convolve8 footprint extends by 7 along each
+/// padded axis. For *scaled* refs the per-sample step `x_step_q4` can
+/// reach `2 * SUBPEL_SHIFTS = 32` (libvpx's 2× downscale floor —
+/// `vp9_scale.h:61-65`), so `(w - 1) * 32 >> 4 + 1 + 8 ≈ 135` for
+/// `w = 64`. Round up to 160 to match libvpx's
+/// `extend_and_predict_buf` cell count (`vp9_decoder.h:58`).
+///
+/// Stored as a constant so the scratch is stack-allocated — at 160² =
+/// 25600 bytes, comfortably fits within Rust's default 8 MiB stack
+/// budget while avoiding allocator pressure on the hot per-block path.
+const MC_BORDER_SCRATCH_MAX: usize = 160;
+
+/// `VP9_INTERP_EXTEND` in libvpx (`yv12config.h:25`). The 8-tap
+/// convolve8 kernel needs 7 trailing taps past the integer base
+/// (`VP9_INTERP_EXTEND - 1 = 3` leading + `VP9_INTERP_EXTEND = 4`
+/// trailing).
+const VP9_INTERP_EXTEND: i32 = 4;
+
+/// Visible (cropped) plane dimensions for one ref-plane. Mirrors
+/// libvpx's `y_crop_width` / `uv_crop_width` (`yv12config.h:74-79`).
+/// Captured so the MC-border scratch fill replicates from the cropped
+/// edges exactly as libvpx's `build_mc_border` does.
+#[derive(Copy, Clone)]
+struct RefPlaneCrop {
+    /// Visible width in pixels (Y = `crop_width`; UV = `(crop_width +
+    /// ss_x) >> ss_x`).
+    crop_w: usize,
+    /// Visible height in pixels.
+    crop_h: usize,
+}
+
+impl RefPlaneCrop {
+    /// Resolve the crop dims for `plane` (0=Y, 1=U, 2=V) on `buf`,
+    /// using 4:2:0 subsampling (the only chroma format the decoder
+    /// supports, D-01 RESOLVED).
+    fn for_plane(buf: &Yv12Buffer, plane: usize) -> Self {
+        let crop_w_y = buf.width() as usize;
+        let crop_h_y = buf.height() as usize;
+        if plane == 0 {
+            Self { crop_w: crop_w_y, crop_h: crop_h_y }
+        } else {
+            // libvpx `(crop + ss) >> ss` (yv12config.c:254-255).
+            Self {
+                crop_w: (crop_w_y + 1) >> 1,
+                crop_h: (crop_h_y + 1) >> 1,
+            }
+        }
+    }
+}
+
+/// libvpx `build_mc_border` (`vp9_decodeframe.c:456-490`). Copy a
+/// rectangle of `b_w × b_h` reference pixels starting at top-left
+/// `(x, y)` in visible-region coordinates into `dst`, padding any
+/// out-of-visible cells via edge-replication from the nearest visible
+/// pixel.
+///
+/// `src` points to the visible top-left (`crop[0, 0]`), `src_stride`
+/// is the underlying ref-plane stride, and `(w, h)` are the cropped
+/// dimensions. `dst` has stride `dst_stride == b_w` (caller allocates
+/// the scratch tightly packed).
+///
+/// Reads remain in-bounds on `src` because the caller passes a
+/// `BorderedPlaneRef`-derived pointer; cells in the `[crop_w,
+/// aligned_w + border)` slack also hold edge-replicated values after
+/// `extend_borders`, so even when `b_w` would overshoot we never
+/// observe an uninitialised cell.
+#[allow(clippy::too_many_arguments)] // mirrors libvpx's `build_mc_border` 1:1
+fn build_mc_border(
+    src: &[u8],
+    src_stride: usize,
+    dst: &mut [u8],
+    dst_stride: usize,
+    x: i32,
+    mut y: i32,
+    b_w: usize,
+    b_h: usize,
+    w: i32,
+    h: i32,
+) {
+    // libvpx: `ref_row = src - x - y * src_stride;` — i.e. row 0 of
+    // the visible region. We index `ref_row` via `(y_clamped *
+    // src_stride + col)`.
+    let mut y_clamped = if y >= h {
+        h - 1
+    } else if y > 0 {
+        y
+    } else {
+        0
+    };
+
+    let mut dst_off = 0usize;
+    for _ in 0..b_h {
+        // libvpx: per-row, recompute left/right paddings (only `x`
+        // varies; we keep `x` constant per call but the loop matches
+        // libvpx's structure 1:1).
+        let left = if x < 0 { (-x) as usize } else { 0 };
+        let left = left.min(b_w);
+        let right_raw = x + b_w as i32 - w;
+        let right = if right_raw > 0 { right_raw as usize } else { 0 };
+        let right = right.min(b_w);
+        let copy = b_w.saturating_sub(left + right);
+
+        let row_base = (y_clamped as usize) * src_stride;
+        let row = &src[row_base..];
+
+        if left > 0 {
+            let fill = row[0];
+            for c in 0..left {
+                dst[dst_off + c] = fill;
+            }
+        }
+        if copy > 0 {
+            let src_start = (x + left as i32) as usize;
+            dst[dst_off + left..dst_off + left + copy]
+                .copy_from_slice(&row[src_start..src_start + copy]);
+        }
+        if right > 0 {
+            let fill = row[(w - 1) as usize];
+            for c in 0..right {
+                dst[dst_off + left + copy + c] = fill;
+            }
+        }
+
+        dst_off += dst_stride;
+        y += 1;
+        // libvpx: `if (y > 0 && y < h) ref_row += src_stride;`
+        if y > 0 && y < h {
+            y_clamped = y;
+        }
+    }
+}
+
+/// Run motion compensation for one inter sub-block, transparently
+/// handling MVs that point beyond the reference frame's extended
+/// border via a fallback scratch buffer.
+///
+/// Mirrors libvpx's `dec_build_inter_predictors`
+/// (`vp9_decodeframe.c:576-712`) — the bounds check at lines 660-697
+/// decides between the direct convolve and the `extend_and_predict`
+/// scratch path. For decoder paths that pre-extend the reference
+/// frame's static border (our case; `extend_borders` runs at frame
+/// finalisation), the fast direct path covers all MVs whose convolve
+/// footprint fits within the bordered region (`±32` for Y / `±16`
+/// for UV); only the wider-MV tail spills into the scratch fallback.
+///
+/// `total_x_q4` / `total_y_q4` are the *full* Q4 sub-pel positions in
+/// the reference frame (as returned by [`ScaleFactors::scaled_x_q4`] /
+/// [`ScaleFactors::scaled_y_q4`]). `ref_plane` is the bordered view
+/// of the ref plane; `crop` is the visible (cropped) dimensions of
+/// the same plane.
+#[allow(clippy::too_many_arguments)] // mirrors libvpx 1:1
+fn build_inter_predictor_with_mc_border(
+    ref_plane: &BorderedPlaneRef<'_>,
+    crop: RefPlaneCrop,
+    total_x_q4: i32,
+    total_y_q4: i32,
+    sf: &ScaleFactors,
+    interp_filter: InterpFilter,
+    dst: &mut [u8],
+    dst_stride: usize,
+    w: usize,
+    h: usize,
+    is_compound_avg: bool,
+) {
+    let int_x = total_x_q4 >> SUBPEL_BITS;
+    let int_y = total_y_q4 >> SUBPEL_BITS;
+    let subpel_x_q4 = total_x_q4 & SUBPEL_MASK;
+    let subpel_y_q4 = total_y_q4 & SUBPEL_MASK;
+
+    // libvpx `vp9_decodeframe.c:660-678`: when the convolve actually
+    // touches sub-pel taps on an axis (subpel != 0 or scaled), the
+    // footprint extends by `VP9_INTERP_EXTEND - 1 = 3` leading +
+    // `VP9_INTERP_EXTEND = 4` trailing samples past the integer-pel
+    // base. `x_pad` / `y_pad` are 1 iff that axis is padded.
+    let x_pad = subpel_x_q4 != 0 || sf.x_step_q4 != SUBPEL_SHIFTS as i32;
+    let y_pad = subpel_y_q4 != 0 || sf.y_step_q4 != SUBPEL_SHIFTS as i32;
+
+    // libvpx: `x1 = ((x0_16 + (w - 1) * xs) >> SUBPEL_BITS) + 1`. For
+    // the unscaled fast path `xs == SUBPEL_SHIFTS` and `(w - 1) * xs >>
+    // SUBPEL_BITS == w - 1`, collapsing to `int_x + w`. We compute the
+    // general form so the scaled tail walks correctly.
+    let xs = sf.x_step_q4;
+    let ys = sf.y_step_q4;
+    let last_x_q4 = total_x_q4 + (w as i32 - 1) * xs;
+    let last_y_q4 = total_y_q4 + (h as i32 - 1) * ys;
+    let mut x0 = int_x;
+    let mut y0 = int_y;
+    let mut x1 = (last_x_q4 >> SUBPEL_BITS) + 1;
+    let mut y1 = (last_y_q4 >> SUBPEL_BITS) + 1;
+    if x_pad {
+        x0 -= VP9_INTERP_EXTEND - 1;
+        x1 += VP9_INTERP_EXTEND;
+    }
+    if y_pad {
+        y0 -= VP9_INTERP_EXTEND - 1;
+        y1 += VP9_INTERP_EXTEND;
+    }
+
+    // Bordered-region bounds: `[-border, aligned + border)`. As long
+    // as the footprint extreme cell `(x1, y1)` (= one-past-last touched
+    // sample's index — libvpx's predicate checks `x1 > frame_width -
+    // 1`, equivalent to `x1 >= frame_width`) sits inside the bordered
+    // region, the direct path produces the same result as the scratch
+    // path because `extend_borders` has already populated the bordered
+    // region with edge-replicated values.
+    let bordered_x_lo = -(ref_plane.border_w as i32);
+    let bordered_y_lo = -(ref_plane.border_h as i32);
+    let bordered_x_hi = (ref_plane.width + ref_plane.border_w) as i32;
+    let bordered_y_hi = (ref_plane.height + ref_plane.border_h) as i32;
+
+    let needs_scratch = x0 < bordered_x_lo
+        || y0 < bordered_y_lo
+        || x1 > bordered_x_hi
+        || y1 > bordered_y_hi;
+
+    if !needs_scratch {
+        // Fast path: read directly from the bordered region. Apply
+        // the same per-axis `-3` pre-shift as the legacy in-line MC
+        // code so `src[0]` is the kernel's first-tap base.
+        let row_pre = if y_pad { -(VP9_INTERP_EXTEND - 1) } else { 0 };
+        let col_pre = if x_pad { -(VP9_INTERP_EXTEND - 1) } else { 0 };
+        let row_base =
+            (ref_plane.border_h as i32 + int_y + row_pre) as usize;
+        let col_base =
+            (ref_plane.border_w as i32 + int_x + col_pre) as usize;
+        let src_base = row_base * ref_plane.stride + col_base;
+        inter_predictor(
+            &ref_plane.data[src_base..],
+            ref_plane.stride,
+            dst,
+            dst_stride,
+            subpel_x_q4,
+            subpel_y_q4,
+            sf,
+            interp_filter,
+            w,
+            h,
+            is_compound_avg,
+        );
+        return;
+    }
+
+    // Slow path: copy footprint into scratch with libvpx-style edge
+    // replication, then convolve from there. The scratch buffer is
+    // tightly packed: `b_h × b_w` cells with stride `b_w`. Libvpx
+    // sizes the scratch as `b_w = x1 - x0 + 1, b_h = y1 - y0 + 1`
+    // (`vp9_decodeframe.c:685-686`) — i.e. inclusive of both
+    // endpoints; the convolve's 8-tap footprint requires reading one
+    // sample past the last destination column.
+    let b_w = (x1 - x0 + 1) as usize;
+    let b_h = (y1 - y0 + 1) as usize;
+    debug_assert!(
+        b_w <= MC_BORDER_SCRATCH_MAX && b_h <= MC_BORDER_SCRATCH_MAX,
+        "MC scratch footprint {b_w}×{b_h} exceeds MC_BORDER_SCRATCH_MAX = {MC_BORDER_SCRATCH_MAX}",
+    );
+    let mut scratch = [0u8; MC_BORDER_SCRATCH_MAX * MC_BORDER_SCRATCH_MAX];
+    let scratch_stride = b_w;
+    let scratch_used = b_h * scratch_stride;
+
+    // Source pointer at the visible top-left (= bordered top-left +
+    // (border_h, border_w)).
+    let visible_base =
+        ref_plane.border_h * ref_plane.stride + ref_plane.border_w;
+    let src_visible = &ref_plane.data[visible_base..];
+
+    build_mc_border(
+        src_visible,
+        ref_plane.stride,
+        &mut scratch[..scratch_used],
+        scratch_stride,
+        x0,
+        y0,
+        b_w,
+        b_h,
+        crop.crop_w as i32,
+        crop.crop_h as i32,
+    );
+
+    // The scratch's top-left is the 8-tap convolve footprint's
+    // top-left when the relevant axis is padded — libvpx's
+    // `border_offset = y_pad * 3 * b_w + x_pad * 3` places the
+    // destination origin (post-shift) inside the scratch, but our
+    // `inter_predictor` expects pre-shifted `src` (i.e. the
+    // first-tap base), so the right scratch offset is `0` on any
+    // padded axis. On a non-padded axis (`*_pad == false`) the
+    // destination origin coincides with the integer-pel base, and
+    // libvpx skips the corresponding `-3` shift; we mirror that by
+    // leaving the offset at 0 too.
+    //
+    // Why does this still work for the no-pad axis? `b_w = x1 - x0 +
+    // 1 = w + 1` in that case (no `VP9_INTERP_EXTEND` widening), and
+    // the kernel reads `c ∈ 0..w` only (since `subpel == 0` collapses
+    // to `convolve_copy`/`convolve8_vert` which don't sweep the tap
+    // window horizontally). The kernel never indexes past
+    // `b_w - 1`.
+    inter_predictor(
+        &scratch[..],
+        scratch_stride,
+        dst,
+        dst_stride,
+        subpel_x_q4,
+        subpel_y_q4,
+        sf,
+        interp_filter,
+        w,
+        h,
+        is_compound_avg,
+    );
 }
 
 #[allow(dead_code)] // referenced in tests / placeholders
@@ -1327,5 +1618,353 @@ mod tests {
             }
         }
         assert!(any_nonzero, "MC must have written non-zero pixels");
+    }
+
+    // --- Phase D.5: extend_mc_border ---------------------------------
+    //
+    // Tests the wide-MV scratch-buffer fallback in
+    // `build_inter_predictor_with_mc_border`. The fast (direct) path
+    // covers any footprint that fits within the bordered region
+    // (`±32` for Y / `±16` for UV under the decoder border setting);
+    // the slow (scratch) path fires only when the footprint extends
+    // past that. Both paths must produce the same result as libvpx's
+    // equivalent code path — edge-replication from the visible region.
+
+    /// Build a tiny ref frame whose visible pixels carry distinct
+    /// values so edge replication can be observed in test outputs.
+    fn ref_with_distinct_edge_pixels(crop_w: u32, crop_h: u32) -> Yv12Buffer {
+        let mut buf = Yv12Buffer::alloc(
+            crop_w, crop_h, ChromaFormat::Yuv420,
+            BorderUsage::Decoder, ByteAlignment::Legacy,
+        ).unwrap();
+        // Y plane: each pixel encodes its (clamped) position so the
+        // edge-replicated cells differ from interior cells.
+        {
+            let mut y = buf.y_plane_mut();
+            let stride = y.stride();
+            let w = y.width();
+            let h = y.height();
+            let data = y.data_mut();
+            for r in 0..h {
+                for c in 0..w {
+                    data[r * stride + c] = ((r * 13 + c * 5) & 0xff) as u8;
+                }
+            }
+        }
+        buf.u_plane_mut().fill(0x55);
+        buf.v_plane_mut().fill(0xAA);
+        buf.extend_borders();
+        buf
+    }
+
+    /// Sanity: a fully-inside block with zero MV produces a verbatim
+    /// copy of the ref pixels (the direct fast path).
+    #[test]
+    fn mc_border_direct_path_inside_frame() {
+        use super::build_inter_predictor_with_mc_border;
+        use rvp9_core::inter::scale::ScaleFactors;
+
+        let ref_buf = ref_with_distinct_edge_pixels(64, 64);
+        let ref_plane = ref_buf.plane_with_border(0);
+        let crop = super::RefPlaneCrop::for_plane(&ref_buf, 0);
+        let sf = ScaleFactors::new(64, 64, 64, 64);
+
+        let mut dst = [0x99u8; 16 * 16];
+        // sub_px = (8, 8), mv = 0 → total_*_q4 = (8 << 4, 8 << 4).
+        let total_x_q4 = sf.scaled_x_q4(8, 0);
+        let total_y_q4 = sf.scaled_y_q4(8, 0);
+
+        build_inter_predictor_with_mc_border(
+            &ref_plane,
+            crop,
+            total_x_q4,
+            total_y_q4,
+            &sf,
+            InterpFilter::EightTap,
+            &mut dst,
+            16,
+            8, 8,
+            false,
+        );
+
+        let ref_y = ref_buf.y_plane();
+        for r in 0..8 {
+            for c in 0..8 {
+                let want = ref_y.data()[(8 + r) * ref_y.stride() + 8 + c];
+                assert_eq!(dst[r * 16 + c], want, "dst[{r},{c}]");
+            }
+        }
+    }
+
+    /// Footprint within the static border (e.g. MV = -28 pixels = Q3 =
+    /// -224) still uses the direct path. The bordered region already
+    /// holds the replicated edge values so the result matches the
+    /// scratch path bit-for-bit.
+    #[test]
+    fn mc_border_within_static_border_uses_direct_path() {
+        use super::build_inter_predictor_with_mc_border;
+        use rvp9_core::inter::scale::ScaleFactors;
+
+        let ref_buf = ref_with_distinct_edge_pixels(64, 64);
+        let ref_plane = ref_buf.plane_with_border(0);
+        let crop = super::RefPlaneCrop::for_plane(&ref_buf, 0);
+        let sf = ScaleFactors::new(64, 64, 64, 64);
+
+        // Block at (0, 0), MV = (-28, -28) Q3 → Q4 = -56 each axis.
+        // int_x = int_y = -56/16 = -4 (rounded toward -inf via shift =
+        // -56 >> 4 = -4 with subpel = 8 ... actually -56 & 0xF = 8 in
+        // two's complement: -56 = 0xFFFFFFC8 → & 0xF = 8). The
+        // resulting footprint with both pads is x0 = -4 - 3 = -7,
+        // x1 = (-56 + 7*16) >> 4 + 1 + 4 = (-56+112)>>4 + 5 = 3 + 5 =
+        // 8. All within `[-32, 64+32)`.
+        let total_x_q4 = sf.scaled_x_q4(0, -56);
+        let total_y_q4 = sf.scaled_y_q4(0, -56);
+
+        let mut dst_direct = [0u8; 8 * 8];
+        build_inter_predictor_with_mc_border(
+            &ref_plane,
+            crop,
+            total_x_q4,
+            total_y_q4,
+            &sf,
+            InterpFilter::EightTap,
+            &mut dst_direct,
+            8,
+            8, 8,
+            false,
+        );
+
+        // Smoke: result must contain at least one non-zero pixel
+        // (interior of the ref is non-zero almost everywhere).
+        assert!(dst_direct.iter().any(|&p| p != 0));
+    }
+
+    /// MV that points well beyond the static border (e.g. 200 pixels
+    /// off the bottom-right corner of a 32×32 frame) fires the
+    /// scratch path. All output pixels must equal the visible-corner
+    /// pixel (edge-replication).
+    #[test]
+    fn mc_border_far_outside_static_border_uses_scratch() {
+        use super::build_inter_predictor_with_mc_border;
+        use rvp9_core::inter::scale::ScaleFactors;
+
+        let ref_buf = ref_with_distinct_edge_pixels(32, 32);
+        let ref_plane = ref_buf.plane_with_border(0);
+        let crop = super::RefPlaneCrop::for_plane(&ref_buf, 0);
+        let sf = ScaleFactors::new(32, 32, 32, 32);
+
+        // Block at (0, 0) with MV pushing into far bottom-right
+        // (Q3 = 200 * 8 = 1600 each axis). int_x = int_y = 1600 / 16 =
+        // 100. With pads, x1 ≈ 100 + 8 + 4 = 112 — well past
+        // `aligned + border = 32 + 32 = 64`, so scratch fires.
+        let total_x_q4 = sf.scaled_x_q4(0, 1600);
+        let total_y_q4 = sf.scaled_y_q4(0, 1600);
+
+        let mut dst = [0u8; 8 * 8];
+        build_inter_predictor_with_mc_border(
+            &ref_plane,
+            crop,
+            total_x_q4,
+            total_y_q4,
+            &sf,
+            InterpFilter::EightTap,
+            &mut dst,
+            8,
+            8, 8,
+            false,
+        );
+
+        // All 8x8 pixels = bottom-right visible pixel of the ref.
+        let ref_y = ref_buf.y_plane();
+        let bottom_right = ref_y.data()[31 * ref_y.stride() + 31];
+        for px in &dst {
+            assert_eq!(*px, bottom_right, "scratch must replicate corner pixel");
+        }
+    }
+
+    /// MV pointing far off the top-left corner: scratch must replicate
+    /// from visible[0, 0].
+    #[test]
+    fn mc_border_top_left_scratch_replicates_corner() {
+        use super::build_inter_predictor_with_mc_border;
+        use rvp9_core::inter::scale::ScaleFactors;
+
+        let ref_buf = ref_with_distinct_edge_pixels(32, 32);
+        let ref_plane = ref_buf.plane_with_border(0);
+        let crop = super::RefPlaneCrop::for_plane(&ref_buf, 0);
+        let sf = ScaleFactors::new(32, 32, 32, 32);
+
+        // Block at (0, 0) with MV pushing far into top-left
+        // (Q3 = -200 * 8 = -1600). int_* = -100. With pads, x0 ≈
+        // -100 - 3 = -103. `-32` < -103 → scratch fires.
+        let total_x_q4 = sf.scaled_x_q4(0, -1600);
+        let total_y_q4 = sf.scaled_y_q4(0, -1600);
+
+        let mut dst = [0u8; 8 * 8];
+        build_inter_predictor_with_mc_border(
+            &ref_plane,
+            crop,
+            total_x_q4,
+            total_y_q4,
+            &sf,
+            InterpFilter::EightTap,
+            &mut dst,
+            8,
+            8, 8,
+            false,
+        );
+
+        let ref_y = ref_buf.y_plane();
+        let top_left = ref_y.data()[0];
+        for px in &dst {
+            assert_eq!(*px, top_left, "top-left scratch must replicate corner pixel");
+        }
+    }
+
+    /// Differential: scratch path and direct path produce identical
+    /// output when both can read the same footprint. We choose an MV
+    /// that lands the footprint inside the static border (so direct
+    /// fires), then run the scratch fill manually against the same
+    /// footprint and convolve; pixels must match.
+    #[test]
+    fn mc_border_scratch_matches_direct_for_inside_footprint() {
+        use rvp9_core::inter::scale::ScaleFactors;
+        use rvp9_core::inter::scale::inter_predictor;
+
+        let ref_buf = ref_with_distinct_edge_pixels(64, 64);
+        let ref_plane = ref_buf.plane_with_border(0);
+        let crop = super::RefPlaneCrop::for_plane(&ref_buf, 0);
+        let sf = ScaleFactors::new(64, 64, 64, 64);
+
+        // Block at (16, 16), MV = (3, 5) Q3 → Q4 = (6, 10). Subpel
+        // both axes; both pads fire. Footprint comfortably inside.
+        let total_x_q4 = sf.scaled_x_q4(16, 10);
+        let total_y_q4 = sf.scaled_y_q4(16, 6);
+
+        // -- Direct path output (via the new helper).
+        let mut dst_helper = [0u8; 8 * 8];
+        super::build_inter_predictor_with_mc_border(
+            &ref_plane,
+            crop,
+            total_x_q4,
+            total_y_q4,
+            &sf,
+            InterpFilter::EightTap,
+            &mut dst_helper,
+            8,
+            8, 8,
+            false,
+        );
+
+        // -- Same footprint via an explicit scratch fill + convolve.
+        let int_x = total_x_q4 >> SUBPEL_BITS;
+        let int_y = total_y_q4 >> SUBPEL_BITS;
+        let subpel_x_q4 = total_x_q4 & SUBPEL_MASK;
+        let subpel_y_q4 = total_y_q4 & SUBPEL_MASK;
+        let x0 = int_x - 3;
+        let y0 = int_y - 3;
+        // libvpx b_* = (x1 - x0 + 1) with x1 = int_x + w + 4 - 1 (the
+        // last touched column = int_x + w + 3 inclusive of 7-tap tail
+        // since x_pad fires); resulting b_w = w + 7 + 1 = 16.
+        let b_w = 8 + 7 + 1;
+        let b_h = 8 + 7 + 1;
+        let mut scratch = [0u8; 16 * 16];
+        // Visible top-left of ref_plane.
+        let visible_base = ref_plane.border_h * ref_plane.stride + ref_plane.border_w;
+        super::build_mc_border(
+            &ref_plane.data[visible_base..],
+            ref_plane.stride,
+            &mut scratch,
+            b_w,
+            x0,
+            y0,
+            b_w,
+            b_h,
+            crop.crop_w as i32,
+            crop.crop_h as i32,
+        );
+
+        let mut dst_scratch = [0u8; 8 * 8];
+        inter_predictor(
+            &scratch[..],
+            b_w,
+            &mut dst_scratch,
+            8,
+            subpel_x_q4,
+            subpel_y_q4,
+            &sf,
+            InterpFilter::EightTap,
+            8,
+            8,
+            false,
+        );
+
+        assert_eq!(dst_helper, dst_scratch);
+    }
+
+    /// `build_mc_border` directly: top-left replication (negative `x`
+    /// and `y` start), with a 4-row × 4-col footprint reading from a
+    /// known visible region.
+    #[test]
+    fn build_mc_border_replicates_top_left() {
+        // 2×2 visible region; values: [[0xA0, 0xA1], [0xB0, 0xB1]].
+        let src = [
+            0xA0u8, 0xA1, 0x00, 0x00,
+            0xB0,   0xB1, 0x00, 0x00,
+            0x00,   0x00, 0x00, 0x00,
+            0x00,   0x00, 0x00, 0x00,
+        ];
+        let mut dst = [0u8; 16]; // 4x4 footprint
+        super::build_mc_border(
+            &src,
+            /* src_stride */ 4,
+            &mut dst,
+            /* dst_stride */ 4,
+            /* x */ -2,
+            /* y */ -2,
+            /* b_w */ 4,
+            /* b_h */ 4,
+            /* w */ 2,
+            /* h */ 2,
+        );
+        // Row -2 / -1 → clamp to row 0 → [0xA0, 0xA0, 0xA0, 0xA1]
+        // (left=2 fills 0xA0, copy=2 reads [0,1]=A0,A1; right=0).
+        // Wait: with x=-2, b_w=4, w=2: left = 2, right = max(0, -2+4-2) = 0.
+        // copy = 4 - 2 - 0 = 2. left fill = row[0]=0xA0; copy = row[0..2]=A0,A1.
+        // So expected row = [A0, A0, A0, A1].
+        assert_eq!(&dst[0..4], &[0xA0, 0xA0, 0xA0, 0xA1]);
+        assert_eq!(&dst[4..8], &[0xA0, 0xA0, 0xA0, 0xA1]);
+        // Row 0 → [0xA0, 0xA0, 0xA0, 0xA1] same fill pattern.
+        assert_eq!(&dst[8..12], &[0xA0, 0xA0, 0xA0, 0xA1]);
+        // Row 1 → [0xB0, 0xB0, 0xB0, 0xB1].
+        assert_eq!(&dst[12..16], &[0xB0, 0xB0, 0xB0, 0xB1]);
+    }
+
+    /// `build_mc_border` directly: bottom-right replication.
+    #[test]
+    fn build_mc_border_replicates_bottom_right() {
+        let src = [
+            0xA0u8, 0xA1, 0x00, 0x00,
+            0xB0,   0xB1, 0x00, 0x00,
+            0x00,   0x00, 0x00, 0x00,
+            0x00,   0x00, 0x00, 0x00,
+        ];
+        let mut dst = [0u8; 16];
+        super::build_mc_border(
+            &src, 4, &mut dst, 4,
+            /* x */ 0, /* y */ 0,
+            /* b_w */ 4, /* b_h */ 4,
+            /* w */ 2,  /* h */ 2,
+        );
+        // Row 0 (y=0): left=0, right=max(0, 0+4-2)=2, copy=2. fill = row[w-1]=row[1]=0xA1.
+        //   → [0xA0, 0xA1, 0xA1, 0xA1].
+        assert_eq!(&dst[0..4], &[0xA0, 0xA1, 0xA1, 0xA1]);
+        // Row 1: [0xB0, 0xB1, 0xB1, 0xB1].
+        assert_eq!(&dst[4..8], &[0xB0, 0xB1, 0xB1, 0xB1]);
+        // Row 2 (y=2): y >= h → clamp to row h-1 = row 1.
+        //   → [0xB0, 0xB1, 0xB1, 0xB1].
+        assert_eq!(&dst[8..12], &[0xB0, 0xB1, 0xB1, 0xB1]);
+        // Row 3: still clamped.
+        assert_eq!(&dst[12..16], &[0xB0, 0xB1, 0xB1, 0xB1]);
     }
 }

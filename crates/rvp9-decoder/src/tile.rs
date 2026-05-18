@@ -1415,9 +1415,15 @@ fn decode_inter_block(
     let y_mis = bh_mi.min(params.base.mi_rows - mi_row);
 
     if is_inter {
-        // D.3.b: read inter-block mode info, clamp MVs to a buffer-
-        // safe range, then drive per-plane MC + residual decode via
-        // D.2's `reconstruct_inter_block`.
+        // D.3.b: read inter-block mode info, then drive per-plane
+        // MC + residual decode via D.2's `reconstruct_inter_block`.
+        // Phase D.5 (2026-05-18) replaces the legacy buffer-safe MV
+        // clamp with `build_inter_predictor_with_mc_border`, which
+        // handles any MV (including ones pointing well past the
+        // static border) via a scratch-buffer fallback with libvpx-
+        // style edge replication. The on-bitstream MV bounds are
+        // already enforced in `read_inter_block_mode_info` via
+        // `clamp_mv2` (`vp9_mvref_common.h:20-25`).
         let mut mi = ModeInfo {
             block_size: bsize,
             tx_size,
@@ -1462,17 +1468,6 @@ fn decode_inter_block(
                 &mut mi,
             );
         }
-
-        // 1b. Buffer-safe MV clamp (see `clamp_block_mvs` for details).
-        clamp_block_mvs(
-            &mut mi,
-            mi_row,
-            mi_col,
-            bw_mi,
-            bh_mi,
-            params.cur_y_width as usize,
-            params.cur_y_height as usize,
-        );
 
         // 2. Resolve per-block refs against params.refs (LAST=0,
         //    GOLDEN=1, ALTREF=2) and the decoded mi.ref_frames pair.
@@ -1579,16 +1574,22 @@ fn decode_inter_block(
 ///
 /// libvpx handles wide-MV cases via `extend_mc_border`
 /// (`vp9_reconinter.c:154-205`) which copies reference pixels into a
-/// scratch buffer; until that helper lands, this conservative clamp
-/// prevents the MC kernel from reading outside the reference buffer's
-/// allocated area. The clamp is tighter than libvpx's
-/// `clamp_mv_to_umv_border_sb` and may cause MD5 mismatches when
-/// upstream produced an MV that needed the border-extend path.
+/// scratch buffer. As of Phase D.5 (2026-05-18) the equivalent
+/// scratch fallback lives in
+/// `reconstruct_inter::build_inter_predictor_with_mc_border`, so this
+/// helper is no longer wired into the recon pipeline. We retain it
+/// here as a fallback option (e.g. a `#[cfg(feature = "no-mc-border")]`
+/// build flag, or a future correctness-debug switch) — see the Phase
+/// D.5 design note in `notes/lld/motion-estimation.md`. The clamp is
+/// tighter than libvpx's `clamp_mv_to_umv_border_sb` and produces MD5
+/// mismatches when upstream needs the border-extend path; do NOT
+/// re-wire it as the primary path.
 ///
 /// We compute separate per-plane bounds (luma + chroma) and take the
 /// intersection, since the chroma plane has half-width / half-height
 /// and is the tighter constraint for some block positions / frame
 /// sizes (notably the small 8×8 conformance vectors).
+#[allow(dead_code)] // Retired Phase D.5; see `build_inter_predictor_with_mc_border`.
 fn clamp_block_mvs(
     mi: &mut ModeInfo,
     mi_row: usize,
