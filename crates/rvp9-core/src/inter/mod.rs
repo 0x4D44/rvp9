@@ -25,6 +25,7 @@
 //! Stage 3 Tasks C.3+ slot in.
 
 pub mod filter;
+pub mod mode_info;
 pub mod mv;
 pub mod mv_ref;
 pub mod scale;
@@ -36,6 +37,13 @@ pub use filter::{
     convolve_avg, convolve_copy, kernel_for, BILINEAR_KERNEL, EIGHTTAP_KERNEL,
     EIGHTTAP_SHARP_KERNEL, EIGHTTAP_SMOOTH_KERNEL, FILTER_BITS, FILTER_TAPS, SUBPEL_BITS,
     SUBPEL_MASK, SUBPEL_SHIFTS, SUBPEL_TAPS,
+};
+pub use mode_info::{
+    get_intra_inter_context, get_mode_context, get_pred_context_comp_ref_p,
+    get_pred_context_single_ref_p1, get_pred_context_single_ref_p2,
+    get_pred_context_switchable_interp, get_reference_mode_context,
+    read_inter_block_mode_info, read_ref_frames, read_switchable_interp_filter,
+    setup_compound_reference_mode, InterModeReadParams, SWITCHABLE_INTERP_TREE,
 };
 pub use mv::{read_mv, read_mv_component};
 pub use mv_ref::{
