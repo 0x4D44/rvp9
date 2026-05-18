@@ -130,13 +130,13 @@ fn conformance_runner_walks_all_vectors() {
     // == 0`, but while we iterate on the mismatched keyframes the
     // ratchet keeps regression signal visible: lowering `MAX_MISMATCHES`
     // as we fix bugs, raising `MIN_PASSES` as we light up frames.
-    const MIN_PASSES: usize = 2;
-    // D.3.c (2026-05-18): inter-frame finalisation lands, K2.c's
-    // loop-filter apply path matures, and conformance moves from
-    // 1/160/40 → 2/159/40. The ratchet retains the inter-frame
+    const MIN_PASSES: usize = 3;
+    // D.5 (2026-05-18): `extend_mc_border` scratch-buffer fallback
+    // lands alongside M.11/M.13 intra-pred fixes; conformance moves
+    // from 2/159/40 → 3/158/40. The ratchet retains the inter-frame
     // mismatch count as headroom for the cascade-bug work in M.X / D.4.
     // Pre-D.3.a baseline: 1/9/191.
-    const MAX_MISMATCHES: usize = 160;
+    const MAX_MISMATCHES: usize = 158;
     assert!(
         total_passed >= MIN_PASSES,
         "regression: expected at least {MIN_PASSES} passed, got {total_passed}",
