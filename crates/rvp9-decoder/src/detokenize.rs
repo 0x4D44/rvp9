@@ -212,6 +212,75 @@ pub fn decode_block_tokens(
         );
     }
 
+    // Stage 3 stretch M.17 — capture a Y Tx8x8 block's bool-reader
+    // pre-state + ctx + scan + probs, so the libvpx oracle can replay
+    // exactly this block. We log inputs as a single dense line plus a
+    // base64-style buffer hex dump on the line after. Gated by
+    // `RVP9_DEBUG_DQCOEFS=tx8` with optional position filter
+    // `RVP9_DEBUG_DQCOEFS_AT="x4,y4"` (defaults to the M.16 smoking-gun
+    // block at x4=70, y4_in_sb=0).
+    if plane == 0
+        && tx_size == TxSize::Tx8x8
+        && std::env::var("RVP9_DEBUG_DQCOEFS").is_ok_and(|v| v == "tx8")
+        && {
+            let filter = std::env::var("RVP9_DEBUG_DQCOEFS_AT")
+                .unwrap_or_else(|_| "70,0".to_string());
+            let parts: Vec<&str> = filter.split(',').collect();
+            parts.len() == 2
+                && parts[0].parse::<usize>().ok() == Some(x4)
+                && parts[1].parse::<usize>().ok() == Some(y4_in_sb)
+        }
+    {
+        let a0 = coef_ctx.above_coef(plane, x4);
+        let a1 = coef_ctx.above_coef(plane, x4 + 1);
+        let l0 = coef_ctx.left_coef(plane, y4_in_sb);
+        let l1 = coef_ctx.left_coef(plane, y4_in_sb + 1);
+        let (range, value, count, pos) = reader.cursor_state();
+        let buf = reader.buffer();
+        let probs_b0 = &coef_probs[0][initial_pt];
+        let probs_b1 = &coef_probs[1][initial_pt];
+        eprintln!(
+            "RVP9_DBG_TX8 plane=0 tx=8x8 x4={x4} y4_in_sb={y4_in_sb} \
+             tx_type={tx_type:?} ref_type={ref_type} \
+             a_any={a_any} l_any={l_any} above[{x4}]={a0} above[{}]={a1} \
+             left[{y4_in_sb}]={l0} left[{}]={l1} \
+             initial_pt={initial_pt} dequant=({},{}) \
+             pre_range={range} pre_value=0x{value:016x} pre_count={count} pre_pos={pos} \
+             buffer_len={} scan_kind={} \
+             probs[b=0][ctx={initial_pt}]={probs_b0:?} probs[b=1][ctx={initial_pt}]={probs_b1:?} \
+             scan[0..8]={:?}",
+            x4 + 1, y4_in_sb + 1,
+            dequant.0, dequant.1,
+            buf.len(),
+            match tx_type {
+                TxType::DctDct => "default_scan_8x8",
+                TxType::AdstDct => "row_scan_8x8",
+                TxType::DctAdst => "col_scan_8x8",
+                TxType::AdstAdst => "default_scan_8x8",
+            },
+            &scan.scan[..8],
+        );
+        // Dump the entire tile buffer to a file so the oracle can re-create
+        // the reader. Path is taken from `RVP9_DEBUG_BUFFER_DUMP`
+        // environment variable; if unset, default to ./m17_tile_buffer.bin
+        // in the cwd.
+        let dump_path = std::env::var("RVP9_DEBUG_BUFFER_DUMP")
+            .unwrap_or_else(|_| "m17_tile_buffer.bin".to_string());
+        match std::fs::write(&dump_path, buf) {
+            Ok(_) => eprintln!("RVP9_DBG_TX8 wrote tile buffer ({} bytes) to {}", buf.len(), dump_path),
+            Err(e) => eprintln!("RVP9_DBG_TX8 failed to write tile buffer to {}: {}", dump_path, e),
+        }
+        // Dump full coef_probs as a flat hex array for direct
+        // copy-paste into the oracle snapshot. The Tx8x8 probs slot has
+        // shape [COEF_BANDS=6][COEFF_CONTEXTS=6][3 = UNCONSTRAINED_NODES].
+        eprintln!("RVP9_DBG_TX8 coef_probs (6 bands x 6 ctxs x 3 nodes):");
+        for (b, band) in coef_probs.iter().enumerate() {
+            for (c, ctx) in band.iter().enumerate() {
+                eprintln!("  [{b}][{c}] = [{}, {}, {}]", ctx[0], ctx[1], ctx[2]);
+            }
+        }
+    }
+
     let eob = decode_coefs(
         reader,
         coef_probs,

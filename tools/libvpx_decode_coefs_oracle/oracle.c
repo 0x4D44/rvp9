@@ -714,5 +714,133 @@ int main(int argc, char **argv) {
     }
   }
 
+  /* =====================================================================
+   * Stage 3 stretch M.17 — vp90-2-05-resize frame 1 Block8x8 Dc at
+   * (px 280, row 0).
+   *
+   * Replay libvpx's decode_coefs on the captured bool-reader pre-state
+   * + runtime coef_probs + initial_pt + dequant. If the output
+   * matches rvp9's [-698, 550, 0, ...] dq_coefs, then rvp9's
+   * decode_coefs was correct on the captured inputs — meaning the bug
+   * is downstream OR the inputs are themselves wrong. If the output
+   * differs, then either (a) probs were wrong (mismatch between
+   * captured probs and libvpx's view) or (b) the bool-coder pre-state
+   * was wrong (cumulative cursor drift).
+   * ===================================================================== */
+  {
+    printf("\n=== Stage 3 stretch M.17 — vp90-2-05-resize frame 1, "
+           "block (px 280, row 0) Tx8x8 Dc ===\n");
+    printf("Pre-state: range=%u value=0x%016llx count=%d pos=%u\n",
+           (unsigned)SNAP_M17_PRE_RANGE,
+           (unsigned long long)SNAP_M17_PRE_VALUE,
+           SNAP_M17_PRE_COUNT,
+           (unsigned)SNAP_M17_PRE_POS);
+    printf("Inputs: tx_type=DCT_DCT initial_pt=%d dq=(%d,%d)\n",
+           SNAP_M17_INITIAL_PT, SNAP_M17_DQ_DC, SNAP_M17_DQ_AC);
+
+    /* Read the tile buffer dump captured at runtime. */
+    FILE *f = fopen(SNAP_M17_BUFFER_FILE, "rb");
+    if (!f) {
+      fprintf(stderr, "M.17: failed to open %s — run rvp9 with "
+                      "RVP9_DEBUG_DQCOEFS=tx8 RVP9_DEBUG_BUFFER_DUMP=%s first\n",
+              SNAP_M17_BUFFER_FILE, SNAP_M17_BUFFER_FILE);
+      return 2;
+    }
+    fseek(f, 0, SEEK_END);
+    long blen = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    uint8_t *buf = (uint8_t *)malloc((size_t)blen);
+    if (!buf) { fclose(f); return 2; }
+    size_t got = fread(buf, 1, (size_t)blen, f);
+    fclose(f);
+    if (got != (size_t)blen) { free(buf); return 2; }
+    printf("Tile buffer: %ld bytes from %s\n", blen, SNAP_M17_BUFFER_FILE);
+
+    /* Init libvpx reader to the captured pre-state. */
+    vpx_reader rr;
+    memset(&rr, 0, sizeof(rr));
+    rr.value      = SNAP_M17_PRE_VALUE;
+    rr.range      = SNAP_M17_PRE_RANGE;
+    rr.count      = SNAP_M17_PRE_COUNT;
+    rr.buffer     = buf + SNAP_M17_PRE_POS;
+    rr.buffer_end = buf + blen;
+
+    /* MACROBLOCKD shell. */
+    MODE_INFO mi_storage;
+    memset(&mi_storage, 0, sizeof(mi_storage));
+    mi_storage.ref_frame[0] = INTRA_FRAME;
+    mi_storage.ref_frame[1] = INTRA_FRAME;
+    MODE_INFO *mi_ptr = &mi_storage;
+    MODE_INFO **mi_grid = &mi_ptr;
+
+    FRAME_CONTEXT *fc2 = (FRAME_CONTEXT *)calloc(1, sizeof(FRAME_CONTEXT));
+    memcpy(fc2->coef_probs[TX_8X8][PLANE_TYPE_Y][/*ref=*/0],
+           snap_m17_coef_probs,
+           sizeof(snap_m17_coef_probs));
+
+    MACROBLOCKD xd2;
+    memset(&xd2, 0, sizeof(xd2));
+    xd2.mi = mi_grid;
+    xd2.fc = fc2;
+    xd2.counts = NULL;
+    xd2.lossless = 0;
+
+    /* TX_8X8 Y intra Dc → tx_type = DCT_DCT → default_scan_8x8. */
+    const ScanOrder *sc8 = &vp9_default_scan_orders[TX_8X8];
+    int16_t dq8[2] = { SNAP_M17_DQ_DC, SNAP_M17_DQ_AC };
+    tran_low_t dqc8[64];
+    memset(dqc8, 0, sizeof(dqc8));
+
+    int eob8 = oracle_decode_coefs_inner(&xd2, PLANE_TYPE_Y, dqc8,
+                                         TX_8X8, dq8, SNAP_M17_INITIAL_PT,
+                                         sc8->scan, sc8->neighbors, &rr);
+
+    printf("\nlibvpx M.17 decode_coefs:\n");
+    printf("  eob      = %d\n", eob8);
+    printf("  dq_coefs[0..16] = [");
+    for (int i = 0; i < 16; ++i) {
+      printf("%s%d", i == 0 ? "" : ", ", (int)dqc8[i]);
+    }
+    printf("]\n");
+    printf("  explicit: dqc8[0]=%d dqc8[1]=%d dqc8[2]=%d dqc8[8]=%d dqc8[16]=%d\n",
+           (int)dqc8[0], (int)dqc8[1], (int)dqc8[2], (int)dqc8[8], (int)dqc8[16]);
+    printf("  scan[0..3]: %d, %d, %d\n", (int)sc8->scan[0], (int)sc8->scan[1], (int)sc8->scan[2]);
+
+    printf("\nrvp9 M.17 production:\n");
+    printf("  eob      = %d\n", SNAP_M17_PROD_EOB);
+    printf("  dq_coefs[0..16] = [");
+    for (int i = 0; i < 16; ++i) {
+      printf("%s%d", i == 0 ? "" : ", ", snap_m17_prod_dq[i]);
+    }
+    printf("]\n");
+
+    int match17 = (eob8 == SNAP_M17_PROD_EOB);
+    for (int i = 0; i < 64 && match17; ++i) {
+      if ((int32_t)dqc8[i] != snap_m17_prod_dq[i]) match17 = 0;
+    }
+    printf("\n=== M.17: %s ===\n", match17 ? "MATCH" : "DIVERGE");
+    if (!match17) {
+      for (int i = 0; i < 64; ++i) {
+        if ((int32_t)dqc8[i] != snap_m17_prod_dq[i]) {
+          printf("  first diff @ scan-pos %d: libvpx=%d rvp9=%d\n",
+                 i, (int)dqc8[i], snap_m17_prod_dq[i]);
+          break;
+        }
+      }
+      if (eob8 != SNAP_M17_PROD_EOB) {
+        printf("  eob diff: libvpx=%d rvp9=%d\n", eob8, SNAP_M17_PROD_EOB);
+      }
+    }
+
+    free(fc2);
+    free(buf);
+
+    /* Suppress the unused param warning for `match` from the M.8 block
+     * so M.17 can set the exit code based on its own check. */
+    if (!match17) {
+      return 1;
+    }
+  }
+
   return match ? 0 : 1;
 }

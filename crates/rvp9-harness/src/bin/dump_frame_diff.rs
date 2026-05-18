@@ -211,6 +211,39 @@ fn main() {
         }
         println!();
     }
+
+    // M.17 probe: dump the (px 276..295, row 0..7) window — straddles the
+    // last-passing 4×4 (px 276..279), our failing Block8x8 (px 280..287),
+    // and the start of the next Block8x8 (px 288..295). Lets us read off
+    // which column is the smoking-gun pre-LF divergence.
+    if let Ok(s) = std::env::var("RVP9_DEBUG_DUMP_WINDOW") {
+        // Format: "x_lo,x_hi,y_lo,y_hi" — half-open ranges.
+        let parts: Vec<&str> = s.split(',').collect();
+        if parts.len() == 4 {
+            let c_lo: usize = parts[0].parse().unwrap_or(0);
+            let c_hi: usize = parts[1].parse::<usize>().unwrap_or(0).min(crop_w);
+            let r_lo: usize = parts[2].parse().unwrap_or(0);
+            let r_hi: usize = parts[3].parse::<usize>().unwrap_or(0).min(crop_h);
+            println!("---- Y cols {c_lo}..{c_hi} rows {r_lo}..{r_hi}: got | exp | diff ----");
+            for r in r_lo..r_hi {
+                print!("  r{r:3} got: ");
+                for c in c_lo..c_hi {
+                    print!("{:4} ", y_got[r * crop_w + c]);
+                }
+                print!("  | exp: ");
+                for c in c_lo..c_hi {
+                    print!("{:4} ", y_exp[r * crop_w + c]);
+                }
+                print!("  | diff: ");
+                for c in c_lo..c_hi {
+                    let g = y_got[r * crop_w + c] as i32;
+                    let e = y_exp[r * crop_w + c] as i32;
+                    print!("{:+4} ", g - e);
+                }
+                println!();
+            }
+        }
+    }
     // M.13 probe — dump rows 8..24 cols 22..32 to inspect upstream cascade.
     if std::env::var("RVP9_DUMP_PATCH").is_ok() {
         let r_lo: usize = 8;

@@ -433,7 +433,18 @@ pub fn decode_coefs(
 
         // Sign bit (raw, prob 128).
         let signed_v = if reader.read_bit() != 0 { -v } else { v };
-        dq_coefs_out[scan.scan[c] as usize] = signed_v;
+        let raster_idx = scan.scan[c] as usize;
+        dq_coefs_out[raster_idx] = signed_v;
+
+        // Stage 3 stretch M.17 — print scan[c] and write index for Tx8x8.
+        if matches!(tx_size, TxSize::Tx8x8)
+            && std::env::var("RVP9_DEBUG_SCAN_WRITE").is_ok_and(|v| v == "1")
+        {
+            eprintln!(
+                "RVP9_DBG_SCAN_WRITE c={c} scan[c]={raster_idx} v={signed_v} dq_coefs_out.len={}",
+                dq_coefs_out.len()
+            );
+        }
 
         c += 1;
         if c < seg_eob {

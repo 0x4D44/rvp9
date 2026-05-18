@@ -131,4 +131,55 @@ static const uint8_t snap_coef_probs[6][6][3] = {
 #define SNAP_DQ_DC       177
 #define SNAP_DQ_AC       231
 
+/* =====================================================================
+ * Stage 3 stretch M.17 — second snapshot, for vp90-2-05-resize frame 1.
+ *
+ * Block at (px 280, row 0) — Block8x8 Dc tx_size=Tx8x8.
+ *
+ * Captured via `RVP9_DEBUG_DQCOEFS=tx8` 2026-05-18:
+ *   tx_type=DctDct, ref_type=0, initial_pt=1, dq=(349, 550)
+ *   pre_range=144 pre_value=0x6f87ffa7a6560000 pre_count=41 pre_pos=582
+ *   buffer_len=3881
+ *   probs[b=0][ctx=1]=[52, 41, 133]
+ *   probs[b=1][ctx=1]=[51, 102, 147]
+ *
+ * rvp9 production output:
+ *   eob = 3
+ *   dq_coefs = [-698, 550, 0, 0, ..., 0]
+ *
+ * The compressed-tile buffer was dumped to ./m17_tile_buffer.bin via
+ * the RVP9_DEBUG_BUFFER_DUMP env var; the oracle reads it at runtime.
+ * ===================================================================== */
+#define SNAP_M17_PRE_RANGE   144u
+#define SNAP_M17_PRE_VALUE   0x6f87ffa7a6560000ull
+#define SNAP_M17_PRE_COUNT   41
+#define SNAP_M17_PRE_POS     582u
+#define SNAP_M17_BUFFER_FILE "m17_tile_buffer.bin"
+#define SNAP_M17_INITIAL_PT  1
+#define SNAP_M17_DQ_DC       349
+#define SNAP_M17_DQ_AC       550
+#define SNAP_M17_SEG_EOB     64
+#define SNAP_M17_PROD_EOB    3
+static const int32_t snap_m17_prod_dq[64] = {
+    -698, 550, 0, 0, 0, 0, 0, 0,
+       0,   0, 0, 0, 0, 0, 0, 0,
+       0,   0, 0, 0, 0, 0, 0, 0,
+       0,   0, 0, 0, 0, 0, 0, 0,
+       0,   0, 0, 0, 0, 0, 0, 0,
+       0,   0, 0, 0, 0, 0, 0, 0,
+       0,   0, 0, 0, 0, 0, 0, 0,
+       0,   0, 0, 0, 0, 0, 0, 0,
+};
+
+/* Captured runtime coef_probs for Tx8x8 Y intra at the moment this
+ * block is decoded. ([band][ctx][3 = UNCONSTRAINED_NODES]). */
+static const uint8_t snap_m17_coef_probs[6][6][3] = {
+    {{125,  34, 187}, { 52,  41, 133}, {  6,  31,  56}, {0,0,0}, {0,0,0}, {0,0,0}},
+    {{ 37, 109, 153}, { 51, 102, 147}, { 23,  87, 128}, {  8,  67, 101}, {  1,  41, 125}, {  1,  19,  29}},
+    {{ 31, 154, 185}, { 17, 127, 175}, {  6,  96, 145}, {  2,  73, 114}, {  1,  51,  82}, {  1,  28,  45}},
+    {{ 23, 163, 200}, { 10, 131, 185}, {  2,  93, 148}, {  1,  67, 111}, {  1,  41,  69}, {  1,  14,  24}},
+    {{ 29, 176, 234}, { 12, 145, 231}, {  3, 101, 238}, {  1,  69, 111}, {  1,  39,  63}, {  1,  14,  23}},
+    {{ 93, 192, 250}, { 60, 154, 245}, {  6, 109, 167}, {  3,  78, 118}, {  1,  48,  69}, {  1,  21,  29}},
+};
+
 #endif  /* ORACLE_SNAPSHOT_H_ */
