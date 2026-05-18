@@ -89,8 +89,11 @@ pub const fn default_scan_4x4() -> ScanOrder {
     }
 }
 
-/// 4×4 column scan (ADST_DCT — vertical first). 16 entries from
-/// libvpx `vp9_scan.c:19-21`.
+/// 4×4 column scan (DCT_ADST — vertical first). 16 entries from
+/// libvpx `vp9_scan.c:19-21`. Used when the row pass is DCT and the
+/// column pass is ADST, which skews per-position priority toward early
+/// rows / late columns — visiting raster positions column-first hits
+/// the surviving coefficients sooner.
 #[rustfmt::skip]
 pub static COL_SCAN_4X4: [i16; 16] = [
     0, 4, 8, 1, 12, 5, 9, 2, 13, 6, 10, 3, 7, 14, 11, 15,
@@ -111,8 +114,10 @@ pub static COL_SCAN_4X4_NEIGHBORS: [i16; 34] = [
     9, 2, 2, 6, 6, 2, 2, 3, 3, 10, 10, 7, 7, 11, 11, 0, 0,
 ];
 
-/// 4×4 row scan (DCT_ADST — horizontal first). 16 entries from libvpx
-/// `vp9_scan.c:23-25`.
+/// 4×4 row scan (ADST_DCT — horizontal first). 16 entries from libvpx
+/// `vp9_scan.c:23-25`. Used when the row pass is ADST and the column
+/// pass is DCT — visiting raster positions row-first hits the surviving
+/// coefficients sooner.
 #[rustfmt::skip]
 pub static ROW_SCAN_4X4: [i16; 16] = [
     0, 1, 4, 2, 5, 3, 6, 8, 9, 7, 12, 10, 13, 11, 14, 15,
@@ -135,7 +140,8 @@ pub static ROW_SCAN_4X4_NEIGHBORS: [i16; 34] = [
 
 /// 4×4 column `ScanOrder` (used for `TxType::DctAdst`).
 ///
-/// Matches `scan_order_4x4` dispatch below: `DCT_ADST → col_scan`.
+/// Matches `scan_order_4x4` dispatch below: `DCT_ADST → col_scan` and
+/// libvpx `vp9_scan_orders[TX_4X4][DCT_ADST]` (`vp9_scan.c:702`).
 #[inline]
 #[must_use]
 pub const fn col_scan_4x4() -> ScanOrder {
@@ -148,7 +154,8 @@ pub const fn col_scan_4x4() -> ScanOrder {
 
 /// 4×4 row `ScanOrder` (used for `TxType::AdstDct`).
 ///
-/// Matches `scan_order_4x4` dispatch below: `ADST_DCT → row_scan`.
+/// Matches `scan_order_4x4` dispatch below: `ADST_DCT → row_scan` and
+/// libvpx `vp9_scan_orders[TX_4X4][ADST_DCT]` (`vp9_scan.c:701`).
 #[inline]
 #[must_use]
 pub const fn row_scan_4x4() -> ScanOrder {

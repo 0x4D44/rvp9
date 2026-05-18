@@ -935,6 +935,127 @@ mod tests {
         );
     }
 
+    /// `decode_coefs` with `col_scan_4x4` (the scan order used for
+    /// `TxType::DctAdst`) must route non-zero tokens to the **raster**
+    /// positions named by `scan[c]`, not to scan positions `c`. M.2
+    /// bisect probe: if this fails, the bug is in `decode_coefs`'s
+    /// handling of non-default scans (token_cache writeback / neighbour
+    /// indexing / dqv switching). If it passes, the bug is downstream
+    /// (in `iht4x4_16_add` or the dequant glue).
+    ///
+    /// Encoded sequence:
+    /// - Scan pos 0: ONE_TOKEN positive → raster pos `scan[0] = 0` (DC).
+    /// - Scan pos 1: ONE_TOKEN positive → raster pos `scan[1] = 4`
+    ///   (row 1, col 0 — vertical neighbour of DC).
+    /// - Scan pos 2: EOB.
+    ///
+    /// Expected:
+    /// - `dq_coefs[0] = +1 * dc_dq` (DC dequant on first position).
+    /// - `dq_coefs[4] = +1 * ac_dq` (AC dequant after the first).
+    /// - All other slots zero.
+    #[test]
+    fn col_scan_4x4_dispatches_to_raster_positions() {
+        use crate::transforms::scans::col_scan_4x4;
+        let probs = flat_coef_probs(64, 64, 64);
+        let bytes = encode(|w| {
+            // Scan pos 0: NOT-EOB → NOT-ZERO → ONE-token → positive.
+            w.write(1, 64);
+            w.write(1, 64);
+            w.write(0, 64);
+            w.write_bit(0);
+            // Scan pos 1: NOT-EOB → NOT-ZERO → ONE-token → positive.
+            w.write(1, 64);
+            w.write(1, 64);
+            w.write(0, 64);
+            w.write_bit(0);
+            // Scan pos 2: EOB.
+            w.write(0, 64);
+        });
+        let mut r = BoolReader::new(&bytes).unwrap();
+        let mut dqc = vec![0i32; 16];
+        let scan = col_scan_4x4();
+        let dc_dq = 11;
+        let ac_dq = 23;
+        let eob = decode_coefs(
+            &mut r,
+            &probs,
+            None,
+            &scan,
+            0,
+            TxSize::Tx4x4,
+            16,
+            (dc_dq, ac_dq),
+            &mut dqc,
+        );
+        assert_eq!(eob, 2);
+        // scan[0] = 0 (raster DC), gets dc_dq.
+        assert_eq!(scan.scan[0], 0);
+        assert_eq!(dqc[0], dc_dq, "DC at raster 0 should be dc_dq");
+        // scan[1] = 4 (raster row 1 col 0), gets ac_dq.
+        assert_eq!(scan.scan[1], 4);
+        assert_eq!(dqc[4], ac_dq, "second coef at raster 4 should be ac_dq");
+        // Everything else zero.
+        for (i, &v) in dqc.iter().enumerate() {
+            if i == 0 || i == 4 {
+                continue;
+            }
+            assert_eq!(v, 0, "raster slot {i} should be zero");
+        }
+    }
+
+    /// Companion to `col_scan_4x4_dispatches_to_raster_positions` —
+    /// same probe but at `row_scan_4x4` (the scan order used for
+    /// `TxType::AdstDct`). Verifies the row-scan path lands tokens at
+    /// the correct raster positions too.
+    #[test]
+    fn row_scan_4x4_dispatches_to_raster_positions() {
+        use crate::transforms::scans::row_scan_4x4;
+        let probs = flat_coef_probs(64, 64, 64);
+        let bytes = encode(|w| {
+            // Scan pos 0: ONE_TOKEN positive.
+            w.write(1, 64);
+            w.write(1, 64);
+            w.write(0, 64);
+            w.write_bit(0);
+            // Scan pos 1: ONE_TOKEN positive.
+            w.write(1, 64);
+            w.write(1, 64);
+            w.write(0, 64);
+            w.write_bit(0);
+            // Scan pos 2: EOB.
+            w.write(0, 64);
+        });
+        let mut r = BoolReader::new(&bytes).unwrap();
+        let mut dqc = vec![0i32; 16];
+        let scan = row_scan_4x4();
+        let dc_dq = 11;
+        let ac_dq = 23;
+        let eob = decode_coefs(
+            &mut r,
+            &probs,
+            None,
+            &scan,
+            0,
+            TxSize::Tx4x4,
+            16,
+            (dc_dq, ac_dq),
+            &mut dqc,
+        );
+        assert_eq!(eob, 2);
+        // row_scan_4x4: scan = [0, 1, 4, ...]. scan[0]=0 (DC), scan[1]=1
+        // (row 0 col 1 — horizontal neighbour of DC).
+        assert_eq!(scan.scan[0], 0);
+        assert_eq!(scan.scan[1], 1);
+        assert_eq!(dqc[0], dc_dq, "DC at raster 0 should be dc_dq");
+        assert_eq!(dqc[1], ac_dq, "second coef at raster 1 should be ac_dq");
+        for (i, &v) in dqc.iter().enumerate() {
+            if i == 0 || i == 1 {
+                continue;
+            }
+            assert_eq!(v, 0, "raster slot {i} should be zero");
+        }
+    }
+
     /// Tx32x32 right-shifts the magnitude by 1 (libvpx `dq_shift`).
     /// Verifies the rare-but-important `dq_shift == 1` path.
     #[test]

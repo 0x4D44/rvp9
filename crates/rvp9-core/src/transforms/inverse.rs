@@ -1988,6 +1988,94 @@ mod tests {
         }
     }
 
+    /// `iht4x4_16_add(DctAdst, ...)` with `dq_coefs = [64, 0, 0, ..., 0]`.
+    /// Hand-traced oracle test for M.2 bisect of the H-mode (DCT_ADST)
+    /// residual divergence.
+    ///
+    /// Trace:
+    /// - Row pass (idct4) on row 0 of input = [64, 0, 0, 0]:
+    ///   - temp1 = (64+0) * 11585 = 741_440 → round_shift = (741_440 + 8192) >> 14
+    ///     = 749_632 >> 14 = 45 → step0 = step1 = 45.
+    ///   - temp1/2 for input[1], input[3] are zero → step2 = step3 = 0.
+    ///   - output = [45, 45, 45, 45].
+    /// - Rows 1..3 are zero in, so intermediate rows 1..3 = [0, 0, 0, 0].
+    /// - Column pass (iadst4) on column c (any c, all four are identical):
+    ///   col_in = [45, 0, 0, 0]
+    ///   - s0_a = 5283 * 45 = 237_735
+    ///   - s1_a = 9929 * 45 = 446_805
+    ///   - s7 = 45 ; s2 = 13377 * 45 = 601_965
+    ///   - s0 = 237_735, s1 = 446_805, s3 = 0
+    ///   - out[0] = round_shift(237_735) = (237_735 + 8192) >> 14 = 15
+    ///   - out[1] = round_shift(446_805) = 27
+    ///   - out[2] = round_shift(601_965) = 36 (NOT 37 — `601965+8192=610157 >> 14 = 37`)
+    ///     Actually 610_157 / 16384 = 37.24 → integer >> 14 = 37.
+    ///   - out[3] = round_shift(237_735 + 446_805) = round_shift(684_540) = 42
+    /// - ROUND_POWER_OF_TWO(out, 4) added to dest (init 0):
+    ///   - row 0: (15+8)>>4 = 1
+    ///   - row 1: (27+8)>>4 = 2
+    ///   - row 2: (37+8)>>4 = 2
+    ///   - row 3: (42+8)>>4 = 3
+    /// - Each row is filled identically across columns (since each
+    ///   column has the same input post-row-pass).
+    #[test]
+    fn iht4x4_dct_adst_dc_only_known_value() {
+        let mut input = [0i32; 16];
+        input[0] = 64;
+        let mut dest = [0u8; 16];
+        iht4x4_16_add(&input, &mut dest, 4, TxType::DctAdst);
+        let expected: [u8; 16] = [
+            1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3,
+        ];
+        assert_eq!(dest, expected);
+    }
+
+    /// `iht4x4_16_add(AdstDct, ...)` with `dq_coefs = [64, 0, 0, ..., 0]`.
+    /// Companion hand-traced oracle. AdstDct does iadst on rows and
+    /// idct on columns — input row 0 is iadst4([64,0,0,0]) which
+    /// produces a *non-constant* output, and other rows stay zero;
+    /// then idct on each column.
+    ///
+    /// Trace (row pass iadst4 on [64,0,0,0]):
+    ///   - s0_a = 5283 * 64 = 338_112
+    ///   - s1_a = 9929 * 64 = 635_456
+    ///   - s7 = 64 ; s2 = 13377 * 64 = 856_128
+    ///   - s0 = 338_112; s1 = 635_456; s3 = 0
+    ///   - out[0] = (338_112 + 8192) >> 14 = 346_304 >> 14 = 21
+    ///   - out[1] = (635_456 + 8192) >> 14 = 643_648 >> 14 = 39
+    ///   - out[2] = (856_128 + 8192) >> 14 = 864_320 >> 14 = 52
+    ///   - out[3] = (338_112 + 635_456 + 8192) >> 14 = 981_760 >> 14 = 59
+    /// - intermediate row 0 = [21, 39, 52, 59]; rows 1..3 = 0.
+    /// - Column pass idct4 on col 0 = [21, 0, 0, 0]:
+    ///   - temp1 = (21+0)*11585 = 243_285 → step0 = step1 = (243_285+8192)>>14 = 251_477 >> 14 = 15
+    ///   - step2 = step3 = 0
+    ///   - col_out = [15, 15, 15, 15]
+    ///   - rounded (col_out + 8) >> 4 = (15+8)>>4 = 1 — all 4 rows get +1.
+    /// - Column 1 idct4([39, 0, 0, 0]):
+    ///   - temp1 = 39 * 11585 = 451_815 → step = (451_815+8192)>>14 = 460_007>>14 = 28
+    ///   - col_out = [28; 4] → (28+8)>>4 = 36>>4 = 2.
+    /// - Column 2 idct4([52, 0, 0, 0]):
+    ///   - 52 * 11585 = 602_420 → (602_420+8192)>>14 = 610_612>>14 = 37
+    ///   - (37+8)>>4 = 45>>4 = 2.
+    /// - Column 3 idct4([59, 0, 0, 0]):
+    ///   - 59 * 11585 = 683_515 → (683_515+8192)>>14 = 691_707>>14 = 42
+    ///   - (42+8)>>4 = 50>>4 = 3.
+    /// - Each row gets [1, 2, 2, 3] (constant across all rows since col_out is uniform).
+    #[test]
+    fn iht4x4_adst_dct_dc_only_known_value() {
+        let mut input = [0i32; 16];
+        input[0] = 64;
+        let mut dest = [0u8; 16];
+        iht4x4_16_add(&input, &mut dest, 4, TxType::AdstDct);
+        let row = [1u8, 2, 2, 3];
+        let expected: [u8; 16] = [
+            row[0], row[1], row[2], row[3],
+            row[0], row[1], row[2], row[3],
+            row[0], row[1], row[2], row[3],
+            row[0], row[1], row[2], row[3],
+        ];
+        assert_eq!(dest, expected);
+    }
+
     /// The three non-DCT-DCT TxTypes produce different output from
     /// DctDct for the same non-trivial input (sanity check that the
     /// dispatch actually changes behaviour).
