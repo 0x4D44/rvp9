@@ -180,6 +180,26 @@ pub fn reconstruct_intra_block(
         &mut dq_coefs[..seg_eob],
     );
 
+    // Phase-2 diagnostic — Stage 3 stretch M.3. Logs dq_coefs at the
+    // first Block4x4 of the first SB (plane 0, TX_4×4, 4 sub-positions
+    // around the origin). Gated behind `RVP9_DEBUG_DQCOEFS=1` so it's
+    // a no-op in normal runs. The failing block reported by M.1 / M.2
+    // is sub-1 of bmi=[Dc, H, Dc, Dc] at `(x4=1, y4_in_sb=0)`, plane 0,
+    // tx_size=Tx4x4, tx_type=DctAdst.
+    if plane == 0
+        && tx_size == TxSize::Tx4x4
+        && x4 < 2
+        && y4_in_sb < 2
+        && std::env::var("RVP9_DEBUG_DQCOEFS").is_ok_and(|v| v == "1")
+    {
+        eprintln!(
+            "RVP9_DBG dq_coefs plane=0 tx=4x4 x4={x4} y4_in_sb={y4_in_sb} \
+             tx_type={tx_type:?} eob={eob} mode={intra_mode:?} \
+             dq_coefs={:?}",
+            &dq_coefs[..n]
+        );
+    }
+
     // 3. If non-empty, apply IT-add into `dst` (reads prediction, adds
     // IT(dq_coefs), writes back).
     if eob > 0 {
