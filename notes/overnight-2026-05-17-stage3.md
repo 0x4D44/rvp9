@@ -1,10 +1,15 @@
-# Overnight 2026-05-17 — Stage 3 autonomous run
+# Overnight 2026-05-17 → 2026-05-18 onward — Stage 3 ledger
 
-**Owner:** Arthur (asleep). Lead: Claude (supervisor / coordinator).
+**Owner:** Arthur. Lead: Claude (supervisor / coordinator).
 **Started:** 2026-05-17.
-**Goal:** First keyframe bit-exact under vpxdec MD5 (floor) → all
-keyframes in all 14 conformance vectors bit-exact (stretch).
-**Approved by Arthur:** scope = floor + stretch; wedge policy = skip + flag.
+**Goal (2026-05-17, overnight):** First keyframe bit-exact under vpxdec MD5 (floor) → all keyframes bit-exact (stretch).
+**🎯 FLOOR HIT 2026-05-17:** `vp90-2-02-size-08x08.webm` frame 1 matches `2f90d606edc511c8c960530dd915cb98` ✓.
+**Goal (2026-05-18 onward, Arthur-approved):** **Full Stage 3 exit** — 100% pass on official VP9 conformance test vectors (all 201 frames).
+**Wedge policy:** skip + flag, never cascade.
+
+The 2026-05-17 overnight run hit the floor + landed 19 commits. This
+ledger now continues across additional sessions toward Stage 3 exit;
+see Phase B/C/D/E/F sections appended at the bottom as each phase begins.
 
 ## Architecture
 
@@ -44,7 +49,7 @@ Arthur triages all `WEDGED` and `WEDGED-BLOCKED` entries on wake.
 |---|---|---|
 | D | 8.2.6 neighbour-context plumbing (above/left ModeInfo grid) | ✅ `3b907d2` |
 | B2 | 6.3.5 adjust_mask post-pass | ✅ `68777f6` |
-| E | 8.2.7 partial MV-component decoder (inter leaves stub `unimplemented!()`) | ⏬ DEFERRED — not on critical path for keyframe-only floor (F doesn't depend on it) |
+| E | 8.2.7 partial MV-component decoder (inter leaves stub `unimplemented!()`) | ⏬ deferred during overnight; resurrected as Phase B.1 for Stage 3 exit drive (see below) |
 
 ### Wave 3 — gated on A+D (split F preemptively to reduce wedge risk)
 
@@ -72,8 +77,11 @@ Arthur triages all `WEDGED` and `WEDGED-BLOCKED` entries on wake.
 |---|---|---|
 | L | Run conformance vectors, assert MD5 match on first keyframe — FLOOR | 🎯 **HIT** — `3364c60` + `3ba4741`. `vp90-2-02-size-08x08.webm` frame 1 MD5-matches libvpx exactly. 1 passed / 10 mismatched / 190 skipped / 201 total. |
 | M.1 | Differential-trace 32×32 keyframe mismatch (smallest delta from passing 8×8) | ✅ `27f2f3c` + ratchet 10→9 (1 bug found+fixed; cascade bug surfaced for M.2) |
-| M.2 | Hand-trace DctAdst 4×4 H-mode path — bisect decode_coefs vs iadst4 vs dq_shift | 🟡 partial-localization (2 of 3 suspects ruled out via hand-traced unit tests; decoder-level instrumentation blocked by concurrent in-flight refactor of rvp9-decoder) |
-| M.3 | Extend to all keyframes across all 14 vectors — full stretch | ⏸ blocked on M.2 findings |
+| M.2 | Hand-trace DctAdst 4×4 H-mode path — bisect decode_coefs vs iadst4 vs dq_shift | ✅ partial `8707f6a` — 2 of 3 suspects RULED OUT (decode_coefs col/row_scan dispatch fine; iadst4 DC-only numerics fine; dq_shift not in play for TX_4×4). Remaining: iht4x4 multi-coef OR dq_coefs production mismatch. Closed pending follow-up. |
+| M.3 | iht4x4 multi-coef oracle (Phase 1) + dq_coefs instrumentation (Phase 2) | ✅ `36c1a04` + `287b4b1` — iht4x4 CLEARED (N=100 random-input differential vs verbatim libvpx port, no divergence). Bug LOCALIZED to dq_coefs production (decode_coefs or upstream). M.3 agent's line-by-line review of decode_coefs vs libvpx found no source-level divergence. |
+| M.4 | decode_coefs verbatim port + N=100 differential; if clean, audit call-site (initial_pt, writeback timing, scan, probs) | ✅ partial — Phase 1+2 CLEARED decode_coefs (N=100 random across 10 (TxSize × scan) configs vs verbatim libvpx port — no divergence). Phase 4 call-site audit on `vp90-2-02-size-32x32.webm` frame 1 sub-1: `initial_pt=1, tx_type=DctAdst, scan=col_scan_4x4 ([0,4,8,1,...]), dequant=(177,231), probs[b0][ctx1]=[84,49,136]` — all match libvpx defaults EXACTLY. **decode_coefs is bit-exact AND its inputs are correct.** Remaining hypothesis: bit-stream cursor diverges BEFORE sub-1 due to a prior mis-counted read OR an interaction with the boolean coder we haven't characterised. Lead: dispatch focused follow-up to diff vpxdec's per-block bool-reader state against ours. |
+| N.1 | Parser-rejection investigation (15 frames: 11× first_partition_size=0, 4× log2_tile_cols=7) | ✅ `78df111` — single root cause (bit-stream misalignment in `setup_frame_size_with_refs`: loop ate all 3 size_in_found bits; libvpx breaks on first 1-bit). Same bug, two symptoms. 14 frames moved from parser-reject to unimplemented-inter (165→179). Conformance headline unchanged — no parser-rejected frames were keyframes. |
+| M.4 | Extend to all keyframes across all 14 vectors — full stretch | ⏸ blocked on M.3 findings |
 
 ## Run log
 

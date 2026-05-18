@@ -153,6 +153,33 @@ pub fn decode_block_tokens(
     let l_any = fold_any_nonzero(coef_ctx, plane, y4_in_sb, n, false);
     let initial_pt = combine_entropy_contexts(a_any, l_any);
 
+    // Stage 3 stretch M.4 — log call-site inputs for the first Block4x4
+    // of the first SB. Gated by `RVP9_DEBUG_DQCOEFS=2` so it's a no-op
+    // in normal runs. Companion to the dq_coefs dump in
+    // `reconstruct.rs` (gated by `=1`). Captures `initial_pt`, the
+    // exact above/left neighbour cells used to compute it, the scan
+    // kind, the tx_type, the dequant pair, and the coef_probs[band=0]
+    // [ctx=initial_pt] row to allow a hand-trace of the first token
+    // read against libvpx.
+    if plane == 0
+        && tx_size == TxSize::Tx4x4
+        && x4 < 2
+        && y4_in_sb < 2
+        && std::env::var("RVP9_DEBUG_DQCOEFS").is_ok_and(|v| v == "2")
+    {
+        let a0 = coef_ctx.above_coef(plane, x4);
+        let l0 = coef_ctx.left_coef(plane, y4_in_sb);
+        let prob_b0 = &coef_probs[0][initial_pt];
+        eprintln!(
+            "RVP9_DBG callsite plane=0 tx=4x4 x4={x4} y4_in_sb={y4_in_sb} \
+             tx_type={tx_type:?} ref_type={ref_type} \
+             a_any={a_any} l_any={l_any} above[{x4}]={a0} left[{y4_in_sb}]={l0} \
+             initial_pt={initial_pt} dequant={dequant:?} \
+             scan[0..6]={:?} probs[b=0][ctx={initial_pt}]={prob_b0:?}",
+            &scan.scan[..6.min(scan.scan.len())]
+        );
+    }
+
     let eob = decode_coefs(
         reader,
         coef_probs,

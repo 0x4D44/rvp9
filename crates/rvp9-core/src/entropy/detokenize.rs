@@ -1056,6 +1056,601 @@ mod tests {
         }
     }
 
+    // ===================================================================
+    // Stage 3 stretch Task M.4 — verbatim libvpx reference port.
+    //
+    // Direct line-by-line transcription of `decode_coefs`
+    // (`third_party/libvpx/vp9/decoder/vp9_detokenize.c:115-261`). The
+    // job of this reference is to be *obviously* correct by direct
+    // comparison with libvpx, NOT to be idiomatic Rust. We then
+    // differential-test our production [`decode_coefs`] against this
+    // reference on randomly-synthesised bitstreams to localize any
+    // divergence to the bit level.
+    //
+    // Differs from libvpx only in superficial host-language ways:
+    //   - Uses our `BoolReader` directly via `read(prob)` instead of
+    //     libvpx's inlined `read_bool` register-cached variant. Both
+    //     produce identical bit sequences (same arithmetic coder).
+    //   - Indexes `band_translate` via `c` instead of post-incrementing
+    //     a pointer. Functionally equivalent: libvpx reads
+    //     `band = *band_translate++` once per outer iteration AND once
+    //     per inner zero-loop iteration; in both cases the pointer
+    //     advances at exactly the same scan positions `c` does, so
+    //     `band_translate[c]` is the same value.
+    //   - No counts-bumping (we exercise the decoded outputs only, not
+    //     the backward-adaptation tallies — those have separate tests).
+    //   - No coefficient-range-checking; that's libvpx's
+    //     `CONFIG_COEFFICIENT_RANGE_CHECKING` debug guard, disabled in
+    //     conformance builds anyway.
+    // ===================================================================
+
+    /// Verbatim transcription of libvpx `decode_coefs`
+    /// (`vp9_detokenize.c:115-261`).
+    ///
+    /// `dq` is the libvpx `[dc, ac]` pair. `nb` is the scan's neighbour
+    /// table.
+    #[allow(clippy::too_many_arguments)]
+    fn decode_coefs_libvpx_ref(
+        reader: &mut BoolReader<'_>,
+        coef_probs: &CoefBandCtxProbs,
+        tx_size: TxSize,
+        dq: (i32, i32),
+        mut ctx: usize,
+        scan: &[i16],
+        nb: &[i16],
+        dq_coefs_out: &mut [i32],
+        seg_eob: usize,
+    ) -> usize {
+        // libvpx: int max_eob = 16 << (tx_size << 1);  → 16 / 64 / 256 / 1024
+        let max_eob = tx_size.n_coeffs();
+        let max_eob = max_eob.min(seg_eob); // seg_eob cap for SEG_LVL_SKIP
+
+        // Zero the output (caller-side memset in libvpx).
+        for slot in &mut dq_coefs_out[..max_eob] {
+            *slot = 0;
+        }
+
+        // band_translate: 4x4 or 8x8plus
+        let band_translate: &[u8] = if matches!(tx_size, TxSize::Tx4x4) {
+            &VP9_COEFBAND_TRANS_4X4
+        } else {
+            &VP9_COEFBAND_TRANS_8X8PLUS
+        };
+        let dq_shift: u32 = if matches!(tx_size, TxSize::Tx32x32) { 1 } else { 0 };
+
+        let mut token_cache = vec![0u8; tx_size.n_coeffs()];
+
+        let mut c: usize = 0;
+        let mut bt_idx: usize = 0; // mirrors libvpx's post-increment
+        let mut dqv: i32 = dq.0;
+
+        while c < max_eob {
+            // libvpx: band = *band_translate++;
+            let mut band = band_translate[bt_idx] as usize;
+            bt_idx += 1;
+            // libvpx: prob = coef_probs[band][ctx];
+            let mut prob = &coef_probs[band][ctx];
+
+            // libvpx: if (!read_bool(EOB_CONTEXT_NODE)) break;
+            if reader.read(prob[EOB_CONTEXT_NODE]) == 0 {
+                break;
+            }
+
+            // libvpx: while (!read_bool(ZERO_CONTEXT_NODE)) {
+            //          dqv = dq[1];
+            //          token_cache[scan[c]] = 0;
+            //          ++c;
+            //          if (c >= max_eob) return c;
+            //          ctx = get_coef_context(nb, token_cache, c);
+            //          band = *band_translate++;
+            //          prob = coef_probs[band][ctx];
+            //        }
+            while reader.read(prob[ZERO_CONTEXT_NODE]) == 0 {
+                dqv = dq.1;
+                token_cache[scan[c] as usize] = 0;
+                c += 1;
+                if c >= max_eob {
+                    return c;
+                }
+                // get_coef_context: (1 + nb[2c] + nb[2c+1]) >> 1
+                let nb0 = nb[MAX_NEIGHBORS * c] as usize;
+                let nb1 = nb[MAX_NEIGHBORS * c + 1] as usize;
+                ctx = (1 + usize::from(token_cache[nb0]) + usize::from(token_cache[nb1])) >> 1;
+                band = band_translate[bt_idx] as usize;
+                bt_idx += 1;
+                prob = &coef_probs[band][ctx];
+            }
+
+            // libvpx: if (read_bool(ONE_CONTEXT_NODE)) {
+            let v: i32;
+            if reader.read(prob[ONE_CONTEXT_NODE]) != 0 {
+                // libvpx: p = vp9_pareto8_full[prob[PIVOT_NODE] - 1];
+                let p = &VP9_PARETO8_FULL[(prob[PIVOT_NODE] - 1) as usize];
+                if reader.read(p[0]) != 0 {
+                    if reader.read(p[3]) != 0 {
+                        token_cache[scan[c] as usize] = 5;
+                        let val = if reader.read(p[5]) != 0 {
+                            if reader.read(p[7]) != 0 {
+                                // CAT6: 14 ext bits @ vp9_cat6_prob (8-bit)
+                                CAT6_MIN_VAL + read_coeff_bits(reader, &VP9_CAT6_PROB)
+                            } else {
+                                CAT5_MIN_VAL + read_coeff_bits(reader, &VP9_CAT5_PROB)
+                            }
+                        } else if reader.read(p[6]) != 0 {
+                            CAT4_MIN_VAL + read_coeff_bits(reader, &VP9_CAT4_PROB)
+                        } else {
+                            CAT3_MIN_VAL + read_coeff_bits(reader, &VP9_CAT3_PROB)
+                        };
+                        v = (val * dqv) >> dq_shift;
+                    } else {
+                        token_cache[scan[c] as usize] = 4;
+                        let val = if reader.read(p[4]) != 0 {
+                            CAT2_MIN_VAL + read_coeff_bits(reader, &VP9_CAT2_PROB)
+                        } else {
+                            CAT1_MIN_VAL + read_coeff_bits(reader, &VP9_CAT1_PROB)
+                        };
+                        v = (val * dqv) >> dq_shift;
+                    }
+                } else if reader.read(p[1]) != 0 {
+                    token_cache[scan[c] as usize] = 3;
+                    let three_or_four = 3 + i32::from(reader.read(p[2]));
+                    v = (three_or_four * dqv) >> dq_shift;
+                } else {
+                    token_cache[scan[c] as usize] = 2;
+                    v = (2 * dqv) >> dq_shift;
+                }
+            } else {
+                token_cache[scan[c] as usize] = 1;
+                v = dqv >> dq_shift;
+            }
+
+            // libvpx: dqcoeff[scan[c]] = read_bool(128) ? -v : v;
+            let signed_v = if reader.read_bit() != 0 { -v } else { v };
+            dq_coefs_out[scan[c] as usize] = signed_v;
+
+            c += 1;
+            // libvpx: ctx = get_coef_context(nb, token_cache, c);
+            if c < max_eob {
+                let nb0 = nb[MAX_NEIGHBORS * c] as usize;
+                let nb1 = nb[MAX_NEIGHBORS * c + 1] as usize;
+                ctx = (1 + usize::from(token_cache[nb0]) + usize::from(token_cache[nb1])) >> 1;
+            }
+            // libvpx: dqv = dq[1];
+            dqv = dq.1;
+        }
+
+        c
+    }
+
+    /// Tiny deterministic PRNG (xorshift64*) — keeps the differential
+    /// test reproducible without a `rand` dep.
+    struct XorShift64 {
+        state: u64,
+    }
+
+    impl XorShift64 {
+        fn new(seed: u64) -> Self {
+            Self { state: seed.max(1) }
+        }
+        fn next_u64(&mut self) -> u64 {
+            let mut x = self.state;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.state = x;
+            x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+        fn next_range(&mut self, range: u32) -> u32 {
+            (self.next_u64() as u32) % range
+        }
+        /// Pick a probability biased to NOT be 128 — flat 128 avoids many
+        /// edge cases (Pareto pivot 127 → row 127, etc). We mix in some
+        /// extreme values (low and high) along with the bulk range.
+        fn next_prob(&mut self) -> u8 {
+            // 1..=255 (probability 0 is not used in VP9 — `prob - 1` for
+            // the Pareto pivot would underflow).
+            let r = self.next_u64() as u32;
+            // 10% chance of extreme high (200..=255)
+            // 10% chance of extreme low   (1..=50)
+            // 80% chance of mid          (51..=199)
+            let bucket = r & 0xff;
+            let base = (r >> 8) as u8;
+            if bucket < 26 {
+                1 + (base % 50)
+            } else if bucket < 52 {
+                200 + (base % 56)
+            } else {
+                51 + (base % 149)
+            }
+        }
+    }
+
+    /// Encode a random sequence of tokens compatible with the libvpx
+    /// detokenize bit-grammar: walks the same scan-position structure
+    /// the decoder will walk, emitting either an EOB at position 0, a
+    /// run of ZERO tokens that exhausts the block, or some sequence
+    /// of (ZERO* | ONE | TWO | THREE | FOUR | CAT1..6) ending in EOB.
+    ///
+    /// Drives the *encoder's* mirror of the libvpx state machine,
+    /// which means we MUST track the same `ctx` / `band` / `dqv` /
+    /// `token_cache` evolution the decoder will see, so the emitted
+    /// bits round-trip cleanly.
+    ///
+    /// Returns the buffer plus the expected (eob, dq_coefs).
+    #[allow(clippy::too_many_arguments)]
+    fn synthesize_random_block(
+        rng: &mut XorShift64,
+        coef_probs: &CoefBandCtxProbs,
+        tx_size: TxSize,
+        dq: (i32, i32),
+        initial_pt: usize,
+        scan: &[i16],
+        nb: &[i16],
+    ) -> (Vec<u8>, usize, Vec<i32>) {
+        let n = tx_size.n_coeffs();
+        let band_translate: &[u8] = if matches!(tx_size, TxSize::Tx4x4) {
+            &VP9_COEFBAND_TRANS_4X4
+        } else {
+            &VP9_COEFBAND_TRANS_8X8PLUS
+        };
+        let dq_shift: u32 = if matches!(tx_size, TxSize::Tx32x32) { 1 } else { 0 };
+
+        // Determine an EOB roll: 30% empty (EOB@0), 60% truncated mid,
+        // 10% full-length (run to seg_eob via zero-run).
+        let eob_roll = rng.next_range(10);
+        let target_eob: usize = if eob_roll < 3 {
+            0
+        } else if eob_roll < 9 {
+            // pick a target in 1..n
+            1 + (rng.next_range(n as u32) as usize % n)
+        } else {
+            n // attempt to run all the way (rarely reachable since the
+              // last position consumes the EOB read; we cap by max_eob
+              // path which exits via the inner zero-run early-return).
+        };
+
+        let mut bytes = vec![0u8; n * 8 + 256]; // generous
+        let mut dq_coefs_expected = vec![0i32; n];
+        let mut token_cache = vec![0u8; n];
+        let mut ctx = initial_pt;
+        let mut dqv = dq.0;
+        let mut c: usize = 0;
+        let mut bt_idx: usize = 0;
+        let mut eob: usize = 0;
+
+        let final_len = {
+            let mut w = BoolWriter::start_encode(&mut bytes);
+            loop {
+                if c >= n {
+                    // Block ran to seg_eob via zero-run inside the inner
+                    // loop. No EOB token emitted. Decoder hits its
+                    // early-return at `c >= max_eob`.
+                    eob = c;
+                    break;
+                }
+                let band = band_translate[bt_idx] as usize;
+                bt_idx += 1;
+                let prob = &coef_probs[band][ctx];
+
+                if c >= target_eob {
+                    // Emit EOB.
+                    w.write(0, prob[EOB_CONTEXT_NODE]);
+                    eob = c;
+                    break;
+                }
+
+                // NOT-EOB.
+                w.write(1, prob[EOB_CONTEXT_NODE]);
+
+                // Decide ZERO run length here. We always emit at least
+                // one not-zero per outer iteration unless we're stuffing
+                // zeros to advance `c` (toward target_eob OR toward n).
+                // Strategy: roll a small random count of zero-tokens
+                // before the next non-zero.
+                let max_zero_run = (target_eob - c).min(8);
+                let zero_run = if max_zero_run > 0 {
+                    rng.next_range(max_zero_run as u32 + 1) as usize
+                } else {
+                    0
+                };
+
+                let mut local_ctx = ctx;
+                let mut local_prob = prob;
+                let mut emitted_zeros = 0usize;
+                while emitted_zeros < zero_run {
+                    w.write(0, local_prob[ZERO_CONTEXT_NODE]);
+                    dqv = dq.1;
+                    token_cache[scan[c] as usize] = 0;
+                    c += 1;
+                    emitted_zeros += 1;
+                    if c >= n {
+                        // Match libvpx's early return: no further EOB
+                        // bit emitted.
+                        eob = c;
+                        ctx = local_ctx; // unused after break
+                        break;
+                    }
+                    let nb0 = nb[MAX_NEIGHBORS * c] as usize;
+                    let nb1 = nb[MAX_NEIGHBORS * c + 1] as usize;
+                    local_ctx =
+                        (1 + usize::from(token_cache[nb0]) + usize::from(token_cache[nb1])) >> 1;
+                    let local_band = band_translate[bt_idx] as usize;
+                    bt_idx += 1;
+                    local_prob = &coef_probs[local_band][local_ctx];
+                }
+                if c >= n {
+                    break;
+                }
+
+                // NOT-ZERO.
+                w.write(1, local_prob[ZERO_CONTEXT_NODE]);
+
+                // Pick a token category. Distribute over ONE / TWO /
+                // THREE / FOUR / CAT1..6.
+                let kind = rng.next_range(10);
+                let (val, cache_v) = match kind {
+                    0..=3 => {
+                        // ONE_TOKEN.
+                        w.write(0, local_prob[ONE_CONTEXT_NODE]);
+                        (1i32, 1u8)
+                    }
+                    _ => {
+                        // TWO-or-more branch.
+                        w.write(1, local_prob[ONE_CONTEXT_NODE]);
+                        let p = &VP9_PARETO8_FULL[(local_prob[PIVOT_NODE] - 1) as usize];
+                        let sub = rng.next_range(10);
+                        match sub {
+                            0..=2 => {
+                                // TWO_TOKEN (val=2)
+                                w.write(0, p[0]);
+                                w.write(0, p[1]);
+                                (2, 2)
+                            }
+                            3..=4 => {
+                                // THREE or FOUR
+                                w.write(0, p[0]);
+                                w.write(1, p[1]);
+                                let four = rng.next_range(2) as u8;
+                                w.write(four, p[2]);
+                                (3 + i32::from(four), 3)
+                            }
+                            5 => {
+                                // CAT1
+                                w.write(1, p[0]);
+                                w.write(0, p[3]);
+                                w.write(0, p[4]);
+                                let extra = rng.next_range(1u32 << 1) as i32;
+                                // CAT1 has 1 extension bit.
+                                let bit = (extra & 1) as u8;
+                                w.write(bit, VP9_CAT1_PROB[0]);
+                                (CAT1_MIN_VAL + extra, 4)
+                            }
+                            6 => {
+                                // CAT2
+                                w.write(1, p[0]);
+                                w.write(0, p[3]);
+                                w.write(1, p[4]);
+                                let extra = rng.next_range(1u32 << 2) as i32;
+                                for i in (0..2).rev() {
+                                    let bit = ((extra >> i) & 1) as u8;
+                                    w.write(bit, VP9_CAT2_PROB[1 - i]);
+                                }
+                                (CAT2_MIN_VAL + extra, 4)
+                            }
+                            7 => {
+                                // CAT3
+                                w.write(1, p[0]);
+                                w.write(1, p[3]);
+                                w.write(0, p[5]);
+                                w.write(0, p[6]);
+                                let extra = rng.next_range(1u32 << 3) as i32;
+                                for i in (0..3).rev() {
+                                    let bit = ((extra >> i) & 1) as u8;
+                                    w.write(bit, VP9_CAT3_PROB[2 - i]);
+                                }
+                                (CAT3_MIN_VAL + extra, 5)
+                            }
+                            8 => {
+                                // CAT4
+                                w.write(1, p[0]);
+                                w.write(1, p[3]);
+                                w.write(0, p[5]);
+                                w.write(1, p[6]);
+                                let extra = rng.next_range(1u32 << 4) as i32;
+                                for i in (0..4).rev() {
+                                    let bit = ((extra >> i) & 1) as u8;
+                                    w.write(bit, VP9_CAT4_PROB[3 - i]);
+                                }
+                                (CAT4_MIN_VAL + extra, 5)
+                            }
+                            9 => {
+                                // CAT5
+                                w.write(1, p[0]);
+                                w.write(1, p[3]);
+                                w.write(1, p[5]);
+                                w.write(0, p[7]);
+                                let extra = rng.next_range(1u32 << 5) as i32;
+                                for i in (0..5).rev() {
+                                    let bit = ((extra >> i) & 1) as u8;
+                                    w.write(bit, VP9_CAT5_PROB[4 - i]);
+                                }
+                                (CAT5_MIN_VAL + extra, 5)
+                            }
+                            _ => {
+                                // CAT6 (14 ext bits)
+                                w.write(1, p[0]);
+                                w.write(1, p[3]);
+                                w.write(1, p[5]);
+                                w.write(1, p[7]);
+                                let extra = rng.next_range(1u32 << 14) as i32;
+                                for i in (0..14).rev() {
+                                    let bit = ((extra >> i) & 1) as u8;
+                                    w.write(bit, VP9_CAT6_PROB[13 - i]);
+                                }
+                                (CAT6_MIN_VAL + extra, 5)
+                            }
+                        }
+                    }
+                };
+
+                // Sign + dequant + dq_shift.
+                let sign_bit = (rng.next_range(2) as u8) & 1;
+                w.write_bit(sign_bit);
+                let signed_v_pre_shift = (val * dqv) >> dq_shift;
+                let signed = if sign_bit != 0 {
+                    -signed_v_pre_shift
+                } else {
+                    signed_v_pre_shift
+                };
+                dq_coefs_expected[scan[c] as usize] = signed;
+                token_cache[scan[c] as usize] = cache_v;
+
+                c += 1;
+                if c < n {
+                    let nb0 = nb[MAX_NEIGHBORS * c] as usize;
+                    let nb1 = nb[MAX_NEIGHBORS * c + 1] as usize;
+                    ctx = (1 + usize::from(token_cache[nb0]) + usize::from(token_cache[nb1])) >> 1;
+                } else {
+                    // Decoder will exit via outer-loop guard.
+                }
+                dqv = dq.1;
+            }
+            // Pad with zero bits so the reader can always fill its
+            // register without overshoot.
+            for _ in 0..32 {
+                w.write_bit(0);
+            }
+            w.stop_encode().unwrap()
+        };
+        bytes.truncate(final_len);
+        (bytes, eob, dq_coefs_expected)
+    }
+
+    /// Build a random `CoefBandCtxProbs` table: every (band, ctx)
+    /// triple is independently rolled with the bias from
+    /// `XorShift64::next_prob` (extreme-low / mid / extreme-high mix).
+    fn random_coef_probs(rng: &mut XorShift64) -> CoefBandCtxProbs {
+        let mut probs: CoefBandCtxProbs =
+            [[[0u8; UNCONSTRAINED_NODES]; COEFF_CONTEXTS]; COEF_BANDS];
+        for band in probs.iter_mut() {
+            for ctx in band.iter_mut() {
+                for slot in ctx.iter_mut() {
+                    *slot = rng.next_prob();
+                }
+            }
+        }
+        probs
+    }
+
+    /// Differential fuzz harness: N random inputs across all TX sizes
+    /// and scan orders. For each iteration:
+    ///   1. Roll random probs / initial_pt / dequant.
+    ///   2. Synthesize a random bitstream (driven by the same state
+    ///      machine the decoder will walk).
+    ///   3. Decode it with BOTH the libvpx-verbatim reference port
+    ///      AND our production `decode_coefs`.
+    ///   4. Assert (eob, dq_coefs) match between the two decoders AND
+    ///      that both match the synthesizer's "expected" tally.
+    ///
+    /// If our impl diverges at any iteration we get the (seed,
+    /// iteration, TX size, scan kind) tuple printed to stderr for
+    /// localized re-investigation.
+    #[test]
+    fn differential_fuzz_decode_coefs_vs_libvpx_ref() {
+        use crate::transforms::scans::{
+            col_scan_4x4, col_scan_8x8, col_scan_16x16, default_scan_4x4, default_scan_8x8,
+            default_scan_16x16, default_scan_32x32, row_scan_4x4, row_scan_8x8, row_scan_16x16,
+        };
+
+        let mut rng = XorShift64::new(0x00C0_FFEE_BABE_FACE_u64);
+        #[allow(clippy::type_complexity)] // one-off test config table
+        let configs: &[(TxSize, fn() -> ScanOrder, &'static str)] = &[
+            (TxSize::Tx4x4, default_scan_4x4, "default_4x4"),
+            (TxSize::Tx4x4, col_scan_4x4, "col_4x4"),
+            (TxSize::Tx4x4, row_scan_4x4, "row_4x4"),
+            (TxSize::Tx8x8, default_scan_8x8, "default_8x8"),
+            (TxSize::Tx8x8, col_scan_8x8, "col_8x8"),
+            (TxSize::Tx8x8, row_scan_8x8, "row_8x8"),
+            (TxSize::Tx16x16, default_scan_16x16, "default_16x16"),
+            (TxSize::Tx16x16, col_scan_16x16, "col_16x16"),
+            (TxSize::Tx16x16, row_scan_16x16, "row_16x16"),
+            (TxSize::Tx32x32, default_scan_32x32, "default_32x32"),
+        ];
+
+        const N_PER_CONFIG: usize = 10; // 100 total across 10 configs
+
+        for (tx_size, scan_fn, label) in configs {
+            for iter in 0..N_PER_CONFIG {
+                let probs = random_coef_probs(&mut rng);
+                let initial_pt = (rng.next_range(3) as usize) & 0x3;
+                let dq_dc = 1 + (rng.next_range(48) as i32);
+                let dq_ac = 1 + (rng.next_range(96) as i32);
+
+                let scan_order = scan_fn();
+                let (bytes, expected_eob, expected_dq) = synthesize_random_block(
+                    &mut rng,
+                    &probs,
+                    *tx_size,
+                    (dq_dc, dq_ac),
+                    initial_pt,
+                    scan_order.scan,
+                    scan_order.neighbors,
+                );
+                let n = tx_size.n_coeffs();
+
+                // Reference decode.
+                let mut r_ref = BoolReader::new(&bytes)
+                    .unwrap_or_else(|_| panic!("{label} iter {iter}: bad bitstream"));
+                let mut dq_ref = vec![0i32; n];
+                let eob_ref = decode_coefs_libvpx_ref(
+                    &mut r_ref,
+                    &probs,
+                    *tx_size,
+                    (dq_dc, dq_ac),
+                    initial_pt,
+                    scan_order.scan,
+                    scan_order.neighbors,
+                    &mut dq_ref,
+                    n,
+                );
+
+                // Production decode.
+                let mut r_prod = BoolReader::new(&bytes)
+                    .unwrap_or_else(|_| panic!("{label} iter {iter}: bad bitstream"));
+                let mut dq_prod = vec![0i32; n];
+                let eob_prod = decode_coefs(
+                    &mut r_prod,
+                    &probs,
+                    None,
+                    &scan_order,
+                    initial_pt,
+                    *tx_size,
+                    n,
+                    (dq_dc, dq_ac),
+                    &mut dq_prod,
+                );
+
+                // Three-way assertion: ref == prod == synth-expected.
+                assert_eq!(
+                    eob_ref, eob_prod,
+                    "{label} iter {iter}: ref eob {eob_ref} != prod eob {eob_prod}",
+                );
+                assert_eq!(
+                    dq_ref, dq_prod,
+                    "{label} iter {iter}: ref dq != prod dq (first diff scan, ref={dq_ref:?} prod={dq_prod:?})",
+                );
+                assert_eq!(
+                    eob_ref, expected_eob,
+                    "{label} iter {iter}: ref eob {eob_ref} != synth-expected {expected_eob}",
+                );
+                assert_eq!(
+                    dq_ref, expected_dq,
+                    "{label} iter {iter}: ref dq != synth-expected (ref={dq_ref:?} expected={expected_dq:?})",
+                );
+            }
+        }
+    }
+
     /// Tx32x32 right-shifts the magnitude by 1 (libvpx `dq_shift`).
     /// Verifies the rare-but-important `dq_shift == 1` path.
     #[test]
