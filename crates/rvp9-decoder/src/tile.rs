@@ -28,9 +28,16 @@
 //!
 //! where `sb_cols = mi_cols_aligned_to_sb(mi_dim) >> MI_BLOCK_SIZE_LOG2`.
 //!
-//! For the current Stage 3 floor we only ship a single-tile decode path.
-//! Multi-tile vectors (`tile_cols > 1` or `tile_rows > 1`) surface as
-//! [`TileDecodeError::MultiTileUnsupported`].
+//! Stage 3 Task E.2 lit up single-threaded multi-tile decode: the
+//! decoder iterates `(tile_row, tile_col)` in raster order and calls
+//! [`decode_tile_intra`] / [`decode_tile_inter`] once per tile, each
+//! with its own fresh [`TileDecodeCtx`] / `TileCoefCtx` / `BoolReader`.
+//! [`TileDecodeError::MultiTileUnsupported`] is retained for diagnostic
+//! purposes but is no longer produced by the v1 decode path. Frame-
+//! level state (counts, current-frame seg-id slab, current-frame MV
+//! grid, the output `Yv12Buffer`) is shared across all tiles in a
+//! frame; per-tile state resets at every tile boundary, mirroring
+//! libvpx `decode_tiles` (`vp9_decodeframe.c:2200-2240`).
 
 use rvp9_core::bitstream::TileInfo;
 use rvp9_core::block::{BlockSize, PartitionType, max_txsize, subsize};
@@ -66,8 +73,12 @@ const PARTITION_PLOFFSET: usize = 4;
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum TileDecodeError {
-    /// Multi-tile decoding is not yet wired in v1. The current floor
-    /// only supports `tile_cols == 1 && tile_rows == 1`.
+    /// Diagnostic-only variant retained for backwards compatibility.
+    /// Stage 3 Task E.2 wired up single-threaded multi-tile decode,
+    /// so the v1 decoder no longer produces this error. (Future
+    /// codepaths that need to surface a "multi-tile not supported"
+    /// signal — e.g. a parallel decoder gate — can still construct
+    /// it.)
     MultiTileUnsupported {
         /// `log2_tile_cols` from the header.
         log2_tile_cols: u8,

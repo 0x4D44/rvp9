@@ -153,6 +153,16 @@ fn conformance_runner_walks_all_vectors() {
     // ratchet keeps regression signal visible: lowering `MAX_MISMATCHES`
     // as we fix bugs, raising `MIN_PASSES` as we light up frames.
     const MIN_PASSES: usize = 22;
+    // E.2 (2026-05-18): single-threaded multi-tile decode wired up.
+    // Removes the `MultiTileUnsupported` reject on the 1x2/1x4/1x8
+    // tile vectors (30 previously-skipped frames). All 30 now DECODE
+    // (no panic, no error) but MD5-mismatch — expected, since these
+    // vectors exercise tile-boundary entropy isolation that the floor
+    // is now exposed to for the first time. `MAX_MISMATCHES` rises
+    // from 139 → 169 (the new mismatches) and `total_skipped` falls
+    // from 40 → 10. `MIN_PASSES` unchanged. Also fixes a pre-existing
+    // `1u16 << 16` overflow in `adjust_mask` for `rows == 7`
+    // (triggered by the 1920×1080 tile vectors).
     // D.9 (2026-05-18): backward-adapt now uses a pre-compressed-header
     // FrameContext snapshot as the `pre` baseline (mirroring libvpx's
     // `pre_fc = cm->frame_contexts[fc_idx]` while compressed-header
@@ -178,7 +188,7 @@ fn conformance_runner_walks_all_vectors() {
     // D.5 (2026-05-18): `extend_mc_border` scratch-buffer fallback.
     // Conformance: 2/159/40 → 3/158/40.
     // Pre-D.3.a baseline: 1/9/191.
-    const MAX_MISMATCHES: usize = 139;
+    const MAX_MISMATCHES: usize = 169;
     assert!(
         total_passed >= MIN_PASSES,
         "regression: expected at least {MIN_PASSES} passed, got {total_passed}",

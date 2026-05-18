@@ -662,26 +662,22 @@ impl Decoder {
         let tile_cols = 1u32 << tail.tile_info.log2_tile_cols;
         let tile_rows = 1u32 << tail.tile_info.log2_tile_rows;
 
-        // 4. Reject multi-tile in v1.
-        if tile_cols > 1 || tile_rows > 1 {
-            return Err(DecodeError::TileDecode(TileDecodeError::MultiTileUnsupported {
-                log2_tile_cols: tail.tile_info.log2_tile_cols,
-                log2_tile_rows: tail.tile_info.log2_tile_rows,
+        // 4. Parse per-tile byte payloads. Stage 3 Task E.2 — wire up
+        //    single-threaded multi-tile decode. libvpx splits the tile
+        //    section by the 4-byte BE size prefix before every tile
+        //    except the last (`get_tile_buffers`,
+        //    `vp9_decodeframe.c:1649-1697`); we walk the resulting
+        //    `Vec<TileBuffer>` in row-major order below.
+        let buffers = parse_tile_buffers(tile_section, tile_cols, tile_rows)
+            .map_err(DecodeError::Bitstream)?;
+        if buffers.is_empty() {
+            return Err(DecodeError::Bitstream(BitstreamError::Truncated {
+                needed: 1,
+                available: 0,
             }));
         }
 
-        // 5. Parse tile buffers (single tile: takes the whole tile
-        //    section).
-        let buffers = parse_tile_buffers(tile_section, tile_cols, tile_rows)
-            .map_err(DecodeError::Bitstream)?;
-        let tile_buf = buffers
-            .first()
-            .ok_or(DecodeError::Bitstream(BitstreamError::Truncated {
-                needed: 1,
-                available: 0,
-            }))?;
-
-        // 6. Allocate the destination FrameBuf.
+        // 5. Allocate the destination FrameBuf.
         let mut yv12 = Yv12Buffer::alloc(
             frame.header.width,
             frame.header.height,
@@ -691,8 +687,15 @@ impl Decoder {
         )
         .map_err(|_| DecodeError::FrameAlloc)?;
 
-        // 7. Drive the tile decode loop, writing into `yv12`.
-        let bounds = tile_bounds(&tail.tile_info, mi_cols, mi_rows, 0, 0);
+        // 6. Per-frame state — drive every tile through a shared
+        //    accumulator (counts) + shared output (`yv12`,
+        //    `cur_segment_ids`). Each tile gets its own fresh
+        //    `TileDecodeCtx` / `TileCoefCtx` / `BoolReader` allocated
+        //    inside `decode_tile_intra`. This mirrors libvpx
+        //    `decode_tiles` (`vp9_decodeframe.c:2200-2240`) which
+        //    constructs a fresh `TileWorkerData` per tile but writes
+        //    to the shared `cm->cur_frame->yv12` and accumulates
+        //    counts into `cm->counts`.
         // D.10 — resolve the per-frame segmentation against the
         // running state, then use the RESOLVED view everywhere
         // downstream (per-segment alt_Q lookup + the loop-filter
@@ -739,9 +742,28 @@ impl Decoder {
         // `prev_segment_ids` (libvpx `vp9_setup_past_independence` at
         // `vp9_entropymode.c:424-437`) — keyframes RESET the seg map.
         let mut cur_segment_ids = vec![0u8; mi_rows * mi_cols];
-        let decode_ctx = {
+
+        // Stage 3 Task E.2 — iterate `(tile_row, tile_col)` in raster
+        // order, decoding each tile sequentially with a fresh per-tile
+        // `TileDecodeCtx` + `TileCoefCtx` + `BoolReader` (allocated
+        // inside `decode_tile_intra`). Per-tile state is intentionally
+        // isolated — VP9 specifies that the `above_*` / `left_*`
+        // entropy contexts reset at every tile boundary
+        // (`vp9_decodeframe.c:2200-2240`). Keep the per-tile mi grids
+        // so we can stitch them into a frame-wide mi grid for the LF
+        // driver below.
+        let mut tile_decode_ctxs: Vec<(tile::TileBounds, TileDecodeCtx)> =
+            Vec::with_capacity(buffers.len());
+        for tile_buf in &buffers {
+            let bounds = tile_bounds(
+                &tail.tile_info,
+                mi_cols,
+                mi_rows,
+                tile_buf.row,
+                tile_buf.col,
+            );
             let fc = &self.frame_contexts[fc_idx];
-            decode_tile_intra(
+            let decode_ctx = decode_tile_intra(
                 tile_buf.data,
                 bounds,
                 &params,
@@ -750,8 +772,9 @@ impl Decoder {
                 Some(&mut self.coef_counts),
                 &mut cur_segment_ids,
             )
-            .map_err(DecodeError::TileDecode)?
-        };
+            .map_err(DecodeError::TileDecode)?;
+            tile_decode_ctxs.push((bounds, decode_ctx));
+        }
 
         // Backward-adapt `coef_probs` per `vp9_adapt_coef_probs`
         // (`vp9_entropy.c:1084-1100`). Same gate as `adapt_mv_probs`:
@@ -802,9 +825,20 @@ impl Decoder {
         // analysis (dump_frame_diff vs vpxdec's post-LF YUV).
         let lf_disabled = std::env::var("RVP9_DISABLE_LF").is_ok();
         if filter_level > 0 && !lf_disabled {
+            // Stage 3 Task E.2 — stitch per-tile mi grids into a
+            // frame-wide grid for the LF mask builder. Mirrors libvpx
+            // `cm->mi_grid_visible` which spans the entire frame
+            // regardless of tile count.
+            let tile_grids: Vec<(tile::TileBounds, &[Option<ModeInfo>])> =
+                tile_decode_ctxs
+                    .iter()
+                    .map(|(b, c)| (*b, c.mi_grid()))
+                    .collect();
+            let frame_mi_grid = build_frame_mi_grid(mi_rows, mi_cols, &tile_grids);
             apply_loop_filter_to_frame(
                 &mut yv12,
-                &decode_ctx,
+                &frame_mi_grid,
+                mi_cols,
                 mi_rows,
                 mi_cols,
                 filter_level,
@@ -1014,20 +1048,20 @@ impl Decoder {
         let mi_rows = ((frame.header.height as usize) + 7) >> 3;
         let tile_cols = 1u32 << tail.tile_info.log2_tile_cols;
         let tile_rows = 1u32 << tail.tile_info.log2_tile_rows;
-        if tile_cols > 1 || tile_rows > 1 {
-            return Err(DecodeError::TileDecode(TileDecodeError::MultiTileUnsupported {
-                log2_tile_cols: tail.tile_info.log2_tile_cols,
-                log2_tile_rows: tail.tile_info.log2_tile_rows,
-            }));
-        }
+        // Stage 3 Task E.2 — wire up single-threaded multi-tile decode
+        // for inter frames. Per-tile state (BoolReader / TileDecodeCtx
+        // / TileCoefCtx) resets at every tile boundary; frame-level
+        // accumulators (counts / cur_mv_grid / cur_segment_ids / yv12)
+        // are shared across all tiles. Mirrors libvpx `decode_tiles`
+        // (`vp9_decodeframe.c:2200-2240`).
         let buffers = parse_tile_buffers(tile_section, tile_cols, tile_rows)
             .map_err(DecodeError::Bitstream)?;
-        let tile_buf = buffers
-            .first()
-            .ok_or(DecodeError::Bitstream(BitstreamError::Truncated {
+        if buffers.is_empty() {
+            return Err(DecodeError::Bitstream(BitstreamError::Truncated {
                 needed: 1,
                 available: 0,
-            }))?;
+            }));
+        }
 
         // 5. Allocate destination FrameBuf.
         let mut yv12 = Yv12Buffer::alloc(
@@ -1176,10 +1210,26 @@ impl Decoder {
             };
         let mut cur_segment_ids = vec![0u8; mi_rows * mi_cols];
 
-        let bounds = tile_bounds(&tail.tile_info, mi_cols, mi_rows, 0, 0);
-        let decode_ctx = {
+        // Stage 3 Task E.2 — iterate `(tile_row, tile_col)` in raster
+        // order. Each tile is decoded sequentially with its own fresh
+        // `BoolReader` / `TileDecodeCtx` / `TileCoefCtx` (allocated
+        // inside `decode_tile_inter`). Shared frame-level state
+        // (`yv12`, `cur_mv_grid`, `cur_segment_ids`, counts) accumulates
+        // across all tiles. Per-tile mi grids are collected here so
+        // we can stitch them into a frame-wide mi grid for the LF
+        // driver below.
+        let mut tile_decode_ctxs: Vec<(tile::TileBounds, TileDecodeCtx)> =
+            Vec::with_capacity(buffers.len());
+        for tile_buf in &buffers {
+            let bounds = tile_bounds(
+                &tail.tile_info,
+                mi_cols,
+                mi_rows,
+                tile_buf.row,
+                tile_buf.col,
+            );
             let fc = &self.frame_contexts[fc_idx];
-            decode_tile_inter(
+            let decode_ctx = decode_tile_inter(
                 tile_buf.data,
                 bounds,
                 &params,
@@ -1193,8 +1243,9 @@ impl Decoder {
                 prev_seg_ids_slice,
                 &mut cur_segment_ids,
             )
-            .map_err(DecodeError::TileDecode)?
-        };
+            .map_err(DecodeError::TileDecode)?;
+            tile_decode_ctxs.push((bounds, decode_ctx));
+        }
 
         // Backward-adapt the per-frame probability banks per
         // `vp9_adapt_*_probs` (`vp9_decodeframe.c:3046-3053`). Same gate
@@ -1281,9 +1332,20 @@ impl Decoder {
         let filter_level = tail.loop_filter.filter_level;
         let lf_disabled = std::env::var("RVP9_DISABLE_LF").is_ok();
         if filter_level > 0 && !lf_disabled {
+            // Stage 3 Task E.2 — stitch per-tile mi grids into a
+            // frame-wide grid for the LF mask builder. Mirrors libvpx
+            // `cm->mi_grid_visible` which spans the entire frame
+            // regardless of tile count.
+            let tile_grids: Vec<(tile::TileBounds, &[Option<ModeInfo>])> =
+                tile_decode_ctxs
+                    .iter()
+                    .map(|(b, c)| (*b, c.mi_grid()))
+                    .collect();
+            let frame_mi_grid = build_frame_mi_grid(mi_rows, mi_cols, &tile_grids);
             apply_loop_filter_to_frame(
                 &mut yv12,
-                &decode_ctx,
+                &frame_mi_grid,
+                mi_cols,
                 mi_rows,
                 mi_cols,
                 filter_level,
@@ -1433,6 +1495,53 @@ impl Decoder {
 /// `MI_BLOCK_SIZE` at `vp9_enums.h:25`).
 const SB_MI_SIZE: usize = 8;
 
+/// Stitch per-tile mi grids into a single frame-level mi grid suitable
+/// for downstream consumers (loop-filter mask builder, etc.).
+///
+/// `tile_grids` is a row-major list of `(bounds, tile_grid)` covering
+/// the frame's `tile_rows × tile_cols` tiles. Each `tile_grid` is the
+/// row-major `Option<ModeInfo>` slab returned by
+/// [`tile_ctx::TileDecodeCtx::mi_grid`], sized
+/// `(bounds.mi_row_end - bounds.mi_row_start) * (bounds.mi_col_end -
+/// bounds.mi_col_start)` and addressed at stride =
+/// `bounds.mi_col_end - bounds.mi_col_start`.
+///
+/// Returns a frame-wide `Vec<Option<ModeInfo>>` of length
+/// `mi_rows * mi_cols` at stride `mi_cols`, where each cell's value
+/// comes from the tile that covers `(mi_row, mi_col)`. Cells outside
+/// any tile (shouldn't happen for valid `TileInfo`) stay `None`.
+///
+/// Mirrors libvpx's `cm->mi_grid_visible` (`vp9_onyxc_int.h:
+/// mi_grid_visible`) which is allocated frame-wide and populated by
+/// each tile's `vp9_decodeframe.c:decode_partition` calls writing
+/// through the frame-wide stride. Our `TileDecodeCtx::write_block`
+/// stores at tile-local stride; this stitcher merges them back to
+/// frame stride after the tile loop completes.
+fn build_frame_mi_grid(
+    mi_rows: usize,
+    mi_cols: usize,
+    tile_grids: &[(tile::TileBounds, &[Option<ModeInfo>])],
+) -> Vec<Option<ModeInfo>> {
+    let mut frame: Vec<Option<ModeInfo>> = vec![None; mi_rows * mi_cols];
+    for (bounds, tile_grid) in tile_grids {
+        let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
+        let tile_mi_rows = bounds.mi_row_end - bounds.mi_row_start;
+        debug_assert_eq!(tile_grid.len(), tile_mi_cols * tile_mi_rows);
+        for r in 0..tile_mi_rows {
+            let frame_row = bounds.mi_row_start + r;
+            if frame_row >= mi_rows {
+                break;
+            }
+            let src_base = r * tile_mi_cols;
+            let dst_base = frame_row * mi_cols + bounds.mi_col_start;
+            let copy_cols = tile_mi_cols.min(mi_cols - bounds.mi_col_start);
+            frame[dst_base..dst_base + copy_cols]
+                .copy_from_slice(&tile_grid[src_base..src_base + copy_cols]);
+        }
+    }
+    frame
+}
+
 /// Drive the per-SB loop-filter mask build + frame-wide apply. Mirrors
 /// the libvpx sequence in `vp9_loop_filter_frame` →
 /// `loop_filter_rows` (`vp9_loopfilter.c:1422-1483`): build the
@@ -1441,12 +1550,17 @@ const SB_MI_SIZE: usize = 8;
 /// `adjust_mask`, then dispatch [`loop_filter_frame`] in place on the
 /// reconstructed planes.
 ///
-/// `decode_ctx` carries the per-tile (which equals per-frame for the
-/// single-tile path) mi grid produced by [`decode_tile_intra`].
+/// `mi_grid` is the frame-level row-major `Option<ModeInfo>` slab
+/// (stride = `mi_stride = mi_cols`). For single-tile frames this is
+/// the tile's grid; for multi-tile frames it's stitched together by
+/// [`build_frame_mi_grid`] across all tiles. Mirrors libvpx
+/// `cm->mi_grid_visible` (`vp9_onyxc_int.h:mi_grid_visible`) which
+/// spans the entire frame regardless of tile count.
 #[allow(clippy::too_many_arguments)]
 fn apply_loop_filter_to_frame(
     yv12: &mut Yv12Buffer,
-    decode_ctx: &TileDecodeCtx,
+    mi_grid: &[Option<ModeInfo>],
+    mi_stride: usize,
     mi_rows: usize,
     mi_cols: usize,
     filter_level: u8,
@@ -1459,8 +1573,6 @@ fn apply_loop_filter_to_frame(
 
     let sb_rows = mi_rows.div_ceil(SB_MI_SIZE);
     let sb_cols = mi_cols.div_ceil(SB_MI_SIZE);
-    let mi_stride = decode_ctx.tile_mi_cols();
-    let mi_grid = decode_ctx.mi_grid();
 
     // Materialise the full-frame ModeInfo grid (one entry per 8×8
     // luma cell, row-major with stride = mi_stride). `setup_mask`
@@ -2341,4 +2453,83 @@ mod tests {
         // Persistent storage preserved.
         assert_eq!(deltas.ref_deltas, [5, 5, 5, 5]);
     }
+
+    /// Stage 3 Task E.2: the multi-tile mi-grid stitcher must place
+    /// each per-tile grid at the right `(mi_row_start, mi_col_start)`
+    /// offset in the frame-wide grid, using the frame's `mi_cols` as
+    /// the stride.
+    ///
+    /// Builds a 16×16 frame split into two 16×8 tiles (1 row × 2 cols),
+    /// fills each tile's grid with a distinguishable `ModeInfo` tag,
+    /// runs `build_frame_mi_grid`, and verifies that every frame cell
+    /// resolves to the correct per-tile origin.
+    #[test]
+    fn build_frame_mi_grid_stitches_two_tiles_in_row() {
+        use rvp9_core::block::BlockSize;
+        use rvp9_core::intra_pred::IntraMode;
+        use rvp9_core::mode_info::{BlockMode, ModeInfo};
+        use rvp9_core::transforms::TxSize;
+        use crate::tile::TileBounds;
+
+        let mi_rows = 16usize;
+        let mi_cols = 16usize;
+        let tile_a_bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: 16,
+            mi_col_start: 0,
+            mi_col_end: 8,
+        };
+        let tile_b_bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: 16,
+            mi_col_start: 8,
+            mi_col_end: 16,
+        };
+        // Use `segment_id` as a tile tag (1 = tile A, 2 = tile B).
+        let mk_mi = |seg: u8| ModeInfo {
+            block_size: BlockSize::Block8x8,
+            tx_size: TxSize::Tx4x4,
+            skip: false,
+            segment_id: seg,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        let tile_a_grid: Vec<Option<ModeInfo>> = vec![Some(mk_mi(1)); 16 * 8];
+        let tile_b_grid: Vec<Option<ModeInfo>> = vec![Some(mk_mi(2)); 16 * 8];
+
+        let frame = build_frame_mi_grid(
+            mi_rows,
+            mi_cols,
+            &[
+                (tile_a_bounds, tile_a_grid.as_slice()),
+                (tile_b_bounds, tile_b_grid.as_slice()),
+            ],
+        );
+
+        assert_eq!(frame.len(), mi_rows * mi_cols);
+        // Spot-check: top-left of tile A.
+        assert_eq!(frame[0].unwrap().segment_id, 1);
+        // Top-right cell of tile A (col 7).
+        assert_eq!(frame[7].unwrap().segment_id, 1);
+        // First cell of tile B (col 8).
+        assert_eq!(frame[8].unwrap().segment_id, 2);
+        // Bottom row of tile B.
+        assert_eq!(frame[15 * mi_cols + 15].unwrap().segment_id, 2);
+        // Every cell on the tile A / tile B border respects the split.
+        for r in 0..mi_rows {
+            for c in 0..mi_cols {
+                let expected_tag = if c < 8 { 1 } else { 2 };
+                assert_eq!(
+                    frame[r * mi_cols + c].unwrap().segment_id,
+                    expected_tag,
+                    "mismatch at (r={r}, c={c})"
+                );
+            }
+        }
+    }
+
 }

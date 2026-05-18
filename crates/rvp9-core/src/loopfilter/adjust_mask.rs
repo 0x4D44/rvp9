@@ -94,8 +94,13 @@ pub fn adjust_mask(mi_row: u32, mi_col: u32, mi_rows: u32, mi_cols: u32, lfm: &m
         let mask_y: u64 = (1u64 << (rows << 3)) - 1;
         // Chroma: every two luma 8×8 rows = one 4×4 UV row, so
         // the UV row count is `(rows + 1) / 2`, contributing
-        // 4 bits per row.
-        let mask_uv: u16 = (1u16 << (((rows + 1) >> 1) << 2)) - 1;
+        // 4 bits per row. Compute in u32 so the `rows == 7` case
+        // (shift amount = 16) doesn't overflow `u16`; the result
+        // truncates cleanly back to `u16` because the top bit of
+        // the u32 result is just past the u16 boundary
+        // (1<<16 - 1 = 0xffff fits in u16).
+        let mask_uv: u16 =
+            ((1u32 << (((rows + 1) >> 1) << 2)) - 1) as u16;
 
         // Mask off out-of-frame bits for TX_4X4 / TX_8X8 /
         // TX_16X16. The TX_32X32 slot is *not* masked — the apply
