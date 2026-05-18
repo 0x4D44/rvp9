@@ -1224,6 +1224,7 @@ pub fn decode_tile_inter(
     params: &InterFrameDecodeParams<'_>,
     fc: &FrameContext,
     dst_frame: &mut Yv12Buffer,
+    mut mv_counts: Option<&mut rvp9_core::entropy::mv_probs::NmvCounts>,
 ) -> Result<(), TileDecodeError> {
     let mut reader =
         BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;
@@ -1254,6 +1255,7 @@ pub fn decode_tile_inter(
                 mi_col,
                 BlockSize::Block64x64,
                 4,
+                mv_counts.as_deref_mut(),
             );
             mi_col += MI_BLOCK_SIZE;
         }
@@ -1281,6 +1283,7 @@ fn decode_inter_partition(
     mi_col: usize,
     bsize: BlockSize,
     n4x4_l2: u8,
+    mut mv_counts: Option<&mut rvp9_core::entropy::mv_probs::NmvCounts>,
 ) {
     if mi_row >= params.base.mi_rows || mi_col >= params.base.mi_cols {
         return;
@@ -1323,37 +1326,37 @@ fn decode_inter_partition(
     if hbs == 0 {
         decode_inter_block(
             reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-            mi_row, mi_col, sub,
+            mi_row, mi_col, sub, mv_counts.as_deref_mut(),
         );
     } else {
         match partition {
             PartitionType::None => {
                 decode_inter_block(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                    mi_row, mi_col, sub,
+                    mi_row, mi_col, sub, mv_counts.as_deref_mut(),
                 );
             }
             PartitionType::Horz => {
                 decode_inter_block(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                    mi_row, mi_col, sub,
+                    mi_row, mi_col, sub, mv_counts.as_deref_mut(),
                 );
                 if has_rows {
                     decode_inter_block(
                         reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                        mi_row + hbs, mi_col, sub,
+                        mi_row + hbs, mi_col, sub, mv_counts.as_deref_mut(),
                     );
                 }
             }
             PartitionType::Vert => {
                 decode_inter_block(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                    mi_row, mi_col, sub,
+                    mi_row, mi_col, sub, mv_counts.as_deref_mut(),
                 );
                 if has_cols {
                     decode_inter_block(
                         reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                        mi_row, mi_col + hbs, sub,
+                        mi_row, mi_col + hbs, sub, mv_counts.as_deref_mut(),
                     );
                 }
             }
@@ -1361,18 +1364,22 @@ fn decode_inter_partition(
                 decode_inter_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row, mi_col, sub, n8x8_l2,
+                    mv_counts.as_deref_mut(),
                 );
                 decode_inter_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row, mi_col + hbs, sub, n8x8_l2,
+                    mv_counts.as_deref_mut(),
                 );
                 decode_inter_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row + hbs, mi_col, sub, n8x8_l2,
+                    mv_counts.as_deref_mut(),
                 );
                 decode_inter_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row + hbs, mi_col + hbs, sub, n8x8_l2,
+                    mv_counts,
                 );
             }
         }
@@ -1411,6 +1418,7 @@ fn decode_inter_block(
     mi_row: usize,
     mi_col: usize,
     bsize: BlockSize,
+    mv_counts: Option<&mut rvp9_core::entropy::mv_probs::NmvCounts>,
 ) {
     let mi_row_in_tile = mi_row - bounds.mi_row_start;
     let mi_col_in_tile = mi_col - bounds.mi_col_start;
@@ -1497,7 +1505,9 @@ fn decode_inter_block(
         );
 
         // 1. Read mode info — fills mi.mode (ref_frames / inter_mode /
-        //    MVs / interp_filter) and mi.bmi.
+        //    MVs / interp_filter) and mi.bmi. `mv_counts` (when Some)
+        //    accumulates the NEW-MV component reads for backward
+        //    adaptation (`vp9_adapt_mv_probs`).
         {
             let lookup = TileNeighbourLookup::new(
                 decode_ctx,
@@ -1507,7 +1517,7 @@ fn decode_inter_block(
             read_inter_block_mode_info(
                 reader,
                 fc,
-                None,
+                mv_counts,
                 &params.inter_params,
                 &lookup,
                 bsize,

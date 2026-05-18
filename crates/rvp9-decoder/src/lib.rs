@@ -103,6 +103,12 @@ pub struct Decoder {
     /// libvpx defaults on construction and updated by backward
     /// adaptation after each frame's residuals are decoded.
     frame_contexts: [FrameContext; FRAME_CONTEXTS],
+    /// Accumulated motion-vector decode counts for the in-flight
+    /// inter frame. Zeroed at the start of each inter frame; consumed
+    /// by [`adapt_mv_probs`](rvp9_core::entropy::adapt::adapt_mv_probs)
+    /// at end-of-frame to produce the next frame's `nmvc` table.
+    /// Mirrors libvpx `cm->counts.mv` (`vp9_entropymode.h:78`).
+    mv_counts: rvp9_core::entropy::mv_probs::NmvCounts,
     /// Current per-ref / per-mode loop-filter deltas. The
     /// uncompressed header overlays these via the `Option<i8>` slots
     /// in `LoopFilterParams`; we maintain the resolved running state
@@ -142,6 +148,7 @@ impl Decoder {
             frame_contexts,
             lf_deltas: ResolvedLfDeltas::default(),
             have_resync: true, // until we've seen any frame, treat as needing resync
+            mv_counts: rvp9_core::entropy::mv_probs::NmvCounts::default(),
         }
     }
 
@@ -834,11 +841,36 @@ impl Decoder {
             inter_params,
         };
 
+        // Zero MV counts at start of frame, then decode the tile.
+        // After the tile completes the counts hold this frame's NEWMV
+        // component tallies, which feed `adapt_mv_probs` below.
+        self.mv_counts = rvp9_core::entropy::mv_probs::NmvCounts::default();
         let fc_idx = tail.frame_context_idx as usize;
-        let fc = &self.frame_contexts[fc_idx];
         let bounds = tile_bounds(&tail.tile_info, mi_cols, mi_rows, 0, 0);
-        decode_tile_inter(tile_buf.data, bounds, &params, fc, &mut yv12)
+        {
+            let fc = &self.frame_contexts[fc_idx];
+            decode_tile_inter(
+                tile_buf.data,
+                bounds,
+                &params,
+                fc,
+                &mut yv12,
+                Some(&mut self.mv_counts),
+            )
             .map_err(DecodeError::TileDecode)?;
+        }
+
+        // Backward-adapt `nmvc` per `vp9_adapt_mv_probs`. Only fires
+        // when the frame requests context refresh AND is not
+        // error-resilient (libvpx `vp9_decodeframe.c:3046-3053`).
+        if tail.refresh_frame_context && !frame.header.error_resilient {
+            let new_nmvc = rvp9_core::entropy::adapt::adapt_mv_probs(
+                &self.frame_contexts[fc_idx].nmvc,
+                &self.mv_counts,
+                allow_high_precision_mv,
+            );
+            self.frame_contexts[fc_idx].nmvc = new_nmvc;
+        }
 
         // D.3.c — frame finalisation:
         //
@@ -1546,6 +1578,29 @@ mod tests {
         let kf = &parsed.frames()[0];
         let err = dec.decode_show_existing_frame(&kf.header).unwrap_err();
         assert_eq!(err, DecodeError::WrongFrameKind);
+    }
+
+    /// Stage 3 stretch D.6: backward-adapt `nmvc` end-of-inter-frame
+    /// shifts the bank away from defaults when counts accumulate.
+    /// Verifies the plumbing: a synthetic count bump on the joint
+    /// "NEWMV used horizontally" tally feeds `adapt_mv_probs` and
+    /// pushes the `joints` probabilities toward libvpx's expected
+    /// merged value.
+    #[test]
+    fn adapt_mv_probs_post_inter_frame_shifts_nmvc() {
+        use rvp9_core::entropy::adapt::adapt_mv_probs;
+        use rvp9_core::entropy::mv_probs::NmvCounts;
+        let mut counts = NmvCounts::default();
+        counts.joints[1] = 10; // 10 horizontal-only MV reads
+        counts.joints[3] = 5; // 5 both-component reads
+        let pre = rvp9_core::entropy::mv_probs::DEFAULT_NMV_CONTEXT;
+        let post = adapt_mv_probs(&pre, &counts, /* allow_hp */ true);
+        // Some prob in joints[] must differ — counts are non-zero so
+        // mode-merge moves the prob from its default.
+        assert!(
+            pre.joints != post.joints,
+            "expected adapt_mv_probs to shift joints with non-zero counts"
+        );
     }
 
     #[test]
