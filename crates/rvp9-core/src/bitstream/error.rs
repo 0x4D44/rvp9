@@ -83,6 +83,19 @@ pub enum BitstreamError {
     /// `Invalid header size` (`vp9_decodeframe.c:2856-2858`).
     InvalidFirstPartitionSize,
 
+    /// An inter-frame header set a `size_in_found` bit for a logical
+    /// inter-ref whose pool slot is empty (no decoded frame yet).
+    /// Mirrors libvpx's "Failed to decode frame size" rejection at
+    /// `vp9_decodeframe.c:1567-1570` (the `INVALID_IDX` branch of
+    /// `setup_frame_size_with_refs`).
+    InvalidRefFrameSize {
+        /// Which logical inter-ref signalled the missing size
+        /// (0 = LAST, 1 = GOLDEN, 2 = ALTREF).
+        logical_ref: u8,
+        /// The 3-bit pool slot index the header referenced.
+        pool_slot: u8,
+    },
+
     /// The trailing superframe-index byte indicated a multi-frame
     /// packet but the index was malformed (truncated or marker
     /// mismatch). Mirrors the `VPX_CODEC_CORRUPT_FRAME` returns at
@@ -150,6 +163,13 @@ impl fmt::Display for BitstreamError {
             Self::InvalidFirstPartitionSize => {
                 f.write_str("invalid first_partition_size: 0 (compressed header must be non-empty)")
             }
+            Self::InvalidRefFrameSize {
+                logical_ref,
+                pool_slot,
+            } => write!(
+                f,
+                "inter-ref {logical_ref} requested size from empty pool slot {pool_slot}"
+            ),
             Self::CompressedHeaderInvalidMarker => {
                 f.write_str("compressed-header boolean decoder: invalid marker bit")
             }

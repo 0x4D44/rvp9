@@ -43,7 +43,7 @@ pub mod tile_ctx;
 
 use rvp9_core::bitstream::{
     BitstreamError, ChromaFormat, CompressedHeaderOptions, CompressedHeaderResult, FrameKind,
-    InterpFilter, RefFrameSizes, Superframe, UncompressedHeader, parse_compressed_header,
+    InterpFilter, Superframe, UncompressedHeader, parse_compressed_header,
     parse_superframe_index, parse_tile_buffers, parse_uncompressed_header,
 };
 use rvp9_core::entropy::{FRAME_CONTEXTS, FrameContext};
@@ -64,6 +64,17 @@ use crate::tile::{FrameDecodeParams, TileDecodeError, decode_tile_intra, tile_bo
 pub struct Decoder {
     /// 9-slot pool of decoded reference frames.
     frame_pool: DecoderFramePool,
+    /// Cached (width, height) of every frame currently held in the
+    /// 8-slot reference-frame-map. `None` means the corresponding
+    /// ref-map slot has no decoded frame yet. Mirrors the
+    /// `cm->ref_frame_map[i] -> frame_bufs[i].buf->y_crop_{width,height}`
+    /// lookup chain libvpx uses inside `setup_frame_size_with_refs`
+    /// (`vp9_decodeframe.c:1559-1574`). Updated by `decode_keyframe`
+    /// (which sets every slot per `refresh_frame_flags = 0xFF`).
+    /// Decoupled from the frame_pool slot pool: this is the minimum
+    /// state needed by the uncompressed-header parser, and does NOT
+    /// require any actual pixels to be stored.
+    ref_frame_sizes: [Option<(u32, u32)>; rvp9_core::bitstream::REF_FRAMES],
     /// Four independent FRAME_CONTEXT banks, selected per-frame by
     /// the 2-bit `frame_context_idx` header field. Each is reset to
     /// libvpx defaults on construction and updated by backward
@@ -103,6 +114,7 @@ impl Decoder {
         ];
         Self {
             frame_pool: DecoderFramePool::new(),
+            ref_frame_sizes: [None; rvp9_core::bitstream::REF_FRAMES],
             frame_contexts,
             lf_deltas: ResolvedLfDeltas::default(),
             have_resync: true, // until we've seen any frame, treat as needing resync
@@ -153,7 +165,7 @@ impl Decoder {
     ///
     /// Propagates any [`BitstreamError`] from the superframe-index
     /// parse or the per-frame header parse.
-    pub fn parse_packet<'a>(&self, data: &'a [u8]) -> Result<PacketFrames<'a>, BitstreamError> {
+    pub fn parse_packet<'a>(&mut self, data: &'a [u8]) -> Result<PacketFrames<'a>, BitstreamError> {
         let sf = parse_superframe_index(data)?;
         let mut frame_slices: Vec<&'a [u8]> = Vec::new();
 
@@ -185,17 +197,22 @@ impl Decoder {
             }
         }
 
-        // For each frame, parse its uncompressed header. We use
-        // `NO_REFS` for now — the proper ref-size lookup wires in
-        // once we maintain per-slot dimensions (Task 8.2).
-        let no_refs: RefFrameSizes = [None; rvp9_core::bitstream::MAX_INTER_REFS];
+        // Pass the running per-slot ref-frame sizes to the parser so
+        // it can resolve `setup_frame_size_with_refs` (`vp9_decodeframe.c:1559-1574`)
+        // when the header inherits size from a previous frame.
         let mut parsed: Vec<ParsedFrame<'a>> = Vec::with_capacity(frame_slices.len());
         for frame_data in frame_slices {
-            let (header, header_end) = parse_uncompressed_header(frame_data, &no_refs)?;
-            // After the uncompressed header, the next
-            // first_partition_size bytes are the compressed header
-            // (boolean-coder driver). For now we just expose the
-            // raw remaining bytes.
+            let (header, header_end) =
+                parse_uncompressed_header(frame_data, &self.ref_frame_sizes)?;
+            // Keyframe and intra-only frames advertise a fresh width
+            // and refresh some/all ref-frame-map slots; mirror libvpx's
+            // `setup_frame_size` propagation (`vp9_decodeframe.c:2698`)
+            // so subsequent inter frames in the same packet (or the
+            // next packet) can resolve their sizes during parse.
+            // Keyframes set every slot (`refresh_frame_flags = 0xFF` per
+            // spec); intra-only carries an explicit 8-bit flag in the
+            // header that we surface via `FrameKind::IntraOnly`.
+            self.refresh_ref_frame_sizes(&header);
             parsed.push(ParsedFrame {
                 header,
                 header_end_byte: header_end,
@@ -204,6 +221,38 @@ impl Decoder {
         }
 
         Ok(PacketFrames { frames: parsed })
+    }
+
+    /// Propagate the just-parsed header's frame size into the
+    /// `ref_frame_sizes` cache, respecting the `refresh_frame_flags`
+    /// mask. Mirrors the post-parse update libvpx performs at
+    /// `vp9_decodeframe.c:2691` (keyframes set every slot) and the
+    /// intra-only / inter mask handling at `:2730`.
+    fn refresh_ref_frame_sizes(&mut self, header: &UncompressedHeader) {
+        match header.kind {
+            FrameKind::KeyFrame => {
+                let size = Some((header.width, header.height));
+                for slot in self.ref_frame_sizes.iter_mut() {
+                    *slot = size;
+                }
+            }
+            FrameKind::IntraOnly {
+                refresh_frame_flags,
+                ..
+            } => {
+                let size = (header.width, header.height);
+                for (i, slot) in self.ref_frame_sizes.iter_mut().enumerate() {
+                    if (refresh_frame_flags >> i) & 1 != 0 {
+                        *slot = Some(size);
+                    }
+                }
+            }
+            // Inter frames refresh slots too, but their width/height
+            // is already derived (potentially inherited) by the parser;
+            // we'll update once decode_frame succeeds for them (Stage
+            // 3+ inter decode). Show-existing carries no width.
+            FrameKind::InterFrame { .. } | FrameKind::ShowExistingFrame { .. } => {}
+        }
     }
 
     /// Update the running loop-filter deltas with a parsed
@@ -515,6 +564,9 @@ impl Decoder {
         //    a no-op and the floor MD5 already matches.
         let frame_buf: FrameBuf = std::sync::Arc::new(yv12);
 
+        // Note: ref_frame_sizes is already populated by
+        // `parse_packet -> refresh_ref_frame_sizes`; no work here.
+
         self.have_resync = false;
         Ok(frame_buf)
     }
@@ -709,7 +761,7 @@ mod tests {
     #[test]
     fn parse_packet_single_keyframe() {
         let buf = build_minimal_keyframe();
-        let dec = Decoder::new();
+        let mut dec = Decoder::new();
         let frames = dec.parse_packet(&buf).expect("valid keyframe");
         assert_eq!(frames.count(), 1);
         let f = &frames.frames()[0];
@@ -857,7 +909,7 @@ mod tests {
         }
         packet.push(marker);
 
-        let dec = Decoder::new();
+        let mut dec = Decoder::new();
         let frames = dec.parse_packet(&packet).expect("valid superframe");
         assert_eq!(frames.count(), 2);
         for f in frames.frames() {
@@ -943,7 +995,7 @@ mod tests {
 
     #[test]
     fn decode_show_existing_frame_empty_slot_rejected() {
-        let dec = Decoder::new();
+        let mut dec = Decoder::new();
         // No slots populated.
         let buf = build_show_existing_frame(2);
         let parsed = dec.parse_packet(&buf).unwrap();
@@ -954,7 +1006,7 @@ mod tests {
 
     #[test]
     fn decode_show_existing_frame_rejects_non_show_existing() {
-        let dec = Decoder::new();
+        let mut dec = Decoder::new();
         let buf = build_minimal_keyframe();
         let parsed = dec.parse_packet(&buf).unwrap();
         let kf = &parsed.frames()[0];

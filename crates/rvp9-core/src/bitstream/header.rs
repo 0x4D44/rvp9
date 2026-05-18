@@ -174,24 +174,29 @@ impl FrameKind {
     }
 }
 
-/// Resolved sizes of the previously-decoded reference frames at the
-/// time we're parsing the current frame. `[None; MAX_INTER_REFS]` if
-/// no refs are currently available (the parser will then always read
-/// fresh frame_size bits — this matches libvpx's behaviour when
-/// `cm->frame_refs[i].idx == INVALID_IDX`).
-pub type RefFrameSizes = [Option<(u32, u32)>; MAX_INTER_REFS];
+/// Sizes of the frames currently held in the decoder's 8-slot
+/// reference pool, indexed by `ref_frame_map` slot (the 3-bit value
+/// the inter-frame header reads per logical ref). `None` means the
+/// corresponding pool slot is empty.
+///
+/// Mirrors libvpx's `cm->ref_frame_map[ref] -> pool slot ->
+/// frame_bufs[idx].buf.y_crop_{width,height}` lookup chain used by
+/// `setup_frame_size_with_refs` (`vp9_decodeframe.c:1559-1574`).
+pub type RefFrameSizes = [Option<(u32, u32)>; REF_FRAMES];
 
 /// Decode a VP9 uncompressed header from `data`. Returns the populated
 /// header and the byte offset (one past the last header byte) at which
 /// the compressed-header partition begins.
 ///
-/// `ref_sizes` provides the (luma width, luma height) of each
-/// currently-decoded reference frame in the buffer pool, indexed by
-/// `LAST=0 / GOLDEN=1 / ALTREF=2`. Each slot may be `None` if the
-/// corresponding ref isn't currently available (parses that try to
-/// inherit a size from a `None` ref will fall through to reading
-/// fresh `frame_size` bits, matching libvpx's behaviour at
-/// `vp9_decodeframe.c:1559-1574`).
+/// `ref_sizes` provides the (luma width, luma height) of every frame
+/// currently held in the 8-slot reference pool, indexed by
+/// `ref_frame_map` slot. The parser uses the just-read
+/// `ref_frame_indices[i]` to look up the size for each logical
+/// inter-ref (LAST=0 / GOLDEN=1 / ALTREF=2). Empty slots (`None`)
+/// surface as [`BitstreamError::InvalidRefFrameSize`] when the
+/// header tries to inherit from them — mirroring libvpx's
+/// `INVALID_IDX → "Failed to decode frame size"` rejection at
+/// `vp9_decodeframe.c:1567-1570`.
 ///
 /// Mirrors `read_uncompressed_header` (`vp9_decodeframe.c:2637-2861`)
 /// up to and including the ref-frame loop and
@@ -315,17 +320,31 @@ pub fn parse_uncompressed_header(
             }
 
             // setup_frame_size_with_refs. libvpx :1553-1604.
-            // For each ref: read 1 bit; if set AND that ref has a known size,
-            // inherit width/height. Otherwise fall through to a fresh
-            // frame_size read.
+            //
+            // Read up to REFS_PER_FRAME (= 3) "size_in_found" bits, one
+            // per logical inter-ref (LAST/GOLDEN/ALTREF). On the FIRST
+            // bit that's `1`, libvpx looks up the referenced pool slot's
+            // size and BREAKS the loop — subsequent bits are NOT read.
+            // If none of the bits are set, fresh 32-bit frame_size
+            // follows.
             let mut inherited: Option<(u32, u32)> = None;
-            for ref_slot in ref_sizes.iter() {
+            for (i, ref_idx) in ref_frame_indices.iter().enumerate() {
                 let use_size = rb.read_bit()? != 0;
-                if use_size
-                    && inherited.is_none()
-                    && let Some(sz) = ref_slot
-                {
-                    inherited = Some(*sz);
+                if use_size {
+                    // Resolve `ref_frame_indices[i]` against the pool.
+                    let pool_idx = *ref_idx as usize;
+                    match ref_sizes.get(pool_idx).copied().flatten() {
+                        Some(sz) => {
+                            inherited = Some(sz);
+                            break;
+                        }
+                        None => {
+                            return Err(BitstreamError::InvalidRefFrameSize {
+                                logical_ref: i as u8,
+                                pool_slot: *ref_idx,
+                            });
+                        }
+                    }
                 }
             }
             (width, height) = if let Some(sz) = inherited {
@@ -554,7 +573,7 @@ mod tests {
     /// Convenience: "no reference frames currently resolved" — the
     /// state at decoder boot and after a `need_resync`. Equivalent to
     /// `cm->frame_refs[i].idx == INVALID_IDX` for every slot.
-    const NO_REFS: RefFrameSizes = [None; MAX_INTER_REFS];
+    const NO_REFS: RefFrameSizes = [None; REF_FRAMES];
 
     /// Helper: build a header byte sequence by writing fields with a
     /// `RawBitWriter`, then return the populated buffer.
@@ -878,9 +897,15 @@ mod tests {
 
     #[test]
     fn inter_frame_inherits_size_from_ref() {
-        // Ref slot 1 (GOLDEN) has 1920x1080. We set size_in_found bits
-        // [0, 1, 0] → inherit from ref 1.
-        let refs: RefFrameSizes = [None, Some((1920, 1080)), None];
+        // Pool slot 5 has 1920x1080. All three logical inter-refs
+        // (LAST/GOLDEN/ALTREF) map to pool slot 5 via `ref_frame_indices`.
+        // size_in_found bits `[0, 1, ...]` → parser reads bit 0 (= 0),
+        // bit 1 (= 1), looks up `pool_sizes[ref_frame_indices[1]] =
+        // pool_sizes[5] = Some((1920, 1080))`, and BREAKS (matches
+        // libvpx `vp9_decodeframe.c:1559-1572`). The 3rd bit is NEVER
+        // written nor read.
+        let mut refs: RefFrameSizes = [None; REF_FRAMES];
+        refs[5] = Some((1920, 1080));
         let buf = build_header(|w| {
             w.write_literal(sync::FRAME_MARKER as u32, 2);
             w.write_bit(0);
@@ -891,16 +916,15 @@ mod tests {
             w.write_bit(0); // error_resilient = 0
             w.write_literal(0, 2); // reset_frame_context = 0
             w.write_literal(0xFF, 8); // refresh_frame_flags
-            // Refs: indices [1, 1, 1], sign_biases [false, false, false].
+            // Refs: indices [5, 5, 5], sign_biases [false, false, false].
             for _ in 0..3 {
-                w.write_literal(1, 3);
+                w.write_literal(5, 3);
                 w.write_bit(0);
             }
-            // size_in_found bits: skip first ref, inherit second, skip
-            // third. The parser reads all 3 bits.
+            // size_in_found bits: skip first ref, inherit second.
+            // Parser breaks on the second bit — no third bit written.
             w.write_bit(0);
             w.write_bit(1);
-            w.write_bit(0);
             // No fresh size — inherited from ref 1.
             w.write_bit(0); // no render size
             w.write_bit(0); // allow_high_precision_mv = 0
@@ -928,13 +952,11 @@ mod tests {
         }
     }
 
-    /// If a `size_in_found` bit is set but the corresponding ref slot
-    /// is `None`, libvpx would error; our parser falls through to a
-    /// fresh size read (lenient — the decoder catches the resulting
-    /// inconsistency at a higher layer when it sees `idx == INVALID`).
-    /// This pins the parse-doesn't-panic behaviour.
+    /// `size_in_found = 1` for a logical ref whose pool slot is empty
+    /// surfaces as `InvalidRefFrameSize`. Matches libvpx
+    /// `vp9_decodeframe.c:1567-1570` ("Failed to decode frame size").
     #[test]
-    fn inter_frame_size_in_found_with_missing_ref_falls_through() {
+    fn inter_frame_size_in_found_with_missing_ref_errors() {
         let buf = build_header(|w| {
             w.write_literal(sync::FRAME_MARKER as u32, 2);
             w.write_bit(0);
@@ -949,24 +971,22 @@ mod tests {
                 w.write_literal(0, 3);
                 w.write_bit(0);
             }
-            // All size_in_found bits set, but all refs None → fall through.
+            // First size_in_found bit set, but pool slot 0 is None →
+            // error.
             w.write_bit(1);
-            w.write_bit(1);
-            w.write_bit(1);
-            w.write_literal(255, 16); // width 256
-            w.write_literal(255, 16); // height 256
-            w.write_bit(0);
-            w.write_bit(0);
-            w.write_bit(0);
-            w.write_literal(2, 2); // EightTapSharp
-            write_minimal_tail(w, 256);
+            // Padding so the reader doesn't truncate.
             for _ in 0..8 {
                 w.write_literal(0, 8);
             }
         });
-        let (hdr, _) = parse_uncompressed_header(&buf, &NO_REFS).expect("falls through");
-        assert_eq!(hdr.width, 256);
-        assert_eq!(hdr.height, 256);
+        let err = parse_uncompressed_header(&buf, &NO_REFS).unwrap_err();
+        assert_eq!(
+            err,
+            BitstreamError::InvalidRefFrameSize {
+                logical_ref: 0,
+                pool_slot: 0,
+            }
+        );
     }
 
     /// `first_partition_size = 0` triggers `InvalidFirstPartitionSize`
