@@ -156,10 +156,6 @@ pub fn reconstruct_inter_block(
         (mi.block_size as u8) >= (BlockSize::Block8x8 as u8),
         "D.2.a does not handle sub-8 inter blocks — landed in D.2.d"
     );
-    debug_assert!(
-        !mi.skip,
-        "D.2.a does not handle skip — landed in D.2.b"
-    );
 
     // Resolve the active reference frame.
     let ref_idx = 0usize;
@@ -274,49 +270,70 @@ pub fn reconstruct_inter_block(
         );
 
         // -- Residual decode + IT-add -------------------------------
+        //
+        // libvpx `decode_block` (vp9_decodeframe.c:455-505): when
+        // `mi->skip` is set, the per-TX residual decode is bypassed
+        // and the MC output is the final reconstruction. Caller-side
+        // `dec_reset_skip_context` (vp9_decodeframe.c:783-790) zeroes
+        // the per-plane above/left coef-context cells covering the
+        // block — we do that inline here per-plane.
 
-        let plane_dequant_pair = inputs.dequant_per_plane[plane];
+        if mi.skip {
+            // Zero the (above_coef, left_coef) cells for this plane's
+            // span. Mirrors libvpx's per-plane `dec_reset_skip_context`
+            // splat.
+            coef_ctx.set_coef_flags(
+                plane,
+                plane_x4_base,
+                plane_y4_in_sb_base,
+                plane_bw_4x4,
+                plane_bh_4x4,
+                false,
+            );
+        } else {
+            let plane_dequant_pair = inputs.dequant_per_plane[plane];
 
-        // Iterate TX positions inside the plane's coding block.
-        let mut loff = 0usize;
-        while loff < plane_bh_4x4 {
-            let mut aoff = 0usize;
-            while aoff < plane_bw_4x4 {
-                let tx_px_x = plane_px_x + aoff * 4;
-                let tx_px_y = plane_px_y + loff * 4;
-                let tx_dst_off = tx_px_y * dst_stride + tx_px_x;
-                let tx_dst = &mut dst_slice[tx_dst_off..];
+            // Iterate TX positions inside the plane's coding block.
+            let mut loff = 0usize;
+            while loff < plane_bh_4x4 {
+                let mut aoff = 0usize;
+                while aoff < plane_bw_4x4 {
+                    let tx_px_x = plane_px_x + aoff * 4;
+                    let tx_px_y = plane_px_y + loff * 4;
+                    let tx_dst_off = tx_px_y * dst_stride + tx_px_x;
+                    let tx_dst = &mut dst_slice[tx_dst_off..];
 
-                let tx_type = TxType::DctDct; // inter blocks always use DctDct
-                let seg_eob = plane_tx.n_coeffs();
-                let mut dq_coefs = [0i32; MAX_TX_COEFFS];
-                let eob = decode_block_tokens(
-                    reader,
-                    fc,
-                    /* counts = */ None,
-                    coef_ctx,
-                    plane,
-                    plane_x4_base + aoff,
-                    plane_y4_in_sb_base + loff,
-                    plane_tx,
-                    tx_type,
-                    /* ref_type = */ 1, // inter
-                    seg_eob,
-                    plane_dequant_pair,
-                    &mut dq_coefs[..seg_eob],
-                );
-
-                if eob > 0 {
-                    inverse_transform_add_dct(
-                        plane_tx, &dq_coefs[..seg_eob], eob, tx_dst, dst_stride,
+                    let tx_type = TxType::DctDct; // inter blocks always use DctDct
+                    let seg_eob = plane_tx.n_coeffs();
+                    let mut dq_coefs = [0i32; MAX_TX_COEFFS];
+                    let eob = decode_block_tokens(
+                        reader,
+                        fc,
+                        /* counts = */ None,
+                        coef_ctx,
+                        plane,
+                        plane_x4_base + aoff,
+                        plane_y4_in_sb_base + loff,
+                        plane_tx,
+                        tx_type,
+                        /* ref_type = */ 1, // inter
+                        seg_eob,
+                        plane_dequant_pair,
+                        &mut dq_coefs[..seg_eob],
                     );
-                }
 
-                aoff += tx_step_4x4;
+                    if eob > 0 {
+                        inverse_transform_add_dct(
+                            plane_tx, &dq_coefs[..seg_eob], eob, tx_dst, dst_stride,
+                        );
+                    }
+
+                    aoff += tx_step_4x4;
+                }
+                loff += tx_step_4x4;
             }
-            loff += tx_step_4x4;
         }
-        let _ = inputs.lossless; // unused in D.2.a (no lossless inter yet)
+        let _ = inputs.lossless; // unused (no lossless inter yet)
     }
 }
 
@@ -579,6 +596,139 @@ mod tests {
             let ref_row = &ref_u.data()[(4 + row) * ref_u.stride() + 8..];
             assert_eq!(&dst_row[..4], &ref_row[..4], "U row {row}");
         }
+    }
+
+    /// D.2.b: NEARESTMV + skip block reconstructs to exactly the
+    /// ref-frame pixels (no residual, MC output is final). We verify
+    /// against a Mv = 0 single-ref block where MC is `convolve_copy`,
+    /// so the result is byte-equal to the corresponding ref-frame
+    /// region. The bool-coder is NOT advanced (skip path doesn't read
+    /// tokens) — we confirm by holding the reader's position before
+    /// and after.
+    #[test]
+    fn skip_block_zero_mv_block16x16_copies_ref_no_token_consume() {
+        let cur_w = 64u32;
+        let cur_h = 64u32;
+        let ref_buf = make_ref(cur_w, cur_h);
+        let mut dst = Yv12Buffer::alloc(
+            cur_w, cur_h, ChromaFormat::Yuv420,
+            BorderUsage::Decoder, ByteAlignment::Legacy,
+        ).unwrap();
+        dst.y_plane_mut().fill(0xAB);
+        dst.u_plane_mut().fill(0xCD);
+        dst.v_plane_mut().fill(0xEF);
+
+        let fc = fc_flat_eob_inter();
+        // Reader holds *no* token bytes — the skip path mustn't read.
+        let bytes = vec![0u8; 4];
+        let mut reader = BoolReader::new(&bytes).unwrap();
+        let pre_pos = reader.cursor_state().3;
+        let mut coef_ctx = TileCoefCtx::new(cur_w as usize / 8);
+
+        // Pre-set some coef-context cells to non-zero so we can check
+        // the reset splat after the skip block lands.
+        coef_ctx.set_coef_flags(0, 0, 0, 4, 4, true);
+
+        let mut mi = inter_mi(BlockSize::Block16x16, TxSize::Tx16x16, Mv::ZERO);
+        mi.skip = true;
+
+        let inputs = InterBlockInputs {
+            cur_y_width: cur_w,
+            cur_y_height: cur_h,
+            refs: [Some(&ref_buf), None],
+            dequant_per_plane: [(8, 16); 3],
+            lossless: false,
+        };
+
+        reconstruct_inter_block(
+            &mut reader,
+            &fc,
+            None,
+            &mut coef_ctx,
+            &mi,
+            /* mi_row */ 0,
+            /* mi_col */ 0,
+            /* mi_row_in_tile */ 0,
+            /* mi_col_in_tile */ 0,
+            /* mi_row_in_sb */ 0,
+            &inputs,
+            &mut dst,
+        );
+
+        // Reader unchanged.
+        let post_pos = reader.cursor_state().3;
+        assert_eq!(pre_pos, post_pos, "skip path must not consume bits");
+
+        // Coef-context cells in the spanned region are all zero.
+        for x4 in 0..4 {
+            assert_eq!(coef_ctx.above_coef(0, x4), 0, "Y above[{x4}] reset");
+        }
+        for y4 in 0..4 {
+            assert_eq!(coef_ctx.left_coef(0, y4), 0, "Y left[{y4}] reset");
+        }
+
+        // Y region at (0,0) equals the corresponding ref region.
+        let dst_y = dst.y_plane();
+        let ref_y = ref_buf.y_plane();
+        for row in 0..16 {
+            let dst_row = &dst_y.data()[row * dst_y.stride()..];
+            let ref_row = &ref_y.data()[row * ref_y.stride()..];
+            assert_eq!(&dst_row[..16], &ref_row[..16], "Y row {row}");
+        }
+    }
+
+    /// D.2.b: skip with a NON-zero MV (subpel) — the MC output still
+    /// is the final reconstruction, but it now equals a `convolve8_*`
+    /// of the ref pixels, not a direct copy.
+    #[test]
+    fn skip_block_subpel_mv_no_residual() {
+        let cur_w = 64u32;
+        let cur_h = 64u32;
+        let ref_buf = make_ref(cur_w, cur_h);
+        let mut dst = Yv12Buffer::alloc(
+            cur_w, cur_h, ChromaFormat::Yuv420,
+            BorderUsage::Decoder, ByteAlignment::Legacy,
+        ).unwrap();
+        dst.y_plane_mut().fill(0);
+
+        let fc = fc_flat_eob_inter();
+        let bytes = vec![0u8; 4];
+        let mut reader = BoolReader::new(&bytes).unwrap();
+        let mut coef_ctx = TileCoefCtx::new(cur_w as usize / 8);
+
+        let mut mi = inter_mi(
+            BlockSize::Block16x16,
+            TxSize::Tx16x16,
+            Mv { row: 0, col: 5 },
+        );
+        mi.skip = true;
+
+        let inputs = InterBlockInputs {
+            cur_y_width: cur_w,
+            cur_y_height: cur_h,
+            refs: [Some(&ref_buf), None],
+            dequant_per_plane: [(8, 16); 3],
+            lossless: false,
+        };
+
+        reconstruct_inter_block(
+            &mut reader, &fc, None, &mut coef_ctx, &mi,
+            2, 2, 2, 2, 2, &inputs, &mut dst,
+        );
+
+        // Some pixels in the 16x16 region at (16, 16) are non-zero
+        // (MC output landed).
+        let dst_y = dst.y_plane();
+        let mut any = false;
+        for row in 0..16 {
+            for col in 0..16 {
+                if dst_y.data()[(16 + row) * dst_y.stride() + 16 + col] != 0 {
+                    any = true;
+                    break;
+                }
+            }
+        }
+        assert!(any, "MC output must be non-zero");
     }
 
     /// D.2.a coverage: non-zero MV with sub-pel offset. With identity
