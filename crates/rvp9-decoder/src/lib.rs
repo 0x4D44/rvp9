@@ -1031,6 +1031,82 @@ impl Decoder {
             allow_high_precision_mv,
         )?;
 
+        // D.16 — env-gated dump of FrameContext state immediately after
+        // compressed-header parse, mirroring libvpx's RVP9_TRACE_FC
+        // instrumentation in `vp9_decodeframe.c::read_compressed_header`.
+        // Diff line-by-line vs the libvpx trace to localize any
+        // bitstream-interpretation divergence at the per-frame FC
+        // diff-update layer (separate from per-block decode bugs).
+        if std::env::var("RVP9_TRACE_FC").ok().as_deref() == Some("1") {
+            let fc = &self.frame_contexts[fc_idx];
+            eprintln!(
+                "RVP9_TRACE_FC compressed_header_done kf=0 intra_only=0"
+            );
+            eprintln!(
+                "RVP9_TRACE_FC tx_mode={} ref_mode={}",
+                compressed_result.tx_mode as u8,
+                compressed_result.reference_mode as u8
+            );
+            eprintln!(
+                "RVP9_TRACE_FC skip_probs=[{},{},{}]",
+                fc.skip_probs[0], fc.skip_probs[1], fc.skip_probs[2]
+            );
+            eprintln!(
+                "RVP9_TRACE_FC intra_inter_prob=[{},{},{},{}]",
+                fc.intra_inter_prob[0],
+                fc.intra_inter_prob[1],
+                fc.intra_inter_prob[2],
+                fc.intra_inter_prob[3]
+            );
+            eprintln!(
+                "RVP9_TRACE_FC comp_inter_prob=[{},{},{},{},{}]",
+                fc.comp_inter_prob[0], fc.comp_inter_prob[1],
+                fc.comp_inter_prob[2], fc.comp_inter_prob[3],
+                fc.comp_inter_prob[4]
+            );
+            for i in 0..5 {
+                eprintln!(
+                    "RVP9_TRACE_FC single_ref_prob[{i}]=[{},{}]",
+                    fc.single_ref_prob[i][0], fc.single_ref_prob[i][1]
+                );
+            }
+            eprintln!(
+                "RVP9_TRACE_FC comp_ref_prob=[{},{},{},{},{}]",
+                fc.comp_ref_prob[0], fc.comp_ref_prob[1],
+                fc.comp_ref_prob[2], fc.comp_ref_prob[3],
+                fc.comp_ref_prob[4]
+            );
+            for j in 0..7 {
+                eprintln!(
+                    "RVP9_TRACE_FC inter_mode_probs[{j}]=[{},{},{}]",
+                    fc.inter_mode_probs[j][0],
+                    fc.inter_mode_probs[j][1],
+                    fc.inter_mode_probs[j][2]
+                );
+            }
+            eprintln!(
+                "RVP9_TRACE_FC nmvc.joints=[{},{},{}]",
+                fc.nmvc.joints[0], fc.nmvc.joints[1], fc.nmvc.joints[2]
+            );
+            for i in 0..2 {
+                let c = &fc.nmvc.comps[i];
+                eprintln!(
+                    "RVP9_TRACE_FC nmvc.comp[{i}].sign={} classes=[{},{},{},{},{},{},{},{},{},{}]",
+                    c.sign,
+                    c.classes[0], c.classes[1], c.classes[2], c.classes[3],
+                    c.classes[4], c.classes[5], c.classes[6], c.classes[7],
+                    c.classes[8], c.classes[9]
+                );
+                eprintln!(
+                    "RVP9_TRACE_FC nmvc.comp[{i}].class0=[{}] bits=[{},{},{},{},{},{},{},{},{},{}]",
+                    c.class0[0],
+                    c.bits[0], c.bits[1], c.bits[2], c.bits[3],
+                    c.bits[4], c.bits[5], c.bits[6], c.bits[7],
+                    c.bits[8], c.bits[9]
+                );
+            }
+        }
+
         // 4. Slice tile data (everything past the compressed header).
         let header_end = frame.header_end_byte;
         let fps = tail.first_partition_size as usize;

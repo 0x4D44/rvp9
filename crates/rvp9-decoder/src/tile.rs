@@ -1918,6 +1918,22 @@ fn decode_inter_block(
                 prev_mv,
             );
         }
+
+        // D.16 — env-gated per-block INTERMI trace mirroring the libvpx
+        // dump in `read_inter_frame_mode_info` (`vp9_decodemv.c`). One
+        // line summarises (bsize, segment_id, skip, tx_size, mode, refs,
+        // mvs) — diff against libvpx's `RVP9_TRACE_INTERMI` to localize
+        // per-block divergence.
+        if std::env::var("RVP9_TRACE_INTERMI").ok().as_deref() == Some("1")
+            && let BlockMode::Inter { mode, ref_frames, mvs, .. } = mi.mode
+        {
+            eprintln!(
+                "RVP9_TRACE_INTERMI mi=({mi_row},{mi_col}) bsize={} seg={} skip={} is_inter=1 tx={} mode={} ref=[{},{}] mv0=({},{}) mv1=({},{})",
+                bsize as u8, segment_id, skip as u8, tx_size as u8,
+                mode as u8, ref_frames[0] as i8, ref_frames[1] as i8,
+                mvs[0].row, mvs[0].col, mvs[1].row, mvs[1].col,
+            );
+        }
         // 2. Resolve per-block refs against params.refs (LAST=0,
         //    GOLDEN=1, ALTREF=2) and the decoded mi.ref_frames pair.
         let block_refs = match mi.mode {

@@ -329,3 +329,126 @@ Arthur triages all `WEDGED` and `WEDGED-BLOCKED` entries on wake.
      (probably also a coef-context edge case at a frame boundary).
      Tractable; useful single-frame test target for any inter cascade
      investigation.
+
+---
+
+## D.16 returned — aq2 keyframe-adapt + post-CH FC + per-block decode all MATCH libvpx; bug isolated to per-pixel MC/recon at mi=(0,2) (NEGATIVE-with-localization)
+
+- **Target:** `vp90-2-09-aq2.webm` frame 2 (= first shown inter post-altref).
+  The D.13 "MV decode at mi=(0,0) is wrong" hypothesis turned out to be a
+  false-trail: D.13's "expected libvpx output" was the wrong frame (frame
+  0 keyframe, not frame 2). After fixing the comparison file
+  (`vpxdec --i420 --limit=2` → take the SECOND frame only), the first
+  Y divergence shifts from (4, 0) to **(29, 0)**.
+- **Step 1 — FrameContext post-compressed-header dump.** Built libvpx
+  `RVP9_TRACE_FC=1` instrumentation in `vp9_decodeframe.c::read_compressed_header`
+  + matching rvp9-side trace in `Decoder::decode_inter_frame` (right
+  after `parse_compressed_partition_inter`). Both dump every FC field
+  the per-block decode actually consumes (skip_probs, intra_inter_prob,
+  comp_inter_prob, single_ref_prob, comp_ref_prob, inter_mode_probs,
+  nmvc.joints + per-component sign/classes/class0/bits). **EVERY byte
+  matches libvpx for frame 1 (altref) AND frame 2.** That fully clears
+  D.13's suspect #1 (keyframe-adapt) AND its suspect #3 (backward-adapt
+  of intra_inter_prob/mv probs). The FC bank value rvp9 hands to the
+  per-block decoder is bit-for-bit identical to libvpx's.
+- **Step 2 — per-block INTERMI trace.** Added libvpx
+  `RVP9_TRACE_INTERMI=1` instrumentation in
+  `vp9_decodemv.c::read_inter_frame_mode_info` (cursor checkpoint
+  before/after each syntax element + final mode-info summary) +
+  matching rvp9-side trace in `tile.rs::decode_inter_block`. Diff'd
+  the per-block summaries across frame 2:
+  - **mi=(0,0) matches exactly** — bsize=6, seg=0, skip=1, tx=2,
+    mode=NEWMV(13), ref=[Last, NoRef], mv0=(-2,-8). rvp9 = libvpx.
+  - **mi=(0,2) matches exactly** — bsize=6, seg=0, skip=1, tx=2,
+    mode=NEAREST(10), ref=[Last,NoRef], mv0=(-2,-8). rvp9 = libvpx.
+  - The first 12 frame-2 blocks (mi=(0,0..6) parent + 4 sub-blocks
+    inside the partition tree) all match.
+  - First semantic divergence is **mi=(0,8) seg=1 (rvp9) vs seg=0
+    (libvpx)** — but mi=(0,8) is at pixel col 64+, well AFTER the
+    first picture divergence at pixel (29, 0) which is inside mi=(0,2).
+  - The "mv1=(-32768,-32768)" lines are libvpx's uninitialised-mv
+    sentinel for single-ref blocks (mi->mv[1] never written when
+    ref_frame[1] = NO_REF_FRAME). Cosmetic, not a real divergence.
+- **Conclusion: the bug is downstream of mode-info decode**, at the
+  per-pixel **MC / residual / loopfilter** stage for the first BLOCK_16X16
+  inter block at mi=(0,2). Per-pixel diff vs libvpx I420 dump:
+  - First Y diff at (29, 0): got=68, expected=67. The block at pixel
+    cols 28..31, rows 0..3 (= right edge of mi=(0,2) BLOCK_16X16):
+    ```
+    got       expected      diff
+    67 68 68 69    67 67 67 67    +0 +1 +1 +2
+    67 67 68 68    67 67 67 67    +0  0 +1 +1
+    67 67 68 68    67 67 67 67    +0  0 +1 +1
+    67 67 67 68    67 66 66 66    +0 +1 +1 +2
+    ```
+  - mi=(0,2) is `skip=1` → no residual → output IS pure MC from LAST
+    (keyframe). The keyframe is bit-exact vs libvpx (verified via
+    dump_frame_diff frame 1 → all planes MATCH). With MV=(-2,-8) the
+    16x16 MC reads from keyframe cols 15..30, rows -0.25..14.75.
+  - Cols 0..27 of mi=(0,2) **match** libvpx (rows 0..3). Cols 28..31
+    diverge. Same MC kernel call, same source rows, same single-ref
+    convolve — yet output differs at the rightmost 4×4. Possible
+    causes:
+    1. **Border-replication asymmetry** — `extend_frame_borders` (or
+       `BorderedPlaneRef`) misbehaves at one edge but not the other.
+       The MV col=-8 means MC reads from ref cols 15..30; col 30 is
+       inside the visible 352-wide keyframe so no border read on the
+       right. Top border (row -1) is read for ALL columns at row=0
+       though, including cols 28..31. If our top-row replication writes
+       (78, 78, ..., 78) but libvpx's writes (...keyframe row 0 ...),
+       cols 28..31 specifically would diverge if our keyframe row 0
+       at cols 27..30 differs from the top-border content we wrote.
+       **Worth checking: are the top-border cells = visible row 0
+       cells byte-for-byte?**
+    2. **Subpel filter rounding asymmetry** — at row fractional
+       position 12/16 (subpel_y_q4 = (mv_row * 2) & 15 = -4 & 15 = 12),
+       the 8-tap filter is `[-1, 4, -11, 37, 112, -16, 4, -1]`. Single
+       per-axis rounding `(sum + 64) >> 7`. Same logic for every
+       output pixel. Hard to see how this asymmetrises across cols.
+    3. **Loop-filter divergence** at frame 2 — frame 2 has
+       `filter_level=24` (non-zero). The +0/+1/+2 pattern at a block
+       boundary IS consistent with an off-by-one LF call (e.g.
+       applying inner-edge filter where libvpx applies outer-edge,
+       or filter-strength miscompute for adjacent blocks).
+  - Suspect (3) — loop-filter — is the **highest prior**. The diff
+    pattern (small +0/+1/+2, localized to a 4×4 block at the
+    boundary, frame_level=24) matches the M.9 / J wireup signature
+    that was fixed at the LF stage previously. Re-test with
+    `RVP9_DISABLE_LF=1` to confirm.
+- **Cascade not yet lit.** Conformance unchanged: 31 / 160 / 10 / 201.
+  Tests + clippy clean. Diagnostic infrastructure committed for D.17.
+- **Deliverables (in rvp9 repo):**
+  - `crates/rvp9-decoder/src/lib.rs` — env-gated `RVP9_TRACE_FC=1`
+    dump in `decode_inter_frame` post-compressed-header.
+  - `crates/rvp9-decoder/src/tile.rs` — env-gated `RVP9_TRACE_INTERMI=1`
+    one-line per-block summary in `decode_inter_block`.
+- **Deliverables NOT in this repo (separate tree at
+  `D:/language/libvpx-stock/`):**
+  - `vp9/decoder/vp9_decodeframe.c::read_compressed_header` —
+    `RVP9_TRACE_FC=1` post-CH FC dump.
+  - `vp9/decoder/vp9_decodemv.c::read_inter_frame_mode_info` —
+    `RVP9_TRACE_INTERMI=1` per-syntax-element + per-block summary
+    dump. Filters on `cm->show_frame && cm->current_video_frame >= 1`
+    so frame 0 (keyframe) and frame 1 (altref non-shown) are silent.
+  - `libs-x86_64-win64-gcc.mk` — added `export TMPDIR/TMP/TEMP=/tmp`
+    so gcc-mingw rebuilds succeed under our shell env. `gcc_wrap.sh`
+    scratch (unused, can remove).
+- **Next agent recipe for D.17:**
+  1. Run `RVP9_DISABLE_LF=1` + `dump_frame_diff` on aq2 frame 2 to
+     confirm/refute the LF-divergence hypothesis. If the pre-LF picture
+     matches libvpx, the bug is purely in the LF apply for inter frames.
+     (Reminder: D.13 already verified `RVP9_DISABLE_LF=1` showed the
+     same cascade pattern — but that was against the WRONG expected
+     file. Re-run with the correct frame-2-only expected.)
+  2. If pre-LF diverges too, walk in to the MC at mi=(0,2): dump the
+     keyframe Y-plane top-border row (rows -1..-7, cols 14..32) on
+     both rvp9 and libvpx. Compare. Look for asymmetric replication.
+  3. Separately track the seg_id divergence at mi=(0,8) — that's an
+     INDEPENDENT bug (compound-ref or temporal_update inheritance in
+     `prev_segment_ids` from frame 1's altref). Will need its own
+     investigation but is **not** the cause of the first-pixel
+     divergence.
+  4. The diagnostic infra committed by D.16 (FC + INTERMI traces) is
+     ready to drop into any other failing vector. Apply to
+     `vp90-2-00-quantizer-26.webm` frame 2 if aq2's bug doesn't
+     generalise.
