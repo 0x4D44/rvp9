@@ -10,13 +10,23 @@
 //! - [`mv_ref`] — decoder-side MV reference resolution
 //!   (`dec_find_mv_refs`, `append_sub8x8_mvs_for_idx`,
 //!   `vp9_find_best_ref_mvs`).
+//! - [`filter`] — 8-tap sub-pel interpolation filter tables and the
+//!   `convolve8` family of scalar kernels (libvpx
+//!   `vpx_dsp/vpx_convolve.c` + `vp9/common/vp9_filter.c`).
 //!
-//! More sub-modules (interp filtering, compound prediction) will
-//! land as Stage 3 Tasks B.3+ slot in.
+//! More sub-modules (compound prediction wireup) will land as
+//! Stage 3 Tasks C.2+ slot in.
 
+pub mod filter;
 pub mod mv;
 pub mod mv_ref;
 
+pub use filter::{
+    convolve8, convolve8_avg, convolve8_avg_horiz, convolve8_avg_vert, convolve8_horiz,
+    convolve8_vert, convolve_avg, convolve_copy, kernel_for, BILINEAR_KERNEL, EIGHTTAP_KERNEL,
+    EIGHTTAP_SHARP_KERNEL, EIGHTTAP_SMOOTH_KERNEL, FILTER_BITS, FILTER_TAPS, SUBPEL_BITS,
+    SUBPEL_SHIFTS, SUBPEL_TAPS,
+};
 pub use mv::{read_mv, read_mv_component};
 pub use mv_ref::{
     append_sub8x8_mvs_for_idx, dec_find_mv_refs, find_best_ref_mvs, find_mv_refs,
