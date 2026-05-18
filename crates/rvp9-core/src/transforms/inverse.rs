@@ -2378,4 +2378,29 @@ mod tests {
             );
         }
     }
+
+    /// Stage 3 stretch M.16 — captured dq_coefs from resize frame 1 at
+    /// the Block8x8 Dc block at (px 280, 0): `dc=-698, ac@(0,1)=550`,
+    /// dest pre-filled with Dc pred = 69. Confirms `idct8x8_64_add`
+    /// produces a flat row 0..7 result of `[70, 68, 65, 60, 56, 51,
+    /// 48, 46]` for this sparse input — matching our actual pre-LF
+    /// frame output but NOT libvpx's pre-LF (col 7 varies in libvpx,
+    /// pointing at a decode_coefs divergence upstream that yields
+    /// different non-zero coefs into iht).
+    #[test]
+    fn m16_idct8x8_resize_280_0_probe() {
+        let mut input = [0i32; 64];
+        input[0] = -698;
+        input[1] = 550;
+        let mut dest = [69u8; 64];
+        idct8x8_64_add(&input, &mut dest, 8);
+        let expected_row: [u8; 8] = [70, 68, 65, 60, 56, 51, 48, 46];
+        for r in 0..8 {
+            assert_eq!(
+                &dest[r * 8..r * 8 + 8],
+                &expected_row,
+                "row {r}: idct8x8 output differs from expected (M.16 pin)"
+            );
+        }
+    }
 }
