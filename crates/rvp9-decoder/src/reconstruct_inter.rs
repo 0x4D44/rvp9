@@ -311,9 +311,27 @@ pub fn reconstruct_inter_block(
 
                     let ref_plane: BorderedPlaneRef<'_> =
                         ref_buf.plane_with_border(plane);
-                    let src_base = (ref_plane.border_h as i32 + int_y) as usize
-                        * ref_plane.stride
-                        + (ref_plane.border_w as i32 + int_x) as usize;
+                    // libvpx pre-shifts `src` by `-3 rows / -3 cols`
+                    // for the filtered kernels (convolve8 / its
+                    // horiz/vert sub-cases) so `src[0]` is the top-
+                    // left corner of the 8-tap 2-D footprint. The
+                    // unscaled `convolve_copy` / `convolve_avg`
+                    // sub-cases do NOT want this offset — they read
+                    // `src[r*stride+c]` for `r,c in 0..h/0..w` and
+                    // expect `src[0]` at the integer-pel base.
+                    //
+                    // Per-axis pre-shift: convolve8_horiz only needs
+                    // the column shift; convolve8_vert only needs the
+                    // row shift. We apply the shift on each axis only
+                    // when its subpel is non-zero, matching the
+                    // tightness of the kernel's actual read footprint.
+                    let row_pre = if subpel_y_q4 != 0 { -3 } else { 0 };
+                    let col_pre = if subpel_x_q4 != 0 { -3 } else { 0 };
+                    let row_base =
+                        (ref_plane.border_h as i32 + int_y + row_pre) as usize;
+                    let col_base =
+                        (ref_plane.border_w as i32 + int_x + col_pre) as usize;
+                    let src_base = row_base * ref_plane.stride + col_base;
                     let src = &ref_plane.data[src_base..];
                     let src_stride = ref_plane.stride;
 

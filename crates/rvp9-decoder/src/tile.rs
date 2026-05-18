@@ -47,6 +47,7 @@ use rvp9_core::quant::{ac_quant, dc_quant, get_qindex};
 use rvp9_core::transforms::{TxMode, TxSize};
 
 use crate::reconstruct::reconstruct_intra_block;
+use crate::reconstruct_inter::{InterBlockInputs, reconstruct_inter_block};
 use crate::tile_ctx::{TileCoefCtx, TileDecodeCtx, TileNeighbourLookup};
 
 /// `MI_BLOCK_SIZE` from libvpx (`vp9_enums.h:25`) — each 64×64
@@ -303,6 +304,10 @@ fn plane_dequant(params: &FrameDecodeParams, plane: usize, segment_id: u8) -> (i
 /// and leaf blocks. After K2.b lands, this also drives per-plane
 /// intra prediction + token decode + IT-add into `dst_frame`.
 ///
+/// Returns the populated [`TileDecodeCtx`] so callers (e.g. K2.c's
+/// loop-filter wireup) can walk the per-block ModeInfo grid after
+/// reconstruction completes.
+///
 /// # Errors
 ///
 /// Returns [`TileDecodeError::InvalidTilePayload`] if the tile bytes
@@ -313,7 +318,7 @@ pub fn decode_tile_intra(
     params: &FrameDecodeParams,
     fc: &FrameContext,
     dst_frame: &mut Yv12Buffer,
-) -> Result<(), TileDecodeError> {
+) -> Result<TileDecodeCtx, TileDecodeError> {
     let mut reader =
         BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;
     let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
@@ -350,7 +355,7 @@ pub fn decode_tile_intra(
         }
         mi_row += MI_BLOCK_SIZE;
     }
-    Ok(())
+    Ok(decode_ctx)
 }
 
 /// Recursively decode one partition starting at `(mi_row, mi_col)`
@@ -1374,14 +1379,9 @@ fn decode_inter_block(
     let y_mis = bh_mi.min(params.base.mi_rows - mi_row);
 
     if is_inter {
-        // D.3.a scaffold: read the inter-block mode info into the
-        // ModeInfo grid, but DON'T yet drive per-plane MC + residual
-        // reconstruction. The bool-coder cursor is advanced through
-        // the mode-info section (ref frames + inter mode + interp
-        // filter + MVs), so all downstream blocks see the correct
-        // bitstream position. Pixel reconstruction lands in D.3.b
-        // (which switches this branch to D.2's
-        // `decode_and_reconstruct_inter_block`).
+        // D.3.b: read inter-block mode info, clamp MVs to a buffer-
+        // safe range, then drive per-plane MC + residual decode via
+        // D.2's `reconstruct_inter_block`.
         let mut mi = ModeInfo {
             block_size: bsize,
             tx_size,
@@ -1406,6 +1406,8 @@ fn decode_inter_block(
             bh_mi as i32,
         );
 
+        // 1. Read mode info — fills mi.mode (ref_frames / inter_mode /
+        //    MVs / interp_filter) and mi.bmi.
         {
             let lookup = TileNeighbourLookup::new(
                 decode_ctx,
@@ -1415,24 +1417,72 @@ fn decode_inter_block(
             read_inter_block_mode_info(
                 reader,
                 fc,
-                None, // no NmvCounts sink in v1
+                None,
                 &params.inter_params,
                 &lookup,
                 bsize,
                 &bounds_block,
-                None, // no prev-frame MV grid yet
+                None,
                 &mut mi,
             );
         }
 
-        // No residual decode in D.3.a — the leaf block produces no
-        // tokens. (D.3.b adds the per-plane residual path via D.2's
-        // primitive.)
-        let _ = coef_ctx;
-        let _ = dst_frame;
-        let _ = params.refs;
-        let _ = params.cur_y_width;
-        let _ = params.cur_y_height;
+        // 1b. Buffer-safe MV clamp (see `clamp_block_mvs` for details).
+        clamp_block_mvs(
+            &mut mi,
+            mi_row,
+            mi_col,
+            bw_mi,
+            bh_mi,
+            params.cur_y_width as usize,
+            params.cur_y_height as usize,
+        );
+
+        // 2. Resolve per-block refs against params.refs (LAST=0,
+        //    GOLDEN=1, ALTREF=2) and the decoded mi.ref_frames pair.
+        let block_refs = match mi.mode {
+            BlockMode::Inter { ref_frames, .. } => {
+                let resolve = |rf: RefFrame| -> Option<&Yv12Buffer> {
+                    match rf {
+                        RefFrame::LastFrame => params.refs[0],
+                        RefFrame::GoldenFrame => params.refs[1],
+                        RefFrame::AltrefFrame => params.refs[2],
+                        _ => None,
+                    }
+                };
+                [resolve(ref_frames[0]), resolve(ref_frames[1])]
+            }
+            _ => unreachable!("read_inter_block_mode_info must populate Inter"),
+        };
+
+        // 3. Per-plane recon. Skip if the primary ref is unresolvable
+        //    (block leaves zero pixels; MD5 mismatch surfaces).
+        if block_refs[0].is_some() {
+            let dequant_y = plane_dequant(&params.base, 0, segment_id);
+            let dequant_u = plane_dequant(&params.base, 1, segment_id);
+            let dequant_v = plane_dequant(&params.base, 2, segment_id);
+            let inputs = InterBlockInputs {
+                cur_y_width: params.cur_y_width,
+                cur_y_height: params.cur_y_height,
+                refs: block_refs,
+                dequant_per_plane: [dequant_y, dequant_u, dequant_v],
+                lossless: params.base.lossless,
+            };
+            reconstruct_inter_block(
+                reader,
+                fc,
+                None,
+                coef_ctx,
+                &mi,
+                mi_row,
+                mi_col,
+                mi_row_in_tile,
+                mi_col_in_tile,
+                mi_row_in_sb,
+                &inputs,
+                dst_frame,
+            );
+        }
 
         decode_ctx.write_block(mi_row_in_tile, mi_row_in_sb, mi_col_in_tile, x_mis, y_mis, &mi);
     } else {
@@ -1470,6 +1520,124 @@ fn decode_inter_block(
         // mismatches until D.4 wires real intra-in-inter pred + recon.
         let _ = coef_ctx;
         let _ = dst_frame;
+    }
+}
+
+/// Clamp every active MV in `mi` so the MC kernel's `src_base`
+/// arithmetic in [`reconstruct_inter_block`] cannot wrap. Computes
+/// the safe Q3 luma MV range from the block's frame-pixel position +
+/// the decoder's `DEC_BORDER` (= 32 px), then clamps each component.
+///
+/// libvpx handles wide-MV cases via `extend_mc_border`
+/// (`vp9_reconinter.c:154-205`) which copies reference pixels into a
+/// scratch buffer; until that helper lands, this conservative clamp
+/// prevents the MC kernel from reading outside the reference buffer's
+/// allocated area. The clamp is tighter than libvpx's
+/// `clamp_mv_to_umv_border_sb` and may cause MD5 mismatches when
+/// upstream produced an MV that needed the border-extend path.
+///
+/// We compute separate per-plane bounds (luma + chroma) and take the
+/// intersection, since the chroma plane has half-width / half-height
+/// and is the tighter constraint for some block positions / frame
+/// sizes (notably the small 8×8 conformance vectors).
+fn clamp_block_mvs(
+    mi: &mut ModeInfo,
+    mi_row: usize,
+    mi_col: usize,
+    bw_mi: usize,
+    bh_mi: usize,
+    cur_y_width: usize,
+    cur_y_height: usize,
+) {
+    // libvpx `DEC_BORDER_IN_PIXELS` (`yv12config.h:27`).
+    const BORDER_PX: i32 = 32;
+    // libvpx `VP9_INTERP_EXTEND` (`vp9_reconinter.h:33`).
+    const INTERP_EXTEND_PX: i32 = 4;
+
+    // Per-plane safe Q3 MV bounds. `int_x` in plane units is
+    // `block_x_plane + (mv >> (3 + ss))`, so the Q3-MV-equivalent of
+    // each `int_x` constraint scales by `(1 << (3 + ss))` = 8 for
+    // luma, 16 for chroma. We take the intersection of the per-plane
+    // bounds across planes 0..=2 (Y, U, V).
+    let bw_px_luma = (bw_mi as i32) * 8;
+    let bh_px_luma = (bh_mi as i32) * 8;
+    let block_x_luma = (mi_col as i32) * 8;
+    let block_y_luma = (mi_row as i32) * 8;
+
+    let mut min_col_q3 = i32::MIN / 2;
+    let mut max_col_q3 = i32::MAX / 2;
+    let mut min_row_q3 = i32::MIN / 2;
+    let mut max_row_q3 = i32::MAX / 2;
+
+    // Pre-shift adjustment: reconstruct_inter.rs offsets `src` by
+    // `-3 rows, -3 cols` so the convolve8 2-D filter footprint starts
+    // at the right place. That moves the effective minimum int_x from
+    // `-border` to `-border + 3`, and the effective max upper limit
+    // tightens by 3 on the read side: total read extent is
+    // `(intermediate_height = bh + 7)` rows starting from `int_y - 3`,
+    // so the last row touched is `int_y + bh + 3`. We need
+    // `border + int_y + bh + 3 <= plane_h + 2*border`, i.e.
+    // `int_y <= plane_h + border - bh - 3`.
+    const PRESHIFT: i32 = 3;
+    const FILTER_TAIL: i32 = 4; // 8-tap filter trailing taps past int base.
+
+    for ss in 0..=1 {
+        // ss=0 → luma; ss=1 → 4:2:0 chroma.
+        let shift: i32 = 3 + ss;
+        let scale = 1i32 << shift; // 8 for luma, 16 for chroma
+        let plane_w = (cur_y_width as i32) >> ss;
+        let plane_h = (cur_y_height as i32) >> ss;
+        let plane_border = BORDER_PX >> ss;
+        let plane_bw = bw_px_luma >> ss;
+        let plane_bh = bh_px_luma >> ss;
+        let plane_block_x = block_x_luma >> ss;
+        let plane_block_y = block_y_luma >> ss;
+
+        // Min: `border + int_x - PRESHIFT >= 0`.
+        let lo_int = -plane_border + PRESHIFT - plane_block_x;
+        // Max: `border + int_x - PRESHIFT + bw + (FILTER_TAIL + PRESHIFT) <= plane_w + 2*border`,
+        // i.e. `int_x <= plane_w + plane_border - bw - FILTER_TAIL - plane_block_x`.
+        let _ = INTERP_EXTEND_PX; // kept for documentation parity with libvpx
+        let hi_int =
+            plane_w + plane_border - plane_bw - FILTER_TAIL - plane_block_x;
+        let lo_col = lo_int * scale;
+        let hi_col = hi_int * scale + (scale - 1);
+        let lo_int_row = -plane_border + PRESHIFT - plane_block_y;
+        let hi_int_row =
+            plane_h + plane_border - plane_bh - FILTER_TAIL - plane_block_y;
+        let lo_row = lo_int_row * scale;
+        let hi_row = hi_int_row * scale + (scale - 1);
+
+        min_col_q3 = min_col_q3.max(lo_col);
+        max_col_q3 = max_col_q3.min(hi_col);
+        min_row_q3 = min_row_q3.max(lo_row);
+        max_row_q3 = max_row_q3.min(hi_row);
+    }
+
+    let clamp_to_i16 = |v: i32, lo: i32, hi: i32| -> i16 {
+        v.clamp(lo, hi)
+            .clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
+    };
+
+    let clamp = |mv: Mv| -> Mv {
+        Mv {
+            col: clamp_to_i16(i32::from(mv.col), min_col_q3, max_col_q3),
+            row: clamp_to_i16(i32::from(mv.row), min_row_q3, max_row_q3),
+        }
+    };
+
+    match &mut mi.mode {
+        BlockMode::Inter { mvs, .. } => {
+            for slot in mvs.iter_mut() {
+                *slot = clamp(*slot);
+            }
+        }
+        BlockMode::Intra { .. } => {}
+    }
+    for bmi in mi.bmi.iter_mut() {
+        for slot in bmi.as_mv.iter_mut() {
+            *slot = clamp(*slot);
+        }
     }
 }
 
