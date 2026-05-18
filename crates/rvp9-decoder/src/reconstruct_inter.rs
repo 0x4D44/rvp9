@@ -147,37 +147,35 @@ pub fn reconstruct_inter_block(
     };
     let _ = mode; // mode not consumed in D.2.a (no per-bmi yet)
 
-    // D.2.a: enforce single-ref, no sub-8, no compound, no skip.
-    debug_assert!(
-        !ref_frames[1].is_inter(),
-        "D.2.a does not handle compound — landed in D.2.c"
-    );
     debug_assert!(
         (mi.block_size as u8) >= (BlockSize::Block8x8 as u8),
-        "D.2.a does not handle sub-8 inter blocks — landed in D.2.d"
+        "D.2.a/b/c does not handle sub-8 inter blocks — landed in D.2.d"
     );
 
-    // Resolve the active reference frame.
-    let ref_idx = 0usize;
-    let ref_frame = ref_frames[ref_idx];
-    debug_assert!(ref_frame.is_inter(), "active ref must be inter");
-    let ref_buf = inputs.refs[ref_idx]
-        .expect("caller must resolve ref-pool slot for active ref");
+    // Active references and per-ref scale factors. `is_compound` =>
+    // both refs valid (libvpx `has_second_ref`). Single-ref blocks
+    // only iterate ref 0.
+    debug_assert!(ref_frames[0].is_inter(), "ref[0] must be inter");
+    let is_compound = ref_frames[1].is_inter();
 
-    // Build the Q14 scale factor for this ref against the current
-    // frame's aligned luma dims (libvpx vp9_setup_scale_factors_for_frame).
-    let sf = ScaleFactors::new(
-        ref_buf.aligned_y_width(),
-        ref_buf.aligned_y_height(),
-        inputs.cur_y_width,
-        inputs.cur_y_height,
-    );
-    debug_assert!(sf.is_valid(), "ref dimensions must be in libvpx envelope");
-
-    // Per-plane MC + residual loop.
-    let mv = mvs[ref_idx];
-    let mode_for_y = TxType::DctDct; // unused for inter — placeholder
-    let _ = mode_for_y;
+    let mut sfs: [Option<ScaleFactors>; 2] = [None, None];
+    let num_refs = 1 + usize::from(is_compound);
+    #[allow(clippy::needless_range_loop)] // indexes both `inputs.refs` and `sfs`
+    for r in 0..num_refs {
+        let ref_buf = inputs.refs[r]
+            .expect("caller must resolve ref-pool slot for each active ref");
+        let sf = ScaleFactors::new(
+            ref_buf.aligned_y_width(),
+            ref_buf.aligned_y_height(),
+            inputs.cur_y_width,
+            inputs.cur_y_height,
+        );
+        debug_assert!(
+            sf.is_valid(),
+            "ref dimensions must be in libvpx envelope"
+        );
+        sfs[r] = Some(sf);
+    }
 
     let bsize = mi.block_size;
     for plane in 0..3 {
@@ -211,36 +209,12 @@ pub fn reconstruct_inter_block(
         let block_h_px = plane_bh_4x4 * 4;
 
         // -- Motion compensation -------------------------------------
-
-        // libvpx `average_split_mvs(plane=0, sb_type >= 8)` returns
-        // `mi->mv[ref].as_mv` directly. For chroma under 4:2:0 the
-        // sub-8 case averages four bmi MVs (D.2.d); ≥8×8 is the same
-        // raw mv shared across planes.
         //
-        // Convert Q3 (1/8-pel, luma) to Q4 (1/16-pel, ref-coord). For
-        // chroma without sub-8, the same MV applies but doubled (libvpx
-        // `mv_q4 = mv.row * (1 << (1 - ss_y))`).
-        let mv_q4_row = i32::from(mv.row) * (1i32 << (1 - ss_y as i32));
-        let mv_q4_col = i32::from(mv.col) * (1i32 << (1 - ss_x as i32));
-
-        // Combine plane-pixel origin + Q4 MV into a Q4 sample position
-        // in the reference frame.
-        let total_x_q4 = sf.scaled_x_q4(plane_px_x as i32, mv_q4_col as i16);
-        let total_y_q4 = sf.scaled_y_q4(plane_px_y as i32, mv_q4_row as i16);
-
-        let int_x = total_x_q4 >> SUBPEL_BITS;
-        let int_y = total_y_q4 >> SUBPEL_BITS;
-        let subpel_x_q4 = total_x_q4 & SUBPEL_MASK;
-        let subpel_y_q4 = total_y_q4 & SUBPEL_MASK;
-
-        // Source pointer — start at the bordered top-left, then shift
-        // to the integer-pel base.
-        let ref_plane: BorderedPlaneRef<'_> = ref_buf.plane_with_border(plane);
-        let src_base = (ref_plane.border_h as i32 + int_y) as usize
-            * ref_plane.stride
-            + (ref_plane.border_w as i32 + int_x) as usize;
-        let src = &ref_plane.data[src_base..];
-        let src_stride = ref_plane.stride;
+        // libvpx `build_inter_predictors` (`vp9_reconinter.c:126-207`):
+        // iterate over `1 + is_compound` refs. The first ref writes
+        // its prediction into `dst`; the second (compound) ref runs
+        // through the `_avg` kernels which read the in-place dst and
+        // overwrite it with `(dst + new_pred + 1) >> 1`.
 
         // Destination view of the current frame's plane. We borrow the
         // PlaneMut for this iteration so the slice lives for the whole
@@ -253,21 +227,57 @@ pub fn reconstruct_inter_block(
         let dst_stride = dst_plane.stride();
         let dst_slice: &mut [u8] = dst_plane.data_mut();
         let dst_offset = plane_px_y * dst_stride + plane_px_x;
-        let dst_for_mc = &mut dst_slice[dst_offset..];
 
-        inter_predictor(
-            src,
-            src_stride,
-            dst_for_mc,
-            dst_stride,
-            subpel_x_q4,
-            subpel_y_q4,
-            &sf,
-            interp_filter,
-            block_w_px,
-            block_h_px,
-            /* is_compound_avg = */ false,
-        );
+        for r in 0..num_refs {
+            let ref_buf = inputs.refs[r].expect("ref already validated");
+            let sf = sfs[r].expect("sf already validated");
+            let mv = mvs[r];
+
+            // Convert Q3 (1/8-pel, luma) to Q4 (1/16-pel, ref-coord).
+            // For chroma without sub-8, the same MV applies but doubled
+            // along each subsampled axis: `mv_q4 = mv * (1 << (1 - ss))`.
+            let mv_q4_row = i32::from(mv.row) * (1i32 << (1 - ss_y as i32));
+            let mv_q4_col = i32::from(mv.col) * (1i32 << (1 - ss_x as i32));
+
+            // Combine plane-pixel origin + Q4 MV into a Q4 sample
+            // position in the reference frame.
+            let total_x_q4 = sf.scaled_x_q4(plane_px_x as i32, mv_q4_col as i16);
+            let total_y_q4 = sf.scaled_y_q4(plane_px_y as i32, mv_q4_row as i16);
+
+            let int_x = total_x_q4 >> SUBPEL_BITS;
+            let int_y = total_y_q4 >> SUBPEL_BITS;
+            let subpel_x_q4 = total_x_q4 & SUBPEL_MASK;
+            let subpel_y_q4 = total_y_q4 & SUBPEL_MASK;
+
+            let ref_plane: BorderedPlaneRef<'_> = ref_buf.plane_with_border(plane);
+            let src_base = (ref_plane.border_h as i32 + int_y) as usize
+                * ref_plane.stride
+                + (ref_plane.border_w as i32 + int_x) as usize;
+            let src = &ref_plane.data[src_base..];
+            let src_stride = ref_plane.stride;
+
+            // Re-borrow the destination slice for this inner ref
+            // iteration. Each `inter_predictor` call takes the slice
+            // mutably; we drop the borrow at end of statement.
+            let dst_for_mc = &mut dst_slice[dst_offset..];
+
+            // ref 0: write prediction; ref 1: average with existing dst.
+            let is_compound_avg = r > 0;
+
+            inter_predictor(
+                src,
+                src_stride,
+                dst_for_mc,
+                dst_stride,
+                subpel_x_q4,
+                subpel_y_q4,
+                &sf,
+                interp_filter,
+                block_w_px,
+                block_h_px,
+                is_compound_avg,
+            );
+        }
 
         // -- Residual decode + IT-add -------------------------------
         //
@@ -729,6 +739,95 @@ mod tests {
             }
         }
         assert!(any, "MC output must be non-zero");
+    }
+
+    /// D.2.c: compound prediction. Two refs filled with distinct
+    /// constants (Y plane = 0x40 and 0xC0). The compound average for
+    /// Mv = 0 is `(0x40 + 0xC0 + 1) >> 1 = 0x80` per pixel — that's
+    /// the libvpx `convolve_avg` formula. The test confirms (a) ref 1
+    /// went through the `_avg` kernel rather than overwriting ref 0's
+    /// prediction and (b) the chroma path mirrors the same compound
+    /// average.
+    #[test]
+    fn compound_zero_mvs_avg_const_refs_block8x8() {
+        let cur_w = 64u32;
+        let cur_h = 64u32;
+        // Two refs with distinct constant fills.
+        let mut ref0 = Yv12Buffer::alloc(
+            cur_w, cur_h, ChromaFormat::Yuv420,
+            BorderUsage::Decoder, ByteAlignment::Legacy,
+        ).unwrap();
+        ref0.y_plane_mut().fill(0x40);
+        ref0.u_plane_mut().fill(0x10);
+        ref0.v_plane_mut().fill(0x20);
+        ref0.extend_borders();
+
+        let mut ref1 = Yv12Buffer::alloc(
+            cur_w, cur_h, ChromaFormat::Yuv420,
+            BorderUsage::Decoder, ByteAlignment::Legacy,
+        ).unwrap();
+        ref1.y_plane_mut().fill(0xC0);
+        ref1.u_plane_mut().fill(0x30);
+        ref1.v_plane_mut().fill(0x60);
+        ref1.extend_borders();
+
+        let mut dst = Yv12Buffer::alloc(
+            cur_w, cur_h, ChromaFormat::Yuv420,
+            BorderUsage::Decoder, ByteAlignment::Legacy,
+        ).unwrap();
+        dst.y_plane_mut().fill(0x77); // sentinel; should be overwritten
+
+        let fc = fc_flat_eob_inter();
+        let bytes = encode_eob_zero();
+        let mut reader = BoolReader::new(&bytes).unwrap();
+        let mut coef_ctx = TileCoefCtx::new(cur_w as usize / 8);
+
+        // Compound inter mi: both refs valid.
+        let mut mi = inter_mi(BlockSize::Block8x8, TxSize::Tx8x8, Mv::ZERO);
+        if let BlockMode::Inter { ref_frames, .. } = &mut mi.mode {
+            *ref_frames = [RefFrame::LastFrame, RefFrame::GoldenFrame];
+        }
+
+        let inputs = InterBlockInputs {
+            cur_y_width: cur_w,
+            cur_y_height: cur_h,
+            refs: [Some(&ref0), Some(&ref1)],
+            dequant_per_plane: [(8, 16); 3],
+            lossless: false,
+        };
+
+        reconstruct_inter_block(
+            &mut reader, &fc, None, &mut coef_ctx, &mi,
+            1, 1, 1, 1, 1, &inputs, &mut dst,
+        );
+
+        // Y block at pixel (8, 8): every cell = (0x40 + 0xC0 + 1) >> 1
+        // = 0x80.
+        let dst_y = dst.y_plane();
+        for row in 0..8 {
+            for col in 0..8 {
+                let v = dst_y.data()[(8 + row) * dst_y.stride() + 8 + col];
+                assert_eq!(v, 0x80, "Y[{row},{col}] compound avg");
+            }
+        }
+
+        // U block at chroma pixel (4, 4): (0x10 + 0x30 + 1) >> 1 = 0x20.
+        let dst_u = dst.u_plane();
+        for row in 0..4 {
+            for col in 0..4 {
+                let v = dst_u.data()[(4 + row) * dst_u.stride() + 4 + col];
+                assert_eq!(v, 0x20, "U[{row},{col}] compound avg");
+            }
+        }
+
+        // V block: (0x20 + 0x60 + 1) >> 1 = 0x40.
+        let dst_v = dst.v_plane();
+        for row in 0..4 {
+            for col in 0..4 {
+                let v = dst_v.data()[(4 + row) * dst_v.stride() + 4 + col];
+                assert_eq!(v, 0x40, "V[{row},{col}] compound avg");
+            }
+        }
     }
 
     /// D.2.a coverage: non-zero MV with sub-pel offset. With identity
