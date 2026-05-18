@@ -591,8 +591,8 @@ fn decode_block(
     let (y_mode, bmi) = read_keyframe_y_mode_traced(
         reader,
         bsize,
-        above.map(|m| (m.mode, m.bmi)),
-        left.map(|m| (m.mode, m.bmi)),
+        above.map(|m| (m.block_size, m.mode, m.bmi)),
+        left.map(|m| (m.block_size, m.mode, m.bmi)),
         trace_cursor,
     );
     if trace_cursor {
@@ -919,8 +919,8 @@ fn reconstruct_intra_planes(
 fn read_keyframe_y_mode(
     reader: &mut BoolReader<'_>,
     bsize: BlockSize,
-    above: Option<(BlockMode, [BmiInfo; 4])>,
-    left: Option<(BlockMode, [BmiInfo; 4])>,
+    above: Option<(BlockSize, BlockMode, [BmiInfo; 4])>,
+    left: Option<(BlockSize, BlockMode, [BmiInfo; 4])>,
 ) -> (IntraMode, [BmiInfo; 4]) {
     read_keyframe_y_mode_traced(reader, bsize, above, left, false)
 }
@@ -934,8 +934,8 @@ fn read_keyframe_y_mode(
 fn read_keyframe_y_mode_traced(
     reader: &mut BoolReader<'_>,
     bsize: BlockSize,
-    above: Option<(BlockMode, [BmiInfo; 4])>,
-    left: Option<(BlockMode, [BmiInfo; 4])>,
+    above: Option<(BlockSize, BlockMode, [BmiInfo; 4])>,
+    left: Option<(BlockSize, BlockMode, [BmiInfo; 4])>,
     trace: bool,
 ) -> (IntraMode, [BmiInfo; 4]) {
     // For BLOCK_4X4 / BLOCK_4X8 / BLOCK_8X4, libvpx subdivides into
@@ -1035,41 +1035,53 @@ fn read_keyframe_y_mode_traced(
 fn kf_y_mode_probs_for(
     block: usize,
     cur_bmi: &[BmiInfo; 4],
-    above: Option<(BlockMode, [BmiInfo; 4])>,
-    left: Option<(BlockMode, [BmiInfo; 4])>,
+    above: Option<(BlockSize, BlockMode, [BmiInfo; 4])>,
+    left: Option<(BlockSize, BlockMode, [BmiInfo; 4])>,
 ) -> [u8; 10 - 1] {
     let above_mode = above_block_mode(block, cur_bmi, above);
     let left_mode = left_block_mode(block, cur_bmi, left);
     VP9_KF_Y_MODE_PROB[above_mode as usize][left_mode as usize]
 }
 
+/// libvpx `get_y_mode(mi, block)` (`vp9_blockd.h:99-101`). For sub-8
+/// neighbours (`sb_type < BLOCK_8X8`) returns the per-bmi mode; for
+/// `>= 8×8` neighbours returns the parent's `y_mode`. The branch is
+/// on the neighbour's block size, NOT on whether the bmi byte is
+/// non-zero — `DC_PRED` is encoded as `0` and is a legitimate per-bmi
+/// mode, so a `bmi[b].as_mode != 0` "is-populated" check would
+/// misclassify legit Dc bmi entries as missing and substitute the
+/// parent y_mode, corrupting the `[above][left]` probs row downstream.
+#[inline]
+fn neighbour_get_y_mode(
+    block_size: BlockSize,
+    y_mode: IntraMode,
+    bmi: &[BmiInfo; 4],
+    block: usize,
+) -> IntraMode {
+    match block_size {
+        BlockSize::Block4x4 | BlockSize::Block4x8 | BlockSize::Block8x4 => {
+            IntraMode::from_u8(bmi[block].as_mode).unwrap_or(y_mode)
+        }
+        _ => y_mode,
+    }
+}
+
 /// libvpx `vp9_above_block_mode` (`vp9_blockd.c:25-35`). For sub-blocks
 /// at the top row of the parent (`block` ∈ {0, 1}), inherit from the
-/// above neighbour's bottom-row bmi (sub-blocks 2 or 3). For other
+/// above neighbour via `get_y_mode(above_mi, b + 2)`. For other
 /// sub-blocks, read from the current parent's already-decoded sibling.
 fn above_block_mode(
     block: usize,
     cur_bmi: &[BmiInfo; 4],
-    above: Option<(BlockMode, [BmiInfo; 4])>,
+    above: Option<(BlockSize, BlockMode, [BmiInfo; 4])>,
 ) -> IntraMode {
     if block == 0 || block == 1 {
         match above {
             None => IntraMode::Dc,
-            Some((mode, neighbour_bmi)) => match mode {
+            Some((n_bsize, mode, neighbour_bmi)) => match mode {
                 BlockMode::Inter { .. } => IntraMode::Dc,
                 BlockMode::Intra { y_mode, .. } => {
-                    // libvpx returns `get_y_mode(above_mi, b + 2)` for
-                    // the parent — for >=8×8 parents that's the parent
-                    // mode; for sub-8 parents it's the per-bmi mode.
-                    // We approximate by reading the neighbour's
-                    // bottom-row bmi entry when available; otherwise
-                    // the parent's y_mode.
-                    let n_idx = block + 2;
-                    if neighbour_bmi[n_idx].as_mode != 0 {
-                        IntraMode::from_u8(neighbour_bmi[n_idx].as_mode).unwrap_or(y_mode)
-                    } else {
-                        y_mode
-                    }
+                    neighbour_get_y_mode(n_bsize, y_mode, &neighbour_bmi, block + 2)
                 }
             },
         }
@@ -1081,26 +1093,20 @@ fn above_block_mode(
 
 /// libvpx `vp9_left_block_mode` (`vp9_blockd.c:13-23`). For sub-blocks
 /// at the left column of the parent (`block` ∈ {0, 2}), inherit from
-/// the left neighbour's right-column bmi (sub-blocks 1 or 3). For
-/// other sub-blocks, read from the current parent's already-decoded
-/// sibling.
+/// the left neighbour via `get_y_mode(left_mi, b + 1)`. For other
+/// sub-blocks, read from the current parent's already-decoded sibling.
 fn left_block_mode(
     block: usize,
     cur_bmi: &[BmiInfo; 4],
-    left: Option<(BlockMode, [BmiInfo; 4])>,
+    left: Option<(BlockSize, BlockMode, [BmiInfo; 4])>,
 ) -> IntraMode {
     if block == 0 || block == 2 {
         match left {
             None => IntraMode::Dc,
-            Some((mode, neighbour_bmi)) => match mode {
+            Some((n_bsize, mode, neighbour_bmi)) => match mode {
                 BlockMode::Inter { .. } => IntraMode::Dc,
                 BlockMode::Intra { y_mode, .. } => {
-                    let n_idx = block + 1;
-                    if neighbour_bmi[n_idx].as_mode != 0 {
-                        IntraMode::from_u8(neighbour_bmi[n_idx].as_mode).unwrap_or(y_mode)
-                    } else {
-                        y_mode
-                    }
+                    neighbour_get_y_mode(n_bsize, y_mode, &neighbour_bmi, block + 1)
                 }
             },
         }
@@ -2052,5 +2058,101 @@ mod tests {
         assert_eq!(bmi[1].as_mode, IntraMode::V as u8);
         assert_eq!(bmi[2].as_mode, IntraMode::H as u8);
         assert_eq!(bmi[3].as_mode, IntraMode::H as u8);
+    }
+
+    /// Stage 3 stretch M.11 — regression: a sub-8 intra left neighbour
+    /// whose right-column bmi entry is `DC_PRED` (numeric value `0`)
+    /// must be reported as `Dc` by `left_block_mode`, NOT collapsed to
+    /// the parent's `y_mode` via an `as_mode != 0` "is-populated"
+    /// sentinel. libvpx `get_y_mode` (`vp9_blockd.h:99-101`) branches on
+    /// the neighbour's `sb_type`, not on the bmi byte value.
+    #[test]
+    fn left_block_mode_sub8_neighbour_returns_dc_when_bmi_is_dc() {
+        // Left neighbour is sub-8 (Block8x4) with parent y_mode V and
+        // bmi[1].as_mode = DC_PRED (= 0). For block=0 the left lookup
+        // reads neighbour bmi[block + 1 = 1].
+        let mut n_bmi = [BmiInfo::default(); 4];
+        n_bmi[0].as_mode = IntraMode::V as u8;
+        n_bmi[1].as_mode = IntraMode::Dc as u8; // legit Dc, value 0.
+        n_bmi[2].as_mode = IntraMode::V as u8;
+        n_bmi[3].as_mode = IntraMode::Dc as u8;
+        let left = Some((
+            BlockSize::Block8x4,
+            BlockMode::Intra {
+                y_mode: IntraMode::V,
+                uv_mode: IntraMode::Dc,
+            },
+            n_bmi,
+        ));
+        let cur_bmi = [BmiInfo::default(); 4];
+        assert_eq!(left_block_mode(0, &cur_bmi, left), IntraMode::Dc);
+        // For block=2 the left lookup reads neighbour bmi[3] which is
+        // also DC_PRED in this fixture.
+        assert_eq!(left_block_mode(2, &cur_bmi, left), IntraMode::Dc);
+    }
+
+    /// Mirror of the previous test for `above_block_mode` — sub-8
+    /// above neighbour whose bottom-row bmi entry is `DC_PRED` must be
+    /// reported as `Dc`, not as the parent's `y_mode`.
+    #[test]
+    fn above_block_mode_sub8_neighbour_returns_dc_when_bmi_is_dc() {
+        let mut n_bmi = [BmiInfo::default(); 4];
+        n_bmi[0].as_mode = IntraMode::H as u8;
+        n_bmi[1].as_mode = IntraMode::H as u8;
+        n_bmi[2].as_mode = IntraMode::Dc as u8; // block=0 reads bmi[2].
+        n_bmi[3].as_mode = IntraMode::Dc as u8; // block=1 reads bmi[3].
+        let above = Some((
+            BlockSize::Block4x8,
+            BlockMode::Intra {
+                y_mode: IntraMode::H,
+                uv_mode: IntraMode::Dc,
+            },
+            n_bmi,
+        ));
+        let cur_bmi = [BmiInfo::default(); 4];
+        assert_eq!(above_block_mode(0, &cur_bmi, above), IntraMode::Dc);
+        assert_eq!(above_block_mode(1, &cur_bmi, above), IntraMode::Dc);
+    }
+
+    /// A `>= 8×8` neighbour returns the parent `y_mode` regardless of
+    /// the bmi contents — libvpx's `get_y_mode` branches on
+    /// `sb_type < BLOCK_8X8`. This guards against accidentally reading
+    /// the (zero-init) bmi for >=8×8 parents.
+    #[test]
+    fn left_block_mode_ge_8x8_neighbour_returns_parent_y_mode() {
+        let n_bmi = [BmiInfo::default(); 4]; // all zero (would look like Dc).
+        let left = Some((
+            BlockSize::Block16x16,
+            BlockMode::Intra {
+                y_mode: IntraMode::V,
+                uv_mode: IntraMode::Dc,
+            },
+            n_bmi,
+        ));
+        let cur_bmi = [BmiInfo::default(); 4];
+        assert_eq!(left_block_mode(0, &cur_bmi, left), IntraMode::V);
+        assert_eq!(left_block_mode(2, &cur_bmi, left), IntraMode::V);
+    }
+
+    /// An inter neighbour collapses to `Dc` regardless of bmi /
+    /// block_size — libvpx's
+    /// `if (!left_mi || is_inter_block(left_mi)) return DC_PRED`.
+    #[test]
+    fn left_block_mode_inter_neighbour_collapses_to_dc() {
+        use rvp9_core::bitstream::frame::InterpFilter;
+        use rvp9_core::mode_info::{InterMode, Mv, RefFrame};
+        let n_bmi = [BmiInfo::default(); 4];
+        let left = Some((
+            BlockSize::Block8x4,
+            BlockMode::Inter {
+                mode: InterMode::ZeroMv,
+                ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                mvs: [Mv::ZERO; 2],
+                interp_filter: InterpFilter::EightTap,
+            },
+            n_bmi,
+        ));
+        let cur_bmi = [BmiInfo::default(); 4];
+        assert_eq!(left_block_mode(0, &cur_bmi, left), IntraMode::Dc);
     }
 }
