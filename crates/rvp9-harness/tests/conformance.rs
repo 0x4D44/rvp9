@@ -152,7 +152,45 @@ fn conformance_runner_walks_all_vectors() {
     // == 0`, but while we iterate on the mismatched keyframes the
     // ratchet keeps regression signal visible: lowering `MAX_MISMATCHES`
     // as we fix bugs, raising `MIN_PASSES` as we light up frames.
-    const MIN_PASSES: usize = 56;
+    const MIN_PASSES: usize = 168;
+    // D.22 (2026-05-19): fix MV-component hp count gating + altref
+    // prev_frame swap. Two distinct bugs, both surfaced via libvpx
+    // INTERMI altref trace on `vp90-2-09-aq2.webm`:
+    //
+    //   1. `read_mv_component` was gating the `hp` count bump on
+    //      `use_hp`. Libvpx's `inc_mv_component` (`vp9_entropymv.c:111-136`)
+    //      hard-codes `usehp=1` at the call site (`vp9_inc_mv` at :145
+    //      / :149). When a block's `use_hp=false`, the hp bit is
+    //      hard-coded to 1 at decode time, but `comp_counts->hp[1]`
+    //      *still gets bumped* — the count reflects the EFFECTIVE hp
+    //      bit. Our gating under-counted `hp[1]`, drifting `comp.hp`
+    //      and `comp.class0_hp` away from libvpx after every frame
+    //      that adapts MV probs with `allow_high_precision_mv` ON.
+    //
+    //   2. `decode_inter_frame` was pulling `prev_mv_grid` from
+    //      `mv_grids[ref_frame_indices[0]]` (the LAST_FRAME ref-map
+    //      slot's grid). Libvpx's `cm->prev_frame->mvs` follows the
+    //      `cm->prev_frame = cm->cur_frame` swap (`vp9_decoder.c:478`)
+    //      that fires after EVERY non-show-existing decode —
+    //      independent of which `ref_frame_map` slot was refreshed.
+    //      For altref frames whose LAST_FRAME index points at a slot
+    //      holding an older frame's grid, the two diverge. Added
+    //      `Decoder::prev_frame_mv_grid` + `prev_frame_mv_grid_dims`
+    //      to track the most-recently-decoded grid directly.
+    //
+    // Bisect: libvpx-side detailed `read_mv` + `read_mv_component`
+    // tracing (RVP9_TRACE_RDMV, RVP9_TRACE_RDMV_COMP) on aq2 `f=16`
+    // (the 2nd altref) pinpointed `comp[0].hp` diverging (libvpx 99,
+    // rvp9 131) — same input range/value/count/probs from `joints`
+    // down through `bits[i]`, only `hp` differed. The HP prob mismatch
+    // shifted bits at `vpx_read(hp_prob)` causing range/count to
+    // diverge in the col decode that follows — final MV `(-32,-106)`
+    // vs `(-32,-98)` (col differed by 8 = 1 pel).
+    //
+    // Cascade scope: aq2 14→100 (+86), sharpness-1 3→10 (+7),
+    // sharpness-7 3→10 (+7), tile_1x2 2→10 (+8), show-existing-frame
+    // 1→5 (+4). Conformance 56/135/10 → 168/23/10 (+112 frames).
+    // Remaining 23 mismatches: resize 7, tile_1x4 8, tile_1x8 8.
     // D.21 (2026-05-19): fix `size_group` mapping in
     // `read_intra_in_inter_mode_info` — Block8x8 was wrongly mapped to
     // size_group=0, Block16x16/Block32x32 cohorts were each one index
@@ -233,7 +271,7 @@ fn conformance_runner_walks_all_vectors() {
     // D.5 (2026-05-18): `extend_mc_border` scratch-buffer fallback.
     // Conformance: 2/159/40 → 3/158/40.
     // Pre-D.3.a baseline: 1/9/191.
-    const MAX_MISMATCHES: usize = 135;
+    const MAX_MISMATCHES: usize = 23;
     assert!(
         total_passed >= MIN_PASSES,
         "regression: expected at least {MIN_PASSES} passed, got {total_passed}",

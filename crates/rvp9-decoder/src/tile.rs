@@ -1687,6 +1687,28 @@ fn decode_inter_block(
     let x_mis_pre = bw_mi_pre.min(params.base.mi_cols - mi_col);
     let y_mis_pre = bh_mi_pre.min(params.base.mi_rows - mi_row);
 
+    // D.22 — fine-grained `RVP9_TRACE_INTERMI` that mirrors libvpx's
+    // pre/post-element format with `f=N` tagging, so frame-15 (and
+    // beyond) diffs can be line-matched against libvpx's altref-
+    // inclusive dump.
+    let trace_imi = std::env::var("RVP9_TRACE_INTERMI").ok().as_deref() == Some("1");
+    let trace_frame = std::env::var("RVP9_TRACE_FRAME")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok());
+    let frame_id = crate::RVP9_TRACE_FRAME_COUNTER
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let trace_imi = trace_imi
+        && trace_frame.is_none_or(|tf| tf == frame_id);
+    if trace_imi {
+        let (range, value, count, _) = reader.cursor_state();
+        let value_byte = (value >> (64 - 8)) as u8;
+        eprintln!(
+            "RVP9_TRACE_INTERMI f={frame_id} mi=({mi_row},{mi_col}) bsize={} enter \
+             range={range} value=0x{value_byte:x} count={count}",
+            bsize as u8,
+        );
+    }
+
     // 1. segment_id — full libvpx state machine via
     //    `read_inter_segment_id` (`vp9_decodemv.c:146-177`):
     //    * `!enabled` ⇒ 0;
@@ -1722,6 +1744,13 @@ fn decode_inter_block(
         y_mis_pre,
         seg_id_pred_ctx,
     );
+    if trace_imi {
+        let (range, _, count, _) = reader.cursor_state();
+        eprintln!(
+            "RVP9_TRACE_INTERMI f={frame_id} mi=({mi_row},{mi_col}) post_segid \
+             seg={segment_id} range={range} count={count}",
+        );
+    }
     // D.20 — env-gated trace of the inter-frame segment_id decision.
     // Dumps the predicted_segment_id (min over prev_segment_ids), the
     // pred_flag context, the resolved segment_id, and the predicted-
@@ -1804,6 +1833,14 @@ fn decode_inter_block(
         );
     }
     let skip = read_skip(reader, &fc.skip_probs, skip_ctx, mode_counts.as_deref_mut());
+    if trace_imi {
+        let (range, _, count, _) = reader.cursor_state();
+        eprintln!(
+            "RVP9_TRACE_INTERMI f={frame_id} mi=({mi_row},{mi_col}) post_skip \
+             skip={} range={range} count={count}",
+            u8::from(skip),
+        );
+    }
 
     // 3. is_inter classification.
     let intra_inter_ctx = get_intra_inter_context(above.as_ref(), left.as_ref());
@@ -1828,6 +1865,14 @@ fn decode_inter_block(
         intra_inter_ctx,
         mode_counts.as_deref_mut(),
     );
+    if trace_imi {
+        let (range, _, count, _) = reader.cursor_state();
+        eprintln!(
+            "RVP9_TRACE_INTERMI f={frame_id} mi=({mi_row},{mi_col}) post_isinter \
+             is_inter={} range={range} count={count}",
+            u8::from(is_inter),
+        );
+    }
     if let Some(filt) = trace_isinter.as_deref()
         && let Some((tr, tc)) = filt.split_once(',')
         && let (Ok(tr), Ok(tc)) = (tr.parse::<usize>(), tc.parse::<usize>())
@@ -1861,6 +1906,14 @@ fn decode_inter_block(
         tx_ctx,
         mode_counts.as_deref_mut(),
     );
+    if trace_imi {
+        let (range, _, count, _) = reader.cursor_state();
+        eprintln!(
+            "RVP9_TRACE_INTERMI f={frame_id} mi=({mi_row},{mi_col}) post_txsize \
+             tx={} range={range} count={count}",
+            tx_size as u8,
+        );
+    }
 
     // 5. dispatch to inter vs intra mode-info reader. Block-cell
     //    counts already computed up-front for the segment-id splat.
@@ -1952,17 +2005,18 @@ fn decode_inter_block(
             );
         }
 
-        // D.16 — env-gated per-block INTERMI trace mirroring the libvpx
-        // dump in `read_inter_frame_mode_info` (`vp9_decodemv.c`). One
-        // line summarises (bsize, segment_id, skip, tx_size, mode, refs,
-        // mvs) — diff against libvpx's `RVP9_TRACE_INTERMI` to localize
-        // per-block divergence.
-        if std::env::var("RVP9_TRACE_INTERMI").ok().as_deref() == Some("1")
+        // D.16 + D.22 — env-gated per-block INTERMI trace mirroring the
+        // libvpx dump in `read_inter_frame_mode_info` (`vp9_decodemv.c`)
+        // with `f=N` frame tagging and the same `post_modeinfo` line
+        // format libvpx emits — diff against libvpx's
+        // `RVP9_TRACE_INTERMI` to localize per-block divergence.
+        if trace_imi
             && let BlockMode::Inter { mode, ref_frames, mvs, .. } = mi.mode
         {
+            let (range, _, count, _) = reader.cursor_state();
             eprintln!(
-                "RVP9_TRACE_INTERMI mi=({mi_row},{mi_col}) bsize={} seg={} skip={} is_inter=1 tx={} mode={} ref=[{},{}] mv0=({},{}) mv1=({},{})",
-                bsize as u8, segment_id, skip as u8, tx_size as u8,
+                "RVP9_TRACE_INTERMI f={frame_id} mi=({mi_row},{mi_col}) post_modeinfo \
+                 mode={} ref=[{},{}] mv0=({},{}) mv1=({},{}) range={range} count={count}",
                 mode as u8, ref_frames[0] as i8, ref_frames[1] as i8,
                 mvs[0].row, mvs[0].col, mvs[1].row, mvs[1].col,
             );
@@ -2045,6 +2099,19 @@ fn decode_inter_block(
         // factored into `reconstruct_intra_planes`.
         let (y_mode, uv_mode, bmi) =
             read_intra_in_inter_mode_info(reader, fc, bsize, mode_counts);
+        if trace_imi {
+            let (range, _, count, _) = reader.cursor_state();
+            // libvpx emits the post_modeinfo line for intra-in-inter
+            // with `ref=[0,-1]` (INTRA_FRAME, NO_REF_FRAME) and zero MVs.
+            // Mirror exactly so the trace line-counts match.
+            eprintln!(
+                "RVP9_TRACE_INTERMI f={frame_id} mi=({mi_row},{mi_col}) post_modeinfo \
+                 mode={} ref=[0,-1] mv0=(0,0) mv1=(0,0) range={range} count={count}",
+                y_mode as u8,
+            );
+            // suppress unused-warnings if uv_mode isn't otherwise used:
+            let _ = uv_mode;
+        }
 
         let mi = ModeInfo {
             block_size: bsize,

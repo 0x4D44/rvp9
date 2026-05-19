@@ -96,6 +96,15 @@ fn dump_visible_y_plane(yv12: &Yv12Buffer, path: &str) {
 ///
 /// Mirrors the role of libvpx's `VP9Decoder` + `VP9_COMMON`
 /// — owns every per-stream and per-frame-history data structure the
+/// D.22 — global decode-frame counter, parallels libvpx's
+/// `rvp9_trace_current_frame` (`vp9_decodeframe.c:55`). Incremented at
+/// the top of [`Decoder::decode_frame`]; read by per-block tracers in
+/// `tile.rs` to tag `RVP9_TRACE_INTERMI` lines with the same `f=N`
+/// libvpx emits, so altref + visible-frame traces line up frame-by-
+/// frame between the two implementations.
+pub static RVP9_TRACE_FRAME_COUNTER: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0);
+
 /// decoder needs.
 ///
 /// Construction does not require a stream header — call
@@ -194,6 +203,22 @@ pub struct Decoder {
     /// last cycle.
     mv_grids: [Option<std::sync::Arc<Vec<rvp9_core::inter::mv_ref::PrevFrameMvRef>>>;
         rvp9_core::bitstream::REF_FRAMES],
+    /// D.22 — most-recently-decoded frame's MV grid + (mi_rows,
+    /// mi_cols) dims. Mirrors libvpx `cm->prev_frame->mvs` which is
+    /// assigned via `cm->prev_frame = cm->cur_frame` at the end of
+    /// every non-`show_existing_frame` decode (`vp9_decoder.c:478`).
+    /// This is **independent of `refresh_frame_flags`** — it always
+    /// tracks the truly-most-recent decode, regardless of which
+    /// `ref_frame_map` slot was (or wasn't) refreshed. Replaces the
+    /// previous `mv_grids[ref_frame_indices[0]]` lookup, which broke
+    /// for altref frames whose `LAST_FRAME` index points at a slot
+    /// that holds a different (older) frame's grid.
+    prev_frame_mv_grid: Option<std::sync::Arc<Vec<rvp9_core::inter::mv_ref::PrevFrameMvRef>>>,
+    /// `(mi_rows, mi_cols)` of [`Self::prev_frame_mv_grid`]. Used to
+    /// guard against a stride mismatch when the next frame's size
+    /// differs (libvpx's `use_prev_frame_mvs` gate catches that, but
+    /// we double-check here as a defensive measure).
+    prev_frame_mv_grid_dims: (usize, usize),
     /// Width / height of the most recently decoded frame. Used by
     /// `decode_inter_frame` to compute `use_prev_frame_mvs` per libvpx
     /// `vp9_decodeframe.c:2983`. `None` before any frame decodes.
@@ -280,6 +305,8 @@ impl Decoder {
             last_frame_was_key: false,
             mode_counts: rvp9_core::entropy::adapt::FrameCounts::default(),
             mv_grids: Default::default(),
+            prev_frame_mv_grid: None,
+            prev_frame_mv_grid_dims: (0, 0),
             last_frame_size: None,
             last_intra_only: false,
             last_show_frame: false,
@@ -605,6 +632,13 @@ impl Decoder {
     /// - [`DecodeError::EmptySlot`] from the `ShowExistingFrame`
     ///   sub-path.
     pub fn decode_frame(&mut self, frame: &ParsedFrame<'_>) -> Result<FrameBuf, DecodeError> {
+        // D.22 — global decode-frame counter, parallels libvpx's
+        // `rvp9_trace_current_frame` (incremented at the top of
+        // `vp9_decode_frame`, includes altref frames). Used by
+        // RVP9_TRACE_INTERMI / RVP9_TRACE_PART traces to tag each line
+        // with the same `f=N` libvpx emits, so per-frame diffs are
+        // line-up-able.
+        RVP9_TRACE_FRAME_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         match frame.header.kind {
             FrameKind::ShowExistingFrame { .. } => self.decode_show_existing_frame(&frame.header),
             FrameKind::KeyFrame => self.decode_keyframe(frame),
@@ -905,6 +939,14 @@ impl Decoder {
         for slot in &mut self.mv_grids {
             *slot = None;
         }
+        // D.22 — keyframe also clears `cm->prev_frame->mvs` from the
+        // decoder's perspective. The subsequent `use_prev_frame_mvs`
+        // gate trips on `last_frame_type == KEY_FRAME` anyway, but
+        // null-ing the field keeps state hygiene matching libvpx
+        // (a keyframe is intra-only, so there are no MVs to carry
+        // forward).
+        self.prev_frame_mv_grid = None;
+        self.prev_frame_mv_grid_dims = (0, 0);
 
         self.have_resync = false;
         self.last_frame_was_key = true;
@@ -1273,18 +1315,19 @@ impl Decoder {
             && !self.last_intra_only
             && self.last_show_frame
             && !self.last_frame_was_key;
+        // D.22 — `cm->prev_frame->mvs` mirror: pull the MV grid
+        // captured at the *end of the previous decoded frame*
+        // (regardless of which `ref_frame_map` slot was refreshed).
+        // This matches libvpx's `cm->prev_frame = cm->cur_frame` swap
+        // (`vp9_decoder.c:478`) — fires after every non-show-existing
+        // decode, so prev_frame always points at the truly-most-recent
+        // frame's buffer. The previous implementation pulled from
+        // `mv_grids[ref_frame_indices[0]]` (the LAST_FRAME slot's
+        // grid), which broke for altref frames whose LAST_FRAME index
+        // points at a slot holding an older frame's grid.
         let prev_mv_grid: Option<&[rvp9_core::inter::mv_ref::PrevFrameMvRef]> =
             if use_prev_frame_mvs {
-                // libvpx pulls `cm->prev_frame` which is the just-
-                // decoded frame's buffer, swapped from `cm->cur_frame`.
-                // For our model that's whichever frame the last cycle
-                // ended up storing — equivalent to the LAST_FRAME ref
-                // slot's grid (slot index = ref_frame_indices[0]).
-                let last_slot = ref_frame_indices[0] as usize;
-                self.mv_grids
-                    .get(last_slot)
-                    .and_then(|s| s.as_ref())
-                    .map(|g| g.as_slice())
+                self.prev_frame_mv_grid.as_ref().map(|g| g.as_slice())
             } else {
                 None
             };
@@ -1507,6 +1550,14 @@ impl Decoder {
                 *mv_slot = Some(cur_mv_grid_arc.clone());
             }
         }
+
+        // D.22 — `cm->prev_frame = cm->cur_frame` mirror. Save this
+        // frame's MV grid as the "prev frame" for the next decode,
+        // independent of which `ref_frame_map` slots were refreshed.
+        // Matches libvpx `vp9_decoder.c:478` — fires for every non-
+        // show-existing decode (we already early-return for that path).
+        self.prev_frame_mv_grid = Some(cur_mv_grid_arc.clone());
+        self.prev_frame_mv_grid_dims = (mi_rows, mi_cols);
 
         self.last_frame_was_key = false;
         self.last_frame_size = Some((frame.header.width, frame.header.height));

@@ -691,3 +691,77 @@ Arthur triages all `WEDGED` and `WEDGED-BLOCKED` entries on wake.
     cause; D.22 should pick the densest mismatch cluster.
   - 32×32 frame 10 still mismatches (D.20 prediction confirmed —
     independent of seg_id-specific bug).
+
+## D.22 — 2026-05-19 (Arthur asleep, lead dispatch)
+
+- **Two root causes (both surfaced via a single libvpx INTERMI
+  altref diff on aq2 `f=16`):**
+
+  1. **MV-component HP count gating.** `read_mv_component`'s bump
+     of `counts.hp[hp]` / `counts.class0_hp[hp]` was gated on
+     `use_hp` (the per-block 1/8-pel flag). Libvpx's
+     `inc_mv_component` (`vp9_entropymv.c:111-136`) is also gated
+     on a `usehp` parameter — but the only caller, `vp9_inc_mv`
+     (`:139-151`), **hard-codes `usehp=1`**. So libvpx ALWAYS
+     bumps `hp[e]` regardless of the block-level `use_hp`; when
+     the read had `use_hp=false`, the hp bit is hard-coded to 1
+     at decode time and `e = o & 1 = 1` falls out of the
+     composition formula, so `hp[1]` still gets the bump. Our
+     gating under-counted `hp[1]`, drifting `comp.hp` /
+     `comp.class0_hp` away from libvpx every frame that adapts MV
+     probs with `allow_high_precision_mv` enabled.
+
+  2. **Altref `prev_frame->mvs` swap.** `decode_inter_frame`
+     pulled `prev_mv_grid` from `mv_grids[ref_frame_indices[0]]`
+     — the LAST_FRAME ref-map slot's grid. Libvpx's
+     `cm->prev_frame->mvs` is set by `cm->prev_frame =
+     cm->cur_frame` (`vp9_decoder.c:478`) at the end of EVERY
+     non-show-existing decode, independent of `refresh_frame_flags`.
+     For altref frames whose LAST_FRAME index points at a slot
+     holding an OLDER frame's grid, the two diverge. Added
+     `Decoder::prev_frame_mv_grid` + dims to track the truly-
+     most-recently-decoded grid directly, mirroring libvpx's
+     swap exactly. (This fix is necessary but not sufficient on
+     its own — moves aq2 mv0 from `(-30,-90)` to `(-32,-98)` but
+     bits still differ; the second fix above resolves the
+     remaining `(-32,-98)` → `(-32,-106)` gap.)
+
+- **Validation path:** added libvpx-side fine-grained `read_mv` +
+  `read_mv_component` traces (RVP9_TRACE_RDMV /
+  RVP9_TRACE_RDMV_COMP) emitting pre-state, joints/comps probs,
+  per-bit `bits[i]` reads, fr/hp probs+bits. Same instrumentation
+  on rvp9. On aq2 `f=16` (2nd altref) mi=(0,0) first NEWMV: both
+  impls enter `read_mv` with bit-identical state (`range=150
+  value=0x95 count=38`), bit-identical probs (`joints=[3,75,103]`,
+  `comp0.classes=[232,117,...]`, `comp1.bits=[117,128,...]`),
+  identical `read_mv_component` for the row component. The first
+  divergence is at the ROW component's HP read: libvpx prob=99,
+  rvp9 prob=131. That HP-prob mismatch caused the row decode to
+  end with `range=141` (libvpx) vs `range=224` (rvp9), which
+  cascaded into the col decode reading different `bits[i]` values
+  → final col=-106 (libvpx) vs col=-98 (rvp9). Diagnostic traces
+  removed post-fix; libvpx left clean.
+
+- **Cascade scope:** aq2 14→100 (+86), sharpness-1 3→10 (+7),
+  sharpness-7 3→10 (+7), tile_1x2 2→10 (+8),
+  show-existing-frame 1→5 (+4). **Conformance 56/135/10 →
+  168/23/10 (+112 frames).** All tests + clippy clean.
+
+- **Diagnostic artefacts:**
+  - `crates/rvp9-decoder/src/lib.rs`: pub
+    `RVP9_TRACE_FRAME_COUNTER` (AtomicU32, mirrors libvpx
+    `rvp9_trace_current_frame`) bumped at top of `decode_frame`.
+  - `crates/rvp9-decoder/src/tile.rs`: per-element `RVP9_TRACE_INTERMI`
+    fine-grained trace (`enter` / `post_segid` / `post_skip` /
+    `post_isinter` / `post_txsize` / `post_modeinfo`) tagged with
+    `f=N` matching libvpx's altref-inclusive format. New env hook
+    `RVP9_TRACE_FRAME=N` filters to a single frame.
+  - Existing libvpx-stock instrumentation (D.21) preserved.
+
+- **Followups (D.23):**
+  - 23 mismatches remain: resize 7, tile_1x4 8, tile_1x8 8.
+  - tile_1x2 fully lit up (10/10) but tile_1x4 / tile_1x8 still
+    8/2 mismatched each. Likely a multi-tile entropy-isolation
+    bug specific to >2 tiles per row. Densest cluster for D.23.
+  - resize 7 mismatches: separate cause — frame-resize state
+    machine.

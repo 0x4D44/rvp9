@@ -296,8 +296,20 @@ pub fn read_mv_component(
     };
 
     // Bump counts (backward adaptation). Mirrors libvpx
-    // `inc_mv_component` — only the sign/class/bits/fp/hp slots
-    // touched on this branch are incremented.
+    // `inc_mv_component` (`vp9_entropymv.c:111-136`).
+    //
+    // D.22 — libvpx ALWAYS bumps `(class0_)hp[e]` (the per-block call
+    // site `vp9_inc_mv` hard-codes `usehp=1` regardless of the
+    // frame-level `allow_high_precision_mv` flag; `vp9_entropymv.c:145`
+    // / `:149`). When the block-level read was done with `use_hp=false`
+    // (hp was hard-coded to 1, no bit consumed), libvpx still bumps
+    // `hp[1]` because `e = o & 1` and `o = (d<<3) | (fr<<1) | 1` ends
+    // with LSB=1. The previous gating on `use_hp` here under-counted
+    // those slots, drifting `comp.hp` (and `class0_hp`) away from
+    // libvpx after every frame that adapts mv probs with `allow_hp`
+    // ultimately enabled — surfaces as a MV-decode divergence on the
+    // first NEWMV in an altref frame (`vp90-2-09-aq2.webm` shown frame
+    // 15, libvpx `f=16` altref).
     if let Some(c) = counts {
         c.sign[sign as usize] = c.sign[sign as usize].saturating_add(1);
         let cls = mv_class as usize;
@@ -307,9 +319,7 @@ pub fn read_mv_component(
             c.class0[di] = c.class0[di].saturating_add(1);
             c.class0_fp[di][fr as usize] =
                 c.class0_fp[di][fr as usize].saturating_add(1);
-            if use_hp {
-                c.class0_hp[hp as usize] = c.class0_hp[hp as usize].saturating_add(1);
-            }
+            c.class0_hp[hp as usize] = c.class0_hp[hp as usize].saturating_add(1);
         } else {
             let n = mv_class as usize + CLASS0_BITS - 1;
             for i in 0..n {
@@ -317,9 +327,7 @@ pub fn read_mv_component(
                 c.bits[i][bit] = c.bits[i][bit].saturating_add(1);
             }
             c.fp[fr as usize] = c.fp[fr as usize].saturating_add(1);
-            if use_hp {
-                c.hp[hp as usize] = c.hp[hp as usize].saturating_add(1);
-            }
+            c.hp[hp as usize] = c.hp[hp as usize].saturating_add(1);
         }
     }
 
@@ -868,10 +876,15 @@ mod tests {
         }
     }
 
-    /// HP bit count increments when `use_hp` is true, and does not
-    /// increment when `use_hp` is false (ref MV too large).
+    /// HP bit count increments unconditionally — mirrors libvpx's
+    /// `inc_mv_component` hard-coding `usehp=1` at the call site
+    /// (`vp9_entropymv.c:145`). When the block-level read had
+    /// `use_hp=false`, the hp bit is hard-coded to 1, and slot 1 still
+    /// gets bumped. The previous test gating hp counts on `use_hp` was
+    /// wrong; under-counting drifted `comp.hp` away from libvpx after
+    /// every frame that adapts with `allow_hp` enabled. See D.22.
     #[test]
-    fn read_mv_component_hp_count_gating() {
+    fn read_mv_component_hp_count_always_bumps() {
         let ctx = &DEFAULT_NMV_CONTEXT;
         // First case: small ref → HP enabled. diff col=4 → hp slot 1.
         let buf = encode_mv(Mv { row: 0, col: 4 }, ctx, true);
@@ -881,11 +894,13 @@ mod tests {
         assert_eq!(counts.comps[1].class0_hp[1], 1);
         assert_eq!(counts.comps[1].class0_hp[0], 0);
 
-        // Second case: large ref → HP disabled. Encode without HP bit.
+        // Second case: large ref → HP disabled at read time. Encode
+        // without HP bit. Libvpx still bumps `class0_hp[1]` because
+        // the fallback `hp=1` is treated as observed (`e = o & 1 = 1`).
         let buf = encode_mv(Mv { row: 0, col: 4 }, ctx, false);
         let mut r = BoolReader::new(&buf).expect("init");
         let mut counts = NmvCounts::default();
         let _ = read_mv(&mut r, Mv { row: 200, col: 200 }, true, ctx, Some(&mut counts));
-        assert_eq!(counts.comps[1].class0_hp, [0, 0]);
+        assert_eq!(counts.comps[1].class0_hp, [0, 1]);
     }
 }
