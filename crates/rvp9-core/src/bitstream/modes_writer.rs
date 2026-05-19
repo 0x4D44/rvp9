@@ -553,13 +553,12 @@ fn write_block_intra_keyframe(
             block_size: mi.block_size,
         });
     }
-    match mi.mode {
-        BlockMode::Intra { y_mode, uv_mode }
-            if y_mode == IntraMode::Dc && uv_mode == IntraMode::Dc => {}
-        _ => {
+    let (y_mode, uv_mode) = match mi.mode {
+        BlockMode::Intra { y_mode, uv_mode } => (y_mode, uv_mode),
+        BlockMode::Inter { .. } => {
             return Err(ModesWriterError::UnsupportedBlockMode { mi_row, mi_col });
         }
-    }
+    };
     if !mi.skip {
         return Err(ModesWriterError::UnsupportedNonSkip { mi_row, mi_col });
     }
@@ -583,52 +582,123 @@ fn write_block_intra_keyframe(
     //    read_skip`).
     bw.write(1, fc.skip_probs[skip_ctx]);
 
-    // 2. Intra Y mode = DC_PRED. The keyframe Y-mode tree walks
-    //    `INTRA_MODE_TREE` against `VP9_KF_Y_MODE_PROB[above][left]`.
-    //    Reaching the DC leaf requires a single `0` bit at `probs[0]`.
+    // 2. Intra Y mode. The keyframe Y-mode tree walks
+    //    `VP9_INTRA_MODE_TREE` against
+    //    `VP9_KF_Y_MODE_PROB[above_mode][left_mode]`.
     let y_probs = &VP9_KF_Y_MODE_PROB[above_mode as usize][left_mode as usize];
-    write_keyframe_y_mode_dc(bw, y_probs);
+    write_intra_mode(bw, y_probs, y_mode);
 
-    // 3. Intra UV mode = DC_PRED. Walks `INTRA_MODE_TREE` against
-    //    `VP9_KF_UV_MODE_PROB[y_mode]`. With `y_mode = DC_PRED`,
-    //    that's `VP9_KF_UV_MODE_PROB[0]`.
-    let uv_probs = &VP9_KF_UV_MODE_PROB[IntraMode::Dc as usize];
-    write_intra_mode_dc(bw, uv_probs);
+    // 3. Intra UV mode. Same tree, probs gated by the chosen Y mode:
+    //    `VP9_KF_UV_MODE_PROB[y_mode]`.
+    let uv_probs = &VP9_KF_UV_MODE_PROB[y_mode as usize];
+    write_intra_mode(bw, uv_probs, uv_mode);
 
     // 4. tx_size — NOT emitted on the wire when `tx_mode !=
     //    TxModeSelect`. The caller commits this via the compressed
     //    header.
 
     // 5. Splat the just-written neighbour state. v1 always writes the
-    //    full 64x64 = 8 mi-units of cells.
+    //    full 64x64 = 8 mi-units of cells. The above/left context for
+    //    the next block sees the parent's Y mode.
     let mi_extent = MI_BLOCK_SIZE;
     nbr_ctx.write_block(
         mi_row_in_tile,
         mi_col_in_tile,
         mi_extent,
         mi_extent,
-        IntraMode::Dc,
+        y_mode,
         true,
     );
 
     Ok(())
 }
 
-/// Encode `DC_PRED` against `VP9_KF_Y_MODE_PROB[above][left]`. The
-/// `INTRA_MODE_TREE` reaches the DC leaf in a single step
-/// (`tree[0] = -(IntraMode::Dc as i8) = 0`); a `bool_reader` reading
-/// a `0` bit at `probs[0]` returns DC and exits the tree walk.
+/// Encode an intra-prediction mode against an
+/// `INTRA_MODE_TREE`-shaped 9-prob slot. Mirrors libvpx's
+/// `vp9_write_token` against `vp9_intra_mode_tree`
+/// (`vp9/common/vp9_entropymode.c:245-255`).
+///
+/// The bit sequences here are derived statically from
+/// `VP9_INTRA_MODE_TREE`. Each `bw.write(bit, prob)` mirrors the
+/// reader's `r.read(prob)` and walks the same tree edge. The leaf
+/// value `-(mode as i8)` is reached on the last write.
+///
+/// Used for BOTH:
+/// - the keyframe Y mode (`probs = VP9_KF_Y_MODE_PROB[above][left]`)
+/// - the keyframe UV mode (`probs = VP9_KF_UV_MODE_PROB[y_mode]`)
+/// - (future) non-keyframe Y/UV intra modes against `FrameContext`.
 #[inline]
-fn write_keyframe_y_mode_dc(bw: &mut BoolWriter<'_>, probs: &[u8; 10 - 1]) {
-    bw.write(0, probs[0]);
-}
-
-/// Encode `DC_PRED` against an `INTRA_MODE_TREE`-shaped 9-prob slot.
-/// Shared between the keyframe UV mode and any future non-keyframe
-/// helpers — both walk the same tree, only the probs differ.
-#[inline]
-fn write_intra_mode_dc(bw: &mut BoolWriter<'_>, probs: &[u8; 10 - 1]) {
-    bw.write(0, probs[0]);
+fn write_intra_mode(bw: &mut BoolWriter<'_>, probs: &[u8; 10 - 1], mode: IntraMode) {
+    match mode {
+        IntraMode::Dc => {
+            bw.write(0, probs[0]);
+        }
+        IntraMode::Tm => {
+            bw.write(1, probs[0]);
+            bw.write(0, probs[1]);
+        }
+        IntraMode::V => {
+            bw.write(1, probs[0]);
+            bw.write(1, probs[1]);
+            bw.write(0, probs[2]);
+        }
+        IntraMode::H => {
+            bw.write(1, probs[0]);
+            bw.write(1, probs[1]);
+            bw.write(1, probs[2]);
+            bw.write(0, probs[3]);
+            bw.write(0, probs[4]);
+        }
+        IntraMode::D135 => {
+            bw.write(1, probs[0]);
+            bw.write(1, probs[1]);
+            bw.write(1, probs[2]);
+            bw.write(0, probs[3]);
+            bw.write(1, probs[4]);
+            bw.write(0, probs[5]);
+        }
+        IntraMode::D117 => {
+            bw.write(1, probs[0]);
+            bw.write(1, probs[1]);
+            bw.write(1, probs[2]);
+            bw.write(0, probs[3]);
+            bw.write(1, probs[4]);
+            bw.write(1, probs[5]);
+        }
+        IntraMode::D45 => {
+            bw.write(1, probs[0]);
+            bw.write(1, probs[1]);
+            bw.write(1, probs[2]);
+            bw.write(1, probs[3]);
+            bw.write(0, probs[6]);
+        }
+        IntraMode::D63 => {
+            bw.write(1, probs[0]);
+            bw.write(1, probs[1]);
+            bw.write(1, probs[2]);
+            bw.write(1, probs[3]);
+            bw.write(1, probs[6]);
+            bw.write(0, probs[7]);
+        }
+        IntraMode::D153 => {
+            bw.write(1, probs[0]);
+            bw.write(1, probs[1]);
+            bw.write(1, probs[2]);
+            bw.write(1, probs[3]);
+            bw.write(1, probs[6]);
+            bw.write(1, probs[7]);
+            bw.write(0, probs[8]);
+        }
+        IntraMode::D207 => {
+            bw.write(1, probs[0]);
+            bw.write(1, probs[1]);
+            bw.write(1, probs[2]);
+            bw.write(1, probs[3]);
+            bw.write(1, probs[6]);
+            bw.write(1, probs[7]);
+            bw.write(1, probs[8]);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -832,17 +902,18 @@ mod tests {
         assert!(matches!(err, ModesWriterError::UnsupportedNonSkip { .. }));
     }
 
-    /// `write_tile_intra_keyframe` rejects a non-DC intra mode.
+    /// `write_tile_intra_keyframe` rejects an inter-mode block. Intra
+    /// modes other than DC are now ACCEPTED (S4.12 widened coverage);
+    /// the scope rejection applies only to inter mode for the
+    /// keyframe-only writer.
     #[test]
-    fn write_tile_intra_keyframe_rejects_non_dc_mode() {
+    fn write_tile_intra_keyframe_rejects_inter_mode() {
+        use rvp9_core_inter_stubs::*;
         let mut buf = vec![0u8; 64];
         let fc = FrameContext::new_default();
         let mut grid = make_dc_grid(8, 8);
         if let Some(c) = grid[0].as_mut() {
-            c.mode = BlockMode::Intra {
-                y_mode: IntraMode::V,
-                uv_mode: IntraMode::Dc,
-            };
+            c.mode = synth_inter_mode();
         }
         let bounds = TileBounds {
             mi_row_start: 0,
@@ -853,6 +924,23 @@ mod tests {
         let mut bw = BoolWriter::start_encode(&mut buf);
         let err = write_tile_intra_keyframe(&mut bw, &grid, 8, 8, bounds, &fc).unwrap_err();
         assert!(matches!(err, ModesWriterError::UnsupportedBlockMode { .. }));
+    }
+
+    /// Inline test scaffolding for building an inter-mode `BlockMode`
+    /// without depending on the encoder's full inter API. The exact
+    /// inter payload values don't matter — we just need a non-Intra
+    /// variant for the scope-rejection test above.
+    mod rvp9_core_inter_stubs {
+        use crate::mode_info::{BlockMode, InterMode, Mv, RefFrame};
+
+        pub fn synth_inter_mode() -> BlockMode {
+            BlockMode::Inter {
+                mode: InterMode::ZeroMv,
+                ref_frames: [RefFrame::IntraFrame, RefFrame::NoRefFrame],
+                mvs: [Mv { row: 0, col: 0 }, Mv { row: 0, col: 0 }],
+                interp_filter: crate::bitstream::frame::InterpFilter::EightTap,
+            }
+        }
     }
 
     /// `write_tile_intra_keyframe` rejects non-multiple-of-64 dims.
@@ -954,4 +1042,117 @@ mod tests {
         }
     }
 
+    // -----------------------------------------------------------------
+    // S4.12 — widened intra-mode coverage (all 10 modes)
+    // -----------------------------------------------------------------
+
+    /// Read an `IntraMode` from a `BoolReader` using the canonical
+    /// tree walk against `VP9_INTRA_MODE_TREE`. Mirrors the decoder's
+    /// `read_intra_mode` inline at `tile.rs:read_keyframe_y_mode`.
+    fn read_intra_mode_via_tree(
+        r: &mut crate::entropy::BoolReader<'_>,
+        probs: &[u8; 10 - 1],
+    ) -> IntraMode {
+        let tree: &[i8] = &crate::entropy::adapt::VP9_INTRA_MODE_TREE;
+        let leaf = r.read_tree(tree, probs);
+        IntraMode::from_u8(leaf as u8).expect("tree leaf must map to a valid IntraMode")
+    }
+
+    /// Round-trip every intra mode against a fixed probability set.
+    /// Picks `VP9_KF_Y_MODE_PROB[DC][DC]` for stability — any prob set
+    /// works since the writer just walks the tree topology.
+    #[test]
+    fn write_intra_mode_round_trips_for_all_10_modes() {
+        for mode in [
+            IntraMode::Dc,
+            IntraMode::V,
+            IntraMode::H,
+            IntraMode::D45,
+            IntraMode::D135,
+            IntraMode::D117,
+            IntraMode::D153,
+            IntraMode::D207,
+            IntraMode::D63,
+            IntraMode::Tm,
+        ] {
+            let probs = &VP9_KF_Y_MODE_PROB[IntraMode::Dc as usize][IntraMode::Dc as usize];
+            let mut buf = vec![0u8; 64];
+            let written = {
+                let mut bw = crate::entropy::BoolWriter::start_encode(&mut buf);
+                write_intra_mode(&mut bw, probs, mode);
+                bw.stop_encode().expect("stop_encode")
+            };
+            buf.truncate(written);
+            let mut r = crate::entropy::BoolReader::new(&buf).expect("BoolReader::new");
+            let got = read_intra_mode_via_tree(&mut r, probs);
+            assert_eq!(got, mode, "round-trip failed for {mode:?}");
+        }
+    }
+
+    /// End-to-end: encode a 1-SB keyframe whose Y/UV modes are each
+    /// non-DC; assert the bitstream parses back via the keyframe
+    /// Y-mode + UV-mode trees.
+    #[test]
+    fn write_block_intra_keyframe_accepts_all_intra_modes() {
+        use crate::entropy::{BoolReader, BoolWriter, FrameContext};
+        let fc = FrameContext::new_default();
+        let probs_for_above_left = |above: IntraMode, left: IntraMode| {
+            VP9_KF_Y_MODE_PROB[above as usize][left as usize]
+        };
+
+        for y_mode in [
+            IntraMode::V,
+            IntraMode::H,
+            IntraMode::Tm,
+            IntraMode::D45,
+            IntraMode::D135,
+            IntraMode::D207,
+        ] {
+            for uv_mode in [IntraMode::Dc, IntraMode::V, IntraMode::Tm] {
+                let mi_rows = 8u32;
+                let mi_cols = 8u32;
+                let mi = ModeInfo {
+                    block_size: BlockSize::Block64x64,
+                    tx_size: TxSize::Tx32x32,
+                    skip: true,
+                    segment_id: 0,
+                    seg_id_predicted: false,
+                    mode: BlockMode::Intra { y_mode, uv_mode },
+                    bmi: Default::default(),
+                };
+                let grid: Vec<Option<ModeInfo>> = vec![Some(mi); (mi_rows * mi_cols) as usize];
+                let bounds = TileBounds {
+                    mi_row_start: 0,
+                    mi_row_end: 8,
+                    mi_col_start: 0,
+                    mi_col_end: 8,
+                };
+                let mut buf = vec![0u8; 2 * 1024];
+                let written = {
+                    let mut bw = BoolWriter::start_encode(&mut buf);
+                    write_tile_intra_keyframe(&mut bw, &grid, mi_rows, mi_cols, bounds, &fc)
+                        .expect("write_tile_intra_keyframe");
+                    bw.stop_encode().expect("stop_encode")
+                };
+                buf.truncate(written);
+
+                let mut r = BoolReader::new(&buf).expect("BoolReader::new");
+                // 1-bit PARTITION_NONE @ VP9_KF_PARTITION_PROBS[ctx][0].
+                // For the first 64x64 SB (no above/left history) the
+                // context is `bsl * PARTITION_PLOFFSET = 3*4 = 12`.
+                let ctx = 3 * 4;
+                let _ = r.read(VP9_KF_PARTITION_PROBS[ctx][0]);
+                // skip flag @ skip_probs[0]
+                let _ = r.read(fc.skip_probs[0]);
+                // y_mode against VP9_KF_Y_MODE_PROB[Dc][Dc] (above=Dc, left=Dc since neighbours absent)
+                let y_probs = probs_for_above_left(IntraMode::Dc, IntraMode::Dc);
+                let got_y = read_intra_mode_via_tree(&mut r, &y_probs);
+                assert_eq!(got_y, y_mode, "Y mode parse for ({y_mode:?}, {uv_mode:?})");
+                // uv_mode against VP9_KF_UV_MODE_PROB[got_y]
+                let uv_probs = VP9_KF_UV_MODE_PROB[got_y as usize];
+                let got_uv = read_intra_mode_via_tree(&mut r, &uv_probs);
+                assert_eq!(got_uv, uv_mode, "UV mode parse for ({y_mode:?}, {uv_mode:?})");
+            }
+        }
+    }
 }
