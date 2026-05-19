@@ -539,3 +539,100 @@ Arthur triages all `WEDGED` and `WEDGED-BLOCKED` entries on wake.
      Differential against a precomputed convolve8 reference.
   4. Probe second compound block (mi=(4,0) at altref) by adding
      a row-32 dump to verify same bug pattern.
+
+## D.20 — 2026-05-19 (Arthur asleep, lead dispatch)
+
+- **D.19's "altref content wrong" hypothesis: CONFIRMED.** Our
+  altref Y plane at row 0..3 cols 64..71 = `73 73 73 73 73 73 73
+  73` for all four rows — a 4×8 flat patch of 73's. The trace
+  shows altref's mi=(0,8) is `bsize=Block32x16 mv=(-24,-80)
+  int=(54,-3) subpel=(0,0)` — integer-pel MC reading keyframe at
+  (row -3..13, col 54..86). With border extend, KF rows -3..-1
+  replicate row 0; KF(row 0, cols 54..61) = `73 73 73 73 73 73 73
+  73` (flat region in the keyframe). So MC yields 73's at altref
+  (row 0..3, cols 64..71). Block has `skip=0` (residual decoded)
+  but our output is exactly MC ⇒ residual is zero in our decode.
+- **Localized root cause: altref's mi=(0,8) seg_id is WRONG.**
+  Added env-gated trace (`RVP9_TRACE_SEG_ID=1`) at
+  `read_inter_segment_id`. Our altref decodes seg=1 at
+  mi=(0,8) (Block32x16). LIBVPX's altref must produce seg=0 at
+  the same location: libvpx_imi.txt for frame 2 shows mi=(0,8)
+  `post_segid seg=0`, and frame 2 has `update_map=false ⇒
+  inherits altref's seg map directly. Our frame 2 trace at
+  mi=(0,8) shows seg=1 (which it inherits from our altref's
+  wrong seg map). Block-count match for frame 2 (484 rvp9 / 484
+  libvpx) ⇒ partition decisions agree post-altref; the
+  bool-coder cursor resyncs at start of frame 2.
+- **Mechanism: bool-coder divergence inside altref's mi=(0,8)
+  syntax.** Our trace shows pred_flag=0 (less-likely under
+  pred_probs[ctx=1]=81 ≈ 32% for bit 0) + tree-decode → 1. For
+  libvpx altref to yield 0 either:
+   (a) pred_flag=1 → inherit predicted=0 (68% under prob=81)
+   (b) pred_flag=0 + tree-decode → 0 (≈ 84% under tree_probs
+       [255, 217, …])
+  Either way our bit reads diverge from libvpx's. The divergence
+  is local: our pred_flag bits at mi=(0,2)..(0,6) all matched
+  expectations (seg_id_predicted=true ≈ 68%); the cursor only
+  goes off at mi=(0,8). Suspect:
+  1. Partition tree at SB(0,8) reads different than libvpx's
+     altref (we picked PARTITION_SPLIT@Block64x64 +
+     PARTITION_HORZ@Block32x32 → two Block32x16; libvpx may
+     have picked different).
+  2. Bool-coder cursor was off by 1 bit between end of SB(0,0)
+     and start of SB(0,8) (some block's syntax read different
+     length).
+  3. Bug in seg_id_predicted "right neighbor" context: when
+     ctx is computed for mi=(0,8)'s LEFT neighbor, we should
+     read from mi=(0,7)'s `seg_id_predicted`. The Block16x16 at
+     mi=(0,6) covers cells (0,6..7) ⇒ left neighbor at mi=(0,7)
+     is the same Block16x16 ⇒ its seg_id_predicted = 1. Matches
+     trace.
+- **Cannot pin bool-coder divergence to a specific bit without a
+  libvpx altref bit-cursor trace.** vpxdec.exe needs to be
+  rebuilt with INTERMI instrumentation that drops the
+  `cm->show_frame` filter (currently silences altref). Build env
+  for libvpx-stock is wedged: no `make`/`mingw32-make` in our
+  shell path. **Required for D.21:** install make (e.g.,
+  `pacman -S make` under msys2) and rebuild libvpx-stock vpxdec
+  with `cm->show_frame` filter relaxed.
+- **Diagnostic infra added under D.20:**
+  - `crates/rvp9-decoder/src/lib.rs` —
+    `RVP9_DUMP_ALTREF=<path>` env hook dumps the visible Y
+    plane of any non-shown frame post-extend_borders.
+  - `crates/rvp9-decoder/src/tile.rs` —
+    `RVP9_TRACE_SEG_ID=1` env-gated per-block seg-id trace
+    (predicted, pred_ctx, segment_id, seg_id_predicted bit).
+  - `crates/rvp9-decoder/src/lib.rs` — `RVP9_TRACE_SEG=1`
+    extended to dump the first SB-row of the per-frame seg map
+    (rows 0..3, cols 0..15).
+- **Cascade not yet lit.** Conformance unchanged: 31 / 160 / 10
+  / 201. Tests + clippy clean.
+- **Recipe for D.21:**
+  1. **Fix libvpx build env first.** Confirm `make` is on PATH;
+     `pacman -S make` under msys2 if not. Then
+     `cd D:/language/libvpx-stock && touch vpxdec.c && make`
+     should relink `vpxdec.exe`. (.asm.d files are still
+     ":1"-corrupted from D.17 — delete + rebuild.)
+  2. Drop the `cm->show_frame` filter from
+     `vp9/decoder/vp9_decodemv.c` so INTERMI trace fires on
+     non-shown frames (altref). Re-decode aq2 with
+     `RVP9_TRACE_INTERMI=1` to capture libvpx's altref seg-id
+     trace.
+  3. Diff rvp9 vs libvpx altref INTERMI line-by-line. The first
+     divergent line is the bool-coder cursor target.
+  4. The divergence likely points at one of:
+     - Partition tree at SB(0,8) (Block64x64 split decision)
+     - Specific block's syntax-element bit count mismatch in
+       SB(0,0)'s rightmost cells (mi cols 4..7)
+     - The pred_flag computation in `seg_id_pred_ctx`
+       (`above_sip + left_sip`) for Block32x16
+  5. Once the offending bit is identified, fix and re-run
+     conformance. Expected cascade range: 5-100+ (every inter
+     vector that exercises segmentation with temporal_update
+     hits the same path).
+- **Alternative D.21 path if libvpx oracle can't be rebuilt:**
+  Write a synthesis test: build a minimal aq2-like bitstream
+  with known mode-info content for SB(0,8) of an altref frame,
+  decode with our decoder, compare against hand-computed
+  expected bit positions / segment_id values. Tedious but
+  doesn't depend on libvpx rebuild.

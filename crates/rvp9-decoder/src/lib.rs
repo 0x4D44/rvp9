@@ -65,6 +65,33 @@ use crate::tile::{
 };
 use crate::tile_ctx::TileDecodeCtx;
 
+/// D.20 — write the visible-region Y plane of a freshly-decoded
+/// frame to `path` (raw bytes, row-major, no padding). Used by the
+/// `RVP9_DUMP_ALTREF=<path>` env hook to capture our altref output
+/// for diffing against libvpx's altref dump.
+fn dump_visible_y_plane(yv12: &Yv12Buffer, path: &str) {
+    let y = yv12.y_plane();
+    let w = y.width();
+    let h = y.height();
+    let stride = y.stride();
+    let mut buf = Vec::with_capacity(w * h);
+    for r in 0..h {
+        let row_start = r * stride;
+        buf.extend_from_slice(&y.data()[row_start..row_start + w]);
+    }
+    if let Err(e) = std::fs::write(path, &buf) {
+        eprintln!("RVP9_DUMP_ALTREF: failed to write {path}: {e}");
+    } else {
+        eprintln!(
+            "RVP9_DUMP_ALTREF: wrote {} bytes ({}x{}) to {}",
+            buf.len(),
+            w,
+            h,
+            path
+        );
+    }
+}
+
 /// Top-level VP9 decoder state.
 ///
 /// Mirrors the role of libvpx's `VP9Decoder` + `VP9_COMMON`
@@ -900,6 +927,13 @@ impl Decoder {
                 "[rvp9_seg] keyframe end: mi={}x{} non-zero seg cells = {} / {}",
                 mi_rows, mi_cols, nz, cur_segment_ids.len()
             );
+            for r in 0..4.min(mi_rows) {
+                let mut row = String::new();
+                for c in 0..16.min(mi_cols) {
+                    row.push_str(&format!(" {}", cur_segment_ids[r * mi_cols + c]));
+                }
+                eprintln!("[rvp9_seg] keyframe row{r}:{}", row);
+            }
         }
         self.prev_segment_ids = cur_segment_ids;
         self.prev_segment_ids_dims = (mi_rows, mi_cols);
@@ -1439,6 +1473,17 @@ impl Decoder {
         //    `yv12extend.c:169`).
         extend_frame_borders(&mut yv12);
 
+        // D.20 — env-gated dump of the post-recon, post-LF (if not
+        // disabled), post-border-extend visible Y plane for any
+        // non-shown frame (typically an altref). Writes
+        // `${RVP9_DUMP_ALTREF}_y.bin` (raw Y bytes, row-major, no
+        // padding) so we can diff against a libvpx altref dump.
+        if !frame.header.show_frame
+            && let Ok(path) = std::env::var("RVP9_DUMP_ALTREF")
+        {
+            dump_visible_y_plane(&yv12, &path);
+        }
+
         let frame_buf: FrameBuf = std::sync::Arc::new(yv12);
         let cur_mv_grid_arc: std::sync::Arc<
             Vec<rvp9_core::inter::mv_ref::PrevFrameMvRef>,
@@ -1477,6 +1522,14 @@ impl Decoder {
                 "[rvp9_seg] inter end: mi={}x{} non-zero seg cells = {} / {}",
                 mi_rows, mi_cols, nz, cur_segment_ids.len()
             );
+            // D.20 — also dump first SB row of seg map (rows 0..4 cols 0..16)
+            for r in 0..4.min(mi_rows) {
+                let mut row = String::new();
+                for c in 0..16.min(mi_cols) {
+                    row.push_str(&format!(" {}", cur_segment_ids[r * mi_cols + c]));
+                }
+                eprintln!("[rvp9_seg] inter row{r}:{}", row);
+            }
         }
         self.prev_segment_ids = cur_segment_ids;
         self.prev_segment_ids_dims = (mi_rows, mi_cols);

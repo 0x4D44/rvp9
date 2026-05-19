@@ -153,6 +153,16 @@ fn conformance_runner_walks_all_vectors() {
     // ratchet keeps regression signal visible: lowering `MAX_MISMATCHES`
     // as we fix bugs, raising `MIN_PASSES` as we light up frames.
     const MIN_PASSES: usize = 31;
+    // D.20 (2026-05-19): NEGATIVE — diagnostic infra only. Ratchet
+    // unchanged. Localized aq2 frame-2 (64, 0) cascade to altref's
+    // mi=(0,8) seg_id divergence (rvp9 decodes seg=1; libvpx altref
+    // produces seg=0 per the frame-2 inherit-via-min trace at
+    // libvpx_imi.txt). Confirmed bool-coder cursor diverges inside
+    // altref's SB(0,8) syntax — cannot pin to a specific bit without
+    // a libvpx altref INTERMI trace (build env wedged). Three new
+    // env hooks for D.21: `RVP9_DUMP_ALTREF=<path>` for altref Y
+    // plane dump, `RVP9_TRACE_SEG_ID=1` for per-block seg-id reads,
+    // `RVP9_TRACE_SEG=1` extended to dump first-SB-row seg map.
     // D.15 (2026-05-18): sub-8 luma `dec_reset_skip_context` now pins
     // the entropy-context span to the parent 8×8 mi cell (n4 = 2 in
     // each axis), matching libvpx's `set_plane_n4(bwl=bhl=1)` for any

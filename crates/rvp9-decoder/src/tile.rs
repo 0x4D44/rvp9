@@ -1722,6 +1722,39 @@ fn decode_inter_block(
         y_mis_pre,
         seg_id_pred_ctx,
     );
+    // D.20 — env-gated trace of the inter-frame segment_id decision.
+    // Dumps the predicted_segment_id (min over prev_segment_ids), the
+    // pred_flag context, the resolved segment_id, and the predicted-
+    // flag bit. Used to localize seg-map divergence at altref blocks.
+    if std::env::var("RVP9_TRACE_SEG_ID").is_ok() {
+        // Recompute predicted_segment_id locally so the trace shows
+        // what `read_inter_segment_id` saw (it's an internal value).
+        let predicted: u8 = if prev_segment_ids.is_empty() {
+            0
+        } else {
+            let mut acc: u8 = 7; // (MAX_SEGMENTS - 1)
+            let base = mi_row * params.base.mi_cols + mi_col;
+            for y in 0..y_mis_pre {
+                let row_off = base + y * params.base.mi_cols;
+                for x in 0..x_mis_pre {
+                    let v = prev_segment_ids[row_off + x];
+                    if v < acc {
+                        acc = v;
+                    }
+                }
+            }
+            acc
+        };
+        eprintln!(
+            "[rvp9_seg_id] mi=({mi_row},{mi_col}) bsize={bsize:?} \
+             x_mis={x_mis_pre} y_mis={y_mis_pre} en={} upd_map={} t_upd={} \
+             ctx={seg_id_pred_ctx} predicted={predicted} segment_id={segment_id} \
+             seg_id_predicted={seg_id_predicted}",
+            seg_params.enabled,
+            seg_params.update_map,
+            seg_params.temporal_update,
+        );
+    }
     // Splat the chosen segment_id into the current frame's seg map
     // (libvpx `set_segment_id`, `vp9_decodemv.c:104-113`).
     splat_segment_id(
