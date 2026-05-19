@@ -57,7 +57,7 @@ pub use superframe::{
     MAX_SIZE_FIELD_BYTES, MAX_SUPERFRAME_FRAMES, Superframe, SuperframeBuilder,
     SuperframeIndexErrorReason, parse_superframe_index,
 };
-pub use tile::{TileBuffer, parse_tile_buffers};
+pub use tile::{TileBuffer, parse_tile_buffers, write_tile_buffers};
 pub use sub_parsers::{
     LoopFilterParams, MAX_SEGMENTS, PREDICTION_PROBS, QuantizationParams, SEG_LVL_MAX,
     SEG_TREE_PROBS, SegFeature, SegmentationParams, TileInfo, parse_loopfilter,

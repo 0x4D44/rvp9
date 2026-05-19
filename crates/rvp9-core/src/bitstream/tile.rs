@@ -118,6 +118,66 @@ pub fn parse_tile_buffers<'a>(
     Ok(out)
 }
 
+/// Encoder-side companion to [`parse_tile_buffers`]. Given the per-tile
+/// payloads in row-major order, emit the tile-data partition: each
+/// tile except the last is prefixed with a 4-byte big-endian size; the
+/// last tile is appended without a prefix (its size is implied by the
+/// caller-supplied container length).
+///
+/// Mirrors the libvpx side of the contract — `write_tile_size` at
+/// `vp9/encoder/vp9_bitstream.c:1377-1389` (and its surrounding
+/// per-tile assembly loop).
+///
+/// Returns the concatenated bytes. The result, fed into
+/// [`parse_tile_buffers`] with the same `(tile_cols, tile_rows)`,
+/// recovers byte-identical per-tile slices.
+///
+/// # Errors
+///
+/// - [`BitstreamError::TileSizeOverflow`] if any non-last tile is
+///   longer than `u32::MAX` bytes (impossible in practice; VP9 frames
+///   are well below 4 GiB).
+pub fn write_tile_buffers(
+    tile_payloads: &[&[u8]],
+    tile_cols: u32,
+    tile_rows: u32,
+) -> Result<Vec<u8>, BitstreamError> {
+    let expected = (tile_cols as usize) * (tile_rows as usize);
+    debug_assert_eq!(
+        tile_payloads.len(),
+        expected,
+        "tile_payloads has {} entries but ({}, {}) demands {}",
+        tile_payloads.len(),
+        tile_cols,
+        tile_rows,
+        expected,
+    );
+
+    let total_body: usize = tile_payloads.iter().map(|t| t.len()).sum();
+    let total_prefix = if tile_payloads.is_empty() {
+        0
+    } else {
+        4 * (tile_payloads.len() - 1)
+    };
+    let mut out = Vec::with_capacity(total_body + total_prefix);
+
+    for (i, payload) in tile_payloads.iter().enumerate() {
+        let is_last = i + 1 == tile_payloads.len();
+        if !is_last {
+            let size = u32::try_from(payload.len()).map_err(|_| {
+                BitstreamError::TileSizeOverflow {
+                    tile_index: i,
+                    bytes: payload.len(),
+                }
+            })?;
+            out.extend_from_slice(&size.to_be_bytes());
+        }
+        out.extend_from_slice(payload);
+    }
+
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,5 +284,64 @@ mod tests {
         assert!(tiles.is_empty());
         let tiles = parse_tile_buffers(&buf, 3, 0).unwrap();
         assert!(tiles.is_empty());
+    }
+
+    // -----------------------------------------------------------------
+    // write_tile_buffers tests
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn write_tile_buffers_single_tile_emits_no_prefix() {
+        let payload = [0x01u8, 0x02, 0x03, 0x04];
+        let out = write_tile_buffers(&[&payload], 1, 1).unwrap();
+        // Single tile is the last (and only) tile; no size prefix.
+        assert_eq!(out, &payload);
+    }
+
+    #[test]
+    fn write_tile_buffers_round_trips_through_parse() {
+        let a: Vec<u8> = (0..40u8).collect();
+        let b: Vec<u8> = (40..70u8).collect();
+        let c: Vec<u8> = (70..90u8).collect();
+        let out = write_tile_buffers(&[&a, &b, &c], 3, 1).unwrap();
+        let tiles = parse_tile_buffers(&out, 3, 1).unwrap();
+        assert_eq!(tiles.len(), 3);
+        assert_eq!(tiles[0].data, &a[..]);
+        assert_eq!(tiles[1].data, &b[..]);
+        assert_eq!(tiles[2].data, &c[..]);
+    }
+
+    #[test]
+    fn write_tile_buffers_byte_identical_to_legacy_helper() {
+        // The legacy `build_tiles` test helper produces the canonical
+        // wire form. `write_tile_buffers` must agree byte-for-byte.
+        let a: Vec<u8> = (0..15u8).collect();
+        let b: Vec<u8> = (100..150u8).collect();
+        let want = build_tiles(&[&a, &b]);
+        let got = write_tile_buffers(&[&a, &b], 2, 1).unwrap();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn write_tile_buffers_row_major_layout() {
+        // 2 cols x 2 rows = 4 tiles, payload order (r0c0, r0c1, r1c0, r1c1).
+        let p: [Vec<u8>; 4] = [vec![0xa0; 5], vec![0xa1; 7], vec![0xb0; 9], vec![0xb1; 11]];
+        let refs: Vec<&[u8]> = p.iter().map(Vec::as_slice).collect();
+        let out = write_tile_buffers(&refs, 2, 2).unwrap();
+        let tiles = parse_tile_buffers(&out, 2, 2).unwrap();
+        for (i, expected_payload) in p.iter().enumerate() {
+            assert_eq!(tiles[i].data, expected_payload.as_slice());
+        }
+        // Row-major ordering check.
+        assert_eq!((tiles[0].row, tiles[0].col), (0, 0));
+        assert_eq!((tiles[1].row, tiles[1].col), (0, 1));
+        assert_eq!((tiles[2].row, tiles[2].col), (1, 0));
+        assert_eq!((tiles[3].row, tiles[3].col), (1, 1));
+    }
+
+    #[test]
+    fn write_tile_buffers_zero_tiles_yields_empty() {
+        let out = write_tile_buffers(&[], 0, 0).unwrap();
+        assert!(out.is_empty());
     }
 }

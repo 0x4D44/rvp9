@@ -121,6 +121,17 @@ pub enum BitstreamError {
     /// `0` but libvpx never emits an empty frame; reject for parity.
     SuperframeEmptyFrame,
 
+    /// Encoder-side [`super::tile::write_tile_buffers`] received a
+    /// tile payload larger than `u32::MAX` bytes. The 4-byte size
+    /// prefix can't represent it. In practice impossible; the variant
+    /// exists so callers can propagate `Result` cleanly.
+    TileSizeOverflow {
+        /// Zero-based index of the offending tile (row-major).
+        tile_index: usize,
+        /// Length of the payload that overflowed.
+        bytes: usize,
+    },
+
     /// The compressed-header boolean decoder failed to initialise:
     /// the leading marker bit at probability 128 wasn't zero.
     /// Mirrors libvpx's bool-coder init failure at
@@ -234,6 +245,10 @@ impl fmt::Display for BitstreamError {
             Self::SuperframeEmptyFrame => {
                 f.write_str("superframe builder: refusing zero-length frame")
             }
+            Self::TileSizeOverflow { tile_index, bytes } => write!(
+                f,
+                "tile-buffer write: tile {tile_index} payload is {bytes} bytes, exceeds 4-byte size prefix"
+            ),
         }
     }
 }
