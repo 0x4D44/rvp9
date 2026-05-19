@@ -636,3 +636,58 @@ Arthur triages all `WEDGED` and `WEDGED-BLOCKED` entries on wake.
   decode with our decoder, compare against hand-computed
   expected bit positions / segment_id values. Tedious but
   doesn't depend on libvpx rebuild.
+
+## D.21 — 2026-05-19 (Arthur asleep, lead dispatch)
+
+- **Root cause: wrong `size_group_lookup` mapping in
+  `read_intra_in_inter_mode_info`.** Our match expression had
+  Block8x8 mapped to size_group=0 (shared with Block4x4/4x8/8x4)
+  and the Block16x16/Block32x32 cohorts each shifted one slot
+  too low. Libvpx (`vp9_common_data.c:32-33`) is
+  `{0,0,0, 1,1,1, 2,2,2, 3,3,3,3}` indexed by BLOCK_SIZE. We had
+  `{0,0,0,0, 1,1,1, 2,2,2, 3,3,3}`. The default-arm intra Y mode
+  read for non-keyframe intra blocks (Block8x8 and larger) uses
+  `fc.y_mode_prob[size_group]`; the wrong row produced a
+  different y_mode and desynced the bool-coder cursor on every
+  inter stream containing an intra block ≥ Block8x8.
+- **Validation path:** rebuilt libvpx-stock vpxdec (TMPDIR=C:/tmp
+  in `libs-x86_64-win64-gcc.mk`, added same to
+  `examples-x86_64-win64-gcc.mk` and `gxx_wrap.sh`; deleted
+  19 corrupted ".asm.d" files), patched
+  `vp9/decoder/vp9_decodemv.c` to drop the `cm->show_frame`
+  filter on RVP9_TRACE_INTERMI, added per-frame counter
+  (`rvp9_trace_current_frame`, distinct from
+  `cm->current_video_frame` which conflates altref+visible into
+  one f= value), added RVP9_TRACE_PART for partition decisions.
+  Diff against rvp9's existing RVP9_TRACE_PARTITION / SEG_ID /
+  INTERMI traces on aq2 frame 2 pinpoint mi=(5,0): both
+  decoders read partition_post range=224 count=39, skip=0 from
+  range=230, is_inter=0 from range=144 count=34, tx=0 from
+  range=130 count=33 — all matching. Then libvpx
+  post_modeinfo reads range=216 count=29 with mode=0 (DC);
+  rvp9 reads range=232 count=28 with mode=2 (H). Same cursor
+  entry but different y_mode ⇒ wrong probability row.
+- **Cascade scope:** aq2 frame 2 lights up plus 24 other inter
+  vectors that exercise intra-in-inter blocks. Conformance
+  **31/160/10 → 56/135/10** (25 new vectors). All tests + clippy
+  clean. Doctest pre-existing failure on
+  `Decoder::parse_compressed_partition` ignored as per CI shape.
+- **Diagnostic artefacts:**
+  - `D:/language/libvpx-stock/vpxdec.exe` rebuilt with
+    RVP9_TRACE_INTERMI + RVP9_TRACE_PART firing on altref.
+  - `C:/tmp/libvpx_imi_d21.txt` — full libvpx altref + visible
+    INTERMI/PART trace (~29 MB).
+  - `C:/tmp/rvp9_trace_d21.txt` — matching rvp9 trace via
+    `dump_frame_diff --frame 2 RVP9_TRACE_PARTITION=1
+    RVP9_TRACE_SEG_ID=1 RVP9_TRACE_INTERMI=1`.
+  - Build-env fix preserved in
+    `D:/language/libvpx-stock/{libs,examples}-x86_64-win64-gcc.mk`
+    and `gxx_wrap.sh`; `vp9/decoder/vp9_decodemv.c` and
+    `vp9/decoder/vp9_decodeframe.c` carry persistent
+    rvp9_trace_current_frame bump + show_frame-filter drop.
+- **Followups (no fix landed):**
+  - 135 vectors still mismatch. Cascade-likely paths next: most
+    failing keyframes are the 1×N tile vectors with no aq2-style
+    cause; D.22 should pick the densest mismatch cluster.
+  - 32×32 frame 10 still mismatches (D.20 prediction confirmed —
+    independent of seg_id-specific bug).

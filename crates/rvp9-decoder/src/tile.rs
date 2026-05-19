@@ -2305,13 +2305,21 @@ fn read_intra_in_inter_mode_info(
     bsize: BlockSize,
     mut mode_counts: Option<&mut rvp9_core::entropy::adapt::FrameCounts>,
 ) -> (IntraMode, IntraMode, [BmiInfo; 4]) {
-    // libvpx `size_group_lookup` (`vp9_common_data.c:14-19`).
+    // libvpx `size_group_lookup` (`vp9_common_data.c:32-33`):
+    //   { 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3 }
+    // indexed by BLOCK_SIZE: 4X4=0, 4X8=1, 8X4=2, 8X8=3, 8X16=4, 16X8=5,
+    //   16X16=6, 16X32=7, 32X16=8, 32X32=9, 32X64=10, 64X32=11, 64X64=12.
+    // D.21 fix: Block8x8 was wrongly mapped to size_group=0 (and the
+    // 16x16/32x32 cohorts were one off). Default-arm reads of the intra
+    // Y mode use `fc.y_mode_prob[size_group]`; for an inter-frame intra
+    // block at Block8x8 the wrong row produced a different y_mode and
+    // desynced the bool-coder cursor on aq2 segmentation streams.
     let size_group = match bsize {
-        BlockSize::Block4x4 | BlockSize::Block4x8 | BlockSize::Block8x4
-        | BlockSize::Block8x8 => 0,
-        BlockSize::Block8x16 | BlockSize::Block16x8 | BlockSize::Block16x16 => 1,
-        BlockSize::Block16x32 | BlockSize::Block32x16 | BlockSize::Block32x32 => 2,
-        BlockSize::Block32x64 | BlockSize::Block64x32 | BlockSize::Block64x64 => 3,
+        BlockSize::Block4x4 | BlockSize::Block4x8 | BlockSize::Block8x4 => 0,
+        BlockSize::Block8x8 | BlockSize::Block8x16 | BlockSize::Block16x8 => 1,
+        BlockSize::Block16x16 | BlockSize::Block16x32 | BlockSize::Block32x16 => 2,
+        BlockSize::Block32x32 | BlockSize::Block32x64
+        | BlockSize::Block64x32 | BlockSize::Block64x64 => 3,
     };
 
     let mut bmi = [BmiInfo::default(); 4];

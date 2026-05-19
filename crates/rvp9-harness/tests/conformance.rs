@@ -152,7 +152,30 @@ fn conformance_runner_walks_all_vectors() {
     // == 0`, but while we iterate on the mismatched keyframes the
     // ratchet keeps regression signal visible: lowering `MAX_MISMATCHES`
     // as we fix bugs, raising `MIN_PASSES` as we light up frames.
-    const MIN_PASSES: usize = 31;
+    const MIN_PASSES: usize = 56;
+    // D.21 (2026-05-19): fix `size_group` mapping in
+    // `read_intra_in_inter_mode_info` — Block8x8 was wrongly mapped to
+    // size_group=0, Block16x16/Block32x32 cohorts were each one index
+    // too low. Libvpx `size_group_lookup` (vp9_common_data.c:32-33)
+    // is `{0,0,0, 1,1,1, 2,2,2, 3,3,3,3}` indexed by BLOCK_SIZE; we
+    // had `{0,0,0,0, 1,1,1, 2,2,2, 3,3,3}`. The default-arm intra Y
+    // mode read for non-keyframe intra blocks uses
+    // `fc.y_mode_prob[size_group]`; the wrong row produced a different
+    // y_mode and desynced the bool-coder cursor on aq2 segmentation
+    // streams (and any inter stream with an intra block ≥ Block8x8).
+    // Confirmed via libvpx altref INTERMI trace at aq2 mi=(5,0):
+    // libvpx post_modeinfo range=216 count=29 (mode=DC); rvp9 read
+    // range=232 count=28 (mode=H). Same cursor entry, different bits
+    // consumed ⇒ wrong prob row. The D.20 altref seg_id mismatch at
+    // mi=(0,8) was the visible end of this cascade — the cursor
+    // started drifting at mi=(5,0)'s intra Y mode read. After the
+    // fix: aq2 lights up plus 24 other inter vectors that exercise
+    // intra-in-inter blocks (aq2 segmentation, altref-driven inter,
+    // most quantizer / sharpness / deltaq / resize sweeps).
+    // Conformance 31/160/10 → 56/135/10. Required libvpx-stock
+    // build fix (TMPDIR=C:/tmp, examples-x86_64-win64-gcc.mk + libs-
+    // *.mk + gxx_wrap.sh) and drop of cm->show_frame filter on
+    // RVP9_TRACE_INTERMI to capture the altref trace.
     // D.20 (2026-05-19): NEGATIVE — diagnostic infra only. Ratchet
     // unchanged. Localized aq2 frame-2 (64, 0) cascade to altref's
     // mi=(0,8) seg_id divergence (rvp9 decodes seg=1; libvpx altref
@@ -210,7 +233,7 @@ fn conformance_runner_walks_all_vectors() {
     // D.5 (2026-05-18): `extend_mc_border` scratch-buffer fallback.
     // Conformance: 2/159/40 → 3/158/40.
     // Pre-D.3.a baseline: 1/9/191.
-    const MAX_MISMATCHES: usize = 160;
+    const MAX_MISMATCHES: usize = 135;
     assert!(
         total_passed >= MIN_PASSES,
         "regression: expected at least {MIN_PASSES} passed, got {total_passed}",
