@@ -45,8 +45,10 @@ gated by S4.O1 verdict on each commit. First module: `bitstream_writer`
 
 - Lossless q00 WHT path (decoder-side; Stage 3 carry-over). Out of Stage 4
   critical path unless we want lossless encode coverage.
-- Pre-existing doctest failure on `Decoder::parse_compressed_partition`
-  (commit `20bc60d`). Conformance gate dodges via `--lib --bins --tests`.
+- ~~Pre-existing doctest failure on `Decoder::parse_compressed_partition`
+  (commit `20bc60d`).~~ Fixed `b1de169` — was pseudo-code in an
+  indented block being treated as a real doctest. Now marked
+  `text`. `cargo test --workspace` is green without flag tricks.
 - Stage 3 secondary gates (SIMD audit, throughput bench, unsafe-comment
   audit) still pending — revisit before formal Stage 3 sign-off.
 - libvpx-stock instrumentation tree (D:/language/libvpx-stock/)
