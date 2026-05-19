@@ -641,6 +641,82 @@ fn infer_partition(
     }
 }
 
+/// Inter-aware variant of [`infer_partition`]. Same as the keyframe
+/// version for every parent size **except** `Block8x8`, where it
+/// recognises sub-8 leaves (`Block8x4` / `Block4x8` / `Block4x4`)
+/// as `PARTITION_HORZ` / `PARTITION_VERT` / `PARTITION_SPLIT`
+/// respectively. The decoder's `decode_inter_partition` (`tile.rs`)
+/// reaches this point via the `hbs == 0` branch and calls
+/// `decode_inter_block` once with `sub = subsize(Block8x8,
+/// partition)` — the sub-partitioning is then handled internally by
+/// `resolve_sub8_bmi` (mirrored by S4.16e's `write_sub8_bmi`).
+///
+/// Keyframes still call [`infer_partition`] which pins BLOCK_8x8 to
+/// `PARTITION_NONE` per VP9 spec (sub-8 partitioning is inter-only).
+fn infer_inter_partition(
+    mi_grid: &[Option<ModeInfo>],
+    mi_cols: usize,
+    mi_row: usize,
+    mi_col: usize,
+    bsize: BlockSize,
+) -> Result<PartitionType, ModesWriterError> {
+    let leaf = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
+        .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
+    let leaf_bsize = leaf.block_size;
+
+    if leaf_bsize == bsize {
+        return Ok(PartitionType::None);
+    }
+
+    // BLOCK_8x8 parents on the inter path can split into 4x4 / 4x8 /
+    // 8x4 sub-8 leaves. Match against `subsize(BLOCK_8x8, *)`.
+    if bsize == BlockSize::Block8x8 {
+        if let Some(horz) = subsize(bsize, PartitionType::Horz)
+            && leaf_bsize == horz
+        {
+            return Ok(PartitionType::Horz);
+        }
+        if let Some(vert) = subsize(bsize, PartitionType::Vert)
+            && leaf_bsize == vert
+        {
+            return Ok(PartitionType::Vert);
+        }
+        if let Some(split) = subsize(bsize, PartitionType::Split)
+            && leaf_bsize == split
+        {
+            return Ok(PartitionType::Split);
+        }
+        return Err(ModesWriterError::InconsistentPartitionTree {
+            mi_row,
+            mi_col,
+            parent_bsize: bsize,
+            leaf_bsize,
+        });
+    }
+
+    if let Some(horz) = subsize(bsize, PartitionType::Horz)
+        && leaf_bsize == horz
+    {
+        return Ok(PartitionType::Horz);
+    }
+    if let Some(vert) = subsize(bsize, PartitionType::Vert)
+        && leaf_bsize == vert
+    {
+        return Ok(PartitionType::Vert);
+    }
+
+    if subsize(bsize, PartitionType::Split).is_some() {
+        Ok(PartitionType::Split)
+    } else {
+        Err(ModesWriterError::InconsistentPartitionTree {
+            mi_row,
+            mi_col,
+            parent_bsize: bsize,
+            leaf_bsize,
+        })
+    }
+}
+
 /// Emit the partition bit-sequence for `partition` against the
 /// supplied 3-entry probability slice. Mirrors the reader-side
 /// `mode_info::read_partition` tree walk over `PARTITION_TREE`
@@ -1256,6 +1332,32 @@ fn write_inter_partition_tree(
     let bsl: usize = n8x8_l2 as usize;
     let ctx = part_ctx.context(mi_row_in_tile, mi_col_in_tile, bsl);
 
+    let partition = infer_inter_partition(mi_grid, mi_cols, mi_row, mi_col, bsize)?;
+    write_partition(bw, &fc.partition_prob[ctx], partition);
+
+    let sub = subsize(bsize, partition)
+        .expect("infer_inter_partition only returns a partition whose subsize is legal");
+
+    // BLOCK_8x8 parent (hbs == 0): non-NONE partitions produce a
+    // single sub-8 leaf rather than multiple sub-block leaves.
+    // Mirrors the decoder's `decode_inter_partition` `hbs == 0`
+    // branch (`tile.rs:1542-1551`).
+    if hbs == 0 {
+        let mi = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
+            .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
+        write_inter_block_leaf(
+            bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row, mi_col, sub, &mi,
+            prev_mv_grid,
+        )?;
+        if (bsize as u8) >= (BlockSize::Block8x8 as u8) {
+            // Always fires for BLOCK_8x8 — the gate `bsize ==
+            // BLOCK_8x8 || partition != SPLIT` is `true` because of
+            // the LHS.
+            part_ctx.update(mi_row_in_tile, mi_col_in_tile, sub, num_8x8_wh);
+        }
+        return Ok(());
+    }
+
     // Same frame-edge invariant as the keyframe writer: dims are
     // multiples of 64, so `has_rows && has_cols` always holds.
     debug_assert!(
@@ -1266,12 +1368,6 @@ fn write_inter_partition_tree(
         mi_col + hbs < bounds.mi_col_end,
         "has_cols must hold; frame-multiple-of-64 invariant violated"
     );
-
-    let partition = infer_partition(mi_grid, mi_cols, mi_row, mi_col, bsize)?;
-    write_partition(bw, &fc.partition_prob[ctx], partition);
-
-    let sub = subsize(bsize, partition)
-        .expect("infer_partition only returns a partition whose subsize is legal");
 
     match partition {
         PartitionType::None => {
@@ -2660,6 +2756,17 @@ mod tests {
             leaves.push((mi_row, mi_col, got));
         };
 
+        // BLOCK_8x8 parent (hbs == 0): non-NONE partitions produce a
+        // single sub-8 leaf — mirrors the writer's special case +
+        // the decoder's `hbs == 0` branch in `decode_inter_partition`.
+        if hbs == 0 {
+            read_leaf(r, leaves, mi_row, mi_col, sub);
+            if (bsize as u8) >= (BlockSize::Block8x8 as u8) {
+                part_ctx.update_with_subsize(mi_row_in_tile, mi_col_in_tile, sub, num_8x8_wh);
+            }
+            return;
+        }
+
         match partition {
             PartitionType::None => {
                 read_leaf(r, leaves, mi_row, mi_col, sub);
@@ -3037,6 +3144,145 @@ mod tests {
         );
         assert_eq!(leaves.len(), 1);
         assert_inter_match(&cell, &leaves[0].2, "NEWMV 64x64");
+    }
+
+    // ----- S4.16f: sub-8 partitioning at BLOCK_8x8 parent ----------
+
+    /// Build an 8x8-grain inter cell with sub-8 partitioning recorded
+    /// via the [`BmiInfo`] array. All sub-blocks ZEROMV LASTFRAME,
+    /// skip=true. The parent's `mode` / `mvs` follow libvpx's "last
+    /// sub-block becomes parent" convention.
+    fn make_sub8_zero_inter_cell(sub8: BlockSize) -> ModeInfo {
+        let mut bmi = [BmiInfo::default(); 4];
+        for slot in &mut bmi {
+            slot.as_mode = InterMode::ZeroMv.idx() as u8;
+            slot.as_mv = [Mv::ZERO; 2];
+        }
+        ModeInfo {
+            block_size: sub8,
+            tx_size: TxSize::Tx4x4,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Inter {
+                mode: InterMode::ZeroMv,
+                ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                mvs: [Mv::ZERO; 2],
+                interp_filter: InterpFilter::EightTap,
+            },
+            bmi,
+        }
+    }
+
+    /// 64×64 SB drilled all the way down to 8x8 leaves, with one
+    /// `Block4x4` sub-8 leaf at (0,0). Proves the partition walker
+    /// reaches sub-8 via the `hbs == 0` branch (S4.16f) and dispatches
+    /// to `write_sub8_bmi` (S4.16e).
+    #[test]
+    fn s4_16f_round_trip_block8x8_split_into_4x4_at_corner() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+
+        // Fill the 64x64 with Block8x8 NONE leaves...
+        let plain_cell = make_inter_cell(
+            BlockSize::Block8x8,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let mut grid: Vec<Option<ModeInfo>> =
+            vec![Some(plain_cell); (mi_rows * mi_cols) as usize];
+
+        // ...then replace cell (0, 0) with a Block4x4 sub-8 leaf.
+        grid[0] = Some(make_sub8_zero_inter_cell(BlockSize::Block4x4));
+
+        let leaves = encode_then_replay_inter(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+        );
+
+        // 64 leaves total — 63 Block8x8 + 1 Block4x4.
+        assert_eq!(leaves.len(), 64);
+        let (r0, c0, mi0) = &leaves[0];
+        assert_eq!((*r0, *c0), (0, 0));
+        assert_eq!(
+            mi0.block_size,
+            BlockSize::Block4x4,
+            "sub-8 leaf at (0,0) must round-trip as Block4x4"
+        );
+        // Spot-check one of the surrounding Block8x8 leaves.
+        let (_, _, mi1) = &leaves[1];
+        assert_eq!(mi1.block_size, BlockSize::Block8x8);
+    }
+
+    /// 64x64 SB with one `Block8x4` sub-8 leaf (HORZ at BLOCK_8x8) at (0,0).
+    #[test]
+    fn s4_16f_round_trip_block8x8_horz_into_8x4_at_corner() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let plain_cell = make_inter_cell(
+            BlockSize::Block8x8,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let mut grid: Vec<Option<ModeInfo>> =
+            vec![Some(plain_cell); (mi_rows * mi_cols) as usize];
+        grid[0] = Some(make_sub8_zero_inter_cell(BlockSize::Block8x4));
+
+        let leaves = encode_then_replay_inter(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+        );
+        assert_eq!(leaves.len(), 64);
+        assert_eq!(leaves[0].2.block_size, BlockSize::Block8x4);
+    }
+
+    /// 64x64 SB with one `Block4x8` sub-8 leaf (VERT at BLOCK_8x8) at (0,0).
+    #[test]
+    fn s4_16f_round_trip_block8x8_vert_into_4x8_at_corner() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let plain_cell = make_inter_cell(
+            BlockSize::Block8x8,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let mut grid: Vec<Option<ModeInfo>> =
+            vec![Some(plain_cell); (mi_rows * mi_cols) as usize];
+        grid[0] = Some(make_sub8_zero_inter_cell(BlockSize::Block4x8));
+
+        let leaves = encode_then_replay_inter(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+        );
+        assert_eq!(leaves.len(), 64);
+        assert_eq!(leaves[0].2.block_size, BlockSize::Block4x8);
     }
 
     /// Leaf carrying `BlockMode::Intra` → writer rejects with
