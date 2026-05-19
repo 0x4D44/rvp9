@@ -54,8 +54,8 @@ pub use header::{
 };
 pub use raw::{RawBitReader, RawBitWriter};
 pub use superframe::{
-    MAX_SIZE_FIELD_BYTES, MAX_SUPERFRAME_FRAMES, Superframe, SuperframeIndexErrorReason,
-    parse_superframe_index,
+    MAX_SIZE_FIELD_BYTES, MAX_SUPERFRAME_FRAMES, Superframe, SuperframeBuilder,
+    SuperframeIndexErrorReason, parse_superframe_index,
 };
 pub use tile::{TileBuffer, parse_tile_buffers};
 pub use sub_parsers::{

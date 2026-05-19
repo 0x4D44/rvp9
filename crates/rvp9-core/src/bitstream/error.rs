@@ -105,6 +105,22 @@ pub enum BitstreamError {
         reason: super::superframe::SuperframeIndexErrorReason,
     },
 
+    /// Encoder-side [`super::superframe::SuperframeBuilder`] received
+    /// a [`super::superframe::SuperframeBuilder::push_frame`] call
+    /// after already holding [`super::superframe::MAX_SUPERFRAME_FRAMES`]
+    /// frames. The wire format reserves 3 bits for the frame count
+    /// (`marker & 0x7`), capping the payload at 8 frames per packet.
+    SuperframeOverflow {
+        /// `MAX_SUPERFRAME_FRAMES` (always 8) — surfaced so error
+        /// callers don't have to import the constant.
+        limit: usize,
+    },
+
+    /// Encoder-side [`super::superframe::SuperframeBuilder::push_frame`]
+    /// received a zero-length frame. The wire format CAN encode size
+    /// `0` but libvpx never emits an empty frame; reject for parity.
+    SuperframeEmptyFrame,
+
     /// The compressed-header boolean decoder failed to initialise:
     /// the leading marker bit at probability 128 wasn't zero.
     /// Mirrors libvpx's bool-coder init failure at
@@ -211,6 +227,13 @@ impl fmt::Display for BitstreamError {
                     "invalid superframe index: leading marker 0x{leading:02x} != trailing 0x{trailing:02x}"
                 ),
             },
+            Self::SuperframeOverflow { limit } => write!(
+                f,
+                "superframe builder: cannot push more than {limit} frames per packet"
+            ),
+            Self::SuperframeEmptyFrame => {
+                f.write_str("superframe builder: refusing zero-length frame")
+            }
         }
     }
 }
