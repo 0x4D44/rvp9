@@ -469,7 +469,7 @@ fn mv_class_and_base(mag: u32) -> (MvClass, u32) {
 ///
 /// Panics in debug builds if `target` is unreachable from the root.
 #[inline]
-fn write_tree(bw: &mut BoolWriter<'_>, tree: &[i8], probs: &[u8], target: i8) {
+pub(crate) fn write_tree(bw: &mut BoolWriter<'_>, tree: &[i8], probs: &[u8], target: i8) {
     /// Recursively check whether `target` is reachable in the subtree
     /// rooted at `node`. Leaves are negative (`-target`); internal
     /// nodes are positive indices into `tree`.

@@ -40,16 +40,16 @@
 use crate::bitstream::{InterpFilter, ReferenceMode};
 use crate::block::BlockSize;
 use crate::entropy::{
-    BoolReader, FrameContext, NmvCounts, COMP_INTER_CONTEXTS, INTER_MODE_CONTEXTS,
+    BoolReader, BoolWriter, FrameContext, NmvCounts, COMP_INTER_CONTEXTS, INTER_MODE_CONTEXTS,
     INTRA_INTER_CONTEXTS, REF_CONTEXTS, SWITCHABLE_FILTERS, SWITCHABLE_FILTER_CONTEXTS,
 };
-use crate::inter::mv::read_mv;
+use crate::inter::mv::{read_mv, write_mv, write_tree};
 use crate::inter::mv_ref::{
     append_sub8x8_mvs_for_idx, find_mv_refs, lower_mv_precision, BlockBounds, NeighbourLookup,
     Position, PrevFrameMvRef,
 };
 use crate::mode_info::{
-    read_inter_mode, BlockMode, BmiInfo, InterMode, ModeInfo, Mv, RefFrame,
+    read_inter_mode, BlockMode, BmiInfo, InterMode, ModeInfo, Mv, RefFrame, INTER_MODE_TREE,
 };
 
 /// libvpx `vp9_switchable_interp_tree` (`vp9_entropymode.c:337-338`).
@@ -839,6 +839,219 @@ pub fn read_inter_block_mode_info<N: NeighbourLookup>(
         interp_filter,
     };
     out.bmi = bmi;
+}
+
+/// Errors returned by [`write_inter_block_mode_info`].
+///
+/// The S4.16b writer covers the parent inter-block path (block_size ≥
+/// `Block8x8`). Sub-8 inter blocks (`Block4x4` / `Block4x8` /
+/// `Block8x4`) flow through `resolve_sub8_bmi` on the decoder and are
+/// deferred to S4.16b-sub.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum InterModeWriteError {
+    /// The block size is sub-8 — out of scope for the S4.16b commit.
+    Sub8NotSupported(BlockSize),
+    /// The supplied `ModeInfo::mode` was [`BlockMode::Intra`]. The
+    /// inter-block writer must only be called on inter blocks; the
+    /// caller's mode driver is expected to dispatch intra blocks to
+    /// the intra writer.
+    NotInter,
+}
+
+impl core::fmt::Display for InterModeWriteError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Sub8NotSupported(bs) => write!(
+                f,
+                "write_inter_block_mode_info: sub-8 block_size {bs:?} not supported in S4.16b"
+            ),
+            Self::NotInter => f.write_str(
+                "write_inter_block_mode_info: expected ModeInfo::mode = BlockMode::Inter, got intra",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for InterModeWriteError {}
+
+/// Encode the per-inter-block mode info. Mirrors libvpx
+/// `vp9/encoder/vp9_bitstream.c:pack_inter_mode_mvs` for the
+/// parent-block (block_size ≥ `Block8x8`) path.
+///
+/// This is the inverse of [`read_inter_block_mode_info`] — round-tripping
+/// `(fc, params, neighbours, block_size, bounds, prev_mv, mi)` through
+/// `write_inter_block_mode_info` and then `read_inter_block_mode_info`
+/// must recover the same `(mode, ref_frames, mvs, interp_filter)`.
+///
+/// Stages, in the exact wire order the decoder consumes them:
+/// 1. Reference frames — single or compound, via the
+///    [`read_ref_frames`] inverse. The `is_compound` decision is
+///    derived from `mi.ref_frames[1]` (compound iff
+///    `ref_frames[1].is_inter()`); the `Select` reference-mode emits
+///    one boolean against `comp_inter_prob[ctx]`, otherwise no
+///    `comp_inter` bit is emitted.
+/// 2. Inter mode — [`INTER_MODE_TREE`] via `fc.inter_mode_probs[ctx]`,
+///    where `ctx = get_mode_context(block_size, neighbours)`.
+/// 3. Switchable interpolation filter — only emitted when
+///    `params.interp_filter == InterpFilter::Switchable`. The
+///    [`SWITCHABLE_INTERP_TREE`] is walked against
+///    `fc.switchable_interp_prob[ctx]`.
+/// 4. MV residuals — only for [`InterMode::NewMv`]. For each active
+///    ref slot, compute the same `best_ref_mv` the decoder computes in
+///    [`resolve_parent_mvs`] (i.e. `find_mv_refs` →
+///    `mvs[count-1]` → [`lower_mv_precision`]), then emit the per-axis
+///    diff via [`write_mv`]. NEAREST / NEAR / ZERO modes emit no MV
+///    bits — the decoder reconstructs them from the ref-MV list.
+///
+/// Sub-8 inputs (`Block4x4` / `Block4x8` / `Block8x4`) return
+/// [`InterModeWriteError::Sub8NotSupported`] — the per-bmi writer is
+/// deferred to a follow-up commit.
+#[allow(clippy::too_many_arguments)]
+pub fn write_inter_block_mode_info<N: NeighbourLookup>(
+    bw: &mut BoolWriter<'_>,
+    fc: &FrameContext,
+    params: &InterModeReadParams,
+    neighbours: &N,
+    block_size: BlockSize,
+    bounds: &BlockBounds,
+    prev_mv: Option<PrevFrameMvRef>,
+    mi: &ModeInfo,
+) -> Result<(), InterModeWriteError> {
+    if (block_size as u8) < (BlockSize::Block8x8 as u8) {
+        return Err(InterModeWriteError::Sub8NotSupported(block_size));
+    }
+    let (mode, ref_frames, mvs, interp_filter) = match mi.mode {
+        BlockMode::Inter {
+            mode,
+            ref_frames,
+            mvs,
+            interp_filter,
+        } => (mode, ref_frames, mvs, interp_filter),
+        BlockMode::Intra { .. } => return Err(InterModeWriteError::NotInter),
+    };
+
+    let above = neighbours.get(Position { row: -1, col: 0 });
+    let left = neighbours.get(Position { row: 0, col: -1 });
+
+    // 1. Reference frames — inverse of `read_ref_frames`.
+    let is_compound = ref_frames[1].is_inter();
+    match params.reference_mode {
+        ReferenceMode::Select => {
+            let ctx = get_reference_mode_context(above, left, params.comp_fixed_ref);
+            debug_assert!(ctx < COMP_INTER_CONTEXTS);
+            bw.write(u8::from(is_compound), fc.comp_inter_prob[ctx]);
+        }
+        ReferenceMode::Compound => debug_assert!(is_compound),
+        ReferenceMode::Single => debug_assert!(!is_compound),
+    }
+
+    if is_compound {
+        // Decoder: `ref_frames[idx] = comp_fixed_ref;
+        //           ref_frames[1-idx] = comp_var_ref[bit]`.
+        // Inverse: bit = (ref_frames[1-idx] == comp_var_ref[1]).
+        let idx = params.sign_bias[params.comp_fixed_ref as usize] as usize;
+        debug_assert_eq!(ref_frames[idx], params.comp_fixed_ref);
+        let var_slot = ref_frames[1 - idx];
+        let bit: u8 = if var_slot == params.comp_var_ref[1] {
+            1
+        } else {
+            debug_assert_eq!(var_slot, params.comp_var_ref[0]);
+            0
+        };
+        let ctx = get_pred_context_comp_ref_p(
+            above,
+            left,
+            &params.sign_bias,
+            params.comp_fixed_ref,
+            params.comp_var_ref,
+        );
+        debug_assert!(ctx < REF_CONTEXTS);
+        bw.write(bit, fc.comp_ref_prob[ctx]);
+    } else {
+        // Decoder: bit0=0 → LAST; bit0=1, bit1=0 → GOLDEN;
+        //          bit0=1, bit1=1 → ALTREF.
+        let ctx0 = get_pred_context_single_ref_p1(above, left);
+        debug_assert!(ctx0 < REF_CONTEXTS);
+        match ref_frames[0] {
+            RefFrame::LastFrame => bw.write(0, fc.single_ref_prob[ctx0][0]),
+            RefFrame::GoldenFrame => {
+                bw.write(1, fc.single_ref_prob[ctx0][0]);
+                let ctx1 = get_pred_context_single_ref_p2(above, left);
+                debug_assert!(ctx1 < REF_CONTEXTS);
+                bw.write(0, fc.single_ref_prob[ctx1][1]);
+            }
+            RefFrame::AltrefFrame => {
+                bw.write(1, fc.single_ref_prob[ctx0][0]);
+                let ctx1 = get_pred_context_single_ref_p2(above, left);
+                debug_assert!(ctx1 < REF_CONTEXTS);
+                bw.write(1, fc.single_ref_prob[ctx1][1]);
+            }
+            // Single-ref block must reference a real ref frame.
+            _ => debug_assert!(
+                false,
+                "write_inter_block_mode_info: single-ref block has invalid ref_frames[0] = {:?}",
+                ref_frames[0]
+            ),
+        }
+    }
+
+    // 2. Inter mode — INTER_MODE_TREE inverse. The tree leaves are
+    //    `InterMode::idx()` (NEAREST=0, NEAR=1, ZERO=2, NEW=3).
+    let inter_mode_ctx = get_mode_context(block_size, neighbours);
+    debug_assert!(inter_mode_ctx < INTER_MODE_CONTEXTS);
+    write_tree(
+        bw,
+        &INTER_MODE_TREE,
+        &fc.inter_mode_probs[inter_mode_ctx],
+        mode.idx() as i8,
+    );
+
+    // 3. Switchable interpolation filter — only when the frame header
+    //    says `Switchable`. SWITCHABLE_INTERP_TREE leaves are the raw
+    //    `InterpFilter` discriminants (EightTap=0, EightTapSmooth=1,
+    //    EightTapSharp=2).
+    if params.interp_filter == InterpFilter::Switchable {
+        let ctx = get_pred_context_switchable_interp(above, left);
+        write_tree(
+            bw,
+            &SWITCHABLE_INTERP_TREE,
+            &fc.switchable_interp_prob[ctx],
+            interp_filter as i8,
+        );
+    }
+
+    // 4. MV residuals — only for NEWMV. NEAREST/NEAR/ZERO emit no MV
+    //    bits; the decoder reconstructs them from the ref-MV list.
+    if matches!(mode, InterMode::NewMv) {
+        let num_refs = 1 + usize::from(is_compound);
+        for i in 0..num_refs {
+            // Replicate the decoder's `best_ref_mv` computation
+            // (`resolve_parent_mvs`): find_mv_refs → mvs[count-1] →
+            // lower_mv_precision.
+            let list = find_mv_refs(
+                InterMode::NewMv,
+                block_size,
+                ref_frames[i],
+                neighbours,
+                &params.sign_bias,
+                bounds,
+                prev_mv,
+            );
+            let idx = list.count.saturating_sub(1).min(list.mvs.len() - 1);
+            let best_ref_mv =
+                lower_mv_precision(list.mvs[idx], params.allow_high_precision_mv);
+            write_mv(
+                bw,
+                mvs[i],
+                best_ref_mv,
+                params.allow_high_precision_mv,
+                &fc.nmvc,
+            );
+        }
+    }
+
+    Ok(())
 }
 
 /// Resolve `mv[0]` (+ `mv[1]` for compound) for a parent inter block
@@ -1854,5 +2067,245 @@ mod tests {
             mode_counts.switchable_interp,
             FrameCounts::default().switchable_interp
         );
+    }
+
+    // ----- S4.16b: write_inter_block_mode_info round-trip tests ----
+
+    /// Make a built inter [`ModeInfo`] for round-trip tests. The
+    /// `block_size` is mirrored into the skeleton fields; only
+    /// `mode` matters for the writer's wire output.
+    fn build_inter_mi(
+        block_size: BlockSize,
+        mode: InterMode,
+        ref_frames: [RefFrame; 2],
+        mvs: [Mv; 2],
+        interp_filter: InterpFilter,
+    ) -> ModeInfo {
+        ModeInfo {
+            block_size,
+            tx_size: TxSize::Tx8x8,
+            skip: false,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Inter {
+                mode,
+                ref_frames,
+                mvs,
+                interp_filter,
+            },
+            bmi: Default::default(),
+        }
+    }
+
+    /// Encode `mi` via [`write_inter_block_mode_info`], then decode it
+    /// back via [`read_inter_block_mode_info`], asserting the recovered
+    /// `BlockMode::Inter` payload matches the input. Returns the
+    /// recovered `ModeInfo` for any extra assertions.
+    fn round_trip(
+        fc: &FrameContext,
+        params: &InterModeReadParams,
+        neighbours: &impl NeighbourLookup,
+        block_size: BlockSize,
+        bounds: &BlockBounds,
+        prev_mv: Option<PrevFrameMvRef>,
+        mi: &ModeInfo,
+    ) -> ModeInfo {
+        let mut buf = vec![0u8; 256];
+        let size = {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            write_inter_block_mode_info(
+                &mut w, fc, params, neighbours, block_size, bounds, prev_mv, mi,
+            )
+            .expect("writer ok");
+            finalise(w)
+        };
+        buf.truncate(size);
+
+        let mut reader = BoolReader::new(&buf).expect("init reader");
+        let mut got = skeleton_mi(block_size);
+        read_inter_block_mode_info(
+            &mut reader,
+            fc,
+            None,
+            None,
+            params,
+            neighbours,
+            block_size,
+            bounds,
+            prev_mv,
+            &mut got,
+        );
+        match (&mi.mode, &got.mode) {
+            (
+                BlockMode::Inter {
+                    mode: m_in,
+                    ref_frames: rf_in,
+                    mvs: mvs_in,
+                    interp_filter: if_in,
+                },
+                BlockMode::Inter {
+                    mode: m_out,
+                    ref_frames: rf_out,
+                    mvs: mvs_out,
+                    interp_filter: if_out,
+                },
+            ) => {
+                assert_eq!(m_in, m_out, "mode round-trip");
+                assert_eq!(rf_in, rf_out, "ref_frames round-trip");
+                assert_eq!(mvs_in, mvs_out, "mvs round-trip");
+                assert_eq!(if_in, if_out, "interp_filter round-trip");
+            }
+            _ => panic!("expected Inter after round trip"),
+        }
+        got
+    }
+
+    /// Single-ref LASTFRAME, NEARESTMV, EightTap, no neighbours.
+    #[test]
+    fn s4_16b_round_trip_single_ref_nearest_mv() {
+        let fc = FrameContext::new_default();
+        let params = default_params();
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block8x8;
+        // NEAREST with no neighbours: find_mv_refs returns count=0 →
+        // best_ref_mv = (0,0); decoder copies that into mvs[0].
+        let mi = build_inter_mi(
+            bsize,
+            InterMode::NearestMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO, Mv::ZERO],
+            InterpFilter::EightTap,
+        );
+        let _ = round_trip(&fc, &params, &nb, bsize, &bounds, None, &mi);
+    }
+
+    /// Single-ref GOLDENFRAME, ZEROMV.
+    #[test]
+    fn s4_16b_round_trip_single_ref_zero_mv() {
+        let fc = FrameContext::new_default();
+        let params = default_params();
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block16x16;
+        let mi = build_inter_mi(
+            bsize,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO, Mv::ZERO],
+            InterpFilter::EightTap,
+        );
+        let _ = round_trip(&fc, &params, &nb, bsize, &bounds, None, &mi);
+    }
+
+    /// Single-ref LASTFRAME, NEWMV with mvs[0] = (12, -4), allow_hp=true.
+    /// With no neighbours, find_mv_refs returns count=0 →
+    /// best_ref_mv = (0,0); the encoded diff is the MV itself.
+    #[test]
+    fn s4_16b_round_trip_single_ref_new_mv() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.allow_high_precision_mv = true;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block16x16;
+        let mi = build_inter_mi(
+            bsize,
+            InterMode::NewMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv { row: 12, col: -4 }, Mv::ZERO],
+            InterpFilter::EightTap,
+        );
+        let _ = round_trip(&fc, &params, &nb, bsize, &bounds, None, &mi);
+    }
+
+    /// Compound mode, ZEROMV, ref_frames=[LASTFRAME, ALTREFFRAME].
+    /// Set sign-bias so comp_fixed_ref = ALTREF, comp_var_ref =
+    /// [LAST, GOLDEN]; idx = sign_bias[ALTREF] = 1, so the bit must
+    /// be 0 (selecting var_ref[0] = LAST in slot 0).
+    #[test]
+    fn s4_16b_round_trip_compound_zero_mv() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&params.sign_bias);
+        params.comp_fixed_ref = fixed;
+        params.comp_var_ref = var;
+        params.reference_mode = ReferenceMode::Compound;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block16x16;
+        let mi = build_inter_mi(
+            bsize,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO, Mv::ZERO],
+            InterpFilter::EightTap,
+        );
+        let _ = round_trip(&fc, &params, &nb, bsize, &bounds, None, &mi);
+    }
+
+    /// Switchable interp filter, single-ref ZEROMV, filter =
+    /// EightTapSmooth. Verifies the per-block switchable filter is
+    /// round-tripped via SWITCHABLE_INTERP_TREE.
+    #[test]
+    fn s4_16b_round_trip_switchable_interp() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.interp_filter = InterpFilter::Switchable;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block8x8;
+        let mi = build_inter_mi(
+            bsize,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO, Mv::ZERO],
+            InterpFilter::EightTapSmooth,
+        );
+        let _ = round_trip(&fc, &params, &nb, bsize, &bounds, None, &mi);
+    }
+
+    /// Sub-8 block_size → writer rejects with `Sub8NotSupported`.
+    #[test]
+    fn s4_16b_rejects_sub8() {
+        let fc = FrameContext::new_default();
+        let params = default_params();
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block4x4;
+        let mi = build_inter_mi(
+            bsize,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO, Mv::ZERO],
+            InterpFilter::EightTap,
+        );
+        let mut buf = vec![0u8; 64];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        let err = write_inter_block_mode_info(
+            &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi,
+        )
+        .expect_err("expected Sub8NotSupported");
+        assert_eq!(err, InterModeWriteError::Sub8NotSupported(bsize));
+    }
+
+    /// Intra mode info → writer rejects with `NotInter`.
+    #[test]
+    fn s4_16b_rejects_intra() {
+        let fc = FrameContext::new_default();
+        let params = default_params();
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block16x16;
+        // skeleton_mi yields BlockMode::Intra.
+        let mi = skeleton_mi(bsize);
+        let mut buf = vec![0u8; 64];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        let err = write_inter_block_mode_info(
+            &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi,
+        )
+        .expect_err("expected NotInter");
+        assert_eq!(err, InterModeWriteError::NotInter);
     }
 }
