@@ -553,11 +553,13 @@ impl Decoder {
     /// `FrameContext` bank. Mirrors libvpx's call sequence at
     /// `vp9_decodeframe.c:2944-2948`:
     ///
-    ///     read_uncompressed_header(...);
-    ///     // ...
-    ///     read_compressed_header(...);    // ← this method
-    ///     // ...
-    ///     decode_tiles(...);
+    /// ```text
+    /// read_uncompressed_header(...);
+    /// // ...
+    /// read_compressed_header(...);    // ← this method
+    /// // ...
+    /// decode_tiles(...);
+    /// ```
     ///
     /// The selected bank is `frame_contexts[header.tail.frame_context_idx]`.
     /// The compressed-header byte slice is `frame.full_frame_data

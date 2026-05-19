@@ -23,17 +23,30 @@
 //!
 //! ## Current status (2026-05-19, Stage 4a in progress)
 //!
-//! The encoder is at SKELETON state. The wire-format layer is complete
-//! (uncompressed header, compressed header, tile-buffer assembly,
-//! superframe container, mode-info encoding for the simplest keyframe
-//! case). What's missing is everything that makes the encoder USEFUL:
-//! mode decision, partition selection, motion estimation, rate control,
-//! adaptive quantization, denoising. Those land in the modules listed
-//! in `PLAN.md` Stage 4a tasks 2-8.
+//! The encoder is at SKELETON state — the wire-format layer is
+//! functionally complete (keyframe + inter, every legal block size
+//! down to BLOCK_4x4 sub-8 partitions, every partition shape,
+//! superframe container assembly). What's missing is everything
+//! that makes the encoder USEFUL: real residuals (coef integration
+//! into inter leaves), mode decision, partition selection, motion
+//! estimation, rate control, adaptive quantization, denoising.
+//! Those land in the modules listed in `PLAN.md` Stage 4a tasks 2-8.
 //!
-//! Today the encoder can emit ONE thing: a synthetic all-DC-skip
-//! keyframe at any 64-multiple resolution. See
-//! [`Encoder::encode_synthetic_dc_skip_keyframe`].
+//! Today the encoder can emit:
+//!
+//! - A synthetic all-DC-skip keyframe at any 64-multiple resolution
+//!   ([`Encoder::encode_synthetic_dc_skip_keyframe`]).
+//! - A 2-frame keyframe + inter sequence packed into one superframe
+//!   packet, both decodable by `rvp9-decoder`
+//!   ([`Encoder::encode_synthetic_two_frame_kf_inter`]). The inter
+//!   frame uses single-ref LASTFRAME ZEROMV `skip=true` over
+//!   PARTITION_NONE 64×64 super-blocks.
+//!
+//! Sub-8 partitioning, mixed inter modes, NEWMV, and compound-ref
+//! inter frames are exercisable via the `rvp9-core` writers directly
+//! (`write_tile_inter`, `write_inter_block_mode_info`, etc.); the
+//! encoder's public API will widen to cover those shapes as the
+//! mode-decision driver lands.
 
 use rvp9_core::bitstream::frame::{MAX_INTER_REFS, ReferenceMode};
 use rvp9_core::bitstream::header::HeaderTail;
