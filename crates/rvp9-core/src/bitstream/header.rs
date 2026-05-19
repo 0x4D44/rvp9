@@ -55,7 +55,7 @@ pub const FRAME_CONTEXTS_LOG2: u8 = 2;
 ///   inherited from the existing frame and left at default).
 /// - `KeyFrame` / `IntraOnly`: full color/sampling/size populated.
 /// - `InterFrameTodo`: parser bailed early; do not use field values.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UncompressedHeader {
     /// The frame's "kind" — determines which other fields are populated.
     pub kind: FrameKind,

@@ -1,12 +1,18 @@
-//! Bitstream differential diff tool — Level 0 (byte diff).
+//! Bitstream differential diff tool — Levels 0, 1, 2.
 //!
 //! Compares two `.ivf` files and reports the first point of divergence.
-//! This binary is the **Level 0** entry point for the structured diff
-//! harness described in
-//! `notes/stage4-design/diff-bitstream-harness.md`. Higher levels
-//! (1..=4) are planned for commits 2-4 of that design and currently
-//! emit a "not yet implemented" stderr note while still running the
-//! Level 0 byte diff.
+//! This binary is the entry point for the structured diff harness
+//! described in `notes/stage4-design/diff-bitstream-harness.md`.
+//! Currently implements:
+//!
+//! - **Level 0:** raw IVF byte diff (the original Stage 0 behaviour).
+//! - **Level 1:** per-frame size + superframe layout + frame-kind +
+//!   `show_frame` + `frame_context_idx` diff.
+//! - **Level 2:** field-by-field walk of [`rvp9_core::bitstream::UncompressedHeader`]
+//!   (and its [`rvp9_core::bitstream::HeaderTail`] when present).
+//!
+//! Levels 3..=5 still emit a "not yet implemented" stderr note while
+//! the lower levels run.
 //!
 //! Usage:
 //!   cargo run --release --bin diff-bitstream -- \
@@ -27,8 +33,20 @@
 //!   2  argument or input error (missing file, bad IVF, bad flag).
 
 use std::io::{IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+
+use rvp9_core::bitstream::{
+    FrameKind, HeaderTail, RefFrameSizes, Superframe, UncompressedHeader,
+    parse_superframe_index, parse_uncompressed_header,
+};
+use rvp9_core::bitstream::frame::REF_FRAMES;
+use rvp9_core::bitstream::sub_parsers::{
+    LoopFilterParams, MAX_REF_LF_DELTAS, MAX_MODE_LF_DELTAS, MAX_SEGMENTS,
+    PREDICTION_PROBS, QuantizationParams, SEG_LVL_MAX, SEG_TREE_PROBS,
+    SegmentationParams, TileInfo,
+};
+use rvp9_harness::container::{ContainerError, read_ivf_packets};
 
 // -----------------------------------------------------------------------------
 // CLI
@@ -287,6 +305,13 @@ trait DiffReporter {
 
     /// Flush any trailing envelope and return the process exit code.
     fn finish(&mut self) -> i32;
+
+    /// `true` if any divergence record was ever submitted (regardless
+    /// of whether `--verbose first` suppressed its emission). Used by
+    /// the text-format trailer to decide whether to print
+    /// "Identical: every byte matches." — `code` alone is ambiguous
+    /// when `--exit-on-diff` is false.
+    fn had_divergence(&self) -> bool;
 }
 
 /// Text reporter — preserves the original Stage 0 stdout when run at
@@ -294,11 +319,20 @@ trait DiffReporter {
 struct TextReporter<W: Write> {
     out: W,
     /// Stop after first divergence?
+    ///
+    /// `stop_at_first` is **per-level**: under `--verbose first` the
+    /// reporter emits the first record at each distinct level (so a
+    /// run that finds divergences at L0 and L2 still shows both),
+    /// but suppresses subsequent records at any level it has already
+    /// reported on. `--verbose full` disables this gating entirely.
     stop_at_first: bool,
     /// Has any divergence been seen?
     any_diff: bool,
-    /// Number of divergences emitted so far (for `--verbose first` gating).
+    /// Total divergence records emitted (informational).
     emitted: usize,
+    /// Set of `level` values already emitted under `stop_at_first`.
+    /// Indexed by level (0..=5) for cheap O(1) lookup.
+    level_emitted: [bool; 6],
     /// Caller wants `exit 1` on divergence.
     exit_on_diff: bool,
     /// ANSI colour enabled?
@@ -312,6 +346,7 @@ impl<W: Write> TextReporter<W> {
             stop_at_first: !matches!(verbose, Verbose::Full),
             any_diff: false,
             emitted: 0,
+            level_emitted: [false; 6],
             exit_on_diff,
             color,
         }
@@ -320,12 +355,14 @@ impl<W: Write> TextReporter<W> {
 
 impl<W: Write> DiffReporter for TextReporter<W> {
     fn divergence(&mut self, level: u8, summary: &str, detail: Option<&str>) {
-        if self.stop_at_first && self.emitted > 0 {
+        let bucket = (level as usize).min(5);
+        if self.stop_at_first && self.level_emitted[bucket] {
             self.any_diff = true; // still record that we saw one
             return;
         }
         self.any_diff = true;
         self.emitted += 1;
+        self.level_emitted[bucket] = true;
         let red = if self.color { "\x1b[31m" } else { "" };
         let reset = if self.color { "\x1b[0m" } else { "" };
         let label = format!("Level {level}  {summary}");
@@ -348,15 +385,22 @@ impl<W: Write> DiffReporter for TextReporter<W> {
         let _ = self.out.flush();
         if self.any_diff && self.exit_on_diff { 1 } else { 0 }
     }
+
+    fn had_divergence(&self) -> bool {
+        self.any_diff
+    }
 }
 
 /// JSON reporter — one NDJSON record per `divergence()` call, plus a
 /// trailing summary object. Format spec: §5.4 of the design.
 struct JsonReporter<W: Write> {
     out: W,
+    /// `stop_at_first` is per-level — see [`TextReporter`] for the
+    /// rationale.
     stop_at_first: bool,
     any_diff: bool,
     emitted: usize,
+    level_emitted: [bool; 6],
     exit_on_diff: bool,
 }
 
@@ -367,6 +411,7 @@ impl<W: Write> JsonReporter<W> {
             stop_at_first: !matches!(verbose, Verbose::Full),
             any_diff: false,
             emitted: 0,
+            level_emitted: [false; 6],
             exit_on_diff,
         }
     }
@@ -393,12 +438,14 @@ fn json_escape(s: &str) -> String {
 
 impl<W: Write> DiffReporter for JsonReporter<W> {
     fn divergence(&mut self, level: u8, summary: &str, detail: Option<&str>) {
-        if self.stop_at_first && self.emitted > 0 {
+        let bucket = (level as usize).min(5);
+        if self.stop_at_first && self.level_emitted[bucket] {
             self.any_diff = true;
             return;
         }
         self.any_diff = true;
         self.emitted += 1;
+        self.level_emitted[bucket] = true;
         let detail_field = match detail {
             Some(d) => format!(",\"detail\":\"{}\"", json_escape(d)),
             None => String::new(),
@@ -428,6 +475,10 @@ impl<W: Write> DiffReporter for JsonReporter<W> {
         );
         let _ = self.out.flush();
         if self.any_diff && self.exit_on_diff { 1 } else { 0 }
+    }
+
+    fn had_divergence(&self) -> bool {
+        self.any_diff
     }
 }
 
@@ -561,6 +612,663 @@ fn format_byte_diff(d: &ByteDiff) -> String {
 }
 
 // -----------------------------------------------------------------------------
+// Level 1 + Level 2: per-frame parsed-header diff
+// -----------------------------------------------------------------------------
+
+/// One frame's-worth of pre-parsed state, used by Levels 1/2/3.
+///
+/// `packet` is the 1-based IVF packet index; `frame` is the 0-based
+/// sub-frame index within the (super)frame (always 0 for single
+/// frames). `chunk_size` is the IVF-declared payload byte count for
+/// the packet; `superframe_count` is the number of sub-frames the
+/// trailing superframe index produced (1 for a single frame).
+///
+/// `header` is `None` if the uncompressed-header parser bailed — the
+/// driver records a divergence in that case (parser error is itself
+/// information) but doesn't try to walk fields on `None`.
+struct FrameEntry {
+    packet: u32,
+    frame: u32,
+    chunk_size: usize,
+    superframe_count: u32,
+    is_superframe: bool,
+    header: Option<UncompressedHeader>,
+    /// `Some(err_string)` if header parsing failed; carried through so
+    /// L1/L2 can report the failure rather than swallow it silently.
+    parse_error: Option<String>,
+}
+
+/// Extract every (packet, sub-frame) pair from an IVF buffer along
+/// with the parsed uncompressed header. Returns the flat list in
+/// container order.
+fn extract_frames(data: &[u8]) -> Result<Vec<FrameEntry>, ContainerError> {
+    let packets = read_ivf_packets(data)?;
+    // We need an empty ref-frame pool — the harness can't track real
+    // inter-frame size inheritance without driving a full Decoder, and
+    // for Levels 1/2 we only need the uncompressed-header *fields*,
+    // not the full reference plumbing. Any frame that genuinely
+    // inherits a size from a ref will surface as a parse_error, which
+    // we report as a divergence reason rather than crashing. This
+    // matches the design's "harness does not re-implement decoder
+    // state" rule (§4 of the design note).
+    let no_refs: RefFrameSizes = [None; REF_FRAMES];
+    let mut out = Vec::new();
+    for (packet_idx, range) in packets.iter().enumerate() {
+        let packet = (packet_idx as u32) + 1;
+        let bytes = range.slice(data);
+        let chunk_size = bytes.len();
+
+        // Superframe split.
+        let sf = match parse_superframe_index(bytes) {
+            Ok(sf) => sf,
+            Err(e) => {
+                // Treat as a single unparseable frame so L1 still
+                // reports the chunk size + the parse error.
+                out.push(FrameEntry {
+                    packet,
+                    frame: 0,
+                    chunk_size,
+                    superframe_count: 1,
+                    is_superframe: false,
+                    header: None,
+                    parse_error: Some(format!("superframe parse error: {e}")),
+                });
+                continue;
+            }
+        };
+
+        match sf {
+            Superframe::Single => {
+                let (header, parse_error) = parse_header_opt(bytes, &no_refs);
+                out.push(FrameEntry {
+                    packet,
+                    frame: 0,
+                    chunk_size,
+                    superframe_count: 1,
+                    is_superframe: false,
+                    header,
+                    parse_error,
+                });
+            }
+            Superframe::Multi {
+                sizes,
+                count,
+                index_size,
+            } => {
+                let mut offset = 0usize;
+                let frame_data_end = chunk_size.saturating_sub(index_size);
+                for (sub, &raw_size) in sizes.iter().enumerate().take(count) {
+                    let frame_size = raw_size as usize;
+                    let frame_end = offset.saturating_add(frame_size);
+                    if frame_end > frame_data_end {
+                        // Truncated sub-frame — record the error and stop.
+                        out.push(FrameEntry {
+                            packet,
+                            frame: sub as u32,
+                            chunk_size,
+                            superframe_count: count as u32,
+                            is_superframe: true,
+                            header: None,
+                            parse_error: Some(format!(
+                                "superframe sub-frame {sub} truncated: \
+                                 declared {frame_size} bytes, only \
+                                 {} remain",
+                                frame_data_end.saturating_sub(offset),
+                            )),
+                        });
+                        break;
+                    }
+                    let frame_bytes = &bytes[offset..frame_end];
+                    let (header, parse_error) = parse_header_opt(frame_bytes, &no_refs);
+                    out.push(FrameEntry {
+                        packet,
+                        frame: sub as u32,
+                        chunk_size,
+                        superframe_count: count as u32,
+                        is_superframe: true,
+                        header,
+                        parse_error,
+                    });
+                    offset = frame_end;
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Best-effort header parse. Returns `(Some(header), None)` on
+/// success or `(None, Some(error_string))` on failure.
+fn parse_header_opt(
+    bytes: &[u8],
+    refs: &RefFrameSizes,
+) -> (Option<UncompressedHeader>, Option<String>) {
+    match parse_uncompressed_header(bytes, refs) {
+        Ok((h, _)) => (Some(h), None),
+        Err(e) => (None, Some(format!("header parse error: {e}"))),
+    }
+}
+
+/// Read an IVF file from disk and extract its parsed frame entries.
+/// Errors are turned into a `String` for the caller to surface via
+/// stderr.
+fn load_frames(path: &Path) -> Result<Vec<FrameEntry>, String> {
+    let data = std::fs::read(path)
+        .map_err(|e| format!("could not read {}: {e}", path.display()))?;
+    extract_frames(&data).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// `true` if `entry.packet` (1-based) falls inside the optional
+/// `--frame N` / `--frame N-M` range. Both endpoints are 1-based
+/// packet indices (Q6 supervisor decision: `--frame N` selects packet
+/// N, output labels are `packet=N frame=M`).
+fn packet_in_range(packet: u32, range: Option<FrameRange>) -> bool {
+    match range {
+        None => true,
+        Some(r) => packet >= r.start && packet <= r.end,
+    }
+}
+
+/// Format a per-frame label used by the L1/L2 divergence detail
+/// strings: `packet=P frame=F`.
+fn frame_label(entry: &FrameEntry) -> String {
+    format!("packet={} frame={}", entry.packet, entry.frame)
+}
+
+/// Run the Level 1 diff (per-frame size + kind + show_frame +
+/// frame_context_idx + superframe layout). Pre-parsed frame lists
+/// are produced by [`extract_frames`].
+fn level_1_diff<R: DiffReporter>(
+    a: &[FrameEntry],
+    b: &[FrameEntry],
+    args: &Args,
+    reporter: &mut R,
+) {
+    if a.len() != b.len() {
+        let detail = format!(
+            "frame count differs: a={} entries, b={} entries",
+            a.len(),
+            b.len(),
+        );
+        reporter.divergence(1, "frame-count", Some(&detail));
+        // Walk only the common prefix; missing trailing frames are
+        // already accounted for by the count record.
+    }
+
+    let common = a.len().min(b.len());
+    for i in 0..common {
+        let ea = &a[i];
+        let eb = &b[i];
+        // Honour --frame on the A-side packet number (both files
+        // should be aligned by index in normal use; if they aren't,
+        // the count divergence above flags it).
+        if !packet_in_range(ea.packet, args.frame) {
+            continue;
+        }
+
+        // Was the previous frame on either side already diverging
+        // enough to stop in --verbose first? The reporter handles
+        // that gating internally; we just emit and let it decide.
+        let mut emitted = 0u32;
+
+        // Parse errors are first-class divergences at L1 ONLY when
+        // asymmetric: if one side parsed and the other didn't, or both
+        // failed differently, that's a real bug. If both sides hit the
+        // SAME error (e.g. both miss an inter-frame ref because the
+        // harness doesn't drive a full decoder — design §4 documents
+        // this gap), it's symmetric harness noise, not divergence.
+        let parse_diverges = match (&ea.parse_error, &eb.parse_error) {
+            (None, None) => false,
+            (Some(a), Some(b)) if a == b => false,
+            _ => true,
+        };
+        if parse_diverges {
+            let detail = format!(
+                "{lbl}: a_err={a_err:?} b_err={b_err:?}",
+                lbl = frame_label(ea),
+                a_err = ea.parse_error.as_deref().unwrap_or("ok"),
+                b_err = eb.parse_error.as_deref().unwrap_or("ok"),
+            );
+            reporter.divergence(1, "parse-error", Some(&detail));
+            emitted += 1;
+            if matches!(args.verbose, Verbose::First) {
+                continue;
+            }
+        } else if ea.parse_error.is_some() {
+            // Both failed identically; skip downstream diffs for this
+            // frame since the headers aren't populated.
+            continue;
+        }
+
+        if ea.chunk_size != eb.chunk_size {
+            let detail = format!(
+                "{}: chunk_size a={} b={}",
+                frame_label(ea),
+                ea.chunk_size,
+                eb.chunk_size,
+            );
+            reporter.divergence(1, "chunk-size", Some(&detail));
+            emitted += 1;
+            if matches!(args.verbose, Verbose::First) && emitted > 0 {
+                continue;
+            }
+        }
+
+        if ea.is_superframe != eb.is_superframe
+            || ea.superframe_count != eb.superframe_count
+        {
+            let detail = format!(
+                "{}: superframe a=({}, count={}) b=({}, count={})",
+                frame_label(ea),
+                ea.is_superframe,
+                ea.superframe_count,
+                eb.is_superframe,
+                eb.superframe_count,
+            );
+            reporter.divergence(1, "superframe-layout", Some(&detail));
+            emitted += 1;
+            if matches!(args.verbose, Verbose::First) && emitted > 0 {
+                continue;
+            }
+        }
+
+        let (ha, hb) = match (ea.header.as_ref(), eb.header.as_ref()) {
+            (Some(a), Some(b)) => (a, b),
+            // Without both headers parsed we can't do field-level diff;
+            // the parse-error branch above already reported.
+            _ => continue,
+        };
+
+        let kind_a = frame_kind_label(&ha.kind);
+        let kind_b = frame_kind_label(&hb.kind);
+        if kind_a != kind_b {
+            let detail = format!(
+                "{}: frame_kind a={} b={}",
+                frame_label(ea),
+                kind_a,
+                kind_b,
+            );
+            reporter.divergence(1, "frame-kind", Some(&detail));
+            emitted += 1;
+            if matches!(args.verbose, Verbose::First) && emitted > 0 {
+                continue;
+            }
+        }
+
+        if ha.show_frame != hb.show_frame {
+            let detail = format!(
+                "{}: show_frame a={} b={}",
+                frame_label(ea),
+                ha.show_frame,
+                hb.show_frame,
+            );
+            reporter.divergence(1, "show-frame", Some(&detail));
+            emitted += 1;
+            if matches!(args.verbose, Verbose::First) && emitted > 0 {
+                continue;
+            }
+        }
+
+        if let (Some(ta), Some(tb)) = (ha.tail.as_ref(), hb.tail.as_ref())
+            && ta.frame_context_idx != tb.frame_context_idx
+        {
+            let detail = format!(
+                "{}: frame_context_idx a={} b={}",
+                frame_label(ea),
+                ta.frame_context_idx,
+                tb.frame_context_idx,
+            );
+            reporter.divergence(1, "frame-context-idx", Some(&detail));
+        }
+    }
+}
+
+/// Stable short label for a [`FrameKind`] discriminant.
+fn frame_kind_label(k: &FrameKind) -> &'static str {
+    match k {
+        FrameKind::ShowExistingFrame { .. } => "ShowExistingFrame",
+        FrameKind::KeyFrame => "KeyFrame",
+        FrameKind::IntraOnly { .. } => "IntraOnly",
+        FrameKind::InterFrame { .. } => "InterFrame",
+    }
+}
+
+/// Run the Level 2 diff: field-by-field walk of every
+/// [`UncompressedHeader`] pair.
+fn level_2_diff<R: DiffReporter>(
+    a: &[FrameEntry],
+    b: &[FrameEntry],
+    args: &Args,
+    reporter: &mut R,
+) {
+    let common = a.len().min(b.len());
+    for i in 0..common {
+        let ea = &a[i];
+        let eb = &b[i];
+        if !packet_in_range(ea.packet, args.frame) {
+            continue;
+        }
+        let (ha, hb) = match (ea.header.as_ref(), eb.header.as_ref()) {
+            (Some(a), Some(b)) => (a, b),
+            _ => continue,
+        };
+
+        let label = frame_label(ea);
+        // Bail-out flag for `--verbose first`: once we've emitted one
+        // record for THIS frame we suppress further records on this
+        // frame only. (Level 0 / Level 1 records on other frames are
+        // separate; the reporter's own `stop_at_first` handles the
+        // cross-level gate.)
+        let mut emitted = false;
+        let stop_first = matches!(args.verbose, Verbose::First);
+        let mut emit = |path: &str, detail: String| {
+            if emitted && stop_first {
+                return;
+            }
+            let full = format!("{label}: {path}: {detail}");
+            reporter.divergence(2, path, Some(&full));
+            emitted = true;
+        };
+        walk_uncompressed_header(ha, hb, &mut emit);
+    }
+}
+
+/// Visitor: invoke `emit(field_path, "a=.. b=..")` for every leaf
+/// field of [`UncompressedHeader`] (and [`HeaderTail`]) where the two
+/// sides differ. Trait-free, macro-free — just a flat sequence of
+/// `dbg_field!`-style calls, optimised for "I can see every covered
+/// field at a glance".
+fn walk_uncompressed_header<F: FnMut(&str, String)>(
+    a: &UncompressedHeader,
+    b: &UncompressedHeader,
+    emit: &mut F,
+) {
+    // ----- top-level scalar fields -----
+    diff_field("header.profile", &a.profile, &b.profile, emit);
+    diff_field("header.show_frame", &a.show_frame, &b.show_frame, emit);
+    diff_field(
+        "header.error_resilient",
+        &a.error_resilient,
+        &b.error_resilient,
+        emit,
+    );
+    diff_field("header.bit_depth", &a.bit_depth, &b.bit_depth, emit);
+    diff_field("header.color_space", &a.color_space, &b.color_space, emit);
+    diff_field("header.color_range", &a.color_range, &b.color_range, emit);
+    diff_field("header.chroma", &a.chroma, &b.chroma, emit);
+    diff_field("header.width", &a.width, &b.width, emit);
+    diff_field("header.height", &a.height, &b.height, emit);
+    diff_field("header.render_size", &a.render_size, &b.render_size, emit);
+
+    // ----- kind payload -----
+    walk_kind(&a.kind, &b.kind, emit);
+
+    // ----- tail -----
+    match (a.tail.as_ref(), b.tail.as_ref()) {
+        (Some(ta), Some(tb)) => walk_tail(ta, tb, emit),
+        (None, None) => {}
+        _ => emit(
+            "header.tail.presence",
+            format!(
+                "a={} b={}",
+                a.tail.is_some(),
+                b.tail.is_some(),
+            ),
+        ),
+    }
+}
+
+fn walk_kind<F: FnMut(&str, String)>(a: &FrameKind, b: &FrameKind, emit: &mut F) {
+    let la = frame_kind_label(a);
+    let lb = frame_kind_label(b);
+    if la != lb {
+        emit("header.kind.tag", format!("a={la} b={lb}"));
+        return;
+    }
+    // Same discriminant — walk the per-variant payload.
+    match (a, b) {
+        (FrameKind::ShowExistingFrame { slot: sa }, FrameKind::ShowExistingFrame { slot: sb }) => {
+            diff_field("header.kind.ShowExistingFrame.slot", sa, sb, emit);
+        }
+        (FrameKind::KeyFrame, FrameKind::KeyFrame) => {}
+        (
+            FrameKind::IntraOnly {
+                reset_frame_context: ra,
+                refresh_frame_flags: fa,
+            },
+            FrameKind::IntraOnly {
+                reset_frame_context: rb,
+                refresh_frame_flags: fb,
+            },
+        ) => {
+            diff_field("header.kind.IntraOnly.reset_frame_context", ra, rb, emit);
+            diff_field("header.kind.IntraOnly.refresh_frame_flags", fa, fb, emit);
+        }
+        (
+            FrameKind::InterFrame {
+                reset_frame_context: ra,
+                refresh_frame_flags: fa,
+                ref_frame_indices: ia,
+                ref_frame_sign_biases: sa,
+                allow_high_precision_mv: ha,
+                interp_filter: ifa,
+            },
+            FrameKind::InterFrame {
+                reset_frame_context: rb,
+                refresh_frame_flags: fb,
+                ref_frame_indices: ib,
+                ref_frame_sign_biases: sb,
+                allow_high_precision_mv: hb,
+                interp_filter: ifb,
+            },
+        ) => {
+            diff_field("header.kind.InterFrame.reset_frame_context", ra, rb, emit);
+            diff_field("header.kind.InterFrame.refresh_frame_flags", fa, fb, emit);
+            diff_field("header.kind.InterFrame.ref_frame_indices", ia, ib, emit);
+            diff_field(
+                "header.kind.InterFrame.ref_frame_sign_biases",
+                sa,
+                sb,
+                emit,
+            );
+            diff_field(
+                "header.kind.InterFrame.allow_high_precision_mv",
+                ha,
+                hb,
+                emit,
+            );
+            diff_field("header.kind.InterFrame.interp_filter", ifa, ifb, emit);
+        }
+        // Unreachable: tags are equal so the pairs must match.
+        _ => emit("header.kind", format!("a={a:?} b={b:?}")),
+    }
+}
+
+fn walk_tail<F: FnMut(&str, String)>(a: &HeaderTail, b: &HeaderTail, emit: &mut F) {
+    diff_field(
+        "header.tail.refresh_frame_context",
+        &a.refresh_frame_context,
+        &b.refresh_frame_context,
+        emit,
+    );
+    diff_field(
+        "header.tail.frame_parallel_decoding_mode",
+        &a.frame_parallel_decoding_mode,
+        &b.frame_parallel_decoding_mode,
+        emit,
+    );
+    diff_field(
+        "header.tail.frame_context_idx",
+        &a.frame_context_idx,
+        &b.frame_context_idx,
+        emit,
+    );
+    walk_loopfilter(&a.loop_filter, &b.loop_filter, emit);
+    walk_quantization(&a.quantization, &b.quantization, emit);
+    walk_segmentation(&a.segmentation, &b.segmentation, emit);
+    walk_tile_info(&a.tile_info, &b.tile_info, emit);
+    diff_field(
+        "header.tail.first_partition_size",
+        &a.first_partition_size,
+        &b.first_partition_size,
+        emit,
+    );
+}
+
+fn walk_loopfilter<F: FnMut(&str, String)>(
+    a: &LoopFilterParams,
+    b: &LoopFilterParams,
+    emit: &mut F,
+) {
+    diff_field(
+        "header.tail.loop_filter.filter_level",
+        &a.filter_level,
+        &b.filter_level,
+        emit,
+    );
+    diff_field(
+        "header.tail.loop_filter.sharpness_level",
+        &a.sharpness_level,
+        &b.sharpness_level,
+        emit,
+    );
+    diff_field(
+        "header.tail.loop_filter.mode_ref_delta_enabled",
+        &a.mode_ref_delta_enabled,
+        &b.mode_ref_delta_enabled,
+        emit,
+    );
+    diff_field(
+        "header.tail.loop_filter.mode_ref_delta_update",
+        &a.mode_ref_delta_update,
+        &b.mode_ref_delta_update,
+        emit,
+    );
+    for i in 0..MAX_REF_LF_DELTAS {
+        let path = format!("header.tail.loop_filter.ref_deltas[{i}]");
+        diff_field(&path, &a.ref_deltas[i], &b.ref_deltas[i], emit);
+    }
+    for i in 0..MAX_MODE_LF_DELTAS {
+        let path = format!("header.tail.loop_filter.mode_deltas[{i}]");
+        diff_field(&path, &a.mode_deltas[i], &b.mode_deltas[i], emit);
+    }
+}
+
+fn walk_quantization<F: FnMut(&str, String)>(
+    a: &QuantizationParams,
+    b: &QuantizationParams,
+    emit: &mut F,
+) {
+    diff_field(
+        "header.tail.quantization.base_qindex",
+        &a.base_qindex,
+        &b.base_qindex,
+        emit,
+    );
+    diff_field(
+        "header.tail.quantization.y_dc_delta_q",
+        &a.y_dc_delta_q,
+        &b.y_dc_delta_q,
+        emit,
+    );
+    diff_field(
+        "header.tail.quantization.uv_dc_delta_q",
+        &a.uv_dc_delta_q,
+        &b.uv_dc_delta_q,
+        emit,
+    );
+    diff_field(
+        "header.tail.quantization.uv_ac_delta_q",
+        &a.uv_ac_delta_q,
+        &b.uv_ac_delta_q,
+        emit,
+    );
+}
+
+fn walk_segmentation<F: FnMut(&str, String)>(
+    a: &SegmentationParams,
+    b: &SegmentationParams,
+    emit: &mut F,
+) {
+    diff_field(
+        "header.tail.segmentation.enabled",
+        &a.enabled,
+        &b.enabled,
+        emit,
+    );
+    diff_field(
+        "header.tail.segmentation.update_map",
+        &a.update_map,
+        &b.update_map,
+        emit,
+    );
+    diff_field(
+        "header.tail.segmentation.temporal_update",
+        &a.temporal_update,
+        &b.temporal_update,
+        emit,
+    );
+    diff_field(
+        "header.tail.segmentation.update_data",
+        &a.update_data,
+        &b.update_data,
+        emit,
+    );
+    diff_field(
+        "header.tail.segmentation.abs_delta",
+        &a.abs_delta,
+        &b.abs_delta,
+        emit,
+    );
+    for i in 0..SEG_TREE_PROBS {
+        let path = format!("header.tail.segmentation.tree_probs[{i}]");
+        diff_field(&path, &a.tree_probs[i], &b.tree_probs[i], emit);
+    }
+    for i in 0..PREDICTION_PROBS {
+        let path = format!("header.tail.segmentation.pred_probs[{i}]");
+        diff_field(&path, &a.pred_probs[i], &b.pred_probs[i], emit);
+    }
+    for seg in 0..MAX_SEGMENTS {
+        for feat in 0..SEG_LVL_MAX {
+            let path = format!("header.tail.segmentation.feature_data[{seg}][{feat}]");
+            diff_field(
+                &path,
+                &a.feature_data[seg][feat],
+                &b.feature_data[seg][feat],
+                emit,
+            );
+        }
+    }
+}
+
+fn walk_tile_info<F: FnMut(&str, String)>(a: &TileInfo, b: &TileInfo, emit: &mut F) {
+    diff_field(
+        "header.tail.tile_info.log2_tile_cols",
+        &a.log2_tile_cols,
+        &b.log2_tile_cols,
+        emit,
+    );
+    diff_field(
+        "header.tail.tile_info.log2_tile_rows",
+        &a.log2_tile_rows,
+        &b.log2_tile_rows,
+        emit,
+    );
+}
+
+/// Helper: compare two values with `Debug` representation; if not
+/// equal, call `emit(path, "a={a:?} b={b:?}")`.
+fn diff_field<T, F>(path: &str, a: &T, b: &T, emit: &mut F)
+where
+    T: PartialEq + std::fmt::Debug + ?Sized,
+    F: FnMut(&str, String),
+{
+    if a != b {
+        emit(path, format!("a={a:?} b={b:?}"));
+    }
+}
+
+// -----------------------------------------------------------------------------
 // Driver
 // -----------------------------------------------------------------------------
 
@@ -574,26 +1282,15 @@ fn run_with_streams<E: Write, R: DiffReporter>(
     stderr: &mut E,
     reporter: &mut R,
 ) -> i32 {
-    // Notes for flags whose behaviour ships in later commits.
     let level_n = args.level.as_u8();
-    if level_n >= 1 {
+
+    // Notes for flags whose behaviour ships in later commits.
+    if level_n >= 3 {
         let _ = writeln!(
             stderr,
             "note: level {level_n} not yet implemented \
-             (commits 2-4 of stage4-design/diff-bitstream-harness.md)"
-        );
-    }
-    if args.frame.is_some() {
-        let _ = writeln!(
-            stderr,
-            "note: --frame is ignored at Level 0 (whole-file byte diff)"
-        );
-    }
-    if matches!(args.verbose, Verbose::Full) {
-        let _ = writeln!(
-            stderr,
-            "note: --verbose full not yet implemented for Level 0 \
-             (defaults to first-divergence behaviour)"
+             (commits 3-4 of stage4-design/diff-bitstream-harness.md); \
+             running levels 0..=2 only"
         );
     }
 
@@ -623,16 +1320,43 @@ fn run_with_streams<E: Write, R: DiffReporter>(
         return 2;
     }
 
+    // ----- Level 0: byte diff -----
     let diff = byte_diff(&a, &b, args.max_frames);
     match &diff {
         ByteDiff::Identical => {
-            // No divergence — reporter records nothing. Text format
-            // callers surface the "identical" line via the preamble
-            // path in main().
+            // No divergence at any level — short-circuit.
+            return reporter.finish();
         }
         ByteDiff::PrefixMismatch { .. } | ByteDiff::Diverge { .. } => {
             let msg = format_byte_diff(&diff);
             reporter.divergence(0, "byte", Some(&msg));
+        }
+    }
+
+    // ----- Levels 1+: parse the IVF on both sides and run higher
+    //                  levels. We only do this if the user asked for
+    //                  them (level_n >= 1) AND the byte diff already
+    //                  reported divergence (otherwise byte-identity
+    //                  guarantees parser-output identity too).
+    if level_n >= 1 {
+        let frames_a = match load_frames(&args.a) {
+            Ok(f) => f,
+            Err(e) => {
+                let _ = writeln!(stderr, "L1/L2 skipped: {e}");
+                return reporter.finish();
+            }
+        };
+        let frames_b = match load_frames(&args.b) {
+            Ok(f) => f,
+            Err(e) => {
+                let _ = writeln!(stderr, "L1/L2 skipped: {e}");
+                return reporter.finish();
+            }
+        };
+
+        level_1_diff(&frames_a, &frames_b, args, reporter);
+        if level_n >= 2 {
+            level_2_diff(&frames_a, &frames_b, args, reporter);
         }
     }
 
@@ -699,21 +1423,25 @@ fn main() -> ExitCode {
         }
     }
 
-    let code = match args.format {
+    let (code, had_diff) = match args.format {
         Format::Text => {
             let mut reporter = TextReporter::new(&mut out, args.verbose, args.exit_on_diff, color);
-            run_with_streams(&args, &mut err, &mut reporter)
+            let code = run_with_streams(&args, &mut err, &mut reporter);
+            (code, reporter.had_divergence())
         }
         Format::Json => {
             let mut reporter = JsonReporter::new(&mut out, args.verbose, args.exit_on_diff);
-            run_with_streams(&args, &mut err, &mut reporter)
+            let code = run_with_streams(&args, &mut err, &mut reporter);
+            (code, reporter.had_divergence())
         }
     };
 
-    // Original Stage 0 contract: when text format and no divergence,
-    // print "Identical: every byte matches." on stdout. The reporter
-    // doesn't see "no divergence" events so we surface it here.
-    if matches!(args.format, Format::Text) && code == 0 {
+    // Original Stage 0 contract: when text format and no divergence
+    // *at any level*, print "Identical: every byte matches." on stdout.
+    // We consult `had_divergence` rather than `code` because the
+    // latter is 0 both for "identical" and "divergent but --exit-on-diff
+    // not set".
+    if matches!(args.format, Format::Text) && !had_diff {
         let _ = writeln!(out, "Identical: every byte matches.");
     }
 
@@ -1144,5 +1872,341 @@ mod tests {
         let _ = (a, b);
         let err_s = String::from_utf8(err).unwrap();
         assert!(err_s.contains("level 4 not yet implemented"), "err: {err_s}");
+    }
+
+    // -------------------------------------------------------------------------
+    // Level 1 / Level 2 tests
+    // -------------------------------------------------------------------------
+
+    use rvp9_core::bitstream::frame::{sync, ColorSpace};
+    use rvp9_core::bitstream::raw::RawBitWriter;
+    use rvp9_core::bitstream::sub_parsers::get_tile_n_bits;
+
+    /// Build one minimal-keyframe VP9 frame payload (width × height,
+    /// Profile 0, BT.601, studio range, no render size, all-zero tail
+    /// except `first_partition_size = 1`). Returns the byte buffer
+    /// trimmed to the bits actually written (no trailing padding).
+    fn build_keyframe_payload(width: u32, height: u32) -> Vec<u8> {
+        let mut buf = vec![0u8; 256];
+        {
+            let mut w = RawBitWriter::new(&mut buf);
+            write_keyframe_bits(&mut w, width, height);
+        }
+        // Keep a few extra bytes so the reader has byte-cursor headroom
+        // when it reaches the trailing first_partition_size.
+        let used_bits = count_keyframe_bits(width);
+        let needed = used_bits.div_ceil(8) + 4;
+        buf.truncate(needed);
+        buf
+    }
+
+    fn write_keyframe_bits(w: &mut RawBitWriter, width: u32, height: u32) {
+        // Minimal keyframe: profile 0, show_frame=1, error_resilient=0,
+        // sync code, BT.601, studio range, frame size, no render size,
+        // all-zero tail, first_partition_size = 1.
+        w.write_literal(sync::FRAME_MARKER as u32, 2);
+        w.write_bit(0); // profile low
+        w.write_bit(0); // profile high → Profile 0
+        w.write_bit(0); // show_existing = 0
+        w.write_bit(0); // frame_type = KEY
+        w.write_bit(1); // show_frame = 1
+        w.write_bit(0); // error_resilient = 0
+        w.write_literal(sync::SYNC_CODE_0 as u32, 8);
+        w.write_literal(sync::SYNC_CODE_1 as u32, 8);
+        w.write_literal(sync::SYNC_CODE_2 as u32, 8);
+        w.write_literal(ColorSpace::Bt601 as u32, 3);
+        w.write_bit(0); // color_range = Studio
+        w.write_literal(width - 1, 16);
+        w.write_literal(height - 1, 16);
+        w.write_bit(0); // no render size
+        // Tail: refresh + fpdm + idx + loopfilter + quant + seg + tile + fps.
+        w.write_bit(0); // refresh_frame_context
+        w.write_bit(0); // frame_parallel_decoding_mode
+        w.write_literal(0, 2); // frame_context_idx = 0
+        w.write_literal(0, 6); // loopfilter filter_level
+        w.write_literal(0, 3); // sharpness
+        w.write_bit(0); // delta_enabled = 0
+        w.write_literal(0, 8); // base_qindex
+        w.write_bit(0);
+        w.write_bit(0);
+        w.write_bit(0);
+        w.write_bit(0); // segmentation disabled
+        // Tile cols: emit 1 zero bit only if min < max.
+        let mi_cols = ((width + 7) >> 3) as i32;
+        let (min_log2, max_log2) = get_tile_n_bits(mi_cols);
+        if max_log2 - min_log2 > 0 {
+            w.write_bit(0); // stop increment
+        }
+        w.write_bit(0); // log2_tile_rows = 0
+        w.write_literal(1, 16); // first_partition_size = 1 (non-zero)
+    }
+
+    /// Bit count corresponding to write_keyframe_bits — used to size
+    /// the buffer without trailing zero padding.
+    fn count_keyframe_bits(width: u32) -> usize {
+        let mi_cols = ((width + 7) >> 3) as i32;
+        let (min_log2, max_log2) = get_tile_n_bits(mi_cols);
+        let extra_col_bit: usize = if max_log2 - min_log2 > 0 { 1 } else { 0 };
+        // 2 (marker) + 2 (profile) + 1 (show_existing) + 1 (frame_type)
+        // + 1 (show) + 1 (err_res) + 24 (sync) + 3 (cs) + 1 (range)
+        // + 16 (w-1) + 16 (h-1) + 1 (no render) + 1+1+2 (rfc/fpdm/idx)
+        // + 6+3+1 (loopfilter) + 8+1+1+1 (quant) + 1 (seg disabled)
+        // + extra_col_bit + 1 (rows) + 16 (fps)
+        2 + 2 + 1 + 1 + 1 + 1 + 24 + 3 + 1 + 16 + 16 + 1
+            + 1 + 1 + 2
+            + 6 + 3 + 1
+            + 8 + 1 + 1 + 1
+            + 1
+            + extra_col_bit + 1
+            + 16
+    }
+
+    /// Wrap `payloads` in a minimal IVF file (32-byte header + per-frame
+    /// `(size_le_u32, pts_u64)` records + payload bytes).
+    fn wrap_in_ivf(payloads: &[&[u8]]) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(b"DKIF");
+        v.extend_from_slice(&[0u8; 28]);
+        for (i, p) in payloads.iter().enumerate() {
+            v.extend_from_slice(&(p.len() as u32).to_le_bytes());
+            v.extend_from_slice(&(i as u64).to_le_bytes());
+            v.extend_from_slice(p);
+        }
+        v
+    }
+
+    #[test]
+    fn uncompressed_header_partial_eq_smoke() {
+        // Parse the same payload twice; expect equality.
+        let payload = build_keyframe_payload(320, 240);
+        let refs: rvp9_core::bitstream::RefFrameSizes =
+            [None; rvp9_core::bitstream::REF_FRAMES];
+        let (h1, _) =
+            rvp9_core::bitstream::parse_uncompressed_header(&payload, &refs).unwrap();
+        let (h2, _) =
+            rvp9_core::bitstream::parse_uncompressed_header(&payload, &refs).unwrap();
+        assert_eq!(h1, h2);
+
+        // Now perturb height and re-parse → not equal.
+        let other = build_keyframe_payload(320, 480);
+        let (h3, _) =
+            rvp9_core::bitstream::parse_uncompressed_header(&other, &refs).unwrap();
+        assert_ne!(h1, h3);
+    }
+
+    /// Build a synthetic IVF file with N keyframes of the given size.
+    fn ivf_with_n_keyframes(n: usize, width: u32, height: u32) -> Vec<u8> {
+        let payload = build_keyframe_payload(width, height);
+        let refs: Vec<&[u8]> = (0..n).map(|_| payload.as_slice()).collect();
+        wrap_in_ivf(&refs)
+    }
+
+    fn run_with_text_reporter(args: &Args) -> (String, String, i32) {
+        let mut out = Vec::<u8>::new();
+        let mut err = Vec::<u8>::new();
+        let code = {
+            let mut reporter = TextReporter::new(&mut out, args.verbose, args.exit_on_diff, false);
+            run_with_streams(args, &mut err, &mut reporter)
+        };
+        (
+            String::from_utf8(out).unwrap(),
+            String::from_utf8(err).unwrap(),
+            code,
+        )
+    }
+
+    #[test]
+    fn l1_identity_emits_no_record() {
+        let buf = ivf_with_n_keyframes(3, 320, 240);
+        let a = write_tmp("a-l1-id", &buf);
+        let b = write_tmp("b-l1-id", &buf);
+        let args = Args {
+            a: a.clone(),
+            b: b.clone(),
+            level: Level::N(1),
+            frame: None,
+            format: Format::Text,
+            verbose: Verbose::Full,
+            max_frames: None,
+            no_color: true,
+            exit_on_diff: true,
+        };
+        let (out, err, code) = run_with_text_reporter(&args);
+        let _ = (a, b);
+        // Byte-identical → exit 0, no L1 records.
+        assert_eq!(code, 0, "out={out:?} err={err:?}");
+        assert!(!out.contains("Level 1"), "out={out:?}");
+    }
+
+    #[test]
+    fn l1_frame_count_mismatch_reported() {
+        let buf_a = ivf_with_n_keyframes(3, 320, 240);
+        let buf_b = ivf_with_n_keyframes(2, 320, 240);
+        let a = write_tmp("a-l1-count", &buf_a);
+        let b = write_tmp("b-l1-count", &buf_b);
+        let args = Args {
+            a: a.clone(),
+            b: b.clone(),
+            level: Level::N(1),
+            frame: None,
+            format: Format::Text,
+            verbose: Verbose::Full,
+            max_frames: None,
+            no_color: true,
+            exit_on_diff: true,
+        };
+        let (out, err, code) = run_with_text_reporter(&args);
+        let _ = (a, b);
+        assert_eq!(code, 1, "out={out:?} err={err:?}");
+        // Must contain a Level 1 frame-count divergence.
+        assert!(
+            out.contains("Level 1") && out.contains("frame-count"),
+            "out={out:?}"
+        );
+        // Reasoning text must mention the actual counts.
+        assert!(out.contains("a=3") && out.contains("b=2"), "out={out:?}");
+    }
+
+    #[test]
+    fn l2_identity_emits_no_record() {
+        let buf = ivf_with_n_keyframes(2, 320, 240);
+        let a = write_tmp("a-l2-id", &buf);
+        let b = write_tmp("b-l2-id", &buf);
+        let args = Args {
+            a: a.clone(),
+            b: b.clone(),
+            level: Level::N(2),
+            frame: None,
+            format: Format::Text,
+            verbose: Verbose::Full,
+            max_frames: None,
+            no_color: true,
+            exit_on_diff: true,
+        };
+        let (out, err, code) = run_with_text_reporter(&args);
+        let _ = (a, b);
+        assert_eq!(code, 0, "out={out:?} err={err:?}");
+        assert!(!out.contains("Level 2"), "out={out:?}");
+    }
+
+    #[test]
+    fn l2_field_divergence_golden() {
+        // Build two identical IVFs, then patch a single bit in B's
+        // first frame payload to bump filter_level by 1.
+        let buf_a = ivf_with_n_keyframes(1, 320, 240);
+        let mut buf_b = buf_a.clone();
+
+        // Locate the filter_level bits inside frame 1's payload. The
+        // payload starts at offset 32 (file header) + 12 (chunk header)
+        // = 44. Within the payload, count keyframe bits up to (but
+        // excluding) filter_level: 2+2+1+1+1+1 = 8 (= 1 byte) through
+        // error_resilient, then 24 sync + 3 cs + 1 range = 28 bits;
+        // 8+28 = 36; then 16+16 width/height = 32; 36+32 = 68; then
+        // 1 (no render) + 1+1+2 (rfc/fpdm/idx) = 5; 68+5 = 73 bits.
+        // filter_level occupies bits 73..79 (6 bits, MSB-first).
+        let payload_start = 44usize;
+        let filter_bit_offset = 73usize;
+        let byte_idx = payload_start + filter_bit_offset / 8;
+        let bit_in_byte = 7 - (filter_bit_offset % 8); // MSB-first
+        // filter_level is 0; flip the LSB of the 6-bit value (bit 73+5
+        // → bit_in_byte−5 within the same/next byte). We'll flip the
+        // *highest* of the 6 filter_level bits (bit 73 itself), which
+        // becomes filter_level = 32.
+        buf_b[byte_idx] ^= 1 << bit_in_byte;
+
+        let a = write_tmp("a-l2-fld", &buf_a);
+        let b = write_tmp("b-l2-fld", &buf_b);
+        let args = Args {
+            a: a.clone(),
+            b: b.clone(),
+            level: Level::N(2),
+            frame: None,
+            format: Format::Text,
+            verbose: Verbose::Full,
+            max_frames: None,
+            no_color: true,
+            exit_on_diff: true,
+        };
+        let (out, err, code) = run_with_text_reporter(&args);
+        let _ = (a, b);
+        assert_eq!(code, 1, "out={out:?} err={err:?}");
+        // Must contain a Level 2 filter_level record with the right
+        // path string and the right values.
+        assert!(
+            out.contains("header.tail.loop_filter.filter_level"),
+            "out={out:?}"
+        );
+        assert!(out.contains("packet=1 frame=0"), "out={out:?}");
+        assert!(out.contains("a=0") && out.contains("b=32"), "out={out:?}");
+    }
+
+    #[test]
+    fn l2_verbose_full_vs_first() {
+        // Build two IVFs that differ on TWO fields of frame 1.
+        // Flip filter_level highest bit AND sharpness highest bit.
+        let buf_a = ivf_with_n_keyframes(1, 320, 240);
+        let mut buf_b_full = buf_a.clone();
+
+        let payload_start = 44usize;
+        // filter_level top bit at bit 73.
+        let f_bit = 73usize;
+        let byte_idx = payload_start + f_bit / 8;
+        let bit_in_byte = 7 - (f_bit % 8);
+        buf_b_full[byte_idx] ^= 1 << bit_in_byte;
+        // sharpness top bit at bit 79 (6 bits later).
+        let s_bit = 79usize;
+        let byte_idx2 = payload_start + s_bit / 8;
+        let bit_in_byte2 = 7 - (s_bit % 8);
+        buf_b_full[byte_idx2] ^= 1 << bit_in_byte2;
+
+        let a = write_tmp("a-l2-vf", &buf_a);
+        let b = write_tmp("b-l2-vf", &buf_b_full);
+
+        // verbose=full → both records.
+        let args = Args {
+            a: a.clone(),
+            b: b.clone(),
+            level: Level::N(2),
+            frame: None,
+            format: Format::Text,
+            verbose: Verbose::Full,
+            max_frames: None,
+            no_color: true,
+            exit_on_diff: true,
+        };
+        let (out_full, _, _) = run_with_text_reporter(&args);
+
+        // verbose=first → only one Level 2 record.
+        let args = Args {
+            a: a.clone(),
+            b: b.clone(),
+            level: Level::N(2),
+            frame: None,
+            format: Format::Text,
+            verbose: Verbose::First,
+            max_frames: None,
+            no_color: true,
+            exit_on_diff: true,
+        };
+        let (out_first, _, _) = run_with_text_reporter(&args);
+        let _ = (a, b);
+
+        let level2_full_records = out_full
+            .lines()
+            .filter(|l| l.starts_with("Level 2") || l.contains("Level 2 "))
+            .count();
+        let level2_first_records = out_first
+            .lines()
+            .filter(|l| l.starts_with("Level 2") || l.contains("Level 2 "))
+            .count();
+
+        assert!(
+            level2_full_records >= 2,
+            "expected ≥2 Level 2 records under --verbose full; got {level2_full_records}, out={out_full:?}"
+        );
+        assert_eq!(
+            level2_first_records, 1,
+            "expected exactly 1 Level 2 record under --verbose first; got {level2_first_records}, out={out_first:?}"
+        );
     }
 }
