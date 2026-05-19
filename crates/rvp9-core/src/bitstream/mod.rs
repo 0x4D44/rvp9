@@ -37,7 +37,11 @@ pub use compressed_header::{
     parse_compressed_header, read_coef_probs, read_frame_reference_mode,
     read_frame_reference_mode_probs, read_inter_mode_probs, read_intra_inter_probs, read_mv_probs,
     read_partition_probs, read_skip_probs, read_switchable_interp_probs, read_tx_mode,
-    read_tx_mode_probs, read_y_mode_probs, tx_mode_to_biggest_tx_size,
+    read_tx_mode_probs, read_y_mode_probs, tx_mode_to_biggest_tx_size, write_compressed_header,
+    write_coef_probs, write_frame_reference_mode, write_frame_reference_mode_probs,
+    write_inter_mode_probs, write_intra_inter_probs, write_mv_probs, write_partition_probs,
+    write_skip_probs, write_switchable_interp_probs, write_tx_mode, write_tx_mode_probs,
+    write_y_mode_probs,
 };
 pub use error::BitstreamError;
 pub use frame::{

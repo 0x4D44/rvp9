@@ -51,12 +51,12 @@
 use super::error::BitstreamError;
 use super::frame::{InterpFilter, ReferenceMode};
 use crate::entropy::{
-    BLOCK_SIZE_GROUPS, BoolReader, CLASS0_SIZE, COEF_BANDS, COEFF_CONTEXTS, COMP_INTER_CONTEXTS,
-    CoeffProbsModel, DefaultTxProbs, FrameContext, INTER_MODE_CONTEXTS, INTER_MODES,
-    INTRA_INTER_CONTEXTS, INTRA_MODES, MV_CLASSES, MV_FP_SIZE, MV_JOINTS, MV_OFFSET_BITS,
-    NmvContext, PARTITION_CONTEXTS, PARTITION_TYPES, PLANE_TYPES, REF_CONTEXTS, REF_TYPES,
-    SKIP_CONTEXTS, SWITCHABLE_FILTER_CONTEXTS, SWITCHABLE_FILTERS, TX_SIZES, UNCONSTRAINED_NODES,
-    diff_update_prob,
+    BLOCK_SIZE_GROUPS, BoolReader, BoolWriter, CLASS0_SIZE, COEF_BANDS, COEFF_CONTEXTS,
+    COMP_INTER_CONTEXTS, CoeffProbsModel, DefaultTxProbs, FrameContext, INTER_MODE_CONTEXTS,
+    INTER_MODES, INTRA_INTER_CONTEXTS, INTRA_MODES, MV_CLASSES, MV_FP_SIZE, MV_JOINTS,
+    MV_OFFSET_BITS, NmvContext, PARTITION_CONTEXTS, PARTITION_TYPES, PLANE_TYPES, REF_CONTEXTS,
+    REF_TYPES, SKIP_CONTEXTS, SWITCHABLE_FILTER_CONTEXTS, SWITCHABLE_FILTERS, TX_SIZES,
+    UNCONSTRAINED_NODES, cond_prob_diff_update, diff_update_prob,
 };
 use crate::transforms::TxMode;
 
@@ -573,6 +573,494 @@ fn read_coef_probs_common(r: &mut BoolReader<'_>, coef_probs: &mut CoeffProbsMod
             }
         }
     }
+}
+
+// =====================================================================
+// Encoder side: write_compressed_header + per-section sub-writers.
+//
+// Mirrors libvpx `vp9/encoder/vp9_bitstream.c:1316-1394`
+// (`write_compressed_header`). Each `write_*` function below is the
+// direct inverse of the matching `read_*` above; together with
+// [`write_compressed_header`] they round-trip against
+// [`parse_compressed_header`].
+//
+// API shape (Strategy B — force-update on diff):
+//
+// - `pre_fc`: the probability bank state the decoder will start
+//   from. Typically the bank pointed at by `frame_context_idx`,
+//   inherited from the previous frame (or
+//   `FrameContext::new_default` on first use).
+// - `post_fc`: the probability bank the encoder wants the decoder
+//   to land on after applying this frame's compressed-header
+//   updates. Every slot where `pre[i] != post[i]` triggers a
+//   `gate=1` + `write_prob_diff_update(post, pre)` emission;
+//   every other slot emits `gate=0`.
+//
+// `cond_prob_diff_update` (from `entropy::prob_diff_writer`) is the
+// shared workhorse: writes one bit at `DIFF_UPDATE_PROB` and, when
+// the gate is set, the term-subexp `delp` payload. It also tracks
+// the running `*oldp` so a sequence of calls keeps in sync with
+// what the decoder will observe.
+// =====================================================================
+
+/// Write the `tx_mode` field. Inverse of [`read_tx_mode`]. Mirrors
+/// libvpx `write_tx_mode` (`vp9_bitstream.c:1078-1083`).
+///
+/// Wire format mirrors [`read_tx_mode`]:
+/// - `OnlyTx4x4 / AllowTx8x8 / AllowTx16x16` → 2 bits literal (0/1/2).
+/// - `AllowTx32x32` → 2 bits literal (3) + 1 extra bit (0).
+/// - `TxModeSelect` → 2 bits literal (3) + 1 extra bit (1).
+///
+/// Callers must NOT call this when `lossless == true`; the
+/// uncompressed-header lossless gate forces `tx_mode = OnlyTx4x4`
+/// without writing any bits (see [`write_compressed_header`]).
+pub fn write_tx_mode(bw: &mut BoolWriter<'_>, tx_mode: TxMode) {
+    match tx_mode {
+        TxMode::OnlyTx4x4 => bw.write_literal(0, 2),
+        TxMode::AllowTx8x8 => bw.write_literal(1, 2),
+        TxMode::AllowTx16x16 => bw.write_literal(2, 2),
+        TxMode::AllowTx32x32 => {
+            bw.write_literal(3, 2);
+            bw.write_bit(0);
+        }
+        TxMode::TxModeSelect => {
+            bw.write_literal(3, 2);
+            bw.write_bit(1);
+        }
+    }
+}
+
+/// Diff-update the per-context tx-size probabilities. Inverse of
+/// [`read_tx_mode_probs`]. Walk order matches that helper exactly.
+pub fn write_tx_mode_probs(
+    bw: &mut BoolWriter<'_>,
+    pre: &mut DefaultTxProbs,
+    post: &DefaultTxProbs,
+) {
+    for ctx in 0..TX_SIZE_CONTEXTS {
+        for j in 0..1 {
+            cond_prob_diff_update(bw, &mut pre.p8x8[ctx][j], post.p8x8[ctx][j]);
+        }
+    }
+    for ctx in 0..TX_SIZE_CONTEXTS {
+        for j in 0..2 {
+            cond_prob_diff_update(bw, &mut pre.p16x16[ctx][j], post.p16x16[ctx][j]);
+        }
+    }
+    for ctx in 0..TX_SIZE_CONTEXTS {
+        for j in 0..3 {
+            cond_prob_diff_update(bw, &mut pre.p32x32[ctx][j], post.p32x32[ctx][j]);
+        }
+    }
+}
+
+/// Diff-update the 3 per-context skip-flag probabilities. Inverse
+/// of [`read_skip_probs`].
+pub fn write_skip_probs(
+    bw: &mut BoolWriter<'_>,
+    pre: &mut [u8; SKIP_CONTEXTS],
+    post: &[u8; SKIP_CONTEXTS],
+) {
+    for (p_slot, n_slot) in pre.iter_mut().zip(post.iter()) {
+        cond_prob_diff_update(bw, p_slot, *n_slot);
+    }
+}
+
+/// Diff-update the coefficient probability tables for every TX
+/// size `[TX_4X4 .. max_tx_size(tx_mode)]`. Inverse of
+/// [`read_coef_probs`]. Mirrors libvpx `update_coef_probs`
+/// (`vp9_bitstream.c:435-498`) using the "always update if diff"
+/// policy: emits the per-TX-size `update_probs` gate bit as `1`
+/// iff any slot in that table differs from `pre`.
+///
+/// TX sizes beyond `max_tx_size(tx_mode)` are not in the wire
+/// format at all and must therefore match between `pre` and `post`
+/// — debug-asserted.
+pub fn write_coef_probs(
+    bw: &mut BoolWriter<'_>,
+    pre: &mut [CoeffProbsModel; TX_SIZES],
+    post: &[CoeffProbsModel; TX_SIZES],
+    tx_mode: TxMode,
+) {
+    let max_tx_size = tx_mode_to_biggest_tx_size(tx_mode);
+    for (tx_idx, (pre_table, post_table)) in pre.iter_mut().zip(post.iter()).enumerate() {
+        if tx_idx <= max_tx_size {
+            write_coef_probs_common(bw, pre_table, post_table);
+        } else {
+            debug_assert_eq!(
+                pre_table, post_table,
+                "TX size {tx_idx} > max_tx_size({max_tx_size}) but pre != post — \
+                 the encoder must raise tx_mode to update this table"
+            );
+        }
+    }
+}
+
+/// Per-TX-size body of [`write_coef_probs`]. Mirrors libvpx
+/// `update_coef_probs_common` (`vp9_bitstream.c:435-498`) at the
+/// "update bit" granularity. We always emit `update=1` when any
+/// slot differs and walk every slot (each with its own gate).
+fn write_coef_probs_common(
+    bw: &mut BoolWriter<'_>,
+    pre: &mut CoeffProbsModel,
+    post: &CoeffProbsModel,
+) {
+    let any_diff = pre != post;
+    if !any_diff {
+        bw.write_bit(0);
+        return;
+    }
+    bw.write_bit(1);
+    for (pre_plane, post_plane) in pre.iter_mut().zip(post.iter()).take(PLANE_TYPES) {
+        for (pre_ref, post_ref) in pre_plane.iter_mut().zip(post_plane.iter()).take(REF_TYPES) {
+            for (band_idx, (pre_band, post_band)) in pre_ref
+                .iter_mut()
+                .zip(post_ref.iter())
+                .take(COEF_BANDS)
+                .enumerate()
+            {
+                let n_contexts = band_coeff_contexts(band_idx);
+                for (pre_ctx, post_ctx) in
+                    pre_band.iter_mut().zip(post_band.iter()).take(n_contexts)
+                {
+                    for (pre_slot, post_slot) in pre_ctx
+                        .iter_mut()
+                        .zip(post_ctx.iter())
+                        .take(UNCONSTRAINED_NODES)
+                    {
+                        cond_prob_diff_update(bw, pre_slot, *post_slot);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Diff-update the inter-mode tree probabilities. Inverse of
+/// [`read_inter_mode_probs`].
+pub fn write_inter_mode_probs(
+    bw: &mut BoolWriter<'_>,
+    pre: &mut [[u8; INTER_MODES - 1]; INTER_MODE_CONTEXTS],
+    post: &[[u8; INTER_MODES - 1]; INTER_MODE_CONTEXTS],
+) {
+    for (pre_ctx, post_ctx) in pre.iter_mut().zip(post.iter()) {
+        for (p, n) in pre_ctx.iter_mut().zip(post_ctx.iter()) {
+            cond_prob_diff_update(bw, p, *n);
+        }
+    }
+}
+
+/// Diff-update the switchable interp-filter probabilities. Inverse
+/// of [`read_switchable_interp_probs`]. Caller is responsible for
+/// the `interp_filter == Switchable` gate.
+pub fn write_switchable_interp_probs(
+    bw: &mut BoolWriter<'_>,
+    pre: &mut [[u8; SWITCHABLE_FILTERS - 1]; SWITCHABLE_FILTER_CONTEXTS],
+    post: &[[u8; SWITCHABLE_FILTERS - 1]; SWITCHABLE_FILTER_CONTEXTS],
+) {
+    for (pre_ctx, post_ctx) in pre.iter_mut().zip(post.iter()) {
+        for (p, n) in pre_ctx.iter_mut().zip(post_ctx.iter()) {
+            cond_prob_diff_update(bw, p, *n);
+        }
+    }
+}
+
+/// Diff-update the intra/inter classification probabilities.
+/// Inverse of [`read_intra_inter_probs`].
+pub fn write_intra_inter_probs(
+    bw: &mut BoolWriter<'_>,
+    pre: &mut [u8; INTRA_INTER_CONTEXTS],
+    post: &[u8; INTRA_INTER_CONTEXTS],
+) {
+    for (p, n) in pre.iter_mut().zip(post.iter()) {
+        cond_prob_diff_update(bw, p, *n);
+    }
+}
+
+/// Write the frame-level `reference_mode`. Inverse of
+/// [`read_frame_reference_mode`]. Mirrors libvpx
+/// `write_frame_reference_mode` (`vp9_bitstream.c:1100-1110`).
+///
+/// When `compound_allowed == false`, asserts `reference_mode ==
+/// Single` and writes no bits.
+pub fn write_frame_reference_mode(
+    bw: &mut BoolWriter<'_>,
+    reference_mode: ReferenceMode,
+    compound_allowed: bool,
+) {
+    if !compound_allowed {
+        debug_assert_eq!(
+            reference_mode,
+            ReferenceMode::Single,
+            "compound_allowed=false but reference_mode={reference_mode:?}"
+        );
+        return;
+    }
+    match reference_mode {
+        ReferenceMode::Single => bw.write_bit(0),
+        ReferenceMode::Compound => {
+            bw.write_bit(1);
+            bw.write_bit(0);
+        }
+        ReferenceMode::Select => {
+            bw.write_bit(1);
+            bw.write_bit(1);
+        }
+    }
+}
+
+/// Diff-update the reference-mode-related probability tables.
+/// Inverse of [`read_frame_reference_mode_probs`]. The `reference_mode`
+/// argument gates which sub-tables are written, matching libvpx's
+/// reader gates exactly.
+///
+/// Mirrors libvpx's three-table writer signature; 8 args are the
+/// natural fit for a `(pre, post) × {comp_inter, single_ref, comp_ref}`
+/// fan-out, so clippy's `too_many_arguments` lint is silenced here.
+#[allow(clippy::too_many_arguments)]
+pub fn write_frame_reference_mode_probs(
+    bw: &mut BoolWriter<'_>,
+    reference_mode: ReferenceMode,
+    pre_comp_inter: &mut [u8; COMP_INTER_CONTEXTS],
+    post_comp_inter: &[u8; COMP_INTER_CONTEXTS],
+    pre_single_ref: &mut [[u8; 2]; REF_CONTEXTS],
+    post_single_ref: &[[u8; 2]; REF_CONTEXTS],
+    pre_comp_ref: &mut [u8; REF_CONTEXTS],
+    post_comp_ref: &[u8; REF_CONTEXTS],
+) {
+    if reference_mode == ReferenceMode::Select {
+        for (p, n) in pre_comp_inter.iter_mut().zip(post_comp_inter.iter()) {
+            cond_prob_diff_update(bw, p, *n);
+        }
+    }
+    if reference_mode != ReferenceMode::Compound {
+        for (pre_pair, post_pair) in pre_single_ref.iter_mut().zip(post_single_ref.iter()) {
+            cond_prob_diff_update(bw, &mut pre_pair[0], post_pair[0]);
+            cond_prob_diff_update(bw, &mut pre_pair[1], post_pair[1]);
+        }
+    }
+    if reference_mode != ReferenceMode::Single {
+        for (p, n) in pre_comp_ref.iter_mut().zip(post_comp_ref.iter()) {
+            cond_prob_diff_update(bw, p, *n);
+        }
+    }
+}
+
+/// Diff-update the intra-Y-mode-given-block-size probabilities.
+/// Inverse of [`read_y_mode_probs`].
+pub fn write_y_mode_probs(
+    bw: &mut BoolWriter<'_>,
+    pre: &mut [[u8; INTRA_MODES - 1]; BLOCK_SIZE_GROUPS],
+    post: &[[u8; INTRA_MODES - 1]; BLOCK_SIZE_GROUPS],
+) {
+    for (pre_group, post_group) in pre.iter_mut().zip(post.iter()) {
+        for (p, n) in pre_group.iter_mut().zip(post_group.iter()) {
+            cond_prob_diff_update(bw, p, *n);
+        }
+    }
+}
+
+/// Diff-update the partition-tree probabilities. Inverse of
+/// [`read_partition_probs`].
+pub fn write_partition_probs(
+    bw: &mut BoolWriter<'_>,
+    pre: &mut [[u8; PARTITION_TYPES - 1]; PARTITION_CONTEXTS],
+    post: &[[u8; PARTITION_TYPES - 1]; PARTITION_CONTEXTS],
+) {
+    for (pre_ctx, post_ctx) in pre.iter_mut().zip(post.iter()) {
+        for (p, n) in pre_ctx.iter_mut().zip(post_ctx.iter()) {
+            cond_prob_diff_update(bw, p, *n);
+        }
+    }
+}
+
+/// MV-prob update writer — inverse of the private `update_mv_probs`
+/// reader (`compressed_header.rs:409`). Mirrors libvpx
+/// `write_mv_update` (`vp9_bitstream.c:165-178`).
+///
+/// For each slot in `post`:
+/// - If `pre == post`, emit gate=0 at [`MV_UPDATE_PROB`].
+/// - Otherwise, emit gate=1, then the new prob's upper 7 bits as a
+///   literal (the wire format forces the LSB on, so MV probs are
+///   always odd). Updates `pre` in place.
+///
+/// Asserts every `post` MV-prob is odd, since the wire format
+/// cannot represent even values.
+fn write_update_mv_probs(bw: &mut BoolWriter<'_>, pre: &mut [u8], post: &[u8]) {
+    debug_assert_eq!(pre.len(), post.len());
+    for (p_slot, n_slot) in pre.iter_mut().zip(post.iter()) {
+        if *p_slot == *n_slot {
+            bw.write(0, MV_UPDATE_PROB);
+        } else {
+            debug_assert_eq!(
+                *n_slot & 1,
+                1,
+                "write_update_mv_probs: target MV prob {n_slot} is even, but wire \
+                 format forces LSB=1"
+            );
+            bw.write(1, MV_UPDATE_PROB);
+            bw.write_literal(u32::from(*n_slot >> 1), 7);
+            *p_slot = *n_slot;
+        }
+    }
+}
+
+/// Update the motion-vector probability context. Inverse of
+/// [`read_mv_probs`]. Walk order matches that helper exactly.
+pub fn write_mv_probs(
+    bw: &mut BoolWriter<'_>,
+    pre: &mut NmvContext,
+    post: &NmvContext,
+    allow_high_precision_mv: bool,
+) {
+    write_update_mv_probs(bw, &mut pre.joints, &post.joints);
+
+    for (pre_comp, post_comp) in pre.comps.iter_mut().zip(post.comps.iter()) {
+        write_update_mv_probs(
+            bw,
+            core::slice::from_mut(&mut pre_comp.sign),
+            core::slice::from_ref(&post_comp.sign),
+        );
+        write_update_mv_probs(bw, &mut pre_comp.classes, &post_comp.classes);
+        write_update_mv_probs(bw, &mut pre_comp.class0, &post_comp.class0);
+        write_update_mv_probs(bw, &mut pre_comp.bits, &post_comp.bits);
+    }
+
+    for (pre_comp, post_comp) in pre.comps.iter_mut().zip(post.comps.iter()) {
+        for j in 0..CLASS0_SIZE {
+            write_update_mv_probs(bw, &mut pre_comp.class0_fp[j], &post_comp.class0_fp[j]);
+        }
+        write_update_mv_probs(bw, &mut pre_comp.fp, &post_comp.fp);
+    }
+
+    if allow_high_precision_mv {
+        for (pre_comp, post_comp) in pre.comps.iter_mut().zip(post.comps.iter()) {
+            write_update_mv_probs(
+                bw,
+                core::slice::from_mut(&mut pre_comp.class0_hp),
+                core::slice::from_ref(&post_comp.class0_hp),
+            );
+            write_update_mv_probs(
+                bw,
+                core::slice::from_mut(&mut pre_comp.hp),
+                core::slice::from_ref(&post_comp.hp),
+            );
+        }
+    }
+}
+
+/// Top-level compressed-header writer. Inverse of
+/// [`parse_compressed_header`]. Mirrors libvpx
+/// `write_compressed_header` (`vp9_bitstream.c:1316-1394`).
+///
+/// Walk order must remain bit-for-bit identical to the parser's:
+///
+/// 1. `tx_mode` (skipped when `opts.lossless`).
+/// 2. If `tx_mode == TxModeSelect`, [`write_tx_mode_probs`].
+/// 3. [`write_coef_probs`] (gated per TX size by `tx_mode`).
+/// 4. [`write_skip_probs`].
+/// 5. If `!opts.intra_only`:
+///    [`write_inter_mode_probs`] → (if `opts.interp_filter ==
+///    Switchable`) [`write_switchable_interp_probs`] →
+///    [`write_intra_inter_probs`] → [`write_frame_reference_mode`] →
+///    [`write_frame_reference_mode_probs`] → [`write_y_mode_probs`]
+///    → [`write_partition_probs`] → [`write_mv_probs`].
+///
+/// `pre_fc` is consumed mutably and at return equals the bank state
+/// the decoder will land on (i.e., the post-update probabilities
+/// for every slot the writer touched). The bank also incorporates
+/// any slot in `post_fc` the wire format cannot reach — those slots
+/// remain at their `pre_fc` entry values and the writer asserts
+/// `pre_fc[unreachable] == post_fc[unreachable]` in debug builds.
+///
+/// # Errors
+///
+/// - [`BitstreamError::CompressedHeaderTooLarge`] if the
+///   `BoolWriter` overflowed its output buffer at any point.
+///
+/// # Panics
+///
+/// Debug builds panic if `target.tx_mode` does not match the
+/// caller's lossless gate (i.e. `lossless == true` implies
+/// `target.tx_mode == OnlyTx4x4`).
+pub fn write_compressed_header(
+    bw: &mut BoolWriter<'_>,
+    pre_fc: &mut FrameContext,
+    post_fc: &FrameContext,
+    opts: CompressedHeaderOptions,
+    target: &CompressedHeaderResult,
+) -> Result<(), BitstreamError> {
+    let tx_mode = target.tx_mode;
+    let reference_mode = target.reference_mode;
+
+    // 1. tx_mode (forced to OnlyTx4x4 in lossless frames; not written).
+    if opts.lossless {
+        debug_assert_eq!(
+            tx_mode,
+            TxMode::OnlyTx4x4,
+            "lossless frame must encode tx_mode = OnlyTx4x4 (forced by uncompressed header)"
+        );
+    } else {
+        write_tx_mode(bw, tx_mode);
+    }
+
+    // 2. tx_mode probs (only when TxModeSelect).
+    if tx_mode == TxMode::TxModeSelect {
+        write_tx_mode_probs(bw, &mut pre_fc.tx_probs, &post_fc.tx_probs);
+    } else {
+        debug_assert_eq!(
+            pre_fc.tx_probs, post_fc.tx_probs,
+            "tx_mode != TxModeSelect but tx_probs differ — wire format cannot carry this update"
+        );
+    }
+
+    // 3. Coef probs (gated per TX size by tx_mode).
+    write_coef_probs(bw, &mut pre_fc.coef_probs, &post_fc.coef_probs, tx_mode);
+
+    // 4. Skip probs.
+    write_skip_probs(bw, &mut pre_fc.skip_probs, &post_fc.skip_probs);
+
+    // 5. Inter branch.
+    if opts.intra_only {
+        debug_assert_eq!(
+            reference_mode,
+            ReferenceMode::Single,
+            "intra_only frame must have reference_mode = Single"
+        );
+    } else {
+        write_inter_mode_probs(bw, &mut pre_fc.inter_mode_probs, &post_fc.inter_mode_probs);
+
+        if opts.interp_filter == InterpFilter::Switchable {
+            write_switchable_interp_probs(
+                bw,
+                &mut pre_fc.switchable_interp_prob,
+                &post_fc.switchable_interp_prob,
+            );
+        }
+
+        write_intra_inter_probs(bw, &mut pre_fc.intra_inter_prob, &post_fc.intra_inter_prob);
+
+        write_frame_reference_mode(bw, reference_mode, opts.compound_allowed);
+        write_frame_reference_mode_probs(
+            bw,
+            reference_mode,
+            &mut pre_fc.comp_inter_prob,
+            &post_fc.comp_inter_prob,
+            &mut pre_fc.single_ref_prob,
+            &post_fc.single_ref_prob,
+            &mut pre_fc.comp_ref_prob,
+            &post_fc.comp_ref_prob,
+        );
+
+        write_y_mode_probs(bw, &mut pre_fc.y_mode_prob, &post_fc.y_mode_prob);
+        write_partition_probs(bw, &mut pre_fc.partition_prob, &post_fc.partition_prob);
+        write_mv_probs(bw, &mut pre_fc.nmvc, &post_fc.nmvc, opts.allow_high_precision_mv);
+    }
+
+    if bw.has_error() {
+        return Err(BitstreamError::CompressedHeaderTooLarge);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1508,5 +1996,410 @@ mod tests {
         assert_eq!(tables[1], DEFAULT_COEF_PROBS_8X8);
         assert_eq!(tables[2], DEFAULT_COEF_PROBS_16X16);
         assert_eq!(tables[3], DEFAULT_COEF_PROBS_32X32);
+    }
+
+    // =================================================================
+    // S4.07 — write_compressed_header round-trip tests.
+    // =================================================================
+
+    /// Encode `(pre_fc, post_fc, opts, target)` via
+    /// [`write_compressed_header`], stop the writer, and return the
+    /// emitted bytes.
+    fn encode_compressed_header(
+        pre_fc: &mut FrameContext,
+        post_fc: &FrameContext,
+        opts: CompressedHeaderOptions,
+        target: CompressedHeaderResult,
+    ) -> Vec<u8> {
+        let mut buf = vec![0u8; 16 * 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        write_compressed_header(&mut bw, pre_fc, post_fc, opts, &target).expect("encode");
+        let size = bw.stop_encode().expect("stop_encode");
+        buf.truncate(size);
+        buf
+    }
+
+    /// Round-trip helper: encode the compressed header for `(pre,
+    /// post, opts, target)`, then parse it back starting from a
+    /// fresh `pre` clone and assert the resulting `FrameContext`
+    /// equals `post` and the parser's result matches `target`.
+    fn round_trip_compressed_header(
+        pre: &FrameContext,
+        post: &FrameContext,
+        opts: CompressedHeaderOptions,
+        target: CompressedHeaderResult,
+    ) {
+        let mut pre_for_write = pre.clone();
+        let bytes = encode_compressed_header(&mut pre_for_write, post, opts, target);
+        // Writer's pre_fc trajectory: at return it equals what the
+        // decoder will land on (modulo any reader-not-touched slots
+        // which are equal between pre and post by construction).
+        assert_eq!(
+            &pre_for_write, post,
+            "writer post-state should equal decoder post-state"
+        );
+
+        let mut fc = pre.clone();
+        let parsed = parse_compressed_header(&bytes, &mut fc, opts).expect("parse");
+        assert_eq!(parsed, target, "tx_mode / reference_mode mismatch");
+        assert_eq!(&fc, post, "decoder bank mismatch");
+    }
+
+    /// Identity round-trip (pre == post) for the smallest possible
+    /// frame configuration. Writer emits only `gate=0` bits; decoder
+    /// leaves `fc` untouched.
+    #[test]
+    fn write_compressed_header_identity_lossless_intra_only() {
+        let pre = FrameContext::new_default();
+        let post = pre.clone();
+        let opts = CompressedHeaderOptions {
+            lossless: true,
+            intra_only: true,
+            interp_filter: InterpFilter::EightTap,
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+        let target = CompressedHeaderResult {
+            tx_mode: TxMode::OnlyTx4x4,
+            reference_mode: ReferenceMode::Single,
+        };
+        round_trip_compressed_header(&pre, &post, opts, target);
+    }
+
+    /// Identity round-trip on a full inter frame (every code path
+    /// runs: tx-mode-probs, all interp probs, all reference-mode
+    /// sub-tables, HP MV). All gates must be 0; fc unchanged.
+    #[test]
+    fn write_compressed_header_identity_inter_select_with_hp() {
+        let pre = FrameContext::new_default();
+        let post = pre.clone();
+        let opts = CompressedHeaderOptions {
+            lossless: false,
+            intra_only: false,
+            interp_filter: InterpFilter::Switchable,
+            compound_allowed: true,
+            allow_high_precision_mv: true,
+        };
+        let target = CompressedHeaderResult {
+            tx_mode: TxMode::TxModeSelect,
+            reference_mode: ReferenceMode::Select,
+        };
+        round_trip_compressed_header(&pre, &post, opts, target);
+    }
+
+    /// Every tx_mode round-trips through write_tx_mode / read_tx_mode.
+    #[test]
+    fn write_tx_mode_round_trip_every_variant() {
+        for tx in [
+            TxMode::OnlyTx4x4,
+            TxMode::AllowTx8x8,
+            TxMode::AllowTx16x16,
+            TxMode::AllowTx32x32,
+            TxMode::TxModeSelect,
+        ] {
+            let mut buf = vec![0u8; 64];
+            let mut bw = BoolWriter::start_encode(&mut buf);
+            write_tx_mode(&mut bw, tx);
+            for _ in 0..16 {
+                bw.write_bit(0);
+            }
+            let n = bw.stop_encode().expect("stop");
+            buf.truncate(n);
+            let mut r = BoolReader::new(&buf).expect("init");
+            assert_eq!(read_tx_mode(&mut r), tx, "tx={tx:?}");
+        }
+    }
+
+    /// Every reference_mode round-trips through
+    /// `write_frame_reference_mode` / `read_frame_reference_mode`
+    /// when compound is allowed.
+    #[test]
+    fn write_frame_reference_mode_round_trip_all_variants() {
+        for rm in [
+            ReferenceMode::Single,
+            ReferenceMode::Compound,
+            ReferenceMode::Select,
+        ] {
+            let mut buf = vec![0u8; 64];
+            let mut bw = BoolWriter::start_encode(&mut buf);
+            write_frame_reference_mode(&mut bw, rm, true);
+            for _ in 0..16 {
+                bw.write_bit(0);
+            }
+            let n = bw.stop_encode().expect("stop");
+            buf.truncate(n);
+            let mut r = BoolReader::new(&buf).expect("init");
+            assert_eq!(read_frame_reference_mode(&mut r, true), rm);
+        }
+    }
+
+    /// Per-section perturbation: change exactly one slot in
+    /// `skip_probs` and verify the writer emits the diff and the
+    /// decoder recovers the post-update state.
+    #[test]
+    fn write_compressed_header_perturbs_skip_probs() {
+        let pre = FrameContext::new_default();
+        let mut post = pre.clone();
+        post.skip_probs[1] = post.skip_probs[1].wrapping_sub(17).max(1);
+        assert_ne!(pre.skip_probs, post.skip_probs);
+        let opts = CompressedHeaderOptions {
+            lossless: true,
+            intra_only: true,
+            interp_filter: InterpFilter::EightTap,
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+        let target = CompressedHeaderResult {
+            tx_mode: TxMode::OnlyTx4x4,
+            reference_mode: ReferenceMode::Single,
+        };
+        round_trip_compressed_header(&pre, &post, opts, target);
+    }
+
+    /// Per-section perturbation: y_mode_prob, partition_prob.
+    #[test]
+    fn write_compressed_header_perturbs_intra_probs() {
+        let pre = FrameContext::new_default();
+        let mut post = pre.clone();
+        post.y_mode_prob[2][1] = 99;
+        post.partition_prob[5][2] = 33;
+        let opts = CompressedHeaderOptions {
+            lossless: false,
+            intra_only: false,
+            interp_filter: InterpFilter::EightTap,
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+        let target = CompressedHeaderResult {
+            tx_mode: TxMode::OnlyTx4x4,
+            reference_mode: ReferenceMode::Single,
+        };
+        round_trip_compressed_header(&pre, &post, opts, target);
+    }
+
+    /// Multi-section perturbation: touch 5+ sub-tables across the
+    /// frame context. The writer must walk every diff'd slot in
+    /// the libvpx order; the decoder recovers the full target bank.
+    #[test]
+    fn write_compressed_header_perturbs_multiple_sections() {
+        let pre = FrameContext::new_default();
+        let mut post = pre.clone();
+        // tx_probs (visited because target uses TxModeSelect).
+        post.tx_probs.p8x8[0][0] = 11;
+        post.tx_probs.p16x16[1][0] = 22;
+        post.tx_probs.p32x32[0][2] = 33;
+        // coef_probs (every TX size, since TxModeSelect).
+        post.coef_probs[0][0][0][0][0][0] = 44;
+        post.coef_probs[3][1][1][5][5][2] = 55;
+        // skip_probs.
+        post.skip_probs[0] = 66;
+        // inter branch sections.
+        post.inter_mode_probs[3][1] = 77;
+        post.switchable_interp_prob[2][0] = 88;
+        post.intra_inter_prob[2] = 99;
+        post.comp_inter_prob[1] = 111;
+        post.single_ref_prob[2][1] = 122;
+        post.comp_ref_prob[0] = 133;
+        post.y_mode_prob[1][4] = 144;
+        post.partition_prob[10][1] = 155;
+        // MV probs: target must be odd (wire format constraint).
+        post.nmvc.joints[0] = 13;
+        post.nmvc.comps[0].classes[3] = 199;
+        post.nmvc.comps[1].class0_hp = 41;
+        post.nmvc.comps[1].hp = 251;
+
+        let opts = CompressedHeaderOptions {
+            lossless: false,
+            intra_only: false,
+            interp_filter: InterpFilter::Switchable,
+            compound_allowed: true,
+            allow_high_precision_mv: true,
+        };
+        let target = CompressedHeaderResult {
+            tx_mode: TxMode::TxModeSelect,
+            reference_mode: ReferenceMode::Select,
+        };
+        round_trip_compressed_header(&pre, &post, opts, target);
+    }
+
+    /// Tx-mode coverage: every variant round-trips end-to-end
+    /// through the top-level writer when there are no prob diffs.
+    #[test]
+    fn write_compressed_header_every_tx_mode_round_trip() {
+        let pre = FrameContext::new_default();
+        let post = pre.clone();
+        for tx_mode in [
+            TxMode::OnlyTx4x4,
+            TxMode::AllowTx8x8,
+            TxMode::AllowTx16x16,
+            TxMode::AllowTx32x32,
+            TxMode::TxModeSelect,
+        ] {
+            let opts = CompressedHeaderOptions {
+                lossless: false,
+                intra_only: true,
+                interp_filter: InterpFilter::EightTap,
+                compound_allowed: false,
+                allow_high_precision_mv: false,
+            };
+            let target = CompressedHeaderResult {
+                tx_mode,
+                reference_mode: ReferenceMode::Single,
+            };
+            round_trip_compressed_header(&pre, &post, opts, target);
+        }
+    }
+
+    /// Reference-mode coverage: every variant round-trips end-to-end
+    /// when compound is allowed.
+    #[test]
+    fn write_compressed_header_every_reference_mode_round_trip() {
+        let pre = FrameContext::new_default();
+        let post = pre.clone();
+        for rm in [
+            ReferenceMode::Single,
+            ReferenceMode::Compound,
+            ReferenceMode::Select,
+        ] {
+            let opts = CompressedHeaderOptions {
+                lossless: false,
+                intra_only: false,
+                interp_filter: InterpFilter::EightTap,
+                compound_allowed: true,
+                allow_high_precision_mv: false,
+            };
+            let target = CompressedHeaderResult {
+                tx_mode: TxMode::OnlyTx4x4,
+                reference_mode: rm,
+            };
+            round_trip_compressed_header(&pre, &post, opts, target);
+        }
+    }
+
+    /// Lossless path: the writer MUST skip the tx_mode field. The
+    /// frame can still update coef/skip/etc, but tx_mode_probs is
+    /// also skipped (tx_mode is OnlyTx4x4, not TxModeSelect).
+    #[test]
+    fn write_compressed_header_lossless_skips_tx_mode_bits() {
+        let pre = FrameContext::new_default();
+        let mut post = pre.clone();
+        post.skip_probs[0] = 7;
+
+        let opts = CompressedHeaderOptions {
+            lossless: true,
+            intra_only: true,
+            interp_filter: InterpFilter::EightTap,
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+        let target = CompressedHeaderResult {
+            tx_mode: TxMode::OnlyTx4x4,
+            reference_mode: ReferenceMode::Single,
+        };
+        round_trip_compressed_header(&pre, &post, opts, target);
+    }
+
+    /// Intra-only path: writer skips the entire inter branch.
+    /// Round-trip with coef/skip diffs but no inter-frame diffs.
+    #[test]
+    fn write_compressed_header_intra_only_skips_inter_branch() {
+        let pre = FrameContext::new_default();
+        let mut post = pre.clone();
+        post.coef_probs[0][1][0][3][2][1] = 30;
+
+        let opts = CompressedHeaderOptions {
+            lossless: false,
+            intra_only: true,
+            interp_filter: InterpFilter::Switchable, // ignored on intra-only
+            compound_allowed: true,                  // ignored on intra-only
+            allow_high_precision_mv: true,           // ignored on intra-only
+        };
+        let target = CompressedHeaderResult {
+            tx_mode: TxMode::OnlyTx4x4,
+            reference_mode: ReferenceMode::Single,
+        };
+        round_trip_compressed_header(&pre, &post, opts, target);
+    }
+
+    /// Captured frame round-trip: parse `vp90-2-05-resize.ivf` first
+    /// keyframe's compressed partition into `post_fc`, encode
+    /// starting from `FrameContext::new_default()`, re-parse, assert
+    /// the post-update bank equals `post_fc`.
+    #[test]
+    fn write_compressed_header_captured_frame_round_trip() {
+        use crate::bitstream::header::parse_uncompressed_header;
+        use crate::bitstream::header::FrameKind;
+        use crate::bitstream::header::RefFrameSizes;
+
+        let bytes = std::fs::read("../../tests/conformance/vectors/vp90-2-05-resize.ivf")
+            .expect("test vector must be present");
+        assert_eq!(&bytes[..4], b"DKIF");
+        let frame_size = u32::from_le_bytes(
+            bytes[32..36].try_into().expect("4 bytes available"),
+        ) as usize;
+        let payload = &bytes[44..44 + frame_size];
+
+        let no_refs = RefFrameSizes::default();
+        let (uh, uh_size) = parse_uncompressed_header(payload, &no_refs)
+            .expect("uncompressed parses");
+        assert_eq!(uh.kind, FrameKind::KeyFrame);
+        let tail = uh.tail.as_ref().expect("keyframe must carry a tail");
+        let fp_size = tail.first_partition_size as usize;
+        let compressed = &payload[uh_size..uh_size + fp_size];
+
+        // Decode reference: keyframe is intra-only; lossless is
+        // governed by quantization.
+        let lossless = tail.quantization.is_lossless();
+        let opts = CompressedHeaderOptions {
+            lossless,
+            intra_only: true,
+            interp_filter: InterpFilter::EightTap,
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+
+        let mut post_fc = FrameContext::new_default();
+        let target = parse_compressed_header(compressed, &mut post_fc, opts)
+            .expect("captured compressed parses");
+
+        // Now encode starting from default; the writer's `pre` is
+        // `FrameContext::new_default()` (the bank state libvpx
+        // decoder uses for the first keyframe).
+        let pre = FrameContext::new_default();
+        round_trip_compressed_header(&pre, &post_fc, opts, target);
+    }
+
+    /// MV-prob writer constraint: target MV probs must be odd. We
+    /// can't easily verify the panic message without `should_panic`
+    /// — verify the round-trip works when targets are odd.
+    #[test]
+    fn write_mv_probs_round_trip_with_odd_targets() {
+        let pre = FrameContext::new_default();
+        let mut post = pre.clone();
+        // Several MV-prob updates, all odd.
+        post.nmvc.joints[0] = 1;
+        post.nmvc.joints[1] = 255;
+        post.nmvc.joints[2] = 127;
+        post.nmvc.comps[0].sign = 99;  // 99 odd? 99=0b1100011 → yes
+        post.nmvc.comps[0].classes[0] = 51;
+        post.nmvc.comps[1].classes[9] = 73;
+        post.nmvc.comps[0].class0_fp[0][0] = 33;
+        post.nmvc.comps[1].fp[2] = 199;
+        // HP slots — note these are gated on allow_high_precision_mv.
+        post.nmvc.comps[0].class0_hp = 65;
+        post.nmvc.comps[1].hp = 25;
+
+        let opts = CompressedHeaderOptions {
+            lossless: true,
+            intra_only: false,
+            interp_filter: InterpFilter::EightTap,
+            compound_allowed: false,
+            allow_high_precision_mv: true,
+        };
+        let target = CompressedHeaderResult {
+            tx_mode: TxMode::OnlyTx4x4,
+            reference_mode: ReferenceMode::Single,
+        };
+        round_trip_compressed_header(&pre, &post, opts, target);
     }
 }

@@ -118,6 +118,13 @@ pub enum BitstreamError {
     /// `vp9_decodeframe.c:2910`.
     CompressedHeaderReaderError,
 
+    /// The compressed-header boolean encoder ran past the end of its
+    /// output buffer during write. Mirrors libvpx's
+    /// `vpx_writer.error` sticky flag (`vpx_dsp/bitwriter.h:74`).
+    /// Also surfaced when the produced header would exceed the
+    /// 16-bit `first_partition_size` field (`vp9_bitstream.c:1441-1443`).
+    CompressedHeaderTooLarge,
+
     /// A per-tile size prefix declared more bytes than the input
     /// slice had remaining. Mirrors libvpx
     /// `vp9_decodeframe.c:1669-1671`
@@ -175,6 +182,9 @@ impl fmt::Display for BitstreamError {
             }
             Self::CompressedHeaderReaderError => {
                 f.write_str("compressed-header boolean decoder: read past end of partition")
+            }
+            Self::CompressedHeaderTooLarge => {
+                f.write_str("compressed-header boolean encoder: output buffer overflow")
             }
             Self::InvalidTileSize {
                 tile_row,

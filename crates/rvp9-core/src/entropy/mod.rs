@@ -35,6 +35,7 @@ pub mod frame_context;
 pub mod kf_probs;
 pub mod mv_probs;
 pub mod pareto;
+pub mod prob_diff_writer;
 pub mod tables;
 
 pub use adapt::{
@@ -50,6 +51,7 @@ pub use detokenize::{
     VP9_CAT6_PROB, VP9_COEFBAND_TRANS_4X4, VP9_COEFBAND_TRANS_8X8PLUS, ZERO_TOKEN, decode_coefs,
 };
 pub use diff_update::{DIFF_UPDATE_PROB, diff_update_prob, inv_remap_prob};
+pub use prob_diff_writer::{cond_prob_diff_update, remap_prob, write_prob_diff_update};
 pub use default_probs::{
     BLOCK_SIZE_GROUPS, COMP_INTER_CONTEXTS, DEFAULT_COMP_INTER_PROB, DEFAULT_COMP_REF_PROB,
     DEFAULT_IF_UV_PROBS, DEFAULT_IF_Y_PROBS, DEFAULT_INTER_MODE_PROBS, DEFAULT_INTRA_INTER_PROB,
