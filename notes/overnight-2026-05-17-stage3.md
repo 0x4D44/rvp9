@@ -974,3 +974,100 @@ Arthur triages all `WEDGED` and `WEDGED-BLOCKED` entries on wake.
     when there's a behavioral diff in production — push for a
     concrete differential dump (pre-LF Y) to PROVE which pipeline
     stage diverges.
+
+## D.25 — Stage 3 EXIT (2026-05-19) 🎯
+
+**Result:** 175 passed / 16 mismatched / 10 skipped → **191 passed /
+0 mismatched / 10 skipped / 201 total.** All 16 remaining mismatches
+(tile_1x4 8 + tile_1x8 8) lit up; conformance gate switched from
+ratchet (`MAX_MISMATCHES = 16`) to hard `assert_eq!(total_mismatched
+== 0)`. Stage 3 closed.
+
+**Root cause:** Residual decode loop in `reconstruct_inter_block`
+(`crates/rvp9-decoder/src/reconstruct_inter.rs`) iterated the full
+`plane_bh_4x4` × `plane_bw_4x4` extent of every block, including the
+4×4 cells whose top-left lies outside the visible frame for partial-
+bottom / partial-right blocks. Libvpx's `predict_recon_inter`
+(`vp9_decodeframe.c:892-921`) clamps that iteration via:
+
+```c
+max_blocks_wide = n4_w + (mb_to_right_edge  < 0 ? mb_to_right_edge  >> (5 + ss_x) : 0)
+max_blocks_high = n4_h + (mb_to_bottom_edge < 0 ? mb_to_bottom_edge >> (5 + ss_y) : 0)
+```
+
+The unclamped iteration in rvp9 reads coef tokens for those
+invisible cells — drifting the bool-coder cursor relative to libvpx
+on every partial-edge inter block. With 1920×1080 (mi_rows=135 = 16×8
++ 7) and tile_1x4 / tile_1x8 vectors, the partial-bottom SB row
+of any non-first tile accumulates enough drift that the **altref
+(non-show) frame** decodes wrong partition / mode for the partial-
+bottom-row SBs near the tile's right edge. That altref then gets
+splatted into the ref-pool, and the **next visible inter frame**
+reads it as a compound reference — surfacing as the ~3000-pixel diff
+band on SB row 16 of tile_1x4 frame 3 and the analogous bands on
+tile_1x8.
+
+**Fix:** add the same `max_blocks_{wide,high}` clamp to rvp9's
+residual decode loop. Threads new fields `mi_rows` / `mi_cols` through
+`InterBlockInputs` (the obvious shape — libvpx pulls them from
+`cm->mi_{rows,cols}` for the same formula). Six lines of math
+extending the existing `loff < plane_bh_4x4` / `aoff < plane_bw_4x4`
+loop bounds to clamped versions. Test sites in
+`reconstruct_inter.rs` get the obvious sentinel
+(`mi_{rows,cols} = 1 << 16`) — the synthetic blocks don't sit near
+frame edges, so the clamp is a no-op there.
+
+**Why this didn't surface earlier:**
+
+  - tile_1x2 has only ONE tile boundary (at col 960). The partial-
+    bottom SBs near col 960 are inside tile 0, which starts at
+    mi_col=0 — no tile-relative drift accumulates because tile 0's
+    BoolReader sees the same bits libvpx's tile 0 sees. tile_1x4 /
+    tile_1x8 have additional internal tile boundaries, so the
+    failing SBs land inside tile 1 / 2 / 3, whose BoolReaders have
+    their own buffer + cursor and accumulate drift independently.
+  - The keyframe MD5s match bit-exactly today (filter_level > 0
+    keyframes light up via the K2.c LF wireup) because the intra
+    path in `reconstruct_intra_planes` (`tile.rs:1500-1700`)
+    already clamps its TX iteration to the visible region via
+    `n_4x4` adjustments — only the inter path's parallel loop in
+    `reconstruct_inter_block` was missing the clamp.
+  - D.23's entropy-parity finding ("every per-block syntax element
+    cursor matches libvpx") looked at INTERMI logging which fires
+    AFTER `read_inter_block_mode_info` returns — i.e. before the
+    residual decode loop. The cursor was identical at the entry of
+    every per-block trace point; the drift accumulates INSIDE
+    decode_block_tokens for the invisible-edge TX cells, which the
+    INTERMI trace doesn't cover.
+
+**Localization path (for future "looks-like-recon-but-it's-parser" bugs):**
+
+  1. `RVP9_DISABLE_LF=1` on both sides (rvp9 + libvpx-stock; D.17
+     wired the env hook on libvpx). Diff pre-LF Y via
+     `dump_frame_diff`. We confirmed pre-LF differs ⇒ ruled out LF
+     as the bug surface.
+  2. Add `RVP9_TRACE_MC_FILTER=row,colmin,colmax` to scope the MC
+     trace to a specific SB band (`reconstruct_inter.rs`). Diff
+     rvp9 vs libvpx MC events at the failing SBs. Different bsize
+     /mv/ref at same `(mi_row, mi_col)` ⇒ ruled out MC kernel and
+     pointed at *upstream* mode-info or partition divergence.
+  3. Re-trace `RVP9_TRACE_INTERMI` for every decoded frame (not
+     just the visible ones; libvpx's trace tags each frame with
+     `f=N` so altrefs are visible). Diff per-frame. Frame 4 (the
+     altref preceding frame 3) had a 5-bit cursor drift entering
+     mi=(128, 104) — first divergence-point.
+  4. Walk backwards from there. Cursor matched at mi=(134, 100)
+     `post_modeinfo` (count=11 both sides), diverged at
+     mi=(128, 104) `enter`. The only thing between those two
+     events is **the residual decode for the previous block**.
+     Inspect `reconstruct_inter_block`'s loop bounds vs libvpx's
+     `predict_recon_inter` ⇒ missing clamp.
+
+**Code touched:** `crates/rvp9-decoder/src/reconstruct_inter.rs`
+(add fields + clamp), `crates/rvp9-decoder/src/tile.rs` (thread
+`mi_rows` / `mi_cols`), `crates/rvp9-harness/tests/conformance.rs`
+(swap ratchet for `assert_eq!(total_mismatched, 0)` + raise
+`MIN_PASSES` to 191).
+
+**Status: Stage 3 EXIT achieved. No mismatches across all 201
+conformance frames.**

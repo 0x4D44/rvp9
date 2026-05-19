@@ -2053,6 +2053,8 @@ fn decode_inter_block(
                 refs: block_refs,
                 dequant_per_plane: [dequant_y, dequant_u, dequant_v],
                 lossless: params.base.lossless,
+                mi_rows: params.base.mi_rows,
+                mi_cols: params.base.mi_cols,
             };
             reconstruct_inter_block(
                 reader,

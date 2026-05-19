@@ -89,6 +89,11 @@ pub struct InterBlockInputs<'a> {
     pub dequant_per_plane: [(i32, i32); 3],
     /// `true` ⇒ lossless mode (forces `TxType::DctDct`).
     pub lossless: bool,
+    /// Frame-wide mi rows. Used for partial-bottom / partial-right edge
+    /// clamping of the residual decode loop (D.25).
+    pub mi_rows: usize,
+    /// Frame-wide mi cols. See `mi_rows`.
+    pub mi_cols: usize,
 }
 
 /// Reconstruct one inter coding block at frame-pixel origin
@@ -366,7 +371,29 @@ pub fn reconstruct_inter_block(
                     // Prints per-MC: mi, plane, ref, mv (Q3), block w/h,
                     // dst origin, total_x_q4/total_y_q4, int_x/int_y,
                     // subpel_x_q4/subpel_y_q4, ref_frame enum.
-                    if std::env::var("RVP9_TRACE_MC").is_ok() {
+                    // D.25 — additional gate on `RVP9_TRACE_MC_FILTER=row,colmin,colmax`
+                    // to scope the trace to specific failing SB rows. Used to
+                    // localize tile_1x4 frame-3 partial-bottom MC divergence to
+                    // the altref (frame 4) partition decode upstream.
+                    let trace_mc_pass = if std::env::var("RVP9_TRACE_MC").is_ok() {
+                        match std::env::var("RVP9_TRACE_MC_FILTER").ok() {
+                            None => true,
+                            Some(s) => {
+                                let parts: Vec<&str> = s.split(',').collect();
+                                if parts.len() == 3 {
+                                    let r: usize = parts[0].parse().unwrap_or(0);
+                                    let cmin: usize = parts[1].parse().unwrap_or(0);
+                                    let cmax: usize = parts[2].parse().unwrap_or(0);
+                                    mi_row == r && mi_col >= cmin && mi_col < cmax
+                                } else {
+                                    true
+                                }
+                            }
+                        }
+                    } else {
+                        false
+                    };
+                    if trace_mc_pass {
                         let int_x = total_x_q4 >> SUBPEL_BITS;
                         let int_y = total_y_q4 >> SUBPEL_BITS;
                         let subpel_x = total_x_q4 & SUBPEL_MASK;
@@ -430,11 +457,56 @@ pub fn reconstruct_inter_block(
         } else {
             let plane_dequant_pair = inputs.dequant_per_plane[plane];
 
+            // D.25 — frame-edge clamp for partial-bottom / partial-right
+            // blocks, mirroring libvpx `predict_recon_inter`
+            // (`vp9_decodeframe.c:892-921`) which iterates with:
+            //
+            //   max_blocks_wide = n4_w + (mb_to_right_edge >> (5 + ss_x))
+            //   max_blocks_high = n4_h + (mb_to_bottom_edge >> (5 + ss_y))
+            //
+            // (where the second term is only applied when mb_to_*_edge < 0
+            // i.e. the block extends past the frame edge). Without this
+            // clamp rvp9 reads coef tokens for the invisible-edge TX cells,
+            // drifting the bool-coder cursor relative to libvpx for any
+            // partial-row/col inter block. Surfaced as the SB row 16
+            // (mi_rows - mi_row = 7) divergence on tile_1x4 / tile_1x8 at
+            // 1920×1080 / 3840×2160. The intra path doesn't hit this
+            // because keyframes are bit-exact today; libvpx applies the
+            // same clamp in `predict_recon_intra`.
+            let bw_mi = usize::from(bsize.n_8x8_wide());
+            let bh_mi = usize::from(bsize.n_8x8_high());
+            let mb_to_right_edge_px = if is_sub8 {
+                // libvpx applies the partial-row/col clamp to the parent
+                // 8×8 cell, so use bw=1/bh=1 here. Sub-8 blocks never
+                // straddle a frame edge in practice (the parent 8×8 is
+                // the unit of edge-clamping).
+                (inputs.mi_cols as i64 - 1 - mi_col as i64) * 64
+            } else {
+                (inputs.mi_cols as i64 - bw_mi as i64 - mi_col as i64) * 64
+            };
+            let mb_to_bottom_edge_px = if is_sub8 {
+                (inputs.mi_rows as i64 - 1 - mi_row as i64) * 64
+            } else {
+                (inputs.mi_rows as i64 - bh_mi as i64 - mi_row as i64) * 64
+            };
+            let max_blocks_wide = if mb_to_right_edge_px >= 0 {
+                plane_bw_4x4
+            } else {
+                let clamp = (mb_to_right_edge_px >> (5 + ss_x)) as isize;
+                ((plane_bw_4x4 as isize) + clamp).max(0) as usize
+            };
+            let max_blocks_high = if mb_to_bottom_edge_px >= 0 {
+                plane_bh_4x4
+            } else {
+                let clamp = (mb_to_bottom_edge_px >> (5 + ss_y)) as isize;
+                ((plane_bh_4x4 as isize) + clamp).max(0) as usize
+            };
+
             // Iterate TX positions inside the plane's coding block.
             let mut loff = 0usize;
-            while loff < plane_bh_4x4 {
+            while loff < max_blocks_high {
                 let mut aoff = 0usize;
-                while aoff < plane_bw_4x4 {
+                while aoff < max_blocks_wide {
                     let tx_px_x = plane_px_x + aoff * 4;
                     let tx_px_y = plane_px_y + loff * 4;
                     let tx_dst_off = tx_px_y * dst_stride + tx_px_x;
@@ -1135,6 +1207,8 @@ mod tests {
             refs: [Some(&ref_buf), None],
             dequant_per_plane: [(8, 16); 3],
             lossless: false,
+            mi_rows: 1 << 16,
+            mi_cols: 1 << 16,
         };
 
         reconstruct_inter_block(
@@ -1221,6 +1295,8 @@ mod tests {
             refs: [Some(&ref_buf), None],
             dequant_per_plane: [(8, 16); 3],
             lossless: false,
+            mi_rows: 1 << 16,
+            mi_cols: 1 << 16,
         };
 
         reconstruct_inter_block(
@@ -1292,6 +1368,8 @@ mod tests {
             refs: [Some(&ref_buf), None],
             dequant_per_plane: [(8, 16); 3],
             lossless: false,
+            mi_rows: 1 << 16,
+            mi_cols: 1 << 16,
         };
 
         reconstruct_inter_block(
@@ -1367,6 +1445,8 @@ mod tests {
             refs: [Some(&ref0), Some(&ref1)],
             dequant_per_plane: [(8, 16); 3],
             lossless: false,
+            mi_rows: 1 << 16,
+            mi_cols: 1 << 16,
         };
 
         reconstruct_inter_block(
@@ -1497,6 +1577,8 @@ mod tests {
             refs: [Some(&ref_buf), None],
             dequant_per_plane: [(8, 16); 3],
             lossless: false,
+            mi_rows: 1 << 16,
+            mi_cols: 1 << 16,
         };
 
         decode_and_reconstruct_inter_block(
@@ -1588,6 +1670,8 @@ mod tests {
             refs: [Some(&ref_buf), None],
             dequant_per_plane: [(8, 16); 3],
             lossless: false,
+            mi_rows: 1 << 16,
+            mi_cols: 1 << 16,
         };
 
         reconstruct_inter_block(
@@ -1682,6 +1766,8 @@ mod tests {
             refs: [Some(&ref_buf), None],
             dequant_per_plane: [(8, 16); 3],
             lossless: false,
+            mi_rows: 1 << 16,
+            mi_cols: 1 << 16,
         };
 
         reconstruct_inter_block(

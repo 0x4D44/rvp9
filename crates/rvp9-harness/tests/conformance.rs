@@ -146,13 +146,13 @@ fn conformance_runner_walks_all_vectors() {
          {total_skipped} skipped / {total_expected} total"
     );
 
-    // Ratcheting baseline (set during overnight 2026-05-17 floor milestone
-    // when the first keyframe match — vp90-2-02-size-08x08.webm frame 1 —
-    // landed). The final load-bearing Stage 3 gate is `total_mismatched
-    // == 0`, but while we iterate on the mismatched keyframes the
-    // ratchet keeps regression signal visible: lowering `MAX_MISMATCHES`
-    // as we fix bugs, raising `MIN_PASSES` as we light up frames.
-    const MIN_PASSES: usize = 175;
+    // Stage 3 EXIT — `total_mismatched == 0` is the final load-bearing
+    // gate. With D.25's partial-bottom edge-clamp fix the last 16 mis-
+    // matches lit up; we now assert hard zero instead of ratcheting.
+    // `MIN_PASSES` is kept as defense-in-depth so any future regression
+    // that drops `total_passed` (e.g. someone introduces an Unimplemented
+    // path) still trips the gate.
+    const MIN_PASSES: usize = 191;
     // D.24 (2026-05-19): fix scaled-MC for resize vectors. Two
     // distinct bugs (one Y, one chroma) that surface together on any
     // inter frame whose reference frame has a different size than the
@@ -301,14 +301,25 @@ fn conformance_runner_walks_all_vectors() {
     // D45 / D63 / D207 intra-pred. Conformance: 3/158/40 → 6/155/40.
     // D.5 (2026-05-18): `extend_mc_border` scratch-buffer fallback.
     // Conformance: 2/159/40 → 3/158/40.
+    // D.25 (2026-05-19): Stage 3 EXIT. Fixed partial-bottom / partial-
+    // right residual-decode loop clamp in `reconstruct_inter_block` —
+    // libvpx's `predict_recon_inter` (`vp9_decodeframe.c:892-921`) gates
+    // the per-4×4-block iteration on `max_blocks_{wide,high}` derived
+    // from `mb_to_{right,bottom}_edge`; rvp9 was iterating the full
+    // plane extent and reading coef tokens for the invisible-edge TX
+    // cells, drifting the bool-coder cursor relative to libvpx for any
+    // partial-row/col inter block. Surfaced on tile_1x4 / tile_1x8 at
+    // 1920×1080 / 3840×2160 where the partial-bottom SB row + altref
+    // compound reference let the cursor drift cascade visible into
+    // frame 3 / 5 / 7 / etc. via MC. Lights up the final 16 mismatches
+    // (8 tile_1x4 + 8 tile_1x8) → 175/16/10 → 191/0/10.
     // Pre-D.3.a baseline: 1/9/191.
-    const MAX_MISMATCHES: usize = 16;
     assert!(
         total_passed >= MIN_PASSES,
         "regression: expected at least {MIN_PASSES} passed, got {total_passed}",
     );
-    assert!(
-        total_mismatched <= MAX_MISMATCHES,
-        "regression: expected at most {MAX_MISMATCHES} mismatched, got {total_mismatched}",
+    assert_eq!(
+        total_mismatched, 0,
+        "stage 3 exit: any mismatch is a regression",
     );
 }
