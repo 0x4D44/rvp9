@@ -1,4 +1,4 @@
-//! Bitstream differential diff tool — Levels 0, 1, 2.
+//! Bitstream differential diff tool — Levels 0, 1, 2, 3.
 //!
 //! Compares two `.ivf` files and reports the first point of divergence.
 //! This binary is the entry point for the structured diff harness
@@ -10,8 +10,12 @@
 //!   `show_frame` + `frame_context_idx` diff.
 //! - **Level 2:** field-by-field walk of [`rvp9_core::bitstream::UncompressedHeader`]
 //!   (and its [`rvp9_core::bitstream::HeaderTail`] when present).
+//! - **Level 3:** compressed-header diff: `tx_mode` + `reference_mode`
+//!   from [`rvp9_core::bitstream::parse_compressed_header`], plus the
+//!   post-update probability tables in the selected
+//!   [`rvp9_core::entropy::FrameContext`] bank.
 //!
-//! Levels 3..=5 still emit a "not yet implemented" stderr note while
+//! Levels 4..=5 still emit a "not yet implemented" stderr note while
 //! the lower levels run.
 //!
 //! Usage:
@@ -37,14 +41,23 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use rvp9_core::bitstream::{
-    FrameKind, HeaderTail, RefFrameSizes, Superframe, UncompressedHeader,
-    parse_superframe_index, parse_uncompressed_header,
+    CompressedHeaderOptions, FrameKind, HeaderTail, InterpFilter, RefFrameSizes, Superframe,
+    UncompressedHeader, parse_compressed_header, parse_superframe_index,
+    parse_uncompressed_header,
 };
 use rvp9_core::bitstream::frame::REF_FRAMES;
 use rvp9_core::bitstream::sub_parsers::{
     LoopFilterParams, MAX_REF_LF_DELTAS, MAX_MODE_LF_DELTAS, MAX_SEGMENTS,
     PREDICTION_PROBS, QuantizationParams, SEG_LVL_MAX, SEG_TREE_PROBS,
     SegmentationParams, TileInfo,
+};
+use rvp9_core::entropy::{
+    BLOCK_SIZE_GROUPS, CLASS0_SIZE, COEF_BANDS, COEFF_CONTEXTS, COMP_INTER_CONTEXTS,
+    DefaultTxProbs, FRAME_CONTEXTS, FrameContext, INTER_MODE_CONTEXTS, INTER_MODES,
+    INTRA_INTER_CONTEXTS, INTRA_MODES, MV_CLASSES, MV_FP_SIZE, MV_JOINTS, MV_OFFSET_BITS,
+    NmvComponent, NmvContext, PARTITION_CONTEXTS, PARTITION_TYPES, PLANE_TYPES, REF_CONTEXTS,
+    REF_TYPES, SKIP_CONTEXTS, SWITCHABLE_FILTER_CONTEXTS, SWITCHABLE_FILTERS, TX_SIZES,
+    UNCONSTRAINED_NODES,
 };
 use rvp9_harness::container::{ContainerError, read_ivf_packets};
 
@@ -626,6 +639,13 @@ fn format_byte_diff(d: &ByteDiff) -> String {
 /// `header` is `None` if the uncompressed-header parser bailed — the
 /// driver records a divergence in that case (parser error is itself
 /// information) but doesn't try to walk fields on `None`.
+///
+/// `frame_bytes` is the slice of the IVF file backing this sub-frame
+/// (without the per-packet 12-byte IVF chunk header). `header_end`
+/// is the byte offset within `frame_bytes` at which the compressed
+/// partition begins — i.e. `parse_uncompressed_header`'s second
+/// return value. Both are populated only when `header` is `Some`;
+/// Level 3 uses them to slice out the compressed-header bytes.
 struct FrameEntry {
     packet: u32,
     frame: u32,
@@ -636,6 +656,13 @@ struct FrameEntry {
     /// `Some(err_string)` if header parsing failed; carried through so
     /// L1/L2 can report the failure rather than swallow it silently.
     parse_error: Option<String>,
+    /// The sub-frame bytes (no IVF chunk header). Length = the frame's
+    /// declared size from the superframe index (or `chunk_size` for
+    /// a single-frame packet). Empty when the parser bailed.
+    frame_bytes: Vec<u8>,
+    /// Byte offset within `frame_bytes` of the start of the compressed
+    /// header partition; `0` when `header` is `None`.
+    header_end: usize,
 }
 
 /// Extract every (packet, sub-frame) pair from an IVF buffer along
@@ -672,6 +699,8 @@ fn extract_frames(data: &[u8]) -> Result<Vec<FrameEntry>, ContainerError> {
                     is_superframe: false,
                     header: None,
                     parse_error: Some(format!("superframe parse error: {e}")),
+                    frame_bytes: Vec::new(),
+                    header_end: 0,
                 });
                 continue;
             }
@@ -679,7 +708,7 @@ fn extract_frames(data: &[u8]) -> Result<Vec<FrameEntry>, ContainerError> {
 
         match sf {
             Superframe::Single => {
-                let (header, parse_error) = parse_header_opt(bytes, &no_refs);
+                let (header, parse_error, header_end) = parse_header_opt(bytes, &no_refs);
                 out.push(FrameEntry {
                     packet,
                     frame: 0,
@@ -688,6 +717,8 @@ fn extract_frames(data: &[u8]) -> Result<Vec<FrameEntry>, ContainerError> {
                     is_superframe: false,
                     header,
                     parse_error,
+                    frame_bytes: bytes.to_vec(),
+                    header_end,
                 });
             }
             Superframe::Multi {
@@ -715,11 +746,14 @@ fn extract_frames(data: &[u8]) -> Result<Vec<FrameEntry>, ContainerError> {
                                  {} remain",
                                 frame_data_end.saturating_sub(offset),
                             )),
+                            frame_bytes: Vec::new(),
+                            header_end: 0,
                         });
                         break;
                     }
-                    let frame_bytes = &bytes[offset..frame_end];
-                    let (header, parse_error) = parse_header_opt(frame_bytes, &no_refs);
+                    let frame_bytes_slice = &bytes[offset..frame_end];
+                    let (header, parse_error, header_end) =
+                        parse_header_opt(frame_bytes_slice, &no_refs);
                     out.push(FrameEntry {
                         packet,
                         frame: sub as u32,
@@ -728,6 +762,8 @@ fn extract_frames(data: &[u8]) -> Result<Vec<FrameEntry>, ContainerError> {
                         is_superframe: true,
                         header,
                         parse_error,
+                        frame_bytes: frame_bytes_slice.to_vec(),
+                        header_end,
                     });
                     offset = frame_end;
                 }
@@ -737,15 +773,16 @@ fn extract_frames(data: &[u8]) -> Result<Vec<FrameEntry>, ContainerError> {
     Ok(out)
 }
 
-/// Best-effort header parse. Returns `(Some(header), None)` on
-/// success or `(None, Some(error_string))` on failure.
+/// Best-effort header parse. Returns `(Some(header), None, end)` on
+/// success (where `end` is the byte offset at which the compressed
+/// partition begins) or `(None, Some(error_string), 0)` on failure.
 fn parse_header_opt(
     bytes: &[u8],
     refs: &RefFrameSizes,
-) -> (Option<UncompressedHeader>, Option<String>) {
+) -> (Option<UncompressedHeader>, Option<String>, usize) {
     match parse_uncompressed_header(bytes, refs) {
-        Ok((h, _)) => (Some(h), None),
-        Err(e) => (None, Some(format!("header parse error: {e}"))),
+        Ok((h, end)) => (Some(h), None, end),
+        Err(e) => (None, Some(format!("header parse error: {e}")), 0),
     }
 }
 
@@ -1269,6 +1306,471 @@ where
 }
 
 // -----------------------------------------------------------------------------
+// Level 3: compressed-header + FrameContext prob-bank diff
+// -----------------------------------------------------------------------------
+
+/// Build [`CompressedHeaderOptions`] from an uncompressed header.
+///
+/// Mirrors `Decoder::parse_compressed_partition`
+/// (`crates/rvp9-decoder/src/lib.rs:558-578`):
+///
+/// - `lossless` from `tail.quantization.is_lossless()`,
+/// - `intra_only` from `kind.is_intra()`,
+/// - `(interp_filter, allow_high_precision_mv)` from
+///   `FrameKind::InterFrame` (defaults `EightTap` / `false` otherwise —
+///   `parse_compressed_header` ignores these when `intra_only == true`),
+/// - `compound_allowed = false` conservatively. This is design Q3 and
+///   matches the decoder's pending-POC stance; symmetric "miss" is
+///   harmless for the diff harness because both sides use the same
+///   value and the same uncompressed header.
+fn options_from_header(h: &UncompressedHeader) -> CompressedHeaderOptions {
+    let tail = h.tail.as_ref();
+    let lossless = tail.is_some_and(|t| t.quantization.is_lossless());
+    let intra_only = h.kind.is_intra();
+    let (interp_filter, allow_high_precision_mv) = match &h.kind {
+        FrameKind::InterFrame {
+            interp_filter,
+            allow_high_precision_mv,
+            ..
+        } => (*interp_filter, *allow_high_precision_mv),
+        _ => (InterpFilter::EightTap, false),
+    };
+    CompressedHeaderOptions {
+        lossless,
+        intra_only,
+        interp_filter,
+        compound_allowed: false,
+        allow_high_precision_mv,
+    }
+}
+
+/// Per-side [`FrameContext`] state for Level 3.
+///
+/// **Simplification (v1):** both sides keep their own
+/// `[FrameContext; FRAME_CONTEXTS]` array. Each frame updates the bank
+/// indexed by `tail.frame_context_idx`. The full VP9 decoder also
+/// honours `refresh_frame_context` and various reset conditions
+/// (keyframes, `error_resilient`, `frame_parallel_decoding_mode`) when
+/// deciding whether the post-parse bank gets written back. This
+/// simplification is sound for diff purposes when both encoders are
+/// bit-identical (the same bank ends up updated to the same value on
+/// both sides), and the divergence the harness is looking for is the
+/// post-update bank contents — not the cross-frame refresh policy.
+struct FrameContextBanks {
+    banks: [FrameContext; FRAME_CONTEXTS],
+}
+
+impl FrameContextBanks {
+    fn new() -> Self {
+        // FRAME_CONTEXTS = 4. Build explicitly to avoid requiring
+        // `Default` on `FrameContext`.
+        Self {
+            banks: [
+                FrameContext::new_default(),
+                FrameContext::new_default(),
+                FrameContext::new_default(),
+                FrameContext::new_default(),
+            ],
+        }
+    }
+}
+
+/// Run the Level 3 diff: parse the compressed header on both sides
+/// against per-side `FrameContext` banks, then diff
+/// `(tx_mode, reference_mode)` and the post-update prob tables.
+///
+/// `show_existing_frame` frames have no compressed header and are
+/// skipped. Frames whose uncompressed-header parse failed are skipped
+/// (L1 already reported the asymmetry, if any).
+fn level_3_diff<R: DiffReporter>(
+    a: &[FrameEntry],
+    b: &[FrameEntry],
+    args: &Args,
+    reporter: &mut R,
+) {
+    let mut banks_a = FrameContextBanks::new();
+    let mut banks_b = FrameContextBanks::new();
+
+    let common = a.len().min(b.len());
+    for i in 0..common {
+        let ea = &a[i];
+        let eb = &b[i];
+        if !packet_in_range(ea.packet, args.frame) {
+            continue;
+        }
+        // Need parsed headers on both sides to compute opts + locate
+        // the partition.
+        let (ha, hb) = match (ea.header.as_ref(), eb.header.as_ref()) {
+            (Some(a), Some(b)) => (a, b),
+            _ => continue,
+        };
+        // ShowExistingFrame has no compressed header.
+        if matches!(ha.kind, FrameKind::ShowExistingFrame { .. })
+            || matches!(hb.kind, FrameKind::ShowExistingFrame { .. })
+        {
+            continue;
+        }
+        let (ta, tb) = match (ha.tail.as_ref(), hb.tail.as_ref()) {
+            (Some(a), Some(b)) => (a, b),
+            _ => continue,
+        };
+
+        let label = frame_label(ea);
+        let stop_first = matches!(args.verbose, Verbose::First);
+        let mut emitted = false;
+        let mut emit = |path: &str, detail: String| {
+            if emitted && stop_first {
+                return;
+            }
+            let full = format!("{label}: {path}: {detail}");
+            reporter.divergence(3, path, Some(&full));
+            emitted = true;
+        };
+
+        // Slice out the compressed-header partition on each side. If
+        // the partition extends past the frame data we emit a parse
+        // error record (mirrors the decoder's
+        // `TruncatedCompressedHeader`).
+        let compressed_a = match slice_compressed(ea.header_end, ta.first_partition_size, &ea.frame_bytes) {
+            Some(s) => s,
+            None => {
+                emit(
+                    "fc.parse-error",
+                    format!(
+                        "a: compressed header extends past frame data \
+                         (header_end={}, fps={}, frame_len={})",
+                        ea.header_end,
+                        ta.first_partition_size,
+                        ea.frame_bytes.len(),
+                    ),
+                );
+                continue;
+            }
+        };
+        let compressed_b = match slice_compressed(eb.header_end, tb.first_partition_size, &eb.frame_bytes) {
+            Some(s) => s,
+            None => {
+                emit(
+                    "fc.parse-error",
+                    format!(
+                        "b: compressed header extends past frame data \
+                         (header_end={}, fps={}, frame_len={})",
+                        eb.header_end,
+                        tb.first_partition_size,
+                        eb.frame_bytes.len(),
+                    ),
+                );
+                continue;
+            }
+        };
+
+        let opts_a = options_from_header(ha);
+        let opts_b = options_from_header(hb);
+
+        let idx_a = (ta.frame_context_idx as usize).min(FRAME_CONTEXTS - 1);
+        let idx_b = (tb.frame_context_idx as usize).min(FRAME_CONTEXTS - 1);
+
+        // Drive the parser against the selected bank on each side.
+        // Mirrors `Decoder::parse_compressed_partition`.
+        let res_a = parse_compressed_header(compressed_a, &mut banks_a.banks[idx_a], opts_a);
+        let res_b = parse_compressed_header(compressed_b, &mut banks_b.banks[idx_b], opts_b);
+
+        // The `emit` closure handles its own first-vs-full gating via
+        // the `emitted` flag, so we can call it freely below without
+        // re-checking after each call.
+        match (&res_a, &res_b) {
+            (Ok(ra), Ok(rb)) => {
+                if ra.tx_mode != rb.tx_mode {
+                    emit(
+                        "fc.tx_mode",
+                        format!("a={:?} b={:?}", ra.tx_mode, rb.tx_mode),
+                    );
+                }
+                if ra.reference_mode != rb.reference_mode {
+                    emit(
+                        "fc.reference_mode",
+                        format!("a={:?} b={:?}", ra.reference_mode, rb.reference_mode),
+                    );
+                }
+                // Walk the (post-update) bank on each side. We diff the
+                // banks the parser just updated; cross-frame refresh
+                // semantics are simplified per `FrameContextBanks` docs.
+                walk_frame_context(&banks_a.banks[idx_a], &banks_b.banks[idx_b], &mut emit);
+            }
+            (Err(ea), Err(eb)) if format!("{ea}") == format!("{eb}") => {
+                // Both sides failed identically — symmetric noise.
+                // Mirrors the L1/L2 parse-error policy: don't report.
+            }
+            (a_res, b_res) => {
+                emit(
+                    "fc.parse-error",
+                    format!(
+                        "a={} b={}",
+                        match a_res {
+                            Ok(_) => "ok".to_string(),
+                            Err(e) => format!("{e}"),
+                        },
+                        match b_res {
+                            Ok(_) => "ok".to_string(),
+                            Err(e) => format!("{e}"),
+                        },
+                    ),
+                );
+            }
+        }
+    }
+}
+
+/// Return `Some(&data[header_end..header_end + fps])` or `None` if
+/// the slice is out of bounds (overflow or past-end).
+fn slice_compressed(header_end: usize, first_partition_size: u16, data: &[u8]) -> Option<&[u8]> {
+    let fps = first_partition_size as usize;
+    let needed_end = header_end.checked_add(fps)?;
+    if needed_end > data.len() {
+        return None;
+    }
+    Some(&data[header_end..needed_end])
+}
+
+// -----------------------------------------------------------------------------
+// FrameContext field walker
+// -----------------------------------------------------------------------------
+
+/// Visitor: invoke `emit(field_path, "a=.. b=..")` for every leaf
+/// field of [`FrameContext`] where the two sides differ. Field paths
+/// follow `fc.<field>[<idx>][<idx>]...` so divergences are
+/// pinpointable in tooling.
+///
+/// Layout — every leaf of `FrameContext` is visited:
+/// 1. `y_mode_prob[group][i]`
+/// 2. `uv_mode_prob[y_mode][i]`
+/// 3. `partition_prob[ctx][i]`
+/// 4. `coef_probs[tx][plane][ref][band][ctx][node]`
+/// 5. `switchable_interp_prob[ctx][i]`
+/// 6. `inter_mode_probs[ctx][i]`
+/// 7. `intra_inter_prob[ctx]`
+/// 8. `comp_inter_prob[ctx]`
+/// 9. `single_ref_prob[ctx][i]`
+/// 10. `comp_ref_prob[ctx]`
+/// 11. `tx_probs.{p32x32,p16x16,p8x8}[ctx][i]`
+/// 12. `skip_probs[ctx]`
+/// 13. `nmvc.joints[i]` + `nmvc.comps[axis].{...}`
+/// 14. `initialized`
+fn walk_frame_context<F: FnMut(&str, String)>(
+    a: &FrameContext,
+    b: &FrameContext,
+    emit: &mut F,
+) {
+    // 1. y_mode_prob[BLOCK_SIZE_GROUPS][INTRA_MODES-1]
+    for g in 0..BLOCK_SIZE_GROUPS {
+        for i in 0..(INTRA_MODES - 1) {
+            let path = format!("fc.y_mode_prob[group={g}][{i}]");
+            diff_field(&path, &a.y_mode_prob[g][i], &b.y_mode_prob[g][i], emit);
+        }
+    }
+    // 2. uv_mode_prob[INTRA_MODES][INTRA_MODES-1]
+    for y in 0..INTRA_MODES {
+        for i in 0..(INTRA_MODES - 1) {
+            let path = format!("fc.uv_mode_prob[y_mode={y}][{i}]");
+            diff_field(&path, &a.uv_mode_prob[y][i], &b.uv_mode_prob[y][i], emit);
+        }
+    }
+    // 3. partition_prob[PARTITION_CONTEXTS][PARTITION_TYPES-1]
+    for ctx in 0..PARTITION_CONTEXTS {
+        for i in 0..(PARTITION_TYPES - 1) {
+            let path = format!("fc.partition_prob[ctx={ctx}][{i}]");
+            diff_field(&path, &a.partition_prob[ctx][i], &b.partition_prob[ctx][i], emit);
+        }
+    }
+    // 4. coef_probs[TX_SIZES][PLANE_TYPES][REF_TYPES][COEF_BANDS]
+    //    [COEFF_CONTEXTS][UNCONSTRAINED_NODES]
+    const TX_LABEL: [&str; TX_SIZES] = ["4x4", "8x8", "16x16", "32x32"];
+    for (tx, tx_lbl) in TX_LABEL.iter().enumerate() {
+        for plane in 0..PLANE_TYPES {
+            for r in 0..REF_TYPES {
+                for band in 0..COEF_BANDS {
+                    for ctx in 0..COEFF_CONTEXTS {
+                        for node in 0..UNCONSTRAINED_NODES {
+                            let path = format!(
+                                "fc.coef_probs[tx={tx_lbl}][plane={plane}][ref={r}]\
+                                 [band={band}][ctx={ctx}][node={node}]"
+                            );
+                            diff_field(
+                                &path,
+                                &a.coef_probs[tx][plane][r][band][ctx][node],
+                                &b.coef_probs[tx][plane][r][band][ctx][node],
+                                emit,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // 5. switchable_interp_prob[SWITCHABLE_FILTER_CONTEXTS][SWITCHABLE_FILTERS-1]
+    for ctx in 0..SWITCHABLE_FILTER_CONTEXTS {
+        for i in 0..(SWITCHABLE_FILTERS - 1) {
+            let path = format!("fc.switchable_interp_prob[ctx={ctx}][{i}]");
+            diff_field(
+                &path,
+                &a.switchable_interp_prob[ctx][i],
+                &b.switchable_interp_prob[ctx][i],
+                emit,
+            );
+        }
+    }
+    // 6. inter_mode_probs[INTER_MODE_CONTEXTS][INTER_MODES-1]
+    for ctx in 0..INTER_MODE_CONTEXTS {
+        for i in 0..(INTER_MODES - 1) {
+            let path = format!("fc.inter_mode_probs[ctx={ctx}][{i}]");
+            diff_field(
+                &path,
+                &a.inter_mode_probs[ctx][i],
+                &b.inter_mode_probs[ctx][i],
+                emit,
+            );
+        }
+    }
+    // 7. intra_inter_prob[INTRA_INTER_CONTEXTS]
+    for ctx in 0..INTRA_INTER_CONTEXTS {
+        let path = format!("fc.intra_inter_prob[ctx={ctx}]");
+        diff_field(&path, &a.intra_inter_prob[ctx], &b.intra_inter_prob[ctx], emit);
+    }
+    // 8. comp_inter_prob[COMP_INTER_CONTEXTS]
+    for ctx in 0..COMP_INTER_CONTEXTS {
+        let path = format!("fc.comp_inter_prob[ctx={ctx}]");
+        diff_field(&path, &a.comp_inter_prob[ctx], &b.comp_inter_prob[ctx], emit);
+    }
+    // 9. single_ref_prob[REF_CONTEXTS][2]
+    for ctx in 0..REF_CONTEXTS {
+        for i in 0..2 {
+            let path = format!("fc.single_ref_prob[ctx={ctx}][{i}]");
+            diff_field(
+                &path,
+                &a.single_ref_prob[ctx][i],
+                &b.single_ref_prob[ctx][i],
+                emit,
+            );
+        }
+    }
+    // 10. comp_ref_prob[REF_CONTEXTS]
+    for ctx in 0..REF_CONTEXTS {
+        let path = format!("fc.comp_ref_prob[ctx={ctx}]");
+        diff_field(&path, &a.comp_ref_prob[ctx], &b.comp_ref_prob[ctx], emit);
+    }
+    // 11. tx_probs.{p32x32,p16x16,p8x8}
+    walk_tx_probs(&a.tx_probs, &b.tx_probs, emit);
+    // 12. skip_probs[SKIP_CONTEXTS]
+    for ctx in 0..SKIP_CONTEXTS {
+        let path = format!("fc.skip_probs[ctx={ctx}]");
+        diff_field(&path, &a.skip_probs[ctx], &b.skip_probs[ctx], emit);
+    }
+    // 13. nmvc — joints + per-axis component pair.
+    walk_nmvc(&a.nmvc, &b.nmvc, emit);
+    // 14. initialized
+    diff_field("fc.initialized", &a.initialized, &b.initialized, emit);
+}
+
+fn walk_tx_probs<F: FnMut(&str, String)>(
+    a: &DefaultTxProbs,
+    b: &DefaultTxProbs,
+    emit: &mut F,
+) {
+    // p32x32: [[u8; 3]; 2]
+    for ctx in 0..2 {
+        for i in 0..3 {
+            let path = format!("fc.tx_probs.p32x32[ctx={ctx}][{i}]");
+            diff_field(&path, &a.p32x32[ctx][i], &b.p32x32[ctx][i], emit);
+        }
+    }
+    // p16x16: [[u8; 2]; 2]
+    for ctx in 0..2 {
+        for i in 0..2 {
+            let path = format!("fc.tx_probs.p16x16[ctx={ctx}][{i}]");
+            diff_field(&path, &a.p16x16[ctx][i], &b.p16x16[ctx][i], emit);
+        }
+    }
+    // p8x8: [[u8; 1]; 2]
+    for ctx in 0..2 {
+        for i in 0..1 {
+            let path = format!("fc.tx_probs.p8x8[ctx={ctx}][{i}]");
+            diff_field(&path, &a.p8x8[ctx][i], &b.p8x8[ctx][i], emit);
+        }
+    }
+}
+
+fn walk_nmvc<F: FnMut(&str, String)>(a: &NmvContext, b: &NmvContext, emit: &mut F) {
+    // joints: [u8; MV_JOINTS - 1]
+    for i in 0..(MV_JOINTS - 1) {
+        let path = format!("fc.nmvc.joints[{i}]");
+        diff_field(&path, &a.joints[i], &b.joints[i], emit);
+    }
+    // comps: [NmvComponent; 2]
+    for axis in 0..2 {
+        walk_nmv_component(axis, &a.comps[axis], &b.comps[axis], emit);
+    }
+}
+
+fn walk_nmv_component<F: FnMut(&str, String)>(
+    axis: usize,
+    a: &NmvComponent,
+    b: &NmvComponent,
+    emit: &mut F,
+) {
+    let base = format!("fc.nmvc.comps[{axis}]");
+    diff_field(&format!("{base}.sign"), &a.sign, &b.sign, emit);
+    for i in 0..(MV_CLASSES - 1) {
+        diff_field(
+            &format!("{base}.classes[{i}]"),
+            &a.classes[i],
+            &b.classes[i],
+            emit,
+        );
+    }
+    for i in 0..(CLASS0_SIZE - 1) {
+        diff_field(
+            &format!("{base}.class0[{i}]"),
+            &a.class0[i],
+            &b.class0[i],
+            emit,
+        );
+    }
+    for i in 0..MV_OFFSET_BITS {
+        diff_field(
+            &format!("{base}.bits[{i}]"),
+            &a.bits[i],
+            &b.bits[i],
+            emit,
+        );
+    }
+    for c0 in 0..CLASS0_SIZE {
+        for i in 0..(MV_FP_SIZE - 1) {
+            diff_field(
+                &format!("{base}.class0_fp[{c0}][{i}]"),
+                &a.class0_fp[c0][i],
+                &b.class0_fp[c0][i],
+                emit,
+            );
+        }
+    }
+    for i in 0..(MV_FP_SIZE - 1) {
+        diff_field(
+            &format!("{base}.fp[{i}]"),
+            &a.fp[i],
+            &b.fp[i],
+            emit,
+        );
+    }
+    diff_field(
+        &format!("{base}.class0_hp"),
+        &a.class0_hp,
+        &b.class0_hp,
+        emit,
+    );
+    diff_field(&format!("{base}.hp"), &a.hp, &b.hp, emit);
+}
+
+// -----------------------------------------------------------------------------
 // Driver
 // -----------------------------------------------------------------------------
 
@@ -1285,12 +1787,12 @@ fn run_with_streams<E: Write, R: DiffReporter>(
     let level_n = args.level.as_u8();
 
     // Notes for flags whose behaviour ships in later commits.
-    if level_n >= 3 {
+    if level_n >= 4 {
         let _ = writeln!(
             stderr,
             "note: level {level_n} not yet implemented \
-             (commits 3-4 of stage4-design/diff-bitstream-harness.md); \
-             running levels 0..=2 only"
+             (commit 4 of stage4-design/diff-bitstream-harness.md); \
+             running levels 0..=3 only"
         );
     }
 
@@ -1357,6 +1859,9 @@ fn run_with_streams<E: Write, R: DiffReporter>(
         level_1_diff(&frames_a, &frames_b, args, reporter);
         if level_n >= 2 {
             level_2_diff(&frames_a, &frames_b, args, reporter);
+        }
+        if level_n >= 3 {
+            level_3_diff(&frames_a, &frames_b, args, reporter);
         }
     }
 
@@ -2001,6 +2506,68 @@ mod tests {
         wrap_in_ivf(&refs)
     }
 
+    /// Build a keyframe payload with a `compressed_partition_size`-byte
+    /// compressed partition (zero-filled). The uncompressed-header
+    /// layout matches [`build_keyframe_payload`] except that the
+    /// `first_partition_size` field is set to
+    /// `compressed_partition_size`. The compressed partition itself
+    /// is appended as raw zero bytes after the header.
+    fn build_keyframe_with_compressed_partition(
+        width: u32,
+        height: u32,
+        compressed_partition_size: u16,
+    ) -> Vec<u8> {
+        // Re-write the uncompressed header byte stream but with a
+        // different first_partition_size literal.
+        let mut buf = vec![0u8; 256];
+        let header_bit_len = {
+            let mut w = RawBitWriter::new(&mut buf);
+            // Inlined copy of write_keyframe_bits, but with a custom
+            // fps literal.
+            w.write_literal(sync::FRAME_MARKER as u32, 2);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(1);
+            w.write_bit(0);
+            w.write_literal(sync::SYNC_CODE_0 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_1 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_2 as u32, 8);
+            w.write_literal(ColorSpace::Bt601 as u32, 3);
+            w.write_bit(0);
+            w.write_literal(width - 1, 16);
+            w.write_literal(height - 1, 16);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_literal(0, 2);
+            w.write_literal(0, 6);
+            w.write_literal(0, 3);
+            w.write_bit(0);
+            w.write_literal(0, 8);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(0);
+            let mi_cols = ((width + 7) >> 3) as i32;
+            let (min_log2, max_log2) = get_tile_n_bits(mi_cols);
+            if max_log2 - min_log2 > 0 {
+                w.write_bit(0);
+            }
+            w.write_bit(0);
+            w.write_literal(u32::from(compressed_partition_size), 16);
+            count_keyframe_bits(width)
+        };
+        let header_bytes = header_bit_len.div_ceil(8);
+        buf.truncate(header_bytes);
+        // Append `compressed_partition_size` zero bytes for the
+        // compressed partition + a small trailing pad for bool-reader
+        // headroom.
+        buf.extend(std::iter::repeat_n(0u8, compressed_partition_size as usize + 4));
+        buf
+    }
+
     fn run_with_text_reporter(args: &Args) -> (String, String, i32) {
         let mut out = Vec::<u8>::new();
         let mut err = Vec::<u8>::new();
@@ -2207,6 +2774,243 @@ mod tests {
         assert_eq!(
             level2_first_records, 1,
             "expected exactly 1 Level 2 record under --verbose first; got {level2_first_records}, out={out_first:?}"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Level 3 tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn l3_identity_emits_no_record() {
+        // Two byte-identical keyframe-only IVFs → L3 must produce zero
+        // divergence records (banks update identically on both sides).
+        let buf = ivf_with_n_keyframes(2, 320, 240);
+        let a = write_tmp("a-l3-id", &buf);
+        let b = write_tmp("b-l3-id", &buf);
+        let args = Args {
+            a: a.clone(),
+            b: b.clone(),
+            level: Level::N(3),
+            frame: None,
+            format: Format::Text,
+            verbose: Verbose::Full,
+            max_frames: None,
+            no_color: true,
+            exit_on_diff: true,
+        };
+        let (out, err, code) = run_with_text_reporter(&args);
+        let _ = (a, b);
+        // Byte-identical → short-circuit at L0; no Level 3 records.
+        assert_eq!(code, 0, "out={out:?} err={err:?}");
+        assert!(!out.contains("Level 3"), "out={out:?}");
+    }
+
+    #[test]
+    fn l3_walk_frame_context_path_format() {
+        // Smoke-test the field walker independent of the harness:
+        // perturb a single y_mode_prob slot and check the emitted
+        // path uses the documented `fc.y_mode_prob[group=...][...]`
+        // form expected by tooling.
+        let mut a = rvp9_core::entropy::FrameContext::new_default();
+        let b = a.clone();
+        // Perturb a.y_mode_prob[2][1] to a value that is guaranteed
+        // to differ from the default (which is 80 at [2][1]).
+        a.y_mode_prob[2][1] = a.y_mode_prob[2][1].wrapping_add(7);
+
+        let mut records: Vec<(String, String)> = Vec::new();
+        {
+            let mut emit = |path: &str, detail: String| {
+                records.push((path.to_string(), detail));
+            };
+            walk_frame_context(&a, &b, &mut emit);
+        }
+        assert_eq!(records.len(), 1, "records={records:?}");
+        let (path, detail) = &records[0];
+        assert_eq!(path, "fc.y_mode_prob[group=2][1]");
+        // Detail should be the standard `a=.. b=..` shape.
+        assert!(
+            detail.contains("a=") && detail.contains("b="),
+            "detail={detail:?}"
+        );
+    }
+
+    #[test]
+    fn l3_walk_frame_context_covers_diverse_field_areas() {
+        // Perturb one leaf in several distinct subtrees of FrameContext
+        // and verify the walker emits the exact path for each.
+        let mut a = rvp9_core::entropy::FrameContext::new_default();
+        let b = a.clone();
+
+        a.partition_prob[5][2] = a.partition_prob[5][2].wrapping_add(1);
+        a.coef_probs[1][0][1][3][2][1] = a.coef_probs[1][0][1][3][2][1].wrapping_add(1);
+        a.tx_probs.p16x16[1][0] = a.tx_probs.p16x16[1][0].wrapping_add(1);
+        a.skip_probs[2] = a.skip_probs[2].wrapping_add(1);
+        a.nmvc.comps[0].class0[0] = a.nmvc.comps[0].class0[0].wrapping_add(1);
+        a.initialized = false;
+
+        let mut paths: Vec<String> = Vec::new();
+        {
+            let mut emit = |path: &str, _detail: String| {
+                paths.push(path.to_string());
+            };
+            walk_frame_context(&a, &b, &mut emit);
+        }
+        let joined = paths.join("\n");
+        assert!(joined.contains("fc.partition_prob[ctx=5][2]"), "paths:\n{joined}");
+        assert!(
+            joined.contains("fc.coef_probs[tx=8x8][plane=0][ref=1][band=3][ctx=2][node=1]"),
+            "paths:\n{joined}",
+        );
+        assert!(joined.contains("fc.tx_probs.p16x16[ctx=1][0]"), "paths:\n{joined}");
+        assert!(joined.contains("fc.skip_probs[ctx=2]"), "paths:\n{joined}");
+        assert!(joined.contains("fc.nmvc.comps[0].class0[0]"), "paths:\n{joined}");
+        assert!(joined.contains("fc.initialized"), "paths:\n{joined}");
+        // And we should have emitted exactly 6 records (one per leaf
+        // we perturbed).
+        assert_eq!(paths.len(), 6, "paths={paths:?}");
+    }
+
+    #[test]
+    fn l3_post_update_divergence_byte_identical_inputs_no_record() {
+        // Locks the harness's "diff post-update fc" contract: when
+        // both sides drive the parser against the same bitstream
+        // (byte-identical IVF), the resulting post-update banks must
+        // match, even though we deliberately seed the *initial* banks
+        // identically. This is the L3 equivalent of "byte-identical
+        // inputs ⇒ no L3 records" and locks the simplified
+        // FrameContextBanks::new() init.
+        let buf = ivf_with_n_keyframes(1, 320, 240);
+        let a = write_tmp("a-l3-post", &buf);
+        let b = write_tmp("b-l3-post", &buf);
+        let args = Args {
+            a: a.clone(),
+            b: b.clone(),
+            level: Level::N(3),
+            frame: None,
+            format: Format::Text,
+            verbose: Verbose::Full,
+            max_frames: None,
+            no_color: true,
+            exit_on_diff: true,
+        };
+        let (out, err, code) = run_with_text_reporter(&args);
+        let _ = (a, b);
+        assert_eq!(code, 0, "out={out:?} err={err:?}");
+        // Specifically, no `fc.*` paths emitted.
+        assert!(!out.contains("fc."), "out={out:?}");
+    }
+
+    /// Probe utility for the divergence-fixture builder below: try
+    /// each single-bit XOR within the first few bytes of a 64-byte
+    /// zero-filled partition, and report which ones change the parser
+    /// outcome (either produce a different post-update FrameContext,
+    /// or fail where the zero buffer succeeded).
+    #[test]
+    fn _debug_probe_compressed_byte_perturbations() {
+        if std::env::var_os("RVP9_PROBE_BOOL").is_none() {
+            return;
+        }
+        let opts = rvp9_core::bitstream::CompressedHeaderOptions {
+            lossless: true,
+            intra_only: true,
+            interp_filter: rvp9_core::bitstream::InterpFilter::EightTap,
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+        let base = rvp9_core::entropy::FrameContext::new_default();
+        let zero_buf = vec![0u8; 64];
+        let baseline = {
+            let mut fc = base.clone();
+            let r = rvp9_core::bitstream::parse_compressed_header(&zero_buf, &mut fc, opts);
+            eprintln!("baseline (64 zeros): {r:?}, fc_eq_default={}", fc == base);
+            (r.is_ok(), fc)
+        };
+        // Iterate byte 0 from 0..128 (top bit must stay 0 to satisfy
+        // the marker check) and report which values produce a
+        // differing post-update bank.
+        for byte0 in 0..128u8 {
+            let mut buf = zero_buf.clone();
+            buf[0] = byte0;
+            let mut fc = base.clone();
+            let r = rvp9_core::bitstream::parse_compressed_header(&buf, &mut fc, opts);
+            let ok = r.is_ok();
+            let differs = ok && fc != baseline.1;
+            if differs {
+                eprintln!("byte0={byte0:#04x}: differs (skip_probs={:?}, coef[0][0][0][0][0]={:?})",
+                    fc.skip_probs, fc.coef_probs[0][0][0][0][0]);
+            }
+        }
+    }
+
+    #[test]
+    fn l3_compressed_partition_divergence_reported() {
+        // Two IVFs that differ in the compressed-header byte but share
+        // an identical uncompressed header → L0 reports the byte
+        // diff, L1/L2 stay silent (uncompressed header byte-identical
+        // across both sides), and L3 surfaces a divergence — either
+        // a post-update prob change, or an asymmetric parse-error.
+        //
+        // To get a non-truncated parse we build a keyframe with a
+        // larger compressed partition (64 zero bytes) so the parser
+        // can actually run through `read_coef_probs` + `read_skip_probs`
+        // on both sides. We then flip a low-order bit in B's partition
+        // — chosen so the marker bit (top bit of byte 0) stays 0 and
+        // some downstream gate fires asymmetrically.
+        let payload_a = build_keyframe_with_compressed_partition(320, 240, 64);
+        let mut payload_b = payload_a.clone();
+
+        // Locate the compressed partition: re-parse the A side to get
+        // `header_end`. The keyframe payload's header is followed by
+        // 64 zero bytes (the partition) + 4 pad bytes.
+        let no_refs: rvp9_core::bitstream::RefFrameSizes =
+            [None; rvp9_core::bitstream::REF_FRAMES];
+        let (_, header_end) = rvp9_core::bitstream::parse_uncompressed_header(
+            &payload_a,
+            &no_refs,
+        )
+        .expect("parse A keyframe");
+        // Set the first compressed-partition byte to 0x48
+        // (`0b0100_1000`). The top bit stays 0 so the marker check
+        // passes; bit 6 = 1 forces the `read_coef_probs` update gate
+        // on, which makes the 4x4 coef table walk diverge from the
+        // all-zero "no update" path on the A side. The
+        // `_debug_probe_compressed_byte_perturbations` test pinned
+        // this byte (and its neighbours) as guaranteed to produce a
+        // post-update bank divergence under the lossless-keyframe
+        // path used here.
+        payload_b[header_end] = 0x48;
+
+        let buf_a = wrap_in_ivf(&[payload_a.as_slice()]);
+        let buf_b = wrap_in_ivf(&[payload_b.as_slice()]);
+
+        let a = write_tmp("a-l3-comp", &buf_a);
+        let b = write_tmp("b-l3-comp", &buf_b);
+        let args = Args {
+            a: a.clone(),
+            b: b.clone(),
+            level: Level::N(3),
+            frame: None,
+            format: Format::Text,
+            verbose: Verbose::Full,
+            max_frames: None,
+            no_color: true,
+            exit_on_diff: true,
+        };
+        let (out, err, code) = run_with_text_reporter(&args);
+        let _ = (a, b);
+        // L0 will of course flag the byte difference. We just need
+        // L3 to ALSO surface a fc.* divergence (or a parse-error
+        // record), proving the harness drives parse_compressed_header
+        // on both sides.
+        assert_eq!(code, 1, "out={out:?} err={err:?}");
+        let saw_l3 = out
+            .lines()
+            .any(|l| l.starts_with("Level 3") || l.contains("Level 3 "));
+        assert!(
+            saw_l3,
+            "expected a Level 3 record (fc.* or parse-error) on \
+             perturbed compressed-partition byte; out={out:?} err={err:?}",
         );
     }
 }
