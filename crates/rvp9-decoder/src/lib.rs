@@ -3928,4 +3928,334 @@ mod tests {
             }
         }
     }
+
+    /// End-to-end inter-frame round-trip with **sub-8 partitioning**
+    /// at one corner — 64×64 SB drilled to BLOCK_8x8 grain (63 cells)
+    /// with cell (0, 0) further sub-partitioned into a BLOCK_4x4
+    /// sub-8 inter leaf carrying 4× ZEROMV sub-blocks. Validates
+    /// `write_sub8_bmi` (S4.16e) + the partition walker's `hbs == 0`
+    /// sub-8 branch (S4.16f) compose through the **real decoder**'s
+    /// `resolve_sub8_bmi` + per-bmi reconstruction (motion-compensated
+    /// per 4×4 sub-block + chroma-MV averaging via
+    /// `avg_split_mv_q4_4x4`).
+    ///
+    /// First proof-of-life that sub-8 inter leaves the encoder emits
+    /// can be parsed AND reconstructed by the real decoder, not just
+    /// round-tripped through the in-test replay walker.
+    #[test]
+    fn s4_16j_round_trip_inter_sub8_at_corner_through_decoder() {
+        use rvp9_core::bitstream::frame::ReferenceMode;
+        use rvp9_core::bitstream::header::HeaderTail;
+        use rvp9_core::bitstream::sub_parsers::{
+            LoopFilterParams, MAX_PROB, PREDICTION_PROBS, QuantizationParams, SEG_TREE_PROBS,
+            SegmentationParams, TileInfo,
+        };
+        use rvp9_core::bitstream::{
+            BitDepth, ChromaFormat, ColorRange, ColorSpace, CompressedHeaderOptions,
+            CompressedHeaderResult, FrameKind, InterpFilter, ModesTileBounds, Profile,
+            RawBitWriter, UncompressedHeader, write_compressed_header, write_tile_inter,
+            write_tile_intra_keyframe, write_uncompressed_header,
+        };
+        use rvp9_core::block::BlockSize;
+        use rvp9_core::entropy::{BoolWriter, FrameContext};
+        use rvp9_core::inter::{
+            InterModeReadParams, setup_compound_reference_mode, sign_bias_from_header,
+        };
+        use rvp9_core::intra_pred::IntraMode;
+        use rvp9_core::mode_info::{
+            BlockMode, BmiInfo, InterMode, ModeInfo, Mv, RefFrame,
+        };
+        use rvp9_core::transforms::{TxMode, TxSize};
+
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let tile_bounds = ModesTileBounds {
+            mi_row_start: 0,
+            mi_row_end: 8,
+            mi_col_start: 0,
+            mi_col_end: 8,
+        };
+        let make_tail = |compressed_len: usize| HeaderTail {
+            refresh_frame_context: true,
+            frame_parallel_decoding_mode: false,
+            frame_context_idx: 0,
+            loop_filter: LoopFilterParams {
+                filter_level: 0,
+                sharpness_level: 0,
+                mode_ref_delta_enabled: false,
+                mode_ref_delta_update: false,
+                ref_deltas: [None; 4],
+                mode_deltas: [None; 2],
+            },
+            quantization: QuantizationParams {
+                base_qindex: 50,
+                y_dc_delta_q: 0,
+                uv_dc_delta_q: 0,
+                uv_ac_delta_q: 0,
+            },
+            segmentation: SegmentationParams {
+                enabled: false,
+                update_map: false,
+                temporal_update: false,
+                tree_probs: [MAX_PROB; SEG_TREE_PROBS],
+                pred_probs: [MAX_PROB; PREDICTION_PROBS],
+                update_data: false,
+                abs_delta: false,
+                feature_data: Default::default(),
+            },
+            tile_info: TileInfo {
+                log2_tile_cols: 0,
+                log2_tile_rows: 0,
+            },
+            first_partition_size: compressed_len as u16,
+        };
+
+        // -- Frame 1: PARTITION_NONE 64x64 DC-skip keyframe --------
+        let kf_cell = ModeInfo {
+            block_size: BlockSize::Block64x64,
+            tx_size: TxSize::Tx32x32,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        let kf_grid: Vec<Option<ModeInfo>> =
+            vec![Some(kf_cell); (mi_rows * mi_cols) as usize];
+        let mut kf_pre_fc = FrameContext::new_default();
+        let kf_post_fc = kf_pre_fc.clone();
+        let kf_opts = CompressedHeaderOptions {
+            lossless: false,
+            intra_only: true,
+            interp_filter: InterpFilter::EightTap,
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+        let kf_target = CompressedHeaderResult {
+            tx_mode: TxMode::AllowTx32x32,
+            reference_mode: ReferenceMode::Single,
+        };
+        let mut kf_compressed_buf = vec![0u8; 16 * 1024];
+        let kf_compressed_len = {
+            let mut bw = BoolWriter::start_encode(&mut kf_compressed_buf);
+            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target)
+                .expect("kf compressed");
+            bw.stop_encode().expect("stop_encode kf compressed")
+        };
+        kf_compressed_buf.truncate(kf_compressed_len);
+        let mut kf_tile_buf = vec![0u8; 4 * 1024];
+        let kf_tile_len = {
+            let mut bw = BoolWriter::start_encode(&mut kf_tile_buf);
+            write_tile_intra_keyframe(&mut bw, &kf_grid, mi_rows, mi_cols, tile_bounds, &kf_post_fc)
+                .expect("kf write_tile");
+            bw.stop_encode().expect("stop_encode kf tile")
+        };
+        kf_tile_buf.truncate(kf_tile_len);
+        let kf_tail = make_tail(kf_compressed_len);
+        let kf_hdr = UncompressedHeader {
+            kind: FrameKind::KeyFrame,
+            profile: Profile::Profile0,
+            show_frame: true,
+            error_resilient: false,
+            bit_depth: BitDepth::Eight,
+            color_space: ColorSpace::Bt601,
+            color_range: ColorRange::Studio,
+            chroma: ChromaFormat::Yuv420,
+            width: 64,
+            height: 64,
+            render_size: None,
+            tail: Some(kf_tail),
+        };
+        let mut kf_hdr_buf = vec![0u8; 256];
+        let kf_hdr_len = {
+            let mut wb = RawBitWriter::new(&mut kf_hdr_buf);
+            write_uncompressed_header(&mut wb, &kf_hdr, kf_compressed_len as u16)
+                .expect("kf header");
+            wb.finish().expect("kf finish")
+        };
+        kf_hdr_buf.truncate(kf_hdr_len);
+        let mut kf_packet = Vec::new();
+        kf_packet.extend_from_slice(&kf_hdr_buf);
+        kf_packet.extend_from_slice(&kf_compressed_buf);
+        kf_packet.extend_from_slice(&kf_tile_buf);
+        let mut dec = Decoder::new();
+        let parsed = dec.parse_packet(&kf_packet).expect("parse kf");
+        let kf_parsed = ParsedFrame {
+            header: parsed.frames()[0].header.clone(),
+            header_end_byte: parsed.frames()[0].header_end_byte,
+            full_frame_data: parsed.frames()[0].full_frame_data,
+        };
+        dec.decode_frame(&kf_parsed).expect("decode kf");
+
+        // -- Frame 2: dense 8x8-grain inter with one BLOCK_4x4 leaf at (0,0)
+        let inter_post_fc = dec.frame_context(0).clone();
+
+        let plain_inter_cell = ModeInfo {
+            block_size: BlockSize::Block8x8,
+            tx_size: TxSize::Tx8x8,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Inter {
+                mode: InterMode::ZeroMv,
+                ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                mvs: [Mv::ZERO; 2],
+                interp_filter: InterpFilter::EightTap,
+            },
+            bmi: Default::default(),
+        };
+        let mut inter_grid: Vec<Option<ModeInfo>> =
+            vec![Some(plain_inter_cell); (mi_rows * mi_cols) as usize];
+
+        // Replace cell (0, 0) with a BLOCK_4x4 sub-8 leaf: 4× ZEROMV
+        // sub-blocks. The writer's per-sub-block contract: each
+        // bmi[j].as_mode carries InterMode::idx() (= 2 for ZEROMV),
+        // each as_mv = [Mv::ZERO; 2]. Parent's `mode` = ZEROMV (matches
+        // bmi[3].as_mode); parent's `mvs` = (0,0) (matches bmi[3].as_mv).
+        let mut sub8_bmi = [BmiInfo::default(); 4];
+        for slot in &mut sub8_bmi {
+            slot.as_mode = InterMode::ZeroMv.idx() as u8;
+            slot.as_mv = [Mv::ZERO; 2];
+        }
+        let sub8_cell = ModeInfo {
+            block_size: BlockSize::Block4x4,
+            tx_size: TxSize::Tx4x4,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Inter {
+                mode: InterMode::ZeroMv,
+                ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                mvs: [Mv::ZERO; 2],
+                interp_filter: InterpFilter::EightTap,
+            },
+            bmi: sub8_bmi,
+        };
+        inter_grid[0] = Some(sub8_cell);
+
+        let mut inter_pre_fc = inter_post_fc.clone();
+        let inter_target_fc = inter_post_fc.clone();
+        let inter_opts = CompressedHeaderOptions {
+            lossless: false,
+            intra_only: false,
+            interp_filter: InterpFilter::EightTap,
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+        let inter_target = CompressedHeaderResult {
+            tx_mode: TxMode::AllowTx32x32,
+            reference_mode: ReferenceMode::Single,
+        };
+        let mut inter_compressed_buf = vec![0u8; 16 * 1024];
+        let inter_compressed_len = {
+            let mut bw = BoolWriter::start_encode(&mut inter_compressed_buf);
+            write_compressed_header(
+                &mut bw,
+                &mut inter_pre_fc,
+                &inter_target_fc,
+                inter_opts,
+                &inter_target,
+            )
+            .expect("inter compressed");
+            bw.stop_encode().expect("stop_encode inter compressed")
+        };
+        inter_compressed_buf.truncate(inter_compressed_len);
+
+        let sign_bias = sign_bias_from_header(&[false, false, false]);
+        let (comp_fixed_ref, comp_var_ref) = setup_compound_reference_mode(&sign_bias);
+        let inter_params = InterModeReadParams {
+            allow_high_precision_mv: false,
+            interp_filter: InterpFilter::EightTap,
+            reference_mode: ReferenceMode::Single,
+            comp_fixed_ref,
+            comp_var_ref,
+            sign_bias,
+        };
+        let mut inter_tile_buf = vec![0u8; 32 * 1024];
+        let inter_tile_len = {
+            let mut bw = BoolWriter::start_encode(&mut inter_tile_buf);
+            write_tile_inter(
+                &mut bw,
+                &inter_target_fc,
+                &inter_params,
+                TxMode::AllowTx32x32,
+                &inter_grid,
+                mi_rows,
+                mi_cols,
+                tile_bounds,
+                None,
+            )
+            .expect("inter write_tile (with sub-8)");
+            bw.stop_encode().expect("stop_encode inter tile")
+        };
+        inter_tile_buf.truncate(inter_tile_len);
+
+        let inter_tail = make_tail(inter_compressed_len);
+        let inter_hdr = UncompressedHeader {
+            kind: FrameKind::InterFrame {
+                reset_frame_context: 0,
+                refresh_frame_flags: 0x00,
+                ref_frame_indices: [0, 0, 0],
+                ref_frame_sign_biases: [false, false, false],
+                allow_high_precision_mv: false,
+                interp_filter: InterpFilter::EightTap,
+            },
+            profile: Profile::Profile0,
+            show_frame: true,
+            error_resilient: false,
+            bit_depth: BitDepth::Eight,
+            color_space: ColorSpace::Bt601,
+            color_range: ColorRange::Studio,
+            chroma: ChromaFormat::Yuv420,
+            width: 64,
+            height: 64,
+            render_size: None,
+            tail: Some(inter_tail),
+        };
+        let mut inter_hdr_buf = vec![0u8; 256];
+        let inter_hdr_len = {
+            let mut wb = RawBitWriter::new(&mut inter_hdr_buf);
+            write_uncompressed_header(&mut wb, &inter_hdr, inter_compressed_len as u16)
+                .expect("inter header");
+            wb.finish().expect("inter finish")
+        };
+        inter_hdr_buf.truncate(inter_hdr_len);
+        let mut inter_packet = Vec::new();
+        inter_packet.extend_from_slice(&inter_hdr_buf);
+        inter_packet.extend_from_slice(&inter_compressed_buf);
+        inter_packet.extend_from_slice(&inter_tile_buf);
+
+        let inter_parsed_out = dec.parse_packet(&inter_packet).expect("parse inter");
+        let inter_parsed = ParsedFrame {
+            header: inter_parsed_out.frames()[0].header.clone(),
+            header_end_byte: inter_parsed_out.frames()[0].header_end_byte,
+            full_frame_data: inter_parsed_out.frames()[0].full_frame_data,
+        };
+        dec.decode_frame(&inter_parsed)
+            .expect("decode inter (with sub-8 corner)");
+
+        // Verify the sub-8 corner cell came back as Block4x4 inter
+        // (decoder stores the sub-8 block_size in the mi-cell). The
+        // surrounding cells should still be Block8x8.
+        let got = dec.last_frame_mi_grid();
+        let corner = got[0].expect("corner cell populated");
+        assert_eq!(
+            corner.block_size,
+            BlockSize::Block4x4,
+            "sub-8 corner leaf must round-trip as Block4x4"
+        );
+        match corner.mode {
+            BlockMode::Inter { mode, ref_frames, .. } => {
+                assert_eq!(mode, InterMode::ZeroMv);
+                assert_eq!(ref_frames, [RefFrame::LastFrame, RefFrame::NoRefFrame]);
+            }
+            BlockMode::Intra { .. } => panic!("sub-8 corner came back as intra"),
+        }
+        // Surrounding cells stay Block8x8.
+        let neighbour = got[1].expect("neighbour cell populated");
+        assert_eq!(neighbour.block_size, BlockSize::Block8x8);
+    }
 }
