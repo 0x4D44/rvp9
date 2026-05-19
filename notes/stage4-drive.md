@@ -61,7 +61,8 @@ gated by S4.O1 verdict on each commit. First module: `bitstream_writer`
 | S4.01 | 2026-05-19 | Read `notes/lld/bitstream.md` end-to-end; produce structured-diff harness design note | S4.01 | done — design note at `notes/stage4-design/diff-bitstream-harness.md` (656 lines, 4 commits planned) | — |
 | — | 2026-05-19 | Supervisor decisions on Q5/Q6/Q7: defer Level 5, `packet=N frame=M` labels, ledger via post-processor (not harness) | supervisor | done | — |
 | S4.02 | 2026-05-19 | Implement commit #1 from design: CLI restructure on `diff_bitstream.rs`; preserve Level 0 byte diff exactly; add output-formatter trait; tests + clippy clean | S4.02 | done — 103→1147 ll, 22 tests green, clippy clean. Socket dropped mid-report; supervisor fixed 3 stale 4-arg test calls + dead-code warn before commit. | `c77ae42` |
-| S4.03 | 2026-05-19 | Implement commit #2: Level 1 (frame size + kind) + Level 2 (uncompressed-header field diff). Add `PartialEq, Eq` derives to `UncompressedHeader` + sub-types. Tests for L1/L2 identity, injected divergence at each level. | (next dispatch) | pending | — |
+| S4.03 | 2026-05-19 | Implement commit #2: Level 1 (frame size + kind) + Level 2 (uncompressed-header field diff). Add `PartialEq, Eq` derives to `UncompressedHeader` + sub-types. Tests for L1/L2 identity, injected divergence at each level. | S4.03 | done — Levels 1+2 land (1147→2204 ll incl. supervisor fix); 6 new tests (28 total); field-walker audit OK; supervisor patched symmetric-parse-error noise before commit. | `27ce31f` |
+| S4.04 | 2026-05-19 | Implement commit #3: Level 3 compressed-header + FrameContext prob-bank diff. Walk `parse_compressed_header` outputs per frame; visitor for prob banks. Tests: L3 identity, prob-bank golden divergence. | (next dispatch) | pending | — |
 
 ## Supervisor notes
 
