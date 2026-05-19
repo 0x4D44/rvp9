@@ -270,6 +270,28 @@ pub struct Decoder {
     /// `abs_delta` companion to [`Self::seg_feature_data`]. Same
     /// inheritance semantics.
     seg_abs_delta: bool,
+    /// Stitched, frame-wide `Option<ModeInfo>` grid produced at the
+    /// end of the most recent `decode_frame` call. Empty before any
+    /// non-`ShowExistingFrame` frame has decoded. Valid only until
+    /// the next `decode_frame` call (which overwrites it).
+    ///
+    /// Stored row-major at stride `last_frame_mi_cols`; a `None`
+    /// cell means "outside the visible frame / not written by the
+    /// partition walker" (libvpx's `mi_grid_visible` post-`vpx_calloc`
+    /// state). Exposed via [`Self::last_frame_mi_grid`] +
+    /// [`Self::last_frame_mi_dims`] for the bitstream-diff harness
+    /// (`crates/rvp9-harness/src/bin/diff_bitstream.rs`); the encoder
+    /// is expected to consume the same accessor for self-validation
+    /// against this decoder.
+    ///
+    /// Strategy A from `notes/stage4-design/diff-bitstream-harness.md`
+    /// §9 commit 4: smallest decoder-side change to expose the
+    /// post-decode mi-grid without invasive callbacks. Already stitched
+    /// internally for the LF apply driver; we just hold onto it.
+    last_frame_mi_grid: Vec<Option<ModeInfo>>,
+    /// `(mi_rows, mi_cols)` of [`Self::last_frame_mi_grid`]. `(0, 0)`
+    /// before any non-`ShowExistingFrame` frame has decoded.
+    last_frame_mi_dims: (u32, u32),
 }
 
 impl Default for Decoder {
@@ -315,6 +337,8 @@ impl Decoder {
             seg_feature_data: [[None; rvp9_core::bitstream::SEG_LVL_MAX];
                 rvp9_core::bitstream::MAX_SEGMENTS],
             seg_abs_delta: false,
+            last_frame_mi_grid: Vec::new(),
+            last_frame_mi_dims: (0, 0),
         }
     }
 
@@ -347,6 +371,34 @@ impl Decoder {
     #[must_use]
     pub fn needs_resync(&self) -> bool {
         self.have_resync
+    }
+
+    /// Borrow the frame-wide `Option<ModeInfo>` grid produced by the
+    /// most recent [`Self::decode_frame`] call. Row-major at stride
+    /// [`Self::last_frame_mi_dims`]`.1`; `None` cells mean "outside
+    /// the visible frame / not touched by the partition walker".
+    ///
+    /// **Lifetime:** valid until the next [`Self::decode_frame`] call
+    /// (which overwrites the buffer in place).
+    ///
+    /// Returns an empty slice before any non-`ShowExistingFrame` frame
+    /// has decoded.
+    ///
+    /// Consumed by the bitstream-diff harness
+    /// (`crates/rvp9-harness/src/bin/diff_bitstream.rs`) at Level 4.
+    /// Strategy A per `notes/stage4-design/diff-bitstream-harness.md`
+    /// §9 commit 4.
+    #[must_use]
+    pub fn last_frame_mi_grid(&self) -> &[Option<ModeInfo>] {
+        &self.last_frame_mi_grid
+    }
+
+    /// `(mi_rows, mi_cols)` of the grid returned by
+    /// [`Self::last_frame_mi_grid`]. `(0, 0)` before any non-
+    /// `ShowExistingFrame` frame has decoded.
+    #[must_use]
+    pub fn last_frame_mi_dims(&self) -> (u32, u32) {
+        self.last_frame_mi_dims
     }
 
     /// Parse one transport packet (an IVF chunk, RTP packet, etc.)
@@ -885,17 +937,20 @@ impl Decoder {
         // apply driver, exposing pre-LF reconstruction for cascade
         // analysis (dump_frame_diff vs vpxdec's post-LF YUV).
         let lf_disabled = std::env::var("RVP9_DISABLE_LF").is_ok();
+        // Stage 3 Task E.2 — stitch per-tile mi grids into a
+        // frame-wide grid for the LF mask builder. Mirrors libvpx
+        // `cm->mi_grid_visible` which spans the entire frame
+        // regardless of tile count. We always stitch (not just when
+        // LF fires) so the bitstream-diff harness's L4 accessor
+        // [`Self::last_frame_mi_grid`] sees a populated grid even
+        // when `filter_level == 0` (Stage 4 design Strategy A).
+        let tile_grids: Vec<(tile::TileBounds, &[Option<ModeInfo>])> =
+            tile_decode_ctxs
+                .iter()
+                .map(|(b, c)| (*b, c.mi_grid()))
+                .collect();
+        let frame_mi_grid = build_frame_mi_grid(mi_rows, mi_cols, &tile_grids);
         if filter_level > 0 && !lf_disabled {
-            // Stage 3 Task E.2 — stitch per-tile mi grids into a
-            // frame-wide grid for the LF mask builder. Mirrors libvpx
-            // `cm->mi_grid_visible` which spans the entire frame
-            // regardless of tile count.
-            let tile_grids: Vec<(tile::TileBounds, &[Option<ModeInfo>])> =
-                tile_decode_ctxs
-                    .iter()
-                    .map(|(b, c)| (*b, c.mi_grid()))
-                    .collect();
-            let frame_mi_grid = build_frame_mi_grid(mi_rows, mi_cols, &tile_grids);
             apply_loop_filter_to_frame(
                 &mut yv12,
                 &frame_mi_grid,
@@ -979,6 +1034,10 @@ impl Decoder {
         }
         self.prev_segment_ids = cur_segment_ids;
         self.prev_segment_ids_dims = (mi_rows, mi_cols);
+        // Strategy A (Stage 4 design §9 commit 4) — publish the
+        // stitched frame-wide mi grid for the bitstream-diff harness.
+        self.last_frame_mi_grid = frame_mi_grid;
+        self.last_frame_mi_dims = (mi_rows as u32, mi_cols as u32);
         Ok(frame_buf)
     }
 
@@ -1491,17 +1550,20 @@ impl Decoder {
         self.merge_lf_params(&tail.loop_filter);
         let filter_level = tail.loop_filter.filter_level;
         let lf_disabled = std::env::var("RVP9_DISABLE_LF").is_ok();
+        // Stage 3 Task E.2 — stitch per-tile mi grids into a
+        // frame-wide grid for the LF mask builder. Mirrors libvpx
+        // `cm->mi_grid_visible` which spans the entire frame
+        // regardless of tile count. Always stitched (Stage 4 design
+        // Strategy A) so the bitstream-diff harness's L4 accessor
+        // [`Self::last_frame_mi_grid`] is populated for every
+        // non-`ShowExistingFrame` frame.
+        let tile_grids: Vec<(tile::TileBounds, &[Option<ModeInfo>])> =
+            tile_decode_ctxs
+                .iter()
+                .map(|(b, c)| (*b, c.mi_grid()))
+                .collect();
+        let frame_mi_grid = build_frame_mi_grid(mi_rows, mi_cols, &tile_grids);
         if filter_level > 0 && !lf_disabled {
-            // Stage 3 Task E.2 — stitch per-tile mi grids into a
-            // frame-wide grid for the LF mask builder. Mirrors libvpx
-            // `cm->mi_grid_visible` which spans the entire frame
-            // regardless of tile count.
-            let tile_grids: Vec<(tile::TileBounds, &[Option<ModeInfo>])> =
-                tile_decode_ctxs
-                    .iter()
-                    .map(|(b, c)| (*b, c.mi_grid()))
-                    .collect();
-            let frame_mi_grid = build_frame_mi_grid(mi_rows, mi_cols, &tile_grids);
             apply_loop_filter_to_frame(
                 &mut yv12,
                 &frame_mi_grid,
@@ -1591,6 +1653,10 @@ impl Decoder {
         }
         self.prev_segment_ids = cur_segment_ids;
         self.prev_segment_ids_dims = (mi_rows, mi_cols);
+        // Strategy A (Stage 4 design §9 commit 4) — publish the
+        // stitched frame-wide mi grid for the bitstream-diff harness.
+        self.last_frame_mi_grid = frame_mi_grid;
+        self.last_frame_mi_dims = (mi_rows as u32, mi_cols as u32);
         Ok(frame_buf)
     }
 

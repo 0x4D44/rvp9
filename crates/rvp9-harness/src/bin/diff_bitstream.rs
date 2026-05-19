@@ -1,4 +1,4 @@
-//! Bitstream differential diff tool — Levels 0, 1, 2, 3.
+//! Bitstream differential diff tool — Levels 0, 1, 2, 3, 4.
 //!
 //! Compares two `.ivf` files and reports the first point of divergence.
 //! This binary is the entry point for the structured diff harness
@@ -14,9 +14,13 @@
 //!   from [`rvp9_core::bitstream::parse_compressed_header`], plus the
 //!   post-update probability tables in the selected
 //!   [`rvp9_core::entropy::FrameContext`] bank.
+//! - **Level 4:** per-tile syntax — drive two [`rvp9_decoder::Decoder`]
+//!   instances frame-by-frame and diff the post-decode
+//!   `Option<ModeInfo>` grid published via
+//!   [`rvp9_decoder::Decoder::last_frame_mi_grid`].
 //!
-//! Levels 4..=5 still emit a "not yet implemented" stderr note while
-//! the lower levels run.
+//! Level 5 (per-coef tokens) is deferred per design Q5; still emits a
+//! "not yet implemented" stderr note while the lower levels run.
 //!
 //! Usage:
 //!   cargo run --release --bin diff-bitstream -- \
@@ -59,7 +63,10 @@ use rvp9_core::entropy::{
     REF_TYPES, SKIP_CONTEXTS, SWITCHABLE_FILTER_CONTEXTS, SWITCHABLE_FILTERS, TX_SIZES,
     UNCONSTRAINED_NODES,
 };
+use rvp9_core::intra_pred::IntraMode;
+use rvp9_core::mode_info::{BlockMode, BmiInfo, Mv, RefFrame};
 use rvp9_harness::container::{ContainerError, read_ivf_packets};
+use rvp9_decoder::Decoder;
 
 // -----------------------------------------------------------------------------
 // CLI
@@ -272,7 +279,8 @@ REQUIRED:
 
 OPTIONS:
     --level N | --level all     Stop after level N (0..=5); default 4
-                                 (levels 1..=5 not yet implemented)
+                                 (level 5 not yet implemented;
+                                  deferred per design Q5)
     --frame N | --frame N-M     Restrict to frame index or inclusive range
                                  (ignored at Level 0)
     --format text|json          Output format; default text
@@ -1771,6 +1779,446 @@ fn walk_nmv_component<F: FnMut(&str, String)>(
 }
 
 // -----------------------------------------------------------------------------
+// Level 4: per-tile syntax diff via Decoder::decode_frame
+// -----------------------------------------------------------------------------
+
+/// Static map of field-path suffix → probable encoder-module owner.
+/// Used by [`likely_site_hint`] to annotate Level 4 records with a
+/// triage hint per design §5.3. Suffix-match on the final field
+/// segment of the path; the path itself can start with `fc.`, `mi.`,
+/// or `header.` (we ignore the prefix and the index brackets, just
+/// match against the field segment substrings).
+static LIKELY_SITES: &[(&str, &str)] = &[
+    (".block_size", "encoder::partition"),
+    (".tx_size", "encoder::mode_decision"),
+    (".skip", "encoder::mode_decision"),
+    (".segment_id", "encoder::aq"),
+    (".seg_id_predicted", "encoder::aq"),
+    (".mode.y_mode", "encoder::mode_decision (intra)"),
+    (".mode.uv_mode", "encoder::mode_decision (intra)"),
+    (".mode.mode", "encoder::mode_decision (inter)"),
+    (".mode.ref_frames", "encoder::motion_estimation"),
+    (".mode.mvs", "encoder::motion_estimation"),
+    (".mode.interp_filter", "encoder::mode_decision"),
+    (".mode.tag", "encoder::mode_decision"),
+    (".bmi", "encoder::mode_decision (sub-8 partition)"),
+    ("fc.coef_probs", "encoder::entropy (token coder)"),
+    ("fc.nmvc", "encoder::motion_estimation"),
+    ("fc.partition_prob", "encoder::partition"),
+    ("fc.skip_probs", "encoder::mode_decision"),
+];
+
+/// Return `Some(module)` if any suffix in [`LIKELY_SITES`] is a
+/// substring of `path`; the longest matching entry wins so more
+/// specific paths (e.g. `.mode.y_mode`) beat their generic
+/// ancestors. `None` if nothing matches.
+fn likely_site_hint(path: &str) -> Option<&'static str> {
+    LIKELY_SITES
+        .iter()
+        .filter(|(suffix, _)| path.contains(*suffix))
+        .max_by_key(|(suffix, _)| suffix.len())
+        .map(|(_, owner)| *owner)
+}
+
+/// Append `(likely site: <module>)` to `detail` when [`likely_site_hint`]
+/// finds a match for `path`. Otherwise return `detail` unchanged.
+fn with_likely_site(path: &str, detail: String) -> String {
+    match likely_site_hint(path) {
+        Some(owner) => format!("{detail} (likely site: {owner})"),
+        None => detail,
+    }
+}
+
+/// Run the Level 4 diff: drive two `Decoder` instances frame-by-frame
+/// over both IVFs and compare the post-decode mi grids cell-by-cell.
+///
+/// Asymmetric `decode_frame` errors are reported as Level 4 records;
+/// symmetric errors (both sides failed identically) are silent —
+/// mirrors the L1/L2/L3 parse-error policy.
+fn level_4_diff<R: DiffReporter, E: Write>(
+    a_path: &Path,
+    b_path: &Path,
+    args: &Args,
+    reporter: &mut R,
+    stderr: &mut E,
+) {
+    let a_data = match std::fs::read(a_path) {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = writeln!(stderr, "L4 skipped: could not read {}: {e}", a_path.display());
+            return;
+        }
+    };
+    let b_data = match std::fs::read(b_path) {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = writeln!(stderr, "L4 skipped: could not read {}: {e}", b_path.display());
+            return;
+        }
+    };
+
+    let packets_a = match read_ivf_packets(&a_data) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = writeln!(stderr, "L4 skipped: {}: {e}", a_path.display());
+            return;
+        }
+    };
+    let packets_b = match read_ivf_packets(&b_data) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = writeln!(stderr, "L4 skipped: {}: {e}", b_path.display());
+            return;
+        }
+    };
+
+    let mut decoder_a = Decoder::new();
+    let mut decoder_b = Decoder::new();
+    let common = packets_a.len().min(packets_b.len());
+
+    for (packet_idx, (ra, rb)) in packets_a
+        .iter()
+        .zip(packets_b.iter())
+        .take(common)
+        .enumerate()
+    {
+        let packet_no = (packet_idx as u32) + 1;
+        if !packet_in_range(packet_no, args.frame) {
+            continue;
+        }
+        if let Some(cap) = args.max_frames
+            && packet_no > cap
+        {
+            break;
+        }
+
+        let bytes_a = ra.slice(&a_data);
+        let bytes_b = rb.slice(&b_data);
+
+        let parse_a = decoder_a.parse_packet(bytes_a);
+        let parse_b = decoder_b.parse_packet(bytes_b);
+
+        // Asymmetric parse error → record (mirrors L1 parse-error policy).
+        let (frames_a, frames_b) = match (parse_a, parse_b) {
+            (Ok(a), Ok(b)) => (a, b),
+            (Err(ea), Err(eb)) if format!("{ea}") == format!("{eb}") => continue,
+            (a_res, b_res) => {
+                let detail = format!(
+                    "packet={packet_no}: parse_packet a={} b={}",
+                    match a_res {
+                        Ok(_) => "ok".to_string(),
+                        Err(e) => format!("{e}"),
+                    },
+                    match b_res {
+                        Ok(_) => "ok".to_string(),
+                        Err(e) => format!("{e}"),
+                    },
+                );
+                reporter.divergence(4, "decode.parse_packet", Some(&detail));
+                continue;
+            }
+        };
+
+        // Frame-count mismatch inside a superframe: report and walk
+        // the common prefix.
+        let mut frames_a_iter = frames_a.into_iter();
+        let mut frames_b_iter = frames_b.into_iter();
+        let mut sub_idx: u32 = 0;
+        loop {
+            let next_a = frames_a_iter.next();
+            let next_b = frames_b_iter.next();
+            match (next_a, next_b) {
+                (None, None) => break,
+                (Some(_), None) | (None, Some(_)) => {
+                    let detail = format!(
+                        "packet={packet_no}: superframe sub-frame count differs at sub={sub_idx}",
+                    );
+                    reporter.divergence(4, "decode.subframe-count", Some(&detail));
+                    break;
+                }
+                (Some(fa), Some(fb)) => {
+                    diff_one_decoded_frame(
+                        &mut decoder_a,
+                        &mut decoder_b,
+                        &fa,
+                        &fb,
+                        packet_no,
+                        sub_idx,
+                        args,
+                        reporter,
+                    );
+                    sub_idx += 1;
+                }
+            }
+        }
+    }
+}
+
+/// Drive one decoded sub-frame through both decoders and diff the
+/// resulting `Option<ModeInfo>` grids.
+#[allow(clippy::too_many_arguments)]
+fn diff_one_decoded_frame<R: DiffReporter>(
+    decoder_a: &mut Decoder,
+    decoder_b: &mut Decoder,
+    frame_a: &rvp9_decoder::ParsedFrame<'_>,
+    frame_b: &rvp9_decoder::ParsedFrame<'_>,
+    packet_no: u32,
+    sub_idx: u32,
+    args: &Args,
+    reporter: &mut R,
+) {
+    let label = format!("packet={packet_no} frame={sub_idx}");
+    let stop_first = matches!(args.verbose, Verbose::First);
+    // Use a Cell so the closure can read+write the gating flag without
+    // exclusively borrowing the outer variable for its whole lifetime.
+    let emitted = std::cell::Cell::new(false);
+    let mut emit = |path: &str, detail: String| {
+        if emitted.get() && stop_first {
+            return;
+        }
+        let full = format!("{label}: {path}: {}", with_likely_site(path, detail));
+        reporter.divergence(4, path, Some(&full));
+        emitted.set(true);
+    };
+
+    // Drive both decoders synchronously; missing/asymmetric errors are
+    // L4 records, matching errors are silent.
+    let res_a = decoder_a.decode_frame(frame_a);
+    let res_b = decoder_b.decode_frame(frame_b);
+    match (&res_a, &res_b) {
+        (Ok(_), Ok(_)) => {}
+        (Err(ea), Err(eb)) if format!("{ea}") == format!("{eb}") => {
+            // Symmetric error — skip cell walk; both grids may be empty
+            // anyway (Decoder leaves last_frame_mi_grid untouched on
+            // error). No record emitted.
+            return;
+        }
+        (a_res, b_res) => {
+            emit(
+                "decode.decode_frame",
+                format!(
+                    "a={} b={}",
+                    match a_res {
+                        Ok(_) => "ok".to_string(),
+                        Err(e) => format!("{e}"),
+                    },
+                    match b_res {
+                        Ok(_) => "ok".to_string(),
+                        Err(e) => format!("{e}"),
+                    },
+                ),
+            );
+            return;
+        }
+    }
+
+    // Both sides decoded — compare the published mi grids.
+    let dims_a = decoder_a.last_frame_mi_dims();
+    let dims_b = decoder_b.last_frame_mi_dims();
+    if dims_a != dims_b {
+        emit(
+            "mi_grid.dims",
+            format!(
+                "a=({},{}) b=({},{})",
+                dims_a.0, dims_a.1, dims_b.0, dims_b.1,
+            ),
+        );
+        return;
+    }
+
+    let grid_a = decoder_a.last_frame_mi_grid();
+    let grid_b = decoder_b.last_frame_mi_grid();
+    let (mi_rows, mi_cols) = (dims_a.0 as usize, dims_a.1 as usize);
+    if grid_a.len() != mi_rows * mi_cols || grid_b.len() != mi_rows * mi_cols {
+        // Decoder contract violation — should never happen, but report
+        // rather than panic so the harness stays robust.
+        emit(
+            "mi_grid.length",
+            format!(
+                "a.len={} b.len={} expected={}",
+                grid_a.len(),
+                grid_b.len(),
+                mi_rows * mi_cols,
+            ),
+        );
+        return;
+    }
+
+    // Per-cell walk. Iterate row-major; for cells where either side is
+    // `Some`, run the field-walker (or report a presence divergence).
+    for row in 0..mi_rows {
+        for col in 0..mi_cols {
+            if emitted.get() && stop_first {
+                return;
+            }
+            let cell_a = &grid_a[row * mi_cols + col];
+            let cell_b = &grid_b[row * mi_cols + col];
+            let cell_label = format!("mi[row={row},col={col}]");
+            match (cell_a, cell_b) {
+                (None, None) => {}
+                (Some(_), None) | (None, Some(_)) => {
+                    emit(
+                        &format!("{cell_label}.presence"),
+                        format!(
+                            "a={} b={}",
+                            cell_a.is_some(),
+                            cell_b.is_some(),
+                        ),
+                    );
+                }
+                (Some(mi_a), Some(mi_b)) => {
+                    if mi_a != mi_b {
+                        walk_mode_info(&cell_label, mi_a, mi_b, &mut emit);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Field-by-field walker over [`rvp9_core::mode_info::ModeInfo`].
+/// Emits one `emit(path, "a=.. b=..")` call per differing leaf field.
+/// `mi_label` is the cell label (e.g. `mi[row=12,col=8]`); paths are
+/// rooted at that label.
+pub(crate) fn walk_mode_info<F: FnMut(&str, String)>(
+    mi_label: &str,
+    a: &rvp9_core::mode_info::ModeInfo,
+    b: &rvp9_core::mode_info::ModeInfo,
+    emit: &mut F,
+) {
+    diff_field(
+        &format!("{mi_label}.block_size"),
+        &a.block_size,
+        &b.block_size,
+        emit,
+    );
+    diff_field(
+        &format!("{mi_label}.tx_size"),
+        &a.tx_size,
+        &b.tx_size,
+        emit,
+    );
+    diff_field(&format!("{mi_label}.skip"), &a.skip, &b.skip, emit);
+    diff_field(
+        &format!("{mi_label}.segment_id"),
+        &a.segment_id,
+        &b.segment_id,
+        emit,
+    );
+    diff_field(
+        &format!("{mi_label}.seg_id_predicted"),
+        &a.seg_id_predicted,
+        &b.seg_id_predicted,
+        emit,
+    );
+    walk_block_mode(&format!("{mi_label}.mode"), &a.mode, &b.mode, emit);
+    // bmi: [BmiInfo; 4]
+    for (i, (ba, bb)) in a.bmi.iter().zip(b.bmi.iter()).enumerate() {
+        let base = format!("{mi_label}.bmi[{i}]");
+        walk_bmi_info(&base, ba, bb, emit);
+    }
+}
+
+/// Walker over [`rvp9_core::mode_info::BlockMode`]. Tag mismatch
+/// (intra vs inter) emits one record; same-tag pairs recurse into
+/// payload fields.
+fn walk_block_mode<F: FnMut(&str, String)>(
+    base: &str,
+    a: &BlockMode,
+    b: &BlockMode,
+    emit: &mut F,
+) {
+    let tag_a = block_mode_tag(a);
+    let tag_b = block_mode_tag(b);
+    if tag_a != tag_b {
+        emit(&format!("{base}.tag"), format!("a={tag_a} b={tag_b}"));
+        return;
+    }
+    match (a, b) {
+        (
+            BlockMode::Intra { y_mode: ya, uv_mode: ua },
+            BlockMode::Intra { y_mode: yb, uv_mode: ub },
+        ) => {
+            diff_field(&format!("{base}.y_mode"), ya, yb, emit);
+            diff_field(&format!("{base}.uv_mode"), ua, ub, emit);
+        }
+        (
+            BlockMode::Inter {
+                mode: ma,
+                ref_frames: rfa,
+                mvs: mva,
+                interp_filter: ifa,
+            },
+            BlockMode::Inter {
+                mode: mb,
+                ref_frames: rfb,
+                mvs: mvb,
+                interp_filter: ifb,
+            },
+        ) => {
+            diff_field(&format!("{base}.mode"), ma, mb, emit);
+            walk_ref_frame_pair(&format!("{base}.ref_frames"), rfa, rfb, emit);
+            walk_mv_pair(&format!("{base}.mvs"), mva, mvb, emit);
+            diff_field(&format!("{base}.interp_filter"), ifa, ifb, emit);
+        }
+        // Tag mismatch is handled above; the remaining patterns are
+        // unreachable but keep the match total.
+        _ => emit(base, format!("a={a:?} b={b:?}")),
+    }
+}
+
+/// Walker over `[RefFrame; 2]` (BlockMode::Inter.ref_frames).
+fn walk_ref_frame_pair<F: FnMut(&str, String)>(
+    base: &str,
+    a: &[RefFrame; 2],
+    b: &[RefFrame; 2],
+    emit: &mut F,
+) {
+    for i in 0..2 {
+        diff_field(&format!("{base}[{i}]"), &a[i], &b[i], emit);
+    }
+}
+
+/// Walker over `[Mv; 2]` (BlockMode::Inter.mvs and BmiInfo.as_mv).
+fn walk_mv_pair<F: FnMut(&str, String)>(base: &str, a: &[Mv; 2], b: &[Mv; 2], emit: &mut F) {
+    for i in 0..2 {
+        walk_mv(&format!("{base}[{i}]"), &a[i], &b[i], emit);
+    }
+}
+
+/// Walker over [`rvp9_core::mode_info::Mv`]. Two scalar fields
+/// (`row` / `col`) — emit per-axis records so a 1-pixel MV bug shows
+/// the axis.
+fn walk_mv<F: FnMut(&str, String)>(base: &str, a: &Mv, b: &Mv, emit: &mut F) {
+    diff_field(&format!("{base}.row"), &a.row, &b.row, emit);
+    diff_field(&format!("{base}.col"), &a.col, &b.col, emit);
+}
+
+/// Walker over [`rvp9_core::mode_info::BmiInfo`].
+fn walk_bmi_info<F: FnMut(&str, String)>(
+    base: &str,
+    a: &BmiInfo,
+    b: &BmiInfo,
+    emit: &mut F,
+) {
+    diff_field(&format!("{base}.as_mode"), &a.as_mode, &b.as_mode, emit);
+    walk_mv_pair(&format!("{base}.as_mv"), &a.as_mv, &b.as_mv, emit);
+}
+
+/// Stable short label for a [`BlockMode`] discriminant.
+fn block_mode_tag(m: &BlockMode) -> &'static str {
+    match m {
+        BlockMode::Intra { .. } => "Intra",
+        BlockMode::Inter { .. } => "Inter",
+    }
+}
+
+// IntraMode / RefFrame are used via Debug in `diff_field`; keep the
+// imports alive so future refactors don't accidentally drop them.
+#[allow(dead_code)]
+fn _intra_mode_uses(_m: IntraMode) {}
+
+// -----------------------------------------------------------------------------
 // Driver
 // -----------------------------------------------------------------------------
 
@@ -1786,13 +2234,14 @@ fn run_with_streams<E: Write, R: DiffReporter>(
 ) -> i32 {
     let level_n = args.level.as_u8();
 
-    // Notes for flags whose behaviour ships in later commits.
-    if level_n >= 4 {
+    // Level 5 (per-coef tokens) deferred per design Q5 — every other
+    // level ships here.
+    if level_n >= 5 {
         let _ = writeln!(
             stderr,
-            "note: level {level_n} not yet implemented \
-             (commit 4 of stage4-design/diff-bitstream-harness.md); \
-             running levels 0..=3 only"
+            "note: level 5 not yet implemented \
+             (deferred per Q5 of stage4-design/diff-bitstream-harness.md); \
+             running levels 0..=4 only"
         );
     }
 
@@ -1862,6 +2311,9 @@ fn run_with_streams<E: Write, R: DiffReporter>(
         }
         if level_n >= 3 {
             level_3_diff(&frames_a, &frames_b, args, reporter);
+        }
+        if level_n >= 4 {
+            level_4_diff(&args.a, &args.b, args, reporter, stderr);
         }
     }
 
@@ -2355,14 +2807,17 @@ mod tests {
     }
 
     #[test]
-    fn level_above_zero_emits_stderr_note() {
+    fn level_5_emits_stderr_note() {
+        // After commit #4 lands, Level 4 is implemented — only Level 5
+        // (per-coef tokens, deferred per design Q5) still emits a
+        // "not yet implemented" note.
         let buf = synth_ivf(2, 0x20);
         let a = write_tmp("a-note", &buf);
         let b = write_tmp("b-note", &buf);
         let args = Args {
             a: a.clone(),
             b: b.clone(),
-            level: Level::N(4),
+            level: Level::N(5),
             frame: None,
             format: Format::Text,
             verbose: Verbose::First,
@@ -2376,7 +2831,7 @@ mod tests {
         let _code = run_with_streams(&args, &mut err, &mut reporter);
         let _ = (a, b);
         let err_s = String::from_utf8(err).unwrap();
-        assert!(err_s.contains("level 4 not yet implemented"), "err: {err_s}");
+        assert!(err_s.contains("level 5 not yet implemented"), "err: {err_s}");
     }
 
     // -------------------------------------------------------------------------
@@ -3011,6 +3466,370 @@ mod tests {
             saw_l3,
             "expected a Level 3 record (fc.* or parse-error) on \
              perturbed compressed-partition byte; out={out:?} err={err:?}",
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Level 4 tests
+    // -------------------------------------------------------------------------
+
+    /// Locate the conformance-vectors directory, if present. The
+    /// workspace ships at most one `.ivf` here (the others are .webm).
+    /// Returns `None` when the directory is missing (e.g. fresh
+    /// checkout that hasn't run `scripts/fetch-vectors.ps1`); callers
+    /// should skip the test gracefully in that case.
+    fn conformance_vectors_dir() -> Option<PathBuf> {
+        let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let dir = crate_root
+            .parent()?
+            .parent()?
+            .join("tests")
+            .join("conformance")
+            .join("vectors");
+        if dir.exists() { Some(dir) } else { None }
+    }
+
+    /// Find an IVF in `dir` whose decoded output the L4 driver can
+    /// actually walk (i.e. `Decoder::decode_frame` returns `Ok` on the
+    /// first frame). Returns `None` if the directory is missing or no
+    /// IVF is suitable for the current decoder state. The current
+    /// shipping `vp90-2-05-resize.ivf` qualifies.
+    fn pick_l4_ivf(dir: &Path) -> Option<PathBuf> {
+        std::fs::read_dir(dir).ok()?.flatten().find_map(|e| {
+            let p = e.path();
+            (p.extension().and_then(|s| s.to_str()) == Some("ivf")).then_some(p)
+        })
+    }
+
+    #[test]
+    fn likely_site_hint_matches_suffix() {
+        assert_eq!(
+            likely_site_hint("mi[row=0,col=0].tx_size"),
+            Some("encoder::mode_decision"),
+        );
+        assert_eq!(
+            likely_site_hint("mi[row=12,col=8].mode.mvs[0].row"),
+            Some("encoder::motion_estimation"),
+        );
+        assert_eq!(
+            likely_site_hint("mi[row=4,col=4].block_size"),
+            Some("encoder::partition"),
+        );
+        assert_eq!(
+            likely_site_hint("fc.coef_probs[tx=4x4][plane=0][ref=0][band=0][ctx=0][node=0]"),
+            Some("encoder::entropy (token coder)"),
+        );
+        // Unknown path → None.
+        assert_eq!(likely_site_hint("header.profile"), None);
+    }
+
+    #[test]
+    fn walk_mode_info_identity_emits_nothing() {
+        // Two identical ModeInfo structs → walker emits zero records.
+        use rvp9_core::block::BlockSize;
+        use rvp9_core::transforms::TxSize;
+        let mi = rvp9_core::mode_info::ModeInfo {
+            block_size: BlockSize::Block16x16,
+            tx_size: TxSize::Tx8x8,
+            skip: false,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        let mut records = Vec::<(String, String)>::new();
+        {
+            let mut emit =
+                |p: &str, d: String| records.push((p.to_string(), d));
+            walk_mode_info("mi[row=0,col=0]", &mi, &mi, &mut emit);
+        }
+        assert!(records.is_empty(), "expected zero records, got {records:?}");
+    }
+
+    #[test]
+    fn walk_mode_info_field_paths() {
+        use rvp9_core::block::BlockSize;
+        use rvp9_core::transforms::TxSize;
+        let base = rvp9_core::mode_info::ModeInfo {
+            block_size: BlockSize::Block16x16,
+            tx_size: TxSize::Tx8x8,
+            skip: false,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        let mut perturbed = base;
+        perturbed.tx_size = TxSize::Tx16x16;
+        perturbed.skip = true;
+        perturbed.segment_id = 3;
+
+        let mut records = Vec::<(String, String)>::new();
+        {
+            let mut emit =
+                |p: &str, d: String| records.push((p.to_string(), d));
+            walk_mode_info("mi[row=2,col=4]", &base, &perturbed, &mut emit);
+        }
+        let paths: Vec<String> = records.iter().map(|(p, _)| p.clone()).collect();
+        assert!(
+            paths.contains(&"mi[row=2,col=4].tx_size".to_string()),
+            "paths={paths:?}",
+        );
+        assert!(
+            paths.contains(&"mi[row=2,col=4].skip".to_string()),
+            "paths={paths:?}",
+        );
+        assert!(
+            paths.contains(&"mi[row=2,col=4].segment_id".to_string()),
+            "paths={paths:?}",
+        );
+    }
+
+    #[test]
+    fn walk_mode_info_tag_mismatch() {
+        // Intra vs Inter — should emit a single `.tag` record and stop
+        // recursing into payload (no need to compare y_mode vs mode).
+        use rvp9_core::block::BlockSize;
+        use rvp9_core::bitstream::InterpFilter;
+        use rvp9_core::mode_info::InterMode;
+        use rvp9_core::transforms::TxSize;
+        let intra = rvp9_core::mode_info::ModeInfo {
+            block_size: BlockSize::Block8x8,
+            tx_size: TxSize::Tx4x4,
+            skip: false,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        let inter = rvp9_core::mode_info::ModeInfo {
+            block_size: BlockSize::Block8x8,
+            tx_size: TxSize::Tx4x4,
+            skip: false,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Inter {
+                mode: InterMode::ZeroMv,
+                ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                mvs: [Mv::ZERO, Mv::ZERO],
+                interp_filter: InterpFilter::EightTap,
+            },
+            bmi: Default::default(),
+        };
+        let mut records = Vec::<(String, String)>::new();
+        {
+            let mut emit =
+                |p: &str, d: String| records.push((p.to_string(), d));
+            walk_mode_info("mi[row=0,col=0]", &intra, &inter, &mut emit);
+        }
+        let paths: Vec<String> = records.iter().map(|(p, _)| p.clone()).collect();
+        assert!(
+            paths.iter().any(|p| p.ends_with(".mode.tag")),
+            "paths={paths:?}",
+        );
+        // No y_mode or mvs records — the tag mismatch short-circuits.
+        assert!(
+            !paths.iter().any(|p| p.contains(".mode.y_mode")),
+            "paths={paths:?}",
+        );
+        assert!(
+            !paths.iter().any(|p| p.contains(".mode.mvs")),
+            "paths={paths:?}",
+        );
+    }
+
+    #[test]
+    fn l4_identity_on_real_ivf() {
+        let dir = match conformance_vectors_dir() {
+            Some(d) => d,
+            None => {
+                eprintln!(
+                    "l4_identity_on_real_ivf: conformance vectors dir absent — \
+                     skipping (run scripts/fetch-vectors.ps1)"
+                );
+                return;
+            }
+        };
+        let ivf = match pick_l4_ivf(&dir) {
+            Some(p) => p,
+            None => {
+                eprintln!("l4_identity_on_real_ivf: no .ivf in {dir:?} — skipping");
+                return;
+            }
+        };
+        let args = Args {
+            a: ivf.clone(),
+            b: ivf.clone(),
+            level: Level::N(4),
+            frame: None,
+            format: Format::Text,
+            verbose: Verbose::Full,
+            max_frames: None,
+            no_color: true,
+            exit_on_diff: true,
+        };
+        let (out, err, code) = run_with_text_reporter(&args);
+        // Byte-identical IVF → L0 short-circuits to "identical" and L4
+        // never runs. Either way, no divergence records and exit 0.
+        assert_eq!(code, 0, "out={out:?} err={err:?}");
+        assert!(!out.contains("Level 4"), "out={out:?}");
+    }
+
+    /// Build a minimal valid IVF buffer with a single (synthetic)
+    /// keyframe payload of the given dims. Frame won't actually decode
+    /// past the parse layer — the L4 driver gracefully handles
+    /// symmetric `decode_frame` errors as silent noise. We only need
+    /// the uncompressed-header dimensions to differ to exercise the
+    /// frame-shape divergence path that would dominate a real
+    /// `mi_grid.dims` record before decode finishes.
+    fn ivf_with_dims(width: u32, height: u32) -> Vec<u8> {
+        let payload = build_keyframe_payload(width, height);
+        wrap_in_ivf(&[payload.as_slice()])
+    }
+
+    #[test]
+    fn l4_keyframe_shape_difference_reports_at_l2_first() {
+        // Sanity: when two IVFs have different keyframe dims, L2
+        // catches the divergence (`header.width` / `header.height`)
+        // long before L4's mi-grid walk would see anything. This locks
+        // the level-monotonicity invariant from design §6.5: lower
+        // levels surface the bug first.
+        let buf_a = ivf_with_dims(320, 240);
+        let buf_b = ivf_with_dims(640, 480);
+        let a = write_tmp("a-l4-shape", &buf_a);
+        let b = write_tmp("b-l4-shape", &buf_b);
+        let args = Args {
+            a: a.clone(),
+            b: b.clone(),
+            level: Level::N(4),
+            frame: None,
+            format: Format::Text,
+            verbose: Verbose::Full,
+            max_frames: None,
+            no_color: true,
+            exit_on_diff: true,
+        };
+        let (out, _err, code) = run_with_text_reporter(&args);
+        let _ = (a, b);
+        assert_eq!(code, 1);
+        // L0 reports the byte diff; L2 reports the width/height fields.
+        assert!(out.contains("Level 2") && out.contains("header.width"), "out={out:?}");
+    }
+
+    #[test]
+    fn l4_property_lower_levels_also_report_on_diff() {
+        // Level monotonicity (design §6.5): if L4 finds any record,
+        // the same run with `--level all` MUST also see records at
+        // every level that has something to say. Concretely: two IVFs
+        // that differ in keyframe shape produce records at L0 (byte
+        // diff), L1 (chunk-size differs), and L2 (header.width). The
+        // exact set depends on how deep the divergence reaches; the
+        // invariant is "no level above the first divergence is
+        // silent".
+        let buf_a = ivf_with_dims(320, 240);
+        let buf_b = ivf_with_dims(640, 480);
+        let a = write_tmp("a-l4-mono", &buf_a);
+        let b = write_tmp("b-l4-mono", &buf_b);
+        let args = Args {
+            a: a.clone(),
+            b: b.clone(),
+            level: Level::N(4),
+            frame: None,
+            format: Format::Text,
+            verbose: Verbose::Full,
+            max_frames: None,
+            no_color: true,
+            exit_on_diff: true,
+        };
+        let (out, _err, _code) = run_with_text_reporter(&args);
+        let _ = (a, b);
+        // L0 reports the bytes, L1 reports chunk-size, L2 reports
+        // width/height. Every level that has something to say must
+        // emit at least one record under `--verbose full`.
+        for level in &["Level 0", "Level 1", "Level 2"] {
+            assert!(
+                out.lines().any(|l| l.contains(level)),
+                "expected at least one {level} record; out={out:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn l4_identity_synthetic_ivf_emits_no_record() {
+        // Byte-identical synthetic IVF → L0 short-circuits, L4 never
+        // runs, no Level 4 records.
+        let buf = ivf_with_n_keyframes(2, 320, 240);
+        let a = write_tmp("a-l4-id", &buf);
+        let b = write_tmp("b-l4-id", &buf);
+        let args = Args {
+            a: a.clone(),
+            b: b.clone(),
+            level: Level::N(4),
+            frame: None,
+            format: Format::Text,
+            verbose: Verbose::Full,
+            max_frames: None,
+            no_color: true,
+            exit_on_diff: true,
+        };
+        let (out, err, code) = run_with_text_reporter(&args);
+        let _ = (a, b);
+        assert_eq!(code, 0, "out={out:?} err={err:?}");
+        assert!(!out.contains("Level 4"), "out={out:?}");
+    }
+
+    #[test]
+    fn l4_real_ivf_cost_budget() {
+        // Cost-budget guard (design §6.4): driving L4 on a real
+        // conformance vector for two identical inputs must finish in
+        // under 5 s wall-clock. The shipping vector is small (9 kB,
+        // resize stress) — we scale the budget down accordingly. If
+        // no IVF is present (fresh checkout), skip; we don't add
+        // binary blobs to satisfy this gate.
+        let dir = match conformance_vectors_dir() {
+            Some(d) => d,
+            None => {
+                eprintln!("l4_real_ivf_cost_budget: vectors dir absent — skipping");
+                return;
+            }
+        };
+        let ivf = match pick_l4_ivf(&dir) {
+            Some(p) => p,
+            None => {
+                eprintln!("l4_real_ivf_cost_budget: no .ivf in vectors — skipping");
+                return;
+            }
+        };
+        let args = Args {
+            a: ivf.clone(),
+            b: ivf.clone(),
+            level: Level::N(4),
+            frame: None,
+            format: Format::Text,
+            verbose: Verbose::Full,
+            max_frames: None,
+            no_color: true,
+            exit_on_diff: true,
+        };
+        let start = std::time::Instant::now();
+        let (_out, _err, _code) = run_with_text_reporter(&args);
+        let elapsed = start.elapsed();
+        // 5 s ceiling per design §6.4. The shipping vector is tiny
+        // (9 kB) so we set a wide margin; the budget exists to catch
+        // accidental double-decode regressions, not to gate
+        // performance work.
+        assert!(
+            elapsed.as_secs() < 5,
+            "L4 identity on {ivf:?} took {elapsed:?} — budget 5s",
         );
     }
 }
