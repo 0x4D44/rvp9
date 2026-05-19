@@ -29,8 +29,8 @@ use crate::bitstream::{
 use crate::block::{BlockSize, PARTITION_TYPES, PartitionType};
 use crate::entropy::adapt::FrameCounts;
 use crate::entropy::{
-    BoolReader, COMP_INTER_CONTEXTS, DefaultTxProbs, INTRA_INTER_CONTEXTS, REF_CONTEXTS,
-    SKIP_CONTEXTS,
+    BoolReader, BoolWriter, COMP_INTER_CONTEXTS, DefaultTxProbs, INTRA_INTER_CONTEXTS,
+    REF_CONTEXTS, SKIP_CONTEXTS,
 };
 use crate::intra_pred::IntraMode;
 use crate::transforms::{TxMode, TxSize};
@@ -649,6 +649,105 @@ pub fn read_tx_size(
             // Unreachable: both inputs are TxSize-derived (0..=3).
             _ => unreachable!("min of TxSize values out of range: {raw}"),
         }
+    }
+}
+
+/// Write a per-block transform size to the boolean writer. Encoder
+/// mirror of [`read_tx_size`].
+///
+/// Walks the same selected-tx-size tree the reader walks against
+/// `tx_probs[max_tx_size][ctx]`, emitting the bit-sequence that
+/// `read_tx_size` will decode back to `tx_size`:
+///
+/// | tx_size  | bits at max=Tx8x8 | max=Tx16x16  | max=Tx32x32   |
+/// |----------|-------------------|--------------|---------------|
+/// | Tx4x4    | `0`               | `0`          | `0`           |
+/// | Tx8x8    | `1`               | `1, 0`       | `1, 0`        |
+/// | Tx16x16  | —                 | `1, 1`       | `1, 1, 0`     |
+/// | Tx32x32  | —                 | —            | `1, 1, 1`     |
+///
+/// In the non-select path (`!allow_select || tx_mode !=
+/// TxModeSelect`), no bits are emitted: the decoder derives
+/// `tx_size = min(max_tx_size, tx_mode_to_biggest_tx_size(tx_mode))`
+/// directly. This function `debug_assert!`s that the caller-supplied
+/// `tx_size` matches that derived value — surfacing encoder mode-
+/// decision bugs early without bloating release builds.
+///
+/// Parameters mirror [`read_tx_size`] 1:1 (minus the `counts` slot,
+/// which is reader-only state for backward adaptation).
+///
+/// # Panics
+///
+/// In debug builds:
+/// - if the algorithm tries to emit a selected tx_size with
+///   `max_tx_size == Tx4x4` (the gate that drops to the non-select
+///   path),
+/// - if `tx_size > max_tx_size` in either path (the value is
+///   un-encodable),
+/// - if the non-select path receives a `tx_size` that doesn't match
+///   the `min(max_tx_size, cap)` the decoder will derive (encoder
+///   mode-decision inconsistency).
+#[inline]
+pub fn write_tx_size(
+    bw: &mut BoolWriter<'_>,
+    tx_probs: &DefaultTxProbs,
+    tx_mode: TxMode,
+    max_tx_size: TxSize,
+    allow_select: bool,
+    ctx: usize,
+    tx_size: TxSize,
+) {
+    debug_assert!(
+        (tx_size as u8) <= (max_tx_size as u8),
+        "write_tx_size: tx_size {tx_size:?} exceeds max_tx_size {max_tx_size:?}"
+    );
+    if allow_select && tx_mode == TxMode::TxModeSelect && max_tx_size >= TxSize::Tx8x8 {
+        let probs = get_tx_probs(tx_probs, max_tx_size, ctx)
+            .expect("write_selected_tx_size requires max_tx_size >= Tx8x8");
+        // Tree walk mirrors `read_tx_size`. We emit bits in the same
+        // order the reader reads them — first bit branches at Tx4x4,
+        // second at Tx8x8 (only when max >= Tx16x16), third at Tx16x16
+        // (only when max >= Tx32x32).
+        match tx_size {
+            TxSize::Tx4x4 => {
+                bw.write(0, probs[0]);
+            }
+            TxSize::Tx8x8 => {
+                bw.write(1, probs[0]);
+                if max_tx_size >= TxSize::Tx16x16 {
+                    bw.write(0, probs[1]);
+                }
+            }
+            TxSize::Tx16x16 => {
+                // max must be >= Tx16x16 for this leaf to be reachable;
+                // the assert at the top of the function enforces it.
+                bw.write(1, probs[0]);
+                bw.write(1, probs[1]);
+                if max_tx_size >= TxSize::Tx32x32 {
+                    bw.write(0, probs[2]);
+                }
+            }
+            TxSize::Tx32x32 => {
+                debug_assert_eq!(
+                    max_tx_size,
+                    TxSize::Tx32x32,
+                    "Tx32x32 is only reachable when max_tx_size == Tx32x32"
+                );
+                bw.write(1, probs[0]);
+                bw.write(1, probs[1]);
+                bw.write(1, probs[2]);
+            }
+        }
+    } else {
+        // Non-select path emits no bits; debug-assert the caller's
+        // `tx_size` matches the decoder-derived value.
+        let cap = tx_mode_to_biggest_tx_size(tx_mode) as u8;
+        let expected = core::cmp::min(max_tx_size as u8, cap);
+        debug_assert_eq!(
+            tx_size as u8, expected,
+            "write_tx_size non-select path: tx_size {tx_size:?} disagrees with min(max_tx_size={max_tx_size:?}, tx_mode_cap={cap})"
+        );
+        let _ = (bw, tx_probs, ctx);
     }
 }
 
@@ -1902,6 +2001,129 @@ mod tests {
         let got =
             read_tx_size(&mut r, &custom_tx, TxMode::TxModeSelect, TxSize::Tx8x8, true, 1, None);
         assert_eq!(got, TxSize::Tx8x8, "ctx=1 should pick Tx8x8");
+    }
+
+    /// `write_tx_size` → `read_tx_size` round-trip at every legal
+    /// (max_tx_size, tx_size, ctx) triple in the selected-tx path.
+    /// Covers all 9 reachable leaves (`Tx4x4/Tx8x8 @ max=Tx8x8`,
+    /// `+Tx16x16 @ max=Tx16x16`, `+Tx32x32 @ max=Tx32x32`) × 2 ctx
+    /// values.
+    #[test]
+    fn write_tx_size_round_trips_selected_path_all_combinations() {
+        let fc = crate::entropy::FrameContext::new_default();
+
+        let cases: &[(TxSize, &[TxSize])] = &[
+            (TxSize::Tx8x8, &[TxSize::Tx4x4, TxSize::Tx8x8]),
+            (TxSize::Tx16x16, &[TxSize::Tx4x4, TxSize::Tx8x8, TxSize::Tx16x16]),
+            (
+                TxSize::Tx32x32,
+                &[TxSize::Tx4x4, TxSize::Tx8x8, TxSize::Tx16x16, TxSize::Tx32x32],
+            ),
+        ];
+
+        for (max_tx, allowed_tx) in cases {
+            for &tx_size in *allowed_tx {
+                for ctx in 0..2 {
+                    let mut buf = vec![0u8; 32];
+                    let size = {
+                        let mut bw = BoolWriter::start_encode(&mut buf);
+                        write_tx_size(
+                            &mut bw,
+                            &fc.tx_probs,
+                            TxMode::TxModeSelect,
+                            *max_tx,
+                            true,
+                            ctx,
+                            tx_size,
+                        );
+                        // Pad so the BoolReader can flush its window.
+                        for _ in 0..16 {
+                            bw.write_bit(0);
+                        }
+                        bw.stop_encode().expect("stop_encode")
+                    };
+                    buf.truncate(size);
+
+                    let mut r = BoolReader::new(&buf).expect("BoolReader::new");
+                    let got = read_tx_size(
+                        &mut r,
+                        &fc.tx_probs,
+                        TxMode::TxModeSelect,
+                        *max_tx,
+                        true,
+                        ctx,
+                        None,
+                    );
+                    assert_eq!(
+                        got, tx_size,
+                        "round-trip failed for max={max_tx:?} tx_size={tx_size:?} ctx={ctx}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Non-select path: `write_tx_size` must emit zero bits. We
+    /// verify by writing a sentinel `1` immediately after; if any
+    /// bits were emitted before it, the sentinel would decode as
+    /// `0`.
+    #[test]
+    fn write_tx_size_non_select_path_emits_no_bits() {
+        let fc = crate::entropy::FrameContext::new_default();
+
+        // Exercise both the non-select tx_mode and the
+        // `allow_select == false` gate. Tx32x32 cap → derived tx_size
+        // is min(Tx32x32, Tx32x32) = Tx32x32.
+        let non_select_cases: &[(TxMode, bool, TxSize, TxSize)] = &[
+            (TxMode::AllowTx32x32, true, TxSize::Tx32x32, TxSize::Tx32x32),
+            // allow_select=false forces the cap path even with TxModeSelect.
+            (TxMode::TxModeSelect, false, TxSize::Tx32x32, TxSize::Tx32x32),
+            // AllowTx16x16 caps tx_size at Tx16x16 regardless of max.
+            (TxMode::AllowTx16x16, true, TxSize::Tx32x32, TxSize::Tx16x16),
+            // OnlyTx4x4 caps to Tx4x4.
+            (TxMode::OnlyTx4x4, true, TxSize::Tx8x8, TxSize::Tx4x4),
+        ];
+
+        for (tx_mode, allow_select, max_tx, expected_tx_size) in non_select_cases {
+            let mut buf = vec![0u8; 32];
+            let size = {
+                let mut bw = BoolWriter::start_encode(&mut buf);
+                write_tx_size(
+                    &mut bw,
+                    &fc.tx_probs,
+                    *tx_mode,
+                    *max_tx,
+                    *allow_select,
+                    0,
+                    *expected_tx_size,
+                );
+                // Sentinel `1` at p=128; if write_tx_size emitted bits
+                // they'd shift the cursor and the sentinel would
+                // decode as `0`.
+                bw.write(1, 128);
+                for _ in 0..16 {
+                    bw.write_bit(0);
+                }
+                bw.stop_encode().expect("stop_encode")
+            };
+            buf.truncate(size);
+
+            let mut r = BoolReader::new(&buf).expect("BoolReader::new");
+            let sentinel = r.read(128);
+            assert_eq!(
+                sentinel, 1,
+                "write_tx_size emitted bits in non-select path: tx_mode={tx_mode:?} allow_select={allow_select} max_tx={max_tx:?}"
+            );
+            // Also verify that read_tx_size returns the expected
+            // derived value with no further reads (sentinel was the
+            // first/only read).
+            let got =
+                read_tx_size(&mut r, &fc.tx_probs, *tx_mode, *max_tx, *allow_select, 0, None);
+            assert_eq!(
+                got, *expected_tx_size,
+                "decoder derivation disagrees with writer expectation"
+            );
+        }
     }
 
     /// Helpers shared by the `read_inter_segment_id` tests. Encodes a
