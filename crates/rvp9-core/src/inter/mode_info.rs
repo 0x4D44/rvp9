@@ -843,31 +843,55 @@ pub fn read_inter_block_mode_info<N: NeighbourLookup>(
 
 /// Errors returned by [`write_inter_block_mode_info`].
 ///
-/// The S4.16b writer covers the parent inter-block path (block_size ≥
-/// `Block8x8`). Sub-8 inter blocks (`Block4x4` / `Block4x8` /
-/// `Block8x4`) flow through `resolve_sub8_bmi` on the decoder and are
-/// deferred to S4.16b-sub.
+/// Covers both the parent inter-block path (block_size ≥
+/// `Block8x8`, landed in S4.16b) and the sub-8 inter-block path
+/// (`Block4x4` / `Block4x8` / `Block8x4`, landed in S4.16e — mirrors
+/// `resolve_sub8_bmi` on the decoder side).
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum InterModeWriteError {
-    /// The block size is sub-8 — out of scope for the S4.16b commit.
-    Sub8NotSupported(BlockSize),
     /// The supplied `ModeInfo::mode` was [`BlockMode::Intra`]. The
     /// inter-block writer must only be called on inter blocks; the
     /// caller's mode driver is expected to dispatch intra blocks to
     /// the intra writer.
     NotInter,
+    /// A sub-8 sub-block's `bmi[j].as_mode` did not map to a valid
+    /// [`InterMode`] via [`InterMode::from_idx`]. The caller is
+    /// expected to populate `as_mode = sub_mode.idx() as u8` for
+    /// each of the 4 sub-blocks of a sub-8 inter block.
+    Sub8InvalidSubMode {
+        /// The 4×4 sub-block index (`0..=3`).
+        j: usize,
+        /// The raw `as_mode` byte that failed to decode.
+        raw: u8,
+    },
+    /// The parent's `mi.mode` (inter mode discriminant) did not
+    /// match the last sub-block's `bmi[3].as_mode` for a sub-8 inter
+    /// block. Decoder convention is that the parent inherits the
+    /// last sub-block's mode (libvpx `mi->mode = b_mode` on the last
+    /// loop iteration); the writer enforces the same invariant on
+    /// its caller.
+    Sub8ParentModeMismatch {
+        /// Parent's inter-mode index.
+        parent: u8,
+        /// `bmi[3].as_mode` (last sub-block's mode index).
+        last_sub: u8,
+    },
 }
 
 impl core::fmt::Display for InterModeWriteError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Sub8NotSupported(bs) => write!(
-                f,
-                "write_inter_block_mode_info: sub-8 block_size {bs:?} not supported in S4.16b"
-            ),
             Self::NotInter => f.write_str(
                 "write_inter_block_mode_info: expected ModeInfo::mode = BlockMode::Inter, got intra",
+            ),
+            Self::Sub8InvalidSubMode { j, raw } => write!(
+                f,
+                "write_inter_block_mode_info: sub-8 bmi[{j}].as_mode = {raw} is not a valid InterMode index"
+            ),
+            Self::Sub8ParentModeMismatch { parent, last_sub } => write!(
+                f,
+                "write_inter_block_mode_info: sub-8 parent mode index {parent} != bmi[3].as_mode {last_sub}"
             ),
         }
     }
@@ -876,8 +900,9 @@ impl core::fmt::Display for InterModeWriteError {
 impl std::error::Error for InterModeWriteError {}
 
 /// Encode the per-inter-block mode info. Mirrors libvpx
-/// `vp9/encoder/vp9_bitstream.c:pack_inter_mode_mvs` for the
-/// parent-block (block_size ≥ `Block8x8`) path.
+/// `vp9/encoder/vp9_bitstream.c:pack_inter_mode_mvs` for both the
+/// parent-block (block_size ≥ `Block8x8`) and sub-8 (`Block4x4` /
+/// `Block4x8` / `Block8x4`) paths.
 ///
 /// This is the inverse of [`read_inter_block_mode_info`] — round-tripping
 /// `(fc, params, neighbours, block_size, bounds, prev_mv, mi)` through
@@ -891,22 +916,43 @@ impl std::error::Error for InterModeWriteError {}
 ///    `ref_frames[1].is_inter()`); the `Select` reference-mode emits
 ///    one boolean against `comp_inter_prob[ctx]`, otherwise no
 ///    `comp_inter` bit is emitted.
-/// 2. Inter mode — [`INTER_MODE_TREE`] via `fc.inter_mode_probs[ctx]`,
-///    where `ctx = get_mode_context(block_size, neighbours)`.
+/// 2. Parent inter mode — [`INTER_MODE_TREE`] via
+///    `fc.inter_mode_probs[ctx]`, where
+///    `ctx = get_mode_context(block_size, neighbours)`. **Skipped
+///    for sub-8 blocks** (each 4×4 sub-block emits its own mode in
+///    step 4).
 /// 3. Switchable interpolation filter — only emitted when
 ///    `params.interp_filter == InterpFilter::Switchable`. The
 ///    [`SWITCHABLE_INTERP_TREE`] is walked against
-///    `fc.switchable_interp_prob[ctx]`.
-/// 4. MV residuals — only for [`InterMode::NewMv`]. For each active
-///    ref slot, compute the same `best_ref_mv` the decoder computes in
-///    [`resolve_parent_mvs`] (i.e. `find_mv_refs` →
-///    `mvs[count-1]` → [`lower_mv_precision`]), then emit the per-axis
-///    diff via [`write_mv`]. NEAREST / NEAR / ZERO modes emit no MV
-///    bits — the decoder reconstructs them from the ref-MV list.
+///    `fc.switchable_interp_prob[ctx]`. Emitted once for the parent
+///    block in both the ≥8×8 and sub-8 paths.
+/// 4. MV / sub-block payload — for ≥8×8 blocks, the [`InterMode::NewMv`]
+///    branch emits the per-ref MV residual via [`write_mv`]
+///    (NEAREST / NEAR / ZERO are MV-bit-free — the decoder
+///    reconstructs them from the ref-MV list). For sub-8 blocks,
+///    each 4×4 sub-block emits its own inter-mode (via
+///    [`INTER_MODE_TREE`]) followed by any NEWMV residuals; see
+///    [`write_sub8_bmi`].
 ///
-/// Sub-8 inputs (`Block4x4` / `Block4x8` / `Block8x4`) return
-/// [`InterModeWriteError::Sub8NotSupported`] — the per-bmi writer is
-/// deferred to a follow-up commit.
+/// ## Sub-8 caller contract
+///
+/// For `Block4x4` / `Block4x8` / `Block8x4`, the caller must
+/// populate `mi.bmi[j].as_mode = sub_mode.idx() as u8` and
+/// `mi.bmi[j].as_mv` for each of the 4 sub-blocks. The parent's
+/// `mi.mode` must match `mi.bmi[3].as_mode` (libvpx's
+/// `mi->mode = b_mode` at end-of-loop convention). The 2×2
+/// replication rules are also asserted on the input:
+///
+/// - `Block4x8` (num_4x4_h = 2): `bmi[2] == bmi[0]` and
+///   `bmi[3] == bmi[1]`.
+/// - `Block8x4` (num_4x4_w = 2): `bmi[1] == bmi[0]` and
+///   `bmi[3] == bmi[2]`.
+/// - `Block4x4`: all 4 entries are independent.
+///
+/// Caller violations of the per-sub-block invariants surface as
+/// [`InterModeWriteError::Sub8InvalidSubMode`] /
+/// [`InterModeWriteError::Sub8ParentModeMismatch`]; the replication
+/// rules and per-mode MV invariants are enforced via `debug_assert!`.
 #[allow(clippy::too_many_arguments)]
 pub fn write_inter_block_mode_info<N: NeighbourLookup>(
     bw: &mut BoolWriter<'_>,
@@ -918,9 +964,6 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
     prev_mv: Option<PrevFrameMvRef>,
     mi: &ModeInfo,
 ) -> Result<(), InterModeWriteError> {
-    if (block_size as u8) < (BlockSize::Block8x8 as u8) {
-        return Err(InterModeWriteError::Sub8NotSupported(block_size));
-    }
     let (mode, ref_frames, mvs, interp_filter) = match mi.mode {
         BlockMode::Inter {
             mode,
@@ -930,6 +973,7 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
         } => (mode, ref_frames, mvs, interp_filter),
         BlockMode::Intra { .. } => return Err(InterModeWriteError::NotInter),
     };
+    let is_sub8 = (block_size as u8) < (BlockSize::Block8x8 as u8);
 
     let above = neighbours.get(Position { row: -1, col: 0 });
     let left = neighbours.get(Position { row: 0, col: -1 });
@@ -996,21 +1040,25 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
         }
     }
 
-    // 2. Inter mode — INTER_MODE_TREE inverse. The tree leaves are
-    //    `InterMode::idx()` (NEAREST=0, NEAR=1, ZERO=2, NEW=3).
+    // 2. Parent inter mode — INTER_MODE_TREE inverse. The tree
+    //    leaves are `InterMode::idx()` (NEAREST=0, NEAR=1, ZERO=2,
+    //    NEW=3). Skipped for sub-8 blocks: the decoder reads one
+    //    `b_mode` per sub-block instead (see `write_sub8_bmi`).
     let inter_mode_ctx = get_mode_context(block_size, neighbours);
     debug_assert!(inter_mode_ctx < INTER_MODE_CONTEXTS);
-    write_tree(
-        bw,
-        &INTER_MODE_TREE,
-        &fc.inter_mode_probs[inter_mode_ctx],
-        mode.idx() as i8,
-    );
+    if !is_sub8 {
+        write_tree(
+            bw,
+            &INTER_MODE_TREE,
+            &fc.inter_mode_probs[inter_mode_ctx],
+            mode.idx() as i8,
+        );
+    }
 
     // 3. Switchable interpolation filter — only when the frame header
     //    says `Switchable`. SWITCHABLE_INTERP_TREE leaves are the raw
     //    `InterpFilter` discriminants (EightTap=0, EightTapSmooth=1,
-    //    EightTapSharp=2).
+    //    EightTapSharp=2). Emitted once for the parent in both paths.
     if params.interp_filter == InterpFilter::Switchable {
         let ctx = get_pred_context_switchable_interp(above, left);
         write_tree(
@@ -1021,8 +1069,26 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
         );
     }
 
-    // 4. MV residuals — only for NEWMV. NEAREST/NEAR/ZERO emit no MV
-    //    bits; the decoder reconstructs them from the ref-MV list.
+    // 4. MV / sub-block payload.
+    if is_sub8 {
+        return write_sub8_bmi(
+            bw,
+            fc,
+            params,
+            neighbours,
+            block_size,
+            bounds,
+            prev_mv,
+            ref_frames,
+            is_compound,
+            inter_mode_ctx,
+            mi,
+        );
+    }
+
+    // Parent-block (≥8×8) MV residuals — only for NEWMV.
+    // NEAREST/NEAR/ZERO emit no MV bits; the decoder reconstructs
+    // them from the ref-MV list.
     if matches!(mode, InterMode::NewMv) {
         let num_refs = 1 + usize::from(is_compound);
         for i in 0..num_refs {
@@ -1051,6 +1117,206 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
         }
     }
 
+    Ok(())
+}
+
+/// Encode the per-bmi inter mode + MV(s) for sub-8 inter blocks
+/// (`Block4x4` / `Block4x8` / `Block8x4`). Mirror of the decoder's
+/// `resolve_sub8_bmi` (see this module) — emits the wire-format
+/// counterpart of libvpx `vp9_decodemv.c:723-770`.
+///
+/// Wire order (per active sub-block, in row-major
+/// `idy ∈ {0, num_4x4_h}, idx ∈ {0, num_4x4_w}` order):
+///
+/// 1. The sub-block's inter mode via [`INTER_MODE_TREE`] against
+///    `fc.inter_mode_probs[inter_mode_ctx]` (same context as the
+///    parent — the decoder uses the parent-block-level context for
+///    every sub-block).
+/// 2. For NEWMV: per active ref, the MV residual via [`write_mv`].
+///    The reference MV is `lower_mv_precision(find_mv_refs.mvs[0])`,
+///    computed **once per ref** and cached across sub-blocks
+///    (libvpx `got_mv_refs_for_new`).
+/// 3. For NEAREST / NEAR: nothing on the wire — the decoder
+///    reconstructs the MV via `append_sub8x8_mvs_for_idx`. We
+///    `debug_assert!` that the caller-supplied `bmi[j].as_mv`
+///    matches that reconstruction.
+/// 4. For ZERO: nothing on the wire — we `debug_assert!` that
+///    `bmi[j].as_mv == [Mv::ZERO; 2]`.
+///
+/// The 2×2 replication is enforced as an input invariant (the
+/// decoder copies sub-block `j` into `j+num_4x4_w` /
+/// `j+num_4x4_h*2`; the writer requires the caller to have
+/// pre-replicated identical entries at those slots).
+#[allow(clippy::too_many_arguments)]
+fn write_sub8_bmi<N: NeighbourLookup>(
+    bw: &mut BoolWriter<'_>,
+    fc: &FrameContext,
+    params: &InterModeReadParams,
+    neighbours: &N,
+    block_size: BlockSize,
+    bounds: &BlockBounds,
+    prev_mv: Option<PrevFrameMvRef>,
+    ref_frames: [RefFrame; 2],
+    is_compound: bool,
+    inter_mode_ctx: usize,
+    mi: &ModeInfo,
+) -> Result<(), InterModeWriteError> {
+    // libvpx num_4x4_w/h for the sub-8 sizes; see `resolve_sub8_bmi`.
+    let (num_4x4_w, num_4x4_h) = match block_size {
+        BlockSize::Block4x4 => (1usize, 1usize),
+        BlockSize::Block4x8 => (1usize, 2usize),
+        BlockSize::Block8x4 => (2usize, 1usize),
+        // Non-sub-8 callers are routed past us by the parent path.
+        _ => (1, 1),
+    };
+
+    // Parent-mode invariant: libvpx assigns `mi->mode = b_mode` on
+    // the last loop iteration, so the parent's mode mirrors
+    // `bmi[3].as_mode`. Surface a structured error rather than a
+    // silent assertion so encoders catch caller bugs early.
+    let parent_idx = match mi.mode {
+        BlockMode::Inter { mode, .. } => mode.idx() as u8,
+        BlockMode::Intra { .. } => return Err(InterModeWriteError::NotInter),
+    };
+    let last_sub = mi.bmi[3].as_mode;
+    if parent_idx != last_sub {
+        return Err(InterModeWriteError::Sub8ParentModeMismatch {
+            parent: parent_idx,
+            last_sub,
+        });
+    }
+
+    // libvpx `got_mv_refs_for_new` — find_mv_refs result for NEWMV is
+    // shared across all sub-blocks.
+    let mut best_ref_mvs_for_new = [Mv::ZERO; 2];
+    let mut got_mv_refs_for_new = false;
+    let num_refs = 1 + usize::from(is_compound);
+
+    let mut idy = 0usize;
+    while idy < 2 {
+        let mut idx = 0usize;
+        while idx < 2 {
+            let j = idy * 2 + idx;
+            let raw = mi.bmi[j].as_mode;
+            let b_mode = InterMode::from_idx(raw)
+                .ok_or(InterModeWriteError::Sub8InvalidSubMode { j, raw })?;
+
+            // 1. Emit the sub-block's inter mode.
+            write_tree(
+                bw,
+                &INTER_MODE_TREE,
+                &fc.inter_mode_probs[inter_mode_ctx],
+                b_mode.idx() as i8,
+            );
+
+            match b_mode {
+                InterMode::NewMv => {
+                    if !got_mv_refs_for_new {
+                        for r in 0..num_refs {
+                            let list = find_mv_refs(
+                                InterMode::NewMv,
+                                block_size,
+                                ref_frames[r],
+                                neighbours,
+                                &params.sign_bias,
+                                bounds,
+                                prev_mv,
+                            );
+                            best_ref_mvs_for_new[r] = lower_mv_precision(
+                                list.mvs[0],
+                                params.allow_high_precision_mv,
+                            );
+                        }
+                        got_mv_refs_for_new = true;
+                    }
+                    // 2. Emit the per-ref MV residual.
+                    for (r, &ref_mv) in
+                        best_ref_mvs_for_new.iter().enumerate().take(num_refs)
+                    {
+                        write_mv(
+                            bw,
+                            mi.bmi[j].as_mv[r],
+                            ref_mv,
+                            params.allow_high_precision_mv,
+                            &fc.nmvc,
+                        );
+                    }
+                }
+                InterMode::NearestMv | InterMode::NearMv => {
+                    // 3. No MV bits emitted; assert the caller-supplied
+                    //    MV matches `append_sub8x8_mvs_for_idx` for each
+                    //    active ref. We use a synthetic parent
+                    //    `ModeInfo` matching the decoder's call site
+                    //    (block_size + b_mode + ref_frames + the
+                    //    accumulated bmi so far).
+                    for r in 0..num_refs {
+                        let synthetic = ModeInfo {
+                            block_size,
+                            tx_size: crate::transforms::TxSize::Tx4x4,
+                            skip: false,
+                            segment_id: 0,
+                            seg_id_predicted: false,
+                            mode: BlockMode::Inter {
+                                mode: b_mode,
+                                ref_frames,
+                                mvs: [Mv::ZERO; 2],
+                                interp_filter: InterpFilter::EightTap,
+                            },
+                            bmi: mi.bmi,
+                        };
+                        let expected = append_sub8x8_mvs_for_idx(
+                            b_mode,
+                            &synthetic,
+                            block_size,
+                            ref_frames[r],
+                            r,
+                            j,
+                            neighbours,
+                            &params.sign_bias,
+                            bounds,
+                            prev_mv,
+                        );
+                        debug_assert_eq!(
+                            mi.bmi[j].as_mv[r], expected,
+                            "sub-8 bmi[{j}].as_mv[{r}] must match append_sub8x8_mvs_for_idx",
+                        );
+                    }
+                }
+                InterMode::ZeroMv => {
+                    // 4. No MV bits; assert the caller supplied
+                    //    `[Mv::ZERO; 2]`.
+                    debug_assert_eq!(
+                        mi.bmi[j].as_mv,
+                        [Mv::ZERO; 2],
+                        "sub-8 ZEROMV bmi[{j}].as_mv must be [Mv::ZERO; 2]",
+                    );
+                }
+            }
+
+            // Replication invariant — the decoder copies sub-block
+            // `j` into the un-iterated 4×4 cells; require the caller
+            // to have done the same so the writer's view matches.
+            if num_4x4_h == 2 {
+                debug_assert_eq!(
+                    mi.bmi[j + 2], mi.bmi[j],
+                    "sub-8 replication: bmi[{}] must mirror bmi[{}]",
+                    j + 2,
+                    j,
+                );
+            }
+            if num_4x4_w == 2 {
+                debug_assert_eq!(
+                    mi.bmi[j + 1], mi.bmi[j],
+                    "sub-8 replication: bmi[{}] must mirror bmi[{}]",
+                    j + 1,
+                    j,
+                );
+            }
+
+            idx += num_4x4_w;
+        }
+        idy += num_4x4_h;
+    }
     Ok(())
 }
 
@@ -2266,30 +2532,6 @@ mod tests {
         let _ = round_trip(&fc, &params, &nb, bsize, &bounds, None, &mi);
     }
 
-    /// Sub-8 block_size → writer rejects with `Sub8NotSupported`.
-    #[test]
-    fn s4_16b_rejects_sub8() {
-        let fc = FrameContext::new_default();
-        let params = default_params();
-        let nb = ListNeighbours::new();
-        let bounds = loose_bounds();
-        let bsize = BlockSize::Block4x4;
-        let mi = build_inter_mi(
-            bsize,
-            InterMode::ZeroMv,
-            [RefFrame::LastFrame, RefFrame::NoRefFrame],
-            [Mv::ZERO, Mv::ZERO],
-            InterpFilter::EightTap,
-        );
-        let mut buf = vec![0u8; 64];
-        let mut w = BoolWriter::start_encode(&mut buf);
-        let err = write_inter_block_mode_info(
-            &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi,
-        )
-        .expect_err("expected Sub8NotSupported");
-        assert_eq!(err, InterModeWriteError::Sub8NotSupported(bsize));
-    }
-
     /// Intra mode info → writer rejects with `NotInter`.
     #[test]
     fn s4_16b_rejects_intra() {
@@ -2307,5 +2549,347 @@ mod tests {
         )
         .expect_err("expected NotInter");
         assert_eq!(err, InterModeWriteError::NotInter);
+    }
+
+    // ----- S4.16e: sub-8 inter block round-trip tests ----
+
+    /// Build a sub-8 inter [`ModeInfo`] from a per-sub-block
+    /// `(mode, [mv0, mv1])` array. Caller provides 4 entries in
+    /// row-major order; this helper applies the libvpx 2×2
+    /// replication rules (so a `Block4x8` caller passes 2 distinct
+    /// entries at `[0]` / `[1]`, etc., and gets `[2] = [0]`,
+    /// `[3] = [1]`). The parent's `mi.mode` is set to `entries[3].0`
+    /// (matching `mi->mode = b_mode` at end-of-loop in libvpx).
+    fn build_sub8_inter_mi(
+        block_size: BlockSize,
+        ref_frames: [RefFrame; 2],
+        interp_filter: InterpFilter,
+        entries: [(InterMode, [Mv; 2]); 4],
+    ) -> ModeInfo {
+        let mut bmi = [BmiInfo::default(); 4];
+        for (j, (mode, mvs)) in entries.iter().enumerate() {
+            bmi[j].as_mode = mode.idx() as u8;
+            bmi[j].as_mv = *mvs;
+        }
+        // Apply the replication contract — the writer asserts on it.
+        match block_size {
+            BlockSize::Block4x8 => {
+                bmi[2] = bmi[0];
+                bmi[3] = bmi[1];
+            }
+            BlockSize::Block8x4 => {
+                bmi[1] = bmi[0];
+                bmi[3] = bmi[2];
+            }
+            _ => {}
+        }
+        let parent_mode = InterMode::from_idx(bmi[3].as_mode).expect("valid parent mode");
+        let parent_mvs = bmi[3].as_mv;
+        ModeInfo {
+            block_size,
+            tx_size: TxSize::Tx4x4,
+            skip: false,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Inter {
+                mode: parent_mode,
+                ref_frames,
+                mvs: parent_mvs,
+                interp_filter,
+            },
+            bmi,
+        }
+    }
+
+    /// Sub-8 round-trip: encode then decode, asserting parent
+    /// `(mode, ref_frames, mvs, interp_filter)` and `bmi[j].as_mv`
+    /// for `j ∈ 0..4` match. The decoder doesn't populate
+    /// `bmi[j].as_mode` on the inter path, so we don't compare it.
+    fn round_trip_sub8(
+        fc: &FrameContext,
+        params: &InterModeReadParams,
+        neighbours: &impl NeighbourLookup,
+        block_size: BlockSize,
+        bounds: &BlockBounds,
+        prev_mv: Option<PrevFrameMvRef>,
+        mi: &ModeInfo,
+    ) -> ModeInfo {
+        let mut buf = vec![0u8; 256];
+        let size = {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            write_inter_block_mode_info(
+                &mut w, fc, params, neighbours, block_size, bounds, prev_mv, mi,
+            )
+            .expect("sub-8 writer ok");
+            finalise(w)
+        };
+        buf.truncate(size);
+
+        let mut reader = BoolReader::new(&buf).expect("init reader");
+        let mut got = skeleton_mi(block_size);
+        read_inter_block_mode_info(
+            &mut reader,
+            fc,
+            None,
+            None,
+            params,
+            neighbours,
+            block_size,
+            bounds,
+            prev_mv,
+            &mut got,
+        );
+        match (&mi.mode, &got.mode) {
+            (
+                BlockMode::Inter {
+                    mode: m_in,
+                    ref_frames: rf_in,
+                    mvs: mvs_in,
+                    interp_filter: if_in,
+                },
+                BlockMode::Inter {
+                    mode: m_out,
+                    ref_frames: rf_out,
+                    mvs: mvs_out,
+                    interp_filter: if_out,
+                },
+            ) => {
+                assert_eq!(m_in, m_out, "parent mode round-trip");
+                assert_eq!(rf_in, rf_out, "ref_frames round-trip");
+                assert_eq!(mvs_in, mvs_out, "parent mvs round-trip");
+                assert_eq!(if_in, if_out, "interp_filter round-trip");
+            }
+            _ => panic!("expected Inter after sub-8 round trip"),
+        }
+        for j in 0..4 {
+            assert_eq!(
+                mi.bmi[j].as_mv, got.bmi[j].as_mv,
+                "bmi[{j}].as_mv round-trip",
+            );
+        }
+        got
+    }
+
+    /// Block4x4, all 4 sub-blocks ZEROMV. No MV bits on the wire;
+    /// only the inter-mode tree leaves.
+    #[test]
+    fn s4_16e_round_trip_sub8_block4x4_all_zero() {
+        let fc = FrameContext::new_default();
+        let params = default_params();
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block4x4;
+        let entries = [
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+        ];
+        let mi = build_sub8_inter_mi(
+            bsize,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            InterpFilter::EightTap,
+            entries,
+        );
+        let _ = round_trip_sub8(&fc, &params, &nb, bsize, &bounds, None, &mi);
+    }
+
+    /// Block4x4, all 4 sub-blocks NEARESTMV with no neighbours
+    /// (`append_sub8x8_mvs_for_idx` → `(0, 0)`).
+    #[test]
+    fn s4_16e_round_trip_sub8_block4x4_all_nearest() {
+        let fc = FrameContext::new_default();
+        let params = default_params();
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block4x4;
+        let entries = [
+            (InterMode::NearestMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::NearestMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::NearestMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::NearestMv, [Mv::ZERO, Mv::ZERO]),
+        ];
+        let mi = build_sub8_inter_mi(
+            bsize,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            InterpFilter::EightTap,
+            entries,
+        );
+        let _ = round_trip_sub8(&fc, &params, &nb, bsize, &bounds, None, &mi);
+    }
+
+    /// Block4x4, 4 distinct NEWMV MVs per sub-block. No neighbours
+    /// so the cached `best_ref_mv_for_new` is `(0, 0)` for the
+    /// single LAST ref; each sub-block's MV is encoded as the diff
+    /// against that.
+    #[test]
+    fn s4_16e_round_trip_sub8_block4x4_new_mv() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.allow_high_precision_mv = true;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block4x4;
+        let entries = [
+            (InterMode::NewMv, [Mv { row: 4, col: 0 }, Mv::ZERO]),
+            (InterMode::NewMv, [Mv { row: -2, col: 6 }, Mv::ZERO]),
+            (InterMode::NewMv, [Mv { row: 8, col: -4 }, Mv::ZERO]),
+            (InterMode::NewMv, [Mv { row: -6, col: 10 }, Mv::ZERO]),
+        ];
+        let mi = build_sub8_inter_mi(
+            bsize,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            InterpFilter::EightTap,
+            entries,
+        );
+        let _ = round_trip_sub8(&fc, &params, &nb, bsize, &bounds, None, &mi);
+    }
+
+    /// Block4x8 (num_4x4_h = 2): only `bmi[0]` and `bmi[1]` are
+    /// active; `bmi[2]` mirrors `bmi[0]` and `bmi[3]` mirrors
+    /// `bmi[1]` (per libvpx's `num_4x4_h == 2` replication).
+    #[test]
+    fn s4_16e_round_trip_sub8_block4x8_zero() {
+        let fc = FrameContext::new_default();
+        let params = default_params();
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block4x8;
+        let entries = [
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+        ];
+        let mi = build_sub8_inter_mi(
+            bsize,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            InterpFilter::EightTap,
+            entries,
+        );
+        let _ = round_trip_sub8(&fc, &params, &nb, bsize, &bounds, None, &mi);
+    }
+
+    /// Block8x4 (num_4x4_w = 2): active sub-blocks are `bmi[0]` and
+    /// `bmi[2]`; `bmi[1]` mirrors `bmi[0]` and `bmi[3]` mirrors
+    /// `bmi[2]`.
+    #[test]
+    fn s4_16e_round_trip_sub8_block8x4_zero() {
+        let fc = FrameContext::new_default();
+        let params = default_params();
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block8x4;
+        let entries = [
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+        ];
+        let mi = build_sub8_inter_mi(
+            bsize,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            InterpFilter::EightTap,
+            entries,
+        );
+        let _ = round_trip_sub8(&fc, &params, &nb, bsize, &bounds, None, &mi);
+    }
+
+    /// Block4x4 with mixed modes: ZERO / NEAREST / NEW / NEW. The
+    /// last sub-block's mode (NEW) becomes the parent's `mode`. The
+    /// NEWMV cache is populated once on the first NEWMV (sub-block
+    /// `j=2`) and reused for `j=3`.
+    #[test]
+    fn s4_16e_round_trip_sub8_block4x4_mixed_modes() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.allow_high_precision_mv = true;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block4x4;
+        let entries = [
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::NearestMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::NewMv, [Mv { row: 4, col: -2 }, Mv::ZERO]),
+            (InterMode::NewMv, [Mv { row: -8, col: 6 }, Mv::ZERO]),
+        ];
+        let mi = build_sub8_inter_mi(
+            bsize,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            InterpFilter::EightTap,
+            entries,
+        );
+        let _ = round_trip_sub8(&fc, &params, &nb, bsize, &bounds, None, &mi);
+    }
+
+    /// Compound sub-8: Block4x4, all 4 sub-blocks ZEROMV with two
+    /// active refs (LAST + ALTREF). Confirms both ref slots survive
+    /// round-trip through the sub-8 path.
+    #[test]
+    fn s4_16e_round_trip_sub8_compound_zero() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&params.sign_bias);
+        params.comp_fixed_ref = fixed;
+        params.comp_var_ref = var;
+        params.reference_mode = ReferenceMode::Compound;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block4x4;
+        let entries = [
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+        ];
+        let mi = build_sub8_inter_mi(
+            bsize,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            InterpFilter::EightTap,
+            entries,
+        );
+        let _ = round_trip_sub8(&fc, &params, &nb, bsize, &bounds, None, &mi);
+    }
+
+    /// `mi.mode != bmi[3].as_mode` → writer rejects with
+    /// `Sub8ParentModeMismatch`.
+    #[test]
+    fn s4_16e_rejects_parent_mode_mismatch() {
+        let fc = FrameContext::new_default();
+        let params = default_params();
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block4x4;
+        // bmi[3] is ZEROMV (idx=2) but parent says NEWMV (idx=3).
+        let entries = [
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+        ];
+        let mut mi = build_sub8_inter_mi(
+            bsize,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            InterpFilter::EightTap,
+            entries,
+        );
+        // Force the mismatch.
+        if let BlockMode::Inter { ref mut mode, .. } = mi.mode {
+            *mode = InterMode::NewMv;
+        }
+        let mut buf = vec![0u8; 64];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        let err = write_inter_block_mode_info(
+            &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi,
+        )
+        .expect_err("expected Sub8ParentModeMismatch");
+        assert_eq!(
+            err,
+            InterModeWriteError::Sub8ParentModeMismatch {
+                parent: InterMode::NewMv.idx() as u8,
+                last_sub: InterMode::ZeroMv.idx() as u8,
+            },
+        );
     }
 }

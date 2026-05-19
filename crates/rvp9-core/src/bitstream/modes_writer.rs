@@ -3171,30 +3171,19 @@ mod tests {
         );
     }
 
-    /// Sub-8 leaf (`Block4x4`) → writer surfaces the inter-mode
-    /// writer's `Sub8NotSupported` via `ModesWriterError::InterModeWrite`.
-    /// This test exists because the inter-mode writer rejects sub-8
-    /// before we do; the partition walker propagates the error
-    /// faithfully.
+    /// Smallest reachable inter-frame partition. The walker stops
+    /// recursion at BLOCK_8x8 (forcing PARTITION_NONE there), so an
+    /// 8x8-grain SB is the densest leaf the partition writer
+    /// produces today. Sub-8 inter leaves (BLOCK_4x4/4x8/8x4) are
+    /// reached only through the inter-block writer's own sub-8
+    /// path (S4.16e) and aren't exercised by this walker test;
+    /// see the dedicated `s4_16e_*` tests in `inter::mode_info`.
     #[test]
-    fn s4_16c_rejects_sub8_via_inter_mode_writer() {
+    fn s4_16c_round_trip_8x8_grain_dense_sb() {
         let fc = FrameContext::new_default();
         let params = s4c_default_params();
         let mi_rows = 8u32;
         let mi_cols = 8u32;
-        // Build a partition tree that recurses all the way down to
-        // BLOCK_8X8 — then BLOCK_8X8 is accepted by the partition
-        // writer (it forces PARTITION_NONE at that level), and the
-        // leaf write goes through `write_inter_block_mode_info` which
-        // gets a Block8x8 — which IS valid. So sub-8 isn't reachable
-        // via the partition walker's recursion (it stops at 8x8).
-        //
-        // To actually exercise the Sub8NotSupported path we'd need
-        // the writer to dispatch sub-8 leaves, which the current scope
-        // doesn't. Skip this rejection test; the Sub8 error is
-        // already covered by S4.16b's `s4_16b_rejects_sub8`. The
-        // partition walker's BLOCK_8x8 leaves go through the parent
-        // inter path cleanly.
         let cell = make_inter_cell(
             BlockSize::Block8x8,
             InterMode::ZeroMv,

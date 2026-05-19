@@ -867,11 +867,20 @@ impl Mv {
 /// per-4×4 prediction info here; the parent [`ModeInfo`]'s `mode`
 /// field is then not used for Y prediction (libvpx uses
 /// `mi->bmi[i].as_mode` instead — see `vp9_blockd.h:99-101`).
+///
+/// For sub-8 inter blocks, the writer side reuses [`Self::as_mode`]
+/// to carry the per-sub-block [`InterMode::idx`] (the decoder
+/// doesn't currently populate it on the inter path — it's a
+/// forward-only contract from the caller into
+/// [`crate::inter::mode_info::write_inter_block_mode_info`]). The
+/// parent's [`BlockMode`] discriminant tells the consumer which
+/// interpretation (intra mode vs inter-mode index) applies.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
 pub struct BmiInfo {
     /// Per-sub-block intra mode (for keyframes / intra blocks) OR
-    /// the MV for the sub-block (for inter blocks). The decoder
-    /// distinguishes via the parent block's [`BlockMode`].
+    /// the inter-mode index ([`InterMode::idx`] cast to `u8`) for
+    /// sub-8 inter blocks on the writer side. The parent block's
+    /// [`BlockMode`] distinguishes the two interpretations.
     pub as_mode: u8,
     /// First / second MV — only used by inter sub-8 blocks.
     pub as_mv: [Mv; 2],
