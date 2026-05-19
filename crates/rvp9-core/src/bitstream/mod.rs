@@ -46,7 +46,7 @@ pub use frame::{
 };
 pub use header::{
     FRAME_CONTEXTS_LOG2, FrameKind, HeaderTail, RefFrameSizes, UncompressedHeader,
-    parse_uncompressed_header,
+    parse_uncompressed_header, write_uncompressed_header,
 };
 pub use raw::{RawBitReader, RawBitWriter};
 pub use superframe::{
@@ -57,5 +57,6 @@ pub use tile::{TileBuffer, parse_tile_buffers};
 pub use sub_parsers::{
     LoopFilterParams, MAX_SEGMENTS, PREDICTION_PROBS, QuantizationParams, SEG_LVL_MAX,
     SEG_TREE_PROBS, SegFeature, SegmentationParams, TileInfo, parse_loopfilter,
-    parse_quantization, parse_segmentation, parse_tile_info,
+    parse_quantization, parse_segmentation, parse_tile_info, write_loopfilter,
+    write_quantization, write_segmentation, write_tile_info,
 };

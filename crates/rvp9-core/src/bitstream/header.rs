@@ -37,10 +37,11 @@ use super::frame::{
     BitDepth, ChromaFormat, ColorRange, ColorSpace, FrameType, InterpFilter, MAX_INTER_REFS,
     Profile, REF_FRAMES, REF_FRAMES_LOG2, sync,
 };
-use super::raw::RawBitReader;
+use super::raw::{RawBitReader, RawBitWriter};
 use super::sub_parsers::{
     LoopFilterParams, QuantizationParams, SegmentationParams, TileInfo, parse_loopfilter,
-    parse_quantization, parse_segmentation, parse_tile_info,
+    parse_quantization, parse_segmentation, parse_tile_info, write_loopfilter, write_quantization,
+    write_segmentation, write_tile_info,
 };
 
 /// Number of `FRAME_CONTEXTS_LOG2` bits used by `frame_context_idx`
@@ -564,6 +565,269 @@ fn read_render_size(
     }
 }
 
+// ============================================================================
+//                              Writer side
+// ============================================================================
+//
+// `write_uncompressed_header` and friends are the encoder mirrors of the
+// `parse_*` helpers above. Each writer is a near-line-by-line inverse
+// of its reader sibling — same field order, same conditional structure.
+// libvpx reference: `write_uncompressed_header` at
+// `vp9_bitstream.c:1243-1314`.
+
+/// Write the VP9 uncompressed header for the supplied
+/// [`UncompressedHeader`] into `wb`. Parser inverse of
+/// [`parse_uncompressed_header`].
+///
+/// `first_partition_size` is taken as an explicit argument rather than
+/// from `h.tail.first_partition_size`: the caller must compute the
+/// final compressed-header byte length (after writing it) and pass it
+/// in here. This mirrors libvpx's two-pass arrangement where the
+/// uncompressed header is patched after the compressed header is
+/// finalised (`vp9_bitstream.c:1442-1445`).
+///
+/// # Errors
+///
+/// Returns [`BitstreamError::BufferFull`] if the underlying writer
+/// overflows, or [`BitstreamError::UnsupportedProfile`] if `h.profile`
+/// is not [`Profile::Profile0`] (the only profile rvp9 v1 emits).
+pub fn write_uncompressed_header(
+    wb: &mut RawBitWriter<'_>,
+    h: &UncompressedHeader,
+    first_partition_size: u16,
+) -> Result<(), BitstreamError> {
+    if h.profile != Profile::Profile0 {
+        return Err(BitstreamError::UnsupportedProfile {
+            profile: h.profile as u8,
+        });
+    }
+
+    // 2-bit frame_marker. libvpx :1248.
+    wb.write_literal(u32::from(sync::FRAME_MARKER), 2);
+
+    // Profile encoding. libvpx :1250 / `write_profile` :1206-1217.
+    write_profile_raw(wb, h.profile);
+
+    // show_existing_frame branch. libvpx :1253-1257.
+    if let FrameKind::ShowExistingFrame { slot } = h.kind {
+        wb.write_bit(1);
+        wb.write_literal(u32::from(slot), 3);
+        return finalise(wb);
+    }
+    wb.write_bit(0);
+
+    // frame_type / show_frame / error_resilient. libvpx :1259-1261.
+    let frame_type = match h.kind {
+        FrameKind::KeyFrame => FrameType::Key,
+        FrameKind::IntraOnly { .. } | FrameKind::InterFrame { .. } => FrameType::Inter,
+        FrameKind::ShowExistingFrame { .. } => unreachable!("handled above"),
+    };
+    wb.write_bit(frame_type as u8);
+    wb.write_bit(u8::from(h.show_frame));
+    wb.write_bit(u8::from(h.error_resilient));
+
+    let color = ColorConfig {
+        bit_depth: h.bit_depth,
+        color_space: h.color_space,
+        color_range: h.color_range,
+        chroma: h.chroma,
+    };
+
+    match h.kind {
+        FrameKind::KeyFrame => {
+            // Keyframe path. libvpx :1263-1266.
+            write_sync_code(wb);
+            write_bitdepth_colorspace_sampling(wb, h.profile, &color);
+            write_frame_size(wb, h.width, h.height);
+            write_render_size(wb, h.render_size);
+        }
+        FrameKind::IntraOnly {
+            reset_frame_context,
+            refresh_frame_flags,
+        } => {
+            // libvpx :1267-1282 (inter branch + intra_only=1).
+            // intra_only bit only emitted when show_frame == 0.
+            if !h.show_frame {
+                wb.write_bit(1);
+            }
+            if !h.error_resilient {
+                wb.write_literal(u32::from(reset_frame_context), 2);
+            }
+            write_sync_code(wb);
+            // Profile 0 inherits color defaults — no color bits emitted.
+            // libvpx :1277-1279.
+            if h.profile != Profile::Profile0 {
+                write_bitdepth_colorspace_sampling(wb, h.profile, &color);
+            }
+            wb.write_literal(u32::from(refresh_frame_flags), REF_FRAMES as u8);
+            write_frame_size(wb, h.width, h.height);
+            write_render_size(wb, h.render_size);
+        }
+        FrameKind::InterFrame {
+            reset_frame_context,
+            refresh_frame_flags,
+            ref_frame_indices,
+            ref_frame_sign_biases,
+            allow_high_precision_mv,
+            interp_filter,
+        } => {
+            // libvpx :1267-1299 (inter branch + intra_only=0).
+            if !h.show_frame {
+                // intra_only = 0 — only emitted when show_frame == 0.
+                wb.write_bit(0);
+            }
+            if !h.error_resilient {
+                wb.write_literal(u32::from(reset_frame_context), 2);
+            }
+            wb.write_literal(u32::from(refresh_frame_flags), REF_FRAMES as u8);
+            for i in 0..MAX_INTER_REFS {
+                wb.write_literal(u32::from(ref_frame_indices[i]), REF_FRAMES_LOG2 as u8);
+                wb.write_bit(u8::from(ref_frame_sign_biases[i]));
+            }
+            // `setup_frame_size_with_refs` inverse: emit three
+            // "size_in_found = 0" bits and a fresh 32-bit frame size.
+            // This is always valid — the encoder may also inherit size
+            // from a ref by setting one of these bits to 1 and skipping
+            // the fresh size; for v1 we always emit fresh size so the
+            // writer doesn't need access to the reference-pool sizes.
+            // libvpx :1166-1198 (`write_frame_size_with_refs`).
+            for _ in 0..MAX_INTER_REFS {
+                wb.write_bit(0);
+            }
+            wb.write_literal(h.width - 1, 16);
+            wb.write_literal(h.height - 1, 16);
+            write_render_size(wb, h.render_size);
+            wb.write_bit(u8::from(allow_high_precision_mv));
+            write_interp_filter(wb, interp_filter);
+        }
+        FrameKind::ShowExistingFrame { .. } => unreachable!("handled above"),
+    }
+
+    // ----- Shared post-disposition tail. libvpx :1302-1313. -----
+    let tail = h.tail.as_ref().ok_or(BitstreamError::BufferFull)?;
+    // ^ `None` tail only occurs for ShowExistingFrame (returned above);
+    // the encoder cannot fabricate the sub-block contents from nothing,
+    // so we reject with BufferFull as a stable "caller error" signal.
+
+    if !h.error_resilient {
+        wb.write_bit(u8::from(tail.refresh_frame_context));
+        wb.write_bit(u8::from(tail.frame_parallel_decoding_mode));
+    }
+    wb.write_literal(u32::from(tail.frame_context_idx), FRAME_CONTEXTS_LOG2);
+
+    write_loopfilter(wb, &tail.loop_filter)?;
+    write_quantization(wb, &tail.quantization)?;
+    write_segmentation(wb, &tail.segmentation)?;
+    let mi_cols = ((h.width + 7) >> 3) as i32;
+    write_tile_info(wb, &tail.tile_info, mi_cols)?;
+
+    // Trailing first_partition_size — 16 bits. libvpx writes this at
+    // pack time after computing the compressed-header length.
+    wb.write_literal(u32::from(first_partition_size), 16);
+
+    finalise(wb)
+}
+
+/// Helper: turn writer-poison into a `Result`.
+fn finalise(wb: &RawBitWriter<'_>) -> Result<(), BitstreamError> {
+    if wb.has_error() {
+        Err(BitstreamError::BufferFull)
+    } else {
+        Ok(())
+    }
+}
+
+/// Encoder mirror of [`read_profile_raw`]. Mirrors libvpx
+/// `write_profile` (`vp9_bitstream.c:1206-1217`). The wire encoding
+/// puts the **low** bit of the profile value first; for Profile 0 that
+/// reduces to writing two zero bits.
+fn write_profile_raw(wb: &mut RawBitWriter<'_>, profile: Profile) {
+    match profile {
+        Profile::Profile0 => wb.write_literal(0, 2),
+        Profile::Profile1 => wb.write_literal(2, 2),
+        Profile::Profile2 => wb.write_literal(1, 2),
+        Profile::Profile3 => wb.write_literal(6, 3),
+    }
+}
+
+/// Encoder mirror of [`read_sync_code`]. Mirrors libvpx
+/// `write_sync_code` (`vp9_bitstream.c:1200-1204`).
+fn write_sync_code(wb: &mut RawBitWriter<'_>) {
+    wb.write_literal(u32::from(sync::SYNC_CODE_0), 8);
+    wb.write_literal(u32::from(sync::SYNC_CODE_1), 8);
+    wb.write_literal(u32::from(sync::SYNC_CODE_2), 8);
+}
+
+/// Encoder mirror of [`read_bitdepth_colorspace_sampling`]. Mirrors
+/// libvpx `write_bitdepth_colorspace_sampling`
+/// (`vp9_bitstream.c:1219-1241`).
+fn write_bitdepth_colorspace_sampling(
+    wb: &mut RawBitWriter<'_>,
+    profile: Profile,
+    color: &ColorConfig,
+) {
+    if matches!(profile, Profile::Profile2 | Profile::Profile3) {
+        // 1 bit: 0 → 10, 1 → 12. libvpx :1223.
+        wb.write_bit(u8::from(color.bit_depth == BitDepth::Twelve));
+    }
+    wb.write_literal(color.color_space as u32, 3);
+    if color.color_space != ColorSpace::Srgb {
+        wb.write_bit(color.color_range as u8);
+        if matches!(profile, Profile::Profile1 | Profile::Profile3) {
+            wb.write_bit(u8::from(color.chroma.subsampling_x()));
+            wb.write_bit(u8::from(color.chroma.subsampling_y()));
+            wb.write_bit(0); // reserved
+        }
+        // Profile 0/2 force 4:2:0 — no subsampling bits emitted.
+    } else {
+        // sRGB. libvpx :1239 writes a single reserved 0 bit.
+        wb.write_bit(0);
+    }
+}
+
+/// Encoder mirror of [`read_frame_size`]. Mirrors libvpx
+/// `write_frame_size` (`vp9_bitstream.c:1158-1164`) **minus the
+/// trailing `write_render_size`** — render size is emitted by the
+/// caller so that the inter-frame branch can place it after the
+/// inheritance bits.
+fn write_frame_size(wb: &mut RawBitWriter<'_>, width: u32, height: u32) {
+    wb.write_literal(width - 1, 16);
+    wb.write_literal(height - 1, 16);
+}
+
+/// Encoder mirror of [`read_render_size`]. Mirrors libvpx
+/// `write_render_size` (`vp9_bitstream.c:1147-1156`).
+fn write_render_size(wb: &mut RawBitWriter<'_>, render: Option<(u32, u32)>) {
+    match render {
+        Some((rw, rh)) => {
+            wb.write_bit(1);
+            wb.write_literal(rw - 1, 16);
+            wb.write_literal(rh - 1, 16);
+        }
+        None => wb.write_bit(0),
+    }
+}
+
+/// Encoder mirror of [`read_interp_filter`]. Mirrors libvpx
+/// `write_interp_filter` (`vp9_bitstream.c:854-861`). The
+/// `filter_to_literal` map `[1, 0, 2, 3]` is the inverse of the
+/// reader's `literal_to_filter` map; see [`InterpFilter::from_literal`].
+fn write_interp_filter(wb: &mut RawBitWriter<'_>, filter: InterpFilter) {
+    if filter == InterpFilter::Switchable {
+        wb.write_bit(1);
+    } else {
+        wb.write_bit(0);
+        let literal = match filter {
+            InterpFilter::EightTapSmooth => 0,
+            InterpFilter::EightTap => 1,
+            InterpFilter::EightTapSharp => 2,
+            InterpFilter::Bilinear => 3,
+            InterpFilter::Switchable => unreachable!("handled above"),
+        };
+        wb.write_literal(literal, 2);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -987,6 +1251,232 @@ mod tests {
                 pool_slot: 0,
             }
         );
+    }
+
+    // ====================================================================
+    //                       write_uncompressed_header
+    // ====================================================================
+
+    use crate::bitstream::sub_parsers::{
+        LoopFilterParams, MAX_PROB, PREDICTION_PROBS, QuantizationParams, SEG_TREE_PROBS,
+        SegmentationParams, TileInfo,
+    };
+
+    /// Build a minimal valid `HeaderTail` for round-trip tests. All
+    /// sub-blocks at defaults; `first_partition_size` stored as 1 (the
+    /// writer ignores this — caller passes its own).
+    ///
+    /// The segmentation `tree_probs` / `pred_probs` arrays are seeded
+    /// with [`MAX_PROB`] to match what `parse_segmentation` produces
+    /// when `enabled = false` (the parser initialises the arrays to
+    /// MAX_PROB *before* the early return; `Default::default()` would
+    /// give all zeros and the round-trip would fail).
+    fn default_tail() -> HeaderTail {
+        HeaderTail {
+            refresh_frame_context: false,
+            frame_parallel_decoding_mode: false,
+            frame_context_idx: 0,
+            loop_filter: LoopFilterParams::default(),
+            quantization: QuantizationParams::default(),
+            segmentation: SegmentationParams {
+                tree_probs: [MAX_PROB; SEG_TREE_PROBS],
+                pred_probs: [MAX_PROB; PREDICTION_PROBS],
+                ..Default::default()
+            },
+            tile_info: TileInfo::default(),
+            first_partition_size: 1,
+        }
+    }
+
+    /// Write `hdr` to a new buffer, parse it back via
+    /// [`parse_uncompressed_header`], and return the parsed header.
+    /// Asserts the parsed result equals the input.
+    fn round_trip(hdr: &UncompressedHeader, refs: &RefFrameSizes, fp_size: u16) {
+        let mut buf = vec![0u8; 256];
+        let used = {
+            let mut wb = RawBitWriter::new(&mut buf);
+            write_uncompressed_header(&mut wb, hdr, fp_size).expect("write succeeds");
+            wb.finish().expect("no overflow")
+        };
+        buf.truncate(used + 8); // padding so the byte-cursor reader has room
+        let (got, _cursor) =
+            parse_uncompressed_header(&buf, refs).expect("parse succeeds");
+
+        // The parser produces fresh `first_partition_size` from the wire;
+        // patch the input copy to match before comparing the rest.
+        let mut expected = hdr.clone();
+        if let Some(t) = expected.tail.as_mut() {
+            t.first_partition_size = fp_size;
+        }
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn write_show_existing_frame_all_slots() {
+        for slot in 0u8..8 {
+            let hdr = UncompressedHeader {
+                kind: FrameKind::ShowExistingFrame { slot },
+                profile: Profile::Profile0,
+                show_frame: true,
+                error_resilient: false,
+                bit_depth: BitDepth::Eight,
+                color_space: ColorSpace::Unknown,
+                color_range: ColorRange::Studio,
+                chroma: ChromaFormat::Yuv420,
+                width: 0,
+                height: 0,
+                render_size: None,
+                tail: None,
+            };
+            round_trip(&hdr, &NO_REFS, 0); // fp_size unused for show-existing
+        }
+    }
+
+    fn make_keyframe(width: u32, height: u32) -> UncompressedHeader {
+        UncompressedHeader {
+            kind: FrameKind::KeyFrame,
+            profile: Profile::Profile0,
+            show_frame: true,
+            error_resilient: false,
+            bit_depth: BitDepth::Eight,
+            color_space: ColorSpace::Bt601,
+            color_range: ColorRange::Studio,
+            chroma: ChromaFormat::Yuv420,
+            width,
+            height,
+            render_size: None,
+            tail: Some(default_tail()),
+        }
+    }
+
+    #[test]
+    fn write_keyframe_common_resolutions() {
+        for (w, h) in [(320u32, 240u32), (1280, 720), (1920, 1080)] {
+            round_trip(&make_keyframe(w, h), &NO_REFS, 1);
+        }
+    }
+
+    #[test]
+    fn write_keyframe_error_resilient() {
+        let mut hdr = make_keyframe(640, 480);
+        hdr.error_resilient = true;
+        // When error_resilient is set, the parser forces fpdm = true.
+        if let Some(t) = hdr.tail.as_mut() {
+            t.refresh_frame_context = false;
+            t.frame_parallel_decoding_mode = true;
+        }
+        round_trip(&hdr, &NO_REFS, 17);
+    }
+
+    #[test]
+    fn write_keyframe_with_render_size() {
+        let mut hdr = make_keyframe(1920, 1080);
+        hdr.color_space = ColorSpace::Bt709;
+        hdr.color_range = ColorRange::Full;
+        hdr.render_size = Some((640, 360));
+        round_trip(&hdr, &NO_REFS, 42);
+    }
+
+    #[test]
+    fn write_intra_only_refresh_flags() {
+        for rff in [0x00u8, 0x01, 0xA3, 0xFF] {
+            let hdr = UncompressedHeader {
+                kind: FrameKind::IntraOnly {
+                    reset_frame_context: 0,
+                    refresh_frame_flags: rff,
+                },
+                profile: Profile::Profile0,
+                show_frame: false, // intra-only requires !show_frame to write the intra_only bit
+                error_resilient: false,
+                bit_depth: BitDepth::Eight,
+                // Profile-0 intra-only inherits these defaults (libvpx :2721).
+                color_space: ColorSpace::Bt601,
+                color_range: ColorRange::Studio,
+                chroma: ChromaFormat::Yuv420,
+                width: 320,
+                height: 240,
+                render_size: None,
+                tail: Some(default_tail()),
+            };
+            round_trip(&hdr, &NO_REFS, 7);
+        }
+    }
+
+    fn make_inter(filter: InterpFilter, high_prec: bool) -> UncompressedHeader {
+        UncompressedHeader {
+            kind: FrameKind::InterFrame {
+                reset_frame_context: 0,
+                refresh_frame_flags: 0b0101_0101,
+                ref_frame_indices: [0, 1, 2],
+                ref_frame_sign_biases: [false, true, false],
+                allow_high_precision_mv: high_prec,
+                interp_filter: filter,
+            },
+            profile: Profile::Profile0,
+            show_frame: true,
+            error_resilient: false,
+            bit_depth: BitDepth::Eight,
+            // Inter frames inherit color from prior KEY/intra-only; the
+            // parser populates them with defaults (lines 363-368). The
+            // writer doesn't emit them, so we must use those same
+            // defaults in the input here for the round-trip to match.
+            color_space: ColorSpace::Unknown,
+            color_range: ColorRange::Studio,
+            chroma: ChromaFormat::Yuv420,
+            width: 640,
+            height: 480,
+            render_size: None,
+            tail: Some(default_tail()),
+        }
+    }
+
+    #[test]
+    fn write_inter_frame_all_interp_filters() {
+        for filter in [
+            InterpFilter::EightTap,
+            InterpFilter::EightTapSmooth,
+            InterpFilter::EightTapSharp,
+            InterpFilter::Bilinear,
+            InterpFilter::Switchable,
+        ] {
+            round_trip(&make_inter(filter, false), &NO_REFS, 1);
+        }
+    }
+
+    #[test]
+    fn write_inter_frame_high_precision_mv() {
+        round_trip(&make_inter(InterpFilter::Switchable, true), &NO_REFS, 1);
+    }
+
+    /// Parse the first keyframe out of `vp90-2-05-resize.ivf`, write
+    /// it back via `write_uncompressed_header`, then parse the result
+    /// again and assert the second parse equals the first.
+    #[test]
+    fn captured_header_round_trip() {
+        // IVF: 32-byte file header, then per-frame (4-byte size LE +
+        // 8-byte pts + payload). We just grab the first frame.
+        let bytes = std::fs::read(
+            "../../tests/conformance/vectors/vp90-2-05-resize.ivf",
+        )
+        .expect("test vector must be present");
+        assert_eq!(&bytes[..4], b"DKIF", "not an IVF file");
+        let frame_size = u32::from_le_bytes(
+            bytes[32..36].try_into().expect("4 bytes available"),
+        ) as usize;
+        let payload = &bytes[44..44 + frame_size];
+
+        // First frame of a libvpx-encoded IVF is always a key frame.
+        let (parsed, _) = parse_uncompressed_header(payload, &NO_REFS)
+            .expect("captured keyframe parses");
+        assert_eq!(parsed.kind, FrameKind::KeyFrame);
+
+        // Round-trip through the writer.
+        let fp_size = parsed
+            .tail
+            .as_ref()
+            .map(|t| t.first_partition_size)
+            .expect("keyframe must carry a tail");
+        round_trip(&parsed, &NO_REFS, fp_size);
     }
 
     /// `first_partition_size = 0` triggers `InvalidFirstPartitionSize`
