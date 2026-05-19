@@ -61,17 +61,18 @@ fn main() {
                     frame.header.kind,
                     rvp9_core::bitstream::FrameKind::ShowExistingFrame { .. }
                 );
+            // D.19 — always decode every frame (including non-shown
+            // altrefs). Skipping altrefs leaves the ref-pool slot
+            // uninitialised, so any subsequent inter frame that uses
+            // ALTREF reads stale data and the diff is meaningless.
+            let buf_opt = decoder.decode_frame(&frame).ok();
             if !shown {
                 continue;
             }
             shown_idx += 1;
             if shown_idx == args.frame {
-                let buf = decoder.decode_frame(&frame).expect("decode_frame");
-                got_buf = Some(buf);
+                got_buf = buf_opt;
                 break 'outer;
-            } else {
-                // Skip decoding non-target frames for speed.
-                let _ = decoder.decode_frame(&frame);
             }
         }
     }

@@ -315,6 +315,27 @@ pub fn reconstruct_inter_block(
                     let dst_for_mc = &mut dst_slice[sub_dst_offset..];
                     let is_compound_avg = r > 0;
 
+                    // D.19 — gated MC trace for aq2 divergence debug.
+                    // Prints per-MC: mi, plane, ref, mv (Q3), block w/h,
+                    // dst origin, total_x_q4/total_y_q4, int_x/int_y,
+                    // subpel_x_q4/subpel_y_q4, ref_frame enum.
+                    if std::env::var("RVP9_TRACE_MC").is_ok() {
+                        let int_x = total_x_q4 >> SUBPEL_BITS;
+                        let int_y = total_y_q4 >> SUBPEL_BITS;
+                        let subpel_x = total_x_q4 & SUBPEL_MASK;
+                        let subpel_y = total_y_q4 & SUBPEL_MASK;
+                        eprintln!(
+                            "RVP9_TRACE_MC mi=({},{}) plane={} ref={} bw={} bh={} dst=({},{}) \
+                             mv=({},{}) mv_q4=({},{}) total=({},{}) int=({},{}) subpel=({},{}) \
+                             rf={:?} sub_x={} sub_y={}",
+                            mi_row, mi_col, plane, r, mc_w_px, mc_h_px,
+                            sub_px_x, sub_px_y,
+                            mv.row, mv.col, mv_q4_row, mv_q4_col,
+                            total_x_q4, total_y_q4, int_x, int_y, subpel_x, subpel_y,
+                            ref_frames[r], sub_x, sub_y,
+                        );
+                    }
+
                     // Phase D.5: route through `build_inter_predictor_with_mc_border`
                     // so wide-MV blocks that point beyond the
                     // pre-extended static border fall back to a
@@ -818,6 +839,21 @@ fn build_inter_predictor_with_mc_border(
         let col_base =
             (ref_plane.border_w as i32 + int_x + col_pre) as usize;
         let src_base = row_base * ref_plane.stride + col_base;
+        // D.19 — gated source-data trace for the fast path. Dumps the
+        // first row of the src footprint (post pre-shift) so the
+        // caller can diff against libvpx's mc trace.
+        if std::env::var("RVP9_TRACE_MC_SRC").is_ok() {
+            let mut row = String::new();
+            for c in 0..18.min(ref_plane.data.len().saturating_sub(src_base)) {
+                row.push_str(&format!("{:3} ", ref_plane.data[src_base + c]));
+            }
+            eprintln!(
+                "RVP9_TRACE_MC_SRC int=({int_x},{int_y}) subpel=({subpel_x_q4},{subpel_y_q4}) \
+                 row_pre={row_pre} col_pre={col_pre} src_base={src_base} stride={} \
+                 fast src_row0=[{row}]",
+                ref_plane.stride,
+            );
+        }
         inter_predictor(
             &ref_plane.data[src_base..],
             ref_plane.stride,

@@ -452,3 +452,90 @@ Arthur triages all `WEDGED` and `WEDGED-BLOCKED` entries on wake.
      ready to drop into any other failing vector. Apply to
      `vp90-2-00-quantizer-26.webm` frame 2 if aq2's bug doesn't
      generalise.
+
+## D.19 — 2026-05-19 (Arthur asleep, lead dispatch)
+
+- **Pre-LF A/B test outcome: pre-LF DIFFERS.** D.16's three-way
+  suspect list (LF, MC border replication, downstream seg_id)
+  collapses to **MC / reconstruction** — the LF is NOT the primary
+  bug. `RVP9_DISABLE_LF=1` + `dump_frame_diff` against
+  `notes/d17/aq2_libvpx_nolf_f2.yuv` shows our pre-LF picture
+  diverges from libvpx's pre-LF picture too. **One bit for D.20.**
+- **`dump_frame_diff` was skipping non-shown altref frames** —
+  introduced when the binary was first written. The dumper called
+  `continue` on `!shown`, so the ALTREF slot in the ref-pool was
+  uninitialised when frame 2 reached `decode_frame`. This made
+  every "where's the first diff" analysis lie by ~32 columns:
+  with altref skipped, first Y diff at (32, 0); with altref
+  decoded, first Y diff at (64, 0). **Conformance harness was
+  NOT affected** — it always decodes every frame. Bug was
+  diagnosis-only but had cost D.17 ~3 hours chasing the wrong
+  block. Fix: always call `decode_frame(&frame)`, just gate the
+  MD5 save / `shown_idx` advance on `shown`.
+- **Bug surface now precisely localized:**
+  - First pre-LF divergence at `(col 64, row 0)`. Cols 0..63 of
+    row 0 MATCH libvpx pre-LF byte-for-byte.
+  - mi=(0,8) = pixel (col 64, row 0) is **the FIRST compound
+    prediction block in frame 2** (per `notes/d17/libvpx_imi.txt`:
+    `bsize=6 ref=[1,3] mv0=(-2,-6) mv1=(24,66) mode=13`). All
+    earlier blocks (mi=(0,0), (0,2), (0,4), (0,6)) are single-ref.
+  - Mode-info parse for mi=(0,8) matches libvpx (verified via
+    `RVP9_TRACE_MC` on rvp9 side vs `LIBVPX_TRACE_MC` on libvpx
+    side: identical mv, mv_q4, int_x/int_y, subpel_x/subpel_y for
+    both refs).
+  - MV-to-Q4 conversion is correct (`mv_q4_col = mv.col *
+    (1 << (1 - ss_x))` matches libvpx `scaled_mv`).
+  - No `clamp_mv_to_umv_border_sb` in rvp9 — but for the failing
+    mi=(0,8) the clamp is a no-op (block sits well inside the
+    frame); so this isn't the immediate bug.
+  - Suspect (1): **our altref (frame 1) reconstruction differs
+    from libvpx's altref** at the reference-read region. Cannot
+    confirm directly — no on-disk libvpx altref dump and the
+    libvpx-stock build environment had stale `.asm.d` files from
+    D.17 that block `make vpxdec.exe` rebuilds (~20 broken deps
+    with `: 1` literal; I deleted them but the link step still
+    won't relink the existing `.o` files). **Path forward for
+    D.20:** add an rvp9-side dump of the altref Y plane after
+    decode (env-gated), and/or fix the libvpx tree's `.d` files
+    so an instrumented vpxdec can rebuild.
+  - Suspect (2): **our compound averaging path is wrong**.
+    Hand-math via the trace: ref 1 (ALTREF, mv=(24,66),
+    subpel_x=4) at output (64, 0) yields `pred = 49`. Final pixel
+    = 62, so ref 0 (LAST, mv=(-2,-6), 2D convolve) must yield
+    `pred = 74` (since `(74 + 49 + 1) >> 1 = 62`). Libvpx final
+    = 74 ⇒ libvpx ref1 ~73 (if ref0 also ~74). 24-LSB gap between
+    our ref1_pred and libvpx's ref1_pred is what's killing us.
+    Could be: altref content wrong, OR subpel filter on this
+    specific tap row wrong (subpel_x=4 = filter row
+    `[-1, 4, -16, 112, 37, -11, 4, -1]`), OR wrong reference
+    frame index being read.
+- **Diagnostic infra added (committed under D.19):**
+  - `crates/rvp9-decoder/src/reconstruct_inter.rs` —
+    `RVP9_TRACE_MC=1` per-MC trace (mi, plane, ref, bw, bh, dst,
+    mv, mv_q4, total_q4, int_x/int_y, subpel_x/subpel_y, rf).
+  - Same file — `RVP9_TRACE_MC_SRC=1` source-data dump on the
+    fast path (first 18 cols of the convolve footprint after the
+    `-3` pre-shift).
+  - `crates/rvp9-harness/src/bin/dump_frame_diff.rs` — fix for
+    altref-skip bug. **Diagnosis output now reliable for any
+    future inter-frame analysis.**
+- **Cascade not yet lit.** Conformance unchanged: 31 / 160 / 10 /
+  201. Tests + clippy clean.
+- **Recipe for D.20:**
+  1. Confirm compound averaging is correct by writing a
+     differential test: synthesize two refs, run compound MC,
+     compare against a libvpx-faithful manual reference. (~30 min)
+  2. If the diff test passes, the bug IS in our altref content.
+     Add an env-gated altref-plane dump in `decode_inter_frame`
+     post-extend_borders (gate on `RVP9_DUMP_ALTREF=1`), then
+     build a libvpx altref dump via the modified `vpxdec.exe`
+     (after fixing the broken `.d` files in
+     `D:/language/libvpx-stock/`: `find . -name "*.asm.d" -exec
+     grep -l ": 1$" {} \; -exec rm {} \;` — already done by D.19;
+     just need to relink). Diff our altref vs libvpx altref to
+     localize.
+  3. If altref matches, the bug is in subpel filter (specifically
+     filter row 4 of EIGHTTAP_KERNEL?) or the 2D convolve.
+     Differential against a precomputed convolve8 reference.
+  4. Probe second compound block (mi=(4,0) at altref) by adding
+     a row-32 dump to verify same bug pattern.
