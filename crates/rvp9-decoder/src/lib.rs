@@ -3231,4 +3231,384 @@ mod tests {
             }
         }
     }
+
+    /// **S4.16d** — first end-to-end inter-frame round-trip through
+    /// the live decoder. Builds a 64×64 keyframe (PARTITION_NONE,
+    /// intra DC-skip) to prime pool slot 0, then a 64×64 inter frame
+    /// referencing that keyframe as LAST (PARTITION_NONE, inter
+    /// LASTFRAME ZEROMV, skip = true). Feeds both packets sequentially
+    /// through the same `Decoder` and asserts the recovered inter
+    /// mi_grid carries the expected `BlockMode::Inter` payload in
+    /// every cell.
+    ///
+    /// Sibling of `s4_13_round_trip_partition_split_64x64_through_decoder`
+    /// — that test covered the keyframe partition writer; this one
+    /// proves the new `write_tile_inter` path (S4.16c) composes with
+    /// the rest of the encoder primitives into a wire stream the
+    /// decoder can consume.
+    #[test]
+    fn s4_16d_round_trip_inter_after_keyframe_through_decoder() {
+        use rvp9_core::bitstream::frame::ReferenceMode;
+        use rvp9_core::bitstream::header::HeaderTail;
+        use rvp9_core::bitstream::sub_parsers::{
+            LoopFilterParams, MAX_PROB, PREDICTION_PROBS, QuantizationParams, SEG_TREE_PROBS,
+            SegmentationParams, TileInfo,
+        };
+        use rvp9_core::bitstream::{
+            BitDepth, ChromaFormat, ColorRange, ColorSpace, CompressedHeaderOptions,
+            CompressedHeaderResult, FrameKind, InterpFilter, ModesTileBounds, Profile,
+            RawBitWriter, UncompressedHeader, write_compressed_header, write_tile_inter,
+            write_tile_intra_keyframe, write_uncompressed_header,
+        };
+        use rvp9_core::block::BlockSize;
+        use rvp9_core::entropy::{BoolWriter, FrameContext};
+        use rvp9_core::inter::{
+            InterModeReadParams, setup_compound_reference_mode, sign_bias_from_header,
+        };
+        use rvp9_core::intra_pred::IntraMode;
+        use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, Mv, RefFrame};
+        use rvp9_core::transforms::{TxMode, TxSize};
+
+        // Shared geometry: 64×64 frame, mi_rows = mi_cols = 8.
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let tile_bounds = ModesTileBounds {
+            mi_row_start: 0,
+            mi_row_end: 8,
+            mi_col_start: 0,
+            mi_col_end: 8,
+        };
+
+        // Shared HeaderTail builder (identical shape for both frames;
+        // the tail's per-field layout is independent of FrameKind —
+        // see `write_uncompressed_header` :706-722).
+        let make_tail = |compressed_len: usize| HeaderTail {
+            refresh_frame_context: true,
+            frame_parallel_decoding_mode: false,
+            frame_context_idx: 0,
+            loop_filter: LoopFilterParams {
+                filter_level: 0,
+                sharpness_level: 0,
+                mode_ref_delta_enabled: false,
+                mode_ref_delta_update: false,
+                ref_deltas: [None; 4],
+                mode_deltas: [None; 2],
+            },
+            quantization: QuantizationParams {
+                base_qindex: 50,
+                y_dc_delta_q: 0,
+                uv_dc_delta_q: 0,
+                uv_ac_delta_q: 0,
+            },
+            segmentation: SegmentationParams {
+                enabled: false,
+                update_map: false,
+                temporal_update: false,
+                tree_probs: [MAX_PROB; SEG_TREE_PROBS],
+                pred_probs: [MAX_PROB; PREDICTION_PROBS],
+                update_data: false,
+                abs_delta: false,
+                feature_data: Default::default(),
+            },
+            tile_info: TileInfo {
+                log2_tile_cols: 0,
+                log2_tile_rows: 0,
+            },
+            first_partition_size: compressed_len as u16,
+        };
+
+        // ----------------------------------------------------------------
+        // Frame 1 — keyframe (PARTITION_NONE, intra DC-skip 64×64 SB).
+        // Primes the decoder's ref-frame pool so frame 2 can resolve
+        // LAST against pool slot 0.
+        // ----------------------------------------------------------------
+        let kf_cell = ModeInfo {
+            block_size: BlockSize::Block64x64,
+            tx_size: TxSize::Tx32x32,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        let kf_mi_grid: Vec<Option<ModeInfo>> =
+            vec![Some(kf_cell); (mi_rows * mi_cols) as usize];
+        // (Every 8×8 cell carries the same 64×64 splatted ModeInfo —
+        // the decoder splat convention; see `tile_ctx.rs:411`.)
+
+        let pre_fc_default = FrameContext::new_default();
+        let mut kf_pre_fc = pre_fc_default.clone();
+        let kf_post_fc = pre_fc_default.clone();
+        let kf_opts = CompressedHeaderOptions {
+            lossless: false,
+            intra_only: true,
+            interp_filter: InterpFilter::EightTap,
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+        let kf_target = CompressedHeaderResult {
+            tx_mode: TxMode::AllowTx32x32,
+            reference_mode: ReferenceMode::Single,
+        };
+
+        let mut kf_compressed_buf = vec![0u8; 16 * 1024];
+        let kf_compressed_len = {
+            let mut bw = BoolWriter::start_encode(&mut kf_compressed_buf);
+            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target)
+                .expect("write_compressed_header keyframe");
+            bw.stop_encode().expect("stop_encode kf compressed")
+        };
+        kf_compressed_buf.truncate(kf_compressed_len);
+
+        let mut kf_tile_buf = vec![0u8; 4 * 1024];
+        let kf_tile_len = {
+            let mut bw = BoolWriter::start_encode(&mut kf_tile_buf);
+            write_tile_intra_keyframe(
+                &mut bw, &kf_mi_grid, mi_rows, mi_cols, tile_bounds, &kf_post_fc,
+            )
+            .expect("write_tile_intra_keyframe");
+            bw.stop_encode().expect("stop_encode kf tile")
+        };
+        kf_tile_buf.truncate(kf_tile_len);
+
+        let kf_tail = make_tail(kf_compressed_len);
+        let kf_hdr = UncompressedHeader {
+            kind: FrameKind::KeyFrame,
+            profile: Profile::Profile0,
+            show_frame: true,
+            error_resilient: false,
+            bit_depth: BitDepth::Eight,
+            color_space: ColorSpace::Bt601,
+            color_range: ColorRange::Studio,
+            chroma: ChromaFormat::Yuv420,
+            width: 64,
+            height: 64,
+            render_size: None,
+            tail: Some(kf_tail),
+        };
+
+        let mut kf_hdr_buf = vec![0u8; 256];
+        let kf_hdr_len = {
+            let mut wb = RawBitWriter::new(&mut kf_hdr_buf);
+            write_uncompressed_header(&mut wb, &kf_hdr, kf_compressed_len as u16)
+                .expect("write_uncompressed_header keyframe");
+            wb.finish().expect("RawBitWriter::finish kf")
+        };
+        kf_hdr_buf.truncate(kf_hdr_len);
+
+        let mut kf_packet = Vec::new();
+        kf_packet.extend_from_slice(&kf_hdr_buf);
+        kf_packet.extend_from_slice(&kf_compressed_buf);
+        kf_packet.extend_from_slice(&kf_tile_buf);
+
+        let mut dec = Decoder::new();
+        let kf_parsed = {
+            let frames = dec
+                .parse_packet(&kf_packet)
+                .expect("parse_packet must accept synthetic keyframe");
+            assert_eq!(frames.count(), 1);
+            let pf = &frames.frames()[0];
+            assert_eq!(pf.header.kind, FrameKind::KeyFrame);
+            ParsedFrame {
+                header: pf.header.clone(),
+                header_end_byte: pf.header_end_byte,
+                full_frame_data: pf.full_frame_data,
+            }
+        };
+        dec.decode_frame(&kf_parsed)
+            .expect("decode_frame must accept synthetic keyframe");
+
+        // ----------------------------------------------------------------
+        // Frame 2 — single-ref inter frame, LAST = pool slot 0
+        // (just-decoded keyframe). PARTITION_NONE 64×64 inter
+        // LASTFRAME ZEROMV with skip = true.
+        // ----------------------------------------------------------------
+
+        // Synthetic mi_grid: every 8×8 cell carries the same splatted
+        // 64×64 inter ModeInfo.
+        let inter_cell = ModeInfo {
+            block_size: BlockSize::Block64x64,
+            tx_size: TxSize::Tx32x32, // min(largest_tx_size(AllowTx32x32), max_txsize(64×64))
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Inter {
+                mode: InterMode::ZeroMv,
+                ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                mvs: [Mv::ZERO; 2],
+                interp_filter: InterpFilter::EightTap,
+            },
+            bmi: Default::default(),
+        };
+        let inter_mi_grid: Vec<Option<ModeInfo>> =
+            vec![Some(inter_cell); (mi_rows * mi_cols) as usize];
+
+        // The inter compressed-header parser mutates
+        // `frame_contexts[fc_idx]` via diff updates. If we set
+        // pre_fc == post_fc == the decoder's *current* FC bank, every
+        // diff bit is "0" and the decoder leaves the bank untouched.
+        // After the keyframe decode `dec.frame_context(0)` is the
+        // post-adapt FC (coef_probs etc.); use that for both sides.
+        let inter_post_fc = dec.frame_context(0).clone();
+        let mut inter_pre_fc = inter_post_fc.clone();
+
+        let inter_opts = CompressedHeaderOptions {
+            lossless: false,
+            intra_only: false,
+            interp_filter: InterpFilter::EightTap,
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+        let inter_target = CompressedHeaderResult {
+            tx_mode: TxMode::AllowTx32x32,
+            reference_mode: ReferenceMode::Single,
+        };
+
+        let mut inter_compressed_buf = vec![0u8; 16 * 1024];
+        let inter_compressed_len = {
+            let mut bw = BoolWriter::start_encode(&mut inter_compressed_buf);
+            write_compressed_header(
+                &mut bw,
+                &mut inter_pre_fc,
+                &inter_post_fc,
+                inter_opts,
+                &inter_target,
+            )
+            .expect("write_compressed_header inter");
+            bw.stop_encode().expect("stop_encode inter compressed")
+        };
+        inter_compressed_buf.truncate(inter_compressed_len);
+
+        // InterModeReadParams: SINGLE ref mode, all-false sign-bias,
+        // 8-tap filter, no HP. comp_fixed_ref / comp_var_ref must be
+        // syntactically valid even though compound mode is off.
+        let sign_bias = sign_bias_from_header(&[false, false, false]);
+        let (comp_fixed_ref, comp_var_ref) = setup_compound_reference_mode(&sign_bias);
+        let inter_params = InterModeReadParams {
+            allow_high_precision_mv: false,
+            interp_filter: InterpFilter::EightTap,
+            reference_mode: ReferenceMode::Single,
+            comp_fixed_ref,
+            comp_var_ref,
+            sign_bias,
+        };
+
+        let mut inter_tile_buf = vec![0u8; 4 * 1024];
+        let inter_tile_len = {
+            let mut bw = BoolWriter::start_encode(&mut inter_tile_buf);
+            write_tile_inter(
+                &mut bw,
+                &inter_post_fc,
+                &inter_params,
+                TxMode::AllowTx32x32,
+                &inter_mi_grid,
+                mi_rows,
+                mi_cols,
+                tile_bounds,
+                None, // no prev-frame MV grid — keyframe just cleared it
+            )
+            .expect("write_tile_inter");
+            bw.stop_encode().expect("stop_encode inter tile")
+        };
+        inter_tile_buf.truncate(inter_tile_len);
+
+        let inter_tail = make_tail(inter_compressed_len);
+        let inter_hdr = UncompressedHeader {
+            kind: FrameKind::InterFrame {
+                reset_frame_context: 0,
+                refresh_frame_flags: 0x00,
+                ref_frame_indices: [0, 0, 0],
+                ref_frame_sign_biases: [false, false, false],
+                allow_high_precision_mv: false,
+                interp_filter: InterpFilter::EightTap,
+            },
+            profile: Profile::Profile0,
+            show_frame: true,
+            error_resilient: false,
+            bit_depth: BitDepth::Eight,
+            color_space: ColorSpace::Bt601,
+            color_range: ColorRange::Studio,
+            chroma: ChromaFormat::Yuv420,
+            width: 64,
+            height: 64,
+            render_size: None,
+            tail: Some(inter_tail),
+        };
+
+        let mut inter_hdr_buf = vec![0u8; 256];
+        let inter_hdr_len = {
+            let mut wb = RawBitWriter::new(&mut inter_hdr_buf);
+            write_uncompressed_header(&mut wb, &inter_hdr, inter_compressed_len as u16)
+                .expect("write_uncompressed_header inter");
+            wb.finish().expect("RawBitWriter::finish inter")
+        };
+        inter_hdr_buf.truncate(inter_hdr_len);
+
+        let mut inter_packet = Vec::new();
+        inter_packet.extend_from_slice(&inter_hdr_buf);
+        inter_packet.extend_from_slice(&inter_compressed_buf);
+        inter_packet.extend_from_slice(&inter_tile_buf);
+
+        let inter_parsed = {
+            let frames = dec
+                .parse_packet(&inter_packet)
+                .expect("parse_packet must accept synthetic inter frame");
+            assert_eq!(frames.count(), 1);
+            let pf = &frames.frames()[0];
+            assert!(matches!(pf.header.kind, FrameKind::InterFrame { .. }));
+            ParsedFrame {
+                header: pf.header.clone(),
+                header_end_byte: pf.header_end_byte,
+                full_frame_data: pf.full_frame_data,
+            }
+        };
+        dec.decode_frame(&inter_parsed)
+            .expect("decode_frame must accept synthetic inter frame");
+
+        // Verify the decoder's recovered mi_grid matches what we
+        // emitted. Every 8×8 cell of the 64×64 SB should carry a
+        // splatted `BlockMode::Inter { ZEROMV, LAST, EightTap }`
+        // payload with skip = true.
+        let (got_rows, got_cols) = dec.last_frame_mi_dims();
+        assert_eq!((got_rows, got_cols), (mi_rows, mi_cols));
+        let got_grid = dec.last_frame_mi_grid();
+        assert_eq!(got_grid.len(), (mi_rows * mi_cols) as usize);
+        for (i, cell_got) in got_grid.iter().enumerate() {
+            let mi_row = i / (mi_cols as usize);
+            let mi_col = i % (mi_cols as usize);
+            let cell = cell_got
+                .expect("every cell of the PARTITION_NONE 64×64 SB must be populated");
+            assert_eq!(
+                cell.block_size,
+                BlockSize::Block64x64,
+                "block_size @ ({mi_row}, {mi_col}) — must be 64×64 leaf"
+            );
+            assert!(cell.skip, "skip @ ({mi_row}, {mi_col})");
+            match cell.mode {
+                BlockMode::Inter {
+                    mode,
+                    ref_frames,
+                    mvs,
+                    interp_filter,
+                } => {
+                    assert_eq!(mode, InterMode::ZeroMv, "inter_mode @ ({mi_row}, {mi_col})");
+                    assert_eq!(
+                        ref_frames,
+                        [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                        "ref_frames @ ({mi_row}, {mi_col})"
+                    );
+                    assert_eq!(mvs, [Mv::ZERO; 2], "mvs @ ({mi_row}, {mi_col})");
+                    assert_eq!(
+                        interp_filter,
+                        InterpFilter::EightTap,
+                        "interp_filter @ ({mi_row}, {mi_col})"
+                    );
+                }
+                BlockMode::Intra { .. } => panic!("intra mode @ ({mi_row}, {mi_col})"),
+            }
+        }
+    }
 }
