@@ -1359,11 +1359,14 @@ fn left_block_mode(
 pub struct InterFrameDecodeParams<'a> {
     /// Shared base (mi_cols / tx_mode / segmentation / quant).
     pub base: FrameDecodeParams,
-    /// Frame's aligned luma width (matches `cur_y_width` in
-    /// [`InterBlockInputs`]).
+    /// Frame's raw (crop / un-aligned) luma width (matches
+    /// `cur_y_width` in [`InterBlockInputs`]). D.24: fed straight to
+    /// `ScaleFactors::new` along with the ref's crop width, mirroring
+    /// libvpx `vp9_setup_scale_factors_for_frame(... cm->width ...)` at
+    /// `vp9_decodeframe.c:2928-2935`.
     pub cur_y_width: u32,
-    /// Frame's aligned luma height (matches `cur_y_height` in
-    /// [`InterBlockInputs`]).
+    /// Frame's raw (crop / un-aligned) luma height (matches
+    /// `cur_y_height` in [`InterBlockInputs`]). See `cur_y_width`.
     pub cur_y_height: u32,
     /// Per-logical-ref reference frames (`[LAST, GOLDEN, ALTREF]`).
     /// `None` slots indicate the corresponding pool entry is empty —

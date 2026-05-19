@@ -1225,8 +1225,15 @@ impl Decoder {
         )
         .map_err(|_| DecodeError::FrameAlloc)?;
 
-        let cur_y_width = yv12.aligned_y_width();
-        let cur_y_height = yv12.aligned_y_height();
+        // D.24: pass the raw (crop) width / height to ScaleFactors, not
+        // the aligned 8-multiple. Libvpx feeds `cm->width / cm->height`
+        // (the un-aligned values) into `vp9_setup_scale_factors_for_frame`
+        // at `vp9_decodeframe.c:2928-2935`. For frames whose dims are
+        // already 8-multiples (most vectors) the two coincide; for resize
+        // vectors with dims like 282×173 they don't, and using the
+        // aligned dim produces a wrong Q14 ratio.
+        let cur_y_width = frame.header.width;
+        let cur_y_height = frame.header.height;
 
         // 6. Per-frame inter params.
         let sign_bias = sign_bias_from_header(&ref_frame_sign_biases);

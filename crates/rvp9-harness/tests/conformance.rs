@@ -152,7 +152,38 @@ fn conformance_runner_walks_all_vectors() {
     // == 0`, but while we iterate on the mismatched keyframes the
     // ratchet keeps regression signal visible: lowering `MAX_MISMATCHES`
     // as we fix bugs, raising `MIN_PASSES` as we light up frames.
-    const MIN_PASSES: usize = 168;
+    const MIN_PASSES: usize = 175;
+    // D.24 (2026-05-19): fix scaled-MC for resize vectors. Two
+    // distinct bugs (one Y, one chroma) that surface together on any
+    // inter frame whose reference frame has a different size than the
+    // current frame:
+    //
+    //   1. `ScaleFactors` was built with `ref_buf.aligned_y_width()`
+    //      and `inputs.cur_y_width` (the 8-aligned dims). Libvpx
+    //      passes `y_crop_width` / `cm->width` — the *un-aligned*
+    //      visible dims — to `vp9_setup_scale_factors_for_frame`
+    //      (`vp9_decodeframe.c:2928-2935`). For 282×173 this differs
+    //      by 6/3 pixels respectively; the Q14 ratio changes and every
+    //      block's scaled-MC integer base + subpel ends up shifted.
+    //      Fix: pass `ref_buf.width() / height()` and the raw header
+    //      dims. Lights up the Y plane on all 7 mismatched frames.
+    //
+    //   2. The Q4 sub-pel sum bundled the plane-pixel coord and MV
+    //      via one `scaled_x_q4` call for all planes. Libvpx splits
+    //      these: `scaled_buffer_offset` uses the *plane* coord
+    //      (chroma = luma>>1) for the integer base, but `vp9_scale_mv`
+    //      uses the *luma* coord (`mi_x + x`) for the sub-pel mask.
+    //      For 4:2:0 chroma the two coords differ by 2×, so the sub-
+    //      pel-Q4 result rotates by a different amount mod 16 and the
+    //      kernel picks a different filter row — visible as off-by-1
+    //      U/V on every chroma block when scaling is active. Fix
+    //      mirrors libvpx's split exactly inside the `is_scaled()`
+    //      branch; unscaled refs keep the cheap unified path.
+    //
+    // Cascade: vp90-2-05-resize 3→10 (+7). Conformance 168/23/10 →
+    // 175/16/10. Remaining 16 mismatches: tile_1x4 8 + tile_1x8 8 (a
+    // multi-tile entropy-isolation bug specific to >2 tiles per row,
+    // D.23's lane).
     // D.22 (2026-05-19): fix MV-component hp count gating + altref
     // prev_frame swap. Two distinct bugs, both surfaced via libvpx
     // INTERMI altref trace on `vp90-2-09-aq2.webm`:
@@ -271,7 +302,7 @@ fn conformance_runner_walks_all_vectors() {
     // D.5 (2026-05-18): `extend_mc_border` scratch-buffer fallback.
     // Conformance: 2/159/40 → 3/158/40.
     // Pre-D.3.a baseline: 1/9/191.
-    const MAX_MISMATCHES: usize = 23;
+    const MAX_MISMATCHES: usize = 16;
     assert!(
         total_passed >= MIN_PASSES,
         "regression: expected at least {MIN_PASSES} passed, got {total_passed}",

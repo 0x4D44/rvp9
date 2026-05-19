@@ -765,3 +765,87 @@ Arthur triages all `WEDGED` and `WEDGED-BLOCKED` entries on wake.
     bug specific to >2 tiles per row. Densest cluster for D.23.
   - resize 7 mismatches: separate cause — frame-resize state
     machine.
+
+## 2026-05-19 — D.24 (resize / scaled-MC)
+
+- **Picked resize lane** (7 mismatches on `vp90-2-05-resize.ivf`)
+  in parallel with D.23 (multi-tile). Stream resizes 352×288 →
+  282×173 → 352×288; mid-stream `setup_frame_size_with_refs`
+  fires and refs are wrong size from current. Frame 1 (kf)
+  already passed; inter frames 2-10 failed.
+
+- **Two bugs found, both in scaled-MC integer/sub-pel math:**
+
+  1. **ScaleFactors built with aligned dims, not crop dims.**
+     We used `ref_buf.aligned_y_width()` and `yv12.aligned_y_width()`
+     (the 8-aligned size). Libvpx feeds `y_crop_width` /
+     `cm->width` (the raw header values) to
+     `vp9_setup_scale_factors_for_frame` at
+     `vp9_decodeframe.c:2928-2935`. For 282 the aligned dim is
+     288, for 173 it's 176 — so x_scale_fp drifted by 6/288
+     and y_scale_fp by 3/144 in the Q14 ratio, perturbing every
+     scaled-MC block's integer base + subpel. Fix: pass
+     `ref_buf.width() / height()` + `header.width / height`.
+     This alone fixed all 7 frames' Y plane bit-exactly.
+
+  2. **Chroma sub-pel mask used plane coord, not luma coord.**
+     Libvpx's `build_inter_predictors` (`vp9_reconinter.c:155-186`)
+     in the scaled path uses an asymmetric mapping:
+     `scaled_buffer_offset(x_start, y_start, ...)` uses the
+     *plane* coord (chroma = luma>>1) for the integer base, but
+     `vp9_scale_mv(mv_q4, mi_x, mi_y, sf)` uses *luma* pixel
+     coords (`mi_x = mi_col * 8`) for the sub-pel mask. Our
+     `scaled_x_q4(plane_x, mv_q4)` collapsed both into one
+     plane-coord-based sum, so for 4:2:0 chroma the sub-pel-Q4
+     result rotated by a different amount mod 16, picking a
+     different filter row and producing off-by-1 chroma on
+     every chroma block in a scaled frame. Fix: in the
+     `sf.is_scaled()` branch, split the sum the way libvpx
+     does (helper `mul_q14` for the i64-widened Q14 multiply).
+     Unscaled path keeps the cheap unified `scaled_x_q4` (where
+     the asymmetry collapses to a no-op).
+
+- **Validation path:**
+  - `dump_frame_diff` per-frame on resize: after bug 1, Y
+    matched on all 10 frames; chroma still off-by-1.
+  - Worked through libvpx's `build_inter_predictors` math
+    line-by-line. Concrete numerics for chroma column 38 on
+    frame 7 (cur=352×288, ref=282×173, x_scale_fp=13125):
+    `scaled(mi_x << 4) & 15 = 10` vs `scaled(plane_x << 4) & 15
+    = 13` — same block, different subpel filter row.
+  - After both fixes: vp90-2-05-resize.ivf 3→10 (+7), all
+    frames bit-exact.
+
+- **Conformance ratchet:** 168/23/10 → **175/16/10 (+7)**.
+  `MIN_PASSES` raised to 175, `MAX_MISMATCHES` lowered to 16.
+  All `-p rvp9-core -p rvp9-decoder -p rvp9-harness --lib
+  --bins --tests` green; clippy `-D warnings` clean.
+
+- **Files touched:**
+  - `crates/rvp9-decoder/src/lib.rs` — `cur_y_width` /
+    `cur_y_height` now use `frame.header.width / height` (crop).
+  - `crates/rvp9-decoder/src/reconstruct_inter.rs` —
+    `ScaleFactors::new` fed `ref_buf.width() / height()`; new
+    libvpx-style branch in `reconstruct_inter_block` for the
+    `sf.is_scaled()` chroma-aware sub-pel split + `mul_q14`
+    helper.
+  - `crates/rvp9-decoder/src/tile.rs` — comment update on
+    `InterFrameDecodeParams::cur_y_width / height`.
+  - `crates/rvp9-harness/tests/conformance.rs` — ratchet
+    bump + multi-paragraph fix-rationale block.
+
+- **Followups (D.25 / D.26):**
+  - 16 mismatches remain: tile_1x4 8 + tile_1x8 8. D.23's
+    lane (concurrent). Multi-tile entropy-isolation bug
+    specific to >2 tiles per row.
+
+- **Lessons:**
+  - When porting libvpx code that takes `(plane_x, plane_y,
+    mi_x, mi_y)` arguments, double-check whether the function
+    treats them as the same coord system or not. Here the
+    integer base and the sub-pel mask take coords in *different*
+    systems — easy to miss when reading the code top-down.
+  - For scale-factor envelope checks: aligned vs cropped dims
+    must match libvpx exactly. Even a 6-pixel discrepancy in
+    width changes the Q14 ratio by ~280 and breaks every
+    scaled-MC block.

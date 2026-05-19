@@ -72,10 +72,13 @@ const SUBSAMPLING_Y: [usize; 3] = [0, 1, 1];
 /// signature compact.
 #[allow(missing_docs)]
 pub struct InterBlockInputs<'a> {
-    /// The current frame's aligned luma width (pixels) — used to build
-    /// [`ScaleFactors`] for each ref.
+    /// The current frame's raw (crop / un-aligned) luma width (pixels)
+    /// — used to build [`ScaleFactors`] for each ref. D.24: matches
+    /// libvpx `cm->width` fed to `vp9_setup_scale_factors_for_frame`
+    /// (`vp9_decodeframe.c:2928-2935`), NOT the aligned dim.
     pub cur_y_width: u32,
-    /// The current frame's aligned luma height (pixels).
+    /// The current frame's raw (crop / un-aligned) luma height (pixels).
+    /// See `cur_y_width`.
     pub cur_y_height: u32,
     /// Per-ref reference frames. `refs[i]` is `Some(&buf)` if the
     /// corresponding `mi.ref_frames[i]` is an inter ref; `None` if it's
@@ -167,9 +170,16 @@ pub fn reconstruct_inter_block(
     for r in 0..num_refs {
         let ref_buf = inputs.refs[r]
             .expect("caller must resolve ref-pool slot for each active ref");
+        // D.24: use crop (visible) dims, not aligned dims, to match
+        // libvpx `vp9_setup_scale_factors_for_frame` which is called
+        // with `ref_buf->buf->y_crop_width / y_crop_height` against
+        // `cm->width / cm->height` (the raw, un-aligned dims) — see
+        // `vp9_decodeframe.c:2928-2935`. For frames whose dims are
+        // 8-multiples the two coincide; for resize vectors (e.g.
+        // 282×173) they differ and the scale factor mismatches.
         let sf = ScaleFactors::new(
-            ref_buf.aligned_y_width(),
-            ref_buf.aligned_y_height(),
+            ref_buf.width(),
+            ref_buf.height(),
             inputs.cur_y_width,
             inputs.cur_y_height,
         );
@@ -305,8 +315,45 @@ pub fn reconstruct_inter_block(
                         i32::from(mv.col) * (1i32 << (1 - ss_x as i32))
                     };
 
-                    let total_x_q4 = sf.scaled_x_q4(sub_px_x as i32, mv_q4_col as i16);
-                    let total_y_q4 = sf.scaled_y_q4(sub_px_y as i32, mv_q4_row as i16);
+                    // D.24: libvpx's `build_inter_predictors`
+                    // (`vp9_reconinter.c:155-186`) uses an asymmetric
+                    // mapping in the scaled path: the integer-pel base
+                    // uses the *plane* coord (`scaled_buffer_offset(x_start,
+                    // y_start, ...)` where `x_start = (-mb_to_left_edge) >>
+                    // (3 + ss_x)` is in chroma pixels) while
+                    // `vp9_scale_mv(mv_q4, mi_x, mi_y, sf)` uses *luma*
+                    // pixel coords (`mi_x = mi_col * 8`) to compute the
+                    // sub-pel mask offset. For unscaled refs the two
+                    // collapse together (xs/ys == 16 and scaled is the
+                    // identity), so we keep the cheap unified path. For
+                    // scaled refs the chroma off-by-1 vs libvpx is the
+                    // exact "wrong subpel filter row" symptom — fix
+                    // mirrors libvpx 1:1.
+                    let (total_x_q4, total_y_q4) = if sf.is_scaled() {
+                        // mi_x / mi_y are libvpx's `mi_x + x`, `mi_y + y`
+                        // — pixel coords in LUMA precision regardless of
+                        // plane. For sub-8 luma the per-bmi sub-coord
+                        // expansion in luma units is `sub_* * 4`; for
+                        // chroma the bmi iteration is collapsed (sub_*
+                        // == 0 always), so the term is zero.
+                        let mi_x = (mi_col * 8) as i32 + (sub_x * 4) as i32 * (1i32 << ss_x);
+                        let mi_y = (mi_row * 8) as i32 + (sub_y * 4) as i32 * (1i32 << ss_y);
+                        let scaled_mv_col = mul_q14(mv_q4_col, sf.x_scale_fp)
+                            + (mul_q14(mi_x << SUBPEL_BITS, sf.x_scale_fp) & SUBPEL_MASK);
+                        let scaled_mv_row = mul_q14(mv_q4_row, sf.y_scale_fp)
+                            + (mul_q14(mi_y << SUBPEL_BITS, sf.y_scale_fp) & SUBPEL_MASK);
+                        let base_int_x = mul_q14(sub_px_x as i32, sf.x_scale_fp);
+                        let base_int_y = mul_q14(sub_px_y as i32, sf.y_scale_fp);
+                        (
+                            (base_int_x << SUBPEL_BITS) + scaled_mv_col,
+                            (base_int_y << SUBPEL_BITS) + scaled_mv_row,
+                        )
+                    } else {
+                        (
+                            sf.scaled_x_q4(sub_px_x as i32, mv_q4_col as i16),
+                            sf.scaled_y_q4(sub_px_y as i32, mv_q4_row as i16),
+                        )
+                    };
 
                     let ref_plane: BorderedPlaneRef<'_> =
                         ref_buf.plane_with_border(plane);
@@ -936,6 +983,16 @@ fn build_inter_predictor_with_mc_border(
         h,
         is_compound_avg,
     );
+}
+
+/// libvpx's `scaled_x` / `scaled_y` (`vp9_scale.c:16-22`) and the
+/// `(int64_t)val * sf->x_scale_fp >> REF_SCALE_SHIFT` expression
+/// used inside `vp9_scale_mv` / `scaled_buffer_offset`. Widens the
+/// multiply to 64-bit so `val * scale_fp` doesn't overflow at full-HD
+/// scale factors before the Q14 shift collapses it back to i32.
+#[inline]
+fn mul_q14(val: i32, scale_fp: i32) -> i32 {
+    ((i64::from(val) * i64::from(scale_fp)) >> 14) as i32
 }
 
 #[allow(dead_code)] // referenced in tests / placeholders
