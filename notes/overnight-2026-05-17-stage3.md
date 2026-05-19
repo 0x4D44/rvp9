@@ -849,3 +849,128 @@ Arthur triages all `WEDGED` and `WEDGED-BLOCKED` entries on wake.
     must match libvpx exactly. Even a 6-pixel discrepancy in
     width changes the Q14 ratio by ~280 and breaks every
     scaled-MC block.
+
+## D.23 (2026-05-19) — multi-tile (>2 tile cols) — NEGATIVE / localization only
+
+- **Targets:** `vp90-2-08-tile_1x4.webm` (8 mismatches) +
+  `vp90-2-08-tile_1x8.webm` (8 mismatches). Cumulative 16
+  mismatches after D.24's resize landing.
+
+- **What we confirmed (diagnostic infra):**
+  - Frames 1 & 2 of tile_1x4 MD5-match libvpx. Frame 3 is the
+    first failing frame.
+  - First-divergent Y pixel: `(960, 1018)` on frame 3 of
+    tile_1x4. Col 960 = px boundary between **tile-1 and
+    tile-2** for tile_1x4 (mi_col=120). For tile_1x8 frame 3,
+    first Y diff at `(1716, 2106)`.
+  - tile_1x4 tile boundaries: `mi_col ∈ {0, 56, 120, 176, 240}`
+    (px {0, 448, 960, 1408, 1920}). The first-diff column sits
+    at the boundary that **also** exists in tile_1x2 (which
+    passes), so the bug isn't intrinsic to that boundary in
+    isolation — it depends on having a tile **between** two
+    boundaries (i.e. interior tiles).
+  - Spatial distribution analysis (`diff_y_dump.py`) of tile_1x4
+    frame 3: **all** Y diffs concentrate in SB row 16
+    (mi_row 128..135, the partial-bottom SB row). Breakdown:
+    - `SB(16, 13)` (px 832..896): 2681 diffs
+    - `SB(16, 14)` (px 896..960): 3618 diffs
+    - `SB(16, 15)` (px 960..1024): 338 diffs
+    - All other SBs: 0 diffs.
+  - The cluster straddles the **tile-1/tile-2** boundary at
+    mi_col=120 (px 960), heavily skewed to the LEFT side
+    (in tile 1).
+
+- **What we ruled out:**
+  - Entropy-decode parity. `RVP9_TRACE_INTERMI` on tile_1x4
+    frame 3 produces **identical** bool-reader cursor state
+    (`range`/`count`) at every single per-block syntax element
+    between rvp9 and libvpx. Sort-by-mi diff shows ONLY cosmetic
+    `mv1=(0,0)` vs `(-32768,-32768)` (single-ref blocks where
+    libvpx leaves mv[1] uninitialised) and the analogous mv0
+    diff for intra blocks. **The decoded MVs / modes / coef
+    streams are bit-identical.**
+  - Block-walk order. libvpx interleaves SB-rows across tile
+    cols (`tile_row outer → mi_row inner → tile_col → mi_col`),
+    rvp9 walks tile-by-tile (each tile fully decoded before
+    moving to the next). Despite the different walk order, the
+    bool-coder consumption of each tile is per-tile-private and
+    identical to libvpx's. Walk order alone is provably not the
+    bug.
+  - Tile-bound `is_inside` semantics for `find_mv_refs`. Our
+    `TileNeighbourLookup` correctly clamps neighbour reads to
+    tile-relative `(0..tile_mi_rows × 0..tile_mi_cols)`. The
+    `BlockBounds::new` for `clamp_mv2` uses **frame-wide**
+    `mi_rows`/`mi_cols`, which matches libvpx's
+    `set_mi_row_col` 1:1 — that's deliberately not tile-clamped
+    (libvpx's `xd->mb_to_*_edge` is set against frame dims).
+  - `cur_mv_grid` / `cur_segment_ids` ordering. Both writes are
+    based on the decoded block's (mi_row, mi_col, x_mis, y_mis)
+    and produce identical content at end of frame regardless of
+    tile-walk order, because each block only writes cells the
+    block covers and overlap with adjacent tiles is bounded by
+    `x_mis`/`y_mis` (clamped to frame edge only) — libvpx does
+    the same.
+  - Frame-2 output. Pre/post-LF Y/U/V planes match libvpx
+    bit-exactly via `dump_frame_diff --frame 2`. So frame 3
+    sees the **correct** reference pixels.
+
+- **Open question / where we ran out of time:**
+  - **Why does pre-LF recon of frame 3 diverge in SB row 16
+    (partial-bottom SB)** despite identical entropy state and
+    correct reference inputs?
+  - Diff cluster suggests either:
+    1. A subtle bug in pre-LF MC/IT-add at the
+       **`mi_row + bh > mi_rows`** edge (this is the only SB
+       row that triggers it for 1080-px frame).
+    2. A bug in `apply_loop_filter_to_frame` specific to the
+       LAST visible SB row, where `adjust_mask`'s
+       `rows == 7` branch (mi_rows - mi_row = 7 for tile_1x4)
+       takes a numerically-special path
+       (`((1u32 << 16) - 1) as u16 = 0xffff`).
+  - The fact that diffs CLUSTER on the LEFT side of the
+    tile boundary (3618 vs 338) suggests it's tile-1's pre-LF
+    recon that's wrong, and LF then partially "spreads" the
+    diff into tile 2.
+
+- **Files left as diagnostic state (uncommitted):**
+  - `diff_y_dump.py` — spatial diff distribution helper for
+    `dump_frame_diff`'s 4×4 grid output. Reusable for future
+    multi-tile bisects.
+
+- **Files NOT changed:** none. The 16 mismatches remain.
+
+- **Conformance ratchet:** unchanged at 175/16/10.
+
+- **Followups (D.25+):**
+  - **First lever to pull:** add an env-gated pre-LF Y-plane
+    dump (`RVP9_DUMP_PRELF=<path>` on shown frames) and a
+    libvpx-side mirror probe that dumps `cm->cur_frame->y` just
+    before `vp9_loop_filter_frame_mt` runs. Diff the two on
+    tile_1x4 frame 3 — if pre-LF differs, the bug is in recon
+    of SB row 16; if pre-LF matches, the bug is in LF.
+  - **Second lever:** decode tile_1x4 frame 3 with our walk
+    order **swapped to libvpx's interleaved order** (a
+    surgical experiment, not a fix). If the diff goes away,
+    the bug is in something correlated with our walk order
+    (e.g. a per-frame mutable resource that gets touched in
+    different orders); if not, we've conclusively ruled out
+    walk order.
+  - **Third lever:** the `partition_context` in `PartitionCtx`
+    is reset at each SB row. For multi-tile, libvpx does **not**
+    actually share `above_seg_context` across tile cols (each
+    tile's `above_seg_context` slice is its own column range).
+    Verify our `PartitionCtx::above_partition` is similarly
+    isolated per tile — re-read against libvpx's `vp9_tile_init`
+    + `init_macroblockd`.
+
+- **Lessons:**
+  - When the entropy decode of EVERY per-block syntax element
+    matches the oracle bit-exactly but pixel output diverges,
+    the bug is in pixel-domain code (recon / LF / border-extend),
+    not in the bitstream parser. This shaves the search space
+    dramatically. Use the spatial diff distribution to localize
+    further before reading code.
+  - "Both work the same in principle" reasoning is not enough
+    when there's a behavioral diff in production — push for a
+    concrete differential dump (pre-LF Y) to PROVE which pipeline
+    stage diverges.
