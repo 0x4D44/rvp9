@@ -45,7 +45,9 @@ pub use compressed_header::{
     write_y_mode_probs,
 };
 pub use error::BitstreamError;
-pub use modes_writer::{ModesWriterError, TileBounds as ModesTileBounds, write_tile_intra_keyframe};
+pub use modes_writer::{
+    ModesWriterError, TileBounds as ModesTileBounds, write_tile_inter, write_tile_intra_keyframe,
+};
 pub use frame::{
     BitDepth, ChromaFormat, ColorRange, ColorSpace, FrameType, InterpFilter, MAX_INTER_REFS,
     Profile, REF_FRAMES, REF_FRAMES_LOG2, ReferenceMode,
