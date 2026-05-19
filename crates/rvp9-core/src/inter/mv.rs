@@ -37,8 +37,8 @@
 //! `2 * next_node` convention.
 
 use crate::entropy::{
-    BoolReader, CLASS0_BITS, CLASS0_SIZE, MV_CLASSES, MV_FP_SIZE, MV_JOINTS, NmvComponent,
-    NmvComponentCounts, NmvContext, NmvCounts,
+    BoolReader, BoolWriter, CLASS0_BITS, CLASS0_SIZE, MV_CLASSES, MV_FP_SIZE, MV_JOINTS,
+    NmvComponent, NmvComponentCounts, NmvContext, NmvCounts,
 };
 use crate::mode_info::Mv;
 
@@ -399,10 +399,262 @@ pub fn read_mv(
     }
 }
 
+// ============================================================================
+// Encoder-side primitives — write_mv_component / write_mv.
+//
+// Mirror images of `read_mv_component` / `read_mv` above. Used by the
+// inter-block ModeInfo writer (S4.16b) and ultimately by the encoder
+// to emit NEWMV MV-residual payloads. libvpx counterpart:
+// `vp9_encodemv.c::encode_mv_component` (`vp9/encoder/vp9_encodemv.c:159-205`)
+// and `vp9_encode_mv` (`vp9_encodemv.c:207-242`).
+//
+// Invariants the encoder must preserve so the decoder round-trips:
+//   - `diff` (MV-axis residual) is in libvpx's `MV_LOW..=MV_UPP` range,
+//     i.e. fits in 14 bits (`MV_IN_USE_BITS = 14`).
+//   - When `use_hp == false`, `abs(diff)` must be EVEN — equivalently
+//     `mag & 1 == 1` (because `composed = mag + 1`). libvpx's decoder
+//     hard-codes the HP bit to 1 in that case; the encoder accordingly
+//     emits no HP bit, and the only diff values that compose back
+//     correctly are those whose LSB-of-offset is already 1.
+// ============================================================================
+
+/// Decompose an MV-axis residual magnitude `mag` (= `abs(diff) - 1`)
+/// into its `(MvClass, mag_base)` pair, matching libvpx's
+/// `vp9_get_mv_class` (`vp9/common/vp9_entropymv.c:43-66`).
+///
+/// `mag_base` is the floor of the magnitude window for that class,
+/// derived via the same `(CLASS0_SIZE) << (class + 2)` formula the
+/// reader uses (see [`read_mv_component`] line 272). For class 0 the
+/// base is 0.
+#[inline]
+fn mv_class_and_base(mag: u32) -> (MvClass, u32) {
+    // libvpx's `log_in_base_2[z >> 3]` table maps `z >> 3` to
+    // `floor(log2(z >> 3))` for `z >= 8`, with a special-case
+    // "class 10" branch for `z >= CLASS0_SIZE * 4096 == 8192`.
+    // The test helper already does this; we replicate it here as a
+    // small inline pure helper that matches the reader's `base`
+    // formula bit-for-bit.
+    if mag >= (CLASS0_SIZE as u32) * 4096 {
+        let class = MvClass::Class10;
+        let base = (CLASS0_SIZE as u32) << (class as u32 + 2);
+        return (class, base);
+    }
+    let idx = mag >> 3;
+    if idx == 0 {
+        return (MvClass::Class0, 0);
+    }
+    let bits = 32 - idx.leading_zeros();
+    let class = MvClass::from_u8((bits - 1) as u8).expect("mv_class_and_base: class in 0..=10");
+    // Class0 is special-cased to base=0 (matches the reader: line 261-263
+    // returns base=0 for is_class0 unconditionally). Without this guard,
+    // a mag in 8..=15 (e.g. value=9 → mag=8 → idx=1 → bits=1 → class=0)
+    // would compute `base = CLASS0_SIZE << 2 = 8`, which is wrong: class
+    // 0 covers magnitudes 0..=15 with base=0.
+    if matches!(class, MvClass::Class0) {
+        return (class, 0);
+    }
+    let base = (CLASS0_SIZE as u32) << (class as u32 + 2);
+    (class, base)
+}
+
+/// Walk a libvpx-format probability tree to find the bit sequence that
+/// reaches the leaf with value `target`, and emit those bits against
+/// `probs` via `bw.write`. Mirrors the inverse of
+/// [`BoolReader::read_tree`] (`bool_reader.rs:158-167`).
+///
+/// `tree` and `probs` follow the same layout the reader walks: positive
+/// entries are next-node indices; negative entries `-leaf` are terminal
+/// leaves whose returned value is `leaf` (negation recovers the positive
+/// enum value); `probs[i >> 1]` gates the branch decision at node `i`.
+///
+/// Panics in debug builds if `target` is unreachable from the root.
+#[inline]
+fn write_tree(bw: &mut BoolWriter<'_>, tree: &[i8], probs: &[u8], target: i8) {
+    /// Recursively check whether `target` is reachable in the subtree
+    /// rooted at `node`. Leaves are negative (`-target`); internal
+    /// nodes are positive indices into `tree`.
+    fn contains(tree: &[i8], node: i8, target: i8) -> bool {
+        if node <= 0 {
+            -node == target
+        } else {
+            let i = node as usize;
+            contains(tree, tree[i], target) || contains(tree, tree[i + 1], target)
+        }
+    }
+    let mut i: i32 = 0;
+    loop {
+        let left = tree[i as usize];
+        let right = tree[i as usize + 1];
+        let prob = probs[(i as usize) >> 1];
+        let bit: u8 = if contains(tree, left, target) { 0 } else { 1 };
+        bw.write(bit, prob);
+        let next = if bit == 0 { left } else { right };
+        if next <= 0 {
+            debug_assert_eq!(-next, target, "write_tree: descended to wrong leaf");
+            return;
+        }
+        i = next as i32;
+    }
+}
+
+/// Encode one motion-vector axis component (`row` or `col`) into the
+/// boolean writer. Mirrors libvpx `encode_mv_component`
+/// (`vp9/encoder/vp9_encodemv.c:159-205`) — the inverse of
+/// [`read_mv_component`].
+///
+/// `diff` is the signed MV residual in 1/8-pel units; must be nonzero
+/// (the zero case is handled by the MV joint short-circuit in
+/// [`write_mv`]) and fit in libvpx's 14-bit `MV_IN_USE_BITS` range.
+///
+/// 1. Emit sign bit (`comp_probs.sign`).
+/// 2. Emit class via [`MV_CLASS_TREE`] against `comp_probs.classes`.
+/// 3. If class 0: emit one integer-pel bit (`comp_probs.class0[0]`).
+///    Otherwise: emit `class + CLASS0_BITS - 1` offset bits LSB-first
+///    against `comp_probs.bits[..]`.
+/// 4. Emit fractional-pel tree (`class0_fp[d]` for class 0, else `fp`).
+/// 5. If `use_hp`: emit the HP bit (`class0_hp` / `hp`). Otherwise no
+///    HP bit is emitted — the caller guarantees `mag & 1 == 1` (i.e.
+///    `abs(diff)` is even) so the decoder's hard-coded `hp = 1` will
+///    recompose the same value.
+///
+/// # Panics (debug only)
+///
+/// Panics if `diff == 0`, if `abs(diff)` exceeds libvpx's
+/// `MV_IN_USE_BITS = 14` range, or if `!use_hp` but `mag & 1 != 1`.
+#[inline]
+pub fn write_mv_component(
+    bw: &mut BoolWriter<'_>,
+    diff: i16,
+    comp_probs: &NmvComponent,
+    use_hp: bool,
+) {
+    debug_assert!(diff != 0, "write_mv_component: zero handled by joint short-circuit");
+
+    let sign: u8 = if diff < 0 { 1 } else { 0 };
+    // `abs_diff` is `abs(diff)` widened to u32. `i16::unsigned_abs`
+    // returns u16; widen so the subtraction below stays in u32.
+    let abs_diff = u32::from(diff.unsigned_abs());
+    // libvpx's `z = (sign ? -v : v) - 1`. `z` is the "mag" in
+    // `read_mv_component` parlance.
+    let mag = abs_diff - 1;
+    debug_assert!(
+        mag < (1u32 << 14),
+        "write_mv_component: diff out of MV_IN_USE_BITS range (got abs={abs_diff})"
+    );
+
+    // Class + magnitude base.
+    let (class, mag_base) = mv_class_and_base(mag);
+    let is_class0 = matches!(class, MvClass::Class0);
+
+    // libvpx: `o = mag - mag_base`, `d = o >> 3`, `f = (o >> 1) & 3`,
+    // `e = o & 1`. For class 0, `mag_base = 0` so `o = mag`.
+    let offset = mag - mag_base;
+    let d = offset >> 3;
+    let fr = (offset >> 1) & 3;
+    let hp = offset & 1;
+
+    // Sign bit.
+    bw.write(sign, comp_probs.sign);
+
+    // Class tree.
+    write_tree(bw, &MV_CLASS_TREE, &comp_probs.classes, class as i8);
+
+    // Integer-pel section.
+    if is_class0 {
+        // Single bit gates the 2-slot `class0` (CLASS0_SIZE = 2), matching
+        // the reader's `r.read(comp_probs.class0[0])` (line 262).
+        bw.write(d as u8, comp_probs.class0[0]);
+    } else {
+        let n = class as usize + CLASS0_BITS - 1;
+        for i in 0..n {
+            let bit = ((d >> i) & 1) as u8;
+            bw.write(bit, comp_probs.bits[i]);
+        }
+    }
+
+    // Fractional-pel tree.
+    let fp_probs: &[u8] = if is_class0 {
+        &comp_probs.class0_fp[d as usize]
+    } else {
+        &comp_probs.fp
+    };
+    write_tree(bw, &MV_FP_TREE, fp_probs, fr as i8);
+
+    // High-precision bit (1/8-pel). Only emitted when `use_hp`; libvpx's
+    // decoder hard-codes `hp = 1` otherwise, so the encoder must only
+    // call us with `mag & 1 == 1` when `use_hp == false`.
+    if use_hp {
+        let p = if is_class0 {
+            comp_probs.class0_hp
+        } else {
+            comp_probs.hp
+        };
+        bw.write(hp as u8, p);
+    } else {
+        debug_assert_eq!(
+            hp, 1,
+            "write_mv_component: use_hp=false requires LSB-of-offset == 1 (abs(diff) must be even)"
+        );
+    }
+}
+
+/// Encode a complete motion-vector residual `(cur_mv - ref_mv)` into the
+/// boolean writer. Mirrors libvpx `vp9_encode_mv`
+/// (`vp9/encoder/vp9_encodemv.c:207-242`) — the inverse of
+/// [`read_mv`].
+///
+/// 1. Compute `diff = cur_mv - ref_mv` (wrapping i16 sub).
+/// 2. Emit the [`MvJoint`] via [`MV_JOINT_TREE`].
+/// 3. If the joint says vertical is nonzero, emit the row component.
+/// 4. If the joint says horizontal is nonzero, emit the col component.
+///
+/// `allow_hp` is the frame-level `uh->allow_high_precision_mv`. The
+/// per-block HP gate ([`use_mv_hp`]) is applied internally against
+/// `ref_mv` and threaded down to both component writes — matching the
+/// reader's behaviour exactly.
+///
+/// **Per-block call contract:** invoke once per `NEWMV` MV slot. For
+/// `NEAREST/NEAR/ZERO` modes the encoder skips this entirely — the MV
+/// is implied by the reference list. Matches the read-side gate at
+/// `vp9_decodemv.c:414` and `:438-491`.
+///
+/// # Panics (debug only)
+///
+/// Panics if any non-zero diff component falls outside libvpx's
+/// `MV_IN_USE_BITS = 14` range, or if `!use_hp` (after the per-block
+/// gate) is incompatible with the diff value (see
+/// [`write_mv_component`]).
+#[inline]
+pub fn write_mv(
+    bw: &mut BoolWriter<'_>,
+    cur_mv: Mv,
+    ref_mv: Mv,
+    allow_hp: bool,
+    nmv_context: &NmvContext,
+) {
+    let diff = Mv {
+        row: cur_mv.row.wrapping_sub(ref_mv.row),
+        col: cur_mv.col.wrapping_sub(ref_mv.col),
+    };
+    let joint = get_mv_joint(diff);
+
+    // Joint tree.
+    write_tree(bw, &MV_JOINT_TREE, &nmv_context.joints, joint as i8);
+
+    let use_hp = allow_hp && use_mv_hp(ref_mv);
+
+    if joint.vertical() {
+        write_mv_component(bw, diff.row, &nmv_context.comps[0], use_hp);
+    }
+    if joint.horizontal() {
+        write_mv_component(bw, diff.col, &nmv_context.comps[1], use_hp);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entropy::{BoolWriter, DEFAULT_NMV_CONTEXT};
+    use crate::entropy::DEFAULT_NMV_CONTEXT;
 
     // ---------- Helpers --------------------------------------------------
 
@@ -902,5 +1154,280 @@ mod tests {
         let mut counts = NmvCounts::default();
         let _ = read_mv(&mut r, Mv { row: 200, col: 200 }, true, ctx, Some(&mut counts));
         assert_eq!(counts.comps[1].class0_hp, [0, 1]);
+    }
+
+    // ---------- write_mv_component / write_mv round-trip tests ----------
+    //
+    // These exercise the encoder-side primitives added in S4.16a. The
+    // existing test helpers above (`encode_component`, `encode_mv`)
+    // mirror the same algorithm; here we directly call the new public
+    // API and verify the decoder recovers the input.
+
+    /// Drive `write_mv_component` and flush. Returns the byte-tight
+    /// buffer the reader can consume.
+    fn write_component_buf(value: i16, comp: &NmvComponent, use_hp: bool) -> Vec<u8> {
+        let mut buf = vec![0u8; 128];
+        let size = {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            write_mv_component(&mut w, value, comp, use_hp);
+            for _ in 0..16 {
+                w.write_bit(0);
+            }
+            w.stop_encode().expect("stop_encode")
+        };
+        buf.truncate(size);
+        buf
+    }
+
+    /// Drive `write_mv` and flush.
+    fn write_mv_buf(cur_mv: Mv, ref_mv: Mv, ctx: &NmvContext, allow_hp: bool) -> Vec<u8> {
+        let mut buf = vec![0u8; 256];
+        let size = {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            write_mv(&mut w, cur_mv, ref_mv, allow_hp, ctx);
+            for _ in 0..16 {
+                w.write_bit(0);
+            }
+            w.stop_encode().expect("stop_encode")
+        };
+        buf.truncate(size);
+        buf
+    }
+
+    /// `write_mv_component` round-trips every value in class 0 (mag in
+    /// 1..=16), both signs, with `use_hp = true`. This is the densest
+    /// coverage band; any decomposition bug surfaces here.
+    #[test]
+    fn write_mv_component_round_trips_class0_all_values() {
+        let comp = &DEFAULT_NMV_CONTEXT.comps[0];
+        for mag in 1i16..=16 {
+            for &value in &[mag, -mag] {
+                let buf = write_component_buf(value, comp, true);
+                let mut r = BoolReader::new(&buf).expect("init");
+                let got = read_mv_component(&mut r, comp, None, true);
+                assert_eq!(got, value, "class0 mag {mag}, sign-signed {value}");
+                assert!(!r.has_error(), "decoder over-ran buffer");
+            }
+        }
+    }
+
+    /// `write_mv_component` with `use_hp = false` requires the LSB of
+    /// `offset = mag` to be 1, i.e. `abs(value)` is even. Verify every
+    /// such value in class 0 round-trips (the decoder hard-codes hp=1).
+    #[test]
+    fn write_mv_component_round_trips_no_hp() {
+        let comp = &DEFAULT_NMV_CONTEXT.comps[1];
+        // Even abs values in 2..=16 → mag = abs-1 ∈ {1,3,5,...,15},
+        // LSB = 1, decoder's hp=1 fallback reconstructs the same value.
+        for mag in (2i16..=16).step_by(2) {
+            for &value in &[mag, -mag] {
+                let buf = write_component_buf(value, comp, false);
+                let mut r = BoolReader::new(&buf).expect("init");
+                let got = read_mv_component(&mut r, comp, None, false);
+                assert_eq!(got, value, "no-hp class0 value={value}");
+            }
+        }
+    }
+
+    /// One representative value per `MvClass` (1..=10). Uses the same
+    /// representative magnitudes as `read_mv_component_each_class_round_trip`.
+    #[test]
+    fn write_mv_component_round_trips_each_class_one_value() {
+        let comp = &DEFAULT_NMV_CONTEXT.comps[0];
+        let cases: &[(MvClass, i16)] = &[
+            (MvClass::Class0, 4),
+            (MvClass::Class1, 24),
+            (MvClass::Class2, 48),
+            (MvClass::Class3, 96),
+            (MvClass::Class4, 192),
+            (MvClass::Class5, 384),
+            (MvClass::Class6, 768),
+            (MvClass::Class7, 1536),
+            (MvClass::Class8, 3072),
+            (MvClass::Class9, 6144),
+            (MvClass::Class10, 12288),
+        ];
+        for &(expected_class, value) in cases {
+            let buf = write_component_buf(value, comp, true);
+            let mut r = BoolReader::new(&buf).expect("init");
+            let got = read_mv_component(&mut r, comp, None, true);
+            assert_eq!(got, value, "class {expected_class:?} value={value}");
+        }
+    }
+
+    /// Extreme values at the edges of `MV_IN_USE_BITS = 14` (i.e.
+    /// `mag = 2^14 - 1`, so `abs(value) = 2^14 = 16384`... no — `MV_LOW
+    /// = -16384`, `MV_UPP = 16383`, so absolute max value is 16383 and
+    /// the corresponding `mag = 16382`. With class 10 (`mag >= 8192`),
+    /// `(d << 3) | (fr << 1) | hp` covers offsets 0..(2^11+8190) — but
+    /// the safe bound for the residual itself is 8191 on the
+    /// `value` side at `MV_CLASS10` boundary tests in the wider
+    /// codebase. Use ±8191 as documented.
+    #[test]
+    fn write_mv_component_round_trips_extreme_values() {
+        let comp = &DEFAULT_NMV_CONTEXT.comps[0];
+        for &value in &[8191i16, -8191] {
+            let buf = write_component_buf(value, comp, true);
+            let mut r = BoolReader::new(&buf).expect("init");
+            let got = read_mv_component(&mut r, comp, None, true);
+            assert_eq!(got, value, "extreme value={value}");
+        }
+    }
+
+    /// `cur_mv == ref_mv` → joint == Zero → no component bits emitted.
+    /// The decoder must reconstruct `ref_mv` unchanged.
+    #[test]
+    fn write_mv_round_trips_zero_joint() {
+        let ctx = &DEFAULT_NMV_CONTEXT;
+        let ref_mv = Mv { row: 17, col: -29 };
+        let buf = write_mv_buf(ref_mv, ref_mv, ctx, true);
+        let mut r = BoolReader::new(&buf).expect("init");
+        let got = read_mv(&mut r, ref_mv, true, ctx, None);
+        assert_eq!(got, ref_mv);
+    }
+
+    /// `diff = (0, k)` → joint HnzVz; only the col component is on the
+    /// wire.
+    #[test]
+    fn write_mv_round_trips_hnz_vz() {
+        let ctx = &DEFAULT_NMV_CONTEXT;
+        let ref_mv = Mv { row: 0, col: 0 };
+        let cur_mv = Mv { row: 0, col: 9 };
+        let buf = write_mv_buf(cur_mv, ref_mv, ctx, true);
+        let mut r = BoolReader::new(&buf).expect("init");
+        let got = read_mv(&mut r, ref_mv, true, ctx, None);
+        assert_eq!(got, cur_mv);
+    }
+
+    /// `diff = (k, 0)` → joint HzVnz; only the row component is on the
+    /// wire.
+    #[test]
+    fn write_mv_round_trips_hz_vnz() {
+        let ctx = &DEFAULT_NMV_CONTEXT;
+        let ref_mv = Mv { row: 0, col: 0 };
+        let cur_mv = Mv { row: -11, col: 0 };
+        let buf = write_mv_buf(cur_mv, ref_mv, ctx, true);
+        let mut r = BoolReader::new(&buf).expect("init");
+        let got = read_mv(&mut r, ref_mv, true, ctx, None);
+        assert_eq!(got, cur_mv);
+    }
+
+    /// `diff = (k, m)` → joint HnzVnz; both components on the wire.
+    #[test]
+    fn write_mv_round_trips_hnz_vnz() {
+        let ctx = &DEFAULT_NMV_CONTEXT;
+        let ref_mv = Mv { row: 5, col: -3 };
+        let cur_mv = Mv { row: 12, col: -10 };
+        let buf = write_mv_buf(cur_mv, ref_mv, ctx, true);
+        let mut r = BoolReader::new(&buf).expect("init");
+        let got = read_mv(&mut r, ref_mv, true, ctx, None);
+        assert_eq!(got, cur_mv);
+    }
+
+    /// 200-iter fuzz over random (`cur_mv`, `ref_mv`, `allow_hp`)
+    /// triples. Uses a deterministic XorShift64 PRNG so failures are
+    /// reproducible. The diff is constrained to libvpx's
+    /// `MV_IN_USE_BITS = 14` range on each axis; when the per-block
+    /// HP gate disables HP, we round `abs(diff)` to the nearest even
+    /// value so the encoder's `use_hp == false` contract holds.
+    #[test]
+    fn write_mv_round_trips_fuzz() {
+        let ctx = &DEFAULT_NMV_CONTEXT;
+
+        /// XorShift64 from a 64-bit seed. Same shape as the lt_pred
+        /// fuzz harness.
+        struct XorShift64(u64);
+        impl XorShift64 {
+            fn next_u64(&mut self) -> u64 {
+                let mut x = self.0;
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                self.0 = x;
+                x
+            }
+            fn next_i16_in_range(&mut self, lo: i16, hi: i16) -> i16 {
+                let span = (hi as i32 - lo as i32 + 1) as u64;
+                let r = self.next_u64() % span;
+                (lo as i32 + r as i32) as i16
+            }
+        }
+
+        let mut rng = XorShift64(0x00C0_FFEE_F00D_1234);
+
+        for iter in 0..200 {
+            // Pick a ref MV anywhere in i16 (allowed; the per-block
+            // HP gate falls back to no-HP for large refs).
+            let ref_mv = Mv {
+                row: rng.next_i16_in_range(-2000, 2000),
+                col: rng.next_i16_in_range(-2000, 2000),
+            };
+
+            // Pick a diff in libvpx's MV_LOW..=MV_UPP per axis. Each
+            // axis residual is bounded by `2^14 - 1 == 16383`.
+            let mut diff_row = rng.next_i16_in_range(-1024, 1024);
+            let mut diff_col = rng.next_i16_in_range(-1024, 1024);
+
+            // allow_hp toggle.
+            let allow_hp = (iter & 1) == 0;
+            let use_hp = allow_hp && use_mv_hp(ref_mv);
+
+            // If HP is gated off at the block level, the encoder needs
+            // `abs(diff)` to be even (LSB-of-offset = 1) on any nonzero
+            // axis. Coerce by setting bit 0 of `abs(diff)` to 0.
+            if !use_hp {
+                for d in [&mut diff_row, &mut diff_col] {
+                    if *d != 0 && (*d).unsigned_abs() & 1 == 1 {
+                        // Snap to the next-larger-magnitude even value.
+                        // E.g. 5 -> 6, -5 -> -6. Both stay nonzero.
+                        if *d > 0 {
+                            *d += 1;
+                        } else {
+                            *d -= 1;
+                        }
+                    }
+                }
+            }
+
+            let cur_mv = Mv {
+                row: ref_mv.row.wrapping_add(diff_row),
+                col: ref_mv.col.wrapping_add(diff_col),
+            };
+
+            let buf = write_mv_buf(cur_mv, ref_mv, ctx, allow_hp);
+            let mut r = BoolReader::new(&buf).expect("init");
+            let got = read_mv(&mut r, ref_mv, allow_hp, ctx, None);
+            assert_eq!(
+                got, cur_mv,
+                "fuzz iter {iter}: ref={ref_mv:?} diff=({diff_row},{diff_col}) allow_hp={allow_hp}"
+            );
+            assert!(!r.has_error(), "decoder over-ran buffer (iter {iter})");
+        }
+    }
+
+    /// Spot-check the private `mv_class_and_base` helper against the
+    /// representative magnitudes used in [`read_mv_component_each_class_round_trip`].
+    #[test]
+    fn mv_class_and_base_spot_checks() {
+        // (mag, expected_class, expected_base)
+        let cases: &[(u32, MvClass, u32)] = &[
+            (0, MvClass::Class0, 0),
+            // 8..=15 covers the "class 0 with idx >= 1" subcase that
+            // exposed the missing base-override bug — see comment in
+            // `mv_class_and_base`.
+            (8, MvClass::Class0, 0),
+            (15, MvClass::Class0, 0),
+            (16, MvClass::Class1, 16),
+            (31, MvClass::Class1, 16),
+            (32, MvClass::Class2, 32),
+            (8191, MvClass::Class9, 4096),
+            (8192, MvClass::Class10, 8192),
+            (16383, MvClass::Class10, 8192),
+        ];
+        for &(mag, expected_class, expected_base) in cases {
+            let (c, b) = mv_class_and_base(mag);
+            assert_eq!(c, expected_class, "mag {mag} class mismatch");
+            assert_eq!(b, expected_base, "mag {mag} base mismatch");
+        }
     }
 }
