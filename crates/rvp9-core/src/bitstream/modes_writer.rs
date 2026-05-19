@@ -1,61 +1,85 @@
-//! Per-tile mode-info writer (v1 keyframe-only scaffold).
+//! Per-tile mode-info writer (keyframe partition-tree scaffold).
 //!
 //! Encoder mirror of the decoder's per-tile partition-tree walker
 //! (`rvp9_decoder::tile::decode_tile_intra` + `decode_partition` +
-//! `decode_block`). v1 scope is deliberately narrow: every superblock
-//! is `PARTITION_NONE` (no split), every block is intra with
-//! `DC_PRED`, every block has `skip == true`, segmentation is
-//! disabled, and the caller is responsible for emitting a compressed
-//! header with `tx_mode == AllowTx32x32` so that the per-block
-//! `tx_size` is implicit (not present on the wire). Any input
+//! `decode_block`). v1 scope was every-SB-PARTITION_NONE; S4.13
+//! widens the writer to mirror the decoder's full recursive
+//! partition tree (HORZ / VERT / SPLIT down to BLOCK_8x8 leaves)
+//! while keeping the per-leaf intra-DC-skip residual contract
+//! intact.
+//!
+//! Each leaf block is still required to be intra (any of the 10
+//! Y/UV modes) with `skip == true`; segmentation must be disabled.
+//! The caller is responsible for emitting a compressed header with
+//! `tx_mode == AllowTx32x32` (or any non-`TxModeSelect` mode) so
+//! that the per-block `tx_size` is implicit. Any input
 //! [`ModeInfo`] grid that violates the scope is rejected with
 //! [`ModesWriterError`].
 //!
-//! This commit lands the wire-format scaffolding the follow-on
-//! commits will widen as the encoder's mode-decision driver starts to
-//! emit real partitioning, modes, tx-size selection, and tokens.
+//! ## Partition-tree inference
+//!
+//! The decoder splats one `ModeInfo` across every 8x8 cell that the
+//! leaf covers (see `build_frame_mi_grid` in `rvp9-decoder`). The
+//! writer takes advantage of that: at each level of the recursion,
+//! it inspects the cell at the top-left mi-coordinate of the current
+//! sub-block, reads its `block_size`, and chooses the partition by
+//! comparing against `bsize`'s legal subsizes (NONE / HORZ / VERT /
+//! SPLIT). For SPLIT the recursion checks each of the four
+//! quadrants in turn.
+//!
+//! ## Frame-edge scope reduction
+//!
+//! The writer rejects mi-grids whose `(mi_rows, mi_cols)` aren't
+//! multiples of 8 via [`ModesWriterError::NonMultipleOfSb`], so the
+//! frame-edge cases (`has_rows` or `has_cols` false; or the
+//! `hbs == 0` BLOCK_8x8 sub-partitioning branch on the decoder side)
+//! never fire. The writer always emits via the full 4-way
+//! `read_partition` tree-walk path. When the writer is widened to
+//! arbitrary frame sizes, those branches become future work.
+//!
+//! The BLOCK_8x8 leaf is accepted as a leaf, but BLOCK_8x8 parents
+//! always emit `PARTITION_NONE` (no further sub-8 partitioning into
+//! 4x4 / 4x8 / 8x4).
 //!
 //! ## Wire format produced
 //!
-//! For each 64×64 superblock in row-major SB scan:
+//! For each parent block visited by [`write_partition_tree`] (top
+//! call at `bsize = Block64x64, n4x4_l2 = 4`):
 //!
-//! 1. **Partition** — `PARTITION_NONE` encoded as a single boolean
-//!    `0` against `VP9_KF_PARTITION_PROBS[ctx][0]`. The `ctx` is
-//!    computed by mirroring the decoder's
-//!    `PartitionCtx::context(mi_row_in_tile, mi_col_in_tile, bsl=3)`.
-//! 2. **Segment_id** — skipped (writer rejects `segmentation` outside
-//!    of "disabled").
-//! 3. **Skip flag** — `1` against `fc.skip_probs[ctx]`. The context
-//!    starts at `0` (no neighbours) and grows to `2` only once a
-//!    neighbour exists; with `skip` set on every cell, the right-hand
-//!    column / bottom row read `skip_probs[2]` on the inside of the
-//!    frame.
-//! 4. **Y intra mode** — `DC_PRED` encoded as a single boolean `0`
-//!    against `VP9_KF_Y_MODE_PROB[above_mode][left_mode][0]`. With
-//!    every neighbour also `DC_PRED`, the slot is always
-//!    `VP9_KF_Y_MODE_PROB[Dc][Dc]`.
-//! 5. **UV intra mode** — `DC_PRED` encoded as a single boolean `0`
-//!    against `VP9_KF_UV_MODE_PROB[Dc][0]`.
-//! 6. **tx_size** — NOT emitted on the wire when `tx_mode !=
-//!    TxModeSelect`. The decoder derives `tx_size = min(max_tx_size,
-//!    tx_mode_to_biggest_tx_size(tx_mode))`. For 64×64 blocks with
-//!    `tx_mode = AllowTx32x32`, that yields `Tx32x32`.
-//! 7. **Residual tokens** — none (skip is set).
+//! 1. **Partition bit-sequence** against `VP9_KF_PARTITION_PROBS[ctx]`:
+//!    - `PARTITION_NONE`  → `0`
+//!    - `PARTITION_HORZ`  → `1, 0`
+//!    - `PARTITION_VERT`  → `1, 1, 0`
+//!    - `PARTITION_SPLIT` → `1, 1, 1`
+//!
+//!    `ctx` mirrors `PartitionCtx::context(mi_row_in_tile,
+//!    mi_col_in_tile, bsl)` where `bsl = n8x8_l2 = n4x4_l2 - 1`.
+//! 2. **Per-leaf block** at the chosen `subsize`:
+//!    - **Segment_id** — skipped (segmentation disabled).
+//!    - **Skip flag** — `1` against `fc.skip_probs[skip_ctx]`.
+//!    - **Y intra mode** — chosen mode encoded as the
+//!      `VP9_INTRA_MODE_TREE` walk against
+//!      `VP9_KF_Y_MODE_PROB[above_mode][left_mode]`.
+//!    - **UV intra mode** — chosen mode encoded against
+//!      `VP9_KF_UV_MODE_PROB[y_mode]`.
+//!    - **tx_size** — NOT emitted on the wire (caller's
+//!      `tx_mode != TxModeSelect`).
+//!    - **Residual tokens** — none (skip is set).
 //!
 //! ## Caller contract
 //!
-//! - The frame's compressed header must encode
-//!   `tx_mode = AllowTx32x32` (or any other non-`TxModeSelect` mode
-//!   whose `tx_mode_to_biggest_tx_size` matches the per-block
+//! - The compressed header must commit
+//!   `tx_mode = AllowTx32x32` (or any non-`TxModeSelect` mode whose
+//!   `tx_mode_to_biggest_tx_size` matches each leaf's expected
 //!   `tx_size`). The wire format cannot otherwise communicate the
 //!   per-block tx-size for skip-only blocks.
 //! - The frame must be a keyframe (or intra-only) and segmentation
 //!   must be disabled in the uncompressed header.
 //! - Frame dimensions must be multiples of 64 pixels (= 8 mi-units).
-//!   v1 doesn't yet support partial superblocks at the frame edge.
+//!   Partial superblocks at the frame edge are future work.
 
 use super::error::BitstreamError;
-use crate::block::{BlockSize, PartitionType};
+use crate::block::{BlockSize, PartitionType, subsize};
 use crate::entropy::{BoolWriter, FrameContext, VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB,
     VP9_KF_Y_MODE_PROB};
 use crate::intra_pred::IntraMode;
@@ -129,16 +153,37 @@ pub enum ModesWriterError {
         /// Column of the missing cell.
         mi_col: usize,
     },
-    /// A cell carried a `block_size` other than `Block64x64`. The v1
-    /// writer always emits `PARTITION_NONE` at the superblock root,
-    /// so every cell must be 64×64.
+    /// The leaf cell's `block_size` doesn't match the partition-tree
+    /// derived expected `subsize` at this level of recursion. Either
+    /// the encoder's partition decisions were never written into the
+    /// mi-grid for this leaf, or the grid is internally inconsistent
+    /// (sibling cells inside the same parent block report sizes that
+    /// don't recursively decompose to a legal VP9 partition tree).
     UnsupportedBlockSize {
         /// Row of the offending cell.
         mi_row: usize,
         /// Column of the offending cell.
         mi_col: usize,
-        /// The actual block size that triggered the rejection.
+        /// The actual block size found in the grid.
         block_size: BlockSize,
+    },
+    /// The mi-grid carries a leaf shape at `(mi_row, mi_col)` that
+    /// doesn't match any of the legal subsize choices for the parent
+    /// `bsize` (i.e. neither `bsize`, nor `subsize(bsize, HORZ)`,
+    /// nor `subsize(bsize, VERT)`, and the SPLIT recursion couldn't
+    /// reconcile the four quadrants). This is the
+    /// inconsistent-partition-tree rejection — typically the
+    /// encoder's mode-decision driver produced a grid that
+    /// isn't a valid VP9 partition tree.
+    InconsistentPartitionTree {
+        /// Row of the offending cell (top-left of the parent).
+        mi_row: usize,
+        /// Column of the offending cell (top-left of the parent).
+        mi_col: usize,
+        /// The parent `bsize` whose subsize lookup failed.
+        parent_bsize: BlockSize,
+        /// The block size found at the top-left cell of the parent.
+        leaf_bsize: BlockSize,
     },
     /// A cell carried `mode != Intra { y_mode: Dc, uv_mode: Dc }`.
     /// Either the cell is inter, or it's intra but with a non-DC
@@ -193,7 +238,16 @@ impl core::fmt::Display for ModesWriterError {
                 block_size,
             } => write!(
                 f,
-                "modes_writer v1: cell ({mi_row}, {mi_col}) has block_size {block_size:?}, expected Block64x64"
+                "modes_writer: leaf cell ({mi_row}, {mi_col}) has block_size {block_size:?} but the partition tree expected a different subsize at this level"
+            ),
+            Self::InconsistentPartitionTree {
+                mi_row,
+                mi_col,
+                parent_bsize,
+                leaf_bsize,
+            } => write!(
+                f,
+                "modes_writer: parent {parent_bsize:?} at ({mi_row}, {mi_col}) cannot host leaf size {leaf_bsize:?} (not a legal HORZ/VERT/NONE subsize)"
             ),
             Self::UnsupportedBlockMode { mi_row, mi_col } => write!(
                 f,
@@ -372,19 +426,19 @@ impl NeighbourCtx {
 /// — the same shape `rvp9_decoder::Decoder::last_frame_mi_grid()`
 /// returns. `tile_bounds` selects the rectangle of the grid this
 /// tile owns. `fc` provides the per-frame entropy context (the only
-/// field the v1 writer reads is `fc.skip_probs`; partitions and modes
+/// field the writer reads is `fc.skip_probs`; partitions and modes
 /// use the keyframe tables directly).
 ///
-/// Walks `tile_bounds` in row-major 64×64 SB order; for each SB calls
-/// [`write_partition`] (which emits `PARTITION_NONE`) and then
-/// [`write_block_intra_keyframe`] (which emits the per-block
-/// `(skip, y_mode, uv_mode)` triple).
+/// Walks `tile_bounds` in row-major 64x64 SB order; for each SB
+/// drives [`write_partition_tree`] which recursively emits the
+/// partition decisions (mirrored from the decoder's
+/// `decode_partition`) and the per-leaf intra-DC-skip block.
 ///
 /// # Caller contract
 ///
 /// - The compressed header must commit `tx_mode = AllowTx32x32` (or
 ///   any non-`TxModeSelect` mode whose
-///   `tx_mode_to_biggest_tx_size` evaluates to `Tx32x32`).
+///   `tx_mode_to_biggest_tx_size` matches each leaf's `tx_size`).
 /// - The uncompressed header must commit `segmentation.enabled =
 ///   false`.
 /// - The frame must be a keyframe (or intra-only) and its
@@ -394,9 +448,11 @@ impl NeighbourCtx {
 ///
 /// - [`ModesWriterError::MissingCell`] — a cell on the SB scan was
 ///   [`None`].
-/// - [`ModesWriterError::UnsupportedBlockSize`] / `UnsupportedBlockMode`
-///   / `UnsupportedNonSkip` / `UnsupportedSegmentation` — the cell's
-///   `ModeInfo` exceeded the v1 scope.
+/// - [`ModesWriterError::UnsupportedBlockSize`] /
+///   [`ModesWriterError::InconsistentPartitionTree`] /
+///   `UnsupportedBlockMode` / `UnsupportedNonSkip` /
+///   `UnsupportedSegmentation` — the cell's `ModeInfo` exceeded the
+///   writer scope.
 /// - [`ModesWriterError::NonMultipleOfSb`] / `InvalidTileBounds` —
 ///   geometry-level rejections.
 /// - [`ModesWriterError::BufferOverflow`] — the [`BoolWriter`]
@@ -436,17 +492,18 @@ pub fn write_tile_intra_keyframe(
 
         let mut mi_col = tile_bounds.mi_col_start;
         while mi_col < tile_bounds.mi_col_end {
-            write_partition(bw, &mut part_ctx, &tile_bounds, mi_row, mi_col)?;
-            let mi = mi_grid_get(mi_grid, mi_cols_us, mi_row, mi_col)
-                .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
-            write_block_intra_keyframe(
+            write_partition_tree(
                 bw,
-                fc,
+                &mut part_ctx,
                 &mut nbr_ctx,
                 &tile_bounds,
+                mi_grid,
+                mi_cols_us,
                 mi_row,
                 mi_col,
-                &mi,
+                BlockSize::Block64x64,
+                4, // n4x4_l2 for 64x64 = log2(16) = 4
+                fc,
             )?;
             mi_col += MI_BLOCK_SIZE;
         }
@@ -469,73 +526,307 @@ fn mi_grid_get(
     grid.get(mi_row * mi_cols + mi_col).and_then(|c| *c)
 }
 
-/// Write the partition decision for the 64×64 superblock starting at
-/// `(mi_row, mi_col)`. v1 always emits `PARTITION_NONE`, encoded as
-/// a single boolean `0` against `VP9_KF_PARTITION_PROBS[ctx][0]`.
+/// Inspect the mi-grid at `(mi_row, mi_col)` and decide which
+/// [`PartitionType`] the encoder used to subdivide a `bsize` parent
+/// block.
 ///
-/// Then updates `part_ctx` so the next SB sees the post-block
-/// partition context, mirroring the decoder's
-/// `dec_update_partition_context` (gated on `bsize >= BLOCK_8X8 &&
-/// (bsize == BLOCK_8X8 || partition != SPLIT)`; for the
-/// `PARTITION_NONE @ 64x64` case both predicates are true).
-fn write_partition(
-    bw: &mut BoolWriter<'_>,
-    part_ctx: &mut PartitionCtx,
-    bounds: &TileBounds,
+/// Relies on the decoder's "splat one ModeInfo across every 8x8 cell
+/// covered by a leaf" invariant (`build_frame_mi_grid` in
+/// `rvp9-decoder`): the top-left cell of any leaf carries its own
+/// `block_size`, which is compared against `bsize` and its three
+/// legal split subsizes. If the leaf size matches `bsize` itself,
+/// the parent was `PARTITION_NONE`; if it matches `subsize(bsize,
+/// HORZ)` or `subsize(bsize, VERT)` we report HORZ / VERT
+/// respectively; otherwise the parent was `PARTITION_SPLIT` and the
+/// caller recurses (which validates the four quadrants).
+///
+/// Edge cases:
+/// - `bsize == Block8x8`: the writer scope reduction pins the
+///   parent-8x8 partition to `PARTITION_NONE`. If the leaf at
+///   `(mi_row, mi_col)` is anything other than `Block8x8`, return
+///   [`ModesWriterError::InconsistentPartitionTree`] — the decoder
+///   `hbs == 0` BLOCK_8x8 sub-partitioning into 4x4/4x8/8x4 isn't
+///   supported by this scope.
+/// - The leaf size doesn't match `bsize`, `subsize(bsize, HORZ)`, or
+///   `subsize(bsize, VERT)`, and the parent isn't square enough to
+///   SPLIT (i.e. `subsize(bsize, SPLIT)` is `None`): return
+///   [`ModesWriterError::InconsistentPartitionTree`].
+fn infer_partition(
+    mi_grid: &[Option<ModeInfo>],
+    mi_cols: usize,
     mi_row: usize,
     mi_col: usize,
+    bsize: BlockSize,
+) -> Result<PartitionType, ModesWriterError> {
+    let leaf = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
+        .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
+    let leaf_bsize = leaf.block_size;
+
+    if leaf_bsize == bsize {
+        return Ok(PartitionType::None);
+    }
+
+    // BLOCK_8x8 parents: scope-reduced to NONE only. Any non-matching
+    // leaf size at parent-8x8 is rejected.
+    if bsize == BlockSize::Block8x8 {
+        return Err(ModesWriterError::InconsistentPartitionTree {
+            mi_row,
+            mi_col,
+            parent_bsize: bsize,
+            leaf_bsize,
+        });
+    }
+
+    if let Some(horz) = subsize(bsize, PartitionType::Horz)
+        && leaf_bsize == horz
+    {
+        return Ok(PartitionType::Horz);
+    }
+    if let Some(vert) = subsize(bsize, PartitionType::Vert)
+        && leaf_bsize == vert
+    {
+        return Ok(PartitionType::Vert);
+    }
+
+    // The only remaining legal option is SPLIT; verify the parent
+    // supports a SPLIT subsize. If not, the grid is malformed.
+    if subsize(bsize, PartitionType::Split).is_some() {
+        Ok(PartitionType::Split)
+    } else {
+        Err(ModesWriterError::InconsistentPartitionTree {
+            mi_row,
+            mi_col,
+            parent_bsize: bsize,
+            leaf_bsize,
+        })
+    }
+}
+
+/// Emit the partition bit-sequence for `partition` against
+/// `VP9_KF_PARTITION_PROBS[ctx]`. Mirrors the reader-side
+/// `mode_info::read_partition` tree walk over `PARTITION_TREE`
+/// exactly:
+///
+/// - `PARTITION_NONE`  → `0`
+/// - `PARTITION_HORZ`  → `1, 0`
+/// - `PARTITION_VERT`  → `1, 1, 0`
+/// - `PARTITION_SPLIT` → `1, 1, 1`
+fn write_partition(
+    bw: &mut BoolWriter<'_>,
+    ctx: usize,
+    partition: PartitionType,
+) {
+    let probs = &VP9_KF_PARTITION_PROBS[ctx];
+    match partition {
+        PartitionType::None => {
+            bw.write(0, probs[0]);
+        }
+        PartitionType::Horz => {
+            bw.write(1, probs[0]);
+            bw.write(0, probs[1]);
+        }
+        PartitionType::Vert => {
+            bw.write(1, probs[0]);
+            bw.write(1, probs[1]);
+            bw.write(0, probs[2]);
+        }
+        PartitionType::Split => {
+            bw.write(1, probs[0]);
+            bw.write(1, probs[1]);
+            bw.write(1, probs[2]);
+        }
+    }
+}
+
+/// Recursively encode the partition tree rooted at `(mi_row, mi_col)`
+/// with parent block-size `bsize` and `n4x4_l2 = log2(n_4x4_wide)`.
+///
+/// Mirrors the decoder's `decode_partition` (`tile.rs:417-559`) but
+/// runs in the encoder direction:
+/// 1. Compute `n8x8_l2 = n4x4_l2 - 1`, `num_8x8_wh = 1 << n8x8_l2`,
+///    `hbs = num_8x8_wh >> 1`, `bsl = n8x8_l2`.
+/// 2. Look up `ctx = part_ctx.context(...)` and infer the partition
+///    type from the mi-grid via [`infer_partition`].
+/// 3. Emit the partition bit-sequence via [`write_partition`].
+/// 4. Switch on the partition: NONE/HORZ/VERT call
+///    [`write_block_intra_keyframe`] for one (NONE) or two (HORZ/VERT)
+///    leaves; SPLIT recurses into the four quadrants.
+/// 5. Apply the libvpx partition-context update gate
+///    (`bsize >= BLOCK_8X8 && (bsize == BLOCK_8X8 || partition !=
+///    SPLIT)`).
+///
+/// Scope assumptions: `has_rows && has_cols` always hold inside the
+/// writer because `write_tile_intra_keyframe` rejects mi-grids whose
+/// dimensions aren't multiples of 8. The `hbs == 0` BLOCK_8x8
+/// sub-partitioning branch on the decoder side is similarly out of
+/// scope; [`infer_partition`] forces BLOCK_8x8 parents to
+/// `PARTITION_NONE`.
+#[allow(clippy::too_many_arguments)] // mirrors libvpx 1:1
+fn write_partition_tree(
+    bw: &mut BoolWriter<'_>,
+    part_ctx: &mut PartitionCtx,
+    nbr_ctx: &mut NeighbourCtx,
+    bounds: &TileBounds,
+    mi_grid: &[Option<ModeInfo>],
+    mi_cols: usize,
+    mi_row: usize,
+    mi_col: usize,
+    bsize: BlockSize,
+    n4x4_l2: u8,
+    fc: &FrameContext,
 ) -> Result<(), ModesWriterError> {
+    // Defensive: the frame-edge clip in `decode_partition` should
+    // never fire because (1) the writer caller's `NonMultipleOfSb`
+    // gate pins `(mi_rows, mi_cols)` to multiples of 8, and (2) the
+    // SB scan loop only enters this function at superblock-aligned
+    // coordinates inside `tile_bounds`. Express the invariant.
+    debug_assert!(mi_row < bounds.mi_row_end && mi_col < bounds.mi_col_end);
+
+    let n8x8_l2: u8 = n4x4_l2.saturating_sub(1);
+    let num_8x8_wh: usize = 1usize << n8x8_l2;
+    let hbs: usize = num_8x8_wh >> 1;
+
     let mi_row_in_tile = mi_row - bounds.mi_row_start;
     let mi_col_in_tile = mi_col - bounds.mi_col_start;
-    // 64x64 root: bsl = log2(n_8x8_wide / 2) = log2(8 / 2) = 2. Wait —
-    // the decoder uses `bsl = n8x8_l2` where `n8x8_l2 = n4x4_l2 - 1`
-    // and `n4x4_l2 = 4` for 64x64 (`log2(16) = 4`). So `bsl = 3` at
-    // the 64x64 root. This matches `decode_partition`'s
-    // `let bsl = n8x8_l2 as usize` at the top-level call.
-    let bsl = 3usize;
+    let bsl: usize = n8x8_l2 as usize;
     let ctx = part_ctx.context(mi_row_in_tile, mi_col_in_tile, bsl);
-    let probs = &VP9_KF_PARTITION_PROBS[ctx];
-    // Both `has_rows` and `has_cols` are true: the SB scan loop only
-    // enters this function when `(mi_row, mi_col)` is within the
-    // frame, and `hbs = 4 < 8 = MI_BLOCK_SIZE` so the 64x64 root
-    // sub-block always has rows and cols inside the same 64x64 patch.
-    // The decoder's three-way fallback (rows-only / cols-only / both
-    // missing) only fires at the SB-grid edge of a frame whose
-    // dimensions aren't multiples of 64; v1 rejects that case
-    // upstream via `NonMultipleOfSb`.
-    bw.write(0, probs[0]);
 
-    // libvpx `decode_partition`: the partition-context update fires
-    // when `bsize >= BLOCK_8X8 && (bsize == BLOCK_8X8 || partition !=
-    // SPLIT)`. For 64x64 / PARTITION_NONE both predicates hold.
-    let _ = PartitionType::None; // explicit reminder of the encoded value
-    let subsize = BlockSize::Block64x64; // PARTITION_NONE keeps parent size
-    let bw_mi: usize = usize::from(BlockSize::Block64x64.n_8x8_wide());
-    part_ctx.update(mi_row_in_tile, mi_col_in_tile, subsize, bw_mi);
+    // Frame-edge invariant — the writer is restricted upstream to
+    // multiples of 64 px, so the asymmetric (rows-only / cols-only)
+    // and (no-rows && no-cols) partition cases never fire. Assert.
+    debug_assert!(
+        mi_row + hbs < bounds.mi_row_end,
+        "has_rows must hold; frame-multiple-of-64 invariant violated"
+    );
+    debug_assert!(
+        mi_col + hbs < bounds.mi_col_end,
+        "has_cols must hold; frame-multiple-of-64 invariant violated"
+    );
+
+    let partition = infer_partition(mi_grid, mi_cols, mi_row, mi_col, bsize)?;
+    write_partition(bw, ctx, partition);
+
+    let sub = subsize(bsize, partition)
+        .expect("infer_partition only returns a partition whose subsize is legal");
+
+    match partition {
+        PartitionType::None => {
+            // sub == bsize for PARTITION_NONE. Write the leaf.
+            let mi = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
+                .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
+            write_block_intra_keyframe(bw, fc, nbr_ctx, bounds, mi_row, mi_col, sub, &mi)?;
+        }
+        PartitionType::Horz => {
+            // Two leaves: (mi_row, mi_col) and (mi_row + hbs, mi_col),
+            // both with `sub` = horizontal subsize of `bsize`.
+            let top = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
+                .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
+            write_block_intra_keyframe(bw, fc, nbr_ctx, bounds, mi_row, mi_col, sub, &top)?;
+            let mi_row_b = mi_row + hbs;
+            let bot = mi_grid_get(mi_grid, mi_cols, mi_row_b, mi_col).ok_or(
+                ModesWriterError::MissingCell {
+                    mi_row: mi_row_b,
+                    mi_col,
+                },
+            )?;
+            write_block_intra_keyframe(bw, fc, nbr_ctx, bounds, mi_row_b, mi_col, sub, &bot)?;
+        }
+        PartitionType::Vert => {
+            let left = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
+                .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
+            write_block_intra_keyframe(bw, fc, nbr_ctx, bounds, mi_row, mi_col, sub, &left)?;
+            let mi_col_r = mi_col + hbs;
+            let right = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col_r).ok_or(
+                ModesWriterError::MissingCell {
+                    mi_row,
+                    mi_col: mi_col_r,
+                },
+            )?;
+            write_block_intra_keyframe(bw, fc, nbr_ctx, bounds, mi_row, mi_col_r, sub, &right)?;
+        }
+        PartitionType::Split => {
+            // 4-way recursion in (mi_row | +hbs, mi_col | +hbs) order
+            // — same order as the decoder.
+            write_partition_tree(
+                bw, part_ctx, nbr_ctx, bounds, mi_grid, mi_cols, mi_row, mi_col, sub, n8x8_l2,
+                fc,
+            )?;
+            write_partition_tree(
+                bw,
+                part_ctx,
+                nbr_ctx,
+                bounds,
+                mi_grid,
+                mi_cols,
+                mi_row,
+                mi_col + hbs,
+                sub,
+                n8x8_l2,
+                fc,
+            )?;
+            write_partition_tree(
+                bw,
+                part_ctx,
+                nbr_ctx,
+                bounds,
+                mi_grid,
+                mi_cols,
+                mi_row + hbs,
+                mi_col,
+                sub,
+                n8x8_l2,
+                fc,
+            )?;
+            write_partition_tree(
+                bw,
+                part_ctx,
+                nbr_ctx,
+                bounds,
+                mi_grid,
+                mi_cols,
+                mi_row + hbs,
+                mi_col + hbs,
+                sub,
+                n8x8_l2,
+                fc,
+            )?;
+        }
+    }
+
+    // Partition-context update — mirror libvpx `decode_partition`
+    // (`vp9_decodeframe.c:1222-1224`): fires only when `bsize >=
+    // BLOCK_8X8 && (bsize == BLOCK_8X8 || partition != SPLIT)`.
+    if (bsize as u8) >= (BlockSize::Block8x8 as u8)
+        && (bsize == BlockSize::Block8x8 || partition != PartitionType::Split)
+    {
+        part_ctx.update(mi_row_in_tile, mi_col_in_tile, sub, num_8x8_wh);
+    }
 
     Ok(())
 }
 
-/// Write the per-block keyframe mode info for the 64×64 block
-/// starting at `(mi_row, mi_col)`. v1 requires `mi` to be:
+/// Write the per-leaf keyframe mode info for the block of size
+/// `leaf_bsize` starting at `(mi_row, mi_col)`. The leaf is required
+/// to be:
 ///
-/// - `block_size == Block64x64`,
-/// - `mode == Intra { y_mode: Dc, uv_mode: Dc }`,
+/// - `block_size == leaf_bsize`,
+/// - `mode == Intra { y_mode, uv_mode }` (any of the 10 intra modes),
 /// - `skip == true`,
 /// - `segment_id == 0 && !seg_id_predicted`.
 ///
 /// Emits, in order:
 ///
 /// 1. `skip = 1` against `fc.skip_probs[skip_ctx]`.
-/// 2. `y_mode = DC_PRED` (single bit `0`) against
-///    `VP9_KF_Y_MODE_PROB[above_mode][left_mode][0]`.
-/// 3. `uv_mode = DC_PRED` (single bit `0`) against
-///    `VP9_KF_UV_MODE_PROB[Dc][0]`.
+/// 2. `y_mode` against
+///    `VP9_KF_Y_MODE_PROB[above_mode][left_mode]` via the
+///    `VP9_INTRA_MODE_TREE` walk.
+/// 3. `uv_mode` against `VP9_KF_UV_MODE_PROB[y_mode]` (same tree).
 ///
 /// Then updates `nbr_ctx` with the just-written `(y_mode, skip)`
 /// pair so subsequent blocks see the correct above/left neighbour
 /// state. Mirrors the relevant slice of the decoder's
 /// `TileDecodeCtx::write_block`.
+#[allow(clippy::too_many_arguments)] // mirrors the decoder's per-block call
 fn write_block_intra_keyframe(
     bw: &mut BoolWriter<'_>,
     fc: &FrameContext,
@@ -543,10 +834,15 @@ fn write_block_intra_keyframe(
     bounds: &TileBounds,
     mi_row: usize,
     mi_col: usize,
+    leaf_bsize: BlockSize,
     mi: &ModeInfo,
 ) -> Result<(), ModesWriterError> {
-    // Scope validation — keep the error variants tight to the cell.
-    if mi.block_size != BlockSize::Block64x64 {
+    // Scope validation — the leaf cell's recorded block_size must
+    // match the partition-tree-derived expected subsize at this
+    // level. (`infer_partition` already validated the top-left cell
+    // of the parent; here we check the leaf the recursion actually
+    // landed on, which for HORZ/VERT/SPLIT is a different cell.)
+    if mi.block_size != leaf_bsize {
         return Err(ModesWriterError::UnsupportedBlockSize {
             mi_row,
             mi_col,
@@ -572,24 +868,19 @@ fn write_block_intra_keyframe(
         nbr_ctx.neighbours_for(mi_row_in_tile, mi_col_in_tile);
 
     // Segment_id: caller contract pins `segmentation_update_map ==
-    // false`, so no bits are emitted. (The compressed-header
-    // segmentation params block in the uncompressed header also
-    // marks the feature disabled.)
+    // false`, so no bits are emitted.
 
-    // 1. Skip flag — always 1 under v1 scope. The skip prob bank is
-    //    laid out as `[u8; SKIP_CONTEXTS]` (3 entries) and the
+    // 1. Skip flag — always 1 under writer scope. The skip prob bank
+    //    is laid out as `[u8; SKIP_CONTEXTS]` (3 entries) and the
     //    decoder reads with `r.read(probs[ctx])` (`mode_info.rs::
     //    read_skip`).
     bw.write(1, fc.skip_probs[skip_ctx]);
 
-    // 2. Intra Y mode. The keyframe Y-mode tree walks
-    //    `VP9_INTRA_MODE_TREE` against
-    //    `VP9_KF_Y_MODE_PROB[above_mode][left_mode]`.
+    // 2. Intra Y mode against `VP9_KF_Y_MODE_PROB[above][left]`.
     let y_probs = &VP9_KF_Y_MODE_PROB[above_mode as usize][left_mode as usize];
     write_intra_mode(bw, y_probs, y_mode);
 
-    // 3. Intra UV mode. Same tree, probs gated by the chosen Y mode:
-    //    `VP9_KF_UV_MODE_PROB[y_mode]`.
+    // 3. Intra UV mode against `VP9_KF_UV_MODE_PROB[y_mode]`.
     let uv_probs = &VP9_KF_UV_MODE_PROB[y_mode as usize];
     write_intra_mode(bw, uv_probs, uv_mode);
 
@@ -597,18 +888,12 @@ fn write_block_intra_keyframe(
     //    TxModeSelect`. The caller commits this via the compressed
     //    header.
 
-    // 5. Splat the just-written neighbour state. v1 always writes the
-    //    full 64x64 = 8 mi-units of cells. The above/left context for
-    //    the next block sees the parent's Y mode.
-    let mi_extent = MI_BLOCK_SIZE;
-    nbr_ctx.write_block(
-        mi_row_in_tile,
-        mi_col_in_tile,
-        mi_extent,
-        mi_extent,
-        y_mode,
-        true,
-    );
+    // 5. Splat the just-written neighbour state across the leaf's
+    //    mi-coverage. The above/left context for the next block sees
+    //    the leaf's Y mode.
+    let x_mis = usize::from(leaf_bsize.n_8x8_wide());
+    let y_mis = usize::from(leaf_bsize.n_8x8_high());
+    nbr_ctx.write_block(mi_row_in_tile, mi_col_in_tile, x_mis, y_mis, y_mode, true);
 
     Ok(())
 }
@@ -753,7 +1038,16 @@ mod tests {
             (usize::from(left) * 2 + usize::from(above)) + bsl * PARTITION_PLOFFSET
         }
         fn update(&mut self, mi_row_in_tile: usize, mi_col_in_tile: usize, bw: usize) {
-            let (above_v, left_v) = PARTITION_CONTEXT_LOOKUP[BlockSize::Block64x64 as usize];
+            self.update_with_subsize(mi_row_in_tile, mi_col_in_tile, BlockSize::Block64x64, bw);
+        }
+        fn update_with_subsize(
+            &mut self,
+            mi_row_in_tile: usize,
+            mi_col_in_tile: usize,
+            subsize_bs: BlockSize,
+            bw: usize,
+        ) {
+            let (above_v, left_v) = PARTITION_CONTEXT_LOOKUP[subsize_bs as usize];
             let col_end = (mi_col_in_tile + bw).min(self.above.len());
             for slot in &mut self.above[mi_col_in_tile..col_end] {
                 *slot = above_v;
@@ -775,15 +1069,18 @@ mod tests {
         let n = {
             let mut bw = BoolWriter::start_encode(&mut buf);
             // Mirror the SB scan for a 64x64 (one-SB) tile.
-            let bounds = TileBounds {
-                mi_row_start: 0,
-                mi_row_end: 8,
-                mi_col_start: 0,
-                mi_col_end: 8,
-            };
             let mut part_ctx = PartitionCtx::new(8);
-            write_partition(&mut bw, &mut part_ctx, &bounds, 0, 0)
-                .expect("write_partition v1 should succeed");
+            let bsl = 3usize;
+            let ctx = part_ctx.context(0, 0, bsl);
+            write_partition(&mut bw, ctx, PartitionType::None);
+            // Mirror the partition-context update the recursive walker
+            // does for PARTITION_NONE @ 64x64.
+            part_ctx.update(
+                0,
+                0,
+                BlockSize::Block64x64,
+                BlockSize::Block64x64.n_8x8_wide() as usize,
+            );
             bw.stop_encode().expect("stop_encode")
         };
         buf.truncate(n);
@@ -795,9 +1092,7 @@ mod tests {
         let p = read_partition(&mut reader, probs, ctx, None);
         assert_eq!(p, PartitionType::None);
         // Update mirrors the decoder so subsequent SBs see the same
-        // context the writer produced (we only check the single-SB
-        // case here, but exercise the update path for the multi-SB
-        // tests below).
+        // context the writer produced.
         test_ctx.update(0, 0, BlockSize::Block64x64.n_8x8_wide() as usize);
         assert_eq!(test_ctx.above[0], 0); // 64x64 → above_v = 0
     }
@@ -819,8 +1114,17 @@ mod tests {
             let mut nbr_ctx = NeighbourCtx::new(8);
             let grid = make_dc_grid(8, 8);
             let mi = grid[0].expect("populated cell");
-            write_block_intra_keyframe(&mut bw, &fc, &mut nbr_ctx, &bounds, 0, 0, &mi)
-                .expect("write_block_intra_keyframe v1 should succeed");
+            write_block_intra_keyframe(
+                &mut bw,
+                &fc,
+                &mut nbr_ctx,
+                &bounds,
+                0,
+                0,
+                BlockSize::Block64x64,
+                &mi,
+            )
+            .expect("write_block_intra_keyframe should succeed");
             bw.stop_encode().expect("stop_encode")
         };
         buf.truncate(n);
@@ -859,9 +1163,14 @@ mod tests {
         assert!(matches!(err, ModesWriterError::MissingCell { mi_row: 0, mi_col: 0 }));
     }
 
-    /// `write_tile_intra_keyframe` rejects a non-`Block64x64` cell.
+    /// `write_tile_intra_keyframe` rejects a malformed grid where the
+    /// top-left cell carries `Block32x32` (implying SPLIT) but the
+    /// rest of the SB still carries `Block64x64` cells — the partition
+    /// tree can't legally decompose. After the recursion lands in a
+    /// 32x32 sub-block whose top-left is still `Block64x64`, the
+    /// writer reports `InconsistentPartitionTree`.
     #[test]
-    fn write_tile_intra_keyframe_rejects_non_64x64() {
+    fn write_tile_intra_keyframe_rejects_inconsistent_mixed_sizes() {
         let mut buf = vec![0u8; 64];
         let fc = FrameContext::new_default();
         let mut grid = make_dc_grid(8, 8);
@@ -876,10 +1185,11 @@ mod tests {
         };
         let mut bw = BoolWriter::start_encode(&mut buf);
         let err = write_tile_intra_keyframe(&mut bw, &grid, 8, 8, bounds, &fc).unwrap_err();
-        assert!(matches!(
-            err,
-            ModesWriterError::UnsupportedBlockSize { block_size: BlockSize::Block32x32, .. }
-        ));
+        assert!(
+            matches!(err, ModesWriterError::InconsistentPartitionTree { .. })
+                || matches!(err, ModesWriterError::UnsupportedBlockSize { .. }),
+            "got: {err:?}"
+        );
     }
 
     /// `write_tile_intra_keyframe` rejects a non-skip cell.
@@ -1154,5 +1464,496 @@ mod tests {
                 assert_eq!(got_uv, uv_mode, "UV mode parse for ({y_mode:?}, {uv_mode:?})");
             }
         }
+    }
+
+    // -----------------------------------------------------------------
+    // S4.13 — recursive partition-tree round-trips (HORZ / VERT / SPLIT)
+    // -----------------------------------------------------------------
+
+    /// Build a populated `ModeInfo` cell of size `bsize`, intra-DC,
+    /// skip=true, segmentation-off.
+    fn make_dc_cell(bsize: BlockSize) -> ModeInfo {
+        ModeInfo {
+            block_size: bsize,
+            tx_size: TxSize::Tx32x32,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        }
+    }
+
+    /// Splat `mi` across the `[mi_row..+y_mis] x [mi_col..+x_mis]`
+    /// patch of the frame mi-grid. Mirrors `build_frame_mi_grid`'s
+    /// decoder-side splat: every 8x8 cell inside the leaf's coverage
+    /// carries the same `ModeInfo`.
+    fn splat_cell(
+        grid: &mut [Option<ModeInfo>],
+        mi_cols: usize,
+        mi_row: usize,
+        mi_col: usize,
+        mi: ModeInfo,
+    ) {
+        let x_mis = usize::from(mi.block_size.n_8x8_wide());
+        let y_mis = usize::from(mi.block_size.n_8x8_high());
+        for dr in 0..y_mis {
+            for dc in 0..x_mis {
+                grid[(mi_row + dr) * mi_cols + (mi_col + dc)] = Some(mi);
+            }
+        }
+    }
+
+    /// Reader-side replay of the writer's partition-tree walk. Drives
+    /// `read_partition` / `read_skip` / `read_intra_mode` recursively
+    /// against the same partition + neighbour contexts the writer
+    /// builds, and accumulates a `Vec<(mi_row, mi_col, BlockSize)>` of
+    /// visited leaves for verification.
+    #[allow(clippy::too_many_arguments)]
+    fn replay_partition_tree(
+        r: &mut BoolReader<'_>,
+        part_ctx: &mut TestPartCtx,
+        nbr: &mut NeighbourCtx,
+        fc: &FrameContext,
+        bounds: TileBounds,
+        mi_row: usize,
+        mi_col: usize,
+        bsize: BlockSize,
+        n4x4_l2: u8,
+        leaves: &mut Vec<(usize, usize, BlockSize)>,
+    ) {
+        let n8x8_l2 = n4x4_l2.saturating_sub(1);
+        let num_8x8_wh: usize = 1usize << n8x8_l2;
+        let hbs = num_8x8_wh >> 1;
+        let mi_row_in_tile = mi_row - bounds.mi_row_start;
+        let mi_col_in_tile = mi_col - bounds.mi_col_start;
+        let bsl = n8x8_l2 as usize;
+        let ctx = part_ctx.context(mi_row_in_tile, mi_col_in_tile, bsl);
+        let probs = &VP9_KF_PARTITION_PROBS[ctx];
+        let partition = read_partition(r, probs, ctx, None);
+        let sub = subsize(bsize, partition).expect("legal subsize");
+
+        let mut read_leaf = |r: &mut BoolReader<'_>,
+                             nbr: &mut NeighbourCtx,
+                             mi_row: usize,
+                             mi_col: usize,
+                             leaf_bsize: BlockSize| {
+            let mi_row_in_tile = mi_row - bounds.mi_row_start;
+            let mi_col_in_tile = mi_col - bounds.mi_col_start;
+            let (above_mode, left_mode, skip_ctx) =
+                nbr.neighbours_for(mi_row_in_tile, mi_col_in_tile);
+            let skip = read_skip(r, &fc.skip_probs, skip_ctx, None);
+            assert!(skip, "skip @ ({mi_row}, {mi_col})");
+            let y_probs = &VP9_KF_Y_MODE_PROB[above_mode as usize][left_mode as usize];
+            let y_mode = read_intra_mode(r, y_probs);
+            let uv_probs = &VP9_KF_UV_MODE_PROB[y_mode as usize];
+            let _uv_mode = read_intra_mode(r, uv_probs);
+            let x_mis = usize::from(leaf_bsize.n_8x8_wide());
+            let y_mis = usize::from(leaf_bsize.n_8x8_high());
+            nbr.write_block(mi_row_in_tile, mi_col_in_tile, x_mis, y_mis, y_mode, true);
+            leaves.push((mi_row, mi_col, leaf_bsize));
+        };
+
+        match partition {
+            PartitionType::None => {
+                read_leaf(r, nbr, mi_row, mi_col, sub);
+            }
+            PartitionType::Horz => {
+                read_leaf(r, nbr, mi_row, mi_col, sub);
+                read_leaf(r, nbr, mi_row + hbs, mi_col, sub);
+            }
+            PartitionType::Vert => {
+                read_leaf(r, nbr, mi_row, mi_col, sub);
+                read_leaf(r, nbr, mi_row, mi_col + hbs, sub);
+            }
+            PartitionType::Split => {
+                replay_partition_tree(
+                    r, part_ctx, nbr, fc, bounds, mi_row, mi_col, sub, n8x8_l2, leaves,
+                );
+                replay_partition_tree(
+                    r,
+                    part_ctx,
+                    nbr,
+                    fc,
+                    bounds,
+                    mi_row,
+                    mi_col + hbs,
+                    sub,
+                    n8x8_l2,
+                    leaves,
+                );
+                replay_partition_tree(
+                    r,
+                    part_ctx,
+                    nbr,
+                    fc,
+                    bounds,
+                    mi_row + hbs,
+                    mi_col,
+                    sub,
+                    n8x8_l2,
+                    leaves,
+                );
+                replay_partition_tree(
+                    r,
+                    part_ctx,
+                    nbr,
+                    fc,
+                    bounds,
+                    mi_row + hbs,
+                    mi_col + hbs,
+                    sub,
+                    n8x8_l2,
+                    leaves,
+                );
+            }
+        }
+
+        if (bsize as u8) >= (BlockSize::Block8x8 as u8)
+            && (bsize == BlockSize::Block8x8 || partition != PartitionType::Split)
+        {
+            part_ctx.update_with_subsize(mi_row_in_tile, mi_col_in_tile, sub, num_8x8_wh);
+        }
+    }
+
+    /// Encode the given mi-grid through `write_tile_intra_keyframe`,
+    /// then replay through `replay_partition_tree` and return the
+    /// recovered leaves. Asserts the writer accepts the grid.
+    fn encode_then_replay(
+        mi_rows: u32,
+        mi_cols: u32,
+        grid: &[Option<ModeInfo>],
+    ) -> Vec<(usize, usize, BlockSize)> {
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let fc = FrameContext::new_default();
+        let mut buf = vec![0u8; 8 * 1024];
+        let written = {
+            let mut bw = BoolWriter::start_encode(&mut buf);
+            write_tile_intra_keyframe(&mut bw, grid, mi_rows, mi_cols, bounds, &fc)
+                .expect("write_tile_intra_keyframe should accept legal partition tree");
+            bw.stop_encode().expect("stop_encode")
+        };
+        buf.truncate(written);
+
+        let mut reader = BoolReader::new(&buf).expect("reader init");
+        let mut part_ctx = TestPartCtx::new(mi_cols as usize);
+        let mut nbr = NeighbourCtx::new(mi_cols as usize);
+        let mut leaves = Vec::new();
+
+        let mut mi_row = 0usize;
+        while mi_row < mi_rows as usize {
+            part_ctx.reset_left();
+            nbr.reset_left();
+            let mut mi_col = 0usize;
+            while mi_col < mi_cols as usize {
+                replay_partition_tree(
+                    &mut reader,
+                    &mut part_ctx,
+                    &mut nbr,
+                    &fc,
+                    bounds,
+                    mi_row,
+                    mi_col,
+                    BlockSize::Block64x64,
+                    4,
+                    &mut leaves,
+                );
+                mi_col += MI_BLOCK_SIZE;
+            }
+            mi_row += MI_BLOCK_SIZE;
+        }
+        leaves
+    }
+
+    /// 64x64 PARTITION_HORZ — two `Block64x32` leaves stacked.
+    #[test]
+    fn partition_horz_64x64_round_trip() {
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, make_dc_cell(BlockSize::Block64x32));
+        splat_cell(&mut grid, mi_cols as usize, 4, 0, make_dc_cell(BlockSize::Block64x32));
+
+        let leaves = encode_then_replay(mi_rows, mi_cols, &grid);
+        assert_eq!(
+            leaves,
+            vec![
+                (0, 0, BlockSize::Block64x32),
+                (4, 0, BlockSize::Block64x32),
+            ]
+        );
+    }
+
+    /// 64x64 PARTITION_VERT — two `Block32x64` leaves side-by-side.
+    #[test]
+    fn partition_vert_64x64_round_trip() {
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, make_dc_cell(BlockSize::Block32x64));
+        splat_cell(&mut grid, mi_cols as usize, 0, 4, make_dc_cell(BlockSize::Block32x64));
+
+        let leaves = encode_then_replay(mi_rows, mi_cols, &grid);
+        assert_eq!(
+            leaves,
+            vec![
+                (0, 0, BlockSize::Block32x64),
+                (0, 4, BlockSize::Block32x64),
+            ]
+        );
+    }
+
+    /// 64x64 PARTITION_SPLIT — four `Block32x32` leaves at NONE each.
+    #[test]
+    fn partition_split_64x64_round_trip() {
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let cell = make_dc_cell(BlockSize::Block32x32);
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, cell);
+        splat_cell(&mut grid, mi_cols as usize, 0, 4, cell);
+        splat_cell(&mut grid, mi_cols as usize, 4, 0, cell);
+        splat_cell(&mut grid, mi_cols as usize, 4, 4, cell);
+
+        let leaves = encode_then_replay(mi_rows, mi_cols, &grid);
+        assert_eq!(
+            leaves,
+            vec![
+                (0, 0, BlockSize::Block32x32),
+                (0, 4, BlockSize::Block32x32),
+                (4, 0, BlockSize::Block32x32),
+                (4, 4, BlockSize::Block32x32),
+            ]
+        );
+    }
+
+    /// 64x64 SPLIT, first quadrant SPLIT into 4x `Block16x16` NONE,
+    /// other three quadrants each `Block32x32` NONE.
+    #[test]
+    fn partition_split_then_split_round_trip() {
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        // First quadrant (0..4, 0..4) split into four 16x16 (mi-size 2).
+        let cell16 = make_dc_cell(BlockSize::Block16x16);
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, cell16);
+        splat_cell(&mut grid, mi_cols as usize, 0, 2, cell16);
+        splat_cell(&mut grid, mi_cols as usize, 2, 0, cell16);
+        splat_cell(&mut grid, mi_cols as usize, 2, 2, cell16);
+        // Other three quadrants: 32x32 NONE.
+        let cell32 = make_dc_cell(BlockSize::Block32x32);
+        splat_cell(&mut grid, mi_cols as usize, 0, 4, cell32);
+        splat_cell(&mut grid, mi_cols as usize, 4, 0, cell32);
+        splat_cell(&mut grid, mi_cols as usize, 4, 4, cell32);
+
+        let leaves = encode_then_replay(mi_rows, mi_cols, &grid);
+        assert_eq!(
+            leaves,
+            vec![
+                // First quadrant (split into 16x16 quartet)
+                (0, 0, BlockSize::Block16x16),
+                (0, 2, BlockSize::Block16x16),
+                (2, 0, BlockSize::Block16x16),
+                (2, 2, BlockSize::Block16x16),
+                // Remaining three 32x32 quadrants (decoder order: TR, BL, BR)
+                (0, 4, BlockSize::Block32x32),
+                (4, 0, BlockSize::Block32x32),
+                (4, 4, BlockSize::Block32x32),
+            ]
+        );
+    }
+
+    /// Full recursion down to `Block8x8`: 64 -> SPLIT -> 32 ->
+    /// SPLIT -> 16 -> SPLIT -> 8 NONE.
+    #[test]
+    fn partition_full_recursion_to_8x8() {
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        // Top-left 32x32: split into 16x16 quartet. First 16x16 itself
+        // split into four 8x8 leaves. Other three 16x16 are NONE.
+        let cell8 = make_dc_cell(BlockSize::Block8x8);
+        let cell16 = make_dc_cell(BlockSize::Block16x16);
+        let cell32 = make_dc_cell(BlockSize::Block32x32);
+        // Block (0,0)..(2,2) = top-left 16x16, split into four 8x8.
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, cell8);
+        splat_cell(&mut grid, mi_cols as usize, 0, 1, cell8);
+        splat_cell(&mut grid, mi_cols as usize, 1, 0, cell8);
+        splat_cell(&mut grid, mi_cols as usize, 1, 1, cell8);
+        // The three remaining 16x16 inside the top-left 32x32.
+        splat_cell(&mut grid, mi_cols as usize, 0, 2, cell16);
+        splat_cell(&mut grid, mi_cols as usize, 2, 0, cell16);
+        splat_cell(&mut grid, mi_cols as usize, 2, 2, cell16);
+        // The remaining three 32x32 inside the 64x64.
+        splat_cell(&mut grid, mi_cols as usize, 0, 4, cell32);
+        splat_cell(&mut grid, mi_cols as usize, 4, 0, cell32);
+        splat_cell(&mut grid, mi_cols as usize, 4, 4, cell32);
+
+        let leaves = encode_then_replay(mi_rows, mi_cols, &grid);
+        assert_eq!(
+            leaves,
+            vec![
+                // Deepest: four 8x8 inside the top-left 16x16
+                (0, 0, BlockSize::Block8x8),
+                (0, 1, BlockSize::Block8x8),
+                (1, 0, BlockSize::Block8x8),
+                (1, 1, BlockSize::Block8x8),
+                // Remaining three 16x16 in the top-left 32x32
+                (0, 2, BlockSize::Block16x16),
+                (2, 0, BlockSize::Block16x16),
+                (2, 2, BlockSize::Block16x16),
+                // Remaining three 32x32 in the 64x64
+                (0, 4, BlockSize::Block32x32),
+                (4, 0, BlockSize::Block32x32),
+                (4, 4, BlockSize::Block32x32),
+            ]
+        );
+    }
+
+    /// `infer_partition` returns `None` when the leaf at the top-left
+    /// cell matches the parent `bsize`.
+    #[test]
+    fn infer_partition_none() {
+        let mi_cols = 8usize;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; mi_cols * mi_cols];
+        splat_cell(&mut grid, mi_cols, 0, 0, make_dc_cell(BlockSize::Block64x64));
+        let p = infer_partition(&grid, mi_cols, 0, 0, BlockSize::Block64x64)
+            .expect("legal NONE");
+        assert_eq!(p, PartitionType::None);
+    }
+
+    /// `infer_partition` returns `Horz` when the leaf at the top-left
+    /// matches `subsize(bsize, HORZ)`.
+    #[test]
+    fn infer_partition_horz() {
+        let mi_cols = 8usize;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; mi_cols * mi_cols];
+        splat_cell(&mut grid, mi_cols, 0, 0, make_dc_cell(BlockSize::Block64x32));
+        let p = infer_partition(&grid, mi_cols, 0, 0, BlockSize::Block64x64)
+            .expect("legal HORZ");
+        assert_eq!(p, PartitionType::Horz);
+    }
+
+    /// `infer_partition` returns `Vert` when the leaf at the top-left
+    /// matches `subsize(bsize, VERT)`.
+    #[test]
+    fn infer_partition_vert() {
+        let mi_cols = 8usize;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; mi_cols * mi_cols];
+        splat_cell(&mut grid, mi_cols, 0, 0, make_dc_cell(BlockSize::Block32x64));
+        let p = infer_partition(&grid, mi_cols, 0, 0, BlockSize::Block64x64)
+            .expect("legal VERT");
+        assert_eq!(p, PartitionType::Vert);
+    }
+
+    /// `infer_partition` returns `Split` when the leaf is smaller
+    /// than any of `bsize` / `subsize(HORZ)` / `subsize(VERT)`. The
+    /// recursion validates the sub-tree on the next call.
+    #[test]
+    fn infer_partition_split() {
+        let mi_cols = 8usize;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; mi_cols * mi_cols];
+        splat_cell(&mut grid, mi_cols, 0, 0, make_dc_cell(BlockSize::Block32x32));
+        let p = infer_partition(&grid, mi_cols, 0, 0, BlockSize::Block64x64)
+            .expect("legal SPLIT");
+        assert_eq!(p, PartitionType::Split);
+    }
+
+    /// `infer_partition` rejects a BLOCK_8x8 parent whose top-left
+    /// leaf is anything other than `Block8x8` — scope reduction
+    /// disallows sub-8 partitioning.
+    #[test]
+    fn infer_partition_rejects_sub8_partitioning() {
+        let mi_cols = 8usize;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; mi_cols * mi_cols];
+        // Synthesize a `Block4x4` leaf at (0,0) under a Block8x8 parent.
+        grid[0] = Some(make_dc_cell(BlockSize::Block4x4));
+        let err = infer_partition(&grid, mi_cols, 0, 0, BlockSize::Block8x8).unwrap_err();
+        assert!(matches!(
+            err,
+            ModesWriterError::InconsistentPartitionTree {
+                parent_bsize: BlockSize::Block8x8,
+                ..
+            }
+        ));
+    }
+
+    /// Per-partition-type round-trip: writer emits the bit-sequence
+    /// for each `PartitionType`, then `read_partition` recovers the
+    /// same value.
+    #[test]
+    fn write_partition_round_trips_each_type() {
+        for p in [
+            PartitionType::None,
+            PartitionType::Horz,
+            PartitionType::Vert,
+            PartitionType::Split,
+        ] {
+            let mut buf = vec![0u8; 64];
+            let written = {
+                let mut bw = BoolWriter::start_encode(&mut buf);
+                // Use ctx=0 — keyframe partition probs slot is fine
+                // regardless; the round-trip is symmetric.
+                write_partition(&mut bw, 0, p);
+                bw.stop_encode().expect("stop_encode")
+            };
+            buf.truncate(written);
+            let mut r = BoolReader::new(&buf).expect("reader");
+            let probs = &VP9_KF_PARTITION_PROBS[0];
+            let got = read_partition(&mut r, probs, 0, None);
+            assert_eq!(got, p, "round-trip for {p:?}");
+        }
+    }
+
+    /// Inconsistent partition tree: top-left cell at (0, 0) claims
+    /// `Block32x64` (implying VERT) but the adjacent cell at (0, 4)
+    /// claims `Block16x16` — neither a pure VERT (the right half
+    /// would need Block32x64 too) nor a clean SPLIT-then-NONE (the
+    /// left half would need Block32x32). The writer rejects.
+    #[test]
+    fn rejects_inconsistent_partition_tree() {
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        // (0, 0) claims VERT (Block32x64).
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, make_dc_cell(BlockSize::Block32x64));
+        // (0, 4) claims Block16x16 instead of the Block32x64 a real
+        // VERT would require.
+        splat_cell(&mut grid, mi_cols as usize, 0, 4, make_dc_cell(BlockSize::Block16x16));
+        // Fill the bottom half so the writer doesn't trip on missing
+        // cells first.
+        splat_cell(&mut grid, mi_cols as usize, 4, 0, make_dc_cell(BlockSize::Block32x32));
+        splat_cell(&mut grid, mi_cols as usize, 4, 4, make_dc_cell(BlockSize::Block32x32));
+
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: 8,
+            mi_col_start: 0,
+            mi_col_end: 8,
+        };
+        let fc = FrameContext::new_default();
+        let mut buf = vec![0u8; 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let err =
+            write_tile_intra_keyframe(&mut bw, &grid, mi_rows, mi_cols, bounds, &fc).unwrap_err();
+        // The exact variant depends on where the mismatch surfaces.
+        // For this grid: the top-level partition is inferred as VERT
+        // (from the (0,0) leaf), then the second VERT leaf at (0,4)
+        // carries `block_size = Block16x16` which doesn't match the
+        // leaf-bsize the recursion expects (`Block32x64`) — so the
+        // writer surfaces `UnsupportedBlockSize` at that cell.
+        assert!(
+            matches!(err, ModesWriterError::UnsupportedBlockSize { .. })
+                || matches!(err, ModesWriterError::InconsistentPartitionTree { .. }),
+            "expected UnsupportedBlockSize or InconsistentPartitionTree, got: {err:?}"
+        );
     }
 }

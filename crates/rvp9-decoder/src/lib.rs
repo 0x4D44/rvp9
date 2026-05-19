@@ -3014,4 +3014,221 @@ mod tests {
             }
         }
     }
+
+    /// S4.13 — whole-loop synthesis: build a 64x64 keyframe whose
+    /// single SB is encoded with `PARTITION_SPLIT` into four 32x32
+    /// `PARTITION_NONE` DC-skip leaves; feed through the full
+    /// decoder; assert the recovered `mi_grid` has every 8x8 cell
+    /// splatted with `block_size == Block32x32` and DC intra-skip.
+    ///
+    /// Exercises the recursive partition-tree writer landed in S4.13
+    /// end-to-end against the live decoder, proving that the
+    /// `write_tile_intra_keyframe` widening doesn't regress the
+    /// every-PARTITION_NONE pipeline and DOES produce a valid
+    /// bitstream for the SPLIT-then-NONE pattern.
+    #[test]
+    fn s4_13_round_trip_partition_split_64x64_through_decoder() {
+        use rvp9_core::bitstream::frame::ReferenceMode;
+        use rvp9_core::bitstream::header::HeaderTail;
+        use rvp9_core::bitstream::sub_parsers::{
+            LoopFilterParams, MAX_PROB, PREDICTION_PROBS, QuantizationParams, SEG_TREE_PROBS,
+            SegmentationParams, TileInfo,
+        };
+        use rvp9_core::bitstream::{
+            BitDepth, ChromaFormat, ColorRange, ColorSpace, CompressedHeaderOptions,
+            CompressedHeaderResult, FrameKind, InterpFilter, ModesTileBounds, Profile, RawBitWriter,
+            UncompressedHeader, write_compressed_header, write_tile_intra_keyframe,
+            write_uncompressed_header,
+        };
+        use rvp9_core::block::BlockSize;
+        use rvp9_core::entropy::{BoolWriter, FrameContext};
+        use rvp9_core::intra_pred::IntraMode;
+        use rvp9_core::mode_info::{BlockMode, ModeInfo};
+        use rvp9_core::transforms::{TxMode, TxSize};
+
+        // 1. Build the synthetic mi_grid: one 64x64 SB partitioned
+        //    PARTITION_SPLIT into four 32x32 leaves (each DC-skip).
+        //    The decoder's splat convention requires every 8x8 cell
+        //    inside a 32x32 leaf to carry the same ModeInfo.
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let cell32 = ModeInfo {
+            block_size: BlockSize::Block32x32,
+            tx_size: TxSize::Tx32x32,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        let mut mi_grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        for &(r0, c0) in &[(0usize, 0usize), (0, 4), (4, 0), (4, 4)] {
+            for dr in 0..4 {
+                for dc in 0..4 {
+                    mi_grid[(r0 + dr) * (mi_cols as usize) + (c0 + dc)] = Some(cell32);
+                }
+            }
+        }
+
+        // 2. Compressed header — same shape as the S4.10 round-trip
+        //    test. `tx_mode = AllowTx32x32` so per-block tx_size is
+        //    implicit; pre == post so every diff-update is a single
+        //    "0" bit.
+        let pre_fc_template = FrameContext::new_default();
+        let mut pre_fc = pre_fc_template.clone();
+        let post_fc = pre_fc.clone();
+        let opts = CompressedHeaderOptions {
+            lossless: false,
+            intra_only: true,
+            interp_filter: InterpFilter::EightTap,
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+        let target = CompressedHeaderResult {
+            tx_mode: TxMode::AllowTx32x32,
+            reference_mode: ReferenceMode::Single,
+        };
+
+        let mut compressed_buf = vec![0u8; 16 * 1024];
+        let compressed_len = {
+            let mut bw = BoolWriter::start_encode(&mut compressed_buf);
+            write_compressed_header(&mut bw, &mut pre_fc, &post_fc, opts, &target)
+                .expect("write_compressed_header");
+            bw.stop_encode().expect("stop_encode compressed header")
+        };
+        compressed_buf.truncate(compressed_len);
+
+        // 3. Tile data: single tile, the full 64x64 frame.
+        let tile_bounds = ModesTileBounds {
+            mi_row_start: 0,
+            mi_row_end: 8,
+            mi_col_start: 0,
+            mi_col_end: 8,
+        };
+        let mut tile_buf = vec![0u8; 4 * 1024];
+        let tile_len = {
+            let mut bw = BoolWriter::start_encode(&mut tile_buf);
+            write_tile_intra_keyframe(
+                &mut bw, &mi_grid, mi_rows, mi_cols, tile_bounds, &post_fc,
+            )
+            .expect("write_tile_intra_keyframe");
+            bw.stop_encode().expect("stop_encode tile partition")
+        };
+        tile_buf.truncate(tile_len);
+
+        // 4. Uncompressed header — same shape as the S4.10 round-trip.
+        let tail = HeaderTail {
+            refresh_frame_context: true,
+            frame_parallel_decoding_mode: false,
+            frame_context_idx: 0,
+            loop_filter: LoopFilterParams {
+                filter_level: 0,
+                sharpness_level: 0,
+                mode_ref_delta_enabled: false,
+                mode_ref_delta_update: false,
+                ref_deltas: [None; 4],
+                mode_deltas: [None; 2],
+            },
+            quantization: QuantizationParams {
+                base_qindex: 50,
+                y_dc_delta_q: 0,
+                uv_dc_delta_q: 0,
+                uv_ac_delta_q: 0,
+            },
+            segmentation: SegmentationParams {
+                enabled: false,
+                update_map: false,
+                temporal_update: false,
+                tree_probs: [MAX_PROB; SEG_TREE_PROBS],
+                pred_probs: [MAX_PROB; PREDICTION_PROBS],
+                update_data: false,
+                abs_delta: false,
+                feature_data: Default::default(),
+            },
+            tile_info: TileInfo {
+                log2_tile_cols: 0,
+                log2_tile_rows: 0,
+            },
+            first_partition_size: compressed_len as u16,
+        };
+        let hdr = UncompressedHeader {
+            kind: FrameKind::KeyFrame,
+            profile: Profile::Profile0,
+            show_frame: true,
+            error_resilient: false,
+            bit_depth: BitDepth::Eight,
+            color_space: ColorSpace::Bt601,
+            color_range: ColorRange::Studio,
+            chroma: ChromaFormat::Yuv420,
+            width: 64,
+            height: 64,
+            render_size: None,
+            tail: Some(tail),
+        };
+
+        let mut hdr_buf = vec![0u8; 256];
+        let hdr_len = {
+            let mut wb = RawBitWriter::new(&mut hdr_buf);
+            write_uncompressed_header(&mut wb, &hdr, compressed_len as u16)
+                .expect("write_uncompressed_header");
+            wb.finish().expect("RawBitWriter::finish")
+        };
+        hdr_buf.truncate(hdr_len);
+
+        // 5. Assemble the full frame payload.
+        let mut packet = Vec::new();
+        packet.extend_from_slice(&hdr_buf);
+        packet.extend_from_slice(&compressed_buf);
+        packet.extend_from_slice(&tile_buf);
+
+        // 6. Feed through the decoder.
+        let mut dec = Decoder::new();
+        let parsed_frame = {
+            let frames = dec
+                .parse_packet(&packet)
+                .expect("parse_packet must accept synthetic keyframe");
+            assert_eq!(frames.count(), 1);
+            let pf = &frames.frames()[0];
+            assert_eq!(pf.header.kind, FrameKind::KeyFrame);
+            (pf.header.clone(), pf.header_end_byte, pf.full_frame_data)
+        };
+        let (hdr_back, header_end_byte, full_frame_data) = parsed_frame;
+        let parsed = ParsedFrame {
+            header: hdr_back,
+            header_end_byte,
+            full_frame_data,
+        };
+        dec.decode_frame(&parsed)
+            .expect("decode_frame must accept SPLIT-partition keyframe");
+
+        // 7. Verify the decoder's recovered mi_grid matches what we
+        //    emitted. Every 8x8 cell should carry block_size ==
+        //    Block32x32 and intra DC-skip.
+        let (got_rows, got_cols) = dec.last_frame_mi_dims();
+        assert_eq!((got_rows, got_cols), (mi_rows, mi_cols));
+        let got_grid = dec.last_frame_mi_grid();
+        assert_eq!(got_grid.len(), (mi_rows * mi_cols) as usize);
+        for (i, cell_got) in got_grid.iter().enumerate() {
+            let mi_row = i / (mi_cols as usize);
+            let mi_col = i % (mi_cols as usize);
+            let cell = cell_got
+                .expect("every cell of the SPLIT-partitioned SB must be populated");
+            assert_eq!(
+                cell.block_size,
+                BlockSize::Block32x32,
+                "block_size @ ({mi_row}, {mi_col}) — must be 32x32 leaf"
+            );
+            assert!(cell.skip, "skip @ ({mi_row}, {mi_col})");
+            match cell.mode {
+                BlockMode::Intra { y_mode, uv_mode } => {
+                    assert_eq!(y_mode, IntraMode::Dc, "y_mode @ ({mi_row}, {mi_col})");
+                    assert_eq!(uv_mode, IntraMode::Dc, "uv_mode @ ({mi_row}, {mi_col})");
+                }
+                BlockMode::Inter { .. } => panic!("inter mode @ ({mi_row}, {mi_col})"),
+            }
+        }
+    }
 }
