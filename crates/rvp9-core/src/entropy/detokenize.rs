@@ -41,6 +41,7 @@
 //! in libvpx are not ported.
 
 use super::BoolReader;
+use super::BoolWriter;
 use super::coef_probs::{COEF_BANDS, COEFF_CONTEXTS, UNCONSTRAINED_NODES};
 use super::pareto::VP9_PARETO8_FULL;
 use crate::transforms::scans::ScanOrder;
@@ -687,6 +688,275 @@ pub fn decode_coefs_libvpx_ref(
     c
 }
 
+
+/// Write `n` raw bits MSB-first under the given per-bit probability
+/// vector. Mirror of [`read_coeff_bits`] (libvpx `vp9_detokenize.c:107-113`)
+/// for the encoder side: emits `probs.len()` bits, with bit `i` of `val`
+/// (MSB first) gated by `probs[i]`.
+#[inline]
+fn write_coeff_bits(bw: &mut BoolWriter<'_>, val: i32, probs: &[u8]) {
+    let n = probs.len();
+    for (i, &p) in probs.iter().enumerate() {
+        // MSB-first: bit position is `n - 1 - i` from the LSB.
+        let shift = (n - 1 - i) as u32;
+        let bit = ((val >> shift) & 1) as u8;
+        bw.write(bit, p);
+    }
+}
+
+/// Encode one transform block's coefficients — the encoder-side mirror
+/// of [`decode_coefs`].
+///
+/// Mirrors libvpx `vp9_encode_coefs` / `tokenize_b`
+/// (`vp9/encoder/vp9_tokenize.c`) at the bit-grammar level by inverting
+/// the `decode_coefs` state machine in
+/// `vp9/decoder/vp9_detokenize.c:115-261`. Walks the scan in order,
+/// emitting `(EOB, ZERO, ONE, value-tree)` + extension bits + sign for
+/// each raw quantized coefficient indexed by `scan.scan[c]`.
+///
+/// ## Round-trip contract
+///
+/// For any `(coef_probs, scan, initial_pt, tx_size, seg_eob,
+/// raw_coefs, eob)`, the bits this function emits, when fed back into
+/// [`decode_coefs`] with the identity dequant pair (the multiplier
+/// after `dq_shift` evaluates to 1 — `(1, 1)` for Tx{4,8,16}, `(2, 2)`
+/// for Tx32x32), will recover `eob` and `raw_coefs[..seg_eob]`
+/// verbatim.
+///
+/// ## EOB termination
+///
+/// - If `eob < seg_eob`, this function emits one terminal `0` bit at
+///   the `EOB_CONTEXT_NODE` after the `eob`-th coefficient.
+/// - If `eob == seg_eob`, NO terminal EOB bit is emitted — the decoder
+///   exits via its `c >= seg_eob` outer-loop guard.
+///
+/// # Parameters
+/// - `bw`: the [`BoolWriter`] positioned where this block's tokens
+///   should land. Advances by however many bits the block encode emits.
+/// - `coef_probs`: per-`(tx, plane, ref)` coefficient probability slice
+///   — the SAME table the matching `decode_coefs` call will consult.
+/// - `scan`: scan-order triple (must match what the decoder will use).
+/// - `initial_pt`: starting token-tree context (0..=2) from
+///   `combine_entropy_contexts(above_coef, left_coef)`.
+/// - `tx_size`: transform size — selects 4×4 vs 8×8plus coefband
+///   translate table.
+/// - `seg_eob`: per-segment EOB cap; typically `tx_size.n_coeffs()`.
+/// - `raw_coefs`: raster-order quantized coefficient indices. Length
+///   must be `>= tx_size.n_coeffs()`.
+/// - `eob`: number of scan positions to encode (0..=seg_eob). Slots
+///   beyond `eob` in the scan must read as 0 from `raw_coefs` for the
+///   round-trip to make sense, but this function does NOT inspect them.
+///
+/// # Panics
+///
+/// - `seg_eob > tx_size.n_coeffs()`.
+/// - `eob > seg_eob`.
+/// - `raw_coefs.len() < tx_size.n_coeffs()`.
+/// - `initial_pt > 2`.
+#[allow(clippy::too_many_arguments)] // mirrors decode_coefs 1:1
+pub fn encode_coefs(
+    bw: &mut BoolWriter<'_>,
+    coef_probs: &CoefBandCtxProbs,
+    scan: &ScanOrder,
+    initial_pt: usize,
+    tx_size: TxSize,
+    seg_eob: usize,
+    raw_coefs: &[i32],
+    eob: usize,
+) {
+    assert!(
+        seg_eob <= tx_size.n_coeffs(),
+        "encode_coefs: seg_eob ({seg_eob}) > tx_size.n_coeffs ({})",
+        tx_size.n_coeffs(),
+    );
+    assert!(
+        eob <= seg_eob,
+        "encode_coefs: eob ({eob}) > seg_eob ({seg_eob})",
+    );
+    assert!(
+        raw_coefs.len() >= tx_size.n_coeffs(),
+        "encode_coefs: raw_coefs.len() ({}) < tx_size.n_coeffs ({})",
+        raw_coefs.len(),
+        tx_size.n_coeffs(),
+    );
+    assert!(
+        initial_pt <= 2,
+        "encode_coefs: initial_pt ({initial_pt}) > 2",
+    );
+
+    let band_translate = get_band_translate(tx_size);
+    let mut token_cache = vec![0u8; tx_size.n_coeffs()];
+    let mut ctx = initial_pt;
+
+    // Outer loop — one iteration per (NOT-EOB, zero-run, non-zero token,
+    // sign) tuple OR the final EOB token. Mirrors the structure of
+    // `decode_coefs`'s outer loop at `vp9_detokenize.c:130-244`.
+    let mut c = 0usize;
+    'outer: while c < eob {
+        let band = band_translate[c] as usize;
+        let prob = &coef_probs[band][ctx];
+
+        // Outer-loop EOB decision — we are NOT at EOB, emit '1'.
+        bw.write(1, prob[EOB_CONTEXT_NODE]);
+
+        // Inner zero-run loop. Each iteration here emits ONE ZERO bit
+        // ('0' at the ZERO node) and DOES NOT re-read EOB. Mirrors the
+        // decoder's `while reader.read(prob[ZERO_CONTEXT_NODE]) == 0`
+        // inner loop.
+        let mut local_prob = prob;
+        loop {
+            let raster_idx = scan.scan[c] as usize;
+            let coef = raw_coefs[raster_idx];
+            if coef != 0 {
+                // Break out — emit NOT-ZERO and proceed to the value
+                // tree below.
+                bw.write(1, local_prob[ZERO_CONTEXT_NODE]);
+                break;
+            }
+            // ZERO_TOKEN at this position.
+            bw.write(0, local_prob[ZERO_CONTEXT_NODE]);
+            token_cache[raster_idx] = 0;
+            c += 1;
+            if c >= eob {
+                // Decoder will exit via its `c >= seg_eob` guard if eob
+                // == seg_eob, OR will consume one more EOB bit at the
+                // next outer iteration. Either way, we're done with the
+                // value tree path here — fall through to the terminal
+                // EOB emission below.
+                //
+                // Update `ctx` so the terminal EOB emission (below)
+                // sees the post-zero-run context. Match the decoder's
+                // behaviour: when the inner zero loop ends inside the
+                // outer loop, the next outer iteration recomputes
+                // (band, ctx) from the updated token_cache.
+                if c < seg_eob {
+                    ctx = get_coef_context(scan.neighbors, &token_cache, c);
+                }
+                break 'outer;
+            }
+            ctx = get_coef_context(scan.neighbors, &token_cache, c);
+            let band_local = band_translate[c] as usize;
+            local_prob = &coef_probs[band_local][ctx];
+        }
+
+        // Non-zero coefficient — emit the value tree.
+        let raster_idx = scan.scan[c] as usize;
+        let coef = raw_coefs[raster_idx];
+        let abs_val = coef.unsigned_abs() as i32;
+        let sign_neg = coef < 0;
+
+        if abs_val == 1 {
+            // ONE_TOKEN — emit '0' at the ONE node.
+            bw.write(0, local_prob[ONE_CONTEXT_NODE]);
+            token_cache[raster_idx] = 1;
+        } else {
+            // TWO-or-higher branch.
+            bw.write(1, local_prob[ONE_CONTEXT_NODE]);
+            let p = &VP9_PARETO8_FULL[(local_prob[PIVOT_NODE] - 1) as usize];
+            if abs_val <= 4 {
+                // Low branch — TWO / THREE / FOUR.
+                bw.write(0, p[0]);
+                match abs_val {
+                    2 => {
+                        bw.write(0, p[1]);
+                        token_cache[raster_idx] = 2;
+                    }
+                    3 => {
+                        bw.write(1, p[1]);
+                        bw.write(0, p[2]);
+                        token_cache[raster_idx] = 3;
+                    }
+                    4 => {
+                        bw.write(1, p[1]);
+                        bw.write(1, p[2]);
+                        token_cache[raster_idx] = 3;
+                    }
+                    _ => unreachable!(),
+                }
+            } else {
+                // High branch — CAT1..CAT6.
+                bw.write(1, p[0]);
+                if abs_val <= 10 {
+                    // p[3] = 0 → low-cat side.
+                    bw.write(0, p[3]);
+                    token_cache[raster_idx] = 4;
+                    if abs_val <= 6 {
+                        // CAT1 (1 ext bit; values 5..=6).
+                        bw.write(0, p[4]);
+                        let extra = abs_val - CAT1_MIN_VAL;
+                        write_coeff_bits(bw, extra, &VP9_CAT1_PROB);
+                    } else {
+                        // CAT2 (2 ext bits; values 7..=10).
+                        bw.write(1, p[4]);
+                        let extra = abs_val - CAT2_MIN_VAL;
+                        write_coeff_bits(bw, extra, &VP9_CAT2_PROB);
+                    }
+                } else {
+                    // p[3] = 1 → high-cat side.
+                    bw.write(1, p[3]);
+                    token_cache[raster_idx] = 5;
+                    if abs_val <= 34 {
+                        // p[5] = 0 → CAT3 / CAT4.
+                        bw.write(0, p[5]);
+                        if abs_val <= 18 {
+                            // CAT3 (3 ext bits; values 11..=18).
+                            bw.write(0, p[6]);
+                            let extra = abs_val - CAT3_MIN_VAL;
+                            write_coeff_bits(bw, extra, &VP9_CAT3_PROB);
+                        } else {
+                            // CAT4 (4 ext bits; values 19..=34).
+                            bw.write(1, p[6]);
+                            let extra = abs_val - CAT4_MIN_VAL;
+                            write_coeff_bits(bw, extra, &VP9_CAT4_PROB);
+                        }
+                    } else {
+                        // p[5] = 1 → CAT5 / CAT6.
+                        bw.write(1, p[5]);
+                        if abs_val <= 66 {
+                            // CAT5 (5 ext bits; values 35..=66).
+                            bw.write(0, p[7]);
+                            let extra = abs_val - CAT5_MIN_VAL;
+                            write_coeff_bits(bw, extra, &VP9_CAT5_PROB);
+                        } else {
+                            // CAT6 (14 ext bits on 8-bit Profile 0;
+                            // values 67..=67 + 2^14 - 1 = 16450).
+                            bw.write(1, p[7]);
+                            let extra = abs_val - CAT6_MIN_VAL;
+                            write_coeff_bits(bw, extra, &VP9_CAT6_PROB);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sign bit — raw, prob 128 (`write_bit`).
+        bw.write_bit(u8::from(sign_neg));
+
+        c += 1;
+        // Update ctx for the next iteration. We update whenever there's
+        // another scan position to consider — either another value-tree
+        // emit (c < eob) OR the terminal EOB emission below
+        // (eob < seg_eob, in which case we need ctx for position `eob`).
+        if c < seg_eob {
+            ctx = get_coef_context(scan.neighbors, &token_cache, c);
+        }
+    }
+
+    // Terminal EOB bit — only if we stopped short of seg_eob. If we
+    // ran to seg_eob (either via the value-tree path or the inner
+    // zero-run), the decoder exits via its `c >= seg_eob` guard
+    // without consuming any further bit. Mirrors the libvpx behaviour
+    // at `vp9_detokenize.c:158-160` + the inner zero-run early-return.
+    if eob < seg_eob {
+        // Recompute the EOB context for the terminal position. When
+        // `eob` is 0 nothing has been emitted yet, so the context is
+        // still `initial_pt`. Otherwise the loop above already updated
+        // `ctx` to the next position's context.
+        let band = band_translate[eob] as usize;
+        let prob = &coef_probs[band][ctx];
+        bw.write(0, prob[EOB_CONTEXT_NODE]);
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -1803,5 +2073,353 @@ mod tests {
         );
         assert_eq!(eob, 1);
         assert_eq!(dqc[scan.scan[0] as usize], 4, "1 * 8 >> 1");
+    }
+
+    // ===================================================================
+    // Stage 4 task S4.15 — encoder-side `encode_coefs` round-trip tests.
+    //
+    // Each test builds a raw quantized-coefficient block, runs
+    // `encode_coefs` into a `BoolWriter`, then decodes the same bytes
+    // with `decode_coefs` using the identity dequant pair (`(1, 1)` for
+    // Tx{4,8,16}, `(2, 2)` for Tx32x32 — the `(val * 2) >> 1` cancels
+    // the `dq_shift = 1` so the recovered value equals the raw input).
+    // ===================================================================
+
+    /// Helper: encode `raw_coefs[..eob]` into a fresh buffer and return
+    /// the byte slice. Adds 32 trailing zero bits of padding so the
+    /// `BoolReader` register can fill without overshoot.
+    fn enc_block(
+        probs: &CoefBandCtxProbs,
+        scan: &ScanOrder,
+        initial_pt: usize,
+        tx_size: TxSize,
+        seg_eob: usize,
+        raw_coefs: &[i32],
+        eob: usize,
+    ) -> Vec<u8> {
+        let mut buf = vec![0u8; tx_size.n_coeffs() * 8 + 256];
+        let n = {
+            let mut bw = BoolWriter::start_encode(&mut buf);
+            encode_coefs(&mut bw, probs, scan, initial_pt, tx_size, seg_eob, raw_coefs, eob);
+            for _ in 0..32 {
+                bw.write_bit(0);
+            }
+            bw.stop_encode().unwrap()
+        };
+        buf.truncate(n);
+        buf
+    }
+
+    /// Decode the bytes produced by `enc_block` with the identity-dq
+    /// pair appropriate for `tx_size` and assert that the recovered
+    /// `(eob, dq_coefs)` equal `(expected_eob, expected_raw)`. Returns
+    /// the recovered dq buffer for additional caller-side assertions.
+    #[allow(clippy::too_many_arguments)] // mirrors enc_block 1:1
+    fn assert_round_trip(
+        bytes: &[u8],
+        probs: &CoefBandCtxProbs,
+        scan: &ScanOrder,
+        initial_pt: usize,
+        tx_size: TxSize,
+        seg_eob: usize,
+        expected_raw: &[i32],
+        expected_eob: usize,
+    ) -> Vec<i32> {
+        // Identity dequant: `(val * dq) >> dq_shift` must equal `val`.
+        // For Tx32x32 dq_shift=1, so use (2, 2); otherwise (1, 1).
+        let dq = if matches!(tx_size, TxSize::Tx32x32) {
+            (2i32, 2i32)
+        } else {
+            (1i32, 1i32)
+        };
+        let mut dq_out = vec![0i32; tx_size.n_coeffs()];
+        let mut r = BoolReader::new(bytes).unwrap();
+        let eob = decode_coefs(
+            &mut r,
+            probs,
+            None,
+            scan,
+            initial_pt,
+            tx_size,
+            seg_eob,
+            dq,
+            &mut dq_out,
+        );
+        assert_eq!(eob, expected_eob, "round-trip eob mismatch");
+        assert_eq!(
+            &dq_out[..],
+            &expected_raw[..tx_size.n_coeffs()],
+            "round-trip dq_coefs mismatch"
+        );
+        dq_out
+    }
+
+    #[test]
+    fn encode_coefs_round_trips_empty_block() {
+        let probs = flat_coef_probs(64, 64, 64);
+        let scan = default_scan_4x4();
+        let raw = vec![0i32; 16];
+        let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 0);
+        assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 0);
+    }
+
+    #[test]
+    fn encode_coefs_round_trips_single_one_dc_positive() {
+        let probs = flat_coef_probs(64, 64, 64);
+        let scan = default_scan_4x4();
+        let mut raw = vec![0i32; 16];
+        raw[scan.scan[0] as usize] = 1;
+        let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+        assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+    }
+
+    #[test]
+    fn encode_coefs_round_trips_single_one_negative() {
+        let probs = flat_coef_probs(64, 64, 64);
+        let scan = default_scan_4x4();
+        let mut raw = vec![0i32; 16];
+        raw[scan.scan[0] as usize] = -1;
+        let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+        assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+    }
+
+    #[test]
+    fn encode_coefs_round_trips_two_token() {
+        let probs = flat_coef_probs(64, 64, 64);
+        let scan = default_scan_4x4();
+        let mut raw = vec![0i32; 16];
+        raw[scan.scan[0] as usize] = 2;
+        let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+        assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+    }
+
+    #[test]
+    fn encode_coefs_round_trips_three_token() {
+        let probs = flat_coef_probs(64, 64, 64);
+        let scan = default_scan_4x4();
+        let mut raw = vec![0i32; 16];
+        raw[scan.scan[0] as usize] = 3;
+        let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+        assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+    }
+
+    #[test]
+    fn encode_coefs_round_trips_four_token() {
+        let probs = flat_coef_probs(64, 64, 64);
+        let scan = default_scan_4x4();
+        let mut raw = vec![0i32; 16];
+        raw[scan.scan[0] as usize] = 4;
+        let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+        assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+    }
+
+    #[test]
+    fn encode_coefs_round_trips_cat1_full_range() {
+        // CAT1 covers absolute values 5..=6 (one extension bit).
+        for &v in &[5i32, 6] {
+            let probs = flat_coef_probs(64, 64, 100);
+            let scan = default_scan_4x4();
+            let mut raw = vec![0i32; 16];
+            raw[scan.scan[0] as usize] = v;
+            let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+            assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+        }
+    }
+
+    #[test]
+    fn encode_coefs_round_trips_cat2_full_range() {
+        // CAT2 covers absolute values 7..=10 (two extension bits).
+        for &v in &[7i32, 8, 9, 10] {
+            let probs = flat_coef_probs(64, 64, 100);
+            let scan = default_scan_4x4();
+            let mut raw = vec![0i32; 16];
+            raw[scan.scan[0] as usize] = v;
+            let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+            assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+        }
+    }
+
+    #[test]
+    fn encode_coefs_round_trips_cat3() {
+        // CAT3 covers absolute values 11..=18 (three extension bits).
+        for &v in &[11i32, 18] {
+            let probs = flat_coef_probs(64, 64, 100);
+            let scan = default_scan_4x4();
+            let mut raw = vec![0i32; 16];
+            raw[scan.scan[0] as usize] = v;
+            let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+            assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+        }
+    }
+
+    #[test]
+    fn encode_coefs_round_trips_cat4() {
+        // CAT4 covers absolute values 19..=34 (four extension bits).
+        for &v in &[19i32, 34] {
+            let probs = flat_coef_probs(64, 64, 100);
+            let scan = default_scan_4x4();
+            let mut raw = vec![0i32; 16];
+            raw[scan.scan[0] as usize] = v;
+            let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+            assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+        }
+    }
+
+    #[test]
+    fn encode_coefs_round_trips_cat5() {
+        // CAT5 covers absolute values 35..=66 (five extension bits).
+        for &v in &[35i32, 66] {
+            let probs = flat_coef_probs(64, 64, 100);
+            let scan = default_scan_4x4();
+            let mut raw = vec![0i32; 16];
+            raw[scan.scan[0] as usize] = v;
+            let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+            assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+        }
+    }
+
+    #[test]
+    fn encode_coefs_round_trips_cat6() {
+        // CAT6 covers absolute values 67..=67 + 2^14 - 1 = 16450
+        // (fourteen extension bits) on 8-bit Profile 0.
+        for &v in &[67i32, 128, 1000, 8194, 16450] {
+            let probs = flat_coef_probs(64, 64, 200);
+            let scan = default_scan_4x4();
+            let mut raw = vec![0i32; 16];
+            raw[scan.scan[0] as usize] = v;
+            let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+            assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+        }
+    }
+
+    #[test]
+    fn encode_coefs_round_trips_zero_run_then_one() {
+        // Mirrors `single_two_token_ac_at_position_5_negative`: scan
+        // positions 0..=4 are zero, position 5 is -2, eob = 6.
+        let probs = flat_coef_probs(64, 64, 64);
+        let scan = default_scan_4x4();
+        let mut raw = vec![0i32; 16];
+        raw[scan.scan[5] as usize] = -2;
+        let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 6);
+        assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 6);
+    }
+
+    #[test]
+    fn encode_coefs_round_trips_block_full_to_seg_eob() {
+        // Every scan position non-zero, eob = seg_eob = 16. NO terminal
+        // EOB bit is emitted — decoder exits via `c >= seg_eob` guard.
+        let probs = flat_coef_probs(64, 64, 64);
+        let scan = default_scan_4x4();
+        let raw = vec![1i32; 16];
+        let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 16);
+        assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 16);
+    }
+
+    #[test]
+    fn encode_coefs_round_trips_full_block_random_fuzz() {
+        // 100 iterations of random 4x4 blocks with abs-cap 200 (hits
+        // CAT5 cleanly, occasionally CAT6).
+        let mut rng = XorShift64::new(0xDEAD_BEEF_CAFE_F00D_u64);
+        let scan = default_scan_4x4();
+        for iter in 0..100 {
+            let probs = random_coef_probs(&mut rng);
+            let initial_pt = (rng.next_range(3) as usize) & 0x3;
+            let target_eob = rng.next_range(17) as usize; // 0..=16
+            let mut raw = vec![0i32; 16];
+            // Populate scan positions 0..target_eob with random non-
+            // zero magnitudes capped at 200 (with random sign). Scan
+            // positions >= target_eob remain zero.
+            //
+            // To exercise the inner zero-run path we ALSO inject a few
+            // zeros within the run: each slot has a 25% chance of being
+            // zero (skipped). The last filled position must be non-zero
+            // so eob is well-defined; we enforce this by computing the
+            // last-non-zero index and using it as eob.
+            for c in 0..target_eob {
+                let r = rng.next_range(100);
+                if r < 25 {
+                    // leave zero
+                } else {
+                    let mag = 1 + (rng.next_range(200) as i32);
+                    let sign = if rng.next_range(2) == 0 { 1 } else { -1 };
+                    raw[scan.scan[c] as usize] = mag * sign;
+                }
+            }
+            // Compute effective eob = last-non-zero scan position + 1.
+            let mut effective_eob = 0usize;
+            for c in 0..target_eob {
+                if raw[scan.scan[c] as usize] != 0 {
+                    effective_eob = c + 1;
+                }
+            }
+            let bytes = enc_block(
+                &probs,
+                &scan,
+                initial_pt,
+                TxSize::Tx4x4,
+                16,
+                &raw,
+                effective_eob,
+            );
+            let mut dq_out = vec![0i32; 16];
+            let mut r = BoolReader::new(&bytes).unwrap();
+            let eob_got = decode_coefs(
+                &mut r,
+                &probs,
+                None,
+                &scan,
+                initial_pt,
+                TxSize::Tx4x4,
+                16,
+                (1, 1),
+                &mut dq_out,
+            );
+            assert_eq!(
+                eob_got, effective_eob,
+                "iter {iter}: eob mismatch (raw={raw:?}, initial_pt={initial_pt})",
+            );
+            assert_eq!(
+                dq_out, raw,
+                "iter {iter}: dq round-trip mismatch (initial_pt={initial_pt})",
+            );
+        }
+    }
+
+    #[test]
+    fn encode_coefs_round_trips_all_tx_sizes() {
+        use crate::transforms::scans::{
+            default_scan_16x16, default_scan_32x32, default_scan_8x8,
+        };
+        // Per-tx_size table of (TxSize, ScanOrder ctor). Tx32x32 will
+        // use dq=(2,2) via `assert_round_trip`'s built-in switch.
+        #[allow(clippy::type_complexity)] // one-off test config table
+        let configs: &[(TxSize, fn() -> ScanOrder)] = &[
+            (TxSize::Tx4x4, default_scan_4x4),
+            (TxSize::Tx8x8, default_scan_8x8),
+            (TxSize::Tx16x16, default_scan_16x16),
+            (TxSize::Tx32x32, default_scan_32x32),
+        ];
+        for &(tx_size, scan_fn) in configs {
+            let n = tx_size.n_coeffs();
+            let scan = scan_fn();
+            let probs = flat_coef_probs(64, 64, 64);
+
+            // Case 1: empty block.
+            let raw = vec![0i32; n];
+            let bytes = enc_block(&probs, &scan, 0, tx_size, n, &raw, 0);
+            assert_round_trip(&bytes, &probs, &scan, 0, tx_size, n, &raw, 0);
+
+            // Case 2: single ONE_TOKEN at scan[0], positive.
+            let mut raw = vec![0i32; n];
+            raw[scan.scan[0] as usize] = 1;
+            let bytes = enc_block(&probs, &scan, 0, tx_size, n, &raw, 1);
+            assert_round_trip(&bytes, &probs, &scan, 0, tx_size, n, &raw, 1);
+
+            // Case 3: zero run of 5 then a TWO_TOKEN at scan[5].
+            let mut raw = vec![0i32; n];
+            raw[scan.scan[5] as usize] = 2;
+            let bytes = enc_block(&probs, &scan, 0, tx_size, n, &raw, 6);
+            assert_round_trip(&bytes, &probs, &scan, 0, tx_size, n, &raw, 6);
+        }
     }
 }
