@@ -3257,12 +3257,13 @@ mod tests {
             SegmentationParams, TileInfo,
         };
         use rvp9_core::bitstream::{
-            BitDepth, ChromaFormat, ColorRange, ColorSpace, CompressedHeaderOptions,
-            CompressedHeaderResult, FrameKind, InterpFilter, ModesTileBounds, Profile,
-            RawBitWriter, UncompressedHeader, write_compressed_header, write_tile_inter,
-            write_tile_intra_keyframe, write_uncompressed_header,
+            AllZeroCoefSource, BitDepth, ChromaFormat, ColorRange, ColorSpace,
+            CompressedHeaderOptions, CompressedHeaderResult, FrameKind, InterpFilter,
+            ModesTileBounds, Profile, RawBitWriter, UncompressedHeader, write_compressed_header,
+            write_tile_inter, write_tile_intra_keyframe, write_uncompressed_header,
         };
         use rvp9_core::block::BlockSize;
+        use rvp9_core::coef_ctx::TileCoefCtx;
         use rvp9_core::entropy::{BoolWriter, FrameContext};
         use rvp9_core::inter::{
             InterModeReadParams, setup_compound_reference_mode, sign_bias_from_header,
@@ -3501,6 +3502,9 @@ mod tests {
         let mut inter_tile_buf = vec![0u8; 4 * 1024];
         let inter_tile_len = {
             let mut bw = BoolWriter::start_encode(&mut inter_tile_buf);
+            let mut coef_ctx =
+                TileCoefCtx::new((tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1));
+            let coef_source = AllZeroCoefSource::new();
             write_tile_inter(
                 &mut bw,
                 &inter_post_fc,
@@ -3511,6 +3515,8 @@ mod tests {
                 mi_cols,
                 tile_bounds,
                 None, // no prev-frame MV grid — keyframe just cleared it
+                &mut coef_ctx,
+                &coef_source,
             )
             .expect("write_tile_inter");
             bw.stop_encode().expect("stop_encode inter tile")
@@ -3630,12 +3636,13 @@ mod tests {
             SegmentationParams, TileInfo,
         };
         use rvp9_core::bitstream::{
-            BitDepth, ChromaFormat, ColorRange, ColorSpace, CompressedHeaderOptions,
-            CompressedHeaderResult, FrameKind, InterpFilter, ModesTileBounds, Profile,
-            RawBitWriter, UncompressedHeader, write_compressed_header, write_tile_inter,
-            write_tile_intra_keyframe, write_uncompressed_header,
+            AllZeroCoefSource, BitDepth, ChromaFormat, ColorRange, ColorSpace,
+            CompressedHeaderOptions, CompressedHeaderResult, FrameKind, InterpFilter,
+            ModesTileBounds, Profile, RawBitWriter, UncompressedHeader, write_compressed_header,
+            write_tile_inter, write_tile_intra_keyframe, write_uncompressed_header,
         };
         use rvp9_core::block::BlockSize;
+        use rvp9_core::coef_ctx::TileCoefCtx;
         use rvp9_core::entropy::{BoolWriter, FrameContext};
         use rvp9_core::inter::{
             InterModeReadParams, setup_compound_reference_mode, sign_bias_from_header,
@@ -3842,6 +3849,9 @@ mod tests {
         let mut inter_tile_buf = vec![0u8; 32 * 1024];
         let inter_tile_len = {
             let mut bw = BoolWriter::start_encode(&mut inter_tile_buf);
+            let mut coef_ctx =
+                TileCoefCtx::new((tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1));
+            let coef_source = AllZeroCoefSource::new();
             write_tile_inter(
                 &mut bw,
                 &inter_target_fc,
@@ -3852,6 +3862,8 @@ mod tests {
                 mi_cols,
                 tile_bounds,
                 None,
+                &mut coef_ctx,
+                &coef_source,
             )
             .expect("inter write_tile");
             bw.stop_encode().expect("stop_encode inter tile")
@@ -3953,12 +3965,13 @@ mod tests {
             SegmentationParams, TileInfo,
         };
         use rvp9_core::bitstream::{
-            BitDepth, ChromaFormat, ColorRange, ColorSpace, CompressedHeaderOptions,
-            CompressedHeaderResult, FrameKind, InterpFilter, ModesTileBounds, Profile,
-            RawBitWriter, UncompressedHeader, write_compressed_header, write_tile_inter,
-            write_tile_intra_keyframe, write_uncompressed_header,
+            AllZeroCoefSource, BitDepth, ChromaFormat, ColorRange, ColorSpace,
+            CompressedHeaderOptions, CompressedHeaderResult, FrameKind, InterpFilter,
+            ModesTileBounds, Profile, RawBitWriter, UncompressedHeader, write_compressed_header,
+            write_tile_inter, write_tile_intra_keyframe, write_uncompressed_header,
         };
         use rvp9_core::block::BlockSize;
+        use rvp9_core::coef_ctx::TileCoefCtx;
         use rvp9_core::entropy::{BoolWriter, FrameContext};
         use rvp9_core::inter::{
             InterModeReadParams, setup_compound_reference_mode, sign_bias_from_header,
@@ -4179,6 +4192,9 @@ mod tests {
         let mut inter_tile_buf = vec![0u8; 32 * 1024];
         let inter_tile_len = {
             let mut bw = BoolWriter::start_encode(&mut inter_tile_buf);
+            let mut coef_ctx =
+                TileCoefCtx::new((tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1));
+            let coef_source = AllZeroCoefSource::new();
             write_tile_inter(
                 &mut bw,
                 &inter_target_fc,
@@ -4189,6 +4205,8 @@ mod tests {
                 mi_cols,
                 tile_bounds,
                 None,
+                &mut coef_ctx,
+                &coef_source,
             )
             .expect("inter write_tile (with sub-8)");
             bw.stop_encode().expect("stop_encode inter tile")

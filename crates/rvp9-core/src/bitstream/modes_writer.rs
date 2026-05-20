@@ -79,17 +79,19 @@
 //!   Partial superblocks at the frame edge are future work.
 
 use super::error::BitstreamError;
+use super::inter_coef_source::InterCoefSource;
 use crate::block::{max_txsize, BlockSize, PartitionType, subsize};
 use crate::bitstream::compressed_header::tx_mode_to_biggest_tx_size;
-use crate::entropy::{BoolWriter, FrameContext, VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB,
-    VP9_KF_Y_MODE_PROB};
+use crate::coef_ctx::TileCoefCtx;
+use crate::entropy::{write_block_tokens, BoolWriter, FrameContext, VP9_KF_PARTITION_PROBS,
+    VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB};
 use crate::inter::mode_info::{
     get_intra_inter_context, write_inter_block_mode_info, InterModeReadParams, InterModeWriteError,
 };
 use crate::inter::mv_ref::{BlockBounds, NeighbourLookup, Position, PrevFrameMvRef};
 use crate::intra_pred::IntraMode;
 use crate::mode_info::{get_tx_size_context, BlockMode, ModeInfo};
-use crate::transforms::{TxMode, TxSize};
+use crate::transforms::{TxMode, TxSize, TxType};
 
 /// `MI_BLOCK_SIZE` — each 64×64 superblock covers an 8×8 mode-info
 /// grid. Mirrors `rvp9_decoder::tile::MI_BLOCK_SIZE`.
@@ -200,8 +202,10 @@ pub enum ModesWriterError {
         /// Column of the offending cell.
         mi_col: usize,
     },
-    /// A cell carried `skip == false`. The v1 writer never emits
-    /// residual tokens.
+    /// A cell carried `skip == false` in a writer scope that doesn't
+    /// support residual emission. The keyframe (intra) writer still
+    /// requires `skip == true` for every leaf; the inter writer now
+    /// supports `skip == false` (S4.16g) and never returns this.
     UnsupportedNonSkip {
         /// Row of the offending cell.
         mi_row: usize,
@@ -282,7 +286,7 @@ impl core::fmt::Display for ModesWriterError {
             ),
             Self::UnsupportedNonSkip { mi_row, mi_col } => write!(
                 f,
-                "modes_writer v1: cell ({mi_row}, {mi_col}) has skip=false; v1 emits no residual tokens"
+                "modes_writer v1: cell ({mi_row}, {mi_col}) has skip=false; this writer scope emits no residual tokens"
             ),
             Self::UnsupportedSegmentation { mi_row, mi_col } => write!(
                 f,
@@ -1240,6 +1244,8 @@ pub fn write_tile_inter(
     mi_cols: u32,
     tile_bounds: TileBounds,
     prev_mv_grid: Option<&[PrevFrameMvRef]>,
+    coef_ctx: &mut TileCoefCtx,
+    coef_source: &dyn InterCoefSource,
 ) -> Result<(), ModesWriterError> {
     if !mi_rows.is_multiple_of(MI_BLOCK_SIZE as u32)
         || !mi_cols.is_multiple_of(MI_BLOCK_SIZE as u32)
@@ -1268,6 +1274,10 @@ pub fn write_tile_inter(
     let mut mi_row = tile_bounds.mi_row_start;
     while mi_row < tile_bounds.mi_row_end {
         part_ctx.reset_left();
+        // SB-row boundary: clear the per-plane left coef-context (the
+        // above row persists across SB rows). Mirrors libvpx
+        // `vp9_decodeframe.c:2089`.
+        coef_ctx.reset_left_coef();
 
         let mut mi_col = tile_bounds.mi_col_start;
         while mi_col < tile_bounds.mi_col_end {
@@ -1286,6 +1296,8 @@ pub fn write_tile_inter(
                 BlockSize::Block64x64,
                 4, // n4x4_l2 for 64x64
                 prev_mv_grid,
+                coef_ctx,
+                coef_source,
             )?;
             mi_col += MI_BLOCK_SIZE;
         }
@@ -1320,6 +1332,8 @@ fn write_inter_partition_tree(
     bsize: BlockSize,
     n4x4_l2: u8,
     prev_mv_grid: Option<&[PrevFrameMvRef]>,
+    coef_ctx: &mut TileCoefCtx,
+    coef_source: &dyn InterCoefSource,
 ) -> Result<(), ModesWriterError> {
     debug_assert!(mi_row < bounds.mi_row_end && mi_col < bounds.mi_col_end);
 
@@ -1347,7 +1361,7 @@ fn write_inter_partition_tree(
             .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
         write_inter_block_leaf(
             bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row, mi_col, sub, &mi,
-            prev_mv_grid,
+            prev_mv_grid, coef_ctx, coef_source,
         )?;
         if (bsize as u8) >= (BlockSize::Block8x8 as u8) {
             // Always fires for BLOCK_8x8 — the gate `bsize ==
@@ -1375,7 +1389,7 @@ fn write_inter_partition_tree(
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
             write_inter_block_leaf(
                 bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row, mi_col, sub, &mi,
-                prev_mv_grid,
+                prev_mv_grid, coef_ctx, coef_source,
             )?;
         }
         PartitionType::Horz => {
@@ -1383,7 +1397,7 @@ fn write_inter_partition_tree(
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
             write_inter_block_leaf(
                 bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row, mi_col, sub, &top,
-                prev_mv_grid,
+                prev_mv_grid, coef_ctx, coef_source,
             )?;
             let mi_row_b = mi_row + hbs;
             let bot = mi_grid_get(mi_grid, mi_cols, mi_row_b, mi_col).ok_or(
@@ -1394,7 +1408,7 @@ fn write_inter_partition_tree(
             )?;
             write_inter_block_leaf(
                 bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row_b, mi_col, sub, &bot,
-                prev_mv_grid,
+                prev_mv_grid, coef_ctx, coef_source,
             )?;
         }
         PartitionType::Vert => {
@@ -1402,7 +1416,7 @@ fn write_inter_partition_tree(
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
             write_inter_block_leaf(
                 bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row, mi_col, sub, &left,
-                prev_mv_grid,
+                prev_mv_grid, coef_ctx, coef_source,
             )?;
             let mi_col_r = mi_col + hbs;
             let right = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col_r).ok_or(
@@ -1413,13 +1427,13 @@ fn write_inter_partition_tree(
             )?;
             write_inter_block_leaf(
                 bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row, mi_col_r, sub, &right,
-                prev_mv_grid,
+                prev_mv_grid, coef_ctx, coef_source,
             )?;
         }
         PartitionType::Split => {
             write_inter_partition_tree(
                 bw, fc, params, tx_mode, part_ctx, bounds, mi_grid, mi_rows, mi_cols, mi_row,
-                mi_col, sub, n8x8_l2, prev_mv_grid,
+                mi_col, sub, n8x8_l2, prev_mv_grid, coef_ctx, coef_source,
             )?;
             write_inter_partition_tree(
                 bw,
@@ -1436,6 +1450,8 @@ fn write_inter_partition_tree(
                 sub,
                 n8x8_l2,
                 prev_mv_grid,
+                coef_ctx,
+                coef_source,
             )?;
             write_inter_partition_tree(
                 bw,
@@ -1452,6 +1468,8 @@ fn write_inter_partition_tree(
                 sub,
                 n8x8_l2,
                 prev_mv_grid,
+                coef_ctx,
+                coef_source,
             )?;
             write_inter_partition_tree(
                 bw,
@@ -1468,6 +1486,8 @@ fn write_inter_partition_tree(
                 sub,
                 n8x8_l2,
                 prev_mv_grid,
+                coef_ctx,
+                coef_source,
             )?;
         }
     }
@@ -1515,6 +1535,8 @@ fn write_inter_block_leaf(
     leaf_bsize: BlockSize,
     mi: &ModeInfo,
     prev_mv_grid: Option<&[PrevFrameMvRef]>,
+    coef_ctx: &mut TileCoefCtx,
+    coef_source: &dyn InterCoefSource,
 ) -> Result<(), ModesWriterError> {
     // Scope validation: the leaf cell's block_size must match the
     // partition-tree-derived expected subsize at this level.
@@ -1528,9 +1550,6 @@ fn write_inter_block_leaf(
     if mi.segment_id != 0 || mi.seg_id_predicted {
         return Err(ModesWriterError::UnsupportedSegmentation { mi_row, mi_col });
     }
-    if !mi.skip {
-        return Err(ModesWriterError::UnsupportedNonSkip { mi_row, mi_col });
-    }
     if matches!(mi.mode, BlockMode::Intra { .. }) {
         return Err(ModesWriterError::UnsupportedIntraInInter { mi_row, mi_col });
     }
@@ -1542,11 +1561,12 @@ fn write_inter_block_leaf(
     let above = neighbours.get(Position { row: -1, col: 0 });
     let left = neighbours.get(Position { row: 0, col: -1 });
 
-    // 2. Skip flag — always 1 under writer scope. Mirrors
-    //    `decode_inter_block` step 2.
+    // 2. Skip flag. Pre-S4.16g this was hardcoded to `1`; phase 3
+    //    of S4.16g widened the writer to accept `mi.skip == false`.
+    //    Mirrors `decode_inter_block` step 2.
     let skip_ctx = usize::from(above.is_some_and(|m| m.skip))
         + usize::from(left.is_some_and(|m| m.skip));
-    bw.write(1, fc.skip_probs[skip_ctx]);
+    bw.write(u8::from(mi.skip), fc.skip_probs[skip_ctx]);
 
     // 3. is_inter classification — always 1 under writer scope.
     let intra_inter_ctx = get_intra_inter_context(above, left);
@@ -1625,9 +1645,198 @@ fn write_inter_block_leaf(
         source: e,
     })?;
 
-    // 6. Residual coefs — skipped (v1 invariant: skip == true).
+    // 6. Residual coefs. When `mi.skip == true` the decoder bypasses
+    //    the per-TX residual decode entirely; we emit nothing. When
+    //    `mi.skip == false` we walk planes 0/1/2 and emit one
+    //    `write_block_tokens` per TX position, mirroring the decoder's
+    //    `reconstruct_inter_block` `loff` / `aoff` loop
+    //    (`rvp9-decoder::reconstruct_inter`).
+    if !mi.skip {
+        write_inter_block_residual(
+            bw,
+            fc,
+            coef_ctx,
+            coef_source,
+            mi_row,
+            mi_col,
+            leaf_bsize,
+            effective_tx_size,
+        );
+    }
 
     Ok(())
+}
+
+/// Per-plane chroma subsampling for VP9 Profile 0 (4:2:0). Plane 0
+/// (Y) is full-resolution; planes 1/2 (U/V) are half-resolution in
+/// both axes. Mirrors `rvp9_decoder::reconstruct_inter::SUBSAMPLING_*`.
+const SUBSAMPLING_X: [usize; 3] = [0, 1, 1];
+const SUBSAMPLING_Y: [usize; 3] = [0, 1, 1];
+
+/// libvpx `ss_size_lookup[bsize][1][1]` — chroma plane's block size
+/// for a luma `bsize` under 4:2:0. Mirrors
+/// `rvp9_decoder::reconstruct_inter::uv_plane_block_size`.
+fn uv_plane_block_size(bsize: BlockSize) -> BlockSize {
+    use BlockSize::*;
+    match bsize {
+        Block4x4 | Block4x8 | Block8x4 | Block8x8 => Block4x4,
+        Block8x16 => Block4x8,
+        Block16x8 => Block8x4,
+        Block16x16 => Block8x8,
+        Block16x32 => Block8x16,
+        Block32x16 => Block16x8,
+        Block32x32 => Block16x16,
+        Block32x64 => Block16x32,
+        Block64x32 => Block32x16,
+        Block64x64 => Block32x32,
+    }
+}
+
+/// libvpx `get_uv_tx_size`: `min(luma_tx, max_txsize_lookup[uv_bsize])`.
+/// Mirrors `rvp9_decoder::reconstruct_inter::uv_plane_tx_size`.
+fn uv_plane_tx_size(bsize: BlockSize, luma_tx: TxSize) -> TxSize {
+    let cap = max_txsize(uv_plane_block_size(bsize));
+    if (luma_tx as u8) < (cap as u8) {
+        luma_tx
+    } else {
+        cap
+    }
+}
+
+/// Emit one non-skip inter leaf's per-plane × per-TX residual stream.
+///
+/// Mirrors the decoder's `reconstruct_inter_block` residual loop
+/// (`rvp9-decoder::reconstruct_inter`, lines 505-543):
+///
+/// For each plane in `0..3`:
+///
+/// - Derive `plane_bsize` (`bsize` for Y, `uv_plane_block_size` for UV).
+/// - Derive per-plane `plane_tx` (`mi.tx_size` for Y, capped via
+///   `uv_plane_tx_size` for UV).
+/// - Step in `tx_step_4x4 = 1 << plane_tx` 4×4-sub-block units across the
+///   plane block.
+/// - For each TX position emit one `write_block_tokens` against
+///   `TxType::DctDct` and `ref_type = 1` (inter).
+///
+/// The `tx_x4_local` / `tx_y4_local` coordinates passed to the
+/// `InterCoefSource` are plane-leaf-relative (so `(0, 0)` is the
+/// leaf's top-left in this plane). The tile-absolute coordinates the
+/// `TileCoefCtx` consumes are derived inside, matching the decoder's
+/// `plane_x4_base = (mi_col_in_tile * 2) >> ss_x` /
+/// `plane_y4_in_sb_base = (mi_row_in_sb * 2) >> ss_y`.
+///
+/// Note: today's writer scope assumes full-frame tiles (single tile
+/// covering the whole frame), so `mi_col_in_tile == mi_col` and
+/// `mi_row_in_sb == mi_row & MI_MASK`. Multi-tile support will need
+/// the tile origin threaded through; that's deferred until the wider
+/// tile-bounds work lands.
+///
+/// The frame-edge clamping the decoder applies (libvpx
+/// `predict_recon_inter`) is intentionally omitted here: the writer's
+/// invariant (`mi_rows`, `mi_cols` both multiples of 8) means partial
+/// blocks at the frame edge never arise.
+#[allow(clippy::too_many_arguments)]
+fn write_inter_block_residual(
+    bw: &mut BoolWriter<'_>,
+    fc: &FrameContext,
+    coef_ctx: &mut TileCoefCtx,
+    coef_source: &dyn InterCoefSource,
+    mi_row: usize,
+    mi_col: usize,
+    leaf_bsize: BlockSize,
+    luma_tx: TxSize,
+) {
+    let mi_col_in_tile = mi_col; // single-tile scope (see fn doc).
+    let mi_row_in_sb = mi_row & MI_MASK;
+
+    for plane in 0..3 {
+        let ss_x = SUBSAMPLING_X[plane];
+        let ss_y = SUBSAMPLING_Y[plane];
+
+        let plane_bsize = if plane == 0 {
+            leaf_bsize
+        } else {
+            uv_plane_block_size(leaf_bsize)
+        };
+        let plane_tx = if plane == 0 {
+            luma_tx
+        } else {
+            uv_plane_tx_size(leaf_bsize, luma_tx)
+        };
+
+        // For sub-8 luma the decoder pins the plane extent to
+        // `(2 >> ss_x, 2 >> ss_y)` — the parent 8×8's 4×4 cell count.
+        // For ≥8×8 we use the plane_bsize directly. Mirrors
+        // `reconstruct_inter_block`'s `(plane_bw_4x4, plane_bh_4x4)`
+        // derivation (line 218).
+        let is_sub8 = (leaf_bsize as u8) < (BlockSize::Block8x8 as u8);
+        let (plane_bw_4x4, plane_bh_4x4) = if is_sub8 {
+            (2 >> ss_x, 2 >> ss_y)
+        } else {
+            (
+                plane_bsize.n_4x4_wide() as usize,
+                plane_bsize.n_4x4_high() as usize,
+            )
+        };
+        let tx_step_4x4 = 1usize << (plane_tx as usize);
+
+        // Tile- / SB-relative 4×4 origin in the plane's coef-context
+        // tables. Matches the decoder's `plane_x4_base` /
+        // `plane_y4_in_sb_base` formulas.
+        let plane_x4_base = (mi_col_in_tile * 2) >> ss_x;
+        let plane_y4_in_sb_base = (mi_row_in_sb * 2) >> ss_y;
+
+        let seg_eob = plane_tx.n_coeffs();
+
+        // Raster-order walk over TX positions inside this plane's
+        // coding block.
+        let mut tx_y4_local = 0usize;
+        while tx_y4_local < plane_bh_4x4 {
+            let mut tx_x4_local = 0usize;
+            while tx_x4_local < plane_bw_4x4 {
+                let (coefs, eob) = coef_source.get_block_coefs(
+                    mi_row,
+                    mi_col,
+                    plane,
+                    tx_x4_local,
+                    tx_y4_local,
+                    plane_tx,
+                );
+                debug_assert!(
+                    coefs.len() >= plane_tx.n_coeffs(),
+                    "coef source returned slice of len {} < tx.n_coeffs() {} for plane {} tx {:?}",
+                    coefs.len(),
+                    plane_tx.n_coeffs(),
+                    plane,
+                    plane_tx,
+                );
+                debug_assert!(
+                    eob <= seg_eob,
+                    "coef source returned eob {} > seg_eob {} for plane {} tx {:?}",
+                    eob,
+                    seg_eob,
+                    plane,
+                    plane_tx,
+                );
+                write_block_tokens(
+                    bw,
+                    fc,
+                    coef_ctx,
+                    plane,
+                    plane_x4_base + tx_x4_local,
+                    plane_y4_in_sb_base + tx_y4_local,
+                    plane_tx,
+                    TxType::DctDct,
+                    /* ref_type = */ 1, // inter
+                    seg_eob,
+                    coefs,
+                    eob,
+                );
+                tx_x4_local += tx_step_4x4;
+            }
+            tx_y4_local += tx_step_4x4;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2866,6 +3075,8 @@ mod tests {
         let mut buf = vec![0u8; 16 * 1024];
         let written = {
             let mut bw = BoolWriter::start_encode(&mut buf);
+            let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+            let coef_source = crate::bitstream::AllZeroCoefSource::new();
             write_tile_inter(
                 &mut bw,
                 fc,
@@ -2876,6 +3087,8 @@ mod tests {
                 mi_cols,
                 bounds,
                 prev_mv_grid,
+                &mut coef_ctx,
+                &coef_source,
             )
             .expect("write_tile_inter should accept legal grid");
             // Pad with zero bits so the reader's lookahead is always
@@ -2942,6 +3155,555 @@ mod tests {
                 assert_eq!(if_in, if_out, "{where_}: interp_filter");
             }
             _ => panic!("{where_}: expected Inter on both sides"),
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // S4.16g phase 3 — non-skip inter leaves with coef-source
+    // -----------------------------------------------------------------
+
+    use crate::coef_ctx::{combine_entropy_contexts, TileCoefCtx};
+    use crate::entropy::detokenize::decode_coefs;
+    use crate::transforms::scans::scan_for;
+
+    /// One TX block's recovered coefficients + eob, keyed by
+    /// `(mi_row, mi_col, plane, tx_x4_local, tx_y4_local)`. Some
+    /// fields are populated for inspection by future tests but go
+    /// unread today.
+    #[allow(dead_code)]
+    #[derive(Clone, Debug)]
+    struct RecoveredTx {
+        mi_row: usize,
+        mi_col: usize,
+        plane: usize,
+        tx_x4_local: usize,
+        tx_y4_local: usize,
+        tx_size: TxSize,
+        coefs: Vec<i32>,
+        eob: usize,
+    }
+
+    /// Decode-side mirror of `write_inter_block_residual`. Walks the
+    /// same per-plane × per-TX grid the writer emitted, calling
+    /// `decode_coefs` against the same `TileCoefCtx` state. Used by the
+    /// non-skip replay walker below.
+    ///
+    /// Uses an "identity" dequantiser per `tx_size` so the recovered
+    /// coefficients exactly equal the raw values the writer emitted.
+    /// This matches `round_trip_block_tokens` in
+    /// `entropy::detokenize::tests`.
+    #[allow(clippy::too_many_arguments)]
+    fn replay_inter_block_residual(
+        r: &mut BoolReader<'_>,
+        fc: &FrameContext,
+        coef_ctx: &mut TileCoefCtx,
+        mi_row: usize,
+        mi_col: usize,
+        leaf_bsize: BlockSize,
+        luma_tx: TxSize,
+        out: &mut Vec<RecoveredTx>,
+    ) {
+        const SS_X: [usize; 3] = [0, 1, 1];
+        const SS_Y: [usize; 3] = [0, 1, 1];
+        let mi_col_in_tile = mi_col;
+        let mi_row_in_sb = mi_row & MI_MASK;
+
+        for plane in 0..3 {
+            let ss_x = SS_X[plane];
+            let ss_y = SS_Y[plane];
+            let plane_tx = if plane == 0 {
+                luma_tx
+            } else {
+                uv_plane_tx_size(leaf_bsize, luma_tx)
+            };
+            let plane_bsize = if plane == 0 {
+                leaf_bsize
+            } else {
+                uv_plane_block_size(leaf_bsize)
+            };
+            let is_sub8 = (leaf_bsize as u8) < (BlockSize::Block8x8 as u8);
+            let (plane_bw_4x4, plane_bh_4x4) = if is_sub8 {
+                (2 >> ss_x, 2 >> ss_y)
+            } else {
+                (
+                    plane_bsize.n_4x4_wide() as usize,
+                    plane_bsize.n_4x4_high() as usize,
+                )
+            };
+            let tx_step_4x4 = 1usize << (plane_tx as usize);
+            let plane_x4_base = (mi_col_in_tile * 2) >> ss_x;
+            let plane_y4_in_sb_base = (mi_row_in_sb * 2) >> ss_y;
+            let n_span = 1usize << (plane_tx as usize);
+            let plane_type = usize::from(plane > 0);
+            let coef_probs = &fc.coef_probs[plane_tx as usize][plane_type][1]; // ref_type = inter
+            let scan = scan_for(plane_tx, TxType::DctDct);
+            let n = plane_tx.n_coeffs();
+            // Identity dequant: (1, 1) for non-32x32; (2, 2) for 32x32
+            // (mirrors `round_trip_block_tokens::identity_dq`).
+            let dq = if plane_tx == TxSize::Tx32x32 { (2, 2) } else { (1, 1) };
+
+            let mut tx_y4_local = 0usize;
+            while tx_y4_local < plane_bh_4x4 {
+                let mut tx_x4_local = 0usize;
+                while tx_x4_local < plane_bw_4x4 {
+                    let x4 = plane_x4_base + tx_x4_local;
+                    let y4_in_sb = plane_y4_in_sb_base + tx_y4_local;
+                    // OR-fold the spanned above/left cells (mirrors
+                    // `write_block_tokens`'s inline fold).
+                    let mut a_any: u8 = 0;
+                    for i in 0..n_span {
+                        if coef_ctx.above_coef(plane, x4 + i) != 0 {
+                            a_any = 1;
+                            break;
+                        }
+                    }
+                    let mut l_any: u8 = 0;
+                    for i in 0..n_span {
+                        if coef_ctx.left_coef(plane, y4_in_sb + i) != 0 {
+                            l_any = 1;
+                            break;
+                        }
+                    }
+                    let initial_pt = combine_entropy_contexts(a_any, l_any);
+                    let mut dq_out = vec![0i32; n];
+                    let recovered_eob = decode_coefs(
+                        r,
+                        coef_probs,
+                        None,
+                        &scan,
+                        initial_pt,
+                        plane_tx,
+                        n, // seg_eob
+                        dq,
+                        &mut dq_out,
+                    );
+                    coef_ctx.set_coef_flags(
+                        plane,
+                        x4,
+                        y4_in_sb,
+                        n_span,
+                        n_span,
+                        recovered_eob > 0,
+                    );
+                    out.push(RecoveredTx {
+                        mi_row,
+                        mi_col,
+                        plane,
+                        tx_x4_local,
+                        tx_y4_local,
+                        tx_size: plane_tx,
+                        coefs: dq_out,
+                        eob: recovered_eob,
+                    });
+                    tx_x4_local += tx_step_4x4;
+                }
+                tx_y4_local += tx_step_4x4;
+            }
+        }
+    }
+
+    /// Replay variant of `replay_inter_partition_tree` that also walks
+    /// each leaf's residual coefs (when `skip == false`). Returns the
+    /// recovered `(leaves, residual TX blocks)`.
+    #[allow(clippy::too_many_arguments)]
+    fn replay_inter_partition_tree_with_coefs(
+        r: &mut BoolReader<'_>,
+        fc: &FrameContext,
+        params: &InterModeReadParams,
+        tx_mode: TxMode,
+        part_ctx: &mut TestPartCtx,
+        coef_ctx: &mut TileCoefCtx,
+        mi_grid: &[Option<ModeInfo>],
+        mi_rows: usize,
+        mi_cols: usize,
+        bounds: TileBounds,
+        mi_row: usize,
+        mi_col: usize,
+        bsize: BlockSize,
+        n4x4_l2: u8,
+        prev_mv_grid: Option<&[PrevFrameMvRef]>,
+        leaves: &mut Vec<(usize, usize, ModeInfo)>,
+        residuals: &mut Vec<RecoveredTx>,
+    ) {
+        let n8x8_l2 = n4x4_l2.saturating_sub(1);
+        let num_8x8_wh: usize = 1usize << n8x8_l2;
+        let hbs = num_8x8_wh >> 1;
+        let mi_row_in_tile = mi_row - bounds.mi_row_start;
+        let mi_col_in_tile = mi_col - bounds.mi_col_start;
+        let bsl = n8x8_l2 as usize;
+        let ctx = part_ctx.context(mi_row_in_tile, mi_col_in_tile, bsl);
+        let probs = &fc.partition_prob[ctx];
+        let partition = read_partition(r, probs, ctx, None);
+        let sub = subsize(bsize, partition).expect("legal subsize");
+
+        let read_leaf =
+            |r: &mut BoolReader<'_>,
+             coef_ctx: &mut TileCoefCtx,
+             leaves: &mut Vec<(usize, usize, ModeInfo)>,
+             residuals: &mut Vec<RecoveredTx>,
+             mi_row: usize,
+             mi_col: usize,
+             leaf_bsize: BlockSize| {
+                let nb = MiGridNeighbourLookup::new(mi_grid, mi_cols, mi_row, mi_col, mi_rows);
+                let above = nb.get(Position { row: -1, col: 0 }).copied();
+                let left = nb.get(Position { row: 0, col: -1 }).copied();
+                let skip_ctx = usize::from(above.is_some_and(|m| m.skip))
+                    + usize::from(left.is_some_and(|m| m.skip));
+                let skip = read_skip(r, &fc.skip_probs, skip_ctx, None);
+                let intra_inter_ctx = get_intra_inter_context(above.as_ref(), left.as_ref());
+                let is_inter = read_is_inter(r, &fc.intra_inter_prob, intra_inter_ctx, None);
+                assert!(is_inter, "is_inter @ ({mi_row}, {mi_col})");
+                let allow_select = !skip;
+                let max_tx = max_txsize(leaf_bsize);
+                let above_tx = above.map(|m| (m.tx_size, m.skip));
+                let left_tx = left.map(|m| (m.tx_size, m.skip));
+                let tx_ctx = if max_tx >= TxSize::Tx8x8 {
+                    get_tx_size_context(above_tx, left_tx, max_tx)
+                } else {
+                    0
+                };
+                let tx_size =
+                    read_tx_size(r, &fc.tx_probs, tx_mode, max_tx, allow_select, tx_ctx, None);
+                let bw_mi = i32::from(leaf_bsize.n_8x8_wide());
+                let bh_mi = i32::from(leaf_bsize.n_8x8_high());
+                let bounds_block = BlockBounds::new(
+                    mi_row as i32,
+                    mi_col as i32,
+                    mi_rows as i32,
+                    mi_cols as i32,
+                    bw_mi,
+                    bh_mi,
+                );
+                let prev_mv =
+                    prev_mv_grid.and_then(|g| g.get(mi_row * mi_cols + mi_col).copied());
+                let mut got = ModeInfo {
+                    block_size: leaf_bsize,
+                    tx_size,
+                    skip,
+                    segment_id: 0,
+                    seg_id_predicted: false,
+                    mode: BlockMode::Inter {
+                        mode: InterMode::NearestMv,
+                        ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                        mvs: [Mv::ZERO; 2],
+                        interp_filter: params.interp_filter,
+                    },
+                    bmi: [BmiInfo::default(); 4],
+                };
+                read_inter_block_mode_info(
+                    r, fc, None, None, params, &nb, leaf_bsize, &bounds_block, prev_mv, &mut got,
+                );
+                let _ = get_mode_context(leaf_bsize, &nb);
+                // Effective tx_size when allow_select is false matches
+                // the writer's derivation (min(max_tx, cap)).
+                let effective_tx = if allow_select && tx_mode == TxMode::TxModeSelect {
+                    tx_size
+                } else {
+                    let cap = tx_mode_to_biggest_tx_size(tx_mode) as u8;
+                    let raw = core::cmp::min(max_tx as u8, cap);
+                    match raw {
+                        0 => TxSize::Tx4x4,
+                        1 => TxSize::Tx8x8,
+                        2 => TxSize::Tx16x16,
+                        3 => TxSize::Tx32x32,
+                        _ => unreachable!(),
+                    }
+                };
+                if !skip {
+                    replay_inter_block_residual(
+                        r,
+                        fc,
+                        coef_ctx,
+                        mi_row,
+                        mi_col,
+                        leaf_bsize,
+                        effective_tx,
+                        residuals,
+                    );
+                }
+                leaves.push((mi_row, mi_col, got));
+            };
+
+        if hbs == 0 {
+            read_leaf(r, coef_ctx, leaves, residuals, mi_row, mi_col, sub);
+            if (bsize as u8) >= (BlockSize::Block8x8 as u8) {
+                part_ctx.update_with_subsize(mi_row_in_tile, mi_col_in_tile, sub, num_8x8_wh);
+            }
+            return;
+        }
+
+        match partition {
+            PartitionType::None => {
+                read_leaf(r, coef_ctx, leaves, residuals, mi_row, mi_col, sub);
+            }
+            PartitionType::Horz => {
+                read_leaf(r, coef_ctx, leaves, residuals, mi_row, mi_col, sub);
+                read_leaf(r, coef_ctx, leaves, residuals, mi_row + hbs, mi_col, sub);
+            }
+            PartitionType::Vert => {
+                read_leaf(r, coef_ctx, leaves, residuals, mi_row, mi_col, sub);
+                read_leaf(r, coef_ctx, leaves, residuals, mi_row, mi_col + hbs, sub);
+            }
+            PartitionType::Split => {
+                replay_inter_partition_tree_with_coefs(
+                    r, fc, params, tx_mode, part_ctx, coef_ctx, mi_grid, mi_rows, mi_cols, bounds,
+                    mi_row, mi_col, sub, n8x8_l2, prev_mv_grid, leaves, residuals,
+                );
+                replay_inter_partition_tree_with_coefs(
+                    r, fc, params, tx_mode, part_ctx, coef_ctx, mi_grid, mi_rows, mi_cols, bounds,
+                    mi_row, mi_col + hbs, sub, n8x8_l2, prev_mv_grid, leaves, residuals,
+                );
+                replay_inter_partition_tree_with_coefs(
+                    r, fc, params, tx_mode, part_ctx, coef_ctx, mi_grid, mi_rows, mi_cols, bounds,
+                    mi_row + hbs, mi_col, sub, n8x8_l2, prev_mv_grid, leaves, residuals,
+                );
+                replay_inter_partition_tree_with_coefs(
+                    r, fc, params, tx_mode, part_ctx, coef_ctx, mi_grid, mi_rows, mi_cols, bounds,
+                    mi_row + hbs, mi_col + hbs, sub, n8x8_l2, prev_mv_grid, leaves, residuals,
+                );
+            }
+        }
+
+        if (bsize as u8) >= (BlockSize::Block8x8 as u8)
+            && (bsize == BlockSize::Block8x8 || partition != PartitionType::Split)
+        {
+            part_ctx.update_with_subsize(mi_row_in_tile, mi_col_in_tile, sub, num_8x8_wh);
+        }
+    }
+
+    /// Encode `grid` via `write_tile_inter` against `coef_source`, then
+    /// replay through the per-symbol readers including per-TX coef
+    /// decode. Returns the recovered leaves; residuals can be inspected
+    /// via [`encode_then_replay_inter_full`].
+    #[allow(clippy::too_many_arguments)]
+    fn encode_then_replay_inter_with_coefs(
+        fc: &FrameContext,
+        params: &InterModeReadParams,
+        tx_mode: TxMode,
+        mi_rows: u32,
+        mi_cols: u32,
+        grid: &[Option<ModeInfo>],
+        prev_mv_grid: Option<&[PrevFrameMvRef]>,
+        coef_source: &dyn InterCoefSource,
+    ) -> Vec<(usize, usize, ModeInfo)> {
+        let (leaves, _residuals) = encode_then_replay_inter_full(
+            fc, params, tx_mode, mi_rows, mi_cols, grid, prev_mv_grid, coef_source,
+        );
+        leaves
+    }
+
+    /// Full-fidelity variant of `encode_then_replay_inter_with_coefs`
+    /// that also returns the recovered residual TX blocks.
+    #[allow(clippy::too_many_arguments)]
+    fn encode_then_replay_inter_full(
+        fc: &FrameContext,
+        params: &InterModeReadParams,
+        tx_mode: TxMode,
+        mi_rows: u32,
+        mi_cols: u32,
+        grid: &[Option<ModeInfo>],
+        prev_mv_grid: Option<&[PrevFrameMvRef]>,
+        coef_source: &dyn InterCoefSource,
+    ) -> (Vec<(usize, usize, ModeInfo)>, Vec<RecoveredTx>) {
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        // Large buffer to fit dense residuals (every TX position
+        // potentially several bits of token tree).
+        let mut buf = vec![0u8; 128 * 1024];
+        let written = {
+            let mut bw = BoolWriter::start_encode(&mut buf);
+            let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+            write_tile_inter(
+                &mut bw,
+                fc,
+                params,
+                tx_mode,
+                grid,
+                mi_rows,
+                mi_cols,
+                bounds,
+                prev_mv_grid,
+                &mut coef_ctx,
+                coef_source,
+            )
+            .expect("write_tile_inter should accept legal grid");
+            for _ in 0..32 {
+                bw.write_bit(0);
+            }
+            bw.stop_encode().expect("stop_encode")
+        };
+        buf.truncate(written);
+
+        let mut r = BoolReader::new(&buf).expect("reader init");
+        let mut part_ctx = TestPartCtx::new(mi_cols as usize);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let mut leaves = Vec::new();
+        let mut residuals = Vec::new();
+        let mut mi_row = 0usize;
+        while mi_row < mi_rows as usize {
+            part_ctx.reset_left();
+            coef_ctx.reset_left_coef();
+            let mut mi_col = 0usize;
+            while mi_col < mi_cols as usize {
+                replay_inter_partition_tree_with_coefs(
+                    &mut r,
+                    fc,
+                    params,
+                    tx_mode,
+                    &mut part_ctx,
+                    &mut coef_ctx,
+                    grid,
+                    mi_rows as usize,
+                    mi_cols as usize,
+                    bounds,
+                    mi_row,
+                    mi_col,
+                    BlockSize::Block64x64,
+                    4,
+                    prev_mv_grid,
+                    &mut leaves,
+                    &mut residuals,
+                );
+                mi_col += MI_BLOCK_SIZE;
+            }
+            mi_row += MI_BLOCK_SIZE;
+        }
+        (leaves, residuals)
+    }
+
+    /// S4.16g phase 3a — round-trip a single 64×64 inter leaf with
+    /// `skip == false` and an `AllZeroCoefSource`. Proves the writer's
+    /// coef-walk plumbs through (4 Y TX + 1 U TX + 1 V TX = 6 TX
+    /// blocks emit a terminal-EOB each) and the in-test replay walker
+    /// recovers the same leaves the writer wrote.
+    #[test]
+    fn s4_16g_round_trip_non_skip_all_zero_coefs() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut cell = make_inter_cell(
+            BlockSize::Block64x64,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        cell.skip = false;
+        let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+
+        let (leaves, residuals) = encode_then_replay_inter_full(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+            &crate::bitstream::AllZeroCoefSource::new(),
+        );
+        assert_eq!(leaves.len(), 1, "1 leaf");
+        assert_inter_match(&cell, &leaves[0].2, "non-skip leaf");
+        // BLOCK_64x64 with effective_tx = Tx32x32:
+        //   Y: 2×2 TX blocks (64/4 = 16 4x4, step 8 = 2 along each axis)
+        //   U: 1 TX block (uv_bsize = Block32x32, plane_tx = Tx32x32, 8 cells, step 8)
+        //   V: 1 TX block
+        // ⇒ 4 + 1 + 1 = 6 TX blocks total.
+        assert_eq!(residuals.len(), 6, "1 leaf × (4 Y + 1 U + 1 V) TX blocks");
+        for tx in &residuals {
+            assert_eq!(tx.eob, 0, "all-zero source ⇒ eob=0");
+            assert!(tx.coefs.iter().all(|&v| v == 0), "all-zero source ⇒ coefs all 0");
+        }
+    }
+
+    /// S4.16g phase 3a — round-trip a non-skip inter leaf where the
+    /// Y plane carries a single non-zero coefficient (`coefs[0] = 1`,
+    /// eob = 1) per Y TX block. UV planes stay all-zero. Proves the
+    /// coef walk actually FIRES (versus being silently bypassed by
+    /// the all-zero source) and that per-TX coef recovery agrees
+    /// with what the writer emitted.
+    #[test]
+    fn s4_16g_round_trip_non_skip_one_per_y_coef() {
+        struct OnePerYCoefSource {
+            zero: [i32; 1024],
+            one_y: [i32; 1024],
+        }
+        impl OnePerYCoefSource {
+            fn new() -> Self {
+                let mut one_y = [0i32; 1024];
+                // DC (raster position 0) = 1. The default scan tables
+                // map scan position 0 → raster position 0, so this is
+                // the DC-only block.
+                one_y[0] = 1;
+                Self {
+                    zero: [0; 1024],
+                    one_y,
+                }
+            }
+        }
+        impl InterCoefSource for OnePerYCoefSource {
+            fn get_block_coefs(
+                &self,
+                _mi_row: usize,
+                _mi_col: usize,
+                plane: usize,
+                _tx_x4_local: usize,
+                _tx_y4_local: usize,
+                tx_size: TxSize,
+            ) -> (&[i32], usize) {
+                if plane == 0 {
+                    (&self.one_y[..tx_size.n_coeffs()], 1)
+                } else {
+                    (&self.zero[..tx_size.n_coeffs()], 0)
+                }
+            }
+        }
+
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut cell = make_inter_cell(
+            BlockSize::Block64x64,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        cell.skip = false;
+        let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+
+        let src = OnePerYCoefSource::new();
+        let (leaves, residuals) = encode_then_replay_inter_full(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+            &src,
+        );
+        assert_eq!(leaves.len(), 1, "1 leaf");
+        assert_inter_match(&cell, &leaves[0].2, "non-skip 1Y leaf");
+        assert_eq!(residuals.len(), 6, "1 leaf × 6 TX blocks");
+        for tx in &residuals {
+            if tx.plane == 0 {
+                assert_eq!(tx.eob, 1, "Y TX: eob == 1");
+                assert_eq!(tx.coefs[0], 1, "Y TX: DC coef recovered as 1");
+                // Decode side uses identity dequant; positions past
+                // scan[0] are zeroed by `decode_coefs`.
+                for (i, &v) in tx.coefs.iter().enumerate().skip(1) {
+                    assert_eq!(v, 0, "Y TX: scan pos {i} should be 0");
+                }
+            } else {
+                assert_eq!(tx.eob, 0, "UV TX: eob == 0");
+                assert!(tx.coefs.iter().all(|&v| v == 0), "UV TX: coefs all 0");
+            }
         }
     }
 
@@ -3313,6 +4075,8 @@ mod tests {
         };
         let mut buf = vec![0u8; 1024];
         let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
         let err = write_tile_inter(
             &mut bw,
             &fc,
@@ -3323,6 +4087,8 @@ mod tests {
             mi_cols,
             bounds,
             None,
+            &mut coef_ctx,
+            &coef_source,
         )
         .unwrap_err();
         assert!(
@@ -3331,10 +4097,14 @@ mod tests {
         );
     }
 
-    /// Leaf with `skip = false` → writer rejects with
-    /// `UnsupportedNonSkip`.
+    /// S4.16g phase 3: the inter writer no longer rejects `skip =
+    /// false`. With an `AllZeroCoefSource` plumbed in, the writer
+    /// emits the residual path's terminal-EOB per TX block and the
+    /// round-trip succeeds. Replaces the original
+    /// `s4_16c_rejects_non_skip_leaf` (which became obsolete the
+    /// moment the writer learned to emit residuals).
     #[test]
-    fn s4_16c_rejects_non_skip_leaf() {
+    fn s4_16g_accepts_non_skip_leaf_with_all_zero_coefs() {
         let fc = FrameContext::new_default();
         let params = s4c_default_params();
         let mi_rows = 8u32;
@@ -3348,30 +4118,18 @@ mod tests {
         );
         cell.skip = false;
         let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
-        let bounds = TileBounds {
-            mi_row_start: 0,
-            mi_row_end: 8,
-            mi_col_start: 0,
-            mi_col_end: 8,
-        };
-        let mut buf = vec![0u8; 1024];
-        let mut bw = BoolWriter::start_encode(&mut buf);
-        let err = write_tile_inter(
-            &mut bw,
+        let leaves = encode_then_replay_inter_with_coefs(
             &fc,
             &params,
             TxMode::AllowTx32x32,
-            &grid,
             mi_rows,
             mi_cols,
-            bounds,
+            &grid,
             None,
-        )
-        .unwrap_err();
-        assert!(
-            matches!(err, ModesWriterError::UnsupportedNonSkip { .. }),
-            "got: {err:?}"
+            &crate::bitstream::AllZeroCoefSource::new(),
         );
+        assert_eq!(leaves.len(), 1);
+        assert_inter_match(&cell, &leaves[0].2, "non-skip leaf all-zero coefs");
     }
 
     /// Leaf with `segment_id != 0` → writer rejects with
@@ -3399,6 +4157,8 @@ mod tests {
         };
         let mut buf = vec![0u8; 1024];
         let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
         let err = write_tile_inter(
             &mut bw,
             &fc,
@@ -3409,6 +4169,8 @@ mod tests {
             mi_cols,
             bounds,
             None,
+            &mut coef_ctx,
+            &coef_source,
         )
         .unwrap_err();
         assert!(
@@ -3474,6 +4236,8 @@ mod tests {
         };
         let mut buf = vec![0u8; 1024];
         let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
         let err = write_tile_inter(
             &mut bw,
             &fc,
@@ -3484,6 +4248,8 @@ mod tests {
             mi_cols,
             bounds,
             None,
+            &mut coef_ctx,
+            &coef_source,
         )
         .unwrap_err();
         assert!(
@@ -3508,6 +4274,8 @@ mod tests {
         };
         let mut buf = vec![0u8; 1024];
         let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
         let err = write_tile_inter(
             &mut bw,
             &fc,
@@ -3518,6 +4286,8 @@ mod tests {
             mi_cols,
             bounds,
             None,
+            &mut coef_ctx,
+            &coef_source,
         )
         .unwrap_err();
         assert!(matches!(err, ModesWriterError::NonMultipleOfSb { .. }), "got: {err:?}");

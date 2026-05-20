@@ -55,12 +55,14 @@ use rvp9_core::bitstream::sub_parsers::{
     SegmentationParams, TileInfo,
 };
 use rvp9_core::bitstream::{
-    BitDepth, BitstreamError, ChromaFormat, ColorRange, ColorSpace, CompressedHeaderOptions,
-    CompressedHeaderResult, FrameKind, InterpFilter, ModesTileBounds, ModesWriterError, Profile,
-    RawBitWriter, SuperframeBuilder, UncompressedHeader, write_compressed_header,
-    write_tile_intra_keyframe, write_tile_inter, write_uncompressed_header,
+    AllZeroCoefSource, BitDepth, BitstreamError, ChromaFormat, ColorRange, ColorSpace,
+    CompressedHeaderOptions, CompressedHeaderResult, FrameKind, InterpFilter, ModesTileBounds,
+    ModesWriterError, Profile, RawBitWriter, SuperframeBuilder, UncompressedHeader,
+    write_compressed_header, write_tile_intra_keyframe, write_tile_inter,
+    write_uncompressed_header,
 };
 use rvp9_core::block::BlockSize;
+use rvp9_core::coef_ctx::TileCoefCtx;
 use rvp9_core::entropy::{BoolWriter, FrameContext};
 use rvp9_core::inter::mode_info::{InterModeReadParams, setup_compound_reference_mode};
 use rvp9_core::inter::mv_ref::sign_bias_from_header;
@@ -488,6 +490,10 @@ impl Encoder {
         let mut tile_buf = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 8 + 1024];
         let tile_len = {
             let mut bw = BoolWriter::start_encode(&mut tile_buf);
+            let tile_mi_cols =
+                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
+            let coef_source = AllZeroCoefSource::new();
             write_tile_inter(
                 &mut bw,
                 &post_fc,
@@ -498,6 +504,8 @@ impl Encoder {
                 mi_cols,
                 tile_bounds,
                 /* prev_mv_grid = */ None,
+                &mut coef_ctx,
+                &coef_source,
             )?;
             bw.stop_encode()
                 .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?

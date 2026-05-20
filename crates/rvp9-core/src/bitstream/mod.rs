@@ -27,6 +27,7 @@ pub mod compressed_header;
 pub mod error;
 pub mod frame;
 pub mod header;
+pub mod inter_coef_source;
 pub mod modes_writer;
 pub mod raw;
 pub mod sub_parsers;
@@ -45,6 +46,7 @@ pub use compressed_header::{
     write_y_mode_probs,
 };
 pub use error::BitstreamError;
+pub use inter_coef_source::{AllZeroCoefSource, InterCoefSource};
 pub use modes_writer::{
     ModesWriterError, TileBounds as ModesTileBounds, write_tile_inter, write_tile_intra_keyframe,
 };
