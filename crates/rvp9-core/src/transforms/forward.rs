@@ -27,8 +27,9 @@
 //! encoder never emits lossless frames.
 
 use super::constants::{
-    COSPI_8_64, COSPI_16_64, COSPI_24_64, SINPI_1_9, SINPI_2_9, SINPI_3_9, SINPI_4_9,
-    dct_const_round_shift, wraplow,
+    COSPI_2_64, COSPI_4_64, COSPI_6_64, COSPI_8_64, COSPI_10_64, COSPI_12_64, COSPI_14_64,
+    COSPI_16_64, COSPI_18_64, COSPI_20_64, COSPI_22_64, COSPI_24_64, COSPI_26_64, COSPI_28_64,
+    COSPI_30_64, SINPI_1_9, SINPI_2_9, SINPI_3_9, SINPI_4_9, dct_const_round_shift, wraplow,
 };
 use super::types::TxType;
 
@@ -36,6 +37,10 @@ use super::types::TxType;
 /// [`fdct4`] or [`fadst4`]. Used by the [`fht4x4`] dispatcher to pick
 /// per-axis kernels via the FHT_4 table.
 type Fwd1d4 = fn(&[i32; 4], &mut [i32; 4]);
+
+/// Function pointer for a 1D 8-point forward transform — either
+/// [`fdct8`] or [`fadst8`]. Used by [`fht8x8`] via the FHT_8 table.
+type Fwd1d8 = fn(&[i32; 8], &mut [i32; 8]);
 
 /// 1D 4-point forward DCT. The `tran_high_t` intermediates in the C
 /// source live in `i64` to mirror the 32-bit-safe arithmetic of
@@ -256,9 +261,315 @@ pub fn fht4x4(input: &[i16], output: &mut [i32; 16], stride: usize, tx_type: TxT
     }
 }
 
+// ---------------------------------------------------------------------
+// 8×8 forward transform family.
+// ---------------------------------------------------------------------
+
+/// 1D 8-point forward DCT. Four stages of butterflies + cospi-weighted
+/// rotations. Mirrors libvpx `fdct8` (`vp9/encoder/vp9_dct.c:42-92`).
+#[inline]
+pub fn fdct8(input: &[i32; 8], output: &mut [i32; 8]) {
+    // stage 1
+    let s0 = input[0] as i64 + input[7] as i64;
+    let s1 = input[1] as i64 + input[6] as i64;
+    let s2 = input[2] as i64 + input[5] as i64;
+    let s3 = input[3] as i64 + input[4] as i64;
+    let s4 = input[3] as i64 - input[4] as i64;
+    let s5 = input[2] as i64 - input[5] as i64;
+    let s6 = input[1] as i64 - input[6] as i64;
+    let s7 = input[0] as i64 - input[7] as i64;
+
+    // fdct4(step, step) sub-block on s0..s3
+    let x0 = s0 + s3;
+    let x1 = s1 + s2;
+    let x2 = s1 - s2;
+    let x3 = s0 - s3;
+    let t0 = (x0 + x1) * COSPI_16_64 as i64;
+    let t1 = (x0 - x1) * COSPI_16_64 as i64;
+    let t2 = x2 * COSPI_24_64 as i64 + x3 * COSPI_8_64 as i64;
+    let t3 = -x2 * COSPI_8_64 as i64 + x3 * COSPI_24_64 as i64;
+    output[0] = wraplow(dct_const_round_shift(t0) as i32);
+    output[2] = wraplow(dct_const_round_shift(t2) as i32);
+    output[4] = wraplow(dct_const_round_shift(t1) as i32);
+    output[6] = wraplow(dct_const_round_shift(t3) as i32);
+
+    // Stage 2
+    let t0 = (s6 - s5) * COSPI_16_64 as i64;
+    let t1 = (s6 + s5) * COSPI_16_64 as i64;
+    // libvpx: t2/t3 are `tran_high_t` here but assigned from
+    // `fdct_round_shift` — they stay in 32-bit land. We carry them in
+    // i64 for arithmetic safety; values still fit in i32.
+    let t2 = dct_const_round_shift(t0);
+    let t3 = dct_const_round_shift(t1);
+
+    // Stage 3
+    let x0 = s4 + t2;
+    let x1 = s4 - t2;
+    let x2 = s7 - t3;
+    let x3 = s7 + t3;
+
+    // Stage 4
+    let t0 = x0 * COSPI_28_64 as i64 + x3 * COSPI_4_64 as i64;
+    let t1 = x1 * COSPI_12_64 as i64 + x2 * COSPI_20_64 as i64;
+    let t2 = x2 * COSPI_12_64 as i64 + x1 * -(COSPI_20_64 as i64);
+    let t3 = x3 * COSPI_28_64 as i64 + x0 * -(COSPI_4_64 as i64);
+    output[1] = wraplow(dct_const_round_shift(t0) as i32);
+    output[3] = wraplow(dct_const_round_shift(t2) as i32);
+    output[5] = wraplow(dct_const_round_shift(t1) as i32);
+    output[7] = wraplow(dct_const_round_shift(t3) as i32);
+}
+
+/// 1D 8-point forward ADST. Three stages with input + output
+/// permutations and explicit sign flips on half the outputs. The
+/// outputs at indices 1, 3, 5, 7 carry sign flips.
+///
+/// Mirrors libvpx `fadst8` (`vp9/encoder/vp9_dct.c:275-344`).
+#[inline]
+pub fn fadst8(input: &[i32; 8], output: &mut [i32; 8]) {
+    // Input permutation per libvpx :278-285.
+    let x0 = input[7] as i64;
+    let x1 = input[0] as i64;
+    let x2 = input[5] as i64;
+    let x3 = input[2] as i64;
+    let x4 = input[3] as i64;
+    let x5 = input[4] as i64;
+    let x6 = input[1] as i64;
+    let x7 = input[6] as i64;
+
+    // stage 1
+    let s0 = COSPI_2_64 as i64 * x0 + COSPI_30_64 as i64 * x1;
+    let s1 = COSPI_30_64 as i64 * x0 - COSPI_2_64 as i64 * x1;
+    let s2 = COSPI_10_64 as i64 * x2 + COSPI_22_64 as i64 * x3;
+    let s3 = COSPI_22_64 as i64 * x2 - COSPI_10_64 as i64 * x3;
+    let s4 = COSPI_18_64 as i64 * x4 + COSPI_14_64 as i64 * x5;
+    let s5 = COSPI_14_64 as i64 * x4 - COSPI_18_64 as i64 * x5;
+    let s6 = COSPI_26_64 as i64 * x6 + COSPI_6_64 as i64 * x7;
+    let s7 = COSPI_6_64 as i64 * x6 - COSPI_26_64 as i64 * x7;
+
+    let x0 = dct_const_round_shift(s0 + s4);
+    let x1 = dct_const_round_shift(s1 + s5);
+    let x2 = dct_const_round_shift(s2 + s6);
+    let x3 = dct_const_round_shift(s3 + s7);
+    let x4 = dct_const_round_shift(s0 - s4);
+    let x5 = dct_const_round_shift(s1 - s5);
+    let x6 = dct_const_round_shift(s2 - s6);
+    let x7 = dct_const_round_shift(s3 - s7);
+
+    // stage 2 — pass-through for s0..s3
+    let s0 = x0;
+    let s1 = x1;
+    let s2 = x2;
+    let s3 = x3;
+    let s4 = COSPI_8_64 as i64 * x4 + COSPI_24_64 as i64 * x5;
+    let s5 = COSPI_24_64 as i64 * x4 - COSPI_8_64 as i64 * x5;
+    let s6 = -(COSPI_24_64 as i64) * x6 + COSPI_8_64 as i64 * x7;
+    let s7 = COSPI_8_64 as i64 * x6 + COSPI_24_64 as i64 * x7;
+
+    let x0 = s0 + s2;
+    let x1 = s1 + s3;
+    let x2 = s0 - s2;
+    let x3 = s1 - s3;
+    let x4 = dct_const_round_shift(s4 + s6);
+    let x5 = dct_const_round_shift(s5 + s7);
+    let x6 = dct_const_round_shift(s4 - s6);
+    let x7 = dct_const_round_shift(s5 - s7);
+
+    // stage 3
+    let s2 = COSPI_16_64 as i64 * (x2 + x3);
+    let s3 = COSPI_16_64 as i64 * (x2 - x3);
+    let s6 = COSPI_16_64 as i64 * (x6 + x7);
+    let s7 = COSPI_16_64 as i64 * (x6 - x7);
+
+    let x2 = dct_const_round_shift(s2);
+    let x3 = dct_const_round_shift(s3);
+    let x6 = dct_const_round_shift(s6);
+    let x7 = dct_const_round_shift(s7);
+
+    // Output permutation with sign flips per libvpx :336-343. Each
+    // store is a `tran_low_t` assignment so we apply `wraplow`.
+    output[0] = wraplow(x0 as i32);
+    output[1] = wraplow(-x4 as i32);
+    output[2] = wraplow(x6 as i32);
+    output[3] = wraplow(-x2 as i32);
+    output[4] = wraplow(x3 as i32);
+    output[5] = wraplow(-x7 as i32);
+    output[6] = wraplow(x5 as i32);
+    output[7] = wraplow(-x1 as i32);
+}
+
+/// 2D 8×8 forward DCT. Pass 0 multiplies input by 4 (no DC bump,
+/// unlike 4×4); pass 1 reads from intermediate at integer values
+/// directly (no `(x + 1) >> 2` between passes). The final reduction
+/// is `output /= 2` — **integer truncation toward zero**, equivalent
+/// to Rust `/` on signed integers (per C99 6.5.5).
+///
+/// Note the difference from 4×4: 4×4 uses `(x + 1) >> 2` (round half
+/// up); 8×8 uses `/= 2` (truncate toward zero). The hybrid wrapper
+/// [`fht8x8`] uses the textually-different `(x + (x<0)) >> 1` form
+/// which is semantically identical to `/ 2` for `i32`.
+///
+/// Mirrors libvpx `vpx_fdct8x8_c` (`vpx_dsp/fwd_txfm.c:90-172`).
+pub fn fdct8x8(input: &[i16], output: &mut [i32; 64], stride: usize) {
+    debug_assert!(
+        input.len() >= 7 * stride + 8,
+        "input slice too small for 8x8 at stride {stride}"
+    );
+
+    let mut intermediate = [0i32; 64];
+
+    // Pass 0: column transform with ×4 scaling.
+    for i in 0..8 {
+        let s0 = (input[i] as i64 + input[7 * stride + i] as i64) * 4;
+        let s1 = (input[stride + i] as i64 + input[6 * stride + i] as i64) * 4;
+        let s2 = (input[2 * stride + i] as i64 + input[5 * stride + i] as i64) * 4;
+        let s3 = (input[3 * stride + i] as i64 + input[4 * stride + i] as i64) * 4;
+        let s4 = (input[3 * stride + i] as i64 - input[4 * stride + i] as i64) * 4;
+        let s5 = (input[2 * stride + i] as i64 - input[5 * stride + i] as i64) * 4;
+        let s6 = (input[stride + i] as i64 - input[6 * stride + i] as i64) * 4;
+        let s7 = (input[i] as i64 - input[7 * stride + i] as i64) * 4;
+        fdct8_inner(s0, s1, s2, s3, s4, s5, s6, s7, &mut intermediate, i * 8);
+    }
+
+    // Pass 1: row transform on transposed intermediate (in-place
+    // semantics from libvpx — `in_low` walks intermediate column-by-
+    // column at stride 8, `out` is the output buffer).
+    for i in 0..8 {
+        let s0 = intermediate[i] as i64 + intermediate[7 * 8 + i] as i64;
+        let s1 = intermediate[8 + i] as i64 + intermediate[6 * 8 + i] as i64;
+        let s2 = intermediate[2 * 8 + i] as i64 + intermediate[5 * 8 + i] as i64;
+        let s3 = intermediate[3 * 8 + i] as i64 + intermediate[4 * 8 + i] as i64;
+        let s4 = intermediate[3 * 8 + i] as i64 - intermediate[4 * 8 + i] as i64;
+        let s5 = intermediate[2 * 8 + i] as i64 - intermediate[5 * 8 + i] as i64;
+        let s6 = intermediate[8 + i] as i64 - intermediate[6 * 8 + i] as i64;
+        let s7 = intermediate[i] as i64 - intermediate[7 * 8 + i] as i64;
+        fdct8_inner(s0, s1, s2, s3, s4, s5, s6, s7, output, i * 8);
+    }
+
+    // Final reduction: `output /= 2` (truncation toward zero).
+    for slot in output.iter_mut() {
+        *slot = wraplow(*slot / 2);
+    }
+}
+
+/// Helper: the fdct8 inner pipeline operating on pre-loaded
+/// `s0..s7` values and writing into `out[base..base+8]`. Factored out
+/// because [`fdct8x8`] needs it twice (one pass with ×4 scaling, one
+/// without) and inlining the body twice would obscure the structure.
+#[allow(clippy::too_many_arguments)]
+#[inline]
+fn fdct8_inner(
+    s0: i64,
+    s1: i64,
+    s2: i64,
+    s3: i64,
+    s4: i64,
+    s5: i64,
+    s6: i64,
+    s7: i64,
+    out: &mut [i32],
+    base: usize,
+) {
+    // fdct4 sub-block on s0..s3.
+    let x0 = s0 + s3;
+    let x1 = s1 + s2;
+    let x2 = s1 - s2;
+    let x3 = s0 - s3;
+    let t0 = (x0 + x1) * COSPI_16_64 as i64;
+    let t1 = (x0 - x1) * COSPI_16_64 as i64;
+    let t2 = x2 * COSPI_24_64 as i64 + x3 * COSPI_8_64 as i64;
+    let t3 = -x2 * COSPI_8_64 as i64 + x3 * COSPI_24_64 as i64;
+    out[base] = wraplow(dct_const_round_shift(t0) as i32);
+    out[base + 2] = wraplow(dct_const_round_shift(t2) as i32);
+    out[base + 4] = wraplow(dct_const_round_shift(t1) as i32);
+    out[base + 6] = wraplow(dct_const_round_shift(t3) as i32);
+
+    // Stage 2.
+    let t0 = (s6 - s5) * COSPI_16_64 as i64;
+    let t1 = (s6 + s5) * COSPI_16_64 as i64;
+    let t2 = dct_const_round_shift(t0);
+    let t3 = dct_const_round_shift(t1);
+
+    // Stage 3.
+    let x0 = s4 + t2;
+    let x1 = s4 - t2;
+    let x2 = s7 - t3;
+    let x3 = s7 + t3;
+
+    // Stage 4.
+    let t0 = x0 * COSPI_28_64 as i64 + x3 * COSPI_4_64 as i64;
+    let t1 = x1 * COSPI_12_64 as i64 + x2 * COSPI_20_64 as i64;
+    let t2 = x2 * COSPI_12_64 as i64 + x1 * -(COSPI_20_64 as i64);
+    let t3 = x3 * COSPI_28_64 as i64 + x0 * -(COSPI_4_64 as i64);
+    out[base + 1] = wraplow(dct_const_round_shift(t0) as i32);
+    out[base + 3] = wraplow(dct_const_round_shift(t2) as i32);
+    out[base + 5] = wraplow(dct_const_round_shift(t1) as i32);
+    out[base + 7] = wraplow(dct_const_round_shift(t3) as i32);
+}
+
+/// 2D 8×8 hybrid forward transform (DCT or ADST per axis), selected
+/// by `tx_type`. `DCT_DCT` short-circuits to [`fdct8x8`] (matching
+/// libvpx :559-560). Other types use the column / row 1D dispatch
+/// with pass-0 ×4 scaling (no DC bump at 8×8) and final
+/// `(x + (x < 0)) >> 1` reduction (= `/ 2` truncation toward zero).
+///
+/// Mirrors libvpx `vp9_fht8x8_c` (`vp9/encoder/vp9_dct.c:557-582`).
+pub fn fht8x8(input: &[i16], output: &mut [i32; 64], stride: usize, tx_type: TxType) {
+    if matches!(tx_type, TxType::DctDct) {
+        fdct8x8(input, output, stride);
+        return;
+    }
+
+    debug_assert!(
+        input.len() >= 7 * stride + 8,
+        "input slice too small for 8x8 at stride {stride}"
+    );
+
+    // FHT_8 table (vp9_dct.c:516-521).
+    let (col_fn, row_fn): (Fwd1d8, Fwd1d8) = match tx_type {
+        TxType::DctDct => unreachable!(),
+        TxType::AdstDct => (fadst8, fdct8),
+        TxType::DctAdst => (fdct8, fadst8),
+        TxType::AdstAdst => (fadst8, fadst8),
+    };
+
+    let mut intermediate = [0i32; 64];
+
+    // Columns: ×4 scaling, transform, transpose-store into intermediate.
+    for i in 0..8 {
+        let mut col_in = [0i32; 8];
+        for j in 0..8 {
+            col_in[j] = (input[j * stride + i] as i32) * 4;
+        }
+        let mut col_out = [0i32; 8];
+        col_fn(&col_in, &mut col_out);
+        for j in 0..8 {
+            intermediate[j * 8 + i] = col_out[j];
+        }
+    }
+
+    // Rows: transform, then `(x + (x < 0)) >> 1`.
+    for i in 0..8 {
+        let mut row_in = [0i32; 8];
+        for j in 0..8 {
+            row_in[j] = intermediate[j + i * 8];
+        }
+        let mut row_out = [0i32; 8];
+        row_fn(&row_in, &mut row_out);
+        for j in 0..8 {
+            // `(x + (x < 0)) >> 1` == `x / 2` (truncation toward zero
+            // for two's-complement i32).
+            let v = row_out[j];
+            let adjusted = v + i32::from(v < 0);
+            output[j + i * 8] = wraplow(adjusted >> 1);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::super::inverse::{idct4, iadst4, iht4x4_16_add};
+    use super::super::inverse::{
+        iadst4, iadst8, idct4, idct8, iht4x4_16_add, iht8x8_64_add,
+    };
     use super::*;
 
     /// Zero input → zero output (1D DCT).
@@ -474,4 +785,187 @@ mod tests {
             );
         }
     }
+
+    // -----------------------------------------------------------------
+    // 8×8 tests.
+    // -----------------------------------------------------------------
+
+    /// Zero input → zero output (1D 8-point DCT).
+    #[test]
+    fn fdct8_zero_in_zero_out() {
+        let input = [0i32; 8];
+        let mut output = [99i32; 8];
+        fdct8(&input, &mut output);
+        assert_eq!(output, [0; 8]);
+    }
+
+    /// Zero input → zero output (1D 8-point ADST). Note `fadst8` has
+    /// no explicit all-zero short-circuit (unlike `fadst4`) — every
+    /// stage runs with zero inputs and produces zero outputs.
+    #[test]
+    fn fadst8_zero_in_zero_out() {
+        let input = [0i32; 8];
+        let mut output = [99i32; 8];
+        fadst8(&input, &mut output);
+        assert_eq!(output, [0; 8]);
+    }
+
+    /// 1D fdct8 + idct8 round-trip: input scaled by **4** within ±2.
+    /// At fixed point the 1D 8-point DCT pair has gain 4 (vs the 4-pt
+    /// pair's gain of 2); the 2D wrappers compensate with an extra
+    /// `>> 1` between the two passes. The ±2 tolerance reflects the
+    /// looser accumulation through more stages of `dct_const_round_shift`.
+    #[test]
+    fn fdct8_idct8_round_trip_small() {
+        let input: [i32; 8] = [10, -4, 6, -2, 8, -3, 5, -1];
+        let mut spectrum = [0i32; 8];
+        fdct8(&input, &mut spectrum);
+        let mut round_trip = [0i32; 8];
+        idct8(&spectrum, &mut round_trip);
+        for k in 0..8 {
+            let expected = input[k] * 4;
+            assert!(
+                (round_trip[k] - expected).abs() <= 2,
+                "round_trip[{k}] = {} not within ±2 of 4 * input[{k}] = {}",
+                round_trip[k],
+                expected
+            );
+        }
+    }
+
+    /// 1D fadst8 + iadst8 round-trip: input scaled by 4 within ±2.
+    #[test]
+    fn fadst8_iadst8_round_trip_small() {
+        let input: [i32; 8] = [8, -5, 3, -1, 6, -4, 2, -7];
+        let mut spectrum = [0i32; 8];
+        fadst8(&input, &mut spectrum);
+        let mut round_trip = [0i32; 8];
+        iadst8(&spectrum, &mut round_trip);
+        for k in 0..8 {
+            let expected = input[k] * 4;
+            assert!(
+                (round_trip[k] - expected).abs() <= 2,
+                "round_trip[{k}] = {} not within ±2 of 4 * input[{k}] = {}",
+                round_trip[k],
+                expected
+            );
+        }
+    }
+
+    /// Zero 8×8 residual block → zero coefficients (2D DCT).
+    #[test]
+    fn fdct8x8_zero_input_zero_output() {
+        let input = [0i16; 64];
+        let mut output = [99i32; 64];
+        fdct8x8(&input, &mut output, 8);
+        assert_eq!(output, [0; 64]);
+    }
+
+    /// Zero 8×8 residual block → zero coefficients for every `TxType`
+    /// (2D hybrid).
+    #[test]
+    fn fht8x8_zero_input_zero_output_all_tx_types() {
+        for tx_type in [
+            TxType::DctDct,
+            TxType::AdstDct,
+            TxType::DctAdst,
+            TxType::AdstAdst,
+        ] {
+            let input = [0i16; 64];
+            let mut output = [99i32; 64];
+            fht8x8(&input, &mut output, 8, tx_type);
+            assert_eq!(
+                output, [0; 64],
+                "tx_type {tx_type:?} did not produce zero output for zero input"
+            );
+        }
+    }
+
+    /// `fht8x8` with `DCT_DCT` is bit-identical to `fdct8x8` — the
+    /// short-circuit at `vp9_fht8x8_c:559-560`.
+    #[test]
+    fn fht8x8_dct_dct_matches_fdct8x8() {
+        let input: [i16; 64] = [
+            10, -4, 6, -2, 8, -3, 5, -1, //
+            -3, 8, -1, 5, -7, 2, -4, 9, //
+            7, -6, 4, -2, 3, -5, 8, -1, //
+            1, -3, 9, -5, 6, -2, 4, -8, //
+            -2, 5, -3, 7, -1, 4, -6, 2, //
+            8, -1, 6, -4, 9, -3, 5, -7, //
+            3, -8, 2, -5, 7, -1, 4, -6, //
+            -5, 9, -2, 6, -3, 8, -1, 4,
+        ];
+        let mut out_fht = [0i32; 64];
+        let mut out_fdct = [0i32; 64];
+        fht8x8(&input, &mut out_fht, 8, TxType::DctDct);
+        fdct8x8(&input, &mut out_fdct, 8);
+        assert_eq!(out_fht, out_fdct);
+    }
+
+    /// `fht8x8 → iht8x8_64_add` recovers a small residual within ±1
+    /// per pixel for every `TxType`. The canonical encoder-side oracle
+    /// at 8×8 scale.
+    #[test]
+    fn fht8x8_then_iht8x8_recovers_small_residual_all_tx_types() {
+        let residual: [i16; 64] = [
+            5, -3, 2, -1, 4, -2, 3, -1, //
+            -2, 4, -1, 3, -2, 1, -3, 2, //
+            1, -2, 5, -4, 2, -1, 4, -3, //
+            -1, 2, -3, 6, -2, 3, -1, 5, //
+            3, -1, 2, -5, 1, -4, 2, -1, //
+            -2, 4, -1, 3, -5, 2, -3, 4, //
+            1, -3, 2, -1, 4, -2, 5, -1, //
+            -1, 2, -4, 1, -3, 5, -2, 3,
+        ];
+        for tx_type in [
+            TxType::DctDct,
+            TxType::AdstDct,
+            TxType::DctAdst,
+            TxType::AdstAdst,
+        ] {
+            let mut coefs = [0i32; 64];
+            fht8x8(&residual, &mut coefs, 8, tx_type);
+
+            let mut dest = [128u8; 64];
+            iht8x8_64_add(&coefs, &mut dest, 8, tx_type);
+
+            for k in 0..64 {
+                let recovered = (dest[k] as i32) - 128;
+                let expected = residual[k] as i32;
+                assert!(
+                    (recovered - expected).abs() <= 1,
+                    "{tx_type:?}: pos {k} recovered={recovered} expected={expected}"
+                );
+            }
+        }
+    }
+
+    /// `fdct8x8` honours non-trivial `stride`: same content laid out
+    /// at stride 16 vs stride 8 produces identical coefficients.
+    #[test]
+    fn fdct8x8_stride_independence() {
+        let residual: [i16; 64] = [
+            5, -3, 2, -1, 4, -2, 3, -1, //
+            -2, 4, -1, 3, -2, 1, -3, 2, //
+            1, -2, 5, -4, 2, -1, 4, -3, //
+            -1, 2, -3, 6, -2, 3, -1, 5, //
+            3, -1, 2, -5, 1, -4, 2, -1, //
+            -2, 4, -1, 3, -5, 2, -3, 4, //
+            1, -3, 2, -1, 4, -2, 5, -1, //
+            -1, 2, -4, 1, -3, 5, -2, 3,
+        ];
+        let mut wide = [0i16; 128];
+        for r in 0..8 {
+            for c in 0..8 {
+                wide[r * 16 + c] = residual[r * 8 + c];
+            }
+        }
+
+        let mut out_tight = [0i32; 64];
+        let mut out_wide = [0i32; 64];
+        fdct8x8(&residual, &mut out_tight, 8);
+        fdct8x8(&wide, &mut out_wide, 16);
+        assert_eq!(out_tight, out_wide);
+    }
+
 }
