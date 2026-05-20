@@ -4635,4 +4635,383 @@ mod tests {
             }
         }
     }
+
+    /// End-to-end inter-frame round-trip with **skip = false** + ONE
+    /// NON-ZERO Y coefficient per TX block (UV stay all-zero) through
+    /// the real Decoder. Sibling of S4.16k (the trivial-coef sibling).
+    ///
+    /// S4.16k proved the coef-decode path fires for all-zero coefs
+    /// (every TX block hits the terminal-EOB bit only — inverse
+    /// transform of zero = identity = no pixel change). S4.16l proves
+    /// the coef-decode AND inverse-transform AND add-to-predictor
+    /// pipeline fires for actual non-zero residuals through the real
+    /// `Decoder::decode_frame`.
+    ///
+    /// Encoder emits `raw_coefs[0] = 1, eob = 1` for every Y TX
+    /// (4 × Tx32x32) and `eob = 0` for both UV TX blocks. Decoder
+    /// reads these via `decode_block_tokens`, dequantizes (Y DC at
+    /// qindex=50 → some non-zero value), runs `idct32x32_1024_add`
+    /// per Y TX block, adds the resulting pattern to the predictor.
+    ///
+    /// Test asserts the decoder succeeds + mi_grid recovery matches.
+    /// Pixel output WILL differ from S4.16k (non-zero residuals
+    /// modify the predictor), but we don't check pixels here — the
+    /// proof-of-life is that the entire pipeline runs without error.
+    ///
+    /// Together with S4.16k, this completes E2E coverage of every
+    /// skip/coef combination through the real decoder.
+    #[test]
+    fn s4_16l_round_trip_non_skip_one_per_y_through_decoder() {
+        use rvp9_core::bitstream::frame::ReferenceMode;
+        use rvp9_core::bitstream::header::HeaderTail;
+        use rvp9_core::bitstream::inter_coef_source::InterCoefSource;
+        use rvp9_core::bitstream::sub_parsers::{
+            LoopFilterParams, MAX_PROB, PREDICTION_PROBS, QuantizationParams, SEG_TREE_PROBS,
+            SegmentationParams, TileInfo,
+        };
+        use rvp9_core::bitstream::{
+            BitDepth, ChromaFormat, ColorRange, ColorSpace, CompressedHeaderOptions,
+            CompressedHeaderResult, FrameKind, InterpFilter, ModesTileBounds, Profile,
+            RawBitWriter, UncompressedHeader, write_compressed_header, write_tile_inter,
+            write_tile_intra_keyframe, write_uncompressed_header,
+        };
+        use rvp9_core::block::BlockSize;
+        use rvp9_core::coef_ctx::TileCoefCtx;
+        use rvp9_core::entropy::{BoolWriter, FrameContext};
+        use rvp9_core::inter::{
+            InterModeReadParams, setup_compound_reference_mode, sign_bias_from_header,
+        };
+        use rvp9_core::intra_pred::IntraMode;
+        use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, Mv, RefFrame};
+        use rvp9_core::transforms::{TxMode, TxSize};
+
+        /// Per-Y-TX single non-zero coef source. Y plane gets
+        /// `raw_coefs[0] = 1, eob = 1`; UV planes stay all-zero.
+        /// Tile-scoped 'static buffers are safe because the test
+        /// borrows immutably for one call at a time.
+        struct OnePerYThenZero {
+            y_buf: [i32; 1024],
+            zero_buf: [i32; 1024],
+        }
+        impl OnePerYThenZero {
+            fn new() -> Self {
+                let mut y_buf = [0i32; 1024];
+                y_buf[0] = 1;
+                Self { y_buf, zero_buf: [0i32; 1024] }
+            }
+        }
+        impl InterCoefSource for OnePerYThenZero {
+            fn get_block_coefs(
+                &self,
+                _mi_row: usize,
+                _mi_col: usize,
+                plane: usize,
+                _tx_x4_local: usize,
+                _tx_y4_local: usize,
+                tx_size: TxSize,
+            ) -> (&[i32], usize) {
+                let n = tx_size.n_coeffs();
+                if plane == 0 {
+                    (&self.y_buf[..n], 1)
+                } else {
+                    (&self.zero_buf[..n], 0)
+                }
+            }
+        }
+
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let tile_bounds = ModesTileBounds {
+            mi_row_start: 0,
+            mi_row_end: 8,
+            mi_col_start: 0,
+            mi_col_end: 8,
+        };
+
+        let make_tail = |compressed_len: usize| HeaderTail {
+            refresh_frame_context: true,
+            frame_parallel_decoding_mode: false,
+            frame_context_idx: 0,
+            loop_filter: LoopFilterParams {
+                filter_level: 0,
+                sharpness_level: 0,
+                mode_ref_delta_enabled: false,
+                mode_ref_delta_update: false,
+                ref_deltas: [None; 4],
+                mode_deltas: [None; 2],
+            },
+            quantization: QuantizationParams {
+                base_qindex: 50,
+                y_dc_delta_q: 0,
+                uv_dc_delta_q: 0,
+                uv_ac_delta_q: 0,
+            },
+            segmentation: SegmentationParams {
+                enabled: false,
+                update_map: false,
+                temporal_update: false,
+                tree_probs: [MAX_PROB; SEG_TREE_PROBS],
+                pred_probs: [MAX_PROB; PREDICTION_PROBS],
+                update_data: false,
+                abs_delta: false,
+                feature_data: Default::default(),
+            },
+            tile_info: TileInfo {
+                log2_tile_cols: 0,
+                log2_tile_rows: 0,
+            },
+            first_partition_size: compressed_len as u16,
+        };
+
+        // ---- Frame 1: keyframe (primes ref pool slot 0) ----
+        let kf_cell = ModeInfo {
+            block_size: BlockSize::Block64x64,
+            tx_size: TxSize::Tx32x32,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        let kf_mi_grid: Vec<Option<ModeInfo>> =
+            vec![Some(kf_cell); (mi_rows * mi_cols) as usize];
+
+        let pre_fc_default = FrameContext::new_default();
+        let mut kf_pre_fc = pre_fc_default.clone();
+        let kf_post_fc = pre_fc_default.clone();
+        let kf_opts = CompressedHeaderOptions {
+            lossless: false,
+            intra_only: true,
+            interp_filter: InterpFilter::EightTap,
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+        let kf_target = CompressedHeaderResult {
+            tx_mode: TxMode::AllowTx32x32,
+            reference_mode: ReferenceMode::Single,
+        };
+
+        let mut kf_compressed_buf = vec![0u8; 16 * 1024];
+        let kf_compressed_len = {
+            let mut bw = BoolWriter::start_encode(&mut kf_compressed_buf);
+            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target)
+                .expect("write_compressed_header kf");
+            bw.stop_encode().expect("stop_encode kf compressed")
+        };
+        kf_compressed_buf.truncate(kf_compressed_len);
+
+        let mut kf_tile_buf = vec![0u8; 4 * 1024];
+        let kf_tile_len = {
+            let mut bw = BoolWriter::start_encode(&mut kf_tile_buf);
+            write_tile_intra_keyframe(
+                &mut bw, &kf_mi_grid, mi_rows, mi_cols, tile_bounds, &kf_post_fc,
+            )
+            .expect("write_tile_intra_keyframe");
+            bw.stop_encode().expect("stop_encode kf tile")
+        };
+        kf_tile_buf.truncate(kf_tile_len);
+
+        let kf_tail = make_tail(kf_compressed_len);
+        let kf_hdr = UncompressedHeader {
+            kind: FrameKind::KeyFrame,
+            profile: Profile::Profile0,
+            show_frame: true,
+            error_resilient: false,
+            bit_depth: BitDepth::Eight,
+            color_space: ColorSpace::Bt601,
+            color_range: ColorRange::Studio,
+            chroma: ChromaFormat::Yuv420,
+            width: 64,
+            height: 64,
+            render_size: None,
+            tail: Some(kf_tail),
+        };
+
+        let mut kf_hdr_buf = vec![0u8; 256];
+        let kf_hdr_len = {
+            let mut wb = RawBitWriter::new(&mut kf_hdr_buf);
+            write_uncompressed_header(&mut wb, &kf_hdr, kf_compressed_len as u16)
+                .expect("write_uncompressed_header kf");
+            wb.finish().expect("RawBitWriter::finish kf")
+        };
+        kf_hdr_buf.truncate(kf_hdr_len);
+
+        let mut kf_packet = Vec::new();
+        kf_packet.extend_from_slice(&kf_hdr_buf);
+        kf_packet.extend_from_slice(&kf_compressed_buf);
+        kf_packet.extend_from_slice(&kf_tile_buf);
+
+        let mut dec = Decoder::new();
+        let kf_parsed = {
+            let frames = dec.parse_packet(&kf_packet).expect("parse_packet kf");
+            let pf = &frames.frames()[0];
+            ParsedFrame {
+                header: pf.header.clone(),
+                header_end_byte: pf.header_end_byte,
+                full_frame_data: pf.full_frame_data,
+            }
+        };
+        dec.decode_frame(&kf_parsed).expect("decode_frame kf");
+
+        // ---- Frame 2: inter, skip=false, OnePerYThenZero coefs ----
+        let inter_cell = ModeInfo {
+            block_size: BlockSize::Block64x64,
+            tx_size: TxSize::Tx32x32,
+            skip: false,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Inter {
+                mode: InterMode::ZeroMv,
+                ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                mvs: [Mv::ZERO; 2],
+                interp_filter: InterpFilter::EightTap,
+            },
+            bmi: Default::default(),
+        };
+        let inter_mi_grid: Vec<Option<ModeInfo>> =
+            vec![Some(inter_cell); (mi_rows * mi_cols) as usize];
+
+        let inter_post_fc = dec.frame_context(0).clone();
+        let mut inter_pre_fc = inter_post_fc.clone();
+
+        let inter_opts = CompressedHeaderOptions {
+            lossless: false,
+            intra_only: false,
+            interp_filter: InterpFilter::EightTap,
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+        let inter_target = CompressedHeaderResult {
+            tx_mode: TxMode::AllowTx32x32,
+            reference_mode: ReferenceMode::Single,
+        };
+
+        let mut inter_compressed_buf = vec![0u8; 16 * 1024];
+        let inter_compressed_len = {
+            let mut bw = BoolWriter::start_encode(&mut inter_compressed_buf);
+            write_compressed_header(
+                &mut bw,
+                &mut inter_pre_fc,
+                &inter_post_fc,
+                inter_opts,
+                &inter_target,
+            )
+            .expect("write_compressed_header inter");
+            bw.stop_encode().expect("stop_encode inter compressed")
+        };
+        inter_compressed_buf.truncate(inter_compressed_len);
+
+        let sign_bias = sign_bias_from_header(&[false, false, false]);
+        let (comp_fixed_ref, comp_var_ref) = setup_compound_reference_mode(&sign_bias);
+        let inter_params = InterModeReadParams {
+            allow_high_precision_mv: false,
+            interp_filter: InterpFilter::EightTap,
+            reference_mode: ReferenceMode::Single,
+            comp_fixed_ref,
+            comp_var_ref,
+            sign_bias,
+        };
+
+        let mut inter_tile_buf = vec![0u8; 4 * 1024];
+        let inter_tile_len = {
+            let mut bw = BoolWriter::start_encode(&mut inter_tile_buf);
+            let mut coef_ctx =
+                TileCoefCtx::new((tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1));
+            let coef_source = OnePerYThenZero::new();
+            write_tile_inter(
+                &mut bw,
+                &inter_post_fc,
+                &inter_params,
+                TxMode::AllowTx32x32,
+                &inter_mi_grid,
+                mi_rows,
+                mi_cols,
+                tile_bounds,
+                None,
+                &mut coef_ctx,
+                &coef_source,
+            )
+            .expect("write_tile_inter");
+            bw.stop_encode().expect("stop_encode inter tile")
+        };
+        inter_tile_buf.truncate(inter_tile_len);
+
+        let inter_tail = make_tail(inter_compressed_len);
+        let inter_hdr = UncompressedHeader {
+            kind: FrameKind::InterFrame {
+                reset_frame_context: 0,
+                refresh_frame_flags: 0x00,
+                ref_frame_indices: [0, 0, 0],
+                ref_frame_sign_biases: [false, false, false],
+                allow_high_precision_mv: false,
+                interp_filter: InterpFilter::EightTap,
+            },
+            profile: Profile::Profile0,
+            show_frame: true,
+            error_resilient: false,
+            bit_depth: BitDepth::Eight,
+            color_space: ColorSpace::Bt601,
+            color_range: ColorRange::Studio,
+            chroma: ChromaFormat::Yuv420,
+            width: 64,
+            height: 64,
+            render_size: None,
+            tail: Some(inter_tail),
+        };
+
+        let mut inter_hdr_buf = vec![0u8; 256];
+        let inter_hdr_len = {
+            let mut wb = RawBitWriter::new(&mut inter_hdr_buf);
+            write_uncompressed_header(&mut wb, &inter_hdr, inter_compressed_len as u16)
+                .expect("write_uncompressed_header inter");
+            wb.finish().expect("RawBitWriter::finish inter")
+        };
+        inter_hdr_buf.truncate(inter_hdr_len);
+
+        let mut inter_packet = Vec::new();
+        inter_packet.extend_from_slice(&inter_hdr_buf);
+        inter_packet.extend_from_slice(&inter_compressed_buf);
+        inter_packet.extend_from_slice(&inter_tile_buf);
+
+        let inter_parsed = {
+            let frames = dec
+                .parse_packet(&inter_packet)
+                .expect("parse_packet inter non-skip non-zero coefs");
+            let pf = &frames.frames()[0];
+            ParsedFrame {
+                header: pf.header.clone(),
+                header_end_byte: pf.header_end_byte,
+                full_frame_data: pf.full_frame_data,
+            }
+        };
+
+        // **The critical assertion** — decode must succeed even though
+        // skip=false + non-zero Y coefs drive the real decoder's
+        // coef-decode + dequant + idct32x32_add pipeline for every
+        // Y TX block.
+        dec.decode_frame(&inter_parsed)
+            .expect("decode_frame must accept skip=false inter with non-zero Y coefs");
+
+        // mi_grid recovery: every cell came back as skip=false inter
+        // (same shape as S4.16k).
+        let got_grid = dec.last_frame_mi_grid();
+        for (i, cell_got) in got_grid.iter().enumerate() {
+            let mi_row = i / (mi_cols as usize);
+            let mi_col = i % (mi_cols as usize);
+            let cell = cell_got
+                .expect("every cell of the 64×64 SB must be populated");
+            assert_eq!(cell.block_size, BlockSize::Block64x64);
+            assert!(
+                !cell.skip,
+                "skip flag must round-trip as FALSE @ ({mi_row}, {mi_col})"
+            );
+            match cell.mode {
+                BlockMode::Inter { mode, .. } => assert_eq!(mode, InterMode::ZeroMv),
+                BlockMode::Intra { .. } => panic!("intra @ ({mi_row}, {mi_col})"),
+            }
+        }
+    }
 }
