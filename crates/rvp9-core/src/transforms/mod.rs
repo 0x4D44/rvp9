@@ -19,10 +19,12 @@
 //! from this module.
 
 pub mod constants;
+pub mod forward;
 pub mod inverse;
 pub mod scans;
 pub mod types;
 
+pub use forward::{fadst4, fdct4, fdct4x4, fht4x4};
 pub use inverse::{
     iadst4, iadst8, iadst16, idct4, idct4x4_1_add, idct4x4_16_add, idct8, idct8x8_1_add,
     idct8x8_64_add, idct16, idct16x16_1_add, idct16x16_256_add, idct32, idct32x32_1_add,
