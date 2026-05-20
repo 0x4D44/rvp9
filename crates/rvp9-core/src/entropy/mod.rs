@@ -49,7 +49,7 @@ pub use detokenize::{
     CoefBandCtxProbs, CoefCountsBlock, DecodeCoefCounts, EOB_MODEL_TOKEN, EobBranchCountsBlock,
     ONE_TOKEN, TWO_TOKEN, VP9_CAT1_PROB, VP9_CAT2_PROB, VP9_CAT3_PROB, VP9_CAT4_PROB, VP9_CAT5_PROB,
     VP9_CAT6_PROB, VP9_COEFBAND_TRANS_4X4, VP9_COEFBAND_TRANS_8X8PLUS, ZERO_TOKEN, decode_coefs,
-    encode_coefs,
+    encode_coefs, write_block_tokens,
 };
 pub use diff_update::{DIFF_UPDATE_PROB, diff_update_prob, inv_remap_prob};
 pub use prob_diff_writer::{cond_prob_diff_update, remap_prob, write_prob_diff_update};

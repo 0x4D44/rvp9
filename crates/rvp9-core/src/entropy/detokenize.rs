@@ -43,9 +43,11 @@
 use super::BoolReader;
 use super::BoolWriter;
 use super::coef_probs::{COEF_BANDS, COEFF_CONTEXTS, UNCONSTRAINED_NODES};
+use super::frame_context::FrameContext;
 use super::pareto::VP9_PARETO8_FULL;
-use crate::transforms::scans::ScanOrder;
-use crate::transforms::types::{MAX_NEIGHBORS, TxSize};
+use crate::coef_ctx::{TileCoefCtx, combine_entropy_contexts};
+use crate::transforms::scans::{ScanOrder, scan_for};
+use crate::transforms::types::{MAX_NEIGHBORS, TxSize, TxType};
 
 /// `vp9_coefband_trans_4x4` (`vp9_entropy.c:91-93`). Maps the 16 scan
 /// positions in a 4×4 transform block to their coefficient band
@@ -956,6 +958,108 @@ pub fn encode_coefs(
         let prob = &coef_probs[band][ctx];
         bw.write(0, prob[EOB_CONTEXT_NODE]);
     }
+}
+
+/// Encode one transform block's coefficients with full per-TX-block
+/// neighbour-context setup — the encoder-side mirror of
+/// `vp9_decode_block_tokens` (`vp9/decoder/vp9_detokenize.c:275-333`).
+///
+/// This is the wrapper layer on top of [`encode_coefs`]: it slices
+/// `fc.coef_probs[tx_size][plane_type][ref_type]` to the per-`(tx,
+/// plane, ref)` table, looks up the scan order, OR-folds the spanned
+/// above-row + left-column [`TileCoefCtx`] cells to derive
+/// `initial_pt`, calls [`encode_coefs`], and writes the resulting
+/// `(eob > 0)` flag back into the covered sub-block region. After
+/// this call, the decoder-side `vp9_decode_block_tokens` will recover
+/// the same coefficients verbatim (modulo the identity-dequant trick
+/// the round-trip tests use to invert the dequant multiply).
+///
+/// # Parameters
+///
+/// - `bw`: bool-coder positioned where this block's tokens should
+///   land; advances by however many bits the block encode emits.
+/// - `fc`: per-frame probability bank — we slice
+///   `fc.coef_probs[tx_size][plane_type][ref_type]` for the per-`(tx,
+///   plane_type, ref)` table.
+/// - `coef_ctx`: per-tile coefficient-context state — read for the
+///   initial `pt`, written for the post-encode `(eob > 0)` flag.
+/// - `plane`: `0` / `1` / `2` for Y / U / V. `plane > 0` ⇒ chroma
+///   plane-type (libvpx `get_plane_type` at `vp9_blockd.h:210-212`).
+/// - `x4`: top-left 4×4 column of the transform block within the
+///   tile, in plane-relative 4×4-sub-block units.
+/// - `y4_in_sb`: top-left 4×4 row of the transform block within the
+///   current SB row, in plane-relative 4×4-sub-block units.
+/// - `tx_size`: transform size (`Tx4x4` / `Tx8x8` / `Tx16x16` /
+///   `Tx32x32`).
+/// - `tx_type`: transform type (DCT/ADST permutation). Selects the
+///   non-default scan tables for `Tx4x4` / `Tx8x8` / `Tx16x16` Y
+///   intra; chroma always uses `DctDct`.
+/// - `ref_type`: `0` = intra, `1` = inter. Selects between
+///   `coef_probs[..][0]` and `coef_probs[..][1]`.
+/// - `seg_eob`: per-segment EOB cap; typically `tx_size.n_coeffs()`.
+/// - `raw_coefs`: raster-order quantized coefficient indices. Length
+///   must be `>= tx_size.n_coeffs()`.
+/// - `eob`: number of scan positions to encode (`0..=seg_eob`).
+///
+/// # Panics
+///
+/// Inherits [`encode_coefs`]'s assertions: `seg_eob > tx_size.n_coeffs()`,
+/// `eob > seg_eob`, or `raw_coefs.len() < tx_size.n_coeffs()` trip.
+#[allow(clippy::too_many_arguments)] // mirrors decode_block_tokens 1:1
+pub fn write_block_tokens(
+    bw: &mut BoolWriter<'_>,
+    fc: &FrameContext,
+    coef_ctx: &mut TileCoefCtx,
+    plane: usize,
+    x4: usize,
+    y4_in_sb: usize,
+    tx_size: TxSize,
+    tx_type: TxType,
+    ref_type: usize,
+    seg_eob: usize,
+    raw_coefs: &[i32],
+    eob: usize,
+) {
+    // libvpx `get_plane_type`: Y → 0, UV → 1
+    // (`vp9_blockd.h:210-212`).
+    let plane_type = usize::from(plane > 0);
+
+    // libvpx `cm->fc->coef_probs[tx_size][plane_type][ref_type]`
+    // (`vp9_detokenize.c:159-161`).
+    let coef_probs: &CoefBandCtxProbs =
+        &fc.coef_probs[tx_size as usize][plane_type][ref_type];
+
+    // libvpx `vp9_scan_orders[tx_size][tx_type]`
+    // (`vp9_decodeframe.c:326-328`).
+    let scan: ScanOrder = scan_for(tx_size, tx_type);
+
+    // OR-fold the above-row + left-column slices spanned by this TX
+    // block to compute the initial token-tree context. libvpx packs
+    // these as `uintN_t` and uses `!!*` to collapse to 0/1; we walk
+    // cells. Mirrors the decoder-side `fold_any_nonzero` helper in
+    // `rvp9_decoder::detokenize`.
+    let n = 1usize << (tx_size as usize); // 1 / 2 / 4 / 8
+    let mut a_any: u8 = 0;
+    for i in 0..n {
+        if coef_ctx.above_coef(plane, x4 + i) != 0 {
+            a_any = 1;
+            break;
+        }
+    }
+    let mut l_any: u8 = 0;
+    for i in 0..n {
+        if coef_ctx.left_coef(plane, y4_in_sb + i) != 0 {
+            l_any = 1;
+            break;
+        }
+    }
+    let initial_pt = combine_entropy_contexts(a_any, l_any);
+
+    encode_coefs(bw, coef_probs, &scan, initial_pt, tx_size, seg_eob, raw_coefs, eob);
+
+    // Writeback: splat `(eob > 0)` across the (n × n) sub-block
+    // region. libvpx `vp9_detokenize.c:294/302/311/323`.
+    coef_ctx.set_coef_flags(plane, x4, y4_in_sb, n, n, eob > 0);
 }
 
 #[cfg(test)]
@@ -2421,5 +2525,478 @@ mod tests {
             let bytes = enc_block(&probs, &scan, 0, tx_size, n, &raw, 6);
             assert_round_trip(&bytes, &probs, &scan, 0, tx_size, n, &raw, 6);
         }
+    }
+
+    // ===================================================================
+    // `write_block_tokens` round-trip tests (S4.16g phase 2).
+    //
+    // The decoder-side mirror (`vp9_decode_block_tokens`) lives in the
+    // `rvp9-decoder` crate, which we cannot depend on from here without
+    // creating a cycle. Each test therefore (a) drives `write_block_tokens`
+    // through a fresh `TileCoefCtx`, then (b) replicates the same per-TX
+    // setup (`fc.coef_probs[..]` slice, `scan_for`, OR-fold) over a
+    // SEPARATE decoder-side `TileCoefCtx` and feeds the result into
+    // `decode_coefs`. This mirrors what `vp9_decode_block_tokens` does
+    // verbatim and pins the encode/decode contract on the OR-fold and
+    // writeback steps.
+    //
+    // Dequant: identity-dequant trick — `(1, 1)` for Tx{4,8,16}, `(2, 2)`
+    // for Tx32x32 (the `>> dq_shift=1` cancels the `* 2`), so the
+    // recovered `dq_coefs_out` slot equals the raw input value.
+    // ===================================================================
+
+    use crate::coef_ctx::TileCoefCtx;
+    use crate::transforms::types::TxType;
+
+    /// Identity-dequant pair for `tx_size`.
+    fn identity_dq(tx_size: TxSize) -> (i32, i32) {
+        if matches!(tx_size, TxSize::Tx32x32) {
+            (2, 2)
+        } else {
+            (1, 1)
+        }
+    }
+
+    /// OR-fold `n` cells of an above-row or left-column slice — the
+    /// decoder-side mirror of the inlined OR-fold inside
+    /// `write_block_tokens`. Cell-by-cell because `TileCoefCtx` stores
+    /// one `u8` per 4×4 sub-block (rather than the packed `uintN_t`
+    /// libvpx uses).
+    fn fold_any_nonzero(
+        coef_ctx: &TileCoefCtx,
+        plane: usize,
+        start: usize,
+        n: usize,
+        above: bool,
+    ) -> u8 {
+        for i in 0..n {
+            let v = if above {
+                coef_ctx.above_coef(plane, start + i)
+            } else {
+                coef_ctx.left_coef(plane, start + i)
+            };
+            if v != 0 {
+                return 1;
+            }
+        }
+        0
+    }
+
+    /// End-to-end round-trip helper:
+    /// 1. Run `write_block_tokens` over a fresh `TileCoefCtx`.
+    /// 2. Re-derive `initial_pt` from a FRESH decoder-side `TileCoefCtx`
+    ///    that has been seeded with the SAME pre-encode state.
+    /// 3. Feed the bytes into `decode_coefs` and assert `(eob, dq_coefs)`
+    ///    match the input.
+    /// 4. Return the (post-encode) encoder-side `TileCoefCtx` for any
+    ///    caller-side writeback assertions.
+    ///
+    /// `seed_enc_ctx` runs before encode on the encoder-side coef-ctx
+    /// (typically `|_| {}` for fresh-context tests). The decoder-side
+    /// coef-ctx receives the same seeding so the OR-fold matches.
+    #[allow(clippy::too_many_arguments)] // mirror of write_block_tokens
+    fn round_trip_block_tokens<F: Fn(&mut TileCoefCtx)>(
+        plane: usize,
+        x4: usize,
+        y4_in_sb: usize,
+        tx_size: TxSize,
+        tx_type: TxType,
+        ref_type: usize,
+        seg_eob: usize,
+        raw_coefs: &[i32],
+        eob: usize,
+        seed_enc_ctx: F,
+    ) -> TileCoefCtx {
+        let fc = FrameContext::new_default();
+        let n = tx_size.n_coeffs();
+        assert!(raw_coefs.len() >= n);
+
+        // tile_mi_cols=8 gives Y above_coef width=16, UV width=8.
+        // Sufficient for every case below (max Tx32x32 at origin needs
+        // 8 cells, which fits even on UV).
+        let mut enc_ctx = TileCoefCtx::new(8);
+        seed_enc_ctx(&mut enc_ctx);
+        let mut dec_ctx = TileCoefCtx::new(8);
+        seed_enc_ctx(&mut dec_ctx);
+
+        // Encode side: 8 bytes-per-coef + slack handles the worst case
+        // (every coef CAT6 + 14 ext bits ≈ 32 bits ⇒ 4 bytes; 8B per
+        // coef leaves room).
+        let mut buf = vec![0u8; n * 8 + 256];
+        let written = {
+            let mut bw = BoolWriter::start_encode(&mut buf);
+            write_block_tokens(
+                &mut bw,
+                &fc,
+                &mut enc_ctx,
+                plane,
+                x4,
+                y4_in_sb,
+                tx_size,
+                tx_type,
+                ref_type,
+                seg_eob,
+                raw_coefs,
+                eob,
+            );
+            // Pad with trailing zero bits so the reader can fill its
+            // register without overshoot (matches `enc_block` helper).
+            for _ in 0..32 {
+                bw.write_bit(0);
+            }
+            bw.stop_encode().unwrap()
+        };
+        buf.truncate(written);
+
+        // Decode side: replicate the per-TX-block setup
+        // `decode_block_tokens` performs before its `decode_coefs` call.
+        let plane_type = usize::from(plane > 0);
+        let coef_probs: &CoefBandCtxProbs =
+            &fc.coef_probs[tx_size as usize][plane_type][ref_type];
+        let scan = scan_for(tx_size, tx_type);
+        let n_span = 1usize << (tx_size as usize);
+        let a_any = fold_any_nonzero(&dec_ctx, plane, x4, n_span, true);
+        let l_any = fold_any_nonzero(&dec_ctx, plane, y4_in_sb, n_span, false);
+        let initial_pt = combine_entropy_contexts(a_any, l_any);
+
+        let mut r = BoolReader::new(&buf).unwrap();
+        let mut dq_out = vec![0i32; n];
+        let dq = identity_dq(tx_size);
+        let recovered_eob = decode_coefs(
+            &mut r, coef_probs, None, &scan, initial_pt, tx_size, seg_eob, dq,
+            &mut dq_out,
+        );
+
+        assert_eq!(recovered_eob, eob, "eob mismatch (plane={plane}, x4={x4}, y4_in_sb={y4_in_sb})");
+        assert_eq!(&dq_out[..], &raw_coefs[..n], "coef mismatch");
+
+        // Mirror the writeback into dec_ctx so the caller can compare
+        // the post-encode + post-decode states (they must agree).
+        dec_ctx.set_coef_flags(plane, x4, y4_in_sb, n_span, n_span, recovered_eob > 0);
+        for plane_idx in 0..3 {
+            for x in 0..enc_ctx.above_coef_width(plane_idx) {
+                assert_eq!(
+                    enc_ctx.above_coef(plane_idx, x),
+                    dec_ctx.above_coef(plane_idx, x),
+                    "above[{plane_idx}][{x}] enc/dec mismatch"
+                );
+            }
+            for y in 0..enc_ctx.left_coef_height(plane_idx) {
+                assert_eq!(
+                    enc_ctx.left_coef(plane_idx, y),
+                    dec_ctx.left_coef(plane_idx, y),
+                    "left[{plane_idx}][{y}] enc/dec mismatch"
+                );
+            }
+        }
+
+        enc_ctx
+    }
+
+    /// Y intra Tx4x4 DctDct, all-zero coefs (eob=0). Trivial proof-of-
+    /// life — emits a single EOB-at-pos-0 bit, decodes to eob=0, leaves
+    /// the writeback region cleared.
+    #[test]
+    fn write_block_tokens_y_intra_tx4x4_empty() {
+        let raw = vec![0i32; 16];
+        let ctx = round_trip_block_tokens(
+            0, 0, 0,
+            TxSize::Tx4x4,
+            TxType::DctDct,
+            0, // intra
+            16,
+            &raw,
+            0,
+            |_| {},
+        );
+        // eob == 0 ⇒ writeback splatted zero. All cells remain 0.
+        assert_eq!(ctx.above_coef(0, 0), 0);
+        assert_eq!(ctx.left_coef(0, 0), 0);
+    }
+
+    /// Y intra Tx4x4 DctDct, 3 non-zero coefs of mixed magnitude /
+    /// sign. Round-trip oracle covers the value-tree + sign-bit paths
+    /// at three different scan positions.
+    #[test]
+    fn write_block_tokens_y_intra_tx4x4_three_nonzero() {
+        let scan = scan_for(TxSize::Tx4x4, TxType::DctDct);
+        let mut raw = vec![0i32; 16];
+        raw[scan.scan[0] as usize] = 1;   // ONE_TOKEN, positive
+        raw[scan.scan[1] as usize] = -2;  // TWO_TOKEN, negative
+        raw[scan.scan[2] as usize] = 7;   // CAT2 (7..=10), positive
+        let ctx = round_trip_block_tokens(
+            0, 0, 0,
+            TxSize::Tx4x4,
+            TxType::DctDct,
+            0,
+            16,
+            &raw,
+            3,
+            |_| {},
+        );
+        // Writeback: above[0] and left[0] flipped to 1 (Tx4x4 spans 1×1).
+        assert_eq!(ctx.above_coef(0, 0), 1);
+        assert_eq!(ctx.left_coef(0, 0), 1);
+    }
+
+    /// Y inter Tx8x8 DctDct, eob=10. Tx8x8 spans 2×2 sub-blocks ⇒
+    /// writeback splats above[0..2] = left[0..2] = 1. ref_type=1
+    /// selects the inter coef-prob bank.
+    #[test]
+    fn write_block_tokens_y_inter_tx8x8_eob10() {
+        let scan = scan_for(TxSize::Tx8x8, TxType::DctDct);
+        let mut raw = vec![0i32; 64];
+        // Fill scan[0..10] with small non-zero values.
+        for c in 0..10 {
+            let v = if c % 2 == 0 { 1 + (c as i32) } else { -(1 + c as i32) };
+            raw[scan.scan[c] as usize] = v;
+        }
+        let ctx = round_trip_block_tokens(
+            0, 0, 0,
+            TxSize::Tx8x8,
+            TxType::DctDct,
+            1, // inter
+            64,
+            &raw,
+            10,
+            |_| {},
+        );
+        for i in 0..2 {
+            assert_eq!(ctx.above_coef(0, i), 1, "Y above[{i}] splat");
+            assert_eq!(ctx.left_coef(0, i), 1, "Y left[{i}] splat");
+        }
+    }
+
+    /// UV inter Tx16x16, eob=20. Plane=1 (U) selects plane_type=1 in
+    /// the coef_probs index. Tx16x16 spans 4×4 ⇒ writeback splats
+    /// above[0..4] = left[0..4] = 1 on the U plane only.
+    #[test]
+    fn write_block_tokens_uv_inter_tx16x16_eob20() {
+        let scan = scan_for(TxSize::Tx16x16, TxType::DctDct);
+        let mut raw = vec![0i32; 256];
+        for c in 0..20 {
+            let v: i32 = match c % 5 {
+                0 => 1,
+                1 => -1,
+                2 => 5,    // CAT1 (5..=6)
+                3 => -11,  // CAT3 (11..=18)
+                _ => 3,
+            };
+            raw[scan.scan[c] as usize] = v;
+        }
+        let ctx = round_trip_block_tokens(
+            1, 0, 0,
+            TxSize::Tx16x16,
+            TxType::DctDct,
+            1,
+            256,
+            &raw,
+            20,
+            |_| {},
+        );
+        // U-plane writeback: 4×4 region (above[0..4], left[0..4]).
+        for i in 0..4 {
+            assert_eq!(ctx.above_coef(1, i), 1, "U above[{i}] splat");
+            assert_eq!(ctx.left_coef(1, i), 1, "U left[{i}] splat");
+        }
+        // Y and V untouched.
+        for plane in [0usize, 2] {
+            for x in 0..ctx.above_coef_width(plane) {
+                assert_eq!(ctx.above_coef(plane, x), 0, "plane {plane} above[{x}]");
+            }
+            for y in 0..ctx.left_coef_height(plane) {
+                assert_eq!(ctx.left_coef(plane, y), 0, "plane {plane} left[{y}]");
+            }
+        }
+    }
+
+    /// Y intra Tx32x32, eob=64 (well under n_coeffs=1024). Largest TX
+    /// size — exercises the `dq_shift=1` identity-dequant path
+    /// (dq=(2,2) ⇒ `(val * 2) >> 1 == val`).
+    #[test]
+    fn write_block_tokens_y_intra_tx32x32_eob64() {
+        let scan = scan_for(TxSize::Tx32x32, TxType::DctDct);
+        let mut raw = vec![0i32; 1024];
+        for c in 0..64 {
+            // Mix: ONE, TWO, CAT1, occasional zero (to hit zero-run
+            // path inside the value-tree loop).
+            let v: i32 = match c % 7 {
+                0 | 4 => 0, // zero within run
+                1 => 1,
+                2 => -2,
+                3 => 5,    // CAT1
+                5 => 3,
+                _ => -1,
+            };
+            raw[scan.scan[c] as usize] = v;
+        }
+        // Effective eob = last-non-zero scan position + 1; if scan[63]
+        // landed on a zero slot, scan back. For our mod-7 pattern
+        // c=63 → 63 % 7 = 0 ⇒ zero. Force a non-zero at scan[63] so
+        // eob=64 is well-defined.
+        raw[scan.scan[63] as usize] = 1;
+
+        let ctx = round_trip_block_tokens(
+            0, 0, 0,
+            TxSize::Tx32x32,
+            TxType::DctDct,
+            0,
+            1024,
+            &raw,
+            64,
+            |_| {},
+        );
+        // 8×8 writeback splat across above and left.
+        for i in 0..8 {
+            assert_eq!(ctx.above_coef(0, i), 1, "above[{i}] splat");
+            assert_eq!(ctx.left_coef(0, i), 1, "left[{i}] splat");
+        }
+    }
+
+    /// Above/left context propagation: write block A at (x4=0,y4=0)
+    /// with eob>0, then write block B at (x4=1,y4=0). B's encode must
+    /// observe above[0]=1 / left[0]=1 (well, left[0]=1 since the
+    /// previous block sits to the left) and pick the corresponding
+    /// `initial_pt`. The round-trip helper re-derives the same
+    /// `initial_pt` on the decode side from the matching seed
+    /// state. If propagation works, the bytes round-trip cleanly.
+    #[test]
+    fn write_block_tokens_above_left_propagation() {
+        let fc = FrameContext::new_default();
+        let scan = scan_for(TxSize::Tx4x4, TxType::DctDct);
+        let mut raw_a = vec![0i32; 16];
+        raw_a[scan.scan[0] as usize] = 1; // ONE_TOKEN, positive
+        let eob_a = 1;
+
+        let mut raw_b = vec![0i32; 16];
+        raw_b[scan.scan[0] as usize] = -3; // THREE_TOKEN, negative
+        let eob_b = 1;
+
+        // Encode both blocks into a SHARED enc_ctx + buffer.
+        let mut enc_ctx = TileCoefCtx::new(8);
+        let mut buf = vec![0u8; 1024];
+        let written = {
+            let mut bw = BoolWriter::start_encode(&mut buf);
+            write_block_tokens(
+                &mut bw, &fc, &mut enc_ctx, 0, 0, 0,
+                TxSize::Tx4x4, TxType::DctDct, 0, 16, &raw_a, eob_a,
+            );
+            write_block_tokens(
+                &mut bw, &fc, &mut enc_ctx, 0, 1, 0,
+                TxSize::Tx4x4, TxType::DctDct, 0, 16, &raw_b, eob_b,
+            );
+            for _ in 0..32 {
+                bw.write_bit(0);
+            }
+            bw.stop_encode().unwrap()
+        };
+        buf.truncate(written);
+
+        // After A: above[0] = left[0] = 1. After B (eob>0): above[1] =
+        // left[0] = 1.
+        assert_eq!(enc_ctx.above_coef(0, 0), 1, "post-AB above[0]");
+        assert_eq!(enc_ctx.above_coef(0, 1), 1, "post-AB above[1]");
+        assert_eq!(enc_ctx.left_coef(0, 0), 1, "post-AB left[0]");
+
+        // Decode side: replicate the per-block setup. Mirror the
+        // `write_block_tokens` ctx evolution as we decode.
+        let mut r = BoolReader::new(&buf).unwrap();
+        let mut dec_ctx = TileCoefCtx::new(8);
+
+        // Block A at (0, 0).
+        let coef_probs = &fc.coef_probs[TxSize::Tx4x4 as usize][0][0];
+        let a_any = fold_any_nonzero(&dec_ctx, 0, 0, 1, true);
+        let l_any = fold_any_nonzero(&dec_ctx, 0, 0, 1, false);
+        let initial_pt_a = combine_entropy_contexts(a_any, l_any);
+        assert_eq!(initial_pt_a, 0, "A at origin: pt=0");
+        let mut dq_out_a = vec![0i32; 16];
+        let recovered_eob_a = decode_coefs(
+            &mut r, coef_probs, None, &scan, initial_pt_a,
+            TxSize::Tx4x4, 16, (1, 1), &mut dq_out_a,
+        );
+        assert_eq!(recovered_eob_a, eob_a);
+        assert_eq!(dq_out_a, raw_a);
+        dec_ctx.set_coef_flags(0, 0, 0, 1, 1, recovered_eob_a > 0);
+
+        // Block B at (1, 0). At this point dec_ctx.above[0]=1, left[0]=1.
+        // B reads above[1] (=0) and left[0] (=1) ⇒ initial_pt = 0 + 1 = 1.
+        let a_any = fold_any_nonzero(&dec_ctx, 0, 1, 1, true);
+        let l_any = fold_any_nonzero(&dec_ctx, 0, 0, 1, false);
+        let initial_pt_b = combine_entropy_contexts(a_any, l_any);
+        assert_eq!(initial_pt_b, 1, "B right of A: pt = 0 + 1 = 1");
+        let mut dq_out_b = vec![0i32; 16];
+        let recovered_eob_b = decode_coefs(
+            &mut r, coef_probs, None, &scan, initial_pt_b,
+            TxSize::Tx4x4, 16, (1, 1), &mut dq_out_b,
+        );
+        assert_eq!(recovered_eob_b, eob_b);
+        assert_eq!(dq_out_b, raw_b);
+        dec_ctx.set_coef_flags(0, 1, 0, 1, 1, recovered_eob_b > 0);
+
+        // Encoder / decoder ctxs end in the same state.
+        for plane in 0..3 {
+            for x in 0..enc_ctx.above_coef_width(plane) {
+                assert_eq!(
+                    enc_ctx.above_coef(plane, x),
+                    dec_ctx.above_coef(plane, x),
+                );
+            }
+            for y in 0..enc_ctx.left_coef_height(plane) {
+                assert_eq!(
+                    enc_ctx.left_coef(plane, y),
+                    dec_ctx.left_coef(plane, y),
+                );
+            }
+        }
+    }
+
+    /// `seg_eob < n_coeffs`: shorten the per-segment EOB cap to 5 for
+    /// a Tx4x4 block (whose n_coeffs is 16). Encode 3 non-zero coefs.
+    /// Decoder side must use the same seg_eob to bound its scan walk.
+    #[test]
+    fn write_block_tokens_seg_eob_shortened() {
+        let scan = scan_for(TxSize::Tx4x4, TxType::DctDct);
+        let mut raw = vec![0i32; 16];
+        raw[scan.scan[0] as usize] = 1;
+        raw[scan.scan[1] as usize] = -2;
+        raw[scan.scan[2] as usize] = 3;
+        // seg_eob=5 (< n_coeffs=16), eob=3.
+        round_trip_block_tokens(
+            0, 0, 0,
+            TxSize::Tx4x4,
+            TxType::DctDct,
+            0,
+            5,
+            &raw,
+            3,
+            |_| {},
+        );
+    }
+
+    /// Pre-seeded above/left context: seed both neighbours non-zero
+    /// before encoding so initial_pt = 2. Round-trips via the helper,
+    /// which re-derives the same initial_pt on decode side from the
+    /// same seed.
+    #[test]
+    fn write_block_tokens_initial_pt_two_via_seeded_context() {
+        let scan = scan_for(TxSize::Tx4x4, TxType::DctDct);
+        let mut raw = vec![0i32; 16];
+        raw[scan.scan[0] as usize] = 1;
+        round_trip_block_tokens(
+            0,
+            2, 2, // place the block away from origin so the seed cells aren't overwritten
+            TxSize::Tx4x4,
+            TxType::DctDct,
+            0,
+            16,
+            &raw,
+            1,
+            |ctx| {
+                // Seed Y above[2] = 1 and Y left[2] = 1 — the two cells
+                // the block at (x4=2, y4_in_sb=2) reads for its OR-fold.
+                ctx.set_coef_flags(0, 2, 2, 1, 1, true);
+                // The set above wrote both above[2] and left[2]; perfect.
+            },
+        );
     }
 }
