@@ -254,7 +254,47 @@ impl Encoder {
     pub fn encode_synthetic_two_frame_kf_inter(&self) -> Result<Vec<u8>, EncodeError> {
         let kf_payload =
             self.build_keyframe_payload(/* refresh_frame_context = */ false)?;
-        let inter_payload = self.build_inter_after_default_keyframe_payload()?;
+        let inter_payload =
+            self.build_inter_after_default_keyframe_payload(/* inter_skip = */ true)?;
+
+        let mut sf = SuperframeBuilder::new();
+        sf.push_frame(kf_payload)?;
+        sf.push_frame(inter_payload)?;
+        Ok(sf.finish())
+    }
+
+    /// Encode a synthetic two-frame superframe **with `skip = false`**
+    /// on the inter frame, exercising the encoder's residual-coef
+    /// emission path end-to-end.
+    ///
+    /// Same shape as [`encode_synthetic_two_frame_kf_inter`] (default
+    /// keyframe + single-ref LASTFRAME ZEROMV PARTITION_NONE 64×64
+    /// inter), but the inter cell carries `skip = false` and the
+    /// writer emits per-plane per-TX residual tokens via
+    /// `write_inter_block_residual` (S4.16g phase 3a) →
+    /// `write_block_tokens` (phase 2) → `encode_coefs` (S4.15).
+    /// All coefs are zero (via `AllZeroCoefSource`), so the decoder's
+    /// inverse transform produces zero and the pixel output is
+    /// identical to the skip=true variant — but the entire coef-decode
+    /// pipeline fires through the real `Decoder::decode_frame`
+    /// (validated by S4.16k in the decoder crate's tests).
+    ///
+    /// This API surface gives external callers (tests, fuzzers,
+    /// downstream tools) a way to exercise the encoder's non-skip
+    /// path without driving a full mode-decision loop. Equivalent to
+    /// what the rvp9-decoder's `s4_16k` test does at integration
+    /// scope.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`encode_synthetic_two_frame_kf_inter`].
+    pub fn encode_synthetic_two_frame_kf_inter_non_skip(
+        &self,
+    ) -> Result<Vec<u8>, EncodeError> {
+        let kf_payload =
+            self.build_keyframe_payload(/* refresh_frame_context = */ false)?;
+        let inter_payload =
+            self.build_inter_after_default_keyframe_payload(/* inter_skip = */ false)?;
 
         let mut sf = SuperframeBuilder::new();
         sf.push_frame(kf_payload)?;
@@ -409,12 +449,19 @@ impl Encoder {
 
     /// Build a single inter-frame payload that references the
     /// (default-FC) keyframe emitted by `build_keyframe_payload(false)`.
-    /// Single-ref LASTFRAME, PARTITION_NONE 64×64, ZEROMV, skip=1,
-    /// EightTap. Caller's responsibility to ensure the decoder's
-    /// `frame_contexts[0]` is at default before this packet is
-    /// parsed — that's what the `refresh_frame_context = false`
-    /// keyframe pairing guarantees.
-    fn build_inter_after_default_keyframe_payload(&self) -> Result<Vec<u8>, EncodeError> {
+    /// Single-ref LASTFRAME, PARTITION_NONE 64×64, ZEROMV, EightTap.
+    /// Caller's responsibility to ensure the decoder's
+    /// `frame_contexts[0]` is at default before this packet is parsed
+    /// — that's what the `refresh_frame_context = false` keyframe
+    /// pairing guarantees.
+    ///
+    /// `inter_skip` controls the leaf cell's `skip` flag and gates
+    /// whether the writer emits per-plane per-TX residual tokens
+    /// (`AllZeroCoefSource` is no-op under `inter_skip = true`).
+    fn build_inter_after_default_keyframe_payload(
+        &self,
+        inter_skip: bool,
+    ) -> Result<Vec<u8>, EncodeError> {
         let mi_rows = self.config.height / 8;
         let mi_cols = self.config.width / 8;
 
@@ -424,7 +471,7 @@ impl Encoder {
         let inter_cell = ModeInfo {
             block_size: BlockSize::Block64x64,
             tx_size: TxSize::Tx32x32,
-            skip: true,
+            skip: inter_skip,
             segment_id: 0,
             seg_id_predicted: false,
             mode: BlockMode::Inter {
@@ -792,6 +839,71 @@ mod tests {
             let cell = cell_got.expect("every mi-cell must be populated");
             assert_eq!(cell.block_size, BlockSize::Block64x64);
             assert!(cell.skip);
+            match cell.mode {
+                BlockMode::Inter {
+                    mode,
+                    ref_frames,
+                    interp_filter,
+                    ..
+                } => {
+                    assert_eq!(mode, InterMode::ZeroMv);
+                    assert_eq!(ref_frames, [RefFrame::LastFrame, RefFrame::NoRefFrame]);
+                    assert_eq!(interp_filter, InterpFilter::EightTap);
+                }
+                BlockMode::Intra { .. } => panic!("expected inter mode"),
+            }
+        }
+    }
+
+    /// End-to-end test for the new public `encode_synthetic_two_frame_
+    /// kf_inter_non_skip` API. Decodes through the real `Decoder` and
+    /// asserts every cell of the recovered inter mi_grid comes back as
+    /// `skip = false`. The encoder's residual-coef emission path
+    /// (write_inter_block_residual → write_block_tokens → encode_coefs)
+    /// fires for every plane × every TX block (6 total: 4 Y Tx32x32 +
+    /// 1 U + 1 V).
+    ///
+    /// Public-API counterpart to the rvp9-decoder crate's S4.16k
+    /// integration test (validates the same wire-format capability
+    /// is reachable from the encoder crate's external surface).
+    #[test]
+    fn encode_two_frame_kf_inter_non_skip_decodes_through_real_decoder() {
+        use rvp9_core::block::BlockSize;
+        use rvp9_decoder::{Decoder, ParsedFrame};
+
+        let enc = Encoder::new(Config::new(64, 64, 50)).unwrap();
+        let pkt = enc.encode_synthetic_two_frame_kf_inter_non_skip().unwrap();
+
+        let mut dec = Decoder::new();
+        let parsed = dec
+            .parse_packet(&pkt)
+            .expect("parse_packet must accept the non-skip 2-frame superframe");
+        assert_eq!(parsed.count(), 2);
+        let frames: Vec<ParsedFrame> = parsed
+            .frames()
+            .iter()
+            .map(|pf| ParsedFrame {
+                header: pf.header.clone(),
+                header_end_byte: pf.header_end_byte,
+                full_frame_data: pf.full_frame_data,
+            })
+            .collect();
+        assert_eq!(frames[0].header.kind, FrameKind::KeyFrame);
+        assert!(matches!(frames[1].header.kind, FrameKind::InterFrame { .. }));
+
+        // Decode both frames; the inter frame must decode cleanly with
+        // skip=false driving the coef-decode + IT-add pipeline.
+        dec.decode_frame(&frames[0]).expect("decode kf");
+        dec.decode_frame(&frames[1])
+            .expect("decode_frame must accept non-skip inter with all-zero coefs");
+
+        // Every cell of the 64×64 SB came back as Block64x64 inter
+        // LASTFRAME ZEROMV EightTap with skip=FALSE.
+        let grid = dec.last_frame_mi_grid();
+        for cell_got in grid.iter() {
+            let cell = cell_got.expect("every mi-cell must be populated");
+            assert_eq!(cell.block_size, BlockSize::Block64x64);
+            assert!(!cell.skip, "skip must round-trip as FALSE");
             match cell.mode {
                 BlockMode::Inter {
                     mode,
