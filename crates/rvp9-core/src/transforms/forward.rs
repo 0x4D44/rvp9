@@ -27,9 +27,12 @@
 //! encoder never emits lossless frames.
 
 use super::constants::{
-    COSPI_2_64, COSPI_4_64, COSPI_6_64, COSPI_8_64, COSPI_10_64, COSPI_12_64, COSPI_14_64,
-    COSPI_16_64, COSPI_18_64, COSPI_20_64, COSPI_22_64, COSPI_24_64, COSPI_26_64, COSPI_28_64,
-    COSPI_30_64, SINPI_1_9, SINPI_2_9, SINPI_3_9, SINPI_4_9, dct_const_round_shift, wraplow,
+    COSPI_1_64, COSPI_2_64, COSPI_3_64, COSPI_4_64, COSPI_5_64, COSPI_6_64, COSPI_7_64, COSPI_8_64,
+    COSPI_9_64, COSPI_10_64, COSPI_11_64, COSPI_12_64, COSPI_13_64, COSPI_14_64, COSPI_15_64,
+    COSPI_16_64, COSPI_17_64, COSPI_18_64, COSPI_19_64, COSPI_20_64, COSPI_21_64, COSPI_22_64,
+    COSPI_23_64, COSPI_24_64, COSPI_25_64, COSPI_26_64, COSPI_27_64, COSPI_28_64, COSPI_29_64,
+    COSPI_30_64, COSPI_31_64, SINPI_1_9, SINPI_2_9, SINPI_3_9, SINPI_4_9, dct_const_round_shift,
+    wraplow,
 };
 use super::types::TxType;
 
@@ -565,10 +568,503 @@ pub fn fht8x8(input: &[i16], output: &mut [i32; 64], stride: usize, tx_type: TxT
     }
 }
 
+// ---------------------------------------------------------------------
+// 16×16 forward transform family.
+// ---------------------------------------------------------------------
+
+/// Function pointer for a 1D 16-point forward transform — either
+/// [`fdct16`] or [`fadst16`]. Used by [`fht16x16`] via the FHT_16 table.
+type Fwd1d16 = fn(&[i32; 16], &mut [i32; 16]);
+
+/// 1D 16-point forward DCT. Computes the 8 even-indexed outputs via a
+/// nested `fdct8`-equivalent sub-block on the sum half
+/// (`input[0]+input[15]`, `input[1]+input[14]`, ...) and the 8
+/// odd-indexed outputs via stages 2-6 operating on the difference half
+/// (`input[0]-input[15]`, ..., `input[7]-input[8]`).
+///
+/// Mirrors libvpx `fdct16` (`vp9/encoder/vp9_dct.c:94-233`).
+pub fn fdct16(input: &[i32; 16], output: &mut [i32; 16]) {
+    // step 1: split into sum half (`in_half`) and difference half (`step1`).
+    let in_half: [i64; 8] = [
+        input[0] as i64 + input[15] as i64,
+        input[1] as i64 + input[14] as i64,
+        input[2] as i64 + input[13] as i64,
+        input[3] as i64 + input[12] as i64,
+        input[4] as i64 + input[11] as i64,
+        input[5] as i64 + input[10] as i64,
+        input[6] as i64 + input[9] as i64,
+        input[7] as i64 + input[8] as i64,
+    ];
+    let step1: [i64; 8] = [
+        input[7] as i64 - input[8] as i64,
+        input[6] as i64 - input[9] as i64,
+        input[5] as i64 - input[10] as i64,
+        input[4] as i64 - input[11] as i64,
+        input[3] as i64 - input[12] as i64,
+        input[2] as i64 - input[13] as i64,
+        input[1] as i64 - input[14] as i64,
+        input[0] as i64 - input[15] as i64,
+    ];
+    fdct16_butterfly(&in_half, &step1, output, 0);
+}
+
+/// The fdct16 butterfly body operating on pre-loaded `in_half` (sum-half)
+/// and `step1` (difference-half) and writing 16 values at
+/// `output[base..base+16]`. Factored so [`fdct16x16`] can reuse it on
+/// two passes without duplicating ~130 lines of arithmetic.
+///
+/// Mirrors the body at `vp9/encoder/vp9_dct.c:120-232` and
+/// `vpx_dsp/fwd_txfm.c:245-352`.
+#[inline]
+fn fdct16_butterfly(
+    in_half: &[i64; 8],
+    step1: &[i64; 8],
+    output: &mut [i32],
+    base: usize,
+) {
+    // ---- Even outputs (indices 0, 2, 4, 6, 8, 10, 12, 14): fdct8 sub-block on in_half ----
+    let s0 = in_half[0] + in_half[7];
+    let s1 = in_half[1] + in_half[6];
+    let s2 = in_half[2] + in_half[5];
+    let s3 = in_half[3] + in_half[4];
+    let s4 = in_half[3] - in_half[4];
+    let s5 = in_half[2] - in_half[5];
+    let s6 = in_half[1] - in_half[6];
+    let s7 = in_half[0] - in_half[7];
+
+    // fdct4(step, step) on s0..s3 → out[0], out[4], out[8], out[12].
+    let x0 = s0 + s3;
+    let x1 = s1 + s2;
+    let x2 = s1 - s2;
+    let x3 = s0 - s3;
+    let t0 = (x0 + x1) * COSPI_16_64 as i64;
+    let t1 = (x0 - x1) * COSPI_16_64 as i64;
+    // Note libvpx vp9_dct.c:143-144 uses `x3 * cospi_8 + x2 * cospi_24` for t2
+    // and `x3 * cospi_24 - x2 * cospi_8` for t3 (different from fdct4/fdct8).
+    let t2 = x3 * COSPI_8_64 as i64 + x2 * COSPI_24_64 as i64;
+    let t3 = x3 * COSPI_24_64 as i64 - x2 * COSPI_8_64 as i64;
+    output[base] = wraplow(dct_const_round_shift(t0) as i32);
+    output[base + 4] = wraplow(dct_const_round_shift(t2) as i32);
+    output[base + 8] = wraplow(dct_const_round_shift(t1) as i32);
+    output[base + 12] = wraplow(dct_const_round_shift(t3) as i32);
+
+    // Stage 2 on s5, s6.
+    let t0 = (s6 - s5) * COSPI_16_64 as i64;
+    let t1 = (s6 + s5) * COSPI_16_64 as i64;
+    let t2 = dct_const_round_shift(t0);
+    let t3 = dct_const_round_shift(t1);
+
+    // Stage 3.
+    let x0 = s4 + t2;
+    let x1 = s4 - t2;
+    let x2 = s7 - t3;
+    let x3 = s7 + t3;
+
+    // Stage 4 → out[2], out[6], out[10], out[14].
+    let t0 = x0 * COSPI_28_64 as i64 + x3 * COSPI_4_64 as i64;
+    let t1 = x1 * COSPI_12_64 as i64 + x2 * COSPI_20_64 as i64;
+    let t2 = x2 * COSPI_12_64 as i64 + x1 * -(COSPI_20_64 as i64);
+    let t3 = x3 * COSPI_28_64 as i64 + x0 * -(COSPI_4_64 as i64);
+    output[base + 2] = wraplow(dct_const_round_shift(t0) as i32);
+    output[base + 6] = wraplow(dct_const_round_shift(t2) as i32);
+    output[base + 10] = wraplow(dct_const_round_shift(t1) as i32);
+    output[base + 14] = wraplow(dct_const_round_shift(t3) as i32);
+
+    // ---- Odd outputs (indices 1, 3, 5, 7, 9, 11, 13, 15): steps 2-6 on step1 ----
+    //
+    // step1[] is consumed and rewritten across stages, so we copy into
+    // a mutable local. libvpx reuses the same array names through the
+    // stages; we mirror that with local mut bindings.
+    let step1_0 = step1[0];
+    let step1_1 = step1[1];
+    let step1_2 = step1[2];
+    let step1_3 = step1[3];
+    let step1_4 = step1[4];
+    let step1_5 = step1[5];
+    let step1_6 = step1[6];
+    let step1_7 = step1[7];
+
+    // step 2
+    let temp1 = (step1_5 - step1_2) * COSPI_16_64 as i64;
+    let temp2 = (step1_4 - step1_3) * COSPI_16_64 as i64;
+    let step2_2 = dct_const_round_shift(temp1);
+    let step2_3 = dct_const_round_shift(temp2);
+    let temp1 = (step1_4 + step1_3) * COSPI_16_64 as i64;
+    let temp2 = (step1_5 + step1_2) * COSPI_16_64 as i64;
+    let step2_4 = dct_const_round_shift(temp1);
+    let step2_5 = dct_const_round_shift(temp2);
+
+    // step 3
+    let step3_0 = step1_0 + step2_3;
+    let step3_1 = step1_1 + step2_2;
+    let step3_2 = step1_1 - step2_2;
+    let step3_3 = step1_0 - step2_3;
+    let step3_4 = step1_7 - step2_4;
+    let step3_5 = step1_6 - step2_5;
+    let step3_6 = step1_6 + step2_5;
+    let step3_7 = step1_7 + step2_4;
+
+    // step 4
+    let temp1 = step3_1 * -(COSPI_8_64 as i64) + step3_6 * COSPI_24_64 as i64;
+    let temp2 = step3_2 * COSPI_24_64 as i64 + step3_5 * COSPI_8_64 as i64;
+    let step2_1 = dct_const_round_shift(temp1);
+    let step2_2 = dct_const_round_shift(temp2);
+    let temp1 = step3_2 * COSPI_8_64 as i64 - step3_5 * COSPI_24_64 as i64;
+    let temp2 = step3_1 * COSPI_24_64 as i64 + step3_6 * COSPI_8_64 as i64;
+    let step2_5 = dct_const_round_shift(temp1);
+    let step2_6 = dct_const_round_shift(temp2);
+
+    // step 5
+    let step1_0 = step3_0 + step2_1;
+    let step1_1 = step3_0 - step2_1;
+    let step1_2 = step3_3 + step2_2;
+    let step1_3 = step3_3 - step2_2;
+    let step1_4 = step3_4 - step2_5;
+    let step1_5 = step3_4 + step2_5;
+    let step1_6 = step3_7 - step2_6;
+    let step1_7 = step3_7 + step2_6;
+
+    // step 6 → odd outputs
+    let temp1 = step1_0 * COSPI_30_64 as i64 + step1_7 * COSPI_2_64 as i64;
+    let temp2 = step1_1 * COSPI_14_64 as i64 + step1_6 * COSPI_18_64 as i64;
+    output[base + 1] = wraplow(dct_const_round_shift(temp1) as i32);
+    output[base + 9] = wraplow(dct_const_round_shift(temp2) as i32);
+
+    let temp1 = step1_2 * COSPI_22_64 as i64 + step1_5 * COSPI_10_64 as i64;
+    let temp2 = step1_3 * COSPI_6_64 as i64 + step1_4 * COSPI_26_64 as i64;
+    output[base + 5] = wraplow(dct_const_round_shift(temp1) as i32);
+    output[base + 13] = wraplow(dct_const_round_shift(temp2) as i32);
+
+    let temp1 = step1_3 * -(COSPI_26_64 as i64) + step1_4 * COSPI_6_64 as i64;
+    let temp2 = step1_2 * -(COSPI_10_64 as i64) + step1_5 * COSPI_22_64 as i64;
+    output[base + 3] = wraplow(dct_const_round_shift(temp1) as i32);
+    output[base + 11] = wraplow(dct_const_round_shift(temp2) as i32);
+
+    let temp1 = step1_1 * -(COSPI_18_64 as i64) + step1_6 * COSPI_14_64 as i64;
+    let temp2 = step1_0 * -(COSPI_2_64 as i64) + step1_7 * COSPI_30_64 as i64;
+    output[base + 7] = wraplow(dct_const_round_shift(temp1) as i32);
+    output[base + 15] = wraplow(dct_const_round_shift(temp2) as i32);
+}
+
+/// 1D 16-point forward ADST. Four stages with input permutation
+/// (`x0=input[15]`, `x1=input[0]`, `x2=input[13]`, ..., `x15=input[14]`)
+/// and output permutation with sign flips at indices 1, 3, 13, 15.
+///
+/// Mirrors libvpx `fadst16` (`vp9/encoder/vp9_dct.c:346-507`).
+pub fn fadst16(input: &[i32; 16], output: &mut [i32; 16]) {
+    // Input permutation per libvpx :350-365.
+    let x0 = input[15] as i64;
+    let x1 = input[0] as i64;
+    let x2 = input[13] as i64;
+    let x3 = input[2] as i64;
+    let x4 = input[11] as i64;
+    let x5 = input[4] as i64;
+    let x6 = input[9] as i64;
+    let x7 = input[6] as i64;
+    let x8 = input[7] as i64;
+    let x9 = input[8] as i64;
+    let x10 = input[5] as i64;
+    let x11 = input[10] as i64;
+    let x12 = input[3] as i64;
+    let x13 = input[12] as i64;
+    let x14 = input[1] as i64;
+    let x15 = input[14] as i64;
+
+    // stage 1
+    let s0 = x0 * COSPI_1_64 as i64 + x1 * COSPI_31_64 as i64;
+    let s1 = x0 * COSPI_31_64 as i64 - x1 * COSPI_1_64 as i64;
+    let s2 = x2 * COSPI_5_64 as i64 + x3 * COSPI_27_64 as i64;
+    let s3 = x2 * COSPI_27_64 as i64 - x3 * COSPI_5_64 as i64;
+    let s4 = x4 * COSPI_9_64 as i64 + x5 * COSPI_23_64 as i64;
+    let s5 = x4 * COSPI_23_64 as i64 - x5 * COSPI_9_64 as i64;
+    let s6 = x6 * COSPI_13_64 as i64 + x7 * COSPI_19_64 as i64;
+    let s7 = x6 * COSPI_19_64 as i64 - x7 * COSPI_13_64 as i64;
+    let s8 = x8 * COSPI_17_64 as i64 + x9 * COSPI_15_64 as i64;
+    let s9 = x8 * COSPI_15_64 as i64 - x9 * COSPI_17_64 as i64;
+    let s10 = x10 * COSPI_21_64 as i64 + x11 * COSPI_11_64 as i64;
+    let s11 = x10 * COSPI_11_64 as i64 - x11 * COSPI_21_64 as i64;
+    let s12 = x12 * COSPI_25_64 as i64 + x13 * COSPI_7_64 as i64;
+    let s13 = x12 * COSPI_7_64 as i64 - x13 * COSPI_25_64 as i64;
+    let s14 = x14 * COSPI_29_64 as i64 + x15 * COSPI_3_64 as i64;
+    let s15 = x14 * COSPI_3_64 as i64 - x15 * COSPI_29_64 as i64;
+
+    let x0 = dct_const_round_shift(s0 + s8);
+    let x1 = dct_const_round_shift(s1 + s9);
+    let x2 = dct_const_round_shift(s2 + s10);
+    let x3 = dct_const_round_shift(s3 + s11);
+    let x4 = dct_const_round_shift(s4 + s12);
+    let x5 = dct_const_round_shift(s5 + s13);
+    let x6 = dct_const_round_shift(s6 + s14);
+    let x7 = dct_const_round_shift(s7 + s15);
+    let x8 = dct_const_round_shift(s0 - s8);
+    let x9 = dct_const_round_shift(s1 - s9);
+    let x10 = dct_const_round_shift(s2 - s10);
+    let x11 = dct_const_round_shift(s3 - s11);
+    let x12 = dct_const_round_shift(s4 - s12);
+    let x13 = dct_const_round_shift(s5 - s13);
+    let x14 = dct_const_round_shift(s6 - s14);
+    let x15 = dct_const_round_shift(s7 - s15);
+
+    // stage 2: pass through s0..s7
+    let s0 = x0;
+    let s1 = x1;
+    let s2 = x2;
+    let s3 = x3;
+    let s4 = x4;
+    let s5 = x5;
+    let s6 = x6;
+    let s7 = x7;
+    let s8 = x8 * COSPI_4_64 as i64 + x9 * COSPI_28_64 as i64;
+    let s9 = x8 * COSPI_28_64 as i64 - x9 * COSPI_4_64 as i64;
+    let s10 = x10 * COSPI_20_64 as i64 + x11 * COSPI_12_64 as i64;
+    let s11 = x10 * COSPI_12_64 as i64 - x11 * COSPI_20_64 as i64;
+    let s12 = -x12 * COSPI_28_64 as i64 + x13 * COSPI_4_64 as i64;
+    let s13 = x12 * COSPI_4_64 as i64 + x13 * COSPI_28_64 as i64;
+    let s14 = -x14 * COSPI_12_64 as i64 + x15 * COSPI_20_64 as i64;
+    let s15 = x14 * COSPI_20_64 as i64 + x15 * COSPI_12_64 as i64;
+
+    let x0 = s0 + s4;
+    let x1 = s1 + s5;
+    let x2 = s2 + s6;
+    let x3 = s3 + s7;
+    let x4 = s0 - s4;
+    let x5 = s1 - s5;
+    let x6 = s2 - s6;
+    let x7 = s3 - s7;
+    let x8 = dct_const_round_shift(s8 + s12);
+    let x9 = dct_const_round_shift(s9 + s13);
+    let x10 = dct_const_round_shift(s10 + s14);
+    let x11 = dct_const_round_shift(s11 + s15);
+    let x12 = dct_const_round_shift(s8 - s12);
+    let x13 = dct_const_round_shift(s9 - s13);
+    let x14 = dct_const_round_shift(s10 - s14);
+    let x15 = dct_const_round_shift(s11 - s15);
+
+    // stage 3
+    let s0 = x0;
+    let s1 = x1;
+    let s2 = x2;
+    let s3 = x3;
+    let s4 = x4 * COSPI_8_64 as i64 + x5 * COSPI_24_64 as i64;
+    let s5 = x4 * COSPI_24_64 as i64 - x5 * COSPI_8_64 as i64;
+    let s6 = -x6 * COSPI_24_64 as i64 + x7 * COSPI_8_64 as i64;
+    let s7 = x6 * COSPI_8_64 as i64 + x7 * COSPI_24_64 as i64;
+    let s8 = x8;
+    let s9 = x9;
+    let s10 = x10;
+    let s11 = x11;
+    let s12 = x12 * COSPI_8_64 as i64 + x13 * COSPI_24_64 as i64;
+    let s13 = x12 * COSPI_24_64 as i64 - x13 * COSPI_8_64 as i64;
+    let s14 = -x14 * COSPI_24_64 as i64 + x15 * COSPI_8_64 as i64;
+    let s15 = x14 * COSPI_8_64 as i64 + x15 * COSPI_24_64 as i64;
+
+    let x0 = s0 + s2;
+    let x1 = s1 + s3;
+    let x2 = s0 - s2;
+    let x3 = s1 - s3;
+    let x4 = dct_const_round_shift(s4 + s6);
+    let x5 = dct_const_round_shift(s5 + s7);
+    let x6 = dct_const_round_shift(s4 - s6);
+    let x7 = dct_const_round_shift(s5 - s7);
+    let x8 = s8 + s10;
+    let x9 = s9 + s11;
+    let x10 = s8 - s10;
+    let x11 = s9 - s11;
+    let x12 = dct_const_round_shift(s12 + s14);
+    let x13 = dct_const_round_shift(s13 + s15);
+    let x14 = dct_const_round_shift(s12 - s14);
+    let x15 = dct_const_round_shift(s13 - s15);
+
+    // stage 4
+    let s2 = -(COSPI_16_64 as i64) * (x2 + x3);
+    let s3 = COSPI_16_64 as i64 * (x2 - x3);
+    let s6 = COSPI_16_64 as i64 * (x6 + x7);
+    let s7 = COSPI_16_64 as i64 * (-x6 + x7);
+    let s10 = COSPI_16_64 as i64 * (x10 + x11);
+    let s11 = COSPI_16_64 as i64 * (-x10 + x11);
+    let s14 = -(COSPI_16_64 as i64) * (x14 + x15);
+    let s15 = COSPI_16_64 as i64 * (x14 - x15);
+
+    let x2 = dct_const_round_shift(s2);
+    let x3 = dct_const_round_shift(s3);
+    let x6 = dct_const_round_shift(s6);
+    let x7 = dct_const_round_shift(s7);
+    let x10 = dct_const_round_shift(s10);
+    let x11 = dct_const_round_shift(s11);
+    let x14 = dct_const_round_shift(s14);
+    let x15 = dct_const_round_shift(s15);
+
+    // Output permutation with sign flips at 1, 3, 13, 15 (libvpx :491-506).
+    output[0] = wraplow(x0 as i32);
+    output[1] = wraplow(-x8 as i32);
+    output[2] = wraplow(x12 as i32);
+    output[3] = wraplow(-x4 as i32);
+    output[4] = wraplow(x6 as i32);
+    output[5] = wraplow(x14 as i32);
+    output[6] = wraplow(x10 as i32);
+    output[7] = wraplow(x2 as i32);
+    output[8] = wraplow(x3 as i32);
+    output[9] = wraplow(x11 as i32);
+    output[10] = wraplow(x15 as i32);
+    output[11] = wraplow(x7 as i32);
+    output[12] = wraplow(x5 as i32);
+    output[13] = wraplow(-x13 as i32);
+    output[14] = wraplow(x9 as i32);
+    output[15] = wraplow(-x1 as i32);
+}
+
+/// 2D 16×16 forward DCT. Pass 0 multiplies input by 4 (no DC bump);
+/// pass 1 applies `(x + 1) >> 2` to each intermediate value before
+/// the row transform. No final reduction step (the inter-pass
+/// `(x + 1) >> 2` IS the reduction).
+///
+/// Mirrors libvpx `vpx_fdct16x16_c` (`vpx_dsp/fwd_txfm.c:183-361`).
+pub fn fdct16x16(input: &[i16], output: &mut [i32; 256], stride: usize) {
+    debug_assert!(
+        input.len() >= 15 * stride + 16,
+        "input slice too small for 16x16 at stride {stride}"
+    );
+
+    let mut intermediate = [0i32; 256];
+
+    // Pass 0: column transform with ×4 scaling. For each output column
+    // i, build `in_half` (sums) and `step1` (diffs) directly from the
+    // i-th input column, call the butterfly, then transpose-store.
+    for i in 0..16 {
+        let mut col_out = [0i32; 16];
+        let in_half: [i64; 8] = [
+            (input[i] as i64 + input[15 * stride + i] as i64) * 4,
+            (input[stride + i] as i64 + input[14 * stride + i] as i64) * 4,
+            (input[2 * stride + i] as i64 + input[13 * stride + i] as i64) * 4,
+            (input[3 * stride + i] as i64 + input[12 * stride + i] as i64) * 4,
+            (input[4 * stride + i] as i64 + input[11 * stride + i] as i64) * 4,
+            (input[5 * stride + i] as i64 + input[10 * stride + i] as i64) * 4,
+            (input[6 * stride + i] as i64 + input[9 * stride + i] as i64) * 4,
+            (input[7 * stride + i] as i64 + input[8 * stride + i] as i64) * 4,
+        ];
+        let step1: [i64; 8] = [
+            (input[7 * stride + i] as i64 - input[8 * stride + i] as i64) * 4,
+            (input[6 * stride + i] as i64 - input[9 * stride + i] as i64) * 4,
+            (input[5 * stride + i] as i64 - input[10 * stride + i] as i64) * 4,
+            (input[4 * stride + i] as i64 - input[11 * stride + i] as i64) * 4,
+            (input[3 * stride + i] as i64 - input[12 * stride + i] as i64) * 4,
+            (input[2 * stride + i] as i64 - input[13 * stride + i] as i64) * 4,
+            (input[stride + i] as i64 - input[14 * stride + i] as i64) * 4,
+            (input[i] as i64 - input[15 * stride + i] as i64) * 4,
+        ];
+        fdct16_butterfly(&in_half, &step1, &mut col_out, 0);
+        // Transpose-store into intermediate[j * 16 + i].
+        for j in 0..16 {
+            intermediate[j * 16 + i] = col_out[j];
+        }
+    }
+
+    // Pass 1: build in_half/step1 from intermediate **row** `i`
+    // (= the per-column-pass coefficients at all 16 horizontal
+    // positions) with `(x + 1) >> 2` between-pass reduction baked into
+    // the input loading. Pass 0 stores
+    // `intermediate[j * 16 + i] = (j-th coef of fdct16 on input col i)`
+    // i.e. `intermediate.entry(row=j, col=i) = B[j, i]` in natural
+    // matrix layout. Pass 1's "row i" read therefore picks out the
+    // sequence `{B[i, c] for c=0..15}` — the i-th coefficient of the
+    // column-pass across all input columns, which is the input for the
+    // second 1D transform per the standard 2D DCT structure.
+    for i in 0..16 {
+        let row_base = i * 16;
+        let read = |c: usize| (intermediate[row_base + c] + 1) >> 2;
+        let in_half: [i64; 8] = [
+            read(0) as i64 + read(15) as i64,
+            read(1) as i64 + read(14) as i64,
+            read(2) as i64 + read(13) as i64,
+            read(3) as i64 + read(12) as i64,
+            read(4) as i64 + read(11) as i64,
+            read(5) as i64 + read(10) as i64,
+            read(6) as i64 + read(9) as i64,
+            read(7) as i64 + read(8) as i64,
+        ];
+        let step1: [i64; 8] = [
+            read(7) as i64 - read(8) as i64,
+            read(6) as i64 - read(9) as i64,
+            read(5) as i64 - read(10) as i64,
+            read(4) as i64 - read(11) as i64,
+            read(3) as i64 - read(12) as i64,
+            read(2) as i64 - read(13) as i64,
+            read(1) as i64 - read(14) as i64,
+            read(0) as i64 - read(15) as i64,
+        ];
+        fdct16_butterfly(&in_half, &step1, output, i * 16);
+    }
+}
+
+/// 2D 16×16 hybrid forward transform (DCT or ADST per axis), selected
+/// by `tx_type`. `DCT_DCT` short-circuits to [`fdct16x16`] (matching
+/// libvpx :642-643). Other types use the column / row 1D dispatch
+/// with pass-0 ×4 scaling and **between-pass `(x + 1 + (x<0)) >> 2`**
+/// (round half away from zero, divide by 4).
+///
+/// Note: this `(x + 1 + (x<0)) >> 2` between-pass form is **not**
+/// bit-equivalent to `fdct16x16`'s `(x + 1) >> 2`, which is why the
+/// DCT_DCT short-circuit is necessary to preserve `fht16x16(DCT_DCT) ==
+/// fdct16x16` semantics.
+///
+/// Mirrors libvpx `vp9_fht16x16_c` (`vp9/encoder/vp9_dct.c:640-665`).
+pub fn fht16x16(input: &[i16], output: &mut [i32; 256], stride: usize, tx_type: TxType) {
+    if matches!(tx_type, TxType::DctDct) {
+        fdct16x16(input, output, stride);
+        return;
+    }
+
+    debug_assert!(
+        input.len() >= 15 * stride + 16,
+        "input slice too small for 16x16 at stride {stride}"
+    );
+
+    // FHT_16 table (vp9_dct.c:523-528).
+    let (col_fn, row_fn): (Fwd1d16, Fwd1d16) = match tx_type {
+        TxType::DctDct => unreachable!(),
+        TxType::AdstDct => (fadst16, fdct16),
+        TxType::DctAdst => (fdct16, fadst16),
+        TxType::AdstAdst => (fadst16, fadst16),
+    };
+
+    let mut intermediate = [0i32; 256];
+
+    // Columns: ×4 scaling, transform, transpose-store with
+    // `(x + 1 + (x<0)) >> 2` reduction.
+    for i in 0..16 {
+        let mut col_in = [0i32; 16];
+        for j in 0..16 {
+            col_in[j] = (input[j * stride + i] as i32) * 4;
+        }
+        let mut col_out = [0i32; 16];
+        col_fn(&col_in, &mut col_out);
+        for j in 0..16 {
+            let v = col_out[j];
+            let reduced = (v + 1 + i32::from(v < 0)) >> 2;
+            intermediate[j * 16 + i] = wraplow(reduced);
+        }
+    }
+
+    // Rows: transform with no further reduction (the column-pass
+    // reduction was the only scaling normalisation).
+    for i in 0..16 {
+        let mut row_in = [0i32; 16];
+        for j in 0..16 {
+            row_in[j] = intermediate[j + i * 16];
+        }
+        let mut row_out = [0i32; 16];
+        row_fn(&row_in, &mut row_out);
+        for j in 0..16 {
+            output[j + i * 16] = wraplow(row_out[j]);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::inverse::{
-        iadst4, iadst8, idct4, idct8, iht4x4_16_add, iht8x8_64_add,
+        iadst4, iadst8, iadst16, idct4, idct8, idct16, iht4x4_16_add, iht8x8_64_add,
+        iht16x16_256_add,
     };
     use super::*;
 
@@ -968,4 +1464,177 @@ mod tests {
         assert_eq!(out_tight, out_wide);
     }
 
+    // -----------------------------------------------------------------
+    // 16×16 tests.
+    // -----------------------------------------------------------------
+
+    /// Shared 16×16 residual block for round-trip / stride tests.
+    /// Small-magnitude (`[-6, 6]`) so reconstructed pixels stay in
+    /// unsigned-byte range when added to a dest of 128.
+    fn sample_residual_16x16() -> [i16; 256] {
+        let mut block = [0i16; 256];
+        for r in 0..16 {
+            for c in 0..16 {
+                // Deterministic pseudo-random pattern bounded to [-6, 6].
+                let v = ((r * 7 + c * 11 + r * c) % 13) as i16 - 6;
+                block[r * 16 + c] = v;
+            }
+        }
+        block
+    }
+
+    /// Zero input → zero output (1D 16-point DCT).
+    #[test]
+    fn fdct16_zero_in_zero_out() {
+        let input = [0i32; 16];
+        let mut output = [99i32; 16];
+        fdct16(&input, &mut output);
+        assert_eq!(output, [0; 16]);
+    }
+
+    /// Zero input → zero output (1D 16-point ADST).
+    #[test]
+    fn fadst16_zero_in_zero_out() {
+        let input = [0i32; 16];
+        let mut output = [99i32; 16];
+        fadst16(&input, &mut output);
+        assert_eq!(output, [0; 16]);
+    }
+
+    /// 1D fdct16 + idct16 round-trip: input scaled by **8** within ±4.
+    /// (Gain pattern continues: 4-point ×2, 8-point ×4, 16-point ×8.)
+    #[test]
+    fn fdct16_idct16_round_trip_small() {
+        let input: [i32; 16] = [
+            10, -4, 6, -2, 8, -3, 5, -1, //
+            7, -5, 4, -2, 9, -3, 6, -1,
+        ];
+        let mut spectrum = [0i32; 16];
+        fdct16(&input, &mut spectrum);
+        let mut round_trip = [0i32; 16];
+        idct16(&spectrum, &mut round_trip);
+        for k in 0..16 {
+            let expected = input[k] * 8;
+            assert!(
+                (round_trip[k] - expected).abs() <= 4,
+                "round_trip[{k}] = {} not within ±4 of 8 * input[{k}] = {}",
+                round_trip[k],
+                expected
+            );
+        }
+    }
+
+    /// 1D fadst16 + iadst16 round-trip: input scaled by 8 within ±8.
+    /// 16-point ADST has four sequential `dct_const_round_shift` stages
+    /// (vs the DCT's three) so per-element drift up to ~6 is normal.
+    #[test]
+    fn fadst16_iadst16_round_trip_small() {
+        let input: [i32; 16] = [
+            8, -5, 3, -1, 6, -4, 2, -7, //
+            9, -3, 5, -1, 4, -8, 2, -6,
+        ];
+        let mut spectrum = [0i32; 16];
+        fadst16(&input, &mut spectrum);
+        let mut round_trip = [0i32; 16];
+        iadst16(&spectrum, &mut round_trip);
+        for k in 0..16 {
+            let expected = input[k] * 8;
+            assert!(
+                (round_trip[k] - expected).abs() <= 8,
+                "round_trip[{k}] = {} not within ±8 of 8 * input[{k}] = {}",
+                round_trip[k],
+                expected
+            );
+        }
+    }
+
+    /// Zero 16×16 residual block → zero coefficients (2D DCT).
+    #[test]
+    fn fdct16x16_zero_input_zero_output() {
+        let input = [0i16; 256];
+        let mut output = [99i32; 256];
+        fdct16x16(&input, &mut output, 16);
+        assert_eq!(output, [0; 256]);
+    }
+
+    /// Zero 16×16 residual block → zero coefficients for every
+    /// `TxType` (2D hybrid).
+    #[test]
+    fn fht16x16_zero_input_zero_output_all_tx_types() {
+        for tx_type in [
+            TxType::DctDct,
+            TxType::AdstDct,
+            TxType::DctAdst,
+            TxType::AdstAdst,
+        ] {
+            let input = [0i16; 256];
+            let mut output = [99i32; 256];
+            fht16x16(&input, &mut output, 16, tx_type);
+            assert_eq!(
+                output, [0; 256],
+                "tx_type {tx_type:?} did not produce zero output for zero input"
+            );
+        }
+    }
+
+    /// `fht16x16` with `DCT_DCT` is bit-identical to `fdct16x16` — the
+    /// short-circuit at `vp9_fht16x16_c:642-643`. This identity matters
+    /// because the two paths use *different* between-pass rounding
+    /// modes (`(x+1)>>2` vs `(x+1+(x<0))>>2`).
+    #[test]
+    fn fht16x16_dct_dct_matches_fdct16x16() {
+        let input = sample_residual_16x16();
+        let mut out_fht = [0i32; 256];
+        let mut out_fdct = [0i32; 256];
+        fht16x16(&input, &mut out_fht, 16, TxType::DctDct);
+        fdct16x16(&input, &mut out_fdct, 16);
+        assert_eq!(out_fht, out_fdct);
+    }
+
+    /// `fht16x16 → iht16x16_256_add` recovers a small residual within
+    /// ±1 per pixel for every `TxType`. Canonical 16×16 oracle.
+    #[test]
+    fn fht16x16_then_iht16x16_recovers_small_residual_all_tx_types() {
+        let residual = sample_residual_16x16();
+        for tx_type in [
+            TxType::DctDct,
+            TxType::AdstDct,
+            TxType::DctAdst,
+            TxType::AdstAdst,
+        ] {
+            let mut coefs = [0i32; 256];
+            fht16x16(&residual, &mut coefs, 16, tx_type);
+
+            let mut dest = [128u8; 256];
+            iht16x16_256_add(&coefs, &mut dest, 16, tx_type);
+
+            for k in 0..256 {
+                let recovered = (dest[k] as i32) - 128;
+                let expected = residual[k] as i32;
+                assert!(
+                    (recovered - expected).abs() <= 1,
+                    "{tx_type:?}: pos {k} recovered={recovered} expected={expected}"
+                );
+            }
+        }
+    }
+
+    /// `fdct16x16` honours non-trivial `stride`: same content laid out
+    /// at stride 32 vs stride 16 produces identical coefficients.
+    #[test]
+    fn fdct16x16_stride_independence() {
+        let residual = sample_residual_16x16();
+        let mut wide = [0i16; 16 * 32];
+        for r in 0..16 {
+            for c in 0..16 {
+                wide[r * 32 + c] = residual[r * 16 + c];
+            }
+        }
+
+        let mut out_tight = [0i32; 256];
+        let mut out_wide = [0i32; 256];
+        fdct16x16(&residual, &mut out_tight, 16);
+        fdct16x16(&wide, &mut out_wide, 32);
+        assert_eq!(out_tight, out_wide);
+    }
 }
