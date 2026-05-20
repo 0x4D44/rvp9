@@ -23,6 +23,7 @@
 
 pub mod bitstream;
 pub mod block;
+pub mod coef_ctx;
 pub mod dsp;
 pub mod entropy;
 pub mod frame;
