@@ -1060,11 +1060,358 @@ pub fn fht16x16(input: &[i16], output: &mut [i32; 256], stride: usize, tx_type: 
     }
 }
 
+// ---------------------------------------------------------------------
+// 32×32 forward transform family (DCT only — no hybrid at 32×32).
+// ---------------------------------------------------------------------
+
+/// Cosine rotation round-shift used inside [`fdct32`]. Mirrors libvpx
+/// `dct_32_round` (`vpx_dsp/fwd_txfm.c:372-378`) which wraps
+/// `ROUND_POWER_OF_TWO(x, DCT_CONST_BITS)`.
+#[inline]
+const fn dct_32_round(x: i64) -> i64 {
+    dct_const_round_shift(x)
+}
+
+/// `half_round_shift`: `(x + 1 + (x < 0)) >> 2` — round half away
+/// from zero divided by 4. Used between stages 2 and 3 of [`fdct32`]
+/// when the `round` flag is set (i.e. by the rate-distortion variant).
+/// Mirrors libvpx `half_round_shift` (`vpx_dsp/fwd_txfm.c:380-383`).
+#[inline]
+const fn half_round_shift(x: i64) -> i64 {
+    (x + 1 + (x < 0) as i64) >> 2
+}
+
+/// 1D 32-point forward DCT. Seven stages plus a final bit-reversed
+/// permutation. The `round` flag toggles an extra `half_round_shift`
+/// (÷4 with round-half-away-from-zero) applied between stages 2 and 3
+/// — set this `false` for the standard 2D wrapper [`fdct32x32`] and
+/// `true` for the rate-distortion variant (`fdct32x32_rd`, not yet
+/// ported).
+///
+/// Mirrors libvpx `vpx_fdct32` (`vpx_dsp/fwd_txfm.c:385-706`).
+///
+/// Note: input is `&[i32; 32]` (not `&[i16; 32]`) because the only
+/// caller — [`fdct32x32`] — passes ×4-scaled input values that can
+/// exceed `i16`.
+pub fn fdct32(input: &[i32; 32], output: &mut [i32; 32], round: bool) {
+    let mut step = [0i64; 32];
+    let mut out = [0i64; 32];
+
+    // Stage 1 — pairwise sums/diffs on the 32-element input.
+    for k in 0..16 {
+        step[k] = input[k] as i64 + input[31 - k] as i64;
+    }
+    for k in 16..32 {
+        step[k] = -(input[k] as i64) + input[31 - k] as i64;
+    }
+
+    // Stage 2 — sums/diffs on the lower-16 half + identity / cospi_16
+    // rotation on the upper-16 half.
+    for k in 0..8 {
+        out[k] = step[k] + step[15 - k];
+    }
+    for k in 8..16 {
+        out[k] = -step[k] + step[15 - k];
+    }
+    out[16] = step[16];
+    out[17] = step[17];
+    out[18] = step[18];
+    out[19] = step[19];
+    out[20] = dct_32_round((-step[20] + step[27]) * COSPI_16_64 as i64);
+    out[21] = dct_32_round((-step[21] + step[26]) * COSPI_16_64 as i64);
+    out[22] = dct_32_round((-step[22] + step[25]) * COSPI_16_64 as i64);
+    out[23] = dct_32_round((-step[23] + step[24]) * COSPI_16_64 as i64);
+    out[24] = dct_32_round((step[24] + step[23]) * COSPI_16_64 as i64);
+    out[25] = dct_32_round((step[25] + step[22]) * COSPI_16_64 as i64);
+    out[26] = dct_32_round((step[26] + step[21]) * COSPI_16_64 as i64);
+    out[27] = dct_32_round((step[27] + step[20]) * COSPI_16_64 as i64);
+    out[28] = step[28];
+    out[29] = step[29];
+    out[30] = step[30];
+    out[31] = step[31];
+
+    // Optional `half_round_shift` between stages 2 and 3 (only for
+    // the rate-distortion variant).
+    if round {
+        for slot in out.iter_mut() {
+            *slot = half_round_shift(*slot);
+        }
+    }
+
+    // Stage 3.
+    step[0] = out[0] + out[7];
+    step[1] = out[1] + out[6];
+    step[2] = out[2] + out[5];
+    step[3] = out[3] + out[4];
+    step[4] = -out[4] + out[3];
+    step[5] = -out[5] + out[2];
+    step[6] = -out[6] + out[1];
+    step[7] = -out[7] + out[0];
+    step[8] = out[8];
+    step[9] = out[9];
+    step[10] = dct_32_round((-out[10] + out[13]) * COSPI_16_64 as i64);
+    step[11] = dct_32_round((-out[11] + out[12]) * COSPI_16_64 as i64);
+    step[12] = dct_32_round((out[12] + out[11]) * COSPI_16_64 as i64);
+    step[13] = dct_32_round((out[13] + out[10]) * COSPI_16_64 as i64);
+    step[14] = out[14];
+    step[15] = out[15];
+    step[16] = out[16] + out[23];
+    step[17] = out[17] + out[22];
+    step[18] = out[18] + out[21];
+    step[19] = out[19] + out[20];
+    step[20] = -out[20] + out[19];
+    step[21] = -out[21] + out[18];
+    step[22] = -out[22] + out[17];
+    step[23] = -out[23] + out[16];
+    step[24] = -out[24] + out[31];
+    step[25] = -out[25] + out[30];
+    step[26] = -out[26] + out[29];
+    step[27] = -out[27] + out[28];
+    step[28] = out[28] + out[27];
+    step[29] = out[29] + out[26];
+    step[30] = out[30] + out[25];
+    step[31] = out[31] + out[24];
+
+    // Stage 4.
+    out[0] = step[0] + step[3];
+    out[1] = step[1] + step[2];
+    out[2] = -step[2] + step[1];
+    out[3] = -step[3] + step[0];
+    out[4] = step[4];
+    out[5] = dct_32_round((-step[5] + step[6]) * COSPI_16_64 as i64);
+    out[6] = dct_32_round((step[6] + step[5]) * COSPI_16_64 as i64);
+    out[7] = step[7];
+    out[8] = step[8] + step[11];
+    out[9] = step[9] + step[10];
+    out[10] = -step[10] + step[9];
+    out[11] = -step[11] + step[8];
+    out[12] = -step[12] + step[15];
+    out[13] = -step[13] + step[14];
+    out[14] = step[14] + step[13];
+    out[15] = step[15] + step[12];
+    out[16] = step[16];
+    out[17] = step[17];
+    out[18] = dct_32_round(step[18] * -(COSPI_8_64 as i64) + step[29] * COSPI_24_64 as i64);
+    out[19] = dct_32_round(step[19] * -(COSPI_8_64 as i64) + step[28] * COSPI_24_64 as i64);
+    out[20] =
+        dct_32_round(step[20] * -(COSPI_24_64 as i64) + step[27] * -(COSPI_8_64 as i64));
+    out[21] =
+        dct_32_round(step[21] * -(COSPI_24_64 as i64) + step[26] * -(COSPI_8_64 as i64));
+    out[22] = step[22];
+    out[23] = step[23];
+    out[24] = step[24];
+    out[25] = step[25];
+    out[26] = dct_32_round(step[26] * COSPI_24_64 as i64 + step[21] * -(COSPI_8_64 as i64));
+    out[27] = dct_32_round(step[27] * COSPI_24_64 as i64 + step[20] * -(COSPI_8_64 as i64));
+    out[28] = dct_32_round(step[28] * COSPI_8_64 as i64 + step[19] * COSPI_24_64 as i64);
+    out[29] = dct_32_round(step[29] * COSPI_8_64 as i64 + step[18] * COSPI_24_64 as i64);
+    out[30] = step[30];
+    out[31] = step[31];
+
+    // Stage 5.
+    step[0] = dct_32_round((out[0] + out[1]) * COSPI_16_64 as i64);
+    step[1] = dct_32_round((-out[1] + out[0]) * COSPI_16_64 as i64);
+    step[2] = dct_32_round(out[2] * COSPI_24_64 as i64 + out[3] * COSPI_8_64 as i64);
+    step[3] = dct_32_round(out[3] * COSPI_24_64 as i64 - out[2] * COSPI_8_64 as i64);
+    step[4] = out[4] + out[5];
+    step[5] = -out[5] + out[4];
+    step[6] = -out[6] + out[7];
+    step[7] = out[7] + out[6];
+    step[8] = out[8];
+    step[9] = dct_32_round(out[9] * -(COSPI_8_64 as i64) + out[14] * COSPI_24_64 as i64);
+    step[10] = dct_32_round(out[10] * -(COSPI_24_64 as i64) + out[13] * -(COSPI_8_64 as i64));
+    step[11] = out[11];
+    step[12] = out[12];
+    step[13] = dct_32_round(out[13] * COSPI_24_64 as i64 + out[10] * -(COSPI_8_64 as i64));
+    step[14] = dct_32_round(out[14] * COSPI_8_64 as i64 + out[9] * COSPI_24_64 as i64);
+    step[15] = out[15];
+    step[16] = out[16] + out[19];
+    step[17] = out[17] + out[18];
+    step[18] = -out[18] + out[17];
+    step[19] = -out[19] + out[16];
+    step[20] = -out[20] + out[23];
+    step[21] = -out[21] + out[22];
+    step[22] = out[22] + out[21];
+    step[23] = out[23] + out[20];
+    step[24] = out[24] + out[27];
+    step[25] = out[25] + out[26];
+    step[26] = -out[26] + out[25];
+    step[27] = -out[27] + out[24];
+    step[28] = -out[28] + out[31];
+    step[29] = -out[29] + out[30];
+    step[30] = out[30] + out[29];
+    step[31] = out[31] + out[28];
+
+    // Stage 6.
+    out[0] = step[0];
+    out[1] = step[1];
+    out[2] = step[2];
+    out[3] = step[3];
+    out[4] = dct_32_round(step[4] * COSPI_28_64 as i64 + step[7] * COSPI_4_64 as i64);
+    out[5] = dct_32_round(step[5] * COSPI_12_64 as i64 + step[6] * COSPI_20_64 as i64);
+    out[6] = dct_32_round(step[6] * COSPI_12_64 as i64 + step[5] * -(COSPI_20_64 as i64));
+    out[7] = dct_32_round(step[7] * COSPI_28_64 as i64 + step[4] * -(COSPI_4_64 as i64));
+    out[8] = step[8] + step[9];
+    out[9] = -step[9] + step[8];
+    out[10] = -step[10] + step[11];
+    out[11] = step[11] + step[10];
+    out[12] = step[12] + step[13];
+    out[13] = -step[13] + step[12];
+    out[14] = -step[14] + step[15];
+    out[15] = step[15] + step[14];
+    out[16] = step[16];
+    out[17] = dct_32_round(step[17] * -(COSPI_4_64 as i64) + step[30] * COSPI_28_64 as i64);
+    out[18] =
+        dct_32_round(step[18] * -(COSPI_28_64 as i64) + step[29] * -(COSPI_4_64 as i64));
+    out[19] = step[19];
+    out[20] = step[20];
+    out[21] = dct_32_round(step[21] * -(COSPI_20_64 as i64) + step[26] * COSPI_12_64 as i64);
+    out[22] =
+        dct_32_round(step[22] * -(COSPI_12_64 as i64) + step[25] * -(COSPI_20_64 as i64));
+    out[23] = step[23];
+    out[24] = step[24];
+    out[25] = dct_32_round(step[25] * COSPI_12_64 as i64 + step[22] * -(COSPI_20_64 as i64));
+    out[26] = dct_32_round(step[26] * COSPI_20_64 as i64 + step[21] * COSPI_12_64 as i64);
+    out[27] = step[27];
+    out[28] = step[28];
+    out[29] = dct_32_round(step[29] * COSPI_28_64 as i64 + step[18] * -(COSPI_4_64 as i64));
+    out[30] = dct_32_round(step[30] * COSPI_4_64 as i64 + step[17] * COSPI_28_64 as i64);
+    out[31] = step[31];
+
+    // Stage 7.
+    step[0] = out[0];
+    step[1] = out[1];
+    step[2] = out[2];
+    step[3] = out[3];
+    step[4] = out[4];
+    step[5] = out[5];
+    step[6] = out[6];
+    step[7] = out[7];
+    step[8] = dct_32_round(out[8] * COSPI_30_64 as i64 + out[15] * COSPI_2_64 as i64);
+    step[9] = dct_32_round(out[9] * COSPI_14_64 as i64 + out[14] * COSPI_18_64 as i64);
+    step[10] = dct_32_round(out[10] * COSPI_22_64 as i64 + out[13] * COSPI_10_64 as i64);
+    step[11] = dct_32_round(out[11] * COSPI_6_64 as i64 + out[12] * COSPI_26_64 as i64);
+    step[12] = dct_32_round(out[12] * COSPI_6_64 as i64 + out[11] * -(COSPI_26_64 as i64));
+    step[13] = dct_32_round(out[13] * COSPI_22_64 as i64 + out[10] * -(COSPI_10_64 as i64));
+    step[14] = dct_32_round(out[14] * COSPI_14_64 as i64 + out[9] * -(COSPI_18_64 as i64));
+    step[15] = dct_32_round(out[15] * COSPI_30_64 as i64 + out[8] * -(COSPI_2_64 as i64));
+    step[16] = out[16] + out[17];
+    step[17] = -out[17] + out[16];
+    step[18] = -out[18] + out[19];
+    step[19] = out[19] + out[18];
+    step[20] = out[20] + out[21];
+    step[21] = -out[21] + out[20];
+    step[22] = -out[22] + out[23];
+    step[23] = out[23] + out[22];
+    step[24] = out[24] + out[25];
+    step[25] = -out[25] + out[24];
+    step[26] = -out[26] + out[27];
+    step[27] = out[27] + out[26];
+    step[28] = out[28] + out[29];
+    step[29] = -out[29] + out[28];
+    step[30] = -out[30] + out[31];
+    step[31] = out[31] + out[30];
+
+    // Final stage — output indices are bit-reversed.
+    output[0] = step[0] as i32;
+    output[16] = step[1] as i32;
+    output[8] = step[2] as i32;
+    output[24] = step[3] as i32;
+    output[4] = step[4] as i32;
+    output[20] = step[5] as i32;
+    output[12] = step[6] as i32;
+    output[28] = step[7] as i32;
+    output[2] = step[8] as i32;
+    output[18] = step[9] as i32;
+    output[10] = step[10] as i32;
+    output[26] = step[11] as i32;
+    output[6] = step[12] as i32;
+    output[22] = step[13] as i32;
+    output[14] = step[14] as i32;
+    output[30] = step[15] as i32;
+
+    output[1] = dct_32_round(step[16] * COSPI_31_64 as i64 + step[31] * COSPI_1_64 as i64) as i32;
+    output[17] = dct_32_round(step[17] * COSPI_15_64 as i64 + step[30] * COSPI_17_64 as i64) as i32;
+    output[9] = dct_32_round(step[18] * COSPI_23_64 as i64 + step[29] * COSPI_9_64 as i64) as i32;
+    output[25] = dct_32_round(step[19] * COSPI_7_64 as i64 + step[28] * COSPI_25_64 as i64) as i32;
+    output[5] = dct_32_round(step[20] * COSPI_27_64 as i64 + step[27] * COSPI_5_64 as i64) as i32;
+    output[21] = dct_32_round(step[21] * COSPI_11_64 as i64 + step[26] * COSPI_21_64 as i64) as i32;
+    output[13] = dct_32_round(step[22] * COSPI_19_64 as i64 + step[25] * COSPI_13_64 as i64) as i32;
+    output[29] = dct_32_round(step[23] * COSPI_3_64 as i64 + step[24] * COSPI_29_64 as i64) as i32;
+    output[3] =
+        dct_32_round(step[24] * COSPI_3_64 as i64 + step[23] * -(COSPI_29_64 as i64)) as i32;
+    output[19] =
+        dct_32_round(step[25] * COSPI_19_64 as i64 + step[22] * -(COSPI_13_64 as i64)) as i32;
+    output[11] =
+        dct_32_round(step[26] * COSPI_11_64 as i64 + step[21] * -(COSPI_21_64 as i64)) as i32;
+    output[27] =
+        dct_32_round(step[27] * COSPI_27_64 as i64 + step[20] * -(COSPI_5_64 as i64)) as i32;
+    output[7] =
+        dct_32_round(step[28] * COSPI_7_64 as i64 + step[19] * -(COSPI_25_64 as i64)) as i32;
+    output[23] =
+        dct_32_round(step[29] * COSPI_23_64 as i64 + step[18] * -(COSPI_9_64 as i64)) as i32;
+    output[15] =
+        dct_32_round(step[30] * COSPI_15_64 as i64 + step[17] * -(COSPI_17_64 as i64)) as i32;
+    output[31] =
+        dct_32_round(step[31] * COSPI_31_64 as i64 + step[16] * -(COSPI_1_64 as i64)) as i32;
+}
+
+/// 2D 32×32 forward DCT. Pass 0 multiplies input by 4, then applies
+/// `(x + 1 + (x > 0)) >> 2` between passes (note `>`, not `<` — round
+/// half-away-from-zero with positive bias on zero). Pass 1 outputs use
+/// `(x + 1 + (x < 0)) >> 2` (the standard form).
+///
+/// Mirrors libvpx `vpx_fdct32x32_c` (`vpx_dsp/fwd_txfm.c:708-730`).
+///
+/// Note: 32×32 has no `fht32x32` hybrid variant — libvpx never emits
+/// ADST at 32×32 (intra at 32×32 always selects `tx_type=DCT_DCT`).
+pub fn fdct32x32(input: &[i16], output: &mut [i32; 1024], stride: usize) {
+    debug_assert!(
+        input.len() >= 31 * stride + 32,
+        "input slice too small for 32x32 at stride {stride}"
+    );
+
+    let mut intermediate = [0i32; 1024];
+
+    // Pass 0: column transform with ×4 scaling.
+    for i in 0..32 {
+        let mut temp_in = [0i32; 32];
+        for j in 0..32 {
+            temp_in[j] = (input[j * stride + i] as i32) * 4;
+        }
+        let mut temp_out = [0i32; 32];
+        fdct32(&temp_in, &mut temp_out, false);
+        // Transpose-store with `(x + 1 + (x > 0)) >> 2` — round half
+        // toward positive infinity for positives, toward zero for
+        // negatives. NOT symmetric with the pass-1 reduction.
+        for j in 0..32 {
+            let v = temp_out[j];
+            intermediate[j * 32 + i] = (v + 1 + i32::from(v > 0)) >> 2;
+        }
+    }
+
+    // Pass 1: row transform on intermediate **row** `i` (the i-th
+    // coefficient across all 32 column-pass outputs — same layout
+    // story as fdct16x16; see comments there). Then final reduction
+    // with `(x + 1 + (x < 0)) >> 2` (the standard form).
+    for i in 0..32 {
+        let row_base = i * 32;
+        let mut temp_in = [0i32; 32];
+        temp_in.copy_from_slice(&intermediate[row_base..row_base + 32]);
+        let mut temp_out = [0i32; 32];
+        fdct32(&temp_in, &mut temp_out, false);
+        for j in 0..32 {
+            let v = temp_out[j];
+            output[j + row_base] = wraplow((v + 1 + i32::from(v < 0)) >> 2);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::inverse::{
-        iadst4, iadst8, iadst16, idct4, idct8, idct16, iht4x4_16_add, iht8x8_64_add,
-        iht16x16_256_add,
+        iadst4, iadst8, iadst16, idct4, idct8, idct16, idct32, idct32x32_1024_add, iht4x4_16_add,
+        iht8x8_64_add, iht16x16_256_add,
     };
     use super::*;
 
@@ -1636,5 +1983,106 @@ mod tests {
         fdct16x16(&residual, &mut out_tight, 16);
         fdct16x16(&wide, &mut out_wide, 32);
         assert_eq!(out_tight, out_wide);
+    }
+
+    // -----------------------------------------------------------------
+    // 32×32 tests (DCT-only — no hybrid variant at 32×32).
+    // -----------------------------------------------------------------
+
+    /// Deterministic 32×32 residual in `[-6, 6]` for round-trip tests.
+    fn sample_residual_32x32() -> [i16; 1024] {
+        let mut block = [0i16; 1024];
+        for r in 0..32 {
+            for c in 0..32 {
+                let v = ((r * 7 + c * 11 + r * c) % 13) as i16 - 6;
+                block[r * 32 + c] = v;
+            }
+        }
+        block
+    }
+
+    /// Zero input → zero output (1D 32-point DCT).
+    #[test]
+    fn fdct32_zero_in_zero_out() {
+        let input = [0i32; 32];
+        let mut output = [99i32; 32];
+        fdct32(&input, &mut output, false);
+        assert_eq!(output, [0; 32]);
+    }
+
+    /// 1D fdct32 + idct32 round-trip: input scaled by **16** within
+    /// ±8. (Gain pattern: 4-pt ×2, 8-pt ×4, 16-pt ×8, 32-pt ×16 = N/2.)
+    #[test]
+    fn fdct32_idct32_round_trip_small() {
+        let mut input = [0i32; 32];
+        // Mildly varied pattern: values in [-3, 3].
+        for (k, slot) in input.iter_mut().enumerate() {
+            *slot = (k as i32 % 7) - 3;
+        }
+        let mut spectrum = [0i32; 32];
+        fdct32(&input, &mut spectrum, false);
+        let mut round_trip = [0i32; 32];
+        idct32(&spectrum, &mut round_trip);
+        for k in 0..32 {
+            let expected = input[k] * 16;
+            assert!(
+                (round_trip[k] - expected).abs() <= 8,
+                "round_trip[{k}] = {} not within ±8 of 16 * input[{k}] = {}",
+                round_trip[k],
+                expected
+            );
+        }
+    }
+
+    /// Zero 32×32 residual block → zero coefficients.
+    #[test]
+    fn fdct32x32_zero_input_zero_output() {
+        let input = [0i16; 1024];
+        let mut output = [99i32; 1024];
+        fdct32x32(&input, &mut output, 32);
+        for (k, &v) in output.iter().enumerate() {
+            assert_eq!(v, 0, "non-zero at {k}");
+        }
+    }
+
+    /// `fdct32x32 → idct32x32_1024_add` recovers a small residual
+    /// within ±1 per pixel. Canonical 32×32 oracle.
+    #[test]
+    fn fdct32x32_then_idct32x32_recovers_small_residual() {
+        let residual = sample_residual_32x32();
+        let mut coefs = [0i32; 1024];
+        fdct32x32(&residual, &mut coefs, 32);
+
+        let mut dest = [128u8; 1024];
+        idct32x32_1024_add(&coefs, &mut dest, 32);
+
+        for (k, (&d, &r)) in dest.iter().zip(residual.iter()).enumerate() {
+            let recovered = (d as i32) - 128;
+            let expected = r as i32;
+            assert!(
+                (recovered - expected).abs() <= 1,
+                "pos {k} recovered={recovered} expected={expected}"
+            );
+        }
+    }
+
+    /// `fdct32x32` honours non-trivial `stride`.
+    #[test]
+    fn fdct32x32_stride_independence() {
+        let residual = sample_residual_32x32();
+        let mut wide = [0i16; 32 * 64];
+        for r in 0..32 {
+            for c in 0..32 {
+                wide[r * 64 + c] = residual[r * 32 + c];
+            }
+        }
+
+        let mut out_tight = [0i32; 1024];
+        let mut out_wide = [0i32; 1024];
+        fdct32x32(&residual, &mut out_tight, 32);
+        fdct32x32(&wide, &mut out_wide, 64);
+        for (k, (&t, &w)) in out_tight.iter().zip(out_wide.iter()).enumerate() {
+            assert_eq!(t, w, "pos {k}");
+        }
     }
 }

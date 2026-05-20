@@ -25,8 +25,8 @@ pub mod scans;
 pub mod types;
 
 pub use forward::{
-    fadst4, fadst8, fadst16, fdct4, fdct4x4, fdct8, fdct8x8, fdct16, fdct16x16, fht4x4, fht8x8,
-    fht16x16,
+    fadst4, fadst8, fadst16, fdct4, fdct4x4, fdct8, fdct8x8, fdct16, fdct16x16, fdct32, fdct32x32,
+    fht4x4, fht8x8, fht16x16,
 };
 pub use inverse::{
     iadst4, iadst8, iadst16, idct4, idct4x4_1_add, idct4x4_16_add, idct8, idct8x8_1_add,
