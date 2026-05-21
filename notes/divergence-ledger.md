@@ -603,3 +603,58 @@ dominant win at our cpu-used target).
 ref enabled on the libvpx side too (`--cpu-used 7 --rt` defaults
 match this constraint at the picker level); once parity at matched
 config is hit, Stage 4d/e widens the encoder.
+
+## AQ-series Stage 4b — Cyclic-Refresh AQ divergences (2026-05-21)
+
+### 2026-05-21 — AQ.5 BD-rate measurement on short / synthetic sources
+**Where:** `crates/rvp9-encoder/tests/bdrate_gate.rs::bdrate_gate_stage4b_aq`
+— the four-curve Stage 4b exit-gate harness (rvp9 AQ on/off vs libvpx
+AQ on/off).
+**What libvpx / reference workflows do:** measure BD-rate on the
+`yt-ut-hd` / `derf` corpus loops with sequences of hundreds to
+thousands of frames, at operating bitrates inside the
+encoder's discrimination range.
+**What rvp9 does:** the AQ.5 harness runs 8 frames of a 256×256
+centre-crop from `tests/corpus/testsrc_720p30.y4m` at four target
+bitrates spanning 200–1600 kbps. Both rvp9 and libvpx-stock
+(`--rt --cpu-used=7`) saturate inside that range on this sequence
+length, so the literal 0.3 % BD-rate gate is **NOT MEASURABLE** —
+gain numbers are dominated by rate-control noise, not by the AQ
+algorithm.
+**Why:** v1 ships the measurement infrastructure now; the corpus +
+long-sequence harness is Stage 5 work. The brief explicitly allows
+"infrastructure GREEN, literal gate deferred for real-content
+corpus" if that's the truth.
+**Byte-parity impact:** N/A (measurement, not bitstream).
+**Compression-efficiency impact:** N/A — the YARDSTICK has
+documented uncertainty in this regime, NOT the encoder.
+**Future plan:** Stage 5 — 240-frame sweeps on multiple y4m
+sources at 256×256 / 512×512, post rate-control fix (next entry),
+re-run the four-curve gate, expect a finite negative gain on both
+legs and assess literal 0.3 %.
+
+### 2026-05-21 — rvp9 rate-controller bitrate saturation (F9.0)
+**Where:** `crates/rvp9-encoder/src/rate_control.rs` (F9.0 single-
+pass CBR controller).
+**What libvpx does:** the libvpx rate controller lowers q-index
+aggressively when actual bitrate runs below target, eventually
+reaching q ≈ 0 for very-high target bitrates.
+**What rvp9 does:** the F9.0 controller is mechanically correct
+(matches the libvpx update formula) but in practice the actual
+bitrate plateaus 5–40× below target across the operating range
+the AQ.5 harness explores. At 256×256@30fps with target 1600 kbps
+the rvp9 encoder produces only ~39 kbps actual.
+**Why:** the suspect is the `pic_norm`-derived bits-per-frame
+correction factor + the encoder's still-narrow coded surface
+(intra-heavy without NEARMV / compound-ref / sub-8 inter). The
+controller never sees the bit-count it expects, so it doesn't
+push q down to consume the target.
+**Byte-parity impact:** structural — rvp9 picks higher q-indices
+than libvpx would at matched target.
+**Compression-efficiency impact:** large — the encoder operates
+below its discrimination range on most BD-rate gates we'd want
+to run, masking the per-feature gains we're trying to measure.
+**Future plan:** Stage 5 first task is to instrument the
+rate controller, identify whether the gap is in the per-frame
+target derivation or the q→bits estimator, and close it. After
+the fix the AQ.5 harness becomes meaningful.
