@@ -43,8 +43,7 @@ use rvp9_core::entropy::{BoolReader, FrameContext};
 use rvp9_core::intra_pred::{DcAvailability, IntraMode, PredCtx, intra_predict};
 use rvp9_core::transforms::inverse::{
     idct4x4_1_add, idct8x8_1_add, idct16x16_1_add,
-    idct16x16_256_add, idct32x32_1_add, idct32x32_1024_add, iht4x4_16_add, iht8x8_64_add,
-    iht16x16_256_add, iwht4x4_1_add, iwht4x4_16_add,
+    idct32x32_1_add, idct32x32_1024_add, iht16x16_256_add, iwht4x4_1_add, iwht4x4_16_add,
 };
 use rvp9_core::transforms::types::{TxSize, TxType};
 
@@ -360,16 +359,17 @@ fn inverse_transform_add(
                     // G4.2 — dispatch through SimdDispatch so the AVX2
                     // implementation runs on supported CPUs (mirror of
                     // the G4.1 idct8x8 wiring).
-                    // G4.2: DCT-DCT only; ADST hybrids (DCT_ADST/ADST_DCT/
-                    // ADST_ADST) still scalar via iht4x4_16_add. Hybrids
-                    // need separate dispatch slots — G4.3a follow-up.
                     (dispatch.idct4x4_add())(coefs, dest, stride);
                 } else {
                     idct4x4_1_add(coefs[0], dest, stride);
                 }
             } else {
-                // Hybrid 4×4 — libvpx vp9_iht4x4_16_add (vp9_idct.c:182-188).
-                iht4x4_16_add(coefs, dest, stride, tx_type);
+                // G4.3a — hybrid 4×4 (DCT_ADST/ADST_DCT/ADST_ADST) via
+                // the SimdDispatch slot. Scalar-only in this gap;
+                // Wave E swaps in the AVX2 port at this exact call
+                // site (no signature churn). Libvpx reference:
+                // `vp9_iht4x4_16_add` (`vp9_idct.c:182-188`).
+                (dispatch.iht4x4_add())(coefs, dest, stride, tx_type);
             }
         }
         TxSize::Tx8x8 => {
@@ -389,7 +389,9 @@ fn inverse_transform_add(
                     (dispatch.idct8x8_add())(coefs, dest, stride);
                 }
             } else {
-                iht8x8_64_add(coefs, dest, stride, tx_type);
+                // G4.3a — hybrid 8×8 via SimdDispatch (scalar-only;
+                // Wave E lands AVX2).
+                (dispatch.iht8x8_add())(coefs, dest, stride, tx_type);
             }
         }
         TxSize::Tx16x16 => {
@@ -398,11 +400,16 @@ fn inverse_transform_add(
                 if eob == 1 {
                     idct16x16_1_add(coefs[0], dest, stride);
                 } else {
-                    // 10/38-bucket fast paths not yet ported; full
-                    // _256_add is bit-exact.
-                    idct16x16_256_add(coefs, dest, stride);
+                    // G4.2 — dispatch through SimdDispatch so the AVX2
+                    // implementation runs on supported CPUs. 10/38-bucket
+                    // fast paths not yet ported; full _256_add is bit-exact.
+                    (dispatch.idct16x16_add())(coefs, dest, stride);
                 }
             } else {
+                // Hybrid 16×16 still scalar — the 16×16 ADST is not in
+                // any G4 dispatch slot (Wave E adds it if needed; in
+                // practice intra Y at 16×16 is the only path that
+                // produces a non-DctDct tx_type here).
                 iht16x16_256_add(coefs, dest, stride, tx_type);
             }
         }

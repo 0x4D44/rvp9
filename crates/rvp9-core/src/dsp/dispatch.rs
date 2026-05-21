@@ -56,7 +56,10 @@ use crate::frame::Yv12Buffer;
 use crate::quant::QuantizerDeltas;
 use crate::transforms::inverse::{
     idct4x4_16_add as scalar_idct4x4_add, idct8x8_64_add as scalar_idct8x8_add,
+    idct16x16_256_add as scalar_idct16x16_add, iht4x4_16_add as scalar_iht4x4_add,
+    iht8x8_64_add as scalar_iht8x8_add,
 };
+use crate::transforms::types::TxType;
 
 /// Scalar adapter for the `dc_predictor_4x4` dispatch slot. The
 /// underlying [`crate::intra_pred::dc_predictor`] takes a `PredCtx`
@@ -123,7 +126,10 @@ fn scalar_extend_frame_borders(yv12: &mut Yv12Buffer) {
 /// |-------|-------------------|----------------------------|-----------|
 /// | G4.1  | inverse 8×8       | `idct8x8_add`              | yes       |
 /// | G4.2  | inverse 4×4       | `idct4x4_add`              | yes       |
+/// | G4.2  | inverse 16×16     | `idct16x16_add`            | yes       |
 /// | G4.3a | intra-pred DC 4×4 | `dc_predictor_4x4`         | yes       |
+/// | G4.3a | hybrid ADST 4×4   | `iht4x4_add`               | scalar only (Wave E follow-up) |
+/// | G4.3a | hybrid ADST 8×8   | `iht8x8_add`               | scalar only (Wave E follow-up) |
 /// | G4.3b | loopfilter v4     | `lpf_vertical_4`           | scalar only (deferred) |
 /// | G4.4a | quant dequant     | `plane_dequant_pair`       | scalar only (architectural — no batchable kernel) |
 /// | G4.4b | frame-buffers     | `extend_frame_borders`     | scalar only (memcpy/memset already vectorised) |
@@ -131,17 +137,18 @@ fn scalar_extend_frame_borders(yv12: &mut Yv12Buffer) {
 /// **Family coverage** (per HLD §G4 table line 543-552):
 /// 1. frame-buffers — `extend_frame_borders` slot present (G4.4b).
 /// 2. entropy decoder — n/a (scalar by design, BoolReader is sequential).
-/// 3. transforms inverse — `idct8x8_add` (G4.1) + `idct4x4_add` (G4.2)
-///    both have AVX2 impls.
+/// 3. transforms inverse — `idct4x4_add` (G4.2) + `idct8x8_add` (G4.1) + `idct16x16_add` (G4.2 full-kernel rollout) all have AVX2 impls; `iht4x4_add` + `iht8x8_add` (G4.3a) hold the ADST hybrid families with scalar fallbacks (Wave E will swap in SIMD).
 /// 4. quant dequant — `plane_dequant_pair` slot present (G4.4a).
 /// 5. intra-pred — `dc_predictor_4x4` has AVX2 impl (G4.3a).
 /// 6. loopfilter — `lpf_vertical_4` slot present (G4.3b).
 ///
-/// 5/6 families have a slot; 3/6 carry a non-scalar Tier-1 impl
-/// (idct8x8, idct4x4, dc_predictor_4x4). The remaining three slots
-/// reserve naming + dispatch shape so future AVX2 work can fill them
-/// without changing call sites. See per-field docstrings for the
-/// per-family deferral rationale.
+/// 6/6 families have a slot; 4/6 carry a non-scalar Tier-1 impl
+/// (idct4x4, idct8x8, idct16x16, dc_predictor_4x4). The hybrid ADST
+/// slots (iht4x4, iht8x8) plus the deferred slots (lpf_vertical_4,
+/// plane_dequant_pair, extend_frame_borders) reserve naming + dispatch
+/// shape so future AVX2 work can fill them without changing call
+/// sites. See per-field docstrings for the per-family deferral
+/// rationale.
 ///
 /// Fields are `pub(crate)` to keep slot additions a crate-internal
 /// concern; external dispatch sites call the per-kernel accessor
@@ -167,6 +174,31 @@ pub struct SimdDispatch {
     /// [`crate::dsp::x86_64::idct4x4_add_avx2`]; otherwise it points
     /// at the scalar reference.
     pub(crate) idct4x4_add: fn(input: &[i32; 16], dst: &mut [u8], stride: usize),
+
+    /// G4.2 — 16×16 inverse DCT + residual add (full-density 256
+    /// variant). Signature mirrors the scalar reference
+    /// [`crate::transforms::inverse::idct16x16_256_add`]. On x86_64
+    /// AVX2 CPUs this points at the safe wrapper
+    /// [`crate::dsp::x86_64::idct16x16_add_avx2`]; otherwise it points
+    /// at the scalar reference. The 10/38-bucket fast paths are not
+    /// yet ported — only the full `_256_add` variant is dispatched.
+    pub(crate) idct16x16_add: fn(input: &[i32; 256], dst: &mut [u8], stride: usize),
+
+    /// G4.3a — 4×4 hybrid inverse transform (ADST/DCT combinations).
+    /// Signature mirrors [`crate::transforms::inverse::iht4x4_16_add`]
+    /// — the `tx_type` arg picks the row/col 1D pair. **Currently
+    /// scalar-only**: the AVX2 port of `vp9_iht4x4_16_add_sse2` is
+    /// Wave E work; the slot exists so dispatch sites can be written
+    /// against `(dispatch.iht4x4_add())(...)` today without a
+    /// signature churn when Wave E lands the SIMD impl.
+    pub(crate) iht4x4_add:
+        fn(input: &[i32; 16], dst: &mut [u8], stride: usize, tx_type: TxType),
+
+    /// G4.3a — 8×8 hybrid inverse transform. Same scalar-only-for-now
+    /// deferral as [`SimdDispatch::iht4x4_add`]; signature mirrors
+    /// [`crate::transforms::inverse::iht8x8_64_add`].
+    pub(crate) iht8x8_add:
+        fn(input: &[i32; 64], dst: &mut [u8], stride: usize, tx_type: TxType),
 
     /// G4.3a — DC intra-predictor at `bs = 4`. Signature is the
     /// flat-arg form `(dst, stride, above, left)` (compare:
@@ -258,6 +290,15 @@ impl SimdDispatch {
         let idct4x4_add: fn(&[i32; 16], &mut [u8], usize) = scalar_idct4x4_add;
 
         #[cfg(target_arch = "x86_64")]
+        let idct16x16_add: fn(&[i32; 256], &mut [u8], usize) = if caps.avx2 {
+            crate::dsp::x86_64::idct16x16_add_avx2
+        } else {
+            scalar_idct16x16_add
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let idct16x16_add: fn(&[i32; 256], &mut [u8], usize) = scalar_idct16x16_add;
+
+        #[cfg(target_arch = "x86_64")]
         let dc_predictor_4x4: fn(&mut [u8], usize, &[u8], &[u8]) = if caps.avx2 {
             crate::dsp::x86_64::dc_predictor_4x4_avx2
         } else {
@@ -265,6 +306,14 @@ impl SimdDispatch {
         };
         #[cfg(not(target_arch = "x86_64"))]
         let dc_predictor_4x4: fn(&mut [u8], usize, &[u8], &[u8]) = scalar_dc_predictor_4x4;
+
+        // ---- G4.3a hybrid ADST slots — scalar-only in this gap.
+        // Wave E ports `vp9_iht4x4_16_add_sse2` / `vp9_iht8x8_64_add_sse2`
+        // to AVX2 and swaps these slots' selection clauses to mirror
+        // the idct slots above. The slot's signature carries `tx_type`
+        // so the scalar adapter routes to the right row / col 1D pair.
+        let iht4x4_add: fn(&[i32; 16], &mut [u8], usize, TxType) = scalar_iht4x4_add;
+        let iht8x8_add: fn(&[i32; 64], &mut [u8], usize, TxType) = scalar_iht8x8_add;
 
         // ---- G4.3b / G4.4a / G4.4b — scalar-only slots (deferral
         // rationale per field docstrings on `SimdDispatch`). ----
@@ -276,7 +325,10 @@ impl SimdDispatch {
             caps,
             idct8x8_add,
             idct4x4_add,
+            idct16x16_add,
             dc_predictor_4x4,
+            iht4x4_add,
+            iht8x8_add,
             lpf_vertical_4,
             plane_dequant_pair,
             extend_frame_borders,
@@ -300,6 +352,34 @@ impl SimdDispatch {
     #[must_use]
     pub fn idct4x4_add(&self) -> fn(&[i32; 16], &mut [u8], usize) {
         self.idct4x4_add
+    }
+
+    /// Dispatch the 16×16 inverse-DCT + add kernel (G4.2 full-kernel
+    /// rollout). Full-density `_256_add` variant only; the 10/38-bucket
+    /// fast paths are not yet ported.
+    #[inline]
+    #[must_use]
+    pub fn idct16x16_add(&self) -> fn(&[i32; 256], &mut [u8], usize) {
+        self.idct16x16_add
+    }
+
+    /// Dispatch the 4×4 hybrid inverse-transform + add kernel
+    /// (G4.3a — ADST/DCT combinations). The `tx_type` arg routes to
+    /// the right row / col 1D pair. **Scalar-only** in the current
+    /// rollout; Wave E lands the AVX2 port.
+    #[inline]
+    #[must_use]
+    pub fn iht4x4_add(&self) -> fn(&[i32; 16], &mut [u8], usize, TxType) {
+        self.iht4x4_add
+    }
+
+    /// Dispatch the 8×8 hybrid inverse-transform + add kernel
+    /// (G4.3a — ADST/DCT combinations). **Scalar-only** in the current
+    /// rollout; Wave E lands the AVX2 port.
+    #[inline]
+    #[must_use]
+    pub fn iht8x8_add(&self) -> fn(&[i32; 64], &mut [u8], usize, TxType) {
+        self.iht8x8_add
     }
 
     /// Dispatch the 4×4 DC intra-predictor (G4.3a). The slot uses the
@@ -449,6 +529,50 @@ mod tests {
             scalar as usize,
             "avx2=false must install the scalar idct4x4_16_add"
         );
+    }
+
+    /// Forcing `avx2 = false` falls back to the scalar reference for
+    /// the G4.2 idct16x16 slot.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn forced_scalar_caps_installs_scalar_idct16x16() {
+        let mut caps = detect();
+        caps.avx2 = false;
+        let d = SimdDispatch::build(caps);
+        let scalar: fn(&[i32; 256], &mut [u8], usize) =
+            crate::transforms::inverse::idct16x16_256_add;
+        assert_eq!(
+            d.idct16x16_add() as usize,
+            scalar as usize,
+            "avx2=false must install the scalar idct16x16_256_add"
+        );
+    }
+
+    /// G4.3a hybrid ADST slots are always scalar in this gap (Wave E
+    /// will swap in AVX2). Verify both caps states route to the scalar
+    /// reference.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn iht_hybrid_slots_are_always_scalar() {
+        for &avx2 in &[true, false] {
+            let mut caps = detect();
+            caps.avx2 = avx2;
+            let d = SimdDispatch::build(caps);
+            let iht4: fn(&[i32; 16], &mut [u8], usize, TxType) =
+                crate::transforms::inverse::iht4x4_16_add;
+            let iht8: fn(&[i32; 64], &mut [u8], usize, TxType) =
+                crate::transforms::inverse::iht8x8_64_add;
+            assert_eq!(
+                d.iht4x4_add() as usize,
+                iht4 as usize,
+                "iht4x4 must be scalar regardless of caps (avx2={avx2})"
+            );
+            assert_eq!(
+                d.iht8x8_add() as usize,
+                iht8 as usize,
+                "iht8x8 must be scalar regardless of caps (avx2={avx2})"
+            );
+        }
     }
 
     /// Forcing `avx2 = false` falls back to the scalar adapter for
