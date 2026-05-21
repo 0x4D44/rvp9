@@ -38,7 +38,7 @@
 use rvp9_decoder::{Decoder, ParsedFrame};
 use rvp9_encoder::{AqMode, EncoderConfig, StreamEncoder, YuvFrameRef};
 use rvp9_harness::bdrate::bdrate;
-use std::io::Read;
+use rvp9_harness::y4m::{YuvFrameBuf, probe_testsrc_720p, read_cropped as y4m_read_cropped};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -59,10 +59,6 @@ fn libvpx_stock_available() -> Option<PathBuf> {
     }
     None
 }
-
-/// Owned tight-stride YUV planes: `(Y, U, V)`. Used as the in-memory
-/// frame representation throughout the harness.
-type YuvFrameBuf = (Vec<u8>, Vec<u8>, Vec<u8>);
 
 /// Build a strided YUV view over tight-stride backing buffers.
 fn yuv_view<'a>(y: &'a [u8], u: &'a [u8], v: &'a [u8], w: usize) -> YuvFrameRef<'a> {
@@ -358,31 +354,91 @@ fn measure_libvpx_point(
 #[test]
 #[ignore = "F12.0 — Stage 4a exit-gate harness; run with `--ignored`"]
 fn bdrate_gate_stage4a() {
-    // 128×128 is the smallest size that exercises a 2×2 SB grid (so
-    // partition decisions matter) while staying tractable as a smoke
-    // test. 8 frames at 30 fps = 1 GOP keyframe + 7 inter — enough to
-    // average bitrate / PSNR meaningfully.
-    const W: u32 = 128;
-    const H: u32 = 128;
-    const N_FRAMES: u32 = 8;
-    const FRAMERATE: f64 = 30.0;
+    // 256×256 = 4×4 SB grid — exercises non-trivial partition decisions
+    // and is wide enough that the AQ-off baseline RD curve has
+    // meaningful slope. 16 frames at 30 fps = 1 GOP keyframe + 15 inter
+    // — gives the RC.1 rate-correction feedback loop time to converge
+    // (it takes ~10-30 frames to walk from cf=1.0 to steady state on
+    // most content).
+    const W: u32 = 256;
+    const H: u32 = 256;
+    const N_FRAMES: u32 = 16;
+    const FRAMERATE_HINT: f64 = 30.0;
 
-    // Operating points: span ~1 octave each side of "natural" bitrate
-    // for this resolution. At 128×128×30fps a typical RT VP9 encode
-    // sits around 200–1200 kbps; we use 4 evenly-spaced log-domain
-    // points covering 250→2000 kbps.
+    // Operating points: span ~3 octaves at this resolution. With RC.1
+    // the controller can now push Q across the full range, so we
+    // bracket from low-Q (high PSNR) to high-Q (low PSNR) operating
+    // points.
     let target_bitrates_bps: [u32; 4] = [250_000, 500_000, 1_000_000, 2_000_000];
 
-    let frames: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)> = (0..N_FRAMES)
-        .map(|i| animated_gradient(W as usize, H as usize, i))
-        .collect();
+    // Source selection: real y4m corpus when available, fall back to
+    // the in-test synthetic. RC.2 wires the same testsrc_720p30 corpus
+    // used by AQ.5 so both gates can be re-measured under identical
+    // input post-RC.1.
+    let y4m_path_buf = probe_testsrc_720p();
+    let source_mode: SourceMode = match y4m_path_buf.as_deref() {
+        Some(path) => SourceMode::Y4mCrop(path),
+        None => SourceMode::SyntheticTextured,
+    };
+    let (frames, framerate, source_label): (Vec<YuvFrameBuf>, f64, String) = match source_mode {
+        SourceMode::Y4mCrop(path) => match y4m_read_cropped(path, W, H, N_FRAMES as usize) {
+            Ok((f, fr)) if f.len() == N_FRAMES as usize => (
+                f,
+                fr,
+                format!(
+                    "y4m centre-crop from {} → {W}x{H} @ {fr} fps",
+                    path.display()
+                ),
+            ),
+            Ok((f, _)) => {
+                eprintln!(
+                    "    [y4m fallback] only got {}/{} frames; using animated gradient",
+                    f.len(),
+                    N_FRAMES
+                );
+                let frames: Vec<YuvFrameBuf> = (0..N_FRAMES)
+                    .map(|i| animated_gradient(W as usize, H as usize, i))
+                    .collect();
+                (
+                    frames,
+                    FRAMERATE_HINT,
+                    format!(
+                        "synthetic animated-gradient (y4m fallback), {W}x{H} @ {FRAMERATE_HINT} fps"
+                    ),
+                )
+            }
+            Err(e) => {
+                eprintln!("    [y4m fallback] read failed: {e}; using animated gradient");
+                let frames: Vec<YuvFrameBuf> = (0..N_FRAMES)
+                    .map(|i| animated_gradient(W as usize, H as usize, i))
+                    .collect();
+                (
+                    frames,
+                    FRAMERATE_HINT,
+                    format!(
+                        "synthetic animated-gradient (y4m fallback), {W}x{H} @ {FRAMERATE_HINT} fps"
+                    ),
+                )
+            }
+        },
+        SourceMode::SyntheticTextured => {
+            let frames: Vec<YuvFrameBuf> = (0..N_FRAMES)
+                .map(|i| animated_gradient(W as usize, H as usize, i))
+                .collect();
+            (
+                frames,
+                FRAMERATE_HINT,
+                format!(
+                    "synthetic animated-gradient (no y4m available), {W}x{H} @ {FRAMERATE_HINT} fps"
+                ),
+            )
+        }
+    };
 
-    eprintln!("Stage 4a Exit Gate — F12.0 Measurement Report");
-    eprintln!("=============================================");
-    eprintln!(
-        "Source: synthetic translating gradient, {W}x{H}, {N_FRAMES} frames @ {FRAMERATE} fps"
-    );
-    eprintln!("Target bitrates tested: {target_bitrates_bps:?} bps");
+    eprintln!("Stage 4a Exit Gate — F12.0 Measurement Report (RC.2-wired)");
+    eprintln!("==========================================================");
+    eprintln!("Source: {source_label}");
+    eprintln!("Frames: {N_FRAMES}    Target bitrates: {target_bitrates_bps:?} bps");
     eprintln!();
 
     // -------------------------------------------------------------
@@ -391,7 +447,7 @@ fn bdrate_gate_stage4a() {
     let mut rvp9_curve: Vec<(f64, f64)> = Vec::with_capacity(target_bitrates_bps.len());
     let mut rvp9_points: Vec<RdPoint> = Vec::with_capacity(target_bitrates_bps.len());
     for &tb in &target_bitrates_bps {
-        let p = measure_rvp9_point(W, H, FRAMERATE, tb, AqMode::Off, &frames);
+        let p = measure_rvp9_point(W, H, framerate, tb, AqMode::Off, &frames);
         eprintln!(
             "  rvp9    target={:>5} kbps  →  actual={:>7.1} kbps,  PSNR={:>5.2} dB",
             tb / 1000,
@@ -413,7 +469,7 @@ fn bdrate_gate_stage4a() {
         eprintln!("libvpx-stock available at: {}", vpxenc.display());
         let mut curve: Vec<(f64, f64)> = Vec::new();
         for &tb in &target_bitrates_bps {
-            if let Some(p) = measure_libvpx_point(&vpxenc, W, H, FRAMERATE, tb, 0, &frames) {
+            if let Some(p) = measure_libvpx_point(&vpxenc, W, H, framerate, tb, 0, &frames) {
                 eprintln!(
                     "  libvpx  target={:>5} kbps  →  actual={:>7.1} kbps,  PSNR={:>5.2} dB",
                     tb / 1000,
@@ -499,184 +555,6 @@ enum SourceMode<'a> {
     Y4mCrop(&'a Path),
     /// Generate frames in-process via [`textured_foreground`].
     SyntheticTextured,
-}
-
-/// Header parsed from a y4m file's first line ("YUV4MPEG2 W... H... F.../1 ...").
-#[derive(Debug, Clone, Copy)]
-struct Y4mHeader {
-    w: u32,
-    h: u32,
-    fps_num: u32,
-    fps_den: u32,
-}
-
-/// Parse the y4m header from `f`'s start position. Leaves `f` positioned
-/// just after the header newline.
-///
-/// We only handle C420 / C420jpeg / C420mpeg2 / unstated (= I420). Any
-/// other chroma format returns `Err`.
-fn parse_y4m_header(f: &mut std::fs::File) -> std::io::Result<Y4mHeader> {
-    use std::io::{BufRead, BufReader, Seek, SeekFrom};
-    let mut reader = BufReader::new(&mut *f);
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
-    let bytes_consumed = line.len() as u64;
-    if !line.starts_with("YUV4MPEG2 ") {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "missing YUV4MPEG2 magic",
-        ));
-    }
-    // Drop the BufReader before seeking — it has its own internal cursor.
-    drop(reader);
-    f.seek(SeekFrom::Start(bytes_consumed))?;
-
-    let mut w = None;
-    let mut h = None;
-    let mut fps_num = None;
-    let mut fps_den = None;
-    let mut chroma_ok = true;
-    for tok in line.trim_end().split(' ').skip(1) {
-        if let Some(v) = tok.strip_prefix('W') {
-            w = v.parse().ok();
-        } else if let Some(v) = tok.strip_prefix('H') {
-            h = v.parse().ok();
-        } else if let Some(v) = tok.strip_prefix('F') {
-            // F<num>:<den>
-            let mut sp = v.split(':');
-            fps_num = sp.next().and_then(|n| n.parse().ok());
-            fps_den = sp.next().and_then(|d| d.parse().ok());
-        } else if let Some(v) = tok.strip_prefix('C') {
-            // Accept the common 4:2:0 variants; everything else fails.
-            chroma_ok = matches!(v, "420" | "420jpeg" | "420mpeg2" | "420paldv");
-        }
-    }
-    if !chroma_ok {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "unsupported y4m chroma (need 4:2:0 variant)",
-        ));
-    }
-    match (w, h, fps_num, fps_den) {
-        (Some(w), Some(h), Some(fps_num), Some(fps_den)) => Ok(Y4mHeader {
-            w,
-            h,
-            fps_num,
-            fps_den,
-        }),
-        _ => Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "missing required y4m field (W/H/F)",
-        )),
-    }
-}
-
-/// Read up to `n` frames from a y4m file, cropping each frame's centre to
-/// `(crop_w, crop_h)`. `crop_w` and `crop_h` MUST be even (chroma) and
-/// `≤ header.w/h`.
-///
-/// Returns `(frames, framerate)` on success. Each frame is `(Y, U, V)`
-/// in tight stride matching the crop dimensions.
-fn read_y4m_cropped(
-    path: &Path,
-    crop_w: u32,
-    crop_h: u32,
-    n: usize,
-) -> std::io::Result<(Vec<YuvFrameBuf>, f64)> {
-    let mut f = std::fs::File::open(path)?;
-    let hdr = parse_y4m_header(&mut f)?;
-
-    if crop_w > hdr.w || crop_h > hdr.h {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!(
-                "crop {crop_w}x{crop_h} exceeds y4m {}x{}",
-                hdr.w, hdr.h
-            ),
-        ));
-    }
-    if !crop_w.is_multiple_of(2) || !crop_h.is_multiple_of(2) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "crop dims must be even",
-        ));
-    }
-
-    let src_w = hdr.w as usize;
-    let src_h = hdr.h as usize;
-    let cw = crop_w as usize;
-    let ch = crop_h as usize;
-    let off_x = (src_w - cw) / 2;
-    let off_y = (src_h - ch) / 2;
-    let chroma_off_x = off_x / 2;
-    let chroma_off_y = off_y / 2;
-
-    // Full frame body sizes in the y4m.
-    let y_size = src_w * src_h;
-    let uv_size = (src_w / 2) * (src_h / 2);
-    let frame_body = y_size + 2 * uv_size;
-
-    let mut frames = Vec::with_capacity(n);
-    let mut hdr_buf = [0u8; 6]; // "FRAME\n"
-    let mut body = vec![0u8; frame_body];
-
-    for _ in 0..n {
-        // Each y4m frame starts with "FRAME" + optional params + "\n".
-        // For our simple corpus the tag is exactly "FRAME\n".
-        if f.read_exact(&mut hdr_buf).is_err() {
-            break;
-        }
-        if &hdr_buf[..5] != b"FRAME" {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "missing FRAME tag",
-            ));
-        }
-        if hdr_buf[5] != b'\n' {
-            // Some y4m variants have FRAME<params>\n; skip until \n.
-            let mut b = [0u8; 1];
-            loop {
-                if f.read_exact(&mut b).is_err() {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::UnexpectedEof,
-                        "EOF in FRAME params",
-                    ));
-                }
-                if b[0] == b'\n' {
-                    break;
-                }
-            }
-        }
-        f.read_exact(&mut body)?;
-
-        // Crop Y.
-        let mut y_crop = vec![0u8; cw * ch];
-        for r in 0..ch {
-            let src_row = &body[(off_y + r) * src_w + off_x..(off_y + r) * src_w + off_x + cw];
-            y_crop[r * cw..(r + 1) * cw].copy_from_slice(src_row);
-        }
-        // Crop U / V.
-        let u_off = y_size;
-        let v_off = y_size + uv_size;
-        let chroma_src_w = src_w / 2;
-        let chroma_cw = cw / 2;
-        let chroma_ch = ch / 2;
-        let mut u_crop = vec![0u8; chroma_cw * chroma_ch];
-        let mut v_crop = vec![0u8; chroma_cw * chroma_ch];
-        for r in 0..chroma_ch {
-            let u_row_off = u_off + (chroma_off_y + r) * chroma_src_w + chroma_off_x;
-            u_crop[r * chroma_cw..(r + 1) * chroma_cw]
-                .copy_from_slice(&body[u_row_off..u_row_off + chroma_cw]);
-            let v_row_off = v_off + (chroma_off_y + r) * chroma_src_w + chroma_off_x;
-            v_crop[r * chroma_cw..(r + 1) * chroma_cw]
-                .copy_from_slice(&body[v_row_off..v_row_off + chroma_cw]);
-        }
-
-        frames.push((y_crop, u_crop, v_crop));
-    }
-
-    let framerate = f64::from(hdr.fps_num) / f64::from(hdr.fps_den);
-    Ok((frames, framerate))
 }
 
 /// Generate frame `idx` of a "textured-foreground over textured-background"
@@ -826,18 +704,14 @@ fn bdrate_gate_stage4b_aq() {
     let target_bitrates_bps: [u32; 4] = [200_000, 400_000, 800_000, 1_600_000];
 
     // Source selection: try y4m, fall back to synthetic.
-    let y4m_path = PathBuf::from("tests/corpus/testsrc_720p30.y4m");
-    let y4m_path_alt = PathBuf::from(r"D:\language\rvp9-2\tests\corpus\testsrc_720p30.y4m");
-    let source_mode: SourceMode = if y4m_path.is_file() {
-        SourceMode::Y4mCrop(&y4m_path)
-    } else if y4m_path_alt.is_file() {
-        SourceMode::Y4mCrop(&y4m_path_alt)
-    } else {
-        SourceMode::SyntheticTextured
+    let y4m_path_buf = probe_testsrc_720p();
+    let source_mode: SourceMode = match y4m_path_buf.as_deref() {
+        Some(path) => SourceMode::Y4mCrop(path),
+        None => SourceMode::SyntheticTextured,
     };
 
     let (frames, framerate, source_label): (Vec<_>, f64, String) = match source_mode {
-        SourceMode::Y4mCrop(path) => match read_y4m_cropped(path, W, H, N_FRAMES as usize) {
+        SourceMode::Y4mCrop(path) => match y4m_read_cropped(path, W, H, N_FRAMES as usize) {
             Ok((f, fr)) if f.len() == N_FRAMES as usize => (
                 f,
                 fr,

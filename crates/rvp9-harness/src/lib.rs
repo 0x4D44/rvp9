@@ -7,6 +7,7 @@
 pub mod bdrate;
 pub mod container;
 pub mod md5file;
+pub mod y4m;
 
 use rvp9_core::frame::Yv12Buffer;
 use std::path::Path;
