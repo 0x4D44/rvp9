@@ -550,6 +550,69 @@ forced to ZEROMV-skip (no F8.1 sub-8 picker exists yet).
 **Future plan:** when sub-8 picker lands, the remaining sub-8
 fallback also disappears.
 
+### 2026-05-21 — Chroma intra mode forced to DC on every KF leaf  [RESOLVED A0''-chroma]
+**Where:** `rvp9-encoder::pick_and_simulate_intra_encode_partitions`
++ writer-side `BlockMode::Intra { uv_mode: IntraMode::Dc }` in
+`rvp9-encoder::frame_loop::build_kf_mi_grid`. libvpx counterpart:
+`vp9/encoder/vp9_pickmode.c::vp9_pick_intra_mode` selects from the
+full `{DC, V, H, D45, D63, D117, D135, D153, D207, TM}` set.
+**What libvpx does:** evaluates all 10 chroma intra modes via RD,
+emits one `uv_mode` per leaf.
+**What rvp9 did before A0''-chroma:** picker stopped at luma; UV
+was hard-forced to `IntraMode::Dc` everywhere. Encoder simulator
+predicted both U and V planes as DC; writer emitted
+`uv_mode = Dc` on every leaf. End-to-end consistent (cross-decoder
+gate passed byte-exact) but structurally wrong on textured chroma.
+A0' measured UV PSNR locked at 11-17 dB across q-index 34 → 254 on
+foreman_cif.
+**A0''-chroma resolution (2026-05-21):** added `pick_intra_mode_uv`
+in `rvp9-core::mode_decision::intra` mirroring the existing luma
+picker; threads `predicted_uv_mode` through `PartitionLeafDesc`,
+the simulator's UV plane loop, and `build_kf_mi_grid`. Single
+`uv_mode` applied to both U and V (libvpx wire-format invariant).
+Cost table is `intra_uv_mode_costs_kf[y_mode][uv_mode]`.
+Block64x64 leaves still fall back to DC (the luma picker is out
+of scope there too — F8.x roadmap item).
+**Byte-parity impact:** structural for any leaf whose RD winner is
+not DC. Cross-decoder gate remains BYTE-EXACT against vpxdec +
+ffmpeg.
+**Future plan:** when the F8.x sub-Block64x64 picker lands, the
+last DC fallback at Block64x64 also disappears.
+
+### 2026-05-21 — KF partition descent capped at Block16x16  [RESOLVED A0''-partition]
+**Where:** `rvp9-core::mode_decision::partition::descend`. libvpx
+counterpart: `vp9/encoder/vp9_pickmode.c::choose_partitioning`
+descends through Block16x16 → Block8x8 on KFs whenever the per-
+pixel variance exceeds the threshold.
+**What libvpx does:** unconditionally allows the Block16x16 →
+Block8x8 split on textured KFs; the picker downstream handles the
+per-block mode selection at any size.
+**What rvp9 does (post-A0''):** gates the Block16x16 → Block8x8
+split OFF on KEYFRAMES (`!params.is_keyframe`). INTER frames keep
+the full descent. Diagnosed on foreman_cif: at q ≥ 124, ~92 % of
+16×16 KF blocks crossed the variance threshold and split to 8×8,
+producing 940/1024 Block8x8 leaves per frame. Per-leaf overhead
+(mode bits + EOB context) consumed the entire frame bit budget,
+starving the residual coefficients. Capping at Block16x16 frees
+per-leaf bits AND keeps every KF leaf inside the F10.1b intra
+picker's supported size range.
+**Why this gate, not a full cap:** A1 / A1.perf established that
+the F8.1 Block8x8 INTER picker is the testsrc PSNR climb (24 →
+35-52 dB on motion frames). That picker requires Block8x8 leaves
+to exist on inter frames. The KF-only gate preserves the inter
+win while closing the KF fragmentation.
+**Byte-parity impact:** structural — KF leaves coarser than libvpx
+on textured content. Cross-decoder gate remains BYTE-EXACT.
+**Compression-efficiency impact:** foreman_cif KF Y-PSNR climbs
+slightly from chroma-only (14-16 dB) to ~16 dB across the
+operating range. The flat PSNR-vs-bitrate signature still
+indicates downstream bottlenecks (likely F8.1 inter picker on
+textured real content).
+**Future plan:** when libvpx-faithful KF RD-loop (per-leaf
+per-size RD comparison) is wired, the cap can be lifted — at that
+point per-leaf bits are spent only where they reduce RD net of
+overhead.
+
 ### 2026-05-21 — BD-rate trapezoidal approximation (F12.0)
 **Where:** `rvp9-harness::bdrate::bdrate`. libvpx / standard
 counterpart: Bjøntegaard 2001 (and 2008 update) cubic polynomial fit
