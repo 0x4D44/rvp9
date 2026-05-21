@@ -463,6 +463,94 @@ pub fn idct16x16_256_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
     }
 }
 
+/// 2D 10-coefficient inverse 16×16 DCT — sparse-block fast path.
+///
+/// Mirrors `vpx_idct16x16_10_add_c` (`vpx_dsp/inv_txfm.c`). When the
+/// caller knows `eob <= 10` the non-zero coefficients are confined to
+/// the top-left 4×4 sub-block of the input (raster order), so the
+/// row 1D pass only needs to run on the first 4 input rows; rows
+/// 4..16 of the input are zero and feed through `idct16` to produce
+/// all-zero intermediate rows (proven by `idct16_zero_in_zero_out`).
+/// The column pass still runs all 16 columns because rows 0..3 of the
+/// row-pass output are dense in every column.
+///
+/// **Caller contract** (mirrors libvpx): if used on a block whose true
+/// eob exceeds 10, coefficients at indices `>=` row 4 are silently
+/// ignored and the output diverges from the full kernel. Callers are
+/// responsible for the eob bucket gate.
+pub fn idct16x16_10_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
+    debug_assert!(dest.len() >= stride * 15 + 16, "dest too small for 16x16 add");
+
+    // Intermediate buffer — rows 4..16 stay zero because the
+    // corresponding input rows are assumed zero (caller contract).
+    let mut intermediate = [0i32; 256];
+
+    // Row pass — first 4 rows only.
+    for r in 0..4 {
+        let row_in: &[i32; 16] = input[r * 16..r * 16 + 16].try_into().unwrap();
+        let row_out_mut: &mut [i32; 16] = (&mut intermediate[r * 16..r * 16 + 16])
+            .try_into()
+            .unwrap();
+        idct16(row_in, row_out_mut);
+    }
+
+    // Column pass + residual add (full 16 cols, identical to _256_add).
+    let mut col_in = [0i32; 16];
+    let mut col_out = [0i32; 16];
+    for c in 0..16 {
+        for r in 0..16 {
+            col_in[r] = intermediate[r * 16 + c];
+        }
+        idct16(&col_in, &mut col_out);
+        for r in 0..16 {
+            let shifted = (col_out[r] as i64 + 32) >> 6;
+            dest[r * stride + c] = clip_pixel_add(dest[r * stride + c], shifted);
+        }
+    }
+}
+
+/// 2D 38-coefficient inverse 16×16 DCT — sparse-block fast path.
+///
+/// Mirrors `vpx_idct16x16_38_add_c` (`vpx_dsp/inv_txfm.c`). When the
+/// caller knows `eob <= 38` the non-zero coefficients are confined to
+/// the top-left 8×8 sub-block of the input (raster order), so the row
+/// 1D pass only needs to run on the first 8 input rows; rows 8..16 of
+/// the input are zero and feed through `idct16` to produce all-zero
+/// intermediate rows. The column pass still runs all 16 columns.
+///
+/// **Caller contract** (mirrors libvpx): if used on a block whose true
+/// eob exceeds 38, coefficients at indices `>=` row 8 are silently
+/// ignored and the output diverges from the full kernel. Callers are
+/// responsible for the eob bucket gate.
+pub fn idct16x16_38_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
+    debug_assert!(dest.len() >= stride * 15 + 16, "dest too small for 16x16 add");
+
+    let mut intermediate = [0i32; 256];
+
+    // Row pass — first 8 rows only.
+    for r in 0..8 {
+        let row_in: &[i32; 16] = input[r * 16..r * 16 + 16].try_into().unwrap();
+        let row_out_mut: &mut [i32; 16] = (&mut intermediate[r * 16..r * 16 + 16])
+            .try_into()
+            .unwrap();
+        idct16(row_in, row_out_mut);
+    }
+
+    // Column pass + residual add (full 16 cols, identical to _256_add).
+    let mut col_in = [0i32; 16];
+    let mut col_out = [0i32; 16];
+    for c in 0..16 {
+        for r in 0..16 {
+            col_in[r] = intermediate[r * 16 + c];
+        }
+        idct16(&col_in, &mut col_out);
+        for r in 0..16 {
+            let shifted = (col_out[r] as i64 + 32) >> 6;
+            dest[r * stride + c] = clip_pixel_add(dest[r * stride + c], shifted);
+        }
+    }
+}
+
 /// 2D 1-coefficient inverse 16×16 DCT (DC-only fast path).
 ///
 /// Mirrors `vpx_idct16x16_1_add_c` (`vpx_dsp/inv_txfm.c:799-811`). Two
@@ -1877,6 +1965,127 @@ mod tests {
         let any_above = dest.iter().any(|&v| v > 128);
         let any_below = dest.iter().any(|&v| v < 128);
         assert!(any_above && any_below, "AC should produce both signs");
+    }
+
+    // ---- 16x16 EOB-bucket fast paths (G4-δ) ----
+    //
+    // Bit-exactness: when the input's non-zero coefficients are
+    // confined to the top-left 4×4 (eob ≤ 10) or 8×8 (eob ≤ 38)
+    // sub-block, the fast paths must produce identical pixel output
+    // to the full _256_add kernel. The fast paths skip the row pass
+    // on the all-zero rows, which is bit-equivalent because
+    // `idct16(&[0;16])` is `[0;16]` (proven by `idct16_zero_in_zero_out`).
+
+    /// Helper: build a 16×16 raster-order input that is zero outside
+    /// the top-left `n × n` sub-block, with `seed`-derived values
+    /// inside. Values are in `[-2048, 2047]` to stay within
+    /// `tran_low_t` range without provoking saturation tests.
+    fn make_sparse_input_top_left(n: usize, seed: u64) -> [i32; 256] {
+        let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let mut input = [0i32; 256];
+        for r in 0..n {
+            for c in 0..n {
+                // Tiny xorshift; values mod 4096 - 2048.
+                s ^= s << 13;
+                s ^= s >> 7;
+                s ^= s << 17;
+                input[r * 16 + c] = ((s as i32) & 0x0FFF) - 0x800;
+            }
+        }
+        input
+    }
+
+    /// `idct16x16_10_add` must match `idct16x16_256_add` bit-for-bit
+    /// when the input's non-zeros are confined to the top-left 4×4.
+    /// Stratified across 4 dest backgrounds × 4 seeds to cover the
+    /// clip_pixel_add saturation arms.
+    #[test]
+    fn idct16x16_10_add_matches_256_add_for_sparse_input() {
+        let backgrounds = [0u8, 50, 128, 240];
+        for &bg in &backgrounds {
+            for seed in 0..4u64 {
+                let input = make_sparse_input_top_left(4, seed);
+                let mut dest_full = [bg; 256];
+                let mut dest_fast = [bg; 256];
+                idct16x16_256_add(&input, &mut dest_full, 16);
+                idct16x16_10_add(&input, &mut dest_fast, 16);
+                assert_eq!(
+                    dest_full, dest_fast,
+                    "_10_add must match _256_add for sparse 4×4 input \
+                     (bg={bg}, seed={seed})"
+                );
+            }
+        }
+    }
+
+    /// `idct16x16_38_add` must match `idct16x16_256_add` bit-for-bit
+    /// when the input's non-zeros are confined to the top-left 8×8.
+    /// Stratified across 4 dest backgrounds × 4 seeds.
+    #[test]
+    fn idct16x16_38_add_matches_256_add_for_sparse_input() {
+        let backgrounds = [0u8, 50, 128, 240];
+        for &bg in &backgrounds {
+            for seed in 0..4u64 {
+                let input = make_sparse_input_top_left(8, seed);
+                let mut dest_full = [bg; 256];
+                let mut dest_fast = [bg; 256];
+                idct16x16_256_add(&input, &mut dest_full, 16);
+                idct16x16_38_add(&input, &mut dest_fast, 16);
+                assert_eq!(
+                    dest_full, dest_fast,
+                    "_38_add must match _256_add for sparse 8×8 input \
+                     (bg={bg}, seed={seed})"
+                );
+            }
+        }
+    }
+
+    /// `idct16x16_38_add` must also match for the strict subset that
+    /// the `_10_add` bucket covers (input confined to top-left 4×4).
+    /// A caller picking the larger bucket should still get bit-exact
+    /// output — the _38_ path just does extra zero-input row passes.
+    #[test]
+    fn idct16x16_38_add_matches_256_add_for_eob10_sized_input() {
+        for seed in 0..4u64 {
+            let input = make_sparse_input_top_left(4, seed);
+            let mut dest_full = [128u8; 256];
+            let mut dest_fast = [128u8; 256];
+            idct16x16_256_add(&input, &mut dest_full, 16);
+            idct16x16_38_add(&input, &mut dest_fast, 16);
+            assert_eq!(
+                dest_full, dest_fast,
+                "_38_add must match _256_add for eob≤10 inputs (seed={seed})"
+            );
+        }
+    }
+
+    /// DC-only input falls within both buckets — verifies the fast
+    /// paths handle the trivial eob=1 case identically to the full
+    /// kernel.
+    #[test]
+    fn idct16x16_eob_fast_paths_match_for_dc_only() {
+        let mut input = [0i32; 256];
+        input[0] = 512;
+        let mut dest_full = [50u8; 256];
+        let mut dest_10 = [50u8; 256];
+        let mut dest_38 = [50u8; 256];
+        idct16x16_256_add(&input, &mut dest_full, 16);
+        idct16x16_10_add(&input, &mut dest_10, 16);
+        idct16x16_38_add(&input, &mut dest_38, 16);
+        assert_eq!(dest_full, dest_10, "_10_add DC-only must match _256_add");
+        assert_eq!(dest_full, dest_38, "_38_add DC-only must match _256_add");
+    }
+
+    /// Zero input preserves dest for both fast paths.
+    #[test]
+    fn idct16x16_eob_fast_paths_zero_preserve_dest() {
+        let input = [0i32; 256];
+        let mut dest_10 = [128u8; 256];
+        let mut dest_38 = [128u8; 256];
+        idct16x16_10_add(&input, &mut dest_10, 16);
+        idct16x16_38_add(&input, &mut dest_38, 16);
+        assert_eq!(dest_10, [128; 256], "_10_add(zero) must preserve dest");
+        assert_eq!(dest_38, [128; 256], "_38_add(zero) must preserve dest");
     }
 
     // ---- 32x32 family ----

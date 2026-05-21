@@ -43,7 +43,7 @@ use rvp9_core::entropy::{BoolReader, FrameContext};
 use rvp9_core::intra_pred::{DcAvailability, IntraMode, PredCtx, intra_predict};
 use rvp9_core::transforms::inverse::{
     idct4x4_1_add, idct8x8_1_add, idct16x16_1_add,
-    idct32x32_1_add, iht16x16_256_add, iwht4x4_1_add, iwht4x4_16_add,
+    idct32x32_1_add, iwht4x4_1_add, iwht4x4_16_add,
 };
 use rvp9_core::transforms::types::{TxSize, TxType};
 
@@ -399,18 +399,26 @@ fn inverse_transform_add(
             if tx_type == TxType::DctDct {
                 if eob == 1 {
                     idct16x16_1_add(coefs[0], dest, stride);
+                } else if eob <= 10 {
+                    // G4-δ — sparse-block fast path. Top-left 4×4 of
+                    // input is non-zero (libvpx scan-order bucket);
+                    // row pass runs 4× instead of 16×. Scalar-only
+                    // today (Wave F lands AVX2).
+                    (dispatch.idct16x16_10_add())(coefs, dest, stride);
+                } else if eob <= 38 {
+                    // G4-δ — top-left 8×8 sparse fast path. Row pass
+                    // runs 8× instead of 16×.
+                    (dispatch.idct16x16_38_add())(coefs, dest, stride);
                 } else {
                     // G4.2 — dispatch through SimdDispatch so the AVX2
-                    // implementation runs on supported CPUs. 10/38-bucket
-                    // fast paths not yet ported; full _256_add is bit-exact.
+                    // implementation runs on supported CPUs.
                     (dispatch.idct16x16_add())(coefs, dest, stride);
                 }
             } else {
-                // Hybrid 16×16 still scalar — the 16×16 ADST is not in
-                // any G4 dispatch slot (Wave E adds it if needed; in
-                // practice intra Y at 16×16 is the only path that
-                // produces a non-DctDct tx_type here).
-                iht16x16_256_add(coefs, dest, stride, tx_type);
+                // G4-δ — hybrid 16×16 via SimdDispatch (scalar-only
+                // today; Wave F lands AVX2). Replaces the prior direct
+                // `iht16x16_256_add(...)` scalar call.
+                (dispatch.iht16x16_add())(coefs, dest, stride, tx_type);
             }
         }
         TxSize::Tx32x32 => {
