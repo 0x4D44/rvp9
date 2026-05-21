@@ -356,20 +356,27 @@ fn measure_libvpx_point(
 fn bdrate_gate_stage4a() {
     // 256×256 = 4×4 SB grid — exercises non-trivial partition decisions
     // and is wide enough that the AQ-off baseline RD curve has
-    // meaningful slope. 16 frames at 30 fps = 1 GOP keyframe + 15 inter
-    // — gives the RC.1 rate-correction feedback loop time to converge
-    // (it takes ~10-30 frames to walk from cf=1.0 to steady state on
-    // most content).
+    // meaningful slope. 64 frames at 30 fps = 1 GOP keyframe + 63 inter
+    // — gives the RC.1 rate-correction feedback loop AND the
+    // `avg_frame_qindex_inter` EWMA enough samples to escape the
+    // worst_quality init clamp. The night-6 F12 midpoint at 16 frames
+    // showed all four target bitrates producing the same actual bitrate
+    // because the EWMA stayed pinned high. RC.6 confirmed that 60+
+    // frames was required for measurability.
     const W: u32 = 256;
     const H: u32 = 256;
-    const N_FRAMES: u32 = 16;
+    const N_FRAMES: u32 = 64;
     const FRAMERATE_HINT: f64 = 30.0;
 
-    // Operating points: span ~3 octaves at this resolution. With RC.1
-    // the controller can now push Q across the full range, so we
-    // bracket from low-Q (high PSNR) to high-Q (low PSNR) operating
-    // points.
-    let target_bitrates_bps: [u32; 4] = [250_000, 500_000, 1_000_000, 2_000_000];
+    // Operating points: 25-250 kbps spans 3 octaves at the LOW end of
+    // the bitrate spectrum, where both encoders have to push Q high
+    // enough that the R-D curves actually slope. RC.6 measured both
+    // rvp9 and libvpx saturating at ~75 kbps / 59-82 dB on the
+    // testsrc 256×256 corpus at the original 250-2000 kbps range:
+    // the content is too easy at 256×256 to fill higher bitrates,
+    // and both encoders just plateau. By targeting below the
+    // saturation knee we get a measurable curve.
+    let target_bitrates_bps: [u32; 4] = [25_000, 50_000, 100_000, 250_000];
 
     // Source selection: real y4m corpus when available, fall back to
     // the in-test synthetic. RC.2 wires the same testsrc_720p30 corpus
@@ -692,14 +699,17 @@ fn bdrate_gate_stage4b_aq() {
     // - 256×256 frames are 4× the F12.0 area (still tractable for the
     //   v1 encoder, ~1-2s per frame at high bitrate in debug, ~100ms
     //   in release). 256 is a 64-multiple.
-    // - 8 frames per run: 1 KF + 7 inter. Enough that cyclic refresh
-    //   actually cycles segments (default period is 4 frames).
+    // - 64 frames per run: 1 KF + 63 inter. RC.6 raised this from 8 so
+    //   the `avg_frame_qindex_inter` EWMA can settle from the libvpx-
+    //   faithful worst_quality=255 init, and cyclic refresh has many
+    //   passes to cycle segments (default period is 4 frames → 16 full
+    //   refresh cycles in this window).
     // - 4 target bitrates spanning ~3 octaves: 200 → 1600 kbps. At
     //   256×256×30 this brackets the rvp9 saturation regime (~50 dB)
     //   from the textured-foreground source's low-bitrate end (~30 dB).
     const W: u32 = 256;
     const H: u32 = 256;
-    const N_FRAMES: u32 = 8;
+    const N_FRAMES: u32 = 64;
     const FRAMERATE_HINT: f64 = 30.0;
     let target_bitrates_bps: [u32; 4] = [200_000, 400_000, 800_000, 1_600_000];
 
