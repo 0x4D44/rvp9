@@ -91,14 +91,16 @@ fn lossless_quantizer_00_decodes_bit_exact() {
                     let want = md5_entries
                         .get(shown_idx)
                         .expect("md5 entry for shown frame");
-                    if want.md5_hex == got_hex {
+                    let want_hex = want
+                        .md5_hex_visible()
+                        .expect("md5 ledger entry should carry visible digest");
+                    if want_hex == got_hex {
                         passed += 1;
                     } else {
                         mismatched += 1;
                         eprintln!(
                             "lossless mismatch @ shown={shown_idx}: \
-                             got {got_hex}, want {}",
-                            want.md5_hex
+                             got {got_hex}, want {want_hex}"
                         );
                     }
                     shown_idx += 1;

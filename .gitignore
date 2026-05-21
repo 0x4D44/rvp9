@@ -26,10 +26,33 @@ env/
 
 # Test data — gitignored, fetched by scripts/
 tests/conformance/vectors/
-tests/corpus/
+# Real-world corpus (HLD §G8):
+#   - sources/  : raw .y4m / mkv source clips, fetched by
+#                 scripts/fetch-corpus.{sh,ps1} (gitignored — too large).
+#                 Sole exception: the README that documents the layout
+#                 stays committed via the negation rule below.
+#   - fixtures/ : small curated subset of encoded .ivf + .md5 pairs
+#                 committed in-repo. NOT gitignored.
+tests/corpus/sources/*
+!tests/corpus/sources/README.md
+# Raw .y4m sources sometimes get staged into tests/corpus/ root (e.g.
+# `testsrc_*.y4m`) by ad-hoc encode-corpus dry runs. They're hundreds of
+# MB each; never commit them.
+tests/corpus/*.y4m
 
-# Benchmark output
-bench/results/
+# Benchmark output (host-specific dev-box runs). The committed
+# `decode-throughput.csv` baseline is the exception — per HLD §G6 the
+# ratchet test reads it as the last-committed baseline, so it MUST be
+# tracked. Other ad-hoc files under bench/results/ remain ignored.
+bench/results/*
+!bench/results/decode-throughput.csv
+
+# rvp9-fuzz — libFuzzer corpus + crash artifacts (source is committed,
+# working state is not). Per HLD §G9; corpus is seeded by
+# scripts/setup-fuzz-corpus.ps1.
+crates/rvp9-fuzz/corpus/
+crates/rvp9-fuzz/artifacts/
+crates/rvp9-fuzz/coverage/
 
 # libvpx build outputs live at /build/libvpx/ (NOT inside the submodule —
 # that path collides with libvpx's source-tree `build/` directory).

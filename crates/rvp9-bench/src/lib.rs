@@ -15,15 +15,17 @@ use std::path::Path;
 ///
 /// Returns 0 on malformed/short files.
 pub fn count_ivf_frames(path: &Path) -> u32 {
-    let Ok(data) = std::fs::read(path) else { return 0 };
+    let Ok(data) = std::fs::read(path) else {
+        return 0;
+    };
     if data.len() < 32 {
         return 0;
     }
     let mut count: u32 = 0;
     let mut pos: usize = 32;
     while pos + 12 <= data.len() {
-        let size = u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
-            as usize;
+        let size =
+            u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         pos += 12 + size;
         if pos > data.len() {
             // Truncated last frame — don't count it.
@@ -43,6 +45,7 @@ pub struct Stats {
     pub mean: f64,
     pub p50: f64,
     pub p90: f64,
+    pub p95: f64,
     pub p99: f64,
 }
 
@@ -52,7 +55,7 @@ impl Stats {
     ///
     /// Percentile uses the nearest-rank method: rank = ceil(p * n), then
     /// `sorted[rank - 1]` (clamped to `[0, n - 1]`). For n=100 sorted
-    /// `[1, 2, ..., 100]`, p50=50, p90=90, p99=99.
+    /// `[1, 2, ..., 100]`, p50=50, p90=90, p95=95, p99=99.
     pub fn from_sorted(sorted: &[f64]) -> Option<Self> {
         if sorted.is_empty() {
             return None;
@@ -72,10 +75,13 @@ impl Stats {
             mean,
             p50: pct(0.50),
             p90: pct(0.90),
+            p95: pct(0.95),
             p99: pct(0.99),
         })
     }
 }
+
+pub mod throughput;
 
 //
 // Y4M (YUV4MPEG2) reader + Y-PSNR
@@ -258,6 +264,7 @@ mod tests {
         assert_eq!(s.n, 1);
         assert_eq!(s.min, 42.0);
         assert_eq!(s.p50, 42.0);
+        assert_eq!(s.p95, 42.0);
         assert_eq!(s.p99, 42.0);
     }
 
@@ -270,6 +277,7 @@ mod tests {
         assert_eq!(s.max, 100.0);
         assert_eq!(s.p50, 50.0);
         assert_eq!(s.p90, 90.0);
+        assert_eq!(s.p95, 95.0);
         assert_eq!(s.p99, 99.0);
     }
 

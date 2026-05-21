@@ -39,7 +39,7 @@
 //! frame; per-tile state resets at every tile boundary, mirroring
 //! libvpx `decode_tiles` (`vp9_decodeframe.c:2200-2240`).
 
-use rvp9_core::bitstream::TileInfo;
+use rvp9_core::bitstream::{ChromaFormat, TileInfo};
 use rvp9_core::block::{BlockSize, PartitionType, max_txsize, subsize};
 use rvp9_core::entropy::{BoolReader, FrameContext, VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB,
     VP9_KF_Y_MODE_PROB};
@@ -301,7 +301,14 @@ pub struct FrameDecodeParams {
 }
 
 /// Per-plane geometry derived from the frame's chroma subsampling
-/// (4:2:0 in v1 — D-01 RESOLVED).
+/// (4:2:0 only — D-01 RESOLVED, G7.0 gate at
+/// `crates/rvp9-decoder/src/lib.rs::Decoder::decode_frame` rejects
+/// Profile 1 with `DecodeError::UnsupportedProfile` before any tile
+/// decode begins). When G7.1 lifts that gate the constant must be
+/// replaced with a per-frame `[ss_x_per_plane; 3]` lookup driven by
+/// the buffer's `ChromaFormat`; the load-bearing callers downstream
+/// (`uv_plane_block_size`, `uv_plane_tx_size`,
+/// `RefPlaneCrop::for_plane`) all consume this array.
 const SUBSAMPLING_X: [usize; 3] = [0, 1, 1];
 const SUBSAMPLING_Y: [usize; 3] = [0, 1, 1];
 
@@ -347,6 +354,17 @@ pub fn decode_tile_intra(
     mut coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
     cur_segment_ids: &mut [u8],
 ) -> Result<TileDecodeCtx, TileDecodeError> {
+    // G7.0 review (2026-05-21): defensive — the
+    // `Decoder::decode_frame` gate should already have rejected non-
+    // `Yuv420` frames. The per-block decode chain that follows
+    // (`SUBSAMPLING_X/Y`, `uv_plane_block_size`, etc.) hardcodes 4:2:0
+    // geometry; mis-routing here would silently corrupt the chroma
+    // plane. Debug-only — release builds skip the check.
+    debug_assert_eq!(
+        dst_frame.chroma(),
+        ChromaFormat::Yuv420,
+        "G7.0 gate should have rejected non-Yuv420 before decode_tile_intra",
+    );
     let mut reader =
         BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;
     let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
@@ -1402,6 +1420,12 @@ pub fn decode_tile_inter(
     prev_segment_ids: &[u8],
     cur_segment_ids: &mut [u8],
 ) -> Result<TileDecodeCtx, TileDecodeError> {
+    // G7.0 review (2026-05-21): see `decode_tile_intra` for rationale.
+    debug_assert_eq!(
+        dst_frame.chroma(),
+        ChromaFormat::Yuv420,
+        "G7.0 gate should have rejected non-Yuv420 before decode_tile_inter",
+    );
     let mut reader =
         BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;
     let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;

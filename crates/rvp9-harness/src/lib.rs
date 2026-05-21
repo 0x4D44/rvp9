@@ -99,20 +99,35 @@ pub fn hex16(bytes: [u8; 16]) -> String {
 /// MD5 of a decoded YV12 buffer in the order/dimensions libvpx's
 /// `vpxdec --md5` uses: Y, then U, then V, each row hashed in raster
 /// order over the **visible** (cropped) plane width only — border and
-/// stride padding are excluded. For 4:2:0, U/V dimensions are
-/// `((crop_w + 1) / 2, (crop_h + 1) / 2)`.
+/// stride padding are excluded.
+///
+/// The U/V plane dimensions are derived from the buffer's chroma
+/// format via [`Yv12Buffer::chroma_width`] / [`chroma_height`]:
+/// - `Yuv420` → `((crop_w + 1) / 2, (crop_h + 1) / 2)`
+/// - `Yuv422` → `((crop_w + 1) / 2, crop_h)`
+/// - `Yuv440` → `(crop_w, (crop_h + 1) / 2)`
+/// - `Yuv444` → `(crop_w, crop_h)`
+///
+/// Without this widening (the v0 spelling was `crop_w.div_ceil(2)` /
+/// `crop_h.div_ceil(2)` hardcoded for 4:2:0) the harness would MD5
+/// phantom bytes — or stop short of valid bytes — for Profile 1
+/// streams.
 ///
 /// Reference: `vpxdec.c:update_image_md5` (loops `Y, U, V` planes,
 /// hashing `vpx_img_plane_width(img, plane)` bytes per row for
 /// `vpx_img_plane_height(img, plane)` rows) + `tools_common.c:
-/// vpx_img_plane_width/height` (rounding-up halve for chroma).
+/// vpx_img_plane_width/height` (the `(crop + ss) >> ss` rounding for
+/// chroma planes).
+///
+/// [`Yv12Buffer::chroma_width`]: rvp9_core::frame::Yv12Buffer::chroma_width
+/// [`chroma_height`]: rvp9_core::frame::Yv12Buffer::chroma_height
 pub fn md5_of_yv12_visible(buf: &Yv12Buffer) -> [u8; 16] {
     use rvp9_core::frame::PlaneRef;
 
     let crop_w = buf.width() as usize;
     let crop_h = buf.height() as usize;
-    let uv_w = crop_w.div_ceil(2);
-    let uv_h = crop_h.div_ceil(2);
+    let uv_w = buf.chroma_width() as usize;
+    let uv_h = buf.chroma_height() as usize;
 
     // Pre-size: Y + 2 × chroma.
     let mut bytes: Vec<u8> = Vec::with_capacity(crop_w * crop_h + 2 * uv_w * uv_h);
@@ -133,6 +148,8 @@ pub fn md5_of_yv12_visible(buf: &Yv12Buffer) -> [u8; 16] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rvp9_core::bitstream::ChromaFormat;
+    use rvp9_core::frame::{BorderUsage, ByteAlignment, Yv12Buffer};
 
     #[test]
     fn md5_empty() {
@@ -150,5 +167,76 @@ mod tests {
             hex16(md5(b"The quick brown fox jumps over the lazy dog")),
             "9e107d9d372bb6826bd81d3542a419d6"
         );
+    }
+
+    /// G7 oracle. `md5_of_yv12_visible` must hash exactly the visible
+    /// plane bytes for every chroma sub-mode — for each format the
+    /// total hashed byte count is `Y_visible + 2 × chroma_visible`,
+    /// and the chroma extent follows libvpx's `(crop + ss) >> ss`. The
+    /// pre-G7 spelling hardcoded `crop.div_ceil(2)` and would silently
+    /// either hash phantom bytes (4:4:4 → reads past the visible
+    /// chroma extent) or stop short (4:2:2 / 4:4:0).
+    ///
+    /// Verifies by:
+    /// 1. Filling each plane with a known constant.
+    /// 2. Recomputing the expected MD5 over the same byte stream the
+    ///    function should walk (`Y, U, V`, each `chroma_w × chroma_h`
+    ///    for U/V), and asserting equality.
+    /// 3. Also checking the digest *differs* across formats — same Y
+    ///    dims + same fills + different chroma extents → different hash.
+    #[test]
+    fn md5_of_yv12_visible_handles_all_chroma_formats() {
+        let formats = [
+            ChromaFormat::Yuv420,
+            ChromaFormat::Yuv422,
+            ChromaFormat::Yuv440,
+            ChromaFormat::Yuv444,
+        ];
+        // 17×11 — odd width AND height, so the `(crop+ss)>>ss` rounding
+        // bites on both axes for the subsampled sub-modes.
+        let (crop_w, crop_h) = (17u32, 11u32);
+        let mut digests = Vec::with_capacity(formats.len());
+
+        for cf in formats {
+            let mut buf = Yv12Buffer::alloc(
+                crop_w,
+                crop_h,
+                cf,
+                BorderUsage::Decoder,
+                ByteAlignment::Legacy,
+            )
+            .expect("alloc");
+            buf.y_plane_mut().fill(0x11);
+            buf.u_plane_mut().fill(0x22);
+            buf.v_plane_mut().fill(0x33);
+
+            // Compute the expected stream the function should walk.
+            let cw = buf.chroma_width() as usize;
+            let ch = buf.chroma_height() as usize;
+            let mut expected = Vec::with_capacity((crop_w * crop_h) as usize + 2 * cw * ch);
+            expected.extend(std::iter::repeat_n(0x11u8, (crop_w * crop_h) as usize));
+            expected.extend(std::iter::repeat_n(0x22u8, cw * ch));
+            expected.extend(std::iter::repeat_n(0x33u8, cw * ch));
+            let expected_md5 = md5(&expected);
+
+            let got = md5_of_yv12_visible(&buf);
+            assert_eq!(
+                got, expected_md5,
+                "md5_of_yv12_visible mismatch for {cf:?} (chroma {cw}×{ch})"
+            );
+            digests.push((cf, got));
+        }
+
+        // Every chroma format produces a distinct digest (different
+        // total byte count under the same fill).
+        for i in 0..digests.len() {
+            for j in (i + 1)..digests.len() {
+                assert_ne!(
+                    digests[i].1, digests[j].1,
+                    "{:?} and {:?} produced the same digest",
+                    digests[i].0, digests[j].0
+                );
+            }
+        }
     }
 }

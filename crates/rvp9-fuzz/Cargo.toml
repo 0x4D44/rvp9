@@ -1,0 +1,62 @@
+# rvp9-fuzz — cargo-fuzz / libFuzzer harness for the rvp9-2 decoder.
+#
+# HLD §G9 (`wrk_docs/2026.05.19 - HLD - decoder hardening.md`):
+# the decoder has no fuzzing today; malformed or truncated bitstreams
+# must produce errors, not panics or undefined behaviour. This crate
+# stands up the parser-target slice: `fuzz_parse_packet`. The two
+# follow-on targets (`fuzz_decode_frame`, `fuzz_full_stream`) become
+# G9.1 / G9.2 once Stage 4a can synthesise valid frames.
+#
+# Layout follows the `cargo-fuzz` convention (separate crate, one
+# binary per target, `[package.metadata] cargo-fuzz = true`). This
+# crate is NOT in `[workspace.lints]` because cargo-fuzz targets are
+# `#![no_main]` and intentionally produce a binary with no `main`,
+# which trips a couple of library-oriented lints. See the README for
+# the documented allow set.
+
+[package]
+name = "rvp9-fuzz"
+version = "0.1.0"
+edition.workspace = true
+license = "BSD-3-Clause"
+authors = ["Arthur <martin@tollens.ai>"]
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+# The fuzz target consumes:
+#   - `rvp9_decoder::Decoder` — the parser entrypoint under test.
+#   - `rvp9_core::bitstream::RawBitWriter` — used to bit-pack the
+#     uncompressed header (frame_marker, profile bits, sync code,
+#     16-bit MSB-first width/height) onto a non-byte-aligned cursor
+#     so the parser sees what the encoder wrote (G9 review fix #2).
+# The reviewer initially flagged `rvp9-core` as unused; after
+# switching the header encoder to the bit-writer path the dep is
+# load-bearing again. Removing it would force a duplicate
+# bit-packing implementation in the fuzz target.
+rvp9-decoder = { path = "../rvp9-decoder" }
+rvp9-core = { path = "../rvp9-core" }
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+# NOTE: deliberately NOT inheriting `[lints.workspace]`. cargo-fuzz
+# targets compile as `#![no_main]` binaries which interact poorly
+# with the workspace's `missing_docs = "warn"` (the synthetic
+# `rust_fuzzer_test_input` entrypoint has no doc-attachment point
+# the compiler will accept). A selective `#![allow(missing_docs)]`
+# in the fuzz target itself was considered (DA review G9 follow-up)
+# but rejected for this iteration: the workspace lint table also
+# denies `print_stderr` / `print_stdout` and warns on several other
+# library-oriented lints whose interaction with `#![no_main]` is
+# not load-bearing for fuzz infrastructure. Revisit once the
+# fuzz-target surface grows beyond a single binary.
+
+[[bin]]
+name = "fuzz_parse_packet"
+path = "fuzz_targets/fuzz_parse_packet.rs"
+test = false
+doc = false
+bench = false
+doctest = false

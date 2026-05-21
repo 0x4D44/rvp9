@@ -5,6 +5,10 @@ version = 4
 [[package]]
 name = "rvp9-bench"
 version = "0.1.0"
+dependencies = [
+ "rvp9-decoder",
+ "rvp9-harness",
+]
 
 [[package]]
 name = "rvp9-cli"

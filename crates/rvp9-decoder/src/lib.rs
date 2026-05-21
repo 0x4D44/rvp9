@@ -1009,6 +1009,40 @@ impl Decoder {
         // with the same `f=N` libvpx emits, so per-frame diffs are
         // line-up-able.
         RVP9_TRACE_FRAME_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // G7.0 plumbing gate. Profile 1 (`Yuv422` / `Yuv440` / `Yuv444`)
+        // parses cleanly through `parse_uncompressed_header`, and
+        // `Yv12Buffer` carries the chroma format on the alloc path —
+        // but the per-block decode chain (tile.rs `SUBSAMPLING_X/Y`
+        // constants, reconstruct_inter.rs `RefPlaneCrop::for_plane`,
+        // loopfilter `filter_block_plane_ss11`, the `uv_plane_block_size`
+        // / `uv_plane_tx_size` lookups) still encodes the 4:2:0 geometry
+        // assumptions. Decoding a Profile 1 stream would silently mis-
+        // address the chroma plane and corrupt the output rather than
+        // surface a clear error. Reject explicitly with
+        // `UnsupportedProfile` (NOT `Unimplemented` — see the variant's
+        // doc for why) until G7.1 (deep tile/recon/loopfilter `ss`-aware
+        // refactor) lands; ShowExistingFrame skips the gate because it
+        // merely hands back an already-decoded slot.
+        //
+        // Invariant chain (G7.0 review M1, applied 2026-05-21):
+        // The gate fires on keyframes / intra-only frames whose parsed
+        // chroma != Yuv420. Inter frames are NOT gated here because
+        // the parser hardcodes their chroma to Yuv420 (see
+        // `bitstream/header.rs:~368` inter-frame chroma defaulting).
+        // Profile 1 inter frames in a stream are protected today by
+        // the keyframe rejection cascade (no Profile 1 keyframe
+        // decoded → no ref slot populated → inter frame fails at
+        // `EmptyInterRef`). When G7.1 lifts this gate, parser chroma
+        // forwarding across frames MUST be implemented in the same
+        // commit, or inter frames will allocate with the wrong
+        // subsampling and silently corrupt chroma.
+        if !matches!(frame.header.kind, FrameKind::ShowExistingFrame { .. })
+            && frame.header.chroma != ChromaFormat::Yuv420
+        {
+            return Err(DecodeError::UnsupportedProfile {
+                profile: frame.header.profile as u8,
+            });
+        }
         match frame.header.kind {
             FrameKind::ShowExistingFrame { .. } => self.decode_show_existing_frame(&frame.header),
             FrameKind::KeyFrame => self.decode_keyframe(frame),
@@ -1198,11 +1232,14 @@ impl Decoder {
             }));
         }
 
-        // 5. Allocate the destination FrameBuf.
+        // 5. Allocate the destination FrameBuf. Chroma format flows
+        //    from the parsed header — for Profile 0 always `Yuv420`,
+        //    for Profile 1 one of the three non-420 sub-modes (gated
+        //    upstream in `decode_frame` pending G7.1).
         let mut yv12 = Yv12Buffer::alloc(
             frame.header.width,
             frame.header.height,
-            ChromaFormat::Yuv420,
+            frame.header.chroma,
             BorderUsage::Decoder,
             ByteAlignment::Legacy,
         )
@@ -1745,11 +1782,13 @@ impl Decoder {
             }));
         }
 
-        // 5. Allocate destination FrameBuf.
+        // 5. Allocate destination FrameBuf. Chroma format flows from
+        //    the parsed header — see the matching keyframe / intra-only
+        //    site for the Profile 1 gating context.
         let mut yv12 = Yv12Buffer::alloc(
             frame.header.width,
             frame.header.height,
-            ChromaFormat::Yuv420,
+            frame.header.chroma,
             BorderUsage::Decoder,
             ByteAlignment::Legacy,
         )
@@ -2511,9 +2550,40 @@ pub enum DecodeError {
     /// stage of the Stage 3 build-out. The `reason` describes which
     /// path. Used by [`Decoder::decode_frame`] for non-show-existing
     /// branches until the full pipeline lands.
+    ///
+    /// **Contrast with [`Self::UnsupportedProfile`].** `Unimplemented`
+    /// means "the decoder reached a codepath whose implementation is
+    /// not yet written — the missing work has NOT been catalogued as a
+    /// specific follow-up task". `UnsupportedProfile` (and any sibling
+    /// gated-feature variants in the future) means "the decoder
+    /// DETECTED a known-unsupported feature and rejected it with a
+    /// dedicated variant — the implementation work is deferred to a
+    /// named follow-up". The conformance harness counts the two
+    /// independently so a gated feature being silently re-routed
+    /// through `Unimplemented` (K-5 regression) is impossible.
     Unimplemented {
         /// Short human-readable description of the missing path.
         reason: &'static str,
+    },
+    /// A feature explicitly gated until a follow-up task lands. The
+    /// codepath has been DETECTED but its implementation is deferred.
+    ///
+    /// Sibling of [`Self::Unimplemented`] — see that variant's doc for
+    /// the distinction. Today the only producer is the G7.0 gate at
+    /// [`Decoder::decode_frame`] which rejects Profile 1 (non-`Yuv420`
+    /// chroma) frames until the G7.1 tile/recon/loopfilter deep
+    /// refactor lands. Lives as a dedicated variant (rather than
+    /// reusing `Unimplemented`) so the conformance harness can bucket
+    /// gated features independently from genuinely missing codepaths:
+    /// pre-K-5 the silent skip-folding bug masked real failures behind
+    /// the expected-skip count, and re-routing Profile 1 frames
+    /// through `Unimplemented` would resurrect that exact failure
+    /// mode the moment a Profile 1 vector entered the corpus.
+    UnsupportedProfile {
+        /// The 2-bit `profile` value parsed from the uncompressed
+        /// header. Matches [`BitstreamError::UnsupportedProfile`]'s
+        /// `profile: u8` shape.
+        profile: u8,
     },
     /// A tile-decode-layer error surfaced during keyframe decode.
     /// Carries the underlying [`TileDecodeError`] for diagnostics.
@@ -2542,6 +2612,12 @@ impl core::fmt::Display for DecodeError {
             ),
             Self::Bitstream(e) => write!(f, "bitstream error: {e}"),
             Self::Unimplemented { reason } => write!(f, "unimplemented: {reason}"),
+            Self::UnsupportedProfile { profile } => {
+                write!(
+                    f,
+                    "unsupported profile {profile} (feature gated, see DecodeError::UnsupportedProfile docs)"
+                )
+            }
             Self::TileDecode(e) => write!(f, "tile decode: {e}"),
             Self::FrameAlloc => f.write_str("frame allocation failed"),
         }
@@ -3735,6 +3811,111 @@ mod tests {
         assert_ne!(
             DecodeError::EmptySlot { slot: 3 },
             DecodeError::EmptyInterRef { slot: 3 },
+        );
+    }
+
+    /// G7.0 review (2026-05-21): the gate at `decode_frame` for
+    /// non-`Yuv420` chroma must surface as
+    /// `DecodeError::UnsupportedProfile { profile: <bitstream profile> }`,
+    /// NOT `DecodeError::Unimplemented`. The two variants are
+    /// independently bucketed by the K-5 conformance harness; folding
+    /// gated features back into `Unimplemented` would resurrect the
+    /// K-5 silent-skip failure mode (a future Profile 1 vector
+    /// classified as a benign skip rather than a flagged gating event).
+    ///
+    /// Hand-synthesise a Profile 1 keyframe `ParsedFrame` directly —
+    /// the gate fires before any compressed-header / tile-byte parse,
+    /// so the body bytes can be empty.
+    #[test]
+    fn decode_frame_gates_profile1_chroma_as_unsupported_profile() {
+        use rvp9_core::bitstream::header::HeaderTail;
+        use rvp9_core::bitstream::sub_parsers::{
+            LoopFilterParams, MAX_PROB, PREDICTION_PROBS, QuantizationParams, SEG_TREE_PROBS,
+            SegmentationParams, TileInfo,
+        };
+        use rvp9_core::bitstream::{
+            BitDepth, ChromaFormat, ColorRange, ColorSpace, Profile, UncompressedHeader,
+        };
+
+        let mut dec = Decoder::new();
+        let tail = HeaderTail {
+            refresh_frame_context: true,
+            frame_parallel_decoding_mode: false,
+            frame_context_idx: 0,
+            loop_filter: LoopFilterParams {
+                filter_level: 0,
+                sharpness_level: 0,
+                mode_ref_delta_enabled: false,
+                mode_ref_delta_update: false,
+                ref_deltas: [None; 4],
+                mode_deltas: [None; 2],
+            },
+            quantization: QuantizationParams {
+                base_qindex: 50,
+                y_dc_delta_q: 0,
+                uv_dc_delta_q: 0,
+                uv_ac_delta_q: 0,
+            },
+            segmentation: SegmentationParams {
+                enabled: false,
+                update_map: false,
+                temporal_update: false,
+                tree_probs: [MAX_PROB; SEG_TREE_PROBS],
+                pred_probs: [MAX_PROB; PREDICTION_PROBS],
+                update_data: false,
+                abs_delta: false,
+                feature_data: Default::default(),
+            },
+            tile_info: TileInfo {
+                log2_tile_cols: 0,
+                log2_tile_rows: 0,
+            },
+            first_partition_size: 0,
+        };
+        let header = UncompressedHeader {
+            kind: FrameKind::KeyFrame,
+            profile: Profile::Profile1,
+            show_frame: true,
+            error_resilient: false,
+            bit_depth: BitDepth::Eight,
+            color_space: ColorSpace::Bt601,
+            color_range: ColorRange::Studio,
+            chroma: ChromaFormat::Yuv444,
+            width: 64,
+            height: 64,
+            render_size: None,
+            tail: Some(tail),
+        };
+        let empty: [u8; 0] = [];
+        let parsed = ParsedFrame {
+            header,
+            header_end_byte: 0,
+            full_frame_data: &empty,
+        };
+
+        let err = dec.decode_frame(&parsed).unwrap_err();
+        assert!(
+            matches!(err, DecodeError::UnsupportedProfile { profile: 1 }),
+            "expected UnsupportedProfile {{ profile: 1 }}, got {err:?}",
+        );
+        // Round-trip via PartialEq for completeness.
+        assert_eq!(err, DecodeError::UnsupportedProfile { profile: 1 });
+    }
+
+    /// G7.0 review (2026-05-21): companion guard to
+    /// `empty_slot_and_empty_inter_ref_with_same_slot_are_not_equal` —
+    /// `UnsupportedProfile` and `Unimplemented` are siblings (both
+    /// cover "this decoder cannot finish the frame") but must compare
+    /// non-equal so the K-5 harness can bucket them independently.
+    /// Any future refactor that collapses them would silently regress
+    /// the diagnostic separation.
+    #[test]
+    fn unsupported_profile_and_unimplemented_are_not_equal() {
+        assert_ne!(
+            DecodeError::UnsupportedProfile { profile: 1 },
+            DecodeError::Unimplemented {
+                reason: "test reason",
+            },
         );
     }
 

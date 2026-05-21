@@ -1,0 +1,34 @@
+# libFuzzer dictionary for rvp9-fuzz / fuzz_parse_packet.
+#
+# Format reference: https://llvm.org/docs/LibFuzzer.html#dictionaries
+# Each entry is a quoted token; \xNN escapes one byte. libFuzzer
+# splices these tokens into mutated inputs at random offsets, which
+# is much more effective at hitting structured parsers than pure
+# bitflip / arithmetic mutators.
+
+# IVF container magic. The parser doesn't consume IVF framing, but
+# corpus seeds copied from tests/conformance/vectors/ start with it
+# and the splicer will use these bytes to extend tile-body mutations.
+"DKIF"
+
+# VP9 sync code (profile 0/1 keyframe). Required after the
+# uncompressed-header bits when frame_type == key.
+"\x49\x83\x42"
+
+# VP9 sync code (profile 2/3).
+"\x49\x83\x43"
+
+# First-byte stencils that encode a valid 2-bit frame_marker (0b10)
+# in the high bits. Splicing these gives the fuzzer a free hand at
+# producing parser-reachable first bytes without having to discover
+# the marker mutation from scratch.
+"\x80"
+"\x84"
+"\x88"
+"\x90"
+"\xa0"
+# Profile 3 stencil (profile_low=1, profile_high=1) — triggers the
+# rare 3-bit Profile3 read path in `vp9_read_profile`
+# (`vp9_decodeframe.c:2945-2950`). Without this byte, libFuzzer
+# rarely synthesises both profile bits set in the same byte.
+"\xb0"

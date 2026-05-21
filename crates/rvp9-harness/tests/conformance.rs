@@ -14,6 +14,37 @@ use rvp9_harness::md5file::read_md5_file;
 use rvp9_harness::{hex16, md5_of_yv12_visible};
 use std::path::PathBuf;
 
+/// Expected sub-frame count for a transport packet, derived purely
+/// from the trailing superframe-index byte (VP9 spec §B.3) via an
+/// **inline re-parse** that does NOT call into `rvp9_core`.
+///
+/// G8.0 review (2026-05-21): the original implementation delegated to
+/// `parse_superframe_index` — the SAME function `Decoder::parse_packet`
+/// already calls — so the oracle was a tautology (any bug in the
+/// superframe parser would corrupt both sides equally and the oracle
+/// would stay silent). This re-implementation is genuinely independent:
+/// it reads only the trailing marker byte and decodes the 3 low bits
+/// directly, so a regression that drops a sub-frame mid-loop inside
+/// `parse_packet` (or anywhere downstream) lights up immediately.
+///
+/// Wire format (VP9 spec §B.3 / libvpx `vp9_parse_superframe_index`):
+///   - Last byte's top 3 bits == `0b110` (`marker & 0xe0 == 0xc0`) ⇒
+///     superframe; count = `(marker & 0b0000_0111) + 1` (1..=8).
+///   - Otherwise ⇒ single-frame packet, count = 1.
+///
+/// Truncated/malformed indices fall through to count = 1: the header-
+/// parse arm below already reports them via the `Err` path, so we
+/// don't want to double-fault the same packet.
+fn expected_sub_frame_count(packet: &[u8]) -> usize {
+    let Some(&marker) = packet.last() else {
+        return 1;
+    };
+    if (marker & 0xe0) != 0xc0 {
+        return 1;
+    }
+    ((marker & 0x07) as usize) + 1
+}
+
 fn vectors_dir() -> PathBuf {
     // Find the workspace root by walking up from this file's
     // location. `CARGO_MANIFEST_DIR` is the crate root
@@ -66,6 +97,17 @@ fn conformance_runner_walks_all_vectors() {
     // masking real decode failures behind the "expected" skip count
     // — cannot recur. Asserted to be zero after the loop.
     let mut total_other_err: usize = 0;
+    // G7.0 review (2026-05-21): bucket `DecodeError::UnsupportedProfile`
+    // separately from `Unimplemented`. Gated features (currently:
+    // Profile 1 chroma via the G7.0 gate) are explicitly OK — they have
+    // a named follow-up task. We do NOT assert `total_gated == 0`; the
+    // supervisor expects this counter to climb during transitional
+    // periods (e.g. when a Profile 1 vector enters the corpus before
+    // G7.1 lands). Folding the gated-feature bucket back into
+    // `total_skipped` would resurrect exactly the K-5 silent-skip
+    // failure mode (a future Profile 1 vector classified as a benign
+    // skip rather than a flagged gating event).
+    let mut total_gated: usize = 0;
 
     for vector in &vectors {
         let md5_path = vector.with_extension(format!(
@@ -86,8 +128,18 @@ fn conformance_runner_walks_all_vectors() {
 
         let mut decoder = Decoder::new();
         let mut shown_idx: usize = 0;
-        for range in &packets {
-            let parsed = match decoder.parse_packet(range.slice(&data)) {
+        for (packet_idx, range) in packets.iter().enumerate() {
+            let packet_bytes = range.slice(&data);
+            // G8 sub-frame-count sanity oracle (HLD V6 §G8 lines
+            // 1489-1502): count the number of `ParsedFrame`s
+            // `parse_packet` produces and compare to the count derived
+            // independently from the trailing superframe-index byte
+            // (VP9 spec §B.3). Any mismatch indicates a hidden-frame
+            // ordering/count regression that the visible-only MD5
+            // check cannot detect. Hard-fail with a diagnostic naming
+            // the offending packet.
+            let expected_sub_frames = expected_sub_frame_count(packet_bytes);
+            let parsed = match decoder.parse_packet(packet_bytes) {
                 Ok(p) => p,
                 Err(_) => {
                     // header parse fail → treat the packet as a single
@@ -97,6 +149,18 @@ fn conformance_runner_walks_all_vectors() {
                     continue;
                 }
             };
+            let decoded_sub_frames = parsed.frames().len();
+            assert_eq!(
+                decoded_sub_frames,
+                expected_sub_frames,
+                "G8 sub-frame-count sanity oracle: vector {} packet {} \
+                 decoded {} sub-frame(s); superframe-index byte says \
+                 {}. Hidden-frame ordering/count regression.",
+                vector.file_name().unwrap_or_default().to_string_lossy(),
+                packet_idx,
+                decoded_sub_frames,
+                expected_sub_frames,
+            );
             for frame in parsed {
                 let shown = frame.header.show_frame
                     || matches!(
@@ -111,7 +175,7 @@ fn conformance_runner_walks_all_vectors() {
                         let got_hex = hex16(md5_of_yv12_visible(&buf));
                         let want = md5_entries.get(shown_idx);
                         match want {
-                            Some(e) if e.md5_hex == got_hex => {
+                            Some(e) if e.md5_hex_visible().as_deref() == Some(got_hex.as_str()) => {
                                 total_passed += 1;
                                 v_passed += 1;
                             }
@@ -126,6 +190,22 @@ fn conformance_runner_walks_all_vectors() {
                         if shown {
                             total_skipped += 1;
                             v_skipped += 1;
+                            shown_idx += 1;
+                        }
+                    }
+                    Err(DecodeError::UnsupportedProfile { .. }) => {
+                        // G7.0 review (2026-05-21): gated-feature
+                        // bucket. The decoder DETECTED a known-
+                        // unsupported feature (today: Profile 1 chroma
+                        // via the G7.0 gate) and rejected it with a
+                        // dedicated variant. Counted independently
+                        // from `total_skipped` so the K-5 silent skip-
+                        // folding failure mode cannot recur for gated
+                        // features. Still advance `shown_idx` so
+                        // subsequent shown frames line up against the
+                        // .md5 list.
+                        if shown {
+                            total_gated += 1;
                             shown_idx += 1;
                         }
                     }
@@ -153,7 +233,7 @@ fn conformance_runner_walks_all_vectors() {
 
     println!(
         "conformance: {total_passed} passed / {total_mismatched} mismatched / \
-         {total_skipped} skipped / {total_expected} total"
+         {total_skipped} skipped / {total_gated} gated / {total_expected} total"
     );
 
     // Stage 3 EXIT — `total_mismatched == 0` is the final load-bearing
@@ -345,4 +425,75 @@ fn conformance_runner_walks_all_vectors() {
          decode errors; pre-K-5 the silent skip-folding bug would \
          have masked these as expected skips",
     );
+}
+
+/// Unit tests for the inline-reparse `expected_sub_frame_count` oracle.
+///
+/// G8.0 review (2026-05-21): pins the inline implementation against
+/// hand-crafted trailing-marker bytes so a future refactor that
+/// accidentally re-delegates to `parse_superframe_index` (and thus re-
+/// introduces the tautology) is caught at unit-test time.
+#[cfg(test)]
+mod expected_sub_frame_count_tests {
+    use super::expected_sub_frame_count;
+
+    /// Empty packet → fallback count of 1 (matches the comment in
+    /// `expected_sub_frame_count`).
+    #[test]
+    fn empty_packet_is_one() {
+        assert_eq!(expected_sub_frame_count(&[]), 1);
+    }
+
+    /// A non-marker trailing byte → single-frame packet, count = 1.
+    #[test]
+    fn non_marker_trailer_is_one() {
+        // 0x00 — top 3 bits are 000, not 110.
+        assert_eq!(expected_sub_frame_count(&[0x12, 0x34, 0x00]), 1);
+        // 0xff — top 3 bits are 111, not 110.
+        assert_eq!(expected_sub_frame_count(&[0x12, 0xff]), 1);
+        // 0xa0 — top 3 bits are 101.
+        assert_eq!(expected_sub_frame_count(&[0xa0]), 1);
+    }
+
+    /// Marker bytes covering every 1..=8 sub-frame count, with mag bits
+    /// varied. The mag bits do NOT affect the count derivation, so the
+    /// oracle must return the right count regardless.
+    #[test]
+    fn marker_low_three_bits_decode_to_count_plus_one() {
+        // (count, marker) pairs.
+        for count in 1usize..=8 {
+            // mask = low three bits of marker → count - 1 (0..=7).
+            let mask = (count - 1) as u8;
+            // Try mag = 1..=4 (mag bits at marker[3..=4]).
+            for mag_bits in 0u8..=3 {
+                let marker = 0xc0 | (mag_bits << 3) | mask;
+                // Single trailing byte is enough — the oracle only
+                // reads `packet.last()`. A real superframe would have
+                // a longer body, but the oracle is intentionally
+                // agnostic to that.
+                let packet = [marker];
+                assert_eq!(
+                    expected_sub_frame_count(&packet),
+                    count,
+                    "marker=0x{marker:02x} (count={count} mag_bits={mag_bits})",
+                );
+            }
+        }
+    }
+
+    /// The boundary cases: 0xc0 (count=1, mag=1) and 0xdf (count=8,
+    /// mag=4) — the lowest and highest legal marker bytes.
+    #[test]
+    fn marker_boundaries() {
+        assert_eq!(expected_sub_frame_count(&[0xc0]), 1);
+        assert_eq!(expected_sub_frame_count(&[0xdf]), 8);
+    }
+
+    /// 0xe0 sits just outside the marker range (top 3 bits = 111) — it
+    /// must NOT be misclassified as a superframe.
+    #[test]
+    fn just_above_marker_range_is_single() {
+        assert_eq!(expected_sub_frame_count(&[0xe0]), 1);
+        assert_eq!(expected_sub_frame_count(&[0xbf]), 1);
+    }
 }

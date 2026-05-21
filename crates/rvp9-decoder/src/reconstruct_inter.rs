@@ -41,7 +41,7 @@
 //! [`Yv12Buffer::extend_borders`] has been called on the reference
 //! frame first.
 
-use rvp9_core::bitstream::InterpFilter;
+use rvp9_core::bitstream::{ChromaFormat, InterpFilter};
 use rvp9_core::block::BlockSize;
 use rvp9_core::entropy::{BoolReader, FrameContext};
 use rvp9_core::entropy::adapt::CoefCountsBank;
@@ -63,7 +63,11 @@ use crate::tile_ctx::TileCoefCtx;
 /// Maximum coefficient count at any TX size (`Tx32x32 = 32 * 32 = 1024`).
 const MAX_TX_COEFFS: usize = 1024;
 
-/// Per-plane subsampling (4:2:0 only — D-01 RESOLVED).
+/// Per-plane subsampling (4:2:0 only — D-01 RESOLVED, G7.0 gate at
+/// `lib.rs::Decoder::decode_frame` rejects non-`Yuv420` before any
+/// per-block reconstruction begins). The G7.1 deep refactor must
+/// replace this with a per-frame lookup driven by the destination
+/// buffer's `ChromaFormat`.
 const SUBSAMPLING_X: [usize; 3] = [0, 1, 1];
 const SUBSAMPLING_Y: [usize; 3] = [0, 1, 1];
 
@@ -148,6 +152,15 @@ pub fn reconstruct_inter_block(
     inputs: &InterBlockInputs<'_>,
     dst_frame: &mut Yv12Buffer,
 ) {
+    // G7.0 review (2026-05-21): defensive — the
+    // `Decoder::decode_frame` gate should already have rejected non-
+    // `Yuv420` frames. `SUBSAMPLING_X/Y` above + the per-plane MC /
+    // residual loops below hardcode 4:2:0 chroma geometry. Debug-only.
+    debug_assert_eq!(
+        dst_frame.chroma(),
+        ChromaFormat::Yuv420,
+        "G7.0 gate should have rejected non-Yuv420 before reconstruct_inter_block",
+    );
     let (mode, ref_frames, mvs, interp_filter) = match mi.mode {
         BlockMode::Inter {
             mode,

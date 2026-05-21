@@ -148,28 +148,36 @@ fn run_one_vector(
                     let got = md5_of_yv12_visible(&buf);
                     let got_hex = hex16(got);
                     let entry: Option<&Md5Entry> = md5_entries.get(shown_idx);
+                    // G8 in-memory ledger no longer carries a 1-based
+                    // `index` field — the libvpx `.md5` row position is
+                    // the displayed-frame index, so derive it from
+                    // `shown_idx + 1`.
+                    let display_idx = (shown_idx + 1) as u32;
                     match entry {
-                        Some(e) if e.md5_hex == got_hex => {
+                        Some(e) if e.md5_hex_visible().as_deref() == Some(got_hex.as_str()) => {
                             stats.passed += 1;
                             if verbose {
                                 println!(
                                     "    frame {:>4}: PASS  ({}x{})",
-                                    e.index, e.width, e.height
+                                    display_idx, e.width, e.height
                                 );
                             }
                         }
                         Some(e) => {
                             stats.mismatched += 1;
+                            let want_hex = e
+                                .md5_hex_visible()
+                                .unwrap_or_else(|| "<no-visible-digest>".to_string());
                             println!(
                                 "    frame {:>4}: MISMATCH  expected {}  got {}",
-                                e.index, e.md5_hex, got_hex
+                                display_idx, want_hex, got_hex
                             );
                         }
                         None => {
                             stats.mismatched += 1;
                             println!(
                                 "    frame {:>4}: MISMATCH  (no .md5 entry; decoder produced extra frame)",
-                                shown_idx + 1
+                                display_idx
                             );
                         }
                     }
@@ -180,10 +188,7 @@ fn run_one_vector(
                         let tag = format!("unimplemented: {reason}");
                         skip_reasons.record(&tag);
                         if verbose {
-                            let label = md5_entries
-                                .get(shown_idx)
-                                .map(|e| e.index)
-                                .unwrap_or((shown_idx + 1) as u32);
+                            let label = (shown_idx + 1) as u32;
                             println!("    frame {label:>4}: SKIP  {tag}");
                         }
                         stats.skipped += 1;
@@ -198,10 +203,7 @@ fn run_one_vector(
                         let tag = format!("decode error: {e}");
                         skip_reasons.record(&tag);
                         if verbose {
-                            let label = md5_entries
-                                .get(shown_idx)
-                                .map(|e| e.index)
-                                .unwrap_or((shown_idx + 1) as u32);
+                            let label = (shown_idx + 1) as u32;
                             println!("    frame {label:>4}: SKIP  {tag}");
                         }
                         stats.skipped += 1;
@@ -248,7 +250,10 @@ fn main() {
     }
 
     if vectors.is_empty() {
-        println!("no .ivf/.webm vectors found in {}", args.vectors_dir.display());
+        println!(
+            "no .ivf/.webm vectors found in {}",
+            args.vectors_dir.display()
+        );
         println!("(run scripts/fetch-vectors.ps1 to populate)");
         std::process::exit(0);
     }

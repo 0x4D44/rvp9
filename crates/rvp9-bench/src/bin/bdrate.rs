@@ -104,7 +104,11 @@ fn encode(encoder: &Path, input: &Path, cpu_used: u32, bitrate_kbps: u32, tag: &
         .arg(input)
         .status()
         .expect("encoder failed");
-    assert!(status.success(), "encoder {} failed at {bitrate_kbps}k", encoder.display());
+    assert!(
+        status.success(),
+        "encoder {} failed at {bitrate_kbps}k",
+        encoder.display()
+    );
     out
 }
 
@@ -159,9 +163,15 @@ fn bd_rate(anchor: &[RdPoint], test: &[RdPoint]) -> Option<f64> {
     // Integration range: the OVERLAP of the two PSNR ranges (Bjontegaard
     // integrates only over PSNR values where both curves are defined).
     let anchor_min = anchor_xy.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
-    let anchor_max = anchor_xy.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
+    let anchor_max = anchor_xy
+        .iter()
+        .map(|p| p.0)
+        .fold(f64::NEG_INFINITY, f64::max);
     let test_min = test_xy.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
-    let test_max = test_xy.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
+    let test_max = test_xy
+        .iter()
+        .map(|p| p.0)
+        .fold(f64::NEG_INFINITY, f64::max);
     let range_lo = anchor_min.max(test_min);
     let range_hi = anchor_max.min(test_max);
     if range_hi <= range_lo {
@@ -255,7 +265,13 @@ fn main() {
     let mut test_rd: Vec<RdPoint> = Vec::new();
 
     for &br in &args.bitrates_kbps {
-        let a_ivf = encode(&args.anchor_encoder, &args.input, args.cpu_used, br, "anchor");
+        let a_ivf = encode(
+            &args.anchor_encoder,
+            &args.input,
+            args.cpu_used,
+            br,
+            "anchor",
+        );
         let t_ivf = encode(&args.test_encoder, &args.input, args.cpu_used, br, "test");
 
         let a_frames = rvp9_bench::count_ivf_frames(&a_ivf);
@@ -267,10 +283,18 @@ fn main() {
         let a_psnr = decode_and_psnr(&args.decoder, &a_ivf, &args.input);
         let t_psnr = decode_and_psnr(&args.decoder, &t_ivf, &args.input);
 
-        println!("target {br:>5}k | anchor {a_br:>6.0}k psnr {a_psnr:>5.2} | test {t_br:>6.0}k psnr {t_psnr:>5.2}");
+        println!(
+            "target {br:>5}k | anchor {a_br:>6.0}k psnr {a_psnr:>5.2} | test {t_br:>6.0}k psnr {t_psnr:>5.2}"
+        );
 
-        anchor_rd.push(RdPoint { bitrate_kbps: a_br, psnr_db: a_psnr });
-        test_rd.push(RdPoint { bitrate_kbps: t_br, psnr_db: t_psnr });
+        anchor_rd.push(RdPoint {
+            bitrate_kbps: a_br,
+            psnr_db: a_psnr,
+        });
+        test_rd.push(RdPoint {
+            bitrate_kbps: t_br,
+            psnr_db: t_psnr,
+        });
     }
 
     let bd = if anchor_rd.iter().any(|p| p.psnr_db.is_nan())
@@ -318,9 +342,13 @@ fn write_csv(
             writeln!(f, "test,{t},{:.3},{:.4}", p.bitrate_kbps, p.psnr_db)?;
         }
     }
-    writeln!(f, "bdrate_pct,{}", match bdrate_pct {
-        Some(v) => format!("{v:.4}"),
-        None => String::new(),
-    })?;
+    writeln!(
+        f,
+        "bdrate_pct,{}",
+        match bdrate_pct {
+            Some(v) => format!("{v:.4}"),
+            None => String::new(),
+        }
+    )?;
     Ok(())
 }

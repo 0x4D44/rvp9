@@ -77,13 +77,16 @@ fn show_existing_frame_all_thirteen_shown_frames_match_reference() {
                     let got_hex = hex16(md5_of_yv12_visible(&buf));
                     let want = md5_entries.get(shown_idx);
                     match want {
-                        Some(e) if e.md5_hex == got_hex => {
+                        Some(e) if e.md5_hex_visible().as_deref() == Some(got_hex.as_str()) => {
                             matched[shown_idx] = true;
                         }
                         Some(e) => {
+                            let want_hex = e
+                                .md5_hex_visible()
+                                .unwrap_or_else(|| "<no-visible-digest>".to_string());
                             failures.push(format!(
-                                "frame[{shown_idx}] kind={:?}: md5 mismatch — got {got_hex} want {}",
-                                frame.header.kind, e.md5_hex
+                                "frame[{shown_idx}] kind={:?}: md5 mismatch — got {got_hex} want {want_hex}",
+                                frame.header.kind
                             ));
                         }
                         None => {

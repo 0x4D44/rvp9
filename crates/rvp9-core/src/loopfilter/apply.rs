@@ -34,6 +34,7 @@
 //! `vp9_loopfilter.c:1291-1294`.
 
 use super::mask::LoopFilterMask;
+use crate::bitstream::ChromaFormat;
 use crate::frame::Yv12Buffer;
 use crate::loopfilter::{
     LoopFilterInfo, lpf_horizontal_4, lpf_horizontal_4_dual, lpf_horizontal_8,
@@ -88,6 +89,19 @@ pub fn loop_filter_frame(
     debug_assert!(end_mi_row <= sb_rows * MI_BLOCK_SIZE);
     debug_assert!(lfm_grid.len() >= sb_rows * lfm_stride);
     debug_assert!(lfm_stride >= sb_cols);
+    // G7.0 review (2026-05-21): defensive — `filter_block_plane_ss11`
+    // hardcodes `ss_x = ss_y = 1` (see its name); the per-SB chroma
+    // origin calculation at `(mi_row * MI_BLOCK_SIZE / 2) * stride +
+    // (mi_col * MI_BLOCK_SIZE / 2)` only holds for 4:2:0. The G7.0
+    // gate at `rvp9-decoder::Decoder::decode_frame` should have
+    // rejected non-`Yuv420` before any frame reaches the loop filter.
+    // Debug-only — release builds skip the check.
+    debug_assert_eq!(
+        yv12.chroma(),
+        ChromaFormat::Yuv420,
+        "G7.0 gate should have rejected non-Yuv420 before loop_filter_frame; \
+         filter_block_plane_ss11 below assumes ss_x = ss_y = 1",
+    );
     let _ = mi_cols; // libvpx parity: `mi_col` loop terminates at `mi_cols`,
     // which equals `sb_cols * MI_BLOCK_SIZE` rounded up; we
     // walk one mask per SB and the mask-edge cleanup

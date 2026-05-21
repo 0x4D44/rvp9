@@ -230,6 +230,14 @@ impl Yv12Buffer {
         let uv_stride = y_stride >> ss_x;
         let uv_border_w = border_px >> ss_x;
         let uv_border_h = border_px >> ss_y;
+        // G7.0 review (2026-05-21): post-condition guarding against
+        // future allocator drift — `aligned_chroma_width()` /
+        // `aligned_chroma_height()` accessors return `uv_width` /
+        // `uv_height` directly, and downstream code (e.g. tile.rs'
+        // per-plane geometry walk) assumes the libvpx-faithful
+        // `y_dim >> ss` relationship holds. Debug-only.
+        debug_assert_eq!(uv_width, y_width >> ss_x);
+        debug_assert_eq!(uv_height, y_height >> ss_y);
 
         let yplane_rows = (y_height + 2 * border_px) as u64;
         let yplane_size = yplane_rows * u64::from(y_stride);
@@ -340,11 +348,57 @@ impl Yv12Buffer {
         self.border
     }
 
-    /// Chroma format. `Yuv420` in v1.
+    /// Chroma format (4:2:0 / 4:2:2 / 4:4:0 / 4:4:4). Plane-extent
+    /// accessors derive their dimensions from this — never hardcode
+    /// `>> 1`; route through [`ChromaFormat::subsampling_x`] /
+    /// [`subsampling_y`].
+    ///
+    /// [`subsampling_y`]: ChromaFormat::subsampling_y
     #[inline]
     #[must_use]
     pub const fn chroma(&self) -> ChromaFormat {
         self.chroma
+    }
+
+    /// Visible (cropped) chroma plane width, in pixels. Mirrors libvpx's
+    /// `(y_crop_width + ss_x) >> ss_x` (`yv12config.c:254-255`). For
+    /// `Yuv420` / `Yuv422` (`ss_x = 1`) the width is rounded up to an
+    /// even chroma-pixel; for `Yuv440` / `Yuv444` (`ss_x = 0`) it
+    /// equals the Y crop width.
+    #[inline]
+    #[must_use]
+    pub const fn chroma_width(&self) -> u32 {
+        let ss_x = self.chroma.subsampling_x() as u32;
+        (self.crop_width + ss_x) >> ss_x
+    }
+
+    /// Visible (cropped) chroma plane height, in pixels. Mirrors libvpx's
+    /// `(y_crop_height + ss_y) >> ss_y`. See [`chroma_width`] for the
+    /// per-format derivation.
+    ///
+    /// [`chroma_width`]: Yv12Buffer::chroma_width
+    #[inline]
+    #[must_use]
+    pub const fn chroma_height(&self) -> u32 {
+        let ss_y = self.chroma.subsampling_y() as u32;
+        (self.crop_height + ss_y) >> ss_y
+    }
+
+    /// Aligned (mi-multiple) chroma plane width — the allocated chroma
+    /// plane width, including the alignment pad past the visible region.
+    /// Equal to `aligned_y_width() >> ss_x`.
+    #[inline]
+    #[must_use]
+    pub const fn aligned_chroma_width(&self) -> u32 {
+        self.uv_width
+    }
+
+    /// Aligned (mi-multiple) chroma plane height. Equal to
+    /// `aligned_y_height() >> ss_y`.
+    #[inline]
+    #[must_use]
+    pub const fn aligned_chroma_height(&self) -> u32 {
+        self.uv_height
     }
 
     /// Color space attached to this buffer.
@@ -1162,6 +1216,89 @@ mod tests {
         assert_eq!(b.height(), 1077);
         assert_eq!(b.aligned_y_width(), 1928); // = 1923 rounded up to 8
         assert_eq!(b.aligned_y_height(), 1080);
+    }
+
+    /// G7 oracle. Locks in the `(ss_x, ss_y)` tuple per chroma format
+    /// against the spec, so a future "convenience" tweak to
+    /// [`ChromaFormat::subsampling_x`] / `subsampling_y` cannot silently
+    /// flip a sub-mode (e.g. swapping 4:2:2 with 4:4:0 would only be
+    /// caught at the bit-exact output layer — far too late).
+    #[test]
+    fn chroma_format_subsampling_table_oracle() {
+        use ChromaFormat::*;
+        let table: [(ChromaFormat, bool, bool); 4] = [
+            (Yuv420, true, true),
+            (Yuv422, true, false),
+            (Yuv440, false, true),
+            (Yuv444, false, false),
+        ];
+        for (cf, ss_x, ss_y) in table {
+            assert_eq!(cf.subsampling_x(), ss_x, "{cf:?} subsampling_x");
+            assert_eq!(cf.subsampling_y(), ss_y, "{cf:?} subsampling_y");
+        }
+    }
+
+    /// G7 oracle. Chroma plane dimensions per [`Yv12Buffer::chroma_width`]
+    /// / `chroma_height` must follow libvpx's `(crop + ss) >> ss` rounding
+    /// for every chroma format. A 17×11 crop tests the odd-axis path —
+    /// for `ss_x = 1` chroma rounds to 9, for `ss_x = 0` it stays at 17;
+    /// matching analysis on the Y axis covers 4:4:0.
+    #[test]
+    fn chroma_width_height_round_trip_all_formats() {
+        let cases: [(ChromaFormat, u32, u32); 4] = [
+            (ChromaFormat::Yuv420, 9, 6),  // (17+1)>>1 = 9, (11+1)>>1 = 6
+            (ChromaFormat::Yuv422, 9, 11), // (17+1)>>1 = 9, full-height
+            (ChromaFormat::Yuv440, 17, 6), // full-width,    (11+1)>>1 = 6
+            (ChromaFormat::Yuv444, 17, 11),
+        ];
+        for (cf, expect_w, expect_h) in cases {
+            let b = Yv12Buffer::alloc(17, 11, cf, BorderUsage::Decoder, ByteAlignment::Legacy)
+                .expect("alloc");
+            assert_eq!(b.chroma(), cf);
+            assert_eq!(b.chroma_width(), expect_w, "{cf:?} chroma_width");
+            assert_eq!(b.chroma_height(), expect_h, "{cf:?} chroma_height");
+            // Aligned dims always follow the aligned Y dims shifted by ss.
+            let ss_x = u32::from(cf.subsampling_x());
+            let ss_y = u32::from(cf.subsampling_y());
+            assert_eq!(
+                b.aligned_chroma_width(),
+                b.aligned_y_width() >> ss_x,
+                "{cf:?} aligned_chroma_width"
+            );
+            assert_eq!(
+                b.aligned_chroma_height(),
+                b.aligned_y_height() >> ss_y,
+                "{cf:?} aligned_chroma_height"
+            );
+        }
+    }
+
+    /// G7 — the U/V plane visible regions actually carry the expected
+    /// extent after a fill round-trip across every chroma format. Catches
+    /// regressions where an `alloc()` change miscomputes the chroma
+    /// stride or plane size, leaving a chroma row read short of `chroma_width`.
+    #[test]
+    fn alloc_chroma_plane_round_trip_all_formats() {
+        for cf in [
+            ChromaFormat::Yuv420,
+            ChromaFormat::Yuv422,
+            ChromaFormat::Yuv440,
+            ChromaFormat::Yuv444,
+        ] {
+            let mut b = Yv12Buffer::alloc(32, 24, cf, BorderUsage::Decoder, ByteAlignment::Legacy)
+                .expect("alloc");
+            b.u_plane_mut().fill(0x55);
+            b.v_plane_mut().fill(0xaa);
+            let uw = b.chroma_width() as usize;
+            let uh = b.chroma_height() as usize;
+            let u = b.u_plane();
+            let v = b.v_plane();
+            // First and last visible row, first and last visible byte.
+            assert_eq!(u.row(0)[0], 0x55, "{cf:?} U(0,0)");
+            assert_eq!(u.row(uh - 1)[uw - 1], 0x55, "{cf:?} U last");
+            assert_eq!(v.row(0)[0], 0xaa, "{cf:?} V(0,0)");
+            assert_eq!(v.row(uh - 1)[uw - 1], 0xaa, "{cf:?} V last");
+        }
     }
 
     #[test]

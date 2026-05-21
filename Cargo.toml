@@ -20,6 +20,11 @@ members = [
     "crates/rvp9-bench",
     "crates/rvp9-harness",
 ]
+# Note: `crates/rvp9-fuzz` is NOT a workspace member. cargo-fuzz uses
+# `#![no_main]` (libFuzzer convention); building it via plain
+# `cargo build --workspace` triggers LNK1561 on Windows. The fuzz
+# crate is excluded by omission — invoke via `cargo fuzz run` (or
+# `cd crates/rvp9-fuzz && cargo +nightly fuzz run`).
 
 [workspace.package]
 version = "0.1.0"
