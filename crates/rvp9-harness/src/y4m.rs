@@ -208,6 +208,26 @@ pub fn probe_testsrc_720p() -> Option<std::path::PathBuf> {
     candidates.into_iter().find(|p| p.is_file())
 }
 
+/// Probe whether the classic Foreman CIF (352×288, ~30 fps, 300 frames)
+/// y4m corpus file is available at one of the canonical paths. Returns
+/// `Some(path)` for the first hit.
+///
+/// Foreman is a real-content clip with substantial motion (head turn,
+/// camera pan to construction site) and texture that stresses every
+/// component (DCT, MV search, MC). It complements the saturating
+/// testsrc 720p clip — see `tests/corpus/sources/README.md` for the
+/// acquisition steps.
+#[must_use]
+pub fn probe_foreman_cif() -> Option<std::path::PathBuf> {
+    let candidates = [
+        std::path::PathBuf::from("tests/corpus/foreman_cif.y4m"),
+        std::path::PathBuf::from(r"D:\language\rvp9-2\tests\corpus\foreman_cif.y4m"),
+        // Sibling-tree cache populated by the legacy rvp9 repo's fixtures.
+        std::path::PathBuf::from(r"D:\language\rvp9\crates\rvp9\tests\data\cache\foreman_cif.y4m"),
+    ];
+    candidates.into_iter().find(|p| p.is_file())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -46,3 +46,35 @@ pwsh ./scripts/encode-corpus.ps1
 # 3. Hand-pick the small curated subset and copy into
 #    tests/corpus/fixtures/ (committed; <10 MB total budget).
 ```
+
+## Compression-efficiency test clips
+
+The Stage 4a/4b BD-rate and AQ.5 exit-gate harnesses
+(`crates/rvp9-encoder/tests/bdrate_gate.rs`) probe for these y4m
+sources at canonical paths. They are gitignored — fetch manually:
+
+### `tests/corpus/foreman_cif.y4m`
+
+**Format**: YUV4MPEG2 W352 H288 F30000:1001 Ip A128:117 (C420)  
+**Size**: ~46 MB (300 frames)  
+**Why**: Real-motion content (head turn, panning camera, construction
+site detail) — the testsrc 720p clip is mostly flat colour bars and
+saturates at ~75 kbps regardless of target bitrate. Foreman exposes
+meaningful DCT/MV-search/MC working sets across the rate-distortion
+curve. Classic Hannover H.263 test clip.
+
+**Acquisition** (manual; download or sibling-tree copy):
+
+```sh
+# Option 1: Xiph derf collection.
+curl -L -o tests/corpus/foreman_cif.y4m \
+    https://media.xiph.org/video/derf/y4m/foreman_cif.y4m
+
+# Option 2: copy from the legacy rvp9 sibling-tree fixture cache
+# (auto-probed by `rvp9_harness::y4m::probe_foreman_cif`).
+cp D:/language/rvp9/crates/rvp9/tests/data/cache/foreman_cif.y4m \
+   tests/corpus/foreman_cif.y4m
+```
+
+The harness skips the real-content tests cleanly if the file is
+absent — no panic, just an `[skip]` line on stderr.
