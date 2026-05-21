@@ -11,12 +11,70 @@ use super::{FrameKind, RateControl};
 /// `BPER_MB_NORMBITS` — libvpx `vp9_ratectrl.h:28`. The bits-per-MB
 /// estimate is multiplied by 512 (= `1 << 9`); the per-frame total
 /// is `(bpm * mbs) >> BPER_MB_NORMBITS`.
-const BPER_MB_NORMBITS: u32 = 9;
+pub(super) const BPER_MB_NORMBITS: u32 = 9;
 
 /// libvpx `FRAME_OVERHEAD_BITS` (`vp9_ratectrl.h:38`). Headers, tile
 /// markers, padding bytes — anything that isn't tile coefficient
 /// data. Used as a floor on per-frame target bits.
-const FRAME_OVERHEAD_BITS: u32 = 200;
+pub(super) const FRAME_OVERHEAD_BITS: u32 = 200;
+
+/// libvpx `MIN_BPB_FACTOR` (`vp9_ratectrl.c:44`). Floor on the per-
+/// level `rate_correction_factor`. Used by both
+/// `get_rate_correction_factor` and the damped update in
+/// `vp9_rc_update_rate_correction_factors`.
+pub(super) const MIN_BPB_FACTOR: f64 = 0.005;
+
+/// libvpx `MAX_BPB_FACTOR` (`vp9_ratectrl.c:45`). Ceiling counterpart
+/// of [`MIN_BPB_FACTOR`].
+pub(super) const MAX_BPB_FACTOR: f64 = 50.0;
+
+/// libvpx `RATE_FACTOR_LEVELS` count (`vp9_ratectrl.h:54`). Sized to
+/// hold every variant of [`RateFactorLevel`].
+pub(super) const RATE_FACTOR_LEVELS: usize = 5;
+
+/// Slot index into the per-level `rate_correction_factors[]` table.
+///
+/// Mirrors the libvpx `RATE_FACTOR_LEVEL` enum
+/// (`vp9_ratectrl.h:48-55`) — the full 5-entry layout is kept for
+/// future-proofing even though the v1 CBR realtime path only ever
+/// reads/writes [`Self::InterNormal`] and [`Self::KfStd`].
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(super) enum RateFactorLevel {
+    /// libvpx `INTER_NORMAL = 0`. Default inter frame.
+    InterNormal = 0,
+    /// libvpx `INTER_HIGH = 1`. Reserved for future use (high-motion
+    /// inter classification not implemented in v1).
+    #[allow(dead_code)]
+    InterHigh = 1,
+    /// libvpx `GF_ARF_LOW = 2`. Reserved — GF/ARF path not driven.
+    #[allow(dead_code)]
+    GfArfLow = 2,
+    /// libvpx `GF_ARF_STD = 3`. Reserved — GF/ARF path not driven.
+    #[allow(dead_code)]
+    GfArfStd = 3,
+    /// libvpx `KF_STD = 4`. Key / intra-only frame.
+    KfStd = 4,
+}
+
+impl RateFactorLevel {
+    /// Index into [`RateControl::rate_correction_factors`].
+    #[inline]
+    pub(super) const fn as_index(self) -> usize {
+        self as usize
+    }
+
+    /// Pick the v1 CBR rate-factor level for a frame kind. Mirrors
+    /// libvpx `get_rate_correction_factor` (`vp9_ratectrl.c:689-710`)
+    /// for the `pass != 2 && !gf_cbr_boost` branch — keyframes land in
+    /// `KF_STD`, every inter frame lands in `INTER_NORMAL`.
+    #[inline]
+    pub(super) const fn for_frame(frame_kind: FrameKind) -> Self {
+        match frame_kind {
+            FrameKind::Key => Self::KfStd,
+            FrameKind::Inter => Self::InterNormal,
+        }
+    }
+}
 
 /// Convert a Q-index to the libvpx "q value" — `ac_quant(qindex, 0) /
 /// 4.0`. Mirrors `vp9_convert_qindex_to_q` (`vp9_ratectrl.c:163-171`)
@@ -34,9 +92,11 @@ fn qindex_to_q(qindex: i32) -> f64 {
 /// bpm = enumerator * correction_factor / q
 /// ```
 ///
-/// `correction_factor` is fixed at 1.0 in v1 — see [`super`] divergence
-/// notes.
-fn bits_per_mb(frame_kind: FrameKind, qindex: i32) -> i32 {
+/// The caller supplies `correction_factor` from the per-level
+/// [`RateControl::rate_correction_factors`] table (libvpx
+/// `get_rate_correction_factor`, clamped to
+/// `[MIN_BPB_FACTOR, MAX_BPB_FACTOR]`).
+pub(super) fn bits_per_mb(frame_kind: FrameKind, qindex: i32, correction_factor: f64) -> i32 {
     let q = qindex_to_q(qindex);
     // Avoid divide-by-zero when q drops to ~0 at qindex 0. libvpx
     // never hits this in practice (qindex 0 == lossless, handled
@@ -54,8 +114,60 @@ fn bits_per_mb(frame_kind: FrameKind, qindex: i32) -> i32 {
     // semantics with `floor`.
     let bump = (enumerator * q / 4096.0).floor();
     enumerator += bump;
-    // correction_factor = 1.0 in v1.
-    (enumerator / q) as i32
+    (enumerator * correction_factor / q) as i32
+}
+
+/// Read the clamped rate-correction factor for the current frame.
+///
+/// Mirrors libvpx `get_rate_correction_factor` (`vp9_ratectrl.c:689-710`)
+/// — the v1 CBR-realtime path collapses to "KF_STD for intra-only,
+/// INTER_NORMAL for every inter". The `rcf_mult[frame_size_selector]`
+/// scaling (libvpx line 708) is omitted: we don't drive the dynamic
+/// frame-resizer in v1, so `frame_size_selector` is always `UNSCALED`
+/// (multiplier = 1.0).
+#[inline]
+pub(super) fn get_rate_correction_factor(rc: &RateControl, frame_kind: FrameKind) -> f64 {
+    let level = RateFactorLevel::for_frame(frame_kind);
+    rc.rate_correction_factors[level.as_index()].clamp(MIN_BPB_FACTOR, MAX_BPB_FACTOR)
+}
+
+/// Write a damped-updated correction factor back into the per-level
+/// table. Mirrors libvpx `set_rate_correction_factor`
+/// (`vp9_ratectrl.c:712-735`). The pre-clamp `factor /=
+/// rcf_mult[selector]` libvpx line is dropped — see
+/// [`get_rate_correction_factor`].
+#[inline]
+pub(super) fn set_rate_correction_factor(
+    rc: &mut RateControl,
+    frame_kind: FrameKind,
+    factor: f64,
+) {
+    let clamped = factor.clamp(MIN_BPB_FACTOR, MAX_BPB_FACTOR);
+    let level = RateFactorLevel::for_frame(frame_kind);
+    rc.rate_correction_factors[level.as_index()] = clamped;
+}
+
+/// Estimate the number of bits the encoder *would* spend at a given Q,
+/// for a given correction factor. Mirrors libvpx
+/// `vp9_estimate_bits_at_q` (`vp9_ratectrl.c:198-205`):
+///
+/// ```text
+/// bpm = vp9_rc_bits_per_mb(frame_type, q, correction_factor, ...)
+/// bits = max(FRAME_OVERHEAD_BITS, (bpm * MBs) >> BPER_MB_NORMBITS)
+/// ```
+///
+/// Used by `postencode::update_rate_correction_factors` to compute
+/// `projected_size_based_on_q`, the controller's own prediction of
+/// the frame size at the picked Q.
+pub(super) fn estimate_bits_at_q(
+    frame_kind: FrameKind,
+    qindex: i32,
+    mbs: u32,
+    correction_factor: f64,
+) -> i64 {
+    let bpm = i64::from(bits_per_mb(frame_kind, qindex, correction_factor));
+    let raw = bpm.saturating_mul(i64::from(mbs)) >> BPER_MB_NORMBITS;
+    raw.max(i64::from(FRAME_OVERHEAD_BITS))
 }
 
 /// Pick a Q-index that targets `target_bits_per_frame` within
@@ -72,6 +184,7 @@ fn regulate_q(
     active_best: i32,
     active_worst: i32,
     mbs: u32,
+    correction_factor: f64,
 ) -> i32 {
     // `(target_bits << 9) / MBs` — bits_per_mb at the target rate.
     let target_bpm: i64 = if mbs == 0 {
@@ -83,7 +196,7 @@ fn regulate_q(
     let mut last_error = i64::MAX;
     let mut i = active_best;
     while i <= active_worst {
-        let bpm_at_i = i64::from(bits_per_mb(frame_kind, i));
+        let bpm_at_i = i64::from(bits_per_mb(frame_kind, i, correction_factor));
         if bpm_at_i <= target_bpm {
             // libvpx tie-break: prefer the Q with the smaller residual.
             let q = if target_bpm - bpm_at_i <= last_error {
@@ -294,13 +407,23 @@ pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> 
     let active_best = active_best.clamp(rc.best_quality, rc.worst_quality);
     let active_worst = active_worst.clamp(active_best, rc.worst_quality);
 
-    // 3. Regulate Q.
-    let q = regulate_q(frame_kind, target_bits, active_best, active_worst, rc.mbs);
+    // 3. Regulate Q using the current per-level correction factor.
+    let correction_factor = get_rate_correction_factor(rc, frame_kind);
+    let q = regulate_q(
+        frame_kind,
+        target_bits,
+        active_best,
+        active_worst,
+        rc.mbs,
+        correction_factor,
+    );
     let q = q.clamp(active_best, active_worst);
 
-    // Persist bounds.
+    // Persist bounds + the picked Q so postencode can re-apply the
+    // damped update formula at the same rate-factor level.
     rc.active_min_qindex = active_best as u8;
     rc.active_max_qindex = active_worst as u8;
+    rc.last_picked_qindex = q as u8;
 
     (q as u8, active_best as u8, active_worst as u8)
 }
@@ -328,10 +451,12 @@ mod tests {
 
     #[test]
     fn bits_per_mb_monotonically_decreases_with_q() {
-        // Test sanity: as Q rises, bits-per-MB falls.
-        let prev = bits_per_mb(FrameKind::Inter, 20);
+        // Test sanity: as Q rises, bits-per-MB falls. Use the default
+        // correction factor of 1.0 (libvpx's `vp9_rc_init` seed) so
+        // this stays a pure-function test.
+        let prev = bits_per_mb(FrameKind::Inter, 20, 1.0);
         for q in (21..=255).step_by(8) {
-            let now = bits_per_mb(FrameKind::Inter, q);
+            let now = bits_per_mb(FrameKind::Inter, q, 1.0);
             assert!(
                 now <= prev || (prev - now).abs() < 5,
                 "bits_per_mb non-monotonic: q={q}, prev={prev}, now={now}"
@@ -344,11 +469,25 @@ mod tests {
         // Key enumerator (2_700_000) > inter enumerator (1_800_000),
         // so at the same Q keyframes consume more bits/MB.
         let q = 100;
-        let key = bits_per_mb(FrameKind::Key, q);
-        let inter = bits_per_mb(FrameKind::Inter, q);
+        let key = bits_per_mb(FrameKind::Key, q, 1.0);
+        let inter = bits_per_mb(FrameKind::Inter, q, 1.0);
         assert!(
             key > inter,
             "expected KF bpm ({key}) > inter bpm ({inter}) at q={q}"
+        );
+    }
+
+    #[test]
+    fn bits_per_mb_scales_with_correction_factor() {
+        // 2x the correction factor → ~2x the bits-per-MB estimate
+        // (modulo integer truncation).
+        let q = 80;
+        let one = bits_per_mb(FrameKind::Inter, q, 1.0);
+        let two = bits_per_mb(FrameKind::Inter, q, 2.0);
+        let ratio = f64::from(two) / f64::from(one);
+        assert!(
+            (1.9..=2.1).contains(&ratio),
+            "expected ~2x scaling: one={one}, two={two}, ratio={ratio}"
         );
     }
 
@@ -437,14 +576,14 @@ mod tests {
     #[test]
     fn regulate_q_returns_active_best_for_tiny_target() {
         // If target bits is huge, regulate should pick active_best.
-        let q = regulate_q(FrameKind::Inter, 10_000_000, 10, 200, 3600);
+        let q = regulate_q(FrameKind::Inter, 10_000_000, 10, 200, 3600, 1.0);
         assert_eq!(q, 10, "huge target should land at active_best");
     }
 
     #[test]
     fn regulate_q_returns_active_worst_for_huge_demand() {
         // If target bits is tiny, regulate should pick active_worst.
-        let q = regulate_q(FrameKind::Inter, 50, 10, 200, 3600);
+        let q = regulate_q(FrameKind::Inter, 50, 10, 200, 3600, 1.0);
         assert_eq!(q, 200, "tiny target should land at active_worst");
     }
 

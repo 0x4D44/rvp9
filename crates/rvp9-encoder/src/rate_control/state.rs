@@ -7,6 +7,7 @@
 //! pointers, no SVC arrays) replace the C-isms.
 
 use super::{FrameKind, RateControlConfig, cbr, postencode};
+use cbr::RATE_FACTOR_LEVELS;
 
 /// Running rate-control state.
 ///
@@ -74,6 +75,35 @@ pub struct RateControl {
     pub active_min_qindex: u8,
     /// See `active_min_qindex`.
     pub active_max_qindex: u8,
+
+    /// Q-index actually picked by the most recent
+    /// [`Self::pick_q_and_bounds`]. Mirrors libvpx
+    /// `cm->base_qindex` at the moment `vp9_rc_update_rate_correction_factors`
+    /// runs (`vp9_ratectrl.c:1859`) — the damped feedback loop
+    /// needs the picked Q to compute `projected_size_based_on_q`.
+    pub last_picked_qindex: u8,
+
+    // ---- Rate-correction feedback ----
+    /// Per-level rate-correction factor table.
+    ///
+    /// Mirrors libvpx `rc->rate_correction_factors[RATE_FACTOR_LEVELS]`
+    /// (`vp9_ratectrl.h:103`). Indexed by the
+    /// [`cbr::RateFactorLevel`] enum. Multiplies the libvpx
+    /// `vp9_rc_bits_per_mb` enumerator-over-Q estimate to compensate
+    /// for systematic over-/under-estimation; damped-updated
+    /// post-encode by `postencode::update_rate_correction_factors`.
+    ///
+    /// libvpx seeds every slot to 1.0 in `vp9_rc_init`
+    /// (`vp9_ratectrl.c:419-422`).
+    pub rate_correction_factors: [f64; RATE_FACTOR_LEVELS],
+
+    /// Per-level "have we seen any frame at this level yet" flag.
+    /// Mirrors libvpx `rc->damped_adjustment[RATE_FACTOR_LEVELS]`
+    /// (`vp9_ratectrl.h:203`). First update at each level uses
+    /// `adjustment_limit = 1.0` (no damping); subsequent updates use
+    /// the log-magnitude damping formula
+    /// (`vp9_ratectrl.c:770-779`).
+    pub damped_adjustment: [bool; RATE_FACTOR_LEVELS],
 
     // ---- GOP state ----
     /// Frames until the next keyframe. libvpx `rc->frames_to_key`
@@ -178,6 +208,14 @@ impl RateControl {
 
             active_min_qindex: config.min_qindex,
             active_max_qindex: config.max_qindex,
+            last_picked_qindex: config.max_qindex,
+
+            // libvpx `vp9_rc_init` seeds every slot of the
+            // rate_correction_factors[] table to 1.0 and every
+            // damped_adjustment[] flag to 0 (no damping applied to the
+            // first frame at each level). `vp9_ratectrl.c:419-422`.
+            rate_correction_factors: [1.0; RATE_FACTOR_LEVELS],
+            damped_adjustment: [false; RATE_FACTOR_LEVELS],
 
             frames_to_key: 0, // first frame must be a keyframe
             frames_since_key: 0,

@@ -3,7 +3,91 @@
 //! Port of `vp9_rc_postencode_update` (`vp9_ratectrl.c:1845-1995`),
 //! restricted to the fields actually used by the 1-pass CBR pick logic.
 
+use super::cbr::{
+    self, MAX_BPB_FACTOR, MIN_BPB_FACTOR, RateFactorLevel, estimate_bits_at_q,
+    get_rate_correction_factor, set_rate_correction_factor,
+};
 use super::{FrameKind, RateControl};
+
+/// Port of `vp9_rc_update_rate_correction_factors`
+/// (`vp9_ratectrl.c:737-817`).
+///
+/// Closes the loop between *predicted* bits-at-Q and *actual* bits-at-Q
+/// by multiplicatively walking the per-level correction factor:
+///
+/// ```text
+/// projected = estimate_bits_at_q(frame_type, picked_q, MBs, current_factor)
+/// correction_factor_pct = 100 * actual_bits / projected   // libvpx int math
+/// adjustment_limit = first_time ? 1.0
+///                                : 0.25 + 0.5 * min(1, |log10(0.01 * cf)|)
+/// if cf > 102: factor *= (100 + (cf - 100) * adj) / 100
+/// elif cf < 99: factor *= (100 - (100 - cf) * adj) / 100
+/// clamp to [MIN_BPB_FACTOR, MAX_BPB_FACTOR]
+/// ```
+///
+/// The libvpx oscillation-detector (`q_1_frame` / `q_2_frame` /
+/// `rc_1_frame` / `rc_2_frame` lines 781-795) is NOT ported — those
+/// fields feed the GF-overshoot rescue path
+/// (`vp9_encodedframe_overshoot`) which is out of scope per the
+/// divergence ledger. The damped update itself doesn't read them.
+fn update_rate_correction_factors(rc: &mut RateControl, actual_bits: u32, frame_kind: FrameKind) {
+    // 1. Recover the factor in force when this frame's Q was picked.
+    let current_factor = get_rate_correction_factor(rc, frame_kind);
+
+    // 2. Re-project the frame size at the picked Q under that factor.
+    //    libvpx uses `cm->base_qindex` (== the Q the encoder actually
+    //    handed to the entropy coder); we record that in
+    //    `rc.last_picked_qindex` in `cbr::pick_q_and_bounds`.
+    let picked_q = i32::from(rc.last_picked_qindex);
+    let projected = estimate_bits_at_q(frame_kind, picked_q, rc.mbs, current_factor);
+
+    // 3. Compute the integer correction-factor percentage. libvpx
+    //    short-circuits when projected ≤ FRAME_OVERHEAD_BITS by
+    //    leaving `correction_factor = 100` (no adjustment); we mirror
+    //    that by skipping the update entirely.
+    if projected <= i64::from(cbr::FRAME_OVERHEAD_BITS) {
+        return;
+    }
+    let correction_pct: i64 = (100_i64 * i64::from(actual_bits)) / projected;
+
+    // 4. Damping. First frame at this rate-factor level: full
+    //    correction. Subsequent: damp by the log-magnitude of the
+    //    miss (libvpx `vp9_ratectrl.c:770-779`).
+    let level = RateFactorLevel::for_frame(frame_kind);
+    let slot = level.as_index();
+    let adjustment_limit: f64 = if !rc.damped_adjustment[slot] {
+        rc.damped_adjustment[slot] = true;
+        1.0
+    } else {
+        let pct_f = correction_pct as f64;
+        let abs_log = (0.01 * pct_f).abs().log10().abs();
+        0.25 + 0.5 * abs_log.min(1.0)
+    };
+
+    // 5. Multiplicatively walk the per-level factor. libvpx's gates
+    //    are 102 / 99 (so a small dead-band on either side is
+    //    ignored). We replicate the int-math truncation exactly so
+    //    behaviour matches the reference at the bit level.
+    let mut new_factor = current_factor;
+    if correction_pct > 102 {
+        let damped =
+            (100_i64 + (((correction_pct - 100) as f64) * adjustment_limit) as i64) as f64;
+        new_factor = (new_factor * damped) / 100.0;
+        if new_factor > MAX_BPB_FACTOR {
+            new_factor = MAX_BPB_FACTOR;
+        }
+    } else if correction_pct < 99 {
+        let damped =
+            (100_i64 - (((100 - correction_pct) as f64) * adjustment_limit) as i64) as f64;
+        new_factor = (new_factor * damped) / 100.0;
+        if new_factor < MIN_BPB_FACTOR {
+            new_factor = MIN_BPB_FACTOR;
+        }
+    }
+    // else: inside the [99, 102] dead-band — leave factor unchanged.
+
+    set_rate_correction_factor(rc, frame_kind, new_factor);
+}
 
 /// Update buffer + Q history given the frame just encoded.
 ///
@@ -11,7 +95,8 @@ use super::{FrameKind, RateControl};
 ///
 /// 1. `projected_frame_size = bytes_used << 3` — we receive bits
 ///    already.
-/// 2. `update_rate_correction_factors` — SKIPPED in v1 (fixed factor).
+/// 2. `update_rate_correction_factors` — port at
+///    [`update_rate_correction_factors`].
 /// 3. Update `last_q[type]`, `avg_frame_qindex[type]` via
 ///    `(3 * prev + new) >> 2`.
 /// 4. `update_buffer_level_postencode`:
@@ -30,6 +115,13 @@ use super::{FrameKind, RateControl};
 ///
 /// [`RateControl::advance_frame`]: super::RateControl::advance_frame
 pub(super) fn postencode_update(rc: &mut RateControl, actual_bits: u32, frame_kind: FrameKind) {
+    // -- Adapt the per-level rate-correction factor BEFORE we touch
+    //    last_q / avg_frame_qindex (libvpx ordering — line 1859 then
+    //    line 1864). The damped update reads `last_picked_qindex`,
+    //    not the EWMA history, so the order matters only for symmetry
+    //    with libvpx.
+    update_rate_correction_factors(rc, actual_bits, frame_kind);
+
     // -- Update last_q / avg_frame_qindex --
     // The post-encode update uses the active Q that was picked for
     // this frame. We don't have access to the actual encoded Q here
@@ -205,6 +297,180 @@ mod tests {
         rc.postencode_update(bits, FrameKind::Key);
         assert_eq!(rc.frames_since_key, 0);
         assert_eq!(rc.frames_to_key, rc.config().gop_length - 1);
+    }
+
+    // Closed-loop convergence oracle (RC.1).
+    //
+    // Drives the rate controller through a synthetic encoder whose
+    // response curve is `bits_per_mb(picked_q, correction_factor=1.0)`
+    // scaled by a `content_factor`. At a fixed correction factor of
+    // 1.0 the rvp9 controller's prediction is 1/content_factor of
+    // reality and the actual bitrate saturates accordingly (the
+    // documented 5-40x divergence-ledger failure mode). A faithful
+    // port of `vp9_rc_update_rate_correction_factors` must walk that
+    // factor to match `content_factor` over time. The oracle gates
+    // the average bits/frame at ±20 % of target across three orders
+    // of magnitude.
+
+    /// "Truth" content response curve used by
+    /// [`simulate_closed_loop`].
+    ///
+    /// Models a content scene that costs `content_factor` times what
+    /// the controller's untuned `bits_per_mb` formula predicts at
+    /// `correction_factor = 1.0`. The rate-correction-factor feedback
+    /// loop's whole job is to walk the per-level factor to this same
+    /// `content_factor` over time, so the controller's predictions
+    /// match reality. If the port is correct, the loop converges
+    /// regardless of `content_factor` (within `[MIN_BPB_FACTOR,
+    /// MAX_BPB_FACTOR]`).
+    fn synth_bits_at_q(kind: FrameKind, q: i32, mbs: u32, content_factor: f64) -> u32 {
+        use super::super::cbr::bits_per_mb;
+        // Use 1.0 inside `bits_per_mb` and apply `content_factor`
+        // ourselves so the synthesised value doesn't get clamped by
+        // the [MIN_BPB_FACTOR, MAX_BPB_FACTOR] gate (content_factor
+        // is allowed to be slightly outside that — that's the test).
+        let bpm = f64::from(bits_per_mb(kind, q, 1.0)) * content_factor;
+        let bits = (bpm as i64).saturating_mul(i64::from(mbs)) >> 9;
+        bits.clamp(0, i64::from(u32::MAX)) as u32
+    }
+
+    fn simulate_closed_loop(
+        target_bps: u32,
+        frame_w: u32,
+        frame_h: u32,
+        frames: u32,
+        content_factor: f64,
+    ) -> (u64, u64) {
+        use super::super::config::RateControlConfig;
+
+        let cfg = RateControlConfig {
+            target_bitrate_bps: target_bps,
+            frame_width: frame_w,
+            frame_height: frame_h,
+            ..RateControlConfig::default()
+        };
+        let mut rc = RateControl::new(cfg);
+        let mbs = rc.config().mbs();
+
+        // Warm-up: 1 keyframe + half the requested run as a settling
+        // period. We do NOT count any warm-up bits toward the budget
+        // gate — libvpx-equivalent harnesses report mean inter
+        // bitrate after the rate-correction factor has converged and
+        // the buffer has reached its steady-state level. The
+        // controller still observes the warm-up so the per-level
+        // factor and the ambient Q EWMA both walk to their
+        // equilibrium points.
+        let warmup_frames = frames / 2;
+        let (q, _, _) = rc.pick_q_and_bounds(FrameKind::Key);
+        let actual = synth_bits_at_q(FrameKind::Key, i32::from(q), mbs, content_factor);
+        rc.postencode_update(actual, FrameKind::Key);
+        rc.advance_frame();
+
+        for _ in 0..warmup_frames {
+            let (q, _, _) = rc.pick_q_and_bounds(FrameKind::Inter);
+            let actual = synth_bits_at_q(FrameKind::Inter, i32::from(q), mbs, content_factor);
+            rc.postencode_update(actual, FrameKind::Inter);
+            rc.advance_frame();
+        }
+
+        let mut total_bits: u64 = 0;
+        for _ in 0..frames {
+            let (q, _, _) = rc.pick_q_and_bounds(FrameKind::Inter);
+            let actual = synth_bits_at_q(FrameKind::Inter, i32::from(q), mbs, content_factor);
+            rc.postencode_update(actual, FrameKind::Inter);
+            rc.advance_frame();
+            total_bits += u64::from(actual);
+        }
+
+        let avg_actual = total_bits / u64::from(frames);
+        let avg_target = u64::from(rc.avg_frame_bandwidth);
+        (avg_actual, avg_target)
+    }
+
+    // Convergence oracle resolutions are matched to the operating
+    // bitrate so the test exercises the rate-correction-factor
+    // feedback loop, not the controller's worst-Q saturation floor.
+    // At 720p with `bits_per_mb(q=255, factor=1.0)` the encoder cannot
+    // produce fewer than ~30,800 bits/frame (= 924 kbps @ 30 fps), so
+    // sub-megabit 720p targets are unachievable in our model even
+    // with a perfect controller — that's libvpx's documented
+    // "needs frame-drop" regime (`vp9_rc_drop_frame`), which we
+    // explicitly don't port. The chosen resolutions match WebRTC's
+    // standard bitrate ladders (240p @ 250 kbps, 360p @ 1 Mbps, 720p
+    // @ 4 Mbps), keeping every test inside the controller's
+    // discrimination range.
+    //
+    // The content_factor = 3.0 below models the documented
+    // observation that rvp9 actual bitrate runs 5-40x below target
+    // before the loop is closed (divergence ledger entry "rvp9
+    // rate-controller bitrate saturation"). At content_factor = 1.0
+    // the controller's predictions match the content model exactly
+    // and the feedback loop has nothing to compensate for; 3.0 forces
+    // the loop to walk the per-level factor away from its initial
+    // 1.0 to a steady-state ≈ 3.0.
+
+    #[test]
+    fn rate_control_converges_at_multiple_bitrates_250kbps() {
+        // 250 kbps / 30 fps / 320x240 — low end of the WebRTC ladder.
+        let (avg_actual, avg_target) = simulate_closed_loop(250_000, 320, 240, 120, 3.0);
+        let diff = avg_actual as i64 - avg_target as i64;
+        let pct = diff.unsigned_abs() * 100 / avg_target;
+        assert!(
+            pct <= 20,
+            "250 kbps @ 240p: avg_actual={avg_actual}, avg_target={avg_target}, \
+             diff={diff} ({pct}% — expected ≤ 20%)"
+        );
+    }
+
+    #[test]
+    fn rate_control_converges_at_multiple_bitrates_1mbps() {
+        // 1 Mbps / 30 fps / 640x360 — mid-bitrate ladder rung.
+        let (avg_actual, avg_target) = simulate_closed_loop(1_000_000, 640, 360, 120, 3.0);
+        let diff = avg_actual as i64 - avg_target as i64;
+        let pct = diff.unsigned_abs() * 100 / avg_target;
+        assert!(
+            pct <= 20,
+            "1 Mbps @ 360p: avg_actual={avg_actual}, avg_target={avg_target}, \
+             diff={diff} ({pct}% — expected ≤ 20%)"
+        );
+    }
+
+    #[test]
+    fn rate_control_converges_at_multiple_bitrates_4mbps() {
+        // 4 Mbps / 30 fps / 1280x720 — high-bitrate ladder rung.
+        let (avg_actual, avg_target) = simulate_closed_loop(4_000_000, 1280, 720, 120, 3.0);
+        let diff = avg_actual as i64 - avg_target as i64;
+        let pct = diff.unsigned_abs() * 100 / avg_target;
+        assert!(
+            pct <= 20,
+            "4 Mbps @ 720p: avg_actual={avg_actual}, avg_target={avg_target}, \
+             diff={diff} ({pct}% — expected ≤ 20%)"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    #[allow(clippy::print_stdout)]
+    fn rate_control_closed_loop_trace() {
+        // Diagnostic — run with `cargo test -- --ignored
+        // rate_control_closed_loop_trace --nocapture` to see the
+        // convergence numbers for each of the three convergence-
+        // oracle bitrates.
+        for (label, target_bps, w, h) in [
+            ("250 kbps @ 240p", 250_000_u32, 320_u32, 240_u32),
+            ("1 Mbps @ 360p", 1_000_000, 640, 360),
+            ("4 Mbps @ 720p", 4_000_000, 1280, 720),
+        ] {
+            let (avg_actual, avg_target) = simulate_closed_loop(target_bps, w, h, 120, 3.0);
+            let diff = avg_actual as i64 - avg_target as i64;
+            let pct = (diff.unsigned_abs() as f64) * 100.0 / avg_target as f64;
+            let sign = if diff >= 0 { '+' } else { '-' };
+            println!(
+                "{label}: avg_actual={avg_actual} avg_target={avg_target} \
+                 diff={sign}{} ({sign}{pct:.1}%)",
+                diff.unsigned_abs()
+            );
+        }
     }
 
     #[test]

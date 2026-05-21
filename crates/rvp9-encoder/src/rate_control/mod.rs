@@ -25,15 +25,21 @@
 //! AS DIVERGENCES (per HLD D8: every deliberate departure goes in
 //! `notes/divergence-ledger.md`):
 //!
-//! - **Rate correction factor feedback loop.** libvpx maintains a
-//!   per-rate-level `rate_correction_factors[]` table that is damped-
-//!   updated after each frame in `vp9_rc_update_rate_correction_factors`
-//!   (`vp9_ratectrl.c:712-817`). v1 uses a fixed `correction_factor =
-//!   1.0` and relies on the buffer-driven active-worst-quality clamp to
-//!   pull Q towards the right neighbourhood. The single-frame Q estimate
-//!   may therefore over- or under-shoot by up to ~30 % at first; over a
-//!   30-frame window the buffer feedback drives the average back to
-//!   target (see [`tests::rate_control_simulation_30_frames`]).
+//! - **Rate correction factor feedback loop — PORTED (RC.1, 2026-05-21).**
+//!   libvpx maintains a per-rate-level `rate_correction_factors[]` table
+//!   that is damped-updated after each frame in
+//!   `vp9_rc_update_rate_correction_factors` (`vp9_ratectrl.c:737-817`).
+//!   The port lives in `postencode::update_rate_correction_factors`
+//!   and walks the per-level factor (`INTER_NORMAL`, `KF_STD`) using
+//!   the libvpx damping formula
+//!   (`0.25 + 0.5 * min(1, |log10(0.01 * cf)|)`). The closed-loop
+//!   convergence oracle in `postencode::tests` gates
+//!   `|actual - target| / target ≤ 20 %` across 250 kbps / 1 Mbps /
+//!   4 Mbps targets. The libvpx oscillation-detector fields
+//!   (`q_1_frame` / `q_2_frame` / `rc_1_frame` / `rc_2_frame`,
+//!   `vp9_ratectrl.c:781-795`) are intentionally not ported — they
+//!   feed the GF-overshoot rescue path (`vp9_encodedframe_overshoot`)
+//!   which is out of scope.
 //! - **Frame drop / decimation.** `vp9_rc_drop_frame` (`vp9_ratectrl.c:
 //!   554-665`) and the `drop_count` / `decimation_*` machinery are
 //!   stubbed (`drop_count` field carried for ABI shape only).

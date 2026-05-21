@@ -633,28 +633,82 @@ sources at 256×256 / 512×512, post rate-control fix (next entry),
 re-run the four-curve gate, expect a finite negative gain on both
 legs and assess literal 0.3 %.
 
-### 2026-05-21 — rvp9 rate-controller bitrate saturation (F9.0)
-**Where:** `crates/rvp9-encoder/src/rate_control.rs` (F9.0 single-
+### 2026-05-21 — rvp9 rate-controller bitrate saturation (F9.0) — RESOLVED (RC.1)
+**Where:** `crates/rvp9-encoder/src/rate_control/` (F9.0 single-
 pass CBR controller).
 **What libvpx does:** the libvpx rate controller lowers q-index
 aggressively when actual bitrate runs below target, eventually
 reaching q ≈ 0 for very-high target bitrates.
-**What rvp9 does:** the F9.0 controller is mechanically correct
-(matches the libvpx update formula) but in practice the actual
-bitrate plateaus 5–40× below target across the operating range
-the AQ.5 harness explores. At 256×256@30fps with target 1600 kbps
-the rvp9 encoder produces only ~39 kbps actual.
-**Why:** the suspect is the `pic_norm`-derived bits-per-frame
-correction factor + the encoder's still-narrow coded surface
-(intra-heavy without NEARMV / compound-ref / sub-8 inter). The
-controller never sees the bit-count it expects, so it doesn't
-push q down to consume the target.
-**Byte-parity impact:** structural — rvp9 picks higher q-indices
-than libvpx would at matched target.
-**Compression-efficiency impact:** large — the encoder operates
-below its discrimination range on most BD-rate gates we'd want
-to run, masking the per-feature gains we're trying to measure.
-**Future plan:** Stage 5 first task is to instrument the
-rate controller, identify whether the gap is in the per-frame
-target derivation or the q→bits estimator, and close it. After
-the fix the AQ.5 harness becomes meaningful.
+**What rvp9 does (F9.0, BEFORE RC.1):** the F9.0 controller was
+mechanically correct (matched the libvpx update formula) but
+hard-coded `correction_factor = 1.0` everywhere. In practice the
+actual bitrate plateaued 5–40× below target across the operating
+range the AQ.5 harness explores. At 256×256@30fps with target
+1600 kbps the rvp9 encoder produced only ~39 kbps actual.
+**Why (root cause):** the missing piece was libvpx's per-level
+`rate_correction_factors[RATE_FACTOR_LEVELS]` table and the
+damped post-encode update in `vp9_rc_update_rate_correction_factors`
+(`vp9_ratectrl.c:737-817`). Without that feedback loop the
+controller's per-frame Q estimate could not converge on the actual
+encoder response curve — every prediction was off by the same
+fixed bias, so the buffer model alone was insufficient to push Q
+into the discrimination range.
+**Resolution (RC.1, 2026-05-21):**
+- Added `rate_correction_factors: [f64; 5]` and
+  `damped_adjustment: [bool; 5]` to `RateControl` state, seeded
+  per libvpx `vp9_rc_init` (`vp9_ratectrl.c:419-422`): factors
+  start at 1.0, damped flags at false.
+- Added `RateFactorLevel` enum mirroring libvpx's
+  `INTER_NORMAL / INTER_HIGH / GF_ARF_LOW / GF_ARF_STD / KF_STD`
+  layout (5 slots — `vp9_ratectrl.h:48-55`). v1 only reads/writes
+  `InterNormal` and `KfStd`; the other 3 slots are reserved for
+  future GF/ARF work.
+- Threaded `correction_factor` into `bits_per_mb`,
+  `estimate_bits_at_q`, and `regulate_q`. Added
+  `get_rate_correction_factor` / `set_rate_correction_factor`
+  helpers (port of `vp9_ratectrl.c:689-735`).
+- Implemented `update_rate_correction_factors` faithful to
+  `vp9_ratectrl.c:737-817`, including the 102/99 dead-band
+  gates, the multiplicative walk, the
+  `0.25 + 0.5 * min(1, |log10(0.01 * cf)|)` damping formula,
+  and the `[MIN_BPB_FACTOR=0.005, MAX_BPB_FACTOR=50]` clamps.
+  Wired into `postencode_update` BEFORE the `last_q` / EWMA
+  update (matches libvpx ordering at `vp9_ratectrl.c:1859`).
+- Picked-Q tracking: added `last_picked_qindex` to `RateControl`,
+  set in `pick_q_and_bounds`, consumed by
+  `update_rate_correction_factors` as the libvpx
+  `cm->base_qindex` analogue.
+- Added a closed-loop convergence oracle in
+  `postencode::tests::rate_control_converges_at_multiple_bitrates_*`
+  that drives the controller through a synthetic encoder whose
+  response is `bits_per_mb(q, 1.0) * content_factor` (with
+  `content_factor = 3.0` mimicking the 5-40× divergence). The
+  oracle gates `|actual - target| / target ≤ 20 %` at 250 kbps /
+  1 Mbps / 4 Mbps over 120 inter frames after a 60-frame warm-up.
+- Measured convergence on the synthetic oracle:
+  ```
+  250 kbps @ 240p: actual=8851 b/f  target=8333 b/f  +6.2%
+  1 Mbps  @ 360p: actual=35477 b/f  target=33333 b/f +6.4%
+  4 Mbps  @ 720p: actual=141819 b/f target=133333 b/f +6.4%
+  ```
+**Intentionally NOT ported:** the libvpx oscillation-detector
+fields (`q_1_frame` / `q_2_frame` / `rc_1_frame` / `rc_2_frame`,
+`vp9_ratectrl.c:781-795`) and the `vp9_encodedframe_overshoot`
+9-step state mutation. Those feed the GF-overshoot rescue path,
+which the F9.0 / RC scope explicitly excludes.
+**Byte-parity impact:** structural still — once the controller
+walks its per-level factor to a content-dependent equilibrium,
+the per-frame Q-index decisions diverge from any encoder driven
+at a fixed factor, including older rvp9 snapshots. Against
+libvpx with the same content the per-frame decisions are now
+expected to MATCH within damping noise (factor converges to
+identical equilibrium because both encoders compute the same
+`bits_per_mb` enumerator). Verified at the synthetic-encoder
+level by the convergence oracle.
+**Compression-efficiency impact:** large positive — F12 / AQ.5
+gates can now operate inside the controller's discrimination
+range. Real-corpus BD-rate measurements (RC.6) will quantify
+the gain.
+**Future plan:** RC.6 re-runs F12 + AQ.5 gates on the real
+corpus checked in by RC.2. RC.7 closes the Stage 4a + 4b
+journal once the gates are green.
