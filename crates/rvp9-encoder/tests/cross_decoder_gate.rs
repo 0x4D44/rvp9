@@ -490,3 +490,211 @@ fn cross_decoder_gate_vpxdec_ffmpeg() {
         "cross-decoder gate FAIL: vpxdec={vpxdec_verdict}, ffmpeg={ffmpeg_verdict}"
     );
 }
+
+/// RC.X1 — diagnostic dump for cross-decoder gate. Produces the same IVF
+/// as the gate but PRESERVES it under the temp dir, plus per-frame
+/// payloads (`/tmp/rc_x1_frame_N.bin`) and truncated cumulative IVFs
+/// (`/tmp/rc_x1_thru_N.ivf`) so each prefix can be fed to vpxdec
+/// independently. This is purely for human inspection.
+#[test]
+#[ignore = "RC.X1 diagnostic dump; run with `--ignored`"]
+fn rc_x1_diagnostic_dump() {
+    const W: u32 = 256;
+    const H: u32 = 256;
+    const N_FRAMES: u32 = 8;
+    const TARGET_BITRATE_BPS: u32 = 1_000_000;
+
+    let Some(y4m_path) = probe_testsrc_720p() else {
+        eprintln!("[SKIPPED] testsrc_720p30.y4m corpus not available.");
+        return;
+    };
+    let (frames, framerate) = y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize)
+        .expect("y4m_read_cropped");
+    assert_eq!(frames.len(), N_FRAMES as usize);
+
+    let cfg = EncoderConfig {
+        width: W,
+        height: H,
+        framerate,
+        target_bitrate_bps: TARGET_BITRATE_BPS,
+        gop_length: N_FRAMES + 1,
+        aq_mode: AqMode::Off,
+    };
+    let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
+
+    let mut packets: Vec<Vec<u8>> = Vec::with_capacity(N_FRAMES as usize);
+    for (idx, (y, u, v)) in frames.iter().enumerate() {
+        let pkt = enc
+            .encode_frame(&yuv_view(y, u, v, W as usize))
+            .expect("encode_frame");
+        eprintln!(
+            "  encoded frame {idx}: kind={:?} q={} bytes={} first16={:02x?}",
+            pkt.frame_kind,
+            pkt.q_index,
+            pkt.data.len(),
+            &pkt.data[..pkt.data.len().min(16)]
+        );
+        packets.push(pkt.data);
+    }
+
+    let tmp_dir = std::env::temp_dir();
+
+    // Dump every frame's raw payload.
+    for (idx, pkt) in packets.iter().enumerate() {
+        let p = tmp_dir.join(format!("rc_x1_frame_{idx}.bin"));
+        std::fs::write(&p, pkt).expect("write frame bin");
+        eprintln!("  wrote {} ({} bytes)", p.display(), pkt.len());
+    }
+
+    // Write cumulative IVFs containing frames 0..=k for k = 0..N_FRAMES-1.
+    let header = IvfHeader::vp9(W as u16, H as u16, framerate.round() as u32, 1);
+    for end in 1..=packets.len() {
+        let ivf_path = tmp_dir.join(format!("rc_x1_thru_{}.ivf", end - 1));
+        let refs: Vec<&[u8]> = packets[..end].iter().map(Vec::as_slice).collect();
+        let mut f = std::fs::File::create(&ivf_path).expect("create ivf");
+        write_ivf(&mut f, &header, &refs).expect("write_ivf");
+        eprintln!("  wrote {} ({} packets)", ivf_path.display(), end);
+    }
+
+    // Also write the full IVF under a stable name.
+    let full_ivf = tmp_dir.join("rc_x1_full.ivf");
+    let refs: Vec<&[u8]> = packets.iter().map(Vec::as_slice).collect();
+    {
+        let mut f = std::fs::File::create(&full_ivf).expect("create full ivf");
+        write_ivf(&mut f, &header, &refs).expect("write_ivf full");
+    }
+    eprintln!("RC.X1 diagnostic dump complete. Inspect files under: {}", tmp_dir.display());
+}
+
+/// RC.X1 — dump per-SB leaf layout for frame 1 (rvp9-decoder view).
+#[test]
+#[ignore = "RC.X1 SB-leaf dump; run with `--ignored`"]
+fn rc_x1_sb_leaf_dump() {
+    use rvp9_core::mode_info::BlockMode;
+
+    const W: u32 = 256;
+    const H: u32 = 256;
+    const N_FRAMES: u32 = 8;
+    const TARGET_BITRATE_BPS: u32 = 1_000_000;
+
+    let Some(y4m_path) = probe_testsrc_720p() else { return };
+    let (frames, framerate) = y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize)
+        .expect("y4m_read_cropped");
+
+    let cfg = EncoderConfig {
+        width: W, height: H, framerate, target_bitrate_bps: TARGET_BITRATE_BPS,
+        gop_length: N_FRAMES + 1, aq_mode: AqMode::Off,
+    };
+    let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
+    let mut dec = Decoder::new();
+
+    for (idx, (y, u, v)) in frames.iter().enumerate() {
+        let pkt = enc.encode_frame(&yuv_view(y, u, v, W as usize)).expect("encode_frame");
+        let parsed = decode_packet(&mut dec, &pkt.data);
+        for pf in &parsed {
+            let _ = dec.decode_frame(pf).expect("rvp9 decode_frame");
+        }
+        if idx != 1 { continue; }
+        let grid = dec.last_frame_mi_grid();
+        let (mi_rows, mi_cols) = dec.last_frame_mi_dims();
+        let mi_cols_us = mi_cols as usize;
+        // For each 8x8 SB-relative position within each SB, print bsize + skip + is_inter.
+        for sb_row in 0..((mi_rows as usize) / 8) {
+            for sb_col in 0..(mi_cols_us / 8) {
+                eprintln!("SB ({}, {}):", sb_row * 8, sb_col * 8);
+                for r in 0..8 {
+                    for c in 0..8 {
+                        let mi_r = sb_row * 8 + r;
+                        let mi_c = sb_col * 8 + c;
+                        let cell = grid[mi_r * mi_cols_us + mi_c];
+                        if let Some(mi) = cell {
+                            let is_inter = matches!(mi.mode, BlockMode::Inter { .. });
+                            eprint!(" [{}.{}|{:?}|sk={}|i={}]", r, c, mi.block_size, u8::from(mi.skip), u8::from(is_inter));
+                        } else {
+                            eprint!(" [{}.{}|None]", r, c);
+                        }
+                    }
+                    eprintln!();
+                }
+            }
+        }
+    }
+}
+
+/// RC.X1 — decode each frame through rvp9-decoder and print summary stats
+/// (per-frame mode/partition/skip breakdown) so we can spot anomalies in
+/// our frame-1's emitted modes.
+#[test]
+#[ignore = "RC.X1 internal mi-grid dump; run with `--ignored`"]
+fn rc_x1_internal_dump() {
+    use rvp9_core::mode_info::BlockMode;
+
+    const W: u32 = 256;
+    const H: u32 = 256;
+    const N_FRAMES: u32 = 8;
+    const TARGET_BITRATE_BPS: u32 = 1_000_000;
+
+    let Some(y4m_path) = probe_testsrc_720p() else {
+        eprintln!("[SKIPPED] testsrc_720p30.y4m not available.");
+        return;
+    };
+    let (frames, framerate) = y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize)
+        .expect("y4m_read_cropped");
+
+    let cfg = EncoderConfig {
+        width: W,
+        height: H,
+        framerate,
+        target_bitrate_bps: TARGET_BITRATE_BPS,
+        gop_length: N_FRAMES + 1,
+        aq_mode: AqMode::Off,
+    };
+    let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
+    let mut dec = Decoder::new();
+
+    for (idx, (y, u, v)) in frames.iter().enumerate() {
+        let pkt = enc
+            .encode_frame(&yuv_view(y, u, v, W as usize))
+            .expect("encode_frame");
+        let parsed = decode_packet(&mut dec, &pkt.data);
+        for pf in &parsed {
+            let _ = dec.decode_frame(pf).expect("rvp9 decode_frame");
+        }
+
+        // Inspect the just-decoded mi grid.
+        let grid = dec.last_frame_mi_grid();
+        let (mi_rows, mi_cols) = dec.last_frame_mi_dims();
+        let mut counts: std::collections::HashMap<String, u32> = Default::default();
+        let mut skip_true = 0u32;
+        let mut skip_false = 0u32;
+        let mut mode_zero = 0u32;
+        let mut mode_nz = 0u32;
+        let mut nonref_zero = 0u32;
+        let mut nonzero_mv = 0u32;
+        for cell in grid {
+            if let Some(c) = cell {
+                let bs = format!("{:?}", c.block_size);
+                *counts.entry(bs).or_insert(0) += 1;
+                if c.skip { skip_true += 1; } else { skip_false += 1; }
+                match c.mode {
+                    BlockMode::Inter { mode, mvs, .. } => {
+                        let mv = mvs[0];
+                        if mv.col == 0 && mv.row == 0 { mode_zero += 1 } else { nonzero_mv += 1 }
+                        // Track mode discriminator separately for diagnosis.
+                        let mode_str = format!("{:?}", mode);
+                        *counts.entry(mode_str).or_insert(0) += 1;
+                    }
+                    BlockMode::Intra { .. } => {
+                        mode_nz += 1;
+                    }
+                }
+            } else {
+                nonref_zero += 1;
+            }
+        }
+        eprintln!(
+            "frame {idx}: kind={:?} q={} bytes={} mi_dims=({},{}) bsize_counts={:?} skip(true/false)=({}/{}) mv(zero/nonzero)=({}/{}) intra={} unpopulated={}",
+            pkt.frame_kind, pkt.q_index, pkt.data.len(), mi_rows, mi_cols, counts, skip_true, skip_false, mode_zero, nonzero_mv, mode_nz, nonref_zero,
+        );
+    }
+}

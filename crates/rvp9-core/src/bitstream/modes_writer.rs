@@ -1920,9 +1920,74 @@ fn write_inter_block_leaf(
             leaf_bsize,
             effective_tx_size,
         );
+    } else {
+        // RC.X1 — mirror libvpx's `dec_reset_skip_context`
+        // (`vp9_decodeframe.c:1008-1010`): when a leaf is skip-coded
+        // the decoder zeros the per-plane above/left coef-context
+        // cells the block covers, so the NEXT non-skip leaf sees a
+        // fresh context. The encoder must do the same so the bool
+        // coder stays in sync — otherwise our `initial_pt` for the
+        // next leaf's coef tokens differs from the decoder's, the
+        // EOB prob differs, and the bit stream desyncs.
+        reset_skip_coef_context(coef_ctx, leaf_bsize, mi_row, mi_col);
     }
 
     Ok(())
+}
+
+/// RC.X1 — encoder-side mirror of libvpx's `dec_reset_skip_context`
+/// (`vp9_decodeframe.c:1008-1010`). When a leaf is skip-coded the
+/// decoder zeros the per-plane above/left coef-context cells the
+/// block covers; we must do the same so subsequent non-skip leaves
+/// initialize their `initial_pt` from the same (zeroed) neighbour
+/// context the decoder sees.
+fn reset_skip_coef_context(
+    coef_ctx: &mut TileCoefCtx,
+    leaf_bsize: BlockSize,
+    mi_row: usize,
+    mi_col: usize,
+) {
+    let mi_col_in_tile = mi_col; // single-tile scope (matches write_inter_block_residual).
+    let mi_row_in_sb = mi_row & MI_MASK;
+    for plane in 0..3 {
+        let ss_x = SUBSAMPLING_X[plane];
+        let ss_y = SUBSAMPLING_Y[plane];
+
+        let plane_bsize = if plane == 0 {
+            leaf_bsize
+        } else {
+            uv_plane_block_size(leaf_bsize)
+        };
+
+        // Mirrors `write_inter_block_residual`'s plane-extent
+        // derivation. Sub-8 luma leaves zero a 2x2 4×4 cell tile (the
+        // parent 8×8's coverage); ≥8×8 leaves zero the plane_bsize
+        // 4×4-cell extent.
+        let is_sub8 = (leaf_bsize as u8) < (BlockSize::Block8x8 as u8);
+        let (plane_bw_4x4, plane_bh_4x4) = if is_sub8 {
+            (2 >> ss_x, 2 >> ss_y)
+        } else {
+            (
+                plane_bsize.n_4x4_wide() as usize,
+                plane_bsize.n_4x4_high() as usize,
+            )
+        };
+
+        let plane_x4_base = (mi_col_in_tile * 2) >> ss_x;
+        let plane_y4_in_sb_base = (mi_row_in_sb * 2) >> ss_y;
+
+        // Zero (above × left) cells covering the block. `set_coef_flags`
+        // with `nonzero = false` writes 0 to every covered cell —
+        // exactly what `memset(..., 0, ...)` does in libvpx.
+        coef_ctx.set_coef_flags(
+            plane,
+            plane_x4_base,
+            plane_y4_in_sb_base,
+            plane_bw_4x4,
+            plane_bh_4x4,
+            /* nonzero = */ false,
+        );
+    }
 }
 
 /// Per-plane chroma subsampling for VP9 Profile 0 (4:2:0). Plane 0

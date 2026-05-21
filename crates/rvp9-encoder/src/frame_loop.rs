@@ -2310,6 +2310,17 @@ mod tests {
         // mode may still be ZEROMV/NEARESTMV depending on RD; what
         // matters is that the picker FIRED on at least one Block16+
         // leaf (not just the Block8x8 skip-true fallback).
+        //
+        // RC.X1 — use a SHIFTED inter frame so forward-quant produces
+        // non-zero residuals on at least one leaf. With identical
+        // KF→inter content, all coefs quantize to zero and the
+        // RC.X1 skip-on-zero-eob fix flips every leaf to skip=true
+        // (which is the correct VP9 behaviour for zero-residual
+        // blocks). The pre-RC.X1 behaviour of forcing skip=false on
+        // picker-supported leaves was non-conformant — libvpx's
+        // decoder overrides `mi->skip = 1` on `eobtotal == 0` and the
+        // mismatch desyncs the bool coder at the next block's skip
+        // read. See `vp9_decodeframe.c:1101`.
         let cfg = EncoderConfig {
             width: 128,
             height: 128,
@@ -2323,9 +2334,10 @@ mod tests {
         let kf = enc.encode_frame(&yuv_view(&y0, &u0, &v0, 128)).unwrap();
         assert_eq!(kf.frame_kind, FrameKind::Key);
 
-        // Inter frame: gradient — F8.2 should keep partition at
-        // Block64x64; F8.1 fires and chooses some non-skip leaf.
-        let inter = enc.encode_frame(&yuv_view(&y0, &u0, &v0, 128)).unwrap();
+        // Inter frame: shifted gradient so forward-quant produces
+        // non-zero residuals on at least one Block16+ leaf.
+        let (y1, u1, v1) = translating_gradient(128, 128, 1);
+        let inter = enc.encode_frame(&yuv_view(&y1, &u1, &v1, 128)).unwrap();
         assert_eq!(inter.frame_kind, FrameKind::Inter);
 
         let mut dec = Decoder::new();

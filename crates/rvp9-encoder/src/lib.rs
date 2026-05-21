@@ -2158,6 +2158,19 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 sb_partitions[sb_idx][leaf_idx].picked_mv = pick.best_mv;
                 sb_partitions[sb_idx][leaf_idx].skip = false;
 
+                // RC.X1 — track total eob across all planes & TX blocks.
+                // libvpx's decoder (`vp9_decodeframe.c:1101`) sets
+                // `mi->skip = 1` AFTER coef-token reads if `eobtotal == 0`
+                // (so neighbour blocks see `skip=1` when computing their
+                // `skip_context`). We must mirror this on the encoder
+                // side: if forward-quant produces all-zero coefs across
+                // the entire leaf, mark the leaf `skip=true` so the
+                // writer emits a `skip` bit instead of a sequence of
+                // EOB-only TX tokens. Otherwise downstream blocks read
+                // a different `skip_prob` than what we wrote, desyncing
+                // the bool coder.
+                let mut leaf_total_eob: usize = 0;
+
                 // Per-plane recon + residual emission. Mirrors the
                 // decoder's `reconstruct_inter_block` plane / TX walk
                 // (rvp9-decoder::reconstruct_inter, lines 199-554).
@@ -2281,11 +2294,24 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 qcoeff_i32,
                                 eob_usize,
                             );
+                            leaf_total_eob += eob_usize;
 
                             tx_x4_local += tx_step_4x4;
                         }
                         tx_y4_local += tx_step_4x4;
                     }
+                }
+
+                // RC.X1 — if no coefs in the entire leaf were non-zero,
+                // flip the leaf to skip=true. Mirrors libvpx's
+                // `if (eobtotal == 0) mi->skip = 1` post-fact override
+                // (`vp9_decodeframe.c:1101`). Without this, our writer
+                // computes downstream `skip_context` from the original
+                // `mi.skip = false` while the decoder computes it from
+                // the overridden `mi.skip = true`, desyncing the bool
+                // coder at the next block's skip read.
+                if leaf_total_eob == 0 {
+                    sb_partitions[sb_idx][leaf_idx].skip = true;
                 }
             }
         }
