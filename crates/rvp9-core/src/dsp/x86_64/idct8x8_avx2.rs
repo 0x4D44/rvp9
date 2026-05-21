@@ -1,8 +1,15 @@
-//! 8×8 inverse-DCT + add — x86_64 AVX2 implementation (G4.1 pilot).
+//! 8×8 inverse-DCT + add — x86_64 AVX2 implementation.
 //!
-//! This is the **first** SIMD kernel landed in rvp9-core and the
-//! reference for the safe-wrapper convention every subsequent
-//! G4.x rollout mirrors:
+//! **G4-γ full-1D refactor**: both the row pass and the column pass are
+//! now fully vectorised in AVX2 with 32-bit lanes. The previous
+//! "finisher-only" pilot kept the scalar [`crate::transforms::inverse::idct8`]
+//! call site and only AVX2-accelerated the final round/clamp/pack stage.
+//! That pattern is preserved for the smaller / hybrid kernels (idct4x4,
+//! iht4x4, iht8x8, idct16x16, idct32x32) — see Wave F follow-up. This
+//! file is the first kernel in the codebase to vectorise the 1-D
+//! butterflies themselves.
+//!
+//! Convention compatibility:
 //!
 //! 1. The body uses `#[target_feature(enable = "avx2")]` on an
 //!    `unsafe fn`. (`target_feature_1.1` is unstable on stable Rust
@@ -24,33 +31,227 @@
 //! (`int16_t`-truncation) at every intermediate store, then a final
 //! `(out + 16) >> 5` ROUND_POWER_OF_TWO with `clip_pixel_add`.
 //!
-//! For the G4.1 pilot we keep the i32 transform math identical to
-//! the scalar reference (1:1 reuse of [`crate::transforms::inverse::idct8`])
-//! and AVX2-accelerate the *load + final add-clamp-pack* stage —
-//! the part where AVX2 actually moves the needle (eight u8 lanes
-//! per row mean the inner loop is store-bandwidth limited in scalar,
-//! but a vectorised pack saturates in two `vpackus` + one `vmovq`).
-//! This pattern is what libvpx's `vpx_idct8x8_64_add_sse2` does in
-//! its `write_buffer_8x8` finisher and is the cleanest way to
-//! demonstrate the wrapper convention without re-deriving the
-//! butterfly arithmetic in 16-bit `_mm_madd_epi16` form (which is
-//! G4.2 work).
+//! ### How the vector form preserves bit-exactness
+//!
+//! Every scalar operation in [`crate::transforms::inverse::idct8`] is
+//! mirrored 1:1 in vector form across 8 lanes (one lane per row of the
+//! 8×8 block):
+//!
+//! * Multiplies use [`_mm256_mullo_epi32`]. Because the dequantised
+//!   coefficients are spec-bounded to i16 range and the cospi
+//!   constants are all `< 2^15`, every single product fits in `i32`.
+//!   `_mm256_mullo_epi32` returns the low 32 bits of the product, which
+//!   is exact for in-range operands. Subsequent add/sub of two such
+//!   products fits comfortably in i32 (max abs ≈ 2 × 16k × 32k ≈ 1e9,
+//!   < 2^31 = 2.15e9).
+//! * `dct_const_round_shift` is `(x + 8192) >> 14` —
+//!   [`_mm256_add_epi32`] + [`_mm256_srai_epi32`] by 14, lane-parallel.
+//! * `wraplow` is `x as i16 as i32` (modular truncation, **not**
+//!   saturation). The vector equivalent is `slli_epi32(_, 16)` then
+//!   `srai_epi32(_, 16)` — sign-extend the low 16 bits, exactly
+//!   reproducing the truncation. This is the critical correctness
+//!   point: libvpx's SSE2 kernel uses `_mm_packs_epi32` (saturating)
+//!   which **diverges from the C reference on out-of-range
+//!   intermediates**. Our proptest fixtures exercise such inputs (the
+//!   `pathological_strategy` includes `[i16::MAX; 64]`), so we MUST
+//!   match the C truncation semantics, not libvpx's SSE2 saturation.
+//!
+//! After the column pass, results are in row-major layout (8 ymm,
+//! each = one output row, lanes = 8 columns). The existing
+//! round + add + clip + pack finisher runs unchanged.
 //!
 //! ## Aligned-load discipline (HLD V6 §G4 M6-6)
 //!
-//! Loads from `dst` are unaligned via `_mm_loadl_epi64`; stack scratch
-//! `final_out` is read via `_mm256_loadu_si256`. The grep sentinel
-//! below is checked by `scripts/check-simd-sentinels.sh` / `.ps1`.
+//! Loads from `dst` are unaligned via `_mm_loadl_epi64`; the input
+//! coefficient buffer is read via `_mm256_loadu_si256` per row. The
+//! grep sentinel below is checked by
+//! `scripts/check-simd-sentinels.{sh,ps1}`.
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
     __m128i, __m256i, _mm_add_epi16, _mm_loadl_epi64, _mm_packus_epi16, _mm_setzero_si128,
     _mm_storel_epi64, _mm_unpacklo_epi8, _mm256_add_epi32, _mm256_castsi256_si128,
-    _mm256_loadu_si256, _mm256_packs_epi32, _mm256_permute4x64_epi64, _mm256_set1_epi32,
-    _mm256_srai_epi32,
+    _mm256_loadu_si256, _mm256_mullo_epi32, _mm256_packs_epi32, _mm256_permute2x128_si256,
+    _mm256_permute4x64_epi64, _mm256_set1_epi32, _mm256_slli_epi32, _mm256_srai_epi32,
+    _mm256_sub_epi32, _mm256_unpackhi_epi32, _mm256_unpackhi_epi64, _mm256_unpacklo_epi32,
+    _mm256_unpacklo_epi64,
 };
 
-use crate::transforms::inverse::idct8;
+use crate::transforms::constants::{
+    COSPI_4_64, COSPI_8_64, COSPI_12_64, COSPI_16_64, COSPI_20_64, COSPI_24_64, COSPI_28_64,
+};
+
+// ---------------------------------------------------------------------
+// Tiny intrinsic helpers, each one-line. Kept `#[inline(always)]` so the
+// compiler folds them away with no call overhead; this avoids littering
+// the butterfly with `_mm256_*` noise.
+// ---------------------------------------------------------------------
+
+/// `dct_const_round_shift(x) = (x + 8192) >> 14`, lane-parallel.
+// G4: loads from `dst` use _mm_loadl_epi64 (unaligned) — helper does no `dst` I/O
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+#[inline]
+unsafe fn drs(x: __m256i) -> __m256i {
+    let round = _mm256_set1_epi32(1 << 13);
+    _mm256_srai_epi32(_mm256_add_epi32(x, round), 14)
+}
+
+/// `wraplow(x) = x as i16 as i32`, lane-parallel. Sign-extends the low
+/// 16 bits of each lane back to 32 bits — i.e., MODULAR i16 truncation,
+/// not saturation.
+// G4: loads from `dst` use _mm_loadl_epi64 (unaligned) — helper does no `dst` I/O
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+#[inline]
+unsafe fn wrap(x: __m256i) -> __m256i {
+    _mm256_srai_epi32(_mm256_slli_epi32(x, 16), 16)
+}
+
+/// `mul_const(x, c)`: lane-parallel `x * c` where `c` is a 16-bit
+/// constant. Implemented with `_mm256_mullo_epi32` against a
+/// broadcast vector. Operand-range note: `x` is the result of a
+/// previous `wraplow` (hence i16-range) **or** an unwrapped raw input
+/// coefficient (also spec-bounded to i16). `c` is `< 2^15`. Product
+/// fits in i32 with margin.
+// G4: loads from `dst` use _mm_loadl_epi64 (unaligned) — helper does no `dst` I/O
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+#[inline]
+unsafe fn mul_const(x: __m256i, c: i32) -> __m256i {
+    _mm256_mullo_epi32(x, _mm256_set1_epi32(c))
+}
+
+// ---------------------------------------------------------------------
+// 8×8 i32 transpose using a 3-stage unpack pyramid.
+//
+// Input rows R0..R7 each hold 8 i32 (one input row per ymm).
+// Output columns C0..C7 each hold 8 i32 where C[k] = [R0[k], R1[k], ...,
+// R7[k]] — i.e., column k of the original 8×8 matrix.
+//
+// Stage 1: pair adjacent rows via 32-bit unpack
+// Stage 2: pair adjacent pair-results via 64-bit unpack
+// Stage 3: swap 128-bit halves via permute2x128 to merge rows 0..3 with
+//          rows 4..7 for each column
+//
+// Total: 8 unpacklo_epi32 + 8 (interleaved) + 8 unpacklo_epi64 + 8
+// (interleaved) + 8 permute2x128 = 32 ops. Standard AVX2 transpose.
+// ---------------------------------------------------------------------
+// G4: loads from `dst` use _mm_loadl_epi64 (unaligned) — helper does no `dst` I/O
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+#[inline]
+#[allow(clippy::too_many_arguments)]
+unsafe fn transpose8x8_i32(
+    r0: __m256i, r1: __m256i, r2: __m256i, r3: __m256i,
+    r4: __m256i, r5: __m256i, r6: __m256i, r7: __m256i,
+) -> [__m256i; 8] {
+    // Stage 1: 32-bit unpack (pairs of rows).
+    // unpacklo gives [r_i[0], r_j[0], r_i[1], r_j[1], r_i[4], r_j[4], r_i[5], r_j[5]]
+    // unpackhi gives [r_i[2], r_j[2], r_i[3], r_j[3], r_i[6], r_j[6], r_i[7], r_j[7]]
+    let a0 = _mm256_unpacklo_epi32(r0, r1);
+    let a1 = _mm256_unpackhi_epi32(r0, r1);
+    let a2 = _mm256_unpacklo_epi32(r2, r3);
+    let a3 = _mm256_unpackhi_epi32(r2, r3);
+    let a4 = _mm256_unpacklo_epi32(r4, r5);
+    let a5 = _mm256_unpackhi_epi32(r4, r5);
+    let a6 = _mm256_unpacklo_epi32(r6, r7);
+    let a7 = _mm256_unpackhi_epi32(r6, r7);
+
+    // Stage 2: 64-bit unpack (pairs of pair-results).
+    // Each result is [col k for rows X, Y, Z, W (low 128), col k+4 for
+    // rows X, Y, Z, W (high 128)] — still split across 128-bit lanes.
+    let b0 = _mm256_unpacklo_epi64(a0, a2); // col 0, rows 0,1,2,3 (lo) / col 4 (hi)
+    let b1 = _mm256_unpackhi_epi64(a0, a2); // col 1, rows 0..3 (lo) / col 5 (hi)
+    let b2 = _mm256_unpacklo_epi64(a1, a3); // col 2 (lo) / col 6 (hi)
+    let b3 = _mm256_unpackhi_epi64(a1, a3); // col 3 (lo) / col 7 (hi)
+    let b4 = _mm256_unpacklo_epi64(a4, a6); // col 0, rows 4,5,6,7 (lo) / col 4 (hi)
+    let b5 = _mm256_unpackhi_epi64(a4, a6); // col 1, rows 4..7 (lo) / col 5 (hi)
+    let b6 = _mm256_unpacklo_epi64(a5, a7); // col 2, rows 4..7 (lo) / col 6 (hi)
+    let b7 = _mm256_unpackhi_epi64(a5, a7); // col 3, rows 4..7 (lo) / col 7 (hi)
+
+    // Stage 3: permute2x128 to assemble full columns.
+    // imm 0x20 selects (src1.lo, src2.lo) → column k, rows 0..7.
+    // imm 0x31 selects (src1.hi, src2.hi) → column k+4, rows 0..7.
+    let c0 = _mm256_permute2x128_si256(b0, b4, 0x20);
+    let c1 = _mm256_permute2x128_si256(b1, b5, 0x20);
+    let c2 = _mm256_permute2x128_si256(b2, b6, 0x20);
+    let c3 = _mm256_permute2x128_si256(b3, b7, 0x20);
+    let c4 = _mm256_permute2x128_si256(b0, b4, 0x31);
+    let c5 = _mm256_permute2x128_si256(b1, b5, 0x31);
+    let c6 = _mm256_permute2x128_si256(b2, b6, 0x31);
+    let c7 = _mm256_permute2x128_si256(b3, b7, 0x31);
+
+    [c0, c1, c2, c3, c4, c5, c6, c7]
+}
+
+// ---------------------------------------------------------------------
+// Vector 1D idct8. Each `__m256i` holds 8 i32 lanes corresponding to 8
+// independent rows / columns being transformed in parallel. The
+// arithmetic mirrors `idct8` in `crate::transforms::inverse` line-by-line.
+// ---------------------------------------------------------------------
+// G4: loads from `dst` use _mm_loadl_epi64 (unaligned) — helper does no `dst` I/O
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+#[inline]
+unsafe fn idct8_avx2(v: [__m256i; 8]) -> [__m256i; 8] {
+    let [v0, v1, v2, v3, v4, v5, v6, v7] = v;
+
+    // ----- stage 1 -----
+    // step1[0] = input[0], step1[2] = input[4], step1[1] = input[2], step1[3] = input[6]
+    let s1_0 = v0;
+    let s1_2 = v4;
+    let s1_1 = v2;
+    let s1_3 = v6;
+    // temp1 = v1*C28 - v7*C4 ; temp2 = v1*C4 + v7*C28
+    let t1 = _mm256_sub_epi32(mul_const(v1, COSPI_28_64), mul_const(v7, COSPI_4_64));
+    let t2 = _mm256_add_epi32(mul_const(v1, COSPI_4_64), mul_const(v7, COSPI_28_64));
+    let s1_4 = wrap(drs(t1));
+    let s1_7 = wrap(drs(t2));
+    let t1 = _mm256_sub_epi32(mul_const(v5, COSPI_12_64), mul_const(v3, COSPI_20_64));
+    let t2 = _mm256_add_epi32(mul_const(v5, COSPI_20_64), mul_const(v3, COSPI_12_64));
+    let s1_5 = wrap(drs(t1));
+    let s1_6 = wrap(drs(t2));
+
+    // ----- stage 2 -----
+    let t1 = mul_const(_mm256_add_epi32(s1_0, s1_2), COSPI_16_64);
+    let t2 = mul_const(_mm256_sub_epi32(s1_0, s1_2), COSPI_16_64);
+    let s2_0 = wrap(drs(t1));
+    let s2_1 = wrap(drs(t2));
+    let t1 = _mm256_sub_epi32(mul_const(s1_1, COSPI_24_64), mul_const(s1_3, COSPI_8_64));
+    let t2 = _mm256_add_epi32(mul_const(s1_1, COSPI_8_64), mul_const(s1_3, COSPI_24_64));
+    let s2_2 = wrap(drs(t1));
+    let s2_3 = wrap(drs(t2));
+    let s2_4 = wrap(_mm256_add_epi32(s1_4, s1_5));
+    let s2_5 = wrap(_mm256_sub_epi32(s1_4, s1_5));
+    // step2[6] = wraplow(-step1[6] + step1[7]) = wraplow(step1[7] - step1[6])
+    let s2_6 = wrap(_mm256_sub_epi32(s1_7, s1_6));
+    let s2_7 = wrap(_mm256_add_epi32(s1_6, s1_7));
+
+    // ----- stage 3 -----
+    let s3_0 = wrap(_mm256_add_epi32(s2_0, s2_3));
+    let s3_1 = wrap(_mm256_add_epi32(s2_1, s2_2));
+    let s3_2 = wrap(_mm256_sub_epi32(s2_1, s2_2));
+    let s3_3 = wrap(_mm256_sub_epi32(s2_0, s2_3));
+    let s3_4 = s2_4;
+    let t1 = mul_const(_mm256_sub_epi32(s2_6, s2_5), COSPI_16_64);
+    let t2 = mul_const(_mm256_add_epi32(s2_5, s2_6), COSPI_16_64);
+    let s3_5 = wrap(drs(t1));
+    let s3_6 = wrap(drs(t2));
+    let s3_7 = s2_7;
+
+    // ----- stage 4 (final output) -----
+    let o0 = wrap(_mm256_add_epi32(s3_0, s3_7));
+    let o1 = wrap(_mm256_add_epi32(s3_1, s3_6));
+    let o2 = wrap(_mm256_add_epi32(s3_2, s3_5));
+    let o3 = wrap(_mm256_add_epi32(s3_3, s3_4));
+    let o4 = wrap(_mm256_sub_epi32(s3_3, s3_4));
+    let o5 = wrap(_mm256_sub_epi32(s3_2, s3_5));
+    let o6 = wrap(_mm256_sub_epi32(s3_1, s3_6));
+    let o7 = wrap(_mm256_sub_epi32(s3_0, s3_7));
+
+    [o0, o1, o2, o3, o4, o5, o6, o7]
+}
 
 /// AVX2 implementation of the 8×8 inverse-DCT + residual add.
 ///
@@ -65,22 +266,34 @@ use crate::transforms::inverse::idct8;
 ///
 /// # Implementation
 ///
-/// Row + column idct8 math uses the scalar reference (i32, bit-exact
-/// `wraplow`). AVX2 accelerates the final `(out + 16) >> 5` + add +
-/// clip stage:
+/// Full-1D AVX2: both row and column passes use [`idct8_avx2`] (8-way
+/// SIMD). Transpose between passes uses a standard unpack pyramid
+/// ([`transpose8x8_i32`]). The output add/clamp/pack finisher matches
+/// the original G4.1 pilot.
 ///
 /// ```text
+///   for r in 0..8: load row r as ymm[r]                ; vmovdqu ymm
+///   ymm[k] = transpose(R0..R7)[k]    ; (no-op for row pass — see note)
+///   ymm[k] = idct8_avx2(ymm[0..7])   ; row pass, 8-way
+///   ymm[k] = transpose(ymm[0..7])    ; flip rows ↔ columns
+///   ymm[k] = idct8_avx2(ymm[0..7])   ; column pass
+///   (each ymm now = one output row)
 ///   for r in 0..8:
-///     loadu 8x i32 from row r           ; vmovdqu ymm
-///     add round constant (+16)          ; vpaddd
-///     srai 5                            ; vpsrad
-///     pack to i16 (saturated)           ; vpackssdw + permute
-///     loadl 8x u8 from dst+r*stride     ; vmovq
-///     unpack to i16                     ; vpunpcklbw
-///     add transform output              ; vpaddw
-///     pack to u8 (saturated)            ; vpackuswb
-///     storel 8x u8 to dst+r*stride      ; vmovq
+///     add round +16, srai 5, pack to i16
+///     load 8 dst u8, zero-extend, add, saturate-pack u8
+///     store
 /// ```
+///
+/// Note: a "row pass" applied to 8 columns of inputs (each column = one
+/// input position across 8 rows) is mathematically identical to
+/// applying the row pass to 8 rows in parallel. Concretely: we load
+/// rows as ymm[0..7], then **transpose first** so each ymm[k] holds
+/// position k across 8 rows. The row pass operates on this layout
+/// natively (each butterfly mixes ymm[i] with ymm[j] — different
+/// registers, no in-lane shuffles needed). After the row pass, each
+/// ymm[k] holds intermediate column k. A second transpose flips into
+/// per-row layout for the column pass; the result of the column pass
+/// is row-major (each ymm = one output row), ready for the finisher.
 ///
 /// All loads/stores from / to `dst` are unaligned. See HLD V6 §G4
 /// M6-6.
@@ -90,84 +303,65 @@ use crate::transforms::inverse::idct8;
 unsafe fn idct8x8_add_avx2_inner(input: &[i32; 64], dst: &mut [u8], stride: usize) {
     debug_assert!(dst.len() >= stride * 7 + 8, "dst too small for 8x8 add");
 
-    // ----- Stage 1: row pass (scalar idct8, bit-exact). -----
-    let mut intermediate = [0i32; 64];
-    for r in 0..8 {
-        let row_in: &[i32; 8] = input[r * 8..r * 8 + 8].try_into().unwrap();
-        let row_out_mut: &mut [i32; 8] = (&mut intermediate[r * 8..r * 8 + 8]).try_into().unwrap();
-        idct8(row_in, row_out_mut);
-    }
+    // ----- Load: 8 rows of 8 i32 each into ymm[0..7]. -----
+    let in_ptr = input.as_ptr() as *const __m256i;
+    let r0 = _mm256_loadu_si256(in_ptr.add(0));
+    let r1 = _mm256_loadu_si256(in_ptr.add(1));
+    let r2 = _mm256_loadu_si256(in_ptr.add(2));
+    let r3 = _mm256_loadu_si256(in_ptr.add(3));
+    let r4 = _mm256_loadu_si256(in_ptr.add(4));
+    let r5 = _mm256_loadu_si256(in_ptr.add(5));
+    let r6 = _mm256_loadu_si256(in_ptr.add(6));
+    let r7 = _mm256_loadu_si256(in_ptr.add(7));
 
-    // ----- Stage 2: column pass (scalar idct8). -----
-    // Produces 8 columns of 8 i32 outputs. Stored in row-major
-    // `final_out[r * 8 + c]` so the AVX2 row finisher can `loadu` a
-    // whole row in one ymm op.
-    let mut final_out = [0i32; 64];
-    for c in 0..8 {
-        let col_in: [i32; 8] = [
-            intermediate[c],
-            intermediate[8 + c],
-            intermediate[16 + c],
-            intermediate[24 + c],
-            intermediate[32 + c],
-            intermediate[40 + c],
-            intermediate[48 + c],
-            intermediate[56 + c],
-        ];
-        let mut col_out = [0i32; 8];
-        idct8(&col_in, &mut col_out);
-        for r in 0..8 {
-            final_out[r * 8 + c] = col_out[r];
-        }
-    }
+    // ----- Stage A: transpose so each ymm[k] holds input position k
+    // across 8 rows. -----
+    let cols = transpose8x8_i32(r0, r1, r2, r3, r4, r5, r6, r7);
 
-    // ----- Stage 3: AVX2-accelerated add + clamp + pack + store. -----
+    // ----- Stage B: row pass. -----
+    // After this, each ymm[k] = intermediate column k (8 rows in lanes).
+    let row_out = idct8_avx2(cols);
+
+    // ----- Stage C: transpose again to get per-row layout for the
+    // column pass. After this, each ymm[r] = intermediate row r (8
+    // columns in lanes). -----
+    let rows = transpose8x8_i32(
+        row_out[0], row_out[1], row_out[2], row_out[3],
+        row_out[4], row_out[5], row_out[6], row_out[7],
+    );
+
+    // ----- Stage D: column pass.
     //
-    // For each row:
-    //   1. Load 8 i32 outputs into a ymm register (unaligned, from a
-    //      stack array `final_out`).
-    //   2. Add the round constant +16 and shift right by 5
-    //      (ROUND_POWER_OF_TWO equivalent, signed).
-    //   3. Permute + pack i32 → i16 (saturated). The transform output
-    //      bound fits in i16 by VP9 spec.
-    //   4. Load 8 u8 destination samples (unaligned).
-    //   5. Zero-extend u8 → i16, add, saturate-pack i16 → u8.
-    //   6. Store 8 u8 back.
+    // Reinterpretation: the column pass treats each COLUMN of the
+    // intermediate as a separate 1D-idct8 input. Equivalently (since
+    // we transposed), we now have rows in lanes and apply idct8
+    // across the 8 ymm registers; each ymm holds one position of the
+    // *column-pass input*, i.e., the value at fixed input-position k
+    // varying over 8 rows. The vector idct8 logic is identical. After
+    // this pass each ymm[k] holds one output row. -----
+    let final_rows = idct8_avx2(rows);
+
+    // ----- Stage E: round, add round constant +16, shift right by 5,
+    // saturating-pack i32 → i16, add to dst, saturating-pack i16 → u8.
+    // -----
     let round = _mm256_set1_epi32(16);
     let zero = _mm_setzero_si128();
-    for r in 0..8 {
-        let row_ptr = final_out.as_ptr().add(r * 8) as *const __m256i;
-        // (1) unaligned load 8 i32 from `final_out` (stack scratch).
-        let mut out_i32 = _mm256_loadu_si256(row_ptr);
-        // (2) add round constant +16, shift right arithmetic by 5.
-        out_i32 = _mm256_add_epi32(out_i32, round);
-        out_i32 = _mm256_srai_epi32(out_i32, 5);
-        // (3) saturate-pack i32 → i16. `_mm256_packs_epi32(x, x)` is
-        // per-128-bit-lane: the ymm result is
-        //   lane 0 (low 128 bits)  = [a0, a1, a2, a3, a0, a1, a2, a3] as i16
-        //   lane 1 (high 128 bits) = [a4, a5, a6, a7, a4, a5, a6, a7] as i16
-        // To get a single 128-bit `__m128i` with the 8 i16s in
-        // natural order [a0..a7] we permute by 64-bit qwords with
-        // control 0xD8 = 0b_11_01_10_00 → qword order [0, 2, 1, 3]:
-        //   - imm[1:0]=0 → low qword = input qword 0 = [a0..a3]
-        //   - imm[3:2]=2 → next qword = input qword 2 = [a4..a7]
-        //   - imm[5:4]=1, imm[7:6]=3 → high lane ignored; we only
-        //     read the low 128 below.
+    for (r, row) in final_rows.iter().enumerate() {
+        let out_i32 = _mm256_srai_epi32(_mm256_add_epi32(*row, round), 5);
+        // Saturate-pack i32 → i16. `_mm256_packs_epi32(x, x)` interleaves
+        // per-128-bit-lane; `_mm256_permute4x64_epi64(_, 0xD8)` reorders
+        // the 64-bit qwords so the low 128 bits contain 8 × i16 in
+        // natural order.
         let packed_lanes = _mm256_packs_epi32(out_i32, out_i32);
         let packed_natural = _mm256_permute4x64_epi64(packed_lanes, 0xD8);
-        // Cast: take low 128 bits = 8 × i16 in natural order.
         let out_i16_lo = _mm256_castsi256_si128(packed_natural);
 
-        // (4) load 8 u8 from dst row (unaligned).
         // G4: loads from `dst` use _mm_loadl_epi64 (unaligned)
         let dst_row_ptr = dst.as_mut_ptr().add(r * stride) as *const __m128i;
         let dst_u8 = _mm_loadl_epi64(dst_row_ptr);
-        // (5) zero-extend u8 → i16 (only the low 8 bytes are valid).
         let dst_i16 = _mm_unpacklo_epi8(dst_u8, zero);
-        // Add transform output and saturate-pack to u8.
         let sum_i16 = _mm_add_epi16(out_i16_lo, dst_i16);
         let sum_u8 = _mm_packus_epi16(sum_i16, sum_i16);
-        // (6) store 8 u8 back (unaligned).
         let dst_row_ptr_mut = dst.as_mut_ptr().add(r * stride) as *mut __m128i;
         _mm_storel_epi64(dst_row_ptr_mut, sum_u8);
     }
@@ -233,6 +427,12 @@ mod tests {
     //!   loads land). Pointer arithmetic uses a `Box<[u8; 80]>`
     //!   over-allocation; sub-slicing then guarantees the requested
     //!   offset on the slice's `as_ptr`.
+    //!
+    //! - **`idct8x8_full1d_row_dominant_directed`** — G4-γ directed
+    //!   regression: single-row impulse where the entire signal lives
+    //!   in row 0 (no contribution from rows 1..7). Exercises the
+    //!   "row pass produces zero for empty rows / non-zero for the
+    //!   loaded row" property, which the integration tests may dilute.
     //!
     //! Every test is gated on `is_x86_feature_detected!("avx2")` and
     //! returns early on non-AVX2 CPUs (CI runner check).
@@ -537,5 +737,67 @@ mod tests {
         (dispatch_avx2.idct8x8_add())(&input, &mut dst_avx2, 8);
         (dispatch_scalar.idct8x8_add())(&input, &mut dst_scalar, 8);
         assert_eq!(dst_avx2, dst_scalar);
+    }
+
+    /// **G4-γ directed regression**: row-dominant stress.
+    ///
+    /// The full-1D refactor splits the work across the row pass and
+    /// the column pass with a transpose between. A bug in the
+    /// transpose, in the row-pass butterfly, or in how we load /
+    /// unload rows would corrupt the output even on "easy" inputs.
+    /// This test plants two distinct row signatures (row 0 = ramp,
+    /// row 4 = high-magnitude alternating sign, rest zero) and
+    /// confirms scalar / AVX2 still agree. The signature is chosen so
+    /// the row pass produces non-trivial intermediates that the
+    /// column pass then mixes into every output row — making row /
+    /// column / transpose bugs visible everywhere.
+    #[test]
+    fn idct8x8_full1d_row_dominant_directed() {
+        require_avx2!();
+        let mut input = [0i32; 64];
+        // Row 0: ramp.
+        for (c, slot) in input.iter_mut().take(8).enumerate() {
+            *slot = (c as i32) * 1500 - 6000;
+        }
+        // Row 4: high-magnitude alternating sign.
+        for (c, slot) in input[4 * 8..4 * 8 + 8].iter_mut().enumerate() {
+            *slot = if c & 1 == 0 { 28000 } else { -28000 };
+        }
+        // Row 7: single impulse at column 3 (exercises the column-7
+        // input position which the row pass routes through the
+        // odd-coefficient half of the butterfly).
+        input[7 * 8 + 3] = 12345;
+
+        for &dst_fill in &[0u8, 64, 128, 255] {
+            let dst_init = [dst_fill; 64];
+            assert_match(&input, &dst_init);
+        }
+    }
+
+    /// **G4-γ directed regression**: column-dominant stress, mirror
+    /// image of the row-dominant test. Loads column 0, column 4, and
+    /// a single (5, 2) coefficient; the row pass produces small
+    /// intermediates across many rows, then the column pass amplifies
+    /// each column independently. Different bug-pressure profile from
+    /// the row-dominant directed test.
+    #[test]
+    fn idct8x8_full1d_column_dominant_directed() {
+        require_avx2!();
+        let mut input = [0i32; 64];
+        // Column 0 of input: ramp.
+        for r in 0..8 {
+            input[r * 8] = (r as i32) * 1500 - 6000;
+        }
+        // Column 4: high-magnitude alternating sign.
+        for r in 0..8 {
+            input[r * 8 + 4] = if r & 1 == 0 { 28000 } else { -28000 };
+        }
+        // Single impulse at (5, 2).
+        input[5 * 8 + 2] = 12345;
+
+        for &dst_fill in &[0u8, 64, 128, 255] {
+            let dst_init = [dst_fill; 64];
+            assert_match(&input, &dst_init);
+        }
     }
 }
