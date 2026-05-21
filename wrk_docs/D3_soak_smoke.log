@@ -1,0 +1,19 @@
+=== rvp9 soak harness (D3) ===
+duration_secs    : 30
+iterations       : 0
+frames_per_iter  : 8
+report_every_secs: 10
+cross_decode     : true
+vpxdec_path      : D:\language\libvpx-stock\vpxdec.exe
+sources:
+  - y4m(D:\language\rvp9-2\tests\corpus\testsrc_720p30.y4m, 256x256)
+  - y4m(D:\language\rvp9-2\tests\corpus\foreman_cif.y4m, 256x256)
+  - synthetic-gradient(256x256)
+
+[start] wall=0.0s iter=0 rss=4.3 MiB
+[report] wall=   10.0s iter=   131 avg=   76.5 ms/iter frames=   1048 ( 104.6 fps) br=  887.1 kbps last_iter=  119.3 ms rss=6.8 MiB errors=0 cksum=254340a7ce2c76b3
+[report] wall=   20.0s iter=   269 avg=   74.5 ms/iter frames=   2152 ( 107.4 fps) br=  908.4 kbps last_iter=   97.6 ms rss=7.1 MiB errors=0 cksum=254340a7ce2c76b3
+[report] wall=   30.1s iter=   416 avg=   72.2 ms/iter frames=   3328 ( 110.7 fps) br=  935.8 kbps last_iter=   98.7 ms rss=9.3 MiB errors=0 cksum=f9f1c21dedc33a39
+
+=== soak complete ===
+[report] wall=   30.1s iter=   416 avg=   72.2 ms/iter frames=   3328 ( 110.7 fps) br=  935.8 kbps last_iter=    0.0 ms rss=9.3 MiB errors=0 cksum=f9f1c21dedc33a39
