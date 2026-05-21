@@ -2014,6 +2014,31 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
     let sb_cols = w / 64;
     let sb_rows = h / 64;
+
+    // A1' — Frame-area gate on the Block8x8 inter picker. The
+    // variance partitioner descends to Block8x8 at high-motion edges
+    // (`partition.rs:331`), and A1 (`f7d5cb8`) lifted these into the
+    // F8.1 picker. That recovers the testsrc PSNR (24 dB lock →
+    // 35-52 dB sweep) but blows the 33 ms 720p30 RT budget — the
+    // picker's NEWMV diamond + sub-pel refinement + per-plane
+    // round-trip transform is too expensive to run on every
+    // Block8x8 leaf at 720p (the variance partitioner descends
+    // densely on natural-content frames).
+    //
+    // libvpx applies similar size-conditional restrictions in its
+    // realtime path. The cheapest fix that preserves A1's
+    // correctness gain on small frames where the budget can absorb
+    // it: gate the Block8x8 picker on frame area. The threshold
+    // (307_200 px == 640 × 480) cleanly separates the F12 small-
+    // frame corpus from the RT-path 720p+ corpus:
+    //   * testsrc 256×256 = 65_536 → enabled (PSNR sweep preserved)
+    //   * foreman_cif 352×288 = 101_376 → enabled
+    //   * 720p 1280×704 = 901_120 → disabled (RT gate recovers)
+    // Block8x8 leaves on disabled frames fall through to the
+    // pre-A1 ZEROMV-skip path (same as the sub-8 partitions emitted
+    // wire-format-only by F8.2).
+    let block8x8_picker_enabled = w * h <= 307_200;
+
     assert_eq!(
         sb_partitions.len(),
         sb_rows * sb_cols,
@@ -2082,14 +2107,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // high-motion 8×8 leaves get real MV + residual instead
                 // of locking to LASTFRAME (A0 diagnosis: at peak motion
                 // ~130-140 Block8x8 leaves per frame previously fell
-                // through to ZEROMV-skip).
-                let picker_supported = matches!(
-                    leaf_bsize,
-                    BlockSize::Block8x8
-                        | BlockSize::Block16x16
-                        | BlockSize::Block32x32
-                        | BlockSize::Block64x64
-                );
+                // through to ZEROMV-skip). A1' — frame-area-gated; see
+                // `block8x8_picker_enabled` above (above the SB walk).
+                let picker_supported = match leaf_bsize {
+                    BlockSize::Block8x8 => block8x8_picker_enabled,
+                    BlockSize::Block16x16
+                    | BlockSize::Block32x32
+                    | BlockSize::Block64x64 => true,
+                    _ => false,
+                };
 
                 if !picker_supported {
                     sb_partitions[sb_idx][leaf_idx].picked_mode = InterMode::ZeroMv;
