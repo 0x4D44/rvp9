@@ -697,18 +697,26 @@ impl Yv12Buffer {
     /// geometry (`crop_width`/`crop_height`/`chroma`/strides).
     ///
     /// `luma_col_start` and `luma_col_end` specify the column range
-    /// in LUMA pixels (must be multiples of [`Yv12TileSplit::ALIGN`]
-    /// = 2 for 4:2:0 chroma alignment; tile boundaries are at MI
-    /// units = 8 luma px, so this is always satisfied).
+    /// in LUMA pixels. Row and column endpoints must be multiples of
+    /// [`Yv12TileSplit::ALIGN`] (= 2 for 4:2:0 chroma alignment; VP9
+    /// tile boundaries are at MI units = 8 luma px, so the gate is
+    /// always satisfied for well-formed streams).
+    ///
+    /// G5.3 (tile_rows > 1) tiles each own a disjoint rectangle in
+    /// the (mi_row, mi_col) grid: each tile's rect is copied here
+    /// once the tile worker has finished, with no two tiles writing
+    /// the same pixel (VP9 spec guarantee).
     ///
     /// # Panics
     ///
     /// Panics in debug builds if the geometry mismatches, or if the
-    /// column range is out of bounds, or if the alignment requirement
+    /// rectangle is out of bounds, or if the alignment requirement
     /// is violated.
-    pub fn merge_tile_columns_from(
+    pub fn merge_tile_rect_from(
         &mut self,
         src: &Yv12Buffer,
+        luma_row_start: usize,
+        luma_row_end: usize,
         luma_col_start: usize,
         luma_col_end: usize,
     ) {
@@ -721,6 +729,8 @@ impl Yv12Buffer {
         debug_assert_eq!(self.y_height, src.y_height);
         debug_assert_eq!(self.uv_width, src.uv_width);
         debug_assert_eq!(self.uv_height, src.uv_height);
+        debug_assert!(luma_row_start <= luma_row_end);
+        debug_assert!(luma_row_end <= self.y_height as usize);
         debug_assert!(luma_col_start <= luma_col_end);
         debug_assert!(luma_col_end <= self.y_width as usize);
 
@@ -728,16 +738,17 @@ impl Yv12Buffer {
         let ss_y = u32::from(self.chroma.subsampling_y()) as usize;
         debug_assert!(luma_col_start.is_multiple_of(1 << ss_x));
         debug_assert!(luma_col_end.is_multiple_of(1 << ss_x));
+        debug_assert!(luma_row_start.is_multiple_of(1 << ss_y));
+        debug_assert!(luma_row_end.is_multiple_of(1 << ss_y));
 
         let y_stride = self.y_stride as usize;
         let uv_stride = self.uv_stride as usize;
-        let y_height = self.y_height as usize;
-        let uv_height = self.uv_height as usize;
 
-        // Y plane copy: rows 0..y_height, columns [luma_col_start, luma_col_end).
+        // Y plane copy: rows [luma_row_start, luma_row_end),
+        // columns [luma_col_start, luma_col_end).
         let y_col_len = luma_col_end - luma_col_start;
         if y_col_len > 0 {
-            for r in 0..y_height {
+            for r in luma_row_start..luma_row_end {
                 let dst_start = self.y_offset + r * y_stride + luma_col_start;
                 let src_start = src.y_offset + r * y_stride + luma_col_start;
                 self.buffer_alloc[dst_start..dst_start + y_col_len]
@@ -745,13 +756,15 @@ impl Yv12Buffer {
             }
         }
 
-        // U/V plane copy: rows 0..uv_height, columns [luma_col_start >> ss_x, luma_col_end >> ss_x).
+        // U/V plane copy: rows [luma_row_start >> ss_y, luma_row_end >> ss_y),
+        // columns [luma_col_start >> ss_x, luma_col_end >> ss_x).
         let uv_col_start = luma_col_start >> ss_x;
         let uv_col_end = luma_col_end >> ss_x;
         let uv_col_len = uv_col_end - uv_col_start;
+        let uv_row_start = luma_row_start >> ss_y;
+        let uv_row_end = luma_row_end >> ss_y;
         if uv_col_len > 0 {
-            let _ = ss_y; // chroma vertical handled implicitly via uv_height.
-            for r in 0..uv_height {
+            for r in uv_row_start..uv_row_end {
                 let dst_u = self.u_offset + r * uv_stride + uv_col_start;
                 let src_u = src.u_offset + r * uv_stride + uv_col_start;
                 self.buffer_alloc[dst_u..dst_u + uv_col_len]
@@ -762,6 +775,23 @@ impl Yv12Buffer {
                     .copy_from_slice(&src.buffer_alloc[src_v..src_v + uv_col_len]);
             }
         }
+    }
+
+    /// G5.1: copy a per-tile column range (full height) from a scratch
+    /// source buffer into `self`. Backward-compatible wrapper around
+    /// [`Self::merge_tile_rect_from`] for the tile_rows == 1 case
+    /// where every tile spans the full frame height.
+    ///
+    /// See [`Self::merge_tile_rect_from`] for geometry / alignment
+    /// requirements and panic behaviour.
+    pub fn merge_tile_columns_from(
+        &mut self,
+        src: &Yv12Buffer,
+        luma_col_start: usize,
+        luma_col_end: usize,
+    ) {
+        let y_height = self.y_height as usize;
+        self.merge_tile_rect_from(src, 0, y_height, luma_col_start, luma_col_end);
     }
 }
 
@@ -2476,5 +2506,105 @@ mod tests {
         pool.put(bufs2);
         // Pool returns to the high-water mark.
         assert_eq!(pool.buffer_count(), 2);
+    }
+
+    // ---- G5.3: merge_tile_rect_from --------------------------------------
+
+    /// 2x2 tile grid (4 disjoint rects). Each tile stamps its scratch
+    /// buffer with a unique fill byte; main thread merges all four
+    /// rects into a fresh destination and confirms each rect retained
+    /// its pattern. This is the G5.3 soundness oracle.
+    #[test]
+    fn merge_tile_rect_from_disjoint_rects() {
+        const W: u32 = 128;
+        const H: u32 = 64;
+        const ROW_MID: usize = 32;
+        const COL_MID: usize = 64;
+        const COL_END: usize = 128;
+        const ROW_END: usize = 64;
+        const FILLS: [(u8, u8, u8); 4] = [
+            (0xA0, 0xA1, 0xA2),
+            (0xB0, 0xB1, 0xB2),
+            (0xC0, 0xC1, 0xC2),
+            (0xD0, 0xD1, 0xD2),
+        ];
+
+        let template = Yv12Buffer::alloc(
+            W,
+            H,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
+
+        let scratches: Vec<Yv12Buffer> = FILLS
+            .iter()
+            .map(|(y, u, v)| {
+                let mut s = template.clone_geometry().unwrap();
+                s.y_plane_mut().fill(*y);
+                s.u_plane_mut().fill(*u);
+                s.v_plane_mut().fill(*v);
+                s
+            })
+            .collect();
+
+        let mut dst = template.clone_geometry().unwrap();
+        let rects: [(usize, usize, usize, usize); 4] = [
+            (0, ROW_MID, 0, COL_MID),
+            (0, ROW_MID, COL_MID, COL_END),
+            (ROW_MID, ROW_END, 0, COL_MID),
+            (ROW_MID, ROW_END, COL_MID, COL_END),
+        ];
+        for (i, (r0, r1, c0, c1)) in rects.iter().enumerate() {
+            dst.merge_tile_rect_from(&scratches[i], *r0, *r1, *c0, *c1);
+        }
+
+        let y = dst.y_plane();
+        let y_stride = y.stride();
+        let y_data = y.data();
+        let probes: [((usize, usize), u8); 8] = [
+            ((0, 0), FILLS[0].0),
+            ((0, COL_MID), FILLS[1].0),
+            ((ROW_MID, 0), FILLS[2].0),
+            ((ROW_MID, COL_MID), FILLS[3].0),
+            ((ROW_MID - 1, COL_MID - 1), FILLS[0].0),
+            ((ROW_MID - 1, COL_END - 1), FILLS[1].0),
+            ((ROW_END - 1, COL_MID - 1), FILLS[2].0),
+            ((ROW_END - 1, COL_END - 1), FILLS[3].0),
+        ];
+        for ((r, c), want) in probes {
+            let got = y_data[r * y_stride + c];
+            assert_eq!(got, want, "Y@({r},{c}) got 0x{got:02X} want 0x{want:02X}");
+        }
+    }
+
+    /// `merge_tile_columns_from` (the G5.1 wrapper) must produce the
+    /// same output as `merge_tile_rect_from(src, 0, y_height, c0, c1)`.
+    /// Asserts backward compatibility for the tile_rows==1 path.
+    #[test]
+    fn merge_tile_columns_from_matches_full_height_rect() {
+        let mut src = Yv12Buffer::alloc(
+            128,
+            64,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
+        src.y_plane_mut().fill(0x55);
+        src.u_plane_mut().fill(0x33);
+        src.v_plane_mut().fill(0x77);
+
+        let mut dst_a = src.clone_geometry().unwrap();
+        let mut dst_b = src.clone_geometry().unwrap();
+        let y_h = src.aligned_y_height() as usize;
+        dst_a.merge_tile_columns_from(&src, 0, 64);
+        dst_b.merge_tile_rect_from(&src, 0, y_h, 0, 64);
+        assert_eq!(
+            dst_a.y_plane().data(),
+            dst_b.y_plane().data(),
+            "merge_tile_columns_from must equal full-height rect merge"
+        );
     }
 }

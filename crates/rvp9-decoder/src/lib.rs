@@ -1445,9 +1445,10 @@ impl Decoder {
         // threading.md` § "G5.1 dispatch" for the design rationale
         // (especially the per-tile fresh-Yv12Buffer allocation cost
         // vs. unsafe slice-aliasing tradeoff).
-        let parallel = tail.tile_info.log2_tile_rows == 0
-            && buffers.len() > 1
-            && self.num_threads.get() > 1;
+        // G5.3: gate is "multi-tile + multi-thread"; the
+        // tile_rows == 0 restriction of G5.1 is gone because
+        // `merge_tile_rect_from` handles the 2D grid case.
+        let parallel = buffers.len() > 1 && self.num_threads.get() > 1;
 
         let frame_contexts = &self.frame_contexts;
         let simd_dispatch = &self.simd_dispatch;
@@ -1610,21 +1611,33 @@ impl Decoder {
                 // 1. Merge counts into the decoder's running coef_counts.
                 self.coef_counts.add(&counts);
 
-                // 2. Merge pixel column range from scratch -> yv12.
-                //    Borrow the scratch we just pushed into
-                //    `recovered_scratch` by index.
+                // 2. Merge pixel rectangle (rows x cols) from scratch
+                //    -> yv12. G5.3: row range is per-tile so
+                //    tile_rows > 1 tiles only stamp their own rect.
+                let luma_row_start = bounds.mi_row_start * MI_BLOCK_PIXELS;
+                let luma_row_end = bounds.mi_row_end * MI_BLOCK_PIXELS;
                 let luma_col_start = bounds.mi_col_start * MI_BLOCK_PIXELS;
                 let luma_col_end = bounds.mi_col_end * MI_BLOCK_PIXELS;
                 let scratch_ref = recovered_scratch
                     .last()
                     .expect("just pushed scratch above");
-                yv12.merge_tile_columns_from(scratch_ref, luma_col_start, luma_col_end);
+                yv12.merge_tile_rect_from(
+                    scratch_ref,
+                    luma_row_start,
+                    luma_row_end,
+                    luma_col_start,
+                    luma_col_end,
+                );
 
-                // 3. Merge seg_id column range — each tile only
-                //    writes its own (mi_col_start..mi_col_end) cells.
+                // 3. Merge seg_id rectangle — each tile only writes
+                //    its own (mi_row_start..mi_row_end,
+                //    mi_col_start..mi_col_end) cells. G5.3: restrict
+                //    the row loop to the tile's row range so multi-
+                //    tile-row dispatch doesn't trample sibling-row
+                //    tiles' seg-id writes.
                 let mc_start = bounds.mi_col_start;
                 let mc_end = bounds.mi_col_end;
-                for mi_row in 0..mi_rows {
+                for mi_row in bounds.mi_row_start..bounds.mi_row_end {
                     let row_base = mi_row * mi_cols;
                     cur_segment_ids[row_base + mc_start..row_base + mc_end]
                         .copy_from_slice(&seg_ids[row_base + mc_start..row_base + mc_end]);
@@ -2284,9 +2297,10 @@ impl Decoder {
         // gate. The inter path additionally fans out the per-tile
         // mv-counts / mode-counts / cur_mv_grid / cur_segment_ids
         // worker-local buffers.
-        let parallel = tail.tile_info.log2_tile_rows == 0
-            && buffers.len() > 1
-            && self.num_threads.get() > 1;
+        // G5.3: gate is "multi-tile + multi-thread"; the
+        // tile_rows == 0 restriction of G5.1 is gone because
+        // `merge_tile_rect_from` handles the 2D grid case.
+        let parallel = buffers.len() > 1 && self.num_threads.get() > 1;
 
         let frame_contexts = &self.frame_contexts;
         let simd_dispatch = &self.simd_dispatch;
@@ -2478,18 +2492,31 @@ impl Decoder {
                 self.coef_counts.add(&coef_counts);
                 self.mode_counts.add(&mode_counts);
 
-                // Merge pixels (column range) into yv12.
+                // Merge pixel rectangle (rows x cols) into yv12.
+                // G5.3: row range is per-tile so tile_rows > 1 tiles
+                // each stamp only their own rectangle.
+                let luma_row_start = bounds.mi_row_start * MI_BLOCK_PIXELS;
+                let luma_row_end = bounds.mi_row_end * MI_BLOCK_PIXELS;
                 let luma_col_start = bounds.mi_col_start * MI_BLOCK_PIXELS;
                 let luma_col_end = bounds.mi_col_end * MI_BLOCK_PIXELS;
                 let scratch_ref = recovered_scratch
                     .last()
                     .expect("just pushed scratch above");
-                yv12.merge_tile_columns_from(scratch_ref, luma_col_start, luma_col_end);
+                yv12.merge_tile_rect_from(
+                    scratch_ref,
+                    luma_row_start,
+                    luma_row_end,
+                    luma_col_start,
+                    luma_col_end,
+                );
 
-                // Merge seg_ids + mv_grid column ranges.
+                // Merge seg_ids + mv_grid rectangles. G5.3: restrict
+                // the row loop to the tile's row range to support
+                // tile_rows > 1 without sibling-row tiles clobbering
+                // each other.
                 let mc_start = bounds.mi_col_start;
                 let mc_end = bounds.mi_col_end;
-                for mi_row in 0..mi_rows {
+                for mi_row in bounds.mi_row_start..bounds.mi_row_end {
                     let row_base = mi_row * mi_cols;
                     cur_segment_ids[row_base + mc_start..row_base + mc_end]
                         .copy_from_slice(&seg_ids[row_base + mc_start..row_base + mc_end]);
