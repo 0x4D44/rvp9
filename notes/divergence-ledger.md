@@ -516,27 +516,39 @@ penalty on typical content (NEARMV is rare-but-not-vanishingly-so).
 **Future plan:** Stage 4a follow-up if BD-rate gate fails by margin;
 otherwise defer.
 
-### 2026-05-21 — Block8x8 inter leaves forced to ZEROMV-skip
+### 2026-05-21 — Block8x8 inter leaves forced to ZEROMV-skip  [RESOLVED A1]
 **Where:** `rvp9-encoder::frame_loop::encode_inter_internal` (night-3
 F10.1c). libvpx counterpart: `vp9/encoder/vp9_pickmode.c` over all
 leaf sizes ≥ 8×8.
 **What libvpx does:** picks inter mode + MV at every leaf size from
 Block64x64 down to Block8x8 (and Block4x* via the sub-8 picker).
-**What rvp9 does:** uses the F8.1 picker for leaves ≥ Block16x16;
-Block8x8 leaves fall back unconditionally to `ZEROMV / LASTFRAME /
-skip = true`. Sub-8 partitions remain wire-format-only.
+**What rvp9 did before A1:** used the F8.1 picker for leaves ≥
+Block16x16; Block8x8 leaves fell back unconditionally to `ZEROMV /
+LASTFRAME / skip = true`. Sub-8 partitions remain wire-format-only.
 **Why:** F8.1's `pick_inter_mode_luma` doesn't support sub-16. The
 fallback keeps the F10.1c oracle (bit-exact encoder↔decoder recon)
 viable across all partition shapes the F8.2 picker can produce.
 **Byte-parity impact:** structural — Block8x8 inter leaves with real
-motion content reconstruct to zero-MV instead of the picker's
+motion content reconstructed to zero-MV instead of the picker's
 choice.
 **Compression-efficiency impact:** small on most content (Block8x8
 is the smallest the F8.2 picker emits in v1, and ZEROMV-skip is
 already optimal on the majority of Block8x8 leaves in low-motion
-content). Larger on high-motion 8×8-detailed content.
-**Future plan:** when sub-8 picker lands, this fallback path
-disappears.
+content). Larger on high-motion 8×8-detailed content (A0 measured
+~130-140 leaves/frame at peak motion ≈ 13% of pixel area).
+**A1 resolution (2026-05-21):** lifted Block8x8 into the F8.1 picker
+gate at `rvp9-encoder::pick_and_simulate_inter_encode_partitions`.
+The simulator's per-plane / per-TX walk already handled Block8x8
+generically; only the gate and a chroma-aware tightening of the
+MV-limit envelope were required (the picker's MV must keep the
+8-tap convolve inside the visible chroma plane as well as luma —
+the encoder simulator does not border-extend). F12 testsrc shows
+Y-PSNR climbing from locked-at-24.65 dB on motion frames to
+35.83-52.64 dB across the 25-250 kbps sweep. Cross-decoder gate
+remains BYTE-EXACT vs vpxdec + ffmpeg. Sub-8 partitions still
+forced to ZEROMV-skip (no F8.1 sub-8 picker exists yet).
+**Future plan:** when sub-8 picker lands, the remaining sub-8
+fallback also disappears.
 
 ### 2026-05-21 — BD-rate trapezoidal approximation (F12.0)
 **Where:** `rvp9-harness::bdrate::bdrate`. libvpx / standard

@@ -2072,15 +2072,23 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let bw = usize::from(leaf_bsize.width());
                 let bh = usize::from(leaf_bsize.height());
 
-                // F8.1 picker supports Block16/32/64 only — for
-                // Block8x8 leaves (and any other size out of scope) we
-                // fall back to ZEROMV / skip = true. The recon for these
+                // F8.1 picker supports Block8x8 / Block16x16 /
+                // Block32x32 / Block64x64. Any other size (sub-8
+                // partitions emitted wire-format-only by F8.2) falls
+                // back to ZEROMV / skip = true; the recon for those
                 // leaves equals the reference (already populated via
                 // the up-front copy above), and no coef entries are
-                // recorded.
+                // recorded. A1 — lifted Block8x8 into the picker so
+                // high-motion 8×8 leaves get real MV + residual instead
+                // of locking to LASTFRAME (A0 diagnosis: at peak motion
+                // ~130-140 Block8x8 leaves per frame previously fell
+                // through to ZEROMV-skip).
                 let picker_supported = matches!(
                     leaf_bsize,
-                    BlockSize::Block16x16 | BlockSize::Block32x32 | BlockSize::Block64x64
+                    BlockSize::Block8x8
+                        | BlockSize::Block16x16
+                        | BlockSize::Block32x32
+                        | BlockSize::Block64x64
                 );
 
                 if !picker_supported {
@@ -2100,21 +2108,49 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 }
 
                 // Constrain MV limits so the F8.1 picker's convolve
-                // footprint stays inside the frame. The 8-tap kernel
-                // touches `int_pel - 3 .. int_pel + bw + 4` in the
-                // unscaled-with-subpel case. We need `leaf_px + mv_int
-                // - 3 >= 0` and `leaf_px + mv_int + bw + 4 <= plane_w`.
-                // mv_limits is in full-pel units (libvpx convention).
+                // footprint stays inside the frame on EVERY plane
+                // (luma + 4:2:0 chroma). The 8-tap kernel touches
+                // `int_pel - 3 .. int_pel + bw + 4` in the
+                // unscaled-with-subpel case.
+                //
+                // Luma:   `leaf_px + mv_int - 3 >= 0` AND
+                //         `leaf_px + mv_int + bw + 4 <= plane_w`.
+                // Chroma: same constraint on the chroma plane, where
+                //         `chroma_leaf = leaf_px / 2`, `chroma_bw =
+                //         bw / 2`, `chroma_w = w / 2`, and the chroma
+                //         Q4 MV equals the luma Q3 MV. Because the
+                //         picker's sub-pel refinement can drive the
+                //         Q3 luma MV to `mv_fullpel*8 ± 7`, the chroma
+                //         integer-pel base can drop one pixel below
+                //         the luma integer-pel mapping when the
+                //         physical motion lands on a half-chroma-pel.
+                //         The arithmetic resolves to an envelope
+                //         three luma full-pels TIGHTER on every side
+                //         than the luma-only envelope. A1 — without
+                //         this tightening, Block8x8 leaves at frame
+                //         edges with the picked MV at the luma-only
+                //         boundary underflowed `build_inter_pred_plane_unscaled`
+                //         on the chroma plane (the simulator does not
+                //         border-extend; see its caller-invariant
+                //         comment).
                 //
                 // If the resulting envelope is degenerate (col_min >
                 // col_max) the leaf is too close to a frame edge for
                 // any non-zero MV; skip the picker and fall back to
                 // ZEROMV / skip = true so the assert in F8.1's
                 // `build_inter_prediction` doesn't fire.
-                let col_min = -(leaf_px_x as i32) + 3;
-                let col_max = (w as i32) - (leaf_px_x as i32) - (bw as i32) - 4;
-                let row_min = -(leaf_px_y as i32) + 3;
-                let row_max = (h as i32) - (leaf_px_y as i32) - (bh as i32) - 4;
+                let col_min_luma = -(leaf_px_x as i32) + 3;
+                let col_max_luma = (w as i32) - (leaf_px_x as i32) - (bw as i32) - 4;
+                let row_min_luma = -(leaf_px_y as i32) + 3;
+                let row_max_luma = (h as i32) - (leaf_px_y as i32) - (bh as i32) - 4;
+                let col_min_chroma = 6 - leaf_px_x as i32;
+                let col_max_chroma = (w as i32) - (leaf_px_x as i32) - (bw as i32) - 7;
+                let row_min_chroma = 6 - leaf_px_y as i32;
+                let row_max_chroma = (h as i32) - (leaf_px_y as i32) - (bh as i32) - 7;
+                let col_min = col_min_luma.max(col_min_chroma);
+                let col_max = col_max_luma.min(col_max_chroma);
+                let row_min = row_min_luma.max(row_min_chroma);
+                let row_max = row_max_luma.min(row_max_chroma);
                 if col_min > col_max || row_min > row_max {
                     sb_partitions[sb_idx][leaf_idx].picked_mode = InterMode::ZeroMv;
                     sb_partitions[sb_idx][leaf_idx].picked_mv = Mv::ZERO;
