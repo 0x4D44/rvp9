@@ -25,6 +25,7 @@
 //! Each `&[u8]` is one transport packet — i.e. exactly what gets fed
 //! into [`rvp9_decoder::Decoder::parse_packet`].
 
+use std::io::{self, Write};
 use std::path::Path;
 
 /// Errors from the container readers.
@@ -200,6 +201,115 @@ pub fn read_ivf_packets(data: &[u8]) -> Result<Vec<PacketRange>, ContainerError>
         pos = payload_end;
     }
     Ok(packets)
+}
+
+// ============================================================================
+// IVF writer
+// ============================================================================
+//
+// RC.4 — mirror of [`read_ivf_packets`] in the write direction. Layout
+// matches libvpx's `ivf_write_file_header` + `ivf_write_frame_header`
+// (`ivfenc.c:9-44`).
+
+/// Fixed-size IVF file header descriptor handed to [`write_ivf`].
+///
+/// Mirrors libvpx's `IVF_FILE_HEADER` layout (`ivfenc.c:11`): the magic
+/// `DKIF`, a 16-bit version (always `0`), a 16-bit header size (always
+/// `32`), the codec four-CC (`VP90` for VP9), width / height as little-
+/// endian `u16`s, framerate as a `(num_le_u32, den_le_u32)` pair, and a
+/// trailing `num_frames` slot left at the value supplied by the caller
+/// (libvpx leaves this at `0` and patches it back in after the encode
+/// completes — we follow the same convention by default).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IvfHeader {
+    /// Codec FourCC. `*b"VP90"` for VP9.
+    pub codec_fourcc: [u8; 4],
+    /// Coded frame width in pixels.
+    pub width: u16,
+    /// Coded frame height in pixels.
+    pub height: u16,
+    /// Framerate numerator (e.g. `30` for 30 fps).
+    pub framerate_num: u32,
+    /// Framerate denominator (e.g. `1` for 30 fps).
+    pub framerate_den: u32,
+}
+
+impl IvfHeader {
+    /// VP9 FourCC (`VP90`).
+    pub const FOURCC_VP9: [u8; 4] = *b"VP90";
+
+    /// Build an IVF header for a VP9 stream at `(width, height)`,
+    /// `framerate_num / framerate_den` fps.
+    #[must_use]
+    pub const fn vp9(width: u16, height: u16, framerate_num: u32, framerate_den: u32) -> Self {
+        Self {
+            codec_fourcc: Self::FOURCC_VP9,
+            width,
+            height,
+            framerate_num,
+            framerate_den,
+        }
+    }
+}
+
+/// Write an IVF file containing `packets`.
+///
+/// The file is laid out as:
+/// - 32-byte file header: `DKIF`, version (`0_le_u16`), header_size
+///   (`32_le_u16`), codec FourCC, width (`le_u16`), height (`le_u16`),
+///   framerate_num (`le_u32`), framerate_den (`le_u32`), num_frames
+///   (`le_u32`, set to `packets.len()`), unused (`0_le_u32`).
+/// - One per-packet record per `&[u8]` in `packets`: `u32 size_le`,
+///   `u64 pts_le` (the packet's index, monotonically increasing), and
+///   the payload bytes verbatim.
+///
+/// # Errors
+///
+/// Forwards any [`io::Error`] from the writer.
+pub fn write_ivf<W: Write>(
+    out: &mut W,
+    header: &IvfHeader,
+    packets: &[&[u8]],
+) -> io::Result<()> {
+    let num_frames = u32::try_from(packets.len()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "too many packets for IVF (must fit in u32)",
+        )
+    })?;
+
+    // 32-byte file header.
+    let mut hdr = [0u8; 32];
+    hdr[0..4].copy_from_slice(b"DKIF");
+    // version_le_u16 = 0; header_size_le_u16 = 32.
+    hdr[4..6].copy_from_slice(&0u16.to_le_bytes());
+    hdr[6..8].copy_from_slice(&32u16.to_le_bytes());
+    hdr[8..12].copy_from_slice(&header.codec_fourcc);
+    hdr[12..14].copy_from_slice(&header.width.to_le_bytes());
+    hdr[14..16].copy_from_slice(&header.height.to_le_bytes());
+    hdr[16..20].copy_from_slice(&header.framerate_num.to_le_bytes());
+    hdr[20..24].copy_from_slice(&header.framerate_den.to_le_bytes());
+    hdr[24..28].copy_from_slice(&num_frames.to_le_bytes());
+    // hdr[28..32] = unused (zero).
+    out.write_all(&hdr)?;
+
+    // Per-packet record.
+    for (idx, packet) in packets.iter().enumerate() {
+        let size = u32::try_from(packet.len()).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "packet too large for IVF (size must fit in u32)",
+            )
+        })?;
+        let pts = idx as u64;
+        let mut rec = [0u8; 12];
+        rec[0..4].copy_from_slice(&size.to_le_bytes());
+        rec[4..12].copy_from_slice(&pts.to_le_bytes());
+        out.write_all(&rec)?;
+        out.write_all(packet)?;
+    }
+
+    Ok(())
 }
 
 // ============================================================================
@@ -485,6 +595,55 @@ mod tests {
         let (v, n) = read_ebml_vint(&[0xFF], 0).unwrap();
         assert_eq!(n, 1);
         assert!(is_unknown_vint(v, 1));
+    }
+
+    #[test]
+    fn ivf_roundtrip_two_packets() {
+        // RC.4 — round-trip `write_ivf` through `read_ivf_packets`.
+        let p0: &[u8] = b"hello-frame-0";
+        let p1: &[u8] = b"frame-one-with-different-length";
+        let header = IvfHeader::vp9(256, 256, 30, 1);
+
+        let mut buf: Vec<u8> = Vec::new();
+        write_ivf(&mut buf, &header, &[p0, p1]).expect("write_ivf");
+
+        // File header: 32 bytes; magic + version + header_size.
+        assert!(buf.len() >= 32);
+        assert_eq!(&buf[0..4], b"DKIF");
+        assert_eq!(u16::from_le_bytes([buf[4], buf[5]]), 0);
+        assert_eq!(u16::from_le_bytes([buf[6], buf[7]]), 32);
+        assert_eq!(&buf[8..12], b"VP90");
+        assert_eq!(u16::from_le_bytes([buf[12], buf[13]]), 256);
+        assert_eq!(u16::from_le_bytes([buf[14], buf[15]]), 256);
+        assert_eq!(
+            u32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]]),
+            30
+        );
+        assert_eq!(
+            u32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]]),
+            1
+        );
+        assert_eq!(
+            u32::from_le_bytes([buf[24], buf[25], buf[26], buf[27]]),
+            2
+        );
+
+        // Re-read and confirm payloads survive intact.
+        let packets = read_ivf_packets(&buf).expect("read_ivf_packets");
+        assert_eq!(packets.len(), 2);
+        assert_eq!(packets[0].slice(&buf), p0);
+        assert_eq!(packets[1].slice(&buf), p1);
+    }
+
+    #[test]
+    fn ivf_roundtrip_empty_stream() {
+        // Zero packets is legal — produces just the 32-byte file header.
+        let header = IvfHeader::vp9(64, 64, 30, 1);
+        let mut buf: Vec<u8> = Vec::new();
+        write_ivf(&mut buf, &header, &[]).expect("write_ivf empty");
+        assert_eq!(buf.len(), 32);
+        let packets = read_ivf_packets(&buf).expect("read_ivf_packets");
+        assert_eq!(packets.len(), 0);
     }
 
     #[test]
