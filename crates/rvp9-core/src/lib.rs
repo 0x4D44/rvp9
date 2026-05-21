@@ -31,6 +31,7 @@ pub mod frame;
 pub mod inter;
 pub mod intra_pred;
 pub mod loopfilter;
+pub mod mode_decision;
 pub mod mode_info;
 pub mod mv_search;
 pub mod quant;
