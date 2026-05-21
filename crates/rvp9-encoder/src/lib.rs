@@ -1033,11 +1033,33 @@ fn f5_uv_plane_block_size(bsize: BlockSize) -> BlockSize {
     }
 }
 
+/// Per-leaf descriptor handed to
+/// [`simulate_dc_intra_encode_partitions`] — describes one DC_PRED
+/// intra leaf inside a 64×64 SB.
+///
+/// `(mi_row_in_sb, mi_col_in_sb)` is the leaf's top-left in 8×8 mi
+/// units relative to the SB's top-left (i.e. each is in `0..8`).
+/// `leaf_bsize` is the leaf's [`BlockSize`] (square, ≥ 8×8 for F10.1a).
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PartitionLeafDesc {
+    /// Leaf's row inside the SB, in 8×8 mi units (0..=7).
+    pub mi_row_in_sb: usize,
+    /// Leaf's column inside the SB, in 8×8 mi units (0..=7).
+    pub mi_col_in_sb: usize,
+    /// Leaf [`BlockSize`] (square: `Block8x8` / `Block16x16` /
+    /// `Block32x32` / `Block64x64`).
+    pub leaf_bsize: BlockSize,
+}
+
 /// Encoder simulator: per-TX-block predict → residual → fdct →
 /// forward-quant → idct-add. Returns a [`VecBackedIntraCoefSource`]
 /// populated with the per-TX qcoeff buffers; fills `recon_yuv_out`
 /// with the per-TX reconstructed pixels (the exact bit pattern the
 /// decoder will produce given the emitted bitstream).
+///
+/// Single-leaf form: every 64×64 SB is treated as a `Block64x64`
+/// leaf. For F10.1a's partition-aware path, see
+/// [`simulate_dc_intra_encode_partitions`].
 ///
 /// Caller invariants (checked outside):
 /// - `(width, height)` are multiples of 64.
@@ -1050,6 +1072,49 @@ pub(crate) fn simulate_dc_intra_encode(
     input_yuv: (&[u8], &[u8], &[u8]),
     recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
 ) -> VecBackedIntraCoefSource {
+    // Single Block64x64 leaf per SB; SBs walked in raster order.
+    let sb_cols = (width as usize) / 64;
+    let sb_rows = (height as usize) / 64;
+    let mut sb_partitions: Vec<Vec<PartitionLeafDesc>> =
+        Vec::with_capacity(sb_rows * sb_cols);
+    for _ in 0..(sb_rows * sb_cols) {
+        sb_partitions.push(vec![PartitionLeafDesc {
+            mi_row_in_sb: 0,
+            mi_col_in_sb: 0,
+            leaf_bsize: BlockSize::Block64x64,
+        }]);
+    }
+    simulate_dc_intra_encode_partitions(
+        width,
+        height,
+        base_qindex,
+        input_yuv,
+        recon_yuv_out,
+        &sb_partitions,
+    )
+}
+
+/// Partition-aware version of [`simulate_dc_intra_encode`].
+///
+/// `sb_partitions[sb_row * sb_cols + sb_col]` is the slice of leaves
+/// (in raster scan inside the SB) for the SB at `(sb_row, sb_col)`.
+/// Each leaf is encoded as `DC_PRED` intra; the simulator records
+/// qcoeffs / eob per (mi_row, mi_col, plane, tx_x4_local, tx_y4_local)
+/// — keyed off the leaf's top-left `(mi_row, mi_col)` in the frame —
+/// and fills `recon_yuv_out` with the decoder-bit-exact reconstruction.
+///
+/// Leaves are walked in the order the slice provides them; for the
+/// F10.1a wiring this is a raster scan inside the SB, which matches
+/// the writer's tree-walk visit order (Z-order at SPLIT is equivalent
+/// to raster for non-overlapping leaves at any depth).
+pub(crate) fn simulate_dc_intra_encode_partitions(
+    width: u32,
+    height: u32,
+    base_qindex: u8,
+    input_yuv: (&[u8], &[u8], &[u8]),
+    recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
+    sb_partitions: &[Vec<PartitionLeafDesc>],
+) -> VecBackedIntraCoefSource {
     use rvp9_core::intra_pred::{
         DcAvailability, EdgeBuffers, IntraMode as PredIntraMode, build_intra_predictors,
         intra_predict,
@@ -1058,8 +1123,10 @@ pub(crate) fn simulate_dc_intra_encode(
         QuantizerDeltas, init_plane_quantizers, scan_for_forward, vp9_quantize_b,
         vp9_quantize_b_32x32,
     };
-    use rvp9_core::transforms::forward::{fdct16x16, fdct32x32};
-    use rvp9_core::transforms::inverse::{idct16x16_256_add, idct32x32_1024_add};
+    use rvp9_core::transforms::forward::{fdct16x16, fdct32x32, fdct4x4, fdct8x8};
+    use rvp9_core::transforms::inverse::{
+        idct16x16_256_add, idct32x32_1024_add, idct4x4_16_add, idct8x8_64_add,
+    };
     use rvp9_core::transforms::scans::scan_for;
     use rvp9_core::transforms::TxType;
 
@@ -1085,264 +1152,275 @@ pub(crate) fn simulate_dc_intra_encode(
 
     let mut out = VecBackedIntraCoefSource::new(width, height);
 
-    // The mi-grid is splatted with `BlockSize::Block64x64` cells; we
-    // iterate over each SB.
     let sb_cols = w / 64;
     let sb_rows = h / 64;
+    assert_eq!(
+        sb_partitions.len(),
+        sb_rows * sb_cols,
+        "sb_partitions must have one entry per 64x64 SB ({} rows × {} cols)",
+        sb_rows,
+        sb_cols,
+    );
 
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
-            let mi_row = sb_row * 8;
-            let mi_col = sb_col * 8;
+            let leaves = &sb_partitions[sb_row * sb_cols + sb_col];
+            for leaf in leaves {
+                let leaf_bsize = leaf.leaf_bsize;
+                let leaf_mi_row = sb_row * 8 + leaf.mi_row_in_sb;
+                let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
+                let luma_tx = rvp9_core::block::max_txsize(leaf_bsize);
 
-            // The writer's `IntraCoefSource::get_block_coefs` receives
-            // `(mi_row, mi_col)` of the leaf's top-left.
+                // Iterate planes: 0=Y, 1=U, 2=V.
+                for plane in 0..3 {
+                    let ss_x = F5_SUBSAMPLING_X[plane];
+                    let ss_y = F5_SUBSAMPLING_Y[plane];
 
-            // Iterate planes: 0=Y, 1=U, 2=V.
-            for plane in 0..3 {
-                let ss_x = F5_SUBSAMPLING_X[plane];
-                let ss_y = F5_SUBSAMPLING_Y[plane];
+                    // Plane dimensions.
+                    let plane_w = if plane == 0 { w } else { uvw };
+                    let plane_h = if plane == 0 { h } else { uvh };
 
-                // Plane dimensions and TX size.
-                let plane_w = if plane == 0 { w } else { uvw };
-                let plane_h = if plane == 0 { h } else { uvh };
+                    // Per-plane TX size and block size for this leaf.
+                    let plane_tx = if plane == 0 {
+                        luma_tx
+                    } else {
+                        f5_uv_plane_tx_size(leaf_bsize, luma_tx)
+                    };
+                    let plane_bsize = if plane == 0 {
+                        leaf_bsize
+                    } else {
+                        f5_uv_plane_block_size(leaf_bsize)
+                    };
 
-                let plane_tx = if plane == 0 {
-                    TxSize::Tx32x32
-                } else {
-                    f5_uv_plane_tx_size(BlockSize::Block64x64, TxSize::Tx32x32)
-                };
-                // For Block64x64 + Y Tx32x32: UV plane size is
-                // Block32x32, max_txsize = Tx32x32, so UV TX is also
-                // Tx32x32 (a single 32×32 transform covers the whole
-                // UV plane of a 64×64 SB).
-                debug_assert_eq!(plane_tx, TxSize::Tx32x32);
+                    // Plane 4×4 extents for this leaf. Mirrors the
+                    // decoder's `reconstruct_intra_planes` derivation:
+                    // sub-8 luma pins to `(2 >> ss)` but for F10.1a we
+                    // only see ≥ 8×8 leaves so the regular path is fine.
+                    let plane_bw_4x4 = plane_bsize.n_4x4_wide() as usize;
+                    let plane_bh_4x4 = plane_bsize.n_4x4_high() as usize;
+                    let tx_step_4x4 = 1usize << (plane_tx as usize);
+                    let tx_side = plane_tx.side();
 
-                let plane_bw_4x4 = (64 >> ss_x) / 4;
-                let plane_bh_4x4 = (64 >> ss_y) / 4;
-                let tx_step_4x4 = 1usize << (plane_tx as usize);
-                let tx_side = plane_tx.side();
+                    // Leaf top-left in plane pixels.
+                    let leaf_plane_px_x = (leaf_mi_col * 8) >> ss_x;
+                    let leaf_plane_px_y = (leaf_mi_row * 8) >> ss_y;
 
-                // Plane top-left in pixels (within the SB).
-                let plane_px_base_x = (mi_col * 8) >> ss_x;
-                let plane_px_base_y = (mi_row * 8) >> ss_y;
+                    // Per-plane references — split mutable / immutable.
+                    let (input_plane, recon_plane) = match plane {
+                        0 => (input_yuv.0, &mut *recon_yuv_out.0),
+                        1 => (input_yuv.1, &mut *recon_yuv_out.1),
+                        _ => (input_yuv.2, &mut *recon_yuv_out.2),
+                    };
+                    let plane_stride = plane_w;
 
-                // Per-plane references — split mutable / immutable so
-                // we can borrow recon (mut) and input (read).
-                let (input_plane, recon_plane) = match plane {
-                    0 => (input_yuv.0, &mut *recon_yuv_out.0),
-                    1 => (input_yuv.1, &mut *recon_yuv_out.1),
-                    _ => (input_yuv.2, &mut *recon_yuv_out.2),
-                };
-                let plane_stride = plane_w;
+                    // Dequant pair / quantizer params: Y uses qp_y, UV
+                    // uses qp_uv (delta-q zero → identical today).
+                    let dequant_pair = if plane == 0 {
+                        [qp_y.dequant[0], qp_y.dequant[1]]
+                    } else {
+                        [qp_uv.dequant[0], qp_uv.dequant[1]]
+                    };
+                    let (zbin, round, quant, quant_shift) = if plane == 0 {
+                        (qp_y.zbin, qp_y.round, qp_y.quant, qp_y.quant_shift)
+                    } else {
+                        (qp_uv.zbin, qp_uv.round, qp_uv.quant, qp_uv.quant_shift)
+                    };
 
-                // Dequant pair: Y uses qp_y, UV uses qp_uv. Both
-                // identical here (delta-q zero).
-                let dequant_pair = if plane == 0 {
-                    [qp_y.dequant[0], qp_y.dequant[1]]
-                } else {
-                    [qp_uv.dequant[0], qp_uv.dequant[1]]
-                };
-                let (zbin, round, quant, quant_shift) = if plane == 0 {
-                    (qp_y.zbin, qp_y.round, qp_y.quant, qp_y.quant_shift)
-                } else {
-                    (qp_uv.zbin, qp_uv.round, qp_uv.quant, qp_uv.quant_shift)
-                };
+                    // Leaf-level neighbour availability: single tile,
+                    // single-slice frame, so it reduces to "the leaf
+                    // is not at the top-left of the frame".
+                    let have_above_block = leaf_mi_row > 0;
+                    let have_left_block = leaf_mi_col > 0;
 
-                // Walk TX positions inside this plane's coding block.
-                let mut tx_y4_local = 0usize;
-                while tx_y4_local < plane_bh_4x4 {
-                    let mut tx_x4_local = 0usize;
-                    while tx_x4_local < plane_bw_4x4 {
-                        let tx_px_x = plane_px_base_x + tx_x4_local * 4;
-                        let tx_px_y = plane_px_base_y + tx_y4_local * 4;
+                    // Walk TX positions inside this plane's coding
+                    // block. `loff` / `aoff` are in 4×4 units; the per-
+                    // TX `have_top` / `have_left` formulas mirror
+                    // `reconstruct_intra_planes`.
+                    let mut tx_y4_local = 0usize;
+                    while tx_y4_local < plane_bh_4x4 {
+                        let mut tx_x4_local = 0usize;
+                        while tx_x4_local < plane_bw_4x4 {
+                            let tx_px_x = leaf_plane_px_x + tx_x4_local * 4;
+                            let tx_px_y = leaf_plane_px_y + tx_y4_local * 4;
 
-                        // 1. Build prediction edges from the local
-                        //    recon buffer. Neighbour availability
-                        //    flags mirror the decoder's
-                        //    `have_top = loff > 0 || have_above_block;
-                        //     have_left = aoff > 0 || have_left_block;`
-                        let have_above_block =
-                            sb_row > 0 || tx_y4_local > 0; // any prior SB row OR prior TX row inside SB
-                        let have_left_block =
-                            sb_col > 0 || tx_x4_local > 0;
-                        // For TX-internal (within-SB) walks, the
-                        // `have_top` / `have_left` formulas reduce to
-                        // the same booleans (loff/aoff cover the
-                        // within-coding-block portion; have_*_block
-                        // covers crossings of the coding-block edge,
-                        // i.e. crossings of the SB edge). For our
-                        // single-SB tests `sb_row == sb_col == 0` so
-                        // both are exactly `tx_*_local > 0`.
-                        let have_top = have_above_block || tx_y4_local > 0;
-                        let have_left = have_left_block || tx_x4_local > 0;
-                        let have_right =
-                            (tx_x4_local + tx_step_4x4) < plane_bw_4x4;
+                            let have_top = have_above_block || tx_y4_local > 0;
+                            let have_left = have_left_block || tx_x4_local > 0;
+                            let have_right =
+                                (tx_x4_local + tx_step_4x4) < plane_bw_4x4;
 
-                        let mut edges = EdgeBuffers::new();
-                        build_intra_predictors(
-                            recon_plane,
-                            plane_stride,
-                            tx_px_x,
-                            tx_px_y,
-                            plane_w,
-                            plane_h,
-                            plane_tx,
-                            PredIntraMode::Dc,
-                            have_top,
-                            have_left,
-                            have_right,
-                            &mut edges,
-                        );
-                        let pred_ctx = edges.pred_ctx(tx_side);
-                        let dc_avail = DcAvailability {
-                            above_available: have_top,
-                            left_available: have_left,
-                        };
+                            let mut edges = EdgeBuffers::new();
+                            build_intra_predictors(
+                                recon_plane,
+                                plane_stride,
+                                tx_px_x,
+                                tx_px_y,
+                                plane_w,
+                                plane_h,
+                                plane_tx,
+                                PredIntraMode::Dc,
+                                have_top,
+                                have_left,
+                                have_right,
+                                &mut edges,
+                            );
+                            let pred_ctx = edges.pred_ctx(tx_side);
+                            let dc_avail = DcAvailability {
+                                above_available: have_top,
+                                left_available: have_left,
+                            };
 
-                        // 2. Run prediction into the recon plane at
-                        //    (tx_px_x, tx_px_y).
-                        let dst_off = tx_px_y * plane_stride + tx_px_x;
-                        let dst = &mut recon_plane[dst_off..];
-                        intra_predict(
-                            PredIntraMode::Dc,
-                            dst,
-                            plane_stride,
-                            tx_side,
-                            pred_ctx,
-                            dc_avail,
-                        );
+                            // 2. Run prediction into recon.
+                            let dst_off = tx_px_y * plane_stride + tx_px_x;
+                            let dst = &mut recon_plane[dst_off..];
+                            intra_predict(
+                                PredIntraMode::Dc,
+                                dst,
+                                plane_stride,
+                                tx_side,
+                                pred_ctx,
+                                dc_avail,
+                            );
 
-                        // 3. Residual = input - pred. Pred lives in
-                        //    recon[..] (just written by intra_predict).
-                        let mut residual = vec![0i16; tx_side * tx_side];
-                        for r in 0..tx_side {
-                            for c in 0..tx_side {
-                                let px_x = tx_px_x + c;
-                                let px_y = tx_px_y + r;
-                                let in_off = px_y * plane_stride + px_x;
-                                let pred = recon_plane[in_off] as i16;
-                                let inp = input_plane[in_off] as i16;
-                                residual[r * tx_side + c] = inp - pred;
+                            // 3. Residual = input - pred.
+                            let mut residual = vec![0i16; tx_side * tx_side];
+                            for r in 0..tx_side {
+                                for c in 0..tx_side {
+                                    let px_x = tx_px_x + c;
+                                    let px_y = tx_px_y + r;
+                                    let in_off = px_y * plane_stride + px_x;
+                                    let pred = recon_plane[in_off] as i16;
+                                    let inp = input_plane[in_off] as i16;
+                                    residual[r * tx_side + c] = inp - pred;
+                                }
                             }
-                        }
 
-                        // 4. Forward DCT.
-                        let n = plane_tx.n_coeffs();
-                        let mut coefs_i32 = vec![0i32; n];
-                        match plane_tx {
-                            TxSize::Tx32x32 => {
-                                let mut buf = [0i32; 1024];
-                                fdct32x32(&residual, &mut buf, tx_side);
-                                coefs_i32.copy_from_slice(&buf[..]);
-                            }
-                            TxSize::Tx16x16 => {
-                                let mut buf = [0i32; 256];
-                                fdct16x16(&residual, &mut buf, tx_side);
-                                coefs_i32.copy_from_slice(&buf[..]);
-                            }
-                            // Tx8x8 / Tx4x4 aren't reachable for our
-                            // 64×64 SB / Block64x64 leaf; assert if
-                            // they ever are.
-                            _ => unreachable!(
-                                "F5.1 simulator only handles Tx32x32 (Y) and Tx16x16 (UV); got {:?}",
-                                plane_tx
-                            ),
-                        }
-
-                        // 5. Forward quant. Encoder qcoeff / dqcoeff
-                        //    are i16. We then widen qcoeff to i32 for
-                        //    the writer.
-                        let scan = scan_for(plane_tx, TxType::DctDct);
-                        let scan_slice = scan_for_forward(&scan);
-                        let mut qcoeff_i16 = vec![0i16; n];
-                        let mut dqcoeff_i16 = vec![0i16; n];
-                        let eob = match plane_tx {
-                            TxSize::Tx32x32 => vp9_quantize_b_32x32(
-                                &coefs_i32,
-                                /* skip_block = */ false,
-                                &zbin,
-                                &round,
-                                &quant,
-                                &quant_shift,
-                                &mut qcoeff_i16,
-                                &mut dqcoeff_i16,
-                                &dequant_pair,
-                                scan_slice,
-                            ),
-                            TxSize::Tx16x16 => vp9_quantize_b(
-                                &coefs_i32,
-                                n,
-                                /* skip_block = */ false,
-                                &zbin,
-                                &round,
-                                &quant,
-                                &quant_shift,
-                                &mut qcoeff_i16,
-                                &mut dqcoeff_i16,
-                                &dequant_pair,
-                                scan_slice,
-                            ),
-                            _ => unreachable!(),
-                        };
-                        let eob_usize = eob as usize;
-
-                        // 6. Inverse-DCT-add of the dequantized coefs.
-                        //    Writes pred + residual into recon. The
-                        //    decoder will produce the exact same
-                        //    bytes given (a) the same qcoeffs (which
-                        //    we emit via the coef source) and (b) the
-                        //    same intra prediction (which we matched
-                        //    by walking from the same recon-buffer
-                        //    state).
-                        let mut dq_i32 = vec![0i32; n];
-                        for i in 0..n {
-                            dq_i32[i] = dqcoeff_i16[i] as i32;
-                        }
-                        if eob_usize > 0 {
+                            // 4. Forward DCT (per TX size).
+                            let n = plane_tx.n_coeffs();
+                            let mut coefs_i32 = vec![0i32; n];
                             match plane_tx {
                                 TxSize::Tx32x32 => {
                                     let mut buf = [0i32; 1024];
-                                    buf.copy_from_slice(&dq_i32[..]);
-                                    idct32x32_1024_add(
-                                        &buf,
-                                        &mut recon_plane[dst_off..],
-                                        plane_stride,
-                                    );
+                                    fdct32x32(&residual, &mut buf, tx_side);
+                                    coefs_i32.copy_from_slice(&buf[..]);
                                 }
                                 TxSize::Tx16x16 => {
                                     let mut buf = [0i32; 256];
-                                    buf.copy_from_slice(&dq_i32[..]);
-                                    idct16x16_256_add(
-                                        &buf,
-                                        &mut recon_plane[dst_off..],
-                                        plane_stride,
-                                    );
+                                    fdct16x16(&residual, &mut buf, tx_side);
+                                    coefs_i32.copy_from_slice(&buf[..]);
                                 }
-                                _ => unreachable!(),
+                                TxSize::Tx8x8 => {
+                                    let mut buf = [0i32; 64];
+                                    fdct8x8(&residual, &mut buf, tx_side);
+                                    coefs_i32.copy_from_slice(&buf[..]);
+                                }
+                                TxSize::Tx4x4 => {
+                                    let mut buf = [0i32; 16];
+                                    fdct4x4(&residual, &mut buf, tx_side);
+                                    coefs_i32.copy_from_slice(&buf[..]);
+                                }
                             }
+
+                            // 5. Forward quant.
+                            let scan = scan_for(plane_tx, TxType::DctDct);
+                            let scan_slice = scan_for_forward(&scan);
+                            let mut qcoeff_i16 = vec![0i16; n];
+                            let mut dqcoeff_i16 = vec![0i16; n];
+                            let eob = match plane_tx {
+                                TxSize::Tx32x32 => vp9_quantize_b_32x32(
+                                    &coefs_i32,
+                                    /* skip_block = */ false,
+                                    &zbin,
+                                    &round,
+                                    &quant,
+                                    &quant_shift,
+                                    &mut qcoeff_i16,
+                                    &mut dqcoeff_i16,
+                                    &dequant_pair,
+                                    scan_slice,
+                                ),
+                                _ => vp9_quantize_b(
+                                    &coefs_i32,
+                                    n,
+                                    /* skip_block = */ false,
+                                    &zbin,
+                                    &round,
+                                    &quant,
+                                    &quant_shift,
+                                    &mut qcoeff_i16,
+                                    &mut dqcoeff_i16,
+                                    &dequant_pair,
+                                    scan_slice,
+                                ),
+                            };
+                            let eob_usize = eob as usize;
+
+                            // 6. Inverse-DCT-add of the dequant coefs.
+                            let mut dq_i32 = vec![0i32; n];
+                            for i in 0..n {
+                                dq_i32[i] = dqcoeff_i16[i] as i32;
+                            }
+                            if eob_usize > 0 {
+                                match plane_tx {
+                                    TxSize::Tx32x32 => {
+                                        let mut buf = [0i32; 1024];
+                                        buf.copy_from_slice(&dq_i32[..]);
+                                        idct32x32_1024_add(
+                                            &buf,
+                                            &mut recon_plane[dst_off..],
+                                            plane_stride,
+                                        );
+                                    }
+                                    TxSize::Tx16x16 => {
+                                        let mut buf = [0i32; 256];
+                                        buf.copy_from_slice(&dq_i32[..]);
+                                        idct16x16_256_add(
+                                            &buf,
+                                            &mut recon_plane[dst_off..],
+                                            plane_stride,
+                                        );
+                                    }
+                                    TxSize::Tx8x8 => {
+                                        let mut buf = [0i32; 64];
+                                        buf.copy_from_slice(&dq_i32[..]);
+                                        idct8x8_64_add(
+                                            &buf,
+                                            &mut recon_plane[dst_off..],
+                                            plane_stride,
+                                        );
+                                    }
+                                    TxSize::Tx4x4 => {
+                                        let mut buf = [0i32; 16];
+                                        buf.copy_from_slice(&dq_i32[..]);
+                                        idct4x4_16_add(
+                                            &buf,
+                                            &mut recon_plane[dst_off..],
+                                            plane_stride,
+                                        );
+                                    }
+                                }
+                            }
+
+                            // 7. Record qcoeff buffer + eob, keyed by
+                            //    leaf top-left (mi_row, mi_col) so the
+                            //    writer's `IntraCoefSource` lookup hits.
+                            let qcoeff_i32: Vec<i32> = qcoeff_i16
+                                .into_iter()
+                                .map(i32::from)
+                                .collect();
+                            out.insert(
+                                leaf_mi_row,
+                                leaf_mi_col,
+                                plane,
+                                tx_x4_local,
+                                tx_y4_local,
+                                qcoeff_i32,
+                                eob_usize,
+                            );
+
+                            tx_x4_local += tx_step_4x4;
                         }
-                        // If eob == 0, decoder uses fast-skip path
-                        // (prediction stays as the reconstruction).
-
-                        // 7. Record qcoeff buffer + eob.
-                        let qcoeff_i32: Vec<i32> = qcoeff_i16
-                            .into_iter()
-                            .map(i32::from)
-                            .collect();
-                        out.insert(
-                            mi_row,
-                            mi_col,
-                            plane,
-                            tx_x4_local,
-                            tx_y4_local,
-                            qcoeff_i32,
-                            eob_usize,
-                        );
-
-                        tx_x4_local += tx_step_4x4;
+                        tx_y4_local += tx_step_4x4;
                     }
-                    tx_y4_local += tx_step_4x4;
                 }
             }
         }

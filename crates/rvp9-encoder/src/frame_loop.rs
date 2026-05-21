@@ -60,17 +60,23 @@ use rvp9_core::bitstream::{
     ModesTileBounds, Profile, RawBitWriter, UncompressedHeader, write_compressed_header,
     write_tile_intra_keyframe, write_tile_inter, write_uncompressed_header,
 };
-use rvp9_core::block::BlockSize;
+use rvp9_core::block::{BlockSize, max_txsize};
 use rvp9_core::coef_ctx::TileCoefCtx;
 use rvp9_core::entropy::{BoolWriter, FrameContext};
 use rvp9_core::inter::mode_info::{InterModeReadParams, setup_compound_reference_mode};
 use rvp9_core::inter::mv_ref::sign_bias_from_header;
 use rvp9_core::intra_pred::IntraMode;
+use rvp9_core::mode_decision::partition::{
+    PartitionDecision, PartitionSearchParams, choose_partitioning,
+};
 use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, Mv, RefFrame};
-use rvp9_core::transforms::{TxMode, TxSize};
+use rvp9_core::mv_search::PlaneRef;
+use rvp9_core::transforms::TxMode;
 
 use crate::rate_control::{FrameKind as RcFrameKind, RateControl, RateControlConfig};
-use crate::{EncodeError, simulate_dc_intra_encode};
+use crate::{
+    EncodeError, PartitionLeafDesc, simulate_dc_intra_encode_partitions,
+};
 
 /// Public configuration for the F10.0 streaming encoder.
 ///
@@ -363,7 +369,10 @@ impl StreamEncoder {
                 q_index,
                 (&y_tight, &u_tight, &v_tight),
             )?,
-            FrameKind::Inter => self.encode_inter_internal(q_index)?,
+            FrameKind::Inter => self.encode_inter_internal(
+                q_index,
+                (&y_tight, &u_tight, &v_tight),
+            )?,
         };
 
         let actual_bits = (packet.len() as u32).saturating_mul(8);
@@ -393,9 +402,17 @@ impl StreamEncoder {
         let w = self.config.width;
         let h = self.config.height;
 
-        // Run the F5.1 simulator. Output goes directly into our
-        // reference buffers — those ARE the reconstruction.
-        let coef_source = simulate_dc_intra_encode(
+        // F10.1a — pick the per-SB partition via the F8.2 variance
+        // picker. For KF the ref plane is unused (the picker substitutes
+        // a flat-128 fallback when `is_keyframe = true`), but we still
+        // need a valid `PlaneRef`; pass the input Y as the ref.
+        let sb_partitions =
+            choose_partitions_for_frame(w as usize, h as usize, q_index, input_yuv.0, /* ref_y = */ input_yuv.0, /* is_keyframe = */ true);
+
+        // Run the F5.1 simulator with the partition. Output goes
+        // directly into our reference buffers — those ARE the
+        // reconstruction.
+        let coef_source = simulate_dc_intra_encode_partitions(
             w,
             h,
             q_index,
@@ -405,16 +422,39 @@ impl StreamEncoder {
                 &mut self.last_recon_u,
                 &mut self.last_recon_v,
             ),
+            &sb_partitions,
         );
 
-        build_keyframe_packet(w, h, q_index, &coef_source)
+        build_keyframe_packet(w, h, q_index, &coef_source, &sb_partitions)
     }
 
     /// Inter internal: emit a single-ref LASTFRAME ZEROMV `skip = true`
-    /// frame over the full SB grid. The reconstruction equals the
-    /// reference (zero-MV no-residual), so `last_recon_*` are unchanged.
-    fn encode_inter_internal(&mut self, q_index: u8) -> Result<Vec<u8>, EncodeError> {
-        build_inter_zero_mv_packet(self.config.width, self.config.height, q_index)
+    /// frame over the SB grid. The reconstruction equals the reference
+    /// (zero-MV no-residual), so `last_recon_*` are unchanged.
+    ///
+    /// The per-SB partition still drives mi_grid layout (each leaf gets
+    /// one Inter ZEROMV skip=true cell splat) so the picker is exercised
+    /// on the inter path too — even though the reconstruction is
+    /// identical to the reference.
+    fn encode_inter_internal(
+        &mut self,
+        q_index: u8,
+        input_yuv: (&[u8], &[u8], &[u8]),
+    ) -> Result<Vec<u8>, EncodeError> {
+        let w = self.config.width;
+        let h = self.config.height;
+        // For inter the picker compares src vs ref (LASTFRAME, zero-MV).
+        // `last_recon_y` is the previous frame's Y reconstruction; that
+        // IS the LASTFRAME ref under our zero-MV mode.
+        let sb_partitions = choose_partitions_for_frame(
+            w as usize,
+            h as usize,
+            q_index,
+            input_yuv.0,
+            &self.last_recon_y,
+            /* is_keyframe = */ false,
+        );
+        build_inter_zero_mv_packet(w, h, q_index, &sb_partitions)
     }
 
     /// Read-only access to the rate controller (for tests / probes).
@@ -422,6 +462,215 @@ impl StreamEncoder {
     pub fn rate_control(&self) -> &RateControl {
         &self.rate_control
     }
+}
+
+// ---------------------------------------------------------------------------
+// F10.1a — partition decision wiring.
+// ---------------------------------------------------------------------------
+
+/// Run the F8.2 variance-based partition picker on every 64×64 SB in
+/// the frame and return one `Vec<PartitionLeafDesc>` per SB (in raster
+/// scan inside the SB).
+///
+/// For keyframes the `ref_y` plane is ignored (the picker substitutes
+/// a flat-128 fallback when `is_keyframe = true`); for inter frames
+/// `ref_y` must point at the previous-frame's Y reconstruction
+/// (LASTFRAME under our zero-MV mode).
+fn choose_partitions_for_frame(
+    width_px: usize,
+    height_px: usize,
+    q_index: u8,
+    src_y: &[u8],
+    ref_y: &[u8],
+    is_keyframe: bool,
+) -> Vec<Vec<PartitionLeafDesc>> {
+    let sb_cols = width_px / 64;
+    let sb_rows = height_px / 64;
+    let mut out: Vec<Vec<PartitionLeafDesc>> = Vec::with_capacity(sb_rows * sb_cols);
+
+    let src_plane = PlaneRef {
+        data: src_y,
+        stride: width_px,
+        width: width_px,
+        height: height_px,
+    };
+    let ref_plane = PlaneRef {
+        data: ref_y,
+        stride: width_px,
+        width: width_px,
+        height: height_px,
+    };
+
+    for sb_row in 0..sb_rows {
+        for sb_col in 0..sb_cols {
+            let params = PartitionSearchParams {
+                src_plane: &src_plane,
+                src_offset_xy: (sb_col * 64, sb_row * 64),
+                ref_plane: &ref_plane,
+                ref_offset_xy: (sb_col * 64, sb_row * 64),
+                is_keyframe,
+                q_index,
+            };
+            let decision = choose_partitioning(&params);
+            out.push(leaves_from_decision(&decision));
+        }
+    }
+    out
+}
+
+/// Walk a [`PartitionDecision`]'s 8×8 cell grid in raster order and
+/// return one [`PartitionLeafDesc`] per unique leaf (top-left cell
+/// only). Caller invariant: `decision` passes
+/// [`PartitionDecision::is_valid_partition`] — which the F8.2 picker
+/// always guarantees.
+fn leaves_from_decision(decision: &PartitionDecision) -> Vec<PartitionLeafDesc> {
+    let mut leaves = Vec::with_capacity(64);
+    let mut visited = [[false; 8]; 8];
+    for r in 0..8 {
+        for c in 0..8 {
+            if visited[r][c] {
+                continue;
+            }
+            let bs = decision.cells[r][c];
+            let cells_wide = match bs {
+                BlockSize::Block8x8 => 1usize,
+                BlockSize::Block16x16 => 2,
+                BlockSize::Block32x32 => 4,
+                BlockSize::Block64x64 => 8,
+                other => panic!("F10.1a leaves_from_decision: unsupported leaf {other:?}"),
+            };
+            for dr in 0..cells_wide {
+                for dc in 0..cells_wide {
+                    visited[r + dr][c + dc] = true;
+                }
+            }
+            leaves.push(PartitionLeafDesc {
+                mi_row_in_sb: r,
+                mi_col_in_sb: c,
+                leaf_bsize: bs,
+            });
+        }
+    }
+    leaves
+}
+
+/// Splat `cell` into every 8×8 slot of `mi_grid` the leaf at
+/// `(leaf_mi_row, leaf_mi_col)` with size `leaf_bsize` covers. The
+/// writer's `infer_partition` reads the top-left of each leaf, but
+/// HORZ / VERT / SPLIT recursion also reads the alternate-position
+/// leaf cell, so every cell must carry the leaf's `ModeInfo` (with
+/// the same `block_size`).
+fn splat_leaf_mode_info(
+    mi_grid: &mut [Option<ModeInfo>],
+    mi_cols: usize,
+    leaf_mi_row: usize,
+    leaf_mi_col: usize,
+    leaf_bsize: BlockSize,
+    cell: ModeInfo,
+) {
+    let n_8x8_wide = leaf_bsize.n_8x8_wide() as usize;
+    let n_8x8_high = leaf_bsize.n_8x8_high() as usize;
+    for dr in 0..n_8x8_high {
+        for dc in 0..n_8x8_wide {
+            let mi_row = leaf_mi_row + dr;
+            let mi_col = leaf_mi_col + dc;
+            mi_grid[mi_row * mi_cols + mi_col] = Some(cell);
+        }
+    }
+}
+
+/// Build the keyframe mi_grid from the per-SB partition decisions.
+/// Each leaf gets a `DC_PRED` intra `ModeInfo` with `skip = false`
+/// splatted across every 8×8 cell it covers.
+fn build_kf_mi_grid(
+    mi_rows: u32,
+    mi_cols: u32,
+    sb_partitions: &[Vec<PartitionLeafDesc>],
+) -> Vec<Option<ModeInfo>> {
+    let mi_rows_us = mi_rows as usize;
+    let mi_cols_us = mi_cols as usize;
+    let mut mi_grid: Vec<Option<ModeInfo>> = vec![None; mi_rows_us * mi_cols_us];
+
+    let sb_cols = mi_cols_us / 8;
+    let sb_rows = mi_rows_us / 8;
+    for sb_row in 0..sb_rows {
+        for sb_col in 0..sb_cols {
+            let leaves = &sb_partitions[sb_row * sb_cols + sb_col];
+            for leaf in leaves {
+                let leaf_mi_row = sb_row * 8 + leaf.mi_row_in_sb;
+                let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
+                let cell = ModeInfo {
+                    block_size: leaf.leaf_bsize,
+                    tx_size: max_txsize(leaf.leaf_bsize),
+                    skip: false,
+                    segment_id: 0,
+                    seg_id_predicted: false,
+                    mode: BlockMode::Intra {
+                        y_mode: IntraMode::Dc,
+                        uv_mode: IntraMode::Dc,
+                    },
+                    bmi: Default::default(),
+                };
+                splat_leaf_mode_info(
+                    &mut mi_grid,
+                    mi_cols_us,
+                    leaf_mi_row,
+                    leaf_mi_col,
+                    leaf.leaf_bsize,
+                    cell,
+                );
+            }
+        }
+    }
+    mi_grid
+}
+
+/// Build the inter mi_grid from the per-SB partition decisions. Each
+/// leaf gets a single-ref LASTFRAME ZEROMV `skip = true` `ModeInfo`
+/// splatted across every 8×8 cell it covers.
+fn build_inter_mi_grid(
+    mi_rows: u32,
+    mi_cols: u32,
+    sb_partitions: &[Vec<PartitionLeafDesc>],
+) -> Vec<Option<ModeInfo>> {
+    let mi_rows_us = mi_rows as usize;
+    let mi_cols_us = mi_cols as usize;
+    let mut mi_grid: Vec<Option<ModeInfo>> = vec![None; mi_rows_us * mi_cols_us];
+
+    let sb_cols = mi_cols_us / 8;
+    let sb_rows = mi_rows_us / 8;
+    for sb_row in 0..sb_rows {
+        for sb_col in 0..sb_cols {
+            let leaves = &sb_partitions[sb_row * sb_cols + sb_col];
+            for leaf in leaves {
+                let leaf_mi_row = sb_row * 8 + leaf.mi_row_in_sb;
+                let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
+                let cell = ModeInfo {
+                    block_size: leaf.leaf_bsize,
+                    tx_size: max_txsize(leaf.leaf_bsize),
+                    skip: true,
+                    segment_id: 0,
+                    seg_id_predicted: false,
+                    mode: BlockMode::Inter {
+                        mode: InterMode::ZeroMv,
+                        ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                        mvs: [Mv::ZERO; 2],
+                        interp_filter: InterpFilter::EightTap,
+                    },
+                    bmi: Default::default(),
+                };
+                splat_leaf_mode_info(
+                    &mut mi_grid,
+                    mi_cols_us,
+                    leaf_mi_row,
+                    leaf_mi_col,
+                    leaf.leaf_bsize,
+                    cell,
+                );
+            }
+        }
+    }
+    mi_grid
 }
 
 // ---------------------------------------------------------------------------
@@ -441,22 +690,11 @@ fn build_keyframe_packet(
     height: u32,
     base_qindex: u8,
     coef_source: &dyn rvp9_core::bitstream::IntraCoefSource,
+    sb_partitions: &[Vec<PartitionLeafDesc>],
 ) -> Result<Vec<u8>, EncodeError> {
     let mi_rows = height / 8;
     let mi_cols = width / 8;
-    let cell = ModeInfo {
-        block_size: BlockSize::Block64x64,
-        tx_size: TxSize::Tx32x32,
-        skip: false,
-        segment_id: 0,
-        seg_id_predicted: false,
-        mode: BlockMode::Intra {
-            y_mode: IntraMode::Dc,
-            uv_mode: IntraMode::Dc,
-        },
-        bmi: Default::default(),
-    };
-    let mi_grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+    let mi_grid = build_kf_mi_grid(mi_rows, mi_cols, sb_partitions);
 
     let pre_fc_template = FrameContext::new_default();
     let mut pre_fc = pre_fc_template.clone();
@@ -586,25 +824,11 @@ fn build_inter_zero_mv_packet(
     width: u32,
     height: u32,
     base_qindex: u8,
+    sb_partitions: &[Vec<PartitionLeafDesc>],
 ) -> Result<Vec<u8>, EncodeError> {
     let mi_rows = height / 8;
     let mi_cols = width / 8;
-    let inter_cell = ModeInfo {
-        block_size: BlockSize::Block64x64,
-        tx_size: TxSize::Tx32x32,
-        skip: true,
-        segment_id: 0,
-        seg_id_predicted: false,
-        mode: BlockMode::Inter {
-            mode: InterMode::ZeroMv,
-            ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
-            mvs: [Mv::ZERO; 2],
-            interp_filter: InterpFilter::EightTap,
-        },
-        bmi: Default::default(),
-    };
-    let mi_grid: Vec<Option<ModeInfo>> =
-        vec![Some(inter_cell); (mi_rows * mi_cols) as usize];
+    let mi_grid = build_inter_mi_grid(mi_rows, mi_cols, sb_partitions);
 
     let mut pre_fc = FrameContext::new_default();
     let post_fc = pre_fc.clone();
@@ -1074,5 +1298,169 @@ mod tests {
         let mut dec = Decoder::new();
         let frames = decode_packet(&mut dec, &pkt.data);
         let _ = dec.decode_frame(&frames[0]).expect("decode strided kf");
+    }
+
+    /// xorshift32-based pseudo-random byte fill — deterministic across
+    /// runs so the partition picker can't flicker its decisions.
+    fn xorshift_y_plane(w: usize, h: usize, seed: u32) -> Vec<u8> {
+        let mut buf = vec![0u8; w * h];
+        let mut state = seed.max(1);
+        for b in buf.iter_mut() {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            *b = (state & 0xFF) as u8;
+        }
+        buf
+    }
+
+    /// Count distinct block sizes in the decoder's recovered mi_grid.
+    fn count_distinct_block_sizes(grid: &[Option<ModeInfo>]) -> usize {
+        let mut sizes: std::collections::BTreeSet<BlockSize> = std::collections::BTreeSet::new();
+        for cell in grid.iter().flatten() {
+            sizes.insert(cell.block_size);
+        }
+        sizes.len()
+    }
+
+    /// F10.1a KEY ORACLE — chaotic keyframe input drives the F8.2
+    /// picker into a non-uniform partition, and the full bitstream
+    /// round-trips through the real decoder (every cell of the
+    /// recovered mi_grid is populated, and at least one cell is
+    /// smaller than Block64x64).
+    #[test]
+    fn encode_keyframe_with_chaotic_input_uses_split_partition() {
+        let cfg = EncoderConfig {
+            width: 64,
+            height: 64,
+            framerate: 30.0,
+            target_bitrate_bps: 2_000_000,
+            gop_length: 30,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+
+        let y = xorshift_y_plane(64, 64, 0xC0FFEE);
+        let u = vec![128u8; 32 * 32];
+        let v = vec![128u8; 32 * 32];
+
+        let pkt = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        assert_eq!(pkt.frame_kind, FrameKind::Key);
+
+        let mut dec = Decoder::new();
+        let frames = decode_packet(&mut dec, &pkt.data);
+        assert_eq!(frames.len(), 1);
+        let _ = dec
+            .decode_frame(&frames[0])
+            .expect("decode_frame must accept the chaotic-input KF");
+
+        let grid = dec.last_frame_mi_grid();
+        // Every cell populated.
+        for cell in grid.iter() {
+            assert!(cell.is_some(), "every mi-cell must be populated");
+        }
+        // Partition split somewhere — at least one cell is not Block64x64.
+        let any_split = grid
+            .iter()
+            .any(|cell| cell.map(|c| c.block_size != BlockSize::Block64x64).unwrap_or(false));
+        assert!(
+            any_split,
+            "F8.2 should have split the chaotic-input KF into sub-64x64 leaves; \
+             distinct sizes seen = {}",
+            count_distinct_block_sizes(grid),
+        );
+    }
+
+    /// F10.1a — Flat input keeps the picker on `Block64x64` (the F8.2
+    /// "no-split" outcome). Decoder must recover an all-Block64x64
+    /// mi_grid.
+    #[test]
+    fn encode_keyframe_with_flat_input_uses_64x64_partition() {
+        let cfg = EncoderConfig {
+            width: 64,
+            height: 64,
+            framerate: 30.0,
+            target_bitrate_bps: 2_000_000,
+            gop_length: 30,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+
+        // Fully flat — variance is zero everywhere; the picker should
+        // emit Block64x64 (no splits).
+        let y = vec![128u8; 64 * 64];
+        let u = vec![128u8; 32 * 32];
+        let v = vec![128u8; 32 * 32];
+
+        let pkt = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        assert_eq!(pkt.frame_kind, FrameKind::Key);
+
+        let mut dec = Decoder::new();
+        let frames = decode_packet(&mut dec, &pkt.data);
+        let _ = dec
+            .decode_frame(&frames[0])
+            .expect("decode_frame must accept the flat-input KF");
+
+        // libvpx's KF path forces a SPLIT at the top level for
+        // keyframes (`set_vt_partitioning:504-508`). F8.2 deliberately
+        // doesn't (documented divergence in `partition.rs`), so an
+        // all-flat KF lands on a single Block64x64 leaf — same shape
+        // as the F10.0-era path. Assert that here.
+        let grid = dec.last_frame_mi_grid();
+        for cell in grid.iter() {
+            let cell = cell.expect("every mi-cell must be populated");
+            assert_eq!(
+                cell.block_size,
+                BlockSize::Block64x64,
+                "flat KF should not split"
+            );
+        }
+    }
+
+    /// F10.1a — Inter frame whose source differs from the previous
+    /// reference splits and round-trips. (The reconstruction equals
+    /// the reference under ZEROMV/skip=true so the picker's outcome
+    /// is observable through the mi_grid shape, not through pixel
+    /// content.)
+    #[test]
+    fn encode_inter_with_chaotic_diff_uses_split_partition() {
+        let cfg = EncoderConfig {
+            width: 64,
+            height: 64,
+            framerate: 30.0,
+            target_bitrate_bps: 2_000_000,
+            gop_length: 30,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+
+        // Frame 0 — flat keyframe. The encoder's `last_recon_*` then
+        // matches the reconstruction of this flat KF (a flat plane).
+        let y0 = vec![128u8; 64 * 64];
+        let u0 = vec![128u8; 32 * 32];
+        let v0 = vec![128u8; 32 * 32];
+        let kf = enc.encode_frame(&yuv_view(&y0, &u0, &v0, 64)).unwrap();
+        assert_eq!(kf.frame_kind, FrameKind::Key);
+
+        // Frame 1 — chaotic Y; UV unchanged. The picker sees high
+        // variance between src and the flat reference (Y) and should
+        // split.
+        let y1 = xorshift_y_plane(64, 64, 0xDEADBEEF);
+        let inter = enc.encode_frame(&yuv_view(&y1, &u0, &v0, 64)).unwrap();
+        assert_eq!(inter.frame_kind, FrameKind::Inter);
+
+        let mut dec = Decoder::new();
+        let frames_kf = decode_packet(&mut dec, &kf.data);
+        let _ = dec.decode_frame(&frames_kf[0]).expect("decode kf");
+        let frames_inter = decode_packet(&mut dec, &inter.data);
+        let _ = dec
+            .decode_frame(&frames_inter[0])
+            .expect("decode chaotic-diff inter");
+
+        let grid = dec.last_frame_mi_grid();
+        let any_split = grid
+            .iter()
+            .any(|cell| cell.map(|c| c.block_size != BlockSize::Block64x64).unwrap_or(false));
+        assert!(
+            any_split,
+            "F8.2 should have split the chaotic-diff inter into sub-64x64 leaves"
+        );
     }
 }
