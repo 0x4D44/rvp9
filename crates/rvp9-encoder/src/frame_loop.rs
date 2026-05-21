@@ -418,10 +418,17 @@ impl StreamEncoder {
         // `pick_intra_mode_luma`, run the F5.1 simulator with the
         // picked modes. Output goes directly into our reference
         // buffers — those ARE the reconstruction.
+        //
+        // AQ.1 — Stage 4a behaviour: AQ is OFF in the frame loop, so
+        // pass an all-`None` `seg_q_deltas` table. The simulator's
+        // per-leaf effective qindex collapses to `q_index`. AQ.3 will
+        // replace this with the cyclic-refresh state machine's output.
+        let seg_q_deltas: [Option<i16>; 8] = [None; 8];
         let coef_source = pick_and_simulate_intra_encode_partitions(
             w,
             h,
             q_index,
+            &seg_q_deltas,
             input_yuv,
             (
                 &mut self.last_recon_y,
@@ -496,6 +503,9 @@ impl StreamEncoder {
                             picked_mode: InterMode::ZeroMv,
                             picked_mv: Mv::ZERO,
                             skip: true,
+                            // AQ.1 — carry segment_id forward from the
+                            // intra-shaped partition descriptor.
+                            segment_id: l.segment_id,
                         })
                         .collect()
                 })
@@ -512,10 +522,14 @@ impl StreamEncoder {
         let mut new_recon_u = vec![0u8; uvw * uvh];
         let mut new_recon_v = vec![0u8; uvw * uvh];
 
+        // AQ.1 — Stage 4a: AQ off in the frame loop. AQ.3 will swap in
+        // the cyclic-refresh deltas.
+        let seg_q_deltas: [Option<i16>; 8] = [None; 8];
         let coef_source = pick_and_simulate_inter_encode_partitions(
             w,
             h,
             q_index,
+            &seg_q_deltas,
             input_yuv,
             (&self.last_recon_y, &self.last_recon_u, &self.last_recon_v),
             (&mut new_recon_y, &mut new_recon_u, &mut new_recon_v),
@@ -664,6 +678,9 @@ fn leaves_from_decision(decision: &PartitionDecision) -> Vec<PartitionLeafDesc> 
                 // `pick_and_simulate_intra_encode_partitions`. The
                 // inter path doesn't read it.
                 predicted_y_mode: IntraMode::Dc,
+                // AQ.1 — default to segment 0 (no Q-delta). AQ.3 will
+                // populate this from the cyclic-refresh state machine.
+                segment_id: 0,
             });
         }
     }
@@ -1698,6 +1715,7 @@ mod tests {
                     mi_col_in_sb: c,
                     leaf_bsize: BlockSize::Block8x8,
                     predicted_y_mode: IntraMode::V,
+                    segment_id: 0,
                 });
             }
         }
@@ -1718,10 +1736,12 @@ mod tests {
         let mut u_recon = vec![0u8; ((w / 2) * (h / 2)) as usize];
         let mut v_recon = vec![0u8; ((w / 2) * (h / 2)) as usize];
 
+        let seg_q_deltas: [Option<i16>; 8] = [None; 8];
         let coef_source = simulate_dc_intra_encode_partitions(
             w,
             h,
             q_index,
+            &seg_q_deltas,
             (&y_input, &u_input, &v_input),
             (&mut y_recon, &mut u_recon, &mut v_recon),
             &sb_partitions,

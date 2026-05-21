@@ -1123,6 +1123,32 @@ fn f5_uv_plane_block_size(bsize: BlockSize) -> BlockSize {
     }
 }
 
+/// AQ.1 — compute the effective qindex for a leaf, given the base
+/// qindex and the per-segment Q-delta table from the uncompressed
+/// header (`SegmentationParams.feature_data[seg][SEG_LVL_ALT_Q]`).
+///
+/// Mirrors the decoder's `tile.rs::plane_dequant` derivation in
+/// delta-mode (`abs_delta = false`, which is the only mode the libvpx
+/// cyclic-refresh path / AQ.0–AQ.3 ever emits today). The returned
+/// value is clamped to `0..=MAX_Q` (where `MAX_Q == 255`).
+///
+/// `segment_id == 0` with `seg_q_deltas[0] = None` is the
+/// AQ-disabled common case — returns `base_qindex` unchanged. This
+/// preserves Stage 4a byte-exact behaviour when the frame loop passes
+/// an all-`None` table.
+#[inline]
+#[must_use]
+pub(crate) fn effective_qindex_for_segment(
+    base_qindex: u8,
+    segment_id: u8,
+    seg_q_deltas: &[Option<i16>; 8],
+) -> u8 {
+    match seg_q_deltas[segment_id as usize] {
+        Some(delta) => (i32::from(base_qindex) + i32::from(delta)).clamp(0, 255) as u8,
+        None => base_qindex,
+    }
+}
+
 /// Per-leaf descriptor handed to
 /// [`simulate_dc_intra_encode_partitions`] — describes one intra leaf
 /// inside a 64×64 SB.
@@ -1135,6 +1161,10 @@ fn f5_uv_plane_block_size(bsize: BlockSize) -> BlockSize {
 /// leaf form ([`simulate_dc_intra_encode`]) and the partition-aware
 /// frame loop's pre-F10.1b path use `IntraMode::Dc`; F10.1b drives this
 /// from [`crate::mode_decision::intra::pick_intra_mode_luma`].
+/// `segment_id` selects the per-segment Q-delta entry in
+/// `seg_q_deltas` that the forward-quant path uses for this leaf
+/// (AQ.1). For AQ-disabled frames callers leave it `0` and the
+/// simulator's `seg_q_deltas` will be all-`None`.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PartitionLeafDesc {
     /// Leaf's row inside the SB, in 8×8 mi units (0..=7).
@@ -1147,6 +1177,9 @@ pub(crate) struct PartitionLeafDesc {
     /// Intra Y-mode the simulator should use for prediction +
     /// forward/inverse transforms (luma only — UV stays DC for F10.1b).
     pub predicted_y_mode: IntraMode,
+    /// AQ.1 — segment id `0..=7` driving the per-leaf effective
+    /// qindex via [`effective_qindex_for_segment`]. `0` for AQ-off.
+    pub segment_id: u8,
 }
 
 /// Encoder simulator: per-TX-block predict → residual → fdct →
@@ -1181,12 +1214,17 @@ pub(crate) fn simulate_dc_intra_encode(
             mi_col_in_sb: 0,
             leaf_bsize: BlockSize::Block64x64,
             predicted_y_mode: IntraMode::Dc,
+            segment_id: 0,
         }]);
     }
+    // AQ-off path — all-`None` deltas table preserves Stage 4a
+    // behaviour (every leaf uses `base_qindex` verbatim).
+    let seg_q_deltas: [Option<i16>; 8] = [None; 8];
     simulate_dc_intra_encode_partitions(
         width,
         height,
         base_qindex,
+        &seg_q_deltas,
         input_yuv,
         recon_yuv_out,
         &sb_partitions,
@@ -1210,6 +1248,7 @@ pub(crate) fn simulate_dc_intra_encode_partitions(
     width: u32,
     height: u32,
     base_qindex: u8,
+    seg_q_deltas: &[Option<i16>; 8],
     input_yuv: (&[u8], &[u8], &[u8]),
     recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
     sb_partitions: &[Vec<PartitionLeafDesc>],
@@ -1231,6 +1270,7 @@ pub(crate) fn simulate_dc_intra_encode_partitions(
         width,
         height,
         base_qindex,
+        seg_q_deltas,
         input_yuv,
         recon_yuv_out,
         sb_partitions,
@@ -1244,6 +1284,7 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
     width: u32,
     height: u32,
     base_qindex: u8,
+    seg_q_deltas: &[Option<i16>; 8],
     input_yuv: (&[u8], &[u8], &[u8]),
     recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
     sb_partitions: &[Vec<PartitionLeafDesc>],
@@ -1268,10 +1309,6 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
     let h = height as usize;
     let uvw = w / 2;
     let uvh = h / 2;
-    let qi = base_qindex as i32;
-
-    let qp_y = init_plane_quantizers(qi, QuantizerDeltas::Y);
-    let qp_uv = init_plane_quantizers(qi, QuantizerDeltas::Y); // delta-q all zero
 
     let mut out = VecBackedIntraCoefSource::new(width, height);
 
@@ -1299,6 +1336,19 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
                 // scan order at sizes < Tx32x32 (Tx32x32 always uses
                 // DctDct, mirroring the decoder + writer).
                 let leaf_y_mode = leaf.predicted_y_mode;
+
+                // AQ.1 — per-leaf effective qindex. When AQ is off
+                // (`seg_q_deltas` all `None`), this collapses to
+                // `base_qindex` and the recomputed `qp_y` / `qp_uv` are
+                // byte-equal to the old per-frame values, so the
+                // Stage 4a tests are unaffected.
+                let leaf_qindex = i32::from(effective_qindex_for_segment(
+                    base_qindex,
+                    leaf.segment_id,
+                    seg_q_deltas,
+                ));
+                let qp_y = init_plane_quantizers(leaf_qindex, QuantizerDeltas::Y);
+                let qp_uv = init_plane_quantizers(leaf_qindex, QuantizerDeltas::Y);
 
                 // Iterate planes: 0=Y, 1=U, 2=V.
                 for plane in 0..3 {
@@ -1639,6 +1689,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     width: u32,
     height: u32,
     base_qindex: u8,
+    seg_q_deltas: &[Option<i16>; 8],
     input_yuv: (&[u8], &[u8], &[u8]),
     recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
     sb_partitions: &mut [Vec<PartitionLeafDesc>],
@@ -1678,7 +1729,6 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     // exactly the data the picker needs too. So the picker's `above_
     // pixels` / `left_pixels` come from the same buffer.
 
-    let quantizer = init_plane_quantizers(i32::from(base_qindex), QuantizerDeltas::Y);
     let y_mode_costs = intra_y_mode_costs_kf_table();
 
     // Zero recon up-front — the per-leaf simulator call expects the
@@ -1763,6 +1813,22 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                 // picker. Per-32×32 sub-block picking inside a 64×64
                 // leaf is on the F8.0 picker's roadmap; for v1 we get
                 // DC on the (rare) full-SB-no-split leaves.
+                // AQ.1 — per-leaf effective qindex feeds BOTH the
+                // picker's RD evaluation AND the simulator's forward-
+                // quant init. The simulator gets it indirectly via the
+                // per-leaf `seg_q_deltas` lookup against the leaf's
+                // `segment_id`; the picker takes the resolved value
+                // directly. When AQ is off (all-`None` deltas) this
+                // collapses to `base_qindex`.
+                let leaf_qindex = effective_qindex_for_segment(
+                    base_qindex,
+                    sb_partitions[sb_idx][leaf_idx].segment_id,
+                    seg_q_deltas,
+                );
+                let leaf_quantizer = init_plane_quantizers(
+                    i32::from(leaf_qindex),
+                    QuantizerDeltas::Y,
+                );
                 let picked_mode = if leaf_bsize == BlockSize::Block64x64 {
                     IntraMode::Dc
                 } else {
@@ -1781,8 +1847,8 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                         top_left_pixel,
                         have_above,
                         have_left,
-                        quantizer: &quantizer,
-                        q_index: base_qindex,
+                        quantizer: &leaf_quantizer,
+                        q_index: leaf_qindex,
                         frame_kind:
                             rvp9_core::bitstream::header::FrameKind::KeyFrame,
                         above_mode_ctx,
@@ -1823,6 +1889,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     width,
                     height,
                     base_qindex,
+                    seg_q_deltas,
                     input_yuv,
                     (
                         &mut *recon_yuv_out.0,
@@ -1875,6 +1942,9 @@ pub(crate) struct InterPartitionLeafDesc {
     /// `true` ⇒ this leaf falls back to the skip-true / zero-residual
     /// path (e.g. Block8x8 leaves where F8.1 doesn't apply).
     pub skip: bool,
+    /// AQ.1 — segment id `0..=7` driving the per-leaf effective
+    /// qindex via [`effective_qindex_for_segment`]. `0` for AQ-off.
+    pub segment_id: u8,
 }
 
 /// F10.1c — Drive the F8.1 inter mode picker per leaf and run the
@@ -1906,10 +1976,14 @@ pub(crate) struct InterPartitionLeafDesc {
 ///
 /// Walks SBs/leaves in raster order — same convention as the F10.1b
 /// intra simulator + writer.
+#[allow(clippy::too_many_arguments)] // AQ.1 added `seg_q_deltas`; the
+// remaining args are all load-bearing per-frame inputs that don't
+// reduce to a meaningful struct yet — revisit when AQ.3 lands.
 pub(crate) fn pick_and_simulate_inter_encode_partitions(
     width: u32,
     height: u32,
     base_qindex: u8,
+    seg_q_deltas: &[Option<i16>; 8],
     input_yuv: (&[u8], &[u8], &[u8]),
     last_recon_yuv: (&[u8], &[u8], &[u8]),
     recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
@@ -1946,11 +2020,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let src_y = PlaneRef { data: input_yuv.0, stride: w, width: w, height: h };
     let ref_y = PlaneRef { data: last_recon_yuv.0, stride: w, width: w, height: h };
 
-    // Picker harness — built once per frame.
+    // Picker harness — built once per frame. The per-leaf
+    // `PlaneQuantizers` is rebuilt inside the SB walk below (AQ.1)
+    // because it depends on the leaf's `segment_id`.
     let inter_costs = inter_mode_costs(&FrameContext::new_default());
     let mv_costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, /* allow_hp = */ false);
     let site_config = init_dsmotion_compensation(w as i32);
-    let quantizer = init_plane_quantizers(i32::from(base_qindex), QuantizerDeltas::Y);
 
     // Inter-frame `FrameKind` for `compute_rd_mult`. Only the variant
     // matters; the inner fields don't drive the picker.
@@ -2040,6 +2115,21 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // this matches the picker's `MvCandidates::default()`.
                 let mvc = MvCandidates::default();
 
+                // AQ.1 — per-leaf effective qindex from the leaf's
+                // `segment_id` + the frame-level `seg_q_deltas` table.
+                // Feeds BOTH the picker's RD evaluation and the
+                // forward-quant `quantizer` used in
+                // `inter_forward_quant_one_tx` below.
+                let leaf_qindex = effective_qindex_for_segment(
+                    base_qindex,
+                    sb_partitions[sb_idx][leaf_idx].segment_id,
+                    seg_q_deltas,
+                );
+                let quantizer = init_plane_quantizers(
+                    i32::from(leaf_qindex),
+                    QuantizerDeltas::Y,
+                );
+
                 let params = InterModeSearchParams {
                     block_size: leaf_bsize,
                     src_plane: &src_y,
@@ -2052,7 +2142,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     inter_mode_costs: &inter_costs,
                     inter_mode_ctx: 0,
                     quantizer: &quantizer,
-                    q_index: base_qindex,
+                    q_index: leaf_qindex,
                     allow_hp: false,
                     frame_kind,
                 };
@@ -3062,5 +3152,229 @@ mod tests {
                 );
             }
         }
+    }
+
+    // -----------------------------------------------------------------
+    // AQ.1 — per-segment Q-delta drives the forward quant init.
+    //
+    // The four scalar tests below pin down the
+    // `effective_qindex_for_segment` helper's table semantics + clamp
+    // behaviour. Test #5 is the key oracle: it runs the simulator on
+    // two equally-sized leaves whose only difference is `segment_id`
+    // and asserts that the simulator's per-TX dq coefficients differ
+    // in the direction implied by the Q-delta. Without that final
+    // assertion, the scalar tests are necessary-but-not-sufficient
+    // — they prove the helper is correct in isolation but say nothing
+    // about whether the simulator actually consults it on the hot path.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn effective_qindex_for_segment_no_delta_returns_base() {
+        let seg_q_deltas: [Option<i16>; 8] = [None; 8];
+        assert_eq!(effective_qindex_for_segment(100, 0, &seg_q_deltas), 100);
+        // Non-zero segment with no delta entry also returns base.
+        assert_eq!(effective_qindex_for_segment(100, 4, &seg_q_deltas), 100);
+    }
+
+    #[test]
+    fn effective_qindex_for_segment_applies_negative_delta() {
+        let mut seg_q_deltas: [Option<i16>; 8] = [None; 8];
+        seg_q_deltas[1] = Some(-10);
+        assert_eq!(effective_qindex_for_segment(100, 1, &seg_q_deltas), 90);
+        // Other segments still take the base path.
+        assert_eq!(effective_qindex_for_segment(100, 0, &seg_q_deltas), 100);
+        assert_eq!(effective_qindex_for_segment(100, 2, &seg_q_deltas), 100);
+    }
+
+    #[test]
+    fn effective_qindex_for_segment_clamps_high() {
+        let mut seg_q_deltas: [Option<i16>; 8] = [None; 8];
+        seg_q_deltas[1] = Some(20);
+        assert_eq!(effective_qindex_for_segment(250, 1, &seg_q_deltas), 255);
+    }
+
+    #[test]
+    fn effective_qindex_for_segment_clamps_low() {
+        let mut seg_q_deltas: [Option<i16>; 8] = [None; 8];
+        seg_q_deltas[1] = Some(-20);
+        assert_eq!(effective_qindex_for_segment(5, 1, &seg_q_deltas), 0);
+    }
+
+    /// AQ.1 KEY ORACLE — run the simulator on two equally-shaped 8×8
+    /// leaves placed at two different positions in a single 64×64 SB,
+    /// with the SAME input pixel values. Leaf A carries `segment_id =
+    /// 0` (no Q-delta); leaf B carries `segment_id = 1` with
+    /// `seg_q_deltas[1] = -20` (= finer quant, smaller dequant step).
+    ///
+    /// The simulator's per-TX `dequant` value scales with the
+    /// effective qindex (`ac_quant(qindex, 0)` for AC bins, monotone
+    /// non-decreasing in qindex per `rvp9_core::quant::tests::
+    /// luts_are_monotonic_nondecreasing`). With a -20 delta on top of
+    /// `base_qindex = 100` the per-segment-1 qindex is 80, so AC
+    /// dequant for seg 1 should be strictly LESS than for seg 0.
+    ///
+    /// We don't compare full qcoeff vectors (those depend on edge
+    /// neighbour state which differs by leaf position); instead we
+    /// reach into the simulator's internals by computing the
+    /// `PlaneQuantizers` for both qindices and asserting they differ
+    /// in the expected direction. The simulator's per-leaf
+    /// `init_plane_quantizers` call uses the same formula, so this
+    /// proves the per-segment Q-delta math reaches the forward-quant
+    /// init.
+    ///
+    /// As the integration oracle: we also check that the simulator's
+    /// `qcoeff` outputs for leaf A vs leaf B genuinely differ when fed
+    /// identical input pixels in identical neighbour contexts (i.e.
+    /// the dq path is wired live, not a no-op).
+    #[test]
+    fn encode_kf_with_per_segment_q_delta_quantizes_differently_per_segment() {
+        use rvp9_core::quant::forward::{
+            QuantizerDeltas, init_plane_quantizers,
+        };
+
+        // (a) Helper-level proof: two qindices yield different
+        // `PlaneQuantizers` (different `dequant` AC values).
+        let base_qindex: u8 = 100;
+        let mut seg_q_deltas: [Option<i16>; 8] = [None; 8];
+        seg_q_deltas[1] = Some(-20);
+        let q0 = effective_qindex_for_segment(base_qindex, 0, &seg_q_deltas);
+        let q1 = effective_qindex_for_segment(base_qindex, 1, &seg_q_deltas);
+        assert_eq!(q0, 100, "seg 0 qindex must equal base");
+        assert_eq!(q1, 80, "seg 1 qindex must equal base + (-20)");
+        let pq0 = init_plane_quantizers(i32::from(q0), QuantizerDeltas::Y);
+        let pq1 = init_plane_quantizers(i32::from(q1), QuantizerDeltas::Y);
+        assert!(
+            pq1.dequant[1] < pq0.dequant[1],
+            "seg 1 AC dequant (q={q1}) must be < seg 0 AC dequant (q={q0}): \
+             got pq1.dequant[1] = {}, pq0.dequant[1] = {}",
+            pq1.dequant[1],
+            pq0.dequant[1],
+        );
+
+        // (b) Simulator-level proof: feed the simulator a SB whose two
+        // 8×8 leaves carry identical input pixels but different
+        // segment_ids. The simulator must produce different qcoeff
+        // vectors for the two leaves — that's the "AQ.1 is wired"
+        // signal. (Leaf neighbour state differs by position, so we
+        // don't pin exact bit patterns; we only check that the
+        // qcoeffs are non-equal.)
+        //
+        // Layout: single 64×64 SB, all 64 cells are 8×8 leaves. Cell
+        // at (mi_row_in_sb=0, mi_col_in_sb=0) → seg 0. Cell at
+        // (mi_row_in_sb=4, mi_col_in_sb=0) → seg 1. Both leaves
+        // receive the same input pixel pattern (we tile-paint the
+        // same 8×8 block over the whole 64×64 frame).
+        let w: u32 = 64;
+        let h: u32 = 64;
+        let mut leaves = Vec::with_capacity(64);
+        for r in 0..8usize {
+            for c in 0..8usize {
+                let seg = if r == 0 && c == 0 {
+                    0
+                } else if r == 4 && c == 0 {
+                    1
+                } else {
+                    0
+                };
+                leaves.push(PartitionLeafDesc {
+                    mi_row_in_sb: r,
+                    mi_col_in_sb: c,
+                    leaf_bsize: BlockSize::Block8x8,
+                    predicted_y_mode: IntraMode::Dc,
+                    segment_id: seg,
+                });
+            }
+        }
+        let sb_partitions = vec![leaves];
+
+        // Tile-painted Y: same 8×8 block repeated across the frame so
+        // the two seg-0 / seg-1 leaves see input data of the same
+        // visual shape. (Note: their neighbour-recon contexts still
+        // differ — but the residual is identical only at the top-left
+        // 8×8 of the SB where there are no neighbours; for other
+        // leaves the neighbour context is partial. We rely on the
+        // leaves' qcoeff outputs simply being NOT equal to prove the
+        // dq path is active per-leaf.)
+        let y_input: Vec<u8> = (0..(w * h) as usize)
+            .map(|i| {
+                let r = i / (w as usize);
+                let c = i % (w as usize);
+                let r8 = r % 8;
+                let c8 = c % 8;
+                (128i32 + (r8 as i32) * 5 + (c8 as i32) * 3).clamp(0, 255) as u8
+            })
+            .collect();
+        let u_input = vec![128u8; ((w / 2) * (h / 2)) as usize];
+        let v_input = vec![128u8; ((w / 2) * (h / 2)) as usize];
+
+        let mut y_recon = vec![0u8; (w * h) as usize];
+        let mut u_recon = vec![0u8; ((w / 2) * (h / 2)) as usize];
+        let mut v_recon = vec![0u8; ((w / 2) * (h / 2)) as usize];
+
+        // Two simulator runs: one with `seg_q_deltas` empty (Stage 4a
+        // baseline) and one with a -20 delta for seg 1. The seg 0
+        // leaf at (0, 0) must produce identical qcoeffs across both
+        // runs (its effective qindex doesn't change). The seg 1 leaf
+        // at (mi_row=4, mi_col=0) must produce DIFFERENT qcoeffs
+        // between the two runs (its effective qindex shifts from
+        // 100 → 80).
+        let mut y_recon_base = y_recon.clone();
+        let mut u_recon_base = u_recon.clone();
+        let mut v_recon_base = v_recon.clone();
+        let baseline_deltas: [Option<i16>; 8] = [None; 8];
+        let base_coefs = simulate_dc_intra_encode_partitions(
+            w,
+            h,
+            base_qindex,
+            &baseline_deltas,
+            (&y_input, &u_input, &v_input),
+            (&mut y_recon_base, &mut u_recon_base, &mut v_recon_base),
+            &sb_partitions,
+        );
+        let aq_coefs = simulate_dc_intra_encode_partitions(
+            w,
+            h,
+            base_qindex,
+            &seg_q_deltas,
+            (&y_input, &u_input, &v_input),
+            (&mut y_recon, &mut u_recon, &mut v_recon),
+            &sb_partitions,
+        );
+
+        // Pull the Y qcoeff vector for the seg-1 leaf
+        // (mi_row=4, mi_col=0; plane 0; tx_x4_local=0, tx_y4_local=0).
+        let key_seg1 = (4usize, 0usize, 0usize, 0usize, 0usize);
+        let (base_qc_seg1, base_eob_seg1) =
+            base_coefs.blocks.get(&key_seg1).expect("seg1 leaf coefs missing in baseline");
+        let (aq_qc_seg1, aq_eob_seg1) =
+            aq_coefs.blocks.get(&key_seg1).expect("seg1 leaf coefs missing in AQ run");
+        // The two runs must produce DIFFERENT qcoeffs for the seg 1
+        // leaf — that's the smoking gun that per-segment Q-delta
+        // reaches the forward-quant init.
+        assert!(
+            base_qc_seg1 != aq_qc_seg1 || base_eob_seg1 != aq_eob_seg1,
+            "AQ.1 KEY ORACLE: seg 1 leaf qcoeffs identical between baseline \
+             (no delta) and AQ (delta=-20) runs — per-segment Q math is NOT \
+             reaching the forward-quant init. \
+             base_qc = {base_qc_seg1:?}, aq_qc = {aq_qc_seg1:?}, \
+             base_eob = {base_eob_seg1}, aq_eob = {aq_eob_seg1}",
+        );
+
+        // The seg-0 leaf at (0, 0) must produce IDENTICAL qcoeffs
+        // across the two runs — its qindex doesn't change.
+        let key_seg0 = (0usize, 0usize, 0usize, 0usize, 0usize);
+        let (base_qc_seg0, base_eob_seg0) =
+            base_coefs.blocks.get(&key_seg0).expect("seg0 leaf coefs missing in baseline");
+        let (aq_qc_seg0, aq_eob_seg0) =
+            aq_coefs.blocks.get(&key_seg0).expect("seg0 leaf coefs missing in AQ run");
+        assert_eq!(
+            base_qc_seg0, aq_qc_seg0,
+            "seg 0 leaf qcoeffs must be IDENTICAL across the two runs \
+             (no Q-delta applies to segment 0)",
+        );
+        assert_eq!(
+            base_eob_seg0, aq_eob_seg0,
+            "seg 0 leaf eob must be IDENTICAL across the two runs",
+        );
     }
 }
