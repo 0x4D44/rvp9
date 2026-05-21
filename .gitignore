@@ -53,6 +53,12 @@ bench/results/*
 crates/rvp9-fuzz/corpus/
 crates/rvp9-fuzz/artifacts/
 crates/rvp9-fuzz/coverage/
+# Standalone-workspace target dir for the fuzz crate (the empty
+# `[workspace]` in `crates/rvp9-fuzz/Cargo.toml` makes cargo-fuzz
+# resolve its own target/ here, separate from the repo-root target/.
+# Both must be excluded; the root `target/` rule above doesn't match
+# this path because it isn't anchored at the crate root.
+crates/rvp9-fuzz/target/
 
 # libvpx build outputs live at /build/libvpx/ (NOT inside the submodule —
 # that path collides with libvpx's source-tree `build/` directory).
