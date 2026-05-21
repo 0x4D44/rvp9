@@ -56,6 +56,64 @@ pub fn read_segment_id(r: &mut BoolReader<'_>, tree_probs: &[u8; SEG_TREE_PROBS]
     r.read_tree(&SEGMENT_TREE, tree_probs) as u8
 }
 
+/// Encoder-side mirror of [`read_segment_id`]. Walks [`SEGMENT_TREE`]
+/// from the root to the leaf whose negated value equals `segment_id`,
+/// emitting one bit per internal node against the corresponding
+/// `tree_probs[node >> 1]` probability. Mirrors libvpx
+/// `vp9_write_token` driven by the static segment tree in
+/// `encode_segmentation_map` (`vp9_bitstream.c:78-95`).
+///
+/// # Panics
+///
+/// In debug builds, panics if `segment_id >= MAX_SEGMENTS` (i.e. not in
+/// `0..=7`). Release builds will walk the tree until a positive index
+/// goes out of bounds, which is also a panic.
+pub fn write_segment_id(
+    bw: &mut BoolWriter<'_>,
+    segment_id: u8,
+    tree_probs: &[u8; SEG_TREE_PROBS],
+) {
+    debug_assert!(
+        (segment_id as usize) < MAX_SEGMENTS,
+        "segment_id {segment_id} out of range [0, {MAX_SEGMENTS})",
+    );
+    // DFS helper: does the subtree rooted at `node` contain the
+    // leaf encoded as `-target`? Internal nodes are positive indices;
+    // leaves are non-positive (`-leaf_value`).
+    fn subtree_contains(tree: &[i8], node: i8, target: u8) -> bool {
+        if node <= 0 {
+            (-node) as u8 == target
+        } else {
+            let i = node as usize;
+            subtree_contains(tree, tree[i], target) || subtree_contains(tree, tree[i + 1], target)
+        }
+    }
+
+    let mut i: i32 = 0;
+    loop {
+        let left = SEGMENT_TREE[i as usize];
+        let right = SEGMENT_TREE[i as usize + 1];
+        // Choose the child whose subtree contains the target leaf.
+        let bit: u8 = if subtree_contains(&SEGMENT_TREE, left, segment_id) {
+            0
+        } else {
+            debug_assert!(
+                subtree_contains(&SEGMENT_TREE, right, segment_id),
+                "segment_id {segment_id} not present in SEGMENT_TREE",
+            );
+            1
+        };
+        bw.write(bit, tree_probs[(i >> 1) as usize]);
+        let next = if bit == 0 { left } else { right };
+        if next <= 0 {
+            // Reached the leaf; the negation should match `segment_id`.
+            debug_assert_eq!((-next) as u8, segment_id);
+            return;
+        }
+        i = next as i32;
+    }
+}
+
 /// Inter-frame segmentation-map params: the four-state knob libvpx
 /// extracts from `cm->seg` (`vp9_seg_common.h:42-65`) at the per-block
 /// segment-id decode site.
@@ -1234,6 +1292,50 @@ mod tests {
             let mut r = BoolReader::new(&buf).expect("init");
             let got = read_segment_id(&mut r, &probs);
             assert_eq!(got, target, "round-trip segment_id={target}");
+        }
+    }
+
+    /// AQ.0 — `write_segment_id` ↔ `read_segment_id` round-trip
+    /// for every segment value `0..=7` against uniform p=128 tree
+    /// probs. Encoder-side mirror of `read_segment_id_round_trip`;
+    /// drives the new public writer via the same `BoolReader`
+    /// recovery the per-block decode path uses.
+    #[test]
+    fn write_segment_id_round_trip_via_read_segment_id() {
+        use crate::entropy::BoolWriter;
+
+        let probs = [128u8; SEG_TREE_PROBS];
+        for target in 0u8..(MAX_SEGMENTS as u8) {
+            let mut buf = vec![0u8; 64];
+            let size = {
+                let mut w = BoolWriter::start_encode(&mut buf);
+                write_segment_id(&mut w, target, &probs);
+                // Pad so the reader's lookahead is always satisfied.
+                for _ in 0..16 {
+                    w.write_bit(0);
+                }
+                w.stop_encode().expect("stop_encode")
+            };
+            buf.truncate(size);
+            let mut r = BoolReader::new(&buf).expect("BoolReader::new");
+            let got = read_segment_id(&mut r, &probs);
+            assert_eq!(got, target, "write→read round-trip segment_id={target}");
+        }
+    }
+
+    /// `write_segment_id` accepts every legal segment_id (`0..=7`)
+    /// without panicking. Sanity check that complements the round-trip
+    /// test above; documents the writer's accepted input range.
+    #[test]
+    fn write_segment_id_accepts_full_range() {
+        use crate::entropy::BoolWriter;
+
+        let probs = [128u8; SEG_TREE_PROBS];
+        for target in 0u8..(MAX_SEGMENTS as u8) {
+            let mut buf = vec![0u8; 32];
+            let mut w = BoolWriter::start_encode(&mut buf);
+            write_segment_id(&mut w, target, &probs);
+            let _ = w.stop_encode().expect("stop_encode");
         }
     }
 

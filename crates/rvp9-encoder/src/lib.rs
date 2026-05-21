@@ -70,6 +70,7 @@ use rvp9_core::intra_pred::IntraMode;
 use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, Mv, RefFrame};
 use rvp9_core::transforms::{TxMode, TxSize};
 
+pub mod aq_cyclic_refresh;
 pub mod frame_loop;
 pub(crate) mod loopfilter;
 pub mod rate_control;
@@ -470,6 +471,7 @@ impl Encoder {
                 mi_cols,
                 tile_bounds,
                 &post_fc,
+                /* seg = */ None,
                 &mut coef_ctx,
                 coef_source,
             )?;
@@ -623,6 +625,7 @@ impl Encoder {
                 mi_cols,
                 tile_bounds,
                 &post_fc,
+                /* seg = */ None,
                 &mut coef_ctx,
                 &coef_source,
             )?;
@@ -804,6 +807,7 @@ impl Encoder {
                 mi_rows,
                 mi_cols,
                 tile_bounds,
+                /* seg = */ None,
                 /* prev_mv_grid = */ None,
                 &mut coef_ctx,
                 &coef_source,
@@ -2802,5 +2806,261 @@ mod tests {
             max_err_input_y < 32,
             "max |decoded - input| (Y) = {max_err_input_y} exceeded loose bound"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // AQ.0 — segmentation-map round-trip via the real Decoder
+    //
+    // The encoder's segmentation writer (`write_segment_id` +
+    // `SegmentationWriteParams`) emits per-leaf `segment_id` values
+    // for the `update_map = true, temporal_update = false` case
+    // (libvpx cyclic refresh / AQ mode 3). These integration tests
+    // encode a keyframe whose 64×64 SB carries a non-zero
+    // `segment_id`, decode it through the real `rvp9_decoder::Decoder`,
+    // and assert the recovered `last_frame_mi_grid` carries the same
+    // segment_id at every covered cell.
+    // -----------------------------------------------------------------
+
+    /// AQ.0 test-only helper: build a single-SB keyframe packet whose
+    /// SB carries a uniform `target_segment_id` on every cell, with
+    /// `enabled = true, update_map = true, temporal_update = false`
+    /// and uniform-128 tree_probs. Matches the libvpx cyclic-refresh
+    /// segmentation header but with `update_data = false` (no
+    /// per-segment Q deltas — AQ.3 will wire those).
+    fn build_kf_with_segments(
+        enc: &Encoder,
+        target_segment_id: u8,
+    ) -> Result<Vec<u8>, EncodeError> {
+        use rvp9_core::bitstream::{
+            BitDepth, ChromaFormat, ColorRange, ColorSpace, CompressedHeaderOptions,
+            CompressedHeaderResult, FrameKind, HeaderTail, LoopFilterParams, Profile,
+            QuantizationParams, RawBitWriter, SEG_TREE_PROBS,
+            SegmentationWriteParams as ModesSegParams, UncompressedHeader,
+            write_compressed_header, write_tile_intra_keyframe, write_uncompressed_header,
+        };
+
+        let mi_rows = enc.config.height / 8;
+        let mi_cols = enc.config.width / 8;
+        let cell = ModeInfo {
+            block_size: BlockSize::Block64x64,
+            tx_size: TxSize::Tx32x32,
+            skip: true,
+            segment_id: target_segment_id,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        let mi_grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+
+        // Compressed header (default-FC, tx_mode = AllowTx32x32).
+        let mut pre_fc = FrameContext::new_default();
+        let post_fc = pre_fc.clone();
+        let opts = CompressedHeaderOptions {
+            lossless: false,
+            intra_only: true,
+            interp_filter: InterpFilter::EightTap,
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+        let target = CompressedHeaderResult {
+            tx_mode: TxMode::AllowTx32x32,
+            reference_mode: ReferenceMode::Single,
+        };
+        let mut compressed_buf = vec![0u8; 16 * 1024];
+        let compressed_len = {
+            let mut bw = BoolWriter::start_encode(&mut compressed_buf);
+            write_compressed_header(&mut bw, &mut pre_fc, &post_fc, opts, &target)?;
+            bw.stop_encode()
+                .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
+        };
+        compressed_buf.truncate(compressed_len);
+
+        // Tile data: segmentation enabled with update_map=true,
+        // tree_probs = uniform 128.
+        let tree_probs = [128u8; SEG_TREE_PROBS];
+        let tile_bounds = ModesTileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut tile_buf = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 8 + 1024];
+        let tile_len = {
+            let mut bw = BoolWriter::start_encode(&mut tile_buf);
+            let tile_mi_cols =
+                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
+            let coef_source = AllZeroIntraCoefSource::new();
+            write_tile_intra_keyframe(
+                &mut bw,
+                &mi_grid,
+                mi_rows,
+                mi_cols,
+                tile_bounds,
+                &post_fc,
+                Some(ModesSegParams { tree_probs: &tree_probs }),
+                &mut coef_ctx,
+                &coef_source,
+            )?;
+            bw.stop_encode()
+                .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
+        };
+        tile_buf.truncate(tile_len);
+
+        // Uncompressed header — segmentation enabled, update_map=true,
+        // temporal_update=false, tree_probs[i]=128. `update_data =
+        // false` (AQ.3 will wire feature_data for per-segment Q deltas).
+        let tail = HeaderTail {
+            refresh_frame_context: true,
+            frame_parallel_decoding_mode: false,
+            frame_context_idx: 0,
+            loop_filter: LoopFilterParams {
+                filter_level: 0,
+                sharpness_level: 0,
+                mode_ref_delta_enabled: false,
+                mode_ref_delta_update: false,
+                ref_deltas: [None; 4],
+                mode_deltas: [None; 2],
+            },
+            quantization: QuantizationParams {
+                base_qindex: enc.config.base_qindex,
+                y_dc_delta_q: 0,
+                uv_dc_delta_q: 0,
+                uv_ac_delta_q: 0,
+            },
+            segmentation: SegmentationParams {
+                enabled: true,
+                update_map: true,
+                temporal_update: false,
+                tree_probs,
+                pred_probs: [MAX_PROB; PREDICTION_PROBS],
+                update_data: false,
+                abs_delta: false,
+                feature_data: Default::default(),
+            },
+            tile_info: TileInfo {
+                log2_tile_cols: 0,
+                log2_tile_rows: 0,
+            },
+            first_partition_size: compressed_len as u16,
+        };
+        let hdr = UncompressedHeader {
+            kind: FrameKind::KeyFrame,
+            profile: Profile::Profile0,
+            show_frame: true,
+            error_resilient: false,
+            bit_depth: BitDepth::Eight,
+            color_space: ColorSpace::Bt601,
+            color_range: ColorRange::Studio,
+            chroma: ChromaFormat::Yuv420,
+            width: enc.config.width,
+            height: enc.config.height,
+            render_size: None,
+            tail: Some(tail),
+        };
+        let mut hdr_buf = vec![0u8; 256];
+        let hdr_len = {
+            let mut wb = RawBitWriter::new(&mut hdr_buf);
+            write_uncompressed_header(&mut wb, &hdr, compressed_len as u16)?;
+            wb.finish()
+                .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
+        };
+        hdr_buf.truncate(hdr_len);
+
+        let mut packet = Vec::with_capacity(hdr_len + compressed_len + tile_len);
+        packet.extend_from_slice(&hdr_buf);
+        packet.extend_from_slice(&compressed_buf);
+        packet.extend_from_slice(&tile_buf);
+        Ok(packet)
+    }
+
+    /// AQ.0 — encode a 64×64 keyframe whose single SB carries
+    /// `segment_id = 3` everywhere, then decode through the real
+    /// `Decoder` and assert every cell of the recovered mi_grid has
+    /// `segment_id = 3`. This is the key oracle: the
+    /// encoder→header→bitstream→decoder loop carries per-leaf
+    /// segment IDs end-to-end.
+    #[test]
+    fn aq0_encode_kf_with_segment_id_3_decodes_back_through_real_decoder() {
+        use rvp9_decoder::{Decoder, ParsedFrame};
+
+        let enc = Encoder::new(Config::new(64, 64, 50)).unwrap();
+        let pkt = build_kf_with_segments(&enc, 3).expect("build_kf_with_segments");
+
+        let mut dec = Decoder::new();
+        let parsed = dec
+            .parse_packet(&pkt)
+            .expect("parse_packet must accept the seg-enabled keyframe");
+        assert_eq!(parsed.count(), 1);
+        let frames: Vec<ParsedFrame> = parsed
+            .frames()
+            .iter()
+            .map(|pf| ParsedFrame {
+                header: pf.header.clone(),
+                header_end_byte: pf.header_end_byte,
+                full_frame_data: pf.full_frame_data,
+            })
+            .collect();
+        assert_eq!(frames[0].header.kind, FrameKind::KeyFrame);
+
+        let _ = dec
+            .decode_frame(&frames[0])
+            .expect("decode_frame must accept the seg-enabled keyframe");
+
+        let grid = dec.last_frame_mi_grid();
+        assert!(!grid.is_empty(), "decoded mi_grid must be populated");
+        for (i, cell_got) in grid.iter().enumerate() {
+            let cell = cell_got.unwrap_or_else(|| panic!("mi-cell [{i}] must be populated"));
+            assert_eq!(
+                cell.segment_id, 3,
+                "cell [{i}] segment_id should round-trip as 3"
+            );
+        }
+    }
+
+    /// AQ.0 — round-trip every legal segment_id (0..=7) on a
+    /// single-SB keyframe through the real Decoder. Verifies the
+    /// full `SEGMENT_TREE` walk is reachable from public encoder
+    /// state.
+    #[test]
+    fn aq0_encode_kf_with_each_segment_id_decodes_back_through_real_decoder() {
+        use rvp9_core::bitstream::MAX_SEGMENTS;
+        use rvp9_decoder::{Decoder, ParsedFrame};
+
+        let enc = Encoder::new(Config::new(64, 64, 50)).unwrap();
+        for target in 0u8..(MAX_SEGMENTS as u8) {
+            let pkt = build_kf_with_segments(&enc, target)
+                .unwrap_or_else(|e| panic!("build_kf_with_segments({target}) failed: {e:?}"));
+
+            let mut dec = Decoder::new();
+            let parsed = dec
+                .parse_packet(&pkt)
+                .unwrap_or_else(|e| panic!("parse_packet seg={target}: {e:?}"));
+            assert_eq!(parsed.count(), 1, "seg={target}");
+            let frames: Vec<ParsedFrame> = parsed
+                .frames()
+                .iter()
+                .map(|pf| ParsedFrame {
+                    header: pf.header.clone(),
+                    header_end_byte: pf.header_end_byte,
+                    full_frame_data: pf.full_frame_data,
+                })
+                .collect();
+            let _ = dec
+                .decode_frame(&frames[0])
+                .unwrap_or_else(|e| panic!("decode_frame seg={target}: {e:?}"));
+            let grid = dec.last_frame_mi_grid();
+            for (i, cell_got) in grid.iter().enumerate() {
+                let cell = cell_got
+                    .unwrap_or_else(|| panic!("seg={target} cell [{i}] must be populated"));
+                assert_eq!(
+                    cell.segment_id, target,
+                    "seg={target} cell [{i}]: recovered segment_id mismatch"
+                );
+            }
+        }
     }
 }

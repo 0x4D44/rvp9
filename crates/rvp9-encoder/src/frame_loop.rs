@@ -858,6 +858,7 @@ fn build_keyframe_packet(
             mi_cols,
             tile_bounds,
             &post_fc,
+            /* seg = */ None,
             &mut coef_ctx,
             coef_source,
         )?;
@@ -1016,6 +1017,7 @@ fn build_inter_packet_with_residuals(
             mi_rows,
             mi_cols,
             tile_bounds,
+            /* seg = */ None,
             /* prev_mv_grid = */ None,
             &mut coef_ctx,
             coef_source,

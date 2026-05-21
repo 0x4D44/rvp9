@@ -83,6 +83,7 @@ use super::inter_coef_source::InterCoefSource;
 use super::intra_coef_source::IntraCoefSource;
 use crate::block::{max_txsize, BlockSize, PartitionType, subsize};
 use crate::bitstream::compressed_header::tx_mode_to_biggest_tx_size;
+use crate::bitstream::SEG_TREE_PROBS;
 use crate::coef_ctx::TileCoefCtx;
 use crate::entropy::{write_block_tokens, BoolWriter, FrameContext, VP9_KF_PARTITION_PROBS,
     VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB};
@@ -91,8 +92,30 @@ use crate::inter::mode_info::{
 };
 use crate::inter::mv_ref::{BlockBounds, NeighbourLookup, Position, PrevFrameMvRef};
 use crate::intra_pred::IntraMode;
-use crate::mode_info::{get_tx_size_context, BlockMode, ModeInfo};
+use crate::mode_info::{get_tx_size_context, write_segment_id, BlockMode, ModeInfo};
 use crate::transforms::{TxMode, TxSize, TxType};
+
+/// Encoder-side segmentation context for the per-block writer.
+///
+/// AQ.0 scope: the writer emits the per-block `segment_id` only when
+/// `Some(SegmentationWriteParams)` is supplied. This matches libvpx's
+/// cyclic-refresh AQ (mode 3) which runs with `update_map = true &&
+/// temporal_update = false`. The `temporal_update == true` path
+/// (predicted-segment-id flag bit against `seg.pred_probs`) is
+/// deferred — libvpx's cyclic refresh doesn't use it, and a v1 writer
+/// for the simple-tree-decode case covers AQ.3's needs end-to-end.
+///
+/// The decoder mirror is the per-block branch in
+/// `rvp9_decoder::tile::decode_block` (`segmentation_update_map`
+/// gate) for keyframes and `read_inter_segment_id` (with
+/// `update_map && !temporal_update`) for inter frames.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct SegmentationWriteParams<'a> {
+    /// Tree probabilities for the segment-id tree decode. Mirrors
+    /// `SegmentationParams::tree_probs` (the header-emitted slice the
+    /// decoder reads back into `params.seg_tree_probs`).
+    pub tree_probs: &'a [u8; SEG_TREE_PROBS],
+}
 
 /// `MI_BLOCK_SIZE` — each 64×64 superblock covers an 8×8 mode-info
 /// grid. Mirrors `rvp9_decoder::tile::MI_BLOCK_SIZE`.
@@ -509,6 +532,7 @@ pub fn write_tile_intra_keyframe(
     mi_cols: u32,
     tile_bounds: TileBounds,
     fc: &FrameContext,
+    seg: Option<SegmentationWriteParams<'_>>,
     coef_ctx: &mut TileCoefCtx,
     coef_source: &dyn IntraCoefSource,
 ) -> Result<(), ModesWriterError> {
@@ -556,6 +580,7 @@ pub fn write_tile_intra_keyframe(
                 BlockSize::Block64x64,
                 4, // n4x4_l2 for 64x64 = log2(16) = 4
                 fc,
+                seg,
                 coef_ctx,
                 coef_source,
             )?;
@@ -808,6 +833,7 @@ fn write_partition_tree(
     bsize: BlockSize,
     n4x4_l2: u8,
     fc: &FrameContext,
+    seg: Option<SegmentationWriteParams<'_>>,
     coef_ctx: &mut TileCoefCtx,
     coef_source: &dyn IntraCoefSource,
 ) -> Result<(), ModesWriterError> {
@@ -851,7 +877,7 @@ fn write_partition_tree(
             let mi = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
             write_block_intra_keyframe(
-                bw, fc, nbr_ctx, bounds, mi_row, mi_col, sub, &mi, coef_ctx, coef_source,
+                bw, fc, seg, nbr_ctx, bounds, mi_row, mi_col, sub, &mi, coef_ctx, coef_source,
             )?;
         }
         PartitionType::Horz => {
@@ -860,7 +886,7 @@ fn write_partition_tree(
             let top = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
             write_block_intra_keyframe(
-                bw, fc, nbr_ctx, bounds, mi_row, mi_col, sub, &top, coef_ctx, coef_source,
+                bw, fc, seg, nbr_ctx, bounds, mi_row, mi_col, sub, &top, coef_ctx, coef_source,
             )?;
             let mi_row_b = mi_row + hbs;
             let bot = mi_grid_get(mi_grid, mi_cols, mi_row_b, mi_col).ok_or(
@@ -870,14 +896,14 @@ fn write_partition_tree(
                 },
             )?;
             write_block_intra_keyframe(
-                bw, fc, nbr_ctx, bounds, mi_row_b, mi_col, sub, &bot, coef_ctx, coef_source,
+                bw, fc, seg, nbr_ctx, bounds, mi_row_b, mi_col, sub, &bot, coef_ctx, coef_source,
             )?;
         }
         PartitionType::Vert => {
             let left = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
             write_block_intra_keyframe(
-                bw, fc, nbr_ctx, bounds, mi_row, mi_col, sub, &left, coef_ctx, coef_source,
+                bw, fc, seg, nbr_ctx, bounds, mi_row, mi_col, sub, &left, coef_ctx, coef_source,
             )?;
             let mi_col_r = mi_col + hbs;
             let right = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col_r).ok_or(
@@ -887,7 +913,7 @@ fn write_partition_tree(
                 },
             )?;
             write_block_intra_keyframe(
-                bw, fc, nbr_ctx, bounds, mi_row, mi_col_r, sub, &right, coef_ctx, coef_source,
+                bw, fc, seg, nbr_ctx, bounds, mi_row, mi_col_r, sub, &right, coef_ctx, coef_source,
             )?;
         }
         PartitionType::Split => {
@@ -895,7 +921,7 @@ fn write_partition_tree(
             // — same order as the decoder.
             write_partition_tree(
                 bw, part_ctx, nbr_ctx, bounds, mi_grid, mi_cols, mi_row, mi_col, sub, n8x8_l2,
-                fc, coef_ctx, coef_source,
+                fc, seg, coef_ctx, coef_source,
             )?;
             write_partition_tree(
                 bw,
@@ -909,6 +935,7 @@ fn write_partition_tree(
                 sub,
                 n8x8_l2,
                 fc,
+                seg,
                 coef_ctx,
                 coef_source,
             )?;
@@ -924,6 +951,7 @@ fn write_partition_tree(
                 sub,
                 n8x8_l2,
                 fc,
+                seg,
                 coef_ctx,
                 coef_source,
             )?;
@@ -939,6 +967,7 @@ fn write_partition_tree(
                 sub,
                 n8x8_l2,
                 fc,
+                seg,
                 coef_ctx,
                 coef_source,
             )?;
@@ -983,6 +1012,7 @@ fn write_partition_tree(
 fn write_block_intra_keyframe(
     bw: &mut BoolWriter<'_>,
     fc: &FrameContext,
+    seg: Option<SegmentationWriteParams<'_>>,
     nbr_ctx: &mut NeighbourCtx,
     bounds: &TileBounds,
     mi_row: usize,
@@ -1010,7 +1040,15 @@ fn write_block_intra_keyframe(
             return Err(ModesWriterError::UnsupportedBlockMode { mi_row, mi_col });
         }
     };
-    if mi.segment_id != 0 || mi.seg_id_predicted {
+    // Keyframes: `seg_id_predicted` is decoder-write-only (the inter
+    // path stashes the temporal-update pred-flag bit there). Reject
+    // any leaf that has it set even when the writer is segment-aware.
+    if mi.seg_id_predicted {
+        return Err(ModesWriterError::UnsupportedSegmentation { mi_row, mi_col });
+    }
+    // When the writer scope is "no segmentation", reject any non-zero
+    // segment_id — the wire format can't carry it.
+    if seg.is_none() && mi.segment_id != 0 {
         return Err(ModesWriterError::UnsupportedSegmentation { mi_row, mi_col });
     }
 
@@ -1019,8 +1057,15 @@ fn write_block_intra_keyframe(
     let (above_mode, left_mode, skip_ctx) =
         nbr_ctx.neighbours_for(mi_row_in_tile, mi_col_in_tile);
 
-    // Segment_id: caller contract pins `segmentation_update_map ==
-    // false`, so no bits are emitted.
+    // 0. Segment_id. When `seg.is_some()`, the caller has committed
+    //    `segmentation.enabled && segmentation.update_map` in the
+    //    uncompressed header, so the decoder reads a tree decode
+    //    via `read_segment_id` (mirrors `rvp9_decoder::tile::
+    //    decode_block`'s `params.segmentation_update_map` branch).
+    //    When `None`, no bits are emitted.
+    if let Some(seg) = seg {
+        write_segment_id(bw, mi.segment_id, seg.tree_probs);
+    }
 
     // 1. Skip flag against `fc.skip_probs[skip_ctx]`. The skip prob bank
     //    is laid out as `[u8; SKIP_CONTEXTS]` (3 entries) and the
@@ -1432,6 +1477,7 @@ pub fn write_tile_inter(
     mi_rows: u32,
     mi_cols: u32,
     tile_bounds: TileBounds,
+    seg: Option<SegmentationWriteParams<'_>>,
     prev_mv_grid: Option<&[PrevFrameMvRef]>,
     coef_ctx: &mut TileCoefCtx,
     coef_source: &dyn InterCoefSource,
@@ -1484,6 +1530,7 @@ pub fn write_tile_inter(
                 mi_col,
                 BlockSize::Block64x64,
                 4, // n4x4_l2 for 64x64
+                seg,
                 prev_mv_grid,
                 coef_ctx,
                 coef_source,
@@ -1520,6 +1567,7 @@ fn write_inter_partition_tree(
     mi_col: usize,
     bsize: BlockSize,
     n4x4_l2: u8,
+    seg: Option<SegmentationWriteParams<'_>>,
     prev_mv_grid: Option<&[PrevFrameMvRef]>,
     coef_ctx: &mut TileCoefCtx,
     coef_source: &dyn InterCoefSource,
@@ -1550,7 +1598,7 @@ fn write_inter_partition_tree(
             .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
         write_inter_block_leaf(
             bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row, mi_col, sub, &mi,
-            prev_mv_grid, coef_ctx, coef_source,
+            seg, prev_mv_grid, coef_ctx, coef_source,
         )?;
         if (bsize as u8) >= (BlockSize::Block8x8 as u8) {
             // Always fires for BLOCK_8x8 — the gate `bsize ==
@@ -1578,7 +1626,7 @@ fn write_inter_partition_tree(
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
             write_inter_block_leaf(
                 bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row, mi_col, sub, &mi,
-                prev_mv_grid, coef_ctx, coef_source,
+                seg, prev_mv_grid, coef_ctx, coef_source,
             )?;
         }
         PartitionType::Horz => {
@@ -1586,7 +1634,7 @@ fn write_inter_partition_tree(
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
             write_inter_block_leaf(
                 bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row, mi_col, sub, &top,
-                prev_mv_grid, coef_ctx, coef_source,
+                seg, prev_mv_grid, coef_ctx, coef_source,
             )?;
             let mi_row_b = mi_row + hbs;
             let bot = mi_grid_get(mi_grid, mi_cols, mi_row_b, mi_col).ok_or(
@@ -1597,7 +1645,7 @@ fn write_inter_partition_tree(
             )?;
             write_inter_block_leaf(
                 bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row_b, mi_col, sub, &bot,
-                prev_mv_grid, coef_ctx, coef_source,
+                seg, prev_mv_grid, coef_ctx, coef_source,
             )?;
         }
         PartitionType::Vert => {
@@ -1605,7 +1653,7 @@ fn write_inter_partition_tree(
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
             write_inter_block_leaf(
                 bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row, mi_col, sub, &left,
-                prev_mv_grid, coef_ctx, coef_source,
+                seg, prev_mv_grid, coef_ctx, coef_source,
             )?;
             let mi_col_r = mi_col + hbs;
             let right = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col_r).ok_or(
@@ -1616,13 +1664,13 @@ fn write_inter_partition_tree(
             )?;
             write_inter_block_leaf(
                 bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row, mi_col_r, sub, &right,
-                prev_mv_grid, coef_ctx, coef_source,
+                seg, prev_mv_grid, coef_ctx, coef_source,
             )?;
         }
         PartitionType::Split => {
             write_inter_partition_tree(
                 bw, fc, params, tx_mode, part_ctx, bounds, mi_grid, mi_rows, mi_cols, mi_row,
-                mi_col, sub, n8x8_l2, prev_mv_grid, coef_ctx, coef_source,
+                mi_col, sub, n8x8_l2, seg, prev_mv_grid, coef_ctx, coef_source,
             )?;
             write_inter_partition_tree(
                 bw,
@@ -1638,6 +1686,7 @@ fn write_inter_partition_tree(
                 mi_col + hbs,
                 sub,
                 n8x8_l2,
+                seg,
                 prev_mv_grid,
                 coef_ctx,
                 coef_source,
@@ -1656,6 +1705,7 @@ fn write_inter_partition_tree(
                 mi_col,
                 sub,
                 n8x8_l2,
+                seg,
                 prev_mv_grid,
                 coef_ctx,
                 coef_source,
@@ -1674,6 +1724,7 @@ fn write_inter_partition_tree(
                 mi_col + hbs,
                 sub,
                 n8x8_l2,
+                seg,
                 prev_mv_grid,
                 coef_ctx,
                 coef_source,
@@ -1723,6 +1774,7 @@ fn write_inter_block_leaf(
     mi_col: usize,
     leaf_bsize: BlockSize,
     mi: &ModeInfo,
+    seg: Option<SegmentationWriteParams<'_>>,
     prev_mv_grid: Option<&[PrevFrameMvRef]>,
     coef_ctx: &mut TileCoefCtx,
     coef_source: &dyn InterCoefSource,
@@ -1736,11 +1788,28 @@ fn write_inter_block_leaf(
             block_size: mi.block_size,
         });
     }
-    if mi.segment_id != 0 || mi.seg_id_predicted {
+    // `seg_id_predicted` is the temporal-update pred-flag bit; AQ.0
+    // doesn't emit it (matches libvpx cyclic refresh's
+    // `temporal_update = false`). Reject any leaf that has it set.
+    if mi.seg_id_predicted {
+        return Err(ModesWriterError::UnsupportedSegmentation { mi_row, mi_col });
+    }
+    // When the writer scope is "no segmentation", reject any non-zero
+    // segment_id — the wire format can't carry it.
+    if seg.is_none() && mi.segment_id != 0 {
         return Err(ModesWriterError::UnsupportedSegmentation { mi_row, mi_col });
     }
     if matches!(mi.mode, BlockMode::Intra { .. }) {
         return Err(ModesWriterError::UnsupportedIntraInInter { mi_row, mi_col });
+    }
+
+    // 1. Segment_id. AQ.0 emits a plain tree decode when
+    //    `seg.is_some()` (i.e. `enabled && update_map &&
+    //    !temporal_update`). The decoder mirror is
+    //    `read_inter_segment_id` at the `update_map && !temporal_update`
+    //    branch (`mode_info.rs:160-165`).
+    if let Some(seg) = seg {
+        write_segment_id(bw, mi.segment_id, seg.tree_probs);
     }
 
     // Build the neighbour lookup adapter for this leaf. The decoder
@@ -2080,6 +2149,7 @@ mod tests {
             mi_cols,
             tile_bounds,
             fc,
+            /* seg = */ None,
             &mut coef_ctx,
             &coef_source,
         )
@@ -2192,6 +2262,7 @@ mod tests {
             write_block_intra_keyframe(
                 &mut bw,
                 &fc,
+                /* seg = */ None,
                 &mut nbr_ctx,
                 &bounds,
                 0,
@@ -2311,6 +2382,7 @@ mod tests {
             8,
             bounds,
             &fc,
+            /* seg = */ None,
             &mut coef_ctx,
             &coef_source,
         )
@@ -3338,6 +3410,7 @@ mod tests {
                 mi_rows,
                 mi_cols,
                 bounds,
+                /* seg = */ None,
                 prev_mv_grid,
                 &mut coef_ctx,
                 &coef_source,
@@ -3778,6 +3851,7 @@ mod tests {
                 mi_rows,
                 mi_cols,
                 bounds,
+                /* seg = */ None,
                 prev_mv_grid,
                 &mut coef_ctx,
                 coef_source,
@@ -4338,7 +4412,8 @@ mod tests {
             mi_rows,
             mi_cols,
             bounds,
-            None,
+            /* seg = */ None,
+            /* prev_mv_grid = */ None,
             &mut coef_ctx,
             &coef_source,
         )
@@ -4420,7 +4495,8 @@ mod tests {
             mi_rows,
             mi_cols,
             bounds,
-            None,
+            /* seg = */ None,
+            /* prev_mv_grid = */ None,
             &mut coef_ctx,
             &coef_source,
         )
@@ -4499,7 +4575,8 @@ mod tests {
             mi_rows,
             mi_cols,
             bounds,
-            None,
+            /* seg = */ None,
+            /* prev_mv_grid = */ None,
             &mut coef_ctx,
             &coef_source,
         )
@@ -4537,11 +4614,396 @@ mod tests {
             mi_rows,
             mi_cols,
             bounds,
-            None,
+            /* seg = */ None,
+            /* prev_mv_grid = */ None,
             &mut coef_ctx,
             &coef_source,
         )
         .unwrap_err();
         assert!(matches!(err, ModesWriterError::NonMultipleOfSb { .. }), "got: {err:?}");
+    }
+
+    // ---------------------------------------------------------------
+    // AQ.0 — segmentation-map emission (encoder side)
+    //
+    // The decoder already supports the full per-block segment_id
+    // read path (`mode_info::read_segment_id` + `read_inter_segment_id`).
+    // These tests drive `write_segment_id` through the keyframe + inter
+    // writer scopes and replay via the same `BoolReader` flow the
+    // decoder uses, asserting the recovered segment_id matches the
+    // input. v1 scope is `update_map = true, temporal_update = false`
+    // (cyclic refresh AQ — libvpx mode 3).
+    // ---------------------------------------------------------------
+
+    /// AQ.0 — write a single keyframe leaf with `segment_id = 3` and
+    /// recover it via `read_segment_id`. Exercises the writer's new
+    /// `Some(SegmentationWriteParams)` branch on the KF path; mirrors
+    /// the decoder's `params.segmentation_update_map` branch in
+    /// `decode_block`.
+    #[test]
+    fn write_block_intra_keyframe_emits_nonzero_segment_id() {
+        use crate::bitstream::SEG_TREE_PROBS;
+        let mut buf = vec![0u8; 64];
+        let fc = FrameContext::new_default();
+        let tree_probs = [128u8; SEG_TREE_PROBS];
+        let n = {
+            let mut bw = BoolWriter::start_encode(&mut buf);
+            let bounds = TileBounds {
+                mi_row_start: 0,
+                mi_row_end: 8,
+                mi_col_start: 0,
+                mi_col_end: 8,
+            };
+            let mut nbr_ctx = NeighbourCtx::new(8);
+            let mut mi = make_dc_grid(8, 8)[0].expect("populated cell");
+            mi.segment_id = 3;
+            let mut coef_ctx = TileCoefCtx::new(8);
+            let coef_source = crate::bitstream::AllZeroIntraCoefSource::new();
+            write_block_intra_keyframe(
+                &mut bw,
+                &fc,
+                Some(SegmentationWriteParams { tree_probs: &tree_probs }),
+                &mut nbr_ctx,
+                &bounds,
+                0,
+                0,
+                BlockSize::Block64x64,
+                &mi,
+                &mut coef_ctx,
+                &coef_source,
+            )
+            .expect("write_block_intra_keyframe with seg should succeed");
+            bw.stop_encode().expect("stop_encode")
+        };
+        buf.truncate(n);
+
+        // Replay: segment_id is the FIRST symbol on the wire, then
+        // skip, y_mode, uv_mode.
+        let mut reader = BoolReader::new(&buf).expect("reader init");
+        let got_seg = crate::mode_info::read_segment_id(&mut reader, &tree_probs);
+        assert_eq!(got_seg, 3, "segment_id should round-trip");
+        let skip = read_skip(&mut reader, &fc.skip_probs, 0, None);
+        assert!(skip);
+        let y_probs = &VP9_KF_Y_MODE_PROB[IntraMode::Dc as usize][IntraMode::Dc as usize];
+        let got_y = read_intra_mode(&mut reader, y_probs);
+        assert_eq!(got_y, IntraMode::Dc);
+        let uv_probs = &VP9_KF_UV_MODE_PROB[got_y as usize];
+        let got_uv = read_intra_mode(&mut reader, uv_probs);
+        assert_eq!(got_uv, IntraMode::Dc);
+    }
+
+    /// AQ.0 — keyframe writer round-trips every legal segment_id
+    /// (0..=7) at p=128 via a 1-SB grid through the FULL
+    /// `write_tile_intra_keyframe` entry point. Exercises the
+    /// partition-tree path AND the segment_id emission.
+    #[test]
+    fn write_tile_intra_keyframe_round_trip_segment_ids_0_to_7() {
+        use crate::bitstream::SEG_TREE_PROBS;
+        let fc = FrameContext::new_default();
+        let tree_probs = [128u8; SEG_TREE_PROBS];
+
+        for target_seg in 0u8..(crate::bitstream::MAX_SEGMENTS as u8) {
+            let mi_rows = 8u32;
+            let mi_cols = 8u32;
+            let mut grid = make_dc_grid(mi_rows as usize, mi_cols as usize);
+            for mi in grid.iter_mut().flatten() {
+                mi.segment_id = target_seg;
+            }
+            let bounds = TileBounds {
+                mi_row_start: 0,
+                mi_row_end: 8,
+                mi_col_start: 0,
+                mi_col_end: 8,
+            };
+            let mut buf = vec![0u8; 1024];
+            let written = {
+                let mut bw = BoolWriter::start_encode(&mut buf);
+                let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+                let coef_source = crate::bitstream::AllZeroIntraCoefSource::new();
+                write_tile_intra_keyframe(
+                    &mut bw,
+                    &grid,
+                    mi_rows,
+                    mi_cols,
+                    bounds,
+                    &fc,
+                    Some(SegmentationWriteParams { tree_probs: &tree_probs }),
+                    &mut coef_ctx,
+                    &coef_source,
+                )
+                .expect("write_tile_intra_keyframe with seg");
+                bw.stop_encode().expect("stop_encode")
+            };
+            buf.truncate(written);
+
+            // Walk the same per-symbol flow the decoder uses:
+            // partition → segment_id → skip → y_mode → uv_mode.
+            let mut r = BoolReader::new(&buf).expect("BoolReader::new");
+            // 64x64 SB → partition_ctx = bsl*4 = 3*4 = 12 for the empty
+            // above/left state.
+            let part_ctx = 3 * 4;
+            let p = read_partition(&mut r, &VP9_KF_PARTITION_PROBS[part_ctx], part_ctx, None);
+            assert_eq!(p, PartitionType::None, "seg={target_seg}: partition");
+            let got_seg = crate::mode_info::read_segment_id(&mut r, &tree_probs);
+            assert_eq!(got_seg, target_seg, "seg={target_seg}: recovered segment_id");
+            let skip = read_skip(&mut r, &fc.skip_probs, 0, None);
+            assert!(skip, "seg={target_seg}: skip");
+        }
+    }
+
+    /// AQ.0 — multi-segment 64×64 SB split into 4 32×32 SPLIT
+    /// leaves with `segment_id` values [0, 1, 2, 3]. Verifies the
+    /// recursion threads the segmentation context to every leaf
+    /// and each leaf emits its own tree-decoded segment_id.
+    #[test]
+    fn write_tile_intra_keyframe_multi_segment_split_sb() {
+        use crate::bitstream::SEG_TREE_PROBS;
+        let fc = FrameContext::new_default();
+        let tree_probs = [128u8; SEG_TREE_PROBS];
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        // 4 leaves of Block32x32 (4 mi_units each on each side).
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let segs_at = [
+            (0usize, 0usize, 0u8), // top-left
+            (0, 4, 1),             // top-right
+            (4, 0, 2),             // bottom-left
+            (4, 4, 3),             // bottom-right
+        ];
+        for &(r, c, seg) in &segs_at {
+            let mut cell = make_dc_cell(BlockSize::Block32x32);
+            cell.segment_id = seg;
+            splat_cell(&mut grid, mi_cols as usize, r, c, cell);
+        }
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: 8,
+            mi_col_start: 0,
+            mi_col_end: 8,
+        };
+        let mut buf = vec![0u8; 2 * 1024];
+        let written = {
+            let mut bw = BoolWriter::start_encode(&mut buf);
+            let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+            let coef_source = crate::bitstream::AllZeroIntraCoefSource::new();
+            write_tile_intra_keyframe(
+                &mut bw,
+                &grid,
+                mi_rows,
+                mi_cols,
+                bounds,
+                &fc,
+                Some(SegmentationWriteParams { tree_probs: &tree_probs }),
+                &mut coef_ctx,
+                &coef_source,
+            )
+            .expect("write_tile_intra_keyframe SPLIT with seg");
+            bw.stop_encode().expect("stop_encode")
+        };
+        buf.truncate(written);
+
+        // Replay: parent 64x64 → PARTITION_SPLIT (1, 1, 1) at
+        // ctx=12. Each child 32x32 then emits PARTITION_NONE (a
+        // single 0 bit at the appropriate ctx). At each leaf we read
+        // segment_id → skip → y_mode → uv_mode.
+        let mut r = BoolReader::new(&buf).expect("BoolReader::new");
+        let mut test_ctx = TestPartCtx::new(mi_cols as usize);
+
+        // Parent SPLIT.
+        let parent_ctx = test_ctx.context(0, 0, 3);
+        let parent_probs = &VP9_KF_PARTITION_PROBS[parent_ctx];
+        let parent = read_partition(&mut r, parent_probs, parent_ctx, None);
+        assert_eq!(parent, PartitionType::Split, "parent partition");
+
+        // 4 children at (0,0), (0,4), (4,0), (4,4), each 32x32 with
+        // PARTITION_NONE.
+        for &(rr, cc, expected_seg) in &segs_at {
+            // For 32x32 inside a 64x64 split, bsl = n8x8_l2 = 2.
+            let child_ctx = test_ctx.context(rr, cc, 2);
+            let child_probs = &VP9_KF_PARTITION_PROBS[child_ctx];
+            let p = read_partition(&mut r, child_probs, child_ctx, None);
+            assert_eq!(p, PartitionType::None, "child ({rr},{cc})");
+            test_ctx.update(rr, cc, BlockSize::Block32x32.n_8x8_wide() as usize);
+
+            // Segment_id.
+            let got_seg = crate::mode_info::read_segment_id(&mut r, &tree_probs);
+            assert_eq!(got_seg, expected_seg, "child ({rr},{cc}) segment_id");
+
+            // Skip: skip_ctx depends on above/left neighbour skip flags.
+            // Every leaf is skip=true; so e.g. top-right sees left=skip=1.
+            let skip_ctx = match (rr, cc) {
+                (0, 0) => 0,
+                (0, 4) | (4, 0) => 1,
+                (4, 4) => 2,
+                _ => unreachable!(),
+            };
+            let skip = read_skip(&mut r, &fc.skip_probs, skip_ctx, None);
+            assert!(skip, "child ({rr},{cc}) skip");
+            let y_probs = &VP9_KF_Y_MODE_PROB[IntraMode::Dc as usize][IntraMode::Dc as usize];
+            let got_y = read_intra_mode(&mut r, y_probs);
+            assert_eq!(got_y, IntraMode::Dc, "child ({rr},{cc}) y_mode");
+            let uv_probs = &VP9_KF_UV_MODE_PROB[got_y as usize];
+            let got_uv = read_intra_mode(&mut r, uv_probs);
+            assert_eq!(got_uv, IntraMode::Dc, "child ({rr},{cc}) uv_mode");
+        }
+    }
+
+    /// AQ.0 — inter writer emits per-leaf `segment_id` via tree
+    /// decode (the `update_map && !temporal_update` branch in
+    /// `read_inter_segment_id`). Drives a single Block64x64 inter
+    /// leaf with `segment_id = 2`; recovered via per-symbol replay.
+    #[test]
+    fn write_tile_inter_emits_nonzero_segment_id() {
+        use crate::bitstream::SEG_TREE_PROBS;
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let tree_probs = [128u8; SEG_TREE_PROBS];
+
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut cell = make_inter_cell(
+            BlockSize::Block64x64,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        cell.segment_id = 2;
+        let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: 8,
+            mi_col_start: 0,
+            mi_col_end: 8,
+        };
+        let mut buf = vec![0u8; 4 * 1024];
+        let written = {
+            let mut bw = BoolWriter::start_encode(&mut buf);
+            let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+            let coef_source = crate::bitstream::AllZeroCoefSource::new();
+            write_tile_inter(
+                &mut bw,
+                &fc,
+                &params,
+                TxMode::AllowTx32x32,
+                &grid,
+                mi_rows,
+                mi_cols,
+                bounds,
+                Some(SegmentationWriteParams { tree_probs: &tree_probs }),
+                /* prev_mv_grid = */ None,
+                &mut coef_ctx,
+                &coef_source,
+            )
+            .expect("write_tile_inter with seg");
+            for _ in 0..16 {
+                bw.write_bit(0);
+            }
+            bw.stop_encode().expect("stop_encode")
+        };
+        buf.truncate(written);
+
+        let mut r = BoolReader::new(&buf).expect("BoolReader::new");
+        let part_ctx = 3 * 4;
+        let part_probs = &fc.partition_prob[part_ctx];
+        let p = read_partition(&mut r, part_probs, part_ctx, None);
+        assert_eq!(p, PartitionType::None);
+        let got_seg = crate::mode_info::read_segment_id(&mut r, &tree_probs);
+        assert_eq!(got_seg, 2, "inter leaf segment_id should round-trip");
+        let skip = read_skip(&mut r, &fc.skip_probs, 0, None);
+        assert!(skip);
+        let intra_inter_ctx = 0;
+        let is_inter = read_is_inter(&mut r, &fc.intra_inter_prob, intra_inter_ctx, None);
+        assert!(is_inter);
+    }
+
+    /// AQ.0 — writer rejects `seg_id_predicted == true`. The
+    /// temporal-update predicted-flag bit is out of scope for v1.
+    #[test]
+    fn write_tile_inter_rejects_seg_id_predicted() {
+        use crate::bitstream::SEG_TREE_PROBS;
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let tree_probs = [128u8; SEG_TREE_PROBS];
+
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut cell = make_inter_cell(
+            BlockSize::Block64x64,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        cell.segment_id = 1;
+        cell.seg_id_predicted = true;
+        let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: 8,
+            mi_col_start: 0,
+            mi_col_end: 8,
+        };
+        let mut buf = vec![0u8; 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        let err = write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            Some(SegmentationWriteParams { tree_probs: &tree_probs }),
+            None,
+            &mut coef_ctx,
+            &coef_source,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ModesWriterError::UnsupportedSegmentation { .. }),
+            "got: {err:?}"
+        );
+    }
+
+    /// AQ.0 — writer accepts the boundary segment_id (MAX_SEGMENTS-1
+    /// = 7). Edge-of-range sanity check matching libvpx's
+    /// `MAX_SEGMENTS = 8` constant.
+    #[test]
+    fn write_tile_intra_keyframe_accepts_max_segment_id() {
+        use crate::bitstream::SEG_TREE_PROBS;
+        let fc = FrameContext::new_default();
+        let tree_probs = [128u8; SEG_TREE_PROBS];
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid = make_dc_grid(mi_rows as usize, mi_cols as usize);
+        for mi in grid.iter_mut().flatten() {
+            mi.segment_id = (crate::bitstream::MAX_SEGMENTS as u8) - 1;
+        }
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: 8,
+            mi_col_start: 0,
+            mi_col_end: 8,
+        };
+        let mut buf = vec![0u8; 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroIntraCoefSource::new();
+        write_tile_intra_keyframe(
+            &mut bw,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            &fc,
+            Some(SegmentationWriteParams { tree_probs: &tree_probs }),
+            &mut coef_ctx,
+            &coef_source,
+        )
+        .expect("MAX_SEGMENTS-1 = 7 must be accepted");
     }
 }

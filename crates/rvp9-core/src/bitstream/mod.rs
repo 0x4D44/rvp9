@@ -50,7 +50,8 @@ pub use error::BitstreamError;
 pub use inter_coef_source::{AllZeroCoefSource, InterCoefSource};
 pub use intra_coef_source::{AllZeroIntraCoefSource, IntraCoefSource};
 pub use modes_writer::{
-    ModesWriterError, TileBounds as ModesTileBounds, write_tile_inter, write_tile_intra_keyframe,
+    ModesWriterError, SegmentationWriteParams, TileBounds as ModesTileBounds, write_tile_inter,
+    write_tile_intra_keyframe,
 };
 pub use frame::{
     BitDepth, ChromaFormat, ColorRange, ColorSpace, FrameType, InterpFilter, MAX_INTER_REFS,
