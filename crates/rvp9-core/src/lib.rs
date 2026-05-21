@@ -35,6 +35,7 @@ pub mod mode_decision;
 pub mod mode_info;
 pub mod mv_search;
 pub mod quant;
+pub mod tile_threading;
 pub mod transforms;
 
 /// The pixel type. Per **D-01 RESOLVED** (PLAN.md §3): 8-bit only in v1.

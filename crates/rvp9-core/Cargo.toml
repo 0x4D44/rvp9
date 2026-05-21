@@ -11,3 +11,18 @@ description = "Shared VP9 codec primitives: bitstream, entropy, transforms, intr
 workspace = true
 
 [dependencies]
+# G5 — tile-threaded decode. MPMC `Receiver` is required because the
+# worker pool has one job queue feeding many worker threads (each
+# competing to receive). `std::sync::mpsc` is SPSC on the receive side
+# (`Receiver: !Sync`), so it cannot back a `recv()` loop on multiple
+# worker threads from the same channel. See
+# `crates/rvp9-core/src/tile_threading/SAFETY.md` §3 for the full
+# justification.
+crossbeam-channel = "0.5"
+
+[dev-dependencies]
+# G4.1 — scalar-vs-SIMD differential proptests for the AVX2 idct8x8
+# pilot. Property-based generation lets us cover the EOB-bucket /
+# misalignment / saturation strata without hand-curating every
+# corner case. See `dsp/x86_64/idct8x8_avx2.rs`'s test module.
+proptest = "1"

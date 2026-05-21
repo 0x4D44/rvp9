@@ -410,7 +410,7 @@ LLD edits).
 - §7.DV-TT-02 Determinism flag forces `adaptive_rd_thresh_row_mt = 1` *(R-08 RESOLVED via bit-exact-by-default)*
 - §7.DV-TT-03 Workers never invoke `vpx_internal_error` (`Result<>` only)
 - §7.DV-TT-04 Pool tears down + rebuilds on `num_workers` change
-- §7.DV-TT-05 Mirror libvpx's `FRAME_COUNTS` accumulation bias *(L-57 — bug-for-bug counts)*
+- §7.DV-TT-05 Mirror libvpx's `FRAME_COUNTS` accumulation bias *(L-57 — bug-for-bug counts; **status: MIRRORED-INTENTIONALLY** per HLD V6 §G5 lines 1107-1162; inline-worker pattern: `num_workers = min(num_threads, num_tiles)`, inline slot mutates `cm.counts` directly, other workers receive baseline memcpy. Cross-references: encoder `notes/lld/tile-threading.md` §7.DV-TT-05; decoder `crates/rvp9-decoder/src/lib.rs` G5 worker_pool wrap in `decode_intra_frame_inner` / `decode_inter_frame`)*
 - §7.DV-TT-06 Worker thread priority not elevated *(L-63)*
 - §7.DV-TT-07 No frame-parallel encoding in v1 *(Q4 deferred → v2)*
 

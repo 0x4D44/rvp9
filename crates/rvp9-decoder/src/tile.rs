@@ -41,6 +41,7 @@
 
 use rvp9_core::bitstream::{ChromaFormat, TileInfo};
 use rvp9_core::block::{BlockSize, PartitionType, max_txsize, subsize};
+use rvp9_core::dsp::SimdDispatch;
 use rvp9_core::entropy::{BoolReader, FrameContext, VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB,
     VP9_KF_Y_MODE_PROB};
 use rvp9_core::frame::Yv12Buffer;
@@ -345,6 +346,7 @@ fn plane_dequant(params: &FrameDecodeParams, plane: usize, segment_id: u8) -> (i
 ///
 /// Returns [`TileDecodeError::InvalidTilePayload`] if the tile bytes
 /// don't open with a valid bool-coder marker bit.
+#[allow(clippy::too_many_arguments)]
 pub fn decode_tile_intra(
     tile_data: &[u8],
     bounds: TileBounds,
@@ -353,6 +355,7 @@ pub fn decode_tile_intra(
     dst_frame: &mut Yv12Buffer,
     mut coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
     cur_segment_ids: &mut [u8],
+    dispatch: &SimdDispatch,
 ) -> Result<TileDecodeCtx, TileDecodeError> {
     // G7.0 review (2026-05-21): defensive — the
     // `Decoder::decode_frame` gate should already have rejected non-
@@ -417,6 +420,7 @@ pub fn decode_tile_intra(
                 4, // n4x4_l2 for 64×64 = log2(16) = 4
                 coef_counts.as_deref_mut(),
                 cur_segment_ids,
+                dispatch,
             );
             mi_col += MI_BLOCK_SIZE;
         }
@@ -447,6 +451,7 @@ fn decode_partition(
     n4x4_l2: u8,
     mut coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
     cur_segment_ids: &mut [u8],
+    dispatch: &SimdDispatch,
 ) {
     if mi_row >= params.mi_rows || mi_col >= params.mi_cols {
         return;
@@ -499,6 +504,7 @@ fn decode_partition(
             reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
             mi_row, mi_col, sub, coef_counts.as_deref_mut(),
             cur_segment_ids,
+            dispatch,
         );
     } else {
         match partition {
@@ -507,6 +513,7 @@ fn decode_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
                     mi_row, mi_col, sub, coef_counts.as_deref_mut(),
                     cur_segment_ids,
+                    dispatch,
                 );
             }
             PartitionType::Horz => {
@@ -514,12 +521,14 @@ fn decode_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
                     mi_row, mi_col, sub, coef_counts.as_deref_mut(),
                     cur_segment_ids,
+                    dispatch,
                 );
                 if has_rows {
                     decode_block(
                         reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
                         mi_row + hbs, mi_col, sub, coef_counts.as_deref_mut(),
                         cur_segment_ids,
+                        dispatch,
                     );
                 }
             }
@@ -528,12 +537,14 @@ fn decode_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
                     mi_row, mi_col, sub, coef_counts.as_deref_mut(),
                     cur_segment_ids,
+                    dispatch,
                 );
                 if has_cols {
                     decode_block(
                         reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
                         mi_row, mi_col + hbs, sub, coef_counts.as_deref_mut(),
                         cur_segment_ids,
+                        dispatch,
                     );
                 }
             }
@@ -543,24 +554,28 @@ fn decode_partition(
                     dst_frame, mi_row, mi_col, sub, n8x8_l2,
                     coef_counts.as_deref_mut(),
                     cur_segment_ids,
+                    dispatch,
                 );
                 decode_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row, mi_col + hbs, sub, n8x8_l2,
                     coef_counts.as_deref_mut(),
                     cur_segment_ids,
+                    dispatch,
                 );
                 decode_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row + hbs, mi_col, sub, n8x8_l2,
                     coef_counts.as_deref_mut(),
                     cur_segment_ids,
+                    dispatch,
                 );
                 decode_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
                     dst_frame, mi_row + hbs, mi_col + hbs, sub, n8x8_l2,
                     coef_counts,
                     cur_segment_ids,
+                    dispatch,
                 );
             }
         }
@@ -603,6 +618,7 @@ fn decode_block(
     bsize: BlockSize,
     coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
     cur_segment_ids: &mut [u8],
+    dispatch: &SimdDispatch,
 ) {
     let mi_row_in_tile = mi_row - bounds.mi_row_start;
     let mi_col_in_tile = mi_col - bounds.mi_col_start;
@@ -816,6 +832,7 @@ fn decode_block(
         dequant_v,
         params.lossless,
         coef_counts,
+        dispatch,
     );
 }
 
@@ -941,6 +958,7 @@ fn reconstruct_intra_planes(
     dequant_v: (i32, i32),
     frame_lossless: bool,
     mut coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
+    dispatch: &SimdDispatch,
 ) {
     let bsize = mi.block_size;
     let tx_size = mi.tx_size;
@@ -1128,6 +1146,7 @@ fn reconstruct_intra_planes(
                         seg_eob,
                         plane_dequant_pair,
                         frame_lossless && plane_tx == TxSize::Tx4x4,
+                        dispatch,
                     );
                 }
 
@@ -1419,6 +1438,7 @@ pub fn decode_tile_inter(
     cur_mv_grid: &mut [rvp9_core::inter::mv_ref::PrevFrameMvRef],
     prev_segment_ids: &[u8],
     cur_segment_ids: &mut [u8],
+    dispatch: &SimdDispatch,
 ) -> Result<TileDecodeCtx, TileDecodeError> {
     // G7.0 review (2026-05-21): see `decode_tile_intra` for rationale.
     debug_assert_eq!(
@@ -1462,6 +1482,7 @@ pub fn decode_tile_inter(
                 cur_mv_grid,
                 prev_segment_ids,
                 cur_segment_ids,
+                dispatch,
             );
             mi_col += MI_BLOCK_SIZE;
         }
@@ -1496,6 +1517,7 @@ fn decode_inter_partition(
     cur_mv_grid: &mut [rvp9_core::inter::mv_ref::PrevFrameMvRef],
     prev_segment_ids: &[u8],
     cur_segment_ids: &mut [u8],
+    dispatch: &SimdDispatch,
 ) {
     if mi_row >= params.base.mi_rows || mi_col >= params.base.mi_cols {
         return;
@@ -1571,6 +1593,7 @@ fn decode_inter_partition(
             mode_counts.as_deref_mut(),
             prev_mv_grid, cur_mv_grid,
             prev_segment_ids, cur_segment_ids,
+            dispatch,
         );
     } else {
         match partition {
@@ -1582,6 +1605,7 @@ fn decode_inter_partition(
                     mode_counts.as_deref_mut(),
                     prev_mv_grid, cur_mv_grid,
                     prev_segment_ids, cur_segment_ids,
+                    dispatch,
                 );
             }
             PartitionType::Horz => {
@@ -1592,6 +1616,7 @@ fn decode_inter_partition(
                     mode_counts.as_deref_mut(),
                     prev_mv_grid, cur_mv_grid,
                     prev_segment_ids, cur_segment_ids,
+                    dispatch,
                 );
                 if has_rows {
                     decode_inter_block(
@@ -1601,6 +1626,7 @@ fn decode_inter_partition(
                         mode_counts.as_deref_mut(),
                         prev_mv_grid, cur_mv_grid,
                         prev_segment_ids, cur_segment_ids,
+                        dispatch,
                     );
                 }
             }
@@ -1612,6 +1638,7 @@ fn decode_inter_partition(
                     mode_counts.as_deref_mut(),
                     prev_mv_grid, cur_mv_grid,
                     prev_segment_ids, cur_segment_ids,
+                    dispatch,
                 );
                 if has_cols {
                     decode_inter_block(
@@ -1621,6 +1648,7 @@ fn decode_inter_partition(
                         mode_counts.as_deref_mut(),
                         prev_mv_grid, cur_mv_grid,
                         prev_segment_ids, cur_segment_ids,
+                        dispatch,
                     );
                 }
             }
@@ -1632,6 +1660,7 @@ fn decode_inter_partition(
                     mode_counts.as_deref_mut(),
                     prev_mv_grid, cur_mv_grid,
                     prev_segment_ids, cur_segment_ids,
+                    dispatch,
                 );
                 decode_inter_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
@@ -1640,6 +1669,7 @@ fn decode_inter_partition(
                     mode_counts.as_deref_mut(),
                     prev_mv_grid, cur_mv_grid,
                     prev_segment_ids, cur_segment_ids,
+                    dispatch,
                 );
                 decode_inter_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
@@ -1648,6 +1678,7 @@ fn decode_inter_partition(
                     mode_counts.as_deref_mut(),
                     prev_mv_grid, cur_mv_grid,
                     prev_segment_ids, cur_segment_ids,
+                    dispatch,
                 );
                 decode_inter_partition(
                     reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
@@ -1655,6 +1686,7 @@ fn decode_inter_partition(
                     mv_counts, coef_counts, mode_counts,
                     prev_mv_grid, cur_mv_grid,
                     prev_segment_ids, cur_segment_ids,
+                    dispatch,
                 );
             }
         }
@@ -1700,6 +1732,7 @@ fn decode_inter_block(
     cur_mv_grid: &mut [rvp9_core::inter::mv_ref::PrevFrameMvRef],
     prev_segment_ids: &[u8],
     cur_segment_ids: &mut [u8],
+    dispatch: &SimdDispatch,
 ) {
     let mi_row_in_tile = mi_row - bounds.mi_row_start;
     let mi_col_in_tile = mi_col - bounds.mi_col_start;
@@ -2093,6 +2126,7 @@ fn decode_inter_block(
                 mi_row_in_sb,
                 &inputs,
                 dst_frame,
+                dispatch,
             );
         }
 
@@ -2202,6 +2236,7 @@ fn decode_inter_block(
             dequant_v,
             params.base.lossless,
             coef_counts,
+            dispatch,
         );
     }
 }

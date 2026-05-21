@@ -10,6 +10,7 @@
 
 use rvp9_decoder::{DecodeError, Decoder, tile::TileDecodeError};
 use rvp9_harness::container::read_packets;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 fn vectors_dir() -> PathBuf {
@@ -33,7 +34,8 @@ fn assert_vector_decodes_without_multi_tile_reject(vector_name: &str) {
         return;
     }
     let (data, packets) = read_packets(&path).expect("container parse");
-    let mut dec = Decoder::new();
+    // Pin to one worker (G5 review M2 — avoid thread amplification).
+    let mut dec = Decoder::with_threads(NonZeroUsize::new(1).expect("1 is non-zero"));
     let mut decoded = 0usize;
     for range in &packets {
         let parsed = dec.parse_packet(range.slice(&data)).expect("packet parse");

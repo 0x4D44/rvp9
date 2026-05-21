@@ -43,6 +43,7 @@
 
 use rvp9_core::bitstream::{ChromaFormat, InterpFilter};
 use rvp9_core::block::BlockSize;
+use rvp9_core::dsp::SimdDispatch;
 use rvp9_core::entropy::{BoolReader, FrameContext};
 use rvp9_core::entropy::adapt::CoefCountsBank;
 use rvp9_core::frame::{BorderedPlaneRef, Yv12Buffer};
@@ -52,7 +53,7 @@ use rvp9_core::inter::scale::{ScaleFactors, inter_predictor};
 use rvp9_core::inter::filter::{SUBPEL_BITS, SUBPEL_MASK, SUBPEL_SHIFTS};
 use rvp9_core::mode_info::{BlockMode, ModeInfo, Mv, RefFrame};
 use rvp9_core::transforms::inverse::{
-    idct4x4_1_add, idct4x4_16_add, idct8x8_1_add, idct8x8_64_add, idct16x16_1_add,
+    idct4x4_1_add, idct8x8_1_add, idct16x16_1_add,
     idct16x16_256_add, idct32x32_1_add, idct32x32_1024_add, iwht4x4_1_add, iwht4x4_16_add,
 };
 use rvp9_core::transforms::types::{TxSize, TxType};
@@ -151,6 +152,7 @@ pub fn reconstruct_inter_block(
     mi_row_in_sb: usize,
     inputs: &InterBlockInputs<'_>,
     dst_frame: &mut Yv12Buffer,
+    dispatch: &SimdDispatch,
 ) {
     // G7.0 review (2026-05-21): defensive — the
     // `Decoder::decode_frame` gate should already have rejected non-
@@ -558,6 +560,7 @@ pub fn reconstruct_inter_block(
                             tx_dst,
                             dst_stride,
                             inputs.lossless,
+                            dispatch,
                         );
                     }
 
@@ -614,6 +617,7 @@ pub fn decode_and_reconstruct_inter_block<N: NeighbourLookup>(
     mi_row_in_sb: usize,
     inputs: &InterBlockInputs<'_>,
     dst_frame: &mut Yv12Buffer,
+    dispatch: &SimdDispatch,
 ) {
     // 1. Read inter-block mode info (refs, mode, MVs, filter).
     read_inter_block_mode_info(
@@ -643,6 +647,7 @@ pub fn decode_and_reconstruct_inter_block<N: NeighbourLookup>(
         mi_row_in_sb,
         inputs,
         dst_frame,
+        dispatch,
     );
 }
 
@@ -715,6 +720,7 @@ fn uv_plane_tx_size(bsize: BlockSize, luma_tx: TxSize) -> TxSize {
 /// libvpx `inverse_transform_block_inter` (`vp9_decodeframe.c:266-294`).
 /// Lossless mode is restricted to `TX_4X4`, so at the larger TX sizes
 /// the flag is unused and a debug assertion catches caller bugs.
+#[allow(clippy::too_many_arguments)] // dispatch arg threading through G4.x SIMD rollout
 fn inverse_transform_add_dct(
     tx_size: TxSize,
     input: &[i32],
@@ -722,6 +728,7 @@ fn inverse_transform_add_dct(
     dest: &mut [u8],
     stride: usize,
     lossless: bool,
+    dispatch: &SimdDispatch,
 ) {
     debug_assert!(
         !lossless || tx_size == TxSize::Tx4x4,
@@ -746,7 +753,12 @@ fn inverse_transform_add_dct(
                     iwht4x4_16_add(coefs, dest, stride);
                 }
             } else if eob > 1 {
-                idct4x4_16_add(coefs, dest, stride);
+                // G4.2 — dispatch through SimdDispatch (mirror of the
+                // G4.1 idct8x8 wiring two arms down).
+                // G4.2: inter is DCT-DCT-only by spec (no ADST hybrids
+                // reach here); when intra wires hybrid dispatch slots in
+                // G4.3a, the inter path is already covered.
+                (dispatch.idct4x4_add())(coefs, dest, stride);
             } else {
                 idct4x4_1_add(coefs[0], dest, stride);
             }
@@ -756,7 +768,9 @@ fn inverse_transform_add_dct(
             if eob == 1 {
                 idct8x8_1_add(coefs[0], dest, stride);
             } else {
-                idct8x8_64_add(coefs, dest, stride);
+                // G4.1 — dispatch through SimdDispatch so the AVX2
+                // implementation runs on supported CPUs.
+                (dispatch.idct8x8_add())(coefs, dest, stride);
             }
         }
         TxSize::Tx16x16 => {
@@ -1131,6 +1145,17 @@ mod tests {
     use rvp9_core::frame::{BorderUsage, ByteAlignment, Yv12Buffer};
     use rvp9_core::mode_info::{BlockMode, BmiInfo, InterMode, ModeInfo, Mv, RefFrame};
     use rvp9_core::transforms::TxSize;
+    use std::sync::Arc;
+
+    /// G4.1 — local helper that returns the process-wide
+    /// `Arc<SimdDispatch>` for the test arg. Goes through
+    /// `rvp9_core::dsp::init()` so we share the OnceLock with
+    /// production (caps detection runs internally). Call sites use
+    /// `&test_dispatch()` to obtain a `&SimdDispatch` via deref
+    /// coercion on `&Arc<SimdDispatch>`.
+    fn test_dispatch() -> Arc<rvp9_core::dsp::SimdDispatch> {
+        rvp9_core::dsp::init()
+    }
 
     /// Build a `FrameContext` whose `coef_probs[tx][plane_type][1]`
     /// (inter `ref_type = 1`) is a flat-128 table, so the encoded
@@ -1272,6 +1297,7 @@ mod tests {
             /* mi_row_in_sb */ 1,
             &inputs,
             &mut dst,
+            &test_dispatch(),
         );
 
         // The block lands at pixel (mi_col*8, mi_row*8) = (16, 8) in
@@ -1360,6 +1386,7 @@ mod tests {
             /* mi_row_in_sb */ 0,
             &inputs,
             &mut dst,
+            &test_dispatch(),
         );
 
         // Reader unchanged.
@@ -1423,6 +1450,7 @@ mod tests {
         reconstruct_inter_block(
             &mut reader, &fc, None, &mut coef_ctx, &mi,
             2, 2, 2, 2, 2, &inputs, &mut dst,
+            &test_dispatch(),
         );
 
         // Some pixels in the 16x16 region at (16, 16) are non-zero
@@ -1500,6 +1528,7 @@ mod tests {
         reconstruct_inter_block(
             &mut reader, &fc, None, &mut coef_ctx, &mi,
             1, 1, 1, 1, 1, &inputs, &mut dst,
+            &test_dispatch(),
         );
 
         // Y block at pixel (8, 8): every cell = (0x40 + 0xC0 + 1) >> 1
@@ -1645,6 +1674,7 @@ mod tests {
             /* mi_row_in_sb */ 0,
             &inputs,
             &mut dst,
+            &test_dispatch(),
         );
 
         // 6. Confirm mi.mode is Inter with expected values.
@@ -1726,6 +1756,7 @@ mod tests {
             &mut reader, &fc, None, &mut coef_ctx, &mi,
             /* mi_row */ 1, /* mi_col */ 1,
             1, 1, 1, &inputs, &mut dst,
+            &test_dispatch(),
         );
 
         // Y region at pixel (8, 8) is 8×8 (4 bmis * 4×4 each).
@@ -1831,6 +1862,7 @@ mod tests {
             /* mi_row_in_sb */ 2,
             &inputs,
             &mut dst,
+            &test_dispatch(),
         );
 
         // After convolve8_horiz the dst region must not be all-zero (we

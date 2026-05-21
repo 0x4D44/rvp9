@@ -12,6 +12,7 @@ use rvp9_decoder::{DecodeError, Decoder};
 use rvp9_harness::container::read_packets;
 use rvp9_harness::md5file::read_md5_file;
 use rvp9_harness::{hex16, md5_of_yv12_visible};
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 /// Expected sub-frame count for a transport packet, derived purely
@@ -126,7 +127,13 @@ fn conformance_runner_walks_all_vectors() {
         let mut v_mismatched = 0usize;
         let mut v_skipped = 0usize;
 
-        let mut decoder = Decoder::new();
+        // Pin to one worker thread per G5 review (M2) — this loop
+        // constructs a fresh `Decoder` per vector (×201 vectors), and
+        // `Decoder::new()` would spawn `available_parallelism()`
+        // threads each time. The conformance pipeline runs every tile
+        // inline in the first-cut decoder, so additional workers sit
+        // idle anyway.
+        let mut decoder = Decoder::with_threads(NonZeroUsize::new(1).expect("1 is non-zero"));
         let mut shown_idx: usize = 0;
         for (packet_idx, range) in packets.iter().enumerate() {
             let packet_bytes = range.slice(&data);

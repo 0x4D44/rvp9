@@ -20,6 +20,7 @@ use rvp9_decoder::{DecodeError, Decoder};
 use rvp9_harness::container::read_packets;
 use rvp9_harness::md5file::read_md5_file;
 use rvp9_harness::{hex16, md5_of_yv12_visible};
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 fn vectors_dir() -> PathBuf {
@@ -52,7 +53,8 @@ fn lossless_quantizer_00_decodes_bit_exact() {
     let (data, packets) = read_packets(&vector).expect("container parse");
     let md5_entries = read_md5_file(&md5_path).expect(".md5 parse");
 
-    let mut decoder = Decoder::new();
+    // Pin to one worker (G5 review M2 — avoid thread amplification).
+    let mut decoder = Decoder::with_threads(NonZeroUsize::new(1).expect("1 is non-zero"));
     let mut shown_idx: usize = 0;
     let mut passed = 0usize;
     let mut mismatched = 0usize;

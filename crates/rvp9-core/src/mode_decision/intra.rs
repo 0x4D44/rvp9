@@ -424,6 +424,7 @@ pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSear
                 TxSize::Tx8x8 => {
                     let mut buf = [0i32; 64];
                     buf.copy_from_slice(&dq32[..64]);
+                    // TODO(G4.2): route through SimdDispatch::idct8x8_add() once mode_decision threads &SimdDispatch.
                     idct8x8_64_add(&buf, recon_slice, tx_side);
                 }
                 TxSize::Tx16x16 => {
@@ -1063,6 +1064,7 @@ mod tests {
                     TxSize::Tx8x8 => {
                         let mut buf = [0i32; 64];
                         buf.copy_from_slice(&dq32[..64]);
+                        // TODO(G4.2): route through SimdDispatch::idct8x8_add() once mode_decision threads &SimdDispatch.
                         idct8x8_64_add(&buf, recon_slice, tx_side);
                     }
                     TxSize::Tx16x16 => {

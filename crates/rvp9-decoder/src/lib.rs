@@ -471,6 +471,42 @@ pub struct Decoder {
     /// `(mi_rows, mi_cols)` of [`Self::last_frame_mi_grid`]. `(0, 0)`
     /// before any non-`ShowExistingFrame` frame has decoded.
     last_frame_mi_dims: (u32, u32),
+    /// G4.1 — Arc-shared SIMD dispatch table. Constructed once per
+    /// `Decoder::new` via `rvp9_core::dsp::init()` (`OnceLock`-backed),
+    /// then borrowed at frame entry and threaded down into
+    /// `decode_tile_*` so the per-TX dispatch site picks up the
+    /// AVX2 `idct8x8_add` (or the per-arch fallback) without
+    /// per-call `OnceLock::get` overhead.
+    ///
+    /// G5 (tile threading) inherits this Arc — `WorkerPool::new` will
+    /// take an `Arc<SimdDispatch>` clone so per-tile workers don't
+    /// re-detect CPU caps.
+    simd_dispatch: std::sync::Arc<rvp9_core::dsp::SimdDispatch>,
+    /// G5 — tile-threaded decode worker pool. Sized at construction
+    /// time from [`Self::num_threads`]; one OS thread per slot,
+    /// joined on drop. The decoder convention (HLD V6 §G5 V5 line
+    /// 1107: libvpx-faithful inline-worker pattern) is that for
+    /// `num_workers = min(num_threads, num_tiles)`, ONE slot
+    /// (`num_workers - 1`) runs inline on the caller thread and the
+    /// other `num_workers - 1` workers receive a `memcpy` of
+    /// `cm.counts` as a baseline. At `num_threads = 1` (the
+    /// deterministic-test path), `num_workers = 1`, the inline slot
+    /// is the only worker, no actual job is submitted, and the per-
+    /// tile decode loop produces `cm.counts = baseline + delta`
+    /// exactly as today — no code-path bifurcation.
+    ///
+    /// **G5 first-cut scope.** The pool is constructed and joined,
+    /// the `pool.scope(...)` API is wired through inter / intra
+    /// frame decode, and the all-inline path (every tile runs on
+    /// the caller thread inside the scope closure) is the only
+    /// execution mode. Per-worker `FrameCounts` memcpy + merge
+    /// mechanics (V5 §G5 lines 1107-1162) land in the follow-up
+    /// commit alongside the disjoint plane-view split (HLD §G5
+    /// option (a) `Yv12Buffer::split_into_tile_views`). The G5
+    /// primitive is what unlocks that follow-up; the inline path
+    /// keeps conformance at 201/0/0/0/201 and inter-thread-count
+    /// determinism at `decode(N=1) == decode(N=2)` byte-for-byte.
+    worker_pool: rvp9_core::tile_threading::WorkerPool,
 }
 
 // Wave A G12 — compile-time check that auto-derive still produces
@@ -511,6 +547,13 @@ impl Decoder {
     /// `WorkerPool` that drives per-tile parallelism. Callers can
     /// pre-emptively pin the count to keep behaviour stable across
     /// the G5 transition.
+    // TODO(G5.1): consider lazy worker spawning — workers should be
+    // created on first `scope()` invocation, not on `Decoder::new()`.
+    // Today's eager spawn means each `Decoder::new()` in tests/fuzz
+    // spawns N threads (`available_parallelism()` by default), which
+    // amplifies the cost of fast unit tests by a factor of N. See the
+    // review note in `notes/lld/core-tile-threading.md` §
+    // "Performance/cost notes".
     #[must_use]
     pub fn new() -> Self {
         // V6 §G12 K6-2: derive the default thread count from the
@@ -552,6 +595,13 @@ impl Decoder {
             FrameContext::new_default(),
             FrameContext::new_default(),
         ];
+        // G5 — construct the tile-threading worker pool sized at
+        // `n` threads. One pool lives for the decoder's lifetime;
+        // `Drop` joins every worker. The pool spawns `n` OS threads
+        // immediately — at `n = 1` (deterministic-test path) that's
+        // exactly one worker. Uniform with multi-threaded shapes:
+        // no code-path bifurcation per HLD V6 §G5.
+        let worker_pool = rvp9_core::tile_threading::WorkerPool::new(n);
         Self {
             num_threads: n,
             frame_pool: DecoderFramePool::new(),
@@ -577,6 +627,13 @@ impl Decoder {
             seg_abs_delta: false,
             last_frame_mi_grid: Vec::new(),
             last_frame_mi_dims: (0, 0),
+            // G4.1 — populate the process-wide SimdDispatch once at
+            // decoder construction. Subsequent calls to `dsp::init` are
+            // free (Arc::clone of the OnceLock slot). HLD-simd §2.2
+            // R-09: dispatch is fully populated before any decode
+            // worker can spawn.
+            simd_dispatch: rvp9_core::dsp::init(),
+            worker_pool,
         }
     }
 
@@ -1313,27 +1370,60 @@ impl Decoder {
         // driver below.
         let mut tile_decode_ctxs: Vec<(tile::TileBounds, TileDecodeCtx)> =
             Vec::with_capacity(buffers.len());
-        for tile_buf in &buffers {
-            let bounds = tile_bounds(
-                &tail.tile_info,
-                mi_cols,
-                mi_rows,
-                tile_buf.row,
-                tile_buf.col,
-            );
-            let fc = &self.frame_contexts[fc_idx];
-            let decode_ctx = decode_tile_intra(
-                tile_buf.data,
-                bounds,
-                &params,
-                fc,
-                &mut yv12,
-                Some(&mut self.coef_counts),
-                &mut cur_segment_ids,
-            )
-            .map_err(DecodeError::TileDecode)?;
-            tile_decode_ctxs.push((bounds, decode_ctx));
-        }
+        // G5 — open a `pool.scope(...)` block so the API contract is
+        // exercised even when no jobs are submitted. Per HLD V6 §G5
+        // V5 lines 1107-1162 the inline-worker pattern at
+        // `num_workers = 1` (single-threaded knob OR every tile
+        // routed to the inline slot, as we do here for the first-
+        // cut) runs every tile on the caller thread: no memcpy of
+        // `cm.counts`, no merge step, identical math to the
+        // pre-G5 path. The `pool.scope` wrap is what makes the
+        // future ramp to actual per-tile workers a local diff —
+        // change the loop body to `scope.submit(...)`, leave the
+        // surrounding adapt / loop-filter code untouched.
+        //
+        // The closure-form scope borrows `self.worker_pool`
+        // exclusively for the duration of the block. Re-bind the
+        // disjoint `&mut self` fields as local refs BEFORE the
+        // scope opens — forward-compatible with `scope.submit(...)`
+        // closures that need to capture references rather than
+        // re-borrow `self` per iteration.
+        let coef_counts = &mut self.coef_counts;
+        let frame_contexts = &self.frame_contexts;
+        let simd_dispatch = &self.simd_dispatch;
+        self.worker_pool.scope(|_scope| {
+            // First-cut G5: every tile runs inline on the caller
+            // thread. No `scope.submit(...)` calls. The follow-up
+            // commit will (a) split `yv12` into per-tile disjoint
+            // plane views via `Yv12Buffer::split_into_tile_views`
+            // and (b) submit `num_workers - 1` tile-decode jobs
+            // into the scope, leaving the LAST tile for the
+            // caller thread (the inline slot) per libvpx's
+            // `vp9_decode_tiles` pattern.
+            for tile_buf in &buffers {
+                let bounds = tile_bounds(
+                    &tail.tile_info,
+                    mi_cols,
+                    mi_rows,
+                    tile_buf.row,
+                    tile_buf.col,
+                );
+                let fc = &frame_contexts[fc_idx];
+                let decode_ctx = decode_tile_intra(
+                    tile_buf.data,
+                    bounds,
+                    &params,
+                    fc,
+                    &mut yv12,
+                    Some(&mut *coef_counts),
+                    &mut cur_segment_ids,
+                    simd_dispatch,
+                )
+                .map_err(DecodeError::TileDecode)?;
+                tile_decode_ctxs.push((bounds, decode_ctx));
+            }
+            Ok::<(), DecodeError>(())
+        })?;
 
         // Backward-adapt `coef_probs` per `vp9_adapt_coef_probs`
         // (`vp9_entropy.c:1084-1100`). Same gate as `adapt_mv_probs`:
@@ -1944,32 +2034,47 @@ impl Decoder {
         // driver below.
         let mut tile_decode_ctxs: Vec<(tile::TileBounds, TileDecodeCtx)> =
             Vec::with_capacity(buffers.len());
-        for tile_buf in &buffers {
-            let bounds = tile_bounds(
-                &tail.tile_info,
-                mi_cols,
-                mi_rows,
-                tile_buf.row,
-                tile_buf.col,
-            );
-            let fc = &self.frame_contexts[fc_idx];
-            let decode_ctx = decode_tile_inter(
-                tile_buf.data,
-                bounds,
-                &params,
-                fc,
-                &mut yv12,
-                Some(&mut self.mv_counts),
-                Some(&mut self.coef_counts),
-                Some(&mut self.mode_counts),
-                prev_mv_grid,
-                &mut cur_mv_grid,
-                prev_seg_ids_slice,
-                &mut cur_segment_ids,
-            )
-            .map_err(DecodeError::TileDecode)?;
-            tile_decode_ctxs.push((bounds, decode_ctx));
-        }
+        // G5 — wrap the per-tile loop in `pool.scope(...)`. See the
+        // matching block in `decode_intra_frame_inner` for the
+        // rationale (HLD V6 §G5 V5 inline-worker pattern at
+        // `num_workers = 1`). The first-cut runs every tile inline;
+        // the disjoint-plane split + per-worker `FrameCounts` memcpy/
+        // merge land in the follow-up.
+        let mv_counts = &mut self.mv_counts;
+        let coef_counts = &mut self.coef_counts;
+        let mode_counts = &mut self.mode_counts;
+        let frame_contexts = &self.frame_contexts;
+        let simd_dispatch = &self.simd_dispatch;
+        self.worker_pool.scope(|_scope| {
+            for tile_buf in &buffers {
+                let bounds = tile_bounds(
+                    &tail.tile_info,
+                    mi_cols,
+                    mi_rows,
+                    tile_buf.row,
+                    tile_buf.col,
+                );
+                let fc = &frame_contexts[fc_idx];
+                let decode_ctx = decode_tile_inter(
+                    tile_buf.data,
+                    bounds,
+                    &params,
+                    fc,
+                    &mut yv12,
+                    Some(&mut *mv_counts),
+                    Some(&mut *coef_counts),
+                    Some(&mut *mode_counts),
+                    prev_mv_grid,
+                    &mut cur_mv_grid,
+                    prev_seg_ids_slice,
+                    &mut cur_segment_ids,
+                    simd_dispatch,
+                )
+                .map_err(DecodeError::TileDecode)?;
+                tile_decode_ctxs.push((bounds, decode_ctx));
+            }
+            Ok::<(), DecodeError>(())
+        })?;
 
         // Backward-adapt the per-frame probability banks per
         // `vp9_adapt_*_probs` (`vp9_decodeframe.c:3046-3053`). Same gate

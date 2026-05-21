@@ -27,6 +27,16 @@
 use rvp9_core::bitstream::{ColorSpace, FrameKind, RawBitWriter, frame::sync};
 use rvp9_decoder::{DecodeError, Decoder, ParsedFrame};
 use rvp9_encoder::{Config, Encoder};
+use std::num::NonZeroUsize;
+
+/// Single-thread `Decoder` constructor for tests — avoids the
+/// `Decoder::new()` thread amplification (see review M2 / G5.1
+/// TODOs). Tests here don't exercise tile-threading; pinning to one
+/// worker keeps wall-clock predictable and avoids host-CPU-dependent
+/// scheduler noise.
+fn single_thread_decoder() -> Decoder {
+    Decoder::with_threads(NonZeroUsize::new(1).expect("1 is non-zero"))
+}
 
 /// The "valid keyframe" fixture both tests reach for after the
 /// expected `Err`. `encode_synthetic_dc_skip_keyframe` produces a
@@ -108,7 +118,7 @@ fn build_keyframe_overflowing_first_partition_size() -> Vec<u8> {
 /// from compressed-header parse before any running-state mutation).
 #[test]
 fn early_error_then_valid_keyframe_decodes() {
-    let mut dec = Decoder::new();
+    let mut dec = single_thread_decoder();
 
     // Step 1: feed the broken packet.
     let bad = build_keyframe_overflowing_first_partition_size();
@@ -201,7 +211,7 @@ fn mid_tile_failure_then_valid_keyframe_decodes() {
         .encode_synthetic_two_frame_kf_inter_non_skip()
         .expect("synthetic 2-frame packet builds");
 
-    let mut dec = Decoder::new();
+    let mut dec = single_thread_decoder();
 
     // Step 1: parse the packet into its 2 frames.
     let parsed = dec.parse_packet(&packet).expect("synthetic packet parses");
@@ -323,7 +333,7 @@ fn mid_tile_failure_then_valid_inter_decodes() {
         .encode_synthetic_two_frame_kf_inter_non_skip()
         .expect("synthetic 2-frame packet #2 builds");
 
-    let mut dec = Decoder::new();
+    let mut dec = single_thread_decoder();
 
     // Step 1: decode the keyframe from packet #1 — populates
     // `ref_frame_map` (every slot points at the keyframe's pool
@@ -413,7 +423,7 @@ fn mid_tile_failure_then_valid_inter_decodes() {
 /// (`Default::default` regression).
 #[test]
 fn fresh_decoder_baseline() {
-    let dec = Decoder::new();
+    let dec = single_thread_decoder();
     // No frames decoded yet → frame pool empty. (The test exists
     // to catch a regression where `Decoder::new` accidentally
     // started populating a slot.)

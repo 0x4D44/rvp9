@@ -170,7 +170,13 @@ impl PlausibleVp9Packet {
 
 fuzz_target!(|packet: PlausibleVp9Packet| {
     let bytes = packet.encode();
-    let mut decoder = Decoder::new();
+    // Pin to 1 worker thread — the fuzzer hits this constructor on
+    // every iteration and `Decoder::new()` spawns
+    // `available_parallelism()` threads (commonly 8-32). The fuzz
+    // target only exercises `parse_packet`, which never submits any
+    // tile-decode work, so the threads sit idle. See G5.1 TODO at
+    // `Decoder::new`.
+    let mut decoder = Decoder::with_threads(std::num::NonZeroUsize::new(1).expect("1 is non-zero"));
     // Result is irrelevant; we are only catching panics / UB.
     let _ = decoder.parse_packet(&bytes);
 });

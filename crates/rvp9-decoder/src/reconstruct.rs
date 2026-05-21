@@ -37,11 +37,12 @@
 //!   `vp9_reconintra.c:263-403` is **not** in scope here; it lives in
 //!   the K driver / intra-pred wrapper landing later.
 
+use rvp9_core::dsp::SimdDispatch;
 use rvp9_core::entropy::adapt::CoefCountsBank;
 use rvp9_core::entropy::{BoolReader, FrameContext};
 use rvp9_core::intra_pred::{DcAvailability, IntraMode, PredCtx, intra_predict};
 use rvp9_core::transforms::inverse::{
-    idct4x4_1_add, idct4x4_16_add, idct8x8_1_add, idct8x8_64_add, idct16x16_1_add,
+    idct4x4_1_add, idct8x8_1_add, idct16x16_1_add,
     idct16x16_256_add, idct32x32_1_add, idct32x32_1024_add, iht4x4_16_add, iht8x8_64_add,
     iht16x16_256_add, iwht4x4_1_add, iwht4x4_16_add,
 };
@@ -155,6 +156,7 @@ pub fn reconstruct_intra_block(
     seg_eob: usize,
     dequant: (i32, i32),
     lossless: bool,
+    dispatch: &SimdDispatch,
 ) -> usize {
     // VP9 lossless restricts every TX block to 4×4 (libvpx
     // `vp9_decodeframe.c:280-281`). The caller already gates `lossless`
@@ -272,7 +274,16 @@ pub fn reconstruct_intra_block(
     // pass `lossless` through so the 4×4 site can pick the WHT family
     // (`iwht4x4_*_add`) instead of the standard IDCT.
     if eob > 0 {
-        inverse_transform_add(tx_size, tx_type, &dq_coefs[..n], eob, dst, dst_stride, lossless);
+        inverse_transform_add(
+            tx_size,
+            tx_type,
+            &dq_coefs[..n],
+            eob,
+            dst,
+            dst_stride,
+            lossless,
+            dispatch,
+        );
     }
 
     eob
@@ -297,6 +308,7 @@ pub fn reconstruct_intra_block(
 /// `vp9_decodeframe.c:280-294`). Lossless mode is restricted to
 /// `TX_4X4`, so the flag has no effect at the larger TX sizes — they
 /// keep the standard IDCT dispatch.
+#[allow(clippy::too_many_arguments)] // dispatch arg threading through G4.x SIMD rollout
 fn inverse_transform_add(
     tx_size: TxSize,
     tx_type: TxType,
@@ -305,6 +317,7 @@ fn inverse_transform_add(
     dest: &mut [u8],
     stride: usize,
     lossless: bool,
+    dispatch: &SimdDispatch,
 ) {
     debug_assert!(input.len() == tx_size.n_coeffs());
     debug_assert!(
@@ -341,7 +354,13 @@ fn inverse_transform_add(
                 }
             } else if tx_type == TxType::DctDct {
                 if eob > 1 {
-                    idct4x4_16_add(coefs, dest, stride);
+                    // G4.2 — dispatch through SimdDispatch so the AVX2
+                    // implementation runs on supported CPUs (mirror of
+                    // the G4.1 idct8x8 wiring).
+                    // G4.2: DCT-DCT only; ADST hybrids (DCT_ADST/ADST_DCT/
+                    // ADST_ADST) still scalar via iht4x4_16_add. Hybrids
+                    // need separate dispatch slots — G4.3a follow-up.
+                    (dispatch.idct4x4_add())(coefs, dest, stride);
                 } else {
                     idct4x4_1_add(coefs[0], dest, stride);
                 }
@@ -361,7 +380,10 @@ fn inverse_transform_add(
                     // §3.4 lists 12-bucket kernels but only _1 and
                     // _64 are landed in inverse.rs today). Bit-exact
                     // result; just slower for sparse blocks.
-                    idct8x8_64_add(coefs, dest, stride);
+                    //
+                    // G4.1 — dispatch through SimdDispatch so the AVX2
+                    // implementation runs on supported CPUs.
+                    (dispatch.idct8x8_add())(coefs, dest, stride);
                 }
             } else {
                 iht8x8_64_add(coefs, dest, stride, tx_type);
@@ -400,6 +422,7 @@ mod tests {
     use super::*;
     use rvp9_core::entropy::BoolWriter;
     use rvp9_core::entropy::coef_probs::{COEF_BANDS, COEFF_CONTEXTS};
+    use std::sync::Arc;
 
     /// Default `DcAvailability` for tests that exercise non-edge
     /// blocks — both neighbours present, so `intra_predict(Dc, ...)`
@@ -409,6 +432,16 @@ mod tests {
         above_available: true,
         left_available: true,
     };
+
+    /// G4.1 — local helper that returns the process-wide
+    /// `Arc<SimdDispatch>` for the test arg. Goes through
+    /// `rvp9_core::dsp::init()` so we share the OnceLock with
+    /// production (caps detection runs internally). Call sites use
+    /// `&test_dispatch()` to obtain a `&SimdDispatch` via deref
+    /// coercion on `&Arc<SimdDispatch>`.
+    fn test_dispatch() -> Arc<rvp9_core::dsp::SimdDispatch> {
+        rvp9_core::dsp::init()
+    }
 
     // ---- Helpers ----------------------------------------------------
 
@@ -561,6 +594,7 @@ mod tests {
             16,
             (10, 20),
             false,
+            &test_dispatch(),
         );
 
         assert_eq!(eob, 0, "EOB at scan[0] → eob = 0");
@@ -620,6 +654,7 @@ mod tests {
             16,
             (8, 13),
             false,
+            &test_dispatch(),
         );
         assert_eq!(eob, 1);
 
@@ -669,6 +704,7 @@ mod tests {
             16,
             (7, 11),
             false,
+            &test_dispatch(),
         );
         assert_eq!(eob, 0);
 
@@ -720,6 +756,7 @@ mod tests {
             256,
             (10, 20),
             false,
+            &test_dispatch(),
         );
         assert_eq!(eob, 0);
 
@@ -772,6 +809,7 @@ mod tests {
             1024,
             (10, 20),
             false,
+            &test_dispatch(),
         );
         assert_eq!(eob, 0);
 
@@ -839,6 +877,7 @@ mod tests {
             64,
             (10, 20),
             false,
+            &test_dispatch(),
         );
         assert_eq!(eob, 0);
 
