@@ -19,8 +19,13 @@
 //! §3.7) lands as Stage 4 work — that's encoder-side construction of
 //! the per-plane quant arrays at frame setup.
 
+pub mod forward;
 pub mod tables;
 
+pub use forward::{
+    PlaneQuantizers, QuantizerDeltas, init_plane_quantizers, plane_dequant_pair, vp9_quantize_b,
+    vp9_quantize_b_32x32, vp9_quantize_fp, vp9_quantize_fp_32x32,
+};
 pub use tables::{AC_QLOOKUP, DC_QLOOKUP};
 
 /// Maximum value of a clamped qindex. `MAXQ` in libvpx
