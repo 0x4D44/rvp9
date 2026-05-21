@@ -71,6 +71,7 @@ use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, Mv, RefFrame};
 use rvp9_core::transforms::{TxMode, TxSize};
 
 pub mod frame_loop;
+pub(crate) mod loopfilter;
 pub mod rate_control;
 
 pub use frame_loop::{EncodedFrame, EncoderConfig, FrameKind as StreamFrameKind, StreamEncoder, YuvFrameRef};

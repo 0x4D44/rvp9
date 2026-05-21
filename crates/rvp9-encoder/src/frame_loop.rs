@@ -73,6 +73,10 @@ use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, Mv, RefFrame};
 use rvp9_core::mv_search::PlaneRef;
 use rvp9_core::transforms::TxMode;
 
+use crate::loopfilter::{
+    apply_loop_filter_to_tight_recon, build_inter_mi_grid_for_lf, build_kf_mi_grid_for_lf,
+    pick_filter_level,
+};
 use crate::rate_control::{FrameKind as RcFrameKind, RateControl, RateControlConfig};
 use crate::{
     EncodeError, InterPartitionLeafDesc, PartitionLeafDesc,
@@ -427,7 +431,25 @@ impl StreamEncoder {
             &mut sb_partitions,
         );
 
-        build_keyframe_packet(w, h, q_index, &coef_source, &sb_partitions)
+        // F11.0 — apply the in-loop deblocking filter to the encoder's
+        // reference reconstruction. The decoder runs the same filter
+        // with the same `filter_level` after IT-add, so the
+        // encoder↔decoder bit-exact invariant survives LF.
+        let filter_level = pick_filter_level(q_index);
+        if filter_level > 0 {
+            let mi_grid = build_kf_mi_grid_for_lf(h / 8, w / 8, &sb_partitions);
+            apply_loop_filter_to_tight_recon(
+                w,
+                h,
+                filter_level,
+                &mi_grid,
+                &mut self.last_recon_y,
+                &mut self.last_recon_u,
+                &mut self.last_recon_v,
+            );
+        }
+
+        build_keyframe_packet(w, h, q_index, filter_level, &coef_source, &sb_partitions)
     }
 
     /// Inter internal: F10.1c — drive F8.2 partition + F8.1 inter mode
@@ -500,10 +522,35 @@ impl StreamEncoder {
             &mut sb_partitions,
         );
 
+        // F11.0 — apply the in-loop deblocking filter to the encoder's
+        // new reference reconstruction (matches the decoder's LF pass
+        // after IT-add). Must run BEFORE we commit `new_recon_*` into
+        // `last_recon_*` so the next inter frame's reference is the
+        // post-LF pixels — same as the decoder's pool.
+        let filter_level = pick_filter_level(q_index);
+        if filter_level > 0 {
+            let mi_grid = build_inter_mi_grid_for_lf(h / 8, w / 8, &sb_partitions);
+            apply_loop_filter_to_tight_recon(
+                w,
+                h,
+                filter_level,
+                &mi_grid,
+                &mut new_recon_y,
+                &mut new_recon_u,
+                &mut new_recon_v,
+            );
+        }
+
         // Build the packet from the populated coef source + leaf
         // descriptors.
-        let packet =
-            build_inter_packet_with_residuals(w, h, q_index, &coef_source, &sb_partitions)?;
+        let packet = build_inter_packet_with_residuals(
+            w,
+            h,
+            q_index,
+            filter_level,
+            &coef_source,
+            &sb_partitions,
+        )?;
 
         // Commit the new reconstruction as the encoder's new LAST ref.
         self.last_recon_y = new_recon_y;
@@ -760,6 +807,7 @@ fn build_keyframe_packet(
     width: u32,
     height: u32,
     base_qindex: u8,
+    filter_level: u8,
     coef_source: &dyn rvp9_core::bitstream::IntraCoefSource,
     sb_partitions: &[Vec<PartitionLeafDesc>],
 ) -> Result<Vec<u8>, EncodeError> {
@@ -826,7 +874,10 @@ fn build_keyframe_packet(
         frame_parallel_decoding_mode: false,
         frame_context_idx: 0,
         loop_filter: LoopFilterParams {
-            filter_level: 0,
+            // F11.0 — emit the F11.0-picked filter_level so the decoder
+            // applies the same in-loop deblocking pass the encoder
+            // applied to its reference reconstruction.
+            filter_level,
             sharpness_level: 0,
             mode_ref_delta_enabled: false,
             mode_ref_delta_update: false,
@@ -899,6 +950,7 @@ fn build_inter_packet_with_residuals(
     width: u32,
     height: u32,
     base_qindex: u8,
+    filter_level: u8,
     coef_source: &dyn InterCoefSource,
     sb_partitions: &[Vec<InterPartitionLeafDesc>],
 ) -> Result<Vec<u8>, EncodeError> {
@@ -980,7 +1032,9 @@ fn build_inter_packet_with_residuals(
         frame_parallel_decoding_mode: false,
         frame_context_idx: 0,
         loop_filter: LoopFilterParams {
-            filter_level: 0,
+            // F11.0 — emit the F11.0-picked filter_level (matches the
+            // pass applied to the encoder's reference reconstruction).
+            filter_level,
             sharpness_level: 0,
             mode_ref_delta_enabled: false,
             mode_ref_delta_update: false,
@@ -1671,8 +1725,15 @@ mod tests {
             &sb_partitions,
         );
 
-        let pkt = build_keyframe_packet(w, h, q_index, &coef_source, &sb_partitions)
-            .expect("build_keyframe_packet must succeed");
+        let pkt = build_keyframe_packet(
+            w,
+            h,
+            q_index,
+            /* filter_level = */ 0,
+            &coef_source,
+            &sb_partitions,
+        )
+        .expect("build_keyframe_packet must succeed");
 
         let mut dec = Decoder::new();
         let frames = decode_packet(&mut dec, &pkt);
@@ -2288,5 +2349,136 @@ mod tests {
             "F10.2-T3: KF PSNR = {kf_psnr:.2} dB — expected > 30 dB on \
              smooth gradient",
         );
+    }
+
+    // ============================================================
+    // F11.0 — in-loop deblocking filter wireup tests.
+    // ============================================================
+
+    /// F11.0 T1 — At a typical Q (~80 here), the emitted
+    /// `filter_level` in the uncompressed header must be > 0. Prior to
+    /// F11.0 the encoder hard-coded `filter_level = 0`, silently
+    /// disabling the deblocking pass; this test guards against the
+    /// regression.
+    #[test]
+    fn f11_0_filter_level_nonzero_at_typical_q() {
+        const W: usize = 64;
+        const H: usize = 64;
+
+        let cfg = EncoderConfig {
+            width: W as u32,
+            height: H as u32,
+            framerate: 30.0,
+            // Tight bitrate target so the rate controller picks a
+            // mid-range Q — empirically lands around q = 70-90 on a
+            // 64×64 gradient KF.
+            target_bitrate_bps: 300_000,
+            gop_length: 30,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let (y, u, v) = gradient_frame(W, H);
+
+        let pkt = enc.encode_frame(&yuv_view(&y, &u, &v, W)).unwrap();
+        // Sanity-check the Q the controller picked is in the "typical"
+        // band — if not, the test's premise about a non-zero
+        // filter_level doesn't apply.
+        assert!(
+            pkt.q_index >= 4,
+            "F11.0-T1: precondition violated — q_index = {} too low to \
+             exercise non-zero filter_level (need q_index ≥ 4)",
+            pkt.q_index
+        );
+
+        // Parse the packet through the decoder and inspect the header.
+        let mut dec = Decoder::new();
+        let frames = decode_packet(&mut dec, &pkt.data);
+        assert_eq!(frames.len(), 1);
+        let tail = frames[0]
+            .header
+            .tail
+            .as_ref()
+            .expect("KF must carry a tail");
+        assert!(
+            tail.loop_filter.filter_level > 0,
+            "F11.0-T1: filter_level = {} (expected > 0 at q_index = {})",
+            tail.loop_filter.filter_level,
+            pkt.q_index
+        );
+        // The picker is `(q >> 1) min 63`; cross-check.
+        let expected = (pkt.q_index >> 1).min(63);
+        assert_eq!(
+            tail.loop_filter.filter_level, expected,
+            "F11.0-T1: filter_level should match the F11.0 picker formula"
+        );
+    }
+
+    /// F11.0 T2 — The key oracle: with LF enabled, the decoder's
+    /// reconstruction must still match the encoder's `last_recon_y`
+    /// pixel-for-pixel. If the encoder's LF and the decoder's LF
+    /// diverge by a single byte, this fails. This is the gate.
+    #[test]
+    fn f11_0_decoded_recon_matches_encoder_recon_with_lf() {
+        const W: usize = 64;
+        const H: usize = 64;
+
+        let cfg = EncoderConfig {
+            width: W as u32,
+            height: H as u32,
+            framerate: 30.0,
+            // Pick a tight bitrate so the rate controller drives Q up
+            // into the band where LF is non-trivial.
+            target_bitrate_bps: 200_000,
+            gop_length: 30,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let (y, u, v) = gradient_frame(W, H);
+
+        let pkt = enc.encode_frame(&yuv_view(&y, &u, &v, W)).unwrap();
+        // Precondition: LF actually fired (filter_level > 0).
+        let filter_level_picked = (pkt.q_index >> 1).min(63);
+        assert!(
+            filter_level_picked > 0,
+            "F11.0-T2: precondition — LF must fire at q_index = {}",
+            pkt.q_index
+        );
+
+        let mut dec = Decoder::new();
+        let frames = decode_packet(&mut dec, &pkt.data);
+        let buf = dec.decode_frame(&frames[0]).unwrap();
+
+        // Encoder's local recon (post-LF) vs decoder's recon (post-LF):
+        // bit-exact match per row.
+        let enc_recon = enc.last_recon_y();
+        let yp = buf.y_plane();
+        for r in 0..H {
+            let dec_row = &yp.data()[r * yp.stride()..r * yp.stride() + W];
+            let enc_row = &enc_recon[r * W..(r + 1) * W];
+            assert_eq!(
+                dec_row, enc_row,
+                "F11.0-T2: row {r} encoder recon (post-LF) != decoder \
+                 recon (post-LF); filter_level = {filter_level_picked}, \
+                 q_index = {}",
+                pkt.q_index
+            );
+        }
+    }
+
+    /// F11.0 T3 — At very low Q (q_index = 1, the encoder's lossless
+    /// clamp), `pick_filter_level` must return 0 so the LF pass is
+    /// skipped entirely (matches libvpx `vp9_loopfilter.c:1422-1427`).
+    /// We assert via the public picker function rather than driving a
+    /// full encode at q = 1, because the rate controller never picks
+    /// q = 1 in practice on this codec config.
+    #[test]
+    fn f11_0_lf_at_q_zero_is_zero() {
+        use crate::loopfilter::pick_filter_level;
+        assert_eq!(pick_filter_level(0), 0, "q = 0 must yield filter_level = 0");
+        assert_eq!(pick_filter_level(1), 0, "q = 1 (encoder min) must yield filter_level = 0");
+        // Sanity: typical Q lands at the picker's formula.
+        assert_eq!(pick_filter_level(80), 40);
+        assert_eq!(pick_filter_level(120), 60);
+        // Saturates at MAX_LOOP_FILTER = 63.
+        assert_eq!(pick_filter_level(200), 63);
+        assert_eq!(pick_filter_level(255), 63);
     }
 }
