@@ -325,10 +325,34 @@ fn descend(
     let per_pixel_var = u64::from(var_total) / n.max(1);
 
     // Threshold index: 0 → 64, 1 → 32, 2 → 16, 3 → 8.
+    //
+    // Stage 4a' partition-fragmentation closure (A0''): on KEYFRAMES,
+    // the Block16x16 → Block8x8 descent is GATED OFF. Diagnosed on
+    // foreman_cif: at q ≥ 124 on textured KFs (faces, hair) ~92 % of
+    // 16×16 blocks exceed the variance threshold and descend to
+    // Block8x8, generating 940/1024 leaves per frame. Per-leaf mode
+    // bits + EOB context alone consume the entire bit budget,
+    // starving the residual coefficients. Capping at Block16x16 on
+    // KFs frees per-leaf bits AND keeps every leaf inside the F10.1b
+    // intra picker's supported size range. Block8x8 leaves are still
+    // reachable directly when the parent variance does NOT cause it
+    // to split (the common case for low-variance blocks).
+    //
+    // INTER frames keep the full descent — A1 / A1.perf documented
+    // that F8.1's Block8x8 inter picker (the testsrc PSNR climb from
+    // 24 → 35-52 dB) depends on the descent reaching Block8x8 on
+    // small frames; capping inter too would regress that win.
+    let allow_split_to_8x8 = !params.is_keyframe;
     let (threshold_idx, child_size) = match bs {
         BlockSize::Block64x64 => (0usize, Some(BlockSize::Block32x32)),
         BlockSize::Block32x32 => (1, Some(BlockSize::Block16x16)),
-        BlockSize::Block16x16 => (2, Some(BlockSize::Block8x8)),
+        BlockSize::Block16x16 => {
+            if allow_split_to_8x8 {
+                (2, Some(BlockSize::Block8x8))
+            } else {
+                (2, None)
+            }
+        }
         BlockSize::Block8x8 => (3, None),
         _ => return false,
     };
