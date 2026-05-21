@@ -70,6 +70,8 @@ use rvp9_core::intra_pred::IntraMode;
 use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, Mv, RefFrame};
 use rvp9_core::transforms::{TxMode, TxSize};
 
+pub mod rate_control;
+
 /// Encoder configuration.
 ///
 /// v1 is intentionally tiny — Stage 4a tasks 2-8 will widen this with
