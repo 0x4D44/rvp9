@@ -654,6 +654,130 @@ impl Yv12Buffer {
             uv_border_w + (uv_w - uv_crop_w),
         );
     }
+
+    /// G5.1: produce a fresh [`Yv12Buffer`] with identical geometry —
+    /// same crop dimensions, aligned dimensions, strides, borders,
+    /// chroma format, alignment — but with a freshly zero-initialised
+    /// pixel backing. Used as a per-tile scratch buffer for parallel
+    /// tile decode: each tile worker writes its column range into its
+    /// own scratch buffer, and the main thread merges the column
+    /// ranges back via [`Self::merge_tile_columns_from`] once the
+    /// per-tile scope has joined.
+    ///
+    /// The returned buffer's `color_space`, `color_range`, and
+    /// `render_size` are reset to defaults — the caller is expected
+    /// to consume the scratch buffer for pixel data only.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FrameAllocError`] only if the underlying allocation
+    /// fails (extremely unlikely for sizes that the source buffer
+    /// already holds).
+    pub fn clone_geometry(&self) -> Result<Self, FrameAllocError> {
+        // We can't directly recover the `byte_alignment` from `self`,
+        // but `Legacy` (= 1) is the libvpx default and the only value
+        // the decoder uses today; geometry comes from the strides and
+        // offsets so the byte_alignment choice is moot. We use
+        // `Legacy` to keep the scratch allocation compact.
+        //
+        // The decoder constructs frames with `BorderUsage::Decoder`
+        // (= 32 px) — match that via `BorderUsage::Custom(self.border)`
+        // so the scratch buffer has the same border width.
+        Self::alloc(
+            self.crop_width,
+            self.crop_height,
+            self.chroma,
+            BorderUsage::Custom(self.border),
+            ByteAlignment::Legacy,
+        )
+    }
+
+    /// G5.1: copy a per-tile column range from a scratch source
+    /// buffer into `self`. The two buffers MUST have identical
+    /// geometry (`crop_width`/`crop_height`/`chroma`/strides).
+    ///
+    /// `luma_col_start` and `luma_col_end` specify the column range
+    /// in LUMA pixels (must be multiples of [`Yv12TileSplit::ALIGN`]
+    /// = 2 for 4:2:0 chroma alignment; tile boundaries are at MI
+    /// units = 8 luma px, so this is always satisfied).
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug builds if the geometry mismatches, or if the
+    /// column range is out of bounds, or if the alignment requirement
+    /// is violated.
+    pub fn merge_tile_columns_from(
+        &mut self,
+        src: &Yv12Buffer,
+        luma_col_start: usize,
+        luma_col_end: usize,
+    ) {
+        debug_assert_eq!(self.crop_width, src.crop_width);
+        debug_assert_eq!(self.crop_height, src.crop_height);
+        debug_assert_eq!(self.chroma, src.chroma);
+        debug_assert_eq!(self.y_stride, src.y_stride);
+        debug_assert_eq!(self.uv_stride, src.uv_stride);
+        debug_assert_eq!(self.y_width, src.y_width);
+        debug_assert_eq!(self.y_height, src.y_height);
+        debug_assert_eq!(self.uv_width, src.uv_width);
+        debug_assert_eq!(self.uv_height, src.uv_height);
+        debug_assert!(luma_col_start <= luma_col_end);
+        debug_assert!(luma_col_end <= self.y_width as usize);
+
+        let ss_x = u32::from(self.chroma.subsampling_x()) as usize;
+        let ss_y = u32::from(self.chroma.subsampling_y()) as usize;
+        debug_assert!(luma_col_start.is_multiple_of(1 << ss_x));
+        debug_assert!(luma_col_end.is_multiple_of(1 << ss_x));
+
+        let y_stride = self.y_stride as usize;
+        let uv_stride = self.uv_stride as usize;
+        let y_height = self.y_height as usize;
+        let uv_height = self.uv_height as usize;
+
+        // Y plane copy: rows 0..y_height, columns [luma_col_start, luma_col_end).
+        let y_col_len = luma_col_end - luma_col_start;
+        if y_col_len > 0 {
+            for r in 0..y_height {
+                let dst_start = self.y_offset + r * y_stride + luma_col_start;
+                let src_start = src.y_offset + r * y_stride + luma_col_start;
+                self.buffer_alloc[dst_start..dst_start + y_col_len]
+                    .copy_from_slice(&src.buffer_alloc[src_start..src_start + y_col_len]);
+            }
+        }
+
+        // U/V plane copy: rows 0..uv_height, columns [luma_col_start >> ss_x, luma_col_end >> ss_x).
+        let uv_col_start = luma_col_start >> ss_x;
+        let uv_col_end = luma_col_end >> ss_x;
+        let uv_col_len = uv_col_end - uv_col_start;
+        if uv_col_len > 0 {
+            let _ = ss_y; // chroma vertical handled implicitly via uv_height.
+            for r in 0..uv_height {
+                let dst_u = self.u_offset + r * uv_stride + uv_col_start;
+                let src_u = src.u_offset + r * uv_stride + uv_col_start;
+                self.buffer_alloc[dst_u..dst_u + uv_col_len]
+                    .copy_from_slice(&src.buffer_alloc[src_u..src_u + uv_col_len]);
+                let dst_v = self.v_offset + r * uv_stride + uv_col_start;
+                let src_v = src.v_offset + r * uv_stride + uv_col_start;
+                self.buffer_alloc[dst_v..dst_v + uv_col_len]
+                    .copy_from_slice(&src.buffer_alloc[src_v..src_v + uv_col_len]);
+            }
+        }
+    }
+}
+
+/// G5.1: helpers / constants for the per-tile-column split that the
+/// decoder uses to drive parallel tile decode. Bundled into a single
+/// struct so callers have a stable name to refer to.
+pub struct Yv12TileSplit;
+
+impl Yv12TileSplit {
+    /// Alignment requirement on luma column start/end for the
+    /// per-tile column split: must be a multiple of 2 (so chroma at
+    /// 4:2:0's `ss_x = 1` lands on integer chroma pixels). Tile
+    /// boundaries are at MI units (8 luma px), which is a stricter
+    /// alignment than this requirement, so the gate is satisfied for
+    /// every well-formed VP9 stream.
+    pub const ALIGN: usize = 2;
 }
 
 /// Replicate edge pixels into each plane's border so motion-comp
@@ -1902,5 +2026,79 @@ mod tests {
         assert_eq!(pool.occupied_count(), 0);
         // External refs still alive even after clear (Arc semantics).
         assert_eq!(external.len(), 5);
+    }
+
+    // ---- G5.1: clone_geometry + merge_tile_columns_from ------------------
+
+    #[test]
+    fn clone_geometry_matches_source_dimensions() {
+        let src = Yv12Buffer::alloc(
+            128, 96,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
+        let dst = src.clone_geometry().unwrap();
+        assert_eq!(dst.width(), src.width());
+        assert_eq!(dst.height(), src.height());
+        assert_eq!(dst.aligned_y_width(), src.aligned_y_width());
+        assert_eq!(dst.aligned_y_height(), src.aligned_y_height());
+        assert_eq!(dst.y_stride(), src.y_stride());
+        assert_eq!(dst.uv_stride(), src.uv_stride());
+        assert_eq!(dst.chroma(), src.chroma());
+        assert_eq!(dst.border(), src.border());
+    }
+
+    #[test]
+    fn merge_tile_columns_round_trip() {
+        // Build a source: stamp distinct values in each column range
+        // [0, 64) and [64, 128). Build a fresh dst, merge each range
+        // and confirm bytes round-trip.
+        let mut src_a = Yv12Buffer::alloc(
+            128, 64,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
+        src_a.y_plane_mut().fill(0xAA);
+        src_a.u_plane_mut().fill(0xA1);
+        src_a.v_plane_mut().fill(0xA2);
+
+        let mut src_b = src_a.clone_geometry().unwrap();
+        src_b.y_plane_mut().fill(0xBB);
+        src_b.u_plane_mut().fill(0xB1);
+        src_b.v_plane_mut().fill(0xB2);
+
+        let mut dst = src_a.clone_geometry().unwrap();
+        // Tile A owns luma cols [0, 64); tile B owns [64, 128).
+        dst.merge_tile_columns_from(&src_a, 0, 64);
+        dst.merge_tile_columns_from(&src_b, 64, 128);
+
+        // Spot-check Y plane: left half = 0xAA, right half = 0xBB.
+        let y = dst.y_plane();
+        let stride = y.stride();
+        let data = y.data();
+        assert_eq!(data[0], 0xAA, "Y col 0 = src_a fill");
+        assert_eq!(data[63], 0xAA, "Y col 63 = src_a fill");
+        assert_eq!(data[64], 0xBB, "Y col 64 = src_b fill");
+        assert_eq!(data[127], 0xBB, "Y col 127 = src_b fill");
+        // Row 1 sanity.
+        assert_eq!(data[stride], 0xAA);
+        assert_eq!(data[stride + 127], 0xBB);
+
+        // Chroma plane: ss_x = 1, so cols [0, 32) = src_a, [32, 64) = src_b.
+        let u = dst.u_plane();
+        let u_stride = u.stride();
+        let u_data = u.data();
+        assert_eq!(u_data[0], 0xA1);
+        assert_eq!(u_data[31], 0xA1);
+        assert_eq!(u_data[32], 0xB1);
+        assert_eq!(u_data[63], 0xB1);
+        assert_eq!(u_data[u_stride], 0xA1);
+        let v = dst.v_plane();
+        assert_eq!(v.data()[0], 0xA2);
+        assert_eq!(v.data()[63], 0xB2);
     }
 }

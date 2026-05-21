@@ -143,6 +143,55 @@ pub struct NmvCounts {
     pub comps: [NmvComponentCounts; 2],
 }
 
+impl NmvComponentCounts {
+    /// G5.1: additive merge for per-tile-worker count accumulation.
+    /// Adds every field of `other` into `self`. Used after the per-tile
+    /// worker scope to fold worker-local counts back into the decoder's
+    /// `mv_counts` field.
+    pub fn add(&mut self, other: &Self) {
+        for (a, b) in self.sign.iter_mut().zip(other.sign.iter()) {
+            *a += *b;
+        }
+        for (a, b) in self.classes.iter_mut().zip(other.classes.iter()) {
+            *a += *b;
+        }
+        for (a, b) in self.class0.iter_mut().zip(other.class0.iter()) {
+            *a += *b;
+        }
+        for (row_a, row_b) in self.bits.iter_mut().zip(other.bits.iter()) {
+            for (a, b) in row_a.iter_mut().zip(row_b.iter()) {
+                *a += *b;
+            }
+        }
+        for (row_a, row_b) in self.class0_fp.iter_mut().zip(other.class0_fp.iter()) {
+            for (a, b) in row_a.iter_mut().zip(row_b.iter()) {
+                *a += *b;
+            }
+        }
+        for (a, b) in self.fp.iter_mut().zip(other.fp.iter()) {
+            *a += *b;
+        }
+        for (a, b) in self.class0_hp.iter_mut().zip(other.class0_hp.iter()) {
+            *a += *b;
+        }
+        for (a, b) in self.hp.iter_mut().zip(other.hp.iter()) {
+            *a += *b;
+        }
+    }
+}
+
+impl NmvCounts {
+    /// G5.1: additive merge — see [`NmvComponentCounts::add`].
+    pub fn add(&mut self, other: &Self) {
+        for (a, b) in self.joints.iter_mut().zip(other.joints.iter()) {
+            *a += *b;
+        }
+        for (a, b) in self.comps.iter_mut().zip(other.comps.iter()) {
+            a.add(b);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

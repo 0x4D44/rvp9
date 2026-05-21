@@ -257,3 +257,77 @@ fn decoder_construct_and_drop_at_n1_and_n2() {
         let _dec = Decoder::with_threads(nz(8));
     }
 }
+
+/// G5.1 oracle: the parallel dispatch path MUST actually fire on a
+/// multi-tile vector at N=2 (non-tautological N=2 conformance).
+///
+/// Reads the process-wide `RVP9_G5_1_PARALLEL_JOBS` counter before and
+/// after decoding a `tile_1x2` vector at N=2; asserts the delta is
+/// `num_shown_frames * 2` (= 2 tile jobs per frame). If the eligibility
+/// gate misfires or the dispatch path silently falls back to inline,
+/// the counter doesn't bump and the assert fires.
+#[test]
+fn multi_tile_dispatch_uses_worker_pool() {
+    use std::sync::atomic::Ordering;
+    let dir = vectors_dir();
+    let path = dir.join("vp90-2-08-tile_1x2.webm");
+    if !path.exists() {
+        eprintln!("skip: {} not present", path.display());
+        return;
+    }
+    let before = rvp9_decoder::RVP9_G5_1_PARALLEL_JOBS.load(Ordering::Relaxed);
+    let md5s = decode_md5s(&path, nz(2));
+    let after = rvp9_decoder::RVP9_G5_1_PARALLEL_JOBS.load(Ordering::Relaxed);
+    let delta = after.wrapping_sub(before);
+    let n_frames = md5s.iter().filter(|m| m.is_some()).count() as u32;
+    assert!(
+        n_frames > 0,
+        "tile_1x2 produced 0 frames — corpus broken"
+    );
+    // 2 tiles per frame in `tile_1x2`. Expect delta >= 2 * n_frames
+    // (=) ; "exactly" if every shown frame is a multi-tile frame
+    // (which holds for tile_1x2 — every frame has the same tile config).
+    assert!(
+        delta >= 2 * n_frames,
+        "G5.1 parallel dispatch under-fired: delta={delta}, expected >= {} (2 * {} frames)",
+        2 * n_frames,
+        n_frames,
+    );
+    eprintln!(
+        "G5.1: {} parallel tile jobs fired across {} frames (= avg {:.1} jobs/frame)",
+        delta,
+        n_frames,
+        delta as f64 / n_frames as f64
+    );
+}
+
+/// G5.1 oracle: re-running the same multi-tile vector twice in
+/// succession produces bit-identical MD5s on every frame. Catches
+/// thread-scheduling non-determinism — if the merge order varies
+/// between runs (e.g. results collected in completion order instead
+/// of submission order), the running counts diverge after the first
+/// frame and the second run's MD5s drift.
+#[test]
+fn multi_tile_run_to_run_determinism() {
+    let vectors = [
+        "vp90-2-08-tile_1x2.webm",
+        "vp90-2-08-tile_1x4.webm",
+        "vp90-2-08-tile_1x8.webm",
+    ];
+    let dir = vectors_dir();
+    for name in &vectors {
+        let path = dir.join(name);
+        if !path.exists() {
+            eprintln!("skip: {} not present", path.display());
+            continue;
+        }
+        let run1 = decode_md5s(&path, nz(2));
+        let run2 = decode_md5s(&path, nz(2));
+        assert_eq!(
+            run1, run2,
+            "{name}: G5.1 run-to-run determinism broken — same vector \
+             produced different MD5s on consecutive decodes",
+        );
+        assert!(!run1.is_empty(), "{name}: no frames decoded");
+    }
+}

@@ -139,25 +139,101 @@ libvpx-parity oracle (oracle #3).
 
 ---
 
-## 7. Decoder wrap (first cut)
+## 7. Decoder wrap
 
 The decoder constructs `WorkerPool` in `with_threads(n)` and stores
 it as `Decoder::worker_pool`. Both `decode_intra_frame_inner` and
 `decode_inter_frame` wrap their per-tile loop in
-`self.worker_pool.scope(|_scope| { ... })`.
+`self.worker_pool.scope(|scope| { ... })`.
 
-**First-cut execution mode: all-inline.** No `scope.submit(...)`
-calls inside the scope body — every tile runs sequentially on the
-caller thread. This collapses the inline-worker math (HLD V6 §G5 V5
-lines 1107-1162) to `num_workers = 1`: no `cm.counts` memcpy, no
-merge step. Identical math to the pre-G5 path. Conformance stays
-201/0/0/0/201.
+### 7.1 G5.0 first cut (all-inline) — superseded by G5.1
 
-**Follow-up commit** lands the disjoint plane-view split
-(`Yv12Buffer::split_into_tile_views` per HLD §G5 option (a)) and
-moves the per-tile body into `scope.submit(...)` for
-`num_workers - 1` of the tiles, leaving the LAST one inline per the
-libvpx-faithful inline-worker pattern.
+`scope.submit(...)` was unused; every tile ran sequentially on the
+caller thread. Conformance held tautologically at N=2 because the
+N=2 path was structurally identical to N=1.
+
+### 7.2 G5.1 dispatch (current) — per-tile fresh `Yv12Buffer`
+
+**Eligibility gate** (both intra + inter loops):
+
+- `tile_rows == 1` — VP9 column-only split. Tile pixel rectangles
+  are vertically full-height but horizontally disjoint at MI
+  granularity (8 luma px = 4 chroma px at 4:2:0). Tile_rows > 1
+  falls back to the inline path (rare in conformance; documented in
+  `notes/g5.2-tile-rows-followup.md`).
+- `buffers.len() > 1` — degenerate 1-tile frames stay inline.
+- `self.num_threads.get() > 1` — single-threaded knob always
+  inline.
+
+**Per-tile state** (each tile owns a fresh, scope-lifetime
+allocation):
+
+- `scratch: Yv12Buffer` — a fresh full-frame-sized YV12 buffer
+  built via `Yv12Buffer::clone_geometry()`. Each tile writes its
+  column range into its own scratch buffer; the rest stays zero.
+- `seg_ids: Vec<u8>` — fresh frame-sized seg-id slab; tile writes
+  only its `(mi_col_start..mi_col_end)` cells.
+- `mv_grid: Vec<PrevFrameMvRef>` (inter only) — fresh frame-sized
+  MV grid.
+- `coef_counts / mv_counts / mode_counts` — fresh per-tile
+  count banks (Box-allocated to avoid stack churn for the
+  `FrameCounts` ~62 KB struct).
+- `result: Option<Result<TileDecodeCtx, _>>` — filled by the
+  worker, drained by the main thread post-scope.
+
+The slot struct uses `Mutex<Option<T>>` for each field — the
+worker `.lock().take()`s on entry, `.lock() = Some(...)`s on exit,
+and the main thread `.into_inner()`s after scope joins. This keeps
+the ownership handoff clean and panic-safe (a worker panic leaves
+the slot's mutex in a recoverable state).
+
+**Post-scope merge** (in submission order):
+
+1. `self.coef_counts.add(&counts)` etc — additive merge of every
+   field via `FrameCounts::add` / `CoefCountsBank::add` /
+   `NmvCounts::add`.
+2. `yv12.merge_tile_columns_from(&scratch, luma_col_start, luma_col_end)`
+   — memcpy each tile's column range from the scratch buffer to
+   the destination YV12, row-by-row.
+3. `cur_segment_ids[..][col_range].copy_from_slice(...)` /
+   `cur_mv_grid[..][col_range].copy_from_slice(...)` — same column-
+   range merge for the frame-sized auxiliary arrays.
+
+**Determinism**: merging in submission order — not completion
+order — guarantees frame-to-frame and run-to-run bit-exactness.
+Workers complete in arbitrary order, but the merge loop iterates
+`slots.into_iter().enumerate()` so the additive folds happen in
+the same sequence on every run.
+
+**Why per-tile fresh `Yv12Buffer`?** The simpler design — give
+each tile a column-windowed view into the parent buffer — runs
+into Rust's `&mut` aliasing rules for column-wise splits. A
+contiguous-bytes `&mut [u8]` slice that includes rows from
+neighboring tiles unavoidably aliases across tiles. The standard-
+library `split_at_mut` only splits linearly (rows), not columns.
+The remaining options are (a) careful unsafe with raw pointers
+and a soundness chain that's awkward to audit, (b) per-tile fresh
+allocations + a post-scope memcpy merge. We chose (b) because the
+allocation cost is modest (one ~3MB Yv12Buffer per tile per
+frame for 1080p Yuv420; ~12MB total for 4 tiles), the soundness
+proof is trivial (every byte is uniquely owned), and the merge
+memcpy is a streaming sequential write that the OS allocator and
+hardware prefetcher both handle well.
+
+**Cost summary**: ~3 MB scratch / tile / frame allocation cost,
+~3 MB merge memcpy / tile / frame. For tile-rows-1 vectors at
+≤8 tiles this is a few percent of a single-tile decode's
+wall-clock. Future G5.2 work can reduce this via a recycled
+per-thread scratch buffer pool (`Decoder::scratch_pool`), but the
+current shape is the floor that ships parallelism without
+soundness debt.
+
+**Instrumentation**: a process-wide `RVP9_G5_1_PARALLEL_JOBS`
+atomic counter bumps inside every `scope.submit(...)` job body —
+the harness regression test
+`multi_tile_dispatch_uses_worker_pool` verifies the delta is
+non-zero on `tile_1x2` to confirm the parallel path actually
+fires (catches eligibility-gate misfires).
 
 ---
 

@@ -131,6 +131,41 @@ impl Default for CoefCountsBank {
     }
 }
 
+impl CoefCountsBank {
+    /// G5.1: additive merge for per-tile-worker count accumulation.
+    /// Each tile worker decodes into its own owned `CoefCountsBank`;
+    /// after the scope joins, the main thread folds the per-tile banks
+    /// back into the decoder's running counter via repeated `add` calls.
+    /// Mirrors libvpx's `cm->counts` merge in
+    /// `vp9_decode_tiles_mt`'s post-join accumulation loop.
+    pub fn add(&mut self, other: &Self) {
+        for (tx_a, tx_b) in self.coef.iter_mut().zip(other.coef.iter()) {
+            for (pt_a, pt_b) in tx_a.iter_mut().zip(tx_b.iter()) {
+                for (rt_a, rt_b) in pt_a.iter_mut().zip(pt_b.iter()) {
+                    for (band_a, band_b) in rt_a.iter_mut().zip(rt_b.iter()) {
+                        for (ctx_a, ctx_b) in band_a.iter_mut().zip(band_b.iter()) {
+                            for (a, b) in ctx_a.iter_mut().zip(ctx_b.iter()) {
+                                *a += *b;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for (tx_a, tx_b) in self.eob_branch.iter_mut().zip(other.eob_branch.iter()) {
+            for (pt_a, pt_b) in tx_a.iter_mut().zip(tx_b.iter()) {
+                for (rt_a, rt_b) in pt_a.iter_mut().zip(pt_b.iter()) {
+                    for (band_a, band_b) in rt_a.iter_mut().zip(rt_b.iter()) {
+                        for (a, b) in band_a.iter_mut().zip(band_b.iter()) {
+                            *a += *b;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// TX-size selection counts. Mirrors libvpx `struct tx_counts`
 /// (`vp9_entropymode.h:37-42`). `tx_totals` is libvpx bookkeeping for
 /// `vp9_tx_counts_to_branch_counts_*` callers; backward adaptation
@@ -148,6 +183,30 @@ pub struct TxCounts {
     /// `tx_totals[TX_SIZE]` — total count of each TX size across all
     /// contexts. Bookkeeping only; not consumed by adapt.
     pub tx_totals: [u32; TX_SIZES],
+}
+
+impl TxCounts {
+    /// G5.1: additive merge — see [`CoefCountsBank::add`].
+    pub fn add(&mut self, other: &Self) {
+        for (ra, rb) in self.p32x32.iter_mut().zip(other.p32x32.iter()) {
+            for (a, b) in ra.iter_mut().zip(rb.iter()) {
+                *a += *b;
+            }
+        }
+        for (ra, rb) in self.p16x16.iter_mut().zip(other.p16x16.iter()) {
+            for (a, b) in ra.iter_mut().zip(rb.iter()) {
+                *a += *b;
+            }
+        }
+        for (ra, rb) in self.p8x8.iter_mut().zip(other.p8x8.iter()) {
+            for (a, b) in ra.iter_mut().zip(rb.iter()) {
+                *a += *b;
+            }
+        }
+        for (a, b) in self.tx_totals.iter_mut().zip(other.tx_totals.iter()) {
+            *a += *b;
+        }
+    }
 }
 
 /// Aggregated per-frame decoded counts. Mirrors libvpx `FRAME_COUNTS`
@@ -190,6 +249,75 @@ pub struct FrameCounts {
     pub skip: [[u32; 2]; SKIP_CONTEXTS],
     /// MV counts.
     pub mv: NmvCounts,
+}
+
+impl FrameCounts {
+    /// G5.1: additive merge — sum every field of `other` into `self`.
+    /// Used after per-tile-worker scope join to fold worker-local
+    /// counts back into the decoder's running `mode_counts` field.
+    /// Mirrors libvpx `cm->counts` accumulation in
+    /// `vp9_decode_tiles_mt`.
+    pub fn add(&mut self, other: &Self) {
+        for (ra, rb) in self.y_mode.iter_mut().zip(other.y_mode.iter()) {
+            for (a, b) in ra.iter_mut().zip(rb.iter()) {
+                *a += *b;
+            }
+        }
+        for (ra, rb) in self.uv_mode.iter_mut().zip(other.uv_mode.iter()) {
+            for (a, b) in ra.iter_mut().zip(rb.iter()) {
+                *a += *b;
+            }
+        }
+        for (ra, rb) in self.partition.iter_mut().zip(other.partition.iter()) {
+            for (a, b) in ra.iter_mut().zip(rb.iter()) {
+                *a += *b;
+            }
+        }
+        self.coef.add(&other.coef);
+        for (ra, rb) in self
+            .switchable_interp
+            .iter_mut()
+            .zip(other.switchable_interp.iter())
+        {
+            for (a, b) in ra.iter_mut().zip(rb.iter()) {
+                *a += *b;
+            }
+        }
+        for (ra, rb) in self.inter_mode.iter_mut().zip(other.inter_mode.iter()) {
+            for (a, b) in ra.iter_mut().zip(rb.iter()) {
+                *a += *b;
+            }
+        }
+        for (ra, rb) in self.intra_inter.iter_mut().zip(other.intra_inter.iter()) {
+            for (a, b) in ra.iter_mut().zip(rb.iter()) {
+                *a += *b;
+            }
+        }
+        for (ra, rb) in self.comp_inter.iter_mut().zip(other.comp_inter.iter()) {
+            for (a, b) in ra.iter_mut().zip(rb.iter()) {
+                *a += *b;
+            }
+        }
+        for (ra, rb) in self.single_ref.iter_mut().zip(other.single_ref.iter()) {
+            for (rra, rrb) in ra.iter_mut().zip(rb.iter()) {
+                for (a, b) in rra.iter_mut().zip(rrb.iter()) {
+                    *a += *b;
+                }
+            }
+        }
+        for (ra, rb) in self.comp_ref.iter_mut().zip(other.comp_ref.iter()) {
+            for (a, b) in ra.iter_mut().zip(rb.iter()) {
+                *a += *b;
+            }
+        }
+        self.tx.add(&other.tx);
+        for (ra, rb) in self.skip.iter_mut().zip(other.skip.iter()) {
+            for (a, b) in ra.iter_mut().zip(rb.iter()) {
+                *a += *b;
+            }
+        }
+        self.mv.add(&other.mv);
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -1173,5 +1301,116 @@ mod tests {
                 }
             }
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // G5.1 — additive merge methods (per-tile-worker count accumulation).
+    //
+    // The invariant: `merge` is associative and identity-on-default.
+    // For three independently-built counts banks A, B, C we should have
+    // `(A + B) + C == A + (B + C) == sum(A, B, C)`. We verify with a
+    // hand-constructed synthetic FrameCounts.
+    // -------------------------------------------------------------------------
+
+    fn populate_synthetic(fc: &mut FrameCounts, seed: u32) {
+        // Sprinkle non-zero values across every field path. Numbers
+        // chosen so each `add` produces a unique result.
+        fc.y_mode[0][0] = seed;
+        fc.y_mode[1][3] = seed * 2;
+        fc.uv_mode[2][4] = seed * 3;
+        fc.partition[5][1] = seed * 4;
+        fc.coef.coef[0][0][0][2][1][ZERO_TOKEN] = seed * 5;
+        fc.coef.eob_branch[0][0][0][2][1] = seed * 6;
+        fc.switchable_interp[0][0] = seed * 7;
+        fc.inter_mode[2][1] = seed * 8;
+        fc.intra_inter[1][0] = seed * 9;
+        fc.comp_inter[0][1] = seed * 10;
+        fc.single_ref[1][0][1] = seed * 11;
+        fc.comp_ref[2][0] = seed * 12;
+        fc.tx.p32x32[0][3] = seed * 13;
+        fc.tx.p16x16[1][2] = seed * 14;
+        fc.tx.p8x8[0][1] = seed * 15;
+        fc.tx.tx_totals[2] = seed * 16;
+        fc.skip[1][1] = seed * 17;
+        fc.mv.joints[2] = seed * 18;
+        fc.mv.comps[0].classes[5] = seed * 19;
+        fc.mv.comps[1].bits[3][1] = seed * 20;
+    }
+
+    #[test]
+    fn frame_counts_add_identity_on_default() {
+        let mut a = FrameCounts::default();
+        populate_synthetic(&mut a, 7);
+        let snapshot = a.clone();
+        let b = FrameCounts::default();
+        a.add(&b);
+        assert_eq!(a, snapshot, "adding default must be the identity");
+    }
+
+    #[test]
+    fn frame_counts_add_is_associative() {
+        let mut a = FrameCounts::default();
+        let mut b = FrameCounts::default();
+        let mut c = FrameCounts::default();
+        populate_synthetic(&mut a, 3);
+        populate_synthetic(&mut b, 11);
+        populate_synthetic(&mut c, 23);
+
+        // (a + b) + c
+        let mut left = a.clone();
+        left.add(&b);
+        left.add(&c);
+
+        // a + (b + c)
+        let mut bc = b.clone();
+        bc.add(&c);
+        let mut right = a.clone();
+        right.add(&bc);
+
+        assert_eq!(left, right, "merge must be associative");
+    }
+
+    #[test]
+    fn frame_counts_add_bit_exact_against_explicit_sum() {
+        let mut a = FrameCounts::default();
+        let mut b = FrameCounts::default();
+        populate_synthetic(&mut a, 5);
+        populate_synthetic(&mut b, 17);
+
+        let mut merged = a.clone();
+        merged.add(&b);
+
+        // Spot-check a representative slot per field path.
+        assert_eq!(merged.y_mode[0][0], 5 + 17);
+        assert_eq!(merged.uv_mode[2][4], 5 * 3 + 17 * 3);
+        assert_eq!(merged.partition[5][1], 5 * 4 + 17 * 4);
+        assert_eq!(merged.coef.coef[0][0][0][2][1][ZERO_TOKEN], 5 * 5 + 17 * 5);
+        assert_eq!(merged.coef.eob_branch[0][0][0][2][1], 5 * 6 + 17 * 6);
+        assert_eq!(merged.switchable_interp[0][0], 5 * 7 + 17 * 7);
+        assert_eq!(merged.tx.p32x32[0][3], 5 * 13 + 17 * 13);
+        assert_eq!(merged.skip[1][1], 5 * 17 + 17 * 17);
+        assert_eq!(merged.mv.joints[2], 5 * 18 + 17 * 18);
+        assert_eq!(merged.mv.comps[1].bits[3][1], 5 * 20 + 17 * 20);
+    }
+
+    #[test]
+    fn coef_counts_bank_add_identity_and_sum() {
+        // Smaller scope: just the CoefCountsBank slot.
+        let mut a = CoefCountsBank::default();
+        let mut b = CoefCountsBank::default();
+        a.coef[0][0][0][1][2][ONE_TOKEN] = 7;
+        a.eob_branch[2][1][0][3][0] = 9;
+        b.coef[0][0][0][1][2][ONE_TOKEN] = 11;
+        b.eob_branch[2][1][0][3][0] = 13;
+
+        let zero = CoefCountsBank::default();
+        let mut snap = a.clone();
+        snap.add(&zero);
+        assert_eq!(snap, a);
+
+        let mut merged = a.clone();
+        merged.add(&b);
+        assert_eq!(merged.coef[0][0][0][1][2][ONE_TOKEN], 7 + 11);
+        assert_eq!(merged.eob_branch[2][1][0][3][0], 9 + 13);
     }
 }

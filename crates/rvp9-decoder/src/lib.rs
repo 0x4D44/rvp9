@@ -75,6 +75,13 @@ use crate::tile::{
     decode_tile_intra, tile_bounds,
 };
 use crate::tile_ctx::TileDecodeCtx;
+use std::sync::Mutex;
+
+/// G5.1: luma pixels per MI block (`MI_BLOCK_SIZE_LOG2 = 3` → 8 luma
+/// pixels). Used by the parallel tile-dispatch path to translate
+/// `TileBounds::mi_col_*` into luma pixel column offsets for
+/// [`Yv12Buffer::merge_tile_columns_from`].
+const MI_BLOCK_PIXELS: usize = 8;
 
 /// D.20 — write the visible-region Y plane of a freshly-decoded
 /// frame to `path` (raw bytes, row-major, no padding). Used by the
@@ -110,6 +117,18 @@ fn dump_visible_y_plane(yv12: &Yv12Buffer, path: &str) {
 /// libvpx emits, so altref + visible-frame traces line up frame-by-
 /// frame between the two implementations.
 pub static RVP9_TRACE_FRAME_COUNTER: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0);
+
+/// G5.1 instrumentation: count of tile-decode jobs the parallel
+/// dispatch path submitted into the worker pool, summed across the
+/// process lifetime. Used by the
+/// `multi_tile_dispatch_uses_worker_pool` regression test (in this
+/// crate's integration test suite) to confirm the parallel path
+/// fires non-tautologically on multi-tile vectors. Bumped exactly
+/// once per `scope.submit(...)` call in
+/// [`Decoder::decode_intra_frame_inner`] and
+/// [`Decoder::decode_inter_frame`].
+pub static RVP9_G5_1_PARALLEL_JOBS: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(0);
 
 /// Top-level VP9 decoder state.
@@ -1370,60 +1389,211 @@ impl Decoder {
         // driver below.
         let mut tile_decode_ctxs: Vec<(tile::TileBounds, TileDecodeCtx)> =
             Vec::with_capacity(buffers.len());
-        // G5 — open a `pool.scope(...)` block so the API contract is
-        // exercised even when no jobs are submitted. Per HLD V6 §G5
-        // V5 lines 1107-1162 the inline-worker pattern at
-        // `num_workers = 1` (single-threaded knob OR every tile
-        // routed to the inline slot, as we do here for the first-
-        // cut) runs every tile on the caller thread: no memcpy of
-        // `cm.counts`, no merge step, identical math to the
-        // pre-G5 path. The `pool.scope` wrap is what makes the
-        // future ramp to actual per-tile workers a local diff —
-        // change the loop body to `scope.submit(...)`, leave the
-        // surrounding adapt / loop-filter code untouched.
+        // G5.1 — real parallel tile dispatch. Eligibility:
+        //   * `tile_rows == 1` — column-only split makes per-tile
+        //     pixel rectangles disjoint by construction (VP9 tile-col
+        //     boundaries align to MI = 8-luma-px, which is also
+        //     chroma-aligned at 4:2:0).
+        //   * `num_tiles > 1` — degenerate 1-tile frames stay on the
+        //     inline path (no benefit to dispatching one job).
+        //   * `num_threads > 1` — the worker-pool size knob; respects
+        //     `Decoder::with_threads(1)` as the deterministic path.
         //
-        // The closure-form scope borrows `self.worker_pool`
-        // exclusively for the duration of the block. Re-bind the
-        // disjoint `&mut self` fields as local refs BEFORE the
-        // scope opens — forward-compatible with `scope.submit(...)`
-        // closures that need to capture references rather than
-        // re-borrow `self` per iteration.
-        let coef_counts = &mut self.coef_counts;
+        // For ineligible frames (tile_rows > 1 OR single tile OR
+        // single-threaded knob), we keep the inline path: every tile
+        // runs sequentially on the caller thread, sharing the
+        // decoder's `coef_counts` accumulator and the destination
+        // `yv12`. This is the pre-G5.1 shape.
+        //
+        // For eligible frames we allocate per-tile scratch buffers,
+        // fan-out into the pool, and merge results column-range-wise
+        // back into `yv12` + sum per-tile `coef_counts` into the
+        // decoder's running total. See `notes/lld/core-tile-
+        // threading.md` § "G5.1 dispatch" for the design rationale
+        // (especially the per-tile fresh-Yv12Buffer allocation cost
+        // vs. unsafe slice-aliasing tradeoff).
+        let parallel = tail.tile_info.log2_tile_rows == 0
+            && buffers.len() > 1
+            && self.num_threads.get() > 1;
+
         let frame_contexts = &self.frame_contexts;
         let simd_dispatch = &self.simd_dispatch;
-        self.worker_pool.scope(|_scope| {
-            // First-cut G5: every tile runs inline on the caller
-            // thread. No `scope.submit(...)` calls. The follow-up
-            // commit will (a) split `yv12` into per-tile disjoint
-            // plane views via `Yv12Buffer::split_into_tile_views`
-            // and (b) submit `num_workers - 1` tile-decode jobs
-            // into the scope, leaving the LAST tile for the
-            // caller thread (the inline slot) per libvpx's
-            // `vp9_decode_tiles` pattern.
+        if parallel {
+            // Pre-compute per-tile bounds + allocate per-tile scratch
+            // (Yv12Buffer + cur_segment_ids + CoefCountsBank). Each
+            // worker writes its tile's column range into the scratch
+            // YV12 and the per-tile counts bank; the main thread
+            // merges after the scope closes.
+            let num_tiles = buffers.len();
+            let mut per_tile_bounds: Vec<tile::TileBounds> = Vec::with_capacity(num_tiles);
             for tile_buf in &buffers {
-                let bounds = tile_bounds(
+                per_tile_bounds.push(tile_bounds(
                     &tail.tile_info,
                     mi_cols,
                     mi_rows,
                     tile_buf.row,
                     tile_buf.col,
-                );
-                let fc = &frame_contexts[fc_idx];
-                let decode_ctx = decode_tile_intra(
-                    tile_buf.data,
-                    bounds,
-                    &params,
-                    fc,
-                    &mut yv12,
-                    Some(&mut *coef_counts),
-                    &mut cur_segment_ids,
-                    simd_dispatch,
-                )
-                .map_err(DecodeError::TileDecode)?;
+                ));
+            }
+
+            // Per-tile slots: each slot owns the scratch yv12, the
+            // worker-local seg-id map, the worker-local counts, and
+            // an `Option<TileDecodeCtx>` filled by the worker. The
+            // workers consume the contained owned values via
+            // `Mutex` interior mutability so each tile's outputs land
+            // in the right slot regardless of completion order.
+            //
+            // `Mutex<Option<...>>` cleanly handles the "one worker
+            // takes the contents, drops the mutex, then signals
+            // completion" handoff. After scope joins, the main
+            // thread `.take()`s each slot.
+            struct TileSlot {
+                scratch: Mutex<Option<Yv12Buffer>>,
+                seg_ids: Mutex<Option<Vec<u8>>>,
+                counts: Mutex<Option<Box<rvp9_core::entropy::adapt::CoefCountsBank>>>,
+                result: Mutex<Option<Result<TileDecodeCtx, tile::TileDecodeError>>>,
+            }
+            let slots: Vec<TileSlot> = (0..num_tiles)
+                .map(|_| {
+                    let scratch = yv12
+                        .clone_geometry()
+                        .expect("scratch Yv12Buffer allocation");
+                    TileSlot {
+                        scratch: Mutex::new(Some(scratch)),
+                        seg_ids: Mutex::new(Some(vec![0u8; mi_rows * mi_cols])),
+                        counts: Mutex::new(Some(Box::new(
+                            rvp9_core::entropy::adapt::CoefCountsBank::default(),
+                        ))),
+                        result: Mutex::new(None),
+                    }
+                })
+                .collect();
+
+            // Borrow shared immutables.
+            let fc = &frame_contexts[fc_idx];
+            let params_ref = &params;
+            self.worker_pool.scope(|scope| {
+                for (tile_idx, tile_buf) in buffers.iter().enumerate() {
+                    let bounds = per_tile_bounds[tile_idx];
+                    let tile_data: &[u8] = tile_buf.data;
+                    let slot = &slots[tile_idx];
+                    scope.submit(move || {
+                        RVP9_G5_1_PARALLEL_JOBS
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let mut scratch = slot
+                            .scratch
+                            .lock()
+                            .expect("scratch mutex")
+                            .take()
+                            .expect("scratch present at job start");
+                        let mut seg_ids = slot
+                            .seg_ids
+                            .lock()
+                            .expect("seg_ids mutex")
+                            .take()
+                            .expect("seg_ids present at job start");
+                        let mut counts = slot
+                            .counts
+                            .lock()
+                            .expect("counts mutex")
+                            .take()
+                            .expect("counts present at job start");
+                        let res = decode_tile_intra(
+                            tile_data,
+                            bounds,
+                            params_ref,
+                            fc,
+                            &mut scratch,
+                            Some(counts.as_mut()),
+                            &mut seg_ids,
+                            simd_dispatch,
+                        );
+                        // Restore the owned state so the main thread
+                        // can merge.
+                        *slot.scratch.lock().expect("scratch mutex") = Some(scratch);
+                        *slot.seg_ids.lock().expect("seg_ids mutex") = Some(seg_ids);
+                        *slot.counts.lock().expect("counts mutex") = Some(counts);
+                        *slot.result.lock().expect("result mutex") = Some(res);
+                    });
+                }
+            });
+            // Post-scope merge: in submission order, collect TileDecodeCtx,
+            // merge per-tile counts into `self.coef_counts`, and
+            // merge per-tile pixels (column-range) into `yv12`.
+            for (tile_idx, slot) in slots.into_iter().enumerate() {
+                let res = slot
+                    .result
+                    .into_inner()
+                    .expect("result mutex")
+                    .expect("worker stored result");
+                let decode_ctx = res.map_err(DecodeError::TileDecode)?;
+                let bounds = per_tile_bounds[tile_idx];
+                let scratch = slot
+                    .scratch
+                    .into_inner()
+                    .expect("scratch mutex")
+                    .expect("scratch present after job");
+                let seg_ids = slot
+                    .seg_ids
+                    .into_inner()
+                    .expect("seg_ids mutex")
+                    .expect("seg_ids present after job");
+                let counts = slot
+                    .counts
+                    .into_inner()
+                    .expect("counts mutex")
+                    .expect("counts present after job");
+
+                // 1. Merge counts into the decoder's running coef_counts.
+                self.coef_counts.add(&counts);
+
+                // 2. Merge pixel column range from scratch -> yv12.
+                let luma_col_start = bounds.mi_col_start * MI_BLOCK_PIXELS;
+                let luma_col_end = bounds.mi_col_end * MI_BLOCK_PIXELS;
+                yv12.merge_tile_columns_from(&scratch, luma_col_start, luma_col_end);
+
+                // 3. Merge seg_id column range — each tile only
+                //    writes its own (mi_col_start..mi_col_end) cells.
+                let mc_start = bounds.mi_col_start;
+                let mc_end = bounds.mi_col_end;
+                for mi_row in 0..mi_rows {
+                    let row_base = mi_row * mi_cols;
+                    cur_segment_ids[row_base + mc_start..row_base + mc_end]
+                        .copy_from_slice(&seg_ids[row_base + mc_start..row_base + mc_end]);
+                }
+
                 tile_decode_ctxs.push((bounds, decode_ctx));
             }
-            Ok::<(), DecodeError>(())
-        })?;
+        } else {
+            // Inline path (single-threaded knob OR ineligible
+            // geometry). Identical to the pre-G5.1 first-cut shape.
+            let coef_counts = &mut self.coef_counts;
+            self.worker_pool.scope(|_scope| {
+                for tile_buf in &buffers {
+                    let bounds = tile_bounds(
+                        &tail.tile_info,
+                        mi_cols,
+                        mi_rows,
+                        tile_buf.row,
+                        tile_buf.col,
+                    );
+                    let fc = &frame_contexts[fc_idx];
+                    let decode_ctx = decode_tile_intra(
+                        tile_buf.data,
+                        bounds,
+                        &params,
+                        fc,
+                        &mut yv12,
+                        Some(&mut *coef_counts),
+                        &mut cur_segment_ids,
+                        simd_dispatch,
+                    )
+                    .map_err(DecodeError::TileDecode)?;
+                    tile_decode_ctxs.push((bounds, decode_ctx));
+                }
+                Ok::<(), DecodeError>(())
+            })?;
+        }
 
         // Backward-adapt `coef_probs` per `vp9_adapt_coef_probs`
         // (`vp9_entropy.c:1084-1100`). Same gate as `adapt_mv_probs`:
@@ -2034,47 +2204,237 @@ impl Decoder {
         // driver below.
         let mut tile_decode_ctxs: Vec<(tile::TileBounds, TileDecodeCtx)> =
             Vec::with_capacity(buffers.len());
-        // G5 — wrap the per-tile loop in `pool.scope(...)`. See the
-        // matching block in `decode_intra_frame_inner` for the
-        // rationale (HLD V6 §G5 V5 inline-worker pattern at
-        // `num_workers = 1`). The first-cut runs every tile inline;
-        // the disjoint-plane split + per-worker `FrameCounts` memcpy/
-        // merge land in the follow-up.
-        let mv_counts = &mut self.mv_counts;
-        let coef_counts = &mut self.coef_counts;
-        let mode_counts = &mut self.mode_counts;
+        // G5.1 — parallel tile dispatch. See the matching block in
+        // `decode_intra_frame_inner` for the rationale + eligibility
+        // gate. The inter path additionally fans out the per-tile
+        // mv-counts / mode-counts / cur_mv_grid / cur_segment_ids
+        // worker-local buffers.
+        let parallel = tail.tile_info.log2_tile_rows == 0
+            && buffers.len() > 1
+            && self.num_threads.get() > 1;
+
         let frame_contexts = &self.frame_contexts;
         let simd_dispatch = &self.simd_dispatch;
-        self.worker_pool.scope(|_scope| {
+        if parallel {
+            let num_tiles = buffers.len();
+            let mut per_tile_bounds: Vec<tile::TileBounds> = Vec::with_capacity(num_tiles);
             for tile_buf in &buffers {
-                let bounds = tile_bounds(
+                per_tile_bounds.push(tile_bounds(
                     &tail.tile_info,
                     mi_cols,
                     mi_rows,
                     tile_buf.row,
                     tile_buf.col,
-                );
-                let fc = &frame_contexts[fc_idx];
-                let decode_ctx = decode_tile_inter(
-                    tile_buf.data,
-                    bounds,
-                    &params,
-                    fc,
-                    &mut yv12,
-                    Some(&mut *mv_counts),
-                    Some(&mut *coef_counts),
-                    Some(&mut *mode_counts),
-                    prev_mv_grid,
-                    &mut cur_mv_grid,
-                    prev_seg_ids_slice,
-                    &mut cur_segment_ids,
-                    simd_dispatch,
-                )
-                .map_err(DecodeError::TileDecode)?;
+                ));
+            }
+
+            struct InterTileSlot {
+                scratch: Mutex<Option<Yv12Buffer>>,
+                seg_ids: Mutex<Option<Vec<u8>>>,
+                mv_grid: Mutex<Option<Vec<rvp9_core::inter::mv_ref::PrevFrameMvRef>>>,
+                mv_counts: Mutex<Option<Box<rvp9_core::entropy::mv_probs::NmvCounts>>>,
+                coef_counts: Mutex<Option<Box<rvp9_core::entropy::adapt::CoefCountsBank>>>,
+                mode_counts: Mutex<Option<Box<rvp9_core::entropy::adapt::FrameCounts>>>,
+                result: Mutex<Option<Result<TileDecodeCtx, tile::TileDecodeError>>>,
+            }
+            let slots: Vec<InterTileSlot> = (0..num_tiles)
+                .map(|_| {
+                    let scratch = yv12
+                        .clone_geometry()
+                        .expect("scratch Yv12Buffer allocation");
+                    InterTileSlot {
+                        scratch: Mutex::new(Some(scratch)),
+                        seg_ids: Mutex::new(Some(vec![0u8; mi_rows * mi_cols])),
+                        mv_grid: Mutex::new(Some(vec![
+                            rvp9_core::inter::mv_ref::PrevFrameMvRef::default();
+                            mi_rows * mi_cols
+                        ])),
+                        mv_counts: Mutex::new(Some(Box::new(
+                            rvp9_core::entropy::mv_probs::NmvCounts::default(),
+                        ))),
+                        coef_counts: Mutex::new(Some(Box::new(
+                            rvp9_core::entropy::adapt::CoefCountsBank::default(),
+                        ))),
+                        mode_counts: Mutex::new(Some(Box::new(
+                            rvp9_core::entropy::adapt::FrameCounts::default(),
+                        ))),
+                        result: Mutex::new(None),
+                    }
+                })
+                .collect();
+
+            let fc = &frame_contexts[fc_idx];
+            let params_ref = &params;
+            let prev_mv_grid_ref = prev_mv_grid;
+            let prev_seg_ref = prev_seg_ids_slice;
+            self.worker_pool.scope(|scope| {
+                for (tile_idx, tile_buf) in buffers.iter().enumerate() {
+                    let bounds = per_tile_bounds[tile_idx];
+                    let tile_data: &[u8] = tile_buf.data;
+                    let slot = &slots[tile_idx];
+                    scope.submit(move || {
+                        RVP9_G5_1_PARALLEL_JOBS
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let mut scratch = slot
+                            .scratch
+                            .lock()
+                            .expect("scratch mutex")
+                            .take()
+                            .expect("scratch present at job start");
+                        let mut seg_ids = slot
+                            .seg_ids
+                            .lock()
+                            .expect("seg_ids mutex")
+                            .take()
+                            .expect("seg_ids present at job start");
+                        let mut mv_grid = slot
+                            .mv_grid
+                            .lock()
+                            .expect("mv_grid mutex")
+                            .take()
+                            .expect("mv_grid present at job start");
+                        let mut mv_counts = slot
+                            .mv_counts
+                            .lock()
+                            .expect("mv_counts mutex")
+                            .take()
+                            .expect("mv_counts present at job start");
+                        let mut coef_counts = slot
+                            .coef_counts
+                            .lock()
+                            .expect("coef_counts mutex")
+                            .take()
+                            .expect("coef_counts present at job start");
+                        let mut mode_counts = slot
+                            .mode_counts
+                            .lock()
+                            .expect("mode_counts mutex")
+                            .take()
+                            .expect("mode_counts present at job start");
+                        let res = decode_tile_inter(
+                            tile_data,
+                            bounds,
+                            params_ref,
+                            fc,
+                            &mut scratch,
+                            Some(mv_counts.as_mut()),
+                            Some(coef_counts.as_mut()),
+                            Some(mode_counts.as_mut()),
+                            prev_mv_grid_ref,
+                            &mut mv_grid,
+                            prev_seg_ref,
+                            &mut seg_ids,
+                            simd_dispatch,
+                        );
+                        // Restore owned state to slot.
+                        *slot.scratch.lock().expect("scratch mutex") = Some(scratch);
+                        *slot.seg_ids.lock().expect("seg_ids mutex") = Some(seg_ids);
+                        *slot.mv_grid.lock().expect("mv_grid mutex") = Some(mv_grid);
+                        *slot.mv_counts.lock().expect("mv_counts mutex") = Some(mv_counts);
+                        *slot.coef_counts.lock().expect("coef_counts mutex") = Some(coef_counts);
+                        *slot.mode_counts.lock().expect("mode_counts mutex") = Some(mode_counts);
+                        *slot.result.lock().expect("result mutex") = Some(res);
+                    });
+                }
+            });
+            // Post-scope merge in submission order.
+            for (tile_idx, slot) in slots.into_iter().enumerate() {
+                let res = slot
+                    .result
+                    .into_inner()
+                    .expect("result mutex")
+                    .expect("worker stored result");
+                let decode_ctx = res.map_err(DecodeError::TileDecode)?;
+                let bounds = per_tile_bounds[tile_idx];
+                let scratch = slot
+                    .scratch
+                    .into_inner()
+                    .expect("scratch mutex")
+                    .expect("scratch present after job");
+                let seg_ids = slot
+                    .seg_ids
+                    .into_inner()
+                    .expect("seg_ids mutex")
+                    .expect("seg_ids present after job");
+                let mv_grid = slot
+                    .mv_grid
+                    .into_inner()
+                    .expect("mv_grid mutex")
+                    .expect("mv_grid present after job");
+                let mv_counts = slot
+                    .mv_counts
+                    .into_inner()
+                    .expect("mv_counts mutex")
+                    .expect("mv_counts present after job");
+                let coef_counts = slot
+                    .coef_counts
+                    .into_inner()
+                    .expect("coef_counts mutex")
+                    .expect("coef_counts present after job");
+                let mode_counts = slot
+                    .mode_counts
+                    .into_inner()
+                    .expect("mode_counts mutex")
+                    .expect("mode_counts present after job");
+
+                // Merge counts (additive).
+                self.mv_counts.add(&mv_counts);
+                self.coef_counts.add(&coef_counts);
+                self.mode_counts.add(&mode_counts);
+
+                // Merge pixels (column range) into yv12.
+                let luma_col_start = bounds.mi_col_start * MI_BLOCK_PIXELS;
+                let luma_col_end = bounds.mi_col_end * MI_BLOCK_PIXELS;
+                yv12.merge_tile_columns_from(&scratch, luma_col_start, luma_col_end);
+
+                // Merge seg_ids + mv_grid column ranges.
+                let mc_start = bounds.mi_col_start;
+                let mc_end = bounds.mi_col_end;
+                for mi_row in 0..mi_rows {
+                    let row_base = mi_row * mi_cols;
+                    cur_segment_ids[row_base + mc_start..row_base + mc_end]
+                        .copy_from_slice(&seg_ids[row_base + mc_start..row_base + mc_end]);
+                    cur_mv_grid[row_base + mc_start..row_base + mc_end]
+                        .copy_from_slice(&mv_grid[row_base + mc_start..row_base + mc_end]);
+                }
+
                 tile_decode_ctxs.push((bounds, decode_ctx));
             }
-            Ok::<(), DecodeError>(())
-        })?;
+        } else {
+            let mv_counts = &mut self.mv_counts;
+            let coef_counts = &mut self.coef_counts;
+            let mode_counts = &mut self.mode_counts;
+            self.worker_pool.scope(|_scope| {
+                for tile_buf in &buffers {
+                    let bounds = tile_bounds(
+                        &tail.tile_info,
+                        mi_cols,
+                        mi_rows,
+                        tile_buf.row,
+                        tile_buf.col,
+                    );
+                    let fc = &frame_contexts[fc_idx];
+                    let decode_ctx = decode_tile_inter(
+                        tile_buf.data,
+                        bounds,
+                        &params,
+                        fc,
+                        &mut yv12,
+                        Some(&mut *mv_counts),
+                        Some(&mut *coef_counts),
+                        Some(&mut *mode_counts),
+                        prev_mv_grid,
+                        &mut cur_mv_grid,
+                        prev_seg_ids_slice,
+                        &mut cur_segment_ids,
+                        simd_dispatch,
+                    )
+                    .map_err(DecodeError::TileDecode)?;
+                    tile_decode_ctxs.push((bounds, decode_ctx));
+                }
+                Ok::<(), DecodeError>(())
+            })?;
+        }
 
         // Backward-adapt the per-frame probability banks per
         // `vp9_adapt_*_probs` (`vp9_decodeframe.c:3046-3053`). Same gate
