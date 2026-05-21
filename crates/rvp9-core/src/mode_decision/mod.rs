@@ -13,9 +13,11 @@
 //!   `vp9_pick_inter_mode` (`vp9_pickmode.c:1300-1700`) for the
 //!   realtime variant. F8.1 — `{ZEROMV, NEARESTMV, NEWMV}` ×
 //!   `{LASTFRAME}`, single-ref only.
+//! - [`partition`] — variance-based partition picker. Mirrors libvpx
+//!   `choose_partitioning` (`vp9_encodeframe.c:1261-...`). F8.2 —
+//!   variance descent over a 64x64 SB, NONE / SPLIT only.
 //!
-//! UV-mode search and the partition driver are tracked under F8.2 /
-//! later and will land as further sub-modules here.
+//! UV-mode search lands as a further sub-module here later.
 //!
 //! ## RD cost convention
 //!
@@ -37,6 +39,7 @@
 
 pub mod inter;
 pub mod intra;
+pub mod partition;
 
 /// libvpx `RDDIV_BITS` (`vp9_rd.h:26`).
 pub const RDDIV_BITS: u32 = 7;
