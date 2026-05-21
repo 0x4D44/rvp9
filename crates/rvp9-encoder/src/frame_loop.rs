@@ -2066,4 +2066,227 @@ mod tests {
             }
         }
     }
+
+    // -----------------------------------------------------------------
+    // F10.2 — Multi-frame real-content PSNR oracle.
+    //
+    // First true quality oracle for the encoder. Builds synthesised
+    // multi-frame YUV input, runs it through StreamEncoder::encode_frame,
+    // decodes every packet through a real rvp9_decoder::Decoder, and
+    // computes per-frame Y-plane PSNR.
+    //
+    // Tests use 64×64 frames for tractable runtime (a few seconds for
+    // multi-frame sequences).
+    // -----------------------------------------------------------------
+
+    /// Compute peak signal-to-noise ratio (Y-plane only) in dB. Returns
+    /// 100.0 if the two planes are bit-exact (mse == 0).
+    fn psnr_db(orig: &[u8], recon: &[u8]) -> f64 {
+        assert_eq!(orig.len(), recon.len(), "psnr_db: length mismatch");
+        let mut sse: u64 = 0;
+        for (a, b) in orig.iter().zip(recon.iter()) {
+            let diff = i32::from(*a) - i32::from(*b);
+            sse += (diff * diff) as u64;
+        }
+        if sse == 0 {
+            return 100.0;
+        }
+        let mse = sse as f64 / orig.len() as f64;
+        10.0 * (255.0 * 255.0 / mse).log10()
+    }
+
+    /// Synthesise frame `idx` of a translating-gradient sequence.
+    /// Diagonal gradient shifts per frame so F8.1 inter mode picker
+    /// sees real motion. U/V planes are constant 128.
+    fn translating_gradient(w: usize, h: usize, idx: u32) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let mut y = vec![0u8; w * h];
+        for r in 0..h {
+            for c in 0..w {
+                let v = 64i32 + (r as i32 / 2) + (c as i32 / 2) + (idx as i32 * 3);
+                y[r * w + c] = v.clamp(0, 255) as u8;
+            }
+        }
+        let u = vec![128u8; (w / 2) * (h / 2)];
+        let v = vec![128u8; (w / 2) * (h / 2)];
+        (y, u, v)
+    }
+
+    /// Synthesise a static gradient (same pattern every frame). Tests
+    /// the encoder under "perfect ZEROMV" conditions — inter frames
+    /// should reconstruct the keyframe bit-exactly via skip=true or
+    /// zero-MV+zero-residual.
+    fn static_gradient(w: usize, h: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        translating_gradient(w, h, 0)
+    }
+
+    /// T1 — 4-frame translating gradient (1 KF + 3 inter). PSNR oracle.
+    ///
+    /// Smaller frame count than the original 30 to keep test runtime
+    /// in line with the workspace's per-test budget. Still exercises
+    /// the inter mode picker on multiple consecutive frames.
+    #[test]
+    fn f10_2_t1_translating_gradient_4_frames_psnr() {
+        const W: usize = 64;
+        const H: usize = 64;
+        const N_FRAMES: u32 = 4;
+
+        let cfg = EncoderConfig {
+            width: W as u32,
+            height: H as u32,
+            framerate: 30.0,
+            target_bitrate_bps: 2_000_000,
+            gop_length: 30,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let mut dec = Decoder::new();
+
+        let mut psnrs = Vec::with_capacity(N_FRAMES as usize);
+
+        for idx in 0..N_FRAMES {
+            let (y, u, v) = translating_gradient(W, H, idx);
+            let pkt = enc
+                .encode_frame(&yuv_view(&y, &u, &v, W))
+                .expect("encode_frame must succeed");
+
+            let frames = decode_packet(&mut dec, &pkt.data);
+            assert_eq!(frames.len(), 1, "frame {idx}: one wire frame per packet");
+            let buf = dec
+                .decode_frame(&frames[0])
+                .expect("decode_frame must succeed");
+
+            // Y-plane PSNR — extract a tight-stride copy of the decoded
+            // visible region.
+            let yp = buf.y_plane();
+            let mut decoded_y = vec![0u8; W * H];
+            for r in 0..H {
+                let src_off = r * yp.stride();
+                let dst_off = r * W;
+                decoded_y[dst_off..dst_off + W]
+                    .copy_from_slice(&yp.data()[src_off..src_off + W]);
+            }
+            let p = psnr_db(&y, &decoded_y);
+            psnrs.push(p);
+        }
+
+        let avg: f64 = psnrs.iter().sum::<f64>() / psnrs.len() as f64;
+        let min = psnrs.iter().cloned().fold(f64::INFINITY, f64::min);
+
+        // Oracle: smooth-gradient content at 2 Mbps should easily exceed
+        // 30 dB average and 25 dB min. The 4-frame run is the cumulative
+        // signal for "the F5–F10 pipeline produces meaningful PSNR".
+        assert!(
+            avg > 30.0,
+            "F10.2-T1: avg PSNR = {avg:.2} dB (per-frame: {psnrs:?}) — \
+             expected > 30 dB",
+        );
+        assert!(
+            min > 25.0,
+            "F10.2-T1: min PSNR = {min:.2} dB (per-frame: {psnrs:?}) — \
+             expected > 25 dB",
+        );
+    }
+
+    /// T2 — Bit-exact invariant across multiple frames.
+    ///
+    /// Asserts the F10.1c key property: encoder reconstruction matches
+    /// decoder reconstruction PIXEL-FOR-PIXEL on every frame of a
+    /// multi-frame sequence. If this drifts, no downstream quality
+    /// oracle is meaningful.
+    #[test]
+    fn f10_2_t2_bit_exact_invariant_across_frames() {
+        const W: usize = 64;
+        const H: usize = 64;
+        const N_FRAMES: u32 = 3;
+
+        let cfg = EncoderConfig {
+            width: W as u32,
+            height: H as u32,
+            framerate: 30.0,
+            target_bitrate_bps: 1_500_000,
+            gop_length: 30,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let mut dec = Decoder::new();
+
+        for idx in 0..N_FRAMES {
+            let (y, u, v) = translating_gradient(W, H, idx);
+            let pkt = enc.encode_frame(&yuv_view(&y, &u, &v, W)).unwrap();
+            let frames = decode_packet(&mut dec, &pkt.data);
+            let buf = dec.decode_frame(&frames[0]).unwrap();
+
+            // Encoder's local recon vs decoder's recon: must match
+            // pixel-for-pixel.
+            let enc_recon = &enc.last_recon_y;
+            let yp = buf.y_plane();
+            for r in 0..H {
+                let dec_row = &yp.data()[r * yp.stride()..r * yp.stride() + W];
+                let enc_row = &enc_recon[r * W..(r + 1) * W];
+                let diff_count = dec_row
+                    .iter()
+                    .zip(enc_row.iter())
+                    .filter(|(a, b)| a != b)
+                    .count();
+                assert_eq!(
+                    diff_count, 0,
+                    "F10.2-T2: frame {idx} row {r}: encoder recon != \
+                     decoder recon. dec={dec_row:?} enc={enc_row:?}",
+                );
+            }
+        }
+    }
+
+    /// T3 — Static gradient with single KF + 2 inter; inter frames are
+    /// identical to the KF source so ZEROMV should be optimal. PSNR on
+    /// inter frames should match or exceed the keyframe PSNR.
+    #[test]
+    fn f10_2_t3_static_content_inter_matches_kf_quality() {
+        const W: usize = 64;
+        const H: usize = 64;
+
+        let cfg = EncoderConfig {
+            width: W as u32,
+            height: H as u32,
+            framerate: 30.0,
+            target_bitrate_bps: 1_000_000,
+            gop_length: 30,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let mut dec = Decoder::new();
+
+        let (y, u, v) = static_gradient(W, H);
+        let mut psnrs = Vec::new();
+
+        for _ in 0..3 {
+            let pkt = enc.encode_frame(&yuv_view(&y, &u, &v, W)).unwrap();
+            let frames = decode_packet(&mut dec, &pkt.data);
+            let buf = dec.decode_frame(&frames[0]).unwrap();
+
+            let yp = buf.y_plane();
+            let mut decoded_y = vec![0u8; W * H];
+            for r in 0..H {
+                decoded_y[r * W..(r + 1) * W]
+                    .copy_from_slice(&yp.data()[r * yp.stride()..r * yp.stride() + W]);
+            }
+            psnrs.push(psnr_db(&y, &decoded_y));
+        }
+
+        // KF PSNR is the floor. Subsequent inter frames at static-content
+        // ZEROMV should match (allow ≤ 1 dB drift for residual-coef
+        // quantization differences).
+        let kf_psnr = psnrs[0];
+        for (i, p) in psnrs.iter().enumerate().skip(1) {
+            assert!(
+                *p >= kf_psnr - 1.0,
+                "F10.2-T3: inter frame {i} PSNR = {p:.2} dB but KF PSNR \
+                 = {kf_psnr:.2} dB — static content should not regress",
+            );
+        }
+
+        // Sanity: KF on smooth gradient should comfortably exceed 30 dB.
+        assert!(
+            kf_psnr > 30.0,
+            "F10.2-T3: KF PSNR = {kf_psnr:.2} dB — expected > 30 dB on \
+             smooth gradient",
+        );
+    }
 }
