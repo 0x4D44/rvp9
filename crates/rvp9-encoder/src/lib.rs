@@ -1161,6 +1161,11 @@ pub(crate) fn effective_qindex_for_segment(
 /// leaf form ([`simulate_dc_intra_encode`]) and the partition-aware
 /// frame loop's pre-F10.1b path use `IntraMode::Dc`; F10.1b drives this
 /// from [`crate::mode_decision::intra::pick_intra_mode_luma`].
+/// `predicted_uv_mode` is the chroma intra mode used for both U and V
+/// planes (VP9 wire format emits a single `uv_mode` per leaf). The
+/// F10.1b chroma picker (Stage 4a' chroma-DC closure) drives this from
+/// [`crate::mode_decision::intra::pick_intra_mode_uv`]; pre-picker
+/// paths default to `IntraMode::Dc` (matching the prior v1 behaviour).
 /// `segment_id` selects the per-segment Q-delta entry in
 /// `seg_q_deltas` that the forward-quant path uses for this leaf
 /// (AQ.1). For AQ-disabled frames callers leave it `0` and the
@@ -1175,8 +1180,11 @@ pub(crate) struct PartitionLeafDesc {
     /// `Block32x32` / `Block64x64`).
     pub leaf_bsize: BlockSize,
     /// Intra Y-mode the simulator should use for prediction +
-    /// forward/inverse transforms (luma only — UV stays DC for F10.1b).
+    /// forward/inverse transforms.
     pub predicted_y_mode: IntraMode,
+    /// Intra UV-mode applied to BOTH U and V planes for this leaf.
+    /// Picked by [`pick_intra_mode_uv`] alongside the luma mode.
+    pub predicted_uv_mode: IntraMode,
     /// AQ.1 — segment id `0..=7` driving the per-leaf effective
     /// qindex via [`effective_qindex_for_segment`]. `0` for AQ-off.
     pub segment_id: u8,
@@ -1214,6 +1222,7 @@ pub(crate) fn simulate_dc_intra_encode(
             mi_col_in_sb: 0,
             leaf_bsize: BlockSize::Block64x64,
             predicted_y_mode: IntraMode::Dc,
+            predicted_uv_mode: IntraMode::Dc,
             segment_id: 0,
         }]);
     }
@@ -1290,8 +1299,7 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
     sb_partitions: &[Vec<PartitionLeafDesc>],
 ) -> VecBackedIntraCoefSource {
     use rvp9_core::intra_pred::{
-        DcAvailability, EdgeBuffers, IntraMode as PredIntraMode, build_intra_predictors,
-        intra_predict,
+        DcAvailability, EdgeBuffers, build_intra_predictors, intra_predict,
     };
     use rvp9_core::quant::forward::{
         QuantizerDeltas, init_plane_quantizers, scan_for_forward, vp9_quantize_b,
@@ -1335,12 +1343,17 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
                 let leaf_mi_row = sb_row * 8 + leaf.mi_row_in_sb;
                 let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
                 let luma_tx = rvp9_core::block::max_txsize(leaf_bsize);
-                // F10.1b: Y plane uses the picked intra mode; UV stays
-                // DC for v1 (UV mode picker is deferred). The Y mode
+                // F10.1b: Y plane uses the picked intra mode. Stage 4a'
+                // chroma-DC closure: UV planes use `leaf.predicted_uv_mode`
+                // (also picked by F10.1b — see `pick_intra_mode_uv`).
+                // Pre-picker call sites set `predicted_uv_mode =
+                // IntraMode::Dc` to preserve prior behaviour. The Y mode
                 // also drives `tx_type` for the forward transform +
                 // scan order at sizes < Tx32x32 (Tx32x32 always uses
-                // DctDct, mirroring the decoder + writer).
+                // DctDct, mirroring the decoder + writer); UV is
+                // always DctDct.
                 let leaf_y_mode = leaf.predicted_y_mode;
+                let leaf_uv_mode = leaf.predicted_uv_mode;
 
                 // AQ.1 — per-leaf effective qindex. When AQ is off
                 // (`seg_q_deltas` all `None`), this collapses to
@@ -1432,12 +1445,13 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
                             let have_right =
                                 (tx_x4_local + tx_step_4x4) < plane_bw_4x4;
 
-                            // Y plane uses the leaf's picked mode; UV
-                            // is DC (UV-mode picker is F10.1c+).
+                            // Y plane uses the picked Y mode; both UV
+                            // planes use the picked UV mode (single
+                            // `uv_mode` per leaf in VP9 wire format).
                             let plane_mode = if plane == 0 {
                                 leaf_y_mode
                             } else {
-                                PredIntraMode::Dc
+                                leaf_uv_mode
                             };
                             let mut edges = EdgeBuffers::new();
                             build_intra_predictors(
@@ -1685,12 +1699,24 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
 /// 4. Write the picked mode back into `sb_partitions[sb][leaf]
 ///    .predicted_y_mode` AND the picked-mode grid (splat across every
 ///    8×8 mi cell the leaf covers).
-/// 5. Run the per-leaf encode pass (predict → fdct → quant → idct-add)
-///    using that mode — populates both the recon buffer and the
-///    qcoeff [`VecBackedIntraCoefSource`].
+/// 5. Stage 4a' chroma-DC closure — call
+///    [`pick_intra_mode_uv`](rvp9_core::mode_decision::intra::pick_intra_mode_uv)
+///    against the leaf's U+V planes (with neighbour edges sourced from
+///    the running U/V recon) and the just-picked luma mode. The picker
+///    evaluates all 10 intra modes on the combined U+V transform-
+///    coefficient-domain distortion plus the UV-mode rate cost
+///    `[y_mode][uv_mode]`. Write the winner back into
+///    `sb_partitions[sb][leaf].predicted_uv_mode` so both the
+///    simulator (this function's downstream call) and the writer
+///    (`build_kf_mi_grid`) see the same mode.
+/// 6. Run the per-leaf encode pass (predict → fdct → quant → idct-add)
+///    using the picked Y / UV modes — populates both the recon buffer
+///    and the qcoeff [`VecBackedIntraCoefSource`].
 ///
-/// UV stays forced to `IntraMode::Dc` for v1 (the UV-mode picker is
-/// further down the F8.x roadmap).
+/// For `Block64x64` leaves the luma picker is out of scope (sub-32×32
+/// per-leaf sub-mode picking is on the F8.x roadmap); both Y and UV
+/// fall back to DC on those leaves. Every smaller-leaf size gets both
+/// the luma and chroma picker treatment.
 pub(crate) fn pick_and_simulate_intra_encode_partitions(
     width: u32,
     height: u32,
@@ -1700,9 +1726,10 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
     sb_partitions: &mut [Vec<PartitionLeafDesc>],
 ) -> VecBackedIntraCoefSource {
-    use rvp9_core::cost::intra_y_mode_costs_kf_table;
+    use rvp9_core::cost::{intra_uv_mode_costs_kf, intra_y_mode_costs_kf_table};
     use rvp9_core::mode_decision::intra::{
-        IntraModeSearchParams, pick_intra_mode_luma,
+        IntraModeSearchParams, UvIntraModeSearchParams, pick_intra_mode_luma,
+        pick_intra_mode_uv,
     };
     use rvp9_core::mv_search::PlaneRef;
     use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
@@ -1736,6 +1763,9 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     // pixels` / `left_pixels` come from the same buffer.
 
     let y_mode_costs = intra_y_mode_costs_kf_table();
+    let uv_mode_costs = intra_uv_mode_costs_kf();
+    let uvw = w / 2;
+    let uvh = h / 2;
 
     // Zero recon up-front — the per-leaf simulator call expects the
     // recon plane to be already populated for previously-encoded leaves
@@ -1888,6 +1918,97 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                             Some(picked_mode);
                     }
                 }
+
+                // Stage 4a' — chroma intra mode picker. Runs alongside
+                // the luma picker so the leaf's `predicted_uv_mode` is
+                // committed BEFORE the simulator's per-plane encode
+                // pass. The picker reads U/V neighbour samples from the
+                // running U/V recon (populated by all previously-encoded
+                // leaves) and the U/V source planes, evaluates all 10
+                // intra modes on the combined U+V transform-coefficient
+                // distortion + the `intra_uv_mode_costs_kf[y_mode]`
+                // rate cost, and returns the RD winner. Block64x64
+                // leaves keep `predicted_uv_mode = IntraMode::Dc`
+                // (initialised by the leaves-from-partition-decision
+                // path) — the luma picker is out of scope there too.
+                let picked_uv_mode = if leaf_bsize == BlockSize::Block64x64 {
+                    IntraMode::Dc
+                } else {
+                    let bs_uv = bs_pixels / 2;
+                    let leaf_uv_x = leaf_px_x / 2;
+                    let leaf_uv_y = leaf_px_y / 2;
+                    let have_above_uv = leaf_uv_y > 0;
+                    let have_left_uv = leaf_uv_x > 0;
+                    let mut u_above = vec![0u8; bs_uv];
+                    let mut u_left = vec![0u8; bs_uv];
+                    let mut v_above = vec![0u8; bs_uv];
+                    let mut v_left = vec![0u8; bs_uv];
+                    if have_above_uv {
+                        let above_row_uv = leaf_uv_y - 1;
+                        let row_off = above_row_uv * uvw + leaf_uv_x;
+                        u_above.copy_from_slice(
+                            &recon_yuv_out.1[row_off..row_off + bs_uv],
+                        );
+                        v_above.copy_from_slice(
+                            &recon_yuv_out.2[row_off..row_off + bs_uv],
+                        );
+                    }
+                    if have_left_uv {
+                        let left_col_uv = leaf_uv_x - 1;
+                        for r in 0..bs_uv {
+                            u_left[r] =
+                                recon_yuv_out.1[(leaf_uv_y + r) * uvw + left_col_uv];
+                            v_left[r] =
+                                recon_yuv_out.2[(leaf_uv_y + r) * uvw + left_col_uv];
+                        }
+                    }
+                    let (u_tl, v_tl) = if have_above_uv && have_left_uv {
+                        (
+                            recon_yuv_out.1
+                                [(leaf_uv_y - 1) * uvw + (leaf_uv_x - 1)],
+                            recon_yuv_out.2
+                                [(leaf_uv_y - 1) * uvw + (leaf_uv_x - 1)],
+                        )
+                    } else {
+                        (0u8, 0u8)
+                    };
+                    let u_src_plane = PlaneRef {
+                        data: input_yuv.1,
+                        stride: uvw,
+                        width: uvw,
+                        height: uvh,
+                    };
+                    let v_src_plane = PlaneRef {
+                        data: input_yuv.2,
+                        stride: uvw,
+                        width: uvw,
+                        height: uvh,
+                    };
+                    let uv_block_size = f5_uv_plane_block_size(leaf_bsize);
+                    let uv_params = UvIntraModeSearchParams {
+                        block_size: uv_block_size,
+                        u_src_plane: &u_src_plane,
+                        v_src_plane: &v_src_plane,
+                        src_offset: (leaf_uv_x, leaf_uv_y),
+                        u_above_pixels: &u_above,
+                        u_left_pixels: &u_left,
+                        u_top_left_pixel: u_tl,
+                        v_above_pixels: &v_above,
+                        v_left_pixels: &v_left,
+                        v_top_left_pixel: v_tl,
+                        have_above: have_above_uv,
+                        have_left: have_left_uv,
+                        quantizer: &leaf_quantizer,
+                        q_index: leaf_qindex,
+                        frame_kind:
+                            rvp9_core::bitstream::header::FrameKind::KeyFrame,
+                        y_mode: picked_mode,
+                        uv_mode_costs: &uv_mode_costs,
+                    };
+                    pick_intra_mode_uv(&uv_params).best_mode
+                };
+
+                sb_partitions[sb_idx][leaf_idx].predicted_uv_mode = picked_uv_mode;
 
                 // Encode this one leaf via the simulator. We construct
                 // a per-SB layout containing only this leaf so the
@@ -3425,6 +3546,7 @@ mod tests {
                     mi_col_in_sb: c,
                     leaf_bsize: BlockSize::Block8x8,
                     predicted_y_mode: IntraMode::Dc,
+                    predicted_uv_mode: IntraMode::Dc,
                     segment_id: seg,
                 });
             }

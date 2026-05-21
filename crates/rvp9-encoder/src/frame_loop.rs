@@ -807,6 +807,10 @@ fn leaves_from_decision(decision: &PartitionDecision) -> Vec<PartitionLeafDesc> 
                 // `pick_and_simulate_intra_encode_partitions`. The
                 // inter path doesn't read it.
                 predicted_y_mode: IntraMode::Dc,
+                // F10.1b chroma picker (Stage 4a' chroma-DC closure)
+                // mutates this on the KF path too. Inter path ignores
+                // it (inter leaves are not intra-coded).
+                predicted_uv_mode: IntraMode::Dc,
                 // AQ.1 — default to segment 0 (no Q-delta). AQ.3 will
                 // populate this from the cyclic-refresh state machine.
                 segment_id: 0,
@@ -868,9 +872,11 @@ fn build_kf_mi_grid(
                     segment_id: 0,
                     seg_id_predicted: false,
                     mode: BlockMode::Intra {
-                        // F10.1b — picker-driven Y mode; UV stays DC.
+                        // F10.1b — picker-driven Y mode. Stage 4a'
+                        // chroma-DC closure: per-leaf picker-driven
+                        // UV mode (see `pick_intra_mode_uv`).
                         y_mode: leaf.predicted_y_mode,
-                        uv_mode: IntraMode::Dc,
+                        uv_mode: leaf.predicted_uv_mode,
                     },
                     bmi: Default::default(),
                 };
@@ -1961,6 +1967,7 @@ mod tests {
                     mi_col_in_sb: c,
                     leaf_bsize: BlockSize::Block8x8,
                     predicted_y_mode: IntraMode::V,
+                    predicted_uv_mode: IntraMode::Dc,
                     segment_id: 0,
                 });
             }

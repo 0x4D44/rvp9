@@ -474,6 +474,324 @@ pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSear
     best
 }
 
+/// Per-`y_mode` UV intra-mode cost table for keyframes. Mirrors libvpx
+/// `intra_uv_mode_cost[KEY_FRAME][y_mode][uv_mode]` (`vp9_rd.c:105-106`),
+/// built from the static `VP9_KF_UV_MODE_PROB`. Indexed as
+/// `[y_mode][uv_mode]`.
+pub type UvModeCostsKf = [[i32; NUM_INTRA_MODES]; NUM_INTRA_MODES];
+
+/// Inputs to [`pick_intra_mode_uv`].
+///
+/// The UV picker chooses a single intra mode applied to BOTH chroma
+/// planes (U and V — VP9's wire format emits one `uv_mode` per leaf).
+/// The picker evaluates each candidate mode's combined U+V transform-
+/// domain `block_yrd` distortion plus the mode-coding cost
+/// `uv_mode_costs[y_mode][uv_mode]`, and returns the RD winner.
+///
+/// `u_src_plane` / `v_src_plane` are the source U / V plane views;
+/// `src_offset` is `(x, y)` in chroma-plane-sample units pointing at
+/// the top-left of the chroma block being predicted (i.e. luma's
+/// `(leaf_px_x >> ss_x, leaf_px_y >> ss_y)`).
+///
+/// `u_above_pixels` / `u_left_pixels` / `u_top_left_pixel` and the
+/// corresponding `v_*` describe the already-reconstructed chroma
+/// neighbour edges. When [`have_above`] is `false`, the picker ignores
+/// the above buffers and fills with `127` (libvpx
+/// `ABOVE_UNAVAILABLE_FILL`); when [`have_left`] is `false`, fills
+/// with `129` (libvpx `LEFT_UNAVAILABLE_FILL`).
+///
+/// `quantizer` is the per-plane UV quantizer (delta-q zero ⇒ same as
+/// Y today). `q_index` is the frame's base qindex used to compute
+/// `lambda`. `frame_kind` selects the KF vs inter RD multiplier.
+/// `y_mode` is the leaf's already-picked luma mode (drives the cost-
+/// table lookup row). `uv_mode_costs` is the KF cost table from
+/// [`crate::cost::intra_uv_mode_costs_kf`].
+#[derive(Clone, Copy)]
+pub struct UvIntraModeSearchParams<'a> {
+    /// Chroma plane block size (UV-subsampled). For 4:2:0 this is the
+    /// luma block size halved on each axis: Block16x16 → Block8x8,
+    /// Block8x8 → Block4x4, etc. The transform size is
+    /// [`max_txsize(block_size)`], yielding one TX per chroma plane
+    /// for the F10.1b leaf sizes we support (≤ Block32x32).
+    pub block_size: BlockSize,
+    /// Source U plane view.
+    pub u_src_plane: &'a PlaneRef<'a>,
+    /// Source V plane view.
+    pub v_src_plane: &'a PlaneRef<'a>,
+    /// Top-left of the chroma block in chroma-plane samples
+    /// (`(x, y)`).
+    pub src_offset: (usize, usize),
+    /// Already-reconstructed U-plane row above the block (`bs`
+    /// pixels). Ignored when `have_above == false`.
+    pub u_above_pixels: &'a [Pixel],
+    /// Already-reconstructed U-plane column left of the block
+    /// (`bs` pixels). Ignored when `have_left == false`.
+    pub u_left_pixels: &'a [Pixel],
+    /// Already-reconstructed U-plane top-left corner pixel.
+    pub u_top_left_pixel: Pixel,
+    /// Already-reconstructed V-plane row above the block.
+    pub v_above_pixels: &'a [Pixel],
+    /// Already-reconstructed V-plane column left of the block.
+    pub v_left_pixels: &'a [Pixel],
+    /// Already-reconstructed V-plane top-left corner pixel.
+    pub v_top_left_pixel: Pixel,
+    /// Whether the above-row pixels are in-frame and decoded.
+    pub have_above: bool,
+    /// Whether the left-column pixels are in-frame and decoded.
+    pub have_left: bool,
+    /// UV-plane forward-quantizer derived from [`q_index`].
+    pub quantizer: &'a PlaneQuantizers,
+    /// Frame base qindex (0..255) — used to compute `lambda`.
+    pub q_index: u8,
+    /// Frame kind — selects the RD-multiplier formula.
+    pub frame_kind: FrameKind,
+    /// Picked luma mode (selects the cost-table row).
+    pub y_mode: IntraMode,
+    /// Keyframe UV-mode cost table from
+    /// [`crate::cost::intra_uv_mode_costs_kf`]. Indexed
+    /// `[y_mode][uv_mode]`.
+    pub uv_mode_costs: &'a UvModeCostsKf,
+}
+
+/// Run the libvpx-style intra-mode RD search for one chroma block pair
+/// (U + V).
+///
+/// Mirror of [`pick_intra_mode_luma`] for the UV plane:
+///
+/// - Evaluates all 10 [`IntraMode`] variants.
+/// - Each candidate is applied to BOTH U and V planes (VP9 emits a
+///   single `uv_mode` per leaf).
+/// - Distortion is the SUM of U and V `block_yrd` transform-domain
+///   distortions (`(coef - dqcoeff)^2 >> shift`, same shift table as
+///   luma — `0` for Tx32x32, `2` otherwise).
+/// - TX type is always [`TxType::DctDct`] for chroma (VP9 wire format).
+/// - Rate is `uv_mode_costs[y_mode][candidate_mode]` (built from the
+///   static keyframe `VP9_KF_UV_MODE_PROB[y_mode]`).
+/// - RD cost uses the same `compute_rd_mult` → `rd_cost` path as luma.
+///
+/// The chroma block size is given by [`UvIntraModeSearchParams::
+/// block_size`]; under 4:2:0 this is the luma block size halved on
+/// each axis.
+#[must_use]
+pub fn pick_intra_mode_uv(params: &UvIntraModeSearchParams<'_>) -> IntraModeSearchResult {
+    let tx_size = max_txsize(params.block_size);
+    let tx_side = tx_size.side();
+    debug_assert!(
+        params.block_size.width() as usize == tx_side
+            && params.block_size.height() as usize == tx_side,
+        "UV picker supports square chroma block == tx_size only \
+         (got {:?}, tx_side={})",
+        params.block_size,
+        tx_side
+    );
+
+    let lambda = compute_rd_mult(
+        i32::from(params.q_index),
+        frame_type_for_rd(params.frame_kind),
+    );
+
+    let mut best = IntraModeSearchResult {
+        best_mode: IntraMode::Dc,
+        best_rd_cost: i64::MAX,
+        best_distortion: u32::MAX,
+        best_rate: u32::MAX,
+    };
+
+    // Scratch buffers reused across modes. Chroma TX caps at 32×32 (for
+    // a Block64x64 luma leaf → Block32x32 chroma) but in practice the
+    // F10.1b picker is only invoked for leaves ≤ Block32x32 → chroma
+    // ≤ Block16x16 → tx ≤ Tx16x16. We still size for 32×32 to keep the
+    // signature uniform with the luma picker.
+    let mut pred = [0u8; 32 * 32];
+    let mut residual = [0i16; 32 * 32];
+    let mut coefs = [0i32; 1024];
+    let mut qcoeff = [0i16; 1024];
+    let mut dqcoeff = [0i16; 1024];
+    let mut dq_buf = [0i32; 1024];
+
+    // Materialise neighbour edges once for U and V (the kernels reread
+    // them per-mode).
+    let (u_above_row, u_above_left, u_left_col) = build_edges(
+        tx_side,
+        params.u_above_pixels,
+        params.u_left_pixels,
+        params.u_top_left_pixel,
+        params.have_above,
+        params.have_left,
+    );
+    let (v_above_row, v_above_left, v_left_col) = build_edges(
+        tx_side,
+        params.v_above_pixels,
+        params.v_left_pixels,
+        params.v_top_left_pixel,
+        params.have_above,
+        params.have_left,
+    );
+
+    let dc_avail = DcAvailability {
+        above_available: params.have_above,
+        left_available: params.have_left,
+    };
+
+    let dispatch = crate::dsp::get();
+    let mode_cost_row = &params.uv_mode_costs[params.y_mode as usize];
+
+    let dequant_pair = [params.quantizer.dequant[0], params.quantizer.dequant[1]];
+    // Chroma always uses DctDct → scan_for is DctDct-keyed regardless
+    // of mode. Compute once outside the mode loop.
+    let scan = scan_for(tx_size, TxType::DctDct);
+    let scan_slice = scan_for_forward(&scan);
+
+    for raw_mode in 0u8..NUM_INTRA_MODES as u8 {
+        let mode = IntraMode::from_u8(raw_mode).expect("0..10 valid");
+
+        // Score U and V independently, then sum the distortions before
+        // RD. libvpx's `vp9_pick_intra_mode` evaluates the same shape:
+        // sum of per-plane SSE → single RD score.
+        let mut total_dist: u32 = 0;
+
+        for plane in 0..2usize {
+            let (src_plane, above_row, above_left, left_col) = if plane == 0 {
+                (
+                    params.u_src_plane,
+                    &u_above_row,
+                    u_above_left,
+                    &u_left_col,
+                )
+            } else {
+                (
+                    params.v_src_plane,
+                    &v_above_row,
+                    v_above_left,
+                    &v_left_col,
+                )
+            };
+
+            let ctx = PredCtx {
+                above: &above_row[..2 * tx_side],
+                left: &left_col[..tx_side],
+                above_left,
+            };
+
+            // 1. Predict into `pred`.
+            let n = tx_size.n_coeffs();
+            let pred_len = tx_side * tx_side;
+            for p in pred[..pred_len].iter_mut() {
+                *p = 0;
+            }
+            intra_predict(
+                mode,
+                &mut pred[..pred_len],
+                tx_side,
+                tx_side,
+                ctx,
+                dc_avail,
+                &dispatch,
+            );
+
+            // 2. Residual = src - pred. src lives at `params.src_offset`
+            //    within the plane.
+            let (sx, sy) = params.src_offset;
+            let src_stride = src_plane.stride;
+            for r in 0..tx_side {
+                for c in 0..tx_side {
+                    let src_off = (sy + r) * src_stride + (sx + c);
+                    let p = pred[r * tx_side + c] as i16;
+                    let s = src_plane.data[src_off] as i16;
+                    residual[r * tx_side + c] = s - p;
+                }
+            }
+
+            // 3. Forward transform — DctDct for chroma, all sizes.
+            match tx_size {
+                TxSize::Tx4x4 => {
+                    let mut buf = [0i32; 16];
+                    fht4x4(&residual[..16], &mut buf, tx_side, TxType::DctDct);
+                    coefs[..16].copy_from_slice(&buf);
+                }
+                TxSize::Tx8x8 => {
+                    let mut buf = [0i32; 64];
+                    fht8x8(&residual[..64], &mut buf, tx_side, TxType::DctDct);
+                    coefs[..64].copy_from_slice(&buf);
+                }
+                TxSize::Tx16x16 => {
+                    let mut buf = [0i32; 256];
+                    fht16x16(&residual[..256], &mut buf, tx_side, TxType::DctDct);
+                    coefs[..256].copy_from_slice(&buf);
+                }
+                TxSize::Tx32x32 => {
+                    let mut buf = [0i32; 1024];
+                    fdct32x32(&residual[..1024], &mut buf, tx_side);
+                    coefs[..1024].copy_from_slice(&buf);
+                }
+            }
+
+            // 4. Forward quant.
+            for q in qcoeff[..n].iter_mut() {
+                *q = 0;
+            }
+            for d in dqcoeff[..n].iter_mut() {
+                *d = 0;
+            }
+            let _eob = if tx_size == TxSize::Tx32x32 {
+                vp9_quantize_b_32x32(
+                    &coefs[..1024],
+                    false,
+                    &params.quantizer.zbin,
+                    &params.quantizer.round,
+                    &params.quantizer.quant,
+                    &params.quantizer.quant_shift,
+                    &mut qcoeff[..1024],
+                    &mut dqcoeff[..1024],
+                    &dequant_pair,
+                    scan_slice,
+                )
+            } else {
+                vp9_quantize_b(
+                    &coefs[..n],
+                    n,
+                    false,
+                    &params.quantizer.zbin,
+                    &params.quantizer.round,
+                    &params.quantizer.quant,
+                    &params.quantizer.quant_shift,
+                    &mut qcoeff[..n],
+                    &mut dqcoeff[..n],
+                    &dequant_pair,
+                    scan_slice,
+                )
+            };
+
+            // 5. Widen dq → i32 for the distortion model.
+            let dq32 = &mut dq_buf[..n];
+            for (i, &v) in dqcoeff[..n].iter().enumerate() {
+                dq32[i] = v as i32;
+            }
+
+            // 6. Per-plane block_yrd distortion.
+            let (dist, _skippable) = block_yrd_distortion(&coefs[..n], dq32, n, tx_size);
+            total_dist = total_dist.saturating_add(dist);
+        }
+
+        // 7. Mode-coding cost — UV-mode cost row keyed by Y mode.
+        let rate = mode_cost_row[raw_mode as usize].max(0) as u32;
+
+        // 8. RD cost.
+        let this_rd = rd_cost(lambda, rate, total_dist);
+
+        if this_rd < best.best_rd_cost {
+            best = IntraModeSearchResult {
+                best_mode: mode,
+                best_rd_cost: this_rd,
+                best_distortion: total_dist,
+                best_rate: rate,
+            };
+        }
+    }
+
+    best
+}
+
 /// Map a [`FrameKind`] to the [`FrameTypeForRd`] enum used by
 /// [`compute_rd_mult`]. Keyframes get the KF multiplier; intra-only
 /// inherits inter (libvpx treats intra-only as inter for the RD-mult
