@@ -290,6 +290,13 @@ pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSear
         left_available: params.have_left,
     };
 
+    // G4.3.1 — fetch the process-wide SimdDispatch once; `intra_predict`
+    // routes DC 4×4 (both-avail) through the `dc_predictor_4x4` slot.
+    // For non-DC modes / non-4×4 / one-sided neighbours the dispatch
+    // arg is unused inside `intra_predict`, but threading it keeps the
+    // signature uniform with the decoder.
+    let dispatch = crate::dsp::get();
+
     let above_idx = params.above_mode_ctx as usize;
     let left_idx = params.left_mode_ctx as usize;
     let mode_cost_row = &params.y_mode_costs[above_idx][left_idx];
@@ -308,7 +315,15 @@ pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSear
         for p in pred[..pred_len].iter_mut() {
             *p = 0;
         }
-        intra_predict(mode, &mut pred[..pred_len], tx_side, tx_side, ctx, dc_avail);
+        intra_predict(
+            mode,
+            &mut pred[..pred_len],
+            tx_side,
+            tx_side,
+            ctx,
+            dc_avail,
+            &dispatch,
+        );
 
         // 2. Residual = src - pred. src lives at `params.src_offset`
         //    within `params.src_plane`.
@@ -934,6 +949,7 @@ mod tests {
             above_available: params.have_above,
             left_available: params.have_left,
         };
+        let dispatch = crate::dsp::get();
         let above_idx = params.above_mode_ctx as usize;
         let left_idx = params.left_mode_ctx as usize;
         let mode_cost_row = &params.y_mode_costs[above_idx][left_idx];
@@ -958,7 +974,15 @@ mod tests {
             for p in pred[..pred_len].iter_mut() {
                 *p = 0;
             }
-            intra_predict(mode, &mut pred[..pred_len], tx_side, tx_side, ctx, dc_avail);
+            intra_predict(
+                mode,
+                &mut pred[..pred_len],
+                tx_side,
+                tx_side,
+                ctx,
+                dc_avail,
+                &dispatch,
+            );
 
             let src = params.src_plane;
             let (sx, sy) = params.src_offset;

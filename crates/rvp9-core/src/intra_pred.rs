@@ -724,6 +724,7 @@ pub fn intra_predict(
     bs: usize,
     ctx: PredCtx<'_>,
     dc_avail: DcAvailability,
+    dispatch: &crate::dsp::SimdDispatch,
 ) {
     // Per libvpx `intra_pred_no_4x4(d{45,63,117,135,153,207})` the
     // bs == 4 path uses hand-unrolled specializations that differ from
@@ -742,22 +743,34 @@ pub fn intra_predict(
     // The bs >= 8 path still uses the generic kernels which libvpx
     // also uses for those sizes (the macro is `intra_pred_no_4x4`,
     // not `intra_pred_only_4x4`).
-    match (mode, bs == 4) {
-        (IntraMode::Dc, _) => {
-            dc_predict_with_availability(dst, stride, bs, ctx.above, ctx.left, dc_avail);
+    //
+    // G4.3.1 — DC_PRED at bs=4 with both neighbours available routes
+    // through the `dc_predictor_4x4` dispatch slot so AVX2 hosts run
+    // the SIMD kernel. All other DC variants (DC_TOP / DC_LEFT /
+    // DC_128 / bs > 4) stay on the scalar `dc_predict_with_availability`
+    // path until a follow-up adds slots for them.
+    let dispatched_dc_4x4 =
+        mode == IntraMode::Dc && bs == 4 && dc_avail.above_available && dc_avail.left_available;
+    if dispatched_dc_4x4 {
+        (dispatch.dc_predictor_4x4())(dst, stride, ctx.above, ctx.left);
+    } else {
+        match (mode, bs == 4) {
+            (IntraMode::Dc, _) => {
+                dc_predict_with_availability(dst, stride, bs, ctx.above, ctx.left, dc_avail);
+            }
+            (IntraMode::V, _) => v_predictor(dst, stride, bs, ctx),
+            (IntraMode::H, _) => h_predictor(dst, stride, bs, ctx),
+            (IntraMode::D45, true) => d45_predictor_4x4(dst, stride, ctx.above),
+            (IntraMode::D45, false) => d45_predictor(dst, stride, bs, ctx.above),
+            (IntraMode::D135, _) => d135_predictor(dst, stride, bs, ctx),
+            (IntraMode::D117, _) => d117_predictor(dst, stride, bs, ctx),
+            (IntraMode::D153, _) => d153_predictor(dst, stride, bs, ctx),
+            (IntraMode::D207, true) => d207_predictor_4x4(dst, stride, ctx.left),
+            (IntraMode::D207, false) => d207_predictor(dst, stride, bs, ctx.left),
+            (IntraMode::D63, true) => d63_predictor_4x4(dst, stride, ctx.above),
+            (IntraMode::D63, false) => d63_predictor(dst, stride, bs, ctx.above),
+            (IntraMode::Tm, _) => tm_predictor(dst, stride, bs, ctx),
         }
-        (IntraMode::V, _) => v_predictor(dst, stride, bs, ctx),
-        (IntraMode::H, _) => h_predictor(dst, stride, bs, ctx),
-        (IntraMode::D45, true) => d45_predictor_4x4(dst, stride, ctx.above),
-        (IntraMode::D45, false) => d45_predictor(dst, stride, bs, ctx.above),
-        (IntraMode::D135, _) => d135_predictor(dst, stride, bs, ctx),
-        (IntraMode::D117, _) => d117_predictor(dst, stride, bs, ctx),
-        (IntraMode::D153, _) => d153_predictor(dst, stride, bs, ctx),
-        (IntraMode::D207, true) => d207_predictor_4x4(dst, stride, ctx.left),
-        (IntraMode::D207, false) => d207_predictor(dst, stride, bs, ctx.left),
-        (IntraMode::D63, true) => d63_predictor_4x4(dst, stride, ctx.above),
-        (IntraMode::D63, false) => d63_predictor(dst, stride, bs, ctx.above),
-        (IntraMode::Tm, _) => tm_predictor(dst, stride, bs, ctx),
     }
 
     // Stage 3 stretch M.9 — env-gated trace. Dumps mode + edge inputs +
@@ -1144,9 +1157,19 @@ pub fn build_intra_predictors(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dsp::caps::Caps;
+    use crate::dsp::dispatch::SimdDispatch;
 
     fn make_dst(bs: usize, stride: usize) -> Vec<u8> {
         vec![0u8; stride * bs]
+    }
+
+    /// G4.3.1 — locally-built scalar-only dispatch table for tests
+    /// that care only about the legacy scalar dispatch behaviour
+    /// (not the SIMD slot itself). Forcing scalar caps means these
+    /// tests behave identically on AVX2 and non-AVX2 hosts.
+    fn scalar_dispatch() -> SimdDispatch {
+        SimdDispatch::build(Caps::default())
     }
 
     #[test]
@@ -1228,6 +1251,7 @@ mod tests {
                     above_available: true,
                     left_available: true,
                 },
+                &scalar_dispatch(),
             );
 
             // Direct kernel call. The bs == 4 dispatch goes through the
@@ -1248,6 +1272,90 @@ mod tests {
             }
 
             assert_eq!(dst_disp, dst_direct, "mode {mode:?} dispatch mismatch");
+        }
+    }
+
+    /// G4.3.1 — the `dc_predictor_4x4` dispatch slot fires for DC_PRED
+    /// at `bs = 4` with both neighbours available, and the AVX2 path
+    /// (when caps.avx2 == true) produces byte-identical output to the
+    /// scalar reference path.
+    ///
+    /// This is the production-wiring oracle: feeding identical inputs
+    /// through an AVX2-enabled SimdDispatch and a forced-scalar one
+    /// MUST yield equal `dst` buffers. On non-AVX2 hosts (`caps.avx2`
+    /// initially false) both dispatches land on the scalar adapter and
+    /// the test degenerates to scalar-vs-scalar — still a valid
+    /// regression against the dispatch threading itself.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn dispatch_dc_pred_4x4_avx2_matches_scalar() {
+        use crate::dsp::caps::{detect, Caps};
+
+        // Distinguishable neighbour samples so any per-lane bug shows up.
+        let above = [10u8, 25, 80, 200, 17, 42, 63, 99];
+        let left = [33u8, 77, 128, 254];
+        let ctx = PredCtx {
+            above: &above[..4],
+            left: &left,
+            above_left: 50,
+        };
+        let dc_avail = DcAvailability {
+            above_available: true,
+            left_available: true,
+        };
+
+        // Scalar dispatch — caps.avx2 forced off.
+        let mut scalar_caps = detect();
+        // On non-x86_64 the `avx2` field doesn't exist; this whole
+        // test is gated on x86_64.
+        scalar_caps.avx2 = false;
+        let scalar_d = SimdDispatch::build(scalar_caps);
+
+        // Native dispatch — whatever the CPU actually supports. When
+        // the test runs on an AVX2 host this lands on the AVX2 kernel.
+        let native_d = SimdDispatch::build(Caps::detect());
+
+        let mut dst_scalar = [0u8; 16];
+        intra_predict(
+            IntraMode::Dc,
+            &mut dst_scalar,
+            4,
+            4,
+            ctx,
+            dc_avail,
+            &scalar_d,
+        );
+
+        let mut dst_native = [0u8; 16];
+        intra_predict(
+            IntraMode::Dc,
+            &mut dst_native,
+            4,
+            4,
+            ctx,
+            dc_avail,
+            &native_d,
+        );
+
+        assert_eq!(
+            dst_native, dst_scalar,
+            "AVX2 dc_predictor_4x4 must agree with scalar reference \
+             byte-for-byte through `intra_predict` (native caps = {:?})",
+            native_d.caps,
+        );
+
+        // Sanity: when the test host has avx2, the two dispatches do
+        // hold *different* function pointers — that's what guarantees
+        // we actually exercised the AVX2 path and not just compared
+        // scalar-to-scalar.
+        if native_d.caps.avx2 {
+            assert_ne!(
+                native_d.dc_predictor_4x4() as usize,
+                scalar_d.dc_predictor_4x4() as usize,
+                "with avx2 caps the dispatch slot must hold the AVX2 \
+                 kernel, not the scalar adapter — if these match the \
+                 test is not exercising the AVX2 path",
+            );
         }
     }
 
@@ -1342,6 +1450,8 @@ mod tests {
             above_left: 129,
         };
 
+        let dispatch = scalar_dispatch();
+
         // (above_only) → dc_top_predictor: (16*4 + 2) / 4 = 16.
         let mut dst = [0u8; 16];
         intra_predict(
@@ -1354,6 +1464,7 @@ mod tests {
                 above_available: true,
                 left_available: false,
             },
+            &dispatch,
         );
         assert!(
             dst.iter().all(|&v| v == 16),
@@ -1372,6 +1483,7 @@ mod tests {
                 above_available: false,
                 left_available: true,
             },
+            &dispatch,
         );
         assert!(dst.iter().all(|&v| v == 129));
 
@@ -1387,6 +1499,7 @@ mod tests {
                 above_available: false,
                 left_available: false,
             },
+            &dispatch,
         );
         assert!(dst.iter().all(|&v| v == 128));
 
@@ -1402,6 +1515,7 @@ mod tests {
                 above_available: true,
                 left_available: true,
             },
+            &dispatch,
         );
         assert!(dst.iter().all(|&v| v == 73));
     }
@@ -2269,7 +2383,16 @@ mod tests {
             above_available: true,
             left_available: true,
         };
-        intra_predict(IntraMode::V, &mut dst_from_builder, 4, bs, edges.pred_ctx(bs), avail);
+        let dispatch = scalar_dispatch();
+        intra_predict(
+            IntraMode::V,
+            &mut dst_from_builder,
+            4,
+            bs,
+            edges.pred_ctx(bs),
+            avail,
+            &dispatch,
+        );
 
         // Reference path: build PredCtx by hand.
         let above_ref_start = (px_y - 1) * stride + px_x;
@@ -2281,7 +2404,15 @@ mod tests {
             above_left: plane[above_ref_start - 1],
         };
         let mut dst_manual = [0u8; 16];
-        intra_predict(IntraMode::V, &mut dst_manual, 4, bs, manual_ctx, avail);
+        intra_predict(
+            IntraMode::V,
+            &mut dst_manual,
+            4,
+            bs,
+            manual_ctx,
+            avail,
+            &dispatch,
+        );
         assert_eq!(dst_from_builder, dst_manual);
     }
 }

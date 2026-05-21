@@ -1305,6 +1305,11 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
     use rvp9_core::transforms::scans::scan_for;
     use rvp9_core::transforms::TxType;
 
+    // G4.3.1 — `intra_predict` takes a `&SimdDispatch` so the DC 4×4
+    // both-avail path can route through the SIMD slot. Fetch once per
+    // call; `dsp::get()` is one atomic load.
+    let dispatch = rvp9_core::dsp::get();
+
     let w = width as usize;
     let h = height as usize;
     let uvw = w / 2;
@@ -1465,6 +1470,7 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
                                 tx_side,
                                 pred_ctx,
                                 dc_avail,
+                                &dispatch,
                             );
 
                             // 3. Residual = input - pred.

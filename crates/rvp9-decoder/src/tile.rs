@@ -1126,6 +1126,7 @@ fn reconstruct_intra_planes(
                         plane_tx.side(),
                         pred_ctx,
                         dc_avail,
+                        dispatch,
                     );
                 } else {
                     let seg_eob = plane_tx.n_coeffs();
