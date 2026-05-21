@@ -60,6 +60,12 @@ fn conformance_runner_walks_all_vectors() {
     let mut total_mismatched = 0usize;
     let mut total_skipped = 0usize;
     let mut total_expected = 0usize;
+    // K-5 (HLD V6 §G1, lines 1806-1821): track non-`Unimplemented`
+    // decode errors separately so the silent skip-folding bug —
+    // historically both `Err` arms incremented `total_skipped`,
+    // masking real decode failures behind the "expected" skip count
+    // — cannot recur. Asserted to be zero after the loop.
+    let mut total_other_err: usize = 0;
 
     for vector in &vectors {
         let md5_path = vector.with_extension(format!(
@@ -124,9 +130,13 @@ fn conformance_runner_walks_all_vectors() {
                         }
                     }
                     Err(_) => {
+                        // K-5: any non-`Unimplemented` decode error is a
+                        // real failure, not an expected skip. Count it
+                        // separately so the post-loop assertion can hard-
+                        // fail. Still advance `shown_idx` so subsequent
+                        // shown frames line up against the .md5 list.
                         if shown {
-                            total_skipped += 1;
-                            v_skipped += 1;
+                            total_other_err += 1;
                             shown_idx += 1;
                         }
                     }
@@ -152,7 +162,10 @@ fn conformance_runner_walks_all_vectors() {
     // `MIN_PASSES` is kept as defense-in-depth so any future regression
     // that drops `total_passed` (e.g. someone introduces an Unimplemented
     // path) still trips the gate.
-    const MIN_PASSES: usize = 191;
+    // Wave A R1 (2026-05-21): ratcheted 191 → 201 after G1 (frame_pool
+    // sync) + G2 (WHT lossless) closed the last 10 skips. Full 14-vector
+    // AOM corpus now passes bit-exact. Per HLD V6 §4 Wave A exit gate #3.
+    const MIN_PASSES: usize = 201;
     // D.24 (2026-05-19): fix scaled-MC for resize vectors. Two
     // distinct bugs (one Y, one chroma) that surface together on any
     // inter frame whose reference frame has a different size than the
@@ -321,5 +334,15 @@ fn conformance_runner_walks_all_vectors() {
     assert_eq!(
         total_mismatched, 0,
         "stage 3 exit: any mismatch is a regression",
+    );
+    // K-5 (HLD V6 §G1, lines 1806-1821): hard-fail any non-
+    // `Unimplemented` decode error. Pre-K-5 the harness folded these
+    // silently into `total_skipped`, masking real regressions behind
+    // the expected-skip count.
+    assert_eq!(
+        total_other_err, 0,
+        "conformance harness saw {total_other_err} non-Unimplemented \
+         decode errors; pre-K-5 the silent skip-folding bug would \
+         have masked these as expected skips",
     );
 }

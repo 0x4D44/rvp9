@@ -53,7 +53,7 @@ use rvp9_core::inter::filter::{SUBPEL_BITS, SUBPEL_MASK, SUBPEL_SHIFTS};
 use rvp9_core::mode_info::{BlockMode, ModeInfo, Mv, RefFrame};
 use rvp9_core::transforms::inverse::{
     idct4x4_1_add, idct4x4_16_add, idct8x8_1_add, idct8x8_64_add, idct16x16_1_add,
-    idct16x16_256_add, idct32x32_1_add, idct32x32_1024_add,
+    idct16x16_256_add, idct32x32_1_add, idct32x32_1024_add, iwht4x4_1_add, iwht4x4_16_add,
 };
 use rvp9_core::transforms::types::{TxSize, TxType};
 
@@ -532,8 +532,19 @@ pub fn reconstruct_inter_block(
                     );
 
                     if eob > 0 {
+                        // G2 (decoder-hardening V6 §G2): pass
+                        // `inputs.lossless` so the 4×4 site can pick
+                        // the inverse Walsh-Hadamard family
+                        // (`iwht4x4_*_add`) instead of the standard
+                        // IDCT when the frame is lossless. Larger TX
+                        // sizes are not legal in lossless mode.
                         inverse_transform_add_dct(
-                            plane_tx, &dq_coefs[..seg_eob], eob, tx_dst, dst_stride,
+                            plane_tx,
+                            &dq_coefs[..seg_eob],
+                            eob,
+                            tx_dst,
+                            dst_stride,
+                            inputs.lossless,
                         );
                     }
 
@@ -542,7 +553,6 @@ pub fn reconstruct_inter_block(
                 loff += tx_step_4x4;
             }
         }
-        let _ = inputs.lossless; // unused (no lossless inter yet)
     }
 }
 
@@ -561,14 +571,13 @@ pub fn reconstruct_inter_block(
 /// and `mi.mode` initialised to a placeholder — `read_inter_block_mode_info`
 /// will fully populate `mi.mode` and `mi.bmi`.
 ///
-/// `decode_block` integration (Stage D.2.e): the future
-/// `decode_interframe` driver should call this helper from the inter
-/// branch of `decode_block`. Today there's no live inter-frame driver
-/// (`Decoder::decode_frame` returns
-/// [`crate::DecodeError::Unimplemented`] for `FrameKind::InterFrame`),
-/// so this helper is exercised via unit tests only. When the driver
-/// lands, replacing its `Unimplemented` arm with a call to this
-/// helper is the only wiring change required.
+/// `decode_block` integration (Stage D.2.e): the live inter-frame
+/// driver ([`crate::Decoder::decode_inter_frame`]) calls this helper
+/// from the inter branch of `decode_block`. `FrameKind::InterFrame`
+/// is fully handled; only specific structural error cases (e.g. an
+/// inter ref naming an empty `ref_frame_map` slot —
+/// [`crate::DecodeError::EmptyInterRef`]) produce early returns
+/// before this helper runs.
 ///
 /// # Panics
 ///
@@ -687,17 +696,43 @@ fn uv_plane_tx_size(bsize: BlockSize, luma_tx: TxSize) -> TxSize {
 /// blocks always use `TxType::DctDct` (libvpx
 /// `vp9_decodeframe.c:235-280`: hybrid kernels exist only for intra Y);
 /// 32×32 has no hybrid in any case.
+///
+/// `lossless` selects the inverse Walsh-Hadamard family
+/// (`iwht4x4_*_add`) at Tx4x4 in place of the standard 4×4 IDCT, per
+/// libvpx `inverse_transform_block_inter` (`vp9_decodeframe.c:266-294`).
+/// Lossless mode is restricted to `TX_4X4`, so at the larger TX sizes
+/// the flag is unused and a debug assertion catches caller bugs.
 fn inverse_transform_add_dct(
     tx_size: TxSize,
     input: &[i32],
     eob: usize,
     dest: &mut [u8],
     stride: usize,
+    lossless: bool,
 ) {
+    debug_assert!(
+        !lossless || tx_size == TxSize::Tx4x4,
+        "VP9 lossless mode is restricted to TX_4X4; got tx_size={tx_size:?}"
+    );
     match tx_size {
         TxSize::Tx4x4 => {
             let coefs: &[i32; 16] = input.try_into().expect("Tx4x4 input is 16 coefs");
-            if eob > 1 {
+            if lossless {
+                if eob == 1 {
+                    // Defensive: `iwht4x4_1_add` only sees `coefs[0]`; if a
+                    // future detokenizer bug emitted `eob == 1` alongside a
+                    // nonzero AC coefficient, that AC value would be
+                    // silently dropped and the block would miscompute.
+                    debug_assert!(
+                        coefs[1..].iter().all(|&c| c == 0),
+                        "iwht4x4_1_add dispatched with non-DC coefficients; \
+                         eob == 1 must imply coefs[1..] are zero"
+                    );
+                    iwht4x4_1_add(coefs[0], dest, stride);
+                } else {
+                    iwht4x4_16_add(coefs, dest, stride);
+                }
+            } else if eob > 1 {
                 idct4x4_16_add(coefs, dest, stride);
             } else {
                 idct4x4_1_add(coefs[0], dest, stride);

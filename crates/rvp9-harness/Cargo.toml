@@ -7,8 +7,21 @@ authors.workspace = true
 rust-version.workspace = true
 description = "Test harnesses: VP9 conformance runner and bitstream differential diff tool."
 
-[lints]
-workspace = true
+# Intentionally NOT inheriting `[lints.workspace]` per HLD §G11
+# deliverable 1: integration-test harnesses print pass/fail tallies
+# and per-vector diagnostics to stderr/stdout — that IS the output
+# mechanism, so denying `clippy::print_stderr` + `print_stdout` here
+# would be the wrong rule.
+#
+# Re-enables only the unsafe-related lints from the workspace table;
+# `print_stderr` / `print_stdout` are deliberately omitted because
+# this test-harness crate uses stderr/stdout for legitimate
+# pass/fail diagnostics.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"
 
 [[bin]]
 name = "conformance"

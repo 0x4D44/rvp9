@@ -7,8 +7,21 @@ authors.workspace = true
 rust-version.workspace = true
 description = "Command-line tools: rvp9enc (encoder) and rvp9dec (decoder). Mirror libvpx vpxenc/vpxdec interfaces where practical."
 
-[lints]
-workspace = true
+# Intentionally NOT inheriting `[lints.workspace]` per HLD §G11
+# deliverable 1: this is a CLI tool where `eprintln!` / `println!` is
+# the correct output mechanism. The workspace lint table denies
+# `clippy::print_stderr` + `clippy::print_stdout`, which is the right
+# rule for library crates but the wrong rule for binaries.
+#
+# Re-enables only the unsafe-related lints from the workspace table;
+# `print_stderr` / `print_stdout` are deliberately omitted because
+# this binary crate uses stderr/stdout for legitimate user-facing
+# output.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"
 
 [[bin]]
 name = "rvp9enc"

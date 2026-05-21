@@ -43,7 +43,7 @@ use rvp9_core::intra_pred::{DcAvailability, IntraMode, PredCtx, intra_predict};
 use rvp9_core::transforms::inverse::{
     idct4x4_1_add, idct4x4_16_add, idct8x8_1_add, idct8x8_64_add, idct16x16_1_add,
     idct16x16_256_add, idct32x32_1_add, idct32x32_1024_add, iht4x4_16_add, iht8x8_64_add,
-    iht16x16_256_add,
+    iht16x16_256_add, iwht4x4_1_add, iwht4x4_16_add,
 };
 use rvp9_core::transforms::types::{TxSize, TxType};
 
@@ -113,10 +113,16 @@ pub fn resolve_tx_type(plane: usize, lossless: bool, intra_mode: IntraMode) -> T
 /// - `seg_eob`: per-segment EOB cap (callers without segmentation
 ///   pass `tx_size.n_coeffs()`).
 /// - `dequant`: `(dc_dequant, ac_dequant)` for this plane / segment.
-/// - `lossless`: forces TX type to DCT_DCT (libvpx
-///   `inverse_transform_block_intra:280`). The 4×4 WHT path is not
-///   yet wired; passing `lossless == true` for `Tx4x4` will trigger a
-///   debug-assert. See module-level docs.
+/// - `lossless`: forces TX type to DCT_DCT and routes Tx4x4 through
+///   the inverse Walsh-Hadamard (`iwht4x4_*_add`) family instead of
+///   the 4×4 DCT. Mirrors libvpx `inverse_transform_block_intra`
+///   (`vp9_decodeframe.c:235-294`): the `lossless` flag flows from
+///   `xd->lossless` into the kernel-dispatch switch at lines 280-294,
+///   selecting `vpx_iwht4x4_*_add` over `vp9_iht4x4_*_add` /
+///   `vpx_idct4x4_*_add`. Caller is responsible for ensuring
+///   `tx_size == TxSize::Tx4x4` whenever `lossless == true` — VP9
+///   forbids any larger TX size in lossless mode
+///   (`vp9_decodeframe.c:280-281`).
 ///
 /// # Returns
 ///
@@ -127,7 +133,8 @@ pub fn resolve_tx_type(plane: usize, lossless: bool, intra_mode: IntraMode) -> T
 /// # Panics
 ///
 /// - Inherits the assertions in [`decode_block_tokens`].
-/// - Debug-asserts if `lossless == true` (4×4 WHT path not yet wired).
+/// - Debug-asserts if `lossless == true` and `tx_size != Tx4x4`
+///   (VP9 lossless mode is restricted to `TX_4X4`).
 /// - Debug-asserts if `dst` is too small for the TX block at the given
 ///   stride.
 #[allow(clippy::too_many_arguments)] // mirrors libvpx 1:1
@@ -149,9 +156,15 @@ pub fn reconstruct_intra_block(
     dequant: (i32, i32),
     lossless: bool,
 ) -> usize {
+    // VP9 lossless restricts every TX block to 4×4 (libvpx
+    // `vp9_decodeframe.c:280-281`). The caller already gates `lossless`
+    // at the Tx4x4 site (see e.g. `decode_keyframe` →
+    // `decode_intra_block`'s `frame_lossless && plane_tx == TxSize::Tx4x4`
+    // argument); keep an assertion in step so a future caller wiring
+    // bug surfaces loudly in debug builds.
     debug_assert!(
-        !lossless,
-        "lossless (WHT) reconstruction not yet wired in Task H; pass lossless=false"
+        !lossless || tx_size == TxSize::Tx4x4,
+        "VP9 lossless mode is restricted to TX_4X4; got tx_size={tx_size:?}"
     );
 
     let bs = tx_size.side();
@@ -255,9 +268,11 @@ pub fn reconstruct_intra_block(
     }
 
     // 3. If non-empty, apply IT-add into `dst` (reads prediction, adds
-    // IT(dq_coefs), writes back).
+    // IT(dq_coefs), writes back). G2 (decoder-hardening V6 §G2):
+    // pass `lossless` through so the 4×4 site can pick the WHT family
+    // (`iwht4x4_*_add`) instead of the standard IDCT.
     if eob > 0 {
-        inverse_transform_add(tx_size, tx_type, &dq_coefs[..n], eob, dst, dst_stride);
+        inverse_transform_add(tx_size, tx_type, &dq_coefs[..n], eob, dst, dst_stride, lossless);
     }
 
     eob
@@ -277,6 +292,11 @@ pub fn reconstruct_intra_block(
 /// `input` is `n_coeffs(tx_size)` dequantised coefficients in raster
 /// order. `dest` is the in-place reconstruction buffer (predicted
 /// samples already there; the IT output is added and saturated).
+///
+/// `lossless` selects the Walsh-Hadamard family at Tx4x4 (libvpx
+/// `vp9_decodeframe.c:280-294`). Lossless mode is restricted to
+/// `TX_4X4`, so the flag has no effect at the larger TX sizes — they
+/// keep the standard IDCT dispatch.
 fn inverse_transform_add(
     tx_size: TxSize,
     tx_type: TxType,
@@ -284,13 +304,42 @@ fn inverse_transform_add(
     eob: usize,
     dest: &mut [u8],
     stride: usize,
+    lossless: bool,
 ) {
     debug_assert!(input.len() == tx_size.n_coeffs());
+    debug_assert!(
+        !lossless || tx_size == TxSize::Tx4x4,
+        "VP9 lossless mode is restricted to TX_4X4; got tx_size={tx_size:?}"
+    );
 
     match tx_size {
         TxSize::Tx4x4 => {
             let coefs: &[i32; 16] = input.try_into().expect("Tx4x4 input is 16 coefs");
-            if tx_type == TxType::DctDct {
+            if lossless {
+                // VP9 lossless replaces the 4×4 IDCT with the inverse
+                // Walsh-Hadamard. `resolve_tx_type` already forces
+                // `tx_type == DctDct` for lossless blocks, so the
+                // hybrid (ADST) arms below are never reached when
+                // `lossless == true`.
+                debug_assert!(
+                    tx_type == TxType::DctDct,
+                    "lossless must resolve TX type to DctDct; got {tx_type:?}"
+                );
+                if eob == 1 {
+                    // Defensive: `iwht4x4_1_add` only sees `coefs[0]`; if a
+                    // future detokenizer bug emitted `eob == 1` alongside a
+                    // nonzero AC coefficient, that AC value would be
+                    // silently dropped and the block would miscompute.
+                    debug_assert!(
+                        coefs[1..].iter().all(|&c| c == 0),
+                        "iwht4x4_1_add dispatched with non-DC coefficients; \
+                         eob == 1 must imply coefs[1..] are zero"
+                    );
+                    iwht4x4_1_add(coefs[0], dest, stride);
+                } else {
+                    iwht4x4_16_add(coefs, dest, stride);
+                }
+            } else if tx_type == TxType::DctDct {
                 if eob > 1 {
                     idct4x4_16_add(coefs, dest, stride);
                 } else {

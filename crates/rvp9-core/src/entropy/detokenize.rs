@@ -1,3 +1,13 @@
+// Wave A G11 — workspace lint `clippy::print_stderr` is "deny" for
+// library crates. This module's `eprintln!` sites are env-var-gated
+// trace-debug breadcrumbs (`RVP9_TRACE`, `RVP9_DEBUG_SCAN_WRITE`,
+// etc.) scheduled for triage in the HLD §G11 deliverable 3 eprintln
+// audit follow-up (delete / `cfg!(rvp9_trace)`-gate / promote to
+// `DecodeError`). Until that sweep lands, allow at the module level
+// so the lint stays active for *new* code while ignoring the pre-G11
+// inventory.
+#![allow(clippy::print_stderr)]
+
 //! Per-transform-block coefficient detokenizer — the bool-coder ➔
 //! dequantised coefficient pipeline.
 //!

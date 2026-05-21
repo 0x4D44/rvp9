@@ -664,11 +664,7 @@ mod tests {
         }
         // Document the result the picker actually returned (DC vs V):
         let res = pick_intra_mode_luma(&params);
-        eprintln!(
-            "F8.0 V-stripe winner: {:?} (rd={}, dist={}, rate={}); V (rd={}, dist={}, rate={})",
-            res.best_mode, res.best_rd_cost, res.best_distortion, res.best_rate,
-            v.best_rd_cost, v.best_distortion, v.best_rate,
-        );
+        let _ = res;
     }
 
     /// Horizontal-stripe source with matching left neighbours → H_PRED
@@ -757,11 +753,7 @@ mod tests {
             );
         }
         let res = pick_intra_mode_luma(&params);
-        eprintln!(
-            "F8.0 H-stripe winner: {:?} (rd={}, dist={}, rate={}); H (rd={}, dist={}, rate={})",
-            res.best_mode, res.best_rd_cost, res.best_distortion, res.best_rate,
-            h.best_rd_cost, h.best_distortion, h.best_rate,
-        );
+        let _ = res;
     }
 
     /// RD cost is finite and positive (the rate cost is always > 0 and
@@ -1110,17 +1102,6 @@ mod tests {
         // Print a one-line summary the supervisor can copy into the
         // report. (`--nocapture` shows this; the assertion below
         // guarantees the test passes either way.)
-        eprintln!(
-            "F8.0 RD breakdown (16x16, flat-128, q=120, no-neighbours):\n  \
-             DC: rd={} dist={} rate={}\n  \
-             V : rd={} dist={} rate={}\n  \
-             H : rd={} dist={} rate={}\n  \
-             TM: rd={} dist={} rate={}",
-            dc.best_rd_cost, dc.best_distortion, dc.best_rate,
-            v.best_rd_cost, v.best_distortion, v.best_rate,
-            h.best_rd_cost, h.best_distortion, h.best_rate,
-            tm.best_rd_cost, tm.best_distortion, tm.best_rate,
-        );
         assert!(dc.best_rd_cost <= v.best_rd_cost);
         assert!(dc.best_rd_cost <= h.best_rd_cost);
         assert!(dc.best_rd_cost <= tm.best_rd_cost);

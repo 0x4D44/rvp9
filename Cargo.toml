@@ -28,14 +28,37 @@ license = "BSD-3-Clause"
 authors = ["Arthur <martin@tollens.ai>"]
 rust-version = "1.95"
 
-# Lints applied to every workspace member via `[lints] workspace = true` in
-# the per-crate manifests. Start conservative; tighten as the codebase matures.
+# Library-crate lints (Wave A G11 — see HLD §G11 deliverable 1).
+#
+# Applied via `[lints] workspace = true` in EACH LIBRARY crate's manifest
+# (`rvp9-core`, `rvp9-decoder`, `rvp9-encoder`). The CLI / bench /
+# harness crates intentionally do NOT inherit — for those, eprintln /
+# println is the correct output mechanism, so denying them would be
+# wrong. See per-crate `Cargo.toml` for the explicit non-inheritance
+# comment.
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "warn"
 missing_docs = "warn"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+# Every `unsafe { ... }` in a library crate must carry a `// SAFETY:`
+# comment explaining why the soundness contract is met. Mechanically
+# enforces the unsafe-review process documented in
+# `notes/decoder-hardening/unsafe-review-checklist.md`. No live unsafe
+# blocks exist today; Wave C G4 (target_feature intrinsics) and G5
+# (shared plane writes) land the first ones — the lint catches missing
+# comments at PR time.
+undocumented_unsafe_blocks = "deny"
+# Library code should not write to stderr/stdout directly. Diagnostics
+# belong in `DecodeError` variants or the `log`/`tracing` facade.
+# Per HLD V6 §G11 deliverable 3 the existing trace-debug `eprintln!`s are
+# triaged in a follow-up sweep (~80% delete-or-cfg!(rvp9_trace),
+# ~10% promote to `DecodeError`, ~10% convert to log::info!); until
+# that sweep lands the offending modules carry a local
+# `#[allow(clippy::print_stderr)]` with a pointer back to this lint.
+print_stderr = "deny"
+print_stdout = "deny"
 
 # Release: maximum optimization. We will be CPU-bound at 1080p60.
 [profile.release]

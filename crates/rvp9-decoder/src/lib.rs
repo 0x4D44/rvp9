@@ -35,6 +35,17 @@
 
 #![deny(missing_docs)]
 #![deny(unsafe_op_in_unsafe_fn)]
+// Wave A G11 — workspace lint `clippy::print_stderr` is "deny" for
+// library crates. The decoder's compressed-header / segmentation
+// debug dumps + loop-filter mask probe + altref dump path all emit
+// to stderr through env-var-gated breadcrumbs (`RVP9_DUMP_ALTREF`,
+// `[rvp9_seg]`, `RVP9_TRACE_FC`, etc.). Scheduled for triage in the
+// HLD §G11 deliverable 3 eprintln audit follow-up (~80% delete or
+// `cfg!(rvp9_trace)`-gate, ~10% promote to `DecodeError`, ~10%
+// convert to `log::info!`). Until that sweep lands, allow at the
+// crate level for the decoder; new eprintln sites added by future
+// commits should also be triaged at that time.
+#![allow(clippy::print_stderr)]
 
 pub mod detokenize;
 pub mod reconstruct;
@@ -44,19 +55,19 @@ pub mod tile_ctx;
 
 use rvp9_core::bitstream::{
     BitstreamError, ChromaFormat, CompressedHeaderOptions, CompressedHeaderResult, FrameKind,
-    InterpFilter, Superframe, UncompressedHeader, parse_compressed_header,
-    parse_superframe_index, parse_tile_buffers, parse_uncompressed_header,
+    InterpFilter, Superframe, UncompressedHeader, parse_compressed_header, parse_superframe_index,
+    parse_tile_buffers, parse_uncompressed_header,
 };
+use rvp9_core::block::BlockSize;
 use rvp9_core::entropy::{FRAME_CONTEXTS, FrameContext};
+use rvp9_core::frame::extend_frame_borders;
 use rvp9_core::frame::{BorderUsage, ByteAlignment, DecoderFramePool, FrameBuf, Yv12Buffer};
 use rvp9_core::inter::mode_info::{InterModeReadParams, setup_compound_reference_mode};
 use rvp9_core::inter::mv_ref::sign_bias_from_header;
-use rvp9_core::frame::extend_frame_borders;
 use rvp9_core::loopfilter::{
     LoopFilterInfo, LoopFilterMask, ResolvedLfDeltas, SegmentationLfView, adjust_mask,
     loop_filter_frame, resolve_filter_levels, setup_mask,
 };
-use rvp9_core::block::BlockSize;
 use rvp9_core::mode_info::ModeInfo;
 
 use crate::tile::{
@@ -92,10 +103,6 @@ fn dump_visible_y_plane(yv12: &Yv12Buffer, path: &str) {
     }
 }
 
-/// Top-level VP9 decoder state.
-///
-/// Mirrors the role of libvpx's `VP9Decoder` + `VP9_COMMON`
-/// — owns every per-stream and per-frame-history data structure the
 /// D.22 — global decode-frame counter, parallels libvpx's
 /// `rvp9_trace_current_frame` (`vp9_decodeframe.c:55`). Incremented at
 /// the top of [`Decoder::decode_frame`]; read by per-block tracers in
@@ -105,24 +112,196 @@ fn dump_visible_y_plane(yv12: &Yv12Buffer, path: &str) {
 pub static RVP9_TRACE_FRAME_COUNTER: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(0);
 
-/// decoder needs.
+/// Top-level VP9 decoder state.
+///
+/// Mirrors the role of libvpx's `VP9Decoder` + `VP9_COMMON` — owns
+/// every per-stream and per-frame-history data structure the decoder
+/// needs.
 ///
 /// Construction does not require a stream header — call
-/// [`Decoder::new`], then feed packets via
-/// [`Decoder::parse_packet`].
+/// [`Decoder::new`], then feed packets via [`Decoder::parse_packet`].
+///
+/// # Thread safety
+///
+/// `Decoder` is both [`Send`] and [`Sync`]. The `&mut self` decode
+/// API means concurrent `&Decoder` holders cannot mutate without a
+/// lock, so `Sync` adds no requirement beyond what auto-derive
+/// produces. Wave C G5's tile worker pool captures borrowed slices
+/// in per-job closures and does not share `&Decoder` across threads.
+/// The compile-time `static_assertions::assert_impl_all!(Decoder:
+/// Send, Sync)` immediately below the struct catches accidental
+/// drift if a future change introduces interior mutability.
+///
+/// # Panic / error safety
+///
+/// After [`Decoder::decode_frame`] returns `Err(_)`, the `Decoder`
+/// is in a **well-defined state**: subsequent calls may succeed for
+/// unrelated inputs. The poisoning contract is intentionally
+/// non-transactional:
+///
+/// - `ref_frame_map`, the frame pool, and the four `FrameContext`
+///   banks are **NOT reverted** on error. A mid-tile failure may
+///   leave partial entropy adaptation in the bank that was being
+///   updated.
+/// - A subsequent keyframe / intra-only frame fully refreshes the
+///   bank it selects (and any banks `reset_frame_context` /
+///   `error_resilient` ask for), so a keyframe after an error
+///   always restarts cleanly.
+/// - `Decoder` does not implement `Clone`; the in-progress decode
+///   state is too large and partly opaque (the per-frame mv-grid,
+///   the four `FrameContext` banks, the prev-segment buffers, the
+///   ref-frame-size cache, etc.). Consumers needing transactional
+///   semantics (revert on error) should keep a fresh `Decoder` for
+///   each independent stream rather than attempting to snapshot —
+///   the public accessors do NOT cover every field, so a
+///   "field-by-field copy" is not actually achievable today.
+///
+/// The integration tests in `tests/panic_safety.rs` pin this
+/// contract: an early-error packet (uncompressed-header parser
+/// `Err`) followed by a valid keyframe decodes successfully, a
+/// mid-tile failure (truncated entropy stream) followed by a valid
+/// keyframe decodes successfully, and a mid-tile failure followed
+/// by a valid INTER frame (whose refs survived the failed decode)
+/// also decodes — pinning that the surviving `ref_frame_map`
+/// entries remain resolvable through the documented bank-poisoning.
+///
+/// # Memory and allocation
+///
+/// Frame allocation goes through [`Yv12Buffer::alloc`], which uses
+/// `vec![0u8; N].into_boxed_slice()` internally. Two layers of
+/// defence apply:
+///
+/// - `MAX_FRAME_PIXELS` (1 GiB worth of luma at 8-bit) rejects
+///   oversized headers before any allocation attempt — see
+///   `rvp9_core::frame` for the bound. Headers exceeding the bound
+///   surface as [`DecodeError::FrameAlloc`] (no allocation tried).
+/// - Allocations within the bound that fail panic per the global
+///   allocator's default. A future `try_alloc` variant returning
+///   `Result<Self, DecodeError::OutOfMemory>` is tracked but not in
+///   Stage 3.5.
+///
+/// # Drop semantics
+///
+/// `Decoder` owns the frame pool and the ref-frame-map slot
+/// indices. Both indirect into `Arc<Yv12Buffer>` storage. Any
+/// [`FrameBuf`] handle returned from [`Decoder::decode_frame`] is an
+/// `Arc`; **its backing buffer survives the decoder's drop** as
+/// long as the caller holds the handle. The common
+/// "decode-into-`Vec`" pattern is therefore safe:
+///
+/// ```ignore
+/// let mut frames: Vec<rvp9_core::frame::FrameBuf> = Vec::new();
+/// {
+///     let mut dec = rvp9_decoder::Decoder::new();
+///     // ... parse packets, push FrameBufs into `frames` ...
+///     // `dec` drops at end of scope. Its frame_pool drops too.
+/// }
+/// // `frames[0]` is still valid here — the Arc-backed buffer
+/// // outlives the Decoder because the Vec holds the only
+/// // remaining strong reference.
+/// drop(frames);
+/// ```
+///
+/// Explicit drop order matters only if the caller wants the backing
+/// allocations released eagerly: dropping the `Vec<FrameBuf>` first
+/// releases the buffers, dropping the `Decoder` first leaves the
+/// buffers alive until the `Vec` drops. Either order is sound.
+///
+/// # Pool exhaustion
+///
+/// The decoder's internal frame pool holds at most `N` buffers
+/// (currently `9` — see [`rvp9_core::frame::DECODER_FRAME_BUFFERS`]).
+/// Consumers that retain `N` or more decoded frames simultaneously
+/// will receive [`DecodeError::FrameAlloc`] on the next decode —
+/// `acquire_free` reports `NoFreeSlot` because every pool slot is
+/// either externally held (`Arc::strong_count > 1`) or referenced
+/// by the active `ref_frame_map`. The natural pattern
+///
+/// ```ignore
+/// let frames: Vec<FrameBuf> = (0..M).map(|_| decode_one()).collect();
+/// ```
+///
+/// is safe only for `M < N`. For longer streams, drain returned
+/// frames (drop or process them) before requesting more — once an
+/// external `FrameBuf` drops AND its slot is no longer named by any
+/// `ref_frame_map` entry, the slot becomes recyclable.
 pub struct Decoder {
-    /// 9-slot pool of decoded reference frames.
+    /// Worker-pool size requested at construction time. Currently a
+    /// forward-compatibility plumb only — Wave A G12 stores it,
+    /// Wave C G5 will consume it to build the tile-threading
+    /// `WorkerPool`. Read by future `decode_inter_frame` /
+    /// `decode_intra_frame_inner` to size their per-frame `scope`.
+    ///
+    /// Initialised by [`Decoder::new`] from
+    /// `std::thread::available_parallelism`, defaulting to 1 if
+    /// detection fails. Override via [`Decoder::with_threads`] for
+    /// deterministic single-threaded test runs (conformance harness
+    /// uses `with_threads(NonZeroUsize::new(1).unwrap())` to keep
+    /// per-CPU-count variance out of the K-1 inline-worker math).
+    num_threads: std::num::NonZeroUsize,
+    /// 9-slot pool of decoded reference frames. Single source of
+    /// truth for `Arc<Yv12Buffer>` storage — every `FrameBuf` lives
+    /// here exactly once. [`Self::ref_frame_map`] indirects into this
+    /// pool via `u8` slot indices (libvpx-faithful: see the
+    /// `cm->ref_frame_map[i] -> cm->buffer_pool->frame_bufs[N]`
+    /// chain in `vp9_decodeframe.c:2940`).
+    ///
+    /// G12 refactor (2026-05-21): prior to G12, `ref_frame_map` held
+    /// `Option<FrameBuf>` and a parallel `frame_pool.assign_slot`
+    /// mirror was written on every refresh. That doubled
+    /// `Arc::strong_count` per slot and would have starved
+    /// `acquire_free` as soon as the function was wired up (it
+    /// wasn't yet, so the bug was latent). G12 collapses the two
+    /// data structures to a single Arc-per-buffer model.
+    ///
+    // INVARIANT (frame_pool ↔ ref_frame_map): every
+    // `Some(pool_idx)` entry in `ref_frame_map` MUST be paired with
+    // a non-zero `frame_pool.ref_count(pool_idx)` AND index a
+    // `Some(_)` entry in `frame_pool.slots` (i.e. an occupied pool
+    // slot). `acquire_free`'s safety relies on
+    // `ref_counts == 0 && Arc::strong_count == 1`: the Arc check
+    // alone is NOT sufficient (the v6.0 refactor briefly attempted
+    // that and produced silent aliasing on recycle — see the
+    // `pool_acquire_blocked_by_nonzero_ref_count` regression in
+    // `rvp9-core::frame`).
+    //
+    // This invariant is maintained by:
+    //   - `decode_intra_frame_inner` / `decode_inter_frame`: write
+    //     the pool index returned by `frame_pool.acquire_free(buf)`
+    //     into every ref-map slot selected by `refresh_frame_flags`
+    //     in one logical step (no half-applied refresh), via
+    //     [`Self::write_ref_slot`] which handles the inc/dec_ref
+    //     bookkeeping.
+    //   - `decode_show_existing_frame`: reads via
+    //     `ref_frame_buf(i)` which fails closed (`None` →
+    //     `EmptyInterRef` / `EmptySlot`) if the pool slot is
+    //     unexpectedly free, so a violated invariant surfaces as a
+    //     clean error instead of UB.
+    //   - `DecoderFramePool::acquire_free`: only recycles slots
+    //     with `ref_counts[slot] == 0 AND Arc::strong_count == 1`,
+    //     so an active `ref_frame_map[i] -> pool_idx` keeps that
+    //     slot reserved via `ref_counts`.
+    // Tests that synthesize ref-map state MUST use
+    // [`Self::set_ref_slot`] (which performs the inc_ref under the
+    // hood) AND pre-populate the matching pool slot via
+    // [`Self::frame_pool_mut`] + [`DecoderFramePool::assign_slot`],
+    // or the invariant breaks and `ref_frame_buf` returns `None`.
     frame_pool: DecoderFramePool,
     /// 8-slot reference-frame map. `ref_frame_map[i]` is the
-    /// [`FrameBuf`] currently bound to logical ref slot `i`, or
-    /// `None` if that slot has never been written. Mirrors libvpx's
-    /// `cm->ref_frame_map[i]` — see `vp9_decodeframe.c:2940`'s
-    /// `cm->frame_refs[i].buf = &cm->buffer_pool->frame_bufs[
-    /// cm->ref_frame_map[ref_idx]].buf`. Updated post-decode in
-    /// [`Decoder::decode_keyframe`] (every slot per
-    /// `refresh_frame_flags = 0xFF`) and [`Decoder::decode_inter_frame`]
-    /// (per the parsed `refresh_frame_flags` mask).
-    ref_frame_map: [Option<FrameBuf>; rvp9_core::bitstream::REF_FRAMES],
+    /// frame-pool slot index currently bound to logical ref slot
+    /// `i` (`0..DECODER_FRAME_BUFFERS = 0..9`), or `None` if that
+    /// slot has never been written. Mirrors libvpx's
+    /// `cm->ref_frame_map[i]` (which is also a `int` index into the
+    /// shared `BufferPool::frame_bufs` array — see
+    /// `vp9_decodeframe.c:2940`'s `cm->frame_refs[i].buf =
+    /// &cm->buffer_pool->frame_bufs[cm->ref_frame_map[ref_idx]].buf`).
+    ///
+    /// Resolve to a [`FrameBuf`] via
+    /// [`Self::ref_frame_buf`]. Updated post-decode in
+    /// [`Decoder::decode_keyframe`] (every slot per `refresh_frame_flags
+    /// = 0xFF`) and [`Decoder::decode_inter_frame`] (per the parsed
+    /// `refresh_frame_flags` mask).
+    ref_frame_map: [Option<u8>; rvp9_core::bitstream::REF_FRAMES],
     /// Cached (width, height) of every frame currently held in the
     /// 8-slot reference-frame-map. `None` means the corresponding
     /// ref-map slot has no decoded frame yet. Mirrors the
@@ -265,8 +444,8 @@ pub struct Decoder {
     /// `update_data == false`. Needed for AQ-2 vectors where the
     /// keyframe writes the per-segment alt_Q (cyclic refresh) and
     /// every subsequent inter frame leaves the data untouched.
-    seg_feature_data: [[Option<i16>; rvp9_core::bitstream::SEG_LVL_MAX];
-        rvp9_core::bitstream::MAX_SEGMENTS],
+    seg_feature_data:
+        [[Option<i16>; rvp9_core::bitstream::SEG_LVL_MAX]; rvp9_core::bitstream::MAX_SEGMENTS],
     /// `abs_delta` companion to [`Self::seg_feature_data`]. Same
     /// inheritance semantics.
     seg_abs_delta: bool,
@@ -294,6 +473,22 @@ pub struct Decoder {
     last_frame_mi_dims: (u32, u32),
 }
 
+// Wave A G12 — compile-time check that auto-derive still produces
+// `Send + Sync` for `Decoder`. Catches drift: if a future change adds
+// an interior-mutability field (`Cell`/`RefCell`/`Rc`/`UnsafeCell`
+// without an explicit `unsafe impl Sync`) the assertion fails to
+// compile and the regression is caught at the offending PR rather
+// than at the first multi-threaded consumer.
+//
+// Caveat (V6 §G12): this guards against accidental drift only. It
+// does not prevent an intentional removal of `Sync` — if a future
+// change genuinely needs `!Sync` (e.g., a per-frame cache requiring
+// interior mutability), the assertion must be updated AND the
+// `Decoder` API contract revisited. Sharing `&Decoder` across threads
+// is currently a valid usage pattern (no consumer does it today, but
+// it's permitted by the type).
+static_assertions::assert_impl_all!(Decoder: Send, Sync);
+
 impl Default for Decoder {
     fn default() -> Self {
         Self::new()
@@ -304,8 +499,50 @@ impl Decoder {
     /// Construct a fresh decoder. The frame pool starts empty; the
     /// four FRAME_CONTEXT banks are pre-populated with libvpx
     /// defaults; loop-filter deltas are all zero and disabled.
+    ///
+    /// The thread-pool size is determined by
+    /// [`std::thread::available_parallelism`], defaulting to 1 if
+    /// detection fails. Callers wanting a deterministic single-
+    /// threaded decoder (e.g., conformance harness) should prefer
+    /// [`Decoder::with_threads`] with `NonZeroUsize::new(1).unwrap()`.
+    ///
+    /// **G12 plumb status.** The thread-count parameter is currently
+    /// stored but not yet consumed — Wave C G5 will wire it into the
+    /// `WorkerPool` that drives per-tile parallelism. Callers can
+    /// pre-emptively pin the count to keep behaviour stable across
+    /// the G5 transition.
     #[must_use]
     pub fn new() -> Self {
+        // V6 §G12 K6-2: derive the default thread count from the
+        // host's reported parallelism, falling back to 1 if the OS
+        // refuses to answer (sandboxes, exotic platforms). Keep
+        // `Decoder::new()` zero-arg so the ~14 existing call sites
+        // don't need to change.
+        let n = std::thread::available_parallelism()
+            .map(std::num::NonZeroUsize::get)
+            .unwrap_or(1);
+        // `n` is `>= 1` by construction (either the OS reported a
+        // non-zero value, or we fell back to 1). The `unwrap` is
+        // therefore infallible.
+        Self::with_threads(std::num::NonZeroUsize::new(n).expect("n >= 1 by construction"))
+    }
+
+    /// Construct a decoder with an explicit thread-pool size.
+    ///
+    /// `n = NonZeroUsize::new(1).unwrap()` disables threading: when
+    /// Wave C G5 lands, the decoder will run a single inline worker
+    /// (no spawn) and behave identically to today's single-threaded
+    /// pipeline. The deterministic-test path (conformance harness)
+    /// pins this to 1 so K-1 inline-worker math is independent of
+    /// host CPU count.
+    ///
+    /// **G12 plumb status.** The thread-count parameter is currently
+    /// stored as `self.num_threads` but not yet consumed — there is
+    /// no `WorkerPool` until Wave C G5 lands. `with_threads(N)` is
+    /// equivalent to `new()` plus a stored `N` today; the divergence
+    /// will surface once G5 wires the pool through `decode_inter_frame`.
+    #[must_use]
+    pub fn with_threads(n: std::num::NonZeroUsize) -> Self {
         // Default::default() doesn't work on a 4-array if FrameContext
         // isn't Copy (it isn't — it contains a large coef_probs table).
         // Build each bank explicitly.
@@ -316,6 +553,7 @@ impl Decoder {
             FrameContext::new_default(),
         ];
         Self {
+            num_threads: n,
             frame_pool: DecoderFramePool::new(),
             ref_frame_map: Default::default(),
             ref_frame_sizes: [None; rvp9_core::bitstream::REF_FRAMES],
@@ -342,16 +580,86 @@ impl Decoder {
         }
     }
 
+    /// Worker-pool size this decoder was constructed with.
+    ///
+    /// Returns the value passed to [`Decoder::with_threads`], or the
+    /// auto-detected value from [`Decoder::new`]. Currently advisory
+    /// only — Wave C G5 will consume it.
+    #[must_use]
+    pub fn num_threads(&self) -> std::num::NonZeroUsize {
+        self.num_threads
+    }
+
     /// Borrow the decoder's frame pool (immutable).
     #[must_use]
     pub fn frame_pool(&self) -> &DecoderFramePool {
         &self.frame_pool
     }
 
+    /// Resolve a logical ref-frame-map index (`0..REF_FRAMES = 0..8`)
+    /// to the [`FrameBuf`] currently bound there, or `None` if the
+    /// slot has never been written.
+    ///
+    /// This is the libvpx-faithful indirection: `ref_frame_map[i]`
+    /// holds a frame-pool slot index, not a direct `Arc`. Mirrors
+    /// `cm->ref_frame_map[i] -> &cm->buffer_pool->frame_bufs[
+    /// cm->ref_frame_map[i]].buf`.
+    ///
+    /// G12 refactor (2026-05-21). Replaces the pre-G12
+    /// `self.ref_frame_map[i].clone()` direct-Arc pattern.
+    #[must_use]
+    pub fn ref_frame_buf(&self, ref_idx: usize) -> Option<FrameBuf> {
+        self.ref_frame_map
+            .get(ref_idx)
+            .and_then(|slot| *slot)
+            .and_then(|pool_slot| self.frame_pool.get(pool_slot as usize))
+    }
+
     /// Borrow the decoder's frame pool (mutable). Used by tests and
     /// by the eventual pixel-reconstruction path.
     pub fn frame_pool_mut(&mut self) -> &mut DecoderFramePool {
         &mut self.frame_pool
+    }
+
+    /// Internal helper: write `ref_frame_map[i] = Some(new_idx)`,
+    /// keeping `frame_pool.ref_counts` in sync. If the slot already
+    /// held `Some(old_idx)`, decrements that slot's ref-count first;
+    /// then increments `ref_counts[new_idx]`.
+    ///
+    /// Every production write to `ref_frame_map[i]` MUST go through
+    /// this helper (or [`Self::clear_ref_slot`] for the `= None`
+    /// case) — direct field assignment skips the bookkeeping and
+    /// breaks the [`Self::frame_pool`] invariant.
+    fn write_ref_slot(&mut self, i: usize, new_idx: u8) {
+        if let Some(old_idx) = self.ref_frame_map[i] {
+            if old_idx == new_idx {
+                // No-op: count stays the same (one dec + one inc).
+                return;
+            }
+            self.frame_pool.dec_ref(old_idx);
+        }
+        self.ref_frame_map[i] = Some(new_idx);
+        self.frame_pool.inc_ref(new_idx);
+    }
+
+    /// Test-only setter that writes a ref-map → pool-slot pointer.
+    ///
+    /// Replaces direct `self.ref_frame_map[i] = Some(pool_idx)` field
+    /// writes from in-crate tests so that the structural invariant
+    /// documented on [`Self::frame_pool`] is callable from one named
+    /// site (greppable, attributable). Goes through
+    /// [`Self::write_ref_slot`] so the `frame_pool.ref_counts`
+    /// bookkeeping fires identically to a production refresh.
+    ///
+    /// Caller MUST have already populated `frame_pool.slots[pool_idx]`
+    /// via [`Self::frame_pool_mut`] + [`DecoderFramePool::assign_slot`]
+    /// before calling this; otherwise the next
+    /// [`Self::ref_frame_buf`] lookup will return `None` and the
+    /// downstream decode path will surface `EmptyInterRef` /
+    /// `EmptySlot`.
+    #[cfg(test)]
+    pub(crate) fn set_ref_slot(&mut self, i: usize, pool_idx: u8) {
+        self.write_ref_slot(i, pool_idx);
     }
 
     /// Borrow a specific frame-context bank (0..=3).
@@ -588,18 +896,23 @@ impl Decoder {
         &mut self,
         frame: &ParsedFrame<'_>,
     ) -> Result<CompressedHeaderResult, DecodeError> {
-        let tail = frame.header.tail.as_ref().ok_or(DecodeError::WrongFrameKind)?;
+        let tail = frame
+            .header
+            .tail
+            .as_ref()
+            .ok_or(DecodeError::WrongFrameKind)?;
 
         // Slice out [header_end .. header_end + first_partition_size].
         let header_end = frame.header_end_byte;
         let fps = tail.first_partition_size as usize;
         let total = frame.full_frame_data.len();
-        let needed_end = header_end
-            .checked_add(fps)
-            .ok_or(DecodeError::TruncatedCompressedHeader {
-                declared: usize::MAX,
-                available: total,
-            })?;
+        let needed_end =
+            header_end
+                .checked_add(fps)
+                .ok_or(DecodeError::TruncatedCompressedHeader {
+                    declared: usize::MAX,
+                    available: total,
+                })?;
         if needed_end > total {
             return Err(DecodeError::TruncatedCompressedHeader {
                 declared: needed_end,
@@ -637,14 +950,21 @@ impl Decoder {
         parse_compressed_header(compressed, fc, opts).map_err(DecodeError::Bitstream)
     }
 
-    /// Handle a `show_existing_frame` parsed header by looking up
-    /// the referenced slot in the frame pool and returning its
-    /// [`FrameBuf`]. This is the simplest possible decoder output
-    /// path — no compressed-header / tile decoding required.
+    /// Handle a `show_existing_frame` parsed header by resolving the
+    /// 3-bit ref-frame-map index in the header to a [`FrameBuf`].
+    /// This is the simplest possible decoder output path — no
+    /// compressed-header / tile decoding required.
     ///
     /// Mirrors libvpx's `vp9_decodeframe.c:2664-2679` early-exit:
     /// after recording the show-existing buffer index, libvpx
-    /// returns the buffer at that slot.
+    /// returns the buffer at `cm->ref_frame_map[i]`.
+    ///
+    /// G12 refactor (2026-05-21). Previously this method consulted
+    /// the frame pool directly via the header's 3-bit `slot` field,
+    /// which only worked because pre-G12 code mirror-wrote every
+    /// refresh into both `ref_frame_map[i]` AND `frame_pool[i]`.
+    /// G12 collapsed the mirror; now `decode_show_existing_frame`
+    /// goes through `ref_frame_map` (libvpx-faithful).
     ///
     /// # Errors
     ///
@@ -661,9 +981,7 @@ impl Decoder {
             FrameKind::ShowExistingFrame { slot } => slot,
             _ => return Err(DecodeError::WrongFrameKind),
         };
-        let slot_usize = slot as usize;
-        self.frame_pool
-            .get(slot_usize)
+        self.ref_frame_buf(slot as usize)
             .ok_or(DecodeError::EmptySlot { slot })
     }
 
@@ -672,19 +990,17 @@ impl Decoder {
     /// not-shown frame whose payload still references something).
     ///
     /// This is the single entry point the conformance harness uses
-    /// to walk a packet's worth of frames. Today only the
-    /// `ShowExistingFrame` path is plumbed through; all other paths
-    /// return [`DecodeError::Unimplemented`] with a short reason
-    /// string. As the decoder fills in across Stage 3 (compressed-
-    /// header parse, tile decode, pixel reconstruction, loopfilter)
-    /// those branches will be replaced with real decode paths.
+    /// to walk a packet's worth of frames. All four [`FrameKind`]
+    /// arms are now plumbed through to real decode paths:
+    /// `ShowExistingFrame`, `KeyFrame`, `IntraOnly` (Wave A G1),
+    /// and `InterFrame` (with G3 covering the empty-inter-ref
+    /// rejection). See the [`DecodeError`] enum for the canonical
+    /// list of structured failures any of these paths may return.
     ///
     /// # Errors
     ///
-    /// - [`DecodeError::Unimplemented`] for every non-`ShowExistingFrame`
-    ///   path until the wiring lands.
-    /// - [`DecodeError::EmptySlot`] from the `ShowExistingFrame`
-    ///   sub-path.
+    /// Returns the structured [`DecodeError`] variant appropriate to
+    /// the failing path — see that enum's doc for the full set.
     pub fn decode_frame(&mut self, frame: &ParsedFrame<'_>) -> Result<FrameBuf, DecodeError> {
         // D.22 — global decode-frame counter, parallels libvpx's
         // `rvp9_trace_current_frame` (incremented at the top of
@@ -696,9 +1012,7 @@ impl Decoder {
         match frame.header.kind {
             FrameKind::ShowExistingFrame { .. } => self.decode_show_existing_frame(&frame.header),
             FrameKind::KeyFrame => self.decode_keyframe(frame),
-            FrameKind::IntraOnly { .. } => Err(DecodeError::Unimplemented {
-                reason: "intra-only frame decode (compressed header + tile decode + reconstruction)",
-            }),
+            FrameKind::IntraOnly { .. } => self.decode_intra_only_frame(frame),
             FrameKind::InterFrame { .. } => self.decode_inter_frame(frame),
         }
     }
@@ -712,31 +1026,123 @@ impl Decoder {
     /// only (multi-tile vectors surface as
     /// [`DecodeError::TileDecode`]).
     ///
-    /// ## Stage K2 status
-    ///
-    /// - **K2.a (this commit)** wires the partition+tile walker, reads
-    ///   per-block ModeInfo, and writes neighbour-context state.
-    ///   Pixels are NOT yet reconstructed; the returned `FrameBuf`'s
-    ///   plane contents are still the all-zero allocation.
-    /// - **K2.b** adds per-plane prediction + token decode + IT-add.
-    /// - **K2.c** wires loop-filter apply (gated on J landing).
+    /// Keyframes refresh every slot in `ref_frame_map` (libvpx implicit
+    /// `refresh_frame_flags = 0xFF` at `vp9_decodeframe.c:2691`), so
+    /// this method delegates to [`Decoder::decode_intra_frame_inner`]
+    /// with `refresh_mask = 0xFF` and `intra_only = false`.
     fn decode_keyframe(&mut self, frame: &ParsedFrame<'_>) -> Result<FrameBuf, DecodeError> {
+        self.decode_intra_frame_inner(frame, 0xFF, /* intra_only = */ false)
+    }
+
+    /// Decode an intra-only frame end-to-end, returning the freshly-
+    /// allocated [`FrameBuf`] that holds the reconstructed pixels.
+    ///
+    /// IntraOnly frames are structurally identical to keyframes from
+    /// the per-block reconstruction perspective — both go through
+    /// `read_intra_frame_mode_info` (`vp9_decodemv.c:822`) and share
+    /// the `vp9_kf_partition_probs` table (`vp9_onyxc_int.h:371`).
+    /// They differ from keyframes only in three header-level details
+    /// (G1, HLD V6 §G1):
+    ///
+    /// 1. **FrameContext reset semantics.** Keyframes always overwrite
+    ///    every `frame_contexts[]` bank with libvpx defaults inside
+    ///    `vp9_setup_past_independence` (`vp9_entropymode.c:452-459`).
+    ///    Intra-only frames consult the 2-bit `reset_frame_context`
+    ///    header field: `3` → all banks reset, `2` → only the selected
+    ///    bank reset, `0`/`1` → keep existing banks.
+    /// 2. **ref_frame_map refresh.** Keyframes splat every slot
+    ///    (implicit `refresh_frame_flags = 0xFF`); intra-only honours
+    ///    the explicit 8-bit `refresh_frame_flags` byte from the header.
+    /// 3. **last_frame_type.** Libvpx sets `cm->last_frame_type =
+    ///    cm->frame_type` (`vp9_decodeframe.c:2645`). Intra-only's
+    ///    `frame_type == INTER_FRAME` (`cm->intra_only` is the
+    ///    distinguishing flag), so the next frame's
+    ///    `coef_adapt_params` picks the non-AFTER_KEY constants.
+    ///
+    /// The body itself is shared with [`Decoder::decode_keyframe`]
+    /// via [`Decoder::decode_intra_frame_inner`].
+    fn decode_intra_only_frame(
+        &mut self,
+        frame: &ParsedFrame<'_>,
+    ) -> Result<FrameBuf, DecodeError> {
+        let (reset_frame_context, refresh_frame_flags) = match frame.header.kind {
+            FrameKind::IntraOnly {
+                reset_frame_context,
+                refresh_frame_flags,
+            } => (reset_frame_context, refresh_frame_flags),
+            _ => return Err(DecodeError::WrongFrameKind),
+        };
+        // Per `vp9_setup_past_independence` (`vp9_entropymode.c:452-459`):
+        // for an intra-only frame (with `error_resilient == false`), the
+        // bank-reset behaviour is gated on `reset_frame_context`:
+        //   - 3 ⇒ reset all FRAME_CONTEXTS to defaults
+        //   - 2 ⇒ reset only `cm->frame_contexts[cm->frame_context_idx]`
+        //   - 0 or 1 ⇒ keep existing banks (the working copy `cm->fc`
+        //              is loaded with defaults but the bank slots stay).
+        // We materialise defaults directly via `FrameContext::new_default`.
+        // Error-resilient frames force the all-banks reset path
+        // (`vp9_entropymode.c:452`).
+        let force_all_reset = frame.header.error_resilient || reset_frame_context == 3;
+        let fc_idx = frame
+            .header
+            .tail
+            .as_ref()
+            .ok_or(DecodeError::WrongFrameKind)?
+            .frame_context_idx as usize;
+        if force_all_reset {
+            for bank in self.frame_contexts.iter_mut() {
+                *bank = FrameContext::new_default();
+            }
+        } else if reset_frame_context == 2 {
+            self.frame_contexts[fc_idx] = FrameContext::new_default();
+        }
+        // `vp9_setup_past_independence` is also called whenever the
+        // frame is intra-only, regardless of `reset_frame_context` —
+        // it always wipes the seg map, sets default LF deltas, and
+        // resets `ref_frame_sign_bias`. The seg-map reset is handled
+        // by `resolve_segmentation(is_keyframe = true)` inside the
+        // inner driver below, and the LF-delta reset is handled by
+        // the unconditional `self.lf_deltas = ...keyframe defaults...`
+        // assignment near the top of the LF-apply block. (Sign-bias
+        // isn't tracked on `Decoder` — it's read from the inter-frame
+        // header on demand.)
+        self.decode_intra_frame_inner(frame, refresh_frame_flags, /* intra_only = */ true)
+    }
+
+    /// Shared intra-frame decode driver. Drives the full pipeline —
+    /// compressed-header parse, tile walk, partition walk, per-block
+    /// mode decode, plane reconstruction, loop-filter apply,
+    /// ref-slot refresh, end-of-frame state mirror — for both the
+    /// `FrameKind::KeyFrame` and `FrameKind::IntraOnly` paths.
+    ///
+    /// The two callers differ only in their entry-and-exit gymnastics:
+    /// keyframes pass `refresh_mask = 0xFF` and `intra_only = false`;
+    /// intra-only frames pass `tail.refresh_frame_flags` and
+    /// `intra_only = true`. They also differ in the bank-reset
+    /// performed BEFORE this method runs — keyframes implicitly reset
+    /// nothing (the four banks already hold defaults at construction
+    /// and any subsequent adapt is per-frame), while intra-only frames
+    /// may consult `reset_frame_context` to selectively reset banks
+    /// (handled in [`Decoder::decode_intra_only_frame`]).
+    fn decode_intra_frame_inner(
+        &mut self,
+        frame: &ParsedFrame<'_>,
+        refresh_mask: u8,
+        intra_only: bool,
+    ) -> Result<FrameBuf, DecodeError> {
         let tail = frame
             .header
             .tail
             .as_ref()
             .ok_or(DecodeError::WrongFrameKind)?;
 
-        // Lossless decode (WHT) not yet wired in Task H — gracefully
-        // return Unimplemented rather than letting H's debug_assert
-        // fire downstream. See `notes/overnight-2026-05-17-stage3.md`
-        // for the lossless follow-up tracking; this is an explicit
-        // skip rather than a wedge.
-        if tail.quantization.is_lossless() {
-            return Err(DecodeError::Unimplemented {
-                reason: "lossless decode (WHT inverse transform path) not yet wired",
-            });
-        }
+        // G2 (decoder-hardening V6 §G2): lossless decode is wired
+        // end-to-end through the inverse Walsh-Hadamard transform at
+        // `crates/rvp9-core/src/transforms/inverse.rs::iwht4x4_{16,1}_add`.
+        // The dispatch in `reconstruct::inverse_transform_add` selects
+        // the WHT family whenever `lossless == true` at TX_4X4. VP9
+        // restricts lossless mode to TX_4X4 (`vp9_decodeframe.c:280-281`),
+        // so the rest of the keyframe driver is unchanged.
 
         // 1. Parse the compressed header into the selected FrameContext
         //    bank to get `tx_mode` (and the coef-prob updates etc.).
@@ -818,7 +1224,8 @@ impl Decoder {
         // the keyframe's `feature_data` (encoder sets it once at the
         // keyframe with `update_data = 1`, then leaves it alone on
         // every inter frame).
-        let resolved_seg = self.resolve_segmentation(&tail.segmentation, /* is_keyframe = */ true);
+        let resolved_seg =
+            self.resolve_segmentation(&tail.segmentation, /* is_keyframe = */ true);
         // Per-segment alt-Q feature data: feature_data[seg][SEG_LVL_ALT_Q].
         let mut seg_alt_q = [None; rvp9_core::loopfilter::MAX_SEGMENTS];
         if resolved_seg.enabled {
@@ -903,11 +1310,10 @@ impl Decoder {
         // adapt result, unaffected by this frame's compressed-header
         // diff-updates (see snapshot comment above).
         if tail.refresh_frame_context && !frame.header.error_resilient {
-            let (count_sat, max_update_factor) =
-                rvp9_core::entropy::adapt::coef_adapt_params(
-                    /* intra_only = */ true,
-                    self.last_frame_was_key,
-                );
+            let (count_sat, max_update_factor) = rvp9_core::entropy::adapt::coef_adapt_params(
+                /* intra_only = */ true,
+                self.last_frame_was_key,
+            );
             let new_coef_probs = rvp9_core::entropy::adapt::adapt_coef_probs(
                 &pre_fc.coef_probs,
                 &self.coef_counts,
@@ -946,11 +1352,10 @@ impl Decoder {
         // LF fires) so the bitstream-diff harness's L4 accessor
         // [`Self::last_frame_mi_grid`] sees a populated grid even
         // when `filter_level == 0` (Stage 4 design Strategy A).
-        let tile_grids: Vec<(tile::TileBounds, &[Option<ModeInfo>])> =
-            tile_decode_ctxs
-                .iter()
-                .map(|(b, c)| (*b, c.mi_grid()))
-                .collect();
+        let tile_grids: Vec<(tile::TileBounds, &[Option<ModeInfo>])> = tile_decode_ctxs
+            .iter()
+            .map(|(b, c)| (*b, c.mi_grid()))
+            .collect();
         let frame_mi_grid = build_frame_mi_grid(mi_rows, mi_cols, &tile_grids);
         if filter_level > 0 && !lf_disabled {
             apply_loop_filter_to_frame(
@@ -977,38 +1382,76 @@ impl Decoder {
         // Note: ref_frame_sizes is already populated by
         // `parse_packet -> refresh_ref_frame_sizes`; no work here.
 
-        // Keyframes refresh every ref-map slot (libvpx implicit
-        // `refresh_frame_flags = 0xFF` for FRAME_TYPE_KEY at
-        // `vp9_decodeframe.c:2691`). Splat the new FrameBuf across all
-        // eight slots so subsequent inter frames can resolve any
-        // ref_frame_indices[i] against this keyframe.
-        for slot in &mut self.ref_frame_map {
-            *slot = Some(frame_buf.clone());
+        // Refresh `ref_frame_map` per `refresh_mask` (keyframes pass
+        // `0xFF`, intra-only pass `tail.refresh_frame_flags`). Mirrors
+        // libvpx `vp9_decodeframe.c:2691` (KEY) and `:2730` (intra-only).
+        //
+        // G12 refactor (2026-05-21). Pre-G12 stored an `Arc` clone in
+        // every selected ref slot AND mirror-wrote `frame_pool[i]`.
+        // The mirror doubled `Arc::strong_count` per slot and would
+        // starve `acquire_free` once wired up. G12 reverts to the
+        // libvpx-faithful single-Arc-per-buffer model: park the
+        // FrameBuf in the pool via `acquire_free`, then store the
+        // pool slot index in every selected ref_frame_map slot.
+        //
+        // `acquire_free` errors only when every pool slot has an
+        // outstanding external ref (refcount > 1). At decode time
+        // the freshly-built `frame_buf` has refcount 1 (only this
+        // local owns it), so a free slot is always available
+        // unless the caller is holding 9+ live FrameBufs from
+        // previous decodes — that's a caller bug. Surface it via
+        // `DecodeError::FrameAlloc` (reusing the existing
+        // alloc-failure variant rather than adding a new one).
+        let pool_slot = self
+            .frame_pool
+            .acquire_free(frame_buf.clone())
+            .map_err(|_| DecodeError::FrameAlloc)?;
+        // `pool_slot` returned by `acquire_free` is always
+        // `< DECODER_FRAME_BUFFERS == 9`, so casting to u8 is safe.
+        let pool_slot_u8 = pool_slot as u8;
+        debug_assert!(pool_slot < rvp9_core::frame::DECODER_FRAME_BUFFERS);
+        // Use `write_ref_slot` so `frame_pool.ref_counts` stays in
+        // sync — this is what reserves the slot against
+        // `acquire_free` recycling while the ref-map still names it.
+        for i in 0..self.ref_frame_map.len() {
+            if (refresh_mask >> i) & 1 != 0 {
+                self.write_ref_slot(i, pool_slot_u8);
+            }
         }
-        // Keyframes don't populate the MV grid — libvpx never reads
+        // Intra frames don't populate the MV grid — libvpx never reads
         // `cm->cur_frame->mvs` for intra frames in `vp9_read_mode_info`
         // (the `frame_is_intra_only` early-return at
         // `vp9_decodemv.c:822`). Clear every ref-slot MV grid so the
-        // first inter frame after this keyframe finds no salvageable
+        // first inter frame after this intra finds no salvageable
         // collocated MVs and falls through to the default zero-init
         // (matching libvpx `use_prev_frame_mvs == false` for
-        // `cm->last_frame_type == KEY_FRAME`).
+        // `cm->last_frame_type == KEY_FRAME` or `last_intra_only == 1`).
         for slot in &mut self.mv_grids {
             *slot = None;
         }
         // D.22 — keyframe also clears `cm->prev_frame->mvs` from the
         // decoder's perspective. The subsequent `use_prev_frame_mvs`
-        // gate trips on `last_frame_type == KEY_FRAME` anyway, but
-        // null-ing the field keeps state hygiene matching libvpx
-        // (a keyframe is intra-only, so there are no MVs to carry
-        // forward).
+        // gate trips on `last_frame_type == KEY_FRAME` (or
+        // `last_intra_only == 1` for intra-only) anyway, but null-ing
+        // the field keeps state hygiene matching libvpx (intra frames
+        // produce no MVs to carry forward).
         self.prev_frame_mv_grid = None;
         self.prev_frame_mv_grid_dims = (0, 0);
 
         self.have_resync = false;
-        self.last_frame_was_key = true;
+        // Mirror libvpx `cm->last_frame_type = cm->frame_type`
+        // (`vp9_decodeframe.c:2645`). For intra-only frames the
+        // `frame_type` field is `INTER_FRAME` (`cm->intra_only` is the
+        // distinguishing flag), so `last_frame_was_key` is `false` for
+        // both intra-only and inter — only KeyFrames set it to `true`.
+        // This is the right behaviour for `coef_adapt_params`'s
+        // `last_was_key` argument in the *next* frame.
+        self.last_frame_was_key = !intra_only;
         self.last_frame_size = Some((frame.header.width, frame.header.height));
-        self.last_intra_only = false; // keyframes are not intra-only
+        // Mirror libvpx `cm->last_intra_only = cm->intra_only`
+        // (`vp9_decodeframe.c:2646`). Bypasses the prev-frame-MV
+        // salvage for the frame after an intra-only.
+        self.last_intra_only = intra_only;
         self.last_show_frame = frame.header.show_frame;
         // D.10 — promote the keyframe's just-decoded seg map into
         // `prev_segment_ids` so the next inter frame's
@@ -1024,7 +1467,10 @@ impl Decoder {
             let nz = cur_segment_ids.iter().filter(|&&v| v != 0).count();
             eprintln!(
                 "[rvp9_seg] keyframe end: mi={}x{} non-zero seg cells = {} / {}",
-                mi_rows, mi_cols, nz, cur_segment_ids.len()
+                mi_rows,
+                mi_cols,
+                nz,
+                cur_segment_ids.len()
             );
             for r in 0..4.min(mi_rows) {
                 let mut row = String::new();
@@ -1057,8 +1503,11 @@ impl Decoder {
     ///   per-block ModeInfo reader, and (via D.2) the per-inter-block
     ///   reconstruction primitive. Intra-in-inter blocks consume their
     ///   bitstream bits but skip pixel reconstruction (deferred to
-    ///   D.4). Lossless and any frame referencing a ref slot whose
-    ///   pool entry is `None` returns [`DecodeError::Unimplemented`].
+    ///   D.4). Lossless is handled by the WHT branch (G2). Any frame
+    ///   referencing a `ref_frame_map` slot whose entry is `None`
+    ///   surfaces as [`DecodeError::EmptyInterRef`] `{ slot }` (G3 —
+    ///   the loop reports the slot index named by
+    ///   `ref_frame_indices`, not the loop iteration index).
     /// - **D.3.b** rewires the per-block refs from "single-ref LAST
     ///   only" to the actual decoded `ref_frames` pair.
     /// - **D.3.c** wires `extend_frame_borders` + `refresh_frame_flags`
@@ -1097,11 +1546,14 @@ impl Decoder {
         if std::env::var("RVP9_TRACE_INTER_MV").is_ok() {
             eprintln!(
                 "[rvp9_inter_frame] indices={:?} sign_biases={:?} refresh=0x{:02x} last_key={} last_size={:?}",
-                ref_frame_indices, ref_frame_sign_biases, refresh_frame_flags,
-                self.last_frame_was_key, self.last_frame_size,
+                ref_frame_indices,
+                ref_frame_sign_biases,
+                refresh_frame_flags,
+                self.last_frame_was_key,
+                self.last_frame_size,
             );
             for i in 0..rvp9_core::bitstream::REF_FRAMES {
-                let row0: Option<Vec<u8>> = self.ref_frame_map[i].as_ref().map(|b| {
+                let row0: Option<Vec<u8>> = self.ref_frame_buf(i).map(|b| {
                     let yp = b.y_plane();
                     let stride = yp.stride();
                     yp.data()[..stride.min(8)].to_vec()
@@ -1110,30 +1562,34 @@ impl Decoder {
             }
         }
 
-        // Lossless inter not yet wired (mirrors keyframe gating).
-        if tail.quantization.is_lossless() {
-            return Err(DecodeError::Unimplemented {
-                reason: "lossless inter frame decode (WHT inverse transform path)",
-            });
-        }
+        // G2 (decoder-hardening V6 §G2): lossless inter is wired
+        // through `inverse_transform_add_dct`'s WHT branch (mirrors the
+        // keyframe gating removed earlier in this commit). Inter blocks
+        // resolve to `TxType::DctDct`, and at TX_4X4 the dispatch picks
+        // `iwht4x4_{16,1}_add` whenever `inputs.lossless == true`.
 
         // 1. Resolve the three logical inter refs (LAST / GOLDEN /
         //    ALTREF) into actual FrameBuf handles via ref_frame_map.
-        //    Empty slots surface as Unimplemented for now (libvpx would
-        //    treat as bitstream-corrupt; in practice every real stream
-        //    populates these via the prior keyframe).
+        //    Empty slots surface as `EmptyInterRef` (G3 — V6 §G3):
+        //    libvpx treats this as bitstream-corrupt, and in practice
+        //    every real stream populates these via the prior keyframe.
+        //    The sibling `EmptySlot` variant continues to cover the
+        //    `decode_show_existing_frame` path.
         let mut refs: [Option<FrameBuf>; 3] = [None, None, None];
         for (i, &ref_idx) in ref_frame_indices.iter().enumerate() {
             let slot_idx = ref_idx as usize;
-            let buf = self
-                .ref_frame_map
-                .get(slot_idx)
-                .and_then(|slot| slot.clone());
-            match buf {
+            // G12 refactor: `ref_frame_map[slot_idx]` is now an
+            // `Option<u8>` pool slot index; resolve through the
+            // `ref_frame_buf` helper that walks both indirections
+            // (ref_frame_map → frame_pool). `None` from either step
+            // (slot_idx out of range OR empty pool slot) is reported
+            // identically as `EmptyInterRef` — libvpx treats both as
+            // bitstream-corrupt.
+            match self.ref_frame_buf(slot_idx) {
                 Some(b) => refs[i] = Some(b),
                 None => {
-                    return Err(DecodeError::Unimplemented {
-                        reason: "inter frame referenced empty ref_frame_map slot",
+                    return Err(DecodeError::EmptyInterRef {
+                        slot: slot_idx as u8,
                     });
                 }
             }
@@ -1176,13 +1632,10 @@ impl Decoder {
         // diff-update layer (separate from per-block decode bugs).
         if std::env::var("RVP9_TRACE_FC").ok().as_deref() == Some("1") {
             let fc = &self.frame_contexts[fc_idx];
-            eprintln!(
-                "RVP9_TRACE_FC compressed_header_done kf=0 intra_only=0"
-            );
+            eprintln!("RVP9_TRACE_FC compressed_header_done kf=0 intra_only=0");
             eprintln!(
                 "RVP9_TRACE_FC tx_mode={} ref_mode={}",
-                compressed_result.tx_mode as u8,
-                compressed_result.reference_mode as u8
+                compressed_result.tx_mode as u8, compressed_result.reference_mode as u8
             );
             eprintln!(
                 "RVP9_TRACE_FC skip_probs=[{},{},{}]",
@@ -1197,8 +1650,10 @@ impl Decoder {
             );
             eprintln!(
                 "RVP9_TRACE_FC comp_inter_prob=[{},{},{},{},{}]",
-                fc.comp_inter_prob[0], fc.comp_inter_prob[1],
-                fc.comp_inter_prob[2], fc.comp_inter_prob[3],
+                fc.comp_inter_prob[0],
+                fc.comp_inter_prob[1],
+                fc.comp_inter_prob[2],
+                fc.comp_inter_prob[3],
                 fc.comp_inter_prob[4]
             );
             for i in 0..5 {
@@ -1209,16 +1664,16 @@ impl Decoder {
             }
             eprintln!(
                 "RVP9_TRACE_FC comp_ref_prob=[{},{},{},{},{}]",
-                fc.comp_ref_prob[0], fc.comp_ref_prob[1],
-                fc.comp_ref_prob[2], fc.comp_ref_prob[3],
+                fc.comp_ref_prob[0],
+                fc.comp_ref_prob[1],
+                fc.comp_ref_prob[2],
+                fc.comp_ref_prob[3],
                 fc.comp_ref_prob[4]
             );
             for j in 0..7 {
                 eprintln!(
                     "RVP9_TRACE_FC inter_mode_probs[{j}]=[{},{},{}]",
-                    fc.inter_mode_probs[j][0],
-                    fc.inter_mode_probs[j][1],
-                    fc.inter_mode_probs[j][2]
+                    fc.inter_mode_probs[j][0], fc.inter_mode_probs[j][1], fc.inter_mode_probs[j][2]
                 );
             }
             eprintln!(
@@ -1230,16 +1685,30 @@ impl Decoder {
                 eprintln!(
                     "RVP9_TRACE_FC nmvc.comp[{i}].sign={} classes=[{},{},{},{},{},{},{},{},{},{}]",
                     c.sign,
-                    c.classes[0], c.classes[1], c.classes[2], c.classes[3],
-                    c.classes[4], c.classes[5], c.classes[6], c.classes[7],
-                    c.classes[8], c.classes[9]
+                    c.classes[0],
+                    c.classes[1],
+                    c.classes[2],
+                    c.classes[3],
+                    c.classes[4],
+                    c.classes[5],
+                    c.classes[6],
+                    c.classes[7],
+                    c.classes[8],
+                    c.classes[9]
                 );
                 eprintln!(
                     "RVP9_TRACE_FC nmvc.comp[{i}].class0=[{}] bits=[{},{},{},{},{},{},{},{},{},{}]",
                     c.class0[0],
-                    c.bits[0], c.bits[1], c.bits[2], c.bits[3],
-                    c.bits[4], c.bits[5], c.bits[6], c.bits[7],
-                    c.bits[8], c.bits[9]
+                    c.bits[0],
+                    c.bits[1],
+                    c.bits[2],
+                    c.bits[3],
+                    c.bits[4],
+                    c.bits[5],
+                    c.bits[6],
+                    c.bits[7],
+                    c.bits[8],
+                    c.bits[9]
                 );
             }
         }
@@ -1311,7 +1780,8 @@ impl Decoder {
         // 7. D.10 — resolve per-frame segmentation against the running
         // state (inherits `feature_data` / `abs_delta` when the parsed
         // value's `update_data == false`).
-        let resolved_seg = self.resolve_segmentation(&tail.segmentation, /* is_keyframe = */ false);
+        let resolved_seg =
+            self.resolve_segmentation(&tail.segmentation, /* is_keyframe = */ false);
 
         // Per-segment alt-Q from the RESOLVED feature data.
         let mut seg_alt_q = [None; rvp9_core::loopfilter::MAX_SEGMENTS];
@@ -1342,11 +1812,8 @@ impl Decoder {
         // Borrow refs as &Yv12Buffer for InterFrameDecodeParams. The
         // FrameBufs we cloned above keep the underlying allocations
         // alive for the lifetime of this scope.
-        let refs_borrowed: [Option<&Yv12Buffer>; 3] = [
-            refs[0].as_deref(),
-            refs[1].as_deref(),
-            refs[2].as_deref(),
-        ];
+        let refs_borrowed: [Option<&Yv12Buffer>; 3] =
+            [refs[0].as_deref(), refs[1].as_deref(), refs[2].as_deref()];
         let params = InterFrameDecodeParams {
             base,
             cur_y_width,
@@ -1403,10 +1870,8 @@ impl Decoder {
         let prev_mv_grid = prev_mv_grid.filter(|g| g.len() >= mi_rows * mi_cols);
         // Allocate fresh current-frame MV grid (zero-init = all
         // `(NoRefFrame, NoRefFrame)` entries with zero MVs).
-        let mut cur_mv_grid = vec![
-            rvp9_core::inter::mv_ref::PrevFrameMvRef::default();
-            mi_rows * mi_cols
-        ];
+        let mut cur_mv_grid =
+            vec![rvp9_core::inter::mv_ref::PrevFrameMvRef::default(); mi_rows * mi_cols];
 
         // D.10 — populate `prev_segment_ids` view for segment-id
         // inheritance and allocate the current frame's seg-id slab.
@@ -1421,14 +1886,13 @@ impl Decoder {
         // frame's mi-dims, treat it as missing — libvpx reallocates +
         // zero-fills `last_frame_seg_map` whenever mi_rows / mi_cols
         // change (`vp9_alloccommon.c:vp9_alloc_context_buffers`).
-        let prev_seg_ids_slice: &[u8] =
-            if self.prev_segment_ids_dims == (mi_rows, mi_cols)
-                && self.prev_segment_ids.len() == mi_rows * mi_cols
-            {
-                &self.prev_segment_ids
-            } else {
-                &[]
-            };
+        let prev_seg_ids_slice: &[u8] = if self.prev_segment_ids_dims == (mi_rows, mi_cols)
+            && self.prev_segment_ids.len() == mi_rows * mi_cols
+        {
+            &self.prev_segment_ids
+        } else {
+            &[]
+        };
         let mut cur_segment_ids = vec![0u8; mi_rows * mi_cols];
 
         // Stage 3 Task E.2 — iterate `(tile_row, tile_col)` in raster
@@ -1514,11 +1978,10 @@ impl Decoder {
             // coef_probs — inter-frame adapt (`intra_only = false`).
             // `coef_adapt_params` picks AFTER_KEY constants on the first
             // inter frame after a keyframe, default constants otherwise.
-            let (count_sat, max_update_factor) =
-                rvp9_core::entropy::adapt::coef_adapt_params(
-                    /* intra_only = */ false,
-                    self.last_frame_was_key,
-                );
+            let (count_sat, max_update_factor) = rvp9_core::entropy::adapt::coef_adapt_params(
+                /* intra_only = */ false,
+                self.last_frame_was_key,
+            );
             let new_coef_probs = rvp9_core::entropy::adapt::adapt_coef_probs(
                 &pre_fc.coef_probs,
                 &self.coef_counts,
@@ -1559,11 +2022,10 @@ impl Decoder {
         // Strategy A) so the bitstream-diff harness's L4 accessor
         // [`Self::last_frame_mi_grid`] is populated for every
         // non-`ShowExistingFrame` frame.
-        let tile_grids: Vec<(tile::TileBounds, &[Option<ModeInfo>])> =
-            tile_decode_ctxs
-                .iter()
-                .map(|(b, c)| (*b, c.mi_grid()))
-                .collect();
+        let tile_grids: Vec<(tile::TileBounds, &[Option<ModeInfo>])> = tile_decode_ctxs
+            .iter()
+            .map(|(b, c)| (*b, c.mi_grid()))
+            .collect();
         let frame_mi_grid = build_frame_mi_grid(mi_rows, mi_cols, &tile_grids);
         if filter_level > 0 && !lf_disabled {
             apply_loop_filter_to_frame(
@@ -1599,26 +2061,40 @@ impl Decoder {
         }
 
         let frame_buf: FrameBuf = std::sync::Arc::new(yv12);
-        let cur_mv_grid_arc: std::sync::Arc<
-            Vec<rvp9_core::inter::mv_ref::PrevFrameMvRef>,
-        > = std::sync::Arc::new(cur_mv_grid);
+        let cur_mv_grid_arc: std::sync::Arc<Vec<rvp9_core::inter::mv_ref::PrevFrameMvRef>> =
+            std::sync::Arc::new(cur_mv_grid);
 
         // 2. Update `ref_frame_map` per `refresh_frame_flags` mask
         //    (libvpx `vp9_decodeframe.c:2914` — for each bit `i` set in
         //    the mask, `cm->ref_frame_map[i] = cm->new_fb_idx`). We
-        //    splat the freshly-decoded FrameBuf into every slot the
-        //    mask selects. The parallel `mv_grids` array gets the same
-        //    splat so the next inter frame can salvage collocated MVs
-        //    via `use_prev_frame_mvs`.
-        for (i, (slot, mv_slot)) in self
-            .ref_frame_map
-            .iter_mut()
-            .zip(self.mv_grids.iter_mut())
-            .enumerate()
-        {
+        //    park the freshly-decoded FrameBuf in the pool via
+        //    `acquire_free` and write that pool slot index into
+        //    every selected ref_frame_map slot. The parallel `mv_grids`
+        //    array continues to hold `Arc<Vec<PrevFrameMvRef>>` clones
+        //    (one per refreshed ref slot) — those don't go through the
+        //    pool because they're not `Yv12Buffer`s.
+        //
+        // G12 refactor (2026-05-21). Pre-G12 stored an `Arc` clone in
+        // every ref slot AND mirror-wrote `frame_pool[i]`, doubling
+        // `Arc::strong_count` per buffer. G12 reverts to the libvpx-
+        // faithful single-Arc-per-buffer model (`ref_frame_map[i]`
+        // holds a `Some(u8)` pool slot index; the pool owns the only
+        // strong ref to the buffer apart from the one we hand back
+        // to the caller).
+        let pool_slot = self
+            .frame_pool
+            .acquire_free(frame_buf.clone())
+            .map_err(|_| DecodeError::FrameAlloc)?;
+        let pool_slot_u8 = pool_slot as u8;
+        debug_assert!(pool_slot < rvp9_core::frame::DECODER_FRAME_BUFFERS);
+        // Use `write_ref_slot` so `frame_pool.ref_counts` stays in
+        // sync (G12 R2 Critical fix — pre-fix the silent aliasing
+        // bug fired when an inter refresh recycled a pool slot the
+        // ref-map still pointed at).
+        for i in 0..self.ref_frame_map.len() {
             if (refresh_frame_flags >> i) & 1 != 0 {
-                *slot = Some(frame_buf.clone());
-                *mv_slot = Some(cur_mv_grid_arc.clone());
+                self.write_ref_slot(i, pool_slot_u8);
+                self.mv_grids[i] = Some(cur_mv_grid_arc.clone());
             }
         }
 
@@ -1642,7 +2118,10 @@ impl Decoder {
             let nz = cur_segment_ids.iter().filter(|&&v| v != 0).count();
             eprintln!(
                 "[rvp9_seg] inter end: mi={}x{} non-zero seg cells = {} / {}",
-                mi_rows, mi_cols, nz, cur_segment_ids.len()
+                mi_rows,
+                mi_cols,
+                nz,
+                cur_segment_ids.len()
             );
             // D.20 — also dump first SB row of seg map (rows 0..4 cols 0..16)
             for r in 0..4.min(mi_rows) {
@@ -1713,17 +2192,22 @@ impl Decoder {
         interp_filter: InterpFilter,
         allow_high_precision_mv: bool,
     ) -> Result<CompressedHeaderResult, DecodeError> {
-        let tail = frame.header.tail.as_ref().ok_or(DecodeError::WrongFrameKind)?;
+        let tail = frame
+            .header
+            .tail
+            .as_ref()
+            .ok_or(DecodeError::WrongFrameKind)?;
 
         let header_end = frame.header_end_byte;
         let fps = tail.first_partition_size as usize;
         let total = frame.full_frame_data.len();
-        let needed_end = header_end
-            .checked_add(fps)
-            .ok_or(DecodeError::TruncatedCompressedHeader {
-                declared: usize::MAX,
-                available: total,
-            })?;
+        let needed_end =
+            header_end
+                .checked_add(fps)
+                .ok_or(DecodeError::TruncatedCompressedHeader {
+                    declared: usize::MAX,
+                    available: total,
+                })?;
         if needed_end > total {
             return Err(DecodeError::TruncatedCompressedHeader {
                 declared: needed_end,
@@ -1856,8 +2340,7 @@ fn apply_loop_filter_to_frame(
         }
     }
 
-    let mut lfm_grid: Vec<LoopFilterMask> =
-        vec![LoopFilterMask::default(); sb_rows * sb_cols];
+    let mut lfm_grid: Vec<LoopFilterMask> = vec![LoopFilterMask::default(); sb_rows * sb_cols];
 
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
@@ -1887,16 +2370,7 @@ fn apply_loop_filter_to_frame(
     }
 
     loop_filter_frame(
-        yv12,
-        &lfm_grid,
-        sb_cols,
-        sb_rows,
-        sb_cols,
-        mi_rows,
-        mi_cols,
-        &info,
-        0,
-        mi_rows,
+        yv12, &lfm_grid, sb_cols, sb_rows, sb_cols, mi_rows, mi_cols, &info, 0, mi_rows,
     );
 }
 
@@ -1919,9 +2393,7 @@ fn dump_lf_masks(
     }
     let mi_row = sb_row * SB_MI_SIZE;
     let mi_col = sb_col * SB_MI_SIZE;
-    eprintln!(
-        "SB ({sb_row},{sb_col}) mi=({mi_row},{mi_col}) mi_rows={mi_rows} mi_cols={mi_cols}"
-    );
+    eprintln!("SB ({sb_row},{sb_col}) mi=({mi_row},{mi_col}) mi_rows={mi_rows} mi_cols={mi_cols}");
     eprintln!(
         "  left_y    = [{:#018x}, {:#018x}, {:#018x}, {:#018x}]",
         lfm.left_y[0], lfm.left_y[1], lfm.left_y[2], lfm.left_y[3]
@@ -2010,6 +2482,19 @@ pub enum DecodeError {
         /// The 3-bit slot index that was requested.
         slot: u8,
     },
+    /// An inter frame's `ref_frame_indices` named a `ref_frame_map`
+    /// slot that holds no decoded frame. Sibling of [`Self::EmptySlot`]
+    /// — `EmptySlot` covers the `decode_show_existing_frame` path,
+    /// `EmptyInterRef` covers the inter-reference resolution path
+    /// at [`Decoder::decode_inter_frame`]. In libvpx terms this is a
+    /// bitstream-corrupt condition (no real stream ever names an
+    /// empty slot — the prior keyframe always populates them), so
+    /// callers should treat it as a malformed-bitstream error rather
+    /// than an unimplemented-feature signal.
+    EmptyInterRef {
+        /// The 3-bit slot index that was requested.
+        slot: u8,
+    },
     /// `parse_compressed_partition` saw a `first_partition_size`
     /// that runs past the end of the frame's byte slice.
     TruncatedCompressedHeader {
@@ -2041,11 +2526,12 @@ pub enum DecodeError {
 impl core::fmt::Display for DecodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::WrongFrameKind => f.write_str(
-                "frame kind is inappropriate for this entry point",
-            ),
+            Self::WrongFrameKind => f.write_str("frame kind is inappropriate for this entry point"),
             Self::EmptySlot { slot } => {
                 write!(f, "frame pool slot {slot} contains no decoded frame")
+            }
+            Self::EmptyInterRef { slot } => {
+                write!(f, "inter frame referenced empty ref_frame_map slot {slot}")
             }
             Self::TruncatedCompressedHeader {
                 declared,
@@ -2111,9 +2597,7 @@ impl<'a> IntoIterator for PacketFrames<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rvp9_core::bitstream::{
-        ColorSpace, FrameKind, Profile, RawBitWriter, frame::sync,
-    };
+    use rvp9_core::bitstream::{ColorSpace, FrameKind, Profile, RawBitWriter, frame::sync};
 
     /// Build a minimal valid keyframe header buffer (returns the
     /// raw `&[u8]` payload). Mirrors the helper in
@@ -2162,6 +2646,576 @@ mod tests {
         let used = w.bytes_written();
         buf.truncate(used + 8);
         buf
+    }
+
+    /// Build a minimal valid intra-only header buffer with the given
+    /// `reset_frame_context` and `refresh_frame_flags`. The compressed
+    /// header / tile section is `n` zero bytes (same shape as
+    /// [`build_lossless_keyframe_with_compressed_size`]). Mirrors
+    /// libvpx's intra-only header at `vp9_decodeframe.c:2705-2735`.
+    ///
+    /// `frame_context_idx` defaults to 0; use
+    /// [`build_minimal_intra_only_with_fc_idx`] when a different bank
+    /// selector is needed.
+    fn build_minimal_intra_only(
+        reset_frame_context: u8,
+        refresh_frame_flags: u8,
+        n: u16,
+    ) -> Vec<u8> {
+        build_minimal_intra_only_with_fc_idx(
+            reset_frame_context,
+            refresh_frame_flags,
+            /* fc_idx = */ 0,
+            n,
+        )
+    }
+
+    /// As [`build_minimal_intra_only`] but with an explicit
+    /// `frame_context_idx` (2 bits — value range `0..=3`).
+    fn build_minimal_intra_only_with_fc_idx(
+        reset_frame_context: u8,
+        refresh_frame_flags: u8,
+        fc_idx: u8,
+        n: u16,
+    ) -> Vec<u8> {
+        build_minimal_intra_only_full(
+            reset_frame_context,
+            refresh_frame_flags,
+            fc_idx,
+            /* error_resilient = */ false,
+            n,
+        )
+    }
+
+    /// Most general intra-only fixture builder — adds an explicit
+    /// `error_resilient` toggle on top of
+    /// [`build_minimal_intra_only_with_fc_idx`]. Used by the error-
+    /// resilient bank-reset test (the spec at
+    /// `vp9_entropymode.c:452` short-circuits `force_all_reset` when
+    /// `error_resilient == 1`, regardless of `reset_frame_context`).
+    fn build_minimal_intra_only_full(
+        reset_frame_context: u8,
+        refresh_frame_flags: u8,
+        fc_idx: u8,
+        error_resilient: bool,
+        n: u16,
+    ) -> Vec<u8> {
+        assert!(fc_idx < 4, "frame_context_idx is a 2-bit field");
+        let mut buf = vec![0u8; 256];
+        let mut w = RawBitWriter::new(&mut buf);
+        w.write_literal(sync::FRAME_MARKER as u32, 2);
+        w.write_bit(0); // profile low
+        w.write_bit(0); // profile high → Profile 0
+        w.write_bit(0); // show_existing_frame = 0
+        w.write_bit(1); // frame_type = INTER (= 1)
+        w.write_bit(0); // show_frame = 0 (must be 0 for intra-only)
+        w.write_bit(if error_resilient { 1 } else { 0 });
+        w.write_bit(1); // intra_only = 1 (only read when !show_frame)
+        // `reset_frame_context` is only present when !error_resilient
+        // (libvpx forces it to 0 in that case; see header.rs:284-288).
+        if !error_resilient {
+            w.write_literal(u32::from(reset_frame_context), 2);
+        }
+        // Intra-only profile-0 path: sync code + (no color config —
+        // Profile 0 inherits defaults per spec) + refresh_frame_flags +
+        // frame_size + render_size flag.
+        w.write_literal(sync::SYNC_CODE_0 as u32, 8);
+        w.write_literal(sync::SYNC_CODE_1 as u32, 8);
+        w.write_literal(sync::SYNC_CODE_2 as u32, 8);
+        w.write_literal(u32::from(refresh_frame_flags), 8);
+        w.write_literal(319, 16); // width - 1
+        w.write_literal(239, 16); // height - 1
+        w.write_bit(0); // no render size
+        // Tail: refresh_frame_context (1), frame_parallel_decoding_mode
+        // (1), frame_context_idx (2), loopfilter (10), quant (11),
+        // segmentation (1), tile cols (0 — width 320 → mi_cols 40
+        // → sb64_cols 5 → min=max=0), tile rows (1), first_partition_size.
+        //
+        // `refresh_frame_context` + `frame_parallel_decoding_mode` are
+        // ONLY present in the bitstream when !error_resilient — libvpx
+        // forces them to (false, true) otherwise (see header.rs:384-390).
+        if !error_resilient {
+            w.write_bit(0);
+            w.write_bit(0);
+        }
+        w.write_literal(u32::from(fc_idx), 2);
+        w.write_literal(0, 6);
+        w.write_literal(0, 3);
+        w.write_bit(0);
+        // base_qindex = 100 (non-zero to bypass the lossless-only
+        // gate at decode_intra_frame_inner; lossless is G2's gap, not
+        // G1's). The actual value doesn't matter — only that
+        // `is_lossless()` returns false.
+        w.write_literal(100, 8);
+        w.write_bit(0);
+        w.write_bit(0);
+        w.write_bit(0);
+        w.write_bit(0);
+        w.write_bit(0);
+        w.write_literal(u32::from(n), 16);
+        let used = w.bytes_written();
+        buf.truncate(used + n as usize + 4);
+        buf
+    }
+
+    /// G1 routing test: an intra-only packet parses, classifies as
+    /// `FrameKind::IntraOnly`, and dispatches through
+    /// [`Decoder::decode_intra_only_frame`] — i.e. does NOT return
+    /// `DecodeError::Unimplemented` (the pre-G1 behaviour). The
+    /// downstream decode is expected to fail at the tile bool-coder
+    /// (the test fixture has only zero bytes for tile data) but the
+    /// error MUST be a tile / bitstream error, not the
+    /// `Unimplemented` short-circuit.
+    #[test]
+    fn intra_only_dispatch_no_longer_unimplemented() {
+        let buf = build_minimal_intra_only(
+            /* reset_frame_context = */ 0, /* refresh_frame_flags = */ 0xFF, 16,
+        );
+        let mut dec = Decoder::new();
+        let frames = dec.parse_packet(&buf).expect("valid intra-only");
+        assert_eq!(frames.count(), 1);
+        let header = frames.frames()[0].header.clone();
+        assert_eq!(
+            header.kind,
+            FrameKind::IntraOnly {
+                reset_frame_context: 0,
+                refresh_frame_flags: 0xFF,
+            }
+        );
+        let frame_data: Vec<u8> = frames.frames()[0].full_frame_data.to_vec();
+        let header_end = frames.frames()[0].header_end_byte;
+        drop(frames);
+        let parsed = ParsedFrame {
+            header,
+            header_end_byte: header_end,
+            full_frame_data: &frame_data,
+        };
+        // The fixture's tile section is zero-padded; downstream decode
+        // may either succeed (zero bytes parse as all-zeros tokens) or
+        // fail at a bool-coder boundary. EITHER outcome demonstrates
+        // that the IntraOnly arm no longer short-circuits to
+        // Unimplemented — the load-bearing assertion is the negative.
+        let result = dec.decode_frame(&parsed);
+        match &result {
+            Err(DecodeError::Unimplemented { reason }) => {
+                panic!("G1: intra-only frame still returns Unimplemented (reason: {reason})")
+            }
+            Ok(_) | Err(_) => { /* anything but Unimplemented is fine */ }
+        }
+        // Positive property: if the inner decode succeeded (the
+        // synthetic zero-byte tile DOES parse as all-zero tokens for
+        // this minimal fixture), the IntraOnly arm must have run the
+        // `ref_frame_map` refresh per `refresh_frame_flags = 0xFF`,
+        // populating all 8 slots with the freshly-decoded FrameBuf.
+        // This complements the negative assertion above by exercising
+        // a real downstream effect of the dispatch.
+        //
+        // If the decode failed (a future fixture change that causes
+        // the bool-coder to trip), the ref-map refresh runs at the END
+        // of `decode_intra_frame_inner` so the slots would remain
+        // empty — in that case the assertion is skipped and only the
+        // negative routing check is exercised.
+        //
+        // TODO(G1.1): expand with a pixel-correctness assertion when
+        // an IntraOnly conformance vector is added to the corpus.
+        //
+        // Item 4 (devil's-advocate): the prior `if result.is_ok()` guard
+        // silently downgraded this test to negative-only if the fixture
+        // ever stopped decoding successfully. Hard-fail instead so
+        // fixture drift surfaces immediately as a test failure rather
+        // than as a silently-skipped positive check.
+        assert!(
+            result.is_ok(),
+            "synthetic IntraOnly fixture should decode successfully; if \
+             this assertion fires, either the fixture is broken or the \
+             IntraOnly path regressed: {result:?}",
+        );
+        for (i, slot) in dec.ref_frame_map.iter().enumerate() {
+            assert!(
+                slot.is_some(),
+                "G1: ref_frame_map[{i}] not populated after IntraOnly decode \
+                 with refresh_frame_flags=0xFF",
+            );
+        }
+    }
+
+    /// G1: an intra-only frame with `reset_frame_context = 3` resets
+    /// every FRAME_CONTEXTS bank to libvpx defaults before the inner
+    /// decode driver runs. Verifies the `vp9_setup_past_independence`
+    /// bank-reset mirror (`vp9_entropymode.c:452-455`).
+    ///
+    /// Strategy: poison every bank with a sentinel that differs from
+    /// the default; build an intra-only packet with
+    /// `reset_frame_context = 3`; invoke `decode_frame`; observe that
+    /// every bank is restored to defaults regardless of how the
+    /// downstream decode terminates.
+    #[test]
+    fn intra_only_reset_frame_context_3_resets_all_banks() {
+        let default_bank = FrameContext::new_default();
+        let mut dec = Decoder::new();
+        // Poison every bank: zero its `skip_probs[0]` (default is
+        // libvpx's 192). Verify the poison sticks pre-dispatch.
+        for bank in dec.frame_contexts.iter_mut() {
+            bank.skip_probs[0] = 0;
+        }
+        assert_ne!(
+            dec.frame_contexts[0].skip_probs[0],
+            default_bank.skip_probs[0]
+        );
+
+        let buf = build_minimal_intra_only(
+            /* reset_frame_context = */ 3, /* refresh_frame_flags = */ 0xFF, 16,
+        );
+        let frames = dec.parse_packet(&buf).expect("valid intra-only");
+        let header = frames.frames()[0].header.clone();
+        let frame_data: Vec<u8> = frames.frames()[0].full_frame_data.to_vec();
+        let header_end = frames.frames()[0].header_end_byte;
+        drop(frames);
+        let parsed = ParsedFrame {
+            header,
+            header_end_byte: header_end,
+            full_frame_data: &frame_data,
+        };
+        // Decode is expected to fail downstream at the tile bool-coder
+        // (zero tile bytes), but the bank reset happens *before* the
+        // inner decode driver, so we check banks regardless of the
+        // decode outcome.
+        let _ = dec.decode_frame(&parsed);
+        for (i, bank) in dec.frame_contexts.iter().enumerate() {
+            assert_eq!(
+                bank.skip_probs[0], default_bank.skip_probs[0],
+                "bank[{i}] was not reset to defaults after reset_frame_context=3"
+            );
+        }
+    }
+
+    /// G1: an intra-only frame with `reset_frame_context = 2` resets
+    /// ONLY the bank selected by `frame_context_idx` (= 0 in the
+    /// minimal fixture). Banks 1..=3 keep the poison sentinel.
+    /// Mirrors libvpx `vp9_entropymode.c:456-459`.
+    #[test]
+    fn intra_only_reset_frame_context_2_resets_selected_bank_only() {
+        let default_bank = FrameContext::new_default();
+        let mut dec = Decoder::new();
+        for bank in dec.frame_contexts.iter_mut() {
+            bank.skip_probs[0] = 0;
+        }
+        let buf = build_minimal_intra_only(
+            /* reset_frame_context = */ 2, /* refresh_frame_flags = */ 0xFF, 16,
+        );
+        let frames = dec.parse_packet(&buf).expect("valid intra-only");
+        let header = frames.frames()[0].header.clone();
+        let frame_data: Vec<u8> = frames.frames()[0].full_frame_data.to_vec();
+        let header_end = frames.frames()[0].header_end_byte;
+        drop(frames);
+        let parsed = ParsedFrame {
+            header,
+            header_end_byte: header_end,
+            full_frame_data: &frame_data,
+        };
+        let _ = dec.decode_frame(&parsed);
+        // Bank 0 reset; banks 1..=3 still poisoned.
+        assert_eq!(
+            dec.frame_contexts[0].skip_probs[0],
+            default_bank.skip_probs[0]
+        );
+        for i in 1..FRAME_CONTEXTS {
+            assert_eq!(
+                dec.frame_contexts[i].skip_probs[0], 0,
+                "bank[{i}] should be untouched when reset_frame_context=2"
+            );
+        }
+    }
+
+    /// G1: companion to
+    /// [`intra_only_reset_frame_context_2_resets_selected_bank_only`]
+    /// that exercises the bank-selection logic with a non-zero
+    /// `frame_context_idx`. With `fc_idx = 2`, only bank 2 must be
+    /// reset; banks 0, 1, 3 must retain their poison sentinel.
+    ///
+    /// Mirrors libvpx `vp9_entropymode.c:456-459` — the selection is
+    /// `self.frame_contexts[fc_idx]`, so a single non-zero index
+    /// suffices to demonstrate the indexing is honoured (rather than
+    /// hardcoded to bank 0).
+    #[test]
+    fn intra_only_reset_frame_context_2_resets_fc_idx_2_only() {
+        let default_bank = FrameContext::new_default();
+        let mut dec = Decoder::new();
+        for bank in dec.frame_contexts.iter_mut() {
+            bank.skip_probs[0] = 0;
+        }
+        let buf = build_minimal_intra_only_with_fc_idx(
+            /* reset_frame_context = */ 2, /* refresh_frame_flags = */ 0xFF,
+            /* fc_idx = */ 2, 16,
+        );
+        let frames = dec.parse_packet(&buf).expect("valid intra-only");
+        let header = frames.frames()[0].header.clone();
+        // Sanity-check the fixture: the header tail's
+        // `frame_context_idx` must round-trip as 2 (guards against a
+        // future bit-layout drift in `build_minimal_intra_only_with_
+        // fc_idx`).
+        assert_eq!(
+            header
+                .tail
+                .as_ref()
+                .expect("tail present")
+                .frame_context_idx,
+            2,
+        );
+        let frame_data: Vec<u8> = frames.frames()[0].full_frame_data.to_vec();
+        let header_end = frames.frames()[0].header_end_byte;
+        drop(frames);
+        let parsed = ParsedFrame {
+            header,
+            header_end_byte: header_end,
+            full_frame_data: &frame_data,
+        };
+        let _ = dec.decode_frame(&parsed);
+        // Bank 2 reset; banks 0, 1, 3 still poisoned.
+        assert_eq!(
+            dec.frame_contexts[2].skip_probs[0],
+            default_bank.skip_probs[0]
+        );
+        for i in 0..FRAME_CONTEXTS {
+            if i == 2 {
+                continue;
+            }
+            assert_eq!(
+                dec.frame_contexts[i].skip_probs[0], 0,
+                "bank[{i}] should be untouched when reset_frame_context=2 and fc_idx=2"
+            );
+        }
+    }
+
+    /// G1 (DA Item 3): `reset_frame_context = 0` must NOT reset any
+    /// FRAME_CONTEXTS bank. Per libvpx `vp9_entropymode.c:452-459` the
+    /// switch only triggers a reset on `reset_frame_context == 2` or
+    /// `== 3` (and on `error_resilient`); values 0 / 1 are no-ops for
+    /// the bank pool. Poison every bank with a sentinel, decode an
+    /// intra-only packet with `reset_frame_context = 0`, and verify
+    /// every bank still carries the sentinel.
+    #[test]
+    fn intra_only_reset_frame_context_0_keeps_all_banks() {
+        let default_bank = FrameContext::new_default();
+        let mut dec = Decoder::new();
+        for bank in dec.frame_contexts.iter_mut() {
+            bank.skip_probs[0] = 0;
+        }
+        // Sanity: poison differs from the default we are testing
+        // *against*.
+        assert_ne!(0, default_bank.skip_probs[0]);
+
+        let buf = build_minimal_intra_only_with_fc_idx(
+            /* reset_frame_context = */ 0, /* refresh_frame_flags = */ 0xFF,
+            /* fc_idx = */ 0, 16,
+        );
+        let frames = dec.parse_packet(&buf).expect("valid intra-only");
+        let header = frames.frames()[0].header.clone();
+        let frame_data: Vec<u8> = frames.frames()[0].full_frame_data.to_vec();
+        let header_end = frames.frames()[0].header_end_byte;
+        drop(frames);
+        let parsed = ParsedFrame {
+            header,
+            header_end_byte: header_end,
+            full_frame_data: &frame_data,
+        };
+        let _ = dec.decode_frame(&parsed);
+        for i in 0..FRAME_CONTEXTS {
+            assert_eq!(
+                dec.frame_contexts[i].skip_probs[0], 0,
+                "bank[{i}] should be untouched when reset_frame_context=0 \
+                 (intra-only with reset_frame_context in 0..=1 is a no-op \
+                  per vp9_entropymode.c:452-459)"
+            );
+        }
+    }
+
+    /// G1 (DA Item 3): `reset_frame_context = 1` is also a no-op for
+    /// the bank pool per libvpx `vp9_entropymode.c:452-459` — only `2`
+    /// and `3` trigger resets. Same poison-then-decode strategy as
+    /// [`intra_only_reset_frame_context_0_keeps_all_banks`].
+    #[test]
+    fn intra_only_reset_frame_context_1_keeps_all_banks() {
+        let mut dec = Decoder::new();
+        for bank in dec.frame_contexts.iter_mut() {
+            bank.skip_probs[0] = 0;
+        }
+        let buf = build_minimal_intra_only_with_fc_idx(
+            /* reset_frame_context = */ 1, /* refresh_frame_flags = */ 0xFF,
+            /* fc_idx = */ 0, 16,
+        );
+        let frames = dec.parse_packet(&buf).expect("valid intra-only");
+        let header = frames.frames()[0].header.clone();
+        let frame_data: Vec<u8> = frames.frames()[0].full_frame_data.to_vec();
+        let header_end = frames.frames()[0].header_end_byte;
+        drop(frames);
+        let parsed = ParsedFrame {
+            header,
+            header_end_byte: header_end,
+            full_frame_data: &frame_data,
+        };
+        let _ = dec.decode_frame(&parsed);
+        for i in 0..FRAME_CONTEXTS {
+            assert_eq!(
+                dec.frame_contexts[i].skip_probs[0], 0,
+                "bank[{i}] should be untouched when reset_frame_context=1 \
+                 (libvpx treats 0/1 identically as the no-reset cases)"
+            );
+        }
+    }
+
+    /// G1 (DA Item 3): `error_resilient = 1` forces an all-banks reset
+    /// regardless of `reset_frame_context`. Per libvpx
+    /// `vp9_entropymode.c:452`, the `force_all_reset` predicate is
+    /// `frame.error_resilient || reset_frame_context == 3`, so an
+    /// error-resilient intra-only frame with `reset_frame_context = 0`
+    /// must still wipe every bank back to defaults.
+    #[test]
+    fn intra_only_error_resilient_resets_all_banks() {
+        let default_bank = FrameContext::new_default();
+        let mut dec = Decoder::new();
+        for bank in dec.frame_contexts.iter_mut() {
+            bank.skip_probs[0] = 0;
+        }
+        assert_ne!(
+            dec.frame_contexts[0].skip_probs[0],
+            default_bank.skip_probs[0]
+        );
+
+        let buf = build_minimal_intra_only_full(
+            /* reset_frame_context = */ 0, /* refresh_frame_flags = */ 0xFF,
+            /* fc_idx = */ 0, /* error_resilient = */ true, 16,
+        );
+        let frames = dec.parse_packet(&buf).expect("valid intra-only");
+        let header = frames.frames()[0].header.clone();
+        // Sanity-check fixture round-trip: error_resilient must be true.
+        assert!(
+            header.error_resilient,
+            "fixture builder failed to set error_resilient = 1"
+        );
+        let frame_data: Vec<u8> = frames.frames()[0].full_frame_data.to_vec();
+        let header_end = frames.frames()[0].header_end_byte;
+        drop(frames);
+        let parsed = ParsedFrame {
+            header,
+            header_end_byte: header_end,
+            full_frame_data: &frame_data,
+        };
+        let _ = dec.decode_frame(&parsed);
+        for (i, bank) in dec.frame_contexts.iter().enumerate() {
+            assert_eq!(
+                bank.skip_probs[0], default_bank.skip_probs[0],
+                "bank[{i}] should be reset to defaults under error_resilient=1 \
+                 (same effect as reset_frame_context=3)"
+            );
+        }
+    }
+
+    /// G1 (DA Item 3) — refreshed for G12 (2026-05-21): two
+    /// consecutive intra-only decodes each with `refresh_frame_flags
+    /// = 0xFF` must each replace the FrameBuf currently bound to
+    /// every ref_frame_map slot. The G12 refactor collapsed the
+    /// pre-G12 parallel-mirror data structures (`ref_frame_map`
+    /// held `Arc` clones and `frame_pool` held a mirror), so the
+    /// "mirror in lockstep" assertion is gone; what remains is the
+    /// libvpx-faithful chain `ref_frame_map[i] -> frame_pool[N]`,
+    /// where after `refresh_frame_flags = 0xFF` every ref slot
+    /// holds the SAME pool slot index, and the second decode
+    /// installs a different FrameBuf at that (or some other) pool
+    /// slot.
+    #[test]
+    fn intra_only_then_intra_only_overwrites_every_ref_slot() {
+        let mut dec = Decoder::new();
+        // First intra-only decode: populates every slot via the
+        // same FrameBuf (refresh_frame_flags = 0xFF).
+        let buf1 = build_minimal_intra_only(
+            /* reset_frame_context = */ 0, /* refresh_frame_flags = */ 0xFF, 16,
+        );
+        let frames = dec.parse_packet(&buf1).expect("valid intra-only #1");
+        let header = frames.frames()[0].header.clone();
+        let frame_data: Vec<u8> = frames.frames()[0].full_frame_data.to_vec();
+        let header_end = frames.frames()[0].header_end_byte;
+        drop(frames);
+        let parsed = ParsedFrame {
+            header,
+            header_end_byte: header_end,
+            full_frame_data: &frame_data,
+        };
+        dec.decode_frame(&parsed).expect("intra-only #1 decode");
+
+        // After decode #1: every ref_frame_map slot must point at
+        // the same pool slot (refresh_frame_flags=0xFF splat).
+        let pool_slot_after_1 =
+            dec.ref_frame_map[0].expect("ref_frame_map[0] populated after first decode");
+        for i in 0..rvp9_core::bitstream::REF_FRAMES {
+            assert_eq!(
+                dec.ref_frame_map[i],
+                Some(pool_slot_after_1),
+                "ref_frame_map[{i}] should point at the same pool slot as [0] \
+                 after refresh_frame_flags=0xFF",
+            );
+        }
+        // Snapshot the FrameBuf identity through the resolver
+        // (uses Y-plane data pointer as a stable identity).
+        let snap: Vec<*const u8> = (0..rvp9_core::bitstream::REF_FRAMES)
+            .map(|i| {
+                dec.ref_frame_buf(i)
+                    .expect("slot populated after first decode")
+                    .y_plane()
+                    .data()
+                    .as_ptr()
+            })
+            .collect();
+
+        // Second intra-only decode (same fixture, fresh FrameBuf) — must
+        // install a different FrameBuf at each resolved ref slot.
+        let buf2 = build_minimal_intra_only(
+            /* reset_frame_context = */ 0, /* refresh_frame_flags = */ 0xFF, 16,
+        );
+        let frames = dec.parse_packet(&buf2).expect("valid intra-only #2");
+        let header = frames.frames()[0].header.clone();
+        let frame_data: Vec<u8> = frames.frames()[0].full_frame_data.to_vec();
+        let header_end = frames.frames()[0].header_end_byte;
+        drop(frames);
+        let parsed = ParsedFrame {
+            header,
+            header_end_byte: header_end,
+            full_frame_data: &frame_data,
+        };
+        dec.decode_frame(&parsed).expect("intra-only #2 decode");
+
+        // After decode #2: every ref_frame_map slot must again
+        // point at the same pool slot (could be the same pool slot
+        // recycled, or a different one — `acquire_free` recycles
+        // when refcount == 1, which is the expected state because
+        // the caller dropped the FrameBuf from #1).
+        let pool_slot_after_2 =
+            dec.ref_frame_map[0].expect("ref_frame_map[0] populated after second decode");
+        for i in 0..rvp9_core::bitstream::REF_FRAMES {
+            assert_eq!(
+                dec.ref_frame_map[i],
+                Some(pool_slot_after_2),
+                "ref_frame_map[{i}] should point at the same pool slot as [0] \
+                 after second refresh_frame_flags=0xFF",
+            );
+        }
+        // The FrameBuf at every resolved ref slot must differ from
+        // the snapshot — different `Arc`, different `Yv12Buffer`,
+        // different Y-data pointer.
+        for (i, &snap_ptr) in snap.iter().enumerate() {
+            let new_ptr = dec
+                .ref_frame_buf(i)
+                .expect("ref_frame_map[i] still resolves after second decode")
+                .y_plane()
+                .data()
+                .as_ptr();
+            assert_ne!(
+                new_ptr, snap_ptr,
+                "FrameBuf at ref slot {i} was NOT replaced by the second \
+                 IntraOnly decode (refresh_frame_flags=0xFF should install \
+                 a fresh FrameBuf at every selected ref slot)",
+            );
+        }
     }
 
     #[test]
@@ -2301,7 +3355,9 @@ mod tests {
             header_end_byte: header_end,
             full_frame_data: &frame_data,
         };
-        let err = dec.parse_compressed_partition(&parsed).expect_err("must fail");
+        let err = dec
+            .parse_compressed_partition(&parsed)
+            .expect_err("must fail");
         assert_eq!(err, DecodeError::WrongFrameKind);
     }
 
@@ -2389,7 +3445,18 @@ mod tests {
         use std::sync::Arc;
 
         let mut dec = Decoder::new();
-        // Populate slot 4 with a frame.
+        // G12 refactor: `ref_frame_map[i]` now holds an
+        // `Option<u8>` pool slot index, not an `Arc` directly. To
+        // wire a FrameBuf into `ref_frame_map[4]`:
+        //   (1) park the FrameBuf in the frame_pool (any slot; we
+        //       use pool slot 6 here to keep the test honest — i.e.,
+        //       NOT relying on the historical invariant that the
+        //       ref_frame_map slot index matches the pool slot index).
+        //   (2) write that pool slot index into ref_frame_map[4].
+        // `decode_show_existing_frame` then resolves
+        // `ref_frame_map[slot=4] -> Some(6) -> frame_pool.get(6) ->
+        // FrameBuf`. Pre-G12 the two indices were identical only
+        // because of the mirror-write hack the refactor removed.
         let f: FrameBuf = Arc::new(
             Yv12Buffer::alloc(
                 320,
@@ -2400,16 +3467,18 @@ mod tests {
             )
             .unwrap(),
         );
-        dec.frame_pool_mut().assign_slot(4, f.clone()).unwrap();
+        dec.frame_pool_mut().assign_slot(6, f.clone()).unwrap();
+        dec.set_ref_slot(4, 6);
 
-        // Build a packet pointing at slot 4.
+        // Build a packet pointing at ref slot 4.
         let buf = build_show_existing_frame(4);
         let parsed = dec.parse_packet(&buf).expect("valid");
         assert_eq!(parsed.count(), 1);
         let frame = &parsed.frames()[0];
         assert_eq!(frame.header.kind, FrameKind::ShowExistingFrame { slot: 4 });
 
-        // Decode emits the existing FrameBuf.
+        // Decode resolves through ref_frame_map → frame_pool and
+        // emits the originally-installed FrameBuf.
         let out = dec.decode_show_existing_frame(&frame.header).unwrap();
         assert!(Arc::ptr_eq(&out, &f));
     }
@@ -2433,6 +3502,240 @@ mod tests {
         let kf = &parsed.frames()[0];
         let err = dec.decode_show_existing_frame(&kf.header).unwrap_err();
         assert_eq!(err, DecodeError::WrongFrameKind);
+    }
+
+    /// G3 (decoder-hardening V6 §G3): an inter frame whose
+    /// `ref_frame_indices` point at an empty `ref_frame_map` slot
+    /// surfaces as `DecodeError::EmptyInterRef { slot }`, not the
+    /// pre-G3 misleading `Unimplemented` variant. The sibling
+    /// variant `EmptySlot` continues to be used by the
+    /// `decode_show_existing_frame` path (see
+    /// `decode_show_existing_frame_empty_slot_rejected` above).
+    ///
+    /// The test constructs a `ParsedFrame` directly (no packet
+    /// round-trip needed) — the ref-resolution loop runs before any
+    /// compressed-header or tile-byte parsing, so the body bytes are
+    /// irrelevant.
+    #[test]
+    fn decode_inter_frame_empty_ref_slot_rejected() {
+        use rvp9_core::bitstream::header::HeaderTail;
+        use rvp9_core::bitstream::sub_parsers::{
+            LoopFilterParams, MAX_PROB, PREDICTION_PROBS, QuantizationParams, SEG_TREE_PROBS,
+            SegmentationParams, TileInfo,
+        };
+        use rvp9_core::bitstream::{
+            BitDepth, ChromaFormat, ColorRange, ColorSpace, InterpFilter, Profile,
+            UncompressedHeader,
+        };
+
+        let mut dec = Decoder::new();
+        // No keyframe decoded — every `ref_frame_map` slot is `None`.
+
+        let tail = HeaderTail {
+            refresh_frame_context: true,
+            frame_parallel_decoding_mode: false,
+            frame_context_idx: 0,
+            loop_filter: LoopFilterParams {
+                filter_level: 0,
+                sharpness_level: 0,
+                mode_ref_delta_enabled: false,
+                mode_ref_delta_update: false,
+                ref_deltas: [None; 4],
+                mode_deltas: [None; 2],
+            },
+            quantization: QuantizationParams {
+                base_qindex: 50,
+                y_dc_delta_q: 0,
+                uv_dc_delta_q: 0,
+                uv_ac_delta_q: 0,
+            },
+            segmentation: SegmentationParams {
+                enabled: false,
+                update_map: false,
+                temporal_update: false,
+                tree_probs: [MAX_PROB; SEG_TREE_PROBS],
+                pred_probs: [MAX_PROB; PREDICTION_PROBS],
+                update_data: false,
+                abs_delta: false,
+                feature_data: Default::default(),
+            },
+            tile_info: TileInfo {
+                log2_tile_cols: 0,
+                log2_tile_rows: 0,
+            },
+            first_partition_size: 0,
+        };
+        let header = UncompressedHeader {
+            kind: FrameKind::InterFrame {
+                reset_frame_context: 0,
+                refresh_frame_flags: 0x00,
+                // LAST/GOLDEN/ALTREF all point at empty slot 3.
+                // The decoder reports the *first* unresolved slot
+                // (LAST), so the expected payload is `slot: 3`.
+                ref_frame_indices: [3, 3, 3],
+                ref_frame_sign_biases: [false, false, false],
+                allow_high_precision_mv: false,
+                interp_filter: InterpFilter::EightTap,
+            },
+            profile: Profile::Profile0,
+            show_frame: true,
+            error_resilient: false,
+            bit_depth: BitDepth::Eight,
+            color_space: ColorSpace::Bt601,
+            color_range: ColorRange::Studio,
+            chroma: ChromaFormat::Yuv420,
+            width: 64,
+            height: 64,
+            render_size: None,
+            tail: Some(tail),
+        };
+        // `full_frame_data` is never read on this path — the
+        // ref-resolution loop at lib.rs:1252 fires before any byte
+        // of the compressed header / tiles is consumed. Use an
+        // empty slice.
+        let empty: [u8; 0] = [];
+        let parsed = ParsedFrame {
+            header,
+            header_end_byte: 0,
+            full_frame_data: &empty,
+        };
+
+        let err = dec.decode_frame(&parsed).unwrap_err();
+        assert_eq!(err, DecodeError::EmptyInterRef { slot: 3 });
+    }
+
+    /// G3 (DA Item 4): the empty-ref-rejection loop must report the
+    /// *slot index* named by `ref_frame_indices[i]`, not the loop
+    /// iteration index `i`. Construct a case where slots 0 and 1 are
+    /// populated but slot 5 is empty, and the inter frame's
+    /// `ref_frame_indices = [0, 5, 0]`. The loop should resolve [0]
+    /// (LAST = slot 0, OK), then hit [1] (GOLDEN = slot 5, empty),
+    /// and return `EmptyInterRef { slot: 5 }` — proving the payload
+    /// carries the ref-map slot, not the iteration counter `i = 1`.
+    #[test]
+    fn decode_inter_frame_empty_ref_slot_rejected_reports_correct_slot() {
+        use rvp9_core::bitstream::header::HeaderTail;
+        use rvp9_core::bitstream::sub_parsers::{
+            LoopFilterParams, MAX_PROB, PREDICTION_PROBS, QuantizationParams, SEG_TREE_PROBS,
+            SegmentationParams, TileInfo,
+        };
+        use rvp9_core::bitstream::{
+            BitDepth, ChromaFormat, ColorRange, ColorSpace, InterpFilter, Profile,
+            UncompressedHeader,
+        };
+        use rvp9_core::frame::{BorderUsage, ByteAlignment, FrameBuf, Yv12Buffer};
+        use std::sync::Arc;
+
+        let mut dec = Decoder::new();
+        // Pre-populate ref_frame_map slots 0 and 1 with real FrameBufs
+        // (slot 5 stays `None`). These tests share the crate; the
+        // `set_ref_slot` accessor names the structural invariant the
+        // raw `ref_frame_map[i] = Some(_)` write would have obscured
+        // (see `Decoder::frame_pool` doc-comment).
+        //
+        // G12 refactor: `ref_frame_map[i]` holds an `Option<u8>`
+        // pool slot index; park each FrameBuf in `frame_pool` and
+        // wire the slot index into the ref_frame_map entry.
+        let make_buf = || -> FrameBuf {
+            Arc::new(
+                Yv12Buffer::alloc(
+                    64,
+                    64,
+                    ChromaFormat::Yuv420,
+                    BorderUsage::Decoder,
+                    ByteAlignment::Legacy,
+                )
+                .unwrap(),
+            )
+        };
+        dec.frame_pool_mut().assign_slot(0, make_buf()).unwrap();
+        dec.frame_pool_mut().assign_slot(1, make_buf()).unwrap();
+        dec.set_ref_slot(0, 0);
+        dec.set_ref_slot(1, 1);
+        // dec.ref_frame_map[5] stays None — this is the empty slot.
+
+        let tail = HeaderTail {
+            refresh_frame_context: true,
+            frame_parallel_decoding_mode: false,
+            frame_context_idx: 0,
+            loop_filter: LoopFilterParams {
+                filter_level: 0,
+                sharpness_level: 0,
+                mode_ref_delta_enabled: false,
+                mode_ref_delta_update: false,
+                ref_deltas: [None; 4],
+                mode_deltas: [None; 2],
+            },
+            quantization: QuantizationParams {
+                base_qindex: 50,
+                y_dc_delta_q: 0,
+                uv_dc_delta_q: 0,
+                uv_ac_delta_q: 0,
+            },
+            segmentation: SegmentationParams {
+                enabled: false,
+                update_map: false,
+                temporal_update: false,
+                tree_probs: [MAX_PROB; SEG_TREE_PROBS],
+                pred_probs: [MAX_PROB; PREDICTION_PROBS],
+                update_data: false,
+                abs_delta: false,
+                feature_data: Default::default(),
+            },
+            tile_info: TileInfo {
+                log2_tile_cols: 0,
+                log2_tile_rows: 0,
+            },
+            first_partition_size: 0,
+        };
+        let header = UncompressedHeader {
+            kind: FrameKind::InterFrame {
+                reset_frame_context: 0,
+                refresh_frame_flags: 0x00,
+                // LAST = slot 0 (populated), GOLDEN = slot 5 (empty),
+                // ALTREF = slot 0 (populated). The loop should fail at
+                // iteration i=1 and report `slot: 5`, not `slot: 1`.
+                ref_frame_indices: [0, 5, 0],
+                ref_frame_sign_biases: [false, false, false],
+                allow_high_precision_mv: false,
+                interp_filter: InterpFilter::EightTap,
+            },
+            profile: Profile::Profile0,
+            show_frame: true,
+            error_resilient: false,
+            bit_depth: BitDepth::Eight,
+            color_space: ColorSpace::Bt601,
+            color_range: ColorRange::Studio,
+            chroma: ChromaFormat::Yuv420,
+            width: 64,
+            height: 64,
+            render_size: None,
+            tail: Some(tail),
+        };
+        let empty: [u8; 0] = [];
+        let parsed = ParsedFrame {
+            header,
+            header_end_byte: 0,
+            full_frame_data: &empty,
+        };
+
+        let err = dec.decode_frame(&parsed).unwrap_err();
+        assert_eq!(err, DecodeError::EmptyInterRef { slot: 5 });
+    }
+
+    /// G3 (DA Item 5): regression guard against an accidental merge
+    /// of [`DecodeError::EmptySlot`] and [`DecodeError::EmptyInterRef`].
+    /// Even at identical slot indices the two variants must compare
+    /// non-equal — they cover distinct decoder paths
+    /// (show-existing-frame vs. inter-ref resolution) and any future
+    /// refactor that collapses them would silently regress the
+    /// diagnostic separation introduced by G3.
+    #[test]
+    fn empty_slot_and_empty_inter_ref_with_same_slot_are_not_equal() {
+        assert_ne!(
+            DecodeError::EmptySlot { slot: 3 },
+            DecodeError::EmptyInterRef { slot: 3 },
+        );
     }
 
     /// Stage 3 stretch D.6: backward-adapt `nmvc` end-of-inter-frame
@@ -2500,9 +3803,7 @@ mod tests {
     /// route to it, independently of the per-frame plumbing.
     #[test]
     fn adapt_coef_probs_with_nonzero_counts_shifts_probs() {
-        use rvp9_core::entropy::adapt::{
-            CoefCountsBank, adapt_coef_probs, coef_adapt_params,
-        };
+        use rvp9_core::entropy::adapt::{CoefCountsBank, adapt_coef_probs, coef_adapt_params};
         let pre = FrameContext::new_default();
         let mut counts = CoefCountsBank::default();
         // Inject a single (tx=Tx4x4, plane=Y, ref=intra, band=1, ctx=0)
@@ -2657,12 +3958,14 @@ mod tests {
         // libvpx applies these to `cm->fc` (working copy); we apply
         // them in place on the bank, matching our actual decode path.
         let delta_cell = (0usize, 0, 0, 2, 1, 0);
-        let original = dec.frame_contexts[0].coef_probs[delta_cell.0][delta_cell.1]
-            [delta_cell.2][delta_cell.3][delta_cell.4][delta_cell.5];
-        dec.frame_contexts[0].coef_probs[delta_cell.0][delta_cell.1][delta_cell.2]
-            [delta_cell.3][delta_cell.4][delta_cell.5] = original.saturating_sub(20);
+        let original = dec.frame_contexts[0].coef_probs[delta_cell.0][delta_cell.1][delta_cell.2]
+            [delta_cell.3][delta_cell.4][delta_cell.5];
+        dec.frame_contexts[0].coef_probs[delta_cell.0][delta_cell.1][delta_cell.2][delta_cell.3]
+            [delta_cell.4][delta_cell.5] = original.saturating_sub(20);
 
-        let (cs, uf) = coef_adapt_params(/* intra_only = */ false, /* last_was_key = */ true);
+        let (cs, uf) = coef_adapt_params(
+            /* intra_only = */ false, /* last_was_key = */ true,
+        );
 
         // The D.9 codepath: adapt uses the pre-snapshot as the `pre`
         // baseline.
@@ -2720,11 +4023,11 @@ mod tests {
     /// resolves to the correct per-tile origin.
     #[test]
     fn build_frame_mi_grid_stitches_two_tiles_in_row() {
+        use crate::tile::TileBounds;
         use rvp9_core::block::BlockSize;
         use rvp9_core::intra_pred::IntraMode;
         use rvp9_core::mode_info::{BlockMode, ModeInfo};
         use rvp9_core::transforms::TxSize;
-        use crate::tile::TileBounds;
 
         let mi_rows = 16usize;
         let mi_cols = 16usize;
@@ -2810,8 +4113,8 @@ mod tests {
         };
         use rvp9_core::bitstream::{
             BitDepth, ChromaFormat, ColorRange, ColorSpace, CompressedHeaderOptions,
-            CompressedHeaderResult, FrameKind, InterpFilter, ModesTileBounds, Profile, RawBitWriter,
-            UncompressedHeader, write_compressed_header, write_tile_intra_keyframe,
+            CompressedHeaderResult, FrameKind, InterpFilter, ModesTileBounds, Profile,
+            RawBitWriter, UncompressedHeader, write_compressed_header, write_tile_intra_keyframe,
             write_uncompressed_header,
         };
         use rvp9_core::block::BlockSize;
@@ -2836,8 +4139,7 @@ mod tests {
             },
             bmi: Default::default(),
         };
-        let mi_grid: Vec<Option<ModeInfo>> =
-            vec![Some(cell); (mi_rows * mi_cols) as usize];
+        let mi_grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
 
         // 2. Build the compressed header. tx_mode = AllowTx32x32 so
         //    that the per-block tx_size is implicit (decoder derives
@@ -3004,8 +4306,7 @@ mod tests {
         for (i, cell_got) in got_grid.iter().enumerate() {
             let mi_row = i / (mi_cols as usize);
             let mi_col = i % (mi_cols as usize);
-            let cell = cell_got
-                .expect("every cell in the 1-SB frame must be populated");
+            let cell = cell_got.expect("every cell in the 1-SB frame must be populated");
             assert_eq!(
                 cell.block_size,
                 BlockSize::Block64x64,
@@ -3049,8 +4350,8 @@ mod tests {
         };
         use rvp9_core::bitstream::{
             BitDepth, ChromaFormat, ColorRange, ColorSpace, CompressedHeaderOptions,
-            CompressedHeaderResult, FrameKind, InterpFilter, ModesTileBounds, Profile, RawBitWriter,
-            UncompressedHeader, write_compressed_header, write_tile_intra_keyframe,
+            CompressedHeaderResult, FrameKind, InterpFilter, ModesTileBounds, Profile,
+            RawBitWriter, UncompressedHeader, write_compressed_header, write_tile_intra_keyframe,
             write_uncompressed_header,
         };
         use rvp9_core::block::BlockSize;
@@ -3238,8 +4539,7 @@ mod tests {
         for (i, cell_got) in got_grid.iter().enumerate() {
             let mi_row = i / (mi_cols as usize);
             let mi_col = i % (mi_cols as usize);
-            let cell = cell_got
-                .expect("every cell of the SPLIT-partitioned SB must be populated");
+            let cell = cell_got.expect("every cell of the SPLIT-partitioned SB must be populated");
             assert_eq!(
                 cell.block_size,
                 BlockSize::Block32x32,
@@ -3359,8 +4659,7 @@ mod tests {
             },
             bmi: Default::default(),
         };
-        let kf_mi_grid: Vec<Option<ModeInfo>> =
-            vec![Some(kf_cell); (mi_rows * mi_cols) as usize];
+        let kf_mi_grid: Vec<Option<ModeInfo>> = vec![Some(kf_cell); (mi_rows * mi_cols) as usize];
         // (Every 8×8 cell carries the same 64×64 splatted ModeInfo —
         // the decoder splat convention; see `tile_ctx.rs:411`.)
 
@@ -3620,8 +4919,8 @@ mod tests {
         for (i, cell_got) in got_grid.iter().enumerate() {
             let mi_row = i / (mi_cols as usize);
             let mi_col = i % (mi_cols as usize);
-            let cell = cell_got
-                .expect("every cell of the PARTITION_NONE 64×64 SB must be populated");
+            let cell =
+                cell_got.expect("every cell of the PARTITION_NONE 64×64 SB must be populated");
             assert_eq!(
                 cell.block_size,
                 BlockSize::Block64x64,
@@ -3741,8 +5040,7 @@ mod tests {
             },
             bmi: Default::default(),
         };
-        let kf_grid: Vec<Option<ModeInfo>> =
-            vec![Some(kf_cell); (mi_rows * mi_cols) as usize];
+        let kf_grid: Vec<Option<ModeInfo>> = vec![Some(kf_cell); (mi_rows * mi_cols) as usize];
 
         let mut kf_pre_fc = FrameContext::new_default();
         let kf_post_fc = kf_pre_fc.clone();
@@ -3761,14 +5059,8 @@ mod tests {
         let mut kf_compressed_buf = vec![0u8; 16 * 1024];
         let kf_compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_compressed_buf);
-            write_compressed_header(
-                &mut bw,
-                &mut kf_pre_fc,
-                &kf_post_fc,
-                kf_opts,
-                &kf_target,
-            )
-            .expect("kf compressed header");
+            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target)
+                .expect("kf compressed header");
             bw.stop_encode().expect("stop_encode kf compressed")
         };
         kf_compressed_buf.truncate(kf_compressed_len);
@@ -4023,9 +5315,7 @@ mod tests {
             InterModeReadParams, setup_compound_reference_mode, sign_bias_from_header,
         };
         use rvp9_core::intra_pred::IntraMode;
-        use rvp9_core::mode_info::{
-            BlockMode, BmiInfo, InterMode, ModeInfo, Mv, RefFrame,
-        };
+        use rvp9_core::mode_info::{BlockMode, BmiInfo, InterMode, ModeInfo, Mv, RefFrame};
         use rvp9_core::transforms::{TxMode, TxSize};
 
         let mi_rows = 8u32;
@@ -4084,8 +5374,7 @@ mod tests {
             },
             bmi: Default::default(),
         };
-        let kf_grid: Vec<Option<ModeInfo>> =
-            vec![Some(kf_cell); (mi_rows * mi_cols) as usize];
+        let kf_grid: Vec<Option<ModeInfo>> = vec![Some(kf_cell); (mi_rows * mi_cols) as usize];
         let mut kf_pre_fc = FrameContext::new_default();
         let kf_post_fc = kf_pre_fc.clone();
         let kf_opts = CompressedHeaderOptions {
@@ -4327,7 +5616,9 @@ mod tests {
             "sub-8 corner leaf must round-trip as Block4x4"
         );
         match corner.mode {
-            BlockMode::Inter { mode, ref_frames, .. } => {
+            BlockMode::Inter {
+                mode, ref_frames, ..
+            } => {
                 assert_eq!(mode, InterMode::ZeroMv);
                 assert_eq!(ref_frames, [RefFrame::LastFrame, RefFrame::NoRefFrame]);
             }
@@ -4438,8 +5729,7 @@ mod tests {
             },
             bmi: Default::default(),
         };
-        let kf_mi_grid: Vec<Option<ModeInfo>> =
-            vec![Some(kf_cell); (mi_rows * mi_cols) as usize];
+        let kf_mi_grid: Vec<Option<ModeInfo>> = vec![Some(kf_cell); (mi_rows * mi_cols) as usize];
 
         let pre_fc_default = FrameContext::new_default();
         let mut kf_pre_fc = pre_fc_default.clone();
@@ -4676,8 +5966,7 @@ mod tests {
         for (i, cell_got) in got_grid.iter().enumerate() {
             let mi_row = i / (mi_cols as usize);
             let mi_col = i % (mi_cols as usize);
-            let cell = cell_got
-                .expect("every cell of the 64×64 SB must be populated");
+            let cell = cell_got.expect("every cell of the 64×64 SB must be populated");
             assert_eq!(
                 cell.block_size,
                 BlockSize::Block64x64,
@@ -4689,13 +5978,13 @@ mod tests {
             );
             match cell.mode {
                 BlockMode::Inter {
-                    mode, ref_frames, mvs, interp_filter,
+                    mode,
+                    ref_frames,
+                    mvs,
+                    interp_filter,
                 } => {
                     assert_eq!(mode, InterMode::ZeroMv);
-                    assert_eq!(
-                        ref_frames,
-                        [RefFrame::LastFrame, RefFrame::NoRefFrame]
-                    );
+                    assert_eq!(ref_frames, [RefFrame::LastFrame, RefFrame::NoRefFrame]);
                     assert_eq!(mvs, [Mv::ZERO; 2]);
                     assert_eq!(interp_filter, InterpFilter::EightTap);
                 }
@@ -4767,7 +6056,10 @@ mod tests {
             fn new() -> Self {
                 let mut y_buf = [0i32; 1024];
                 y_buf[0] = 1;
-                Self { y_buf, zero_buf: [0i32; 1024] }
+                Self {
+                    y_buf,
+                    zero_buf: [0i32; 1024],
+                }
             }
         }
         impl InterCoefSource for OnePerYThenZero {
@@ -4846,8 +6138,7 @@ mod tests {
             },
             bmi: Default::default(),
         };
-        let kf_mi_grid: Vec<Option<ModeInfo>> =
-            vec![Some(kf_cell); (mi_rows * mi_cols) as usize];
+        let kf_mi_grid: Vec<Option<ModeInfo>> = vec![Some(kf_cell); (mi_rows * mi_cols) as usize];
 
         let pre_fc_default = FrameContext::new_default();
         let mut kf_pre_fc = pre_fc_default.clone();
@@ -5082,8 +6373,7 @@ mod tests {
         for (i, cell_got) in got_grid.iter().enumerate() {
             let mi_row = i / (mi_cols as usize);
             let mi_col = i % (mi_cols as usize);
-            let cell = cell_got
-                .expect("every cell of the 64×64 SB must be populated");
+            let cell = cell_got.expect("every cell of the 64×64 SB must be populated");
             assert_eq!(cell.block_size, BlockSize::Block64x64);
             assert!(
                 !cell.skip,
@@ -5199,8 +6489,7 @@ mod tests {
             },
             bmi: Default::default(),
         };
-        let kf_grid: Vec<Option<ModeInfo>> =
-            vec![Some(kf_cell); (mi_rows * mi_cols) as usize];
+        let kf_grid: Vec<Option<ModeInfo>> = vec![Some(kf_cell); (mi_rows * mi_cols) as usize];
         let mut kf_pre_fc = FrameContext::new_default();
         let kf_post_fc = kf_pre_fc.clone();
         let kf_opts = CompressedHeaderOptions {
@@ -5402,8 +6691,9 @@ mod tests {
         inter_packet.extend_from_slice(&inter_compressed_buf);
         inter_packet.extend_from_slice(&inter_tile_buf);
 
-        let inter_parsed_out =
-            dec.parse_packet(&inter_packet).expect("parse dense 8x8 non-skip inter");
+        let inter_parsed_out = dec
+            .parse_packet(&inter_packet)
+            .expect("parse dense 8x8 non-skip inter");
         let inter_parsed = ParsedFrame {
             header: inter_parsed_out.frames()[0].header.clone(),
             header_end_byte: inter_parsed_out.frames()[0].header_end_byte,
@@ -5426,7 +6716,9 @@ mod tests {
                 "skip must round-trip as FALSE @ ({mi_row}, {mi_col})"
             );
             match cell.mode {
-                BlockMode::Inter { mode, ref_frames, .. } => {
+                BlockMode::Inter {
+                    mode, ref_frames, ..
+                } => {
                     assert_eq!(mode, InterMode::ZeroMv);
                     assert_eq!(ref_frames, [RefFrame::LastFrame, RefFrame::NoRefFrame]);
                 }

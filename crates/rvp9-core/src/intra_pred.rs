@@ -1,3 +1,10 @@
+// Wave A G11 — workspace lint `clippy::print_stderr` is "deny" for
+// library crates. `predict_intra` carries an env-var-gated
+// (`RVP9_TRACE_INTRA`) debug-dump scheduled for triage in the HLD
+// §G11 deliverable 3 eprintln audit follow-up. Allow at the module
+// level until that sweep lands.
+#![allow(clippy::print_stderr)]
+
 //! VP9 intra prediction kernels.
 //!
 //! Mirrors libvpx `vpx_dsp/intrapred.c` for the 8-bit (non-HBD) path.

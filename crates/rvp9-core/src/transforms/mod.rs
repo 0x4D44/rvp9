@@ -31,7 +31,8 @@ pub use forward::{
 pub use inverse::{
     iadst4, iadst8, iadst16, idct4, idct4x4_1_add, idct4x4_16_add, idct8, idct8x8_1_add,
     idct8x8_64_add, idct16, idct16x16_1_add, idct16x16_256_add, idct32, idct32x32_1_add,
-    idct32x32_1024_add, iht4x4_16_add, iht8x8_64_add, iht16x16_256_add,
+    idct32x32_1024_add, iht4x4_16_add, iht8x8_64_add, iht16x16_256_add, iwht4x4_1_add,
+    iwht4x4_16_add,
 };
 pub use scans::{
     COL_ISCAN_4X4, COL_ISCAN_8X8, COL_ISCAN_16X16, COL_SCAN_4X4, COL_SCAN_4X4_NEIGHBORS,

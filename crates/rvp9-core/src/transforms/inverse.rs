@@ -1,3 +1,11 @@
+// Wave A G11 — workspace lint `clippy::print_stderr` is "deny" for
+// library crates. The `m13_v_block_24_12_iht4x4_probe` test dumps
+// intermediate iht4x4 output to stderr while diagnosing the M13
+// V-block divergence. Scheduled for triage in the HLD §G11 deliverable
+// 3 eprintln audit follow-up. Allow at the module level until that
+// sweep lands.
+#![allow(clippy::print_stderr)]
+
 //! Inverse transform scalar reference kernels (decoder + encoder
 //! reconstruction).
 //!
@@ -1209,6 +1217,125 @@ pub fn iadst16(input: &[i32; 16], output: &mut [i32; 16]) {
     output[15] = wraplow(-x1);
 }
 
+/// libvpx `UNIT_QUANT_SHIFT` (`vpx_dsp/txfm_common.h:20`). The
+/// 4×4 inverse Walsh-Hadamard right-shifts every input coefficient by
+/// this amount up-front; the matching forward kernel scales coefficients
+/// by `UNIT_QUANT_FACTOR = 1 << UNIT_QUANT_SHIFT = 4` so the round-trip
+/// cancels.
+///
+/// G2 (decoder-hardening V6 §G2): scoped to this module because only the
+/// WHT kernels reference it; if a forward WHT lands later it should
+/// re-export from here.
+const UNIT_QUANT_SHIFT: u32 = 2;
+
+/// 2D 16-coefficient inverse 4×4 Walsh-Hadamard transform with residual
+/// add to `dest` (lossless mode).
+///
+/// `input` is the 16 dequantised coefficients in raster order. `dest`
+/// is the prediction (or the zero-base initial buffer); the transform
+/// output is added pixel-by-pixel and saturated to `[0, 255]`.
+///
+/// VP9 lossless mode (`lossless == 1` in the frame header) uses this
+/// kernel instead of the standard 4×4 inverse DCT at every `TX_4X4`
+/// position. Larger TX sizes are not legal in lossless mode (libvpx
+/// `vp9_decodeframe.c:280` forces `tx_size = TX_4X4` when lossless).
+///
+/// Mirrors `vpx_iwht4x4_16_add_c` (`vpx_dsp/inv_txfm.c:18-68`)
+/// byte-for-byte: a 4-point reversible orthonormal Walsh-Hadamard in
+/// 3.5 adds and 0.5 shifts per pixel, applied first as a row pass then
+/// a column pass + residual add.
+pub fn iwht4x4_16_add(input: &[i32; 16], dest: &mut [u8], stride: usize) {
+    debug_assert!(dest.len() >= stride * 3 + 4, "dest too small for 4x4 add");
+
+    let mut output = [0i32; 16];
+
+    // Row pass — read `[a, c, d, b] = ip[0..4]`, divide by
+    // UNIT_QUANT_FACTOR=4 (the encoder-side WHT inflates by this), run
+    // the butterfly, then WRAPLOW-store back as `[a, b, c, d]`.
+    for r in 0..4 {
+        let ip = &input[r * 4..r * 4 + 4];
+        let mut a1: i64 = (ip[0] as i64) >> UNIT_QUANT_SHIFT;
+        let mut c1: i64 = (ip[1] as i64) >> UNIT_QUANT_SHIFT;
+        let mut d1: i64 = (ip[2] as i64) >> UNIT_QUANT_SHIFT;
+        let mut b1: i64 = (ip[3] as i64) >> UNIT_QUANT_SHIFT;
+        a1 += c1;
+        d1 -= b1;
+        let e1: i64 = (a1 - d1) >> 1;
+        b1 = e1 - b1;
+        c1 = e1 - c1;
+        a1 -= b1;
+        d1 += c1;
+        let op = &mut output[r * 4..r * 4 + 4];
+        op[0] = wraplow(a1 as i32);
+        op[1] = wraplow(b1 as i32);
+        op[2] = wraplow(c1 as i32);
+        op[3] = wraplow(d1 as i32);
+    }
+
+    // Column pass + residual add. libvpx walks the columns by stepping
+    // `ip` one slot per column and reading `ip[4*r]` for each row; we
+    // index directly. No further shift on the output — `clip_pixel_add`
+    // does the WRAPLOW + clamp.
+    for c in 0..4 {
+        let mut a1: i64 = output[c] as i64;
+        let mut c1: i64 = output[4 + c] as i64;
+        let mut d1: i64 = output[8 + c] as i64;
+        let mut b1: i64 = output[12 + c] as i64;
+        a1 += c1;
+        d1 -= b1;
+        let e1: i64 = (a1 - d1) >> 1;
+        b1 = e1 - b1;
+        c1 = e1 - c1;
+        a1 -= b1;
+        d1 += c1;
+        dest[c] = clip_pixel_add(dest[c], wraplow(a1 as i32) as i64);
+        dest[stride + c] = clip_pixel_add(dest[stride + c], wraplow(b1 as i32) as i64);
+        dest[2 * stride + c] = clip_pixel_add(dest[2 * stride + c], wraplow(c1 as i32) as i64);
+        dest[3 * stride + c] = clip_pixel_add(dest[3 * stride + c], wraplow(d1 as i32) as i64);
+    }
+}
+
+/// 2D 1-coefficient inverse 4×4 Walsh-Hadamard fast path (DC-only).
+///
+/// `input` is the DC coefficient (`coef[0]`); the remaining 15 are
+/// assumed zero. Produces a result bit-identical to
+/// [`iwht4x4_16_add`] for any DC-only input — see the
+/// `iwht4x4_1_add_matches_16_add_for_dc_only` unit test.
+///
+/// Mirrors `vpx_iwht4x4_1_add_c` (`vpx_dsp/inv_txfm.c:70-94`).
+pub fn iwht4x4_1_add(input: i32, dest: &mut [u8], stride: usize) {
+    debug_assert!(dest.len() >= stride * 3 + 4, "dest too small for 4x4 add");
+
+    // Row pass: only `ip[0]` is non-zero, so `c1 = d1 = b1 = 0` and the
+    // recurrence collapses to `e1 = a1 >> 1; a1 -= e1`, writing
+    // `[a1, e1, e1, e1]`. libvpx allocates a `tran_low_t tmp[4]`; we
+    // inline the four values.
+    let a1: i64 = (input as i64) >> UNIT_QUANT_SHIFT;
+    let e1: i64 = a1 >> 1;
+    let a1: i64 = a1 - e1;
+    let tmp_a = wraplow(a1 as i32);
+    let tmp_e = wraplow(e1 as i32);
+    let tmp = [tmp_a, tmp_e, tmp_e, tmp_e];
+
+    // Column pass: each column starts with `ip[0] = tmp[c]`,
+    // `ip[4] = ip[8] = ip[12] = 0`. Recurrence again collapses to
+    // `e1 = ip[0] >> 1; a1 = ip[0] - e1`, writing
+    // `[a1, e1, e1, e1]` down the column. libvpx does NOT WRAPLOW the
+    // per-pixel add inside the loop, and neither do we: values produced
+    // here are small enough (DC pre-scaled by `>> UNIT_QUANT_SHIFT` = 4)
+    // that WRAPLOW (`x as i16 as i32`) would be a no-op in any realistic
+    // range, so libvpx — and we — match by omitting it.
+    for c in 0..4 {
+        let ip0: i64 = tmp[c] as i64;
+        let e1: i64 = ip0 >> 1;
+        let a1: i64 = ip0 - e1;
+        dest[c] = clip_pixel_add(dest[c], a1);
+        dest[stride + c] = clip_pixel_add(dest[stride + c], e1);
+        dest[2 * stride + c] = clip_pixel_add(dest[2 * stride + c], e1);
+        dest[3 * stride + c] = clip_pixel_add(dest[3 * stride + c], e1);
+    }
+}
+
 /// Function-pointer type for a fixed-size 1D inverse transform.
 type Transform1D<const N: usize> = fn(&[i32; N], &mut [i32; N]);
 
@@ -2401,6 +2528,156 @@ mod tests {
                 &expected_row,
                 "row {r}: idct8x8 output differs from expected (M.16 pin)"
             );
+        }
+    }
+
+    // ----- Walsh-Hadamard inverse (lossless) -------------------------
+    //
+    // G2 (decoder-hardening V6 §G2): scalar reference port of libvpx's
+    // `vpx_iwht4x4_16_add_c` / `vpx_iwht4x4_1_add_c`
+    // (`vpx_dsp/inv_txfm.c:18-94`). Each pass:
+    //
+    //   a1 = ip[0] >> UNIT_QUANT_SHIFT  (>>2 in default build)
+    //   c1 = ip[1] >> UNIT_QUANT_SHIFT
+    //   d1 = ip[2] >> UNIT_QUANT_SHIFT
+    //   b1 = ip[3] >> UNIT_QUANT_SHIFT
+    //   a1 += c1
+    //   d1 -= b1
+    //   e1 = (a1 - d1) >> 1
+    //   b1 = e1 - b1
+    //   c1 = e1 - c1
+    //   a1 -= b1
+    //   d1 += c1
+    //   write {a1, b1, c1, d1} via WRAPLOW
+    //
+    // Tests below derive expected outputs by walking that recurrence
+    // by hand, then cross-check the DC fast path against the 16-add
+    // path for DC-only inputs.
+
+    /// Zero input → unchanged dest.
+    #[test]
+    fn iwht4x4_16_add_zero_preserves_dest() {
+        let input = [0i32; 16];
+        let mut dest = [128u8; 16];
+        iwht4x4_16_add(&input, &mut dest, 4);
+        assert_eq!(dest, [128u8; 16]);
+    }
+
+    /// DC=16 single-coefficient input. Trace through the WHT:
+    /// - Row pass on row 0 (`ip = [16, 0, 0, 0]`):
+    ///   `a1 = 16 >> 2 = 4`, `c1 = d1 = b1 = 0`.
+    ///   `a1 += c1 → 4`, `d1 -= b1 → 0`,
+    ///   `e1 = (4 - 0) >> 1 = 2`,
+    ///   `b1 = 2 - 0 = 2`, `c1 = 2 - 0 = 2`,
+    ///   `a1 -= b1 → 2`, `d1 += c1 → 2`.
+    ///   Row 0 output = `[2, 2, 2, 2]`. Rows 1..3 stay zero.
+    /// - Column pass on col 0 (`ip = [2, 0, 0, 0]`): identical algebra
+    ///   gives `[1, 1, 1, 1]`. By symmetry every column is `[1; 4]`.
+    /// - `clip_pixel_add` with `trans = 1` and `dest = 128` → 129.
+    #[test]
+    fn iwht4x4_16_add_dc_16_known_value() {
+        let mut input = [0i32; 16];
+        input[0] = 16;
+        let mut dest = [128u8; 16];
+        iwht4x4_16_add(&input, &mut dest, 4);
+        assert_eq!(dest, [129u8; 16]);
+    }
+
+    /// DC=64 single-coefficient input. Same trace as the DC=16 test
+    /// but with `a1 = 64 >> 2 = 16`; the recurrence yields row-pass
+    /// output `[8, 8, 8, 8]`, column-pass output `[4, 4, 4, 4]`, and
+    /// final `dest = [132; 16]` from a 128 base.
+    #[test]
+    fn iwht4x4_16_add_dc_64_known_value() {
+        let mut input = [0i32; 16];
+        input[0] = 64;
+        let mut dest = [128u8; 16];
+        iwht4x4_16_add(&input, &mut dest, 4);
+        assert_eq!(dest, [132u8; 16]);
+    }
+
+    /// `iwht4x4_1_add` is the DC-only fast path. For any DC-only input
+    /// (`input[0] = dc`, rest zero), it must produce the exact same
+    /// pixels as the full `iwht4x4_16_add`. Mirrors the equivalent
+    /// `idct4x4_1_add_matches_16_add_for_dc_only` invariant.
+    ///
+    /// Inputs include both multiples of 4 (clean `>> UNIT_QUANT_SHIFT`)
+    /// and non-multiples (`±5, ±7, ±25`) to exercise the arithmetic
+    /// right-shift behavior of `>> UNIT_QUANT_SHIFT` for inputs that do
+    /// not divide evenly — both paths must round identically.
+    #[test]
+    fn iwht4x4_1_add_matches_16_add_for_dc_only() {
+        for dc in [
+            -256i32, -64, -25, -16, -7, -5, -4, 0, 4, 5, 7, 16, 25, 64, 256,
+        ] {
+            let mut input = [0i32; 16];
+            input[0] = dc;
+            let mut dest_full = [128u8; 16];
+            let mut dest_dc = [128u8; 16];
+            iwht4x4_16_add(&input, &mut dest_full, 4);
+            iwht4x4_1_add(dc, &mut dest_dc, 4);
+            assert_eq!(
+                dest_full, dest_dc,
+                "DC={dc}: WHT DC-only fast path must match full WHT for DC-only input"
+            );
+        }
+    }
+
+    /// `clip_pixel_add` clamps to 255: a large positive DC produces a
+    /// per-pixel residual well above what `dest = 200` can absorb, so the
+    /// output saturates at the upper bound. Note: this does NOT exercise
+    /// wraplow's i16 truncation — DC=16000 yields intermediate values
+    /// around ~4000, well inside i16 range. It exclusively tests the
+    /// `[0, 255]` clamp inside `clip_pixel_add`.
+    #[test]
+    fn iwht4x4_16_add_clamps_dest_to_255_on_high_dc() {
+        let mut input = [0i32; 16];
+        input[0] = 16_000;
+        let mut dest = [200u8; 16];
+        iwht4x4_16_add(&input, &mut dest, 4);
+        assert_eq!(dest, [255u8; 16]);
+    }
+
+    /// Saturation: large negative DC clamps to 0.
+    #[test]
+    fn iwht4x4_16_add_saturates_low() {
+        let mut input = [0i32; 16];
+        input[0] = -16_000;
+        let mut dest = [100u8; 16];
+        iwht4x4_16_add(&input, &mut dest, 4);
+        assert_eq!(dest, [0u8; 16]);
+    }
+
+    /// AC-only differential trace. Input has a single non-zero in row 0
+    /// at position 1 (`c1`-slot of the row pass), so the row output
+    /// involves all four lanes of the recurrence, not just the DC
+    /// pattern. Cross-check the WHT output by walking the recurrence
+    /// by hand on the resulting 4×4 intermediate.
+    ///
+    /// Input: `coef[1] = 32`. UNIT_QUANT_SHIFT divides by 4 → c1=8.
+    /// - Row 0 (`ip = [0, 32, 0, 0]`): `a1=0, c1=8, d1=0, b1=0`,
+    ///   `a1 += c1 → 8`, `d1 -= b1 → 0`, `e1 = (8-0)>>1 = 4`,
+    ///   `b1 = 4-0 = 4`, `c1 = 4-8 = -4`, `a1 -= b1 → 4`, `d1 += c1 → -4`.
+    ///   Row 0 output = `[4, 4, -4, -4]`.
+    /// - Column 0 (`ip = [4, 0, 0, 0]`): `a1=4, c1=d1=b1=0` →
+    ///   `e1 = 4>>1 = 2`, `b1 = 2`, `c1 = 2`, `a1 = 2`, `d1 = 2`.
+    ///   Column 0 final pixel adds = `[2, 2, 2, 2]`.
+    /// - Column 1 (`ip = [4, 0, 0, 0]`): same → `[2, 2, 2, 2]`.
+    /// - Column 2 (`ip = [-4, 0, 0, 0]`): `a1=-4, e1=(-4)>>1 = -2`,
+    ///   `b1 = -2`, `c1 = -2`, `a1 = -4-(-2) = -2`, `d1 = 0+(-2) = -2`.
+    ///   Column 2 final pixel adds = `[-2, -2, -2, -2]`.
+    /// - Column 3: same as column 2 → `[-2, -2, -2, -2]`.
+    ///
+    /// `dest = 128 + [2, 2, -2, -2]` for each row.
+    #[test]
+    fn iwht4x4_16_add_ac_row0_pos1_known_value() {
+        let mut input = [0i32; 16];
+        input[1] = 32;
+        let mut dest = [128u8; 16];
+        iwht4x4_16_add(&input, &mut dest, 4);
+        let row: [u8; 4] = [130, 130, 126, 126];
+        for r in 0..4 {
+            assert_eq!(&dest[r * 4..r * 4 + 4], &row, "row {r}");
         }
     }
 }

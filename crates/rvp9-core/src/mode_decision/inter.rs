@@ -953,18 +953,7 @@ mod tests {
 
         let all = pick_inter_mode_luma_all_costs(&params);
         let zero = &all[0];
-        let nearest = &all[1];
         let new = &all[2];
-
-        eprintln!(
-            "F8.1 shifted-ref RD breakdown (Block16x16, shift=(0,3) full-pel, q=50):\n  \
-             ZEROMV  : rd={} dist={} rate={} mv={:?}\n  \
-             NEAREST : rd={} dist={} rate={} mv={:?}\n  \
-             NEWMV   : rd={} dist={} rate={} mv={:?}",
-            zero.best_rd_cost, zero.best_distortion, zero.best_rate, zero.best_mv,
-            nearest.best_rd_cost, nearest.best_distortion, nearest.best_rate, nearest.best_mv,
-            new.best_rd_cost, new.best_distortion, new.best_rate, new.best_mv,
-        );
 
         // The actual oracle: NEWMV's distortion must be substantially
         // lower than ZEROMV's (NEWMV finds the shift; ZEROMV is stuck

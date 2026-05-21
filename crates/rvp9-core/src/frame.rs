@@ -811,16 +811,30 @@ impl std::error::Error for FramePoolError {}
 /// 9-slot recycling pool of decoded frames for the decoder.
 ///
 /// Each slot holds either nothing (`None`) or a `FrameBuf` (an
-/// `Arc<Yv12Buffer>`). A slot is "free" when either:
+/// `Arc<Yv12Buffer>`). A slot is "free" when ALL of:
 ///
-/// - the slot is `None`, or
-/// - the slot's `Arc` has refcount 1 (only the pool holds the
-///   reference, so it's safe to recycle the underlying buffer).
+/// - the slot is `None`, OR its `Arc` has refcount 1 (only the pool
+///   holds the reference, so it's safe to recycle the underlying
+///   buffer), AND
+/// - the parallel `ref_counts[slot] == 0` — no logical
+///   `ref_frame_map[i]` entry currently names this slot.
+///
+/// The parallel `ref_counts` array exists because the decoder stores
+/// `ref_frame_map[i]: Option<u8>` (integer slot indices, not Arc
+/// clones), so an active ref-map entry does NOT bump
+/// `Arc::strong_count`. Without the parallel array a slot whose Arc
+/// is held only by the pool but is named by 8 ref-map entries would
+/// be recycled, silently aliasing every ref-map slot onto the new
+/// frame. (The G12 v6.0 refactor briefly relied on the strong-count
+/// check alone and produced exactly that bug — DA traced it during
+/// the G12 R2 review; see the regression test
+/// `pool_acquire_blocked_by_nonzero_ref_count` below.)
 ///
 /// libvpx counterpart: `BufferPool::frame_bufs` plus the
 /// `ref_count`/`ref_cnt_fb`/`get_free_fb` family at
 /// `vp9_onyxc_int.h:66-365`. The reference-count semantics translate
-/// directly: `Arc::strong_count` is `frame_bufs[i].ref_count`.
+/// directly: `ref_counts[i]` is libvpx's `frame_bufs[i].ref_count`
+/// (it counts logical ref-map slots, not Arc strong-count).
 ///
 /// **Concurrency**: only the main decoder thread mutates the pool
 /// (per HLD-threading §5.4); tile workers hold cloned `FrameBuf`
@@ -830,6 +844,13 @@ impl std::error::Error for FramePoolError {}
 #[derive(Debug, Default)]
 pub struct DecoderFramePool {
     slots: [Option<FrameBuf>; DECODER_FRAME_BUFFERS],
+    /// Per-slot logical ref-map refcount (number of
+    /// `ref_frame_map[i] = Some(slot)` entries in the decoder that
+    /// currently name this slot). Caller must keep this in sync via
+    /// [`inc_ref`](Self::inc_ref) / [`dec_ref`](Self::dec_ref) on every
+    /// `ref_frame_map[i]` mutation. See the type-level doc for why
+    /// the Arc strong-count alone is insufficient.
+    ref_counts: [u8; DECODER_FRAME_BUFFERS],
 }
 
 impl DecoderFramePool {
@@ -855,27 +876,89 @@ impl DecoderFramePool {
     /// Acquire a free slot, populating it with `frame`. Returns the
     /// slot index. Mirrors libvpx `get_free_fb`.
     ///
-    /// A slot is "free" if it's empty OR its `Arc` has refcount 1
-    /// (only the pool holds it). If no slot is free,
-    /// [`FramePoolError::NoFreeSlot`] is returned — at that point the
-    /// caller has held too many refs (a bug).
+    /// A slot is "free" if **both** of these hold:
+    ///
+    /// 1. The slot is empty (`None`) OR its `Arc` has strong-count 1
+    ///    (no external `FrameBuf` holder), AND
+    /// 2. The parallel `ref_counts[slot] == 0` (no decoder
+    ///    `ref_frame_map[i]` entry currently names this slot).
+    ///
+    /// The `ref_counts` check is what prevents recycling a slot that
+    /// the decoder's `ref_frame_map` still indexes — without it, a
+    /// slot whose external Arc was dropped but whose pool index is
+    /// still in 8 ref-map slots would be silently overwritten,
+    /// aliasing all 8 ref-map entries onto the new frame.
+    ///
+    /// If no slot is free, [`FramePoolError::NoFreeSlot`] is returned
+    /// — at that point the caller has held too many refs (or has too
+    /// many live ref-map entries — i.e., a bug).
     ///
     /// # Errors
     ///
     /// [`FramePoolError::NoFreeSlot`] when every slot has an
-    /// outstanding external reference.
+    /// outstanding external reference or a non-zero `ref_counts`.
     pub fn acquire_free(&mut self, frame: FrameBuf) -> Result<usize, FramePoolError> {
         for (i, slot) in self.slots.iter_mut().enumerate() {
-            let is_free = match slot {
+            let arc_free = match slot {
                 None => true,
                 Some(arc) => Arc::strong_count(arc) == 1,
             };
-            if is_free {
+            let ref_count_free = self.ref_counts[i] == 0;
+            if arc_free && ref_count_free {
                 *slot = Some(frame);
                 return Ok(i);
             }
         }
         Err(FramePoolError::NoFreeSlot)
+    }
+
+    /// Bump the logical ref-map refcount for `idx`. The decoder calls
+    /// this every time it writes `ref_frame_map[i] = Some(idx)`. Pair
+    /// with [`dec_ref`](Self::dec_ref) when overwriting the slot to a
+    /// different `Some(_)` or to `None`.
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug builds if `idx >= DECODER_FRAME_BUFFERS` or if
+    /// the refcount would overflow `u8`. A `u8` is plenty for 8
+    /// ref-map slots × 9 pool slots; an overflow would indicate the
+    /// caller is double-incrementing.
+    pub fn inc_ref(&mut self, idx: u8) {
+        let i = idx as usize;
+        debug_assert!(i < DECODER_FRAME_BUFFERS, "pool slot {i} out of range");
+        debug_assert!(
+            self.ref_counts[i] < u8::MAX,
+            "pool slot {i} ref-count overflow (was {})",
+            self.ref_counts[i],
+        );
+        self.ref_counts[i] = self.ref_counts[i].saturating_add(1);
+    }
+
+    /// Decrement the logical ref-map refcount for `idx`. The decoder
+    /// calls this when it overwrites a `ref_frame_map[i] =
+    /// Some(old_idx)` entry (to a different `Some(_)` or to `None`),
+    /// passing `old_idx`.
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug builds if `idx >= DECODER_FRAME_BUFFERS` or if
+    /// the refcount is already zero (which would mean the caller
+    /// dec'd more times than they inc'd — a paired-call bug).
+    pub fn dec_ref(&mut self, idx: u8) {
+        let i = idx as usize;
+        debug_assert!(i < DECODER_FRAME_BUFFERS, "pool slot {i} out of range");
+        debug_assert!(
+            self.ref_counts[i] > 0,
+            "pool slot {i} dec_ref underflow (already zero)",
+        );
+        self.ref_counts[i] = self.ref_counts[i].saturating_sub(1);
+    }
+
+    /// Read the logical ref-map refcount for `idx` (test/diagnostic
+    /// use only).
+    #[must_use]
+    pub fn ref_count(&self, idx: usize) -> u8 {
+        self.ref_counts.get(idx).copied().unwrap_or(0)
     }
 
     /// Replace the frame at `slot` with `frame`. Mirrors libvpx
@@ -908,10 +991,16 @@ impl DecoderFramePool {
         Ok(())
     }
 
-    /// Reset the pool to empty.
+    /// Reset the pool to empty. Also zeroes every `ref_counts` entry
+    /// (caller's responsibility to ensure no `ref_frame_map[i]` still
+    /// names a cleared slot — otherwise the next `inc_ref` /
+    /// `dec_ref` pairing is wrong).
     pub fn clear(&mut self) {
         for slot in self.slots.iter_mut() {
             *slot = None;
+        }
+        for c in self.ref_counts.iter_mut() {
+            *c = 0;
         }
     }
 }
@@ -1571,6 +1660,93 @@ mod tests {
         let mut dst_b = vec![0u8; w * h];
         convolve8_horiz(&reference, ref_stride, &mut dst_b, w, phase, w, h);
         assert_eq!(dst_a, dst_b);
+    }
+
+    /// Critical regression (G12 R2): a pool slot whose external Arc
+    /// was dropped (strong_count == 1) but whose `ref_counts` is
+    /// non-zero (logical ref-map entries still name it) MUST NOT be
+    /// recycled by `acquire_free`. Pre-fix, the Arc check alone
+    /// returned this slot — leading to silent aliasing of every
+    /// ref-map entry onto the new frame.
+    ///
+    /// Walkthrough (matches DA's trace):
+    ///   1. Park a frame in slot 0 via `acquire_free`; drop the
+    ///      external `FrameBuf` so `strong_count == 1`.
+    ///   2. Simulate keyframe `refresh_frame_flags = 0xFF` by
+    ///      `inc_ref(0)` 8 times (every ref-map slot now names 0).
+    ///   3. `acquire_free` for a new frame MUST return `NoFreeSlot`
+    ///      (the pool is exhausted by the ref-map references). Only
+    ///      after 8 `dec_ref(0)`s clear the count can the slot be
+    ///      recycled.
+    #[test]
+    fn pool_acquire_blocked_by_nonzero_ref_count() {
+        let mut pool = DecoderFramePool::new();
+        let f = make_frame(16, 16);
+        let slot = pool.acquire_free(f.clone()).expect("free");
+        assert_eq!(slot, 0);
+        // Drop external — Arc strong_count for slot 0 falls to 1
+        // (only the pool holds it).
+        drop(f);
+        assert_eq!(Arc::strong_count(&pool.get(0).unwrap()), 2); // 1 pool + 1 just-cloned by get
+        // Simulate keyframe refresh=0xFF wiring 8 ref-map slots to
+        // pool slot 0.
+        for _ in 0..8 {
+            pool.inc_ref(0);
+        }
+        assert_eq!(pool.ref_count(0), 8);
+        // Every other pool slot is empty; but acquire MUST NOT pick
+        // slot 0 (it's still ref'd) and MUST pick the first empty
+        // slot. After we fill all 8 empty slots externally-held, a
+        // 10th acquire fails.
+        let mut external: Vec<FrameBuf> = Vec::new();
+        for _ in 0..(DECODER_FRAME_BUFFERS - 1) {
+            let n = make_frame(16, 16);
+            let s = pool.acquire_free(n.clone()).expect("non-slot-0");
+            assert_ne!(s, 0, "slot 0 must not recycle while ref_counts[0]==8");
+            external.push(n);
+        }
+        // Pool now has slot 0 ref-blocked + 8 externally held → no
+        // free slot.
+        let err = pool.acquire_free(make_frame(16, 16)).unwrap_err();
+        assert_eq!(err, FramePoolError::NoFreeSlot);
+
+        // Clear the ref-count on slot 0 — now it can recycle.
+        for _ in 0..8 {
+            pool.dec_ref(0);
+        }
+        assert_eq!(pool.ref_count(0), 0);
+        let recycled = pool.acquire_free(make_frame(16, 16)).expect("slot 0 frees");
+        assert_eq!(recycled, 0);
+    }
+
+    /// Defensive: `inc_ref` / `dec_ref` round-trip increments and
+    /// decrements correctly across multiple slots independently.
+    #[test]
+    fn pool_ref_count_per_slot_independent() {
+        let mut pool = DecoderFramePool::new();
+        pool.inc_ref(0);
+        pool.inc_ref(0);
+        pool.inc_ref(3);
+        assert_eq!(pool.ref_count(0), 2);
+        assert_eq!(pool.ref_count(3), 1);
+        assert_eq!(pool.ref_count(7), 0);
+        pool.dec_ref(0);
+        assert_eq!(pool.ref_count(0), 1);
+        pool.dec_ref(3);
+        assert_eq!(pool.ref_count(3), 0);
+    }
+
+    /// `clear()` zeroes both `slots` and `ref_counts`.
+    #[test]
+    fn pool_clear_resets_ref_counts() {
+        let mut pool = DecoderFramePool::new();
+        pool.acquire_free(make_frame(16, 16)).unwrap();
+        pool.inc_ref(0);
+        pool.inc_ref(0);
+        assert_eq!(pool.ref_count(0), 2);
+        pool.clear();
+        assert_eq!(pool.ref_count(0), 0);
+        assert_eq!(pool.occupied_count(), 0);
     }
 
     #[test]

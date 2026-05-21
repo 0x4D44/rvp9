@@ -1753,6 +1753,5 @@ mod tests {
             max_err_input_y < 32,
             "max |decoded - input| (Y) = {max_err_input_y} exceeded loose bound"
         );
-        eprintln!("F5.1: max |decoded - input| (Y) = {max_err_input_y}");
     }
 }

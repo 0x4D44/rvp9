@@ -12,3 +12,16 @@ workspace = true
 
 [dependencies]
 rvp9-core = { path = "../rvp9-core" }
+# Drift-catch for `Decoder: Send + Sync` — see lib.rs near the
+# `assert_impl_all!` invocation. `static_assertions` is a zero-cost
+# compile-time-only crate (all macros expand to unused fns).
+static_assertions = "1.1"
+
+[dev-dependencies]
+# Wave A G12 — used by `tests/panic_safety.rs` to build the inter-
+# frame fixture for the mid-tile-failure test (otherwise the test
+# would re-derive ~300 lines of synthetic-packet plumbing already
+# present in the encoder). Circular dev-dep is fine: cargo only
+# rejects regular-dep cycles, and the encoder's own dev-dep on the
+# decoder is the symmetric case (round-trip integration tests).
+rvp9-encoder = { path = "../rvp9-encoder" }

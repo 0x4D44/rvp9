@@ -7,8 +7,20 @@ authors.workspace = true
 rust-version.workspace = true
 description = "Performance benchmarks: real-time latency (ms/frame) and BD-rate measurement against libvpx."
 
-[lints]
-workspace = true
+# Intentionally NOT inheriting `[lints.workspace]` per HLD §G11
+# deliverable 1: benchmarks legitimately print results to stdout /
+# diagnostics to stderr, so `clippy::print_stderr` + `print_stdout`
+# would be the wrong rule here.
+#
+# Re-enables only the unsafe-related lints from the workspace table;
+# `print_stderr` / `print_stdout` are deliberately omitted because
+# this benchmark crate uses stderr/stdout for legitimate user-facing
+# output.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"
 
 [[bin]]
 name = "realtime"

@@ -545,7 +545,6 @@ mod tests {
             let (var, sse) = var_fn(&buf, w, &buf, w);
             assert_eq!(var, 0, "variance({}×{}) on flat must be 0", w, h);
             assert_eq!(sse, 0, "sse({}×{}) on flat must be 0", w, h);
-            println!("variance {}x{} OK", w, h);
         }
     }
 
@@ -583,7 +582,6 @@ mod tests {
                 w,
                 h
             );
-            println!("sad {}x{} OK", w, h);
         }
     }
 
