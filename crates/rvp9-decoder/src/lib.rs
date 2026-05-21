@@ -4372,6 +4372,7 @@ mod tests {
                 mi_cols,
                 tile_bounds,
                 &post_fc,
+                None, // AQ.0: seg = None (no segmentation in this test)
                 &mut coef_ctx,
                 &coef_source,
             )
@@ -4617,6 +4618,7 @@ mod tests {
                 mi_cols,
                 tile_bounds,
                 &post_fc,
+                None, // AQ.0: seg = None (no segmentation in this test)
                 &mut coef_ctx,
                 &coef_source,
             )
@@ -4882,6 +4884,7 @@ mod tests {
                 mi_cols,
                 tile_bounds,
                 &kf_post_fc,
+                None, // AQ.0: seg = None (no segmentation in this test)
                 &mut coef_ctx,
                 &coef_source,
             )
@@ -5027,6 +5030,7 @@ mod tests {
                 mi_rows,
                 mi_cols,
                 tile_bounds,
+                None, // AQ.0: seg = None (no segmentation in this test)
                 None, // no prev-frame MV grid — keyframe just cleared it
                 &mut coef_ctx,
                 &coef_source,
@@ -5260,6 +5264,7 @@ mod tests {
                 mi_cols,
                 tile_bounds,
                 &kf_post_fc,
+                None, // AQ.0: seg = None (no segmentation in this test)
                 &mut coef_ctx,
                 &coef_source,
             )
@@ -5380,7 +5385,8 @@ mod tests {
                 mi_rows,
                 mi_cols,
                 tile_bounds,
-                None,
+                None, // AQ.0: seg = None (no segmentation in this test)
+                None, // prev_mv_grid = None
                 &mut coef_ctx,
                 &coef_source,
             )
@@ -5591,6 +5597,7 @@ mod tests {
                 mi_cols,
                 tile_bounds,
                 &kf_post_fc,
+                None, // AQ.0: seg = None (no segmentation in this test)
                 &mut coef_ctx,
                 &coef_source,
             )
@@ -5733,7 +5740,8 @@ mod tests {
                 mi_rows,
                 mi_cols,
                 tile_bounds,
-                None,
+                None, // AQ.0: seg = None (no segmentation in this test)
+                None, // prev_mv_grid = None
                 &mut coef_ctx,
                 &coef_source,
             )
@@ -5950,6 +5958,7 @@ mod tests {
                 mi_cols,
                 tile_bounds,
                 &kf_post_fc,
+                None, // AQ.0: seg = None (no segmentation in this test)
                 &mut coef_ctx,
                 &coef_source,
             )
@@ -6075,7 +6084,8 @@ mod tests {
                 mi_rows,
                 mi_cols,
                 tile_bounds,
-                None,
+                None, // AQ.0: seg = None (no segmentation in this test)
+                None, // prev_mv_grid = None
                 &mut coef_ctx,
                 &coef_source,
             )
@@ -6359,6 +6369,7 @@ mod tests {
                 mi_cols,
                 tile_bounds,
                 &kf_post_fc,
+                None, // AQ.0: seg = None (no segmentation in this test)
                 &mut coef_ctx,
                 &coef_source,
             )
@@ -6483,7 +6494,8 @@ mod tests {
                 mi_rows,
                 mi_cols,
                 tile_bounds,
-                None,
+                None, // AQ.0: seg = None (no segmentation in this test)
+                None, // prev_mv_grid = None
                 &mut coef_ctx,
                 &coef_source,
             )
@@ -6708,6 +6720,7 @@ mod tests {
                 mi_cols,
                 tile_bounds,
                 &kf_post_fc,
+                None, // AQ.0: seg = None (no segmentation in this test)
                 &mut coef_ctx,
                 &coef_source,
             )
@@ -6827,7 +6840,8 @@ mod tests {
                 mi_rows,
                 mi_cols,
                 tile_bounds,
-                None,
+                None, // AQ.0: seg = None (no segmentation in this test)
+                None, // prev_mv_grid = None
                 &mut coef_ctx,
                 &coef_source,
             )
