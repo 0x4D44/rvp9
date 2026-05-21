@@ -2087,6 +2087,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     sb_partitions[sb_idx][leaf_idx].picked_mode = InterMode::ZeroMv;
                     sb_partitions[sb_idx][leaf_idx].picked_mv = Mv::ZERO;
                     sb_partitions[sb_idx][leaf_idx].skip = true;
+                    if std::env::var("RVP9_DIAG_PICKER").is_ok() {
+                        #[allow(clippy::print_stderr)]
+                        {
+                            eprintln!(
+                                "    SKIP-fallback (Block8x8) leaf sb=({},{}) px=({},{}) bs={:?}",
+                                sb_row, sb_col, leaf_px_x, leaf_px_y, leaf_bsize
+                            );
+                        }
+                    }
                     continue;
                 }
 
@@ -2157,6 +2166,23 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 sb_partitions[sb_idx][leaf_idx].picked_mode = pick.best_mode;
                 sb_partitions[sb_idx][leaf_idx].picked_mv = pick.best_mv;
                 sb_partitions[sb_idx][leaf_idx].skip = false;
+
+                // A0 diagnostic: dump per-leaf picker decision when
+                // `RVP9_DIAG_PICKER` is set in the environment.
+                if std::env::var("RVP9_DIAG_PICKER").is_ok() {
+                    #[allow(clippy::print_stderr)]
+                    {
+                        eprintln!(
+                            "    leaf sb=({},{}) px=({},{}) bs={:?} q={} → mode={:?} mv=({},{}) rd={} dist={} rate={}",
+                            sb_row, sb_col, leaf_px_x, leaf_px_y, leaf_bsize, leaf_qindex,
+                            pick.best_mode,
+                            pick.best_mv.row, pick.best_mv.col,
+                            pick.best_rd_cost,
+                            pick.best_distortion,
+                            pick.best_rate,
+                        );
+                    }
+                }
 
                 // RC.X1 — track total eob across all planes & TX blocks.
                 // libvpx's decoder (`vp9_decodeframe.c:1101`) sets
@@ -2312,6 +2338,16 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // coder at the next block's skip read.
                 if leaf_total_eob == 0 {
                     sb_partitions[sb_idx][leaf_idx].skip = true;
+                }
+                if std::env::var("RVP9_DIAG_PICKER").is_ok() {
+                    #[allow(clippy::print_stderr)]
+                    {
+                        eprintln!(
+                            "      leaf_total_eob={} (skip={})",
+                            leaf_total_eob,
+                            sb_partitions[sb_idx][leaf_idx].skip
+                        );
+                    }
                 }
             }
         }

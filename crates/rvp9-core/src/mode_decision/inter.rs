@@ -395,6 +395,47 @@ fn evaluate_candidate(
     // fits in u32 (max 64*64*255^2 = 266_342_400 < 2^32).
     let sse = sse_block(params.src_plane, params.src_offset, &recon, bw, bw, bh);
     let dist = sse.min(u32::MAX as u64) as u32;
+    // A0 diagnostic 2: dump full 16-pixel sample comparison for an
+    // arbitrary leaf when RVP9_DIAG_EVAL_FULL is set.
+    if std::env::var("RVP9_DIAG_EVAL_FULL").is_ok() {
+        #[allow(clippy::print_stderr)]
+        {
+            let (sx, sy) = params.src_offset;
+            // Print src row 0 cols 0..16 vs recon row 0 cols 0..16.
+            let row_off = sy * params.src_plane.stride + sx;
+            let src_row = &params.src_plane.data[row_off..row_off + 16];
+            let recon_row = &recon[..16];
+            eprintln!("      FULL mode={:?} mv=({},{}) src_row0={:?} recon_row0={:?} bw={} sse={}",
+                mode, mv.row, mv.col, src_row, recon_row, bw, sse);
+            // Also row 5 (middle of small block).
+            let row5_off = (sy + 5) * params.src_plane.stride + sx;
+            let src_row5 = &params.src_plane.data[row5_off..row5_off + 16];
+            let recon_row5 = &recon[5 * bw..5 * bw + 16];
+            eprintln!("           src_row5={:?} recon_row5={:?}", src_row5, recon_row5);
+        }
+    }
+    // A0 diagnostic — print per-candidate src/pred/recon comparison.
+    if std::env::var("RVP9_DIAG_EVAL").is_ok() {
+        #[allow(clippy::print_stderr)]
+        {
+            let (sx, sy) = params.src_offset;
+            let src0 = params.src_plane.data[sy * params.src_plane.stride + sx];
+            let src1 = params.src_plane.data[sy * params.src_plane.stride + sx + 1];
+            let pred0 = pred[0];
+            let pred1 = pred[1];
+            let recon0 = recon[0];
+            let recon1 = recon[1];
+            let ref_x = (sx as i32) + (i32::from(mv.col) >> 3);
+            let ref_y = (sy as i32) + (i32::from(mv.row) >> 3);
+            let ref0 = if ref_x >= 0 && ref_y >= 0 {
+                params.ref_plane.data[(ref_y as usize) * params.ref_plane.stride + (ref_x as usize)]
+            } else { 0 };
+            eprintln!(
+                "      eval mode={:?} mv=({},{}) src[0..2]=({},{}) ref[0]={} pred[0..2]=({},{}) recon[0..2]=({},{}) sse={}",
+                mode, mv.row, mv.col, src0, src1, ref0, pred0, pred1, recon0, recon1, sse
+            );
+        }
+    }
 
     // Rate. Mode cost is a table lookup; NEWMV additionally charges
     // the MV-bit cost (libvpx `vp9_mv_bit_cost`).
