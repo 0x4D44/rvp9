@@ -36,5 +36,6 @@
 
 pub mod caps;
 pub mod dispatch;
+pub mod distortion;
 
 pub use dispatch::{SimdDispatch, get, init};
