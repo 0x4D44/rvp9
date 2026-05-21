@@ -701,6 +701,22 @@ impl StreamEncoder {
     pub(crate) fn last_recon_y(&self) -> &[u8] {
         &self.last_recon_y
     }
+
+    /// Test-only — read access to the encoder's last reconstruction
+    /// U plane. AQ.4 Oracle 1 (`aq_cyclic_refresh_bit_exact_encoder_decoder_recon`)
+    /// asserts the encoder's per-plane recon matches the decoder bit-exactly
+    /// with AQ on.
+    #[cfg(test)]
+    pub(crate) fn last_recon_u(&self) -> &[u8] {
+        &self.last_recon_u
+    }
+
+    /// Test-only — read access to the encoder's last reconstruction
+    /// V plane. AQ.4 Oracle 1 companion to [`Self::last_recon_u`].
+    #[cfg(test)]
+    pub(crate) fn last_recon_v(&self) -> &[u8] {
+        &self.last_recon_v
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3017,4 +3033,390 @@ mod tests {
             }
         }
     }
+
+    // -----------------------------------------------------------------
+    // AQ.4 — Differential quality oracles for cyclic-refresh AQ.
+    //
+    // Stage 4b cyclic-refresh AQ is wired and functionally validated
+    // (AQ.3 tests cover emit/decode/refresh-cycle/KF-reset round-trips).
+    // The AQ.4 oracles validate that AQ actually produces meaningful
+    // DIFFERENTIAL effects on the output:
+    //
+    // 1. `aq_cyclic_refresh_bit_exact_encoder_decoder_recon` — KEY
+    //    ORACLE. AQ on, KF + 3 inter on translating-gradient input.
+    //    Encoder Y/U/V recon must match decoder recon pixel-for-pixel
+    //    (max |diff| == 0 on every plane on every frame). Extends the
+    //    F10.1c / F10.2 T2 invariant to U/V under AQ.
+    // 2. `aq_cyclic_refresh_segment_1_has_finer_quantization` — quality
+    //    oracle. On chaotic content where AQ paints some SBs as
+    //    segment 1 and others as segment 0, the segment-1 SBs must
+    //    have lower per-cell reconstruction SSE vs source than the
+    //    segment-0 SBs (finer Q ⇒ lower distortion).
+    // 3. `aq_cyclic_refresh_cursor_advances_monotonically` — refresh-
+    //    map stability oracle. Consecutive inter frames mark DISJOINT
+    //    sets of SBs as segment 1 (the cursor advances; refreshed SBs
+    //    age past `min_refresh_age = 4` before re-eligibility).
+    // -----------------------------------------------------------------
+
+    /// AQ.4 Oracle 1 — KEY ORACLE.
+    ///
+    /// With `AqMode::CyclicRefresh` on, encoder and decoder
+    /// reconstructions match BIT-EXACT pixel-for-pixel on every plane
+    /// (Y, U, V) for every frame (KF + 3 inter) under translating-
+    /// gradient motion. Extends the F10.2 T2 invariant (encoder recon
+    /// == decoder recon) to AQ-on path, on all three planes.
+    ///
+    /// If this fails, segmentation bits, per-segment Q-delta
+    /// application, or segment_id projection has drifted between
+    /// encoder and decoder — a critical wire-format bug.
+    #[test]
+    fn aq_cyclic_refresh_bit_exact_encoder_decoder_recon() {
+        const W: usize = 64;
+        const H: usize = 64;
+        let cfg = EncoderConfig {
+            width: W as u32,
+            height: H as u32,
+            framerate: 30.0,
+            target_bitrate_bps: 1_500_000,
+            gop_length: 30,
+            aq_mode: AqMode::CyclicRefresh,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let mut dec = Decoder::new();
+
+        for idx in 0..4u32 {
+            let (y, u, v) = translating_gradient(W, H, idx);
+            let pkt = enc.encode_frame(&yuv_view(&y, &u, &v, W)).unwrap();
+            let frames = decode_packet(&mut dec, &pkt.data);
+            assert_eq!(frames.len(), 1);
+            let buf = dec
+                .decode_frame(&frames[0])
+                .expect("decode_frame must accept the AQ-on packet");
+
+            // Y plane: row-by-row bit-exact.
+            let yp = buf.y_plane();
+            let enc_y = enc.last_recon_y();
+            let mut max_y_diff = 0i32;
+            for r in 0..H {
+                let dec_row = &yp.data()[r * yp.stride()..r * yp.stride() + W];
+                let enc_row = &enc_y[r * W..(r + 1) * W];
+                for c in 0..W {
+                    let d = (dec_row[c] as i32) - (enc_row[c] as i32);
+                    max_y_diff = max_y_diff.max(d.abs());
+                }
+            }
+            assert_eq!(
+                max_y_diff, 0,
+                "AQ.4 Oracle 1: frame {idx} Y plane: encoder recon != \
+                 decoder recon under AqMode::CyclicRefresh (max |diff| = {max_y_diff})",
+            );
+
+            // U/V planes (subsampled 4:2:0, W/2 × H/2): same invariant.
+            let uvw = W / 2;
+            let uvh = H / 2;
+            let up = buf.u_plane();
+            let vp = buf.v_plane();
+            let enc_u = enc.last_recon_u();
+            let enc_v = enc.last_recon_v();
+            let mut max_u_diff = 0i32;
+            let mut max_v_diff = 0i32;
+            for r in 0..uvh {
+                let dec_u_row = &up.data()[r * up.stride()..r * up.stride() + uvw];
+                let enc_u_row = &enc_u[r * uvw..(r + 1) * uvw];
+                let dec_v_row = &vp.data()[r * vp.stride()..r * vp.stride() + uvw];
+                let enc_v_row = &enc_v[r * uvw..(r + 1) * uvw];
+                for c in 0..uvw {
+                    let du = (dec_u_row[c] as i32) - (enc_u_row[c] as i32);
+                    let dv = (dec_v_row[c] as i32) - (enc_v_row[c] as i32);
+                    max_u_diff = max_u_diff.max(du.abs());
+                    max_v_diff = max_v_diff.max(dv.abs());
+                }
+            }
+            assert_eq!(
+                max_u_diff, 0,
+                "AQ.4 Oracle 1: frame {idx} U plane: encoder recon != \
+                 decoder recon under AqMode::CyclicRefresh (max |diff| = {max_u_diff})",
+            );
+            assert_eq!(
+                max_v_diff, 0,
+                "AQ.4 Oracle 1: frame {idx} V plane: encoder recon != \
+                 decoder recon under AqMode::CyclicRefresh (max |diff| = {max_v_diff})",
+            );
+        }
+    }
+
+    /// AQ.4 Oracle 2 — segment-1 leaves are reconstructed at FINER
+    /// quality (lower SSE) than the same cells would be under AQ-off.
+    ///
+    /// **Design rationale — differential, not absolute**: comparing
+    /// segment-1 SSE to segment-0 SSE in the *same* AQ-on frame is
+    /// confounded — cyclic refresh paints whole SBs uniformly, so
+    /// segment-1 SBs and segment-0 SBs are *different content regions*
+    /// with different motion-estimation difficulty / boundary
+    /// proximity / etc. The two buckets are not comparable.
+    ///
+    /// Instead we run two parallel encoders on identical input:
+    /// - encoder A: `AqMode::Off`
+    /// - encoder B: `AqMode::CyclicRefresh`
+    ///
+    /// We pick the cells that B marked as segment 1 (using the decoded
+    /// mi-grid), then compare A's per-cell SSE on those same cells
+    /// against B's per-cell SSE on the same cells. The AQ.1 quality
+    /// claim is: B's per-cell SSE on segment-1 cells must be LOWER
+    /// than A's per-cell SSE on the same cells.
+    ///
+    /// This is the libvpx-spec property: finer Q ⇒ lower distortion.
+    /// If this fails, AQ is "running but not producing quality" —
+    /// segment_q_delta isn't reaching the dequant path on the decoder
+    /// side, OR the encoder isn't actually using the finer Q.
+    #[test]
+    fn aq_cyclic_refresh_segment_1_has_finer_quantization() {
+        // 256×256 = 16 SBs (4×4 grid); large enough that cyclic refresh
+        // marks multiple SBs as segment 1 over the run.
+        const W: usize = 256;
+        const H: usize = 256;
+        const N_INTER: u32 = 8;
+        let cfg_off = EncoderConfig {
+            width: W as u32,
+            height: H as u32,
+            framerate: 30.0,
+            target_bitrate_bps: 1_500_000,
+            gop_length: 100, // single KF
+            aq_mode: AqMode::Off,
+        };
+        let cfg_on = EncoderConfig { aq_mode: AqMode::CyclicRefresh, ..cfg_off };
+
+        let mut enc_off = StreamEncoder::new(cfg_off).unwrap();
+        let mut enc_on = StreamEncoder::new(cfg_on).unwrap();
+        let mut dec_off = Decoder::new();
+        let mut dec_on = Decoder::new();
+
+        // KF on both encoders (identical input ⇒ AQ-off KF and AQ-on KF
+        // emit identical headers since AQ doesn't fire on KF).
+        let (y0, u0, v0) = translating_gradient(W, H, 0);
+        {
+            let kf_off = enc_off.encode_frame(&yuv_view(&y0, &u0, &v0, W)).unwrap();
+            let fr = decode_packet(&mut dec_off, &kf_off.data);
+            let _ = dec_off.decode_frame(&fr[0]).expect("decode kf off");
+            let kf_on = enc_on.encode_frame(&yuv_view(&y0, &u0, &v0, W)).unwrap();
+            let fr = decode_packet(&mut dec_on, &kf_on.data);
+            let _ = dec_on.decode_frame(&fr[0]).expect("decode kf on");
+        }
+
+        let mi_rows = H / 8;
+        let mi_cols = W / 8;
+
+        // Per-cell SSE for "segment-1 under AQ-on" vs "same cell under AQ-off".
+        // The cell is identified by (frame_idx, mi_r, mi_c). We collect
+        // BOTH encoders' SSE on that cell, then compare aggregated means.
+        let mut sse_on_at_seg1_cells: Vec<u64> = Vec::new();
+        let mut sse_off_at_seg1_cells: Vec<u64> = Vec::new();
+
+        // Diagnostic counters surfaced in assert messages on failure.
+        let mut seg1_total = 0usize;
+        let mut seg1_skip = 0usize;
+
+        for f in 1..=N_INTER {
+            let (ys, us, vs) = translating_gradient(W, H, f);
+            // Encode + decode on both encoders.
+            let pkt_off = enc_off.encode_frame(&yuv_view(&ys, &us, &vs, W)).unwrap();
+            let fr_off = decode_packet(&mut dec_off, &pkt_off.data);
+            let buf_off = dec_off.decode_frame(&fr_off[0]).expect("decode off");
+            let pkt_on = enc_on.encode_frame(&yuv_view(&ys, &us, &vs, W)).unwrap();
+            let fr_on = decode_packet(&mut dec_on, &pkt_on.data);
+            let buf_on = dec_on.decode_frame(&fr_on[0]).expect("decode on");
+
+            let yp_off = buf_off.y_plane();
+            let yp_on = buf_on.y_plane();
+            let grid_on = dec_on.last_frame_mi_grid();
+            assert_eq!(grid_on.len(), mi_rows * mi_cols);
+
+            // For each cell marked segment 1 by AQ-on, compute both
+            // encoders' 8×8 SSE on that cell vs source.
+            for mi_r in 0..mi_rows {
+                for mi_c in 0..mi_cols {
+                    let cell = match grid_on[mi_r * mi_cols + mi_c] {
+                        Some(c) => c,
+                        None => continue,
+                    };
+                    if cell.segment_id != 1 {
+                        continue;
+                    }
+                    seg1_total += 1;
+                    if cell.skip {
+                        seg1_skip += 1;
+                        // Skipped seg-1 cells don't carry residual; their
+                        // recon = reference (same on both encoders modulo
+                        // ref-pool drift). Excluding mirrors the cyclic-
+                        // refresh post-encode "skip excludes from refresh
+                        // tracking" rule.
+                        continue;
+                    }
+                    let mut sse_off: u64 = 0;
+                    let mut sse_on: u64 = 0;
+                    for r in 0..8 {
+                        let py = mi_r * 8 + r;
+                        let src_off = py * W + mi_c * 8;
+                        let off_off = py * yp_off.stride() + mi_c * 8;
+                        let off_on = py * yp_on.stride() + mi_c * 8;
+                        for c in 0..8 {
+                            let d_off = (yp_off.data()[off_off + c] as i32)
+                                - (ys[src_off + c] as i32);
+                            let d_on = (yp_on.data()[off_on + c] as i32)
+                                - (ys[src_off + c] as i32);
+                            sse_off += (d_off * d_off) as u64;
+                            sse_on += (d_on * d_on) as u64;
+                        }
+                    }
+                    sse_on_at_seg1_cells.push(sse_on);
+                    sse_off_at_seg1_cells.push(sse_off);
+                }
+            }
+        }
+
+        // Need samples to do the comparison.
+        let n_cells = sse_on_at_seg1_cells.len();
+        assert!(
+            n_cells > 0,
+            "AQ.4 Oracle 2: no non-skipped segment-1 cells observed across \
+             {N_INTER} inter frames — cyclic refresh fired but every seg-1 \
+             cell skipped. seg1_total={seg1_total} (skip={seg1_skip})",
+        );
+
+        let mean_on =
+            sse_on_at_seg1_cells.iter().sum::<u64>() as f64 / n_cells as f64;
+        let mean_off =
+            sse_off_at_seg1_cells.iter().sum::<u64>() as f64 / n_cells as f64;
+        let ratio = mean_on / mean_off;
+
+        // The libvpx-spec property: on the cells that AQ chose to boost,
+        // AQ-on (finer Q) must produce strictly lower distortion than
+        // AQ-off (base Q). Assertion message carries the full stats so
+        // failures are self-diagnostic.
+        assert!(
+            mean_on < mean_off,
+            "AQ.4 Oracle 2: AQ-on mean SSE on segment-1 cells \
+             ({mean_on:.2}) must be STRICTLY LESS than AQ-off mean SSE \
+             on the same cells ({mean_off:.2}); ratio on/off = {ratio:.3}. \
+             Cyclic refresh's finer Q on segment 1 must produce lower \
+             reconstruction distortion. \
+             cells={n_cells}, seg1_total={seg1_total}, seg1_skip={seg1_skip}",
+        );
+    }
+
+    /// AQ.4 Oracle 3 — refresh-map stability.
+    ///
+    /// Cyclic refresh's cursor advances monotonically: an SB refreshed
+    /// in frame i must NOT be refreshed again in frame i+1 (the cells
+    /// just had their age reset to 0; with `min_refresh_age = 4` they
+    /// need 4 more frames before re-eligibility). The picker walks
+    /// from `sb_cursor` forward, and the cursor advances past the most-
+    /// recently-refreshed SB after every post_encode_update.
+    ///
+    /// This catches bugs in:
+    /// - cursor advancement (e.g. if it didn't advance, frame i+1's
+    ///   picker would restart at the same SB and re-pick it under
+    ///   `min_refresh_age = 0` config — but our default age is 4 so
+    ///   the picker would just skip-and-walk anyway; this test catches
+    ///   the AGE bookkeeping instead);
+    /// - age increment logic (cells must age past `min_refresh_age`
+    ///   before re-eligibility).
+    ///
+    /// Method: encode KF + 10 inter frames, capture the SB-set refreshed
+    /// per frame (= the set of SBs with at least one cell in segment 1),
+    /// and verify that consecutive frames' SB-sets are disjoint.
+    #[test]
+    fn aq_cyclic_refresh_cursor_advances_monotonically() {
+        // 128×128 = 4 SBs (2×2). Small enough that ~10% refresh rate
+        // marks <1 SB per frame on average, but over 10 frames we'll
+        // see multiple non-empty refresh sets.
+        const W: usize = 128;
+        const H: usize = 128;
+        const N_INTER: u32 = 10;
+        let cfg = EncoderConfig {
+            width: W as u32,
+            height: H as u32,
+            framerate: 30.0,
+            target_bitrate_bps: 2_000_000,
+            gop_length: 100,
+            aq_mode: AqMode::CyclicRefresh,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let mut dec = Decoder::new();
+
+        // KF.
+        let (y0, u0, v0) = translating_gradient(W, H, 0);
+        let kf = enc.encode_frame(&yuv_view(&y0, &u0, &v0, W)).unwrap();
+        let frames_kf = decode_packet(&mut dec, &kf.data);
+        let _ = dec.decode_frame(&frames_kf[0]).expect("decode kf");
+
+        let mi_rows = H / 8;
+        let mi_cols = W / 8;
+        let sb_cols = mi_cols / 8;
+
+        // Per inter frame: set of SB indices (sb_row * sb_cols + sb_col)
+        // that contain at least one cell marked as segment 1.
+        let mut per_frame_refreshed_sbs: Vec<std::collections::BTreeSet<usize>> =
+            Vec::with_capacity(N_INTER as usize);
+
+        for f in 0..N_INTER {
+            let (ys, us, vs) = translating_gradient(W, H, f + 1);
+            let pkt = enc.encode_frame(&yuv_view(&ys, &us, &vs, W)).unwrap();
+            assert_eq!(pkt.frame_kind, FrameKind::Inter);
+            let frames = decode_packet(&mut dec, &pkt.data);
+            let _ = dec.decode_frame(&frames[0]).expect("decode inter");
+            let grid = dec.last_frame_mi_grid();
+
+            let mut refreshed: std::collections::BTreeSet<usize> =
+                std::collections::BTreeSet::new();
+            for mi_r in 0..mi_rows {
+                for mi_c in 0..mi_cols {
+                    if let Some(cell) = grid[mi_r * mi_cols + mi_c]
+                        && cell.segment_id == 1
+                    {
+                        let sb_row = mi_r / 8;
+                        let sb_col = mi_c / 8;
+                        refreshed.insert(sb_row * sb_cols + sb_col);
+                    }
+                }
+            }
+            per_frame_refreshed_sbs.push(refreshed);
+        }
+
+        // At least one frame must have refreshed something — otherwise
+        // the test is vacuous (cyclic refresh never fired).
+        let total_refreshed: usize =
+            per_frame_refreshed_sbs.iter().map(|s| s.len()).sum();
+        assert!(
+            total_refreshed > 0,
+            "AQ.4 Oracle 3: no SBs refreshed in any of {N_INTER} inter \
+             frames — cyclic refresh never fired (test setup bug?)",
+        );
+
+        // Consecutive frames must mark DISJOINT SB sets. `min_refresh_age
+        // = 4` (default config) means a cell needs at least 4 post-encode
+        // cycles between refreshes — so frame i and frame i+1 must be
+        // disjoint (and so should i and i+1, i+2, i+3 — but we only
+        // assert i / i+1 to mirror the cursor-advancement contract; the
+        // age contract is implicitly tested by the disjointness across
+        // all consecutive pairs).
+        for i in 0..(per_frame_refreshed_sbs.len() - 1) {
+            let a = &per_frame_refreshed_sbs[i];
+            let b = &per_frame_refreshed_sbs[i + 1];
+            let overlap: Vec<usize> = a.intersection(b).copied().collect();
+            assert!(
+                overlap.is_empty(),
+                "AQ.4 Oracle 3: inter frames {i} and {} both refreshed \
+                 SBs {:?} — cursor failed to advance OR age logic let a \
+                 freshly-refreshed SB re-trigger. Frame {i}: {:?}, \
+                 frame {}: {:?}",
+                i + 1,
+                overlap,
+                a,
+                i + 1,
+                b,
+            );
+        }
+    }
+
 }
