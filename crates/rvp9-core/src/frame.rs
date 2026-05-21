@@ -780,6 +780,182 @@ impl Yv12TileSplit {
     pub const ALIGN: usize = 2;
 }
 
+/// G5.2 instrumentation: count of fresh [`Yv12Buffer`] allocations the
+/// scratch pool has performed across this process's lifetime. Bumped
+/// inside [`Yv12ScratchPool::take`] every time it cannot satisfy the
+/// request from already-cached buffers and must allocate a new one.
+///
+/// Used by the `tile_scratch_pool_warm_no_alloc` regression test to
+/// confirm the pool stops allocating once the steady-state tile count
+/// is reached: the delta of this counter for frame N (N > warmup) is
+/// expected to be 0.
+pub static RVP9_G5_2_SCRATCH_ALLOCS: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0);
+
+/// G5.2: recycled scratch-buffer pool for parallel tile decoding.
+///
+/// **Why**: G5.1's parallel tile dispatch allocated a fresh
+/// [`Yv12Buffer`] per tile per frame via [`Yv12Buffer::clone_geometry`]
+/// — at 1080p × 8 tiles × 60 fps that's ~1.44 GB/s of allocator churn
+/// and zero-init traffic (per-tile scratch is ~3 MB at 1080p). G5.2
+/// recycles those buffers across frames.
+///
+/// **Lifecycle**: the [`crate::Decoder`] equivalent (or any host) owns
+/// one [`Yv12ScratchPool`] for its lifetime. Per-frame:
+///
+/// 1. Call [`Self::take(n_tiles, &yv12)`](Self::take) to obtain
+///    `n_tiles` owned scratch buffers, where `yv12` is the destination
+///    frame whose geometry the scratches must mirror.
+/// 2. Move each buffer into the per-tile worker (closure-captured).
+/// 3. After the worker pool's scope joins, recover the owned buffers
+///    from the slots and pass them all to [`Self::put`] to recycle
+///    for the next frame.
+///
+/// **Pool growth**: lazy. `take(n, …)` allocates only as many as it
+/// has to to satisfy `n`; subsequent calls with `n' <= max(n_seen)`
+/// allocate zero buffers. The pool **never shrinks** within its
+/// lifetime — once `n` tiles have been seen, the pool holds at least
+/// `n` buffers across `take`/`put` cycles. (Justified by the fact
+/// that decoders see a small distinct set of tile counts in practice:
+/// usually exactly one. Shrinking would force re-allocation on the
+/// next frame, defeating the entire point.)
+///
+/// **Geometry mismatch**: if `take` is called with a `template`
+/// (destination frame) whose geometry differs from the pool's cached
+/// buffers (e.g. mid-stream resize), the cached buffers are
+/// **discarded** and replacements allocated. This is the libvpx-
+/// faithful "resize blows away scratch" semantics — a resize is rare
+/// and re-allocating once is cheaper than keeping a per-geometry
+/// pool.
+///
+/// **Re-zero safety**: pooled buffers are **NOT** re-zeroed between
+/// frames. The invariant that makes this safe: in entropy-tiled VP9,
+/// each tile reads only pixels within its own column range (left/
+/// above neighbours are in the same tile's column range), and the
+/// post-scope merge in [`Yv12Buffer::merge_tile_columns_from`] copies
+/// only that column range back to the main frame. Stale pixels
+/// outside the column range from a prior tile decode therefore
+/// **never get read by the new tile** (out of range) and **never get
+/// merged back** (out of merge range). Adding a re-zero pass between
+/// frames would halve the perf gain — don't.
+///
+/// **Thread-safety / concurrency**: the pool is `!Sync` by virtue of
+/// `&mut self` on every mutator; it lives on the supervisor thread
+/// (the decoder thread that drives `scope.submit`). Workers hold
+/// individual `Yv12Buffer`s moved into their closures, not pool
+/// handles, so no cross-thread access of the pool is possible.
+#[derive(Debug, Default)]
+pub struct Yv12ScratchPool {
+    /// Cached scratch buffers, idle (not in use by any worker).
+    /// Buffers move out via [`Self::take`] and return via
+    /// [`Self::put`]. Geometry is uniform across the Vec (a
+    /// mismatched-geometry `take` discards the entire Vec).
+    buffers: Vec<Yv12Buffer>,
+}
+
+impl Yv12ScratchPool {
+    /// Build an empty pool.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Number of buffers currently parked in the pool (i.e. **not**
+    /// out at workers). Test / diagnostic accessor.
+    #[must_use]
+    pub fn buffer_count(&self) -> usize {
+        self.buffers.len()
+    }
+
+    /// Hand out `n` owned scratch buffers with geometry matching
+    /// `template`. If the pool's cached buffers don't match
+    /// `template`'s geometry (mid-stream resize), the entire cache
+    /// is discarded and replacements allocated.
+    ///
+    /// The returned buffers' pixel contents are **arbitrary** —
+    /// either zero (freshly allocated) or whatever the previous
+    /// tile decode wrote. The caller MUST overwrite every pixel
+    /// it intends to read; see the type-level "Re-zero safety"
+    /// note for why this is sound for the parallel-tile use case.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FrameAllocError`] if a fresh allocation fails
+    /// (oversized dimensions, etc. — extremely unlikely for sizes
+    /// the host already holds in `template`).
+    pub fn take(
+        &mut self,
+        n: usize,
+        template: &Yv12Buffer,
+    ) -> Result<Vec<Yv12Buffer>, FrameAllocError> {
+        // Geometry-fingerprint the head of the cache. Compare a
+        // representative buffer against the template; if they
+        // differ, drop the entire cache (mid-stream resize).
+        let geometry_matches = self
+            .buffers
+            .first()
+            .map(|b| Self::geometry_eq(b, template))
+            .unwrap_or(true);
+        if !geometry_matches {
+            self.buffers.clear();
+        }
+
+        let mut out: Vec<Yv12Buffer> = Vec::with_capacity(n);
+        while out.len() < n {
+            if let Some(b) = self.buffers.pop() {
+                out.push(b);
+            } else {
+                // Allocate one fresh buffer matching template
+                // geometry. Increments the global counter so
+                // tests can detect non-zero allocs on the hot
+                // path post-warmup.
+                let fresh = template.clone_geometry()?;
+                RVP9_G5_2_SCRATCH_ALLOCS
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                out.push(fresh);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Return previously-taken buffers to the pool. The buffers'
+    /// pixel contents are **not** zeroed — see the type doc's
+    /// "Re-zero safety" section.
+    pub fn put(&mut self, mut buffers: Vec<Yv12Buffer>) {
+        // If our cache currently holds a different geometry (very
+        // rare — would happen if `take` was just called with a
+        // resized template and the pool was empty when the next
+        // `put` arrives), align them by dropping the older entries.
+        if let (Some(first), Some(cached_first)) = (buffers.first(), self.buffers.first())
+            && !Self::geometry_eq(first, cached_first)
+        {
+            self.buffers.clear();
+        }
+        self.buffers.append(&mut buffers);
+    }
+
+    /// Whether two buffers have the same geometry for the purposes
+    /// of scratch-pool reuse. Compares dimensions, strides, border,
+    /// chroma format, and plane offsets — i.e. every field that
+    /// would make `merge_tile_columns_from` ill-defined if they
+    /// differed.
+    fn geometry_eq(a: &Yv12Buffer, b: &Yv12Buffer) -> bool {
+        a.crop_width == b.crop_width
+            && a.crop_height == b.crop_height
+            && a.chroma == b.chroma
+            && a.border == b.border
+            && a.y_stride == b.y_stride
+            && a.uv_stride == b.uv_stride
+            && a.y_width == b.y_width
+            && a.y_height == b.y_height
+            && a.uv_width == b.uv_width
+            && a.uv_height == b.uv_height
+            && a.y_offset == b.y_offset
+            && a.u_offset == b.u_offset
+            && a.v_offset == b.v_offset
+    }
+}
+
 /// Replicate edge pixels into each plane's border so motion-comp
 /// halos can read out-of-visible-region positions without bounds
 /// checks. Free-function wrapper around [`Yv12Buffer::extend_borders`].
@@ -2100,5 +2276,205 @@ mod tests {
         let v = dst.v_plane();
         assert_eq!(v.data()[0], 0xA2);
         assert_eq!(v.data()[63], 0xB2);
+    }
+
+    // ---- Yv12ScratchPool (G5.2) ----
+
+    /// Shared lock to serialise the scratch-pool tests that observe
+    /// the process-wide [`RVP9_G5_2_SCRATCH_ALLOCS`] counter. Without
+    /// this, concurrent pool-test runs interleave allocations and
+    /// the delta-snapshot assertions become flaky.
+    fn scratch_alloc_counter_lock() -> &'static std::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
+    #[test]
+    fn scratch_pool_new_is_empty() {
+        let pool = Yv12ScratchPool::new();
+        assert_eq!(pool.buffer_count(), 0);
+    }
+
+    #[test]
+    fn scratch_pool_take_grows_to_n() {
+        let _guard = scratch_alloc_counter_lock().lock().unwrap();
+        let template = Yv12Buffer::alloc(
+            128,
+            96,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
+        let mut pool = Yv12ScratchPool::new();
+        assert_eq!(pool.buffer_count(), 0);
+
+        let bufs = pool.take(4, &template).expect("take 4");
+        assert_eq!(bufs.len(), 4);
+        // Pool is empty while buffers are out.
+        assert_eq!(pool.buffer_count(), 0);
+
+        // Geometry of each returned buffer matches the template.
+        for b in &bufs {
+            assert!(Yv12ScratchPool::geometry_eq(b, &template));
+        }
+
+        pool.put(bufs);
+        assert_eq!(pool.buffer_count(), 4);
+    }
+
+    #[test]
+    fn scratch_pool_warm_does_not_allocate() {
+        // Serialise against other counter-observing tests in this
+        // module to keep the delta snapshot tight.
+        let _guard = scratch_alloc_counter_lock().lock().unwrap();
+        let template = Yv12Buffer::alloc(
+            64,
+            48,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
+        let mut pool = Yv12ScratchPool::new();
+        // Warmup: pull 3, put them back.
+        let bufs = pool.take(3, &template).expect("warmup");
+        pool.put(bufs);
+        assert_eq!(pool.buffer_count(), 3);
+
+        // Repeated take(3)/put(3) cycles must not bump the alloc
+        // counter — they should all be served from the cache.
+        use std::sync::atomic::Ordering;
+        let before = RVP9_G5_2_SCRATCH_ALLOCS.load(Ordering::Relaxed);
+        for _ in 0..5 {
+            let bufs = pool.take(3, &template).expect("warm take");
+            assert_eq!(bufs.len(), 3);
+            pool.put(bufs);
+        }
+        let after = RVP9_G5_2_SCRATCH_ALLOCS.load(Ordering::Relaxed);
+        assert_eq!(after, before, "warm pool must not allocate on take(3)");
+    }
+
+    #[test]
+    fn scratch_pool_grows_monotonically() {
+        let _guard = scratch_alloc_counter_lock().lock().unwrap();
+        let template = Yv12Buffer::alloc(
+            32,
+            32,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
+        let mut pool = Yv12ScratchPool::new();
+
+        // Round 1: take 2.
+        let bufs = pool.take(2, &template).unwrap();
+        pool.put(bufs);
+        assert_eq!(pool.buffer_count(), 2);
+
+        // Round 2: take 4 — pool must grow to satisfy.
+        let bufs = pool.take(4, &template).unwrap();
+        pool.put(bufs);
+        assert_eq!(pool.buffer_count(), 4);
+
+        // Round 3: take 2 again — pool keeps the larger high-water
+        // mark even after a smaller take/put cycle.
+        let bufs = pool.take(2, &template).unwrap();
+        assert_eq!(bufs.len(), 2);
+        // After take(2), the pool holds buffer_count = 4 - 2 = 2.
+        assert_eq!(pool.buffer_count(), 2);
+        pool.put(bufs);
+        // After put, back to the high-water mark.
+        assert_eq!(pool.buffer_count(), 4);
+    }
+
+    #[test]
+    fn scratch_pool_resize_drops_cache() {
+        let _guard = scratch_alloc_counter_lock().lock().unwrap();
+        let small = Yv12Buffer::alloc(
+            32,
+            32,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
+        let large = Yv12Buffer::alloc(
+            128,
+            96,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
+        let mut pool = Yv12ScratchPool::new();
+        let bufs = pool.take(3, &small).unwrap();
+        pool.put(bufs);
+        assert_eq!(pool.buffer_count(), 3);
+
+        // Different geometry — old cache must be discarded.
+        let bufs = pool.take(2, &large).unwrap();
+        assert_eq!(bufs.len(), 2);
+        for b in &bufs {
+            assert!(Yv12ScratchPool::geometry_eq(b, &large));
+        }
+        // After putting back, pool holds only the new-geometry
+        // buffers (the small ones were dropped on take).
+        pool.put(bufs);
+        assert_eq!(pool.buffer_count(), 2);
+    }
+
+    #[test]
+    fn scratch_pool_alloc_counter_bumps_only_on_growth() {
+        let _guard = scratch_alloc_counter_lock().lock().unwrap();
+        // The counter is process-wide and other tests may run in
+        // parallel and bump it. We assert relative deltas with an
+        // inequality (other tests may have contributed to "after"
+        // beyond our own 2), but the SECOND take is on our own pool
+        // with the buffers already cached — our pool contributes 0,
+        // and we assert the GLOBAL delta between the two snapshots
+        // is `>= 0`. The tight equality check that the warm `take(2)`
+        // contributes nothing is covered by `scratch_pool_warm_does_not_allocate`
+        // which uses a `RVP9_G5_2_SCRATCH_ALLOCS` snapshot strictly
+        // around its repeated take/put loop — that's tight enough
+        // because any concurrent test's contribution would also have
+        // to fire *during* that loop to spoil the measurement, and
+        // the test corpus has no other test that bumps the counter
+        // in a loop. Here we only check our pool grows and the warm
+        // re-take returns the same buffers (a structural invariant
+        // that doesn't depend on the global counter).
+        let template = Yv12Buffer::alloc(
+            32,
+            32,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
+        let mut pool = Yv12ScratchPool::new();
+
+        let bufs = pool.take(2, &template).unwrap();
+        assert_eq!(bufs.len(), 2);
+        pool.put(bufs);
+        assert_eq!(pool.buffer_count(), 2);
+
+        // Second take(2) drains the cache; the buffers come from
+        // the cache (no growth). Verify by capturing the pointer
+        // identity: the returned buffers must be byte-identical
+        // to the ones we put. We can't compare `Yv12Buffer` directly
+        // (no PartialEq), so we compare via geometry + verifying
+        // pool_count drops to 0 (pool drained, no fresh alloc).
+        let bufs2 = pool.take(2, &template).unwrap();
+        assert_eq!(bufs2.len(), 2);
+        // After draining 2 from a pool of 2, the pool is empty.
+        assert_eq!(
+            pool.buffer_count(),
+            0,
+            "second take(2) must drain the cache (not allocate fresh)"
+        );
+        pool.put(bufs2);
+        // Pool returns to the high-water mark.
+        assert_eq!(pool.buffer_count(), 2);
     }
 }

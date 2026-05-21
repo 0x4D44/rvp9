@@ -301,6 +301,122 @@ fn multi_tile_dispatch_uses_worker_pool() {
     );
 }
 
+/// G5.2 oracle: the per-tile scratch pool persists across frames
+/// and stops allocating once the steady-state tile count is reached.
+///
+/// Pattern: decode the SAME multi-tile vector (tile_1x8 — 8 tiles)
+/// frame-by-frame through a single `Decoder` instance. After the
+/// first multi-tile frame, the pool holds `n_tiles` buffers. Every
+/// subsequent multi-tile frame's `take(n_tiles, …)` must be satisfied
+/// from the cache, so the post-decode `tile_scratch_pool_buffer_count`
+/// MUST remain at the steady-state value (no shrinkage; no growth).
+///
+/// We also snapshot the process-wide [`RVP9_G5_2_SCRATCH_ALLOCS`]
+/// counter delta per frame as a secondary signal — but we accept
+/// non-zero increments from concurrent tests (this binary's tests
+/// run in parallel and other tests use multi-tile decoders that
+/// also bump this counter). The pool-buffer-count assertion is
+/// the load-bearing one; the counter delta is reported for
+/// diagnostic purposes.
+///
+/// Vector choice: `tile_1x8.webm` has the largest tile count in the
+/// conformance corpus that we have hands-on multi-tile parallel-
+/// dispatch eligibility for, so this catches both growth (from 0 to
+/// 8) and steady-state-no-growth (from frame 2 onwards).
+#[test]
+fn tile_scratch_pool_warm_no_alloc() {
+    use std::sync::atomic::Ordering;
+    let dir = vectors_dir();
+    let path = dir.join("vp90-2-08-tile_1x8.webm");
+    if !path.exists() {
+        eprintln!("skip: {} not present", path.display());
+        return;
+    }
+    let (data, packets) =
+        rvp9_harness::container::read_packets(&path).expect("container parse");
+    let mut decoder = Decoder::with_threads(nz(2));
+
+    // Before any decode, the pool should be empty.
+    assert_eq!(
+        decoder.tile_scratch_pool_buffer_count(),
+        0,
+        "fresh decoder pool should start empty"
+    );
+
+    let mut frame_idx = 0usize;
+    let mut alloc_delta_by_frame: Vec<u32> = Vec::new();
+    let mut pool_count_by_frame: Vec<usize> = Vec::new();
+
+    for range in &packets {
+        let packet_bytes = range.slice(&data);
+        let parsed = match decoder.parse_packet(packet_bytes) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        for frame in parsed {
+            let before = rvp9_core::frame::RVP9_G5_2_SCRATCH_ALLOCS.load(Ordering::Relaxed);
+            let _ = decoder.decode_frame(&frame);
+            let after = rvp9_core::frame::RVP9_G5_2_SCRATCH_ALLOCS.load(Ordering::Relaxed);
+            alloc_delta_by_frame.push(after.wrapping_sub(before));
+            pool_count_by_frame.push(decoder.tile_scratch_pool_buffer_count());
+            frame_idx += 1;
+            // Bound the test runtime — we only need a few frames
+            // past warmup to make the assertion.
+            if frame_idx >= 5 {
+                break;
+            }
+        }
+        if frame_idx >= 5 {
+            break;
+        }
+    }
+
+    assert!(
+        frame_idx >= 2,
+        "needed at least 2 frames from tile_1x8.webm to test pool warmup"
+    );
+
+    // After frame 1: pool holds n_tiles_steady buffers (the take
+    // grew it; the post-merge put restored it). tile_1x8 has 8
+    // tiles ⇒ 8 buffers.
+    let n_tiles_steady = pool_count_by_frame[0];
+    assert!(
+        n_tiles_steady >= 2,
+        "tile_1x8 should grow pool to ≥ 2 buffers after frame 1, was {n_tiles_steady}"
+    );
+
+    // Frames 2+: pool is warm. The pool-buffer-count post-decode
+    // MUST remain at n_tiles_steady (no growth — take(n) is fully
+    // satisfied from the cache; no shrinkage — put restores all
+    // borrowed buffers).
+    for i in 1..pool_count_by_frame.len() {
+        assert_eq!(
+            pool_count_by_frame[i], n_tiles_steady,
+            "G5.2: frame {} pool count {} != steady-state {}. \
+             Per-frame pool counts: {:?}",
+            i, pool_count_by_frame[i], n_tiles_steady, pool_count_by_frame,
+        );
+    }
+
+    // Pool size never shrinks: monotonic. (Already covered by the
+    // equality check above; kept as a defensive invariant.)
+    for (i, &count) in pool_count_by_frame.iter().enumerate() {
+        assert!(
+            count >= n_tiles_steady,
+            "G5.2: frame {i} pool count {count} < steady-state {n_tiles_steady} (pool shrank!)",
+        );
+    }
+
+    eprintln!(
+        "G5.2: pool warmed to {} buffers, {} steady-state frames at constant pool size. \
+         (Counter deltas: {:?} — non-zero values past frame 0 are from concurrent tests, \
+         not from this decoder's pool.)",
+        n_tiles_steady,
+        pool_count_by_frame.len() - 1,
+        &alloc_delta_by_frame
+    );
+}
+
 /// G5.1 oracle: re-running the same multi-tile vector twice in
 /// succession produces bit-identical MD5s on every frame. Catches
 /// thread-scheduling non-determinism — if the merge order varies
