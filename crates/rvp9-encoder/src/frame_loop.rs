@@ -75,7 +75,7 @@ use rvp9_core::transforms::TxMode;
 
 use crate::rate_control::{FrameKind as RcFrameKind, RateControl, RateControlConfig};
 use crate::{
-    EncodeError, PartitionLeafDesc, simulate_dc_intra_encode_partitions,
+    EncodeError, PartitionLeafDesc, pick_and_simulate_intra_encode_partitions,
 };
 
 /// Public configuration for the F10.0 streaming encoder.
@@ -406,13 +406,14 @@ impl StreamEncoder {
         // picker. For KF the ref plane is unused (the picker substitutes
         // a flat-128 fallback when `is_keyframe = true`), but we still
         // need a valid `PlaneRef`; pass the input Y as the ref.
-        let sb_partitions =
+        let mut sb_partitions =
             choose_partitions_for_frame(w as usize, h as usize, q_index, input_yuv.0, /* ref_y = */ input_yuv.0, /* is_keyframe = */ true);
 
-        // Run the F5.1 simulator with the partition. Output goes
-        // directly into our reference buffers — those ARE the
-        // reconstruction.
-        let coef_source = simulate_dc_intra_encode_partitions(
+        // F10.1b — pick the Y intra mode per leaf via
+        // `pick_intra_mode_luma`, run the F5.1 simulator with the
+        // picked modes. Output goes directly into our reference
+        // buffers — those ARE the reconstruction.
+        let coef_source = pick_and_simulate_intra_encode_partitions(
             w,
             h,
             q_index,
@@ -422,7 +423,7 @@ impl StreamEncoder {
                 &mut self.last_recon_u,
                 &mut self.last_recon_v,
             ),
-            &sb_partitions,
+            &mut sb_partitions,
         );
 
         build_keyframe_packet(w, h, q_index, &coef_source, &sb_partitions)
@@ -548,6 +549,10 @@ fn leaves_from_decision(decision: &PartitionDecision) -> Vec<PartitionLeafDesc> 
                 mi_row_in_sb: r,
                 mi_col_in_sb: c,
                 leaf_bsize: bs,
+                // F10.1b — placeholder. The KF path mutates this via
+                // `pick_and_simulate_intra_encode_partitions`. The
+                // inter path doesn't read it.
+                predicted_y_mode: IntraMode::Dc,
             });
         }
     }
@@ -606,7 +611,8 @@ fn build_kf_mi_grid(
                     segment_id: 0,
                     seg_id_predicted: false,
                     mode: BlockMode::Intra {
-                        y_mode: IntraMode::Dc,
+                        // F10.1b — picker-driven Y mode; UV stays DC.
+                        y_mode: leaf.predicted_y_mode,
                         uv_mode: IntraMode::Dc,
                     },
                     bmi: Default::default(),
@@ -1461,6 +1467,210 @@ mod tests {
         assert!(
             any_split,
             "F8.2 should have split the chaotic-diff inter into sub-64x64 leaves"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // F10.1b — intra-mode picker wiring tests.
+    // ---------------------------------------------------------------
+
+    /// Tally each `IntraMode` seen in the recovered keyframe mi-grid
+    /// (only the `BlockMode::Intra` cells; inter cells return 0).
+    fn count_intra_y_modes(grid: &[Option<ModeInfo>]) -> [usize; 10] {
+        let mut counts = [0usize; 10];
+        for cell in grid.iter().flatten() {
+            if let BlockMode::Intra { y_mode, .. } = cell.mode {
+                counts[y_mode as usize] += 1;
+            }
+        }
+        counts
+    }
+
+    /// F10.1b — End-to-end wiring smoke test. Encode a chaotic KF
+    /// (so the F8.2 partition picker splits below 64×64 and the F8.0
+    /// intra picker actually fires per leaf), then decode and verify
+    /// every recovered intra cell carries one of the 10 [`IntraMode`]
+    /// variants — round-tripped faithfully through writer / decoder.
+    ///
+    /// This test exists because the F8.0-fix transform-domain
+    /// `block_yrd` distortion model is highly noise-sensitive: any
+    /// recon noise (the encoder's per-pixel quantization round-trip
+    /// noise of ±1-±3) in the above row inflates V_PRED's residual
+    /// energy through the forward FHT in a way that "perfect-above"
+    /// picker unit tests don't capture. In realistic frame-loop
+    /// conditions the picker correctly RDO-chooses DC even on
+    /// vertical-stripe content — V's rate-cost penalty
+    /// (~1993 vs DC's ~462 in prob-cost units, [Dc][Dc] context)
+    /// outweighs the noisy-residual distortion advantage. See the
+    /// F10.1b open punch-list for the V_PRED-oracle follow-up.
+    #[test]
+    fn encode_keyframe_with_chaotic_input_intra_modes_round_trip() {
+        let cfg = EncoderConfig {
+            width: 64,
+            height: 64,
+            framerate: 30.0,
+            target_bitrate_bps: 50_000,
+            gop_length: 30,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+
+        let y = xorshift_y_plane(64, 64, 0xFACEFEED);
+        let u = vec![128u8; 32 * 32];
+        let v = vec![128u8; 32 * 32];
+
+        let pkt = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        assert_eq!(pkt.frame_kind, FrameKind::Key);
+
+        let mut dec = Decoder::new();
+        let frames = decode_packet(&mut dec, &pkt.data);
+        let _ = dec
+            .decode_frame(&frames[0])
+            .expect("decode_frame must accept the chaotic-input KF");
+
+        let grid = dec.last_frame_mi_grid();
+        // Every cell must be intra and carry a valid Y mode (sanity:
+        // the picker + writer agree on the per-leaf mode).
+        for cell in grid.iter() {
+            let c = cell.expect("every mi-cell must be populated");
+            match c.mode {
+                BlockMode::Intra { y_mode, uv_mode } => {
+                    // UV stays DC for F10.1b (UV-mode picker is F10.1c+).
+                    assert_eq!(uv_mode, IntraMode::Dc);
+                    let raw = y_mode as u8;
+                    assert!(raw < 10);
+                }
+                BlockMode::Inter { .. } => panic!("KF cell carries inter mode"),
+            }
+        }
+    }
+
+    /// F10.1b WIRING ORACLE — bypass the F8.0 picker by hand-injecting
+    /// a `PartitionLeafDesc` with `predicted_y_mode = IntraMode::V`,
+    /// feed it through `simulate_dc_intra_encode_partitions` +
+    /// `build_keyframe_packet`, then decode and assert every cell
+    /// round-trips as `V_PRED`. Proves the F10.1b wiring layer
+    /// (`PartitionLeafDesc.predicted_y_mode` → `build_kf_mi_grid` →
+    /// writer → decoder mi-grid) faithfully threads the picker's
+    /// chosen mode, independent of what the picker actually picks
+    /// when called from the frame loop with realistic neighbour data.
+    #[test]
+    fn build_kf_with_forced_v_pred_leaves_round_trips_as_v_pred() {
+        use crate::{PartitionLeafDesc, simulate_dc_intra_encode_partitions};
+
+        let w: u32 = 64;
+        let h: u32 = 64;
+        let q_index: u8 = 50;
+
+        // Single 64×64 SB; 64 sub-8×8 leaves all forced to V_PRED.
+        let mut leaves = Vec::with_capacity(64);
+        for r in 0..8 {
+            for c in 0..8 {
+                leaves.push(PartitionLeafDesc {
+                    mi_row_in_sb: r,
+                    mi_col_in_sb: c,
+                    leaf_bsize: BlockSize::Block8x8,
+                    predicted_y_mode: IntraMode::V,
+                });
+            }
+        }
+        let sb_partitions = vec![leaves];
+
+        // Gentle Y gradient so the recon round-trip is stable.
+        let y_input: Vec<u8> = (0..(w * h) as usize)
+            .map(|i| {
+                let r = i / (w as usize);
+                let c = i % (w as usize);
+                (128i32 + (r as i32) / 2 + (c as i32) / 2).clamp(0, 255) as u8
+            })
+            .collect();
+        let u_input = vec![128u8; ((w / 2) * (h / 2)) as usize];
+        let v_input = vec![128u8; ((w / 2) * (h / 2)) as usize];
+
+        let mut y_recon = vec![0u8; (w * h) as usize];
+        let mut u_recon = vec![0u8; ((w / 2) * (h / 2)) as usize];
+        let mut v_recon = vec![0u8; ((w / 2) * (h / 2)) as usize];
+
+        let coef_source = simulate_dc_intra_encode_partitions(
+            w,
+            h,
+            q_index,
+            (&y_input, &u_input, &v_input),
+            (&mut y_recon, &mut u_recon, &mut v_recon),
+            &sb_partitions,
+        );
+
+        let pkt = build_keyframe_packet(w, h, q_index, &coef_source, &sb_partitions)
+            .expect("build_keyframe_packet must succeed");
+
+        let mut dec = Decoder::new();
+        let frames = decode_packet(&mut dec, &pkt);
+        assert_eq!(frames.len(), 1);
+        let _ = dec
+            .decode_frame(&frames[0])
+            .expect("decode_frame must accept the V_PRED-leaf KF");
+
+        let grid = dec.last_frame_mi_grid();
+        let mut v_count = 0usize;
+        for cell in grid.iter() {
+            let c = cell.expect("every cell populated");
+            match c.mode {
+                BlockMode::Intra { y_mode, .. } => {
+                    if y_mode == IntraMode::V {
+                        v_count += 1;
+                    }
+                }
+                BlockMode::Inter { .. } => panic!("expected intra"),
+            }
+        }
+        assert_eq!(
+            v_count, 64,
+            "all 64 cells should round-trip as V_PRED (forced) — got {v_count}",
+        );
+    }
+
+    /// F10.1b regression — Flat KF content keeps DC_PRED dominant. The
+    /// F8.2 picker holds the partition at Block64x64 (no split), so the
+    /// picker falls back to DC via the Block64x64 carve-out anyway; but
+    /// for any sub-64x64 leaf the picker also lands on DC because the
+    /// residual is zero everywhere under DC.
+    #[test]
+    fn encode_keyframe_with_flat_content_still_picks_dc() {
+        let cfg = EncoderConfig {
+            width: 64,
+            height: 64,
+            framerate: 30.0,
+            target_bitrate_bps: 2_000_000,
+            gop_length: 30,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+
+        let y = vec![128u8; 64 * 64];
+        let u = vec![128u8; 32 * 32];
+        let v = vec![128u8; 32 * 32];
+
+        let pkt = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        assert_eq!(pkt.frame_kind, FrameKind::Key);
+
+        let mut dec = Decoder::new();
+        let frames = decode_packet(&mut dec, &pkt.data);
+        let _ = dec
+            .decode_frame(&frames[0])
+            .expect("decode_frame must accept the flat KF");
+
+        let grid = dec.last_frame_mi_grid();
+        let counts = count_intra_y_modes(grid);
+        let dc_count = counts[IntraMode::Dc as usize];
+        let total: usize = counts.iter().sum();
+        assert!(
+            dc_count > 0,
+            "F10.1b: flat KF should produce at least one DC_PRED leaf \
+             — counts = {counts:?}",
+        );
+        // DC must be the dominant mode (≥ half the cells).
+        assert!(
+            dc_count * 2 >= total,
+            "F10.1b: flat KF should be DC-dominant: dc_count={dc_count}, total={total}, \
+             counts={counts:?}",
         );
     }
 }

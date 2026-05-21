@@ -1034,12 +1034,17 @@ fn f5_uv_plane_block_size(bsize: BlockSize) -> BlockSize {
 }
 
 /// Per-leaf descriptor handed to
-/// [`simulate_dc_intra_encode_partitions`] — describes one DC_PRED
-/// intra leaf inside a 64×64 SB.
+/// [`simulate_dc_intra_encode_partitions`] — describes one intra leaf
+/// inside a 64×64 SB.
 ///
 /// `(mi_row_in_sb, mi_col_in_sb)` is the leaf's top-left in 8×8 mi
 /// units relative to the SB's top-left (i.e. each is in `0..8`).
 /// `leaf_bsize` is the leaf's [`BlockSize`] (square, ≥ 8×8 for F10.1a).
+/// `predicted_y_mode` is the intra mode the simulator should use for
+/// the leaf's prediction + forward / inverse transform pair. The single-
+/// leaf form ([`simulate_dc_intra_encode`]) and the partition-aware
+/// frame loop's pre-F10.1b path use `IntraMode::Dc`; F10.1b drives this
+/// from [`crate::mode_decision::intra::pick_intra_mode_luma`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PartitionLeafDesc {
     /// Leaf's row inside the SB, in 8×8 mi units (0..=7).
@@ -1049,6 +1054,9 @@ pub(crate) struct PartitionLeafDesc {
     /// Leaf [`BlockSize`] (square: `Block8x8` / `Block16x16` /
     /// `Block32x32` / `Block64x64`).
     pub leaf_bsize: BlockSize,
+    /// Intra Y-mode the simulator should use for prediction +
+    /// forward/inverse transforms (luma only — UV stays DC for F10.1b).
+    pub predicted_y_mode: IntraMode,
 }
 
 /// Encoder simulator: per-TX-block predict → residual → fdct →
@@ -1082,6 +1090,7 @@ pub(crate) fn simulate_dc_intra_encode(
             mi_row_in_sb: 0,
             mi_col_in_sb: 0,
             leaf_bsize: BlockSize::Block64x64,
+            predicted_y_mode: IntraMode::Dc,
         }]);
     }
     simulate_dc_intra_encode_partitions(
@@ -1115,28 +1124,10 @@ pub(crate) fn simulate_dc_intra_encode_partitions(
     recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
     sb_partitions: &[Vec<PartitionLeafDesc>],
 ) -> VecBackedIntraCoefSource {
-    use rvp9_core::intra_pred::{
-        DcAvailability, EdgeBuffers, IntraMode as PredIntraMode, build_intra_predictors,
-        intra_predict,
-    };
-    use rvp9_core::quant::forward::{
-        QuantizerDeltas, init_plane_quantizers, scan_for_forward, vp9_quantize_b,
-        vp9_quantize_b_32x32,
-    };
-    use rvp9_core::transforms::forward::{fdct16x16, fdct32x32, fdct4x4, fdct8x8};
-    use rvp9_core::transforms::inverse::{
-        idct16x16_256_add, idct32x32_1024_add, idct4x4_16_add, idct8x8_64_add,
-    };
-    use rvp9_core::transforms::scans::scan_for;
-    use rvp9_core::transforms::TxType;
-
-    let w = width as usize;
-    let h = height as usize;
-    let uvw = w / 2;
-    let uvh = h / 2;
-    let qi = base_qindex as i32;
-
-    // Initialise the recon plane to zeroes (we'll fill TX-by-TX).
+    // Initialise the recon plane to zeroes (we'll fill TX-by-TX). The
+    // F10.1b picker-driven path skips this and uses
+    // [`simulate_dc_intra_encode_partitions_no_zero`] so previously-
+    // encoded leaves' recon is preserved across calls.
     for px in recon_yuv_out.0.iter_mut() {
         *px = 0;
     }
@@ -1146,6 +1137,48 @@ pub(crate) fn simulate_dc_intra_encode_partitions(
     for px in recon_yuv_out.2.iter_mut() {
         *px = 0;
     }
+    simulate_dc_intra_encode_partitions_no_zero(
+        width,
+        height,
+        base_qindex,
+        input_yuv,
+        recon_yuv_out,
+        sb_partitions,
+    )
+}
+
+/// `simulate_dc_intra_encode_partitions` without the up-front recon
+/// zeroing — the F10.1b picker path calls this once per leaf and needs
+/// the recon buffer from earlier leaves preserved across calls.
+pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
+    width: u32,
+    height: u32,
+    base_qindex: u8,
+    input_yuv: (&[u8], &[u8], &[u8]),
+    recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
+    sb_partitions: &[Vec<PartitionLeafDesc>],
+) -> VecBackedIntraCoefSource {
+    use rvp9_core::intra_pred::{
+        DcAvailability, EdgeBuffers, IntraMode as PredIntraMode, build_intra_predictors,
+        intra_predict,
+    };
+    use rvp9_core::quant::forward::{
+        QuantizerDeltas, init_plane_quantizers, scan_for_forward, vp9_quantize_b,
+        vp9_quantize_b_32x32,
+    };
+    use rvp9_core::transforms::forward::{fdct32x32, fht4x4, fht8x8, fht16x16};
+    use rvp9_core::transforms::inverse::{
+        idct32x32_1024_add, idct4x4_16_add, idct8x8_64_add, idct16x16_256_add,
+        iht4x4_16_add, iht8x8_64_add, iht16x16_256_add,
+    };
+    use rvp9_core::transforms::scans::scan_for;
+    use rvp9_core::transforms::TxType;
+
+    let w = width as usize;
+    let h = height as usize;
+    let uvw = w / 2;
+    let uvh = h / 2;
+    let qi = base_qindex as i32;
 
     let qp_y = init_plane_quantizers(qi, QuantizerDeltas::Y);
     let qp_uv = init_plane_quantizers(qi, QuantizerDeltas::Y); // delta-q all zero
@@ -1170,6 +1203,12 @@ pub(crate) fn simulate_dc_intra_encode_partitions(
                 let leaf_mi_row = sb_row * 8 + leaf.mi_row_in_sb;
                 let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
                 let luma_tx = rvp9_core::block::max_txsize(leaf_bsize);
+                // F10.1b: Y plane uses the picked intra mode; UV stays
+                // DC for v1 (UV mode picker is deferred). The Y mode
+                // also drives `tx_type` for the forward transform +
+                // scan order at sizes < Tx32x32 (Tx32x32 always uses
+                // DctDct, mirroring the decoder + writer).
+                let leaf_y_mode = leaf.predicted_y_mode;
 
                 // Iterate planes: 0=Y, 1=U, 2=V.
                 for plane in 0..3 {
@@ -1248,6 +1287,13 @@ pub(crate) fn simulate_dc_intra_encode_partitions(
                             let have_right =
                                 (tx_x4_local + tx_step_4x4) < plane_bw_4x4;
 
+                            // Y plane uses the leaf's picked mode; UV
+                            // is DC (UV-mode picker is F10.1c+).
+                            let plane_mode = if plane == 0 {
+                                leaf_y_mode
+                            } else {
+                                PredIntraMode::Dc
+                            };
                             let mut edges = EdgeBuffers::new();
                             build_intra_predictors(
                                 recon_plane,
@@ -1257,7 +1303,7 @@ pub(crate) fn simulate_dc_intra_encode_partitions(
                                 plane_w,
                                 plane_h,
                                 plane_tx,
-                                PredIntraMode::Dc,
+                                plane_mode,
                                 have_top,
                                 have_left,
                                 have_right,
@@ -1273,7 +1319,7 @@ pub(crate) fn simulate_dc_intra_encode_partitions(
                             let dst_off = tx_px_y * plane_stride + tx_px_x;
                             let dst = &mut recon_plane[dst_off..];
                             intra_predict(
-                                PredIntraMode::Dc,
+                                plane_mode,
                                 dst,
                                 plane_stride,
                                 tx_side,
@@ -1294,7 +1340,21 @@ pub(crate) fn simulate_dc_intra_encode_partitions(
                                 }
                             }
 
-                            // 4. Forward DCT (per TX size).
+                            // TX type. Y plane: `plane_mode.tx_type()`
+                            // (collapses to DctDct for Tx32x32 below).
+                            // UV plane: always DctDct. Matches the
+                            // writer's `tx_type` derivation at
+                            // `modes_writer::write_intra_block_residual`.
+                            let tx_type = if plane == 0 && plane_tx != TxSize::Tx32x32 {
+                                plane_mode.tx_type()
+                            } else {
+                                TxType::DctDct
+                            };
+
+                            // 4. Forward DCT / FHT (per TX size).
+                            //    Tx32x32 has no hybrid → fdct32x32. Smaller
+                            //    sizes use the hybrid `fht*` family with
+                            //    `tx_type`.
                             let n = plane_tx.n_coeffs();
                             let mut coefs_i32 = vec![0i32; n];
                             match plane_tx {
@@ -1305,23 +1365,25 @@ pub(crate) fn simulate_dc_intra_encode_partitions(
                                 }
                                 TxSize::Tx16x16 => {
                                     let mut buf = [0i32; 256];
-                                    fdct16x16(&residual, &mut buf, tx_side);
+                                    fht16x16(&residual, &mut buf, tx_side, tx_type);
                                     coefs_i32.copy_from_slice(&buf[..]);
                                 }
                                 TxSize::Tx8x8 => {
                                     let mut buf = [0i32; 64];
-                                    fdct8x8(&residual, &mut buf, tx_side);
+                                    fht8x8(&residual, &mut buf, tx_side, tx_type);
                                     coefs_i32.copy_from_slice(&buf[..]);
                                 }
                                 TxSize::Tx4x4 => {
                                     let mut buf = [0i32; 16];
-                                    fdct4x4(&residual, &mut buf, tx_side);
+                                    fht4x4(&residual, &mut buf, tx_side, tx_type);
                                     coefs_i32.copy_from_slice(&buf[..]);
                                 }
                             }
 
-                            // 5. Forward quant.
-                            let scan = scan_for(plane_tx, TxType::DctDct);
+                            // 5. Forward quant. Scan follows the writer:
+                            //    Tx32x32 → DctDct scan; smaller sizes use
+                            //    `scan_for(plane_tx, tx_type)`.
+                            let scan = scan_for(plane_tx, tx_type);
                             let scan_slice = scan_for_forward(&scan);
                             let mut qcoeff_i16 = vec![0i16; n];
                             let mut dqcoeff_i16 = vec![0i16; n];
@@ -1373,29 +1435,56 @@ pub(crate) fn simulate_dc_intra_encode_partitions(
                                     TxSize::Tx16x16 => {
                                         let mut buf = [0i32; 256];
                                         buf.copy_from_slice(&dq_i32[..]);
-                                        idct16x16_256_add(
-                                            &buf,
-                                            &mut recon_plane[dst_off..],
-                                            plane_stride,
-                                        );
+                                        if tx_type == TxType::DctDct {
+                                            idct16x16_256_add(
+                                                &buf,
+                                                &mut recon_plane[dst_off..],
+                                                plane_stride,
+                                            );
+                                        } else {
+                                            iht16x16_256_add(
+                                                &buf,
+                                                &mut recon_plane[dst_off..],
+                                                plane_stride,
+                                                tx_type,
+                                            );
+                                        }
                                     }
                                     TxSize::Tx8x8 => {
                                         let mut buf = [0i32; 64];
                                         buf.copy_from_slice(&dq_i32[..]);
-                                        idct8x8_64_add(
-                                            &buf,
-                                            &mut recon_plane[dst_off..],
-                                            plane_stride,
-                                        );
+                                        if tx_type == TxType::DctDct {
+                                            idct8x8_64_add(
+                                                &buf,
+                                                &mut recon_plane[dst_off..],
+                                                plane_stride,
+                                            );
+                                        } else {
+                                            iht8x8_64_add(
+                                                &buf,
+                                                &mut recon_plane[dst_off..],
+                                                plane_stride,
+                                                tx_type,
+                                            );
+                                        }
                                     }
                                     TxSize::Tx4x4 => {
                                         let mut buf = [0i32; 16];
                                         buf.copy_from_slice(&dq_i32[..]);
-                                        idct4x4_16_add(
-                                            &buf,
-                                            &mut recon_plane[dst_off..],
-                                            plane_stride,
-                                        );
+                                        if tx_type == TxType::DctDct {
+                                            idct4x4_16_add(
+                                                &buf,
+                                                &mut recon_plane[dst_off..],
+                                                plane_stride,
+                                            );
+                                        } else {
+                                            iht4x4_16_add(
+                                                &buf,
+                                                &mut recon_plane[dst_off..],
+                                                plane_stride,
+                                                tx_type,
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -1427,6 +1516,244 @@ pub(crate) fn simulate_dc_intra_encode_partitions(
     }
 
     out
+}
+
+/// F10.1b — pick the Y intra mode per leaf via
+/// [`rvp9_core::mode_decision::intra::pick_intra_mode_luma`], record it
+/// into the leaf descriptor, AND encode the leaf in the same walk so
+/// the running recon buffer feeds the next leaf's neighbour fetch.
+///
+/// Same shape as [`simulate_dc_intra_encode_partitions`] but with the
+/// picker invocation interleaved per leaf. Walks SBs/leaves in raster
+/// order; for each leaf:
+///
+/// 1. Materialise neighbour Y samples from the running
+///    `recon_yuv_out.0` plane (above row + left column + top-left
+///    pixel; the frame-edge leaves fall back to the picker's 127/129
+///    libvpx sentinels via `have_above = false` / `have_left = false`).
+/// 2. Look up the above-/left-mode contexts from the picked-mode grid.
+///    libvpx's `vp9_rd.c:96-101` Y-mode-cost table is indexed
+///    `[above_ctx][left_ctx][mode]`; out-of-frame neighbours fall back
+///    to `DC_PRED`.
+/// 3. Call `pick_intra_mode_luma` to choose the winning mode.
+/// 4. Write the picked mode back into `sb_partitions[sb][leaf]
+///    .predicted_y_mode` AND the picked-mode grid (splat across every
+///    8×8 mi cell the leaf covers).
+/// 5. Run the per-leaf encode pass (predict → fdct → quant → idct-add)
+///    using that mode — populates both the recon buffer and the
+///    qcoeff [`VecBackedIntraCoefSource`].
+///
+/// UV stays forced to `IntraMode::Dc` for v1 (the UV-mode picker is
+/// further down the F8.x roadmap).
+pub(crate) fn pick_and_simulate_intra_encode_partitions(
+    width: u32,
+    height: u32,
+    base_qindex: u8,
+    input_yuv: (&[u8], &[u8], &[u8]),
+    recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
+    sb_partitions: &mut [Vec<PartitionLeafDesc>],
+) -> VecBackedIntraCoefSource {
+    use rvp9_core::cost::intra_y_mode_costs_kf_table;
+    use rvp9_core::mode_decision::intra::{
+        IntraModeSearchParams, pick_intra_mode_luma,
+    };
+    use rvp9_core::mv_search::PlaneRef;
+    use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
+
+    let w = width as usize;
+    let h = height as usize;
+    let sb_cols = w / 64;
+    let sb_rows = h / 64;
+    assert_eq!(
+        sb_partitions.len(),
+        sb_rows * sb_cols,
+        "sb_partitions must have one entry per 64x64 SB ({} rows × {} cols)",
+        sb_rows,
+        sb_cols,
+    );
+
+    let mi_cols = w / 8;
+    let mi_rows = h / 8;
+    let mut picked_y_mode_grid: Vec<Option<IntraMode>> =
+        vec![None; mi_rows * mi_cols];
+
+    // First pass: walk SBs/leaves in raster, run the simulator one
+    // leaf at a time, prepended by a picker call. The simulator
+    // helper expects `sb_partitions` to drive *which* leaves get
+    // encoded; we feed it a single-element slice per call so it only
+    // touches one leaf per invocation.
+    //
+    // The simulator's neighbour-edge build reads from `recon_yuv_out`,
+    // which has been populated by all previously-encoded leaves —
+    // exactly the data the picker needs too. So the picker's `above_
+    // pixels` / `left_pixels` come from the same buffer.
+
+    let quantizer = init_plane_quantizers(i32::from(base_qindex), QuantizerDeltas::Y);
+    let y_mode_costs = intra_y_mode_costs_kf_table();
+
+    // Zero recon up-front — the per-leaf simulator call expects the
+    // recon plane to be already populated for previously-encoded leaves
+    // and zero outside.
+    for px in recon_yuv_out.0.iter_mut() {
+        *px = 0;
+    }
+    for px in recon_yuv_out.1.iter_mut() {
+        *px = 0;
+    }
+    for px in recon_yuv_out.2.iter_mut() {
+        *px = 0;
+    }
+
+    let mut coef_source = VecBackedIntraCoefSource::new(width, height);
+
+    for sb_row in 0..sb_rows {
+        for sb_col in 0..sb_cols {
+            let sb_idx = sb_row * sb_cols + sb_col;
+            for leaf_idx in 0..sb_partitions[sb_idx].len() {
+                let (leaf_mi_row, leaf_mi_col, leaf_bsize) = {
+                    let leaf = &sb_partitions[sb_idx][leaf_idx];
+                    (
+                        sb_row * 8 + leaf.mi_row_in_sb,
+                        sb_col * 8 + leaf.mi_col_in_sb,
+                        leaf.leaf_bsize,
+                    )
+                };
+                let bs_pixels = leaf_bsize.width() as usize;
+                debug_assert_eq!(
+                    bs_pixels,
+                    leaf_bsize.height() as usize,
+                    "F10.1b picker expects square leaves"
+                );
+                let leaf_px_x = leaf_mi_col * 8;
+                let leaf_px_y = leaf_mi_row * 8;
+
+                let have_above = leaf_px_y > 0;
+                let have_left = leaf_px_x > 0;
+                let mut above_pixels = vec![0u8; bs_pixels];
+                let mut left_pixels = vec![0u8; bs_pixels];
+                if have_above {
+                    let above_row_y = leaf_px_y - 1;
+                    let row_off = above_row_y * w + leaf_px_x;
+                    above_pixels
+                        .copy_from_slice(&recon_yuv_out.0[row_off..row_off + bs_pixels]);
+                }
+                if have_left {
+                    let left_col_x = leaf_px_x - 1;
+                    for (r, slot) in left_pixels.iter_mut().enumerate() {
+                        *slot = recon_yuv_out.0[(leaf_px_y + r) * w + left_col_x];
+                    }
+                }
+                let top_left_pixel = if have_above && have_left {
+                    recon_yuv_out.0[(leaf_px_y - 1) * w + (leaf_px_x - 1)]
+                } else {
+                    0u8
+                };
+
+                let above_mode_ctx = if leaf_mi_row > 0 {
+                    picked_y_mode_grid
+                        [(leaf_mi_row - 1) * mi_cols + leaf_mi_col]
+                        .unwrap_or(IntraMode::Dc)
+                } else {
+                    IntraMode::Dc
+                };
+                let left_mode_ctx = if leaf_mi_col > 0 {
+                    picked_y_mode_grid
+                        [leaf_mi_row * mi_cols + (leaf_mi_col - 1)]
+                        .unwrap_or(IntraMode::Dc)
+                } else {
+                    IntraMode::Dc
+                };
+
+                // F8.0 picker requires `block_size.side == tx_size.side`
+                // (debug_assert at `mode_decision/intra.rs:246`). The
+                // luma `max_txsize` for Block64x64 is Tx32x32 (side 32),
+                // so a Block64x64 leaf falls outside the picker's
+                // current scope — fall back to DC for those. Smaller
+                // square leaves (≤ Block32x32) are handled by the
+                // picker. Per-32×32 sub-block picking inside a 64×64
+                // leaf is on the F8.0 picker's roadmap; for v1 we get
+                // DC on the (rare) full-SB-no-split leaves.
+                let picked_mode = if leaf_bsize == BlockSize::Block64x64 {
+                    IntraMode::Dc
+                } else {
+                    let src_plane = PlaneRef {
+                        data: input_yuv.0,
+                        stride: w,
+                        width: w,
+                        height: h,
+                    };
+                    let params = IntraModeSearchParams {
+                        block_size: leaf_bsize,
+                        src_plane: &src_plane,
+                        src_offset: (leaf_px_x, leaf_px_y),
+                        above_pixels: &above_pixels,
+                        left_pixels: &left_pixels,
+                        top_left_pixel,
+                        have_above,
+                        have_left,
+                        quantizer: &quantizer,
+                        q_index: base_qindex,
+                        frame_kind:
+                            rvp9_core::bitstream::header::FrameKind::KeyFrame,
+                        above_mode_ctx,
+                        left_mode_ctx,
+                        y_mode_costs: &y_mode_costs,
+                    };
+                    pick_intra_mode_luma(&params).best_mode
+                };
+
+                sb_partitions[sb_idx][leaf_idx].predicted_y_mode = picked_mode;
+                let n_8x8 = (bs_pixels / 8).max(1);
+                for dr in 0..n_8x8 {
+                    for dc in 0..n_8x8 {
+                        let mi_r = leaf_mi_row + dr;
+                        let mi_c = leaf_mi_col + dc;
+                        picked_y_mode_grid[mi_r * mi_cols + mi_c] =
+                            Some(picked_mode);
+                    }
+                }
+
+                // Encode this one leaf via the simulator. We construct
+                // a per-SB layout containing only this leaf so the
+                // simulator's outer loop walks exactly one element.
+                // Recon buffer state from earlier leaves is preserved
+                // (the simulator no longer zeros recon — we relocated
+                // that to up-front, see below).
+                let single_leaf_layout: Vec<Vec<PartitionLeafDesc>> = (0..(sb_rows
+                    * sb_cols))
+                    .map(|i| {
+                        if i == sb_idx {
+                            vec![sb_partitions[sb_idx][leaf_idx]]
+                        } else {
+                            Vec::new()
+                        }
+                    })
+                    .collect();
+                let leaf_coefs = simulate_dc_intra_encode_partitions_no_zero(
+                    width,
+                    height,
+                    base_qindex,
+                    input_yuv,
+                    (
+                        &mut *recon_yuv_out.0,
+                        &mut *recon_yuv_out.1,
+                        &mut *recon_yuv_out.2,
+                    ),
+                    &single_leaf_layout,
+                );
+                // Merge `leaf_coefs` into the running `coef_source`.
+                for ((mi_row, mi_col, plane, tx_x, tx_y), (qc, eob)) in
+                    leaf_coefs.blocks.into_iter()
+                {
+                    coef_source.insert(
+                        mi_row, mi_col, plane, tx_x, tx_y, qc, eob,
+                    );
+                }
+            }
+        }
+    }
+
+    coef_source
 }
 
 #[cfg(test)]
