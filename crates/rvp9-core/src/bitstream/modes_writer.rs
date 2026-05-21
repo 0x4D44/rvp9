@@ -80,6 +80,7 @@
 
 use super::error::BitstreamError;
 use super::inter_coef_source::InterCoefSource;
+use super::intra_coef_source::IntraCoefSource;
 use crate::block::{max_txsize, BlockSize, PartitionType, subsize};
 use crate::bitstream::compressed_header::tx_mode_to_biggest_tx_size;
 use crate::coef_ctx::TileCoefCtx;
@@ -500,6 +501,7 @@ impl NeighbourCtx {
 ///   geometry-level rejections.
 /// - [`ModesWriterError::BufferOverflow`] — the [`BoolWriter`]
 ///   overflowed.
+#[allow(clippy::too_many_arguments)] // mirrors libvpx's per-tile signature
 pub fn write_tile_intra_keyframe(
     bw: &mut BoolWriter<'_>,
     mi_grid: &[Option<ModeInfo>],
@@ -507,6 +509,8 @@ pub fn write_tile_intra_keyframe(
     mi_cols: u32,
     tile_bounds: TileBounds,
     fc: &FrameContext,
+    coef_ctx: &mut TileCoefCtx,
+    coef_source: &dyn IntraCoefSource,
 ) -> Result<(), ModesWriterError> {
     if !mi_rows.is_multiple_of(MI_BLOCK_SIZE as u32)
         || !mi_cols.is_multiple_of(MI_BLOCK_SIZE as u32)
@@ -532,6 +536,11 @@ pub fn write_tile_intra_keyframe(
     while mi_row < tile_bounds.mi_row_end {
         part_ctx.reset_left();
         nbr_ctx.reset_left();
+        // SB-row boundary: clear the per-plane left coef-context. The
+        // above row persists across SB rows. Mirrors libvpx
+        // `vp9_decodeframe.c:2089` (same gate the inter writer applies
+        // in `write_tile_inter`).
+        coef_ctx.reset_left_coef();
 
         let mut mi_col = tile_bounds.mi_col_start;
         while mi_col < tile_bounds.mi_col_end {
@@ -547,6 +556,8 @@ pub fn write_tile_intra_keyframe(
                 BlockSize::Block64x64,
                 4, // n4x4_l2 for 64x64 = log2(16) = 4
                 fc,
+                coef_ctx,
+                coef_source,
             )?;
             mi_col += MI_BLOCK_SIZE;
         }
@@ -797,6 +808,8 @@ fn write_partition_tree(
     bsize: BlockSize,
     n4x4_l2: u8,
     fc: &FrameContext,
+    coef_ctx: &mut TileCoefCtx,
+    coef_source: &dyn IntraCoefSource,
 ) -> Result<(), ModesWriterError> {
     // Defensive: the frame-edge clip in `decode_partition` should
     // never fire because (1) the writer caller's `NonMultipleOfSb`
@@ -837,14 +850,18 @@ fn write_partition_tree(
             // sub == bsize for PARTITION_NONE. Write the leaf.
             let mi = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
-            write_block_intra_keyframe(bw, fc, nbr_ctx, bounds, mi_row, mi_col, sub, &mi)?;
+            write_block_intra_keyframe(
+                bw, fc, nbr_ctx, bounds, mi_row, mi_col, sub, &mi, coef_ctx, coef_source,
+            )?;
         }
         PartitionType::Horz => {
             // Two leaves: (mi_row, mi_col) and (mi_row + hbs, mi_col),
             // both with `sub` = horizontal subsize of `bsize`.
             let top = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
-            write_block_intra_keyframe(bw, fc, nbr_ctx, bounds, mi_row, mi_col, sub, &top)?;
+            write_block_intra_keyframe(
+                bw, fc, nbr_ctx, bounds, mi_row, mi_col, sub, &top, coef_ctx, coef_source,
+            )?;
             let mi_row_b = mi_row + hbs;
             let bot = mi_grid_get(mi_grid, mi_cols, mi_row_b, mi_col).ok_or(
                 ModesWriterError::MissingCell {
@@ -852,12 +869,16 @@ fn write_partition_tree(
                     mi_col,
                 },
             )?;
-            write_block_intra_keyframe(bw, fc, nbr_ctx, bounds, mi_row_b, mi_col, sub, &bot)?;
+            write_block_intra_keyframe(
+                bw, fc, nbr_ctx, bounds, mi_row_b, mi_col, sub, &bot, coef_ctx, coef_source,
+            )?;
         }
         PartitionType::Vert => {
             let left = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
-            write_block_intra_keyframe(bw, fc, nbr_ctx, bounds, mi_row, mi_col, sub, &left)?;
+            write_block_intra_keyframe(
+                bw, fc, nbr_ctx, bounds, mi_row, mi_col, sub, &left, coef_ctx, coef_source,
+            )?;
             let mi_col_r = mi_col + hbs;
             let right = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col_r).ok_or(
                 ModesWriterError::MissingCell {
@@ -865,14 +886,16 @@ fn write_partition_tree(
                     mi_col: mi_col_r,
                 },
             )?;
-            write_block_intra_keyframe(bw, fc, nbr_ctx, bounds, mi_row, mi_col_r, sub, &right)?;
+            write_block_intra_keyframe(
+                bw, fc, nbr_ctx, bounds, mi_row, mi_col_r, sub, &right, coef_ctx, coef_source,
+            )?;
         }
         PartitionType::Split => {
             // 4-way recursion in (mi_row | +hbs, mi_col | +hbs) order
             // — same order as the decoder.
             write_partition_tree(
                 bw, part_ctx, nbr_ctx, bounds, mi_grid, mi_cols, mi_row, mi_col, sub, n8x8_l2,
-                fc,
+                fc, coef_ctx, coef_source,
             )?;
             write_partition_tree(
                 bw,
@@ -886,6 +909,8 @@ fn write_partition_tree(
                 sub,
                 n8x8_l2,
                 fc,
+                coef_ctx,
+                coef_source,
             )?;
             write_partition_tree(
                 bw,
@@ -899,6 +924,8 @@ fn write_partition_tree(
                 sub,
                 n8x8_l2,
                 fc,
+                coef_ctx,
+                coef_source,
             )?;
             write_partition_tree(
                 bw,
@@ -912,6 +939,8 @@ fn write_partition_tree(
                 sub,
                 n8x8_l2,
                 fc,
+                coef_ctx,
+                coef_source,
             )?;
         }
     }
@@ -934,16 +963,17 @@ fn write_partition_tree(
 ///
 /// - `block_size == leaf_bsize`,
 /// - `mode == Intra { y_mode, uv_mode }` (any of the 10 intra modes),
-/// - `skip == true`,
 /// - `segment_id == 0 && !seg_id_predicted`.
 ///
 /// Emits, in order:
 ///
-/// 1. `skip = 1` against `fc.skip_probs[skip_ctx]`.
+/// 1. `mi.skip` against `fc.skip_probs[skip_ctx]`.
 /// 2. `y_mode` against
 ///    `VP9_KF_Y_MODE_PROB[above_mode][left_mode]` via the
 ///    `VP9_INTRA_MODE_TREE` walk.
 /// 3. `uv_mode` against `VP9_KF_UV_MODE_PROB[y_mode]` (same tree).
+/// 4. When `!mi.skip`, per-plane × per-TX residual coefs via
+///    [`write_intra_block_residual`] (drives `write_block_tokens`).
 ///
 /// Then updates `nbr_ctx` with the just-written `(y_mode, skip)`
 /// pair so subsequent blocks see the correct above/left neighbour
@@ -959,6 +989,8 @@ fn write_block_intra_keyframe(
     mi_col: usize,
     leaf_bsize: BlockSize,
     mi: &ModeInfo,
+    coef_ctx: &mut TileCoefCtx,
+    coef_source: &dyn IntraCoefSource,
 ) -> Result<(), ModesWriterError> {
     // Scope validation — the leaf cell's recorded block_size must
     // match the partition-tree-derived expected subsize at this
@@ -978,9 +1010,6 @@ fn write_block_intra_keyframe(
             return Err(ModesWriterError::UnsupportedBlockMode { mi_row, mi_col });
         }
     };
-    if !mi.skip {
-        return Err(ModesWriterError::UnsupportedNonSkip { mi_row, mi_col });
-    }
     if mi.segment_id != 0 || mi.seg_id_predicted {
         return Err(ModesWriterError::UnsupportedSegmentation { mi_row, mi_col });
     }
@@ -993,11 +1022,11 @@ fn write_block_intra_keyframe(
     // Segment_id: caller contract pins `segmentation_update_map ==
     // false`, so no bits are emitted.
 
-    // 1. Skip flag — always 1 under writer scope. The skip prob bank
+    // 1. Skip flag against `fc.skip_probs[skip_ctx]`. The skip prob bank
     //    is laid out as `[u8; SKIP_CONTEXTS]` (3 entries) and the
     //    decoder reads with `r.read(probs[ctx])` (`mode_info.rs::
     //    read_skip`).
-    bw.write(1, fc.skip_probs[skip_ctx]);
+    bw.write(u8::from(mi.skip), fc.skip_probs[skip_ctx]);
 
     // 2. Intra Y mode against `VP9_KF_Y_MODE_PROB[above][left]`.
     let y_probs = &VP9_KF_Y_MODE_PROB[above_mode as usize][left_mode as usize];
@@ -1009,16 +1038,176 @@ fn write_block_intra_keyframe(
 
     // 4. tx_size — NOT emitted on the wire when `tx_mode !=
     //    TxModeSelect`. The caller commits this via the compressed
-    //    header.
+    //    header. The decoder derives `tx_size = min(max_tx,
+    //    tx_mode_to_biggest_tx_size(tx_mode))` per-block.
 
-    // 5. Splat the just-written neighbour state across the leaf's
+    // 5. Residual coefs. The decoder's `reconstruct_intra_planes`
+    //    walks each plane × each TX position, decoding tokens via
+    //    `decode_block_tokens` when `!mi.skip`. We mirror that walk
+    //    here. The skip=true path is handled implicitly by the
+    //    decoder's `dec_reset_skip_context` (zeros the coef-context
+    //    cells covering the block) — under writer scope today all
+    //    existing skip=true call sites start with a zero coef_ctx,
+    //    so the reset is a no-op and we don't replicate it.
+    if !mi.skip {
+        write_intra_block_residual(
+            bw,
+            fc,
+            coef_ctx,
+            coef_source,
+            mi_row,
+            mi_col,
+            leaf_bsize,
+            mi.tx_size,
+            y_mode,
+            uv_mode,
+        );
+    }
+
+    // 6. Splat the just-written neighbour state across the leaf's
     //    mi-coverage. The above/left context for the next block sees
-    //    the leaf's Y mode.
+    //    the leaf's Y mode and skip flag.
     let x_mis = usize::from(leaf_bsize.n_8x8_wide());
     let y_mis = usize::from(leaf_bsize.n_8x8_high());
-    nbr_ctx.write_block(mi_row_in_tile, mi_col_in_tile, x_mis, y_mis, y_mode, true);
+    nbr_ctx.write_block(mi_row_in_tile, mi_col_in_tile, x_mis, y_mis, y_mode, mi.skip);
 
     Ok(())
+}
+
+/// Emit one non-skip keyframe intra leaf's per-plane × per-TX residual
+/// stream.
+///
+/// Mirror of [`write_inter_block_residual`] for the keyframe path —
+/// same plane / TX walk, same `write_block_tokens` per TX, just
+/// `ref_type = 0` (intra) and the Y-plane `tx_type` is derived from
+/// the intra mode (libvpx `intra_mode_to_tx_type_lookup`,
+/// `vp9_decodeframe.c:324-325` and the matching path in
+/// `rvp9_decoder::reconstruct::resolve_tx_type`). UV always uses
+/// `TxType::DctDct`.
+///
+/// Order matches the decoder's `reconstruct_intra_planes` inner
+/// `loff` / `aoff` loop (`rvp9-decoder::tile`, near line 987):
+/// for each plane in 0..3, walk plane-block in TX-step-4×4 strides
+/// over (row, col).
+///
+/// The frame-edge clamping the decoder applies (the
+/// `tx_px_x >= plane_width_px` / `tx_px_y >= plane_height_px` short-
+/// circuit) is intentionally omitted: the writer invariant
+/// (`mi_rows`, `mi_cols` both multiples of 8) means partial blocks at
+/// the frame edge never arise.
+#[allow(clippy::too_many_arguments)]
+fn write_intra_block_residual(
+    bw: &mut BoolWriter<'_>,
+    fc: &FrameContext,
+    coef_ctx: &mut TileCoefCtx,
+    coef_source: &dyn IntraCoefSource,
+    mi_row: usize,
+    mi_col: usize,
+    leaf_bsize: BlockSize,
+    luma_tx: TxSize,
+    y_mode: IntraMode,
+    _uv_mode: IntraMode,
+) {
+    // Single-tile scope (see `write_inter_block_residual` doc).
+    let mi_col_in_tile = mi_col;
+    let mi_row_in_sb = mi_row & MI_MASK;
+
+    for plane in 0..3 {
+        let ss_x = SUBSAMPLING_X[plane];
+        let ss_y = SUBSAMPLING_Y[plane];
+
+        let plane_bsize = if plane == 0 {
+            leaf_bsize
+        } else {
+            uv_plane_block_size(leaf_bsize)
+        };
+        let plane_tx = if plane == 0 {
+            luma_tx
+        } else {
+            uv_plane_tx_size(leaf_bsize, luma_tx)
+        };
+
+        // libvpx pd->n4_w / n4_h: sub-8 luma uses `(2 >> ss_x, 2 >>
+        // ss_y)` regardless of subsize; ≥ 8×8 uses the plane_bsize
+        // 4×4 extent. Mirrors the decoder's
+        // `reconstruct_intra_planes` plane-extent derivation.
+        let is_sub8 = (leaf_bsize as u8) < (BlockSize::Block8x8 as u8);
+        let (plane_bw_4x4, plane_bh_4x4) = if is_sub8 {
+            (2 >> ss_x, 2 >> ss_y)
+        } else {
+            (
+                plane_bsize.n_4x4_wide() as usize,
+                plane_bsize.n_4x4_high() as usize,
+            )
+        };
+        let tx_step_4x4 = 1usize << (plane_tx as usize);
+
+        // Tile-/SB-relative 4×4 origin in the plane's coef-context
+        // tables. Matches the decoder.
+        let plane_x4_base = (mi_col_in_tile * 2) >> ss_x;
+        let plane_y4_in_sb_base = (mi_row_in_sb * 2) >> ss_y;
+
+        let seg_eob = plane_tx.n_coeffs();
+
+        // TX type. Y plane: `intra_mode_to_tx_type_lookup[y_mode]`
+        // (collapses to `DctDct` for DC_PRED / TM_PRED at sizes ≥
+        // Tx32x32 anyway). UV: always `DctDct`. Mirrors
+        // `rvp9_decoder::reconstruct::resolve_tx_type`.
+        let tx_type = if plane == 0 {
+            y_mode.tx_type()
+        } else {
+            TxType::DctDct
+        };
+
+        // Raster-order walk over TX positions inside this plane's
+        // coding block.
+        let mut tx_y4_local = 0usize;
+        while tx_y4_local < plane_bh_4x4 {
+            let mut tx_x4_local = 0usize;
+            while tx_x4_local < plane_bw_4x4 {
+                let (coefs, eob) = coef_source.get_block_coefs(
+                    mi_row,
+                    mi_col,
+                    plane,
+                    tx_x4_local,
+                    tx_y4_local,
+                    plane_tx,
+                );
+                debug_assert!(
+                    coefs.len() >= plane_tx.n_coeffs(),
+                    "intra coef source returned slice of len {} < tx.n_coeffs() {} for plane {} tx {:?}",
+                    coefs.len(),
+                    plane_tx.n_coeffs(),
+                    plane,
+                    plane_tx,
+                );
+                debug_assert!(
+                    eob <= seg_eob,
+                    "intra coef source returned eob {} > seg_eob {} for plane {} tx {:?}",
+                    eob,
+                    seg_eob,
+                    plane,
+                    plane_tx,
+                );
+                write_block_tokens(
+                    bw,
+                    fc,
+                    coef_ctx,
+                    plane,
+                    plane_x4_base + tx_x4_local,
+                    plane_y4_in_sb_base + tx_y4_local,
+                    plane_tx,
+                    tx_type,
+                    /* ref_type = */ 0, // intra
+                    seg_eob,
+                    coefs,
+                    eob,
+                );
+                tx_x4_local += tx_step_4x4;
+            }
+            tx_y4_local += tx_step_4x4;
+        }
+    }
 }
 
 /// Encode an intra-prediction mode against an
@@ -1865,6 +2054,37 @@ mod tests {
         vec![Some(cell); mi_rows * mi_cols]
     }
 
+    /// Test-only wrapper around the widened `write_tile_intra_keyframe`
+    /// signature. Supplies a stack-local `TileCoefCtx` + an
+    /// `AllZeroIntraCoefSource` so the existing tests (which all assume
+    /// `skip = true` and don't care about residual emission) don't have
+    /// to thread those parameters individually.
+    fn write_tile_intra_keyframe_default(
+        bw: &mut BoolWriter<'_>,
+        mi_grid: &[Option<ModeInfo>],
+        mi_rows: u32,
+        mi_cols: u32,
+        tile_bounds: TileBounds,
+        fc: &FrameContext,
+    ) -> Result<(), ModesWriterError> {
+        let tile_mi_cols = tile_bounds
+            .mi_col_end
+            .saturating_sub(tile_bounds.mi_col_start)
+            .max(1);
+        let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
+        let coef_source = crate::bitstream::AllZeroIntraCoefSource::new();
+        write_tile_intra_keyframe(
+            bw,
+            mi_grid,
+            mi_rows,
+            mi_cols,
+            tile_bounds,
+            fc,
+            &mut coef_ctx,
+            &coef_source,
+        )
+    }
+
     /// Mirror of the decoder's per-tile partition-context machinery.
     /// We need it in tests to read back what we just wrote — the
     /// public reader-side helpers in `rvp9_core::mode_info` only do
@@ -1967,6 +2187,8 @@ mod tests {
             let mut nbr_ctx = NeighbourCtx::new(8);
             let grid = make_dc_grid(8, 8);
             let mi = grid[0].expect("populated cell");
+            let mut coef_ctx = TileCoefCtx::new(8);
+            let coef_source = crate::bitstream::AllZeroIntraCoefSource::new();
             write_block_intra_keyframe(
                 &mut bw,
                 &fc,
@@ -1976,6 +2198,8 @@ mod tests {
                 0,
                 BlockSize::Block64x64,
                 &mi,
+                &mut coef_ctx,
+                &coef_source,
             )
             .expect("write_block_intra_keyframe should succeed");
             bw.stop_encode().expect("stop_encode")
@@ -2012,7 +2236,7 @@ mod tests {
             mi_col_end: 8,
         };
         let mut bw = BoolWriter::start_encode(&mut buf);
-        let err = write_tile_intra_keyframe(&mut bw, &grid, 8, 8, bounds, &fc).unwrap_err();
+        let err = write_tile_intra_keyframe_default(&mut bw, &grid, 8, 8, bounds, &fc).unwrap_err();
         assert!(matches!(err, ModesWriterError::MissingCell { mi_row: 0, mi_col: 0 }));
     }
 
@@ -2037,7 +2261,7 @@ mod tests {
             mi_col_end: 8,
         };
         let mut bw = BoolWriter::start_encode(&mut buf);
-        let err = write_tile_intra_keyframe(&mut bw, &grid, 8, 8, bounds, &fc).unwrap_err();
+        let err = write_tile_intra_keyframe_default(&mut bw, &grid, 8, 8, bounds, &fc).unwrap_err();
         assert!(
             matches!(err, ModesWriterError::InconsistentPartitionTree { .. })
                 || matches!(err, ModesWriterError::UnsupportedBlockSize { .. }),
@@ -2046,13 +2270,30 @@ mod tests {
     }
 
     /// `write_tile_intra_keyframe` rejects a non-skip cell.
+    /// F5.1 — the keyframe writer accepts `skip = false` cells and
+    /// emits residual coefs via the `IntraCoefSource` plumbing.
+    /// Companion to `s4_16k_round_trip_non_skip_all_zero_through_decoder`
+    /// in the rvp9-decoder crate (which exercises the same path for the
+    /// inter writer). With `AllZeroIntraCoefSource` every TX block
+    /// reports `eob = 0`, so the writer emits a single terminal-EOB
+    /// bit per (plane × TX) — 6 EOB bits per 64×64 SB (4 Y Tx32x32 +
+    /// 1 U + 1 V) on top of the mode-info bits.
     #[test]
-    fn write_tile_intra_keyframe_rejects_non_skip() {
-        let mut buf = vec![0u8; 64];
+    fn write_tile_intra_keyframe_accepts_non_skip_with_all_zero_coefs() {
+        let mut buf = vec![0u8; 1024];
         let fc = FrameContext::new_default();
         let mut grid = make_dc_grid(8, 8);
         if let Some(c) = grid[0].as_mut() {
             c.skip = false;
+        }
+        // mi-grid splat: every 8×8 cell of the 64×64 SB carries the
+        // same ModeInfo. (The walker reads `block_size` from the
+        // top-left cell to infer PARTITION_NONE; the rest are tracked
+        // for the leaf's coverage.)
+        for cell in grid.iter_mut().skip(1) {
+            if let Some(c) = cell.as_mut() {
+                c.skip = false;
+            }
         }
         let bounds = TileBounds {
             mi_row_start: 0,
@@ -2061,8 +2302,19 @@ mod tests {
             mi_col_end: 8,
         };
         let mut bw = BoolWriter::start_encode(&mut buf);
-        let err = write_tile_intra_keyframe(&mut bw, &grid, 8, 8, bounds, &fc).unwrap_err();
-        assert!(matches!(err, ModesWriterError::UnsupportedNonSkip { .. }));
+        let mut coef_ctx = TileCoefCtx::new(8);
+        let coef_source = crate::bitstream::AllZeroIntraCoefSource::new();
+        write_tile_intra_keyframe(
+            &mut bw,
+            &grid,
+            8,
+            8,
+            bounds,
+            &fc,
+            &mut coef_ctx,
+            &coef_source,
+        )
+        .expect("non-skip + all-zero coef source must succeed");
     }
 
     /// `write_tile_intra_keyframe` rejects an inter-mode block. Intra
@@ -2085,7 +2337,7 @@ mod tests {
             mi_col_end: 8,
         };
         let mut bw = BoolWriter::start_encode(&mut buf);
-        let err = write_tile_intra_keyframe(&mut bw, &grid, 8, 8, bounds, &fc).unwrap_err();
+        let err = write_tile_intra_keyframe_default(&mut bw, &grid, 8, 8, bounds, &fc).unwrap_err();
         assert!(matches!(err, ModesWriterError::UnsupportedBlockMode { .. }));
     }
 
@@ -2119,7 +2371,7 @@ mod tests {
             mi_col_end: 8,
         };
         let mut bw = BoolWriter::start_encode(&mut buf);
-        let err = write_tile_intra_keyframe(&mut bw, &grid, 7, 8, bounds, &fc).unwrap_err();
+        let err = write_tile_intra_keyframe_default(&mut bw, &grid, 7, 8, bounds, &fc).unwrap_err();
         assert!(matches!(err, ModesWriterError::NonMultipleOfSb { .. }));
     }
 
@@ -2144,7 +2396,7 @@ mod tests {
         let mut buf = vec![0u8; 256];
         let used = {
             let mut bw = BoolWriter::start_encode(&mut buf);
-            write_tile_intra_keyframe(
+            write_tile_intra_keyframe_default(
                 &mut bw,
                 &grid,
                 mi_rows as u32,
@@ -2293,7 +2545,7 @@ mod tests {
                 let mut buf = vec![0u8; 2 * 1024];
                 let written = {
                     let mut bw = BoolWriter::start_encode(&mut buf);
-                    write_tile_intra_keyframe(&mut bw, &grid, mi_rows, mi_cols, bounds, &fc)
+                    write_tile_intra_keyframe_default(&mut bw, &grid, mi_rows, mi_cols, bounds, &fc)
                         .expect("write_tile_intra_keyframe");
                     bw.stop_encode().expect("stop_encode")
                 };
@@ -2490,7 +2742,7 @@ mod tests {
         let mut buf = vec![0u8; 8 * 1024];
         let written = {
             let mut bw = BoolWriter::start_encode(&mut buf);
-            write_tile_intra_keyframe(&mut bw, grid, mi_rows, mi_cols, bounds, &fc)
+            write_tile_intra_keyframe_default(&mut bw, grid, mi_rows, mi_cols, bounds, &fc)
                 .expect("write_tile_intra_keyframe should accept legal partition tree");
             bw.stop_encode().expect("stop_encode")
         };
@@ -2796,7 +3048,7 @@ mod tests {
         let mut buf = vec![0u8; 1024];
         let mut bw = BoolWriter::start_encode(&mut buf);
         let err =
-            write_tile_intra_keyframe(&mut bw, &grid, mi_rows, mi_cols, bounds, &fc).unwrap_err();
+            write_tile_intra_keyframe_default(&mut bw, &grid, mi_rows, mi_cols, bounds, &fc).unwrap_err();
         // The exact variant depends on where the mismatch surfaces.
         // For this grid: the top-level partition is inferred as VERT
         // (from the (0,0) leaf), then the second VERT leaf at (0,4)

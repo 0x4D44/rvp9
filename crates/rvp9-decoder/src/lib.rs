@@ -2878,8 +2878,19 @@ mod tests {
         let mut tile_buf = vec![0u8; 4 * 1024];
         let tile_len = {
             let mut bw = BoolWriter::start_encode(&mut tile_buf);
+            let tile_mi_cols =
+                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let mut coef_ctx = rvp9_core::coef_ctx::TileCoefCtx::new(tile_mi_cols);
+            let coef_source = rvp9_core::bitstream::AllZeroIntraCoefSource::new();
             write_tile_intra_keyframe(
-                &mut bw, &mi_grid, mi_rows, mi_cols, tile_bounds, &post_fc,
+                &mut bw,
+                &mi_grid,
+                mi_rows,
+                mi_cols,
+                tile_bounds,
+                &post_fc,
+                &mut coef_ctx,
+                &coef_source,
             )
             .expect("write_tile_intra_keyframe");
             bw.stop_encode().expect("stop_encode tile partition")
@@ -3113,8 +3124,19 @@ mod tests {
         let mut tile_buf = vec![0u8; 4 * 1024];
         let tile_len = {
             let mut bw = BoolWriter::start_encode(&mut tile_buf);
+            let tile_mi_cols =
+                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let mut coef_ctx = rvp9_core::coef_ctx::TileCoefCtx::new(tile_mi_cols);
+            let coef_source = rvp9_core::bitstream::AllZeroIntraCoefSource::new();
             write_tile_intra_keyframe(
-                &mut bw, &mi_grid, mi_rows, mi_cols, tile_bounds, &post_fc,
+                &mut bw,
+                &mi_grid,
+                mi_rows,
+                mi_cols,
+                tile_bounds,
+                &post_fc,
+                &mut coef_ctx,
+                &coef_source,
             )
             .expect("write_tile_intra_keyframe");
             bw.stop_encode().expect("stop_encode tile partition")
@@ -3369,8 +3391,19 @@ mod tests {
         let mut kf_tile_buf = vec![0u8; 4 * 1024];
         let kf_tile_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_tile_buf);
+            let tile_mi_cols =
+                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let mut coef_ctx = rvp9_core::coef_ctx::TileCoefCtx::new(tile_mi_cols);
+            let coef_source = rvp9_core::bitstream::AllZeroIntraCoefSource::new();
             write_tile_intra_keyframe(
-                &mut bw, &kf_mi_grid, mi_rows, mi_cols, tile_bounds, &kf_post_fc,
+                &mut bw,
+                &kf_mi_grid,
+                mi_rows,
+                mi_cols,
+                tile_bounds,
+                &kf_post_fc,
+                &mut coef_ctx,
+                &coef_source,
             )
             .expect("write_tile_intra_keyframe");
             bw.stop_encode().expect("stop_encode kf tile")
@@ -3743,8 +3776,21 @@ mod tests {
         let mut kf_tile_buf = vec![0u8; 4 * 1024];
         let kf_tile_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_tile_buf);
-            write_tile_intra_keyframe(&mut bw, &kf_grid, mi_rows, mi_cols, tile_bounds, &kf_post_fc)
-                .expect("kf write_tile");
+            let tile_mi_cols =
+                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let mut coef_ctx = rvp9_core::coef_ctx::TileCoefCtx::new(tile_mi_cols);
+            let coef_source = rvp9_core::bitstream::AllZeroIntraCoefSource::new();
+            write_tile_intra_keyframe(
+                &mut bw,
+                &kf_grid,
+                mi_rows,
+                mi_cols,
+                tile_bounds,
+                &kf_post_fc,
+                &mut coef_ctx,
+                &coef_source,
+            )
+            .expect("kf write_tile");
             bw.stop_encode().expect("stop_encode kf tile")
         };
         kf_tile_buf.truncate(kf_tile_len);
@@ -4064,8 +4110,21 @@ mod tests {
         let mut kf_tile_buf = vec![0u8; 4 * 1024];
         let kf_tile_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_tile_buf);
-            write_tile_intra_keyframe(&mut bw, &kf_grid, mi_rows, mi_cols, tile_bounds, &kf_post_fc)
-                .expect("kf write_tile");
+            let tile_mi_cols =
+                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let mut coef_ctx = rvp9_core::coef_ctx::TileCoefCtx::new(tile_mi_cols);
+            let coef_source = rvp9_core::bitstream::AllZeroIntraCoefSource::new();
+            write_tile_intra_keyframe(
+                &mut bw,
+                &kf_grid,
+                mi_rows,
+                mi_cols,
+                tile_bounds,
+                &kf_post_fc,
+                &mut coef_ctx,
+                &coef_source,
+            )
+            .expect("kf write_tile");
             bw.stop_encode().expect("stop_encode kf tile")
         };
         kf_tile_buf.truncate(kf_tile_len);
@@ -4409,8 +4468,19 @@ mod tests {
         let mut kf_tile_buf = vec![0u8; 4 * 1024];
         let kf_tile_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_tile_buf);
+            let tile_mi_cols =
+                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let mut coef_ctx = rvp9_core::coef_ctx::TileCoefCtx::new(tile_mi_cols);
+            let coef_source = rvp9_core::bitstream::AllZeroIntraCoefSource::new();
             write_tile_intra_keyframe(
-                &mut bw, &kf_mi_grid, mi_rows, mi_cols, tile_bounds, &kf_post_fc,
+                &mut bw,
+                &kf_mi_grid,
+                mi_rows,
+                mi_cols,
+                tile_bounds,
+                &kf_post_fc,
+                &mut coef_ctx,
+                &coef_source,
             )
             .expect("write_tile_intra_keyframe");
             bw.stop_encode().expect("stop_encode kf tile")
@@ -4806,8 +4876,19 @@ mod tests {
         let mut kf_tile_buf = vec![0u8; 4 * 1024];
         let kf_tile_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_tile_buf);
+            let tile_mi_cols =
+                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let mut coef_ctx = rvp9_core::coef_ctx::TileCoefCtx::new(tile_mi_cols);
+            let coef_source = rvp9_core::bitstream::AllZeroIntraCoefSource::new();
             write_tile_intra_keyframe(
-                &mut bw, &kf_mi_grid, mi_rows, mi_cols, tile_bounds, &kf_post_fc,
+                &mut bw,
+                &kf_mi_grid,
+                mi_rows,
+                mi_cols,
+                tile_bounds,
+                &kf_post_fc,
+                &mut coef_ctx,
+                &coef_source,
             )
             .expect("write_tile_intra_keyframe");
             bw.stop_encode().expect("stop_encode kf tile")
@@ -5146,8 +5227,21 @@ mod tests {
         let mut kf_tile_buf = vec![0u8; 4 * 1024];
         let kf_tile_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_tile_buf);
-            write_tile_intra_keyframe(&mut bw, &kf_grid, mi_rows, mi_cols, tile_bounds, &kf_post_fc)
-                .expect("kf write_tile");
+            let tile_mi_cols =
+                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let mut coef_ctx = rvp9_core::coef_ctx::TileCoefCtx::new(tile_mi_cols);
+            let coef_source = rvp9_core::bitstream::AllZeroIntraCoefSource::new();
+            write_tile_intra_keyframe(
+                &mut bw,
+                &kf_grid,
+                mi_rows,
+                mi_cols,
+                tile_bounds,
+                &kf_post_fc,
+                &mut coef_ctx,
+                &coef_source,
+            )
+            .expect("kf write_tile");
             bw.stop_encode().expect("stop_encode kf tile")
         };
         kf_tile_buf.truncate(kf_tile_len);
