@@ -443,3 +443,163 @@ LLD edits).
 - **Heuristic improvements** — places where we make a different
   heuristic decision in the non-RD path (informed by Stage 1 analysis).
   *(Stage 2: none yet; LLDs preserve libvpx heuristics exactly.)*
+
+---
+
+## F-series Stage 4a — encoder MVP divergences (2026-05-21)
+
+The night-3 (F5–F10) + night-4 (F8-fix–F12) drives surfaced a set of
+deliberate departures from libvpx's encoder. Listed here in one place
+so the Stage 4a exit-gate journal can reference a single anchor.
+
+### 2026-05-21 — block_yrd transform-domain distortion (F8.0-fix)
+**Where:** `rvp9-core::mode_decision::intra::block_yrd`. libvpx
+counterpart: `vp9/encoder/vp9_rdopt.c::block_rd_txfm` + the rd-cost
+accumulator path.
+**What libvpx does:** computes distortion in the transform-coef domain
+(`(coef - quantized_dequantized_coef)^2 >> shift`) where
+`shift = (tx_size == TX_32X32) ? 0 : 2`.
+**What rvp9 does:** ports the libvpx transform-coef-domain distortion
+formula exactly (down from the pre-fix post-recon-SSE shortcut, which
+collapsed all modes to dist=0 on bit-exact content).
+**Byte-parity impact:** matched.
+**Compression-efficiency impact:** matched within block_yrd. Knock-on
+to mode-decision is the new picker actually selects V_PRED on vertical
+stripes (correctness recovery, not divergence).
+**Known issue:** `block_yrd` is noise-sensitive — small (1–3u)
+reconstruction differences inflate non-DC modes' transform-domain
+distortion because FHT spreads to high-freq → quant to 0 →
+`(coef-0)^2` accumulates. DC's averaging absorbs noise. On
+stripe-pattern content with quantizer-induced 1-3u noise, V_PRED can
+score WORSE than DC even when V is the true winner. Documented in the
+night-4 journal under F10.1b. Follow-up: investigate switching the
+distortion accumulator from L2 to L1 in the high-freq band, or
+applying a noise-floor offset.
+
+### 2026-05-21 — Fixed pic_norm correction factor (F8.x rate model)
+**Where:** `rvp9-encoder::rate_control` and the F8.x rate-model
+estimator (per night-4 ledger snapshots). libvpx counterpart:
+`vp9/encoder/vp9_rdopt.c` rate-model + AQ feedback adapting the
+correction factor per frame.
+**What libvpx does:** maintains an adaptive correction factor that
+walks with observed (bits_used / bits_estimated) per frame, per layer,
+per AQ segment.
+**What rvp9 does:** uses a fixed correction factor in v1 — the
+adaptive loop isn't wired yet.
+**Why:** v1 prioritises a working bitstream-producing encoder over
+the rate-model auto-tuning loop. The fixed factor is conservative.
+**Byte-parity impact:** structural — rate-control decisions diverge
+frame by frame.
+**Compression-efficiency impact:** unmeasured (F12.0 didn't reach a
+matched-config measurement). Expect 1–3 % BD-rate penalty until the
+adaptive loop lands.
+**Future plan:** Stage 4b adaptive Q work brings in the per-frame
+correction adapter.
+
+### 2026-05-21 — NEARMV not implemented (F8.1 inter mode picker)
+**Where:** `rvp9-core::mode_decision::inter::pick_inter_mode_luma`.
+libvpx counterpart: `vp9/encoder/vp9_pickmode.c::vp9_pick_inter_mode`.
+**What libvpx does:** evaluates `{NEARESTMV, NEARMV, NEWMV, ZEROMV}`
+× `{single, compound}` × `{LAST, GOLDEN, ALTREF}` references; selects
+by RD.
+**What rvp9 does:** evaluates `{NEARESTMV, NEWMV, ZEROMV}` × single
+ref × `{LAST}` only. NEARMV omitted. Compound-ref not driven by the
+picker.
+**Why:** F8.1 scope was bounded to demonstrate the picker shape. The
+F8.2 partition picker chooses NEARESTMV-vs-NEWMV at the same MV-ref
+list anchor; adding NEARMV is mechanical (next candidate in the
+MV-ref list) but didn't fit the night-3 budget.
+**Byte-parity impact:** structural — wherever NEARMV would have won
+RD, rvp9 picks a different mode.
+**Compression-efficiency impact:** modest. Expected 0.5–1.5 % BD-rate
+penalty on typical content (NEARMV is rare-but-not-vanishingly-so).
+**Future plan:** Stage 4a follow-up if BD-rate gate fails by margin;
+otherwise defer.
+
+### 2026-05-21 — Block8x8 inter leaves forced to ZEROMV-skip
+**Where:** `rvp9-encoder::frame_loop::encode_inter_internal` (night-3
+F10.1c). libvpx counterpart: `vp9/encoder/vp9_pickmode.c` over all
+leaf sizes ≥ 8×8.
+**What libvpx does:** picks inter mode + MV at every leaf size from
+Block64x64 down to Block8x8 (and Block4x* via the sub-8 picker).
+**What rvp9 does:** uses the F8.1 picker for leaves ≥ Block16x16;
+Block8x8 leaves fall back unconditionally to `ZEROMV / LASTFRAME /
+skip = true`. Sub-8 partitions remain wire-format-only.
+**Why:** F8.1's `pick_inter_mode_luma` doesn't support sub-16. The
+fallback keeps the F10.1c oracle (bit-exact encoder↔decoder recon)
+viable across all partition shapes the F8.2 picker can produce.
+**Byte-parity impact:** structural — Block8x8 inter leaves with real
+motion content reconstruct to zero-MV instead of the picker's
+choice.
+**Compression-efficiency impact:** small on most content (Block8x8
+is the smallest the F8.2 picker emits in v1, and ZEROMV-skip is
+already optimal on the majority of Block8x8 leaves in low-motion
+content). Larger on high-motion 8×8-detailed content.
+**Future plan:** when sub-8 picker lands, this fallback path
+disappears.
+
+### 2026-05-21 — BD-rate trapezoidal approximation (F12.0)
+**Where:** `rvp9-harness::bdrate::bdrate`. libvpx / standard
+counterpart: Bjøntegaard 2001 (and 2008 update) cubic polynomial fit
+in `log10(bitrate)` vs PSNR with closed-form integration.
+**What libvpx does (or what tools-against-libvpx do):** fits a
+3rd-degree polynomial to each curve's `(log10(bitrate), PSNR)` points
+and integrates the closed-form gap between the two polynomials over
+the overlap.
+**What rvp9 does:** trapezoidal-rule integration of
+`log10(bitrate)` vs PSNR over the overlap; geometric-mean ratio
+expressed as percent. No polynomial fit, no extrapolation outside
+the overlap.
+**Why:** the trapezoidal approximation requires zero new
+dependencies (no linear-algebra crate needed). For matched-config
+curves with monotonic shape and 4+ points the answer agrees with
+the cubic fit to within ~0.5 percentage points (Bjøntegaard's own
+2008 follow-up note documents this).
+**Byte-parity impact:** N/A (measurement, not bitstream).
+**Compression-efficiency impact:** N/A — this is the YARDSTICK,
+not a coding choice. The yardstick has documented uncertainty
+±0.5 pp.
+**Future plan:** if a 0.5 pp uncertainty matters at the Stage 4a
+exit gate, port the cubic fit (4×4 matrix solve, ~30 lines of
+arithmetic, no crate dependency).
+
+### 2026-05-21 — Encoder-side loop-filter level approximation (F11.0)
+**Where:** `rvp9-encoder::loopfilter::pick_filter_level`. libvpx
+counterpart: `vp9/encoder/vp9_picklpf.c::av1_pick_filter_level` with
+full RD search.
+**What libvpx does:** searches `filter_level` to minimise RD cost
+across a range bracketed by previous-frame `filter_level`. Around
+half a dozen reconstructions per frame.
+**What rvp9 does:** approximates the picked level as
+`(q_index >> 1).min(63)`. Skips loop filter entirely at q < 2 (the
+F5.1 quant table is undefined at q = 0; encoder forbids q = 0).
+**Why:** RD-search over filter level is a per-frame inner-loop cost.
+v1 ships the heuristic. Bit-exact encoder↔decoder reconstruction is
+preserved (both apply the same `filter_level`).
+**Byte-parity impact:** structural — picked level differs from
+libvpx's per-frame choice.
+**Compression-efficiency impact:** unmeasured. The libvpx heuristic
+on cpu-used 7-8 is close to a linear-q approximation already, so
+expected delta is small (< 0.5 % BD-rate).
+**Future plan:** if Stage 4b's measurement work shows > 1 % BD-rate
+attributable to filter-level choice, port the RD search.
+
+### 2026-05-21 — No NEARMV / compound-ref / temporal SVC inter shapes
+**Where:** rvp9-encoder doesn't drive compound-ref inter blocks or
+temporal SVC layering. libvpx counterpart: full inter-coding shape
+surface.
+**What libvpx does:** ships all VP9 inter shapes.
+**What rvp9 does:** single-ref LASTFRAME only in the encoder
+(decoder handles the full surface). No SVC.
+**Why:** v1 scope (Stage 4a MVP). SVC is Stages 4d/4e. Compound-ref
+is mechanical-but-orthogonal work.
+**Byte-parity impact:** structural — the wire-format writer can emit
+compound-ref blocks but the encoder doesn't pick them.
+**Compression-efficiency impact:** the largest single residual
+divergence from full-libvpx parity. Expect 5–15 % BD-rate penalty on
+typical real-time content (compound-ref bidirectional inter is the
+dominant win at our cpu-used target).
+**Future plan:** Stage 4a exit gate will measure WITHOUT compound-
+ref enabled on the libvpx side too (`--cpu-used 7 --rt` defaults
+match this constraint at the picker level); once parity at matched
+config is hit, Stage 4d/e widens the encoder.

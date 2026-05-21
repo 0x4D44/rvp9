@@ -34,6 +34,7 @@ version = "0.1.0"
 dependencies = [
  "rvp9-core",
  "rvp9-decoder",
+ "rvp9-harness",
 ]
 
 [[package]]
