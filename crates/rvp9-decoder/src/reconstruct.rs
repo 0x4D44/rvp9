@@ -43,7 +43,7 @@ use rvp9_core::entropy::{BoolReader, FrameContext};
 use rvp9_core::intra_pred::{DcAvailability, IntraMode, PredCtx, intra_predict};
 use rvp9_core::transforms::inverse::{
     idct4x4_1_add, idct8x8_1_add, idct16x16_1_add,
-    idct32x32_1_add, idct32x32_1024_add, iht16x16_256_add, iwht4x4_1_add, iwht4x4_16_add,
+    idct32x32_1_add, iht16x16_256_add, iwht4x4_1_add, iwht4x4_16_add,
 };
 use rvp9_core::transforms::types::{TxSize, TxType};
 
@@ -420,8 +420,10 @@ fn inverse_transform_add(
             if eob == 1 {
                 idct32x32_1_add(coefs[0], dest, stride);
             } else {
-                // 34/135-bucket fast paths not yet ported.
-                idct32x32_1024_add(coefs, dest, stride);
+                // G4-α — dispatch through SimdDispatch so the AVX2
+                // implementation runs on supported CPUs. 34/135-bucket
+                // fast paths not yet ported; full _1024_add is bit-exact.
+                (dispatch.idct32x32_add())(coefs, dest, stride);
             }
         }
     }

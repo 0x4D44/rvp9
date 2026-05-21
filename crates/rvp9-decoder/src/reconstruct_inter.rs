@@ -54,7 +54,7 @@ use rvp9_core::inter::filter::{SUBPEL_BITS, SUBPEL_MASK, SUBPEL_SHIFTS};
 use rvp9_core::mode_info::{BlockMode, ModeInfo, Mv, RefFrame};
 use rvp9_core::transforms::inverse::{
     idct4x4_1_add, idct8x8_1_add, idct16x16_1_add,
-    idct32x32_1_add, idct32x32_1024_add, iwht4x4_1_add, iwht4x4_16_add,
+    idct32x32_1_add, iwht4x4_1_add, iwht4x4_16_add,
 };
 use rvp9_core::transforms::types::{TxSize, TxType};
 
@@ -788,7 +788,9 @@ fn inverse_transform_add_dct(
             if eob == 1 {
                 idct32x32_1_add(coefs[0], dest, stride);
             } else {
-                idct32x32_1024_add(coefs, dest, stride);
+                // G4-α — dispatch through SimdDispatch so the AVX2
+                // implementation runs on supported CPUs.
+                (dispatch.idct32x32_add())(coefs, dest, stride);
             }
         }
     }
