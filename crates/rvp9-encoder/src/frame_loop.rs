@@ -73,6 +73,7 @@ use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, Mv, RefFrame};
 use rvp9_core::mv_search::PlaneRef;
 use rvp9_core::transforms::TxMode;
 
+use crate::aq_cyclic_refresh::{CyclicRefresh, CyclicRefreshConfig};
 use crate::loopfilter::{
     apply_loop_filter_to_tight_recon, build_inter_mi_grid_for_lf, build_kf_mi_grid_for_lf,
     pick_filter_level,
@@ -82,6 +83,33 @@ use crate::{
     EncodeError, InterPartitionLeafDesc, PartitionLeafDesc,
     pick_and_simulate_intra_encode_partitions, pick_and_simulate_inter_encode_partitions,
 };
+
+/// Adaptive-quantization mode. Selects whether the encoder runs an
+/// AQ state machine on inter frames.
+///
+/// `Off` reproduces Stage 4a behaviour exactly: no segmentation in the
+/// uncompressed header, no per-leaf `segment_id` emission, every leaf
+/// quantized at the frame's `base_qindex`.
+///
+/// `CyclicRefresh` drives the F8.2 cyclic-refresh state machine
+/// ([`crate::aq_cyclic_refresh::CyclicRefresh`]) on every inter frame:
+/// a fraction of super-blocks are picked for refresh (segment 1),
+/// their per-leaf `segment_id` is emitted via the modes_writer (AQ.0),
+/// the forward quant runs at a finer Q for those leaves (AQ.1), and
+/// the post-encode skip-aware age-update + cursor advance closes the
+/// loop. Keyframes reset the cyclic-refresh state (fresh map / cursor)
+/// — they emit no segmentation themselves.
+///
+/// Defaults to `Off`.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
+pub enum AqMode {
+    /// AQ disabled. Stage 4a behaviour: no segmentation, uniform Q.
+    #[default]
+    Off,
+    /// libvpx cyclic refresh AQ. Cycles through SBs at finer Q over
+    /// `~1/N` frames. See [`crate::aq_cyclic_refresh`].
+    CyclicRefresh,
+}
 
 /// Public configuration for the F10.0 streaming encoder.
 ///
@@ -103,12 +131,16 @@ pub struct EncoderConfig {
     /// thereafter a keyframe is emitted every `gop_length` frames.
     /// Must be > 0.
     pub gop_length: u32,
+    /// Adaptive-quantization mode. [`AqMode::Off`] (the default)
+    /// preserves Stage 4a bytes. [`AqMode::CyclicRefresh`] wires the
+    /// F8.2 cyclic-refresh state machine into the inter path.
+    pub aq_mode: AqMode,
 }
 
 impl EncoderConfig {
     /// Convenience constructor with defaults that mirror the
     /// rate-control crate's WebRTC profile (1 Mbps / 30 fps /
-    /// gop_length = 60).
+    /// gop_length = 60) and AQ off.
     #[must_use]
     pub const fn new(width: u32, height: u32) -> Self {
         Self {
@@ -117,6 +149,7 @@ impl EncoderConfig {
             framerate: 30.0,
             target_bitrate_bps: 1_000_000,
             gop_length: 60,
+            aq_mode: AqMode::Off,
         }
     }
 
@@ -222,6 +255,10 @@ pub struct StreamEncoder {
     last_recon_u: Vec<u8>,
     /// Last reconstructed V plane (`(width / 2) * (height / 2)`).
     last_recon_v: Vec<u8>,
+    /// AQ.3 — cyclic-refresh AQ state. `Some(..)` iff
+    /// `config.aq_mode == AqMode::CyclicRefresh`. Reset on every
+    /// keyframe via `init_cyclic_refresh`.
+    cyclic_refresh: Option<CyclicRefresh>,
 }
 
 impl StreamEncoder {
@@ -268,6 +305,15 @@ impl StreamEncoder {
         let uvw = w / 2;
         let uvh = h / 2;
 
+        let cyclic_refresh = match config.aq_mode {
+            AqMode::Off => None,
+            AqMode::CyclicRefresh => Some(CyclicRefresh::new(
+                h / 8,
+                w / 8,
+                CyclicRefreshConfig::default(),
+            )),
+        };
+
         Ok(Self {
             config,
             rate_control,
@@ -275,6 +321,7 @@ impl StreamEncoder {
             last_recon_y: vec![0u8; w * h],
             last_recon_u: vec![0u8; uvw * uvh],
             last_recon_v: vec![0u8; uvw * uvh],
+            cyclic_refresh,
         })
     }
 
@@ -407,6 +454,24 @@ impl StreamEncoder {
         let w = self.config.width;
         let h = self.config.height;
 
+        // AQ.3 — Reset cyclic-refresh state on every keyframe. The
+        // ref pool / mode-info history is discarded at the KF
+        // boundary, so the cyclic-refresh map (which tracks "age since
+        // last refresh per cell") and the SB cursor must reset too.
+        // The KF path itself does not emit segmentation (AQ only fires
+        // on inter frames), so the per-leaf segment_id stays 0 and the
+        // simulator's seg_q_deltas stays all-`None` — preserving
+        // Stage 4a behaviour on the KF.
+        if self.cyclic_refresh.is_some() {
+            let mi_rows = (h as usize) / 8;
+            let mi_cols = (w as usize) / 8;
+            self.cyclic_refresh = Some(CyclicRefresh::new(
+                mi_rows,
+                mi_cols,
+                CyclicRefreshConfig::default(),
+            ));
+        }
+
         // F10.1a — pick the per-SB partition via the F8.2 variance
         // picker. For KF the ref plane is unused (the picker substitutes
         // a flat-128 fallback when `is_keyframe = true`), but we still
@@ -469,6 +534,13 @@ impl StreamEncoder {
     /// those leaves equals the reference (the simulator's up-front
     /// copy). The bigger picker-supported leaves carry the picked
     /// `(mode, mv)` and emit real coefs.
+    ///
+    /// AQ.3 — when `config.aq_mode == AqMode::CyclicRefresh`, this
+    /// path runs the cyclic-refresh state machine: pre-encode it picks
+    /// a `segment_id` per cell (segment 1 = refresh, segment 0 =
+    /// baseline); the per-leaf `segment_id` + frame-level
+    /// `seg_q_deltas` flow through the picker / simulator /
+    /// modes_writer; post-encode the state machine's map ages.
     fn encode_inter_internal(
         &mut self,
         q_index: u8,
@@ -476,6 +548,20 @@ impl StreamEncoder {
     ) -> Result<Vec<u8>, EncodeError> {
         let w = self.config.width;
         let h = self.config.height;
+        let mi_rows_us = (h as usize) / 8;
+        let mi_cols_us = (w as usize) / 8;
+
+        // AQ.3 — pre-encode segment-map pick + per-segment Q deltas.
+        // `seg_map` is per-mi-cell (length mi_rows * mi_cols); when AQ
+        // is off it's all zeros and `seg_q_deltas` is all-`None`.
+        let (seg_map, seg_q_deltas): (Vec<u8>, [Option<i16>; 8]) =
+            match &self.cyclic_refresh {
+                None => (vec![0u8; mi_rows_us * mi_cols_us], [None; 8]),
+                Some(cr) => {
+                    let (map, _n) = cr.pre_encode_pick_segments();
+                    (map, cr.segment_q_deltas())
+                }
+            };
 
         // F10.1a — F8.2 variance-based partition decision per SB.
         let sb_partitions_intra_shape = choose_partitions_for_frame(
@@ -490,22 +576,34 @@ impl StreamEncoder {
         // Convert the intra-shaped partition descriptors into inter-
         // shaped ones (picker fields default to ZEROMV / Mv::ZERO and
         // are overwritten by the simulator).
+        let sb_cols = mi_cols_us / 8;
         let mut sb_partitions: Vec<Vec<InterPartitionLeafDesc>> =
             sb_partitions_intra_shape
                 .iter()
-                .map(|leaves| {
+                .enumerate()
+                .map(|(sb_idx, leaves)| {
+                    let sb_row = sb_idx / sb_cols;
+                    let sb_col = sb_idx - sb_row * sb_cols;
                     leaves
                         .iter()
-                        .map(|l| InterPartitionLeafDesc {
-                            mi_row_in_sb: l.mi_row_in_sb,
-                            mi_col_in_sb: l.mi_col_in_sb,
-                            leaf_bsize: l.leaf_bsize,
-                            picked_mode: InterMode::ZeroMv,
-                            picked_mv: Mv::ZERO,
-                            skip: true,
-                            // AQ.1 — carry segment_id forward from the
-                            // intra-shaped partition descriptor.
-                            segment_id: l.segment_id,
+                        .map(|l| {
+                            // AQ.3 — project the seg_map onto this leaf
+                            // by sampling the top-left mi cell. Cyclic
+                            // refresh paints whole SBs uniformly so the
+                            // top-left is exact for any leaf inside the
+                            // SB.
+                            let leaf_mi_row = sb_row * 8 + l.mi_row_in_sb;
+                            let leaf_mi_col = sb_col * 8 + l.mi_col_in_sb;
+                            let seg_id = seg_map[leaf_mi_row * mi_cols_us + leaf_mi_col];
+                            InterPartitionLeafDesc {
+                                mi_row_in_sb: l.mi_row_in_sb,
+                                mi_col_in_sb: l.mi_col_in_sb,
+                                leaf_bsize: l.leaf_bsize,
+                                picked_mode: InterMode::ZeroMv,
+                                picked_mv: Mv::ZERO,
+                                skip: true,
+                                segment_id: seg_id,
+                            }
                         })
                         .collect()
                 })
@@ -522,9 +620,6 @@ impl StreamEncoder {
         let mut new_recon_u = vec![0u8; uvw * uvh];
         let mut new_recon_v = vec![0u8; uvw * uvh];
 
-        // AQ.1 — Stage 4a: AQ off in the frame loop. AQ.3 will swap in
-        // the cyclic-refresh deltas.
-        let seg_q_deltas: [Option<i16>; 8] = [None; 8];
         let coef_source = pick_and_simulate_inter_encode_partitions(
             w,
             h,
@@ -555,6 +650,14 @@ impl StreamEncoder {
             );
         }
 
+        // AQ.3 — build the segmentation header + per-leaf write params.
+        // `Off` produces `None` (segmentation disabled in the header,
+        // no per-leaf bits emitted by the modes_writer — Stage 4a
+        // bytes exact).
+        let segmentation_enabled = self.cyclic_refresh.is_some();
+        let segmentation_params =
+            build_segmentation_params(segmentation_enabled, &seg_q_deltas);
+
         // Build the packet from the populated coef source + leaf
         // descriptors.
         let packet = build_inter_packet_with_residuals(
@@ -564,12 +667,22 @@ impl StreamEncoder {
             filter_level,
             &coef_source,
             &sb_partitions,
+            &segmentation_params,
         )?;
 
         // Commit the new reconstruction as the encoder's new LAST ref.
         self.last_recon_y = new_recon_y;
         self.last_recon_u = new_recon_u;
         self.last_recon_v = new_recon_v;
+
+        // AQ.3 — post-encode update: feed the actually-coded segment
+        // ids + skip flags back into the cyclic-refresh state machine
+        // so the next frame's map / cursor reflect what we just coded.
+        if let Some(cr) = self.cyclic_refresh.as_mut() {
+            let (coded_segments, coded_skip) =
+                gather_coded_segments_and_skip(mi_rows_us, mi_cols_us, &sb_partitions);
+            cr.post_encode_update(&coded_segments, &coded_skip);
+        }
 
         Ok(packet)
     }
@@ -784,7 +897,12 @@ fn build_inter_mi_grid_from_picker(
                     block_size: leaf.leaf_bsize,
                     tx_size: max_txsize(leaf.leaf_bsize),
                     skip: leaf.skip,
-                    segment_id: 0,
+                    // AQ.3 — carry the leaf's segment_id into the mi_grid
+                    // so the modes_writer emits the per-leaf segment_id
+                    // bits (when `seg.is_some()`). Stage 4a path keeps
+                    // `segment_id = 0` because cyclic refresh is off and
+                    // every leaf's `segment_id` was initialised to 0.
+                    segment_id: leaf.segment_id,
                     seg_id_predicted: false,
                     mode: BlockMode::Inter {
                         mode: leaf.picked_mode,
@@ -964,6 +1082,14 @@ fn build_keyframe_packet(
 /// mi-grid from `sb_partitions`, runs the wire-format compressed +
 /// uncompressed header writers, and threads the coef source through
 /// `write_tile_inter`.
+///
+/// AQ.3 — `segmentation` carries the header's segmentation block.
+/// When `segmentation.enabled == true`, the tile writer is also
+/// supplied with a [`SegmentationWriteParams`] (matching tree_probs)
+/// so per-leaf `segment_id` bits are emitted. When disabled, both the
+/// header bit and the per-leaf bits are suppressed — Stage 4a bytes
+/// preserved exactly.
+#[allow(clippy::too_many_arguments)] // load-bearing AQ.3 plumbing args
 fn build_inter_packet_with_residuals(
     width: u32,
     height: u32,
@@ -971,7 +1097,9 @@ fn build_inter_packet_with_residuals(
     filter_level: u8,
     coef_source: &dyn InterCoefSource,
     sb_partitions: &[Vec<InterPartitionLeafDesc>],
+    segmentation: &SegmentationParams,
 ) -> Result<Vec<u8>, EncodeError> {
+    use rvp9_core::bitstream::SegmentationWriteParams;
     let mi_rows = height / 8;
     let mi_cols = width / 8;
     let mi_grid = build_inter_mi_grid_from_picker(mi_rows, mi_cols, sb_partitions);
@@ -1017,6 +1145,20 @@ fn build_inter_packet_with_residuals(
         sign_bias,
     };
 
+    // AQ.3 — if segmentation is enabled in the header (cyclic refresh
+    // is active), build a `SegmentationWriteParams` that mirrors the
+    // header's `tree_probs`. The modes_writer reads `tree_probs` to
+    // probability-code per-leaf segment_id bits. When disabled, the
+    // writer is invoked with `None` (no bits emitted), matching the
+    // Stage 4a path.
+    let seg_write = if segmentation.enabled {
+        Some(SegmentationWriteParams {
+            tree_probs: &segmentation.tree_probs,
+        })
+    } else {
+        None
+    };
+
     // F10.1c — sized generously (per-pixel × 4) since real residuals
     // can dominate the bit budget at higher Q indices.
     let mut tile_buf =
@@ -1034,7 +1176,7 @@ fn build_inter_packet_with_residuals(
             mi_rows,
             mi_cols,
             tile_bounds,
-            /* seg = */ None,
+            seg_write,
             /* prev_mv_grid = */ None,
             &mut coef_ctx,
             coef_source,
@@ -1066,16 +1208,11 @@ fn build_inter_packet_with_residuals(
             uv_dc_delta_q: 0,
             uv_ac_delta_q: 0,
         },
-        segmentation: SegmentationParams {
-            enabled: false,
-            update_map: false,
-            temporal_update: false,
-            tree_probs: [MAX_PROB; SEG_TREE_PROBS],
-            pred_probs: [MAX_PROB; PREDICTION_PROBS],
-            update_data: false,
-            abs_delta: false,
-            feature_data: Default::default(),
-        },
+        // AQ.3 — segmentation block supplied by caller. `Off` ⇒
+        // `enabled = false` (Stage 4a bytes). `CyclicRefresh` ⇒
+        // `enabled = true && update_map && update_data` with the
+        // per-segment Q delta encoded in `feature_data[seg][AltQ]`.
+        segmentation: segmentation.clone(),
         tile_info: TileInfo {
             log2_tile_cols: 0,
             log2_tile_rows: 0,
@@ -1118,6 +1255,86 @@ fn build_inter_packet_with_residuals(
     packet.extend_from_slice(&compressed_buf);
     packet.extend_from_slice(&tile_buf);
     Ok(packet)
+}
+
+// ---------------------------------------------------------------------------
+// AQ.3 — segmentation header + post-encode collection helpers.
+// ---------------------------------------------------------------------------
+
+/// Build a [`SegmentationParams`] header block for the cyclic-refresh
+/// inter path. When `enabled == false` returns the Stage 4a all-zeros
+/// header (segmentation disabled — no bits emitted).
+///
+/// When `enabled == true` populates the libvpx cyclic-refresh shape:
+///
+/// - `enabled = true`, `update_map = true`, `temporal_update = false`,
+///   `update_data = true`, `abs_delta = false`.
+/// - `tree_probs` left at `MAX_PROB` (libvpx-style "no update from
+///   default"; the per-leaf segment_id writer reads them verbatim).
+///   Future AQ.x revisions can train these against the picked map.
+/// - `feature_data[seg][SEG_LVL_ALT_Q] = Some(delta)` for every
+///   segment with a non-`None` slot in `seg_q_deltas`. Other features
+///   (`AltLf` / `ReferenceFrame` / `Skip`) stay `None`.
+fn build_segmentation_params(
+    enabled: bool,
+    seg_q_deltas: &[Option<i16>; 8],
+) -> SegmentationParams {
+    let mut params = SegmentationParams {
+        enabled,
+        update_map: enabled,
+        temporal_update: false,
+        tree_probs: [MAX_PROB; SEG_TREE_PROBS],
+        pred_probs: [MAX_PROB; PREDICTION_PROBS],
+        update_data: enabled,
+        abs_delta: false,
+        feature_data: Default::default(),
+    };
+    if enabled {
+        // Slot 0 (`SEG_LVL_ALT_Q`) = the per-segment Q delta. AQ.3
+        // populates this from `cyclic_refresh.segment_q_deltas()`; the
+        // decoder's `setup_segmentation` reads it back into the
+        // dequantizer derivation per leaf (via
+        // `effective_qindex_for_segment` on the encoder side).
+        for (seg_idx, slot) in seg_q_deltas.iter().enumerate() {
+            if let Some(delta) = *slot {
+                params.feature_data[seg_idx][0] = Some(delta);
+            }
+        }
+    }
+    params
+}
+
+/// AQ.3 — gather the per-mi-cell `(coded_segment_id, coded_skip)`
+/// pair for the cyclic-refresh `post_encode_update` call. Splats each
+/// leaf's `(segment_id, skip)` across every 8×8 cell the leaf covers.
+fn gather_coded_segments_and_skip(
+    mi_rows: usize,
+    mi_cols: usize,
+    sb_partitions: &[Vec<InterPartitionLeafDesc>],
+) -> (Vec<u8>, Vec<bool>) {
+    let mut coded_segments = vec![0u8; mi_rows * mi_cols];
+    let mut coded_skip = vec![false; mi_rows * mi_cols];
+    let sb_cols = mi_cols / 8;
+    let sb_rows = mi_rows / 8;
+    for sb_row in 0..sb_rows {
+        for sb_col in 0..sb_cols {
+            let leaves = &sb_partitions[sb_row * sb_cols + sb_col];
+            for leaf in leaves {
+                let leaf_mi_row = sb_row * 8 + leaf.mi_row_in_sb;
+                let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
+                let n_high = leaf.leaf_bsize.n_8x8_high() as usize;
+                let n_wide = leaf.leaf_bsize.n_8x8_wide() as usize;
+                for dr in 0..n_high {
+                    for dc in 0..n_wide {
+                        let idx = (leaf_mi_row + dr) * mi_cols + (leaf_mi_col + dc);
+                        coded_segments[idx] = leaf.segment_id;
+                        coded_skip[idx] = leaf.skip;
+                    }
+                }
+            }
+        }
+    }
+    (coded_segments, coded_skip)
 }
 
 #[cfg(test)]
@@ -1178,6 +1395,7 @@ mod tests {
             framerate: 30.0,
             target_bitrate_bps: 1_000_000,
             gop_length: 30,
+            aq_mode: AqMode::Off,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -1207,6 +1425,7 @@ mod tests {
             framerate: 30.0,
             target_bitrate_bps: 1_000_000,
             gop_length: 30,
+            aq_mode: AqMode::Off,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -1248,6 +1467,7 @@ mod tests {
             framerate: 30.0,
             target_bitrate_bps: 2_000_000, // high enough for low q
             gop_length: 30,
+            aq_mode: AqMode::Off,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -1302,6 +1522,7 @@ mod tests {
             framerate: 30.0,
             target_bitrate_bps: 1_000_000,
             gop_length: 3,
+            aq_mode: AqMode::Off,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -1336,6 +1557,7 @@ mod tests {
             framerate: 30.0,
             target_bitrate_bps: 50_000, // 50 kbps — very tight
             gop_length: 30,
+            aq_mode: AqMode::Off,
         };
         let mut enc_low = StreamEncoder::new(cfg_low).unwrap();
         // Pump a few KF-then-inter cycles so the buffer feedback
@@ -1354,6 +1576,7 @@ mod tests {
             framerate: 30.0,
             target_bitrate_bps: 10_000_000, // 10 Mbps — wide budget
             gop_length: 30,
+            aq_mode: AqMode::Off,
         };
         let mut enc_high = StreamEncoder::new(cfg_high).unwrap();
         let mut last_high_q = 0u8;
@@ -1379,6 +1602,7 @@ mod tests {
             framerate: 30.0,
             target_bitrate_bps: 2_000_000,
             gop_length: 30,
+            aq_mode: AqMode::Off,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(128, 64);
@@ -1401,6 +1625,7 @@ mod tests {
             framerate: 30.0,
             target_bitrate_bps: 1_000_000,
             gop_length: 30,
+            aq_mode: AqMode::Off,
         };
         assert!(StreamEncoder::new(cfg).is_err());
     }
@@ -1414,6 +1639,7 @@ mod tests {
             framerate: 30.0,
             target_bitrate_bps: 1_000_000,
             gop_length: 30,
+            aq_mode: AqMode::Off,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -1487,6 +1713,7 @@ mod tests {
             framerate: 30.0,
             target_bitrate_bps: 2_000_000,
             gop_length: 30,
+            aq_mode: AqMode::Off,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -1532,6 +1759,7 @@ mod tests {
             framerate: 30.0,
             target_bitrate_bps: 2_000_000,
             gop_length: 30,
+            aq_mode: AqMode::Off,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -1579,6 +1807,7 @@ mod tests {
             framerate: 30.0,
             target_bitrate_bps: 2_000_000,
             gop_length: 30,
+            aq_mode: AqMode::Off,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -1656,6 +1885,7 @@ mod tests {
             framerate: 30.0,
             target_bitrate_bps: 50_000,
             gop_length: 30,
+            aq_mode: AqMode::Off,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -1796,6 +2026,7 @@ mod tests {
             framerate: 30.0,
             target_bitrate_bps: 2_000_000,
             gop_length: 30,
+            aq_mode: AqMode::Off,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -1864,6 +2095,7 @@ mod tests {
             framerate: 30.0,
             target_bitrate_bps: 2_000_000,
             gop_length: 30,
+            aq_mode: AqMode::Off,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -2068,6 +2300,7 @@ mod tests {
             framerate: 30.0,
             target_bitrate_bps: 4_000_000,
             gop_length: 30,
+            aq_mode: AqMode::Off,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y0, u0, v0) = gradient_frame(128, 128);
@@ -2112,6 +2345,7 @@ mod tests {
             framerate: 30.0,
             target_bitrate_bps: 50_000, // tight budget → high q → smaller splits
             gop_length: 30,
+            aq_mode: AqMode::Off,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2219,6 +2453,7 @@ mod tests {
             framerate: 30.0,
             target_bitrate_bps: 2_000_000,
             gop_length: 30,
+            aq_mode: AqMode::Off,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -2287,6 +2522,7 @@ mod tests {
             framerate: 30.0,
             target_bitrate_bps: 1_500_000,
             gop_length: 30,
+            aq_mode: AqMode::Off,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -2332,6 +2568,7 @@ mod tests {
             framerate: 30.0,
             target_bitrate_bps: 1_000_000,
             gop_length: 30,
+            aq_mode: AqMode::Off,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -2396,6 +2633,7 @@ mod tests {
             // 64×64 gradient KF.
             target_bitrate_bps: 300_000,
             gop_length: 30,
+            aq_mode: AqMode::Off,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -2451,6 +2689,7 @@ mod tests {
             // into the band where LF is non-trivial.
             target_bitrate_bps: 200_000,
             gop_length: 30,
+            aq_mode: AqMode::Off,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -2502,5 +2741,280 @@ mod tests {
         // Saturates at MAX_LOOP_FILTER = 63.
         assert_eq!(pick_filter_level(200), 63);
         assert_eq!(pick_filter_level(255), 63);
+    }
+
+    // ============================================================
+    // AQ.3 — cyclic-refresh wireup tests.
+    // ============================================================
+
+    /// AQ.3 — `AqMode::Off` must preserve Stage 4a behaviour: the
+    /// emitted uncompressed header's `segmentation.enabled` is `false`
+    /// on every frame (KF + inter). This is the bytes-exact gate
+    /// against AQ being silently enabled when callers haven't asked
+    /// for it.
+    #[test]
+    fn aq_off_preserves_stage_4a_behavior() {
+        const W: usize = 64;
+        const H: usize = 64;
+        let cfg = EncoderConfig {
+            width: W as u32,
+            height: H as u32,
+            framerate: 30.0,
+            target_bitrate_bps: 1_000_000,
+            gop_length: 30,
+            aq_mode: AqMode::Off,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let (y, u, v) = gradient_frame(W, H);
+
+        let mut dec = Decoder::new();
+        // KF + 3 inter — all five frames must report `segmentation.enabled = false`.
+        for idx in 0..4u32 {
+            let pkt = enc.encode_frame(&yuv_view(&y, &u, &v, W)).unwrap();
+            let frames = decode_packet(&mut dec, &pkt.data);
+            assert_eq!(frames.len(), 1);
+            let tail = frames[0]
+                .header
+                .tail
+                .as_ref()
+                .expect("frame must have a tail");
+            assert!(
+                !tail.segmentation.enabled,
+                "frame {idx}: AqMode::Off must keep segmentation disabled",
+            );
+            let _ = dec.decode_frame(&frames[0]).expect("decode_frame");
+        }
+    }
+
+    /// AQ.3 — `AqMode::CyclicRefresh`: KFs still emit `enabled = false`
+    /// (cyclic refresh only fires on inter frames), but every inter
+    /// frame must carry segmentation in the uncompressed header. The
+    /// header's `feature_data[1][0]` must equal the CyclicRefresh
+    /// default `segment1_q_delta` (-8).
+    #[test]
+    fn aq_cyclic_refresh_emits_segmentation_in_inter_frames() {
+        const W: usize = 64;
+        const H: usize = 64;
+        let cfg = EncoderConfig {
+            width: W as u32,
+            height: H as u32,
+            framerate: 30.0,
+            target_bitrate_bps: 1_000_000,
+            gop_length: 30,
+            aq_mode: AqMode::CyclicRefresh,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let (y, u, v) = gradient_frame(W, H);
+        let mut dec = Decoder::new();
+
+        // KF: segmentation disabled (KF doesn't run AQ).
+        let kf = enc.encode_frame(&yuv_view(&y, &u, &v, W)).unwrap();
+        assert_eq!(kf.frame_kind, FrameKind::Key);
+        let frames_kf = decode_packet(&mut dec, &kf.data);
+        let tail_kf = frames_kf[0].header.tail.as_ref().unwrap();
+        assert!(
+            !tail_kf.segmentation.enabled,
+            "KF must keep segmentation disabled (KF doesn't run AQ)",
+        );
+        let _ = dec.decode_frame(&frames_kf[0]).expect("decode kf");
+
+        // Inter frames: segmentation enabled, feature_data[1][0] == -8.
+        for inter_idx in 0..3u32 {
+            let pkt = enc.encode_frame(&yuv_view(&y, &u, &v, W)).unwrap();
+            assert_eq!(pkt.frame_kind, FrameKind::Inter);
+            let frames = decode_packet(&mut dec, &pkt.data);
+            let tail = frames[0].header.tail.as_ref().unwrap();
+            assert!(
+                tail.segmentation.enabled,
+                "inter frame {inter_idx}: AqMode::CyclicRefresh must \
+                 enable segmentation",
+            );
+            assert!(tail.segmentation.update_map);
+            assert!(!tail.segmentation.temporal_update);
+            assert!(tail.segmentation.update_data);
+            assert!(!tail.segmentation.abs_delta);
+            assert_eq!(
+                tail.segmentation.feature_data[1][0],
+                Some(-8),
+                "inter frame {inter_idx}: feature_data[1][AltQ] must carry \
+                 the default segment1_q_delta (-8)",
+            );
+            let _ = dec.decode_frame(&frames[0]).expect("decode inter");
+        }
+    }
+
+    /// AQ.3 KEY ORACLE — over a full refresh cycle (default 10% / 25
+    /// of 256 ≈ 1 SB per frame on a 16×16 mi frame), every mi-cell
+    /// must get `segment_id == CR_SEGMENT_ID_BOOST` at least once.
+    ///
+    /// Uses a 128×128 frame so we get 2×2 = 4 SBs; at the default
+    /// 10% refresh rate that's ~26 mi cells/frame ≈ 0.4 SBs/frame.
+    /// Over 20 inter frames every SB should land in segment 1 at
+    /// least once. This is the cyclic-refresh state machine's
+    /// defining invariant.
+    #[test]
+    fn aq_cyclic_refresh_refresh_cycle_completes_in_n_frames() {
+        const W: usize = 128;
+        const H: usize = 128;
+        const N_INTER: u32 = 20;
+        let cfg = EncoderConfig {
+            width: W as u32,
+            height: H as u32,
+            framerate: 30.0,
+            target_bitrate_bps: 2_000_000,
+            gop_length: 100, // single KF, then N inter frames
+            aq_mode: AqMode::CyclicRefresh,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let (y, u, v) = gradient_frame(W, H);
+        let mut dec = Decoder::new();
+
+        let mi_rows = H / 8;
+        let mi_cols = W / 8;
+        let mut ever_refreshed = vec![false; mi_rows * mi_cols];
+
+        // First frame is a KF — no refresh activity.
+        let kf = enc.encode_frame(&yuv_view(&y, &u, &v, W)).unwrap();
+        let frames_kf = decode_packet(&mut dec, &kf.data);
+        let _ = dec.decode_frame(&frames_kf[0]).expect("decode kf");
+
+        // Drive N inter frames; track which mi-cells ever hit segment 1.
+        for f in 0..N_INTER {
+            let pkt = enc.encode_frame(&yuv_view(&y, &u, &v, W)).unwrap();
+            assert_eq!(pkt.frame_kind, FrameKind::Inter);
+            let frames = decode_packet(&mut dec, &pkt.data);
+            let _ = dec.decode_frame(&frames[0]).expect("decode inter");
+            let grid = dec.last_frame_mi_grid();
+            for (i, cell) in grid.iter().enumerate() {
+                if let Some(c) = cell
+                    && c.segment_id == 1
+                {
+                    ever_refreshed[i] = true;
+                }
+            }
+            let n_missed = ever_refreshed.iter().filter(|&&r| !r).count();
+            let _ = (f, n_missed); // for debugging
+        }
+
+        let n_missed = ever_refreshed.iter().filter(|&&r| !r).count();
+        assert_eq!(
+            n_missed, 0,
+            "AQ.3 KEY ORACLE: after {N_INTER} inter frames at 10% refresh \
+             on a {W}x{H} frame, {n_missed} mi-cells never got refreshed",
+        );
+    }
+
+    /// AQ.3 — keyframe boundaries reset the cyclic-refresh state. The
+    /// segmentation maps emitted post-first-KF and post-second-KF
+    /// must be identical (same input, same Q ⇒ same picker output).
+    #[test]
+    fn aq_cyclic_refresh_keyframes_reset_state() {
+        const W: usize = 64;
+        const H: usize = 64;
+        let cfg = EncoderConfig {
+            width: W as u32,
+            height: H as u32,
+            framerate: 30.0,
+            target_bitrate_bps: 1_000_000,
+            gop_length: 6, // KF at frames 0 and 6
+            aq_mode: AqMode::CyclicRefresh,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let (y, u, v) = gradient_frame(W, H);
+        let mut dec = Decoder::new();
+
+        // First GOP: KF + 5 inter. Capture each inter's mi-grid segment_id pattern.
+        let mut first_gop_seg_grids: Vec<Vec<u8>> = Vec::new();
+        for idx in 0..6u32 {
+            let pkt = enc.encode_frame(&yuv_view(&y, &u, &v, W)).unwrap();
+            let frames = decode_packet(&mut dec, &pkt.data);
+            let _ = dec.decode_frame(&frames[0]).expect("decode");
+            if idx > 0 {
+                let grid = dec.last_frame_mi_grid();
+                let seg: Vec<u8> = grid
+                    .iter()
+                    .map(|c| c.map(|m| m.segment_id).unwrap_or(0))
+                    .collect();
+                first_gop_seg_grids.push(seg);
+            }
+        }
+
+        // Second GOP: KF (frame 6) + 5 inter. Capture again.
+        let mut second_gop_seg_grids: Vec<Vec<u8>> = Vec::new();
+        for idx in 0..6u32 {
+            let pkt = enc.encode_frame(&yuv_view(&y, &u, &v, W)).unwrap();
+            let frames = decode_packet(&mut dec, &pkt.data);
+            let _ = dec.decode_frame(&frames[0]).expect("decode");
+            if idx > 0 {
+                let grid = dec.last_frame_mi_grid();
+                let seg: Vec<u8> = grid
+                    .iter()
+                    .map(|c| c.map(|m| m.segment_id).unwrap_or(0))
+                    .collect();
+                second_gop_seg_grids.push(seg);
+            }
+        }
+
+        assert_eq!(first_gop_seg_grids.len(), 5);
+        assert_eq!(second_gop_seg_grids.len(), 5);
+        for (i, (a, b)) in first_gop_seg_grids
+            .iter()
+            .zip(second_gop_seg_grids.iter())
+            .enumerate()
+        {
+            assert_eq!(
+                a, b,
+                "AQ.3: inter frame {i} of first GOP segment_id grid must \
+                 equal inter frame {i} of second GOP — KF must reset CR \
+                 state. first={a:?}, second={b:?}",
+            );
+        }
+    }
+
+    /// AQ.3 sanity — 4-frame AQ-on sequence (KF + 3 inter) decodes
+    /// cleanly through the real Decoder; the encoder's reconstruction
+    /// remains bit-exact with the decoder's on every frame (the AQ.0
+    /// segment-id wire-format plumbing doesn't change the per-leaf
+    /// recon pixels, since the per-leaf Q delta flows through both
+    /// sides).
+    #[test]
+    fn aq_cyclic_refresh_decodes_through_real_decoder() {
+        const W: usize = 64;
+        const H: usize = 64;
+        let cfg = EncoderConfig {
+            width: W as u32,
+            height: H as u32,
+            framerate: 30.0,
+            target_bitrate_bps: 1_500_000,
+            gop_length: 30,
+            aq_mode: AqMode::CyclicRefresh,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let mut dec = Decoder::new();
+
+        for idx in 0..4u32 {
+            let (y, u, v) = translating_gradient(W, H, idx);
+            let pkt = enc.encode_frame(&yuv_view(&y, &u, &v, W)).unwrap();
+            let frames = decode_packet(&mut dec, &pkt.data);
+            assert_eq!(frames.len(), 1);
+            let buf = dec
+                .decode_frame(&frames[0])
+                .expect("decode_frame must accept the AQ-on packet");
+
+            // Encoder's recon must match the decoder's recon bit-exact
+            // on every frame (segmentation doesn't change the per-leaf
+            // dequant; both sides compute the same effective qindex).
+            let yp = buf.y_plane();
+            let enc_recon = enc.last_recon_y();
+            for r in 0..H {
+                let dec_row = &yp.data()[r * yp.stride()..r * yp.stride() + W];
+                let enc_row = &enc_recon[r * W..(r + 1) * W];
+                assert_eq!(
+                    dec_row, enc_row,
+                    "AQ.3 sanity: frame {idx} row {r} encoder recon != \
+                     decoder recon under AqMode::CyclicRefresh",
+                );
+            }
+        }
     }
 }

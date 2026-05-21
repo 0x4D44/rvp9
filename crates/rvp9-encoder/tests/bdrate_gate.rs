@@ -145,6 +145,7 @@ fn measure_rvp9_point(
         framerate,
         target_bitrate_bps,
         gop_length: frames.len() as u32 + 1,
+        aq_mode: rvp9_encoder::AqMode::Off,
     };
     let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
     let mut dec = Decoder::new();

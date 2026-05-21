@@ -75,7 +75,7 @@ pub mod frame_loop;
 pub(crate) mod loopfilter;
 pub mod rate_control;
 
-pub use frame_loop::{EncodedFrame, EncoderConfig, FrameKind as StreamFrameKind, StreamEncoder, YuvFrameRef};
+pub use frame_loop::{AqMode, EncodedFrame, EncoderConfig, FrameKind as StreamFrameKind, StreamEncoder, YuvFrameRef};
 
 /// Encoder configuration.
 ///
