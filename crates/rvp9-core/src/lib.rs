@@ -32,6 +32,7 @@ pub mod inter;
 pub mod intra_pred;
 pub mod loopfilter;
 pub mod mode_info;
+pub mod mv_search;
 pub mod quant;
 pub mod transforms;
 
