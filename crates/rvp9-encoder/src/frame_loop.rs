@@ -554,11 +554,31 @@ impl StreamEncoder {
         // AQ.3 — pre-encode segment-map pick + per-segment Q deltas.
         // `seg_map` is per-mi-cell (length mi_rows * mi_cols); when AQ
         // is off it's all zeros and `seg_q_deltas` is all-`None`.
+        //
+        // AQ-night-7: libvpx `apply_cyclic_refresh` gate
+        // (`vp9_aq_cyclicrefresh.c:487-505`) — skip AQ this frame
+        // when avg_qindex_inter is out of range or frames_since_key
+        // window says it's not worth refreshing. The gate is
+        // evaluated against the rate-controller state BEFORE the
+        // post-encode update for this frame, matching libvpx's
+        // call order (cyclic_refresh runs during `setup_frame`,
+        // before encoding).
+        let aq_active_this_frame = match &self.cyclic_refresh {
+            None => false,
+            Some(cr) => cr.apply_cyclic_refresh(
+                /* is_keyframe = */ false,
+                self.rate_control.avg_frame_qindex_inter,
+                self.rate_control.best_quality,
+                self.rate_control.frames_since_key,
+            ),
+        };
         let (seg_map, seg_q_deltas): (Vec<u8>, [Option<i16>; 8]) =
-            match &self.cyclic_refresh {
-                None => (vec![0u8; mi_rows_us * mi_cols_us], [None; 8]),
-                Some(cr) => {
-                    let (map, _n) = cr.pre_encode_pick_segments();
+            match (&self.cyclic_refresh, aq_active_this_frame) {
+                (None, _) | (Some(_), false) => {
+                    (vec![0u8; mi_rows_us * mi_cols_us], [None; 8])
+                }
+                (Some(cr), true) => {
+                    let (map, _n) = cr.pre_encode_pick_segments(q_index);
                     (map, cr.segment_q_deltas())
                 }
             };
@@ -654,7 +674,16 @@ impl StreamEncoder {
         // `Off` produces `None` (segmentation disabled in the header,
         // no per-leaf bits emitted by the modes_writer — Stage 4a
         // bytes exact).
-        let segmentation_enabled = self.cyclic_refresh.is_some();
+        //
+        // AQ-night-7: when the `apply_cyclic_refresh` gate suppressed
+        // refresh for this frame (`aq_active_this_frame = false`),
+        // `seg_q_deltas` is all-None and `seg_map` is all-zeros — both
+        // disable the segmentation header (saves the segmentation
+        // bytes) and prevent any per-leaf segment-id emission. This
+        // mirrors libvpx `vp9_cyclic_refresh_setup` calling
+        // `vp9_disable_segmentation` on the suppress branch
+        // (`vp9_aq_cyclicrefresh.c:606-619`).
+        let segmentation_enabled = self.cyclic_refresh.is_some() && aq_active_this_frame;
         let segmentation_params =
             build_segmentation_params(segmentation_enabled, &seg_q_deltas);
 
@@ -678,10 +707,21 @@ impl StreamEncoder {
         // AQ.3 — post-encode update: feed the actually-coded segment
         // ids + skip flags back into the cyclic-refresh state machine
         // so the next frame's map / cursor reflect what we just coded.
+        //
+        // AQ-night-7: the post-encode update still runs on
+        // gate-suppressed frames so the age map keeps incrementing
+        // (otherwise cells would stay at age 0 forever and AQ would
+        // never re-engage when conditions improve). On gated frames
+        // the per-leaf segment_id is 0 (`aq_active_this_frame == false`
+        // pushes `seg_map` all-zeros above), so the `coded_segments`
+        // gathered here are all-baseline. `last_coded_q_map` still
+        // gets the correct `base_qindex` update for non-skipped cells,
+        // matching libvpx's behaviour on the gate-suppress branch
+        // (it sets `seg_map` to 0 then continues encoding).
         if let Some(cr) = self.cyclic_refresh.as_mut() {
             let (coded_segments, coded_skip) =
                 gather_coded_segments_and_skip(mi_rows_us, mi_cols_us, &sb_partitions);
-            cr.post_encode_update(&coded_segments, &coded_skip);
+            cr.post_encode_update(&coded_segments, &coded_skip, q_index);
         }
 
         Ok(packet)

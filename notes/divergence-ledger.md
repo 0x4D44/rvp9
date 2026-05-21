@@ -787,3 +787,139 @@ the gain.
 **Future plan:** RC.6 re-runs F12 + AQ.5 gates on the real
 corpus checked in by RC.2. RC.7 closes the Stage 4a + 4b
 journal once the gates are green.
+
+### 2026-05-22 — Cyclic-refresh `apply_cyclic_refresh` frame-level gate — RESOLVED (AQ-night-7)
+**Where:** `rvp9-encoder::aq_cyclic_refresh::CyclicRefresh::apply_cyclic_refresh`
++ caller in `rvp9-encoder::frame_loop::StreamEncoder::encode_inter_internal`.
+libvpx counterpart: `vp9_aq_cyclicrefresh.c:487-505`
+(`vp9_cyclic_refresh_update_parameters`'s early-out branch).
+**What libvpx does:** evaluates a frame-level gate that suppresses
+cyclic refresh entirely when the rate controller's
+`avg_frame_qindex[INTER_FRAME]` is below `qp_thresh = 20` (encoder
+has plenty of headroom — AQ overhead is pure cost) or above
+`qp_max_thresh = 117*MAXQ>>7 = 233` with `frames_since_key > 20`
+(encoder saturated at MAXQ — AQ can't recover quality).
+**What rvp9 did (BEFORE AQ-night-7):** ran the cyclic-refresh state
+machine on every inter frame post-KF reset, regardless of the rate
+controller's q-history. This produced AQ overhead (segmentation
+header + per-leaf segment_id bits + finer-Q-coded refresh cells)
+even at operating points where libvpx would have skipped AQ
+entirely.
+**Resolution (AQ-night-7):**
+- `CyclicRefresh::apply_cyclic_refresh(is_keyframe, avg_q, best_q,
+  frames_since_key) -> bool` returns false on the three suppress
+  branches (KF / low-q / stuck-high-q).
+- `encode_inter_internal` calls the gate; when suppressed, the
+  `seg_map` is all-zeros and `seg_q_deltas` is all-None — this
+  collapses the segmentation header to disabled and the per-leaf
+  segment_id to 0 (matching the Stage 4a byte shape on suppressed
+  frames). Post-encode update still runs so the age map keeps
+  incrementing.
+- AQ.5 BD-rate delta on foreman_cif fell from +36.978 % to
+  +15.998 % (gain_rvp9 +25.310 % vs libvpx +9.312 %). Half the
+  rvp9 overhead is gone.
+**Intentionally NOT ported:** SVC (no
+`cpi->svc.temporal_layer_id > 0` branch), lossless gate (no
+lossless path in v1), `avg_frame_low_motion < 20 &&
+frames_since_key > 40` low-motion suppression (needs an ME-driven
+low-motion estimator we don't track), `cpi->roi.enabled` ROI
+gates (ROI not implemented).
+**Byte-parity impact:** structural — the segmentation header is
+present/absent per frame based on the gate. On gate-suppressed
+frames the bytes match Stage 4a AQ-off exactly; on gate-active
+frames they match the previous AQ-on shape.
+**Compression-efficiency impact:** −20 pp on the
+foreman_cif AQ-delta; testsrc delta moved slightly +1.4 pp
+(+8.098 → +9.541) — testsrc has no "boring" zones for refresh
+to help, so any AQ-on frame is pure overhead. Net win.
+
+### 2026-05-22 — Cyclic-refresh `last_coded_q_map` feedback — RESOLVED (AQ-night-7)
+**Where:** `rvp9-encoder::aq_cyclic_refresh::CyclicRefresh::last_coded_q_map`
++ its update in `post_encode_update` + its read in
+`pre_encode_pick_segments`. libvpx counterpart:
+`cr->last_coded_q_map` in `vp9_aq_cyclicrefresh.c:42-49, 224-254,
+437-441`.
+**What libvpx does:** per-mi-cell map seeded to `MAXQ` (every cell
+starts marked "coarsely coded"). Post-encode, non-skipped cells
+write the effective q (`base_qindex + qindex_delta[seg]`);
+inter-skip cells under a refresh segment write
+`min(prev, effective_q)`; baseline-skipped cells preserve the
+stored value (`vp9_cyclic_refresh_update_sb_postencode` is
+single-branch for the refresh case).
+Pre-encode, eligibility for refresh
+requires `last_coded_q_map[i] > qindex_thresh` where
+`qindex_thresh = vp9_get_qindex(seg, BOOST1, base_qindex) =
+base_qindex + qindex_delta[1]` (= the refresh-segment effective q).
+**What rvp9 did (BEFORE AQ-night-7):** no per-cell q-history; the
+eligibility check was age-only. This made every cell that aged
+past `min_refresh_age` eligible regardless of whether it had
+already been coded at a finer q recently.
+**Resolution (AQ-night-7):**
+- Added `last_coded_q_map: Vec<u8>` to `CyclicRefresh`, seeded to
+  `MAXQ = 255` in `CyclicRefresh::new` (mirrors libvpx
+  `vp9_cyclic_refresh_alloc` `memset(..., MAXQ, ...)`).
+- `post_encode_update` now takes `base_qindex: u8`; for each cell
+  writes `effective_q = clamp(base + seg_delta, 0, MAXQ)` under
+  the libvpx skip-aware rules (write / MIN-clamp / preserve).
+- `pre_encode_pick_segments` now takes `base_qindex: u8`; the
+  per-cell eligibility predicate combines the age check with
+  `last_coded_q_map[i] > qindex_thresh` where
+  `qindex_thresh = clamp(base + segment1_q_delta, 0, MAXQ)`.
+**Byte-parity impact:** structural — bug-for-bug-faithful filter
+that gates refresh by per-cell q-history rather than only age.
+On the suppressed-frame path the field is unused (gate is OFF).
+**Compression-efficiency impact:** contributes to the
+foreman_cif AQ-delta improvement above.
+
+### 2026-05-22 — Cyclic-refresh "≥ half eligible" SB rule — RESOLVED (AQ-night-7)
+**Where:** `rvp9-encoder::aq_cyclic_refresh::CyclicRefresh::pre_encode_pick_segments`.
+libvpx counterpart: `vp9_aq_cyclicrefresh.c:449`
+(`if (sum_map >= xmis * ymis / 2)`).
+**What libvpx does:** counts per-cell eligibility in a per-SB
+`sum_map`; if at least HALF the cells in the SB are eligible,
+the entire SB is painted segment 1.
+**What rvp9 did (BEFORE AQ-night-7):** required EVERY cell in the
+SB to be eligible. Tighter rule was a documented simplification
+that turned out to be wrong (especially for partial-edge SBs at
+frame boundaries, which have `xmis * ymis < 64`).
+**Resolution (AQ-night-7):** replaced the per-cell early-out loop
+with a `sum_map` counter; the SB is painted iff
+`sum_map * 2 >= xmis * ymis` (libvpx-faithful).
+**Byte-parity impact:** structural — partial-edge SBs and
+mixed-age SBs may now get refreshed where they would not have
+before. On the suppressed-frame path the rule is unused.
+**Compression-efficiency impact:** contributes to the
+foreman_cif AQ-delta improvement above.
+
+### 2026-05-22 — Cyclic-refresh BOOST2 segment not ported (DEFERRED)
+**Where:** `rvp9-encoder::aq_cyclic_refresh::CyclicRefresh` ships
+only segment 0 (BASE) and segment 1 (BOOST1). libvpx counterpart:
+`CR_SEGMENT_ID_BOOST2 = 2` and the picker
+`candidate_refresh_aq` in `vp9_aq_cyclicrefresh.c:67-87`.
+**What libvpx does:** during the per-block mode decision,
+`candidate_refresh_aq` demotes blocks marked BOOST1 to BOOST2
+when they are big (`bsize >= BLOCK_16X16`), inter-coded,
+zero-MV, low-rate-prediction, and `rate_boost_fac > 10`. BOOST2
+gets a more aggressive q-delta
+(`compute_deltaq(0.1 * rate_boost_fac * rate_ratio_qdelta)`).
+**What rvp9 does:** no BOOST2 path. The encoder picker doesn't
+expose the per-block `rate` and `dist` estimates needed by
+`candidate_refresh_aq`, so we can't drive the BOOST1→BOOST2
+demotion. All eligible cells get BOOST1's fixed q-delta.
+**Why deferred:** the non-RD inter picker in
+`crates/rvp9-core/src/mode_decision/inter/` returns
+`(mode, mv, skip)` per leaf but not a `(rate, dist)` pair; wiring
+those out would require a non-trivial picker API extension. The
+gain from BOOST2 over BOOST1 is bounded by the q-delta gap
+(typically 2-4 q indices ⇒ ~5-10 % BD-rate on big zero-MV
+content); shipping this is plausible Stage 4c+ work.
+**Byte-parity impact:** structural — the wire format supports
+segment 2; rvp9 simply never picks it. The decoder handles
+segment 2 correctly (reads the per-segment q-delta from the
+header).
+**Compression-efficiency impact:** small positive on
+high-static-content (talking-head, presentation) — those are
+exactly the frames libvpx refreshes more aggressively via
+BOOST2.
+**Future plan:** Stage 4c (or later) when the picker is widened
+to expose per-leaf rate/dist for the RD path.
