@@ -1864,6 +1864,20 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     pick_intra_mode_luma(&params).best_mode
                 };
 
+                // A0' diagnostic — dump per-leaf KF intra mode pick when
+                // RVP9_DIAG_INTRA is set in the environment. Sampling at
+                // mod-16 keeps the output bounded on a 256x256 frame.
+                if std::env::var("RVP9_DIAG_INTRA").is_ok() {
+                    #[allow(clippy::print_stderr)]
+                    {
+                        eprintln!(
+                            "    intra_leaf sb=({},{}) px=({},{}) bs={:?} q={} → mode={:?}",
+                            sb_row, sb_col, leaf_px_x, leaf_px_y, leaf_bsize,
+                            leaf_qindex, picked_mode,
+                        );
+                    }
+                }
+
                 sb_partitions[sb_idx][leaf_idx].predicted_y_mode = picked_mode;
                 let n_8x8 = (bs_pixels / 8).max(1);
                 for dr in 0..n_8x8 {
