@@ -2,25 +2,31 @@
 //!
 //! Tries the 10 VP9 intra modes (`DC_PRED .. TM_PRED`) for a single
 //! luma block, performs prediction + forward DCT + quantize +
-//! dequantize + inverse DCT, and picks the mode minimising
-//! `D + lambda * R` where `D` is the sum-of-squared-error between the
-//! source and the reconstructed pixels and `R` is the mode-coding rate
-//! cost in 1/512-bit `vp9_prob_cost` units.
+//! dequantize, and picks the mode minimising `D + lambda * R` where
+//! `D` is libvpx's transform-coefficient-domain distortion model
+//! (`block_yrd`: `sum((coef - dqcoeff)^2) >> shift`) and `R` is the
+//! mode-coding rate cost in 1/512-bit `vp9_prob_cost` units. The
+//! inverse DCT is still run to produce the reconstruction (callers
+//! depend on the recon for downstream encoding stages), but the
+//! distortion no longer uses post-recon SSE.
 //!
 //! Reference: `vp9/encoder/vp9_pickmode.c:1155-1213` (realtime
-//! `vp9_pick_intra_mode`).
+//! `vp9_pick_intra_mode`) and `vp9/encoder/vp9_pickmode.c:718-844`
+//! (`block_yrd`) / `vp9/encoder/vp9_rdopt.c:561-600` (`dist_block`,
+//! which provides the canonical shift table).
 //!
 //! ## libvpx divergences (recorded)
 //!
 //! - **Mode set.** libvpx-realtime only evaluates DC / V / H
 //!   (`for (this_mode = DC_PRED; this_mode <= H_PRED; ++this_mode)` at
 //!   `vp9_pickmode.c:1188`); we evaluate all 10 modes — explicit
-//!   supervisor decision for F8.0. The skip-txfm / `skip_prob`
-//!   shortcuts (`vp9_pickmode.c:1196-1202`) are also out of scope:
-//!   F8.0 computes the full reconstruction SSE rather than libvpx's
-//!   `block_yrd` model. This means our distortion is slightly higher
-//!   resolution than libvpx's (their model approximates SSE via the
-//!   transform-domain residual variance plus a quantizer-tuned scale).
+//!   supervisor decision for F8.0.
+//! - **Distortion model.** We adopt libvpx's transform-coefficient-
+//!   domain distortion `block_yrd` (`(coef - dqcoeff)^2 >> shift`)
+//!   instead of post-recon SSE. The shift table mirrors
+//!   `vp9_rdopt.c:574`: `shift = (tx_size == TX_32X32) ? 0 : 2`. The
+//!   pixel-domain reconstruction is still produced (callers consume
+//!   it).
 //! - **No UV-mode pick.** libvpx's `estimate_block_intra` also runs
 //!   over UV planes inside the per-mode loop using `model_rd_for_sb_uv`;
 //!   F8.0 is luma-only. UV-mode search is deferred (the supervisor's
@@ -28,9 +34,10 @@
 //! - **No `skip_txfm[]` flag.** libvpx maintains a per-plane
 //!   skip-transform short-circuit that re-uses the previous block's
 //!   "all coefficients quantized to zero" flag. F8.0 always runs the
-//!   forward/inverse round-trip so the SSE is exact.
+//!   forward/inverse round-trip so the recon is exact even when the
+//!   distortion model is in transform domain.
 //!
-//! ## Algorithm (F8.0)
+//! ## Algorithm (F8.0-fix)
 //!
 //! For each `mode ∈ 0..NUM_INTRA_MODES`:
 //!
@@ -40,12 +47,17 @@
 //!    buffer.
 //! 3. Compute the residual `src - pred`.
 //! 4. Forward DCT (`fht*` family — the mode's `tx_type` selects DCT vs
-//!    ADST per axis).
+//!    ADST per axis). Save the unquantized output as `coef`.
 //! 5. Forward-quantize via `vp9_quantize_b` (or `vp9_quantize_b_32x32`
-//!    for `Tx32x32`).
-//! 6. Dequantize + inverse DCT into a `recon` buffer (initialised to
-//!    `pred`). On `eob == 0` we skip the inverse and `recon == pred`.
-//! 7. Compute SSE between `recon` and `src` — this is `D`.
+//!    for `Tx32x32`). Save the dequantized output as `dqcoeff`.
+//! 6. Distortion `D = block_yrd_distortion(coef, dqcoeff, n_coeffs,
+//!    tx_size)` — `sum((coef[i] - dqcoeff[i])^2) >> shift`, where
+//!    `shift = (tx_size == Tx32x32) ? 0 : 2` (matches
+//!    `vp9/encoder/vp9_rdopt.c:574`).
+//! 7. Inverse DCT into a `recon` buffer (initialised to `pred`). On
+//!    `eob == 0` we skip the inverse and `recon == pred`. The recon
+//!    is no longer used to score distortion but is still computed so
+//!    callers can consume it.
 //! 8. Look up `R = y_mode_costs[above_ctx][left_ctx][mode]`.
 //! 9. `rd_cost = ROUND_POWER_OF_TWO(R * lambda, 9) + (D << 7)` —
 //!    libvpx `RDCOST` macro at `vp9_rd.h:29-30`.
@@ -144,20 +156,84 @@ pub struct IntraModeSearchResult {
     pub best_mode: IntraMode,
     /// `RDCOST(lambda, rate, distortion)` for the winning mode.
     pub best_rd_cost: i64,
-    /// Distortion (sum-of-squared-error between source and
-    /// reconstruction) for the winning mode.
+    /// Transform-domain `block_yrd` distortion (`sum((coef -
+    /// dqcoeff)^2) >> shift`) for the winning mode. See
+    /// [`block_yrd_distortion`].
     pub best_distortion: u32,
     /// Mode-coding rate cost for the winning mode, in
     /// `vp9_prob_cost` units.
     pub best_rate: u32,
 }
 
+/// Libvpx `block_yrd` transform-coefficient-domain distortion model.
+///
+/// Computes `sum((coef[i] - dqcoeff[i])^2) >> shift`, where the shift
+/// follows libvpx's canonical table from `vp9/encoder/vp9_rdopt.c:574`:
+///
+/// ```text
+/// shift = (tx_size == TX_32X32) ? 0 : 2
+/// ```
+///
+/// The `>> 2` for smaller transforms compensates for the fdct's extra
+/// gain (libvpx's hybrid transforms are scaled by 4× relative to an
+/// orthonormal DCT in their non-32x32 implementations); the 32×32
+/// fdct already divides by 4 internally, so no further shift is
+/// needed. See `vp9/encoder/vp9_pickmode.c:835` (realtime `block_yrd`
+/// hardcodes `>> 2` because it does not handle 32×32) and the
+/// matching `vp9/encoder/vp9_rdopt.c:574` (full-RD path with the
+/// 32×32-aware ternary).
+///
+/// Returns `(sse_approx, skippable)` where `skippable` mirrors libvpx's
+/// "all quantized coefficients are zero" flag — used by callers to
+/// signal that the transform block can be coded as a skip. With our
+/// `dqcoeff` (= `qcoeff * dequant`) the "all-zero" condition on
+/// `qcoeff` is equivalent to "`dqcoeff` all zero", which is what we
+/// test here.
+///
+/// Note: the panics below are debug-only because this helper is in the
+/// inner mode-search loop.
+#[must_use]
+fn block_yrd_distortion(
+    coef: &[i32],
+    dqcoeff: &[i32],
+    n_coeffs: usize,
+    tx_size: TxSize,
+) -> (u32, bool) {
+    debug_assert!(coef.len() >= n_coeffs);
+    debug_assert!(dqcoeff.len() >= n_coeffs);
+    let shift: u32 = if tx_size == TxSize::Tx32x32 { 0 } else { 2 };
+
+    // `coef[i] - dqcoeff[i]` fits comfortably in i32 for all VP9 TX
+    // sizes (both values are bounded by the transform's coefficient
+    // range; the dynamic range argument is the same as in libvpx's
+    // `vp9_block_error_fp_c` at `vp9/encoder/vp9_rdopt.c:334-345`).
+    // Square promotion to u64 (then sum) avoids any chance of overflow
+    // for 32×32 (1024 coefficients × max-squared-diff).
+    let mut sse: u64 = 0;
+    let mut all_zero = true;
+    for i in 0..n_coeffs {
+        let c = coef[i];
+        let d = dqcoeff[i];
+        let diff = c - d;
+        // `as i64` then square — guaranteed to fit in i64 for any
+        // tran_low_t-sized inputs, then re-cast to u64.
+        let sq = (diff as i64) * (diff as i64);
+        sse = sse.saturating_add(sq as u64);
+        if d != 0 {
+            all_zero = false;
+        }
+    }
+    let dist = (sse >> shift).min(u32::MAX as u64) as u32;
+    (dist, all_zero)
+}
+
 /// Run the libvpx-style intra-mode RD search for one luma block.
 ///
 /// Evaluates all 10 [`IntraMode`] variants, returns the lowest-RD-cost
-/// winner. Distortion is the exact SSE of `(src - recon)` after the
-/// forward/inverse-transform round-trip (i.e. *exact* per-mode
-/// reconstruction quality, not a transform-domain model).
+/// winner. Distortion is libvpx's transform-coefficient-domain
+/// `block_yrd` model — `sum((coef - dqcoeff)^2) >> shift` — *not* the
+/// post-reconstruction SSE. See [`block_yrd_distortion`] for the
+/// shift table.
 #[must_use]
 pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSearchResult {
     let tx_size = max_txsize(params.block_size);
@@ -317,18 +393,28 @@ pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSear
         };
         let eob_usize = eob as usize;
 
-        // 5. Reconstruct: recon = pred + idct(dq). Initialise recon to
+        // 5. Widen dq to i32 once — used for both the distortion model
+        //    and the inverse transform kernels below.
+        let dq32 = &mut dq_buf[..n];
+        for (i, &v) in dqcoeff[..n].iter().enumerate() {
+            dq32[i] = v as i32;
+        }
+
+        // 6. Distortion = libvpx-style `block_yrd` in transform domain.
+        //    See [`block_yrd_distortion`]. Computed from `coefs`
+        //    (unquantized fdct output) and `dq32` (re-dequantized after
+        //    forward quant).
+        let (dist, _skippable) = block_yrd_distortion(&coefs[..n], dq32, n, tx_size);
+
+        // 7. Reconstruct: recon = pred + idct(dq). Initialise recon to
         //    pred, then add the dequantized residual via the matching
         //    inverse kernel. When eob == 0 the kernel writes nothing,
-        //    so recon stays at pred (libvpx's fast-skip).
+        //    so recon stays at pred (libvpx's fast-skip). The recon is
+        //    kept for downstream consumers (e.g. UV-mode search) — the
+        //    distortion above no longer reads it.
         let recon_slice = &mut recon[..tx_side * tx_side];
         recon_slice.copy_from_slice(&pred[..tx_side * tx_side]);
         if eob_usize > 0 {
-            // Widen dq to i32 for the inverse kernels.
-            let dq32 = &mut dq_buf[..n];
-            for (i, &v) in dqcoeff[..n].iter().enumerate() {
-                dq32[i] = v as i32;
-            }
             match tx_size {
                 TxSize::Tx4x4 => {
                     let mut buf = [0i32; 16];
@@ -353,25 +439,10 @@ pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSear
             }
         }
 
-        // 6. Distortion = SSE(src, recon).
-        let mut sse: u64 = 0;
-        for r in 0..tx_side {
-            for c in 0..tx_side {
-                let src_off = (sy + r) * src_stride + (sx + c);
-                let s = src.data[src_off] as i32;
-                let v = recon_slice[r * tx_side + c] as i32;
-                let d = s - v;
-                sse += (d * d) as u64;
-            }
-        }
-        // For block sizes ≤ 32×32 the SSE fits in `u32` (max
-        // 32*32*255^2 = 66_585_600 << 2^32).
-        let dist = sse.min(u32::MAX as u64) as u32;
-
-        // 7. Rate = mode-coding cost.
+        // 8. Rate = mode-coding cost.
         let rate = mode_cost_row[raw_mode as usize].max(0) as u32;
 
-        // 8. RD cost.
+        // 9. RD cost.
         let this_rd = rd_cost(lambda, rate, dist);
 
         if this_rd < best.best_rd_cost {
@@ -614,21 +685,10 @@ mod tests {
 
         // V_PRED predicts the source exactly when above matches the
         // column pattern, so V's distortion must be the minimum across
-        // all modes. RD-cost tie-breaking with DC is rate-dominated
-        // (DC has the lowest mode-coding cost under default keyframe
-        // probabilities), but the *distortion oracle* is the real
-        // signal: V should be at least as good as every other mode.
-        //
-        // libvpx's realtime `vp9_pick_intra_mode` only evaluates
-        // DC/V/H; this F8.0 port evaluates all 10 to give the
-        // supervisor a complete oracle. The "V wins overall RD"
-        // outcome additionally requires lambda × (R_v - R_dc) to be
-        // smaller than (D_dc - D_v) << 7 — at moderate quantizers
-        // the DCT round-trip recovers DC's bad prediction so dist
-        // collapses to ~0 for both and rate dominates. To force a
-        // strict "V wins overall" we'd need libvpx's transform-
-        // coefficient-domain distortion model (`block_yrd`), which
-        // is out of scope for F8.0.
+        // all modes. With the F8.0-fix transform-domain `block_yrd`
+        // distortion, V's near-zero distortion is preserved through
+        // the picker (no longer collapsed by the forward/inverse-DCT
+        // round-trip), so V also wins the *full* RD comparison.
         let all = pick_intra_mode_luma_all_costs(&params);
         let v = &all[IntraMode::V as usize];
         for (i, c) in all.iter().enumerate() {
@@ -640,31 +700,29 @@ mod tests {
                 c.best_distortion
             );
         }
-        // V_PRED must also be at least as cheap as every directional
-        // / TM mode on RD cost — its rate is lower than D45/D135/etc.
-        // and its dist is the minimum, so it can only lose to DC/H
-        // on a rate tiebreaker. Validate that V beats the directional
-        // and TM modes on overall RD.
+        // V_PRED must beat *every other mode* on overall RD now that
+        // distortion is computed in transform domain (the post-recon
+        // SSE collapse that previously let DC tie on rate is gone).
         let v_rd = v.best_rd_cost;
-        for mode in [
-            IntraMode::D45,
-            IntraMode::D135,
-            IntraMode::D117,
-            IntraMode::D153,
-            IntraMode::D207,
-            IntraMode::D63,
-            IntraMode::Tm,
-        ] {
-            let other = &all[mode as usize];
+        for (i, other) in all.iter().enumerate() {
+            if i == IntraMode::V as usize {
+                continue;
+            }
+            let mode = IntraMode::from_u8(i as u8).unwrap();
             assert!(
                 v_rd <= other.best_rd_cost,
                 "V's RD ({v_rd}) must be ≤ mode {mode:?}'s ({})",
                 other.best_rd_cost
             );
         }
-        // Document the result the picker actually returned (DC vs V):
+        // The picker's overall winner should also be V.
         let res = pick_intra_mode_luma(&params);
-        let _ = res;
+        assert_eq!(
+            res.best_mode,
+            IntraMode::V,
+            "expected V_PRED as overall RD winner under block_yrd, got {:?}",
+            res.best_mode
+        );
     }
 
     /// Horizontal-stripe source with matching left neighbours → H_PRED
@@ -718,11 +776,11 @@ mod tests {
 
         // Same oracle pattern as `pick_intra_mode_vertical_stripe_picks_v`:
         // H_PRED is the unique minimum-distortion mode here (`left`
-        // matches the source's row pattern). Verifying directly that
-        // H's distortion is the minimum across all 10 modes is the
-        // load-bearing assertion; "H wins on overall RD" is
-        // rate-vs-dist tuning dependent and at moderate quantizers
-        // the residual round-trip recovers DC's prediction error.
+        // matches the source's row pattern). Under the F8.0-fix
+        // transform-domain `block_yrd` distortion, H also wins the
+        // full RD comparison — DC's bad pixel-domain prediction
+        // shows up as large transform-coefficient error rather than
+        // being masked by the inverse-DCT round-trip.
         let all = pick_intra_mode_luma_all_costs(&params);
         let h = &all[IntraMode::H as usize];
         for (i, c) in all.iter().enumerate() {
@@ -734,26 +792,27 @@ mod tests {
                 c.best_distortion
             );
         }
-        // H beats directional + TM modes on RD.
+        // H beats every other mode on overall RD.
         let h_rd = h.best_rd_cost;
-        for mode in [
-            IntraMode::D45,
-            IntraMode::D135,
-            IntraMode::D117,
-            IntraMode::D153,
-            IntraMode::D207,
-            IntraMode::D63,
-            IntraMode::Tm,
-        ] {
-            let other = &all[mode as usize];
+        for (i, other) in all.iter().enumerate() {
+            if i == IntraMode::H as usize {
+                continue;
+            }
+            let mode = IntraMode::from_u8(i as u8).unwrap();
             assert!(
                 h_rd <= other.best_rd_cost,
                 "H's RD ({h_rd}) must be ≤ mode {mode:?}'s ({})",
                 other.best_rd_cost
             );
         }
+        // The picker's overall winner should also be H.
         let res = pick_intra_mode_luma(&params);
-        let _ = res;
+        assert_eq!(
+            res.best_mode,
+            IntraMode::H,
+            "expected H_PRED as overall RD winner under block_yrd, got {:?}",
+            res.best_mode
+        );
     }
 
     /// RD cost is finite and positive (the rate cost is always > 0 and
@@ -979,13 +1038,22 @@ mod tests {
             };
             let eob_usize = eob as usize;
 
+            // Widen dq → i32 (shared between distortion and inverse).
+            let mut dq32 = [0i32; 1024];
+            for (i, &v) in dqcoeff[..n].iter().enumerate() {
+                dq32[i] = v as i32;
+            }
+            // Transform-domain block_yrd distortion — matches the
+            // production picker.
+            let (dist, _skippable) =
+                block_yrd_distortion(&coefs[..n], &dq32[..n], n, tx_size);
+
+            // Keep recon path so the helper diverges from the production
+            // picker only in the bookkeeping (records every mode rather
+            // than argmin). recon itself is unused but still produced.
             let recon_slice = &mut recon[..pred_len];
             recon_slice.copy_from_slice(&pred[..pred_len]);
             if eob_usize > 0 {
-                let mut dq32 = [0i32; 1024];
-                for (i, &v) in dqcoeff[..n].iter().enumerate() {
-                    dq32[i] = v as i32;
-                }
                 match tx_size {
                     TxSize::Tx4x4 => {
                         let mut buf = [0i32; 16];
@@ -1009,18 +1077,6 @@ mod tests {
                     }
                 }
             }
-
-            let mut sse: u64 = 0;
-            for r in 0..tx_side {
-                for c in 0..tx_side {
-                    let src_off = (sy + r) * src_stride + (sx + c);
-                    let s = src.data[src_off] as i32;
-                    let v = recon_slice[r * tx_side + c] as i32;
-                    let d = s - v;
-                    sse += (d * d) as u64;
-                }
-            }
-            let dist = sse.min(u32::MAX as u64) as u32;
             let rate = mode_cost_row[raw_mode as usize].max(0) as u32;
             let this_rd = rd_cost(lambda, rate, dist);
             results.push(IntraModeSearchResult {
@@ -1105,5 +1161,239 @@ mod tests {
         assert!(dc.best_rd_cost <= v.best_rd_cost);
         assert!(dc.best_rd_cost <= h.best_rd_cost);
         assert!(dc.best_rd_cost <= tm.best_rd_cost);
+    }
+
+    // ---- F8.0-fix: `block_yrd_distortion` unit tests ------------------
+
+    /// Zero residual ⇒ zero distortion and `skippable = true`.
+    /// `coef == dqcoeff` for every position means the forward DCT
+    /// output matches the dequantized output exactly (e.g. all-zero
+    /// residual produces all-zero coef *and* all-zero dqcoeff).
+    #[test]
+    fn block_yrd_distortion_zero_residual_is_zero() {
+        for &tx in &[TxSize::Tx4x4, TxSize::Tx8x8, TxSize::Tx16x16, TxSize::Tx32x32] {
+            let n = tx.n_coeffs();
+            let coef = vec![0i32; n];
+            let dqcoeff = vec![0i32; n];
+            let (dist, skippable) = block_yrd_distortion(&coef, &dqcoeff, n, tx);
+            assert_eq!(dist, 0, "zero-residual dist must be 0 for {tx:?}");
+            assert!(skippable, "all-zero dqcoeff must be skippable for {tx:?}");
+        }
+    }
+
+    /// Known-value 4×4 mismatch: hand-built `(coef, dqcoeff)` arrays so
+    /// the expected distortion can be computed by hand. With
+    /// `tx_size = Tx4x4` the shift is 2, so
+    /// `dist = floor(sum((coef-dq)^2) / 4)`.
+    #[test]
+    fn block_yrd_distortion_known_value_4x4() {
+        let mut coef = [0i32; 16];
+        let mut dq = [0i32; 16];
+        // Place known mismatches: positions 0..4 hold (coef, dq) =
+        // (10, 0), (0, -3), (7, 5), (1, 1). Squared diffs: 100, 9, 4,
+        // 0. Sum = 113. After `>> 2` → 28.
+        coef[0] = 10;
+        dq[0] = 0;
+        coef[1] = 0;
+        dq[1] = -3;
+        coef[2] = 7;
+        dq[2] = 5;
+        coef[3] = 1;
+        dq[3] = 1;
+        let (dist, skippable) = block_yrd_distortion(&coef, &dq, 16, TxSize::Tx4x4);
+        assert_eq!(dist, 28, "expected sum(sq)/4 = 113/4 = 28, got {dist}");
+        // Not skippable because dq[1] = -3 ≠ 0.
+        assert!(!skippable, "dq has nonzero entries → not skippable");
+    }
+
+    /// 32×32 uses shift 0 (libvpx `vp9/encoder/vp9_rdopt.c:574`).
+    /// Build a tiny mismatch and verify no shift is applied.
+    #[test]
+    fn block_yrd_distortion_32x32_no_shift() {
+        let mut coef = vec![0i32; 1024];
+        let mut dq = vec![0i32; 1024];
+        coef[0] = 5;
+        dq[0] = 2; // diff 3 → sq 9, no shift
+        coef[1] = -1;
+        dq[1] = 1; // diff -2 → sq 4
+        let (dist, skippable) = block_yrd_distortion(&coef, &dq, 1024, TxSize::Tx32x32);
+        assert_eq!(dist, 13, "expected sum(sq) = 13 (shift=0 for 32×32)");
+        assert!(!skippable);
+    }
+
+    /// Build a vertical-stripe block_size=8x8 source with above
+    /// matching, then assert V_PRED wins the RD comparison under the
+    /// new block_yrd model. This is the KEY ORACLE for F8.0-fix: with
+    /// post-recon SSE this test failed because DC's prediction was
+    /// recovered by the inverse-DCT round-trip and rate dominated.
+    #[test]
+    fn pick_intra_mode_vertical_stripe_actually_picks_v() {
+        let bs = 8;
+        // Vertical stripes: columns alternate 30 / 220 — large enough
+        // contrast that DC's 125-ish prediction has nonzero residual
+        // even after quantization.
+        let mut src = vec![0u8; bs * bs];
+        for r in 0..bs {
+            for c in 0..bs {
+                src[r * bs + c] = if c % 2 == 0 { 30 } else { 220 };
+            }
+        }
+        let src_plane = PlaneRef {
+            data: &src,
+            stride: bs,
+            width: bs,
+            height: bs,
+        };
+        let q_index: u8 = 40;
+        let quantizer = init_plane_quantizers(i32::from(q_index), QuantizerDeltas::Y);
+        let costs = intra_y_mode_costs_kf_table();
+
+        let above_pixels: Vec<u8> =
+            (0..bs).map(|c| if c % 2 == 0 { 30u8 } else { 220 }).collect();
+        let left_pixels: Vec<u8> = vec![30u8; bs];
+
+        let params = IntraModeSearchParams {
+            block_size: BlockSize::Block8x8,
+            src_plane: &src_plane,
+            src_offset: (0, 0),
+            above_pixels: &above_pixels,
+            left_pixels: &left_pixels,
+            top_left_pixel: 30,
+            have_above: true,
+            have_left: true,
+            quantizer: &quantizer,
+            q_index,
+            frame_kind: FrameKind::KeyFrame,
+            above_mode_ctx: IntraMode::Dc,
+            left_mode_ctx: IntraMode::Dc,
+            y_mode_costs: &costs,
+        };
+
+        // The per-mode RD breakdown captured for the F8.0-fix report
+        // (q_index=40, 8×8 vstripe, neighbour-aligned):
+        //   DC rd=42754 dist=282  rate=462
+        //   V  rd=28723 dist=0    rate=1993   ← winner
+        //   H  rd=60859 dist=297  rate=1585
+        // V's transform-domain dist is exactly 0 (the above row
+        // matches the source column pattern, so the residual is
+        // identically zero → coef and dqcoeff are both zero). DC
+        // pays a small dist but its much lower rate previously won
+        // under post-recon SSE; under block_yrd, V's dist=0 *plus*
+        // (lambda × rate) makes V the winner.
+        let res = pick_intra_mode_luma(&params);
+        assert_eq!(
+            res.best_mode,
+            IntraMode::V,
+            "block_yrd MUST pick V_PRED on vertical stripes (got {:?}, \
+             rd={}, dist={}, rate={})",
+            res.best_mode,
+            res.best_rd_cost,
+            res.best_distortion,
+            res.best_rate
+        );
+    }
+
+    /// Companion to [`pick_intra_mode_vertical_stripe_actually_picks_v`]
+    /// for horizontal stripes. H_PRED must win under `block_yrd`.
+    #[test]
+    fn pick_intra_mode_horizontal_stripe_actually_picks_h() {
+        let bs = 8;
+        let mut src = vec![0u8; bs * bs];
+        for r in 0..bs {
+            let v = if r % 2 == 0 { 30u8 } else { 220 };
+            for c in 0..bs {
+                src[r * bs + c] = v;
+            }
+        }
+        let src_plane = PlaneRef {
+            data: &src,
+            stride: bs,
+            width: bs,
+            height: bs,
+        };
+        let q_index: u8 = 40;
+        let quantizer = init_plane_quantizers(i32::from(q_index), QuantizerDeltas::Y);
+        let costs = intra_y_mode_costs_kf_table();
+
+        let left_pixels: Vec<u8> =
+            (0..bs).map(|r| if r % 2 == 0 { 30u8 } else { 220 }).collect();
+        let above_pixels: Vec<u8> = vec![30u8; bs];
+
+        let params = IntraModeSearchParams {
+            block_size: BlockSize::Block8x8,
+            src_plane: &src_plane,
+            src_offset: (0, 0),
+            above_pixels: &above_pixels,
+            left_pixels: &left_pixels,
+            top_left_pixel: 30,
+            have_above: true,
+            have_left: true,
+            quantizer: &quantizer,
+            q_index,
+            frame_kind: FrameKind::KeyFrame,
+            above_mode_ctx: IntraMode::Dc,
+            left_mode_ctx: IntraMode::Dc,
+            y_mode_costs: &costs,
+        };
+
+        let res = pick_intra_mode_luma(&params);
+        assert_eq!(
+            res.best_mode,
+            IntraMode::H,
+            "block_yrd MUST pick H_PRED on horizontal stripes (got {:?}, \
+             rd={}, dist={}, rate={})",
+            res.best_mode,
+            res.best_rd_cost,
+            res.best_distortion,
+            res.best_rate
+        );
+    }
+
+    /// Regression: on a synthetic flat block with no neighbours, DC
+    /// must still win under block_yrd. The flat-128 fallback gives DC
+    /// a perfect prediction (residual = 0 → distortion = 0), so DC
+    /// trivially beats every other mode regardless of distortion
+    /// model. This test guards against regressions where the new
+    /// distortion model inadvertently flips the DC winner.
+    #[test]
+    fn pick_intra_mode_flat_block_still_picks_dc() {
+        let bs = 16;
+        let src = make_flat_src(bs, 128);
+        let src_plane = PlaneRef {
+            data: &src,
+            stride: bs,
+            width: bs,
+            height: bs,
+        };
+        let quantizer = init_plane_quantizers(50, QuantizerDeltas::Y);
+        let costs = intra_y_mode_costs_kf_table();
+        let above = [0u8; 32];
+        let left = [0u8; 32];
+        let params = make_params(
+            BlockSize::Block16x16,
+            &src_plane,
+            &quantizer,
+            &costs,
+            &above,
+            &left,
+            /* have_above */ false,
+            /* have_left  */ false,
+            /* top_left_pixel */ 0,
+        );
+        let res = pick_intra_mode_luma(&params);
+        assert_eq!(
+            res.best_mode,
+            IntraMode::Dc,
+            "flat block: DC must still win under block_yrd (got {:?}, \
+             rd={}, dist={}, rate={})",
+            res.best_mode,
+            res.best_rd_cost,
+            res.best_distortion,
+            res.best_rate
+        );
+        assert_eq!(
+            res.best_distortion, 0,
+            "DC's transform-domain distortion on flat-128 input is 0"
+        );
     }
 }
