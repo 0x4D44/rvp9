@@ -9,11 +9,13 @@
 //!
 //! - [`intra`] — luma intra-mode picker. Mirrors libvpx
 //!   `vp9_pick_intra_mode` (`vp9_pickmode.c:1155-1213`). F8.0.
+//! - [`inter`] — luma inter-mode picker. Mirrors libvpx
+//!   `vp9_pick_inter_mode` (`vp9_pickmode.c:1300-1700`) for the
+//!   realtime variant. F8.1 — `{ZEROMV, NEARESTMV, NEWMV}` ×
+//!   `{LASTFRAME}`, single-ref only.
 //!
-//! Inter-mode search (libvpx `vp9_pick_inter_mode` /
-//! `vp9_pick_inter_mode_sub8x8`), UV-mode search, and the partition
-//! driver are tracked under F8.1 / F8.2 and will land as further
-//! sub-modules here.
+//! UV-mode search and the partition driver are tracked under F8.2 /
+//! later and will land as further sub-modules here.
 //!
 //! ## RD cost convention
 //!
@@ -33,6 +35,7 @@
 //! large blocks (max `D` is `32 * 32 * 255^2 = 66_585_600 << 7 ≈ 8.5e9`,
 //! comfortably below `i64::MAX`).
 
+pub mod inter;
 pub mod intra;
 
 /// libvpx `RDDIV_BITS` (`vp9_rd.h:26`).
