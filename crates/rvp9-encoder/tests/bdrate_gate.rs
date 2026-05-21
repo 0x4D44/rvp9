@@ -711,7 +711,11 @@ fn bdrate_gate_stage4b_aq() {
     const H: u32 = 256;
     const N_FRAMES: u32 = 64;
     const FRAMERATE_HINT: f64 = 30.0;
-    let target_bitrates_bps: [u32; 4] = [200_000, 400_000, 800_000, 1_600_000];
+    // RC.X1 dropped the encoder's "natural" bitrate further. Targets
+    // ≥ 200 kbps now saturate at the same PSNR (61.17 dB) — the cubic
+    // fit becomes ill-conditioned on flat curves. Use the same low-end
+    // range as F12 to expose meaningful R-D slope.
+    let target_bitrates_bps: [u32; 4] = [25_000, 50_000, 100_000, 250_000];
 
     // Source selection: try y4m, fall back to synthetic.
     let y4m_path_buf = probe_testsrc_720p();
