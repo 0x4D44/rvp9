@@ -70,7 +70,10 @@ use rvp9_core::intra_pred::IntraMode;
 use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, Mv, RefFrame};
 use rvp9_core::transforms::{TxMode, TxSize};
 
+pub mod frame_loop;
 pub mod rate_control;
+
+pub use frame_loop::{EncodedFrame, EncoderConfig, FrameKind as StreamFrameKind, StreamEncoder, YuvFrameRef};
 
 /// Encoder configuration.
 ///
@@ -1040,7 +1043,7 @@ fn f5_uv_plane_block_size(bsize: BlockSize) -> BlockSize {
 /// - `(width, height)` are multiples of 64.
 /// - `input_yuv` plane lengths match the YUV420 tight-stride layout.
 /// - `recon_yuv_out` plane lengths match `input_yuv`.
-fn simulate_dc_intra_encode(
+pub(crate) fn simulate_dc_intra_encode(
     width: u32,
     height: u32,
     base_qindex: u8,
