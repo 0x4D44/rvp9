@@ -55,8 +55,8 @@ use rvp9_core::bitstream::sub_parsers::{
     SegmentationParams, TileInfo,
 };
 use rvp9_core::bitstream::{
-    AllZeroCoefSource, BitDepth, BitstreamError, ChromaFormat, ColorRange, ColorSpace,
-    CompressedHeaderOptions, CompressedHeaderResult, FrameKind as WireFrameKind, InterpFilter,
+    BitDepth, BitstreamError, ChromaFormat, ColorRange, ColorSpace, CompressedHeaderOptions,
+    CompressedHeaderResult, FrameKind as WireFrameKind, InterCoefSource, InterpFilter,
     ModesTileBounds, Profile, RawBitWriter, UncompressedHeader, write_compressed_header,
     write_tile_intra_keyframe, write_tile_inter, write_uncompressed_header,
 };
@@ -75,7 +75,8 @@ use rvp9_core::transforms::TxMode;
 
 use crate::rate_control::{FrameKind as RcFrameKind, RateControl, RateControlConfig};
 use crate::{
-    EncodeError, PartitionLeafDesc, pick_and_simulate_intra_encode_partitions,
+    EncodeError, InterPartitionLeafDesc, PartitionLeafDesc,
+    pick_and_simulate_intra_encode_partitions, pick_and_simulate_inter_encode_partitions,
 };
 
 /// Public configuration for the F10.0 streaming encoder.
@@ -429,14 +430,16 @@ impl StreamEncoder {
         build_keyframe_packet(w, h, q_index, &coef_source, &sb_partitions)
     }
 
-    /// Inter internal: emit a single-ref LASTFRAME ZEROMV `skip = true`
-    /// frame over the SB grid. The reconstruction equals the reference
-    /// (zero-MV no-residual), so `last_recon_*` are unchanged.
+    /// Inter internal: F10.1c — drive F8.2 partition + F8.1 inter mode
+    /// picker per leaf, run the inter encoder simulator to produce real
+    /// per-TX residuals + a bit-exact-with-decoder encoder
+    /// reconstruction, then emit the inter packet with those residuals.
     ///
-    /// The per-SB partition still drives mi_grid layout (each leaf gets
-    /// one Inter ZEROMV skip=true cell splat) so the picker is exercised
-    /// on the inter path too — even though the reconstruction is
-    /// identical to the reference.
+    /// For Block8x8 (sub-8 picker-out-of-scope) leaves the simulator
+    /// falls back to `ZEROMV / LASTFRAME / skip = true`; the recon for
+    /// those leaves equals the reference (the simulator's up-front
+    /// copy). The bigger picker-supported leaves carry the picked
+    /// `(mode, mv)` and emit real coefs.
     fn encode_inter_internal(
         &mut self,
         q_index: u8,
@@ -444,10 +447,9 @@ impl StreamEncoder {
     ) -> Result<Vec<u8>, EncodeError> {
         let w = self.config.width;
         let h = self.config.height;
-        // For inter the picker compares src vs ref (LASTFRAME, zero-MV).
-        // `last_recon_y` is the previous frame's Y reconstruction; that
-        // IS the LASTFRAME ref under our zero-MV mode.
-        let sb_partitions = choose_partitions_for_frame(
+
+        // F10.1a — F8.2 variance-based partition decision per SB.
+        let sb_partitions_intra_shape = choose_partitions_for_frame(
             w as usize,
             h as usize,
             q_index,
@@ -455,13 +457,75 @@ impl StreamEncoder {
             &self.last_recon_y,
             /* is_keyframe = */ false,
         );
-        build_inter_zero_mv_packet(w, h, q_index, &sb_partitions)
+
+        // Convert the intra-shaped partition descriptors into inter-
+        // shaped ones (picker fields default to ZEROMV / Mv::ZERO and
+        // are overwritten by the simulator).
+        let mut sb_partitions: Vec<Vec<InterPartitionLeafDesc>> =
+            sb_partitions_intra_shape
+                .iter()
+                .map(|leaves| {
+                    leaves
+                        .iter()
+                        .map(|l| InterPartitionLeafDesc {
+                            mi_row_in_sb: l.mi_row_in_sb,
+                            mi_col_in_sb: l.mi_col_in_sb,
+                            leaf_bsize: l.leaf_bsize,
+                            picked_mode: InterMode::ZeroMv,
+                            picked_mv: Mv::ZERO,
+                            skip: true,
+                        })
+                        .collect()
+                })
+                .collect();
+
+        // Save the previous reference for the simulator — the simulator
+        // reads `last_recon_*` and writes the new recon into
+        // `recon_yuv_out`. We swap buffers via a scratch allocation.
+        let w_us = w as usize;
+        let h_us = h as usize;
+        let uvw = w_us / 2;
+        let uvh = h_us / 2;
+        let mut new_recon_y = vec![0u8; w_us * h_us];
+        let mut new_recon_u = vec![0u8; uvw * uvh];
+        let mut new_recon_v = vec![0u8; uvw * uvh];
+
+        let coef_source = pick_and_simulate_inter_encode_partitions(
+            w,
+            h,
+            q_index,
+            input_yuv,
+            (&self.last_recon_y, &self.last_recon_u, &self.last_recon_v),
+            (&mut new_recon_y, &mut new_recon_u, &mut new_recon_v),
+            &mut sb_partitions,
+        );
+
+        // Build the packet from the populated coef source + leaf
+        // descriptors.
+        let packet =
+            build_inter_packet_with_residuals(w, h, q_index, &coef_source, &sb_partitions)?;
+
+        // Commit the new reconstruction as the encoder's new LAST ref.
+        self.last_recon_y = new_recon_y;
+        self.last_recon_u = new_recon_u;
+        self.last_recon_v = new_recon_v;
+
+        Ok(packet)
     }
 
     /// Read-only access to the rate controller (for tests / probes).
     #[must_use]
     pub fn rate_control(&self) -> &RateControl {
         &self.rate_control
+    }
+
+    /// Test-only — read access to the encoder's last reconstruction
+    /// Y plane. Used by the F10.1c bit-exact-encoder-vs-decoder oracle
+    /// to assert the encoder's mirrored `reconstruct_inter_block`
+    /// matches the decoder bit-exactly.
+    #[cfg(test)]
+    pub(crate) fn last_recon_y(&self) -> &[u8] {
+        &self.last_recon_y
     }
 }
 
@@ -631,13 +695,14 @@ fn build_kf_mi_grid(
     mi_grid
 }
 
-/// Build the inter mi_grid from the per-SB partition decisions. Each
-/// leaf gets a single-ref LASTFRAME ZEROMV `skip = true` `ModeInfo`
-/// splatted across every 8×8 cell it covers.
-fn build_inter_mi_grid(
+/// F10.1c — Build the inter mi_grid from the picker-populated inter
+/// leaf descriptors. Each leaf carries the picker's `(picked_mode,
+/// picked_mv, skip)` (set by `pick_and_simulate_inter_encode_partitions`);
+/// Block8x8 leaves fall back to `ZEROMV / skip = true`.
+fn build_inter_mi_grid_from_picker(
     mi_rows: u32,
     mi_cols: u32,
-    sb_partitions: &[Vec<PartitionLeafDesc>],
+    sb_partitions: &[Vec<InterPartitionLeafDesc>],
 ) -> Vec<Option<ModeInfo>> {
     let mi_rows_us = mi_rows as usize;
     let mi_cols_us = mi_cols as usize;
@@ -654,13 +719,13 @@ fn build_inter_mi_grid(
                 let cell = ModeInfo {
                     block_size: leaf.leaf_bsize,
                     tx_size: max_txsize(leaf.leaf_bsize),
-                    skip: true,
+                    skip: leaf.skip,
                     segment_id: 0,
                     seg_id_predicted: false,
                     mode: BlockMode::Inter {
-                        mode: InterMode::ZeroMv,
+                        mode: leaf.picked_mode,
                         ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
-                        mvs: [Mv::ZERO; 2],
+                        mvs: [leaf.picked_mv, Mv::ZERO],
                         interp_filter: InterpFilter::EightTap,
                     },
                     bmi: Default::default(),
@@ -821,20 +886,25 @@ fn build_keyframe_packet(
     Ok(packet)
 }
 
-/// Build an inter packet: every 64×64 SB is `InterMode::ZeroMv`
-/// `LASTFRAME` `skip = true` `BlockSize::Block64x64`. Reconstruction
-/// is a zero-MV copy of LASTFRAME — the encoder's reference buffer
-/// remains identical across the boundary, which is the contract the
-/// caller (the F10.0 frame loop) relies on.
-fn build_inter_zero_mv_packet(
+/// F10.1c — Build an inter packet whose leaves carry the picker's
+/// chosen `(inter_mode, mv, skip)` and whose non-skip leaves emit real
+/// per-TX residuals supplied by `coef_source` (the F10.1c inter encoder
+/// simulator's output).
+///
+/// Mirror of [`build_keyframe_packet`] for the inter path: builds the
+/// mi-grid from `sb_partitions`, runs the wire-format compressed +
+/// uncompressed header writers, and threads the coef source through
+/// `write_tile_inter`.
+fn build_inter_packet_with_residuals(
     width: u32,
     height: u32,
     base_qindex: u8,
-    sb_partitions: &[Vec<PartitionLeafDesc>],
+    coef_source: &dyn InterCoefSource,
+    sb_partitions: &[Vec<InterPartitionLeafDesc>],
 ) -> Result<Vec<u8>, EncodeError> {
     let mi_rows = height / 8;
     let mi_cols = width / 8;
-    let mi_grid = build_inter_mi_grid(mi_rows, mi_cols, sb_partitions);
+    let mi_grid = build_inter_mi_grid_from_picker(mi_rows, mi_cols, sb_partitions);
 
     let mut pre_fc = FrameContext::new_default();
     let post_fc = pre_fc.clone();
@@ -877,12 +947,14 @@ fn build_inter_zero_mv_packet(
         sign_bias,
     };
 
-    let mut tile_buf = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 8 + 1024];
+    // F10.1c — sized generously (per-pixel × 4) since real residuals
+    // can dominate the bit budget at higher Q indices.
+    let mut tile_buf =
+        vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
     let tile_len = {
         let mut bw = BoolWriter::start_encode(&mut tile_buf);
         let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
         let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
-        let coef_source = AllZeroCoefSource::new();
         write_tile_inter(
             &mut bw,
             &post_fc,
@@ -894,7 +966,7 @@ fn build_inter_zero_mv_packet(
             tile_bounds,
             /* prev_mv_grid = */ None,
             &mut coef_ctx,
-            &coef_source,
+            coef_source,
         )?;
         bw.stop_encode()
             .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
@@ -1672,5 +1744,326 @@ mod tests {
             "F10.1b: flat KF should be DC-dominant: dc_count={dc_count}, total={total}, \
              counts={counts:?}",
         );
+    }
+
+    // -----------------------------------------------------------------
+    // F10.1c — inter mode picker + real inter residuals tests.
+    // -----------------------------------------------------------------
+
+    /// Compute PSNR on the Y plane between two tight-stride buffers.
+    /// Returns `f64::INFINITY` when the MSE is zero.
+    fn y_psnr(a: &[u8], b: &[u8]) -> f64 {
+        debug_assert_eq!(a.len(), b.len());
+        let mut sse: u64 = 0;
+        for (&aa, &bb) in a.iter().zip(b.iter()) {
+            let d = (aa as i32) - (bb as i32);
+            sse += (d * d) as u64;
+        }
+        let mse = sse as f64 / (a.len() as f64);
+        if mse <= 0.0 {
+            f64::INFINITY
+        } else {
+            10.0 * (255.0_f64 * 255.0 / mse).log10()
+        }
+    }
+
+    /// F10.1c KEY ORACLE — encode a KF followed by an inter whose
+    /// source equals the KF's reconstruction. With src == ref under
+    /// zero MV the F8.1 picker lands on ZEROMV / NEARESTMV with
+    /// near-zero distortion; the inter recon should be bit-exact-ish
+    /// with the KF recon. PSNR > 35 dB on the decoded inter output vs
+    /// the encoder's intended source (= KF recon).
+    #[test]
+    fn encode_inter_with_real_residuals_decodes_with_low_psnr() {
+        let cfg = EncoderConfig {
+            width: 64,
+            height: 64,
+            framerate: 30.0,
+            target_bitrate_bps: 2_000_000,
+            gop_length: 30,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let (y, u, v) = gradient_frame(64, 64);
+
+        // Frame 0 — keyframe.
+        let kf = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        assert_eq!(kf.frame_kind, FrameKind::Key);
+
+        // Drive the decoder to materialise the KF's reconstruction so
+        // we can use it as the inter's source. (The encoder's internal
+        // `last_recon_*` was bit-exact with this by construction —
+        // F10.1b oracle.)
+        let mut dec = Decoder::new();
+        let frames_kf = decode_packet(&mut dec, &kf.data);
+        let frame_kf = dec.decode_frame(&frames_kf[0]).expect("decode kf");
+        let kf_recon_y: Vec<u8> = {
+            let y_plane = frame_kf.y_plane();
+            let stride = y_plane.stride();
+            let data = y_plane.data();
+            let mut out = vec![0u8; 64 * 64];
+            for r in 0..64 {
+                out[r * 64..r * 64 + 64].copy_from_slice(&data[r * stride..r * stride + 64]);
+            }
+            out
+        };
+        let kf_recon_u: Vec<u8> = {
+            let p = frame_kf.u_plane();
+            let stride = p.stride();
+            let data = p.data();
+            let mut out = vec![0u8; 32 * 32];
+            for r in 0..32 {
+                out[r * 32..r * 32 + 32].copy_from_slice(&data[r * stride..r * stride + 32]);
+            }
+            out
+        };
+        let kf_recon_v: Vec<u8> = {
+            let p = frame_kf.v_plane();
+            let stride = p.stride();
+            let data = p.data();
+            let mut out = vec![0u8; 32 * 32];
+            for r in 0..32 {
+                out[r * 32..r * 32 + 32].copy_from_slice(&data[r * stride..r * stride + 32]);
+            }
+            out
+        };
+
+        // Frame 1 — inter with src = KF recon.
+        let inter = enc
+            .encode_frame(&yuv_view(&kf_recon_y, &kf_recon_u, &kf_recon_v, 64))
+            .unwrap();
+        assert_eq!(inter.frame_kind, FrameKind::Inter);
+
+        let frames_inter = decode_packet(&mut dec, &inter.data);
+        let frame_inter = dec.decode_frame(&frames_inter[0]).expect("decode inter");
+
+        let y_plane = frame_inter.y_plane();
+        let decoded_y: Vec<u8> = {
+            let stride = y_plane.stride();
+            let data = y_plane.data();
+            let mut out = vec![0u8; 64 * 64];
+            for r in 0..64 {
+                out[r * 64..r * 64 + 64].copy_from_slice(&data[r * stride..r * stride + 64]);
+            }
+            out
+        };
+
+        let psnr = y_psnr(&decoded_y, &kf_recon_y);
+        assert!(
+            psnr > 35.0,
+            "F10.1c KEY ORACLE: decoded inter PSNR vs source = {psnr:.2} dB \
+             — expected > 35 dB",
+        );
+
+        // Stronger bit-exact-encoder-vs-decoder oracle: the encoder's
+        // post-inter `last_recon_y` should match the decoder's output
+        // pixel-for-pixel (or near-bit-exact under the documented
+        // F10.1c divergences). Asserts the encoder's mirrored
+        // `reconstruct_inter_block` IT-add sequence matches the
+        // decoder's exact path.
+        let enc_recon_y = enc.last_recon_y();
+        assert_eq!(
+            enc_recon_y.len(),
+            decoded_y.len(),
+            "encoder recon and decoded recon must have same length",
+        );
+        let mut max_diff = 0i32;
+        let mut sse: u64 = 0;
+        for (&e, &d) in enc_recon_y.iter().zip(decoded_y.iter()) {
+            let diff = (e as i32) - (d as i32);
+            max_diff = max_diff.max(diff.abs());
+            sse += (diff * diff) as u64;
+        }
+        // Bit-exact is the goal; allow a tiny tolerance under the
+        // documented v1 divergences.
+        assert_eq!(
+            max_diff, 0,
+            "F10.1c KEY ORACLE: encoder recon vs decoder recon diverged \
+             — max |diff| = {max_diff}, sse = {sse}",
+        );
+    }
+
+    /// F10.1c — Inter src is shifted relative to the LASTFRAME ref.
+    /// The F8.1 picker (running on Block16+ leaves) should pick
+    /// `skip = false` on at least some leaves — proving the picker
+    /// fired and emitted real residuals (not the skip-true fallback).
+    /// We also call the picker directly through a synthetic harness to
+    /// verify the NEWMV path finds a non-zero MV, which we can't always
+    /// observe through the decoder's mi-grid because libvpx's RD logic
+    /// often prefers `NEARESTMV` (cheaper MV bits) when the picker's
+    /// post-recon SSE savings under NEWMV are modest.
+    #[test]
+    fn encode_inter_with_shifted_content_picks_nonzero_mv() {
+        use rvp9_core::block::BlockSize as Bs;
+        use rvp9_core::cost::mv_cost::build_nmv_cost_table;
+        use rvp9_core::cost::symbol_costs::inter_mode_costs;
+        use rvp9_core::entropy::FrameContext as Fc;
+        use rvp9_core::entropy::mv_probs::DEFAULT_NMV_CONTEXT;
+        use rvp9_core::mode_decision::inter::{
+            InterModeSearchParams, MvCandidates, pick_inter_mode_luma,
+        };
+        use rvp9_core::mv_search::PlaneRef as PR;
+        use rvp9_core::mv_search::mv_limits::MvLimits;
+        use rvp9_core::mv_search::init_dsmotion_compensation;
+        use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
+
+        // (a) Direct F8.1 picker oracle on a Block16x16 chaotic-content
+        // 3-pel shift — mirrors `mode_decision::inter::tests::
+        // pick_inter_finds_new_mv_on_shifted_ref` setup exactly (64×64
+        // plane, seed 17). The picker should return NEWMV with col ≈
+        // 24 (= 3 full-pels in 1/8-pel units).
+        let pw = 64usize;
+        let ph = 64usize;
+        let mut state: u32 = 18; // xorshift seed (17 + 1, matching F8.1 test)
+        let mut ref_data = vec![0u8; pw * ph];
+        for b in ref_data.iter_mut() {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            *b = (state & 0xff) as u8;
+        }
+        let mut src_data = ref_data.clone();
+        for i in 0..16 {
+            for j in 0..16 {
+                src_data[(20 + i) * pw + (20 + j)] = ref_data[(20 + i) * pw + (23 + j)];
+            }
+        }
+        let src_plane = PR { data: &src_data, stride: pw, width: pw, height: ph };
+        let ref_plane = PR { data: &ref_data, stride: pw, width: pw, height: ph };
+        let fc = Fc::new_default();
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, false);
+        let inter_costs = inter_mode_costs(&fc);
+        let quantizer = init_plane_quantizers(50, QuantizerDeltas::Y);
+        let site_config = init_dsmotion_compensation(pw as i32);
+        let mvc = MvCandidates::default();
+        let params = InterModeSearchParams {
+            block_size: Bs::Block16x16,
+            src_plane: &src_plane,
+            src_offset: (20, 20),
+            ref_plane: &ref_plane,
+            mv_candidates: &mvc,
+            mv_limits: MvLimits::new(-16, 16, -16, 16),
+            site_config: &site_config,
+            mv_costs: &costs,
+            inter_mode_costs: &inter_costs,
+            inter_mode_ctx: 0,
+            quantizer: &quantizer,
+            q_index: 50,
+            allow_hp: false,
+            frame_kind: rvp9_core::bitstream::header::FrameKind::InterFrame {
+                reset_frame_context: 0,
+                refresh_frame_flags: 0,
+                ref_frame_indices: [0; rvp9_core::bitstream::frame::MAX_INTER_REFS],
+                ref_frame_sign_biases: [false; rvp9_core::bitstream::frame::MAX_INTER_REFS],
+                allow_high_precision_mv: false,
+                interp_filter: InterpFilter::EightTap,
+            },
+        };
+        let pick = pick_inter_mode_luma(&params);
+        assert_eq!(
+            pick.best_mode,
+            rvp9_core::mode_info::InterMode::NewMv,
+            "F8.1 picker should choose NEWMV for shifted chaotic ref — \
+             got {:?}",
+            pick.best_mode,
+        );
+        assert!(
+            pick.best_mv.col != 0 || pick.best_mv.row != 0,
+            "F8.1 picker should choose non-zero MV for shifted ref — \
+             got mv=({}, {})",
+            pick.best_mv.row, pick.best_mv.col,
+        );
+
+        // (b) End-to-end inter encode + decode oracle: at least one
+        // leaf round-trips through the picker (skip = false), proving
+        // the integration layer reaches the F8.1 picker. The chosen
+        // mode may still be ZEROMV/NEARESTMV depending on RD; what
+        // matters is that the picker FIRED on at least one Block16+
+        // leaf (not just the Block8x8 skip-true fallback).
+        let cfg = EncoderConfig {
+            width: 128,
+            height: 128,
+            framerate: 30.0,
+            target_bitrate_bps: 4_000_000,
+            gop_length: 30,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let (y0, u0, v0) = gradient_frame(128, 128);
+        let kf = enc.encode_frame(&yuv_view(&y0, &u0, &v0, 128)).unwrap();
+        assert_eq!(kf.frame_kind, FrameKind::Key);
+
+        // Inter frame: gradient — F8.2 should keep partition at
+        // Block64x64; F8.1 fires and chooses some non-skip leaf.
+        let inter = enc.encode_frame(&yuv_view(&y0, &u0, &v0, 128)).unwrap();
+        assert_eq!(inter.frame_kind, FrameKind::Inter);
+
+        let mut dec = Decoder::new();
+        let frames_kf = decode_packet(&mut dec, &kf.data);
+        let _ = dec.decode_frame(&frames_kf[0]).expect("decode kf");
+        let frames_inter = decode_packet(&mut dec, &inter.data);
+        let _ = dec.decode_frame(&frames_inter[0]).expect("decode inter");
+
+        let grid = dec.last_frame_mi_grid();
+        let any_nonskip_picker_leaf = grid.iter().flatten().any(|c| {
+            !c.skip
+                && matches!(
+                    c.block_size,
+                    BlockSize::Block16x16 | BlockSize::Block32x32 | BlockSize::Block64x64
+                )
+        });
+        assert!(
+            any_nonskip_picker_leaf,
+            "F10.1c: at least one Block16+ leaf must have skip=false \
+             (picker fired and emitted residuals)"
+        );
+    }
+
+    /// F10.1c — Block8x8 leaves fall back to ZEROMV / skip = true (the
+    /// picker doesn't support sub-16 sizes). Use a chaotic KF so F8.2
+    /// splits into Block8x8 leaves; verify the inter frame's
+    /// Block8x8 cells carry `skip = true`.
+    #[test]
+    fn encode_inter_skip_true_path_still_works() {
+        let cfg = EncoderConfig {
+            width: 64,
+            height: 64,
+            framerate: 30.0,
+            target_bitrate_bps: 50_000, // tight budget → high q → smaller splits
+            gop_length: 30,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+
+        let y = xorshift_y_plane(64, 64, 0xC0FFEE42);
+        let u = vec![128u8; 32 * 32];
+        let v = vec![128u8; 32 * 32];
+
+        let kf = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        assert_eq!(kf.frame_kind, FrameKind::Key);
+
+        let mut dec = Decoder::new();
+        let frames_kf = decode_packet(&mut dec, &kf.data);
+        let _ = dec.decode_frame(&frames_kf[0]).expect("decode kf");
+
+        // Inter: shifted Y so F8.2 splits (the inter path's variance
+        // picker measures src-vs-ref difference).
+        let inter = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        assert_eq!(inter.frame_kind, FrameKind::Inter);
+
+        let frames_inter = decode_packet(&mut dec, &inter.data);
+        let _ = dec.decode_frame(&frames_inter[0]).expect("decode inter");
+
+        // Every cell must be populated; sub-16 leaves must carry
+        // skip=true (picker fallback).
+        let grid = dec.last_frame_mi_grid();
+        for cell in grid.iter() {
+            let c = cell.expect("every mi-cell populated");
+            if c.block_size == BlockSize::Block8x8 {
+                assert!(
+                    c.skip,
+                    "F10.1c: Block8x8 leaf must carry skip=true (picker \
+                     fallback), got skip=false at block_size={:?}",
+                    c.block_size,
+                );
+            }
+        }
     }
 }

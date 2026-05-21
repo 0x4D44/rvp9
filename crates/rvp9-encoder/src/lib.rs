@@ -999,6 +999,91 @@ impl rvp9_core::bitstream::IntraCoefSource for VecBackedIntraCoefSource {
     }
 }
 
+/// F10.1c — Vec-backed [`rvp9_core::bitstream::InterCoefSource`].
+///
+/// Stores one qcoeff buffer per (mi_row, mi_col, plane, tx_x4_local,
+/// tx_y4_local) tuple. Mirror of [`VecBackedIntraCoefSource`]'s shape,
+/// but consumed by the inter-frame writer
+/// ([`rvp9_core::bitstream::write_tile_inter`]).
+///
+/// Populated by [`pick_and_simulate_inter_encode_partitions`] — the
+/// F10.1c inter encoder simulator.
+pub struct VecBackedInterCoefSource {
+    /// Frame width in pixels.
+    width: u32,
+    /// Frame height in pixels.
+    height: u32,
+    /// One entry per stored TX block. Same key shape as
+    /// [`VecBackedIntraCoefSource`].
+    blocks: std::collections::HashMap<IntraCoefBlockKey, IntraCoefBlockValue>,
+}
+
+impl VecBackedInterCoefSource {
+    /// Build an empty source for the given frame dimensions.
+    #[must_use]
+    pub fn new(width: u32, height: u32) -> Self {
+        Self {
+            width,
+            height,
+            blocks: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Record one TX block's quantized coefficients + eob.
+    #[allow(clippy::too_many_arguments)] // mirrors InterCoefSource trait shape
+    pub fn insert(
+        &mut self,
+        mi_row: usize,
+        mi_col: usize,
+        plane: usize,
+        tx_x4_local: usize,
+        tx_y4_local: usize,
+        qcoefs: Vec<i32>,
+        eob: usize,
+    ) {
+        self.blocks
+            .insert((mi_row, mi_col, plane, tx_x4_local, tx_y4_local), (qcoefs, eob));
+    }
+
+    /// Frame width in pixels.
+    #[must_use]
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Frame height in pixels.
+    #[must_use]
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+}
+
+impl rvp9_core::bitstream::InterCoefSource for VecBackedInterCoefSource {
+    fn get_block_coefs(
+        &self,
+        mi_row: usize,
+        mi_col: usize,
+        plane: usize,
+        tx_x4_local: usize,
+        tx_y4_local: usize,
+        tx_size: TxSize,
+    ) -> (&[i32], usize) {
+        let entry = self
+            .blocks
+            .get(&(mi_row, mi_col, plane, tx_x4_local, tx_y4_local))
+            .unwrap_or_else(|| {
+                panic!(
+                    "VecBackedInterCoefSource: missing TX block at \
+                     (mi_row={mi_row}, mi_col={mi_col}, plane={plane}, \
+                     tx_x4_local={tx_x4_local}, tx_y4_local={tx_y4_local})"
+                )
+            });
+        let n = tx_size.n_coeffs();
+        debug_assert!(entry.0.len() >= n);
+        (&entry.0[..n], entry.1)
+    }
+}
+
 /// Per-plane chroma subsampling for 4:2:0 (Profile 0). Mirrors
 /// rvp9-decoder's `reconstruct_inter::SUBSAMPLING_*`.
 const F5_SUBSAMPLING_X: [usize; 3] = [0, 1, 1];
@@ -1754,6 +1839,559 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     }
 
     coef_source
+}
+
+// ---------------------------------------------------------------------------
+// F10.1c — inter-mode picker integration + real inter residual emission.
+// ---------------------------------------------------------------------------
+
+/// Per-leaf descriptor for the inter encoder simulator. Mirrors
+/// [`PartitionLeafDesc`] but carries the inter mode info (mode + MV +
+/// skip flag) the picker chose for the leaf.
+///
+/// `leaf_bsize` ∈ {Block8x8, Block16x16, Block32x32, Block64x64}.
+/// F8.1 (the inter mode picker) only supports Block16x16 / Block32x32 /
+/// Block64x64; for Block8x8 leaves the simulator falls back to a
+/// `ZEROMV / LASTFRAME / skip = true` cell (the documented F10.1c
+/// divergence, on the F10.2 punch-list).
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) struct InterPartitionLeafDesc {
+    /// Leaf's row inside the SB, in 8×8 mi units (0..=7).
+    pub mi_row_in_sb: usize,
+    /// Leaf's column inside the SB, in 8×8 mi units (0..=7).
+    pub mi_col_in_sb: usize,
+    /// Leaf [`BlockSize`] (square).
+    pub leaf_bsize: BlockSize,
+    /// Picked inter mode (one of `ZeroMv` / `NearestMv` / `NewMv`).
+    /// Always `ZeroMv` on `skip = true` fallback leaves.
+    pub picked_mode: InterMode,
+    /// Picked MV in 1/8-pel units. `Mv::ZERO` on skip-true leaves.
+    pub picked_mv: Mv,
+    /// `true` ⇒ this leaf falls back to the skip-true / zero-residual
+    /// path (e.g. Block8x8 leaves where F8.1 doesn't apply).
+    pub skip: bool,
+}
+
+/// F10.1c — Drive the F8.1 inter mode picker per leaf and run the
+/// inter encoder simulator that produces real residual coefficients +
+/// a decoder-bit-exact encoder reconstruction.
+///
+/// For each leaf:
+///
+/// 1. If `leaf_bsize == Block8x8`, fall back to `ZeroMv / LASTFRAME /
+///    skip = true`. The reconstruction is a zero-MV copy of the
+///    reference plane (no residual emission); no coef-source entries
+///    are recorded.
+/// 2. Otherwise, run [`pick_inter_mode_luma`] against the leaf's source
+///    block + the LASTFRAME ref plane to pick `(best_mode, best_mv)`.
+///    Store the choice in `sb_partitions[sb][leaf]` so the caller can
+///    splat it into the mi-grid.
+/// 3. Per plane (Y, U, V): convolve8 the ref at the (chroma-scaled) MV
+///    to produce the prediction, compute residual = src - pred,
+///    forward-DCT + forward-quant, then inverse-DCT-add back into the
+///    encoder's recon plane (mirror of the decoder's
+///    `reconstruct_inter_block` IT-add sequence). Store
+///    `(qcoeffs, eob)` per (plane, tx) in the returned coef source.
+///
+/// `last_recon_yuv` is the previous frame's reconstruction (the
+/// LASTFRAME ref under our zero-MV-no-update reference scheme); the
+/// encoder reads it for prediction. `recon_yuv_out` is filled with the
+/// new frame's reconstruction (the encoder's "what the decoder will
+/// produce" prediction-correctness oracle).
+///
+/// Walks SBs/leaves in raster order — same convention as the F10.1b
+/// intra simulator + writer.
+pub(crate) fn pick_and_simulate_inter_encode_partitions(
+    width: u32,
+    height: u32,
+    base_qindex: u8,
+    input_yuv: (&[u8], &[u8], &[u8]),
+    last_recon_yuv: (&[u8], &[u8], &[u8]),
+    recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
+    sb_partitions: &mut [Vec<InterPartitionLeafDesc>],
+) -> VecBackedInterCoefSource {
+    use rvp9_core::bitstream::frame::{InterpFilter as WireInterpFilter, MAX_INTER_REFS};
+    use rvp9_core::bitstream::header::FrameKind as WireFrameKind;
+    use rvp9_core::cost::mv_cost::build_nmv_cost_table;
+    use rvp9_core::cost::symbol_costs::inter_mode_costs;
+    use rvp9_core::entropy::mv_probs::DEFAULT_NMV_CONTEXT;
+    use rvp9_core::mode_decision::inter::{
+        InterModeSearchParams, MvCandidates, pick_inter_mode_luma,
+    };
+    use rvp9_core::mv_search::mv_limits::MvLimits;
+    use rvp9_core::mv_search::{PlaneRef, init_dsmotion_compensation};
+    use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
+
+    let w = width as usize;
+    let h = height as usize;
+    let uvw = w / 2;
+    let uvh = h / 2;
+
+    let sb_cols = w / 64;
+    let sb_rows = h / 64;
+    assert_eq!(
+        sb_partitions.len(),
+        sb_rows * sb_cols,
+        "sb_partitions must have one entry per 64x64 SB ({} rows × {} cols)",
+        sb_rows,
+        sb_cols,
+    );
+
+    // Plane refs into the input + last-recon buffers.
+    let src_y = PlaneRef { data: input_yuv.0, stride: w, width: w, height: h };
+    let ref_y = PlaneRef { data: last_recon_yuv.0, stride: w, width: w, height: h };
+
+    // Picker harness — built once per frame.
+    let inter_costs = inter_mode_costs(&FrameContext::new_default());
+    let mv_costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, /* allow_hp = */ false);
+    let site_config = init_dsmotion_compensation(w as i32);
+    let quantizer = init_plane_quantizers(i32::from(base_qindex), QuantizerDeltas::Y);
+
+    // Inter-frame `FrameKind` for `compute_rd_mult`. Only the variant
+    // matters; the inner fields don't drive the picker.
+    let frame_kind = WireFrameKind::InterFrame {
+        reset_frame_context: 0,
+        refresh_frame_flags: 0,
+        ref_frame_indices: [0u8; MAX_INTER_REFS],
+        ref_frame_sign_biases: [false; MAX_INTER_REFS],
+        allow_high_precision_mv: false,
+        interp_filter: WireInterpFilter::EightTap,
+    };
+
+    let mut coef_source = VecBackedInterCoefSource::new(width, height);
+
+    // Initialise the recon planes from the LAST ref. ZERO-MV / skip
+    // leaves get this as their final recon (no residual added); the
+    // picker-driven leaves overwrite their region via the per-TX
+    // IT-add. Mirrors the decoder's "MC writes into dst, then residual
+    // IT-add applies on top" sequence.
+    recon_yuv_out.0.copy_from_slice(last_recon_yuv.0);
+    recon_yuv_out.1.copy_from_slice(last_recon_yuv.1);
+    recon_yuv_out.2.copy_from_slice(last_recon_yuv.2);
+
+    for sb_row in 0..sb_rows {
+        for sb_col in 0..sb_cols {
+            let sb_idx = sb_row * sb_cols + sb_col;
+            for leaf_idx in 0..sb_partitions[sb_idx].len() {
+                let (leaf_mi_row, leaf_mi_col, leaf_bsize) = {
+                    let leaf = &sb_partitions[sb_idx][leaf_idx];
+                    (
+                        sb_row * 8 + leaf.mi_row_in_sb,
+                        sb_col * 8 + leaf.mi_col_in_sb,
+                        leaf.leaf_bsize,
+                    )
+                };
+                let leaf_px_x = leaf_mi_col * 8;
+                let leaf_px_y = leaf_mi_row * 8;
+                let bw = usize::from(leaf_bsize.width());
+                let bh = usize::from(leaf_bsize.height());
+
+                // F8.1 picker supports Block16/32/64 only — for
+                // Block8x8 leaves (and any other size out of scope) we
+                // fall back to ZEROMV / skip = true. The recon for these
+                // leaves equals the reference (already populated via
+                // the up-front copy above), and no coef entries are
+                // recorded.
+                let picker_supported = matches!(
+                    leaf_bsize,
+                    BlockSize::Block16x16 | BlockSize::Block32x32 | BlockSize::Block64x64
+                );
+
+                if !picker_supported {
+                    sb_partitions[sb_idx][leaf_idx].picked_mode = InterMode::ZeroMv;
+                    sb_partitions[sb_idx][leaf_idx].picked_mv = Mv::ZERO;
+                    sb_partitions[sb_idx][leaf_idx].skip = true;
+                    continue;
+                }
+
+                // Constrain MV limits so the F8.1 picker's convolve
+                // footprint stays inside the frame. The 8-tap kernel
+                // touches `int_pel - 3 .. int_pel + bw + 4` in the
+                // unscaled-with-subpel case. We need `leaf_px + mv_int
+                // - 3 >= 0` and `leaf_px + mv_int + bw + 4 <= plane_w`.
+                // mv_limits is in full-pel units (libvpx convention).
+                //
+                // If the resulting envelope is degenerate (col_min >
+                // col_max) the leaf is too close to a frame edge for
+                // any non-zero MV; skip the picker and fall back to
+                // ZEROMV / skip = true so the assert in F8.1's
+                // `build_inter_prediction` doesn't fire.
+                let col_min = -(leaf_px_x as i32) + 3;
+                let col_max = (w as i32) - (leaf_px_x as i32) - (bw as i32) - 4;
+                let row_min = -(leaf_px_y as i32) + 3;
+                let row_max = (h as i32) - (leaf_px_y as i32) - (bh as i32) - 4;
+                if col_min > col_max || row_min > row_max {
+                    sb_partitions[sb_idx][leaf_idx].picked_mode = InterMode::ZeroMv;
+                    sb_partitions[sb_idx][leaf_idx].picked_mv = Mv::ZERO;
+                    sb_partitions[sb_idx][leaf_idx].skip = true;
+                    continue;
+                }
+                let mv_limits = MvLimits::new(col_min, col_max, row_min, row_max);
+
+                // MV candidates — under our v1 LAST-frame-only ref
+                // scheme the nearest / near refs default to zero (the
+                // previous frame mi-grid carries only zero MVs and we
+                // don't thread a prev_mv_grid through). For F10.1c
+                // this matches the picker's `MvCandidates::default()`.
+                let mvc = MvCandidates::default();
+
+                let params = InterModeSearchParams {
+                    block_size: leaf_bsize,
+                    src_plane: &src_y,
+                    src_offset: (leaf_px_x, leaf_px_y),
+                    ref_plane: &ref_y,
+                    mv_candidates: &mvc,
+                    mv_limits,
+                    site_config: &site_config,
+                    mv_costs: &mv_costs,
+                    inter_mode_costs: &inter_costs,
+                    inter_mode_ctx: 0,
+                    quantizer: &quantizer,
+                    q_index: base_qindex,
+                    allow_hp: false,
+                    frame_kind,
+                };
+                let pick = pick_inter_mode_luma(&params);
+
+                sb_partitions[sb_idx][leaf_idx].picked_mode = pick.best_mode;
+                sb_partitions[sb_idx][leaf_idx].picked_mv = pick.best_mv;
+                sb_partitions[sb_idx][leaf_idx].skip = false;
+
+                // Per-plane recon + residual emission. Mirrors the
+                // decoder's `reconstruct_inter_block` plane / TX walk
+                // (rvp9-decoder::reconstruct_inter, lines 199-554).
+                for plane in 0..3 {
+                    let ss_x = F5_SUBSAMPLING_X[plane];
+                    let ss_y = F5_SUBSAMPLING_Y[plane];
+                    let plane_w = if plane == 0 { w } else { uvw };
+                    let plane_h = if plane == 0 { h } else { uvh };
+                    let plane_stride = plane_w;
+
+                    let plane_bsize = if plane == 0 {
+                        leaf_bsize
+                    } else {
+                        f5_uv_plane_block_size(leaf_bsize)
+                    };
+                    let luma_tx = rvp9_core::block::max_txsize(leaf_bsize);
+                    let plane_tx = if plane == 0 {
+                        luma_tx
+                    } else {
+                        f5_uv_plane_tx_size(leaf_bsize, luma_tx)
+                    };
+
+                    let plane_bw_4x4 = plane_bsize.n_4x4_wide() as usize;
+                    let plane_bh_4x4 = plane_bsize.n_4x4_high() as usize;
+                    let tx_step_4x4 = 1usize << (plane_tx as usize);
+                    let tx_side = plane_tx.side();
+
+                    // Plane-pixel coord of leaf's top-left.
+                    let plane_px_x = (leaf_mi_col * 8) >> ss_x;
+                    let plane_px_y = (leaf_mi_row * 8) >> ss_y;
+                    let block_w_px = plane_bw_4x4 * 4;
+                    let block_h_px = plane_bh_4x4 * 4;
+
+                    // MV in Q4 units, with chroma scaling. Matches the
+                    // decoder's non-sub-8 derivation:
+                    //   mv_q4 = mv * (1 << (1 - ss))
+                    // (i.e. luma stays at Q4, chroma doubles).
+                    let mv_q4_col = i32::from(pick.best_mv.col) * (1i32 << (1 - ss_x as i32));
+                    let mv_q4_row = i32::from(pick.best_mv.row) * (1i32 << (1 - ss_y as i32));
+
+                    // Per-plane source / ref / recon slices.
+                    let (input_plane, ref_plane_data, recon_plane) = match plane {
+                        0 => (input_yuv.0, last_recon_yuv.0, &mut *recon_yuv_out.0),
+                        1 => (input_yuv.1, last_recon_yuv.1, &mut *recon_yuv_out.1),
+                        _ => (input_yuv.2, last_recon_yuv.2, &mut *recon_yuv_out.2),
+                    };
+
+                    // Build the leaf's MC prediction into the recon
+                    // plane region (mirrors the decoder's MC step that
+                    // writes into `dst_slice` before the residual
+                    // IT-add). Uses the unscaled `inter_predictor` path
+                    // (encoder ref dims = current dims, so identity
+                    // scale).
+                    build_inter_pred_plane_unscaled(
+                        ref_plane_data,
+                        plane_stride,
+                        plane_w,
+                        plane_h,
+                        plane_px_x,
+                        plane_px_y,
+                        block_w_px,
+                        block_h_px,
+                        mv_q4_col,
+                        mv_q4_row,
+                        recon_plane,
+                        plane_stride,
+                    );
+
+                    // Per-TX residual emission. Walk in plane 4×4
+                    // raster (same order the writer walks).
+                    let mut tx_y4_local = 0usize;
+                    while tx_y4_local < plane_bh_4x4 {
+                        let mut tx_x4_local = 0usize;
+                        while tx_x4_local < plane_bw_4x4 {
+                            let tx_px_x = plane_px_x + tx_x4_local * 4;
+                            let tx_px_y = plane_px_y + tx_y4_local * 4;
+                            let dst_off = tx_px_y * plane_stride + tx_px_x;
+
+                            // Residual = input - pred. `recon_plane`
+                            // currently holds the MC prediction.
+                            let mut residual = vec![0i16; tx_side * tx_side];
+                            for r in 0..tx_side {
+                                for c in 0..tx_side {
+                                    let off = (tx_px_y + r) * plane_stride
+                                        + (tx_px_x + c);
+                                    let s = input_plane[off] as i16;
+                                    let p = recon_plane[off] as i16;
+                                    residual[r * tx_side + c] = s - p;
+                                }
+                            }
+
+                            let (qcoeff_i32, dqcoeff_i32, eob_usize) =
+                                inter_forward_quant_one_tx(
+                                    &residual,
+                                    tx_side,
+                                    plane_tx,
+                                    &quantizer,
+                                );
+
+                            // Inverse-DCT-add into recon (the encoder's
+                            // bit-exact mirror of the decoder's
+                            // `inverse_transform_add_dct`). Skip when
+                            // eob == 0 — matches the decoder's
+                            // `if eob > 0` guard.
+                            if eob_usize > 0 {
+                                inter_inverse_dct_add(
+                                    plane_tx,
+                                    &dqcoeff_i32,
+                                    eob_usize,
+                                    &mut recon_plane[dst_off..],
+                                    plane_stride,
+                                );
+                            }
+
+                            coef_source.insert(
+                                leaf_mi_row,
+                                leaf_mi_col,
+                                plane,
+                                tx_x4_local,
+                                tx_y4_local,
+                                qcoeff_i32,
+                                eob_usize,
+                            );
+
+                            tx_x4_local += tx_step_4x4;
+                        }
+                        tx_y4_local += tx_step_4x4;
+                    }
+                }
+            }
+        }
+    }
+
+    coef_source
+}
+
+/// Build a `bw × bh` inter prediction at `(plane_px_x + mv)` into
+/// `dst[..]`, mirroring the decoder's unscaled
+/// `build_inter_predictor_with_mc_border` fast path (ref-dim == cur-dim,
+/// so [`ScaleFactors`] is identity). MVs are in Q4 (1/16-pel) units in
+/// the reference plane's coord system.
+///
+/// Caller invariant: the MV must be constrained so the convolve8
+/// footprint stays inside the visible plane (no border-extend). The
+/// F8.1 picker's `MvLimits` enforces this upstream.
+#[allow(clippy::too_many_arguments)]
+fn build_inter_pred_plane_unscaled(
+    ref_plane: &[u8],
+    ref_stride: usize,
+    ref_w: usize,
+    ref_h: usize,
+    plane_px_x: usize,
+    plane_px_y: usize,
+    bw: usize,
+    bh: usize,
+    mv_q4_col: i32,
+    mv_q4_row: i32,
+    dst: &mut [u8],
+    dst_stride: usize,
+) {
+    use rvp9_core::bitstream::frame::InterpFilter;
+    use rvp9_core::inter::filter::{SUBPEL_BITS, SUBPEL_MASK};
+    use rvp9_core::inter::scale::{ScaleFactors, inter_predictor};
+
+    // Identity scale (ref dims = cur dims).
+    let sf = ScaleFactors::new(ref_w as u32, ref_h as u32, ref_w as u32, ref_h as u32);
+    debug_assert!(!sf.is_scaled(), "F10.1c v1 encoder assumes identity ref scale");
+
+    let total_x_q4 = sf.scaled_x_q4(plane_px_x as i32, mv_q4_col as i16);
+    let total_y_q4 = sf.scaled_y_q4(plane_px_y as i32, mv_q4_row as i16);
+    let int_x = total_x_q4 >> SUBPEL_BITS;
+    let int_y = total_y_q4 >> SUBPEL_BITS;
+    let subpel_x_q4 = total_x_q4 & SUBPEL_MASK;
+    let subpel_y_q4 = total_y_q4 & SUBPEL_MASK;
+
+    // Pre-shift the ref pointer by `(VP9_INTERP_EXTEND - 1) = 3` along
+    // each axis where sub-pel is non-zero — mirrors the decoder's fast
+    // path at `reconstruct_inter.rs:985-1023`. The encoder's MV-limits
+    // bound enforces non-negative `int_y + row_pre` / `int_x + col_pre`.
+    let row_pre = if subpel_y_q4 != 0 { -3i32 } else { 0 };
+    let col_pre = if subpel_x_q4 != 0 { -3i32 } else { 0 };
+    let row_base = (int_y + row_pre) as usize;
+    let col_base = (int_x + col_pre) as usize;
+    let src_base = row_base * ref_stride + col_base;
+
+    // Destination slice starts at the leaf's top-left in the plane.
+    let dst_off = plane_px_y * dst_stride + plane_px_x;
+
+    inter_predictor(
+        &ref_plane[src_base..],
+        ref_stride,
+        &mut dst[dst_off..],
+        dst_stride,
+        subpel_x_q4,
+        subpel_y_q4,
+        &sf,
+        InterpFilter::EightTap,
+        bw,
+        bh,
+        /* is_compound_avg = */ false,
+    );
+}
+
+/// Forward DCT (DctDct) + forward quant of one TX block for the inter
+/// path. Returns `(qcoeff_i32, dqcoeff_i32, eob)` — the qcoeff buffer
+/// the writer will serialise, the dqcoeff buffer to inverse-transform
+/// into the recon, and the end-of-block count.
+fn inter_forward_quant_one_tx(
+    residual: &[i16],
+    tx_side: usize,
+    plane_tx: TxSize,
+    quantizer: &rvp9_core::quant::forward::PlaneQuantizers,
+) -> (Vec<i32>, Vec<i32>, usize) {
+    use rvp9_core::quant::forward::{scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32};
+    use rvp9_core::transforms::TxType;
+    use rvp9_core::transforms::forward::{fdct8x8, fdct16x16, fdct32x32, fht4x4};
+    use rvp9_core::transforms::scans::scan_for;
+
+    let n = plane_tx.n_coeffs();
+    let mut coefs = vec![0i32; n];
+    match plane_tx {
+        TxSize::Tx4x4 => {
+            // Inter blocks always use DctDct (no ADST hybrid). `fht4x4`
+            // with `TxType::DctDct` is the DCT-DCT variant.
+            let mut buf = [0i32; 16];
+            fht4x4(residual, &mut buf, tx_side, TxType::DctDct);
+            coefs.copy_from_slice(&buf[..]);
+        }
+        TxSize::Tx8x8 => {
+            let mut buf = [0i32; 64];
+            fdct8x8(residual, &mut buf, tx_side);
+            coefs.copy_from_slice(&buf[..]);
+        }
+        TxSize::Tx16x16 => {
+            let mut buf = [0i32; 256];
+            fdct16x16(residual, &mut buf, tx_side);
+            coefs.copy_from_slice(&buf[..]);
+        }
+        TxSize::Tx32x32 => {
+            let mut buf = [0i32; 1024];
+            fdct32x32(residual, &mut buf, tx_side);
+            coefs.copy_from_slice(&buf[..]);
+        }
+    }
+
+    let scan = scan_for(plane_tx, TxType::DctDct);
+    let scan_slice = scan_for_forward(&scan);
+    let dequant_pair = [quantizer.dequant[0], quantizer.dequant[1]];
+    let mut qcoeff_i16 = vec![0i16; n];
+    let mut dqcoeff_i16 = vec![0i16; n];
+    let eob = match plane_tx {
+        TxSize::Tx32x32 => vp9_quantize_b_32x32(
+            &coefs,
+            /* skip_block = */ false,
+            &quantizer.zbin,
+            &quantizer.round,
+            &quantizer.quant,
+            &quantizer.quant_shift,
+            &mut qcoeff_i16,
+            &mut dqcoeff_i16,
+            &dequant_pair,
+            scan_slice,
+        ),
+        _ => vp9_quantize_b(
+            &coefs,
+            n,
+            /* skip_block = */ false,
+            &quantizer.zbin,
+            &quantizer.round,
+            &quantizer.quant,
+            &quantizer.quant_shift,
+            &mut qcoeff_i16,
+            &mut dqcoeff_i16,
+            &dequant_pair,
+            scan_slice,
+        ),
+    };
+    let qcoeff_i32: Vec<i32> = qcoeff_i16.into_iter().map(i32::from).collect();
+    let dqcoeff_i32: Vec<i32> = dqcoeff_i16.into_iter().map(i32::from).collect();
+    (qcoeff_i32, dqcoeff_i32, eob as usize)
+}
+
+/// Inverse-DCT-add for inter (DctDct only). Mirrors the decoder's
+/// `inverse_transform_add_dct` at
+/// `rvp9-decoder::reconstruct_inter::inverse_transform_add_dct`. `eob`
+/// is the number of decoded scan positions (caller has already filtered
+/// `eob > 0`).
+fn inter_inverse_dct_add(
+    plane_tx: TxSize,
+    dq_input: &[i32],
+    eob: usize,
+    dst: &mut [u8],
+    stride: usize,
+) {
+    use rvp9_core::transforms::inverse::{
+        idct4x4_1_add, idct4x4_16_add, idct8x8_1_add, idct8x8_64_add, idct16x16_1_add,
+        idct16x16_256_add, idct32x32_1_add, idct32x32_1024_add,
+    };
+
+    debug_assert!(eob > 0, "inter_inverse_dct_add called with eob == 0");
+
+    match plane_tx {
+        TxSize::Tx4x4 => {
+            let coefs: &[i32; 16] = dq_input.try_into().expect("Tx4x4 takes 16 coefs");
+            if eob > 1 {
+                idct4x4_16_add(coefs, dst, stride);
+            } else {
+                idct4x4_1_add(coefs[0], dst, stride);
+            }
+        }
+        TxSize::Tx8x8 => {
+            let coefs: &[i32; 64] = dq_input.try_into().expect("Tx8x8 takes 64 coefs");
+            if eob == 1 {
+                idct8x8_1_add(coefs[0], dst, stride);
+            } else {
+                idct8x8_64_add(coefs, dst, stride);
+            }
+        }
+        TxSize::Tx16x16 => {
+            let coefs: &[i32; 256] = dq_input.try_into().expect("Tx16x16 takes 256 coefs");
+            if eob == 1 {
+                idct16x16_1_add(coefs[0], dst, stride);
+            } else {
+                idct16x16_256_add(coefs, dst, stride);
+            }
+        }
+        TxSize::Tx32x32 => {
+            let coefs: &[i32; 1024] = dq_input.try_into().expect("Tx32x32 takes 1024 coefs");
+            if eob == 1 {
+                idct32x32_1_add(coefs[0], dst, stride);
+            } else {
+                idct32x32_1024_add(coefs, dst, stride);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
