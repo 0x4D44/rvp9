@@ -170,7 +170,10 @@ pub fn idct16x16_add_avx2(input: &[i32; 256], dest: &mut [u8], stride: usize) {
     unsafe { idct16x16_add_avx2_inner(input, dest, stride) }
 }
 
-#[cfg(all(test, target_arch = "x86_64"))]
+// Miri cannot interpret AVX2 intrinsics — see the parallel comment
+// in `dc_pred_4x4_avx2.rs`. Scalar reference paths (the
+// `transforms::inverse` family) still run under miri unchanged.
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
 mod tests {
     //! Scalar-vs-AVX2 differential tests for `idct16x16_add`.
     //!

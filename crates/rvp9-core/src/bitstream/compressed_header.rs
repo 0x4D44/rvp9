@@ -2325,6 +2325,16 @@ mod tests {
     /// keyframe's compressed partition into `post_fc`, encode
     /// starting from `FrameContext::new_default()`, re-parse, assert
     /// the post-update bank equals `post_fc`.
+    ///
+    /// **Skipped under miri**: this test reads a conformance vector
+    /// from disk (`tests/conformance/vectors/vp90-2-05-resize.ivf`),
+    /// and miri's filesystem isolation rejects the path-canonicalisation
+    /// call inside `std::fs::read` on Windows. The test asserts on
+    /// real-world bitstream parity and is a poor fit for miri's
+    /// strength (UB detection in computation-heavy paths) anyway —
+    /// the round-trip arithmetic is exercised by the synthetic
+    /// `write_compressed_header_*` tests in this same module.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn write_compressed_header_captured_frame_round_trip() {
         use crate::bitstream::header::parse_uncompressed_header;

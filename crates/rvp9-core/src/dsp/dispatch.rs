@@ -530,7 +530,18 @@ mod tests {
 
     /// Forcing `avx2 = false` falls back to the scalar reference for
     /// the idct8x8 slot. Verified by function-pointer identity.
+    ///
+    /// **Skipped under miri**: miri does not preserve `fn` pointer
+    /// identity across crate boundaries — the same source-level
+    /// `fn`, when coerced to `fn(...)` via different call sites, can
+    /// resolve to different miri-internal "alloc IDs" and the `as usize`
+    /// cast yields distinct values. This is a known miri limitation
+    /// (see rust-lang/miri#2123), not a bug in this dispatch slot.
+    /// The native test on stable / nightly continues to assert the
+    /// invariant; this attribute only suppresses spurious miri failures.
+    /// Applied identically to every fn-pointer-identity test below.
     #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn forced_scalar_caps_installs_scalar_idct8x8() {
         let mut caps = detect();
@@ -545,8 +556,10 @@ mod tests {
     }
 
     /// Forcing `avx2 = false` falls back to the scalar reference for
-    /// the G4.2 idct4x4 slot.
+    /// the G4.2 idct4x4 slot. See `forced_scalar_caps_installs_scalar_idct8x8`
+    /// for the miri-skip rationale.
     #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn forced_scalar_caps_installs_scalar_idct4x4() {
         let mut caps = detect();
@@ -561,8 +574,10 @@ mod tests {
     }
 
     /// Forcing `avx2 = false` falls back to the scalar reference for
-    /// the G4.2 idct16x16 slot.
+    /// the G4.2 idct16x16 slot. See `forced_scalar_caps_installs_scalar_idct8x8`
+    /// for the miri-skip rationale.
     #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn forced_scalar_caps_installs_scalar_idct16x16() {
         let mut caps = detect();
@@ -596,8 +611,10 @@ mod tests {
 
     /// G4.3a hybrid ADST slots are always scalar in this gap (Wave E
     /// will swap in AVX2). Verify both caps states route to the scalar
-    /// reference.
+    /// reference. See `forced_scalar_caps_installs_scalar_idct8x8`
+    /// for the miri-skip rationale.
     #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn iht_hybrid_slots_are_always_scalar() {
         for &avx2 in &[true, false] {
@@ -622,8 +639,11 @@ mod tests {
     }
 
     /// Forcing `avx2 = false` falls back to the scalar adapter for
-    /// the G4.3a dc_predictor_4x4 slot.
+    /// the G4.3a dc_predictor_4x4 slot. See
+    /// `forced_scalar_caps_installs_scalar_idct8x8` for the miri-skip
+    /// rationale.
     #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn forced_scalar_caps_installs_scalar_dc_predictor_4x4() {
         let mut caps = detect();
@@ -638,7 +658,10 @@ mod tests {
     }
 
     /// G4.3b / G4.4a / G4.4b slots are always scalar regardless of caps.
+    /// See `forced_scalar_caps_installs_scalar_idct8x8` for the miri-skip
+    /// rationale.
     #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn deferred_slots_are_always_scalar() {
         for &avx2 in &[true, false] {

@@ -125,7 +125,12 @@ pub fn dc_predictor_4x4_avx2(dst: &mut [u8], stride: usize, above: &[u8], left: 
     unsafe { dc_predictor_4x4_avx2_inner(dst, stride, above, left) }
 }
 
-#[cfg(all(test, target_arch = "x86_64"))]
+// Miri cannot interpret AVX2 intrinsics (`_mm256_*` etc.), so this
+// `tests` module is excluded from `cargo +nightly miri test`. The
+// AVX2 kernel itself is x86_64-only, and the scalar reference is
+// already covered by `crate::intra_pred::tests` which DOES run
+// under miri. See `scripts/run_miri.ps1` for the full miri lane.
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
 mod tests {
     //! Scalar-vs-AVX2 differential tests for `dc_predictor_4x4`.
     //!
