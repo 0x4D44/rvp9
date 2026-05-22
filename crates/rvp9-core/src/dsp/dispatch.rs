@@ -431,8 +431,8 @@ fn scalar_extend_frame_borders(yv12: &mut Yv12Buffer) {
 /// | H2    | loopfilter h4_dual | `lpf_horizontal_4_dual`   | yes (Wave H H2) — two-singles delegation |
 /// | H3    | loopfilter v8_dual | `lpf_vertical_8_dual`     | yes (Wave H H3) — two-singles delegation |
 /// | H3    | loopfilter h8_dual | `lpf_horizontal_8_dual`   | yes (Wave H H3) — two-singles delegation |
-/// | H1    | loopfilter v16_dual| `lpf_vertical_16_dual`    | scalar (H4 lands AVX2) |
-/// | H1    | loopfilter h16_dual| `lpf_horizontal_16_dual`  | scalar (H4 lands AVX2) |
+/// | H4    | loopfilter v16_dual| `lpf_vertical_16_dual`    | yes (Wave H H4, two-singles) |
+/// | H4    | loopfilter h16_dual| `lpf_horizontal_16_dual`  | yes (Wave H H4, two-singles) |
 /// | H6    | quant dequant     | `plane_dequant_finisher`   | yes (Wave H H6) — pass 2 of split detokenize |
 /// | G4.4b | frame-buffers     | `extend_frame_borders`     | scalar only (memcpy/memset already vectorised) |
 ///
@@ -1132,11 +1132,27 @@ impl SimdDispatch {
             u8,
         ) = scalar_lpf_horizontal_8_dual;
 
-        // 16-tap duals share a single threshold set (libvpx convention)
-        // and remain scalar at H2/H3 close — H4 promotes them after H7
-        // fixes `lpf_vertical_16_avx2`.
+        // 16-tap duals share a single threshold set (libvpx convention).
+        // Wave H H4 promoted both to AVX2 via two-singles delegation
+        // (H7 fixed v16; H4.1 fixed the parallel bug in h16's
+        // `flat_mask5_avx2` call site).
+        #[cfg(target_arch = "x86_64")]
+        let lpf_vertical_16_dual: fn(&mut [u8], usize, usize, u8, u8, u8) = if caps.avx2 {
+            crate::dsp::x86_64::lpf_vertical_16_dual_avx2
+        } else {
+            scalar_lpf_vertical_16_dual
+        };
+        #[cfg(not(target_arch = "x86_64"))]
         let lpf_vertical_16_dual: fn(&mut [u8], usize, usize, u8, u8, u8) =
             scalar_lpf_vertical_16_dual;
+
+        #[cfg(target_arch = "x86_64")]
+        let lpf_horizontal_16_dual: fn(&mut [u8], usize, usize, u8, u8, u8) = if caps.avx2 {
+            crate::dsp::x86_64::lpf_horizontal_16_dual_avx2
+        } else {
+            scalar_lpf_horizontal_16_dual
+        };
+        #[cfg(not(target_arch = "x86_64"))]
         let lpf_horizontal_16_dual: fn(&mut [u8], usize, usize, u8, u8, u8) =
             scalar_lpf_horizontal_16_dual;
 
@@ -1992,10 +2008,11 @@ mod tests {
     }
 
     /// Wave H H2 + H3 — on AVX2 CPUs the 4/8-tap dual slots route to
-    /// the AVX2 dual wrappers; the 16-tap duals still route to scalar
-    /// (deferred to H4 after H7 fixes V16). Note 4/8-tap duals are
-    /// 9-arg (independent threshold sets) while 16-tap duals are
-    /// 6-arg (shared thresholds, libvpx convention). See
+    /// the AVX2 dual wrappers; the 16-tap duals also route to AVX2
+    /// after Wave H H4 + H7 (V16 fix made the two-singles delegation
+    /// bit-exact). Note 4/8-tap duals are 9-arg (independent
+    /// threshold sets) while 16-tap duals are 6-arg (shared
+    /// thresholds, libvpx convention). See
     /// `forced_scalar_caps_installs_scalar_idct8x8` for the miri-skip
     /// rationale.
     #[cfg(target_arch = "x86_64")]
@@ -2016,11 +2033,11 @@ mod tests {
         assert_eq!(d.lpf_horizontal_4_dual() as usize, h4_avx2 as usize);
         assert_eq!(d.lpf_vertical_8_dual() as usize, v8_avx2 as usize);
         assert_eq!(d.lpf_horizontal_8_dual() as usize, h8_avx2 as usize);
-        // 16-tap duals stay scalar (H4 still pending).
-        let v16: Dual6 = super::scalar_lpf_vertical_16_dual;
-        let h16: Dual6 = super::scalar_lpf_horizontal_16_dual;
-        assert_eq!(d.lpf_vertical_16_dual() as usize, v16 as usize);
-        assert_eq!(d.lpf_horizontal_16_dual() as usize, h16 as usize);
+        // Wave H H4 + H4.1 — 16-tap duals both route to AVX2.
+        let v16_avx2: Dual6 = crate::dsp::x86_64::lpf_vertical_16_dual_avx2;
+        let h16_avx2: Dual6 = crate::dsp::x86_64::lpf_horizontal_16_dual_avx2;
+        assert_eq!(d.lpf_vertical_16_dual() as usize, v16_avx2 as usize);
+        assert_eq!(d.lpf_horizontal_16_dual() as usize, h16_avx2 as usize);
     }
 
     /// Wave H H2 + H3 — when caps.avx2 is forced false, all 6 dual

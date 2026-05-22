@@ -204,18 +204,23 @@ unsafe fn flat_mask4_avx2(
 #[allow(clippy::too_many_arguments)]
 unsafe fn flat_mask5_avx2(
     thresh: u8,
-    p4: __m128i, p3: __m128i, p2: __m128i, p1: __m128i, p0: __m128i,
-    q0: __m128i, q1: __m128i, q2: __m128i, q3: __m128i, q4: __m128i,
+    p7: __m128i, p6: __m128i, p5: __m128i, p4: __m128i, p0: __m128i,
+    q0: __m128i, q4: __m128i, q5: __m128i, q6: __m128i, q7: __m128i,
 ) -> __m128i {
+    // Wave H H4.1 — parameter names corrected to match the scalar
+    // `flat_mask5` formal-param convention (which is misleading in
+    // libvpx — formal `p4..p1` actually receive outer pixels at
+    // `pixels[s-8..s-5]`). Same fix as Wave H H7 applied to the
+    // sibling `lpf_vertical_16_avx2` (commit b9d4cdb).
     let thresh_v = _mm_set1_epi8(thresh as i8);
-    let mut work = abs_diff_u8(p1, p0);
-    work = _mm_max_epu8(work, abs_diff_u8(q1, q0));
-    work = _mm_max_epu8(work, abs_diff_u8(p2, p0));
-    work = _mm_max_epu8(work, abs_diff_u8(q2, q0));
-    work = _mm_max_epu8(work, abs_diff_u8(p3, p0));
-    work = _mm_max_epu8(work, abs_diff_u8(q3, q0));
-    work = _mm_max_epu8(work, abs_diff_u8(p4, p0));
+    let mut work = abs_diff_u8(p4, p0);
     work = _mm_max_epu8(work, abs_diff_u8(q4, q0));
+    work = _mm_max_epu8(work, abs_diff_u8(p5, p0));
+    work = _mm_max_epu8(work, abs_diff_u8(q5, q0));
+    work = _mm_max_epu8(work, abs_diff_u8(p6, p0));
+    work = _mm_max_epu8(work, abs_diff_u8(q6, q0));
+    work = _mm_max_epu8(work, abs_diff_u8(p7, p0));
+    work = _mm_max_epu8(work, abs_diff_u8(q7, q0));
     let any_gt = cmpgt_u8(work, thresh_v);
     let ones = _mm_set1_epi8(-1i8);
     _mm_andnot_si128(any_gt, ones)
@@ -740,7 +745,10 @@ unsafe fn lpf_horizontal_16_avx2_inner(
     let mask = filter_mask_avx2(blimit, limit, p3, p2, p1, p0, q0, q1, q2, q3);
     let hev = hev_mask_avx2(thresh, p1, p0, q0, q1);
     let flat = flat_mask4_avx2(1, p3, p2, p1, p0, q0, q1, q2, q3);
-    let flat2 = flat_mask5_avx2(1, p4, p3, p2, p1, p0, q0, q1, q2, q3, q4);
+    // Wave H H4.1 — call site passes OUTER pixels (p7..p4, q4..q7) to
+    // match the scalar `flat_mask5` semantics; H7 fixed the parallel
+    // bug in the vertical sibling at b9d4cdb.
+    let flat2 = flat_mask5_avx2(1, p7, p6, p5, p4, p0, q0, q4, q5, q6, q7);
 
     let apply_wide = _mm_and_si128(flat, mask);
     let apply_wide2 = _mm_and_si128(flat2, apply_wide);
