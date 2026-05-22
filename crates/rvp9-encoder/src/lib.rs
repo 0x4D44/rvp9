@@ -2130,6 +2130,12 @@ fn splat_inter_leaf_into_mi_grid(
     picked_mv: Mv,
     segment_id: u8,
     skip: bool,
+    // A15 Phase B Step 4 — propagate picked ref frame into the
+    // mi_grid so subsequent neighbour lookups (and the writer's
+    // mi_grid read) see the same ref the picker chose. Default-
+    // callable sites pass `RefFrame::LastFrame` for skip-fallback
+    // leaves (matches A14 behaviour).
+    picked_ref_frame: RefFrame,
 ) {
     use rvp9_core::bitstream::frame::InterpFilter as WireInterpFilter;
     use rvp9_core::mode_info::{BlockMode, ModeInfo};
@@ -2143,7 +2149,7 @@ fn splat_inter_leaf_into_mi_grid(
         seg_id_predicted: false,
         mode: BlockMode::Inter {
             mode: picked_mode,
-            ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            ref_frames: [picked_ref_frame, RefFrame::NoRefFrame],
             mvs: [picked_mv, Mv::ZERO],
             interp_filter: WireInterpFilter::EightTap,
         },
@@ -2257,7 +2263,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         BlockBounds, find_mv_refs, lower_mv_precision,
     };
     use rvp9_core::mode_decision::inter::{
-        InterModeSearchParams, MvCandidates, pick_inter_mode_luma,
+        InterModeSearchParams, InterModeSearchResult, MvCandidates, pick_inter_mode_luma,
     };
     use rvp9_core::mv_search::int_pro_me::int_pro_motion_estimation;
     use rvp9_core::mv_search::mv_limits::MvLimits;
@@ -2339,12 +2345,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let ref_y = PlaneRef { data: last_recon_yuv.0, stride: w, width: w, height: h };
     // A15 Phase B — GOLDEN Y plane ref for the widened picker.
     // Used in Step 3 to drive candidate SSE/RD when iterating
-    // `{LAST, GOLDEN} × {ZERO, NEAREST, NEAR, NEW}`. Currently
-    // (Step 2) unused at the picker; only the GOLDEN
-    // `find_mv_refs` lookup needs the in-progress mi_grid (it
-    // doesn't read this plane). Suppress the unused warning until
-    // Step 3 wires it in.
-    let _ref_y_golden = PlaneRef { data: golden_recon_yuv.0, stride: w, width: w, height: h };
+    // `{LAST, GOLDEN} × {ZERO, NEAREST, NEAR, NEW}`. The
+    // encoder calls `pick_inter_mode_luma` once per ref-plane,
+    // then takes the min-RD winner across both rankings.
+    let ref_y_golden = PlaneRef { data: golden_recon_yuv.0, stride: w, width: w, height: h };
 
     // Picker harness — built once per frame. The per-leaf
     // `PlaneQuantizers` is rebuilt inside the SB walk below (AQ.1)
@@ -2504,6 +2508,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     sb_partitions[sb_idx][leaf_idx].picked_mode = InterMode::ZeroMv;
                     sb_partitions[sb_idx][leaf_idx].picked_mv = Mv::ZERO;
                     sb_partitions[sb_idx][leaf_idx].skip = true;
+                    sb_partitions[sb_idx][leaf_idx].picked_ref_frame = RefFrame::LastFrame;
                     splat_inter_leaf_into_mi_grid(
                         &mut mi_grid,
                         mi_cols_us,
@@ -2514,6 +2519,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         Mv::ZERO,
                         sb_partitions[sb_idx][leaf_idx].segment_id,
                         /* skip = */ true,
+                        /* picked_ref_frame = */ RefFrame::LastFrame,
                     );
                     if std::env::var("RVP9_DIAG_PICKER").is_ok() {
                         #[allow(clippy::print_stderr)]
@@ -2575,6 +2581,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     sb_partitions[sb_idx][leaf_idx].picked_mode = InterMode::ZeroMv;
                     sb_partitions[sb_idx][leaf_idx].picked_mv = Mv::ZERO;
                     sb_partitions[sb_idx][leaf_idx].skip = true;
+                    sb_partitions[sb_idx][leaf_idx].picked_ref_frame = RefFrame::LastFrame;
                     splat_inter_leaf_into_mi_grid(
                         &mut mi_grid,
                         mi_cols_us,
@@ -2585,6 +2592,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         Mv::ZERO,
                         sb_partitions[sb_idx][leaf_idx].segment_id,
                         /* skip = */ true,
+                        /* picked_ref_frame = */ RefFrame::LastFrame,
                     );
                     continue;
                 }
@@ -2675,11 +2683,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     MvCandidates { nearest, near }
                 };
                 let mvc = build_mvc(RefFrame::LastFrame);
-                // A15 Phase B Step 2 — GOLDEN candidates. Step 3 will
-                // consume these in the doubled picker iteration; for
-                // now we just compute them to land the data flow.
+                // A15 Phase B Step 3 — GOLDEN candidates feed the
+                // second picker invocation below. The encoder iterates
+                // {LAST, GOLDEN} × {ZERO, NEAREST, NEAR, NEW} = 8
+                // candidates by calling `pick_inter_mode_luma` once
+                // per ref frame and taking the min-RD winner across
+                // both rankings.
                 let mvc_golden = build_mvc(RefFrame::GoldenFrame);
-                let _ = mvc_golden;
 
                 // AQ.1 — per-leaf effective qindex from the leaf's
                 // `segment_id` + the frame-level `seg_q_deltas` table.
@@ -2727,82 +2737,90 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         && row_fp >= row_min
                         && row_fp <= row_max
                 };
-                let nearest_in_bounds = mv_in_bounds(mvc.nearest);
-                // A12 — mirror the OOB substitution for `near` too.
-                // If `near` is OOB, the NEARMV evaluation's convolve
-                // would over-read the ref plane (the picker doesn't
-                // border-extend). Substitute ZERO so the picker
-                // evaluates a zero-MV NEARMV instead, and post-pick
-                // veto NEARMV if it wins on the OOB path so the
-                // decoder doesn't read the OOB `near` MV.
-                let near_in_bounds = mv_in_bounds(mvc.near);
-                let mvc_safe = MvCandidates {
-                    nearest: if nearest_in_bounds {
-                        mvc.nearest
+                // A15 Phase B Step 3 — invoke the picker once per
+                // ref frame and take the min-RD winner across both
+                // rankings. The OOB veto + `mvc_safe` substitution
+                // is per-ref (each ref's `find_mv_refs` produces
+                // its own NEAREST/NEAR candidates), so the closure
+                // captures the ref plane + ref-specific `mvc`.
+                //
+                // This implements the
+                // {LAST, GOLDEN} × {ZERO, NEAREST, NEAR, NEW} = 8-
+                // candidate iteration without modifying the core-
+                // crate `InterModeSearchParams` API: the wrapper
+                // ranks two independent 4-candidate searches.
+                let pick_for_ref = |ref_plane: &PlaneRef<'_>,
+                                    mvc_in: &MvCandidates|
+                 -> InterModeSearchResult {
+                    let nearest_in_bounds = mv_in_bounds(mvc_in.nearest);
+                    let near_in_bounds = mv_in_bounds(mvc_in.near);
+                    let mvc_safe = MvCandidates {
+                        nearest: if nearest_in_bounds {
+                            mvc_in.nearest
+                        } else {
+                            Mv::ZERO
+                        },
+                        near: if near_in_bounds { mvc_in.near } else { Mv::ZERO },
+                    };
+                    let params = InterModeSearchParams {
+                        block_size: leaf_bsize,
+                        src_plane: &src_y,
+                        src_offset: (leaf_px_x, leaf_px_y),
+                        ref_plane,
+                        mv_candidates: &mvc_safe,
+                        mv_limits,
+                        site_config: &site_config,
+                        mv_costs: &mv_costs,
+                        inter_mode_costs: &inter_costs,
+                        inter_mode_ctx: 0,
+                        quantizer: &quantizer,
+                        q_index: leaf_qindex,
+                        allow_hp: false,
+                        frame_kind,
+                        newmv_seed: sb_newmv_seed,
+                    };
+                    let pick_raw = pick_inter_mode_luma(&params);
+                    // OOB veto — same logic as pre-A15 single-ref
+                    // path.
+                    let veto_nearest = !nearest_in_bounds
+                        && matches!(pick_raw.best_mode, InterMode::NearestMv);
+                    let veto_near = !near_in_bounds
+                        && matches!(pick_raw.best_mode, InterMode::NearMv);
+                    if veto_nearest || veto_near {
+                        let all =
+                            rvp9_core::mode_decision::inter::pick_inter_mode_luma_all_costs(
+                                &params,
+                            );
+                        let mut best = all[0]; // ZERO is always in-bounds.
+                        if nearest_in_bounds && all[1].best_rd_cost < best.best_rd_cost {
+                            best = all[1];
+                        }
+                        if near_in_bounds && all[2].best_rd_cost < best.best_rd_cost {
+                            best = all[2];
+                        }
+                        if all[3].best_rd_cost < best.best_rd_cost {
+                            best = all[3];
+                        }
+                        best
                     } else {
-                        Mv::ZERO
-                    },
-                    near: if near_in_bounds { mvc.near } else { Mv::ZERO },
+                        pick_raw
+                    }
                 };
-                let params = InterModeSearchParams {
-                    block_size: leaf_bsize,
-                    src_plane: &src_y,
-                    src_offset: (leaf_px_x, leaf_px_y),
-                    ref_plane: &ref_y,
-                    mv_candidates: &mvc_safe,
-                    mv_limits,
-                    site_config: &site_config,
-                    mv_costs: &mv_costs,
-                    inter_mode_costs: &inter_costs,
-                    inter_mode_ctx: 0,
-                    quantizer: &quantizer,
-                    q_index: leaf_qindex,
-                    allow_hp: false,
-                    frame_kind,
-                    // A3'-int-pro - thread the SB-level coarse-ME
-                    // seed into the per-leaf picker. All leaves
-                    // inside this SB share the same seed (matches
-                    // libvpx, which writes `x->pred_mv[LAST_FRAME]`
-                    // once per SB and reads it on each per-leaf
-                    // pick).
-                    newmv_seed: sb_newmv_seed,
-                };
-                let pick_raw = pick_inter_mode_luma(&params);
-                // OOB veto: if the picker chose a ref-MV mode whose
-                // candidate is actually out-of-bounds in the picker's
-                // tight MvLimits envelope, the decoder will reconstruct
-                // it using the original (clamped-by-the-decoder)
-                // candidate via `find_mv_refs`, which over-reads the
-                // ref plane on the encoder side. Re-pick among the
-                // remaining in-bounds candidates (ZERO + NEW, plus
-                // any of NEAREST/NEAR that remain in-bounds).
-                let veto_nearest = !nearest_in_bounds
-                    && matches!(pick_raw.best_mode, InterMode::NearestMv);
-                let veto_near = !near_in_bounds
-                    && matches!(pick_raw.best_mode, InterMode::NearMv);
-                let pick = if veto_nearest || veto_near {
-                    let all =
-                        rvp9_core::mode_decision::inter::pick_inter_mode_luma_all_costs(&params);
-                    // [ZERO, NEAREST, NEAR, NEW]. Filter out vetoed
-                    // slots and pick min-RD among survivors.
-                    let mut best = all[0]; // ZERO is always in-bounds (Mv::ZERO).
-                    if nearest_in_bounds && all[1].best_rd_cost < best.best_rd_cost {
-                        best = all[1];
-                    }
-                    if near_in_bounds && all[2].best_rd_cost < best.best_rd_cost {
-                        best = all[2];
-                    }
-                    if all[3].best_rd_cost < best.best_rd_cost {
-                        best = all[3];
-                    }
-                    best
+                let pick_last = pick_for_ref(&ref_y, &mvc);
+                let pick_golden = pick_for_ref(&ref_y_golden, &mvc_golden);
+                // Argmin across the two ref frames. Tiebreak on
+                // LAST (cheaper bitstream cost: GOLDEN single-ref
+                // requires an extra ref-frame bit).
+                let (pick, picked_ref) = if pick_golden.best_rd_cost < pick_last.best_rd_cost {
+                    (pick_golden, RefFrame::GoldenFrame)
                 } else {
-                    pick_raw
+                    (pick_last, RefFrame::LastFrame)
                 };
 
                 sb_partitions[sb_idx][leaf_idx].picked_mode = pick.best_mode;
                 sb_partitions[sb_idx][leaf_idx].picked_mv = pick.best_mv;
                 sb_partitions[sb_idx][leaf_idx].skip = false;
+                sb_partitions[sb_idx][leaf_idx].picked_ref_frame = picked_ref;
 
                 // A0 diagnostic: dump per-leaf picker decision when
                 // `RVP9_DIAG_PICKER` is set in the environment.
@@ -2875,10 +2893,25 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let mv_q4_row = i32::from(pick.best_mv.row) * (1i32 << (1 - ss_y as i32));
 
                     // Per-plane source / ref / recon slices.
-                    let (input_plane, ref_plane_data, recon_plane) = match plane {
-                        0 => (input_yuv.0, last_recon_yuv.0, &mut *recon_yuv_out.0),
-                        1 => (input_yuv.1, last_recon_yuv.1, &mut *recon_yuv_out.1),
-                        _ => (input_yuv.2, last_recon_yuv.2, &mut *recon_yuv_out.2),
+                    // A15 Phase B Step 3 — select the ref plane that
+                    // matches `picked_ref`. The decoder's
+                    // `reconstruct_inter_block` reads from the slot
+                    // the writer encodes in the ref-frame bits, so
+                    // the encoder simulator must mirror that to keep
+                    // the recon byte-exact.
+                    let (input_plane, ref_plane_data, recon_plane) = match (plane, picked_ref) {
+                        (0, RefFrame::GoldenFrame) => {
+                            (input_yuv.0, golden_recon_yuv.0, &mut *recon_yuv_out.0)
+                        }
+                        (1, RefFrame::GoldenFrame) => {
+                            (input_yuv.1, golden_recon_yuv.1, &mut *recon_yuv_out.1)
+                        }
+                        (_, RefFrame::GoldenFrame) => {
+                            (input_yuv.2, golden_recon_yuv.2, &mut *recon_yuv_out.2)
+                        }
+                        (0, _) => (input_yuv.0, last_recon_yuv.0, &mut *recon_yuv_out.0),
+                        (1, _) => (input_yuv.1, last_recon_yuv.1, &mut *recon_yuv_out.1),
+                        (_, _) => (input_yuv.2, last_recon_yuv.2, &mut *recon_yuv_out.2),
                     };
 
                     // Build the leaf's MC prediction into the recon
@@ -2989,6 +3022,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // A2.foreman - Splat the picked `(mode, mv, skip)`
                 // into the in-progress mi_grid so subsequent leaves'
                 // neighbour lookups see this leaf's decision.
+                // A15 Phase B Step 4 — carry `picked_ref_frame` too so
+                // neighbour MV-ref propagation matches the per-ref
+                // picker behaviour (the decoder's `find_mv_refs` is
+                // ref-aware).
                 splat_inter_leaf_into_mi_grid(
                     &mut mi_grid,
                     mi_cols_us,
@@ -2999,6 +3036,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     sb_partitions[sb_idx][leaf_idx].picked_mv,
                     sb_partitions[sb_idx][leaf_idx].segment_id,
                     sb_partitions[sb_idx][leaf_idx].skip,
+                    sb_partitions[sb_idx][leaf_idx].picked_ref_frame,
                 );
             }
         }

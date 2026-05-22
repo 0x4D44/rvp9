@@ -346,7 +346,14 @@ pub(crate) fn build_inter_mi_grid_for_lf(
                     seg_id_predicted: false,
                     mode: BlockMode::Inter {
                         mode: leaf.picked_mode,
-                        ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                        // A15 Phase B Step 4 — carry `picked_ref_frame`
+                        // into the LF mi_grid so `get_filter_level`
+                        // (`loopfilter::setup_mask::ref0_idx`) reads
+                        // the right ref slot. The decoder looks up
+                        // `lfi->lvl[seg][ref0][mode_lf]`; a GOLDEN-
+                        // picked leaf must use the GOLDEN row, not
+                        // LAST, to stay byte-exact with the decoder.
+                        ref_frames: [leaf.picked_ref_frame, RefFrame::NoRefFrame],
                         mvs: [leaf.picked_mv, Mv::ZERO],
                         interp_filter: InterpFilter::EightTap,
                     },

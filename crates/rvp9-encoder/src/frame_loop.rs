@@ -1136,7 +1136,16 @@ fn build_inter_mi_grid_from_picker(
                     seg_id_predicted: false,
                     mode: BlockMode::Inter {
                         mode: leaf.picked_mode,
-                        ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                        // A15 Phase B Step 4 — carry `picked_ref_frame`
+                        // into the mi_grid so the modes_writer's
+                        // ref-frame branch (`mode_info.rs:1020-1041`)
+                        // emits the correct single-ref bits (0 for
+                        // LAST, 1+0 for GOLDEN, 1+1 for ALTREF).
+                        // GOLDEN-picked leaves were unreachable on
+                        // the wire until A15 Phase B; now they emit
+                        // the GOLDEN bit pair and the decoder reads
+                        // GOLDEN's ref-buffer slot for reconstruction.
+                        ref_frames: [leaf.picked_ref_frame, RefFrame::NoRefFrame],
                         mvs: [leaf.picked_mv, Mv::ZERO],
                         interp_filter: InterpFilter::EightTap,
                     },
