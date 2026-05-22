@@ -929,6 +929,95 @@ pub struct SimdDispatch {
         dq_coefs_out: &mut [i32],
     ),
 
+    /// Wave I I5 — integer-pel copy: copy a `w × h` block from `src`
+    /// to `dst`. Mirrors [`crate::inter::convolve_copy`] (libvpx
+    /// `vpx_convolve_copy_c`). Scalar-only at I5; AVX2 wiring deferred
+    /// to Wave J.
+    pub(crate) convolve_copy:
+        fn(src: &[u8], src_stride: usize, dst: &mut [u8], dst_stride: usize, w: usize, h: usize),
+
+    /// Wave I I5 — integer-pel average: `dst = (dst + src + 1) >> 1`.
+    /// Mirrors [`crate::inter::convolve_avg`] (libvpx
+    /// `vpx_convolve_avg_c`). Scalar-only at I5.
+    pub(crate) convolve_avg:
+        fn(src: &[u8], src_stride: usize, dst: &mut [u8], dst_stride: usize, w: usize, h: usize),
+
+    /// Wave I I5 — 8-tap horizontal subpel convolution. Mirrors
+    /// [`crate::inter::convolve8_horiz`]. Scalar-only at I5.
+    pub(crate) convolve8_horiz: fn(
+        src: &[u8],
+        src_stride: usize,
+        dst: &mut [u8],
+        dst_stride: usize,
+        filter_x: &[i16; 8],
+        w: usize,
+        h: usize,
+    ),
+
+    /// Wave I I5 — 8-tap vertical subpel convolution. Mirrors
+    /// [`crate::inter::convolve8_vert`]. Scalar-only at I5.
+    pub(crate) convolve8_vert: fn(
+        src: &[u8],
+        src_stride: usize,
+        dst: &mut [u8],
+        dst_stride: usize,
+        filter_y: &[i16; 8],
+        w: usize,
+        h: usize,
+    ),
+
+    /// Wave I I5 — 8-tap 2-D subpel convolution. Mirrors
+    /// [`crate::inter::convolve8`]. Scalar-only at I5.
+    pub(crate) convolve8: fn(
+        src: &[u8],
+        src_stride: usize,
+        dst: &mut [u8],
+        dst_stride: usize,
+        filter_x: &[i16; 8],
+        filter_y: &[i16; 8],
+        w: usize,
+        h: usize,
+    ),
+
+    /// Wave I I5 — 8-tap horizontal subpel convolution with compound
+    /// average. Mirrors [`crate::inter::convolve8_avg_horiz`].
+    /// Scalar-only at I5.
+    pub(crate) convolve8_avg_horiz: fn(
+        src: &[u8],
+        src_stride: usize,
+        dst: &mut [u8],
+        dst_stride: usize,
+        filter_x: &[i16; 8],
+        w: usize,
+        h: usize,
+    ),
+
+    /// Wave I I5 — 8-tap vertical subpel convolution with compound
+    /// average. Mirrors [`crate::inter::convolve8_avg_vert`].
+    /// Scalar-only at I5.
+    pub(crate) convolve8_avg_vert: fn(
+        src: &[u8],
+        src_stride: usize,
+        dst: &mut [u8],
+        dst_stride: usize,
+        filter_y: &[i16; 8],
+        w: usize,
+        h: usize,
+    ),
+
+    /// Wave I I5 — 8-tap 2-D subpel convolution with compound average.
+    /// Mirrors [`crate::inter::convolve8_avg`]. Scalar-only at I5.
+    pub(crate) convolve8_avg: fn(
+        src: &[u8],
+        src_stride: usize,
+        dst: &mut [u8],
+        dst_stride: usize,
+        filter_x: &[i16; 8],
+        filter_y: &[i16; 8],
+        w: usize,
+        h: usize,
+    ),
+
     /// G4.4b — frame-border edge replication. Signature mirrors
     /// [`crate::frame::extend_frame_borders`]. **Currently scalar-only**:
     /// the inner per-row work is `slice::fill` (left/right border
@@ -1459,6 +1548,47 @@ impl SimdDispatch {
             &mut [i32],
         ) = scalar_plane_dequant_finisher;
 
+        // ---- Wave I I5 — motion-compensation dispatch slots
+        // (scalar-only). Direct aliases of the existing scalar
+        // `crate::inter::filter::*` fns — those already match the slot
+        // signatures verbatim (no PredCtx-style wrapping needed). The
+        // slots reserve the family name and dispatch shape so Wave J
+        // can promote individual fns to AVX2 without touching the call
+        // sites in `inter_predictor`. No caps gating: scalar regardless
+        // of host ISA at I5.
+        let convolve_copy: fn(&[u8], usize, &mut [u8], usize, usize, usize) =
+            crate::inter::filter::convolve_copy;
+        let convolve_avg: fn(&[u8], usize, &mut [u8], usize, usize, usize) =
+            crate::inter::filter::convolve_avg;
+        let convolve8_horiz: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
+            crate::inter::filter::convolve8_horiz;
+        let convolve8_vert: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
+            crate::inter::filter::convolve8_vert;
+        let convolve8: fn(
+            &[u8],
+            usize,
+            &mut [u8],
+            usize,
+            &[i16; 8],
+            &[i16; 8],
+            usize,
+            usize,
+        ) = crate::inter::filter::convolve8;
+        let convolve8_avg_horiz: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
+            crate::inter::filter::convolve8_avg_horiz;
+        let convolve8_avg_vert: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
+            crate::inter::filter::convolve8_avg_vert;
+        let convolve8_avg: fn(
+            &[u8],
+            usize,
+            &mut [u8],
+            usize,
+            &[i16; 8],
+            &[i16; 8],
+            usize,
+            usize,
+        ) = crate::inter::filter::convolve8_avg;
+
         // ---- G4.4b — scalar-only slot (deferral rationale on field doc). ----
         let extend_frame_borders: fn(&mut Yv12Buffer) = scalar_extend_frame_borders;
 
@@ -1496,6 +1626,14 @@ impl SimdDispatch {
             lpf_vertical_16_dual,
             lpf_horizontal_16_dual,
             plane_dequant_finisher,
+            convolve_copy,
+            convolve_avg,
+            convolve8_horiz,
+            convolve8_vert,
+            convolve8,
+            convolve8_avg_horiz,
+            convolve8_avg_vert,
+            convolve8_avg,
             extend_frame_borders,
         }
     }
@@ -1831,6 +1969,87 @@ impl SimdDispatch {
         &self,
     ) -> fn(&[u16], &[i16], &[i16], &[u8], u32, &mut [i32]) {
         self.plane_dequant_finisher
+    }
+
+    /// Dispatch the integer-pel block copy kernel (Wave I I5). Scalar
+    /// only at I5; AVX2 promotion deferred to Wave J. See field doc
+    /// on [`SimdDispatch::convolve_copy`].
+    #[inline]
+    #[must_use]
+    pub fn convolve_copy(&self) -> fn(&[u8], usize, &mut [u8], usize, usize, usize) {
+        self.convolve_copy
+    }
+
+    /// Dispatch the integer-pel compound-average kernel (Wave I I5).
+    /// Scalar only at I5; AVX2 promotion deferred to Wave J. See field
+    /// doc on [`SimdDispatch::convolve_avg`].
+    #[inline]
+    #[must_use]
+    pub fn convolve_avg(&self) -> fn(&[u8], usize, &mut [u8], usize, usize, usize) {
+        self.convolve_avg
+    }
+
+    /// Dispatch the 8-tap horizontal subpel convolution (Wave I I5).
+    /// Scalar only at I5; AVX2 promotion deferred to Wave J.
+    #[inline]
+    #[must_use]
+    pub fn convolve8_horiz(
+        &self,
+    ) -> fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) {
+        self.convolve8_horiz
+    }
+
+    /// Dispatch the 8-tap vertical subpel convolution (Wave I I5).
+    /// Scalar only at I5; AVX2 promotion deferred to Wave J.
+    #[inline]
+    #[must_use]
+    pub fn convolve8_vert(
+        &self,
+    ) -> fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) {
+        self.convolve8_vert
+    }
+
+    /// Dispatch the 8-tap 2-D subpel convolution (Wave I I5). Scalar
+    /// only at I5; AVX2 promotion deferred to Wave J.
+    #[inline]
+    #[must_use]
+    pub fn convolve8(
+        &self,
+    ) -> fn(&[u8], usize, &mut [u8], usize, &[i16; 8], &[i16; 8], usize, usize) {
+        self.convolve8
+    }
+
+    /// Dispatch the 8-tap horizontal subpel convolution with compound
+    /// average (Wave I I5). Scalar only at I5; AVX2 promotion deferred
+    /// to Wave J.
+    #[inline]
+    #[must_use]
+    pub fn convolve8_avg_horiz(
+        &self,
+    ) -> fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) {
+        self.convolve8_avg_horiz
+    }
+
+    /// Dispatch the 8-tap vertical subpel convolution with compound
+    /// average (Wave I I5). Scalar only at I5; AVX2 promotion deferred
+    /// to Wave J.
+    #[inline]
+    #[must_use]
+    pub fn convolve8_avg_vert(
+        &self,
+    ) -> fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) {
+        self.convolve8_avg_vert
+    }
+
+    /// Dispatch the 8-tap 2-D subpel convolution with compound average
+    /// (Wave I I5). Scalar only at I5; AVX2 promotion deferred to
+    /// Wave J.
+    #[inline]
+    #[must_use]
+    pub fn convolve8_avg(
+        &self,
+    ) -> fn(&[u8], usize, &mut [u8], usize, &[i16; 8], &[i16; 8], usize, usize) {
+        self.convolve8_avg
     }
 
     /// Dispatch the frame-border edge-replication kernel (G4.4b). Slot
@@ -2709,5 +2928,199 @@ mod tests {
         assert_eq!(d.lpf_horizontal_8_dual() as usize, h8 as usize);
         assert_eq!(d.lpf_vertical_16_dual() as usize, v16 as usize);
         assert_eq!(d.lpf_horizontal_16_dual() as usize, h16 as usize);
+    }
+
+    // =================================================================
+    // Wave I I5 — motion-compensation slot routing.
+    // -----------------------------------------------------------------
+    // At I5 these slots are scalar regardless of caps (AVX2 promotion
+    // deferred to Wave J). Each test pins the slot fn pointer to the
+    // matching `crate::inter::filter::*` scalar fn to catch silent
+    // regressions when Wave J wires AVX2 variants — once Wave J lands,
+    // these tests will be refactored into the same `avx2-on / scalar
+    // forced-off` pattern used by I1-I4 / H6.
+    // =================================================================
+
+    /// I5 — `convolve_copy` slot points at the scalar
+    /// `crate::inter::filter::convolve_copy` fn at I5.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn convolve_copy_dispatches_correctly() {
+        let d = SimdDispatch::build(detect());
+        let scalar: fn(&[u8], usize, &mut [u8], usize, usize, usize) =
+            crate::inter::filter::convolve_copy;
+        assert_eq!(
+            d.convolve_copy() as usize,
+            scalar as usize,
+            "I5: convolve_copy slot must install the scalar reference"
+        );
+    }
+
+    /// I5 — `convolve_avg` slot points at the scalar
+    /// `crate::inter::filter::convolve_avg` fn at I5.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn convolve_avg_dispatches_correctly() {
+        let d = SimdDispatch::build(detect());
+        let scalar: fn(&[u8], usize, &mut [u8], usize, usize, usize) =
+            crate::inter::filter::convolve_avg;
+        assert_eq!(
+            d.convolve_avg() as usize,
+            scalar as usize,
+            "I5: convolve_avg slot must install the scalar reference"
+        );
+    }
+
+    /// I5 — `convolve8_horiz` slot points at the scalar
+    /// `crate::inter::filter::convolve8_horiz` fn at I5.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn convolve8_horiz_dispatches_correctly() {
+        let d = SimdDispatch::build(detect());
+        let scalar: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
+            crate::inter::filter::convolve8_horiz;
+        assert_eq!(
+            d.convolve8_horiz() as usize,
+            scalar as usize,
+            "I5: convolve8_horiz slot must install the scalar reference"
+        );
+    }
+
+    /// I5 — `convolve8_vert` slot points at the scalar
+    /// `crate::inter::filter::convolve8_vert` fn at I5.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn convolve8_vert_dispatches_correctly() {
+        let d = SimdDispatch::build(detect());
+        let scalar: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
+            crate::inter::filter::convolve8_vert;
+        assert_eq!(
+            d.convolve8_vert() as usize,
+            scalar as usize,
+            "I5: convolve8_vert slot must install the scalar reference"
+        );
+    }
+
+    /// I5 — `convolve8` slot points at the scalar
+    /// `crate::inter::filter::convolve8` fn at I5.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn convolve8_dispatches_correctly() {
+        let d = SimdDispatch::build(detect());
+        let scalar: fn(
+            &[u8],
+            usize,
+            &mut [u8],
+            usize,
+            &[i16; 8],
+            &[i16; 8],
+            usize,
+            usize,
+        ) = crate::inter::filter::convolve8;
+        assert_eq!(
+            d.convolve8() as usize,
+            scalar as usize,
+            "I5: convolve8 slot must install the scalar reference"
+        );
+    }
+
+    /// I5 — `convolve8_avg_horiz` slot points at the scalar
+    /// `crate::inter::filter::convolve8_avg_horiz` fn at I5.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn convolve8_avg_horiz_dispatches_correctly() {
+        let d = SimdDispatch::build(detect());
+        let scalar: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
+            crate::inter::filter::convolve8_avg_horiz;
+        assert_eq!(
+            d.convolve8_avg_horiz() as usize,
+            scalar as usize,
+            "I5: convolve8_avg_horiz slot must install the scalar reference"
+        );
+    }
+
+    /// I5 — `convolve8_avg_vert` slot points at the scalar
+    /// `crate::inter::filter::convolve8_avg_vert` fn at I5.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn convolve8_avg_vert_dispatches_correctly() {
+        let d = SimdDispatch::build(detect());
+        let scalar: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
+            crate::inter::filter::convolve8_avg_vert;
+        assert_eq!(
+            d.convolve8_avg_vert() as usize,
+            scalar as usize,
+            "I5: convolve8_avg_vert slot must install the scalar reference"
+        );
+    }
+
+    /// I5 — `convolve8_avg` slot points at the scalar
+    /// `crate::inter::filter::convolve8_avg` fn at I5.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn convolve8_avg_dispatches_correctly() {
+        let d = SimdDispatch::build(detect());
+        let scalar: fn(
+            &[u8],
+            usize,
+            &mut [u8],
+            usize,
+            &[i16; 8],
+            &[i16; 8],
+            usize,
+            usize,
+        ) = crate::inter::filter::convolve8_avg;
+        assert_eq!(
+            d.convolve8_avg() as usize,
+            scalar as usize,
+            "I5: convolve8_avg slot must install the scalar reference"
+        );
+    }
+
+    /// I5 end-to-end smoke — `inter_predictor` routes the unscaled
+    /// `(0, 0, false)` arm through `dispatch.convolve_copy()` and the
+    /// output equals a direct scalar `convolve_copy` call. Proves the
+    /// dispatch wiring did not perturb behaviour (Wave I5 is a pure
+    /// refactor — the dispatched fn IS the original scalar fn). One
+    /// representative arm is sufficient because all 8 arms route
+    /// through the same slot-lookup pattern.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn inter_predictor_unscaled_routes_through_dispatch_convolve_copy() {
+        use crate::bitstream::frame::InterpFilter;
+        use crate::inter::filter::convolve_copy;
+        use crate::inter::scale::{inter_predictor, ScaleFactors};
+
+        // 16x16 src with a deterministic ramp; identity scale, zero
+        // subpel offsets, no compound avg ⇒ the (false, false, false)
+        // arm fires ⇒ dispatch.convolve_copy() should run.
+        let w = 16usize;
+        let h = 16usize;
+        let src_stride = w;
+        let dst_stride = w;
+        let src: Vec<u8> = (0..w * h).map(|i| (i & 0xff) as u8).collect();
+        let mut dst_via_predictor = vec![0u8; w * h];
+        let mut dst_via_direct = vec![0u8; w * h];
+
+        let sf = ScaleFactors::new(w as u32, h as u32, w as u32, h as u32);
+        inter_predictor(
+            &src,
+            src_stride,
+            &mut dst_via_predictor,
+            dst_stride,
+            0,
+            0,
+            &sf,
+            InterpFilter::EightTap,
+            w,
+            h,
+            false,
+        );
+        convolve_copy(&src, src_stride, &mut dst_via_direct, dst_stride, w, h);
+
+        assert_eq!(
+            dst_via_predictor, dst_via_direct,
+            "I5: inter_predictor unscaled (0,0,false) arm must match direct convolve_copy"
+        );
     }
 }

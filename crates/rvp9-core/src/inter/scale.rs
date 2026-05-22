@@ -29,9 +29,7 @@
 //! C.3 will handle reads beyond `[0, ref_w) × [0, ref_h)`.
 
 use super::filter::{
-    convolve8, convolve8_avg, convolve8_avg_horiz, convolve8_avg_vert, convolve8_horiz,
-    convolve8_scaled, convolve8_scaled_avg, convolve8_vert, convolve_avg, convolve_copy,
-    kernel_for, SUBPEL_BITS, SUBPEL_MASK, SUBPEL_SHIFTS,
+    convolve8_scaled, convolve8_scaled_avg, kernel_for, SUBPEL_BITS, SUBPEL_MASK, SUBPEL_SHIFTS,
 };
 use crate::bitstream::frame::InterpFilter;
 
@@ -271,6 +269,17 @@ pub fn inter_predictor(
 
     let filters = kernel_for(interp_filter);
 
+    // Wave I I5 — route the unscaled match through the dispatch
+    // table so Wave J can promote individual convolve kernels to
+    // AVX2 without touching this call site (the public signature is
+    // load-bearing — see encoder caller at
+    // `rvp9-encoder/src/lib.rs:3342`).
+    //
+    // The scaled path (sf.is_scaled() == true) still calls the
+    // scalar `convolve8_scaled[_avg]` fns directly; scaled-MC slots
+    // are deferred to Wave J alongside any AVX2 promotion.
+    let dispatch = crate::dsp::get();
+
     if sf.is_scaled() {
         // Always run the full 2-D scaled path. libvpx specialises
         // horiz-only / vert-only sub-cases for SIMD; the scalar path
@@ -316,20 +325,28 @@ pub fn inter_predictor(
     let filter_y = &filters[subpel_y_q4 as usize];
 
     match (x_nonzero, y_nonzero, is_compound_avg) {
-        (false, false, false) => convolve_copy(src, src_stride, dst, dst_stride, w, h),
-        (false, false, true) => convolve_avg(src, src_stride, dst, dst_stride, w, h),
-        (false, true, false) => convolve8_vert(src, src_stride, dst, dst_stride, filter_y, w, h),
+        (false, false, false) => {
+            (dispatch.convolve_copy())(src, src_stride, dst, dst_stride, w, h)
+        }
+        (false, false, true) => {
+            (dispatch.convolve_avg())(src, src_stride, dst, dst_stride, w, h)
+        }
+        (false, true, false) => {
+            (dispatch.convolve8_vert())(src, src_stride, dst, dst_stride, filter_y, w, h)
+        }
         (false, true, true) => {
-            convolve8_avg_vert(src, src_stride, dst, dst_stride, filter_y, w, h)
+            (dispatch.convolve8_avg_vert())(src, src_stride, dst, dst_stride, filter_y, w, h)
         }
-        (true, false, false) => convolve8_horiz(src, src_stride, dst, dst_stride, filter_x, w, h),
+        (true, false, false) => {
+            (dispatch.convolve8_horiz())(src, src_stride, dst, dst_stride, filter_x, w, h)
+        }
         (true, false, true) => {
-            convolve8_avg_horiz(src, src_stride, dst, dst_stride, filter_x, w, h)
+            (dispatch.convolve8_avg_horiz())(src, src_stride, dst, dst_stride, filter_x, w, h)
         }
-        (true, true, false) => convolve8(
+        (true, true, false) => (dispatch.convolve8())(
             src, src_stride, dst, dst_stride, filter_x, filter_y, w, h,
         ),
-        (true, true, true) => convolve8_avg(
+        (true, true, true) => (dispatch.convolve8_avg())(
             src, src_stride, dst, dst_stride, filter_x, filter_y, w, h,
         ),
     }
@@ -343,7 +360,7 @@ pub const SUBPEL_MASK_Q4: i32 = SUBPEL_MASK;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::filter::convolve8_scaled_horiz;
+    use super::super::filter::{convolve8, convolve8_horiz, convolve8_scaled_horiz};
 
     // --- Constants and validity gate -----------------------------------
 
