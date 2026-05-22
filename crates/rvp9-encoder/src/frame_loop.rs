@@ -480,6 +480,20 @@ impl StreamEncoder {
         } else {
             None
         };
+        // E9 DIAG — matched-Q oracle override. When `RVP9_FIXED_Q` is
+        // set to a value in 1..=255, pin every frame's quantizer to it,
+        // bypassing the rate controller's pick. This is diagnostic
+        // instrumentation only (the rate controller still runs its
+        // pick + postencode_update so its state evolves identically);
+        // it lets the E9 harness drive rvp9 at a fixed quantizer to
+        // match libvpx `--end-usage=q --cq-level=<q>` so PSNR/bit
+        // differences isolate prediction + transform + entropy from
+        // rate control. No-op when unset (production paths unaffected).
+        let q_index = match std::env::var("RVP9_FIXED_Q").ok().and_then(|s| s.parse::<u8>().ok()) {
+            Some(fixed) if fixed >= 1 => fixed,
+            _ => q_index,
+        };
+
         // The CBR controller may legitimately pick `q == 0` when the
         // buffer is over-full; the F5.1 simulator's quantizer math
         // doesn't support lossless (qindex 0), so we clamp to 1.

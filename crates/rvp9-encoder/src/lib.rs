@@ -73,6 +73,7 @@ use rvp9_core::transforms::{TxMode, TxSize};
 pub mod aq_cyclic_refresh;
 pub mod frame_loop;
 pub(crate) mod loopfilter;
+pub mod predstat;
 pub mod rate_control;
 pub mod skipstat;
 
@@ -1499,6 +1500,16 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
                                     let inp = input_plane[in_off] as i16;
                                     residual[r * tx_side + c] = inp - pred;
                                 }
+                            }
+
+                            // E9 DIAG — tap the Y-plane prediction residual
+                            // (`source − intra prediction`, before transform/quant).
+                            if plane == 0 {
+                                crate::predstat::record_y_residual(
+                                    &residual,
+                                    tx_side,
+                                    plane_tx as usize,
+                                );
                             }
 
                             // TX type. Y plane: `plane_mode.tx_type()`
@@ -3246,6 +3257,16 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     let p = recon_plane[off] as i16;
                                     residual[r * tx_side + c] = s - p;
                                 }
+                            }
+
+                            // E9 DIAG — tap the Y-plane prediction residual
+                            // (`source − MC prediction`, before transform/quant).
+                            if plane == 0 {
+                                crate::predstat::record_y_residual(
+                                    &residual,
+                                    tx_side,
+                                    plane_tx as usize,
+                                );
                             }
 
                             let (qcoeff_i32, dqcoeff_i32, eob_usize) =
