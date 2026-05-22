@@ -988,6 +988,96 @@ pub fn idct32x32_1024_add(input: &[i32; 1024], dest: &mut [u8], stride: usize) {
     }
 }
 
+/// 2D 34-coefficient inverse 32×32 DCT — sparse-block fast path.
+///
+/// Mirrors `vpx_idct32x32_34_add_c` (`vpx_dsp/inv_txfm.c`, dispatcher
+/// site `vp9/common/vp9_idct.c:289`). When the caller knows
+/// `eob <= 34` the non-zero coefficients are confined to the top-left
+/// 8×8 sub-block of the input (raster order), so the row 1D pass only
+/// needs to run on the first 8 input rows; rows 8..32 of the input are
+/// zero and would feed through `idct32` to produce all-zero
+/// intermediate rows (proven by `idct32_zero_in_zero_out`). The column
+/// pass still runs all 32 columns because rows 0..7 of the row-pass
+/// output are dense in every column.
+///
+/// **Caller contract** (mirrors libvpx): if used on a block whose true
+/// eob exceeds 34, coefficients at indices `>=` row 8 are silently
+/// ignored and the output diverges from the full kernel. Callers are
+/// responsible for the eob bucket gate.
+pub fn idct32x32_34_add(input: &[i32; 1024], dest: &mut [u8], stride: usize) {
+    debug_assert!(dest.len() >= stride * 31 + 32, "dest too small for 32x32 add");
+
+    // Intermediate buffer — rows 8..32 stay zero because the
+    // corresponding input rows are assumed zero (caller contract).
+    let mut intermediate = [0i32; 1024];
+
+    // Row pass — first 8 rows only.
+    for r in 0..8 {
+        let row_in: &[i32; 32] = input[r * 32..r * 32 + 32].try_into().unwrap();
+        let row_out_mut: &mut [i32; 32] = (&mut intermediate[r * 32..r * 32 + 32])
+            .try_into()
+            .unwrap();
+        idct32(row_in, row_out_mut);
+    }
+
+    // Column pass + residual add (full 32 cols, identical to _1024_add).
+    let mut col_in = [0i32; 32];
+    let mut col_out = [0i32; 32];
+    for c in 0..32 {
+        for r in 0..32 {
+            col_in[r] = intermediate[r * 32 + c];
+        }
+        idct32(&col_in, &mut col_out);
+        for r in 0..32 {
+            let shifted = (col_out[r] as i64 + 32) >> 6;
+            dest[r * stride + c] = clip_pixel_add(dest[r * stride + c], shifted);
+        }
+    }
+}
+
+/// 2D 135-coefficient inverse 32×32 DCT — sparse-block fast path.
+///
+/// Mirrors `vpx_idct32x32_135_add_c` (`vpx_dsp/inv_txfm.c`, dispatcher
+/// site `vp9/common/vp9_idct.c:289`). When the caller knows
+/// `eob <= 135` the non-zero coefficients are confined to the top-left
+/// 16×16 sub-block of the input (raster order), so the row 1D pass
+/// only needs to run on the first 16 input rows; rows 16..32 of the
+/// input are zero and would feed through `idct32` to produce all-zero
+/// intermediate rows. The column pass still runs all 32 columns.
+///
+/// **Caller contract** (mirrors libvpx): if used on a block whose true
+/// eob exceeds 135, coefficients at indices `>=` row 16 are silently
+/// ignored and the output diverges from the full kernel. Callers are
+/// responsible for the eob bucket gate.
+pub fn idct32x32_135_add(input: &[i32; 1024], dest: &mut [u8], stride: usize) {
+    debug_assert!(dest.len() >= stride * 31 + 32, "dest too small for 32x32 add");
+
+    let mut intermediate = [0i32; 1024];
+
+    // Row pass — first 16 rows only.
+    for r in 0..16 {
+        let row_in: &[i32; 32] = input[r * 32..r * 32 + 32].try_into().unwrap();
+        let row_out_mut: &mut [i32; 32] = (&mut intermediate[r * 32..r * 32 + 32])
+            .try_into()
+            .unwrap();
+        idct32(row_in, row_out_mut);
+    }
+
+    // Column pass + residual add (full 32 cols, identical to _1024_add).
+    let mut col_in = [0i32; 32];
+    let mut col_out = [0i32; 32];
+    for c in 0..32 {
+        for r in 0..32 {
+            col_in[r] = intermediate[r * 32 + c];
+        }
+        idct32(&col_in, &mut col_out);
+        for r in 0..32 {
+            let shifted = (col_out[r] as i64 + 32) >> 6;
+            dest[r * stride + c] = clip_pixel_add(dest[r * stride + c], shifted);
+        }
+    }
+}
+
 /// 2D 1-coefficient inverse 32×32 DCT (DC-only fast path).
 ///
 /// Mirrors `vpx_idct32x32_1_add_c` (`vpx_dsp/inv_txfm.c:1263-1276`). Two
@@ -2181,6 +2271,80 @@ mod tests {
         let any_above = dest.iter().any(|&v| v > 128);
         let any_below = dest.iter().any(|&v| v < 128);
         assert!(any_above && any_below, "AC should produce both signs");
+    }
+
+    /// `idct32x32_34_add` must match `idct32x32_1024_add` bit-for-bit
+    /// for any input whose non-zero coefficients are confined to the
+    /// top-left 8×8 sub-block (rows 0..8). Sweep several magnitudes.
+    #[test]
+    fn idct32x32_34_vs_1024_zero_top_rows() {
+        for &val in &[1i32, -1, 256, -256, 4096, -4096, 32767, -32768] {
+            let mut input = [0i32; 1024];
+            // Populate the top-left 8×8 sub-block (raster positions
+            // within rows 0..8, cols 0..8 of the 32×32 input — i.e.
+            // input indices `r * 32 + c` for r,c in 0..8). The caller
+            // contract only requires rows >= 8 to be zero; we tighten
+            // to cols >= 8 here too to mirror libvpx's eob-bucket
+            // scan-order assumption.
+            for r in 0..8 {
+                for c in 0..8 {
+                    input[r * 32 + c] = val.wrapping_mul((r * 8 + c + 1) as i32);
+                }
+            }
+            let mut dest_full = vec![100u8; 1024];
+            let mut dest_fast = vec![100u8; 1024];
+            idct32x32_1024_add(&input, &mut dest_full, 32);
+            idct32x32_34_add(&input, &mut dest_fast, 32);
+            assert_eq!(
+                dest_full, dest_fast,
+                "_34_add must match _1024_add for top-left 8×8 input (val={val})"
+            );
+        }
+    }
+
+    /// `idct32x32_135_add` must match `idct32x32_1024_add` bit-for-bit
+    /// for any input whose non-zero coefficients are confined to the
+    /// top-left 16×16 sub-block (rows 0..16).
+    #[test]
+    fn idct32x32_135_vs_1024_zero_top_rows() {
+        for &val in &[1i32, -1, 256, -256, 4096, -4096, 32767, -32768] {
+            let mut input = [0i32; 1024];
+            for r in 0..16 {
+                for c in 0..16 {
+                    input[r * 32 + c] = val.wrapping_mul((r * 16 + c + 1) as i32);
+                }
+            }
+            let mut dest_full = vec![100u8; 1024];
+            let mut dest_fast = vec![100u8; 1024];
+            idct32x32_1024_add(&input, &mut dest_full, 32);
+            idct32x32_135_add(&input, &mut dest_fast, 32);
+            assert_eq!(
+                dest_full, dest_fast,
+                "_135_add must match _1024_add for top-left 16×16 input (val={val})"
+            );
+        }
+    }
+
+    /// DC-only input — both fast paths must equal `_1024_add` AND
+    /// `_1_add` (which uses the closed-form two-cospi_16_64 trick
+    /// shifted by 4 to match `ROUND_POWER_OF_TWO(_, 6)`). Locks the
+    /// per-bucket DC seam.
+    #[test]
+    fn idct32x32_34_135_dc_only_matches_1024_and_1() {
+        let dc: i32 = 256;
+        let mut input = [0i32; 1024];
+        input[0] = dc;
+        let mut dest_full = vec![50u8; 1024];
+        let mut dest_34 = vec![50u8; 1024];
+        let mut dest_135 = vec![50u8; 1024];
+        let mut dest_dc = vec![50u8; 1024];
+        idct32x32_1024_add(&input, &mut dest_full, 32);
+        idct32x32_34_add(&input, &mut dest_34, 32);
+        idct32x32_135_add(&input, &mut dest_135, 32);
+        idct32x32_1_add(dc, &mut dest_dc, 32);
+        assert_eq!(dest_full, dest_34, "_34_add must match _1024_add for DC-only");
+        assert_eq!(dest_full, dest_135, "_135_add must match _1024_add for DC-only");
+        assert_eq!(dest_full, dest_dc, "_1_add must match _1024_add for DC-only");
     }
 
     // ---- iadst family ----

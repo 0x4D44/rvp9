@@ -58,7 +58,10 @@ use crate::transforms::inverse::{
     idct4x4_16_add as scalar_idct4x4_add, idct8x8_64_add as scalar_idct8x8_add,
     idct16x16_10_add as scalar_idct16x16_10_add,
     idct16x16_38_add as scalar_idct16x16_38_add,
-    idct16x16_256_add as scalar_idct16x16_add, idct32x32_1024_add as scalar_idct32x32_add,
+    idct16x16_256_add as scalar_idct16x16_add,
+    idct32x32_135_add as scalar_idct32x32_135_add,
+    idct32x32_34_add as scalar_idct32x32_34_add,
+    idct32x32_1024_add as scalar_idct32x32_add,
     iht4x4_16_add as scalar_iht4x4_add, iht8x8_64_add as scalar_iht8x8_add,
     iht16x16_256_add as scalar_iht16x16_add,
 };
@@ -133,6 +136,8 @@ fn scalar_extend_frame_borders(yv12: &mut Yv12Buffer) {
 /// | G4-α  | inverse 32×32     | `idct32x32_add`            | yes       |
 /// | F3    | inverse 16×16 EOB≤10 | `idct16x16_10_add`      | yes       |
 /// | F4    | inverse 16×16 EOB≤38 | `idct16x16_38_add`      | yes       |
+/// | F9    | inverse 32×32 eob≤34  | `idct32x32_34_add`     | yes (finisher-only) |
+/// | F9    | inverse 32×32 eob≤135 | `idct32x32_135_add`    | yes (finisher-only) |
 /// | G4.3a | intra-pred DC 4×4 | `dc_predictor_4x4`         | yes       |
 /// | G4-β  | hybrid ADST 4×4   | `iht4x4_add`               | yes       |
 /// | G4-β  | hybrid ADST 8×8   | `iht8x8_add`               | yes       |
@@ -195,9 +200,34 @@ pub struct SimdDispatch {
     /// [`crate::transforms::inverse::idct32x32_1024_add`]. On x86_64
     /// AVX2 CPUs this points at the safe wrapper
     /// [`crate::dsp::x86_64::idct32x32_add_avx2`]; otherwise it points
-    /// at the scalar reference. The 34/135-bucket fast paths are not
-    /// yet ported — only the full `_1024_add` variant is dispatched.
+    /// at the scalar reference. The 34/135-bucket fast paths land in
+    /// [`SimdDispatch::idct32x32_34_add`] /
+    /// [`SimdDispatch::idct32x32_135_add`].
     pub(crate) idct32x32_add: fn(input: &[i32; 1024], dst: &mut [u8], stride: usize),
+
+    /// F9 — 32×32 inverse DCT + add for sparse blocks with
+    /// `eob <= 34` (top-left 8×8 sub-block non-zero). Signature
+    /// mirrors the scalar reference
+    /// [`crate::transforms::inverse::idct32x32_34_add`]. On x86_64
+    /// AVX2 CPUs this points at the safe wrapper
+    /// [`crate::dsp::x86_64::idct32x32_34_add_avx2`]; otherwise it
+    /// points at the scalar reference. Same finisher as the
+    /// `idct32x32_add` AVX2 kernel — only the row count differs
+    /// (Stage 1 runs for the first 8 rows only). Caller must respect
+    /// the eob contract.
+    pub(crate) idct32x32_34_add: fn(input: &[i32; 1024], dst: &mut [u8], stride: usize),
+
+    /// F9 — 32×32 inverse DCT + add for sparse blocks with
+    /// `eob <= 135` (top-left 16×16 sub-block non-zero). Signature
+    /// mirrors the scalar reference
+    /// [`crate::transforms::inverse::idct32x32_135_add`]. On x86_64
+    /// AVX2 CPUs this points at the safe wrapper
+    /// [`crate::dsp::x86_64::idct32x32_135_add_avx2`]; otherwise it
+    /// points at the scalar reference. Same finisher as the
+    /// `idct32x32_add` AVX2 kernel — only the row count differs
+    /// (Stage 1 runs for the first 16 rows only). Caller must respect
+    /// the eob contract.
+    pub(crate) idct32x32_135_add: fn(input: &[i32; 1024], dst: &mut [u8], stride: usize),
 
     /// Wave F F3 — 16×16 inverse DCT + add for sparse blocks with
     /// `eob <= 10` (top-left 4×4 sub-block non-zero). Signature
@@ -355,6 +385,28 @@ impl SimdDispatch {
         #[cfg(not(target_arch = "x86_64"))]
         let idct32x32_add: fn(&[i32; 1024], &mut [u8], usize) = scalar_idct32x32_add;
 
+        // F9 — 32×32 EOB-bucket fast paths. Finisher (Stage 3) is
+        // shared with `idct32x32_add_avx2`; only Stage 1 row count
+        // differs (8 / 16 rows respectively). Scalar fallback uses
+        // the corresponding scalar reference.
+        #[cfg(target_arch = "x86_64")]
+        let idct32x32_34_add: fn(&[i32; 1024], &mut [u8], usize) = if caps.avx2 {
+            crate::dsp::x86_64::idct32x32_34_add_avx2
+        } else {
+            scalar_idct32x32_34_add
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let idct32x32_34_add: fn(&[i32; 1024], &mut [u8], usize) = scalar_idct32x32_34_add;
+
+        #[cfg(target_arch = "x86_64")]
+        let idct32x32_135_add: fn(&[i32; 1024], &mut [u8], usize) = if caps.avx2 {
+            crate::dsp::x86_64::idct32x32_135_add_avx2
+        } else {
+            scalar_idct32x32_135_add
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let idct32x32_135_add: fn(&[i32; 1024], &mut [u8], usize) = scalar_idct32x32_135_add;
+
         #[cfg(target_arch = "x86_64")]
         let dc_predictor_4x4: fn(&mut [u8], usize, &[u8], &[u8]) = if caps.avx2 {
             crate::dsp::x86_64::dc_predictor_4x4_avx2
@@ -437,6 +489,8 @@ impl SimdDispatch {
             idct4x4_add,
             idct16x16_add,
             idct32x32_add,
+            idct32x32_34_add,
+            idct32x32_135_add,
             idct16x16_10_add,
             idct16x16_38_add,
             dc_predictor_4x4,
@@ -478,12 +532,38 @@ impl SimdDispatch {
     }
 
     /// Dispatch the 32×32 inverse-DCT + add kernel (G4-α full-kernel
-    /// rollout). Full-density `_1024_add` variant only; the
-    /// 34/135-bucket fast paths are not yet ported.
+    /// rollout). Full-density `_1024_add` variant only — the
+    /// 34/135-bucket fast paths land in
+    /// [`SimdDispatch::idct32x32_34_add`] /
+    /// [`SimdDispatch::idct32x32_135_add`].
     #[inline]
     #[must_use]
     pub fn idct32x32_add(&self) -> fn(&[i32; 1024], &mut [u8], usize) {
         self.idct32x32_add
+    }
+
+    /// Dispatch the 32×32 inverse-DCT + add `eob <= 34` fast-path
+    /// kernel (Wave F F9). AVX2 finisher-only, same Stage 3 as
+    /// `idct32x32_add` but the row pass (Stage 1) runs over the first
+    /// 8 rows only. Caller must respect the eob contract — passing a
+    /// block whose true eob exceeds 34 silently drops coefficients
+    /// beyond row 8 and diverges from the full kernel.
+    #[inline]
+    #[must_use]
+    pub fn idct32x32_34_add(&self) -> fn(&[i32; 1024], &mut [u8], usize) {
+        self.idct32x32_34_add
+    }
+
+    /// Dispatch the 32×32 inverse-DCT + add `eob <= 135` fast-path
+    /// kernel (Wave F F9). AVX2 finisher-only, same Stage 3 as
+    /// `idct32x32_add` but the row pass (Stage 1) runs over the first
+    /// 16 rows only. Caller must respect the eob contract — passing a
+    /// block whose true eob exceeds 135 silently drops coefficients
+    /// beyond row 16 and diverges from the full kernel.
+    #[inline]
+    #[must_use]
+    pub fn idct32x32_135_add(&self) -> fn(&[i32; 1024], &mut [u8], usize) {
+        self.idct32x32_135_add
     }
 
     /// Dispatch the 16×16 inverse-DCT + add `eob <= 10` fast-path
@@ -729,6 +809,77 @@ mod tests {
             d.idct32x32_add() as usize,
             scalar as usize,
             "avx2=false must install the scalar idct32x32_1024_add"
+        );
+    }
+
+    /// Forcing `avx2 = false` falls back to the scalar reference for
+    /// the Wave F F9 `idct32x32_34_add` slot.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn forced_scalar_caps_installs_scalar_idct32x32_34() {
+        let mut caps = detect();
+        caps.avx2 = false;
+        let d = SimdDispatch::build(caps);
+        let scalar: fn(&[i32; 1024], &mut [u8], usize) =
+            crate::transforms::inverse::idct32x32_34_add;
+        assert_eq!(
+            d.idct32x32_34_add() as usize,
+            scalar as usize,
+            "avx2=false must install the scalar idct32x32_34_add"
+        );
+    }
+
+    /// Forcing `avx2 = false` falls back to the scalar reference for
+    /// the Wave F F9 `idct32x32_135_add` slot.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn forced_scalar_caps_installs_scalar_idct32x32_135() {
+        let mut caps = detect();
+        caps.avx2 = false;
+        let d = SimdDispatch::build(caps);
+        let scalar: fn(&[i32; 1024], &mut [u8], usize) =
+            crate::transforms::inverse::idct32x32_135_add;
+        assert_eq!(
+            d.idct32x32_135_add() as usize,
+            scalar as usize,
+            "avx2=false must install the scalar idct32x32_135_add"
+        );
+    }
+
+    /// The 32×32 EOB-bucket slots route through their per-bucket fast
+    /// paths under both caps states. Under forced AVX2 they install
+    /// the corresponding AVX2 wrappers; under forced scalar they
+    /// install the scalar references. Mirrors the 16×16 pattern in
+    /// `idct16x16_eob_bucket_slots_are_always_scalar` (kept as a
+    /// dispatch-shape test so a future scalar-only regression would
+    /// surface here).
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn idct32x32_eob_bucket_slots_dispatch_correctly() {
+        // Scalar caps → scalar fn pointers.
+        let mut caps = detect();
+        caps.avx2 = false;
+        let d_scalar = SimdDispatch::build(caps);
+        let scalar_34: fn(&[i32; 1024], &mut [u8], usize) =
+            crate::transforms::inverse::idct32x32_34_add;
+        let scalar_135: fn(&[i32; 1024], &mut [u8], usize) =
+            crate::transforms::inverse::idct32x32_135_add;
+        assert_eq!(d_scalar.idct32x32_34_add() as usize, scalar_34 as usize);
+        assert_eq!(d_scalar.idct32x32_135_add() as usize, scalar_135 as usize);
+
+        // AVX2 caps → AVX2 wrappers (NOT the scalar pointers).
+        let mut caps_avx2 = detect();
+        caps_avx2.avx2 = true;
+        let d_avx2 = SimdDispatch::build(caps_avx2);
+        assert_ne!(
+            d_avx2.idct32x32_34_add() as usize,
+            scalar_34 as usize,
+            "avx2=true must install the AVX2 wrapper for idct32x32_34_add"
+        );
+        assert_ne!(
+            d_avx2.idct32x32_135_add() as usize,
+            scalar_135 as usize,
+            "avx2=true must install the AVX2 wrapper for idct32x32_135_add"
         );
     }
 

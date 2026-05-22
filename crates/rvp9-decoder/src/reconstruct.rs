@@ -423,14 +423,26 @@ fn inverse_transform_add(
         }
         TxSize::Tx32x32 => {
             // No 32×32 hybrid exists; libvpx always routes through
-            // vp9_idct32x32_add at this size (vp9_idct.c:289).
+            // vp9_idct32x32_add at this size — see vp9/common/vp9_idct.c
+            // ~line 289 for the per-eob bucket dispatch (Wave F F9
+            // mirrors this here).
             let coefs: &[i32; 1024] = input.try_into().expect("Tx32x32 input is 1024 coefs");
             if eob == 1 {
                 idct32x32_1_add(coefs[0], dest, stride);
+            } else if eob <= 34 {
+                // F9 — top-left 8×8 sparse fast path. Row pass runs
+                // 8× instead of 32×; AVX2 finisher shared with the
+                // full kernel.
+                (dispatch.idct32x32_34_add())(coefs, dest, stride);
+            } else if eob <= 135 {
+                // F9 — top-left 16×16 sparse fast path. Row pass runs
+                // 16× instead of 32×; AVX2 finisher shared with the
+                // full kernel.
+                (dispatch.idct32x32_135_add())(coefs, dest, stride);
             } else {
                 // G4-α — dispatch through SimdDispatch so the AVX2
-                // implementation runs on supported CPUs. 34/135-bucket
-                // fast paths not yet ported; full _1024_add is bit-exact.
+                // implementation runs on supported CPUs. Full
+                // _1024_add is bit-exact.
                 (dispatch.idct32x32_add())(coefs, dest, stride);
             }
         }
