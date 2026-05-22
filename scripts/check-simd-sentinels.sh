@@ -1,24 +1,25 @@
 #!/usr/bin/env bash
-# G4.1 — source-side aligned-load discipline check (per-function granularity).
+# G4.1 — source-side aligned-load discipline check.
 #
-# Every `unsafe fn` in `crates/rvp9-core/src/dsp/x86_64/*.rs` (the AVX2 /
-# SSE2 / SSSE3 / SSE4.1 kernel impls) MUST use unaligned-load intrinsics
-# for reads from `dst`. The convention is documented by a grep-able
-# sentinel comment of the form:
+# In every `*.rs` kernel file under `crates/rvp9-core/src/dsp/x86_64`
+# (the AVX2 / SSE2 / SSSE3 / SSE4.1 impls, excluding `mod.rs`), reads
+# from the `dst` buffer MUST use UNALIGNED load intrinsics
+# (`_mm256_loadu_si256` / `_mm_loadu_si128` / `_mm_loadl_epi64`),
+# because `dst` is not guaranteed 16/32-byte aligned and an aligned
+# load on an unaligned pointer faults.
 #
-#     // G4: loads from `dst` use _mm256_loadu_si256 (unaligned)
+# Rather than mandate a sentinel comment above every `unsafe fn` (most
+# kernels are store-only to `dst` and legitimately never load from it),
+# this check detects the actual violation directly: it FAILS if any
+# kernel file calls an ALIGNED load intrinsic:
 #
-# (or the equivalent for SSE2 / SSSE3 — `_mm_loadu_si128` /
-# `_mm_loadl_epi64`).
+#     _mm256_load_si256  _mm_load_si128   _mm_load_si64
+#     _mm256_load_ps     _mm_load_ps
+#     _mm256_load_pd     _mm_load_pd
 #
-# **Per-function check:** for every `unsafe fn <name>(...)` declaration
-# under the kernel directory, this script requires a sentinel comment
-# either on the line immediately preceding the `unsafe fn` line, or in
-# the contiguous block of comment / attribute lines that precedes it.
-# This catches the failure mode where a second `unsafe fn` is appended
-# to an existing kernel file but the author forgets to add a sentinel
-# above it (the original "one sentinel per file" check would pass
-# silently).
+# The safe unaligned variants (`loadu` / `loadl`) are NOT flagged: the
+# pattern anchors on the exact intrinsic name with a word boundary so
+# `_mm_load_si128` does not match `_mm_loadu_si128` or `_mm_loadl_epi64`.
 #
 # Usage:
 #   scripts/check-simd-sentinels.sh
@@ -26,7 +27,6 @@
 set -euo pipefail
 
 DIR="crates/rvp9-core/src/dsp/x86_64"
-SENTINEL='G4: loads from `dst` use'
 RC=0
 
 if [ ! -d "$DIR" ]; then
@@ -34,57 +34,37 @@ if [ ! -d "$DIR" ]; then
     exit 2
 fi
 
-# Walk every .rs file in the kernel dir except mod.rs.
+# Aligned-load intrinsics that must never appear in a kernel. The
+# boundary is enforced with explicit non-word-character classes
+# `(^|[^A-Za-z0-9_])...([^A-Za-z0-9_]|$)` (portable across awk variants
+# where `\b` / `\<` are unreliable in regexes), so e.g. `_mm_load_si128`
+# matches `_mm_load_si128(` but never `_mm_loadu_si128` /
+# `_mm_loadl_epi64`. The pattern is embedded literally in the awk
+# program (passing it via `-v` would strip the backslashes).
 for f in "$DIR"/*.rs; do
     base="$(basename "$f")"
     if [ "$base" = "mod.rs" ]; then
         continue
     fi
-    # Find every `unsafe fn <name>(` declaration in the file and
-    # confirm the contiguous block of comment/attribute lines that
-    # precedes it contains the sentinel string. A "block" is any run
-    # of lines starting with one of: `//`, `#[`, `#![`, or blank
-    # whitespace.
-    awk -v file="$f" -v sentinel="$SENTINEL" '
+    awk -v file="$f" '
         BEGIN { rc = 0 }
-        # Match any "unsafe fn <ident>(" at any indent. Allow leading
-        # `pub ` / `pub(crate) ` etc. modifiers.
-        /^[[:space:]]*(pub[[:space:]]*(\([^)]*\)[[:space:]]*)?)?unsafe[[:space:]]+fn[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(/ {
-            # Walk backwards through the buffered preceding lines
-            # looking for the sentinel inside the contiguous comment /
-            # attribute / blank block.
-            found = 0
-            for (i = NR - 1; i >= 1; i--) {
-                line = lines[i]
-                # Stop scanning once we hit a non-comment / non-attr /
-                # non-blank line (e.g. a previous fn body close brace).
-                if (line !~ /^[[:space:]]*$/ &&
-                    line !~ /^[[:space:]]*\/\// &&
-                    line !~ /^[[:space:]]*#\[/ &&
-                    line !~ /^[[:space:]]*#!\[/) {
-                    break
-                }
-                if (index(line, sentinel) > 0) {
-                    found = 1
-                    break
-                }
-            }
-            if (!found) {
-                # Strip leading whitespace for a tidier error message.
-                trimmed = $0
-                sub(/^[[:space:]]+/, "", trimmed)
-                printf "MISSING sentinel: %s:%d before `%s` (expected `// %s ...` in the preceding comment block)\n", \
-                       file, NR, trimmed, sentinel
+        {
+            if (match($0, /(^|[^A-Za-z0-9_])(_mm256_load_si256|_mm_load_si128|_mm256_load_ps|_mm_load_ps|_mm256_load_pd|_mm_load_pd|_mm_load_si64)([^A-Za-z0-9_]|$)/)) {
+                m = substr($0, RSTART, RLENGTH)
+                # Strip the boundary chars captured on either side so the
+                # report shows only the intrinsic name.
+                gsub(/^[^A-Za-z0-9_]+|[^A-Za-z0-9_]+$/, "", m)
+                printf "ALIGNED load: %s:%d uses %s (use the unaligned variant: loadu/loadl — `dst` is not guaranteed aligned)\n", \
+                       file, NR, m
                 rc = 1
             }
         }
-        { lines[NR] = $0 }
         END { exit rc }
     ' "$f" || RC=1
 done
 
 if [ "$RC" -eq 0 ]; then
-    echo "OK: every \`unsafe fn\` under $DIR carries a preceding G4 unaligned-load sentinel."
+    echo "OK: no aligned-load intrinsics under $DIR; all SIMD loads use unaligned (loadu/loadl) variants."
 fi
 
 exit "$RC"
