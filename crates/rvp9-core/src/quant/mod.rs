@@ -69,6 +69,47 @@ pub fn apply_qindex_delta(qindex: i32, delta: i32) -> i32 {
     qindex.saturating_add(delta).clamp(MINQ, MAXQ)
 }
 
+/// Scalar reference for the Wave H H6 `plane_dequant_finisher` dispatch
+/// slot — pass 2 of the split detokenize loop in
+/// [`crate::entropy::detokenize::decode_coefs`].
+///
+/// Replays the per-coefficient dequant arithmetic the bool-coder loop
+/// deposits into four parallel scratch arrays (`raster`, `dqv`, `val`,
+/// `sign`). For each scratch entry `i`:
+///
+/// ```text
+/// mag = (val[i] * dqv[i]) >> dq_shift
+/// dq_coefs_out[raster[i]] = if sign[i] != 0 { -mag } else { mag }
+/// ```
+///
+/// `dq_shift` is `0` for every transform size except `Tx32x32` (which
+/// uses `1`). The output buffer is assumed pre-zeroed (the detokenize
+/// caller zeros `dq_coefs_out[..seg_eob]` at function entry).
+///
+/// This is the AVX2-kernel sibling for the slot
+/// [`crate::dsp::SimdDispatch::plane_dequant_finisher`]; the AVX2 path
+/// processes 8 i32 lanes per iteration and a scalar tail.
+pub fn plane_dequant_finisher(
+    scratch_raster: &[u16],
+    scratch_dqv: &[i16],
+    scratch_val: &[i16],
+    scratch_sign: &[u8],
+    dq_shift: u32,
+    dq_coefs_out: &mut [i32],
+) {
+    debug_assert_eq!(scratch_raster.len(), scratch_dqv.len());
+    debug_assert_eq!(scratch_raster.len(), scratch_val.len());
+    debug_assert_eq!(scratch_raster.len(), scratch_sign.len());
+    for i in 0..scratch_raster.len() {
+        let raster_idx = scratch_raster[i] as usize;
+        let dqv_i = i32::from(scratch_dqv[i]);
+        let val_i = i32::from(scratch_val[i]);
+        let sign = scratch_sign[i];
+        let mag = (val_i * dqv_i) >> dq_shift;
+        dq_coefs_out[raster_idx] = if sign != 0 { -mag } else { mag };
+    }
+}
+
 /// Compute the effective qindex for a (segment_alt_q, base_qindex) pair.
 /// Mirrors `vp9_get_qindex` (`vp9_quant_common.c:196-206`).
 ///

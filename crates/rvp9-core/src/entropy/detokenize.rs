@@ -573,14 +573,23 @@ pub fn decode_coefs(
     debug_assert_eq!(scratch_raster.len(), scratch_dqv.len());
     debug_assert_eq!(scratch_raster.len(), scratch_val.len());
     debug_assert_eq!(scratch_raster.len(), scratch_sign.len());
-    for i in 0..scratch_raster.len() {
-        let raster_idx = scratch_raster[i] as usize;
-        let dqv_i = i32::from(scratch_dqv[i]);
-        let val_i = i32::from(scratch_val[i]);
-        let sign = scratch_sign[i];
-        let mag = (val_i * dqv_i) >> dq_shift;
-        dq_coefs_out[raster_idx] = if sign != 0 { -mag } else { mag };
-    }
+    // Wave H H6 — pass-2 dequant arithmetic via the AVX2-capable
+    // `plane_dequant_finisher` slot. On AVX2 hosts this processes 8
+    // i32 lanes per iteration (`_mm256_mullo_epi32` +
+    // `_mm256_sra_epi32` + `_mm256_sign_epi32`) with a scalar tail;
+    // on non-AVX2 hosts it falls back to the bit-exact scalar
+    // reference (`crate::quant::plane_dequant_finisher`). `dsp::get()`
+    // is one atomic load on the process-wide OnceLock; the dispatch
+    // table is constructed once per process and cached.
+    let dispatch = crate::dsp::get();
+    (dispatch.plane_dequant_finisher())(
+        &scratch_raster,
+        &scratch_dqv,
+        &scratch_val,
+        &scratch_sign,
+        dq_shift,
+        dq_coefs_out,
+    );
 
     // Stage 3 stretch M.6 — post-decode differential. The reference port
     // was deliberately frozen back at M.4 (verbatim transcription of

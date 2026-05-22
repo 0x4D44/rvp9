@@ -53,7 +53,6 @@ use std::sync::{Arc, OnceLock};
 
 use super::caps::{Caps, detect};
 use crate::frame::Yv12Buffer;
-use crate::quant::QuantizerDeltas;
 
 /// Bit mask of which AVX2 loopfilter kernels to activate. Wave H H1
 /// gate; H7 bisection support. See the comment block in
@@ -356,14 +355,36 @@ fn scalar_lpf_horizontal_16_dual(
     crate::loopfilter::lpf_horizontal_16_dual(pixels, s_index, pitch, blimit, limit, thresh)
 }
 
-/// Scalar reference for the `plane_dequant_pair` dispatch slot. Direct
-/// alias of [`crate::quant::plane_dequant_pair`]; the slot exists to
-/// reserve the family naming for a future per-coefficient dequant
-/// AVX2 kernel (which would land alongside the entropy decoder
-/// rewrite — currently dequant is fused into the per-token decode
-/// loop and has no batchable entry point).
-fn scalar_plane_dequant_pair(q_index: i32, deltas: QuantizerDeltas) -> (i16, i16) {
-    crate::quant::plane_dequant_pair(q_index, deltas)
+/// Scalar reference for the `plane_dequant_finisher` dispatch slot.
+/// Direct alias of [`crate::quant::plane_dequant_finisher`].
+///
+/// Wave H H6 reshaped this slot. Prior to H6 it was a placeholder
+/// `plane_dequant_pair: fn(i32, QuantizerDeltas) -> (i16, i16)` that
+/// reflected the pre-H5 architecture (dequant fused into the
+/// bool-coder loop, no batchable kernel). Wave H H5 split the
+/// detokenize loop into a bool-coder pass that deposits four parallel
+/// scratch arrays and a uniform pass-2 dequant arithmetic loop. H6
+/// retargets the slot at that pass-2 work: 8 i32 lanes per iteration
+/// via AVX2 (`_mm256_mullo_epi32` + `_mm256_sra_epi32` +
+/// `_mm256_sign_epi32`), with a scalar tail for `< 8` remaining
+/// entries.
+#[allow(clippy::too_many_arguments)] // mirrors the six-slot scratch layout
+fn scalar_plane_dequant_finisher(
+    scratch_raster: &[u16],
+    scratch_dqv: &[i16],
+    scratch_val: &[i16],
+    scratch_sign: &[u8],
+    dq_shift: u32,
+    dq_coefs_out: &mut [i32],
+) {
+    crate::quant::plane_dequant_finisher(
+        scratch_raster,
+        scratch_dqv,
+        scratch_val,
+        scratch_sign,
+        dq_shift,
+        dq_coefs_out,
+    )
 }
 
 /// Scalar reference for the `extend_frame_borders` dispatch slot.
@@ -412,14 +433,14 @@ fn scalar_extend_frame_borders(yv12: &mut Yv12Buffer) {
 /// | H3    | loopfilter h8_dual | `lpf_horizontal_8_dual`   | yes (Wave H H3) — two-singles delegation |
 /// | H1    | loopfilter v16_dual| `lpf_vertical_16_dual`    | scalar (H4 lands AVX2) |
 /// | H1    | loopfilter h16_dual| `lpf_horizontal_16_dual`  | scalar (H4 lands AVX2) |
-/// | G4.4a | quant dequant     | `plane_dequant_pair`       | scalar only (architectural — no batchable kernel) |
+/// | H6    | quant dequant     | `plane_dequant_finisher`   | yes (Wave H H6) — pass 2 of split detokenize |
 /// | G4.4b | frame-buffers     | `extend_frame_borders`     | scalar only (memcpy/memset already vectorised) |
 ///
 /// **Family coverage** (per HLD §G4 table line 543-552):
 /// 1. frame-buffers — `extend_frame_borders` slot present (G4.4b).
 /// 2. entropy decoder — n/a (scalar by design, BoolReader is sequential).
 /// 3. transforms inverse — `idct4x4_add` (G4.2) + `idct8x8_add` (G4.1) + `idct16x16_add` (Wave D G4.2 full-kernel rollout) + `idct32x32_add` (Wave E G4-α) + `iht4x4_add` + `iht8x8_add` (Wave E G4-β) all have AVX2 impls.
-/// 4. quant dequant — `plane_dequant_pair` slot present (G4.4a).
+/// 4. quant dequant — `plane_dequant_finisher` slot present (H6, AVX2-capable).
 /// 5. intra-pred — `dc_predictor_4x4` has AVX2 impl (G4.3a).
 /// 6. loopfilter — `lpf_vertical_4` (Wave F G F10), `lpf_horizontal_4`
 ///    (Wave G G3), `lpf_vertical_8` (Wave G G4), `lpf_horizontal_8`
@@ -430,11 +451,10 @@ fn scalar_extend_frame_borders(yv12: &mut Yv12Buffer) {
 /// (idct4x4, idct8x8, idct16x16, idct32x32, iht4x4, iht8x8,
 /// dc_predictor_4x4, lpf_vertical_4, lpf_horizontal_4,
 /// lpf_vertical_8, lpf_horizontal_8, lpf_vertical_16,
-/// lpf_horizontal_16). The deferred slots
-/// (plane_dequant_pair, extend_frame_borders) reserve naming +
-/// dispatch shape so future AVX2 work can fill them without
-/// changing call sites. See per-field docstrings for the per-family
-/// deferral rationale.
+/// lpf_horizontal_16, plane_dequant_finisher). The deferred slot
+/// (extend_frame_borders) reserves naming + dispatch shape so future
+/// AVX2 work can fill it without changing call sites. See per-field
+/// docstrings for the per-family deferral rationale.
 ///
 /// Fields are `pub(crate)` to keep slot additions a crate-internal
 /// concern; external dispatch sites call the per-kernel accessor
@@ -707,16 +727,25 @@ pub struct SimdDispatch {
     pub(crate) lpf_horizontal_16_dual:
         fn(pixels: &mut [u8], s_index: usize, pitch: usize, blimit: u8, limit: u8, thresh: u8),
 
-    /// G4.4a — paired (DC, AC) dequant LUT lookup. Signature mirrors
-    /// [`crate::quant::plane_dequant_pair`]. **Currently scalar-only**:
-    /// architecturally there is no batchable dequant kernel in the
-    /// VP9 decoder because per-coefficient dequant
-    /// (`v = (value * dqv) >> dq_shift`) is fused into the bool-coder
-    /// loop in `decode_coefs` (see
-    /// `crates/rvp9-core/src/entropy/detokenize.rs:415`). The slot
-    /// here reserves the family name for a future entropy-decoder
-    /// rewrite that would separate dequant into a vectorisable pass.
-    pub(crate) plane_dequant_pair: fn(q_index: i32, deltas: QuantizerDeltas) -> (i16, i16),
+    /// Wave H H6 — pass 2 of the split detokenize loop. Mirrors
+    /// [`crate::quant::plane_dequant_finisher`]. The bool-coder pass
+    /// (pass 1) deposits four parallel scratch arrays
+    /// `(raster, dqv, val, sign)` per non-zero coefficient; this slot
+    /// consumes them, computing
+    /// `mag = (val * dqv) >> dq_shift; out[raster] = sign ? -mag : mag`
+    /// in a vectorisable form (no loop-carried state, no bool-coder
+    /// reads). On x86_64 AVX2 CPUs this points at the safe wrapper
+    /// [`crate::dsp::x86_64::plane_dequant_finisher_avx2`] (8 i32
+    /// lanes per iteration, scalar tail for `< 8` entries); otherwise
+    /// it points at the scalar reference.
+    pub(crate) plane_dequant_finisher: fn(
+        scratch_raster: &[u16],
+        scratch_dqv: &[i16],
+        scratch_val: &[i16],
+        scratch_sign: &[u8],
+        dq_shift: u32,
+        dq_coefs_out: &mut [i32],
+    ),
 
     /// G4.4b — frame-border edge replication. Signature mirrors
     /// [`crate::frame::extend_frame_borders`]. **Currently scalar-only**:
@@ -1111,9 +1140,38 @@ impl SimdDispatch {
         let lpf_horizontal_16_dual: fn(&mut [u8], usize, usize, u8, u8, u8) =
             scalar_lpf_horizontal_16_dual;
 
-        // ---- G4.4a / G4.4b — scalar-only slots (deferral rationale
-        // per field docstrings on `SimdDispatch`). ----
-        let plane_dequant_pair: fn(i32, QuantizerDeltas) -> (i16, i16) = scalar_plane_dequant_pair;
+        // ---- Wave H H6 — pass-2 dequant finisher (AVX2 on x86_64). ----
+        // Pass 2 of the Wave H H5 split detokenize loop. Bit-exact
+        // vs the scalar reference by construction: `_mm256_mullo_epi32`
+        // returns the low 32 bits of the i32×i32 product (which always
+        // fits in i32 here — see kernel docstring for the bound),
+        // `_mm256_sra_epi32` matches scalar `>>` on i32, and
+        // `_mm256_sign_epi32(mag, ±1)` matches `if sign { -mag } else
+        // { mag }` exactly. Scalar tail covers `< 8` remaining entries.
+        #[cfg(target_arch = "x86_64")]
+        let plane_dequant_finisher: fn(
+            &[u16],
+            &[i16],
+            &[i16],
+            &[u8],
+            u32,
+            &mut [i32],
+        ) = if caps.avx2 {
+            crate::dsp::x86_64::plane_dequant_finisher_avx2
+        } else {
+            scalar_plane_dequant_finisher
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let plane_dequant_finisher: fn(
+            &[u16],
+            &[i16],
+            &[i16],
+            &[u8],
+            u32,
+            &mut [i32],
+        ) = scalar_plane_dequant_finisher;
+
+        // ---- G4.4b — scalar-only slot (deferral rationale on field doc). ----
         let extend_frame_borders: fn(&mut Yv12Buffer) = scalar_extend_frame_borders;
 
         Self {
@@ -1142,7 +1200,7 @@ impl SimdDispatch {
             lpf_horizontal_8_dual,
             lpf_vertical_16_dual,
             lpf_horizontal_16_dual,
-            plane_dequant_pair,
+            plane_dequant_finisher,
             extend_frame_borders,
         }
     }
@@ -1384,13 +1442,15 @@ impl SimdDispatch {
         self.lpf_horizontal_16_dual
     }
 
-    /// Dispatch the paired (DC, AC) dequant LUT lookup (G4.4a). Slot
-    /// is currently scalar-only — see field doc on
-    /// [`SimdDispatch::plane_dequant_pair`].
+    /// Dispatch the pass-2 dequant finisher (Wave H H6). See field
+    /// doc on [`SimdDispatch::plane_dequant_finisher`]. AVX2 wrapper
+    /// when `caps.avx2`, scalar reference otherwise.
     #[inline]
     #[must_use]
-    pub fn plane_dequant_pair(&self) -> fn(i32, QuantizerDeltas) -> (i16, i16) {
-        self.plane_dequant_pair
+    pub fn plane_dequant_finisher(
+        &self,
+    ) -> fn(&[u16], &[i16], &[i16], &[u8], u32, &mut [i32]) {
+        self.plane_dequant_finisher
     }
 
     /// Dispatch the frame-border edge-replication kernel (G4.4b). Slot
@@ -1783,12 +1843,10 @@ mod tests {
         );
     }
 
-    /// G4.4a / G4.4b deferred slots are always scalar regardless of
-    /// caps. (G4.3b `lpf_vertical_4` was promoted to AVX2 in Wave F
-    /// G F10 and `lpf_horizontal_4` in Wave G G3; see
-    /// `forced_caps_installs_correct_lpf_vertical_4` and
-    /// `forced_caps_installs_correct_lpf_horizontal_4` for those
-    /// slots' parity assertions.)
+    /// G4.4b deferred slot is always scalar regardless of caps. (H6
+    /// promoted `plane_dequant_finisher` to AVX2 — see
+    /// `plane_dequant_finisher_dispatches_correctly` for that slot's
+    /// parity assertion.)
     /// See `forced_scalar_caps_installs_scalar_idct8x8` for the
     /// miri-skip rationale.
     #[cfg(target_arch = "x86_64")]
@@ -1799,11 +1857,46 @@ mod tests {
             let mut caps = detect();
             caps.avx2 = avx2;
             let d = SimdDispatch::build(caps);
-            let dq: fn(i32, QuantizerDeltas) -> (i16, i16) = super::scalar_plane_dequant_pair;
             let ef: fn(&mut Yv12Buffer) = super::scalar_extend_frame_borders;
-            assert_eq!(d.plane_dequant_pair() as usize, dq as usize);
             assert_eq!(d.extend_frame_borders() as usize, ef as usize);
         }
+    }
+
+    /// Wave H H6 — `plane_dequant_finisher` slot routes to AVX2 wrapper
+    /// when `caps.avx2`, scalar reference otherwise. Mirrors the F10/G3
+    /// tautology-guard pattern.
+    #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn plane_dequant_finisher_dispatches_correctly() {
+        type Slot = fn(&[u16], &[i16], &[i16], &[u8], u32, &mut [i32]);
+
+        // Forced scalar → scalar reference installed.
+        let mut caps_s = detect();
+        caps_s.avx2 = false;
+        let d_s = SimdDispatch::build(caps_s);
+        let scalar_fp: Slot = super::scalar_plane_dequant_finisher;
+        assert_eq!(
+            d_s.plane_dequant_finisher() as usize,
+            scalar_fp as usize,
+            "avx2=false must install scalar plane_dequant_finisher"
+        );
+
+        // Forced AVX2 → AVX2 wrapper installed (NOT scalar).
+        let mut caps_a = detect();
+        caps_a.avx2 = true;
+        let d_a = SimdDispatch::build(caps_a);
+        let avx2_fp: Slot = crate::dsp::x86_64::plane_dequant_finisher_avx2;
+        assert_ne!(
+            d_a.plane_dequant_finisher() as usize,
+            scalar_fp as usize,
+            "avx2=true must NOT install scalar plane_dequant_finisher"
+        );
+        assert_eq!(
+            d_a.plane_dequant_finisher() as usize,
+            avx2_fp as usize,
+            "avx2=true must install plane_dequant_finisher_avx2"
+        );
     }
 
     /// Wave H H1 + H7 — default loopfilter AVX2 routing after H7
