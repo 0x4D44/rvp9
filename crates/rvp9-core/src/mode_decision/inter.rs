@@ -81,7 +81,9 @@
 //! 5. Reconstruct via inverse DCT + add to pred.
 //! 6. Compute SSE between source and reconstruction — this is `D`.
 //! 7. Rate `R = inter_mode_costs[ctx][mode.idx()] +
-//!    (if NEWMV: mv_cost(diff, mv_costs))`.
+//!    (if NEWMV: ROUND_POWER_OF_TWO(mv_cost(diff, mv_costs) * 108, 7))`.
+//!    The `108/128` damping mirrors libvpx `vp9_mv_bit_cost`
+//!    (`vp9_mcomp.c:80-84`) with `MV_COST_WEIGHT = 108` (`vp9_rd.h:38`).
 //! 8. `rd_cost = ROUND_POWER_OF_TWO(R * lambda, 9) + (D << 7)` —
 //!    libvpx `RDCOST` macro at `vp9_rd.h:29-30`.
 
@@ -585,13 +587,24 @@ fn evaluate_candidate(
     }
 
     // Rate. Mode cost is a table lookup; NEWMV additionally charges
-    // the MV-bit cost (libvpx `vp9_mv_bit_cost`).
+    // the MV-bit cost (libvpx `vp9_mv_bit_cost`,
+    // `vp9_mcomp.c:80-84`):
+    //
+    //     ROUND_POWER_OF_TWO(mv_cost(diff) * MV_COST_WEIGHT, 7)
+    //
+    // with `MV_COST_WEIGHT = 108` (`vp9_rd.h:38`). The 108/128 ≈ 0.84
+    // damps the raw `mv_cost` before it is added to `mode_rate` and
+    // fed into RDCOST. Skipping the scaling over-charges MV bits by
+    // 128/108 ≈ 1.185×, which biases the picker against NEWMV.
     let mode_rate = params.inter_mode_costs[params.inter_mode_ctx][mode.idx()]
         .max(0) as u32;
     let mv_rate = if matches!(mode, InterMode::NewMv) {
         let diff_row = mv.row.wrapping_sub(ref_mv.row);
         let diff_col = mv.col.wrapping_sub(ref_mv.col);
-        mv_cost(diff_row, diff_col, params.mv_costs).max(0) as u32
+        let raw = mv_cost(diff_row, diff_col, params.mv_costs).max(0) as u64;
+        // ROUND_POWER_OF_TWO(raw * 108, 7).
+        let scaled = (raw * 108 + 64) >> 7;
+        scaled.min(u32::MAX as u64) as u32
     } else {
         0
     };
