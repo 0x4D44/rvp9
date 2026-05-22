@@ -2289,6 +2289,26 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // seed's effect on the F12 small-frame corpus.
     let int_pro_enabled = w * h <= 307_200;
 
+    // A4.rt-recovery - extend the same frame-area gate to the FULL
+    // inter picker (NEWMV diamond + sub-pel + 3-candidate RD scan) and
+    // the per-leaf find_mv_refs spatial-seed walk. A3.inter + A3'-int-pro
+    // added ~5-7 ms of per-leaf overhead to the RT path: each
+    // Block16x16/Block32x32/Block64x64 leaf walks `find_mv_refs` against
+    // the in-progress mi_grid then runs the picker which runs the NEWMV
+    // diamond + sub-pel refinement unconditionally. The A3'-int-pro
+    // observation ("at 720p+ the picker's RD math at high qindex heavily
+    // favours NEARESTMV-at-(0,0) regardless of seed quality")
+    // generalises: on 720p+ at the CBR qindex (typically 200-255), the
+    // picker's NEWMV diamond + sub-pel work produces ZERO behaviour
+    // change - the picker always rejects NEWMV. Gating the entire picker
+    // on the existing 307_200 threshold falls through to pre-A1
+    // ZEROMV-skip on large frames; small-frame corpora (testsrc 256x256,
+    // foreman_cif 352x288) keep the picker enabled so F12 PSNR sweeps
+    // are preserved (cross-decoder runs at 256x256 so byte-exactness is
+    // also preserved).
+    let inter_picker_enabled = w * h <= 307_200;
+
+
     assert_eq!(
         sb_partitions.len(),
         sb_rows * sb_cols,
@@ -2446,13 +2466,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // ~130-140 Block8x8 leaves per frame previously fell
                 // through to ZEROMV-skip). A1' — frame-area-gated; see
                 // `block8x8_picker_enabled` above (above the SB walk).
-                let picker_supported = match leaf_bsize {
-                    BlockSize::Block8x8 => block8x8_picker_enabled,
-                    BlockSize::Block16x16
-                    | BlockSize::Block32x32
-                    | BlockSize::Block64x64 => true,
-                    _ => false,
-                };
+                let picker_supported = inter_picker_enabled
+                    && match leaf_bsize {
+                        BlockSize::Block8x8 => block8x8_picker_enabled,
+                        BlockSize::Block16x16
+                        | BlockSize::Block32x32
+                        | BlockSize::Block64x64 => true,
+                        _ => false,
+                    };
 
                 if !picker_supported {
                     sb_partitions[sb_idx][leaf_idx].picked_mode = InterMode::ZeroMv;

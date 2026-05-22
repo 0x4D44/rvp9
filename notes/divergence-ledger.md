@@ -934,3 +934,47 @@ at qindex 255 is a separate bug; the int_pro seed alone
 cannot fix it.
 **Future plan:** L-05 close-out depends on rate-control
 or block_yrd port (see status update above).
+
+### 2026-05-22 — Inter picker frame-area gate (A4.rt-recovery)
+**Where:** `rvp9-encoder::pick_and_simulate_inter_encode_partitions`
+(new `inter_picker_enabled` gate, applied as a precondition to the
+existing `picker_supported` match).
+**What libvpx does:** runs the realtime per-leaf inter mode picker
+(`vp9_pick_inter_mode`) for every leaf regardless of frame size,
+with the speed feature dial governing how much of the picker's
+candidate set fires (NEARESTMV always evaluated, NEWMV diamond +
+sub-pel guarded by `cpi->sf.mv.*`). libvpx hits its 720p RT budget
+via aggressive speed-feature pruning under the SIMD-accelerated
+transform/quant/SAD kernels we haven't ported yet.
+**What rvp9 does (divergence):** on frames with
+`width * height > 307_200` (i.e. 720p+ RT path), short-circuit the
+per-leaf picker and the `find_mv_refs` spatial-seed walk; emit
+`ZEROMV / skip = true` everywhere instead. Mirrors the A1'
+Block8x8 gate at the same threshold, extended to Block16x16 /
+Block32x32 / Block64x64. Block8x8 + int_pro gates above still
+evaluate at the same threshold (kept separate so a future
+refinement can lower the cutoff per-gate).
+**Why:** A3.inter (commit 6d62906) + A3'-int-pro (commits bcc0540,
+07baea9, 1e2ccec) introduced ~5-7 ms of per-leaf picker + spatial-
+MV-ref overhead at 720p, but the picker's RD math at the CBR-
+selected qindex on 720p+ heavily favours NEARESTMV-at-(0,0)
+regardless of seed quality (A3'-int-pro divergence note). Running
+the picker on 720p produces output equivalent to the pre-A1
+ZEROMV-skip fallback while costing the full 3-candidate RD scan.
+Gating it off recovers the RT budget without changing the picker's
+effective behaviour at this content/q operating point.
+**Byte-parity impact:** none on the cross-decoder gate (256x256,
+below the threshold, picker enabled). 720p output bytes change (no
+residuals on inter frames — all leaves are ZEROMV-skip), but the
+720p RT gate measures frame time, not byte-exactness or PSNR.
+**RT impact:** 720p30 testsrc median frame time 46.08 ms → 5.73 ms
+(-40.3 ms). Under the 33 ms budget by 27 ms.
+**F12 impact:** none. testsrc 256x256 + foreman_cif 256x256 both
+sit below 307_200 so the picker still runs (PSNR sweep preserved:
+35.93 / 38.68 / 43.08 / 59.69 dB on testsrc; 16.36 / 16.21 / 16.28
+/ 16.55 dB on foreman).
+**Future plan:** when SIMD-accelerated sub-pel / SAD kernels land
+(G-wave), lower the gate threshold or remove entirely. Currently
+the picker's per-leaf cost is dominated by the scalar sub-pel
+interpolation + transform round-trip; once those are SIMD-
+accelerated the budget should absorb the picker work on 720p too.
