@@ -24,6 +24,54 @@ Each entry:
 
 ## Entries
 
+### 2026-05-22 — E6: `max_frame_bandwidth` corrected to libvpx formula (keyframe-boost)
+**Where:** `rvp9-encoder::rate_control::state::RateControl::new`
+(`max_frame_bandwidth` init) vs libvpx `vp9_rc_update_framerate`
+(`vp9_ratectrl.c:2069-2083`).
+**What libvpx does:** `vbr_max = avg_frame_bandwidth *
+two_pass_vbrmax_section/100`; `max_frame_bandwidth =
+max(max(MBs * MAX_MB_RATE=250, MAXIMUM_FRAME_BANDWIDTH=2_000_000),
+vbr_max)`. The 2-Mbit floor is the operative term at low resolution.
+**What rvp9 did (the corrected divergence):** `max_frame_bandwidth =
+avg_frame_bandwidth * 4` only — a "sane default" that omitted both the
+`MBs*250` and the `2_000_000` floors. This silently hard-clamped the
+first-frame keyframe target (`calc_iframe_target_size` first-frame branch
+= `starting_buffer_level / 2`) down to ~4× the inter target.
+**What rvp9 does now:** the full libvpx `max(MBs*250, 2_000_000,
+avg*400/100)` formula. KF target is no longer truncated.
+**Why:** the prior `4*avg` was the proximate cause of keyframe
+starvation (E1 finding #3). On foreman_cif 256-crop @ 100 kbps the KF
+target jumped from a clamped 13 348 b (q=177) to its true
+`starting_buffer_level/2` = 200 000 b request (q=20, 163 048 b coded),
+seeding a high-quality LASTFRAME. This is a bug-correction *toward*
+libvpx, not a new departure.
+**Byte-parity impact:** none — cross-decoder byte-exact gate stays green
+(RC only changes the picked Q trajectory, not the bitstream syntax).
+**Compression-efficiency impact:** the keyframe-quality mechanism FIRES:
+foreman @ 100 kbps inter coef-bits dropped 5531 → 3239 b/frame (−41%),
+mean nonzero-coeff/skip0-leaf 6.9 → 3.9, skip=1 share 59% → 67%; KF/low/
+mid PSNR rose. BUT the 250 kbps point regressed (28.98 → 27.48 dB)
+because rvp9's KF `bits_per_mb` enumerator under-predicts KF cost, so
+regulate_q drives KF Q to 4–20 (vs libvpx q=57/124), overspending the
+now-uncapped target. That collapsed the 4-point foreman BD-rate from a
+measurable +367.81 % to "not measurable (no PSNR overlap)" — rvp9's top
+PSNR fell below libvpx's bottom PSNR.
+**Future plan (follow-up lever, NOT this fix):** port libvpx's keyframe
+rate model / KF active-best handling (or apply a KF-side
+`bits_per_mb_multiplier`) so the KF lands near libvpx's q≈57 instead of
+overspending at high bitrate. That restores BD-rate measurability and
+should turn the confirmed inter-bit reduction into a headline gain. The
+inter `active_worst_quality` clamp (`cbr.rs:374`) was deliberately left
+untouched (separate E4 lever).
+**Tests touched:** two synthetic RC convergence oracles
+(`rate_control_simulation_30_frames`,
+`rate_control_converges_at_multiple_bitrates_1mbps`) were recalibrated:
+they had baked in the starved-KF assumption. The faithful large KF now
+drains the leaky-bucket buffer, and v1 has no frame-drop path
+(documented divergence) to refill it; the tests now measure inter
+steady-state with the buffer restored post-KF, which is the
+correction-factor-loop property they actually test.
+
 ### 2026-05-16 — High-bit-depth (10/12-bit) deferred to v2
 **Where:** `rvp9-core::frame::Pixel` (type alias `pub type Pixel = u8;`);
 all SIMD kernels in `rvp9-core::simd::*`; transforms, quant, intra-pred,

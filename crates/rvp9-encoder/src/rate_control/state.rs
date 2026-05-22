@@ -44,9 +44,12 @@ pub struct RateControl {
     pub min_frame_bandwidth: u32,
 
     /// Ceiling on per-frame target bits — burst rate. libvpx
-    /// `rc->max_frame_bandwidth` (`vp9_ratectrl.h:122`). Set to
-    /// `avg_frame_bandwidth * max_burst_factor` where the factor
-    /// is 4 (matches libvpx `set_frame_max_size` for CBR).
+    /// `rc->max_frame_bandwidth` (`vp9_ratectrl.h:122`). Computed in
+    /// [`RateControl::new`] as `max(MBs * MAX_MB_RATE,
+    /// MAXIMUM_FRAME_BANDWIDTH, avg * vbrmax/100)` — the libvpx
+    /// `vp9_rc_update_framerate` formula. The `MAXIMUM_FRAME_BANDWIDTH`
+    /// (2 Mbit) floor is what lets the keyframe target reach
+    /// `starting_buffer_level / 2` instead of being clamped to ~4x avg.
     pub max_frame_bandwidth: u32,
 
     /// Target for the most recent `pick_q_and_bounds` call. libvpx
@@ -181,9 +184,30 @@ impl RateControl {
 
         let avg_frame_bandwidth = avg_frame_bw(&config);
         let min_frame_bandwidth = avg_frame_bandwidth / 4;
-        // libvpx sets max via VP9E_SET_MAX_INTER_BITRATE_PCT (default
-        // 0 == no clamp); we cap at 4x avg as a sane default.
-        let max_frame_bandwidth = avg_frame_bandwidth.saturating_mul(4);
+        // Per-frame burst ceiling. Mirrors libvpx `vp9_rc_update_framerate`
+        // (`vp9_ratectrl.c:2069-2083`):
+        //   vbr_max_bits = avg_frame_bandwidth * two_pass_vbrmax_section / 100
+        //   max_frame_bandwidth =
+        //       max(max(MBs * MAX_MB_RATE, MAXIMUM_FRAME_BANDWIDTH), vbr_max_bits)
+        // with `MAX_MB_RATE = 250`, `MAXIMUM_FRAME_BANDWIDTH = 2_000_000`,
+        // and the 1-pass `two_pass_vbrmax_section` default of 400 (== 4x avg).
+        //
+        // PREVIOUS rvp9 DIVERGENCE: `max_frame_bandwidth = 4 * avg` only.
+        // That starved the keyframe — the iframe target clamp
+        // (`calc_iframe_target_size`) pinned the KF at `4 * avg` (~13 kbit
+        // on foreman @ 100 kbps) instead of letting it spend the
+        // `starting_buffer_level / 2` it asks for, so the KF coded at q=177
+        // and seeded a poor LASTFRAME. libvpx's 2-Mbit floor lets the KF
+        // grow ~5x, matching the reference (E6 keyframe-boost fix).
+        const MAX_MB_RATE: u64 = 250;
+        const MAXIMUM_FRAME_BANDWIDTH: u64 = 2_000_000;
+        const TWO_PASS_VBRMAX_SECTION: u64 = 400;
+        let vbr_max_bits = u64::from(avg_frame_bandwidth) * TWO_PASS_VBRMAX_SECTION / 100;
+        let mb_rate_bits = u64::from(config.mbs()) * MAX_MB_RATE;
+        let max_frame_bandwidth = mb_rate_bits
+            .max(MAXIMUM_FRAME_BANDWIDTH)
+            .max(vbr_max_bits)
+            .min(u64::from(u32::MAX)) as u32;
 
         let maximum_buffer_size = ms_to_bits(config.buffer_size_ms, config.target_bitrate_bps);
         let optimal_buffer_level = ms_to_bits(config.optimal_buffer_ms, config.target_bitrate_bps);
