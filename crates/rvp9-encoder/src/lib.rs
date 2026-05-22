@@ -2357,6 +2357,51 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let mv_costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, /* allow_hp = */ false);
     let site_config = init_dsmotion_compensation(w as i32);
 
+    // A16 (2026-05-22) — ref-frame rate-cost for the dual-ref picker.
+    //
+    // Mirrors libvpx `init_ref_frame_cost` (`vp9_pickmode.c:1215-1230`):
+    //   ref_frame_cost[LAST]   = cost_bit(intra_inter,1) + cost_bit(p1,0)
+    //   ref_frame_cost[GOLDEN] = cost_bit(intra_inter,1) + cost_bit(p1,1)
+    //                                                   + cost_bit(p2,0)
+    // Both share the `cost_bit(intra_inter, 1)` term — for the LAST-vs-
+    // GOLDEN argmin only the `single_ref_p{1,2}` differential matters,
+    // but we include the intra_inter term so the absolute cost magnitudes
+    // are libvpx-shaped (useful diagnostic and future-proofing for an
+    // intra-vs-inter picker that compares against an intra leaf).
+    //
+    // **Approximation**: libvpx looks up the per-block context via
+    // `vp9_get_pred_prob_single_ref_p{1,2}(cm, xd)` from neighbour
+    // blocks. The picker is called BEFORE the leaf is splatted into
+    // the mi_grid, so the exact per-leaf context isn't free at this
+    // point. We use the libvpx-default probs at the middle REF context
+    // (`DEFAULT_SINGLE_REF_PROB[2] = [142, 142]`) and the middle
+    // intra_inter context (`DEFAULT_INTRA_INTER_PROB[2] = 187`). This
+    // is a constant approximation of the true per-block cost. The
+    // differential between LAST and GOLDEN at this context evaluates
+    // to ~566 - 425 = ~141 units for the p1 bit alone; adding the p2
+    // term tips GOLDEN ~566 units higher than LAST in total. That is
+    // a meaningful fraction of one wire bit (~512 units at p=128) and
+    // is enough to break SSE ties in LAST's favour at high q.
+    let ref_frame_cost_last: u32 = {
+        use rvp9_core::cost::vp9_cost_bit;
+        use rvp9_core::entropy::DEFAULT_INTRA_INTER_PROB;
+        use rvp9_core::entropy::DEFAULT_SINGLE_REF_PROB;
+        let intra_inter_p = DEFAULT_INTRA_INTER_PROB[2];
+        let single_ref_p1 = DEFAULT_SINGLE_REF_PROB[2][0];
+        vp9_cost_bit(intra_inter_p, true) + vp9_cost_bit(single_ref_p1, false)
+    };
+    let ref_frame_cost_golden: u32 = {
+        use rvp9_core::cost::vp9_cost_bit;
+        use rvp9_core::entropy::DEFAULT_INTRA_INTER_PROB;
+        use rvp9_core::entropy::DEFAULT_SINGLE_REF_PROB;
+        let intra_inter_p = DEFAULT_INTRA_INTER_PROB[2];
+        let single_ref_p1 = DEFAULT_SINGLE_REF_PROB[2][0];
+        let single_ref_p2 = DEFAULT_SINGLE_REF_PROB[2][1];
+        vp9_cost_bit(intra_inter_p, true)
+            + vp9_cost_bit(single_ref_p1, true)
+            + vp9_cost_bit(single_ref_p2, false)
+    };
+
     // Inter-frame `FrameKind` for `compute_rd_mult`. Only the variant
     // matters; the inner fields don't drive the picker.
     let frame_kind = WireFrameKind::InterFrame {
@@ -2750,7 +2795,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // crate `InterModeSearchParams` API: the wrapper
                 // ranks two independent 4-candidate searches.
                 let pick_for_ref = |ref_plane: &PlaneRef<'_>,
-                                    mvc_in: &MvCandidates|
+                                    mvc_in: &MvCandidates,
+                                    ref_frame_rate_cost: u32|
                  -> InterModeSearchResult {
                     let nearest_in_bounds = mv_in_bounds(mvc_in.nearest);
                     let near_in_bounds = mv_in_bounds(mvc_in.near);
@@ -2778,6 +2824,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         allow_hp: false,
                         frame_kind,
                         newmv_seed: sb_newmv_seed,
+                        ref_frame_rate_cost,
                     };
                     let pick_raw = pick_inter_mode_luma(&params);
                     // OOB veto — same logic as pre-A15 single-ref
@@ -2806,8 +2853,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         pick_raw
                     }
                 };
-                let pick_last = pick_for_ref(&ref_y, &mvc);
-                let pick_golden = pick_for_ref(&ref_y_golden, &mvc_golden);
+                let pick_last = pick_for_ref(&ref_y, &mvc, ref_frame_cost_last);
+                let pick_golden =
+                    pick_for_ref(&ref_y_golden, &mvc_golden, ref_frame_cost_golden);
                 // A15 Phase B Step 5 (2026-05-22) — GOLDEN selection
                 // is DEFAULT-OFF.
                 //

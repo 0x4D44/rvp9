@@ -87,6 +87,7 @@ fn picker_finds_motion_on_shifted_block() {
         allow_hp: false,
         frame_kind,
         newmv_seed: None,
+        ref_frame_rate_cost: 0,
     };
 
     let all = pick_inter_mode_luma_all_costs(&params);

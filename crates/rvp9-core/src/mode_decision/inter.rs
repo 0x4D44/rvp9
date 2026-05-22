@@ -226,6 +226,28 @@ pub struct InterModeSearchParams<'a> {
     /// When `None`, falls back to seeding at
     /// `mv_candidates.nearest` (the pre-A3' behaviour).
     pub newmv_seed: Option<Mv>,
+    /// Ref-frame rate cost in `vp9_prob_cost` units (1/512-bit). Added
+    /// to every candidate's `rate` so the dual-ref `argmin(pick_last,
+    /// pick_golden)` selector at the caller can compare RDs that
+    /// include the wire-format ref-frame-bit cost difference between
+    /// LAST and GOLDEN (and intra-vs-inter, if the caller wants).
+    ///
+    /// **A16 (2026-05-22)**: introduced to fix the dual-ref picker
+    /// regression. Without this term the picker chose GOLDEN ~25-35%
+    /// of leaves at high q (residuals collapse to zero, SSEs tie,
+    /// missing rate term lets GOLDEN sneak ahead), regressing F12
+    /// PSNR by ~10 dB. Mirrors libvpx
+    /// `vp9_pickmode.c:2398` `this_rdc.rate += ref_frame_cost[ref_frame]`
+    /// at picker level; the picker itself does NOT know which ref it
+    /// is searching, so the caller computes the cost via
+    /// libvpx-default probs (`vp9_pickmode.c:1215-1230` `init_ref_frame_cost`)
+    /// and passes it in.
+    ///
+    /// Set to `0` to disable (mirrors pre-A16 behaviour). Single-ref-
+    /// only callers can use this field to add the intra-vs-inter bit
+    /// too, though the differential between LAST and GOLDEN only
+    /// requires the single-ref subtree.
+    pub ref_frame_rate_cost: u32,
 }
 
 /// Result of [`pick_inter_mode_luma`].
@@ -608,7 +630,15 @@ fn evaluate_candidate(
     } else {
         0
     };
-    let rate = mode_rate.saturating_add(mv_rate);
+    // A16 (2026-05-22) — add the per-ref-frame rate cost. For single-
+    // ref dual-ref-picker callers this carries the LAST-vs-GOLDEN bit
+    // differential (libvpx `vp9_pickmode.c:2398`,
+    // `this_rdc.rate += ref_frame_cost[ref_frame]`). For pre-A16
+    // single-ref-only callers the field defaults to zero and the RD
+    // is unchanged (preserves byte-exact LAST-only output).
+    let rate = mode_rate
+        .saturating_add(mv_rate)
+        .saturating_add(params.ref_frame_rate_cost);
 
     let this_rd = rd_cost(lambda, rate, dist);
 
@@ -1045,6 +1075,7 @@ mod tests {
             allow_hp: false,
             frame_kind: synthetic_inter_frame_kind(),
             newmv_seed: None,
+            ref_frame_rate_cost: 0,
         }
     }
 
@@ -1370,6 +1401,7 @@ mod tests {
             allow_hp: false,
             frame_kind: synthetic_inter_frame_kind(),
             newmv_seed: None,
+            ref_frame_rate_cost: 0,
         };
         let params6 = InterModeSearchParams {
             inter_mode_ctx: 6,

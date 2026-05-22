@@ -2535,6 +2535,7 @@ mod tests {
                 interp_filter: InterpFilter::EightTap,
             },
             newmv_seed: None,
+            ref_frame_rate_cost: 0,
         };
         let pick = pick_inter_mode_luma(&params);
         assert_eq!(
