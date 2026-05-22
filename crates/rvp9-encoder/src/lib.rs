@@ -71,6 +71,7 @@ use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, Mv, RefFrame};
 use rvp9_core::transforms::{TxMode, TxSize};
 
 pub mod aq_cyclic_refresh;
+pub mod e12stat;
 pub mod frame_loop;
 pub(crate) mod loopfilter;
 pub mod predstat;
@@ -2939,6 +2940,53 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let pick_last = pick_for_ref(&ref_y, &mvc, ref_frame_cost_last);
                 let pick_golden =
                     pick_for_ref(&ref_y_golden, &mvc_golden, ref_frame_cost_golden);
+
+                // E12 (2026-05-22) — search-failure-vs-prediction-ceiling
+                // oracle. Read-only: re-uses the same src/ref planes and
+                // leaf geometry the LAST-ref picker just ran on. Compares
+                // prediction PSNR of (0,0) / the SHIPPED MV (`pick_last`,
+                // the RD winner) / NEWMV's RAW search output (before the
+                // RD argmin rejects it) / the exhaustive oracle. The
+                // shipped-vs-newmv-raw split discriminates RD/cost-model
+                // rejection from search non-convergence. Env-gated
+                // `RVP9_E12_ORACLE`; no encoder state mutated.
+                if crate::e12stat::enabled() {
+                    let all_e12 =
+                        rvp9_core::mode_decision::inter::pick_inter_mode_luma_all_costs(
+                            &InterModeSearchParams {
+                                block_size: leaf_bsize,
+                                src_plane: &src_y,
+                                src_offset: (leaf_px_x, leaf_px_y),
+                                ref_plane: &ref_y,
+                                mv_candidates: &mvc,
+                                mv_limits,
+                                site_config: &site_config,
+                                mv_costs: &mv_costs,
+                                inter_mode_costs: &inter_costs,
+                                inter_mode_ctx: 0,
+                                quantizer: &quantizer,
+                                q_index: leaf_qindex,
+                                allow_hp: false,
+                                frame_kind,
+                                newmv_seed: sb_newmv_seed,
+                                ref_frame_rate_cost: ref_frame_cost_last,
+                            },
+                        );
+                    crate::e12stat::record_leaf(
+                        src_y.data,
+                        src_y.stride,
+                        ref_y.data,
+                        ref_y.stride,
+                        ref_y.width,
+                        ref_y.height,
+                        leaf_px_x,
+                        leaf_px_y,
+                        bw,
+                        bh,
+                        pick_last.best_mv,
+                        all_e12[3].best_mv,
+                    );
+                }
 
                 // E3 (2026-05-22) — capture the LAST-ref per-candidate
                 // cost breakdown. Read-only: rebuilds the same params
