@@ -34,6 +34,7 @@
 // ports while still requiring the safe-wrapper to document
 // soundness.
 
+pub mod convolve_avg_avx2;
 pub mod convolve_copy_avx2;
 pub mod dc_pred_4x4_avx2;
 pub mod dc_predict_128_avx2;
@@ -68,6 +69,7 @@ pub mod plane_dequant_finisher_avx2;
 pub mod tm_predictor_avx2;
 pub mod v_predictor_avx2;
 
+pub use convolve_avg_avx2::convolve_avg_avx2;
 pub use convolve_copy_avx2::convolve_copy_avx2;
 pub use dc_pred_4x4_avx2::dc_predictor_4x4_avx2;
 pub use dc_predict_128_avx2::dc_predict_128_avx2;
