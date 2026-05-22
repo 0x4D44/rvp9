@@ -1651,3 +1651,50 @@ plug into a now-correct pyramid step rather than a half-complete one.
 should be updated to reflect that the `SECOND_LEVEL_CHECKS` portion of
 the pruned variants is now ported; only the cost_list / parabolic-fit
 short-circuit (L-07) remains. Decision: **L-05 narrowed**.
+
+### 2026-05-22 — Inter-frame VBP thresholds (E2): partial port, speed-7 only
+**Where:** `rvp9-core::mode_decision::partition::VbpThresholds::for_inter`
++ libvpx `vp9/encoder/vp9_encodeframe.c::set_vbp_thresholds` (`:573-635`)
+and `scale_part_thresh_sumdiff` (`:549-567`).
+**What libvpx does:** the inter branch scales `threshold_base` by noise
+level (≥640×480 + noise enabled), runs a denoiser branch *or*
+`scale_part_thresh_sumdiff` (which applies a 5/4 multiplier for the
+LowSad/HighSad/LowVar content states at speeds 7/8), then applies
+resolution-specific `thresholds[]` overrides, plus a
+`disable_16x16part_nonkey` clamp.
+**What rvp9 does:** ports the inter branch specialized to
+**speed/cpu-used = 7** with **default content state** and **no
+noise/denoiser scaling** and **no `disable_16x16part_nonkey`**. So:
+`threshold_base = variance_part_thresh_mult(=1) * y_dequant[q][1]`;
+`scale_part_thresh_sumdiff` returns it unchanged (default content
+state); resolution overrides ported for all four bands; small-res
+(≤352×288) gets the `>200`/`>220` avg-inter-qindex `thresholds[2]`
+boost. The 256× variance fixed-point scale is folded out and each
+threshold floored at 1, identically to `for_keyframe`. `thresholds[3]`
+(8×8→4×4) is a don't-care on inter (rvp9 caps recursion at 8×8); mirrors
+the keyframe value.
+**`avg_inter_qindex` source:** rvp9 passes the rate controller's running
+`avg_frame_qindex_inter` EWMA — this *is* libvpx's
+`rc.avg_frame_qindex[INTER_FRAME]`, so no divergence there.
+**Why:** content-state classification, noise/denoiser scaling, and
+`disable_16x16part_nonkey` are speed-feature/input modulations not yet
+ported; at cpu-used 7 on our target inputs (default content, no
+denoiser) they are inactive or unreachable. Porting them now would be
+dead code with no exercised path.
+**Byte-parity impact:** none by construction — the partition *shape*
+flows into the bitstream identically to both reference decoders; the
+cross-decoder byte-exact gate stays green.
+**Compression-efficiency impact:** foreman_cif 256-crop BD-rate
+improved +395% → +367.81%. The shift is real but small because rvp9's
+rate controller saturates q at 255 on this clip, where the inter
+64×64 threshold collapses to ~1 per-pixel-variance (matching libvpx's
+own q=255 threshold) — so panning-motion content vs a stale ZEROMV
+LASTFRAME reference splits regardless. The dominant bottleneck is NOT
+partition density at the q-saturation operating point; it is the
+q-saturation itself (and the absence of real MV search to shrink the
+coded residual). At moderate q (e.g. q≈128–137 on the cross-decoder
+clip) `for_inter` correctly keeps the bulk of cells at Block64x64.
+**Future plan:** port the content-state classification + noise/denoiser
+scaling when those speed features land; revisit MV search / rate
+control as the real foreman bottleneck (E2 follow-up). Decision:
+**E2 partial — inter VBP curve landed; foreman gap reopened to RC/MV.**

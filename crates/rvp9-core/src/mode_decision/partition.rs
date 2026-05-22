@@ -192,6 +192,16 @@ pub struct PartitionSearchParams<'a> {
     pub is_keyframe: bool,
     /// Frame base qindex (0..255). Drives the threshold scaling.
     pub q_index: u8,
+    /// Full frame width in pixels. Selects the inter-frame threshold
+    /// branch in `set_vbp_thresholds` (small-res ≤352×288 vs larger).
+    /// Ignored on keyframes.
+    pub frame_width: usize,
+    /// Full frame height in pixels. See [`Self::frame_width`].
+    pub frame_height: usize,
+    /// Rate controller's running `avg_frame_qindex[INTER_FRAME]`. On
+    /// inter frames this picks the `>200` / `>220` `thresholds[2]`
+    /// boost. Ignored on keyframes.
+    pub avg_inter_qindex: u8,
 }
 
 /// Per-level threshold for variance-based partition decisions.
@@ -235,6 +245,93 @@ impl VbpThresholds {
             ],
         }
     }
+
+    /// Compute the **inter**-path libvpx thresholds for a given qindex,
+    /// specialized to realtime speed/cpu-used = 7.
+    ///
+    /// Ports the non-key branch of `set_vbp_thresholds`
+    /// (`vp9/encoder/vp9_encodeframe.c:573-635`) and its helper
+    /// `scale_part_thresh_sumdiff` (`:549-567`). The 256× fixed-point
+    /// scale is folded out exactly as in [`Self::for_keyframe`] (see
+    /// module doc).
+    ///
+    /// libvpx inter formula (speed 7):
+    ///
+    /// ```text
+    /// threshold_base = variance_part_thresh_mult * y_dequant[q][1]
+    ///                = 1 * y_dequant[q][1]   (mult == 1 at speed 7)
+    /// // scale_part_thresh_sumdiff at speed 7, default content_state,
+    /// // returns threshold_base unchanged.
+    /// thresholds[0] = base               // 64x64
+    /// thresholds[2] = base << speed       // == base << 7 (generic path)
+    /// // small-res override (width<=352 && height<=288):
+    /// thresholds[0] = base >> 3
+    /// thresholds[1] = base >> 1
+    /// thresholds[2] = base << 3
+    /// if avg_frame_qindex[INTER] > 220 { thresholds[2] <<= 2 }   // base << 5
+    /// else if avg_frame_qindex[INTER] > 200 { thresholds[2] <<= 1 } // base << 4
+    /// // larger-res branches set thresholds[1] differently (ported below).
+    /// // thresholds[3] (8x8->4x4) is "only used on key frame" — inter
+    /// // never splits 8x8->4x4, and rvp9 caps recursion at 8x8 anyway,
+    /// // so it's a don't-care. We mirror the keyframe value to keep a
+    /// // sane finite number there.
+    /// ```
+    ///
+    /// Divergences from libvpx held to a minimum: we are at the realtime
+    /// speed-7 operating point, default content-state (no SAD/sumdiff
+    /// classification), no noise/denoiser scaling, no
+    /// `disable_16x16part_nonkey`. Those modulations are off at cpu-used
+    /// 7 for our target inputs; see the divergence ledger.
+    fn for_inter(q_index: u8, avg_inter_qindex: u8, width: usize, height: usize) -> Self {
+        // speed/cpu-used = 7 ⇒ variance_part_thresh_mult = 1.
+        let (_dc, ac) = plane_dequant_pair(i32::from(q_index), QuantizerDeltas::Y);
+        let base = ac as u64;
+        // scale_part_thresh_sumdiff(speed=7, default content_state)
+        // returns `base` unchanged — the LowSad/HighSad/LowVar arms are
+        // not hit for our default content classification.
+
+        // Generic (non-small-res) defaults from the inter branch.
+        // thresholds[0] = base; thresholds[2] = base << speed (speed 7).
+        let mut t0 = base;
+        let t1; // set per resolution branch below
+        let mut t2 = base << 7;
+
+        if width <= 352 && height <= 288 {
+            // Small-res override (foreman's 256×256 crop lands here).
+            t0 = base >> 3;
+            t1 = base >> 1;
+            t2 = base << 3;
+            if avg_inter_qindex > 220 {
+                t2 <<= 2;
+            } else if avg_inter_qindex > 200 {
+                t2 <<= 1;
+            }
+        } else if width < 1280 && height < 720 {
+            t1 = (5 * base) >> 2;
+        } else if width < 1920 && height < 1080 {
+            t1 = base << 1;
+        } else {
+            t1 = (5 * base) >> 1;
+        }
+        // Note: the `width >= 1280 && height >= 720 && speed < 7`
+        // thresholds[2] boost does not apply at speed 7.
+
+        // thresholds[3]: don't-care on inter (8x8→4x4 never taken, and
+        // rvp9 caps recursion at 8x8). Mirror keyframe (`base << 2`).
+        let t3 = base << 2;
+
+        // Fold out the 256× fixed-point scale and floor at 1, exactly
+        // as `for_keyframe` does.
+        let scale = 256u64;
+        Self {
+            thresholds: [
+                (t0 / scale).max(1),
+                (t1 / scale).max(1),
+                (t2 / scale).max(1),
+                (t3 / scale).max(1),
+            ],
+        }
+    }
 }
 
 /// Run the libvpx-style variance-based partition picker for one 64x64
@@ -245,7 +342,16 @@ impl VbpThresholds {
 /// always passes [`PartitionDecision::is_valid_partition`].
 #[must_use]
 pub fn choose_partitioning(params: &PartitionSearchParams<'_>) -> PartitionDecision {
-    let thresholds = VbpThresholds::for_keyframe(params.q_index);
+    let thresholds = if params.is_keyframe {
+        VbpThresholds::for_keyframe(params.q_index)
+    } else {
+        VbpThresholds::for_inter(
+            params.q_index,
+            params.avg_inter_qindex,
+            params.frame_width,
+            params.frame_height,
+        )
+    };
 
     // Materialise the reference samples for this 64x64 region into a
     // contiguous stride-64 scratch buffer. For keyframes we use a
@@ -455,6 +561,11 @@ mod tests {
             ref_offset_xy: (0, 0),
             is_keyframe,
             q_index,
+            // Single-SB test harness: 64×64 frame. Small-res inter
+            // branch; avg inter q mirrors the frame q (proxy).
+            frame_width: 64,
+            frame_height: 64,
+            avg_inter_qindex: q_index,
         }
     }
 

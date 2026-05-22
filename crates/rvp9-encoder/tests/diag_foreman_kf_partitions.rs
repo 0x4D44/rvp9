@@ -58,6 +58,10 @@ fn diag_foreman_kf_partitions() {
                     ref_offset_xy: (sb_col * 64, sb_row * 64),
                     is_keyframe: true,
                     q_index: q,
+                    // KF path ignores these inter-only fields.
+                    frame_width: W,
+                    frame_height: H,
+                    avg_inter_qindex: q,
                 };
                 let decision = choose_partitioning(&params);
                 count_decision(&decision, &mut bsize_counts);

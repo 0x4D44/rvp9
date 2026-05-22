@@ -31,15 +31,14 @@
 //!
 //! ## Divergences from libvpx (documented)
 //!
-//! - **No mode decision on inter frames.** Every inter SB is forced to
-//!   `BlockSize::Block64x64` `InterMode::ZeroMv` `LASTFRAME`
-//!   `skip = true`. F8.1's `pick_inter_mode_luma` and F8.2's
-//!   `choose_partitioning` are not driven yet — they're available in
-//!   the codebase but the MVP frame loop short-circuits to ZEROMV/skip
-//!   because (a) wiring partition+inter+coef-walk to the writer
-//!   correctly requires shape adapters that aren't built yet, and (b)
-//!   the F10.0 contract is "produces decodable bitstreams from a
-//!   YUV input", which this scope satisfies. F10.1+ widens the loop.
+//! - **(STALE — superseded by F10.1c.)** This bullet historically read
+//!   "no mode decision on inter frames / forced ZEROMV+skip". That is
+//!   no longer true: `encode_inter_internal` drives F8.2's
+//!   `choose_partitioning` (with inter-specific VBP thresholds, see
+//!   `mode_decision::partition::VbpThresholds::for_inter`) and F8.1's
+//!   inter mode picker per leaf, then runs the inter simulator to
+//!   produce real per-TX residuals. Block8x8 leaves still fall back to
+//!   ZEROMV/LASTFRAME/skip (sub-8 picker out of scope).
 //! - **No mode decision on keyframes.** Every KF SB is forced to
 //!   `Block64x64` `IntraMode::Dc` for both Y and UV (matching the
 //!   F5.1 simulator). F8.0's `pick_intra_mode_luma` is not driven yet
@@ -580,8 +579,17 @@ impl StreamEncoder {
         // picker. For KF the ref plane is unused (the picker substitutes
         // a flat-128 fallback when `is_keyframe = true`), but we still
         // need a valid `PlaneRef`; pass the input Y as the ref.
-        let mut sb_partitions =
-            choose_partitions_for_frame(w as usize, h as usize, q_index, input_yuv.0, /* ref_y = */ input_yuv.0, /* is_keyframe = */ true);
+        let mut sb_partitions = choose_partitions_for_frame(
+            w as usize,
+            h as usize,
+            q_index,
+            input_yuv.0,
+            /* ref_y = */ input_yuv.0,
+            /* is_keyframe = */ true,
+            // Keyframe: `avg_inter_qindex` is unused by the KF threshold
+            // path. Pass the running inter average anyway for clarity.
+            self.rate_control.avg_frame_qindex_inter,
+        );
 
         // F10.1b — pick the Y intra mode per leaf via
         // `pick_intra_mode_luma`, run the F5.1 simulator with the
@@ -725,6 +733,11 @@ impl StreamEncoder {
             input_yuv.0,
             &self.last_recon_y,
             /* is_keyframe = */ false,
+            // E2: inter-frame VBP thresholds depend on the rate
+            // controller's running `avg_frame_qindex[INTER_FRAME]` to
+            // pick the `>200`/`>220` thresholds[2] boost (foreman 100k
+            // settles ≈211, so the `>200` branch fires).
+            self.rate_control.avg_frame_qindex_inter,
         );
 
         // Convert the intra-shaped partition descriptors into inter-
@@ -1042,6 +1055,7 @@ fn choose_partitions_for_frame(
     src_y: &[u8],
     ref_y: &[u8],
     is_keyframe: bool,
+    avg_inter_qindex: u8,
 ) -> Vec<Vec<PartitionLeafDesc>> {
     let sb_cols = width_px / 64;
     let sb_rows = height_px / 64;
@@ -1069,8 +1083,32 @@ fn choose_partitions_for_frame(
                 ref_offset_xy: (sb_col * 64, sb_row * 64),
                 is_keyframe,
                 q_index,
+                frame_width: width_px,
+                frame_height: height_px,
+                avg_inter_qindex,
             };
             let decision = choose_partitioning(&params);
+            // E2 diagnostic (env-gated): accumulate per-8×8-cell area by
+            // leaf size so we can report the inter partition histogram.
+            if !is_keyframe && std::env::var_os("RVP9_PART_HIST").is_some() {
+                let mut counts = [0usize; 4]; // 8,16,32,64
+                for row in &decision.cells {
+                    for &bs in row {
+                        let idx = match bs {
+                            BlockSize::Block8x8 => 0,
+                            BlockSize::Block16x16 => 1,
+                            BlockSize::Block32x32 => 2,
+                            BlockSize::Block64x64 => 3,
+                            _ => continue,
+                        };
+                        counts[idx] += 1;
+                    }
+                }
+                eprintln!(
+                    "RVP9_PART_HIST sb avg_q={avg_inter_qindex} q={q_index} 8x8={} 16x16={} 32x32={} 64x64={}",
+                    counts[0], counts[1], counts[2], counts[3]
+                );
+            }
             out.push(leaves_from_decision(&decision));
         }
     }
