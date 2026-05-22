@@ -1551,3 +1551,70 @@ flagged in A6 is now closed. The remaining foreman gap is in the
 rate model + mode/MV cost tables (see A6 "Where to look next"
 items 1 and 2: per-leaf symbol overhead + inter-mode probability
 context).
+
+### 2026-05-22 — A17: sub-pel SECOND_LEVEL_CHECKS (`iters_per_step = 2`) added
+**Where:** `rvp9-core::mv_search::sub_pixel::find_best_sub_pixel_tree_pruned_more`
++ `rvp9-core::mode_decision::inter::run_newmv_search`. libvpx counterpart:
+the `SECOND_LEVEL_CHECKS` macro (`vp9/encoder/vp9_mcomp.c:218-248`) called
+from every `vp9_find_best_sub_pixel_tree*` variant's no-cost-list path when
+`iters_per_step > 1`.
+**What libvpx does:** at each pyramid level (half/quarter/eighth-pel), after
+`FIRST_LEVEL_CHECKS` (4 cardinals + 1 diagonal), runs `SECOND_LEVEL_CHECKS`
+to fan out 2-3 more samples in the winning direction:
+- diagonal won → sample 2 long-diagonal extensions
+- horizontal cardinal won → sample 3 points (2 long-horizontal + 1 axis hint)
+- vertical cardinal won → sample 3 points (2 long-vertical + 1 axis hint)
+
+libvpx's rt default is `sf.mv.subpel_search_level = 2`
+(`vp9_speed_features.c:929`, never reset in `set_rt_speed_feature_framesize_independent`
+for non-SVC). So rt at cpu-used 6-8 always runs `iters_per_step = 2`.
+**What rvp9 does (POST-A17):** `SubPixelSearchParams::iters_per_step`
+field added (default 2 at the inter picker call site), and the search
+function now does `pyramid_level(...)` = `FIRST_LEVEL_CHECKS` +
+(conditional) `SECOND_LEVEL_CHECKS` at each of half/quarter/eighth-pel.
+**What rvp9 did (pre-A17):** only `FIRST_LEVEL_CHECKS` at each pyramid level
+— no SECOND_LEVEL_CHECKS. This was an `iters_per_step = 1` equivalent,
+diverging from libvpx's rt default of 2.
+**Why this matters in principle:** the SECOND_LEVEL_CHECKS samples are
+sometimes meaningfully better than the FIRST_LEVEL_CHECKS local-min on
+real motion content. libvpx hardcodes `iters_per_step = 2` for rt because
+the empirical hit-rate at speed 0-8 justifies the extra 2-3 sub-pel SVF
+calls per pyramid level.
+**Byte-parity impact:** none (cross-decoder gate verified BYTE-EXACT post-fix).
+The bitstream changes only when the picker selects a different MV than
+before; rvp9-decoder and vpxdec agree on both old and new bitstreams.
+**Compression-efficiency impact, F12 testsrc 256×256 @ 64 frames:**
+```
+target=25kbps:   33.51 / 33.51 dB  (flat)
+target=50kbps:   42.92 / 42.92 dB  (flat)
+target=100kbps:  48.33 / 48.28 dB  (-0.05 dB)
+target=250kbps:  56.86 / 56.86 dB  (flat)
+```
+BD-rate +628.52 % → **+630.68 %** (marginally worse, ~+2pp).
+**Compression-efficiency impact, F12 foreman_cif:**
+```
+target=25kbps:   24.01 / 24.01 dB  (flat)
+target=50kbps:   24.16 / 24.16 dB  (flat)
+target=100kbps:  25.42 / 25.42 dB  (flat)
+target=250kbps:  28.96 / 28.96 dB  (flat)
+```
+BD-rate **+395.92 %** (unchanged).
+**Interpretation:** SECOND_LEVEL_CHECKS samples are *taken* on real
+sub-pel attractors (the unit test for 1/4-pel-shifted source still
+finds the right MV), but on the F12 corpus the additional samples do
+not change the picker's mode-MV selection. The picker is dominated by
+NEWMV-rejection (the candidate seldom beats NEARESTMV after MV-cost +
+rate) or by the upstream int_pro seed being good enough that the
+extra SECOND_LEVEL_CHECKS samples don't shift `(br, bc)`. The testsrc
+-0.05 dB at 100 kbps is within the rate-control noise (kbps ±0.05 actual).
+**Cross-decoder gate:** PASS (rvp9-decoder vs vpxdec vs ffmpeg byte-exact).
+**RT gate:** 5.45 ms median (was 5.69 ms; well within noise).
+**Why we still ship this:** L-05 sub-clause "pruned variants stubbed"
+becomes incrementally less divergent — the FIRST/SECOND_LEVEL_CHECKS
+pyramid path now matches libvpx's `_pruned_more` (with `cost_list = NULL`)
+bug-for-bug. Future work that lands `calc_int_cost_list` (L-07) will
+plug into a now-correct pyramid step rather than a half-complete one.
+**Future plan:** the L-05 stub list section §7.3 of `notes/lld/motion-estimation.md`
+should be updated to reflect that the `SECOND_LEVEL_CHECKS` portion of
+the pruned variants is now ported; only the cost_list / parabolic-fit
+short-circuit (L-07) remains. Decision: **L-05 narrowed**.

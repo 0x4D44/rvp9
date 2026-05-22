@@ -495,6 +495,10 @@ fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
         mv_costs: params.mv_costs,
         allow_hp: params.allow_hp,
         forced_stop: SubPixelForcedStop::EighthPel,
+        // libvpx rt default: `sf.mv.subpel_search_level = 2`
+        // (`vp9_speed_features.c:929`), enabling SECOND_LEVEL_CHECKS
+        // after each pyramid level's FIRST_LEVEL_CHECKS.
+        iters_per_step: 2,
     });
     sub.best_mv
 }

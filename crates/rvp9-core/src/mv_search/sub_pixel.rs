@@ -12,8 +12,21 @@
 //!
 //! ## Search pyramid
 //!
-//! 1. Half-pel (`hstep = 4` in 1/8-pel units) — 4 cardinal + 1
-//!    diagonal sample around the starting center.
+//! At each level (half / quarter / eighth-pel):
+//!
+//! 1. `FIRST_LEVEL_CHECKS` — 4 cardinal + 1 diagonal sample around
+//!    the starting center `(tr, tc)`; updates `(br, bc)` if better.
+//! 2. `SECOND_LEVEL_CHECKS` — only when
+//!    [`SubPixelSearchParams::iters_per_step`] > 1. Extends the search
+//!    in the direction of the FIRST_LEVEL winner: if the diagonal
+//!    won, samples the two adjacent "long-diagonal" points; if a
+//!    cardinal won, samples three further points along the winning
+//!    axis. Mirrors the `SECOND_LEVEL_CHECKS` macro in
+//!    `vp9_mcomp.c:218-248`.
+//!
+//! The levels execute in sequence:
+//!
+//! 1. Half-pel (`hstep = 4` in 1/8-pel units).
 //! 2. Quarter-pel (`hstep = 2`) — only if `forced_stop != 2`.
 //! 3. Eighth-pel (`hstep = 1`) — only if
 //!    `forced_stop == 0 && allow_hp && use_mv_hp(ref_mv)`.
@@ -80,6 +93,17 @@ pub struct SubPixelSearchParams<'a> {
     /// Stop level. `EighthPel` (default) does full pyramid; higher
     /// values truncate.
     pub forced_stop: SubPixelForcedStop,
+    /// `iters_per_step` mirror of libvpx's
+    /// `sf.mv.subpel_search_level` (`vp9_speed_features.h:201`). Each
+    /// pyramid level runs `FIRST_LEVEL_CHECKS` unconditionally; when
+    /// `iters_per_step > 1`, it additionally runs
+    /// `SECOND_LEVEL_CHECKS` to fan out further in the winning
+    /// direction. libvpx's rt setter leaves this at the default of
+    /// `2` (`vp9_speed_features.c:929`) for all rt speed presets
+    /// except SVC speed 3+ (which drops it to 0-1). For our locked
+    /// cpu-used 6-8 rt config the value is **2**, matching libvpx's
+    /// non-SVC rt path bug-for-bug.
+    pub iters_per_step: i32,
 }
 
 /// Result of a sub-pixel search.
@@ -217,11 +241,13 @@ fn try_subpel(
 /// `vp9_find_best_sub_pixel_tree_pruned_more` (`vp9_mcomp.c:453-513`).
 ///
 /// Refines a full-pel MV into 1/8-pel units via a 3-level pyramid
-/// (half / quarter / eighth-pel). The pruning vs `_pruned`:
-/// `_pruned_more` uses `hstep`-scaled steps inside the cost-list
-/// surface-minimum branch (which we don't reach without
-/// `calc_int_cost_list`), but its `FIRST_LEVEL_CHECKS` path is
-/// identical.
+/// (half / quarter / eighth-pel). At each level we run
+/// `FIRST_LEVEL_CHECKS` (4 cardinals + 1 diagonal) plus, when
+/// `iters_per_step > 1`, `SECOND_LEVEL_CHECKS` extending in the
+/// winning direction. The pruning vs `_pruned`: `_pruned_more` uses
+/// `hstep`-scaled steps inside the cost-list surface-minimum branch
+/// (which we don't reach without `calc_int_cost_list`), but its
+/// `FIRST_LEVEL_CHECKS` / `SECOND_LEVEL_CHECKS` path is identical.
 pub fn find_best_sub_pixel_tree_pruned_more(
     params: &SubPixelSearchParams<'_>,
 ) -> SubPixelSearchResult {
@@ -271,14 +297,16 @@ pub fn find_best_sub_pixel_tree_pruned_more(
         params.mv_costs,
     );
 
+    let iters_per_step = params.iters_per_step;
     let mut hstep: i32 = 4; // 1/2-pel in 1/8-pel units.
 
-    // FIRST_LEVEL_CHECKS at 1/2-pel (always).
-    first_level_checks(
+    // Half-pel level (always).
+    pyramid_level(
         &mut br,
         &mut bc,
         &mut besterr,
         hstep,
+        iters_per_step,
         params,
         svf,
         bw,
@@ -286,27 +314,39 @@ pub fn find_best_sub_pixel_tree_pruned_more(
         &subpel_limits,
     );
 
-    // 1/4-pel — only if forced_stop != 2.
+    // Quarter-pel level — only if forced_stop != 2.
     if (params.forced_stop as i32) != (SubPixelForcedStop::HalfPel as i32) {
-        let mut tr = br;
-        let mut tc = bc;
         hstep >>= 1; // 2 (1/4-pel).
-        first_level_checks_from(
-            &mut br, &mut bc, &mut tr, &mut tc, &mut besterr, hstep, params, svf, bw, bh,
+        pyramid_level(
+            &mut br,
+            &mut bc,
+            &mut besterr,
+            hstep,
+            iters_per_step,
+            params,
+            svf,
+            bw,
+            bh,
             &subpel_limits,
         );
     }
 
-    // 1/8-pel — only if forced_stop == 0 && allow_hp && use_mv_hp(ref).
+    // Eighth-pel level — only if forced_stop == 0 && allow_hp && use_mv_hp(ref).
     if (params.forced_stop as i32) == (SubPixelForcedStop::EighthPel as i32)
         && params.allow_hp
         && use_mv_hp(params.ref_mv)
     {
-        let mut tr = br;
-        let mut tc = bc;
         hstep = 1; // 1/8-pel.
-        first_level_checks_from(
-            &mut br, &mut bc, &mut tr, &mut tc, &mut besterr, hstep, params, svf, bw, bh,
+        pyramid_level(
+            &mut br,
+            &mut bc,
+            &mut besterr,
+            hstep,
+            iters_per_step,
+            params,
+            svf,
+            bw,
+            bh,
             &subpel_limits,
         );
     }
@@ -320,59 +360,33 @@ pub fn find_best_sub_pixel_tree_pruned_more(
     }
 }
 
-/// FIRST_LEVEL_CHECKS at the current (br, bc) — sample the 4 cardinal
-/// neighbours then 1 inferred diagonal at the given `hstep`. Updates
-/// `(br, bc, besterr)` in place when a better candidate is found.
+/// One pyramid-level step: `FIRST_LEVEL_CHECKS` at `(br, bc)`, then
+/// (if `iters_per_step > 1`) `SECOND_LEVEL_CHECKS` extending in the
+/// winning direction. Mirrors the `vp9_mcomp.c` macro pair
+/// (`vp9_mcomp.c:202-248`). Updates `(br, bc, besterr)` in place.
+///
+/// The center of FIRST_LEVEL_CHECKS is the current `(*br, *bc)`. The
+/// SECOND_LEVEL_CHECKS step uses the same captured center (libvpx's
+/// `(tr, tc)`) and the post-FIRST best (libvpx's `(br, bc)`), so the
+/// "did the diagonal win?" geometry test is `(tr != br && tc != bc)`.
 #[allow(clippy::too_many_arguments)]
-fn first_level_checks(
+fn pyramid_level(
     br: &mut i32,
     bc: &mut i32,
     besterr: &mut u32,
     hstep: i32,
+    iters_per_step: i32,
     params: &SubPixelSearchParams<'_>,
     svf: SvfFn,
     bw: usize,
     bh: usize,
     subpel_limits: &MvLimits,
 ) {
-    let mut tr = *br;
-    let mut tc = *bc;
-    first_level_checks_from(
-        br,
-        bc,
-        &mut tr,
-        &mut tc,
-        besterr,
-        hstep,
-        params,
-        svf,
-        bw,
-        bh,
-        subpel_limits,
-    );
-}
+    // Capture the center BEFORE the first-level checks update (br, bc).
+    let center_r = *br;
+    let center_c = *bc;
 
-/// Inner FIRST_LEVEL_CHECKS that takes `(tr, tc)` (the center of the
-/// 5-sample cross) explicitly. Used by subsequent pyramid levels
-/// where `(tr, tc) = (br, bc)` from the previous level's commit.
-#[allow(clippy::too_many_arguments)]
-fn first_level_checks_from(
-    br: &mut i32,
-    bc: &mut i32,
-    tr: &mut i32,
-    tc: &mut i32,
-    besterr: &mut u32,
-    hstep: i32,
-    params: &SubPixelSearchParams<'_>,
-    svf: SvfFn,
-    bw: usize,
-    bh: usize,
-    subpel_limits: &MvLimits,
-) {
-    let center_r = *tr;
-    let center_c = *tc;
-
-    // Sample 4 cardinals.
+    // FIRST_LEVEL_CHECKS — 4 cardinals + 1 inferred diagonal.
     let left = check(
         center_r,
         center_c - hstep,
@@ -423,7 +437,7 @@ fn first_level_checks_from(
     );
 
     // libvpx: whichdir = (left < right ? 0 : 1) + (up < down ? 0 : 2);
-    let whichdir = (if left < right { 0 } else { 1 }) + (if up < down { 0 } else { 2 });
+    let whichdir: u32 = (if left < right { 0 } else { 1 }) + (if up < down { 0 } else { 2 });
 
     // One diagonal sample.
     let (diag_r, diag_c) = match whichdir {
@@ -445,8 +459,182 @@ fn first_level_checks_from(
         subpel_limits,
     );
 
-    *tr = *br;
-    *tc = *bc;
+    // SECOND_LEVEL_CHECKS — only when iters_per_step > 1
+    // (`vp9_mcomp.c:218-248`). The libvpx macro uses the FIRST_LEVEL
+    // center (tr, tc) and the post-FIRST best (br, bc).
+    if iters_per_step > 1 {
+        second_level_checks(
+            br,
+            bc,
+            besterr,
+            center_r,
+            center_c,
+            whichdir,
+            hstep,
+            params,
+            svf,
+            bw,
+            bh,
+            subpel_limits,
+        );
+    }
+}
+
+/// `SECOND_LEVEL_CHECKS` macro port (`vp9_mcomp.c:218-248`).
+///
+/// `(tr, tc)` is the FIRST_LEVEL_CHECKS center; `(br, bc)` is the
+/// post-FIRST best. Geometry:
+///
+/// - **Diagonal won** (`tr != br && tc != bc`): sample two "long
+///   diagonal" extensions — `(tr + kr, tc + 2*kc)` and
+///   `(tr + 2*kr, tc + kc)` where `kr = br - tr`, `kc = bc - tc`.
+/// - **Horizontal cardinal won** (`tr == br, tc != bc`): sample
+///   `(tr ± hstep, tc + 2*kc)` and (per `whichdir`) one of
+///   `(tr + hstep, tc + kc)` / `(tr - hstep, tc + kc)`.
+/// - **Vertical cardinal won** (`tr != br, tc == bc`): sample
+///   `(tr + 2*kr, tc ± hstep)` and (per `whichdir`) one of
+///   `(tr + kr, tc + hstep)` / `(tr + kr, tc - hstep)`.
+///
+/// If neither moved (`tr == br && tc == bc`, i.e. the center was the
+/// best), libvpx's macro is a no-op here too.
+#[allow(clippy::too_many_arguments)]
+fn second_level_checks(
+    br: &mut i32,
+    bc: &mut i32,
+    besterr: &mut u32,
+    tr: i32,
+    tc: i32,
+    whichdir: u32,
+    hstep: i32,
+    params: &SubPixelSearchParams<'_>,
+    svf: SvfFn,
+    bw: usize,
+    bh: usize,
+    subpel_limits: &MvLimits,
+) {
+    let br_in = *br;
+    let bc_in = *bc;
+    if tr != br_in && tc != bc_in {
+        // Diagonal won.
+        let kr = br_in - tr;
+        let kc = bc_in - tc;
+        let _ = check(
+            tr + kr,
+            tc + 2 * kc,
+            br,
+            bc,
+            besterr,
+            params,
+            svf,
+            bw,
+            bh,
+            subpel_limits,
+        );
+        let _ = check(
+            tr + 2 * kr,
+            tc + kc,
+            br,
+            bc,
+            besterr,
+            params,
+            svf,
+            bw,
+            bh,
+            subpel_limits,
+        );
+    } else if tr == br_in && tc != bc_in {
+        // Horizontal cardinal won.
+        let kc = bc_in - tc;
+        let _ = check(
+            tr + hstep,
+            tc + 2 * kc,
+            br,
+            bc,
+            besterr,
+            params,
+            svf,
+            bw,
+            bh,
+            subpel_limits,
+        );
+        let _ = check(
+            tr - hstep,
+            tc + 2 * kc,
+            br,
+            bc,
+            besterr,
+            params,
+            svf,
+            bw,
+            bh,
+            subpel_limits,
+        );
+        // whichdir 0/1: up-direction; 2/3: down-direction.
+        let extra_r = if whichdir < 2 {
+            tr + hstep
+        } else {
+            tr - hstep
+        };
+        let _ = check(
+            extra_r,
+            tc + kc,
+            br,
+            bc,
+            besterr,
+            params,
+            svf,
+            bw,
+            bh,
+            subpel_limits,
+        );
+    } else if tr != br_in && tc == bc_in {
+        // Vertical cardinal won.
+        let kr = br_in - tr;
+        let _ = check(
+            tr + 2 * kr,
+            tc + hstep,
+            br,
+            bc,
+            besterr,
+            params,
+            svf,
+            bw,
+            bh,
+            subpel_limits,
+        );
+        let _ = check(
+            tr + 2 * kr,
+            tc - hstep,
+            br,
+            bc,
+            besterr,
+            params,
+            svf,
+            bw,
+            bh,
+            subpel_limits,
+        );
+        // whichdir 0/2: left-direction; 1/3: right-direction.
+        let extra_c = if whichdir == 0 || whichdir == 2 {
+            tc + hstep
+        } else {
+            tc - hstep
+        };
+        let _ = check(
+            tr + kr,
+            extra_c,
+            br,
+            bc,
+            besterr,
+            params,
+            svf,
+            bw,
+            bh,
+            subpel_limits,
+        );
+    }
+    // else: tr == br && tc == bc → center won, no second-level (libvpx
+    // macro silently no-ops here).
 }
 
 /// CHECK_BETTER expansion: compute (variance + cost) at `(r, c)`,
@@ -534,6 +722,7 @@ mod tests {
             mv_costs: &costs,
             allow_hp: true,
             forced_stop: SubPixelForcedStop::EighthPel,
+            iters_per_step: 2,
         };
         let r = find_best_sub_pixel_tree_pruned_more(&params);
         assert_eq!(r.best_mv, Mv::ZERO, "identical planes → MV stays at zero");
@@ -595,6 +784,7 @@ mod tests {
             mv_costs: &costs,
             allow_hp: false, // restrict to 1/4-pel granularity
             forced_stop: SubPixelForcedStop::QuarterPel,
+            iters_per_step: 2,
         };
         let r = find_best_sub_pixel_tree_pruned_more(&params);
         // Expected MV in 1/8-pel units: col = 2, row = 0.
@@ -661,6 +851,7 @@ mod tests {
             mv_costs: &costs,
             allow_hp: true, // would normally enable HP
             forced_stop: SubPixelForcedStop::QuarterPel, // ...but capped here.
+            iters_per_step: 2,
         };
         let r = find_best_sub_pixel_tree_pruned_more(&params);
         assert_eq!(
