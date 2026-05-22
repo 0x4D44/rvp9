@@ -59,6 +59,7 @@ pub mod lpf_vertical_8_dual_avx2;
 pub mod lpf_vertical_16_avx2;
 pub mod lpf_vertical_16_dual_avx2;
 pub mod plane_dequant_finisher_avx2;
+pub mod v_predictor_avx2;
 
 pub use dc_pred_4x4_avx2::dc_predictor_4x4_avx2;
 pub use idct4x4_avx2::idct4x4_add_avx2;
@@ -85,3 +86,4 @@ pub use lpf_vertical_8_dual_avx2::lpf_vertical_8_dual_avx2;
 pub use lpf_vertical_16_avx2::lpf_vertical_16_avx2;
 pub use lpf_vertical_16_dual_avx2::lpf_vertical_16_dual_avx2;
 pub use plane_dequant_finisher_avx2::plane_dequant_finisher_avx2;
+pub use v_predictor_avx2::v_predictor_avx2;

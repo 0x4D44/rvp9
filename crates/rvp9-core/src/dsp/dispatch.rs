@@ -164,6 +164,20 @@ fn scalar_dc_predictor_4x4(dst: &mut [u8], stride: usize, above: &[u8], left: &[
     crate::intra_pred::dc_predictor(dst, stride, 4, ctx);
 }
 
+/// Scalar adapter for the `v_predictor` dispatch slot (Wave I I1).
+/// The underlying [`crate::intra_pred::v_predictor`] takes a
+/// `PredCtx`; V_PRED reads only `ctx.above`, so this adapter rebuilds
+/// a minimal context (`left: &[]`, `above_left: 0`) to match the
+/// flat slot signature `(dst, stride, bs, above)`.
+fn scalar_v_predictor(dst: &mut [u8], stride: usize, bs: usize, above: &[u8]) {
+    let ctx = crate::intra_pred::PredCtx {
+        above,
+        left: &[],     // V_PRED ignores `left`.
+        above_left: 0, // V_PRED ignores `above_left`.
+    };
+    crate::intra_pred::v_predictor(dst, stride, bs, ctx);
+}
+
 /// Scalar reference for the `lpf_vertical_4` dispatch slot. Direct
 /// alias of [`crate::loopfilter::lpf_vertical_4`]; the slot exists to
 /// reserve the family naming for a future AVX2 implementation, see
@@ -419,6 +433,7 @@ fn scalar_extend_frame_borders(yv12: &mut Yv12Buffer) {
 /// | F9    | inverse 32×32 eob≤34  | `idct32x32_34_add`     | yes (finisher-only) |
 /// | F9    | inverse 32×32 eob≤135 | `idct32x32_135_add`    | yes (finisher-only) |
 /// | G4.3a | intra-pred DC 4×4 | `dc_predictor_4x4`         | yes       |
+/// | I1    | intra-pred V (size-parametric) | `v_predictor`     | yes (Wave I I1) |
 /// | G4-β  | hybrid ADST 4×4   | `iht4x4_add`               | yes       |
 /// | G4-β  | hybrid ADST 8×8   | `iht8x8_add`               | yes       |
 /// | G4.3b / F10 | loopfilter v4 | `lpf_vertical_4`           | yes (Wave F G F10) — H1 gated OFF by default |
@@ -581,6 +596,17 @@ pub struct SimdDispatch {
     /// [`crate::dsp::x86_64::dc_predictor_4x4_avx2`]; otherwise it
     /// points at a thin scalar adapter that re-builds a `PredCtx`.
     pub(crate) dc_predictor_4x4: fn(dst: &mut [u8], stride: usize, above: &[u8], left: &[u8]),
+
+    /// Wave I I1 — size-parametric V_PRED intra-predictor. Signature
+    /// is the flat-arg form `(dst, stride, bs, above)` (compare:
+    /// [`crate::intra_pred::v_predictor`] takes a `PredCtx`; V_PRED
+    /// reads only `ctx.above`). `bs ∈ {4, 8, 16, 32}`; the wrapper
+    /// dispatches internally on `bs` to the matching wide-store width
+    /// (4 / 8 / 16 / 32 bytes). On x86_64 AVX2 CPUs this points at
+    /// the safe wrapper [`crate::dsp::x86_64::v_predictor_avx2`];
+    /// otherwise it points at a thin scalar adapter that re-builds a
+    /// `PredCtx`.
+    pub(crate) v_predictor: fn(dst: &mut [u8], stride: usize, bs: usize, above: &[u8]),
 
     /// G4.3b / Wave F G F10 — vertical 4-tap loopfilter edge kernel.
     /// Signature mirrors [`crate::loopfilter::lpf_vertical_4`]. On
@@ -853,6 +879,20 @@ impl SimdDispatch {
         };
         #[cfg(not(target_arch = "x86_64"))]
         let dc_predictor_4x4: fn(&mut [u8], usize, &[u8], &[u8]) = scalar_dc_predictor_4x4;
+
+        // ---- Wave I I1 — size-parametric V_PRED intra-predictor. ----
+        // bs ∈ {4, 8, 16, 32}; one slot covers all sizes (the wrapper
+        // dispatches internally on `bs` to the matching wide-store
+        // width). First non-DC intra-pred slot — pattern that I2/I3/I4
+        // mirror for H_PRED / TM_PRED / DC family extension.
+        #[cfg(target_arch = "x86_64")]
+        let v_predictor: fn(&mut [u8], usize, usize, &[u8]) = if caps.avx2 {
+            crate::dsp::x86_64::v_predictor_avx2
+        } else {
+            scalar_v_predictor
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let v_predictor: fn(&mut [u8], usize, usize, &[u8]) = scalar_v_predictor;
 
         // ---- Wave E G4-β — hybrid ADST slots. AVX2-capable on x86_64
         // when `caps.avx2 == true`; scalar fallback otherwise. The AVX2
@@ -1201,6 +1241,7 @@ impl SimdDispatch {
             idct16x16_10_add,
             idct16x16_38_add,
             dc_predictor_4x4,
+            v_predictor,
             iht4x4_add,
             iht8x8_add,
             iht16x16_add,
@@ -1341,6 +1382,19 @@ impl SimdDispatch {
     #[must_use]
     pub fn dc_predictor_4x4(&self) -> fn(&mut [u8], usize, &[u8], &[u8]) {
         self.dc_predictor_4x4
+    }
+
+    /// Dispatch the size-parametric V_PRED intra-predictor (Wave I I1).
+    /// The slot uses the flat `(dst, stride, bs, above)` signature;
+    /// the AVX2 wrapper dispatches internally on `bs ∈ {4, 8, 16, 32}`
+    /// to the matching wide-store width. The scalar adapter wraps
+    /// [`crate::intra_pred::v_predictor`] (which requires a `PredCtx`
+    /// — the adapter sets `left = &[]` and `above_left = 0` since
+    /// V_PRED ignores those fields).
+    #[inline]
+    #[must_use]
+    pub fn v_predictor(&self) -> fn(&mut [u8], usize, usize, &[u8]) {
+        self.v_predictor
     }
 
     /// Dispatch the vertical 4-tap loopfilter kernel (G4.3b / Wave F
@@ -1856,6 +1910,60 @@ mod tests {
             d.dc_predictor_4x4() as usize,
             scalar as usize,
             "avx2=false must install the scalar dc_predictor_4x4 adapter"
+        );
+    }
+
+    /// Wave I I1 — on AVX2 hosts the `v_predictor` slot routes through
+    /// the AVX2 wrapper and produces output bit-identical to the scalar
+    /// adapter for a deterministic input across all four `bs` sizes.
+    /// On non-AVX2 hosts the slot installs the scalar adapter and the
+    /// test still runs (the bit-equality assertion is trivially true).
+    #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn v_predictor_avx2_routing_avx2_cpu() {
+        if !std::is_x86_feature_detected!("avx2") {
+            return;
+        }
+        let mut caps = detect();
+        caps.avx2 = true;
+        let d = SimdDispatch::build(caps);
+        // Fn-pointer-identity check: AVX2 caps must install the AVX2
+        // safe wrapper.
+        let avx2_fp: fn(&mut [u8], usize, usize, &[u8]) =
+            crate::dsp::x86_64::v_predictor_avx2;
+        assert_eq!(
+            d.v_predictor() as usize,
+            avx2_fp as usize,
+            "avx2=true must install the v_predictor_avx2 wrapper"
+        );
+        // Output-parity check: AVX2 slot must agree with the scalar
+        // adapter on a deterministic input across all four sizes.
+        let scalar: fn(&mut [u8], usize, usize, &[u8]) = super::scalar_v_predictor;
+        for bs in [4usize, 8, 16, 32] {
+            let above: Vec<u8> = (0..bs).map(|i| (i as u32 * 17 + 3) as u8).collect();
+            let mut dst_slot = vec![0u8; bs * bs];
+            let mut dst_scalar = vec![0u8; bs * bs];
+            (d.v_predictor())(&mut dst_slot, bs, bs, &above);
+            scalar(&mut dst_scalar, bs, bs, &above);
+            assert_eq!(dst_slot, dst_scalar, "v_predictor parity mismatch at bs={bs}");
+        }
+    }
+
+    /// Wave I I1 — when caps.avx2 is forced false, the `v_predictor`
+    /// slot routes to the scalar adapter.
+    #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn forced_scalar_caps_installs_scalar_v_predictor() {
+        let mut caps = detect();
+        caps.avx2 = false;
+        let d = SimdDispatch::build(caps);
+        let scalar: fn(&mut [u8], usize, usize, &[u8]) = super::scalar_v_predictor;
+        assert_eq!(
+            d.v_predictor() as usize,
+            scalar as usize,
+            "avx2=false must install the scalar v_predictor adapter"
         );
     }
 
