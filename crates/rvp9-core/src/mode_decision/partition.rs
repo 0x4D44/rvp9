@@ -342,6 +342,16 @@ fn descend(
     // that F8.1's Block8x8 inter picker (the testsrc PSNR climb from
     // 24 → 35-52 dB) depends on the descent reaching Block8x8 on
     // small frames; capping inter too would regress that win.
+    //
+    // A7.inter-cap experiment (2026-05-22): extending the cap to
+    // inter frames reduces foreman bitrate by ~30% (fewer leaves →
+    // fewer mode/skip/MV symbols) but PSNR stays locked at 16 dB.
+    // Confirms the floor is NOT a bit-budget problem: residuals are
+    // empty because q=255 quantizes all coefficients to zero,
+    // independent of partition density. testsrc loses 0.2-0.3 dB
+    // (matches A1's documented inter Block8x8 picker contribution).
+    // Reverted; the inter-cap experiment did not help and slightly
+    // regressed testsrc. See wrk_docs/A7-inter-cap-foreman-report.md.
     let allow_split_to_8x8 = !params.is_keyframe;
     let (threshold_idx, child_size) = match bs {
         BlockSize::Block64x64 => (0usize, Some(BlockSize::Block32x32)),
