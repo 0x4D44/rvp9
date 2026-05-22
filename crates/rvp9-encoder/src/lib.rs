@@ -2176,8 +2176,8 @@ pub(crate) struct InterPartitionLeafDesc {
     pub mi_col_in_sb: usize,
     /// Leaf [`BlockSize`] (square).
     pub leaf_bsize: BlockSize,
-    /// Picked inter mode (one of `ZeroMv` / `NearestMv` / `NewMv`).
-    /// Always `ZeroMv` on `skip = true` fallback leaves.
+    /// Picked inter mode (one of `ZeroMv` / `NearestMv` / `NearMv` /
+    /// `NewMv`). Always `ZeroMv` on `skip = true` fallback leaves.
     pub picked_mode: InterMode,
     /// Picked MV in 1/8-pel units. `Mv::ZERO` on skip-true leaves.
     pub picked_mv: Mv,
