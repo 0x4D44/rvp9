@@ -558,6 +558,39 @@ RD margin is too narrow on textured motion) or (b) seeding
 `prev_mv_grid = None` today). Both are future-experiment
 territory; the F8.1 NEARMV divergence itself is RESOLVED.
 
+**Follow-up — A18 (2026-05-22):** Plumbed prev_frame_mvs through
+the encoder (commits `a41bbbc`, `48e869b`). StreamEncoder now
+maintains a `prev_mv_grid: Vec<PrevFrameMvRef>` mirror of the
+decoder's `cm->prev_frame->mvs` — populated post-encode from the
+final per-leaf picks, gated on libvpx's `use_prev_frame_mvs`
+predicate (size match + `!last_frame_was_key`). Both the picker's
+`find_mv_refs` walks (encoder side) and the writer's
+`build_inter_packet_with_residuals` (`find_mv_refs` for NEWMV
+residual's `best_ref_mv`) now accept the grid.
+
+**However**, activation is gated off by default behind
+`RVP9_A18_ACTIVATE` env var. With activation ON:
+- **testsrc**: BD-rate +630.68 % → +870.01 % (regression -240 pp).
+- **foreman**: unchanged (still +395.92 %) — the prev_mv_grid is
+  all-zero because no NEWMV picks happen on the previous frame,
+  so the salvage adds zero candidates that dedup against the
+  already-zero spatial list. Chicken-and-egg confirmed.
+
+Root cause of testsrc regression: with non-zero prev-frame MVs
+propagating into `mvc.near`, the picker's RD math favours NEARMV
+(rate-free; no MV-delta bits) even when its prediction error is
+worse than refined-NEWMV's after diamond + sub-pel. The picker's
+strict-`<` argmin then keeps NEARMV. Cross-decoder remains
+byte-exact (the encoder and decoder agree on the wrong picks).
+
+A18 thus leaves the infrastructure in place (storage, write-back,
+API extension on `pick_and_simulate_inter_encode_partitions` and
+`build_inter_packet_with_residuals`) but defaults to passing
+`None` so the BD-rate baseline is preserved. Flipping the gate
+default-on requires fixing the picker's NEARMV-vs-NEWMV RD
+ranking first — likely a NEARMV rate-side penalty or a
+distortion-margin guard.
+
 ### 2026-05-21 — Block8x8 inter leaves forced to ZEROMV-skip  [RESOLVED A1]
 **Where:** `rvp9-encoder::frame_loop::encode_inter_internal` (night-3
 F10.1c). libvpx counterpart: `vp9/encoder/vp9_pickmode.c` over all
