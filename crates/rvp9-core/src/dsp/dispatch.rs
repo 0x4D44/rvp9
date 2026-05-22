@@ -141,7 +141,7 @@ fn scalar_extend_frame_borders(yv12: &mut Yv12Buffer) {
 /// | G4.3a | intra-pred DC 4×4 | `dc_predictor_4x4`         | yes       |
 /// | G4-β  | hybrid ADST 4×4   | `iht4x4_add`               | yes       |
 /// | G4-β  | hybrid ADST 8×8   | `iht8x8_add`               | yes       |
-/// | G4.3b | loopfilter v4     | `lpf_vertical_4`           | scalar only (deferred) |
+/// | G4.3b / F10 | loopfilter v4 | `lpf_vertical_4`           | yes (Wave F G F10) |
 /// | G4.4a | quant dequant     | `plane_dequant_pair`       | scalar only (architectural — no batchable kernel) |
 /// | G4.4b | frame-buffers     | `extend_frame_borders`     | scalar only (memcpy/memset already vectorised) |
 ///
@@ -151,15 +151,15 @@ fn scalar_extend_frame_borders(yv12: &mut Yv12Buffer) {
 /// 3. transforms inverse — `idct4x4_add` (G4.2) + `idct8x8_add` (G4.1) + `idct16x16_add` (Wave D G4.2 full-kernel rollout) + `idct32x32_add` (Wave E G4-α) + `iht4x4_add` + `iht8x8_add` (Wave E G4-β) all have AVX2 impls.
 /// 4. quant dequant — `plane_dequant_pair` slot present (G4.4a).
 /// 5. intra-pred — `dc_predictor_4x4` has AVX2 impl (G4.3a).
-/// 6. loopfilter — `lpf_vertical_4` slot present (G4.3b).
+/// 6. loopfilter — `lpf_vertical_4` slot has AVX2 impl (Wave F G F10).
 ///
 /// 6/6 families have a slot; 6/6 carry a non-scalar Tier-1 impl
 /// (idct4x4, idct8x8, idct16x16, idct32x32, iht4x4, iht8x8,
-/// dc_predictor_4x4). The deferred slots (lpf_vertical_4,
-/// plane_dequant_pair, extend_frame_borders) reserve naming + dispatch
-/// shape so future AVX2 work can fill them without changing call
-/// sites. See per-field docstrings for the per-family deferral
-/// rationale.
+/// dc_predictor_4x4, lpf_vertical_4). The deferred slots
+/// (plane_dequant_pair, extend_frame_borders) reserve naming +
+/// dispatch shape so future AVX2 work can fill them without
+/// changing call sites. See per-field docstrings for the per-family
+/// deferral rationale.
 ///
 /// Fields are `pub(crate)` to keep slot additions a crate-internal
 /// concern; external dispatch sites call the per-kernel accessor
@@ -287,14 +287,14 @@ pub struct SimdDispatch {
     /// points at a thin scalar adapter that re-builds a `PredCtx`.
     pub(crate) dc_predictor_4x4: fn(dst: &mut [u8], stride: usize, above: &[u8], left: &[u8]),
 
-    /// G4.3b — vertical 4-tap loopfilter edge kernel. Signature
-    /// mirrors [`crate::loopfilter::lpf_vertical_4`]. **Currently
-    /// scalar-only** — the libvpx SSE2 loopfilter port gathers 8
-    /// transverse columns across an 8-row stripe via `_mm_loadu_si64`
-    /// (then transpose, then `filter4` lane-parallel); that's a
-    /// non-trivial port and is deferred to a follow-up G4 phase.
-    /// The slot exists so dispatch sites can be retrofitted to call
-    /// `dispatch.lpf_vertical_4()(...)` without a signature churn.
+    /// G4.3b / Wave F G F10 — vertical 4-tap loopfilter edge kernel.
+    /// Signature mirrors [`crate::loopfilter::lpf_vertical_4`]. On
+    /// x86_64 AVX2 CPUs this points at the safe wrapper
+    /// [`crate::dsp::x86_64::lpf_vertical_4_avx2`] (transpose 8×8
+    /// rows of 8 bytes into per-column vectors, run `filter4`
+    /// lane-parallel across the 8 rows, transpose the inner 4 result
+    /// columns back into row-major form and store); otherwise it
+    /// points at the scalar reference.
     pub(crate) lpf_vertical_4:
         fn(pixels: &mut [u8], s_index: usize, pitch: usize, blimit: u8, limit: u8, thresh: u8),
 
@@ -477,9 +477,18 @@ impl SimdDispatch {
         #[cfg(not(target_arch = "x86_64"))]
         let idct16x16_38_add: fn(&[i32; 256], &mut [u8], usize) = scalar_idct16x16_38_add;
 
-        // ---- G4.3b / G4.4a / G4.4b — scalar-only slots (deferral
-        // rationale per field docstrings on `SimdDispatch`). ----
+        // ---- Wave F G F10 — vertical 4-tap loopfilter (AVX2 promoted). ----
+        #[cfg(target_arch = "x86_64")]
+        let lpf_vertical_4: fn(&mut [u8], usize, usize, u8, u8, u8) = if caps.avx2 {
+            crate::dsp::x86_64::lpf_vertical_4_avx2
+        } else {
+            scalar_lpf_vertical_4
+        };
+        #[cfg(not(target_arch = "x86_64"))]
         let lpf_vertical_4: fn(&mut [u8], usize, usize, u8, u8, u8) = scalar_lpf_vertical_4;
+
+        // ---- G4.4a / G4.4b — scalar-only slots (deferral rationale
+        // per field docstrings on `SimdDispatch`). ----
         let plane_dequant_pair: fn(i32, QuantizerDeltas) -> (i16, i16) = scalar_plane_dequant_pair;
         let extend_frame_borders: fn(&mut Yv12Buffer) = scalar_extend_frame_borders;
 
@@ -625,9 +634,10 @@ impl SimdDispatch {
         self.dc_predictor_4x4
     }
 
-    /// Dispatch the vertical 4-tap loopfilter kernel (G4.3b). Slot is
-    /// currently scalar-only — see field doc on
-    /// [`SimdDispatch::lpf_vertical_4`].
+    /// Dispatch the vertical 4-tap loopfilter kernel (G4.3b / Wave F
+    /// G F10). On AVX2 x86_64 hosts this routes to the lane-parallel
+    /// transpose-based wrapper; otherwise to the scalar reference.
+    /// See field doc on [`SimdDispatch::lpf_vertical_4`].
     #[inline]
     #[must_use]
     pub fn lpf_vertical_4(&self) -> fn(&mut [u8], usize, usize, u8, u8, u8) {
@@ -1033,9 +1043,12 @@ mod tests {
         );
     }
 
-    /// G4.3b / G4.4a / G4.4b slots are always scalar regardless of caps.
-    /// See `forced_scalar_caps_installs_scalar_idct8x8` for the miri-skip
-    /// rationale.
+    /// G4.4a / G4.4b deferred slots are always scalar regardless of
+    /// caps. (G4.3b `lpf_vertical_4` was promoted to AVX2 in Wave F
+    /// G F10; see `forced_caps_installs_correct_lpf_vertical_4` for
+    /// that slot's parity assertion.)
+    /// See `forced_scalar_caps_installs_scalar_idct8x8` for the
+    /// miri-skip rationale.
     #[cfg(target_arch = "x86_64")]
     #[cfg_attr(miri, ignore)]
     #[test]
@@ -1044,12 +1057,42 @@ mod tests {
             let mut caps = detect();
             caps.avx2 = avx2;
             let d = SimdDispatch::build(caps);
-            let lpf: fn(&mut [u8], usize, usize, u8, u8, u8) = super::scalar_lpf_vertical_4;
             let dq: fn(i32, QuantizerDeltas) -> (i16, i16) = super::scalar_plane_dequant_pair;
             let ef: fn(&mut Yv12Buffer) = super::scalar_extend_frame_borders;
-            assert_eq!(d.lpf_vertical_4() as usize, lpf as usize);
             assert_eq!(d.plane_dequant_pair() as usize, dq as usize);
             assert_eq!(d.extend_frame_borders() as usize, ef as usize);
         }
+    }
+
+    /// Wave F G F10 — `lpf_vertical_4` slot routes to the AVX2 safe
+    /// wrapper when `caps.avx2 == true` and to the scalar reference
+    /// otherwise. See `forced_scalar_caps_installs_scalar_idct8x8`
+    /// for the miri-skip rationale.
+    #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn forced_caps_installs_correct_lpf_vertical_4() {
+        // avx2 = false -> scalar.
+        let mut caps_s = detect();
+        caps_s.avx2 = false;
+        let d_s = SimdDispatch::build(caps_s);
+        let scalar: fn(&mut [u8], usize, usize, u8, u8, u8) = super::scalar_lpf_vertical_4;
+        assert_eq!(
+            d_s.lpf_vertical_4() as usize,
+            scalar as usize,
+            "avx2=false must install the scalar lpf_vertical_4"
+        );
+
+        // avx2 = true -> AVX2 wrapper.
+        let mut caps_a = detect();
+        caps_a.avx2 = true;
+        let d_a = SimdDispatch::build(caps_a);
+        let avx2: fn(&mut [u8], usize, usize, u8, u8, u8) =
+            crate::dsp::x86_64::lpf_vertical_4_avx2;
+        assert_eq!(
+            d_a.lpf_vertical_4() as usize,
+            avx2 as usize,
+            "avx2=true must install the AVX2 lpf_vertical_4 wrapper"
+        );
     }
 }
