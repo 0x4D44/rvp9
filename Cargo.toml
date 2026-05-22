@@ -4,6 +4,7 @@
 #
 # Crate split:
 #   rvp9-core    Shared primitives used by both decoder and encoder.
+#   rvp9-io      Shared container (IVF/WebM) + Y4M I/O and MD5 helpers.
 #   rvp9-decoder Spec-conformant VP9 decoder (Stage 3).
 #   rvp9-encoder Real-time VP9 encoder, libvpx-mirrored (Stage 4).
 #   rvp9-cli     `rvp9enc` / `rvp9dec` binaries.
@@ -14,6 +15,7 @@
 resolver = "2"
 members = [
     "crates/rvp9-core",
+    "crates/rvp9-io",
     "crates/rvp9-decoder",
     "crates/rvp9-encoder",
     "crates/rvp9-cli",

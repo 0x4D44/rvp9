@@ -1,4 +1,4 @@
-//! Minimal container readers for the conformance harness.
+//! Minimal VP9 container readers/writers (IVF + WebM).
 //!
 //! Two formats are supported, both used by libvpx's VP9 conformance
 //! test vectors:

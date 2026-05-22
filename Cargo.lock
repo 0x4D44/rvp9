@@ -352,6 +352,7 @@ dependencies = [
 name = "rvp9-bench"
 version = "0.1.0"
 dependencies = [
+ "rvp9-core",
  "rvp9-decoder",
  "rvp9-encoder",
  "rvp9-harness",
@@ -399,6 +400,14 @@ dependencies = [
  "rvp9-core",
  "rvp9-decoder",
  "rvp9-encoder",
+ "rvp9-io",
+]
+
+[[package]]
+name = "rvp9-io"
+version = "0.1.0"
+dependencies = [
+ "rvp9-core",
 ]
 
 [[package]]

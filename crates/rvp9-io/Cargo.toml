@@ -1,0 +1,14 @@
+[package]
+name = "rvp9-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Shared container (IVF/WebM) + Y4M readers/writers and MD5 helpers used by the rvp9 CLIs and test harness."
+
+[lints]
+workspace = true
+
+[dependencies]
+rvp9-core = { path = "../rvp9-core" }
