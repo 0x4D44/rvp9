@@ -701,13 +701,17 @@ expected delta is small (< 0.5 % BD-rate).
 **Future plan:** if Stage 4b's measurement work shows > 1 % BD-rate
 attributable to filter-level choice, port the RD search.
 
-### 2026-05-21 — No NEARMV / compound-ref / temporal SVC inter shapes
+### 2026-05-21 — No NEARMV / compound-ref / temporal SVC inter shapes [A14 Phase A landed 2026-05-22]
 **Where:** rvp9-encoder doesn't drive compound-ref inter blocks or
 temporal SVC layering. libvpx counterpart: full inter-coding shape
 surface.
 **What libvpx does:** ships all VP9 inter shapes.
-**What rvp9 does:** single-ref LASTFRAME only in the encoder
-(decoder handles the full surface). No SVC.
+**What rvp9 does:** single-ref LASTFRAME only in the encoder's
+PICKER (decoder handles the full surface). No SVC. A14 Phase A
+(2026-05-22) added GOLDEN slot maintenance + periodic refresh on
+the encoder's reference-pool side — `golden_recon_*` buffers
+mirror what the decoder writes when reading `refresh_frame_flags`
+bit 1 — but the picker still iterates LASTFRAME only.
 **Why:** v1 scope (Stage 4a MVP). SVC is Stages 4d/4e. Compound-ref
 is mechanical-but-orthogonal work.
 **Byte-parity impact:** structural — the wire-format writer can emit
@@ -716,6 +720,33 @@ compound-ref blocks but the encoder doesn't pick them.
 divergence from full-libvpx parity. Expect 5–15 % BD-rate penalty on
 typical real-time content (compound-ref bidirectional inter is the
 dominant win at our cpu-used target).
+**A14 Phase A landing (2026-05-22):** added
+`golden_recon_{y,u,v}` buffers + `frames_since_golden_refresh`
+counter to `StreamEncoder` (`crates/rvp9-encoder/src/frame_loop.rs`).
+KF path copies post-LF reconstruction into GOLDEN (matches the
+decoder's `refresh_frame_flags=0xFF` slot fan-out); inter path
+emits `refresh_frame_flags = 0x03` every
+`A14_GOLDEN_REFRESH_PERIOD = 8` inter frames (vs the A11 `0x01`
+baseline) and mirrors the new recon into GOLDEN. Wire-format
+output is identical to A13 on no-refresh frames; on refresh
+frames the one byte carrying `refresh_frame_flags` changes value
+(same bit count). Cross-decoder gate stays BYTE-EXACT vs
+vpxdec + ffmpeg. F12 PSNR sweeps unchanged from A13 because the
+picker still consumes LAST only (the GOLDEN slot is maintained
+but never read).
+**A14 Phases B/C/D outstanding (picker + writer + measurement
+integration):** Phase B widens the picker's `MvCandidates` to
+carry both LAST and GOLDEN refs, doubles the per-leaf candidate
+iteration from 4 to 8 (`{LAST, GOLDEN} x {ZERO, NEAREST, NEAR,
+NEW}`), and adds a `picked_ref_frame` field to
+`InterPartitionLeafDesc`. Phase C threads that through
+`splat_inter_leaf_into_mi_grid` + `build_inter_mi_grid_from_picker`
+so the writer's existing GOLDEN-emission branch is exercised
+(the writer was already symbolic-ref-correct via the round-trip
+to the decoder's `read_ref_frames`). Phase D is the BD-rate
+measurement sweep on foreman_cif (expected meaningful PSNR
+climb at all four target bitrates once the picker has access to
+a non-stale reference).
 **Future plan:** Stage 4a exit gate will measure WITHOUT compound-
 ref enabled on the libvpx side too (`--cpu-used 7 --rt` defaults
 match this constraint at the picker level); once parity at matched
