@@ -756,7 +756,9 @@ pub fn intra_predict(
     } else {
         match (mode, bs == 4) {
             (IntraMode::Dc, _) => {
-                dc_predict_with_availability(dst, stride, bs, ctx.above, ctx.left, dc_avail);
+                dc_predict_with_availability(
+                    dst, stride, bs, ctx.above, ctx.left, dc_avail, dispatch,
+                );
             }
             (IntraMode::V, _) => (dispatch.v_predictor())(dst, stride, bs, ctx.above),
             (IntraMode::H, _) => (dispatch.h_predictor())(dst, stride, bs, ctx.left),
@@ -842,6 +844,14 @@ pub struct DcAvailability {
 /// (only above), [`dc_left_predictor`] (only left), and
 /// [`dc_128_predictor`] (neither). Mirrors libvpx's `dc_pred[][]`
 /// table at `vp9_reconintra.c:330-348`.
+///
+/// Wave I I4 — routes through the per-arm `SimdDispatch` slots so
+/// AVX2 hosts get the lane-parallel kernels. The legacy
+/// `dispatch.dc_predictor_4x4` slot still handles the
+/// `(bs = 4, both-avail)` fast path (called from `intra_predict`);
+/// this router covers every other DC variant including bs ∈ {8, 16, 32}
+/// with both neighbours available and all four arms for any bs when at
+/// least one neighbour is missing.
 pub fn dc_predict_with_availability(
     dst: &mut [u8],
     stride: usize,
@@ -849,21 +859,13 @@ pub fn dc_predict_with_availability(
     above: &[u8],
     left: &[u8],
     availability: DcAvailability,
+    dispatch: &crate::dsp::SimdDispatch,
 ) {
     match (availability.above_available, availability.left_available) {
-        (true, true) => dc_predictor(
-            dst,
-            stride,
-            bs,
-            PredCtx {
-                above,
-                left,
-                above_left: 0,
-            },
-        ),
-        (true, false) => dc_top_predictor(dst, stride, bs, above),
-        (false, true) => dc_left_predictor(dst, stride, bs, left),
-        (false, false) => dc_128_predictor(dst, stride, bs),
+        (true, true) => (dispatch.dc_predict_full())(dst, stride, bs, above, left),
+        (true, false) => (dispatch.dc_predict_top())(dst, stride, bs, above),
+        (false, true) => (dispatch.dc_predict_left())(dst, stride, bs, left),
+        (false, false) => (dispatch.dc_predict_128())(dst, stride, bs),
     }
 }
 
@@ -1368,10 +1370,14 @@ mod tests {
 
     /// DC availability dispatch: 4 combinations of
     /// `(above_available, left_available)` route to the right kernel.
+    /// Wave I I4 — now takes a `&SimdDispatch` argument; uses the
+    /// crate-test `scalar_dispatch()` helper to force scalar caps so
+    /// the expected DC byte is computable by hand.
     #[test]
     fn dc_predict_with_availability_picks_right_kernel() {
         let above = [16u8, 16, 16, 16];
         let left = [32u8, 32, 32, 32];
+        let dispatch = scalar_dispatch();
 
         // Both available → dc_predictor: (16*4 + 32*4 + 4) / 8 = 24.
         let mut dst = [0u8; 16];
@@ -1385,6 +1391,7 @@ mod tests {
                 above_available: true,
                 left_available: true,
             },
+            &dispatch,
         );
         assert!(dst.iter().all(|&v| v == 24));
 
@@ -1400,6 +1407,7 @@ mod tests {
                 above_available: true,
                 left_available: false,
             },
+            &dispatch,
         );
         assert!(dst.iter().all(|&v| v == 16));
 
@@ -1415,6 +1423,7 @@ mod tests {
                 above_available: false,
                 left_available: true,
             },
+            &dispatch,
         );
         assert!(dst.iter().all(|&v| v == 32));
 
@@ -1430,6 +1439,7 @@ mod tests {
                 above_available: false,
                 left_available: false,
             },
+            &dispatch,
         );
         assert!(dst.iter().all(|&v| v == 128));
     }

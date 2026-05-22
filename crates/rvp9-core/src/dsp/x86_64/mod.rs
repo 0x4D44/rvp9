@@ -35,6 +35,10 @@
 // soundness.
 
 pub mod dc_pred_4x4_avx2;
+pub mod dc_predict_128_avx2;
+pub mod dc_predict_full_avx2;
+pub mod dc_predict_left_avx2;
+pub mod dc_predict_top_avx2;
 pub mod h_predictor_avx2;
 pub mod idct4x4_avx2;
 pub mod idct8x8_avx2;
@@ -64,6 +68,10 @@ pub mod tm_predictor_avx2;
 pub mod v_predictor_avx2;
 
 pub use dc_pred_4x4_avx2::dc_predictor_4x4_avx2;
+pub use dc_predict_128_avx2::dc_predict_128_avx2;
+pub use dc_predict_full_avx2::dc_predict_full_avx2;
+pub use dc_predict_left_avx2::dc_predict_left_avx2;
+pub use dc_predict_top_avx2::dc_predict_top_avx2;
 pub use h_predictor_avx2::h_predictor_avx2;
 pub use idct4x4_avx2::idct4x4_add_avx2;
 pub use idct8x8_avx2::idct8x8_add_avx2;
