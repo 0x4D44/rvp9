@@ -714,6 +714,11 @@ impl StreamEncoder {
                                 picked_mv: Mv::ZERO,
                                 skip: true,
                                 segment_id: seg_id,
+                                // A15 Phase B — default picked ref to LAST.
+                                // The picker overwrites this per-leaf when
+                                // it iterates {LAST, GOLDEN} below; skip-
+                                // fallback leaves retain LAST (matches A14).
+                                picked_ref_frame: RefFrame::LastFrame,
                             }
                         })
                         .collect()

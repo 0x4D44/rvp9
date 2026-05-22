@@ -2187,6 +2187,13 @@ pub(crate) struct InterPartitionLeafDesc {
     /// AQ.1 — segment id `0..=7` driving the per-leaf effective
     /// qindex via [`effective_qindex_for_segment`]. `0` for AQ-off.
     pub segment_id: u8,
+    /// A15 Phase B — reference frame the picker chose for this leaf.
+    /// Stage 4a' compression-efficiency closure widens the picker
+    /// surface from `{LASTFRAME} × {ZERO,NEAREST,NEAR,NEW}` to
+    /// `{LASTFRAME, GOLDENFRAME} × {ZERO,NEAREST,NEAR,NEW}`. Default
+    /// `RefFrame::LastFrame` matches A14 behaviour (LAST-only picker)
+    /// on skip-fallback leaves and pre-A15 callers.
+    pub picked_ref_frame: RefFrame,
 }
 
 /// F10.1c — Drive the F8.1 inter mode picker per leaf and run the
