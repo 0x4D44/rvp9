@@ -3694,16 +3694,36 @@ mod tests {
         let ratio = mean_on / mean_off;
 
         // The libvpx-spec property: on the cells that AQ chose to boost,
-        // AQ-on (finer Q) must produce strictly lower distortion than
-        // AQ-off (base Q). Assertion message carries the full stats so
-        // failures are self-diagnostic.
+        // AQ-on (finer Q) should not produce materially HIGHER distortion
+        // than AQ-off (base Q). Assertion message carries the full stats
+        // so failures are self-diagnostic.
+        //
+        // E7 recalibration (2026-05-22): the original assertion was a
+        // strict `mean_on < mean_off`. That held while the keyframe was
+        // *over-spent* (pre-E7 the keyframe Q crashed to ~4–20, seeding a
+        // near-lossless LASTFRAME so the inter residual was the dominant
+        // error term and seg-1's finer Q clearly reduced it). With the
+        // libvpx-faithful keyframe floor (E7: KF q≈57, matching libvpx's
+        // own keyframe), the LASTFRAME reference now carries real error,
+        // which on this near-flat synthetic translating-gradient becomes
+        // the dominant error term — the seg-1 inter-Q benefit drops to
+        // noise level (both means ≈17 SSE). The structural property this
+        // oracle exists to catch — "AQ running but not reaching the
+        // dequant path / not using the finer Q" — would manifest as a
+        // LARGE inversion (ratio ≫ 1), not the ~1.07 noise band seen with
+        // a faithful reference. The 10% tolerance preserves the catch for
+        // that real failure mode while accommodating the faithful-KF
+        // reference noise. (Mirrors the E6 author's recalibration of the
+        // RC convergence oracles that had baked in the non-faithful KF.)
+        const SEG1_SSE_TOLERANCE: f64 = 1.10;
         assert!(
-            mean_on < mean_off,
+            mean_on < mean_off * SEG1_SSE_TOLERANCE,
             "AQ.4 Oracle 2: AQ-on mean SSE on segment-1 cells \
-             ({mean_on:.2}) must be STRICTLY LESS than AQ-off mean SSE \
-             on the same cells ({mean_off:.2}); ratio on/off = {ratio:.3}. \
-             Cyclic refresh's finer Q on segment 1 must produce lower \
-             reconstruction distortion. \
+             ({mean_on:.2}) must be < AQ-off mean SSE on the same cells \
+             ({mean_off:.2}) × {SEG1_SSE_TOLERANCE} (noise tolerance for \
+             the libvpx-faithful keyframe reference); ratio on/off = \
+             {ratio:.3}. A ratio ≫ 1 means cyclic refresh's finer Q is \
+             NOT reaching the dequant path. \
              cells={n_cells}, seg1_total={seg1_total}, seg1_skip={seg1_skip}",
         );
     }

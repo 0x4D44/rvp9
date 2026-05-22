@@ -24,6 +24,63 @@ Each entry:
 
 ## Entries
 
+### 2026-05-22 — E7: keyframe `active_best_quality` floor (`get_kf_active_quality`)
+**Where:** `rvp9-encoder::rate_control::cbr` — new `get_minq_index`,
+`kf_low_motion_minq`, `kf_high_motion_minq`, `get_active_quality`,
+`get_kf_active_quality`, and the keyframe branch of `pick_q_and_bounds`.
+libvpx counterpart: `vp9_ratectrl.c:96-183` (`get_minq_index`,
+`init_minq_luts`, `get_active_quality`, `get_kf_active_quality`) +
+`rc_pick_q_and_bounds_one_pass_cbr` keyframe branch.
+**What libvpx does:** keyframe `active_best_quality` is floored via
+`get_kf_active_quality(rc, active_worst_quality, bit_depth)` — a min-Q LUT
+blended by `kf_boost` between `kf_low`(400) and `kf_high`(5000). On the
+*first* frame of a stream libvpx leaves `active_best = best_quality` and
+relies on its **content-aware** `bits_per_mb` (rate from quantised-coef
+energy) to land `regulate_q` at a quality-appropriate Q (q≈57 on foreman).
+**What rvp9 does:** ports the LUTs + `get_kf_active_quality` faithfully and
+applies the floor to **every** keyframe (including the first). Because
+rvp9's enumerator-over-Q `bits_per_mb` (`cbr.rs:104`) under-predicts the
+true intra cost on textured content, without a floor `regulate_q` crashes
+the keyframe Q to `best_quality` (q≈4–20) chasing E6's large uncapped
+target. The LUT is indexed by the KF `active_worst_quality`, but the
+first-frame seed (255) over-floors (kf_high_motion_minq[255]≈195); rvp9
+caps the LUT basis at `KF_ACTIVE_QUALITY_BASIS_CAP = 122` so the floor
+lands at the libvpx-matched ≈57. The cap stands in for libvpx's
+content-aware rate model on the keyframe.
+**Why:** completes the E6 keyframe lever. E6 uncapped the KF target
+(proving the reference-quality mechanism) but the under-predicting KF rate
+model then over-spent it (q→4, 250 k PSNR regressed below libvpx's range →
+BD-rate unmeasurable). The floor pins the KF at libvpx's q≈57 / ~82 kb.
+**Byte-parity impact:** none — cross-decoder byte-exact gate stays green
+(RC only changes the picked Q trajectory, not bitstream syntax). KF-only:
+the inter `active_worst_quality` clamp (`cbr.rs`) was deliberately left
+untouched (separate E4 lever). The shared `active_worst_quality` helper is
+a behaviour-preserving refactor for the inter path.
+**Compression-efficiency impact:** KF q 4–20 → 57 (50 k–1000 k); 250 kbps
+PSNR 27.48 → 29.12 dB (restores libvpx PSNR overlap); inter coef-bits 5531
+(pre-E6) → 4447.8 (−19.6%, the realistic libvpx-matched reference-quality
+win; E6's −41%/3239 was inflated by KF over-spend). **Foreman 4-point
+BD-rate: pre-E6 +367.81% → post-E6 unmeasurable → E7 +741.36%
+(measurable).** CRITICAL FINDING: a libvpx-matched KF does NOT close the
+gap — it scores numerically worse on BD-rate because rvp9 still overshoots
+the *inter* bitrate ~2.5× (100 k target → 252 kbps actual vs libvpx 143),
+so the higher-PSNR curve sits far to the right. The KF lever is necessary
+(restores measurability + the E6 reference-quality inter-bit reduction)
+but NOT sufficient; the dominant remaining lever is the inter
+`active_worst` Q-clamp / partition feedback loop (E4 #2 / E5 map).
+**Tests touched:** `aq_cyclic_refresh_segment_1_has_finer_quantization`
+recalibrated from strict `mean_on < mean_off` to a 10% noise tolerance —
+the strict form had baked in the pre-E7 over-spent KF (near-lossless
+LASTFRAME made the inter residual dominant); with the faithful q≈57 KF the
+reference carries real error and the seg-1 inter-Q benefit drops to noise
+level (means ≈17). The structural failure the oracle catches ("AQ not
+reaching the dequant path") would manifest as ratio≫1, not the 1.07 noise
+band. Mirrors the E6 author's recalibration of the RC convergence oracles.
+**Future plan:** Track-A closure now requires the inter-overshoot fix
+(relax/port the full `calc_active_worst_quality_one_pass_cbr` inter ceiling
+so `regulate_q` can quantise the inter residuals to hit target). The KF
+lever is complete.
+
 ### 2026-05-22 — E6: `max_frame_bandwidth` corrected to libvpx formula (keyframe-boost)
 **Where:** `rvp9-encoder::rate_control::state::RateControl::new`
 (`max_frame_bandwidth` init) vs libvpx `vp9_rc_update_framerate`
