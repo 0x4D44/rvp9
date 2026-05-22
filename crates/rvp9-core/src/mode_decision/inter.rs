@@ -199,6 +199,20 @@ pub struct InterModeSearchParams<'a> {
     pub allow_hp: bool,
     /// Frame kind — selects the RD-multiplier formula.
     pub frame_kind: FrameKind,
+    /// SB-level NEWMV diamond-search seed (mirror of libvpx's
+    /// `x->pred_mv[LAST_FRAME]`, populated by
+    /// `vp9_int_pro_motion_estimation` per SB upstream of
+    /// `vp9_pick_inter_mode`).
+    ///
+    /// When `Some`, this MV (in Q3 / 1/8-pel units) replaces
+    /// `mv_candidates.nearest` as the diamond-search center for the
+    /// NEWMV candidate. The NEWMV rate cost is still computed
+    /// relative to `mv_candidates.nearest` (it's the ref MV the
+    /// bitstream encodes the delta against).
+    ///
+    /// When `None`, falls back to seeding at
+    /// `mv_candidates.nearest` (the pre-A3' behaviour).
+    pub newmv_seed: Option<Mv>,
 }
 
 /// Result of [`pick_inter_mode_luma`].
@@ -313,17 +327,43 @@ pub fn pick_inter_mode_luma_all_costs(
     [zero, nearest, new]
 }
 
+/// Clamp a Q3 (1/8-pel) MV into the picker's full-pel
+/// `mv_limits` envelope by capping `mv.col >> 3` and `mv.row >> 3`
+/// to `[col_min, col_max] × [row_min, row_max]`. Used to keep the
+/// SB-level int_pro seed inside the per-leaf diamond's reachable
+/// range before threading it into [`diamond_search_sad`].
+fn clamp_mv_to_limits(mv: Mv, limits: &MvLimits) -> Mv {
+    // mv.col, mv.row are i16 in Q3; convert to full-pel and clamp.
+    // Reconstruct a Q3 MV that lies on the clamped full-pel grid
+    // (the diamond search operates in full-pel internally and
+    // truncates the Q3 input via `>> 3`, so feeding back the
+    // clamped Q3 == clamped_fp << 3 is exact).
+    let col_fp = (i32::from(mv.col) >> 3).clamp(limits.col_min, limits.col_max);
+    let row_fp = (i32::from(mv.row) >> 3).clamp(limits.row_min, limits.row_max);
+    Mv {
+        col: (col_fp * 8).clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16,
+        row: (row_fp * 8).clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16,
+    }
+}
+
 /// Run the F7.0 full-pel diamond + sub-pel refinement for NEWMV.
 /// Returns the resulting MV in 1/8-pel units. The full-pel search is
-/// seeded at `mv_candidates.nearest` (libvpx's standard NEWMV
-/// initialisation).
+/// seeded at `params.newmv_seed` when provided (libvpx's
+/// `x->pred_mv[]` from `vp9_int_pro_motion_estimation`), otherwise
+/// at `mv_candidates.nearest`. Either way, the seed is clamped to
+/// the picker's `mv_limits` envelope before being fed into the
+/// diamond search.
 fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
+    let center_mv = clamp_mv_to_limits(
+        params.newmv_seed.unwrap_or(params.mv_candidates.nearest),
+        &params.mv_limits,
+    );
     let full = diamond_search_sad(&FullPixelSearchParams {
         block_size: params.block_size,
         src_plane: params.src_plane,
         src_offset: params.src_offset,
         ref_plane: params.ref_plane,
-        center_mv: params.mv_candidates.nearest,
+        center_mv,
         mv_limits: params.mv_limits,
         sad_per_bit: DEFAULT_SAD_PER_BIT,
         mv_costs: params.mv_costs,
@@ -884,6 +924,7 @@ mod tests {
             q_index,
             allow_hp: false,
             frame_kind: synthetic_inter_frame_kind(),
+            newmv_seed: None,
         }
     }
 
@@ -1201,6 +1242,7 @@ mod tests {
             q_index: 40,
             allow_hp: false,
             frame_kind: synthetic_inter_frame_kind(),
+            newmv_seed: None,
         };
         let params6 = InterModeSearchParams {
             inter_mode_ctx: 6,

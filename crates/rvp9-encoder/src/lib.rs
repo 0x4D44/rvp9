@@ -2242,6 +2242,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     use rvp9_core::mode_decision::inter::{
         InterModeSearchParams, MvCandidates, pick_inter_mode_luma,
     };
+    use rvp9_core::mv_search::int_pro_me::int_pro_motion_estimation;
     use rvp9_core::mv_search::mv_limits::MvLimits;
     use rvp9_core::mv_search::{PlaneRef, init_dsmotion_compensation};
     use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
@@ -2344,6 +2345,49 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
             let sb_idx = sb_row * sb_cols + sb_col;
+
+            // A3'-int-pro - SB-level coarse ME (libvpx
+            // `vp9_int_pro_motion_estimation`,
+            // `vp9_mcomp.c:2264-2400`). Produces a starter
+            // integer-pel MV per 64×64 SB by comparing 1D
+            // row/column projections of source vs LASTFRAME ref.
+            // The per-leaf picker uses this MV as the diamond-
+            // search center for NEWMV (mirror of libvpx's
+            // `x->pred_mv[LAST_FRAME]` plumbing at
+            // `vp9_encodeframe.c:1495`). Without this seed the
+            // per-leaf NEWMV diamond starts at (0,0) and the
+            // MV-bit cost dominates over the SSE gain → picker
+            // never picks NEWMV → spatial MV-ref propagation
+            // (A2.foreman) never chains.
+            //
+            // Cheap: 1D projections (not full 2D SAD). Result is
+            // an unclamped Q3 MV; per-leaf clamping happens
+            // inside [`pick_inter_mode_luma`] via the picker's
+            // own MvLimits envelope before the diamond search.
+            //
+            // Returns `IntProMeResult::ZERO` when the SB sits too
+            // close to a frame edge for the projection window's
+            // `(bw/2, bh/2)` halo — we treat that as "no seed"
+            // and the picker falls back to seeding at
+            // `mv_candidates.nearest`.
+            let sb_px_x = sb_col * 64;
+            let sb_px_y = sb_row * 64;
+            let int_pro = int_pro_motion_estimation(
+                &src_y,
+                &ref_y,
+                sb_px_x,
+                sb_px_y,
+                BlockSize::Block64x64,
+            );
+            // Treat a literal zero MV as "no useful seed" — the
+            // picker's existing NEAREST/ZERO-at-(0,0) candidates
+            // already cover that case.
+            let sb_newmv_seed = if int_pro.mv == Mv::ZERO {
+                None
+            } else {
+                Some(int_pro.mv)
+            };
+
             for leaf_idx in 0..sb_partitions[sb_idx].len() {
                 let (leaf_mi_row, leaf_mi_col, leaf_bsize) = {
                     let leaf = &sb_partitions[sb_idx][leaf_idx];
@@ -2601,6 +2645,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     q_index: leaf_qindex,
                     allow_hp: false,
                     frame_kind,
+                    // A3'-int-pro - thread the SB-level coarse-ME
+                    // seed into the per-leaf picker. All leaves
+                    // inside this SB share the same seed (matches
+                    // libvpx, which writes `x->pred_mv[LAST_FRAME]`
+                    // once per SB and reads it on each per-leaf
+                    // pick).
+                    newmv_seed: sb_newmv_seed,
                 };
                 let pick_raw = pick_inter_mode_luma(&params);
                 let pick = if !nearest_in_bounds

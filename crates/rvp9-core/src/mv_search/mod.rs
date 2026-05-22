@@ -45,6 +45,7 @@
 //!   exactly in [`mvsad_err_cost`] and [`mv_err_cost`].
 
 pub mod full_pixel;
+pub mod int_pro_me;
 pub mod mv_limits;
 pub mod search_site;
 pub mod sub_pixel;
@@ -53,6 +54,7 @@ pub use full_pixel::{
     FullPixelSearchParams, FullPixelSearchResult, PlaneRef, diamond_search_sad,
     mv_err_cost, mvsad_err_cost,
 };
+pub use int_pro_me::{IntProMeResult, int_pro_motion_estimation};
 pub use mv_limits::{
     MAX_FIRST_STEP, MAX_FULL_PEL_VAL, MAX_MVSEARCH_STEPS, MV_LOW, MV_UPP, MvLimits,
     is_mv_in, set_mv_search_range, set_subpel_mv_search_range,
