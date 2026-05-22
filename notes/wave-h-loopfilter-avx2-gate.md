@@ -1,8 +1,9 @@
-# Wave H — loopfilter AVX2 gate (H1 follow-up)
+# Wave H — loopfilter AVX2 gate (H1 follow-up, H7 in progress)
 
 **Date filed**: 2026-05-22
 **Filed by**: Claude (Wave H autonomous supervisor)
-**Status**: ACTIVE — AVX2 loopfilter kernels gated OFF pending diagnosis & fix
+**Status**: PARTIAL — H7 bisection complete; only `lpf_vertical_16_avx2`
+remains gated. The other 5 AVX2 lpf_* kernels ship active in production.
 
 ## What happened
 
@@ -27,21 +28,38 @@ The Wave F/G journals claim "first-try bit-exactness on all 6
 implementer rounds (G1-G6)" — that claim was based on unit-test
 parity, not conformance-corpus parity. H1 surfaces the gap.
 
-## Affected kernels (single-variant)
+## H7 bisection results (2026-05-22)
 
-All 6 single-variant loopfilter AVX2 kernels are suspect:
+Granular per-kernel env var (`RVP9_DSP_LOOPFILTER_AVX2=<tag>`)
+enabled one kernel at a time against the 201-vector conformance
+corpus. Result:
 
-| Kernel | Wave | File |
-|--------|------|------|
-| `lpf_vertical_4_avx2` | F10 | `crates/rvp9-core/src/dsp/x86_64/lpf_vertical_4_avx2.rs` |
-| `lpf_horizontal_4_avx2` | G3 | `crates/rvp9-core/src/dsp/x86_64/lpf_horizontal_4_avx2.rs` |
-| `lpf_vertical_8_avx2` | G4 | `crates/rvp9-core/src/dsp/x86_64/lpf_vertical_8_avx2.rs` |
-| `lpf_horizontal_8_avx2` | G5 | `crates/rvp9-core/src/dsp/x86_64/lpf_horizontal_8_avx2.rs` |
-| `lpf_vertical_16_avx2` | G6 | `crates/rvp9-core/src/dsp/x86_64/lpf_vertical_16_avx2.rs` |
-| `lpf_horizontal_16_avx2` | G6 | `crates/rvp9-core/src/dsp/x86_64/lpf_horizontal_16_avx2.rs` |
+| Kernel | Tag | Wave | Conformance | Status |
+|--------|-----|------|-------------|--------|
+| `lpf_vertical_4_avx2`   | `v4`  | F10 | 201/0 | **clean** (active in production) |
+| `lpf_horizontal_4_avx2` | `h4`  | G3  | 201/0 | **clean** (active in production) |
+| `lpf_vertical_8_avx2`   | `v8`  | G4  | 201/0 | **clean** (active in production) |
+| `lpf_horizontal_8_avx2` | `h8`  | G5  | 201/0 | **clean** (active in production) |
+| `lpf_vertical_16_avx2`  | `v16` | G6  | **143/58 — BUGGY** | gated OFF |
+| `lpf_horizontal_16_avx2`| `h16` | G6  | 201/0 | **clean** (active in production) |
 
-It is not yet known which subset of the 6 is responsible — bisection
-needed (see action plan below).
+Verification: with `RVP9_DSP_LOOPFILTER_AVX2=v4,h4,v8,h8,h16`
+(5 known-good kernels enabled, v16 scalar), conformance is 201/0.
+Combined with v16 alone causing the full 58/201 regression, the
+divergence is isolated to `lpf_vertical_16_avx2`.
+
+**Default routing after H7 bisection** (`LpfAvx2Mask::DEFAULT` in
+`dispatch.rs`): 5 known-good AVX2 paths active; `lpf_vertical_16`
+stays scalar pending the v16-specific fix.
+
+## Remaining work: v16 fix
+
+Only one kernel needs investigation: `lpf_vertical_16_avx2` at
+`crates/rvp9-core/src/dsp/x86_64/lpf_vertical_16_avx2.rs`.
+
+The scalar reference is `crate::loopfilter::lpf_vertical_16` →
+`mb_lpf_vertical_edge_w(_, _, _, _, _, _, 16)`. The AVX2 kernel
+should be byte-exact to the scalar over all valid inputs.
 
 ## Mitigation (H1 ships)
 

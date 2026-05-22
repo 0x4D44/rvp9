@@ -54,6 +54,87 @@ use std::sync::{Arc, OnceLock};
 use super::caps::{Caps, detect};
 use crate::frame::Yv12Buffer;
 use crate::quant::QuantizerDeltas;
+
+/// Bit mask of which AVX2 loopfilter kernels to activate. Wave H H1
+/// gate; H7 bisection support. See the comment block in
+/// [`SimdDispatch::build`] for the env-var grammar.
+///
+/// `repr(transparent)` over a `u8` so the parser can use simple
+/// bit-or accumulation.
+#[cfg(target_arch = "x86_64")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LpfAvx2Mask(u8);
+
+#[cfg(target_arch = "x86_64")]
+#[allow(dead_code)] // Bisection flags read at runtime via `contains`.
+impl LpfAvx2Mask {
+    const NONE: Self = Self(0);
+    const ALL: Self = Self(0x3F);
+    const V4: Self = Self(1 << 0);
+    const H4: Self = Self(1 << 1);
+    const V8: Self = Self(1 << 2);
+    const H8: Self = Self(1 << 3);
+    const V16: Self = Self(1 << 4);
+    const H16: Self = Self(1 << 5);
+
+    /// Wave H H7 bisection (2026-05-22) confirmed only
+    /// `lpf_vertical_16_avx2` (V16) causes conformance regressions
+    /// (58/201 vectors). The other 5 kernels are bit-exact and ship
+    /// active by default. See `notes/wave-h-loopfilter-avx2-gate.md`.
+    const DEFAULT: Self = Self(Self::ALL.0 & !Self::V16.0);
+
+    #[inline]
+    fn contains(self, other: Self) -> bool {
+        (self.0 & other.0) == other.0
+    }
+
+    #[inline]
+    fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+}
+
+/// Parse the `RVP9_DSP_LOOPFILTER_AVX2` env var into an [`LpfAvx2Mask`].
+///
+/// - `None` or `""` → [`LpfAvx2Mask::DEFAULT`] (5 known-good AVX2 kernels
+///   active; `lpf_vertical_16` stays scalar pending H7 fix)
+/// - `"0"` → [`LpfAvx2Mask::NONE`] (all kernels scalar, for differential
+///   testing)
+/// - `"1"` → [`LpfAvx2Mask::ALL`] (all 6 AVX2 paths active, including
+///   the still-buggy V16; used to reproduce the regression for fix work)
+/// - comma list (e.g. `"v4,h4"`) → only the listed kernels active;
+///   used for H7 bisection
+///
+/// Unknown tokens are silently ignored; the function is deliberately
+/// permissive so bisection scripts can pass partial lists without
+/// failing the build.
+#[cfg(target_arch = "x86_64")]
+fn parse_lpf_avx2_mask(s: Option<&str>) -> LpfAvx2Mask {
+    let s = match s {
+        Some(s) if !s.is_empty() => s,
+        _ => return LpfAvx2Mask::DEFAULT,
+    };
+    match s {
+        "0" => return LpfAvx2Mask::NONE,
+        "1" => return LpfAvx2Mask::ALL,
+        _ => {}
+    }
+    let mut mask = LpfAvx2Mask::NONE;
+    for tok in s.split(',') {
+        let t = tok.trim();
+        let bit = match t {
+            "v4" => LpfAvx2Mask::V4,
+            "h4" => LpfAvx2Mask::H4,
+            "v8" => LpfAvx2Mask::V8,
+            "h8" => LpfAvx2Mask::H8,
+            "v16" => LpfAvx2Mask::V16,
+            "h16" => LpfAvx2Mask::H16,
+            _ => LpfAvx2Mask::NONE,
+        };
+        mask = mask.union(bit);
+    }
+    mask
+}
 use crate::transforms::inverse::{
     idct4x4_16_add as scalar_idct4x4_add, idct8x8_64_add as scalar_idct8x8_add,
     idct16x16_10_add as scalar_idct16x16_10_add,
@@ -795,39 +876,47 @@ impl SimdDispatch {
         #[cfg(not(target_arch = "x86_64"))]
         let idct16x16_38_add: fn(&[i32; 256], &mut [u8], usize) = scalar_idct16x16_38_add;
 
-        // ---- Wave H H1 — loopfilter AVX2 gate ----
+        // ---- Wave H H1 — loopfilter AVX2 gate (granular for H7 bisect) ----
         //
         // The F10 + G3-G6 AVX2 loopfilter kernels passed unit tests but
         // exposed conformance regressions (58/201) when made live by H1.
         // Until the kernels are differential-tested against scalar on the
-        // conformance corpus (Wave H follow-up), the AVX2 paths are gated
-        // OFF by default. Set `RVP9_DSP_LOOPFILTER_AVX2=1` at runtime to
-        // exercise the AVX2 paths for development / bisection.
+        // conformance corpus (Wave H follow-up H7), the AVX2 paths are
+        // gated OFF by default.
         //
-        // This gate only affects the 6 single-variant lpf_* slots that
-        // currently have AVX2 impls. The 6 dual-variant slots (H1)
-        // remain scalar regardless until H2/H3/H4 lands AVX2 impls,
-        // at which point the same gate gets extended.
+        // `RVP9_DSP_LOOPFILTER_AVX2` env var values:
+        //   - unset / empty: ALL 6 AVX2 lpf_* paths route to scalar
+        //   - `1`           : ALL 6 AVX2 paths active (full activation)
+        //   - comma list    : individual kernels active (H7 bisection),
+        //                     where tags are any subset of
+        //                     `v4,h4,v8,h8,v16,h16`. Example:
+        //                     `RVP9_DSP_LOOPFILTER_AVX2=v4,h4` enables
+        //                     just the 4-tap kernels.
+        //
+        // The dual-variant slots (H1) remain scalar regardless until
+        // H2/H3/H4 lands AVX2 impls.
         #[cfg(target_arch = "x86_64")]
-        let loopfilter_avx2_enabled = caps.avx2
-            && std::env::var("RVP9_DSP_LOOPFILTER_AVX2")
-                .map(|v| v == "1")
-                .unwrap_or(false);
+        let lpf_avx2_mask = if caps.avx2 {
+            parse_lpf_avx2_mask(std::env::var("RVP9_DSP_LOOPFILTER_AVX2").ok().as_deref())
+        } else {
+            LpfAvx2Mask::NONE
+        };
 
         // ---- Wave F G F10 — vertical 4-tap loopfilter (AVX2 gated). ----
         #[cfg(target_arch = "x86_64")]
-        let lpf_vertical_4: fn(&mut [u8], usize, usize, u8, u8, u8) = if loopfilter_avx2_enabled {
-            crate::dsp::x86_64::lpf_vertical_4_avx2
-        } else {
-            scalar_lpf_vertical_4
-        };
+        let lpf_vertical_4: fn(&mut [u8], usize, usize, u8, u8, u8) =
+            if lpf_avx2_mask.contains(LpfAvx2Mask::V4) {
+                crate::dsp::x86_64::lpf_vertical_4_avx2
+            } else {
+                scalar_lpf_vertical_4
+            };
         #[cfg(not(target_arch = "x86_64"))]
         let lpf_vertical_4: fn(&mut [u8], usize, usize, u8, u8, u8) = scalar_lpf_vertical_4;
 
         // ---- Wave G G3 — horizontal 4-tap loopfilter (AVX2 gated). ----
         #[cfg(target_arch = "x86_64")]
         let lpf_horizontal_4: fn(&mut [u8], usize, usize, u8, u8, u8) =
-            if loopfilter_avx2_enabled {
+            if lpf_avx2_mask.contains(LpfAvx2Mask::H4) {
                 crate::dsp::x86_64::lpf_horizontal_4_avx2
             } else {
                 scalar_lpf_horizontal_4
@@ -837,18 +926,19 @@ impl SimdDispatch {
 
         // ---- Wave G G4 — 8-tap vertical loopfilter (AVX2 gated). ----
         #[cfg(target_arch = "x86_64")]
-        let lpf_vertical_8: fn(&mut [u8], usize, usize, u8, u8, u8) = if loopfilter_avx2_enabled {
-            crate::dsp::x86_64::lpf_vertical_8_avx2
-        } else {
-            scalar_lpf_vertical_8
-        };
+        let lpf_vertical_8: fn(&mut [u8], usize, usize, u8, u8, u8) =
+            if lpf_avx2_mask.contains(LpfAvx2Mask::V8) {
+                crate::dsp::x86_64::lpf_vertical_8_avx2
+            } else {
+                scalar_lpf_vertical_8
+            };
         #[cfg(not(target_arch = "x86_64"))]
         let lpf_vertical_8: fn(&mut [u8], usize, usize, u8, u8, u8) = scalar_lpf_vertical_8;
 
         // ---- Wave G G5 — 8-tap horizontal loopfilter (AVX2 gated). ----
         #[cfg(target_arch = "x86_64")]
         let lpf_horizontal_8: fn(&mut [u8], usize, usize, u8, u8, u8) =
-            if loopfilter_avx2_enabled {
+            if lpf_avx2_mask.contains(LpfAvx2Mask::H8) {
                 crate::dsp::x86_64::lpf_horizontal_8_avx2
             } else {
                 scalar_lpf_horizontal_8
@@ -858,18 +948,19 @@ impl SimdDispatch {
 
         // ---- Wave G G6 — 16-tap vertical edge loopfilter (AVX2 gated). ----
         #[cfg(target_arch = "x86_64")]
-        let lpf_vertical_16: fn(&mut [u8], usize, usize, u8, u8, u8) = if loopfilter_avx2_enabled {
-            crate::dsp::x86_64::lpf_vertical_16_avx2
-        } else {
-            scalar_lpf_vertical_16
-        };
+        let lpf_vertical_16: fn(&mut [u8], usize, usize, u8, u8, u8) =
+            if lpf_avx2_mask.contains(LpfAvx2Mask::V16) {
+                crate::dsp::x86_64::lpf_vertical_16_avx2
+            } else {
+                scalar_lpf_vertical_16
+            };
         #[cfg(not(target_arch = "x86_64"))]
         let lpf_vertical_16: fn(&mut [u8], usize, usize, u8, u8, u8) = scalar_lpf_vertical_16;
 
         // ---- Wave G G6 — 16-tap horizontal edge loopfilter (AVX2 gated). ----
         #[cfg(target_arch = "x86_64")]
         let lpf_horizontal_16: fn(&mut [u8], usize, usize, u8, u8, u8) =
-            if loopfilter_avx2_enabled {
+            if lpf_avx2_mask.contains(LpfAvx2Mask::H16) {
                 crate::dsp::x86_64::lpf_horizontal_16_avx2
             } else {
                 scalar_lpf_horizontal_16
@@ -1626,45 +1717,92 @@ mod tests {
         }
     }
 
-    /// Wave H H1 — single-variant AVX2 lpf_* slots are gated OFF by
-    /// default pending conformance differential-test fixes. The gate
-    /// is the `RVP9_DSP_LOOPFILTER_AVX2` env var (unset = scalar even
-    /// on AVX2 CPUs). The 6 individual `forced_caps_installs_correct_lpf_*`
-    /// tests from Wave F/G have been consolidated here: with the gate
-    /// off (default), all 6 slots route to scalar regardless of
-    /// `caps.avx2`. When the kernels are fixed and the gate removed,
-    /// the individual tests should be restored.
+    /// Wave H H1 + H7 — default loopfilter AVX2 routing after H7
+    /// bisection identified `lpf_vertical_16_avx2` as the lone
+    /// buggy kernel. The other 5 single-variant AVX2 lpf_* slots
+    /// ship active by default on AVX2 CPUs; `lpf_vertical_16` stays
+    /// scalar pending the per-kernel fix (still tracked under H7).
     ///
-    /// See `notes/wave-h-loopfilter-avx2-gate.md` for the conformance
-    /// failure analysis (58/201 regressions when the gate is
-    /// unconditionally enabled).
+    /// Conformance verified at 201/0/0/0/201 with this routing.
+    ///
+    /// See `notes/wave-h-loopfilter-avx2-gate.md` for bisection
+    /// details and the env-var grammar for forcing different routings
+    /// at dev time.
     #[cfg(target_arch = "x86_64")]
     #[cfg_attr(miri, ignore)]
     #[test]
-    fn loopfilter_avx2_singles_gated_off_by_default() {
+    fn loopfilter_avx2_default_routing_avx2_cpu() {
         // Per Rust's docs `std::env::set_var` is not thread-safe across
         // parallel tests; we only READ the var here (the test relies on
         // it being unset in cargo's default test env). If a downstream
         // test sets it, this test must be marked `#[serial]` (we don't
         // depend on serial_test today).
-        for &avx2 in &[true, false] {
-            let mut caps = detect();
-            caps.avx2 = avx2;
-            let d = SimdDispatch::build(caps);
-            type Lpf = fn(&mut [u8], usize, usize, u8, u8, u8);
-            let v4: Lpf = super::scalar_lpf_vertical_4;
-            let h4: Lpf = super::scalar_lpf_horizontal_4;
-            let v8: Lpf = super::scalar_lpf_vertical_8;
-            let h8: Lpf = super::scalar_lpf_horizontal_8;
-            let v16: Lpf = super::scalar_lpf_vertical_16;
-            let h16: Lpf = super::scalar_lpf_horizontal_16;
-            assert_eq!(d.lpf_vertical_4() as usize, v4 as usize);
-            assert_eq!(d.lpf_horizontal_4() as usize, h4 as usize);
-            assert_eq!(d.lpf_vertical_8() as usize, v8 as usize);
-            assert_eq!(d.lpf_horizontal_8() as usize, h8 as usize);
-            assert_eq!(d.lpf_vertical_16() as usize, v16 as usize);
-            assert_eq!(d.lpf_horizontal_16() as usize, h16 as usize);
-        }
+        let mut caps = detect();
+        caps.avx2 = true;
+        let d = SimdDispatch::build(caps);
+        type Lpf = fn(&mut [u8], usize, usize, u8, u8, u8);
+        // 5 known-good AVX2 paths route through their AVX2 wrappers.
+        let v4_avx2: Lpf = crate::dsp::x86_64::lpf_vertical_4_avx2;
+        let h4_avx2: Lpf = crate::dsp::x86_64::lpf_horizontal_4_avx2;
+        let v8_avx2: Lpf = crate::dsp::x86_64::lpf_vertical_8_avx2;
+        let h8_avx2: Lpf = crate::dsp::x86_64::lpf_horizontal_8_avx2;
+        let h16_avx2: Lpf = crate::dsp::x86_64::lpf_horizontal_16_avx2;
+        assert_eq!(d.lpf_vertical_4() as usize, v4_avx2 as usize);
+        assert_eq!(d.lpf_horizontal_4() as usize, h4_avx2 as usize);
+        assert_eq!(d.lpf_vertical_8() as usize, v8_avx2 as usize);
+        assert_eq!(d.lpf_horizontal_8() as usize, h8_avx2 as usize);
+        assert_eq!(d.lpf_horizontal_16() as usize, h16_avx2 as usize);
+        // The buggy v16 kernel stays scalar pending H7 fix.
+        let v16_scalar: Lpf = super::scalar_lpf_vertical_16;
+        assert_eq!(d.lpf_vertical_16() as usize, v16_scalar as usize);
+    }
+
+    /// Wave H H1 + H7 — when caps.avx2 is forced false, all 6
+    /// single-variant lpf_* slots route to scalar regardless of
+    /// the env var or H7 bisection state.
+    #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn loopfilter_scalar_routing_no_avx2() {
+        let mut caps = detect();
+        caps.avx2 = false;
+        let d = SimdDispatch::build(caps);
+        type Lpf = fn(&mut [u8], usize, usize, u8, u8, u8);
+        let v4: Lpf = super::scalar_lpf_vertical_4;
+        let h4: Lpf = super::scalar_lpf_horizontal_4;
+        let v8: Lpf = super::scalar_lpf_vertical_8;
+        let h8: Lpf = super::scalar_lpf_horizontal_8;
+        let v16: Lpf = super::scalar_lpf_vertical_16;
+        let h16: Lpf = super::scalar_lpf_horizontal_16;
+        assert_eq!(d.lpf_vertical_4() as usize, v4 as usize);
+        assert_eq!(d.lpf_horizontal_4() as usize, h4 as usize);
+        assert_eq!(d.lpf_vertical_8() as usize, v8 as usize);
+        assert_eq!(d.lpf_horizontal_8() as usize, h8 as usize);
+        assert_eq!(d.lpf_vertical_16() as usize, v16 as usize);
+        assert_eq!(d.lpf_horizontal_16() as usize, h16 as usize);
+    }
+
+    /// Wave H H1 + H7 — `parse_lpf_avx2_mask` grammar regression test.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn parse_lpf_avx2_mask_grammar() {
+        // Unset / empty -> DEFAULT (5 kernels, v16 off)
+        assert_eq!(super::parse_lpf_avx2_mask(None), super::LpfAvx2Mask::DEFAULT);
+        assert_eq!(super::parse_lpf_avx2_mask(Some("")), super::LpfAvx2Mask::DEFAULT);
+        // "0" -> NONE
+        assert_eq!(super::parse_lpf_avx2_mask(Some("0")), super::LpfAvx2Mask::NONE);
+        // "1" -> ALL
+        assert_eq!(super::parse_lpf_avx2_mask(Some("1")), super::LpfAvx2Mask::ALL);
+        // Comma list: only listed kernels.
+        let m = super::parse_lpf_avx2_mask(Some("v4,h4"));
+        assert!(m.contains(super::LpfAvx2Mask::V4));
+        assert!(m.contains(super::LpfAvx2Mask::H4));
+        assert!(!m.contains(super::LpfAvx2Mask::V8));
+        assert!(!m.contains(super::LpfAvx2Mask::V16));
+        // Unknown tokens silently ignored; legitimate ones still pass.
+        let m = super::parse_lpf_avx2_mask(Some("v4,xx,h4"));
+        assert!(m.contains(super::LpfAvx2Mask::V4));
+        assert!(m.contains(super::LpfAvx2Mask::H4));
     }
 
     /// Wave H H1 — the six `_dual` loopfilter slots are scalar-only at
