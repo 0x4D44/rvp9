@@ -2808,10 +2808,42 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 };
                 let pick_last = pick_for_ref(&ref_y, &mvc);
                 let pick_golden = pick_for_ref(&ref_y_golden, &mvc_golden);
-                // Argmin across the two ref frames. Tiebreak on
-                // LAST (cheaper bitstream cost: GOLDEN single-ref
-                // requires an extra ref-frame bit).
-                let (pick, picked_ref) = if pick_golden.best_rd_cost < pick_last.best_rd_cost {
+                // A15 Phase B Step 5 (2026-05-22) — GOLDEN selection
+                // is DEFAULT-OFF.
+                //
+                // The dual-ref dual-pick infrastructure (Steps 1-4)
+                // is intact and load-bearing: `mvc_golden` is built,
+                // `pick_for_ref(&ref_y_golden, ...)` runs, and
+                // `picked_ref_frame` propagates through every
+                // downstream mi_grid consumer. But naively choosing
+                // `argmin(pick_last.rd, pick_golden.rd)` regressed
+                // F12 PSNR by ~10 dB on both testsrc and foreman_cif
+                // (33→15 / 24→15 dB).
+                //
+                // Root cause (diagnosed): the picker's RD doesn't
+                // include the GOLDEN ref-frame rate-cost penalty
+                // (~1 extra bit per single-ref block on the wire —
+                // LAST writes 1 bit `0`; GOLDEN writes 2 bits
+                // `1`+`0`). At the high quant levels typical for
+                // Stage 4a (q∈[200,255]), residuals collapse to
+                // zero so `recon = pred`; SSE picks become trivially
+                // close between LAST and GOLDEN preds and the missing
+                // rate term lets GOLDEN sneak ahead by a sliver of
+                // RD. The picker then chooses GOLDEN ~25-35% of leaves
+                // per inter frame, and the resulting reconstruction
+                // mixes stale-from-KF GOLDEN patches into a frame
+                // that LAST would have tracked closer.
+                //
+                // Setting `RVP9_PICK_GOLDEN=1` enables the
+                // argmin-across-refs selector for future tuning
+                // work (we need to add a `ref_frame_rate` term to
+                // `evaluate_candidate` before GOLDEN picks become
+                // PSNR-positive). The default-off path keeps the
+                // pre-A15 PSNR baseline byte-exact.
+                let pick_golden_enabled = std::env::var("RVP9_PICK_GOLDEN").is_ok();
+                let (pick, picked_ref) = if pick_golden_enabled
+                    && pick_golden.best_rd_cost < pick_last.best_rd_cost
+                {
                     (pick_golden, RefFrame::GoldenFrame)
                 } else {
                     (pick_last, RefFrame::LastFrame)
@@ -3044,6 +3076,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
     // A3'-int-pro frame-level diagnostic — aggregate mode counts.
     // Set RVP9_DIAG_INTPRO=1 to enable.
+    // A15 Phase B Step 5 — also count GOLDEN picks (key diagnostic
+    // for the widened-picker BD-rate measurement).
     if std::env::var("RVP9_DIAG_INTPRO").is_ok() {
         let mut count_zero = 0usize;
         let mut count_nearest = 0usize;
@@ -3051,6 +3085,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         let mut count_skip = 0usize;
         let mut count_nonzero_mv = 0usize;
         let mut count_near = 0usize;
+        let mut count_golden = 0usize;
         for sb in sb_partitions.iter() {
             for leaf in sb.iter() {
                 match leaf.picked_mode {
@@ -3065,13 +3100,16 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 if leaf.picked_mv != Mv::ZERO {
                     count_nonzero_mv += 1;
                 }
+                if matches!(leaf.picked_ref_frame, RefFrame::GoldenFrame) {
+                    count_golden += 1;
+                }
             }
         }
         #[allow(clippy::print_stderr)]
         {
             eprintln!(
-                "[A3'-int-pro] frame summary: zero={} nearest={} near={} new={} skip={} nonzero_mv={}",
-                count_zero, count_nearest, count_near, count_new, count_skip, count_nonzero_mv,
+                "[A3'-int-pro] frame summary: zero={} nearest={} near={} new={} skip={} nonzero_mv={} golden={}",
+                count_zero, count_nearest, count_near, count_new, count_skip, count_nonzero_mv, count_golden,
             );
         }
     }

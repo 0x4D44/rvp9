@@ -752,6 +752,62 @@ ref enabled on the libvpx side too (`--cpu-used 7 --rt` defaults
 match this constraint at the picker level); once parity at matched
 config is hit, Stage 4d/e widens the encoder.
 
+**A15 Phase B landing (2026-05-22):** Steps 1-5 landed the
+picker / mi_grid / writer / LF data flow for LAST+GOLDEN ref
+selection. `InterPartitionLeafDesc::picked_ref_frame` (Step 1)
+threads through `splat_inter_leaf_into_mi_grid` (Step 4),
+`build_inter_mi_grid_from_picker` (Step 4), and
+`build_inter_mi_grid_for_lf` (Step 4). Per-leaf the encoder
+builds BOTH `find_mv_refs(LAST)` and `find_mv_refs(GOLDEN)`
+candidate sets (Step 2) and invokes `pick_inter_mode_luma`
+twice — once per ref — taking the min-RD winner across the two
+4-candidate rankings (Step 3, effective 8 candidates). The
+per-plane simulator selects last_recon vs golden_recon as the
+ref plane based on the picked ref (Step 3). Cross-decoder gate
+remains BYTE-EXACT vs vpxdec + ffmpeg under both LAST-only and
+LAST+GOLDEN modes.
+
+**A15 measurement (Step 5) — GOLDEN selection DEFAULT-OFF:** the
+naive `argmin(pick_last.rd, pick_golden.rd)` selector regressed
+F12 PSNR by ~10 dB on both testsrc (33.51 → 15.42 dB at 25 kbps)
+and foreman_cif (24.01 → 15.63 dB at 25 kbps). Root cause: the
+picker's RD doesn't include the GOLDEN ref-frame rate-cost
+penalty (~1 extra wire bit per single-ref block: LAST = 1 bit
+`0`; GOLDEN = 2 bits `1`+`0`). At Stage 4a operating qindex
+(typically 200-255 under the current rate model), residuals
+collapse to zero so `recon = pred`; SSE picks become trivially
+close between LAST and GOLDEN preds and the missing rate term
+lets GOLDEN sneak ahead by a sliver of RD. The picker then
+chose GOLDEN ~25-35 % of leaves per inter frame (counts of
+~200-300 GOLDEN picks per ~1024 mi-units on foreman_cif), and
+the resulting reconstruction mixes stale-from-KF GOLDEN patches
+into frames LAST would have tracked closer.
+
+A15 ships the **infrastructure** with GOLDEN selection gated
+behind `RVP9_PICK_GOLDEN=1` (off by default). When the env-var
+is absent the picker pins `picked_ref_frame = LastFrame` and
+the encoder's wire-format output matches A14 byte-exactly
+(F12 PSNR sweeps unchanged: testsrc 33.51 / 42.92 / 48.33 /
+56.86 dB, +628.52 % BD-rate; foreman_cif 24.01 / 24.16 / 25.42 /
+28.96 dB, +395.92 % BD-rate; RT median 5.86 ms ≤ 33 ms gate).
+The dual-ref `find_mv_refs` walks + dual `pick_inter_mode_luma`
+calls add ~0.1 ms median to the 256×256 / 352×288 RT path; 720p+
+runs unchanged (the entire inter picker is frame-area-gated at
+307_200 px).
+
+**A15 future work (Phase B follow-up):** add a
+`ref_frame_rate_cost` term to `evaluate_candidate` that prices
+in the single-ref bit difference (LAST: 1 bit; GOLDEN: 2 bits;
+weighted by the entropy probability `single_ref_prob[ctx][slot]`
+to match the writer's actual emit). With that term, the
+`argmin(pick_last, pick_golden)` selector should bias toward
+LAST on near-tied candidates (recovering the baseline byte-
+exactly) AND let GOLDEN win on content where the GOLDEN block
+genuinely beats LAST by more than the ~1-bit penalty — e.g.
+post-occlusion or scene-cut-recovery leaves. The same hook also
+unblocks compound-ref pricing when Stage 4d wires compound
+inter.
+
 ## AQ-series Stage 4b — Cyclic-Refresh AQ divergences (2026-05-21)
 
 ### 2026-05-21 — AQ.5 BD-rate measurement on short / synthetic sources
