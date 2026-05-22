@@ -273,11 +273,44 @@ pub struct StreamEncoder {
     last_recon_u: Vec<u8>,
     /// Last reconstructed V plane (`(width / 2) * (height / 2)`).
     last_recon_v: Vec<u8>,
+    /// A14 — GOLDEN-slot reconstruction buffer (Phase A
+    /// infrastructure). Initialised on every keyframe from the
+    /// KF reconstruction (the decoder does the same via
+    /// `refresh_frame_flags = 0xFF`); periodically refreshed
+    /// from a chosen inter frame's reconstruction via
+    /// `refresh_frame_flags` bit 1. The picker still iterates
+    /// LASTFRAME only (Phase B is follow-up work); these
+    /// buffers exist so the encoder's notion of the decoder's
+    /// GOLDEN ref-pool slot stays in sync with the bitstream
+    /// the writer emits. Cross-decoder gate stays byte-exact:
+    /// the decoder reads the same refresh mask the encoder
+    /// writes, copies its own decoded current frame into slot
+    /// 1 on refresh, and the encoder's `golden_recon_*` mirrors
+    /// that exact pixel data.
+    golden_recon_y: Vec<u8>,
+    /// A14 — GOLDEN U plane (`(width / 2) * (height / 2)`).
+    golden_recon_u: Vec<u8>,
+    /// A14 — GOLDEN V plane (`(width / 2) * (height / 2)`).
+    golden_recon_v: Vec<u8>,
+    /// A14 — frames since the GOLDEN slot was last refreshed
+    /// (incremented on every encoded inter frame; reset to 0 on
+    /// keyframes and on inter-refresh frames).
+    frames_since_golden_refresh: u32,
     /// AQ.3 — cyclic-refresh AQ state. `Some(..)` iff
     /// `config.aq_mode == AqMode::CyclicRefresh`. Reset on every
     /// keyframe via `init_cyclic_refresh`.
     cyclic_refresh: Option<CyclicRefresh>,
 }
+
+/// A14 — GOLDEN refresh period for the inter path (Phase A
+/// infrastructure). Every Nth inter frame refreshes the GOLDEN
+/// slot via `refresh_frame_flags` bit 1. libvpx's CBR-RT path
+/// uses an adaptive interval (`vp9_rc_pick_frame_type` with
+/// `cpi->refresh_golden_frame` driven by
+/// `vp9_cyclic_refresh_set_golden_update`) typically in the
+/// 8-15 frame range; we pin a constant 8 for v1 to keep the
+/// behaviour deterministic and self-tunable later.
+const A14_GOLDEN_REFRESH_PERIOD: u32 = 8;
 
 impl StreamEncoder {
     /// Construct a streaming encoder from `config`.
@@ -339,6 +372,10 @@ impl StreamEncoder {
             last_recon_y: vec![0u8; w * h],
             last_recon_u: vec![0u8; uvw * uvh],
             last_recon_v: vec![0u8; uvw * uvh],
+            golden_recon_y: vec![0u8; w * h],
+            golden_recon_u: vec![0u8; uvw * uvh],
+            golden_recon_v: vec![0u8; uvw * uvh],
+            frames_since_golden_refresh: 0,
             cyclic_refresh,
         })
     }
@@ -563,6 +600,18 @@ impl StreamEncoder {
             );
         }
 
+        // A14 (Phase A) — keyframes refresh every ref-pool slot via
+        // `refresh_frame_flags = 0xFF` (see `build_keyframe_packet`).
+        // Mirror that on the encoder side: copy the KF reconstruction
+        // (post-LF) into the GOLDEN buffer so the encoder's notion
+        // of the decoder's GOLDEN slot matches what the decoder
+        // computed. Reset the refresh counter — the next GOLDEN
+        // refresh lands `A14_GOLDEN_REFRESH_PERIOD` inter frames out.
+        self.golden_recon_y.copy_from_slice(&self.last_recon_y);
+        self.golden_recon_u.copy_from_slice(&self.last_recon_u);
+        self.golden_recon_v.copy_from_slice(&self.last_recon_v);
+        self.frames_since_golden_refresh = 0;
+
         build_keyframe_packet(w, h, q_index, filter_level, &coef_source, &sb_partitions)
     }
 
@@ -729,6 +778,36 @@ impl StreamEncoder {
         let segmentation_params =
             build_segmentation_params(segmentation_enabled, &seg_q_deltas);
 
+        // A14 (Phase A) — decide whether this inter frame refreshes
+        // the GOLDEN slot. Period: `A14_GOLDEN_REFRESH_PERIOD` inter
+        // frames between refreshes. The counter is incremented BEFORE
+        // the check so the first inter frame after a KF (when the
+        // counter is at 0 from the KF reset) gets `counter == 1` on
+        // the check — meaning the first GOLDEN refresh lands at
+        // inter-frame N (where N == period). That matches libvpx's
+        // `cpi->refresh_golden_frame` cadence (refresh after the
+        // GF group reaches its planned length, never on the first
+        // post-KF frame).
+        //
+        // Phase A is INFRASTRUCTURE ONLY — the picker still iterates
+        // LASTFRAME only (Phase B follow-up), so this refresh bit
+        // changes the wire-format `refresh_frame_flags` mask but
+        // does NOT change which ref the picker reads from. The
+        // encoder's `golden_recon_*` mirror tracks the decoder's
+        // slot-1 contents; once Phase B lands, the picker reads from
+        // those buffers and the wire-format selection bits already
+        // emitted by `write_inter_block_mode_info` will resolve to
+        // the right slot.
+        self.frames_since_golden_refresh =
+            self.frames_since_golden_refresh.saturating_add(1);
+        let refresh_golden_this_frame =
+            self.frames_since_golden_refresh >= A14_GOLDEN_REFRESH_PERIOD;
+        let refresh_flags: u8 = if refresh_golden_this_frame {
+            0x03 // LAST (bit 0) + GOLDEN (bit 1)
+        } else {
+            0x01 // LAST only — A11's baseline
+        };
+
         // Build the packet from the populated coef source + leaf
         // descriptors.
         let packet = build_inter_packet_with_residuals(
@@ -739,12 +818,26 @@ impl StreamEncoder {
             &coef_source,
             &sb_partitions,
             &segmentation_params,
+            refresh_flags,
         )?;
 
         // Commit the new reconstruction as the encoder's new LAST ref.
         self.last_recon_y = new_recon_y;
         self.last_recon_u = new_recon_u;
         self.last_recon_v = new_recon_v;
+
+        // A14 (Phase A) — if this frame refreshed GOLDEN on the wire,
+        // mirror that on the encoder side: copy the new (post-LF)
+        // reconstruction into the GOLDEN buffer and reset the
+        // refresh counter. The decoder applies the same refresh
+        // mask via `refresh_ref_frame_sizes` + the ref-pool copy,
+        // so both sides agree on slot 1's pixels.
+        if refresh_golden_this_frame {
+            self.golden_recon_y.copy_from_slice(&self.last_recon_y);
+            self.golden_recon_u.copy_from_slice(&self.last_recon_u);
+            self.golden_recon_v.copy_from_slice(&self.last_recon_v);
+            self.frames_since_golden_refresh = 0;
+        }
 
         // AQ.3 — post-encode update: feed the actually-coded segment
         // ids + skip flags back into the cyclic-refresh state machine
@@ -1226,6 +1319,7 @@ fn build_inter_packet_with_residuals(
     coef_source: &dyn InterCoefSource,
     sb_partitions: &[Vec<InterPartitionLeafDesc>],
     segmentation: &SegmentationParams,
+    refresh_frame_flags: u8,
 ) -> Result<Vec<u8>, EncodeError> {
     use rvp9_core::bitstream::SegmentationWriteParams;
     let mi_rows = height / 8;
@@ -1365,9 +1459,13 @@ fn build_inter_packet_with_residuals(
     let hdr = UncompressedHeader {
         kind: WireFrameKind::InterFrame {
             reset_frame_context: 0,
-            // A11 — refresh LASTFRAME (slot 0). See the comment above
-            // the `tail` block for the full rationale.
-            refresh_frame_flags: 0x01,
+            // A11 — refresh LASTFRAME (slot 0) every inter frame.
+            // A14 (Phase A) — additionally refresh GOLDEN (slot 1)
+            // on the configured period. Caller supplies the mask
+            // via `refresh_frame_flags`: `0x01` for plain inter,
+            // `0x03` for inter-that-also-refreshes-GOLDEN. See
+            // `encode_inter_internal` for the period state machine.
+            refresh_frame_flags,
             ref_frame_indices: [0; MAX_INTER_REFS],
             ref_frame_sign_biases: [false; MAX_INTER_REFS],
             allow_high_precision_mv: false,
@@ -3563,3 +3661,4 @@ mod tests {
     }
 
 }
+
