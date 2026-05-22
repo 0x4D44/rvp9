@@ -324,6 +324,39 @@ pub fn decode_coefs(
     // `:171,254`).
     let mut dqv = dc_dq;
 
+    // Wave G G7 prototype — two-pass dequant for the ONE_TOKEN arm.
+    //
+    // The dequant arithmetic for the ONE_TOKEN branch (`v = dqv >>
+    // dq_shift`) does not depend on any subsequent bool-coder read,
+    // and the sign bit (entropy-coded, prob 128) only carries info
+    // about the SIGN, not the magnitude. We therefore defer the
+    // arithmetic + writeback for ONE_TOKEN positions out of the
+    // sequential bool-coder loop into a second vectorisable pass.
+    //
+    // The other token arms (CAT1..6, TWO/THREE/FOUR) remain on the
+    // existing fused path — extending them would require either a
+    // second scratch buffer with extra width (`val` for CAT arms is
+    // up-to-16-bit so it doesn't fit in `i8`) or a per-arm tagged
+    // union, both of which complicate the proof-of-concept. See
+    // `notes/wave-h-g7-followups.md` for the full-extension design.
+    //
+    // Scratch layout: parallel arrays sized to `seg_eob` (worst case
+    // every position is ONE_TOKEN). A single u16 counter tracks how
+    // many entries pass 1 deposited. Pass 2 walks `0..n_one_tokens`
+    // and applies `signed_v = if sign { -(dqv >> dq_shift) } else {
+    // dqv >> dq_shift }` to `dq_coefs_out[raster_idx]`.
+    //
+    // Memory cost: 4 * seg_eob bytes (i16 dqv + i16 raster_idx). For
+    // a 32x32 block this is 4 KiB on the stack-allocated `Vec` —
+    // acceptable for a prototype; production would use a per-tile
+    // re-usable scratch arena.
+    let mut one_token_dqv: Vec<i16> = Vec::with_capacity(seg_eob);
+    let mut one_token_raster: Vec<u16> = Vec::with_capacity(seg_eob);
+    // Pack sign + dq_shift_applied flag into one byte per entry. Bit
+    // 0 = sign (1 if negative), nothing else needed (dq_shift is
+    // block-constant).
+    let mut one_token_sign: Vec<u8> = Vec::with_capacity(seg_eob);
+
     // Stage 3 stretch M.6 — runtime differential against the libvpx
     // verbatim reference port. Gated by `RVP9_DEBUG_REFCOEFS=1`. When
     // active: snapshot the reader's register state before the decode loop,
@@ -385,8 +418,16 @@ pub fn decode_coefs(
         }
 
         // ONE-vs-higher branch.
+        //
+        // Wave G G7 prototype: the ONE_TOKEN arm defers its arithmetic
+        // (`v = dqv >> dq_shift`) and writeback into pass 2 (see
+        // scratch buffers above). Other arms remain on the fused path
+        // and write directly into `dq_coefs_out`.
+        let raster_idx = scan.scan[c] as usize;
+        let is_one_token;
         let v: i32;
         if reader.read(prob_local[ONE_CONTEXT_NODE]) != 0 {
+            is_one_token = false;
             // High branch — walk the Pareto8 row.
             let p: &[u8; super::pareto::MODEL_NODES] =
                 &VP9_PARETO8_FULL[(prob_local[PIVOT_NODE] - 1) as usize];
@@ -436,25 +477,60 @@ pub fn decode_coefs(
                 }
             }
         } else {
-            // ONE_TOKEN.
+            // ONE_TOKEN — pass-1 deferred arm.
+            is_one_token = true;
             if let Some(ref mut cs) = counts {
                 cs.coef_counts[band_local][ctx][ONE_TOKEN] += 1;
             }
             token_cache[scan.scan[c] as usize] = 1;
-            v = dqv >> dq_shift;
+            // `v` is computed in pass 2; assign a dummy here so the
+            // sign-bit-trace branch below still has a well-defined value.
+            v = 0;
         }
 
-        // Sign bit (raw, prob 128).
-        let signed_v = if reader.read_bit() != 0 { -v } else { v };
-        let raster_idx = scan.scan[c] as usize;
-        dq_coefs_out[raster_idx] = signed_v;
+        // Sign bit (raw, prob 128). MUST be read inside the
+        // bool-coder loop — it is entropy-coded so deferring this
+        // read would corrupt all subsequent reads.
+        let sign_bit = reader.read_bit();
+
+        if is_one_token {
+            // Pass-1 deposit: record (raster_idx, dqv, sign) for pass-2
+            // arithmetic. `dq_coefs_out[raster_idx]` was zeroed at the
+            // function top so leaving it untouched here is correct (pass
+            // 2 will overwrite).
+            //
+            // Assertion (debug only): `dqv` always fits in i16 — DC and
+            // AC dequant values come from `plane_dequant_pair` whose
+            // return type is `(i16, i16)`.
+            debug_assert!(dqv.unsigned_abs() <= i16::MAX as u32);
+            debug_assert!(raster_idx <= u16::MAX as usize);
+            one_token_dqv.push(dqv as i16);
+            one_token_raster.push(raster_idx as u16);
+            one_token_sign.push(sign_bit);
+        } else {
+            // Fused-path writeback (unchanged from pre-G7).
+            let signed_v = if sign_bit != 0 { -v } else { v };
+            dq_coefs_out[raster_idx] = signed_v;
+        }
 
         // Stage 3 stretch M.17 — print scan[c] and write index for Tx8x8.
+        // For the deferred ONE_TOKEN arm the printed `v` is the
+        // pre-arithmetic placeholder; tracing the post-pass-2 value
+        // would require moving this block after the second pass.
         if matches!(tx_size, TxSize::Tx8x8)
             && std::env::var("RVP9_DEBUG_SCAN_WRITE").is_ok_and(|v| v == "1")
         {
+            let trace_v = if is_one_token {
+                // Reconstruct so the trace line stays meaningful.
+                let mag = dqv >> dq_shift;
+                if sign_bit != 0 { -mag } else { mag }
+            } else if sign_bit != 0 {
+                -v
+            } else {
+                v
+            };
             eprintln!(
-                "RVP9_DBG_SCAN_WRITE c={c} scan[c]={raster_idx} v={signed_v} dq_coefs_out.len={}",
+                "RVP9_DBG_SCAN_WRITE c={c} scan[c]={raster_idx} v={trace_v} dq_coefs_out.len={}",
                 dq_coefs_out.len()
             );
         }
@@ -464,6 +540,33 @@ pub fn decode_coefs(
             ctx = get_coef_context(scan.neighbors, &token_cache, c);
         }
         dqv = ac_dq;
+    }
+
+    // Wave G G7 prototype — pass 2: vectorisable dequant arithmetic +
+    // writeback for the ONE_TOKEN positions deposited by pass 1.
+    //
+    // Each iteration is independent (no loop-carried state, no
+    // bool-coder reads), so this loop is trivially auto-vectorisable
+    // by LLVM and can be hand-lifted into an AVX2 kernel via a
+    // future `SimdDispatch::plane_dequant_pair` family that takes
+    // (scratch arrays, dq_shift) → writes into `dq_coefs_out`.
+    //
+    // Bit-exactness vs the fused path: for ONE_TOKEN, the fused
+    // computation was `signed_v = if sign { -(dqv >> dq_shift) }
+    // else { dqv >> dq_shift }`. We replicate that exactly here. The
+    // `dqv >> dq_shift` is an arithmetic right-shift on a positive
+    // `i32` (since `dqv >= 0` always — dequant LUT values are
+    // positive), so the result is non-negative. Negation produces an
+    // exact i32. Identical to the inline arithmetic at the original
+    // line 444.
+    debug_assert_eq!(one_token_dqv.len(), one_token_raster.len());
+    debug_assert_eq!(one_token_dqv.len(), one_token_sign.len());
+    for i in 0..one_token_dqv.len() {
+        let dqv_i = i32::from(one_token_dqv[i]);
+        let raster_idx = one_token_raster[i] as usize;
+        let sign = one_token_sign[i];
+        let mag = dqv_i >> dq_shift;
+        dq_coefs_out[raster_idx] = if sign != 0 { -mag } else { mag };
     }
 
     // Stage 3 stretch M.6 — post-decode differential. The reference port
