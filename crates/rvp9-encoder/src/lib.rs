@@ -2235,6 +2235,16 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     seg_q_deltas: &[Option<i16>; 8],
     input_yuv: (&[u8], &[u8], &[u8]),
     last_recon_yuv: (&[u8], &[u8], &[u8]),
+    // A15 Phase B — GOLDEN ref planes for the widened picker
+    // ({LAST,GOLDEN} × {ZERO,NEAREST,NEAR,NEW}). Step 2: used
+    // only for `find_mv_refs(GOLDEN)` to build the GOLDEN
+    // `MvCandidates`. Step 3 will additionally use these as the
+    // ref plane for the per-candidate SSE/RD evaluation when
+    // `picked_ref_frame == GoldenFrame`. The caller threads
+    // `golden_recon_*` from `StreamEncoder` (post-A14 Phase A
+    // they mirror what the decoder writes when reading
+    // `refresh_frame_flags & 0x02`).
+    golden_recon_yuv: (&[u8], &[u8], &[u8]),
     recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
     sb_partitions: &mut [Vec<InterPartitionLeafDesc>],
 ) -> VecBackedInterCoefSource {
@@ -2327,6 +2337,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // Plane refs into the input + last-recon buffers.
     let src_y = PlaneRef { data: input_yuv.0, stride: w, width: w, height: h };
     let ref_y = PlaneRef { data: last_recon_yuv.0, stride: w, width: w, height: h };
+    // A15 Phase B — GOLDEN Y plane ref for the widened picker.
+    // Used in Step 3 to drive candidate SSE/RD when iterating
+    // `{LAST, GOLDEN} × {ZERO, NEAREST, NEAR, NEW}`. Currently
+    // (Step 2) unused at the picker; only the GOLDEN
+    // `find_mv_refs` lookup needs the in-progress mi_grid (it
+    // doesn't read this plane). Suppress the unused warning until
+    // Step 3 wires it in.
+    let _ref_y_golden = PlaneRef { data: golden_recon_yuv.0, stride: w, width: w, height: h };
 
     // Picker harness — built once per frame. The per-leaf
     // `PlaneQuantizers` is rebuilt inside the SB walk below (AQ.1)
@@ -2589,24 +2607,31 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // `None`, matching the decoder's `prev_mv_grid =
                 // None` setup in
                 // `frame_loop::build_inter_packet_with_residuals`.
-                let mvc = {
-                    let bw_mi = leaf_bsize.n_8x8_wide() as i32;
-                    let bh_mi = leaf_bsize.n_8x8_high() as i32;
-                    let bounds = BlockBounds::new(
-                        leaf_mi_row as i32,
-                        leaf_mi_col as i32,
-                        mi_rows_us as i32,
-                        mi_cols_us as i32,
-                        bw_mi,
-                        bh_mi,
-                    );
-                    let neighbours = InterPickerMiGridLookup::new(
-                        &mi_grid,
-                        mi_cols_us,
-                        leaf_mi_row,
-                        leaf_mi_col,
-                        mi_rows_us,
-                    );
+                // A15 Phase B Step 2 — build BOTH LAST and GOLDEN
+                // `MvCandidates` per leaf. The mi_grid neighbours +
+                // bounds are shared between the two ref-frame walks;
+                // only the `RefFrame` argument to `find_mv_refs`
+                // differs. Decoder-side `find_mv_refs` already
+                // dispatches per-ref-frame so this mirrors what the
+                // decoder will compute when reading a GOLDEN block.
+                let bw_mi = leaf_bsize.n_8x8_wide() as i32;
+                let bh_mi = leaf_bsize.n_8x8_high() as i32;
+                let bounds = BlockBounds::new(
+                    leaf_mi_row as i32,
+                    leaf_mi_col as i32,
+                    mi_rows_us as i32,
+                    mi_cols_us as i32,
+                    bw_mi,
+                    bh_mi,
+                );
+                let neighbours = InterPickerMiGridLookup::new(
+                    &mi_grid,
+                    mi_cols_us,
+                    leaf_mi_row,
+                    leaf_mi_col,
+                    mi_rows_us,
+                );
+                let build_mvc = |ref_frame: RefFrame| -> MvCandidates {
                     // Use `InterMode::NewMv` so `find_mv_refs` runs the
                     // early-break path (refmv_count == 1; mvs[0] is the
                     // best ref MV - libvpx `tmp_mvs[refmv_count - 1]`
@@ -2617,7 +2642,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let list_nearest = find_mv_refs(
                         InterMode::NewMv,
                         leaf_bsize,
-                        RefFrame::LastFrame,
+                        ref_frame,
                         &neighbours,
                         &sign_bias,
                         &bounds,
@@ -2627,17 +2652,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         list_nearest.mvs[0],
                         /* allow_hp = */ false,
                     );
-                    // A12 (2026-05-22) — call `find_mv_refs(NEARMV)`
-                    // separately so the search continues past the
-                    // first candidate (`early_break` is gated on
-                    // NEARMV). `mvs[count - 1]` is the libvpx
-                    // `tmp_mvs[refmv_count - 1]` slot the decoder
-                    // will use when reading a NEARMV block (mirror
-                    // of `resolve_parent_mvs` at mode_info.rs:1361).
+                    // A12 — `find_mv_refs(NEARMV)` separately so the
+                    // search continues past the first candidate
+                    // (`early_break` is gated on NEARMV).
                     let list_near = find_mv_refs(
                         InterMode::NearMv,
                         leaf_bsize,
-                        RefFrame::LastFrame,
+                        ref_frame,
                         &neighbours,
                         &sign_bias,
                         &bounds,
@@ -2653,6 +2674,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     );
                     MvCandidates { nearest, near }
                 };
+                let mvc = build_mvc(RefFrame::LastFrame);
+                // A15 Phase B Step 2 — GOLDEN candidates. Step 3 will
+                // consume these in the doubled picker iteration; for
+                // now we just compute them to land the data flow.
+                let mvc_golden = build_mvc(RefFrame::GoldenFrame);
+                let _ = mvc_golden;
 
                 // AQ.1 — per-leaf effective qindex from the leaf's
                 // `segment_id` + the frame-level `seg_q_deltas` table.

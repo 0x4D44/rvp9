@@ -743,6 +743,10 @@ impl StreamEncoder {
             &seg_q_deltas,
             input_yuv,
             (&self.last_recon_y, &self.last_recon_u, &self.last_recon_v),
+            // A15 Phase B — GOLDEN ref planes for the widened picker
+            // (Step 2: feeds the second `find_mv_refs` walk for
+            // GOLDEN; Step 3: drives candidate SSE on GOLDEN picks).
+            (&self.golden_recon_y, &self.golden_recon_u, &self.golden_recon_v),
             (&mut new_recon_y, &mut new_recon_u, &mut new_recon_v),
             &mut sb_partitions,
         );
