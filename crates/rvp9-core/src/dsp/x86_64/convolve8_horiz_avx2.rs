@@ -124,7 +124,10 @@ unsafe fn convolve8_horiz_avx2_inner(
     h: usize,
 ) {
     debug_assert!((1..=64).contains(&w));
-    debug_assert!((1..=64).contains(&h));
+    // `h` spans 1..=64 for a direct convolve8_horiz call, but the 2-D
+    // convolve8 (J5) reuses this kernel for the horizontal pass over
+    // `h + 7 ≤ 71` intermediate rows — so the upper bound is 71.
+    debug_assert!((1..=71).contains(&h));
     debug_assert!(src.len() >= (h - 1) * src_stride + w + 7);
     debug_assert!(dst.len() >= (h - 1) * dst_stride + w);
     // Contract: only sub-pel filter rows reach this kernel. The

@@ -34,6 +34,7 @@
 // ports while still requiring the safe-wrapper to document
 // soundness.
 
+pub mod convolve8_avx2;
 pub mod convolve8_horiz_avx2;
 pub mod convolve8_vert_avx2;
 pub mod convolve_avg_avx2;
@@ -71,6 +72,7 @@ pub mod plane_dequant_finisher_avx2;
 pub mod tm_predictor_avx2;
 pub mod v_predictor_avx2;
 
+pub use convolve8_avx2::convolve8_avx2;
 pub use convolve8_horiz_avx2::convolve8_horiz_avx2;
 pub use convolve8_vert_avx2::convolve8_vert_avx2;
 pub use convolve_avg_avx2::convolve_avg_avx2;
