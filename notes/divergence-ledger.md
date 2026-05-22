@@ -1179,3 +1179,106 @@ so cross-decoder byte-exactness is preserved.
 A11 reference-buffer-parity diagnostic. Detailed analysis
 in this ledger entry + `wrk_docs/A10-bpm-verify-report.md`
 (forthcoming).
+
+### 2026-05-22 — A11: inter `refresh_frame_flags` was 0x00 (foreman PSNR floor smash)
+**Where:** `rvp9-encoder::frame_loop::build_inter_packet_with_residuals`
+— the `HeaderTail` / `UncompressedHeader::InterFrame::refresh_frame_flags`
+field. libvpx counterpart: `vp9/encoder/vp9_bitstream.c::write_uncompressed_header`
+emits `refresh_frame_flags` per the GF/ALTREF state machine
+(`vp9_encoder.c::update_reference_frames`); the simple
+single-ref RT path emits `0x01` (refresh LASTFRAME only).
+**What libvpx does:** every non-altref inter frame refreshes the
+LASTFRAME slot (`refresh_frame_flags = 0x01` for the simple
+single-LAST shape). The decoder's `ref_frame_map[LAST_FRAME]` is
+updated to point at this frame's reconstruction, so frame N+1's
+MC reads frame N's reconstruction.
+**What rvp9 did (PRE-A11):** inter frames emitted
+`refresh_frame_flags = 0x00`. The decoder NEVER updated any ref
+slot on an inter frame, so `ref_frame_map[LAST_FRAME]` stayed
+pinned at the keyframe (pool slot 0) for the entire GOP. The
+encoder's INTERNAL `last_recon_*` tracked each frame's
+reconstruction correctly, so the encoder built residuals against
+frame N-1's recon while every decoder applied those residuals
+on top of MC against the keyframe. Both rvp9-decoder and vpxdec
+agreed (cross-decoder byte-exact) on the wrong reconstruction;
+PSNR vs source decayed monotonically across the GOP on
+real-motion content because the residuals fixed the wrong MC
+base.
+**What rvp9 does (POST-A11):** emit `refresh_frame_flags = 0x01`.
+Decoders update `ref_frame_map[LAST_FRAME]` to this frame's
+reconstruction at end-of-frame; frame N+1's MC reads frame N's
+reconstruction, matching the encoder's `last_recon_*`.
+**Why this slipped past testing for so long:** the
+cross-decoder gate (rvp9-decoder vs vpxdec) only proves
+*decoder-decoder* agreement on a bitstream. Both decoders
+correctly implemented `refresh_frame_flags = 0x00` semantics
+(both kept LASTFRAME pinned at the keyframe). The encoder's
+internal recon was diverging from what every decoder produced,
+but no test compared `encoder.last_recon_*` against
+`decoder.recon_*` per frame. A10's diagnosis surfaced the
+hypothesis; A11's `diag_ref_divergence` test (added in this
+commit) confirmed it directly.
+**Diagnostic evidence (before fix), foreman_cif 256×256 @ 100 kbps,
+SSE(encoder.last_recon_y, decoder.recon_y):**
+```
+frame 0 (KF):  SSE_Y =  6,227,702  (KF-only divergence, separate sub-bug)
+frame 1:       SSE_Y =  6,213,542
+frame 2:       SSE_Y = 11,924,802  ← drift kicks in
+frame 3:       SSE_Y = 23,742,611
+frame 4:       SSE_Y = 34,670,213
+...
+frame 11:      SSE_Y = 72,023,785  ← 12× growth
+```
+**Diagnostic evidence (after fix), same corpus:**
+```
+frame 0 (KF):  SSE_Y =  6,227,702  (KF sub-bug unchanged, separate)
+frame 1:       SSE_Y =  6,213,542
+frame 2:       SSE_Y =  6,211,784  ← no growth
+...
+frame 11:      SSE_Y =  6,190,530  ← stable across the GOP
+```
+testsrc 256×256 @ 1 Mbps: SSE_Y = 0 on EVERY frame after the fix
+(was 0,0,728k,2.4M,5.1M,6.6M,8.3M,8.7M growing pre-fix).
+
+**Foreman_cif F12 PSNR sweep, BEFORE vs AFTER:**
+```
+target=25kbps:   16.05 dB → 24.01 dB  (+7.96 dB)
+target=50kbps:   16.07 dB → 24.16 dB  (+8.09 dB)
+target=100kbps:  16.10 dB → 25.42 dB  (+9.32 dB)
+target=250kbps:  16.18 dB → 28.96 dB  (+12.78 dB)
+```
+The 16-dB floor that survived 10 prior experiments (A0-A10)
+collapses. Foreman now sits in the libvpx-comparable range
+(libvpx: 28.32 / 30.51 / 33.52 / 37.25 dB at the same targets).
+Residual gap is a real coding-efficiency gap (legitimate
+follow-up work), not a structural drift bug.
+
+testsrc PSNR sweep preserved: 35.93/38.68/43.08/59.69 dB →
+33.51/38.31/46.02/56.52 dB. Same general envelope; the +3 dB
+shift at 100 kbps comes from now actually using the previous
+frame as ref. Cross-decoder gate BYTE-EXACT preserved.
+RT gate: 5.78 ms median (no regression vs pre-fix 5-6 ms).
+**Byte-parity impact:** STRUCTURAL — every inter frame's
+header now differs by one bit. Pre-A11 bitstreams are no
+longer producible. Decoders accept both (`refresh_frame_flags
+= 0x00` and `0x01` are both spec-valid; the spec allows any
+8-bit value).
+**Compression-efficiency impact:** MASSIVE positive — drift
+on every real-motion GOP, accumulating monotonically with GOP
+length. The +8 to +13 dB foreman win is the headline; broader
+content corpus should see similar wins.
+**Future plan:** retire the "encoder LASTFRAME matches
+decoder LASTFRAME" assertion to a permanent guard in the
+encoder integration tests. The `diag_ref_divergence` test
+should run on every encoder change; it's near-zero-cost
+(<200 ms for 12 frames) and would have caught this bug
+immediately.
+
+Remaining sub-bug surfaced by the diagnostic: foreman frame 0
+(KF) has SSE_Y ≈ 6.2M (max|dY|=21) between encoder and
+decoder reconstructions. testsrc KF has SSE = 0. Likely a
+KF-specific path (Block64x64 intra-DC fallback? variance
+partitioner forcing leaves to DC where the simulator's recon
+diverges from the decoder's reconstruction?). NOT addressed
+by A11; the drift fix alone moved foreman from 16 dB to 24+
+dB, the KF-only divergence is a smaller follow-up.

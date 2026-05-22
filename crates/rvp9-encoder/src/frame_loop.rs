@@ -21,8 +21,12 @@
 //!   emitted whenever the rate-controller's `frames_to_key` counter
 //!   reaches zero.
 //! - Frame-context bank 0 stays at default — keyframes use
-//!   `refresh_frame_context = false`, inter frames use
-//!   `refresh_frame_flags = 0x00`.
+//!   `refresh_frame_context = false`. Inter frames emit
+//!   `refresh_frame_flags = 0x01` so the decoder updates the
+//!   LASTFRAME ref slot to point at this frame's reconstruction
+//!   (post-A11 fix; pre-A11 set `0x00` which left the decoder's
+//!   LASTFRAME pinned to the keyframe for the entire GOP and caused
+//!   monotonic PSNR drift on real content).
 //! - No loop filter (`loop_filter_level = 0`).
 //!
 //! ## Divergences from libvpx (documented)
@@ -795,6 +799,30 @@ impl StreamEncoder {
     pub(crate) fn last_recon_v(&self) -> &[u8] {
         &self.last_recon_v
     }
+
+    /// Diagnostic — read access to the encoder's last reconstruction
+    /// Y plane (post-LF, pre-border-extend). For integration tests
+    /// that compare encoder's internal LASTFRAME against the
+    /// decoder's reconstruction of the emitted bitstream (A11
+    /// reference-buffer divergence diagnostic).
+    #[must_use]
+    pub fn diag_last_recon_y(&self) -> &[u8] {
+        &self.last_recon_y
+    }
+
+    /// Diagnostic — read access to the encoder's last reconstruction
+    /// U plane. See [`Self::diag_last_recon_y`].
+    #[must_use]
+    pub fn diag_last_recon_u(&self) -> &[u8] {
+        &self.last_recon_u
+    }
+
+    /// Diagnostic — read access to the encoder's last reconstruction
+    /// V plane. See [`Self::diag_last_recon_y`].
+    #[must_use]
+    pub fn diag_last_recon_v(&self) -> &[u8] {
+        &self.last_recon_v
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1286,8 +1314,23 @@ fn build_inter_packet_with_residuals(
     };
     tile_buf.truncate(tile_len);
 
-    // refresh_frame_flags = 0: inter frame doesn't update any ref slot.
-    // The keyframe's pool-slot-0 LASTFRAME persists across the boundary.
+    // A11 (b9b4e93) — refresh_frame_flags = 0x01: every inter frame
+    // refreshes ref slot 0 (LASTFRAME). Pre-A11 set this to 0x00,
+    // meaning the decoder kept the keyframe in slot 0 as LASTFRAME
+    // for the entire GOP — but the ENCODER's internal `last_recon_*`
+    // tracked each successive frame's reconstruction. Result: the
+    // encoder built residuals against frame N-1's recon while every
+    // decoder applied them on top of MC against the keyframe. Both
+    // rvp9-decoder and vpxdec agreed (cross-decoder byte-exact) on
+    // the wrong reconstruction; PSNR vs source decayed monotonically
+    // through the GOP because the residuals fixed the wrong base.
+    //
+    // libvpx's RT path sets `refresh_frame_flags = 0x01` (single
+    // LASTFRAME refresh) on every non-altref inter frame
+    // (`vp9_encoder.c::set_arf_sign_bias`-adjacent ref-flag setup,
+    // and `vp9_encodeframe.c:5612` for the simple RT case). We
+    // mirror that here under the single-ref single-LASTFRAME shape
+    // emitted by this encoder.
     let tail = HeaderTail {
         refresh_frame_context: false,
         frame_parallel_decoding_mode: false,
@@ -1322,7 +1365,9 @@ fn build_inter_packet_with_residuals(
     let hdr = UncompressedHeader {
         kind: WireFrameKind::InterFrame {
             reset_frame_context: 0,
-            refresh_frame_flags: 0x00,
+            // A11 — refresh LASTFRAME (slot 0). See the comment above
+            // the `tail` block for the full rationale.
+            refresh_frame_flags: 0x01,
             ref_frame_indices: [0; MAX_INTER_REFS],
             ref_frame_sign_biases: [false; MAX_INTER_REFS],
             allow_high_precision_mv: false,
