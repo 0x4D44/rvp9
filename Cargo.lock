@@ -365,6 +365,7 @@ dependencies = [
  "rvp9-core",
  "rvp9-decoder",
  "rvp9-encoder",
+ "rvp9-io",
 ]
 
 [[package]]

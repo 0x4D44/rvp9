@@ -1,0 +1,174 @@
+//! End-to-end CLI tests for `rvp9enc` / `rvp9dec`.
+//!
+//! Hermetic: builds synthetic raw I420 frames at 64×64 (a single
+//! super-block, the smallest legal coded size), so the tests need no
+//! external corpus. Drives the actual built binaries via the
+//! `CARGO_BIN_EXE_*` paths Cargo provides to integration tests.
+//!
+//! Oracles:
+//! - Encode succeeds and produces a well-formed IVF with the right
+//!   frame count.
+//! - Decode reproduces the right number of frames at the right size.
+//! - `--md5` is deterministic and emits one digest per displayed frame.
+//! - Unsupported flags fail loudly ("not supported yet"), never silently.
+
+use std::path::PathBuf;
+use std::process::Command;
+
+const W: usize = 64;
+const H: usize = 64;
+const FRAME_BYTES: usize = W * H * 3 / 2;
+const N_FRAMES: usize = 6;
+
+fn enc_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_rvp9enc"))
+}
+fn dec_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_rvp9dec"))
+}
+
+/// Unique temp path for this test process + a tag.
+fn tmp(tag: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("rvp9cli_{}_{tag}", std::process::id()))
+}
+
+/// Write `N_FRAMES` synthetic 64×64 I420 frames with per-frame motion
+/// (a diagonal gradient that shifts each frame).
+fn write_synthetic_raw(path: &std::path::Path) {
+    let mut buf = Vec::with_capacity(FRAME_BYTES * N_FRAMES);
+    for f in 0..N_FRAMES {
+        // Y plane.
+        for y in 0..H {
+            for x in 0..W {
+                buf.push(((x + y + f * 4) & 0xff) as u8);
+            }
+        }
+        // U, V planes (half resolution).
+        for _plane in 0..2 {
+            for y in 0..H / 2 {
+                for x in 0..W / 2 {
+                    buf.push(((x * 2 + y + f) & 0xff) as u8);
+                }
+            }
+        }
+    }
+    assert_eq!(buf.len(), FRAME_BYTES * N_FRAMES);
+    std::fs::write(path, &buf).expect("write synthetic raw");
+}
+
+#[test]
+fn encode_decode_roundtrip_raw_input() {
+    let raw = tmp("in.yuv");
+    let ivf = tmp("out.ivf");
+    let yuv = tmp("dec.yuv");
+    write_synthetic_raw(&raw);
+
+    // Encode raw I420 -> IVF.
+    let status = Command::new(enc_bin())
+        .args(["-w", "64", "-h", "64", "--fps", "30/1", "--target-bitrate", "500", "--end-usage", "cbr", "-o"])
+        .arg(&ivf)
+        .arg(&raw)
+        .status()
+        .expect("run rvp9enc");
+    assert!(status.success(), "rvp9enc failed");
+
+    // IVF sanity: magic + frame-count field.
+    let ivf_bytes = std::fs::read(&ivf).expect("read ivf");
+    assert!(ivf_bytes.len() > 32, "ivf too small");
+    assert_eq!(&ivf_bytes[0..4], b"DKIF", "bad IVF magic");
+    let num_frames = u32::from_le_bytes([ivf_bytes[24], ivf_bytes[25], ivf_bytes[26], ivf_bytes[27]]);
+    assert_eq!(num_frames as usize, N_FRAMES, "IVF frame count");
+
+    // Decode IVF -> raw I420.
+    let status = Command::new(dec_bin())
+        .args(["--i420", "-o"])
+        .arg(&yuv)
+        .arg(&ivf)
+        .status()
+        .expect("run rvp9dec");
+    assert!(status.success(), "rvp9dec failed");
+    let dec_len = std::fs::metadata(&yuv).expect("stat dec.yuv").len() as usize;
+    assert_eq!(dec_len, FRAME_BYTES * N_FRAMES, "decoded raw size");
+
+    let _ = std::fs::remove_file(&raw);
+    let _ = std::fs::remove_file(&ivf);
+    let _ = std::fs::remove_file(&yuv);
+}
+
+#[test]
+fn md5_is_deterministic_and_per_frame() {
+    let raw = tmp("md5_in.yuv");
+    let ivf = tmp("md5_out.ivf");
+    write_synthetic_raw(&raw);
+
+    let enc = Command::new(enc_bin())
+        .args(["-w", "64", "-h", "64", "--fps", "30/1", "--target-bitrate", "500", "-o"])
+        .arg(&ivf)
+        .arg(&raw)
+        .status()
+        .expect("run rvp9enc");
+    assert!(enc.success());
+
+    let run_md5 = || {
+        let out = Command::new(dec_bin())
+            .arg("--md5")
+            .arg(&ivf)
+            .output()
+            .expect("run rvp9dec --md5");
+        assert!(out.status.success());
+        String::from_utf8(out.stdout).expect("utf8")
+    };
+    let first = run_md5();
+    let second = run_md5();
+    assert_eq!(first, second, "--md5 must be deterministic");
+    let lines: Vec<&str> = first.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert_eq!(lines.len(), N_FRAMES, "one md5 per displayed frame");
+    for l in &lines {
+        assert_eq!(l.len(), 32, "md5 hex length: {l}");
+        assert!(l.bytes().all(|b| b.is_ascii_hexdigit()), "hex: {l}");
+    }
+
+    let _ = std::fs::remove_file(&raw);
+    let _ = std::fs::remove_file(&ivf);
+}
+
+#[test]
+fn unsupported_flag_fails_loudly() {
+    let out = Command::new(enc_bin())
+        .args(["--svc", "-o", "x.ivf", "in.y4m"])
+        .output()
+        .expect("run rvp9enc");
+    assert!(!out.status.success(), "must exit non-zero");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("not supported yet"),
+        "expected 'not supported yet', got: {stderr}"
+    );
+}
+
+#[test]
+fn non_multiple_of_64_rejected_clearly() {
+    // 100×100 raw: not a multiple of 64. Must be rejected with guidance.
+    let raw = tmp("odd.yuv");
+    std::fs::write(&raw, vec![0u8; 100 * 100 * 3 / 2]).expect("write");
+    let out = Command::new(enc_bin())
+        .args(["-w", "100", "-h", "100", "--target-bitrate", "500", "-o", "x.ivf"])
+        .arg(&raw)
+        .output()
+        .expect("run rvp9enc");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("multiple of 64"), "got: {stderr}");
+    let _ = std::fs::remove_file(&raw);
+}
+
+#[test]
+fn help_lists_supported_and_not_yet_tags() {
+    for bin in [enc_bin(), dec_bin()] {
+        let out = Command::new(&bin).arg("--help").output().expect("run --help");
+        assert!(out.status.success());
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains("[supported]"), "no supported tag in {bin:?}");
+        assert!(text.contains("[not yet]"), "no not-yet tag in {bin:?}");
+    }
+}
