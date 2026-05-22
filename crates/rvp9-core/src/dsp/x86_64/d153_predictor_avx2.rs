@@ -24,7 +24,12 @@
 
 #![cfg(target_arch = "x86_64")]
 
-use super::intra_directional_common_avx2::{avg2_window, avg3_window};
+use super::intra_directional_common_avx2::{avg2_window, avg3_window, store_row};
+use core::arch::x86_64::{
+    __m128i, __m256i, _mm256_alignr_epi8, _mm256_insert_epi8, _mm256_loadu_si256,
+    _mm256_permute2x128_si256, _mm256_storeu_si256, _mm_insert_epi8, _mm_loadu_si128,
+    _mm_slli_si128, _mm_storeu_si128,
+};
 
 /// AVX2 D153 predictor inner kernel.
 ///
@@ -65,17 +70,47 @@ unsafe fn d153_predictor_avx2_inner(
     avg3_window(&sl1, &mut col1); // col1[r] = AVG3(L1[r], L1[r+1], L1[r+2])
     avg3_window(&sat, &mut rtop); // rtop[j] = AVG3(Atop[j], Atop[j+1], Atop[j+2]); col 2+j of row 0
 
-    // Columns 0 and 1 for every row.
-    for r in 0..bs {
-        dst[r * stride] = col0[r];
-        dst[r * stride + 1] = col1[r];
-    }
-    // Row 0, columns 2..bs.
-    dst[2..bs].copy_from_slice(&rtop[..bs - 2]);
-    // Diagonal recurrence: row r cols 2..bs = row r-1 cols 0..bs-2.
-    for r in 1..bs {
-        let src = (r - 1) * stride;
-        dst.copy_within(src..src + bs - 2, r * stride + 2);
+    if bs <= 16 {
+        // L5: SIMD shift-copy recurrence in a single 128-bit lane. Each
+        // row is the previous row shifted right by two bytes, with
+        // `col0[r]`/`col1[r]` inserted as the two new heads. No read-back
+        // from `dst` (avoids over-read); bounded `store_row` write (avoids
+        // over-store). Folds the per-row col0/col1 strided byte writes
+        // into the same pass. Bit-exact with the copy_within form.
+        let mut tmp = [0u8; 16];
+        let r0 = _mm_loadu_si128(rtop.as_ptr() as *const __m128i);
+        let mut cur = _mm_slli_si128(r0, 2);
+        cur = _mm_insert_epi8(cur, i32::from(col0[0]), 0);
+        cur = _mm_insert_epi8(cur, i32::from(col1[0]), 1);
+        _mm_storeu_si128(tmp.as_mut_ptr() as *mut __m128i, cur);
+        store_row(dst, &tmp, bs);
+        for r in 1..bs {
+            cur = _mm_slli_si128(cur, 2);
+            cur = _mm_insert_epi8(cur, i32::from(col0[r]), 0);
+            cur = _mm_insert_epi8(cur, i32::from(col1[r]), 1);
+            _mm_storeu_si128(tmp.as_mut_ptr() as *mut __m128i, cur);
+            store_row(&mut dst[r * stride..], &tmp, bs);
+        }
+    } else {
+        // bs == 32: same recurrence with a full-width 256-bit byte shift.
+        // `slli_si256` only shifts within each 128-bit lane, so the 2-byte
+        // carry across the lane boundary is done with
+        // `alignr(v, permute2x128(v,v,0x08), 14)` (the standard full-width
+        // left-shift-by-2 idiom). Heads inserted via `insert_epi8`.
+        let mut tmp = [0u8; 32];
+        let r0 = _mm256_loadu_si256(rtop.as_ptr() as *const __m256i);
+        let mut cur = _mm256_alignr_epi8(r0, _mm256_permute2x128_si256(r0, r0, 0x08), 14);
+        cur = _mm256_insert_epi8(cur, col0[0] as i8, 0);
+        cur = _mm256_insert_epi8(cur, col1[0] as i8, 1);
+        _mm256_storeu_si256(tmp.as_mut_ptr() as *mut __m256i, cur);
+        store_row(dst, &tmp, bs);
+        for r in 1..bs {
+            cur = _mm256_alignr_epi8(cur, _mm256_permute2x128_si256(cur, cur, 0x08), 14);
+            cur = _mm256_insert_epi8(cur, col0[r] as i8, 0);
+            cur = _mm256_insert_epi8(cur, col1[r] as i8, 1);
+            _mm256_storeu_si256(tmp.as_mut_ptr() as *mut __m256i, cur);
+            store_row(&mut dst[r * stride..], &tmp, bs);
+        }
     }
 }
 

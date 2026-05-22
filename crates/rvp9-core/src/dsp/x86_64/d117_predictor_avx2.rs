@@ -25,6 +25,11 @@
 #![cfg(target_arch = "x86_64")]
 
 use super::intra_directional_common_avx2::{avg2_window, avg3_window, store_row};
+use core::arch::x86_64::{
+    __m128i, __m256i, _mm256_alignr_epi8, _mm256_insert_epi8, _mm256_loadu_si256,
+    _mm256_permute2x128_si256, _mm256_storeu_si256, _mm_insert_epi8, _mm_loadu_si128,
+    _mm_slli_si128, _mm_storeu_si128,
+};
 
 /// AVX2 D117 predictor inner kernel.
 ///
@@ -68,14 +73,48 @@ unsafe fn d117_predictor_avx2_inner(
     store_row(&mut dst[0..], &row0, bs);
     store_row(&mut dst[stride..], &row1, bs);
 
-    // Column 0 for rows 2..bs.
-    for r in 2..bs {
-        dst[r * stride] = col0[r - 2];
-    }
-    // Diagonal recurrence: row r cols 1..bs = row r-2 cols 0..bs-1.
-    for r in 2..bs {
-        let src = (r - 2) * stride;
-        dst.copy_within(src..src + bs - 1, r * stride + 1);
+    // L5: SIMD shift-copy recurrence. Row r (r≥2) cols 1..bs = row r-2
+    // cols 0..bs-1 (shift right by one byte) with `col0[r-2]` as the new
+    // head — an r-2 dependency, so two interleaved chains (even rows seed
+    // from row0, odd from row1). Each step is shift-by-1 + head insert,
+    // folding the per-row col0 strided write into the same pass. No
+    // read-back from `dst`; bounded `store_row` write. Bit-exact with the
+    // copy_within form.
+    if bs <= 16 {
+        let mut tmp = [0u8; 16];
+        let mut cur_even = _mm_loadu_si128(row0.as_ptr() as *const __m128i);
+        let mut cur_odd = _mm_loadu_si128(row1.as_ptr() as *const __m128i);
+        for r in 2..bs {
+            let base = if r & 1 == 0 { cur_even } else { cur_odd };
+            let mut cur = _mm_slli_si128(base, 1);
+            cur = _mm_insert_epi8(cur, i32::from(col0[r - 2]), 0);
+            _mm_storeu_si128(tmp.as_mut_ptr() as *mut __m128i, cur);
+            store_row(&mut dst[r * stride..], &tmp, bs);
+            if r & 1 == 0 {
+                cur_even = cur;
+            } else {
+                cur_odd = cur;
+            }
+        }
+    } else {
+        // bs == 32: full-width 256-bit shift-left-by-1 via
+        // `alignr(v, permute2x128(v,v,0x08), 15)` (carries the cross-lane
+        // byte that `slli_si256` would drop).
+        let mut tmp = [0u8; 32];
+        let mut cur_even = _mm256_loadu_si256(row0.as_ptr() as *const __m256i);
+        let mut cur_odd = _mm256_loadu_si256(row1.as_ptr() as *const __m256i);
+        for r in 2..bs {
+            let base = if r & 1 == 0 { cur_even } else { cur_odd };
+            let mut cur = _mm256_alignr_epi8(base, _mm256_permute2x128_si256(base, base, 0x08), 15);
+            cur = _mm256_insert_epi8(cur, col0[r - 2] as i8, 0);
+            _mm256_storeu_si256(tmp.as_mut_ptr() as *mut __m256i, cur);
+            store_row(&mut dst[r * stride..], &tmp, bs);
+            if r & 1 == 0 {
+                cur_even = cur;
+            } else {
+                cur_odd = cur;
+            }
+        }
     }
 }
 
