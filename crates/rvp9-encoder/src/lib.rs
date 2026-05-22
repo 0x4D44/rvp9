@@ -2532,11 +2532,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             // inside [`pick_inter_mode_luma`] via the picker's
             // own MvLimits envelope before the diamond search.
             //
-            // Returns `IntProMeResult::ZERO` when the SB sits too
-            // close to a frame edge for the projection window's
-            // `(bw/2, bh/2)` halo — we treat that as "no seed"
-            // and the picker falls back to seeding at
-            // `mv_candidates.nearest`.
+            // E10 — every SB (including frame-edge SBs) now produces a
+            // seed: the projection window and 2D-SAD halo read through
+            // an edge-clamped border (libvpx's extended-border frame
+            // equivalent) instead of bailing. A literal zero-MV result
+            // is still treated as "no seed" (the picker's existing
+            // NEAREST/ZERO-at-(0,0) candidates cover it); previously
+            // 12 of 16 SBs on a 256×256 frame bailed outright.
             let sb_px_x = sb_col * 64;
             let sb_px_y = sb_row * 64;
             let int_pro = if int_pro_enabled {

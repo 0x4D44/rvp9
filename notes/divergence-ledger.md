@@ -1846,3 +1846,51 @@ underneath).**
 Also adds a diagnostic-only `RVP9_E8_TRACE=1` per-frame trace
 (`RateControl::e8_trace_snapshot` / `E8Trace`) — env-gated, zero cost
 when unset. Not a divergence; an instrument.
+
+### 2026-05-22 — E10: int_pro edge-SB seed (border-clamp, no bail) — FIXED but necessary-not-sufficient
+**Where:** `rvp9-core::mv_search::int_pro_me` (the
+`int_pro_motion_estimation` projection-window + 2D-SAD reads).
+libvpx counterpart: `vp9/encoder/vp9_mcomp.c:2264-2400`
+(`vp9_int_pro_motion_estimation`), reading a reference frame whose
+borders are physically extended by edge replication
+(`vpx_extend_frame_borders`, `vp9/common/vp9_frame_buffers` /
+`vpx_dsp`).
+**What libvpx does:** runs the 1-D projection window
+(`ref[sb_y-bh/2 .. ][sb_x-bw/2 .. ]`) and the post-search 2D-SAD
+halo against the *extended-border* reference buffer, so frame-edge
+SBs read replicated border pixels and ALWAYS get a seed.
+**What rvp9 did (the bug, A3'-int-pro era):** `PlaneRef` is the bare
+visible plane (no padding). The projection/halo reads near a border
+would be genuinely OOB, so the function *bailed* with the
+`u32::MAX`/`Mv::ZERO` sentinel whenever `sb_px < bw/2` or
+`sb_px + bw + bw/2 > dim`. On a 256×256 frame (4×4 grid of 64×64 SBs)
+that disabled the seed on **12 of 16 SBs — every edge SB** — leaving
+75% of the frame with no motion foothold (E3 §"Contributing defect").
+**Fix:** replaced the bail with edge-clamped reference reads
+(`clamp_px`, `int_pro_row_clamped`, `int_pro_col_clamped`,
+`sad_block_clamped`) — the faithful equivalent of an extended-border
+frame. Every supported SB now produces a real seed. Unit test
+`all_sbs_seeded_no_edge_bail` asserts **16/16** seeded.
+**Byte-parity impact:** none. The seed only steers the encoder's MV
+*search* center; the chosen MV is signalled, so the bitstream stays
+decodable bit-for-bit. `cargo test -p rvp9-encoder --release` = 94
+pass, 0 fail (all encoder↔decoder bit-exact recon gates green).
+testsrc `bdrate_gate_stage4a` unchanged (33.32/33.98/36.43/40.66 dB).
+**Compression-efficiency impact:** **none on foreman.** The seed is
+now valid frame-wide (verified via `RVP9_DIAG_INTPRO_SB`: edge SBs
+e.g. sb=(2,0)→(8,0), sb=(0,2)→(0,-8), tracking foreman's leftward
+pan), and the wandering far-MV artifacts (E3's "max_mag up to 2068")
+collapse to sane small magnitudes. BUT recon/pred PSNR and bits at
+matched Q (q∈{80,120,160}) are byte-identical to the pre-fix E9
+table (pred ~26 dB, recon 31.7/31.4/28.0 dB, 8×8-dominated tx hist).
+`RVP9_E3_MVDIAG` confirms NEWMV RD-win share stays **0.0%** even at a
+2 Mbps target: NEWMV still loses the RD argmin on MV-rate (~5000
+units) vs NEARESTMV-at-(0,0), exactly as E3/E9 diagnosed.
+**Verdict:** the edge-SB bail is a real defect and is now fixed
+(necessary), but it is **not sufficient** to fire the prediction
+cascade. The picker rejects NEWMV regardless of seed quality because
+the per-leaf RD comparison over too-small (Block8x8) partitions makes
+the MV-rate term dominate. The next coupled fixes (E9's recommended
+chain: `find_mv_refs`/NEAREST quality + larger usable partitions +
+`block_yrd`/skip_txfm NEWMV affordability) remain required before
+prediction PSNR climbs off 26 dB.

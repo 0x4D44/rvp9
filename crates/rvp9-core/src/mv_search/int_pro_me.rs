@@ -72,16 +72,39 @@ use crate::dsp::distortion::{
 use crate::mode_info::Mv;
 use crate::mv_search::full_pixel::PlaneRef;
 
+/// Edge-clamped reference pixel read.
+///
+/// libvpx runs `vp9_int_pro_motion_estimation` against a reference
+/// frame buffer whose borders are physically extended by edge
+/// replication (`vpx_extend_frame_borders`,
+/// `vp9/common/vp9_reconinter.c` → `vpx_dsp/vpx_convolve.c`), so the
+/// projection window and the 2D-SAD halo near a frame edge read the
+/// replicated border rather than going out of bounds. rvp9's
+/// `PlaneRef` is the bare visible plane (no padding), so we replicate
+/// that border semantics on the fly: any `(y, x)` outside the visible
+/// plane clamps to the nearest edge pixel. This is the faithful
+/// equivalent of an extended-border frame and lets every SB — including
+/// the frame-edge SBs — get a valid motion seed instead of bailing.
+#[inline]
+fn clamp_px(plane: &PlaneRef<'_>, y: i32, x: i32) -> u8 {
+    let cy = y.clamp(0, plane.height as i32 - 1) as usize;
+    let cx = x.clamp(0, plane.width as i32 - 1) as usize;
+    plane.data[cy * plane.stride + cx]
+}
+
 /// Output of [`int_pro_motion_estimation`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct IntProMeResult {
     /// Resulting integer-pel MV (in Q3 / 1/8-pel units — i.e. the
-    /// full-pel offset times 8). `Mv::ZERO` when the search was a
-    /// no-op (e.g. SB clipped to frame edge) — caller treats
-    /// `Mv::ZERO` as "no useful seed".
+    /// full-pel offset times 8). `Mv::ZERO` when the search settled on
+    /// zero motion — caller treats `Mv::ZERO` as "no useful seed".
     pub mv: Mv,
-    /// Best SAD over the SB at the returned MV. `u32::MAX` when the
-    /// search was skipped (frame-edge clip).
+    /// Best SAD over the SB at the returned MV. `u32::MAX` only for the
+    /// unsupported-block-size early return (the [`ZERO`] sentinel);
+    /// every supported SB — including frame-edge SBs — now produces a
+    /// real SAD via the edge-clamped border reads.
+    ///
+    /// [`ZERO`]: IntProMeResult::ZERO
     pub best_sad: u32,
 }
 
@@ -122,6 +145,48 @@ fn vpx_int_pro_col(ref_row: &[u8], width: usize) -> i32 {
     let mut sum: i32 = 0;
     for &b in ref_row.iter().take(width) {
         sum += i32::from(b);
+    }
+    sum
+}
+
+/// Edge-clamped variant of [`vpx_int_pro_row`]: same as
+/// `vpx_int_pro_row_c` but the reference window base is an absolute
+/// (possibly out-of-plane) `(base_y, base_x)` and every pixel read
+/// clamps to the visible-plane border (see [`clamp_px`]). This is what
+/// libvpx's extended-border frame supplies for free at frame edges.
+#[inline]
+fn int_pro_row_clamped(
+    hbuf: &mut [i16],
+    plane: &PlaneRef<'_>,
+    base_y: i32,
+    base_x: i32,
+    height: usize,
+) {
+    debug_assert_eq!(hbuf.len(), 16);
+    debug_assert!(height >= 2);
+    let norm_factor = (height >> 1) as i32;
+    for (idx, slot) in hbuf.iter_mut().enumerate() {
+        let mut sum: i32 = 0;
+        for i in 0..height {
+            sum += i32::from(clamp_px(plane, base_y + i as i32, base_x + idx as i32));
+        }
+        *slot = (sum / norm_factor) as i16;
+    }
+}
+
+/// Edge-clamped variant of [`vpx_int_pro_col`]: sum `width` columns of
+/// the reference starting at absolute `(base_y, base_x)`, clamping each
+/// read to the visible-plane border.
+#[inline]
+fn int_pro_col_clamped(
+    plane: &PlaneRef<'_>,
+    base_y: i32,
+    base_x: i32,
+    width: usize,
+) -> i32 {
+    let mut sum: i32 = 0;
+    for c in 0..width {
+        sum += i32::from(clamp_px(plane, base_y, base_x + c as i32));
     }
     sum
 }
@@ -251,6 +316,33 @@ fn sad_block(bsize: BlockSize, src: &[u8], src_stride: usize, ref_block: &[u8], 
     }
 }
 
+/// Edge-clamped 2D SAD: gather a `bw×bh` reference block whose top-left
+/// is at absolute `(abs_y, abs_x)` into a contiguous scratch buffer
+/// (clamping every read to the visible-plane border, replicating
+/// libvpx's extended-border behaviour), then run the matching SAD
+/// kernel against the source slice. Used by the post-projection 2D
+/// refinement so frame-edge SBs refine against the replicated border
+/// instead of bailing.
+fn sad_block_clamped(
+    bsize: BlockSize,
+    src: &[u8],
+    src_stride: usize,
+    ref_plane: &PlaneRef<'_>,
+    abs_y: i32,
+    abs_x: i32,
+) -> u32 {
+    let bw = usize::from(bsize.width());
+    let bh = usize::from(bsize.height());
+    // Scratch holds at most 64×64.
+    let mut scratch = [0u8; 64 * 64];
+    for r in 0..bh {
+        for c in 0..bw {
+            scratch[r * bw + c] = clamp_px(ref_plane, abs_y + r as i32, abs_x + c as i32);
+        }
+    }
+    sad_block(bsize, src, src_stride, &scratch[..bh * bw], bw)
+}
+
 /// `b_width_log2_lookup[bsize]` for the square SB block sizes we
 /// support. Mirrors libvpx `vp9_common_data.c:15`.
 #[inline]
@@ -310,17 +402,25 @@ pub fn int_pro_motion_estimation(
     // and
     //   src[sb_y .. sb_y + bh - 1][sb_x .. sb_x + bw - 1].
     // The post-search 2D-SAD refinement reads an additional ±1
-    // ref-pixel halo around the chosen MV. If any of these go OOB
-    // we bail out with the ZERO sentinel — the picker just won't
-    // get a seed for that SB (callers fall through to nearest).
-    if sb_px_x < bw / 2 || sb_px_y < bh / 2 {
-        return IntProMeResult::ZERO;
-    }
-    if sb_px_x + bw + bw / 2 > ref_plane.width
-        || sb_px_y + bh + bh / 2 > ref_plane.height
-    {
-        return IntProMeResult::ZERO;
-    }
+    // ref-pixel halo around the chosen MV.
+    //
+    // E10 — frame-edge handling. libvpx runs this against a reference
+    // frame whose borders are physically extended by edge replication
+    // (`vpx_extend_frame_borders`), so the projection window and the
+    // 2D-SAD halo near a frame edge read the replicated border and the
+    // search always produces a seed. rvp9's `PlaneRef` is the bare
+    // visible plane, so every reference read goes through [`clamp_px`]
+    // (edge-clamp == border replication). The SOURCE reads stay inside
+    // the visible plane: an SB top-left is always inside the frame, and
+    // libvpx never reads source pixels outside the SB extent. The only
+    // source-OOB case is a partial right/bottom edge SB; we guard those
+    // reads too via the source-side clamp at the build sites below.
+    //
+    // Previously this function bailed (ZERO sentinel) whenever the
+    // window touched a border, which on a 256×256 frame disabled the
+    // seed on 12 of 16 SBs (every edge SB) — the root of the no-motion-
+    // foothold degeneracy (E3/E9). With clamped reads all 16 SBs get a
+    // valid seed.
 
     let search_width = bw << 1;
     let search_height = bh << 1;
@@ -328,22 +428,24 @@ pub fn int_pro_motion_estimation(
     debug_assert!(search_height <= 128);
 
     let src_stride = src_plane.stride;
-    let ref_stride = ref_plane.stride;
     let bwl = b_log2(bsize);
 
     // ref_buf base for the row scan: starts (bw>>1) columns LEFT
-    // of the SB. Each call to `vpx_int_pro_row` consumes 16 cols
-    // and advances by 16, building `search_width` int16 entries.
+    // of the SB and (bh>>1) above is NOT applied to the row scan —
+    // the row scan stays at the SB's top row (matching libvpx, which
+    // offsets only the column for the horizontal projection). Each
+    // 16-col chunk builds via the edge-clamped row projection so the
+    // leftmost (bw>>1) columns of an edge SB replicate the border.
+    let base_x_row = sb_px_x as i32 - (bw >> 1) as i32;
     let mut hbuf = [0i16; 128];
     {
-        let ref_top_left = sb_px_y * ref_stride + sb_px_x - (bw >> 1);
         let mut idx = 0;
         while idx < search_width {
-            let off = ref_top_left + idx;
-            vpx_int_pro_row(
+            int_pro_row_clamped(
                 &mut hbuf[idx..idx + 16],
-                &ref_plane.data[off..],
-                ref_stride,
+                ref_plane,
+                sb_px_y as i32,
+                base_x_row + idx as i32,
                 bh,
             );
             idx += 16;
@@ -354,10 +456,14 @@ pub fn int_pro_motion_estimation(
     let mut vbuf = [0i16; 128];
     {
         let norm_factor = 3 + (bw >> 5);
-        let ref_top_left_row = sb_px_y - (bh >> 1);
+        let base_y_col = sb_px_y as i32 - (bh >> 1) as i32;
         for idx in 0..search_height {
-            let row_off = (ref_top_left_row + idx) * ref_stride + sb_px_x;
-            let sum = vpx_int_pro_col(&ref_plane.data[row_off..], bw);
+            let sum = int_pro_col_clamped(
+                ref_plane,
+                base_y_col + idx as i32,
+                sb_px_x as i32,
+                bw,
+            );
             vbuf[idx] = (sum >> norm_factor) as i16;
         }
     }
@@ -406,8 +512,8 @@ pub fn int_pro_motion_estimation(
     }
 
     // 1D matches → integer-pel MV offsets in `[-bw/2, bw/2]`.
-    let mut col = vector_match(&hbuf[..search_width], &src_hbuf[..bw], bwl);
-    let mut row = vector_match(&vbuf[..search_height], &src_vbuf[..bh], bwl);
+    let col = vector_match(&hbuf[..search_width], &src_hbuf[..bw], bwl);
+    let row = vector_match(&vbuf[..search_height], &src_vbuf[..bh], bwl);
 
     // 2D refinement: 4-pt diamond + 2-pt cross, both gated by
     // staying inside the ref plane (with the ±1 halo the diamond
@@ -415,47 +521,25 @@ pub fn int_pro_motion_estimation(
     let src_off = sb_px_y * src_stride + sb_px_x;
     let src_slice = &src_plane.data[src_off..];
 
-    let try_sad = |row: i32, col: i32| -> Option<u32> {
+    // E10 — every 2D-SAD probe reads through the edge-clamped block
+    // gather, mirroring libvpx's extended-border frame. The reference
+    // window can extend past any frame edge and replicates the border
+    // pixel instead of bailing, so the diamond/cross refinement runs
+    // for every SB including frame-edge SBs.
+    let try_sad = |row: i32, col: i32| -> u32 {
         let abs_x = sb_px_x as i32 + col;
         let abs_y = sb_px_y as i32 + row;
-        if abs_x < 0 || abs_y < 0 {
-            return None;
-        }
-        if abs_x as usize + bw > ref_plane.width
-            || abs_y as usize + bh > ref_plane.height
-        {
-            return None;
-        }
-        let off = (abs_y as usize) * ref_stride + (abs_x as usize);
-        Some(sad_block(
-            bsize,
-            src_slice,
-            src_stride,
-            &ref_plane.data[off..],
-            ref_stride,
-        ))
+        sad_block_clamped(bsize, src_slice, src_stride, ref_plane, abs_y, abs_x)
     };
 
-    let mut best_sad = match try_sad(row, col) {
-        Some(sad) => sad,
-        None => {
-            // Initial 1D estimate lands OOB. Match the spirit of
-            // libvpx's `clamp_mv` (which would silently recentre)
-            // by falling back to (0, 0).
-            row = 0;
-            col = 0;
-            try_sad(0, 0).unwrap_or(u32::MAX)
-        }
-    };
+    let mut best_sad = try_sad(row, col);
 
     // 4-pt diamond: { (-1,0), (0,-1), (0,1), (1,0) } (libvpx's
     // `search_pos` order, vp9_mcomp.c:2257-2262).
     let diamond = [(-1i32, 0i32), (0i32, -1i32), (0i32, 1i32), (1i32, 0i32)];
     let mut diamond_sads = [u32::MAX; 4];
     for (i, &(dr, dc)) in diamond.iter().enumerate() {
-        if let Some(sad) = try_sad(row + dr, col + dc) {
-            diamond_sads[i] = sad;
-        }
+        diamond_sads[i] = try_sad(row + dr, col + dc);
     }
 
     // libvpx walks the 4 diamond results in order and updates
@@ -491,9 +575,8 @@ pub fn int_pro_motion_estimation(
     } else {
         pre_diamond_col + 1
     };
-    if let Some(cross_sad) = try_sad(cross_row, cross_col)
-        && cross_sad < best_sad
-    {
+    let cross_sad = try_sad(cross_row, cross_col);
+    if cross_sad < best_sad {
         best_sad = cross_sad;
         best_row = cross_row;
         best_col = cross_col;
@@ -614,19 +697,57 @@ mod tests {
         );
     }
 
-    /// SB at frame edge with insufficient left/top padding → ZERO
-    /// sentinel (no seed).
+    /// E10 — SB at a frame edge no longer bails. libvpx runs the
+    /// projection against an edge-replicated extended border, and we
+    /// mirror that with [`clamp_px`], so even the top-left (0, 0) SB —
+    /// which has no real left/top padding — produces a valid seed
+    /// (real `best_sad`, not the `u32::MAX` sentinel).
     #[test]
-    fn frame_edge_returns_zero_sentinel() {
+    fn frame_edge_still_produces_a_seed() {
         let w = 256;
         let h = 256;
-        let buf = vec![128u8; w * h];
+        // Random-ish texture so the projections discriminate.
+        let buf: Vec<u8> = (0..w * h)
+            .map(|i| (((i * 73 + i / 13) ^ 0x5a) & 0xff) as u8)
+            .collect();
         let src = PlaneRef { data: &buf, stride: w, width: w, height: h };
         let r = PlaneRef { data: &buf, stride: w, width: w, height: h };
-        // Block64x64 at (0, 0): needs 32 pixels of left padding,
-        // which doesn't exist.
+        // Block64x64 at (0, 0): needs 32 pixels of left/top padding,
+        // which the border-clamp supplies by replication.
         let result = int_pro_motion_estimation(&src, &r, 0, 0, BlockSize::Block64x64);
-        assert_eq!(result, IntProMeResult::ZERO);
+        assert_ne!(result.best_sad, u32::MAX, "edge SB should get a real SAD");
+        // src == ref → stationary content → seed should be ~0 motion.
+        let row_fp = i32::from(result.mv.row) / 8;
+        let col_fp = i32::from(result.mv.col) / 8;
+        assert!(row_fp.abs() <= 1, "edge-SB row MV should be ~0, got {row_fp} FP");
+        assert!(col_fp.abs() <= 1, "edge-SB col MV should be ~0, got {col_fp} FP");
+    }
+
+    /// E10 — every SB of a 256×256 frame (4×4 grid of 64×64 SBs)
+    /// now produces a seed (no `u32::MAX` bail), including the 12 edge
+    /// SBs that previously bailed. This is the direct unit-level
+    /// confirmation of the foothold fix.
+    #[test]
+    fn all_sbs_seeded_no_edge_bail() {
+        let w = 256;
+        let h = 256;
+        let buf: Vec<u8> = (0..w * h)
+            .map(|i| (((i * 73 + i / 13) ^ 0x5a) & 0xff) as u8)
+            .collect();
+        let src = PlaneRef { data: &buf, stride: w, width: w, height: h };
+        let r = PlaneRef { data: &buf, stride: w, width: w, height: h };
+        let mut seeded = 0;
+        for sb_row in 0..4 {
+            for sb_col in 0..4 {
+                let res = int_pro_motion_estimation(
+                    &src, &r, sb_col * 64, sb_row * 64, BlockSize::Block64x64,
+                );
+                if res.best_sad != u32::MAX {
+                    seeded += 1;
+                }
+            }
+        }
+        assert_eq!(seeded, 16, "all 16 SBs should be seeded, got {seeded}");
     }
 
     /// vector_match: constant input → libvpx's strict-`<` keeps
