@@ -44,6 +44,7 @@
 //!   = 9 + 7 - 6 + 4 = 14` per `vp9_mcomp.c:91-94`. Both are mirrored
 //!   exactly in [`mvsad_err_cost`] and [`mv_err_cost`].
 
+pub mod e12stat;
 pub mod full_pixel;
 pub mod int_pro_me;
 pub mod mv_limits;

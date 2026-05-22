@@ -336,6 +336,9 @@ pub fn pick_inter_mode_luma(params: &InterModeSearchParams<'_>) -> InterModeSear
     if new.best_rd_cost < best.best_rd_cost {
         best = new;
     }
+    if crate::mv_search::e12stat::enabled() {
+        crate::mv_search::e12stat::record_argmin(matches!(best.best_mode, InterMode::NewMv));
+    }
     best
 }
 
@@ -437,47 +440,77 @@ fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
     // refinement step. The `SubPixelSearchParams::center_mv` is a
     // FULL-PEL value (the sub-pel search lifts it via `* 8`
     // internally to start at the Q3 grid point).
-    let center_mv_fp = if let Some(seed) = params.newmv_seed {
-        // libvpx `sb_use_mv_part` short-circuit
-        // (`vp9_pickmode.c:207-210`). Use the int_pro seed
-        // directly (truncated to full-pel; the int_pro output is
-        // already integer-pel × 8 Q3, so `>> 3` is exact).
-        // Clamp to the picker's full-pel envelope so the sub-pel
-        // search stays inside the safe convolve footprint.
-        let row_fp = (i32::from(seed.row) >> 3)
-            .clamp(params.mv_limits.row_min, params.mv_limits.row_max);
-        let col_fp = (i32::from(seed.col) >> 3)
-            .clamp(params.mv_limits.col_min, params.mv_limits.col_max);
-        Mv {
-            row: row_fp as i16,
-            col: col_fp as i16,
-        }
-    } else {
-        // No seed → standard full-pel diamond from
-        // mv_candidates.nearest. The diamond's center_mv is in
-        // Q3 (matches the existing API); its `best_mv_row` /
-        // `best_mv_col` are full-pel.
-        let center_mv = clamp_mv_to_limits(
-            params.mv_candidates.nearest,
-            &params.mv_limits,
-        );
-        let full = diamond_search_sad(&FullPixelSearchParams {
-            block_size: params.block_size,
-            src_plane: params.src_plane,
-            src_offset: params.src_offset,
-            ref_plane: params.ref_plane,
-            center_mv,
-            mv_limits: params.mv_limits,
-            sad_per_bit: DEFAULT_SAD_PER_BIT,
-            mv_costs: params.mv_costs,
-            max_iters: params.site_config.total_steps as i32,
-            site_config: params.site_config,
-        });
-        Mv {
-            row: full.best_mv_row,
-            col: full.best_mv_col,
-        }
+    // libvpx-faithful realtime full-pel motion search: ALWAYS run the
+    // diamond. The int_pro estimate (when present) and the NEAREST
+    // candidate are *seeds* for the search start (`mvp_full`), NOT a
+    // replacement for it — mirror of `combined_motion_search`
+    // (`vp9_pickmode.c:154-261`) → `vp9_full_pixel_search`. The earlier
+    // `sb_use_mv_part` short-circuit (E10) skipped the diamond whenever
+    // int_pro produced any non-zero MV; in libvpx that short-circuit is
+    // golden/altref-only (`vp9_pickmode.c:207-210` is gated by
+    // `x->sb_use_mv_part`, set only for the GF/ARF int_pro fast path),
+    // so the LAST-frame search must still run the diamond. E13: bypassing
+    // it left 90% of NEWMV leaves stuck at a poor int_pro seed (+0.1 dB
+    // over (0,0) vs +8 dB reachable).
+    //
+    // Cost attractor (`center_mv` / libvpx `ref_mv`) stays at NEAREST so
+    // the rate term matches what the NEWMV bitstream cost will charge.
+    // Start position (`start_mv` / libvpx `mvp_full`) is the int_pro seed
+    // when available, else NEAREST.
+    let ref_mv = clamp_mv_to_limits(params.mv_candidates.nearest, &params.mv_limits);
+    let start_mv = params.newmv_seed.map(|seed| clamp_mv_to_limits(seed, &params.mv_limits));
+    let full = diamond_search_sad(&FullPixelSearchParams {
+        block_size: params.block_size,
+        src_plane: params.src_plane,
+        src_offset: params.src_offset,
+        ref_plane: params.ref_plane,
+        center_mv: ref_mv,
+        start_mv,
+        mv_limits: params.mv_limits,
+        sad_per_bit: DEFAULT_SAD_PER_BIT,
+        mv_costs: params.mv_costs,
+        max_iters: params.site_config.total_steps as i32,
+        site_config: params.site_config,
+    });
+    let center_mv_fp = Mv {
+        row: full.best_mv_row,
+        col: full.best_mv_col,
     };
+
+    // E13 diamond-search-quality oracle (diagnostic-only, env-gated).
+    // Records SAD@(0,0), SAD@diamond-output (NEWMVraw), and the
+    // exhaustive full-pel minimum SAD over the same window, so the
+    // harness can measure how much of the reachable full-pel gain the
+    // diamond actually captures. No-op unless RVP9_E13_DIAMOND is set.
+    if crate::mv_search::e12stat::enabled() {
+        use crate::mv_search::full_pixel::{exhaustive_full_pel_min_sad, raw_sad_at_mv};
+        let sad_zero = raw_sad_at_mv(
+            params.block_size, params.src_plane, params.src_offset,
+            params.ref_plane, 0, 0,
+        )
+        .unwrap_or(u32::MAX);
+        let sad_newmv = raw_sad_at_mv(
+            params.block_size, params.src_plane, params.src_offset,
+            params.ref_plane, center_mv_fp.row, center_mv_fp.col,
+        )
+        .unwrap_or(u32::MAX);
+        // Cap the exhaustive scan radius so the diagnostic stays
+        // tractable; foreman's true motion is well within ±32 full-pel.
+        let sad_oracle = exhaustive_full_pel_min_sad(
+            params.block_size, params.src_plane, params.src_offset,
+            params.ref_plane, &params.mv_limits, 48,
+        )
+        .map_or(u32::MAX, |(s, _, _)| s);
+        let mv_mag = center_mv_fp.row.unsigned_abs() as u32
+            + center_mv_fp.col.unsigned_abs() as u32;
+        crate::mv_search::e12stat::record(
+            sad_zero,
+            sad_newmv,
+            sad_oracle,
+            params.newmv_seed.is_some(),
+            mv_mag,
+        );
+    }
 
     // Hand off to sub-pel. The sub-pel search only supports the 5
     // square block sizes (Block4x4 / 8 / 16 / 32 / 64); F8.1 v1's

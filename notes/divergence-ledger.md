@@ -1894,3 +1894,49 @@ the MV-rate term dominate. The next coupled fixes (E9's recommended
 chain: `find_mv_refs`/NEAREST quality + larger usable partitions +
 `block_yrd`/skip_txfm NEWMV affordability) remain required before
 prediction PSNR climbs off 26 dB.
+
+## E-series — prediction-quality chain (2026-05-22)
+
+### 2026-05-22 — E13 full-pel diamond: always run it; seed != replace
+**Where:** `crates/rvp9-core/src/mode_decision/inter.rs::run_newmv_search`
++ `crates/rvp9-core/src/mv_search/full_pixel.rs` (`FullPixelSearchParams`
+gains `start_mv`, separating libvpx `mvp_full` from `ref_mv`).
+**What libvpx does:** the LAST-frame NEWMV path runs
+`combined_motion_search` → `vp9_full_pixel_search` → the diamond
+ALWAYS (`vp9_pickmode.c:154-261`). The `sb_use_mv_part` short-circuit
+(`vp9_pickmode.c:207-210`) that skips the diamond and trusts the
+int_pro MV is gated by `x->sb_use_mv_part`, set only for the
+GOLDEN/ALTREF int_pro fast path — NOT for LAST-frame. The diamond
+takes a separate `mvp_full` (search start, best-of-{nearest,near,
+pred_mv}) and `ref_mv` (the rate-reference / cost attractor).
+**What rvp9 did (the bug, E10 era):** `run_newmv_search` short-
+circuited the diamond whenever `newmv_seed` (int_pro) was `Some`,
+using the seed directly + sub-pel. On foreman that bypassed the
+diamond for **89.9% of NEWMV leaves**, leaving the chosen full-pel MV
+only +0.1 dB over (0,0) (2.0% of the reachable full-pel gain). It also
+conflated start-MV and cost-center into one `center_mv`.
+**Fix:** always run the diamond; thread the int_pro seed (or NEAREST)
+as `start_mv` and NEAREST as the cost-attractor `center_mv`. Added
+`start_mv: Option<Mv>` (None = legacy behaviour, start == center).
+**Search-quality impact (E13 oracle, `RVP9_E13_DIAMOND`, foreman q120,
+122 068 NEWMV leaves):** diamond-recovers-fraction 2.0% → **75.6%**;
+NEWMVraw SAD-PSNR proxy (8×8) 26.20 → **31.54 dB** (+5.34 dB), oracle
+34.42; reached-oracle 9.2% → 19.9%, improved-on-zero 62% → 79.6%.
+**Byte-parity impact:** none — the search only changes WHICH MV is
+picked; the chosen MV is signalled. `cargo test -p rvp9-encoder
+--release` = 94 pass / 0 fail (all bit-exact recon gates green).
+**Perf:** realtime gate 720p30 PASS, median 5.03 ms/frame (budget
+33 ms). Bounded search (≤11 steps × 4 sites) — no blowup.
+**Compression-efficiency impact:** **none on shipped recon.** Matched-Q
+recon/pred PSNR + bits + tx-hist byte-identical to E9/E10
+(pred ~26.2 dB, recon 31.4 dB @ q120). testsrc `bdrate_gate_stage4a`
+unchanged (33.32/33.98/36.43/40.66). foreman BD-rate still not
+measurable (curves don't overlap).
+**Verdict:** the diamond WAS broken and is now fixed (the E12 lever
+fired at the search level: +5.34 dB into the NEWMV candidate). But it
+is **necessary-NOT-sufficient**: the E13 argmin counter shows NEWMV
+wins the RD comparison on **0.00%** of 107 826 inter leaves — the now-
+good NEWMV is still rejected because at the 8×8-dominated partition
+granularity the MV-rate term dominates the distortion gain (E9 §4 /
+E10's conclusion). The remaining lever is the picker / partition, not
+the search.

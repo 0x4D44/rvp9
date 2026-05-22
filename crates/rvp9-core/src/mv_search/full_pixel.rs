@@ -162,8 +162,19 @@ pub struct FullPixelSearchParams<'a> {
     /// Reference plane view (same plane the encoder will read at the
     /// chosen MV).
     pub ref_plane: &'a PlaneRef<'a>,
-    /// Search center, **1/8-pel units**. Typically the predicted MV.
+    /// Cost-attractor center (`ref_mv` in libvpx `diamond_search_sad`),
+    /// **1/8-pel units**. `mvsad_err_cost` penalises distance from this
+    /// MV — it is the rate-reference MV (NEAREST), NOT necessarily the
+    /// search start. The search loop converts it to full-pel internally
+    /// via `(center_mv.row >> 3, center_mv.col >> 3)`.
     pub center_mv: Mv,
+    /// Search **start** position (`mvp_full` in libvpx), **1/8-pel
+    /// units**. When `None`, the search starts at `center_mv` (the
+    /// historical behaviour). When `Some`, the search starts here while
+    /// still costing MV-distance against `center_mv` — this is the
+    /// libvpx pattern where `mvp_full` (best-of-{nearest,near,pred_mv}
+    /// or the int_pro seed) differs from the rate-reference `ref_mv`.
+    pub start_mv: Option<Mv>,
     /// Full-pel MV bounds.
     pub mv_limits: MvLimits,
     /// `sad_per_bit` cost multiplier. Mode-decision computes this as
@@ -246,6 +257,58 @@ fn sad_at(
     Some((sad_for(block_size))(src_slice, src_stride, ref_slice, ref_stride))
 }
 
+/// Raw SAD (no MV-cost) for the block at full-pel MV `(mv_row, mv_col)`.
+/// Returns `None` if the reference block falls outside the plane.
+/// Diagnostic helper used by the E12/E13 search-quality oracle.
+#[must_use]
+pub fn raw_sad_at_mv(
+    block_size: BlockSize,
+    src_plane: &PlaneRef<'_>,
+    src_offset: (usize, usize),
+    ref_plane: &PlaneRef<'_>,
+    mv_row: i16,
+    mv_col: i16,
+) -> Option<u32> {
+    sad_at(block_size, src_plane, src_offset, ref_plane, mv_row, mv_col)
+}
+
+/// Exhaustive raw-SAD scan over every full-pel MV inside `mv_limits`
+/// (bounded by `max_radius` on each axis around 0). Returns the
+/// minimum raw SAD and the MV achieving it. Diagnostic-only oracle for
+/// the E12/E13 full-pel search-quality measurement — NOT part of the
+/// shipped search (far too slow for realtime).
+#[must_use]
+pub fn exhaustive_full_pel_min_sad(
+    block_size: BlockSize,
+    src_plane: &PlaneRef<'_>,
+    src_offset: (usize, usize),
+    ref_plane: &PlaneRef<'_>,
+    mv_limits: &MvLimits,
+    max_radius: i32,
+) -> Option<(u32, i16, i16)> {
+    let row_lo = mv_limits.row_min.max(-max_radius);
+    let row_hi = mv_limits.row_max.min(max_radius);
+    let col_lo = mv_limits.col_min.max(-max_radius);
+    let col_hi = mv_limits.col_max.min(max_radius);
+    let mut best: Option<(u32, i16, i16)> = None;
+    for r in row_lo..=row_hi {
+        for c in col_lo..=col_hi {
+            if let Some(s) = sad_at(
+                block_size,
+                src_plane,
+                src_offset,
+                ref_plane,
+                r as i16,
+                c as i16,
+            ) && best.is_none_or(|(b, _, _)| s < b)
+            {
+                best = Some((s, r as i16, c as i16));
+            }
+        }
+    }
+    best
+}
+
 /// `vp9_diamond_search_sad_c` (`vp9_mcomp.c:2055-2190`).
 ///
 /// Search the reference plane around `center_mv` using the 4-site
@@ -278,15 +341,21 @@ pub fn diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearch
     debug_assert_eq!(site_config.searches_per_step, 4);
     let searches_per_step = site_config.searches_per_step as usize;
 
-    // Convert center_mv (1/8-pel) to fcenter_mv (full-pel).
+    // Convert center_mv (1/8-pel) to fcenter_mv (full-pel). This is the
+    // cost-attractor / rate-reference MV (libvpx `ref_mv`).
     let fcenter_row = params.center_mv.row >> 3;
     let fcenter_col = params.center_mv.col >> 3;
 
-    // Initial best MV = fcenter_mv (libvpx seeds with ref_mv = fcenter
-    // in the realtime path; the wrapper otherwise picks
-    // mvp_full).
-    let mut best_row = fcenter_row;
-    let mut best_col = fcenter_col;
+    // Initial best MV = the search start (`mvp_full`). When no explicit
+    // start is given, fall back to the cost-attractor (historical
+    // behaviour). The start is clamped into `mv_limits` so the seed
+    // never begins out of the legal window. libvpx clamps `mvp_full`
+    // identically inside `full_pixel_diamond` (`vp9_mcomp.c:2500`).
+    let start_mv = params.start_mv.unwrap_or(params.center_mv);
+    let mut best_row =
+        (i32::from(start_mv.row >> 3)).clamp(params.mv_limits.row_min, params.mv_limits.row_max) as i16;
+    let mut best_col =
+        (i32::from(start_mv.col >> 3)).clamp(params.mv_limits.col_min, params.mv_limits.col_max) as i16;
 
     // Initial SAD; if out-of-bounds, fall back to u32::MAX so any
     // valid step is preferred.
@@ -470,6 +539,7 @@ mod tests {
             src_offset: (16, 16),
             ref_plane: &plane,
             center_mv: Mv::ZERO,
+            start_mv: None,
             mv_limits: MvLimits::new(-32, 32, -32, 32),
             sad_per_bit: 16,
             mv_costs: &costs,
@@ -543,6 +613,7 @@ mod tests {
             src_offset: (src_col, src_row),
             ref_plane: &ref_plane,
             center_mv: Mv::ZERO,
+            start_mv: None,
             mv_limits: MvLimits::new(-16, 16, -16, 16),
             sad_per_bit: 1, // small so cost doesn't dominate
             mv_costs: &costs,
@@ -579,6 +650,7 @@ mod tests {
             src_offset: (20, 20),
             ref_plane: &plane,
             center_mv: Mv::ZERO,
+            start_mv: None,
             mv_limits: MvLimits::new(-16, 16, -16, 16),
             sad_per_bit: 16,
             mv_costs: &costs,
@@ -619,6 +691,7 @@ mod tests {
             src_offset: (0, 0),
             ref_plane: &plane,
             center_mv: Mv::ZERO,
+            start_mv: None,
             mv_limits: MvLimits::new(0, 16, 0, 16),
             sad_per_bit: 16,
             mv_costs: &costs,
