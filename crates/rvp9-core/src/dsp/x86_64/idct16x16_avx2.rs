@@ -988,6 +988,7 @@ mod tests {
         unsafe { idct16x16_transpose_sanity_inner() }
     }
 
+    // G4: loads from `dst` use n/a (test helper — operates on stack scratch only)
     #[target_feature(enable = "avx2")]
     unsafe fn idct16x16_transpose_sanity_inner() {
         use core::arch::x86_64::{__m256i, _mm256_loadu_si256, _mm256_storeu_si256};
