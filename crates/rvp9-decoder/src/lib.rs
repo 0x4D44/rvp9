@@ -1400,9 +1400,12 @@ impl Decoder {
         // every frame and pass an accumulator into the tile decoder.
         // libvpx clears `cm->counts` in `read_uncompressed_header`
         // (`vp9_decodeframe.c:2784`) for every frame whose
-        // `frame_parallel_decoding_mode == 0`. We don't model that
-        // flag yet (treated as 0), so we zero unconditionally — matches
-        // libvpx's behaviour on the single-decoder conformance gate.
+        // `frame_parallel_decoding_mode == 0`. We zero unconditionally,
+        // which is equivalent: the counts are consumed only by backward
+        // adaptation, which is now correctly gated on
+        // `!frame_parallel_decoding_mode` at end-of-frame — so on the
+        // frames where libvpx skips the clear it also skips the
+        // adaptation that would read them.
         self.coef_counts = rvp9_core::entropy::adapt::CoefCountsBank::default();
         // D.10 — allocate the current frame's segment_id slab. Keyframes
         // either write a fresh ID per block (when `update_map = true`)
@@ -1684,17 +1687,28 @@ impl Decoder {
         }
 
         // Backward-adapt `coef_probs` per `vp9_adapt_coef_probs`
-        // (`vp9_entropy.c:1084-1100`). Same gate as `adapt_mv_probs`:
-        // fires whenever `refresh_frame_context` is on and the frame is
-        // not error-resilient. For keyframes the kernel runs with the
-        // `_KEY` constants — `intra_only = true` in `coef_adapt_params`.
+        // (`vp9_entropy.c:1084-1100`). Gate matches libvpx
+        // `vp9_decodeframe.c:3046-3077`: backward adaptation runs only
+        // when `refresh_frame_context` is set AND the frame is neither
+        // error-resilient NOR frame-parallel. A *default* vpxenc encode
+        // sets `frame_parallel_decoding_mode = 1`, so libvpx skips
+        // adaptation and writes the *un-adapted* (forward-updated)
+        // context back; we mirror that by leaving the in-place
+        // forward-updated bank untouched when the gate is false. (Omitting
+        // the frame-parallel term was the foreman decoder-robustness bug —
+        // Wave M M1: the corpus all uses `frame_parallel == 0`, so it
+        // never exercised the miss.) For keyframes the kernel runs with
+        // the `_KEY` constants — `intra_only = true` in `coef_adapt_params`.
         //
         // D.9 — use `pre_fc` (snapshot taken before
         // `parse_compressed_partition`) as the `pre` baseline. libvpx's
         // `pre_fc = cm->frame_contexts[fc_idx]` carries the *prior*
         // adapt result, unaffected by this frame's compressed-header
         // diff-updates (see snapshot comment above).
-        if tail.refresh_frame_context && !frame.header.error_resilient {
+        if tail.refresh_frame_context
+            && !frame.header.error_resilient
+            && !tail.frame_parallel_decoding_mode
+        {
             let (count_sat, max_update_factor) = rvp9_core::entropy::adapt::coef_adapt_params(
                 /* intra_only = */ true,
                 self.last_frame_was_key,
@@ -2570,12 +2584,15 @@ impl Decoder {
         }
 
         // Backward-adapt the per-frame probability banks per
-        // `vp9_adapt_*_probs` (`vp9_decodeframe.c:3046-3053`). Same gate
-        // for all kernels: `refresh_frame_context && !error_resilient`.
-        // `adapt_coef_probs` fires here on inter frames (the keyframe
-        // path runs the kernel separately with the `_KEY` constants);
-        // `adapt_mode_probs` / `adapt_mv_probs` only fire on
-        // non-intra-only frames.
+        // `vp9_adapt_*_probs` (`vp9_decodeframe.c:3046-3077`). Same gate
+        // for all kernels: `refresh_frame_context && !error_resilient &&
+        // !frame_parallel_decoding_mode`. When the gate is false (e.g. a
+        // default vpxenc encode with `frame_parallel == 1`) the in-place
+        // forward-updated bank is left as-is — matching libvpx, which
+        // writes the un-adapted context back. `adapt_coef_probs` fires
+        // here on inter frames (the keyframe path runs the kernel
+        // separately with the `_KEY` constants); `adapt_mode_probs` /
+        // `adapt_mv_probs` only fire on non-intra-only frames.
         //
         // D.9 — use `pre_fc` (snapshot taken before
         // `parse_compressed_partition_inter`) as the `pre` baseline.
@@ -2587,7 +2604,10 @@ impl Decoder {
         // in place, reading `&self.frame_contexts[fc_idx]` here would
         // give the bank *plus* this frame's diff updates — drifting
         // the chained-merge baseline away from libvpx each frame.
-        if tail.refresh_frame_context && !frame.header.error_resilient {
+        if tail.refresh_frame_context
+            && !frame.header.error_resilient
+            && !tail.frame_parallel_decoding_mode
+        {
             // mode_probs — libvpx `vp9_adapt_mode_probs`. Returns a
             // freshly built FrameContext with the mode / partition /
             // skip / tx / intra_inter / comp_inter / single_ref /
