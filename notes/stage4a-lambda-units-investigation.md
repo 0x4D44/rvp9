@@ -34,19 +34,27 @@ magnitude lower; the brief's claim that "libvpx's typical lambda
 values range from a few hundred at q=20 to a few thousand at q=255"
 is mistaken.
 
-## The one real (small) divergence
+## The one real (small) divergence — RESOLVED 2026-05-22 (A13 / commit 2c07ec4)
 
 libvpx's `vp9_mv_bit_cost` (mcomp.c:80-84) returns
 `ROUND_POWER_OF_TWO(mv_cost(diff) * MV_COST_WEIGHT, 7)` with
 `MV_COST_WEIGHT = 108`. That is, MV rate is scaled by `108/128 ≈ 0.84`
 before being charged in RDCOST.
 
-rvp9's picker (`inter.rs:533-540`) charges raw `mv_cost(diff_row,
+rvp9's picker (`inter.rs:533-540`) charged raw `mv_cost(diff_row,
 diff_col, mv_costs)` without the `MV_COST_WEIGHT` scaling.
 
-Net effect: rvp9 over-charges MV bits by `128/108 ≈ 1.185×`. This is
-~19% over, not 256×. It is a real bug-for-bug fidelity gap, but it
-will not unstick foreman from 16 dB — see "actual blocker" below.
+Net effect: rvp9 over-charged MV bits by `128/108 ≈ 1.185×`. This was
+~19% over, not 256×. As predicted below, fixing this is a real
+bug-for-bug fidelity gap but doesn't unstick foreman from its
+~24-29 dB band — see "actual blocker" below.
+
+**Resolution (A13):** ported the `ROUND_POWER_OF_TWO(raw * 108, 7)`
+scaling at `inter.rs:601-609`. F12 testsrc gains +1.15 to +4.6 dB on
+the 50-100 kbps targets (the band where the picker has room to swap
+to NEWMV). F12 foreman flat (rate-model bottleneck, not RD-formula
+bottleneck). Cross-decoder gate PASS byte-exact. Divergence ledger
+updated.
 
 ## The actual blocker on foreman_cif
 

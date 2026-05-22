@@ -1324,3 +1324,65 @@ partitioner forcing leaves to DC where the simulator's recon
 diverges from the decoder's reconstruction?). NOT addressed
 by A11; the drift fix alone moved foreman from 16 dB to 24+
 dB, the KF-only divergence is a smaller follow-up.
+
+### 2026-05-22 — A13: missing `MV_COST_WEIGHT` scaling at NEWMV picker — RESOLVED
+**Where:** `rvp9-core::mode_decision::inter::evaluate_inter_mode`
+(crates/rvp9-core/src/mode_decision/inter.rs:587-611). libvpx
+counterpart: `vp9_mv_bit_cost` at `vp9/encoder/vp9_mcomp.c:80-84`
+with `MV_COST_WEIGHT = 108` (`vp9/encoder/vp9_rd.h:38`).
+**What libvpx does:** charges
+`ROUND_POWER_OF_TWO(mv_cost(diff) * 108, 7)` as NEWMV's MV-bit
+rate, scaling the raw `mv_cost` lookup by `108 / 128 ≈ 0.844`
+before adding it to `mode_rate` and feeding into RDCOST.
+**What rvp9 did (PRE-A13):** charged the raw `mv_cost(diff)`
+result with no weighting. Over-charged NEWMV's MV-bit rate by
+`128 / 108 ≈ 1.185×` (~19% over) relative to libvpx, biasing
+the picker against NEWMV at every RD comparison.
+**What rvp9 does (POST-A13):** matches libvpx exactly — applies
+`(raw * 108 + 64) >> 7` (the `ROUND_POWER_OF_TWO` expansion
+from `vpx_ports/mem.h:31`).
+**Why this is the right fix:** flagged in the A6 lambda-units
+investigation (`notes/stage4a-lambda-units-investigation.md`)
+as the lone real RD-formula divergence after the agent
+exhaustively side-by-sided the RDCOST macro, RDDIV_BITS,
+VP9_PROB_COST_SHIFT, rate unit, distortion unit, and
+`compute_rd_mult_based_on_qindex` — all matched. The
+`MV_COST_WEIGHT` scaling is libvpx's encoder-specific damping
+applied only at the picker (not in the bitstream); A6
+recommended porting it for cross-encoder fidelity.
+**Byte-parity impact:** none (this affects picker decisions
+only; the cross-decoder gate is preserved BYTE-EXACT —
+verified post-fix). Bitstreams change if and only if the
+picker selects a different mode/MV than before, in which
+case both rvp9-decoder and vpxdec agree on the new bitstream.
+**Compression-efficiency impact, F12 testsrc 256×256 @ 64 frames:**
+```
+target=25kbps:   33.51 / 33.51 dB  (no change at 25-kbps target)
+target=50kbps:   38.31 / 42.92 dB  (+4.6 dB at 50-kbps target)
+target=100kbps:  47.18 / 48.33 dB  (+1.15 dB at 100-kbps target)
+target=250kbps:  56.92 / 56.86 dB  (essentially flat at 250)
+```
+BD-rate vs libvpx: +634 % → +628.52 % (modest improvement;
+testsrc was already in a reasonable regime, the win is at the
+50-100 kbps band where the picker has the most room to swap to
+NEWMV).
+**Compression-efficiency impact, F12 foreman_cif:**
+```
+target=25kbps:   24.01 / 24.01 dB  (flat)
+target=50kbps:   24.16 / 24.16 dB  (flat)
+target=100kbps:  25.42 / 25.42 dB  (flat)
+target=250kbps:  28.96 / 28.96 dB  (flat)
+```
+BD-rate +395.92 % (unchanged from A11/A12). Foreman is bottlenecked
+by the rate-model overshoot (514 kbps actual at 250-kbps target,
+RC saturates q=255) and the residual mode/MV cost model, not by
+the 1.185× NEWMV scaling. This matches A6's prediction that the
+scaling fix tightens fidelity but does not unstick foreman.
+**Cross-decoder gate:** PASS (rvp9-decoder vs vpxdec vs ffmpeg
+byte-exact).
+**RT gate:** 6.12 ms median (was 6.57 ms in A6) — no regression.
+**Future plan:** done. The lone outstanding RD-formula divergence
+flagged in A6 is now closed. The remaining foreman gap is in the
+rate model + mode/MV cost tables (see A6 "Where to look next"
+items 1 and 2: per-leaf symbol overhead + inter-mode probability
+context).
