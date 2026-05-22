@@ -347,29 +347,81 @@ fn clamp_mv_to_limits(mv: Mv, limits: &MvLimits) -> Mv {
 }
 
 /// Run the F7.0 full-pel diamond + sub-pel refinement for NEWMV.
-/// Returns the resulting MV in 1/8-pel units. The full-pel search is
-/// seeded at `params.newmv_seed` when provided (libvpx's
-/// `x->pred_mv[]` from `vp9_int_pro_motion_estimation`), otherwise
-/// at `mv_candidates.nearest`. Either way, the seed is clamped to
-/// the picker's `mv_limits` envelope before being fed into the
-/// diamond search.
+/// Returns the resulting MV in 1/8-pel units.
+///
+/// Two paths:
+///
+/// * **No seed** (`newmv_seed == None`): standard libvpx flow —
+///   full-pel diamond search centred at `mv_candidates.nearest`
+///   followed by sub-pel refinement. Mirrors
+///   `vp9/encoder/vp9_pickmode.c:211-214` (`vp9_full_pixel_search`)
+///   plus `:246-253` (`find_fractional_mv_step`).
+///
+/// * **With seed** (`newmv_seed == Some(int_pro_mv)`): SKIP the
+///   full-pel diamond and use the int_pro MV directly. Mirrors
+///   libvpx's `sb_use_mv_part` short-circuit at
+///   `vp9_pickmode.c:207-210`:
+///   ```c
+///   if (x->sb_use_mv_part) {
+///     tmp_mv->as_mv.row = x->sb_mvrow_part >> 3;
+///     tmp_mv->as_mv.col = x->sb_mvcol_part >> 3;
+///   } else {
+///     vp9_full_pixel_search(...);
+///   }
+///   ```
+///   Without this short-circuit, the diamond's internal
+///   `mvsad_err_cost` (penalising MV distance from `ref_mv =
+///   nearest`) drags the search back to `(0, 0)` whenever
+///   `nearest = (0, 0)` (the typical case when neighbours haven't
+///   picked NEWMV yet — chicken-and-egg). The int_pro estimate
+///   already accounts for SAD-domain quality at the SB level, so
+///   we trust it and only run sub-pel refinement around it.
 fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
-    let center_mv = clamp_mv_to_limits(
-        params.newmv_seed.unwrap_or(params.mv_candidates.nearest),
-        &params.mv_limits,
-    );
-    let full = diamond_search_sad(&FullPixelSearchParams {
-        block_size: params.block_size,
-        src_plane: params.src_plane,
-        src_offset: params.src_offset,
-        ref_plane: params.ref_plane,
-        center_mv,
-        mv_limits: params.mv_limits,
-        sad_per_bit: DEFAULT_SAD_PER_BIT,
-        mv_costs: params.mv_costs,
-        max_iters: params.site_config.total_steps as i32,
-        site_config: params.site_config,
-    });
+    // Compute the full-pel-domain MV center for the sub-pel
+    // refinement step. The `SubPixelSearchParams::center_mv` is a
+    // FULL-PEL value (the sub-pel search lifts it via `* 8`
+    // internally to start at the Q3 grid point).
+    let center_mv_fp = if let Some(seed) = params.newmv_seed {
+        // libvpx `sb_use_mv_part` short-circuit
+        // (`vp9_pickmode.c:207-210`). Use the int_pro seed
+        // directly (truncated to full-pel; the int_pro output is
+        // already integer-pel × 8 Q3, so `>> 3` is exact).
+        // Clamp to the picker's full-pel envelope so the sub-pel
+        // search stays inside the safe convolve footprint.
+        let row_fp = (i32::from(seed.row) >> 3)
+            .clamp(params.mv_limits.row_min, params.mv_limits.row_max);
+        let col_fp = (i32::from(seed.col) >> 3)
+            .clamp(params.mv_limits.col_min, params.mv_limits.col_max);
+        Mv {
+            row: row_fp as i16,
+            col: col_fp as i16,
+        }
+    } else {
+        // No seed → standard full-pel diamond from
+        // mv_candidates.nearest. The diamond's center_mv is in
+        // Q3 (matches the existing API); its `best_mv_row` /
+        // `best_mv_col` are full-pel.
+        let center_mv = clamp_mv_to_limits(
+            params.mv_candidates.nearest,
+            &params.mv_limits,
+        );
+        let full = diamond_search_sad(&FullPixelSearchParams {
+            block_size: params.block_size,
+            src_plane: params.src_plane,
+            src_offset: params.src_offset,
+            ref_plane: params.ref_plane,
+            center_mv,
+            mv_limits: params.mv_limits,
+            sad_per_bit: DEFAULT_SAD_PER_BIT,
+            mv_costs: params.mv_costs,
+            max_iters: params.site_config.total_steps as i32,
+            site_config: params.site_config,
+        });
+        Mv {
+            row: full.best_mv_row,
+            col: full.best_mv_col,
+        }
+    };
 
     // Hand off to sub-pel. The sub-pel search only supports the 5
     // square block sizes (Block4x4 / 8 / 16 / 32 / 64); F8.1 v1's
@@ -380,10 +432,7 @@ fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
         src_plane: params.src_plane,
         src_offset: params.src_offset,
         ref_plane: params.ref_plane,
-        center_mv: Mv {
-            row: full.best_mv_row,
-            col: full.best_mv_col,
-        },
+        center_mv: center_mv_fp,
         ref_mv: params.mv_candidates.nearest,
         mv_limits: params.mv_limits,
         error_per_bit: DEFAULT_ERROR_PER_BIT,

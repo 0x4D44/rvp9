@@ -2279,6 +2279,16 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // wire-format-only by F8.2).
     let block8x8_picker_enabled = w * h <= 307_200;
 
+    // A3'-int-pro - same frame-area gate as the Block8x8 picker.
+    // For 720p+ the per-leaf picker's RD math heavily favours
+    // NEARESTMV-at-(0,0) at the high qindex CBR drives the
+    // encoder to (lambda is huge, MV-bit cost dominates), so the
+    // int_pro seed produces no NEWMV picks and just adds overhead
+    // to the RT path. Gating int_pro on the same threshold
+    // restores the pre-A3' RT budget on 720p while preserving the
+    // seed's effect on the F12 small-frame corpus.
+    let int_pro_enabled = w * h <= 307_200;
+
     assert_eq!(
         sb_partitions.len(),
         sb_rows * sb_cols,
@@ -2372,13 +2382,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             // `mv_candidates.nearest`.
             let sb_px_x = sb_col * 64;
             let sb_px_y = sb_row * 64;
-            let int_pro = int_pro_motion_estimation(
-                &src_y,
-                &ref_y,
-                sb_px_x,
-                sb_px_y,
-                BlockSize::Block64x64,
-            );
+            let int_pro = if int_pro_enabled {
+                int_pro_motion_estimation(
+                    &src_y,
+                    &ref_y,
+                    sb_px_x,
+                    sb_px_y,
+                    BlockSize::Block64x64,
+                )
+            } else {
+                rvp9_core::mv_search::int_pro_me::IntProMeResult::ZERO
+            };
             // Treat a literal zero MV as "no useful seed" — the
             // picker's existing NEAREST/ZERO-at-(0,0) candidates
             // already cover that case.
@@ -2387,6 +2401,24 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             } else {
                 Some(int_pro.mv)
             };
+
+            // A3'-int-pro diagnostic — per-SB seed activity. Set
+            // RVP9_DIAG_INTPRO_SB=1 to enable (off by default to
+            // avoid log spam).
+            if std::env::var("RVP9_DIAG_INTPRO_SB").is_ok() {
+                #[allow(clippy::print_stderr)]
+                {
+                    eprintln!(
+                        "  int_pro sb=({},{}) → mv=({},{}) sad={} seed={}",
+                        sb_row,
+                        sb_col,
+                        int_pro.mv.row,
+                        int_pro.mv.col,
+                        int_pro.best_sad,
+                        if sb_newmv_seed.is_some() { "Y" } else { "N" },
+                    );
+                }
+            }
 
             for leaf_idx in 0..sb_partitions[sb_idx].len() {
                 let (leaf_mi_row, leaf_mi_col, leaf_bsize) = {
@@ -2870,6 +2902,40 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     sb_partitions[sb_idx][leaf_idx].skip,
                 );
             }
+        }
+    }
+
+    // A3'-int-pro frame-level diagnostic — aggregate mode counts.
+    // Set RVP9_DIAG_INTPRO=1 to enable.
+    if std::env::var("RVP9_DIAG_INTPRO").is_ok() {
+        let mut count_zero = 0usize;
+        let mut count_nearest = 0usize;
+        let mut count_new = 0usize;
+        let mut count_other = 0usize;
+        let mut count_skip = 0usize;
+        let mut count_nonzero_mv = 0usize;
+        for sb in sb_partitions.iter() {
+            for leaf in sb.iter() {
+                match leaf.picked_mode {
+                    InterMode::ZeroMv => count_zero += 1,
+                    InterMode::NearestMv => count_nearest += 1,
+                    InterMode::NewMv => count_new += 1,
+                    _ => count_other += 1,
+                }
+                if leaf.skip {
+                    count_skip += 1;
+                }
+                if leaf.picked_mv != Mv::ZERO {
+                    count_nonzero_mv += 1;
+                }
+            }
+        }
+        #[allow(clippy::print_stderr)]
+        {
+            eprintln!(
+                "[A3'-int-pro] frame summary: zero={} nearest={} new={} other={} skip={} nonzero_mv={}",
+                count_zero, count_nearest, count_new, count_other, count_skip, count_nonzero_mv,
+            );
         }
     }
 

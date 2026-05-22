@@ -517,61 +517,97 @@ pub fn int_pro_motion_estimation(
 mod tests {
     use super::*;
 
-    /// Zero motion: identical src and ref → search returns
-    /// `Mv::ZERO` (with constant content the projections are all
-    /// identical so vector_match's first-wins returns the centre
-    /// = bw/2, which maps to MV = 0).
+    /// Constant-content src and ref: libvpx's `vector_match`
+    /// returns `0 - bw/2 = -bw/2` for both axes (the strict-`<`
+    /// updates never fire when all SADs tie at 0), then the 4-pt
+    /// diamond + cross can't improve so the result stays at
+    /// `(-bh/2, -bw/2)` in full-pel = `(-bh*4, -bw*4)` Q3.
+    /// We mirror this bug-for-bug — constant input never reaches
+    /// the picker in real encoder runs (variance partitioning
+    /// gates on non-flat regions).
+    ///
+    /// For natural content the result is non-pathological because
+    /// `vector_match`'s first-encountered minimum is the real
+    /// motion location, not the boundary.
     #[test]
-    fn zero_motion_yields_zero_mv() {
+    fn constant_content_returns_libvpx_canonical_value() {
         let w = 256;
         let h = 256;
         let buf = vec![128u8; w * h];
         let src = PlaneRef { data: &buf, stride: w, width: w, height: h };
         let r = PlaneRef { data: &buf, stride: w, width: w, height: h };
         let result = int_pro_motion_estimation(&src, &r, 64, 64, BlockSize::Block64x64);
-        assert_eq!(result.mv, Mv::ZERO);
+        // Block64x64 → bw = bh = 64 → result = (-32, -32) FP =
+        // (-256, -256) Q3.
+        assert_eq!(result.mv, Mv { row: -256, col: -256 });
     }
 
-    /// Synthetic translation: ref is a shifted copy of src. The
-    /// 1D-projection MV should point back to the shift (within
-    /// the projection's accuracy).
+    /// Source plane == reference plane with non-constant content
+    /// (so vector_match's strict-`<` updates actually fire) → the
+    /// MV should be at or very close to (0, 0). With a textured
+    /// stationary scene, the SAD at offset = bw/2 (which maps to
+    /// MV = 0) is the true minimum.
     #[test]
-    fn integer_translation_is_recovered() {
+    fn stationary_textured_content_yields_zero_mv() {
         let w = 256;
         let h = 256;
-        let mut src_buf = vec![0u8; w * h];
-        // Diagonal stripes — has horizontal + vertical structure
-        // so both row and column projections are non-trivial.
-        for y in 0..h {
-            for x in 0..w {
-                src_buf[y * w + x] = (((x + y) % 32) * 4) as u8;
-            }
-        }
-        // Reference: ref[y][x] = src[y][x - shift]. So src's
-        // feature at column x matches ref's feature at x + shift
-        // → MV col = +shift.
-        let shift = 4i32;
-        let mut ref_buf = vec![0u8; w * h];
-        for y in 0..h {
-            for x in 0..w {
-                let sx = x as i32 - shift;
-                if sx < 0 || sx as usize >= w {
-                    ref_buf[y * w + x] = 0;
-                } else {
-                    ref_buf[y * w + x] = src_buf[y * w + sx as usize];
+        // Random-ish texture so the projections discriminate.
+        let buf: Vec<u8> = (0..w * h)
+            .map(|i| (((i * 73 + i / 13) ^ 0x5a) & 0xff) as u8)
+            .collect();
+        let src = PlaneRef { data: &buf, stride: w, width: w, height: h };
+        let r = PlaneRef { data: &buf, stride: w, width: w, height: h };
+        let result = int_pro_motion_estimation(&src, &r, 64, 64, BlockSize::Block64x64);
+        // Should be zero (or very close) since src == ref.
+        let row_fp = i32::from(result.mv.row) / 8;
+        let col_fp = i32::from(result.mv.col) / 8;
+        assert!(row_fp.abs() <= 1, "row MV should be ~0, got {} FP", row_fp);
+        assert!(col_fp.abs() <= 1, "col MV should be ~0, got {} FP", col_fp);
+    }
+
+    /// Synthetic horizontal translation: ref's content (vertical
+    /// step pattern) is shifted left by `shift` cols relative to
+    /// src. So src matches ref at col offset = +shift.
+    /// Vertical-step pattern ensures the column-projection signal
+    /// is strong (rows sum to the same total, but columns vary
+    /// sharply at the step boundary).
+    #[test]
+    fn horizontal_translation_is_recovered() {
+        let w = 256;
+        let h = 256;
+        // Vertical stripes with sharp transitions every 32 cols.
+        // The column projection vbuf will have a strong step at
+        // each multiple of 32; matching src vs ref will recover
+        // the shift.
+        let make = |shift_x: i32| {
+            let mut buf = vec![0u8; w * h];
+            for y in 0..h {
+                for x in 0..w {
+                    let sx = x as i32 - shift_x;
+                    if sx >= 0 && (sx as usize) < w {
+                        buf[y * w + x] = if ((sx as usize) / 32) % 2 == 0 { 50 } else { 200 };
+                    } else {
+                        buf[y * w + x] = 128;
+                    }
                 }
             }
-        }
+            buf
+        };
+        let src_buf = make(0);
+        let shift = 4i32;
+        let ref_buf = make(-shift); // ref shifted LEFT by `shift`
         let src = PlaneRef { data: &src_buf, stride: w, width: w, height: h };
         let r = PlaneRef { data: &ref_buf, stride: w, width: w, height: h };
         let result = int_pro_motion_estimation(&src, &r, 96, 96, BlockSize::Block64x64);
-        // Q3 → full-pel; tolerance ±2 full-pels for the 1D
-        // projection approximation.
+        // src is unshifted; ref has the pattern shifted LEFT by
+        // `shift`. So ref[x] = src[x + shift], i.e. to match src
+        // we sample ref at col offset = -shift. Expected MV col
+        // ≈ -shift.
         let col_fp = i32::from(result.mv.col) / 8;
         assert!(
-            (col_fp - shift).abs() <= 2,
+            (col_fp - (-shift)).abs() <= 2,
             "expected col MV near {} (full-pel), got {} ({} Q3)",
-            shift,
+            -shift,
             col_fp,
             result.mv.col
         );
@@ -592,13 +628,35 @@ mod tests {
         assert_eq!(result, IntProMeResult::ZERO);
     }
 
-    /// vector_match centres at bw/2 → returns 0 for constant input.
+    /// vector_match: constant input → libvpx's strict-`<` keeps
+    /// `offset = 0` (the first try is the first hit) → returns
+    /// `0 - bw/2 = -bw/2`. Document this bug-for-bug match.
     #[test]
-    fn vector_match_constant_input_zero() {
+    fn vector_match_constant_input_returns_neg_half_bw() {
         let bwl: u32 = 2;
-        let bw = 4usize << bwl;
-        let ref_vec = vec![100i16; 2 * bw];
-        let src_vec = vec![100i16; bw];
+        let bw = 4i32 << bwl; // 16
+        let ref_vec = vec![100i16; (2 * bw) as usize];
+        let src_vec = vec![100i16; bw as usize];
+        let mv = vector_match(&ref_vec, &src_vec, bwl);
+        assert_eq!(mv, -bw / 2);
+    }
+
+    /// vector_match: src matches ref starting at offset = bw/2
+    /// (i.e. zero motion). With a unique minimum at that offset,
+    /// vector_match returns 0.
+    #[test]
+    fn vector_match_centered_minimum_returns_zero() {
+        let bwl: u32 = 3;
+        let bw = (4i32 << bwl) as usize; // 32
+        // Build a ref where the matching window is at offset bw/2
+        // (centred).
+        let mut ref_vec = vec![0i16; 2 * bw];
+        for (i, v) in ref_vec.iter_mut().enumerate() {
+            // Position-dependent values; src matches the
+            // bw-window starting at bw/2 of ref.
+            *v = ((i.wrapping_mul(13) + 7) & 0xff) as i16;
+        }
+        let src_vec: Vec<i16> = ref_vec[bw / 2..bw / 2 + bw].to_vec();
         let mv = vector_match(&ref_vec, &src_vec, bwl);
         assert_eq!(mv, 0);
     }
