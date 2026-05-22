@@ -82,6 +82,25 @@ pub(crate) unsafe fn avg3_window(src: &[u8], out: &mut [u8]) {
     _mm256_storeu_si256(out.as_mut_ptr() as *mut _, f);
 }
 
+/// Compute `out[k] = AVG2(in[k], in[k+1])` for `k in 0..32` (caller
+/// uses the first `n`). `src.len() >= 33`, `out.len() >= 32`.
+///
+/// # Safety
+/// Requires AVX2.
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn avg2_window(src: &[u8], out: &mut [u8]) {
+    use core::arch::x86_64::{_mm256_avg_epu8, _mm256_loadu_si256, _mm256_storeu_si256};
+    debug_assert!(src.len() >= 33);
+    debug_assert!(out.len() >= 32);
+    // G4: loads from `src` use _mm256_loadu_si256 (unaligned)
+    let x = _mm256_loadu_si256(src.as_ptr() as *const _);
+    let y = _mm256_loadu_si256(src.as_ptr().add(1) as *const _);
+    let f = _mm256_avg_epu8(x, y);
+    // G4: stores to `out` use _mm256_storeu_si256 (unaligned)
+    _mm256_storeu_si256(out.as_mut_ptr() as *mut _, f);
+}
+
 /// Store the `bs`-byte window `src[0..bs]` to `dst[0..bs]` using the
 /// widest unaligned store that fits `bs ∈ {4, 8, 16, 32}`.
 ///
