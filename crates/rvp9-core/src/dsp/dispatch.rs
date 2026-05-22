@@ -960,7 +960,9 @@ pub struct SimdDispatch {
     ),
 
     /// Wave I I5 — 8-tap vertical subpel convolution. Mirrors
-    /// [`crate::inter::convolve8_vert`]. Scalar-only at I5.
+    /// [`crate::inter::convolve8_vert`]. Wave J J4 promotes this slot to
+    /// AVX2 on x86_64 hosts that report `caps.avx2`; non-AVX2 hosts keep
+    /// the scalar reference.
     pub(crate) convolve8_vert: fn(
         src: &[u8],
         src_stride: usize,
@@ -1591,6 +1593,15 @@ impl SimdDispatch {
         #[cfg(not(target_arch = "x86_64"))]
         let convolve8_horiz: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
             crate::inter::filter::convolve8_horiz;
+        // ---- Wave J J4 — AVX2 convolve8_vert promotion. ----
+        #[cfg(target_arch = "x86_64")]
+        let convolve8_vert: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
+            if caps.avx2 {
+                crate::dsp::x86_64::convolve8_vert_avx2
+            } else {
+                crate::inter::filter::convolve8_vert
+            };
+        #[cfg(not(target_arch = "x86_64"))]
         let convolve8_vert: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
             crate::inter::filter::convolve8_vert;
         let convolve8: fn(
@@ -3088,18 +3099,42 @@ mod tests {
         );
     }
 
-    /// I5 — `convolve8_vert` slot points at the scalar
-    /// `crate::inter::filter::convolve8_vert` fn at I5.
+    /// Wave J J4 — on AVX2 hosts the `convolve8_vert` slot routes
+    /// through the AVX2 wrapper. Fn-pointer-identity check (output
+    /// parity is covered by `convolve8_vert_avx2::tests`).
+    #[cfg(target_arch = "x86_64")]
     #[cfg_attr(miri, ignore)]
     #[test]
-    fn convolve8_vert_dispatches_correctly() {
-        let d = SimdDispatch::build(detect());
+    fn convolve8_vert_avx2_routing_avx2_cpu() {
+        if !std::is_x86_feature_detected!("avx2") {
+            return;
+        }
+        let mut caps = detect();
+        caps.avx2 = true;
+        let d = SimdDispatch::build(caps);
+        let avx2_fp: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
+            crate::dsp::x86_64::convolve8_vert_avx2;
+        assert_eq!(
+            d.convolve8_vert() as usize,
+            avx2_fp as usize,
+            "avx2=true must install the convolve8_vert_avx2 wrapper"
+        );
+    }
+
+    /// Wave J J4 — forced-scalar caps install the scalar reference.
+    #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn forced_scalar_caps_installs_scalar_convolve8_vert() {
+        let mut caps = detect();
+        caps.avx2 = false;
+        let d = SimdDispatch::build(caps);
         let scalar: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
             crate::inter::filter::convolve8_vert;
         assert_eq!(
             d.convolve8_vert() as usize,
             scalar as usize,
-            "I5: convolve8_vert slot must install the scalar reference"
+            "avx2=false must install the scalar convolve8_vert reference"
         );
     }
 
