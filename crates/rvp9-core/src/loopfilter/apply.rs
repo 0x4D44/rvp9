@@ -35,12 +35,9 @@
 
 use super::mask::LoopFilterMask;
 use crate::bitstream::ChromaFormat;
+use crate::dsp::SimdDispatch;
 use crate::frame::Yv12Buffer;
-use crate::loopfilter::{
-    LoopFilterInfo, lpf_horizontal_4, lpf_horizontal_4_dual, lpf_horizontal_8,
-    lpf_horizontal_8_dual, lpf_horizontal_16, lpf_horizontal_16_dual, lpf_vertical_4,
-    lpf_vertical_4_dual, lpf_vertical_8, lpf_vertical_8_dual, lpf_vertical_16, lpf_vertical_16_dual,
-};
+use crate::loopfilter::LoopFilterInfo;
 
 /// Number of 8×8 MI rows per 64×64 superblock. Matches libvpx
 /// `MI_BLOCK_SIZE` (`vp9_enums.h:25`).
@@ -107,6 +104,16 @@ pub fn loop_filter_frame(
     // walk one mask per SB and the mask-edge cleanup
     // (adjust_mask) has already masked out columns ≥ mi_cols.
 
+    // Wave H H1: look up the process-wide SimdDispatch once, thread
+    // it through the inner helpers so the AVX2 loopfilter slots (F10
+    // + G3-G6) become live in production. Backward-compatible at the
+    // public API: callers that hold their own `Arc<SimdDispatch>`
+    // (e.g. the decoder) get the same dispatch table here via the
+    // OnceLock; callers that don't (encoder recon path) pay one
+    // `Arc::clone` per frame call — negligible.
+    let dispatch_arc = crate::dsp::get();
+    let dispatch: &SimdDispatch = &dispatch_arc;
+
     let sb_start = start_mi_row / MI_BLOCK_SIZE;
     let sb_end = end_mi_row.div_ceil(MI_BLOCK_SIZE).min(sb_rows);
 
@@ -128,6 +135,7 @@ pub fn loop_filter_frame(
                     mi_col,
                     mi_rows,
                     info,
+                    dispatch,
                 );
             }
             // U plane (ss = 1).
@@ -142,6 +150,7 @@ pub fn loop_filter_frame(
                     mi_col,
                     mi_rows,
                     info,
+                    dispatch,
                 );
             }
             // V plane (ss = 1).
@@ -156,6 +165,7 @@ pub fn loop_filter_frame(
                     mi_col,
                     mi_rows,
                     info,
+                    dispatch,
                 );
             }
         }
@@ -179,6 +189,7 @@ fn filter_block_plane_ss00(
     mi_col: usize,
     mi_rows: usize,
     info: &LoopFilterInfo,
+    dispatch: &SimdDispatch,
 ) {
     // SB origin within the plane (offset to top-left of the 64×64).
     let sb_origin = mi_row * MI_BLOCK_SIZE * stride + mi_col * MI_BLOCK_SIZE;
@@ -203,6 +214,7 @@ fn filter_block_plane_ss00(
             mask_4x4_int as u32,
             info,
             &lfm.lfl_y[(r << 3)..],
+            dispatch,
         );
         mask_16x16 >>= 16;
         mask_8x8 >>= 16;
@@ -243,6 +255,7 @@ fn filter_block_plane_ss00(
             (mask_4x4_int & 0xff) as u32,
             info,
             &lfm.lfl_y[(r << 3)..],
+            dispatch,
         );
         mask_16x16 >>= 8;
         mask_8x8 >>= 8;
@@ -256,6 +269,7 @@ fn filter_block_plane_ss00(
 /// Each chroma 4×4 covers a 16×16 luma area, so the chroma grid is
 /// 4×4 (vs 8×8 for luma) within the SB. Mirrors libvpx
 /// `vp9_filter_block_plane_ss11` (`vp9_loopfilter.c:1324-1420`).
+#[allow(clippy::too_many_arguments)]
 fn filter_block_plane_ss11(
     pixels: &mut [u8],
     stride: usize,
@@ -264,6 +278,7 @@ fn filter_block_plane_ss11(
     mi_col: usize,
     mi_rows: usize,
     info: &LoopFilterInfo,
+    dispatch: &SimdDispatch,
 ) {
     // SB origin within the chroma plane. The chroma plane is half
     // the size of luma (4:2:0), so 8 MI rows of luma = 4 chroma
@@ -316,6 +331,7 @@ fn filter_block_plane_ss11(
             mask_4x4_int as u32,
             info,
             &lfl_uv[(r << 1)..],
+            dispatch,
         );
 
         mask_16x16 >>= 8;
@@ -363,6 +379,7 @@ fn filter_block_plane_ss11(
             mask_4x4_int_r,
             info,
             &lfl_uv[(r << 1)..],
+            dispatch,
         );
 
         mask_16x16 >>= 4;
@@ -391,6 +408,7 @@ fn filter_selectively_vert_row2_y(
     mask_4x4_int: u32,
     info: &LoopFilterInfo,
     lfl: &[u8],
+    dispatch: &SimdDispatch,
 ) {
     // Dual = both block-rows' columns. ss=0 ⇒ cutoff = 0xffff,
     // lfl_forward = 8 (next block-row in lfl_y), dual_one = 1 | (1<<8).
@@ -411,6 +429,7 @@ fn filter_selectively_vert_row2_y(
         dual_mask_cutoff,
         lfl_forward,
         dual_one,
+        dispatch,
     );
 }
 
@@ -428,6 +447,7 @@ fn filter_selectively_vert_row2_uv(
     mask_4x4_int: u32,
     info: &LoopFilterInfo,
     lfl: &[u8],
+    dispatch: &SimdDispatch,
 ) {
     let dual_mask_cutoff: u32 = 0xff;
     let lfl_forward: usize = 4;
@@ -446,6 +466,7 @@ fn filter_selectively_vert_row2_uv(
         dual_mask_cutoff,
         lfl_forward,
         dual_one,
+        dispatch,
     );
 }
 
@@ -472,7 +493,19 @@ fn filter_selectively_vert_row2_inner(
     dual_mask_cutoff: u32,
     lfl_forward: usize,
     dual_one: u32,
+    dispatch: &SimdDispatch,
 ) {
+    // Wave H H1: bind the loopfilter slots once so the per-mask
+    // dispatch below is a single field load + indirect call. The
+    // pointer values are stable across the SB iteration (the
+    // dispatch table is immutable after `dsp::init`).
+    let v16 = dispatch.lpf_vertical_16();
+    let v16d = dispatch.lpf_vertical_16_dual();
+    let v8 = dispatch.lpf_vertical_8();
+    let v8d = dispatch.lpf_vertical_8_dual();
+    let v4 = dispatch.lpf_vertical_4();
+    let v4d = dispatch.lpf_vertical_4_dual();
+
     let mut mask = (mask_16x16 | mask_8x8 | mask_4x4 | mask_4x4_int) & dual_mask_cutoff;
     let mut s = s_index;
     let mut lfl_index: usize = 0;
@@ -489,11 +522,11 @@ fn filter_selectively_vert_row2_inner(
             // 16-tap.
             if mask_16x16 & dual_one != 0 {
                 if (mask_16x16 & dual_one) == dual_one {
-                    lpf_vertical_16_dual(pixels, s, pitch, lfi0.mblim, lfi0.lim, lfi0.hev_thr);
+                    v16d(pixels, s, pitch, lfi0.mblim, lfi0.lim, lfi0.hev_thr);
                 } else if mask_16x16 & 1 != 0 {
-                    lpf_vertical_16(pixels, s, pitch, lfi0.mblim, lfi0.lim, lfi0.hev_thr);
+                    v16(pixels, s, pitch, lfi0.mblim, lfi0.lim, lfi0.hev_thr);
                 } else {
-                    lpf_vertical_16(
+                    v16(
                         pixels,
                         s + second_pitch,
                         pitch,
@@ -507,7 +540,7 @@ fn filter_selectively_vert_row2_inner(
             // 8-tap.
             if mask_8x8 & dual_one != 0 {
                 if (mask_8x8 & dual_one) == dual_one {
-                    lpf_vertical_8_dual(
+                    v8d(
                         pixels,
                         s,
                         pitch,
@@ -519,9 +552,9 @@ fn filter_selectively_vert_row2_inner(
                         lfi1.hev_thr,
                     );
                 } else if mask_8x8 & 1 != 0 {
-                    lpf_vertical_8(pixels, s, pitch, lfi0.mblim, lfi0.lim, lfi0.hev_thr);
+                    v8(pixels, s, pitch, lfi0.mblim, lfi0.lim, lfi0.hev_thr);
                 } else {
-                    lpf_vertical_8(
+                    v8(
                         pixels,
                         s + second_pitch,
                         pitch,
@@ -535,7 +568,7 @@ fn filter_selectively_vert_row2_inner(
             // 4-tap.
             if mask_4x4 & dual_one != 0 {
                 if (mask_4x4 & dual_one) == dual_one {
-                    lpf_vertical_4_dual(
+                    v4d(
                         pixels,
                         s,
                         pitch,
@@ -547,9 +580,9 @@ fn filter_selectively_vert_row2_inner(
                         lfi1.hev_thr,
                     );
                 } else if mask_4x4 & 1 != 0 {
-                    lpf_vertical_4(pixels, s, pitch, lfi0.mblim, lfi0.lim, lfi0.hev_thr);
+                    v4(pixels, s, pitch, lfi0.mblim, lfi0.lim, lfi0.hev_thr);
                 } else {
-                    lpf_vertical_4(
+                    v4(
                         pixels,
                         s + second_pitch,
                         pitch,
@@ -563,7 +596,7 @@ fn filter_selectively_vert_row2_inner(
             // Internal 4×4 edge: 4 pixels into the 8-pixel block.
             if mask_4x4_int & dual_one != 0 {
                 if (mask_4x4_int & dual_one) == dual_one {
-                    lpf_vertical_4_dual(
+                    v4d(
                         pixels,
                         s + 4,
                         pitch,
@@ -575,9 +608,9 @@ fn filter_selectively_vert_row2_inner(
                         lfi1.hev_thr,
                     );
                 } else if mask_4x4_int & 1 != 0 {
-                    lpf_vertical_4(pixels, s + 4, pitch, lfi0.mblim, lfi0.lim, lfi0.hev_thr);
+                    v4(pixels, s + 4, pitch, lfi0.mblim, lfi0.lim, lfi0.hev_thr);
                 } else {
-                    lpf_vertical_4(
+                    v4(
                         pixels,
                         s + 4 + second_pitch,
                         pitch,
@@ -617,7 +650,17 @@ fn filter_selectively_horiz(
     mut mask_4x4_int: u32,
     info: &LoopFilterInfo,
     lfl: &[u8],
+    dispatch: &SimdDispatch,
 ) {
+    // Wave H H1: bind the slot pointers once per call. See sibling
+    // `filter_selectively_vert_row2_inner` for the rationale.
+    let h16 = dispatch.lpf_horizontal_16();
+    let h16d = dispatch.lpf_horizontal_16_dual();
+    let h8 = dispatch.lpf_horizontal_8();
+    let h8d = dispatch.lpf_horizontal_8_dual();
+    let h4 = dispatch.lpf_horizontal_4();
+    let h4d = dispatch.lpf_horizontal_4_dual();
+
     let mut mask = mask_16x16 | mask_8x8 | mask_4x4 | mask_4x4_int;
     let mut s = s_index;
     let mut lfl_index: usize = 0;
@@ -628,15 +671,15 @@ fn filter_selectively_horiz(
 
             if mask_16x16 & 1 != 0 {
                 if (mask_16x16 & 3) == 3 {
-                    lpf_horizontal_16_dual(pixels, s, pitch, lfi.mblim, lfi.lim, lfi.hev_thr);
+                    h16d(pixels, s, pitch, lfi.mblim, lfi.lim, lfi.hev_thr);
                     count = 2;
                 } else {
-                    lpf_horizontal_16(pixels, s, pitch, lfi.mblim, lfi.lim, lfi.hev_thr);
+                    h16(pixels, s, pitch, lfi.mblim, lfi.lim, lfi.hev_thr);
                 }
             } else if mask_8x8 & 1 != 0 {
                 if (mask_8x8 & 3) == 3 {
                     let lfin = info.thresh(lfl[lfl_index + 1]);
-                    lpf_horizontal_8_dual(
+                    h8d(
                         pixels,
                         s,
                         pitch,
@@ -648,7 +691,7 @@ fn filter_selectively_horiz(
                         lfin.hev_thr,
                     );
                     if (mask_4x4_int & 3) == 3 {
-                        lpf_horizontal_4_dual(
+                        h4d(
                             pixels,
                             s + 4 * pitch,
                             pitch,
@@ -660,7 +703,7 @@ fn filter_selectively_horiz(
                             lfin.hev_thr,
                         );
                     } else if mask_4x4_int & 1 != 0 {
-                        lpf_horizontal_4(
+                        h4(
                             pixels,
                             s + 4 * pitch,
                             pitch,
@@ -669,7 +712,7 @@ fn filter_selectively_horiz(
                             lfi.hev_thr,
                         );
                     } else if mask_4x4_int & 2 != 0 {
-                        lpf_horizontal_4(
+                        h4(
                             pixels,
                             s + 8 + 4 * pitch,
                             pitch,
@@ -680,9 +723,9 @@ fn filter_selectively_horiz(
                     }
                     count = 2;
                 } else {
-                    lpf_horizontal_8(pixels, s, pitch, lfi.mblim, lfi.lim, lfi.hev_thr);
+                    h8(pixels, s, pitch, lfi.mblim, lfi.lim, lfi.hev_thr);
                     if mask_4x4_int & 1 != 0 {
-                        lpf_horizontal_4(
+                        h4(
                             pixels,
                             s + 4 * pitch,
                             pitch,
@@ -695,7 +738,7 @@ fn filter_selectively_horiz(
             } else if mask_4x4 & 1 != 0 {
                 if (mask_4x4 & 3) == 3 {
                     let lfin = info.thresh(lfl[lfl_index + 1]);
-                    lpf_horizontal_4_dual(
+                    h4d(
                         pixels,
                         s,
                         pitch,
@@ -707,7 +750,7 @@ fn filter_selectively_horiz(
                         lfin.hev_thr,
                     );
                     if (mask_4x4_int & 3) == 3 {
-                        lpf_horizontal_4_dual(
+                        h4d(
                             pixels,
                             s + 4 * pitch,
                             pitch,
@@ -719,7 +762,7 @@ fn filter_selectively_horiz(
                             lfin.hev_thr,
                         );
                     } else if mask_4x4_int & 1 != 0 {
-                        lpf_horizontal_4(
+                        h4(
                             pixels,
                             s + 4 * pitch,
                             pitch,
@@ -728,7 +771,7 @@ fn filter_selectively_horiz(
                             lfi.hev_thr,
                         );
                     } else if mask_4x4_int & 2 != 0 {
-                        lpf_horizontal_4(
+                        h4(
                             pixels,
                             s + 8 + 4 * pitch,
                             pitch,
@@ -739,9 +782,9 @@ fn filter_selectively_horiz(
                     }
                     count = 2;
                 } else {
-                    lpf_horizontal_4(pixels, s, pitch, lfi.mblim, lfi.lim, lfi.hev_thr);
+                    h4(pixels, s, pitch, lfi.mblim, lfi.lim, lfi.hev_thr);
                     if mask_4x4_int & 1 != 0 {
-                        lpf_horizontal_4(
+                        h4(
                             pixels,
                             s + 4 * pitch,
                             pitch,
@@ -755,7 +798,7 @@ fn filter_selectively_horiz(
                 // Only the internal-4×4 bit was set — filter at the
                 // mid-block horizontal edge. Mirrors libvpx
                 // `vp9_loopfilter.c:532-534`.
-                lpf_horizontal_4(
+                h4(
                     pixels,
                     s + 4 * pitch,
                     pitch,
@@ -789,6 +832,7 @@ fn filter_selectively_horiz_uv(
     mask_4x4_int: u32,
     info: &LoopFilterInfo,
     lfl: &[u8],
+    dispatch: &SimdDispatch,
 ) {
     // The libvpx UV horizontal dispatch is byte-identical to the Y
     // dispatch — only the mask widths differ (4 bits per chroma
@@ -804,6 +848,7 @@ fn filter_selectively_horiz_uv(
         mask_4x4_int,
         info,
         lfl,
+        dispatch,
     );
 }
 
@@ -812,6 +857,10 @@ mod tests {
     use super::*;
     use crate::bitstream::ChromaFormat;
     use crate::frame::{BorderUsage, ByteAlignment};
+    // Tests still call scalar lpf_* fns directly to compute reference
+    // outputs (then compare to dispatch-routed `loop_filter_frame`).
+    // Production code in this module goes through dispatch slots.
+    use crate::loopfilter::{lpf_horizontal_4, lpf_vertical_4};
 
     fn alloc_64x64() -> Yv12Buffer {
         Yv12Buffer::alloc(

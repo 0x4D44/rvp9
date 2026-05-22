@@ -161,6 +161,118 @@ fn scalar_lpf_horizontal_16(
     crate::loopfilter::lpf_horizontal_16(pixels, s_index, pitch, blimit, limit, thresh)
 }
 
+// ---- Wave H H1 — dual-variant loopfilter slots (scalar-only initially).
+// The 6 `_dual` variants below all take the 9-arg `(pixels, s_index,
+// pitch, blimit0, limit0, thresh0, blimit1, limit1, thresh1)` form
+// and run the matching single-variant filter on two adjacent 8-pixel
+// groups with independent thresholds. AVX2 impls land in H2/H3/H4.
+
+/// Scalar reference for the `lpf_vertical_4_dual` dispatch slot
+/// (Wave H H1; AVX2 promotion in Wave H H2).
+#[allow(clippy::too_many_arguments)]
+fn scalar_lpf_vertical_4_dual(
+    pixels: &mut [u8],
+    s_index: usize,
+    pitch: usize,
+    blimit0: u8,
+    limit0: u8,
+    thresh0: u8,
+    blimit1: u8,
+    limit1: u8,
+    thresh1: u8,
+) {
+    crate::loopfilter::lpf_vertical_4_dual(
+        pixels, s_index, pitch, blimit0, limit0, thresh0, blimit1, limit1, thresh1,
+    )
+}
+
+/// Scalar reference for the `lpf_horizontal_4_dual` dispatch slot
+/// (Wave H H1; AVX2 promotion in Wave H H2).
+#[allow(clippy::too_many_arguments)]
+fn scalar_lpf_horizontal_4_dual(
+    pixels: &mut [u8],
+    s_index: usize,
+    pitch: usize,
+    blimit0: u8,
+    limit0: u8,
+    thresh0: u8,
+    blimit1: u8,
+    limit1: u8,
+    thresh1: u8,
+) {
+    crate::loopfilter::lpf_horizontal_4_dual(
+        pixels, s_index, pitch, blimit0, limit0, thresh0, blimit1, limit1, thresh1,
+    )
+}
+
+/// Scalar reference for the `lpf_vertical_8_dual` dispatch slot
+/// (Wave H H1; AVX2 promotion in Wave H H3).
+#[allow(clippy::too_many_arguments)]
+fn scalar_lpf_vertical_8_dual(
+    pixels: &mut [u8],
+    s_index: usize,
+    pitch: usize,
+    blimit0: u8,
+    limit0: u8,
+    thresh0: u8,
+    blimit1: u8,
+    limit1: u8,
+    thresh1: u8,
+) {
+    crate::loopfilter::lpf_vertical_8_dual(
+        pixels, s_index, pitch, blimit0, limit0, thresh0, blimit1, limit1, thresh1,
+    )
+}
+
+/// Scalar reference for the `lpf_horizontal_8_dual` dispatch slot
+/// (Wave H H1; AVX2 promotion in Wave H H3).
+#[allow(clippy::too_many_arguments)]
+fn scalar_lpf_horizontal_8_dual(
+    pixels: &mut [u8],
+    s_index: usize,
+    pitch: usize,
+    blimit0: u8,
+    limit0: u8,
+    thresh0: u8,
+    blimit1: u8,
+    limit1: u8,
+    thresh1: u8,
+) {
+    crate::loopfilter::lpf_horizontal_8_dual(
+        pixels, s_index, pitch, blimit0, limit0, thresh0, blimit1, limit1, thresh1,
+    )
+}
+
+/// Scalar reference for the `lpf_vertical_16_dual` dispatch slot
+/// (Wave H H1; AVX2 promotion in Wave H H4). Six-arg — the 16-tap
+/// dual variants share one threshold set across both halves (libvpx
+/// `vpx_lpf_vertical_16_dual_c` convention), unlike the 4/8-tap
+/// duals.
+fn scalar_lpf_vertical_16_dual(
+    pixels: &mut [u8],
+    s_index: usize,
+    pitch: usize,
+    blimit: u8,
+    limit: u8,
+    thresh: u8,
+) {
+    crate::loopfilter::lpf_vertical_16_dual(pixels, s_index, pitch, blimit, limit, thresh)
+}
+
+/// Scalar reference for the `lpf_horizontal_16_dual` dispatch slot
+/// (Wave H H1; AVX2 promotion in Wave H H4). Six-arg — see
+/// [`scalar_lpf_vertical_16_dual`] for the shared-threshold rationale.
+fn scalar_lpf_horizontal_16_dual(
+    pixels: &mut [u8],
+    s_index: usize,
+    pitch: usize,
+    blimit: u8,
+    limit: u8,
+    thresh: u8,
+) {
+    crate::loopfilter::lpf_horizontal_16_dual(pixels, s_index, pitch, blimit, limit, thresh)
+}
+
 /// Scalar reference for the `plane_dequant_pair` dispatch slot. Direct
 /// alias of [`crate::quant::plane_dequant_pair`]; the slot exists to
 /// reserve the family naming for a future per-coefficient dequant
@@ -205,12 +317,18 @@ fn scalar_extend_frame_borders(yv12: &mut Yv12Buffer) {
 /// | G4.3a | intra-pred DC 4×4 | `dc_predictor_4x4`         | yes       |
 /// | G4-β  | hybrid ADST 4×4   | `iht4x4_add`               | yes       |
 /// | G4-β  | hybrid ADST 8×8   | `iht8x8_add`               | yes       |
-/// | G4.3b / F10 | loopfilter v4 | `lpf_vertical_4`           | yes (Wave F G F10) |
-/// | G3    | loopfilter h4     | `lpf_horizontal_4`         | yes (Wave G G3) |
-/// | G4    | loopfilter v8     | `lpf_vertical_8`           | yes (Wave G G4) |
-/// | G5    | loopfilter h8     | `lpf_horizontal_8`         | yes (Wave G G5) |
-/// | G6    | loopfilter v16    | `lpf_vertical_16`          | yes (Wave G G6) |
-/// | G6    | loopfilter h16    | `lpf_horizontal_16`        | yes (Wave G G6) |
+/// | G4.3b / F10 | loopfilter v4 | `lpf_vertical_4`           | yes (Wave F G F10) — H1 gated OFF by default |
+/// | G3    | loopfilter h4     | `lpf_horizontal_4`         | yes (Wave G G3) — H1 gated OFF by default |
+/// | G4    | loopfilter v8     | `lpf_vertical_8`           | yes (Wave G G4) — H1 gated OFF by default |
+/// | G5    | loopfilter h8     | `lpf_horizontal_8`         | yes (Wave G G5) — H1 gated OFF by default |
+/// | G6    | loopfilter v16    | `lpf_vertical_16`          | yes (Wave G G6) — H1 gated OFF by default |
+/// | G6    | loopfilter h16    | `lpf_horizontal_16`        | yes (Wave G G6) — H1 gated OFF by default |
+/// | H1    | loopfilter v4_dual | `lpf_vertical_4_dual`     | scalar (H2 lands AVX2) |
+/// | H1    | loopfilter h4_dual | `lpf_horizontal_4_dual`   | scalar (H2 lands AVX2) |
+/// | H1    | loopfilter v8_dual | `lpf_vertical_8_dual`     | scalar (H3 lands AVX2) |
+/// | H1    | loopfilter h8_dual | `lpf_horizontal_8_dual`   | scalar (H3 lands AVX2) |
+/// | H1    | loopfilter v16_dual| `lpf_vertical_16_dual`    | scalar (H4 lands AVX2) |
+/// | H1    | loopfilter h16_dual| `lpf_horizontal_16_dual`  | scalar (H4 lands AVX2) |
 /// | G4.4a | quant dequant     | `plane_dequant_pair`       | scalar only (architectural — no batchable kernel) |
 /// | G4.4b | frame-buffers     | `extend_frame_borders`     | scalar only (memcpy/memset already vectorised) |
 ///
@@ -420,6 +538,84 @@ pub struct SimdDispatch {
     pub(crate) lpf_horizontal_16:
         fn(pixels: &mut [u8], s_index: usize, pitch: usize, blimit: u8, limit: u8, thresh: u8),
 
+    /// Wave H H1 — dual 4-tap vertical loopfilter. Runs `filter4`
+    /// over two adjacent 8-row × 8-col groups (16 rows total) with
+    /// independent threshold sets `(blimit0,limit0,thresh0)` vs
+    /// `(blimit1,limit1,thresh1)`. Mirrors
+    /// [`crate::loopfilter::lpf_vertical_4_dual`]. Scalar-only at
+    /// H1 close; H2 lands the AVX2 promotion (lane-doubling of F10).
+    pub(crate) lpf_vertical_4_dual: fn(
+        pixels: &mut [u8],
+        s_index: usize,
+        pitch: usize,
+        blimit0: u8,
+        limit0: u8,
+        thresh0: u8,
+        blimit1: u8,
+        limit1: u8,
+        thresh1: u8,
+    ),
+
+    /// Wave H H1 — dual 4-tap horizontal loopfilter. Lane-doubled
+    /// counterpart of [`SimdDispatch::lpf_horizontal_4`]. Scalar-only
+    /// at H1 close; H2 lands the AVX2 promotion (lane-doubling of G3).
+    pub(crate) lpf_horizontal_4_dual: fn(
+        pixels: &mut [u8],
+        s_index: usize,
+        pitch: usize,
+        blimit0: u8,
+        limit0: u8,
+        thresh0: u8,
+        blimit1: u8,
+        limit1: u8,
+        thresh1: u8,
+    ),
+
+    /// Wave H H1 — dual 8-tap vertical loopfilter. Lane-doubled
+    /// counterpart of [`SimdDispatch::lpf_vertical_8`]. Scalar-only
+    /// at H1 close; H3 lands the AVX2 promotion (lane-doubling of G4).
+    pub(crate) lpf_vertical_8_dual: fn(
+        pixels: &mut [u8],
+        s_index: usize,
+        pitch: usize,
+        blimit0: u8,
+        limit0: u8,
+        thresh0: u8,
+        blimit1: u8,
+        limit1: u8,
+        thresh1: u8,
+    ),
+
+    /// Wave H H1 — dual 8-tap horizontal loopfilter. Lane-doubled
+    /// counterpart of [`SimdDispatch::lpf_horizontal_8`]. Scalar-only
+    /// at H1 close; H3 lands the AVX2 promotion (lane-doubling of G5).
+    pub(crate) lpf_horizontal_8_dual: fn(
+        pixels: &mut [u8],
+        s_index: usize,
+        pitch: usize,
+        blimit0: u8,
+        limit0: u8,
+        thresh0: u8,
+        blimit1: u8,
+        limit1: u8,
+        thresh1: u8,
+    ),
+
+    /// Wave H H1 — dual 16-tap vertical loopfilter. Six-arg (single
+    /// threshold set shared across both halves per libvpx
+    /// `vpx_lpf_vertical_16_dual_c` convention; cf. 4/8-tap duals
+    /// which take independent threshold sets). Scalar-only at H1
+    /// close; H4 lands the AVX2 promotion (lane-doubling of G6).
+    pub(crate) lpf_vertical_16_dual:
+        fn(pixels: &mut [u8], s_index: usize, pitch: usize, blimit: u8, limit: u8, thresh: u8),
+
+    /// Wave H H1 — dual 16-tap horizontal loopfilter. Six-arg — see
+    /// [`SimdDispatch::lpf_vertical_16_dual`] field doc for the
+    /// shared-threshold rationale. Scalar-only at H1 close; H4 lands
+    /// the AVX2 promotion.
+    pub(crate) lpf_horizontal_16_dual:
+        fn(pixels: &mut [u8], s_index: usize, pitch: usize, blimit: u8, limit: u8, thresh: u8),
+
     /// G4.4a — paired (DC, AC) dequant LUT lookup. Signature mirrors
     /// [`crate::quant::plane_dequant_pair`]. **Currently scalar-only**:
     /// architecturally there is no batchable dequant kernel in the
@@ -599,9 +795,28 @@ impl SimdDispatch {
         #[cfg(not(target_arch = "x86_64"))]
         let idct16x16_38_add: fn(&[i32; 256], &mut [u8], usize) = scalar_idct16x16_38_add;
 
-        // ---- Wave F G F10 — vertical 4-tap loopfilter (AVX2 promoted). ----
+        // ---- Wave H H1 — loopfilter AVX2 gate ----
+        //
+        // The F10 + G3-G6 AVX2 loopfilter kernels passed unit tests but
+        // exposed conformance regressions (58/201) when made live by H1.
+        // Until the kernels are differential-tested against scalar on the
+        // conformance corpus (Wave H follow-up), the AVX2 paths are gated
+        // OFF by default. Set `RVP9_DSP_LOOPFILTER_AVX2=1` at runtime to
+        // exercise the AVX2 paths for development / bisection.
+        //
+        // This gate only affects the 6 single-variant lpf_* slots that
+        // currently have AVX2 impls. The 6 dual-variant slots (H1)
+        // remain scalar regardless until H2/H3/H4 lands AVX2 impls,
+        // at which point the same gate gets extended.
         #[cfg(target_arch = "x86_64")]
-        let lpf_vertical_4: fn(&mut [u8], usize, usize, u8, u8, u8) = if caps.avx2 {
+        let loopfilter_avx2_enabled = caps.avx2
+            && std::env::var("RVP9_DSP_LOOPFILTER_AVX2")
+                .map(|v| v == "1")
+                .unwrap_or(false);
+
+        // ---- Wave F G F10 — vertical 4-tap loopfilter (AVX2 gated). ----
+        #[cfg(target_arch = "x86_64")]
+        let lpf_vertical_4: fn(&mut [u8], usize, usize, u8, u8, u8) = if loopfilter_avx2_enabled {
             crate::dsp::x86_64::lpf_vertical_4_avx2
         } else {
             scalar_lpf_vertical_4
@@ -609,19 +824,20 @@ impl SimdDispatch {
         #[cfg(not(target_arch = "x86_64"))]
         let lpf_vertical_4: fn(&mut [u8], usize, usize, u8, u8, u8) = scalar_lpf_vertical_4;
 
-        // ---- Wave G G3 — horizontal 4-tap loopfilter (AVX2 promoted). ----
+        // ---- Wave G G3 — horizontal 4-tap loopfilter (AVX2 gated). ----
         #[cfg(target_arch = "x86_64")]
-        let lpf_horizontal_4: fn(&mut [u8], usize, usize, u8, u8, u8) = if caps.avx2 {
-            crate::dsp::x86_64::lpf_horizontal_4_avx2
-        } else {
-            scalar_lpf_horizontal_4
-        };
+        let lpf_horizontal_4: fn(&mut [u8], usize, usize, u8, u8, u8) =
+            if loopfilter_avx2_enabled {
+                crate::dsp::x86_64::lpf_horizontal_4_avx2
+            } else {
+                scalar_lpf_horizontal_4
+            };
         #[cfg(not(target_arch = "x86_64"))]
         let lpf_horizontal_4: fn(&mut [u8], usize, usize, u8, u8, u8) = scalar_lpf_horizontal_4;
 
-        // ---- Wave G G4 — 8-tap vertical loopfilter (AVX2 promoted). ----
+        // ---- Wave G G4 — 8-tap vertical loopfilter (AVX2 gated). ----
         #[cfg(target_arch = "x86_64")]
-        let lpf_vertical_8: fn(&mut [u8], usize, usize, u8, u8, u8) = if caps.avx2 {
+        let lpf_vertical_8: fn(&mut [u8], usize, usize, u8, u8, u8) = if loopfilter_avx2_enabled {
             crate::dsp::x86_64::lpf_vertical_8_avx2
         } else {
             scalar_lpf_vertical_8
@@ -629,19 +845,20 @@ impl SimdDispatch {
         #[cfg(not(target_arch = "x86_64"))]
         let lpf_vertical_8: fn(&mut [u8], usize, usize, u8, u8, u8) = scalar_lpf_vertical_8;
 
-        // ---- Wave G G5 — 8-tap horizontal loopfilter (AVX2 promoted). ----
+        // ---- Wave G G5 — 8-tap horizontal loopfilter (AVX2 gated). ----
         #[cfg(target_arch = "x86_64")]
-        let lpf_horizontal_8: fn(&mut [u8], usize, usize, u8, u8, u8) = if caps.avx2 {
-            crate::dsp::x86_64::lpf_horizontal_8_avx2
-        } else {
-            scalar_lpf_horizontal_8
-        };
+        let lpf_horizontal_8: fn(&mut [u8], usize, usize, u8, u8, u8) =
+            if loopfilter_avx2_enabled {
+                crate::dsp::x86_64::lpf_horizontal_8_avx2
+            } else {
+                scalar_lpf_horizontal_8
+            };
         #[cfg(not(target_arch = "x86_64"))]
         let lpf_horizontal_8: fn(&mut [u8], usize, usize, u8, u8, u8) = scalar_lpf_horizontal_8;
 
-        // ---- Wave G G6 — 16-tap vertical edge loopfilter (AVX2 promoted). ----
+        // ---- Wave G G6 — 16-tap vertical edge loopfilter (AVX2 gated). ----
         #[cfg(target_arch = "x86_64")]
-        let lpf_vertical_16: fn(&mut [u8], usize, usize, u8, u8, u8) = if caps.avx2 {
+        let lpf_vertical_16: fn(&mut [u8], usize, usize, u8, u8, u8) = if loopfilter_avx2_enabled {
             crate::dsp::x86_64::lpf_vertical_16_avx2
         } else {
             scalar_lpf_vertical_16
@@ -649,15 +866,70 @@ impl SimdDispatch {
         #[cfg(not(target_arch = "x86_64"))]
         let lpf_vertical_16: fn(&mut [u8], usize, usize, u8, u8, u8) = scalar_lpf_vertical_16;
 
-        // ---- Wave G G6 — 16-tap horizontal edge loopfilter (AVX2 promoted). ----
+        // ---- Wave G G6 — 16-tap horizontal edge loopfilter (AVX2 gated). ----
         #[cfg(target_arch = "x86_64")]
-        let lpf_horizontal_16: fn(&mut [u8], usize, usize, u8, u8, u8) = if caps.avx2 {
-            crate::dsp::x86_64::lpf_horizontal_16_avx2
-        } else {
-            scalar_lpf_horizontal_16
-        };
+        let lpf_horizontal_16: fn(&mut [u8], usize, usize, u8, u8, u8) =
+            if loopfilter_avx2_enabled {
+                crate::dsp::x86_64::lpf_horizontal_16_avx2
+            } else {
+                scalar_lpf_horizontal_16
+            };
         #[cfg(not(target_arch = "x86_64"))]
         let lpf_horizontal_16: fn(&mut [u8], usize, usize, u8, u8, u8) = scalar_lpf_horizontal_16;
+
+        // ---- Wave H H1 — dual-variant loopfilter slots (scalar-only;
+        // AVX2 promotion in H2/H3/H4). The slot type is the 9-arg
+        // dual signature; the `_ = caps` keeps the caps param wired
+        // for future promotion without a non-x86_64 warning. ----
+        let lpf_vertical_4_dual: fn(
+            &mut [u8],
+            usize,
+            usize,
+            u8,
+            u8,
+            u8,
+            u8,
+            u8,
+            u8,
+        ) = scalar_lpf_vertical_4_dual;
+        let lpf_horizontal_4_dual: fn(
+            &mut [u8],
+            usize,
+            usize,
+            u8,
+            u8,
+            u8,
+            u8,
+            u8,
+            u8,
+        ) = scalar_lpf_horizontal_4_dual;
+        let lpf_vertical_8_dual: fn(
+            &mut [u8],
+            usize,
+            usize,
+            u8,
+            u8,
+            u8,
+            u8,
+            u8,
+            u8,
+        ) = scalar_lpf_vertical_8_dual;
+        let lpf_horizontal_8_dual: fn(
+            &mut [u8],
+            usize,
+            usize,
+            u8,
+            u8,
+            u8,
+            u8,
+            u8,
+            u8,
+        ) = scalar_lpf_horizontal_8_dual;
+        // 16-tap duals share a single threshold set (libvpx convention).
+        let lpf_vertical_16_dual: fn(&mut [u8], usize, usize, u8, u8, u8) =
+            scalar_lpf_vertical_16_dual;
+        let lpf_horizontal_16_dual: fn(&mut [u8], usize, usize, u8, u8, u8) =
+            scalar_lpf_horizontal_16_dual;
 
         // ---- G4.4a / G4.4b — scalar-only slots (deferral rationale
         // per field docstrings on `SimdDispatch`). ----
@@ -684,6 +956,12 @@ impl SimdDispatch {
             lpf_horizontal_8,
             lpf_vertical_16,
             lpf_horizontal_16,
+            lpf_vertical_4_dual,
+            lpf_horizontal_4_dual,
+            lpf_vertical_8_dual,
+            lpf_horizontal_8_dual,
+            lpf_vertical_16_dual,
+            lpf_horizontal_16_dual,
             plane_dequant_pair,
             extend_frame_borders,
         }
@@ -866,6 +1144,64 @@ impl SimdDispatch {
     #[must_use]
     pub fn lpf_horizontal_16(&self) -> fn(&mut [u8], usize, usize, u8, u8, u8) {
         self.lpf_horizontal_16
+    }
+
+    /// Dispatch the dual 4-tap vertical loopfilter (Wave H H1). Scalar-only
+    /// at H1 close; H2 fills with AVX2.
+    #[inline]
+    #[must_use]
+    pub fn lpf_vertical_4_dual(
+        &self,
+    ) -> fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) {
+        self.lpf_vertical_4_dual
+    }
+
+    /// Dispatch the dual 4-tap horizontal loopfilter (Wave H H1). Scalar-only
+    /// at H1 close; H2 fills with AVX2.
+    #[inline]
+    #[must_use]
+    pub fn lpf_horizontal_4_dual(
+        &self,
+    ) -> fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) {
+        self.lpf_horizontal_4_dual
+    }
+
+    /// Dispatch the dual 8-tap vertical loopfilter (Wave H H1). Scalar-only
+    /// at H1 close; H3 fills with AVX2.
+    #[inline]
+    #[must_use]
+    pub fn lpf_vertical_8_dual(
+        &self,
+    ) -> fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) {
+        self.lpf_vertical_8_dual
+    }
+
+    /// Dispatch the dual 8-tap horizontal loopfilter (Wave H H1). Scalar-only
+    /// at H1 close; H3 fills with AVX2.
+    #[inline]
+    #[must_use]
+    pub fn lpf_horizontal_8_dual(
+        &self,
+    ) -> fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) {
+        self.lpf_horizontal_8_dual
+    }
+
+    /// Dispatch the dual 16-tap vertical loopfilter (Wave H H1). Six-arg
+    /// (single threshold set shared across both halves; libvpx convention).
+    /// Scalar-only at H1 close; H4 fills with AVX2.
+    #[inline]
+    #[must_use]
+    pub fn lpf_vertical_16_dual(&self) -> fn(&mut [u8], usize, usize, u8, u8, u8) {
+        self.lpf_vertical_16_dual
+    }
+
+    /// Dispatch the dual 16-tap horizontal loopfilter (Wave H H1). Six-arg
+    /// (single threshold set shared across both halves). Scalar-only at
+    /// H1 close; H4 fills with AVX2.
+    #[inline]
+    #[must_use]
+    pub fn lpf_horizontal_16_dual(&self) -> fn(&mut [u8], usize, usize, u8, u8, u8) {
+        self.lpf_horizontal_16_dual
     }
 
     /// Dispatch the paired (DC, AC) dequant LUT lookup (G4.4a). Slot
@@ -1290,143 +1626,77 @@ mod tests {
         }
     }
 
-    /// Wave F G F10 — `lpf_vertical_4` slot routes to the AVX2 safe
-    /// wrapper when `caps.avx2 == true` and to the scalar reference
-    /// otherwise. See `forced_scalar_caps_installs_scalar_idct8x8`
-    /// for the miri-skip rationale.
+    /// Wave H H1 — single-variant AVX2 lpf_* slots are gated OFF by
+    /// default pending conformance differential-test fixes. The gate
+    /// is the `RVP9_DSP_LOOPFILTER_AVX2` env var (unset = scalar even
+    /// on AVX2 CPUs). The 6 individual `forced_caps_installs_correct_lpf_*`
+    /// tests from Wave F/G have been consolidated here: with the gate
+    /// off (default), all 6 slots route to scalar regardless of
+    /// `caps.avx2`. When the kernels are fixed and the gate removed,
+    /// the individual tests should be restored.
+    ///
+    /// See `notes/wave-h-loopfilter-avx2-gate.md` for the conformance
+    /// failure analysis (58/201 regressions when the gate is
+    /// unconditionally enabled).
     #[cfg(target_arch = "x86_64")]
     #[cfg_attr(miri, ignore)]
     #[test]
-    fn forced_caps_installs_correct_lpf_vertical_4() {
-        // avx2 = false -> scalar.
-        let mut caps_s = detect();
-        caps_s.avx2 = false;
-        let d_s = SimdDispatch::build(caps_s);
-        let scalar: fn(&mut [u8], usize, usize, u8, u8, u8) = super::scalar_lpf_vertical_4;
-        assert_eq!(
-            d_s.lpf_vertical_4() as usize,
-            scalar as usize,
-            "avx2=false must install the scalar lpf_vertical_4"
-        );
-
-        // avx2 = true -> AVX2 wrapper.
-        let mut caps_a = detect();
-        caps_a.avx2 = true;
-        let d_a = SimdDispatch::build(caps_a);
-        let avx2: fn(&mut [u8], usize, usize, u8, u8, u8) =
-            crate::dsp::x86_64::lpf_vertical_4_avx2;
-        assert_eq!(
-            d_a.lpf_vertical_4() as usize,
-            avx2 as usize,
-            "avx2=true must install the AVX2 lpf_vertical_4 wrapper"
-        );
+    fn loopfilter_avx2_singles_gated_off_by_default() {
+        // Per Rust's docs `std::env::set_var` is not thread-safe across
+        // parallel tests; we only READ the var here (the test relies on
+        // it being unset in cargo's default test env). If a downstream
+        // test sets it, this test must be marked `#[serial]` (we don't
+        // depend on serial_test today).
+        for &avx2 in &[true, false] {
+            let mut caps = detect();
+            caps.avx2 = avx2;
+            let d = SimdDispatch::build(caps);
+            type Lpf = fn(&mut [u8], usize, usize, u8, u8, u8);
+            let v4: Lpf = super::scalar_lpf_vertical_4;
+            let h4: Lpf = super::scalar_lpf_horizontal_4;
+            let v8: Lpf = super::scalar_lpf_vertical_8;
+            let h8: Lpf = super::scalar_lpf_horizontal_8;
+            let v16: Lpf = super::scalar_lpf_vertical_16;
+            let h16: Lpf = super::scalar_lpf_horizontal_16;
+            assert_eq!(d.lpf_vertical_4() as usize, v4 as usize);
+            assert_eq!(d.lpf_horizontal_4() as usize, h4 as usize);
+            assert_eq!(d.lpf_vertical_8() as usize, v8 as usize);
+            assert_eq!(d.lpf_horizontal_8() as usize, h8 as usize);
+            assert_eq!(d.lpf_vertical_16() as usize, v16 as usize);
+            assert_eq!(d.lpf_horizontal_16() as usize, h16 as usize);
+        }
     }
 
-    /// Wave G G3 — `lpf_horizontal_4` slot routes to the AVX2 safe
-    /// wrapper when `caps.avx2 == true` and to the scalar reference
-    /// otherwise. See `forced_scalar_caps_installs_scalar_idct8x8`
-    /// for the miri-skip rationale.
+    /// Wave H H1 — the six `_dual` loopfilter slots are scalar-only at
+    /// H1 close (regardless of caps). H2/H3/H4 swap individual slots
+    /// to AVX2 impls; this test will need its entries removed
+    /// as those promotions land. Note 4/8-tap duals are 9-arg
+    /// (independent threshold sets) while 16-tap duals are 6-arg
+    /// (shared thresholds, libvpx convention). See
+    /// `forced_scalar_caps_installs_scalar_idct8x8` for the miri-skip
+    /// rationale.
     #[cfg(target_arch = "x86_64")]
     #[cfg_attr(miri, ignore)]
     #[test]
-    fn forced_caps_installs_correct_lpf_horizontal_4() {
-        // avx2 = false -> scalar.
-        let mut caps_s = detect();
-        caps_s.avx2 = false;
-        let d_s = SimdDispatch::build(caps_s);
-        let scalar: fn(&mut [u8], usize, usize, u8, u8, u8) = super::scalar_lpf_horizontal_4;
-        assert_eq!(
-            d_s.lpf_horizontal_4() as usize,
-            scalar as usize,
-            "avx2=false must install the scalar lpf_horizontal_4"
-        );
-
-        // avx2 = true -> AVX2 wrapper.
-        let mut caps_a = detect();
-        caps_a.avx2 = true;
-        let d_a = SimdDispatch::build(caps_a);
-        let avx2: fn(&mut [u8], usize, usize, u8, u8, u8) =
-            crate::dsp::x86_64::lpf_horizontal_4_avx2;
-        assert_eq!(
-            d_a.lpf_horizontal_4() as usize,
-            avx2 as usize,
-            "avx2=true must install the AVX2 lpf_horizontal_4 wrapper"
-        );
-    }
-
-    /// Wave G G4 — `lpf_vertical_8` slot routes correctly per caps.
-    #[cfg(target_arch = "x86_64")]
-    #[cfg_attr(miri, ignore)]
-    #[test]
-    fn forced_caps_installs_correct_lpf_vertical_8() {
-        let mut caps_s = detect();
-        caps_s.avx2 = false;
-        let d_s = SimdDispatch::build(caps_s);
-        let scalar: fn(&mut [u8], usize, usize, u8, u8, u8) = super::scalar_lpf_vertical_8;
-        assert_eq!(d_s.lpf_vertical_8() as usize, scalar as usize);
-
-        let mut caps_a = detect();
-        caps_a.avx2 = true;
-        let d_a = SimdDispatch::build(caps_a);
-        let avx2: fn(&mut [u8], usize, usize, u8, u8, u8) =
-            crate::dsp::x86_64::lpf_vertical_8_avx2;
-        assert_eq!(d_a.lpf_vertical_8() as usize, avx2 as usize);
-    }
-
-    /// Wave G G5 — `lpf_horizontal_8` slot routes correctly per caps.
-    #[cfg(target_arch = "x86_64")]
-    #[cfg_attr(miri, ignore)]
-    #[test]
-    fn forced_caps_installs_correct_lpf_horizontal_8() {
-        let mut caps_s = detect();
-        caps_s.avx2 = false;
-        let d_s = SimdDispatch::build(caps_s);
-        let scalar: fn(&mut [u8], usize, usize, u8, u8, u8) = super::scalar_lpf_horizontal_8;
-        assert_eq!(d_s.lpf_horizontal_8() as usize, scalar as usize);
-
-        let mut caps_a = detect();
-        caps_a.avx2 = true;
-        let d_a = SimdDispatch::build(caps_a);
-        let avx2: fn(&mut [u8], usize, usize, u8, u8, u8) =
-            crate::dsp::x86_64::lpf_horizontal_8_avx2;
-        assert_eq!(d_a.lpf_horizontal_8() as usize, avx2 as usize);
-    }
-
-    /// Wave G G6 — `lpf_vertical_16` slot routes correctly per caps.
-    #[cfg(target_arch = "x86_64")]
-    #[cfg_attr(miri, ignore)]
-    #[test]
-    fn forced_caps_installs_correct_lpf_vertical_16() {
-        let mut caps_s = detect();
-        caps_s.avx2 = false;
-        let d_s = SimdDispatch::build(caps_s);
-        let scalar: fn(&mut [u8], usize, usize, u8, u8, u8) = super::scalar_lpf_vertical_16;
-        assert_eq!(d_s.lpf_vertical_16() as usize, scalar as usize);
-
-        let mut caps_a = detect();
-        caps_a.avx2 = true;
-        let d_a = SimdDispatch::build(caps_a);
-        let avx2: fn(&mut [u8], usize, usize, u8, u8, u8) =
-            crate::dsp::x86_64::lpf_vertical_16_avx2;
-        assert_eq!(d_a.lpf_vertical_16() as usize, avx2 as usize);
-    }
-
-    /// Wave G G6 — `lpf_horizontal_16` slot routes correctly per caps.
-    #[cfg(target_arch = "x86_64")]
-    #[cfg_attr(miri, ignore)]
-    #[test]
-    fn forced_caps_installs_correct_lpf_horizontal_16() {
-        let mut caps_s = detect();
-        caps_s.avx2 = false;
-        let d_s = SimdDispatch::build(caps_s);
-        let scalar: fn(&mut [u8], usize, usize, u8, u8, u8) = super::scalar_lpf_horizontal_16;
-        assert_eq!(d_s.lpf_horizontal_16() as usize, scalar as usize);
-
-        let mut caps_a = detect();
-        caps_a.avx2 = true;
-        let d_a = SimdDispatch::build(caps_a);
-        let avx2: fn(&mut [u8], usize, usize, u8, u8, u8) =
-            crate::dsp::x86_64::lpf_horizontal_16_avx2;
-        assert_eq!(d_a.lpf_horizontal_16() as usize, avx2 as usize);
+    fn dual_loopfilter_slots_are_scalar_at_h1_close() {
+        type Dual9 = fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8);
+        type Dual6 = fn(&mut [u8], usize, usize, u8, u8, u8);
+        for &avx2 in &[true, false] {
+            let mut caps = detect();
+            caps.avx2 = avx2;
+            let d = SimdDispatch::build(caps);
+            let v4: Dual9 = super::scalar_lpf_vertical_4_dual;
+            let h4: Dual9 = super::scalar_lpf_horizontal_4_dual;
+            let v8: Dual9 = super::scalar_lpf_vertical_8_dual;
+            let h8: Dual9 = super::scalar_lpf_horizontal_8_dual;
+            let v16: Dual6 = super::scalar_lpf_vertical_16_dual;
+            let h16: Dual6 = super::scalar_lpf_horizontal_16_dual;
+            assert_eq!(d.lpf_vertical_4_dual() as usize, v4 as usize);
+            assert_eq!(d.lpf_horizontal_4_dual() as usize, h4 as usize);
+            assert_eq!(d.lpf_vertical_8_dual() as usize, v8 as usize);
+            assert_eq!(d.lpf_horizontal_8_dual() as usize, h8 as usize);
+            assert_eq!(d.lpf_vertical_16_dual() as usize, v16 as usize);
+            assert_eq!(d.lpf_horizontal_16_dual() as usize, h16 as usize);
+        }
     }
 }
