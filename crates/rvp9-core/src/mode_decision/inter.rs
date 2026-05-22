@@ -494,6 +494,20 @@ fn evaluate_candidate(
     // ignores the residual rate downstream cost and picks NEWMV
     // too aggressively). Reverted. Notes in
     // `wrk_docs/A8-source-sse-foreman-report.md`.
+    //
+    // A9 (2026-05-22) re-applied A8 *combined* with an inter q-cap
+    // at 200 (`RateControlConfig::inter_max_qindex`). Foreman_cif
+    // still locked at 16-17 dB even with q now in [135, 195] across
+    // every inter frame and 6.2k NEWMV picks active. Per-frame
+    // recon SSE on foreman drifts from 3.4M (KF) to 143M (frame 31)
+    // while source-consecutive SSE stays at 6-17M — MC fundamentally
+    // can't track the head/camera motion at the picker+RC settings
+    // we have. testsrc 250-kbps regression preserved (-1.92 dB).
+    // The 16-dB foreman floor is a deeper rate-model problem (the
+    // bits_per_mb estimator badly under-predicts foreman's per-MB
+    // cost, so even with a q-cap the encoder runs 10x the target
+    // bitrate AND still can't make MC stick). Reverted. Notes in
+    // the 2026-05-22 A9 entry of `notes/divergence-ledger.md`.
     let sse = sse_block(params.src_plane, params.src_offset, &recon, bw, bw, bh);
     let dist = sse.min(u32::MAX as u64) as u32;
     // A0 diagnostic 2: dump full 16-pixel sample comparison for an

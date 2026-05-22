@@ -1025,3 +1025,57 @@ the floor, source-domain SSE might net positive — but testsrc
 high-bitrate regression suggests the picker would also need a
 residual-rate estimate (RDO-style) to be production-ready.
 Detailed write-up: `wrk_docs/A8-source-sse-foreman-report.md`.
+
+### 2026-05-22 — A9 source-SSE + inter q-cap combination — REVERTED
+**Where:** `rvp9-core::mode_decision::inter::evaluate_candidate`
+(distortion metric) AND `rvp9-encoder::rate_control` (new
+`RateControlConfig::inter_max_qindex: Option<u8>` field +
+clamp in `cbr::pick_q_and_bounds`).
+**Status:** explored, reverted, NOT shipped.
+**What was tried:** the A8.B follow-up — apply BOTH the
+source-domain SSE picker distortion (A8) AND an inter-frame
+q-cap at 200 (A8.B recommendation) simultaneously. Hypothesis:
+A8 activates NEWMV picks, the q-cap prevents q=255 saturation
+on foreman_cif so residuals survive quant and MC quality
+actually propagates through the reconstruction loop.
+**Result (foreman_cif 256×256 centre crop, 64 frames):**
+
+| Target  | BASELINE kbps/PSNR | A9 kbps/PSNR |
+|---------|-------------------|--------------|
+|  25 kbps| 127.0 / 16.36     | 252.7 / 16.40 |
+|  50 kbps| 159.7 / 16.21     | 252.8 / 16.23 |
+| 100 kbps| 249.0 / 16.28     | 287.9 / 16.26 |
+| 250 kbps| 514.6 / 16.55     | 482.7 / 16.54 |
+
+The q-cap landed (foreman q-indexes now [135, 195] across all
+inter frames per `diag_foreman_per_frame`, vs the 255-pinned
+baseline) AND NEWMV picks activated (per A8 confirmation).
+**foreman PSNR did NOT climb.** Per-frame recon SSE grows from
+3.4M (KF) to 143M (frame 31) while source-consecutive SSE
+stays at 6-17M — motion compensation fundamentally cannot
+track foreman's head + camera motion at the picker+RC settings
+we have, irrespective of q-cap or picker distortion metric.
+Bitrate also EXPLODED at low targets (252 kbps actual on a
+25 kbps target — 10× over) because the q-cap stops the
+controller from absorbing the foreman per-MB cost.
+
+testsrc 250 kbps regression preserved from A8 alone:
+59.69 → 57.77 dB (-1.92 dB). cross-decoder gate PASS
+(byte-exact). RT gate PASS (5.82 ms).
+**Why reverted:** the 16-dB foreman floor is a structurally
+deeper problem than picker distortion + q-cap can address.
+The `bits_per_mb` rate model (`vp9_rc_bits_per_mb` port at
+`cbr::bits_per_mb`) under-predicts foreman's per-MB cost by
+~10×, so even with q capped at 200 the encoder massively
+overshoots the target AND can't compensate motion correctly.
+Fixing the foreman gap needs Stage 4c-level rate-model
+rework (replace the libvpx-1.x bits_per_mb formula with a
+per-MB content-aware estimate, or port libvpx's later
+`vp9_rc_bits_per_mb_2pass` style two-pass machinery).
+**Byte-parity impact:** would be structural (changes both
+picks and qindex choices). Not applicable since reverted.
+**Future plan:** do not retry the source-SSE + q-cap
+combination until the rate model is fixed. The picker change
+without the rate-model fix biases testsrc; the q-cap without
+the rate-model fix blows the bitrate target. Either change
+alone or both together remain net-negative until Stage 4c.
