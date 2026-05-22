@@ -4,6 +4,118 @@ Source: foreman_cif centre-crop 256x256, 64 frames @ 29.97002997002997 fps. libv
 
 Area-weighted % = fraction of coded 8x8 cells (so a 64x64 leaf counts 64x more than an 8x8 leaf). 'count' = number of distinct partition leaves. Mode/skip/ref stats are over INTER frames only.
 
+---
+
+# Executive summary
+
+The headline gap is **partitioning**. On foreman inter frames at the 100 kbps
+operating point, rvp9 codes **85% of the frame area as 8x8 leaves** (55,028
+distinct 8x8 blocks per 63 inter frames) while libvpx codes **79% of the area
+as 64x64 leaves** and only **2.5% as 8x8**. rvp9 essentially never opens a
+partition above 16x16 except for whole-SB 64x64 fallbacks; libvpx keeps the
+partition tree closed (one MODE_INFO per 64x64) across the static background
+that dominates this clip.
+
+This is the textbook signature of a missing source-variance partition
+pre-selector: rvp9 lacks `vp9_choose_partitioning`, so its RD partition search
+defaults to fine splits everywhere, paying per-block header + mode + context
+overhead 8-64x more often than necessary. The downstream consequence is a
+runaway bit rate: at every target, **rvp9's achieved bitrate is 1.7-3.0x its
+target and 1.7-3.0x libvpx's achieved rate** (100 kbps target: rvp9 = 249 kbps,
+libvpx = 140 kbps), at a *higher* average inter Q than libvpx at the low end.
+rvp9 spends bits it cannot afford on partition/mode overhead and small-block
+coefficient context, then the rate controller is forced to push Q up, which is
+the proximate cause of the q=255 saturation — not the root cause.
+
+## Ranked findings (by estimated bit impact)
+
+**1. Over-partitioning (LARGEST). rvp9 codes 85% of inter-frame area as 8x8 vs
+libvpx 2.5%; libvpx codes 79% as 64x64 vs rvp9 10%.**
+Evidence: §2 partition tables, all four bitrates. rvp9 emits ~55,000 8x8 leaves
+across 63 inter frames (≈873/frame ≈ 55% of the 1024 8x8 cells in a 256x256
+frame as *individual* 8x8 leaves). Each 8x8 leaf pays: a partition-split bit at
+every tree level down to 8x8 (PARTITION_CONTEXT cost), an is-inter bit, a mode
+syntax element, a skip bit, plus per-block coefficient-context startup. libvpx
+collapses ~79% of the area into single 64x64 MODE_INFO units that pay that
+syntax *once per 64x64*. With ~16 SBs/frame, libvpx's ~13 of 16 SBs are a single
+64x64 leaf; rvp9 splits nearly all of them to the 8x8 floor. Order-of-magnitude:
+the per-block header/mode/context overhead is being paid ~30-60x too often over
+the static background, which on a clip this static is the dominant share of the
+inter-frame bit budget. This single divergence is consistent with the entire
+~1.8x achieved-bitrate overshoot at 100 kbps.
+
+**2. Achieved-bitrate overshoot / rate-control saturation (SYMPTOM of #1).**
+Evidence: §1 bit-allocation rows. rvp9 overshoots its target by 1.7-3.0x at
+every operating point and runs ~5x more inter-frame bits than libvpx at 25/50
+kbps (4243 vs 1086; 5297 vs 1752). The per-frame table shows rvp9 q climbing
+monotonically toward 243 as the RC tries to claw the overshoot back, while
+libvpx sits at q≈180-210 for most frames after the initial transient. This is
+a *consequence* of #1: when each frame costs 3-8 kbit of unavoidable structural
+overhead, the only RC lever left is Q, so Q saturates. It is not an independent
+defect.
+
+**3. Keyframe bit allocation is INVERTED vs libvpx.**
+Evidence: §1. rvp9 keyframes are *cheap* (13.7 kbit at 100 kbps) and libvpx
+keyframes are *expensive* (74.5 kbit). libvpx deliberately spends ~5x more on
+the keyframe (q=57 vs rvp9 q=177) to seed a high-quality LAST reference, which
+then lets every subsequent inter frame ride ZEROMV+skip cheaply. rvp9 starves
+the keyframe (high Q) and then pays for it forever on the inter frames. This is
+a rate-allocation / keyframe-boost gap, secondary to #1 but independently real
+and independently fixable.
+
+## What the data does NOT support
+
+- The libvpx **mode / skip / reference-frame** columns (§3-4-6, and the libvpx
+  `intra%` per-frame column) are **NOT trustworthy** and are excluded from the
+  ranking. They report 80-100% intra on libvpx inter frames whose total cost is
+  often <100 bytes — physically impossible for genuine intra coding (intra
+  blocks carry residual; 16 intra 64x64 SBs cannot fit in 86 bytes). All 64
+  frames decoded through the rvp9 decoder with **zero decode errors** and the
+  partition (`block_size`) field is trustworthy (it drives the loop filter,
+  which is cross-decode byte-exact), but the `mode`/`skip`/`ref_frame`
+  discriminant in the decoder's published `last_frame_mi_grid` appears to be
+  mislabeled for libvpx-coded inter-skip/ZEROMV blocks. **This is a likely
+  decoder mi-grid population bug (mode field), surfaced here but NOT fixed per
+  the no-logic-change constraint.** It does not affect findings #1-#3, which
+  rest on bits, partition size, and Q only. The rvp9-side mode columns
+  (NEARESTMV 79% / ZEROMV 21%, 0% intra, 100% LAST) look self-consistent and
+  are likely correct for rvp9's own stream.
+
+## q=255 saturation hypothesis — verdict
+
+The data **supports** that rvp9 saturates Q (q reaches 243-255 on inter frames
+at the 25/50 kbps targets; §5 and the per-frame table) **but refutes that Q
+saturation is the root cause of the gap.** At 100 kbps rvp9's *average* inter Q
+(211) is actually *higher* than libvpx's (204) yet rvp9 still spends 2.3x the
+bits — so rvp9 is not bit-starved relative to libvpx at matched Q; it is
+*structurally* spending more bits per unit quality because of the partitioning
+(#1) and keyframe-starvation (#3). Q saturation is the rate controller reacting
+to a bitstream it cannot make cheap, not the disease. Lowering Q would not close
+the gap; reducing the number of coded blocks would.
+
+## Mapping to libvpx source functions to port (scoping)
+
+1. **`vp9_choose_partitioning` (`vp9/encoder/vp9_encodeframe.c`)** — the
+   source-variance 64x64-down partition pre-selector used by the realtime
+   (`nonrd`) path. This is the #1 fix: it computes per-sub-block source variance
+   and chooses to *keep* large partitions over low-variance (static) regions
+   instead of splitting to 8x8. Directly addresses finding #1 and, transitively,
+   #2.
+2. **`vp9_pick_inter_mode` / nonrd pickmode (`vp9/encoder/vp9_pickmode.c`)** —
+   the fast realtime mode picker. Secondary: once partitions are large, the
+   mode picker must cheaply select ZEROMV/NEARESTMV+skip over the static area.
+   rvp9's own stream already favors NEARESTMV/ZEROMV, so this is lower priority
+   than partitioning, but pairs with it.
+3. **Keyframe rate boost (`vp9_rc_*` keyframe target in `vp9_ratectrl.c`)** —
+   addresses finding #3: spend more bits on the keyframe to seed a good LAST ref.
+
+**Recommended first port: `vp9_choose_partitioning`.** It is the single change
+with the largest projected bit impact and it is a well-isolated, testable unit
+(input = source frame + reference; output = a partition map), making it a clean
+oracle target for a differential test against libvpx.
+
+---
+
 
 ## Operating point: 25 kbps target
 
