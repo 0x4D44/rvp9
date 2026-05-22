@@ -259,21 +259,21 @@ pub fn reconstruct_inter_block(
         let block_w_px = plane_bw_4x4 * 4;
         let block_h_px = plane_bh_4x4 * 4;
 
-        // For sub-8 luma we iterate the four 4×4 bmi sub-blocks; for
-        // sub-8 chroma we collapse all four luma MVs into one averaged
-        // chroma MV (libvpx `average_split_mvs`, `vp9_reconinter.c:112-
-        // 124`, ss_idx == 3). For ≥8×8 (`!is_sub8`) we iterate once
-        // over the full block.
-        let mc_sub_iter_count_w = if is_sub8 && plane == 0 { 2 } else { 1 };
-        let mc_sub_iter_count_h = if is_sub8 && plane == 0 { 2 } else { 1 };
-        let mc_step_px = if is_sub8 && plane == 0 {
-            4
+        // For sub-8 blocks libvpx (`build_inter_predictors_for_planes`,
+        // `vp9_reconinter.c:223-229`) iterates the plane's `num_4x4`
+        // grid, running a counter `i = y * num_4x4_w + x` as the chroma
+        // sub-block index into `average_split_mvs`. The plane grid is
+        // `(2 >> ss_x)` wide × `(2 >> ss_y)` high: luma 2×2, 4:2:0
+        // chroma 1×1, 4:2:2 chroma 1w×2h, 4:4:0 chroma 2w×1h, 4:4:4
+        // chroma 2×2. Each sub-block is 4×4. For ≥8×8 (`!is_sub8`) we
+        // iterate once over the full block.
+        let (mc_sub_iter_count_w, mc_sub_iter_count_h) = if is_sub8 {
+            (2 >> ss_x, 2 >> ss_y)
         } else {
-            block_w_px.max(block_h_px) // unused — single iteration
+            (1, 1)
         };
-        let _ = mc_step_px;
-        let mc_w_px = if is_sub8 && plane == 0 { 4 } else { block_w_px };
-        let mc_h_px = if is_sub8 && plane == 0 { 4 } else { block_h_px };
+        let mc_w_px = if is_sub8 { 4 } else { block_w_px };
+        let mc_h_px = if is_sub8 { 4 } else { block_h_px };
 
         // -- Motion compensation -------------------------------------
         //
@@ -299,7 +299,9 @@ pub fn reconstruct_inter_block(
         // at the matching pixel offset.
         for sub_y in 0..mc_sub_iter_count_h {
             for sub_x in 0..mc_sub_iter_count_w {
-                let bmi_idx = sub_y * 2 + sub_x;
+                // libvpx running counter `i = y * num_4x4_w + x`
+                // (`vp9_reconinter.c:226-228`).
+                let bmi_idx = sub_y * mc_sub_iter_count_w + sub_x;
                 let sub_px_x = plane_px_x + sub_x * 4;
                 let sub_px_y = plane_px_y + sub_y * 4;
                 let sub_dst_offset = sub_px_y * dst_stride + sub_px_x;
@@ -308,39 +310,32 @@ pub fn reconstruct_inter_block(
                     let ref_buf = inputs.refs[r].expect("ref already validated");
                     let sf = sfs[r].expect("sf already validated");
 
-                    // MV selection: luma sub-8 reads bmi[bmi_idx].as_mv[r];
-                    // chroma sub-8 averages all four bmis (libvpx
-                    // `average_split_mvs` for ss_idx == 3); ≥8×8 reads
-                    // `mi->mv[r]` directly.
+                    // MV selection (libvpx `build_inter_predictors`,
+                    // `vp9_reconinter.c:140-142`): sub-8 uses
+                    // `average_split_mvs(pd, mi, ref, block)` for ALL
+                    // planes; ≥8×8 reads `mi->mv[r]` directly. The luma
+                    // plane (ss == 0,0) hits `average_split_mvs` case 0,
+                    // which returns the per-block bmi MV unchanged — so
+                    // this is byte-identical to the old explicit
+                    // `mi.bmi[bmi_idx].as_mv[r]` luma read.
                     let mv = if is_sub8 {
-                        if plane == 0 {
-                            mi.bmi[bmi_idx].as_mv[r]
-                        } else {
-                            avg_split_mv_q4_4x4(&mi.bmi, r)
-                        }
+                        average_split_mvs(&mi.bmi, r, ss_x, ss_y, bmi_idx)
                     } else {
                         mvs[r]
                     };
 
-                    // Convert Q3 (1/8-pel, luma) to Q4 (1/16-pel,
-                    // ref-coord). Chroma without sub-8 doubles per the
-                    // subsampling axis: `mv_q4 = mv * (1 << (1 - ss))`.
-                    // For sub-8 chroma the averaging in
-                    // `avg_split_mv_q4_4x4` already produces a Q3 value
-                    // expressed at the chroma plane's resolution, so we
-                    // still apply the same `(1 << (1 - ss))` doubling
-                    // (mirrors libvpx's `mv_q4 = mv.row * 1` for
-                    // ss_y == 1 — the average IS the doubled chroma MV).
-                    let mv_q4_row = if is_sub8 && plane > 0 {
-                        i32::from(mv.row)
-                    } else {
-                        i32::from(mv.row) * (1i32 << (1 - ss_y as i32))
-                    };
-                    let mv_q4_col = if is_sub8 && plane > 0 {
-                        i32::from(mv.col)
-                    } else {
-                        i32::from(mv.col) * (1i32 << (1 - ss_x as i32))
-                    };
+                    // Convert luma-resolution Q3 (1/8-pel) to Q4
+                    // (1/16-pel, ref-coord) via the uniform per-axis
+                    // doubling `mv_q4 = mv * (1 << (1 - ss))` (libvpx
+                    // `clamp_mv_to_umv_border_sb`, `vp9_reconinter.c:99-
+                    // 100`). `average_split_mvs` returns at luma
+                    // resolution for every subsampling, so the same
+                    // scale path applies whether or not the block is
+                    // sub-8 (collapsing the former `is_sub8 && plane>0`
+                    // special-case: at 4:2:0 chroma `1 << (1-1) == 1`,
+                    // a no-op, so the 4:2:0 output is unchanged).
+                    let mv_q4_row = i32::from(mv.row) * (1i32 << (1 - ss_y as i32));
+                    let mv_q4_col = i32::from(mv.col) * (1i32 << (1 - ss_x as i32));
 
                     // D.24: libvpx's `build_inter_predictors`
                     // (`vp9_reconinter.c:155-186`) uses an asymmetric
@@ -359,10 +354,12 @@ pub fn reconstruct_inter_block(
                     let (total_x_q4, total_y_q4) = if sf.is_scaled() {
                         // mi_x / mi_y are libvpx's `mi_x + x`, `mi_y + y`
                         // — pixel coords in LUMA precision regardless of
-                        // plane. For sub-8 luma the per-bmi sub-coord
-                        // expansion in luma units is `sub_* * 4`; for
-                        // chroma the bmi iteration is collapsed (sub_*
-                        // == 0 always), so the term is zero.
+                        // plane. The per-sub-block offset is in plane
+                        // pixels (`sub_* * 4`); `<< ss` converts it back
+                        // to luma pixels. For 4:2:0 chroma the grid is
+                        // 1×1 so `sub_* == 0` and the term vanishes; for
+                        // 4:2:2/4:4:0/4:4:4 the non-collapsed grid scales
+                        // correctly.
                         let mi_x = (mi_col * 8) as i32 + (sub_x * 4) as i32 * (1i32 << ss_x);
                         let mi_y = (mi_row * 8) as i32 + (sub_y * 4) as i32 * (1i32 << ss_y);
                         let scaled_mv_col = mul_q14(mv_q4_col, sf.x_scale_fp)
@@ -658,9 +655,8 @@ pub fn decode_and_reconstruct_inter_block<N: NeighbourLookup>(
     );
 }
 
-/// libvpx `round_mv_comp_q4` (`vp9_reconinter.c:61-63`). Rounds the sum
-/// of four Q3 MV components into a Q4 chroma MV component, with the
-/// sign-aware "round to nearest" rule.
+/// libvpx `round_mv_comp_q4` (`vp9_reconinter.c:61-63`). Sign-aware
+/// "round to nearest" division of a Q3 MV-component sum of 4 by 4.
 #[inline]
 fn round_mv_comp_q4(value: i32) -> i32 {
     if value < 0 {
@@ -670,11 +666,21 @@ fn round_mv_comp_q4(value: i32) -> i32 {
     }
 }
 
-/// libvpx `mi_mv_pred_q4` (`vp9_reconinter.c:65-75`). For a 4:2:0 chroma
-/// sub-8 block (ss_idx == 3), averages all four bmi MVs for ref `idx`
-/// into a single Q4 chroma MV.
+/// libvpx `round_mv_comp_q2` (`vp9_reconinter.c:77-79`). Sign-aware
+/// "round to nearest" division of a Q3 MV-component sum of 2 by 2.
 #[inline]
-fn avg_split_mv_q4_4x4(bmi: &[rvp9_core::mode_info::BmiInfo; 4], idx: usize) -> Mv {
+fn round_mv_comp_q2(value: i32) -> i32 {
+    if value < 0 {
+        (value - 1) / 2
+    } else {
+        (value + 1) / 2
+    }
+}
+
+/// libvpx `mi_mv_pred_q4` (`vp9_reconinter.c:65-75`). Averages all four
+/// bmi MVs for ref `idx`.
+#[inline]
+fn mi_mv_pred_q4(bmi: &[rvp9_core::mode_info::BmiInfo; 4], idx: usize) -> Mv {
     let row_sum = i32::from(bmi[0].as_mv[idx].row)
         + i32::from(bmi[1].as_mv[idx].row)
         + i32::from(bmi[2].as_mv[idx].row)
@@ -686,6 +692,58 @@ fn avg_split_mv_q4_4x4(bmi: &[rvp9_core::mode_info::BmiInfo; 4], idx: usize) -> 
     Mv {
         row: round_mv_comp_q4(row_sum) as i16,
         col: round_mv_comp_q4(col_sum) as i16,
+    }
+}
+
+/// libvpx `mi_mv_pred_q2` (`vp9_reconinter.c:81-87`). Averages the two
+/// bmi MVs `block0`/`block1` for ref `idx`.
+#[inline]
+fn mi_mv_pred_q2(
+    bmi: &[rvp9_core::mode_info::BmiInfo; 4],
+    idx: usize,
+    block0: usize,
+    block1: usize,
+) -> Mv {
+    let row_sum =
+        i32::from(bmi[block0].as_mv[idx].row) + i32::from(bmi[block1].as_mv[idx].row);
+    let col_sum =
+        i32::from(bmi[block0].as_mv[idx].col) + i32::from(bmi[block1].as_mv[idx].col);
+    Mv {
+        row: round_mv_comp_q2(row_sum) as i16,
+        col: round_mv_comp_q2(col_sum) as i16,
+    }
+}
+
+/// libvpx `average_split_mvs` (`vp9_reconinter.c:112-124`). Selects the
+/// chroma MV for a sub-8 block's chroma sub-block `block`, by averaging
+/// the contributing luma bmi MVs according to the plane subsampling.
+/// Returns the MV at **luma resolution** (Q3); the downstream
+/// `mv * (1 << (1 - ss))` scaling (libvpx `clamp_mv_to_umv_border_sb`,
+/// `vp9_reconinter.c:99-100`) converts it to the chroma Q4 value.
+///
+/// ```text
+/// const int ss_idx = ((pd->subsampling_x > 0) << 1) | (pd->subsampling_y > 0);
+/// switch (ss_idx) {
+///   case 0: res = mi->bmi[block].as_mv[ref].as_mv;        break;  // 4:4:4
+///   case 1: res = mi_mv_pred_q2(mi, ref, block, block + 2); break; // 4:4:0
+///   case 2: res = mi_mv_pred_q2(mi, ref, block, block + 1); break; // 4:2:2
+///   case 3: res = mi_mv_pred_q4(mi, ref);                  break;  // 4:2:0
+/// }
+/// ```
+#[inline]
+fn average_split_mvs(
+    bmi: &[rvp9_core::mode_info::BmiInfo; 4],
+    ref_idx: usize,
+    ss_x: usize,
+    ss_y: usize,
+    block: usize,
+) -> Mv {
+    let ss_idx = ((ss_x > 0) as usize) << 1 | (ss_y > 0) as usize;
+    match ss_idx {
+        0 => bmi[block].as_mv[ref_idx],
+        1 => mi_mv_pred_q2(bmi, ref_idx, block, block + 2),
+        2 => mi_mv_pred_q2(bmi, ref_idx, block, block + 1),
+        _ => mi_mv_pred_q4(bmi, ref_idx),
     }
 }
 
@@ -810,18 +868,20 @@ struct RefPlaneCrop {
 
 impl RefPlaneCrop {
     /// Resolve the crop dims for `plane` (0=Y, 1=U, 2=V) on `buf`,
-    /// using 4:2:0 subsampling (the only chroma format the decoder
-    /// supports, D-01 RESOLVED).
+    /// with chroma subsampling derived from the buffer's
+    /// [`ChromaFormat`]. Chroma planes use libvpx's `(crop + ss) >> ss`
+    /// (`yv12config.c:254-255`); reuses [`Yv12Buffer::chroma_width`] /
+    /// [`Yv12Buffer::chroma_height`], which compute exactly this.
     fn for_plane(buf: &Yv12Buffer, plane: usize) -> Self {
-        let crop_w_y = buf.width() as usize;
-        let crop_h_y = buf.height() as usize;
         if plane == 0 {
-            Self { crop_w: crop_w_y, crop_h: crop_h_y }
-        } else {
-            // libvpx `(crop + ss) >> ss` (yv12config.c:254-255).
             Self {
-                crop_w: (crop_w_y + 1) >> 1,
-                crop_h: (crop_h_y + 1) >> 1,
+                crop_w: buf.width() as usize,
+                crop_h: buf.height() as usize,
+            }
+        } else {
+            Self {
+                crop_w: buf.chroma_width() as usize,
+                crop_h: buf.chroma_height() as usize,
             }
         }
     }
@@ -1774,19 +1834,89 @@ mod tests {
         assert_eq!(super::round_mv_comp_q4(-8), -2);
     }
 
-    /// D.2.d helper: `avg_split_mv_q4_4x4` averages 4 Q3 MVs to one Q4 MV.
+    /// Reduction guarantee (G7.1b B4): at ss=(1,1) — 4:2:0 — the new
+    /// `average_split_mvs` reproduces the OLD `avg_split_mv_q4_4x4`
+    /// behaviour (the all-4 q4 average) for every chroma sub-block.
+    /// libvpx `average_split_mvs` ss_idx == 3 (`vp9_reconinter.c:120`).
     #[test]
-    fn avg_split_mv_q4_matches_libvpx() {
+    fn average_split_mvs_420_matches_old_q4_avg() {
+        let sets: [[Mv; 4]; 3] = [
+            [
+                Mv { row: 8, col: -4 },
+                Mv { row: 4, col: -8 },
+                Mv { row: 4, col: -4 },
+                Mv { row: 8, col: -8 },
+            ],
+            [
+                Mv { row: -3, col: 7 },
+                Mv { row: -5, col: 1 },
+                Mv { row: 2, col: -9 },
+                Mv { row: 6, col: 3 },
+            ],
+            [
+                Mv { row: 0, col: 0 },
+                Mv { row: 1, col: -1 },
+                Mv { row: -2, col: 2 },
+                Mv { row: 0, col: 0 },
+            ],
+        ];
+        for set in &sets {
+            let bmi = [
+                BmiInfo { as_mode: 0, as_mv: [set[0], Mv::ZERO] },
+                BmiInfo { as_mode: 0, as_mv: [set[1], Mv::ZERO] },
+                BmiInfo { as_mode: 0, as_mv: [set[2], Mv::ZERO] },
+                BmiInfo { as_mode: 0, as_mv: [set[3], Mv::ZERO] },
+            ];
+            // Old behaviour: round_mv_comp_q4 over all-4 sum, for any block.
+            let row_sum: i32 = set.iter().map(|m| i32::from(m.row)).sum();
+            let col_sum: i32 = set.iter().map(|m| i32::from(m.col)).sum();
+            let expected = Mv {
+                row: super::round_mv_comp_q4(row_sum) as i16,
+                col: super::round_mv_comp_q4(col_sum) as i16,
+            };
+            for block in 0..4 {
+                assert_eq!(
+                    super::average_split_mvs(&bmi, 0, 1, 1, block),
+                    expected,
+                    "4:2:0 block {block} set {set:?}"
+                );
+            }
+        }
+    }
+
+    /// Differential values (G7.1b B4) — hand-derived from the libvpx
+    /// `average_split_mvs` switch (`vp9_reconinter.c:112-124`) for
+    /// ss_idx 0/1/2. bmi MVs (row, col) per the 2×2 sub-block layout:
+    ///   bmi[0]=(8,-4) bmi[1]=(4,-8) bmi[2]=(4,-4) bmi[3]=(8,-8)
+    #[test]
+    fn average_split_mvs_differential_444_440_422() {
         let bmi = [
             BmiInfo { as_mode: 0, as_mv: [Mv { row: 8, col: -4 }, Mv::ZERO] },
             BmiInfo { as_mode: 0, as_mv: [Mv { row: 4, col: -8 }, Mv::ZERO] },
             BmiInfo { as_mode: 0, as_mv: [Mv { row: 4, col: -4 }, Mv::ZERO] },
             BmiInfo { as_mode: 0, as_mv: [Mv { row: 8, col: -8 }, Mv::ZERO] },
         ];
-        // row_sum = 24, col_sum = -24. round((+ or - 2)) / 4.
-        // row: 24 -> (24+2)/4 = 6. col: -24 -> (-24-2)/4 = -6.
-        let mv = super::avg_split_mv_q4_4x4(&bmi, 0);
-        assert_eq!(mv, Mv { row: 6, col: -6 });
+
+        // ss_idx 0 (4:4:4, ss=0,0): case 0 — returns bmi[block] unchanged.
+        for block in 0..4 {
+            assert_eq!(
+                super::average_split_mvs(&bmi, 0, 0, 0, block),
+                bmi[block].as_mv[0],
+                "4:4:4 block {block}"
+            );
+        }
+
+        // ss_idx 1 (4:4:0, ss_x=0 ss_y=1): case 1 — mi_mv_pred_q2(block, block+2).
+        // block 0 -> avg{bmi0,bmi2}: row (8+4)=12 -> (12+1)/2=6; col (-4-4)=-8 -> (-8-1)/2=-4.
+        assert_eq!(super::average_split_mvs(&bmi, 0, 0, 1, 0), Mv { row: 6, col: -4 });
+        // block 1 -> avg{bmi1,bmi3}: row (4+8)=12 -> 6; col (-8-8)=-16 -> (-16-1)/2=-8.
+        assert_eq!(super::average_split_mvs(&bmi, 0, 0, 1, 1), Mv { row: 6, col: -8 });
+
+        // ss_idx 2 (4:2:2, ss_x=1 ss_y=0): case 2 — mi_mv_pred_q2(block, block+1).
+        // block 0 -> avg{bmi0,bmi1}: row (8+4)=12 -> 6; col (-4-8)=-12 -> (-12-1)/2=-6 (int /2 truncates).
+        assert_eq!(super::average_split_mvs(&bmi, 0, 1, 0, 0), Mv { row: 6, col: -6 });
+        // block 1 -> avg{bmi1,bmi2}: row (4+4)=8 -> (8+1)/2=4; col (-8-4)=-12 -> -6.
+        assert_eq!(super::average_split_mvs(&bmi, 0, 1, 0, 1), Mv { row: 4, col: -6 });
     }
 
     /// D.2.a coverage: non-zero MV with sub-pel offset. With identity
