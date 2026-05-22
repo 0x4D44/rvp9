@@ -769,7 +769,14 @@ pub fn intra_predict(
             (IntraMode::D207, false) => d207_predictor(dst, stride, bs, ctx.left),
             (IntraMode::D63, true) => d63_predictor_4x4(dst, stride, ctx.above),
             (IntraMode::D63, false) => d63_predictor(dst, stride, bs, ctx.above),
-            (IntraMode::Tm, _) => tm_predictor(dst, stride, bs, ctx),
+            (IntraMode::Tm, _) => (dispatch.tm_predictor())(
+                dst,
+                stride,
+                bs,
+                ctx.above,
+                ctx.left,
+                ctx.above_left,
+            ),
         }
     }
 
