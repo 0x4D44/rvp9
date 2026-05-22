@@ -482,6 +482,18 @@ fn evaluate_candidate(
 
     // Distortion = SSE(src, recon). For block sizes ≤ 64×64 the SSE
     // fits in u32 (max 64*64*255^2 = 266_342_400 < 2^32).
+    //
+    // A8 (2026-05-22) tried source-domain SSE (SSE(src, pred)) here
+    // to activate NEWMV picks on textured motion content (foreman
+    // gate). Result: NEWMV picks went 0 → 3788 (foreman_cif), but
+    // foreman PSNR stayed locked at 16 dB (RC q=255 saturation is
+    // the real blocker; source-domain SSE only helps at lower q,
+    // where the picker already had room to differentiate) AND
+    // testsrc 250-kbps PSNR regressed by 1.92 dB (high-bitrate
+    // residuals survive quant; with source-domain SSE the picker
+    // ignores the residual rate downstream cost and picks NEWMV
+    // too aggressively). Reverted. Notes in
+    // `wrk_docs/A8-source-sse-foreman-report.md`.
     let sse = sse_block(params.src_plane, params.src_offset, &recon, bw, bw, bh);
     let dist = sse.min(u32::MAX as u64) as u32;
     // A0 diagnostic 2: dump full 16-pixel sample comparison for an

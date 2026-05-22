@@ -978,3 +978,50 @@ sit below 307_200 so the picker still runs (PSNR sweep preserved:
 the picker's per-leaf cost is dominated by the scalar sub-pel
 interpolation + transform round-trip; once those are SIMD-
 accelerated the budget should absorb the picker work on 720p too.
+
+### 2026-05-22 — A8 source-domain SSE picker distortion — REVERTED
+**Where:** `rvp9-core::mode_decision::inter::evaluate_candidate`
+(distortion metric line). libvpx counterpart: realtime picker
+`vp9_pick_inter_mode` uses transform-coef-domain `block_yrd`
+(`vp9_pickmode.c:1056-1110`) for the distortion side of RDCOST.
+**Status:** explored, reverted, NOT shipped.
+**What was tried:** swap the F8.1 picker's RD distortion from
+post-recon SSE (`SSE(src, recon)`) to source-domain SSE
+(`SSE(src, pred)` — the pre-quant prediction error). Recon round-
+trip kept (downstream encode stages consume it), only the RD
+metric changed.
+**Hypothesis (brief A8):** at high q the picker should pick NEWMV
+on textured motion content (foreman_cif); source-domain SSE was
+hypothesised to break the NEARESTMV trap (0 NEWMV picks across
+226k inter leaves on foreman_cif HEAD).
+**Result:**
+- NEWMV picks 0 → 3788 (foreman_cif, all bitrates). Mechanism
+  confirmed.
+- foreman_cif PSNR essentially UNCHANGED: 16.36 / 16.21 / 16.28
+  / 16.55 → 16.36 / 16.21 / 16.26 / 16.54 dB. NEWMV picks
+  concentrated at q=135-200; at q=255 (RC saturation point,
+  31% of leaves on foreman) residuals quant to zero so recon
+  = pred regardless and source-domain SSE == post-recon SSE.
+  The picks shift but reconstruction quality doesn't.
+- testsrc REGRESSED at 250 kbps: 59.69 → 57.77 dB (-1.92 dB) at
+  -3.5% bits. High-q regime: residuals SURVIVE quant; with
+  source-domain SSE the picker ignores the downstream residual
+  rate the encoder emits, biasing toward NEWMV-with-MV-bits
+  over NEAREST-with-residual. The picker over-emits MV bits.
+- Cross-decoder gate: PASS (BYTE-EXACT) — pick changes the
+  bitstream but every decoder agrees it is valid.
+- RT gate: PASS (5.74 ms median).
+**Why reverted:** brief constraint "don't ship a regression."
+testsrc 250 kbps -1.92 dB is a clear regression; foreman gain is
+near-zero. The real foreman blocker is RC q=255 saturation
+(A6, A7 findings), not the picker distortion metric.
+**Byte-parity impact:** would be structural (bitstream
+contents change wherever NEWMV wins the new RD). Not applicable
+since reverted.
+**Future plan:** revisit only after RC q-ceiling work (A8.B
+recommendation: clamp inter q ≤ 200, let buffer overshoot,
+measure whether foreman climbs above 22 dB). If RC fix lifts
+the floor, source-domain SSE might net positive — but testsrc
+high-bitrate regression suggests the picker would also need a
+residual-rate estimate (RDO-style) to be production-ready.
+Detailed write-up: `wrk_docs/A8-source-sse-foreman-report.md`.
