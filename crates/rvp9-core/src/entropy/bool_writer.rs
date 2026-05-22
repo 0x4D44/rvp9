@@ -80,6 +80,12 @@ impl<'a> BoolWriter<'a> {
     /// carry-back trick at the `0x80000000` check is preserved exactly.
     #[inline]
     pub fn write(&mut self, bit: u8, probability: u8) {
+        // E4 diagnostic: env-gated per-category bit accounting. No-op
+        // (one relaxed atomic load) unless RVP9_E4_BITACCT is set. Does
+        // NOT alter coding state.
+        if super::bitacct::enabled() {
+            super::bitacct::record(bit, probability);
+        }
         let mut count = self.count;
         let mut range = self.range;
         let mut low_value = self.low_value;

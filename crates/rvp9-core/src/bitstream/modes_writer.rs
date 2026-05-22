@@ -87,6 +87,7 @@ use crate::bitstream::SEG_TREE_PROBS;
 use crate::coef_ctx::TileCoefCtx;
 use crate::entropy::{write_block_tokens, BoolWriter, FrameContext, VP9_KF_PARTITION_PROBS,
     VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB};
+use crate::entropy::bitacct::{set_category, BitCategory};
 use crate::inter::mode_info::{
     get_intra_inter_context, write_inter_block_mode_info, InterModeReadParams, InterModeWriteError,
 };
@@ -1584,6 +1585,7 @@ fn write_inter_partition_tree(
     let ctx = part_ctx.context(mi_row_in_tile, mi_col_in_tile, bsl);
 
     let partition = infer_inter_partition(mi_grid, mi_cols, mi_row, mi_col, bsize)?;
+    set_category(BitCategory::Partition);
     write_partition(bw, &fc.partition_prob[ctx], partition);
 
     let sub = subsize(bsize, partition)
@@ -1809,6 +1811,7 @@ fn write_inter_block_leaf(
     //    `read_inter_segment_id` at the `update_map && !temporal_update`
     //    branch (`mode_info.rs:160-165`).
     if let Some(seg) = seg {
+        set_category(BitCategory::SegId);
         write_segment_id(bw, mi.segment_id, seg.tree_probs);
     }
 
@@ -1824,10 +1827,12 @@ fn write_inter_block_leaf(
     //    Mirrors `decode_inter_block` step 2.
     let skip_ctx = usize::from(above.is_some_and(|m| m.skip))
         + usize::from(left.is_some_and(|m| m.skip));
+    set_category(BitCategory::Skip);
     bw.write(u8::from(mi.skip), fc.skip_probs[skip_ctx]);
 
     // 3. is_inter classification — always 1 under writer scope.
     let intra_inter_ctx = get_intra_inter_context(above, left);
+    set_category(BitCategory::IsInter);
     bw.write(1, fc.intra_inter_prob[intra_inter_ctx]);
 
     // 4. tx_size. `allow_select = !skip || !is_inter` per libvpx
@@ -1863,6 +1868,7 @@ fn write_inter_block_leaf(
             _ => unreachable!("min of TxSize values out of range: {raw}"),
         }
     };
+    set_category(BitCategory::TxSize);
     crate::mode_info::write_tx_size(
         bw,
         &fc.tx_probs,
@@ -1887,6 +1893,7 @@ fn write_inter_block_leaf(
         bh_mi,
     );
     let prev_mv = prev_mv_grid.and_then(|g| g.get(mi_row * mi_cols + mi_col).copied());
+    set_category(BitCategory::ModeRef);
     write_inter_block_mode_info(
         bw,
         fc,
@@ -1910,6 +1917,7 @@ fn write_inter_block_leaf(
     //    `reconstruct_inter_block` `loff` / `aoff` loop
     //    (`rvp9-decoder::reconstruct_inter`).
     if !mi.skip {
+        set_category(BitCategory::Coef);
         write_inter_block_residual(
             bw,
             fc,

@@ -74,6 +74,7 @@ pub mod aq_cyclic_refresh;
 pub mod frame_loop;
 pub(crate) mod loopfilter;
 pub mod rate_control;
+pub mod skipstat;
 
 pub use frame_loop::{AqMode, EncodedFrame, EncoderConfig, FrameKind as StreamFrameKind, StreamEncoder, YuvFrameRef};
 
@@ -3298,6 +3299,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 if leaf_total_eob == 0 {
                     sb_partitions[sb_idx][leaf_idx].skip = true;
                 }
+                // E4 diagnostic: per-leaf skip / residual-energy stats.
+                crate::skipstat::record_leaf(
+                    sb_partitions[sb_idx][leaf_idx].skip,
+                    leaf_total_eob,
+                );
                 if std::env::var("RVP9_DIAG_PICKER").is_ok() {
                     #[allow(clippy::print_stderr)]
                     {

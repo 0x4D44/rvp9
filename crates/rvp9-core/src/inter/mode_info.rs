@@ -43,6 +43,7 @@ use crate::entropy::{
     BoolReader, BoolWriter, FrameContext, NmvCounts, COMP_INTER_CONTEXTS, INTER_MODE_CONTEXTS,
     INTRA_INTER_CONTEXTS, REF_CONTEXTS, SWITCHABLE_FILTERS, SWITCHABLE_FILTER_CONTEXTS,
 };
+use crate::entropy::bitacct::{set_category, BitCategory};
 use crate::inter::mv::{read_mv, write_mv, write_tree};
 use crate::inter::mv_ref::{
     append_sub8x8_mvs_for_idx, find_mv_refs, lower_mv_precision, BlockBounds, NeighbourLookup,
@@ -1107,6 +1108,7 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
             let idx = list.count.saturating_sub(1).min(list.mvs.len() - 1);
             let best_ref_mv =
                 lower_mv_precision(list.mvs[idx], params.allow_high_precision_mv);
+            set_category(BitCategory::MvDelta);
             write_mv(
                 bw,
                 mvs[i],
@@ -1114,6 +1116,7 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
                 params.allow_high_precision_mv,
                 &fc.nmvc,
             );
+            set_category(BitCategory::ModeRef);
         }
     }
 
@@ -1230,6 +1233,7 @@ fn write_sub8_bmi<N: NeighbourLookup>(
                         got_mv_refs_for_new = true;
                     }
                     // 2. Emit the per-ref MV residual.
+                    set_category(BitCategory::MvDelta);
                     for (r, &ref_mv) in
                         best_ref_mvs_for_new.iter().enumerate().take(num_refs)
                     {
@@ -1241,6 +1245,7 @@ fn write_sub8_bmi<N: NeighbourLookup>(
                             &fc.nmvc,
                         );
                     }
+                    set_category(BitCategory::ModeRef);
                 }
                 InterMode::NearestMv | InterMode::NearMv => {
                     // 3. No MV bits emitted; assert the caller-supplied

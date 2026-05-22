@@ -25,6 +25,7 @@
 //!   record.
 
 pub mod adapt;
+pub mod bitacct;
 pub mod bool_reader;
 pub mod bool_writer;
 pub mod coef_probs;
