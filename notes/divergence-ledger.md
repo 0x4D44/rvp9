@@ -496,15 +496,15 @@ adaptive loop lands.
 **Future plan:** Stage 4b adaptive Q work brings in the per-frame
 correction adapter.
 
-### 2026-05-21 — NEARMV not implemented (F8.1 inter mode picker)
+### 2026-05-21 — NEARMV not implemented (F8.1 inter mode picker)  [RESOLVED A12]
 **Where:** `rvp9-core::mode_decision::inter::pick_inter_mode_luma`.
 libvpx counterpart: `vp9/encoder/vp9_pickmode.c::vp9_pick_inter_mode`.
 **What libvpx does:** evaluates `{NEARESTMV, NEARMV, NEWMV, ZEROMV}`
 × `{single, compound}` × `{LAST, GOLDEN, ALTREF}` references; selects
 by RD.
-**What rvp9 does:** evaluates `{NEARESTMV, NEWMV, ZEROMV}` × single
-ref × `{LAST}` only. NEARMV omitted. Compound-ref not driven by the
-picker.
+**What rvp9 did before A12:** evaluated `{NEARESTMV, NEWMV, ZEROMV}`
+× single ref × `{LAST}` only. NEARMV omitted. Compound-ref not
+driven by the picker.
 **Why:** F8.1 scope was bounded to demonstrate the picker shape. The
 F8.2 partition picker chooses NEARESTMV-vs-NEWMV at the same MV-ref
 list anchor; adding NEARMV is mechanical (next candidate in the
@@ -513,8 +513,50 @@ MV-ref list) but didn't fit the night-3 budget.
 RD, rvp9 picks a different mode.
 **Compression-efficiency impact:** modest. Expected 0.5–1.5 % BD-rate
 penalty on typical content (NEARMV is rare-but-not-vanishingly-so).
-**Future plan:** Stage 4a follow-up if BD-rate gate fails by margin;
-otherwise defer.
+
+**Resolution — A12 (2026-05-22):** Added NEARMV as a fourth
+candidate to `pick_inter_mode_luma` (commits `9c18c34`, `ee69a64`).
+Encoder integration calls `find_mv_refs(NEARMV, ...)` separately so
+the search continues past the first candidate (`early_break` is
+gated off for NEARMV), and `mvs[count - 1]` populates
+`MvCandidates.near` — matching the decoder's `resolve_parent_mvs`
+exactly (`crates/rvp9-core/src/inter/mode_info.rs:1361`). OOB veto
+for `mvc.near` mirrors the existing NEARESTMV OOB substitution.
+Writer side (`write_inter_block_mode_info`) already supported the
+NEARMV tree-encoding (mode bits only, no MV delta) — no writer
+change needed; doc-only audit committed in `ee69a64`.
+
+**Measured impact (F12 BD-rate gate, 64 frames @ 256×256, 4
+bitrate points 25 / 50 / 100 / 250 kbps):**
+- **testsrc**: BD-rate +660 % → +634 % (–26 percentage points).
+  100-kbps PSNR +1.16 dB; 250-kbps PSNR +0.40 dB; lower-bitrate
+  points unchanged.
+- **foreman_cif**: BD-rate +395.92 % → +395.92 % (no change).
+  Per-frame NEARMV picks = 0 because `find_mv_refs(NEARMV, ..)`
+  returns `count == 1` from the in-progress mi-grid (all
+  neighbours carry ZEROMV initially), so `mvs[count - 1] ==
+  mvs[0] == nearest`. NEARMV is RD-degenerate to NEARESTMV and the
+  picker's argmin (strict `<`) tiebreaker keeps NEARESTMV.
+- Cross-decoder gate (vpxdec + ffmpeg): **BYTE-EXACT** preserved.
+- RT gate: 5.35 ms median (unchanged from 5.85 ms baseline; noise).
+
+**Diagnostic:** `RVP9_DIAG_INTPRO=1` now reports NEARMV picks in
+the per-frame summary (`zero / nearest / near / new / skip /
+nonzero_mv`).
+
+**Remaining gap:** the foreman flat-zero NEARMV `count` is a
+downstream consequence of the F8.1 picker's "all-ZEROMV initial
+state" chicken-and-egg: until at least one Block16+ leaf picks
+NEWMV, all spatial neighbours contribute identical zero MVs to the
+ref list, so the "second-nearest" slot collapses onto the first.
+Activating NEARMV picks on foreman requires either (a) a non-zero
+NEWMV at the top of the SB sweep (covered by the int_pro seed
+mechanism — but the current seed lands at full-pel only and the
+RD margin is too narrow on textured motion) or (b) seeding
+`mvc.near` from a previous-frame MV reference
+(`use_prev_frame_mvs`, the PrevFrameMvRef plumbing wired through
+`prev_mv_grid = None` today). Both are future-experiment
+territory; the F8.1 NEARMV divergence itself is RESOLVED.
 
 ### 2026-05-21 — Block8x8 inter leaves forced to ZEROMV-skip  [RESOLVED A1]
 **Where:** `rvp9-encoder::frame_loop::encode_inter_internal` (night-3
