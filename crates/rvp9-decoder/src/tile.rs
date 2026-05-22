@@ -40,7 +40,8 @@
 //! libvpx `decode_tiles` (`vp9_decodeframe.c:2200-2240`).
 
 use rvp9_core::bitstream::{ChromaFormat, TileInfo};
-use rvp9_core::block::{BlockSize, PartitionType, max_txsize, subsize};
+use rvp9_core::block::{BlockSize, PartitionType, max_txsize, subsize, uv_plane_block_size,
+    uv_plane_tx_size};
 use rvp9_core::dsp::SimdDispatch;
 use rvp9_core::entropy::{BoolReader, FrameContext, VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB,
     VP9_KF_Y_MODE_PROB};
@@ -301,17 +302,20 @@ pub struct FrameDecodeParams {
     pub seg_abs_delta: bool,
 }
 
-/// Per-plane geometry derived from the frame's chroma subsampling
-/// (4:2:0 only — D-01 RESOLVED, G7.0 gate at
-/// `crates/rvp9-decoder/src/lib.rs::Decoder::decode_frame` rejects
-/// Profile 1 with `DecodeError::UnsupportedProfile` before any tile
-/// decode begins). When G7.1 lifts that gate the constant must be
-/// replaced with a per-frame `[ss_x_per_plane; 3]` lookup driven by
-/// the buffer's `ChromaFormat`; the load-bearing callers downstream
-/// (`uv_plane_block_size`, `uv_plane_tx_size`,
-/// `RefPlaneCrop::for_plane`) all consume this array.
-const SUBSAMPLING_X: [usize; 3] = [0, 1, 1];
-const SUBSAMPLING_Y: [usize; 3] = [0, 1, 1];
+/// Per-plane chroma subsampling derived from a [`ChromaFormat`].
+/// Plane 0 (luma) is always full-resolution `(0, 0)`; chroma planes
+/// take the format's `(subsampling_x, subsampling_y)`. Mirrors
+/// libvpx's per-plane `pd->subsampling_{x,y}` setup
+/// (`vp9_decodeframe.c`). At [`ChromaFormat::Yuv420`] this yields the
+/// historical `[0, 1, 1]` arrays exactly.
+#[inline]
+fn plane_ss(chroma: ChromaFormat, plane: usize) -> (usize, usize) {
+    if plane == 0 {
+        (0, 0)
+    } else {
+        (chroma.subsampling_x() as usize, chroma.subsampling_y() as usize)
+    }
+}
 
 /// Compute the dequant pair `(dc, ac)` for `(plane, segment_id)`.
 /// Mirrors libvpx `vp9_init_plane_quantizers`
@@ -854,12 +858,12 @@ fn reset_skip_context(
     mi: &ModeInfo,
     mi_row_in_tile: usize,
     mi_col_in_tile: usize,
+    chroma: ChromaFormat,
 ) {
     let mi_row_in_sb = mi_row_in_tile & MI_MASK;
     let sub8_luma = (mi.block_size as u8) < (BlockSize::Block8x8 as u8);
     for plane in 0..3 {
-        let ss_x = SUBSAMPLING_X[plane];
-        let ss_y = SUBSAMPLING_Y[plane];
+        let (ss_x, ss_y) = plane_ss(chroma, plane);
         let (n4_w, n4_h) = if sub8_luma && plane == 0 {
             // libvpx pads the sub-8 luma entropy context to the parent
             // 8×8 mi cell — i.e. always two 4×4 cells in each axis.
@@ -868,7 +872,7 @@ fn reset_skip_context(
             let plane_bsize = if plane == 0 {
                 mi.block_size
             } else {
-                uv_plane_block_size(mi.block_size)
+                uv_plane_block_size(mi.block_size, ss_x, ss_y)
             };
             (
                 plane_bsize.n_4x4_wide() as usize,
@@ -878,38 +882,6 @@ fn reset_skip_context(
         let x4_base = (mi_col_in_tile * 2) >> ss_x;
         let y4_base = (mi_row_in_sb * 2) >> ss_y;
         coef_ctx.set_coef_flags(plane, x4_base, y4_base, n4_w, n4_h, false);
-    }
-}
-
-/// Compute the chroma plane's block size for the given luma `bsize`,
-/// assuming 4:2:0 (D-01 RESOLVED). Mirrors libvpx's
-/// `ss_size_lookup[bsize][1][1]`. For sub-8 luma blocks, libvpx pins
-/// the chroma plane to `BLOCK_8X8` (the chroma can't subdivide below
-/// 4×4 in 4:2:0).
-fn uv_plane_block_size(bsize: BlockSize) -> BlockSize {
-    use BlockSize::*;
-    match bsize {
-        Block4x4 | Block4x8 | Block8x4 | Block8x8 => Block4x4,
-        Block8x16 => Block4x8,
-        Block16x8 => Block8x4,
-        Block16x16 => Block8x8,
-        Block16x32 => Block8x16,
-        Block32x16 => Block16x8,
-        Block32x32 => Block16x16,
-        Block32x64 => Block16x32,
-        Block64x32 => Block32x16,
-        Block64x64 => Block32x32,
-    }
-}
-
-/// libvpx `get_uv_tx_size` (`vp9_blockd.h:262-267`): chroma TX size is
-/// `min(mi->tx_size, max_txsize_lookup[plane_bsize])`.
-fn uv_plane_tx_size(bsize: BlockSize, luma_tx: TxSize) -> TxSize {
-    let cap = max_txsize(uv_plane_block_size(bsize));
-    if (luma_tx as u8) < (cap as u8) {
-        luma_tx
-    } else {
-        cap
     }
 }
 
@@ -962,28 +934,28 @@ fn reconstruct_intra_planes(
 ) {
     let bsize = mi.block_size;
     let tx_size = mi.tx_size;
+    let chroma = dst_frame.chroma();
 
     if mi.skip {
         // libvpx `dec_reset_skip_context` — zero the per-plane above/
         // left coef-context cells covering the block.
-        reset_skip_context(coef_ctx, mi, mi_row_in_tile, mi_col_in_tile);
+        reset_skip_context(coef_ctx, mi, mi_row_in_tile, mi_col_in_tile, chroma);
     }
 
     let mut edges = EdgeBuffers::new();
     for plane in 0..3 {
-        let ss_x = SUBSAMPLING_X[plane];
-        let ss_y = SUBSAMPLING_Y[plane];
+        let (ss_x, ss_y) = plane_ss(chroma, plane);
 
         // libvpx `get_uv_tx_size` — chroma TX size = min(luma_tx, max_txsize(plane_bsize)).
         let plane_tx = if plane == 0 {
             tx_size
         } else {
-            uv_plane_tx_size(bsize, tx_size)
+            uv_plane_tx_size(bsize, tx_size, ss_x, ss_y)
         };
         let plane_bsize = if plane == 0 {
             bsize
         } else {
-            uv_plane_block_size(bsize)
+            uv_plane_block_size(bsize, ss_x, ss_y)
         };
         // libvpx pd->n4_w / n4_h: sub-8 coding-block path uses (2 >> ss)
         // regardless of subsize; ≥ 8×8 uses the plane_bsize 4×4 extent.

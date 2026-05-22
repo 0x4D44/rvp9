@@ -111,47 +111,24 @@ pub struct BuildMaskInputs {
     pub shift_uv: u32,
 }
 
-/// libvpx `uv_txsize_lookup[block_size][tx_size_y][1][1]` for 4:2:0
-/// (the only chroma format rvp9 v1 supports per **D-01 RESOLVED**).
-/// Hand-extracted from `vp9_common_data.c:128-222` — the `[ss_x=1,
-/// ss_y=1]` slice of the 4-D table.
-#[rustfmt::skip]
-static UV_TXSIZE_LOOKUP_420: [[TxSize; TX_SIZES]; 13] = [
-    // Block4x4
-    [TxSize::Tx4x4, TxSize::Tx4x4, TxSize::Tx4x4, TxSize::Tx4x4],
-    // Block4x8
-    [TxSize::Tx4x4, TxSize::Tx4x4, TxSize::Tx4x4, TxSize::Tx4x4],
-    // Block8x4
-    [TxSize::Tx4x4, TxSize::Tx4x4, TxSize::Tx4x4, TxSize::Tx4x4],
-    // Block8x8
-    [TxSize::Tx4x4, TxSize::Tx4x4, TxSize::Tx4x4, TxSize::Tx4x4],
-    // Block8x16
-    [TxSize::Tx4x4, TxSize::Tx4x4, TxSize::Tx4x4, TxSize::Tx4x4],
-    // Block16x8
-    [TxSize::Tx4x4, TxSize::Tx4x4, TxSize::Tx8x8, TxSize::Tx8x8],
-    // Block16x16
-    [TxSize::Tx4x4, TxSize::Tx8x8, TxSize::Tx8x8, TxSize::Tx8x8],
-    // Block16x32
-    [TxSize::Tx4x4, TxSize::Tx8x8, TxSize::Tx8x8, TxSize::Tx8x8],
-    // Block32x16
-    [TxSize::Tx4x4, TxSize::Tx8x8, TxSize::Tx8x8, TxSize::Tx8x8],
-    // Block32x32
-    [TxSize::Tx4x4, TxSize::Tx8x8, TxSize::Tx16x16, TxSize::Tx16x16],
-    // Block32x64
-    [TxSize::Tx4x4, TxSize::Tx8x8, TxSize::Tx16x16, TxSize::Tx16x16],
-    // Block64x32
-    [TxSize::Tx4x4, TxSize::Tx8x8, TxSize::Tx16x16, TxSize::Tx16x16],
-    // Block64x64
-    [TxSize::Tx4x4, TxSize::Tx8x8, TxSize::Tx16x16, TxSize::Tx32x32],
-];
-
 /// 4:2:0 chroma TX-size lookup. `uv_txsize_420(bs, tx_y)` returns
 /// the chroma TX size libvpx uses for the given luma block and
 /// luma TX size.
+///
+/// libvpx represents this as `uv_txsize_lookup[bs][tx_y][1][1]`
+/// (`vp9_common_data.c:128-222`), the `(ss_x=1, ss_y=1)` slice of
+/// the 4-D table. That table is exactly
+/// `min(tx_y, max_txsize(ss_size_lookup[bs][ss_x][ss_y]))` —
+/// libvpx `get_uv_tx_size_impl` (`vp9_blockd.h:240-258`). We delegate
+/// to the shared [`crate::block::uv_plane_tx_size`] with `(1, 1)` so
+/// the geometry lives in one place. Generalizing the loopfilter
+/// mask-build to non-4:2:0 (threading `(ss_x, ss_y)` through
+/// `setup_mask`/`inputs_for`) is deferred to G7.1c — see notes in the
+/// caller at `setup_mask.rs::inputs_for`.
 #[inline]
 #[must_use]
 pub const fn uv_txsize_420(block_size: BlockSize, tx_size_y: TxSize) -> TxSize {
-    UV_TXSIZE_LOOKUP_420[block_size.idx()][tx_size_y as usize]
+    crate::block::uv_plane_tx_size(block_size, tx_size_y, 1, 1)
 }
 
 /// OR a block's edge contributions into the per-superblock loop-filter

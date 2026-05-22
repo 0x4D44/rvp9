@@ -272,6 +272,70 @@ pub const fn max_txsize(bs: BlockSize) -> crate::transforms::TxSize {
     }
 }
 
+/// libvpx `ss_size_lookup[BLOCK_SIZES][2][2]`
+/// (`vp9/common/vp9_common_data.c:110-126`). Given a luma `bsize` and
+/// the plane's chroma subsampling `(ss_x, ss_y)`, returns the
+/// corresponding plane block size, or `None` for the `BLOCK_INVALID`
+/// entries (a luma shape too small to subdivide at that subsampling).
+///
+/// Index order matches libvpx exactly: `[bsize][ss_x][ss_y]`.
+/// Transcribed VERBATIM from the libvpx literal table (NOT derived).
+#[must_use]
+pub const fn ss_size_lookup(bsize: BlockSize, ss_x: usize, ss_y: usize) -> Option<BlockSize> {
+    use BlockSize::*;
+    // [bsize][ss_x][ss_y]; None == BLOCK_INVALID.
+    let table: [[[Option<BlockSize>; 2]; 2]; BLOCK_SIZES] = [
+        // ss_x==0,ss_y==0 | ss_x==0,ss_y==1 || ss_x==1,ss_y==0 | ss_x==1,ss_y==1
+        [[Some(Block4x4), None], [None, None]],
+        [[Some(Block4x8), Some(Block4x4)], [None, None]],
+        [[Some(Block8x4), None], [Some(Block4x4), None]],
+        [[Some(Block8x8), Some(Block8x4)], [Some(Block4x8), Some(Block4x4)]],
+        [[Some(Block8x16), Some(Block8x8)], [None, Some(Block4x8)]],
+        [[Some(Block16x8), None], [Some(Block8x8), Some(Block8x4)]],
+        [[Some(Block16x16), Some(Block16x8)], [Some(Block8x16), Some(Block8x8)]],
+        [[Some(Block16x32), Some(Block16x16)], [None, Some(Block8x16)]],
+        [[Some(Block32x16), None], [Some(Block16x16), Some(Block16x8)]],
+        [[Some(Block32x32), Some(Block32x16)], [Some(Block16x32), Some(Block16x16)]],
+        [[Some(Block32x64), Some(Block32x32)], [None, Some(Block16x32)]],
+        [[Some(Block64x32), None], [Some(Block32x32), Some(Block32x16)]],
+        [[Some(Block64x64), Some(Block64x32)], [Some(Block32x64), Some(Block32x32)]],
+    ];
+    table[bsize.idx()][ss_x][ss_y]
+}
+
+/// Chroma plane block size for a luma `bsize` at subsampling
+/// `(ss_x, ss_y)`. Wraps [`ss_size_lookup`], mirroring libvpx
+/// `get_plane_block_size` (`vp9_blockd.h:280-285`).
+///
+/// For the four sub-8 luma shapes (`Block4x4`/`Block4x8`/`Block8x4`)
+/// the lookup is `BLOCK_INVALID` at `(1,1)`; libvpx (and the prior
+/// rvp9 code) clamp the chroma plane to `Block4x4` there. We reproduce
+/// that by falling back to `Block4x4` whenever the lookup is `None`.
+#[must_use]
+pub const fn uv_plane_block_size(bsize: BlockSize, ss_x: usize, ss_y: usize) -> BlockSize {
+    match ss_size_lookup(bsize, ss_x, ss_y) {
+        Some(bs) => bs,
+        None => BlockSize::Block4x4,
+    }
+}
+
+/// Chroma plane TX size: `min(luma_tx, max_txsize(uv_plane_block_size))`.
+/// Mirrors libvpx `get_uv_tx_size` (`vp9_blockd.h:262-267`).
+#[must_use]
+pub const fn uv_plane_tx_size(
+    bsize: BlockSize,
+    luma_tx: crate::transforms::TxSize,
+    ss_x: usize,
+    ss_y: usize,
+) -> crate::transforms::TxSize {
+    let cap = max_txsize(uv_plane_block_size(bsize, ss_x, ss_y));
+    if (luma_tx as u8) < (cap as u8) {
+        luma_tx
+    } else {
+        cap
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,5 +540,94 @@ mod tests {
         assert_eq!(max_txsize(Block32x64), TxSize::Tx32x32);
         assert_eq!(max_txsize(Block64x32), TxSize::Tx32x32);
         assert_eq!(max_txsize(Block64x64), TxSize::Tx32x32);
+    }
+
+    /// All 13 block sizes in index order, for table-pinning loops.
+    const ALL_BLOCK_SIZES: [BlockSize; BLOCK_SIZES] = {
+        use BlockSize::*;
+        [
+            Block4x4, Block4x8, Block8x4, Block8x8, Block8x16, Block16x8, Block16x16, Block16x32,
+            Block32x16, Block32x32, Block32x64, Block64x32, Block64x64,
+        ]
+    };
+
+    /// Pin EVERY cell of `ss_size_lookup` against the libvpx literal
+    /// table (`vp9_common_data.c:110-126`): 13 bsizes × 4 ss combos.
+    #[test]
+    fn ss_size_lookup_pins_libvpx() {
+        use BlockSize::*;
+        // [bsize] -> [(ss_x, ss_y, expected)]; None == BLOCK_INVALID.
+        // Transcribed cell-for-cell from the libvpx literal table.
+        let expected: [[Option<BlockSize>; 4]; BLOCK_SIZES] = [
+            // order within row: (0,0), (0,1), (1,0), (1,1)
+            [Some(Block4x4), None, None, None],
+            [Some(Block4x8), Some(Block4x4), None, None],
+            [Some(Block8x4), None, Some(Block4x4), None],
+            [Some(Block8x8), Some(Block8x4), Some(Block4x8), Some(Block4x4)],
+            [Some(Block8x16), Some(Block8x8), None, Some(Block4x8)],
+            [Some(Block16x8), None, Some(Block8x8), Some(Block8x4)],
+            [Some(Block16x16), Some(Block16x8), Some(Block8x16), Some(Block8x8)],
+            [Some(Block16x32), Some(Block16x16), None, Some(Block8x16)],
+            [Some(Block32x16), None, Some(Block16x16), Some(Block16x8)],
+            [Some(Block32x32), Some(Block32x16), Some(Block16x32), Some(Block16x16)],
+            [Some(Block32x64), Some(Block32x32), None, Some(Block16x32)],
+            [Some(Block64x32), None, Some(Block32x32), Some(Block32x16)],
+            [Some(Block64x64), Some(Block64x32), Some(Block32x64), Some(Block32x32)],
+        ];
+        for (i, &bsize) in ALL_BLOCK_SIZES.iter().enumerate() {
+            for (j, &(ss_x, ss_y)) in [(0, 0), (0, 1), (1, 0), (1, 1)].iter().enumerate() {
+                assert_eq!(
+                    ss_size_lookup(bsize, ss_x, ss_y),
+                    expected[i][j],
+                    "ss_size_lookup({bsize:?}, {ss_x}, {ss_y})"
+                );
+            }
+        }
+    }
+
+    /// `uv_plane_block_size(b, 1, 1)` reproduces the prior 13-arm match
+    /// (the old tile.rs / reconstruct_inter.rs `uv_plane_block_size`).
+    #[test]
+    fn uv_plane_block_size_420_reproduces_old_match() {
+        use BlockSize::*;
+        // The exact 13-arm match from the deleted helpers.
+        let expected = |b: BlockSize| -> BlockSize {
+            match b {
+                Block4x4 | Block4x8 | Block8x4 | Block8x8 => Block4x4,
+                Block8x16 => Block4x8,
+                Block16x8 => Block8x4,
+                Block16x16 => Block8x8,
+                Block16x32 => Block8x16,
+                Block32x16 => Block16x8,
+                Block32x32 => Block16x16,
+                Block32x64 => Block16x32,
+                Block64x32 => Block32x16,
+                Block64x64 => Block32x32,
+            }
+        };
+        for &b in &ALL_BLOCK_SIZES {
+            assert_eq!(uv_plane_block_size(b, 1, 1), expected(b), "{b:?}");
+        }
+    }
+
+    /// 4:4:4 identity: `uv_plane_block_size(b, 0, 0) == b` for all b.
+    #[test]
+    fn uv_plane_block_size_444_identity() {
+        for &b in &ALL_BLOCK_SIZES {
+            assert_eq!(uv_plane_block_size(b, 0, 0), b, "{b:?}");
+        }
+    }
+
+    /// `uv_plane_tx_size` at (1,1) caps to the 4:2:0 chroma block's
+    /// max TX, matching `min(luma_tx, max_txsize(uv_bsize))`.
+    #[test]
+    fn uv_plane_tx_size_420_caps() {
+        use BlockSize::*;
+        use crate::transforms::TxSize;
+        // Block16x16 -> uv Block8x8 -> max TX Tx8x8.
+        assert_eq!(uv_plane_tx_size(Block16x16, TxSize::Tx16x16, 1, 1), TxSize::Tx8x8);
+        assert_eq!(uv_plane_tx_size(Block16x16, TxSize::Tx4x4, 1, 1), TxSize::Tx4x4);
+        // Block64x64 -> uv Block32x32 -> max TX Tx32x32 (no cap).
+        assert_eq!(uv_plane_tx_size(Block64x64, TxSize::Tx32x32, 1, 1), TxSize::Tx32x32);
     }
 }
