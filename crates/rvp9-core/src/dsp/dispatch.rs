@@ -238,14 +238,13 @@ pub struct SimdDispatch {
     pub(crate) iht8x8_add:
         fn(input: &[i32; 64], dst: &mut [u8], stride: usize, tx_type: TxType),
 
-    /// G4-δ — 16×16 hybrid inverse transform (ADST/DCT combinations).
-    /// Signature mirrors
+    /// Wave F F5 — 16×16 hybrid inverse transform (ADST/DCT
+    /// combinations). Signature mirrors
     /// [`crate::transforms::inverse::iht16x16_256_add`] — the
-    /// `tx_type` arg picks the row/col 1D pair. **Currently
-    /// scalar-only**: the AVX2 port of `vp9_iht16x16_256_add_sse2`
-    /// is deferred to Wave F. The slot exists so dispatch sites can
-    /// be written against `(dispatch.iht16x16_add())(...)` today
-    /// without a signature churn when the SIMD impl lands.
+    /// `tx_type` arg picks the row/col 1D pair. On x86_64 AVX2 CPUs
+    /// this points at the safe wrapper
+    /// [`crate::dsp::x86_64::iht16x16_add_avx2`]; otherwise it points
+    /// at the scalar reference.
     pub(crate) iht16x16_add:
         fn(input: &[i32; 256], dst: &mut [u8], stride: usize, tx_type: TxType),
 
@@ -390,8 +389,18 @@ impl SimdDispatch {
         #[cfg(not(target_arch = "x86_64"))]
         let iht8x8_add: fn(&[i32; 64], &mut [u8], usize, TxType) = scalar_iht8x8_add;
 
-        // ---- G4-δ — 16×16 hybrid ADST slot. Scalar-only in this gap;
-        // AVX2 port deferred to Wave F (F5).
+        // ---- Wave F F5 — 16×16 hybrid ADST slot. AVX2-capable on
+        // x86_64 when `caps.avx2 == true`; scalar fallback otherwise.
+        // Same finisher-only approach as the other hybrid AVX2 slots:
+        // the i32 1D math is bit-exact to the scalar reference and the
+        // final add/clamp/pack stage is vectorised.
+        #[cfg(target_arch = "x86_64")]
+        let iht16x16_add: fn(&[i32; 256], &mut [u8], usize, TxType) = if caps.avx2 {
+            crate::dsp::x86_64::iht16x16_add_avx2
+        } else {
+            scalar_iht16x16_add
+        };
+        #[cfg(not(target_arch = "x86_64"))]
         let iht16x16_add: fn(&[i32; 256], &mut [u8], usize, TxType) = scalar_iht16x16_add;
 
         // ---- Wave F F3 / F4 — 16×16 idct EOB-bucket fast paths.
@@ -517,9 +526,8 @@ impl SimdDispatch {
     }
 
     /// Dispatch the 16×16 hybrid inverse-transform + add kernel
-    /// (G4-δ — ADST/DCT combinations). The `tx_type` arg routes to
-    /// the right row / col 1D pair. **Scalar-only** in the current
-    /// rollout; the AVX2 port is Wave F follow-up.
+    /// (Wave F F5 — ADST/DCT combinations). The `tx_type` arg routes
+    /// to the right row / col 1D pair.
     #[inline]
     #[must_use]
     pub fn iht16x16_add(&self) -> fn(&[i32; 256], &mut [u8], usize, TxType) {
@@ -761,23 +769,39 @@ mod tests {
         );
     }
 
-    /// G4-δ iht16x16 slot is scalar regardless of caps (AVX2 port is
-    /// Wave F follow-up).
+    /// Forcing `avx2 = false` falls back to the scalar reference for
+    /// the Wave F F5 iht16x16 slot; forcing `avx2 = true` installs the
+    /// AVX2 wrapper and the slot must NOT collapse to the scalar fn.
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn forced_scalar_caps_installs_scalar_iht16x16() {
-        for avx2 in [false, true] {
-            let mut caps = detect();
-            caps.avx2 = avx2;
-            let d = SimdDispatch::build(caps);
-            let scalar: fn(&[i32; 256], &mut [u8], usize, TxType) =
-                crate::transforms::inverse::iht16x16_256_add;
-            assert_eq!(
-                d.iht16x16_add() as usize,
-                scalar as usize,
-                "iht16x16 must be scalar regardless of caps (avx2={avx2})"
-            );
-        }
+        let scalar: fn(&[i32; 256], &mut [u8], usize, TxType) =
+            crate::transforms::inverse::iht16x16_256_add;
+        let avx2_fp: fn(&[i32; 256], &mut [u8], usize, TxType) =
+            crate::dsp::x86_64::iht16x16_add_avx2;
+
+        let mut caps_scalar = detect();
+        caps_scalar.avx2 = false;
+        let d_scalar = SimdDispatch::build(caps_scalar);
+        assert_eq!(
+            d_scalar.iht16x16_add() as usize,
+            scalar as usize,
+            "avx2=false must install the scalar iht16x16_256_add"
+        );
+
+        let mut caps_avx2 = detect();
+        caps_avx2.avx2 = true;
+        let d_avx2 = SimdDispatch::build(caps_avx2);
+        assert_ne!(
+            d_avx2.iht16x16_add() as usize,
+            scalar as usize,
+            "avx2=true must NOT install the scalar iht16x16_256_add"
+        );
+        assert_eq!(
+            d_avx2.iht16x16_add() as usize,
+            avx2_fp as usize,
+            "avx2=true must install the iht16x16_add_avx2 wrapper"
+        );
     }
 
     /// Wave F F3 / F4 — 16×16 EOB-bucket fast paths route to AVX2

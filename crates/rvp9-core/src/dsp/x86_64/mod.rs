@@ -43,6 +43,7 @@ pub mod idct16x16_avx2;
 pub mod idct32x32_avx2;
 pub mod iht4x4_avx2;
 pub mod iht8x8_avx2;
+pub mod iht16x16_avx2;
 
 pub use dc_pred_4x4_avx2::dc_predictor_4x4_avx2;
 pub use idct4x4_avx2::idct4x4_add_avx2;
@@ -53,3 +54,4 @@ pub use idct16x16_avx2::idct16x16_add_avx2;
 pub use idct32x32_avx2::idct32x32_add_avx2;
 pub use iht4x4_avx2::iht4x4_add_avx2;
 pub use iht8x8_avx2::iht8x8_add_avx2;
+pub use iht16x16_avx2::iht16x16_add_avx2;
