@@ -113,6 +113,30 @@ fn scalar_lpf_horizontal_4(
     crate::loopfilter::lpf_horizontal_4(pixels, s_index, pitch, blimit, limit, thresh)
 }
 
+/// Scalar reference for the `lpf_vertical_8` dispatch slot (Wave G G4).
+fn scalar_lpf_vertical_8(
+    pixels: &mut [u8],
+    s_index: usize,
+    pitch: usize,
+    blimit: u8,
+    limit: u8,
+    thresh: u8,
+) {
+    crate::loopfilter::lpf_vertical_8(pixels, s_index, pitch, blimit, limit, thresh)
+}
+
+/// Scalar reference for the `lpf_horizontal_8` dispatch slot (Wave G G5).
+fn scalar_lpf_horizontal_8(
+    pixels: &mut [u8],
+    s_index: usize,
+    pitch: usize,
+    blimit: u8,
+    limit: u8,
+    thresh: u8,
+) {
+    crate::loopfilter::lpf_horizontal_8(pixels, s_index, pitch, blimit, limit, thresh)
+}
+
 /// Scalar reference for the `plane_dequant_pair` dispatch slot. Direct
 /// alias of [`crate::quant::plane_dequant_pair`]; the slot exists to
 /// reserve the family naming for a future per-coefficient dequant
@@ -159,6 +183,8 @@ fn scalar_extend_frame_borders(yv12: &mut Yv12Buffer) {
 /// | G4-β  | hybrid ADST 8×8   | `iht8x8_add`               | yes       |
 /// | G4.3b / F10 | loopfilter v4 | `lpf_vertical_4`           | yes (Wave F G F10) |
 /// | G3    | loopfilter h4     | `lpf_horizontal_4`         | yes (Wave G G3) |
+/// | G4    | loopfilter v8     | `lpf_vertical_8`           | yes (Wave G G4) |
+/// | G5    | loopfilter h8     | `lpf_horizontal_8`         | yes (Wave G G5) |
 /// | G4.4a | quant dequant     | `plane_dequant_pair`       | scalar only (architectural — no batchable kernel) |
 /// | G4.4b | frame-buffers     | `extend_frame_borders`     | scalar only (memcpy/memset already vectorised) |
 ///
@@ -324,6 +350,24 @@ pub struct SimdDispatch {
     /// across the 8 columns without any transpose); otherwise it
     /// points at the scalar reference.
     pub(crate) lpf_horizontal_4:
+        fn(pixels: &mut [u8], s_index: usize, pitch: usize, blimit: u8, limit: u8, thresh: u8),
+
+    /// Wave G G4 — 8-tap vertical loopfilter edge kernel. Signature
+    /// mirrors [`crate::loopfilter::lpf_vertical_8`]. On x86_64 AVX2
+    /// CPUs this points at
+    /// [`crate::dsp::x86_64::lpf_vertical_8_avx2`] (F10 transpose +
+    /// new `filter8` + `flat_mask4` lane-parallel inner); otherwise
+    /// at the scalar reference.
+    pub(crate) lpf_vertical_8:
+        fn(pixels: &mut [u8], s_index: usize, pitch: usize, blimit: u8, limit: u8, thresh: u8),
+
+    /// Wave G G5 — 8-tap horizontal loopfilter edge kernel. Signature
+    /// mirrors [`crate::loopfilter::lpf_horizontal_8`]. On x86_64 AVX2
+    /// CPUs this points at
+    /// [`crate::dsp::x86_64::lpf_horizontal_8_avx2`] (no-transpose
+    /// row-load + same `filter8` + `flat_mask4` inner as G4);
+    /// otherwise at the scalar reference.
+    pub(crate) lpf_horizontal_8:
         fn(pixels: &mut [u8], s_index: usize, pitch: usize, blimit: u8, limit: u8, thresh: u8),
 
     /// G4.4a — paired (DC, AC) dequant LUT lookup. Signature mirrors
@@ -525,6 +569,26 @@ impl SimdDispatch {
         #[cfg(not(target_arch = "x86_64"))]
         let lpf_horizontal_4: fn(&mut [u8], usize, usize, u8, u8, u8) = scalar_lpf_horizontal_4;
 
+        // ---- Wave G G4 — 8-tap vertical loopfilter (AVX2 promoted). ----
+        #[cfg(target_arch = "x86_64")]
+        let lpf_vertical_8: fn(&mut [u8], usize, usize, u8, u8, u8) = if caps.avx2 {
+            crate::dsp::x86_64::lpf_vertical_8_avx2
+        } else {
+            scalar_lpf_vertical_8
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let lpf_vertical_8: fn(&mut [u8], usize, usize, u8, u8, u8) = scalar_lpf_vertical_8;
+
+        // ---- Wave G G5 — 8-tap horizontal loopfilter (AVX2 promoted). ----
+        #[cfg(target_arch = "x86_64")]
+        let lpf_horizontal_8: fn(&mut [u8], usize, usize, u8, u8, u8) = if caps.avx2 {
+            crate::dsp::x86_64::lpf_horizontal_8_avx2
+        } else {
+            scalar_lpf_horizontal_8
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let lpf_horizontal_8: fn(&mut [u8], usize, usize, u8, u8, u8) = scalar_lpf_horizontal_8;
+
         // ---- G4.4a / G4.4b — scalar-only slots (deferral rationale
         // per field docstrings on `SimdDispatch`). ----
         let plane_dequant_pair: fn(i32, QuantizerDeltas) -> (i16, i16) = scalar_plane_dequant_pair;
@@ -546,6 +610,8 @@ impl SimdDispatch {
             iht16x16_add,
             lpf_vertical_4,
             lpf_horizontal_4,
+            lpf_vertical_8,
+            lpf_horizontal_8,
             plane_dequant_pair,
             extend_frame_borders,
         }
@@ -691,6 +757,24 @@ impl SimdDispatch {
     #[must_use]
     pub fn lpf_horizontal_4(&self) -> fn(&mut [u8], usize, usize, u8, u8, u8) {
         self.lpf_horizontal_4
+    }
+
+    /// Dispatch the 8-tap vertical loopfilter (Wave G G4). On AVX2
+    /// x86_64 hosts this routes to the transpose+filter8 wrapper;
+    /// otherwise to scalar. See field doc.
+    #[inline]
+    #[must_use]
+    pub fn lpf_vertical_8(&self) -> fn(&mut [u8], usize, usize, u8, u8, u8) {
+        self.lpf_vertical_8
+    }
+
+    /// Dispatch the 8-tap horizontal loopfilter (Wave G G5). On AVX2
+    /// x86_64 hosts this routes to the no-transpose row-load wrapper
+    /// with the same filter8 inner as G4; otherwise to scalar.
+    #[inline]
+    #[must_use]
+    pub fn lpf_horizontal_8(&self) -> fn(&mut [u8], usize, usize, u8, u8, u8) {
+        self.lpf_horizontal_8
     }
 
     /// Dispatch the paired (DC, AC) dequant LUT lookup (G4.4a). Slot
@@ -1177,5 +1261,43 @@ mod tests {
             avx2 as usize,
             "avx2=true must install the AVX2 lpf_horizontal_4 wrapper"
         );
+    }
+
+    /// Wave G G4 — `lpf_vertical_8` slot routes correctly per caps.
+    #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn forced_caps_installs_correct_lpf_vertical_8() {
+        let mut caps_s = detect();
+        caps_s.avx2 = false;
+        let d_s = SimdDispatch::build(caps_s);
+        let scalar: fn(&mut [u8], usize, usize, u8, u8, u8) = super::scalar_lpf_vertical_8;
+        assert_eq!(d_s.lpf_vertical_8() as usize, scalar as usize);
+
+        let mut caps_a = detect();
+        caps_a.avx2 = true;
+        let d_a = SimdDispatch::build(caps_a);
+        let avx2: fn(&mut [u8], usize, usize, u8, u8, u8) =
+            crate::dsp::x86_64::lpf_vertical_8_avx2;
+        assert_eq!(d_a.lpf_vertical_8() as usize, avx2 as usize);
+    }
+
+    /// Wave G G5 — `lpf_horizontal_8` slot routes correctly per caps.
+    #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn forced_caps_installs_correct_lpf_horizontal_8() {
+        let mut caps_s = detect();
+        caps_s.avx2 = false;
+        let d_s = SimdDispatch::build(caps_s);
+        let scalar: fn(&mut [u8], usize, usize, u8, u8, u8) = super::scalar_lpf_horizontal_8;
+        assert_eq!(d_s.lpf_horizontal_8() as usize, scalar as usize);
+
+        let mut caps_a = detect();
+        caps_a.avx2 = true;
+        let d_a = SimdDispatch::build(caps_a);
+        let avx2: fn(&mut [u8], usize, usize, u8, u8, u8) =
+            crate::dsp::x86_64::lpf_horizontal_8_avx2;
+        assert_eq!(d_a.lpf_horizontal_8() as usize, avx2 as usize);
     }
 }
