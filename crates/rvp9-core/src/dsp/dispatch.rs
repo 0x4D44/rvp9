@@ -78,10 +78,12 @@ impl LpfAvx2Mask {
     const H16: Self = Self(1 << 5);
 
     /// Wave H H7 bisection (2026-05-22) confirmed only
-    /// `lpf_vertical_16_avx2` (V16) causes conformance regressions
-    /// (58/201 vectors). The other 5 kernels are bit-exact and ship
-    /// active by default. See `notes/wave-h-loopfilter-avx2-gate.md`.
-    const DEFAULT: Self = Self(Self::ALL.0 & !Self::V16.0);
+    /// `lpf_vertical_16_avx2` (V16) caused conformance regressions
+    /// (58/201 vectors); the bug was a swapped `flat_mask5` operand set
+    /// (inner p1..p4 / q1..q4 instead of outer p4..p7 / q4..q7). Wave H
+    /// H7 fix (2026-05-22) restored bit-exact parity, so V16 is now
+    /// included in DEFAULT alongside the other 5 kernels.
+    const DEFAULT: Self = Self::ALL;
 
     #[inline]
     fn contains(self, other: Self) -> bool {
@@ -96,14 +98,14 @@ impl LpfAvx2Mask {
 
 /// Parse the `RVP9_DSP_LOOPFILTER_AVX2` env var into an [`LpfAvx2Mask`].
 ///
-/// - `None` or `""` → [`LpfAvx2Mask::DEFAULT`] (5 known-good AVX2 kernels
-///   active; `lpf_vertical_16` stays scalar pending H7 fix)
+/// - `None` or `""` → [`LpfAvx2Mask::DEFAULT`] (all 6 AVX2 lpf kernels
+///   active post-H7 fix)
 /// - `"0"` → [`LpfAvx2Mask::NONE`] (all kernels scalar, for differential
 ///   testing)
-/// - `"1"` → [`LpfAvx2Mask::ALL`] (all 6 AVX2 paths active, including
-///   the still-buggy V16; used to reproduce the regression for fix work)
+/// - `"1"` → [`LpfAvx2Mask::ALL`] (all 6 AVX2 paths active — same as
+///   DEFAULT post-H7)
 /// - comma list (e.g. `"v4,h4"`) → only the listed kernels active;
-///   used for H7 bisection
+///   useful for bisection or regression-bisecting future SIMD work
 ///
 /// Unknown tokens are silently ignored; the function is deliberately
 /// permissive so bisection scripts can pass partial lists without
@@ -1741,20 +1743,21 @@ mod tests {
         caps.avx2 = true;
         let d = SimdDispatch::build(caps);
         type Lpf = fn(&mut [u8], usize, usize, u8, u8, u8);
-        // 5 known-good AVX2 paths route through their AVX2 wrappers.
+        // All 6 AVX2 paths route through their AVX2 wrappers post-H7
+        // (V16 was the bug fixed in 2026-05-22; flat_mask5 outer-pixel
+        // operands were swapped for inner ones).
         let v4_avx2: Lpf = crate::dsp::x86_64::lpf_vertical_4_avx2;
         let h4_avx2: Lpf = crate::dsp::x86_64::lpf_horizontal_4_avx2;
         let v8_avx2: Lpf = crate::dsp::x86_64::lpf_vertical_8_avx2;
         let h8_avx2: Lpf = crate::dsp::x86_64::lpf_horizontal_8_avx2;
+        let v16_avx2: Lpf = crate::dsp::x86_64::lpf_vertical_16_avx2;
         let h16_avx2: Lpf = crate::dsp::x86_64::lpf_horizontal_16_avx2;
         assert_eq!(d.lpf_vertical_4() as usize, v4_avx2 as usize);
         assert_eq!(d.lpf_horizontal_4() as usize, h4_avx2 as usize);
         assert_eq!(d.lpf_vertical_8() as usize, v8_avx2 as usize);
         assert_eq!(d.lpf_horizontal_8() as usize, h8_avx2 as usize);
+        assert_eq!(d.lpf_vertical_16() as usize, v16_avx2 as usize);
         assert_eq!(d.lpf_horizontal_16() as usize, h16_avx2 as usize);
-        // The buggy v16 kernel stays scalar pending H7 fix.
-        let v16_scalar: Lpf = super::scalar_lpf_vertical_16;
-        assert_eq!(d.lpf_vertical_16() as usize, v16_scalar as usize);
     }
 
     /// Wave H H1 + H7 — when caps.avx2 is forced false, all 6
@@ -1786,9 +1789,12 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn parse_lpf_avx2_mask_grammar() {
-        // Unset / empty -> DEFAULT (5 kernels, v16 off)
+        // Unset / empty -> DEFAULT (all 6 kernels post-H7 fix)
         assert_eq!(super::parse_lpf_avx2_mask(None), super::LpfAvx2Mask::DEFAULT);
         assert_eq!(super::parse_lpf_avx2_mask(Some("")), super::LpfAvx2Mask::DEFAULT);
+        // DEFAULT == ALL post-H7 — keep the bisection grammar intact
+        // for future SIMD work even though the gate is now a no-op.
+        assert_eq!(super::LpfAvx2Mask::DEFAULT, super::LpfAvx2Mask::ALL);
         // "0" -> NONE
         assert_eq!(super::parse_lpf_avx2_mask(Some("0")), super::LpfAvx2Mask::NONE);
         // "1" -> ALL
