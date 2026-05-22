@@ -97,6 +97,22 @@ fn scalar_lpf_vertical_4(
     crate::loopfilter::lpf_vertical_4(pixels, s_index, pitch, blimit, limit, thresh)
 }
 
+/// Scalar reference for the `lpf_horizontal_4` dispatch slot. Direct
+/// alias of [`crate::loopfilter::lpf_horizontal_4`]; mirrors the
+/// `scalar_lpf_vertical_4` shape — both slots take the same six-arg
+/// signature and route to either an AVX2 wrapper or the scalar
+/// reference per [`SimdDispatch::build`].
+fn scalar_lpf_horizontal_4(
+    pixels: &mut [u8],
+    s_index: usize,
+    pitch: usize,
+    blimit: u8,
+    limit: u8,
+    thresh: u8,
+) {
+    crate::loopfilter::lpf_horizontal_4(pixels, s_index, pitch, blimit, limit, thresh)
+}
+
 /// Scalar reference for the `plane_dequant_pair` dispatch slot. Direct
 /// alias of [`crate::quant::plane_dequant_pair`]; the slot exists to
 /// reserve the family naming for a future per-coefficient dequant
@@ -142,6 +158,7 @@ fn scalar_extend_frame_borders(yv12: &mut Yv12Buffer) {
 /// | G4-β  | hybrid ADST 4×4   | `iht4x4_add`               | yes       |
 /// | G4-β  | hybrid ADST 8×8   | `iht8x8_add`               | yes       |
 /// | G4.3b / F10 | loopfilter v4 | `lpf_vertical_4`           | yes (Wave F G F10) |
+/// | G3    | loopfilter h4     | `lpf_horizontal_4`         | yes (Wave G G3) |
 /// | G4.4a | quant dequant     | `plane_dequant_pair`       | scalar only (architectural — no batchable kernel) |
 /// | G4.4b | frame-buffers     | `extend_frame_borders`     | scalar only (memcpy/memset already vectorised) |
 ///
@@ -151,11 +168,11 @@ fn scalar_extend_frame_borders(yv12: &mut Yv12Buffer) {
 /// 3. transforms inverse — `idct4x4_add` (G4.2) + `idct8x8_add` (G4.1) + `idct16x16_add` (Wave D G4.2 full-kernel rollout) + `idct32x32_add` (Wave E G4-α) + `iht4x4_add` + `iht8x8_add` (Wave E G4-β) all have AVX2 impls.
 /// 4. quant dequant — `plane_dequant_pair` slot present (G4.4a).
 /// 5. intra-pred — `dc_predictor_4x4` has AVX2 impl (G4.3a).
-/// 6. loopfilter — `lpf_vertical_4` slot has AVX2 impl (Wave F G F10).
+/// 6. loopfilter — `lpf_vertical_4` (Wave F G F10) and `lpf_horizontal_4` (Wave G G3) slots both have AVX2 impls.
 ///
 /// 6/6 families have a slot; 6/6 carry a non-scalar Tier-1 impl
 /// (idct4x4, idct8x8, idct16x16, idct32x32, iht4x4, iht8x8,
-/// dc_predictor_4x4, lpf_vertical_4). The deferred slots
+/// dc_predictor_4x4, lpf_vertical_4, lpf_horizontal_4). The deferred slots
 /// (plane_dequant_pair, extend_frame_borders) reserve naming +
 /// dispatch shape so future AVX2 work can fill them without
 /// changing call sites. See per-field docstrings for the per-family
@@ -296,6 +313,17 @@ pub struct SimdDispatch {
     /// columns back into row-major form and store); otherwise it
     /// points at the scalar reference.
     pub(crate) lpf_vertical_4:
+        fn(pixels: &mut [u8], s_index: usize, pitch: usize, blimit: u8, limit: u8, thresh: u8),
+
+    /// Wave G G3 — horizontal 4-tap loopfilter edge kernel.
+    /// Signature mirrors [`crate::loopfilter::lpf_horizontal_4`]. On
+    /// x86_64 AVX2 CPUs this points at the safe wrapper
+    /// [`crate::dsp::x86_64::lpf_horizontal_4_avx2`] (each tap is a
+    /// contiguous 8-byte row, so 8 columns naturally line up as the
+    /// 8 low bytes of each `__m128i` — `filter4` runs lane-parallel
+    /// across the 8 columns without any transpose); otherwise it
+    /// points at the scalar reference.
+    pub(crate) lpf_horizontal_4:
         fn(pixels: &mut [u8], s_index: usize, pitch: usize, blimit: u8, limit: u8, thresh: u8),
 
     /// G4.4a — paired (DC, AC) dequant LUT lookup. Signature mirrors
@@ -487,6 +515,16 @@ impl SimdDispatch {
         #[cfg(not(target_arch = "x86_64"))]
         let lpf_vertical_4: fn(&mut [u8], usize, usize, u8, u8, u8) = scalar_lpf_vertical_4;
 
+        // ---- Wave G G3 — horizontal 4-tap loopfilter (AVX2 promoted). ----
+        #[cfg(target_arch = "x86_64")]
+        let lpf_horizontal_4: fn(&mut [u8], usize, usize, u8, u8, u8) = if caps.avx2 {
+            crate::dsp::x86_64::lpf_horizontal_4_avx2
+        } else {
+            scalar_lpf_horizontal_4
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let lpf_horizontal_4: fn(&mut [u8], usize, usize, u8, u8, u8) = scalar_lpf_horizontal_4;
+
         // ---- G4.4a / G4.4b — scalar-only slots (deferral rationale
         // per field docstrings on `SimdDispatch`). ----
         let plane_dequant_pair: fn(i32, QuantizerDeltas) -> (i16, i16) = scalar_plane_dequant_pair;
@@ -507,6 +545,7 @@ impl SimdDispatch {
             iht8x8_add,
             iht16x16_add,
             lpf_vertical_4,
+            lpf_horizontal_4,
             plane_dequant_pair,
             extend_frame_borders,
         }
@@ -642,6 +681,16 @@ impl SimdDispatch {
     #[must_use]
     pub fn lpf_vertical_4(&self) -> fn(&mut [u8], usize, usize, u8, u8, u8) {
         self.lpf_vertical_4
+    }
+
+    /// Dispatch the horizontal 4-tap loopfilter kernel (Wave G G3).
+    /// On AVX2 x86_64 hosts this routes to the no-transpose
+    /// lane-parallel wrapper; otherwise to the scalar reference. See
+    /// field doc on [`SimdDispatch::lpf_horizontal_4`].
+    #[inline]
+    #[must_use]
+    pub fn lpf_horizontal_4(&self) -> fn(&mut [u8], usize, usize, u8, u8, u8) {
+        self.lpf_horizontal_4
     }
 
     /// Dispatch the paired (DC, AC) dequant LUT lookup (G4.4a). Slot
@@ -1045,8 +1094,10 @@ mod tests {
 
     /// G4.4a / G4.4b deferred slots are always scalar regardless of
     /// caps. (G4.3b `lpf_vertical_4` was promoted to AVX2 in Wave F
-    /// G F10; see `forced_caps_installs_correct_lpf_vertical_4` for
-    /// that slot's parity assertion.)
+    /// G F10 and `lpf_horizontal_4` in Wave G G3; see
+    /// `forced_caps_installs_correct_lpf_vertical_4` and
+    /// `forced_caps_installs_correct_lpf_horizontal_4` for those
+    /// slots' parity assertions.)
     /// See `forced_scalar_caps_installs_scalar_idct8x8` for the
     /// miri-skip rationale.
     #[cfg(target_arch = "x86_64")]
@@ -1093,6 +1144,38 @@ mod tests {
             d_a.lpf_vertical_4() as usize,
             avx2 as usize,
             "avx2=true must install the AVX2 lpf_vertical_4 wrapper"
+        );
+    }
+
+    /// Wave G G3 — `lpf_horizontal_4` slot routes to the AVX2 safe
+    /// wrapper when `caps.avx2 == true` and to the scalar reference
+    /// otherwise. See `forced_scalar_caps_installs_scalar_idct8x8`
+    /// for the miri-skip rationale.
+    #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn forced_caps_installs_correct_lpf_horizontal_4() {
+        // avx2 = false -> scalar.
+        let mut caps_s = detect();
+        caps_s.avx2 = false;
+        let d_s = SimdDispatch::build(caps_s);
+        let scalar: fn(&mut [u8], usize, usize, u8, u8, u8) = super::scalar_lpf_horizontal_4;
+        assert_eq!(
+            d_s.lpf_horizontal_4() as usize,
+            scalar as usize,
+            "avx2=false must install the scalar lpf_horizontal_4"
+        );
+
+        // avx2 = true -> AVX2 wrapper.
+        let mut caps_a = detect();
+        caps_a.avx2 = true;
+        let d_a = SimdDispatch::build(caps_a);
+        let avx2: fn(&mut [u8], usize, usize, u8, u8, u8) =
+            crate::dsp::x86_64::lpf_horizontal_4_avx2;
+        assert_eq!(
+            d_a.lpf_horizontal_4() as usize,
+            avx2 as usize,
+            "avx2=true must install the AVX2 lpf_horizontal_4 wrapper"
         );
     }
 }
