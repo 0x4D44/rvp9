@@ -178,6 +178,20 @@ fn scalar_v_predictor(dst: &mut [u8], stride: usize, bs: usize, above: &[u8]) {
     crate::intra_pred::v_predictor(dst, stride, bs, ctx);
 }
 
+/// Scalar adapter for the `h_predictor` dispatch slot (Wave I I2).
+/// The underlying [`crate::intra_pred::h_predictor`] takes a
+/// `PredCtx`; H_PRED reads only `ctx.left`, so this adapter rebuilds
+/// a minimal context (`above: &[]`, `above_left: 0`) to match the
+/// flat slot signature `(dst, stride, bs, left)`.
+fn scalar_h_predictor(dst: &mut [u8], stride: usize, bs: usize, left: &[u8]) {
+    let ctx = crate::intra_pred::PredCtx {
+        above: &[],    // H_PRED ignores `above`.
+        left,
+        above_left: 0, // H_PRED ignores `above_left`.
+    };
+    crate::intra_pred::h_predictor(dst, stride, bs, ctx);
+}
+
 /// Scalar reference for the `lpf_vertical_4` dispatch slot. Direct
 /// alias of [`crate::loopfilter::lpf_vertical_4`]; the slot exists to
 /// reserve the family naming for a future AVX2 implementation, see
@@ -608,6 +622,17 @@ pub struct SimdDispatch {
     /// `PredCtx`.
     pub(crate) v_predictor: fn(dst: &mut [u8], stride: usize, bs: usize, above: &[u8]),
 
+    /// Wave I I2 — size-parametric H_PRED intra-predictor. Signature
+    /// is the flat-arg form `(dst, stride, bs, left)` (compare:
+    /// [`crate::intra_pred::h_predictor`] takes a `PredCtx`; H_PRED
+    /// reads only `ctx.left`). `bs ∈ {4, 8, 16, 32}`; the wrapper
+    /// dispatches internally on `bs` to the matching wide-store width
+    /// (4 / 8 / 16 / 32 bytes). On x86_64 AVX2 CPUs this points at
+    /// the safe wrapper [`crate::dsp::x86_64::h_predictor_avx2`];
+    /// otherwise it points at a thin scalar adapter that re-builds a
+    /// `PredCtx`.
+    pub(crate) h_predictor: fn(dst: &mut [u8], stride: usize, bs: usize, left: &[u8]),
+
     /// G4.3b / Wave F G F10 — vertical 4-tap loopfilter edge kernel.
     /// Signature mirrors [`crate::loopfilter::lpf_vertical_4`]. On
     /// x86_64 AVX2 CPUs this points at the safe wrapper
@@ -893,6 +918,21 @@ impl SimdDispatch {
         };
         #[cfg(not(target_arch = "x86_64"))]
         let v_predictor: fn(&mut [u8], usize, usize, &[u8]) = scalar_v_predictor;
+
+        // ---- Wave I I2 — size-parametric H_PRED intra-predictor. ----
+        // Mirrors V_PRED structurally: one slot covers all four
+        // `bs ∈ {4, 8, 16, 32}` sizes; the wrapper dispatches
+        // internally on `bs` to the matching wide-store width. H_PRED
+        // broadcasts `left[r]` across row r (V_PRED broadcasts
+        // `above` down the column axis).
+        #[cfg(target_arch = "x86_64")]
+        let h_predictor: fn(&mut [u8], usize, usize, &[u8]) = if caps.avx2 {
+            crate::dsp::x86_64::h_predictor_avx2
+        } else {
+            scalar_h_predictor
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let h_predictor: fn(&mut [u8], usize, usize, &[u8]) = scalar_h_predictor;
 
         // ---- Wave E G4-β — hybrid ADST slots. AVX2-capable on x86_64
         // when `caps.avx2 == true`; scalar fallback otherwise. The AVX2
@@ -1242,6 +1282,7 @@ impl SimdDispatch {
             idct16x16_38_add,
             dc_predictor_4x4,
             v_predictor,
+            h_predictor,
             iht4x4_add,
             iht8x8_add,
             iht16x16_add,
@@ -1395,6 +1436,19 @@ impl SimdDispatch {
     #[must_use]
     pub fn v_predictor(&self) -> fn(&mut [u8], usize, usize, &[u8]) {
         self.v_predictor
+    }
+
+    /// Dispatch the size-parametric H_PRED intra-predictor (Wave I I2).
+    /// The slot uses the flat `(dst, stride, bs, left)` signature;
+    /// the AVX2 wrapper dispatches internally on `bs ∈ {4, 8, 16, 32}`
+    /// to the matching wide-store width. The scalar adapter wraps
+    /// [`crate::intra_pred::h_predictor`] (which requires a `PredCtx`
+    /// — the adapter sets `above = &[]` and `above_left = 0` since
+    /// H_PRED ignores those fields).
+    #[inline]
+    #[must_use]
+    pub fn h_predictor(&self) -> fn(&mut [u8], usize, usize, &[u8]) {
+        self.h_predictor
     }
 
     /// Dispatch the vertical 4-tap loopfilter kernel (G4.3b / Wave F
@@ -1964,6 +2018,60 @@ mod tests {
             d.v_predictor() as usize,
             scalar as usize,
             "avx2=false must install the scalar v_predictor adapter"
+        );
+    }
+
+    /// Wave I I2 — on AVX2 hosts the `h_predictor` slot routes through
+    /// the AVX2 wrapper and produces output bit-identical to the scalar
+    /// adapter for a deterministic input across all four `bs` sizes.
+    /// Mirrors `v_predictor_avx2_routing_avx2_cpu` (Wave I I1) — only
+    /// the input axis differs (`left` here, `above` in I1).
+    #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn h_predictor_avx2_routing_avx2_cpu() {
+        if !std::is_x86_feature_detected!("avx2") {
+            return;
+        }
+        let mut caps = detect();
+        caps.avx2 = true;
+        let d = SimdDispatch::build(caps);
+        // Fn-pointer-identity check: AVX2 caps must install the AVX2
+        // safe wrapper.
+        let avx2_fp: fn(&mut [u8], usize, usize, &[u8]) =
+            crate::dsp::x86_64::h_predictor_avx2;
+        assert_eq!(
+            d.h_predictor() as usize,
+            avx2_fp as usize,
+            "avx2=true must install the h_predictor_avx2 wrapper"
+        );
+        // Output-parity check: AVX2 slot must agree with the scalar
+        // adapter on a deterministic input across all four sizes.
+        let scalar: fn(&mut [u8], usize, usize, &[u8]) = super::scalar_h_predictor;
+        for bs in [4usize, 8, 16, 32] {
+            let left: Vec<u8> = (0..bs).map(|i| (i as u32 * 19 + 5) as u8).collect();
+            let mut dst_slot = vec![0u8; bs * bs];
+            let mut dst_scalar = vec![0u8; bs * bs];
+            (d.h_predictor())(&mut dst_slot, bs, bs, &left);
+            scalar(&mut dst_scalar, bs, bs, &left);
+            assert_eq!(dst_slot, dst_scalar, "h_predictor parity mismatch at bs={bs}");
+        }
+    }
+
+    /// Wave I I2 — when caps.avx2 is forced false, the `h_predictor`
+    /// slot routes to the scalar adapter.
+    #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn forced_scalar_caps_installs_scalar_h_predictor() {
+        let mut caps = detect();
+        caps.avx2 = false;
+        let d = SimdDispatch::build(caps);
+        let scalar: fn(&mut [u8], usize, usize, &[u8]) = super::scalar_h_predictor;
+        assert_eq!(
+            d.h_predictor() as usize,
+            scalar as usize,
+            "avx2=false must install the scalar h_predictor adapter"
         );
     }
 

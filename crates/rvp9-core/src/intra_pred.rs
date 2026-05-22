@@ -759,7 +759,7 @@ pub fn intra_predict(
                 dc_predict_with_availability(dst, stride, bs, ctx.above, ctx.left, dc_avail);
             }
             (IntraMode::V, _) => (dispatch.v_predictor())(dst, stride, bs, ctx.above),
-            (IntraMode::H, _) => h_predictor(dst, stride, bs, ctx),
+            (IntraMode::H, _) => (dispatch.h_predictor())(dst, stride, bs, ctx.left),
             (IntraMode::D45, true) => d45_predictor_4x4(dst, stride, ctx.above),
             (IntraMode::D45, false) => d45_predictor(dst, stride, bs, ctx.above),
             (IntraMode::D135, _) => d135_predictor(dst, stride, bs, ctx),
