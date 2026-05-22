@@ -762,15 +762,22 @@ pub fn intra_predict(
             }
             (IntraMode::V, _) => (dispatch.v_predictor())(dst, stride, bs, ctx.above),
             (IntraMode::H, _) => (dispatch.h_predictor())(dst, stride, bs, ctx.left),
-            (IntraMode::D45, true) => d45_predictor_4x4(dst, stride, ctx.above),
-            (IntraMode::D45, false) => d45_predictor(dst, stride, bs, ctx.above),
-            (IntraMode::D135, _) => d135_predictor(dst, stride, bs, ctx),
-            (IntraMode::D117, _) => d117_predictor(dst, stride, bs, ctx),
-            (IntraMode::D153, _) => d153_predictor(dst, stride, bs, ctx),
-            (IntraMode::D207, true) => d207_predictor_4x4(dst, stride, ctx.left),
-            (IntraMode::D207, false) => d207_predictor(dst, stride, bs, ctx.left),
-            (IntraMode::D63, true) => d63_predictor_4x4(dst, stride, ctx.above),
-            (IntraMode::D63, false) => d63_predictor(dst, stride, bs, ctx.above),
+            // Wave K — directional modes route through dispatch slots
+            // (AVX2 on capable x86_64 hosts, scalar elsewhere). The
+            // slot fns route the `bs == 4` specialization internally for
+            // D45/D63/D207, so no `bs == 4` arm is needed here.
+            (IntraMode::D45, _) => (dispatch.d45_predictor())(dst, stride, bs, ctx.above),
+            (IntraMode::D135, _) => {
+                (dispatch.d135_predictor())(dst, stride, bs, ctx.above, ctx.left, ctx.above_left)
+            }
+            (IntraMode::D117, _) => {
+                (dispatch.d117_predictor())(dst, stride, bs, ctx.above, ctx.left, ctx.above_left)
+            }
+            (IntraMode::D153, _) => {
+                (dispatch.d153_predictor())(dst, stride, bs, ctx.above, ctx.left, ctx.above_left)
+            }
+            (IntraMode::D207, _) => (dispatch.d207_predictor())(dst, stride, bs, ctx.left),
+            (IntraMode::D63, _) => (dispatch.d63_predictor())(dst, stride, bs, ctx.above),
             (IntraMode::Tm, _) => (dispatch.tm_predictor())(
                 dst,
                 stride,

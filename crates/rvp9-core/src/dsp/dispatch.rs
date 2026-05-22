@@ -257,6 +257,88 @@ fn scalar_tm_predictor(
     crate::intra_pred::tm_predictor(dst, stride, bs, ctx);
 }
 
+/// Scalar adapter for the `d45_predictor` dispatch slot (Wave K K1).
+/// Replicates the scalar's `bs == 4` specialization split internally so
+/// the slot holds one flat-arg fn matching
+/// [`crate::dsp::x86_64::d45_predictor_avx2`].
+fn scalar_d45_predictor(dst: &mut [u8], stride: usize, bs: usize, above: &[u8]) {
+    if bs == 4 {
+        crate::intra_pred::d45_predictor_4x4(dst, stride, above);
+    } else {
+        crate::intra_pred::d45_predictor(dst, stride, bs, above);
+    }
+}
+
+/// Scalar adapter for the `d63_predictor` dispatch slot (Wave K K3).
+fn scalar_d63_predictor(dst: &mut [u8], stride: usize, bs: usize, above: &[u8]) {
+    if bs == 4 {
+        crate::intra_pred::d63_predictor_4x4(dst, stride, above);
+    } else {
+        crate::intra_pred::d63_predictor(dst, stride, bs, above);
+    }
+}
+
+/// Scalar adapter for the `d207_predictor` dispatch slot (Wave K K2).
+fn scalar_d207_predictor(dst: &mut [u8], stride: usize, bs: usize, left: &[u8]) {
+    if bs == 4 {
+        crate::intra_pred::d207_predictor_4x4(dst, stride, left);
+    } else {
+        crate::intra_pred::d207_predictor(dst, stride, bs, left);
+    }
+}
+
+/// Scalar adapter for the `d117_predictor` dispatch slot (Wave K K5).
+/// D117 has no 4×4 special — the generic kernel covers all sizes.
+fn scalar_d117_predictor(
+    dst: &mut [u8],
+    stride: usize,
+    bs: usize,
+    above: &[u8],
+    left: &[u8],
+    above_left: u8,
+) {
+    let ctx = crate::intra_pred::PredCtx {
+        above,
+        left,
+        above_left,
+    };
+    crate::intra_pred::d117_predictor(dst, stride, bs, ctx);
+}
+
+/// Scalar adapter for the `d135_predictor` dispatch slot (Wave K K4).
+fn scalar_d135_predictor(
+    dst: &mut [u8],
+    stride: usize,
+    bs: usize,
+    above: &[u8],
+    left: &[u8],
+    above_left: u8,
+) {
+    let ctx = crate::intra_pred::PredCtx {
+        above,
+        left,
+        above_left,
+    };
+    crate::intra_pred::d135_predictor(dst, stride, bs, ctx);
+}
+
+/// Scalar adapter for the `d153_predictor` dispatch slot (Wave K K6).
+fn scalar_d153_predictor(
+    dst: &mut [u8],
+    stride: usize,
+    bs: usize,
+    above: &[u8],
+    left: &[u8],
+    above_left: u8,
+) {
+    let ctx = crate::intra_pred::PredCtx {
+        above,
+        left,
+        above_left,
+    };
+    crate::intra_pred::d153_predictor(dst, stride, bs, ctx);
+}
+
 /// Scalar reference for the `lpf_vertical_4` dispatch slot. Direct
 /// alias of [`crate::loopfilter::lpf_vertical_4`]; the slot exists to
 /// reserve the family naming for a future AVX2 implementation, see
@@ -491,6 +573,13 @@ fn scalar_extend_frame_borders(yv12: &mut Yv12Buffer) {
     crate::frame::extend_frame_borders(yv12)
 }
 
+/// Flat-arg fn type for the ctx-taking directional intra-predictors
+/// (D117 / D135 / D153, Wave K): `(dst, stride, bs, above, left,
+/// above_left)`. Factored into a `type` alias per clippy's
+/// `type_complexity` suggestion.
+pub type DirectionalCtxPredFn =
+    fn(dst: &mut [u8], stride: usize, bs: usize, above: &[u8], left: &[u8], above_left: u8);
+
 /// The runtime SIMD kernel dispatch table.
 ///
 /// Populated once per process via [`init`] (production path). In-crate
@@ -715,6 +804,35 @@ pub struct SimdDispatch {
         left: &[u8],
         above_left: u8,
     ),
+
+    /// Wave K K1 — D45_PRED directional intra-predictor (`above`-only).
+    /// Flat-arg form `(dst, stride, bs, above)`; the slot fn internally
+    /// routes the `bs == 4` libvpx specialization. On x86_64 AVX2 CPUs
+    /// points at [`crate::dsp::x86_64::d45_predictor_avx2`]; otherwise a
+    /// scalar adapter ([`scalar_d45_predictor`]).
+    pub(crate) d45_predictor: fn(dst: &mut [u8], stride: usize, bs: usize, above: &[u8]),
+
+    /// Wave K K3 — D63_PRED directional intra-predictor (`above`-only).
+    /// See [`SimdDispatch::d45_predictor`]; routes `bs == 4` internally.
+    pub(crate) d63_predictor: fn(dst: &mut [u8], stride: usize, bs: usize, above: &[u8]),
+
+    /// Wave K K2 — D207_PRED directional intra-predictor (`left`-only).
+    /// On AVX2 CPUs points at [`crate::dsp::x86_64::d207_predictor_avx2`].
+    pub(crate) d207_predictor: fn(dst: &mut [u8], stride: usize, bs: usize, left: &[u8]),
+
+    /// Wave K K5 — D117_PRED directional intra-predictor. Flat-arg form
+    /// `(dst, stride, bs, above, left, above_left)`. Generic for all
+    /// sizes (no 4×4 special). On AVX2 CPUs points at
+    /// [`crate::dsp::x86_64::d117_predictor_avx2`].
+    pub(crate) d117_predictor: DirectionalCtxPredFn,
+
+    /// Wave K K4 — D135_PRED directional intra-predictor. See
+    /// [`SimdDispatch::d117_predictor`].
+    pub(crate) d135_predictor: DirectionalCtxPredFn,
+
+    /// Wave K K6 — D153_PRED directional intra-predictor. See
+    /// [`SimdDispatch::d117_predictor`].
+    pub(crate) d153_predictor: DirectionalCtxPredFn,
 
     /// Wave I I4 — size-parametric DC_PRED predictor (full neighbours
     /// available). Covers the `(above_available, left_available) =
@@ -1177,6 +1295,65 @@ impl SimdDispatch {
         };
         #[cfg(not(target_arch = "x86_64"))]
         let tm_predictor: fn(&mut [u8], usize, usize, &[u8], &[u8], u8) = scalar_tm_predictor;
+
+        // ---- Wave K — directional intra-predictors (D45/D63/D207/
+        // D117/D135/D153). Each slot covers all bs ∈ {4, 8, 16, 32};
+        // the AVX2 wrappers (and scalar adapters) route the bs == 4
+        // libvpx specialization internally for D45/D63/D207. D117/D135/
+        // D153 are generic for all sizes. AVX2 on x86_64 when caps.avx2.
+        #[cfg(target_arch = "x86_64")]
+        let d45_predictor: fn(&mut [u8], usize, usize, &[u8]) = if caps.avx2 {
+            crate::dsp::x86_64::d45_predictor_avx2
+        } else {
+            scalar_d45_predictor
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let d45_predictor: fn(&mut [u8], usize, usize, &[u8]) = scalar_d45_predictor;
+
+        #[cfg(target_arch = "x86_64")]
+        let d63_predictor: fn(&mut [u8], usize, usize, &[u8]) = if caps.avx2 {
+            crate::dsp::x86_64::d63_predictor_avx2
+        } else {
+            scalar_d63_predictor
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let d63_predictor: fn(&mut [u8], usize, usize, &[u8]) = scalar_d63_predictor;
+
+        #[cfg(target_arch = "x86_64")]
+        let d207_predictor: fn(&mut [u8], usize, usize, &[u8]) = if caps.avx2 {
+            crate::dsp::x86_64::d207_predictor_avx2
+        } else {
+            scalar_d207_predictor
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let d207_predictor: fn(&mut [u8], usize, usize, &[u8]) = scalar_d207_predictor;
+
+        #[cfg(target_arch = "x86_64")]
+        let d117_predictor: DirectionalCtxPredFn = if caps.avx2 {
+            crate::dsp::x86_64::d117_predictor_avx2
+        } else {
+            scalar_d117_predictor
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let d117_predictor: DirectionalCtxPredFn = scalar_d117_predictor;
+
+        #[cfg(target_arch = "x86_64")]
+        let d135_predictor: DirectionalCtxPredFn = if caps.avx2 {
+            crate::dsp::x86_64::d135_predictor_avx2
+        } else {
+            scalar_d135_predictor
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let d135_predictor: DirectionalCtxPredFn = scalar_d135_predictor;
+
+        #[cfg(target_arch = "x86_64")]
+        let d153_predictor: DirectionalCtxPredFn = if caps.avx2 {
+            crate::dsp::x86_64::d153_predictor_avx2
+        } else {
+            scalar_d153_predictor
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let d153_predictor: DirectionalCtxPredFn = scalar_d153_predictor;
 
         // ---- Wave I I4 — DC_PRED family extension (size-parametric).
         // Four new slots covering all four availability variants:
@@ -1701,6 +1878,12 @@ impl SimdDispatch {
             v_predictor,
             h_predictor,
             tm_predictor,
+            d45_predictor,
+            d63_predictor,
+            d207_predictor,
+            d117_predictor,
+            d135_predictor,
+            d153_predictor,
             dc_predict_full,
             dc_predict_top,
             dc_predict_left,
@@ -1892,6 +2075,52 @@ impl SimdDispatch {
         &self,
     ) -> fn(&mut [u8], usize, usize, &[u8], &[u8], u8) {
         self.tm_predictor
+    }
+
+    /// Dispatch the D45_PRED directional intra-predictor (Wave K K1).
+    /// Flat `(dst, stride, bs, above)` signature; routes the `bs == 4`
+    /// libvpx specialization internally.
+    #[inline]
+    #[must_use]
+    pub fn d45_predictor(&self) -> fn(&mut [u8], usize, usize, &[u8]) {
+        self.d45_predictor
+    }
+
+    /// Dispatch the D63_PRED directional intra-predictor (Wave K K3).
+    #[inline]
+    #[must_use]
+    pub fn d63_predictor(&self) -> fn(&mut [u8], usize, usize, &[u8]) {
+        self.d63_predictor
+    }
+
+    /// Dispatch the D207_PRED directional intra-predictor (Wave K K2).
+    /// Flat `(dst, stride, bs, left)` signature.
+    #[inline]
+    #[must_use]
+    pub fn d207_predictor(&self) -> fn(&mut [u8], usize, usize, &[u8]) {
+        self.d207_predictor
+    }
+
+    /// Dispatch the D117_PRED directional intra-predictor (Wave K K5).
+    /// Flat `(dst, stride, bs, above, left, above_left)` signature.
+    #[inline]
+    #[must_use]
+    pub fn d117_predictor(&self) -> DirectionalCtxPredFn {
+        self.d117_predictor
+    }
+
+    /// Dispatch the D135_PRED directional intra-predictor (Wave K K4).
+    #[inline]
+    #[must_use]
+    pub fn d135_predictor(&self) -> DirectionalCtxPredFn {
+        self.d135_predictor
+    }
+
+    /// Dispatch the D153_PRED directional intra-predictor (Wave K K6).
+    #[inline]
+    #[must_use]
+    pub fn d153_predictor(&self) -> DirectionalCtxPredFn {
+        self.d153_predictor
     }
 
     /// Dispatch the size-parametric DC_PRED (full neighbours) predictor
@@ -2679,6 +2908,122 @@ mod tests {
             d_s.tm_predictor() as usize,
             scalar_fp as usize,
             "avx2=false must install the scalar tm_predictor adapter"
+        );
+    }
+
+    /// Wave K — directional slot routing. Forced-AVX2 installs the AVX2
+    /// wrapper (fn-pointer identity, no call → host AVX2 not required);
+    /// forced-scalar installs the scalar adapter. Covers all six modes.
+    #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn directional_avx2_routing_avx2_cpu() {
+        type Slot4 = fn(&mut [u8], usize, usize, &[u8]);
+        type Slot6 = fn(&mut [u8], usize, usize, &[u8], &[u8], u8);
+
+        let mut caps_a = detect();
+        caps_a.avx2 = true;
+        let d_a = SimdDispatch::build(caps_a);
+
+        // 4-arg slots: D45, D63, D207.
+        let cases4: &[(Slot4, Slot4, Slot4, &str)] = &[
+            (
+                d_a.d45_predictor(),
+                crate::dsp::x86_64::d45_predictor_avx2,
+                super::scalar_d45_predictor,
+                "d45",
+            ),
+            (
+                d_a.d63_predictor(),
+                crate::dsp::x86_64::d63_predictor_avx2,
+                super::scalar_d63_predictor,
+                "d63",
+            ),
+            (
+                d_a.d207_predictor(),
+                crate::dsp::x86_64::d207_predictor_avx2,
+                super::scalar_d207_predictor,
+                "d207",
+            ),
+        ];
+        for &(slot, avx2_fp, scalar_fp, name) in cases4 {
+            assert_eq!(slot as usize, avx2_fp as usize, "avx2=true must install {name}_avx2");
+            assert_ne!(
+                slot as usize, scalar_fp as usize,
+                "avx2=true must NOT install scalar {name}"
+            );
+        }
+
+        // 6-arg slots: D117, D135, D153.
+        let cases6: &[(Slot6, Slot6, Slot6, &str)] = &[
+            (
+                d_a.d117_predictor(),
+                crate::dsp::x86_64::d117_predictor_avx2,
+                super::scalar_d117_predictor,
+                "d117",
+            ),
+            (
+                d_a.d135_predictor(),
+                crate::dsp::x86_64::d135_predictor_avx2,
+                super::scalar_d135_predictor,
+                "d135",
+            ),
+            (
+                d_a.d153_predictor(),
+                crate::dsp::x86_64::d153_predictor_avx2,
+                super::scalar_d153_predictor,
+                "d153",
+            ),
+        ];
+        for &(slot, avx2_fp, scalar_fp, name) in cases6 {
+            assert_eq!(slot as usize, avx2_fp as usize, "avx2=true must install {name}_avx2");
+            assert_ne!(
+                slot as usize, scalar_fp as usize,
+                "avx2=true must NOT install scalar {name}"
+            );
+        }
+    }
+
+    /// Wave K — forced-scalar caps install the scalar directional
+    /// adapters for all six modes.
+    #[test]
+    fn forced_scalar_caps_installs_scalar_directional() {
+        type Slot4 = fn(&mut [u8], usize, usize, &[u8]);
+        type Slot6 = fn(&mut [u8], usize, usize, &[u8], &[u8], u8);
+
+        let mut caps_s = detect();
+        caps_s.avx2 = false;
+        let d_s = SimdDispatch::build(caps_s);
+
+        assert_eq!(
+            d_s.d45_predictor() as usize,
+            super::scalar_d45_predictor as Slot4 as usize,
+            "avx2=false must install scalar d45"
+        );
+        assert_eq!(
+            d_s.d63_predictor() as usize,
+            super::scalar_d63_predictor as Slot4 as usize,
+            "avx2=false must install scalar d63"
+        );
+        assert_eq!(
+            d_s.d207_predictor() as usize,
+            super::scalar_d207_predictor as Slot4 as usize,
+            "avx2=false must install scalar d207"
+        );
+        assert_eq!(
+            d_s.d117_predictor() as usize,
+            super::scalar_d117_predictor as Slot6 as usize,
+            "avx2=false must install scalar d117"
+        );
+        assert_eq!(
+            d_s.d135_predictor() as usize,
+            super::scalar_d135_predictor as Slot6 as usize,
+            "avx2=false must install scalar d135"
+        );
+        assert_eq!(
+            d_s.d153_predictor() as usize,
+            super::scalar_d153_predictor as Slot6 as usize,
+            "avx2=false must install scalar d153"
         );
     }
 
