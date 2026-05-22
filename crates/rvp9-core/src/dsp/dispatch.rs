@@ -931,8 +931,9 @@ pub struct SimdDispatch {
 
     /// Wave I I5 — integer-pel copy: copy a `w × h` block from `src`
     /// to `dst`. Mirrors [`crate::inter::convolve_copy`] (libvpx
-    /// `vpx_convolve_copy_c`). Scalar-only at I5; AVX2 wiring deferred
-    /// to Wave J.
+    /// `vpx_convolve_copy_c`). Wave J J1 promotes this slot to AVX2 on
+    /// x86_64 hosts that report `caps.avx2`; non-AVX2 hosts (and
+    /// non-x86_64 targets) keep the scalar reference.
     pub(crate) convolve_copy:
         fn(src: &[u8], src_stride: usize, dst: &mut [u8], dst_stride: usize, w: usize, h: usize),
 
@@ -1548,14 +1549,21 @@ impl SimdDispatch {
             &mut [i32],
         ) = scalar_plane_dequant_finisher;
 
-        // ---- Wave I I5 — motion-compensation dispatch slots
-        // (scalar-only). Direct aliases of the existing scalar
-        // `crate::inter::filter::*` fns — those already match the slot
-        // signatures verbatim (no PredCtx-style wrapping needed). The
-        // slots reserve the family name and dispatch shape so Wave J
-        // can promote individual fns to AVX2 without touching the call
-        // sites in `inter_predictor`. No caps gating: scalar regardless
-        // of host ISA at I5.
+        // ---- Wave I I5 — motion-compensation dispatch slots. Direct
+        // aliases of the existing scalar `crate::inter::filter::*` fns
+        // — those already match the slot signatures verbatim (no
+        // PredCtx-style wrapping needed). The slots reserve the family
+        // name and dispatch shape so individual fns can be promoted to
+        // AVX2 without touching the call sites in `inter_predictor`.
+        //
+        // ---- Wave J J1 — AVX2 convolve_copy promotion. ----
+        #[cfg(target_arch = "x86_64")]
+        let convolve_copy: fn(&[u8], usize, &mut [u8], usize, usize, usize) = if caps.avx2 {
+            crate::dsp::x86_64::convolve_copy_avx2
+        } else {
+            crate::inter::filter::convolve_copy
+        };
+        #[cfg(not(target_arch = "x86_64"))]
         let convolve_copy: fn(&[u8], usize, &mut [u8], usize, usize, usize) =
             crate::inter::filter::convolve_copy;
         let convolve_avg: fn(&[u8], usize, &mut [u8], usize, usize, usize) =
@@ -2933,26 +2941,50 @@ mod tests {
     // =================================================================
     // Wave I I5 — motion-compensation slot routing.
     // -----------------------------------------------------------------
-    // At I5 these slots are scalar regardless of caps (AVX2 promotion
-    // deferred to Wave J). Each test pins the slot fn pointer to the
-    // matching `crate::inter::filter::*` scalar fn to catch silent
-    // regressions when Wave J wires AVX2 variants — once Wave J lands,
-    // these tests will be refactored into the same `avx2-on / scalar
-    // forced-off` pattern used by I1-I4 / H6.
+    // At I5 these slots were scalar regardless of caps. Wave J promotes
+    // individual fns to AVX2 one by one — promoted slots split into the
+    // `avx2-on / scalar forced-off` pattern used by I1-I4 / H6; the
+    // remaining scalar slots keep the original single-test shape.
     // =================================================================
 
-    /// I5 — `convolve_copy` slot points at the scalar
-    /// `crate::inter::filter::convolve_copy` fn at I5.
+    /// Wave J J1 — on AVX2 hosts the `convolve_copy` slot routes
+    /// through the AVX2 wrapper. Mirrors `v_predictor_avx2_routing_avx2_cpu`
+    /// — fn-pointer-identity check only (output-parity is covered by
+    /// the differential test in `convolve_copy_avx2::tests`).
+    #[cfg(target_arch = "x86_64")]
     #[cfg_attr(miri, ignore)]
     #[test]
-    fn convolve_copy_dispatches_correctly() {
-        let d = SimdDispatch::build(detect());
+    fn convolve_copy_avx2_routing_avx2_cpu() {
+        if !std::is_x86_feature_detected!("avx2") {
+            return;
+        }
+        let mut caps = detect();
+        caps.avx2 = true;
+        let d = SimdDispatch::build(caps);
+        let avx2_fp: fn(&[u8], usize, &mut [u8], usize, usize, usize) =
+            crate::dsp::x86_64::convolve_copy_avx2;
+        assert_eq!(
+            d.convolve_copy() as usize,
+            avx2_fp as usize,
+            "avx2=true must install the convolve_copy_avx2 wrapper"
+        );
+    }
+
+    /// Wave J J1 — when caps.avx2 is forced false, the `convolve_copy`
+    /// slot routes to the scalar reference.
+    #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn forced_scalar_caps_installs_scalar_convolve_copy() {
+        let mut caps = detect();
+        caps.avx2 = false;
+        let d = SimdDispatch::build(caps);
         let scalar: fn(&[u8], usize, &mut [u8], usize, usize, usize) =
             crate::inter::filter::convolve_copy;
         assert_eq!(
             d.convolve_copy() as usize,
             scalar as usize,
-            "I5: convolve_copy slot must install the scalar reference"
+            "avx2=false must install the scalar convolve_copy reference"
         );
     }
 
