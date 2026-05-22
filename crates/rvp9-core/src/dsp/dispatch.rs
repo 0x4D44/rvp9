@@ -580,6 +580,24 @@ fn scalar_extend_frame_borders(yv12: &mut Yv12Buffer) {
 pub type DirectionalCtxPredFn =
     fn(dst: &mut [u8], stride: usize, bs: usize, above: &[u8], left: &[u8], above_left: u8);
 
+/// Fn type for the scaled 2-D sub-pel convolutions (Wave L L1):
+/// `(src, src_stride, dst, dst_stride, filters, x0_q4, x_step_q4,
+/// y0_q4, y_step_q4, w, h)`. Shared by the base and `_avg` slots and
+/// factored into a `type` alias per clippy's `type_complexity`.
+pub type ScaledConvolveFn = fn(
+    &[u8],
+    usize,
+    &mut [u8],
+    usize,
+    &[[i16; 8]; crate::inter::filter::SUBPEL_SHIFTS],
+    i32,
+    i32,
+    i32,
+    i32,
+    usize,
+    usize,
+);
+
 /// The runtime SIMD kernel dispatch table.
 ///
 /// Populated once per process via [`init`] (production path). In-crate
@@ -1145,6 +1163,17 @@ pub struct SimdDispatch {
         w: usize,
         h: usize,
     ),
+
+    /// Wave L L1 — scaled 2-D sub-pel convolution (reference frame a
+    /// different size: resize / spatial SVC). Mirrors
+    /// [`crate::inter::filter::convolve8_scaled`]. AVX2 on x86_64 hosts
+    /// reporting `caps.avx2`; scalar elsewhere.
+    pub(crate) convolve8_scaled: ScaledConvolveFn,
+
+    /// Wave L L1 — scaled 2-D sub-pel convolution with compound average.
+    /// Mirrors [`crate::inter::filter::convolve8_scaled_avg`]. AVX2 on
+    /// x86_64 when `caps.avx2`; scalar elsewhere.
+    pub(crate) convolve8_scaled_avg: ScaledConvolveFn,
 
     /// G4.4b — frame-border edge replication. Signature mirrors
     /// [`crate::frame::extend_frame_borders`]. **Currently scalar-only**:
@@ -1861,6 +1890,24 @@ impl SimdDispatch {
             usize,
         ) = crate::inter::filter::convolve8_avg;
 
+        // ---- Wave L L1 — AVX2 scaled 2-D convolution promotion. ----
+        #[cfg(target_arch = "x86_64")]
+        let convolve8_scaled: ScaledConvolveFn = if caps.avx2 {
+            crate::dsp::x86_64::convolve8_scaled_avx2
+        } else {
+            crate::inter::filter::convolve8_scaled
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let convolve8_scaled: ScaledConvolveFn = crate::inter::filter::convolve8_scaled;
+        #[cfg(target_arch = "x86_64")]
+        let convolve8_scaled_avg: ScaledConvolveFn = if caps.avx2 {
+            crate::dsp::x86_64::convolve8_scaled_avg_avx2
+        } else {
+            crate::inter::filter::convolve8_scaled_avg
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let convolve8_scaled_avg: ScaledConvolveFn = crate::inter::filter::convolve8_scaled_avg;
+
         // ---- G4.4b — scalar-only slot (deferral rationale on field doc). ----
         let extend_frame_borders: fn(&mut Yv12Buffer) = scalar_extend_frame_borders;
 
@@ -1912,6 +1959,8 @@ impl SimdDispatch {
             convolve8_avg_horiz,
             convolve8_avg_vert,
             convolve8_avg,
+            convolve8_scaled,
+            convolve8_scaled_avg,
             extend_frame_borders,
         }
     }
@@ -2374,6 +2423,22 @@ impl SimdDispatch {
         &self,
     ) -> fn(&[u8], usize, &mut [u8], usize, &[i16; 8], &[i16; 8], usize, usize) {
         self.convolve8_avg
+    }
+
+    /// Dispatch the scaled 2-D sub-pel convolution (Wave L L1). AVX2 on
+    /// x86_64 when `caps.avx2`; scalar elsewhere.
+    #[inline]
+    #[must_use]
+    pub fn convolve8_scaled(&self) -> ScaledConvolveFn {
+        self.convolve8_scaled
+    }
+
+    /// Dispatch the scaled 2-D sub-pel convolution with compound average
+    /// (Wave L L1). AVX2 on x86_64 when `caps.avx2`; scalar elsewhere.
+    #[inline]
+    #[must_use]
+    pub fn convolve8_scaled_avg(&self) -> ScaledConvolveFn {
+        self.convolve8_scaled_avg
     }
 
     /// Dispatch the frame-border edge-replication kernel (G4.4b). Slot
@@ -3717,6 +3782,53 @@ mod tests {
             d.convolve8_avg() as usize,
             scalar as usize,
             "avx2=false must install the scalar convolve8_avg reference"
+        );
+    }
+
+    /// Wave L L1 — AVX2-on routing for both scaled-convolve slots.
+    #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn convolve8_scaled_avx2_routing_avx2_cpu() {
+        if !std::is_x86_feature_detected!("avx2") {
+            return;
+        }
+        let mut caps = detect();
+        caps.avx2 = true;
+        let d = SimdDispatch::build(caps);
+        let base: ScaledConvolveFn = crate::dsp::x86_64::convolve8_scaled_avx2;
+        let avg: ScaledConvolveFn = crate::dsp::x86_64::convolve8_scaled_avg_avx2;
+        assert_eq!(
+            d.convolve8_scaled() as usize,
+            base as usize,
+            "avx2=true must install convolve8_scaled_avx2"
+        );
+        assert_eq!(
+            d.convolve8_scaled_avg() as usize,
+            avg as usize,
+            "avx2=true must install convolve8_scaled_avg_avx2"
+        );
+    }
+
+    /// Wave L L1 — forced-scalar caps install the scalar references.
+    #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn forced_scalar_caps_installs_scalar_convolve8_scaled() {
+        let mut caps = detect();
+        caps.avx2 = false;
+        let d = SimdDispatch::build(caps);
+        let base: ScaledConvolveFn = crate::inter::filter::convolve8_scaled;
+        let avg: ScaledConvolveFn = crate::inter::filter::convolve8_scaled_avg;
+        assert_eq!(
+            d.convolve8_scaled() as usize,
+            base as usize,
+            "avx2=false must install scalar convolve8_scaled"
+        );
+        assert_eq!(
+            d.convolve8_scaled_avg() as usize,
+            avg as usize,
+            "avx2=false must install scalar convolve8_scaled_avg"
         );
     }
 

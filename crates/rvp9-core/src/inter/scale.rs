@@ -28,9 +28,7 @@
 //! generates a sample position in the ref's coordinate system, and
 //! C.3 will handle reads beyond `[0, ref_w) × [0, ref_h)`.
 
-use super::filter::{
-    convolve8_scaled, convolve8_scaled_avg, kernel_for, SUBPEL_BITS, SUBPEL_MASK, SUBPEL_SHIFTS,
-};
+use super::filter::{kernel_for, SUBPEL_BITS, SUBPEL_MASK, SUBPEL_SHIFTS};
 use crate::bitstream::frame::InterpFilter;
 
 /// libvpx `REF_SCALE_SHIFT` (`vp9_scale.h:21`). Q14 fixed-point shift
@@ -275,9 +273,8 @@ pub fn inter_predictor(
     // load-bearing — see encoder caller at
     // `rvp9-encoder/src/lib.rs:3342`).
     //
-    // The scaled path (sf.is_scaled() == true) still calls the
-    // scalar `convolve8_scaled[_avg]` fns directly; scaled-MC slots
-    // are deferred to Wave J alongside any AVX2 promotion.
+    // The scaled path (sf.is_scaled() == true) routes through the
+    // dispatch table too (Wave L L1 promoted both scaled slots to AVX2).
     let dispatch = crate::dsp::get();
 
     if sf.is_scaled() {
@@ -286,35 +283,24 @@ pub fn inter_predictor(
         // is identical to the 2-D form (filter row 0 is the identity
         // tap, so an "unscaled" axis collapses cleanly inside the
         // inner loop).
-        if is_compound_avg {
-            convolve8_scaled_avg(
-                src,
-                src_stride,
-                dst,
-                dst_stride,
-                filters,
-                subpel_x_q4,
-                sf.x_step_q4,
-                subpel_y_q4,
-                sf.y_step_q4,
-                w,
-                h,
-            );
+        let scaled = if is_compound_avg {
+            dispatch.convolve8_scaled_avg()
         } else {
-            convolve8_scaled(
-                src,
-                src_stride,
-                dst,
-                dst_stride,
-                filters,
-                subpel_x_q4,
-                sf.x_step_q4,
-                subpel_y_q4,
-                sf.y_step_q4,
-                w,
-                h,
-            );
-        }
+            dispatch.convolve8_scaled()
+        };
+        scaled(
+            src,
+            src_stride,
+            dst,
+            dst_stride,
+            filters,
+            subpel_x_q4,
+            sf.x_step_q4,
+            subpel_y_q4,
+            sf.y_step_q4,
+            w,
+            h,
+        );
         return;
     }
 
@@ -360,7 +346,7 @@ pub const SUBPEL_MASK_Q4: i32 = SUBPEL_MASK;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::filter::{convolve8, convolve8_horiz, convolve8_scaled_horiz};
+    use super::super::filter::{convolve8, convolve8_horiz, convolve8_scaled, convolve8_scaled_horiz};
 
     // --- Constants and validity gate -----------------------------------
 
