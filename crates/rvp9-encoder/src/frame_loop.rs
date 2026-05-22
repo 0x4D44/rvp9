@@ -792,8 +792,19 @@ impl StreamEncoder {
         // pass `None` so `find_mv_refs` skips the prev-frame salvage
         // (matches the decoder's behaviour on the same gate, which
         // keeps the cross-decoder byte-exact invariant intact).
-        let prev_grid_slice: Option<&[PrevFrameMvRef]> = if !self.last_frame_was_key
-            && self.prev_mv_grid_dims == (mi_rows_us, mi_cols_us)
+        // A18 — Compute libvpx's `use_prev_frame_mvs` gate output but
+        // additionally apply an experiment gate: pass `None` unless
+        // `RVP9_A18_ACTIVATE` is set. Rationale documented in the
+        // picker (`lib.rs::pick_and_simulate_inter_encode_partitions`);
+        // tl;dr: activating exposes a picker-RD regression on testsrc
+        // (+240 BD-rate) that needs to be resolved before this can be
+        // enabled by default. Until then, the storage + write-back +
+        // API plumbing all stay in place so the activation is a
+        // one-line flip once the picker fix lands.
+        let gate_open = !self.last_frame_was_key
+            && self.prev_mv_grid_dims == (mi_rows_us, mi_cols_us);
+        let prev_grid_slice: Option<&[PrevFrameMvRef]> = if gate_open
+            && std::env::var_os("RVP9_A18_ACTIVATE").is_some()
         {
             self.prev_mv_grid.as_deref()
         } else {
@@ -899,6 +910,10 @@ impl StreamEncoder {
             &sb_partitions,
             &segmentation_params,
             refresh_flags,
+            // A18 — Thread the same `prev_mv_grid` the picker used so
+            // the writer's `find_mv_refs` produces the SAME
+            // `best_ref_mv` the decoder will compute.
+            prev_grid_slice,
         )?;
 
         // Commit the new reconstruction as the encoder's new LAST ref.
@@ -1419,6 +1434,16 @@ fn build_inter_packet_with_residuals(
     sb_partitions: &[Vec<InterPartitionLeafDesc>],
     segmentation: &SegmentationParams,
     refresh_frame_flags: u8,
+    // A18 — Previous frame's MV grid threaded into the writer so its
+    // per-block `find_mv_refs` call (used to compute the NEWMV
+    // residual's `best_ref_mv`) sees the SAME prev-frame salvage the
+    // decoder sees. Without this, the writer's `best_ref_mv` would
+    // diverge from the decoder's `best_ref_mv` for NEWMV blocks, the
+    // residual would decode against the wrong anchor, and the
+    // encoder's last_recon (computed from the picked MV) would
+    // diverge from the decoder's reconstruction (computed from
+    // best_ref_mv + delta).
+    prev_mv_grid: Option<&[PrevFrameMvRef]>,
 ) -> Result<Vec<u8>, EncodeError> {
     use rvp9_core::bitstream::SegmentationWriteParams;
     let mi_rows = height / 8;
@@ -1498,7 +1523,7 @@ fn build_inter_packet_with_residuals(
             mi_cols,
             tile_bounds,
             seg_write,
-            /* prev_mv_grid = */ None,
+            prev_mv_grid,
             &mut coef_ctx,
             coef_source,
         )?;

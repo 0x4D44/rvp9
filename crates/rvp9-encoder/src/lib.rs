@@ -2713,6 +2713,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // splats the captured MV/ref pair across every cell the
                 // block covers, so reading the leaf's top-left mi cell
                 // is sufficient and matches what the decoder will see.
+                //
+                // The activation gate (`RVP9_A18_ACTIVATE`) lives at
+                // the caller (`frame_loop::encode_inter_internal`); when
+                // gated off, `prev_mv_grid` is `None` here and this
+                // lookup returns `None` — i.e. find_mv_refs falls
+                // through to the pre-A18 spatial-only behaviour.
                 let leaf_prev_mv: Option<PrevFrameMvRef> = prev_mv_grid
                     .and_then(|g| {
                         g.get(leaf_mi_row * mi_cols_us + leaf_mi_col).copied()
