@@ -2436,6 +2436,36 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let mut diag_last_picks: usize = 0;
     let diag_golden_enabled = std::env::var("RVP9_DIAG_GOLDEN_PICKS").is_ok();
 
+    // E3 (2026-05-22) — NEWMV diagnosis. Env-gated (`RVP9_E3_MVDIAG`).
+    // For every picker-supported leaf we compute the LAST-ref
+    // `pick_inter_mode_luma_all_costs` breakdown and accumulate:
+    //   * per-mode win counts (which of ZERO/NEAREST/NEAR/NEW won the
+    //     4-way argmin on LAST),
+    //   * NEWMV MV magnitude histogram (|row|+|col| in 1/8-pel),
+    //   * for leaves where NEWMV had the lowest DISTORTION but did NOT
+    //     win the RD argmin: the RD gap and the MV-rate share of NEWMV's
+    //     cost (Hypothesis 3 evidence).
+    // A sample (first `E3_DIAG_SAMPLE_LIMIT`) of per-leaf rows is printed
+    // verbatim; the rest is summarised at frame end.
+    let e3_diag_enabled = std::env::var("RVP9_E3_MVDIAG").is_ok();
+    const E3_DIAG_SAMPLE_LIMIT: usize = 40;
+    let mut e3_sample_printed: usize = 0;
+    // win counts indexed [ZERO, NEAREST, NEAR, NEW].
+    let mut e3_win_counts = [0usize; 4];
+    let mut e3_total_leaves: usize = 0;
+    let mut e3_newmv_nonzero: usize = 0; // NEWMV MV magnitude > 0
+    let mut e3_newmv_mag_sum: u64 = 0;
+    let mut e3_newmv_mag_max: u32 = 0;
+    // Leaves where NEWMV had strictly lowest distortion among the 4.
+    let mut e3_newmv_best_dist: usize = 0;
+    // ...of those, how many NEWMV nonetheless LOST the RD argmin.
+    let mut e3_newmv_best_dist_lost: usize = 0;
+    // Accumulated NEWMV cost decomposition over the "best-dist-but-lost"
+    // leaves: rate vs distortion shares + RD gap to the winner.
+    let mut e3_lost_mv_rate_sum: u64 = 0;
+    let mut e3_lost_total_rate_sum: u64 = 0;
+    let mut e3_lost_rd_gap_sum: i128 = 0;
+
     // Initialise the recon planes from the LAST ref. ZERO-MV / skip
     // leaves get this as their final recon (no residual added); the
     // picker-driven leaves overwrite their region via the per-TX
@@ -2895,6 +2925,118 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let pick_last = pick_for_ref(&ref_y, &mvc, ref_frame_cost_last);
                 let pick_golden =
                     pick_for_ref(&ref_y_golden, &mvc_golden, ref_frame_cost_golden);
+
+                // E3 (2026-05-22) — capture the LAST-ref per-candidate
+                // cost breakdown. Read-only: rebuilds the same params
+                // `pick_for_ref` used for LAST, then calls
+                // `pick_inter_mode_luma_all_costs` (no encoder state is
+                // mutated). The veto logic above can change which mode
+                // *ships*, but the diagnosis question is "what does the
+                // picker's RD ranking prefer", so we read the raw 4-way
+                // ranking here.
+                if e3_diag_enabled {
+                    let nearest_in_bounds = mv_in_bounds(mvc.nearest);
+                    let near_in_bounds = mv_in_bounds(mvc.near);
+                    let mvc_safe = MvCandidates {
+                        nearest: if nearest_in_bounds { mvc.nearest } else { Mv::ZERO },
+                        near: if near_in_bounds { mvc.near } else { Mv::ZERO },
+                    };
+                    let params = InterModeSearchParams {
+                        block_size: leaf_bsize,
+                        src_plane: &src_y,
+                        src_offset: (leaf_px_x, leaf_px_y),
+                        ref_plane: &ref_y,
+                        mv_candidates: &mvc_safe,
+                        mv_limits,
+                        site_config: &site_config,
+                        mv_costs: &mv_costs,
+                        inter_mode_costs: &inter_costs,
+                        inter_mode_ctx: 0,
+                        quantizer: &quantizer,
+                        q_index: leaf_qindex,
+                        allow_hp: false,
+                        frame_kind,
+                        newmv_seed: sb_newmv_seed,
+                        ref_frame_rate_cost: ref_frame_cost_last,
+                    };
+                    let all =
+                        rvp9_core::mode_decision::inter::pick_inter_mode_luma_all_costs(
+                            &params,
+                        );
+                    // all = [ZERO, NEAREST, NEAR, NEW].
+                    e3_total_leaves += 1;
+                    // RD argmin (mirror the picker's own argmin).
+                    let mut win_idx = 0usize;
+                    for i in 1..4 {
+                        if all[i].best_rd_cost < all[win_idx].best_rd_cost {
+                            win_idx = i;
+                        }
+                    }
+                    e3_win_counts[win_idx] += 1;
+
+                    let new = &all[3];
+                    let new_mag =
+                        (i32::from(new.best_mv.row).abs()
+                            + i32::from(new.best_mv.col).abs()) as u32;
+                    if new_mag > 0 {
+                        e3_newmv_nonzero += 1;
+                    }
+                    e3_newmv_mag_sum += u64::from(new_mag);
+                    e3_newmv_mag_max = e3_newmv_mag_max.max(new_mag);
+
+                    // Did NEWMV have the strictly-lowest distortion?
+                    let new_best_dist = all
+                        .iter()
+                        .enumerate()
+                        .all(|(i, c)| i == 3 || new.best_distortion <= c.best_distortion)
+                        && all
+                            .iter()
+                            .enumerate()
+                            .any(|(i, c)| i != 3 && new.best_distortion < c.best_distortion);
+                    if new_best_dist {
+                        e3_newmv_best_dist += 1;
+                        if win_idx != 3 {
+                            e3_newmv_best_dist_lost += 1;
+                            // Decompose NEWMV's rate into mode + mv rate.
+                            // mv_rate = ROUND_POWER_OF_TWO(mv_cost*108, 7)
+                            // relative to mvc_safe.nearest (the ref MV).
+                            let diff_row =
+                                new.best_mv.row.wrapping_sub(mvc_safe.nearest.row);
+                            let diff_col =
+                                new.best_mv.col.wrapping_sub(mvc_safe.nearest.col);
+                            let raw = rvp9_core::cost::mv_cost::mv_cost(
+                                diff_row, diff_col, &mv_costs,
+                            )
+                            .max(0) as u64;
+                            let mv_rate = (raw * 108 + 64) >> 7;
+                            e3_lost_mv_rate_sum += mv_rate;
+                            e3_lost_total_rate_sum += u64::from(new.best_rate);
+                            let gap = i128::from(new.best_rd_cost)
+                                - i128::from(all[win_idx].best_rd_cost);
+                            e3_lost_rd_gap_sum += gap;
+                        }
+                    }
+
+                    if e3_sample_printed < E3_DIAG_SAMPLE_LIMIT {
+                        e3_sample_printed += 1;
+                        #[allow(clippy::print_stderr)]
+                        {
+                            let names = ["ZERO", "NEAREST", "NEAR", "NEW"];
+                            eprintln!(
+                                "E3 leaf px=({},{}) bs={:?} q={} nearest=({},{}) newmv=({},{}) mag={} | \
+                                 ZERO[rd={} d={} r={}] NEAREST[rd={} d={} r={}] NEAR[rd={} d={} r={}] NEW[rd={} d={} r={}] WIN={}",
+                                leaf_px_x, leaf_px_y, leaf_bsize, leaf_qindex,
+                                mvc_safe.nearest.row, mvc_safe.nearest.col,
+                                new.best_mv.row, new.best_mv.col, new_mag,
+                                all[0].best_rd_cost, all[0].best_distortion, all[0].best_rate,
+                                all[1].best_rd_cost, all[1].best_distortion, all[1].best_rate,
+                                all[2].best_rd_cost, all[2].best_distortion, all[2].best_rate,
+                                all[3].best_rd_cost, all[3].best_distortion, all[3].best_rate,
+                                names[win_idx],
+                            );
+                        }
+                    }
+                }
                 // A15 Phase B Step 5 (2026-05-22) — GOLDEN selection
                 // is DEFAULT-OFF.
                 //
@@ -3243,6 +3385,37 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 } else {
                     0.0
                 },
+            );
+        }
+    }
+
+    if e3_diag_enabled {
+        #[allow(clippy::print_stderr)]
+        {
+            let n = e3_total_leaves.max(1);
+            eprintln!(
+                "[E3-mvdiag] frame summary: leaves={} | RD-win: ZERO={} NEAREST={} NEAR={} NEW={} (NEW {:.1}%) | \
+                 newmv_nonzero_mv={} ({:.1}%) avg_mag={:.1} max_mag={} | \
+                 newmv_best_dist={} of_those_lost_rd={} | \
+                 lost-leaf avg: mv_rate={} total_rate={} rd_gap={}",
+                e3_total_leaves,
+                e3_win_counts[0], e3_win_counts[1], e3_win_counts[2], e3_win_counts[3],
+                100.0 * e3_win_counts[3] as f64 / n as f64,
+                e3_newmv_nonzero,
+                100.0 * e3_newmv_nonzero as f64 / n as f64,
+                e3_newmv_mag_sum as f64 / n as f64,
+                e3_newmv_mag_max,
+                e3_newmv_best_dist,
+                e3_newmv_best_dist_lost,
+                if e3_newmv_best_dist_lost > 0 {
+                    e3_lost_mv_rate_sum / e3_newmv_best_dist_lost as u64
+                } else { 0 },
+                if e3_newmv_best_dist_lost > 0 {
+                    e3_lost_total_rate_sum / e3_newmv_best_dist_lost as u64
+                } else { 0 },
+                if e3_newmv_best_dist_lost > 0 {
+                    e3_lost_rd_gap_sum / e3_newmv_best_dist_lost as i128
+                } else { 0 },
             );
         }
     }
