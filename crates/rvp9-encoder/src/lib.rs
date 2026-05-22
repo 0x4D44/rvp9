@@ -2058,6 +2058,107 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
 // F10.1c — inter-mode picker integration + real inter residual emission.
 // ---------------------------------------------------------------------------
 
+/// Mi-grid-backed [`rvp9_core::inter::mv_ref::NeighbourLookup`] adapter used
+/// by the encoder simulator to spatially seed
+/// [`rvp9_core::mode_decision::inter::MvCandidates`] from already-picked
+/// neighbour leaves.
+///
+/// Mirrors the writer-side `MiGridNeighbourLookup` in
+/// `rvp9-core::bitstream::modes_writer`. The writer's adapter is private
+/// to the core crate; we duplicate the small adapter here so the encoder
+/// can build the same lookup against its in-progress mi_grid (the
+/// encoder picks leaves in raster order and splats each leaf's
+/// `ModeInfo` into the grid right after picking, so all neighbour
+/// positions queried by `find_mv_refs` resolve to either already-picked
+/// cells or out-of-frame `None`).
+struct InterPickerMiGridLookup<'a> {
+    mi_grid: &'a [Option<rvp9_core::mode_info::ModeInfo>],
+    mi_cols: usize,
+    base_mi_row: i32,
+    base_mi_col: i32,
+    mi_rows: i32,
+    mi_cols_frame: i32,
+}
+
+impl<'a> InterPickerMiGridLookup<'a> {
+    fn new(
+        mi_grid: &'a [Option<rvp9_core::mode_info::ModeInfo>],
+        mi_cols: usize,
+        base_mi_row: usize,
+        base_mi_col: usize,
+        mi_rows: usize,
+    ) -> Self {
+        Self {
+            mi_grid,
+            mi_cols,
+            base_mi_row: base_mi_row as i32,
+            base_mi_col: base_mi_col as i32,
+            mi_rows: mi_rows as i32,
+            mi_cols_frame: mi_cols as i32,
+        }
+    }
+}
+
+impl rvp9_core::inter::mv_ref::NeighbourLookup for InterPickerMiGridLookup<'_> {
+    fn get(
+        &self,
+        pos: rvp9_core::inter::mv_ref::Position,
+    ) -> Option<&rvp9_core::mode_info::ModeInfo> {
+        let row = self.base_mi_row.checked_add(i32::from(pos.row))?;
+        let col = self.base_mi_col.checked_add(i32::from(pos.col))?;
+        if row < 0 || col < 0 || row >= self.mi_rows || col >= self.mi_cols_frame {
+            return None;
+        }
+        let idx = (row as usize) * self.mi_cols + (col as usize);
+        self.mi_grid.get(idx)?.as_ref()
+    }
+}
+
+/// Splat a single inter leaf's [`rvp9_core::mode_info::ModeInfo`] into
+/// every 8x8 cell the leaf covers in the in-progress mi_grid used by
+/// the A2.foreman spatial MV-ref propagation. Mirrors
+/// `frame_loop::splat_leaf_mode_info`, kept local so the encoder's
+/// per-leaf simulator stays self-contained.
+#[allow(clippy::too_many_arguments)]
+fn splat_inter_leaf_into_mi_grid(
+    mi_grid: &mut [Option<rvp9_core::mode_info::ModeInfo>],
+    mi_cols: usize,
+    leaf_mi_row: usize,
+    leaf_mi_col: usize,
+    leaf_bsize: BlockSize,
+    picked_mode: InterMode,
+    picked_mv: Mv,
+    segment_id: u8,
+    skip: bool,
+) {
+    use rvp9_core::bitstream::frame::InterpFilter as WireInterpFilter;
+    use rvp9_core::mode_info::{BlockMode, ModeInfo};
+    let n_8x8_wide = leaf_bsize.n_8x8_wide() as usize;
+    let n_8x8_high = leaf_bsize.n_8x8_high() as usize;
+    let cell = ModeInfo {
+        block_size: leaf_bsize,
+        tx_size: rvp9_core::block::max_txsize(leaf_bsize),
+        skip,
+        segment_id,
+        seg_id_predicted: false,
+        mode: BlockMode::Inter {
+            mode: picked_mode,
+            ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            mvs: [picked_mv, Mv::ZERO],
+            interp_filter: WireInterpFilter::EightTap,
+        },
+        bmi: Default::default(),
+    };
+    for dr in 0..n_8x8_high {
+        for dc in 0..n_8x8_wide {
+            let mi_row = leaf_mi_row + dr;
+            let mi_col = leaf_mi_col + dc;
+            mi_grid[mi_row * mi_cols + mi_col] = Some(cell);
+        }
+    }
+}
+
+
 /// Per-leaf descriptor for the inter encoder simulator. Mirrors
 /// [`PartitionLeafDesc`] but carries the inter mode info (mode + MV +
 /// skip flag) the picker chose for the leaf.
@@ -2135,6 +2236,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     use rvp9_core::cost::mv_cost::build_nmv_cost_table;
     use rvp9_core::cost::symbol_costs::inter_mode_costs;
     use rvp9_core::entropy::mv_probs::DEFAULT_NMV_CONTEXT;
+    use rvp9_core::inter::mv_ref::{
+        BlockBounds, find_mv_refs, lower_mv_precision,
+    };
     use rvp9_core::mode_decision::inter::{
         InterModeSearchParams, MvCandidates, pick_inter_mode_luma,
     };
@@ -2215,6 +2319,28 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     recon_yuv_out.1.copy_from_slice(last_recon_yuv.1);
     recon_yuv_out.2.copy_from_slice(last_recon_yuv.2);
 
+    // A2.foreman - In-progress mi_grid for spatial MV-ref propagation
+    // (H3' fix). The encoder walks leaves in raster order; right after
+    // a leaf is picked we splat its `ModeInfo` (carrying the picked
+    // `(InterMode, Mv)`) into every 8x8 cell the leaf covers. Before
+    // the picker runs on each leaf, `find_mv_refs` reads the already-
+    // picked neighbour cells via [`InterPickerMiGridLookup`] and
+    // returns the spatially-seeded `(nearest, near)` MV pair, which we
+    // hand to the picker via [`MvCandidates`].
+    //
+    // Without this, every NEWMV is encoded as a delta from (0,0), so
+    // on content with continuous motion (e.g. foreman_cif) the rate
+    // cost prohibitively favours NEARESTMV/ZEROMV with mv=(0,0) - the
+    // reconstruction then drifts further from the source every frame.
+    //
+    // Sign-bias is all-`false` under our single-LASTFRAME ref scheme
+    // (matches `frame_loop::build_inter_packet_with_residuals`).
+    let mi_rows_us = h / 8;
+    let mi_cols_us = w / 8;
+    let mut mi_grid: Vec<Option<rvp9_core::mode_info::ModeInfo>> =
+        vec![None; mi_rows_us * mi_cols_us];
+    let sign_bias = sign_bias_from_header(&[false, false, false]);
+
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
             let sb_idx = sb_row * sb_cols + sb_col;
@@ -2256,6 +2382,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     sb_partitions[sb_idx][leaf_idx].picked_mode = InterMode::ZeroMv;
                     sb_partitions[sb_idx][leaf_idx].picked_mv = Mv::ZERO;
                     sb_partitions[sb_idx][leaf_idx].skip = true;
+                    splat_inter_leaf_into_mi_grid(
+                        &mut mi_grid,
+                        mi_cols_us,
+                        leaf_mi_row,
+                        leaf_mi_col,
+                        leaf_bsize,
+                        InterMode::ZeroMv,
+                        Mv::ZERO,
+                        sb_partitions[sb_idx][leaf_idx].segment_id,
+                        /* skip = */ true,
+                    );
                     if std::env::var("RVP9_DIAG_PICKER").is_ok() {
                         #[allow(clippy::print_stderr)]
                         {
@@ -2316,16 +2453,82 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     sb_partitions[sb_idx][leaf_idx].picked_mode = InterMode::ZeroMv;
                     sb_partitions[sb_idx][leaf_idx].picked_mv = Mv::ZERO;
                     sb_partitions[sb_idx][leaf_idx].skip = true;
+                    splat_inter_leaf_into_mi_grid(
+                        &mut mi_grid,
+                        mi_cols_us,
+                        leaf_mi_row,
+                        leaf_mi_col,
+                        leaf_bsize,
+                        InterMode::ZeroMv,
+                        Mv::ZERO,
+                        sb_partitions[sb_idx][leaf_idx].segment_id,
+                        /* skip = */ true,
+                    );
                     continue;
                 }
                 let mv_limits = MvLimits::new(col_min, col_max, row_min, row_max);
 
-                // MV candidates — under our v1 LAST-frame-only ref
-                // scheme the nearest / near refs default to zero (the
-                // previous frame mi-grid carries only zero MVs and we
-                // don't thread a prev_mv_grid through). For F10.1c
-                // this matches the picker's `MvCandidates::default()`.
-                let mvc = MvCandidates::default();
+                // A2.foreman - Spatial MV-ref seeding (H3' fix).
+                // Build a `find_mv_refs` neighbour lookup against the
+                // in-progress `mi_grid` (cells covered by earlier-
+                // picked leaves carry their `(InterMode, Mv)` already)
+                // and derive the `(nearest, near)` MV pair for the
+                // current leaf's NEWMV ref-MV / NEARESTMV candidate.
+                // This mirrors the decoder's `find_mv_refs` call at
+                // the same leaf, so the encoder's `MvCandidates`
+                // exactly match what the decoder will compute when
+                // reading the bitstream - cross-decoder byte-
+                // exactness preserved.
+                //
+                // The previous-frame MV grid (`use_prev_frame_mvs`)
+                // is not threaded yet (Phase D / Wave 3 K); we pass
+                // `None`, matching the decoder's `prev_mv_grid =
+                // None` setup in
+                // `frame_loop::build_inter_packet_with_residuals`.
+                let mvc = {
+                    let bw_mi = leaf_bsize.n_8x8_wide() as i32;
+                    let bh_mi = leaf_bsize.n_8x8_high() as i32;
+                    let bounds = BlockBounds::new(
+                        leaf_mi_row as i32,
+                        leaf_mi_col as i32,
+                        mi_rows_us as i32,
+                        mi_cols_us as i32,
+                        bw_mi,
+                        bh_mi,
+                    );
+                    let neighbours = InterPickerMiGridLookup::new(
+                        &mi_grid,
+                        mi_cols_us,
+                        leaf_mi_row,
+                        leaf_mi_col,
+                        mi_rows_us,
+                    );
+                    // Use `InterMode::NewMv` so `find_mv_refs` runs the
+                    // early-break path (refmv_count == 1; mvs[0] is the
+                    // best ref MV - libvpx `tmp_mvs[refmv_count - 1]`
+                    // with `refmv_count == 1`). Apply
+                    // `lower_mv_precision` to mirror the writer's
+                    // exact `best_ref_mv` derivation (mode_info.rs
+                    // line 1098-1109).
+                    let list = find_mv_refs(
+                        InterMode::NewMv,
+                        leaf_bsize,
+                        RefFrame::LastFrame,
+                        &neighbours,
+                        &sign_bias,
+                        &bounds,
+                        /* prev_frame_mv = */ None,
+                    );
+                    let nearest = lower_mv_precision(
+                        list.mvs[0],
+                        /* allow_hp = */ false,
+                    );
+                    let near = lower_mv_precision(
+                        list.mvs[list.count.saturating_sub(1).min(1)],
+                        /* allow_hp = */ false,
+                    );
+                    MvCandidates { nearest, near }
+                };
 
                 // AQ.1 — per-leaf effective qindex from the leaf's
                 // `segment_id` + the frame-level `seg_q_deltas` table.
@@ -2342,12 +2545,53 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     QuantizerDeltas::Y,
                 );
 
+                // A2.foreman - The encoder's strict `MvLimits` is
+                // tighter than the decoder's `clamp_mv_ref` envelope
+                // because `build_inter_pred_plane_unscaled` doesn't
+                // border-extend. If `mvc.nearest` falls outside
+                // `mv_limits` (strict no-border-extend envelope), the
+                // picker would crash when evaluating the NEARESTMV
+                // candidate (the convolve over-reads the plane). The
+                // decoder DOES border-extend so its reconstruction is
+                // well-defined - but the two diverge.
+                //
+                // To preserve bit-exact encoder<->decoder agreement
+                // AND avoid the panic, when `mvc.nearest` is OOB we
+                // substitute Mv::ZERO in the picker's mvc so the
+                // NEARESTMV evaluation reconstructs at (0,0) instead.
+                // We then never let the picker actually choose
+                // NEARESTMV: post-pick, if `picked_mode ==
+                // NearestMv`, override to the better-RD candidate
+                // among {ZeroMv, NewMv}. The writer is unaffected -
+                // it doesn't read `mv_candidates`; it derives its own
+                // `best_ref_mv` from the mi_grid via `find_mv_refs`,
+                // and for the NEAREST mode it would propagate the
+                // un-clamped value through the decoder's
+                // border-extend path.
+                let nearest_in_bounds = {
+                    let col_q3 = i32::from(mvc.nearest.col);
+                    let row_q3 = i32::from(mvc.nearest.row);
+                    let col_fp = col_q3 >> 3;
+                    let row_fp = row_q3 >> 3;
+                    col_fp >= col_min
+                        && col_fp <= col_max
+                        && row_fp >= row_min
+                        && row_fp <= row_max
+                };
+                let mvc_safe = if nearest_in_bounds {
+                    mvc
+                } else {
+                    MvCandidates {
+                        nearest: Mv::ZERO,
+                        near: Mv::ZERO,
+                    }
+                };
                 let params = InterModeSearchParams {
                     block_size: leaf_bsize,
                     src_plane: &src_y,
                     src_offset: (leaf_px_x, leaf_px_y),
                     ref_plane: &ref_y,
-                    mv_candidates: &mvc,
+                    mv_candidates: &mvc_safe,
                     mv_limits,
                     site_config: &site_config,
                     mv_costs: &mv_costs,
@@ -2358,7 +2602,21 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     allow_hp: false,
                     frame_kind,
                 };
-                let pick = pick_inter_mode_luma(&params);
+                let pick_raw = pick_inter_mode_luma(&params);
+                let pick = if !nearest_in_bounds
+                    && matches!(pick_raw.best_mode, InterMode::NearestMv)
+                {
+                    // OOB nearest - re-evaluate ignoring NEAREST.
+                    let all =
+                        rvp9_core::mode_decision::inter::pick_inter_mode_luma_all_costs(&params);
+                    if all[2].best_rd_cost < all[0].best_rd_cost {
+                        all[2]
+                    } else {
+                        all[0]
+                    }
+                } else {
+                    pick_raw
+                };
 
                 sb_partitions[sb_idx][leaf_idx].picked_mode = pick.best_mode;
                 sb_partitions[sb_idx][leaf_idx].picked_mv = pick.best_mv;
@@ -2546,6 +2804,20 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         );
                     }
                 }
+                // A2.foreman - Splat the picked `(mode, mv, skip)`
+                // into the in-progress mi_grid so subsequent leaves'
+                // neighbour lookups see this leaf's decision.
+                splat_inter_leaf_into_mi_grid(
+                    &mut mi_grid,
+                    mi_cols_us,
+                    leaf_mi_row,
+                    leaf_mi_col,
+                    leaf_bsize,
+                    sb_partitions[sb_idx][leaf_idx].picked_mode,
+                    sb_partitions[sb_idx][leaf_idx].picked_mv,
+                    sb_partitions[sb_idx][leaf_idx].segment_id,
+                    sb_partitions[sb_idx][leaf_idx].skip,
+                );
             }
         }
     }
