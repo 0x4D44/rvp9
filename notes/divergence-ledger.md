@@ -808,6 +808,84 @@ post-occlusion or scene-cut-recovery leaves. The same hook also
 unblocks compound-ref pricing when Stage 4d wires compound
 inter.
 
+### 2026-05-22 — A16 ref-frame rate-cost landed; GOLDEN gate STAYS default-off
+
+**Where:** `crates/rvp9-core/src/mode_decision/inter.rs`
+(`InterModeSearchParams::ref_frame_rate_cost`, plumbed into
+`evaluate_candidate`'s rate term); `crates/rvp9-encoder/src/lib.rs`
+(per-frame precomputed `ref_frame_cost_last` /
+`ref_frame_cost_golden` using libvpx-default probs, fed to the
+`pick_for_ref` closure for both ref-frame searches).
+
+**What libvpx does:** `init_ref_frame_cost`
+(`vp9_pickmode.c:1215-1230`) precomputes the per-ref-frame rate
+cost using `vp9_cost_bit(intra_inter_prob, 1) + vp9_cost_bit
+(single_ref_prob[ctx][slot], bit)` for each ref frame, then adds
+it to every candidate's `this_rdc.rate` inside
+`vp9_pick_inter_mode`'s candidate evaluation loop
+(`vp9_pickmode.c:2398`).
+
+**What rvp9 does (A16):** mirrors the libvpx formula but at a
+fixed middle-context approximation
+(`DEFAULT_SINGLE_REF_PROB[2] = [142, 142]`,
+`DEFAULT_INTRA_INTER_PROB[2] = 187`) — the picker is called
+BEFORE the leaf is splatted into the mi_grid so the true per-
+leaf neighbour-derived context isn't free at this point. The
+differential between LAST and GOLDEN at this context is ~566
+prob_cost units (~1.1 wire bits at the p=128 reference).
+
+**Why (and what we measured):** with the rate term active the
+picker's GOLDEN pick rate on foreman_cif dropped from ~200-300
+per inter frame (~25-35 %; the unpriced A15 default-OFF
+baseline) to 0-4 per frame (~0-0.5 %). However F12 PSNR with
+the gate FORCED-ON via `RVP9_PICK_GOLDEN=1` *still* regressed:
+24.01/24.16/25.42/28.96 dB (A15 baseline, GOLDEN never picked)
+vs 23.78/23.61/24.34/26.64 dB (A16 default-ON, ~0.5 % GOLDEN
+picks). A 4x rate-cost multiplier suppressed GOLDEN to 0 picks
+and the baseline was recovered byte-exactly — confirming the
+remaining 0.5 % of picks ARE the regression source.
+
+**Root cause (deeper than rate cost):** the per-leaf RD doesn't
+price the propagation cost (`find_mv_refs` neighbour lookups
+read THIS leaf's picked MV when picking the next leaf — a
+GOLDEN-MV from a stale frame pulls neighbours into worse
+positions); the frame-level rate-controller's bit budget is
+built assuming LAST-only and reacts oddly to mixed refs; the
+GOLDEN recon plane itself may diverge from libvpx (it's the
+previous KF's recon at 4-frame-KF spacing — older content than
+libvpx's `--cpu-used=7 --rt` would carry).
+
+**Decision:** ship A16 with the rate-cost INFRASTRUCTURE
+landed (the LAST-only path applies
+`+ref_frame_cost_last`, so absolute RD magnitudes are libvpx-
+shaped for future intra-vs-inter tuning and downstream
+compound-ref pricing) but keep the GOLDEN gate **DEFAULT-OFF**.
+`RVP9_PICK_GOLDEN=1` re-enables the argmin-across-refs
+selector for tuning runs. The `RVP9_DIAG_GOLDEN_PICKS=1` env-
+var emits per-frame `last=N golden=M total=K golden_pct=P`
+diagnostics.
+
+**Byte-parity impact:** none on the default path
+(`pick_golden_enabled = false`); cross-decoder gate (vpxdec +
+ffmpeg, 8-frame 256×256 testsrc) remains BYTE-EXACT vs both
+reference decoders.
+
+**Compression-efficiency impact:** none on the default path —
+F12 testsrc 33.51/42.92/48.33/56.86 dB and F12 foreman_cif
+24.01/24.16/25.42/28.96 dB / +395.92 % BD-rate preserved
+exactly. RT median 5.50 ms (was 5.86 ms; the new cost
+precompute is once-per-frame, vanishing vs the SB loop).
+
+**Future plan (Phase C / Stage 5):** before re-enabling GOLDEN
+selection, address one of (a) per-leaf RD propagation cost
+(price the neighbour-MV-quality impact of this leaf's pick),
+(b) frame-level RC bit-budget partitioning by ref frame, or
+(c) a known-good GOLDEN recon plane (e.g., a libvpx-faithful
+KF→GF refresh cycle that maintains GOLDEN closer to the
+current frame). Compound-ref pricing for Stage 4d can re-use
+the same `ref_frame_rate_cost` hook with `RefMode::CompoundRef`
+plumbing.
+
 ## AQ-series Stage 4b — Cyclic-Refresh AQ divergences (2026-05-21)
 
 ### 2026-05-21 — AQ.5 BD-rate measurement on short / synthetic sources
