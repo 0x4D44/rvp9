@@ -2415,6 +2415,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
     let mut coef_source = VecBackedInterCoefSource::new(width, height);
 
+    // A16 diagnostic: count GOLDEN ref-frame picks per inter frame when
+    // RVP9_DIAG_GOLDEN_PICKS is set. Emitted as a single eprintln at
+    // end of the SB loop below. Counts only non-skip leaves.
+    let mut diag_golden_picks: usize = 0;
+    let mut diag_last_picks: usize = 0;
+    let diag_golden_enabled = std::env::var("RVP9_DIAG_GOLDEN_PICKS").is_ok();
+
     // Initialise the recon planes from the LAST ref. ZERO-MV / skip
     // leaves get this as their final recon (no residual added); the
     // picker-driven leaves overwrite their region via the per-TX
@@ -2882,12 +2889,34 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // mixes stale-from-KF GOLDEN patches into a frame
                 // that LAST would have tracked closer.
                 //
-                // Setting `RVP9_PICK_GOLDEN=1` enables the
-                // argmin-across-refs selector for future tuning
-                // work (we need to add a `ref_frame_rate` term to
-                // `evaluate_candidate` before GOLDEN picks become
-                // PSNR-positive). The default-off path keeps the
-                // pre-A15 PSNR baseline byte-exact.
+                // **A16 Step 2/3 (2026-05-22) — DEFAULT-OFF preserved**:
+                // Step 1's libvpx-faithful `ref_frame_rate_cost` term
+                // dampened GOLDEN picks dramatically (~200-300 → 0-4
+                // per inter frame on foreman_cif) but did NOT recover
+                // the PSNR regression. With GOLDEN gate ON + Step 1
+                // cost applied, F12 foreman_cif PSNR regressed from
+                // 24.01/24.16/25.42/28.96 dB (A15 baseline) to
+                // 23.78/23.61/24.34/26.64 dB — i.e. the remaining
+                // ~0.5 % of GOLDEN picks still contaminate the recon
+                // enough to drop PSNR ~0.2-2.3 dB. (Confirmed by
+                // running with a 4x rate-cost multiplier — GOLDEN
+                // picks dropped to 0 and PSNR exactly matched the
+                // OFF baseline.)
+                //
+                // Root cause likely sits BELOW the picker's RD: the
+                // per-leaf RD doesn't price the propagation cost
+                // (neighbour blocks read this leaf's MV via
+                // `find_mv_refs`), the rate-controller's bit budget
+                // assumes LAST-only and reacts oddly to mixed refs,
+                // and/or the GOLDEN recon plane diverges from libvpx
+                // in subtle ways. Diagnosing further is Phase C work.
+                //
+                // Ship the dual-ref-picker INFRASTRUCTURE (Step 1's
+                // rate cost is load-bearing — the LAST-only path
+                // still gets +ref_frame_cost_last applied so the
+                // absolute RD magnitudes are libvpx-shaped for
+                // future intra-vs-inter tuning) gated behind
+                // `RVP9_PICK_GOLDEN=1` (opt-in for tuning runs).
                 let pick_golden_enabled = std::env::var("RVP9_PICK_GOLDEN").is_ok();
                 let (pick, picked_ref) = if pick_golden_enabled
                     && pick_golden.best_rd_cost < pick_last.best_rd_cost
@@ -2896,6 +2925,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 } else {
                     (pick_last, RefFrame::LastFrame)
                 };
+                if diag_golden_enabled {
+                    match picked_ref {
+                        RefFrame::GoldenFrame => diag_golden_picks += 1,
+                        _ => diag_last_picks += 1,
+                    }
+                }
 
                 sb_partitions[sb_idx][leaf_idx].picked_mode = pick.best_mode;
                 sb_partitions[sb_idx][leaf_idx].picked_mv = pick.best_mv;
@@ -3158,6 +3193,24 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             eprintln!(
                 "[A3'-int-pro] frame summary: zero={} nearest={} near={} new={} skip={} nonzero_mv={} golden={}",
                 count_zero, count_nearest, count_near, count_new, count_skip, count_nonzero_mv, count_golden,
+            );
+        }
+    }
+
+    if diag_golden_enabled {
+        #[allow(clippy::print_stderr)]
+        {
+            let total = diag_golden_picks + diag_last_picks;
+            eprintln!(
+                "[A16-golden-picks] last={} golden={} total={} golden_pct={:.1}",
+                diag_last_picks,
+                diag_golden_picks,
+                total,
+                if total > 0 {
+                    100.0 * diag_golden_picks as f64 / total as f64
+                } else {
+                    0.0
+                },
             );
         }
     }
