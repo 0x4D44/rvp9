@@ -322,6 +322,56 @@ impl RateControl {
             multiplier,
         )
     }
+
+    /// Diagnostic-only (E8): snapshot of the buffer-state inputs and
+    /// outputs of the inter `active_worst_quality` calculation, captured
+    /// AFTER a `pick_q_and_bounds` call. Used by the
+    /// `RVP9_E8_TRACE=1` instrumentation in `frame_loop::encode_frame`
+    /// to discriminate "clamp artificially limiting" (case A) from
+    /// "structural floor" (case B): does the buffer deplete below
+    /// critical, and does `active_worst` ramp toward `worst_quality`?
+    #[must_use]
+    pub fn e8_trace_snapshot(&self) -> E8Trace {
+        E8Trace {
+            buffer_level: self.buffer_level,
+            optimal_buffer_level: self.optimal_buffer_level,
+            critical_level: self.optimal_buffer_level >> 3,
+            maximum_buffer_size: self.maximum_buffer_size,
+            ambient_qp_inter: i32::from(self.avg_frame_qindex_inter),
+            ambient_cap: (i32::from(self.avg_frame_qindex_inter) * 5) >> 2,
+            active_worst: i32::from(self.active_max_qindex),
+            active_best: i32::from(self.active_min_qindex),
+            picked_q: i32::from(self.last_picked_qindex),
+            this_frame_target: self.this_frame_target,
+        }
+    }
+}
+
+/// Diagnostic-only (E8) snapshot of the inter `active_worst_quality`
+/// buffer state. See [`RateControl::e8_trace_snapshot`].
+#[derive(Copy, Clone, Debug)]
+pub struct E8Trace {
+    /// Current buffer fullness (bits).
+    pub buffer_level: i64,
+    /// Optimal buffer level (bits) — above this, ramp `active_worst` down.
+    pub optimal_buffer_level: i64,
+    /// Critical level (`optimal >> 3`) — below this, `active_worst` pins
+    /// to `worst_quality`.
+    pub critical_level: i64,
+    /// Maximum buffer size (bits).
+    pub maximum_buffer_size: i64,
+    /// Ambient inter Q (the `avg_frame_qindex[INTER]` EWMA).
+    pub ambient_qp_inter: i32,
+    /// The `(ambient * 5) >> 2` base cap on `active_worst`.
+    pub ambient_cap: i32,
+    /// Chosen `active_worst_quality` (== `active_max_qindex`).
+    pub active_worst: i32,
+    /// Chosen `active_best_quality` (== `active_min_qindex`).
+    pub active_best: i32,
+    /// `regulate_q`'s clamped result (the Q actually used).
+    pub picked_q: i32,
+    /// Per-frame target bits.
+    pub this_frame_target: u32,
 }
 
 /// `avg_frame_bandwidth = round(target_bps / framerate)`. Mirrors

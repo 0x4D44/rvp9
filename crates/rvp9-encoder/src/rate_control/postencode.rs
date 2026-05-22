@@ -124,15 +124,22 @@ pub(super) fn postencode_update(rc: &mut RateControl, actual_bits: u32, frame_ki
     update_rate_correction_factors(rc, actual_bits, frame_kind);
 
     // -- Update last_q / avg_frame_qindex --
-    // The post-encode update uses the active Q that was picked for
-    // this frame. We don't have access to the actual encoded Q here
-    // (the encoder may dither within the picked bounds), so we use
-    // the midpoint of the active range as the recorded Q. In v1 the
-    // encoder is expected to use `active_min_qindex` as the realised
-    // Q (no dithering yet), so we use that as the "qindex" for
-    // history. This matches libvpx behaviour when no Q-delta is
-    // applied per superblock.
-    let qindex = rc.active_min_qindex; // == the value we returned
+    // libvpx `vp9_rc_postencode_update:1850` records the *actual coded*
+    // frame Q (`cm->base_qindex`) into `last_q[]` and the ambient EWMA
+    // `avg_frame_qindex[] = (3*avg + qindex) >> 2`. The frame loop codes
+    // at `last_picked_qindex` (the `regulate_q` result, clamped to
+    // `[active_best, active_worst]`), so that — NOT `active_min_qindex`
+    // (the active_best floor) — is the value to record.
+    //
+    // E8 FIX: this previously recorded `active_min_qindex`. Because the
+    // inter `active_best` is `rtc_minq_approx(ambient) ≈ 0.75·ambient`,
+    // feeding it back as the next-frame ambient drove a geometric decay
+    // (ambient 255→30 over 31 frames on foreman). The collapsing ambient
+    // pulled the buffer-ramp `active_worst` floor down with it (the ramp
+    // interpolates UP *from ambient*), so Q was pinned ~190-211 instead
+    // of rising toward 255 as the buffer drained — the inter overshoot.
+    // Recording the real coded Q keeps the ambient where libvpx keeps it.
+    let qindex = rc.last_picked_qindex;
     match frame_kind {
         FrameKind::Key => {
             rc.last_q_keyframe = qindex;

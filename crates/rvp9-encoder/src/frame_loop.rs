@@ -471,6 +471,15 @@ impl StreamEncoder {
 
         // Pick Q via the rate controller.
         let (q_index, _q_lo, _q_hi) = self.rate_control.pick_q_and_bounds(frame_kind.into());
+        // -- E8 DIAG: inter active_worst / buffer-state trace --
+        // Env-gated; captured immediately after the pick so it reflects
+        // the buffer state that drove THIS frame's Q. The actual bits are
+        // appended below once the frame is coded.
+        let e8_trace = if std::env::var_os("RVP9_E8_TRACE").is_some_and(|v| v != "0") {
+            Some(self.rate_control.e8_trace_snapshot())
+        } else {
+            None
+        };
         // The CBR controller may legitimately pick `q == 0` when the
         // buffer is over-full; the F5.1 simulator's quantizer math
         // doesn't support lossless (qindex 0), so we clamp to 1.
@@ -529,6 +538,25 @@ impl StreamEncoder {
             eprintln!(
                 "BPM_VERIFY frame={:>3} kind={:?} q={:>3} predicted={:>8} actual={:>8} ratio={:>6.3}",
                 self.frame_idx, frame_kind, q_picked, predicted, actual_bits, ratio
+            );
+        }
+
+        if let Some(t) = e8_trace {
+            eprintln!(
+                "E8 f{:>3} kind={:?} buf={:>10} opt={:>10} crit={:>9} ambient={:>3} amb*5/4={:>3} \
+                 aworst={:>3} abest={:>3} q={:>3} target={:>7} actual={:>7}",
+                self.frame_idx,
+                frame_kind,
+                t.buffer_level,
+                t.optimal_buffer_level,
+                t.critical_level,
+                t.ambient_qp_inter,
+                t.ambient_cap,
+                t.active_worst,
+                t.active_best,
+                t.picked_q,
+                t.this_frame_target,
+                actual_bits,
             );
         }
 

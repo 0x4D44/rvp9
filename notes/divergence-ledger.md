@@ -1803,3 +1803,46 @@ clip) `for_inter` correctly keeps the bulk of cells at Block64x64.
 scaling when those speed features land; revisit MV search / rate
 control as the real foreman bottleneck (E2 follow-up). Decision:
 **E2 partial — inter VBP curve landed; foreman gap reopened to RC/MV.**
+
+### 2026-05-22 — E8: ambient EWMA records coded Q, not active_best (overshoot fix)
+**Where:** `rvp9-encoder::rate_control::postencode::postencode_update`
++ libvpx `vp9/encoder/vp9_ratectrl.c::vp9_rc_postencode_update:1850,1882`.
+**What libvpx does:** `qindex = cm->base_qindex` (the *coded* frame Q,
+i.e. the `regulate_q` result after clamping), then
+`avg_frame_qindex[type] = ROUND_POWER_OF_TWO(3*avg + qindex, 2)` and
+`last_q[type] = qindex`.
+**What rvp9 did (the bug):** recorded `rc.active_min_qindex` (the
+**active_best** floor) into the ambient EWMA, with a comment claiming the
+encoder "uses active_min_qindex as the realised Q". That claim was false:
+the frame loop codes at `last_picked_qindex` (the `regulate_q` result),
+and the rate-correction-factor update already used `last_picked_qindex`.
+Recording active_best — which for inter frames is
+`rtc_minq_approx(ambient) ≈ 0.75·ambient` — fed a ×0.75-per-frame
+geometric decay back into the ambient (foreman: 255→30 over 31 frames).
+**Why this caused the overshoot:** the buffer-ramp branch of
+`calc_active_worst_quality_one_pass_cbr` interpolates `active_worst` UP
+*from ambient*; as ambient collapsed, the `active_worst` ceiling
+collapsed with it (~190-211 instead of toward 255), so `regulate_q`
+could not reach the Q needed to hit the rate target → inter bits
+overshot 2.5× (~252 kbps at the 100k foreman target).
+**Fix:** record `rc.last_picked_qindex`. Now matches libvpx exactly; the
+divergence is REMOVED (this is a correctness fix, not a new divergence).
+**Byte-parity impact:** none by construction — RC state does not change
+the wire format for a given Q; cross-decoder byte-exact gate stays green
+(vpxdec + ffmpeg).
+**Compression-efficiency impact:** foreman @ 100k target drops from
+~252 kbps to 143.9 kbps (libvpx 143.1) — the overshoot closes. BD-rate
+moves from E7's +741% to *not measurable* because the curves no longer
+overlap: with the bitrate fixed, rvp9's PSNR (24-27 dB) sits entirely
+below libvpx's (28-37 dB). The residual is now a pure per-bit *quality*
+gap (~9 dB at matched 143 kbps), not a rate-control artifact.
+**Future plan:** the remaining gap is block-coding efficiency
+(residual/transform/mode), not RC. The BD-rate gate target needs
+reassessment against this isolated quality gap. Decision: **E8 landed —
+overshoot closed; foreman gap reduced to per-bit coding quality (case
+A clamp-was-limiting confirmed; case B structural quality gap revealed
+underneath).**
+
+Also adds a diagnostic-only `RVP9_E8_TRACE=1` per-frame trace
+(`RateControl::e8_trace_snapshot` / `E8Trace`) — env-gated, zero cost
+when unset. Not a divergence; an instrument.

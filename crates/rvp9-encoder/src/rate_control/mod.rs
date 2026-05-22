@@ -102,7 +102,7 @@ pub mod postencode;
 pub mod state;
 
 pub use config::RateControlConfig;
-pub use state::RateControl;
+pub use state::{E8Trace, RateControl};
 
 /// Frame-kind discriminant for the rate-control API.
 ///
