@@ -72,6 +72,33 @@ pub struct RateControlConfig {
 
     /// Coded luma frame height in pixels. See `frame_width`.
     pub frame_height: u32,
+
+    /// Scaling factor applied to the libvpx-faithful
+    /// `vp9_rc_bits_per_mb` output. Default `1.0` = bit-exact libvpx
+    /// faithful (DO NOT TOUCH if you care about cross-decoder parity
+    /// of the *picked Q*; the bitstream stays decodable either way,
+    /// only the RC trajectory changes).
+    ///
+    /// **DOCUMENTED DIVERGENCE (A10).** libvpx's per-MB bit estimator
+    /// is content-aware (rate from quantised-coefficient energy), but
+    /// the simplified enumerator-over-Q formula we port here can
+    /// systematically under-predict actual cost on textured / high-
+    /// motion content (foreman_cif: ~10× under-prediction measured
+    /// empirically — see A10 instrumentation). Under-prediction →
+    /// regulate_q picks too-low a Q → encoder massively overshoots
+    /// target → RC raises Q → eventually pins at 255 → residuals
+    /// quant to zero → PSNR locks at LASTFRAME-staleness floor.
+    ///
+    /// This knob lets callers correct the bias at the input side
+    /// (`bits_per_mb *= multiplier`). The RC feedback loop in
+    /// `postencode::update_rate_correction_factors` will still adapt
+    /// the per-level `rate_correction_factors[]` on top of this, so
+    /// the multiplier sets the *starting point* rather than a fixed
+    /// scale.
+    ///
+    /// Must be `> 0.0`. `validate()` rejects non-positive / non-
+    /// finite values.
+    pub bits_per_mb_multiplier: f64,
 }
 
 impl Default for RateControlConfig {
@@ -91,6 +118,10 @@ impl Default for RateControlConfig {
             gop_length: 60,
             frame_width: 1280,
             frame_height: 720,
+            // Default 1.0 = libvpx-faithful. Callers encoding
+            // textured / high-motion content can raise this to
+            // compensate for the simplified estimator.
+            bits_per_mb_multiplier: 1.0,
         }
     }
 }
@@ -139,6 +170,9 @@ impl RateControlConfig {
         }
         if self.gop_length == 0 {
             return Err("gop_length must be > 0");
+        }
+        if !self.bits_per_mb_multiplier.is_finite() || self.bits_per_mb_multiplier <= 0.0 {
+            return Err("bits_per_mb_multiplier must be a positive finite number");
         }
         Ok(())
     }

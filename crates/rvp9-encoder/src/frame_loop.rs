@@ -159,12 +159,26 @@ impl EncoderConfig {
     /// buffer geometry (6 s buffer, 4 s starting, 5 s optimal).
     fn to_rate_control_config(self) -> RateControlConfig {
         let defaults = RateControlConfig::default();
+        // A10 experiment hook — let test harnesses override the
+        // `bits_per_mb_multiplier` knob without plumbing a new public
+        // field through every caller. Env var
+        // `RVP9_BPM_MULTIPLIER=<f64>` overrides the default of 1.0
+        // (libvpx-faithful). Non-parseable values are silently
+        // ignored (default stays in force). Production callers
+        // should NOT rely on this; it exists for A10-class diagnostic
+        // experiments only.
+        let bits_per_mb_multiplier = std::env::var("RVP9_BPM_MULTIPLIER")
+            .ok()
+            .and_then(|s| s.parse::<f64>().ok())
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .unwrap_or(defaults.bits_per_mb_multiplier);
         RateControlConfig {
             target_bitrate_bps: self.target_bitrate_bps,
             framerate: self.framerate,
             gop_length: self.gop_length,
             frame_width: self.width,
             frame_height: self.height,
+            bits_per_mb_multiplier,
             ..defaults
         }
     }
@@ -428,6 +442,30 @@ impl StreamEncoder {
         };
 
         let actual_bits = (packet.len() as u32).saturating_mul(8);
+
+        // -- A10 DIAG: bits_per_mb verification --
+        // Env-gated; off by default so production paths never pay the
+        // observation cost. Reports the controller's own prediction
+        // of frame size at the picked Q (via the same `bits_per_mb ×
+        // mbs / 512` math the post-encode feedback loop uses) against
+        // the actual bit count, then the ratio actual/predicted.
+        // Mean of the ratio sets the empirical `bits_per_mb_multiplier`
+        // needed to close the gap on this content.
+        if std::env::var_os("RVP9_DIAG_BPM_VERIFY").is_some_and(|v| v != "0") {
+            let predicted = self
+                .rate_control
+                .predicted_bits_at_picked_q(frame_kind.into());
+            let q_picked = u32::from(self.rate_control.last_picked_qindex);
+            let ratio = if predicted > 0 {
+                f64::from(actual_bits) / predicted as f64
+            } else {
+                f64::NAN
+            };
+            eprintln!(
+                "BPM_VERIFY frame={:>3} kind={:?} q={:>3} predicted={:>8} actual={:>8} ratio={:>6.3}",
+                self.frame_idx, frame_kind, q_picked, predicted, actual_bits, ratio
+            );
+        }
 
         // Post-encode rate-control update + frame counter advance.
         self.rate_control

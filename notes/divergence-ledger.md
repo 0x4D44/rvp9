@@ -1079,3 +1079,103 @@ combination until the rate model is fixed. The picker change
 without the rate-model fix biases testsrc; the q-cap without
 the rate-model fix blows the bitrate target. Either change
 alone or both together remain net-negative until Stage 4c.
+
+### 2026-05-22 — A10 `bits_per_mb` multiplier hypothesis — DISPROVED
+**Where:** new `RateControlConfig::bits_per_mb_multiplier: f64`
+field (default 1.0 = libvpx-faithful). Multiplier applied
+inside `cbr::bits_per_mb_scaled`, threaded through
+`regulate_q` and `estimate_bits_at_q` so the picker side and
+the post-encode feedback side both see the same scaled
+prediction. New diagnostic env var `RVP9_DIAG_BPM_VERIFY=1`
+in `frame_loop::encode_frame` logs per-frame
+`(qpicked, predicted_bits, actual_bits, ratio)`. New env hook
+`RVP9_BPM_MULTIPLIER=<f64>` overrides the default at config
+construction time for experimentation.
+**Status:** infrastructure shipped (default 1.0 = libvpx-
+faithful, byte-exact preserved); experimental non-unit
+multipliers explored and disproved.
+**Hypothesis (night-7 close-out, multi-agent consensus):**
+the foreman_cif 16-dB PSNR floor was due to `bits_per_mb`
+under-predicting per-MB cost by ~10×. A non-unit
+`bits_per_mb_multiplier` would correct the bias, the picker
+would pick a sane Q (80-150), residuals would survive quant,
+and PSNR would climb.
+**Result of measurement (A10 `RVP9_DIAG_BPM_VERIFY=1`):**
+
+Foreman 64-frame sweep, four target bitrates: per-frame
+ratio `actual/predicted_at_picked_q` is **~1.0 ± 0.25**, NOT
+10×. The rate-correction-factor feedback loop in
+`postencode::update_rate_correction_factors` (RC.1, libvpx
+`vp9_rc_update_rate_correction_factors` port) is closing the
+loop correctly — by frame 5+ the predicted bits track actual
+bits within 5-20%. The hypothesis is empirically wrong.
+
+Cross-check experiment: forced
+`RVP9_BPM_MULTIPLIER=10.0` (the predicted-required value)
+and `RVP9_BPM_MULTIPLIER=0.1` (the opposite direction).
+Both produce foreman PSNR within 0.1 dB of baseline at every
+target (16.40-16.46 dB at multiplier=10 vs 16.36-16.55 dB
+baseline). Foreman PSNR is INDEPENDENT of the
+`bits_per_mb_multiplier`. testsrc PSNR sweep preserved at
+multiplier=1.0 default (35.93 / 38.68 / 43.08 / 59.69 dB).
+
+The mechanism for the multiplier impotence: the
+correction_factor feedback walks proportionally to compensate
+the multiplier within ~5-10 frames, after which the picker's
+effective bits_per_mb estimate is dominated by the adapted
+correction_factor and the multiplier washes out. The
+multiplier acts only as a transient prior on the first few
+frames, which doesn't affect the 64-frame average PSNR.
+
+**The bits_per_mb model is NOT the cause of the foreman 16-dB
+floor.** Look elsewhere.
+
+**Where the actual floor lives (hypothesis after A10):** the
+A2.foreman per-plane diagnostic (`notes/stage4a-foreman-block-
+yrd-analysis.md`) noted that **the inter chain monotonically
+decays from f0=30.9 dB → f5=20 dB → f31=14.7 dB** while the
+KF is healthy at 34.78 dB. The 16-dB average is the
+trajectory mean of a 30→14 dB decay. This is consistent
+with a **reference-frame-update bug**: each inter frame
+reconstruction drifts away from the source, the drift is
+copied into the LASTFRAME slot, the next frame's prediction
+is built from a degraded reference, the drift accumulates.
+Probable suspects in descending likelihood:
+
+1. **Inter recon path doesn't refresh LASTFRAME correctly.**
+   At `lib.rs::pick_and_simulate_inter_encode_partitions`,
+   the reconstruction for the new LASTFRAME may not include
+   the residual contribution (so LASTFRAME stays at the
+   PREDICTED value rather than the predicted+residual value
+   the decoder will see). After 30 frames the cumulative
+   delta between encoder LASTFRAME and decoder LASTFRAME is
+   the 14-dB gap. This would also explain A9's `recon SSE
+   3.4M → 143M` drift while `source-consecutive SSE` stays
+   6-17M.
+2. **Loop-filter delta between encoder + decoder.** The
+   encoder's reference is `apply_loop_filter_to_tight_recon`
+   output; the decoder applies its own loop filter. If the
+   filter-level pick disagrees, the references diverge.
+3. **Chroma-MV-limit bug from A1 (chroma-aware tightening):**
+   if some block uses a chroma MC region that the encoder
+   reads from a different buffer than the decoder writes to,
+   the chroma plane drifts.
+
+A11 should be a **reference-buffer parity diagnostic**:
+encode N frames, decode through rvp9-decoder, compute per-
+frame SSE between encoder's `recon_yuv_out` (after loop
+filter, the thing stored as LASTFRAME) and decoder's
+`current_frame_recon` (the thing decoder stores as
+LASTFRAME). If the SSE is non-zero, the reference buffers
+diverge and the bug is in the encoder's reference update.
+Cross-decoder byte-exactness on the BITSTREAM (which we have)
+does NOT imply parity on the REFERENCE BUFFERS — only that
+both decoders interpret the bitstream identically.
+
+**Byte-parity impact:** zero with default multiplier=1.0.
+The infrastructure is shipped at the libvpx-faithful default
+so cross-decoder byte-exactness is preserved.
+**Future plan:** retire the `bits_per_mb` hypothesis. Run
+A11 reference-buffer-parity diagnostic. Detailed analysis
+in this ledger entry + `wrk_docs/A10-bpm-verify-report.md`
+(forthcoming).

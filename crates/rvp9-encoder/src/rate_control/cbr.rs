@@ -96,6 +96,11 @@ fn qindex_to_q(qindex: i32) -> f64 {
 /// [`RateControl::rate_correction_factors`] table (libvpx
 /// `get_rate_correction_factor`, clamped to
 /// `[MIN_BPB_FACTOR, MAX_BPB_FACTOR]`).
+///
+/// Libvpx-faithful version; the production rate-control entry points
+/// route through [`bits_per_mb_scaled`] so the config-driven
+/// `bits_per_mb_multiplier` divergence (A10) applies consistently to
+/// every predict-then-feedback step.
 pub(super) fn bits_per_mb(frame_kind: FrameKind, qindex: i32, correction_factor: f64) -> i32 {
     let q = qindex_to_q(qindex);
     // Avoid divide-by-zero when q drops to ~0 at qindex 0. libvpx
@@ -115,6 +120,42 @@ pub(super) fn bits_per_mb(frame_kind: FrameKind, qindex: i32, correction_factor:
     let bump = (enumerator * q / 4096.0).floor();
     enumerator += bump;
     (enumerator * correction_factor / q) as i32
+}
+
+/// Wrap [`bits_per_mb`] with the config-driven
+/// `bits_per_mb_multiplier`. **DOCUMENTED DIVERGENCE A10** — see
+/// [`super::config::RateControlConfig::bits_per_mb_multiplier`] for
+/// the rationale. Default multiplier `1.0` matches libvpx byte-for-byte;
+/// non-unit multipliers compensate for the simplified estimator on
+/// textured / high-motion content. The multiplier applies to BOTH
+/// the picker side (regulate_q) AND the feedback side
+/// (estimate_bits_at_q used by update_rate_correction_factors) so the
+/// loop stays internally consistent.
+#[inline]
+pub(super) fn bits_per_mb_scaled(
+    frame_kind: FrameKind,
+    qindex: i32,
+    correction_factor: f64,
+    multiplier: f64,
+) -> i32 {
+    let raw = bits_per_mb(frame_kind, qindex, correction_factor);
+    if (multiplier - 1.0).abs() < f64::EPSILON {
+        return raw;
+    }
+    // Apply in f64 then saturate back to i32. `bits_per_mb` already
+    // saturates to i32::MAX when q is degenerate; we preserve that
+    // behaviour.
+    if raw == i32::MAX {
+        return i32::MAX;
+    }
+    let scaled = f64::from(raw) * multiplier;
+    if scaled >= f64::from(i32::MAX) {
+        i32::MAX
+    } else if scaled <= 0.0 {
+        0
+    } else {
+        scaled as i32
+    }
 }
 
 /// Read the clamped rate-correction factor for the current frame.
@@ -164,8 +205,14 @@ pub(super) fn estimate_bits_at_q(
     qindex: i32,
     mbs: u32,
     correction_factor: f64,
+    multiplier: f64,
 ) -> i64 {
-    let bpm = i64::from(bits_per_mb(frame_kind, qindex, correction_factor));
+    let bpm = i64::from(bits_per_mb_scaled(
+        frame_kind,
+        qindex,
+        correction_factor,
+        multiplier,
+    ));
     let raw = bpm.saturating_mul(i64::from(mbs)) >> BPER_MB_NORMBITS;
     raw.max(i64::from(FRAME_OVERHEAD_BITS))
 }
@@ -185,6 +232,7 @@ fn regulate_q(
     active_worst: i32,
     mbs: u32,
     correction_factor: f64,
+    multiplier: f64,
 ) -> i32 {
     // `(target_bits << 9) / MBs` — bits_per_mb at the target rate.
     let target_bpm: i64 = if mbs == 0 {
@@ -196,7 +244,8 @@ fn regulate_q(
     let mut last_error = i64::MAX;
     let mut i = active_best;
     while i <= active_worst {
-        let bpm_at_i = i64::from(bits_per_mb(frame_kind, i, correction_factor));
+        let bpm_at_i =
+            i64::from(bits_per_mb_scaled(frame_kind, i, correction_factor, multiplier));
         if bpm_at_i <= target_bpm {
             // libvpx tie-break: prefer the Q with the smaller residual.
             let q = if target_bpm - bpm_at_i <= last_error {
@@ -409,6 +458,7 @@ pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> 
 
     // 3. Regulate Q using the current per-level correction factor.
     let correction_factor = get_rate_correction_factor(rc, frame_kind);
+    let multiplier = rc.config().bits_per_mb_multiplier;
     let q = regulate_q(
         frame_kind,
         target_bits,
@@ -416,6 +466,7 @@ pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> 
         active_worst,
         rc.mbs,
         correction_factor,
+        multiplier,
     );
     let q = q.clamp(active_best, active_worst);
 
@@ -576,15 +627,40 @@ mod tests {
     #[test]
     fn regulate_q_returns_active_best_for_tiny_target() {
         // If target bits is huge, regulate should pick active_best.
-        let q = regulate_q(FrameKind::Inter, 10_000_000, 10, 200, 3600, 1.0);
+        let q = regulate_q(FrameKind::Inter, 10_000_000, 10, 200, 3600, 1.0, 1.0);
         assert_eq!(q, 10, "huge target should land at active_best");
     }
 
     #[test]
     fn regulate_q_returns_active_worst_for_huge_demand() {
         // If target bits is tiny, regulate should pick active_worst.
-        let q = regulate_q(FrameKind::Inter, 50, 10, 200, 3600, 1.0);
+        let q = regulate_q(FrameKind::Inter, 50, 10, 200, 3600, 1.0, 1.0);
         assert_eq!(q, 200, "tiny target should land at active_worst");
+    }
+
+    #[test]
+    fn bits_per_mb_scaled_default_multiplier_matches_libvpx() {
+        // Multiplier == 1.0 must produce the exact libvpx output. This
+        // is the byte-exactness invariant for the default RC config.
+        let q = 100;
+        let raw = bits_per_mb(FrameKind::Inter, q, 1.0);
+        let scaled = bits_per_mb_scaled(FrameKind::Inter, q, 1.0, 1.0);
+        assert_eq!(raw, scaled);
+    }
+
+    #[test]
+    fn bits_per_mb_scaled_applies_multiplier() {
+        // Non-unit multiplier scales the prediction approximately
+        // linearly. We use a moderate Q so the integer truncation in
+        // `bits_per_mb` doesn't dominate the comparison.
+        let q = 80;
+        let one = bits_per_mb_scaled(FrameKind::Inter, q, 1.0, 1.0);
+        let ten = bits_per_mb_scaled(FrameKind::Inter, q, 1.0, 10.0);
+        let ratio = f64::from(ten) / f64::from(one);
+        assert!(
+            (9.9..=10.1).contains(&ratio),
+            "expected ~10x multiplier scaling: one={one}, ten={ten}, ratio={ratio}"
+        );
     }
 
     #[test]

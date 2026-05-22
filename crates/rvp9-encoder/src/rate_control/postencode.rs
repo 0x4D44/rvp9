@@ -39,7 +39,8 @@ fn update_rate_correction_factors(rc: &mut RateControl, actual_bits: u32, frame_
     //    handed to the entropy coder); we record that in
     //    `rc.last_picked_qindex` in `cbr::pick_q_and_bounds`.
     let picked_q = i32::from(rc.last_picked_qindex);
-    let projected = estimate_bits_at_q(frame_kind, picked_q, rc.mbs, current_factor);
+    let multiplier = rc.config().bits_per_mb_multiplier;
+    let projected = estimate_bits_at_q(frame_kind, picked_q, rc.mbs, current_factor, multiplier);
 
     // 3. Compute the integer correction-factor percentage. libvpx
     //    short-circuits when projected ≤ FRAME_OVERHEAD_BITS by

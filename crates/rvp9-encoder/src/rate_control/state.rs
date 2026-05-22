@@ -278,6 +278,26 @@ impl RateControl {
     pub fn config(&self) -> &RateControlConfig {
         &self.config
     }
+
+    /// Diagnostic-only: predicted total bits at the most recent
+    /// `pick_q_and_bounds`-selected Q, using the same
+    /// `bits_per_mb_scaled` × `mbs` math the post-encode feedback loop
+    /// uses to compute `projected_size_based_on_q`. Used by the A10
+    /// `RVP9_DIAG_BPM_VERIFY=1` instrumentation in
+    /// `frame_loop::encode_frame` to compare predicted-vs-actual per
+    /// frame.
+    #[must_use]
+    pub fn predicted_bits_at_picked_q(&self, frame_kind: FrameKind) -> i64 {
+        let correction = cbr::get_rate_correction_factor(self, frame_kind);
+        let multiplier = self.config.bits_per_mb_multiplier;
+        cbr::estimate_bits_at_q(
+            frame_kind,
+            i32::from(self.last_picked_qindex),
+            self.mbs,
+            correction,
+            multiplier,
+        )
+    }
 }
 
 /// `avg_frame_bandwidth = round(target_bps / framerate)`. Mirrors
