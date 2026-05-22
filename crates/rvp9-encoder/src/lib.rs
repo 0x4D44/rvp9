@@ -2253,6 +2253,20 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     golden_recon_yuv: (&[u8], &[u8], &[u8]),
     recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
     sb_partitions: &mut [Vec<InterPartitionLeafDesc>],
+    // A18 — Previous frame's MV grid for `find_mv_refs` salvage
+    // (libvpx `cm->prev_frame->mvs`). Indexed row-major at stride
+    // `mi_cols`. `None` when the libvpx `use_prev_frame_mvs` gate
+    // is false (frame size mismatch, intra-only / KF previous,
+    // error-resilient). The caller is responsible for evaluating
+    // the gate.
+    prev_mv_grid: Option<&[rvp9_core::inter::mv_ref::PrevFrameMvRef]>,
+    // A18 — out-param: caller-provided buffer that receives the
+    // final picked `(mv[2], ref_frame[2])` per 8×8 mi cell after
+    // the SB sweep finishes. Sized `mi_rows * mi_cols`. Mirrors
+    // the decoder's `cur_mv_grid` write-back path
+    // (`tile.rs:2141-2155`); the encoder swaps this into
+    // `prev_mv_grid` for the next frame.
+    out_mv_grid: &mut [rvp9_core::inter::mv_ref::PrevFrameMvRef],
 ) -> VecBackedInterCoefSource {
     use rvp9_core::bitstream::frame::{InterpFilter as WireInterpFilter, MAX_INTER_REFS};
     use rvp9_core::bitstream::header::FrameKind as WireFrameKind;
@@ -2260,7 +2274,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     use rvp9_core::cost::symbol_costs::inter_mode_costs;
     use rvp9_core::entropy::mv_probs::DEFAULT_NMV_CONTEXT;
     use rvp9_core::inter::mv_ref::{
-        BlockBounds, find_mv_refs, lower_mv_precision,
+        BlockBounds, PrevFrameMvRef, find_mv_refs, lower_mv_precision,
     };
     use rvp9_core::mode_decision::inter::{
         InterModeSearchParams, InterModeSearchResult, MvCandidates, pick_inter_mode_luma,
@@ -2691,6 +2705,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     leaf_mi_col,
                     mi_rows_us,
                 );
+                // A18 — collocated `PrevFrameMvRef` for `find_mv_refs`
+                // salvage. Mirrors the decoder's lookup at
+                // `tile.rs:2036` —
+                //   prev_frame_mvs + mi_row * mi_cols + mi_col
+                // (libvpx `vp9_mvref_common.c:25-28`). The decoder
+                // splats the captured MV/ref pair across every cell the
+                // block covers, so reading the leaf's top-left mi cell
+                // is sufficient and matches what the decoder will see.
+                let leaf_prev_mv: Option<PrevFrameMvRef> = prev_mv_grid
+                    .and_then(|g| {
+                        g.get(leaf_mi_row * mi_cols_us + leaf_mi_col).copied()
+                    });
                 let build_mvc = |ref_frame: RefFrame| -> MvCandidates {
                     // Use `InterMode::NewMv` so `find_mv_refs` runs the
                     // early-break path (refmv_count == 1; mvs[0] is the
@@ -2706,7 +2732,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         &neighbours,
                         &sign_bias,
                         &bounds,
-                        /* prev_frame_mv = */ None,
+                        /* prev_frame_mv = */ leaf_prev_mv,
                     );
                     let nearest = lower_mv_precision(
                         list_nearest.mvs[0],
@@ -2722,7 +2748,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         &neighbours,
                         &sign_bias,
                         &bounds,
-                        /* prev_frame_mv = */ None,
+                        /* prev_frame_mv = */ leaf_prev_mv,
                     );
                     let near_idx = list_near
                         .count
@@ -3212,6 +3238,43 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     0.0
                 },
             );
+        }
+    }
+
+    // A18 — Write back the final picked-leaf MVs into `out_mv_grid` for
+    // the encoder to capture as the *next* frame's `prev_mv_grid`.
+    // Mirrors the decoder's `cur_mv_grid` write-back at
+    // `tile.rs:2141-2155` — for inter cells, store
+    // `(ref_frames, mvs)`; for intra-in-inter cells (none in our
+    // encoder), store `(IntraFrame, zero-mv)`. We iterate the picker
+    // descriptors directly because they carry the canonical
+    // `(picked_mode, picked_mv, picked_ref_frame)` triples.
+    debug_assert_eq!(out_mv_grid.len(), mi_rows_us * mi_cols_us);
+    for cell in out_mv_grid.iter_mut() {
+        *cell = PrevFrameMvRef::default();
+    }
+    for sb_row in 0..sb_rows {
+        for sb_col in 0..sb_cols {
+            let sb_idx = sb_row * sb_cols + sb_col;
+            for leaf in &sb_partitions[sb_idx] {
+                let leaf_mi_row = sb_row * 8 + leaf.mi_row_in_sb;
+                let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
+                let bw_mi = leaf.leaf_bsize.n_8x8_wide() as usize;
+                let bh_mi = leaf.leaf_bsize.n_8x8_high() as usize;
+                let entry = PrevFrameMvRef {
+                    mvs: [leaf.picked_mv, Mv::ZERO],
+                    ref_frames: [leaf.picked_ref_frame, RefFrame::NoRefFrame],
+                };
+                for dr in 0..bh_mi {
+                    for dc in 0..bw_mi {
+                        let r = leaf_mi_row + dr;
+                        let c = leaf_mi_col + dc;
+                        if r < mi_rows_us && c < mi_cols_us {
+                            out_mv_grid[r * mi_cols_us + c] = entry;
+                        }
+                    }
+                }
+            }
         }
     }
 

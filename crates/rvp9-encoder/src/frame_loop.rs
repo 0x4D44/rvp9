@@ -68,7 +68,7 @@ use rvp9_core::block::{BlockSize, max_txsize};
 use rvp9_core::coef_ctx::TileCoefCtx;
 use rvp9_core::entropy::{BoolWriter, FrameContext};
 use rvp9_core::inter::mode_info::{InterModeReadParams, setup_compound_reference_mode};
-use rvp9_core::inter::mv_ref::sign_bias_from_header;
+use rvp9_core::inter::mv_ref::{PrevFrameMvRef, sign_bias_from_header};
 use rvp9_core::intra_pred::IntraMode;
 use rvp9_core::mode_decision::partition::{
     PartitionDecision, PartitionSearchParams, choose_partitioning,
@@ -300,6 +300,26 @@ pub struct StreamEncoder {
     /// `config.aq_mode == AqMode::CyclicRefresh`. Reset on every
     /// keyframe via `init_cyclic_refresh`.
     cyclic_refresh: Option<CyclicRefresh>,
+    /// A18 — Previous frame's MV grid (one [`PrevFrameMvRef`] per 8×8
+    /// mi cell, row-major at stride `mi_cols`). Captured at the end of
+    /// every encoded inter frame from the leaf descriptors that drove
+    /// the writer, so the next inter frame's `find_mv_refs` can
+    /// salvage co-located MV candidates (libvpx
+    /// `cm->prev_frame->mvs`, `vp9_mvref_common.c:25-28`). Keyframes
+    /// rebuild the grid as all-`(IntraFrame, zero-mv)` cells
+    /// (libvpx's `vp9_setup_past_independence` zeroes
+    /// `cm->cur_frame->mvs` with `ref_frame[0] = INTRA_FRAME`).
+    /// `None` means "not yet populated" (before the first encoded
+    /// frame).
+    prev_mv_grid: Option<Vec<PrevFrameMvRef>>,
+    /// A18 — Dimensions of [`Self::prev_mv_grid`] in 8×8 mi units.
+    /// Used to size-match against the current frame (mirrors libvpx's
+    /// `use_prev_frame_mvs` size gate).
+    prev_mv_grid_dims: (usize, usize),
+    /// A18 — `true` iff the last encoded frame was a keyframe (mirrors
+    /// libvpx `cm->last_frame_type == KEY_FRAME`, gates
+    /// `use_prev_frame_mvs`).
+    last_frame_was_key: bool,
 }
 
 /// A14 — GOLDEN refresh period for the inter path (Phase A
@@ -377,6 +397,11 @@ impl StreamEncoder {
             golden_recon_v: vec![0u8; uvw * uvh],
             frames_since_golden_refresh: 0,
             cyclic_refresh,
+            // A18 — no prior frame yet; the first encoded frame is
+            // always a keyframe and rebuilds the grid as all-intra.
+            prev_mv_grid: None,
+            prev_mv_grid_dims: (0, 0),
+            last_frame_was_key: false,
         })
     }
 
@@ -612,6 +637,24 @@ impl StreamEncoder {
         self.golden_recon_v.copy_from_slice(&self.last_recon_v);
         self.frames_since_golden_refresh = 0;
 
+        // A18 — Keyframes reset the prev-frame MV grid to all-intra
+        // (libvpx `vp9_setup_past_independence` zeroes
+        // `cm->cur_frame->mvs` with `ref_frame[0] = INTRA_FRAME`,
+        // see `vp9_entropymode.c:424-437`). The next inter frame's
+        // `use_prev_frame_mvs` gate evaluates the previous frame's
+        // type — KF disables salvage on the post-KF inter frame, so
+        // technically this grid is never read. We populate it anyway
+        // for parity with the decoder's bookkeeping.
+        let mi_rows = (h as usize) / 8;
+        let mi_cols = (w as usize) / 8;
+        let intra_cell = PrevFrameMvRef {
+            mvs: [Mv::ZERO; 2],
+            ref_frames: [RefFrame::IntraFrame; 2],
+        };
+        self.prev_mv_grid = Some(vec![intra_cell; mi_rows * mi_cols]);
+        self.prev_mv_grid_dims = (mi_rows, mi_cols);
+        self.last_frame_was_key = true;
+
         build_keyframe_packet(w, h, q_index, filter_level, &coef_source, &sb_partitions)
     }
 
@@ -736,6 +779,32 @@ impl StreamEncoder {
         let mut new_recon_u = vec![0u8; uvw * uvh];
         let mut new_recon_v = vec![0u8; uvw * uvh];
 
+        // A18 — Evaluate libvpx's `use_prev_frame_mvs` gate
+        // (`vp9_decodeframe.c:2983-2986`):
+        //   !error_resilient && width == last_width &&
+        //   height == last_height && !last_intra_only &&
+        //   last_show_frame && last_frame_type != KEY_FRAME.
+        //
+        // The encoder doesn't emit error_resilient frames or
+        // non-show frames (Stage 4a' scope), and intra-only frames
+        // are out of scope — so the gate collapses to "same size +
+        // previous frame was not a keyframe". When the gate fails,
+        // pass `None` so `find_mv_refs` skips the prev-frame salvage
+        // (matches the decoder's behaviour on the same gate, which
+        // keeps the cross-decoder byte-exact invariant intact).
+        let prev_grid_slice: Option<&[PrevFrameMvRef]> = if !self.last_frame_was_key
+            && self.prev_mv_grid_dims == (mi_rows_us, mi_cols_us)
+        {
+            self.prev_mv_grid.as_deref()
+        } else {
+            None
+        };
+        // A18 — fresh current-frame MV grid; populated by the picker
+        // (final per-leaf picks). Becomes `self.prev_mv_grid` after
+        // the inter encode finishes.
+        let mut cur_mv_grid =
+            vec![PrevFrameMvRef::default(); mi_rows_us * mi_cols_us];
+
         let coef_source = pick_and_simulate_inter_encode_partitions(
             w,
             h,
@@ -749,6 +818,8 @@ impl StreamEncoder {
             (&self.golden_recon_y, &self.golden_recon_u, &self.golden_recon_v),
             (&mut new_recon_y, &mut new_recon_u, &mut new_recon_v),
             &mut sb_partitions,
+            prev_grid_slice,
+            &mut cur_mv_grid,
         );
 
         // F11.0 — apply the in-loop deblocking filter to the encoder's
@@ -834,6 +905,16 @@ impl StreamEncoder {
         self.last_recon_y = new_recon_y;
         self.last_recon_u = new_recon_u;
         self.last_recon_v = new_recon_v;
+
+        // A18 — Commit the per-leaf MV grid for the next inter
+        // frame's `use_prev_frame_mvs` salvage path. Mirrors the
+        // decoder's end-of-frame swap at `lib.rs:2240-2255` —
+        // `cm->prev_frame = cm->cur_frame`, fires after every
+        // non-`show_existing_frame` decode. This frame was an inter
+        // frame, so `last_frame_was_key` becomes `false`.
+        self.prev_mv_grid = Some(cur_mv_grid);
+        self.prev_mv_grid_dims = (mi_rows_us, mi_cols_us);
+        self.last_frame_was_key = false;
 
         // A14 (Phase A) — if this frame refreshed GOLDEN on the wire,
         // mirror that on the encoder side: copy the new (post-LF)
