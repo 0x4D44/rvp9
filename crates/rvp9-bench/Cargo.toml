@@ -38,7 +38,12 @@ path = "src/bin/decode-throughput.rs"
 name = "soak"
 path = "src/bin/soak.rs"
 
+[[bin]]
+name = "dsp-microbench"
+path = "src/bin/dsp-microbench.rs"
+
 [dependencies]
+rvp9-core = { path = "../rvp9-core" }
 rvp9-decoder = { path = "../rvp9-decoder" }
 rvp9-encoder = { path = "../rvp9-encoder" }
 rvp9-harness = { path = "../rvp9-harness" }
