@@ -853,3 +853,84 @@ picker's NEWMV diamond-search center via `x->pred_mv[]`. That
 unlocks the spatial-propagation chain: once one leaf picks
 NEWMV with a non-zero MV, neighbouring leaves see that MV in
 their `find_mv_refs` list and propagate it.
+**Status update (A3'-int-pro, 2026-05-22):** the int_pro
+seed has now been ported and wired through. The seed
+produces non-zero MVs for foreman_cif (e.g. (8, -24) Q3 =
+(1, -3) full-pel on early frames). However, **the picker
+still picks 0 NEWMV on foreman**. Root cause: CBR drives
+qindex to 255 (max quantization) because the encoder
+overproduces bits when MC is missing, which makes
+`compute_rd_mult` lambda enormous (~7.8M), which makes the
+MV-bit cost (~9000-12000 units for typical sub-pel MVs)
+dominate any SSE gain (typically only saves a few thousand
+SSE units × 128 = ~500K RD units). The picker correctly
+rejects NEWMV under this lambda imbalance. The next layer
+is **either** a rate-control fix (don't pin qindex at 255
+when the encoder is producing 2-5× the target bitrate
+because of poor MC, not because of overly-fine quant) **or**
+a libvpx-faithful rate model that drops NEWMV's effective
+rate at high qindex (libvpx's realtime path uses
+`block_yrd` which models rate from quantized-coefficient
+energy, not pure rate-table lookup — this is the F8.1
+divergence already documented in `inter.rs` module docs).
+On testsrc the int_pro seed DID recover PSNR at 250 kbps
+(48.49 → 59.69 dB, a +11 dB win) because testsrc has
+static content and the seed activation correctly
+identifies (0,0) as the best MV, freeing the picker from
+the pre-A3.inter-induced regression. BD-rate vs libvpx
+moved +959 % → +627 % on testsrc.
+
+### 2026-05-22 — SB-level int_pro motion estimation + sb_use_mv_part short-circuit (A3'-int-pro)
+**Where:** `rvp9-core::mv_search::int_pro_me` (new module);
+`rvp9-core::mode_decision::inter::run_newmv_search` (new
+short-circuit branch);
+`rvp9-encoder::pick_and_simulate_inter_encode_partitions`
+(per-SB int_pro call upstream of the per-leaf picker).
+libvpx counterpart: `vp9/encoder/vp9_mcomp.c:2192-2400`
+(`vector_match`, `vp9_int_pro_motion_estimation`),
+`vp9/encoder/vp9_encodeframe.c:1460-1495` (caller in
+variance partitioning), `vp9/encoder/vp9_pickmode.c:207-210`
+(`sb_use_mv_part` short-circuit).
+**What libvpx does:** the variance partitioner
+(`vp9_choose_partitioning`) runs
+`vp9_int_pro_motion_estimation` once per SB and stashes the
+resulting MV in `x->sb_mvrow_part` / `x->sb_mvcol_part`.
+The per-leaf realtime picker reads `x->sb_use_mv_part` and,
+when set, uses the int_pro MV as the NEWMV candidate
+directly — skipping the full-pel diamond. Sub-pel
+refinement still runs around the int_pro MV.
+**What rvp9 does (port):** ported the int_pro algorithm
+(1D row/column projections + 4-pt diamond + 2-pt cross
+SAD refinement) bug-for-bug, including the
+`vector_match`-returns-`-bw/2` edge case for constant
+input. Wired into the encoder's
+`pick_and_simulate_inter_encode_partitions` to run once per
+64×64 SB before the per-leaf picker. The picker's
+`InterModeSearchParams::newmv_seed` field carries the
+result; `run_newmv_search` consumes it via the same
+`sb_use_mv_part` short-circuit (skip diamond, feed the
+seed directly to sub-pel refinement).
+**Frame-area gate:** int_pro is gated on `w * h <=
+307_200` (same threshold as the Block8x8 picker, A1').
+At 720p+ the picker's RD math at high qindex (CBR drives
+qindex → 255 because of bit overproduction) heavily
+favours NEARESTMV-at-(0,0) regardless of seed quality, so
+the int_pro work is wasted. Below 307_200 (256×256
+testsrc, 352×288 foreman_cif) int_pro runs and produces
+seeds.
+**Byte-parity impact:** none. Cross-decoder gate
+BYTE-EXACT vs vpxdec + ffmpeg preserved on the 8-frame
+testsrc encode (the int_pro seed only affects the
+encoder's MV picking; the bitstream the encoder writes
+remains decodable bit-for-bit by both reference
+decoders).
+**Compression-efficiency impact:** testsrc at 250 kbps:
+PSNR 48.49 → 59.69 dB (+11.2 dB), BD-rate +959 % → +627 %.
+testsrc at 25/50/100 kbps: no measurable change
+(content is already static so NEARESTMV-at-(0,0) is
+correct). foreman_cif: no PSNR change (16.2-16.5 dB
+across the sweep) — the rate-control / lambda imbalance
+at qindex 255 is a separate bug; the int_pro seed alone
+cannot fix it.
+**Future plan:** L-05 close-out depends on rate-control
+or block_yrd port (see status update above).

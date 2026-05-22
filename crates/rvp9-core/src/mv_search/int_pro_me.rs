@@ -120,8 +120,8 @@ fn vpx_int_pro_row(hbuf: &mut [i16], ref_plane: &[u8], ref_stride: usize, height
 fn vpx_int_pro_col(ref_row: &[u8], width: usize) -> i32 {
     debug_assert!(ref_row.len() >= width);
     let mut sum: i32 = 0;
-    for idx in 0..width {
-        sum += i32::from(ref_row[idx]);
+    for &b in ref_row.iter().take(width) {
+        sum += i32::from(b);
     }
     sum
 }
@@ -282,6 +282,7 @@ fn b_log2(bsize: BlockSize) -> u32 {
 /// performing the equivalent of libvpx's `vp9_setup_pre_planes`
 /// upstream.
 #[must_use]
+#[allow(clippy::needless_range_loop)]
 pub fn int_pro_motion_estimation(
     src_plane: &PlaneRef<'_>,
     ref_plane: &PlaneRef<'_>,
@@ -490,12 +491,12 @@ pub fn int_pro_motion_estimation(
     } else {
         pre_diamond_col + 1
     };
-    if let Some(cross_sad) = try_sad(cross_row, cross_col) {
-        if cross_sad < best_sad {
-            best_sad = cross_sad;
-            best_row = cross_row;
-            best_col = cross_col;
-        }
+    if let Some(cross_sad) = try_sad(cross_row, cross_col)
+        && cross_sad < best_sad
+    {
+        best_sad = cross_sad;
+        best_row = cross_row;
+        best_col = cross_col;
     }
 
     // Convert full-pel → Q3 (1/8-pel).
@@ -585,7 +586,7 @@ mod tests {
                 for x in 0..w {
                     let sx = x as i32 - shift_x;
                     if sx >= 0 && (sx as usize) < w {
-                        buf[y * w + x] = if ((sx as usize) / 32) % 2 == 0 { 50 } else { 200 };
+                        buf[y * w + x] = if ((sx as usize) / 32).is_multiple_of(2) { 50 } else { 200 };
                     } else {
                         buf[y * w + x] = 128;
                     }
