@@ -19,9 +19,14 @@
 //! *measurement infrastructure*; the soft ratchet lives in the
 //! integration test `decode_throughput_ratchet.rs`.
 //!
-//! Constraint surface (G6 task spec, 2026-05-21): `vpxenc` is not on
-//! PATH, so we cannot generate fresh `.ivf` from the `testsrc_*.y4m`
-//! raw fixtures (HLD §G6's preferred input). Filed as G6.1 follow-up.
+//! Fixture generation (G6.1, resolved Wave L L6): a working libvpx
+//! `vpxenc.exe` lives at `build/libvpx/`, so fresh `.ivf` fixtures can
+//! be generated from the `testsrc_*.y4m` raw sources (HLD §G6's
+//! preferred input) via `scripts/encode-corpus.ps1`, e.g.
+//! `pwsh scripts/encode-corpus.ps1 -Src tests/corpus/testsrc_720p30.y4m
+//! -Out tests/corpus/fixtures/testsrc_720p30.ivf`. The bench only
+//! decodes for timing (no bit-check), so a self-encoded fixture is
+//! valid input regardless of bit-exact conformance.
 //!
 //! # Pinned vs unpinned rows
 //!
