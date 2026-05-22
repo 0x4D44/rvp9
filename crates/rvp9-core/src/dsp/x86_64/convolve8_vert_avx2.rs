@@ -46,9 +46,12 @@
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
-    __m128i, _mm_add_epi16, _mm_adds_epi16, _mm_cvtsi128_si32, _mm_cvtsi32_si128, _mm_loadl_epi64,
-    _mm_loadu_si128, _mm_maddubs_epi16, _mm_packus_epi16, _mm_set1_epi16, _mm_srai_epi16,
-    _mm_storel_epi64, _mm_storeu_si128, _mm_unpackhi_epi8, _mm_unpacklo_epi8,
+    __m128i, __m256i, _mm256_add_epi16, _mm256_adds_epi16, _mm256_loadu_si256, _mm256_maddubs_epi16,
+    _mm256_packus_epi16, _mm256_set1_epi16, _mm256_srai_epi16, _mm256_storeu_si256,
+    _mm256_unpackhi_epi8, _mm256_unpacklo_epi8, _mm_add_epi16, _mm_adds_epi16, _mm_cvtsi128_si32,
+    _mm_cvtsi32_si128, _mm_loadl_epi64, _mm_loadu_si128, _mm_maddubs_epi16, _mm_packus_epi16,
+    _mm_set1_epi16, _mm_srai_epi16, _mm_storel_epi64, _mm_storeu_si128, _mm_unpackhi_epi8,
+    _mm_unpacklo_epi8,
 };
 
 /// Pack two adjacent filter taps into the replicated i8-pair form
@@ -85,6 +88,70 @@ unsafe fn combine(x0: __m128i, x1: __m128i, x2: __m128i, x3: __m128i) -> __m128i
     sum1 = _mm_add_epi16(sum1, k_64);
     sum1 = _mm_adds_epi16(sum1, sum2);
     _mm_srai_epi16(sum1, 7)
+}
+
+/// 256-bit tap-pair: the i8 pair replicated across all sixteen 16-bit
+/// lanes of an `__m256i` (the `_mm256_maddubs_epi16` signed operand).
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn tap_pair256(lo: i16, hi: i16) -> __m256i {
+    _mm256_set1_epi16(i16::from_le_bytes([lo as i8 as u8, hi as i8 as u8]))
+}
+
+/// 256-bit counterpart of [`combine`] — identical saturation order, all
+/// sixteen 16-bit lanes at once.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn combine256(x0: __m256i, x1: __m256i, x2: __m256i, x3: __m256i) -> __m256i {
+    let k_64 = _mm256_set1_epi16(1 << 6);
+    let mut sum1 = _mm256_add_epi16(x0, x2);
+    let sum2 = _mm256_add_epi16(x1, x3);
+    sum1 = _mm256_add_epi16(sum1, k_64);
+    sum1 = _mm256_adds_epi16(sum1, sum2);
+    _mm256_srai_epi16(sum1, 7)
+}
+
+/// 256-bit vertical reduction over eight source rows for one half.
+/// `_mm256_unpack{lo,hi}_epi8` interleave **within each 128-bit lane**,
+/// and `_mm256_packus_epi16` packs the same way, so the lane structure
+/// composes back to the natural column order 0..32 with no permute —
+/// `unpacklo` carries cols {0–7, 16–23}, `unpackhi` cols {8–15, 24–31},
+/// and `packus(lo, hi)` reassembles cols 0..15 / 16..31 per lane.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[target_feature(enable = "avx2")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn vconv256(
+    r: &[__m256i; 8],
+    f01: __m256i,
+    f23: __m256i,
+    f45: __m256i,
+    f67: __m256i,
+    hi: bool,
+) -> __m256i {
+    let (u0, u1, u2, u3) = if hi {
+        (
+            _mm256_unpackhi_epi8(r[0], r[1]),
+            _mm256_unpackhi_epi8(r[2], r[3]),
+            _mm256_unpackhi_epi8(r[4], r[5]),
+            _mm256_unpackhi_epi8(r[6], r[7]),
+        )
+    } else {
+        (
+            _mm256_unpacklo_epi8(r[0], r[1]),
+            _mm256_unpacklo_epi8(r[2], r[3]),
+            _mm256_unpacklo_epi8(r[4], r[5]),
+            _mm256_unpacklo_epi8(r[6], r[7]),
+        )
+    };
+    combine256(
+        _mm256_maddubs_epi16(u0, f01),
+        _mm256_maddubs_epi16(u1, f23),
+        _mm256_maddubs_epi16(u2, f45),
+        _mm256_maddubs_epi16(u3, f67),
+    )
 }
 
 /// Vertical 8-tap reduction over eight source rows for one half
@@ -166,6 +233,32 @@ unsafe fn convolve8_vert_avx2_inner(
     let dst_ptr = dst.as_mut_ptr();
 
     let mut cg = 0usize;
+
+    // L4: 256-bit fast path — 32 columns per group (used by the 32- and
+    // 64-wide VP9 block sizes, and pass 2 of the 2-D convolve). Same
+    // maddubs reduction as the 128-bit path, twice as wide.
+    if w - cg >= 32 {
+        let g01 = tap_pair256(filter_y[0], filter_y[1]);
+        let g23 = tap_pair256(filter_y[2], filter_y[3]);
+        let g45 = tap_pair256(filter_y[4], filter_y[5]);
+        let g67 = tap_pair256(filter_y[6], filter_y[7]);
+        while w - cg >= 32 {
+            for y in 0..h {
+                let mut r = [_mm256_loadu_si256(src_ptr as *const __m256i); 8];
+                for (k, slot) in r.iter_mut().enumerate() {
+                    *slot =
+                        _mm256_loadu_si256(src_ptr.add((y + k) * src_stride + cg) as *const __m256i);
+                }
+                let lo = vconv256(&r, g01, g23, g45, g67, false);
+                let hi = vconv256(&r, g01, g23, g45, g67, true);
+                let res = _mm256_packus_epi16(lo, hi);
+                let dst_row = dst_ptr.add(y * dst_stride + cg);
+                _mm256_storeu_si256(dst_row as *mut __m256i, res);
+            }
+            cg += 32;
+        }
+    }
+
     while cg < w {
         let gw = (w - cg).min(16);
         for y in 0..h {
