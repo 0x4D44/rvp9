@@ -2607,7 +2607,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // `lower_mv_precision` to mirror the writer's
                     // exact `best_ref_mv` derivation (mode_info.rs
                     // line 1098-1109).
-                    let list = find_mv_refs(
+                    let list_nearest = find_mv_refs(
                         InterMode::NewMv,
                         leaf_bsize,
                         RefFrame::LastFrame,
@@ -2617,11 +2617,31 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         /* prev_frame_mv = */ None,
                     );
                     let nearest = lower_mv_precision(
-                        list.mvs[0],
+                        list_nearest.mvs[0],
                         /* allow_hp = */ false,
                     );
+                    // A12 (2026-05-22) — call `find_mv_refs(NEARMV)`
+                    // separately so the search continues past the
+                    // first candidate (`early_break` is gated on
+                    // NEARMV). `mvs[count - 1]` is the libvpx
+                    // `tmp_mvs[refmv_count - 1]` slot the decoder
+                    // will use when reading a NEARMV block (mirror
+                    // of `resolve_parent_mvs` at mode_info.rs:1361).
+                    let list_near = find_mv_refs(
+                        InterMode::NearMv,
+                        leaf_bsize,
+                        RefFrame::LastFrame,
+                        &neighbours,
+                        &sign_bias,
+                        &bounds,
+                        /* prev_frame_mv = */ None,
+                    );
+                    let near_idx = list_near
+                        .count
+                        .saturating_sub(1)
+                        .min(list_near.mvs.len() - 1);
                     let near = lower_mv_precision(
-                        list.mvs[list.count.saturating_sub(1).min(1)],
+                        list_near.mvs[near_idx],
                         /* allow_hp = */ false,
                     );
                     MvCandidates { nearest, near }
@@ -2665,23 +2685,30 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // and for the NEAREST mode it would propagate the
                 // un-clamped value through the decoder's
                 // border-extend path.
-                let nearest_in_bounds = {
-                    let col_q3 = i32::from(mvc.nearest.col);
-                    let row_q3 = i32::from(mvc.nearest.row);
-                    let col_fp = col_q3 >> 3;
-                    let row_fp = row_q3 >> 3;
+                let mv_in_bounds = |m: Mv| -> bool {
+                    let col_fp = i32::from(m.col) >> 3;
+                    let row_fp = i32::from(m.row) >> 3;
                     col_fp >= col_min
                         && col_fp <= col_max
                         && row_fp >= row_min
                         && row_fp <= row_max
                 };
-                let mvc_safe = if nearest_in_bounds {
-                    mvc
-                } else {
-                    MvCandidates {
-                        nearest: Mv::ZERO,
-                        near: Mv::ZERO,
-                    }
+                let nearest_in_bounds = mv_in_bounds(mvc.nearest);
+                // A12 — mirror the OOB substitution for `near` too.
+                // If `near` is OOB, the NEARMV evaluation's convolve
+                // would over-read the ref plane (the picker doesn't
+                // border-extend). Substitute ZERO so the picker
+                // evaluates a zero-MV NEARMV instead, and post-pick
+                // veto NEARMV if it wins on the OOB path so the
+                // decoder doesn't read the OOB `near` MV.
+                let near_in_bounds = mv_in_bounds(mvc.near);
+                let mvc_safe = MvCandidates {
+                    nearest: if nearest_in_bounds {
+                        mvc.nearest
+                    } else {
+                        Mv::ZERO
+                    },
+                    near: if near_in_bounds { mvc.near } else { Mv::ZERO },
                 };
                 let params = InterModeSearchParams {
                     block_size: leaf_bsize,
@@ -2707,17 +2734,34 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     newmv_seed: sb_newmv_seed,
                 };
                 let pick_raw = pick_inter_mode_luma(&params);
-                let pick = if !nearest_in_bounds
-                    && matches!(pick_raw.best_mode, InterMode::NearestMv)
-                {
-                    // OOB nearest - re-evaluate ignoring NEAREST.
+                // OOB veto: if the picker chose a ref-MV mode whose
+                // candidate is actually out-of-bounds in the picker's
+                // tight MvLimits envelope, the decoder will reconstruct
+                // it using the original (clamped-by-the-decoder)
+                // candidate via `find_mv_refs`, which over-reads the
+                // ref plane on the encoder side. Re-pick among the
+                // remaining in-bounds candidates (ZERO + NEW, plus
+                // any of NEAREST/NEAR that remain in-bounds).
+                let veto_nearest = !nearest_in_bounds
+                    && matches!(pick_raw.best_mode, InterMode::NearestMv);
+                let veto_near = !near_in_bounds
+                    && matches!(pick_raw.best_mode, InterMode::NearMv);
+                let pick = if veto_nearest || veto_near {
                     let all =
                         rvp9_core::mode_decision::inter::pick_inter_mode_luma_all_costs(&params);
-                    if all[2].best_rd_cost < all[0].best_rd_cost {
-                        all[2]
-                    } else {
-                        all[0]
+                    // [ZERO, NEAREST, NEAR, NEW]. Filter out vetoed
+                    // slots and pick min-RD among survivors.
+                    let mut best = all[0]; // ZERO is always in-bounds (Mv::ZERO).
+                    if nearest_in_bounds && all[1].best_rd_cost < best.best_rd_cost {
+                        best = all[1];
                     }
+                    if near_in_bounds && all[2].best_rd_cost < best.best_rd_cost {
+                        best = all[2];
+                    }
+                    if all[3].best_rd_cost < best.best_rd_cost {
+                        best = all[3];
+                    }
+                    best
                 } else {
                     pick_raw
                 };
@@ -2932,16 +2976,16 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         let mut count_zero = 0usize;
         let mut count_nearest = 0usize;
         let mut count_new = 0usize;
-        let mut count_other = 0usize;
         let mut count_skip = 0usize;
         let mut count_nonzero_mv = 0usize;
+        let mut count_near = 0usize;
         for sb in sb_partitions.iter() {
             for leaf in sb.iter() {
                 match leaf.picked_mode {
                     InterMode::ZeroMv => count_zero += 1,
                     InterMode::NearestMv => count_nearest += 1,
+                    InterMode::NearMv => count_near += 1,
                     InterMode::NewMv => count_new += 1,
-                    _ => count_other += 1,
                 }
                 if leaf.skip {
                     count_skip += 1;
@@ -2954,8 +2998,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         #[allow(clippy::print_stderr)]
         {
             eprintln!(
-                "[A3'-int-pro] frame summary: zero={} nearest={} new={} other={} skip={} nonzero_mv={}",
-                count_zero, count_nearest, count_new, count_other, count_skip, count_nonzero_mv,
+                "[A3'-int-pro] frame summary: zero={} nearest={} near={} new={} skip={} nonzero_mv={}",
+                count_zero, count_nearest, count_near, count_new, count_skip, count_nonzero_mv,
             );
         }
     }

@@ -1,8 +1,8 @@
 //! Inter mode search — libvpx-faithful realtime port of
 //! `vp9_pick_inter_mode`.
 //!
-//! Tries `{ZEROMV, NEARESTMV, NEWMV} × {LASTFRAME}` for a single
-//! luma block, performs sub-pel reference fetch + forward DCT +
+//! Tries `{ZEROMV, NEARESTMV, NEARMV, NEWMV} × {LASTFRAME}` for a
+//! single luma block, performs sub-pel reference fetch + forward DCT +
 //! quantize + dequantize + inverse DCT, and picks the mode minimising
 //! `D + lambda * R` where:
 //!
@@ -25,10 +25,14 @@
 //!   ALTREF and the ref-frame search is gated by `usable_ref_frame`
 //!   (`vp9_pickmode.c:1429-1452`); we collapse to single-ref single-
 //!   reference-frame to keep v1 tractable. GOLDEN / ALTREF land later.
-//! - **Inter modes**: `{NEARESTMV, ZEROMV, NEWMV}` only. `NEARMV` is
-//!   skipped — it shares the candidate-list mechanics of `NEARESTMV`
-//!   but uses the second-nearest MV; the supervisor's spec explicitly
-//!   defers it to v2.
+//! - **Inter modes**: `{NEARESTMV, NEARMV, ZEROMV, NEWMV}`. NEARMV
+//!   (A12, 2026-05-22) shares the candidate-list mechanics of
+//!   NEARESTMV but uses the second-nearest MV
+//!   (`MvCandidates.near`). The caller is responsible for populating
+//!   `MvCandidates.near` from `find_mv_refs(NEARMV, ...)` — which
+//!   does NOT early-break — so the picker's NEARMV reconstruction
+//!   matches what the decoder will compute when reading the
+//!   bitstream.
 //! - **No compound prediction**: single-ref blocks only. libvpx's
 //!   `vp9_pickmode.c` realtime path also skips compound (it's an RDO
 //!   speed feature gated by `usable_ref_frame > 1`).
@@ -64,6 +68,7 @@
 //! ```text
 //! [(ZEROMV,  Mv::ZERO),
 //!  (NEARESTMV, mv_candidates.nearest),
+//!  (NEARMV, mv_candidates.near),
 //!  (NEWMV,  diamond + sub-pel from `mv_candidates.nearest`)]
 //! ```
 //!
@@ -131,9 +136,15 @@ pub struct MvCandidates {
     /// reference MV for `NEARESTMV` and as the search center for
     /// `NEWMV`.
     pub nearest: Mv,
-    /// `mv_ref_list[1]` — the second-nearest decoded MV. Stored for
-    /// completeness; F8.1 doesn't evaluate `NEARMV` so this slot is
-    /// currently unused. Populated for forward compatibility with v2.
+    /// `mv_ref_list[1]` — the second-nearest decoded MV. Used as the
+    /// reference MV for `NEARMV` (A12, 2026-05-22). The caller must
+    /// derive this from `find_mv_refs(NEARMV, ...)` (the NEARMV path
+    /// disables `early_break` so the search continues past the first
+    /// candidate). Setting `near == nearest` is also legal — it
+    /// makes NEARMV identical to NEARESTMV in rate/distortion, and
+    /// the picker's RD tiebreaker (mode-cost lookup) will pick the
+    /// cheaper mode. The decoder will still read `find_mv_refs(NEARMV,
+    /// ...)` for byte-exact reconstruction.
     pub near: Mv,
 }
 
@@ -234,9 +245,9 @@ pub struct InterModeSearchResult {
 
 /// Run the libvpx-style inter-mode RD search for one luma block.
 ///
-/// Evaluates `{ZEROMV, NEARESTMV, NEWMV}` × `{LASTFRAME}` and returns
-/// the lowest-RD-cost winner. See module docs for the deliberate
-/// divergences from libvpx's full realtime path.
+/// Evaluates `{ZEROMV, NEARESTMV, NEARMV, NEWMV}` × `{LASTFRAME}` and
+/// returns the lowest-RD-cost winner. See module docs for the
+/// deliberate divergences from libvpx's full realtime path.
 #[must_use]
 pub fn pick_inter_mode_luma(params: &InterModeSearchParams<'_>) -> InterModeSearchResult {
     debug_assert!(
@@ -268,7 +279,18 @@ pub fn pick_inter_mode_luma(params: &InterModeSearchParams<'_>) -> InterModeSear
         lambda,
     );
 
-    // Candidate 3: NEWMV — full-pel diamond seeded at NEAREST, then
+    // Candidate 3: NEARMV — uses `mv_candidates.near`
+    // (`find_mv_refs(NEARMV).mvs[count-1]`). No MV delta is encoded
+    // on the wire; the rate cost is just the inter-mode bits.
+    let near = evaluate_candidate(
+        params,
+        InterMode::NearMv,
+        params.mv_candidates.near,
+        params.mv_candidates.near,
+        lambda,
+    );
+
+    // Candidate 4: NEWMV — full-pel diamond seeded at NEAREST, then
     // sub-pel tree-pruned-more refinement.
     let new_mv = run_newmv_search(params);
     let new = evaluate_candidate(
@@ -284,6 +306,9 @@ pub fn pick_inter_mode_luma(params: &InterModeSearchParams<'_>) -> InterModeSear
     if nearest.best_rd_cost < best.best_rd_cost {
         best = nearest;
     }
+    if near.best_rd_cost < best.best_rd_cost {
+        best = near;
+    }
     if new.best_rd_cost < best.best_rd_cost {
         best = new;
     }
@@ -292,12 +317,12 @@ pub fn pick_inter_mode_luma(params: &InterModeSearchParams<'_>) -> InterModeSear
 
 /// Diagnostic: same search as [`pick_inter_mode_luma`] but returns the
 /// per-candidate breakdown in candidate order
-/// `[ZEROMV, NEARESTMV, NEWMV]`. Used by the tests to sanity-check
-/// the RD-ranking for the shifted-ref oracle.
+/// `[ZEROMV, NEARESTMV, NEARMV, NEWMV]`. Used by the tests to
+/// sanity-check the RD-ranking for the shifted-ref oracle.
 #[must_use]
 pub fn pick_inter_mode_luma_all_costs(
     params: &InterModeSearchParams<'_>,
-) -> [InterModeSearchResult; 3] {
+) -> [InterModeSearchResult; 4] {
     let lambda = compute_rd_mult(
         i32::from(params.q_index),
         frame_type_for_rd(params.frame_kind),
@@ -316,6 +341,13 @@ pub fn pick_inter_mode_luma_all_costs(
         params.mv_candidates.nearest,
         lambda,
     );
+    let near = evaluate_candidate(
+        params,
+        InterMode::NearMv,
+        params.mv_candidates.near,
+        params.mv_candidates.near,
+        lambda,
+    );
     let new_mv = run_newmv_search(params);
     let new = evaluate_candidate(
         params,
@@ -324,7 +356,7 @@ pub fn pick_inter_mode_luma_all_costs(
         params.mv_candidates.nearest,
         lambda,
     );
-    [zero, nearest, new]
+    [zero, nearest, near, new]
 }
 
 /// Clamp a Q3 (1/8-pel) MV into the picker's full-pel
@@ -1033,19 +1065,21 @@ mod tests {
         );
 
         let res = pick_inter_mode_luma(&params);
-        // Both ZEROMV and NEARESTMV produce identical zero-MV
-        // predictions here (mv_candidates.nearest is (0, 0)), and
-        // both quantize to zero residual against an identical ref
-        // → distortion is zero for both. The winner is the cheaper-
-        // rate mode under the default inter_mode_probs at ctx=0; that
-        // happens to be NEARESTMV (libvpx's tree puts NEAREST deeper
-        // than ZERO but the default probability favours NEAREST). Any
-        // zero-MV winner is correct; what matters is that NEWMV did
-        // **not** win (which would have wasted bits encoding an MV
-        // residual against an already-perfect prediction).
+        // ZEROMV, NEARESTMV and NEARMV all produce identical zero-MV
+        // predictions here (mv_candidates.nearest = .near = (0, 0)),
+        // and all three quantize to zero residual against an identical
+        // ref → distortion is zero for each. The winner is the
+        // cheapest-rate mode under the default inter_mode_probs at
+        // ctx=0. Any zero-MV winner is correct; what matters is that
+        // NEWMV did **not** win (which would have wasted bits
+        // encoding an MV residual against an already-perfect
+        // prediction).
         assert!(
-            matches!(res.best_mode, InterMode::ZeroMv | InterMode::NearestMv),
-            "identical planes → expected ZEROMV or NEARESTMV, got {:?} (rd={}, dist={}, rate={})",
+            matches!(
+                res.best_mode,
+                InterMode::ZeroMv | InterMode::NearestMv | InterMode::NearMv
+            ),
+            "identical planes → expected ZEROMV / NEARESTMV / NEARMV, got {:?} (rd={}, dist={}, rate={})",
             res.best_mode, res.best_rd_cost, res.best_distortion, res.best_rate,
         );
         assert_eq!(res.best_mv, Mv::ZERO);
@@ -1111,7 +1145,7 @@ mod tests {
 
         let all = pick_inter_mode_luma_all_costs(&params);
         let zero = &all[0];
-        let new = &all[2];
+        let new = &all[3];
 
         // The actual oracle: NEWMV's distortion must be substantially
         // lower than ZEROMV's (NEWMV finds the shift; ZEROMV is stuck
@@ -1189,11 +1223,12 @@ mod tests {
         }
     }
 
-    /// All 3 candidates are evaluated — `pick_inter_mode_luma_all_costs`
-    /// returns exactly 3 entries in `[ZEROMV, NEARESTMV, NEWMV]` order.
-    /// Each entry's mode field must match the slot's intended mode.
+    /// All 4 candidates are evaluated — `pick_inter_mode_luma_all_costs`
+    /// returns exactly 4 entries in
+    /// `[ZEROMV, NEARESTMV, NEARMV, NEWMV]` order. Each entry's mode
+    /// field must match the slot's intended mode.
     #[test]
-    fn pick_inter_walks_3_candidates() {
+    fn pick_inter_walks_4_candidates() {
         let pw = 64;
         let ph = 64;
         let data = make_plane(pw, ph, 9);
@@ -1219,10 +1254,11 @@ mod tests {
             60,
         );
         let all = pick_inter_mode_luma_all_costs(&params);
-        assert_eq!(all.len(), 3);
+        assert_eq!(all.len(), 4);
         assert_eq!(all[0].best_mode, InterMode::ZeroMv);
         assert_eq!(all[1].best_mode, InterMode::NearestMv);
-        assert_eq!(all[2].best_mode, InterMode::NewMv);
+        assert_eq!(all[2].best_mode, InterMode::NearMv);
+        assert_eq!(all[3].best_mode, InterMode::NewMv);
         // Each must produce a finite rate / dist / rd entry.
         for (i, c) in all.iter().enumerate() {
             assert!(c.best_rd_cost > 0, "slot {i}: rd_cost {} must be > 0", c.best_rd_cost);
@@ -1268,16 +1304,19 @@ mod tests {
                 "{bs:?}: rd_cost {} must be finite positive",
                 res.best_rd_cost,
             );
-            // Same-plane → ZEROMV's and NEARESTMV's predictions both
-            // collapse to zero distortion; either is a valid winner
-            // (rate-cost tiebreaker, see
+            // Same-plane → ZEROMV / NEARESTMV / NEARMV predictions all
+            // collapse to zero distortion; any of the three is a valid
+            // winner (rate-cost tiebreaker, see
             // `pick_inter_zero_mv_on_identical_ref` for details). The
             // failure mode we're actually guarding against is NEWMV
             // winning over a zero-MV mode (that would mean the search
             // wasted bits on a useless MV residual).
             assert!(
-                matches!(res.best_mode, InterMode::ZeroMv | InterMode::NearestMv),
-                "{bs:?} identical src/ref: expected ZEROMV or NEARESTMV winner, got {:?}",
+                matches!(
+                    res.best_mode,
+                    InterMode::ZeroMv | InterMode::NearestMv | InterMode::NearMv
+                ),
+                "{bs:?} identical src/ref: expected ZEROMV / NEARESTMV / NEARMV winner, got {:?}",
                 res.best_mode,
             );
             assert_eq!(res.best_distortion, 0);
@@ -1335,12 +1374,18 @@ mod tests {
         //   - winner mode is identical but rate (and hence RD) differs.
         // We assert one of those two outcomes holds.
         assert!(
-            matches!(r0.best_mode, InterMode::ZeroMv | InterMode::NearestMv),
+            matches!(
+                r0.best_mode,
+                InterMode::ZeroMv | InterMode::NearestMv | InterMode::NearMv
+            ),
             "ctx 0 winner must be a zero-MV mode, got {:?}",
             r0.best_mode,
         );
         assert!(
-            matches!(r6.best_mode, InterMode::ZeroMv | InterMode::NearestMv),
+            matches!(
+                r6.best_mode,
+                InterMode::ZeroMv | InterMode::NearestMv | InterMode::NearMv
+            ),
             "ctx 6 winner must be a zero-MV mode, got {:?}",
             r6.best_mode,
         );
