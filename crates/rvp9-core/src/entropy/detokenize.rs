@@ -324,38 +324,50 @@ pub fn decode_coefs(
     // `:171,254`).
     let mut dqv = dc_dq;
 
-    // Wave G G7 prototype — two-pass dequant for the ONE_TOKEN arm.
+    // Wave H H5 — full two-pass dequant split for ALL token arms.
     //
-    // The dequant arithmetic for the ONE_TOKEN branch (`v = dqv >>
-    // dq_shift`) does not depend on any subsequent bool-coder read,
-    // and the sign bit (entropy-coded, prob 128) only carries info
-    // about the SIGN, not the magnitude. We therefore defer the
-    // arithmetic + writeback for ONE_TOKEN positions out of the
-    // sequential bool-coder loop into a second vectorisable pass.
+    // Architectural goal (originally filed as F12 blocker, see
+    // `notes/wave-g-f12-blocker.md` and `notes/wave-h-g7-prototype.md`):
+    // separate per-coefficient dequant arithmetic from the bool-coder
+    // loop so that the dequant arithmetic can be vectorised. Wave G G7
+    // landed the ONE_TOKEN arm as a prototype; H5 extends the same
+    // pattern to every remaining token arm (TWO_TOKEN, THREE_TOKEN,
+    // FOUR_TOKEN, CAT1..6).
     //
-    // The other token arms (CAT1..6, TWO/THREE/FOUR) remain on the
-    // existing fused path — extending them would require either a
-    // second scratch buffer with extra width (`val` for CAT arms is
-    // up-to-16-bit so it doesn't fit in `i8`) or a per-arm tagged
-    // union, both of which complicate the proof-of-concept. See
-    // `notes/wave-h-g7-followups.md` for the full-extension design.
+    // Pass-1 scratch layout: four parallel arrays, one entry per
+    // non-zero coefficient. Each entry records:
+    //   - `raster_idx` (u16): scan[c], i.e. the position in the
+    //     transform block to write the dequantised coefficient into.
+    //   - `dqv`        (i16): the dequant value sampled AT the time
+    //     this coefficient was decoded. Captures DC vs AC: scan
+    //     position 0 sees `dc_dq`, positions 1..eob see `ac_dq`. Do
+    //     NOT recompute this in Pass 2 from scan position — the
+    //     zero-run logic flips `dqv` to `ac_dq` mid-iteration, so the
+    //     "DC vs AC by scan position" rule isn't a clean function of
+    //     `raster_idx` alone here.
+    //   - `val`        (i16): the pre-dequant integer multiplier. The
+    //     per-arm formula was `v = (val * dqv) >> dq_shift`, with
+    //     `val ∈ {1, 2, 3, 4, CAT_min + ext_bits}`. The maximum value
+    //     is CAT6 = 67 + (2^14 - 1) = 16450, comfortably within i16.
+    //   - `sign`       (u8): the raw sign bit, read inside the
+    //     bool-coder loop (entropy-coded → cannot defer).
     //
-    // Scratch layout: parallel arrays sized to `seg_eob` (worst case
-    // every position is ONE_TOKEN). A single u16 counter tracks how
-    // many entries pass 1 deposited. Pass 2 walks `0..n_one_tokens`
-    // and applies `signed_v = if sign { -(dqv >> dq_shift) } else {
-    // dqv >> dq_shift }` to `dq_coefs_out[raster_idx]`.
+    // Pass-2 uniform formula: `mag = (val * dqv) >> dq_shift; out =
+    // if sign { -mag } else { mag }`. This collapses to the
+    // pre-refactor arithmetic exactly for every arm:
+    //   - ONE_TOKEN     : val=1   → mag = dqv >> dq_shift
+    //   - TWO_TOKEN     : val=2   → mag = (2 * dqv) >> dq_shift
+    //   - THREE/FOUR    : val=3|4 → mag = (three_or_four * dqv) >> dq_shift
+    //   - CAT1..6       : val=CATn_MIN_VAL + ext bits → mag = (val * dqv) >> dq_shift
     //
-    // Memory cost: 4 * seg_eob bytes (i16 dqv + i16 raster_idx). For
-    // a 32x32 block this is 4 KiB on the stack-allocated `Vec` —
-    // acceptable for a prototype; production would use a per-tile
-    // re-usable scratch arena.
-    let mut one_token_dqv: Vec<i16> = Vec::with_capacity(seg_eob);
-    let mut one_token_raster: Vec<u16> = Vec::with_capacity(seg_eob);
-    // Pack sign + dq_shift_applied flag into one byte per entry. Bit
-    // 0 = sign (1 if negative), nothing else needed (dq_shift is
-    // block-constant).
-    let mut one_token_sign: Vec<u8> = Vec::with_capacity(seg_eob);
+    // Memory cost: ~7 bytes per entry * seg_eob = ≤ 7 KiB for a 32×32
+    // block (worst case all non-zero). Acceptable for the refactor;
+    // a future TileCtx arena hoist (G7.4 in the prototype note) will
+    // amortise these allocations across all blocks in a tile.
+    let mut scratch_raster: Vec<u16> = Vec::with_capacity(seg_eob);
+    let mut scratch_dqv: Vec<i16> = Vec::with_capacity(seg_eob);
+    let mut scratch_val: Vec<i16> = Vec::with_capacity(seg_eob);
+    let mut scratch_sign: Vec<u8> = Vec::with_capacity(seg_eob);
 
     // Stage 3 stretch M.6 — runtime differential against the libvpx
     // verbatim reference port. Gated by `RVP9_DEBUG_REFCOEFS=1`. When
@@ -419,15 +431,23 @@ pub fn decode_coefs(
 
         // ONE-vs-higher branch.
         //
-        // Wave G G7 prototype: the ONE_TOKEN arm defers its arithmetic
-        // (`v = dqv >> dq_shift`) and writeback into pass 2 (see
-        // scratch buffers above). Other arms remain on the fused path
-        // and write directly into `dq_coefs_out`.
+        // Wave H H5: every arm now defers its dequant arithmetic into
+        // pass 2. The per-arm work inside this loop is reduced to:
+        //   (a) reading the entropy-coded bits that select the token,
+        //   (b) updating `token_cache` (used for context selection of
+        //       the NEXT coefficient — must stay in-loop, in original
+        //       sequence),
+        //   (c) updating `counts` for backward adaptation,
+        //   (d) computing the integer multiplier `val`,
+        //   (e) reading the sign bit (entropy-coded → must stay in-loop),
+        //   (f) depositing `(raster_idx, dqv, val, sign)` into scratch.
+        //
+        // Pass 2 (after the loop) applies the uniform formula
+        // `mag = (val * dqv) >> dq_shift; out = sign ? -mag : mag`
+        // for every captured entry.
         let raster_idx = scan.scan[c] as usize;
-        let is_one_token;
-        let v: i32;
+        let val: i32;
         if reader.read(prob_local[ONE_CONTEXT_NODE]) != 0 {
-            is_one_token = false;
             // High branch — walk the Pareto8 row.
             let p: &[u8; super::pareto::MODEL_NODES] =
                 &VP9_PARETO8_FULL[(prob_local[PIVOT_NODE] - 1) as usize];
@@ -438,7 +458,7 @@ pub fn decode_coefs(
                 // HIGH_LOW or CAT_THREE/FOUR/FIVE/SIX.
                 if reader.read(p[3]) != 0 {
                     token_cache[scan.scan[c] as usize] = 5;
-                    let val = if reader.read(p[5]) != 0 {
+                    val = if reader.read(p[5]) != 0 {
                         if reader.read(p[7]) != 0 {
                             // CAT6.
                             CAT6_MIN_VAL + read_coeff_bits(reader, &VP9_CAT6_PROB)
@@ -453,39 +473,35 @@ pub fn decode_coefs(
                         // CAT3.
                         CAT3_MIN_VAL + read_coeff_bits(reader, &VP9_CAT3_PROB)
                     };
-                    v = (val * dqv) >> dq_shift;
                 } else {
                     token_cache[scan.scan[c] as usize] = 4;
-                    let val = if reader.read(p[4]) != 0 {
+                    val = if reader.read(p[4]) != 0 {
                         // CAT2.
                         CAT2_MIN_VAL + read_coeff_bits(reader, &VP9_CAT2_PROB)
                     } else {
                         // CAT1.
                         CAT1_MIN_VAL + read_coeff_bits(reader, &VP9_CAT1_PROB)
                     };
-                    v = (val * dqv) >> dq_shift;
                 }
             } else {
                 // No high-magnitude bits → token is TWO, THREE, or FOUR.
                 if reader.read(p[1]) != 0 {
                     token_cache[scan.scan[c] as usize] = 3;
-                    let three_or_four = 3 + i32::from(reader.read(p[2]));
-                    v = (three_or_four * dqv) >> dq_shift;
+                    // THREE_TOKEN or FOUR_TOKEN.
+                    val = 3 + i32::from(reader.read(p[2]));
                 } else {
                     token_cache[scan.scan[c] as usize] = 2;
-                    v = (2 * dqv) >> dq_shift;
+                    // TWO_TOKEN.
+                    val = 2;
                 }
             }
         } else {
-            // ONE_TOKEN — pass-1 deferred arm.
-            is_one_token = true;
+            // ONE_TOKEN.
             if let Some(ref mut cs) = counts {
                 cs.coef_counts[band_local][ctx][ONE_TOKEN] += 1;
             }
             token_cache[scan.scan[c] as usize] = 1;
-            // `v` is computed in pass 2; assign a dummy here so the
-            // sign-bit-trace branch below still has a well-defined value.
-            v = 0;
+            val = 1;
         }
 
         // Sign bit (raw, prob 128). MUST be read inside the
@@ -493,42 +509,31 @@ pub fn decode_coefs(
         // read would corrupt all subsequent reads.
         let sign_bit = reader.read_bit();
 
-        if is_one_token {
-            // Pass-1 deposit: record (raster_idx, dqv, sign) for pass-2
-            // arithmetic. `dq_coefs_out[raster_idx]` was zeroed at the
-            // function top so leaving it untouched here is correct (pass
-            // 2 will overwrite).
-            //
-            // Assertion (debug only): `dqv` always fits in i16 — DC and
-            // AC dequant values come from `plane_dequant_pair` whose
-            // return type is `(i16, i16)`.
-            debug_assert!(dqv.unsigned_abs() <= i16::MAX as u32);
-            debug_assert!(raster_idx <= u16::MAX as usize);
-            one_token_dqv.push(dqv as i16);
-            one_token_raster.push(raster_idx as u16);
-            one_token_sign.push(sign_bit);
-        } else {
-            // Fused-path writeback (unchanged from pre-G7).
-            let signed_v = if sign_bit != 0 { -v } else { v };
-            dq_coefs_out[raster_idx] = signed_v;
-        }
+        // Pass-1 deposit: record (raster_idx, dqv, val, sign) for the
+        // pass-2 arithmetic. `dq_coefs_out[raster_idx]` was zeroed at
+        // the function top so leaving it untouched here is correct —
+        // pass 2 will overwrite. CAT6's maximum `val` is
+        // `67 + 2^14 - 1 = 16450`, which fits in i16; smaller arms
+        // are obviously within range. `dqv` comes from
+        // `plane_dequant_pair` whose return type is `(i16, i16)` so
+        // the i16 narrowing is loss-free.
+        debug_assert!(dqv.unsigned_abs() <= i16::MAX as u32);
+        debug_assert!(raster_idx <= u16::MAX as usize);
+        debug_assert!((0..=i32::from(i16::MAX)).contains(&val));
+        scratch_raster.push(raster_idx as u16);
+        scratch_dqv.push(dqv as i16);
+        scratch_val.push(val as i16);
+        scratch_sign.push(sign_bit);
 
         // Stage 3 stretch M.17 — print scan[c] and write index for Tx8x8.
-        // For the deferred ONE_TOKEN arm the printed `v` is the
-        // pre-arithmetic placeholder; tracing the post-pass-2 value
-        // would require moving this block after the second pass.
+        // The post-pass-2 dequantised value is reconstructed here so
+        // the trace stays meaningful (the actual writeback happens in
+        // pass 2 below).
         if matches!(tx_size, TxSize::Tx8x8)
             && std::env::var("RVP9_DEBUG_SCAN_WRITE").is_ok_and(|v| v == "1")
         {
-            let trace_v = if is_one_token {
-                // Reconstruct so the trace line stays meaningful.
-                let mag = dqv >> dq_shift;
-                if sign_bit != 0 { -mag } else { mag }
-            } else if sign_bit != 0 {
-                -v
-            } else {
-                v
-            };
+            let mag = (val * dqv) >> dq_shift;
+            let trace_v = if sign_bit != 0 { -mag } else { mag };
             eprintln!(
                 "RVP9_DBG_SCAN_WRITE c={c} scan[c]={raster_idx} v={trace_v} dq_coefs_out.len={}",
                 dq_coefs_out.len()
@@ -542,30 +547,38 @@ pub fn decode_coefs(
         dqv = ac_dq;
     }
 
-    // Wave G G7 prototype — pass 2: vectorisable dequant arithmetic +
-    // writeback for the ONE_TOKEN positions deposited by pass 1.
+    // Wave H H5 — pass 2: uniform vectorisable dequant arithmetic +
+    // writeback for every coefficient deposited by pass 1.
     //
     // Each iteration is independent (no loop-carried state, no
     // bool-coder reads), so this loop is trivially auto-vectorisable
-    // by LLVM and can be hand-lifted into an AVX2 kernel via a
-    // future `SimdDispatch::plane_dequant_pair` family that takes
-    // (scratch arrays, dq_shift) → writes into `dq_coefs_out`.
+    // by LLVM and is the consumption point for the H6 AVX2
+    // `plane_dequant_pair`-family kernel: gather (val, dqv) pairs,
+    // perform the i32 multiply + arithmetic right shift, conditionally
+    // negate by `sign`, and scatter to `dq_coefs_out[raster_idx]`.
     //
-    // Bit-exactness vs the fused path: for ONE_TOKEN, the fused
-    // computation was `signed_v = if sign { -(dqv >> dq_shift) }
-    // else { dqv >> dq_shift }`. We replicate that exactly here. The
-    // `dqv >> dq_shift` is an arithmetic right-shift on a positive
-    // `i32` (since `dqv >= 0` always — dequant LUT values are
-    // positive), so the result is non-negative. Negation produces an
-    // exact i32. Identical to the inline arithmetic at the original
-    // line 444.
-    debug_assert_eq!(one_token_dqv.len(), one_token_raster.len());
-    debug_assert_eq!(one_token_dqv.len(), one_token_sign.len());
-    for i in 0..one_token_dqv.len() {
-        let dqv_i = i32::from(one_token_dqv[i]);
-        let raster_idx = one_token_raster[i] as usize;
-        let sign = one_token_sign[i];
-        let mag = dqv_i >> dq_shift;
+    // Bit-exactness vs the fused path: the pre-refactor arithmetic
+    // for every arm reduces to `signed_v = if sign { -((val * dqv) >>
+    // dq_shift) } else { (val * dqv) >> dq_shift }` with
+    // arm-specific `val` constants:
+    //   - ONE_TOKEN     val=1   (collapse: `v = dqv >> dq_shift`)
+    //   - TWO_TOKEN     val=2
+    //   - THREE/FOUR    val=3|4
+    //   - CAT1..6       val=CATn_MIN_VAL + extension bits
+    // The unified Pass 2 computes that formula uniformly. Because
+    // `val > 0` and `dqv >= 0` for all valid VP9 streams, the product
+    // is non-negative and the arithmetic right shift behaves
+    // identically to the per-arm inline arithmetic the pre-refactor
+    // code performed.
+    debug_assert_eq!(scratch_raster.len(), scratch_dqv.len());
+    debug_assert_eq!(scratch_raster.len(), scratch_val.len());
+    debug_assert_eq!(scratch_raster.len(), scratch_sign.len());
+    for i in 0..scratch_raster.len() {
+        let raster_idx = scratch_raster[i] as usize;
+        let dqv_i = i32::from(scratch_dqv[i]);
+        let val_i = i32::from(scratch_val[i]);
+        let sign = scratch_sign[i];
+        let mag = (val_i * dqv_i) >> dq_shift;
         dq_coefs_out[raster_idx] = if sign != 0 { -mag } else { mag };
     }
 
