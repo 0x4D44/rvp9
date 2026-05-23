@@ -1,0 +1,130 @@
+# libvpx commit: 12f3a2ac603e8f10742105519e0cd03c3b8f71dd (v1.14.1)
+# F.0.2 — per-block picker-decision oracle (HLD §3.3).
+#
+# Adds ONE additive `fprintf` at the end of `vp9_pick_inter_mode` in
+# vp9/encoder/vp9_pickmode.c (the per-block picker that runs once per
+# coded block in libvpx's real-time path). The fprintf is gated on the
+# `VPX_F02_ORACLE_OUT` environment variable so unpatched / non-F.0.2
+# runs of the patched binary are byte-identical to stock. No behaviour
+# change: no early-returns, no mutations to the picker's locals.
+#
+# Output format: one JSONL object per line, matching the schema in
+# `crates/rvp9-encoder/src/f02_oracle.rs` (HLD §3.4). Both legs
+# serialise the same shape so the diff binary can pair records by
+# (frame_idx, mi_row, mi_col).
+#
+# Output buffering: `setvbuf(_IOLBF)` (HLD §3.3 revision 6) — each
+# fprintf line lands atomically when the patched vpxenc is invoked
+# from the harness driver, avoiding the partial-flush interleaving
+# Windows stdio default `_IOFBF` produces.
+#
+# Forward-looking fields (HLD §3.4.1): `mode_bits_est`, `mv_bits_est`,
+# `coef_bits_est` are emitted as `0` until a Track F milestone wires
+# up the per-rate-component breakdown in libvpx's RT picker. The
+# schema field is present (so the diff binary's parser doesn't
+# need a v2 schema), but the diff report's markdown header must
+# explicitly flag these as "0 on both legs at F.0.2".
+#
+# Applying:
+#   cd third_party/libvpx
+#   git apply ../libvpx-patches/f02_oracle.patch
+# Build via `scripts/build_f02_libvpx.ps1` (HLD §3.3 revision 5).
+diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
+--- a/vp9/encoder/vp9_pickmode.c
++++ b/vp9/encoder/vp9_pickmode.c
+@@ -10,6 +10,7 @@
+
+ #include <assert.h>
+ #include <limits.h>
++#include <stdlib.h>
+ #include <math.h>
+ #include <stdio.h>
+
+@@ -2735,9 +2736,86 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+       }
+     }
+   }
+
+   *rd_cost = best_rdc;
++
++  /* F.0.2 ORACLE BEGIN — additive instrumentation only; no behaviour
++   * change. Emits one JSONL line per coded block to the file named in
++   * `VPX_F02_ORACLE_OUT`. Off-by-default; when the env var is unset
++   * the patched binary is byte-identical to stock. See
++   * `wrk_docs/Track_F/F0.2_HLD_per_block_oracle.md` §3.3 for the full
++   * design rationale. */
++  {
++    static FILE *vpx_f02_fp = NULL;
++    static int vpx_f02_state = 0; /* 0=not-tried, 1=open-ok, 2=open-failed */
++    static const char *const vpx_f02_bsize_tag[BLOCK_SIZES] = {
++      "4x4",   "4x8",   "8x4",   "8x8",   "8x16",  "16x8",  "16x16",
++      "16x32", "32x16", "32x32", "32x64", "64x32", "64x64"
++    };
++    static const char *const vpx_f02_mode_tag[MB_MODE_COUNT] = {
++      "DC", "V", "H", "D45", "D135", "D117", "D153", "D207", "D63", "TM",
++      "NEARESTMV", "NEARMV", "ZEROMV", "NEWMV"
++    };
++    if (vpx_f02_state == 0) {
++      const char *out_path = getenv("VPX_F02_ORACLE_OUT");
++      if (out_path != NULL && out_path[0] != '\0') {
++        vpx_f02_fp = fopen(out_path, "w");
++        if (vpx_f02_fp != NULL) {
++          /* HLD §3.3 revision 6: line-buffered output so per-block
++           * writes land atomically on Windows stdio (default _IOFBF
++           * partial-flush interleaves when the harness drains stderr
++           * concurrently). */
++          setvbuf(vpx_f02_fp, NULL, _IOLBF, 0);
++          vpx_f02_state = 1;
++        } else {
++          vpx_f02_state = 2;
++        }
++      } else {
++        vpx_f02_state = 2; /* env not set — disabled for this run */
++      }
++    }
++    if (vpx_f02_state == 1 && vpx_f02_fp != NULL) {
++      const char *bsize_str = (bsize >= 0 && bsize < BLOCK_SIZES)
++                                  ? vpx_f02_bsize_tag[bsize] : "?";
++      PREDICTION_MODE picked_mode = mi->mode;
++      const char *mode_str = (picked_mode >= 0 && picked_mode < MB_MODE_COUNT)
++                                 ? vpx_f02_mode_tag[picked_mode] : "?";
++      MV_REFERENCE_FRAME picked_ref = mi->ref_frame[0];
++      const char *ref_str;
++      switch (picked_ref) {
++        case INTRA_FRAME: ref_str = "INTRA"; break;
++        case LAST_FRAME:  ref_str = "LAST"; break;
++        case GOLDEN_FRAME:ref_str = "GOLDEN"; break;
++        case ALTREF_FRAME:ref_str = "ALTREF"; break;
++        default: ref_str = "NONE"; break;
++      }
++      int mv_row = (picked_ref == INTRA_FRAME) ? 0
++                                               : (int)mi->mv[0].as_mv.row;
++      int mv_col = (picked_ref == INTRA_FRAME) ? 0
++                                               : (int)mi->mv[0].as_mv.col;
++      /* `sse_after_pred` is the picker's source-vs-recon SSE; use
++       * best_rdc.dist (libvpx's RD distortion is SSE-based for the
++       * RT picker). */
++      unsigned long long sse_after_pred = (unsigned long long)best_rdc.dist;
++      int skip_flag = mi->skip;
++      /* `frame_idx` mirrors the harness binary's IVF-presentation-
++       * order counter; libvpx tracks it as `cm->current_video_frame`. */
++      unsigned int frame_idx = (unsigned int)cm->current_video_frame;
++      fprintf(vpx_f02_fp,
++              "{\"frame_idx\":%u,\"mi_row\":%d,\"mi_col\":%d,"
++              "\"bsize\":\"%s\",\"mode\":\"%s\",\"ref_frame\":\"%s\","
++              "\"mv_row\":%d,\"mv_col\":%d,"
++              "\"mode_bits_est\":0,\"mv_bits_est\":0,\"coef_bits_est\":0,"
++              "\"sse_after_pred\":%llu,\"skip_flag\":%s}\n",
++              frame_idx, mi_row, mi_col,
++              bsize_str, mode_str, ref_str,
++              mv_row, mv_col,
++              sse_after_pred,
++              skip_flag ? "true" : "false");
++    }
++  }
++  /* F.0.2 ORACLE END */
+ }
+
+ void vp9_pick_inter_mode_sub8x8(VP9_COMP *cpi, MACROBLOCK *x, int mi_row,
+                                 int mi_col, RD_COST *rd_cost, BLOCK_SIZE bsize,
+                                 PICK_MODE_CONTEXT *ctx) {

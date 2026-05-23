@@ -43,6 +43,10 @@ path = "src/bin/extract_divergences.rs"
 name = "decode-coefs-oracle-diff"
 path = "src/bin/decode_coefs_oracle_diff.rs"
 
+[[bin]]
+name = "f02-block-oracle"
+path = "src/bin/f02_block_oracle.rs"
+
 [dependencies]
 rvp9-core = { path = "../rvp9-core" }
 rvp9-io = { path = "../rvp9-io" }

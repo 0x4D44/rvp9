@@ -72,6 +72,7 @@ use rvp9_core::transforms::{TxMode, TxSize};
 
 pub mod aq_cyclic_refresh;
 pub mod e12stat;
+pub mod f02_oracle;
 pub mod frame_loop;
 pub(crate) mod loopfilter;
 pub mod predstat;
@@ -2023,6 +2024,47 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
 
                 sb_partitions[sb_idx][leaf_idx].predicted_uv_mode = picked_uv_mode;
 
+                // F.0.2 oracle — record one BlockDecision per coded
+                // intra leaf. Single relaxed atomic load when the env
+                // var `RVP9_F02_ORACLE` is unset (see HLD §3.2 / §7).
+                if crate::f02_oracle::is_enabled() {
+                    crate::f02_oracle::record_decision(
+                        crate::f02_oracle::BlockDecision {
+                            frame_idx: crate::f02_oracle::current_frame_idx(),
+                            mi_row: leaf_mi_row as u16,
+                            mi_col: leaf_mi_col as u16,
+                            bsize: leaf_bsize,
+                            mode: crate::f02_oracle::BlockDecisionMode::Intra(
+                                picked_mode,
+                            ),
+                            ref_frame: RefFrame::IntraFrame,
+                            mv_row: 0,
+                            mv_col: 0,
+                            // Picker mode-rate estimate is not exposed
+                            // through the existing `pick_intra_mode_luma`
+                            // result struct (only the winner mode comes
+                            // back). HLD §3.4.1 marks `mode_bits_est` as
+                            // "live"; the closest we can emit without
+                            // widening the picker API (out of scope,
+                            // HLD §9) is `0` for intra at F.0.2. F.x
+                            // milestones that need exact intra-mode
+                            // bits will widen the picker's return
+                            // shape.
+                            mode_bits_est: 0,
+                            mv_bits_est: 0,
+                            // Forward-looking per HLD §3.4.1 — `0`
+                            // until F.1 lands the coef-bit estimator.
+                            coef_bits_est: 0,
+                            sse_after_pred: 0,
+                            // Intra leaves in the F5.1 path always
+                            // emit residuals (`skip = false` on every
+                            // coded intra leaf). The RC.X1 skip-on-
+                            // zero-eob override only applies to inter.
+                            skip_flag: false,
+                        },
+                    );
+                }
+
                 // Encode this one leaf via the simulator. We construct
                 // a per-SB layout containing only this leaf so the
                 // simulator's outer loop walks exactly one element.
@@ -2620,6 +2662,31 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     sb_partitions[sb_idx][leaf_idx].picked_mv = Mv::ZERO;
                     sb_partitions[sb_idx][leaf_idx].skip = true;
                     sb_partitions[sb_idx][leaf_idx].picked_ref_frame = RefFrame::LastFrame;
+                    // F.0.2 oracle — record the skip-fallback decision
+                    // too (otherwise sub-8 leaves are missing from the
+                    // sink and the libvpx-side patch would emit an
+                    // unmatched record).
+                    if crate::f02_oracle::is_enabled() {
+                        crate::f02_oracle::record_decision(
+                            crate::f02_oracle::BlockDecision {
+                                frame_idx: crate::f02_oracle::current_frame_idx(),
+                                mi_row: leaf_mi_row as u16,
+                                mi_col: leaf_mi_col as u16,
+                                bsize: leaf_bsize,
+                                mode: crate::f02_oracle::BlockDecisionMode::Inter(
+                                    InterMode::ZeroMv,
+                                ),
+                                ref_frame: RefFrame::LastFrame,
+                                mv_row: 0,
+                                mv_col: 0,
+                                mode_bits_est: 0,
+                                mv_bits_est: 0,
+                                coef_bits_est: 0,
+                                sse_after_pred: 0,
+                                skip_flag: true,
+                            },
+                        );
+                    }
                     splat_inter_leaf_into_mi_grid(
                         &mut mi_grid,
                         mi_cols_us,
@@ -2693,6 +2760,31 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     sb_partitions[sb_idx][leaf_idx].picked_mv = Mv::ZERO;
                     sb_partitions[sb_idx][leaf_idx].skip = true;
                     sb_partitions[sb_idx][leaf_idx].picked_ref_frame = RefFrame::LastFrame;
+                    // F.0.2 oracle — also record this degenerate-MV-
+                    // envelope fallback so frame-edge leaves aren't
+                    // silently missing from the sink (and the libvpx-
+                    // side patch's coverage stays paired).
+                    if crate::f02_oracle::is_enabled() {
+                        crate::f02_oracle::record_decision(
+                            crate::f02_oracle::BlockDecision {
+                                frame_idx: crate::f02_oracle::current_frame_idx(),
+                                mi_row: leaf_mi_row as u16,
+                                mi_col: leaf_mi_col as u16,
+                                bsize: leaf_bsize,
+                                mode: crate::f02_oracle::BlockDecisionMode::Inter(
+                                    InterMode::ZeroMv,
+                                ),
+                                ref_frame: RefFrame::LastFrame,
+                                mv_row: 0,
+                                mv_col: 0,
+                                mode_bits_est: 0,
+                                mv_bits_est: 0,
+                                coef_bits_est: 0,
+                                sse_after_pred: 0,
+                                skip_flag: true,
+                            },
+                        );
+                    }
                     splat_inter_leaf_into_mi_grid(
                         &mut mi_grid,
                         mi_cols_us,
@@ -3385,6 +3477,83 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         );
                     }
                 }
+                // F.0.2 oracle — record one BlockDecision per coded
+                // inter leaf, AFTER the RC.X1 skip-on-zero-eob override
+                // (so `skip_flag` matches what lands in the bitstream).
+                // Single relaxed atomic load when `RVP9_F02_ORACLE` is
+                // unset (HLD §3.2 / §7).
+                if crate::f02_oracle::is_enabled() {
+                    let final_skip = sb_partitions[sb_idx][leaf_idx].skip;
+                    let final_mode = sb_partitions[sb_idx][leaf_idx].picked_mode;
+                    let final_mv = sb_partitions[sb_idx][leaf_idx].picked_mv;
+                    let final_ref = sb_partitions[sb_idx][leaf_idx].picked_ref_frame;
+                    // Re-derive `mv_bits_est` for NEWMV using the same
+                    // formula the picker uses internally
+                    // (`evaluate_candidate` in
+                    // `core::mode_decision::inter`), since the existing
+                    // `InterModeSearchResult` only returns the combined
+                    // `best_rate` (HLD §3.4.1 forward-looking note).
+                    // Reference MV is the safe `nearest` MV the picker
+                    // saw (post-OOB-veto), matching the
+                    // `pick_for_ref` closure's `mvc_safe.nearest`.
+                    let mv_bits_est: u32 =
+                        if matches!(final_mode, InterMode::NewMv) {
+                            let mvc_ref = match final_ref {
+                                RefFrame::GoldenFrame => mvc_golden.nearest,
+                                _ => mvc.nearest,
+                            };
+                            let ref_mv = if mv_in_bounds(mvc_ref) {
+                                mvc_ref
+                            } else {
+                                Mv::ZERO
+                            };
+                            let diff_row = final_mv.row.wrapping_sub(ref_mv.row);
+                            let diff_col = final_mv.col.wrapping_sub(ref_mv.col);
+                            let raw = rvp9_core::cost::mv_cost::mv_cost(
+                                diff_row, diff_col, &mv_costs,
+                            )
+                            .max(0) as u64;
+                            // ROUND_POWER_OF_TWO(raw * 108, 7) — same
+                            // `MV_COST_WEIGHT = 108` scaling the picker
+                            // uses.
+                            ((raw * 108 + 64) >> 7).min(u32::MAX as u64) as u32
+                        } else {
+                            0
+                        };
+                    // mode_bits_est = total picker rate minus the
+                    // ref-frame cost and the MV cost — what's left
+                    // is the inter-mode cost.
+                    let ref_cost = match final_ref {
+                        RefFrame::GoldenFrame => ref_frame_cost_golden,
+                        _ => ref_frame_cost_last,
+                    };
+                    let mode_bits_est = pick
+                        .best_rate
+                        .saturating_sub(mv_bits_est)
+                        .saturating_sub(ref_cost);
+                    crate::f02_oracle::record_decision(
+                        crate::f02_oracle::BlockDecision {
+                            frame_idx: crate::f02_oracle::current_frame_idx(),
+                            mi_row: leaf_mi_row as u16,
+                            mi_col: leaf_mi_col as u16,
+                            bsize: leaf_bsize,
+                            mode: crate::f02_oracle::BlockDecisionMode::Inter(
+                                final_mode,
+                            ),
+                            ref_frame: final_ref,
+                            mv_row: final_mv.row,
+                            mv_col: final_mv.col,
+                            mode_bits_est,
+                            mv_bits_est,
+                            // Forward-looking per HLD §3.4.1 — `0`
+                            // until F.1 lands the coef-bit estimator.
+                            coef_bits_est: 0,
+                            sse_after_pred: u64::from(pick.best_distortion),
+                            skip_flag: final_skip,
+                        },
+                    );
+                }
+
                 // A2.foreman - Splat the picked `(mode, mv, skip)`
                 // into the in-progress mi_grid so subsequent leaves'
                 // neighbour lookups see this leaf's decision.

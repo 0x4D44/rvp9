@@ -1,0 +1,422 @@
+//! F.0.2 — per-block libvpx-vs-rvp9 picker-decision oracle sink.
+//!
+//! Mirrors the env-gated thread-local pattern of [`crate::predstat`],
+//! [`crate::skipstat`], [`crate::e12stat`], and
+//! [`rvp9_core::mv_search::e12stat`]. When the env var `RVP9_F02_ORACLE`
+//! is unset, every hook is one relaxed atomic load and zero allocations.
+//!
+//! Hook sites — in the encoder's picker driver, not the picker itself
+//! (the picker lives in `rvp9-core` and would create a circular
+//! dependency if it called into this module). See HLD §3.2 — the hook
+//! "snapshots the winner into the sink" right after the picker returns,
+//! which is functionally identical to instrumenting inside the picker
+//! and avoids the dependency cycle.
+//!
+//! Output: end-of-frame, the harness binary calls [`drain_frame`] to
+//! pull the accumulated `Vec<BlockDecision>` and either serialize each
+//! to JSONL (via [`BlockDecision::write_jsonl`]) or copy out for an
+//! in-process comparison.
+//!
+//! See `wrk_docs/Track_F/F0.2_HLD_per_block_oracle.md` (§3.2, §3.4).
+
+use core::sync::atomic::{AtomicBool, Ordering};
+use std::cell::RefCell;
+use std::fmt::Write as _;
+use std::io;
+
+use rvp9_core::block::BlockSize;
+use rvp9_core::intra_pred::IntraMode;
+use rvp9_core::mode_info::{InterMode, RefFrame};
+
+/// Global enable flag, set once at process startup by
+/// [`init_from_env`]. One relaxed load per picker call site when off.
+static F02_ON: AtomicBool = AtomicBool::new(false);
+
+/// Combined intra/inter mode discriminant for the oracle schema.
+///
+/// HLD §3.4 calls for one `mode` field of shape "DC/V/H/.../TM |
+/// NEAREST/NEAR/ZERO/NEW". The schema column is flat (no
+/// intra-vs-inter envelope), so this enum unifies the two libvpx
+/// mode spaces into a single tag.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum BlockDecisionMode {
+    /// Intra mode — wraps [`IntraMode`] (DC/V/H/D45/D135/D117/D153/D207/D63/TM).
+    Intra(IntraMode),
+    /// Inter mode — wraps [`InterMode`] (NEARESTMV/NEARMV/ZEROMV/NEWMV).
+    Inter(InterMode),
+}
+
+impl BlockDecisionMode {
+    /// Stable lowercase tag for the JSONL `mode` field. Mirrors the
+    /// libvpx printf side of the oracle so cross-leg diff is a plain
+    /// string equality check.
+    #[must_use]
+    pub fn as_tag(self) -> &'static str {
+        match self {
+            Self::Intra(m) => match m {
+                IntraMode::Dc => "DC",
+                IntraMode::V => "V",
+                IntraMode::H => "H",
+                IntraMode::D45 => "D45",
+                IntraMode::D135 => "D135",
+                IntraMode::D117 => "D117",
+                IntraMode::D153 => "D153",
+                IntraMode::D207 => "D207",
+                IntraMode::D63 => "D63",
+                IntraMode::Tm => "TM",
+            },
+            Self::Inter(m) => match m {
+                InterMode::NearestMv => "NEARESTMV",
+                InterMode::NearMv => "NEARMV",
+                InterMode::ZeroMv => "ZEROMV",
+                InterMode::NewMv => "NEWMV",
+            },
+        }
+    }
+}
+
+/// One picker-decision record. HLD §3.4 schema, 13 fields.
+///
+/// Field liveness on the rvp9 leg at F.0.2 (see HLD §3.4.1):
+/// every field is live except `coef_bits_est`, which is emitted as
+/// `0` until F.1 lands the coef-bit estimator.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct BlockDecision {
+    /// 0-based IVF presentation-order frame index.
+    pub frame_idx: u32,
+    /// 8×8-cell row of the leaf's top-left mi cell (`0..frame_h/8`).
+    pub mi_row: u16,
+    /// 8×8-cell col of the leaf's top-left mi cell (`0..frame_w/8`).
+    pub mi_col: u16,
+    /// Coded block size (`Block4x4 .. Block64x64`).
+    pub bsize: BlockSize,
+    /// Final mode the picker chose for this leaf.
+    pub mode: BlockDecisionMode,
+    /// Reference frame (NONE/INTRA for intra leaves; LAST/GOLDEN/ALTREF
+    /// for inter).
+    pub ref_frame: RefFrame,
+    /// MV row in 1/8-pel units. `0` for intra and ZEROMV.
+    pub mv_row: i16,
+    /// MV col in 1/8-pel units. `0` for intra and ZEROMV.
+    pub mv_col: i16,
+    /// Picker's mode-rate estimate (`vp9_prob_cost` units).
+    pub mode_bits_est: u32,
+    /// Picker's MV-rate estimate (`vp9_prob_cost` units). `0` for
+    /// non-NEW modes.
+    pub mv_bits_est: u32,
+    /// Picker's coefficient-bit estimate. **Always `0` on the rvp9
+    /// leg until F.1** — see HLD §3.4.1.
+    pub coef_bits_est: u32,
+    /// `SSE(source − prediction)` over the Y plane, pre-quant.
+    pub sse_after_pred: u64,
+    /// Picker's final skip flag — the value that lands in the
+    /// bitstream's leaf `skip` syntax.
+    pub skip_flag: bool,
+}
+
+impl BlockDecision {
+    /// Serialise the record as one JSONL line (terminated by `\n`).
+    ///
+    /// Hand-rolled to avoid a workspace-wide `serde` dependency for a
+    /// single diagnostic harness. The shape is a flat JSON object —
+    /// no nested envelopes — so a 1-pass tokeniser handles it.
+    /// `mode`, `ref_frame`, and `bsize` are encoded as their stable
+    /// uppercase tags (mirroring the libvpx-side patch's printf).
+    ///
+    /// # Errors
+    ///
+    /// Returns `io::Error` if the underlying writer fails.
+    pub fn write_jsonl<W: io::Write>(&self, w: &mut W) -> io::Result<()> {
+        // One owned buffer to keep the write atomic (single syscall on
+        // line-buffered stdio — matches the libvpx-side `_IOLBF`
+        // guarantee in HLD §3.3 revision 6).
+        let mut s = String::with_capacity(256);
+        writeln!(
+            s,
+            "{{\"frame_idx\":{},\"mi_row\":{},\"mi_col\":{},\
+             \"bsize\":\"{}\",\"mode\":\"{}\",\"ref_frame\":\"{}\",\
+             \"mv_row\":{},\"mv_col\":{},\
+             \"mode_bits_est\":{},\"mv_bits_est\":{},\"coef_bits_est\":{},\
+             \"sse_after_pred\":{},\"skip_flag\":{}}}",
+            self.frame_idx,
+            self.mi_row,
+            self.mi_col,
+            bsize_tag(self.bsize),
+            self.mode.as_tag(),
+            ref_frame_tag(self.ref_frame),
+            self.mv_row,
+            self.mv_col,
+            self.mode_bits_est,
+            self.mv_bits_est,
+            self.coef_bits_est,
+            self.sse_after_pred,
+            self.skip_flag,
+        )
+        .expect("String fmt cannot fail");
+        w.write_all(s.as_bytes())
+    }
+}
+
+/// Stable uppercase tag for a [`BlockSize`]. Mirrors libvpx's
+/// `BLOCK_*` enum names so the libvpx-side patch can emit the same
+/// strings.
+#[inline]
+#[must_use]
+pub fn bsize_tag(b: BlockSize) -> &'static str {
+    match b {
+        BlockSize::Block4x4 => "4x4",
+        BlockSize::Block4x8 => "4x8",
+        BlockSize::Block8x4 => "8x4",
+        BlockSize::Block8x8 => "8x8",
+        BlockSize::Block8x16 => "8x16",
+        BlockSize::Block16x8 => "16x8",
+        BlockSize::Block16x16 => "16x16",
+        BlockSize::Block16x32 => "16x32",
+        BlockSize::Block32x16 => "32x16",
+        BlockSize::Block32x32 => "32x32",
+        BlockSize::Block32x64 => "32x64",
+        BlockSize::Block64x32 => "64x32",
+        BlockSize::Block64x64 => "64x64",
+    }
+}
+
+/// Stable uppercase tag for a [`RefFrame`]. Mirrors libvpx
+/// `MV_REFERENCE_FRAME` names.
+#[inline]
+#[must_use]
+pub fn ref_frame_tag(r: RefFrame) -> &'static str {
+    match r {
+        RefFrame::NoRefFrame => "NONE",
+        RefFrame::IntraFrame => "INTRA",
+        RefFrame::LastFrame => "LAST",
+        RefFrame::GoldenFrame => "GOLDEN",
+        RefFrame::AltrefFrame => "ALTREF",
+    }
+}
+
+thread_local! {
+    /// Per-thread accumulator. Empty when the oracle is disabled or
+    /// after [`drain_frame`].
+    static SINK: RefCell<Vec<BlockDecision>> = const { RefCell::new(Vec::new()) };
+}
+
+thread_local! {
+    /// Per-thread "current frame index" the picker hooks attach to
+    /// each recorded decision. Set by [`set_frame_idx`] at the top of
+    /// each frame's encode loop.
+    static FRAME_IDX: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+}
+
+/// Enable the oracle if `RVP9_F02_ORACLE` is set and non-zero.
+///
+/// One relaxed-store; subsequent picker-hook calls observe the new
+/// value via a relaxed load. Safe to call once at process startup.
+pub fn init_from_env() {
+    let on = std::env::var_os("RVP9_F02_ORACLE").is_some_and(|v| v != "0");
+    F02_ON.store(on, Ordering::Relaxed);
+}
+
+/// Whether the oracle is active. Inlined relaxed load.
+#[inline]
+#[must_use]
+pub fn is_enabled() -> bool {
+    F02_ON.load(Ordering::Relaxed)
+}
+
+/// Set the current frame index. Harness drivers call this at the top
+/// of each frame's encode so the per-block records carry the right
+/// `frame_idx`. No-op when the oracle is disabled.
+#[inline]
+pub fn set_frame_idx(idx: u32) {
+    if !is_enabled() {
+        return;
+    }
+    FRAME_IDX.with(|c| c.set(idx));
+}
+
+/// Record one picker decision. No-op when disabled (single relaxed
+/// atomic load).
+#[inline]
+pub fn record_decision(d: BlockDecision) {
+    if !is_enabled() {
+        return;
+    }
+    SINK.with(|s| s.borrow_mut().push(d));
+}
+
+/// Drain the per-thread per-frame sink. Returns an empty `Vec` when
+/// the oracle is disabled.
+#[must_use]
+pub fn drain_frame() -> Vec<BlockDecision> {
+    if !is_enabled() {
+        return Vec::new();
+    }
+    SINK.with(|s| std::mem::take(&mut *s.borrow_mut()))
+}
+
+/// Read the per-thread current frame index. Used by the picker hooks
+/// that record decisions.
+#[inline]
+#[must_use]
+pub fn current_frame_idx() -> u32 {
+    FRAME_IDX.with(core::cell::Cell::get)
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_inter() -> BlockDecision {
+        BlockDecision {
+            frame_idx: 7,
+            mi_row: 4,
+            mi_col: 12,
+            bsize: BlockSize::Block16x16,
+            mode: BlockDecisionMode::Inter(InterMode::NewMv),
+            ref_frame: RefFrame::LastFrame,
+            mv_row: 24,
+            mv_col: -8,
+            mode_bits_est: 150,
+            mv_bits_est: 320,
+            coef_bits_est: 0,
+            sse_after_pred: 1_234_567,
+            skip_flag: false,
+        }
+    }
+
+    fn sample_intra() -> BlockDecision {
+        BlockDecision {
+            frame_idx: 0,
+            mi_row: 0,
+            mi_col: 0,
+            bsize: BlockSize::Block8x8,
+            mode: BlockDecisionMode::Intra(IntraMode::Dc),
+            ref_frame: RefFrame::IntraFrame,
+            mv_row: 0,
+            mv_col: 0,
+            mode_bits_est: 90,
+            mv_bits_est: 0,
+            coef_bits_est: 0,
+            sse_after_pred: 0,
+            skip_flag: true,
+        }
+    }
+
+    #[test]
+    fn jsonl_round_trip_shape() {
+        // The schema's serialization must be parseable by the same
+        // shape the libvpx-side patch emits.
+        let d = sample_inter();
+        let mut buf = Vec::new();
+        d.write_jsonl(&mut buf).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.ends_with('\n'), "JSONL line must end with newline");
+        assert!(s.contains("\"frame_idx\":7"), "frame_idx field present");
+        assert!(s.contains("\"mi_row\":4"), "mi_row field present");
+        assert!(s.contains("\"mi_col\":12"), "mi_col field present");
+        assert!(s.contains("\"bsize\":\"16x16\""), "bsize tag");
+        assert!(s.contains("\"mode\":\"NEWMV\""), "inter mode tag");
+        assert!(s.contains("\"ref_frame\":\"LAST\""), "ref_frame tag");
+        assert!(s.contains("\"mv_row\":24"), "mv_row field");
+        assert!(s.contains("\"mv_col\":-8"), "mv_col field (signed)");
+        assert!(s.contains("\"skip_flag\":false"), "skip_flag bool");
+        assert!(
+            s.contains("\"coef_bits_est\":0"),
+            "coef_bits_est is 0 on rvp9 leg until F.1 (HLD §3.4.1)"
+        );
+        // Exactly one '\n' (one line).
+        assert_eq!(s.matches('\n').count(), 1);
+    }
+
+    #[test]
+    fn jsonl_intra_mode_tag() {
+        let d = sample_intra();
+        let mut buf = Vec::new();
+        d.write_jsonl(&mut buf).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("\"mode\":\"DC\""), "intra DC tag");
+        assert!(s.contains("\"ref_frame\":\"INTRA\""), "ref_frame INTRA tag");
+        assert!(s.contains("\"skip_flag\":true"), "skip_flag true");
+    }
+
+    #[test]
+    fn sink_off_by_default() {
+        // Without any env init the static atomic is `false`. Whatever
+        // any other test may have set, force off for this assertion.
+        // (Thread-locals are per-test-thread so a second thread isn't
+        // contaminated by env churn.)
+        F02_ON.store(false, Ordering::Relaxed);
+        // Drain first in case a previous test populated this thread's
+        // sink.
+        let _ = drain_frame();
+        record_decision(sample_inter());
+        let v = drain_frame();
+        assert!(v.is_empty(), "disabled sink must drop record_decision");
+    }
+
+    #[test]
+    fn sink_on_records_and_drains() {
+        F02_ON.store(true, Ordering::Relaxed);
+        // Reset thread-local state for determinism.
+        let _ = drain_frame();
+        set_frame_idx(42);
+        assert_eq!(current_frame_idx(), 42);
+        record_decision(sample_inter());
+        record_decision(sample_intra());
+        let v = drain_frame();
+        assert_eq!(v.len(), 2);
+        // After drain, the sink is empty again.
+        let v2 = drain_frame();
+        assert!(v2.is_empty());
+        // Reset for other tests.
+        F02_ON.store(false, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn init_from_env_unset_yields_disabled() {
+        // SAFETY: this test is single-threaded by virtue of `cargo
+        // test`'s per-test isolation. We mutate process env then
+        // re-read. No other threads in this crate touch this var.
+        unsafe { std::env::remove_var("RVP9_F02_ORACLE") };
+        init_from_env();
+        assert!(!is_enabled());
+    }
+
+    #[test]
+    fn bsize_and_ref_tags_cover_every_variant() {
+        // All 13 BlockSize variants emit a tag.
+        for bs in [
+            BlockSize::Block4x4,
+            BlockSize::Block4x8,
+            BlockSize::Block8x4,
+            BlockSize::Block8x8,
+            BlockSize::Block8x16,
+            BlockSize::Block16x8,
+            BlockSize::Block16x16,
+            BlockSize::Block16x32,
+            BlockSize::Block32x16,
+            BlockSize::Block32x32,
+            BlockSize::Block32x64,
+            BlockSize::Block64x32,
+            BlockSize::Block64x64,
+        ] {
+            let t = bsize_tag(bs);
+            assert!(!t.is_empty());
+            assert!(t.contains('x'));
+        }
+        for r in [
+            RefFrame::NoRefFrame,
+            RefFrame::IntraFrame,
+            RefFrame::LastFrame,
+            RefFrame::GoldenFrame,
+            RefFrame::AltrefFrame,
+        ] {
+            let t = ref_frame_tag(r);
+            assert!(!t.is_empty());
+        }
+    }
+}

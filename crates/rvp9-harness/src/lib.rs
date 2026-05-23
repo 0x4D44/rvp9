@@ -5,6 +5,7 @@
 #![allow(missing_docs)]
 
 pub mod bdrate;
+pub mod f02_schema;
 pub mod md5file;
 pub mod y4m;
 
