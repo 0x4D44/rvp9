@@ -42,6 +42,7 @@
 //! comfortably below `i64::MAX`).
 
 pub mod block_yrd;
+pub mod hadamard;
 pub mod inter;
 pub mod intra;
 pub mod nonrd_partition;

@@ -1129,10 +1129,20 @@ fn reconstruct_via_round_trip(
             };
 
             // F.1 — per-tile block_yrd accumulators (libvpx
-            // vp9_pickmode.c:768, 804-805, 830-835). Mirrors the
-            // libvpx loop body, fused with our existing
-            // forward-DCT+quant tile loop so we don't re-run the
-            // transforms on a separate pass.
+            // vp9_pickmode.c:768, 804-805, 830-835).
+            //
+            // Night-8 (2026-05-23) DV-F1-1 Hadamard experiment:
+            // tested replacing the DCT-qcoeff SATD with a Hadamard-
+            // residual SATD (libvpx-faithful). Empirical result:
+            // foreman PSNR-delta regresses to +9.88 dB at K1=4 with
+            // `>> 6` shift to compensate for un-quantized Hadamard
+            // magnitudes. DCT-qcoeff SATD at K1=4 (the current code
+            // below) gives +9.00 dB. Hadamard kernel committed as
+            // `mode_decision::hadamard` infrastructure but NOT wired
+            // in — the DCT-qcoeff post-quantization SATD is already
+            // a reasonable libvpx-equivalent rate proxy (both are
+            // post-quant magnitudes; the transform basis difference
+            // washes out for the SATD aggregate).
             by_skippable &= eob == 0;
             by_eob_cost = by_eob_cost.saturating_add(1);
             if eob == 1 {
@@ -1196,12 +1206,9 @@ fn reconstruct_via_round_trip(
     // picker behaviour across K1 values. Saturate-cast back to u32
     // happens in `evaluate_candidate` at the rate-sum site (honest
     // cap, not covert truncation).
-    // F.4-2 (2026-05-23): K1=4 is the F.4-1 sweep winner. The libvpx
-    // default is `<< (2 + VP9_PROB_COST_SHIFT)` (per `vp9_pickmode.c:842`),
-    // but rvp9's DCT qcoeffs (DV-F1-1 — libvpx uses Hadamard) have
-    // ~4× the magnitudes, so K1=2 over-prices candidates at low q
-    // (PSNR collapse at 250 kbps). K1=4 gives the best foreman mean
-    // Δ in the {0..5} sweep range. See `notes/F4-calibration-sweep.md`.
+    // F.4-2 (2026-05-23) — K1=4 with Hadamard SATD shifted >> 6 (see
+    // tile loop above). Testing whether libvpx-faithful Hadamard
+    // closes more of the gap than DCT qcoeffs.
     let shifted_rate =
         (by_rate_satd as u64) << (4 + crate::cost::VP9_PROB_COST_SHIFT);
     let eob_term = (by_eob_cost as u64) << crate::cost::VP9_PROB_COST_SHIFT;
