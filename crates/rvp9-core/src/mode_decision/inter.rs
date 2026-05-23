@@ -750,16 +750,20 @@ fn evaluate_candidate(
     // the F.0.2 oracle's `coef_bits_est` field reads them. F.2 / F.3
     // land on this infrastructure; F.4 turns on the behaviour after
     // calibrating lambda.
-    let coef_rate_enabled =
-        std::env::var_os("RVP9_F1_COEF_RATE_ENABLE").is_some();
+    // F.4-2 (2026-05-23): `coef_rate` is now unconditionally part of
+    // the rate sum (env-gate removed per F.4 HLD §4.2). The F.4-1
+    // sweep (notes/F4-calibration-sweep.md, night-8 corrected) picked
+    // K1=4 at `inter.rs::reconstruct_via_round_trip` as the winning
+    // SATD-to-prob-cost scale exponent: foreman PSNR-delta drops
+    // +9.07 → +9.00 dB (modest +0.07 dB improvement; full +8 dB
+    // closure to libvpx needs structural work — DV-F1-1 Hadamard
+    // port — beyond F.4-2 scope).
+    //
     // `by.coef_rate` is `u64` to avoid the early saturation that
-    // hid K1 calibration signal at low q. Saturate-cast here, at the
-    // honest cap site, before adding to the `u32` rate sum.
-    let effective_coef_rate: u32 = if coef_rate_enabled {
-        by.coef_rate.min(u32::MAX as u64) as u32
-    } else {
-        0
-    };
+    // hid K1 calibration signal at low q (night-8 saturation fix).
+    // Saturate-cast here at the honest cap site before adding to
+    // the `u32` rate sum.
+    let effective_coef_rate: u32 = by.coef_rate.min(u32::MAX as u64) as u32;
     let rate = mode_rate
         .saturating_add(mv_rate)
         .saturating_add(params.ref_frame_rate_cost)
@@ -1192,8 +1196,14 @@ fn reconstruct_via_round_trip(
     // picker behaviour across K1 values. Saturate-cast back to u32
     // happens in `evaluate_candidate` at the rate-sum site (honest
     // cap, not covert truncation).
+    // F.4-2 (2026-05-23): K1=4 is the F.4-1 sweep winner. The libvpx
+    // default is `<< (2 + VP9_PROB_COST_SHIFT)` (per `vp9_pickmode.c:842`),
+    // but rvp9's DCT qcoeffs (DV-F1-1 — libvpx uses Hadamard) have
+    // ~4× the magnitudes, so K1=2 over-prices candidates at low q
+    // (PSNR collapse at 250 kbps). K1=4 gives the best foreman mean
+    // Δ in the {0..5} sweep range. See `notes/F4-calibration-sweep.md`.
     let shifted_rate =
-        (by_rate_satd as u64) << (2 + crate::cost::VP9_PROB_COST_SHIFT);
+        (by_rate_satd as u64) << (4 + crate::cost::VP9_PROB_COST_SHIFT);
     let eob_term = (by_eob_cost as u64) << crate::cost::VP9_PROB_COST_SHIFT;
     let coef_rate = shifted_rate.saturating_add(eob_term);
     BlockYrdResult {

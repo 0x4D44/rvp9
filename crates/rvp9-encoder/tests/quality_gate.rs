@@ -59,9 +59,14 @@ use std::process::Command;
 
 /// Track F pass/fail threshold on the foreman PSNR-delta mean (dB).
 /// Updated per milestone — see the F.0.1 HLD §3.2 table.
-/// 2026-05-23: +9.5 dB (initial — purely a regression guard at the
-/// baseline mean of +9.07 dB; F.1 will tighten this).
-const TRACK_F_PSNR_DELTA_THRESHOLD_DB: f64 = 9.5;
+/// 2026-05-23 (initial): +9.5 dB regression guard at the +9.07
+/// baseline mean.
+/// 2026-05-23 (F.4-2 activation): +9.1 dB after K1=4 activation
+/// landed the F.4-1 sweep winner (foreman mean Δ +9.07 → +9.00 dB).
+/// The +0.07 dB improvement is honest but tiny; the full +8 dB
+/// closure to libvpx needs structural work (DV-F1-1 Hadamard port)
+/// beyond F.4's parametric-tuning scope.
+const TRACK_F_PSNR_DELTA_THRESHOLD_DB: f64 = 9.1;
 
 /// testsrc is a content-artefact corner case where libvpx wins on
 /// flat-content luck (78 dB on colour bars at 68 kbps — a regime no
