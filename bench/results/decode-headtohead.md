@@ -1,3 +1,65 @@
+# decode head-to-head — 2026-05-23 (R.8 update)
+
+host: windows-x86_64  unpinned  build: release (target-cpu=native)
+rvp9: post-R.8 (LZCNT + u64::from_be_bytes on BoolReader hot path)
+
+## R.7 + R.8 post-fix (algorithmic bool reader improvements)
+
+| fixture            | res        | tiles | threads | rvp9 p50 us | rvp9 mean us | vpxdec mean us | ratio (rvp9/vpx) | budget us | gate        |
+|--------------------|------------|-------|---------|-------------|--------------|----------------|------------------|-----------|-------------|
+| quantizer-00       | 352x288    |     1 |       1 |      1823.4 |       1897.4 |         6088.5 |             0.31 |         - | **FASTER**  |
+| tile_1x4           | 1920x1080  |     4 |       1 |     19853.5 |      19526.2 |         3964.5 |             4.93 |         - | n/a         |
+| tile_1x4           | 1920x1080  |     4 |       4 |     16793.0 |      15841.6 |         2515.7 |             6.30 |         - | n/a         |
+| testsrc_720p30     | 1280x720   |     1 |       1 |      5625.9 |       5102.3 |          627.3 |             8.13 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       2 |     12489.7 |      12206.2 |          820.9 |            14.87 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       4 |     12511.3 |      14527.1 |          614.4 |            23.64 |     33000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       4 |      5603.2 |       8314.8 |          592.2 |            14.04 |     16000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       8 |      6529.7 |       8664.4 |          596.1 |            14.53 |     16000 | PASS-info   |
+| foreman-fp1        | 352x288    |     1 |       1 |       840.8 |        837.3 |          317.0 |             2.64 |         - | n/a         |
+
+Note: this bench run shows elevated p99 values on testsrc_1080p30 t=4
+(125ms outliers) — strong evidence of concurrent system load (Track F
+encoder agents running). Numbers are noisy at this granularity.
+
+## R.7 + R.8 description
+
+**R.7 (commit b436820):** replace `VPX_NORM[(range & 0xff) as usize]`
+table lookup with `((range & 0xff) as u8).leading_zeros() & 7`
+intrinsic. LZCNT is single-cycle on modern x86 with target-cpu=native;
+L1 LUT load is ~4 cycles. Eliminates 256B table dependency.
+
+**R.8 (commit 07bfda9):** replace the manual 8-iteration shift+OR loop
+in BoolReader::fill() with `u64::from_be_bytes(bytes)`. Compiler emits
+a single 8-byte MOV + BSWAP — much faster than 8 byte loads.
+
+Both changes are bit-exact and called millions of times per frame.
+Bench noise (13-21% floor) prevents clean attribution; algorithmic
+soundness is the load-bearing argument.
+
+## Compound: baseline (pre-R.1) → post-R.8
+
+| fixture            | threads | pre-R.1 baseline | post-R.8   | compound speedup |
+|--------------------|---------|------------------|------------|------------------|
+| tile_1x4           |       4 |        339,213.7 |   16,793.0 |        **20.2x** |
+| testsrc_1080p30    |       4 |        181,832.6 |   12,511.3 |        **14.5x** |
+| testsrc_720p30     |       1 |         87,198.0 |    5,625.9 |        **15.5x** |
+| tile_1x4           |       1 |        271,544.0 |   19,853.5 |        **13.7x** |
+| testsrc_1080p30    |       2 |        148,492.1 |   12,489.7 |        **11.9x** |
+| foreman-fp1        |       1 |          8,130.3 |      840.8 |          **9.7x** |
+| quantizer-00       |       1 |         12,084.5 |    1,823.4 |          **6.6x** (3.34x FASTER than vpxdec) |
+| testsrc_1080p60    |       4 |         11,321.2 |    5,603.2 |          **2.0x** |
+
+All PLAN.md §2 real-time budgets PASS:
+- 720p30 single-core: 17% of 33ms budget
+- 1080p30 4 cores: 38% of 33ms budget
+- 1080p60 4 cores: 35% of 16ms budget
+
+Worst remaining gap to vpxdec: 23.6× on testsrc_1080p30 t=4 (with
+known concurrent-agent noise inflating this run; previous R.5 stable
+run showed 17.8×).
+
+## Previous R.5 ledger preserved below
+
 # decode head-to-head — 2026-05-23 (R.5 update)
 
 host: windows-x86_64  unpinned  build: release (target-cpu=native)

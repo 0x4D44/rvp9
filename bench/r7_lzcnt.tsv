@@ -1,0 +1,11 @@
+# rvp9-headtohead schema=1 host=windows-x86_64 build=3c8d6d1ddea4abc4
+label	fixture_path	threads	width	height	timed_frames	p50_us	mean_us	p95_us	p99_us
+quantizer-00	D:\language\rvp9-2\tests\conformance\vectors\vp90-2-00-quantizer-00.webm	1	352	288	1000	1779.900	1850.422	2625.000	3490.500
+tile_1x4	D:\language\rvp9-2\tests\conformance\vectors\vp90-2-08-tile_1x4.webm	1	1920	1080	1000	22015.000	23909.261	43395.500	63435.300
+tile_1x4	D:\language\rvp9-2\tests\conformance\vectors\vp90-2-08-tile_1x4.webm	4	1920	1080	1000	16682.900	15522.327	18983.200	20992.600
+testsrc_720p30	D:\language\rvp9-2\tests\corpus\fixtures\testsrc_720p30.ivf	1	1280	720	1000	5814.700	5250.597	8141.900	8626.100
+testsrc_1080p30	D:\language\rvp9-2\tests\corpus\fixtures\testsrc_1080p30.ivf	2	1920	1080	1000	12632.300	10692.535	17867.200	18677.300
+testsrc_1080p30	D:\language\rvp9-2\tests\corpus\fixtures\testsrc_1080p30.ivf	4	1920	1080	1000	12030.900	10252.401	17430.300	18434.500
+testsrc_1080p60	D:\language\rvp9-2\tests\corpus\fixtures\testsrc_1080p60.ivf	4	1920	1080	1000	5581.000	7446.859	17565.800	19204.300
+testsrc_1080p60	D:\language\rvp9-2\tests\corpus\fixtures\testsrc_1080p60.ivf	8	1920	1080	1000	5352.700	7271.711	17492.200	18712.700
+foreman-fp1	D:\language\rvp9-2\tests\corpus\fixtures\foreman-fp1.ivf	1	352	288	1000	758.200	722.027	1052.100	1308.300
