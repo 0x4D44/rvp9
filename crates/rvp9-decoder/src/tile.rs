@@ -361,23 +361,31 @@ pub fn decode_tile_intra(
     cur_segment_ids: &mut [u8],
     dispatch: &SimdDispatch,
 ) -> Result<TileDecodeCtx, TileDecodeError> {
-    // G7.0 review (2026-05-21): defensive — the
-    // `Decoder::decode_frame` gate should already have rejected non-
-    // `Yuv420` frames. The per-block decode chain that follows
-    // (`SUBSAMPLING_X/Y`, `uv_plane_block_size`, etc.) hardcodes 4:2:0
-    // geometry; mis-routing here would silently corrupt the chroma
-    // plane. Debug-only — release builds skip the check.
-    debug_assert_eq!(
+    // G7.1c: the per-block decode chain is `ss`-aware for the two
+    // identity-grid chroma formats (G7.1a parametric geometry / G7.1b
+    // inter MC). The `Decoder::decode_frame` gate rejects the
+    // asymmetric formats (4:2:2 / 4:4:0) before any frame reaches here,
+    // so the only formats we should see are 4:2:0 and 4:4:4. Debug-only.
+    debug_assert!(
+        matches!(
+            dst_frame.chroma(),
+            ChromaFormat::Yuv420 | ChromaFormat::Yuv444
+        ),
+        "decoder gate should have rejected {:?} before decode_tile_intra",
         dst_frame.chroma(),
-        ChromaFormat::Yuv420,
-        "G7.0 gate should have rejected non-Yuv420 before decode_tile_intra",
     );
     let mut reader =
         BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;
     let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
     let tile_mi_rows = bounds.mi_row_end - bounds.mi_row_start;
     let mut decode_ctx = TileDecodeCtx::new_with_grid(tile_mi_cols, tile_mi_rows);
-    let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
+    // G7.1c: size the chroma coef contexts at the established
+    // subsampling. The PROFILE0 default would silently truncate the U/V
+    // above/left rows at half-tile / half-SB for 4:4:4, dropping every
+    // chroma coef write past the half boundary and yielding stale-zero
+    // contexts on the right half of every SB.
+    let (cc_ss_x, cc_ss_y) = plane_ss(dst_frame.chroma(), 1);
+    let mut coef_ctx = TileCoefCtx::new_with_ss(tile_mi_cols, cc_ss_x, cc_ss_y);
     let mut part_ctx = PartitionCtx::new(tile_mi_cols);
 
     // D.14 cursor-state instrumentation for keyframe SB walk. Gated by
@@ -1413,18 +1421,22 @@ pub fn decode_tile_inter(
     cur_segment_ids: &mut [u8],
     dispatch: &SimdDispatch,
 ) -> Result<TileDecodeCtx, TileDecodeError> {
-    // G7.0 review (2026-05-21): see `decode_tile_intra` for rationale.
-    debug_assert_eq!(
+    // G7.1c: see `decode_tile_intra` for rationale.
+    debug_assert!(
+        matches!(
+            dst_frame.chroma(),
+            ChromaFormat::Yuv420 | ChromaFormat::Yuv444
+        ),
+        "decoder gate should have rejected {:?} before decode_tile_inter",
         dst_frame.chroma(),
-        ChromaFormat::Yuv420,
-        "G7.0 gate should have rejected non-Yuv420 before decode_tile_inter",
     );
     let mut reader =
         BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;
     let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
     let tile_mi_rows = bounds.mi_row_end - bounds.mi_row_start;
     let mut decode_ctx = TileDecodeCtx::new_with_grid(tile_mi_cols, tile_mi_rows);
-    let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
+    let (cc_ss_x, cc_ss_y) = plane_ss(dst_frame.chroma(), 1);
+    let mut coef_ctx = TileCoefCtx::new_with_ss(tile_mi_cols, cc_ss_x, cc_ss_y);
     let mut part_ctx = PartitionCtx::new(tile_mi_cols);
 
     let mut mi_row = bounds.mi_row_start;

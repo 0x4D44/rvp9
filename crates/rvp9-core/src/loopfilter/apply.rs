@@ -67,8 +67,20 @@ const TX_16X16: usize = 2;
 /// respectively (or `mi_rows`).
 ///
 /// Mirrors libvpx `vp9_loop_filter_frame` + `loop_filter_rows`
-/// (`vp9_loopfilter.c:1422-1483`) for the 4:2:0 (`LF_PATH_420`)
-/// path.
+/// (`vp9_loopfilter.c:1422-1467`). Supports the `LF_PATH_420`
+/// (4:2:0) and `LF_PATH_444` (4:4:4) chroma paths; the asymmetric
+/// `LF_PATH_SLOW` (4:2:2 / 4:4:0) is not yet wired (the decoder gate
+/// rejects those formats this milestone).
+///
+/// For 4:4:4 the chroma planes share the luma 8×8 grid, so libvpx
+/// runs `vp9_filter_block_plane_ss00` on U/V using the **luma** masks
+/// (`left_y`/`above_y`/`int_4x4_y`/`lfl_y`) — see
+/// `vp9_loopfilter.c:1456-1457` (`LF_PATH_444`) and the
+/// `assert(subsampling_x == 0 && subsampling_y == 0)` at
+/// `vp9_filter_block_plane_ss00` (`:1250`). The separately-built UV
+/// masks are ignored in that path. We do the same here, which is why
+/// no widened UV mask representation is needed: the Y masks already
+/// hold the full 8×8 grid the chroma planes require at 4:4:4.
 #[allow(clippy::too_many_arguments)]
 pub fn loop_filter_frame(
     yv12: &mut Yv12Buffer,
@@ -86,18 +98,18 @@ pub fn loop_filter_frame(
     debug_assert!(end_mi_row <= sb_rows * MI_BLOCK_SIZE);
     debug_assert!(lfm_grid.len() >= sb_rows * lfm_stride);
     debug_assert!(lfm_stride >= sb_cols);
-    // G7.0 review (2026-05-21): defensive — `filter_block_plane_ss11`
-    // hardcodes `ss_x = ss_y = 1` (see its name); the per-SB chroma
-    // origin calculation at `(mi_row * MI_BLOCK_SIZE / 2) * stride +
-    // (mi_col * MI_BLOCK_SIZE / 2)` only holds for 4:2:0. The G7.0
-    // gate at `rvp9-decoder::Decoder::decode_frame` should have
-    // rejected non-`Yuv420` before any frame reaches the loop filter.
-    // Debug-only — release builds skip the check.
-    debug_assert_eq!(
-        yv12.chroma(),
-        ChromaFormat::Yuv420,
-        "G7.0 gate should have rejected non-Yuv420 before loop_filter_frame; \
-         filter_block_plane_ss11 below assumes ss_x = ss_y = 1",
+    // G7.1c: the loop filter now handles two chroma paths. 4:2:0
+    // (`LF_PATH_420`) drives U/V through `filter_block_plane_ss11`
+    // (chroma origin `(mi_row * MI_BLOCK_SIZE / 2) * stride + ...`,
+    // ss_x = ss_y = 1). 4:4:4 (`LF_PATH_444`) drives U/V through
+    // `filter_block_plane_ss00` with the luma masks (chroma grid ==
+    // luma grid). Asymmetric 4:2:2 / 4:4:0 (`LF_PATH_SLOW`) are
+    // rejected by the decoder gate before reaching here.
+    let chroma = yv12.chroma();
+    debug_assert!(
+        matches!(chroma, ChromaFormat::Yuv420 | ChromaFormat::Yuv444),
+        "loop_filter_frame supports Yuv420 / Yuv444; the decoder gate \
+         should have rejected {chroma:?} before this point",
     );
     let _ = mi_cols; // libvpx parity: `mi_col` loop terminates at `mi_cols`,
     // which equals `sb_cols * MI_BLOCK_SIZE` rounded up; we
@@ -138,35 +150,83 @@ pub fn loop_filter_frame(
                     dispatch,
                 );
             }
-            // U plane (ss = 1).
-            {
-                let mut u = yv12.u_plane_mut();
-                let stride = u.stride();
-                filter_block_plane_ss11(
-                    u.data_mut(),
-                    stride,
-                    lfm,
-                    mi_row,
-                    mi_col,
-                    mi_rows,
-                    info,
-                    dispatch,
-                );
-            }
-            // V plane (ss = 1).
-            {
-                let mut v = yv12.v_plane_mut();
-                let stride = v.stride();
-                filter_block_plane_ss11(
-                    v.data_mut(),
-                    stride,
-                    lfm,
-                    mi_row,
-                    mi_col,
-                    mi_rows,
-                    info,
-                    dispatch,
-                );
+            // U / V planes. Dispatch on the established chroma format:
+            //   - Yuv420 → ss11 (4×4 chroma grid; UV masks).
+            //   - Yuv444 → ss00 (8×8 chroma grid == luma; Y masks).
+            // Mirrors libvpx `loop_filter_rows` `LF_PATH_420` /
+            // `LF_PATH_444` (`vp9_loopfilter.c:1452-1458`).
+            match chroma {
+                ChromaFormat::Yuv420 => {
+                    {
+                        let mut u = yv12.u_plane_mut();
+                        let stride = u.stride();
+                        filter_block_plane_ss11(
+                            u.data_mut(),
+                            stride,
+                            lfm,
+                            mi_row,
+                            mi_col,
+                            mi_rows,
+                            info,
+                            dispatch,
+                        );
+                    }
+                    {
+                        let mut v = yv12.v_plane_mut();
+                        let stride = v.stride();
+                        filter_block_plane_ss11(
+                            v.data_mut(),
+                            stride,
+                            lfm,
+                            mi_row,
+                            mi_col,
+                            mi_rows,
+                            info,
+                            dispatch,
+                        );
+                    }
+                }
+                ChromaFormat::Yuv444 => {
+                    // 4:4:4 chroma == luma grid: reuse the Y masks via
+                    // ss00 (libvpx `vp9_filter_block_plane_ss00` for
+                    // `LF_PATH_444`). The chroma plane is full-resolution,
+                    // so the same SB-origin formula as luma applies.
+                    {
+                        let mut u = yv12.u_plane_mut();
+                        let stride = u.stride();
+                        filter_block_plane_ss00(
+                            u.data_mut(),
+                            stride,
+                            lfm,
+                            mi_row,
+                            mi_col,
+                            mi_rows,
+                            info,
+                            dispatch,
+                        );
+                    }
+                    {
+                        let mut v = yv12.v_plane_mut();
+                        let stride = v.stride();
+                        filter_block_plane_ss00(
+                            v.data_mut(),
+                            stride,
+                            lfm,
+                            mi_row,
+                            mi_col,
+                            mi_rows,
+                            info,
+                            dispatch,
+                        );
+                    }
+                }
+                // Asymmetric subsampling — gated upstream this milestone.
+                ChromaFormat::Yuv422 | ChromaFormat::Yuv440 => {
+                    unreachable!(
+                        "4:2:2 / 4:4:0 loop filtering (LF_PATH_SLOW) not yet \
+                         implemented; decoder gate rejects these formats"
+                    )
+                }
             }
         }
     }

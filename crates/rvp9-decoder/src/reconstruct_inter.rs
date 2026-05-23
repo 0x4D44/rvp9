@@ -161,14 +161,17 @@ pub fn reconstruct_inter_block(
     dst_frame: &mut Yv12Buffer,
     dispatch: &SimdDispatch,
 ) {
-    // G7.0 review (2026-05-21): defensive — the
-    // `Decoder::decode_frame` gate should already have rejected non-
-    // `Yuv420` frames. `SUBSAMPLING_X/Y` above + the per-plane MC /
-    // residual loops below hardcode 4:2:0 chroma geometry. Debug-only.
-    debug_assert_eq!(
+    // G7.1c: the per-plane MC / residual loops are `ss`-aware (G7.1a
+    // parametric geometry / G7.1b inter MC). The `Decoder::decode_frame`
+    // gate rejects the asymmetric formats (4:2:2 / 4:4:0), so the only
+    // formats reaching here are 4:2:0 and 4:4:4. Debug-only.
+    debug_assert!(
+        matches!(
+            dst_frame.chroma(),
+            ChromaFormat::Yuv420 | ChromaFormat::Yuv444
+        ),
+        "decoder gate should have rejected {:?} before reconstruct_inter_block",
         dst_frame.chroma(),
-        ChromaFormat::Yuv420,
-        "G7.0 gate should have rejected non-Yuv420 before reconstruct_inter_block",
     );
     let (mode, ref_frames, mvs, interp_filter) = match mi.mode {
         BlockMode::Inter {

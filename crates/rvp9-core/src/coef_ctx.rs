@@ -30,8 +30,11 @@ pub const MAX_MB_PLANE: usize = 3;
 
 /// Per-plane chroma subsampling for VP9 Profile 0 (4:2:0).
 /// Plane 0 (Y) is full-resolution; planes 1/2 (U/V) are
-/// half-resolution in both axes. We hardcode this because Profile 0
-/// is the only path Stage 3 ships in v1 (master ledger D-01 RESOLVED).
+/// half-resolution in both axes. Kept as the constructor default so
+/// pre-Profile-1 call sites (and the matching encoder tests) remain
+/// byte-identical; Profile-1 callers use
+/// [`TileCoefCtx::new_with_ss`] to size the chroma rows/columns at
+/// the established subsampling.
 const PROFILE0_SUBSAMPLING_X: [usize; MAX_MB_PLANE] = [0, 1, 1];
 const PROFILE0_SUBSAMPLING_Y: [usize; MAX_MB_PLANE] = [0, 1, 1];
 
@@ -143,6 +146,30 @@ impl TileCoefCtx {
     /// one SB column.
     #[must_use]
     pub fn new(tile_mi_cols: usize) -> Self {
+        Self::new_with_ss(
+            tile_mi_cols,
+            PROFILE0_SUBSAMPLING_X[1],
+            PROFILE0_SUBSAMPLING_Y[1],
+        )
+    }
+
+    /// Profile-1-aware constructor. `ss_x` / `ss_y` are the chroma
+    /// subsampling factors for the U/V planes (Y is always full
+    /// resolution). For Profile 0 (4:2:0) both factors are `1`; the
+    /// `new()` alias preserves that for backward compatibility.
+    ///
+    /// At 4:4:4 the chroma above-row / left-column grids match luma's
+    /// — `y_above_w >> 0 = y_above_w`. Without this constructor the
+    /// 4:4:4 chroma coef contexts would silently truncate at half the
+    /// real width, returning 0 for every write past the half-tile
+    /// boundary and yielding a stale-zero context for every chroma
+    /// transform on the right half of every SB. Mirrors libvpx
+    /// `vp9_alloc_context_buffers` (`vp9_alloccommon.c:138-149`)
+    /// where the per-plane allocations are sized via
+    /// `2 * mi_cols_aligned_to_sb >> pd->subsampling_x`
+    /// (`vp9_setup_block_planes` at `vp9_blockd.c:113`).
+    #[must_use]
+    pub fn new_with_ss(tile_mi_cols: usize, ss_x: usize, ss_y: usize) -> Self {
         assert!(
             tile_mi_cols > 0,
             "tile must span at least one 8×8 mode-info column"
@@ -150,14 +177,14 @@ impl TileCoefCtx {
         let y_above_w = tile_mi_cols * SUB4X4_PER_MI;
         let y_left_h = MI_BLOCK_SIZE * SUB4X4_PER_MI;
         let above_coef = [
-            vec![0u8; y_above_w >> PROFILE0_SUBSAMPLING_X[0]],
-            vec![0u8; y_above_w >> PROFILE0_SUBSAMPLING_X[1]],
-            vec![0u8; y_above_w >> PROFILE0_SUBSAMPLING_X[2]],
+            vec![0u8; y_above_w], // Y — always full resolution.
+            vec![0u8; y_above_w >> ss_x],
+            vec![0u8; y_above_w >> ss_x],
         ];
         let left_coef = [
-            vec![0u8; y_left_h >> PROFILE0_SUBSAMPLING_Y[0]],
-            vec![0u8; y_left_h >> PROFILE0_SUBSAMPLING_Y[1]],
-            vec![0u8; y_left_h >> PROFILE0_SUBSAMPLING_Y[2]],
+            vec![0u8; y_left_h], // Y — always full resolution.
+            vec![0u8; y_left_h >> ss_y],
+            vec![0u8; y_left_h >> ss_y],
         ];
         Self { above_coef, left_coef }
     }

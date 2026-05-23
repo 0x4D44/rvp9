@@ -248,12 +248,21 @@ fn hex_val(b: u8) -> Option<u8> {
 /// `(width, height, index)`. The shape is always:
 ///
 /// ```text
-///   <stem>-<W>x<H>-<NNNN>.i420
+///   <stem>-<W>x<H>-<NNNN>.<ext>
 /// ```
+///
+/// where `<ext>` is the chroma-format-tagged raw extension:
+///   - `.i420` — 4:2:0 (Profile 0 + the default Profile-1 sub-mode).
+///   - `.i444` — 4:4:4 (Profile 1; chroma grid == luma grid).
+///   - `.i422` / `.i440` — the asymmetric Profile-1 sub-modes (next
+///     milestone; accepted here so the parser is forward-compatible).
 ///
 /// Returns `None` for any other shape.
 fn parse_resolution_index(filename: &str) -> Option<(u32, u32, u32)> {
-    let stem = filename.strip_suffix(".i420")?;
+    // Try each chroma-tagged extension in turn.
+    let stem = [".i420", ".i444", ".i422", ".i440"]
+        .iter()
+        .find_map(|ext| filename.strip_suffix(ext))?;
     // Last '-' splits off the NNNN; the one before that splits off WxH.
     let (rest, idx_str) = stem.rsplit_once('-')?;
     let (_, wxh) = rest.rsplit_once('-')?;
@@ -277,6 +286,20 @@ mod tests {
         assert_eq!(
             parse_resolution_index("vp90-2-05-resize.ivf-282x173-0004.i420"),
             Some((282, 173, 4))
+        );
+        // Profile-1 4:4:4 ledger entries carry the `.i444` extension.
+        assert_eq!(
+            parse_resolution_index("vp91-2-04-yuv444-352x288-0001.i444"),
+            Some((352, 288, 1))
+        );
+        // Forward-compat: the asymmetric sub-mode extensions parse too.
+        assert_eq!(
+            parse_resolution_index("clip-176x144-0002.i422"),
+            Some((176, 144, 2))
+        );
+        assert_eq!(
+            parse_resolution_index("clip-176x144-0003.i440"),
+            Some((176, 144, 3))
         );
     }
 

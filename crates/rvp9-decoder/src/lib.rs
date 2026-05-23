@@ -387,6 +387,17 @@ pub struct Decoder {
     /// `parse_packet` blocks inter-frame headers from being acted on
     /// before a keyframe (libvpx `pbi->need_resync`).
     have_resync: bool,
+    /// Chroma subsampling established by the most recent key / intra-only
+    /// frame's color config. Inter frames do NOT re-encode the color
+    /// config (`vp9_decodeframe.c:2704-2766` never calls
+    /// `read_bitdepth_colorspace_sampling` on the inter path), so they
+    /// inherit `cm->subsampling_{x,y}` from the sequence. The parser
+    /// hardcodes inter-frame chroma to `Yuv420` (it has no sequence
+    /// state); `parse_packet` overlays this established value onto inter
+    /// headers so the destination `Yv12Buffer` is allocated with the
+    /// correct subsampling. Without this, the first inter frame of a
+    /// 4:4:4 clip would mis-allocate chroma and silently corrupt.
+    established_chroma: ChromaFormat,
     /// Per-ref-slot collocated-MV grid. Parallel to
     /// [`Decoder::ref_frame_map`]; `mv_grids[i]` holds the MV grid that
     /// was written by the frame currently bound at ref slot `i`. Used
@@ -652,6 +663,8 @@ impl Decoder {
             mv_counts: rvp9_core::entropy::mv_probs::NmvCounts::default(),
             coef_counts: rvp9_core::entropy::adapt::CoefCountsBank::default(),
             last_frame_was_key: false,
+            // Default until the first key/intra-only frame sets it.
+            established_chroma: ChromaFormat::Yuv420,
             mode_counts: rvp9_core::entropy::adapt::FrameCounts::default(),
             mv_grids: Default::default(),
             prev_frame_mv_grid: None,
@@ -868,8 +881,25 @@ impl Decoder {
         // when the header inherits size from a previous frame.
         let mut parsed: Vec<ParsedFrame<'a>> = Vec::with_capacity(frame_slices.len());
         for frame_data in frame_slices {
-            let (header, header_end) =
+            let (mut header, header_end) =
                 parse_uncompressed_header(frame_data, &self.ref_frame_sizes)?;
+            // Inter-frame chroma forwarding. Inter frames never re-read the
+            // color config (`vp9_decodeframe.c:2704-2766`); they inherit the
+            // sequence subsampling. The parser hardcodes their chroma to
+            // `Yuv420` (no sequence state), so we overlay the value
+            // established by the most recent key/intra-only frame and, in
+            // turn, record any freshly-parsed color config. ShowExistingFrame
+            // carries no color config and just replays a slot, so it neither
+            // reads nor updates the established chroma.
+            match header.kind {
+                FrameKind::KeyFrame | FrameKind::IntraOnly { .. } => {
+                    self.established_chroma = header.chroma;
+                }
+                FrameKind::InterFrame { .. } => {
+                    header.chroma = self.established_chroma;
+                }
+                FrameKind::ShowExistingFrame { .. } => {}
+            }
             // Keyframe and intra-only frames advertise a fresh width
             // and refresh some/all ref-frame-map slots; mirror libvpx's
             // `setup_frame_size` propagation (`vp9_decodeframe.c:2698`)
@@ -1118,36 +1148,32 @@ impl Decoder {
         // with the same `f=N` libvpx emits, so per-frame diffs are
         // line-up-able.
         RVP9_TRACE_FRAME_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        // G7.0 plumbing gate. Profile 1 (`Yuv422` / `Yuv440` / `Yuv444`)
-        // parses cleanly through `parse_uncompressed_header`, and
-        // `Yv12Buffer` carries the chroma format on the alloc path —
-        // but the per-block decode chain (tile.rs `SUBSAMPLING_X/Y`
-        // constants, reconstruct_inter.rs `RefPlaneCrop::for_plane`,
-        // loopfilter `filter_block_plane_ss11`, the `uv_plane_block_size`
-        // / `uv_plane_tx_size` lookups) still encodes the 4:2:0 geometry
-        // assumptions. Decoding a Profile 1 stream would silently mis-
-        // address the chroma plane and corrupt the output rather than
-        // surface a clear error. Reject explicitly with
-        // `UnsupportedProfile` (NOT `Unimplemented` — see the variant's
-        // doc for why) until G7.1 (deep tile/recon/loopfilter `ss`-aware
-        // refactor) lands; ShowExistingFrame skips the gate because it
-        // merely hands back an already-decoded slot.
+        // G7.1 plumbing gate. As of G7.1c the decode chain is `ss`-aware
+        // for the two identity-or-near-identity chroma grids:
+        //   - Yuv420 (ss=1,1): the original 4:2:0 path.
+        //   - Yuv444 (ss=0,0): chroma grid == luma grid; tile.rs / recon /
+        //     loopfilter all drive the chroma planes through the luma-shaped
+        //     code (uv_plane_tx_size with ss=(0,0) == luma tx, ss00
+        //     loopfilter masks).
+        // Yuv422 (ss=1,0) and Yuv440 (ss=0,1) have asymmetric subsampling
+        // that the per-block decode chain does NOT yet handle, so they stay
+        // rejected with `UnsupportedProfile` (NOT `Unimplemented` — see the
+        // variant's doc) until the next milestone. ShowExistingFrame skips
+        // the gate because it merely hands back an already-decoded slot.
         //
-        // Invariant chain (G7.0 review M1, applied 2026-05-21):
-        // The gate fires on keyframes / intra-only frames whose parsed
-        // chroma != Yuv420. Inter frames are NOT gated here because
-        // the parser hardcodes their chroma to Yuv420 (see
-        // `bitstream/header.rs:~368` inter-frame chroma defaulting).
-        // Profile 1 inter frames in a stream are protected today by
-        // the keyframe rejection cascade (no Profile 1 keyframe
-        // decoded → no ref slot populated → inter frame fails at
-        // `EmptyInterRef`). When G7.1 lifts this gate, parser chroma
-        // forwarding across frames MUST be implemented in the same
-        // commit, or inter frames will allocate with the wrong
-        // subsampling and silently corrupt chroma.
+        // Inter-frame chroma forwarding (G7.1c): inter frames inherit the
+        // sequence chroma established by the most recent key/intra-only
+        // frame — `parse_packet` overlays `self.established_chroma` onto the
+        // inter header (the parser itself hardcodes inter chroma to Yuv420).
+        // So `frame.header.chroma` here is already the correct subsampling
+        // for every frame kind, and the destination buffer allocates right.
         if !matches!(frame.header.kind, FrameKind::ShowExistingFrame { .. })
-            && frame.header.chroma != ChromaFormat::Yuv420
+            && !matches!(
+                frame.header.chroma,
+                ChromaFormat::Yuv420 | ChromaFormat::Yuv444
+            )
         {
+            // Yuv422 / Yuv440 — not yet supported this milestone.
             return Err(DecodeError::UnsupportedProfile {
                 profile: frame.header.profile as u8,
             });
