@@ -1940,3 +1940,171 @@ good NEWMV is still rejected because at the 8×8-dominated partition
 granularity the MV-rate term dominates the distortion gain (E9 §4 /
 E10's conclusion). The remaining lever is the picker / partition, not
 the search.
+
+## F.1 (block_yrd port) — 2026-05-23
+
+### 2026-05-23 — DV-F1-1: rvp9 uses DCT qcoeffs for block_yrd SATD where libvpx uses Hadamard qcoeffs
+**Where:** `rvp9-core::mode_decision::block_yrd::block_yrd` + the
+caller `mode_decision::inter::reconstruct_via_round_trip`. libvpx
+counterpart: `vp9/encoder/vp9_pickmode.c:786-803` (the per-tile
+forward transform inside `block_yrd`).
+**What libvpx does:** runs `vpx_hadamard_{8x8,16x16}` before the
+forward quant inside `block_yrd`. The Hadamard is cheaper than DCT
+and is treated as a rate-model proxy; libvpx's rate term
+(`vpx_satd(qcoeff)`) was empirically tuned on Hadamard magnitudes.
+**What rvp9 does:** reuses the **DCT** qcoeffs that the picker's
+existing `reconstruct_via_round_trip` already computed (we need the
+DCT recon for the pixel-SSE distortion path anyway). One forward
+transform per tile instead of two.
+**Why:** halves the transform cost; aligns the rate model with the
+distortion model (the same qcoeff array determines both); the
+SATD-of-qcoeff is monotone in residual energy regardless of basis
+choice — the only effect is a per-block scalar correction on the
+rate-to-bits mapping.
+**Byte-parity impact:** none directly (transform is encoder-side
+only). May indirectly change which (mode, mv) wins RD and thus the
+bitstream, but the bitstream itself remains valid VP9.
+**Compression-efficiency impact:** SATD-to-bits proportionality may
+be off by a constant relative to libvpx; affects PSNR-delta
+magnitude but not pick directionality. F.1 sign-off is the F.0.2
+oracle (`mode_match%`, `coef_bits_est` movement), not PSNR-delta.
+**Future plan:** F.1.2 may port `vpx_hadamard_{8x8,16x16}` if a F.4
+A/B shows the Hadamard variant is materially closer to libvpx
+behavior.
+
+### 2026-05-23 — DV-F1-2: rvp9's picker uses `vp9_quantize_b` where libvpx's block_yrd uses `vp9_quantize_fp`
+**Where:** `rvp9-core::mode_decision::inter::reconstruct_via_round_trip`
+quantize step (rvp9 uses `vp9_quantize_b{,_32x32}`). libvpx
+counterpart: `vp9/encoder/vp9_pickmode.c:789, 794, 800` (calls
+`vp9_quantize_fp`).
+**What libvpx does:** `vp9_quantize_fp` — lower-overhead variant
+without the zbin pre-test. Produces slightly larger qcoeff
+magnitudes for small-residual blocks (the zbin would have zeroed
+them).
+**What rvp9 does:** `vp9_quantize_b` (with zbin pre-test) — the
+existing rvp9 picker pipeline uses this; F.1 reuses the same
+quant output for the block_yrd SATD accumulator so the picker is
+internally consistent.
+**Why:** introducing a second quantize variant would double the
+maintenance surface and the picker's per-candidate cost. The two
+variants differ on borderline coefficients only; for typical
+content the SATD difference is in the noise.
+**Byte-parity impact:** none directly — the simulator uses
+`vp9_quantize_b` for the final encode path too.
+**Compression-efficiency impact:** the libvpx-rvp9 mismatch shows
+up in the F.0.2 oracle as a non-zero `Δ coef_bits` mean. Don't
+chase it for F.1.
+**Future plan:** F.4 tuning may add `vp9_quantize_fp` if A/B shows
+it materially closes the gap.
+
+### 2026-05-23 — DV-F1-3: F.1 keeps pixel-SSE-of-recon as the RD `dist` term where libvpx uses `block_error_fp >> 2` (coefficient-domain)
+**Where:** `rvp9-core::mode_decision::inter::evaluate_candidate`,
+`let dist = sse.min(u32::MAX as u64) as u32;` (computed from
+`sse_block(src, recon)`). libvpx counterpart:
+`vp9/encoder/vp9_pickmode.c:835` (`this_rdc->dist += vp9_block_error_fp(...) >> 2`).
+**What libvpx does:** uses coefficient-domain squared quantization
+error (`sum (coeff - dqcoeff)^2 >> 2`) as the RDCOST `D` term.
+**What rvp9 does:** uses pixel-domain squared error between source
+and reconstruction (`sum (src - recon)^2`) — the same `D` metric
+F8.0 ships. The F.1 `BlockYrdResult.coef_dist` is computed and
+surfaced (`InterModeSearchResult.coef_dist`) for F.4 A/B but is
+**not consumed** by `rd_cost` in F.1.
+**Why:** changing the `dist` semantics would change RDCOST's
+rate-distortion ranking on every candidate. That requires lambda
+recalibration as a side effect; F.1 should not couple to lambda
+tuning. The two values are Parseval-equivalent up to a transform-
+scale constant.
+**Byte-parity impact:** none directly.
+**Compression-efficiency impact:** F.1 first-cut accepts the
+pixel-domain `dist`; F.4 tuning revisits.
+**Future plan:** F.4 A/B compares coef_dist vs pixel-SSE-of-recon
+once F.1/F.2/F.3 have settled. The `coef_dist` field on
+`InterModeSearchResult` is the affordance.
+
+### 2026-05-23 — F.1 ship state: INFRASTRUCTURE-ONLY (team-lead decision)
+
+F.1 implementer initially landed with `coef_rate` added to the RD
+rate sum AND the libvpx skip-flag tie-break (HLD Q5) active by
+default. Empirical measurement on foreman_cif:
+
+| Configuration | mean Δ | max Δ | min Δ | 250 kbps PSNR |
+|---|---:|---:|---:|---:|
+| Pre-F.1 baseline | +9.07 dB | +9.50 | +8.65 | 26.96 dB |
+| F.1 (both mechanisms ON) | +12.22 dB | +14.07 | +7.93 | 28.61 dB but 100 kbps collapses |
+| F.1 (only `coef_rate` ON, tie-break OFF) | +10.55 dB | +15.49 | +8.65 | **20.91 dB** (-6 dB) |
+| F.1 (infrastructure-only — both OFF, **shipped**) | **+9.07 dB** | **+9.50** | **+8.65** | **26.96 dB** |
+
+**Diagnosis:** both mechanisms have lambda-calibration issues. The
+libvpx `<< (2 + VP9_PROB_COST_SHIFT)` SATD-to-bits scale is tuned
+for libvpx's lambda + RD ranking; rvp9's `compute_rd_mult` was
+calibrated when the picker had no `coef_rate` term. Activating
+`coef_rate` without recalibrating lambda overprices candidates →
+picker falls back to worse modes at higher bitrates → PSNR
+collapses (most visibly the 250 kbps target dropping 6 dB).
+
+**F.1 ships INFRASTRUCTURE-ONLY:**
+- `crates/rvp9-core/src/mode_decision/block_yrd.rs` module (472 LoC,
+  6 unit tests).
+- `BlockYrdResult { coef_rate, coef_dist, skippable }` flows through
+  `reconstruct_via_round_trip` and is captured on
+  `InterModeSearchResult { coef_rate, coef_dist }`.
+- F.0.2 oracle's `coef_bits_est` schema field reads
+  `coef_rate >> VP9_PROB_COST_SHIFT` (live on rvp9 leg).
+- Two env-gated activation knobs, **DEFAULT OFF**:
+  - `RVP9_F1_COEF_RATE_ENABLE=1`: include `coef_rate` in the picker's
+    rate sum.
+  - `RVP9_F1_SKIP_TIE_BREAK_ENABLE=1`: run the libvpx skip-flag
+    tie-break (`vp9_pickmode.c:2355-2362`).
+
+**At default (both unset):** the picker's RD comparison is
+byte-identical to pre-F.1. Foreman PSNR-delta = +9.07 dB exactly.
+No behavioural regression. F.2 and F.3 land on this infrastructure;
+F.4 owns lambda recalibration and turning the activation knobs ON.
+
+**F.4 inherited work-items:**
+1. Recalibrate `compute_rd_mult` or the SATD-to-bits scale so
+   `RVP9_F1_COEF_RATE_ENABLE=1` does not regress PSNR-delta. Most
+   likely culprits: (a) DCT-vs-Hadamard magnitude divergence
+   (DV-F1-1); (b) `vp9_quantize_b` vs `vp9_quantize_fp` differences
+   (DV-F1-2); (c) the `<< 2` rate scale exponent itself.
+2. Once (1) is done, activate `RVP9_F1_SKIP_TIE_BREAK_ENABLE=1`
+   and verify the tie-break improves (or doesn't regress) the
+   metric. Reviewer hypothesis (see follow-up entry below): the
+   tie-break's domain may need realignment via `coef_dist`
+   (revisiting DV-F1-3).
+3. Candidates for the calibration sweep: SATD scalar correction;
+   port `vpx_hadamard_{8,16}`; tune the skip-prob context
+   (currently `DEFAULT_SKIP_PROBS[1] = 128`); thread the real
+   per-block skip context (`vp9_get_pred_context_skip`).
+
+
+### 2026-05-23 — F.1 follow-up: code-reviewer flagged skip-tie-break domain mismatch as a likely root cause
+**Where:** `rvp9-core::mode_decision::inter::evaluate_candidate` —
+the libvpx skip-flag tie-break ported from `vp9_pickmode.c:2355-2362`.
+**Reviewer hypothesis (2026-05-23 code-reviewer pass):** libvpx's
+tie-break compares `RDCOST(rate, this_rdc.dist) vs RDCOST(0,
+this_sse)` where `this_rdc.dist` is `block_error_fp >> 2`
+(coefficient-domain, ≈ 1-3 orders of magnitude larger than
+pixel-SSE-of-recon due to DCT energy scaling) and `this_sse` is
+`(*sse << 4)` (pixel-SSE-of-pred × 16). Both libvpx sides are
+inflated to a comparable magnitude. The F.1 port per HLD §5.5
+uses `pixel_SSE_recon` on the encode side and `pixel_SSE_pred` on
+the skip side — same UNITS (raw pixel SSE) but ORDERS OF MAGNITUDE
+apart at high q (where `pixel_SSE_recon ≈ pixel_SSE_pred` is
+satisfied because heavy quant zeros out the residual). At those
+operating points the comparison collapses to "argmin sse_after_pred"
+instead of libvpx's "argmin (rate + dist)", which could explain the
++3 dB PSNR regression at low-bitrate (high-q) foreman targets.
+**Recommended team-lead investigation:** A/B the encode-side dist
+between (a) current `pixel_SSE_recon`, (b) `by.coef_dist` (already
+surfaced on `InterModeSearchResult` per HLD §5.5 / DV-F1-3), with
+the skip side using a Parseval-equivalent rescaled value. The
+foreman quality_gate run is the oracle. If `coef_dist` recovers
+PSNR-delta, the HLD §5.5 design choice (Q3 resolution) should be
+revisited as the F.4 tuning entry point — not just a scalar
+correction.
+**F.1 ships as designed.** The team-lead's HLD §5.5 sign-off is
+explicit ("F.1 first-cut keeps pixel-SSE-of-recon"). This entry
+records the implementer's review-time concern so F.4 starts from
+the right diagnostic question, not as a unilateral deviation.
+

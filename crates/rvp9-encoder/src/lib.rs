@@ -3531,6 +3531,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         .best_rate
                         .saturating_sub(mv_bits_est)
                         .saturating_sub(ref_cost);
+                    // F.1 — `coef_bits_est` now live. The picker's
+                    // `coef_rate` is in `vp9_prob_cost` units
+                    // (1/512-bit, libvpx `VP9_PROB_COST_SHIFT = 9`); the
+                    // oracle column is in plain bits. The HLD F.1 Q4
+                    // resolution mandates `coef_rate >> 9` as the
+                    // back-conversion. See
+                    // `wrk_docs/Track_F/F1_HLD_block_yrd_port.md` §10
+                    // and the F.0.2 schema liveness matrix.
+                    let coef_bits_est: u32 = pick
+                        .coef_rate
+                        >> rvp9_core::cost::VP9_PROB_COST_SHIFT;
                     crate::f02_oracle::record_decision(
                         crate::f02_oracle::BlockDecision {
                             frame_idx: crate::f02_oracle::current_frame_idx(),
@@ -3545,9 +3556,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             mv_col: final_mv.col,
                             mode_bits_est,
                             mv_bits_est,
-                            // Forward-looking per HLD §3.4.1 — `0`
-                            // until F.1 lands the coef-bit estimator.
-                            coef_bits_est: 0,
+                            coef_bits_est,
                             sse_after_pred: u64::from(pick.best_distortion),
                             skip_flag: final_skip,
                         },

@@ -93,6 +93,9 @@ use crate::cost::mv_cost::{MvCosts, mv_cost};
 use crate::cost::{FrameTypeForRd, InterModeCosts, compute_rd_mult};
 use crate::entropy::default_probs::INTER_MODE_CONTEXTS;
 use crate::inter::filter::{EIGHTTAP_KERNEL, FILTER_TAPS};
+use crate::mode_decision::block_yrd::{
+    BlockYrdResult, block_error_fp_i32, satd_i16,
+};
 use crate::mode_decision::rd_cost;
 use crate::mode_info::{InterMode, Mv};
 use crate::mv_search::full_pixel::{
@@ -110,6 +113,18 @@ use crate::transforms::forward::{fdct8x8, fdct16x16, fdct32x32};
 use crate::transforms::inverse::{idct8x8_64_add, idct16x16_256_add, idct32x32_1024_add};
 use crate::transforms::scans::scan_for;
 use crate::transforms::{TxSize, TxType};
+
+/// F.1 — the default skip-prob context index used by
+/// `evaluate_candidate`'s ported skip-flag tie-break
+/// (`vp9_pickmode.c:2355-2362`). libvpx looks up the per-block skip
+/// probability from `cm->fc->skip_probs[skip_ctx]` where `skip_ctx`
+/// is `vp9_get_pred_context_skip` (derived from neighbour skip
+/// flags). The picker doesn't carry frame context, so F.1 uses the
+/// middle default (`DEFAULT_SKIP_PROBS[1] = 128`, neutral 50/50:
+/// `vp9_cost_bit(128, 0) == vp9_cost_bit(128, 1) == 512` =
+/// 1 bit in `vp9_prob_cost` units). Threading the real per-block
+/// skip context is a F.4 follow-up.
+const F1_DEFAULT_SKIP_CTX: usize = 1;
 
 /// `sad_per_bit` heuristic for full-pel MV search — libvpx's
 /// `sadperbit16` is `2 * x->errorperbit` for the realtime path, where
@@ -261,10 +276,32 @@ pub struct InterModeSearchResult {
     pub best_mv: Mv,
     /// `RDCOST(lambda, rate, distortion)` for the winning candidate.
     pub best_rd_cost: i64,
-    /// Distortion (SSE between source and reconstruction).
+    /// Distortion (SSE between source and reconstruction). When the
+    /// libvpx skip-flag tie-break picks `skip = true` (F.1, per Q5)
+    /// this is overridden with `sse_after_pred = sum((src - pred)^2)`
+    /// to match the distortion the decoder will see.
     pub best_distortion: u32,
-    /// Rate cost (mode + MV bits, in `vp9_prob_cost` units).
+    /// Rate cost (mode + MV bits + ref-frame bits + F.1 coef-bit
+    /// estimate, in `vp9_prob_cost` units). When the libvpx skip-flag
+    /// tie-break picks `skip = true` this collapses to
+    /// `vp9_cost_bit(skip_prob, 1)`.
     pub best_rate: u32,
+    /// F.1 — coefficient-bit estimate that contributed to the
+    /// candidate's RD. Sourced from
+    /// [`crate::mode_decision::block_yrd::BlockYrdResult::coef_rate`].
+    /// In `vp9_prob_cost` units (1/512-bit). Surfaced so the F.0.2
+    /// per-block oracle can populate its `coef_bits_est` column
+    /// (HLD F.1 Q4). For skip-flag-true candidates this remains the
+    /// pre-skip estimate, since the oracle records the picker's
+    /// coefficient-rate signal regardless of the final skip choice.
+    pub coef_rate: u32,
+    /// F.1 — coefficient-domain squared error from
+    /// [`crate::mode_decision::block_yrd::BlockYrdResult::coef_dist`].
+    /// `i64` per HLD Q7 to avoid overflow on saturated 32×32
+    /// quant-error blocks. **Not consumed by `rd_cost` in F.1** (Q3
+    /// keeps pixel-SSE-of-recon as the RD distortion term, DV-F1-3).
+    /// Surfaced for F.4 A/B experiments.
+    pub coef_dist: i64,
 }
 
 /// Run the libvpx-style inter-mode RD search for one luma block.
@@ -568,10 +605,15 @@ fn evaluate_candidate(
     // Compute the reconstruction. For Block16x16 / Block32x32 the
     // block matches its max_txsize and we do one big transform.
     // For Block64x64 we tile 4 × 32x32 transforms.
+    //
+    // **F.1**: the round-trip helper now also returns a libvpx-style
+    // [`BlockYrdResult`] (coef-rate / coef-dist / skippable). The
+    // `coef_rate` term is added to the rate sum below; `skippable`
+    // feeds the libvpx skip-flag tie-break further down.
     let tx_size = max_txsize(params.block_size);
     let mut recon = [0u8; 64 * 64];
     recon[..bw * bh].copy_from_slice(&pred[..bw * bh]);
-    reconstruct_via_round_trip(params, &pred, &mut recon, bw, bh, tx_size);
+    let by = reconstruct_via_round_trip(params, &pred, &mut recon, bw, bh, tx_size);
 
     // Distortion = SSE(src, recon). For block sizes ≤ 64×64 the SSE
     // fits in u32 (max 64*64*255^2 = 266_342_400 < 2^32).
@@ -673,18 +715,141 @@ fn evaluate_candidate(
     // `this_rdc.rate += ref_frame_cost[ref_frame]`). For pre-A16
     // single-ref-only callers the field defaults to zero and the RD
     // is unchanged (preserves byte-exact LAST-only output).
+    //
+    // **F.1**: `by.coef_rate` is the libvpx `block_yrd` coefficient-bit
+    // estimate (SATD-of-qcoeff in `vp9_prob_cost` units, see
+    // `mode_decision::block_yrd`). Adding it to the rate sum is the
+    // primary F.1 lever — previously the picker compared (mode + mv +
+    // ref) against (mode + mv + ref), and a candidate with a strictly
+    // better prediction but a non-zero `mv_rate` would lose to a
+    // rate-free ZEROMV / NEAREST with a large residual.
+    //
+    // **Default: DISABLED at F.1 sign-off (team-lead decision,
+    // 2026-05-23).** Empirical finding during F.1 bring-up: foreman
+    // PSNR-delta regresses +9.07 → +10.55 dB with `coef_rate` active
+    // alone, with the 250 kbps operating point catastrophically
+    // collapsing from 26.96 → 20.91 dB. Root cause: libvpx's
+    // `<< (2 + VP9_PROB_COST_SHIFT)` SATD-to-prob-cost scale is
+    // calibrated against libvpx's lambda + RD ranking. rvp9's lambda
+    // (`compute_rd_mult`) was calibrated when the picker had no
+    // `coef_rate` term. At higher bitrate operating points where
+    // residuals are non-trivial, the libvpx-tuned scale overprices
+    // candidates → picker falls back to worse modes → PSNR collapses.
+    //
+    // **F.4 calibrates lambda + the SATD-to-bits scale** as a pair
+    // (`vp9_pickmode.c:RD_THRESH_*` and `compute_rd_mult` together).
+    // Setting `RVP9_F1_COEF_RATE_ENABLE=1` activates `coef_rate` now
+    // for diagnostic / A/B work.
+    //
+    // F.1 ships as INFRASTRUCTURE-ONLY: the `block_yrd` module exists,
+    // `BlockYrdResult` flows through `reconstruct_via_round_trip`,
+    // `InterModeSearchResult` carries `coef_rate` and `coef_dist`, and
+    // the F.0.2 oracle's `coef_bits_est` field reads them. F.2 / F.3
+    // land on this infrastructure; F.4 turns on the behaviour after
+    // calibrating lambda.
+    let coef_rate_enabled =
+        std::env::var_os("RVP9_F1_COEF_RATE_ENABLE").is_some();
+    let effective_coef_rate = if coef_rate_enabled { by.coef_rate } else { 0 };
     let rate = mode_rate
         .saturating_add(mv_rate)
-        .saturating_add(params.ref_frame_rate_cost);
+        .saturating_add(params.ref_frame_rate_cost)
+        .saturating_add(effective_coef_rate);
 
-    let this_rd = rd_cost(lambda, rate, dist);
+    // **F.1 — libvpx skip-flag tie-break (vp9_pickmode.c:2355-2362, Q5).**
+    //
+    // ```c
+    // if (RDCOST(rdmult, rddiv, this_rdc.rate, this_rdc.dist) <
+    //     RDCOST(rdmult, rddiv, 0, this_sse)) {
+    //   this_rdc.rate += vp9_cost_bit(skip_prob, 0);
+    // } else {
+    //   this_rdc.rate = vp9_cost_bit(skip_prob, 1);
+    //   this_rdc.dist = this_sse;
+    //   x->skip_txfm[0] = SKIP_TXFM_AC_DC;
+    // }
+    // ```
+    //
+    // **Default: DISABLED at F.1 sign-off (team-lead decision,
+    // 2026-05-23).** Empirical finding during F.1 bring-up:
+    // foreman PSNR-delta regressed +9.07 → +12.22 dB with the
+    // tie-break active (`wrk_journals/2026.05.23 - JRN - Track F …`
+    // and `notes/divergence-ledger.md` F.1 entry). Hypothesis
+    // (from /code-reviewer): the tie-break compares
+    // `pixel_SSE_recon` (encode) vs `pixel_SSE_pred` (skip), which
+    // collapse to similar values at high q (quant erases residual
+    // → recon ≈ pred). The comparison then reduces to a rate-only
+    // check dominated by `coef_rate = 4×SATD<<9` — a libvpx-tuned
+    // proxy whose calibration is downstream of lambda. Without
+    // calibration, the picker over-skips, output is reconstructed
+    // from `pred` alone, PSNR drops 3-4 dB.
+    //
+    // **F.4 re-enables this tie-break** after lambda recalibration
+    // (and possibly switching to coef-domain `dist`, reversing
+    // DV-F1-3). Setting `RVP9_F1_SKIP_TIE_BREAK_ENABLE=1` activates
+    // it now for diagnostic / A/B work.
+    //
+    // The `coef_rate` addition to the rate sum above stays active —
+    // it is the *primary* F.1 lever, making coefficient bits
+    // RD-visible. The tie-break is the *secondary* libvpx mechanism
+    // that depends on lambda calibration we don't yet have.
+    let skip_tie_break_enabled =
+        std::env::var_os("RVP9_F1_SKIP_TIE_BREAK_ENABLE").is_some();
+    let (final_rate, final_dist) = if skip_tie_break_enabled {
+        // `this_sse` here is libvpx's caller-supplied `sse_y` from
+        // `model_rd_for_sb_y` — pixel-domain `sum((src - pred)^2)`
+        // (NOT post-recon). The picker uses pixel-SSE-of-recon as
+        // its dist term (Q3), so we mirror libvpx's tie-break with
+        // a freshly computed `sse_after_pred = sum((src - pred)^2)`.
+        //
+        // `skip_prob` — libvpx looks this up from the per-block
+        // `skip_ctx` against `cm->fc->skip_probs[skip_ctx]`. The
+        // picker doesn't carry frame context, so we use the middle
+        // skip context default (`DEFAULT_SKIP_PROBS[1] = 128`,
+        // neutral 50/50 — `vp9_cost_bit(128, 0) ==
+        // vp9_cost_bit(128, 1) == 512` = 1 bit in 1/512 units).
+        // Threading the real per-block skip context is a F.4
+        // follow-up.
+        let sse_after_pred = sse_block(
+            params.src_plane,
+            params.src_offset,
+            &pred,
+            bw,
+            bw,
+            bh,
+        );
+        let sse_after_pred_u32 = sse_after_pred.min(u32::MAX as u64) as u32;
+        let skip_prob =
+            crate::entropy::default_probs::DEFAULT_SKIP_PROBS[F1_DEFAULT_SKIP_CTX];
+        let skip_false_cost = crate::cost::vp9_cost_bit(skip_prob, false);
+        let skip_true_cost = crate::cost::vp9_cost_bit(skip_prob, true);
+
+        let rd_encode = rd_cost(lambda, rate, dist);
+        let rd_skip = rd_cost(lambda, 0, sse_after_pred_u32);
+        if rd_encode < rd_skip {
+            // Cheaper to encode the residual. Pay the skip=false bit.
+            (rate.saturating_add(skip_false_cost), dist)
+        } else {
+            // Cheaper to skip. The decoder will see `sse_after_pred`
+            // as the distortion (no residual added on the inverse
+            // path); the rate collapses to the skip=true bit.
+            (skip_true_cost, sse_after_pred_u32)
+        }
+    } else {
+        // F.1 default — no tie-break. The picker compares candidates
+        // on `(mode + mv + ref + coef) rate` and `pixel_SSE_recon`
+        // distortion only. Skip vs non-skip is decided downstream
+        // by the existing F8.0 / RC.X1 zero-eob skip override.
+        (rate, dist)
+    };
+    let this_rd = rd_cost(lambda, final_rate, final_dist);
 
     InterModeSearchResult {
         best_mode: mode,
         best_mv: mv,
         best_rd_cost: this_rd,
-        best_distortion: dist,
-        best_rate: rate,
+        best_distortion: final_dist,
+        best_rate: final_rate,
+        coef_rate: by.coef_rate,
+        coef_dist: by.coef_dist,
     }
 }
 
@@ -818,6 +983,16 @@ fn build_inter_prediction(
 /// Block64x64 we tile 4 × `Tx32x32` transforms in raster order. Smaller
 /// block sizes (which would tile smaller TX kernels analogously) are
 /// out of scope for F8.1 v1.
+///
+/// **F.1**: also accumulates libvpx-style `block_yrd` outputs across
+/// the per-tile loop and returns them in [`BlockYrdResult`]. The picker
+/// uses `coef_rate` to add coefficient-bit pressure to its RD
+/// comparison and `skippable` for the libvpx skip-flag tie-break
+/// (`vp9_pickmode.c:2355-2362`). `coef_dist` is surfaced for F.4 A/B
+/// experiments — the F.1 picker keeps pixel-SSE-of-recon as the RD
+/// distortion term (DV-F1-3). Mirrors libvpx `block_yrd` at
+/// `vp9_pickmode.c:718-844` v1.14.1 (`12f3a2ac6`). See
+/// [`crate::mode_decision::block_yrd`] for the module-level reference.
 fn reconstruct_via_round_trip(
     params: &InterModeSearchParams<'_>,
     pred: &[u8],
@@ -825,11 +1000,17 @@ fn reconstruct_via_round_trip(
     bw: usize,
     bh: usize,
     tx_size: TxSize,
-) {
+) -> BlockYrdResult {
     let tx_side = tx_size.side();
     let n = tx_size.n_coeffs();
     let src = params.src_plane;
     let (sx, sy) = params.src_offset;
+
+    // libvpx block_yrd accumulators (see vp9_pickmode.c:733, 768, 805).
+    let mut by_skippable = true;
+    let mut by_eob_cost: u32 = 0;
+    let mut by_rate_satd: u32 = 0;
+    let mut by_dist: i64 = 0;
 
     // Tile the block into (bw / tx_side) × (bh / tx_side) transforms.
     // For supported sizes (16/32/64), tx_side ∈ {16, 32} and
@@ -893,7 +1074,7 @@ fn reconstruct_via_round_trip(
                     // F8.1 v1 doesn't cover sub-8 blocks; would need
                     // fdct4x4 + idct4x4_16_add. Defer until needed.
                     debug_assert!(false, "F8.1 v1 doesn't support Tx4x4 tiles");
-                    return;
+                    return BlockYrdResult::default();
                 }
             }
 
@@ -932,6 +1113,23 @@ fn reconstruct_via_round_trip(
                     scan_slice,
                 )
             };
+
+            // F.1 — per-tile block_yrd accumulators (libvpx
+            // vp9_pickmode.c:768, 804-805, 830-835). Mirrors the
+            // libvpx loop body, fused with our existing
+            // forward-DCT+quant tile loop so we don't re-run the
+            // transforms on a separate pass.
+            by_skippable &= eob == 0;
+            by_eob_cost = by_eob_cost.saturating_add(1);
+            if eob == 1 {
+                by_rate_satd = by_rate_satd
+                    .saturating_add(i32::from(qcoeff[0]).unsigned_abs());
+            } else if eob > 1 {
+                by_rate_satd =
+                    by_rate_satd.saturating_add(satd_i16(&qcoeff[..n]));
+            }
+            by_dist = by_dist
+                .saturating_add(block_error_fp_i32(&coefs[..n], &dqcoeff[..n]) >> 2);
 
             // 4. Reconstruct tile: tx_recon = pred + idct(dq).
             for r in 0..tx_side {
@@ -973,17 +1171,37 @@ fn reconstruct_via_round_trip(
             }
         }
     }
+
+    // libvpx vp9_pickmode.c:842-843 — scale rate_satd to vp9_prob_cost
+    // units and add the per-tile EOB charge. The combined shift is
+    // (2 + VP9_PROB_COST_SHIFT) = 11. Saturate at u32::MAX to mirror
+    // libvpx's `int` rate field bound while avoiding wrap.
+    let shifted_rate =
+        (by_rate_satd as u64) << (2 + crate::cost::VP9_PROB_COST_SHIFT);
+    let eob_term = (by_eob_cost as u64) << crate::cost::VP9_PROB_COST_SHIFT;
+    let coef_rate = shifted_rate
+        .saturating_add(eob_term)
+        .min(u32::MAX as u64) as u32;
+    BlockYrdResult {
+        coef_rate,
+        coef_dist: by_dist,
+        skippable: by_skippable,
+    }
 }
 
 /// SSE between source-plane block at `(sx, sy)` (stride
-/// `src_plane.stride`) and reconstruction block `recon` (size `bw × bh`,
-/// stride `recon_stride`). Returns the raw `u64` so the caller can
+/// `src_plane.stride`) and a destination block `dst` (size `bw × bh`,
+/// stride `dst_stride`). Returns the raw `u64` so the caller can
 /// decide how to clamp.
+///
+/// Used for both the post-recon distortion term (`dst = recon`) and
+/// the F.1 skip-flag tie-break's pre-recon "would-be skip" SSE
+/// (`dst = pred`, libvpx `vp9_pickmode.c:2355`).
 fn sse_block(
     src_plane: &PlaneRef<'_>,
     src_offset: (usize, usize),
-    recon: &[u8],
-    recon_stride: usize,
+    dst: &[u8],
+    dst_stride: usize,
     bw: usize,
     bh: usize,
 ) -> u64 {
@@ -992,9 +1210,9 @@ fn sse_block(
     for r in 0..bh {
         for c in 0..bw {
             let s = src_plane.data[(sy + r) * src_plane.stride + (sx + c)] as i32;
-            let p = recon[r * recon_stride + c] as i32;
-            let d = s - p;
-            sse += (d * d) as u64;
+            let d = dst[r * dst_stride + c] as i32;
+            let diff = s - d;
+            sse += (diff * diff) as u64;
         }
     }
     sse
@@ -1447,41 +1665,22 @@ mod tests {
 
         let r0 = pick_inter_mode_luma(&params0);
         let r6 = pick_inter_mode_luma(&params6);
-        // The rate-cost row differs across contexts. With identical-
-        // plane src/ref **every** mode produces a zero-distortion
-        // prediction (any MV indexes into the same plane), so the
-        // winning mode is whichever has the cheapest *rate* at each
-        // context — a pure rate-cost tiebreak. Across ctx 0 and ctx 6
-        // the per-mode rate breakdown differs, so either:
-        //   - winner mode differs between the two contexts, OR
-        //   - winner mode is identical but rate (and hence RD) differs.
-        // We assert one of those two outcomes holds.
-        //
-        // Note: an earlier version of this test additionally asserted
-        // that the winner is always a zero-MV mode (ZEROMV / NEARESTMV
-        // / NEARMV). That invariant became stale post-A13 (commit
-        // `2c07ec4` — MV_COST_WEIGHT=108 scaling in `evaluate_candidate`,
-        // mirroring libvpx `vp9_rd.h:38`). At `inter_mode_ctx = 6`
-        // (two intra neighbours) libvpx's default `inter_mode_probs[6]
-        // = [25, 29, 30]` (`vp9_entropymode.c:233-242`) make NEWMV's
-        // mode-cost 257 (tree leaves: all cost_one of small probs ≈ 0
-        // each), while ZEROMV/NEAREST/NEAR pay cost_zero at one of the
-        // small probs ≈ ~1700 each. After A13 scaling, NEWMV encoding
-        // MV=(0,0) costs mode_rate(257) + mv_rate(MV_JOINT_ZERO)*108/128
-        // ≈ 257 + 1296 = 1553 — cheaper than any zero-MV mode at ctx 6.
-        // That is the libvpx-correct behaviour given the default prob
-        // table: when both neighbours are intra, NEWMV is the modal
-        // pick, and there is no carve-out in the picker for the
-        // degenerate identical-src/ref case (which never occurs in real
-        // content). See `wrk_docs/E16_picker_test_failure.md`.
+        // **F.1 (2026-05-23, team-lead revision).** F.1 added
+        // `coef_rate` to the rate sum AND ported the libvpx
+        // skip-flag tie-break (Q5). The tie-break is gated OFF by
+        // default at F.1 sign-off (F.4 re-enables after lambda
+        // calibration — see `evaluate_candidate` comment above the
+        // `skip_tie_break_enabled` env-var check). With the
+        // tie-break OFF, identical-src/ref still produces zero
+        // residual → `coef_rate == 0` on every candidate → the
+        // `best_rate` field is `mode_rate + mv_rate + ref_rate`
+        // exactly as it was pre-F.1, so the original `inter_mode_ctx`
+        // differential is still visible.
         assert_eq!(r0.best_distortion, 0);
         assert_eq!(r6.best_distortion, 0);
-        assert_eq!(r0.best_distortion, r6.best_distortion);
-        assert!(
-            r0.best_mode != r6.best_mode || r0.best_rate != r6.best_rate,
-            "ctx 0 and ctx 6 should produce a different (mode, rate) pair; \
-             got both = ({:?}, {})",
-            r0.best_mode, r0.best_rate,
+        assert_ne!(
+            r0.best_rate, r6.best_rate,
+            "ctx 0 and ctx 6 must produce different rates via the inter_mode_costs row differential",
         );
     }
 

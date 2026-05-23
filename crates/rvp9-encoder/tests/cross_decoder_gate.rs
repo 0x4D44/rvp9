@@ -30,6 +30,18 @@
 //! ```text
 //! cargo test --test cross_decoder_gate -- --ignored --nocapture
 //! ```
+//!
+//! **F.1-F.3 status (2026-05-23).** This gate compares rvp9-decoder
+//! vs. vpxdec on an *rvp9-encoded* bitstream — both decoders are
+//! consuming the same syntax, so picker-side changes (F.1's
+//! `block_yrd` rate-aware RD, F.2's `find_mv_refs` proper, F.3's
+//! motion-aware partition) do NOT break this contract: the bitstream
+//! is still valid VP9, and both decoders should agree on its YUV
+//! output. The F.1 HLD's §7.5 forward-looking note ("byte-exact
+//! foreman cross-decode #[ignore] during F.1-F.3") refers to a
+//! *future* `rvp9-encoder vs libvpx-encoder produces bit-identical
+//! bitstreams on a given input` gate — not currently in this file.
+//! That gate re-establishes as the F.4 exit criterion per the HLD.
 
 use rvp9_decoder::{Decoder, ParsedFrame};
 use rvp9_encoder::{AqMode, EncoderConfig, StreamEncoder, YuvFrameRef};

@@ -37,6 +37,7 @@
 //! large blocks (max `D` is `32 * 32 * 255^2 = 66_585_600 << 7 ≈ 8.5e9`,
 //! comfortably below `i64::MAX`).
 
+pub mod block_yrd;
 pub mod inter;
 pub mod intra;
 pub mod partition;
