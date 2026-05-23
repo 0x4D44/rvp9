@@ -547,6 +547,38 @@ decoder) is unblocked.
 10. **Hit 720p30 real-time** on a single core (scalar fallback), then on 2-4 cores with tile threading at 1080p30.
 11. **Differential bitstream gate**: `cargo run -p rvp9-harness --bin diff-bitstream` against libvpx. Every divergence either fixed or recorded in `notes/divergence-ledger.md`.
 
+**Empirical status (Track E, 2026-05-22/23):**
+
+After a 14-step evidence chain (E1–E14) the foreman BD-rate gap is no longer a confounded single number — it is decomposed into a closed rate-control / structural part and a clean residual coding-quality deficit. Reports under `wrk_docs/E1*–E16*.md`; comprehensive close-out in `wrk_journals/2026.05.23 - JRN - Track E FINAL CLOSE*`.
+
+Six libvpx-faithful bug fixes landed, all byte-exact cross-decode (vpxdec + ffmpeg), all preserving the 94 encoder lib gates and the 720p30 realtime budget (~5 ms / 33 ms):
+
+| Fix | Commit  | What                                                                                              |
+|-----|---------|---------------------------------------------------------------------------------------------------|
+| E2  | `697384d` | Port libvpx inter VBP variance-partition thresholds (KF formula was being applied to inter).      |
+| E6  | `ff385dc` | Port libvpx `max_frame_bandwidth` (4×avg → `max(MBs·250, 2 Mbit, avg·4)`) — uncaps the KF target. |
+| E7  | `b2286b6` | Port `get_kf_active_quality` LUT — floors the keyframe Q at libvpx's ~57 instead of crashing to 4. |
+| E8  | `7e94f09` | Fix inter-Q EWMA: postencode recorded the active_best FLOOR instead of the coded Q (ambient decay). |
+| E10 | `5a61f8b` | Port libvpx edge-replicated extended-border reads in `int_pro_motion_estimation` (12/16 SBs bailed). |
+| E13 | `f05c6b4` | `run_newmv_search` BYPASSED the diamond on 89.9% of LAST NEWMV leaves; always-run + `start_mv ≠ center_mv`. |
+
+State after the fixes:
+- **Foreman bitrate overshoot eliminated** (252 → 143.9 kbps at the 100k target, libvpx 143.1, within 0.6%).
+- **Inter coefficient bits −20% per frame** from KF reference-quality cascade (E6 mechanism).
+- **NEWMV diamond-recovers-fraction 2% → 75.6%** (E13); search now finds real motion (+5.34 dB prediction PSNR available at the search stage).
+- **Residual gap: ~9 dB matched-bitrate prediction-quality deficit** (foreman at q=120: rvp9 31.4 dB recon vs libvpx 39.2). The BD-rate integral is currently undefined because rvp9's PSNR curve sits entirely below libvpx's; E15 (`7166e8b`) added a matched-bitrate PSNR-delta fallback to the gate harness that reports the gap directly. Foreman fallback: mean +9.07 dB, max +9.50 dB across the 4 operating points.
+
+**Track F (next-phase coupled package) — required for the 2 % BD-rate exit criterion.** Five experiments (E5 RD-skip, E11 partition-cap under broken search, E13 search alone, E14 partition-cap under fixed search, E16 picker-cost audit) converge on one mechanism: rvp9's picker RD models mode-rate + mv-rate but **not coefficient bits**, so even when NEWMV finds a better motion-compensated prediction (E13), the picker can't see the residual-bit savings — only the +5000 prob-cost mv-rate. Three coupled sub-fixes, no single one closes the gap:
+1. **`vp9_block_yrd` / coefficient-bit-aware RD** in the picker's `evaluate_candidate` so NEWMV's residual savings become visible to the RD comparison. (Primary lever; references libvpx `vp9/encoder/vp9_rdopt.c:vp9_block_yrd` and the rate estimation in nonrd pickmode.)
+2. **`find_mv_refs` / NEAREST quality propagation** — once block_yrd makes some block pick NEWMV, NEAREST starts predicting from real motion in neighbours, closing the chicken-and-egg degeneracy. Likely activates the A18 `prev_frame_mvs` plumbing currently in place but no-op.
+3. **Motion-aware partition decision** — libvpx's nonrd evaluates modes (incl. NEWMV with the working search + `block_yrd`) at each level and only splits when motion-comp RD doesn't justify the larger block. Replaces the current variance-of-ZEROMV-residual partitioner.
+
+This is libvpx's `vp9_pick_inter_mode` realtime / nonrd pickmode machinery in its entirety. Estimate **+3–4 weeks on top of the original 8-12** (the rate-control / structural work consumed roughly the existing budget). Until Track F lands, foreman's BD-rate exit criterion is not measurable (PSNR-delta fallback metric stands in; target TBD).
+
+Open items routed:
+- Decoder mi-grid mode/skip column population bug — corrupted E1 mode columns and E4 skip-claim. Logged for the decoder team; no cross-encoder mode/skip comparison can use the mi-grid until fixed.
+- `bitstream::*round_trip` tests missing test-vector fixtures (environmental).
+
 **Deliverables:**
 - Working real-time encoder for the minimal config.
 - Differential bitstream diff harness operational against libvpx.
