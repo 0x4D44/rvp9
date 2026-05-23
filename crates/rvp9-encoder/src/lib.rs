@@ -2191,8 +2191,11 @@ fn splat_inter_leaf_into_mi_grid(
     // callable sites pass `RefFrame::LastFrame` for skip-fallback
     // leaves (matches A14 behaviour).
     picked_ref_frame: RefFrame,
+    // F.5 — interpolation filter the picker chose for this leaf.
+    // Splatted into every 8x8 cell so the writer's mi_grid read sees
+    // the same filter the simulator built the recon with.
+    picked_interp_filter: rvp9_core::bitstream::frame::InterpFilter,
 ) {
-    use rvp9_core::bitstream::frame::InterpFilter as WireInterpFilter;
     use rvp9_core::mode_info::{BlockMode, ModeInfo};
     let n_8x8_wide = leaf_bsize.n_8x8_wide() as usize;
     let n_8x8_high = leaf_bsize.n_8x8_high() as usize;
@@ -2206,7 +2209,7 @@ fn splat_inter_leaf_into_mi_grid(
             mode: picked_mode,
             ref_frames: [picked_ref_frame, RefFrame::NoRefFrame],
             mvs: [picked_mv, Mv::ZERO],
-            interp_filter: WireInterpFilter::EightTap,
+            interp_filter: picked_interp_filter,
         },
         bmi: Default::default(),
     };
@@ -2255,6 +2258,14 @@ pub(crate) struct InterPartitionLeafDesc {
     /// `RefFrame::LastFrame` matches A14 behaviour (LAST-only picker)
     /// on skip-fallback leaves and pre-A15 callers.
     pub picked_ref_frame: RefFrame,
+    /// F.5 — interpolation filter the picker selected for this leaf.
+    /// One of `{EightTap, EightTapSmooth}` (libvpx-realtime 2-filter
+    /// range). Defaults to `EightTap` on skip-fallback leaves and
+    /// pre-F.5 byte-exact paths. The writer reads this field to emit
+    /// the per-block switchable-filter bits and the encoder simulator
+    /// reads it when building the per-plane MC prediction so the
+    /// recon matches what the decoder will produce.
+    pub picked_interp_filter: rvp9_core::bitstream::frame::InterpFilter,
 }
 
 /// F10.1c — Drive the F8.1 inter mode picker per leaf and run the
@@ -2820,6 +2831,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         skip: true,
                         segment_id: seg,
                         picked_ref_frame: RefFrame::LastFrame,
+                        picked_interp_filter:
+                            rvp9_core::bitstream::frame::InterpFilter::EightTap,
                     });
                 }
                 sb_partitions[sb_idx] = new_leaves;
@@ -2901,6 +2914,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         sb_partitions[sb_idx][leaf_idx].segment_id,
                         /* skip = */ true,
                         /* picked_ref_frame = */ RefFrame::LastFrame,
+                        /* picked_interp_filter = */
+                        rvp9_core::bitstream::frame::InterpFilter::EightTap,
                     );
                     if std::env::var("RVP9_DIAG_PICKER").is_ok() {
                         #[allow(clippy::print_stderr)]
@@ -2999,6 +3014,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         sb_partitions[sb_idx][leaf_idx].segment_id,
                         /* skip = */ true,
                         /* picked_ref_frame = */ RefFrame::LastFrame,
+                        /* picked_interp_filter = */
+                        rvp9_core::bitstream::frame::InterpFilter::EightTap,
                     );
                     continue;
                 }
@@ -3467,6 +3484,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 sb_partitions[sb_idx][leaf_idx].picked_mv = pick.best_mv;
                 sb_partitions[sb_idx][leaf_idx].skip = false;
                 sb_partitions[sb_idx][leaf_idx].picked_ref_frame = picked_ref;
+                // F.5 — record the per-leaf interpolation filter so the
+                // writer (via `splat_inter_leaf_into_mi_grid`) and the
+                // encoder simulator's per-plane MC step below both use
+                // the same filter the picker scored against.
+                sb_partitions[sb_idx][leaf_idx].picked_interp_filter =
+                    pick.picked_interp_filter;
 
                 // A0 diagnostic: dump per-leaf picker decision when
                 // `RVP9_DIAG_PICKER` is set in the environment.
@@ -3579,6 +3602,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         mv_q4_row,
                         recon_plane,
                         plane_stride,
+                        sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
                     );
 
                     // Per-TX residual emission. Walk in plane 4×4
@@ -3789,6 +3813,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     sb_partitions[sb_idx][leaf_idx].segment_id,
                     sb_partitions[sb_idx][leaf_idx].skip,
                     sb_partitions[sb_idx][leaf_idx].picked_ref_frame,
+                    sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
                 );
             }
         }
@@ -3946,8 +3971,14 @@ fn build_inter_pred_plane_unscaled(
     mv_q4_row: i32,
     dst: &mut [u8],
     dst_stride: usize,
+    // F.5 — interpolation filter chosen by the picker for this leaf.
+    // Pre-F.5 this was hard-pinned to `EightTap`; the picker now drives
+    // per-block filter selection (`{EightTap, EightTapSmooth}`) and
+    // the encoder simulator must mirror that here so its recon
+    // matches what the decoder will produce when reading the per-block
+    // switchable-filter bits the writer emits.
+    interp_filter: rvp9_core::bitstream::frame::InterpFilter,
 ) {
-    use rvp9_core::bitstream::frame::InterpFilter;
     use rvp9_core::inter::filter::{SUBPEL_BITS, SUBPEL_MASK};
     use rvp9_core::inter::scale::{ScaleFactors, inter_predictor};
 
@@ -3983,7 +4014,7 @@ fn build_inter_pred_plane_unscaled(
         subpel_x_q4,
         subpel_y_q4,
         &sf,
-        InterpFilter::EightTap,
+        interp_filter,
         bw,
         bh,
         /* is_compound_avg = */ false,

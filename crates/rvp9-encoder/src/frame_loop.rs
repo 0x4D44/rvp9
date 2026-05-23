@@ -889,6 +889,13 @@ impl StreamEncoder {
                                 // it iterates {LAST, GOLDEN} below; skip-
                                 // fallback leaves retain LAST (matches A14).
                                 picked_ref_frame: RefFrame::LastFrame,
+                                // F.5 — default to EightTap; the picker
+                                // overwrites this when it runs the
+                                // per-block filter loop. Skip-fallback
+                                // leaves keep `EightTap`, matching the
+                                // pre-F.5 hard-coded default.
+                                picked_interp_filter:
+                                    rvp9_core::bitstream::frame::InterpFilter::EightTap,
                             }
                         })
                         .collect()
@@ -1604,10 +1611,33 @@ fn build_inter_packet_with_residuals(
 
     let mut pre_fc = FrameContext::new_default();
     let post_fc = pre_fc.clone();
+    // F.5 — frame-level filter is `Switchable` ONLY when the picker's
+    // filter-search loop is enabled. Both the picker and the writer
+    // read the gate via `rvp9_core::mode_decision::inter::f5_search_enabled`
+    // (single source of truth — see that fn's doc-comment for the
+    // encoder/decoder drift rationale). When enabled, the writer
+    // emits per-block switchable-interp bits and the picker's chosen
+    // filter goes on the wire. When disabled (default), the frame
+    // header pins `EightTap` so the writer suppresses the per-block
+    // bits — byte-exact to pre-F.5.
+    //
+    // Ship state (2026-05-23): default OFF. Flipping `Switchable` on
+    // alone costs ~+0.6 dB on foreman F.0.1 because the per-block 1–2
+    // bits × ~600 inter blocks/frame inflates the bitstream enough that
+    // the RC cranks q up. The flat-constant rate model for picker
+    // filter selection (see `F5_SWITCHABLE_FILTER_RATE`) doesn't yet
+    // recover that cost. The follow-up that lands proper per-context
+    // signalling cost will move the default ON.
+    let interp_filter_frame =
+        if rvp9_core::mode_decision::inter::f5_search_enabled() {
+            InterpFilter::Switchable
+        } else {
+            InterpFilter::EightTap
+        };
     let opts = CompressedHeaderOptions {
         lossless: false,
         intra_only: false,
-        interp_filter: InterpFilter::EightTap,
+        interp_filter: interp_filter_frame,
         compound_allowed: false,
         allow_high_precision_mv: false,
     };
@@ -1634,9 +1664,14 @@ fn build_inter_packet_with_residuals(
 
     let sign_bias = sign_bias_from_header(&[false, false, false]);
     let (comp_fixed_ref, comp_var_ref) = setup_compound_reference_mode(&sign_bias);
+    // F.5 — Switchable at the frame level (gated, see above). The
+    // writer's `write_inter_mode_info` (`mode_info.rs:1063-1071`)
+    // emits the per-block interp_filter bits when
+    // `params.interp_filter == Switchable`; the decoder reads them at
+    // `read_inter_block_mode_info` (`mode_info.rs:796-800`).
     let params = InterModeReadParams {
         allow_high_precision_mv: false,
-        interp_filter: InterpFilter::EightTap,
+        interp_filter: interp_filter_frame,
         reference_mode: ReferenceMode::Single,
         comp_fixed_ref,
         comp_var_ref,
@@ -1745,7 +1780,13 @@ fn build_inter_packet_with_residuals(
             ref_frame_indices: [0; MAX_INTER_REFS],
             ref_frame_sign_biases: [false; MAX_INTER_REFS],
             allow_high_precision_mv: false,
-            interp_filter: InterpFilter::EightTap,
+            // F.5 — Switchable at the frame level (gated by
+            // `RVP9_F5_FILTER_SEARCH`, mirrors `interp_filter_frame`
+            // above). The uncompressed-header writer emits the
+            // matching wire bits; the decoder reads
+            // `cm->interp_filter = Switchable` and dispatches every
+            // inter block through `read_switchable_interp_filter`.
+            interp_filter: interp_filter_frame,
         },
         profile: Profile::Profile0,
         show_frame: true,

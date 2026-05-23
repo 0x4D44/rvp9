@@ -87,12 +87,13 @@
 //! 8. `rd_cost = ROUND_POWER_OF_TWO(R * lambda, 9) + (D << 7)` —
 //!    libvpx `RDCOST` macro at `vp9_rd.h:29-30`.
 
+use crate::bitstream::frame::InterpFilter;
 use crate::bitstream::header::FrameKind;
 use crate::block::{BlockSize, max_txsize};
 use crate::cost::mv_cost::{MvCosts, mv_cost};
 use crate::cost::{FrameTypeForRd, InterModeCosts, compute_rd_mult};
 use crate::entropy::default_probs::INTER_MODE_CONTEXTS;
-use crate::inter::filter::{EIGHTTAP_KERNEL, FILTER_TAPS};
+use crate::inter::filter::{FILTER_TAPS, kernel_for};
 use crate::mode_decision::block_yrd::{
     BlockYrdResult, block_error_fp_i32, satd_i16,
 };
@@ -305,6 +306,13 @@ pub struct InterModeSearchResult {
     /// keeps pixel-SSE-of-recon as the RD distortion term, DV-F1-3).
     /// Surfaced for F.4 A/B experiments.
     pub coef_dist: i64,
+    /// F.5 — interpolation filter chosen by the per-block filter
+    /// search. One of `{EightTap, EightTapSmooth}` (libvpx-realtime
+    /// 2-filter range). Defaults to `EightTap` for callers that don't
+    /// hit the filter loop (e.g. zero-distortion / identical-ref
+    /// shortcuts). The writer reads this field to emit the per-block
+    /// switchable-filter bits.
+    pub picked_interp_filter: InterpFilter,
 }
 
 /// Run the libvpx-style inter-mode RD search for one luma block.
@@ -576,9 +584,113 @@ fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
     sub.best_mv
 }
 
+/// F.5 — per-block interpolation-filter search set, default state.
+/// Libvpx-realtime iterates `EIGHTTAP (0) .. EIGHTTAP_SMOOTH (1)`
+/// (`vp9_pickmode.c:1512-1514`, `search_filter_ref`); the 2-filter set
+/// is the team-lead-approved starting point.
+///
+/// **F.5 ship state (2026-05-23) — INFRASTRUCTURE-ONLY default.**
+/// The default filter set is `[EightTap]` (1 element → picker loop is
+/// a no-op, byte-exact to pre-F.5). The widened 2-filter set is
+/// gated behind `RVP9_F5_FILTER_SEARCH=1`. Rationale: empirical
+/// measurement of the foreman F.0.1 gate showed that *just adding the
+/// frame-level `Switchable` interp_filter signalling* (without any
+/// picker filter switching) costs ~+0.6 dB of PSNR delta because the
+/// per-block 1–2-bit signalling overhead × ~600 inter blocks/frame
+/// inflates the bitstream enough that the RC cranks q up to
+/// compensate. The picker's 2-filter SMOOTH-vs-EIGHTTAP RD search
+/// recovers some of that cost via better-fitting predictions but not
+/// all of it at the flat 1.5-bit (or even 4-bit) approximations
+/// tried during F.5 bring-up — at `RVP9_F5_FILTER_SEARCH=1` the gate
+/// stays at +9.6–11 dB depending on the rate-cost constant chosen.
+///
+/// The HLD's risk §7.5 anticipates this: "If the switchable-rate
+/// approximation in §4.4 is too aggressive (under-charges bits), the
+/// picker may over-switch filters … We'd see this as a *negative*
+/// PSNR-delta improvement (the gap widens). Detection is automatic
+/// via F.0.1." F.5 v1 ships the picker + writer + decoder wiring
+/// proven by the synthetic two-frame inter roundtrip + cross-decoder
+/// gates, and gates the wire-format flip behind the env var so F.5
+/// follow-up (per-context switchable rate from
+/// [`crate::cost::symbol_costs::switchable_interp_costs`], threaded
+/// via `switchable_interp_ctx` into [`InterModeSearchParams`]) can
+/// land without touching the writer-side again.
+fn f5_filter_search_set() -> &'static [InterpFilter] {
+    if f5_search_enabled() {
+        &[InterpFilter::EightTap, InterpFilter::EightTapSmooth]
+    } else {
+        &[InterpFilter::EightTap]
+    }
+}
+
+/// F.5 — shared env-gate read. Both the picker (filter search set
+/// width) and the encoder writer (frame-header `interp_filter`
+/// selection between `EightTap` and `Switchable`) MUST gate on the
+/// same flag value to avoid encoder/decoder drift: the picker may
+/// pick `EightTapSmooth` for a leaf, but if the writer pins the
+/// frame header to `EightTap`, the per-block switchable-filter bits
+/// are suppressed and the decoder rebuilds the prediction with
+/// `EightTap` while the encoder simulator used `EightTapSmooth` — a
+/// silent, catastrophic recon mismatch.
+///
+/// This helper is the single source of truth for the
+/// `RVP9_F5_FILTER_SEARCH` gate. Per-call env reads are acceptable
+/// (matches the existing `RVP9_F1_SKIP_TIE_BREAK_ENABLE` pattern in
+/// this file); a `OnceLock` cache is a viable future optimisation if
+/// profiling shows the syscall cost matters.
+#[must_use]
+pub fn f5_search_enabled() -> bool {
+    std::env::var_os("RVP9_F5_FILTER_SEARCH").is_some()
+}
+
+/// F.5 — switchable-filter signalling rate in `vp9_prob_cost` units
+/// (1/512 of a bit). Libvpx charges
+/// `vp9_get_switchable_rate(cpi, xd) ≈ 1–2` bits per non-default filter
+/// in the Switchable-frame path (`vp9_pickmode.c:1528`); the exact
+/// cost is `switchable_interp_costs[ctx][filter]` (see
+/// [`crate::cost::symbol_costs::switchable_interp_costs`]), which
+/// depends on per-block neighbour context (`above`, `left` filter).
+///
+/// **F.5 v1 rate model** — flat conservative approximation. The picker
+/// doesn't yet thread neighbour context (an F.5 follow-up per HLD
+/// §4.4 / Q2 — see "Open questions" in the HLD). The team-lead HLD
+/// decision originally specified `768` (= 1.5 bits in
+/// `vp9_prob_cost` units) as a "conservative over-estimate".
+/// Empirical measurement against the default
+/// `switchable_interp_prob` table shows the *actual* signalling cost
+/// ranges from ~300 to ~2120 units across the 4 contexts, with the
+/// most-common steady-state context (`ctx=0`, both neighbours
+/// `EightTap`, probs `[235, 162]`) charging ~2120 units for
+/// `EightTapSmooth`. At 768 the picker over-switches: the F.0.1
+/// foreman gate regresses from +9.00 dB → +10.76 dB because the
+/// per-block distortion improvement from smoothing fails to recover
+/// the wire-format bits actually paid (the picker's RD finds a tiny
+/// distortion drop but spends ~2-4× more wire bits than it gets
+/// credit for).
+///
+/// We pin the flat constant at **2048** (= 4 bits) — close to the
+/// conservative upper bound of the per-context range — so the picker
+/// only switches when the distortion improvement clearly justifies
+/// the bits in the most-common neighbour context. The proper
+/// per-context table is HLD §4.4 / Q2 follow-up; landing it requires
+/// threading `switchable_interp_ctx` into [`InterModeSearchParams`].
+/// **Deviation from HLD § Q2 default `768`** noted in F.5 report;
+/// the HLD itself anticipates this risk in §7.5 ("Quality
+/// regression") and the F.0.1 gate is the detection mechanism.
+const F5_SWITCHABLE_FILTER_RATE: u32 = 2048;
+
 /// Evaluate one `(mode, mv)` candidate: fetch the prediction with sub-pel
 /// interpolation, run the forward/inverse transform round-trip,
 /// compute SSE + rate cost + RD cost.
+///
+/// **F.5** — runs the per-block filter search loop (libvpx
+/// `search_filter_ref`, `vp9_pickmode.c:1488-1573`). For each filter
+/// in [`f5_filter_search_set`] the prediction is rebuilt and the full
+/// `block_yrd` + RD evaluation runs; the lowest-RD winner is returned
+/// with `picked_interp_filter` set accordingly. Default (env unset):
+/// the loop iterates only `[EightTap]` (byte-exact to pre-F.5); the
+/// widened `[EightTap, EightTapSmooth]` set lands when
+/// `RVP9_F5_FILTER_SEARCH=1` is set.
 ///
 /// `ref_mv` is the reference MV used for the NEWMV rate-cost
 /// calculation (only relevant when `mode == InterMode::NewMv`).
@@ -588,6 +700,37 @@ fn evaluate_candidate(
     mv: Mv,
     ref_mv: Mv,
     lambda: u32,
+) -> InterModeSearchResult {
+    // F.5 — per-block filter search. Each filter rebuilds prediction +
+    // residual + DCT + quant + idct + SSE; the picker takes the
+    // lowest-RD winner. The MV is fixed for the duration of the loop
+    // (mirror of libvpx's realtime `search_filter_ref`, which also
+    // does MV search once outside the filter loop).
+    let mut best: Option<InterModeSearchResult> = None;
+    for &filter in f5_filter_search_set() {
+        let candidate = evaluate_candidate_for_filter(params, mode, mv, ref_mv, lambda, filter);
+        match best.as_ref() {
+            Some(prev) if candidate.best_rd_cost >= prev.best_rd_cost => {}
+            _ => best = Some(candidate),
+        }
+    }
+    // The loop iterates over a non-empty slice (the default returns
+    // `[EightTap]`, the env-gated variant returns `[EightTap,
+    // EightTapSmooth]`), so `best` is always populated.
+    best.expect("F.5 filter search set is non-empty")
+}
+
+/// F.5 — evaluate one `(mode, mv, filter)` triplet. The original
+/// pre-F.5 `evaluate_candidate` body, with the filter parameter
+/// threaded into `build_inter_prediction` and the switchable-filter
+/// signalling rate added to the rate sum for non-default filters.
+fn evaluate_candidate_for_filter(
+    params: &InterModeSearchParams<'_>,
+    mode: InterMode,
+    mv: Mv,
+    ref_mv: Mv,
+    lambda: u32,
+    filter: InterpFilter,
 ) -> InterModeSearchResult {
     let bw = usize::from(params.block_size.width());
     let bh = usize::from(params.block_size.height());
@@ -603,6 +746,7 @@ fn evaluate_candidate(
         bh,
         &mut pred,
         bw, // pred_stride
+        filter,
     );
 
     // Compute the reconstruction. For Block16x16 / Block32x32 the
@@ -764,10 +908,24 @@ fn evaluate_candidate(
     // Saturate-cast here at the honest cap site before adding to
     // the `u32` rate sum.
     let effective_coef_rate: u32 = by.coef_rate.min(u32::MAX as u64) as u32;
+
+    // F.5 — switchable-filter signalling cost. Charge a flat
+    // conservative approximation (`F5_SWITCHABLE_FILTER_RATE`) when
+    // the chosen filter is anything other than the default
+    // `EightTap`. See the constant's doc-comment for the libvpx
+    // reference, the empirical magnitude calibration, and the
+    // approximation rationale.
+    let filter_rate: u32 = if matches!(filter, InterpFilter::EightTap) {
+        0
+    } else {
+        F5_SWITCHABLE_FILTER_RATE
+    };
+
     let rate = mode_rate
         .saturating_add(mv_rate)
         .saturating_add(params.ref_frame_rate_cost)
-        .saturating_add(effective_coef_rate);
+        .saturating_add(effective_coef_rate)
+        .saturating_add(filter_rate);
 
     // **F.1 — libvpx skip-flag tie-break (vp9_pickmode.c:2355-2362, Q5).**
     //
@@ -864,6 +1022,7 @@ fn evaluate_candidate(
         best_rate: final_rate,
         coef_rate: by.coef_rate,
         coef_dist: by.coef_dist,
+        picked_interp_filter: filter,
     }
 }
 
@@ -893,6 +1052,7 @@ fn build_inter_prediction(
     bh: usize,
     dst: &mut [u8],
     dst_stride: usize,
+    filter: InterpFilter,
 ) {
     // Integer-pel offset and sub-pel phase.
     // mv is in 1/8-pel units (Q3); the eight-tap filter uses
@@ -952,8 +1112,10 @@ fn build_inter_prediction(
     let src_slice = &ref_plane.data[src_start..];
 
     // Dispatch the kernel matching the (x_nonzero, y_nonzero) pair.
-    // EightTap filter, F8.1 v1 hard-pins the default.
-    let kernel = &EIGHTTAP_KERNEL;
+    // F.5 — the kernel is now per-block: the picker drives it via the
+    // filter loop in `evaluate_candidate`; callers outside the picker
+    // pass `EightTap` to preserve pre-F.5 behaviour.
+    let kernel = kernel_for(filter);
     let filter_x = &kernel[subpel_x_q4 as usize];
     let filter_y = &kernel[subpel_y_q4 as usize];
 
@@ -1712,6 +1874,272 @@ mod tests {
         assert_ne!(
             r0.best_rate, r6.best_rate,
             "ctx 0 and ctx 6 must produce different rates via the inter_mode_costs row differential",
+        );
+    }
+
+    // ====================================================================
+    // F.5 — interpolation filter search loop tests.
+    // ====================================================================
+
+    /// F.5 — identical source and reference → ZEROMV predictions are
+    /// pixel-perfect, residuals quantize to zero, distortion is zero
+    /// for every filter. The picker must select `EightTap` because the
+    /// `+F5_SWITCHABLE_FILTER_RATE` penalty on the SMOOTH candidate
+    /// puts it strictly behind on rate while distortion ties at zero.
+    ///
+    /// This is the v1 "no incentive to switch" oracle (HLD §6.2 test
+    /// item 3 — "no-switchable regression"): when prediction quality
+    /// can't be improved by changing filters, the picker stays at
+    /// EightTap.
+    #[test]
+    fn f5_picker_chooses_eighttap_on_identical_src_ref() {
+        let pw = 64;
+        let ph = 64;
+        let data = make_plane(pw, ph, 71);
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 50);
+        let mvc = MvCandidates::default();
+        let params = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            50,
+        );
+
+        // Direct per-filter evaluation: bypass the picker's outer loop
+        // (which the default ship state pins to `[EightTap]`) and prove
+        // the rate-cost tie-break works regardless of the search-set
+        // gate.
+        let lambda =
+            compute_rd_mult(50, frame_type_for_rd(synthetic_inter_frame_kind()));
+        let eight = evaluate_candidate_for_filter(
+            &params,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            lambda,
+            InterpFilter::EightTap,
+        );
+        let smooth = evaluate_candidate_for_filter(
+            &params,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            lambda,
+            InterpFilter::EightTapSmooth,
+        );
+        // Distortion is zero on both (sub-pel phase is zero → both
+        // filters tap-128 copy the centre pixel; the convolve_copy
+        // fast path also runs).
+        assert_eq!(eight.best_distortion, 0);
+        assert_eq!(smooth.best_distortion, 0);
+        // SMOOTH pays the switchable-filter signalling cost; its rate
+        // is strictly higher.
+        assert!(
+            smooth.best_rate > eight.best_rate,
+            "SMOOTH rate {} must exceed EightTap rate {} by the \
+             F5_SWITCHABLE_FILTER_RATE penalty",
+            smooth.best_rate, eight.best_rate,
+        );
+        assert_eq!(
+            smooth.best_rate.saturating_sub(eight.best_rate),
+            F5_SWITCHABLE_FILTER_RATE,
+            "rate delta must equal the F.5 switchable-filter signalling cost",
+        );
+        // The picker's tie-break MUST give EightTap a strictly-lower RD.
+        assert!(
+            eight.best_rd_cost < smooth.best_rd_cost,
+            "no-incentive case: EightTap RD ({}) must beat SMOOTH RD ({})",
+            eight.best_rd_cost, smooth.best_rd_cost,
+        );
+        assert_eq!(eight.picked_interp_filter, InterpFilter::EightTap);
+        assert_eq!(smooth.picked_interp_filter, InterpFilter::EightTapSmooth);
+    }
+
+    /// F.5 — invoking `evaluate_candidate_for_filter` with each filter
+    /// in the search set produces DIFFERENT predictions (and hence
+    /// different distortion / rate / RD) on non-trivial content with
+    /// a sub-pel MV, and the returned `picked_interp_filter` tags
+    /// match the requested filter. This is the "wiring is exercised"
+    /// oracle from HLD §6.2 test item 1 — proves the SMOOTH kernel is
+    /// actually reachable from the picker, the result struct carries
+    /// the chosen filter, and the `+F5_SWITCHABLE_FILTER_RATE` cost
+    /// is applied only to non-default filters.
+    #[test]
+    fn f5_per_filter_evaluation_differs_and_tags_picked_filter() {
+        let pw = 64;
+        let ph = 64;
+        let ref_data = make_plane(pw, ph, 211);
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        // Source: shifted variant of ref so a non-trivial NEARESTMV
+        // reconstruction can probe the kernels' differing taps.
+        let mut src_data = ref_data.clone();
+        let bw = 16;
+        let bh = 16;
+        let src_col = 20;
+        let src_row = 20;
+        // Quarter-pel right shift (col=2 in Q3 = 0.25 px). Sub-pel
+        // phase = (2 & 7) * 2 = 4 → both filters use kernel row 4,
+        // where EightTap and EightTapSmooth coefficients differ
+        // markedly (Lagrangian preserves edges, SMOOTH attenuates).
+        for i in 0..bh {
+            for j in 0..bw {
+                src_data[(src_row + i) * pw + (src_col + j)] =
+                    ref_data[(src_row + i) * pw + (src_col + j + 1)];
+            }
+        }
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+
+        let harness = TestHarness::new(pw, 80);
+        let mvc = MvCandidates {
+            nearest: Mv { row: 0, col: 2 },
+            near: Mv { row: 0, col: 2 },
+        };
+        let params = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &src_plane,
+            &ref_plane,
+            (src_col, src_row),
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            80,
+        );
+
+        let lambda =
+            compute_rd_mult(80, frame_type_for_rd(synthetic_inter_frame_kind()));
+        let eight = evaluate_candidate_for_filter(
+            &params,
+            InterMode::NearestMv,
+            mvc.nearest,
+            mvc.nearest,
+            lambda,
+            InterpFilter::EightTap,
+        );
+        let smooth = evaluate_candidate_for_filter(
+            &params,
+            InterMode::NearestMv,
+            mvc.nearest,
+            mvc.nearest,
+            lambda,
+            InterpFilter::EightTapSmooth,
+        );
+
+        // The two filters produce different predictions; at least one
+        // RD-axis must differ. The exact direction is content-dependent
+        // (Lagrangian vs low-pass on a per-pixel basis) so we don't
+        // assert which wins, only that they're distinguishable — the
+        // F.5 wiring is exercised.
+        assert!(
+            eight.best_distortion != smooth.best_distortion
+                || eight.best_rd_cost != smooth.best_rd_cost,
+            "EightTap and SMOOTH evaluations must differ on non-trivial \
+             sub-pel content (dist {} vs {}, rd {} vs {})",
+            eight.best_distortion,
+            smooth.best_distortion,
+            eight.best_rd_cost,
+            smooth.best_rd_cost,
+        );
+        // SMOOTH always pays the switchable-filter cost; EightTap
+        // doesn't. The total rate sum on each side is `mode_rate +
+        // mv_rate + ref_frame_rate + coef_rate + filter_rate`; mode /
+        // mv / ref-frame rates are identical (same `(mode, mv)`
+        // across both filter evaluations), so the residual difference
+        // collapses to `coef_rate_delta + F5_SWITCHABLE_FILTER_RATE`.
+        // The directional floor: |smooth.rate − eight.rate| must
+        // exceed the F.5 signalling cost minus any coef-rate slack
+        // (the per-filter coef_rate can differ when the predictions
+        // and hence the residuals differ).
+        let coef_rate_delta = smooth.coef_rate.abs_diff(eight.coef_rate);
+        let observed_rate_delta =
+            u64::from(smooth.best_rate.abs_diff(eight.best_rate));
+        let expected_floor =
+            u64::from(F5_SWITCHABLE_FILTER_RATE).saturating_sub(coef_rate_delta);
+        assert!(
+            observed_rate_delta >= expected_floor,
+            "F.5 switchable-rate floor: |smooth.rate {} − eight.rate {}| = {} \
+             must be ≥ F5_SWITCHABLE_FILTER_RATE {} − coef_rate_slack {} = {}",
+            smooth.best_rate,
+            eight.best_rate,
+            observed_rate_delta,
+            F5_SWITCHABLE_FILTER_RATE,
+            coef_rate_delta,
+            expected_floor,
+        );
+        // Picker-side filter is correctly tagged on each result.
+        assert_eq!(eight.picked_interp_filter, InterpFilter::EightTap);
+        assert_eq!(smooth.picked_interp_filter, InterpFilter::EightTapSmooth);
+    }
+
+    /// F.5 — the default-ship picker loop iterates only `[EightTap]`,
+    /// matching pre-F.5 byte-exact behaviour. Asserts the returned
+    /// `picked_interp_filter` is `EightTap` regardless of content.
+    /// This is the byte-exact-ness regression guard: any change that
+    /// flips the default search set to >1 filter will break this
+    /// test, forcing the author to update both the gate baseline and
+    /// the test together.
+    #[test]
+    fn f5_default_search_set_yields_eighttap_picked_filter() {
+        // Sanity: env var must be unset for the default-state oracle.
+        // Tests run in the same process; if a prior test set the var
+        // we'd see a flake. The test is read-only so we don't unset
+        // (avoiding cross-test interference) and instead assert the
+        // observable default behaviour the search-set helper produces.
+        // SAFETY: read-only env access is benign even under parallel
+        // test execution; we don't mutate process state here.
+        let env_set = std::env::var_os("RVP9_F5_FILTER_SEARCH").is_some();
+        if env_set {
+            // If the user set the env var to drive a different gate
+            // suite, the default-byte-exact assertion is irrelevant —
+            // skip rather than flake.
+            return;
+        }
+
+        let pw = 64;
+        let ph = 64;
+        let data = make_plane(pw, ph, 99);
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 50);
+        let mvc = MvCandidates::default();
+        let params = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            50,
+        );
+        let res = pick_inter_mode_luma(&params);
+        assert_eq!(
+            res.picked_interp_filter,
+            InterpFilter::EightTap,
+            "default ship state must pin picked_interp_filter to EightTap",
         );
     }
 
