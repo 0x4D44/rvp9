@@ -77,3 +77,4 @@ third_party/libvpx/*.exe
 third_party/libvpx/*.o
 third_party/libvpx/*.a
 third_party/libvpx/*.d
+bench/r*_full.tsv

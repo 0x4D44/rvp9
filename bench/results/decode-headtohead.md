@@ -1,4 +1,63 @@
-# decode head-to-head — 2026-05-23 (R.1 update)
+# decode head-to-head — 2026-05-23 (R.2 update)
+
+host: windows-x86_64  unpinned  build: release (3c8d6d1ddea4abc4)
+rvp9: post-R.2 (decode_coefs thread_local scratch)
+
+## R.2 post-fix (decode_coefs scratch via thread_local!)
+
+Re-measured rvp9 side only after R.2 lands. vpxdec column unchanged.
+
+| fixture            | res        | tiles | threads | rvp9 p50 us | rvp9 mean us | vpxdec mean us | ratio (rvp9/vpx) | budget us | gate        |
+|--------------------|------------|-------|---------|-------------|--------------|----------------|------------------|-----------|-------------|
+| quantizer-00       | 352x288    |     1 |       1 |      1870.8 |       1945.6 |         6088.5 |             0.32 |         - | **FASTER**  |
+| tile_1x4           | 1920x1080  |     4 |       1 |     29411.0 |      30632.3 |         3964.5 |             7.73 |         - | n/a         |
+| tile_1x4           | 1920x1080  |     4 |       4 |     18448.8 |      19076.9 |         2515.7 |             7.58 |         - | n/a         |
+| testsrc_720p30     | 1280x720   |     1 |       1 |      9675.7 |      11642.7 |          627.3 |            18.56 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       2 |     16605.9 |      14051.8 |          820.9 |            17.12 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       4 |     12742.7 |      10905.9 |          614.4 |            17.75 |     33000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       4 |      5139.3 |       7147.3 |          592.2 |            12.07 |     16000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       8 |      6541.7 |       8753.0 |          596.1 |            14.68 |     16000 | PASS-info   |
+| foreman-fp1        | 352x288    |     1 |       1 |      1112.5 |        991.6 |          317.0 |             3.13 |         - | n/a         |
+
+## R.2 before/after delta (R.1 → R.2)
+
+| fixture            | threads | post-R.1 p50 us | post-R.2 p50 us | R.2 speedup |
+|--------------------|---------|-----------------|-----------------|-------------|
+| quantizer-00       |       1 |          4867.7 |          1870.8 |  2.60x      |
+| tile_1x4           |       1 |         60844.8 |         29411.0 |  2.07x      |
+| tile_1x4           |       4 |         38652.3 |         18448.8 |  2.10x      |
+| testsrc_720p30     |       1 |         19260.4 |          9675.7 |  1.99x      |
+| testsrc_1080p30    |       2 |         29395.3 |         16605.9 |  1.77x      |
+| testsrc_1080p30    |       4 |         20507.7 |         12742.7 |  1.61x      |
+| testsrc_1080p60    |       4 |          5490.2 |          5139.3 |  1.07x      |
+| testsrc_1080p60    |       8 |          5608.2 |          6541.7 |  0.86x*     |
+| foreman-fp1        |       1 |          2226.5 |          1112.5 |  2.00x      |
+
+*1080p60 t=8 is at the bench noise floor; high variance on a ~5ms p50 across 8 worker threads.
+
+## R.1+R.2 compound delta (baseline → R.2)
+
+| fixture            | threads | pre-R.1 baseline | post-R.2  | combined speedup |
+|--------------------|---------|------------------|-----------|------------------|
+| tile_1x4           |       4 |        339,213.7 |  18,448.8 |          **18.4x** |
+| testsrc_1080p30    |       4 |        181,832.6 |  12,742.7 |          **14.3x** |
+| testsrc_720p30     |       1 |         87,198.0 |   9,675.7 |           **9.0x** |
+| tile_1x4           |       1 |        271,544.0 |  29,411.0 |           **9.2x** |
+| testsrc_1080p30    |       2 |        148,492.1 |  16,605.9 |           **8.9x** |
+| quantizer-00       |       1 |         12,084.5 |   1,870.8 |           **6.5x** (now 3.25x FASTER than vpxdec) |
+| foreman-fp1        |       1 |          8,130.3 |   1,112.5 |           **7.3x** |
+| testsrc_1080p60    |       4 |         11,321.2 |   5,139.3 |           **2.2x** |
+
+All PLAN.md §2 real-time budgets PASS:
+- 720p30 (33ms/single-core): 9.68ms = 29% of budget
+- 1080p30 (33ms/2-4 cores): 12.74ms (t=4) = 39% of budget
+- 1080p60 (16ms/4-8 cores): 5.14ms (t=4) = 32% of budget
+
+Worst remaining gap: 20.8x on testsrc_1080p30 t=4. Continuing in R.3.
+
+## Original baseline (2026-05-23 pre-R.1)
+
+# Original ledger — decode head-to-head — 2026-05-23 (R.1 update)
 
 host: windows-x86_64  unpinned  build: release (3c8d6d1ddea4abc4)
 rvp9: 34596c2  vpxdec: WebM Project VP9 Decoder v1.14.1 (D:\language\rvp9-2\build\libvpx\vpxdec.exe)

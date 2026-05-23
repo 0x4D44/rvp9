@@ -50,6 +50,8 @@
 //! `VP9_CAT6_PROB[14]`. The 10/12-bit `VP9_CAT6_PROB_HIGH*` arrays
 //! in libvpx are not ported.
 
+use std::cell::RefCell;
+
 use super::BoolReader;
 use super::BoolWriter;
 use super::coef_probs::{COEF_BANDS, COEFF_CONTEXTS, UNCONSTRAINED_NODES};
@@ -58,6 +60,57 @@ use super::pareto::VP9_PARETO8_FULL;
 use crate::coef_ctx::{TileCoefCtx, combine_entropy_contexts};
 use crate::transforms::scans::{ScanOrder, scan_for};
 use crate::transforms::types::{MAX_NEIGHBORS, TxSize, TxType};
+
+/// Capacity floor for the per-thread `decode_coefs` scratch buffers.
+/// Matches the worst-case TX block (`TxSize::Tx32x32` → 32 × 32 = 1024
+/// coefficients). Allocated once per thread on first use; reused
+/// (with `Vec::clear`) across every subsequent `decode_coefs` call so
+/// the hot path costs zero heap allocations.
+const DECODE_COEFS_SCRATCH_CAP: usize = 1024;
+
+/// Per-thread reusable scratch for [`decode_coefs`]. R.2 (2026-05-23):
+/// hoists the 5 `Vec` allocations that previously happened on EVERY
+/// `decode_coefs` call (~30k-60k calls per 1080p frame → 150k-300k
+/// `malloc`/`free` pairs/frame on Windows) into a single thread-local
+/// `RefCell`. Each call clears the Vecs (preserves capacity, no
+/// realloc) and zeros only the prefix of `token_cache` it will read
+/// (sized to `tx_size.n_coeffs()`).
+///
+/// Thread-locality means each tile worker has its own scratch — zero
+/// contention, no Mutex needed. The `RefCell` is cheap (single byte
+/// borrow flag) and decode_coefs does not recursively call itself or
+/// any function that would re-enter the borrow (verified: the AVX2
+/// `plane_dequant_finisher` dispatch is a quant kernel, not a
+/// decoder).
+struct DecodeCoefsScratch {
+    /// Indexed-write buffer; reads via `get_coef_context`. Sized to
+    /// `DECODE_COEFS_SCRATCH_CAP`; we zero `[..tx_size.n_coeffs()]`
+    /// per call.
+    token_cache: Vec<u8>,
+    /// Pass-1 push targets for the Wave H H5 split. Cleared per call;
+    /// capacity preserved.
+    scratch_raster: Vec<u16>,
+    scratch_dqv: Vec<i16>,
+    scratch_val: Vec<i16>,
+    scratch_sign: Vec<u8>,
+}
+
+impl DecodeCoefsScratch {
+    fn new() -> Self {
+        Self {
+            token_cache: vec![0u8; DECODE_COEFS_SCRATCH_CAP],
+            scratch_raster: Vec::with_capacity(DECODE_COEFS_SCRATCH_CAP),
+            scratch_dqv: Vec::with_capacity(DECODE_COEFS_SCRATCH_CAP),
+            scratch_val: Vec::with_capacity(DECODE_COEFS_SCRATCH_CAP),
+            scratch_sign: Vec::with_capacity(DECODE_COEFS_SCRATCH_CAP),
+        }
+    }
+}
+
+thread_local! {
+    static DECODE_COEFS_SCRATCH: RefCell<DecodeCoefsScratch> =
+        RefCell::new(DecodeCoefsScratch::new());
+}
 
 /// `vp9_coefband_trans_4x4` (`vp9_entropy.c:91-93`). Maps the 16 scan
 /// positions in a 4×4 transform block to their coefficient band
@@ -309,11 +362,31 @@ pub fn decode_coefs(
     let band_translate = get_band_translate(tx_size);
     let dq_shift: u32 = if matches!(tx_size, TxSize::Tx32x32) { 1 } else { 0 };
 
-    // libvpx uses a flat `uint8_t[32*32]` for token_cache; we size to
-    // the actual block. The cache is indexed by raster position
-    // (`scan[c]`), so it needs to cover every raster slot in the
-    // block, i.e. `tx_size.n_coeffs()`.
-    let mut token_cache = vec![0u8; tx_size.n_coeffs()];
+    // R.2: hoist all 5 `decode_coefs` scratch buffers to a per-thread
+    // `RefCell` (see `DecodeCoefsScratch` above). The `with_borrow_mut`
+    // closure scopes the borrow for the rest of the function body;
+    // we destructure into split `&mut Vec<...>` bindings so the existing
+    // call-site code (`token_cache`, `scratch_raster`, etc.) compiles
+    // unchanged. `Vec::clear()` preserves capacity → zero heap alloc
+    // on the warm path.
+    DECODE_COEFS_SCRATCH.with_borrow_mut(|scratch| {
+    let DecodeCoefsScratch {
+        token_cache,
+        scratch_raster,
+        scratch_dqv,
+        scratch_val,
+        scratch_sign,
+    } = scratch;
+    // Zero only the prefix `token_cache[..n_coeffs]` we'll actually
+    // read/write. `token_cache.len() == DECODE_COEFS_SCRATCH_CAP` is
+    // an invariant established at construction.
+    for slot in &mut token_cache[..tx_size.n_coeffs()] {
+        *slot = 0;
+    }
+    scratch_raster.clear();
+    scratch_dqv.clear();
+    scratch_val.clear();
+    scratch_sign.clear();
 
     let mut ctx = initial_pt;
     let mut c = 0usize;
@@ -361,13 +434,11 @@ pub fn decode_coefs(
     //   - CAT1..6       : val=CATn_MIN_VAL + ext bits → mag = (val * dqv) >> dq_shift
     //
     // Memory cost: ~7 bytes per entry * seg_eob = ≤ 7 KiB for a 32×32
-    // block (worst case all non-zero). Acceptable for the refactor;
-    // a future TileCtx arena hoist (G7.4 in the prototype note) will
-    // amortise these allocations across all blocks in a tile.
-    let mut scratch_raster: Vec<u16> = Vec::with_capacity(seg_eob);
-    let mut scratch_dqv: Vec<i16> = Vec::with_capacity(seg_eob);
-    let mut scratch_val: Vec<i16> = Vec::with_capacity(seg_eob);
-    let mut scratch_sign: Vec<u8> = Vec::with_capacity(seg_eob);
+    // block (worst case all non-zero). R.2 (2026-05-23): hoisted to a
+    // per-thread `RefCell<DecodeCoefsScratch>` so the allocations
+    // happen ONCE per thread, not per call. The destructured `&mut
+    // Vec<...>` bindings above carry the same names as the old locals,
+    // so the rest of the body is unchanged.
 
     // Stage 3 stretch M.6 — runtime differential against the libvpx
     // verbatim reference port. Gated by `RVP9_DEBUG_REFCOEFS=1`. When
@@ -688,6 +759,7 @@ pub fn decode_coefs(
     }
 
     c
+    }) // close DECODE_COEFS_SCRATCH.with_borrow_mut(|scratch| { ... })
 }
 
 /// Verbatim transcription of libvpx `decode_coefs`
