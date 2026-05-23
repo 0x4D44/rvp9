@@ -541,7 +541,19 @@ pub fn reconstruct_inter_block(
 
                     let tx_type = TxType::DctDct; // inter blocks always use DctDct
                     let seg_eob = plane_tx.n_coeffs();
-                    let mut dq_coefs = [0i32; MAX_TX_COEFFS];
+                    // R.10: MaybeUninit eliminates the 4KB stack zero per
+                    // TX iteration. `decode_block_tokens` -> `decode_coefs`
+                    // zeros `[..seg_eob]` internally (`detokenize.rs:305-307`),
+                    // and only `[..seg_eob]` is read afterwards
+                    // (`inverse_transform_add_dct(coefs, ...)` line 568,
+                    // n = seg_eob in this caller per Tx*.n_coeffs()).
+                    let mut dq_coefs_uninit: std::mem::MaybeUninit<[i32; MAX_TX_COEFFS]> =
+                        std::mem::MaybeUninit::uninit();
+                    // SAFETY: decode_block_tokens fully writes
+                    // dq_coefs[..seg_eob] (via its zero pass); subsequent
+                    // reads stay within that range.
+                    let dq_coefs: &mut [i32; MAX_TX_COEFFS] =
+                        unsafe { dq_coefs_uninit.assume_init_mut() };
                     let eob = decode_block_tokens(
                         reader,
                         fc,
