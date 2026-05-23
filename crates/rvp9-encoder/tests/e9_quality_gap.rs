@@ -136,6 +136,7 @@ fn measure_rvp9_fixed_q(fixed_q: u8, frames: &[YuvFrameBuf], framerate: f64) -> 
         target_bitrate_bps: 100_000, // unused: RVP9_FIXED_Q overrides Q
         gop_length: N_FRAMES + 1,    // one keyframe at frame 0
         aq_mode: AqMode::Off,
+        use_prev_frame_mvs: false,
     };
     let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
     let mut dec = Decoder::new();

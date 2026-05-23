@@ -195,6 +195,7 @@ fn realtime_gate_720p30() {
         target_bitrate_bps: 2_000_000,
         gop_length: (N_FRAMES as u32) + 1,
         aq_mode: AqMode::Off,
+        use_prev_frame_mvs: false,
     };
     let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
 

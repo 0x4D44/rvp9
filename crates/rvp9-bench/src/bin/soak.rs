@@ -317,6 +317,7 @@ fn run_one_iteration(
         target_bitrate_bps: 1_000_000,
         gop_length: frames_per_iter + 1,
         aq_mode: AqMode::Off,
+        use_prev_frame_mvs: false,
     };
     let mut enc = StreamEncoder::new(cfg)
         .map_err(|e| format!("StreamEncoder::new: {e:?}"))?;

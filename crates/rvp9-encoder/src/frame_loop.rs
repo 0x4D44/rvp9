@@ -138,6 +138,23 @@ pub struct EncoderConfig {
     /// preserves Stage 4a bytes. [`AqMode::CyclicRefresh`] wires the
     /// F8.2 cyclic-refresh state machine into the inter path.
     pub aq_mode: AqMode,
+    /// F.0.3 — Enable the previous-frame MV salvage path
+    /// (libvpx `cm->use_prev_frame_mvs`).
+    ///
+    /// **Default `false`** at the F.0.3 landing because activating
+    /// today regresses testsrc by ~240pp BD-rate — the picker prefers
+    /// rate-free NEARMV over a refined NEWMV when NEARMV's anchor is
+    /// non-zero (see `wrk_docs/Track_F/F0.3_HLD_prev_frame_mvs.md` §2.5).
+    /// **The default is flipped to `true` by F.1 (`block_yrd`) or F.2
+    /// (`find_mv_refs` proper)**, whichever first lifts the picker's
+    /// coefficient-bit-aware RD enough that NEWMV beats rate-free NEARMV
+    /// when its prediction is actually better.
+    ///
+    /// When `true`, the encoder evaluates the libvpx
+    /// `use_prev_frame_mvs` predicate (size match + previous frame was
+    /// not a KF) per inter frame and threads the captured prev-frame
+    /// grid into both the picker's and the writer's `find_mv_refs` calls.
+    pub use_prev_frame_mvs: bool,
 }
 
 impl EncoderConfig {
@@ -153,6 +170,7 @@ impl EncoderConfig {
             target_bitrate_bps: 1_000_000,
             gop_length: 60,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         }
     }
 
@@ -417,6 +435,51 @@ impl StreamEncoder {
         self.frame_idx
     }
 
+    /// F.0.3 test hook — return the previous-frame MV grid (one
+    /// [`PrevFrameMvRef`] per 8x8 mi cell, row-major) and its
+    /// `(mi_rows, mi_cols)` dims. `None` before the first encoded
+    /// frame. Used by the §6.1/§6.3 integration tests
+    /// (`tests/a18_prev_frame_mvs_fires.rs`,
+    /// `tests/a18_picker_reads_prev_grid.rs`) to assert the writer
+    /// captured a populated grid (HLD Assertion A/B). Hidden from
+    /// rustdoc via `#[doc(hidden)]`; the visibility is `pub` only
+    /// because Rust integration tests link the crate as an external
+    /// dependency and `pub(crate)` would not reach them.
+    ///
+    /// Not part of the supported API. Do not call from production
+    /// code.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn prev_mv_grid_for_test(
+        &self,
+    ) -> Option<(&[PrevFrameMvRef], (usize, usize))> {
+        self.prev_mv_grid
+            .as_deref()
+            .map(|g| (g, self.prev_mv_grid_dims))
+    }
+
+    /// F.0.3 test hook — evaluate the `prev_grid_slice` activation gate
+    /// the inter-frame path uses (`frame_loop.rs:859-867`) against the
+    /// supplied `(mi_rows, mi_cols)` and return whether the gate would
+    /// open. Wraps `last_frame_was_key`, the size-match check, and
+    /// `config.use_prev_frame_mvs` into the single boolean the picker
+    /// sees. Used by §6.3's plumbing test to confirm the gate opens on
+    /// the second inter frame when activation is requested.
+    ///
+    /// Same visibility caveat as
+    /// [`Self::prev_mv_grid_for_test`] — `#[doc(hidden)]`, test-only.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn prev_grid_gate_open_for_test(
+        &self,
+        mi_rows: usize,
+        mi_cols: usize,
+    ) -> bool {
+        !self.last_frame_was_key
+            && self.prev_mv_grid_dims == (mi_rows, mi_cols)
+            && self.config.use_prev_frame_mvs
+    }
+
     /// Encode one input YUV frame; return the produced VP9 frame
     /// packet.
     ///
@@ -430,6 +493,11 @@ impl StreamEncoder {
         &mut self,
         yuv: &YuvFrameRef<'_>,
     ) -> Result<EncodedFrame, EncodeError> {
+        // F.0.2 oracle — stamp the current frame index on the thread-
+        // local sink so picker-hook BlockDecisions carry the right
+        // `frame_idx` (one cell store; no-op when unset).
+        crate::f02_oracle::set_frame_idx(self.frame_idx);
+
         // Validate plane lengths against configured dimensions.
         let w = self.config.width as usize;
         let h = self.config.height as usize;
@@ -847,19 +915,19 @@ impl StreamEncoder {
         // pass `None` so `find_mv_refs` skips the prev-frame salvage
         // (matches the decoder's behaviour on the same gate, which
         // keeps the cross-decoder byte-exact invariant intact).
-        // A18 — Compute libvpx's `use_prev_frame_mvs` gate output but
-        // additionally apply an experiment gate: pass `None` unless
-        // `RVP9_A18_ACTIVATE` is set. Rationale documented in the
-        // picker (`lib.rs::pick_and_simulate_inter_encode_partitions`);
-        // tl;dr: activating exposes a picker-RD regression on testsrc
-        // (+240 BD-rate) that needs to be resolved before this can be
-        // enabled by default. Until then, the storage + write-back +
-        // API plumbing all stay in place so the activation is a
-        // one-line flip once the picker fix lands.
+        // A18 / F.0.3 — Compute libvpx's `use_prev_frame_mvs` gate output
+        // and AND it with the public `EncoderConfig::use_prev_frame_mvs`
+        // activation field (default `false`). Until F.1's block_yrd-aware
+        // RD model lands, activating exposes a picker-RD regression on
+        // testsrc (+240pp BD-rate) — see
+        // `wrk_docs/Track_F/F0.3_HLD_prev_frame_mvs.md` §2.5. The storage,
+        // write-back, and per-leaf reader plumbing all stay live so flipping
+        // `config.use_prev_frame_mvs = true` (per-test or once F.1/F.2 land)
+        // is a single config change with no further wiring.
         let gate_open = !self.last_frame_was_key
             && self.prev_mv_grid_dims == (mi_rows_us, mi_cols_us);
         let prev_grid_slice: Option<&[PrevFrameMvRef]> = if gate_open
-            && std::env::var_os("RVP9_A18_ACTIVATE").is_some()
+            && self.config.use_prev_frame_mvs
         {
             self.prev_mv_grid.as_deref()
         } else {
@@ -1843,6 +1911,7 @@ mod tests {
             target_bitrate_bps: 1_000_000,
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -1873,6 +1942,7 @@ mod tests {
             target_bitrate_bps: 1_000_000,
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -1915,6 +1985,7 @@ mod tests {
             target_bitrate_bps: 2_000_000, // high enough for low q
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -1970,6 +2041,7 @@ mod tests {
             target_bitrate_bps: 1_000_000,
             gop_length: 3,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -2005,6 +2077,7 @@ mod tests {
             target_bitrate_bps: 50_000, // 50 kbps — very tight
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc_low = StreamEncoder::new(cfg_low).unwrap();
         // Pump a few KF-then-inter cycles so the buffer feedback
@@ -2024,6 +2097,7 @@ mod tests {
             target_bitrate_bps: 10_000_000, // 10 Mbps — wide budget
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc_high = StreamEncoder::new(cfg_high).unwrap();
         let mut last_high_q = 0u8;
@@ -2050,6 +2124,7 @@ mod tests {
             target_bitrate_bps: 2_000_000,
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(128, 64);
@@ -2073,6 +2148,7 @@ mod tests {
             target_bitrate_bps: 1_000_000,
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         assert!(StreamEncoder::new(cfg).is_err());
     }
@@ -2087,6 +2163,7 @@ mod tests {
             target_bitrate_bps: 1_000_000,
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2161,6 +2238,7 @@ mod tests {
             target_bitrate_bps: 2_000_000,
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2207,6 +2285,7 @@ mod tests {
             target_bitrate_bps: 2_000_000,
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2255,6 +2334,7 @@ mod tests {
             target_bitrate_bps: 2_000_000,
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2333,6 +2413,7 @@ mod tests {
             target_bitrate_bps: 50_000,
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2475,6 +2556,7 @@ mod tests {
             target_bitrate_bps: 2_000_000,
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2544,6 +2626,7 @@ mod tests {
             target_bitrate_bps: 2_000_000,
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -2762,6 +2845,7 @@ mod tests {
             target_bitrate_bps: 4_000_000,
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y0, u0, v0) = gradient_frame(128, 128);
@@ -2808,6 +2892,7 @@ mod tests {
             target_bitrate_bps: 50_000, // tight budget → high q → smaller splits
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2916,6 +3001,7 @@ mod tests {
             target_bitrate_bps: 2_000_000,
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -2985,6 +3071,7 @@ mod tests {
             target_bitrate_bps: 1_500_000,
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -3031,6 +3118,7 @@ mod tests {
             target_bitrate_bps: 1_000_000,
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -3096,6 +3184,7 @@ mod tests {
             target_bitrate_bps: 300_000,
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3152,6 +3241,7 @@ mod tests {
             target_bitrate_bps: 200_000,
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3225,6 +3315,7 @@ mod tests {
             target_bitrate_bps: 1_000_000,
             gop_length: 30,
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3264,6 +3355,7 @@ mod tests {
             target_bitrate_bps: 1_000_000,
             gop_length: 30,
             aq_mode: AqMode::CyclicRefresh,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3326,6 +3418,7 @@ mod tests {
             target_bitrate_bps: 2_000_000,
             gop_length: 100, // single KF, then N inter frames
             aq_mode: AqMode::CyclicRefresh,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3380,6 +3473,7 @@ mod tests {
             target_bitrate_bps: 1_000_000,
             gop_length: 6, // KF at frames 0 and 6
             aq_mode: AqMode::CyclicRefresh,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3450,6 +3544,7 @@ mod tests {
             target_bitrate_bps: 1_500_000,
             gop_length: 30,
             aq_mode: AqMode::CyclicRefresh,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -3526,6 +3621,7 @@ mod tests {
             target_bitrate_bps: 1_500_000,
             gop_length: 30,
             aq_mode: AqMode::CyclicRefresh,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -3629,6 +3725,7 @@ mod tests {
             target_bitrate_bps: 1_500_000,
             gop_length: 100, // single KF
             aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
         };
         let cfg_on = EncoderConfig { aq_mode: AqMode::CyclicRefresh, ..cfg_off };
 
@@ -3806,6 +3903,7 @@ mod tests {
             target_bitrate_bps: 2_000_000,
             gop_length: 100,
             aq_mode: AqMode::CyclicRefresh,
+            use_prev_frame_mvs: false,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();

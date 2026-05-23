@@ -75,6 +75,7 @@ fn diag_frame4_partition_mode_dump() {
         target_bitrate_bps: 250_000,
         gop_length: N + 1,
         aq_mode: AqMode::Off,
+        use_prev_frame_mvs: false,
     };
     let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
     let mut dec = Decoder::new();

@@ -240,6 +240,7 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
         target_bitrate_bps: opts.target_bitrate_kbps.saturating_mul(1000),
         gop_length: opts.gop_length.unwrap_or(60),
         aq_mode: opts.aq_mode,
+        use_prev_frame_mvs: false,
     };
     let mut encoder = StreamEncoder::new(config).map_err(|e| {
         format!(

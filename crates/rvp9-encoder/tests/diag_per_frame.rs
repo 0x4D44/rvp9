@@ -122,6 +122,7 @@ fn run_rvp9(
         target_bitrate_bps,
         gop_length,
         aq_mode,
+        use_prev_frame_mvs: false,
     };
     let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
     let mut dec = Decoder::new();
