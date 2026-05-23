@@ -813,6 +813,9 @@ fn inverse_transform_add_dct(
             if eob == 1 {
                 idct8x8_1_add(coefs[0], dest, stride);
             } else {
+                // R.6 (2026-05-23) tried wiring a scalar idct8x8_12_add
+                // for eob<=12 but it regressed bench — scalar < AVX2 _64
+                // here. Slot remains in dispatch for a future AVX2 promotion.
                 // G4.1 — dispatch through SimdDispatch so the AVX2
                 // implementation runs on supported CPUs.
                 (dispatch.idct8x8_add())(coefs, dest, stride);

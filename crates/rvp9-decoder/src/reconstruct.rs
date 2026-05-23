@@ -412,6 +412,12 @@ fn inverse_transform_add(
                     // _64 are landed in inverse.rs today). Bit-exact
                     // result; just slower for sparse blocks.
                     //
+                    // R.6 (2026-05-23) tried adding a scalar
+                    // idct8x8_12_add but the scalar reduction (4 row
+                    // passes vs 8) doesn't beat the AVX2 _64 SIMD
+                    // kernel. Reverted; future AVX2 _12 ship can be
+                    // wired in if and when it's available.
+                    //
                     // G4.1 — dispatch through SimdDispatch so the AVX2
                     // implementation runs on supported CPUs.
                     (dispatch.idct8x8_add())(coefs, dest, stride);
