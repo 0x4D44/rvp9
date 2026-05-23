@@ -35,6 +35,10 @@ name = "decode-throughput"
 path = "src/bin/decode-throughput.rs"
 
 [[bin]]
+name = "decode-headtohead"
+path = "src/bin/decode-headtohead.rs"
+
+[[bin]]
 name = "soak"
 path = "src/bin/soak.rs"
 

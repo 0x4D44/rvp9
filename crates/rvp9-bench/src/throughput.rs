@@ -198,6 +198,43 @@ pub fn run_one(
     warmup_frames: usize,
     min_timed_frames: usize,
 ) -> Result<FixtureResult, ThroughputError> {
+    run_with_decoder(fixture_path, warmup_frames, min_timed_frames, Decoder::new)
+}
+
+/// Like [`run_one`], but constructs the decoder with an explicit thread
+/// count via [`Decoder::with_threads`]. Q.1.A head-to-head bench surface
+/// (HLD §3).
+///
+/// `threads` is `NonZeroUsize`; pass `NonZeroUsize::new(1).unwrap()` for
+/// the single-thread baseline.
+///
+/// # Errors
+///
+/// Same as [`run_one`].
+pub fn run_one_threaded(
+    fixture_path: &Path,
+    threads: std::num::NonZeroUsize,
+    warmup_frames: usize,
+    min_timed_frames: usize,
+) -> Result<FixtureResult, ThroughputError> {
+    run_with_decoder(fixture_path, warmup_frames, min_timed_frames, || {
+        Decoder::with_threads(threads)
+    })
+}
+
+/// Shared decode-and-time loop used by [`run_one`] and
+/// [`run_one_threaded`]. The constructor closure is the only knob; the
+/// timing window, warmup discipline, and reduction math are identical
+/// across callers.
+fn run_with_decoder<F>(
+    fixture_path: &Path,
+    warmup_frames: usize,
+    min_timed_frames: usize,
+    make_decoder: F,
+) -> Result<FixtureResult, ThroughputError>
+where
+    F: FnOnce() -> Decoder,
+{
     if !fixture_path.exists() {
         return Err(ThroughputError::MissingFixture(fixture_path.to_path_buf()));
     }
@@ -218,7 +255,7 @@ pub fn run_one(
     // amortizes ref-map / alloc warmup beyond `warmup_frames` even
     // across pass boundaries. Decoder::new() cost is intentionally
     // excluded — measured separately if/when needed.
-    let mut decoder = Decoder::new();
+    let mut decoder = make_decoder();
 
     'outer: while samples_us.len() < min_timed_frames {
         let mut produced_any_this_pass = false;
