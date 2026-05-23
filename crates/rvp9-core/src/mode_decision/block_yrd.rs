@@ -47,15 +47,21 @@ use crate::transforms::TxSize;
 /// Output of [`block_yrd`].
 ///
 /// `coef_rate` is in `vp9_prob_cost` units (1/512-bit), on the same
-/// scale as the picker's `mode_rate` and `mv_rate`. `coef_dist` is the
-/// coefficient-domain squared error accumulator, kept as `i64` to avoid
-/// overflow on a saturated 32×32 quant-error block (Q7 resolution).
-/// `skippable` mirrors libvpx's `*skippable` output: `true` iff every
-/// tile had `eob == 0`.
+/// scale as the picker's `mode_rate` and `mv_rate`. **Held as `u64` to
+/// avoid the early `u32::MAX` saturation** that masks K1 calibration
+/// signal at low q (large qcoeffs): pre-fix the field saturated inside
+/// `block_yrd` / `reconstruct_via_round_trip` itself; post-fix the
+/// caller saturate-casts to `u32` only when adding to the rate sum,
+/// preserving K1 signal across the realistic operating range. `coef_dist`
+/// is the coefficient-domain squared error accumulator, kept as `i64`
+/// to avoid overflow on a saturated 32×32 quant-error block (Q7
+/// resolution). `skippable` mirrors libvpx's `*skippable` output: `true`
+/// iff every tile had `eob == 0`.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct BlockYrdResult {
     /// Coefficient-bit rate estimate in `vp9_prob_cost` units (1/512-bit).
-    pub coef_rate: u32,
+    /// `u64` (not `u32`) to avoid early saturation — see struct doc.
+    pub coef_rate: u64,
     /// Coefficient-domain squared error:
     /// `sum_i (coeff[i] - dqcoeff[i])^2 >> 2`.
     /// `i64` to avoid overflow on saturated 32×32 quant-error blocks.
@@ -150,15 +156,17 @@ pub fn block_yrd(
     //   this_rdc->rate <<= (2 + VP9_PROB_COST_SHIFT);
     //   this_rdc->rate += (eob_cost << VP9_PROB_COST_SHIFT);
     //
-    // `VP9_PROB_COST_SHIFT = 9`, so the combined shift is 11.
-    // Saturate at u32::MAX to avoid wrapping on pathologically large
-    // qcoeff sums (the libvpx `int` rate can theoretically overflow as
-    // well; saturating is the conservative analogue).
+    // `VP9_PROB_COST_SHIFT = 9`, so the combined shift is 11. Held as
+    // `u64` to preserve K1 calibration signal — the pre-fix `.min(u32::MAX
+    // as u64) as u32` truncation hit on low-q blocks (large qcoeffs ⇒
+    // rate_satd > 2_097_152 ⇒ shifted_rate > u32::MAX at K1=2), making
+    // K1 ∈ {0..4} produce identical-looking outputs and masking real
+    // signal. Saturate-cast back to u32 happens at the caller's rate-sum
+    // site in `evaluate_candidate` (where the cap is honest rather than
+    // covert).
     let shifted_rate = (rate_satd as u64) << (2 + VP9_PROB_COST_SHIFT);
     let eob_term = (eob_cost as u64) << VP9_PROB_COST_SHIFT;
-    let coef_rate = shifted_rate
-        .saturating_add(eob_term)
-        .min(u32::MAX as u64) as u32;
+    let coef_rate = shifted_rate.saturating_add(eob_term);
 
     BlockYrdResult {
         coef_rate,
@@ -276,7 +284,7 @@ mod tests {
         // No SATD contribution; only the per-tile EOB cost.
         assert_eq!(
             r.coef_rate,
-            1u32 << VP9_PROB_COST_SHIFT,
+            1u64 << VP9_PROB_COST_SHIFT,
             "all-zero tile → rate is EOB-cost only",
         );
         assert_eq!(r.coef_dist, 0, "coef == dqcoeff → zero block-error");
@@ -305,9 +313,9 @@ mod tests {
         assert!(!r.skippable, "eob == 1 → not skippable");
 
         // Hand-compute the expected rate.
-        let satd = 7u32;
+        let satd: u64 = 7;
         let expected = (satd << 2) << VP9_PROB_COST_SHIFT;
-        let eob_term = 1u32 << VP9_PROB_COST_SHIFT;
+        let eob_term: u64 = 1u64 << VP9_PROB_COST_SHIFT;
         assert_eq!(r.coef_rate, expected + eob_term);
     }
 
@@ -334,9 +342,9 @@ mod tests {
             TxSize::Tx8x8,
         );
         // satd = 5 + 3 + 4 = 12.
-        let satd = 12u32;
-        let expected = ((satd << 2) << VP9_PROB_COST_SHIFT)
-            + (1u32 << VP9_PROB_COST_SHIFT);
+        let satd: u64 = 12;
+        let expected: u64 = ((satd << 2) << VP9_PROB_COST_SHIFT)
+            + (1u64 << VP9_PROB_COST_SHIFT);
         assert_eq!(r.coef_rate, expected);
         assert!(!r.skippable);
     }
@@ -467,14 +475,12 @@ mod tests {
             // at the end so the per-call accumulator matches the
             // 4-tile single-call accumulator (which adds eob_cost
             // four times in one call).
-            sum_rate += u64::from(r_i.coef_rate)
-                - (1u64 << VP9_PROB_COST_SHIFT);
+            sum_rate += r_i.coef_rate - (1u64 << VP9_PROB_COST_SHIFT);
             sum_dist += r_i.coef_dist;
         }
         sum_rate += 4u64 << VP9_PROB_COST_SHIFT;
-        let sum_rate_u32 = sum_rate.min(u32::MAX as u64) as u32;
         assert_eq!(
-            r_all.coef_rate, sum_rate_u32,
+            r_all.coef_rate, sum_rate,
             "single-call rate must match summed-per-tile rate",
         );
         assert_eq!(r_all.coef_dist, sum_dist);

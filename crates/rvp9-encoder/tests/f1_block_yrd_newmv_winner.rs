@@ -155,7 +155,7 @@ fn f1_block_yrd_newmv_wins_on_shifted_ref() {
     // F.0.2 oracle's `coef_bits_est` column reads `coef_rate >> 9`
     // and should be > 0 here.
     assert_ne!(
-        res.coef_rate, 0u32,
+        res.coef_rate, 0u64,
         "coef_rate must be non-zero on a NEWMV-with-residual winner",
     );
     let coef_bits_est = res.coef_rate >> 9;
@@ -218,7 +218,7 @@ fn f1_identical_source_yields_skip_winner() {
     // Tx16x16 tile carries `1 << 9 = 512` of EOB charge. That's
     // the upper bound for `coef_rate` on identical content.
     assert!(
-        res.coef_rate <= 512,
+        res.coef_rate <= 512u64,
         "identical content → coef_rate must be at most the per-tile EOB charge (got {})",
         res.coef_rate,
     );

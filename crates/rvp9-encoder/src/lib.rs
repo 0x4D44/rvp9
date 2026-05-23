@@ -3742,9 +3742,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // back-conversion. See
                     // `wrk_docs/Track_F/F1_HLD_block_yrd_port.md` §10
                     // and the F.0.2 schema liveness matrix.
-                    let coef_bits_est: u32 = pick
+                    //
+                    // Night-8 (2026-05-23): `pick.coef_rate` is `u64`
+                    // now (saturation fix); saturate-cast to `u32` at
+                    // the oracle boundary.
+                    let coef_bits_est: u32 = (pick
                         .coef_rate
-                        >> rvp9_core::cost::VP9_PROB_COST_SHIFT;
+                        >> rvp9_core::cost::VP9_PROB_COST_SHIFT)
+                        .min(u32::MAX as u64) as u32;
                     crate::f02_oracle::record_decision(
                         crate::f02_oracle::BlockDecision {
                             frame_idx: crate::f02_oracle::current_frame_idx(),

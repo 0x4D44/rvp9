@@ -289,12 +289,15 @@ pub struct InterModeSearchResult {
     /// F.1 — coefficient-bit estimate that contributed to the
     /// candidate's RD. Sourced from
     /// [`crate::mode_decision::block_yrd::BlockYrdResult::coef_rate`].
-    /// In `vp9_prob_cost` units (1/512-bit). Surfaced so the F.0.2
-    /// per-block oracle can populate its `coef_bits_est` column
-    /// (HLD F.1 Q4). For skip-flag-true candidates this remains the
-    /// pre-skip estimate, since the oracle records the picker's
-    /// coefficient-rate signal regardless of the final skip choice.
-    pub coef_rate: u32,
+    /// In `vp9_prob_cost` units (1/512-bit). **`u64` (not `u32`) since
+    /// the night-8 saturation fix**: the underlying `block_yrd`
+    /// accumulator was widened to preserve K1 calibration signal at
+    /// low q. Callers add to a `u32` rate sum with a saturate-cast at
+    /// the use site; this field surfaces the un-clipped value for the
+    /// F.0.2 per-block oracle (`coef_bits_est = (coef_rate >> 9).min
+    /// (u32::MAX as u64) as u32`). For skip-flag-true candidates this
+    /// remains the pre-skip estimate.
+    pub coef_rate: u64,
     /// F.1 — coefficient-domain squared error from
     /// [`crate::mode_decision::block_yrd::BlockYrdResult::coef_dist`].
     /// `i64` per HLD Q7 to avoid overflow on saturated 32×32
@@ -749,7 +752,14 @@ fn evaluate_candidate(
     // calibrating lambda.
     let coef_rate_enabled =
         std::env::var_os("RVP9_F1_COEF_RATE_ENABLE").is_some();
-    let effective_coef_rate = if coef_rate_enabled { by.coef_rate } else { 0 };
+    // `by.coef_rate` is `u64` to avoid the early saturation that
+    // hid K1 calibration signal at low q. Saturate-cast here, at the
+    // honest cap site, before adding to the `u32` rate sum.
+    let effective_coef_rate: u32 = if coef_rate_enabled {
+        by.coef_rate.min(u32::MAX as u64) as u32
+    } else {
+        0
+    };
     let rate = mode_rate
         .saturating_add(mv_rate)
         .saturating_add(params.ref_frame_rate_cost)
@@ -1174,14 +1184,18 @@ fn reconstruct_via_round_trip(
 
     // libvpx vp9_pickmode.c:842-843 — scale rate_satd to vp9_prob_cost
     // units and add the per-tile EOB charge. The combined shift is
-    // (2 + VP9_PROB_COST_SHIFT) = 11. Saturate at u32::MAX to mirror
-    // libvpx's `int` rate field bound while avoiding wrap.
+    // (2 + VP9_PROB_COST_SHIFT) = 11. **u64 (not u32) to preserve K1
+    // calibration signal**: pre-fix the value saturated at u32::MAX
+    // here, which masked the K1 ∈ {0..4} sweep — low-q blocks (large
+    // qcoeffs ⇒ rate_satd > 2_097_152 ⇒ shifted_rate > u32::MAX at
+    // K1=2) all clipped to u32::MAX, producing identical-looking
+    // picker behaviour across K1 values. Saturate-cast back to u32
+    // happens in `evaluate_candidate` at the rate-sum site (honest
+    // cap, not covert truncation).
     let shifted_rate =
         (by_rate_satd as u64) << (2 + crate::cost::VP9_PROB_COST_SHIFT);
     let eob_term = (by_eob_cost as u64) << crate::cost::VP9_PROB_COST_SHIFT;
-    let coef_rate = shifted_rate
-        .saturating_add(eob_term)
-        .min(u32::MAX as u64) as u32;
+    let coef_rate = shifted_rate.saturating_add(eob_term);
     BlockYrdResult {
         coef_rate,
         coef_dist: by_dist,
