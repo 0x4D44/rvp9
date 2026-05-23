@@ -382,9 +382,9 @@ pub fn decode_coefs(
     // hand-trace a specific failing block against libvpx's actual bit
     // consumption when the differential alone agrees but the result is
     // still wrong (i.e., a transcription bug shared by prod + ref port).
-    let m6_mode = std::env::var("RVP9_DEBUG_REFCOEFS").ok();
-    let m6_active = matches!(m6_mode.as_deref(), Some("1") | Some("trace"));
-    let m6_trace = matches!(m6_mode.as_deref(), Some("trace"));
+    let m6_mode = crate::trace_flags::trace_flags().debug_refcoefs.as_deref();
+    let m6_active = matches!(m6_mode, Some("1") | Some("trace"));
+    let m6_trace = matches!(m6_mode, Some("trace"));
     let m6_pre_snap = if m6_active {
         Some(reader.snapshot())
     } else {
@@ -530,7 +530,7 @@ pub fn decode_coefs(
         // the trace stays meaningful (the actual writeback happens in
         // pass 2 below).
         if matches!(tx_size, TxSize::Tx8x8)
-            && std::env::var("RVP9_DEBUG_SCAN_WRITE").is_ok_and(|v| v == "1")
+            && crate::trace_flags::trace_flags().debug_scan_write
         {
             let mag = (val * dqv) >> dq_shift;
             let trace_v = if sign_bit != 0 { -mag } else { mag };

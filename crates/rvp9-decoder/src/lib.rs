@@ -52,6 +52,9 @@ pub mod reconstruct;
 pub mod reconstruct_inter;
 pub mod tile;
 pub mod tile_ctx;
+// R.1 — process-wide cache of RVP9_TRACE_* / RVP9_DEBUG_* env vars.
+// Pub(crate) only; not part of the decoder's public surface.
+mod trace_flags;
 
 use rvp9_core::bitstream::{
     BitstreamError, ChromaFormat, CompressedHeaderOptions, CompressedHeaderResult, FrameKind,

@@ -393,7 +393,7 @@ pub fn decode_tile_intra(
     // `RVP9_TRACE_KFSB=1`; logs `(range, value, count, pos)` before
     // every SB's `decode_partition` so a libvpx-side dump at the same
     // checkpoint can localize cursor drift to a specific SB.
-    let trace_kfsb = std::env::var("RVP9_TRACE_KFSB").is_ok_and(|v| v == "1");
+    let trace_kfsb = crate::trace_flags::trace_flags().kfsb;
     if trace_kfsb {
         eprintln!(
             "RVP9_DBG kfsb tile_data.len={} bounds=mi_row[{}..{}] mi_col[{}..{}]",
@@ -490,7 +490,7 @@ fn decode_partition(
     // Mirrors the inter-frame [rvp9_partition_pre]/[rvp9_partition_post]
     // trace but fires on the keyframe decode_partition path. Used to
     // localise the foreman_c440 desync at mi=(0,28).
-    let trace_part = std::env::var("RVP9_TRACE_KFPARTITION").is_ok();
+    let trace_part = crate::trace_flags::trace_flags().kfpartition;
     if trace_part {
         let (range, value, count, pos) = reader.cursor_state();
         eprintln!(
@@ -669,14 +669,14 @@ fn decode_block(
     let trace_cursor = mi_row == bounds.mi_row_start
         && mi_col == bounds.mi_col_start
         && bsize == BlockSize::Block4x4
-        && std::env::var("RVP9_DEBUG_BOOLCURSOR").is_ok_and(|v| v == "1");
+        && crate::trace_flags::trace_flags().debug_boolcursor;
 
     // D.15 per-leaf cursor trace. Gated by `RVP9_TRACE_KFLEAF=1`. Dumps
     // the cursor state at the entry to every `decode_block` AND prints
     // each per-syntax-element checkpoint inside the read. Used to
     // localize the per-SB cursor over-consumption to a specific
     // (sub-)block + syntax element on q63 frame 1.
-    let trace_kfleaf = std::env::var("RVP9_TRACE_KFLEAF").is_ok_and(|v| v == "1");
+    let trace_kfleaf = crate::trace_flags::trace_flags().kfleaf;
     if trace_kfleaf {
         let (range, value, count, pos) = reader.cursor_state();
         eprintln!(
@@ -1086,7 +1086,7 @@ fn reconstruct_intra_planes(
                 //   RVP9_TRACE_INTRA_AT="plane,x,y" → exact-pixel match
                 //   RVP9_TRACE_INTRA_AT="plane,x..,y.."→ "at-or-after" probe
                 //   (unset → no trace)
-                if let Ok(filter) = std::env::var("RVP9_TRACE_INTRA_AT") {
+                if let Some(filter) = crate::trace_flags::trace_flags().intra_at.as_deref() {
                     let parts: Vec<&str> = filter.split(',').collect();
                     if parts.len() == 3 {
                         let p_ok = parts[0].parse::<usize>().ok() == Some(plane);
@@ -1130,7 +1130,7 @@ fn reconstruct_intra_planes(
                 // D.15 per-plane / per-tx cursor pre-trace. Gated by
                 // RVP9_TRACE_KFLEAF=1; mirrors libvpx side at
                 // vp9_decodeframe.c::decode_block per-plane loop.
-                if std::env::var("RVP9_TRACE_KFLEAF").is_ok_and(|v| v == "1") {
+                if crate::trace_flags::trace_flags().kfleaf {
                     let (range, value, count, pos) = reader.cursor_state();
                     eprintln!(
                         "RVP9_DBG kfleaf mi=({mi_row},{mi_col}) plane={plane} row={loff} col={aoff} tx={plane_tx:?} pre (range={range}, value=0x{value:016x}, count={count}, pos={pos})"
@@ -1562,8 +1562,7 @@ fn decode_inter_partition(
     let probs = &fc.partition_prob[ctx];
     // D.11 trace — log partition decisions when
     // `RVP9_TRACE_PARTITION=1` for the first SB row.
-    let trace_part = std::env::var("RVP9_TRACE_PARTITION").is_ok()
-        && mi_row < 8;
+    let trace_part = crate::trace_flags::trace_flags().partition && mi_row < 8;
     if trace_part {
         let (range, value, count, pos) = reader.cursor_state();
         eprintln!(
@@ -1774,14 +1773,11 @@ fn decode_inter_block(
     // pre/post-element format with `f=N` tagging, so frame-15 (and
     // beyond) diffs can be line-matched against libvpx's altref-
     // inclusive dump.
-    let trace_imi = std::env::var("RVP9_TRACE_INTERMI").ok().as_deref() == Some("1");
-    let trace_frame = std::env::var("RVP9_TRACE_FRAME")
-        .ok()
-        .and_then(|s| s.parse::<u32>().ok());
+    let tflags = crate::trace_flags::trace_flags();
     let frame_id = crate::RVP9_TRACE_FRAME_COUNTER
         .load(std::sync::atomic::Ordering::Relaxed);
-    let trace_imi = trace_imi
-        && trace_frame.is_none_or(|tf| tf == frame_id);
+    let trace_imi = tflags.intermi
+        && tflags.trace_frame.is_none_or(|tf| tf == frame_id);
     if trace_imi {
         let (range, value, count, _) = reader.cursor_state();
         let value_byte = (value >> (64 - 8)) as u8;
@@ -1838,7 +1834,7 @@ fn decode_inter_block(
     // Dumps the predicted_segment_id (min over prev_segment_ids), the
     // pred_flag context, the resolved segment_id, and the predicted-
     // flag bit. Used to localize seg-map divergence at altref blocks.
-    if std::env::var("RVP9_TRACE_SEG_ID").is_ok() {
+    if crate::trace_flags::trace_flags().seg_id {
         // Recompute predicted_segment_id locally so the trace shows
         // what `read_inter_segment_id` saw (it's an internal value).
         let predicted: u8 = if prev_segment_ids.is_empty() {
@@ -1887,8 +1883,8 @@ fn decode_inter_block(
     // D.11 trace — capture pre-skip bool-reader state so the
     // libvpx oracle can replay the same bytes against the same
     // probs. Filters on `RVP9_TRACE_ISINTER="mi_row,mi_col"`.
-    let trace_isinter = std::env::var("RVP9_TRACE_ISINTER").ok();
-    if let Some(filt) = trace_isinter.as_deref()
+    let trace_isinter = crate::trace_flags::trace_flags().isinter.as_deref();
+    if let Some(filt) = trace_isinter
         && let Some((tr, tc)) = filt.split_once(',')
         && let (Ok(tr), Ok(tc)) = (tr.parse::<usize>(), tc.parse::<usize>())
         && tr == mi_row
@@ -1927,7 +1923,7 @@ fn decode_inter_block(
 
     // 3. is_inter classification.
     let intra_inter_ctx = get_intra_inter_context(above.as_ref(), left.as_ref());
-    if let Some(filt) = trace_isinter.as_deref()
+    if let Some(filt) = trace_isinter
         && let Some((tr, tc)) = filt.split_once(',')
         && let (Ok(tr), Ok(tc)) = (tr.parse::<usize>(), tc.parse::<usize>())
         && tr == mi_row
@@ -1956,7 +1952,7 @@ fn decode_inter_block(
             u8::from(is_inter),
         );
     }
-    if let Some(filt) = trace_isinter.as_deref()
+    if let Some(filt) = trace_isinter
         && let Some((tr, tc)) = filt.split_once(',')
         && let (Ok(tr), Ok(tc)) = (tr.parse::<usize>(), tc.parse::<usize>())
         && tr == mi_row
@@ -2077,7 +2073,7 @@ fn decode_inter_block(
             );
         }
 
-        if std::env::var("RVP9_TRACE_INTER_MV").is_ok()
+        if crate::trace_flags::trace_flags().inter_mv
             && let BlockMode::Inter { mode, ref_frames, mvs, .. } = mi.mode
         {
             eprintln!(

@@ -399,23 +399,26 @@ pub fn reconstruct_inter_block(
                     // to scope the trace to specific failing SB rows. Used to
                     // localize tile_1x4 frame-3 partial-bottom MC divergence to
                     // the altref (frame 4) partition decode upstream.
-                    let trace_mc_pass = if std::env::var("RVP9_TRACE_MC").is_ok() {
-                        match std::env::var("RVP9_TRACE_MC_FILTER").ok() {
-                            None => true,
-                            Some(s) => {
-                                let parts: Vec<&str> = s.split(',').collect();
-                                if parts.len() == 3 {
-                                    let r: usize = parts[0].parse().unwrap_or(0);
-                                    let cmin: usize = parts[1].parse().unwrap_or(0);
-                                    let cmax: usize = parts[2].parse().unwrap_or(0);
-                                    mi_row == r && mi_col >= cmin && mi_col < cmax
-                                } else {
-                                    true
+                    let trace_mc_pass = {
+                        let tf = crate::trace_flags::trace_flags();
+                        if tf.trace_mc {
+                            match tf.trace_mc_filter.as_deref() {
+                                None => true,
+                                Some(s) => {
+                                    let parts: Vec<&str> = s.split(',').collect();
+                                    if parts.len() == 3 {
+                                        let r: usize = parts[0].parse().unwrap_or(0);
+                                        let cmin: usize = parts[1].parse().unwrap_or(0);
+                                        let cmax: usize = parts[2].parse().unwrap_or(0);
+                                        mi_row == r && mi_col >= cmin && mi_col < cmax
+                                    } else {
+                                        true
+                                    }
                                 }
                             }
+                        } else {
+                            false
                         }
-                    } else {
-                        false
                     };
                     if trace_mc_pass {
                         let int_x = total_x_q4 >> SUBPEL_BITS;
@@ -1071,7 +1074,7 @@ fn build_inter_predictor_with_mc_border(
         // D.19 — gated source-data trace for the fast path. Dumps the
         // first row of the src footprint (post pre-shift) so the
         // caller can diff against libvpx's mc trace.
-        if std::env::var("RVP9_TRACE_MC_SRC").is_ok() {
+        if crate::trace_flags::trace_flags().trace_mc_src {
             let mut row = String::new();
             for c in 0..18.min(ref_plane.data.len().saturating_sub(src_base)) {
                 row.push_str(&format!("{:3} ", ref_plane.data[src_base + c]));

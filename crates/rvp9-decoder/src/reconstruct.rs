@@ -212,7 +212,7 @@ pub fn reconstruct_intra_block(
         && tx_size == TxSize::Tx4x4
         && x4 < 2
         && y4_in_sb < 2
-        && std::env::var("RVP9_DEBUG_DQCOEFS").is_ok_and(|v| v == "1")
+        && crate::trace_flags::trace_flags().dqcoefs_eq("1")
     {
         eprintln!(
             "RVP9_DBG dq_coefs plane=0 tx=4x4 x4={x4} y4_in_sb={y4_in_sb} \
@@ -229,10 +229,10 @@ pub fn reconstruct_intra_block(
     // `RVP9_DBG_TX8` line for a complete input+output snapshot.
     if plane == 0
         && tx_size == TxSize::Tx8x8
-        && std::env::var("RVP9_DEBUG_DQCOEFS").is_ok_and(|v| v == "tx8")
+        && crate::trace_flags::trace_flags().dqcoefs_eq("tx8")
         && {
-            let filter = std::env::var("RVP9_DEBUG_DQCOEFS_AT")
-                .unwrap_or_else(|_| "70,0".to_string());
+            let tf = crate::trace_flags::trace_flags();
+            let filter = tf.debug_dqcoefs_at.as_deref().unwrap_or("70,0");
             let parts: Vec<&str> = filter.split(',').collect();
             parts.len() == 2
                 && parts[0].parse::<usize>().ok() == Some(x4)
@@ -260,7 +260,7 @@ pub fn reconstruct_intra_block(
     // 32×32 vector frame 1.
     if plane == 0
         && tx_size == TxSize::Tx4x4
-        && std::env::var("RVP9_DEBUG_DQCOEFS").is_ok_and(|v| v == "all")
+        && crate::trace_flags::trace_flags().dqcoefs_eq("all")
     {
         eprintln!(
             "RVP9_DBG_ALL dq_coefs plane=0 tx=4x4 x4={x4} y4_in_sb={y4_in_sb} \

@@ -1,7 +1,7 @@
-# decode head-to-head — 2026-05-23T15:54:16Z
+# decode head-to-head — 2026-05-23 (R.1 update)
 
 host: windows-x86_64  unpinned  build: release (3c8d6d1ddea4abc4)
-rvp9: bc95480  vpxdec: WebM Project VP9 Decoder v1.14.1 (D:\language\rvp9-2\build\libvpx\vpxdec.exe)
+rvp9: 34596c2  vpxdec: WebM Project VP9 Decoder v1.14.1 (D:\language\rvp9-2\build\libvpx\vpxdec.exe)
 reps: R=9 per vpxdec row (median); rvp9 timing window per HLD §3
 
 note: vpxdec value is per-frame mean from `vpxdec --noblit --summary -t N`,
@@ -10,10 +10,36 @@ note: vpxdec value is per-frame mean from `vpxdec --noblit --summary -t N`,
       rvp9 mean shown alongside p50 for tail-stability inspection;
       ratio compares means (rvp9 mean / vpxdec mean).
       gate column is informational on unpinned hosts (HLD §1 + §6).
-      rvp9 mean for short fixtures (< MIN_TIMED_FRAMES = 1000) is
-      inflated by repeated keyframe re-decode across replay loops
-      (steady-state Decoder per HLD §3); p50 is the more stable
-      number for those rows.
+
+## R.1 post-fix (env::var hot-path cache via OnceLock<TraceFlags>)
+
+Re-measured rvp9 side only after R.1 lands. vpxdec column is the
+median value from the 2026-05-23 baseline run; vpxdec was not re-run
+since the patch only touches rvp9 decoder internals.
+
+| fixture            | res        | tiles | threads | rvp9 p50 us | rvp9 mean us | vpxdec mean us | ratio (rvp9/vpx) | budget us | gate        |
+|--------------------|------------|-------|---------|-------------|--------------|----------------|------------------|-----------|-------------|
+| testsrc_720p30     | 1280x720   |     1 |       1 |     16588.2 |      15612.3 |          627.3 |            24.89 |     33000 | PASS-info   |
+| tile_1x4           | 1920x1080  |     4 |       1 |     63140.7 |      60503.8 |         3964.5 |            15.26 |         - | n/a         |
+| testsrc_1080p60    | 1920x1080  |     4 |       4 |      6755.6 |      10715.4 |          592.2 |            18.09 |     16000 | PASS-info   |
+
+## R.1 before/after delta
+
+| fixture            | threads | before p50 us | after p50 us | speedup  |
+|--------------------|---------|---------------|--------------|----------|
+| testsrc_720p30     |       1 |       87198.0 |      16588.2 |  5.26x   |
+| tile_1x4           |       1 |      271544.0 |      63140.7 |  4.30x   |
+| testsrc_1080p60    |       4 |       11321.2 |       6755.6 |  1.68x   |
+
+R.1 closes ~80% of the rvp9/vpxdec gap on the worst-affected fixtures
+in a single mechanical change. The remaining gap (15-25x vs vpxdec) is
+algorithmic / SIMD-coverage; further Track R waves will address that.
+
+## Baseline (2026-05-23 — pre-R.1)
+
+For reference, the pre-fix Q.1.A measurement (commit bc95480) which
+triggered the Track R investigation. CSV rows preserved in
+`decode-headtohead.csv` for the full matrix.
 
 | fixture            | res        | tiles | threads | rvp9 p50 us | rvp9 mean us | vpxdec mean us | ratio (rvp9/vpx) | budget us | gate        |
 |--------------------|------------|-------|---------|-------------|--------------|----------------|------------------|-----------|-------------|
@@ -41,3 +67,5 @@ note: vpxdec value is per-frame mean from `vpxdec --noblit --summary -t N`,
   with vpxdec which has no per-frame surface).
 - Gate is informational on unpinned hosts; pinned-host promotion
   deferred to the dedicated Linux CI runner (HLD §1 + §6).
+- R.1 re-measurement: same methodology as baseline; rvp9-side only
+  (no behavioural change for vpxdec since the patch is internal).

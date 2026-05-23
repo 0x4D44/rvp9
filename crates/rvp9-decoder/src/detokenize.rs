@@ -170,7 +170,7 @@ pub fn decode_block_tokens(
 
     // D.15 kfleaf trace: dump initial_pt + raw above/left cells used by
     // the fold. Gated by RVP9_TRACE_KFLEAF=1 to keep the dump scoped.
-    if std::env::var("RVP9_TRACE_KFLEAF").is_ok_and(|v| v == "1") {
+    if crate::trace_flags::trace_flags().kfleaf {
         let above_cells: Vec<u8> = (0..n)
             .map(|i| coef_ctx.above_coef(plane, x4 + i))
             .collect();
@@ -204,7 +204,7 @@ pub fn decode_block_tokens(
         && tx_size == TxSize::Tx4x4
         && x4 < 2
         && y4_in_sb < 2
-        && std::env::var("RVP9_DEBUG_DQCOEFS").is_ok_and(|v| v == "2")
+        && crate::trace_flags::trace_flags().dqcoefs_eq("2")
     {
         let a0 = coef_ctx.above_coef(plane, x4);
         let l0 = coef_ctx.left_coef(plane, y4_in_sb);
@@ -222,7 +222,7 @@ pub fn decode_block_tokens(
         && tx_size == TxSize::Tx4x4
         && x4 < 2
         && y4_in_sb < 2
-        && std::env::var("RVP9_DEBUG_BOOLCURSOR").is_ok_and(|v| v == "1")
+        && crate::trace_flags::trace_flags().debug_boolcursor
     {
         let (range, value, count, pos) = reader.cursor_state();
         eprintln!(
@@ -240,10 +240,10 @@ pub fn decode_block_tokens(
     // block at x4=70, y4_in_sb=0).
     if plane == 0
         && tx_size == TxSize::Tx8x8
-        && std::env::var("RVP9_DEBUG_DQCOEFS").is_ok_and(|v| v == "tx8")
+        && crate::trace_flags::trace_flags().dqcoefs_eq("tx8")
         && {
-            let filter = std::env::var("RVP9_DEBUG_DQCOEFS_AT")
-                .unwrap_or_else(|_| "70,0".to_string());
+            let tf = crate::trace_flags::trace_flags();
+            let filter = tf.debug_dqcoefs_at.as_deref().unwrap_or("70,0");
             let parts: Vec<&str> = filter.split(',').collect();
             parts.len() == 2
                 && parts[0].parse::<usize>().ok() == Some(x4)
@@ -283,9 +283,11 @@ pub fn decode_block_tokens(
         // the reader. Path is taken from `RVP9_DEBUG_BUFFER_DUMP`
         // environment variable; if unset, default to ./m17_tile_buffer.bin
         // in the cwd.
-        let dump_path = std::env::var("RVP9_DEBUG_BUFFER_DUMP")
-            .unwrap_or_else(|_| "m17_tile_buffer.bin".to_string());
-        match std::fs::write(&dump_path, buf) {
+        let dump_path = crate::trace_flags::trace_flags()
+            .debug_buffer_dump
+            .as_deref()
+            .unwrap_or("m17_tile_buffer.bin");
+        match std::fs::write(dump_path, buf) {
             Ok(_) => eprintln!("RVP9_DBG_TX8 wrote tile buffer ({} bytes) to {}", buf.len(), dump_path),
             Err(e) => eprintln!("RVP9_DBG_TX8 failed to write tile buffer to {}: {}", dump_path, e),
         }

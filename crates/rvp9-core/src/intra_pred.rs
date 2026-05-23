@@ -796,7 +796,7 @@ pub fn intra_predict(
     //   RVP9_TRACE_INTRA=all       — every call (very noisy)
     //   RVP9_TRACE_INTRA=4x4       — only 4x4 calls
     //   (unset → no trace)
-    if let Ok(filter) = std::env::var("RVP9_TRACE_INTRA") {
+    if let Some(filter) = crate::trace_flags::trace_flags().intra.as_deref() {
         let want = filter == "all" || (filter == "4x4" && bs == 4);
         if want {
             eprint!(

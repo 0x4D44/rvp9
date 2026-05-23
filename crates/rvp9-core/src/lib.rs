@@ -37,6 +37,9 @@ pub mod mv_search;
 pub mod quant;
 pub mod tile_threading;
 pub mod transforms;
+// R.1 — process-wide cache of RVP9_TRACE_* / RVP9_DEBUG_* env vars
+// read by hot-path core kernels (intra-pred, entropy detokenize).
+mod trace_flags;
 
 /// The pixel type. Per **D-01 RESOLVED** (PLAN.md §3): 8-bit only in v1.
 /// HBD (10-bit / 12-bit) is deferred to Stage 6+; v1 ships a concrete `u8`
