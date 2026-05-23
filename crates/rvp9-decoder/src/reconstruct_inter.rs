@@ -1136,7 +1136,20 @@ fn build_inter_predictor_with_mc_border(
         b_w <= MC_BORDER_SCRATCH_MAX && b_h <= MC_BORDER_SCRATCH_MAX,
         "MC scratch footprint {b_w}×{b_h} exceeds MC_BORDER_SCRATCH_MAX = {MC_BORDER_SCRATCH_MAX}",
     );
-    let mut scratch = [0u8; MC_BORDER_SCRATCH_MAX * MC_BORDER_SCRATCH_MAX];
+    // R.9: 25 KB uninit scratch. `build_mc_border` writes every cell
+    // of `&mut scratch[..scratch_used]` (left fill + copy + right fill
+    // sum to exactly `b_w` per row × `b_h` rows = `scratch_used`), so
+    // `assume_init_mut` is sound — every cell we read post-call has
+    // been written. Replaces `[0u8; ...]` whose compiler-emitted
+    // memset at this declaration was wasted work (the buffer is
+    // immediately overwritten by build_mc_border).
+    let mut scratch_uninit: std::mem::MaybeUninit<[u8; MC_BORDER_SCRATCH_MAX * MC_BORDER_SCRATCH_MAX]>
+        = std::mem::MaybeUninit::uninit();
+    // SAFETY: every byte of `scratch[..scratch_used]` is written by
+    // `build_mc_border` below before any read; reads outside that
+    // range never happen (the convolve only indexes `[..scratch_used]`).
+    let scratch: &mut [u8; MC_BORDER_SCRATCH_MAX * MC_BORDER_SCRATCH_MAX] =
+        unsafe { scratch_uninit.assume_init_mut() };
     let scratch_stride = b_w;
     let scratch_used = b_h * scratch_stride;
 
