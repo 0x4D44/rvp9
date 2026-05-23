@@ -194,11 +194,14 @@ impl<'a> BoolReader<'a> {
         if bits_left > BD_VALUE_SIZE {
             // Fast path: at least 8 source bytes available.
             let bits = (shift & !0x7) + 8;
-            let mut nv: u64 = 0;
-            // Big-endian 8-byte load.
-            for k in 0..8 {
-                nv = (nv << 8) | u64::from(self.buffer[self.pos + k]);
-            }
+            // R.8 (2026-05-23): replace 8-iteration shift+OR loop with
+            // u64::from_be_bytes. On x86_64 the compiler emits a single
+            // 8-byte load + BSWAP — much faster than 8 byte loads +
+            // 7 shifts + 7 ORs. Bit-exact (same big-endian byte order).
+            let bytes: [u8; 8] = self.buffer[self.pos..self.pos + 8]
+                .try_into()
+                .expect("bits_left > 64 guarantees 8 bytes available");
+            let mut nv = u64::from_be_bytes(bytes);
             nv >>= BD_VALUE_SIZE - bits;
             self.count += bits;
             self.pos += (bits >> 3) as usize;
