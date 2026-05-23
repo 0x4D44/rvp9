@@ -48,17 +48,16 @@ use std::path::PathBuf;
 /// ledger is the same name with `.md5` appended.
 ///
 /// G7.2 gates the official WebM-project vector AND a self-encoded
-/// `vpxenc`-default vector for each of 4:4:4, 4:2:2, and 4:4:0 —
-/// EXCEPT `foreman_c440.ivf`, which surfaces a pre-existing parser
-/// desync at frame 0 mi=(0,28) Block16x16 (our parser reads `y_mode
-/// = Dc` where libvpx reads a directional mode). The divergence is
-/// upstream of the loop filter (frame 0 has `filter_level == 0`),
-/// is not introduced by the G7.2 gate-lift, and only fires on this
-/// one self-encoded stream — the official 4:4:0 vector decodes
-/// byte-exact, so the general 4:4:0 path is sound. Tracked as the
-/// dedicated `#[ignore]`d test `profile1_440_parser_desync_followup`
-/// below; remove the `#[ignore]` (and add the vector back here)
-/// once the parser desync is diagnosed and fixed.
+/// `vpxenc`-default vector for each of 4:4:4, 4:2:2, and 4:4:0.
+///
+/// `foreman_c440.ivf` was previously gated out behind a Wave N
+/// `#[ignore]`d follow-up because frame 0 cascaded all 12 frames. The
+/// root cause (Wave P, 2026-05-23) was `reset_skip_context` covering
+/// only the sub-block chroma extent for sub-8 blocks instead of the
+/// parent-8x8 mi cell extent (1 cell instead of 2 for 4:4:0 chroma).
+/// That left a stale `1` in above-context cells beyond the sub-block,
+/// which mis-routed the entropy coder several blocks later. Fix is in
+/// `crates/rvp9-decoder/src/tile.rs::reset_skip_context`.
 const PROFILE1_VECTORS: &[&str] = &[
     // 4:4:4 (G7.1c milestone)
     "vp91-2-04-yuv444.webm",
@@ -68,7 +67,7 @@ const PROFILE1_VECTORS: &[&str] = &[
     "foreman_c422.ivf",
     // 4:4:0 (G7.2 milestone) — asymmetric, half vertical chroma.
     "vp91-2-04-yuv440.webm",
-    // "foreman_c440.ivf",  // See doc above + the #[ignore]d follow-up test.
+    "foreman_c440.ivf",  // Wave P fix; previously the parser-desync follow-up.
 ];
 
 /// Resolve `tests/corpus/profile1/<name>` from the workspace root.
@@ -192,26 +191,18 @@ fn profile1_vectors_decode_bit_exact() {
     );
 }
 
-/// Pre-existing parser desync surfaced by the G7.2 gate lift. NOT a
-/// loop-filter bug: frame 0 of `foreman_c440.ivf` has `filter_level
-/// == 0`, so `apply_loop_filter_to_frame` is never called; the
-/// divergence is in the keyframe Y-mode parser at mi=(0,28)
-/// Block16x16 — our decoder reads `y_mode = Dc` (DC_LEFT prediction)
-/// where libvpx reads a directional mode. All 12 frames of the
-/// stream then cascade to mismatched.
+/// Wave P fix-lock test for the foreman_c440 parser desync. The vector
+/// is also in `PROFILE1_VECTORS` (so it's gated by the main test), but
+/// this single-vector test stays as a named regression marker pointing
+/// back to the journal — and so a future regression on this vector
+/// produces a focused, named failure rather than just "one of six".
 ///
-/// The bug is specific to this self-encoded stream — the official
-/// `vp91-2-04-yuv440.webm` (already gated above) decodes byte-exact,
-/// so the general 4:4:0 decode path is sound; this is a syntax-combo
-/// our parser mishandles that the official vector doesn't exercise.
-///
-/// Marked `#[ignore]` so it doesn't block CI but is loudly visible
-/// in `cargo test`'s ignore tally — and once the desync is fixed,
-/// remove the `#[ignore]` (and re-add the vector to
-/// `PROFILE1_VECTORS` above) to lock in the fix.
+/// Root cause was `reset_skip_context` covering the sub-block chroma
+/// extent rather than the parent-8x8 mi cell extent for sub-8 blocks
+/// (`crates/rvp9-decoder/src/tile.rs::reset_skip_context`). See
+/// `wrk_journals/2026.05.23 - JRN - Wave P foreman_c440 parser desync fix.md`.
 #[test]
-#[ignore = "pre-existing 4:4:0 keyframe parser desync at mi=(0,28) — see Wave N journal 2026-05-22"]
-fn profile1_440_parser_desync_followup() {
+fn profile1_440_foreman_decodes_bit_exact_wave_p() {
     let (_frames, mismatched) = decode_and_gate("foreman_c440.ivf");
-    assert_eq!(mismatched, 0, "foreman_c440.ivf parser desync followup");
+    assert_eq!(mismatched, 0, "foreman_c440.ivf Wave P fix-lock");
 }

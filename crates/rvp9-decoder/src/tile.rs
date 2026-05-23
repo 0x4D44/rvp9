@@ -486,6 +486,19 @@ fn decode_partition(
     // `partition_prob` or the kf table at `set_partition_probs` in
     // `vp9_decodemv.c` (per-frame in `setup_token_decoder`).
     let probs = &VP9_KF_PARTITION_PROBS[ctx];
+    // Wave P: keyframe-partition trace — gated by RVP9_TRACE_KFPARTITION=1.
+    // Mirrors the inter-frame [rvp9_partition_pre]/[rvp9_partition_post]
+    // trace but fires on the keyframe decode_partition path. Used to
+    // localise the foreman_c440 desync at mi=(0,28).
+    let trace_part = std::env::var("RVP9_TRACE_KFPARTITION").is_ok();
+    if trace_part {
+        let (range, value, count, pos) = reader.cursor_state();
+        eprintln!(
+            "[rvp9_kf_partition_pre] mi=({mi_row},{mi_col}) bsize={bsize:?} ctx={ctx} \
+             probs={probs:?} has_rows={has_rows} has_cols={has_cols} \
+             range={range} value=0x{value:016x} count={count} pos={pos}",
+        );
+    }
     // Keyframes don't call `adapt_mode_probs` (libvpx
     // `vp9_decodeframe.c:3050` gate); pass `None` for counts.
     let partition = if has_rows && has_cols {
@@ -507,6 +520,14 @@ fn decode_partition(
     } else {
         PartitionType::Split
     };
+    if trace_part {
+        let (range, value, count, pos) = reader.cursor_state();
+        eprintln!(
+            "[rvp9_kf_partition_post] mi=({mi_row},{mi_col}) bsize={bsize:?} \
+             partition={partition:?} range={range} value=0x{value:016x} \
+             count={count} pos={pos}",
+        );
+    }
 
     let sub = subsize(bsize, partition).unwrap_or(bsize);
 
@@ -854,14 +875,29 @@ fn decode_block(
 /// coding block when the block was marked `skip` (no residual). The
 /// span is the plane's `n4_w × n4_h` 4×4 cells.
 ///
-/// D.15 — for sub-8 luma blocks the entropy-context span libvpx uses is
-/// pinned to the **parent 8×8 mi cell** (n4_w = n4_h = 2 at plane=0),
-/// NOT the sub-block's `plane_bsize.n_4x4_*`. This mirrors libvpx's
-/// `decode_partition`/`decode_block` passing `bwl = bhl = 1` to
-/// `set_plane_n4` when `hbs == 0` (Block8×8 parent of any sub-8
-/// child). Chroma keeps the sub-block extent (uv plane block-size of
-/// `Block4×4` → 1 cell) because the chroma context is already aligned
-/// to the 8×8-luma boundary.
+/// Wave P — for **sub-8 blocks** (Block4x4 / Block4x8 / Block8x4) the
+/// entropy-context span libvpx uses is pinned to the **parent 8x8 mi
+/// cell** for **all planes**, not just luma. This mirrors libvpx's
+/// `decode_partition` "`if (!hbs)`" branch (`vp9_decodeframe.c:1188-1192`)
+/// calling `decode_block(..., subsize, 1, 1)` regardless of partition,
+/// which then sets `pd->n4_w = (1<<1)>>ss_x = 2>>ss_x` and
+/// `pd->n4_h = 2>>ss_y` via `set_plane_n4(xd, 1, 1, 1, 1)`. So for
+/// chroma 4:4:0 sub-8 the libvpx reset zeros 2 above-context cells,
+/// not 1.
+///
+/// The earlier "luma only" carve-out was wrong: for chroma in sub-8
+/// 4:4:0 (Block4x8) or 4:2:2 (Block8x4) the reset must also cover the
+/// full parent-mi extent, otherwise the second chroma column's above-
+/// context cell retains its prior value. That stale `1` then mis-routes
+/// the entropy coder several blocks later. Surfaced by `foreman_c440.ivf`
+/// (Wave P): mi=(2,24) Block4x8 skip=true → x4=49 chroma context never
+/// reset → mi=(3,24) plane=1 col=1 / plane=2 col=1 use wrong probs →
+/// cursor desync → mi=(0,28) Block16x16 partition reads NONE where
+/// libvpx reads SPLIT → all 12 frames cascade-mismatch.
+///
+/// The chroma iteration loop in [`reconstruct_intra_planes`] already
+/// uses `(2 >> ss_x, 2 >> ss_y)` for sub-8 — this fix makes the reset
+/// match.
 fn reset_skip_context(
     coef_ctx: &mut TileCoefCtx,
     mi: &ModeInfo,
@@ -870,13 +906,14 @@ fn reset_skip_context(
     chroma: ChromaFormat,
 ) {
     let mi_row_in_sb = mi_row_in_tile & MI_MASK;
-    let sub8_luma = (mi.block_size as u8) < (BlockSize::Block8x8 as u8);
+    let sub8 = (mi.block_size as u8) < (BlockSize::Block8x8 as u8);
     for plane in 0..3 {
         let (ss_x, ss_y) = plane_ss(chroma, plane);
-        let (n4_w, n4_h) = if sub8_luma && plane == 0 {
-            // libvpx pads the sub-8 luma entropy context to the parent
-            // 8×8 mi cell — i.e. always two 4×4 cells in each axis.
-            (2usize, 2usize)
+        let (n4_w, n4_h) = if sub8 {
+            // libvpx pads the sub-8 entropy context to the parent 8x8
+            // mi cell for ALL planes — see `set_plane_n4(xd, 1, 1, 1,
+            // 1)` via the `!hbs` branch of `decode_partition`.
+            (2 >> ss_x, 2 >> ss_y)
         } else {
             let plane_bsize = if plane == 0 {
                 mi.block_size
