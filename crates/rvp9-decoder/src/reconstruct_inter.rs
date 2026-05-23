@@ -49,7 +49,7 @@ use rvp9_core::entropy::adapt::CoefCountsBank;
 use rvp9_core::frame::{BorderedPlaneRef, Yv12Buffer};
 use rvp9_core::inter::mode_info::{InterModeReadParams, read_inter_block_mode_info};
 use rvp9_core::inter::mv_ref::{BlockBounds, NeighbourLookup, PrevFrameMvRef};
-use rvp9_core::inter::scale::{ScaleFactors, inter_predictor};
+use rvp9_core::inter::scale::ScaleFactors;
 use rvp9_core::inter::filter::{SUBPEL_BITS, SUBPEL_MASK, SUBPEL_SHIFTS};
 use rvp9_core::mode_info::{BlockMode, ModeInfo, Mv, RefFrame};
 use rvp9_core::transforms::inverse::{
@@ -455,6 +455,7 @@ pub fn reconstruct_inter_block(
                         mc_w_px,
                         mc_h_px,
                         is_compound_avg,
+                        dispatch,
                     );
                 }
             }
@@ -1029,6 +1030,7 @@ fn build_mc_border(
 /// of the ref plane; `crop` is the visible (cropped) dimensions of
 /// the same plane.
 #[allow(clippy::too_many_arguments)] // mirrors libvpx 1:1
+#[allow(clippy::too_many_arguments)]
 fn build_inter_predictor_with_mc_border(
     ref_plane: &BorderedPlaneRef<'_>,
     crop: RefPlaneCrop,
@@ -1041,6 +1043,7 @@ fn build_inter_predictor_with_mc_border(
     w: usize,
     h: usize,
     is_compound_avg: bool,
+    dispatch: &SimdDispatch,
 ) {
     let int_x = total_x_q4 >> SUBPEL_BITS;
     let int_y = total_y_q4 >> SUBPEL_BITS;
@@ -1119,7 +1122,9 @@ fn build_inter_predictor_with_mc_border(
                 ref_plane.stride,
             );
         }
-        inter_predictor(
+        // R.16: pass the caller's dispatch to skip the Arc::clone
+        // inside inter_predictor.
+        rvp9_core::inter::inter_predictor_with_dispatch(
             &ref_plane.data[src_base..],
             ref_plane.stride,
             dst,
@@ -1131,6 +1136,7 @@ fn build_inter_predictor_with_mc_border(
             w,
             h,
             is_compound_avg,
+            dispatch,
         );
         return;
     }
@@ -1201,7 +1207,7 @@ fn build_inter_predictor_with_mc_border(
     // to `convolve_copy`/`convolve8_vert` which don't sweep the tap
     // window horizontally). The kernel never indexes past
     // `b_w - 1`.
-    inter_predictor(
+    rvp9_core::inter::inter_predictor_with_dispatch(
         &scratch[..],
         scratch_stride,
         dst,
@@ -1213,6 +1219,7 @@ fn build_inter_predictor_with_mc_border(
         w,
         h,
         is_compound_avg,
+        dispatch,
     );
 }
 
@@ -2116,6 +2123,7 @@ mod tests {
             16,
             8, 8,
             false,
+            rvp9_core::dsp::get_ref(),
         );
 
         let ref_y = ref_buf.y_plane();
@@ -2163,6 +2171,7 @@ mod tests {
             8,
             8, 8,
             false,
+            rvp9_core::dsp::get_ref(),
         );
 
         // Smoke: result must contain at least one non-zero pixel
@@ -2203,6 +2212,7 @@ mod tests {
             8,
             8, 8,
             false,
+            rvp9_core::dsp::get_ref(),
         );
 
         // All 8x8 pixels = bottom-right visible pixel of the ref.
@@ -2243,6 +2253,7 @@ mod tests {
             8,
             8, 8,
             false,
+            rvp9_core::dsp::get_ref(),
         );
 
         let ref_y = ref_buf.y_plane();
@@ -2285,6 +2296,7 @@ mod tests {
             8,
             8, 8,
             false,
+            rvp9_core::dsp::get_ref(),
         );
 
         // -- Same footprint via an explicit scratch fill + convolve.

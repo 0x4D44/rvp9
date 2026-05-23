@@ -252,6 +252,39 @@ pub fn inter_predictor(
     h: usize,
     is_compound_avg: bool,
 ) {
+    let dispatch = crate::dsp::get();
+    inter_predictor_with_dispatch(
+        src, src_stride, dst, dst_stride,
+        subpel_x_q4, subpel_y_q4, sf, interp_filter,
+        w, h, is_compound_avg, &dispatch,
+    );
+}
+
+/// R.16: caller-passes-dispatch variant of [`inter_predictor`]. Hot
+/// callers (decoder per-MC path) can use this to skip the per-call
+/// `Arc::clone` from `crate::dsp::get()`. The public
+/// [`inter_predictor`] just forwards here after acquiring its own
+/// dispatch.
+///
+/// R.13 tried switching `inter_predictor` itself to `get_ref()` and
+/// regressed; passing the existing `&SimdDispatch` (which the caller
+/// already has in scope) avoids both the Arc atomic AND any
+/// codegen-changes that R.13 induced.
+#[allow(clippy::too_many_arguments)]
+pub fn inter_predictor_with_dispatch(
+    src: &[u8],
+    src_stride: usize,
+    dst: &mut [u8],
+    dst_stride: usize,
+    subpel_x_q4: i32,
+    subpel_y_q4: i32,
+    sf: &ScaleFactors,
+    interp_filter: InterpFilter,
+    w: usize,
+    h: usize,
+    is_compound_avg: bool,
+    dispatch: &crate::dsp::SimdDispatch,
+) {
     debug_assert!(
         sf.is_valid(),
         "inter_predictor: scale factor is REF_INVALID_SCALE"
@@ -266,16 +299,6 @@ pub fn inter_predictor(
     );
 
     let filters = kernel_for(interp_filter);
-
-    // Wave I I5 — route the unscaled match through the dispatch
-    // table so Wave J can promote individual convolve kernels to
-    // AVX2 without touching this call site (the public signature is
-    // load-bearing — see encoder caller at
-    // `rvp9-encoder/src/lib.rs:3342`).
-    //
-    // The scaled path (sf.is_scaled() == true) routes through the
-    // dispatch table too (Wave L L1 promoted both scaled slots to AVX2).
-    let dispatch = crate::dsp::get();
 
     if sf.is_scaled() {
         // Always run the full 2-D scaled path. libvpx specialises

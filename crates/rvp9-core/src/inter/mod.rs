@@ -52,6 +52,6 @@ pub use mv_ref::{
     PrevFrameMvRef, RefMvList, MAX_MV_REF_CANDIDATES, MV_BORDER, MVREF_NEIGHBOURS,
 };
 pub use scale::{
-    inter_predictor, valid_ref_frame_size, ScaleFactors, REF_INVALID_SCALE, REF_NO_SCALE,
-    REF_SCALE_SHIFT,
+    inter_predictor, inter_predictor_with_dispatch, valid_ref_frame_size,
+    ScaleFactors, REF_INVALID_SCALE, REF_NO_SCALE, REF_SCALE_SHIFT,
 };
