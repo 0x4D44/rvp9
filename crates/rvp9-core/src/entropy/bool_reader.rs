@@ -186,6 +186,12 @@ impl<'a> BoolReader<'a> {
     /// Replenish the `value` register from `buffer[pos..]`. Mirrors
     /// `vpx_reader_fill` (`bitreader.c:38-91`), simplified per
     /// entropy LLD §7.2 (no decryption callback).
+    ///
+    /// NOT inlined: R.15 (2026-05-23) tried `#[inline]` to merge
+    /// this 50-LOC body into the single call site in `read()`, but
+    /// the resulting code bloat regressed testsrc_1080p30 t=4 by
+    /// 23% (icache pressure on the per-bit hot loop). Kept as an
+    /// outlined call site so the per-bit `read()` stays compact.
     pub fn fill(&mut self) {
         let bytes_left = self.buffer.len() - self.pos;
         let bits_left = (bytes_left as i32) * 8;
