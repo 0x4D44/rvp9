@@ -2159,3 +2159,71 @@ F.4 lands, this divergence collapses.
 - `notes/divergence-ledger.md:676-697` — F.0.3 original
   documentation of the −240 pp regression mechanism.
 
+### 2026-05-23 — F.3 ship state: INFRASTRUCTURE-ONLY (team-lead decision)
+**Where:** new module
+`crates/rvp9-core/src/mode_decision/nonrd_partition.rs` (~700 LoC, 7
+unit tests) + env-gated integration in
+`crates/rvp9-encoder/src/lib.rs:pick_and_simulate_inter_encode_partitions`
+(around line 2670). F.3 HLD §10 originally proposed
+`RVP9_F3_NONRD_PARTITION_OFF` (env var defaulting the new behaviour
+ON with an escape hatch).
+**What the F.3 HLD planned:** invert the partition flow so
+motion-aware RD descent (libvpx `nonrd_pick_partition`,
+`vp9_encodeframe.c:4922-5210`) runs *inside* the per-SB picker, with
+the variance partitioner reduced to a hint/bound source. Drop
+recursion at Block16x16 (no 8×8 mode search). Expected to lift the
+typical leaf size from 8×8 to 16×16+ on motion content and close
+the F.1 "85 % Block8x8 ceiling" (F.1 HLD §9).
+**What rvp9 ships at F.3:** the new module + descent function lands
+in full; the encoder integration is gated behind
+`RVP9_F3_NONRD_PARTITION_ENABLE=1` (polarity flipped vs HLD §10:
+default **OFF**). At defaults the picker hot path is unchanged.
+Foreman PSNR-delta = +9.07 dB exactly (matches pre-F.3 baseline;
+PASS at 9.50 dB threshold). Realtime gate median = 4.76 ms (well
+below 33 ms). The integration's mode-picker callback uses a
+simplified ZERO-MV SSE proxy (not the real `pick_inter_mode_luma`)
+— enough to exercise the wiring; F.4 swaps in the real picker.
+**Why:** F.3 has the same lambda-coupling exposure as F.1 / F.2.
+The descent ranks partition candidates via
+`rd_cost(rd_mult, rate, dist)`; `rd_mult` is the same uncalibrated
+SATD-to-bits scale that regressed PSNR-delta under
+`RVP9_F1_COEF_RATE_ENABLE=1` (F.1 ship-state entry above). Mirroring
+the F.1 / F.2 pattern (infra ships, behaviour is gated) keeps the
+Track F cluster bounded — F.4 calibrates lambda once and flips all
+three activation switches together rather than chasing interaction
+effects across three separately-active components.
+**Byte-parity impact:** none. The default is byte-identical to
+pre-F.3 (and pre-F.1 / pre-F.2 by extension). Foreman PSNR-delta =
++9.07 dB exactly.
+**Compression-efficiency impact:** none at default. F.3's deferred
+activation is expected to *lift the typical leaf size* from 8×8 to
+16×16+ on motion content once F.4's recalibration lands — the F.1
+"85 % Block8x8 ceiling" closes — but holding it back today
+preserves the post-E16 / post-F.1 / post-F.2 +9.07 dB baseline.
+**Realtime-gate impact:** zero at default (`inter_picker_enabled =
+w*h <= 307_200` already gates the picker off at 720p, so the
+descent never runs in the realtime gate). When activated, the
+worst-case per-SB cost lifts from ~38 µs to ~116 µs on small-frame
+corpora (F.3 HLD §7.1) — F.3 HLD §7.5 sets the 8 ms median ceiling
+on foreman_cif as the self-imposed engineering envelope.
+**Future plan:** F.4 owns three coupled work-items:
+1. Replace the integration's SAD-proxy callback in
+   `pick_and_simulate_inter_encode_partitions` with a real
+   `pick_inter_mode_luma` invocation (or the realtime path's
+   simplified picker if libvpx's `nonrd_pick_sb_modes` is closer to
+   what the descent needs).
+2. Recalibrate `compute_rd_mult` / the SATD-to-bits scale so the
+   descent's RD ranking doesn't collapse to the F.1 ship-state
+   failure mode (per F.1 ship-state F.4 inherited work-items).
+3. Flip the env gate ON (most likely by removing the gate entirely
+   after the A/B sweep confirms F.0.1 PSNR-delta improves and
+   foreman_cif median frame time stays under the §7.5 ceiling).
+
+When F.4 lands, this divergence collapses.
+**Cross-references:**
+- F.3 HLD §11 ship-state addendum (`wrk_docs/Track_F/F3_HLD_motion_aware_partition.md`).
+- F.1 ship-state entry (2026-05-23) — the original precedent.
+- F.2 ship-state entry (2026-05-23) — the second mirror.
+- F.4 task inherits the env-gate flip + callback-replacement
+  work-items.
+

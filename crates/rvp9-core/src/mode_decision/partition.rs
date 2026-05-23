@@ -79,7 +79,7 @@ use crate::quant::forward::{QuantizerDeltas, plane_dequant_pair};
 /// 8x8 grid count for a 64x64 superblock — every leaf is one of the
 /// 13 VP9 block sizes, but partition descent in F8.2 lands at one of
 /// `Block8x8` / `Block16x16` / `Block32x32` / `Block64x64`.
-const SB_8X8_GRID: usize = 8;
+pub(crate) const SB_8X8_GRID: usize = 8;
 
 /// A 64x64 superblock's partition decision.
 ///

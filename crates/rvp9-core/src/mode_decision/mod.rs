@@ -16,6 +16,10 @@
 //! - [`partition`] — variance-based partition picker. Mirrors libvpx
 //!   `choose_partitioning` (`vp9_encodeframe.c:1261-...`). F8.2 —
 //!   variance descent over a 64x64 SB, NONE / SPLIT only.
+//! - [`nonrd_partition`] — motion-aware partition descent (F.3
+//!   infrastructure). Mirrors libvpx `nonrd_pick_partition`
+//!   (`vp9_encodeframe.c:4922-5210`). Default OFF; gated behind
+//!   `RVP9_F3_NONRD_PARTITION_ENABLE` (see F.3 HLD §11).
 //!
 //! UV-mode search lands as a further sub-module here later.
 //!
@@ -40,6 +44,7 @@
 pub mod block_yrd;
 pub mod inter;
 pub mod intra;
+pub mod nonrd_partition;
 pub mod partition;
 
 /// libvpx `RDDIV_BITS` (`vp9_rd.h:26`).

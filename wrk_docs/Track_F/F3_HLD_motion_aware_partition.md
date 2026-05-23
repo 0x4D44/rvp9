@@ -5,7 +5,7 @@
 | Track | F (nonrd_pickmode port) |
 | Sub-track | F.3 (motion-aware partition — final coupled piece) |
 | Author | F.3 HLD-writer agent |
-| Status | SIGNED-OFF — pending F.1 + F.2 implementer landing |
+| Status | LANDED — infrastructure-only (see §11 ship-state addendum, 2026-05-23) |
 | Last revised | 2026-05-23 |
 | Repo HEAD at writing | `f1a8327` (post-F.0 foundations; F.1 + F.2 HLDs signed off, implementers in flight) |
 | libvpx HEAD at writing | `12f3a2ac6` (`v1.14.1`) at `D:\language\libvpx` |
@@ -543,3 +543,112 @@ The following are explicitly NOT part of F.3:
 | F.2 HLD F.3-blocks-on-F.2 note | `D:\language\rvp9-2\wrk_docs\Track_F\F2_HLD_find_mv_refs.md` | §1 + §8.2 |
 | E11 partition-cap refuted | `D:\language\rvp9-2\wrk_docs\E11_partition_size_probe.md` | §1, §3 |
 | E14 partition-cap retest | `D:\language\rvp9-2\wrk_docs\E14_partition_size_retest.md` | (full) |
+
+---
+
+## 11. Ship-state addendum (team-lead, 2026-05-23)
+
+F.3 ships INFRASTRUCTURE-ONLY, mirroring the F.1 / F.2 pattern. The
+motion-aware descent module is implemented in full and exposed for
+unit testing, but the encoder's default partition flow is
+**unchanged** — the variance hint still drives the picker at defaults.
+The new descent only runs when `RVP9_F3_NONRD_PARTITION_ENABLE=1` is
+set.
+
+**Polarity flip (vs HLD §10 / §7.4 mitigation 4).** The HLD's
+implementer-facing summary proposed `RVP9_F3_NONRD_PARTITION_OFF` —
+defaulting the new behaviour ON and offering an escape hatch. The
+team-lead flipped this polarity (default OFF) for the reasons F.1 and
+F.2 also shipped infra-only: F.4 owns lambda recalibration, and
+without it, activating the motion-aware descent would couple to the
+same uncalibrated SATD-to-bits scale that regressed F.1's PSNR-delta
+under `RVP9_F1_COEF_RATE_ENABLE=1`.
+
+**Team-lead decision (Arthur, 2026-05-23):** F.3 ships
+INFRASTRUCTURE-ONLY:
+
+- The new module
+  `crates/rvp9-core/src/mode_decision/nonrd_partition.rs` lands in
+  full (≈700 LoC with 7 unit tests). Implements
+  `nonrd_pick_partition` as a parametric descent driven by a
+  `ModePickerFn` callback.
+- The activation gate in `crates/rvp9-encoder/src/lib.rs`
+  (`pick_and_simulate_inter_encode_partitions`) reads
+  `RVP9_F3_NONRD_PARTITION_ENABLE`; **default OFF**.
+- At default (env unset), the picker hot path is unchanged. Foreman
+  PSNR-delta = +9.07 dB exactly (matches pre-F.3 baseline; PASS at
+  9.50 dB threshold). Realtime gate median = 4.76 ms (well below 33
+  ms). No behavioural regression.
+
+**What does land:**
+
+- `crates/rvp9-core/src/mode_decision/nonrd_partition.rs` — square-only
+  NONE-vs-SPLIT descent (libvpx `vp9_encodeframe.c:4922-5210`
+  skeleton), recursion-capped at Block16x16 per §4.3.
+- `nonrd_partition::variance_hint_bounds(hint)` helper — derives
+  `(min, max)` partition sizes from the variance hint with the §8.1
+  R3 floor at Block16x16.
+- `nonrd_partition::partition_plane_context(above, left, bsize)` —
+  libvpx `partition_plane_context` (`vp9_onyxc_int.h:451-462`)
+  formula `(left*2 + above) + bsl*4`.
+- 7 unit tests in `nonrd_partition::tests` covering: flat block
+  picks 64×64, translating block picks 32×32 (the headline
+  behavioural test), recursion caps at Block16x16, variance-hint
+  bounds R3 floor, partition_plane_context formula matches libvpx,
+  SPLIT wins when children are cheaper.
+- Env-gated integration in
+  `crates/rvp9-encoder/src/lib.rs:pick_and_simulate_inter_encode_partitions`.
+  When the env var is set, the descent runs per SB before the
+  per-leaf picker loop and replaces `sb_partitions[sb_idx]` with the
+  new leaf list. At defaults this branch is skipped.
+- The descent's mode-picker callback at the integration site uses a
+  **simplified ZERO-MV SSE proxy** (not the real
+  `pick_inter_mode_luma`). This proves the wiring; F.4 replaces it
+  with the real picker.
+
+**What does NOT land:**
+
+- Any *behavioural* change to the default partition decision flow.
+- Changes to the variance partitioner
+  (`mode_decision/partition.rs:choose_partitioning`).
+- PARTITION_HORZ / PARTITION_VERT (per HLD §2.3 — out of scope).
+- F.3's planned F.0.2 oracle reconvergence run (HLD §6.2) —
+  defaults are unchanged so the oracle measures the same pre-F.3
+  partition stream.
+- Replacement of the SAD-proxy callback with the real
+  `pick_inter_mode_luma`. F.4 territory.
+
+**F.4 inheritance:**
+
+F.4 owns flipping the env gate ON (most likely by removing the gate
+entirely) once:
+
+1. The lambda recalibration work-items from the F.1 ship-state
+   addendum close (`compute_rd_mult` / SATD-to-bits scale tuned
+   against rvp9's coefficient-rate signal).
+2. The descent's mode-picker callback is replaced with the real
+   `pick_inter_mode_luma` (or the realtime path's equivalent
+   simplified picker).
+3. The post-recalibration A/B sweep confirms F.0.1 PSNR-delta
+   improves measurably (HLD §1.3) and foreman_cif median frame time
+   stays under the §7.5 ceiling (8 ms).
+
+**Why this is the right call:**
+
+The F.1 + F.2 + F.3 cluster is now fully infrastructure-complete.
+F.4 can flip all three activation switches together in a single
+calibration sweep, instead of debugging interaction effects across
+three separately-active components. The trait-based
+[`ModePickerFn`] abstraction means F.4 can swap callbacks without
+touching the descent.
+
+**Cross-references:**
+
+- Decision recorded in `notes/divergence-ledger.md` F.3 ship-state
+  entry (2026-05-23).
+- F.1 ship-state addendum (`F1_HLD_block_yrd_port.md` §14) — the
+  original precedent.
+- F.2 ship-state addendum (`F2_HLD_find_mv_refs.md` §12) — the
+  second mirror.
+- F.4 task inherits the env-gate flip + callback-replacement
+  work-items.

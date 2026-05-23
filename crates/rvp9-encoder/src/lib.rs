@@ -2326,13 +2326,16 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     use rvp9_core::bitstream::frame::{InterpFilter as WireInterpFilter, MAX_INTER_REFS};
     use rvp9_core::bitstream::header::FrameKind as WireFrameKind;
     use rvp9_core::cost::mv_cost::build_nmv_cost_table;
-    use rvp9_core::cost::symbol_costs::inter_mode_costs;
+    use rvp9_core::cost::symbol_costs::{inter_mode_costs, partition_costs};
     use rvp9_core::entropy::mv_probs::DEFAULT_NMV_CONTEXT;
     use rvp9_core::inter::mv_ref::{
         BlockBounds, PrevFrameMvRef, find_mv_refs, lower_mv_precision,
     };
     use rvp9_core::mode_decision::inter::{
         InterModeSearchParams, InterModeSearchResult, MvCandidates, pick_inter_mode_luma,
+    };
+    use rvp9_core::mode_decision::nonrd_partition::{
+        NonRdDescentParams, PartitionRdCandidate, nonrd_pick_partition, variance_hint_bounds,
     };
     use rvp9_core::mv_search::int_pro_me::int_pro_motion_estimation;
     use rvp9_core::mv_search::mv_limits::MvLimits;
@@ -2425,6 +2428,45 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let inter_costs = inter_mode_costs(&FrameContext::new_default());
     let mv_costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, /* allow_hp = */ false);
     let site_config = init_dsmotion_compensation(w as i32);
+
+    // F.3 (2026-05-23, infrastructure-only) — motion-aware partition
+    // descent (libvpx `nonrd_pick_partition`,
+    // `vp9_encodeframe.c:4922-5210`).
+    //
+    // **Default OFF**, gated behind `RVP9_F3_NONRD_PARTITION_ENABLE=1`.
+    // Mirrors the F.1 / F.2 infrastructure-only pattern (see F.3 HLD
+    // §11 ship-state addendum and `notes/divergence-ledger.md` F.3
+    // ship-state entry).
+    //
+    // When the gate is set, this branch runs the descent per SB
+    // BEFORE the per-leaf picker loop. The descent's output replaces
+    // `sb_partitions[sb_idx]` (the variance-hint leaf list) with a
+    // new leaf list reflecting the motion-aware RD-driven decision.
+    // The existing per-leaf picker loop then runs over the new
+    // leaves unchanged.
+    //
+    // F.4 owns flipping this default and replacing the descent's
+    // simplified mode-picker callback with a call into the real
+    // `pick_inter_mode_luma`. The infrastructure here proves the
+    // wiring; it does NOT drive byte-stream output at defaults.
+    let f3_nonrd_partition_enabled =
+        std::env::var_os("RVP9_F3_NONRD_PARTITION_ENABLE").is_some();
+    let f3_partition_costs = if f3_nonrd_partition_enabled {
+        Some(partition_costs(&FrameContext::new_default()))
+    } else {
+        None
+    };
+    // F.3 rd_mult — libvpx `compute_rd_mult(q_index, INTER_FRAME)`
+    // (`vp9_rd.c:170-178`). The descent uses it to rank NONE vs
+    // SPLIT via [`rvp9_core::mode_decision::rd_cost`].
+    let f3_rd_mult: u32 = if f3_nonrd_partition_enabled {
+        rvp9_core::cost::compute_rd_mult(
+            i32::from(base_qindex),
+            rvp9_core::cost::FrameTypeForRd::Inter,
+        )
+    } else {
+        0
+    };
 
     // A16 (2026-05-22) — ref-frame rate-cost for the dual-ref picker.
     //
@@ -2620,6 +2662,167 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         if sb_newmv_seed.is_some() { "Y" } else { "N" },
                     );
                 }
+            }
+
+            // F.3 (infrastructure-only) — when
+            // `RVP9_F3_NONRD_PARTITION_ENABLE=1` is set, run the
+            // motion-aware RD descent BEFORE the per-leaf picker
+            // loop. The descent replaces this SB's variance-hint
+            // leaf list with a new one reflecting the
+            // RD-vs-variance comparison. At default (env unset),
+            // this branch is skipped and the existing picker loop
+            // runs over the variance-hint leaves byte-identical to
+            // pre-F.3.
+            //
+            // The simplified mode-picker callback here computes a
+            // ZERO-MV SSE rate-distortion proxy (NOT the real
+            // `pick_inter_mode_luma`). F.4 owns replacing this
+            // with the real picker when activating F.3 — that
+            // requires lambda recalibration per the F.3 HLD §11
+            // ship-state addendum. For infrastructure-only
+            // purposes the callback proves the wiring: descent →
+            // callback → per-position RD → new leaf list.
+            if f3_nonrd_partition_enabled && inter_picker_enabled {
+                use rvp9_core::block::BlockSize as BS;
+                use rvp9_core::mode_decision::partition::PartitionDecision;
+
+                // 1. Rebuild a `PartitionDecision { cells }` from
+                //    the variance-hint leaf list.
+                let mut hint_cells = [[BS::Block8x8; 8]; 8];
+                for leaf in &sb_partitions[sb_idx] {
+                    let span = match leaf.leaf_bsize {
+                        BS::Block64x64 => 8,
+                        BS::Block32x32 => 4,
+                        BS::Block16x16 => 2,
+                        BS::Block8x8 => 1,
+                        _ => 1,
+                    };
+                    for dr in 0..span {
+                        for dc in 0..span {
+                            let r = leaf.mi_row_in_sb + dr;
+                            let c = leaf.mi_col_in_sb + dc;
+                            if r < 8 && c < 8 {
+                                hint_cells[r][c] = leaf.leaf_bsize;
+                            }
+                        }
+                    }
+                }
+                let hint = PartitionDecision { cells: hint_cells };
+
+                // 2. Derive (min, max) bounds (libvpx
+                //    `x->{min,max}_partition_size`) via the
+                //    variance hint, with the R3 floor at
+                //    Block16x16.
+                let (min_bs, max_bs) = variance_hint_bounds(&hint);
+
+                // 3. Build the descent params.
+                let pcosts = f3_partition_costs
+                    .as_ref()
+                    .expect("partition_costs built when F.3 enabled");
+                let params = NonRdDescentParams {
+                    min_partition_size: min_bs,
+                    max_partition_size: max_bs,
+                    partition_costs: pcosts,
+                    rd_mult: f3_rd_mult,
+                };
+
+                // 4. Simplified mode-picker callback. Computes a
+                //    ZERO-MV SSE rate-distortion proxy at the
+                //    given (sb-local 8×8 origin, bsize). This is
+                //    NOT the real picker — F.4 replaces it. The
+                //    SSE compare is between the source block and
+                //    the reference plane at the same coordinates
+                //    (ZERO-MV distortion); rate is a constant
+                //    per-bsize estimate. The descent then ranks
+                //    NONE vs SPLIT using this proxy, exercising
+                //    the full descent code path.
+                //
+                //    **SSE not SAD** — matches the picker's `dist`
+                //    semantics (F.1 Q3 resolution / DV-F1-3:
+                //    pixel-SSE-of-recon is the RD distortion term).
+                //    Using SAD here would compare apples to oranges
+                //    against the partition-tree wire cost added in
+                //    units of `vp9_prob_cost` (1/512-bit); SSE keeps
+                //    the descent's RD ranking in the same magnitude
+                //    family the real picker will use when F.4
+                //    activates this path.
+                let mut descent_picker =
+                    |sb_local_x_8x8: usize, sb_local_y_8x8: usize, bs: BS| {
+                        let px_x = sb_col * 64 + sb_local_x_8x8 * 8;
+                        let px_y = sb_row * 64 + sb_local_y_8x8 * 8;
+                        let bw_px = usize::from(bs.width());
+                        let bh_px = usize::from(bs.height());
+                        // SB-edge guard for partial frames.
+                        if px_x + bw_px > w || px_y + bh_px > h {
+                            return None;
+                        }
+                        // ZERO-MV SSE proxy for motion-comp
+                        // residual energy.
+                        let mut sse: u64 = 0;
+                        for dy in 0..bh_px {
+                            for dx in 0..bw_px {
+                                let s = src_y.data
+                                    [(px_y + dy) * src_y.stride + (px_x + dx)]
+                                    as i32;
+                                let r = ref_y.data
+                                    [(px_y + dy) * ref_y.stride + (px_x + dx)]
+                                    as i32;
+                                let d = s - r;
+                                sse += (d * d) as u64;
+                            }
+                        }
+                        let dist = sse.min(u32::MAX as u64) as u32;
+                        // Mode-bit cost proxy: constant per bsize.
+                        let rate = 100u32;
+                        Some(PartitionRdCandidate {
+                            rate,
+                            dist,
+                            mv: Mv::ZERO,
+                            mode: InterMode::ZeroMv as u8,
+                            ref_frame: RefFrame::LastFrame as u8,
+                        })
+                    };
+
+                let descent_result =
+                    nonrd_pick_partition(&hint, &params, &mut descent_picker);
+
+                // 5. Convert the descent's leaf list back into
+                //    `Vec<InterPartitionLeafDesc>`. Preserve the
+                //    `segment_id` from the variance hint at each
+                //    leaf's top-left mi cell (the descent doesn't
+                //    own segment-id information; AQ.1 owns it).
+                let mut new_leaves: Vec<InterPartitionLeafDesc> =
+                    Vec::with_capacity(descent_result.leaves.len());
+                for leaf in &descent_result.leaves {
+                    // Look up segment_id from the variance hint's
+                    // leaf list at this position. Default to 0 if
+                    // not found (defensive — should always match
+                    // for AQ-off frames where every leaf has
+                    // segment_id = 0).
+                    let seg = sb_partitions[sb_idx]
+                        .iter()
+                        .find(|h| {
+                            h.mi_row_in_sb == leaf.mi_row_in_sb
+                                && h.mi_col_in_sb == leaf.mi_col_in_sb
+                        })
+                        .map(|h| h.segment_id)
+                        .unwrap_or(0);
+                    new_leaves.push(InterPartitionLeafDesc {
+                        mi_row_in_sb: leaf.mi_row_in_sb,
+                        mi_col_in_sb: leaf.mi_col_in_sb,
+                        leaf_bsize: leaf.bsize,
+                        // The picker loop below overwrites these,
+                        // but we seed them to ZeroMv defaults so
+                        // the leaf list is well-formed before the
+                        // picker runs.
+                        picked_mode: InterMode::ZeroMv,
+                        picked_mv: Mv::ZERO,
+                        skip: true,
+                        segment_id: seg,
+                        picked_ref_frame: RefFrame::LastFrame,
+                    });
+                }
+                sb_partitions[sb_idx] = new_leaves;
             }
 
             for leaf_idx in 0..sb_partitions[sb_idx].len() {
