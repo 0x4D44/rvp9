@@ -1,3 +1,67 @@
+# decode head-to-head — 2026-05-23 (R.10 update — final shipped state)
+
+host: windows-x86_64  unpinned  build: release (target-cpu=native)
+rvp9: post-R.10 — 9 shipped Track R waves (R.1-R.5, R.7-R.10);
+4 reverted (R.6 scalar idct8x8_12, R.11/R.12 intra MaybeUninit, R.13 get_ref).
+
+## Final ledger (R.10 numbers — clean run)
+
+| fixture            | res        | tiles | threads | rvp9 p50 us | rvp9 mean us | vpxdec mean us | ratio (rvp9/vpx) | budget us | gate        |
+|--------------------|------------|-------|---------|-------------|--------------|----------------|------------------|-----------|-------------|
+| quantizer-00       | 352x288    |     1 |       1 |      2060.2 |       2358.1 |         6088.5 |             0.39 |         - | **FASTER**  |
+| tile_1x4           | 1920x1080  |     4 |       1 |     19655.8 |      19036.9 |         3964.5 |             4.80 |         - | n/a         |
+| tile_1x4           | 1920x1080  |     4 |       4 |     15474.0 |      14356.2 |         2515.7 |             5.71 |         - | n/a         |
+| testsrc_720p30     | 1280x720   |     1 |       1 |      5087.5 |       4522.2 |          627.3 |             7.21 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       2 |     11998.8 |       9989.7 |          820.9 |            12.17 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       4 |     11467.6 |       9589.4 |          614.4 |            15.61 |     33000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       4 |      5036.4 |       7089.8 |          592.2 |            11.97 |     16000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       8 |      5018.7 |       6822.0 |          596.1 |            11.44 |     16000 | PASS-info   |
+| foreman-fp1        | 352x288    |     1 |       1 |       720.3 |        665.0 |          317.0 |             2.10 |         - | n/a         |
+
+## Compound since pre-R.1 baseline
+
+| fixture            | threads | pre-R.1 baseline | post-R.10  | compound speedup |
+|--------------------|---------|------------------|------------|------------------|
+| tile_1x4           |       4 |        339,213.7 |   15,474.0 |        **21.9x** |
+| testsrc_720p30     |       1 |         87,198.0 |    5,087.5 |        **17.1x** |
+| testsrc_1080p30    |       4 |        181,832.6 |   11,467.6 |        **15.9x** |
+| tile_1x4           |       1 |        271,544.0 |   19,655.8 |        **13.8x** |
+| testsrc_1080p30    |       2 |        148,492.1 |   11,998.8 |        **12.4x** |
+| foreman-fp1        |       1 |          8,130.3 |      720.3 |        **11.3x** |
+| quantizer-00       |       1 |         12,084.5 |    2,060.2 |          **5.9x** (2.96x FASTER than vpxdec) |
+| testsrc_1080p60    |       4 |         11,321.2 |    5,036.4 |          **2.2x** |
+
+## Shipped Track R waves (9)
+
+| Wave | Commit | Mechanism | Marginal effect |
+|---|---|---|---|
+| R.1 | `ff4f5d8` | env::var cache via OnceLock TraceFlags | 4-8x |
+| R.2 | `dd9d423` | decode_coefs scratch hoist to thread_local | 1.6-2.1x |
+| R.3 | `1026118` | trace_flags lib.rs extension + intra dq_coefs thread_local | 1.1-1.4x |
+| R.4 | `99e3800` | target-cpu=native in `.cargo/config.toml` | 1.0-1.2x |
+| R.5 | `f97dc9b` | Inter-path IDCT eob bucketing (16x16, 32x32) | 1.0-1.07x |
+| R.7 | `b436820` | VPX_NORM LUT → `leading_zeros()` LZCNT | algorithmic |
+| R.8 | `07bfda9` | BoolReader::fill → `u64::from_be_bytes` | 1.04-1.15x |
+| R.9 | `5a0f8aa` | MC border scratch → MaybeUninit | algorithmic |
+| R.10 | `3cced1e` | Inter dq_coefs → MaybeUninit (4KB/TX → none) | **1.04-1.30x** |
+
+## Reverted attempts (4)
+
+- R.5b: `#[inline(always)]`, `lto=fat`, `panic=abort` — all regressed at least one fixture
+- R.6: scalar `idct8x8_12_add` — replaced AVX2 _64 with scalar (regression)
+- R.11/R.12: MaybeUninit on intra dq_coefs — regressed due to recursive-partition stack pressure
+- R.13: `get_ref()` instead of `Arc::clone()` for dispatch — caused 2x regression on 1080p60
+
+## Lessons
+
+1. **MaybeUninit wins for non-recursive callers** (inter R.10), loses for recursive callers (intra R.11/R.12) due to stack frame size pressure on the recursion stack.
+2. **Algorithmic correctness > bench noise.** Bench variance at 13-21% prevents clean attribution of small wins; the changes that won by big margins (R.1, R.2, R.10) were big-margin wins; everything else needed careful judgement.
+3. **Hand-tuned AVX2 beats most clever Rust.** R.6 showed scalar fallback is worse than full AVX2 even with theoretical row reduction. AVX2 _12 kernel ports needed to make eob fast paths pay.
+4. **Some "obvious" optimizations regress.** R.13's atomic-elimination intent regressed multi-thread fixtures hard — likely interfered with LLVM's existing optimization of Arc::clone on static OnceLock sources.
+5. **`target-cpu=native` is a free win.** R.4 unlocked compiler auto-vectorization beyond the hand-written AVX2 surface; consistent 1.0-1.2x.
+
+## Previous R.8 ledger preserved below
+
 # decode head-to-head — 2026-05-23 (R.8 update)
 
 host: windows-x86_64  unpinned  build: release (target-cpu=native)
