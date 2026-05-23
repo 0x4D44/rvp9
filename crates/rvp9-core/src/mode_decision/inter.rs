@@ -1448,29 +1448,34 @@ mod tests {
         let r0 = pick_inter_mode_luma(&params0);
         let r6 = pick_inter_mode_luma(&params6);
         // The rate-cost row differs across contexts. With identical-
-        // plane src/ref both ZEROMV and NEARESTMV produce zero-dist
-        // predictions; the winning mode is whichever has the cheaper
-        // rate at each context. Across ctx 0 and ctx 6 the rate-cost
-        // breakdown differs, so either:
+        // plane src/ref **every** mode produces a zero-distortion
+        // prediction (any MV indexes into the same plane), so the
+        // winning mode is whichever has the cheapest *rate* at each
+        // context — a pure rate-cost tiebreak. Across ctx 0 and ctx 6
+        // the per-mode rate breakdown differs, so either:
         //   - winner mode differs between the two contexts, OR
         //   - winner mode is identical but rate (and hence RD) differs.
         // We assert one of those two outcomes holds.
-        assert!(
-            matches!(
-                r0.best_mode,
-                InterMode::ZeroMv | InterMode::NearestMv | InterMode::NearMv
-            ),
-            "ctx 0 winner must be a zero-MV mode, got {:?}",
-            r0.best_mode,
-        );
-        assert!(
-            matches!(
-                r6.best_mode,
-                InterMode::ZeroMv | InterMode::NearestMv | InterMode::NearMv
-            ),
-            "ctx 6 winner must be a zero-MV mode, got {:?}",
-            r6.best_mode,
-        );
+        //
+        // Note: an earlier version of this test additionally asserted
+        // that the winner is always a zero-MV mode (ZEROMV / NEARESTMV
+        // / NEARMV). That invariant became stale post-A13 (commit
+        // `2c07ec4` — MV_COST_WEIGHT=108 scaling in `evaluate_candidate`,
+        // mirroring libvpx `vp9_rd.h:38`). At `inter_mode_ctx = 6`
+        // (two intra neighbours) libvpx's default `inter_mode_probs[6]
+        // = [25, 29, 30]` (`vp9_entropymode.c:233-242`) make NEWMV's
+        // mode-cost 257 (tree leaves: all cost_one of small probs ≈ 0
+        // each), while ZEROMV/NEAREST/NEAR pay cost_zero at one of the
+        // small probs ≈ ~1700 each. After A13 scaling, NEWMV encoding
+        // MV=(0,0) costs mode_rate(257) + mv_rate(MV_JOINT_ZERO)*108/128
+        // ≈ 257 + 1296 = 1553 — cheaper than any zero-MV mode at ctx 6.
+        // That is the libvpx-correct behaviour given the default prob
+        // table: when both neighbours are intra, NEWMV is the modal
+        // pick, and there is no carve-out in the picker for the
+        // degenerate identical-src/ref case (which never occurs in real
+        // content). See `wrk_docs/E16_picker_test_failure.md`.
+        assert_eq!(r0.best_distortion, 0);
+        assert_eq!(r6.best_distortion, 0);
         assert_eq!(r0.best_distortion, r6.best_distortion);
         assert!(
             r0.best_mode != r6.best_mode || r0.best_rate != r6.best_rate,
@@ -1479,4 +1484,5 @@ mod tests {
             r0.best_mode, r0.best_rate,
         );
     }
+
 }
