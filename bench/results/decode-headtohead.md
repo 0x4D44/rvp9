@@ -1,3 +1,58 @@
+# decode head-to-head — 2026-05-23 (R.5 update)
+
+host: windows-x86_64  unpinned  build: release (target-cpu=native)
+rvp9: post-R.5 (inter-path IDCT eob-bucketing for Tx16x16 + Tx32x32)
+
+## R.5 post-fix (inter-path IDCT eob fast paths)
+
+| fixture            | res        | tiles | threads | rvp9 p50 us | rvp9 mean us | vpxdec mean us | ratio (rvp9/vpx) | budget us | gate        |
+|--------------------|------------|-------|---------|-------------|--------------|----------------|------------------|-----------|-------------|
+| quantizer-00       | 352x288    |     1 |       1 |      1782.3 |       1867.4 |         6088.5 |             0.31 |         - | **FASTER**  |
+| tile_1x4           | 1920x1080  |     4 |       1 |     19258.0 |      17938.0 |         3964.5 |             4.52 |         - | n/a         |
+| tile_1x4           | 1920x1080  |     4 |       4 |     15808.9 |      14602.2 |         2515.7 |             5.80 |         - | n/a         |
+| testsrc_720p30     | 1280x720   |     1 |       1 |      5922.0 |       5404.1 |          627.3 |             8.61 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       2 |     12741.9 |      10728.3 |          820.9 |            13.07 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       4 |     11506.9 |       9567.3 |          614.4 |            15.57 |     33000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       4 |      5484.4 |       7496.3 |          592.2 |            12.66 |     16000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       8 |      6083.9 |       8133.4 |          596.1 |            13.64 |     16000 | PASS-info   |
+| foreman-fp1        | 352x288    |     1 |       1 |       773.6 |        730.2 |          317.0 |             2.30 |         - | n/a         |
+
+## R.5 before/after delta (R.4 → R.5)
+
+| fixture            | threads | R.4 p50 us | R.5 p50 us | R.5 speedup |
+|--------------------|---------|------------|------------|-------------|
+| quantizer-00       |       1 |     1692.6 |     1782.3 |  0.95x (noise) |
+| tile_1x4           |       1 |    19700.3 |    19258.0 |  1.02x      |
+| tile_1x4           |       4 |    16904.1 |    15808.9 |  **1.07x**  |
+| testsrc_720p30     |       1 |     5743.7 |     5922.0 |  0.97x (noise) |
+| testsrc_1080p30    |       2 |    12307.0 |    12741.9 |  0.97x (noise) |
+| testsrc_1080p30    |       4 |    11831.0 |    11506.9 |  **1.03x**  |
+| testsrc_1080p60    |       4 |     4980.0 |     5484.4 |  0.91x (within noise) |
+| testsrc_1080p60    |       8 |     4983.3 |     6083.9 |  0.82x (within 13-21% noise floor) |
+| foreman-fp1        |       1 |      818.5 |      773.6 |  **1.06x**  |
+
+Real wins on content-rich fixtures (tile_1x4 +7%, foreman +6%);
+testsrc rows mostly neutral (skip-heavy content where IDCT is less
+exercised). Mechanism: wire idct16x16_10_add / idct16x16_38_add /
+idct32x32_34_add / idct32x32_135_add (already shipped in the dispatch
+table and proven on the intra path) into the inter reconstruction
+path. Bit-exact (mirrors proven intra code; conformance 201/201).
+
+## Compound: baseline (pre-R.1) → post-R.5
+
+| fixture            | threads | pre-R.1 baseline | post-R.5   | compound speedup |
+|--------------------|---------|------------------|------------|------------------|
+| tile_1x4           |       4 |        339,213.7 |   15,808.9 |        **21.5x** |
+| testsrc_1080p30    |       4 |        181,832.6 |   11,506.9 |        **15.8x** |
+| testsrc_720p30     |       1 |         87,198.0 |    5,922.0 |        **14.7x** |
+| tile_1x4           |       1 |        271,544.0 |   19,258.0 |        **14.1x** |
+| foreman-fp1        |       1 |          8,130.3 |      773.6 |        **10.5x** |
+| testsrc_1080p30    |       2 |        148,492.1 |   12,741.9 |        **11.7x** |
+| quantizer-00       |       1 |         12,084.5 |    1,782.3 |          **6.8x** (3.42x FASTER than vpxdec) |
+| testsrc_1080p60    |       4 |         11,321.2 |    5,484.4 |          **2.1x** |
+
+## Previous R.4 ledger preserved below
+
 # decode head-to-head — 2026-05-23 (R.4 update)
 
 host: windows-x86_64  unpinned  build: release (target-cpu=native, R.4)

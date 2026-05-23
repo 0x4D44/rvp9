@@ -822,6 +822,16 @@ fn inverse_transform_add_dct(
             let coefs: &[i32; 256] = input.try_into().expect("Tx16x16 input is 256 coefs");
             if eob == 1 {
                 idct16x16_1_add(coefs[0], dest, stride);
+            } else if eob <= 10 {
+                // R.5 — sparse-block fast path mirroring the intra
+                // path's wiring (reconstruct.rs:430). Top-left 4×4 of
+                // input is non-zero (libvpx scan-order bucket); row
+                // pass runs 4× instead of 16×.
+                (dispatch.idct16x16_10_add())(coefs, dest, stride);
+            } else if eob <= 38 {
+                // R.5 — top-left 8×8 sparse fast path. Row pass runs
+                // 8× instead of 16×.
+                (dispatch.idct16x16_38_add())(coefs, dest, stride);
             } else {
                 // G4.2 — dispatch through SimdDispatch so the AVX2
                 // implementation runs on supported CPUs.
@@ -832,6 +842,14 @@ fn inverse_transform_add_dct(
             let coefs: &[i32; 1024] = input.try_into().expect("Tx32x32 input is 1024 coefs");
             if eob == 1 {
                 idct32x32_1_add(coefs[0], dest, stride);
+            } else if eob <= 34 {
+                // R.5 — top-left 8×8 sparse fast path mirroring
+                // reconstruct.rs:460. Row pass runs 8× instead of 32×.
+                (dispatch.idct32x32_34_add())(coefs, dest, stride);
+            } else if eob <= 135 {
+                // R.5 — top-left 16×16 sparse fast path. Row pass
+                // runs 16× instead of 32×.
+                (dispatch.idct32x32_135_add())(coefs, dest, stride);
             } else {
                 // G4-α — dispatch through SimdDispatch so the AVX2
                 // implementation runs on supported CPUs.
