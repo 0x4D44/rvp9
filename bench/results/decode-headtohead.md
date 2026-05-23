@@ -1,3 +1,52 @@
+# decode head-to-head — 2026-05-23 (R.4 update)
+
+host: windows-x86_64  unpinned  build: release (target-cpu=native, R.4)
+rvp9: post-R.4 (`.cargo/config.toml` adds `-C target-cpu=native` to all
+release builds; unlocks compiler auto-vectorization beyond AVX2 baseline)
+
+## R.4 post-fix
+
+| fixture            | res        | tiles | threads | rvp9 p50 us | rvp9 mean us | vpxdec mean us | ratio (rvp9/vpx) | budget us | gate        |
+|--------------------|------------|-------|---------|-------------|--------------|----------------|------------------|-----------|-------------|
+| quantizer-00       | 352x288    |     1 |       1 |      1692.6 |       1762.3 |         6088.5 |             0.29 |         - | **FASTER**  |
+| tile_1x4           | 1920x1080  |     4 |       1 |     19700.3 |      18474.2 |         3964.5 |             4.66 |         - | n/a         |
+| tile_1x4           | 1920x1080  |     4 |       4 |     16904.1 |      15733.9 |         2515.7 |             6.25 |         - | n/a         |
+| testsrc_720p30     | 1280x720   |     1 |       1 |      5743.7 |       5180.0 |          627.3 |             8.26 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       2 |     12307.0 |      10242.4 |          820.9 |            12.48 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       4 |     11831.0 |       9943.4 |          614.4 |            16.18 |     33000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       4 |      4980.0 |       6849.5 |          592.2 |            11.57 |     16000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       8 |      4983.3 |       6800.3 |          596.1 |            11.41 |     16000 | PASS-info   |
+| foreman-fp1        | 352x288    |     1 |       1 |       818.5 |        775.0 |          317.0 |             2.45 |         - | n/a         |
+
+## R.4 before/after delta (R.3 → R.4)
+
+| fixture            | threads | R.3 p50 us | R.4 p50 us | R.4 speedup |
+|--------------------|---------|------------|------------|-------------|
+| quantizer-00       |       1 |     1836.0 |     1692.6 |  1.08x      |
+| tile_1x4           |       1 |    21870.0 |    19700.3 |  1.11x      |
+| tile_1x4           |       4 |    17122.4 |    16904.1 |  1.01x      |
+| testsrc_720p30     |       1 |     7040.0 |     5743.7 |  **1.23x**  |
+| testsrc_1080p30    |       2 |    14633.3 |    12307.0 |  **1.19x**  |
+| testsrc_1080p30    |       4 |    12730.4 |    11831.0 |  1.08x      |
+| testsrc_1080p60    |       4 |     5668.6 |     4980.0 |  **1.14x**  |
+| testsrc_1080p60    |       8 |     5614.6 |     4983.3 |  **1.13x**  |
+| foreman-fp1        |       1 |      903.7 |      818.5 |  1.10x      |
+
+## Compound: baseline (pre-R.1) → post-R.4
+
+| fixture            | threads | pre-R.1 baseline | post-R.4   | compound speedup |
+|--------------------|---------|------------------|------------|------------------|
+| tile_1x4           |       4 |        339,213.7 |   16,904.1 |        **20.1x** |
+| testsrc_1080p30    |       4 |        181,832.6 |   11,831.0 |        **15.4x** |
+| testsrc_720p30     |       1 |         87,198.0 |    5,743.7 |        **15.2x** |
+| tile_1x4           |       1 |        271,544.0 |   19,700.3 |        **13.8x** |
+| testsrc_1080p30    |       2 |        148,492.1 |   12,307.0 |        **12.1x** |
+| foreman-fp1        |       1 |          8,130.3 |      818.5 |         **9.9x** |
+| quantizer-00       |       1 |         12,084.5 |    1,692.6 |          **7.1x** (now 3.6x FASTER than vpxdec) |
+| testsrc_1080p60    |       4 |         11,321.2 |    4,980.0 |          **2.3x** |
+
+## Previous R.3 ledger preserved below
+
 # decode head-to-head — 2026-05-23 (R.3 update)
 
 host: windows-x86_64  unpinned  build: release (3c8d6d1ddea4abc4)
