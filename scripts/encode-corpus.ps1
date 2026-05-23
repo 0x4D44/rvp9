@@ -81,3 +81,15 @@ try {
 finally {
     Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 }
+
+# Wave O: also emit the ffmpeg-native ledger and cross-check it agrees
+# with vpxdec, so harness tests using `read_triangulated_ledger` find
+# both files and the oracles are verified independent. Best-effort — if
+# ffmpeg isn't on PATH, warn rather than fail (some sandboxes don't have
+# it, and the vpxdec ledger alone is still useful for decode-only work).
+$ffScript = Join-Path $repo 'scripts/oracle-ledger-ffmpeg.ps1'
+if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
+    & pwsh -NoProfile -File $ffScript -Vector $Out -Verify
+} else {
+    Write-Warning "ffmpeg not on PATH — skipped ffmpeg cross-check. Run later with: pwsh $ffScript -Vector $Out -Verify"
+}

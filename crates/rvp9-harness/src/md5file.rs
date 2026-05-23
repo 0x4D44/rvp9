@@ -217,6 +217,101 @@ pub fn read_md5_file(path: &Path) -> Result<Vec<Md5Entry>, Md5FileError> {
     Ok(entries)
 }
 
+/// Multi-oracle conformance loader.
+///
+/// Loads the two sibling ledger files of `vector`:
+/// - `<vector>.md5` — the **libvpx vpxdec** ledger (`encode-corpus.ps1
+///   -WithLedger`).
+/// - `<vector>.ffmpeg.md5` — the **ffmpeg native VP9** ledger
+///   (`scripts/oracle-ledger-ffmpeg.ps1`).
+///
+/// Asserts the two oracles agree on every shown frame's MD5 (the
+/// filename column is allowed to differ — different generators use
+/// slightly different stems — but the hash column must match
+/// byte-for-byte at the same index). Returns the validated `vpxdec`
+/// entries on success.
+///
+/// **Why two oracles?** A bug in the consumer's decoder is hard to
+/// distinguish from a quirk in the reference unless multiple
+/// independent decoders agree on the bitstream. Cross-checking against
+/// ffmpeg's native VP9 decoder (forced explicitly via `-c:v vp9`, NOT
+/// `libvpx-vp9`) gives genuine independent triangulation: if vpxdec and
+/// ffmpeg agree but our decoder doesn't, the bug is unambiguously ours.
+/// If they ever disagree, the consumer is innocent — investigate
+/// libvpx or ffmpeg instead.
+///
+/// **Panics** rather than returning a `Result` because every failure
+/// mode here is a test invariant: missing fixture, missing ledger pair,
+/// length mismatch, or oracle disagreement. Each gets a clear panic
+/// message naming the file + the diagnostic.
+///
+/// Added Wave O after `foreman_c440.ivf` surfaced a pre-existing
+/// rvp9dec keyframe parser desync; both vpxdec and ffmpeg agreed on
+/// the bitstream, definitively placing the bug in our decoder.
+pub fn read_triangulated_ledger(vector: &Path) -> Vec<Md5Entry> {
+    use std::ffi::OsString;
+
+    let with_suffix = |suffix: &str| -> std::path::PathBuf {
+        let mut s = OsString::from(vector.as_os_str());
+        s.push(suffix);
+        std::path::PathBuf::from(s)
+    };
+    let vpx_path = with_suffix(".md5");
+    let ff_path = with_suffix(".ffmpeg.md5");
+
+    assert!(
+        vector.exists(),
+        "triangulated ledger: vector missing: {}",
+        vector.display(),
+    );
+    assert!(
+        vpx_path.exists(),
+        "triangulated ledger: vpxdec ledger missing: {}\n  \
+         regen via: pwsh scripts/encode-corpus.ps1 ... -WithLedger\n  \
+         (or `pwsh scripts/oracle-ledger-ffmpeg.ps1 -Vector <vector>` if the\n  \
+         vpxdec one already exists but you need to refresh the ffmpeg sibling)",
+        vpx_path.display(),
+    );
+    assert!(
+        ff_path.exists(),
+        "triangulated ledger: ffmpeg ledger missing: {}\n  \
+         regen via: pwsh scripts/oracle-ledger-ffmpeg.ps1 -Vector {} -Verify",
+        ff_path.display(),
+        vector.display(),
+    );
+
+    let vpx = read_md5_file(&vpx_path)
+        .unwrap_or_else(|e| panic!("triangulated ledger: parse vpx {}: {e}", vpx_path.display()));
+    let ff = read_md5_file(&ff_path)
+        .unwrap_or_else(|e| panic!("triangulated ledger: parse ffmpeg {}: {e}", ff_path.display()));
+
+    assert_eq!(
+        vpx.len(),
+        ff.len(),
+        "ORACLE DISAGREEMENT on {}: vpxdec ledger has {} entries, ffmpeg has {} — \
+         the two reference decoders disagree on the shown-frame count, which is \
+         a libvpx or ffmpeg issue (NOT the consumer's decoder).",
+        vector.display(),
+        vpx.len(),
+        ff.len(),
+    );
+    for (i, (a, b)) in vpx.iter().zip(ff.iter()).enumerate() {
+        let ha = a.md5_hex_visible();
+        let hb = b.md5_hex_visible();
+        assert_eq!(
+            ha, hb,
+            "ORACLE DISAGREEMENT on {} at shown-frame {i}: vpxdec={:?} ffmpeg={:?} — \
+             two independent VP9 decoders disagree on the bitstream's decoded output, \
+             which is a libvpx or ffmpeg issue (NOT the consumer's decoder). \
+             Investigate the encoder/decoder side BEFORE blaming the consumer.",
+            vector.display(),
+            ha.as_deref().unwrap_or("<none>"),
+            hb.as_deref().unwrap_or("<none>"),
+        );
+    }
+    vpx
+}
+
 /// Parse a 32-char lowercase hex string into a 16-byte digest. Returns
 /// `None` if the string is the wrong length or contains a non-hex
 /// character.

@@ -38,7 +38,7 @@
 use rvp9_core::bitstream::FrameKind;
 use rvp9_decoder::Decoder;
 use rvp9_harness::container::read_packets;
-use rvp9_harness::md5file::read_md5_file;
+use rvp9_harness::md5file::read_triangulated_ledger;
 use rvp9_harness::{hex16, md5_of_yv12_visible};
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -86,20 +86,13 @@ fn profile1_vector(name: &str) -> PathBuf {
         .join(name)
 }
 
-/// The sibling ledger path: the full vector filename with `.md5`
-/// appended (so it works for both `.webm` and `.ivf` vectors).
-fn ledger_path(vector: &PathBuf) -> PathBuf {
-    let mut s = vector.clone().into_os_string();
-    s.push(".md5");
-    PathBuf::from(s)
-}
-
 /// Decode one Profile-1 vector and gate every shown frame's visible
-/// MD5 against the sibling ledger. Returns `(shown_frames, mismatches)`
-/// after asserting the zero-mismatch + full-coverage invariants.
+/// MD5 against the **triangulated** ledger (vpxdec + ffmpeg must agree
+/// first; only then is our decoder compared). Returns `(shown_frames,
+/// mismatches)` after asserting the zero-mismatch + full-coverage
+/// invariants.
 fn decode_and_gate(name: &str) -> (usize, usize) {
     let vector = profile1_vector(name);
-    let ledger = ledger_path(&vector);
 
     // Fail loudly — never skip. (M1 lesson: missing coverage that
     // silently evaporates is worse than no coverage.)
@@ -108,16 +101,15 @@ fn decode_and_gate(name: &str) -> (usize, usize) {
         "Profile-1 vector missing: {}",
         vector.display(),
     );
-    assert!(
-        ledger.exists(),
-        "Profile-1 ledger missing: {}",
-        ledger.display(),
-    );
 
     let (data, packets) = read_packets(&vector)
         .unwrap_or_else(|e| panic!("container parse {}: {e}", vector.display()));
-    let entries = read_md5_file(&ledger)
-        .unwrap_or_else(|e| panic!("ledger parse {}: {e}", ledger.display()));
+    // Wave O: triangulated oracle — `read_triangulated_ledger` loads
+    // both <vector>.md5 (vpxdec) and <vector>.ffmpeg.md5 and asserts
+    // they agree on every shown-frame's hash BEFORE this returns.
+    // If the two oracles disagree the panic message names libvpx /
+    // ffmpeg as the suspect, NOT our decoder.
+    let entries = read_triangulated_ledger(&vector);
 
     // Pin to one worker — deterministic, no thread amplification.
     let mut decoder = Decoder::with_threads(NonZeroUsize::new(1).expect("1 is non-zero"));

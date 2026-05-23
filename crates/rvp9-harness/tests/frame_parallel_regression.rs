@@ -40,7 +40,7 @@
 use rvp9_core::bitstream::FrameKind;
 use rvp9_decoder::Decoder;
 use rvp9_harness::container::read_packets;
-use rvp9_harness::md5file::read_md5_file;
+use rvp9_harness::md5file::read_triangulated_ledger;
 use rvp9_harness::{hex16, md5_of_yv12_visible};
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -68,7 +68,6 @@ const REGEN_HINT: &str = "Regenerate it with:\n  \
 #[test]
 fn frame_parallel_corpus_decodes_bit_exact() {
     let ivf = fixture_ivf();
-    let md5 = ivf.with_extension("ivf.md5");
 
     // Fail loudly — never skip. Missing coverage must be impossible to miss.
     assert!(
@@ -76,16 +75,14 @@ fn frame_parallel_corpus_decodes_bit_exact() {
         "frame-parallel regression fixture missing: {}\n{REGEN_HINT}",
         ivf.display(),
     );
-    assert!(
-        md5.exists(),
-        "frame-parallel regression ledger missing: {}\n{REGEN_HINT}",
-        md5.display(),
-    );
 
     let (data, packets) =
         read_packets(&ivf).unwrap_or_else(|e| panic!("container parse {}: {e}", ivf.display()));
-    let entries =
-        read_md5_file(&md5).unwrap_or_else(|e| panic!("ledger parse {}: {e}", md5.display()));
+    // Wave O: triangulated oracle. Requires both <ivf>.md5 (vpxdec) and
+    // <ivf>.ffmpeg.md5 to be present AND to agree on every frame's hash
+    // before this returns. If they disagree, the panic message points to
+    // libvpx/ffmpeg as the suspect — never the consumer's decoder.
+    let entries = read_triangulated_ledger(&ivf);
 
     // Pin to one worker (mirrors real_world.rs — avoid thread amplification).
     let mut decoder = Decoder::with_threads(NonZeroUsize::new(1).expect("1 is non-zero"));
