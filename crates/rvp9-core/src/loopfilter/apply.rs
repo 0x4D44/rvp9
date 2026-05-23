@@ -35,9 +35,12 @@
 
 use super::mask::LoopFilterMask;
 use crate::bitstream::ChromaFormat;
+use crate::block::uv_plane_tx_size;
 use crate::dsp::SimdDispatch;
 use crate::frame::Yv12Buffer;
-use crate::loopfilter::LoopFilterInfo;
+use crate::loopfilter::{FrameFilterLevels, LoopFilterInfo};
+use crate::mode_info::{BlockMode, InterMode, ModeInfo, RefFrame};
+use crate::transforms::TxSize;
 
 /// Number of 8×8 MI rows per 64×64 superblock. Matches libvpx
 /// `MI_BLOCK_SIZE` (`vp9_enums.h:25`).
@@ -81,6 +84,48 @@ const TX_16X16: usize = 2;
 /// masks are ignored in that path. We do the same here, which is why
 /// no widened UV mask representation is needed: the Y masks already
 /// hold the full 8×8 grid the chroma planes require at 4:4:4.
+///
+/// ## Asymmetric chroma (G7.2 — Milestone 2 of Profile 1)
+///
+/// For 4:2:2 (ss_x=1, ss_y=0) and 4:4:0 (ss_x=0, ss_y=1) the chroma
+/// grid is **asymmetric** w.r.t. luma — neither the packed
+/// [`LoopFilterMask`] (ss11) nor the luma masks (ss00) carry the right
+/// per-edge information. libvpx handles this via the `LF_PATH_SLOW`
+/// path (`vp9_loopfilter.c:1459-1462`), which calls
+/// [`filter_block_plane_non420`] (mirroring libvpx
+/// `vp9_filter_block_plane_non420`, `:1078-1237`) and walks the
+/// MODE_INFO grid directly per chroma row to build per-row masks. This
+/// is why `mi_grid` / `mi_stride` / `levels` are required arguments:
+/// the non420 path consults them; the 420/444 paths ignore them.
+/// Bundle of inputs the `LF_PATH_SLOW` (4:2:2 / 4:4:0) path needs but
+/// the 420 / 444 paths ignore. Bundled into a single optional argument
+/// so the public signature stays backward-compatible for callers that
+/// only ever produce 4:2:0 (e.g. the encoder).
+///
+/// Mirrors the per-frame fields libvpx's `loop_filter_rows` consults
+/// for the non420 path: the row-major `MODE_INFO` slab (`cm->
+/// mi_grid_visible`), the slab stride (`cm->mi_stride`), and the
+/// resolved per-frame `[seg][ref][mode]` filter-level cube
+/// (`cm->lf_info.lvl`).
+#[derive(Copy, Clone, Debug)]
+pub struct Non420Inputs<'a> {
+    /// Frame-wide MI slab, row-major, indexed `[r * mi_stride + c]`.
+    pub mi_grid: &'a [ModeInfo],
+    /// Stride in MI cells per row.
+    pub mi_stride: usize,
+    /// Per-frame `[seg][ref][mode]` filter-level cube (output of
+    /// [`crate::loopfilter::resolve_filter_levels`]).
+    pub levels: &'a FrameFilterLevels,
+}
+
+/// Apply the loop filter to the whole frame, in SB raster order.
+///
+/// Backward-compatible entry that handles 4:2:0 and 4:4:4 buffers. For
+/// 4:2:2 / 4:4:0 callers, use [`loop_filter_frame_with_non420`] and
+/// pass `Some(Non420Inputs { .. })` — calling this overload on an
+/// asymmetric-chroma buffer panics inside the dispatch.
+///
+/// See [`loop_filter_frame_with_non420`] for the argument semantics.
 #[allow(clippy::too_many_arguments)]
 pub fn loop_filter_frame(
     yv12: &mut Yv12Buffer,
@@ -94,22 +139,71 @@ pub fn loop_filter_frame(
     start_mi_row: usize,
     end_mi_row: usize,
 ) {
+    // Backward-compatible entry: dispatches to the full version with no
+    // non420 inputs. Callers that may see 4:2:2 / 4:4:0 must use
+    // [`loop_filter_frame_with_non420`] instead — this overload panics
+    // if the buffer's chroma format is asymmetric, matching the
+    // pre-G7.2 behavior expected by callers that only ever encode /
+    // decode 4:2:0 or 4:4:4 (e.g. the encoder).
+    loop_filter_frame_with_non420(
+        yv12,
+        lfm_grid,
+        lfm_stride,
+        sb_rows,
+        sb_cols,
+        mi_rows,
+        mi_cols,
+        info,
+        start_mi_row,
+        end_mi_row,
+        None,
+    );
+}
+
+/// Like [`loop_filter_frame`] but accepts the `LF_PATH_SLOW` inputs
+/// needed for 4:2:2 / 4:4:0 chroma (libvpx
+/// `vp9_filter_block_plane_non420`). Pass `None` if you've statically
+/// guaranteed the buffer's chroma is 4:2:0 or 4:4:4.
+#[allow(clippy::too_many_arguments)]
+pub fn loop_filter_frame_with_non420(
+    yv12: &mut Yv12Buffer,
+    lfm_grid: &[LoopFilterMask],
+    lfm_stride: usize,
+    sb_rows: usize,
+    sb_cols: usize,
+    mi_rows: usize,
+    mi_cols: usize,
+    info: &LoopFilterInfo,
+    start_mi_row: usize,
+    end_mi_row: usize,
+    non420: Option<Non420Inputs<'_>>,
+) {
     debug_assert!(start_mi_row <= end_mi_row);
     debug_assert!(end_mi_row <= sb_rows * MI_BLOCK_SIZE);
     debug_assert!(lfm_grid.len() >= sb_rows * lfm_stride);
     debug_assert!(lfm_stride >= sb_cols);
-    // G7.1c: the loop filter now handles two chroma paths. 4:2:0
-    // (`LF_PATH_420`) drives U/V through `filter_block_plane_ss11`
-    // (chroma origin `(mi_row * MI_BLOCK_SIZE / 2) * stride + ...`,
-    // ss_x = ss_y = 1). 4:4:4 (`LF_PATH_444`) drives U/V through
-    // `filter_block_plane_ss00` with the luma masks (chroma grid ==
-    // luma grid). Asymmetric 4:2:2 / 4:4:0 (`LF_PATH_SLOW`) are
-    // rejected by the decoder gate before reaching here.
+    // G7.2: the loop filter now handles all four chroma formats.
+    //   - 4:2:0 (`LF_PATH_420`): U/V via `filter_block_plane_ss11`,
+    //     chroma origin `(mi_row * MI_BLOCK_SIZE / 2) * stride + ...`,
+    //     ss_x = ss_y = 1.
+    //   - 4:4:4 (`LF_PATH_444`): U/V via `filter_block_plane_ss00` with
+    //     the luma masks (chroma grid == luma grid).
+    //   - 4:2:2 / 4:4:0 (`LF_PATH_SLOW`): U/V via
+    //     `filter_block_plane_non420`, which walks the MI grid directly
+    //     because the packed SB mask cannot represent the asymmetric
+    //     chroma layout. Mirrors libvpx `loop_filter_rows` dispatch at
+    //     `vp9_loopfilter.c:1452-1463`.
     let chroma = yv12.chroma();
     debug_assert!(
-        matches!(chroma, ChromaFormat::Yuv420 | ChromaFormat::Yuv444),
-        "loop_filter_frame supports Yuv420 / Yuv444; the decoder gate \
-         should have rejected {chroma:?} before this point",
+        matches!(
+            chroma,
+            ChromaFormat::Yuv420
+                | ChromaFormat::Yuv422
+                | ChromaFormat::Yuv440
+                | ChromaFormat::Yuv444
+        ),
+        "loop_filter_frame should see one of the four legal VP9 chroma \
+         formats; got {chroma:?}",
     );
     let _ = mi_cols; // libvpx parity: `mi_col` loop terminates at `mi_cols`,
     // which equals `sb_cols * MI_BLOCK_SIZE` rounded up; we
@@ -220,12 +314,59 @@ pub fn loop_filter_frame(
                         );
                     }
                 }
-                // Asymmetric subsampling — gated upstream this milestone.
+                // Asymmetric subsampling (4:2:2 / 4:4:0) — the
+                // `LF_PATH_SLOW` path in libvpx (`vp9_loopfilter.c:1459-
+                // 1462`). The packed SB mask doesn't carry the right
+                // chroma layout, so `filter_block_plane_non420` walks
+                // the MI grid directly per chroma row. Requires the
+                // caller to pass `Non420Inputs` — without those the
+                // non420 path cannot run.
                 ChromaFormat::Yuv422 | ChromaFormat::Yuv440 => {
-                    unreachable!(
-                        "4:2:2 / 4:4:0 loop filtering (LF_PATH_SLOW) not yet \
-                         implemented; decoder gate rejects these formats"
-                    )
+                    let n420 = non420.expect(
+                        "loop_filter_frame called on Yuv422 / Yuv440 buffer \
+                         without Non420Inputs — use loop_filter_frame_with_non420 \
+                         and pass Some(Non420Inputs { .. })",
+                    );
+                    let ss_x = chroma.subsampling_x();
+                    let ss_y = chroma.subsampling_y();
+                    {
+                        let mut u = yv12.u_plane_mut();
+                        let stride = u.stride();
+                        filter_block_plane_non420(
+                            u.data_mut(),
+                            stride,
+                            n420.mi_grid,
+                            n420.mi_stride,
+                            mi_row,
+                            mi_col,
+                            mi_rows,
+                            mi_cols,
+                            ss_x,
+                            ss_y,
+                            info,
+                            n420.levels,
+                            dispatch,
+                        );
+                    }
+                    {
+                        let mut v = yv12.v_plane_mut();
+                        let stride = v.stride();
+                        filter_block_plane_non420(
+                            v.data_mut(),
+                            stride,
+                            n420.mi_grid,
+                            n420.mi_stride,
+                            mi_row,
+                            mi_col,
+                            mi_rows,
+                            mi_cols,
+                            ss_x,
+                            ss_y,
+                            info,
+                            n420.levels,
+                            dispatch,
+                        );
+                    }
                 }
             }
         }
@@ -447,6 +588,374 @@ fn filter_block_plane_ss11(
         mask_4x4 >>= 4;
         mask_4x4_int >>= 4;
         r += 2;
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Asymmetric-chroma path (4:2:2 / 4:4:0) — libvpx `LF_PATH_SLOW`.
+// ----------------------------------------------------------------------------
+
+/// libvpx `mode_lf_lut[mi->mode]` (`vp9_loopfilter.c:207-210`).
+/// Intra modes + `ZEROMV` map to 0; the other three inter modes map
+/// to 1. Duplicated from `setup_mask.rs`'s private helper because that
+/// module's copy is `pub(super)` to its parent only.
+#[inline]
+fn mode_lf_idx(mi: &ModeInfo) -> usize {
+    match &mi.mode {
+        BlockMode::Intra { .. } => 0,
+        BlockMode::Inter { mode, .. } => match mode {
+            InterMode::ZeroMv => 0,
+            InterMode::NearestMv | InterMode::NearMv | InterMode::NewMv => 1,
+        },
+    }
+}
+
+/// libvpx `mi->ref_frame[0]` → cube ref-axis index. Intra blocks map
+/// to `INTRA_FRAME = 0`. Mirrors `setup_mask.rs::ref0_idx`.
+#[inline]
+fn ref0_idx(mi: &ModeInfo) -> usize {
+    match &mi.mode {
+        BlockMode::Intra { .. } => 0,
+        BlockMode::Inter { ref_frames, .. } => match ref_frames[0] {
+            RefFrame::NoRefFrame | RefFrame::IntraFrame => 0,
+            RefFrame::LastFrame => 1,
+            RefFrame::GoldenFrame => 2,
+            RefFrame::AltrefFrame => 3,
+        },
+    }
+}
+
+/// libvpx `get_filter_level(lfi_n, mi)` (`vp9_loopfilter.c:233-236`).
+/// Per-block filter level lookup from the resolved
+/// `[seg][ref][mode]` cube.
+#[inline]
+fn get_filter_level_mi(levels: &FrameFilterLevels, mi: &ModeInfo) -> u8 {
+    let seg = (mi.segment_id as usize).min(crate::loopfilter::MAX_SEGMENTS - 1);
+    levels[seg][ref0_idx(mi)][mode_lf_idx(mi)]
+}
+
+/// `is_inter_block(mi)` mirror — libvpx `vp9_blockd.h:208-210` only
+/// inspects `mi->ref_frame[0] > INTRA_FRAME`. Our `ModeInfo::is_inter`
+/// is the cleaner expression of the same thing.
+#[inline]
+fn is_inter_block(mi: &ModeInfo) -> bool {
+    mi.is_inter()
+}
+
+/// Filter one superblock's chroma plane for the asymmetric 4:2:2 /
+/// 4:4:0 cases (libvpx `LF_PATH_SLOW`). Mirrors
+/// `vp9_filter_block_plane_non420` (`vp9_loopfilter.c:1078-1237`).
+///
+/// Unlike the ss00 / ss11 paths, this function does **not** consume the
+/// packed [`LoopFilterMask`] (which can only describe the 8×8 luma
+/// grid). Instead it walks the per-MI `MODE_INFO` slab directly for
+/// the SB, building per-luma-row mask arrays sized `MI_BLOCK_SIZE = 8`.
+/// The chroma loop iterates `MI_BLOCK_SIZE` luma-row steps, stepping by
+/// `row_step = 1 << ss_y` and `col_step = 1 << ss_x` so the inner
+/// iteration count matches the *chroma* grid dimensions even though
+/// the indexing remains in luma-MI units (libvpx `:1101-1108`).
+///
+/// `pixels` is a mutable slice over the chroma plane (`u_plane_mut()`
+/// or `v_plane_mut()` `.data_mut()`); `stride` is its row stride.
+/// `mi_grid` is the row-major frame-wide MI slab with stride
+/// `mi_grid_stride`. `mi_row` / `mi_col` are the SB's top-left
+/// position in luma-MI units; `mi_rows` / `mi_cols` are the frame's MI
+/// extents (for the partial-bottom/right clamp). `ss_x` / `ss_y` are
+/// the plane's subsampling flags (4:2:2 ⇒ ss_x=true, ss_y=false; 4:4:0
+/// ⇒ ss_x=false, ss_y=true).
+#[allow(clippy::too_many_arguments)]
+fn filter_block_plane_non420(
+    pixels: &mut [u8],
+    stride: usize,
+    mi_grid: &[ModeInfo],
+    mi_grid_stride: usize,
+    mi_row: usize,
+    mi_col: usize,
+    mi_rows: usize,
+    mi_cols: usize,
+    ss_x: bool,
+    ss_y: bool,
+    info: &LoopFilterInfo,
+    levels: &FrameFilterLevels,
+    dispatch: &SimdDispatch,
+) {
+    // Subsampling factors as 0/1 integers (libvpx `ss_x` / `ss_y`).
+    let ssx = ss_x as usize;
+    let ssy = ss_y as usize;
+    let row_step: usize = 1 << ssy;
+    let col_step: usize = 1 << ssx;
+
+    // Per-luma-row mask arrays — sized MI_BLOCK_SIZE (8) and indexed
+    // by the SB-local luma MI row `r`. Only the rows actually visited
+    // (`r % row_step == 0`) are written; the rest stay zero. Mirrors
+    // libvpx `:1088-1099`.
+    let mut mask_16x16 = [0u32; MI_BLOCK_SIZE];
+    let mut mask_8x8 = [0u32; MI_BLOCK_SIZE];
+    let mut mask_4x4 = [0u32; MI_BLOCK_SIZE];
+    let mut mask_4x4_int = [0u32; MI_BLOCK_SIZE];
+    // lfl is indexed `[(r << 3) + (c >> ss_x)]` — matches libvpx
+    // (`:1129`). 64 entries: 8 luma rows × up-to-8 chroma cols.
+    let mut lfl = [0u8; MI_BLOCK_SIZE * MI_BLOCK_SIZE];
+
+    // SB origin within the chroma plane. For each chroma row covered
+    // by this SB (luma row r → chroma row r >> ss_y), the pixel offset
+    // is `(mi_row + r) >> ss_y * 8 * stride`. The `>> ss_y` is implicit:
+    // because we step by `row_step` we visit only luma rows that
+    // correspond to a chroma row, and each chroma row is 8 pixels —
+    // so the per-iteration pixel advance is `8 * stride` regardless of
+    // subsampling (libvpx `:1198`, `:1235`).
+    //
+    // The plane origin is `((mi_row * MI_BLOCK_SIZE) >> ss_y) * stride
+    // + ((mi_col * MI_BLOCK_SIZE) >> ss_x)`.
+    let sb_origin = ((mi_row * MI_BLOCK_SIZE) >> ssy) * stride
+        + ((mi_col * MI_BLOCK_SIZE) >> ssx);
+
+    // ============================================================
+    // Vertical pass: build per-row vertical-edge masks AND dispatch
+    // the per-row vertical kernels in the same outer loop, just like
+    // libvpx (`:1101-1200`). This is correctness-critical: the
+    // horizontal pass below reads the row-keyed mask_16x16 / mask_8x8
+    // / mask_4x4 arrays, which are populated here.
+    // ============================================================
+    let mut r = 0usize;
+    while r < MI_BLOCK_SIZE && mi_row + r < mi_rows {
+        let mut mask_16x16_c: u32 = 0;
+        let mut mask_8x8_c: u32 = 0;
+        let mut mask_4x4_c: u32 = 0;
+
+        // mi_grid row pointer for this luma row (libvpx `mi_8x8`).
+        let row_base = (mi_row + r) * mi_grid_stride + mi_col;
+
+        let mut c = 0usize;
+        while c < MI_BLOCK_SIZE && mi_col + c < mi_cols {
+            let mi = &mi_grid[row_base + c];
+            let sb_type = mi.block_size;
+            let skip_this = mi.skip && is_inter_block(mi);
+
+            // "Left edge of current unit is block/partition edge"
+            // (libvpx `:1112-1117`). Equivalent to "c is aligned to
+            // the block's 8×8 width within the SB".
+            let n_8x8_wide = sb_type.n_8x8_wide() as usize;
+            let block_edge_left = if sb_type.n_4x4_wide() > 1 {
+                (c & (n_8x8_wide - 1)) == 0
+            } else {
+                true
+            };
+            let skip_this_c = skip_this && !block_edge_left;
+
+            // "Top edge of current unit is block/partition edge"
+            // (libvpx `:1118-1123`).
+            let n_8x8_high = sb_type.n_8x8_high() as usize;
+            let block_edge_above = if sb_type.n_4x4_high() > 1 {
+                (r & (n_8x8_high - 1)) == 0
+            } else {
+                true
+            };
+            let skip_this_r = skip_this && !block_edge_above;
+
+            // Chroma TX size for this MI under (ss_x, ss_y). Mirrors
+            // libvpx `get_uv_tx_size(mi, plane)` (`vp9_blockd.h:243-
+            // 250`); our `uv_plane_tx_size` is the parametric form
+            // landed in G7.1a (`crates/rvp9-core/src/block.rs:325`).
+            let tx_size = uv_plane_tx_size(sb_type, mi.tx_size, ssx, ssy);
+
+            // Frame-edge guards. Libvpx `:1125-1126` — when ss_x is
+            // set AND this is the last column in the frame, drop the
+            // 4×4-internal edge (it would read off the frame). Same
+            // for ss_y at the bottom row.
+            let skip_border_4x4_c = ss_x && mi_col + c == mi_cols - 1;
+            let skip_border_4x4_r = ss_y && mi_row + r == mi_rows - 1;
+
+            // Look up the filter level and bail if zero (libvpx
+            // `:1129-1130`).
+            let lvl = get_filter_level_mi(levels, mi);
+            let lfl_idx = (r << 3) + (c >> ssx);
+            lfl[lfl_idx] = lvl;
+            if lvl == 0 {
+                c += col_step;
+                continue;
+            }
+
+            // Build per-tx masks. The bit position is `1 << (c >> ss_x)`
+            // so chroma column indexing is naturally compact (4:2:2
+            // ⇒ 4 chroma cols → bits 0..4; 4:4:0 ⇒ 8 cols → bits 0..8).
+            let bit = 1u32 << (c >> ssx);
+            match tx_size {
+                TxSize::Tx32x32 => {
+                    // libvpx `:1133-1145` — only mark on aligned
+                    // 4-block boundaries (32 px = 4 × 8).
+                    if !skip_this_c && ((c >> ssx) & 3) == 0 {
+                        if !skip_border_4x4_c {
+                            mask_16x16_c |= bit;
+                        } else {
+                            mask_8x8_c |= bit;
+                        }
+                    }
+                    if !skip_this_r && ((r >> ssy) & 3) == 0 {
+                        if !skip_border_4x4_r {
+                            mask_16x16[r] |= bit;
+                        } else {
+                            mask_8x8[r] |= bit;
+                        }
+                    }
+                }
+                TxSize::Tx16x16 => {
+                    // libvpx `:1146-1158` — aligned 2-block boundaries.
+                    if !skip_this_c && ((c >> ssx) & 1) == 0 {
+                        if !skip_border_4x4_c {
+                            mask_16x16_c |= bit;
+                        } else {
+                            mask_8x8_c |= bit;
+                        }
+                    }
+                    if !skip_this_r && ((r >> ssy) & 1) == 0 {
+                        if !skip_border_4x4_r {
+                            mask_16x16[r] |= bit;
+                        } else {
+                            mask_8x8[r] |= bit;
+                        }
+                    }
+                }
+                TxSize::Tx8x8 | TxSize::Tx4x4 => {
+                    // libvpx `:1159-1177` — "force 8×8 filtering on
+                    // 32×32 boundaries" for sub-16 transforms; 4×4
+                    // otherwise. Plus the internal-4×4 edge for tx<8.
+                    if !skip_this_c {
+                        if tx_size == TxSize::Tx8x8 || ((c >> ssx) & 3) == 0 {
+                            mask_8x8_c |= bit;
+                        } else {
+                            mask_4x4_c |= bit;
+                        }
+                    }
+                    if !skip_this_r {
+                        if tx_size == TxSize::Tx8x8 || ((r >> ssy) & 3) == 0 {
+                            mask_8x8[r] |= bit;
+                        } else {
+                            mask_4x4[r] |= bit;
+                        }
+                    }
+                    if !skip_this && tx_size < TxSize::Tx8x8 && !skip_border_4x4_c {
+                        mask_4x4_int[r] |= bit;
+                    }
+                }
+            }
+
+            c += col_step;
+        }
+
+        // Dispatch this row's vertical pass. Border mask clears the
+        // leftmost bit when mi_col == 0 (libvpx `:1181`).
+        let border_mask: u32 = if mi_col == 0 { !1u32 } else { !0u32 };
+        let dst_offset = sb_origin + (r >> ssy) * 8 * stride;
+        // Note: libvpx passes the un-shifted `lfl[r << 3]` slice; the
+        // chroma columns are at positions 0..(MI_BLOCK_SIZE >> ss_x)
+        // within that row, and the column dispatcher walks the union
+        // mask bit-by-bit. Reusing `filter_selectively_horiz` for the
+        // *vertical* edges here mirrors what libvpx does — the per-
+        // column dispatch logic is the same; only the kernel slot
+        // selection differs (vertical kernels). The libvpx slow path
+        // calls a dedicated `filter_selectively_vert` (the non-dual
+        // variant); we inline a per-bit walker below so we can drive
+        // the dispatch slots directly.
+        filter_selectively_vert_non420(
+            pixels,
+            dst_offset,
+            stride,
+            mask_16x16_c & border_mask,
+            mask_8x8_c & border_mask,
+            mask_4x4_c & border_mask,
+            mask_4x4_int[r],
+            info,
+            &lfl[(r << 3)..],
+            dispatch,
+        );
+
+        r += row_step;
+    }
+
+    // ============================================================
+    // Horizontal pass: dispatch per row, reading the row-keyed mask
+    // arrays we built above. Mirrors libvpx `:1202-1236`.
+    // ============================================================
+    let mut r = 0usize;
+    while r < MI_BLOCK_SIZE && mi_row + r < mi_rows {
+        let skip_border_4x4_r = ss_y && mi_row + r == mi_rows - 1;
+        let mask_4x4_int_r = if skip_border_4x4_r { 0 } else { mask_4x4_int[r] };
+
+        let (m16, m8, m4) = if mi_row + r == 0 {
+            (0u32, 0u32, 0u32)
+        } else {
+            (mask_16x16[r], mask_8x8[r], mask_4x4[r])
+        };
+
+        let dst_offset = sb_origin + (r >> ssy) * 8 * stride;
+        // libvpx `:1191/1229` calls the same `filter_selectively_horiz`
+        // used by the ss00 / ss11 paths — reuse our shared helper.
+        filter_selectively_horiz(
+            pixels,
+            dst_offset,
+            stride,
+            m16,
+            m8,
+            m4,
+            mask_4x4_int_r,
+            info,
+            &lfl[(r << 3)..],
+            dispatch,
+        );
+
+        r += row_step;
+    }
+}
+
+/// libvpx `filter_selectively_vert` (the non-dual variant —
+/// `vp9_loopfilter.c:374-451`). Walks the per-column mask bits one at
+/// a time, dispatching the widest applicable vertical kernel per
+/// column. Used by the non420 path because the asymmetric chroma
+/// grids don't tile cleanly into the "two-rows-of-the-luma-grid-
+/// at-a-time" `_dual` shape.
+#[allow(clippy::too_many_arguments)]
+fn filter_selectively_vert_non420(
+    pixels: &mut [u8],
+    s_index: usize,
+    pitch: usize,
+    mut mask_16x16: u32,
+    mut mask_8x8: u32,
+    mut mask_4x4: u32,
+    mut mask_4x4_int: u32,
+    info: &LoopFilterInfo,
+    lfl: &[u8],
+    dispatch: &SimdDispatch,
+) {
+    let v16 = dispatch.lpf_vertical_16();
+    let v8 = dispatch.lpf_vertical_8();
+    let v4 = dispatch.lpf_vertical_4();
+
+    let mut mask = mask_16x16 | mask_8x8 | mask_4x4 | mask_4x4_int;
+    let mut s = s_index;
+    let mut lfl_index: usize = 0;
+
+    while mask != 0 {
+        if mask & 1 != 0 {
+            let lfi = info.thresh(lfl[lfl_index]);
+            if mask_16x16 & 1 != 0 {
+                v16(pixels, s, pitch, lfi.mblim, lfi.lim, lfi.hev_thr);
+            } else if mask_8x8 & 1 != 0 {
+                v8(pixels, s, pitch, lfi.mblim, lfi.lim, lfi.hev_thr);
+            } else if mask_4x4 & 1 != 0 {
+                v4(pixels, s, pitch, lfi.mblim, lfi.lim, lfi.hev_thr);
+            }
+            if mask_4x4_int & 1 != 0 {
+                v4(pixels, s + 4, pitch, lfi.mblim, lfi.lim, lfi.hev_thr);
+            }
+        }
+        s += 8;
+        lfl_index += 1;
+        mask >>= 1;
+        mask_16x16 >>= 1;
+        mask_8x8 >>= 1;
+        mask_4x4 >>= 1;
+        mask_4x4_int >>= 1;
     }
 }
 
@@ -932,6 +1441,7 @@ mod tests {
         )
         .expect("alloc 64x64 frame")
     }
+
 
     /// Hash the visible Y region for cheap equality checks. We
     /// deliberately read row-by-row to skip the border bytes.

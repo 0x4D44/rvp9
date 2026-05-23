@@ -361,17 +361,18 @@ pub fn decode_tile_intra(
     cur_segment_ids: &mut [u8],
     dispatch: &SimdDispatch,
 ) -> Result<TileDecodeCtx, TileDecodeError> {
-    // G7.1c: the per-block decode chain is `ss`-aware for the two
-    // identity-grid chroma formats (G7.1a parametric geometry / G7.1b
-    // inter MC). The `Decoder::decode_frame` gate rejects the
-    // asymmetric formats (4:2:2 / 4:4:0) before any frame reaches here,
-    // so the only formats we should see are 4:2:0 and 4:4:4. Debug-only.
+    // G7.2: the per-block decode chain is `ss`-aware for all four legal
+    // VP9 chroma formats (G7.1a parametric geometry / G7.1b inter MC /
+    // G7.2 non420 loopfilter). Debug-only sanity check.
     debug_assert!(
         matches!(
             dst_frame.chroma(),
-            ChromaFormat::Yuv420 | ChromaFormat::Yuv444
+            ChromaFormat::Yuv420
+                | ChromaFormat::Yuv422
+                | ChromaFormat::Yuv440
+                | ChromaFormat::Yuv444
         ),
-        "decoder gate should have rejected {:?} before decode_tile_intra",
+        "decode_tile_intra: unexpected chroma {:?}",
         dst_frame.chroma(),
     );
     let mut reader =

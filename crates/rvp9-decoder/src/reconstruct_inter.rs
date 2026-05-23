@@ -161,16 +161,18 @@ pub fn reconstruct_inter_block(
     dst_frame: &mut Yv12Buffer,
     dispatch: &SimdDispatch,
 ) {
-    // G7.1c: the per-plane MC / residual loops are `ss`-aware (G7.1a
-    // parametric geometry / G7.1b inter MC). The `Decoder::decode_frame`
-    // gate rejects the asymmetric formats (4:2:2 / 4:4:0), so the only
-    // formats reaching here are 4:2:0 and 4:4:4. Debug-only.
+    // G7.2: the per-plane MC / residual loops are `ss`-aware for all
+    // four legal VP9 chroma formats (G7.1a parametric geometry / G7.1b
+    // inter MC / G7.2 non420 loopfilter). Debug-only sanity check.
     debug_assert!(
         matches!(
             dst_frame.chroma(),
-            ChromaFormat::Yuv420 | ChromaFormat::Yuv444
+            ChromaFormat::Yuv420
+                | ChromaFormat::Yuv422
+                | ChromaFormat::Yuv440
+                | ChromaFormat::Yuv444
         ),
-        "decoder gate should have rejected {:?} before reconstruct_inter_block",
+        "reconstruct_inter_block: unexpected chroma {:?}",
         dst_frame.chroma(),
     );
     let (mode, ref_frames, mvs, interp_filter) = match mi.mode {

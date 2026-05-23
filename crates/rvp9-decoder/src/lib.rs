@@ -68,8 +68,9 @@ use rvp9_core::inter::mode_info::{InterModeReadParams, setup_compound_reference_
 use rvp9_core::inter::mv_ref::sign_bias_from_header;
 use rvp9_core::loopfilter::{
     LoopFilterInfo, LoopFilterMask, ResolvedLfDeltas, SegmentationLfView, adjust_mask,
-    loop_filter_frame, resolve_filter_levels, setup_mask,
+    resolve_filter_levels, setup_mask,
 };
+use rvp9_core::loopfilter::apply::loop_filter_frame_with_non420;
 use rvp9_core::mode_info::ModeInfo;
 
 use crate::tile::{
@@ -1148,36 +1149,31 @@ impl Decoder {
         // with the same `f=N` libvpx emits, so per-frame diffs are
         // line-up-able.
         RVP9_TRACE_FRAME_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        // G7.1 plumbing gate. As of G7.1c the decode chain is `ss`-aware
-        // for the two identity-or-near-identity chroma grids:
-        //   - Yuv420 (ss=1,1): the original 4:2:0 path.
+        // G7.1 closed; all four chroma formats supported. The decode
+        // chain (intra/inter reconstruction, loopfilter) is `ss`-aware
+        // for every legal VP9 layout:
+        //   - Yuv420 (ss=1,1): original 4:2:0 path.
         //   - Yuv444 (ss=0,0): chroma grid == luma grid; tile.rs / recon /
-        //     loopfilter all drive the chroma planes through the luma-shaped
-        //     code (uv_plane_tx_size with ss=(0,0) == luma tx, ss00
-        //     loopfilter masks).
-        // Yuv422 (ss=1,0) and Yuv440 (ss=0,1) have asymmetric subsampling
-        // that the per-block decode chain does NOT yet handle, so they stay
-        // rejected with `UnsupportedProfile` (NOT `Unimplemented` — see the
-        // variant's doc) until the next milestone. ShowExistingFrame skips
-        // the gate because it merely hands back an already-decoded slot.
+        //     loopfilter drive U/V through the luma-shaped code paths
+        //     (`LF_PATH_444`, `uv_plane_tx_size((0,0)) == luma tx`).
+        //   - Yuv422 (ss=1,0) / Yuv440 (ss=0,1): asymmetric — the
+        //     loopfilter walks the MI grid directly via
+        //     `filter_block_plane_non420` (libvpx `LF_PATH_SLOW`); the
+        //     per-block recon already handles ss-aware geometry from
+        //     G7.1a/b.
         //
         // Inter-frame chroma forwarding (G7.1c): inter frames inherit the
         // sequence chroma established by the most recent key/intra-only
-        // frame — `parse_packet` overlays `self.established_chroma` onto the
-        // inter header (the parser itself hardcodes inter chroma to Yuv420).
-        // So `frame.header.chroma` here is already the correct subsampling
-        // for every frame kind, and the destination buffer allocates right.
-        if !matches!(frame.header.kind, FrameKind::ShowExistingFrame { .. })
-            && !matches!(
-                frame.header.chroma,
-                ChromaFormat::Yuv420 | ChromaFormat::Yuv444
-            )
-        {
-            // Yuv422 / Yuv440 — not yet supported this milestone.
-            return Err(DecodeError::UnsupportedProfile {
-                profile: frame.header.profile as u8,
-            });
-        }
+        // frame — `parse_packet` overlays `self.established_chroma` onto
+        // the inter header (the parser itself hardcodes inter chroma to
+        // Yuv420). So `frame.header.chroma` here is already the correct
+        // subsampling for every frame kind, and the destination buffer
+        // allocates right. ShowExistingFrame still skips any gating
+        // because it merely hands back an already-decoded slot.
+        //
+        // The `UnsupportedProfile` variant remains in `DecodeError` for
+        // future Profiles 2/3 (high-bit-depth) — Profile 1 no longer
+        // rejects here, but HBD profiles still will when they're wired.
         match frame.header.kind {
             FrameKind::ShowExistingFrame { .. } => self.decode_show_existing_frame(&frame.header),
             FrameKind::KeyFrame => self.decode_keyframe(frame),
@@ -3052,8 +3048,26 @@ fn apply_loop_filter_to_frame(
         }
     }
 
-    loop_filter_frame(
-        yv12, &lfm_grid, sb_cols, sb_rows, sb_cols, mi_rows, mi_cols, &info, 0, mi_rows,
+    // G7.2: route through the non420-aware overload so 4:2:2 / 4:4:0
+    // buffers get the MI slab + per-frame level cube
+    // `filter_block_plane_non420` requires. The 420 / 444 dispatches
+    // inside `loop_filter_frame_with_non420` ignore these extra inputs.
+    loop_filter_frame_with_non420(
+        yv12,
+        &lfm_grid,
+        sb_cols,
+        sb_rows,
+        sb_cols,
+        mi_rows,
+        mi_cols,
+        &info,
+        0,
+        mi_rows,
+        Some(rvp9_core::loopfilter::apply::Non420Inputs {
+            mi_grid: &frame_mi,
+            mi_stride,
+            levels: &levels,
+        }),
     );
 }
 
@@ -4456,94 +4470,6 @@ mod tests {
             DecodeError::EmptySlot { slot: 3 },
             DecodeError::EmptyInterRef { slot: 3 },
         );
-    }
-
-    /// G7.0 review (2026-05-21): the gate at `decode_frame` for
-    /// non-`Yuv420` chroma must surface as
-    /// `DecodeError::UnsupportedProfile { profile: <bitstream profile> }`,
-    /// NOT `DecodeError::Unimplemented`. The two variants are
-    /// independently bucketed by the K-5 conformance harness; folding
-    /// gated features back into `Unimplemented` would resurrect the
-    /// K-5 silent-skip failure mode (a future Profile 1 vector
-    /// classified as a benign skip rather than a flagged gating event).
-    ///
-    /// Hand-synthesise a Profile 1 keyframe `ParsedFrame` directly —
-    /// the gate fires before any compressed-header / tile-byte parse,
-    /// so the body bytes can be empty.
-    #[test]
-    fn decode_frame_gates_profile1_chroma_as_unsupported_profile() {
-        use rvp9_core::bitstream::header::HeaderTail;
-        use rvp9_core::bitstream::sub_parsers::{
-            LoopFilterParams, MAX_PROB, PREDICTION_PROBS, QuantizationParams, SEG_TREE_PROBS,
-            SegmentationParams, TileInfo,
-        };
-        use rvp9_core::bitstream::{
-            BitDepth, ChromaFormat, ColorRange, ColorSpace, Profile, UncompressedHeader,
-        };
-
-        let mut dec = Decoder::new();
-        let tail = HeaderTail {
-            refresh_frame_context: true,
-            frame_parallel_decoding_mode: false,
-            frame_context_idx: 0,
-            loop_filter: LoopFilterParams {
-                filter_level: 0,
-                sharpness_level: 0,
-                mode_ref_delta_enabled: false,
-                mode_ref_delta_update: false,
-                ref_deltas: [None; 4],
-                mode_deltas: [None; 2],
-            },
-            quantization: QuantizationParams {
-                base_qindex: 50,
-                y_dc_delta_q: 0,
-                uv_dc_delta_q: 0,
-                uv_ac_delta_q: 0,
-            },
-            segmentation: SegmentationParams {
-                enabled: false,
-                update_map: false,
-                temporal_update: false,
-                tree_probs: [MAX_PROB; SEG_TREE_PROBS],
-                pred_probs: [MAX_PROB; PREDICTION_PROBS],
-                update_data: false,
-                abs_delta: false,
-                feature_data: Default::default(),
-            },
-            tile_info: TileInfo {
-                log2_tile_cols: 0,
-                log2_tile_rows: 0,
-            },
-            first_partition_size: 0,
-        };
-        let header = UncompressedHeader {
-            kind: FrameKind::KeyFrame,
-            profile: Profile::Profile1,
-            show_frame: true,
-            error_resilient: false,
-            bit_depth: BitDepth::Eight,
-            color_space: ColorSpace::Bt601,
-            color_range: ColorRange::Studio,
-            chroma: ChromaFormat::Yuv444,
-            width: 64,
-            height: 64,
-            render_size: None,
-            tail: Some(tail),
-        };
-        let empty: [u8; 0] = [];
-        let parsed = ParsedFrame {
-            header,
-            header_end_byte: 0,
-            full_frame_data: &empty,
-        };
-
-        let err = dec.decode_frame(&parsed).unwrap_err();
-        assert!(
-            matches!(err, DecodeError::UnsupportedProfile { profile: 1 }),
-            "expected UnsupportedProfile {{ profile: 1 }}, got {err:?}",
-        );
-        // Round-trip via PartialEq for completeness.
-        assert_eq!(err, DecodeError::UnsupportedProfile { profile: 1 });
     }
 
     /// G7.0 review (2026-05-21): companion guard to

@@ -108,6 +108,12 @@ fn conformance_runner_walks_all_vectors() {
     // `total_skipped` would resurrect exactly the K-5 silent-skip
     // failure mode (a future Profile 1 vector classified as a benign
     // skip rather than a flagged gating event).
+    //
+    // G7.2 update (2026-05-23): Profile 1 (all three sub-formats —
+    // 4:2:2 / 4:4:0 / 4:4:4) no longer fires `UnsupportedProfile`. The
+    // bucket survives for future Profiles 2/3 (high-bit-depth), which
+    // remain gated. No logic change here — the gating-counter machinery
+    // and the K-5 invariant both stand.
     let mut total_gated: usize = 0;
 
     for vector in &vectors {
