@@ -652,7 +652,12 @@ pub fn decode_coefs(
     // reference (`crate::quant::plane_dequant_finisher`). `dsp::get()`
     // is one atomic load on the process-wide OnceLock; the dispatch
     // table is constructed once per process and cached.
-    let dispatch = crate::dsp::get();
+    // R.14: try `get_ref()` (borrowed ref) instead of `get()` (Arc clone).
+    // R.13 tried this on inter_predictor and regressed; trying here in
+    // decode_coefs (a different call site) — the dispatch is used
+    // immediately for one indirect call and dropped, so eliminating
+    // the atomic increment may help on coefficient-dense fixtures.
+    let dispatch = crate::dsp::get_ref();
     (dispatch.plane_dequant_finisher())(
         &scratch_raster,
         &scratch_dqv,
