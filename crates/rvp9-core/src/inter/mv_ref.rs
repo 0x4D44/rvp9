@@ -1444,4 +1444,132 @@ mod tests {
             Position { row: 0, col: -1 }
         );
     }
+
+    // ---------- F.2 §6.1 salvage-path tests -----------------------------
+    //
+    // These tests exercise the two prev-frame salvage passes in
+    // `dec_find_mv_refs` (libvpx `vp9_mvref_common.c:72-79` matching-ref
+    // and `:99-122` different-ref-with-sign-bias). The assertions are
+    // expressed via the `RefFrame` sign-bias layout
+    // (`sign_bias_from_header` → 4-slot `[INTRA, LAST, GOLDEN, ALTREF]`)
+    // — see §2.3 of the F.2 HLD and risk R3.
+
+    /// F.2 §6.1 — matching-ref prev salvage: all spatial neighbours are
+    /// absent (no NeighbourLookup hits); the prev-frame cell carries
+    /// `ref_frames[0] == LASTFRAME` with a non-zero MV; the query is
+    /// for `LASTFRAME`. The matching-ref salvage at libvpx
+    /// `vp9_mvref_common.c:72-79` must lift the prev MV into slot 0
+    /// (no sign-bias scaling — the refs match).
+    #[test]
+    fn prev_salvage_matching_ref_emits_temporal_candidate() {
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let sign_bias = [false; 4];
+        let prev_mv = Mv { row: 12, col: 24 };
+        let prev = PrevFrameMvRef {
+            mvs: [prev_mv, Mv::ZERO],
+            ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+        };
+
+        let list = find_mv_refs(
+            InterMode::NearestMv,
+            BlockSize::Block16x16,
+            RefFrame::LastFrame,
+            &nb,
+            &sign_bias,
+            &bounds,
+            Some(prev),
+        );
+
+        // Identity scale (refs equal) — clamp_mv_ref is a no-op under
+        // loose_bounds(). Slot 0 holds the salvaged candidate.
+        assert_eq!(list.mvs[0], prev_mv, "matching-ref salvage lifts prev_mv");
+        assert_eq!(list.count, 1, "NEARESTMV target count is 1");
+    }
+
+    /// F.2 §6.1 — different-ref prev salvage with sign-bias flip:
+    /// all spatial neighbours absent; the prev-frame cell carries
+    /// `ref_frames[0] == GOLDENFRAME` with MV `(10, 20)`; sign-bias
+    /// differs between LAST and GOLDEN. Querying for `LASTFRAME` must
+    /// trigger the different-ref salvage pass at libvpx
+    /// `vp9_mvref_common.c:99-122`, which negates the MV via
+    /// `scale_mv` when `ref_sign_bias[GOLDEN] != ref_sign_bias[LAST]`.
+    #[test]
+    fn prev_salvage_different_ref_with_sign_bias_flip() {
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let mut sign_bias = [false; 4];
+        // GOLDEN gets opposite bias from LAST (which stays `false`).
+        sign_bias[RefFrame::GoldenFrame as usize] = true;
+        let prev_mv = Mv { row: 10, col: 20 };
+        let prev = PrevFrameMvRef {
+            mvs: [prev_mv, Mv::ZERO],
+            ref_frames: [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+        };
+
+        let list = find_mv_refs(
+            InterMode::NearestMv,
+            BlockSize::Block16x16,
+            RefFrame::LastFrame,
+            &nb,
+            &sign_bias,
+            &bounds,
+            Some(prev),
+        );
+
+        // sign-bias differs → `scale_mv` negates both components
+        // (`wrapping_neg`, libvpx's `mv.as_mv.row *= -1`).
+        assert_eq!(
+            list.mvs[0],
+            Mv { row: -10, col: -20 },
+            "different-ref salvage negates under sign-bias mismatch"
+        );
+        assert_eq!(list.count, 1);
+    }
+
+    /// F.2 §6.1 — dedup against spatial: one spatial neighbour
+    /// (above) carries `(LASTFRAME, (5, 5))`; the prev-frame cell
+    /// carries `(LASTFRAME, (5, 5))`. The matching-ref salvage runs
+    /// after the spatial walk and would try to add the same MV;
+    /// `add_mv_ref_list_eb`'s `!=` check (mirroring libvpx's
+    /// `ADD_MV_REF_LIST` dedup) must drop the duplicate so the final
+    /// `count` is 1 (NEARMV target = 2, but only one unique MV ever
+    /// reached the list — `finish` rewrites `count` up to the target
+    /// but the duplicate slot stays zero).
+    #[test]
+    fn prev_salvage_dedup_against_spatial() {
+        let common_mv = Mv { row: 5, col: 5 };
+        let above = inter_mi(BlockSize::Block16x16, RefFrame::LastFrame, common_mv);
+        let nb = ListNeighbours::new().with(Position { row: -1, col: 0 }, &above);
+        let bounds = loose_bounds();
+        let sign_bias = [false; 4];
+        let prev = PrevFrameMvRef {
+            mvs: [common_mv, Mv::ZERO],
+            ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+        };
+
+        // Use NEARMV so the search does NOT early-break — both the
+        // spatial above hit and the prev-frame salvage attempt run.
+        let list = find_mv_refs(
+            InterMode::NearMv,
+            BlockSize::Block16x16,
+            RefFrame::LastFrame,
+            &nb,
+            &sign_bias,
+            &bounds,
+            Some(prev),
+        );
+
+        // The dedup drops the second (identical) candidate. Slot 0
+        // holds the spatial MV; slot 1 stays zero (the salvage tried
+        // to add `(5,5)` but `add_mv_ref_list_eb`'s `!=` check
+        // rejected it). `finish` rewrites count to the NEARMV target
+        // (2), but `list.mvs[1]` is still the memset zero.
+        assert_eq!(list.mvs[0], common_mv, "spatial above wins slot 0");
+        assert_eq!(
+            list.mvs[1],
+            Mv::ZERO,
+            "salvage candidate dedups against spatial; slot 1 stays zero"
+        );
+    }
 }

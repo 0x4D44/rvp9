@@ -5,7 +5,7 @@
 | Track | F (nonrd_pickmode port) |
 | Sub-track | F.2 (`find_mv_refs` salvage + A18 default-ON) |
 | Author | F.2 HLD-writer agent |
-| Status | SIGNED-OFF — pending F.1 implementer landing |
+| Status | LANDED — infrastructure-only (see §12 ship-state addendum, 2026-05-23) |
 | Last revised | 2026-05-23 |
 | Repo HEAD at writing | `f1a8327` (post-F.0 foundations; F.1 implementer running in parallel) |
 | libvpx HEAD at writing | `12f3a2ac6` (`v1.14.1`) at `D:\language\libvpx` |
@@ -809,3 +809,105 @@ flip + doc-comment update) + **~120 LoC of test code** (three unit
 tests + the smoke test). The smaller-than-F.1 LoC count reflects that
 F.2 is structurally a default-flip, not a feature port — see Q1 above
 for the framing question.
+
+---
+
+## 12. Ship-state addendum (team-lead, 2026-05-23)
+
+F.1 shipped INFRASTRUCTURE-ONLY (see F.1 HLD §14 / divergence-ledger
+2026-05-23 F.1 ship-state entry). Empirical measurement showed F.1's
+`coef_rate` SATD-to-prob-cost scale is mis-calibrated against rvp9's
+lambda: activating `coef_rate` regressed foreman PSNR-delta from
++9.07 to +10.55 dB (mean) with the 250 kbps point catastrophically
+dropping to 20.91 dB (−6 dB). Both `coef_rate` and the libvpx
+skip-flag tie-break are gated behind env vars, default OFF.
+
+**Without F.1's `coef_rate` active, F.2's planned A18 default-flip
+re-introduces the F.0.3 §2.5 regression mechanism**: the picker
+prefers rate-free NEARMV over refined NEWMV when NEARMV's anchor
+becomes non-zero (testsrc −240 pp BD-rate). The chicken-and-egg fix
+requires BOTH `RVP9_F1_COEF_RATE_ENABLE=1` AND lambda recalibration
+— and the calibration is F.4's primary work-item (per F.1 §14
+"F.4 inheritance" and the divergence-ledger F.4 inherited work-items
+list).
+
+**Team-lead decision (Arthur, 2026-05-23): F.2 ships
+INFRASTRUCTURE-ONLY**, mirroring F.1's pattern:
+
+- The literal `use_prev_frame_mvs: false` at
+  `crates/rvp9-encoder/src/frame_loop.rs:173` **stays as-is**. No
+  default-flip.
+- The doc-comment on `EncoderConfig.use_prev_frame_mvs`
+  (`frame_loop.rs:141-157`) is updated to record the deferral
+  rationale and the F.4 ownership transfer.
+- The three salvage-path unit tests (HLD §6.1) land in
+  `crates/rvp9-core/src/inter/mv_ref.rs::tests`. These test the
+  salvage code-path directly, independent of picker-RD activation.
+- The smoke test (HLD §6.2,
+  `crates/rvp9-encoder/tests/f2_find_mv_refs_temporal_visible.rs`)
+  lands with `use_prev_frame_mvs: true` set explicitly per test
+  (NOT via default).
+- The F.2 HLD §11 implementer steps that depended on the default
+  flip (steps 5–8 — F.0.2 oracle pre/post, testsrc halt-threshold
+  gate, `TRACK_F_PSNR_DELTA_THRESHOLD_DB` update, realtime gate
+  re-run) are **NOT executed** at F.2 sign-off. The picker hot path
+  is unchanged at defaults, so the realtime gate cannot regress.
+
+**What does land:**
+
+- `find_mv_refs` line-by-line verification against libvpx v1.14.1
+  `vp9_mvref_common.c:16-131` (the F.2 HLD §3.1 table holds
+  verbatim against the live source — see workflow step 2 in the
+  implementer brief).
+- Three salvage-path unit tests in `mv_ref.rs::tests`:
+  - `prev_salvage_matching_ref_emits_temporal_candidate`
+  - `prev_salvage_different_ref_with_sign_bias_flip`
+  - `prev_salvage_dedup_against_spatial`
+- Smoke test
+  `crates/rvp9-encoder/tests/f2_find_mv_refs_temporal_visible.rs`
+  with `use_prev_frame_mvs: true` opted in per test. Asserts the
+  matching-ref salvage lifts a known non-zero `PrevFrameMvRef` into
+  `mvc.nearest` when active and stays Mv::ZERO when gated off.
+- Doc-comment update on `EncoderConfig.use_prev_frame_mvs` citing
+  the F.1 lambda-calibration reason and the F.4 ownership transfer.
+- Divergence-ledger entry for F.2 ship-state.
+
+**What does NOT land:**
+
+- The literal `use_prev_frame_mvs: false` → `true` default flip
+  (HLD §4.2 / step 4 in the implementer brief). Deferred to F.4.
+- The post-flip oracle / quality-gate / realtime re-runs (HLD §11
+  steps 5–8). Not meaningful at defaults.
+- Any update to `TRACK_F_PSNR_DELTA_THRESHOLD_DB`
+  (`crates/rvp9-encoder/tests/quality_gate.rs`). Stays at 9.5 dB —
+  F.2 doesn't change picker behaviour at defaults.
+
+**F.4 inheritance:**
+
+F.4 owns flipping `EncoderConfig.use_prev_frame_mvs` to `true` once:
+
+1. The SATD-to-bits scale is recalibrated so
+   `RVP9_F1_COEF_RATE_ENABLE=1` does not regress PSNR-delta (per
+   F.1 ship-state F.4 work-items).
+2. The post-recalibration A/B sweep confirms `use_prev_frame_mvs:
+   true` does NOT regress testsrc BD-rate beyond the F.1
+   baseline + 3 dB halt threshold (HLD §9 R1 mitigation).
+3. The two activation knobs (`RVP9_F1_COEF_RATE_ENABLE` and
+   `RVP9_F1_SKIP_TIE_BREAK_ENABLE`) are removed (or default-ON).
+
+**Why this is the right call:**
+
+F.2's verification + tests land on this infrastructure. The salvage
+code-path is exercised by the new unit tests + smoke test even at
+defaults, so a regression in `find_mv_refs` is caught CI-wide. F.3
+(motion-aware partition) lands on the same infrastructure. F.4
+flips the default in a single literal-constant edit once its
+recalibration work-items close.
+
+**Cross-references:**
+
+- Decision recorded in `notes/divergence-ledger.md` F.2 ship-state
+  entry (2026-05-23).
+- F.1 ship-state addendum (`F1_HLD_block_yrd_port.md` §14) — the
+  precedent this addendum mirrors.
+- F.4 task inherits the default-flip work-item.

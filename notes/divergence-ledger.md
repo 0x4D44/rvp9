@@ -2108,3 +2108,54 @@ explicit ("F.1 first-cut keeps pixel-SSE-of-recon"). This entry
 records the implementer's review-time concern so F.4 starts from
 the right diagnostic question, not as a unilateral deviation.
 
+
+### 2026-05-23 — F.2 ship state: INFRASTRUCTURE-ONLY (team-lead decision)
+**Where:** `crates/rvp9-encoder/src/frame_loop.rs:173` — the literal
+`use_prev_frame_mvs: false` in `EncoderConfig::new`. F.2 HLD §4.2
+originally instructed flipping this to `true`.
+**What the F.2 HLD planned:** flip `EncoderConfig.use_prev_frame_mvs`
+default from `false` to `true` so the encoder's previous-frame MV
+salvage path (libvpx `cm->use_prev_frame_mvs`) is active by default.
+The HLD argued that F.1's `block_yrd` would make NEWMV's coefficient-
+bit savings visible to RD, closing the F.0.3 §2.5 regression
+mechanism (NEARMV winning over refined NEWMV when its anchor became
+non-zero, testsrc −240 pp BD-rate).
+**What rvp9 ships at F.2:** the literal stays `false`. The doc-
+comment is rewritten to record the deferral and cite the F.1
+lambda-calibration reason; the three salvage-path unit tests
+(`prev_salvage_matching_ref_emits_temporal_candidate`,
+`prev_salvage_different_ref_with_sign_bias_flip`,
+`prev_salvage_dedup_against_spatial`) land in
+`crates/rvp9-core/src/inter/mv_ref.rs::tests`; the smoke test
+`crates/rvp9-encoder/tests/f2_find_mv_refs_temporal_visible.rs`
+lands with `use_prev_frame_mvs: true` opted in per test.
+**Why:** F.1 shipped infrastructure-only (see F.1 ship-state entry
+above, 2026-05-23) with `RVP9_F1_COEF_RATE_ENABLE` defaulting OFF
+because the SATD-to-prob-cost scale is mis-calibrated against
+rvp9's lambda. Without F.1's `coef_rate` active by default, the
+chicken-and-egg fix is incomplete and flipping A18 to ON
+re-introduces the F.0.3 §2.5 regression mechanism on testsrc (−240
+pp BD-rate). F.4 owns BOTH the lambda recalibration AND the
+follow-up A18 default-flip; they are sequenced together so the
+sweep that validates the flip is run against a recalibrated
+comparator.
+**Byte-parity impact:** none. The default is byte-identical to
+pre-F.2; the encoder/decoder still agree on `(LASTFRAME, ZEROMV)`
+everywhere on the first inter after a KF.
+**Compression-efficiency impact:** none at default. F.2's deferred
+flip is expected to *improve* PSNR-delta on motion content once
+F.4's recalibration lands, but holding it back today preserves the
+post-E16 foreman PSNR-delta = +9.07 dB baseline.
+**Future plan:** F.4 task (#84) flips the default after the lambda
+recalibration A/B sweep confirms no testsrc regression beyond the
+F.1 baseline + 3 dB halt threshold (per F.2 HLD §9 R1 mitigation).
+F.4 also owns removing the env-var gates on `coef_rate` and the
+skip-flag tie-break (per F.1 ship-state F.4 work-items 1–2). When
+F.4 lands, this divergence collapses.
+**Cross-references:**
+- F.2 HLD §12 ship-state addendum (`wrk_docs/Track_F/F2_HLD_find_mv_refs.md`).
+- F.1 ship-state entry above (2026-05-23) — the precedent and the
+  pre-condition.
+- `notes/divergence-ledger.md:676-697` — F.0.3 original
+  documentation of the −240 pp regression mechanism.
+

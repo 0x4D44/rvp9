@@ -141,19 +141,46 @@ pub struct EncoderConfig {
     /// F.0.3 — Enable the previous-frame MV salvage path
     /// (libvpx `cm->use_prev_frame_mvs`).
     ///
-    /// **Default `false`** at the F.0.3 landing because activating
-    /// today regresses testsrc by ~240pp BD-rate — the picker prefers
-    /// rate-free NEARMV over a refined NEWMV when NEARMV's anchor is
-    /// non-zero (see `wrk_docs/Track_F/F0.3_HLD_prev_frame_mvs.md` §2.5).
-    /// **The default is flipped to `true` by F.1 (`block_yrd`) or F.2
-    /// (`find_mv_refs` proper)**, whichever first lifts the picker's
-    /// coefficient-bit-aware RD enough that NEWMV beats rate-free NEARMV
-    /// when its prediction is actually better.
+    /// **Default `false`** at F.2 sign-off (was the F.2 plan;
+    /// **deferred to F.4** per team-lead decision 2026-05-23).
+    ///
+    /// F.0.3 originally landed this field default-`false` because
+    /// activating it pre-F.1 regressed testsrc by ~240pp BD-rate —
+    /// the picker preferred rate-free NEARMV over refined NEWMV when
+    /// NEARMV's anchor became non-zero (see
+    /// `wrk_docs/Track_F/F0.3_HLD_prev_frame_mvs.md` §2.5). The F.2
+    /// HLD originally instructed flipping the default to `true` once
+    /// F.1 made coefficient bits visible to the picker's RD. F.1
+    /// shipped INFRASTRUCTURE-ONLY (see F.1 HLD §14 and
+    /// `notes/divergence-ledger.md` 2026-05-23 F.1 ship-state entry):
+    /// `coef_rate` is wired but gated behind
+    /// `RVP9_F1_COEF_RATE_ENABLE`, default OFF, because empirical
+    /// measurement showed activating it without lambda recalibration
+    /// regresses foreman PSNR-delta from +9.07 to +10.55 dB and
+    /// catastrophically collapses the 250 kbps point.
+    ///
+    /// With F.1's coef_rate dormant, flipping this default today
+    /// re-introduces the same -240pp testsrc regression F.0.3
+    /// documented — the chicken-and-egg fix requires BOTH F.1's
+    /// `coef_rate` active AND the SATD-to-bits scale recalibrated
+    /// against rvp9's lambda. **F.4 owns flipping this default**
+    /// alongside the F.4 lambda recalibration work-items in
+    /// `notes/divergence-ledger.md` F.1 ship-state entry.
+    ///
+    /// F.2 itself shipped infrastructure-only: a verified-faithful
+    /// `find_mv_refs` salvage (line-by-line against libvpx v1.14.1
+    /// `vp9_mvref_common.c:16-131`), three new unit tests covering
+    /// both salvage passes, and a smoke test
+    /// (`tests/f2_find_mv_refs_temporal_visible.rs`) that opts in
+    /// explicitly. See F.2 HLD §12 ship-state addendum.
     ///
     /// When `true`, the encoder evaluates the libvpx
-    /// `use_prev_frame_mvs` predicate (size match + previous frame was
-    /// not a KF) per inter frame and threads the captured prev-frame
-    /// grid into both the picker's and the writer's `find_mv_refs` calls.
+    /// `use_prev_frame_mvs` predicate (size match + previous frame
+    /// was not a KF) per inter frame and threads the captured
+    /// prev-frame grid into both the picker's and the writer's
+    /// `find_mv_refs` calls. The encoder remains byte-correct in
+    /// this mode — the foreman BD-rate regression is a compression-
+    /// efficiency cost, not a correctness one.
     pub use_prev_frame_mvs: bool,
 }
 
