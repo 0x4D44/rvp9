@@ -2479,6 +2479,28 @@ pub fn init() -> Arc<SimdDispatch> {
         .clone()
 }
 
+/// Get a `&'static` reference to the process-wide dispatch table —
+/// no Arc clone, no atomic ops. Use for read-only call sites in
+/// the per-block / per-MC decode hot path where the dispatch table
+/// is only inspected (not shared across threads or moved).
+///
+/// Internally goes through the same `OnceLock` as [`init`] so the
+/// init-before-use invariant still holds; `init_dispatch_inner` is
+/// idempotent.
+///
+/// R.13 (2026-05-23): added to replace `Arc::clone` calls in the
+/// inter MC path (called ~24k times per 1080p frame). Each Arc
+/// clone is an atomic increment + matching destructor decrement;
+/// `get_ref` is a single OnceLock atomic load returning a borrowed
+/// pointer. Bit-exact.
+#[inline]
+#[must_use]
+pub fn get_ref() -> &'static SimdDispatch {
+    let arc: &'static Arc<SimdDispatch> =
+        DISPATCH.get_or_init(|| Arc::new(SimdDispatch::build(detect())));
+    arc.as_ref()
+}
+
 /// Get the process-wide default dispatch table. Alias for [`init`];
 /// named separately as a documentation hook for "read-after-init"
 /// call sites (e.g. inside a decoder method that knows `init` has
