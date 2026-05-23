@@ -103,6 +103,75 @@ pub fn bdrate(curve_a: &[(f64, f64)], curve_b: &[(f64, f64)]) -> f64 {
     ((mean_b - mean_a).exp() - 1.0) * 100.0
 }
 
+/// Linearly interpolate a curve's PSNR at a given bitrate using
+/// `ln(bitrate)` as the independent variable.
+///
+/// The curve is treated as a set of `(bitrate_kbps, psnr_db)` samples.
+/// `bitrate_kbps` is queried at `target_kbps` and the corresponding PSNR
+/// is returned by piecewise-linear interpolation between the two
+/// bracketing samples (in `ln(bitrate)` space — the same domain the
+/// Bjøntegaard cubic fit uses).
+///
+/// Returns `None` if:
+///
+/// - `target_kbps` is not finite or non-positive.
+/// - The curve has fewer than 2 points.
+/// - `target_kbps` is outside the curve's bitrate range (no
+///   extrapolation — caller is expected to skip out-of-range queries).
+/// - Any sample has a non-positive or non-finite bitrate / PSNR.
+///
+/// This is the fallback metric for the BD-rate gate when the cubic
+/// integral is undefined (no PSNR overlap between curves). Linear
+/// interpolation in `ln(bitrate)` is appropriate here because (a) the
+/// underlying RD relationship is approximately linear in
+/// `(ln(bitrate), PSNR)` at short ranges, and (b) on the 4-point gate
+/// curves a cubic re-fit for a single query point would overshoot near
+/// the endpoints.
+#[must_use]
+pub fn psnr_at_bitrate(curve: &[(f64, f64)], target_kbps: f64) -> Option<f64> {
+    if !target_kbps.is_finite() || target_kbps <= 0.0 || curve.len() < 2 {
+        return None;
+    }
+    // Validate samples are well-formed.
+    for &(br, ps) in curve {
+        if !br.is_finite() || br <= 0.0 || !ps.is_finite() {
+            return None;
+        }
+    }
+    // Sort a copy by bitrate ascending (the gate's curve is built in
+    // target-bitrate order, but RC drift can shuffle the actual
+    // bitrates).
+    let mut sorted: Vec<(f64, f64)> = curve.to_vec();
+    sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let br_min = sorted[0].0;
+    let br_max = sorted[sorted.len() - 1].0;
+    if target_kbps < br_min || target_kbps > br_max {
+        return None;
+    }
+
+    // Find the bracketing pair.
+    let lt = target_kbps.ln();
+    for w in sorted.windows(2) {
+        let (br0, ps0) = w[0];
+        let (br1, ps1) = w[1];
+        if target_kbps >= br0 && target_kbps <= br1 {
+            let l0 = br0.ln();
+            let l1 = br1.ln();
+            if (l1 - l0).abs() < 1e-12 {
+                // Coincident bitrates — average PSNR.
+                return Some((ps0 + ps1) * 0.5);
+            }
+            let t = (lt - l0) / (l1 - l0);
+            return Some(ps0 + t * (ps1 - ps0));
+        }
+    }
+    // Numerically possible to fall through here if the windows iteration
+    // didn't find a bracket (e.g. all samples equal). Conservative
+    // fallback: nearest endpoint.
+    Some(sorted[sorted.len() - 1].1)
+}
+
 /// Definite integral of the cubic `c[0] + c[1]*x + c[2]*x^2 + c[3]*x^3`
 /// over `[lo, hi]`, computed in closed form.
 fn integrate_cubic(c: &[f64; 4], lo: f64, hi: f64) -> f64 {
@@ -378,6 +447,67 @@ mod tests {
         assert!((c[1] - 2.0).abs() < 1e-9, "c1={}", c[1]);
         assert!((c[2] - 3.0).abs() < 1e-9, "c2={}", c[2]);
         assert!((c[3] - 4.0).abs() < 1e-9, "c3={}", c[3]);
+    }
+
+    /// `psnr_at_bitrate` reproduces an endpoint exactly.
+    #[test]
+    fn psnr_at_bitrate_endpoints_exact() {
+        let curve = vec![
+            (250.0, 28.0),
+            (500.0, 34.0),
+            (1000.0, 40.0),
+            (2000.0, 46.0),
+        ];
+        let p = psnr_at_bitrate(&curve, 250.0).expect("in range");
+        assert!((p - 28.0).abs() < 1e-9, "p={p}");
+        let p = psnr_at_bitrate(&curve, 2000.0).expect("in range");
+        assert!((p - 46.0).abs() < 1e-9, "p={p}");
+    }
+
+    /// `psnr_at_bitrate` interpolates the midpoint in log-bitrate space.
+    /// Between (250, 28) and (500, 34) the geometric mean bitrate is
+    /// `exp((ln 250 + ln 500)/2)` ≈ 353.55 kbps; the linear-in-log
+    /// interpolant at that point is the arithmetic mean PSNR = 31.0 dB.
+    #[test]
+    fn psnr_at_bitrate_log_midpoint() {
+        let curve = vec![
+            (250.0, 28.0),
+            (500.0, 34.0),
+            (1000.0, 40.0),
+            (2000.0, 46.0),
+        ];
+        let mid_br = (250.0_f64.ln() + 500.0_f64.ln()).exp().sqrt();
+        let p = psnr_at_bitrate(&curve, mid_br).expect("in range");
+        assert!((p - 31.0).abs() < 1e-9, "p={p} at mid_br={mid_br}");
+    }
+
+    /// `psnr_at_bitrate` refuses to extrapolate beyond the curve range.
+    #[test]
+    fn psnr_at_bitrate_out_of_range_returns_none() {
+        let curve = vec![
+            (250.0, 28.0),
+            (500.0, 34.0),
+            (1000.0, 40.0),
+            (2000.0, 46.0),
+        ];
+        assert!(psnr_at_bitrate(&curve, 100.0).is_none());
+        assert!(psnr_at_bitrate(&curve, 5000.0).is_none());
+        assert!(psnr_at_bitrate(&curve, 0.0).is_none());
+        assert!(psnr_at_bitrate(&curve, f64::NAN).is_none());
+    }
+
+    /// Curve out of order in input — `psnr_at_bitrate` should still work
+    /// (it sorts internally).
+    #[test]
+    fn psnr_at_bitrate_unsorted_input_handled() {
+        let curve = vec![
+            (2000.0, 46.0),
+            (250.0, 28.0),
+            (1000.0, 40.0),
+            (500.0, 34.0),
+        ];
+        let p = psnr_at_bitrate(&curve, 500.0).expect("in range");
+        assert!((p - 34.0).abs() < 1e-9, "p={p}");
     }
 
     /// Degenerate input (all x values identical) → polyfit returns None,

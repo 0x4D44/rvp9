@@ -37,7 +37,7 @@
 
 use rvp9_decoder::{Decoder, ParsedFrame};
 use rvp9_encoder::{AqMode, EncoderConfig, StreamEncoder, YuvFrameRef};
-use rvp9_harness::bdrate::bdrate;
+use rvp9_harness::bdrate::{bdrate, psnr_at_bitrate};
 use rvp9_harness::y4m::{
     YuvFrameBuf, probe_foreman_cif, probe_testsrc_720p, read_cropped as y4m_read_cropped,
 };
@@ -415,17 +415,26 @@ fn run_stage4a_gate(
     }
 
     // -------------------------------------------------------------
-    // BD-rate.
+    // BD-rate (with matched-bitrate-PSNR fallback when undefined).
+    //
+    // BD-rate requires the two RD curves' PSNR ranges to overlap. After
+    // Track E's overshoot fix (E6/E7/E8) rvp9 operates at the *correct*
+    // bitrates but with insufficient coding quality, so its PSNR curve
+    // (24-27 dB on foreman) sits entirely below libvpx's (28-37 dB) and
+    // the integral is undefined. To still produce a usable metric for
+    // Track F (block_yrd / find_mv_refs / motion-aware partitioner) the
+    // gate falls back to a *matched-bitrate PSNR delta*: at each rvp9
+    // operating point, interpolate libvpx's curve at the same bitrate
+    // and report the dB gap. See
+    // `wrk_journals/2026.05.23 - JRN - Track E FINAL CLOSE - E1-E14
+    // complete, multi-fix coupled remainder.md` for the rationale.
     // -------------------------------------------------------------
     let bd = libvpx_curve
         .as_ref()
         .map(|lv| bdrate(lv, &rvp9_curve))
         .unwrap_or(f64::NAN);
     eprintln!();
-    if bd.is_nan() {
-        eprintln!("BD-rate: not measurable (no libvpx curve or insufficient overlap)");
-        eprintln!("Exit gate status: DEFERRED (libvpx leg not measurable in this run)");
-    } else {
+    if !bd.is_nan() {
         eprintln!(
             "BD-rate (rvp9 vs libvpx, positive = rvp9 uses more bits): {bd:+.2} %"
         );
@@ -434,6 +443,81 @@ fn run_stage4a_gate(
             "Exit gate status: {} (threshold ±2 %)",
             if pass { "PASS" } else { "FAIL" }
         );
+    } else if let Some(ref lv) = libvpx_curve {
+        // FALLBACK metric. BD-rate undefined (no PSNR overlap or
+        // ill-conditioned cubic). Report the matched-bitrate PSNR delta
+        // per operating point + mean/max across in-range points.
+        eprintln!("BD-rate: not measurable (no PSNR overlap between curves)");
+        eprintln!(
+            "FALLBACK metric — matched-bitrate PSNR delta (libvpx_PSNR − rvp9_PSNR):"
+        );
+        eprintln!(
+            "  Positive delta = rvp9 trails libvpx at the same bitrate (dB)."
+        );
+        let lv_brs: Vec<f64> = lv.iter().map(|p| p.0).collect();
+        let lv_br_min = lv_brs.iter().cloned().fold(f64::INFINITY, f64::min);
+        let lv_br_max = lv_brs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let mut deltas: Vec<f64> = Vec::with_capacity(rvp9_curve.len());
+        let mut skipped: Vec<f64> = Vec::new();
+        for &(br_r, psnr_r) in rvp9_curve.iter() {
+            match psnr_at_bitrate(lv, br_r) {
+                Some(psnr_l) => {
+                    let d = psnr_l - psnr_r;
+                    eprintln!(
+                        "    rvp9 {br_r:>7.1} kbps / {psnr_r:>5.2} dB  vs  \
+                         libvpx-interp {psnr_l:>5.2} dB  →  Δ = {d:+5.2} dB"
+                    );
+                    deltas.push(d);
+                }
+                None => {
+                    eprintln!(
+                        "    rvp9 {br_r:>7.1} kbps / {psnr_r:>5.2} dB  → \
+                         OUT OF libvpx bitrate range [{lv_br_min:.1}, {lv_br_max:.1}] \
+                         kbps, skipped"
+                    );
+                    skipped.push(br_r);
+                }
+            }
+        }
+        if deltas.is_empty() {
+            eprintln!(
+                "  No rvp9 operating points fell inside the libvpx bitrate range; \
+                 fallback delta not computable."
+            );
+            eprintln!(
+                "Exit gate status: DEFERRED (BD-rate undefined AND fallback has no \
+                 in-range points)"
+            );
+        } else {
+            let mean = deltas.iter().sum::<f64>() / deltas.len() as f64;
+            let max =
+                deltas.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let min = deltas.iter().cloned().fold(f64::INFINITY, f64::min);
+            eprintln!(
+                "  Summary across {} in-range point(s){}: mean Δ = {:+5.2} dB, \
+                 max Δ = {:+5.2} dB, min Δ = {:+5.2} dB",
+                deltas.len(),
+                if skipped.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({} skipped out-of-range)", skipped.len())
+                },
+                mean,
+                max,
+                min
+            );
+            eprintln!(
+                "Exit gate status: DEFERRED-FALLBACK (BD-rate undefined; \
+                 PSNR-delta fallback reported above)"
+            );
+            eprintln!(
+                "  Track F target TBD — the gate condition for \"fallback \
+                 acceptable\" is OPEN. Mean delta is the metric to drive down."
+            );
+        }
+    } else {
+        eprintln!("BD-rate: not measurable (no libvpx curve available)");
+        eprintln!("Exit gate status: DEFERRED (libvpx leg not measurable in this run)");
     }
 
     // Sanity assertions on the rvp9 curve only. Higher target bitrate
