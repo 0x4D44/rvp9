@@ -57,15 +57,22 @@ const MAX_TX_COEFFS: usize = 1024;
 
 thread_local! {
     /// R.3: per-thread reusable dequantised-coefficient buffer.
-    /// Replaces a 4KB stack zero per TX block. R.11 attempted a
-    /// MaybeUninit replacement (mirroring R.10's inter-path win) but
-    /// the intra path REGRESSED 10-14% on means. Hypothesis: the
-    /// recursive partition descent + larger intra function makes
-    /// the heap-resident reused buffer hotter in cache than fresh
-    /// stack allocations. Reverted to thread_local; future investigation
-    /// could try `MaybeUninit<[i32; MAX_TX_COEFFS]>` matching R.10's
-    /// exact array-reference type (R.11 used `&mut [i32]` slice form
-    /// which may have changed codegen).
+    /// Replaces a 4KB stack zero per intra TX block.
+    ///
+    /// R.11 and R.12 attempted to switch to in-function MaybeUninit
+    /// (mirroring R.10's inter-path win) but BOTH regressed 8-24%
+    /// across most fixtures. Hypothesis: `reconstruct_intra_block`
+    /// is called recursively from `decode_partition` (Block64x64 ->
+    /// ... -> Block4x4, up to 4 levels of recursion), so per-call
+    /// stack frame size matters more than the inter path where the
+    /// TX loop is iterative. The thread_local heap buffer stays hot
+    /// in cache; MaybeUninit forces 4KB of stack per recursive
+    /// frame.
+    ///
+    /// This is an architectural insight: MaybeUninit on stack only
+    /// wins when the function isn't on a deep recursion. R.10's
+    /// inter path qualifies (called once per inter mi-block); R.12's
+    /// intra path does not.
     pub(crate) static DQ_COEFS_BUF: RefCell<Vec<i32>> =
         RefCell::new(vec![0i32; MAX_TX_COEFFS]);
 }
@@ -203,9 +210,8 @@ pub fn reconstruct_intra_block(
     let n = tx_size.n_coeffs();
     debug_assert!(seg_eob <= n);
     // R.3: pull the per-TX-block dequantised-coefficient buffer from
-    // the thread-local cache. R.11 attempted a MaybeUninit
-    // replacement (mirroring R.10's inter-path win) but the intra
-    // path REGRESSED 10-14% on means; reverted to thread_local.
+    // the thread-local cache. See DQ_COEFS_BUF docstring for why
+    // MaybeUninit (R.11/R.12) didn't work here.
     DQ_COEFS_BUF.with_borrow_mut(|buf| {
     debug_assert!(buf.len() >= MAX_TX_COEFFS);
     let dq_coefs: &mut [i32] = &mut buf[..];
