@@ -56,15 +56,16 @@ use crate::tile_ctx::TileCoefCtx;
 const MAX_TX_COEFFS: usize = 1024;
 
 thread_local! {
-    /// R.3: per-thread reusable dequantised-coefficient buffer. Was a
-    /// `[0i32; MAX_TX_COEFFS]` stack array constructed on every
-    /// `reconstruct_intra_block` call (4 KB compiler-emitted memset per
-    /// TX block × 30k-60k TX blocks per 1080p frame = 120-240 MB/frame
-    /// of pre-zero bandwidth that `decode_coefs` then immediately
-    /// overwrote via its own `[..seg_eob]` zero pass). Lifting to a
-    /// thread-local Vec means the buffer is allocated and zeroed exactly
-    /// once per thread; per call we hand out `&mut buf[..seg_eob]` and
-    /// `decode_coefs` does the (now lighter) prefix zero.
+    /// R.3: per-thread reusable dequantised-coefficient buffer.
+    /// Replaces a 4KB stack zero per TX block. R.11 attempted a
+    /// MaybeUninit replacement (mirroring R.10's inter-path win) but
+    /// the intra path REGRESSED 10-14% on means. Hypothesis: the
+    /// recursive partition descent + larger intra function makes
+    /// the heap-resident reused buffer hotter in cache than fresh
+    /// stack allocations. Reverted to thread_local; future investigation
+    /// could try `MaybeUninit<[i32; MAX_TX_COEFFS]>` matching R.10's
+    /// exact array-reference type (R.11 used `&mut [i32]` slice form
+    /// which may have changed codegen).
     pub(crate) static DQ_COEFS_BUF: RefCell<Vec<i32>> =
         RefCell::new(vec![0i32; MAX_TX_COEFFS]);
 }
@@ -202,14 +203,9 @@ pub fn reconstruct_intra_block(
     let n = tx_size.n_coeffs();
     debug_assert!(seg_eob <= n);
     // R.3: pull the per-TX-block dequantised-coefficient buffer from
-    // the thread-local cache instead of declaring a fresh
-    // `[0i32; MAX_TX_COEFFS]` stack array. The closure scopes the
-    // borrow over the entire rest of the function so the existing
-    // body (which references `dq_coefs[..n]` and `dq_coefs[..seg_eob]`
-    // throughout) compiles unchanged. `decode_block_tokens` does NOT
-    // recurse into `reconstruct_intra_block` (verified — it's
-    // detokenize → decode_coefs which uses its own thread_local
-    // `DECODE_COEFS_SCRATCH`).
+    // the thread-local cache. R.11 attempted a MaybeUninit
+    // replacement (mirroring R.10's inter-path win) but the intra
+    // path REGRESSED 10-14% on means; reverted to thread_local.
     DQ_COEFS_BUF.with_borrow_mut(|buf| {
     debug_assert!(buf.len() >= MAX_TX_COEFFS);
     let dq_coefs: &mut [i32] = &mut buf[..];
