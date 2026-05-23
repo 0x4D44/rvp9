@@ -85,6 +85,21 @@ pub(crate) struct TraceFlags {
     pub trace_mc_filter: Option<String>,
     /// `RVP9_TRACE_MC_SRC` (any value) — source-data dump.
     pub trace_mc_src: bool,
+
+    // -- lib.rs (R.3 extension; was 9 per-frame env::var calls) --
+    /// `RVP9_DISABLE_LF` (any value) — skip loop-filter apply driver.
+    /// Per-frame in decode_inter_frame + decode_keyframe (2 call sites).
+    pub disable_lf: bool,
+    /// `RVP9_TRACE_SEG` (any value) — segmentation map / probs dump.
+    /// Per-frame in 2 call sites.
+    pub trace_seg: bool,
+    /// `RVP9_TRACE_FC` == "1" — FrameContext bank pre/post-decode trace.
+    pub trace_fc: bool,
+    /// `RVP9_DUMP_ALTREF` — file path for altref-frame YUV dump.
+    pub dump_altref: Option<String>,
+    /// `RVP9_DUMP_LF_MASKS` (any value) — per-SB loopfilter-mask dump.
+    /// Per-SB in `dump_lf_masks` — ~500 calls/frame at 1080p.
+    pub dump_lf_masks: bool,
 }
 
 impl TraceFlags {
@@ -114,6 +129,12 @@ impl TraceFlags {
             trace_mc: any("RVP9_TRACE_MC"),
             trace_mc_filter: get("RVP9_TRACE_MC_FILTER"),
             trace_mc_src: any("RVP9_TRACE_MC_SRC"),
+            // R.3 lib.rs extension
+            disable_lf: any("RVP9_DISABLE_LF"),
+            trace_seg: any("RVP9_TRACE_SEG"),
+            trace_fc: get("RVP9_TRACE_FC").as_deref() == Some("1"),
+            dump_altref: get("RVP9_DUMP_ALTREF"),
+            dump_lf_masks: any("RVP9_DUMP_LF_MASKS"),
         }
     }
 

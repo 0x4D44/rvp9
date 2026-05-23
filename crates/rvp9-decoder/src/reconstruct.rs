@@ -37,6 +37,8 @@
 //!   `vp9_reconintra.c:263-403` is **not** in scope here; it lives in
 //!   the K driver / intra-pred wrapper landing later.
 
+use std::cell::RefCell;
+
 use rvp9_core::dsp::SimdDispatch;
 use rvp9_core::entropy::adapt::CoefCountsBank;
 use rvp9_core::entropy::{BoolReader, FrameContext};
@@ -52,6 +54,20 @@ use crate::tile_ctx::TileCoefCtx;
 
 /// Maximum coefficient count at any TX size (`Tx32x32 = 32*32 = 1024`).
 const MAX_TX_COEFFS: usize = 1024;
+
+thread_local! {
+    /// R.3: per-thread reusable dequantised-coefficient buffer. Was a
+    /// `[0i32; MAX_TX_COEFFS]` stack array constructed on every
+    /// `reconstruct_intra_block` call (4 KB compiler-emitted memset per
+    /// TX block × 30k-60k TX blocks per 1080p frame = 120-240 MB/frame
+    /// of pre-zero bandwidth that `decode_coefs` then immediately
+    /// overwrote via its own `[..seg_eob]` zero pass). Lifting to a
+    /// thread-local Vec means the buffer is allocated and zeroed exactly
+    /// once per thread; per call we hand out `&mut buf[..seg_eob]` and
+    /// `decode_coefs` does the (now lighter) prefix zero.
+    pub(crate) static DQ_COEFS_BUF: RefCell<Vec<i32>> =
+        RefCell::new(vec![0i32; MAX_TX_COEFFS]);
+}
 
 /// Resolve the TX type for one transform block, mirroring libvpx
 /// `vp9_decodeframe.c:324-325` and `:349-350`:
@@ -185,7 +201,18 @@ pub fn reconstruct_intra_block(
 
     let n = tx_size.n_coeffs();
     debug_assert!(seg_eob <= n);
-    let mut dq_coefs = [0i32; MAX_TX_COEFFS];
+    // R.3: pull the per-TX-block dequantised-coefficient buffer from
+    // the thread-local cache instead of declaring a fresh
+    // `[0i32; MAX_TX_COEFFS]` stack array. The closure scopes the
+    // borrow over the entire rest of the function so the existing
+    // body (which references `dq_coefs[..n]` and `dq_coefs[..seg_eob]`
+    // throughout) compiles unchanged. `decode_block_tokens` does NOT
+    // recurse into `reconstruct_intra_block` (verified — it's
+    // detokenize → decode_coefs which uses its own thread_local
+    // `DECODE_COEFS_SCRATCH`).
+    DQ_COEFS_BUF.with_borrow_mut(|buf| {
+    debug_assert!(buf.len() >= MAX_TX_COEFFS);
+    let dq_coefs: &mut [i32] = &mut buf[..];
     let eob = decode_block_tokens(
         reader,
         fc,
@@ -289,6 +316,7 @@ pub fn reconstruct_intra_block(
     }
 
     eob
+    }) // close DQ_COEFS_BUF.with_borrow_mut(|buf| { ... })
 }
 
 /// Dispatch one inverse-transform-add for a TX block. Mirrors libvpx

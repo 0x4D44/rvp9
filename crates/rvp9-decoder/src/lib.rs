@@ -1768,7 +1768,7 @@ impl Decoder {
         // Stage 3 stretch M.13 — `RVP9_DISABLE_LF=1` skips the loop-filter
         // apply driver, exposing pre-LF reconstruction for cascade
         // analysis (dump_frame_diff vs vpxdec's post-LF YUV).
-        let lf_disabled = std::env::var("RVP9_DISABLE_LF").is_ok();
+        let lf_disabled = crate::trace_flags::trace_flags().disable_lf;
         // Stage 3 Task E.2 — stitch per-tile mi grids into a
         // frame-wide grid for the LF mask builder. Mirrors libvpx
         // `cm->mi_grid_visible` which spans the entire frame
@@ -1887,7 +1887,7 @@ impl Decoder {
         // `vp9_setup_past_independence` at frame START already zeroed
         // both maps; we then decoded into `cur_segment_ids`, so the
         // swap-equivalent is just a move into `prev_segment_ids`.
-        if std::env::var("RVP9_TRACE_SEG").is_ok() {
+        if crate::trace_flags::trace_flags().trace_seg {
             let nz = cur_segment_ids.iter().filter(|&&v| v != 0).count();
             eprintln!(
                 "[rvp9_seg] keyframe end: mi={}x{} non-zero seg cells = {} / {}",
@@ -1967,7 +1967,7 @@ impl Decoder {
             _ => return Err(DecodeError::WrongFrameKind),
         };
 
-        if std::env::var("RVP9_TRACE_INTER_MV").is_ok() {
+        if crate::trace_flags::trace_flags().inter_mv {
             eprintln!(
                 "[rvp9_inter_frame] indices={:?} sign_biases={:?} refresh=0x{:02x} last_key={} last_size={:?}",
                 ref_frame_indices,
@@ -2054,7 +2054,7 @@ impl Decoder {
         // Diff line-by-line vs the libvpx trace to localize any
         // bitstream-interpretation divergence at the per-frame FC
         // diff-update layer (separate from per-block decode bugs).
-        if std::env::var("RVP9_TRACE_FC").ok().as_deref() == Some("1") {
+        if crate::trace_flags::trace_flags().trace_fc {
             let fc = &self.frame_contexts[fc_idx];
             eprintln!("RVP9_TRACE_FC compressed_header_done kf=0 intra_only=0");
             eprintln!(
@@ -2696,7 +2696,7 @@ impl Decoder {
         // here for the inter path.
         self.merge_lf_params(&tail.loop_filter);
         let filter_level = tail.loop_filter.filter_level;
-        let lf_disabled = std::env::var("RVP9_DISABLE_LF").is_ok();
+        let lf_disabled = crate::trace_flags::trace_flags().disable_lf;
         // Stage 3 Task E.2 — stitch per-tile mi grids into a
         // frame-wide grid for the LF mask builder. Mirrors libvpx
         // `cm->mi_grid_visible` which spans the entire frame
@@ -2737,9 +2737,9 @@ impl Decoder {
         // `${RVP9_DUMP_ALTREF}_y.bin` (raw Y bytes, row-major, no
         // padding) so we can diff against a libvpx altref dump.
         if !frame.header.show_frame
-            && let Ok(path) = std::env::var("RVP9_DUMP_ALTREF")
+            && let Some(path) = crate::trace_flags::trace_flags().dump_altref.as_deref()
         {
-            dump_visible_y_plane(&yv12, &path);
+            dump_visible_y_plane(&yv12, path);
         }
 
         let frame_buf: FrameBuf = std::sync::Arc::new(yv12);
@@ -2796,7 +2796,7 @@ impl Decoder {
         // `prev_segment_ids` for the next frame's inheritance reads.
         // Mirrors libvpx's seg-map double-buffer at end-of-frame
         // (`vp9_alloccommon.c:vp9_swap_current_and_last_seg_map`).
-        if std::env::var("RVP9_TRACE_SEG").is_ok() {
+        if crate::trace_flags::trace_flags().trace_seg {
             let nz = cur_segment_ids.iter().filter(|&&v| v != 0).count();
             eprintln!(
                 "[rvp9_seg] inter end: mi={}x{} non-zero seg cells = {} / {}",
@@ -3078,7 +3078,8 @@ fn apply_loop_filter_to_frame(
 /// [`LoopFilterMask`] + the visible mi-grid block-size tile, gated by
 /// `RVP9_DUMP_LF_MASKS=1`. Used to audit K2.c's wireup against
 /// libvpx's `vp9_setup_mask` + `vp9_adjust_mask` output. Cheap when
-/// the env var is unset (one `std::env::var` lookup per SB).
+/// the env var is unset (R.3: now a cached `trace_flags()` field
+/// access per SB — was a syscall pre-R.3).
 fn dump_lf_masks(
     lfm: &LoopFilterMask,
     frame_mi: &[ModeInfo],
@@ -3088,7 +3089,7 @@ fn dump_lf_masks(
     sb_row: usize,
     sb_col: usize,
 ) {
-    if std::env::var("RVP9_DUMP_LF_MASKS").is_err() {
+    if !crate::trace_flags::trace_flags().dump_lf_masks {
         return;
     }
     let mi_row = sb_row * SB_MI_SIZE;

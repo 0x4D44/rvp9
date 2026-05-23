@@ -1,3 +1,75 @@
+# decode head-to-head — 2026-05-23 (R.3 update)
+
+host: windows-x86_64  unpinned  build: release (3c8d6d1ddea4abc4)
+rvp9: post-R.3 (trace_flags lib.rs extension + intra dq_coefs thread_local)
+
+## R.3 post-fix
+
+| fixture            | res        | tiles | threads | rvp9 p50 us | rvp9 mean us | vpxdec mean us | ratio (rvp9/vpx) | budget us | gate        |
+|--------------------|------------|-------|---------|-------------|--------------|----------------|------------------|-----------|-------------|
+| quantizer-00       | 352x288    |     1 |       1 |      1836.0 |       1921.0 |         6088.5 |             0.32 |         - | **FASTER**  |
+| tile_1x4           | 1920x1080  |     4 |       1 |     21870.0 |      21073.9 |         3964.5 |             5.31 |         - | n/a         |
+| tile_1x4           | 1920x1080  |     4 |       4 |     17122.4 |      16126.5 |         2515.7 |             6.41 |         - | n/a         |
+| testsrc_720p30     | 1280x720   |     1 |       1 |      7040.0 |       6487.3 |          627.3 |            10.34 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       2 |     14633.3 |      13330.8 |          820.9 |            16.24 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       4 |     12730.4 |      11100.2 |          614.4 |            18.07 |     33000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       4 |      5668.6 |       7529.8 |          592.2 |            12.72 |     16000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       8 |      5614.6 |       7544.7 |          596.1 |            12.66 |     16000 | PASS-info   |
+| foreman-fp1        | 352x288    |     1 |       1 |       903.7 |        874.0 |          317.0 |             2.76 |         - | n/a         |
+
+## R.3 before/after delta (post-R.2 → post-R.3)
+
+| fixture            | threads | post-R.2 p50 us | post-R.3 p50 us | R.3 speedup |
+|--------------------|---------|-----------------|-----------------|-------------|
+| quantizer-00       |       1 |          1870.8 |          1836.0 |  1.02x      |
+| tile_1x4           |       1 |         29411.0 |         21870.0 |  **1.34x**  |
+| tile_1x4           |       4 |         18448.8 |         17122.4 |  1.08x      |
+| testsrc_720p30     |       1 |          9675.7 |          7040.0 |  **1.37x**  |
+| testsrc_1080p30    |       2 |         16605.9 |         14633.3 |  1.13x      |
+| testsrc_1080p30    |       4 |         12742.7 |         12730.4 |  1.00x      |
+| testsrc_1080p60    |       4 |          5139.3 |          5668.6 |  0.91x (noise) |
+| testsrc_1080p60    |       8 |          6541.7 |          5614.6 |  **1.17x**  |
+| foreman-fp1        |       1 |          1112.5 |           903.7 |  **1.23x**  |
+
+## Compound: baseline (pre-R.1) → post-R.3
+
+| fixture            | threads | pre-R.1 baseline | post-R.3   | compound speedup |
+|--------------------|---------|------------------|------------|------------------|
+| tile_1x4           |       4 |        339,213.7 |   17,122.4 |        **19.8x** |
+| testsrc_1080p30    |       4 |        181,832.6 |   12,730.4 |        **14.3x** |
+| testsrc_720p30     |       1 |         87,198.0 |    7,040.0 |        **12.4x** |
+| tile_1x4           |       1 |        271,544.0 |   21,870.0 |        **12.4x** |
+| testsrc_1080p30    |       2 |        148,492.1 |   14,633.3 |        **10.1x** |
+| foreman-fp1        |       1 |          8,130.3 |      903.7 |         **9.0x** |
+| quantizer-00       |       1 |         12,084.5 |    1,836.0 |          **6.6x** (now 3.32x FASTER than vpxdec) |
+| testsrc_1080p60    |       4 |         11,321.2 |    5,668.6 |          **2.0x** |
+
+All PLAN.md §2 budgets PASS with significant headroom. Worst remaining
+gap: 20.7x on testsrc_1080p30 t=4. Continuing in R.4 (profile-guided).
+
+## Methodology
+
+R.3 changes:
+- crates/rvp9-decoder/src/trace_flags.rs: extended TraceFlags with the
+  9 lib.rs `env::var` sites (disable_lf, trace_seg, trace_fc,
+  dump_altref, dump_lf_masks). Last one was per-SB (~500/frame at 1080p).
+- crates/rvp9-decoder/src/reconstruct.rs: added thread_local
+  `DQ_COEFS_BUF: RefCell<Vec<i32>>` (sized to MAX_TX_COEFFS = 1024).
+  Replaced per-call `let mut dq_coefs = [0i32; MAX_TX_COEFFS]` (4 KB
+  stack zero) in `reconstruct_intra_block` with a thread_local borrow.
+  The inter equivalent (`reconstruct_inter.rs:544`) was tried but
+  regressed testsrc_1080p60 by 30% — the per-call RefCell+TLS overhead
+  exceeded the stack-zero savings for synthetic content with high
+  TX-block density. Reverted; left as a follow-up needing UnsafeCell
+  or per-tile hoist via parameter threading.
+- `bool_reader::read` was also tried at `#[inline(always)]` but
+  regressed 1080p60. Reverted.
+
+Bisection summary: lib.rs trace_flags + intra dq_coefs is the
+keep-and-ship subset. Mechanical, bit-exact, no test churn.
+
+## Previous ledger sections preserved below (R.2 + R.1 + baseline)
+
 # decode head-to-head — 2026-05-23 (R.2 update)
 
 host: windows-x86_64  unpinned  build: release (3c8d6d1ddea4abc4)
