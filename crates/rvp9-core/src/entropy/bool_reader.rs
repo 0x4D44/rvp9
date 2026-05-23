@@ -99,8 +99,13 @@ impl<'a> BoolReader<'a> {
             bit = 1;
         }
 
-        // Renormalise.
-        let shift = u32::from(super::tables::VPX_NORM[(range & 0xff) as usize]);
+        // Renormalise. R.6 (2026-05-23): replace `VPX_NORM[(range & 0xff)
+        // as usize]` table lookup (~4-cycle L1 load) with `leading_zeros`
+        // intrinsic (single-cycle LZCNT on modern x86, target-cpu=native).
+        // Bit-exact: VPX_NORM[r] = (r as u8).leading_zeros() & 7 for all
+        // r in 0..256 (the `& 7` collapses lz=8 for r=0 to 0, matching
+        // VPX_NORM[0] = 0 by convention).
+        let shift = ((range & 0xff) as u8).leading_zeros() & 7;
         range <<= shift;
         value = value.wrapping_shl(shift);
         count -= shift as i32;
