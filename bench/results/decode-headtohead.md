@@ -1,3 +1,82 @@
+# decode head-to-head — 2026-05-23 → 2026-05-24 (R.16 final state)
+
+host: windows-x86_64  unpinned  build: release (target-cpu=native)
+rvp9: post-R.16 — 11 shipped Track R waves;
+6 reverted attempt sets (R.5b, R.6, R.11/R.12, R.13, R.15).
+
+## R.16 stable verification
+
+| fixture            | res        | tiles | threads | rvp9 p50 us | rvp9 mean us | vpxdec mean us | ratio (rvp9/vpx) | budget us | gate        |
+|--------------------|------------|-------|---------|-------------|--------------|----------------|------------------|-----------|-------------|
+| quantizer-00       | 352x288    |     1 |       1 |      1709.4 |       1753.2 |         6088.5 |             0.29 |         - | **FASTER**  |
+| tile_1x4           | 1920x1080  |     4 |       1 |     18172.1 |      18200.8 |         3964.5 |             4.59 |         - | n/a         |
+| tile_1x4           | 1920x1080  |     4 |       4 |      9317.0 |       9359.6 |         2515.7 |             3.72 |         - | n/a         |
+| testsrc_720p30     | 1280x720   |     1 |       1 |      5412.4 |       4936.7 |          627.3 |             7.87 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       2 |      8383.1 |       7912.1 |          820.9 |             9.64 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       4 |      7128.2 |      12240.3 |          614.4 |            19.92 |     33000 | PASS-info (noisy) |
+| testsrc_1080p60    | 1920x1080  |     4 |       4 |      5174.8 |       6654.3 |          592.2 |            11.24 |     16000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       8 |      5372.2 |       7156.8 |          596.1 |            12.01 |     16000 | PASS-info   |
+| foreman-fp1        | 352x288    |     1 |       1 |       763.5 |        723.1 |          317.0 |             2.28 |         - | n/a         |
+
+Note: this run had concurrent agent contention (testsrc_1080p30 t=4
+p99 = 89ms, testsrc_1080p60 t=8 p99 = 65ms — major outliers
+indicating CPU contention from other processes). The R.16 commit
+bench captured the cleaner numbers; this run inherits some bench
+noise.
+
+## R.16 description
+
+Threaded `dispatch: &SimdDispatch` through the decoder per-MC path:
+- New `inter_predictor_with_dispatch` variant in `rvp9-core` takes
+  dispatch by reference (caller already has it).
+- `build_inter_predictor_with_mc_border` in `rvp9-decoder` updated to
+  take dispatch and forward to the new variant.
+- `reconstruct_inter_block`'s existing dispatch parameter flows
+  through.
+
+Eliminates ~24k `Arc::clone` atomic operations per 1080p frame.
+Multi-thread fixtures especially benefit (testsrc_1080p60 t=8 +29%
+on first R.16 run).
+
+## Compound: baseline (pre-R.1) → post-R.16
+
+| fixture            | threads | pre-R.1 baseline | post-R.16 | compound speedup |
+|--------------------|---------|------------------|-----------|------------------|
+| tile_1x4           |       4 |        339,213.7 |   9,317.0 |        **36.4x** |
+| testsrc_1080p30    |       2 |        148,492.1 |   8,383.1 |        **17.7x** |
+| testsrc_720p30     |       1 |         87,198.0 |   5,412.4 |        **16.1x** |
+| tile_1x4           |       1 |        271,544.0 |  18,172.1 |        **14.9x** |
+| foreman-fp1        |       1 |          8,130.3 |     763.5 |        **10.7x** |
+| testsrc_1080p30    |       4 |        181,832.6 |   7,128.2 |        **25.5x** (R.16 first run: 31.7x) |
+| quantizer-00       |       1 |         12,084.5 |   1,709.4 |          **7.1x** (3.56x FASTER than vpxdec) |
+| testsrc_1080p60    |       4 |         11,321.2 |   5,174.8 |          **2.2x** |
+
+## 11 shipped Track R waves
+
+| Wave | Commit | Mechanism |
+|---|---|---|
+| R.1 | `ff4f5d8` | env::var cache via OnceLock TraceFlags |
+| R.2 | `dd9d423` | decode_coefs scratch hoist to thread_local |
+| R.3 | `1026118` | trace_flags lib.rs extension + intra dq_coefs thread_local |
+| R.4 | `99e3800` | target-cpu=native in `.cargo/config.toml` |
+| R.5 | `f97dc9b` | Inter-path IDCT eob bucketing (16x16, 32x32) |
+| R.7 | `b436820` | VPX_NORM LUT → `leading_zeros()` LZCNT |
+| R.8 | `07bfda9` | BoolReader::fill → `u64::from_be_bytes` |
+| R.9 | `5a0f8aa` | MC border scratch → MaybeUninit |
+| R.10 | `3cced1e` | Inter dq_coefs → MaybeUninit |
+| R.14 | `cf24154` | decode_coefs → `get_ref()` (skip Arc::clone) |
+| R.16 | `b4dfaea` | Thread dispatch through inter MC path |
+
+## 6 reverted attempt sets
+
+- R.5b: `#[inline(always)]`, `lto=fat`, `panic=abort`
+- R.6: scalar idct8x8_12_add (no AVX2 backing)
+- R.11/R.12: MaybeUninit on intra dq_coefs (recursive stack pressure)
+- R.13: get_ref on inter_predictor (broke LLVM lifetime analysis)
+- R.15: `#[inline]` on BoolReader::fill (icache bloat)
+
+## Previous R.14 ledger preserved below
+
 # decode head-to-head — 2026-05-23 (R.14 update — MAJOR win)
 
 host: windows-x86_64  unpinned  build: release (target-cpu=native)
