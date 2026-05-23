@@ -15,6 +15,7 @@ use rvp9_decoder::Decoder;
 use rvp9_io::container::read_packets;
 use rvp9_io::md5::{hex16, md5_of_yv12_visible};
 use std::io::{BufWriter, Write};
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -53,6 +54,11 @@ struct DecOpts {
     noblit: bool,
     help: bool,
     version: bool,
+    /// Max decode threads. `None` ⇒ flag absent ⇒ auto-detect via
+    /// `Decoder::new()`. `Some(n)` ⇒ explicit `Decoder::with_threads(n)`.
+    /// libvpx parity: `--threads 0` is normalised to `Some(NonZeroUsize::new(1))`
+    /// at parse time (1 thread, no auto-detect).
+    threads: Option<NonZeroUsize>,
 }
 
 impl Default for DecOpts {
@@ -67,6 +73,7 @@ impl Default for DecOpts {
             noblit: false,
             help: false,
             version: false,
+            threads: None,
         }
     }
 }
@@ -103,8 +110,20 @@ fn flag_table() -> Vec<Flag<DecOpts>> {
             apply: Some(|o, _| { o.summary = true; Ok(()) }) },
         Flag { long: "noblit", short: None, arg: Arg::None, help: "decode only, no pixel output",
             apply: Some(|o, _| { o.noblit = true; Ok(()) }) },
+        Flag { long: "threads", short: Some('t'), arg: Arg::Required,
+            help: "max decode threads (0 = 1 thread, omit for auto-detect)",
+            apply: Some(|o, v| {
+                let n: usize = args::parse_value(v, "rvp9dec", "--threads")?;
+                // libvpx parity: --threads 0 means "1 thread" (no extra workers),
+                // NOT auto-detect. Users wanting auto-detect omit the flag.
+                // `NonZeroUsize::new(0)` is the only way `new` returns None
+                // for a `usize`, so fall back to MIN (=1) handles exactly the
+                // `--threads 0` case.
+                let n = NonZeroUsize::new(n).unwrap_or(NonZeroUsize::MIN);
+                o.threads = Some(n);
+                Ok(())
+            }) },
         // Recognised but not implemented yet — error if used.
-        Flag { long: "threads", short: Some('t'), arg: Arg::Required, help: "decode threads", apply: None },
         Flag { long: "frame-buffers", short: None, arg: Arg::Required, help: "external frame buffers", apply: None },
         Flag { long: "scale", short: Some('S'), arg: Arg::None, help: "scale to stream size", apply: None },
         Flag { long: "progress", short: None, arg: Arg::None, help: "show progress", apply: None },
@@ -197,7 +216,10 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
         None
     };
 
-    let mut decoder = Decoder::new();
+    let mut decoder = match opts.threads {
+        Some(n) => Decoder::with_threads(n),
+        None => Decoder::new(),
+    };
     let mut shown: usize = 0; // displayed frames seen
     let mut emitted: usize = 0; // displayed frames written/limited
     let mut y4m_header_written = false;

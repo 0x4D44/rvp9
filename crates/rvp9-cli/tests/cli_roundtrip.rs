@@ -172,3 +172,160 @@ fn help_lists_supported_and_not_yet_tags() {
         assert!(text.contains("[not yet]"), "no not-yet tag in {bin:?}");
     }
 }
+
+// ---- Q.1.B: `--threads` wiring ------------------------------------------------
+//
+// The CLI is a thin shim over `Decoder::with_threads()`. These tests pin the
+// *routing* (flag accepted, libvpx-parity `0 = 1 thread`, validation rejects
+// junk, help no longer says "[not yet]"). The pool-usage oracle lives in
+// `rvp9-harness/tests/tile_threading.rs::multi_tile_dispatch_uses_worker_pool`,
+// which exercises the constructor at N=2 and counts dispatched jobs via the
+// `RVP9_G5_1_PARALLEL_JOBS` counter. We deliberately do not re-prove that here
+// — see Q.1.B HLD §6 "Coverage trade-off".
+
+/// Encode the standard 6-frame 64×64 synthetic clip and return the IVF path.
+/// Caller owns the returned path and is responsible for cleanup.
+fn encode_synthetic_ivf(tag: &str) -> PathBuf {
+    let raw = tmp(&format!("{tag}_in.yuv"));
+    let ivf = tmp(&format!("{tag}_out.ivf"));
+    write_synthetic_raw(&raw);
+    let status = Command::new(enc_bin())
+        .args(["-w", "64", "-h", "64", "--fps", "30/1", "--target-bitrate", "500", "-o"])
+        .arg(&ivf)
+        .arg(&raw)
+        .status()
+        .expect("run rvp9enc");
+    assert!(status.success(), "rvp9enc failed for tag {tag}");
+    let _ = std::fs::remove_file(&raw);
+    ivf
+}
+
+/// Decode `ivf` with the given `extra` flags prepended to the dec args and
+/// return the captured stdout as UTF-8. Fails the test if rvp9dec exits
+/// non-zero or the stdout isn't valid UTF-8.
+fn decode_md5_with(ivf: &std::path::Path, extra: &[&str]) -> String {
+    let mut cmd = Command::new(dec_bin());
+    for a in extra {
+        cmd.arg(a);
+    }
+    let out = cmd
+        .arg("--md5")
+        .arg(ivf)
+        .output()
+        .expect("run rvp9dec");
+    assert!(
+        out.status.success(),
+        "rvp9dec failed with {extra:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).expect("utf8 stdout")
+}
+
+/// Q.1.B test 1: `--threads N` is accepted and produces byte-identical
+/// pixels to the auto-detect (no-flag) path.
+#[test]
+fn threads_flag_accepted() {
+    let ivf = encode_synthetic_ivf("threads_ok");
+
+    let baseline = decode_md5_with(&ivf, &[]);
+    let threaded = decode_md5_with(&ivf, &["--threads", "4"]);
+    assert_eq!(
+        baseline, threaded,
+        "--threads 4 must produce identical output to auto-detect"
+    );
+
+    // Equality of MD5 lines also proves the decoded byte stream matched —
+    // md5_of_yv12_visible covers the whole displayed YV12. No need for a
+    // separate `--i420` byte-compare.
+
+    let _ = std::fs::remove_file(&ivf);
+}
+
+/// Q.1.B test 2: `--threads 0` exits 0 and matches `--threads 1` exactly
+/// (libvpx parity: 0 means 1 thread, NOT auto-detect).
+#[test]
+fn threads_zero_means_one_thread() {
+    let ivf = encode_synthetic_ivf("threads_zero");
+
+    let zero = decode_md5_with(&ivf, &["--threads", "0"]);
+    let one = decode_md5_with(&ivf, &["--threads", "1"]);
+    assert_eq!(
+        zero, one,
+        "--threads 0 must behave identically to --threads 1 (libvpx parity)"
+    );
+
+    let _ = std::fs::remove_file(&ivf);
+}
+
+/// Q.1.B test 3: invalid `--threads` values are rejected with a clear
+/// message that names `--threads`. Three sub-cases: negative, non-numeric,
+/// missing value.
+#[test]
+fn threads_invalid_rejected() {
+    let ivf = encode_synthetic_ivf("threads_bad");
+
+    // Helper: run rvp9dec with the given threads token + the ivf and assert
+    // it exits non-zero with a stderr that mentions `--threads`.
+    let assert_rejects = |threads_tokens: &[&str], label: &str| {
+        let mut cmd = Command::new(dec_bin());
+        for t in threads_tokens {
+            cmd.arg(t);
+        }
+        cmd.arg(&ivf);
+        let out = cmd.output().expect("run rvp9dec");
+        assert!(
+            !out.status.success(),
+            "{label}: must exit non-zero, stderr=`{}`",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("--threads"),
+            "{label}: stderr must mention --threads, got: {stderr}"
+        );
+    };
+
+    // Negative: parse_value::<usize> rejects '-1'.
+    assert_rejects(&["--threads", "-1"], "negative");
+    // Non-numeric: parse_value::<usize> rejects 'abc'.
+    assert_rejects(&["--threads", "abc"], "non-numeric");
+    // Missing value: --threads at EOL with nothing following (the ivf is
+    // consumed as the --threads value, then no positional input remains
+    // → "no input file given" — that's a separate error path. The truly
+    // missing-value case is `--threads` as the *last* token.
+    let out = Command::new(dec_bin())
+        .arg("--threads")
+        .output()
+        .expect("run rvp9dec");
+    assert!(!out.status.success(), "missing-value: must exit non-zero");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--threads") && stderr.contains("requires a value"),
+        "missing-value: expected '--threads requires a value', got: {stderr}"
+    );
+
+    let _ = std::fs::remove_file(&ivf);
+}
+
+/// Q.1.B test 4: `--help` lists `--threads` as `[supported]`, not `[not yet]`.
+#[test]
+fn threads_help_tag_supported() {
+    let out = Command::new(dec_bin())
+        .arg("--help")
+        .output()
+        .expect("run rvp9dec --help");
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    let line = text
+        .lines()
+        .find(|l| l.contains("--threads"))
+        .expect("--threads must appear in --help output");
+    assert!(
+        line.contains("[supported]"),
+        "--threads must be tagged [supported], got: {line}"
+    );
+    assert!(
+        !line.contains("[not yet]"),
+        "--threads must no longer be tagged [not yet], got: {line}"
+    );
+}
