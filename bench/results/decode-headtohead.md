@@ -1,3 +1,65 @@
+# decode head-to-head — 2026-05-23 (R.14 update — MAJOR win)
+
+host: windows-x86_64  unpinned  build: release (target-cpu=native)
+rvp9: post-R.14 — 10 shipped Track R waves (R.1-R.5, R.7-R.10, R.14);
+4 reverted (R.6 scalar idct8x8_12, R.11/R.12 intra MaybeUninit, R.13 get_ref on inter_predictor).
+
+## R.14 post-fix (decode_coefs get_ref)
+
+| fixture            | res        | tiles | threads | rvp9 p50 us | rvp9 mean us | vpxdec mean us | ratio (rvp9/vpx) | budget us | gate        |
+|--------------------|------------|-------|---------|-------------|--------------|----------------|------------------|-----------|-------------|
+| quantizer-00       | 352x288    |     1 |       1 |      1787.2 |       1869.2 |         6088.5 |             0.31 |         - | **FASTER**  |
+| tile_1x4           | 1920x1080  |     4 |       1 |     20167.6 |      22755.3 |         3964.5 |             5.74 |         - | n/a         |
+| tile_1x4           | 1920x1080  |     4 |       4 |     10268.3 |      10670.1 |         2515.7 |             4.24 |         - | n/a         |
+| testsrc_720p30     | 1280x720   |     1 |       1 |      5566.2 |       5160.6 |          627.3 |             8.23 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       2 |      8947.9 |       8424.8 |          820.9 |            10.26 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       4 |      6021.6 |       6857.8 |          614.4 |            11.16 |     33000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       4 |      5501.0 |       6026.8 |          592.2 |            10.18 |     16000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       8 |      6096.4 |       6602.9 |          596.1 |            11.08 |     16000 | PASS-info   |
+| foreman-fp1        | 352x288    |     1 |       1 |       732.8 |        707.7 |          317.0 |             2.23 |         - | n/a         |
+
+## R.14 before/after delta (R.10 → R.14)
+
+| fixture            | threads | R.10 p50 us | R.14 p50 us | R.14 speedup |
+|--------------------|---------|-------------|-------------|--------------|
+| tile_1x4           |       4 |     15474.0 |     10268.3 |  **1.51x**   |
+| testsrc_1080p30    |       2 |     11998.8 |      8947.9 |  **1.34x**   |
+| testsrc_1080p30    |       4 |     11467.6 |      6021.6 |  **1.90x**   |
+| quantizer-00       |       1 |      2060.2 |      1787.2 |  1.15x       |
+| tile_1x4           |       1 |     19655.8 |     20167.6 |  0.97x       |
+| testsrc_720p30     |       1 |      5087.5 |      5566.2 |  0.91x       |
+| testsrc_1080p60    |       4 |      5036.4 |      5501.0 |  0.92x       |
+| testsrc_1080p60    |       8 |      5018.7 |      6096.4 |  0.82x       |
+| foreman-fp1        |       1 |       720.3 |       732.8 |  0.98x       |
+
+## Compound: baseline (pre-R.1) → post-R.14
+
+| fixture            | threads | pre-R.1 baseline | post-R.14 | compound speedup |
+|--------------------|---------|------------------|-----------|------------------|
+| tile_1x4           |       4 |        339,213.7 |  10,268.3 |        **33.0x** |
+| testsrc_1080p30    |       4 |        181,832.6 |   6,021.6 |        **30.2x** |
+| testsrc_720p30     |       1 |         87,198.0 |   5,566.2 |        **15.7x** |
+| testsrc_1080p30    |       2 |        148,492.1 |   8,947.9 |        **16.6x** |
+| tile_1x4           |       1 |        271,544.0 |  20,167.6 |        **13.5x** |
+| foreman-fp1        |       1 |          8,130.3 |     732.8 |        **11.1x** |
+| quantizer-00       |       1 |         12,084.5 |   1,787.2 |          **6.8x** (3.41x FASTER than vpxdec) |
+| testsrc_1080p60    |       4 |         11,321.2 |   5,501.0 |          **2.1x** |
+
+## Worst remaining gaps to vpxdec
+
+| fixture | th | rvp9 p50 | vpxdec | ratio |
+|---|---|---|---|---|
+| quantizer-00 | 1 | 1.79 ms | 6.09 ms | **0.31× (FASTER)** |
+| foreman-fp1 | 1 | 0.73 ms | 0.32 ms | 2.23× |
+| tile_1x4 1080p | 4 | 10.27 ms | 2.52 ms | 4.08× |
+| testsrc_720p30 | 1 | 5.57 ms | 0.63 ms | 8.81× |
+| testsrc_1080p30 | 4 | 6.02 ms | 0.61 ms | 9.81× |
+| testsrc_1080p60 | 4 | 5.50 ms | 0.59 ms | 9.32× |
+
+**The 18.7× testsrc_1080p30 t=4 gap was halved to 9.81× by R.14 alone.**
+
+## Previous R.10 ledger preserved below
+
 # decode head-to-head — 2026-05-23 (R.10 update — final shipped state)
 
 host: windows-x86_64  unpinned  build: release (target-cpu=native)
