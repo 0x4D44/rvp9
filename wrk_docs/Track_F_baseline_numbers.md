@@ -10,7 +10,7 @@ should drive the **PSNR-delta fallback mean** down on foreman, ideally to
 the point where rvp9's PSNR curve overlaps libvpx's and BD-rate becomes
 measurable again.
 
-## Foreman (real-content gate — `bdrate_gate_stage4a_realcontent`)
+## Foreman (real-content gate — `quality_gate_stage4a_realcontent`)
 
 Source: `foreman_cif.y4m`, centre-cropped to 256×256, 64 frames.
 
@@ -29,7 +29,7 @@ structural confounds. **Target: drive it down.** A 2 dB improvement
 would put rvp9 within striking distance of curve overlap → BD-rate
 becomes computable.
 
-## testsrc (synthetic gate — `bdrate_gate_stage4a`)
+## testsrc (synthetic gate — `quality_gate_stage4a`)
 
 Source: `testsrc_720p30.y4m`, centre-cropped to 256×256, 64 frames.
 
@@ -72,12 +72,21 @@ The full Track E stack does not blow the realtime budget.
 ## How to reproduce
 
 ```bash
-# Foreman + testsrc BD-rate gates with PSNR-delta fallback
-cargo test -p rvp9-encoder --release --test bdrate_gate -- --ignored --nocapture
+# Foreman + testsrc quality gates (F.0.1: PSNR-delta is the PRIMARY gate;
+# BD-rate is reported as a secondary informational line until F.4 closes
+# the curve gap)
+cargo test -p rvp9-encoder --release --test quality_gate -- --ignored --nocapture
 
 # 720p30 realtime frame-time gate
 cargo test -p rvp9-encoder --release --test realtime_gate -- --ignored --nocapture
 ```
+
+Note: F.0.1 (2026-05-23) promoted the matched-bitrate PSNR-delta mean
+from a fallback to the **primary** Track F gate, and renamed the
+former `bdrate_gate*` Stage 4a tests to `quality_gate*`. BD-rate stays
+on the report as a secondary line and returns to a co-gate at F.4 once
+the rvp9 PSNR curve overlaps libvpx's. See
+`wrk_docs/Track_F/F0.1_HLD_psnr_delta_primary_gate.md` for the contract.
 
 ## How Track F's wins will appear here
 

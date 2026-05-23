@@ -172,6 +172,75 @@ pub fn psnr_at_bitrate(curve: &[(f64, f64)], target_kbps: f64) -> Option<f64> {
     Some(sorted[sorted.len() - 1].1)
 }
 
+/// Summary of matched-bitrate PSNR-delta evaluation between an rvp9
+/// curve and a libvpx reference curve. Produced by
+/// [`psnr_delta_summary`].
+///
+/// `count_out_of_range` rvp9 points fall outside the libvpx curve's
+/// bitrate span and are *excluded* from the mean/min/max — there is
+/// no extrapolation. Callers should report the count separately.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PsnrDeltaSummary {
+    /// Arithmetic mean of in-range Δ values (dB). Primary Track F
+    /// signal — positive means rvp9 trails libvpx.
+    pub mean_delta_db: f64,
+    /// Minimum in-range Δ (dB).
+    pub min_delta_db: f64,
+    /// Maximum in-range Δ (dB).
+    pub max_delta_db: f64,
+    /// Number of rvp9 points where libvpx's curve covers the bitrate.
+    pub count_in_range: usize,
+    /// Number of rvp9 points outside libvpx's bitrate range (skipped,
+    /// not extrapolated).
+    pub count_out_of_range: usize,
+}
+
+/// Compute the libvpx-vs-rvp9 PSNR-delta summary at the rvp9 curve's
+/// operating points. `libvpx_curve` is the reference; `rvp9_curve` is
+/// queried point-by-point against it via [`psnr_at_bitrate`].
+///
+/// For each rvp9 sample `(br, psnr_rvp9)` the function evaluates
+/// libvpx's PSNR at `br` by piecewise-linear interpolation in
+/// `ln(bitrate)` space and computes
+/// `Δ = psnr_libvpx_interp − psnr_rvp9`. Positive Δ means rvp9 trails
+/// libvpx at that operating point; negative Δ means rvp9 beats
+/// libvpx. The summary stats are taken over the **in-range subset
+/// only** — out-of-range rvp9 points are counted but never
+/// extrapolated.
+///
+/// Returns `None` when no rvp9 point falls inside the libvpx bitrate
+/// range (caller should report DEFERRED — there is no signal). When
+/// `Some`, `count_in_range >= 1`.
+#[must_use]
+pub fn psnr_delta_summary(
+    libvpx_curve: &[(f64, f64)],
+    rvp9_curve: &[(f64, f64)],
+) -> Option<PsnrDeltaSummary> {
+    let mut deltas: Vec<f64> = Vec::with_capacity(rvp9_curve.len());
+    let mut count_out_of_range: usize = 0;
+    for &(br_r, psnr_r) in rvp9_curve {
+        match psnr_at_bitrate(libvpx_curve, br_r) {
+            Some(psnr_l) => deltas.push(psnr_l - psnr_r),
+            None => count_out_of_range += 1,
+        }
+    }
+    if deltas.is_empty() {
+        return None;
+    }
+    let count_in_range = deltas.len();
+    let sum: f64 = deltas.iter().sum();
+    let mean_delta_db = sum / count_in_range as f64;
+    let min_delta_db = deltas.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max_delta_db = deltas.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    Some(PsnrDeltaSummary {
+        mean_delta_db,
+        min_delta_db,
+        max_delta_db,
+        count_in_range,
+        count_out_of_range,
+    })
+}
+
 /// Definite integral of the cubic `c[0] + c[1]*x + c[2]*x^2 + c[3]*x^3`
 /// over `[lo, hi]`, computed in closed form.
 fn integrate_cubic(c: &[f64; 4], lo: f64, hi: f64) -> f64 {
@@ -527,5 +596,190 @@ mod tests {
             (800.0, 35.0),
         ];
         assert!(bdrate(&curve_a, &curve_b).is_nan());
+    }
+
+    // ---------------------------------------------------------------
+    // psnr_delta_summary — F.0.1 additions.
+    // ---------------------------------------------------------------
+
+    /// All rvp9 points fall inside the libvpx curve's bitrate range.
+    /// libvpx is uniformly +4 dB above rvp9 (mean = min = max = +4.0;
+    /// count_in_range == 4, count_out_of_range == 0).
+    #[test]
+    fn psnr_delta_summary_all_in_range() {
+        let libvpx = vec![
+            (100.0, 30.0),
+            (200.0, 34.0),
+            (400.0, 38.0),
+            (800.0, 42.0),
+        ];
+        // rvp9 sits 4 dB below libvpx at every overlapping bitrate
+        // sample. The shared bitrates make `psnr_at_bitrate` reproduce
+        // libvpx's PSNR exactly at each query point.
+        let rvp9 = vec![
+            (100.0, 26.0),
+            (200.0, 30.0),
+            (400.0, 34.0),
+            (800.0, 38.0),
+        ];
+        let s = psnr_delta_summary(&libvpx, &rvp9).expect("in-range");
+        assert_eq!(s.count_in_range, 4);
+        assert_eq!(s.count_out_of_range, 0);
+        assert!(
+            (s.mean_delta_db - 4.0).abs() < 1e-9,
+            "mean={}",
+            s.mean_delta_db
+        );
+        assert!(
+            (s.min_delta_db - 4.0).abs() < 1e-9,
+            "min={}",
+            s.min_delta_db
+        );
+        assert!(
+            (s.max_delta_db - 4.0).abs() < 1e-9,
+            "max={}",
+            s.max_delta_db
+        );
+    }
+
+    /// rvp9 has 4 points, 2 inside libvpx's [200, 800] span and 2
+    /// outside (one below, one above). Mean is computed over the
+    /// 2 in-range only; count_in_range == 2; count_out_of_range == 2.
+    #[test]
+    fn psnr_delta_summary_partial_out_of_range() {
+        let libvpx = vec![
+            (200.0, 30.0),
+            (400.0, 34.0),
+            (600.0, 36.0),
+            (800.0, 38.0),
+        ];
+        // Two in-range (400, 600) and two out-of-range (100, 1000).
+        // At br=400 libvpx = 34 dB; rvp9 = 30 → Δ = +4.
+        // At br=600 libvpx = 36 dB; rvp9 = 31 → Δ = +5.
+        let rvp9 = vec![
+            (100.0, 20.0),  // below libvpx range — skipped
+            (400.0, 30.0),  // in-range, Δ = +4
+            (600.0, 31.0),  // in-range, Δ = +5
+            (1000.0, 35.0), // above libvpx range — skipped
+        ];
+        let s = psnr_delta_summary(&libvpx, &rvp9).expect("in-range");
+        assert_eq!(s.count_in_range, 2);
+        assert_eq!(s.count_out_of_range, 2);
+        assert!(
+            (s.mean_delta_db - 4.5).abs() < 1e-9,
+            "mean={}",
+            s.mean_delta_db
+        );
+        assert!(
+            (s.min_delta_db - 4.0).abs() < 1e-9,
+            "min={}",
+            s.min_delta_db
+        );
+        assert!(
+            (s.max_delta_db - 5.0).abs() < 1e-9,
+            "max={}",
+            s.max_delta_db
+        );
+    }
+
+    /// All rvp9 points lie outside libvpx's bitrate span → `None`
+    /// (caller should report DEFERRED). count_in_range would be 0,
+    /// which the API encodes as the `None` sentinel.
+    #[test]
+    fn psnr_delta_summary_none_in_range() {
+        let libvpx = vec![
+            (200.0, 30.0),
+            (300.0, 32.0),
+            (400.0, 34.0),
+            (500.0, 36.0),
+        ];
+        let rvp9 = vec![
+            (50.0, 22.0),
+            (100.0, 24.0),
+            (1000.0, 38.0),
+            (2000.0, 42.0),
+        ];
+        assert!(psnr_delta_summary(&libvpx, &rvp9).is_none());
+    }
+
+    /// Sign convention: when rvp9 beats libvpx (rvp9 PSNR higher than
+    /// libvpx-interp at the same bitrate) the delta is negative. This
+    /// is the eventual Track F success regime once block_yrd +
+    /// find_mv_refs + motion-aware partition land.
+    #[test]
+    fn psnr_delta_summary_libvpx_below_rvp9() {
+        let libvpx = vec![
+            (100.0, 26.0),
+            (200.0, 30.0),
+            (400.0, 34.0),
+            (800.0, 38.0),
+        ];
+        // rvp9 is 2 dB BETTER than libvpx at every shared bitrate.
+        let rvp9 = vec![
+            (100.0, 28.0),
+            (200.0, 32.0),
+            (400.0, 36.0),
+            (800.0, 40.0),
+        ];
+        let s = psnr_delta_summary(&libvpx, &rvp9).expect("in-range");
+        assert_eq!(s.count_in_range, 4);
+        assert_eq!(s.count_out_of_range, 0);
+        assert!(s.mean_delta_db < 0.0, "expected negative mean delta, got {}", s.mean_delta_db);
+        assert!(
+            (s.mean_delta_db - (-2.0)).abs() < 1e-9,
+            "mean={}",
+            s.mean_delta_db
+        );
+        assert!(
+            (s.min_delta_db - (-2.0)).abs() < 1e-9,
+            "min={}",
+            s.min_delta_db
+        );
+        assert!(
+            (s.max_delta_db - (-2.0)).abs() < 1e-9,
+            "max={}",
+            s.max_delta_db
+        );
+    }
+
+    /// Exactly one rvp9 point in-range: min == max == mean, count == 1.
+    /// (Note: the gate caller still requires `count_in_range >= 2` for
+    /// PASS — that's a gate-level policy, not a summary-level one.)
+    #[test]
+    fn psnr_delta_summary_single_in_range() {
+        let libvpx = vec![
+            (200.0, 30.0),
+            (300.0, 32.0),
+            (400.0, 34.0),
+            (500.0, 36.0),
+        ];
+        // Only one rvp9 point (at br=300) falls inside the libvpx span.
+        // At br=300 libvpx = 32 dB; rvp9 = 28 → Δ = +4.
+        let rvp9 = vec![
+            (50.0, 20.0),   // below — skipped
+            (300.0, 28.0),  // in-range, Δ = +4
+            (1000.0, 36.0), // above — skipped
+            (2000.0, 38.0), // above — skipped
+        ];
+        let s = psnr_delta_summary(&libvpx, &rvp9).expect("in-range");
+        assert_eq!(s.count_in_range, 1);
+        assert_eq!(s.count_out_of_range, 3);
+        assert!(
+            (s.mean_delta_db - 4.0).abs() < 1e-9,
+            "mean={}",
+            s.mean_delta_db
+        );
+        assert!(
+            (s.min_delta_db - s.mean_delta_db).abs() < 1e-12,
+            "single point: min must equal mean, got min={}, mean={}",
+            s.min_delta_db,
+            s.mean_delta_db
+        );
+        assert!(
+            (s.max_delta_db - s.mean_delta_db).abs() < 1e-12,
+            "single point: max must equal mean, got max={}, mean={}",
+            s.max_delta_db,
+            s.mean_delta_db
+        );
     }
 }

@@ -4,13 +4,14 @@
 // wrong rule.
 #![allow(clippy::print_stderr)]
 
-//! F12.0 — BD-rate vs libvpx measurement harness (Stage 4a exit gate).
+//! F12.0 / F.0.1 — Quality vs libvpx measurement harness (Stage 4a
+//! exit gate).
 //!
 //! Gated by `#[ignore]` so it doesn't run on every `cargo test`. Invoke
 //! explicitly:
 //!
 //! ```text
-//! cargo test --test bdrate_gate -- --ignored --nocapture
+//! cargo test --test quality_gate -- --ignored --nocapture
 //! ```
 //!
 //! ## What this measures
@@ -29,20 +30,47 @@
 //!
 //! If `vpxenc.exe` is available (at the path probed by
 //! [`libvpx_stock_available`]), the harness also encodes the same
-//! source through libvpx-stock at matched configs and computes the
-//! BD-rate via [`rvp9_harness::bdrate::bdrate`].
+//! source through libvpx-stock at matched configs.
 //!
-//! Reports to STDERR. Pass/fail is informational — the gate is
-//! recorded in `wrk_journals/2026.05.21 - JRN - F12-stage4a-exit-gate.md`.
+//! ## Primary metric — PSNR-delta mean (F.0.1)
+//!
+//! After Track E closed the rate-control / structural confounds, rvp9's
+//! PSNR curve still sits entirely below libvpx's on real content, so
+//! the Bjøntegaard cubic has no PSNR overlap and BD-rate is structurally
+//! undefined. F.0.1 promotes the matched-bitrate PSNR-delta mean to the
+//! primary signal: gate PASS when
+//! `mean_delta_db <= psnr_delta_threshold_db` AND
+//! `count_in_range >= 2`. BD-rate is reported as a secondary line that
+//! returns to a co-gate at F.4 once the curve overlap closes. See
+//! `wrk_docs/Track_F/F0.1_HLD_psnr_delta_primary_gate.md` and
+//! `wrk_journals/2026.05.21 - JRN - F12-stage4a-exit-gate.md` for the
+//! full rationale.
+//!
+//! Reports to STDERR.
 
 use rvp9_decoder::{Decoder, ParsedFrame};
 use rvp9_encoder::{AqMode, EncoderConfig, StreamEncoder, YuvFrameRef};
-use rvp9_harness::bdrate::{bdrate, psnr_at_bitrate};
+use rvp9_harness::bdrate::{bdrate, psnr_delta_summary};
 use rvp9_harness::y4m::{
     YuvFrameBuf, probe_foreman_cif, probe_testsrc_720p, read_cropped as y4m_read_cropped,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// Track F pass/fail threshold on the foreman PSNR-delta mean (dB).
+/// Updated per milestone — see the F.0.1 HLD §3.2 table.
+/// 2026-05-23: +9.5 dB (initial — purely a regression guard at the
+/// baseline mean of +9.07 dB; F.1 will tighten this).
+const TRACK_F_PSNR_DELTA_THRESHOLD_DB: f64 = 9.5;
+
+/// testsrc is a content-artefact corner case where libvpx wins on
+/// flat-content luck (78 dB on colour bars at 68 kbps — a regime no
+/// realtime encoder follows without flat-content specific
+/// optimisations per Track_F_baseline_numbers.md). This constant is a
+/// COHERENCE SANITY CHECK, NOT A TRACK F GATE — its only job is to
+/// catch wholesale rvp9 regression on testsrc. The Track F headline
+/// metric lives on foreman.
+const TRACK_F_PSNR_DELTA_THRESHOLD_TESTSRC_DB: f64 = 50.0;
 
 /// Probe for libvpx-stock's `vpxenc.exe` at a known path.
 ///
@@ -152,6 +180,7 @@ fn measure_rvp9_point(
         target_bitrate_bps,
         gop_length: frames.len() as u32 + 1,
         aq_mode,
+        use_prev_frame_mvs: false,
     };
     let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
     let mut dec = Decoder::new();
@@ -342,24 +371,32 @@ fn measure_libvpx_point(
     })
 }
 
-/// Stage 4a BD-rate gate body, parameterised over the source frames.
+/// Stage 4a quality gate body, parameterised over the source frames.
 ///
-/// Pulled out so both [`bdrate_gate_stage4a`] (testsrc) and
-/// [`bdrate_gate_stage4a_realcontent`] (foreman_cif) share the same
-/// measurement-and-report code path while varying only the input clip.
-fn run_stage4a_gate(
+/// Pulled out so both [`quality_gate_stage4a`] (testsrc) and
+/// [`quality_gate_stage4a_realcontent`] (foreman_cif) share the same
+/// measurement-and-report code path while varying only the input clip
+/// and the PSNR-delta threshold.
+///
+/// `psnr_delta_threshold_db` is the F.0.1 PASS threshold on the
+/// in-range mean Δ (libvpx_interp − rvp9). PASS requires the mean to
+/// be ≤ threshold AND `count_in_range >= 2`; otherwise FAIL (or
+/// DEFERRED if no libvpx leg is available / too few in-range points).
+fn run_stage4a_quality_gate(
     source_label: &str,
     frames: &[YuvFrameBuf],
     framerate: f64,
     target_bitrates_bps: &[u32],
     w: u32,
     h: u32,
+    psnr_delta_threshold_db: f64,
 ) {
     let n_frames = frames.len();
-    eprintln!("Stage 4a Exit Gate — F12.0 Measurement Report");
+    eprintln!("Stage 4a Exit Gate — F.0.1 Quality Measurement Report");
     eprintln!("==========================================================");
     eprintln!("Source: {source_label}");
     eprintln!("Frames: {n_frames}    Target bitrates: {target_bitrates_bps:?} bps");
+    eprintln!("PSNR-delta PASS threshold: <= {psnr_delta_threshold_db:.2} dB");
     eprintln!();
 
     // -------------------------------------------------------------
@@ -415,59 +452,58 @@ fn run_stage4a_gate(
     }
 
     // -------------------------------------------------------------
-    // BD-rate (with matched-bitrate-PSNR fallback when undefined).
+    // F.0.1 — PSNR-delta is the PRIMARY gate; BD-rate is reported as a
+    // secondary informational line.
     //
-    // BD-rate requires the two RD curves' PSNR ranges to overlap. After
-    // Track E's overshoot fix (E6/E7/E8) rvp9 operates at the *correct*
-    // bitrates but with insufficient coding quality, so its PSNR curve
-    // (24-27 dB on foreman) sits entirely below libvpx's (28-37 dB) and
-    // the integral is undefined. To still produce a usable metric for
-    // Track F (block_yrd / find_mv_refs / motion-aware partitioner) the
-    // gate falls back to a *matched-bitrate PSNR delta*: at each rvp9
-    // operating point, interpolate libvpx's curve at the same bitrate
-    // and report the dB gap. See
-    // `wrk_journals/2026.05.23 - JRN - Track E FINAL CLOSE - E1-E14
-    // complete, multi-fix coupled remainder.md` for the rationale.
+    // After Track E's overshoot fix (E6/E7/E8) rvp9 operates at the
+    // *correct* bitrates but with insufficient coding quality, so its
+    // PSNR curve (24-27 dB on foreman) sits entirely below libvpx's
+    // (28-37 dB). The Bjøntegaard cubic has no PSNR overlap to integrate,
+    // so BD-rate is structurally NaN. F.0.1 promotes the matched-bitrate
+    // PSNR-delta (libvpx_PSNR − rvp9_PSNR, interpolated at each rvp9
+    // bitrate via `psnr_at_bitrate`) to the primary signal. BD-rate
+    // returns as a co-gate at F.4 once block_yrd + find_mv_refs +
+    // motion-aware partition close the curve gap. See
+    // `wrk_docs/Track_F/F0.1_HLD_psnr_delta_primary_gate.md`.
     // -------------------------------------------------------------
+    eprintln!();
+    // Secondary line — BD-rate (informational only during F.1–F.3).
     let bd = libvpx_curve
         .as_ref()
         .map(|lv| bdrate(lv, &rvp9_curve))
         .unwrap_or(f64::NAN);
-    eprintln!();
-    if !bd.is_nan() {
+    if bd.is_nan() {
         eprintln!(
-            "BD-rate (rvp9 vs libvpx, positive = rvp9 uses more bits): {bd:+.2} %"
+            "BD-rate (secondary, informational): not measurable \
+             (no PSNR overlap or libvpx leg absent)"
         );
-        let pass = bd.abs() <= 2.0;
+    } else {
         eprintln!(
-            "Exit gate status: {} (threshold ±2 %)",
-            if pass { "PASS" } else { "FAIL" }
+            "BD-rate (secondary, informational; positive = rvp9 uses more bits): \
+             {bd:+.2} %"
         );
-    } else if let Some(ref lv) = libvpx_curve {
-        // FALLBACK metric. BD-rate undefined (no PSNR overlap or
-        // ill-conditioned cubic). Report the matched-bitrate PSNR delta
-        // per operating point + mean/max across in-range points.
-        eprintln!("BD-rate: not measurable (no PSNR overlap between curves)");
+    }
+
+    // Primary metric — PSNR-delta summary.
+    if let Some(ref lv) = libvpx_curve {
         eprintln!(
-            "FALLBACK metric — matched-bitrate PSNR delta (libvpx_PSNR − rvp9_PSNR):"
+            "PRIMARY metric — matched-bitrate PSNR delta (libvpx_PSNR − rvp9_PSNR):"
         );
         eprintln!(
             "  Positive delta = rvp9 trails libvpx at the same bitrate (dB)."
         );
-        let lv_brs: Vec<f64> = lv.iter().map(|p| p.0).collect();
-        let lv_br_min = lv_brs.iter().cloned().fold(f64::INFINITY, f64::min);
-        let lv_br_max = lv_brs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        let mut deltas: Vec<f64> = Vec::with_capacity(rvp9_curve.len());
-        let mut skipped: Vec<f64> = Vec::new();
+        let lv_br_min = lv.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
+        let lv_br_max = lv.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
+        // Per-point table — preserves the E15 reporter format that the
+        // baseline doc reproduces exactly.
         for &(br_r, psnr_r) in rvp9_curve.iter() {
-            match psnr_at_bitrate(lv, br_r) {
+            match rvp9_harness::bdrate::psnr_at_bitrate(lv, br_r) {
                 Some(psnr_l) => {
                     let d = psnr_l - psnr_r;
                     eprintln!(
                         "    rvp9 {br_r:>7.1} kbps / {psnr_r:>5.2} dB  vs  \
                          libvpx-interp {psnr_l:>5.2} dB  →  Δ = {d:+5.2} dB"
                     );
-                    deltas.push(d);
                 }
                 None => {
                     eprintln!(
@@ -475,49 +511,75 @@ fn run_stage4a_gate(
                          OUT OF libvpx bitrate range [{lv_br_min:.1}, {lv_br_max:.1}] \
                          kbps, skipped"
                     );
-                    skipped.push(br_r);
                 }
             }
         }
-        if deltas.is_empty() {
-            eprintln!(
-                "  No rvp9 operating points fell inside the libvpx bitrate range; \
-                 fallback delta not computable."
-            );
-            eprintln!(
-                "Exit gate status: DEFERRED (BD-rate undefined AND fallback has no \
-                 in-range points)"
-            );
-        } else {
-            let mean = deltas.iter().sum::<f64>() / deltas.len() as f64;
-            let max =
-                deltas.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            let min = deltas.iter().cloned().fold(f64::INFINITY, f64::min);
-            eprintln!(
-                "  Summary across {} in-range point(s){}: mean Δ = {:+5.2} dB, \
-                 max Δ = {:+5.2} dB, min Δ = {:+5.2} dB",
-                deltas.len(),
-                if skipped.is_empty() {
+
+        match psnr_delta_summary(lv, &rvp9_curve) {
+            Some(s) => {
+                let skipped_suffix = if s.count_out_of_range == 0 {
                     String::new()
                 } else {
-                    format!(" ({} skipped out-of-range)", skipped.len())
-                },
-                mean,
-                max,
-                min
-            );
-            eprintln!(
-                "Exit gate status: DEFERRED-FALLBACK (BD-rate undefined; \
-                 PSNR-delta fallback reported above)"
-            );
-            eprintln!(
-                "  Track F target TBD — the gate condition for \"fallback \
-                 acceptable\" is OPEN. Mean delta is the metric to drive down."
-            );
+                    format!(" ({} skipped out-of-range)", s.count_out_of_range)
+                };
+                eprintln!(
+                    "  Summary across {} in-range point(s){}: mean Δ = {:+5.2} dB, \
+                     max Δ = {:+5.2} dB, min Δ = {:+5.2} dB",
+                    s.count_in_range,
+                    skipped_suffix,
+                    s.mean_delta_db,
+                    s.max_delta_db,
+                    s.min_delta_db,
+                );
+                // Gate decision. PASS requires both:
+                //   (a) mean Δ <= threshold (the milestone metric), AND
+                //   (b) >= 2 in-range points (a single-point mean is not
+                //       a meaningful summary of curve-distance — see HLD §3.2).
+                // DEFERRED (not FAIL) when (b) is unmet, because that
+                // condition reflects oracle coverage, not encoder quality.
+                if s.count_in_range < 2 {
+                    eprintln!(
+                        "Exit gate status: DEFERRED (only {} in-range point(s); \
+                         need >= 2 for a meaningful mean — this reflects oracle \
+                         coverage, not encoder quality)",
+                        s.count_in_range
+                    );
+                } else if s.mean_delta_db <= psnr_delta_threshold_db {
+                    eprintln!(
+                        "Exit gate status: PASS (mean Δ {:+.2} dB <= threshold \
+                         {:+.2} dB, count_in_range = {})",
+                        s.mean_delta_db,
+                        psnr_delta_threshold_db,
+                        s.count_in_range,
+                    );
+                } else {
+                    eprintln!(
+                        "Exit gate status: FAIL (mean Δ {:+.2} dB > threshold \
+                         {:+.2} dB, count_in_range = {})",
+                        s.mean_delta_db,
+                        psnr_delta_threshold_db,
+                        s.count_in_range,
+                    );
+                }
+            }
+            None => {
+                eprintln!(
+                    "  No rvp9 operating points fell inside the libvpx bitrate range; \
+                     PSNR-delta summary not computable."
+                );
+                eprintln!(
+                    "Exit gate status: DEFERRED (no in-range points — this reflects \
+                     oracle coverage, not encoder quality)"
+                );
+            }
         }
     } else {
-        eprintln!("BD-rate: not measurable (no libvpx curve available)");
-        eprintln!("Exit gate status: DEFERRED (libvpx leg not measurable in this run)");
+        eprintln!(
+            "PRIMARY metric: not measurable (no libvpx curve available in this run)"
+        );
+        eprintln!(
+            "Exit gate status: DEFERRED (libvpx leg not measurable in this run)"
+        );
     }
 
     // Sanity assertions on the rvp9 curve only. Higher target bitrate
@@ -538,9 +600,9 @@ fn run_stage4a_gate(
     }
 }
 
-/// Load a y4m source for the bdrate gate, falling back to a synthetic
+/// Load a y4m source for the quality gate, falling back to a synthetic
 /// generator on any failure. Returns `(frames, framerate, label)` ready
-/// for [`run_stage4a_gate`].
+/// for [`run_stage4a_quality_gate`].
 fn load_y4m_or_synthetic(
     probed: Option<&Path>,
     w: u32,
@@ -580,25 +642,23 @@ fn load_y4m_or_synthetic(
     (frames, framerate_hint, label)
 }
 
-/// F12.0 — Stage 4a BD-rate exit gate (testsrc 720p crop).
+/// F.0.1 — Stage 4a quality exit gate (testsrc 720p crop).
 ///
 /// Encodes 64 frames of a 256×256 centre-crop of `testsrc_720p30.y4m`
 /// through rvp9 at four target bitrates spanning the operating range,
 /// decodes each output and computes (bitrate, PSNR). If libvpx-stock
 /// is available, runs the same source through `vpxenc` at the same
-/// target bitrates and computes BD-rate.
-///
-/// Reports to stderr. The threshold check (±2 %) is reported but does
-/// NOT cause the test to fail outright — it's informational. The
-/// authoritative gate is the journal entry.
+/// target bitrates and reports both the PSNR-delta primary metric and
+/// BD-rate secondary line.
 ///
 /// testsrc is largely flat colour bars + simple motion, so both rvp9
-/// and libvpx saturate at ~75 kbps regardless of target. See the
-/// companion [`bdrate_gate_stage4a_realcontent`] test for a real-
-/// motion (foreman_cif) cross-check.
+/// and libvpx saturate at ~75 kbps regardless of target. The
+/// [`TRACK_F_PSNR_DELTA_THRESHOLD_TESTSRC_DB`] threshold is a coherence
+/// sanity check (+50 dB), NOT the Track F gate — the headline metric
+/// lives on foreman via [`quality_gate_stage4a_realcontent`].
 #[test]
-#[ignore = "F12.0 — Stage 4a exit-gate harness; run with `--ignored`"]
-fn bdrate_gate_stage4a() {
+#[ignore = "F.0.1 — Stage 4a quality-gate harness; run with `--ignored`"]
+fn quality_gate_stage4a() {
     // 256×256 = 4×4 SB grid — exercises non-trivial partition decisions
     // and is wide enough that the AQ-off baseline RD curve has
     // meaningful slope. 64 frames at 30 fps = 1 GOP keyframe + 63 inter
@@ -645,25 +705,28 @@ fn bdrate_gate_stage4a() {
         animated_gradient,
     );
 
-    run_stage4a_gate(
+    run_stage4a_quality_gate(
         &source_label,
         &frames,
         framerate,
         &target_bitrates_bps,
         W,
         H,
+        TRACK_F_PSNR_DELTA_THRESHOLD_TESTSRC_DB,
     );
 }
 
-/// F12.0 — Stage 4a BD-rate exit gate on real-motion content (foreman_cif).
+/// F.0.1 — Stage 4a quality exit gate on real-motion content
+/// (foreman_cif). **THIS IS THE HEADLINE TRACK F GATE.**
 ///
-/// Companion to [`bdrate_gate_stage4a`]: the testsrc clip is largely
+/// Companion to [`quality_gate_stage4a`]: the testsrc clip is largely
 /// flat colour bars and saturates at ~75 kbps PSNR plateaus regardless
 /// of target bitrate. foreman_cif (CIF 352×288, 30 fps, 300 frames)
 /// has head motion, panning camera motion, and texture (face, hair,
 /// construction-site detail) that stresses DCT, MV search, and motion
-/// compensation. This provides a real-content baseline for the BD-rate
-/// numbers reported on testsrc.
+/// compensation. The PSNR-delta mean here is the metric to drive down
+/// at every Track F milestone — see
+/// `wrk_docs/Track_F/F0.1_HLD_psnr_delta_primary_gate.md`.
 ///
 /// Source: standard Hannover/derf-collection clip distributed by
 /// xiph.org (`media.xiph.org/video/derf/y4m/foreman_cif.y4m`). The y4m
@@ -671,8 +734,8 @@ fn bdrate_gate_stage4a() {
 /// acquisition steps. If the file is missing the test skips early
 /// without panicking.
 #[test]
-#[ignore = "F12.0 — Stage 4a real-content gate; run with `--ignored`"]
-fn bdrate_gate_stage4a_realcontent() {
+#[ignore = "F.0.1 — Stage 4a real-content quality gate; run with `--ignored`"]
+fn quality_gate_stage4a_realcontent() {
     // 256×256 centre crop of CIF (352×288). The face fills the centre
     // of the frame so the crop captures the principal motion. Crop
     // offsets: x = (352-256)/2 = 48, y = (288-256)/2 = 16.
@@ -713,13 +776,14 @@ fn bdrate_gate_stage4a_realcontent() {
         "foreman_cif y4m centre-crop from {} → {W}x{H} @ {framerate} fps",
         path.display()
     );
-    run_stage4a_gate(
+    run_stage4a_quality_gate(
         &source_label,
         &frames,
         framerate,
         &target_bitrates_bps,
         W,
         H,
+        TRACK_F_PSNR_DELTA_THRESHOLD_DB,
     );
 }
 
@@ -730,7 +794,7 @@ fn bdrate_gate_stage4a_realcontent() {
 // libvpx, then compares the two gains. PLAN.md Stage 4b exit gate:
 // `|gain_rvp9 - gain_libvpx| <= 0.3 %`.
 //
-// The synthetic 128×128 gradient used by [`bdrate_gate_stage4a`] is
+// The synthetic 128×128 gradient used by [`quality_gate_stage4a`] is
 // degenerate (both encoders saturate at low bitrates — see the F12.0
 // journal). AQ.5 needs RD curves with PSNR variation, so this harness
 // can read real content from `tests/corpus/*.y4m` (when present) and
@@ -1101,7 +1165,7 @@ fn bdrate_gate_stage4b_aq() {
 /// "boring" regions for cyclic refresh to advantage; foreman exposes a
 /// real working set for the AQ heuristic.
 ///
-/// Source: see [`bdrate_gate_stage4a_realcontent`] for acquisition
+/// Source: see [`quality_gate_stage4a_realcontent`] for acquisition
 /// notes. Skips early if the y4m is missing.
 #[test]
 #[ignore = "AQ.5 — Stage 4b real-content gate; run with `--ignored`"]
