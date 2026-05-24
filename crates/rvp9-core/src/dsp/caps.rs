@@ -23,6 +23,14 @@
 /// because libvpx ships some kernels with SSSE3-only specialisation (e.g.
 /// the `vpx_sad_skip` family) and others SSE4.1-only (e.g. some intra
 /// predictors). We mirror that granularity.
+///
+/// `bmi2` is independent of the SSE/AVX feature tiers. It is exposed
+/// separately so future scalar-bit-manipulation kernels (e.g. `pdep`,
+/// `pext`, `bzhi`, `shrx`/`shlx`) can opt in without dragging an AVX2
+/// requirement along. Per Track T T-3 measurement slice: cap detection
+/// is plumbed first; consumers (e.g. a future `BoolReader::read`
+/// renormaliser variant) land later only if a microbench shows a real,
+/// non-noise win over the existing `leading_zeros`/`shlx` codegen.
 #[cfg(target_arch = "x86_64")]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct X86Caps {
@@ -34,6 +42,11 @@ pub struct X86Caps {
     pub sse4_1: bool,
     /// AVX2 — 256-bit integer SIMD.
     pub avx2: bool,
+    /// BMI2 — `pdep`, `pext`, `bzhi`, `shrx`/`shlx`, `mulx`. Independent
+    /// of the SSE/AVX tier (introduced with Haswell alongside AVX2 but
+    /// promoted to its own CPUID bit). Currently detected-only; no
+    /// kernel selects on it yet (Track T T-3 baseline).
+    pub bmi2: bool,
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -45,6 +58,7 @@ impl X86Caps {
             ssse3: std::is_x86_feature_detected!("ssse3"),
             sse4_1: std::is_x86_feature_detected!("sse4.1"),
             avx2: std::is_x86_feature_detected!("avx2"),
+            bmi2: std::is_x86_feature_detected!("bmi2"),
         }
     }
 }
@@ -113,6 +127,18 @@ mod tests {
     fn x86_sse2_always_present() {
         let caps = X86Caps::detect();
         assert!(caps.sse2, "x86_64 CPUs always support SSE2");
+    }
+
+    /// BMI2 cap is plumbed as a stable bool. Cannot assert it's `true`
+    /// (pre-Haswell x86_64 CPUs and many older Atoms lack it); this just
+    /// pins the field's existence and that detection is deterministic
+    /// across calls.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_bmi2_field_is_stable() {
+        let a = X86Caps::detect().bmi2;
+        let b = X86Caps::detect().bmi2;
+        assert_eq!(a, b, "bmi2 detection must be deterministic");
     }
 
     /// On aarch64 NEON is mandatory.
