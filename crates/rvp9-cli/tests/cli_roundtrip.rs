@@ -164,13 +164,30 @@ fn non_multiple_of_64_rejected_clearly() {
 
 #[test]
 fn help_lists_supported_and_not_yet_tags() {
+    // Every CLI binary must mark at least some flags as `[supported]`
+    // — that's the load-bearing affordance for users scanning `--help`.
+    //
+    // `[not yet]` is *also* expected to appear in the surface as long
+    // as the codec has unimplemented flags. As of e434ff5 the decoder
+    // (`rvp9dec`) has zero unimplemented flags — all 9 previously-
+    // unwired niche flags now accept gracefully — so `[not yet]` no
+    // longer appears in its help. The encoder still has many unwired
+    // flags. Asserting `[not yet]` *across the union* of binaries
+    // keeps the original intent (we surface unsupported features
+    // honestly to the user) without flagging "fully wired" as a
+    // regression.
+    let mut combined = String::new();
     for bin in [enc_bin(), dec_bin()] {
         let out = Command::new(&bin).arg("--help").output().expect("run --help");
         assert!(out.status.success());
         let text = String::from_utf8_lossy(&out.stdout);
         assert!(text.contains("[supported]"), "no supported tag in {bin:?}");
-        assert!(text.contains("[not yet]"), "no not-yet tag in {bin:?}");
+        combined.push_str(&text);
     }
+    assert!(
+        combined.contains("[not yet]"),
+        "no not-yet tag in any CLI binary; if the encoder is now fully wired, update this test",
+    );
 }
 
 // ---- Q.1.B: `--threads` wiring ------------------------------------------------
