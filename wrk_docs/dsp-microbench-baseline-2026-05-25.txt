@@ -1,0 +1,16 @@
+== Motion compensation (8-tap) ==
+convolve8_vert 16x16               scalar    785.6 ns   avx2     34.6 ns   22.70x
+convolve8 (2D) 16x16               scalar   1388.7 ns   avx2    365.5 ns    3.80x
+convolve8_vert 32x32               scalar   4098.9 ns   avx2    157.5 ns   26.03x
+convolve8 (2D) 32x32               scalar   6716.6 ns   avx2    699.2 ns    9.61x
+convolve8_vert 64x64               scalar   8281.0 ns   avx2    680.4 ns   12.17x
+convolve8 (2D) 64x64               scalar  14521.8 ns   avx2   1795.2 ns    8.09x
+== Scaled MC (Wave L L1) ==
+convolve8_scaled 16x16             scalar   1943.7 ns   avx2    829.8 ns    2.34x
+convolve8_scaled 32x32             scalar   8438.2 ns   avx2   2798.1 ns    3.02x
+convolve8_scaled 64x64             scalar  32119.7 ns   avx2   9235.2 ns    3.48x
+== Directional intra (D117 / D153) ==
+d117_predictor 16x16               scalar    227.6 ns   avx2     30.2 ns    7.54x
+d153_predictor 16x16               scalar    216.7 ns   avx2     40.7 ns    5.32x
+d117_predictor 32x32               scalar    740.6 ns   avx2     46.2 ns   16.03x
+d153_predictor 32x32               scalar    667.2 ns   avx2    126.9 ns    5.26x
