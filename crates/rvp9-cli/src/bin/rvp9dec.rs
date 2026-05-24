@@ -59,6 +59,8 @@ struct DecOpts {
     /// libvpx parity: `--threads 0` is normalised to `Some(NonZeroUsize::new(1))`
     /// at parse time (1 thread, no auto-detect).
     threads: Option<NonZeroUsize>,
+    /// Print decode progress to stderr after each displayed frame.
+    progress: bool,
 }
 
 impl Default for DecOpts {
@@ -74,6 +76,7 @@ impl Default for DecOpts {
             help: false,
             version: false,
             threads: None,
+            progress: false,
         }
     }
 }
@@ -123,16 +126,43 @@ fn flag_table() -> Vec<Flag<DecOpts>> {
                 o.threads = Some(n);
                 Ok(())
             }) },
-        // Recognised but not implemented yet — error if used.
-        Flag { long: "frame-buffers", short: None, arg: Arg::Required, help: "external frame buffers", apply: None },
-        Flag { long: "scale", short: Some('S'), arg: Arg::None, help: "scale to stream size", apply: None },
-        Flag { long: "progress", short: None, arg: Arg::None, help: "show progress", apply: None },
-        Flag { long: "postproc", short: None, arg: Arg::None, help: "enable VP8 post-processing", apply: None },
-        Flag { long: "deblock", short: None, arg: Arg::None, help: "postproc: deblock", apply: None },
-        Flag { long: "demacroblock", short: None, arg: Arg::None, help: "postproc: demacroblock", apply: None },
-        Flag { long: "mfqe", short: None, arg: Arg::None, help: "postproc: MFQE", apply: None },
-        Flag { long: "error-concealment", short: None, arg: Arg::None, help: "error concealment", apply: None },
-        Flag { long: "output-bit-depth", short: None, arg: Arg::Required, help: "output bit depth", apply: None },
+        // -- Progress ---------------------------------------------------
+        Flag { long: "progress", short: None, arg: Arg::None, help: "show progress",
+            apply: Some(|o, _| { o.progress = true; Ok(()) }) },
+        // -- Accepted with warning (no-op) ------------------------------
+        Flag { long: "scale", short: Some('S'), arg: Arg::None, help: "scale to stream size",
+            apply: Some(|_, _| {
+                eprintln!("rvp9dec: --scale accepted but display-size scaling not yet implemented (output at coded size)");
+                Ok(())
+            }) },
+        Flag { long: "output-bit-depth", short: None, arg: Arg::Required, help: "output bit depth",
+            apply: Some(|_, v| {
+                let val = v.ok_or_else(|| "rvp9dec: --output-bit-depth requires a value".to_string())?;
+                if val != "8" {
+                    eprintln!("rvp9dec: --output-bit-depth={val}: only 8-bit output supported (Profile 0 decoder)");
+                }
+                Ok(())
+            }) },
+        Flag { long: "error-concealment", short: None, arg: Arg::None, help: "error concealment",
+            apply: Some(|_, _| {
+                eprintln!("rvp9dec: --error-concealment accepted (not yet implemented, errors will propagate)");
+                Ok(())
+            }) },
+        Flag { long: "frame-buffers", short: None, arg: Arg::Required, help: "external frame buffers",
+            apply: Some(|_, v| {
+                let val = v.ok_or_else(|| "rvp9dec: --frame-buffers requires a value".to_string())?;
+                eprintln!("rvp9dec: --frame-buffers={val} accepted (internal buffer pool used)");
+                Ok(())
+            }) },
+        // -- VP8-only post-processing (silent no-op) --------------------
+        Flag { long: "postproc", short: None, arg: Arg::None, help: "enable VP8 post-processing",
+            apply: Some(|_, _| Ok(())) },
+        Flag { long: "deblock", short: None, arg: Arg::None, help: "postproc: deblock",
+            apply: Some(|_, _| Ok(())) },
+        Flag { long: "demacroblock", short: None, arg: Arg::None, help: "postproc: demacroblock",
+            apply: Some(|_, _| Ok(())) },
+        Flag { long: "mfqe", short: None, arg: Arg::None, help: "postproc: MFQE",
+            apply: Some(|_, _| Ok(())) },
     ]
 }
 
@@ -273,9 +303,16 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
 
             shown += 1;
             emitted += 1;
+            if opts.progress {
+                eprint!("\r[rvp9dec] {emitted} frames decoded");
+            }
         }
     }
 
+    if opts.progress {
+        // End the progress line cleanly.
+        eprintln!();
+    }
     if let Some(mut w) = sink {
         w.flush().map_err(io_err)?;
     }
