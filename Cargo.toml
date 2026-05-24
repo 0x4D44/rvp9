@@ -70,7 +70,7 @@ print_stdout = "deny"
 # Release: maximum optimization. We will be CPU-bound at 1080p60.
 [profile.release]
 opt-level = 3
-lto = "thin"
+lto = "fat"
 codegen-units = 1
 debug = "line-tables-only"
 
