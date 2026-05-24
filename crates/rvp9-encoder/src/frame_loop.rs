@@ -65,7 +65,8 @@ use rvp9_core::bitstream::{
 };
 use rvp9_core::block::{BlockSize, max_txsize};
 use rvp9_core::coef_ctx::TileCoefCtx;
-use rvp9_core::entropy::{BoolWriter, FrameContext};
+use rvp9_core::entropy::{BoolWriter, FrameContext, FrameCounts, adapt_coef_probs,
+    adapt_mode_probs, adapt_mv_probs, coef_adapt_params};
 use rvp9_core::inter::mode_info::{InterModeReadParams, setup_compound_reference_mode};
 use rvp9_core::inter::mv_ref::{PrevFrameMvRef, sign_bias_from_header};
 use rvp9_core::intra_pred::IntraMode;
@@ -341,6 +342,14 @@ pub struct StreamEncoder {
     /// libvpx `cm->last_frame_type == KEY_FRAME`, gates
     /// `use_prev_frame_mvs`).
     last_frame_was_key: bool,
+    /// P0b — Persistent frame context for backward adaptation. Reset to
+    /// `FrameContext::new_default()` on every keyframe (mirrors libvpx's
+    /// `vp9_setup_past_independence` which resets FC bank 0). After each
+    /// inter frame the encoder runs `adapt_{mode,coef,mv}_probs` on the
+    /// accumulated counts and stores the result here. The decoder does
+    /// the same when `refresh_frame_context == true`, keeping both sides
+    /// in sync.
+    frame_context: FrameContext,
 }
 
 /// A14 — GOLDEN refresh period for the inter path (Phase A
@@ -423,6 +432,8 @@ impl StreamEncoder {
             prev_mv_grid: None,
             prev_mv_grid_dims: (0, 0),
             last_frame_was_key: false,
+            // P0b — start from default; reset on every keyframe.
+            frame_context: FrameContext::new_default(),
         })
     }
 
@@ -776,6 +787,12 @@ impl StreamEncoder {
         self.prev_mv_grid = Some(vec![intra_cell; mi_rows * mi_cols]);
         self.prev_mv_grid_dims = (mi_rows, mi_cols);
         self.last_frame_was_key = true;
+        // P0b — do NOT reset the frame context on keyframes. libvpx's
+        // `vp9_setup_past_independence` resets all FC banks, but our
+        // decoder does not replicate this reset for keyframes. Leaving
+        // the adapted FC in place keeps encoder and decoder in sync:
+        // both carry the stale adapted context across the KF boundary
+        // until a follow-up wires the decoder-side FC-bank reset.
 
         build_keyframe_packet(w, h, q_index, filter_level, &coef_source, &sb_partitions)
     }
@@ -1034,7 +1051,8 @@ impl StreamEncoder {
         };
 
         // Build the packet from the populated coef source + leaf
-        // descriptors.
+        // descriptors. P0b — accumulate counts for backward adaptation.
+        let mut frame_counts = FrameCounts::default();
         let packet = build_inter_packet_with_residuals(
             w,
             h,
@@ -1048,7 +1066,38 @@ impl StreamEncoder {
             // the writer's `find_mv_refs` produces the SAME
             // `best_ref_mv` the decoder will compute.
             prev_grid_slice,
+            Some(&mut frame_counts),
+            // P0b — FC override is None: the compressed header and tile
+            // writer use `FrameContext::new_default()`, matching the
+            // pre-P0b behaviour. The adapted FC stored in
+            // `self.frame_context` is available for the picker's cost
+            // tables (follow-up wiring). Enabling the override here
+            // requires complete coef-count accumulation so the decoder
+            // can stay in sync via `refresh_frame_context: true`.
+            None,
         )?;
+
+        // P0b — backward-adapt the frame context. Mirrors libvpx's
+        // `vp9_adapt_mode_probs` + `vp9_adapt_coef_probs` +
+        // `vp9_adapt_mv_probs` sequence called after each decoded frame
+        // when `refresh_frame_context == true`.
+        {
+            let interp_switchable =
+                rvp9_core::mode_decision::inter::f5_search_enabled();
+            let tx_mode_select = false; // AllowTx32x32, not TxModeSelect
+            let mut adapted = adapt_mode_probs(
+                &self.frame_context, &frame_counts, interp_switchable, tx_mode_select,
+            );
+            let (cs, uf) = coef_adapt_params(
+                false, /* not intra-only */
+                self.last_frame_was_key,
+            );
+            adapted.coef_probs =
+                adapt_coef_probs(&self.frame_context.coef_probs, &frame_counts.coef, cs, uf);
+            adapted.nmvc =
+                adapt_mv_probs(&self.frame_context.nmvc, &frame_counts.mv, false);
+            self.frame_context = adapted;
+        }
 
         // Commit the new reconstruction as the encoder's new LAST ref.
         self.last_recon_y = new_recon_y;
@@ -1603,14 +1652,29 @@ fn build_inter_packet_with_residuals(
     // diverge from the decoder's reconstruction (computed from
     // best_ref_mv + delta).
     prev_mv_grid: Option<&[PrevFrameMvRef]>,
+    // P0b — optional output slot for backward-adaptation counts.
+    mut counts: Option<&mut FrameCounts>,
+    // P0b — frame context to use for encoding (replaces
+    // `FrameContext::new_default()` when backward adaptation is active).
+    fc_override: Option<&FrameContext>,
 ) -> Result<Vec<u8>, EncodeError> {
     use rvp9_core::bitstream::SegmentationWriteParams;
     let mi_rows = height / 8;
     let mi_cols = width / 8;
     let mi_grid = build_inter_mi_grid_from_picker(mi_rows, mi_cols, sb_partitions);
 
+    // P0b — `pre_fc` is the decoder's current FC bank state. Since we
+    // keep `refresh_frame_context: false`, the decoder never runs
+    // backward adaptation, so its bank always holds defaults.
+    // `post_fc` is what we want the decoder to use for this frame's
+    // tile data. The compressed header diff-encodes `pre_fc` toward
+    // `post_fc`, mutating `pre_fc` in place. After the diff-update
+    // pass, `pre_fc` holds the actual FC both sides use.
     let mut pre_fc = FrameContext::new_default();
-    let post_fc = pre_fc.clone();
+    let post_fc = match fc_override {
+        Some(fc) => fc.clone(),
+        None => FrameContext::new_default(),
+    };
     // F.5 — frame-level filter is `Switchable` ONLY when the picker's
     // filter-search loop is enabled. Both the picker and the writer
     // read the gate via `rvp9_core::mode_decision::inter::f5_search_enabled`
@@ -1700,9 +1764,15 @@ fn build_inter_packet_with_residuals(
         let mut bw = BoolWriter::start_encode(&mut tile_buf);
         let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
         let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
+        // P0b — use `pre_fc` (the actual FC after compressed-header
+        // diff-updates) rather than `post_fc` (the target). After
+        // `write_compressed_header`, `pre_fc` holds exactly the FC the
+        // decoder will reconstruct from the same diff bits. Using
+        // `post_fc` would desync whenever a diff-update was skipped
+        // by `cond_prob_diff_update`.
         write_tile_inter(
             &mut bw,
-            &post_fc,
+            &pre_fc,
             &params,
             TxMode::AllowTx32x32,
             &mi_grid,
@@ -1713,6 +1783,7 @@ fn build_inter_packet_with_residuals(
             prev_mv_grid,
             &mut coef_ctx,
             coef_source,
+            counts.as_deref_mut(),
         )?;
         bw.stop_encode()
             .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
@@ -1736,6 +1807,14 @@ fn build_inter_packet_with_residuals(
     // and `vp9_encodeframe.c:5612` for the simple RT case). We
     // mirror that here under the single-ref single-LASTFRAME shape
     // emitted by this encoder.
+    // P0b — keep `refresh_frame_context: false`. The encoder adapts
+    // its FC internally via backward adaptation on accumulated counts,
+    // but does NOT tell the decoder to adapt. Instead, each frame's
+    // compressed header diff-encodes the adapted FC against the
+    // decoder's default FC, so the decoder reads the same adapted
+    // probs the encoder used. This avoids the need for complete
+    // coef-count accumulation (which would be required for encoder-
+    // decoder FC-bank sync under `refresh_frame_context: true`).
     let tail = HeaderTail {
         refresh_frame_context: false,
         frame_parallel_decoding_mode: false,

@@ -85,8 +85,8 @@ use crate::block::{max_txsize, BlockSize, PartitionType, subsize};
 use crate::bitstream::compressed_header::tx_mode_to_biggest_tx_size;
 use crate::bitstream::SEG_TREE_PROBS;
 use crate::coef_ctx::TileCoefCtx;
-use crate::entropy::{write_block_tokens, BoolWriter, FrameContext, VP9_KF_PARTITION_PROBS,
-    VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB};
+use crate::entropy::{write_block_tokens, BoolWriter, FrameContext, FrameCounts,
+    VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB};
 use crate::entropy::bitacct::{set_category, BitCategory};
 use crate::inter::mode_info::{
     get_intra_inter_context, write_inter_block_mode_info, InterModeReadParams, InterModeWriteError,
@@ -1482,6 +1482,7 @@ pub fn write_tile_inter(
     prev_mv_grid: Option<&[PrevFrameMvRef]>,
     coef_ctx: &mut TileCoefCtx,
     coef_source: &dyn InterCoefSource,
+    mut counts: Option<&mut FrameCounts>,
 ) -> Result<(), ModesWriterError> {
     if !mi_rows.is_multiple_of(MI_BLOCK_SIZE as u32)
         || !mi_cols.is_multiple_of(MI_BLOCK_SIZE as u32)
@@ -1535,6 +1536,7 @@ pub fn write_tile_inter(
                 prev_mv_grid,
                 coef_ctx,
                 coef_source,
+                counts.as_deref_mut(),
             )?;
             mi_col += MI_BLOCK_SIZE;
         }
@@ -1572,6 +1574,7 @@ fn write_inter_partition_tree(
     prev_mv_grid: Option<&[PrevFrameMvRef]>,
     coef_ctx: &mut TileCoefCtx,
     coef_source: &dyn InterCoefSource,
+    mut counts: Option<&mut FrameCounts>,
 ) -> Result<(), ModesWriterError> {
     debug_assert!(mi_row < bounds.mi_row_end && mi_col < bounds.mi_col_end);
 
@@ -1587,6 +1590,10 @@ fn write_inter_partition_tree(
     let partition = infer_inter_partition(mi_grid, mi_cols, mi_row, mi_col, bsize)?;
     set_category(BitCategory::Partition);
     write_partition(bw, &fc.partition_prob[ctx], partition);
+    // P0b — accumulate partition count for backward adaptation.
+    if let Some(c) = counts.as_deref_mut() {
+        c.partition[ctx][partition as usize] += 1;
+    }
 
     let sub = subsize(bsize, partition)
         .expect("infer_inter_partition only returns a partition whose subsize is legal");
@@ -1600,7 +1607,7 @@ fn write_inter_partition_tree(
             .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
         write_inter_block_leaf(
             bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row, mi_col, sub, &mi,
-            seg, prev_mv_grid, coef_ctx, coef_source,
+            seg, prev_mv_grid, coef_ctx, coef_source, counts.as_deref_mut(),
         )?;
         if (bsize as u8) >= (BlockSize::Block8x8 as u8) {
             // Always fires for BLOCK_8x8 — the gate `bsize ==
@@ -1628,7 +1635,7 @@ fn write_inter_partition_tree(
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
             write_inter_block_leaf(
                 bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row, mi_col, sub, &mi,
-                seg, prev_mv_grid, coef_ctx, coef_source,
+                seg, prev_mv_grid, coef_ctx, coef_source, counts.as_deref_mut(),
             )?;
         }
         PartitionType::Horz => {
@@ -1636,7 +1643,7 @@ fn write_inter_partition_tree(
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
             write_inter_block_leaf(
                 bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row, mi_col, sub, &top,
-                seg, prev_mv_grid, coef_ctx, coef_source,
+                seg, prev_mv_grid, coef_ctx, coef_source, counts.as_deref_mut(),
             )?;
             let mi_row_b = mi_row + hbs;
             let bot = mi_grid_get(mi_grid, mi_cols, mi_row_b, mi_col).ok_or(
@@ -1647,7 +1654,7 @@ fn write_inter_partition_tree(
             )?;
             write_inter_block_leaf(
                 bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row_b, mi_col, sub, &bot,
-                seg, prev_mv_grid, coef_ctx, coef_source,
+                seg, prev_mv_grid, coef_ctx, coef_source, counts.as_deref_mut(),
             )?;
         }
         PartitionType::Vert => {
@@ -1655,7 +1662,7 @@ fn write_inter_partition_tree(
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
             write_inter_block_leaf(
                 bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row, mi_col, sub, &left,
-                seg, prev_mv_grid, coef_ctx, coef_source,
+                seg, prev_mv_grid, coef_ctx, coef_source, counts.as_deref_mut(),
             )?;
             let mi_col_r = mi_col + hbs;
             let right = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col_r).ok_or(
@@ -1666,13 +1673,14 @@ fn write_inter_partition_tree(
             )?;
             write_inter_block_leaf(
                 bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row, mi_col_r, sub, &right,
-                seg, prev_mv_grid, coef_ctx, coef_source,
+                seg, prev_mv_grid, coef_ctx, coef_source, counts.as_deref_mut(),
             )?;
         }
         PartitionType::Split => {
             write_inter_partition_tree(
                 bw, fc, params, tx_mode, part_ctx, bounds, mi_grid, mi_rows, mi_cols, mi_row,
                 mi_col, sub, n8x8_l2, seg, prev_mv_grid, coef_ctx, coef_source,
+                counts.as_deref_mut(),
             )?;
             write_inter_partition_tree(
                 bw,
@@ -1692,6 +1700,7 @@ fn write_inter_partition_tree(
                 prev_mv_grid,
                 coef_ctx,
                 coef_source,
+                counts.as_deref_mut(),
             )?;
             write_inter_partition_tree(
                 bw,
@@ -1711,6 +1720,7 @@ fn write_inter_partition_tree(
                 prev_mv_grid,
                 coef_ctx,
                 coef_source,
+                counts.as_deref_mut(),
             )?;
             write_inter_partition_tree(
                 bw,
@@ -1730,6 +1740,7 @@ fn write_inter_partition_tree(
                 prev_mv_grid,
                 coef_ctx,
                 coef_source,
+                counts,
             )?;
         }
     }
@@ -1780,6 +1791,7 @@ fn write_inter_block_leaf(
     prev_mv_grid: Option<&[PrevFrameMvRef]>,
     coef_ctx: &mut TileCoefCtx,
     coef_source: &dyn InterCoefSource,
+    mut counts: Option<&mut FrameCounts>,
 ) -> Result<(), ModesWriterError> {
     // Scope validation: the leaf cell's block_size must match the
     // partition-tree-derived expected subsize at this level.
@@ -1829,11 +1841,19 @@ fn write_inter_block_leaf(
         + usize::from(left.is_some_and(|m| m.skip));
     set_category(BitCategory::Skip);
     bw.write(u8::from(mi.skip), fc.skip_probs[skip_ctx]);
+    // P0b — accumulate skip count.
+    if let Some(c) = counts.as_deref_mut() {
+        c.skip[skip_ctx][usize::from(mi.skip)] += 1;
+    }
 
     // 3. is_inter classification — always 1 under writer scope.
     let intra_inter_ctx = get_intra_inter_context(above, left);
     set_category(BitCategory::IsInter);
     bw.write(1, fc.intra_inter_prob[intra_inter_ctx]);
+    // P0b — accumulate intra_inter count (always inter = index 1).
+    if let Some(c) = counts.as_deref_mut() {
+        c.intra_inter[intra_inter_ctx][1] += 1;
+    }
 
     // 4. tx_size. `allow_select = !skip || !is_inter` per libvpx
     //    `vp9_decodemv.c:800`. With v1's `skip = true` and `is_inter
@@ -1878,6 +1898,27 @@ fn write_inter_block_leaf(
         tx_ctx,
         effective_tx_size,
     );
+    // P0b — accumulate tx-size count. Mirrors the decoder's
+    // `read_tx_size` count logic in `mode_info.rs`. The tx_totals
+    // field accumulates unconditionally (select or not).
+    if let Some(c) = counts.as_deref_mut() {
+        let tx_idx = effective_tx_size as usize;
+        match max_tx {
+            TxSize::Tx32x32 => {
+                c.tx.p32x32[tx_ctx][tx_idx] += 1;
+                c.tx.tx_totals[tx_idx] += 1;
+            }
+            TxSize::Tx16x16 => {
+                c.tx.p16x16[tx_ctx][tx_idx] += 1;
+                c.tx.tx_totals[tx_idx] += 1;
+            }
+            TxSize::Tx8x8 => {
+                c.tx.p8x8[tx_ctx][tx_idx] += 1;
+                c.tx.tx_totals[tx_idx] += 1;
+            }
+            TxSize::Tx4x4 => {} // no choice to count
+        }
+    }
 
     // 5. Inter-block mode info. Build the per-leaf `BlockBounds` the
     //    `find_mv_refs` MV clamp inside `write_inter_block_mode_info`
@@ -1903,6 +1944,7 @@ fn write_inter_block_leaf(
         &bounds_block,
         prev_mv,
         mi,
+        counts.as_deref_mut(),
     )
     .map_err(|e| ModesWriterError::InterModeWrite {
         mi_row,
@@ -3487,6 +3529,7 @@ mod tests {
                 prev_mv_grid,
                 &mut coef_ctx,
                 &coef_source,
+                None,
             )
             .expect("write_tile_inter should accept legal grid");
             // Pad with zero bits so the reader's lookahead is always
@@ -3928,6 +3971,7 @@ mod tests {
                 prev_mv_grid,
                 &mut coef_ctx,
                 coef_source,
+                None,
             )
             .expect("write_tile_inter should accept legal grid");
             for _ in 0..32 {
@@ -4489,6 +4533,7 @@ mod tests {
             /* prev_mv_grid = */ None,
             &mut coef_ctx,
             &coef_source,
+            None,
         )
         .unwrap_err();
         assert!(
@@ -4572,6 +4617,7 @@ mod tests {
             /* prev_mv_grid = */ None,
             &mut coef_ctx,
             &coef_source,
+            None,
         )
         .unwrap_err();
         assert!(
@@ -4652,6 +4698,7 @@ mod tests {
             /* prev_mv_grid = */ None,
             &mut coef_ctx,
             &coef_source,
+            None,
         )
         .unwrap_err();
         assert!(
@@ -4691,6 +4738,7 @@ mod tests {
             /* prev_mv_grid = */ None,
             &mut coef_ctx,
             &coef_source,
+            None,
         )
         .unwrap_err();
         assert!(matches!(err, ModesWriterError::NonMultipleOfSb { .. }), "got: {err:?}");
@@ -4967,6 +5015,7 @@ mod tests {
                 /* prev_mv_grid = */ None,
                 &mut coef_ctx,
                 &coef_source,
+                None,
             )
             .expect("write_tile_inter with seg");
             for _ in 0..16 {
@@ -5034,6 +5083,7 @@ mod tests {
             None,
             &mut coef_ctx,
             &coef_source,
+            None,
         )
         .unwrap_err();
         assert!(

@@ -527,6 +527,7 @@ pub fn write_mv_component(
     diff: i16,
     comp_probs: &NmvComponent,
     use_hp: bool,
+    comp_counts: Option<&mut NmvComponentCounts>,
 ) {
     debug_assert!(diff != 0, "write_mv_component: zero handled by joint short-circuit");
 
@@ -596,6 +597,29 @@ pub fn write_mv_component(
             "write_mv_component: use_hp=false requires LSB-of-offset == 1 (abs(diff) must be even)"
         );
     }
+
+    // P0b — accumulate MV component counts for backward adaptation.
+    if let Some(cc) = comp_counts {
+        cc.sign[sign as usize] += 1;
+        cc.classes[class as usize] += 1;
+        if is_class0 {
+            cc.class0[d as usize] += 1;
+            cc.class0_fp[d as usize][fr as usize] += 1;
+            if use_hp {
+                cc.class0_hp[hp as usize] += 1;
+            }
+        } else {
+            let n = class as usize + CLASS0_BITS - 1;
+            for i in 0..n {
+                let bit = ((d >> i) & 1) as usize;
+                cc.bits[i][bit] += 1;
+            }
+            cc.fp[fr as usize] += 1;
+            if use_hp {
+                cc.hp[hp as usize] += 1;
+            }
+        }
+    }
 }
 
 /// Encode a complete motion-vector residual `(cur_mv - ref_mv)` into the
@@ -631,6 +655,7 @@ pub fn write_mv(
     ref_mv: Mv,
     allow_hp: bool,
     nmv_context: &NmvContext,
+    mut mv_counts: Option<&mut NmvCounts>,
 ) {
     let diff = Mv {
         row: cur_mv.row.wrapping_sub(ref_mv.row),
@@ -640,14 +665,24 @@ pub fn write_mv(
 
     // Joint tree.
     write_tree(bw, &MV_JOINT_TREE, &nmv_context.joints, joint as i8);
+    // P0b — accumulate joint count.
+    if let Some(c) = mv_counts.as_deref_mut() {
+        c.joints[joint as usize] += 1;
+    }
 
     let use_hp = allow_hp && use_mv_hp(ref_mv);
 
     if joint.vertical() {
-        write_mv_component(bw, diff.row, &nmv_context.comps[0], use_hp);
+        write_mv_component(
+            bw, diff.row, &nmv_context.comps[0], use_hp,
+            mv_counts.as_deref_mut().map(|c| &mut c.comps[0]),
+        );
     }
     if joint.horizontal() {
-        write_mv_component(bw, diff.col, &nmv_context.comps[1], use_hp);
+        write_mv_component(
+            bw, diff.col, &nmv_context.comps[1], use_hp,
+            mv_counts.map(|c| &mut c.comps[1]),
+        );
     }
 }
 
@@ -1169,7 +1204,7 @@ mod tests {
         let mut buf = vec![0u8; 128];
         let size = {
             let mut w = BoolWriter::start_encode(&mut buf);
-            write_mv_component(&mut w, value, comp, use_hp);
+            write_mv_component(&mut w, value, comp, use_hp, None);
             for _ in 0..16 {
                 w.write_bit(0);
             }
@@ -1184,7 +1219,7 @@ mod tests {
         let mut buf = vec![0u8; 256];
         let size = {
             let mut w = BoolWriter::start_encode(&mut buf);
-            write_mv(&mut w, cur_mv, ref_mv, allow_hp, ctx);
+            write_mv(&mut w, cur_mv, ref_mv, allow_hp, ctx, None);
             for _ in 0..16 {
                 w.write_bit(0);
             }

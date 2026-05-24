@@ -40,8 +40,9 @@
 use crate::bitstream::{InterpFilter, ReferenceMode};
 use crate::block::BlockSize;
 use crate::entropy::{
-    BoolReader, BoolWriter, FrameContext, NmvCounts, COMP_INTER_CONTEXTS, INTER_MODE_CONTEXTS,
-    INTRA_INTER_CONTEXTS, REF_CONTEXTS, SWITCHABLE_FILTERS, SWITCHABLE_FILTER_CONTEXTS,
+    BoolReader, BoolWriter, FrameContext, FrameCounts, NmvCounts, COMP_INTER_CONTEXTS,
+    INTER_MODE_CONTEXTS, INTRA_INTER_CONTEXTS, REF_CONTEXTS, SWITCHABLE_FILTERS,
+    SWITCHABLE_FILTER_CONTEXTS,
 };
 use crate::entropy::bitacct::{set_category, BitCategory};
 use crate::inter::mv::{read_mv, write_mv, write_tree};
@@ -964,6 +965,7 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
     bounds: &BlockBounds,
     prev_mv: Option<PrevFrameMvRef>,
     mi: &ModeInfo,
+    mut counts: Option<&mut FrameCounts>,
 ) -> Result<(), InterModeWriteError> {
     let (mode, ref_frames, mvs, interp_filter) = match mi.mode {
         BlockMode::Inter {
@@ -986,6 +988,10 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
             let ctx = get_reference_mode_context(above, left, params.comp_fixed_ref);
             debug_assert!(ctx < COMP_INTER_CONTEXTS);
             bw.write(u8::from(is_compound), fc.comp_inter_prob[ctx]);
+            // P0b — accumulate comp_inter count.
+            if let Some(c) = counts.as_deref_mut() {
+                c.comp_inter[ctx][usize::from(is_compound)] += 1;
+            }
         }
         ReferenceMode::Compound => debug_assert!(is_compound),
         ReferenceMode::Single => debug_assert!(!is_compound),
@@ -1013,24 +1019,44 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
         );
         debug_assert!(ctx < REF_CONTEXTS);
         bw.write(bit, fc.comp_ref_prob[ctx]);
+        // P0b — accumulate comp_ref count.
+        if let Some(c) = counts.as_deref_mut() {
+            c.comp_ref[ctx][bit as usize] += 1;
+        }
     } else {
         // Decoder: bit0=0 → LAST; bit0=1, bit1=0 → GOLDEN;
         //          bit0=1, bit1=1 → ALTREF.
         let ctx0 = get_pred_context_single_ref_p1(above, left);
         debug_assert!(ctx0 < REF_CONTEXTS);
         match ref_frames[0] {
-            RefFrame::LastFrame => bw.write(0, fc.single_ref_prob[ctx0][0]),
+            RefFrame::LastFrame => {
+                bw.write(0, fc.single_ref_prob[ctx0][0]);
+                // P0b — single_ref p1 = 0.
+                if let Some(c) = counts.as_deref_mut() {
+                    c.single_ref[ctx0][0][0] += 1;
+                }
+            }
             RefFrame::GoldenFrame => {
                 bw.write(1, fc.single_ref_prob[ctx0][0]);
                 let ctx1 = get_pred_context_single_ref_p2(above, left);
                 debug_assert!(ctx1 < REF_CONTEXTS);
                 bw.write(0, fc.single_ref_prob[ctx1][1]);
+                // P0b — single_ref p1 = 1, p2 = 0.
+                if let Some(c) = counts.as_deref_mut() {
+                    c.single_ref[ctx0][0][1] += 1;
+                    c.single_ref[ctx1][1][0] += 1;
+                }
             }
             RefFrame::AltrefFrame => {
                 bw.write(1, fc.single_ref_prob[ctx0][0]);
                 let ctx1 = get_pred_context_single_ref_p2(above, left);
                 debug_assert!(ctx1 < REF_CONTEXTS);
                 bw.write(1, fc.single_ref_prob[ctx1][1]);
+                // P0b — single_ref p1 = 1, p2 = 1.
+                if let Some(c) = counts.as_deref_mut() {
+                    c.single_ref[ctx0][0][1] += 1;
+                    c.single_ref[ctx1][1][1] += 1;
+                }
             }
             // Single-ref block must reference a real ref frame.
             _ => debug_assert!(
@@ -1054,6 +1080,10 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
             &fc.inter_mode_probs[inter_mode_ctx],
             mode.idx() as i8,
         );
+        // P0b — accumulate inter_mode count.
+        if let Some(c) = counts.as_deref_mut() {
+            c.inter_mode[inter_mode_ctx][mode.idx()] += 1;
+        }
     }
 
     // 3. Switchable interpolation filter — only when the frame header
@@ -1068,6 +1098,10 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
             &fc.switchable_interp_prob[ctx],
             interp_filter as i8,
         );
+        // P0b — accumulate switchable_interp count.
+        if let Some(c) = counts.as_deref_mut() {
+            c.switchable_interp[ctx][interp_filter as usize] += 1;
+        }
     }
 
     // 4. MV / sub-block payload.
@@ -1115,6 +1149,7 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
                 best_ref_mv,
                 params.allow_high_precision_mv,
                 &fc.nmvc,
+                counts.as_deref_mut().map(|c| &mut c.mv),
             );
             set_category(BitCategory::ModeRef);
         }
@@ -1243,6 +1278,7 @@ fn write_sub8_bmi<N: NeighbourLookup>(
                             ref_mv,
                             params.allow_high_precision_mv,
                             &fc.nmvc,
+                            None, // P0b: sub-8 MV counts omitted (rare path)
                         );
                     }
                     set_category(BitCategory::ModeRef);
@@ -2385,7 +2421,7 @@ mod tests {
         let size = {
             let mut w = BoolWriter::start_encode(&mut buf);
             write_inter_block_mode_info(
-                &mut w, fc, params, neighbours, block_size, bounds, prev_mv, mi,
+                &mut w, fc, params, neighbours, block_size, bounds, prev_mv, mi, None,
             )
             .expect("writer ok");
             finalise(w)
@@ -2550,7 +2586,7 @@ mod tests {
         let mut buf = vec![0u8; 64];
         let mut w = BoolWriter::start_encode(&mut buf);
         let err = write_inter_block_mode_info(
-            &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi,
+            &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, None,
         )
         .expect_err("expected NotInter");
         assert_eq!(err, InterModeWriteError::NotInter);
@@ -2623,7 +2659,7 @@ mod tests {
         let size = {
             let mut w = BoolWriter::start_encode(&mut buf);
             write_inter_block_mode_info(
-                &mut w, fc, params, neighbours, block_size, bounds, prev_mv, mi,
+                &mut w, fc, params, neighbours, block_size, bounds, prev_mv, mi, None,
             )
             .expect("sub-8 writer ok");
             finalise(w)
@@ -2886,7 +2922,7 @@ mod tests {
         let mut buf = vec![0u8; 64];
         let mut w = BoolWriter::start_encode(&mut buf);
         let err = write_inter_block_mode_info(
-            &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi,
+            &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, None,
         )
         .expect_err("expected Sub8ParentModeMismatch");
         assert_eq!(

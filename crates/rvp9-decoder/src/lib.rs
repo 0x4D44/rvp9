@@ -5828,6 +5828,7 @@ mod tests {
                 None, // no prev-frame MV grid — keyframe just cleared it
                 &mut coef_ctx,
                 &coef_source,
+                None,
             )
             .expect("write_tile_inter");
             bw.stop_encode().expect("stop_encode inter tile")
@@ -6183,6 +6184,7 @@ mod tests {
                 None, // prev_mv_grid = None
                 &mut coef_ctx,
                 &coef_source,
+                None,
             )
             .expect("inter write_tile");
             bw.stop_encode().expect("stop_encode inter tile")
@@ -6538,6 +6540,7 @@ mod tests {
                 None, // prev_mv_grid = None
                 &mut coef_ctx,
                 &coef_source,
+                None,
             )
             .expect("inter write_tile (with sub-8)");
             bw.stop_encode().expect("stop_encode inter tile")
@@ -6882,6 +6885,7 @@ mod tests {
                 None, // prev_mv_grid = None
                 &mut coef_ctx,
                 &coef_source,
+                None,
             )
             .expect("write_tile_inter");
             bw.stop_encode().expect("stop_encode inter tile")
@@ -7292,6 +7296,7 @@ mod tests {
                 None, // prev_mv_grid = None
                 &mut coef_ctx,
                 &coef_source,
+                None,
             )
             .expect("write_tile_inter");
             bw.stop_encode().expect("stop_encode inter tile")
@@ -7638,6 +7643,7 @@ mod tests {
                 None, // prev_mv_grid = None
                 &mut coef_ctx,
                 &coef_source,
+                None,
             )
             .expect("inter write_tile (dense 8x8 non-skip)");
             bw.stop_encode().expect("stop_encode inter tile")

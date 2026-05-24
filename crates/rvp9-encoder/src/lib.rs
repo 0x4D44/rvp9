@@ -815,6 +815,7 @@ impl Encoder {
                 /* prev_mv_grid = */ None,
                 &mut coef_ctx,
                 &coef_source,
+                None,
             )?;
             bw.stop_encode()
                 .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
@@ -2339,6 +2340,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     use rvp9_core::cost::mv_cost::build_nmv_cost_table;
     use rvp9_core::cost::symbol_costs::{inter_mode_costs, partition_costs};
     use rvp9_core::entropy::mv_probs::DEFAULT_NMV_CONTEXT;
+    use rvp9_core::inter::get_mode_context;
     use rvp9_core::inter::mv_ref::{
         BlockBounds, PrevFrameMvRef, find_mv_refs, lower_mv_precision,
     };
@@ -3062,6 +3064,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     leaf_mi_col,
                     mi_rows_us,
                 );
+                // Phase 0a — inter-mode context from spatial neighbours.
+                // Matches libvpx `x->mbmi_ext->mode_context[ref_frame]`
+                // populated by `vp9_find_mv_refs`. Context is ref-frame-
+                // independent (only spatial neighbour modes matter).
+                let inter_mode_ctx =
+                    get_mode_context(leaf_bsize, &neighbours);
                 // A18 — collocated `PrevFrameMvRef` for `find_mv_refs`
                 // salvage. Mirrors the decoder's lookup at
                 // `tile.rs:2036` —
@@ -3214,7 +3222,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         site_config: &site_config,
                         mv_costs: &mv_costs,
                         inter_mode_costs: &inter_costs,
-                        inter_mode_ctx: 0,
+                        inter_mode_ctx,
                         quantizer: &quantizer,
                         q_index: leaf_qindex,
                         allow_hp: false,
@@ -3275,7 +3283,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 site_config: &site_config,
                                 mv_costs: &mv_costs,
                                 inter_mode_costs: &inter_costs,
-                                inter_mode_ctx: 0,
+                                inter_mode_ctx,
                                 quantizer: &quantizer,
                                 q_index: leaf_qindex,
                                 allow_hp: false,
@@ -3325,7 +3333,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         site_config: &site_config,
                         mv_costs: &mv_costs,
                         inter_mode_costs: &inter_costs,
-                        inter_mode_ctx: 0,
+                        inter_mode_ctx,
                         quantizer: &quantizer,
                         q_index: leaf_qindex,
                         allow_hp: false,
