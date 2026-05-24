@@ -187,15 +187,26 @@ impl<'a> BoolReader<'a> {
     /// `vpx_reader_fill` (`bitreader.c:38-91`), simplified per
     /// entropy LLD §7.2 (no decryption callback).
     ///
-    /// NOT inlined: R.15 (2026-05-23) tried `#[inline]` to merge
-    /// this 50-LOC body into the single call site in `read()`, but
-    /// the resulting code bloat regressed testsrc_1080p30 t=4 by
-    /// 23% (icache pressure on the per-bit hot loop). Kept as an
-    /// outlined call site so the per-bit `read()` stays compact.
+    /// Hot/cold split: the fast path (≥8 source bytes available — the
+    /// overwhelming common case mid-stream) lives here and is
+    /// `#[inline]`-hinted so LLVM can fold it into the single call
+    /// site in `read()`. The EOF byte-loop is hoisted to
+    /// [`Self::fill_slow`] with `#[cold] #[inline(never)]` so it
+    /// stays out-of-line and does not bloat the per-bit hot loop.
+    ///
+    /// `#[inline]` (not `#[inline(always)]`) is deliberate: it is a
+    /// hint, not a directive — LLVM decides per call site. R.15
+    /// (commit `4286269`, 2026-05-23) is the cautionary precedent: an
+    /// `#[inline]` annotation on the *full* 50-LOC `fill` body
+    /// (fast + slow) regressed testsrc_1080p30 t=4 by 23% because the
+    /// EOF byte-loop's icache footprint blew up `read()`. The split
+    /// here keeps the inlined body to ~9 lines and shoves the rare
+    /// path behind a `#[cold] #[inline(never)]` call.
+    #[inline]
     pub fn fill(&mut self) {
         let bytes_left = self.buffer.len() - self.pos;
         let bits_left = (bytes_left as i32) * 8;
-        let mut shift = BD_VALUE_SIZE - 8 - (self.count + 8);
+        let shift = BD_VALUE_SIZE - 8 - (self.count + 8);
 
         if bits_left > BD_VALUE_SIZE {
             // Fast path: at least 8 source bytes available.
@@ -213,22 +224,35 @@ impl<'a> BoolReader<'a> {
             self.pos += (bits >> 3) as usize;
             self.value |= nv << (shift & 0x7);
         } else {
-            // Slow path: end of stream within reach. May set LOTS_OF_BITS.
-            let bits_over = shift + 8 - bits_left;
-            let mut loop_end = 0;
-            if bits_over >= 0 {
-                self.count += LOTS_OF_BITS;
-                loop_end = bits_over;
-            }
-            if bits_over < 0 || bits_left > 0 {
-                while shift >= loop_end {
-                    self.count += 8;
-                    self.value |= u64::from(self.buffer[self.pos]) << shift;
-                    self.pos += 1;
-                    shift -= 8;
-                    if self.pos >= self.buffer.len() {
-                        break;
-                    }
+            self.fill_slow(bits_left, shift);
+        }
+    }
+
+    /// EOF slow path for [`Self::fill`]. `#[cold] #[inline(never)]` is
+    /// mandatory: `#[cold]` hints rarity, `#[inline(never)]` prevents
+    /// LLVM from re-merging this back into `fill` (which would
+    /// re-create the R.15 icache bloat — see [`Self::fill`] doc).
+    ///
+    /// `bits_left` and `shift` are passed in to avoid recomputation
+    /// across the call boundary.
+    #[cold]
+    #[inline(never)]
+    fn fill_slow(&mut self, bits_left: i32, mut shift: i32) {
+        // Slow path: end of stream within reach. May set LOTS_OF_BITS.
+        let bits_over = shift + 8 - bits_left;
+        let mut loop_end = 0;
+        if bits_over >= 0 {
+            self.count += LOTS_OF_BITS;
+            loop_end = bits_over;
+        }
+        if bits_over < 0 || bits_left > 0 {
+            while shift >= loop_end {
+                self.count += 8;
+                self.value |= u64::from(self.buffer[self.pos]) << shift;
+                self.pos += 1;
+                shift -= 8;
+                if self.pos >= self.buffer.len() {
+                    break;
                 }
             }
         }
