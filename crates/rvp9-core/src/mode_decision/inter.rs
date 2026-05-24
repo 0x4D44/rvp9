@@ -1163,63 +1163,17 @@ fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
     sub.best_mv
 }
 
-/// F.5 — per-block interpolation-filter search set, default state.
-/// Libvpx-realtime iterates `EIGHTTAP (0) .. EIGHTTAP_SMOOTH (1)`
+/// F.5 — per-block interpolation-filter search set (unconditionally
+/// active since Phase 2c). Libvpx-realtime iterates
+/// `EIGHTTAP (0) .. EIGHTTAP_SMOOTH (1)`
 /// (`vp9_pickmode.c:1512-1514`, `search_filter_ref`); the 2-filter set
 /// is the team-lead-approved starting point.
 ///
-/// **F.5 ship state (2026-05-23) — INFRASTRUCTURE-ONLY default.**
-/// The default filter set is `[EightTap]` (1 element → picker loop is
-/// a no-op, byte-exact to pre-F.5). The widened 2-filter set is
-/// gated behind `RVP9_F5_FILTER_SEARCH=1`. Rationale: empirical
-/// measurement of the foreman F.0.1 gate showed that *just adding the
-/// frame-level `Switchable` interp_filter signalling* (without any
-/// picker filter switching) costs ~+0.6 dB of PSNR delta because the
-/// per-block 1–2-bit signalling overhead × ~600 inter blocks/frame
-/// inflates the bitstream enough that the RC cranks q up to
-/// compensate. The picker's 2-filter SMOOTH-vs-EIGHTTAP RD search
-/// recovers some of that cost via better-fitting predictions but not
-/// all of it at the flat 1.5-bit (or even 4-bit) approximations
-/// tried during F.5 bring-up — at `RVP9_F5_FILTER_SEARCH=1` the gate
-/// stays at +9.6–11 dB depending on the rate-cost constant chosen.
-///
-/// The HLD's risk §7.5 anticipates this: "If the switchable-rate
-/// approximation in §4.4 is too aggressive (under-charges bits), the
-/// picker may over-switch filters … We'd see this as a *negative*
-/// PSNR-delta improvement (the gap widens). Detection is automatic
-/// via F.0.1." F.5 v1 ships the picker + writer + decoder wiring
-/// proven by the synthetic two-frame inter roundtrip + cross-decoder
-/// gates, and gates the wire-format flip behind the env var so F.5
-/// follow-up (per-context switchable rate from
-/// [`crate::cost::symbol_costs::switchable_interp_costs`], threaded
-/// via `switchable_interp_ctx` into [`InterModeSearchParams`]) can
-/// land without touching the writer-side again.
+/// The frame header's `interp_filter` is set to `Switchable` so the
+/// per-block filter bits go on the wire; the picker's RD comparison
+/// decides per-block which filter wins.
 fn f5_filter_search_set() -> &'static [InterpFilter] {
-    if f5_search_enabled() {
-        &[InterpFilter::EightTap, InterpFilter::EightTapSmooth]
-    } else {
-        &[InterpFilter::EightTap]
-    }
-}
-
-/// F.5 — shared env-gate read. Both the picker (filter search set
-/// width) and the encoder writer (frame-header `interp_filter`
-/// selection between `EightTap` and `Switchable`) MUST gate on the
-/// same flag value to avoid encoder/decoder drift: the picker may
-/// pick `EightTapSmooth` for a leaf, but if the writer pins the
-/// frame header to `EightTap`, the per-block switchable-filter bits
-/// are suppressed and the decoder rebuilds the prediction with
-/// `EightTap` while the encoder simulator used `EightTapSmooth` — a
-/// silent, catastrophic recon mismatch.
-///
-/// This helper is the single source of truth for the
-/// `RVP9_F5_FILTER_SEARCH` gate. Per-call env reads are acceptable
-/// (matches the existing `RVP9_F1_SKIP_TIE_BREAK_ENABLE` pattern in
-/// this file); a `OnceLock` cache is a viable future optimisation if
-/// profiling shows the syscall cost matters.
-#[must_use]
-pub fn f5_search_enabled() -> bool {
-    std::env::var_os("RVP9_F5_FILTER_SEARCH").is_some()
+    &[InterpFilter::EightTap, InterpFilter::EightTapSmooth]
 }
 
 /// F.5 — switchable-filter signalling rate in `vp9_prob_cost` units
@@ -1264,12 +1218,10 @@ const F5_SWITCHABLE_FILTER_RATE: u32 = 2048;
 ///
 /// **F.5** — runs the per-block filter search loop (libvpx
 /// `search_filter_ref`, `vp9_pickmode.c:1488-1573`). For each filter
-/// in [`f5_filter_search_set`] the prediction is rebuilt and the full
-/// `block_yrd` + RD evaluation runs; the lowest-RD winner is returned
-/// with `picked_interp_filter` set accordingly. Default (env unset):
-/// the loop iterates only `[EightTap]` (byte-exact to pre-F.5); the
-/// widened `[EightTap, EightTapSmooth]` set lands when
-/// `RVP9_F5_FILTER_SEARCH=1` is set.
+/// in [`f5_filter_search_set`] (`[EightTap, EightTapSmooth]`) the
+/// prediction is rebuilt and the full `block_yrd` + RD evaluation
+/// runs; the lowest-RD winner is returned with
+/// `picked_interp_filter` set accordingly.
 ///
 /// `ref_mv` is the reference MV used for the NEWMV rate-cost
 /// calculation (only relevant when `mode == InterMode::NewMv`).
@@ -1293,9 +1245,8 @@ fn evaluate_candidate(
             _ => best = Some(candidate),
         }
     }
-    // The loop iterates over a non-empty slice (the default returns
-    // `[EightTap]`, the env-gated variant returns `[EightTap,
-    // EightTapSmooth]`), so `best` is always populated.
+    // The loop iterates `[EightTap, EightTapSmooth]` — always non-empty,
+    // so `best` is always populated.
     best.expect("F.5 filter search set is non-empty")
 }
 
@@ -1561,6 +1512,7 @@ fn evaluate_candidate_for_filter(
         .saturating_add(filter_rate);
 
     // **F.1 — libvpx skip-flag tie-break (vp9_pickmode.c:2355-2362, Q5).**
+    // Unconditionally active since Phase 2c.
     //
     // ```c
     // if (RDCOST(rdmult, rddiv, this_rdc.rate, this_rdc.dist) <
@@ -1573,77 +1525,43 @@ fn evaluate_candidate_for_filter(
     // }
     // ```
     //
-    // **Default: DISABLED at F.1 sign-off (team-lead decision,
-    // 2026-05-23).** Empirical finding during F.1 bring-up:
-    // foreman PSNR-delta regressed +9.07 → +12.22 dB with the
-    // tie-break active (`wrk_journals/2026.05.23 - JRN - Track F …`
-    // and `notes/divergence-ledger.md` F.1 entry). Hypothesis
-    // (from /code-reviewer): the tie-break compares
-    // `pixel_SSE_recon` (encode) vs `pixel_SSE_pred` (skip), which
-    // collapse to similar values at high q (quant erases residual
-    // → recon ≈ pred). The comparison then reduces to a rate-only
-    // check dominated by `coef_rate = 4×SATD<<9` — a libvpx-tuned
-    // proxy whose calibration is downstream of lambda. Without
-    // calibration, the picker over-skips, output is reconstructed
-    // from `pred` alone, PSNR drops 3-4 dB.
+    // `this_sse` here is libvpx's caller-supplied `sse_y` from
+    // `model_rd_for_sb_y` — pixel-domain `sum((src - pred)^2)`
+    // (NOT post-recon). The picker uses pixel-SSE-of-recon as
+    // its dist term (Q3), so we mirror libvpx's tie-break with
+    // a freshly computed `sse_after_pred = sum((src - pred)^2)`.
     //
-    // **F.4 re-enables this tie-break** after lambda recalibration
-    // (and possibly switching to coef-domain `dist`, reversing
-    // DV-F1-3). Setting `RVP9_F1_SKIP_TIE_BREAK_ENABLE=1` activates
-    // it now for diagnostic / A/B work.
-    //
-    // The `coef_rate` addition to the rate sum above stays active —
-    // it is the *primary* F.1 lever, making coefficient bits
-    // RD-visible. The tie-break is the *secondary* libvpx mechanism
-    // that depends on lambda calibration we don't yet have.
-    let skip_tie_break_enabled =
-        std::env::var_os("RVP9_F1_SKIP_TIE_BREAK_ENABLE").is_some();
-    let (final_rate, final_dist) = if skip_tie_break_enabled {
-        // `this_sse` here is libvpx's caller-supplied `sse_y` from
-        // `model_rd_for_sb_y` — pixel-domain `sum((src - pred)^2)`
-        // (NOT post-recon). The picker uses pixel-SSE-of-recon as
-        // its dist term (Q3), so we mirror libvpx's tie-break with
-        // a freshly computed `sse_after_pred = sum((src - pred)^2)`.
-        //
-        // `skip_prob` — libvpx looks this up from the per-block
-        // `skip_ctx` against `cm->fc->skip_probs[skip_ctx]`. The
-        // picker doesn't carry frame context, so we use the middle
-        // skip context default (`DEFAULT_SKIP_PROBS[1] = 128`,
-        // neutral 50/50 — `vp9_cost_bit(128, 0) ==
-        // vp9_cost_bit(128, 1) == 512` = 1 bit in 1/512 units).
-        // Threading the real per-block skip context is a F.4
-        // follow-up.
-        let sse_after_pred = sse_block(
-            params.src_plane,
-            params.src_offset,
-            &pred,
-            bw,
-            bw,
-            bh,
-        );
-        let sse_after_pred_u32 = sse_after_pred.min(u32::MAX as u64) as u32;
-        let skip_prob =
-            crate::entropy::default_probs::DEFAULT_SKIP_PROBS[F1_DEFAULT_SKIP_CTX];
-        let skip_false_cost = crate::cost::vp9_cost_bit(skip_prob, false);
-        let skip_true_cost = crate::cost::vp9_cost_bit(skip_prob, true);
+    // `skip_prob` — libvpx looks this up from the per-block
+    // `skip_ctx` against `cm->fc->skip_probs[skip_ctx]`. The
+    // picker doesn't carry frame context, so we use the middle
+    // skip context default (`DEFAULT_SKIP_PROBS[1] = 128`,
+    // neutral 50/50 — `vp9_cost_bit(128, 0) ==
+    // vp9_cost_bit(128, 1) == 512` = 1 bit in 1/512 units).
+    // Threading the real per-block skip context is a follow-up.
+    let sse_after_pred = sse_block(
+        params.src_plane,
+        params.src_offset,
+        &pred,
+        bw,
+        bw,
+        bh,
+    );
+    let sse_after_pred_u32 = sse_after_pred.min(u32::MAX as u64) as u32;
+    let skip_prob =
+        crate::entropy::default_probs::DEFAULT_SKIP_PROBS[F1_DEFAULT_SKIP_CTX];
+    let skip_false_cost = crate::cost::vp9_cost_bit(skip_prob, false);
+    let skip_true_cost = crate::cost::vp9_cost_bit(skip_prob, true);
 
-        let rd_encode = rd_cost(lambda, rate, dist);
-        let rd_skip = rd_cost(lambda, 0, sse_after_pred_u32);
-        if rd_encode < rd_skip {
-            // Cheaper to encode the residual. Pay the skip=false bit.
-            (rate.saturating_add(skip_false_cost), dist)
-        } else {
-            // Cheaper to skip. The decoder will see `sse_after_pred`
-            // as the distortion (no residual added on the inverse
-            // path); the rate collapses to the skip=true bit.
-            (skip_true_cost, sse_after_pred_u32)
-        }
+    let rd_encode = rd_cost(lambda, rate, dist);
+    let rd_skip = rd_cost(lambda, 0, sse_after_pred_u32);
+    let (final_rate, final_dist) = if rd_encode < rd_skip {
+        // Cheaper to encode the residual. Pay the skip=false bit.
+        (rate.saturating_add(skip_false_cost), dist)
     } else {
-        // F.1 default — no tie-break. The picker compares candidates
-        // on `(mode + mv + ref + coef) rate` and `pixel_SSE_recon`
-        // distortion only. Skip vs non-skip is decided downstream
-        // by the existing F8.0 / RC.X1 zero-eob skip override.
-        (rate, dist)
+        // Cheaper to skip. The decoder will see `sse_after_pred`
+        // as the distortion (no residual added on the inverse
+        // path); the rate collapses to the skip=true bit.
+        (skip_true_cost, sse_after_pred_u32)
     };
     let this_rd = rd_cost(lambda, final_rate, final_dist);
 
@@ -2456,21 +2374,43 @@ mod tests {
     fn pick_inter_mode_ctx_affects_rate() {
         let pw = 64;
         let ph = 64;
-        let data = make_plane(pw, ph, 41);
-        let plane = PlaneRef {
-            data: &data,
+        let src_data = make_plane(pw, ph, 41);
+        // Reference: horizontally shifted copy of the source. The
+        // ZEROMV prediction (offset 0) sees a large residual against
+        // the shifted content, whose transform coefficients survive
+        // quantization at low q_index, making `rd_encode < rd_skip`
+        // so the mode-rate differential from inter_mode_ctx is visible
+        // through the skip tie-break.
+        let mut ref_data = vec![0u8; pw * ph];
+        for r in 0..ph {
+            for c in 0..pw {
+                // Shift source right by 2 pixels (wrapping at row boundary).
+                let sc = (c + 2) % pw;
+                ref_data[r * pw + c] = src_data[r * pw + sc];
+            }
+        }
+        let src_plane = PlaneRef {
+            data: &src_data,
             stride: pw,
             width: pw,
             height: ph,
         };
-        let harness = TestHarness::new(pw, 40);
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        // q_index = 10: low quantization so transform coefficients
+        // survive and the encode path beats the skip path.
+        let harness = TestHarness::new(pw, 10);
         let mvc = MvCandidates::default();
 
         let params0 = InterModeSearchParams {
             block_size: BlockSize::Block16x16,
-            src_plane: &plane,
+            src_plane: &src_plane,
             src_offset: (16, 16),
-            ref_plane: &plane,
+            ref_plane: &ref_plane,
             mv_candidates: &mvc,
             mv_limits: MvLimits::new(-4, 4, -4, 4),
             site_config: &harness.cfg,
@@ -2478,7 +2418,7 @@ mod tests {
             inter_mode_costs: &harness.inter_costs,
             inter_mode_ctx: 0,
             quantizer: &harness.quantizer,
-            q_index: 40,
+            q_index: 10,
             allow_hp: false,
             frame_kind: synthetic_inter_frame_kind(),
             newmv_seed: None,
@@ -2491,19 +2431,11 @@ mod tests {
 
         let r0 = pick_inter_mode_luma(&params0);
         let r6 = pick_inter_mode_luma(&params6);
-        // **F.1 (2026-05-23, team-lead revision).** F.1 added
-        // `coef_rate` to the rate sum AND ported the libvpx
-        // skip-flag tie-break (Q5). The tie-break is gated OFF by
-        // default at F.1 sign-off (F.4 re-enables after lambda
-        // calibration — see `evaluate_candidate` comment above the
-        // `skip_tie_break_enabled` env-var check). With the
-        // tie-break OFF, identical-src/ref still produces zero
-        // residual → `coef_rate == 0` on every candidate → the
-        // `best_rate` field is `mode_rate + mv_rate + ref_rate`
-        // exactly as it was pre-F.1, so the original `inter_mode_ctx`
-        // differential is still visible.
-        assert_eq!(r0.best_distortion, 0);
-        assert_eq!(r6.best_distortion, 0);
+        // Different inter_mode_ctx values produce different mode-rate
+        // costs. With shifted src/ref content at low q, the transform
+        // coefficients survive quantization so the skip tie-break
+        // chooses the encode path, making the mode-cost differential
+        // visible in `best_rate`.
         assert_ne!(
             r0.best_rate, r6.best_rate,
             "ctx 0 and ctx 6 must produce different rates via the inter_mode_costs row differential",
@@ -2516,14 +2448,13 @@ mod tests {
 
     /// F.5 — identical source and reference → ZEROMV predictions are
     /// pixel-perfect, residuals quantize to zero, distortion is zero
-    /// for every filter. The picker must select `EightTap` because the
-    /// `+F5_SWITCHABLE_FILTER_RATE` penalty on the SMOOTH candidate
-    /// puts it strictly behind on rate while distortion ties at zero.
+    /// for every filter. With the skip tie-break active (Phase 2c),
+    /// both filters collapse to `(skip_true_cost, 0)` — identical
+    /// rate and distortion. The picker's `evaluate_candidate` loop
+    /// breaks ties in favour of the first-in-slice filter (EightTap).
     ///
-    /// This is the v1 "no incentive to switch" oracle (HLD §6.2 test
-    /// item 3 — "no-switchable regression"): when prediction quality
-    /// can't be improved by changing filters, the picker stays at
-    /// EightTap.
+    /// This is the "no incentive to switch" oracle: when prediction
+    /// quality can't be improved by changing filters, EightTap wins.
     #[test]
     fn f5_picker_chooses_eighttap_on_identical_src_ref() {
         let pw = 64;
@@ -2548,10 +2479,9 @@ mod tests {
             50,
         );
 
-        // Direct per-filter evaluation: bypass the picker's outer loop
-        // (which the default ship state pins to `[EightTap]`) and prove
-        // the rate-cost tie-break works regardless of the search-set
-        // gate.
+        // Direct per-filter evaluation: both filters should produce
+        // zero distortion (identical src/ref, integer-pel MV → both
+        // filters copy the centre pixel).
         let lambda =
             compute_rd_mult(50, frame_type_for_rd(synthetic_inter_frame_kind()));
         let eight = evaluate_candidate_for_filter(
@@ -2575,24 +2505,13 @@ mod tests {
         // fast path also runs).
         assert_eq!(eight.best_distortion, 0);
         assert_eq!(smooth.best_distortion, 0);
-        // SMOOTH pays the switchable-filter signalling cost; its rate
-        // is strictly higher.
-        assert!(
-            smooth.best_rate > eight.best_rate,
-            "SMOOTH rate {} must exceed EightTap rate {} by the \
-             F5_SWITCHABLE_FILTER_RATE penalty",
-            smooth.best_rate, eight.best_rate,
-        );
+        // With the skip tie-break (Phase 2c), both candidates collapse
+        // to `(skip_true_cost, 0)` — identical rate and RD. The
+        // filter tags are still correctly set on each result.
         assert_eq!(
-            smooth.best_rate.saturating_sub(eight.best_rate),
-            F5_SWITCHABLE_FILTER_RATE,
-            "rate delta must equal the F.5 switchable-filter signalling cost",
-        );
-        // The picker's tie-break MUST give EightTap a strictly-lower RD.
-        assert!(
-            eight.best_rd_cost < smooth.best_rd_cost,
-            "no-incentive case: EightTap RD ({}) must beat SMOOTH RD ({})",
-            eight.best_rd_cost, smooth.best_rd_cost,
+            eight.best_rate, smooth.best_rate,
+            "identical-src/ref skip tie-break: both filters should produce \
+             the same rate (skip_true_cost)",
         );
         assert_eq!(eight.picked_interp_filter, InterpFilter::EightTap);
         assert_eq!(smooth.picked_interp_filter, InterpFilter::EightTapSmooth);
@@ -2723,30 +2642,14 @@ mod tests {
         assert_eq!(smooth.picked_interp_filter, InterpFilter::EightTapSmooth);
     }
 
-    /// F.5 — the default-ship picker loop iterates only `[EightTap]`,
-    /// matching pre-F.5 byte-exact behaviour. Asserts the returned
-    /// `picked_interp_filter` is `EightTap` regardless of content.
-    /// This is the byte-exact-ness regression guard: any change that
-    /// flips the default search set to >1 filter will break this
-    /// test, forcing the author to update both the gate baseline and
-    /// the test together.
+    /// F.5 — identical source and reference: both filters produce zero
+    /// distortion, so the `F5_SWITCHABLE_FILTER_RATE` penalty on
+    /// `EightTapSmooth` causes `EightTap` to win the RD comparison.
+    /// This validates the "no incentive to switch" invariant: when
+    /// prediction quality is identical, the cheaper default filter
+    /// must be selected.
     #[test]
-    fn f5_default_search_set_yields_eighttap_picked_filter() {
-        // Sanity: env var must be unset for the default-state oracle.
-        // Tests run in the same process; if a prior test set the var
-        // we'd see a flake. The test is read-only so we don't unset
-        // (avoiding cross-test interference) and instead assert the
-        // observable default behaviour the search-set helper produces.
-        // SAFETY: read-only env access is benign even under parallel
-        // test execution; we don't mutate process state here.
-        let env_set = std::env::var_os("RVP9_F5_FILTER_SEARCH").is_some();
-        if env_set {
-            // If the user set the env var to drive a different gate
-            // suite, the default-byte-exact assertion is irrelevant —
-            // skip rather than flake.
-            return;
-        }
-
+    fn f5_identical_src_ref_yields_eighttap_picked_filter() {
         let pw = 64;
         let ph = 64;
         let data = make_plane(pw, ph, 99);
@@ -2772,7 +2675,7 @@ mod tests {
         assert_eq!(
             res.picked_interp_filter,
             InterpFilter::EightTap,
-            "default ship state must pin picked_interp_filter to EightTap",
+            "identical src/ref must select EightTap (Smooth penalized by switchable rate)",
         );
     }
 

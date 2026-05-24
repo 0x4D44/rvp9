@@ -1083,8 +1083,7 @@ impl StreamEncoder {
         // `vp9_adapt_mv_probs` sequence called after each decoded frame
         // when `refresh_frame_context == true`.
         {
-            let interp_switchable =
-                rvp9_core::mode_decision::inter::f5_search_enabled();
+            let interp_switchable = true; // F.5 — always Switchable (Phase 2c)
             let tx_mode_select = false; // AllowTx32x32, not TxModeSelect
             let mut adapted = adapt_mode_probs(
                 &self.frame_context, &frame_counts, interp_switchable, tx_mode_select,
@@ -1676,29 +1675,10 @@ fn build_inter_packet_with_residuals(
         Some(fc) => fc.clone(),
         None => FrameContext::new_default(),
     };
-    // F.5 — frame-level filter is `Switchable` ONLY when the picker's
-    // filter-search loop is enabled. Both the picker and the writer
-    // read the gate via `rvp9_core::mode_decision::inter::f5_search_enabled`
-    // (single source of truth — see that fn's doc-comment for the
-    // encoder/decoder drift rationale). When enabled, the writer
-    // emits per-block switchable-interp bits and the picker's chosen
-    // filter goes on the wire. When disabled (default), the frame
-    // header pins `EightTap` so the writer suppresses the per-block
-    // bits — byte-exact to pre-F.5.
-    //
-    // Ship state (2026-05-23): default OFF. Flipping `Switchable` on
-    // alone costs ~+0.6 dB on foreman F.0.1 because the per-block 1–2
-    // bits × ~600 inter blocks/frame inflates the bitstream enough that
-    // the RC cranks q up. The flat-constant rate model for picker
-    // filter selection (see `F5_SWITCHABLE_FILTER_RATE`) doesn't yet
-    // recover that cost. The follow-up that lands proper per-context
-    // signalling cost will move the default ON.
-    let interp_filter_frame =
-        if rvp9_core::mode_decision::inter::f5_search_enabled() {
-            InterpFilter::Switchable
-        } else {
-            InterpFilter::EightTap
-        };
+    // F.5 — frame-level filter is unconditionally `Switchable`
+    // (Phase 2c). The writer emits per-block switchable-interp bits
+    // and the picker's chosen filter goes on the wire.
+    let interp_filter_frame = InterpFilter::Switchable;
     let opts = CompressedHeaderOptions {
         lossless: false,
         intra_only: false,
@@ -1860,10 +1840,9 @@ fn build_inter_packet_with_residuals(
             ref_frame_indices: [0; MAX_INTER_REFS],
             ref_frame_sign_biases: [false; MAX_INTER_REFS],
             allow_high_precision_mv: false,
-            // F.5 — Switchable at the frame level (gated by
-            // `RVP9_F5_FILTER_SEARCH`, mirrors `interp_filter_frame`
-            // above). The uncompressed-header writer emits the
-            // matching wire bits; the decoder reads
+            // F.5 — Switchable at the frame level (unconditionally
+            // active, Phase 2c). The uncompressed-header writer emits
+            // the matching wire bits; the decoder reads
             // `cm->interp_filter = Switchable` and dispatches every
             // inter block through `read_switchable_interp_filter`.
             interp_filter: interp_filter_frame,
