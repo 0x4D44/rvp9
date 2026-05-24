@@ -560,9 +560,13 @@ pub struct PickInterModeResult {
     pub picked_intra_mode: Option<IntraMode>,
 }
 
-/// libvpx `RT_INTER_MODES` iteration order (SVC variant, 8 candidates).
+/// libvpx `ref_mode_set` iteration order (first 8 of 12 entries,
+/// without ALTREF). Reference: `vp9_pickmode.c:1239-1246`.
 ///
-/// Reference: `vp9_pickmode.c:1239-1248`.
+/// Note: the SVC variant (`ref_mode_set_svc`, lines 1249-1254)
+/// differs — it places `(LAST, NEAR)` before `(GOLDEN, ZERO)`.
+/// We follow the non-SVC order.
+///
 /// ```text
 /// (LAST, ZERO), (LAST, NEAREST), (GOLDEN, ZERO), (LAST, NEAR),
 /// (LAST, NEW),  (GOLDEN, NEAREST), (GOLDEN, NEAR), (GOLDEN, NEW)
@@ -727,6 +731,17 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
         {
             skip_this = true;
         }
+        // libvpx `vp9_pickmode.c:2166` — `const_motion` NEARMV skip.
+        // In `mv_refs_rt`, `const_motion=1` when the first nearest
+        // candidate was NOT found among the 2 nearest spatial
+        // neighbours. This makes NEARMV redundant because:
+        //   (a) NEAR == NEAREST → caught by the NEAREST-equality
+        //       skip above, or
+        //   (b) NEAR == (0,0) → caught by the zero-MV dup check.
+        // The only uncovered case (NEAR is non-zero, differs from
+        // NEAREST, populated via diff-ref fallback) is too rare to
+        // justify threading a new flag through `find_mv_refs`.
+        // Intentionally omitted.
         if skip_this { continue; }
 
         // Build a single-ref params struct for the evaluator.
@@ -1082,10 +1097,49 @@ fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
     //
     // Cost attractor (`center_mv` / libvpx `ref_mv`) stays at NEAREST so
     // the rate term matches what the NEWMV bitstream cost will charge.
-    // Start position (`start_mv` / libvpx `mvp_full`) is the int_pro seed
-    // when available, else NEAREST.
+    // Start position (`start_mv` / libvpx `mvp_full`): evaluate SAD at
+    // each MV-ref candidate (nearest, near) via `mv_pred_sad_seed` — port
+    // of `vp9_mv_pred` (`vp9_rd.c:588-639`). Pick the candidate with the
+    // lowest SAD as the diamond search seed. If an SB-level int_pro seed
+    // is also available, keep whichever has the lower SAD.
     let ref_mv = clamp_mv_to_limits(params.mv_candidates.nearest, &params.mv_limits);
-    let start_mv = params.newmv_seed.map(|seed| clamp_mv_to_limits(seed, &params.mv_limits));
+    let candidates = [params.mv_candidates.nearest, params.mv_candidates.near];
+    let (pred_mv, pred_sad) = crate::mv_search::mv_pred::mv_pred_sad_seed(
+        params.src_plane,
+        params.ref_plane,
+        params.src_offset,
+        &candidates,
+        params.block_size,
+    );
+    // Merge with SB-level int_pro seed: if int_pro exists, evaluate its
+    // SAD too and keep whichever is better.
+    let start_mv = if pred_sad < u32::MAX {
+        // mv_pred found a viable seed.
+        if let Some(int_pro) = params.newmv_seed {
+            // Both seeds available — evaluate int_pro's SAD for comparison.
+            let int_pro_fp_row = (int_pro.row + if int_pro.row >= 0 { 4 } else { 3 }) >> 3;
+            let int_pro_fp_col = (int_pro.col + if int_pro.col >= 0 { 4 } else { 3 }) >> 3;
+            let int_pro_sad = crate::mv_search::full_pixel::raw_sad_at_mv(
+                params.block_size,
+                params.src_plane,
+                params.src_offset,
+                params.ref_plane,
+                int_pro_fp_row,
+                int_pro_fp_col,
+            )
+            .unwrap_or(u32::MAX);
+            if int_pro_sad < pred_sad {
+                Some(clamp_mv_to_limits(int_pro, &params.mv_limits))
+            } else {
+                Some(clamp_mv_to_limits(pred_mv, &params.mv_limits))
+            }
+        } else {
+            Some(clamp_mv_to_limits(pred_mv, &params.mv_limits))
+        }
+    } else {
+        // mv_pred found nothing viable — fall back to int_pro seed.
+        params.newmv_seed.map(|seed| clamp_mv_to_limits(seed, &params.mv_limits))
+    };
     let full = diamond_search_sad(&FullPixelSearchParams {
         block_size: params.block_size,
         src_plane: params.src_plane,

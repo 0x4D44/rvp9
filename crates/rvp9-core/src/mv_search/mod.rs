@@ -48,6 +48,7 @@ pub mod e12stat;
 pub mod full_pixel;
 pub mod int_pro_me;
 pub mod mv_limits;
+pub mod mv_pred;
 pub mod search_site;
 pub mod sub_pixel;
 
@@ -63,6 +64,7 @@ pub use mv_limits::{
 pub use search_site::{
     SS_COUNT, SearchSiteConfig, init_dsmotion_compensation,
 };
+pub use mv_pred::mv_pred_sad_seed;
 pub use sub_pixel::{
     SubPixelForcedStop, SubPixelSearchParams, SubPixelSearchResult,
     find_best_sub_pixel_tree_pruned_more,
