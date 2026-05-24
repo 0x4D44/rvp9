@@ -7,7 +7,7 @@ use rvp9_core::bitstream::frame::{InterpFilter as WireInterpFilter, MAX_INTER_RE
 use rvp9_core::bitstream::header::FrameKind as WireFrameKind;
 use rvp9_core::block::BlockSize;
 use rvp9_core::cost::mv_cost::build_nmv_cost_table;
-use rvp9_core::cost::symbol_costs::inter_mode_costs;
+use rvp9_core::cost::symbol_costs::{inter_mode_costs, switchable_interp_costs};
 use rvp9_core::entropy::FrameContext;
 use rvp9_core::entropy::mv_probs::DEFAULT_NMV_CONTEXT;
 use rvp9_core::mode_decision::inter::{
@@ -44,7 +44,9 @@ fn picker_finds_motion_on_shifted_block() {
     let src = PlaneRef { data: &source, stride: W, width: W, height: H };
     let refp = PlaneRef { data: &reference, stride: W, width: W, height: H };
 
-    let inter_costs = inter_mode_costs(&FrameContext::new_default());
+    let fc = FrameContext::new_default();
+    let inter_costs = inter_mode_costs(&fc);
+    let sic = switchable_interp_costs(&fc);
     let mv_costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, /* allow_hp = */ false);
     let site_config = init_dsmotion_compensation(W as i32);
     let mvc = MvCandidates::default();
@@ -88,6 +90,15 @@ fn picker_finds_motion_on_shifted_block() {
         frame_kind,
         newmv_seed: None,
         ref_frame_rate_cost: 0,
+        switchable_interp_costs: &sic,
+        switchable_interp_ctx: 3,
+        src_u: &[],
+        src_v: &[],
+        ref_u: &[],
+        ref_v: &[],
+        uv_stride: 0,
+        uv_dc_quant: 0,
+        uv_ac_quant: 0,
     };
 
     let all = pick_inter_mode_luma_all_costs(&params);

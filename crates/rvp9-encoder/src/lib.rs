@@ -2348,8 +2348,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     use rvp9_core::bitstream::frame::{InterpFilter as WireInterpFilter, MAX_INTER_REFS};
     use rvp9_core::bitstream::header::FrameKind as WireFrameKind;
     use rvp9_core::cost::mv_cost::build_nmv_cost_table;
-    use rvp9_core::cost::symbol_costs::{inter_mode_costs, partition_costs};
-    use rvp9_core::inter::get_mode_context;
+    use rvp9_core::cost::symbol_costs::{inter_mode_costs, partition_costs, switchable_interp_costs};
+    use rvp9_core::inter::{get_mode_context, get_pred_context_switchable_interp};
     use rvp9_core::inter::mv_ref::{
         BlockBounds, PrevFrameMvRef, find_mv_refs, lower_mv_precision,
     };
@@ -2363,7 +2363,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     use rvp9_core::mv_search::int_pro_me::int_pro_motion_estimation;
     use rvp9_core::mv_search::mv_limits::MvLimits;
     use rvp9_core::mv_search::{PlaneRef, init_dsmotion_compensation};
-    use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
+    use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers, plane_dequant_pair};
 
     let w = width as usize;
     let h = height as usize;
@@ -2405,6 +2405,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // `PlaneQuantizers` is rebuilt inside the SB walk below (AQ.1)
     // because it depends on the leaf's `segment_id`.
     let inter_costs = inter_mode_costs(frame_context);
+    let sic = switchable_interp_costs(frame_context);
     let mv_costs = build_nmv_cost_table(&frame_context.nmvc, /* allow_hp = */ false);
     let site_config = init_dsmotion_compensation(w as i32);
 
@@ -3135,6 +3136,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     i32::from(leaf_qindex),
                     QuantizerDeltas::Y,
                 );
+                // G1 — UV dequant pair for chroma model_rd.
+                let (uv_dc_dq, uv_ac_dq) = plane_dequant_pair(
+                    i32::from(leaf_qindex),
+                    QuantizerDeltas { dc_delta: 0, ac_delta: 0 },
+                );
 
                 // A2.foreman - The encoder's strict `MvLimits` is
                 // tighter than the decoder's `clamp_mv_ref` envelope
@@ -3210,6 +3216,21 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     };
                 }
 
+                // G2 — switchable-filter context from above/left
+                // neighbours in the in-progress mi_grid.
+                let nb_above = if leaf_mi_row > 0 {
+                    mi_grid[(leaf_mi_row - 1) * mi_cols_us + leaf_mi_col].as_ref()
+                } else {
+                    None
+                };
+                let nb_left = if leaf_mi_col > 0 {
+                    mi_grid[leaf_mi_row * mi_cols_us + (leaf_mi_col - 1)].as_ref()
+                } else {
+                    None
+                };
+                let switchable_interp_ctx =
+                    get_pred_context_switchable_interp(nb_above, nb_left);
+
                 let pick_params = PickInterModeParams {
                     block_size: leaf_bsize,
                     src_plane: &src_y,
@@ -3239,6 +3260,24 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     intra_top_left_pixel: intra_top_left,
                     intra_y_mode_costs: &intra_y_mode_costs_inter,
                     ref_frame_cost_intra,
+                    switchable_interp_costs: &sic,
+                    switchable_interp_ctx,
+                    // G1 — UV planes for chroma RD in the picker.
+                    src_u: input_yuv.1,
+                    src_u_stride: uvw,
+                    src_v: input_yuv.2,
+                    src_v_stride: uvw,
+                    last_ref_u: last_recon_yuv.1,
+                    last_ref_v: last_recon_yuv.2,
+                    golden_ref_u: golden_recon_yuv.1,
+                    golden_ref_v: golden_recon_yuv.2,
+                    uv_stride: uvw,
+                    uv_dc_quant: uv_dc_dq as u32,
+                    uv_ac_quant: uv_ac_dq as u32,
+                    // G4: encode breakout test fields.
+                    encode_breakout: 20,
+                    dequant_dc: quantizer.dequant[0] as u16,
+                    dequant_ac: quantizer.dequant[1] as u16,
                 };
                 let unified_pick = pick_inter_mode(&pick_params);
 
@@ -3278,6 +3317,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 frame_kind,
                                 newmv_seed: sb_newmv_seed,
                                 ref_frame_rate_cost: ref_frame_cost_last,
+                                switchable_interp_costs: &sic,
+                                switchable_interp_ctx,
+                                src_u: input_yuv.1,
+                                src_v: input_yuv.2,
+                                ref_u: last_recon_yuv.1,
+                                ref_v: last_recon_yuv.2,
+                                uv_stride: uvw,
+                                uv_dc_quant: uv_dc_dq as u32,
+                                uv_ac_quant: uv_ac_dq as u32,
                             },
                         );
                     crate::e12stat::record_leaf(
@@ -3322,6 +3370,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         frame_kind,
                         newmv_seed: sb_newmv_seed,
                         ref_frame_rate_cost: ref_frame_cost_last,
+                        switchable_interp_costs: &sic,
+                        switchable_interp_ctx,
+                        src_u: input_yuv.1,
+                        src_v: input_yuv.2,
+                        ref_u: last_recon_yuv.1,
+                        ref_v: last_recon_yuv.2,
+                        uv_stride: uvw,
+                        uv_dc_quant: uv_dc_dq as u32,
+                        uv_ac_quant: uv_ac_dq as u32,
                     };
                     let all =
                         rvp9_core::mode_decision::inter::pick_inter_mode_luma_all_costs(
@@ -3454,14 +3511,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let mut leaf_total_eob: usize = 0;
 
                 if picked_ref == RefFrame::IntraFrame {
-                    // Phase 2b — intra-in-inter block. Run intra
-                    // prediction into the recon buffer using the same
-                    // infrastructure as the keyframe path. v1 always
-                    // sets skip=true (no residual coding).
+                    // G5 — intra-in-inter block. Single-pass TX walk:
+                    // prediction + residual (forward transform, quantize,
+                    // inverse transform-add, coef collection) per TX
+                    // block. The single-walk design is required because
+                    // VP9 intra prediction is causal — each TX block
+                    // reads reconstructed pixels from prior TX blocks.
                     use rvp9_core::intra_pred::{
                         DcAvailability, EdgeBuffers, build_intra_predictors,
                         intra_predict,
                     };
+                    use rvp9_core::transforms::TxType;
                     let intra_y_mode = pick.picked_intra_mode
                         .expect("IntraFrame pick must have picked_intra_mode");
                     let intra_uv_mode = rvp9_core::intra_pred::IntraMode::Dc;
@@ -3494,10 +3554,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         let plane_px_x = (leaf_mi_col * 8) >> ss_x;
                         let plane_px_y = (leaf_mi_row * 8) >> ss_y;
 
-                        let recon_plane = match plane {
-                            0 => &mut *recon_yuv_out.0,
-                            1 => &mut *recon_yuv_out.1,
-                            _ => &mut *recon_yuv_out.2,
+                        // G5 — bind input + recon planes (input was
+                        // previously only used in the inter branch).
+                        let (input_plane, recon_plane) = match plane {
+                            0 => (input_yuv.0, &mut *recon_yuv_out.0),
+                            1 => (input_yuv.1, &mut *recon_yuv_out.1),
+                            _ => (input_yuv.2, &mut *recon_yuv_out.2),
                         };
 
                         let have_above_block = leaf_mi_row > 0;
@@ -3509,6 +3571,16 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             intra_uv_mode
                         };
 
+                        // G5 — tx_type: Y plane uses the intra mode's
+                        // hybrid type (can be ADST variants); UV and
+                        // Tx32x32 always DctDct. Matches the decoder's
+                        // `resolve_tx_type`.
+                        let tx_type = if plane == 0 && plane_tx != TxSize::Tx32x32 {
+                            plane_mode.tx_type()
+                        } else {
+                            TxType::DctDct
+                        };
+
                         let mut tx_y4_local = 0usize;
                         while tx_y4_local < plane_bh_4x4 {
                             let mut tx_x4_local = 0usize;
@@ -3516,6 +3588,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 let tx_px_x = plane_px_x + tx_x4_local * 4;
                                 let tx_px_y = plane_px_y + tx_y4_local * 4;
 
+                                // Step 1: intra prediction (existing).
                                 let have_top = have_above_block || tx_y4_local > 0;
                                 let have_left = have_left_block || tx_x4_local > 0;
                                 let have_right =
@@ -3543,10 +3616,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 };
 
                                 let dst_off = tx_px_y * plane_stride + tx_px_x;
-                                let dst = &mut recon_plane[dst_off..];
                                 intra_predict(
                                     plane_mode,
-                                    dst,
+                                    &mut recon_plane[dst_off..],
                                     plane_stride,
                                     tx_side,
                                     pred_ctx,
@@ -3554,15 +3626,74 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     &dispatch,
                                 );
 
+                                // Step 2: residual = source - prediction.
+                                let mut residual = vec![0i16; tx_side * tx_side];
+                                for r in 0..tx_side {
+                                    for c in 0..tx_side {
+                                        let off = (tx_px_y + r) * plane_stride
+                                            + (tx_px_x + c);
+                                        let s = input_plane[off] as i16;
+                                        let p = recon_plane[off] as i16;
+                                        residual[r * tx_side + c] = s - p;
+                                    }
+                                }
+
+                                // E9 DIAG — tap Y-plane intra residual.
+                                if plane == 0 {
+                                    crate::predstat::record_y_residual(
+                                        &residual,
+                                        tx_side,
+                                        plane_tx as usize,
+                                    );
+                                }
+
+                                // Steps 3-4: forward hybrid transform + quant.
+                                let (qcoeff_i32, dqcoeff_i32, eob_usize) =
+                                    intra_forward_quant_one_tx(
+                                        &residual,
+                                        tx_side,
+                                        plane_tx,
+                                        tx_type,
+                                        &quantizer,
+                                    );
+
+                                // Step 5: inverse transform-add into recon.
+                                if eob_usize > 0 {
+                                    intra_inverse_transform_add(
+                                        plane_tx,
+                                        tx_type,
+                                        &dqcoeff_i32,
+                                        eob_usize,
+                                        &mut recon_plane[dst_off..],
+                                        plane_stride,
+                                    );
+                                }
+
+                                // Step 6: stash coefs for the writer.
+                                coef_source.insert(
+                                    leaf_mi_row,
+                                    leaf_mi_col,
+                                    plane,
+                                    tx_x4_local,
+                                    tx_y4_local,
+                                    qcoeff_i32,
+                                    eob_usize,
+                                );
+                                // Step 7: accumulate eob for skip decision.
+                                leaf_total_eob += eob_usize;
+
                                 tx_x4_local += tx_step_4x4;
                             }
                             tx_y4_local += tx_step_4x4;
                         }
                     }
 
-                    // v1: intra-in-inter blocks always skip (no residual).
-                    // leaf_total_eob stays 0.
-                    sb_partitions[sb_idx][leaf_idx].skip = true;
+                    // G5 — data-driven skip: true only when all coefs
+                    // are zero (leaf_total_eob == 0). The RC.X1 override
+                    // below handles this uniformly for both branches.
+                    if leaf_total_eob == 0 {
+                        sb_partitions[sb_idx][leaf_idx].skip = true;
+                    }
                 } else {
                     // Inter block — MC prediction + residual path.
                     // Per-plane recon + residual emission. Mirrors the
@@ -4199,6 +4330,161 @@ fn inter_inverse_dct_add(
             }
         }
         TxSize::Tx32x32 => {
+            let coefs: &[i32; 1024] = dq_input.try_into().expect("Tx32x32 takes 1024 coefs");
+            if eob == 1 {
+                idct32x32_1_add(coefs[0], dst, stride);
+            } else {
+                idct32x32_1024_add(coefs, dst, stride);
+            }
+        }
+    }
+}
+
+/// G5 — Forward hybrid transform + forward quant of one TX block for the
+/// intra path (both keyframe and intra-in-inter). Unlike the inter helper
+/// (`inter_forward_quant_one_tx`), this supports non-DctDct `tx_type`
+/// (AdstDct, DctAdst, AdstAdst) via the `fht*` family, and derives
+/// scan order from `(plane_tx, tx_type)` rather than hardcoding DctDct.
+///
+/// Returns `(qcoeff_i32, dqcoeff_i32, eob)`.
+fn intra_forward_quant_one_tx(
+    residual: &[i16],
+    tx_side: usize,
+    plane_tx: TxSize,
+    tx_type: rvp9_core::transforms::TxType,
+    quantizer: &rvp9_core::quant::forward::PlaneQuantizers,
+) -> (Vec<i32>, Vec<i32>, usize) {
+    use rvp9_core::quant::forward::{scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32};
+    use rvp9_core::transforms::forward::{fdct32x32, fht4x4, fht8x8, fht16x16};
+    use rvp9_core::transforms::scans::scan_for;
+
+    let n = plane_tx.n_coeffs();
+    let mut coefs = vec![0i32; n];
+    match plane_tx {
+        TxSize::Tx4x4 => {
+            let mut buf = [0i32; 16];
+            fht4x4(residual, &mut buf, tx_side, tx_type);
+            coefs.copy_from_slice(&buf[..]);
+        }
+        TxSize::Tx8x8 => {
+            let mut buf = [0i32; 64];
+            fht8x8(residual, &mut buf, tx_side, tx_type);
+            coefs.copy_from_slice(&buf[..]);
+        }
+        TxSize::Tx16x16 => {
+            let mut buf = [0i32; 256];
+            fht16x16(residual, &mut buf, tx_side, tx_type);
+            coefs.copy_from_slice(&buf[..]);
+        }
+        TxSize::Tx32x32 => {
+            // VP9 has no hybrid 32x32 -- always pure DCT.
+            let mut buf = [0i32; 1024];
+            fdct32x32(residual, &mut buf, tx_side);
+            coefs.copy_from_slice(&buf[..]);
+        }
+    }
+
+    let scan = scan_for(plane_tx, tx_type);
+    let scan_slice = scan_for_forward(&scan);
+    let dequant_pair = [quantizer.dequant[0], quantizer.dequant[1]];
+    let mut qcoeff_i16 = vec![0i16; n];
+    let mut dqcoeff_i16 = vec![0i16; n];
+    let eob = match plane_tx {
+        TxSize::Tx32x32 => vp9_quantize_b_32x32(
+            &coefs,
+            /* skip_block = */ false,
+            &quantizer.zbin,
+            &quantizer.round,
+            &quantizer.quant,
+            &quantizer.quant_shift,
+            &mut qcoeff_i16,
+            &mut dqcoeff_i16,
+            &dequant_pair,
+            scan_slice,
+        ),
+        _ => vp9_quantize_b(
+            &coefs,
+            n,
+            /* skip_block = */ false,
+            &quantizer.zbin,
+            &quantizer.round,
+            &quantizer.quant,
+            &quantizer.quant_shift,
+            &mut qcoeff_i16,
+            &mut dqcoeff_i16,
+            &dequant_pair,
+            scan_slice,
+        ),
+    };
+    let qcoeff_i32: Vec<i32> = qcoeff_i16.into_iter().map(i32::from).collect();
+    let dqcoeff_i32: Vec<i32> = dqcoeff_i16.into_iter().map(i32::from).collect();
+    (qcoeff_i32, dqcoeff_i32, eob as usize)
+}
+
+/// G5 — Inverse transform-add for intra paths (both keyframe and
+/// intra-in-inter). Unlike `inter_inverse_dct_add`, this dispatches
+/// to the IHT variants (`iht4x4_16_add` / `iht8x8_64_add` /
+/// `iht16x16_256_add`) when `tx_type != DctDct`. The eob==1 fast path
+/// (`idct*_1_add`) applies only for DctDct (no single-coef IHT variants
+/// exist in libvpx).
+///
+/// Caller must ensure `eob > 0`.
+fn intra_inverse_transform_add(
+    plane_tx: TxSize,
+    tx_type: rvp9_core::transforms::TxType,
+    dq_input: &[i32],
+    eob: usize,
+    dst: &mut [u8],
+    stride: usize,
+) {
+    use rvp9_core::transforms::TxType;
+    use rvp9_core::transforms::inverse::{
+        idct4x4_1_add, idct4x4_16_add, idct8x8_1_add, idct8x8_64_add,
+        idct16x16_1_add, idct16x16_256_add, idct32x32_1_add, idct32x32_1024_add,
+        iht4x4_16_add, iht8x8_64_add, iht16x16_256_add,
+    };
+
+    debug_assert!(eob > 0, "intra_inverse_transform_add called with eob == 0");
+
+    match plane_tx {
+        TxSize::Tx4x4 => {
+            let coefs: &[i32; 16] = dq_input.try_into().expect("Tx4x4 takes 16 coefs");
+            if tx_type == TxType::DctDct {
+                if eob > 1 {
+                    idct4x4_16_add(coefs, dst, stride);
+                } else {
+                    idct4x4_1_add(coefs[0], dst, stride);
+                }
+            } else {
+                iht4x4_16_add(coefs, dst, stride, tx_type);
+            }
+        }
+        TxSize::Tx8x8 => {
+            let coefs: &[i32; 64] = dq_input.try_into().expect("Tx8x8 takes 64 coefs");
+            if tx_type == TxType::DctDct {
+                if eob == 1 {
+                    idct8x8_1_add(coefs[0], dst, stride);
+                } else {
+                    idct8x8_64_add(coefs, dst, stride);
+                }
+            } else {
+                iht8x8_64_add(coefs, dst, stride, tx_type);
+            }
+        }
+        TxSize::Tx16x16 => {
+            let coefs: &[i32; 256] = dq_input.try_into().expect("Tx16x16 takes 256 coefs");
+            if tx_type == TxType::DctDct {
+                if eob == 1 {
+                    idct16x16_1_add(coefs[0], dst, stride);
+                } else {
+                    idct16x16_256_add(coefs, dst, stride);
+                }
+            } else {
+                iht16x16_256_add(coefs, dst, stride, tx_type);
+            }
+        }
+        TxSize::Tx32x32 => {
+            // Tx32x32 is always DctDct (no hybrid 32×32 in VP9).
             let coefs: &[i32; 1024] = dq_input.try_into().expect("Tx32x32 takes 1024 coefs");
             if eob == 1 {
                 idct32x32_1_add(coefs[0], dst, stride);

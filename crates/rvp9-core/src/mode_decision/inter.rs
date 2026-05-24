@@ -91,7 +91,10 @@ use crate::bitstream::frame::InterpFilter;
 use crate::bitstream::header::FrameKind;
 use crate::block::BlockSize;
 use crate::cost::mv_cost::{MvCosts, mv_cost};
-use crate::cost::{FrameTypeForRd, InterModeCosts, compute_rd_mult, get_intra_cost_penalty};
+use crate::cost::{
+    FrameTypeForRd, InterModeCosts, SwitchableInterpCosts,
+    compute_rd_mult, get_intra_cost_penalty,
+};
 use crate::entropy::default_probs::INTER_MODE_CONTEXTS;
 use crate::inter::filter::{FILTER_TAPS, kernel_for};
 use crate::intra_pred::{
@@ -120,7 +123,7 @@ use crate::transforms::forward::{fdct8x8, fdct16x16, fdct32x32};
 use crate::transforms::inverse::{idct8x8_64_add, idct16x16_256_add, idct32x32_1024_add};
 use crate::transforms::scans::scan_for;
 use crate::transforms::{TxMode, TxSize, TxType};
-use crate::mode_decision::model_rd::{model_rd_for_sb_y, SkipTxfm};
+use crate::mode_decision::model_rd::{model_rd_for_sb_y, model_rd_for_sb_y_large, model_rd_for_sb_uv, SkipTxfm};
 use crate::Pixel;
 
 /// F.1 — the default skip-prob context index used by
@@ -272,6 +275,32 @@ pub struct InterModeSearchParams<'a> {
     /// too, though the differential between LAST and GOLDEN only
     /// requires the single-ref subtree.
     pub ref_frame_rate_cost: u32,
+    /// Per-context per-filter bit-cost table (G2). Replaces the flat
+    /// `F5_SWITCHABLE_FILTER_RATE`. Build once per frame via
+    /// [`crate::cost::switchable_interp_costs`].
+    pub switchable_interp_costs: &'a SwitchableInterpCosts,
+    /// Switchable-interpolation context (0..4) from above/left
+    /// neighbour filters. Compute via
+    /// [`crate::inter::get_pred_context_switchable_interp`] per leaf.
+    /// Context 3 is the "no neighbour" sentinel.
+    pub switchable_interp_ctx: usize,
+
+    // --- G1: UV RD fields ---
+
+    /// Source U plane (full frame buffer).
+    pub src_u: &'a [u8],
+    /// Source V plane (full frame buffer).
+    pub src_v: &'a [u8],
+    /// Reference U plane (full frame buffer, per-ref).
+    pub ref_u: &'a [u8],
+    /// Reference V plane (full frame buffer, per-ref).
+    pub ref_v: &'a [u8],
+    /// Stride of all UV planes (= w/2 for 4:2:0).
+    pub uv_stride: usize,
+    /// Chroma DC dequant (`dequant[0]` from UV quantizer).
+    pub uv_dc_quant: u32,
+    /// Chroma AC dequant (`dequant[1]` from UV quantizer).
+    pub uv_ac_quant: u32,
 }
 
 /// Result of [`pick_inter_mode_luma`].
@@ -321,6 +350,17 @@ pub struct InterModeSearchResult {
     /// shortcuts). The writer reads this field to emit the per-block
     /// switchable-filter bits.
     pub picked_interp_filter: InterpFilter,
+    /// G4 — Y-plane variance from `model_rd_for_sb_y`. Surfaced for
+    /// the encode-breakout test in `pick_inter_mode`.
+    pub var_y: u32,
+    /// G4 — Y-plane SSE from `model_rd_for_sb_y`. Surfaced for
+    /// the encode-breakout test in `pick_inter_mode`.
+    pub sse_y: u32,
+    /// G6 — set when `model_rd_for_sb_y_large` detects a full skip
+    /// (AcDc) on a block >= 32x32. When true, the mode loop may
+    /// exit early after evaluating at least 2 candidates. Mirrors
+    /// libvpx `early_term` at `vp9_pickmode.c:560-603`.
+    pub early_term: bool,
 }
 
 /// Run the libvpx-style inter-mode RD search for one luma block.
@@ -532,6 +572,52 @@ pub struct PickInterModeParams<'a> {
     /// Ref-frame rate cost for `INTRA_FRAME` in `vp9_prob_cost` units.
     /// `vp9_cost_bit(intra_inter_p, false)`.
     pub ref_frame_cost_intra: u32,
+    /// Per-context per-filter bit-cost table (G2). Replaces the flat
+    /// `F5_SWITCHABLE_FILTER_RATE`. Build once per frame via
+    /// [`crate::cost::switchable_interp_costs`].
+    pub switchable_interp_costs: &'a SwitchableInterpCosts,
+    /// Switchable-interpolation context (0..4) from above/left
+    /// neighbour filters. Compute via
+    /// [`crate::inter::get_pred_context_switchable_interp`] per leaf.
+    pub switchable_interp_ctx: usize,
+
+    // --- G1: UV RD fields ---
+
+    /// Source U plane (full frame buffer).
+    pub src_u: &'a [u8],
+    /// Source U plane stride.
+    pub src_u_stride: usize,
+    /// Source V plane (full frame buffer).
+    pub src_v: &'a [u8],
+    /// Source V plane stride.
+    pub src_v_stride: usize,
+    /// LAST recon U plane (full frame buffer).
+    pub last_ref_u: &'a [u8],
+    /// LAST recon V plane (full frame buffer).
+    pub last_ref_v: &'a [u8],
+    /// GOLDEN recon U plane (full frame buffer).
+    pub golden_ref_u: &'a [u8],
+    /// GOLDEN recon V plane (full frame buffer).
+    pub golden_ref_v: &'a [u8],
+    /// Stride of all UV ref planes (= w/2 for 4:2:0).
+    pub uv_stride: usize,
+    /// Chroma DC dequant (`dequant[0]` from UV quantizer).
+    pub uv_dc_quant: u32,
+    /// Chroma AC dequant (`dequant[1]` from UV quantizer).
+    pub uv_ac_quant: u32,
+
+    // --- G4: encode breakout test fields ---
+
+    /// Per-frame quality knob for the encode-breakout test
+    /// (`vp9_pickmode.c:933-1036`). Typically 20 for realtime speed >= 5.
+    /// Set to 0 to disable the breakout test.
+    pub encode_breakout: u32,
+    /// Y-plane DC dequant value (`dequant[0]`). Used by the
+    /// encode-breakout threshold computation.
+    pub dequant_dc: u16,
+    /// Y-plane AC dequant value (`dequant[1]`). Used by the
+    /// encode-breakout threshold computation.
+    pub dequant_ac: u16,
 }
 
 /// Result of [`pick_inter_mode`].
@@ -560,6 +646,12 @@ pub struct PickInterModeResult {
     /// Intra mode when `picked_ref_frame == IntraFrame`. One of
     /// `{Dc, V, H}` in v1. `None` for inter winners.
     pub picked_intra_mode: Option<IntraMode>,
+    /// G4 — Y-plane variance from the winning candidate's
+    /// `model_rd_for_sb_y`. Used by the encode-breakout test.
+    pub var_y: u32,
+    /// G4 — Y-plane SSE from the winning candidate's
+    /// `model_rd_for_sb_y`. Used by the encode-breakout test.
+    pub sse_y: u32,
 }
 
 /// libvpx `ref_mode_set` iteration order (first 8 of 12 entries,
@@ -660,6 +752,12 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
         } else {
             params.ref_frame_cost_golden
         };
+        // G1 — per-ref UV planes for chroma RD.
+        let (ref_u, ref_v) = if ref_idx == 0 {
+            (params.last_ref_u, params.last_ref_v)
+        } else {
+            (params.golden_ref_u, params.golden_ref_v)
+        };
 
         // OOB veto for NEAREST / NEAR: skip if the caller flagged the
         // MV as out-of-bounds.
@@ -697,6 +795,15 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                         frame_kind: params.frame_kind,
                         newmv_seed: params.newmv_seed,
                         ref_frame_rate_cost,
+                        switchable_interp_costs: params.switchable_interp_costs,
+                        switchable_interp_ctx: params.switchable_interp_ctx,
+                        src_u: params.src_u,
+                        src_v: params.src_v,
+                        ref_u,
+                        ref_v,
+                        uv_stride: params.uv_stride,
+                        uv_dc_quant: params.uv_dc_quant,
+                        uv_ac_quant: params.uv_ac_quant,
                     };
                     *cached = Some(run_newmv_search(&single_params));
                 }
@@ -764,6 +871,15 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
             frame_kind: params.frame_kind,
             newmv_seed: params.newmv_seed,
             ref_frame_rate_cost,
+            switchable_interp_costs: params.switchable_interp_costs,
+            switchable_interp_ctx: params.switchable_interp_ctx,
+            src_u: params.src_u,
+            src_v: params.src_v,
+            ref_u,
+            ref_v,
+            uv_stride: params.uv_stride,
+            uv_dc_quant: params.uv_dc_quant,
+            uv_ac_quant: params.uv_ac_quant,
         };
 
         let ref_mv = match mode {
@@ -791,7 +907,52 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                 picked_interp_filter: candidate.picked_interp_filter,
                 picked_ref_frame: ref_frame,
                 picked_intra_mode: None,
+                var_y: candidate.var_y,
+                sse_y: candidate.sse_y,
             });
+        }
+
+        // --- G4: encode breakout test ---
+        //
+        // After updating the best candidate, check if the prediction
+        // alone is good enough to skip residual coding entirely.
+        // When this fires, the mode loop breaks immediately -- no
+        // further candidates are evaluated, and the intra fallback
+        // is skipped.
+        //
+        // Port of `encode_breakout_test` (vp9_pickmode.c:933-1036).
+        if params.encode_breakout > 0 {
+            if let Some(ref b) = best {
+                if is_new_best {
+                    if crate::mode_decision::model_rd::encode_breakout_test(
+                        b.var_y,
+                        b.sse_y,
+                        params.dequant_dc,
+                        params.dequant_ac,
+                        params.block_size,
+                        b.best_mv,
+                        params.encode_breakout,
+                    ) {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // G6 — early_term mode-loop exit (libvpx vp9_pickmode.c:2474-2478).
+        // When the large model detects a full skip on a block >= 32x32,
+        // exit after at least 2 candidates have been evaluated.
+        if candidate.early_term {
+            if let Some(ref b) = best {
+                if b.best_rd_cost <= candidate.best_rd_cost || is_new_best {
+                    // At least 2 candidates evaluated (this one + previous best),
+                    // and the current or previous best has early_term set.
+                    // Only break if we're past the first evaluated candidate.
+                    if mode_checked.iter().flatten().filter(|&&c| c).count() > 1 {
+                        break;
+                    }
+                }
+            }
         }
 
         // Early-exit: if the best candidate so far is a perfect
@@ -986,6 +1147,16 @@ fn evaluate_intra_fallback(
                 frame_kind: params.frame_kind,
                 newmv_seed: params.newmv_seed,
                 ref_frame_rate_cost: 0,
+                switchable_interp_costs: params.switchable_interp_costs,
+                switchable_interp_ctx: params.switchable_interp_ctx,
+                // G1: UV fields unused for intra fallback.
+                src_u: params.src_u,
+                src_v: params.src_v,
+                ref_u: params.last_ref_u,
+                ref_v: params.last_ref_v,
+                uv_stride: params.uv_stride,
+                uv_dc_quant: params.uv_dc_quant,
+                uv_ac_quant: params.uv_ac_quant,
             };
             reconstruct_via_round_trip(
                 &single_params, &pred, &mut recon, bw, bh, picked_tx_size,
@@ -1023,6 +1194,8 @@ fn evaluate_intra_fallback(
                 picked_interp_filter: InterpFilter::EightTap,
                 picked_ref_frame: RefFrame::IntraFrame,
                 picked_intra_mode: Some(mode),
+                var_y: mrd.var_y,
+                sse_y: mrd.sse_y,
             });
         }
     }
@@ -1232,42 +1405,6 @@ fn f5_filter_search_set() -> &'static [InterpFilter] {
     &[InterpFilter::EightTap, InterpFilter::EightTapSmooth]
 }
 
-/// F.5 — switchable-filter signalling rate in `vp9_prob_cost` units
-/// (1/512 of a bit). Libvpx charges
-/// `vp9_get_switchable_rate(cpi, xd) ≈ 1–2` bits per non-default filter
-/// in the Switchable-frame path (`vp9_pickmode.c:1528`); the exact
-/// cost is `switchable_interp_costs[ctx][filter]` (see
-/// [`crate::cost::symbol_costs::switchable_interp_costs`]), which
-/// depends on per-block neighbour context (`above`, `left` filter).
-///
-/// **F.5 v1 rate model** — flat conservative approximation. The picker
-/// doesn't yet thread neighbour context (an F.5 follow-up per HLD
-/// §4.4 / Q2 — see "Open questions" in the HLD). The team-lead HLD
-/// decision originally specified `768` (= 1.5 bits in
-/// `vp9_prob_cost` units) as a "conservative over-estimate".
-/// Empirical measurement against the default
-/// `switchable_interp_prob` table shows the *actual* signalling cost
-/// ranges from ~300 to ~2120 units across the 4 contexts, with the
-/// most-common steady-state context (`ctx=0`, both neighbours
-/// `EightTap`, probs `[235, 162]`) charging ~2120 units for
-/// `EightTapSmooth`. At 768 the picker over-switches: the F.0.1
-/// foreman gate regresses from +9.00 dB → +10.76 dB because the
-/// per-block distortion improvement from smoothing fails to recover
-/// the wire-format bits actually paid (the picker's RD finds a tiny
-/// distortion drop but spends ~2-4× more wire bits than it gets
-/// credit for).
-///
-/// We pin the flat constant at **2048** (= 4 bits) — close to the
-/// conservative upper bound of the per-context range — so the picker
-/// only switches when the distortion improvement clearly justifies
-/// the bits in the most-common neighbour context. The proper
-/// per-context table is HLD §4.4 / Q2 follow-up; landing it requires
-/// threading `switchable_interp_ctx` into [`InterModeSearchParams`].
-/// **Deviation from HLD § Q2 default `768`** noted in F.5 report;
-/// the HLD itself anticipates this risk in §7.5 ("Quality
-/// regression") and the F.0.1 gate is the detection mechanism.
-const F5_SWITCHABLE_FILTER_RATE: u32 = 2048;
-
 /// Evaluate one `(mode, mv)` candidate: fetch the prediction with sub-pel
 /// interpolation, run the forward/inverse transform round-trip,
 /// compute SSE + rate cost + RD cost.
@@ -1360,20 +1497,39 @@ fn evaluate_candidate_for_filter(
     let src_slice = &params.src_plane.data;
     let (sx, sy) = params.src_offset;
     let src_start = sy * params.src_plane.stride + sx;
-    let mrd = model_rd_for_sb_y(
-        &src_slice[src_start..],
-        params.src_plane.stride,
-        &pred,
-        bw, // pred_stride
-        bw,
-        bh,
-        params.block_size,
-        dc_quant,
-        ac_quant,
-        dc_thr,
-        ac_thr,
-        tx_mode,
-    );
+    // G6: dispatch to the per-sub-block variant for blocks >= 32x32.
+    let use_large = params.block_size >= BlockSize::Block32x32;
+    let mrd = if use_large {
+        model_rd_for_sb_y_large(
+            &src_slice[src_start..],
+            params.src_plane.stride,
+            &pred,
+            bw,
+            bw,
+            bh,
+            params.block_size,
+            dc_quant,
+            ac_quant,
+            dc_thr,
+            ac_thr,
+            tx_mode,
+        )
+    } else {
+        model_rd_for_sb_y(
+            &src_slice[src_start..],
+            params.src_plane.stride,
+            &pred,
+            bw, // pred_stride
+            bw,
+            bh,
+            params.block_size,
+            dc_quant,
+            ac_quant,
+            dc_thr,
+            ac_thr,
+            tx_mode,
+        )
+    };
 
     // Use the model_rd TX size for the round-trip (replaces the
     // previous hard-coded `max_txsize(block_size)`).
@@ -1549,23 +1705,102 @@ fn evaluate_candidate_for_filter(
     // the `u32` rate sum.
     let effective_coef_rate: u32 = by.coef_rate.min(u32::MAX as u64) as u32;
 
-    // F.5 — switchable-filter signalling cost. Charge a flat
-    // conservative approximation (`F5_SWITCHABLE_FILTER_RATE`) when
-    // the chosen filter is anything other than the default
-    // `EightTap`. See the constant's doc-comment for the libvpx
-    // reference, the empirical magnitude calibration, and the
-    // approximation rationale.
-    let filter_rate: u32 = if matches!(filter, InterpFilter::EightTap) {
-        0
+    // G2 — per-context switchable-filter signalling cost. Replaces
+    // the flat `F5_SWITCHABLE_FILTER_RATE = 2048` constant with the
+    // true per-context cost from `switchable_interp_costs[ctx][filter]`.
+    // ALL filters (including EightTap) get their true cost; the old
+    // `EightTap == 0` special-case is gone — the table already encodes
+    // EightTap's cost (low in ctx=0 but nonzero).
+    let filter_rate: u32 = params.switchable_interp_costs
+        [params.switchable_interp_ctx][filter as usize]
+        .max(0) as u32;
+
+    // G1 — UV model-RD (libvpx `vp9_pickmode.c:2378-2393`).
+    //
+    // Build chroma MC predictions and run the variance-domain RD model
+    // for both U and V planes. The UV rate+dist are added to the
+    // luma total so the picker can distinguish candidates that differ
+    // in chroma fidelity.
+    //
+    // Only runs when UV planes are provided (non-empty src_u). Test
+    // harnesses pass empty slices to skip this path.
+    let (uv_rate, uv_dist): (u32, i64) = if !params.src_u.is_empty()
+        && !params.ref_u.is_empty()
+        && params.uv_stride > 0
+    {
+        let uv_bw = bw >> 1;
+        let uv_bh = bh >> 1;
+        // Chroma offset = luma offset >> 1 (4:2:0).
+        let uv_x = params.src_offset.0 >> 1;
+        let uv_y = params.src_offset.1 >> 1;
+
+        // Chroma MV: VP9 4:2:0 scales the luma Q3 MV by halving for
+        // the half-resolution chroma plane. `build_inter_prediction`
+        // interprets its MV in Q3 of the plane's native pixel grid,
+        // so we pass `mv / 2` to get the correct integer + sub-pel
+        // displacement on the chroma plane.
+        let uv_mv = Mv {
+            row: mv.row / 2,
+            col: mv.col / 2,
+        };
+
+        // Build UV MC predictions into scratch buffers.
+        let mut pred_u = [0u8; 32 * 32];
+        let mut pred_v = [0u8; 32 * 32];
+        {
+            let ref_u_plane = PlaneRef {
+                data: params.ref_u,
+                stride: params.uv_stride,
+                width: params.uv_stride, // full chroma width
+                height: params.ref_u.len() / params.uv_stride,
+            };
+            build_inter_prediction(
+                &ref_u_plane, uv_x, uv_y, uv_mv, uv_bw, uv_bh,
+                &mut pred_u, uv_bw, filter,
+            );
+        }
+        {
+            let ref_v_plane = PlaneRef {
+                data: params.ref_v,
+                stride: params.uv_stride,
+                width: params.uv_stride,
+                height: params.ref_v.len() / params.uv_stride,
+            };
+            build_inter_prediction(
+                &ref_v_plane, uv_x, uv_y, uv_mv, uv_bw, uv_bh,
+                &mut pred_v, uv_bw, filter,
+            );
+        }
+
+        // Source UV at the chroma offset.
+        let src_u_start = uv_y * params.uv_stride + uv_x;
+        let src_v_start = uv_y * params.uv_stride + uv_x;
+
+        let uv_rd = model_rd_for_sb_uv(
+            &params.src_u[src_u_start..], params.uv_stride,
+            &pred_u, uv_bw,
+            &params.src_v[src_v_start..], params.uv_stride,
+            &pred_v, uv_bw,
+            bw, bh, // luma dimensions — halved internally
+            params.block_size,
+            params.uv_dc_quant,
+            params.uv_ac_quant,
+        );
+
+        (uv_rd.rate.max(0) as u32, uv_rd.dist)
     } else {
-        F5_SWITCHABLE_FILTER_RATE
+        (0, 0)
     };
+
+    // Add UV dist to luma dist (libvpx `vp9_pickmode.c:2390-2393`).
+    let dist = (dist as i64 + uv_dist).clamp(0, u32::MAX as i64) as u32;
 
     let rate = mode_rate
         .saturating_add(mv_rate)
         .saturating_add(params.ref_frame_rate_cost)
         .saturating_add(effective_coef_rate)
-        .saturating_add(filter_rate);
+        .saturating_add(filter_rate)
+        .saturating_add(uv_rate);
 
     // **F.1 — libvpx skip-flag tie-break (vp9_pickmode.c:2355-2362, Q5).**
     // Unconditionally active since Phase 2c.
@@ -1621,6 +1856,10 @@ fn evaluate_candidate_for_filter(
     };
     let this_rd = rd_cost(lambda, final_rate, final_dist);
 
+    // G6: set early_term when the large model detects a full skip on
+    // a block >= 32x32.
+    let early_term = use_large && mrd.skip_txfm == SkipTxfm::AcDc;
+
     InterModeSearchResult {
         best_mode: mode,
         best_mv: mv,
@@ -1630,6 +1869,9 @@ fn evaluate_candidate_for_filter(
         coef_rate: by.coef_rate,
         coef_dist: by.coef_dist,
         picked_interp_filter: filter,
+        var_y: mrd.var_y,
+        sse_y: mrd.sse_y,
+        early_term,
     }
 }
 
@@ -2075,7 +2317,8 @@ fn frame_type_for_rd(kind: FrameKind) -> FrameTypeForRd {
 mod tests {
     use super::*;
     use crate::cost::mv_cost::build_nmv_cost_table;
-    use crate::cost::symbol_costs::inter_mode_costs;
+    use crate::cost::symbol_costs::{inter_mode_costs, switchable_interp_costs};
+    use crate::cost::SwitchableInterpCosts;
     use crate::entropy::frame_context::FrameContext;
     use crate::entropy::mv_probs::DEFAULT_NMV_CONTEXT;
     use crate::bitstream::frame::{InterpFilter, MAX_INTER_REFS};
@@ -2120,12 +2363,14 @@ mod tests {
         inter_costs: InterModeCosts,
         quantizer: PlaneQuantizers,
         cfg: SearchSiteConfig,
+        sic: SwitchableInterpCosts,
     }
     impl TestHarness {
         fn new(plane_w: usize, q_index: u8) -> Self {
             let fc = FrameContext::new_default();
             let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, false);
             let inter_costs = inter_mode_costs(&fc);
+            let sic = switchable_interp_costs(&fc);
             let quantizer =
                 init_plane_quantizers(i32::from(q_index), QuantizerDeltas::Y);
             let cfg = init_dsmotion_compensation(plane_w as i32);
@@ -2134,6 +2379,7 @@ mod tests {
                 inter_costs,
                 quantizer,
                 cfg,
+                sic,
             }
         }
     }
@@ -2170,6 +2416,16 @@ mod tests {
             frame_kind: synthetic_inter_frame_kind(),
             newmv_seed: None,
             ref_frame_rate_cost: 0,
+            switchable_interp_costs: &harness.sic,
+            switchable_interp_ctx: 3, // no-neighbour sentinel
+            // G1: UV fields — empty for luma-only unit tests.
+            src_u: &[],
+            src_v: &[],
+            ref_u: &[],
+            ref_v: &[],
+            uv_stride: 0,
+            uv_dc_quant: 0,
+            uv_ac_quant: 0,
         }
     }
 
@@ -2518,6 +2774,15 @@ mod tests {
             frame_kind: synthetic_inter_frame_kind(),
             newmv_seed: None,
             ref_frame_rate_cost: 0,
+            switchable_interp_costs: &harness.sic,
+            switchable_interp_ctx: 3,
+            src_u: &[],
+            src_v: &[],
+            ref_u: &[],
+            ref_v: &[],
+            uv_stride: 0,
+            uv_dc_quant: 0,
+            uv_ac_quant: 0,
         };
         let params6 = InterModeSearchParams {
             inter_mode_ctx: 6,
@@ -2612,15 +2877,15 @@ mod tests {
         assert_eq!(smooth.picked_interp_filter, InterpFilter::EightTapSmooth);
     }
 
-    /// F.5 — invoking `evaluate_candidate_for_filter` with each filter
-    /// in the search set produces DIFFERENT predictions (and hence
-    /// different distortion / rate / RD) on non-trivial content with
-    /// a sub-pel MV, and the returned `picked_interp_filter` tags
+    /// F.5/G2 — invoking `evaluate_candidate_for_filter` with each
+    /// filter in the search set produces DIFFERENT predictions (and
+    /// hence different distortion / rate / RD) on non-trivial content
+    /// with a sub-pel MV, and the returned `picked_interp_filter` tags
     /// match the requested filter. This is the "wiring is exercised"
-    /// oracle from HLD §6.2 test item 1 — proves the SMOOTH kernel is
-    /// actually reachable from the picker, the result struct carries
-    /// the chosen filter, and the `+F5_SWITCHABLE_FILTER_RATE` cost
-    /// is applied only to non-default filters.
+    /// oracle — proves the SMOOTH kernel is actually reachable from
+    /// the picker, the result struct carries the chosen filter, and
+    /// the per-context switchable-filter cost is applied to all
+    /// filters (G2 replaces the old flat constant).
     #[test]
     fn f5_per_filter_evaluation_differs_and_tags_picked_filter() {
         let pw = 64;
@@ -2706,29 +2971,32 @@ mod tests {
             eight.best_rd_cost,
             smooth.best_rd_cost,
         );
-        // SMOOTH always pays the switchable-filter cost; EightTap
-        // doesn't. The total rate sum on each side is `mode_rate +
-        // mv_rate + ref_frame_rate + coef_rate + filter_rate`; mode /
-        // mv / ref-frame rates are identical (same `(mode, mv)`
-        // across both filter evaluations), so the residual difference
-        // collapses to `coef_rate_delta + F5_SWITCHABLE_FILTER_RATE`.
-        // The directional floor: |smooth.rate − eight.rate| must
-        // exceed the F.5 signalling cost minus any coef-rate slack
-        // (the per-filter coef_rate can differ when the predictions
-        // and hence the residuals differ).
+        // G2 — SMOOTH pays `sic[ctx][SMOOTH]`; EightTap pays
+        // `sic[ctx][EightTap]`. The total rate sum on each side is
+        // `mode_rate + mv_rate + ref_frame_rate + coef_rate +
+        // filter_rate`; mode / mv / ref-frame rates are identical
+        // (same `(mode, mv)` across both filter evaluations), so the
+        // residual difference collapses to
+        // `|filter_cost_delta| - coef_rate_slack`.
+        let ctx = 3usize; // no-neighbour sentinel used by make_params
+        let fc = FrameContext::new_default();
+        let sic = switchable_interp_costs(&fc);
+        let filter_cost_delta = (sic[ctx][InterpFilter::EightTapSmooth as usize]
+            - sic[ctx][InterpFilter::EightTap as usize])
+            .unsigned_abs() as u64;
         let coef_rate_delta = smooth.coef_rate.abs_diff(eight.coef_rate);
         let observed_rate_delta =
             u64::from(smooth.best_rate.abs_diff(eight.best_rate));
         let expected_floor =
-            u64::from(F5_SWITCHABLE_FILTER_RATE).saturating_sub(coef_rate_delta);
+            filter_cost_delta.saturating_sub(coef_rate_delta);
         assert!(
             observed_rate_delta >= expected_floor,
-            "F.5 switchable-rate floor: |smooth.rate {} − eight.rate {}| = {} \
-             must be ≥ F5_SWITCHABLE_FILTER_RATE {} − coef_rate_slack {} = {}",
+            "G2 switchable-rate floor: |smooth.rate {} - eight.rate {}| = {} \
+             must be >= filter_cost_delta {} - coef_rate_slack {} = {}",
             smooth.best_rate,
             eight.best_rate,
             observed_rate_delta,
-            F5_SWITCHABLE_FILTER_RATE,
+            filter_cost_delta,
             coef_rate_delta,
             expected_floor,
         );
@@ -2737,12 +3005,12 @@ mod tests {
         assert_eq!(smooth.picked_interp_filter, InterpFilter::EightTapSmooth);
     }
 
-    /// F.5 — identical source and reference: both filters produce zero
-    /// distortion, so the `F5_SWITCHABLE_FILTER_RATE` penalty on
-    /// `EightTapSmooth` causes `EightTap` to win the RD comparison.
-    /// This validates the "no incentive to switch" invariant: when
-    /// prediction quality is identical, the cheaper default filter
-    /// must be selected.
+    /// F.5/G2 — identical source and reference: both filters produce
+    /// zero distortion. The per-context switchable-filter cost
+    /// (`switchable_interp_costs[ctx][SMOOTH] > [ctx][EightTap]`) makes
+    /// `EightTap` win the RD comparison. This validates the "no
+    /// incentive to switch" invariant: when prediction quality is
+    /// identical, the cheaper default filter must be selected.
     #[test]
     fn f5_identical_src_ref_yields_eighttap_picked_filter() {
         let pw = 64;

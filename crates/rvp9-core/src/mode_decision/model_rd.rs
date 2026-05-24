@@ -25,6 +25,7 @@ use crate::bitstream::compressed_header::tx_mode_to_biggest_tx_size;
 use crate::block::{BlockSize, max_txsize, uv_plane_block_size};
 use crate::cost::VP9_PROB_COST_SHIFT;
 use crate::transforms::TxMode;
+use crate::mode_info::Mv;
 use crate::transforms::TxSize;
 
 // ---------------------------------------------------------------------------
@@ -494,6 +495,336 @@ pub fn model_rd_for_sb_uv(
 }
 
 // ---------------------------------------------------------------------------
+// encode_breakout_test (vp9_pickmode.c:933-1036)
+// ---------------------------------------------------------------------------
+
+/// Returns `true` when the block can be encoded with prediction only
+/// (no residual coding needed), allowing the mode loop to exit early.
+///
+/// Port of `encode_breakout_test` (`vp9/encoder/vp9_pickmode.c:933-1036`).
+/// 8-bit Profile 0 only; no SVC, no skin detection.
+///
+/// ## Scoping decisions
+///
+/// - UV check deferred (Y-only in v1). Accept a small quality risk on
+///   chroma-noisy content; revisit if breakout fires too aggressively
+///   on chroma edges.
+/// - `sb_is_skin` UV override omitted (rvp9 has no skin detection).
+/// - `scene_change_detected` omitted (rvp9 has no scene-change
+///   detector yet).
+/// - Highbitdepth threshold shift omitted (8-bit Profile 0 only).
+pub fn encode_breakout_test(
+    var_y: u32,
+    sse_y: u32,
+    dequant_dc: u16,
+    dequant_ac: u16,
+    bsize: BlockSize,
+    mv: Mv,
+    encode_breakout: u32,
+) -> bool {
+    // Motion gate: suppress breakout on fast motion (>= 8 full pixels
+    // in either axis). libvpx `vp9_pickmode.c:967-968`.
+    if mv.row.unsigned_abs() > 64 || mv.col.unsigned_abs() > 64 {
+        return false;
+    }
+
+    // Threshold computation (libvpx `vp9_pickmode.c:973-985`).
+    let min_thresh = (encode_breakout << 4).min(36000);
+    let mut thresh_ac = ((dequant_ac as u32).pow(2) >> 3).clamp(min_thresh, 36000);
+
+    // libvpx uses `8 - (b_width_log2 + b_height_log2)` where
+    // `b_width_log2 = log2(n_4x4_wide)`. In rvp9,
+    // `BlockSize::width_log2()` returns `log2(pixel_width)`, which is
+    // `b_width_log2 + 2`. The sum of the two pixel-log2 values is
+    // `(b_width_log2 + 2) + (b_height_log2 + 2) = bwl + bhl + 4`.
+    // So the shift becomes `8 - (bwl + bhl) = 12 - (pixel_wl + pixel_hl)`.
+    let shift = 12u32.saturating_sub(
+        (bsize.width_log2() as u32) + (bsize.height_log2() as u32),
+    );
+    thresh_ac >>= shift;
+
+    let thresh_dc = (dequant_dc as u32).pow(2) >> 6;
+
+    // Y plane test (libvpx `vp9_pickmode.c:996-1000`).
+    var_y <= thresh_ac && (sse_y.saturating_sub(var_y)) <= thresh_dc
+}
+
+// ---------------------------------------------------------------------------
+// model_rd_for_sb_y_large — per-sub-block variance for blocks >= 32x32
+// (vp9_pickmode.c:430-634)
+// ---------------------------------------------------------------------------
+
+/// Compute per-8x8 variance/SSE grid for a `bw × bh` block.
+///
+/// Returns `(total_sse, total_sum, sse8x8, sum8x8, var8x8)` where
+/// `sse8x8`, `sum8x8`, `var8x8` are arrays indexed by sub-block index
+/// `k = (row/8) * (bw/8) + (col/8)`.
+///
+/// Port of the `vpx_get8x8var` loop at `vp9_pickmode.c:442-476`.
+fn compute_variance_8x8(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+    bw: usize,
+    bh: usize,
+) -> (u64, i64, [u32; 64], [i32; 64], [u32; 64]) {
+    let nw = bw / 8;
+    let nh = bh / 8;
+    debug_assert!(nw * nh <= 64, "8x8 grid exceeds 64 cells");
+
+    let mut sse8x8 = [0u32; 64];
+    let mut sum8x8 = [0i32; 64];
+    let mut var8x8 = [0u32; 64];
+    let mut total_sse: u64 = 0;
+    let mut total_sum: i64 = 0;
+
+    for i in 0..nh {
+        for j in 0..nw {
+            let k = i * nw + j;
+            let mut cell_sum: i32 = 0;
+            let mut cell_sse: u32 = 0;
+
+            for row in 0..8 {
+                let s_off = (i * 8 + row) * src_stride + j * 8;
+                let p_off = (i * 8 + row) * pred_stride + j * 8;
+                for col in 0..8 {
+                    let diff = src[s_off + col] as i32 - pred[p_off + col] as i32;
+                    cell_sum += diff;
+                    cell_sse += (diff * diff) as u32;
+                }
+            }
+
+            sse8x8[k] = cell_sse;
+            sum8x8[k] = cell_sum;
+            // var = |sse - (sum*sum >> 6)|
+            let k_sqr = ((cell_sum as i64 * cell_sum as i64) >> 6) as u32;
+            var8x8[k] = if cell_sse > k_sqr {
+                cell_sse - k_sqr
+            } else {
+                k_sqr - cell_sse
+            };
+
+            total_sse += cell_sse as u64;
+            total_sum += cell_sum as i64;
+        }
+    }
+
+    (total_sse, total_sum, sse8x8, sum8x8, var8x8)
+}
+
+/// Aggregate a grid of sub-block statistics by grouping 2x2 cells.
+///
+/// For each 2x2 group at `(i, j)` stepping by 2:
+/// - `sse_out[k] = sse_in[...] + sse_in[...] + sse_in[...] + sse_in[...]`
+/// - `sum_out[k]` similarly
+/// - `var_out[k] = |sse_out[k] - (sum_out[k]^2 >> tx_pixels_log2)|`
+///
+/// Returns `(sse_out, sum_out, var_out, count)` where `count` is the
+/// number of output cells.
+///
+/// Port of libvpx `calculate_variance` (`vp9_pickmode.c:317-340`).
+fn aggregate_to_tx_size(
+    sse_in: &[u32],
+    sum_in: &[i32],
+    nw: usize,
+    nh: usize,
+    tx_pixels_log2: u32,
+) -> ([u32; 16], [i32; 16], [u32; 16], usize) {
+    let out_w = nw / 2;
+    let out_h = nh / 2;
+    let count = out_w * out_h;
+    debug_assert!(count <= 16, "aggregated grid exceeds 16 cells");
+
+    let mut sse_out = [0u32; 16];
+    let mut sum_out = [0i32; 16];
+    let mut var_out = [0u32; 16];
+
+    for i in 0..out_h {
+        for j in 0..out_w {
+            let k = i * out_w + j;
+            let tl = (i * 2) * nw + (j * 2);
+            let tr = tl + 1;
+            let bl = tl + nw;
+            let br = bl + 1;
+
+            sse_out[k] = sse_in[tl] + sse_in[tr] + sse_in[bl] + sse_in[br];
+            sum_out[k] = sum_in[tl] + sum_in[tr] + sum_in[bl] + sum_in[br];
+
+            let s = sum_out[k] as i64;
+            let k_sqr = ((s * s) >> tx_pixels_log2) as u32;
+            var_out[k] = if sse_out[k] > k_sqr {
+                sse_out[k] - k_sqr
+            } else {
+                k_sqr - sse_out[k]
+            };
+        }
+    }
+
+    (sse_out, sum_out, var_out, count)
+}
+
+/// Variance-domain RD model for the Y plane of blocks >= 32x32 with
+/// per-sub-block skip detection at TX granularity.
+///
+/// Port of `model_rd_for_sb_y_large`
+/// (`vp9/encoder/vp9_pickmode.c:430-634`).
+///
+/// Unlike [`model_rd_for_sb_y`] which tests skip with block-level
+/// averages, this function computes per-8x8 variance, aggregates to
+/// the TX-size level, and requires ALL sub-blocks to pass the skip
+/// threshold.
+///
+/// # Parameters
+///
+/// Same as [`model_rd_for_sb_y`]. See its documentation.
+pub fn model_rd_for_sb_y_large(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+    bw: usize,
+    bh: usize,
+    bsize: BlockSize,
+    dc_quant: u32,
+    ac_quant: u32,
+    dc_thr: i64,
+    ac_thr: i64,
+    tx_mode: TxMode,
+) -> ModelRdResult {
+    // Step 1: compute per-8x8 variance grid + totals.
+    let (total_sse, total_sum, sse8x8, sum8x8, var8x8) =
+        compute_variance_8x8(src, src_stride, pred, pred_stride, bw, bh);
+
+    // Step 2: whole-block variance from totals.
+    let n = (bw * bh) as u64;
+    let sse = total_sse as u32;
+    let mean_sq = ((total_sum * total_sum) as u64) / n;
+    let var = total_sse.saturating_sub(mean_sq) as u32;
+
+    // Step 3: pick TX size (clamp to >= Tx8x8).
+    let tx_size_raw = calculate_tx_size(bsize, var, sse, tx_mode);
+    let tx_size = if tx_size_raw < TxSize::Tx8x8 {
+        TxSize::Tx8x8
+    } else {
+        tx_size_raw
+    };
+
+    // Step 4-5: aggregate to TX-size granularity.
+    let nw = bw / 8;
+    let nh = bh / 8;
+
+    // The arrays + count at the TX-size level.
+    // For Tx8x8 we use the 8x8 grid directly.
+    // For Tx16x16 we aggregate 8x8 -> 16x16.
+    // For Tx32x32 we aggregate 8x8 -> 16x16 -> 32x32.
+    //
+    // We store the TX-level data in stack arrays sized for the
+    // largest case (64x64 block / Tx8x8 = 64 cells).
+    let (sse_tx, var_tx, num_tx): ([u32; 64], [u32; 64], usize) = match tx_size {
+        TxSize::Tx8x8 => {
+            let num = nw * nh;
+            (sse8x8, var8x8, num)
+        }
+        TxSize::Tx16x16 => {
+            let (sse16, _sum16, var16, count) =
+                aggregate_to_tx_size(&sse8x8[..nw * nh], &sum8x8[..nw * nh], nw, nh, 8);
+            let mut sse_arr = [0u32; 64];
+            let mut var_arr = [0u32; 64];
+            sse_arr[..count].copy_from_slice(&sse16[..count]);
+            var_arr[..count].copy_from_slice(&var16[..count]);
+            (sse_arr, var_arr, count)
+        }
+        TxSize::Tx32x32 => {
+            // 8x8 -> 16x16
+            let (sse16, sum16, _var16, count16) =
+                aggregate_to_tx_size(&sse8x8[..nw * nh], &sum8x8[..nw * nh], nw, nh, 8);
+            let nw16 = nw / 2;
+            let nh16 = nh / 2;
+            debug_assert_eq!(count16, nw16 * nh16);
+            // 16x16 -> 32x32
+            let (sse32, _sum32, var32, count32) =
+                aggregate_to_tx_size(&sse16[..count16], &sum16[..count16], nw16, nh16, 10);
+            let mut sse_arr = [0u32; 64];
+            let mut var_arr = [0u32; 64];
+            sse_arr[..count32].copy_from_slice(&sse32[..count32]);
+            var_arr[..count32].copy_from_slice(&var32[..count32]);
+            (sse_arr, var_arr, count32)
+        }
+        TxSize::Tx4x4 => {
+            // Should not happen due to clamp above, but handle gracefully.
+            let num = nw * nh;
+            (sse8x8, var8x8, num)
+        }
+    };
+
+    // Step 6: per-sub-block skip test (libvpx pickmode.c:536-557).
+    let mut ac_test = true;
+    let mut dc_test = true;
+    for k in 0..num_tx {
+        if (var_tx[k] as i64) >= ac_thr && var != 0 {
+            ac_test = false;
+        }
+        let dc_energy = sse_tx[k].saturating_sub(var_tx[k]);
+        if (dc_energy as i64) >= dc_thr && sse != var {
+            dc_test = false;
+        }
+    }
+
+    let mut skip_txfm = SkipTxfm::None;
+    let mut skip_dc = false;
+
+    if ac_test {
+        skip_txfm = SkipTxfm::AcOnly;
+        if dc_test {
+            skip_txfm = SkipTxfm::AcDc;
+        }
+    } else if dc_test {
+        skip_dc = true;
+    }
+
+    // Step 7: early-out for full skip.
+    if skip_txfm == SkipTxfm::AcDc {
+        return ModelRdResult {
+            rate: 0,
+            dist: (sse as i64) << 4,
+            var_y: var,
+            sse_y: sse,
+            tx_size,
+            skip_txfm,
+        };
+    }
+
+    // Step 8: model DC + AC via model_rd_from_var_lapndz.
+    let n_log2 = num_pels_log2(bsize);
+    let dc_q = dc_quant >> 3;
+    let ac_q = ac_quant >> 3;
+
+    let (mut rate_sum, mut dist_sum): (i32, i64);
+    if !skip_dc {
+        let (r, d) = model_rd_from_var_lapndz(sse - var, n_log2, dc_q);
+        rate_sum = r >> 1;
+        dist_sum = d << 3;
+    } else {
+        rate_sum = 0;
+        dist_sum = ((sse - var) as i64) << 4;
+    }
+
+    let (r, d) = model_rd_from_var_lapndz(var, n_log2, ac_q);
+    rate_sum += r;
+    dist_sum += d << 4;
+
+    ModelRdResult {
+        rate: rate_sum,
+        dist: dist_sum,
+        var_y: var,
+        sse_y: sse,
+        tx_size,
+        skip_txfm,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // TxSize helper
 // ---------------------------------------------------------------------------
 
@@ -956,5 +1287,323 @@ mod tests {
             "both-plane rate should be 2x single-plane rate");
         assert_eq!(result_both.dist, result_u_only.dist * 2,
             "both-plane dist should be 2x single-plane dist");
+    }
+
+    // -----------------------------------------------------------------------
+    // encode_breakout_test
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn breakout_zero_var_sse_passes() {
+        // Zero variance and SSE: prediction is perfect. Should pass.
+        assert!(encode_breakout_test(
+            0, 0,      // var_y, sse_y
+            96, 80,    // dequant_dc, dequant_ac
+            BlockSize::Block16x16,
+            Mv::ZERO,
+            20,        // encode_breakout
+        ));
+    }
+
+    #[test]
+    fn breakout_large_var_fails() {
+        // Very large variance exceeds thresh_ac. Should fail.
+        assert!(!encode_breakout_test(
+            100_000, 100_000, // var_y, sse_y
+            96, 80,           // dequant_dc, dequant_ac
+            BlockSize::Block16x16,
+            Mv::ZERO,
+            20,
+        ));
+    }
+
+    #[test]
+    fn breakout_large_mv_fails() {
+        // MV exceeds +/-64 quarter-pel (motion gate). Should fail.
+        assert!(!encode_breakout_test(
+            0, 0,
+            96, 80,
+            BlockSize::Block16x16,
+            Mv { row: 65, col: 0 }, // exceeds 64
+            20,
+        ));
+        assert!(!encode_breakout_test(
+            0, 0,
+            96, 80,
+            BlockSize::Block16x16,
+            Mv { row: 0, col: -65 }, // exceeds -64
+            20,
+        ));
+    }
+
+    #[test]
+    fn breakout_mv_at_boundary_passes() {
+        // MV exactly at the 64 boundary. Should pass (not suppressed).
+        assert!(encode_breakout_test(
+            0, 0,
+            96, 80,
+            BlockSize::Block16x16,
+            Mv { row: 64, col: -64 },
+            20,
+        ));
+    }
+
+    #[test]
+    fn breakout_threshold_boundary() {
+        // Compute expected thresholds for dequant_dc=96, dequant_ac=80,
+        // encode_breakout=20, Block16x16 and verify boundary behaviour.
+        //
+        // min_thresh = min(20 << 4, 36000) = min(320, 36000) = 320
+        // thresh_ac = clamp(80^2 >> 3, 320, 36000)
+        //           = clamp(6400 >> 3, 320, 36000)
+        //           = clamp(800, 320, 36000) = 800
+        // Block16x16: width_log2=4, height_log2=4 -> shift = 12 - 8 = 4
+        // thresh_ac >>= 4 -> 800 >> 4 = 50
+        // thresh_dc = 96^2 >> 6 = 9216 >> 6 = 144
+        //
+        // Test: var_y=50 (at boundary), sse_y=50 (dc part = 0)
+        assert!(encode_breakout_test(
+            50, 50,    // var_y = thresh_ac, sse_y - var_y = 0 <= thresh_dc
+            96, 80,
+            BlockSize::Block16x16,
+            Mv::ZERO,
+            20,
+        ));
+        // var_y = 51 -> exceeds thresh_ac -> should fail
+        assert!(!encode_breakout_test(
+            51, 51,
+            96, 80,
+            BlockSize::Block16x16,
+            Mv::ZERO,
+            20,
+        ));
+        // var_y = 0, sse_y = 145 -> dc part = 145 > thresh_dc = 144 -> fail
+        assert!(!encode_breakout_test(
+            0, 145,
+            96, 80,
+            BlockSize::Block16x16,
+            Mv::ZERO,
+            20,
+        ));
+        // var_y = 0, sse_y = 144 -> dc part = 144 <= thresh_dc -> pass
+        assert!(encode_breakout_test(
+            0, 144,
+            96, 80,
+            BlockSize::Block16x16,
+            Mv::ZERO,
+            20,
+        ));
+    }
+
+    #[test]
+    fn breakout_block_size_affects_threshold() {
+        // Larger blocks have smaller shift -> larger thresh_ac.
+        // Block32x32: width_log2=5, height_log2=5 -> shift = 12-10 = 2
+        // thresh_ac = 800 >> 2 = 200
+        // var_y = 100 should pass on 32x32 but fail on 16x16 (thresh=50).
+        assert!(encode_breakout_test(
+            100, 100,
+            96, 80,
+            BlockSize::Block32x32,
+            Mv::ZERO,
+            20,
+        ));
+        assert!(!encode_breakout_test(
+            100, 100,
+            96, 80,
+            BlockSize::Block16x16,
+            Mv::ZERO,
+            20,
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // compute_variance_8x8
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn variance_8x8_flat_block_all_zero() {
+        // Identical src and pred 32x32 -> all var8x8 = 0, sse8x8 = 0.
+        let src = [128u8; 32 * 32];
+        let pred = [128u8; 32 * 32];
+        let (total_sse, total_sum, sse8x8, _sum8x8, var8x8) =
+            compute_variance_8x8(&src, 32, &pred, 32, 32, 32);
+        assert_eq!(total_sse, 0);
+        assert_eq!(total_sum, 0);
+        let num_cells = (32 / 8) * (32 / 8); // = 16
+        for k in 0..num_cells {
+            assert_eq!(sse8x8[k], 0, "sse8x8[{k}] should be 0");
+            assert_eq!(var8x8[k], 0, "var8x8[{k}] should be 0");
+        }
+    }
+
+    #[test]
+    fn variance_8x8_uniform_offset() {
+        // Uniform diff = 2 across a 32x32 block.
+        // Each 8x8 cell: sum = 64*2 = 128, sse = 64*4 = 256,
+        // k_sqr = 128*128 >> 6 = 256, var = |256 - 256| = 0.
+        let src = [130u8; 32 * 32];
+        let pred = [128u8; 32 * 32];
+        let (total_sse, total_sum, sse8x8, sum8x8, var8x8) =
+            compute_variance_8x8(&src, 32, &pred, 32, 32, 32);
+        let num_cells = 16;
+        assert_eq!(total_sse, 256 * 16);
+        assert_eq!(total_sum, 128 * 16);
+        for k in 0..num_cells {
+            assert_eq!(sse8x8[k], 256, "sse8x8[{k}]");
+            assert_eq!(sum8x8[k], 128, "sum8x8[{k}]");
+            assert_eq!(var8x8[k], 0, "uniform offset -> zero variance per cell");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // aggregate_to_tx_size
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn aggregate_basic() {
+        // 4x4 grid of 8x8 cells (32x32 block) -> 2x2 grid of 16x16 cells.
+        let sse_in = [10, 20, 30, 40, // row 0
+                      50, 60, 70, 80, // row 1
+                      90, 100, 110, 120, // row 2
+                      130, 140, 150, 160]; // row 3
+        let sum_in = [1i32, 2, 3, 4,
+                      5, 6, 7, 8,
+                      9, 10, 11, 12,
+                      13, 14, 15, 16];
+        let (sse_out, sum_out, _var_out, count) =
+            aggregate_to_tx_size(&sse_in, &sum_in, 4, 4, 8);
+        assert_eq!(count, 4);
+        // Cell (0,0) = sse_in[0] + [1] + [4] + [5] = 10+20+50+60 = 140
+        assert_eq!(sse_out[0], 140);
+        assert_eq!(sum_out[0], 1 + 2 + 5 + 6);
+        // Cell (0,1) = sse_in[2] + [3] + [6] + [7] = 30+40+70+80 = 220
+        assert_eq!(sse_out[1], 220);
+        // Cell (1,0) = sse_in[8] + [9] + [12] + [13] = 90+100+130+140 = 460
+        assert_eq!(sse_out[2], 460);
+        // Cell (1,1) = 110+120+150+160 = 540
+        assert_eq!(sse_out[3], 540);
+    }
+
+    // -----------------------------------------------------------------------
+    // model_rd_for_sb_y_large
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn large_flat_32x32_skips() {
+        // Identical src and pred 32x32 -> all sub-blocks zero variance
+        // -> skip_txfm = AcDc.
+        let src = [128u8; 32 * 32];
+        let pred = [128u8; 32 * 32];
+        let result = model_rd_for_sb_y_large(
+            &src, 32, &pred, 32, 32, 32,
+            BlockSize::Block32x32,
+            96, 80,
+            100, 100, // dc_thr, ac_thr
+            TxMode::TxModeSelect,
+        );
+        assert_eq!(result.skip_txfm, SkipTxfm::AcDc);
+        assert_eq!(result.rate, 0);
+        assert_eq!(result.dist, 0); // sse = 0 -> dist = 0 << 4 = 0
+        assert_eq!(result.var_y, 0);
+        assert_eq!(result.sse_y, 0);
+    }
+
+    #[test]
+    fn large_64x64_one_noisy_cell_no_skip() {
+        // 64x64 block where 63 of 64 8x8 cells are flat (src == pred)
+        // and 1 cell has large texture. The per-sub-block test should
+        // detect the noisy cell and NOT skip.
+        let mut src = [128u8; 64 * 64];
+        let pred = [128u8; 64 * 64];
+
+        // Make the first 8x8 cell noisy with a pattern that produces
+        // non-trivial variance (checkerboard +/- 50).
+        for r in 0..8 {
+            for c in 0..8 {
+                src[r * 64 + c] = if (r + c) % 2 == 0 { 178 } else { 78 };
+            }
+        }
+
+        let result = model_rd_for_sb_y_large(
+            &src, 64, &pred, 64, 64, 64,
+            BlockSize::Block64x64,
+            96, 80,
+            100, 100, // dc_thr, ac_thr
+            TxMode::TxModeSelect,
+        );
+        // The noisy cell has var = 64 * 50^2 = 160000 (approximately;
+        // depends on the exact var formula). With ac_thr = 100, it
+        // definitely exceeds the threshold -> ac_test fails -> no skip.
+        assert_ne!(
+            result.skip_txfm,
+            SkipTxfm::AcDc,
+            "per-sub-block test should catch the noisy cell"
+        );
+    }
+
+    #[test]
+    fn large_textured_32x32_rate_dist() {
+        // Textured 32x32 -> non-skip, positive rate/dist.
+        let pred = [128u8; 32 * 32];
+        let mut src = [128u8; 32 * 32];
+        for r in 0..32 {
+            for c in 0..32 {
+                src[r * 32 + c] = (128u16 + (r * 4 + c * 2) as u16).min(255) as u8;
+            }
+        }
+        let result = model_rd_for_sb_y_large(
+            &src, 32, &pred, 32, 32, 32,
+            BlockSize::Block32x32,
+            96, 80,
+            1, 1, // very small thresholds -> won't skip
+            TxMode::TxModeSelect,
+        );
+        assert_eq!(result.skip_txfm, SkipTxfm::None);
+        assert!(result.rate > 0, "textured block should have positive rate");
+        assert!(result.dist > 0, "textured block should have positive dist");
+    }
+
+    #[test]
+    fn large_uniform_offset_32x32_skips_acdc() {
+        // Uniform offset (diff = 1 everywhere) -> var = 0 per cell,
+        // sse per cell = 64. With large enough dc_thr (> 64), should skip.
+        let src = [129u8; 32 * 32];
+        let pred = [128u8; 32 * 32];
+        let result = model_rd_for_sb_y_large(
+            &src, 32, &pred, 32, 32, 32,
+            BlockSize::Block32x32,
+            96, 80,
+            1000, // dc_thr: large enough to cover DC energy
+            1000, // ac_thr: large enough to cover any AC
+            TxMode::TxModeSelect,
+        );
+        assert_eq!(result.skip_txfm, SkipTxfm::AcDc);
+        assert_eq!(result.rate, 0);
+    }
+
+    #[test]
+    fn large_agrees_with_regular_on_flat() {
+        // For a flat 32x32, both `model_rd_for_sb_y` and
+        // `model_rd_for_sb_y_large` should produce the same result.
+        let src = [128u8; 32 * 32];
+        let pred = [128u8; 32 * 32];
+        let regular = model_rd_for_sb_y(
+            &src, 32, &pred, 32, 32, 32,
+            BlockSize::Block32x32,
+            96, 80, 100, 100,
+            TxMode::TxModeSelect,
+        );
+        let large = model_rd_for_sb_y_large(
+            &src, 32, &pred, 32, 32, 32,
+            BlockSize::Block32x32,
+            96, 80, 100, 100,
+            TxMode::TxModeSelect,
+        );
+        assert_eq!(regular.skip_txfm, large.skip_txfm);
+        assert_eq!(regular.rate, large.rate);
+        assert_eq!(regular.dist, large.dist);
+        assert_eq!(regular.var_y, large.var_y);
+        assert_eq!(regular.sse_y, large.sse_y);
     }
 }

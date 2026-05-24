@@ -2880,7 +2880,7 @@ mod tests {
     fn encode_inter_with_shifted_content_picks_nonzero_mv() {
         use rvp9_core::block::BlockSize as Bs;
         use rvp9_core::cost::mv_cost::build_nmv_cost_table;
-        use rvp9_core::cost::symbol_costs::inter_mode_costs;
+        use rvp9_core::cost::symbol_costs::{inter_mode_costs, switchable_interp_costs};
         use rvp9_core::entropy::FrameContext as Fc;
         use rvp9_core::entropy::mv_probs::DEFAULT_NMV_CONTEXT;
         use rvp9_core::mode_decision::inter::{
@@ -2917,6 +2917,7 @@ mod tests {
         let fc = Fc::new_default();
         let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, false);
         let inter_costs = inter_mode_costs(&fc);
+        let sic = switchable_interp_costs(&fc);
         let quantizer = init_plane_quantizers(50, QuantizerDeltas::Y);
         let site_config = init_dsmotion_compensation(pw as i32);
         let mvc = MvCandidates::default();
@@ -2944,6 +2945,15 @@ mod tests {
             },
             newmv_seed: None,
             ref_frame_rate_cost: 0,
+            switchable_interp_costs: &sic,
+            switchable_interp_ctx: 3,
+            src_u: &[],
+            src_v: &[],
+            ref_u: &[],
+            ref_v: &[],
+            uv_stride: 0,
+            uv_dc_quant: 0,
+            uv_ac_quant: 0,
         };
         let pick = pick_inter_mode_luma(&params);
         assert_eq!(

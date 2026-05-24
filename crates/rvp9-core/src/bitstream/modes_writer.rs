@@ -1998,6 +1998,13 @@ fn write_inter_block_leaf(
     //    `write_block_tokens` per TX position, mirroring the decoder's
     //    `reconstruct_inter_block` / `reconstruct_intra_planes` loop.
     if !mi.skip {
+        // G5 -- extract y_mode for intra-in-inter residual coding.
+        // Inter blocks pass IntraMode::Dc (unused since is_inter
+        // forces DctDct + ref_type=1 inside the residual writer).
+        let residual_y_mode = match mi.mode {
+            BlockMode::Intra { y_mode, .. } => y_mode,
+            _ => IntraMode::Dc,
+        };
         set_category(BitCategory::Coef);
         write_inter_block_residual(
             bw,
@@ -2008,6 +2015,8 @@ fn write_inter_block_leaf(
             mi_col,
             leaf_bsize,
             effective_tx_size,
+            is_inter,
+            residual_y_mode,
         );
     } else {
         // RC.X1 — mirror libvpx's `dec_reset_skip_context`
@@ -2157,9 +2166,15 @@ fn write_inter_block_residual(
     mi_col: usize,
     leaf_bsize: BlockSize,
     luma_tx: TxSize,
+    // G5 -- intra-in-inter blocks use non-DctDct tx_type and intra
+    // probability tables (ref_type = 0). `is_inter` and `y_mode`
+    // let the per-TX loop derive the correct values.
+    is_inter: bool,
+    y_mode: IntraMode,
 ) {
     let mi_col_in_tile = mi_col; // single-tile scope (see fn doc).
     let mi_row_in_sb = mi_row & MI_MASK;
+    let ref_type = usize::from(is_inter);
 
     for plane in 0..3 {
         let ss_x = SUBSAMPLING_X[plane];
@@ -2176,9 +2191,21 @@ fn write_inter_block_residual(
             uv_plane_tx_size(leaf_bsize, luma_tx)
         };
 
+        // G5 -- tx_type: inter blocks always DctDct. Intra-in-inter
+        // Y plane (non-32x32) uses the intra mode's hybrid type.
+        // UV planes and Tx32x32 always DctDct. Matches the decoder's
+        // `resolve_tx_type`.
+        let tx_type = if is_inter {
+            TxType::DctDct
+        } else if plane == 0 && plane_tx != TxSize::Tx32x32 {
+            y_mode.tx_type()
+        } else {
+            TxType::DctDct
+        };
+
         // For sub-8 luma the decoder pins the plane extent to
-        // `(2 >> ss_x, 2 >> ss_y)` — the parent 8×8's 4×4 cell count.
-        // For ≥8×8 we use the plane_bsize directly. Mirrors
+        // `(2 >> ss_x, 2 >> ss_y)` -- the parent 8x8's 4x4 cell count.
+        // For >=8x8 we use the plane_bsize directly. Mirrors
         // `reconstruct_inter_block`'s `(plane_bw_4x4, plane_bh_4x4)`
         // derivation (line 218).
         let is_sub8 = (leaf_bsize as u8) < (BlockSize::Block8x8 as u8);
@@ -2192,7 +2219,7 @@ fn write_inter_block_residual(
         };
         let tx_step_4x4 = 1usize << (plane_tx as usize);
 
-        // Tile- / SB-relative 4×4 origin in the plane's coef-context
+        // Tile- / SB-relative 4x4 origin in the plane's coef-context
         // tables. Matches the decoder's `plane_x4_base` /
         // `plane_y4_in_sb_base` formulas.
         let plane_x4_base = (mi_col_in_tile * 2) >> ss_x;
@@ -2238,8 +2265,8 @@ fn write_inter_block_residual(
                     plane_x4_base + tx_x4_local,
                     plane_y4_in_sb_base + tx_y4_local,
                     plane_tx,
-                    TxType::DctDct,
-                    /* ref_type = */ 1, // inter
+                    tx_type,
+                    ref_type,
                     seg_eob,
                     coefs,
                     eob,
