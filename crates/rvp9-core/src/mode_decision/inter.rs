@@ -89,7 +89,7 @@
 
 use crate::bitstream::frame::InterpFilter;
 use crate::bitstream::header::FrameKind;
-use crate::block::{BlockSize, max_txsize};
+use crate::block::BlockSize;
 use crate::cost::mv_cost::{MvCosts, mv_cost};
 use crate::cost::{FrameTypeForRd, InterModeCosts, compute_rd_mult};
 use crate::entropy::default_probs::INTER_MODE_CONTEXTS;
@@ -113,7 +113,8 @@ use crate::quant::forward::{
 use crate::transforms::forward::{fdct8x8, fdct16x16, fdct32x32};
 use crate::transforms::inverse::{idct8x8_64_add, idct16x16_256_add, idct32x32_1024_add};
 use crate::transforms::scans::scan_for;
-use crate::transforms::{TxSize, TxType};
+use crate::transforms::{TxMode, TxSize, TxType};
+use crate::mode_decision::model_rd::{model_rd_for_sb_y, SkipTxfm};
 
 /// F.1 — the default skip-prob context index used by
 /// `evaluate_candidate`'s ported skip-flag tie-break
@@ -749,6 +750,50 @@ fn evaluate_candidate_for_filter(
         filter,
     );
 
+    // --- Variance-domain RD model (model_rd_for_sb_y port) ---
+    //
+    // Before the expensive DCT round-trip, run the Laplacian–Gaussian
+    // variance model to (a) pick a TX size adaptively and (b) detect
+    // blocks whose residual will quantize entirely to zero
+    // (skip_txfm == AcDc). For such blocks we short-circuit: the
+    // distortion is `sse << 4` (libvpx convention) and the rate
+    // component from coefficients is zero.
+    //
+    // quant_thred = zbin^2; model_rd thresholds = quant_thred >> 6.
+    let dc_zbin = params.quantizer.zbin[0] as i64;
+    let ac_zbin = params.quantizer.zbin[1] as i64;
+    let dc_thr = (dc_zbin * dc_zbin) >> 6;
+    let ac_thr = (ac_zbin * ac_zbin) >> 6;
+    let dc_quant = params.quantizer.dequant[0] as u32;
+    let ac_quant = params.quantizer.dequant[1] as u32;
+
+    // TxModeSelect lets `calculate_tx_size` pick between TX_8X8 and
+    // `max_txsize(bsize)` based on the variance / SSE ratio, matching
+    // libvpx's realtime path at cpu-used 6-8 (`vp9_pickmode.c`).
+    let tx_mode = TxMode::TxModeSelect;
+
+    let src_slice = &params.src_plane.data;
+    let (sx, sy) = params.src_offset;
+    let src_start = sy * params.src_plane.stride + sx;
+    let mrd = model_rd_for_sb_y(
+        &src_slice[src_start..],
+        params.src_plane.stride,
+        &pred,
+        bw, // pred_stride
+        bw,
+        bh,
+        params.block_size,
+        dc_quant,
+        ac_quant,
+        dc_thr,
+        ac_thr,
+        tx_mode,
+    );
+
+    // Use the model_rd TX size for the round-trip (replaces the
+    // previous hard-coded `max_txsize(block_size)`).
+    let tx_size = mrd.tx_size;
+
     // Compute the reconstruction. For Block16x16 / Block32x32 the
     // block matches its max_txsize and we do one big transform.
     // For Block64x64 we tile 4 × 32x32 transforms.
@@ -757,10 +802,20 @@ fn evaluate_candidate_for_filter(
     // [`BlockYrdResult`] (coef-rate / coef-dist / skippable). The
     // `coef_rate` term is added to the rate sum below; `skippable`
     // feeds the libvpx skip-flag tie-break further down.
-    let tx_size = max_txsize(params.block_size);
     let mut recon = [0u8; 64 * 64];
     recon[..bw * bh].copy_from_slice(&pred[..bw * bh]);
-    let by = reconstruct_via_round_trip(params, &pred, &mut recon, bw, bh, tx_size);
+
+    // skip_txfm short-circuit (libvpx `vp9_pickmode.c:684-686`):
+    // When model_rd says both DC and AC quantize to zero, the entire
+    // residual vanishes. The prediction IS the reconstruction — `recon`
+    // already holds a copy of `pred`. Skip the expensive DCT round-trip
+    // and produce the same `BlockYrdResult` that `block_yrd` would for
+    // an all-zero qcoeff block: coef_rate=0, coef_dist=0, skippable=true.
+    let by = if mrd.skip_txfm == SkipTxfm::AcDc {
+        BlockYrdResult { coef_rate: 0, coef_dist: 0, skippable: true }
+    } else {
+        reconstruct_via_round_trip(params, &pred, &mut recon, bw, bh, tx_size)
+    };
 
     // Distortion = SSE(src, recon). For block sizes ≤ 64×64 the SSE
     // fits in u32 (max 64*64*255^2 = 266_342_400 < 2^32).

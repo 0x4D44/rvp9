@@ -45,6 +45,7 @@ pub mod block_yrd;
 pub mod hadamard;
 pub mod inter;
 pub mod intra;
+pub mod model_rd;
 pub mod nonrd_partition;
 pub mod partition;
 
