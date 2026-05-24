@@ -1483,6 +1483,10 @@ impl Decoder {
         // driver below.
         let mut tile_decode_ctxs: Vec<(tile::TileBounds, TileDecodeCtx)> =
             Vec::with_capacity(buffers.len());
+        // Phase 2 — pre-allocate the frame-wide MI grid. Tiles write
+        // directly into this grid via TileMiView, eliminating the
+        // post-decode `build_frame_mi_grid` stitch step.
+        let mut frame_mi_grid: Vec<Option<ModeInfo>> = vec![None; mi_rows * mi_cols];
         // G5.1 — real parallel tile dispatch. Eligibility:
         //   * `tile_rows == 1` — column-only split makes per-tile
         //     pixel rectangles disjoint by construction (VP9 tile-col
@@ -1559,6 +1563,7 @@ impl Decoder {
             // scratch-allocate and pixel-merge phases entirely.
             struct TileSlot {
                 view: Mutex<Option<TileFrameView>>,
+                mi_view: Mutex<Option<crate::tile_ctx::TileMiView>>,
                 seg_ids: Mutex<Option<Vec<u8>>>,
                 counts: Mutex<Option<Box<rvp9_core::entropy::adapt::CoefCountsBank>>>,
                 result: Mutex<Option<Result<TileDecodeCtx, tile::TileDecodeError>>>,
@@ -1585,10 +1590,31 @@ impl Decoder {
                     unsafe { TileFrameView::from_yv12(&mut yv12) }
                 })
                 .collect();
+            // Phase 2: construct per-tile TileMiViews from frame_mi_grid.
+            // SAFETY: bounds are non-overlapping by VP9 spec (tile
+            // boundaries are SB-aligned); frame_mi_grid lives through
+            // the scope; no other &mut to frame_mi_grid exists between
+            // view construction and scope.join().
+            let mi_views: Vec<crate::tile_ctx::TileMiView> = per_tile_bounds
+                .iter()
+                .map(|bounds| {
+                    // SAFETY: see block comment above.
+                    unsafe {
+                        crate::tile_ctx::TileMiView::new(
+                            frame_mi_grid.as_mut_ptr(),
+                            frame_mi_grid.len(),
+                            mi_cols,
+                            bounds,
+                        )
+                    }
+                })
+                .collect();
             let slots: Vec<TileSlot> = tile_views
                 .into_iter()
-                .map(|view| TileSlot {
+                .zip(mi_views)
+                .map(|(view, mi_v)| TileSlot {
                     view: Mutex::new(Some(view)),
+                    mi_view: Mutex::new(Some(mi_v)),
                     seg_ids: Mutex::new(Some(vec![0u8; mi_rows * mi_cols])),
                     counts: Mutex::new(Some(Box::new(
                         rvp9_core::entropy::adapt::CoefCountsBank::default(),
@@ -1627,6 +1653,12 @@ impl Decoder {
                             .expect("view mutex")
                             .take()
                             .expect("view present at job start");
+                        let mi_v = slot
+                            .mi_view
+                            .lock()
+                            .expect("mi_view mutex")
+                            .take()
+                            .expect("mi_view present at job start");
                         let mut seg_ids = slot
                             .seg_ids
                             .lock()
@@ -1650,6 +1682,7 @@ impl Decoder {
                             Some(counts.as_mut()),
                             &mut seg_ids,
                             simd_dispatch,
+                            mi_v,
                         );
                         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                         let t_decode_end = profile::now_cycles();
@@ -1776,6 +1809,16 @@ impl Decoder {
                         tile_buf.row,
                         tile_buf.col,
                     );
+                    // SAFETY: sequential — only one TileMiView exists
+                    // at a time. frame_mi_grid outlives the view.
+                    let mi_view = unsafe {
+                        crate::tile_ctx::TileMiView::new(
+                            frame_mi_grid.as_mut_ptr(),
+                            frame_mi_grid.len(),
+                            mi_cols,
+                            &bounds,
+                        )
+                    };
                     let fc = &frame_contexts[fc_idx];
                     let decode_ctx = decode_tile_intra(
                         tile_buf.data,
@@ -1786,6 +1829,7 @@ impl Decoder {
                         Some(&mut *coef_counts),
                         &mut cur_segment_ids,
                         simd_dispatch,
+                        mi_view,
                     )
                     .map_err(DecodeError::TileDecode)?;
                     tile_decode_ctxs.push((bounds, decode_ctx));
@@ -1852,22 +1896,12 @@ impl Decoder {
         // apply driver, exposing pre-LF reconstruction for cascade
         // analysis (dump_frame_diff vs vpxdec's post-LF YUV).
         let lf_disabled = crate::trace_flags::trace_flags().disable_lf;
-        // Stage 3 Task E.2 — stitch per-tile mi grids into a
-        // frame-wide grid for the LF mask builder. Mirrors libvpx
-        // `cm->mi_grid_visible` which spans the entire frame
-        // regardless of tile count. We always stitch (not just when
-        // LF fires) so the bitstream-diff harness's L4 accessor
-        // [`Self::last_frame_mi_grid`] sees a populated grid even
-        // when `filter_level == 0` (Stage 4 design Strategy A).
-        let tile_grids: Vec<(tile::TileBounds, &[Option<ModeInfo>])> = tile_decode_ctxs
-            .iter()
-            .map(|(b, c)| (*b, c.mi_grid()))
-            .collect();
+        // Phase 2 — the frame-wide MI grid is already populated by
+        // tile workers via TileMiView. No stitch step needed.
         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
         let t_grid_start = profile::now_cycles();
-        let frame_mi_grid = build_frame_mi_grid(mi_rows, mi_cols, &tile_grids);
         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
-        let t_grid_end = profile::now_cycles();
+        let t_grid_end = t_grid_start; // grid_stitch = 0
         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
         let t_lf_start = profile::now_cycles();
         if filter_level > 0 && !lf_disabled {
@@ -2439,6 +2473,8 @@ impl Decoder {
         // driver below.
         let mut tile_decode_ctxs: Vec<(tile::TileBounds, TileDecodeCtx)> =
             Vec::with_capacity(buffers.len());
+        // Phase 2 — pre-allocate the frame-wide MI grid (inter path).
+        let mut frame_mi_grid: Vec<Option<ModeInfo>> = vec![None; mi_rows * mi_cols];
         // G5.1 — parallel tile dispatch. See the matching block in
         // `decode_intra_frame_inner` for the rationale + eligibility
         // gate. The inter path additionally fans out the per-tile
@@ -2476,6 +2512,7 @@ impl Decoder {
             // Phase 1 — direct-to-frame tile decode for inter frames.
             struct InterTileSlot {
                 view: Mutex<Option<TileFrameView>>,
+                mi_view: Mutex<Option<crate::tile_ctx::TileMiView>>,
                 seg_ids: Mutex<Option<Vec<u8>>>,
                 mv_grid: Mutex<Option<Vec<rvp9_core::inter::mv_ref::PrevFrameMvRef>>>,
                 mv_counts: Mutex<Option<Box<rvp9_core::entropy::mv_probs::NmvCounts>>>,
@@ -2500,10 +2537,27 @@ impl Decoder {
                     unsafe { TileFrameView::from_yv12(&mut yv12) }
                 })
                 .collect();
+            // Phase 2: construct per-tile TileMiViews (inter path).
+            let mi_views: Vec<crate::tile_ctx::TileMiView> = per_tile_bounds
+                .iter()
+                .map(|bounds| {
+                    // SAFETY: see TileFrameView comment above.
+                    unsafe {
+                        crate::tile_ctx::TileMiView::new(
+                            frame_mi_grid.as_mut_ptr(),
+                            frame_mi_grid.len(),
+                            mi_cols,
+                            bounds,
+                        )
+                    }
+                })
+                .collect();
             let slots: Vec<InterTileSlot> = tile_views
                 .into_iter()
-                .map(|view| InterTileSlot {
+                .zip(mi_views)
+                .map(|(view, mi_v)| InterTileSlot {
                     view: Mutex::new(Some(view)),
+                    mi_view: Mutex::new(Some(mi_v)),
                     seg_ids: Mutex::new(Some(vec![0u8; mi_rows * mi_cols])),
                     mv_grid: Mutex::new(Some(vec![
                         rvp9_core::inter::mv_ref::PrevFrameMvRef::default();
@@ -2546,6 +2600,12 @@ impl Decoder {
                             .expect("view mutex")
                             .take()
                             .expect("view present at job start");
+                        let mi_v = slot
+                            .mi_view
+                            .lock()
+                            .expect("mi_view mutex")
+                            .take()
+                            .expect("mi_view present at job start");
                         let mut seg_ids = slot
                             .seg_ids
                             .lock()
@@ -2592,6 +2652,7 @@ impl Decoder {
                             prev_seg_ref,
                             &mut seg_ids,
                             simd_dispatch,
+                            mi_v,
                         );
                         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                         let t_decode_end = profile::now_cycles();
@@ -2731,6 +2792,15 @@ impl Decoder {
                         tile_buf.row,
                         tile_buf.col,
                     );
+                    // SAFETY: sequential - only one TileMiView at a time.
+                    let mi_view = unsafe {
+                        crate::tile_ctx::TileMiView::new(
+                            frame_mi_grid.as_mut_ptr(),
+                            frame_mi_grid.len(),
+                            mi_cols,
+                            &bounds,
+                        )
+                    };
                     let fc = &frame_contexts[fc_idx];
                     let decode_ctx = decode_tile_inter(
                         tile_buf.data,
@@ -2746,6 +2816,7 @@ impl Decoder {
                         prev_seg_ids_slice,
                         &mut cur_segment_ids,
                         simd_dispatch,
+                        mi_view,
                     )
                     .map_err(DecodeError::TileDecode)?;
                     tile_decode_ctxs.push((bounds, decode_ctx));
@@ -2843,22 +2914,12 @@ impl Decoder {
         self.merge_lf_params(&tail.loop_filter);
         let filter_level = tail.loop_filter.filter_level;
         let lf_disabled = crate::trace_flags::trace_flags().disable_lf;
-        // Stage 3 Task E.2 — stitch per-tile mi grids into a
-        // frame-wide grid for the LF mask builder. Mirrors libvpx
-        // `cm->mi_grid_visible` which spans the entire frame
-        // regardless of tile count. Always stitched (Stage 4 design
-        // Strategy A) so the bitstream-diff harness's L4 accessor
-        // [`Self::last_frame_mi_grid`] is populated for every
-        // non-`ShowExistingFrame` frame.
-        let tile_grids: Vec<(tile::TileBounds, &[Option<ModeInfo>])> = tile_decode_ctxs
-            .iter()
-            .map(|(b, c)| (*b, c.mi_grid()))
-            .collect();
+        // Phase 2 — the frame-wide MI grid is already populated by
+        // tile workers via TileMiView. No stitch step needed.
         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
         let t_grid_start = profile::now_cycles();
-        let frame_mi_grid = build_frame_mi_grid(mi_rows, mi_cols, &tile_grids);
         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
-        let t_grid_end = profile::now_cycles();
+        let t_grid_end = t_grid_start; // grid_stitch = 0
         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
         let t_lf_start = profile::now_cycles();
         if filter_level > 0 && !lf_disabled {
@@ -3107,6 +3168,7 @@ const SB_MI_SIZE: usize = 8;
 /// through the frame-wide stride. Our `TileDecodeCtx::write_block`
 /// stores at tile-local stride; this stitcher merges them back to
 /// frame stride after the tile loop completes.
+#[allow(dead_code)]
 fn build_frame_mi_grid(
     mi_rows: usize,
     mi_cols: usize,

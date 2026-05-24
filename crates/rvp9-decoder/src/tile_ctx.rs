@@ -77,6 +77,8 @@
 use rvp9_core::inter::mv_ref::{NeighbourLookup, Position};
 use rvp9_core::mode_info::ModeInfo;
 
+use crate::tile::TileBounds;
+
 // Re-export the coefficient-context types so callers still doing
 // `use crate::tile_ctx::{TileCoefCtx, combine_entropy_contexts, MAX_MB_PLANE}`
 // continue to work. The canonical home is now
@@ -89,6 +91,68 @@ pub use rvp9_core::coef_ctx::{MAX_MB_PLANE, TileCoefCtx, combine_entropy_context
 /// libvpx `MI_BLOCK_SIZE` (`vp9_enums.h:25`). Each 64×64 superblock
 /// covers an 8×8 mode-info grid.
 const MI_BLOCK_SIZE: usize = 8;
+
+/// Non-overlapping mutable view into a rectangular sub-region of the
+/// frame-wide MI grid. Analogous to `TileFrameView` for pixels.
+///
+/// # Safety invariants (construction-time)
+///
+/// 1. The parent `Vec<Option<ModeInfo>>` must outlive all `TileMiView`s.
+/// 2. No two `TileMiView`s may cover overlapping cell ranges.
+/// 3. No other `&mut` to the parent Vec exists while any view is alive.
+#[allow(dead_code)]
+pub struct TileMiView {
+    /// Raw pointer to the first cell of the frame-wide grid (row 0, col 0).
+    ptr: *mut Option<ModeInfo>,
+    /// Total number of cells in the grid (mi_rows * mi_cols).
+    len: usize,
+    /// Frame-wide stride (= mi_cols).
+    mi_stride: usize,
+    /// Tile's column bounds (inclusive start, exclusive end).
+    mi_col_start: usize,
+    mi_col_end: usize,
+    /// Tile's row bounds (inclusive start, exclusive end).
+    mi_row_start: usize,
+    mi_row_end: usize,
+}
+
+// SAFETY: TileMiView is Send because:
+// 1. Raw pointer into a single Vec allocation.
+// 2. Construction contract guarantees non-overlapping write ranges;
+//    each tile writes only within [mi_row_start..mi_row_end,
+//    mi_col_start..mi_col_end].
+// 3. The parent Vec's lifetime is guaranteed by the scoped thread pool.
+unsafe impl Send for TileMiView {}
+
+impl TileMiView {
+    /// Construct a `TileMiView` covering the tile described by `bounds`.
+    ///
+    /// # Safety
+    ///
+    /// Caller must guarantee:
+    /// - `ptr` points to the first cell of a `Vec<Option<ModeInfo>>`
+    ///   with at least `len` elements.
+    /// - The Vec outlives this view.
+    /// - No two views constructed from the same Vec overlap in their
+    ///   `(mi_row_start..mi_row_end, mi_col_start..mi_col_end)` rectangles.
+    /// - No other `&mut` to the Vec exists while any view is alive.
+    pub unsafe fn new(
+        ptr: *mut Option<ModeInfo>,
+        len: usize,
+        mi_stride: usize,
+        bounds: &TileBounds,
+    ) -> Self {
+        Self {
+            ptr,
+            len,
+            mi_stride,
+            mi_col_start: bounds.mi_col_start,
+            mi_col_end: bounds.mi_col_end,
+            mi_row_start: bounds.mi_row_start,
+            mi_row_end: bounds.mi_row_end,
+        }
+    }
+}
 
 /// Per-tile neighbour-context state.
 ///
@@ -122,7 +186,6 @@ const MI_BLOCK_SIZE: usize = 8;
 /// Constructed without a grid via [`Self::new`] (legacy 1-D paths)
 /// and with a grid via [`Self::new_with_grid`]. The legacy
 /// `above` / `left` accessors continue to work either way.
-#[derive(Clone, Debug)]
 pub struct TileDecodeCtx {
     /// Above-row neighbour storage — one slot per 8×8 column in the
     /// tile width. `None` means "no block decoded yet in that
@@ -142,6 +205,13 @@ pub struct TileDecodeCtx {
     /// Number of rows in the 2D grid. `0` when no grid was
     /// allocated. Equals `mi_row_end - mi_row_start` for the tile.
     tile_mi_rows: usize,
+    /// Phase 2: optional mutable view into the pre-allocated frame-wide
+    /// MI grid. `None` when using the legacy `new`/`new_with_grid` path.
+    mi_view: Option<TileMiView>,
+    /// Phase 2: frame-absolute column offset.
+    mi_col_start: usize,
+    /// Phase 2: frame-absolute row offset.
+    mi_row_start: usize,
 }
 
 impl TileDecodeCtx {
@@ -174,6 +244,9 @@ impl TileDecodeCtx {
             left: vec![None; MI_BLOCK_SIZE],
             mi_grid: Vec::new(),
             tile_mi_rows: 0,
+            mi_view: None,
+            mi_col_start: 0,
+            mi_row_start: 0,
         }
     }
 
@@ -205,6 +278,41 @@ impl TileDecodeCtx {
             left: vec![None; MI_BLOCK_SIZE],
             mi_grid: vec![None; tile_mi_cols * tile_mi_rows],
             tile_mi_rows,
+            mi_view: None,
+            mi_col_start: 0,
+            mi_row_start: 0,
+        }
+    }
+
+    /// Create a fresh per-tile context with a [`TileMiView`] into
+    /// the pre-allocated frame-wide MI grid (Phase 2).
+    ///
+    /// `mi_view` provides raw-pointer access to the frame-wide grid.
+    /// `mi_col_start` / `mi_row_start` are the frame-absolute offsets.
+    #[must_use]
+    pub fn new_with_view(
+        tile_mi_cols: usize,
+        tile_mi_rows: usize,
+        mi_view: TileMiView,
+        mi_col_start: usize,
+        mi_row_start: usize,
+    ) -> Self {
+        assert!(
+            tile_mi_cols > 0,
+            "tile must span at least one 8\u{00d7}8 mode-info column"
+        );
+        assert!(
+            tile_mi_rows > 0,
+            "tile must span at least one 8\u{00d7}8 mode-info row"
+        );
+        Self {
+            above: vec![None; tile_mi_cols],
+            left: vec![None; MI_BLOCK_SIZE],
+            mi_grid: Vec::new(),
+            tile_mi_rows,
+            mi_view: Some(mi_view),
+            mi_col_start,
+            mi_row_start,
         }
     }
 
@@ -249,8 +357,19 @@ impl TileDecodeCtx {
         if mi_row >= self.tile_mi_rows || mi_col >= self.above.len() {
             return None;
         }
-        let stride = self.above.len();
-        self.mi_grid.get(mi_row * stride + mi_col)?.as_ref()
+        if let Some(ref view) = self.mi_view {
+            // Phase 2: read from the frame-wide grid at absolute coords.
+            let abs_row = self.mi_row_start + mi_row;
+            let abs_col = self.mi_col_start + mi_col;
+            let idx = abs_row * view.mi_stride + abs_col;
+            debug_assert!(idx < view.len, "mi_at: index {idx} out of grid bounds {}", view.len);
+            // SAFETY: idx is within [mi_row_start..mi_row_end,
+            // mi_col_start..mi_col_end] which is within the grid allocation.
+            unsafe { (*view.ptr.add(idx)).as_ref() }
+        } else {
+            let stride = self.above.len();
+            self.mi_grid.get(mi_row * stride + mi_col)?.as_ref()
+        }
     }
 
     /// Read the [`ModeInfo`] at `(base_row + delta_row,
@@ -378,12 +497,32 @@ impl TileDecodeCtx {
             *slot = Some(*mi);
         }
 
-        // 2D grid splat: replicate the parent's `mi` across every
-        // covered (row, col) cell. Skipped when no grid was
-        // allocated (legacy `new` path). Mirrors libvpx
-        // `mi_grid_visible[y * mi_stride + x] = mi` over the
-        // `x_mis × y_mis` covered region.
-        if !self.mi_grid.is_empty() {
+        // 2D grid splat: write into either the frame-wide grid via
+        // TileMiView (Phase 2) or the tile-local mi_grid (legacy).
+        if let Some(ref view) = self.mi_view {
+            // Phase 2: frame-absolute coordinates via TileMiView.
+            let abs_col = self.mi_col_start + mi_col;
+            let abs_row = self.mi_row_start + mi_row;
+            let stride = view.mi_stride;
+            let row_end_grid = (abs_row + n_8x8_high).min(view.mi_row_end);
+            let col_end_grid = (abs_col + n_8x8_wide).min(view.mi_col_end);
+            for r in abs_row..row_end_grid {
+                let base = r * stride;
+                // SAFETY: we only write within [mi_row_start..mi_row_end,
+                // mi_col_start..mi_col_end] -- guaranteed non-overlapping
+                // across tiles by VP9 spec (tile boundaries are SB-aligned).
+                unsafe {
+                    let slice = std::slice::from_raw_parts_mut(
+                        view.ptr.add(base + abs_col),
+                        col_end_grid - abs_col,
+                    );
+                    for slot in slice.iter_mut() {
+                        *slot = Some(*mi);
+                    }
+                }
+            }
+        } else if !self.mi_grid.is_empty() {
+            // Legacy path: tile-local grid.
             let stride = self.above.len();
             let row_end_grid = (mi_row + n_8x8_high).min(self.tile_mi_rows);
             let col_end_grid = (mi_col + n_8x8_wide).min(stride);

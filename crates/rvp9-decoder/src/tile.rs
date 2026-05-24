@@ -365,6 +365,7 @@ pub fn decode_tile_intra<D: TileFrameDst>(
     mut coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
     cur_segment_ids: &mut [u8],
     dispatch: &SimdDispatch,
+    mi_view: crate::tile_ctx::TileMiView,
 ) -> Result<TileDecodeCtx, TileDecodeError> {
     // G7.2: the per-block decode chain is `ss`-aware for all four legal
     // VP9 chroma formats (G7.1a parametric geometry / G7.1b inter MC /
@@ -384,7 +385,10 @@ pub fn decode_tile_intra<D: TileFrameDst>(
         BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;
     let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
     let tile_mi_rows = bounds.mi_row_end - bounds.mi_row_start;
-    let mut decode_ctx = TileDecodeCtx::new_with_grid(tile_mi_cols, tile_mi_rows);
+    let mut decode_ctx = TileDecodeCtx::new_with_view(
+        tile_mi_cols, tile_mi_rows, mi_view,
+        bounds.mi_col_start, bounds.mi_row_start,
+    );
     // G7.1c: size the chroma coef contexts at the established
     // subsampling. The PROFILE0 default would silently truncate the U/V
     // above/left rows at half-tile / half-SB for 4:4:4, dropping every
@@ -1463,6 +1467,7 @@ pub fn decode_tile_inter<D: TileFrameDst>(
     prev_segment_ids: &[u8],
     cur_segment_ids: &mut [u8],
     dispatch: &SimdDispatch,
+    mi_view: crate::tile_ctx::TileMiView,
 ) -> Result<TileDecodeCtx, TileDecodeError> {
     // G7.1c: see `decode_tile_intra` for rationale.
     debug_assert!(
@@ -1477,7 +1482,10 @@ pub fn decode_tile_inter<D: TileFrameDst>(
         BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;
     let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
     let tile_mi_rows = bounds.mi_row_end - bounds.mi_row_start;
-    let mut decode_ctx = TileDecodeCtx::new_with_grid(tile_mi_cols, tile_mi_rows);
+    let mut decode_ctx = TileDecodeCtx::new_with_view(
+        tile_mi_cols, tile_mi_rows, mi_view,
+        bounds.mi_col_start, bounds.mi_row_start,
+    );
     let (cc_ss_x, cc_ss_y) = plane_ss(dst_frame.chroma(), 1);
     let mut coef_ctx = TileCoefCtx::new_with_ss(tile_mi_cols, cc_ss_x, cc_ss_y);
     let mut part_ctx = PartitionCtx::new(tile_mi_cols);
