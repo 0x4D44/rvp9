@@ -46,6 +46,7 @@
 //! `CONFIG_VP9_HIGHBITDEPTH` paths in libvpx are out of scope.
 
 use super::{ac_quant, dc_quant};
+use crate::bitstream::BitDepth;
 use crate::transforms::scans::ScanOrder;
 use crate::transforms::types::TxSize;
 
@@ -484,11 +485,13 @@ pub fn init_plane_quantizers(q_index: i32, deltas: QuantizerDeltas) -> PlaneQuan
         };
 
         // libvpx `vp9_dc_quant(q, dc_delta)` for `i==0`,
-        // `vp9_ac_quant(q, ac_delta)` for `i==1`.
+        // `vp9_ac_quant(q, ac_delta)` for `i==1`. Encoder is 8-bit only
+        // (D-01 RESOLVED); HBD encoder support is out of scope for
+        // Track T phase 0.
         let quant = if i == 0 {
-            i32::from(dc_quant(q_index, deltas.dc_delta))
+            i32::from(dc_quant(q_index, deltas.dc_delta, BitDepth::Eight))
         } else {
-            i32::from(ac_quant(q_index, deltas.ac_delta))
+            i32::from(ac_quant(q_index, deltas.ac_delta, BitDepth::Eight))
         };
 
         let (q_b, shift) = invert_quant(quant);
@@ -511,7 +514,7 @@ pub fn init_plane_quantizers(q_index: i32, deltas: QuantizerDeltas) -> PlaneQuan
 fn qzbin_factor_8bit(q_index: i32) -> i32 {
     if q_index == 0 {
         64
-    } else if i32::from(dc_quant(q_index, 0)) < 148 {
+    } else if i32::from(dc_quant(q_index, 0, BitDepth::Eight)) < 148 {
         84
     } else {
         80
@@ -549,9 +552,11 @@ fn invert_quant(d: i32) -> (i16, i16) {
 /// helper — mirrors `cpi->y_dequant[q][1]` or `cpi->uv_dequant[q][1]`.
 #[must_use]
 pub fn plane_dequant_pair(q_index: i32, deltas: QuantizerDeltas) -> (i16, i16) {
+    // Encoder-side helper — 8-bit only. HBD encoder support is out of
+    // scope for Track T phase 0.
     (
-        dc_quant(q_index, deltas.dc_delta),
-        ac_quant(q_index, deltas.ac_delta),
+        dc_quant(q_index, deltas.dc_delta, BitDepth::Eight),
+        ac_quant(q_index, deltas.ac_delta, BitDepth::Eight),
     )
 }
 
@@ -1124,8 +1129,8 @@ mod tests {
     #[test]
     fn init_plane_quantizers_q60_dequant_matches_lookup() {
         let qp = init_plane_quantizers(60, QuantizerDeltas::Y);
-        assert_eq!(qp.dequant[0], dc_quant(60, 0));
-        assert_eq!(qp.dequant[1], ac_quant(60, 0));
+        assert_eq!(qp.dequant[0], dc_quant(60, 0, BitDepth::Eight));
+        assert_eq!(qp.dequant[1], ac_quant(60, 0, BitDepth::Eight));
     }
 
     /// Hand-verified: `invert_quant(8)` should yield the libvpx values

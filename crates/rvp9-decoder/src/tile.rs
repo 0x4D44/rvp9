@@ -53,6 +53,7 @@ use rvp9_core::intra_pred::{DcAvailability, EdgeBuffers, IntraMode, build_intra_
 use rvp9_core::mode_info::{BlockMode, BmiInfo, InterMode, ModeInfo, Mv, RefFrame,
     SegmentationReadParams, read_inter_segment_id, read_intra_mode, read_is_inter, read_partition,
     read_segment_id, read_skip, read_tx_size, get_tx_size_context};
+use rvp9_core::bitstream::BitDepth;
 use rvp9_core::quant::{ac_quant, dc_quant, get_qindex};
 use rvp9_core::transforms::{TxMode, TxSize};
 
@@ -331,8 +332,12 @@ fn plane_dequant(params: &FrameDecodeParams, plane: usize, segment_id: u8) -> (i
     } else {
         (params.uv_dc_delta_q, params.uv_ac_delta_q)
     };
-    let dc = dc_quant(qindex, dc_delta) as i32;
-    let ac = ac_quant(qindex, ac_delta) as i32;
+    // Track T phase 0: decoder rejects HBD at the gate in `decode_frame`
+    // (see `lib.rs` near the `match frame.header.kind` block), so we
+    // can hard-code `BitDepth::Eight` here. Phase 1 threads the actual
+    // `frame.header.bit_depth` through.
+    let dc = dc_quant(qindex, dc_delta, BitDepth::Eight) as i32;
+    let ac = ac_quant(qindex, ac_delta, BitDepth::Eight) as i32;
     (dc, ac)
 }
 

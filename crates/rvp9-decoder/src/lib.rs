@@ -70,9 +70,9 @@ mod trace_flags;
 pub mod profile;
 
 use rvp9_core::bitstream::{
-    BitstreamError, ChromaFormat, CompressedHeaderOptions, CompressedHeaderResult, FrameKind,
-    InterpFilter, Superframe, UncompressedHeader, parse_compressed_header, parse_superframe_index,
-    parse_tile_buffers, parse_uncompressed_header,
+    BitDepth, BitstreamError, ChromaFormat, CompressedHeaderOptions, CompressedHeaderResult,
+    FrameKind, InterpFilter, Superframe, UncompressedHeader, parse_compressed_header,
+    parse_superframe_index, parse_tile_buffers, parse_uncompressed_header,
 };
 use rvp9_core::block::BlockSize;
 use rvp9_core::entropy::{FRAME_CONTEXTS, FrameContext};
@@ -1187,9 +1187,34 @@ impl Decoder {
         // allocates right. ShowExistingFrame still skips any gating
         // because it merely hands back an already-decoded slot.
         //
+        // Track T phase 0 — explicit bit-depth gate. Profiles 2 and 3
+        // (HBD 10/12-bit) parse cleanly today but every per-block
+        // kernel below assumes 8-bit pixel storage, so we surface a
+        // structured `UnsupportedProfile` rejection here rather than
+        // letting the rejection fire implicitly at the first kernel
+        // call. This is **declarative**: today's behaviour already
+        // rejected HBD frames; we're making the rejection deliberate
+        // and bisectable for the upcoming phase-1+ work. See
+        // `wrk_docs/Track_T/T1_HBD_decode_HLD.md` §7.1 step 7.
+        //
+        // `ShowExistingFrame` skips the gate because it merely hands
+        // back an already-decoded buffer; the HBD gate fired on the
+        // original decode.
+        if !matches!(frame.header.kind, FrameKind::ShowExistingFrame { .. }) {
+            match frame.header.bit_depth {
+                BitDepth::Eight => {}
+                BitDepth::Ten | BitDepth::Twelve => {
+                    return Err(DecodeError::UnsupportedProfile {
+                        profile: frame.header.profile as u8,
+                    });
+                }
+            }
+        }
+
         // The `UnsupportedProfile` variant remains in `DecodeError` for
         // future Profiles 2/3 (high-bit-depth) — Profile 1 no longer
-        // rejects here, but HBD profiles still will when they're wired.
+        // rejects here, and HBD profiles now reject above via the
+        // explicit gate.
         match frame.header.kind {
             FrameKind::ShowExistingFrame { .. } => self.decode_show_existing_frame(&frame.header),
             FrameKind::KeyFrame => self.decode_keyframe(frame),

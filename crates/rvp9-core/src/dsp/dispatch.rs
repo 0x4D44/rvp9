@@ -137,6 +137,7 @@ fn parse_lpf_avx2_mask(s: Option<&str>) -> LpfAvx2Mask {
     mask
 }
 use crate::transforms::inverse::{
+    highbd_idct4x4_16_add as scalar_highbd_idct4x4_add,
     idct4x4_16_add as scalar_idct4x4_add, idct8x8_64_add as scalar_idct8x8_add,
     idct16x16_10_add as scalar_idct16x16_10_add,
     idct16x16_38_add as scalar_idct16x16_38_add,
@@ -692,6 +693,19 @@ pub struct SimdDispatch {
     /// [`crate::dsp::x86_64::idct4x4_add_avx2`]; otherwise it points
     /// at the scalar reference.
     pub(crate) idct4x4_add: fn(input: &[i32; 16], dst: &mut [u8], stride: usize),
+
+    /// Track T phase 0 — HBD 4×4 inverse DCT + residual add (scalar
+    /// reference only; no SIMD HBD ports in this track).
+    ///
+    /// Signature mirrors the scalar reference
+    /// [`crate::transforms::inverse::highbd_idct4x4_16_add`]. The
+    /// extra `u32` parameter is the bit depth (`bd ∈ {8, 10, 12}`);
+    /// callers pass `bd = h.bit_depth as u32` once the bit-depth gate
+    /// in the decoder lifts (T-1 phase 1+). Until then this slot is
+    /// reachable from unit tests only — no decoder call sites in
+    /// phase 0.
+    pub(crate) highbd_idct4x4_add:
+        fn(input: &[i32; 16], dst: &mut [u16], stride: usize, bd: u32),
 
     /// G4.2 — 16×16 inverse DCT + residual add (full-density 256
     /// variant). Signature mirrors the scalar reference
@@ -1258,6 +1272,12 @@ impl SimdDispatch {
         };
         #[cfg(not(target_arch = "x86_64"))]
         let idct4x4_add: fn(&[i32; 16], &mut [u8], usize) = scalar_idct4x4_add;
+
+        // Track T phase 0 — HBD 4×4 inverse DCT scalar reference. No
+        // SIMD HBD kernels in this track; the slot is populated with
+        // the scalar reference unconditionally.
+        let highbd_idct4x4_add: fn(&[i32; 16], &mut [u16], usize, u32) =
+            scalar_highbd_idct4x4_add;
 
         // Track-T T-4 first slice — `idct16x16_256_add` dispatch.
         //
@@ -1953,6 +1973,7 @@ impl SimdDispatch {
             idct8x8_add,
             idct8x8_12_add,
             idct4x4_add,
+            highbd_idct4x4_add,
             idct16x16_add,
             idct32x32_add,
             idct32x32_34_add,
@@ -2031,6 +2052,21 @@ impl SimdDispatch {
     #[must_use]
     pub fn idct4x4_add(&self) -> fn(&[i32; 16], &mut [u8], usize) {
         self.idct4x4_add
+    }
+
+    /// Dispatch the HBD 4×4 inverse-DCT + add kernel (Track T phase 0
+    /// scalar reference). The trailing `u32` is the bit depth
+    /// (`bd ∈ {8, 10, 12}`). No SIMD HBD kernels in Track T phase 0 —
+    /// the slot always points at
+    /// [`crate::transforms::inverse::highbd_idct4x4_16_add`].
+    ///
+    /// **Phase 0 has no decoder call sites** for this kernel — the
+    /// bit-depth gate in `rvp9-decoder` still rejects HBD frames before
+    /// they reach the per-block transform path. Wired in phase 1.
+    #[inline]
+    #[must_use]
+    pub fn highbd_idct4x4_add(&self) -> fn(&[i32; 16], &mut [u16], usize, u32) {
+        self.highbd_idct4x4_add
     }
 
     /// Dispatch the 16×16 inverse-DCT + add kernel (G4.2 full-kernel
@@ -2708,6 +2744,24 @@ mod tests {
             d.idct16x16_add() as usize,
             sse2 as usize,
             "avx2=false, sse2=true must install idct16x16_add_sse2_256"
+        );
+    }
+
+    /// Track T phase 0 — the HBD `idct4x4_add` slot always installs the
+    /// scalar reference regardless of caps (no SIMD HBD kernels in this
+    /// track). Sanity-checks that the slot is wired and dispatches to
+    /// the libvpx-mirroring scalar implementation.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn highbd_idct4x4_add_slot_is_scalar_reference() {
+        let caps = detect();
+        let d = SimdDispatch::build(caps);
+        let scalar: fn(&[i32; 16], &mut [u16], usize, u32) =
+            crate::transforms::inverse::highbd_idct4x4_16_add;
+        assert_eq!(
+            d.highbd_idct4x4_add() as usize,
+            scalar as usize,
+            "highbd_idct4x4_add slot must point at the scalar reference"
         );
     }
 

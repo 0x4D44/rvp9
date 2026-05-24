@@ -186,7 +186,7 @@ pub const fn wraplow(x: i32) -> i32 {
 
 /// `clip_pixel_add(dest, trans)`: residual-add with saturation to
 /// `[0, 255]`. Mirrors libvpx `clip_pixel_add` (`inv_txfm.h:117-120`)
-/// for the non-HBD path (D-01 RESOLVED: HBD deferred).
+/// for the non-HBD path.
 ///
 /// `trans` is the transform output (an `i32`-range signed delta).
 #[inline]
@@ -194,6 +194,56 @@ pub const fn wraplow(x: i32) -> i32 {
 pub fn clip_pixel_add(dest: u8, trans: i64) -> u8 {
     let sum = (dest as i32) + (trans as i32);
     sum.clamp(0, 255) as u8
+}
+
+/// `HIGHBD_WRAPLOW(x, bd)` — HBD sibling of [`wraplow`]. Mirrors libvpx
+/// `HIGHBD_WRAPLOW` (`vpx_dsp/inv_txfm.h:81`):
+///
+/// ```c
+/// #define HIGHBD_WRAPLOW(x, bd) \
+///   ((((int32_t)highbd_check_range((x), bd)) << (24 - bd)) >> (24 - bd))
+/// ```
+///
+/// In the default `CONFIG_EMULATE_HARDWARE=0` build the macro reduces
+/// to `(int32_t)x` (no truncation) since `highbd_check_range` is the
+/// identity outside `CONFIG_COEFFICIENT_RANGE_CHECKING`. We reproduce
+/// the **hardware-emulation** sign-preserving shift dance because it is
+/// the truncation that bit-exact streams hit when intermediates would
+/// otherwise exceed `bd + 7` bits; for in-range inputs both forms agree.
+///
+/// `bd ∈ {8, 10, 12}`. `(24 - bd)` is `16 / 14 / 12` — well-defined
+/// signed shifts on `i32` (Rust signed shifts perform arithmetic shift).
+#[inline]
+#[must_use]
+pub const fn highbd_wraplow(x: i32, bd: u32) -> i32 {
+    let shift = 24 - (bd as i32);
+    (x << shift) >> shift
+}
+
+/// `highbd_clip_pixel_add(dest, trans, bd)`: HBD residual-add with
+/// saturation to `[0, (1 << bd) - 1]`. Mirrors libvpx
+/// `highbd_clip_pixel_add` (`vpx_dsp/inv_txfm.h:110-117`):
+///
+/// ```c
+/// static INLINE uint16_t highbd_clip_pixel_add(uint16_t dest,
+///                                              tran_high_t trans, int bd) {
+///   trans = HIGHBD_WRAPLOW(trans, bd);
+///   return clip_pixel_highbd(dest + (int)trans, bd);
+/// }
+/// ```
+///
+/// `clip_pixel_highbd` is a clamp to `[0, (1 << bd) - 1]` (see
+/// `vpx_dsp/vpx_dsp_common.h`). We apply [`highbd_wraplow`] before
+/// the add to honour the hardware-emulation contract.
+///
+/// `bd ∈ {8, 10, 12}`.
+#[inline]
+#[must_use]
+pub fn highbd_clip_pixel_add(dest: u16, trans: i64, bd: u32) -> u16 {
+    let trans_wrapped = highbd_wraplow(trans as i32, bd);
+    let max = (1i32 << bd) - 1;
+    let sum = (dest as i32) + trans_wrapped;
+    sum.clamp(0, max) as u16
 }
 
 #[cfg(test)]
@@ -225,5 +275,71 @@ mod tests {
         assert_eq!(clip_pixel_add(5, -10), 0); // lower clamp
         assert_eq!(clip_pixel_add(100, 1_000_000), 255);
         assert_eq!(clip_pixel_add(100, -1_000_000), 0);
+    }
+
+    /// `highbd_wraplow` is the identity on values that fit in `bd + 7`
+    /// bits (the hardware-emulation contract — clean coefficients never
+    /// overflow). Spot checks at `bd ∈ {8, 10, 12}`.
+    #[test]
+    fn highbd_wraplow_identity_for_in_range_values() {
+        for &(x, bd) in &[
+            (0_i32, 8_u32),
+            (0, 10),
+            (0, 12),
+            (123, 8),
+            (-123, 8),
+            (32_767, 8),  // i16::MAX — `bd=8` truncates to 16 bits.
+            (-32_768, 8), // i16::MIN
+            ((1 << 17) - 1, 10), // 18-bit fits at bd=10.
+            (-(1 << 17), 10),
+            ((1 << 19) - 1, 12), // 20-bit fits at bd=12.
+            (-(1 << 19), 12),
+        ] {
+            assert_eq!(
+                highbd_wraplow(x, bd),
+                x,
+                "highbd_wraplow({x}, {bd}) should be identity for in-range input"
+            );
+        }
+    }
+
+    /// `highbd_wraplow` performs sign-preserving modular truncation when
+    /// the input exceeds `(bd + 7)` bits — this is the hardware-emulation
+    /// `((x << (24 - bd)) >> (24 - bd))` dance. For `bd=8` the truncation
+    /// is to 16 bits; libvpx's plain `WRAPLOW` (`x as i16 as i32`) agrees
+    /// for clean inputs.
+    #[test]
+    fn highbd_wraplow_truncates_out_of_range() {
+        // bd=8 → 16-bit truncation. 0x10000 wraps to 0.
+        assert_eq!(highbd_wraplow(0x10000, 8), 0);
+        // bd=8: 0xFFFF (which is -1 as i16) becomes -1.
+        assert_eq!(highbd_wraplow(0xFFFF, 8), -1);
+        // bd=10 → 18-bit truncation. 1 << 18 wraps to 0.
+        assert_eq!(highbd_wraplow(1 << 18, 10), 0);
+        // bd=12 → 20-bit truncation. 1 << 20 wraps to 0.
+        assert_eq!(highbd_wraplow(1 << 20, 12), 0);
+    }
+
+    /// `highbd_clip_pixel_add` saturates to `[0, (1 << bd) - 1]`.
+    /// Endpoints: `(1 << 10) - 1 = 1023`, `(1 << 12) - 1 = 4095`.
+    #[test]
+    fn highbd_clip_pixel_add_clamps_at_bit_depth() {
+        // bd = 10: saturate to [0, 1023].
+        assert_eq!(highbd_clip_pixel_add(0, 0, 10), 0);
+        assert_eq!(highbd_clip_pixel_add(500, 100, 10), 600);
+        assert_eq!(highbd_clip_pixel_add(1000, 100, 10), 1023); // upper clamp
+        assert_eq!(highbd_clip_pixel_add(5, -10, 10), 0); // lower clamp
+
+        // bd = 12: saturate to [0, 4095].
+        assert_eq!(highbd_clip_pixel_add(0, 0, 12), 0);
+        assert_eq!(highbd_clip_pixel_add(2000, 500, 12), 2500);
+        assert_eq!(highbd_clip_pixel_add(4000, 200, 12), 4095); // upper clamp
+        assert_eq!(highbd_clip_pixel_add(5, -10, 12), 0); // lower clamp
+
+        // bd = 8: saturate to [0, 255] (matches `clip_pixel_add` for
+        // small `trans`).
+        assert_eq!(highbd_clip_pixel_add(128, 10, 8), 138);
+        assert_eq!(highbd_clip_pixel_add(250, 10, 8), 255);
+        assert_eq!(highbd_clip_pixel_add(5, -10, 8), 0);
     }
 }

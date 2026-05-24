@@ -25,6 +25,7 @@
 //! omit it. The ext-rc override and HBD adjustment are also out of
 //! scope for v1.
 
+use crate::bitstream::BitDepth;
 use crate::quant::dc_quant;
 
 /// Which frame type to use when picking the `(a, b)` coefficients.
@@ -58,7 +59,9 @@ fn def_rd_multiplier(frame: FrameTypeForRd, qindex: i32) -> f64 {
 /// `modulate_rdmult`.
 #[must_use]
 pub fn compute_rd_mult_based_on_qindex(qindex: i32, frame: FrameTypeForRd) -> u32 {
-    let q = i32::from(dc_quant(qindex, 0));
+    // Encoder-side RD multiplier — 8-bit only (HBD encoder out of scope
+    // for Track T phase 0).
+    let q = i32::from(dc_quant(qindex, 0, BitDepth::Eight));
     let rdmult = q * q;
     let mult = def_rd_multiplier(frame, qindex);
     let scaled = (rdmult as f64) * mult;

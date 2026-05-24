@@ -4,6 +4,7 @@
 //! libvpx's `vp9/encoder/vp9_ratectrl.c`. See [`super`] for the
 //! divergence ledger.
 
+use rvp9_core::bitstream::BitDepth;
 use rvp9_core::quant::ac_quant;
 
 use super::{FrameKind, RateControl};
@@ -80,7 +81,9 @@ impl RateFactorLevel {
 /// 4.0`. Mirrors `vp9_convert_qindex_to_q` (`vp9_ratectrl.c:163-171`)
 /// for the 8-bit path.
 fn qindex_to_q(qindex: i32) -> f64 {
-    f64::from(ac_quant(qindex, 0)) / 4.0
+    // Encoder rate control — 8-bit only (HBD encoder out of scope for
+    // Track T phase 0).
+    f64::from(ac_quant(qindex, 0, BitDepth::Eight)) / 4.0
 }
 
 /// Bits-per-macroblock estimate at a given Q. Mirrors

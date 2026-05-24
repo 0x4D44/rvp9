@@ -1,10 +1,9 @@
 //! VP9 quantizer lookup tables and `qindex → qstep` mapping.
 //!
-//! Owns the DC/AC quantization LUTs (`DC_QLOOKUP[256]`, `AC_QLOOKUP[256]`)
-//! and the bit-clamped lookups [`dc_quant`] / [`ac_quant`]. Mirrors
-//! libvpx `vp9_quant_common.c` for the 8-bit path (D-01 RESOLVED: HBD
-//! deferred to v2 per quant LLD §7.1 — the `vpx_bit_depth_t` parameter
-//! is dropped from this crate's API).
+//! Owns the six DC/AC quantization LUTs (8-bit + 10-bit + 12-bit) and
+//! the bit-clamped lookups [`dc_quant`] / [`ac_quant`]. Mirrors libvpx
+//! `vp9_quant_common.c` including the `vpx_bit_depth_t` dispatch
+//! (`vp9_dc_quant` / `vp9_ac_quant` at `vp9_quant_common.c:164-194`).
 //!
 //! Encoder-only conversion functions (`vp9_quantizer_to_qindex`,
 //! `vp9_qindex_to_quantizer`) live in `rvp9-encoder::quantize` per
@@ -13,11 +12,11 @@
 //!
 //! ## Status
 //!
-//! Stage 3 task 4a lands the LUTs + the four conversion functions
-//! (`dc_quant`, `ac_quant`, `apply_qindex_delta`, `get_qindex`). The
-//! `init_quantizer` per-plane `MacroblockPlaneQuant` struct (quant LLD
-//! §3.7) lands as Stage 4 work — that's encoder-side construction of
-//! the per-plane quant arrays at frame setup.
+//! Stage 3 task 4a lands the 8-bit LUTs + the four conversion functions
+//! (`dc_quant`, `ac_quant`, `apply_qindex_delta`, `get_qindex`). Track T
+//! phase 0 (T-1 HBD scaffolding) adds the four HBD LUTs and threads a
+//! [`BitDepth`] parameter through `dc_quant` / `ac_quant`; today every
+//! caller passes `BitDepth::Eight` so behaviour is unchanged.
 
 pub mod forward;
 pub mod tables;
@@ -26,7 +25,11 @@ pub use forward::{
     PlaneQuantizers, QuantizerDeltas, init_plane_quantizers, plane_dequant_pair, vp9_quantize_b,
     vp9_quantize_b_32x32, vp9_quantize_fp, vp9_quantize_fp_32x32,
 };
-pub use tables::{AC_QLOOKUP, DC_QLOOKUP};
+pub use tables::{
+    AC_QLOOKUP, AC_QLOOKUP_10, AC_QLOOKUP_12, DC_QLOOKUP, DC_QLOOKUP_10, DC_QLOOKUP_12,
+};
+
+use crate::bitstream::BitDepth;
 
 /// Maximum value of a clamped qindex. `MAXQ` in libvpx
 /// (`vp9_quant_common.h:22`).
@@ -39,26 +42,36 @@ pub const MINQ: i32 = 0;
 pub const QINDEX_RANGE: usize = (MAXQ - MINQ + 1) as usize;
 
 /// Return the 16-bit DC quantizer for `(qindex + delta)` clamped into
-/// `[MINQ, MAXQ]`. Mirrors `vp9_dc_quant` (`vp9_quant_common.c:164`) for
-/// the non-HBD path.
+/// `[MINQ, MAXQ]`. Mirrors `vp9_dc_quant` (`vp9_quant_common.c:164-178`)
+/// — selects between [`DC_QLOOKUP`] / [`DC_QLOOKUP_10`] / [`DC_QLOOKUP_12`]
+/// based on `bit_depth`.
 ///
 /// `qindex` and `delta` are passed as `i32` to faithfully mirror the
 /// libvpx C signature; the implementation clamps to a valid LUT index.
 #[inline]
 #[must_use]
-pub fn dc_quant(qindex: i32, delta: i32) -> i16 {
-    let idx = apply_qindex_delta(qindex, delta);
-    DC_QLOOKUP[idx as usize]
+pub fn dc_quant(qindex: i32, delta: i32, bit_depth: BitDepth) -> i16 {
+    let idx = apply_qindex_delta(qindex, delta) as usize;
+    match bit_depth {
+        BitDepth::Eight => DC_QLOOKUP[idx],
+        BitDepth::Ten => DC_QLOOKUP_10[idx],
+        BitDepth::Twelve => DC_QLOOKUP_12[idx],
+    }
 }
 
 /// Return the 16-bit AC quantizer for `(qindex + delta)` clamped into
-/// `[MINQ, MAXQ]`. Mirrors `vp9_ac_quant` (`vp9_quant_common.c:180`) for
-/// the non-HBD path.
+/// `[MINQ, MAXQ]`. Mirrors `vp9_ac_quant` (`vp9_quant_common.c:180-194`)
+/// — selects between [`AC_QLOOKUP`] / [`AC_QLOOKUP_10`] / [`AC_QLOOKUP_12`]
+/// based on `bit_depth`.
 #[inline]
 #[must_use]
-pub fn ac_quant(qindex: i32, delta: i32) -> i16 {
-    let idx = apply_qindex_delta(qindex, delta);
-    AC_QLOOKUP[idx as usize]
+pub fn ac_quant(qindex: i32, delta: i32, bit_depth: BitDepth) -> i16 {
+    let idx = apply_qindex_delta(qindex, delta) as usize;
+    match bit_depth {
+        BitDepth::Eight => AC_QLOOKUP[idx],
+        BitDepth::Ten => AC_QLOOKUP_10[idx],
+        BitDepth::Twelve => AC_QLOOKUP_12[idx],
+    }
 }
 
 /// Sum a qindex with a signed delta and clamp into `[MINQ, MAXQ]`.
@@ -139,15 +152,15 @@ mod tests {
     /// last entry is 1336 (vp9_quant_common.c:34).
     #[test]
     fn dc_quant_boundary() {
-        assert_eq!(dc_quant(0, 0), 4);
-        assert_eq!(dc_quant(MAXQ, 0), 1336);
+        assert_eq!(dc_quant(0, 0, BitDepth::Eight), 4);
+        assert_eq!(dc_quant(MAXQ, 0, BitDepth::Eight), 1336);
     }
 
     /// Boundary values of ac_quant — first entry is 4, last is 1828.
     #[test]
     fn ac_quant_boundary() {
-        assert_eq!(ac_quant(0, 0), 4);
-        assert_eq!(ac_quant(MAXQ, 0), 1828);
+        assert_eq!(ac_quant(0, 0, BitDepth::Eight), 4);
+        assert_eq!(ac_quant(MAXQ, 0, BitDepth::Eight), 1828);
     }
 
     /// Negative deltas clamp at MINQ.
@@ -155,7 +168,7 @@ mod tests {
     fn delta_clamp_below() {
         assert_eq!(apply_qindex_delta(0, -10), 0);
         assert_eq!(apply_qindex_delta(5, -100), 0);
-        assert_eq!(dc_quant(0, -10), DC_QLOOKUP[0]);
+        assert_eq!(dc_quant(0, -10, BitDepth::Eight), DC_QLOOKUP[0]);
     }
 
     /// Positive deltas clamp at MAXQ.
@@ -163,15 +176,18 @@ mod tests {
     fn delta_clamp_above() {
         assert_eq!(apply_qindex_delta(MAXQ, 10), MAXQ);
         assert_eq!(apply_qindex_delta(250, 100), MAXQ);
-        assert_eq!(dc_quant(MAXQ, 10), DC_QLOOKUP[MAXQ as usize]);
+        assert_eq!(
+            dc_quant(MAXQ, 10, BitDepth::Eight),
+            DC_QLOOKUP[MAXQ as usize]
+        );
     }
 
     /// Spot checks at index 1 (unambiguous near the table head — second
     /// entry of each LUT is `8`).
     #[test]
     fn spot_check_index_1() {
-        assert_eq!(dc_quant(1, 0), 8);
-        assert_eq!(ac_quant(1, 0), 8);
+        assert_eq!(dc_quant(1, 0, BitDepth::Eight), 8);
+        assert_eq!(ac_quant(1, 0, BitDepth::Eight), 8);
     }
 
     /// Mid-range spot check verified by hand-counting libvpx
@@ -182,8 +198,35 @@ mod tests {
     ///   (78-90) is 85..=97 → `ac[80] = 87`
     #[test]
     fn mid_range_spot_check() {
-        assert_eq!(dc_quant(80, 0), 74);
-        assert_eq!(ac_quant(80, 0), 87);
+        assert_eq!(dc_quant(80, 0, BitDepth::Eight), 74);
+        assert_eq!(ac_quant(80, 0, BitDepth::Eight), 87);
+    }
+
+    /// HBD dispatch — Track T phase 0 (T-1 HBD scaffolding). Boundary
+    /// values from libvpx `vp9_quant_common.c` for the 10/12-bit LUTs.
+    #[test]
+    fn hbd_dispatch_boundary() {
+        // 10-bit endpoints (vp9_quant_common.c:38-59 / 113-134).
+        assert_eq!(dc_quant(0, 0, BitDepth::Ten), 4);
+        assert_eq!(dc_quant(MAXQ, 0, BitDepth::Ten), 5347);
+        assert_eq!(ac_quant(0, 0, BitDepth::Ten), 4);
+        assert_eq!(ac_quant(MAXQ, 0, BitDepth::Ten), 7312);
+        // 12-bit endpoints (vp9_quant_common.c:61-86 / 136-161).
+        assert_eq!(dc_quant(0, 0, BitDepth::Twelve), 4);
+        assert_eq!(dc_quant(MAXQ, 0, BitDepth::Twelve), 21387);
+        assert_eq!(ac_quant(0, 0, BitDepth::Twelve), 4);
+        assert_eq!(ac_quant(MAXQ, 0, BitDepth::Twelve), 29247);
+    }
+
+    /// HBD second-entry spot check (qindex = 1).
+    /// libvpx values: `dc_qlookup_10[1] = 9`, `ac_qlookup_10[1] = 9`,
+    /// `dc_qlookup_12[1] = 12`, `ac_qlookup_12[1] = 13`.
+    #[test]
+    fn hbd_dispatch_spot_check_index_1() {
+        assert_eq!(dc_quant(1, 0, BitDepth::Ten), 9);
+        assert_eq!(ac_quant(1, 0, BitDepth::Ten), 9);
+        assert_eq!(dc_quant(1, 0, BitDepth::Twelve), 12);
+        assert_eq!(ac_quant(1, 0, BitDepth::Twelve), 13);
     }
 
     /// `get_qindex` in delta mode: base + seg, clamped.

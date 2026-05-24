@@ -45,7 +45,7 @@ use super::constants::{
     COSPI_16_64, COSPI_17_64, COSPI_18_64, COSPI_19_64, COSPI_20_64, COSPI_21_64, COSPI_22_64,
     COSPI_23_64, COSPI_24_64, COSPI_25_64, COSPI_26_64, COSPI_27_64, COSPI_28_64, COSPI_29_64,
     COSPI_30_64, COSPI_31_64, SINPI_1_9, SINPI_2_9, SINPI_3_9, SINPI_4_9, clip_pixel_add,
-    dct_const_round_shift, wraplow,
+    dct_const_round_shift, highbd_clip_pixel_add, highbd_wraplow, wraplow,
 };
 
 /// 1D 4-point inverse DCT. Output values are stored as `i32` but each
@@ -131,6 +131,96 @@ pub fn idct4x4_1_add(input: i32, dest: &mut [u8], stride: usize) {
     for r in 0..4 {
         for c in 0..4 {
             dest[r * stride + c] = clip_pixel_add(dest[r * stride + c], a1);
+        }
+    }
+}
+
+/// 1D 4-point inverse DCT (HBD sibling of [`idct4`]).
+///
+/// Mirrors libvpx `vpx_highbd_idct4_c` (`vpx_dsp/inv_txfm.c:1422-1452`).
+/// In the default `CONFIG_EMULATE_HARDWARE=0` build the math is identical
+/// to the 8-bit `idct4_c` because `HIGHBD_WRAPLOW` is a no-op there
+/// (it's only the hardware-emulation define that performs the
+/// `(24 - bd)` sign-preserving truncation). We mirror the libvpx
+/// signature exactly so phase-1 dispatch can be wired without churn.
+///
+/// `bd` is the bit depth (`bd ∈ {8, 10, 12}`); see [`highbd_wraplow`].
+#[inline]
+pub fn highbd_idct4(input: &[i32; 4], output: &mut [i32; 4], bd: u32) {
+    // stage 1 — libvpx stores into `tran_low_t step[4]` with each
+    // assignment wrapped by `HIGHBD_WRAPLOW(..., bd)`.
+    let temp1: i64 = (input[0] as i64 + input[2] as i64) * COSPI_16_64 as i64;
+    let temp2: i64 = (input[0] as i64 - input[2] as i64) * COSPI_16_64 as i64;
+    let step0: i32 = highbd_wraplow(dct_const_round_shift(temp1) as i32, bd);
+    let step1: i32 = highbd_wraplow(dct_const_round_shift(temp2) as i32, bd);
+    let temp1: i64 =
+        input[1] as i64 * COSPI_24_64 as i64 - input[3] as i64 * COSPI_8_64 as i64;
+    let temp2: i64 =
+        input[1] as i64 * COSPI_8_64 as i64 + input[3] as i64 * COSPI_24_64 as i64;
+    let step2: i32 = highbd_wraplow(dct_const_round_shift(temp1) as i32, bd);
+    let step3: i32 = highbd_wraplow(dct_const_round_shift(temp2) as i32, bd);
+
+    // stage 2 — `output` is `tran_low_t`, each store applies HIGHBD_WRAPLOW.
+    output[0] = highbd_wraplow(step0 + step3, bd);
+    output[1] = highbd_wraplow(step1 + step2, bd);
+    output[2] = highbd_wraplow(step1 - step2, bd);
+    output[3] = highbd_wraplow(step0 - step3, bd);
+}
+
+/// HBD 2D 16-coefficient inverse 4×4 DCT with residual add to `dest`
+/// (sibling of [`idct4x4_16_add`]).
+///
+/// `input` is the 16 dequantised coefficients in raster order.
+/// `dest[r * stride + c]` is the destination pixel as a `u16`; the
+/// transform output is added to `dest` and saturated to `[0, (1 << bd) - 1]`
+/// via [`highbd_clip_pixel_add`].
+///
+/// Mirrors libvpx `vpx_highbd_idct4x4_16_add_c`
+/// (`vpx_dsp/inv_txfm.c:1454-1477`) — same row-then-column structure
+/// as the 8-bit kernel, but the column pass clamps into a `u16` plane
+/// using the `bd`-derived saturation bound.
+///
+/// `bd ∈ {8, 10, 12}`. Dispatched through
+/// [`crate::dsp::SimdDispatch::highbd_idct4x4_add`] (Track T phase 0
+/// scalar reference; no SIMD HBD kernels in this track).
+pub fn highbd_idct4x4_16_add(
+    input: &[i32; 16],
+    dest: &mut [u16],
+    stride: usize,
+    bd: u32,
+) {
+    debug_assert!(
+        dest.len() >= stride * 3 + 4,
+        "dest too small for 4x4 HBD add"
+    );
+
+    let mut intermediate = [0i32; 16];
+
+    // Row pass.
+    for r in 0..4 {
+        let row_in: &[i32; 4] = input[r * 4..r * 4 + 4].try_into().unwrap();
+        let row_out_mut: &mut [i32; 4] = (&mut intermediate[r * 4..r * 4 + 4])
+            .try_into()
+            .unwrap();
+        highbd_idct4(row_in, row_out_mut, bd);
+    }
+
+    // Column pass + residual add.
+    for c in 0..4 {
+        let col_in: [i32; 4] = [
+            intermediate[c],
+            intermediate[4 + c],
+            intermediate[8 + c],
+            intermediate[12 + c],
+        ];
+        let mut col_out = [0i32; 4];
+        highbd_idct4(&col_in, &mut col_out, bd);
+        for r in 0..4 {
+            // ROUND_POWER_OF_TWO(col_out[r], 4) per libvpx
+            // `vpx_dsp/inv_txfm.c:1474`.
+            let shifted = (col_out[r] as i64 + 8) >> 4;
+            dest[r * stride + c] =
+                highbd_clip_pixel_add(dest[r * stride + c], shifted, bd);
         }
     }
 }
@@ -1874,6 +1964,100 @@ mod tests {
                 assert_eq!(dest[r * 8 + c], 10, "row {r} col {c} should be unchanged");
             }
         }
+    }
+
+    // ---- HBD 4x4 family (Track T phase 0) ----
+
+    /// Zero input → zero output (1D HBD).
+    #[test]
+    fn highbd_idct4_zero_in_zero_out() {
+        for bd in [8u32, 10, 12] {
+            let input = [0i32; 4];
+            let mut output = [99i32; 4];
+            highbd_idct4(&input, &mut output, bd);
+            assert_eq!(output, [0; 4], "bd={bd}");
+        }
+    }
+
+    /// Zero input preserves the dest plane.
+    #[test]
+    fn highbd_idct4x4_16_add_zero_preserves_dest() {
+        for bd in [10u32, 12] {
+            let fill = (1u16 << (bd - 2)) - 1; // arbitrary mid-range value
+            let input = [0i32; 16];
+            let mut dest = [fill; 16];
+            highbd_idct4x4_16_add(&input, &mut dest, 4, bd);
+            assert_eq!(dest, [fill; 16], "bd={bd}");
+        }
+    }
+
+    /// **Differential gate (HLD §5.3 + §7.1 step 5).** For clean inputs
+    /// the HBD kernel at `bd=10` should produce the same per-pixel
+    /// reconstruction as the 8-bit kernel run with the input divided by 4
+    /// (`>> 2`), then re-upshifted by 2.
+    ///
+    /// Algebra: the inverse-DCT is linear with a `>> 4` final shift on
+    /// each pixel, and `clip_pixel_add` saturates to `[0, 255]` while
+    /// `highbd_clip_pixel_add(bd=10)` saturates to `[0, 1023]`. So for
+    /// inputs whose intermediates stay within both clamps, scaling the
+    /// input by `4` and the dest by `4` (zero-stays-zero) gives exactly
+    /// 4× output.
+    ///
+    /// We use a tolerance of 4 on each pixel (= 1 LSB at the 10-bit
+    /// scale). The `>> 2` of the input loses up to 3 units in the
+    /// upshifted space, and rounding in the 2D transform's `>> 4`
+    /// final shift can add one more unit of discrepancy. Values
+    /// above this tolerance would indicate a systematic divergence
+    /// between the 8-bit and HBD code paths.
+    #[test]
+    fn highbd_idct4x4_16_add_matches_8bit_when_inputs_scale() {
+        // Deterministic pseudo-random inputs in a "clean" range. Using
+        // values that we know stay well within both saturation bounds
+        // when expressed at bd=10.
+        let coeffs: [i32; 16] = [
+            120, -64, 32, -16, 48, -32, 16, -8, 24, -16, 8, -4, 12, -8, 4, -2,
+        ];
+
+        // 8-bit reference: input `>> 2`, dest = 0.
+        let input_8: [i32; 16] = {
+            let mut v = [0i32; 16];
+            for i in 0..16 {
+                v[i] = coeffs[i] >> 2;
+            }
+            v
+        };
+        let mut dest_8 = [0u8; 16];
+        idct4x4_16_add(&input_8, &mut dest_8, 4);
+
+        // HBD: same shape input, dest = 0, bd = 10.
+        let mut dest_hbd = [0u16; 16];
+        highbd_idct4x4_16_add(&coeffs, &mut dest_hbd, 4, 10);
+
+        // Compare with a tolerance of 4 (= 1 LSB at 10-bit scale)
+        // after upshifting the 8-bit result by 2 bits.
+        for i in 0..16 {
+            let expected = (dest_8[i] as i32) << 2;
+            let actual = dest_hbd[i] as i32;
+            let diff = (expected - actual).abs();
+            assert!(
+                diff <= 4,
+                "pixel {i}: HBD={actual}, 8-bit << 2 = {expected}, diff={diff}"
+            );
+        }
+    }
+
+    /// Golden vector — input `[1024, 0, ..., 0]` at `bd=10`. By the same
+    /// derivation as `idct4x4_16_add_dc_known_value` (DC of 1024 → +32
+    /// per pixel before final saturation), the HBD kernel against a
+    /// zero dest should produce 32 per pixel — `clip_pixel_highbd`
+    /// doesn't change anything since 32 < 1023.
+    #[test]
+    fn highbd_idct4x4_16_add_dc_known_value_bd10() {
+        let mut input = [0i32; 16];
+        input[0] = 1024;
+        let mut dest = [0u16; 16];
+        highbd_idct4x4_16_add(&input, &mut dest, 4, 10);
+        assert_eq!(dest, [32u16; 16]);
     }
 
     // ---- 8x8 family ----
