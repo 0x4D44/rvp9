@@ -54,6 +54,7 @@ use std::cell::RefCell;
 
 use super::BoolReader;
 use super::BoolWriter;
+use super::adapt::CoefCountsBank;
 use super::coef_probs::{COEF_BANDS, COEFF_CONTEXTS, UNCONSTRAINED_NODES};
 use super::frame_context::FrameContext;
 use super::pareto::VP9_PARETO8_FULL;
@@ -977,6 +978,7 @@ pub fn encode_coefs(
     seg_eob: usize,
     raw_coefs: &[i32],
     eob: usize,
+    mut counts: Option<&mut DecodeCoefCounts<'_>>,
 ) {
     assert!(
         seg_eob <= tx_size.n_coeffs(),
@@ -1010,6 +1012,11 @@ pub fn encode_coefs(
         let band = band_translate[c] as usize;
         let prob = &coef_probs[band][ctx];
 
+        // (A) G3 — eob_branch: this position attempts an EOB decision.
+        if let Some(ref mut ct) = counts {
+            ct.eob_branch_counts[band][ctx] += 1;
+        }
+
         // Outer-loop EOB decision — we are NOT at EOB, emit '1'.
         bw.write(1, prob[EOB_CONTEXT_NODE]);
 
@@ -1029,6 +1036,11 @@ pub fn encode_coefs(
             }
             // ZERO_TOKEN at this position.
             bw.write(0, local_prob[ZERO_CONTEXT_NODE]);
+            // (B) G3 — count ZERO_TOKEN.
+            if let Some(ref mut ct) = counts {
+                let b = band_translate[c] as usize;
+                ct.coef_counts[b][ctx][ZERO_TOKEN] += 1;
+            }
             token_cache[raster_idx] = 0;
             c += 1;
             if c >= eob {
@@ -1062,10 +1074,20 @@ pub fn encode_coefs(
         if abs_val == 1 {
             // ONE_TOKEN — emit '0' at the ONE node.
             bw.write(0, local_prob[ONE_CONTEXT_NODE]);
+            // (C) G3 — count ONE_TOKEN.
+            if let Some(ref mut ct) = counts {
+                let b = band_translate[c] as usize;
+                ct.coef_counts[b][ctx][ONE_TOKEN] += 1;
+            }
             token_cache[raster_idx] = 1;
         } else {
             // TWO-or-higher branch.
             bw.write(1, local_prob[ONE_CONTEXT_NODE]);
+            // (D) G3 — count TWO_TOKEN (absorbs TWO through CAT6).
+            if let Some(ref mut ct) = counts {
+                let b = band_translate[c] as usize;
+                ct.coef_counts[b][ctx][TWO_TOKEN] += 1;
+            }
             let p = &VP9_PARETO8_FULL[(local_prob[PIVOT_NODE] - 1) as usize];
             if abs_val <= 4 {
                 // Low branch — TWO / THREE / FOUR.
@@ -1167,6 +1189,11 @@ pub fn encode_coefs(
         // still `initial_pt`. Otherwise the loop above already updated
         // `ctx` to the next position's context.
         let band = band_translate[eob] as usize;
+        // (E) G3 — eob_branch + EOB_MODEL_TOKEN at the terminal position.
+        if let Some(ref mut ct) = counts {
+            ct.eob_branch_counts[band][ctx] += 1;
+            ct.coef_counts[band][ctx][EOB_MODEL_TOKEN] += 1;
+        }
         let prob = &coef_probs[band][ctx];
         bw.write(0, prob[EOB_CONTEXT_NODE]);
     }
@@ -1231,6 +1258,7 @@ pub fn write_block_tokens(
     seg_eob: usize,
     raw_coefs: &[i32],
     eob: usize,
+    counts: Option<&mut CoefCountsBank>,
 ) {
     // libvpx `get_plane_type`: Y → 0, UV → 1
     // (`vp9_blockd.h:210-212`).
@@ -1267,7 +1295,16 @@ pub fn write_block_tokens(
     }
     let initial_pt = combine_entropy_contexts(a_any, l_any);
 
-    encode_coefs(bw, coef_probs, &scan, initial_pt, tx_size, seg_eob, raw_coefs, eob);
+    // G3 — slice the per-frame counts to per-block DecodeCoefCounts.
+    let mut block_counts = counts.map(|c| {
+        let plane_type = usize::from(plane > 0);
+        DecodeCoefCounts {
+            coef_counts: &mut c.coef[tx_size as usize][plane_type][ref_type],
+            eob_branch_counts: &mut c.eob_branch[tx_size as usize][plane_type][ref_type],
+        }
+    });
+    encode_coefs(bw, coef_probs, &scan, initial_pt, tx_size, seg_eob, raw_coefs, eob,
+                 block_counts.as_mut());
 
     // Writeback: splat `(eob > 0)` across the (n × n) sub-block
     // region. libvpx `vp9_detokenize.c:294/302/311/323`.
@@ -2416,7 +2453,7 @@ mod tests {
         let mut buf = vec![0u8; tx_size.n_coeffs() * 8 + 256];
         let n = {
             let mut bw = BoolWriter::start_encode(&mut buf);
-            encode_coefs(&mut bw, probs, scan, initial_pt, tx_size, seg_eob, raw_coefs, eob);
+            encode_coefs(&mut bw, probs, scan, initial_pt, tx_size, seg_eob, raw_coefs, eob, None);
             for _ in 0..32 {
                 bw.write_bit(0);
             }
@@ -2850,6 +2887,7 @@ mod tests {
                 seg_eob,
                 raw_coefs,
                 eob,
+                None,
             );
             // Pad with trailing zero bits so the reader can fill its
             // register without overshoot (matches `enc_block` helper).
@@ -3091,11 +3129,11 @@ mod tests {
             let mut bw = BoolWriter::start_encode(&mut buf);
             write_block_tokens(
                 &mut bw, &fc, &mut enc_ctx, 0, 0, 0,
-                TxSize::Tx4x4, TxType::DctDct, 0, 16, &raw_a, eob_a,
+                TxSize::Tx4x4, TxType::DctDct, 0, 16, &raw_a, eob_a, None,
             );
             write_block_tokens(
                 &mut bw, &fc, &mut enc_ctx, 0, 1, 0,
-                TxSize::Tx4x4, TxType::DctDct, 0, 16, &raw_b, eob_b,
+                TxSize::Tx4x4, TxType::DctDct, 0, 16, &raw_b, eob_b, None,
             );
             for _ in 0..32 {
                 bw.write_bit(0);
@@ -3210,5 +3248,94 @@ mod tests {
                 // The set above wrote both above[2] and left[2]; perfect.
             },
         );
+    }
+
+    /// G3 proof test — verifies that `encode_coefs` actually accumulates
+    /// counts when given a non-`None` counts handle. Without this test
+    /// the count accumulation could silently be a no-op (which is
+    /// exactly the bug the reviewer caught in the original G3 attempt).
+    ///
+    /// Encodes a single ONE_TOKEN at scan[0] (positive), eob=1, with a
+    /// 4x4 scan. The expected counts are:
+    /// - One eob_branch attempt before the EOB decision (band 0, ctx 0)
+    /// - One ONE_TOKEN tally (band 0, ctx 0)
+    /// - One eob_branch attempt at terminal EOB (band depends on scan)
+    /// - One EOB_MODEL_TOKEN tally at terminal EOB
+    #[test]
+    fn g3_encode_coefs_accumulates_counts_when_handle_present() {
+        let probs = flat_coef_probs(64, 64, 64);
+        let scan = default_scan_4x4();
+        let mut raw = vec![0i32; 16];
+        raw[scan.scan[0] as usize] = 1; // single ONE_TOKEN at DC
+
+        let mut coef_counts: CoefCountsBlock =
+            [[[0u32; UNCONSTRAINED_NODES + 1]; COEFF_CONTEXTS]; COEF_BANDS];
+        let mut eob_branch_counts: EobBranchCountsBlock =
+            [[0u32; COEFF_CONTEXTS]; COEF_BANDS];
+        let mut buf = vec![0u8; 256];
+        let _ = {
+            let mut bw = BoolWriter::start_encode(&mut buf);
+            let mut counts = DecodeCoefCounts {
+                coef_counts: &mut coef_counts,
+                eob_branch_counts: &mut eob_branch_counts,
+            };
+            encode_coefs(&mut bw, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1,
+                         Some(&mut counts));
+            bw.stop_encode().unwrap()
+        };
+
+        // Outer-loop iteration at c=0: eob_branch[0][0] += 1.
+        assert_eq!(eob_branch_counts[0][0], 1,
+                   "outer-loop eob_branch attempt at c=0");
+        // ONE_TOKEN at c=0: coef_counts[0][0][ONE_TOKEN] += 1.
+        assert_eq!(coef_counts[0][0][ONE_TOKEN], 1,
+                   "ONE_TOKEN tally at c=0");
+
+        // Terminal EOB at eob=1 (eob<seg_eob=16 so terminal bit fires).
+        // band = band_translate[1] (4x4: band 1), ctx = post-ONE_TOKEN ctx.
+        // The exact (band, ctx) depends on `get_coef_context`, but
+        // exactly one EOB_MODEL_TOKEN + one eob_branch must be tallied
+        // SOMEWHERE in the table.
+        let total_eob_model: u32 = coef_counts.iter()
+            .flat_map(|b| b.iter())
+            .map(|ctx| ctx[EOB_MODEL_TOKEN])
+            .sum();
+        assert_eq!(total_eob_model, 1, "exactly one terminal EOB_MODEL tally");
+        let total_eob_branch: u32 = eob_branch_counts.iter()
+            .flat_map(|b| b.iter())
+            .sum();
+        assert_eq!(total_eob_branch, 2,
+                   "two eob_branch attempts: one outer-loop, one terminal");
+
+        // Nothing else should have been touched.
+        let total_zero: u32 = coef_counts.iter()
+            .flat_map(|b| b.iter())
+            .map(|ctx| ctx[ZERO_TOKEN])
+            .sum();
+        assert_eq!(total_zero, 0, "no ZERO_TOKEN tallies (no zeros in input)");
+        let total_two: u32 = coef_counts.iter()
+            .flat_map(|b| b.iter())
+            .map(|ctx| ctx[TWO_TOKEN])
+            .sum();
+        assert_eq!(total_two, 0, "no TWO_TOKEN tallies (no twos in input)");
+    }
+
+    /// G3 proof test — `encode_coefs` with `None` counts is a no-op
+    /// (no panic, no behavioural change from the pre-G3 version).
+    #[test]
+    fn g3_encode_coefs_with_none_counts_does_not_panic() {
+        let probs = flat_coef_probs(64, 64, 64);
+        let scan = default_scan_4x4();
+        let mut raw = vec![0i32; 16];
+        raw[scan.scan[0] as usize] = 2; // TWO_TOKEN
+
+        let mut buf = vec![0u8; 256];
+        let _ = {
+            let mut bw = BoolWriter::start_encode(&mut buf);
+            encode_coefs(&mut bw, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1,
+                         None);
+            bw.stop_encode().unwrap()
+        };
+        // If we got here, the None path didn't panic.
     }
 }

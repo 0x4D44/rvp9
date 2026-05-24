@@ -1043,6 +1043,7 @@ mod tests {
             64,
             &raw_coefs,
             eob as usize,
+            None,
         );
         let encoded_len = bw.stop_encode().expect("stop_encode should succeed");
 

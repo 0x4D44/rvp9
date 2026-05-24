@@ -87,6 +87,7 @@ use crate::bitstream::SEG_TREE_PROBS;
 use crate::coef_ctx::TileCoefCtx;
 use crate::entropy::{write_block_tokens, BoolWriter, FrameContext, FrameCounts,
     VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB};
+use crate::entropy::adapt::CoefCountsBank;
 use crate::entropy::bitacct::{set_category, BitCategory};
 use crate::inter::mode_info::{
     get_intra_inter_context, write_inter_block_mode_info, InterModeReadParams, InterModeWriteError,
@@ -1248,6 +1249,7 @@ fn write_intra_block_residual(
                     seg_eob,
                     coefs,
                     eob,
+                    None, // KF path: no coef count accumulation
                 );
                 tx_x4_local += tx_step_4x4;
             }
@@ -2017,6 +2019,7 @@ fn write_inter_block_leaf(
             effective_tx_size,
             is_inter,
             residual_y_mode,
+            counts.as_deref_mut().map(|c| &mut c.coef),
         );
     } else {
         // RC.X1 — mirror libvpx's `dec_reset_skip_context`
@@ -2171,6 +2174,8 @@ fn write_inter_block_residual(
     // let the per-TX loop derive the correct values.
     is_inter: bool,
     y_mode: IntraMode,
+    // G3 -- coef count accumulation for backward adaptation.
+    mut counts: Option<&mut CoefCountsBank>,
 ) {
     let mi_col_in_tile = mi_col; // single-tile scope (see fn doc).
     let mi_row_in_sb = mi_row & MI_MASK;
@@ -2270,6 +2275,7 @@ fn write_inter_block_residual(
                     seg_eob,
                     coefs,
                     eob,
+                    counts.as_deref_mut(),
                 );
                 tx_x4_local += tx_step_4x4;
             }
