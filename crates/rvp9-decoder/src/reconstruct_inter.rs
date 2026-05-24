@@ -825,10 +825,15 @@ fn inverse_transform_add_dct(
             let coefs: &[i32; 64] = input.try_into().expect("Tx8x8 input is 64 coefs");
             if eob == 1 {
                 idct8x8_1_add(coefs[0], dest, stride);
+            } else if eob <= 12 {
+                // Task A — sparse Tx8x8 path. SSE2 kernel exploits the
+                // eob<=12 contract (rows 4..7 of coefs are zero per the
+                // bitstream), so the row pass runs on only 4 rows
+                // instead of 8. Saves ~50% of the 1-D row-pass work on
+                // this dispatch. AVX2 _64 still owns the dense
+                // (eob > 12) path.
+                (dispatch.idct8x8_12_add())(coefs, dest, stride);
             } else {
-                // R.6 (2026-05-23) tried wiring a scalar idct8x8_12_add
-                // for eob<=12 but it regressed bench — scalar < AVX2 _64
-                // here. Slot remains in dispatch for a future AVX2 promotion.
                 // G4.1 — dispatch through SimdDispatch so the AVX2
                 // implementation runs on supported CPUs.
                 (dispatch.idct8x8_add())(coefs, dest, stride);

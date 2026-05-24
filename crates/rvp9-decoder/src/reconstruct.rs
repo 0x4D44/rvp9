@@ -407,19 +407,15 @@ fn inverse_transform_add(
             if tx_type == TxType::DctDct {
                 if eob == 1 {
                     idct8x8_1_add(coefs[0], dest, stride);
+                } else if eob <= 12 {
+                    // Task A — sparse Tx8x8 path. SSE2 kernel exploits
+                    // the eob<=12 contract (rows 4..7 of coefs are zero
+                    // per the bitstream), so the row pass runs on only
+                    // 4 rows instead of 8. Saves ~50% of the 1-D row-
+                    // pass work on this dispatch. AVX2 _64 still owns
+                    // the dense (eob > 12) path.
+                    (dispatch.idct8x8_12_add())(coefs, dest, stride);
                 } else {
-                    // libvpx splits eob<=12 → idct8x8_12_add; we ship
-                    // only the full _64_add variant (transforms LLD
-                    // §3.4 lists 12-bucket kernels but only _1 and
-                    // _64 are landed in inverse.rs today). Bit-exact
-                    // result; just slower for sparse blocks.
-                    //
-                    // R.6 (2026-05-23) tried adding a scalar
-                    // idct8x8_12_add but the scalar reduction (4 row
-                    // passes vs 8) doesn't beat the AVX2 _64 SIMD
-                    // kernel. Reverted; future AVX2 _12 ship can be
-                    // wired in if and when it's available.
-                    //
                     // G4.1 — dispatch through SimdDispatch so the AVX2
                     // implementation runs on supported CPUs.
                     (dispatch.idct8x8_add())(coefs, dest, stride);

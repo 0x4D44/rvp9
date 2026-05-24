@@ -675,6 +675,17 @@ pub struct SimdDispatch {
     /// at the scalar reference.
     pub(crate) idct8x8_add: fn(input: &[i32; 64], dst: &mut [u8], stride: usize),
 
+    /// Task A — 8×8 inverse DCT + residual add for sparse blocks with
+    /// `eob <= 12` (top-left 4×4 sub-block non-zero). Signature mirrors
+    /// the scalar reference
+    /// [`crate::transforms::inverse::idct8x8_12_add`]. On x86_64 SSE2
+    /// CPUs this points at the safe wrapper
+    /// [`crate::dsp::x86_64::idct8x8_add_sse2_12`]; otherwise it points
+    /// at the scalar reference. The kernel exploits the eob-12 contract
+    /// (rows 4..7 of `input` are zero) and runs the row pass on 4 rows
+    /// instead of 8.
+    pub(crate) idct8x8_12_add: fn(input: &[i32; 64], dst: &mut [u8], stride: usize),
+
     /// G4.2 — 4×4 inverse DCT + residual add. Signature mirrors the
     /// scalar reference [`crate::transforms::inverse::idct4x4_16_add`].
     /// On x86_64 AVX2 CPUs this points at the safe wrapper
@@ -1222,6 +1233,21 @@ impl SimdDispatch {
             // name uniform.
             let _ = caps;
             scalar_idct8x8_add
+        };
+
+        // Task A — eob<=12 sparse 8×8 path. SSE2 (universal on x86_64)
+        // skips rows 4..7 of the 1-D row pass per the bitstream's
+        // eob-12 zero-tail contract; scalar elsewhere.
+        #[cfg(target_arch = "x86_64")]
+        let idct8x8_12_add: fn(&[i32; 64], &mut [u8], usize) = if caps.sse2 {
+            crate::dsp::x86_64::idct8x8_add_sse2_12
+        } else {
+            crate::transforms::inverse::idct8x8_12_add
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let idct8x8_12_add: fn(&[i32; 64], &mut [u8], usize) = {
+            let _ = caps;
+            crate::transforms::inverse::idct8x8_12_add
         };
 
         #[cfg(target_arch = "x86_64")]
@@ -1914,6 +1940,7 @@ impl SimdDispatch {
         Self {
             caps,
             idct8x8_add,
+            idct8x8_12_add,
             idct4x4_add,
             idct16x16_add,
             idct32x32_add,
@@ -1975,6 +2002,17 @@ impl SimdDispatch {
     #[must_use]
     pub fn idct8x8_add(&self) -> fn(&[i32; 64], &mut [u8], usize) {
         self.idct8x8_add
+    }
+
+    /// Dispatch the sparse 8×8 inverse-DCT + add kernel for the
+    /// `eob <= 12` bucket (Task A). Returns the installed function
+    /// pointer; the call site invokes it directly. The kernel exploits
+    /// the bitstream's eob-12 zero-tail contract — rows 4..7 of `input`
+    /// must be zero on entry.
+    #[inline]
+    #[must_use]
+    pub fn idct8x8_12_add(&self) -> fn(&[i32; 64], &mut [u8], usize) {
+        self.idct8x8_12_add
     }
 
     /// Dispatch the 4×4 inverse-DCT + add kernel (G4.2).
@@ -2575,6 +2613,51 @@ mod tests {
             d.idct8x8_add() as usize,
             scalar as usize,
             "avx2=false must install the scalar idct8x8_64_add"
+        );
+    }
+
+    /// Forcing `sse2 = false` falls back to the scalar reference for
+    /// the Task A idct8x8_12 sparse slot. See
+    /// `forced_scalar_caps_installs_scalar_idct8x8` for the miri-skip
+    /// rationale.
+    #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn forced_scalar_caps_installs_scalar_idct8x8_12() {
+        let mut caps = detect();
+        caps.sse2 = false;
+        let d = SimdDispatch::build(caps);
+        let scalar: fn(&[i32; 64], &mut [u8], usize) = crate::transforms::inverse::idct8x8_12_add;
+        assert_eq!(
+            d.idct8x8_12_add() as usize,
+            scalar as usize,
+            "sse2=false must install the scalar idct8x8_12_add"
+        );
+    }
+
+    /// Forcing `sse2 = true` installs the SSE2 wrapper for the Task A
+    /// idct8x8_12 sparse slot. SSE2 is universally present on x86_64,
+    /// so this is the production code path. See
+    /// `forced_scalar_caps_installs_scalar_idct8x8` for the miri-skip
+    /// rationale.
+    #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn sse2_caps_installs_sse2_idct8x8_12() {
+        let mut caps = detect();
+        caps.sse2 = true;
+        let d = SimdDispatch::build(caps);
+        let sse2: fn(&[i32; 64], &mut [u8], usize) = crate::dsp::x86_64::idct8x8_add_sse2_12;
+        let scalar: fn(&[i32; 64], &mut [u8], usize) = crate::transforms::inverse::idct8x8_12_add;
+        assert_eq!(
+            d.idct8x8_12_add() as usize,
+            sse2 as usize,
+            "sse2=true must install idct8x8_add_sse2_12"
+        );
+        assert_ne!(
+            d.idct8x8_12_add() as usize,
+            scalar as usize,
+            "sse2=true must not install the scalar idct8x8_12_add"
         );
     }
 
