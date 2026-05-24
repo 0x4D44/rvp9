@@ -1279,19 +1279,26 @@ impl SimdDispatch {
         let highbd_idct4x4_add: fn(&[i32; 16], &mut [u16], usize, u32) =
             scalar_highbd_idct4x4_add;
 
-        // Track-T T-4 first slice — `idct16x16_256_add` dispatch.
+        // Track-T T-4 Slice 1.5 — `idct16x16_256_add` dispatch FLIPPED.
         //
-        // The AVX2 arm keeps the existing i32-lane kernel UNCHANGED
-        // (today's production path). The new SSE2 i16-lane kernel
-        // (libvpx port `vpx_idct16x16_256_add_sse2`) is wired into the
-        // non-AVX2-but-SSE2 arm — a conservative initial rollout that
-        // installs the new code only on the (vanishingly small) cohort
-        // of x86_64 CPUs without AVX2. Slice 1.5 (next session) will
-        // flip the AVX2 arm to the SSE2 i16 kernel after bench A/B.
+        // The i16-lane SSE2 kernel (libvpx port `vpx_idct16x16_256_add_sse2`)
+        // is now the primary path on all x86_64 hosts with at least SSE2.
+        // The prior i32-lane AVX2 kernel was 2-4x slower per the libvpx
+        // comparison — i32 lanes pack 8 elements per ymm vs i16's 16 per
+        // ymm (or 8 per xmm), and the dense `_mm_madd_epi16` pipeline
+        // matches libvpx's hot path 1:1. See
+        // `wrk_docs/2026.05.24 - rvp9 vs libvpx decoder comparison.md`
+        // Finding 1 + `crates/rvp9-core/src/dsp/x86_64/idct16x16_sse2_256.rs`
+        // saturating-vs-modular note (i16 kernel uses `_mm_packs_epi32`
+        // saturation; agrees with modular wraplow on every real VP9
+        // bitstream and the 201-vector corpus — diverges only on
+        // synthetic adversarial inputs > i16::MAX, same trade libvpx
+        // makes).
+        //
+        // `idct16x16_add_avx2` is retained for the iht/EOB fast paths
+        // that depend on its row pass (see `iht16x16_avx2.rs`).
         #[cfg(target_arch = "x86_64")]
-        let idct16x16_add: fn(&[i32; 256], &mut [u8], usize) = if caps.avx2 {
-            crate::dsp::x86_64::idct16x16_add_avx2
-        } else if caps.sse2 {
+        let idct16x16_add: fn(&[i32; 256], &mut [u8], usize) = if caps.sse2 {
             crate::dsp::x86_64::idct16x16_add_sse2_256
         } else {
             scalar_idct16x16_add
