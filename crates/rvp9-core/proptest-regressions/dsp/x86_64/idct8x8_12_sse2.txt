@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 1da5d986d41e4231c6a65e4a98fcef9780c1d1937f98e5e8b7e61493a868cade # shrinks to rows = [[0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, -10484, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 15372, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, -14274, 0, 0]]
+cc 052f27d9c4bdb04a88619f7dacb39380ade1c3850bfe05262f3d6c54aaca015b # shrinks to input = [15539, 15575, 16047, -15974, 0, 0, 0, 0, 16177, -15478, 15000, 16176, 0, 0, 0, 0, 16180, 15066, 16331, -15306, 0, 0, 0, 0, -15976, -16369, 15165, 15146, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], dst_init = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]

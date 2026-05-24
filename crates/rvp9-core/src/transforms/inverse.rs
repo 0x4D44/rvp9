@@ -239,6 +239,61 @@ pub fn idct8x8_64_add(input: &[i32; 64], dest: &mut [u8], stride: usize) {
     }
 }
 
+/// 2D 12-coefficient inverse 8×8 DCT — sparse-block fast path.
+///
+/// Mirrors `vpx_idct8x8_12_add_c` (`vpx_dsp/inv_txfm.c:350-373`). When
+/// the caller knows `eob <= 12` the non-zero coefficients are confined
+/// to the top-left 4×4 sub-block of the input (raster order), so the
+/// row 1D pass only needs to run on the first 4 input rows; rows 4..8
+/// of the input are zero and would feed through `idct8` to produce
+/// all-zero intermediate rows. The column pass still runs all 8
+/// columns because rows 0..3 of the row-pass output are dense in
+/// every column.
+///
+/// **Caller contract** (mirrors libvpx): if used on a block whose true
+/// eob exceeds 12, coefficients at indices `>=` row 4 are silently
+/// ignored and the output diverges from the full kernel. Callers are
+/// responsible for the eob bucket gate.
+///
+/// Bit-exact equivalence: `idct8x8_12_add(input)` ≡
+/// `idct8x8_64_add(input_with_rows_4_7_zeroed)`.
+pub fn idct8x8_12_add(input: &[i32; 64], dest: &mut [u8], stride: usize) {
+    debug_assert!(dest.len() >= stride * 7 + 8, "dest too small for 8x8 add");
+
+    // Intermediate buffer — rows 4..8 stay zero because the
+    // corresponding input rows are assumed zero (caller contract).
+    let mut intermediate = [0i32; 64];
+
+    // Row pass — first 4 rows only.
+    for r in 0..4 {
+        let row_in: &[i32; 8] = input[r * 8..r * 8 + 8].try_into().unwrap();
+        let row_out_mut: &mut [i32; 8] = (&mut intermediate[r * 8..r * 8 + 8])
+            .try_into()
+            .unwrap();
+        idct8(row_in, row_out_mut);
+    }
+
+    // Column pass + residual add (ROUND_POWER_OF_TWO with shift 5).
+    for c in 0..8 {
+        let col_in: [i32; 8] = [
+            intermediate[c],
+            intermediate[8 + c],
+            intermediate[16 + c],
+            intermediate[24 + c],
+            intermediate[32 + c],
+            intermediate[40 + c],
+            intermediate[48 + c],
+            intermediate[56 + c],
+        ];
+        let mut col_out = [0i32; 8];
+        idct8(&col_in, &mut col_out);
+        for r in 0..8 {
+            let shifted = (col_out[r] as i64 + 16) >> 5;
+            dest[r * stride + c] = clip_pixel_add(dest[r * stride + c], shifted);
+        }
+    }
+}
+
 /// 2D 1-coefficient inverse 8×8 DCT (DC-only fast path).
 ///
 /// `input` is `coeffs[0]`; the remaining 63 coefficients are assumed
@@ -1855,6 +1910,44 @@ mod tests {
         assert_eq!(
             dest_full, dest_dc,
             "DC-only fast path must match full path for DC-only input"
+        );
+    }
+
+    /// `idct8x8_12_add(input)` ≡ `idct8x8_64_add(input_with_rows_4_7_zeroed)`.
+    /// Directed input: 12 non-zero coefficients in the top-left 4×4
+    /// sub-block (eob=12 boundary), plus pre-existing dst content so
+    /// the residual-add path is exercised non-trivially.
+    #[test]
+    fn idct8x8_12_add_matches_64_add_with_rows_4_7_zeroed() {
+        let mut input_12 = [0i32; 64];
+        // Plant a non-trivial pattern in the top-left 4×4 corner. Use
+        // i14-range magnitudes so intermediates fit in i16 (no wraplow
+        // / saturation divergence — both paths are pure scalar here so
+        // they'd agree regardless, but staying in-bounds keeps the
+        // fixture realistic).
+        let corner: [i32; 16] = [
+            1024, -512, 256, -128,
+            512, -256, 128, 64,
+            -384, 192, -96, 48,
+            256, -128, 64, 32,
+        ];
+        for (i, &v) in corner.iter().enumerate() {
+            let r = i / 4;
+            let c = i % 4;
+            input_12[r * 8 + c] = v;
+        }
+        // Reference: input with rows 4..7 zeroed AND cols 4..7 of rows
+        // 0..3 zeroed (the libvpx eob<=12 contract restricts the input
+        // to the 4×4 corner; the kernel doesn't even read cols 4..7 of
+        // rows 0..3).
+        let input_ref = input_12;
+        let mut dest_12 = [50u8; 64];
+        let mut dest_ref = [50u8; 64];
+        idct8x8_12_add(&input_12, &mut dest_12, 8);
+        idct8x8_64_add(&input_ref, &mut dest_ref, 8);
+        assert_eq!(
+            dest_12, dest_ref,
+            "idct8x8_12_add must equal idct8x8_64_add for eob<=12 inputs"
         );
     }
 
