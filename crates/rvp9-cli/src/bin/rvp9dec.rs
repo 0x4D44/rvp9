@@ -252,6 +252,12 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
     };
     let mut shown: usize = 0; // displayed frames seen
     let mut emitted: usize = 0; // displayed frames written/limited
+    let mut frames_in: usize = 0; // decoded frames (= vpxdec's frame_in)
+    // Accumulated microseconds spent strictly inside `decode_frame`.
+    // Matches vpxdec's `dx_time` measurement scope (the decode call only;
+    // not packet parsing, not pixel output). u128 has effectively unlimited
+    // headroom — a u64 us counter holds ~584,000 years.
+    let mut dx_time_us: u128 = 0;
     let mut y4m_header_written = false;
 
     for range in &packets {
@@ -265,9 +271,11 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
                     frame.header.kind,
                     rvp9_core::bitstream::FrameKind::ShowExistingFrame { .. }
                 );
-            let buf = decoder
-                .decode_frame(&frame)
-                .map_err(|e| format!("decode_frame: {e:?}"))?;
+            let t0 = std::time::Instant::now();
+            let decode_result = decoder.decode_frame(&frame);
+            dx_time_us += t0.elapsed().as_micros();
+            let buf = decode_result.map_err(|e| format!("decode_frame: {e:?}"))?;
+            frames_in += 1;
             if !is_shown {
                 continue;
             }
@@ -317,7 +325,24 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
         w.flush().map_err(io_err)?;
     }
     if opts.summary {
-        eprintln!("rvp9dec: decoded {shown} displayed frame(s), emitted {emitted}");
+        // Match vpxdec's `show_progress` format (printed to stderr):
+        //   "<frame_in> decoded frames/<frame_out> showed frames in <us> us (<fps> fps)"
+        // — frame_in counts every frame fed to the decoder (incl. hidden /
+        //   show_existing_frame), frame_out counts displayed frames. fps is
+        //   derived from displayed frames over decode-call wall time.
+        // Guard against div-by-zero on empty inputs.
+        let fps = if dx_time_us == 0 {
+            0.0
+        } else {
+            (shown as f64) * 1_000_000.0 / (dx_time_us as f64)
+        };
+        eprintln!(
+            "{frames_in} decoded frames/{shown} showed frames in {dx_time_us} us ({fps:.2} fps)"
+        );
+        // Note: `emitted` (displayed frames actually written, after --skip /
+        // --limit) is intentionally omitted to stay byte-compatible with
+        // vpxdec's summary line. Callers wanting that figure can count
+        // output frames externally.
     }
     Ok(())
 }
