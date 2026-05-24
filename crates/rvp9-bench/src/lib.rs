@@ -81,6 +81,7 @@ impl Stats {
     }
 }
 
+pub mod mwu;
 pub mod throughput;
 
 //

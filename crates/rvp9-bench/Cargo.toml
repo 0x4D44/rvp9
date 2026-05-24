@@ -39,6 +39,10 @@ name = "decode-headtohead"
 path = "src/bin/decode-headtohead.rs"
 
 [[bin]]
+name = "bench-compare"
+path = "src/bin/bench-compare.rs"
+
+[[bin]]
 name = "soak"
 path = "src/bin/soak.rs"
 

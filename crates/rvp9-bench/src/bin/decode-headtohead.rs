@@ -14,20 +14,24 @@
 //! library; it does NOT shell out to the CLI subprocess. Q.1.A is not
 //! blocked on Q.1.B.
 //!
-//! # Output schema (TSV — intermediate, schema v1)
+//! # Output schema (TSV — intermediate, schema v2)
 //!
 //! This TSV is the rvp9-side intermediate that the PowerShell
 //! orchestrator consumes; the final committed ledger
-//! (`bench/results/decode-headtohead.csv`, schema v2) is produced by
+//! (`bench/results/decode-headtohead.csv`, schema v3) is produced by
 //! that orchestrator after joining with vpxdec wall-times. The two
 //! schemas are versioned independently.
 //!
-//! Header line: `# rvp9-headtohead schema=1 host=<fp> build=<hash>`
-//! Then tab-separated columns:
+//! Header line: `# rvp9-headtohead schema=2 host=<fp> build=<hash>
+//!   run_index=<N>`. The `run_index` field is 1-based and is propagated
+//! to every data row so the orchestrator can stamp it into the CSV
+//! when running N-run sweeps for statistical comparison (Task C).
+//!
+//! Tab-separated columns:
 //!
 //! ```text
 //! label\tfixture_path\tthreads\twidth\theight\ttimed_frames\
-//!   \tp50_us\tmean_us\tp95_us\tp99_us
+//!   \tp50_us\tmean_us\tp95_us\tp99_us\trun_index
 //! ```
 //!
 //! Tabs (not commas) so fixture paths with spaces survive the join
@@ -37,10 +41,13 @@
 //!
 //! ```text
 //! decode-headtohead [--out <tsv>] [--warmup N] [--min-timed N]
+//!                   [--run-index N]
 //!                   --row <label>=<path>:<threads> [--row ...]
 //! ```
 //!
-//! With no `--row` flags the built-in default matrix runs (HLD §5).
+//! `--run-index` defaults to 1 (single-run behaviour identical to
+//! schema v1). With no `--row` flags the built-in default matrix runs
+//! (HLD §5).
 
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -68,6 +75,10 @@ struct Args {
     out: PathBuf,
     warmup: usize,
     min_timed: usize,
+    /// 1-based run index. Stamped into the TSV header and into every
+    /// row so N-run sweeps can attribute samples back to their iteration
+    /// downstream (CSV schema v3).
+    run_index: u32,
     rows: Vec<Row>,
 }
 
@@ -196,6 +207,11 @@ fn parse_args() -> Args {
     let min_timed = get("--min-timed")
         .and_then(|s| s.parse().ok())
         .unwrap_or(MIN_TIMED_FRAMES);
+    let run_index: u32 = get("--run-index").and_then(|s| s.parse().ok()).unwrap_or(1);
+    if run_index == 0 {
+        eprintln!("error: --run-index must be >= 1 (1-based)");
+        std::process::exit(2);
+    }
 
     let row_specs = get_all("--row");
     let rows: Vec<Row> = if row_specs.is_empty() {
@@ -218,22 +234,23 @@ fn parse_args() -> Args {
         out,
         warmup,
         min_timed,
+        run_index,
         rows,
     }
 }
 
-fn write_tsv_header(buf: &mut String, host: &str, build_hash: &str) {
+fn write_tsv_header(buf: &mut String, host: &str, build_hash: &str, run_index: u32) {
     buf.push_str(&format!(
-        "# rvp9-headtohead schema=1 host={host} build={build_hash}\n"
+        "# rvp9-headtohead schema=2 host={host} build={build_hash} run_index={run_index}\n"
     ));
     buf.push_str(
-        "label\tfixture_path\tthreads\twidth\theight\ttimed_frames\tp50_us\tmean_us\tp95_us\tp99_us\n",
+        "label\tfixture_path\tthreads\twidth\theight\ttimed_frames\tp50_us\tmean_us\tp95_us\tp99_us\trun_index\n",
     );
 }
 
-fn write_tsv_row(buf: &mut String, row: &Row, r: &FixtureResult) {
+fn write_tsv_row(buf: &mut String, row: &Row, r: &FixtureResult, run_index: u32) {
     buf.push_str(&format!(
-        "{label}\t{path}\t{th}\t{w}\t{h}\t{n}\t{p50:.3}\t{mean:.3}\t{p95:.3}\t{p99:.3}\n",
+        "{label}\t{path}\t{th}\t{w}\t{h}\t{n}\t{p50:.3}\t{mean:.3}\t{p95:.3}\t{p99:.3}\t{ri}\n",
         label = row.label,
         path = row.path.display(),
         th = row.threads.get(),
@@ -244,6 +261,7 @@ fn write_tsv_row(buf: &mut String, row: &Row, r: &FixtureResult) {
         mean = r.stats.mean,
         p95 = r.stats.p95,
         p99 = r.stats.p99,
+        ri = run_index,
     ));
 }
 
@@ -258,11 +276,12 @@ fn main() {
     println!("  out:        {}", args.out.display());
     println!("  warmup:     {} frames/row", args.warmup);
     println!("  min timed:  {} frames/row", args.min_timed);
+    println!("  run index:  {}", args.run_index);
     println!("  rows:       {}", args.rows.len());
     println!();
 
     let mut buf = String::new();
-    write_tsv_header(&mut buf, &host, &bph);
+    write_tsv_header(&mut buf, &host, &bph, args.run_index);
 
     let mut had_error = false;
     let mut measured: usize = 0;
@@ -289,7 +308,7 @@ fn main() {
                     p95 = r.stats.p95,
                     p99 = r.stats.p99,
                 );
-                write_tsv_row(&mut buf, row, &r);
+                write_tsv_row(&mut buf, row, &r, args.run_index);
                 measured += 1;
             }
             Err(e) => {

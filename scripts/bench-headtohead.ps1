@@ -18,15 +18,30 @@
 # ledger with `unpinned=true` and gate column is `PASS-info`/`FAIL-info`.
 #
 # Usage:
-#   pwsh scripts/bench-headtohead.ps1                # full default matrix
+#   pwsh scripts/bench-headtohead.ps1                # full default matrix, 1 run
 #   pwsh scripts/bench-headtohead.ps1 -SkipEncode    # assume C/D/E exist
 #   pwsh scripts/bench-headtohead.ps1 -Repetitions 3 # quicker vpxdec pass
+#   pwsh scripts/bench-headtohead.ps1 -Runs 5        # 5 rvp9 sweeps for stats
+#   pwsh scripts/bench-headtohead.ps1 -Runs 5 -SkipVpxdec  # only rvp9 (faster)
+#
+# Task C (statistical bench framework): -Runs N produces N CSV rows per
+# (fixture, threads) pair, all sharing the same $sweepTimestamp so they
+# can be paired with `bench-compare --baseline <ts1> --candidate <ts2>`.
+# -SkipVpxdec leaves the vpxdec_* and ratio_mean columns empty — useful
+# when measuring rvp9-only deltas (vpxdec is the same reference; you
+# only need one sweep of it per session).
 
 param(
     [int] $Repetitions = 9,
+    [int] $Runs = 1,
     [switch] $SkipEncode,
-    [switch] $SkipRvp9Bench
+    [switch] $SkipRvp9Bench,
+    [switch] $SkipVpxdec
 )
+
+if ($Runs -lt 1) {
+    throw "-Runs must be >= 1 (got $Runs)"
+}
 
 $ErrorActionPreference = 'Stop'
 $repo = (git rev-parse --show-toplevel).Trim()
@@ -98,29 +113,47 @@ if (-not $SkipEncode) {
     Write-Host "[encode] -SkipEncode set; not encoding C/D/E"
 }
 
-# --- Step 2: run rvp9 bench ---------------------------------------------
-if (-not $SkipRvp9Bench) {
-    Write-Host ""
-    Write-Host "[rvp9] running decode-headtohead..."
-    & $rvp9bench --out $rvp9Tsv
-    if ($LASTEXITCODE -ne 0) {
-        throw "rvp9 bench failed (exit $LASTEXITCODE)"
+# --- Step 2: run rvp9 bench (N times when -Runs > 1) --------------------
+# Each iteration writes the TSV to a per-run path so we don't clobber
+# samples; the parser below reads them all back. The orchestrator
+# captures ONE timestamp at script start ($sweepTimestamp, used for
+# every CSV row this invocation appends — N rows per fixture×threads).
+$sweepTimestamp = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+$rvp9TsvPaths = @()
+for ($i = 1; $i -le $Runs; $i++) {
+    $perRunTsv = if ($Runs -gt 1) {
+        Join-Path $benchOut "decode-headtohead.rvp9.r$i.tsv"
+    } else {
+        # Single-run: keep the historical path for backwards compat
+        # (some external tools / smoke checks rely on this name).
+        $rvp9Tsv
     }
-} else {
-    Write-Host "[rvp9] -SkipRvp9Bench set; assuming $rvp9Tsv up to date"
-}
-if (-not (Test-Path $rvp9Tsv)) {
-    throw "rvp9 TSV missing at $rvp9Tsv — cannot continue"
+    $rvp9TsvPaths += $perRunTsv
+    if (-not $SkipRvp9Bench) {
+        Write-Host ""
+        Write-Host "[rvp9] running decode-headtohead (run $i / $Runs)..."
+        & $rvp9bench --out $perRunTsv --run-index $i
+        if ($LASTEXITCODE -ne 0) {
+            throw "rvp9 bench failed (exit $LASTEXITCODE) on run $i"
+        }
+    } else {
+        Write-Host "[rvp9] -SkipRvp9Bench set; assuming $perRunTsv up to date (run $i)"
+    }
+    if (-not (Test-Path $perRunTsv)) {
+        throw "rvp9 TSV missing at $perRunTsv — cannot continue"
+    }
 }
 
 # --- Step 3: vpxdec wall-time matrix ------------------------------------
 # Pre-load each unique fixture into the OS page cache so the first
 # vpxdec invocation doesn't pay disk-IO cost (HLD §3 step 1).
 $uniqueFixtures = $matrix.Path | Sort-Object -Unique
-foreach ($f in $uniqueFixtures) {
-    if (Test-Path $f) {
-        Write-Host "[prefetch] $f"
-        $null = [System.IO.File]::ReadAllBytes($f)
+if (-not $SkipVpxdec) {
+    foreach ($f in $uniqueFixtures) {
+        if (Test-Path $f) {
+            Write-Host "[prefetch] $f"
+            $null = [System.IO.File]::ReadAllBytes($f)
+        }
     }
 }
 
@@ -161,77 +194,98 @@ function Measure-Median {
     }
 }
 
-Write-Host ""
-Write-Host "[vpxdec] running R=$Repetitions reps over $($matrix.Count) rows..."
-$vpxResults = @{}  # key="label|threads" => @{ MeanUs=...; Frames=...; Reps=... }
-foreach ($row in $matrix) {
-    $key = "$($row.Label)|$($row.Threads)"
-    if (-not (Test-Path $row.Path)) {
-        Write-Warning "[vpxdec] $($row.Label) t=$($row.Threads): fixture missing $($row.Path) — skipping"
-        $vpxResults[$key] = @{ Missing=$true }
-        continue
+$vpxResults = @{}  # key="label|threads" => @{ MeanUs=...; Frames=...; Reps=...; Missing=... }
+if ($SkipVpxdec) {
+    Write-Host ""
+    Write-Host "[vpxdec] -SkipVpxdec set; leaving vpxdec_* and ratio_mean columns empty"
+    foreach ($row in $matrix) {
+        $key = "$($row.Label)|$($row.Threads)"
+        $vpxResults[$key] = @{ Skipped=$true }
     }
-    Write-Host "  [vpxdec] $($row.Label) t=$($row.Threads)"
-    $perFrameSamples = @()
-    $lastFrames = 0
-    for ($i = 0; $i -lt $Repetitions; $i++) {
-        $r = Invoke-Vpxdec -Fixture $row.Path -Threads $row.Threads
-        if ($r.DecodedFrames -lt 1) {
-            Write-Warning "  rep ${i}: zero decoded frames — skipping"
+} else {
+    Write-Host ""
+    Write-Host "[vpxdec] running R=$Repetitions reps over $($matrix.Count) rows..."
+    foreach ($row in $matrix) {
+        $key = "$($row.Label)|$($row.Threads)"
+        if (-not (Test-Path $row.Path)) {
+            Write-Warning "[vpxdec] $($row.Label) t=$($row.Threads): fixture missing $($row.Path) — skipping"
+            $vpxResults[$key] = @{ Missing=$true }
             continue
         }
-        $lastFrames = $r.DecodedFrames
-        $perFrameSamples += [double] $r.TotalUs / [double] $r.DecodedFrames
+        Write-Host "  [vpxdec] $($row.Label) t=$($row.Threads)"
+        $perFrameSamples = @()
+        $lastFrames = 0
+        for ($i = 0; $i -lt $Repetitions; $i++) {
+            $r = Invoke-Vpxdec -Fixture $row.Path -Threads $row.Threads
+            if ($r.DecodedFrames -lt 1) {
+                Write-Warning "  rep ${i}: zero decoded frames — skipping"
+                continue
+            }
+            $lastFrames = $r.DecodedFrames
+            $perFrameSamples += [double] $r.TotalUs / [double] $r.DecodedFrames
+        }
+        if ($perFrameSamples.Count -eq 0) {
+            Write-Warning "[vpxdec] $key produced no samples"
+            $vpxResults[$key] = @{ Missing=$true }
+            continue
+        }
+        $median = Measure-Median -Values $perFrameSamples
+        $vpxResults[$key] = @{
+            MeanUs = $median
+            Frames = $lastFrames
+            Reps   = $perFrameSamples.Count
+            Missing = $false
+        }
+        Write-Host ("    median per-frame mean: {0:F1} us across {1} reps ({2} frames)" -f $median, $perFrameSamples.Count, $lastFrames)
     }
-    if ($perFrameSamples.Count -eq 0) {
-        Write-Warning "[vpxdec] $key produced no samples"
-        $vpxResults[$key] = @{ Missing=$true }
-        continue
-    }
-    $median = Measure-Median -Values $perFrameSamples
-    $vpxResults[$key] = @{
-        MeanUs = $median
-        Frames = $lastFrames
-        Reps   = $perFrameSamples.Count
-        Missing = $false
-    }
-    Write-Host ("    median per-frame mean: {0:F1} us across {1} reps ({2} frames)" -f $median, $perFrameSamples.Count, $lastFrames)
 }
 
-# --- Step 4: parse rvp9 TSV ---------------------------------------------
-$rvp9Rows = @{}     # key="label|threads" => @{ P50; Mean; Width; Height; TimedFrames }
+# --- Step 4: parse rvp9 TSV(s) ------------------------------------------
+# Keyed by "label|threads|runIndex"; the markdown summary below uses the
+# last-run entry, while the CSV emitter walks every entry.
+$rvp9Rows = @{}
 $rvp9Header = @{}
-foreach ($line in Get-Content -LiteralPath $rvp9Tsv) {
-    if ($line.StartsWith('# ')) {
-        # `# rvp9-headtohead schema=1 host=... build=...`
-        foreach ($kv in ($line.Substring(2) -split '\s+')) {
-            if ($kv.Contains('=')) {
-                $parts = $kv -split '=', 2
-                $rvp9Header[$parts[0]] = $parts[1]
+foreach ($tsvPath in $rvp9TsvPaths) {
+    foreach ($line in Get-Content -LiteralPath $tsvPath) {
+        if ($line.StartsWith('# ')) {
+            # `# rvp9-headtohead schema=2 host=... build=... run_index=N`
+            foreach ($kv in ($line.Substring(2) -split '\s+')) {
+                if ($kv.Contains('=')) {
+                    $parts = $kv -split '=', 2
+                    $rvp9Header[$parts[0]] = $parts[1]
+                }
             }
+            continue
         }
-        continue
-    }
-    if ($line.StartsWith('label')) { continue }  # column header
-    if ([string]::IsNullOrWhiteSpace($line)) { continue }
-    $cols = $line -split "`t"
-    if ($cols.Count -lt 10) { continue }
-    $key = "$($cols[0])|$($cols[2])"
-    $rvp9Rows[$key] = @{
-        Label       = $cols[0]
-        Path        = $cols[1]
-        Threads     = [int] $cols[2]
-        Width       = [int] $cols[3]
-        Height      = [int] $cols[4]
-        TimedFrames = [int] $cols[5]
-        P50         = [double] $cols[6]
-        Mean        = [double] $cols[7]
-        P95         = [double] $cols[8]
-        P99         = [double] $cols[9]
+        if ($line.StartsWith('label')) { continue }  # column header
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $cols = $line -split "`t"
+        # Schema v2 = 11 columns (added run_index); v1 = 10 (run_index
+        # implied 1). Both accepted so this script can re-parse an old
+        # TSV during the v2 rollout if -SkipRvp9Bench is set.
+        if ($cols.Count -lt 10) { continue }
+        $runIdx = if ($cols.Count -ge 11) { [int] $cols[10] } else { 1 }
+        $key = "$($cols[0])|$($cols[2])|$runIdx"
+        $rvp9Rows[$key] = @{
+            Label       = $cols[0]
+            Path        = $cols[1]
+            Threads     = [int] $cols[2]
+            Width       = [int] $cols[3]
+            Height      = [int] $cols[4]
+            TimedFrames = [int] $cols[5]
+            P50         = [double] $cols[6]
+            Mean        = [double] $cols[7]
+            P95         = [double] $cols[8]
+            P99         = [double] $cols[9]
+            RunIndex    = $runIdx
+        }
     }
 }
 
 # --- Step 5: write ledger.md + append ledger.csv ------------------------
+# Display timestamp (human-readable in .md); the CSV uses $sweepTimestamp
+# captured at script start so every row in this invocation shares the
+# same Unix-seconds value.
 $timestamp = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ" -AsUTC)
 $gitSha    = (git rev-parse --short HEAD).Trim()
 # vpxdec has no `--version`; the version banner prints on -v when given
@@ -254,6 +308,7 @@ $md += ""
 $md += "host: $hostFp  unpinned  build: release ($buildFp)"
 $md += "rvp9: $gitSha  vpxdec: $vpxVer ($vpxdec)"
 $md += "reps: R=$Repetitions per vpxdec row (median); rvp9 timing window per HLD §3"
+$md += "rvp9 runs: $Runs (summary row = run 1; CSV ledger captures all runs)"
 $md += ""
 $md += 'note: vpxdec value is per-frame mean from `vpxdec --noblit --summary -t N`,'
 $md += '      including construction/teardown overhead (negligible on >=1000-frame'
@@ -269,52 +324,98 @@ $md += ""
 $md += "| fixture            | res        | tiles | threads | rvp9 p50 us | rvp9 mean us | vpxdec mean us | ratio (rvp9/vpx) | budget us | gate        |"
 $md += "|--------------------|------------|-------|---------|-------------|--------------|----------------|------------------|-----------|-------------|"
 
-# Schema-v2 CSV columns (additive vs decode-throughput schema-v1).
+# Schema-v3 CSV columns: schema v3 inserts `run_index` between `git_sha`
+# and `fixture`. Old schema-v2 rows in the file are left untouched
+# (append-only ledger).
 $csvLines = @()
 $csvNeedsHeader = -not (Test-Path $ledgerCsv)
 if ($csvNeedsHeader) {
-    $csvLines += "schema_version,timestamp,host,unpinned,build_hash,git_sha,fixture,threads,width,height,timed_frames,rvp9_p50_us,rvp9_mean_us,rvp9_p95_us,rvp9_p99_us,vpxdec_mean_us,vpxdec_reps,vpxdec_frames,ratio_mean,budget_us,gate"
+    $csvLines += "schema_version,timestamp,host,unpinned,build_hash,git_sha,run_index,fixture,threads,width,height,timed_frames,rvp9_p50_us,rvp9_mean_us,rvp9_p95_us,rvp9_p99_us,vpxdec_mean_us,vpxdec_reps,vpxdec_frames,ratio_mean,budget_us,gate"
 }
-$tsUnix = [int][double]::Parse((Get-Date -UFormat %s))
+$tsUnix = $sweepTimestamp
+
+# Markdown summary uses run 1 for the at-a-glance view (first sweep —
+# most representative if -Runs N > 1; deeper analysis goes through
+# `bench-compare`).
+$summaryRunIndex = 1
 
 foreach ($row in $matrix) {
-    $key = "$($row.Label)|$($row.Threads)"
-    $rvp9 = $rvp9Rows[$key]
-    $vpx  = $vpxResults[$key]
-
+    $vpx  = $vpxResults["$($row.Label)|$($row.Threads)"]
     $resCol = $row.Res
     $tilesCol = $row.Tiles
     $threadsCol = $row.Threads
 
-    # Defensive: row missing from either side?
-    if (-not $rvp9 -or -not $vpx -or $vpx.Missing) {
-        $md += "| {0,-18} | {1,-10} | {2,5} | {3,7} | MISSING     | MISSING      | MISSING        | -                | {4,9} | MISSING     |" -f `
-            $row.Label, $resCol, $tilesCol, $threadsCol, ($(if ($null -eq $row.Budget) { '-' } else { $row.Budget }))
-        $csvLines += "2,$tsUnix,$hostFp,true,$buildFp,$gitSha,$($row.Label),$($row.Threads),0,0,0,,,,,,,0,,$($row.Budget),MISSING"
-        continue
-    }
-
-    $ratio = $rvp9.Mean / $vpx.MeanUs
-    $resCol = "$($rvp9.Width)x$($rvp9.Height)"
-    if ($null -ne $row.Budget) {
-        if ($rvp9.Mean -le $row.Budget) {
-            $gate = 'PASS-info'
-        } else {
-            $gate = 'FAIL-info'
-        }
-        $budgetCol = $row.Budget
+    # --- Markdown summary (run 1) ---
+    $summaryKey = "$($row.Label)|$($row.Threads)|$summaryRunIndex"
+    $rvp9Summary = $rvp9Rows[$summaryKey]
+    if (-not $rvp9Summary -or -not $vpx -or $vpx.Missing) {
+        if ($null -eq $row.Budget) { $budgetDisp = '-' } else { $budgetDisp = $row.Budget }
+        # Suppress vpxdec-MISSING noise in the .md when the user has
+        # intentionally skipped that side.
+        $vpxCell = if ($vpx -and $vpx.Skipped) { 'SKIPPED' } else { 'MISSING' }
+        $ratioCell = if ($vpx -and $vpx.Skipped) { '-' } else { '-' }
+        $gateCell = if ($vpx -and $vpx.Skipped) { 'rvp9-only' } else { 'MISSING' }
+        $rvp9P50 = if ($rvp9Summary) { ("{0,11:F1}" -f $rvp9Summary.P50) } else { 'MISSING    ' }
+        $rvp9Mean = if ($rvp9Summary) { ("{0,12:F1}" -f $rvp9Summary.Mean) } else { 'MISSING     ' }
+        $md += "| {0,-18} | {1,-10} | {2,5} | {3,7} | $rvp9P50 | $rvp9Mean | {4,14} | {5,16} | {6,9} | {7,-11} |" -f `
+            $row.Label, $resCol, $tilesCol, $threadsCol, $vpxCell, $ratioCell, $budgetDisp, $gateCell
     } else {
-        $gate = 'n/a'
-        $budgetCol = '-'
+        $ratio = $rvp9Summary.Mean / $vpx.MeanUs
+        $resCol = "$($rvp9Summary.Width)x$($rvp9Summary.Height)"
+        if ($null -ne $row.Budget) {
+            if ($rvp9Summary.Mean -le $row.Budget) {
+                $gate = 'PASS-info'
+            } else {
+                $gate = 'FAIL-info'
+            }
+            $budgetCol = $row.Budget
+        } else {
+            $gate = 'n/a'
+            $budgetCol = '-'
+        }
+        $md += "| {0,-18} | {1,-10} | {2,5} | {3,7} | {4,11:F1} | {5,12:F1} | {6,14:F1} | {7,16:F2} | {8,9} | {9,-11} |" -f `
+            $row.Label, $resCol, $tilesCol, $threadsCol, $rvp9Summary.P50, $rvp9Summary.Mean, $vpx.MeanUs, $ratio, $budgetCol, $gate
     }
 
-    $md += "| {0,-18} | {1,-10} | {2,5} | {3,7} | {4,11:F1} | {5,12:F1} | {6,14:F1} | {7,16:F2} | {8,9} | {9,-11} |" -f `
-        $row.Label, $resCol, $tilesCol, $threadsCol, $rvp9.P50, $rvp9.Mean, $vpx.MeanUs, $ratio, $budgetCol, $gate
+    # --- CSV emit (one row per (matrix-row, run_index) pair) ---
+    for ($ri = 1; $ri -le $Runs; $ri++) {
+        $key = "$($row.Label)|$($row.Threads)|$ri"
+        $rvp9 = $rvp9Rows[$key]
+        $budgetCell = if ($null -eq $row.Budget) { '' } else { $row.Budget }
 
-    $budgetCell = if ($null -eq $row.Budget) { '' } else { $row.Budget }
-    $csvLines += ("2,{0},{1},true,{2},{3},{4},{5},{6},{7},{8},{9:F3},{10:F3},{11:F3},{12:F3},{13:F3},{14},{15},{16:F4},{17},{18}" -f `
-        $tsUnix, $hostFp, $buildFp, $gitSha, $row.Label, $row.Threads, $rvp9.Width, $rvp9.Height, $rvp9.TimedFrames, `
-        $rvp9.P50, $rvp9.Mean, $rvp9.P95, $rvp9.P99, $vpx.MeanUs, $vpx.Reps, $vpx.Frames, $ratio, $budgetCell, $gate)
+        # Defensive: rvp9 row missing for this run? Emit a MISSING row
+        # so the CSV reflects the attempt rather than silently dropping.
+        if (-not $rvp9) {
+            $csvLines += "3,$tsUnix,$hostFp,true,$buildFp,$gitSha,$ri,$($row.Label),$($row.Threads),0,0,0,,,,,,,0,,$($row.Budget),MISSING"
+            continue
+        }
+
+        if ($vpx -and $vpx.Skipped) {
+            # -SkipVpxdec: leave vpxdec_* and ratio_mean blank. Gate is
+            # informational only ("rvp9-only").
+            $csvLines += ("3,{0},{1},true,{2},{3},{4},{5},{6},{7},{8},{9},{10:F3},{11:F3},{12:F3},{13:F3},,,,,{14},rvp9-only" -f `
+                $tsUnix, $hostFp, $buildFp, $gitSha, $ri, $row.Label, $row.Threads, $rvp9.Width, $rvp9.Height, $rvp9.TimedFrames, `
+                $rvp9.P50, $rvp9.Mean, $rvp9.P95, $rvp9.P99, $budgetCell)
+            continue
+        }
+
+        if (-not $vpx -or $vpx.Missing) {
+            $csvLines += ("3,{0},{1},true,{2},{3},{4},{5},{6},{7},{8},{9},{10:F3},{11:F3},{12:F3},{13:F3},,,,,{14},MISSING" -f `
+                $tsUnix, $hostFp, $buildFp, $gitSha, $ri, $row.Label, $row.Threads, $rvp9.Width, $rvp9.Height, $rvp9.TimedFrames, `
+                $rvp9.P50, $rvp9.Mean, $rvp9.P95, $rvp9.P99, $budgetCell)
+            continue
+        }
+
+        $ratio = $rvp9.Mean / $vpx.MeanUs
+        if ($null -ne $row.Budget) {
+            $gate = if ($rvp9.Mean -le $row.Budget) { 'PASS-info' } else { 'FAIL-info' }
+        } else {
+            $gate = 'n/a'
+        }
+        $csvLines += ("3,{0},{1},true,{2},{3},{4},{5},{6},{7},{8},{9},{10:F3},{11:F3},{12:F3},{13:F3},{14:F3},{15},{16},{17:F4},{18},{19}" -f `
+            $tsUnix, $hostFp, $buildFp, $gitSha, $ri, $row.Label, $row.Threads, $rvp9.Width, $rvp9.Height, $rvp9.TimedFrames, `
+            $rvp9.P50, $rvp9.Mean, $rvp9.P95, $rvp9.P99, $vpx.MeanUs, $vpx.Reps, $vpx.Frames, $ratio, $budgetCell, $gate)
+    }
 }
 
 # Methodology footer.
@@ -333,6 +434,17 @@ $md += '- Ratio is rvp9 mean / vpxdec mean (mean-to-mean, apples to apples'
 $md += '  with vpxdec which has no per-frame surface).'
 $md += '- Gate is informational on unpinned hosts; pinned-host promotion'
 $md += '  deferred to the dedicated Linux CI runner (HLD §1 + §6).'
+if ($Runs -gt 1) {
+    $md += "- Multi-run sweep: -Runs $Runs. The summary table above shows"
+    $md += "  run 1 only; the CSV ledger contains all $Runs rows per"
+    $md += "  fixture×threads (same `timestamp`, `run_index`=1..$Runs)."
+    $md += '  Pair with `bench-compare --baseline <ts1> --candidate <ts2>`'
+    $md += '  for Mann-Whitney U significance against a previous sweep.'
+}
+if ($SkipVpxdec) {
+    $md += '- vpxdec sweep skipped (-SkipVpxdec); vpxdec_* and'
+    $md += '  ratio_mean columns blank in the CSV for this timestamp.'
+}
 
 Set-Content -LiteralPath $ledgerMd -Value ($md -join "`r`n") -Encoding utf8
 Add-Content -LiteralPath $ledgerCsv -Value $csvLines -Encoding utf8
