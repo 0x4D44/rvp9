@@ -91,9 +91,13 @@ use crate::bitstream::frame::InterpFilter;
 use crate::bitstream::header::FrameKind;
 use crate::block::BlockSize;
 use crate::cost::mv_cost::{MvCosts, mv_cost};
-use crate::cost::{FrameTypeForRd, InterModeCosts, compute_rd_mult};
+use crate::cost::{FrameTypeForRd, InterModeCosts, compute_rd_mult, get_intra_cost_penalty};
 use crate::entropy::default_probs::INTER_MODE_CONTEXTS;
 use crate::inter::filter::{FILTER_TAPS, kernel_for};
+use crate::intra_pred::{
+    ABOVE_UNAVAILABLE_FILL, DcAvailability, IntraMode, LEFT_UNAVAILABLE_FILL, PredCtx,
+    intra_predict,
+};
 use crate::mode_decision::block_yrd::{
     BlockYrdResult, block_error_fp_i32, satd_i16,
 };
@@ -115,6 +119,7 @@ use crate::transforms::inverse::{idct8x8_64_add, idct16x16_256_add, idct32x32_10
 use crate::transforms::scans::scan_for;
 use crate::transforms::{TxMode, TxSize, TxType};
 use crate::mode_decision::model_rd::{model_rd_for_sb_y, SkipTxfm};
+use crate::Pixel;
 
 /// F.1 — the default skip-prob context index used by
 /// `evaluate_candidate`'s ported skip-flag tie-break
@@ -500,14 +505,40 @@ pub struct PickInterModeParams<'a> {
     pub golden_nearest_in_bounds: bool,
     /// Whether GOLDEN NEAR MV is within the picker's MV envelope.
     pub golden_near_in_bounds: bool,
+
+    // --- Intra fallback context (Phase 2b) ---
+    //
+    // Neighbour-edge data for the intra-in-inter search
+    // (`vp9_pickmode.c:2517-2646`). When `intra_above_pixels` is
+    // `Some`, the picker evaluates DC/V/H intra modes after the inter
+    // loop and may pick `RefFrame::IntraFrame` if they beat the best
+    // inter candidate.
+
+    /// Reconstructed row above the block (≥ `bw` pixels), or `None` when
+    /// the block is at the top frame edge.
+    pub intra_above_pixels: Option<&'a [Pixel]>,
+    /// Reconstructed column left of the block (≥ `bh` pixels), or
+    /// `None` when at the left frame edge.
+    pub intra_left_pixels: Option<&'a [Pixel]>,
+    /// Top-left corner pixel. Ignored when both neighbours are
+    /// unavailable.
+    pub intra_top_left_pixel: Pixel,
+    /// Inter-frame per-Y-mode cost table `[size_group][mode]`. Mirrors
+    /// libvpx `cpi->mbmode_cost` (a.k.a.
+    /// `intra_y_mode_costs_inter(fc)[size_group]`).
+    pub intra_y_mode_costs: &'a [i32; 10],
+    /// Ref-frame rate cost for `INTRA_FRAME` in `vp9_prob_cost` units.
+    /// `vp9_cost_bit(intra_inter_p, false)`.
+    pub ref_frame_cost_intra: u32,
 }
 
 /// Result of [`pick_inter_mode`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct PickInterModeResult {
-    /// Winning inter mode.
+    /// Winning inter mode. Meaningless when `picked_ref_frame ==
+    /// IntraFrame`; use [`picked_intra_mode`] instead.
     pub best_mode: InterMode,
-    /// Winning MV (1/8-pel units).
+    /// Winning MV (1/8-pel units). `Mv::ZERO` when intra wins.
     pub best_mv: Mv,
     /// `RDCOST(lambda, rate, distortion)` for the winning candidate.
     pub best_rd_cost: i64,
@@ -521,8 +552,12 @@ pub struct PickInterModeResult {
     pub coef_dist: i64,
     /// F.5 — interpolation filter chosen by per-block filter search.
     pub picked_interp_filter: InterpFilter,
-    /// The chosen reference frame (LastFrame or GoldenFrame).
+    /// The chosen reference frame (LastFrame, GoldenFrame, or
+    /// IntraFrame when the intra fallback wins).
     pub picked_ref_frame: RefFrame,
+    /// Intra mode when `picked_ref_frame == IntraFrame`. One of
+    /// `{Dc, V, H}` in v1. `None` for inter winners.
+    pub picked_intra_mode: Option<IntraMode>,
 }
 
 /// libvpx `RT_INTER_MODES` iteration order (SVC variant, 8 candidates).
@@ -738,6 +773,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                 coef_dist: candidate.coef_dist,
                 picked_interp_filter: candidate.picked_interp_filter,
                 picked_ref_frame: ref_frame,
+                picked_intra_mode: None,
             });
         }
 
@@ -753,7 +789,228 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
 
     // The loop iterates 8 non-empty candidates (LAST ZERO is always
     // reachable), so `best` is always populated.
-    best.expect("RT_INTER_MODES contains at least one evaluable candidate")
+    let mut best = best.expect("RT_INTER_MODES contains at least one evaluable candidate");
+
+    // ================================================================
+    // Phase 2b — intra-in-inter fallback (vp9_pickmode.c:2517-2646).
+    //
+    // After the inter mode loop, optionally evaluate DC/V/H intra
+    // modes. If any intra mode beats the best inter candidate on RD,
+    // the picker returns `RefFrame::IntraFrame`.
+    // ================================================================
+    let intra_cost_penalty = get_intra_cost_penalty(params.q_index, params.block_size);
+    let inter_mode_thresh = rd_cost(lambda, intra_cost_penalty, 0);
+
+    if best.best_rd_cost > inter_mode_thresh {
+        let intra_result = evaluate_intra_fallback(params, lambda, intra_cost_penalty);
+        if let Some(intra) = intra_result {
+            if intra.best_rd_cost < best.best_rd_cost {
+                // Intra wins on RD. Replace the inter result.
+                //
+                // **v1 wire-format note**: the caller's encoder
+                // simulator path doesn't yet handle per-TX intra
+                // prediction for intra-in-inter blocks. When the
+                // caller sees `picked_ref_frame == IntraFrame`, it
+                // falls back to encoding as the best inter candidate
+                // (accepting the quality regression on those blocks).
+                // The picker's intra evaluation is the measurement
+                // signal; full wire-format support lands in a
+                // follow-up.
+                best = intra;
+            }
+        }
+    }
+
+    best
+}
+
+/// Intra modes evaluated in the intra-in-inter fallback.
+/// Matches libvpx's `intra_mode_list[] = { DC_PRED, V_PRED, H_PRED,
+/// TM_PRED }` at `vp9_pickmode.c:2556`, minus TM (deferred for v1
+/// simplicity — see module-level doc).
+const INTRA_IN_INTER_MODES: [IntraMode; 3] = [IntraMode::Dc, IntraMode::V, IntraMode::H];
+
+/// Evaluate DC/V/H intra modes as a fallback inside `pick_inter_mode`.
+///
+/// Port of libvpx `vp9_pickmode.c:2517-2646`. For each candidate mode
+/// this function:
+///
+/// 1. Builds the intra prediction from the reconstructed neighbour
+///    edges provided in `params.intra_{above,left}_pixels`.
+/// 2. Runs `model_rd_for_sb_y` to estimate variance-domain rate/dist
+///    and detect skip-txfm blocks.
+/// 3. When `skip_txfm != AcDc`, runs the full DCT round-trip via
+///    `reconstruct_via_round_trip` for the coefficient-aware RD.
+/// 4. Computes `rate = model_rd_rate + coef_rate + skip_cost +
+///    mbmode_cost + intra_cost_penalty + ref_frame_cost_intra`.
+/// 5. Returns the best intra candidate as a [`PickInterModeResult`]
+///    with `picked_ref_frame = IntraFrame`, or `None` if no intra
+///    params are available.
+fn evaluate_intra_fallback(
+    params: &PickInterModeParams<'_>,
+    lambda: u32,
+    intra_cost_penalty: u32,
+) -> Option<PickInterModeResult> {
+    let intra_costs = params.intra_y_mode_costs;
+
+    // Skip for Block64x64 — the intra prediction kernels only handle
+    // bs ∈ {4, 8, 16, 32}. libvpx's realtime path also caps intra
+    // evaluation at `cpi->sf.max_intra_bsize` (typically BLOCK_32X32
+    // for speed >= 5). Block64x64 intra-in-inter lands as a follow-up
+    // with tiled 4×32x32 intra prediction.
+    if params.block_size == BlockSize::Block64x64 {
+        return None;
+    }
+
+    let bw = usize::from(params.block_size.width());
+    let bh = usize::from(params.block_size.height());
+    let tx_size = crate::block::max_txsize(params.block_size);
+    let _tx_side = tx_size.side();
+
+    let have_above = params.intra_above_pixels.is_some();
+    let have_left = params.intra_left_pixels.is_some();
+
+    // Materialise neighbour edges (libvpx 127-above / 129-left fill).
+    let mut above_row = [ABOVE_UNAVAILABLE_FILL; 128];
+    let mut left_col = [LEFT_UNAVAILABLE_FILL; 64];
+    if let Some(above) = params.intra_above_pixels {
+        let n = bw.min(above.len());
+        above_row[..n].copy_from_slice(&above[..n]);
+        let last = above_row[n.saturating_sub(1)];
+        for slot in above_row.iter_mut().take(2 * bw).skip(bw) {
+            *slot = last;
+        }
+    }
+    if let Some(left) = params.intra_left_pixels {
+        let n = bh.min(left.len());
+        left_col[..n].copy_from_slice(&left[..n]);
+    }
+    let above_left = match (have_above, have_left) {
+        (true, true) => params.intra_top_left_pixel,
+        (true, false) => LEFT_UNAVAILABLE_FILL,
+        (false, true) => ABOVE_UNAVAILABLE_FILL,
+        (false, false) => ABOVE_UNAVAILABLE_FILL,
+    };
+    let dc_avail = DcAvailability {
+        above_available: have_above,
+        left_available: have_left,
+    };
+    let dispatch = crate::dsp::get();
+
+    // Quantizer-derived thresholds for model_rd (same as inter path).
+    let dc_zbin = params.quantizer.zbin[0] as i64;
+    let ac_zbin = params.quantizer.zbin[1] as i64;
+    let dc_thr = (dc_zbin * dc_zbin) >> 6;
+    let ac_thr = (ac_zbin * ac_zbin) >> 6;
+    let dc_quant = params.quantizer.dequant[0] as u32;
+    let ac_quant = params.quantizer.dequant[1] as u32;
+    let tx_mode = TxMode::TxModeSelect;
+
+    let src_slice = &params.src_plane.data;
+    let (sx, sy) = params.src_offset;
+    let src_start = sy * params.src_plane.stride + sx;
+
+    let mut best_intra: Option<PickInterModeResult> = None;
+
+    for &mode in &INTRA_IN_INTER_MODES {
+        // 1. Build prediction.
+        let mut pred = [0u8; 64 * 64];
+        let ctx = PredCtx {
+            above: &above_row[..2 * bw],
+            left: &left_col[..bh],
+            above_left,
+        };
+        // intra_predict needs stride == bw for contiguous layout.
+        intra_predict(mode, &mut pred[..bw * bh], bw, bw, ctx, dc_avail, &dispatch);
+
+        // 2. Variance-domain RD model.
+        let mrd = model_rd_for_sb_y(
+            &src_slice[src_start..],
+            params.src_plane.stride,
+            &pred,
+            bw,
+            bw,
+            bh,
+            params.block_size,
+            dc_quant,
+            ac_quant,
+            dc_thr,
+            ac_thr,
+            tx_mode,
+        );
+
+        let picked_tx_size = mrd.tx_size;
+
+        // 3. DCT round-trip (or skip).
+        let mut recon = [0u8; 64 * 64];
+        recon[..bw * bh].copy_from_slice(&pred[..bw * bh]);
+
+        let by = if mrd.skip_txfm == SkipTxfm::AcDc {
+            BlockYrdResult { coef_rate: 0, coef_dist: 0, skippable: true }
+        } else {
+            // We need an InterModeSearchParams to call
+            // `reconstruct_via_round_trip`. Build one using LAST ref
+            // (arbitrary — the ref plane is not read for intra, but
+            // the struct is needed for the quantizer/src fields).
+            let single_params = InterModeSearchParams {
+                block_size: params.block_size,
+                src_plane: params.src_plane,
+                src_offset: params.src_offset,
+                ref_plane: params.last_ref_plane, // unused for intra
+                mv_candidates: params.last_mv_candidates,
+                mv_limits: params.mv_limits,
+                site_config: params.site_config,
+                mv_costs: params.mv_costs,
+                inter_mode_costs: params.inter_mode_costs,
+                inter_mode_ctx: params.inter_mode_ctx,
+                quantizer: params.quantizer,
+                q_index: params.q_index,
+                allow_hp: params.allow_hp,
+                frame_kind: params.frame_kind,
+                newmv_seed: params.newmv_seed,
+                ref_frame_rate_cost: 0,
+            };
+            reconstruct_via_round_trip(
+                &single_params, &pred, &mut recon, bw, bh, picked_tx_size,
+            )
+        };
+
+        // 4. Distortion = SSE(src, recon).
+        let sse = sse_block(params.src_plane, params.src_offset, &recon, bw, bw, bh);
+        let dist = sse.min(u32::MAX as u64) as u32;
+
+        // 5. Rate = mbmode_cost + ref_frame_cost[INTRA] +
+        //           intra_cost_penalty + coef_rate.
+        let mbmode_cost = intra_costs[mode as usize].max(0) as u32;
+        let effective_coef_rate: u32 = by.coef_rate.min(u32::MAX as u64) as u32;
+        let rate = mbmode_cost
+            .saturating_add(params.ref_frame_cost_intra)
+            .saturating_add(intra_cost_penalty)
+            .saturating_add(effective_coef_rate);
+
+        let this_rd = rd_cost(lambda, rate, dist);
+
+        let is_new_best = match best_intra.as_ref() {
+            None => true,
+            Some(prev) => this_rd < prev.best_rd_cost,
+        };
+        if is_new_best {
+            best_intra = Some(PickInterModeResult {
+                best_mode: InterMode::ZeroMv, // placeholder for intra
+                best_mv: Mv::ZERO,
+                best_rd_cost: this_rd,
+                best_distortion: dist,
+                best_rate: rate,
+                coef_rate: by.coef_rate,
+                coef_dist: by.coef_dist,
+                picked_interp_filter: InterpFilter::EightTap,
+                picked_ref_frame: RefFrame::IntraFrame,
+                picked_intra_mode: Some(mode),
+            });
+        }
+    }
+
+    best_intra
 }
 
 /// Clamp a Q3 (1/8-pel) MV into the picker's full-pel

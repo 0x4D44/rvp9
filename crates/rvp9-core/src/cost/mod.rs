@@ -45,7 +45,9 @@ pub use mv_cost::{
 pub use prob_cost::{
     VP9_PROB_COST, VP9_PROB_COST_SHIFT, vp9_cost_bit, vp9_cost_one, vp9_cost_zero,
 };
-pub use rd_mult::{FrameTypeForRd, compute_rd_mult, compute_rd_mult_based_on_qindex};
+pub use rd_mult::{
+    FrameTypeForRd, compute_rd_mult, compute_rd_mult_based_on_qindex, get_intra_cost_penalty,
+};
 pub use symbol_costs::{
     InterModeCosts, KfPartitionCosts, PartitionCosts, SkipCosts, SwitchableInterpCosts,
     TxSizeCostTable, intra_uv_mode_costs_inter, intra_uv_mode_costs_kf, intra_y_mode_costs_inter,

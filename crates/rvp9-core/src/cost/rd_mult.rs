@@ -26,6 +26,7 @@
 //! scope for v1.
 
 use crate::bitstream::BitDepth;
+use crate::block::BlockSize;
 use crate::quant::dc_quant;
 
 /// Which frame type to use when picking the `(a, b)` coefficients.
@@ -72,6 +73,38 @@ pub fn compute_rd_mult_based_on_qindex(qindex: i32, frame: FrameTypeForRd) -> u3
     let i = scaled as i32;
     let clamped = if i > 0 { i } else { 1 };
     clamped as u32
+}
+
+/// Port of `vp9_get_intra_cost_penalty` (`vp9/encoder/vp9_rd.c:778-795`).
+///
+/// Returns a qindex-dependent rate penalty (in `vp9_prob_cost` units)
+/// that biases the inter-frame picker toward inter modes. libvpx adds
+/// this to the intra candidate's rate inside the intra-in-inter search
+/// (`vp9_pickmode.c:2623`), making intra modes more expensive to
+/// discourage unnecessary mode-switches.
+///
+/// The formula is:
+/// ```text
+///   penalty = (20 * vp9_dc_quant(qindex, qdelta, VPX_BITS_8)) >> reduction_fac
+///   reduction_fac = if bsize <= BLOCK_8X8  { 4 }
+///                   else if bsize <= BLOCK_16X16 { 2 }
+///                   else { 0 }
+/// ```
+///
+/// We always use `qdelta = 0` and `VPX_BITS_8` (8-bit profile 0).
+/// The noise-estimate override (`cpi->noise_estimate.level == kHigh`)
+/// is omitted — rvp9 does not have a noise estimator.
+#[must_use]
+pub fn get_intra_cost_penalty(q_index: u8, bsize: BlockSize) -> u32 {
+    let q = i32::from(dc_quant(i32::from(q_index), 0, BitDepth::Eight));
+    let reduction_fac: u32 = match bsize {
+        BlockSize::Block4x4 | BlockSize::Block8x4 | BlockSize::Block4x8
+        | BlockSize::Block8x8 => 4,
+        BlockSize::Block16x8 | BlockSize::Block8x16
+        | BlockSize::Block16x16 => 2,
+        _ => 0,
+    };
+    ((20 * q) >> reduction_fac) as u32
 }
 
 /// Convenience: same as [`compute_rd_mult_based_on_qindex`].
@@ -160,5 +193,45 @@ mod tests {
             assert!(key >= arf, "key {key} < arf {arf} at q={q}");
             assert!(arf >= inter, "arf {arf} < inter {inter} at q={q}");
         }
+    }
+
+    /// `get_intra_cost_penalty` at qindex=128 with Block16x16:
+    /// `dc_quant(128, 0, Eight) = 140`, `reduction_fac = 2` for
+    /// Block16x16, `penalty = (20 * 140) >> 2 = 700`.
+    #[test]
+    fn intra_cost_penalty_q128_block16() {
+        let v = get_intra_cost_penalty(128, BlockSize::Block16x16);
+        assert_eq!(v, 700, "expected 700, got {v}");
+    }
+
+    /// `get_intra_cost_penalty` at qindex=128 with Block32x32:
+    /// `reduction_fac = 0` for Block32x32,
+    /// `penalty = 20 * 140 = 2800`.
+    #[test]
+    fn intra_cost_penalty_q128_block32() {
+        let v = get_intra_cost_penalty(128, BlockSize::Block32x32);
+        assert_eq!(v, 2800, "expected 2800, got {v}");
+    }
+
+    /// `get_intra_cost_penalty` is monotone non-decreasing in qindex
+    /// (dc_quant is monotone; the formula is `20 * dc_quant >> fac`).
+    #[test]
+    fn intra_cost_penalty_monotone() {
+        for bsize in [BlockSize::Block8x8, BlockSize::Block16x16, BlockSize::Block32x32] {
+            let mut prev = get_intra_cost_penalty(0, bsize);
+            for q in 1..=255u8 {
+                let v = get_intra_cost_penalty(q, bsize);
+                assert!(v >= prev, "non-monotone at q={q} bs={bsize:?}: prev={prev}, v={v}");
+                prev = v;
+            }
+        }
+    }
+
+    /// `get_intra_cost_penalty` at qindex=0 with Block64x64:
+    /// `dc_quant(0) = 4`, `reduction_fac = 0`, `penalty = 20 * 4 = 80`.
+    #[test]
+    fn intra_cost_penalty_q0_block64() {
+        let v = get_intra_cost_penalty(0, BlockSize::Block64x64);
+        assert_eq!(v, 80, "expected 80, got {v}");
     }
 }

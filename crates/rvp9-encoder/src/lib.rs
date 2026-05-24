@@ -2267,6 +2267,9 @@ pub(crate) struct InterPartitionLeafDesc {
     /// reads it when building the per-plane MC prediction so the
     /// recon matches what the decoder will produce.
     pub picked_interp_filter: rvp9_core::bitstream::frame::InterpFilter,
+    /// Phase 2b — intra mode when `picked_ref_frame == IntraFrame`.
+    /// One of `{Dc, V, H}` in v1. `None` for inter winners.
+    pub picked_intra_mode: Option<rvp9_core::intra_pred::IntraMode>,
 }
 
 /// F10.1c — Drive the F8.1 inter mode picker per leaf and run the
@@ -2525,6 +2528,32 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         vp9_cost_bit(intra_inter_p, true)
             + vp9_cost_bit(single_ref_p1, true)
             + vp9_cost_bit(single_ref_p2, false)
+    };
+
+    // Phase 2b — ref_frame_cost for INTRA_FRAME. libvpx's
+    // `init_ref_frame_cost` at `vp9_pickmode.c:1222`:
+    //   ref_frame_cost[INTRA_FRAME] = vp9_cost_bit(intra_inter_p, 0)
+    let ref_frame_cost_intra: u32 = {
+        use rvp9_core::cost::vp9_cost_bit;
+        use rvp9_core::entropy::DEFAULT_INTRA_INTER_PROB;
+        let intra_inter_p = DEFAULT_INTRA_INTER_PROB[2];
+        vp9_cost_bit(intra_inter_p, false)
+    };
+
+    // Phase 2b — inter-frame intra-Y-mode cost table (mbmode_cost).
+    // libvpx builds `cpi->mbmode_cost` from
+    // `fc->y_mode_prob[size_group_lookup[bsize]]`; for our supported
+    // leaf sizes (16x16 / 32x32 / 64x64) the size_group is 2 or 3.
+    // We use size_group=1 (libvpx's `mbmode_cost` default, used in
+    // the intra-in-inter path at `vp9_pickmode.c:2621`). The exact
+    // group doesn't matter much — libvpx uses size_group_lookup[bsize]
+    // only in the full RDO path; the realtime path pins at
+    // `cpi->mbmode_cost` which is group 1.
+    let intra_y_mode_costs_inter: [i32; 10] = {
+        use rvp9_core::entropy::FrameContext;
+        let fc = FrameContext::new_default();
+        let table = rvp9_core::cost::intra_y_mode_costs_inter(&fc);
+        table[1] // size_group = 1 (libvpx mbmode_cost default)
     };
 
     // Inter-frame `FrameKind` for `compute_rd_mult`. Only the variant
@@ -2836,6 +2865,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         picked_ref_frame: RefFrame::LastFrame,
                         picked_interp_filter:
                             rvp9_core::bitstream::frame::InterpFilter::EightTap,
+                        picked_intra_mode: None,
                     });
                 }
                 sb_partitions[sb_idx] = new_leaves;
@@ -3194,6 +3224,42 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // RT_INTER_MODES order internally. OOB veto is
                 // handled inside the picker via the `*_in_bounds`
                 // flags.
+
+                // Phase 2b — extract intra-prediction neighbour edges
+                // from the Y recon plane. The blocks above and left of
+                // the current leaf are already reconstructed.
+                let intra_have_above = leaf_px_y > 0;
+                let intra_have_left = leaf_px_x > 0;
+                let mut intra_above_buf = [0u8; 64];
+                let mut intra_left_buf = [0u8; 64];
+                let intra_above: Option<&[u8]>;
+                let intra_left: Option<&[u8]>;
+                let intra_top_left: u8;
+                {
+                    let recon_y: &[u8] = &recon_yuv_out.0;
+                    if intra_have_above {
+                        let row_off = (leaf_px_y - 1) * w + leaf_px_x;
+                        let n = bw.min(w - leaf_px_x);
+                        intra_above_buf[..n].copy_from_slice(&recon_y[row_off..row_off + n]);
+                        intra_above = Some(&intra_above_buf[..n]);
+                    } else {
+                        intra_above = None;
+                    }
+                    if intra_have_left {
+                        for r in 0..bh.min(h - leaf_px_y) {
+                            intra_left_buf[r] = recon_y[(leaf_px_y + r) * w + (leaf_px_x - 1)];
+                        }
+                        intra_left = Some(&intra_left_buf[..bh.min(h - leaf_px_y)]);
+                    } else {
+                        intra_left = None;
+                    }
+                    intra_top_left = if intra_have_above && intra_have_left {
+                        recon_y[(leaf_px_y - 1) * w + (leaf_px_x - 1)]
+                    } else {
+                        127
+                    };
+                }
+
                 let pick_params = PickInterModeParams {
                     block_size: leaf_bsize,
                     src_plane: &src_y,
@@ -3218,10 +3284,39 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     last_near_in_bounds: mv_in_bounds(mvc.near),
                     golden_nearest_in_bounds: mv_in_bounds(mvc_golden.nearest),
                     golden_near_in_bounds: mv_in_bounds(mvc_golden.near),
+                    intra_above_pixels: intra_above,
+                    intra_left_pixels: intra_left,
+                    intra_top_left_pixel: intra_top_left,
+                    intra_y_mode_costs: &intra_y_mode_costs_inter,
+                    ref_frame_cost_intra,
                 };
                 let unified_pick = pick_inter_mode(&pick_params);
-                let pick = unified_pick;
-                let picked_ref = unified_pick.picked_ref_frame;
+
+                // Phase 2b — when the intra fallback wins, the picker
+                // reports `picked_ref_frame == IntraFrame`. The encoder
+                // simulator's per-plane MC + residual path doesn't yet
+                // support per-TX intra prediction for intra-in-inter
+                // blocks. v1 falls back to ZEROMV-skip on LASTFRAME,
+                // accepting the quality regression on those blocks.
+                // The picker's RD evaluation IS the measurement signal;
+                // full wire-format intra-in-inter lands in a follow-up.
+                let (pick, picked_ref) = if unified_pick.picked_ref_frame == RefFrame::IntraFrame {
+                    let fallback = rvp9_core::mode_decision::inter::PickInterModeResult {
+                        best_mode: InterMode::ZeroMv,
+                        best_mv: Mv::ZERO,
+                        best_rd_cost: unified_pick.best_rd_cost,
+                        best_distortion: unified_pick.best_distortion,
+                        best_rate: unified_pick.best_rate,
+                        coef_rate: unified_pick.coef_rate,
+                        coef_dist: unified_pick.coef_dist,
+                        picked_interp_filter: rvp9_core::bitstream::frame::InterpFilter::EightTap,
+                        picked_ref_frame: RefFrame::LastFrame,
+                        picked_intra_mode: unified_pick.picked_intra_mode,
+                    };
+                    (fallback, RefFrame::LastFrame)
+                } else {
+                    (unified_pick, unified_pick.picked_ref_frame)
+                };
 
                 // E12 (2026-05-22) — search-failure-vs-prediction-ceiling
                 // oracle. Read-only diagnostic, env-gated
@@ -3391,6 +3486,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // the same filter the picker scored against.
                 sb_partitions[sb_idx][leaf_idx].picked_interp_filter =
                     pick.picked_interp_filter;
+                // Phase 2b — record the intra mode when intra wins.
+                sb_partitions[sb_idx][leaf_idx].picked_intra_mode =
+                    pick.picked_intra_mode;
 
                 // A0 diagnostic: dump per-leaf picker decision when
                 // `RVP9_DIAG_PICKER` is set in the environment.

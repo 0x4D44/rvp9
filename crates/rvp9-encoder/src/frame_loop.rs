@@ -913,6 +913,7 @@ impl StreamEncoder {
                                 // pre-F.5 hard-coded default.
                                 picked_interp_filter:
                                     rvp9_core::bitstream::frame::InterpFilter::EightTap,
+                                picked_intra_mode: None,
                             }
                         })
                         .collect()
