@@ -1259,9 +1259,20 @@ impl SimdDispatch {
         #[cfg(not(target_arch = "x86_64"))]
         let idct4x4_add: fn(&[i32; 16], &mut [u8], usize) = scalar_idct4x4_add;
 
+        // Track-T T-4 first slice — `idct16x16_256_add` dispatch.
+        //
+        // The AVX2 arm keeps the existing i32-lane kernel UNCHANGED
+        // (today's production path). The new SSE2 i16-lane kernel
+        // (libvpx port `vpx_idct16x16_256_add_sse2`) is wired into the
+        // non-AVX2-but-SSE2 arm — a conservative initial rollout that
+        // installs the new code only on the (vanishingly small) cohort
+        // of x86_64 CPUs without AVX2. Slice 1.5 (next session) will
+        // flip the AVX2 arm to the SSE2 i16 kernel after bench A/B.
         #[cfg(target_arch = "x86_64")]
         let idct16x16_add: fn(&[i32; 256], &mut [u8], usize) = if caps.avx2 {
             crate::dsp::x86_64::idct16x16_add_avx2
+        } else if caps.sse2 {
+            crate::dsp::x86_64::idct16x16_add_sse2_256
         } else {
             scalar_idct16x16_add
         };
@@ -2679,22 +2690,43 @@ mod tests {
         );
     }
 
-    /// Forcing `avx2 = false` falls back to the scalar reference for
-    /// the G4.2 idct16x16 slot. See `forced_scalar_caps_installs_scalar_idct8x8`
-    /// for the miri-skip rationale.
+    /// Forcing `avx2 = false, sse2 = true` installs the SSE2 i16
+    /// kernel for the idct16x16 slot (Track-T T-4 first slice). See
+    /// `forced_scalar_caps_installs_scalar_idct8x8` for the miri-skip
+    /// rationale.
+    #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn sse2_caps_installs_sse2_idct16x16() {
+        let mut caps = detect();
+        caps.avx2 = false;
+        caps.sse2 = true;
+        let d = SimdDispatch::build(caps);
+        let sse2: fn(&[i32; 256], &mut [u8], usize) =
+            crate::dsp::x86_64::idct16x16_add_sse2_256;
+        assert_eq!(
+            d.idct16x16_add() as usize,
+            sse2 as usize,
+            "avx2=false, sse2=true must install idct16x16_add_sse2_256"
+        );
+    }
+
+    /// Forcing `avx2 = false, sse2 = false` falls back to the scalar
+    /// reference for the idct16x16 slot.
     #[cfg(target_arch = "x86_64")]
     #[cfg_attr(miri, ignore)]
     #[test]
     fn forced_scalar_caps_installs_scalar_idct16x16() {
         let mut caps = detect();
         caps.avx2 = false;
+        caps.sse2 = false;
         let d = SimdDispatch::build(caps);
         let scalar: fn(&[i32; 256], &mut [u8], usize) =
             crate::transforms::inverse::idct16x16_256_add;
         assert_eq!(
             d.idct16x16_add() as usize,
             scalar as usize,
-            "avx2=false must install the scalar idct16x16_256_add"
+            "avx2=false, sse2=false must install the scalar idct16x16_256_add"
         );
     }
 

@@ -94,7 +94,7 @@ use crate::transforms::constants::{
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse2")]
 #[inline]
-unsafe fn pair_set_epi16(a: i16, b: i16) -> __m128i {
+pub(crate) unsafe fn pair_set_epi16(a: i16, b: i16) -> __m128i {
     // libvpx's macro is `_mm_set_epi16(b, a, b, a, b, a, b, a)`.
     // Equivalent to broadcasting a packed `(b << 16) | (a & 0xFFFF)` i32.
     let packed = ((b as u16 as u32) << 16) | (a as u16 as u32);
@@ -111,7 +111,7 @@ unsafe fn pair_set_epi16(a: i16, b: i16) -> __m128i {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse2")]
 #[inline]
-unsafe fn idct_madd_round_shift_sse2(in_: __m128i, cospi: __m128i) -> __m128i {
+pub(crate) unsafe fn idct_madd_round_shift_sse2(in_: __m128i, cospi: __m128i) -> __m128i {
     let t = _mm_madd_epi16(in_, cospi);
     _mm_srai_epi32(_mm_add_epi32(t, _mm_set1_epi32(1 << 13)), 14)
 }
@@ -127,7 +127,7 @@ unsafe fn idct_madd_round_shift_sse2(in_: __m128i, cospi: __m128i) -> __m128i {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse2")]
 #[inline]
-unsafe fn idct_calc_wraplow_sse2(in0: __m128i, in1: __m128i, x: __m128i) -> __m128i {
+pub(crate) unsafe fn idct_calc_wraplow_sse2(in0: __m128i, in1: __m128i, x: __m128i) -> __m128i {
     let t0 = idct_madd_round_shift_sse2(in0, x);
     let t1 = idct_madd_round_shift_sse2(in1, x);
     _mm_packs_epi32(t0, t1)
@@ -142,7 +142,7 @@ unsafe fn idct_calc_wraplow_sse2(in0: __m128i, in1: __m128i, x: __m128i) -> __m1
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse2")]
 #[inline]
-unsafe fn butterfly(in0: __m128i, in1: __m128i, c0: i16, c1: i16) -> (__m128i, __m128i) {
+pub(crate) unsafe fn butterfly(in0: __m128i, in1: __m128i, c0: i16, c1: i16) -> (__m128i, __m128i) {
     let cst0 = pair_set_epi16(c0, -c1);
     let cst1 = pair_set_epi16(c1, c0);
     let lo = _mm_unpacklo_epi16(in0, in1);
