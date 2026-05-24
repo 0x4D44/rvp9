@@ -56,6 +56,19 @@ pub mod tile_ctx;
 // Pub(crate) only; not part of the decoder's public surface.
 mod trace_flags;
 
+// T-5 instrumentation — per-tile rdtsc profiling. Gated on the
+// `profile-tiles` feature AND `target_arch = "x86_64"` (the only arch
+// where `_rdtsc` exists). With the feature off (default), this module
+// and every use site in this file vanishes at parse time. See
+// `wrk_docs/Track_T/T5_tile_dispatch_profile_HLD.md` §3.
+//
+// The module is `pub` (not `pub(crate)`) so the bench binary
+// `crates/rvp9-bench/src/bin/decode-profile-tiles.rs` can call
+// `profile::estimate_cpu_mhz()` to emit the cycles→μs conversion
+// constant alongside the CSV.
+#[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+pub mod profile;
+
 use rvp9_core::bitstream::{
     BitstreamError, ChromaFormat, CompressedHeaderOptions, CompressedHeaderResult, FrameKind,
     InterpFilter, Superframe, UncompressedHeader, parse_compressed_header, parse_superframe_index,
@@ -1478,9 +1491,19 @@ impl Decoder {
         // `merge_tile_rect_from` handles the 2D grid case.
         let parallel = buffers.len() > 1 && self.num_threads.get() > 1;
 
+        // T-5 — per-frame timing bucket, populated only on the
+        // parallel path under the `profile-tiles` feature. Dropped at
+        // function end on the inline / error paths.
+        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+        let mut frame_timing: Option<profile::PerFrameTiming> = None;
+        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+        let frame_wall_start = std::time::Instant::now();
+
         let frame_contexts = &self.frame_contexts;
         let simd_dispatch = &self.simd_dispatch;
         if parallel {
+            #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+            let t_setup_start = profile::now_cycles();
             // Pre-compute per-tile bounds + allocate per-tile scratch
             // (Yv12Buffer + cur_segment_ids + CoefCountsBank). Each
             // worker writes its tile's column range into the scratch
@@ -1520,6 +1543,12 @@ impl Decoder {
                 seg_ids: Mutex<Option<Vec<u8>>>,
                 counts: Mutex<Option<Box<rvp9_core::entropy::adapt::CoefCountsBank>>>,
                 result: Mutex<Option<Result<TileDecodeCtx, tile::TileDecodeError>>>,
+                // T-5: per-tile cycle deltas written by the worker
+                // before it releases the slot. Read by the main
+                // thread post-scope to compose `PerFrameTiming`.
+                // Feature-gated so the field vanishes when off.
+                #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+                timing: Mutex<profile::PerTileTiming>,
             }
             let scratch_buffers = self
                 .tile_scratch_pool
@@ -1534,13 +1563,24 @@ impl Decoder {
                         rvp9_core::entropy::adapt::CoefCountsBank::default(),
                     ))),
                     result: Mutex::new(None),
+                    #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+                    timing: Mutex::new(profile::PerTileTiming::default()),
                 })
                 .collect();
 
             // Borrow shared immutables.
             let fc = &frame_contexts[fc_idx];
             let params_ref = &params;
-            self.worker_pool.scope(|scope| {
+            #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+            let t_submit_start = profile::now_cycles();
+            // T-5: scope closure returns the rdtsc taken just after
+            // the last `submit()` so the main thread can compute
+            // `T_SUBMIT` (open→last-submit) and `T_JOIN` (last-submit→
+            // scope-return) separately. Under feature-off it returns
+            // `()`. Either way control flow is identical — only the
+            // closure's return type changes, which `cfg` resolves at
+            // parse time.
+            let _submit_done_cycles = self.worker_pool.scope(|scope| {
                 for (tile_idx, tile_buf) in buffers.iter().enumerate() {
                     let bounds = per_tile_bounds[tile_idx];
                     let tile_data: &[u8] = tile_buf.data;
@@ -1548,6 +1588,8 @@ impl Decoder {
                     scope.submit(move || {
                         RVP9_G5_1_PARALLEL_JOBS
                             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+                        let t_lock_in = profile::now_cycles();
                         let mut scratch = slot
                             .scratch
                             .lock()
@@ -1566,6 +1608,8 @@ impl Decoder {
                             .expect("counts mutex")
                             .take()
                             .expect("counts present at job start");
+                        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+                        let t_decode_start = profile::now_cycles();
                         let res = decode_tile_intra(
                             tile_data,
                             bounds,
@@ -1576,15 +1620,35 @@ impl Decoder {
                             &mut seg_ids,
                             simd_dispatch,
                         );
+                        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+                        let t_decode_end = profile::now_cycles();
                         // Restore the owned state so the main thread
                         // can merge.
                         *slot.scratch.lock().expect("scratch mutex") = Some(scratch);
                         *slot.seg_ids.lock().expect("seg_ids mutex") = Some(seg_ids);
                         *slot.counts.lock().expect("counts mutex") = Some(counts);
                         *slot.result.lock().expect("result mutex") = Some(res);
+                        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+                        {
+                            let t_lock_out_end = profile::now_cycles();
+                            *slot.timing.lock().expect("timing mutex") =
+                                profile::PerTileTiming {
+                                    lock_in: t_decode_start.wrapping_sub(t_lock_in),
+                                    decode: t_decode_end.wrapping_sub(t_decode_start),
+                                    lock_out: t_lock_out_end.wrapping_sub(t_decode_end),
+                                };
+                        }
                     });
                 }
+                #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+                {
+                    profile::now_cycles()
+                }
             });
+            #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+            let t_scope_end = profile::now_cycles();
+            #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+            let t_merge_start = profile::now_cycles();
             // Post-scope merge: in submission order, collect TileDecodeCtx,
             // merge per-tile counts into `self.coef_counts`, and
             // merge per-tile pixels (column-range) into `yv12`.
@@ -1594,6 +1658,11 @@ impl Decoder {
             // the end of the merge so the next frame can reuse them.
             let mut recovered_scratch: Vec<Yv12Buffer> = Vec::with_capacity(slots.len());
             let mut merge_err: Option<DecodeError> = None;
+            #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+            let num_tiles_local = slots.len();
+            #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+            let mut per_tile_timings: Vec<profile::PerTileTiming> =
+                Vec::with_capacity(num_tiles_local);
             for (tile_idx, slot) in slots.into_iter().enumerate() {
                 let scratch = slot
                     .scratch
@@ -1605,6 +1674,11 @@ impl Decoder {
                 // below), the pool gets the buffer back via the
                 // post-loop `put`.
                 recovered_scratch.push(scratch);
+                #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+                {
+                    let pt = *slot.timing.lock().expect("timing mutex");
+                    per_tile_timings.push(pt);
+                }
 
                 if merge_err.is_some() {
                     // A prior tile errored; keep collecting scratch
@@ -1677,6 +1751,18 @@ impl Decoder {
             // error — the buffers are owned by us and stale content
             // is safe per the pool's Re-zero safety invariant).
             self.tile_scratch_pool.put(recovered_scratch);
+            #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+            {
+                let t_merge_end = profile::now_cycles();
+                frame_timing = Some(profile::PerFrameTiming {
+                    setup: t_submit_start.wrapping_sub(t_setup_start),
+                    submit: _submit_done_cycles.wrapping_sub(t_submit_start),
+                    join: t_scope_end.wrapping_sub(_submit_done_cycles),
+                    merge: t_merge_end.wrapping_sub(t_merge_start),
+                    per_tile: per_tile_timings,
+                    ..profile::PerFrameTiming::default()
+                });
+            }
             if let Some(e) = merge_err {
                 return Err(e);
             }
@@ -1780,7 +1866,13 @@ impl Decoder {
             .iter()
             .map(|(b, c)| (*b, c.mi_grid()))
             .collect();
+        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+        let t_grid_start = profile::now_cycles();
         let frame_mi_grid = build_frame_mi_grid(mi_rows, mi_cols, &tile_grids);
+        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+        let t_grid_end = profile::now_cycles();
+        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+        let t_lf_start = profile::now_cycles();
         if filter_level > 0 && !lf_disabled {
             apply_loop_filter_to_frame(
                 &mut yv12,
@@ -1794,12 +1886,31 @@ impl Decoder {
                 SegmentationLfView::from_segmentation(&resolved_seg),
             );
         }
+        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+        let t_lf_end = profile::now_cycles();
 
         // 9. Extend the frame's borders so future inter frames using
         //    this keyframe as a reference can read MC halos past the
         //    visible region (libvpx `vpx_extend_frame_borders_c`,
         //    `yv12extend.c:169`).
+        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+        let t_border_start = profile::now_cycles();
         extend_frame_borders(&mut yv12);
+        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+        let t_border_end = profile::now_cycles();
+
+        // T-5: finalise per-frame timing and emit a CSV row. No-op if
+        // `RVP9_PROFILE_TILES_OUT` is unset; no I/O on the hot path
+        // when the env var is not set.
+        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+        if let Some(mut pft) = frame_timing.take() {
+            pft.grid_stitch = t_grid_end.wrapping_sub(t_grid_start);
+            pft.loopfilter = t_lf_end.wrapping_sub(t_lf_start);
+            pft.border = t_border_end.wrapping_sub(t_border_start);
+            pft.frame_total_wall_us =
+                frame_wall_start.elapsed().as_secs_f64() * 1_000_000.0;
+            profile::emit_row(&pft, 0);
+        }
 
         let frame_buf: FrameBuf = std::sync::Arc::new(yv12);
 
@@ -2341,9 +2452,18 @@ impl Decoder {
         // `merge_tile_rect_from` handles the 2D grid case.
         let parallel = buffers.len() > 1 && self.num_threads.get() > 1;
 
+        // T-5 — per-frame timing bucket; see the matching declaration
+        // in `decode_intra_frame_inner`.
+        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+        let mut frame_timing: Option<profile::PerFrameTiming> = None;
+        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+        let frame_wall_start = std::time::Instant::now();
+
         let frame_contexts = &self.frame_contexts;
         let simd_dispatch = &self.simd_dispatch;
         if parallel {
+            #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+            let t_setup_start = profile::now_cycles();
             let num_tiles = buffers.len();
             let mut per_tile_bounds: Vec<tile::TileBounds> = Vec::with_capacity(num_tiles);
             for tile_buf in &buffers {
@@ -2364,6 +2484,10 @@ impl Decoder {
                 coef_counts: Mutex<Option<Box<rvp9_core::entropy::adapt::CoefCountsBank>>>,
                 mode_counts: Mutex<Option<Box<rvp9_core::entropy::adapt::FrameCounts>>>,
                 result: Mutex<Option<Result<TileDecodeCtx, tile::TileDecodeError>>>,
+                // T-5: per-tile cycle deltas. See the matching field
+                // in the intra `TileSlot` definition.
+                #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+                timing: Mutex<profile::PerTileTiming>,
             }
             // G5.2: source the per-tile scratch buffers from the
             // decoder-owned [`Yv12ScratchPool`] (recycled across
@@ -2391,6 +2515,8 @@ impl Decoder {
                         rvp9_core::entropy::adapt::FrameCounts::default(),
                     ))),
                     result: Mutex::new(None),
+                    #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+                    timing: Mutex::new(profile::PerTileTiming::default()),
                 })
                 .collect();
 
@@ -2398,7 +2524,9 @@ impl Decoder {
             let params_ref = &params;
             let prev_mv_grid_ref = prev_mv_grid;
             let prev_seg_ref = prev_seg_ids_slice;
-            self.worker_pool.scope(|scope| {
+            #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+            let t_submit_start = profile::now_cycles();
+            let _submit_done_cycles = self.worker_pool.scope(|scope| {
                 for (tile_idx, tile_buf) in buffers.iter().enumerate() {
                     let bounds = per_tile_bounds[tile_idx];
                     let tile_data: &[u8] = tile_buf.data;
@@ -2406,6 +2534,8 @@ impl Decoder {
                     scope.submit(move || {
                         RVP9_G5_1_PARALLEL_JOBS
                             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+                        let t_lock_in = profile::now_cycles();
                         let mut scratch = slot
                             .scratch
                             .lock()
@@ -2442,6 +2572,8 @@ impl Decoder {
                             .expect("mode_counts mutex")
                             .take()
                             .expect("mode_counts present at job start");
+                        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+                        let t_decode_start = profile::now_cycles();
                         let res = decode_tile_inter(
                             tile_data,
                             bounds,
@@ -2457,6 +2589,8 @@ impl Decoder {
                             &mut seg_ids,
                             simd_dispatch,
                         );
+                        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+                        let t_decode_end = profile::now_cycles();
                         // Restore owned state to slot.
                         *slot.scratch.lock().expect("scratch mutex") = Some(scratch);
                         *slot.seg_ids.lock().expect("seg_ids mutex") = Some(seg_ids);
@@ -2465,9 +2599,27 @@ impl Decoder {
                         *slot.coef_counts.lock().expect("coef_counts mutex") = Some(coef_counts);
                         *slot.mode_counts.lock().expect("mode_counts mutex") = Some(mode_counts);
                         *slot.result.lock().expect("result mutex") = Some(res);
+                        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+                        {
+                            let t_lock_out_end = profile::now_cycles();
+                            *slot.timing.lock().expect("timing mutex") =
+                                profile::PerTileTiming {
+                                    lock_in: t_decode_start.wrapping_sub(t_lock_in),
+                                    decode: t_decode_end.wrapping_sub(t_decode_start),
+                                    lock_out: t_lock_out_end.wrapping_sub(t_decode_end),
+                                };
+                        }
                     });
                 }
+                #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+                {
+                    profile::now_cycles()
+                }
             });
+            #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+            let t_scope_end = profile::now_cycles();
+            #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+            let t_merge_start = profile::now_cycles();
             // Post-scope merge in submission order.
             //
             // G5.2: reclaim each tile's scratch `Yv12Buffer` into
@@ -2476,6 +2628,9 @@ impl Decoder {
             // frame can reuse them (rather than re-allocating).
             let mut recovered_scratch: Vec<Yv12Buffer> = Vec::with_capacity(slots.len());
             let mut merge_err: Option<DecodeError> = None;
+            #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+            let mut per_tile_timings: Vec<profile::PerTileTiming> =
+                Vec::with_capacity(slots.len());
             for (tile_idx, slot) in slots.into_iter().enumerate() {
                 let scratch = slot
                     .scratch
@@ -2483,6 +2638,11 @@ impl Decoder {
                     .expect("scratch mutex")
                     .expect("scratch present after job");
                 recovered_scratch.push(scratch);
+                #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+                {
+                    let pt = *slot.timing.lock().expect("timing mutex");
+                    per_tile_timings.push(pt);
+                }
                 if merge_err.is_some() {
                     continue;
                 }
@@ -2569,6 +2729,18 @@ impl Decoder {
             // on error — buffers are owned by us and stale content
             // is safe per the pool's Re-zero safety invariant).
             self.tile_scratch_pool.put(recovered_scratch);
+            #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+            {
+                let t_merge_end = profile::now_cycles();
+                frame_timing = Some(profile::PerFrameTiming {
+                    setup: t_submit_start.wrapping_sub(t_setup_start),
+                    submit: _submit_done_cycles.wrapping_sub(t_submit_start),
+                    join: t_scope_end.wrapping_sub(_submit_done_cycles),
+                    merge: t_merge_end.wrapping_sub(t_merge_start),
+                    per_tile: per_tile_timings,
+                    ..profile::PerFrameTiming::default()
+                });
+            }
             if let Some(e) = merge_err {
                 return Err(e);
             }
@@ -2708,7 +2880,13 @@ impl Decoder {
             .iter()
             .map(|(b, c)| (*b, c.mi_grid()))
             .collect();
+        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+        let t_grid_start = profile::now_cycles();
         let frame_mi_grid = build_frame_mi_grid(mi_rows, mi_cols, &tile_grids);
+        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+        let t_grid_end = profile::now_cycles();
+        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+        let t_lf_start = profile::now_cycles();
         if filter_level > 0 && !lf_disabled {
             apply_loop_filter_to_frame(
                 &mut yv12,
@@ -2722,6 +2900,8 @@ impl Decoder {
                 SegmentationLfView::from_segmentation(&resolved_seg),
             );
         }
+        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+        let t_lf_end = profile::now_cycles();
 
         // D.3.c — frame finalisation:
         //
@@ -2729,7 +2909,22 @@ impl Decoder {
         //    this frame as a reference can read MC halos past the
         //    visible region (libvpx `vpx_extend_frame_borders_c`,
         //    `yv12extend.c:169`).
+        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+        let t_border_start = profile::now_cycles();
         extend_frame_borders(&mut yv12);
+        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+        let t_border_end = profile::now_cycles();
+
+        // T-5: finalise per-frame timing and emit a CSV row.
+        #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+        if let Some(mut pft) = frame_timing.take() {
+            pft.grid_stitch = t_grid_end.wrapping_sub(t_grid_start);
+            pft.loopfilter = t_lf_end.wrapping_sub(t_lf_start);
+            pft.border = t_border_end.wrapping_sub(t_border_start);
+            pft.frame_total_wall_us =
+                frame_wall_start.elapsed().as_secs_f64() * 1_000_000.0;
+            profile::emit_row(&pft, 0);
+        }
 
         // D.20 — env-gated dump of the post-recon, post-LF (if not
         // disabled), post-border-extend visible Y plane for any

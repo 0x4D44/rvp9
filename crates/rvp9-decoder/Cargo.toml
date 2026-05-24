@@ -10,6 +10,15 @@ description = "VP9 video decoder. Spec-conformant; validated against the officia
 [lints]
 workspace = true
 
+[features]
+# T-5 per-tile-dispatch profiling. OFF by default — when off, the
+# `profile` module and every use site in `lib.rs` vanishes at parse
+# time, leaving conformance and bench numbers unperturbed. ON in CI
+# job `decoder-profile-tiles` and in the `decode-profile-tiles` bench
+# binary, which writes per-frame rdtsc-delta phase timings to the CSV
+# at `RVP9_PROFILE_TILES_OUT`. See `wrk_docs/Track_T/T5_*` for design.
+profile-tiles = []
+
 [dependencies]
 rvp9-core = { path = "../rvp9-core" }
 # Drift-catch for `Decoder: Send + Sync` — see lib.rs near the
