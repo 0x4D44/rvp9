@@ -2377,50 +2377,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // Block8x8 leaf at 720p (the variance partitioner descends
     // densely on natural-content frames).
     //
-    // libvpx applies similar size-conditional restrictions in its
-    // realtime path. The cheapest fix that preserves A1's
-    // correctness gain on small frames where the budget can absorb
-    // it: gate the Block8x8 picker on frame area. The threshold
-    // (307_200 px == 640 × 480) cleanly separates the F12 small-
-    // frame corpus from the RT-path 720p+ corpus:
-    //   * testsrc 256×256 = 65_536 → enabled (PSNR sweep preserved)
-    //   * foreman_cif 352×288 = 101_376 → enabled
-    //   * 720p 1280×704 = 901_120 → disabled (RT gate recovers)
-    // Block8x8 leaves on disabled frames fall through to the
-    // pre-A1 ZEROMV-skip path (same as the sub-8 partitions emitted
-    // wire-format-only by F8.2).
-    let block8x8_picker_enabled = w * h <= 307_200;
-
-    // A3'-int-pro - same frame-area gate as the Block8x8 picker.
-    // For 720p+ the per-leaf picker's RD math heavily favours
-    // NEARESTMV-at-(0,0) at the high qindex CBR drives the
-    // encoder to (lambda is huge, MV-bit cost dominates), so the
-    // int_pro seed produces no NEWMV picks and just adds overhead
-    // to the RT path. Gating int_pro on the same threshold
-    // restores the pre-A3' RT budget on 720p while preserving the
-    // seed's effect on the F12 small-frame corpus.
-    let int_pro_enabled = w * h <= 307_200;
-
-    // A4.rt-recovery - extend the same frame-area gate to the FULL
-    // inter picker (NEWMV diamond + sub-pel + 3-candidate RD scan) and
-    // the per-leaf find_mv_refs spatial-seed walk. A3.inter + A3'-int-pro
-    // added ~5-7 ms of per-leaf overhead to the RT path: each
-    // Block16x16/Block32x32/Block64x64 leaf walks `find_mv_refs` against
-    // the in-progress mi_grid then runs the picker which runs the NEWMV
-    // diamond + sub-pel refinement unconditionally. The A3'-int-pro
-    // observation ("at 720p+ the picker's RD math at high qindex heavily
-    // favours NEARESTMV-at-(0,0) regardless of seed quality")
-    // generalises: on 720p+ at the CBR qindex (typically 200-255), the
-    // picker's NEWMV diamond + sub-pel work produces ZERO behaviour
-    // change - the picker always rejects NEWMV. Gating the entire picker
-    // on the existing 307_200 threshold falls through to pre-A1
-    // ZEROMV-skip on large frames; small-frame corpora (testsrc 256x256,
-    // foreman_cif 352x288) keep the picker enabled so F12 PSNR sweeps
-    // are preserved (cross-decoder runs at 256x256 so byte-exactness is
-    // also preserved).
-    let inter_picker_enabled = w * h <= 307_200;
-
-
     assert_eq!(
         sb_partitions.len(),
         sb_rows * sb_cols,
@@ -2669,17 +2625,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             // 12 of 16 SBs on a 256×256 frame bailed outright.
             let sb_px_x = sb_col * 64;
             let sb_px_y = sb_row * 64;
-            let int_pro = if int_pro_enabled {
-                int_pro_motion_estimation(
-                    &src_y,
-                    &ref_y,
-                    sb_px_x,
-                    sb_px_y,
-                    BlockSize::Block64x64,
-                )
-            } else {
-                rvp9_core::mv_search::int_pro_me::IntProMeResult::ZERO
-            };
+            let int_pro = int_pro_motion_estimation(
+                &src_y,
+                &ref_y,
+                sb_px_x,
+                sb_px_y,
+                BlockSize::Block64x64,
+            );
             // Treat a literal zero MV as "no useful seed" — the
             // picker's existing NEAREST/ZERO-at-(0,0) candidates
             // already cover that case.
@@ -2725,7 +2677,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             // ship-state addendum. For infrastructure-only
             // purposes the callback proves the wiring: descent →
             // callback → per-position RD → new leaf list.
-            if f3_nonrd_partition_enabled && inter_picker_enabled {
+            if f3_nonrd_partition_enabled {
                 use rvp9_core::block::BlockSize as BS;
                 use rvp9_core::mode_decision::partition::PartitionDecision;
 
@@ -2891,20 +2843,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // back to ZEROMV / skip = true; the recon for those
                 // leaves equals the reference (already populated via
                 // the up-front copy above), and no coef entries are
-                // recorded. A1 — lifted Block8x8 into the picker so
-                // high-motion 8×8 leaves get real MV + residual instead
-                // of locking to LASTFRAME (A0 diagnosis: at peak motion
-                // ~130-140 Block8x8 leaves per frame previously fell
-                // through to ZEROMV-skip). A1' — frame-area-gated; see
-                // `block8x8_picker_enabled` above (above the SB walk).
-                let picker_supported = inter_picker_enabled
-                    && match leaf_bsize {
-                        BlockSize::Block8x8 => block8x8_picker_enabled,
-                        BlockSize::Block16x16
+                // recorded.
+                let picker_supported = matches!(
+                    leaf_bsize,
+                    BlockSize::Block8x8
+                        | BlockSize::Block16x16
                         | BlockSize::Block32x32
-                        | BlockSize::Block64x64 => true,
-                        _ => false,
-                    };
+                        | BlockSize::Block64x64
+                );
 
                 if !picker_supported {
                     sb_partitions[sb_idx][leaf_idx].picked_mode = InterMode::ZeroMv;
