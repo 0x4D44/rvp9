@@ -68,6 +68,25 @@ const PROFILE1_VECTORS: &[&str] = &[
     // 4:4:0 (G7.2 milestone) — asymmetric, half vertical chroma.
     "vp91-2-04-yuv440.webm",
     "foreman_c440.ivf",  // Wave P fix; previously the parser-desync follow-up.
+    // Track T-2: sharpness=7 triple — exercises LF sharpness threshold ×
+    // each chroma subsampling, gating `filter_block_plane_non420` and
+    // `LF_PATH_444` under elevated sharpness.
+    "foreman_c444_sharp7.ivf",
+    "foreman_c422_sharp7.ivf",
+    "foreman_c440_sharp7.ivf",
+    // Track T-2: 2-pass triple — exercises different bit-allocation
+    // decisions (alt-ref frames, lag) across all three Profile-1 chroma
+    // formats. Covers inter-prediction patterns absent from the
+    // single-pass default vectors.
+    "foreman_c444_2pass.ivf",
+    "foreman_c422_2pass.ivf",
+    "foreman_c440_2pass.ivf",
+    // Track T-2: 720p variants — large-frame chroma at ≥720p.
+    // Catches per-row mask-packing bugs at high mi_rows and exercises
+    // multi-tile (2 tile cols) + tile-aware chroma loop-filter.
+    "testsrc_c444_720p.ivf",
+    "testsrc_c422_720p_tile2.ivf", // tile_columns=1 (2 tiles)
+    "testsrc_c440_720p.ivf",       // 4:4:0 large-frame
 ];
 
 /// Resolve `tests/corpus/profile1/<name>` from the workspace root.
@@ -205,4 +224,111 @@ fn profile1_vectors_decode_bit_exact() {
 fn profile1_440_foreman_decodes_bit_exact_wave_p() {
     let (_frames, mismatched) = decode_and_gate("foreman_c440.ivf");
     assert_eq!(mismatched, 0, "foreman_c440.ivf Wave P fix-lock");
+}
+
+/// Non-asserting variant for probing vectors that are expected to fail
+/// (rvp9 real-bug follow-ups). Returns `(shown_frames, mismatches)`.
+fn decode_and_count(name: &str) -> (usize, usize) {
+    let vector = profile1_vector(name);
+    assert!(vector.exists(), "Profile-1 vector missing: {}", vector.display());
+
+    let (data, packets) = read_packets(&vector)
+        .unwrap_or_else(|e| panic!("container parse {}: {e}", vector.display()));
+    let entries = read_triangulated_ledger(&vector);
+
+    let mut decoder = Decoder::with_threads(NonZeroUsize::new(1).expect("1 is non-zero"));
+    let mut shown_idx: usize = 0;
+    let mut mismatched: usize = 0;
+
+    for range in &packets {
+        let parsed = decoder
+            .parse_packet(range.slice(&data))
+            .unwrap_or_else(|e| panic!("parse_packet {}: {e}", vector.display()));
+        for frame in parsed {
+            let shown = frame.header.show_frame
+                || matches!(frame.header.kind, FrameKind::ShowExistingFrame { .. });
+            let buf = decoder.decode_frame(&frame).unwrap_or_else(|e| {
+                panic!(
+                    "{}: decode error on shown-frame {shown_idx} (kind={:?}): {e}",
+                    vector.display(), frame.header.kind
+                )
+            });
+            if !shown { continue; }
+            let got_hex = hex16(md5_of_yv12_visible(&buf));
+            if let Some(e) = entries.get(shown_idx) {
+                if e.md5_hex_visible().as_deref() != Some(got_hex.as_str()) {
+                    mismatched += 1;
+                }
+            }
+            shown_idx += 1;
+        }
+    }
+    (shown_idx, mismatched)
+}
+
+/// Track T-2: kfonly (--kf-max-dist=1) Profile-1 vectors surface a real
+/// rvp9 decoder bug — all non-initial keyframes mismatch. The encoder's
+/// kfonly mode forces every frame to be a keyframe; frames 0-2 decode
+/// correctly but subsequent keyframes diverge (11/12 for 444, confirmed
+/// across all three chroma formats). vpxdec and ffmpeg agree, so this
+/// is unambiguously an rvp9 bug.
+///
+/// Root cause hypothesis: the inter→intra transition state reset path
+/// in the rvp9 decoder doesn't fully reinitialise some state that
+/// accumulates across frames (possibly ref-frame management or
+/// above/left context). Each fresh keyframe should be decodable
+/// independently, but rvp9's output drifts from oracle starting around
+/// frame 3.
+///
+/// Tracked as follow-up: fix the kfonly decode bug then un-ignore.
+#[test]
+#[ignore = "T-2: kfonly 444 surfaces rvp9 bug — 11/12 frames mismatch"]
+fn profile1_444_kfonly_follow_up() {
+    let (shown, mismatched) = decode_and_count("foreman_c444_kfonly.ivf");
+    assert_eq!(shown, 12);
+    // When the bug is fixed, change this to assert_eq!(mismatched, 0).
+    assert!(mismatched > 0, "Bug appears fixed — remove #[ignore] and move to PROFILE1_VECTORS");
+}
+
+#[test]
+#[ignore = "T-2: kfonly 422 surfaces rvp9 bug — same root cause as 444"]
+fn profile1_422_kfonly_follow_up() {
+    let (shown, mismatched) = decode_and_count("foreman_c422_kfonly.ivf");
+    assert_eq!(shown, 12);
+    assert!(mismatched > 0, "Bug appears fixed — remove #[ignore] and move to PROFILE1_VECTORS");
+}
+
+#[test]
+#[ignore = "T-2: kfonly 440 surfaces rvp9 bug — same root cause as 444"]
+fn profile1_440_kfonly_follow_up() {
+    let (shown, mismatched) = decode_and_count("foreman_c440_kfonly.ivf");
+    assert_eq!(shown, 12);
+    assert!(mismatched > 0, "Bug appears fixed — remove #[ignore] and move to PROFILE1_VECTORS");
+}
+
+/// Track T-2: aq-mode=2 (cyclic refresh segmentation) Profile-1 vectors
+/// surface a second real rvp9 decoder bug. Cyclic refresh activates
+/// segment_id-based quantisation a few frames in; rvp9's non-420
+/// segmentation decode path produces incorrect output. 9/12 mismatches
+/// on foreman_c444, 8/12 on testsrc_c444_720p.
+///
+/// Root cause hypothesis: segment-aware quantisation or loop-filter
+/// delta application in the non-420 decode path doesn't correctly read
+/// the per-block segment_id from the bitstream when aq-mode activates
+/// the segment map. The first frames pass because the encoder hasn't
+/// yet turned on segment-based Q adjustment.
+#[test]
+#[ignore = "T-2: aq2 444 surfaces rvp9 segmentation bug — 9/12 mismatch"]
+fn profile1_444_aq2_follow_up() {
+    let (shown, mismatched) = decode_and_count("foreman_c444_aq2.ivf");
+    assert_eq!(shown, 12);
+    assert!(mismatched > 0, "Bug appears fixed — remove #[ignore] and move to PROFILE1_VECTORS");
+}
+
+#[test]
+#[ignore = "T-2: aq2 720p 444 surfaces same segmentation bug"]
+fn profile1_720p_aq2_follow_up() {
+    let (shown, mismatched) = decode_and_count("testsrc_c444_720p_aq2.ivf");
+    assert_eq!(shown, 12);
+    assert!(mismatched > 0, "Bug appears fixed — remove #[ignore] and move to PROFILE1_VECTORS");
 }

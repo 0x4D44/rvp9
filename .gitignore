@@ -39,6 +39,14 @@ tests/corpus/sources/*
 # `testsrc_*.y4m`) by ad-hoc encode-corpus dry runs. They're hundreds of
 # MB each; never commit them.
 tests/corpus/*.y4m
+# T-2 Profile-1 intermediate re-chroma'd sources (regenerable via ffmpeg
+# from the parent y4m). 30 frames @ 720p444 = ~80MB — too large to commit.
+# The two committed exceptions (`foreman_c422.y4m`, `foreman_c444.y4m`)
+# pre-date Track T and are small enough.
+tests/corpus/profile1/testsrc_*.y4m
+# Raw .yuv intermediate files for Profile-1 encoding (e.g. foreman_c440.yuv
+# for 4:4:0, since y4m format doesn't support yuv440p).
+tests/corpus/profile1/*.yuv
 # Q.1.A regenerable fixtures (HLD §7): encoded by
 # scripts/bench-headtohead.ps1 from the gitignored .y4m sources.
 tests/corpus/fixtures/testsrc_*.ivf
