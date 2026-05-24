@@ -633,6 +633,7 @@ mod tests {
                 pack_i16x8(rows[6]),
                 pack_i16x8(rows[7]),
             ];
+            // SAFETY: _mm_setzero_si128 has no preconditions; unsafe required only because it is a compiler intrinsic.
             let mut out_v: [__m128i; 8] = [unsafe { _mm_setzero_si128() }; 8];
             // SAFETY: SSE2 gated above.
             unsafe { transpose_16bit_8x8(&in_v, &mut out_v); }
@@ -684,6 +685,7 @@ mod tests {
                 pack_i16x8(rows[12]), pack_i16x8(rows[13]),
                 pack_i16x8(rows[14]), pack_i16x8(rows[15]),
             ];
+            // SAFETY: _mm_setzero_si128 has no preconditions; unsafe required only because it is a compiler intrinsic.
             let mut out_v: [__m128i; 16] = [unsafe { _mm_setzero_si128() }; 16];
             // SAFETY: SSE2 gated above.
             unsafe { idct16_8col(&in_v, &mut out_v); }

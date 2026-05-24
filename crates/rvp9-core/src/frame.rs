@@ -1548,9 +1548,13 @@ impl TileFrameView {
         // SAFETY: y_offset / u_offset / v_offset are valid offsets into
         // buffer_alloc (established at allocation time in Yv12Buffer::alloc).
         // The resulting pointers remain within the allocation.
-        let y_ptr = unsafe { alloc_ptr.add(yv12.y_offset) };
-        let u_ptr = unsafe { alloc_ptr.add(yv12.u_offset) };
-        let v_ptr = unsafe { alloc_ptr.add(yv12.v_offset) };
+        let (y_ptr, u_ptr, v_ptr) = unsafe {
+            (
+                alloc_ptr.add(yv12.y_offset),
+                alloc_ptr.add(yv12.u_offset),
+                alloc_ptr.add(yv12.v_offset),
+            )
+        };
 
         let y_len = alloc_len - yv12.y_offset;
         let u_len = alloc_len - yv12.u_offset;

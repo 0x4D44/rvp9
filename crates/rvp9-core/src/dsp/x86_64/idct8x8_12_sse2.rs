@@ -666,6 +666,7 @@ mod tests {
         let row_in = |r: i16| -> [i16; 8] {
             [r * 10, r * 10 + 1, r * 10 + 2, r * 10 + 3, -1, -2, -3, -4]
         };
+        // SAFETY: _mm_setzero_si128 has no preconditions; unsafe required only because it is a compiler intrinsic.
         let mut io: [__m128i; 8] = [unsafe { _mm_setzero_si128() }; 8];
         io[0] = pack_i16x8(row_in(0));
         io[1] = pack_i16x8(row_in(1));
@@ -758,8 +759,9 @@ mod tests {
                 pack_i16x8(rows[6]),
                 pack_i16x8(rows[7]),
             ];
-            // SAFETY: SSE2 gated above.
+            // SAFETY: _mm_setzero_si128 has no preconditions; unsafe required only because it is a compiler intrinsic.
             let mut out_v: [__m128i; 8] = [unsafe { _mm_setzero_si128() }; 8];
+            // SAFETY: SSE2 gated above.
             unsafe { idct8_sse2(&in_v, &mut out_v); }
 
             // Compare each of the 8 lane-positions (the 8 independent
@@ -833,6 +835,7 @@ mod tests {
             pack_i16x8(in2),
             pack_i16x8(in3),
         ];
+        // SAFETY: _mm_setzero_si128 has no preconditions; unsafe required only because it is a compiler intrinsic.
         let mut out_v: [__m128i; 8] = [unsafe { _mm_setzero_si128() }; 8];
         // SAFETY: SSE2 gated by `require_sse2!()`.
         unsafe { idct8x8_12_transpose_16bit_4x8(&in_v, &mut out_v); }
