@@ -78,7 +78,8 @@ use rvp9_core::block::BlockSize;
 use rvp9_core::entropy::{FRAME_CONTEXTS, FrameContext};
 use rvp9_core::frame::extend_frame_borders;
 use rvp9_core::frame::{
-    BorderUsage, ByteAlignment, DecoderFramePool, FrameBuf, Yv12Buffer, Yv12ScratchPool,
+    BorderUsage, ByteAlignment, DecoderFramePool, FrameBuf, TileFrameView, Yv12Buffer,
+    Yv12ScratchPool,
 };
 use rvp9_core::inter::mode_info::{InterModeReadParams, setup_compound_reference_mode};
 use rvp9_core::inter::mv_ref::sign_bias_from_header;
@@ -95,12 +96,6 @@ use crate::tile::{
 };
 use crate::tile_ctx::TileDecodeCtx;
 use std::sync::Mutex;
-
-/// G5.1: luma pixels per MI block (`MI_BLOCK_SIZE_LOG2 = 3` → 8 luma
-/// pixels). Used by the parallel tile-dispatch path to translate
-/// `TileBounds::mi_col_*` into luma pixel column offsets for
-/// [`Yv12Buffer::merge_tile_columns_from`].
-const MI_BLOCK_PIXELS: usize = 8;
 
 /// D.20 — write the visible-region Y plane of a freshly-decoded
 /// frame to `path` (raw bytes, row-major, no padding). Used by the
@@ -1558,13 +1553,12 @@ impl Decoder {
             // completion" handoff. After scope joins, the main
             // thread `.take()`s each slot.
             //
-            // G5.2: the scratch `Yv12Buffer`s are sourced from the
-            // decoder-owned [`Yv12ScratchPool`] rather than via a
-            // fresh `clone_geometry()` per tile per frame. The pool
-            // recycles buffers across frames; see the
-            // [`Yv12ScratchPool`] type doc for the lifecycle.
+            // Phase 1 — direct-to-frame tile decode. Each worker
+            // writes pixels directly into a non-overlapping
+            // TileFrameView of the output yv12, eliminating the
+            // scratch-allocate and pixel-merge phases entirely.
             struct TileSlot {
-                scratch: Mutex<Option<Yv12Buffer>>,
+                view: Mutex<Option<TileFrameView>>,
                 seg_ids: Mutex<Option<Vec<u8>>>,
                 counts: Mutex<Option<Box<rvp9_core::entropy::adapt::CoefCountsBank>>>,
                 result: Mutex<Option<Result<TileDecodeCtx, tile::TileDecodeError>>>,
@@ -1575,14 +1569,26 @@ impl Decoder {
                 #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                 timing: Mutex<profile::PerTileTiming>,
             }
-            let scratch_buffers = self
-                .tile_scratch_pool
-                .take(num_tiles, &yv12)
-                .expect("scratch Yv12Buffer allocation");
-            let slots: Vec<TileSlot> = scratch_buffers
+            // Construct one TileFrameView per tile from &mut yv12.
+            // SAFETY: tile bounds are non-overlapping (VP9 spec —
+            // tile boundaries are SB-aligned and disjoint). The yv12
+            // lives through the scope (borrowed by the closure). No
+            // other &mut to yv12.buffer_alloc exists between view
+            // construction and scope.join().
+            let tile_views: Vec<TileFrameView> = per_tile_bounds
+                .iter()
+                .map(|_bounds| {
+                    // SAFETY: see block comment above. Each view
+                    // covers the full plane origins so frame-absolute
+                    // indexing works; tiles write to disjoint pixel
+                    // rectangles by VP9 spec guarantee.
+                    unsafe { TileFrameView::from_yv12(&mut yv12) }
+                })
+                .collect();
+            let slots: Vec<TileSlot> = tile_views
                 .into_iter()
-                .map(|scratch| TileSlot {
-                    scratch: Mutex::new(Some(scratch)),
+                .map(|view| TileSlot {
+                    view: Mutex::new(Some(view)),
                     seg_ids: Mutex::new(Some(vec![0u8; mi_rows * mi_cols])),
                     counts: Mutex::new(Some(Box::new(
                         rvp9_core::entropy::adapt::CoefCountsBank::default(),
@@ -1615,12 +1621,12 @@ impl Decoder {
                             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                         let t_lock_in = profile::now_cycles();
-                        let mut scratch = slot
-                            .scratch
+                        let mut view = slot
+                            .view
                             .lock()
-                            .expect("scratch mutex")
+                            .expect("view mutex")
                             .take()
-                            .expect("scratch present at job start");
+                            .expect("view present at job start");
                         let mut seg_ids = slot
                             .seg_ids
                             .lock()
@@ -1640,16 +1646,16 @@ impl Decoder {
                             bounds,
                             params_ref,
                             fc,
-                            &mut scratch,
+                            &mut view,
                             Some(counts.as_mut()),
                             &mut seg_ids,
                             simd_dispatch,
                         );
                         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                         let t_decode_end = profile::now_cycles();
-                        // Restore the owned state so the main thread
-                        // can merge.
-                        *slot.scratch.lock().expect("scratch mutex") = Some(scratch);
+                        // View is consumed — no need to put it back
+                        // (it holds no owned allocation, just raw
+                        // pointers that are now logically invalid).
                         *slot.seg_ids.lock().expect("seg_ids mutex") = Some(seg_ids);
                         *slot.counts.lock().expect("counts mutex") = Some(counts);
                         *slot.result.lock().expect("result mutex") = Some(res);
@@ -1674,14 +1680,11 @@ impl Decoder {
             let t_scope_end = profile::now_cycles();
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             let t_merge_start = profile::now_cycles();
-            // Post-scope merge: in submission order, collect TileDecodeCtx,
-            // merge per-tile counts into `self.coef_counts`, and
-            // merge per-tile pixels (column-range) into `yv12`.
-            //
-            // G5.2: recover the scratch `Yv12Buffer`s as we walk the
-            // slots and return them to `self.tile_scratch_pool` at
-            // the end of the merge so the next frame can reuse them.
-            let mut recovered_scratch: Vec<Yv12Buffer> = Vec::with_capacity(slots.len());
+            // Post-scope merge: in submission order, collect
+            // TileDecodeCtx, merge per-tile counts into
+            // `self.coef_counts`, and merge per-tile seg_ids.
+            // Pixel merge is NO LONGER needed — workers wrote
+            // directly into the output yv12 via TileFrameView.
             let mut merge_err: Option<DecodeError> = None;
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             let num_tiles_local = slots.len();
@@ -1689,16 +1692,6 @@ impl Decoder {
             let mut per_tile_timings: Vec<profile::PerTileTiming> =
                 Vec::with_capacity(num_tiles_local);
             for (tile_idx, slot) in slots.into_iter().enumerate() {
-                let scratch = slot
-                    .scratch
-                    .into_inner()
-                    .expect("scratch mutex")
-                    .expect("scratch present after job");
-                // Reclaim the scratch buffer up-front so that even if
-                // the per-tile result is an error (and we early-return
-                // below), the pool gets the buffer back via the
-                // post-loop `put`.
-                recovered_scratch.push(scratch);
                 #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                 {
                     let pt = *slot.timing.lock().expect("timing mutex");
@@ -1706,8 +1699,6 @@ impl Decoder {
                 }
 
                 if merge_err.is_some() {
-                    // A prior tile errored; keep collecting scratch
-                    // buffers but stop merging.
                     continue;
                 }
 
@@ -1738,23 +1729,8 @@ impl Decoder {
                 // 1. Merge counts into the decoder's running coef_counts.
                 self.coef_counts.add(&counts);
 
-                // 2. Merge pixel rectangle (rows x cols) from scratch
-                //    -> yv12. G5.3: row range is per-tile so
-                //    tile_rows > 1 tiles only stamp their own rect.
-                let luma_row_start = bounds.mi_row_start * MI_BLOCK_PIXELS;
-                let luma_row_end = bounds.mi_row_end * MI_BLOCK_PIXELS;
-                let luma_col_start = bounds.mi_col_start * MI_BLOCK_PIXELS;
-                let luma_col_end = bounds.mi_col_end * MI_BLOCK_PIXELS;
-                let scratch_ref = recovered_scratch
-                    .last()
-                    .expect("just pushed scratch above");
-                yv12.merge_tile_rect_from(
-                    scratch_ref,
-                    luma_row_start,
-                    luma_row_end,
-                    luma_col_start,
-                    luma_col_end,
-                );
+                // 2. Pixel merge REMOVED — tiles wrote directly into
+                //    the output yv12 via TileFrameView.
 
                 // 3. Merge seg_id rectangle — each tile only writes
                 //    its own (mi_row_start..mi_row_end,
@@ -1772,10 +1748,6 @@ impl Decoder {
 
                 tile_decode_ctxs.push((bounds, decode_ctx));
             }
-            // Return the scratch buffers to the pool (always, even on
-            // error — the buffers are owned by us and stale content
-            // is safe per the pool's Re-zero safety invariant).
-            self.tile_scratch_pool.put(recovered_scratch);
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             {
                 let t_merge_end = profile::now_cycles();
@@ -2501,8 +2473,9 @@ impl Decoder {
                 ));
             }
 
+            // Phase 1 — direct-to-frame tile decode for inter frames.
             struct InterTileSlot {
-                scratch: Mutex<Option<Yv12Buffer>>,
+                view: Mutex<Option<TileFrameView>>,
                 seg_ids: Mutex<Option<Vec<u8>>>,
                 mv_grid: Mutex<Option<Vec<rvp9_core::inter::mv_ref::PrevFrameMvRef>>>,
                 mv_counts: Mutex<Option<Box<rvp9_core::entropy::mv_probs::NmvCounts>>>,
@@ -2514,17 +2487,23 @@ impl Decoder {
                 #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                 timing: Mutex<profile::PerTileTiming>,
             }
-            // G5.2: source the per-tile scratch buffers from the
-            // decoder-owned [`Yv12ScratchPool`] (recycled across
-            // frames) rather than per-tile `clone_geometry()`.
-            let scratch_buffers = self
-                .tile_scratch_pool
-                .take(num_tiles, &yv12)
-                .expect("scratch Yv12Buffer allocation");
-            let slots: Vec<InterTileSlot> = scratch_buffers
+            // Construct one TileFrameView per tile from &mut yv12.
+            // SAFETY: tile bounds are non-overlapping (VP9 spec —
+            // tile boundaries are SB-aligned and disjoint). The yv12
+            // lives through the scope. No other &mut to
+            // yv12.buffer_alloc exists between view construction and
+            // scope.join().
+            let tile_views: Vec<TileFrameView> = per_tile_bounds
+                .iter()
+                .map(|_bounds| {
+                    // SAFETY: see block comment above.
+                    unsafe { TileFrameView::from_yv12(&mut yv12) }
+                })
+                .collect();
+            let slots: Vec<InterTileSlot> = tile_views
                 .into_iter()
-                .map(|scratch| InterTileSlot {
-                    scratch: Mutex::new(Some(scratch)),
+                .map(|view| InterTileSlot {
+                    view: Mutex::new(Some(view)),
                     seg_ids: Mutex::new(Some(vec![0u8; mi_rows * mi_cols])),
                     mv_grid: Mutex::new(Some(vec![
                         rvp9_core::inter::mv_ref::PrevFrameMvRef::default();
@@ -2561,12 +2540,12 @@ impl Decoder {
                             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                         let t_lock_in = profile::now_cycles();
-                        let mut scratch = slot
-                            .scratch
+                        let mut view = slot
+                            .view
                             .lock()
-                            .expect("scratch mutex")
+                            .expect("view mutex")
                             .take()
-                            .expect("scratch present at job start");
+                            .expect("view present at job start");
                         let mut seg_ids = slot
                             .seg_ids
                             .lock()
@@ -2604,7 +2583,7 @@ impl Decoder {
                             bounds,
                             params_ref,
                             fc,
-                            &mut scratch,
+                            &mut view,
                             Some(mv_counts.as_mut()),
                             Some(coef_counts.as_mut()),
                             Some(mode_counts.as_mut()),
@@ -2616,8 +2595,7 @@ impl Decoder {
                         );
                         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                         let t_decode_end = profile::now_cycles();
-                        // Restore owned state to slot.
-                        *slot.scratch.lock().expect("scratch mutex") = Some(scratch);
+                        // View is consumed — no need to put it back.
                         *slot.seg_ids.lock().expect("seg_ids mutex") = Some(seg_ids);
                         *slot.mv_grid.lock().expect("mv_grid mutex") = Some(mv_grid);
                         *slot.mv_counts.lock().expect("mv_counts mutex") = Some(mv_counts);
@@ -2645,24 +2623,14 @@ impl Decoder {
             let t_scope_end = profile::now_cycles();
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             let t_merge_start = profile::now_cycles();
-            // Post-scope merge in submission order.
-            //
-            // G5.2: reclaim each tile's scratch `Yv12Buffer` into
-            // `recovered_scratch` and return them to
-            // `self.tile_scratch_pool` after the merge so the next
-            // frame can reuse them (rather than re-allocating).
-            let mut recovered_scratch: Vec<Yv12Buffer> = Vec::with_capacity(slots.len());
+            // Post-scope merge in submission order. Pixel merge is
+            // NO LONGER needed — workers wrote directly into the
+            // output yv12 via TileFrameView.
             let mut merge_err: Option<DecodeError> = None;
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             let mut per_tile_timings: Vec<profile::PerTileTiming> =
                 Vec::with_capacity(slots.len());
             for (tile_idx, slot) in slots.into_iter().enumerate() {
-                let scratch = slot
-                    .scratch
-                    .into_inner()
-                    .expect("scratch mutex")
-                    .expect("scratch present after job");
-                recovered_scratch.push(scratch);
                 #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                 {
                     let pt = *slot.timing.lock().expect("timing mutex");
@@ -2716,23 +2684,8 @@ impl Decoder {
                 self.coef_counts.add(&coef_counts);
                 self.mode_counts.add(&mode_counts);
 
-                // Merge pixel rectangle (rows x cols) into yv12.
-                // G5.3: row range is per-tile so tile_rows > 1 tiles
-                // each stamp only their own rectangle.
-                let luma_row_start = bounds.mi_row_start * MI_BLOCK_PIXELS;
-                let luma_row_end = bounds.mi_row_end * MI_BLOCK_PIXELS;
-                let luma_col_start = bounds.mi_col_start * MI_BLOCK_PIXELS;
-                let luma_col_end = bounds.mi_col_end * MI_BLOCK_PIXELS;
-                let scratch_ref = recovered_scratch
-                    .last()
-                    .expect("just pushed scratch above");
-                yv12.merge_tile_rect_from(
-                    scratch_ref,
-                    luma_row_start,
-                    luma_row_end,
-                    luma_col_start,
-                    luma_col_end,
-                );
+                // Pixel merge REMOVED — tiles wrote directly into
+                // the output yv12 via TileFrameView.
 
                 // Merge seg_ids + mv_grid rectangles. G5.3: restrict
                 // the row loop to the tile's row range to support
@@ -2750,10 +2703,6 @@ impl Decoder {
 
                 tile_decode_ctxs.push((bounds, decode_ctx));
             }
-            // G5.2: return scratch buffers to the pool (always, even
-            // on error — buffers are owned by us and stale content
-            // is safe per the pool's Re-zero safety invariant).
-            self.tile_scratch_pool.put(recovered_scratch);
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             {
                 let t_merge_end = profile::now_cycles();

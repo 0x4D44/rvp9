@@ -46,7 +46,7 @@ use rvp9_core::block::{BlockSize, uv_plane_block_size, uv_plane_tx_size};
 use rvp9_core::dsp::SimdDispatch;
 use rvp9_core::entropy::{BoolReader, FrameContext};
 use rvp9_core::entropy::adapt::CoefCountsBank;
-use rvp9_core::frame::{BorderedPlaneRef, Yv12Buffer};
+use rvp9_core::frame::{BorderedPlaneRef, TileFrameDst, Yv12Buffer};
 use rvp9_core::inter::mode_info::{InterModeReadParams, read_inter_block_mode_info};
 use rvp9_core::inter::mv_ref::{BlockBounds, NeighbourLookup, PrevFrameMvRef};
 use rvp9_core::inter::scale::ScaleFactors;
@@ -146,7 +146,7 @@ pub struct InterBlockInputs<'a> {
 /// - Inherits the assertions in [`decode_block_tokens`] and
 ///   [`inter_predictor`].
 #[allow(clippy::too_many_arguments)] // mirrors libvpx 1:1
-pub fn reconstruct_inter_block(
+pub fn reconstruct_inter_block<D: TileFrameDst>(
     reader: &mut BoolReader<'_>,
     fc: &FrameContext,
     mut coef_counts: Option<&mut CoefCountsBank>,
@@ -158,7 +158,7 @@ pub fn reconstruct_inter_block(
     mi_col_in_tile: usize,
     mi_row_in_sb: usize,
     inputs: &InterBlockInputs<'_>,
-    dst_frame: &mut Yv12Buffer,
+    dst_frame: &mut D,
     dispatch: &SimdDispatch,
 ) {
     // G7.2: the per-plane MC / residual loops are `ss`-aware for all
@@ -626,7 +626,7 @@ pub fn reconstruct_inter_block(
 ///   intra variant (would indicate a bitstream / context bug).
 /// - Inherits panics from [`reconstruct_inter_block`].
 #[allow(clippy::too_many_arguments)]
-pub fn decode_and_reconstruct_inter_block<N: NeighbourLookup>(
+pub fn decode_and_reconstruct_inter_block<N: NeighbourLookup, D: TileFrameDst>(
     reader: &mut BoolReader<'_>,
     fc: &FrameContext,
     coef_ctx: &mut TileCoefCtx,
@@ -641,7 +641,7 @@ pub fn decode_and_reconstruct_inter_block<N: NeighbourLookup>(
     mi_col_in_tile: usize,
     mi_row_in_sb: usize,
     inputs: &InterBlockInputs<'_>,
-    dst_frame: &mut Yv12Buffer,
+    dst_frame: &mut D,
     dispatch: &SimdDispatch,
 ) {
     // 1. Read inter-block mode info (refs, mode, MVs, filter).

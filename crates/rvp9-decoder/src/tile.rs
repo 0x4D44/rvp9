@@ -45,7 +45,7 @@ use rvp9_core::block::{BlockSize, PartitionType, max_txsize, subsize, uv_plane_b
 use rvp9_core::dsp::SimdDispatch;
 use rvp9_core::entropy::{BoolReader, FrameContext, VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB,
     VP9_KF_Y_MODE_PROB};
-use rvp9_core::frame::Yv12Buffer;
+use rvp9_core::frame::{TileFrameDst, Yv12Buffer};
 use rvp9_core::inter::mode_info::{InterModeReadParams, get_intra_inter_context,
     read_inter_block_mode_info};
 use rvp9_core::inter::mv_ref::BlockBounds;
@@ -356,12 +356,12 @@ fn plane_dequant(params: &FrameDecodeParams, plane: usize, segment_id: u8) -> (i
 /// Returns [`TileDecodeError::InvalidTilePayload`] if the tile bytes
 /// don't open with a valid bool-coder marker bit.
 #[allow(clippy::too_many_arguments)]
-pub fn decode_tile_intra(
+pub fn decode_tile_intra<D: TileFrameDst>(
     tile_data: &[u8],
     bounds: TileBounds,
     params: &FrameDecodeParams,
     fc: &FrameContext,
-    dst_frame: &mut Yv12Buffer,
+    dst_frame: &mut D,
     mut coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
     cur_segment_ids: &mut [u8],
     dispatch: &SimdDispatch,
@@ -454,7 +454,7 @@ pub fn decode_tile_intra(
 /// `n4x4_l2` is `log2(parent.n_4x4_wide)` — i.e. 4 for 64×64, 3 for
 /// 32×32, 2 for 16×16, 1 for 8×8, 0 for 4×4.
 #[allow(clippy::too_many_arguments)] // mirrors libvpx 1:1
-fn decode_partition(
+fn decode_partition<D: TileFrameDst>(
     reader: &mut BoolReader<'_>,
     fc: &FrameContext,
     params: &FrameDecodeParams,
@@ -462,7 +462,7 @@ fn decode_partition(
     decode_ctx: &mut TileDecodeCtx,
     coef_ctx: &mut TileCoefCtx,
     part_ctx: &mut PartitionCtx,
-    dst_frame: &mut Yv12Buffer,
+    dst_frame: &mut D,
     mi_row: usize,
     mi_col: usize,
     bsize: BlockSize,
@@ -644,14 +644,14 @@ fn decode_partition(
 /// 3. For each plane × TX position: `predict_and_reconstruct_intra_block`
 ///    (= K1 edge-builder + H predict + decode + IT-add).
 #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
-fn decode_block(
+fn decode_block<D: TileFrameDst>(
     reader: &mut BoolReader<'_>,
     fc: &FrameContext,
     params: &FrameDecodeParams,
     bounds: &TileBounds,
     decode_ctx: &mut TileDecodeCtx,
     coef_ctx: &mut TileCoefCtx,
-    dst_frame: &mut Yv12Buffer,
+    dst_frame: &mut D,
     mi_row: usize,
     mi_col: usize,
     bsize: BlockSize,
@@ -960,11 +960,11 @@ fn reset_skip_context(
 ///   `frame_lossless && plane_tx == TxSize::Tx4x4` to match libvpx's
 ///   `inverse_transform_block_intra:280` WHT-vs-IDCT switch.
 #[allow(clippy::too_many_arguments)] // mirrors the inlined libvpx loop
-fn reconstruct_intra_planes(
+fn reconstruct_intra_planes<D: TileFrameDst>(
     reader: &mut BoolReader<'_>,
     fc: &FrameContext,
     coef_ctx: &mut TileCoefCtx,
-    dst_frame: &mut Yv12Buffer,
+    dst_frame: &mut D,
     mi: &ModeInfo,
     y_mode: IntraMode,
     uv_mode: IntraMode,
@@ -1449,12 +1449,12 @@ pub struct InterFrameDecodeParams<'a> {
 /// Returns [`TileDecodeError::InvalidTilePayload`] if the tile bytes
 /// don't open with a valid bool-coder marker bit.
 #[allow(clippy::too_many_arguments)]
-pub fn decode_tile_inter(
+pub fn decode_tile_inter<D: TileFrameDst>(
     tile_data: &[u8],
     bounds: TileBounds,
     params: &InterFrameDecodeParams<'_>,
     fc: &FrameContext,
-    dst_frame: &mut Yv12Buffer,
+    dst_frame: &mut D,
     mut mv_counts: Option<&mut rvp9_core::entropy::mv_probs::NmvCounts>,
     mut coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
     mut mode_counts: Option<&mut rvp9_core::entropy::adapt::FrameCounts>,
@@ -1525,7 +1525,7 @@ pub fn decode_tile_inter(
 /// come from `fc.partition_prob[ctx]` (3 entries) instead of the
 /// keyframe table.
 #[allow(clippy::too_many_arguments)]
-fn decode_inter_partition(
+fn decode_inter_partition<D: TileFrameDst>(
     reader: &mut BoolReader<'_>,
     fc: &FrameContext,
     params: &InterFrameDecodeParams<'_>,
@@ -1533,7 +1533,7 @@ fn decode_inter_partition(
     decode_ctx: &mut TileDecodeCtx,
     coef_ctx: &mut TileCoefCtx,
     part_ctx: &mut PartitionCtx,
-    dst_frame: &mut Yv12Buffer,
+    dst_frame: &mut D,
     mi_row: usize,
     mi_col: usize,
     bsize: BlockSize,
@@ -1741,14 +1741,14 @@ fn decode_inter_partition(
 /// 6. If intra-in-inter: deferred — returns Ok with no pixels written
 ///    today (D.3.a scaffold). Future work surfaces D-XXX.
 #[allow(clippy::too_many_arguments)]
-fn decode_inter_block(
+fn decode_inter_block<D: TileFrameDst>(
     reader: &mut BoolReader<'_>,
     fc: &FrameContext,
     params: &InterFrameDecodeParams<'_>,
     bounds: &TileBounds,
     decode_ctx: &mut TileDecodeCtx,
     coef_ctx: &mut TileCoefCtx,
-    dst_frame: &mut Yv12Buffer,
+    dst_frame: &mut D,
     mi_row: usize,
     mi_col: usize,
     bsize: BlockSize,
