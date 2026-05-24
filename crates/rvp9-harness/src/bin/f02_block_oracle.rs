@@ -269,6 +269,10 @@ fn drive_libvpx_leg(
         .arg("--end-usage=cbr")
         .arg("--aq-mode=0")
         .arg("--passes=1")
+        // `--rt` makes lag-in-frames a no-op; libvpx still prints a
+        // warning and waits for `y` on stdin. Set lag explicitly to
+        // suppress the prompt (matches the BD-rate gate invocation).
+        .arg("--lag-in-frames=0")
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     let out = cmd.output()?;
