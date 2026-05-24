@@ -98,7 +98,7 @@ use crate::mode_decision::block_yrd::{
     BlockYrdResult, block_error_fp_i32, satd_i16,
 };
 use crate::mode_decision::rd_cost;
-use crate::mode_info::{InterMode, Mv};
+use crate::mode_info::{InterMode, Mv, RefFrame};
 use crate::mv_search::full_pixel::{
     FullPixelSearchParams, PlaneRef, diamond_search_sad,
 };
@@ -433,6 +433,327 @@ pub fn pick_inter_mode_luma_all_costs(
         lambda,
     );
     [zero, nearest, near, new]
+}
+
+// ====================================================================
+// Phase 2a — unified dual-ref interleaved picker.
+// ====================================================================
+
+/// Inputs to [`pick_inter_mode`].
+///
+/// Carries data for BOTH reference frames (LAST and GOLDEN) so the
+/// picker can iterate libvpx's `RT_INTER_MODES` interleaved order in
+/// a single call, replacing the old dual-`pick_inter_mode_luma` +
+/// argmin pattern.
+pub struct PickInterModeParams<'a> {
+    /// Block size being decided.
+    pub block_size: BlockSize,
+    /// Source luma plane view.
+    pub src_plane: &'a PlaneRef<'a>,
+    /// Top-left of the block in plane samples `(x, y)`.
+    pub src_offset: (usize, usize),
+
+    // --- LAST ref ---
+    /// LASTFRAME's reconstructed luma plane.
+    pub last_ref_plane: &'a PlaneRef<'a>,
+    /// LAST MV candidates from `find_mv_refs`.
+    pub last_mv_candidates: &'a MvCandidates,
+
+    // --- GOLDEN ref ---
+    /// GOLDENFRAME's reconstructed luma plane.
+    pub golden_ref_plane: &'a PlaneRef<'a>,
+    /// GOLDEN MV candidates from `find_mv_refs`.
+    pub golden_mv_candidates: &'a MvCandidates,
+
+    // --- Shared ---
+    /// Full-pel-unit MV bounds.
+    pub mv_limits: MvLimits,
+    /// 4-site diamond config.
+    pub site_config: &'a SearchSiteConfig,
+    /// MV-bit-cost LUT.
+    pub mv_costs: &'a MvCosts,
+    /// Inter-mode rate-cost table.
+    pub inter_mode_costs: &'a InterModeCosts,
+    /// Inter-mode context index (`0..INTER_MODE_CONTEXTS`).
+    pub inter_mode_ctx: usize,
+    /// Y-plane forward-quantizer.
+    pub quantizer: &'a PlaneQuantizers,
+    /// Frame base qindex (0..255).
+    pub q_index: u8,
+    /// `allow_high_precision_mv` from frame header.
+    pub allow_hp: bool,
+    /// Frame kind — selects the RD-multiplier formula.
+    pub frame_kind: FrameKind,
+    /// SB-level NEWMV diamond-search seed.
+    pub newmv_seed: Option<Mv>,
+    /// Ref-frame rate cost for LAST in `vp9_prob_cost` units.
+    pub ref_frame_cost_last: u32,
+    /// Ref-frame rate cost for GOLDEN in `vp9_prob_cost` units.
+    pub ref_frame_cost_golden: u32,
+
+    // --- OOB flags (from caller's mv_in_bounds check) ---
+    /// Whether LAST NEAREST MV is within the picker's MV envelope.
+    pub last_nearest_in_bounds: bool,
+    /// Whether LAST NEAR MV is within the picker's MV envelope.
+    pub last_near_in_bounds: bool,
+    /// Whether GOLDEN NEAREST MV is within the picker's MV envelope.
+    pub golden_nearest_in_bounds: bool,
+    /// Whether GOLDEN NEAR MV is within the picker's MV envelope.
+    pub golden_near_in_bounds: bool,
+}
+
+/// Result of [`pick_inter_mode`].
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct PickInterModeResult {
+    /// Winning inter mode.
+    pub best_mode: InterMode,
+    /// Winning MV (1/8-pel units).
+    pub best_mv: Mv,
+    /// `RDCOST(lambda, rate, distortion)` for the winning candidate.
+    pub best_rd_cost: i64,
+    /// Distortion (SSE between source and reconstruction).
+    pub best_distortion: u32,
+    /// Rate cost in `vp9_prob_cost` units.
+    pub best_rate: u32,
+    /// F.1 — coefficient-bit estimate.
+    pub coef_rate: u64,
+    /// F.1 — coefficient-domain squared error.
+    pub coef_dist: i64,
+    /// F.5 — interpolation filter chosen by per-block filter search.
+    pub picked_interp_filter: InterpFilter,
+    /// The chosen reference frame (LastFrame or GoldenFrame).
+    pub picked_ref_frame: RefFrame,
+}
+
+/// libvpx `RT_INTER_MODES` iteration order (SVC variant, 8 candidates).
+///
+/// Reference: `vp9_pickmode.c:1239-1248`.
+/// ```text
+/// (LAST, ZERO), (LAST, NEAREST), (GOLDEN, ZERO), (LAST, NEAR),
+/// (LAST, NEW),  (GOLDEN, NEAREST), (GOLDEN, NEAR), (GOLDEN, NEW)
+/// ```
+const RT_INTER_MODES: [(RefFrame, InterMode); 8] = [
+    (RefFrame::LastFrame, InterMode::ZeroMv),
+    (RefFrame::LastFrame, InterMode::NearestMv),
+    (RefFrame::GoldenFrame, InterMode::ZeroMv),
+    (RefFrame::LastFrame, InterMode::NearMv),
+    (RefFrame::LastFrame, InterMode::NewMv),
+    (RefFrame::GoldenFrame, InterMode::NearestMv),
+    (RefFrame::GoldenFrame, InterMode::NearMv),
+    (RefFrame::GoldenFrame, InterMode::NewMv),
+];
+
+/// Run the unified dual-ref inter-mode RD search for one luma block.
+///
+/// Iterates candidates in libvpx's `RT_INTER_MODES` interleaved order
+/// across both LAST and GOLDEN reference frames, performing duplicate-MV
+/// skip, OOB veto, and early-exit. Returns the lowest-RD-cost winner
+/// with the chosen reference frame.
+///
+/// Replaces the old pattern of calling [`pick_inter_mode_luma`] twice
+/// (once per ref) and taking the argmin at the caller.
+#[must_use]
+pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult {
+    debug_assert!(
+        params.inter_mode_ctx < INTER_MODE_CONTEXTS,
+        "inter_mode_ctx {} out of [0, {INTER_MODE_CONTEXTS})",
+        params.inter_mode_ctx,
+    );
+
+    let lambda = compute_rd_mult(
+        i32::from(params.q_index),
+        frame_type_for_rd(params.frame_kind),
+    );
+
+    // Per-ref safe MVs: clamp OOB candidates to ZERO so the
+    // evaluator doesn't read outside the reference plane.
+    let last_mvc_safe = MvCandidates {
+        nearest: if params.last_nearest_in_bounds {
+            params.last_mv_candidates.nearest
+        } else {
+            Mv::ZERO
+        },
+        near: if params.last_near_in_bounds {
+            params.last_mv_candidates.near
+        } else {
+            Mv::ZERO
+        },
+    };
+    let golden_mvc_safe = MvCandidates {
+        nearest: if params.golden_nearest_in_bounds {
+            params.golden_mv_candidates.nearest
+        } else {
+            Mv::ZERO
+        },
+        near: if params.golden_near_in_bounds {
+            params.golden_mv_candidates.near
+        } else {
+            Mv::ZERO
+        },
+    };
+
+    // mode_checked[ref_idx][mode_idx] — tracks which (ref, MV) pairs
+    // have been evaluated for duplicate-MV skip. ref_idx: 0=LAST,
+    // 1=GOLDEN. mode_idx: InterMode::idx() (0=NEAREST,1=NEAR,2=ZERO,3=NEW).
+    let mut mode_checked: [[bool; 4]; 2] = [[false; 4]; 2];
+    // frame_mv[ref_idx][mode_idx] — the MV used for each evaluated
+    // (ref, mode) candidate. Populated on evaluation, read for dup check.
+    let mut frame_mv: [[Mv; 4]; 2] = [[Mv::ZERO; 4]; 2];
+
+    // NEWMV search results (lazily computed per ref frame).
+    let mut newmv_last: Option<Mv> = None;
+    let mut newmv_golden: Option<Mv> = None;
+
+    let mut best: Option<PickInterModeResult> = None;
+
+    for &(ref_frame, mode) in &RT_INTER_MODES {
+        let ref_idx: usize = match ref_frame {
+            RefFrame::LastFrame => 0,
+            RefFrame::GoldenFrame => 1,
+            _ => unreachable!(),
+        };
+        let mvc_safe = if ref_idx == 0 { &last_mvc_safe } else { &golden_mvc_safe };
+        let ref_plane = if ref_idx == 0 { params.last_ref_plane } else { params.golden_ref_plane };
+        let ref_frame_rate_cost = if ref_idx == 0 {
+            params.ref_frame_cost_last
+        } else {
+            params.ref_frame_cost_golden
+        };
+
+        // OOB veto for NEAREST / NEAR: skip if the caller flagged the
+        // MV as out-of-bounds.
+        match (ref_idx, mode) {
+            (0, InterMode::NearestMv) if !params.last_nearest_in_bounds => continue,
+            (0, InterMode::NearMv) if !params.last_near_in_bounds => continue,
+            (1, InterMode::NearestMv) if !params.golden_nearest_in_bounds => continue,
+            (1, InterMode::NearMv) if !params.golden_near_in_bounds => continue,
+            _ => {}
+        }
+
+        // Determine the candidate MV.
+        let mv = match mode {
+            InterMode::ZeroMv => Mv::ZERO,
+            InterMode::NearestMv => mvc_safe.nearest,
+            InterMode::NearMv => mvc_safe.near,
+            InterMode::NewMv => {
+                // Lazily run the NEWMV search for this ref frame.
+                let cached = if ref_idx == 0 { &mut newmv_last } else { &mut newmv_golden };
+                if cached.is_none() {
+                    let single_params = InterModeSearchParams {
+                        block_size: params.block_size,
+                        src_plane: params.src_plane,
+                        src_offset: params.src_offset,
+                        ref_plane,
+                        mv_candidates: mvc_safe,
+                        mv_limits: params.mv_limits,
+                        site_config: params.site_config,
+                        mv_costs: params.mv_costs,
+                        inter_mode_costs: params.inter_mode_costs,
+                        inter_mode_ctx: params.inter_mode_ctx,
+                        quantizer: params.quantizer,
+                        q_index: params.q_index,
+                        allow_hp: params.allow_hp,
+                        frame_kind: params.frame_kind,
+                        newmv_seed: params.newmv_seed,
+                        ref_frame_rate_cost,
+                    };
+                    *cached = Some(run_newmv_search(&single_params));
+                }
+                cached.unwrap()
+            }
+        };
+
+        // Record the MV for this (ref, mode) slot.
+        frame_mv[ref_idx][mode.idx()] = mv;
+
+        // Duplicate-MV skip (libvpx `vp9_pickmode.c:2257-2268`):
+        // skip if another mode for the same ref already checked the
+        // same MV (restricted to zero-MV to match libvpx's TODO
+        // comment about non-zero regression).
+        let mut skip_this = false;
+        if mode != InterMode::NearestMv {
+            for other in [InterMode::NearestMv, InterMode::NearMv, InterMode::ZeroMv, InterMode::NewMv] {
+                if other == mode { continue; }
+                if mode_checked[ref_idx][other.idx()]
+                    && frame_mv[ref_idx][mode.idx()] == frame_mv[ref_idx][other.idx()]
+                    && frame_mv[ref_idx][other.idx()] == Mv::ZERO
+                {
+                    skip_this = true;
+                    break;
+                }
+            }
+        }
+        // libvpx `vp9_pickmode.c:2286-2289`: skip any non-NEAREST mode
+        // whose MV equals NEAREST's MV for the same ref (avoids
+        // re-evaluating the exact same prediction).
+        if mode != InterMode::NearestMv
+            && mode_checked[ref_idx][InterMode::NearestMv.idx()]
+            && mv == frame_mv[ref_idx][InterMode::NearestMv.idx()]
+        {
+            skip_this = true;
+        }
+        if skip_this { continue; }
+
+        // Build a single-ref params struct for the evaluator.
+        let single_params = InterModeSearchParams {
+            block_size: params.block_size,
+            src_plane: params.src_plane,
+            src_offset: params.src_offset,
+            ref_plane,
+            mv_candidates: mvc_safe,
+            mv_limits: params.mv_limits,
+            site_config: params.site_config,
+            mv_costs: params.mv_costs,
+            inter_mode_costs: params.inter_mode_costs,
+            inter_mode_ctx: params.inter_mode_ctx,
+            quantizer: params.quantizer,
+            q_index: params.q_index,
+            allow_hp: params.allow_hp,
+            frame_kind: params.frame_kind,
+            newmv_seed: params.newmv_seed,
+            ref_frame_rate_cost,
+        };
+
+        let ref_mv = match mode {
+            InterMode::NearMv => mvc_safe.near,
+            _ => mvc_safe.nearest,
+        };
+
+        let candidate = evaluate_candidate(&single_params, mode, mv, ref_mv, lambda);
+
+        mode_checked[ref_idx][mode.idx()] = true;
+
+        let is_new_best = match best.as_ref() {
+            None => true,
+            Some(prev) => candidate.best_rd_cost < prev.best_rd_cost,
+        };
+        if is_new_best {
+            best = Some(PickInterModeResult {
+                best_mode: candidate.best_mode,
+                best_mv: candidate.best_mv,
+                best_rd_cost: candidate.best_rd_cost,
+                best_distortion: candidate.best_distortion,
+                best_rate: candidate.best_rate,
+                coef_rate: candidate.coef_rate,
+                coef_dist: candidate.coef_dist,
+                picked_interp_filter: candidate.picked_interp_filter,
+                picked_ref_frame: ref_frame,
+            });
+        }
+
+        // Early-exit: if the best candidate so far is a perfect
+        // skip (zero RD cost or skip_txfm == AcDc detected via zero
+        // distortion + minimal rate), break early.
+        if let Some(ref b) = best {
+            if b.best_rd_cost == 0 {
+                break;
+            }
+        }
+    }
+
+    // The loop iterates 8 non-empty candidates (LAST ZERO is always
+    // reachable), so `best` is always populated.
+    best.expect("RT_INTER_MODES contains at least one evaluable candidate")
 }
 
 /// Clamp a Q3 (1/8-pel) MV into the picker's full-pel

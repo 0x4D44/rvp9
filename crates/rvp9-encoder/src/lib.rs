@@ -2345,7 +2345,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         BlockBounds, PrevFrameMvRef, find_mv_refs, lower_mv_precision,
     };
     use rvp9_core::mode_decision::inter::{
-        InterModeSearchParams, InterModeSearchResult, MvCandidates, pick_inter_mode_luma,
+        InterModeSearchParams, MvCandidates,
+        PickInterModeParams, pick_inter_mode,
     };
     use rvp9_core::mode_decision::nonrd_partition::{
         NonRdDescentParams, PartitionRdCandidate, nonrd_pick_partition, variance_hint_bounds,
@@ -3186,91 +3187,50 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         && row_fp >= row_min
                         && row_fp <= row_max
                 };
-                // A15 Phase B Step 3 — invoke the picker once per
-                // ref frame and take the min-RD winner across both
-                // rankings. The OOB veto + `mvc_safe` substitution
-                // is per-ref (each ref's `find_mv_refs` produces
-                // its own NEAREST/NEAR candidates), so the closure
-                // captures the ref plane + ref-specific `mvc`.
-                //
-                // This implements the
-                // {LAST, GOLDEN} × {ZERO, NEAREST, NEAR, NEW} = 8-
-                // candidate iteration without modifying the core-
-                // crate `InterModeSearchParams` API: the wrapper
-                // ranks two independent 4-candidate searches.
-                let pick_for_ref = |ref_plane: &PlaneRef<'_>,
-                                    mvc_in: &MvCandidates,
-                                    ref_frame_rate_cost: u32|
-                 -> InterModeSearchResult {
-                    let nearest_in_bounds = mv_in_bounds(mvc_in.nearest);
-                    let near_in_bounds = mv_in_bounds(mvc_in.near);
-                    let mvc_safe = MvCandidates {
-                        nearest: if nearest_in_bounds {
-                            mvc_in.nearest
-                        } else {
-                            Mv::ZERO
-                        },
-                        near: if near_in_bounds { mvc_in.near } else { Mv::ZERO },
-                    };
-                    let params = InterModeSearchParams {
-                        block_size: leaf_bsize,
-                        src_plane: &src_y,
-                        src_offset: (leaf_px_x, leaf_px_y),
-                        ref_plane,
-                        mv_candidates: &mvc_safe,
-                        mv_limits,
-                        site_config: &site_config,
-                        mv_costs: &mv_costs,
-                        inter_mode_costs: &inter_costs,
-                        inter_mode_ctx,
-                        quantizer: &quantizer,
-                        q_index: leaf_qindex,
-                        allow_hp: false,
-                        frame_kind,
-                        newmv_seed: sb_newmv_seed,
-                        ref_frame_rate_cost,
-                    };
-                    let pick_raw = pick_inter_mode_luma(&params);
-                    // OOB veto — same logic as pre-A15 single-ref
-                    // path.
-                    let veto_nearest = !nearest_in_bounds
-                        && matches!(pick_raw.best_mode, InterMode::NearestMv);
-                    let veto_near = !near_in_bounds
-                        && matches!(pick_raw.best_mode, InterMode::NearMv);
-                    if veto_nearest || veto_near {
-                        let all =
-                            rvp9_core::mode_decision::inter::pick_inter_mode_luma_all_costs(
-                                &params,
-                            );
-                        let mut best = all[0]; // ZERO is always in-bounds.
-                        if nearest_in_bounds && all[1].best_rd_cost < best.best_rd_cost {
-                            best = all[1];
-                        }
-                        if near_in_bounds && all[2].best_rd_cost < best.best_rd_cost {
-                            best = all[2];
-                        }
-                        if all[3].best_rd_cost < best.best_rd_cost {
-                            best = all[3];
-                        }
-                        best
-                    } else {
-                        pick_raw
-                    }
+                // Phase 2a — unified dual-ref interleaved picker.
+                // Replaces the old dual-`pick_inter_mode_luma` +
+                // argmin pattern with a single call to
+                // `pick_inter_mode` that iterates libvpx's
+                // RT_INTER_MODES order internally. OOB veto is
+                // handled inside the picker via the `*_in_bounds`
+                // flags.
+                let pick_params = PickInterModeParams {
+                    block_size: leaf_bsize,
+                    src_plane: &src_y,
+                    src_offset: (leaf_px_x, leaf_px_y),
+                    last_ref_plane: &ref_y,
+                    last_mv_candidates: &mvc,
+                    golden_ref_plane: &ref_y_golden,
+                    golden_mv_candidates: &mvc_golden,
+                    mv_limits,
+                    site_config: &site_config,
+                    mv_costs: &mv_costs,
+                    inter_mode_costs: &inter_costs,
+                    inter_mode_ctx,
+                    quantizer: &quantizer,
+                    q_index: leaf_qindex,
+                    allow_hp: false,
+                    frame_kind,
+                    newmv_seed: sb_newmv_seed,
+                    ref_frame_cost_last,
+                    ref_frame_cost_golden,
+                    last_nearest_in_bounds: mv_in_bounds(mvc.nearest),
+                    last_near_in_bounds: mv_in_bounds(mvc.near),
+                    golden_nearest_in_bounds: mv_in_bounds(mvc_golden.nearest),
+                    golden_near_in_bounds: mv_in_bounds(mvc_golden.near),
                 };
-                let pick_last = pick_for_ref(&ref_y, &mvc, ref_frame_cost_last);
-                let pick_golden =
-                    pick_for_ref(&ref_y_golden, &mvc_golden, ref_frame_cost_golden);
+                let unified_pick = pick_inter_mode(&pick_params);
+                let pick = unified_pick;
+                let picked_ref = unified_pick.picked_ref_frame;
 
                 // E12 (2026-05-22) — search-failure-vs-prediction-ceiling
-                // oracle. Read-only: re-uses the same src/ref planes and
-                // leaf geometry the LAST-ref picker just ran on. Compares
-                // prediction PSNR of (0,0) / the SHIPPED MV (`pick_last`,
-                // the RD winner) / NEWMV's RAW search output (before the
-                // RD argmin rejects it) / the exhaustive oracle. The
-                // shipped-vs-newmv-raw split discriminates RD/cost-model
-                // rejection from search non-convergence. Env-gated
+                // oracle. Read-only diagnostic, env-gated
                 // `RVP9_E12_ORACLE`; no encoder state mutated.
                 if crate::e12stat::enabled() {
+                    let last_mvc_safe = MvCandidates {
+                        nearest: if mv_in_bounds(mvc.nearest) { mvc.nearest } else { Mv::ZERO },
+                        near: if mv_in_bounds(mvc.near) { mvc.near } else { Mv::ZERO },
+                    };
                     let all_e12 =
                         rvp9_core::mode_decision::inter::pick_inter_mode_luma_all_costs(
                             &InterModeSearchParams {
@@ -3278,7 +3238,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 src_plane: &src_y,
                                 src_offset: (leaf_px_x, leaf_px_y),
                                 ref_plane: &ref_y,
-                                mv_candidates: &mvc,
+                                mv_candidates: &last_mvc_safe,
                                 mv_limits,
                                 site_config: &site_config,
                                 mv_costs: &mv_costs,
@@ -3303,19 +3263,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         leaf_px_y,
                         bw,
                         bh,
-                        pick_last.best_mv,
+                        pick.best_mv,
                         all_e12[3].best_mv,
                     );
                 }
 
                 // E3 (2026-05-22) — capture the LAST-ref per-candidate
-                // cost breakdown. Read-only: rebuilds the same params
-                // `pick_for_ref` used for LAST, then calls
-                // `pick_inter_mode_luma_all_costs` (no encoder state is
-                // mutated). The veto logic above can change which mode
-                // *ships*, but the diagnosis question is "what does the
-                // picker's RD ranking prefer", so we read the raw 4-way
-                // ranking here.
+                // cost breakdown. Read-only diagnostic.
                 if e3_diag_enabled {
                     let nearest_in_bounds = mv_in_bounds(mvc.nearest);
                     let near_in_bounds = mv_in_bounds(mvc.near);
@@ -3323,7 +3277,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         nearest: if nearest_in_bounds { mvc.nearest } else { Mv::ZERO },
                         near: if near_in_bounds { mvc.near } else { Mv::ZERO },
                     };
-                    let params = InterModeSearchParams {
+                    let e3_params = InterModeSearchParams {
                         block_size: leaf_bsize,
                         src_plane: &src_y,
                         src_offset: (leaf_px_x, leaf_px_y),
@@ -3343,7 +3297,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     };
                     let all =
                         rvp9_core::mode_decision::inter::pick_inter_mode_luma_all_costs(
-                            &params,
+                            &e3_params,
                         );
                     // all = [ZERO, NEAREST, NEAR, NEW].
                     e3_total_leaves += 1;
@@ -3419,68 +3373,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         }
                     }
                 }
-                // A15 Phase B Step 5 (2026-05-22) — GOLDEN selection
-                // is DEFAULT-OFF.
-                //
-                // The dual-ref dual-pick infrastructure (Steps 1-4)
-                // is intact and load-bearing: `mvc_golden` is built,
-                // `pick_for_ref(&ref_y_golden, ...)` runs, and
-                // `picked_ref_frame` propagates through every
-                // downstream mi_grid consumer. But naively choosing
-                // `argmin(pick_last.rd, pick_golden.rd)` regressed
-                // F12 PSNR by ~10 dB on both testsrc and foreman_cif
-                // (33→15 / 24→15 dB).
-                //
-                // Root cause (diagnosed): the picker's RD doesn't
-                // include the GOLDEN ref-frame rate-cost penalty
-                // (~1 extra bit per single-ref block on the wire —
-                // LAST writes 1 bit `0`; GOLDEN writes 2 bits
-                // `1`+`0`). At the high quant levels typical for
-                // Stage 4a (q∈[200,255]), residuals collapse to
-                // zero so `recon = pred`; SSE picks become trivially
-                // close between LAST and GOLDEN preds and the missing
-                // rate term lets GOLDEN sneak ahead by a sliver of
-                // RD. The picker then chooses GOLDEN ~25-35% of leaves
-                // per inter frame, and the resulting reconstruction
-                // mixes stale-from-KF GOLDEN patches into a frame
-                // that LAST would have tracked closer.
-                //
-                // **A16 Step 2/3 (2026-05-22) — DEFAULT-OFF preserved**:
-                // Step 1's libvpx-faithful `ref_frame_rate_cost` term
-                // dampened GOLDEN picks dramatically (~200-300 → 0-4
-                // per inter frame on foreman_cif) but did NOT recover
-                // the PSNR regression. With GOLDEN gate ON + Step 1
-                // cost applied, F12 foreman_cif PSNR regressed from
-                // 24.01/24.16/25.42/28.96 dB (A15 baseline) to
-                // 23.78/23.61/24.34/26.64 dB — i.e. the remaining
-                // ~0.5 % of GOLDEN picks still contaminate the recon
-                // enough to drop PSNR ~0.2-2.3 dB. (Confirmed by
-                // running with a 4x rate-cost multiplier — GOLDEN
-                // picks dropped to 0 and PSNR exactly matched the
-                // OFF baseline.)
-                //
-                // Root cause likely sits BELOW the picker's RD: the
-                // per-leaf RD doesn't price the propagation cost
-                // (neighbour blocks read this leaf's MV via
-                // `find_mv_refs`), the rate-controller's bit budget
-                // assumes LAST-only and reacts oddly to mixed refs,
-                // and/or the GOLDEN recon plane diverges from libvpx
-                // in subtle ways. Diagnosing further is Phase C work.
-                //
-                // Ship the dual-ref-picker INFRASTRUCTURE (Step 1's
-                // rate cost is load-bearing — the LAST-only path
-                // still gets +ref_frame_cost_last applied so the
-                // absolute RD magnitudes are libvpx-shaped for
-                // future intra-vs-inter tuning) gated behind
-                // `RVP9_PICK_GOLDEN=1` (opt-in for tuning runs).
-                let pick_golden_enabled = std::env::var("RVP9_PICK_GOLDEN").is_ok();
-                let (pick, picked_ref) = if pick_golden_enabled
-                    && pick_golden.best_rd_cost < pick_last.best_rd_cost
-                {
-                    (pick_golden, RefFrame::GoldenFrame)
-                } else {
-                    (pick_last, RefFrame::LastFrame)
-                };
+
                 if diag_golden_enabled {
                     match picked_ref {
                         RefFrame::GoldenFrame => diag_golden_picks += 1,
