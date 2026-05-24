@@ -350,6 +350,16 @@ pub struct StreamEncoder {
     /// the same when `refresh_frame_context == true`, keeping both sides
     /// in sync.
     frame_context: FrameContext,
+    /// P0b — Mirror of the decoder's FC bank state. Since we emit
+    /// `refresh_frame_context: false`, the decoder does NOT run backward
+    /// adaptation; its FC bank is updated only by the compressed-header
+    /// diff-updates each frame. After each frame, this field holds the
+    /// FC the decoder ended up with (= `pre_fc` after
+    /// `write_compressed_header` mutated it). The next frame's
+    /// compressed header diffs from this state. Reset to defaults on
+    /// keyframes (the decoder's `vp9_setup_past_independence` resets the
+    /// bank).
+    decoder_fc_state: FrameContext,
 }
 
 /// A14 — GOLDEN refresh period for the inter path (Phase A
@@ -434,6 +444,7 @@ impl StreamEncoder {
             last_frame_was_key: false,
             // P0b — start from default; reset on every keyframe.
             frame_context: FrameContext::new_default(),
+            decoder_fc_state: FrameContext::new_default(),
         })
     }
 
@@ -983,6 +994,7 @@ impl StreamEncoder {
             &mut sb_partitions,
             prev_grid_slice,
             &mut cur_mv_grid,
+            &self.frame_context,
         );
 
         // F11.0 — apply the in-loop deblocking filter to the encoder's
@@ -1054,6 +1066,11 @@ impl StreamEncoder {
         // Build the packet from the populated coef source + leaf
         // descriptors. P0b — accumulate counts for backward adaptation.
         let mut frame_counts = FrameCounts::default();
+        // P0b — clone the decoder FC mirror so we can pass a mutable
+        // reference without a borrow conflict on `self`. After the call,
+        // `decoder_fc` holds the FC the decoder ended up with (compressed
+        // header diffs applied); we persist it back for the next frame.
+        let mut decoder_fc = self.decoder_fc_state.clone();
         let packet = build_inter_packet_with_residuals(
             w,
             h,
@@ -1068,15 +1085,16 @@ impl StreamEncoder {
             // `best_ref_mv` the decoder will compute.
             prev_grid_slice,
             Some(&mut frame_counts),
-            // P0b — FC override is None: the compressed header and tile
-            // writer use `FrameContext::new_default()`, matching the
-            // pre-P0b behaviour. The adapted FC stored in
-            // `self.frame_context` is available for the picker's cost
-            // tables (follow-up wiring). Enabling the override here
-            // requires complete coef-count accumulation so the decoder
-            // can stay in sync via `refresh_frame_context: true`.
-            None,
+            // P0b — pass the adapted FC so the compressed header
+            // diff-encodes content-adapted probabilities against the
+            // decoder's FC bank state. The decoder reads the adapted
+            // probs from the compressed header; `refresh_frame_context`
+            // stays false so the decoder does NOT run its own backward
+            // adaptation.
+            Some(&self.frame_context),
+            &mut decoder_fc,
         )?;
+        self.decoder_fc_state = decoder_fc;
 
         // P0b — backward-adapt the frame context. Mirrors libvpx's
         // `vp9_adapt_mode_probs` + `vp9_adapt_coef_probs` +
@@ -1438,20 +1456,32 @@ fn build_inter_mi_grid_from_picker(
                     // every leaf's `segment_id` was initialised to 0.
                     segment_id: leaf.segment_id,
                     seg_id_predicted: false,
-                    mode: BlockMode::Inter {
-                        mode: leaf.picked_mode,
-                        // A15 Phase B Step 4 — carry `picked_ref_frame`
-                        // into the mi_grid so the modes_writer's
-                        // ref-frame branch (`mode_info.rs:1020-1041`)
-                        // emits the correct single-ref bits (0 for
-                        // LAST, 1+0 for GOLDEN, 1+1 for ALTREF).
-                        // GOLDEN-picked leaves were unreachable on
-                        // the wire until A15 Phase B; now they emit
-                        // the GOLDEN bit pair and the decoder reads
-                        // GOLDEN's ref-buffer slot for reconstruction.
-                        ref_frames: [leaf.picked_ref_frame, RefFrame::NoRefFrame],
-                        mvs: [leaf.picked_mv, Mv::ZERO],
-                        interp_filter: InterpFilter::EightTap,
+                    // Phase 2b — when the picker selects intra, emit
+                    // `BlockMode::Intra` so the writer encodes the
+                    // intra-in-inter wire format (is_inter=0, y_mode,
+                    // uv_mode). For inter winners, the existing
+                    // `BlockMode::Inter` path is used.
+                    mode: if let Some(intra_mode) = leaf.picked_intra_mode {
+                        BlockMode::Intra {
+                            y_mode: intra_mode,
+                            uv_mode: IntraMode::Dc, // v1: always DC for UV
+                        }
+                    } else {
+                        BlockMode::Inter {
+                            mode: leaf.picked_mode,
+                            // A15 Phase B Step 4 — carry `picked_ref_frame`
+                            // into the mi_grid so the modes_writer's
+                            // ref-frame branch (`mode_info.rs:1020-1041`)
+                            // emits the correct single-ref bits (0 for
+                            // LAST, 1+0 for GOLDEN, 1+1 for ALTREF).
+                            // GOLDEN-picked leaves were unreachable on
+                            // the wire until A15 Phase B; now they emit
+                            // the GOLDEN bit pair and the decoder reads
+                            // GOLDEN's ref-buffer slot for reconstruction.
+                            ref_frames: [leaf.picked_ref_frame, RefFrame::NoRefFrame],
+                            mvs: [leaf.picked_mv, Mv::ZERO],
+                            interp_filter: InterpFilter::EightTap,
+                        }
                     },
                     bmi: Default::default(),
                 };
@@ -1657,20 +1687,25 @@ fn build_inter_packet_with_residuals(
     // P0b — frame context to use for encoding (replaces
     // `FrameContext::new_default()` when backward adaptation is active).
     fc_override: Option<&FrameContext>,
+    // P0b — mirror of the decoder's FC bank. The compressed header
+    // diff-encodes from this state to `fc_override` (or default when
+    // `fc_override` is `None`). Mutated in place so the caller can
+    // persist it for the next frame. `write_compressed_header` mutates
+    // the "pre" side, so after the call `decoder_fc` holds the FC
+    // both sides actually use for this frame's tile data.
+    decoder_fc: &mut FrameContext,
 ) -> Result<Vec<u8>, EncodeError> {
     use rvp9_core::bitstream::SegmentationWriteParams;
     let mi_rows = height / 8;
     let mi_cols = width / 8;
     let mi_grid = build_inter_mi_grid_from_picker(mi_rows, mi_cols, sb_partitions);
 
-    // P0b — `pre_fc` is the decoder's current FC bank state. Since we
-    // keep `refresh_frame_context: false`, the decoder never runs
-    // backward adaptation, so its bank always holds defaults.
-    // `post_fc` is what we want the decoder to use for this frame's
-    // tile data. The compressed header diff-encodes `pre_fc` toward
-    // `post_fc`, mutating `pre_fc` in place. After the diff-update
-    // pass, `pre_fc` holds the actual FC both sides use.
-    let mut pre_fc = FrameContext::new_default();
+    // P0b — `decoder_fc` is the decoder's current FC bank state,
+    // mirrored by the caller. The compressed header diff-encodes
+    // `decoder_fc` toward `post_fc`, mutating `decoder_fc` in place.
+    // After the diff-update pass, `decoder_fc` holds the actual FC
+    // both sides use for this frame's tile data. The caller persists
+    // the mutated `decoder_fc` for the next frame.
     let post_fc = match fc_override {
         Some(fc) => fc.clone(),
         None => FrameContext::new_default(),
@@ -1694,7 +1729,7 @@ fn build_inter_packet_with_residuals(
     let mut compressed_buf = vec![0u8; 16 * 1024];
     let compressed_len = {
         let mut bw = BoolWriter::start_encode(&mut compressed_buf);
-        write_compressed_header(&mut bw, &mut pre_fc, &post_fc, opts, &target)?;
+        write_compressed_header(&mut bw, decoder_fc, &post_fc, opts, &target)?;
         bw.stop_encode()
             .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
     };
@@ -1745,15 +1780,15 @@ fn build_inter_packet_with_residuals(
         let mut bw = BoolWriter::start_encode(&mut tile_buf);
         let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
         let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
-        // P0b — use `pre_fc` (the actual FC after compressed-header
+        // P0b — use `decoder_fc` (the actual FC after compressed-header
         // diff-updates) rather than `post_fc` (the target). After
-        // `write_compressed_header`, `pre_fc` holds exactly the FC the
-        // decoder will reconstruct from the same diff bits. Using
+        // `write_compressed_header`, `decoder_fc` holds exactly the FC
+        // the decoder will reconstruct from the same diff bits. Using
         // `post_fc` would desync whenever a diff-update was skipped
         // by `cond_prob_diff_update`.
         write_tile_inter(
             &mut bw,
-            &pre_fc,
+            decoder_fc,
             &params,
             TxMode::AllowTx32x32,
             &mi_grid,

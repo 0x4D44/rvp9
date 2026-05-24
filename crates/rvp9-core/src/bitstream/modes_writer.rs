@@ -1461,8 +1461,8 @@ impl NeighbourLookup for MiGridNeighbourLookup<'_> {
 ///   `InconsistentPartitionTree` — partition-tree shape mismatch.
 /// - [`ModesWriterError::UnsupportedNonSkip`] /
 ///   `UnsupportedSegmentation` — per-leaf scope violation.
-/// - [`ModesWriterError::UnsupportedIntraInInter`] — leaf is
-///   `BlockMode::Intra`.
+/// - [`ModesWriterError::UnsupportedIntraInInter`] — (historical;
+///   no longer returned after Phase 2b intra-in-inter support).
 /// - [`ModesWriterError::InterModeWrite`] — sub-8 leaf, or other
 ///   inter-mode-writer error.
 /// - [`ModesWriterError::NonMultipleOfSb`] /
@@ -1813,9 +1813,7 @@ fn write_inter_block_leaf(
     if seg.is_none() && mi.segment_id != 0 {
         return Err(ModesWriterError::UnsupportedSegmentation { mi_row, mi_col });
     }
-    if matches!(mi.mode, BlockMode::Intra { .. }) {
-        return Err(ModesWriterError::UnsupportedIntraInInter { mi_row, mi_col });
-    }
+    let is_inter = matches!(mi.mode, BlockMode::Inter { .. });
 
     // 1. Segment_id. AQ.0 emits a plain tree decode when
     //    `seg.is_some()` (i.e. `enabled && update_map &&
@@ -1846,20 +1844,21 @@ fn write_inter_block_leaf(
         c.skip[skip_ctx][usize::from(mi.skip)] += 1;
     }
 
-    // 3. is_inter classification — always 1 under writer scope.
+    // 3. is_inter classification. Phase 2b: 0 for intra-in-inter
+    //    blocks, 1 for inter blocks.
     let intra_inter_ctx = get_intra_inter_context(above, left);
     set_category(BitCategory::IsInter);
-    bw.write(1, fc.intra_inter_prob[intra_inter_ctx]);
-    // P0b — accumulate intra_inter count (always inter = index 1).
+    bw.write(u8::from(is_inter), fc.intra_inter_prob[intra_inter_ctx]);
+    // P0b — accumulate intra_inter count.
     if let Some(c) = counts.as_deref_mut() {
-        c.intra_inter[intra_inter_ctx][1] += 1;
+        c.intra_inter[intra_inter_ctx][usize::from(is_inter)] += 1;
     }
 
     // 4. tx_size. `allow_select = !skip || !is_inter` per libvpx
-    //    `vp9_decodemv.c:800`. With v1's `skip = true` and `is_inter
-    //    = true`, `allow_select = false` so `write_tx_size` emits no
-    //    bits.
-    let allow_select = !mi.skip;
+    //    `vp9_decodemv.c:800`. For intra blocks `!is_inter = true`
+    //    so `allow_select = true` always. For inter blocks with
+    //    `skip = true`, `allow_select = false`.
+    let allow_select = !mi.skip || !is_inter;
     let max_tx = max_txsize(leaf_bsize);
     let above_tx = above.map(|m| (m.tx_size, m.skip));
     let left_tx = left.map(|m| (m.tx_size, m.skip));
@@ -1920,44 +1919,84 @@ fn write_inter_block_leaf(
         }
     }
 
-    // 5. Inter-block mode info. Build the per-leaf `BlockBounds` the
-    //    `find_mv_refs` MV clamp inside `write_inter_block_mode_info`
-    //    needs (libvpx `set_mi_row_col`).
-    let bw_mi = i32::from(leaf_bsize.n_8x8_wide());
-    let bh_mi = i32::from(leaf_bsize.n_8x8_high());
-    let bounds_block = BlockBounds::new(
-        mi_row as i32,
-        mi_col as i32,
-        mi_rows as i32,
-        mi_cols as i32,
-        bw_mi,
-        bh_mi,
-    );
-    let prev_mv = prev_mv_grid.and_then(|g| g.get(mi_row * mi_cols + mi_col).copied());
-    set_category(BitCategory::ModeRef);
-    write_inter_block_mode_info(
-        bw,
-        fc,
-        params,
-        &neighbours,
-        leaf_bsize,
-        &bounds_block,
-        prev_mv,
-        mi,
-        counts.as_deref_mut(),
-    )
-    .map_err(|e| ModesWriterError::InterModeWrite {
-        mi_row,
-        mi_col,
-        source: e,
-    })?;
+    // 5. Dispatch: intra-in-inter vs inter mode info.
+    if is_inter {
+        // 5a. Inter-block mode info. Build the per-leaf `BlockBounds`
+        //     the `find_mv_refs` MV clamp inside
+        //     `write_inter_block_mode_info` needs (libvpx
+        //     `set_mi_row_col`).
+        let bw_mi = i32::from(leaf_bsize.n_8x8_wide());
+        let bh_mi = i32::from(leaf_bsize.n_8x8_high());
+        let bounds_block = BlockBounds::new(
+            mi_row as i32,
+            mi_col as i32,
+            mi_rows as i32,
+            mi_cols as i32,
+            bw_mi,
+            bh_mi,
+        );
+        let prev_mv = prev_mv_grid.and_then(|g| g.get(mi_row * mi_cols + mi_col).copied());
+        set_category(BitCategory::ModeRef);
+        write_inter_block_mode_info(
+            bw,
+            fc,
+            params,
+            &neighbours,
+            leaf_bsize,
+            &bounds_block,
+            prev_mv,
+            mi,
+            counts.as_deref_mut(),
+        )
+        .map_err(|e| ModesWriterError::InterModeWrite {
+            mi_row,
+            mi_col,
+            source: e,
+        })?;
+    } else {
+        // 5b. Phase 2b — intra-in-inter mode info. Mirrors the
+        //     decoder's `read_intra_in_inter_mode_info`
+        //     (`tile.rs:2457`). For >= 8x8 blocks: write a single
+        //     y_mode against `fc.y_mode_prob[size_group]`, then
+        //     uv_mode against `fc.uv_mode_prob[y_mode]`.
+        let (y_mode, uv_mode) = match mi.mode {
+            BlockMode::Intra { y_mode, uv_mode } => (y_mode, uv_mode),
+            _ => unreachable!("is_inter == false but mode is Inter"),
+        };
+
+        // size_group_lookup — mirrors libvpx `vp9_common_data.c:32-33`
+        // and the decoder's inline mapping in
+        // `read_intra_in_inter_mode_info`.
+        let size_group = match leaf_bsize {
+            BlockSize::Block4x4 | BlockSize::Block4x8 | BlockSize::Block8x4 => 0,
+            BlockSize::Block8x8 | BlockSize::Block8x16 | BlockSize::Block16x8 => 1,
+            BlockSize::Block16x16 | BlockSize::Block16x32 | BlockSize::Block32x16 => 2,
+            BlockSize::Block32x32 | BlockSize::Block32x64
+            | BlockSize::Block64x32 | BlockSize::Block64x64 => 3,
+        };
+
+        set_category(BitCategory::ModeRef);
+
+        // Y mode — tree-coded against `fc.y_mode_prob[size_group]`.
+        write_intra_mode(bw, &fc.y_mode_prob[size_group], y_mode);
+        // P0b — accumulate y_mode count.
+        if let Some(c) = counts.as_deref_mut() {
+            c.y_mode[size_group][y_mode as usize] += 1;
+        }
+
+        // UV mode — tree-coded against `fc.uv_mode_prob[y_mode]`.
+        write_intra_mode(bw, &fc.uv_mode_prob[y_mode as usize], uv_mode);
+        // P0b — accumulate uv_mode count.
+        if let Some(c) = counts.as_deref_mut() {
+            c.uv_mode[y_mode as usize][uv_mode as usize] += 1;
+        }
+    }
 
     // 6. Residual coefs. When `mi.skip == true` the decoder bypasses
     //    the per-TX residual decode entirely; we emit nothing. When
     //    `mi.skip == false` we walk planes 0/1/2 and emit one
     //    `write_block_tokens` per TX position, mirroring the decoder's
-    //    `reconstruct_inter_block` `loff` / `aoff` loop
-    //    (`rvp9-decoder::reconstruct_inter`).
+    //    `reconstruct_inter_block` / `reconstruct_intra_planes` loop.
     if !mi.skip {
         set_category(BitCategory::Coef);
         write_inter_block_residual(
@@ -4490,10 +4529,11 @@ mod tests {
         assert_eq!(leaves[0].2.block_size, BlockSize::Block4x8);
     }
 
-    /// Leaf carrying `BlockMode::Intra` → writer rejects with
-    /// `UnsupportedIntraInInter`.
+    /// Phase 2b: Leaf carrying `BlockMode::Intra` is now accepted
+    /// by the inter-frame writer — the intra-in-inter path writes
+    /// `is_inter=0`, y_mode, and uv_mode.
     #[test]
-    fn s4_16c_rejects_intra_leaf() {
+    fn phase_2b_accepts_intra_leaf() {
         let fc = FrameContext::new_default();
         let params = s4c_default_params();
         let mi_rows = 8u32;
@@ -4509,6 +4549,7 @@ mod tests {
             y_mode: IntraMode::Dc,
             uv_mode: IntraMode::Dc,
         };
+        cell.skip = true;
         let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
         let bounds = TileBounds {
             mi_row_start: 0,
@@ -4520,7 +4561,7 @@ mod tests {
         let mut bw = BoolWriter::start_encode(&mut buf);
         let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
         let coef_source = crate::bitstream::AllZeroCoefSource::new();
-        let err = write_tile_inter(
+        let result = write_tile_inter(
             &mut bw,
             &fc,
             &params,
@@ -4534,12 +4575,8 @@ mod tests {
             &mut coef_ctx,
             &coef_source,
             None,
-        )
-        .unwrap_err();
-        assert!(
-            matches!(err, ModesWriterError::UnsupportedIntraInInter { .. }),
-            "got: {err:?}"
         );
+        assert!(result.is_ok(), "intra-in-inter should succeed: {result:?}");
     }
 
     /// S4.16g phase 3: the inter writer no longer rejects `skip =

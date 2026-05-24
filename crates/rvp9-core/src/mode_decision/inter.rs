@@ -111,8 +111,10 @@ use crate::mv_search::search_site::SearchSiteConfig;
 use crate::mv_search::sub_pixel::{
     SubPixelForcedStop, SubPixelSearchParams, find_best_sub_pixel_tree_pruned_more,
 };
+use crate::mode_decision::hadamard::{hadamard_8x8, hadamard_16x16, hadamard_32x32};
 use crate::quant::forward::{
     PlaneQuantizers, scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32,
+    vp9_quantize_fp, vp9_quantize_fp_32x32,
 };
 use crate::transforms::forward::{fdct8x8, fdct16x16, fdct32x32};
 use crate::transforms::inverse::{idct8x8_64_add, idct16x16_256_add, idct32x32_1024_add};
@@ -1814,6 +1816,13 @@ fn reconstruct_via_round_trip(
     let mut dqcoeff = [0i16; 1024];
     let mut tx_recon = [0u8; 32 * 32];
 
+    // Hadamard + quantize_fp scratch for block_yrd rate/dist (Phase 4c).
+    // The Hadamard transform produces i16; vp9_quantize_fp needs i32 input.
+    let mut had_coeff_i16 = [0i16; 1024];
+    let mut had_coeff = [0i32; 1024];
+    let mut had_qcoeff = [0i16; 1024];
+    let mut had_dqcoeff = [0i16; 1024];
+
     let scan = scan_for(tx_size, TxType::DctDct);
     let scan_slice = scan_for_forward(&scan);
     let dequant_pair = [params.quantizer.dequant[0], params.quantizer.dequant[1]];
@@ -1895,32 +1904,67 @@ fn reconstruct_via_round_trip(
                 )
             };
 
-            // F.1 — per-tile block_yrd accumulators (libvpx
-            // vp9_pickmode.c:768, 804-805, 830-835).
+            // F.1 / Phase 4c — per-tile block_yrd accumulators via
+            // Hadamard + quantize_fp (libvpx vp9_pickmode.c:768,
+            // 804-805, 818-835). The Hadamard path produces the
+            // rate/dist metrics; the DCT pipeline above stays for
+            // reconstruction.
             //
-            // Night-8 (2026-05-23) DV-F1-1 Hadamard experiment:
-            // tested replacing the DCT-qcoeff SATD with a Hadamard-
-            // residual SATD (libvpx-faithful). Empirical result:
-            // foreman PSNR-delta regresses to +9.88 dB at K1=4 with
-            // `>> 6` shift to compensate for un-quantized Hadamard
-            // magnitudes. DCT-qcoeff SATD at K1=4 (the current code
-            // below) gives +9.00 dB. Hadamard kernel committed as
-            // `mode_decision::hadamard` infrastructure but NOT wired
-            // in — the DCT-qcoeff post-quantization SATD is already
-            // a reasonable libvpx-equivalent rate proxy (both are
-            // post-quant magnitudes; the transform basis difference
-            // washes out for the SATD aggregate).
-            by_skippable &= eob == 0;
+            // 1. Hadamard transform on the residual.
+            match tx_size {
+                TxSize::Tx8x8 => {
+                    hadamard_8x8(&residual[..64], tx_side, &mut had_coeff_i16[..64]);
+                }
+                TxSize::Tx16x16 => {
+                    hadamard_16x16(&residual[..256], tx_side, &mut had_coeff_i16[..256]);
+                }
+                TxSize::Tx32x32 => {
+                    hadamard_32x32(&residual[..1024], tx_side, &mut had_coeff_i16[..1024]);
+                }
+                TxSize::Tx4x4 => unreachable!(),
+            }
+            // Widen Hadamard i16 → i32 for quantize_fp input.
+            for i in 0..n {
+                had_coeff[i] = i32::from(had_coeff_i16[i]);
+            }
+            // 2. quantize_fp on Hadamard coefficients.
+            let had_eob = if tx_size == TxSize::Tx32x32 {
+                vp9_quantize_fp_32x32(
+                    &had_coeff[..1024],
+                    false,
+                    &params.quantizer.round_fp,
+                    &params.quantizer.quant_fp,
+                    &mut had_qcoeff[..1024],
+                    &mut had_dqcoeff[..1024],
+                    &dequant_pair,
+                    scan_slice,
+                )
+            } else {
+                vp9_quantize_fp(
+                    &had_coeff[..n],
+                    n,
+                    false,
+                    &params.quantizer.round_fp,
+                    &params.quantizer.quant_fp,
+                    &mut had_qcoeff[..n],
+                    &mut had_dqcoeff[..n],
+                    &dequant_pair,
+                    scan_slice,
+                )
+            };
+            // 3. Accumulate block_yrd metrics from Hadamard-quantized
+            //    coefficients (libvpx vp9_pickmode.c:804, 830-835).
+            by_skippable &= had_eob == 0;
             by_eob_cost = by_eob_cost.saturating_add(1);
-            if eob == 1 {
+            if had_eob == 1 {
                 by_rate_satd = by_rate_satd
-                    .saturating_add(i32::from(qcoeff[0]).unsigned_abs());
-            } else if eob > 1 {
+                    .saturating_add(i32::from(had_qcoeff[0]).unsigned_abs());
+            } else if had_eob > 1 {
                 by_rate_satd =
-                    by_rate_satd.saturating_add(satd_i16(&qcoeff[..n]));
+                    by_rate_satd.saturating_add(satd_i16(&had_qcoeff[..n]));
             }
             by_dist = by_dist
-                .saturating_add(block_error_fp_i32(&coefs[..n], &dqcoeff[..n]) >> 2);
+                .saturating_add(block_error_fp_i32(&had_coeff[..n], &had_dqcoeff[..n]) >> 2);
 
             // 4. Reconstruct tile: tx_recon = pred + idct(dq).
             for r in 0..tx_side {
@@ -1965,19 +2009,16 @@ fn reconstruct_via_round_trip(
 
     // libvpx vp9_pickmode.c:842-843 — scale rate_satd to vp9_prob_cost
     // units and add the per-tile EOB charge. The combined shift is
-    // (2 + VP9_PROB_COST_SHIFT) = 11. **u64 (not u32) to preserve K1
-    // calibration signal**: pre-fix the value saturated at u32::MAX
-    // here, which masked the K1 ∈ {0..4} sweep — low-q blocks (large
-    // qcoeffs ⇒ rate_satd > 2_097_152 ⇒ shifted_rate > u32::MAX at
-    // K1=2) all clipped to u32::MAX, producing identical-looking
-    // picker behaviour across K1 values. Saturate-cast back to u32
-    // happens in `evaluate_candidate` at the rate-sum site (honest
-    // cap, not covert truncation).
-    // F.4-2 (2026-05-23) — K1=4 with Hadamard SATD shifted >> 6 (see
-    // tile loop above). Testing whether libvpx-faithful Hadamard
-    // closes more of the gap than DCT qcoeffs.
+    // (2 + VP9_PROB_COST_SHIFT) = 11. Now matches libvpx exactly:
+    // Hadamard + quantize_fp produces the SATD rate proxy at the same
+    // scale libvpx uses, so K1=2 (the libvpx default) is correct.
+    // **u64 (not u32) to preserve calibration signal**: pre-fix the
+    // value saturated at u32::MAX here, which masked K1 sweeps — low-q
+    // blocks (large qcoeffs ⇒ rate_satd > 2_097_152 ⇒ shifted_rate >
+    // u32::MAX) all clipped to u32::MAX. Saturate-cast back to u32
+    // happens in `evaluate_candidate` at the rate-sum site.
     let shifted_rate =
-        (by_rate_satd as u64) << (4 + crate::cost::VP9_PROB_COST_SHIFT);
+        (by_rate_satd as u64) << (2 + crate::cost::VP9_PROB_COST_SHIFT);
     let eob_term = (by_eob_cost as u64) << crate::cost::VP9_PROB_COST_SHIFT;
     let coef_rate = shifted_rate.saturating_add(eob_term);
     BlockYrdResult {

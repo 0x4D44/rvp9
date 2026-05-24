@@ -2337,12 +2337,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // (`tile.rs:2141-2155`); the encoder swaps this into
     // `prev_mv_grid` for the next frame.
     out_mv_grid: &mut [rvp9_core::inter::mv_ref::PrevFrameMvRef],
+    // P0b — adapted FrameContext from the previous frame's backward
+    // adaptation. Drives the picker's cost tables (inter mode costs,
+    // MV costs, intra-in-inter costs) so that content-adapted
+    // probabilities feed mode decisions. For the first inter frame
+    // this is still `FrameContext::new_default()` (matching libvpx's
+    // frame-N-adapts-frame-N+1 convention).
+    frame_context: &FrameContext,
 ) -> VecBackedInterCoefSource {
     use rvp9_core::bitstream::frame::{InterpFilter as WireInterpFilter, MAX_INTER_REFS};
     use rvp9_core::bitstream::header::FrameKind as WireFrameKind;
     use rvp9_core::cost::mv_cost::build_nmv_cost_table;
     use rvp9_core::cost::symbol_costs::{inter_mode_costs, partition_costs};
-    use rvp9_core::entropy::mv_probs::DEFAULT_NMV_CONTEXT;
     use rvp9_core::inter::get_mode_context;
     use rvp9_core::inter::mv_ref::{
         BlockBounds, PrevFrameMvRef, find_mv_refs, lower_mv_precision,
@@ -2398,8 +2404,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // Picker harness — built once per frame. The per-leaf
     // `PlaneQuantizers` is rebuilt inside the SB walk below (AQ.1)
     // because it depends on the leaf's `segment_id`.
-    let inter_costs = inter_mode_costs(&FrameContext::new_default());
-    let mv_costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, /* allow_hp = */ false);
+    let inter_costs = inter_mode_costs(frame_context);
+    let mv_costs = build_nmv_cost_table(&frame_context.nmvc, /* allow_hp = */ false);
     let site_config = init_dsmotion_compensation(w as i32);
 
     // F.3 (2026-05-23, infrastructure-only) — motion-aware partition
@@ -2506,9 +2512,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // only in the full RDO path; the realtime path pins at
     // `cpi->mbmode_cost` which is group 1.
     let intra_y_mode_costs_inter: [i32; 10] = {
-        use rvp9_core::entropy::FrameContext;
-        let fc = FrameContext::new_default();
-        let table = rvp9_core::cost::intra_y_mode_costs_inter(&fc);
+        let table = rvp9_core::cost::intra_y_mode_costs_inter(frame_context);
         table[1] // size_group = 1 (libvpx mbmode_cost default)
     };
 
@@ -3238,31 +3242,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 };
                 let unified_pick = pick_inter_mode(&pick_params);
 
-                // Phase 2b — when the intra fallback wins, the picker
-                // reports `picked_ref_frame == IntraFrame`. The encoder
-                // simulator's per-plane MC + residual path doesn't yet
-                // support per-TX intra prediction for intra-in-inter
-                // blocks. v1 falls back to ZEROMV-skip on LASTFRAME,
-                // accepting the quality regression on those blocks.
-                // The picker's RD evaluation IS the measurement signal;
-                // full wire-format intra-in-inter lands in a follow-up.
-                let (pick, picked_ref) = if unified_pick.picked_ref_frame == RefFrame::IntraFrame {
-                    let fallback = rvp9_core::mode_decision::inter::PickInterModeResult {
-                        best_mode: InterMode::ZeroMv,
-                        best_mv: Mv::ZERO,
-                        best_rd_cost: unified_pick.best_rd_cost,
-                        best_distortion: unified_pick.best_distortion,
-                        best_rate: unified_pick.best_rate,
-                        coef_rate: unified_pick.coef_rate,
-                        coef_dist: unified_pick.coef_dist,
-                        picked_interp_filter: rvp9_core::bitstream::frame::InterpFilter::EightTap,
-                        picked_ref_frame: RefFrame::LastFrame,
-                        picked_intra_mode: unified_pick.picked_intra_mode,
-                    };
-                    (fallback, RefFrame::LastFrame)
-                } else {
-                    (unified_pick, unified_pick.picked_ref_frame)
-                };
+                // Phase 2b — let intra-winning picks flow through.
+                // When `picked_ref_frame == IntraFrame`, the encoder
+                // simulator runs intra prediction (skip=true, no
+                // residual) instead of MC + residual. The writer
+                // emits the intra-in-inter wire format (is_inter=0,
+                // y_mode, uv_mode).
+                let pick = unified_pick;
+                let picked_ref = pick.picked_ref_frame;
 
                 // E12 (2026-05-22) — search-failure-vs-prediction-ceiling
                 // oracle. Read-only diagnostic, env-gated
@@ -3466,173 +3453,286 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // the bool coder.
                 let mut leaf_total_eob: usize = 0;
 
-                // Per-plane recon + residual emission. Mirrors the
-                // decoder's `reconstruct_inter_block` plane / TX walk
-                // (rvp9-decoder::reconstruct_inter, lines 199-554).
-                for plane in 0..3 {
-                    let ss_x = F5_SUBSAMPLING_X[plane];
-                    let ss_y = F5_SUBSAMPLING_Y[plane];
-                    let plane_w = if plane == 0 { w } else { uvw };
-                    let plane_h = if plane == 0 { h } else { uvh };
-                    let plane_stride = plane_w;
-
-                    let plane_bsize = if plane == 0 {
-                        leaf_bsize
-                    } else {
-                        f5_uv_plane_block_size(leaf_bsize)
+                if picked_ref == RefFrame::IntraFrame {
+                    // Phase 2b — intra-in-inter block. Run intra
+                    // prediction into the recon buffer using the same
+                    // infrastructure as the keyframe path. v1 always
+                    // sets skip=true (no residual coding).
+                    use rvp9_core::intra_pred::{
+                        DcAvailability, EdgeBuffers, build_intra_predictors,
+                        intra_predict,
                     };
-                    let luma_tx = rvp9_core::block::max_txsize(leaf_bsize);
-                    let plane_tx = if plane == 0 {
-                        luma_tx
-                    } else {
-                        f5_uv_plane_tx_size(leaf_bsize, luma_tx)
-                    };
+                    let intra_y_mode = pick.picked_intra_mode
+                        .expect("IntraFrame pick must have picked_intra_mode");
+                    let intra_uv_mode = rvp9_core::intra_pred::IntraMode::Dc;
+                    let dispatch = rvp9_core::dsp::get();
 
-                    let plane_bw_4x4 = plane_bsize.n_4x4_wide() as usize;
-                    let plane_bh_4x4 = plane_bsize.n_4x4_high() as usize;
-                    let tx_step_4x4 = 1usize << (plane_tx as usize);
-                    let tx_side = plane_tx.side();
+                    for plane in 0..3 {
+                        let ss_x = F5_SUBSAMPLING_X[plane];
+                        let ss_y = F5_SUBSAMPLING_Y[plane];
+                        let plane_w = if plane == 0 { w } else { uvw };
+                        let plane_h = if plane == 0 { h } else { uvh };
+                        let plane_stride = plane_w;
 
-                    // Plane-pixel coord of leaf's top-left.
-                    let plane_px_x = (leaf_mi_col * 8) >> ss_x;
-                    let plane_px_y = (leaf_mi_row * 8) >> ss_y;
-                    let block_w_px = plane_bw_4x4 * 4;
-                    let block_h_px = plane_bh_4x4 * 4;
+                        let plane_bsize = if plane == 0 {
+                            leaf_bsize
+                        } else {
+                            f5_uv_plane_block_size(leaf_bsize)
+                        };
+                        let luma_tx = rvp9_core::block::max_txsize(leaf_bsize);
+                        let plane_tx = if plane == 0 {
+                            luma_tx
+                        } else {
+                            f5_uv_plane_tx_size(leaf_bsize, luma_tx)
+                        };
 
-                    // MV in Q4 units, with chroma scaling. Matches the
-                    // decoder's non-sub-8 derivation:
-                    //   mv_q4 = mv * (1 << (1 - ss))
-                    // (i.e. luma stays at Q4, chroma doubles).
-                    let mv_q4_col = i32::from(pick.best_mv.col) * (1i32 << (1 - ss_x as i32));
-                    let mv_q4_row = i32::from(pick.best_mv.row) * (1i32 << (1 - ss_y as i32));
+                        let plane_bw_4x4 = plane_bsize.n_4x4_wide() as usize;
+                        let plane_bh_4x4 = plane_bsize.n_4x4_high() as usize;
+                        let tx_step_4x4 = 1usize << (plane_tx as usize);
+                        let tx_side = plane_tx.side();
 
-                    // Per-plane source / ref / recon slices.
-                    // A15 Phase B Step 3 — select the ref plane that
-                    // matches `picked_ref`. The decoder's
-                    // `reconstruct_inter_block` reads from the slot
-                    // the writer encodes in the ref-frame bits, so
-                    // the encoder simulator must mirror that to keep
-                    // the recon byte-exact.
-                    let (input_plane, ref_plane_data, recon_plane) = match (plane, picked_ref) {
-                        (0, RefFrame::GoldenFrame) => {
-                            (input_yuv.0, golden_recon_yuv.0, &mut *recon_yuv_out.0)
-                        }
-                        (1, RefFrame::GoldenFrame) => {
-                            (input_yuv.1, golden_recon_yuv.1, &mut *recon_yuv_out.1)
-                        }
-                        (_, RefFrame::GoldenFrame) => {
-                            (input_yuv.2, golden_recon_yuv.2, &mut *recon_yuv_out.2)
-                        }
-                        (0, _) => (input_yuv.0, last_recon_yuv.0, &mut *recon_yuv_out.0),
-                        (1, _) => (input_yuv.1, last_recon_yuv.1, &mut *recon_yuv_out.1),
-                        (_, _) => (input_yuv.2, last_recon_yuv.2, &mut *recon_yuv_out.2),
-                    };
+                        let plane_px_x = (leaf_mi_col * 8) >> ss_x;
+                        let plane_px_y = (leaf_mi_row * 8) >> ss_y;
 
-                    // Build the leaf's MC prediction into the recon
-                    // plane region (mirrors the decoder's MC step that
-                    // writes into `dst_slice` before the residual
-                    // IT-add). Uses the unscaled `inter_predictor` path
-                    // (encoder ref dims = current dims, so identity
-                    // scale).
-                    build_inter_pred_plane_unscaled(
-                        ref_plane_data,
-                        plane_stride,
-                        plane_w,
-                        plane_h,
-                        plane_px_x,
-                        plane_px_y,
-                        block_w_px,
-                        block_h_px,
-                        mv_q4_col,
-                        mv_q4_row,
-                        recon_plane,
-                        plane_stride,
-                        sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
-                    );
+                        let recon_plane = match plane {
+                            0 => &mut *recon_yuv_out.0,
+                            1 => &mut *recon_yuv_out.1,
+                            _ => &mut *recon_yuv_out.2,
+                        };
 
-                    // Per-TX residual emission. Walk in plane 4×4
-                    // raster (same order the writer walks).
-                    let mut tx_y4_local = 0usize;
-                    while tx_y4_local < plane_bh_4x4 {
-                        let mut tx_x4_local = 0usize;
-                        while tx_x4_local < plane_bw_4x4 {
-                            let tx_px_x = plane_px_x + tx_x4_local * 4;
-                            let tx_px_y = plane_px_y + tx_y4_local * 4;
-                            let dst_off = tx_px_y * plane_stride + tx_px_x;
+                        let have_above_block = leaf_mi_row > 0;
+                        let have_left_block = leaf_mi_col > 0;
 
-                            // Residual = input - pred. `recon_plane`
-                            // currently holds the MC prediction.
-                            let mut residual = vec![0i16; tx_side * tx_side];
-                            for r in 0..tx_side {
-                                for c in 0..tx_side {
-                                    let off = (tx_px_y + r) * plane_stride
-                                        + (tx_px_x + c);
-                                    let s = input_plane[off] as i16;
-                                    let p = recon_plane[off] as i16;
-                                    residual[r * tx_side + c] = s - p;
-                                }
-                            }
+                        let plane_mode = if plane == 0 {
+                            intra_y_mode
+                        } else {
+                            intra_uv_mode
+                        };
 
-                            // E9 DIAG — tap the Y-plane prediction residual
-                            // (`source − MC prediction`, before transform/quant).
-                            if plane == 0 {
-                                crate::predstat::record_y_residual(
-                                    &residual,
-                                    tx_side,
-                                    plane_tx as usize,
-                                );
-                            }
+                        let mut tx_y4_local = 0usize;
+                        while tx_y4_local < plane_bh_4x4 {
+                            let mut tx_x4_local = 0usize;
+                            while tx_x4_local < plane_bw_4x4 {
+                                let tx_px_x = plane_px_x + tx_x4_local * 4;
+                                let tx_px_y = plane_px_y + tx_y4_local * 4;
 
-                            let (qcoeff_i32, dqcoeff_i32, eob_usize) =
-                                inter_forward_quant_one_tx(
-                                    &residual,
-                                    tx_side,
-                                    plane_tx,
-                                    &quantizer,
-                                );
+                                let have_top = have_above_block || tx_y4_local > 0;
+                                let have_left = have_left_block || tx_x4_local > 0;
+                                let have_right =
+                                    (tx_x4_local + tx_step_4x4) < plane_bw_4x4;
 
-                            // Inverse-DCT-add into recon (the encoder's
-                            // bit-exact mirror of the decoder's
-                            // `inverse_transform_add_dct`). Skip when
-                            // eob == 0 — matches the decoder's
-                            // `if eob > 0` guard.
-                            if eob_usize > 0 {
-                                inter_inverse_dct_add(
-                                    plane_tx,
-                                    &dqcoeff_i32,
-                                    eob_usize,
-                                    &mut recon_plane[dst_off..],
+                                let mut edges = EdgeBuffers::new();
+                                build_intra_predictors(
+                                    recon_plane,
                                     plane_stride,
+                                    tx_px_x,
+                                    tx_px_y,
+                                    plane_w,
+                                    plane_h,
+                                    plane_tx,
+                                    plane_mode,
+                                    have_top,
+                                    have_left,
+                                    have_right,
+                                    &mut edges,
                                 );
+                                let pred_ctx = edges.pred_ctx(tx_side);
+                                let dc_avail = DcAvailability {
+                                    above_available: have_top,
+                                    left_available: have_left,
+                                };
+
+                                let dst_off = tx_px_y * plane_stride + tx_px_x;
+                                let dst = &mut recon_plane[dst_off..];
+                                intra_predict(
+                                    plane_mode,
+                                    dst,
+                                    plane_stride,
+                                    tx_side,
+                                    pred_ctx,
+                                    dc_avail,
+                                    &dispatch,
+                                );
+
+                                tx_x4_local += tx_step_4x4;
                             }
-
-                            coef_source.insert(
-                                leaf_mi_row,
-                                leaf_mi_col,
-                                plane,
-                                tx_x4_local,
-                                tx_y4_local,
-                                qcoeff_i32,
-                                eob_usize,
-                            );
-                            leaf_total_eob += eob_usize;
-
-                            tx_x4_local += tx_step_4x4;
+                            tx_y4_local += tx_step_4x4;
                         }
-                        tx_y4_local += tx_step_4x4;
                     }
-                }
 
-                // RC.X1 — if no coefs in the entire leaf were non-zero,
-                // flip the leaf to skip=true. Mirrors libvpx's
-                // `if (eobtotal == 0) mi->skip = 1` post-fact override
-                // (`vp9_decodeframe.c:1101`). Without this, our writer
-                // computes downstream `skip_context` from the original
-                // `mi.skip = false` while the decoder computes it from
-                // the overridden `mi.skip = true`, desyncing the bool
-                // coder at the next block's skip read.
-                if leaf_total_eob == 0 {
+                    // v1: intra-in-inter blocks always skip (no residual).
+                    // leaf_total_eob stays 0.
                     sb_partitions[sb_idx][leaf_idx].skip = true;
+                } else {
+                    // Inter block — MC prediction + residual path.
+                    // Per-plane recon + residual emission. Mirrors the
+                    // decoder's `reconstruct_inter_block` plane / TX walk
+                    // (rvp9-decoder::reconstruct_inter, lines 199-554).
+                    for plane in 0..3 {
+                        let ss_x = F5_SUBSAMPLING_X[plane];
+                        let ss_y = F5_SUBSAMPLING_Y[plane];
+                        let plane_w = if plane == 0 { w } else { uvw };
+                        let plane_h = if plane == 0 { h } else { uvh };
+                        let plane_stride = plane_w;
+
+                        let plane_bsize = if plane == 0 {
+                            leaf_bsize
+                        } else {
+                            f5_uv_plane_block_size(leaf_bsize)
+                        };
+                        let luma_tx = rvp9_core::block::max_txsize(leaf_bsize);
+                        let plane_tx = if plane == 0 {
+                            luma_tx
+                        } else {
+                            f5_uv_plane_tx_size(leaf_bsize, luma_tx)
+                        };
+
+                        let plane_bw_4x4 = plane_bsize.n_4x4_wide() as usize;
+                        let plane_bh_4x4 = plane_bsize.n_4x4_high() as usize;
+                        let tx_step_4x4 = 1usize << (plane_tx as usize);
+                        let tx_side = plane_tx.side();
+
+                        // Plane-pixel coord of leaf's top-left.
+                        let plane_px_x = (leaf_mi_col * 8) >> ss_x;
+                        let plane_px_y = (leaf_mi_row * 8) >> ss_y;
+                        let block_w_px = plane_bw_4x4 * 4;
+                        let block_h_px = plane_bh_4x4 * 4;
+
+                        // MV in Q4 units, with chroma scaling. Matches the
+                        // decoder's non-sub-8 derivation:
+                        //   mv_q4 = mv * (1 << (1 - ss))
+                        // (i.e. luma stays at Q4, chroma doubles).
+                        let mv_q4_col = i32::from(pick.best_mv.col) * (1i32 << (1 - ss_x as i32));
+                        let mv_q4_row = i32::from(pick.best_mv.row) * (1i32 << (1 - ss_y as i32));
+
+                        // Per-plane source / ref / recon slices.
+                        // A15 Phase B Step 3 — select the ref plane that
+                        // matches `picked_ref`. The decoder's
+                        // `reconstruct_inter_block` reads from the slot
+                        // the writer encodes in the ref-frame bits, so
+                        // the encoder simulator must mirror that to keep
+                        // the recon byte-exact.
+                        let (input_plane, ref_plane_data, recon_plane) = match (plane, picked_ref) {
+                            (0, RefFrame::GoldenFrame) => {
+                                (input_yuv.0, golden_recon_yuv.0, &mut *recon_yuv_out.0)
+                            }
+                            (1, RefFrame::GoldenFrame) => {
+                                (input_yuv.1, golden_recon_yuv.1, &mut *recon_yuv_out.1)
+                            }
+                            (_, RefFrame::GoldenFrame) => {
+                                (input_yuv.2, golden_recon_yuv.2, &mut *recon_yuv_out.2)
+                            }
+                            (0, _) => (input_yuv.0, last_recon_yuv.0, &mut *recon_yuv_out.0),
+                            (1, _) => (input_yuv.1, last_recon_yuv.1, &mut *recon_yuv_out.1),
+                            (_, _) => (input_yuv.2, last_recon_yuv.2, &mut *recon_yuv_out.2),
+                        };
+
+                        // Build the leaf's MC prediction into the recon
+                        // plane region (mirrors the decoder's MC step that
+                        // writes into `dst_slice` before the residual
+                        // IT-add). Uses the unscaled `inter_predictor` path
+                        // (encoder ref dims = current dims, so identity
+                        // scale).
+                        build_inter_pred_plane_unscaled(
+                            ref_plane_data,
+                            plane_stride,
+                            plane_w,
+                            plane_h,
+                            plane_px_x,
+                            plane_px_y,
+                            block_w_px,
+                            block_h_px,
+                            mv_q4_col,
+                            mv_q4_row,
+                            recon_plane,
+                            plane_stride,
+                            sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
+                        );
+
+                        // Per-TX residual emission. Walk in plane 4×4
+                        // raster (same order the writer walks).
+                        let mut tx_y4_local = 0usize;
+                        while tx_y4_local < plane_bh_4x4 {
+                            let mut tx_x4_local = 0usize;
+                            while tx_x4_local < plane_bw_4x4 {
+                                let tx_px_x = plane_px_x + tx_x4_local * 4;
+                                let tx_px_y = plane_px_y + tx_y4_local * 4;
+                                let dst_off = tx_px_y * plane_stride + tx_px_x;
+
+                                // Residual = input - pred. `recon_plane`
+                                // currently holds the MC prediction.
+                                let mut residual = vec![0i16; tx_side * tx_side];
+                                for r in 0..tx_side {
+                                    for c in 0..tx_side {
+                                        let off = (tx_px_y + r) * plane_stride
+                                            + (tx_px_x + c);
+                                        let s = input_plane[off] as i16;
+                                        let p = recon_plane[off] as i16;
+                                        residual[r * tx_side + c] = s - p;
+                                    }
+                                }
+
+                                // E9 DIAG — tap the Y-plane prediction residual
+                                // (`source − MC prediction`, before transform/quant).
+                                if plane == 0 {
+                                    crate::predstat::record_y_residual(
+                                        &residual,
+                                        tx_side,
+                                        plane_tx as usize,
+                                    );
+                                }
+
+                                let (qcoeff_i32, dqcoeff_i32, eob_usize) =
+                                    inter_forward_quant_one_tx(
+                                        &residual,
+                                        tx_side,
+                                        plane_tx,
+                                        &quantizer,
+                                    );
+
+                                // Inverse-DCT-add into recon (the encoder's
+                                // bit-exact mirror of the decoder's
+                                // `inverse_transform_add_dct`). Skip when
+                                // eob == 0 — matches the decoder's
+                                // `if eob > 0` guard.
+                                if eob_usize > 0 {
+                                    inter_inverse_dct_add(
+                                        plane_tx,
+                                        &dqcoeff_i32,
+                                        eob_usize,
+                                        &mut recon_plane[dst_off..],
+                                        plane_stride,
+                                    );
+                                }
+
+                                coef_source.insert(
+                                    leaf_mi_row,
+                                    leaf_mi_col,
+                                    plane,
+                                    tx_x4_local,
+                                    tx_y4_local,
+                                    qcoeff_i32,
+                                    eob_usize,
+                                );
+                                leaf_total_eob += eob_usize;
+
+                                tx_x4_local += tx_step_4x4;
+                            }
+                            tx_y4_local += tx_step_4x4;
+                        }
+                    }
+
+                    // RC.X1 — if no coefs in the entire leaf were non-zero,
+                    // flip the leaf to skip=true. Mirrors libvpx's
+                    // `if (eobtotal == 0) mi->skip = 1` post-fact override
+                    // (`vp9_decodeframe.c:1101`). Without this, our writer
+                    // computes downstream `skip_context` from the original
+                    // `mi.skip = false` while the decoder computes it from
+                    // the overridden `mi.skip = true`, desyncing the bool
+                    // coder at the next block's skip read.
+                    if leaf_total_eob == 0 {
+                        sb_partitions[sb_idx][leaf_idx].skip = true;
+                    }
                 }
                 // E4 diagnostic: per-leaf skip / residual-energy stats.
                 crate::skipstat::record_leaf(
@@ -3857,10 +3957,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // the encoder to capture as the *next* frame's `prev_mv_grid`.
     // Mirrors the decoder's `cur_mv_grid` write-back at
     // `tile.rs:2141-2155` — for inter cells, store
-    // `(ref_frames, mvs)`; for intra-in-inter cells (none in our
-    // encoder), store `(IntraFrame, zero-mv)`. We iterate the picker
-    // descriptors directly because they carry the canonical
-    // `(picked_mode, picked_mv, picked_ref_frame)` triples.
+    // `(ref_frames, mvs)`; for intra-in-inter cells, store
+    // `(IntraFrame, zero-mv)` matching the decoder's D.7 path.
     debug_assert_eq!(out_mv_grid.len(), mi_rows_us * mi_cols_us);
     for cell in out_mv_grid.iter_mut() {
         *cell = PrevFrameMvRef::default();
@@ -3873,9 +3971,20 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
                 let bw_mi = leaf.leaf_bsize.n_8x8_wide() as usize;
                 let bh_mi = leaf.leaf_bsize.n_8x8_high() as usize;
-                let entry = PrevFrameMvRef {
-                    mvs: [leaf.picked_mv, Mv::ZERO],
-                    ref_frames: [leaf.picked_ref_frame, RefFrame::NoRefFrame],
+                // Phase 2b — intra-in-inter blocks write
+                // `(IntraFrame, zero-mv)` to the MV grid, matching
+                // the decoder's D.7 path. Inter blocks write the
+                // picked MV + ref frame as before.
+                let entry = if leaf.picked_ref_frame == RefFrame::IntraFrame {
+                    PrevFrameMvRef {
+                        mvs: [Mv::ZERO; 2],
+                        ref_frames: [RefFrame::IntraFrame, RefFrame::NoRefFrame],
+                    }
+                } else {
+                    PrevFrameMvRef {
+                        mvs: [leaf.picked_mv, Mv::ZERO],
+                        ref_frames: [leaf.picked_ref_frame, RefFrame::NoRefFrame],
+                    }
                 };
                 for dr in 0..bh_mi {
                     for dc in 0..bw_mi {

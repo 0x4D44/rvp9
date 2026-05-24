@@ -882,25 +882,26 @@ pub fn write_partition_probs(
 /// - If `pre == post`, emit gate=0 at [`MV_UPDATE_PROB`].
 /// - Otherwise, emit gate=1, then the new prob's upper 7 bits as a
 ///   literal (the wire format forces the LSB on, so MV probs are
-///   always odd). Updates `pre` in place.
+///   always odd). Updates `pre` in place to the wire-rounded value.
 ///
-/// Asserts every `post` MV-prob is odd, since the wire format
-/// cannot represent even values.
+/// The VP9 MV-prob wire format encodes `prob >> 1` as 7 bits; the
+/// decoder reconstructs `(val << 1) | 1`, so only odd values are
+/// representable. If `post` contains an even value that differs from
+/// `pre`, we round it to odd (`val | 1`) before encoding and update
+/// `pre` to the rounded value. This ensures the encoder's "pre"
+/// state matches what the decoder will reconstruct.
 fn write_update_mv_probs(bw: &mut BoolWriter<'_>, pre: &mut [u8], post: &[u8]) {
     debug_assert_eq!(pre.len(), post.len());
     for (p_slot, n_slot) in pre.iter_mut().zip(post.iter()) {
         if *p_slot == *n_slot {
             bw.write(0, MV_UPDATE_PROB);
         } else {
-            debug_assert_eq!(
-                *n_slot & 1,
-                1,
-                "write_update_mv_probs: target MV prob {n_slot} is even, but wire \
-                 format forces LSB=1"
-            );
+            // Round to nearest odd: the wire format can only represent
+            // odd values. The ±1 perturbation is negligible.
+            let rounded = *n_slot | 1;
             bw.write(1, MV_UPDATE_PROB);
-            bw.write_literal(u32::from(*n_slot >> 1), 7);
-            *p_slot = *n_slot;
+            bw.write_literal(u32::from(rounded >> 1), 7);
+            *p_slot = rounded;
         }
     }
 }

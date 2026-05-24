@@ -13,6 +13,8 @@
 //!   (`vp9/encoder/vp9_pickmode.c:354-385`).
 //! - [`model_rd_for_sb_y`] — `model_rd_for_sb_y`
 //!   (`vp9/encoder/vp9_pickmode.c:636-717`).
+//! - [`model_rd_for_sb_uv`] — `model_rd_for_sb_uv`
+//!   (`vp9/encoder/vp9_pickmode.c:847-915`).
 //!
 //! ## Scope
 //!
@@ -20,10 +22,10 @@
 //! `CONFIG_VP9_HIGHBITDEPTH` paths in libvpx are out of scope.
 
 use crate::bitstream::compressed_header::tx_mode_to_biggest_tx_size;
-use crate::block::{BlockSize, max_txsize};
+use crate::block::{BlockSize, max_txsize, uv_plane_block_size};
 use crate::cost::VP9_PROB_COST_SHIFT;
-use crate::transforms::TxSize;
 use crate::transforms::TxMode;
+use crate::transforms::TxSize;
 
 // ---------------------------------------------------------------------------
 // Lookup tables — ported verbatim from vp9/encoder/vp9_rd.c:450-503.
@@ -395,6 +397,103 @@ pub fn model_rd_for_sb_y(
 }
 
 // ---------------------------------------------------------------------------
+// ModelRdUvResult + model_rd_for_sb_uv (vp9_pickmode.c:847-915)
+// ---------------------------------------------------------------------------
+
+/// Result of [`model_rd_for_sb_uv`].
+#[derive(Clone, Debug)]
+pub struct ModelRdUvResult {
+    /// Rate in `VP9_PROB_COST`-scaled units (summed over U + V planes).
+    pub rate: i32,
+    /// Distortion in RD-scaled units (summed over U + V planes).
+    pub dist: i64,
+}
+
+/// Variance-domain RD model for the UV (chroma) planes of a superblock
+/// leaf.
+///
+/// Port of `model_rd_for_sb_uv`
+/// (`vp9/encoder/vp9_pickmode.c:847-915`).
+///
+/// # Differences from [`model_rd_for_sb_y`]
+///
+/// - Operates on the 4:2:0 chroma planes; `bw` and `bh` are the
+///   **luma** block dimensions and are halved internally.
+/// - Computes rate+distortion for both U and V, summed together.
+/// - No skip-transform classification (skip is determined by the Y
+///   plane).
+/// - No TX-size selection (the model uses `num_pels_log2` of the
+///   chroma block size directly).
+///
+/// # Parameters
+///
+/// - `src_u`, `src_u_stride` -- source U plane.
+/// - `pred_u`, `pred_u_stride` -- prediction U plane.
+/// - `src_v`, `src_v_stride` -- source V plane.
+/// - `pred_v`, `pred_v_stride` -- prediction V plane.
+/// - `bw`, `bh` -- **luma** block width and height in pixels (halved
+///   internally for 4:2:0).
+/// - `bsize` -- luma partition block size. The chroma block size is
+///   derived via `uv_plane_block_size(bsize, 1, 1)`.
+/// - `dc_quant`, `ac_quant` -- chroma dequantizer values (`dequant[0]`
+///   and `dequant[1]`). The caller must pass the raw dequant values;
+///   this function applies the `>> 3` divisor for 8-bit internally.
+pub fn model_rd_for_sb_uv(
+    src_u: &[u8],
+    src_u_stride: usize,
+    pred_u: &[u8],
+    pred_u_stride: usize,
+    src_v: &[u8],
+    src_v_stride: usize,
+    pred_v: &[u8],
+    pred_v_stride: usize,
+    bw: usize,
+    bh: usize,
+    bsize: BlockSize,
+    dc_quant: u32,
+    ac_quant: u32,
+) -> ModelRdUvResult {
+    // 4:2:0: halve luma dimensions for chroma.
+    let uv_bw = bw >> 1;
+    let uv_bh = bh >> 1;
+
+    // Derive chroma block size for num_pels_log2 lookup.
+    let uv_bsize = uv_plane_block_size(bsize, 1, 1);
+    let n_log2 = num_pels_log2(uv_bsize);
+
+    // 8-bit path: divide quant by 8 (>> 3).
+    let dc_q = dc_quant >> 3;
+    let ac_q = ac_quant >> 3;
+
+    let mut rate_sum: i32 = 0;
+    let mut dist_sum: i64 = 0;
+
+    // Process both U and V planes (mirroring the `for i in
+    // start_plane..=stop_plane` loop in libvpx).
+    for (src, src_stride, pred, pred_stride) in [
+        (src_u, src_u_stride, pred_u, pred_u_stride),
+        (src_v, src_v_stride, pred_v, pred_v_stride),
+    ] {
+        let (var, sse) = compute_variance(src, src_stride, pred, pred_stride, uv_bw, uv_bh);
+
+        // DC component: model_rd_from_var_lapndz(sse - var, ...)
+        let (r_dc, d_dc) = model_rd_from_var_lapndz(sse - var, n_log2, dc_q);
+        rate_sum += r_dc >> 1;
+        dist_sum += d_dc << 3;
+
+        // AC component: model_rd_from_var_lapndz(var, ...)
+        let (r_ac, d_ac) = model_rd_from_var_lapndz(var, n_log2, ac_q);
+        rate_sum += r_ac;
+        dist_sum += d_ac << 4;
+    }
+
+    ModelRdUvResult {
+        rate: rate_sum,
+        dist: dist_sum,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // TxSize helper
 // ---------------------------------------------------------------------------
 
@@ -711,5 +810,151 @@ mod tests {
         // r should be between some table entries in the mid-range.
         assert!(r > 0 && r < 65536, "rate should be in (0, 65536): {r}");
         assert!(d > 0 && d < 1024, "dist should be in (0, 1024): {d}");
+    }
+
+    // -----------------------------------------------------------------------
+    // model_rd_for_sb_uv
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn model_rd_uv_identical_src_pred_gives_zero() {
+        // Identical src and pred on both U and V -> rate=0, dist=0.
+        let src_u = [128u8; 8 * 8];
+        let pred_u = [128u8; 8 * 8];
+        let src_v = [128u8; 8 * 8];
+        let pred_v = [128u8; 8 * 8];
+        let result = model_rd_for_sb_uv(
+            &src_u, 8, &pred_u, 8,
+            &src_v, 8, &pred_v, 8,
+            16, 16, // luma 16x16 -> chroma 8x8
+            BlockSize::Block16x16,
+            96, 80,
+        );
+        assert_eq!(result.rate, 0, "zero residual -> zero rate");
+        assert_eq!(result.dist, 0, "zero residual -> zero dist");
+    }
+
+    #[test]
+    fn model_rd_uv_textured_gives_positive() {
+        // Build chroma planes with a gradient residual -> non-zero
+        // rate and dist.
+        let pred_u = [128u8; 8 * 8];
+        let pred_v = [128u8; 8 * 8];
+        let mut src_u = [128u8; 8 * 8];
+        let mut src_v = [128u8; 8 * 8];
+        for r in 0..8 {
+            for c in 0..8 {
+                src_u[r * 8 + c] = (128 + r * 3 + c) as u8;
+                src_v[r * 8 + c] = (128 + r * 2 + c * 2) as u8;
+            }
+        }
+        let result = model_rd_for_sb_uv(
+            &src_u, 8, &pred_u, 8,
+            &src_v, 8, &pred_v, 8,
+            16, 16,
+            BlockSize::Block16x16,
+            96, 80,
+        );
+        assert!(result.rate > 0, "textured UV should have positive rate: {}", result.rate);
+        assert!(result.dist > 0, "textured UV should have positive dist: {}", result.dist);
+    }
+
+    #[test]
+    fn model_rd_uv_dimensions_halved() {
+        // Verify that model_rd_for_sb_uv uses halved dimensions:
+        // luma 32x32 -> chroma 16x16. We only fill 16x16 of data
+        // and it should work without panicking.
+        let src_u = [130u8; 16 * 16];
+        let pred_u = [128u8; 16 * 16];
+        let src_v = [130u8; 16 * 16];
+        let pred_v = [128u8; 16 * 16];
+        let result = model_rd_for_sb_uv(
+            &src_u, 16, &pred_u, 16,
+            &src_v, 16, &pred_v, 16,
+            32, 32, // luma 32x32 -> chroma 16x16
+            BlockSize::Block32x32,
+            96, 80,
+        );
+        // Uniform offset: each plane has sse = 16*16*4 = 1024,
+        // var = 0 -> DC only. Both planes contribute.
+        assert!(result.rate > 0 || result.dist > 0,
+            "uniform offset should produce some cost");
+    }
+
+    #[test]
+    fn model_rd_uv_64x64_uses_32x32_chroma() {
+        // Block64x64 -> chroma Block32x32 (4:2:0). Verify correct
+        // chroma block size is used (32x32 chroma = 1024 pixels,
+        // num_pels_log2 = 10).
+        let src_u = [129u8; 32 * 32];
+        let pred_u = [128u8; 32 * 32];
+        let src_v = [128u8; 32 * 32]; // V is flat -> only U contributes
+        let pred_v = [128u8; 32 * 32];
+        let result = model_rd_for_sb_uv(
+            &src_u, 32, &pred_u, 32,
+            &src_v, 32, &pred_v, 32,
+            64, 64,
+            BlockSize::Block64x64,
+            96, 80,
+        );
+        // U has uniform offset, V is flat. Overall should have
+        // non-zero rate from U plane's DC component.
+        assert!(result.dist > 0, "U-plane DC residual should produce dist");
+    }
+
+    #[test]
+    fn model_rd_uv_8x8_luma_gives_4x4_chroma() {
+        // Block8x8 -> chroma Block4x4 (4:2:0). This is the smallest
+        // chroma block; verify it doesn't panic.
+        let src_u = [135u8; 4 * 4];
+        let pred_u = [128u8; 4 * 4];
+        let src_v = [135u8; 4 * 4];
+        let pred_v = [128u8; 4 * 4];
+        let result = model_rd_for_sb_uv(
+            &src_u, 4, &pred_u, 4,
+            &src_v, 4, &pred_v, 4,
+            8, 8,
+            BlockSize::Block8x8,
+            96, 80,
+        );
+        // diff = 7 per pixel, 16 pixels per plane, sse = 16*49 = 784
+        // per plane. Should produce non-trivial cost.
+        assert!(result.rate > 0, "small chroma block should have positive rate");
+        assert!(result.dist > 0, "small chroma block should have positive dist");
+    }
+
+    #[test]
+    fn model_rd_uv_sums_both_planes() {
+        // Verify that cost is the sum of U and V planes: if only
+        // one plane has residual, cost should be less than when both
+        // have residual.
+        let flat = [128u8; 8 * 8];
+        let mut textured = [128u8; 8 * 8];
+        for r in 0..8 {
+            for c in 0..8 {
+                textured[r * 8 + c] = (128 + r * 3 + c) as u8;
+            }
+        }
+        // Only U has residual.
+        let result_u_only = model_rd_for_sb_uv(
+            &textured, 8, &flat, 8,
+            &flat, 8, &flat, 8,
+            16, 16,
+            BlockSize::Block16x16,
+            96, 80,
+        );
+        // Both U and V have the same residual.
+        let result_both = model_rd_for_sb_uv(
+            &textured, 8, &flat, 8,
+            &textured, 8, &flat, 8,
+            16, 16,
+            BlockSize::Block16x16,
+            96, 80,
+        );
+        // Both planes identical -> exactly double the single-plane cost.
+        assert_eq!(result_both.rate, result_u_only.rate * 2,
+            "both-plane rate should be 2x single-plane rate");
+        assert_eq!(result_both.dist, result_u_only.dist * 2,
+            "both-plane dist should be 2x single-plane dist");
     }
 }

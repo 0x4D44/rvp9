@@ -14,18 +14,16 @@
 //!
 //! ## Divergences from libvpx
 //!
-//! - **DCT vs Hadamard (DV-F1-1).** libvpx's `block_yrd` runs
-//!   `vpx_hadamard_{8x8,16x16}` to produce the SATD inputs; rvp9 reuses
-//!   the DCT coefficients the picker's existing
-//!   `reconstruct_via_round_trip` already computed (see
-//!   `mode_decision::inter`). Halves the transform cost; may need a
-//!   scalar correction at F.4 if the SATD-to-bits proportionality is
-//!   materially off.
-//! - **`vp9_quantize_b` vs `vp9_quantize_fp` (DV-F1-2).** rvp9's picker
-//!   uses `vp9_quantize_b` (with zbin pre-test) where libvpx's
-//!   `block_yrd` uses `vp9_quantize_fp` (no zbin). The two produce
-//!   different qcoeff magnitudes, so the SATD scale differs slightly;
-//!   we accept this for the F.1 first cut.
+//! - **DCT vs Hadamard (DV-F1-1) — RESOLVED (Phase 4c).** The inlined
+//!   accumulator in `mode_decision::inter::reconstruct_via_round_trip`
+//!   now uses `vpx_hadamard_{8x8,16x16,32x32}` + `vp9_quantize_fp`
+//!   on the residual, matching libvpx's `block_yrd` faithfully. The
+//!   shift is `(2 + VP9_PROB_COST_SHIFT)`, the libvpx default.
+//! - **`vp9_quantize_b` vs `vp9_quantize_fp` (DV-F1-2) — RESOLVED
+//!   (Phase 4c).** The block_yrd metrics path now uses `vp9_quantize_fp`
+//!   (no zbin, flat-quant) on the Hadamard coefficients, matching
+//!   libvpx. The DCT + `vp9_quantize_b` pipeline remains for
+//!   reconstruction only.
 //! - **Simple-yrd shortcut not ported.** libvpx's `block_yrd` has a
 //!   speed-feature gate (`use_simple_block_yrd`) that bypasses the
 //!   full path for `speed >= 8` / SVC non-base layers. We always run
