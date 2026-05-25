@@ -5199,4 +5199,2882 @@ mod tests {
         )
         .expect("MAX_SEGMENTS-1 = 7 must be accepted");
     }
+
+    // ---------- Stage 5 — branch-coverage tests -------------------------
+    //
+    // The tests below target the missed-branch dimensions in
+    // `write_tile_inter` / `write_inter_block_leaf` /
+    // `write_inter_partition_tree`. Coverage focus areas:
+    //   - Compound reference encoding (Compound + Select).
+    //   - Switchable interpolation filter encoding.
+    //   - NEWMV at extreme magnitudes with HP precision.
+    //   - All 4 MV joints (covered by varying `Mv` row/col combos).
+    //   - Per-block-size inter round-trip (8x16 / 16x8 / 16x32 / 32x16 /
+    //     32x64 / 64x32) exercising `infer_inter_partition` paths.
+
+    /// Compound `[LAST, ALTREF]` ZEROMV round-trip via the tile-level
+    /// inter writer. Exercises the compound write path of
+    /// `write_inter_block_mode_info` from inside the partition walker.
+    #[test]
+    fn s5_tile_inter_compound_zero_mv_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = s4c_default_params();
+        params.sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&params.sign_bias);
+        params.comp_fixed_ref = fixed;
+        params.comp_var_ref = var;
+        params.reference_mode = ReferenceMode::Compound;
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let cell = make_inter_cell(
+            BlockSize::Block64x64,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+        let leaves =
+            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        assert_eq!(leaves.len(), 1);
+        assert_inter_match(&cell, &leaves[0].2, "compound LAST+ALTREF ZEROMV 64x64");
+    }
+
+    /// Compound `[LAST, ALTREF]` NEWMV round-trip via tile-level
+    /// writer with per-ref MVs. Exercises both per-ref `write_mv`
+    /// calls.
+    #[test]
+    fn s5_tile_inter_compound_new_mv_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = s4c_default_params();
+        params.sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&params.sign_bias);
+        params.comp_fixed_ref = fixed;
+        params.comp_var_ref = var;
+        params.reference_mode = ReferenceMode::Compound;
+        params.allow_high_precision_mv = true;
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mvs = [Mv { row: 8, col: -4 }, Mv { row: -12, col: 6 }];
+        let cell = make_inter_cell(
+            BlockSize::Block64x64,
+            InterMode::NewMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            mvs,
+            InterpFilter::EightTap,
+        );
+        let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+        let leaves =
+            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        assert_eq!(leaves.len(), 1);
+        assert_inter_match(&cell, &leaves[0].2, "compound LAST+ALTREF NEWMV");
+    }
+
+    /// Switchable interpolation filter round-trip via tile-level
+    /// writer (EightTapSmooth on a 64x64 ZEROMV leaf).
+    #[test]
+    fn s5_tile_inter_switchable_filter_smooth_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = s4c_default_params();
+        params.interp_filter = InterpFilter::Switchable;
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let cell = make_inter_cell(
+            BlockSize::Block64x64,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTapSmooth,
+        );
+        let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+        let leaves =
+            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        assert_eq!(leaves.len(), 1);
+        assert_inter_match(&cell, &leaves[0].2, "switchable smooth 64x64 ZEROMV");
+    }
+
+    /// Switchable interpolation filter — EightTapSharp variant.
+    #[test]
+    fn s5_tile_inter_switchable_filter_sharp_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = s4c_default_params();
+        params.interp_filter = InterpFilter::Switchable;
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let cell = make_inter_cell(
+            BlockSize::Block64x64,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTapSharp,
+        );
+        let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+        let leaves =
+            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        assert_eq!(leaves.len(), 1);
+        assert_inter_match(&cell, &leaves[0].2, "switchable sharp 64x64 ZEROMV");
+    }
+
+    /// ReferenceMode::Select with a single-ref leaf — the writer
+    /// emits the `comp_inter` bit = 0 then the single-ref bits.
+    #[test]
+    fn s5_tile_inter_reference_mode_select_single_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = s4c_default_params();
+        params.reference_mode = ReferenceMode::Select;
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let cell = make_inter_cell(
+            BlockSize::Block64x64,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+        let leaves =
+            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        assert_eq!(leaves.len(), 1);
+        assert_inter_match(&cell, &leaves[0].2, "select+single");
+    }
+
+    /// ReferenceMode::Select with a compound leaf — emits the
+    /// `comp_inter` bit = 1 then the compound bit.
+    #[test]
+    fn s5_tile_inter_reference_mode_select_compound_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = s4c_default_params();
+        params.sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&params.sign_bias);
+        params.comp_fixed_ref = fixed;
+        params.comp_var_ref = var;
+        params.reference_mode = ReferenceMode::Select;
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let cell = make_inter_cell(
+            BlockSize::Block64x64,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+        let leaves =
+            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        assert_eq!(leaves.len(), 1);
+        assert_inter_match(&cell, &leaves[0].2, "select+compound");
+    }
+
+    /// Single-ref GOLDEN NEWMV: exercises the `bit0=1, bit1=0`
+    /// single-ref encoder path.
+    #[test]
+    fn s5_tile_inter_single_golden_new_mv_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = s4c_default_params();
+        params.allow_high_precision_mv = true;
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let cell = make_inter_cell(
+            BlockSize::Block64x64,
+            InterMode::NewMv,
+            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+            [Mv { row: 4, col: -2 }, Mv::ZERO],
+            InterpFilter::EightTap,
+        );
+        let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+        let leaves =
+            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        assert_eq!(leaves.len(), 1);
+        assert_inter_match(&cell, &leaves[0].2, "single GOLDEN NEWMV");
+    }
+
+    /// Single-ref ALTREF NEWMV: exercises the `bit0=1, bit1=1`
+    /// single-ref encoder path.
+    #[test]
+    fn s5_tile_inter_single_altref_new_mv_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = s4c_default_params();
+        params.allow_high_precision_mv = true;
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let cell = make_inter_cell(
+            BlockSize::Block64x64,
+            InterMode::NewMv,
+            [RefFrame::AltrefFrame, RefFrame::NoRefFrame],
+            [Mv { row: -8, col: 4 }, Mv::ZERO],
+            InterpFilter::EightTap,
+        );
+        let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+        let leaves =
+            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        assert_eq!(leaves.len(), 1);
+        assert_inter_match(&cell, &leaves[0].2, "single ALTREF NEWMV");
+    }
+
+    /// MV joint HnzVnz (both axes nonzero) via NEWMV. The encoder's
+    /// `write_mv` walks the joint tree to `HnzVnz` and emits both
+    /// row and col components.
+    #[test]
+    fn s5_tile_inter_new_mv_both_axes_nonzero_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = s4c_default_params();
+        params.allow_high_precision_mv = true;
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let cell = make_inter_cell(
+            BlockSize::Block64x64,
+            InterMode::NewMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv { row: 6, col: 10 }, Mv::ZERO],
+            InterpFilter::EightTap,
+        );
+        let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+        let leaves =
+            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        assert_eq!(leaves.len(), 1);
+        assert_inter_match(&cell, &leaves[0].2, "NEWMV both axes nonzero");
+    }
+
+    /// MV joint HnzVz (column nonzero, row zero) via NEWMV.
+    #[test]
+    fn s5_tile_inter_new_mv_col_only_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = s4c_default_params();
+        params.allow_high_precision_mv = true;
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let cell = make_inter_cell(
+            BlockSize::Block64x64,
+            InterMode::NewMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv { row: 0, col: 14 }, Mv::ZERO],
+            InterpFilter::EightTap,
+        );
+        let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+        let leaves =
+            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        assert_eq!(leaves.len(), 1);
+        assert_inter_match(&cell, &leaves[0].2, "NEWMV col only");
+    }
+
+    /// MV joint Zero via NEWMV (encoder still emits one `write_mv`
+    /// call; the joint tree picks the Zero leaf and no per-axis bits
+    /// follow).
+    #[test]
+    fn s5_tile_inter_new_mv_zero_diff_round_trip() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        // NEWMV with target MV equal to ref MV (= 0 for no
+        // neighbours) → diff = 0 → joint = Zero.
+        let cell = make_inter_cell(
+            BlockSize::Block64x64,
+            InterMode::NewMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+        let leaves =
+            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        assert_eq!(leaves.len(), 1);
+        assert_inter_match(&cell, &leaves[0].2, "NEWMV diff = Zero joint");
+    }
+
+    /// Per-block-size partition: 32x32 NEWMV (SPLIT into 4× 32x32).
+    /// One quadrant uses HP-allowed precision; all share a single
+    /// neighbour shape.
+    #[test]
+    fn s5_tile_inter_block32x32_new_mv_split_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = s4c_default_params();
+        params.allow_high_precision_mv = true;
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+
+        let make_quad = |mv: Mv| {
+            make_inter_cell(
+                BlockSize::Block32x32,
+                InterMode::NewMv,
+                [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                [mv, Mv::ZERO],
+                InterpFilter::EightTap,
+            )
+        };
+        let cell_tl = make_quad(Mv { row: 5, col: 3 });
+        let cell_tr = make_quad(Mv { row: -7, col: 11 });
+        let cell_bl = make_quad(Mv { row: 13, col: -5 });
+        let cell_br = make_quad(Mv { row: -9, col: -15 });
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, cell_tl);
+        splat_cell(&mut grid, mi_cols as usize, 0, 4, cell_tr);
+        splat_cell(&mut grid, mi_cols as usize, 4, 0, cell_bl);
+        splat_cell(&mut grid, mi_cols as usize, 4, 4, cell_br);
+
+        let leaves =
+            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        assert_eq!(leaves.len(), 4);
+        let expected = [&cell_tl, &cell_tr, &cell_bl, &cell_br];
+        for (i, ec) in expected.iter().enumerate() {
+            assert_inter_match(ec, &leaves[i].2, "32x32 NEWMV SPLIT quadrant");
+        }
+    }
+
+    /// 16x16 inter blocks tiled across 32x32 SPLIT (4 quadrants × 4
+    /// per quadrant = 16 leaves). Stress the partition walker's
+    /// recursion past 32x32 → 16x16.
+    #[test]
+    fn s5_tile_inter_block16x16_dense_round_trip() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let cell = make_inter_cell(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        // 4 mi-cols per 16x16 → 2x2 = 4 leaves per 32x32 quadrant.
+        for r in (0..mi_rows as usize).step_by(2) {
+            for c in (0..mi_cols as usize).step_by(2) {
+                splat_cell(&mut grid, mi_cols as usize, r, c, cell);
+            }
+        }
+        let leaves =
+            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        assert_eq!(leaves.len(), 16, "16x16 grid: 16 leaves");
+        for (_, _, mi) in &leaves {
+            assert_eq!(mi.block_size, BlockSize::Block16x16);
+        }
+    }
+
+    /// 8x16 inter block via HORZ→VERT partition split. Exercises the
+    /// `infer_inter_partition` VERT path at 16x16 → 8x16.
+    #[test]
+    fn s5_tile_inter_block8x16_vert_round_trip() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        // Top-left 16x16 region: 2x VERT → two 8x16 leaves.
+        let left = make_inter_cell(
+            BlockSize::Block8x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, left);
+        splat_cell(&mut grid, mi_cols as usize, 0, 1, left);
+        // Fill remainder with a single 16x16 ZEROMV stamp.
+        let stamp = make_inter_cell(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        for r in (0..mi_rows as usize).step_by(2) {
+            for c in (0..mi_cols as usize).step_by(2) {
+                if r == 0 && c == 0 {
+                    continue;
+                }
+                splat_cell(&mut grid, mi_cols as usize, r, c, stamp);
+            }
+        }
+        let leaves =
+            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        // 2 (8x16) + 15 (16x16) = 17 leaves.
+        assert_eq!(leaves.len(), 17);
+        // First two leaves are the 8x16 pair.
+        assert_eq!(leaves[0].2.block_size, BlockSize::Block8x16);
+        assert_eq!(leaves[1].2.block_size, BlockSize::Block8x16);
+    }
+
+    /// 16x8 inter block via HORZ split. Exercises the HORZ path at
+    /// 16x16 → 16x8.
+    #[test]
+    fn s5_tile_inter_block16x8_horz_round_trip() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let top = make_inter_cell(
+            BlockSize::Block16x8,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, top);
+        splat_cell(&mut grid, mi_cols as usize, 1, 0, top);
+        // Fill remainder with 16x16.
+        let stamp = make_inter_cell(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        for r in (0..mi_rows as usize).step_by(2) {
+            for c in (0..mi_cols as usize).step_by(2) {
+                if r == 0 && c == 0 {
+                    continue;
+                }
+                splat_cell(&mut grid, mi_cols as usize, r, c, stamp);
+            }
+        }
+        let leaves =
+            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        assert_eq!(leaves.len(), 17);
+        assert_eq!(leaves[0].2.block_size, BlockSize::Block16x8);
+        assert_eq!(leaves[1].2.block_size, BlockSize::Block16x8);
+    }
+
+    /// 32x64 inter block (full-tile VERT at root). Exercises the
+    /// inter partition writer's VERT case at the 64x64 → 32x64 level.
+    #[test]
+    fn s5_tile_inter_block32x64_vert_root_round_trip() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let half = make_inter_cell(
+            BlockSize::Block32x64,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, half);
+        splat_cell(&mut grid, mi_cols as usize, 0, 4, half);
+        let leaves =
+            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        assert_eq!(leaves.len(), 2);
+        assert_eq!(leaves[0].2.block_size, BlockSize::Block32x64);
+        assert_eq!(leaves[1].2.block_size, BlockSize::Block32x64);
+    }
+
+    /// 64x32 inter block (full-tile HORZ at root). Exercises the
+    /// inter partition writer's HORZ case at the 64x64 → 64x32 level.
+    #[test]
+    fn s5_tile_inter_block64x32_horz_root_round_trip() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let half = make_inter_cell(
+            BlockSize::Block64x32,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, half);
+        splat_cell(&mut grid, mi_cols as usize, 4, 0, half);
+        let leaves =
+            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        assert_eq!(leaves.len(), 2);
+        assert_eq!(leaves[0].2.block_size, BlockSize::Block64x32);
+        assert_eq!(leaves[1].2.block_size, BlockSize::Block64x32);
+    }
+
+    // ----- Stage 5: write_tile_inter validation error paths
+
+    /// `write_tile_inter` rejects mi_rows not a multiple of MI_BLOCK_SIZE.
+    #[test]
+    fn s5_tile_inter_rejects_non_multiple_of_sb() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 4u32; // not a multiple of MI_BLOCK_SIZE = 8.
+        let mi_cols = 8u32;
+        let grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 256];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        let err = write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ModesWriterError::NonMultipleOfSb { .. }));
+    }
+
+    /// `write_tile_inter` rejects tile bounds outside frame.
+    #[test]
+    fn s5_tile_inter_rejects_invalid_tile_bounds_out_of_frame() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: 16, // > mi_rows
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 256];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        let err = write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ModesWriterError::InvalidTileBounds));
+    }
+
+    /// `write_tile_inter` rejects mismatched prev_mv_grid length.
+    #[test]
+    fn s5_tile_inter_rejects_invalid_prev_mv_grid_len() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        // prev_mv_grid too short.
+        let prev_mv_grid = vec![PrevFrameMvRef::default(); 4];
+        let mut buf = vec![0u8; 256];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        let err = write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            Some(&prev_mv_grid),
+            &mut coef_ctx,
+            &coef_source,
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ModesWriterError::InvalidTileBounds));
+    }
+
+    /// `write_tile_inter` rejects mismatched mi_grid length.
+    #[test]
+    fn s5_tile_inter_rejects_invalid_grid_length() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        // Grid too short.
+        let grid: Vec<Option<ModeInfo>> = vec![None; 4];
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 256];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        let err = write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ModesWriterError::InvalidTileBounds));
+    }
+
+    /// `write_tile_inter` with FrameCounts populated: confirms the
+    /// per-leaf counts plumbing (skip, intra_inter, tx, inter_mode,
+    /// single_ref, partition).
+    #[test]
+    fn s5_tile_inter_accumulates_frame_counts() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let cell = make_inter_cell(
+            BlockSize::Block64x64,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 4 * 1024];
+        let mut counts = FrameCounts::default();
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            Some(&mut counts),
+        )
+        .expect("ok");
+        // Single 64x64 leaf → one entry in partition, skip,
+        // intra_inter, single_ref, inter_mode, tx.
+        let total_partition: u32 = counts.partition.iter().map(|c| c.iter().sum::<u32>()).sum();
+        assert_eq!(total_partition, 1, "partition counted once");
+        let total_skip: u32 = counts.skip.iter().map(|c| c[0] + c[1]).sum();
+        assert_eq!(total_skip, 1);
+        let total_intra_inter: u32 =
+            counts.intra_inter.iter().map(|c| c[0] + c[1]).sum();
+        assert_eq!(total_intra_inter, 1);
+        let total_inter_mode: u32 =
+            counts.inter_mode.iter().map(|c| c.iter().sum::<u32>()).sum();
+        assert_eq!(total_inter_mode, 1);
+    }
+
+    /// ModesWriterError Display impl coverage — each variant.
+    #[test]
+    fn s5_modes_writer_error_display_missing_cell() {
+        let e = ModesWriterError::MissingCell { mi_row: 1, mi_col: 2 };
+        let s = format!("{e}");
+        assert!(s.contains("missing cell"));
+        assert!(s.contains('1') && s.contains('2'));
+    }
+
+    #[test]
+    fn s5_modes_writer_error_display_unsupported_block_size() {
+        let e = ModesWriterError::UnsupportedBlockSize {
+            mi_row: 0,
+            mi_col: 0,
+            block_size: BlockSize::Block8x8,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("block_size"));
+    }
+
+    #[test]
+    fn s5_modes_writer_error_display_inconsistent_partition_tree() {
+        let e = ModesWriterError::InconsistentPartitionTree {
+            mi_row: 0,
+            mi_col: 0,
+            parent_bsize: BlockSize::Block32x32,
+            leaf_bsize: BlockSize::Block16x32,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("parent"));
+        assert!(s.contains("leaf"));
+    }
+
+    #[test]
+    fn s5_modes_writer_error_display_unsupported_block_mode() {
+        let e = ModesWriterError::UnsupportedBlockMode { mi_row: 5, mi_col: 6 };
+        let s = format!("{e}");
+        assert!(s.contains("intra"));
+    }
+
+    #[test]
+    fn s5_modes_writer_error_display_unsupported_non_skip() {
+        let e = ModesWriterError::UnsupportedNonSkip { mi_row: 0, mi_col: 0 };
+        let s = format!("{e}");
+        assert!(s.contains("skip"));
+    }
+
+    #[test]
+    fn s5_modes_writer_error_display_unsupported_segmentation() {
+        let e = ModesWriterError::UnsupportedSegmentation { mi_row: 0, mi_col: 0 };
+        let s = format!("{e}");
+        assert!(s.contains("segment_id"));
+    }
+
+    #[test]
+    fn s5_modes_writer_error_display_non_multiple_of_sb() {
+        let e = ModesWriterError::NonMultipleOfSb { mi_rows: 5, mi_cols: 9 };
+        let s = format!("{e}");
+        assert!(s.contains("multiples of 8"));
+    }
+
+    #[test]
+    fn s5_modes_writer_error_display_invalid_tile_bounds() {
+        let e = ModesWriterError::InvalidTileBounds;
+        let s = format!("{e}");
+        assert!(s.contains("tile bounds"));
+    }
+
+    #[test]
+    fn s5_modes_writer_error_display_buffer_overflow() {
+        let e = ModesWriterError::BufferOverflow;
+        let s = format!("{e}");
+        assert!(s.contains("overflow"));
+    }
+
+    #[test]
+    fn s5_modes_writer_error_display_unsupported_intra_in_inter() {
+        let e = ModesWriterError::UnsupportedIntraInInter { mi_row: 0, mi_col: 0 };
+        let s = format!("{e}");
+        assert!(s.contains("intra-in-inter"));
+    }
+
+    #[test]
+    fn s5_modes_writer_error_display_inter_mode_write() {
+        let e = ModesWriterError::InterModeWrite {
+            mi_row: 0,
+            mi_col: 0,
+            source: InterModeWriteError::NotInter,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("inter-mode write"));
+    }
+
+    /// `From<ModesWriterError> for BitstreamError` returns
+    /// `CompressedHeaderTooLarge` (per the umbrella `From` impl).
+    #[test]
+    fn s5_modes_writer_error_into_bitstream_error() {
+        let e: BitstreamError = ModesWriterError::InvalidTileBounds.into();
+        assert!(matches!(e, BitstreamError::CompressedHeaderTooLarge));
+    }
+
+    /// `infer_inter_partition` rejects inconsistent BLOCK_8x8 parent
+    /// where the leaf is not 4x4/4x8/8x4 (i.e. a non-sub-8 size).
+    #[test]
+    fn s5_infer_inter_partition_rejects_inconsistent_block8x8_leaf() {
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        // Place a Block16x16 cell at position 0 (the partition walker
+        // will expect a Block8x8 or sub-8 leaf for a BLOCK_8x8 parent).
+        let bad_cell = make_inter_cell(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        grid[0] = Some(bad_cell);
+        // Direct call to `infer_inter_partition` with bsize=Block8x8.
+        let err = infer_inter_partition(&grid, mi_cols as usize, 0, 0, BlockSize::Block8x8)
+            .expect_err("inconsistent");
+        assert!(matches!(err, ModesWriterError::InconsistentPartitionTree { .. }));
+    }
+
+    /// `infer_inter_partition` returns SPLIT for the canonical
+    /// Block8x8 case when leaf is Block4x4.
+    #[test]
+    fn s5_infer_inter_partition_block8x8_split_into_4x4() {
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let cell = make_inter_cell(
+            BlockSize::Block4x4,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        grid[0] = Some(cell);
+        let p = infer_inter_partition(&grid, mi_cols as usize, 0, 0, BlockSize::Block8x8)
+            .expect("ok");
+        assert_eq!(p, PartitionType::Split);
+    }
+
+    /// SPLIT partition with FrameCounts populated — covers
+    /// `counts.as_deref_mut()` paths in the inter partition recursion.
+    #[test]
+    fn s5_tile_inter_split_accumulates_frame_counts() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let cell = make_inter_cell(
+            BlockSize::Block32x32,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        // 4 quadrants × Block32x32 → root partition SPLIT.
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, cell);
+        splat_cell(&mut grid, mi_cols as usize, 0, 4, cell);
+        splat_cell(&mut grid, mi_cols as usize, 4, 0, cell);
+        splat_cell(&mut grid, mi_cols as usize, 4, 4, cell);
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 8 * 1024];
+        let mut counts = FrameCounts::default();
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            Some(&mut counts),
+        )
+        .expect("ok");
+        // 1 SPLIT at root + 4 NONE at the 32x32 leaves = 5 partition
+        // entries.
+        let total_partition: u32 =
+            counts.partition.iter().map(|c| c.iter().sum::<u32>()).sum();
+        assert_eq!(total_partition, 5);
+        // 4 inter leaves → 4 skip entries, 4 inter_mode entries.
+        let total_skip: u32 = counts.skip.iter().map(|c| c[0] + c[1]).sum();
+        assert_eq!(total_skip, 4);
+        let total_inter_mode: u32 =
+            counts.inter_mode.iter().map(|c| c.iter().sum::<u32>()).sum();
+        assert_eq!(total_inter_mode, 4);
+    }
+
+    /// HORZ partition with FrameCounts populated — covers
+    /// `counts.as_deref_mut()` in HORZ partition path.
+    #[test]
+    fn s5_tile_inter_horz_accumulates_frame_counts() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let cell = make_inter_cell(
+            BlockSize::Block64x32,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, cell);
+        splat_cell(&mut grid, mi_cols as usize, 4, 0, cell);
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 4 * 1024];
+        let mut counts = FrameCounts::default();
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            Some(&mut counts),
+        )
+        .expect("ok");
+        // 1 partition + 2 inter leaves.
+        let total_partition: u32 =
+            counts.partition.iter().map(|c| c.iter().sum::<u32>()).sum();
+        assert_eq!(total_partition, 1, "1 HORZ partition at root");
+        let total_skip: u32 = counts.skip.iter().map(|c| c[0] + c[1]).sum();
+        assert_eq!(total_skip, 2);
+    }
+
+    /// VERT partition with FrameCounts populated.
+    #[test]
+    fn s5_tile_inter_vert_accumulates_frame_counts() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let cell = make_inter_cell(
+            BlockSize::Block32x64,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, cell);
+        splat_cell(&mut grid, mi_cols as usize, 0, 4, cell);
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 4 * 1024];
+        let mut counts = FrameCounts::default();
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            Some(&mut counts),
+        )
+        .expect("ok");
+        let total_partition: u32 =
+            counts.partition.iter().map(|c| c.iter().sum::<u32>()).sum();
+        assert_eq!(total_partition, 1);
+    }
+
+    /// `write_tile_intra_keyframe` rejects invalid tile bounds.
+    #[test]
+    fn s5_tile_intra_keyframe_rejects_invalid_tile_bounds() {
+        let fc = FrameContext::new_default();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let grid = make_dc_grid(mi_rows as usize, mi_cols as usize);
+        let bad_bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: 16, // > mi_rows
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 256];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroIntraCoefSource::new();
+        let err = write_tile_intra_keyframe(
+            &mut bw,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bad_bounds,
+            &fc,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ModesWriterError::InvalidTileBounds));
+    }
+
+    /// `write_tile_intra_keyframe` rejects mismatched mi_grid length.
+    #[test]
+    fn s5_tile_intra_keyframe_rejects_invalid_grid_length() {
+        let fc = FrameContext::new_default();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let grid: Vec<Option<ModeInfo>> = vec![None; 4];
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 256];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroIntraCoefSource::new();
+        let err = write_tile_intra_keyframe(
+            &mut bw,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            &fc,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ModesWriterError::InvalidTileBounds));
+    }
+
+    /// `write_inter_block_leaf` rejects `UnsupportedBlockSize` when
+    /// the leaf cell's block_size differs from the partition-derived
+    /// subsize. Triggered via an inconsistent grid where the leaf
+    /// cell has a smaller bsize than the partition tree expects.
+    #[test]
+    fn s5_tile_inter_rejects_unsupported_block_size_mismatch() {
+        // We need an inter partition tree that derives a subsize via
+        // `infer_inter_partition` then dispatches to
+        // `write_inter_block_leaf`, where the cell's block_size
+        // doesn't match the derived subsize. The cleanest way to
+        // trigger this: place a wrong-size cell in a position the
+        // tree wouldn't normally infer correctly.
+        //
+        // Approach: place a Block16x16 cell that splats over (4, 4)
+        // region as expected for a 32x32 quadrant; the partition is
+        // inferred via the (0,0) cell. Set (0,0) = Block32x32 leaf
+        // (NONE partition) but splat only (0,0) with this cell —
+        // the rest of (4..) stays None → MissingCell during HORZ/
+        // VERT/SPLIT recursion.
+        //
+        // Actually trigger the simpler `UnsupportedBlockSize`: pass
+        // a single 64x64 cell whose stored block_size is Block32x32
+        // (mismatched against the NONE-inferred 64x64).
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; 64];
+        let bad_cell = ModeInfo {
+            block_size: BlockSize::Block32x32, // claim 32x32...
+            tx_size: TxSize::Tx32x32,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Inter {
+                mode: InterMode::ZeroMv,
+                ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                mvs: [Mv::ZERO; 2],
+                interp_filter: InterpFilter::EightTap,
+            },
+            bmi: Default::default(),
+        };
+        // ...but splat across the full 64x64 grid (so infer_inter_partition
+        // sees Block32x32 at (0,0) → expects HORZ/VERT/SPLIT subsize at
+        // BLOCK_64x64 parent). Actually infer_inter_partition will pick
+        // a partition matching Block32x32 — that's SPLIT. Then the
+        // recursive call at 32x32 finds the same cell, NONE → leaf
+        // expects Block32x32 to match. Won't trigger
+        // UnsupportedBlockSize.
+        //
+        // Try mismatched leaf via direct `write_inter_block_leaf` call:
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        for slot in &mut grid {
+            *slot = Some(bad_cell);
+        }
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        let mut buf = vec![0u8; 256];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(8);
+        // Call write_inter_block_leaf with mismatched leaf_bsize.
+        let err = write_inter_block_leaf(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            8,
+            8,
+            0,
+            0,
+            BlockSize::Block64x64, // leaf_bsize expected
+            &bad_cell,             // but cell claims Block32x32
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            None,
+        )
+        .expect_err("expected UnsupportedBlockSize");
+        assert!(matches!(err, ModesWriterError::UnsupportedBlockSize { .. }));
+    }
+
+    /// SPLIT down to 16x16 leaves with FrameCounts populated. Covers
+    /// TX size counts for Tx16x16 (line 1910-1913).
+    #[test]
+    fn s5_tile_inter_block16x16_split_with_counts() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let cell = make_inter_cell(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        for r in (0..mi_rows as usize).step_by(2) {
+            for c in (0..mi_cols as usize).step_by(2) {
+                splat_cell(&mut grid, mi_cols as usize, r, c, cell);
+            }
+        }
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 16 * 1024];
+        let mut counts = FrameCounts::default();
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            Some(&mut counts),
+        )
+        .expect("ok");
+        // 16 16x16 leaves → 16 inter_mode counts.
+        let total: u32 = counts.inter_mode.iter().map(|c| c.iter().sum::<u32>()).sum();
+        assert_eq!(total, 16);
+    }
+
+    /// SPLIT down to 8x8 leaves with FrameCounts populated. Covers
+    /// TX size counts for Tx8x8 (line 1914-1917).
+    #[test]
+    fn s5_tile_inter_block8x8_with_counts() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let cell = make_inter_cell(
+            BlockSize::Block8x8,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        for r in 0..mi_rows as usize {
+            for c in 0..mi_cols as usize {
+                splat_cell(&mut grid, mi_cols as usize, r, c, cell);
+            }
+        }
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 16 * 1024];
+        let mut counts = FrameCounts::default();
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            Some(&mut counts),
+        )
+        .expect("ok");
+        // 64 8x8 leaves → 64 inter_mode counts.
+        let total: u32 = counts.inter_mode.iter().map(|c| c.iter().sum::<u32>()).sum();
+        assert_eq!(total, 64);
+    }
+
+    /// `infer_partition` returns `InconsistentPartitionTree` when
+    /// the leaf size at a non-Block8x8 parent isn't a legal subsize
+    /// (lines 676-681).
+    #[test]
+    fn s5_infer_partition_rejects_inconsistent_keyframe() {
+        // Block8x8 cell at (0,0); parent expected Block16x16. The
+        // keyframe `infer_partition` doesn't allow sub-8 leaves under
+        // Block16x16 → it tries to match against HORZ/VERT/SPLIT
+        // subsizes of Block16x16. None match Block8x8 → SPLIT path,
+        // but for Block16x16 SPLIT subsize is Block8x8 → matches.
+        // Actually that's fine. Let me try a Block4x4 (sub-8) at a
+        // Block16x16 parent: HORZ=Block16x8, VERT=Block8x16,
+        // SPLIT=Block8x8. Block4x4 doesn't match any → SPLIT path
+        // taken since subsize(Block16x16, SPLIT) = Block8x8 exists →
+        // returns SPLIT. The keyframe walker then tries to decode
+        // SPLIT children at Block8x8 level; each child cell must be
+        // Block8x8 but we have Block4x4 → infer_partition at Block8x8
+        // sees Block4x4. Block8x8 has no HORZ/VERT subsize per
+        // `subsize`; only SPLIT-into-something exists if `subsize`
+        // returns None. Actually let me try inconsistent Block32x32 at
+        // Block16x16 parent → not a subsize → InconsistentPartitionTree.
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        // Place a Block16x32 cell at (0,0). The walker reaches
+        // (0,0) at Block16x16 parent and infers... Block16x32 isn't
+        // a Block16x16 subsize.
+        let cell = ModeInfo {
+            block_size: BlockSize::Block16x32,
+            tx_size: TxSize::Tx16x16,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, cell);
+        // Fill the rest with valid Block16x16 cells.
+        let stamp = ModeInfo {
+            block_size: BlockSize::Block16x16,
+            tx_size: TxSize::Tx16x16,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        for r in (0..mi_rows as usize).step_by(2) {
+            for c in (0..mi_cols as usize).step_by(2) {
+                if r < 4 && c < 2 {
+                    continue;
+                }
+                splat_cell(&mut grid, mi_cols as usize, r, c, stamp);
+            }
+        }
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 4 * 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroIntraCoefSource::new();
+        let result = write_tile_intra_keyframe(
+            &mut bw,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            &fc(),
+            None,
+            &mut coef_ctx,
+            &coef_source,
+        );
+        // Should reject with either InconsistentPartitionTree (from
+        // infer_partition) or UnsupportedBlockSize (from leaf
+        // validation). Both are valid outcomes for this malformed
+        // grid.
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, ModesWriterError::InconsistentPartitionTree { .. })
+                || matches!(err, ModesWriterError::UnsupportedBlockSize { .. }),
+            "actual: {err:?}",
+        );
+    }
+
+    fn fc() -> FrameContext {
+        FrameContext::new_default()
+    }
+
+    /// `infer_inter_partition` rejects inconsistent partition tree at
+    /// a non-Block8x8 parent (lines 752-757).
+    #[test]
+    fn s5_infer_inter_partition_rejects_inconsistent_at_non_block8x8() {
+        // Block16x32 cell at (0,0) under Block16x16 parent: not a
+        // legal subsize. The walker handles 32x32 SPLIT → 16x16
+        // children. At the 16x16 parent we hit infer_inter_partition
+        // with a Block16x32 cell.
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let bad_cell = make_inter_cell(
+            BlockSize::Block16x32,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, bad_cell);
+        let stamp = make_inter_cell(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        for r in (0..mi_rows as usize).step_by(2) {
+            for c in (0..mi_cols as usize).step_by(2) {
+                if r < 4 && c < 2 {
+                    continue;
+                }
+                splat_cell(&mut grid, mi_cols as usize, r, c, stamp);
+            }
+        }
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 4 * 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        let err = write_tile_inter(
+            &mut bw,
+            &fc(),
+            &s4c_default_params(),
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ModesWriterError::InconsistentPartitionTree { .. })
+                || matches!(err, ModesWriterError::UnsupportedBlockSize { .. }),
+            "actual: {err:?}",
+        );
+    }
+
+    /// Sub-8 keyframe write: BLOCK_8x8 parent with intra modes
+    /// covers the sub-8 plane extent path at line 1182.
+    /// We pass an 8x8 cell that's intra DC and let the regular
+    /// path handle it; the intra keyframe path doesn't actually
+    /// support sub-8 partitioning, but we can drive non-skip
+    /// 8x8 keyframe intra to hit the residual write_intra_block_residual
+    /// at smaller plane sizes.
+    #[test]
+    fn s5_intra_keyframe_non_skip_block8x8_grain() {
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let cell = ModeInfo {
+            block_size: BlockSize::Block8x8,
+            tx_size: TxSize::Tx8x8,
+            skip: false,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        for r in 0..mi_rows as usize {
+            for c in 0..mi_cols as usize {
+                splat_cell(&mut grid, mi_cols as usize, r, c, cell);
+            }
+        }
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 64 * 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroIntraCoefSource::new();
+        write_tile_intra_keyframe(
+            &mut bw,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            &fc(),
+            None,
+            &mut coef_ctx,
+            &coef_source,
+        )
+        .expect("ok");
+    }
+
+    /// `write_block_intra_keyframe` rejects `seg_id_predicted` (line
+    /// 1048).
+    #[test]
+    fn s5_intra_keyframe_rejects_seg_id_predicted() {
+        let fc = FrameContext::new_default();
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: 8,
+            mi_col_start: 0,
+            mi_col_end: 8,
+        };
+        let mut nbr_ctx = NeighbourCtx::new(8);
+        let mut bad = ModeInfo {
+            block_size: BlockSize::Block64x64,
+            tx_size: TxSize::Tx32x32,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: true,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        let _ = &mut bad; // silence unused-mut for future edits
+        let mut buf = vec![0u8; 256];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(8);
+        let coef_source = crate::bitstream::AllZeroIntraCoefSource::new();
+        let err = write_block_intra_keyframe(
+            &mut bw,
+            &fc,
+            None,
+            &mut nbr_ctx,
+            &bounds,
+            0,
+            0,
+            BlockSize::Block64x64,
+            &bad,
+            &mut coef_ctx,
+            &coef_source,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ModesWriterError::UnsupportedSegmentation { .. }));
+    }
+
+    /// `write_block_intra_keyframe` rejects non-zero segment_id when
+    /// seg is None (line 1053).
+    #[test]
+    fn s5_intra_keyframe_rejects_nonzero_seg_id_without_seg_params() {
+        let fc = FrameContext::new_default();
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: 8,
+            mi_col_start: 0,
+            mi_col_end: 8,
+        };
+        let mut nbr_ctx = NeighbourCtx::new(8);
+        let bad = ModeInfo {
+            block_size: BlockSize::Block64x64,
+            tx_size: TxSize::Tx32x32,
+            skip: true,
+            segment_id: 3,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        let mut buf = vec![0u8; 256];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(8);
+        let coef_source = crate::bitstream::AllZeroIntraCoefSource::new();
+        let err = write_block_intra_keyframe(
+            &mut bw,
+            &fc,
+            None,
+            &mut nbr_ctx,
+            &bounds,
+            0,
+            0,
+            BlockSize::Block64x64,
+            &bad,
+            &mut coef_ctx,
+            &coef_source,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ModesWriterError::UnsupportedSegmentation { .. }));
+    }
+
+    /// HORZ partition with second leaf cell missing — should
+    /// surface `MissingCell` error (line 1647-1654 path in
+    /// write_inter_partition_tree).
+    #[test]
+    fn s5_tile_inter_horz_partition_missing_bottom_leaf() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        // Top half: Block64x32 inter cell.
+        let cell = make_inter_cell(
+            BlockSize::Block64x32,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, cell);
+        // Bottom half: deliberately left as None (missing).
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 4 * 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        let err = write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ModesWriterError::MissingCell { mi_row: 4, mi_col: 0 }),
+            "actual: {err:?}",
+        );
+    }
+
+    /// VERT partition with second leaf cell missing.
+    #[test]
+    fn s5_tile_inter_vert_partition_missing_right_leaf() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let cell = make_inter_cell(
+            BlockSize::Block32x64,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, cell);
+        // Right half missing.
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 4 * 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        let err = write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ModesWriterError::MissingCell { mi_row: 0, mi_col: 4 }),
+            "actual: {err:?}",
+        );
+    }
+
+    /// Keyframe HORZ partition with missing bottom leaf.
+    #[test]
+    fn s5_tile_intra_keyframe_horz_partition_missing_bottom_leaf() {
+        let fc = FrameContext::new_default();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let cell = ModeInfo {
+            block_size: BlockSize::Block64x32,
+            tx_size: TxSize::Tx32x32,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, cell);
+        // Bottom half missing.
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 4 * 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroIntraCoefSource::new();
+        let err = write_tile_intra_keyframe(
+            &mut bw,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            &fc,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ModesWriterError::MissingCell { mi_row: 4, mi_col: 0 }));
+    }
+
+    /// Keyframe VERT partition with missing right leaf.
+    #[test]
+    fn s5_tile_intra_keyframe_vert_partition_missing_right_leaf() {
+        let fc = FrameContext::new_default();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let cell = ModeInfo {
+            block_size: BlockSize::Block32x64,
+            tx_size: TxSize::Tx32x32,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, cell);
+        // Right half missing.
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 4 * 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroIntraCoefSource::new();
+        let err = write_tile_intra_keyframe(
+            &mut bw,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            &fc,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ModesWriterError::MissingCell { mi_row: 0, mi_col: 4 }));
+    }
+
+    /// `InterModeWriteError` propagates through
+    /// `write_inter_block_leaf` as `ModesWriterError::InterModeWrite`.
+    /// Trigger via a sub-8 cell with parent mode mismatching bmi[3].
+    #[test]
+    fn s5_tile_inter_propagates_inter_mode_write_error() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+
+        // Build a Block8x8 SB and corrupt sub-8 cell at (0,0) with
+        // parent_mode != bmi[3].as_mode.
+        let plain = make_inter_cell(
+            BlockSize::Block8x8,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        for r in 0..mi_rows as usize {
+            for c in 0..mi_cols as usize {
+                grid[r * mi_cols as usize + c] = Some(plain);
+            }
+        }
+        // Replace (0,0) with a sub-8 cell whose parent mode mismatches.
+        let mut bad = ModeInfo {
+            block_size: BlockSize::Block4x4,
+            tx_size: TxSize::Tx4x4,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Inter {
+                mode: InterMode::NewMv, // parent says NEW...
+                ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                mvs: [Mv::ZERO; 2],
+                interp_filter: InterpFilter::EightTap,
+            },
+            bmi: Default::default(),
+        };
+        for slot in &mut bad.bmi {
+            slot.as_mode = InterMode::ZeroMv.idx() as u8; // ...but bmi[3] = ZERO.
+        }
+        grid[0] = Some(bad);
+
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 16 * 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        let err = write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ModesWriterError::InterModeWrite { mi_row: 0, mi_col: 0, .. }),
+            "actual: {err:?}",
+        );
+    }
+
+    /// `write_tile_inter` returns `BufferOverflow` when the
+    /// underlying BoolWriter runs out of space. Triggered by a
+    /// deliberately tiny buffer and a moderately dense grid.
+    #[test]
+    fn s5_tile_inter_buffer_overflow() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut cell = make_inter_cell(
+            BlockSize::Block8x8,
+            InterMode::NewMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv { row: 100, col: -100 }, Mv::ZERO],
+            InterpFilter::EightTap,
+        );
+        cell.skip = false;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        for r in 0..mi_rows as usize {
+            for c in 0..mi_cols as usize {
+                splat_cell(&mut grid, mi_cols as usize, r, c, cell);
+            }
+        }
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        // 16-byte buffer is too small to encode an 8x8 grid of inter
+        // NEWMV non-skip leaves.
+        let mut buf = vec![0u8; 16];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        let err = write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ModesWriterError::BufferOverflow));
+    }
+
+    /// Sub-8 inter leaf with FrameCounts populated — covers the
+    /// Tx4x4 branch of the TX count match (line 1918) since
+    /// max_txsize(Block4x4) = Tx4x4.
+    #[test]
+    fn s5_tile_inter_sub8_with_counts() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        // Fill with Block8x8 plain leaves first.
+        let plain = make_inter_cell(
+            BlockSize::Block8x8,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        for slot in &mut grid {
+            *slot = Some(plain);
+        }
+        // Place a sub-8 Block4x4 cell at (0, 0). All bmi entries
+        // must use ZEROMV (parent mode) for the writer's parent-
+        // mode invariant.
+        let mut sub8_bmi = [BmiInfo::default(); 4];
+        for slot in &mut sub8_bmi {
+            slot.as_mode = InterMode::ZeroMv.idx() as u8;
+        }
+        let sub8_cell = ModeInfo {
+            block_size: BlockSize::Block4x4,
+            tx_size: TxSize::Tx4x4,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Inter {
+                mode: InterMode::ZeroMv,
+                ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                mvs: [Mv::ZERO; 2],
+                interp_filter: InterpFilter::EightTap,
+            },
+            bmi: sub8_bmi,
+        };
+        grid[0] = Some(sub8_cell);
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 16 * 1024];
+        let mut counts = FrameCounts::default();
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            Some(&mut counts),
+        )
+        .expect("ok");
+        // The Tx4x4 leaf doesn't add to tx_totals, but the rest of
+        // the 8x8 leaves use Tx8x8 → tx_totals[1] (Tx8x8 idx 1) > 0.
+        let total_tx_8x8: u32 = counts.tx.tx_totals[TxSize::Tx8x8 as usize];
+        assert!(total_tx_8x8 > 0, "tx_totals[Tx8x8] should be populated");
+    }
+
+    /// Non-skip 64x64 inter leaf with TxMode::AllowTx16x16 →
+    /// covers uv_plane_tx_size's `luma_tx < cap` branch (line 2121)
+    /// and Block32x16 case in uv_plane_block_size — actually
+    /// uv_plane(64x64) = 32x32, so we get the 64x64 case. The cap
+    /// scenario: luma_tx = Tx16x16 < cap (Tx32x32) → returns Tx16x16.
+    #[test]
+    fn s5_tile_inter_non_skip_64x64_with_tx16x16_cap() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut cell = make_inter_cell(
+            BlockSize::Block64x64,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        cell.skip = false;
+        cell.tx_size = TxSize::Tx16x16;
+        let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 64 * 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx16x16, // cap = Tx16x16
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            None,
+        )
+        .expect("ok");
+    }
+
+    /// S5 — non-skip SPLIT inter via `encode_then_replay_inter_full`
+    /// (exercises the test-side `replay_inter_partition_tree_with_coefs`
+    /// HORZ/VERT/SPLIT paths).
+    #[test]
+    fn s5_round_trip_non_skip_inter_split_via_replay() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let mut cell = make_inter_cell(
+            BlockSize::Block32x32,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        cell.skip = false;
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, cell);
+        splat_cell(&mut grid, mi_cols as usize, 0, 4, cell);
+        splat_cell(&mut grid, mi_cols as usize, 4, 0, cell);
+        splat_cell(&mut grid, mi_cols as usize, 4, 4, cell);
+
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        let (leaves, _residuals) = encode_then_replay_inter_full(
+            &fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None, &coef_source,
+        );
+        assert_eq!(leaves.len(), 4);
+        for (_, _, mi) in &leaves {
+            assert_eq!(mi.block_size, BlockSize::Block32x32);
+        }
+    }
+
+    /// S5 — non-skip HORZ inter via the full replay.
+    #[test]
+    fn s5_round_trip_non_skip_inter_horz_via_replay() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let mut cell = make_inter_cell(
+            BlockSize::Block64x32,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        cell.skip = false;
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, cell);
+        splat_cell(&mut grid, mi_cols as usize, 4, 0, cell);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        let (leaves, _) = encode_then_replay_inter_full(
+            &fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None, &coef_source,
+        );
+        assert_eq!(leaves.len(), 2);
+    }
+
+    /// S5 — non-skip VERT inter via the full replay.
+    #[test]
+    fn s5_round_trip_non_skip_inter_vert_via_replay() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let mut cell = make_inter_cell(
+            BlockSize::Block32x64,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        cell.skip = false;
+        splat_cell(&mut grid, mi_cols as usize, 0, 0, cell);
+        splat_cell(&mut grid, mi_cols as usize, 0, 4, cell);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        let (leaves, _) = encode_then_replay_inter_full(
+            &fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None, &coef_source,
+        );
+        assert_eq!(leaves.len(), 2);
+    }
+
+    /// Non-skip 32x16 inter leaves — exercises uv_plane_block_size
+    /// `Block32x16 → Block16x8` (line 2108) during residual.
+    #[test]
+    fn s5_tile_inter_non_skip_32x16_uv_plane() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let mut cell = make_inter_cell(
+            BlockSize::Block32x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        cell.skip = false;
+        // Fill SB with 32x16 leaves: HORZ in each 32x32 quadrant.
+        for r in (0..mi_rows as usize).step_by(2) {
+            for c in (0..mi_cols as usize).step_by(4) {
+                splat_cell(&mut grid, mi_cols as usize, r, c, cell);
+            }
+        }
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 64 * 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            None,
+        )
+        .expect("ok");
+    }
+
+    /// Intra-in-inter leaf with `TxMode::TxModeSelect` — exercises
+    /// the `allow_select && tx_mode == TxModeSelect` branch at line
+    /// 1878 (uses mi.tx_size directly).
+    #[test]
+    fn s5_tile_inter_intra_in_inter_tx_mode_select() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let intra_cell = ModeInfo {
+            block_size: BlockSize::Block64x64,
+            tx_size: TxSize::Tx16x16,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        let grid: Vec<Option<ModeInfo>> = vec![Some(intra_cell); (mi_rows * mi_cols) as usize];
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 16 * 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::TxModeSelect,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            None,
+        )
+        .expect("ok");
+    }
+
+    /// Intra-in-inter sub-8 leaf at size_group 0 — covers line 1971.
+    #[test]
+    fn s5_tile_inter_intra_in_inter_sub8_size_group0() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        // Plain Block8x8 inter cells everywhere.
+        let plain = make_inter_cell(
+            BlockSize::Block8x8,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        for slot in &mut grid {
+            *slot = Some(plain);
+        }
+        // Sub-8 intra cell at (0, 0) — Block4x4 with intra modes.
+        let sub8_intra = ModeInfo {
+            block_size: BlockSize::Block4x4,
+            tx_size: TxSize::Tx4x4,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::V,
+                uv_mode: IntraMode::H,
+            },
+            bmi: [BmiInfo::default(); 4],
+        };
+        grid[0] = Some(sub8_intra);
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 16 * 1024];
+        let mut counts = FrameCounts::default();
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            Some(&mut counts),
+        )
+        .expect("ok");
+        // size_group 0 (Block4x4) intra leaf with y_mode = V.
+        assert_eq!(counts.y_mode[0][IntraMode::V as usize], 1);
+    }
+
+    /// `write_tile_intra_keyframe` returns `BufferOverflow` with
+    /// a tiny buffer.
+    #[test]
+    fn s5_tile_intra_keyframe_buffer_overflow() {
+        let fc = FrameContext::new_default();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let cell = ModeInfo {
+            block_size: BlockSize::Block8x8,
+            tx_size: TxSize::Tx8x8,
+            skip: false,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::H,
+                uv_mode: IntraMode::V,
+            },
+            bmi: Default::default(),
+        };
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        for r in 0..mi_rows as usize {
+            for c in 0..mi_cols as usize {
+                splat_cell(&mut grid, mi_cols as usize, r, c, cell);
+            }
+        }
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 16];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroIntraCoefSource::new();
+        let err = write_tile_intra_keyframe(
+            &mut bw,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            &fc,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ModesWriterError::BufferOverflow));
+    }
+
+    /// Intra-in-inter leaf at size_group 2 (Block16x16). Covers line
+    /// 1973.
+    #[test]
+    fn s5_tile_inter_intra_in_inter_block16x16_size_group2() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let intra_cell = ModeInfo {
+            block_size: BlockSize::Block16x16,
+            tx_size: TxSize::Tx16x16,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::V,
+                uv_mode: IntraMode::H,
+            },
+            bmi: Default::default(),
+        };
+        for r in (0..mi_rows as usize).step_by(2) {
+            for c in (0..mi_cols as usize).step_by(2) {
+                splat_cell(&mut grid, mi_cols as usize, r, c, intra_cell);
+            }
+        }
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 16 * 1024];
+        let mut counts = FrameCounts::default();
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            Some(&mut counts),
+        )
+        .expect("ok");
+        // 16 intra leaves at size_group 2.
+        assert_eq!(counts.y_mode[2][IntraMode::V as usize], 16);
+    }
+
+    /// Intra-in-inter leaf at size_group 1 (Block8x8).
+    #[test]
+    fn s5_tile_inter_intra_in_inter_block8x8_size_group1() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let intra_cell = ModeInfo {
+            block_size: BlockSize::Block8x8,
+            tx_size: TxSize::Tx8x8,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::D45,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        for r in 0..mi_rows as usize {
+            for c in 0..mi_cols as usize {
+                splat_cell(&mut grid, mi_cols as usize, r, c, intra_cell);
+            }
+        }
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 32 * 1024];
+        let mut counts = FrameCounts::default();
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            Some(&mut counts),
+        )
+        .expect("ok");
+        // 64 intra leaves at size_group 1.
+        assert_eq!(counts.y_mode[1][IntraMode::D45 as usize], 64);
+    }
+
+    /// Non-skip sub-8 (Block4x4) inter leaf — exercises the sub-8
+    /// plane extent path in `write_inter_block_residual` (line 2213).
+    #[test]
+    fn s5_tile_inter_non_skip_sub8_block4x4() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        // Fill SB with plain Block8x8 leaves.
+        let plain = make_inter_cell(
+            BlockSize::Block8x8,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        for slot in &mut grid {
+            *slot = Some(plain);
+        }
+        // Sub-8 cell at (0, 0) — Block4x4 ZEROMV non-skip.
+        let mut sub8_bmi = [BmiInfo::default(); 4];
+        for slot in &mut sub8_bmi {
+            slot.as_mode = InterMode::ZeroMv.idx() as u8;
+        }
+        let sub8_cell = ModeInfo {
+            block_size: BlockSize::Block4x4,
+            tx_size: TxSize::Tx4x4,
+            skip: false,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Inter {
+                mode: InterMode::ZeroMv,
+                ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                mvs: [Mv::ZERO; 2],
+                interp_filter: InterpFilter::EightTap,
+            },
+            bmi: sub8_bmi,
+        };
+        grid[0] = Some(sub8_cell);
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 64 * 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            None,
+        )
+        .expect("ok");
+    }
+
+    /// Non-skip intra-in-inter leaf at Block16x16 (max_tx = Tx16x16,
+    /// so plane_tx != Tx32x32) — exercises `y_mode.tx_type()` for
+    /// the Y plane (line 2201).
+    #[test]
+    fn s5_tile_inter_intra_in_inter_non_skip_16x16_y_tx_type() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let cell = ModeInfo {
+            block_size: BlockSize::Block16x16,
+            tx_size: TxSize::Tx16x16,
+            skip: false,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::H, // → ADST_DCT tx_type for non-32x32
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        for r in (0..mi_rows as usize).step_by(2) {
+            for c in (0..mi_cols as usize).step_by(2) {
+                splat_cell(&mut grid, mi_cols as usize, r, c, cell);
+            }
+        }
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 64 * 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            None,
+        )
+        .expect("ok");
+    }
+
+    /// Non-skip intra-in-inter leaf — exercises `residual_y_mode`
+    /// extraction at line 2005, the intra-in-inter residual TX walk
+    /// (tx_type via y_mode), and uv_plane_tx_size with cap branches.
+    #[test]
+    fn s5_tile_inter_intra_in_inter_non_skip() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let intra_cell = ModeInfo {
+            block_size: BlockSize::Block64x64,
+            tx_size: TxSize::Tx32x32,
+            skip: false,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::H,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        let grid: Vec<Option<ModeInfo>> = vec![Some(intra_cell); (mi_rows * mi_cols) as usize];
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 64 * 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            None,
+        )
+        .expect("ok");
+    }
+
+    /// Non-skip inter at 16x32 leaf — exercises uv_plane_block_size
+    /// `Block16x32 → Block8x16` (line 2107) and the smaller TX paths.
+    #[test]
+    fn s5_tile_inter_non_skip_16x32_exercise_uv_sizes() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let mut cell = make_inter_cell(
+            BlockSize::Block16x32,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        cell.skip = false;
+        // Fill the SB with 16x32 leaves.
+        for c in (0..mi_cols as usize).step_by(2) {
+            splat_cell(&mut grid, mi_cols as usize, 0, c, cell);
+            splat_cell(&mut grid, mi_cols as usize, 4, c, cell);
+        }
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 64 * 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            None,
+        )
+        .expect("ok");
+    }
+
+    /// 16x16 grain non-skip inter leaves with FrameCounts populated.
+    /// Covers the residual TX walk (line 2200+) at smaller TX sizes.
+    #[test]
+    fn s5_tile_inter_non_skip_16x16_with_counts() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
+        let mut cell = make_inter_cell(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        cell.skip = false;
+        for r in (0..mi_rows as usize).step_by(2) {
+            for c in (0..mi_cols as usize).step_by(2) {
+                splat_cell(&mut grid, mi_cols as usize, r, c, cell);
+            }
+        }
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 64 * 1024];
+        let mut counts = FrameCounts::default();
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            Some(&mut counts),
+        )
+        .expect("ok");
+        // 16 leaves, 16 skip counts, 16 inter_mode counts.
+        let total: u32 = counts.inter_mode.iter().map(|c| c.iter().sum::<u32>()).sum();
+        assert_eq!(total, 16);
+        // skip=false on each leaf.
+        let total_skip: u32 = counts.skip.iter().map(|c| c[0] + c[1]).sum();
+        assert_eq!(total_skip, 16);
+    }
+
+    /// `write_inter_block_leaf` rejects `seg_id_predicted` set.
+    #[test]
+    fn s5_inter_block_leaf_rejects_seg_id_predicted() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mut bad_cell = make_inter_cell(
+            BlockSize::Block64x64,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        bad_cell.seg_id_predicted = true;
+        let grid: Vec<Option<ModeInfo>> = vec![Some(bad_cell); 64];
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        let mut buf = vec![0u8; 256];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(8);
+        let err = write_inter_block_leaf(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            8,
+            8,
+            0,
+            0,
+            BlockSize::Block64x64,
+            &bad_cell,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            None,
+        )
+        .expect_err("expected UnsupportedSegmentation");
+        assert!(matches!(err, ModesWriterError::UnsupportedSegmentation { .. }));
+    }
+
+    /// Intra-in-inter leaf: the writer emits y_mode + uv_mode via
+    /// `write_intra_mode`. Exercises the `is_inter == false` branch
+    /// of `write_inter_block_leaf`.
+    #[test]
+    fn s5_tile_inter_intra_in_inter_round_trip() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        // Build an intra-in-inter cell — intra mode info but in an
+        // inter frame's writer.
+        let intra_cell = ModeInfo {
+            block_size: BlockSize::Block64x64,
+            tx_size: TxSize::Tx32x32,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        let grid: Vec<Option<ModeInfo>> = vec![Some(intra_cell); (mi_rows * mi_cols) as usize];
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 4 * 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            None,
+        )
+        .expect("intra-in-inter leaf must be accepted");
+    }
+
+    /// Intra-in-inter leaf with mode counts populated.
+    #[test]
+    fn s5_tile_inter_intra_in_inter_accumulates_counts() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let intra_cell = ModeInfo {
+            block_size: BlockSize::Block64x64,
+            tx_size: TxSize::Tx32x32,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::V,
+                uv_mode: IntraMode::H,
+            },
+            bmi: Default::default(),
+        };
+        let grid: Vec<Option<ModeInfo>> = vec![Some(intra_cell); (mi_rows * mi_cols) as usize];
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 4 * 1024];
+        let mut counts = FrameCounts::default();
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+        write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &coef_source,
+            Some(&mut counts),
+        )
+        .expect("ok");
+        let total_y_mode: u32 = counts.y_mode.iter().map(|c| c.iter().sum::<u32>()).sum();
+        let total_uv_mode: u32 = counts.uv_mode.iter().map(|c| c.iter().sum::<u32>()).sum();
+        assert_eq!(total_y_mode, 1, "y_mode counted");
+        assert_eq!(total_uv_mode, 1, "uv_mode counted");
+        // For a 64x64 leaf, size_group = 3.
+        assert_eq!(counts.y_mode[3][IntraMode::V as usize], 1);
+    }
+
+    /// Compound + Switchable filter combined — exercises both
+    /// branches in the same leaf.
+    #[test]
+    fn s5_tile_inter_compound_with_switchable_filter_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = s4c_default_params();
+        params.sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&params.sign_bias);
+        params.comp_fixed_ref = fixed;
+        params.comp_var_ref = var;
+        params.reference_mode = ReferenceMode::Compound;
+        params.interp_filter = InterpFilter::Switchable;
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let cell = make_inter_cell(
+            BlockSize::Block64x64,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTapSharp,
+        );
+        let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+        let leaves =
+            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        assert_eq!(leaves.len(), 1);
+        assert_inter_match(&cell, &leaves[0].2, "compound + sharp filter");
+    }
 }
