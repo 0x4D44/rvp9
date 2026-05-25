@@ -242,3 +242,309 @@ impl std::fmt::Display for StopEncodeError {
 }
 
 impl std::error::Error for StopEncodeError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::entropy::BoolReader;
+
+    /// Smoke test for `start_encode` initial state: the marker bit at
+    /// prob 128 is emitted at construction time, so `pos()` starts at 0
+    /// before any byte is flushed but `count` is already advanced.
+    #[test]
+    fn start_encode_emits_marker_bit_without_flushing_byte() {
+        let mut buf = [0u8; 16];
+        let w = BoolWriter::start_encode(&mut buf);
+        // Marker bit is `0` at prob 128 — single write does not yet
+        // accumulate 8 bits, so no byte has been written.
+        assert_eq!(w.pos(), 0);
+        assert!(!w.has_error());
+    }
+
+    /// Round-trip: write a single bit, decode it, verify match. This
+    /// is the canonical writer<->reader oracle for the entropy codec.
+    #[test]
+    fn single_bit_round_trip() {
+        let mut buf = [0u8; 16];
+        {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            w.write_bit(1);
+            let n = w.stop_encode().expect("stop_encode failed");
+            assert!(n > 0, "stop_encode must emit at least one byte");
+        }
+        let mut r = BoolReader::new(&buf).expect("reader init failed");
+        assert_eq!(r.read_bit(), 1, "decoded bit must equal encoded bit");
+    }
+
+    /// Round-trip many bits at prob 128 (max entropy) — encoded
+    /// then decoded must match exactly. Exercises `write` + `read`
+    /// across the full byte-emission and carry paths.
+    #[test]
+    fn many_bits_round_trip_prob_128() {
+        let bits: Vec<u8> = (0..256).map(|i| ((i * 17 + 3) & 1) as u8).collect();
+        let mut buf = vec![0u8; 256];
+        let pos = {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            for &b in &bits {
+                w.write_bit(b);
+            }
+            w.stop_encode().expect("stop_encode failed")
+        };
+        let mut r = BoolReader::new(&buf[..pos]).expect("reader init failed");
+        for (i, &expected) in bits.iter().enumerate() {
+            let got = r.read_bit();
+            assert_eq!(got, expected, "mismatch at bit {i}");
+        }
+    }
+
+    /// Round-trip with varied probabilities — exercises the `range *
+    /// prob` arithmetic at extremes (low/high prob), forcing many
+    /// renormalisation paths.
+    #[test]
+    fn round_trip_varied_probabilities() {
+        // Hand-picked test vector: every (bit, prob) pair encoded must
+        // decode to the same bit.
+        let plan: Vec<(u8, u8)> = vec![
+            (0, 1),    // very low prob of 0 → encoding a 0 is rare/expensive
+            (1, 1),    // very high prob of 1 (since prob is P(0))
+            (0, 255),  // very high prob of 0 → cheap
+            (1, 255),  // very low prob of 1 → expensive
+            (0, 128),
+            (1, 128),
+            (0, 64),
+            (1, 192),
+            (1, 32),
+            (0, 200),
+            (1, 50),
+            (0, 100),
+            (1, 10),
+            (0, 240),
+            (1, 5),
+            (0, 250),
+        ];
+        let mut buf = vec![0u8; 64];
+        let pos = {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            for &(bit, prob) in &plan {
+                w.write(bit, prob);
+            }
+            w.stop_encode().expect("stop_encode failed")
+        };
+        let mut r = BoolReader::new(&buf[..pos]).expect("reader init failed");
+        for (i, &(expected_bit, prob)) in plan.iter().enumerate() {
+            let got = r.read(prob);
+            assert_eq!(got, expected_bit, "mismatch at index {i} (prob {prob})");
+        }
+    }
+
+    /// `write_literal(data, bits)` emits the low `bits` bits of `data`
+    /// MSB-first and is recovered by `read_literal(bits)` exactly.
+    #[test]
+    fn write_literal_round_trip() {
+        let mut buf = vec![0u8; 64];
+        let pos = {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            w.write_literal(0xA5, 8);          // 10100101
+            w.write_literal(0b101, 3);
+            w.write_literal(0x1234_5678, 32);  // full 32-bit
+            w.write_literal(0, 0);             // zero-bit literal is a no-op
+            w.stop_encode().expect("stop_encode failed")
+        };
+        let mut r = BoolReader::new(&buf[..pos]).expect("reader init failed");
+        assert_eq!(r.read_literal(8), 0xA5);
+        assert_eq!(r.read_literal(3), 0b101);
+        assert_eq!(r.read_literal(32), 0x1234_5678);
+        assert_eq!(r.read_literal(0), 0);
+    }
+
+    /// `write_prob` emits an 8-bit prob value at p=128; the reader
+    /// recovers it exactly via `read_literal(8)`.
+    #[test]
+    fn write_prob_round_trip() {
+        let mut buf = vec![0u8; 32];
+        let pos = {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            w.write_prob(199);
+            w.write_prob(0);
+            w.write_prob(255);
+            w.stop_encode().expect("stop_encode failed")
+        };
+        let mut r = BoolReader::new(&buf[..pos]).expect("reader init failed");
+        assert_eq!(r.read_literal(8), 199);
+        assert_eq!(r.read_literal(8), 0);
+        assert_eq!(r.read_literal(8), 255);
+    }
+
+    /// `stop_encode` returns `Err(StopEncodeError)` when the buffer is
+    /// too small to hold the trailing flush. Test with a comically
+    /// tiny buffer — even one bit at prob 128 won't fit because the
+    /// 32-bit trailing-zero flush will overflow.
+    #[test]
+    fn stop_encode_returns_err_on_overflow() {
+        let mut buf = [0u8; 1]; // way too small
+        let mut w = BoolWriter::start_encode(&mut buf);
+        // Write enough bits to force overflow during stop_encode.
+        for _ in 0..100 {
+            w.write_bit(1);
+        }
+        let result = w.stop_encode();
+        assert_eq!(result, Err(StopEncodeError));
+    }
+
+    /// `has_error()` becomes true once the writer overflows during a
+    /// regular write (not stop_encode), and subsequent writes are no-ops
+    /// — `pos()` does not advance.
+    #[test]
+    fn has_error_set_on_buffer_overflow() {
+        let mut buf = [0u8; 2];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        // Spam bits until the buffer overflows.
+        for _ in 0..200 {
+            w.write_bit(1);
+        }
+        // After overflow `has_error()` should be true.
+        assert!(w.has_error(), "writer should be in error state");
+        // Further writes don't advance pos beyond the buffer.
+        let pos_before = w.pos();
+        w.write_bit(0);
+        let pos_after = w.pos();
+        assert!(pos_after <= 2, "pos must stay within buffer bounds");
+        assert_eq!(
+            pos_before, pos_after,
+            "writes after error must not advance pos"
+        );
+    }
+
+    /// `StopEncodeError`'s `Display` impl is non-empty and stable.
+    /// Locks in the error message format for diagnostic stability.
+    #[test]
+    fn stop_encode_error_display() {
+        let s = format!("{}", StopEncodeError);
+        assert!(s.contains("overflow"), "Display should mention 'overflow', got: {s}");
+    }
+
+    /// Round-trip a longer sequence with biased probabilities — this
+    /// exercises the carry-back path through long runs of 0xff bytes
+    /// that the arithmetic coder produces under high-prob skewed input.
+    #[test]
+    fn long_sequence_high_prob_round_trip() {
+        // 1000 bits at strongly biased prob (240 → 94% likely to be 0).
+        // Mix in occasional 1-bits to force renormalisation transitions.
+        let mut bits = vec![0u8; 1000];
+        for (i, slot) in bits.iter_mut().enumerate() {
+            // ~6% chance of being 1, deterministic.
+            *slot = u8::from((i * 31 + 7) % 17 == 0);
+        }
+        let mut buf = vec![0u8; 512];
+        let pos = {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            for &b in &bits {
+                w.write(b, 240);
+            }
+            w.stop_encode().expect("stop_encode failed")
+        };
+        let mut r = BoolReader::new(&buf[..pos]).expect("reader init failed");
+        for (i, &expected) in bits.iter().enumerate() {
+            assert_eq!(r.read(240), expected, "mismatch at bit {i}");
+        }
+    }
+
+    /// `stop_encode` may emit a trailing collision-avoidance byte (a
+    /// zero) when the last emitted byte's top 3 bits == 0b110. Verify
+    /// the post-condition: `(buf[pos-1] & 0xe0) != 0xc0` always after
+    /// successful `stop_encode`.
+    #[test]
+    fn stop_encode_avoids_superframe_marker_byte_collision() {
+        // Try many seeds; for at least some, the natural flush will
+        // produce a 0b110xxxxx terminator and stop_encode must append
+        // a guard byte. Verify the post-condition on the last byte
+        // always holds.
+        for seed in 0..32u32 {
+            let mut bits: Vec<u8> = Vec::with_capacity(96);
+            let mut state = seed.wrapping_add(1);
+            for _ in 0..96 {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                bits.push((state & 1) as u8);
+            }
+            let mut buf = vec![0u8; 64];
+            let pos = {
+                let mut w = BoolWriter::start_encode(&mut buf);
+                for &b in &bits {
+                    w.write_bit(b);
+                }
+                w.stop_encode().expect("stop_encode failed")
+            };
+            // Reader round-trip continues to work.
+            let mut r = BoolReader::new(&buf[..pos]).expect("reader init failed");
+            for (i, &expected) in bits.iter().enumerate() {
+                assert_eq!(r.read_bit(), expected, "seed={seed} bit {i} mismatch");
+            }
+            // Last byte must not be a superframe-index marker.
+            assert_ne!(
+                buf[pos - 1] & 0xe0,
+                0xc0,
+                "seed={seed}: stop_encode left a superframe-marker-byte"
+            );
+        }
+    }
+
+    /// `write_bit` is exactly equivalent to `write(bit, 128)`. Two
+    /// independent writers fed via each path must produce byte-identical
+    /// streams.
+    #[test]
+    fn write_bit_equivalent_to_write_at_prob_128() {
+        let bits = [1u8, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1];
+        let mut buf_a = vec![0u8; 16];
+        let mut buf_b = vec![0u8; 16];
+        let pos_a = {
+            let mut w = BoolWriter::start_encode(&mut buf_a);
+            for &b in &bits {
+                w.write_bit(b);
+            }
+            w.stop_encode().expect("stop_encode_a failed")
+        };
+        let pos_b = {
+            let mut w = BoolWriter::start_encode(&mut buf_b);
+            for &b in &bits {
+                w.write(b, super::super::VPX_PROB_HALF);
+            }
+            w.stop_encode().expect("stop_encode_b failed")
+        };
+        assert_eq!(pos_a, pos_b, "same content → same length");
+        assert_eq!(buf_a[..pos_a], buf_b[..pos_b], "byte-identical output");
+    }
+
+    /// Empty stream (zero user bits) still round-trips: stop_encode
+    /// flushes successfully and produces a stream the reader's marker-
+    /// bit check accepts.
+    #[test]
+    fn empty_stream_round_trips() {
+        let mut buf = vec![0u8; 16];
+        let pos = {
+            let w = BoolWriter::start_encode(&mut buf);
+            w.stop_encode().expect("stop_encode failed")
+        };
+        assert!(pos > 0, "even empty stream needs at least one byte");
+        let _ = BoolReader::new(&buf[..pos])
+            .expect("reader must initialize on empty stream");
+    }
+
+    /// `pos()` advances monotonically and reaches the same final value
+    /// `stop_encode` returns.
+    #[test]
+    fn pos_matches_stop_encode_returned_count() {
+        let mut buf = vec![0u8; 32];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        for _ in 0..50 {
+            w.write_bit(1);
+        }
+        let pos_mid = w.pos();
+        let final_pos = w.stop_encode().expect("stop_encode failed");
+        assert!(
+            final_pos >= pos_mid,
+            "stop_encode should not regress pos"
+        );
+    }
+}

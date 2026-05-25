@@ -558,4 +558,59 @@ mod tests {
     fn new_zero_tile_panics() {
         let _ = TileCoefCtx::new(0);
     }
+
+    /// `set_coef_flags(plane_out_of_range, ...)` is a no-op: the
+    /// `if let Some(_)` checks both fail, no panic. Mirrors libvpx's
+    /// defensive plane-index handling.
+    #[test]
+    fn set_coef_flags_out_of_range_plane_is_noop() {
+        let mut ctx = TileCoefCtx::new(4);
+        // Plane index out of range — both above and left lookups
+        // return None; no panic, no writes.
+        ctx.set_coef_flags(7, 0, 0, 2, 2, true);
+        ctx.set_coef_flags(99, 1, 1, 4, 4, false);
+        // Real planes remain zero.
+        for plane in 0..MAX_MB_PLANE {
+            for x4 in 0..ctx.above_coef_width(plane) {
+                assert_eq!(ctx.above_coef(plane, x4), 0);
+            }
+            for y4 in 0..ctx.left_coef_height(plane) {
+                assert_eq!(ctx.left_coef(plane, y4), 0);
+            }
+        }
+    }
+
+    /// `set_coef_flags` with start at the array end — `x4_start >= end`
+    /// after the `.min` clamp. The inner if-blocks must be skipped; no
+    /// panic. Mirrors libvpx's right-edge `get_ctx_shift` zero-width case.
+    #[test]
+    fn set_coef_flags_at_end_index_is_noop() {
+        let mut ctx = TileCoefCtx::new(4); // Y above width = 8
+        // x4_start = 8 = above_row.len() ⇒ end = 8 = x4_start.min(...)
+        // Both branches' `if x4_start < end` evaluate false.
+        ctx.set_coef_flags(0, 8, 16, 4, 4, true);
+        // No cells should have been written.
+        for x4 in 0..8 {
+            assert_eq!(ctx.above_coef(0, x4), 0, "above[{x4}] must remain 0");
+        }
+        for y4 in 0..16 {
+            assert_eq!(ctx.left_coef(0, y4), 0, "left[{y4}] must remain 0");
+        }
+    }
+
+    /// `new_with_ss` at 4:4:4 (ss_x=ss_y=0): chroma planes match luma
+    /// dimensions exactly. Pins the divergence between Profile 0
+    /// (4:2:0) and 4:4:4 (Profile 1) sizing.
+    #[test]
+    fn new_with_ss_444_chroma_matches_luma() {
+        let ctx = TileCoefCtx::new_with_ss(8, 0, 0);
+        // Y above = 8 * 2 = 16. UV above should also be 16 at 4:4:4.
+        assert_eq!(ctx.above_coef_width(0), 16);
+        assert_eq!(ctx.above_coef_width(1), 16);
+        assert_eq!(ctx.above_coef_width(2), 16);
+        // Y left = 16. UV left should also be 16 at 4:4:4.
+        assert_eq!(ctx.left_coef_height(0), 16);
+        assert_eq!(ctx.left_coef_height(1), 16);
+        assert_eq!(ctx.left_coef_height(2), 16);
+    }
 }

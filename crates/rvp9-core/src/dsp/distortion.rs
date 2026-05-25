@@ -585,6 +585,155 @@ mod tests {
         }
     }
 
+    /// Sub-pel variance signature: 6-arg `(src, src_stride, xoff, yoff,
+    /// ref, ref_stride) -> (u32, u32)`.
+    type SubPelVarFn = fn(&[u8], usize, usize, usize, &[u8], usize) -> (u32, u32);
+
+    /// `sad_known_value` for a larger block size: 8x16 with a few
+    /// pixel diffs to confirm row-stride iteration works across rows.
+    #[test]
+    fn sad_8x16_with_row_diffs() {
+        let mut src = flat(50, 8 * 16);
+        let mut reference = flat(50, 8 * 16);
+        // Put a known diff at three rows.
+        src[0] = 60; // row 0, col 0: diff 10
+        src[8] = 40; // row 1, col 0: diff 10
+        src[15 * 8 + 7] = 80; // row 15, col 7: diff 30
+        let s = vpx_sad8x16(&src, 8, &reference, 8);
+        assert_eq!(s, 50, "sad = 10 + 10 + 30 = 50");
+        // Reverse the diff direction to exercise the unsigned_abs() path.
+        src[0] = 50;
+        src[8] = 50;
+        src[15 * 8 + 7] = 50;
+        reference[0] = 60;
+        reference[8] = 40;
+        reference[15 * 8 + 7] = 80;
+        let s2 = vpx_sad8x16(&src, 8, &reference, 8);
+        assert_eq!(s2, 50, "sad symmetric in src/ref swap");
+    }
+
+    /// Per-size variance with a deterministic non-trivial pattern: every
+    /// block size produces variance > 0 when src != ref. Pins the
+    /// per-size dispatcher across all 13 VP9 sizes.
+    #[test]
+    fn variance_nontrivial_pattern_all_sizes() {
+        let dispatch: &[((usize, usize), VarFn)] = &[
+            ((4, 4), vpx_variance4x4),
+            ((4, 8), vpx_variance4x8),
+            ((8, 4), vpx_variance8x4),
+            ((8, 8), vpx_variance8x8),
+            ((8, 16), vpx_variance8x16),
+            ((16, 8), vpx_variance16x8),
+            ((16, 16), vpx_variance16x16),
+            ((16, 32), vpx_variance16x32),
+            ((32, 16), vpx_variance32x16),
+            ((32, 32), vpx_variance32x32),
+            ((32, 64), vpx_variance32x64),
+            ((64, 32), vpx_variance64x32),
+            ((64, 64), vpx_variance64x64),
+        ];
+        for (size, var_fn) in dispatch {
+            let (w, h) = *size;
+            let mut src = vec![0u8; w * h];
+            let mut reference = vec![0u8; w * h];
+            for (i, slot) in src.iter_mut().enumerate() {
+                *slot = (i as u8).wrapping_mul(3);
+            }
+            for (i, slot) in reference.iter_mut().enumerate() {
+                // Different deterministic pattern so per-pixel diffs vary
+                // sign and magnitude.
+                *slot = (i as u8).wrapping_mul(5).wrapping_add(11);
+            }
+            let (var, sse) = var_fn(&src, w, &reference, w);
+            assert!(sse > 0, "size {w}x{h}: sse must be > 0 for non-equal blocks");
+            assert!(var <= sse, "size {w}x{h}: var ({var}) must be ≤ sse ({sse})");
+        }
+    }
+
+    /// Sub-pixel variance with mixed (x=0, y!=0) and (x!=0, y=0)
+    /// offsets — exercises the bilinear filter passes with one axis
+    /// at the identity tap.
+    #[test]
+    fn sub_pixel_variance_mixed_offsets() {
+        let src = subpel_src_8x8(13);
+        let mut reference = vec![0u8; 8 * 8];
+        for (i, v) in reference.iter_mut().enumerate() {
+            *v = ((i + 7) & 0xff) as u8;
+        }
+
+        // (xoff=4, yoff=0): horizontal half-pel only.
+        let (var_h, sse_h) = vpx_sub_pixel_variance8x8(&src, 16, 4, 0, &reference, 8);
+        assert!(var_h <= sse_h, "var_h <= sse_h must hold");
+
+        // (xoff=0, yoff=4): vertical half-pel only.
+        let (var_v, sse_v) = vpx_sub_pixel_variance8x8(&src, 16, 0, 4, &reference, 8);
+        assert!(var_v <= sse_v, "var_v <= sse_v must hold");
+
+        // (xoff=3, yoff=5): general 1/8-pel offsets.
+        let (var_g, sse_g) = vpx_sub_pixel_variance8x8(&src, 16, 3, 5, &reference, 8);
+        assert!(var_g <= sse_g, "var_g <= sse_g must hold");
+    }
+
+    /// Sub-pixel variance with identical src and reference at every
+    /// 1/8-pel offset on a flat image: result must be (0, 0).
+    #[test]
+    fn sub_pixel_variance_flat_image_all_offsets() {
+        // Source: 9 rows × 9 cols of constant 200 — bilinear filter
+        // produces 200 everywhere; variance vs flat-200 reference = 0.
+        let src = vec![200u8; 9 * 16];
+        let reference = vec![200u8; 8 * 8];
+        for xoff in 0..8 {
+            for yoff in 0..8 {
+                let (var, sse) = vpx_sub_pixel_variance8x8(&src, 16, xoff, yoff, &reference, 8);
+                assert_eq!(
+                    var, 0,
+                    "flat 8x8 sub-pel variance at (x={xoff}, y={yoff}): var={var}, sse={sse}"
+                );
+                assert_eq!(
+                    sse, 0,
+                    "flat 8x8 sub-pel sse at (x={xoff}, y={yoff})"
+                );
+            }
+        }
+    }
+
+    /// Per-size sub-pel variance smoke: all 5 supported sub-pel sizes
+    /// (4x4, 8x8, 16x16, 32x32, 64x64) must produce (0, 0) on flat
+    /// inputs and a finite result on non-flat inputs.
+    #[test]
+    fn sub_pixel_variance_all_sizes_smoke() {
+        let dispatch: &[(usize, SubPelVarFn)] = &[
+            (4, vpx_sub_pixel_variance4x4),
+            (8, vpx_sub_pixel_variance8x8),
+            (16, vpx_sub_pixel_variance16x16),
+            (32, vpx_sub_pixel_variance32x32),
+            (64, vpx_sub_pixel_variance64x64),
+        ];
+        for (size, spv_fn) in dispatch {
+            let n = *size;
+            // src needs (n+1) rows × (n+1) cols footprint.
+            let src = vec![64u8; (n + 1) * (n + 16)];
+            let reference = vec![64u8; n * n];
+            let (var, sse) = spv_fn(&src, n + 16, 4, 4, &reference, n);
+            assert_eq!(var, 0, "{n}x{n} flat sub-pel var = 0");
+            assert_eq!(sse, 0, "{n}x{n} flat sub-pel sse = 0");
+        }
+    }
+
+    /// `vpx_get4x4sse_cs` on identical blocks returns 0; on differing
+    /// blocks returns positive sse.
+    #[test]
+    fn get4x4sse_cs_zero_for_identical() {
+        let block: Vec<u8> = (0..16).map(|i| i as u8 * 7).collect();
+        assert_eq!(vpx_get4x4sse_cs(&block, 4, &block, 4), 0);
+
+        // A single 1-pixel diff produces sse = 1.
+        let mut diff = block.clone();
+        diff[5] = block[5].wrapping_add(1);
+        let sse = vpx_get4x4sse_cs(&block, 4, &diff, 4);
+        assert_eq!(sse, 1, "single +1 diff → sse = 1");
+    }
+
     #[test]
     fn variance_negative_clamps_to_zero() {
         // Edge-case sanity: with a hand-picked input where sse < sum²/N due

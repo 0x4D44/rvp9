@@ -803,6 +803,290 @@ mod tests {
         );
     }
 
+    /// `forced_stop = HalfPel`: the search must NOT enter the QuarterPel
+    /// or EighthPel levels, so col % 4 == 0 (LSB and bit-1 zero).
+    #[test]
+    fn sub_pixel_search_forced_stop_half_pel_only_half_pel_results() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+        let pw = 64;
+        let ph = 64;
+        let ref_data = make_plane(pw, ph, 11);
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        // Synthesize a (xoff=1, yoff=0) 1/8-pel shifted source so the
+        // search has an attractor at an odd 1/8-pel offset, but capped
+        // to half-pel by forced_stop=HalfPel.
+        let mut src_data = ref_data.clone();
+        let src_col = 24usize;
+        let src_row = 24usize;
+        for i in 0..8 {
+            for j in 0..8 {
+                let a = i32::from(ref_data[(src_row + i) * pw + (src_col + j)]);
+                let b = i32::from(ref_data[(src_row + i) * pw + (src_col + j + 1)]);
+                let v = (a * 112 + b * 16 + 64) >> 7;
+                src_data[(src_row + i) * pw + (src_col + j)] = v as u8;
+            }
+        }
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let params = SubPixelSearchParams {
+            block_size: BlockSize::Block8x8,
+            src_plane: &src_plane,
+            src_offset: (src_col, src_row),
+            ref_plane: &ref_plane,
+            center_mv: Mv::ZERO,
+            ref_mv: Mv::ZERO,
+            mv_limits: MvLimits::new(-16, 16, -16, 16),
+            error_per_bit: 1,
+            mv_costs: &costs,
+            allow_hp: true,
+            forced_stop: SubPixelForcedStop::HalfPel,
+            iters_per_step: 2,
+        };
+        let r = find_best_sub_pixel_tree_pruned_more(&params);
+        // With HalfPel-only refinement, low 2 bits of each axis must
+        // be zero (1/8-pel-unit half-pel positions are multiples of 4).
+        assert_eq!(
+            r.best_mv.col & 3,
+            0,
+            "forced_stop=HalfPel: col & 3 must be 0; got col={}",
+            r.best_mv.col
+        );
+        assert_eq!(
+            r.best_mv.row & 3,
+            0,
+            "forced_stop=HalfPel: row & 3 must be 0; got row={}",
+            r.best_mv.row
+        );
+    }
+
+    /// `iters_per_step <= 1`: `SECOND_LEVEL_CHECKS` must NOT run. We
+    /// can't directly observe the absence of those probe calls, but
+    /// the search must still produce a valid result for an identical-
+    /// plane case (MV stays at zero).
+    #[test]
+    fn sub_pixel_search_iters_per_step_one_skips_second_level() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+        let pw = 64;
+        let ph = 64;
+        let data = make_plane(pw, ph, 23);
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let params = SubPixelSearchParams {
+            block_size: BlockSize::Block16x16,
+            src_plane: &plane,
+            src_offset: (16, 16),
+            ref_plane: &plane,
+            center_mv: Mv::ZERO,
+            ref_mv: Mv::ZERO,
+            mv_limits: MvLimits::new(-16, 16, -16, 16),
+            error_per_bit: 1,
+            mv_costs: &costs,
+            allow_hp: true,
+            forced_stop: SubPixelForcedStop::EighthPel,
+            iters_per_step: 1, // skips SECOND_LEVEL_CHECKS
+        };
+        let r = find_best_sub_pixel_tree_pruned_more(&params);
+        assert_eq!(
+            r.best_mv,
+            Mv::ZERO,
+            "identical planes → MV stays at zero even with iters=1"
+        );
+    }
+
+    /// `allow_hp=false` blocks the EighthPel level even with
+    /// `forced_stop=EighthPel`. Result must have col & 1 == 0 and
+    /// row & 1 == 0.
+    #[test]
+    fn sub_pixel_search_disabled_hp_yields_no_eighth_pel_bits() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+        let pw = 64;
+        let ph = 64;
+        let ref_data = make_plane(pw, ph, 11);
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        // 1/8-pel-shifted source so the natural attractor is at an odd
+        // 1/8-pel position.
+        let mut src_data = ref_data.clone();
+        let src_col = 24usize;
+        let src_row = 24usize;
+        for i in 0..8 {
+            for j in 0..8 {
+                let a = i32::from(ref_data[(src_row + i) * pw + (src_col + j)]);
+                let b = i32::from(ref_data[(src_row + i) * pw + (src_col + j + 1)]);
+                let v = (a * 112 + b * 16 + 64) >> 7;
+                src_data[(src_row + i) * pw + (src_col + j)] = v as u8;
+            }
+        }
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let params = SubPixelSearchParams {
+            block_size: BlockSize::Block8x8,
+            src_plane: &src_plane,
+            src_offset: (src_col, src_row),
+            ref_plane: &ref_plane,
+            center_mv: Mv::ZERO,
+            ref_mv: Mv::ZERO,
+            mv_limits: MvLimits::new(-16, 16, -16, 16),
+            error_per_bit: 1,
+            mv_costs: &costs,
+            allow_hp: false, // hp disabled — no EighthPel
+            forced_stop: SubPixelForcedStop::EighthPel,
+            iters_per_step: 2,
+        };
+        let r = find_best_sub_pixel_tree_pruned_more(&params);
+        assert_eq!(
+            r.best_mv.col & 1,
+            0,
+            "allow_hp=false: col & 1 must be 0; got col={}",
+            r.best_mv.col
+        );
+        assert_eq!(
+            r.best_mv.row & 1,
+            0,
+            "allow_hp=false: row & 1 must be 0; got row={}",
+            r.best_mv.row
+        );
+    }
+
+    /// `use_mv_hp(ref_mv) == false` (large ref_mv) blocks the
+    /// EighthPel level even if `allow_hp == true && forced_stop ==
+    /// EighthPel`. The function uses `THRESH = 64` for the
+    /// half-of-each-component check.
+    #[test]
+    fn sub_pixel_search_large_ref_mv_disables_eighth_pel() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+        let pw = 64;
+        let ph = 64;
+        let data = make_plane(pw, ph, 11);
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let params = SubPixelSearchParams {
+            block_size: BlockSize::Block8x8,
+            src_plane: &plane,
+            src_offset: (16, 16),
+            ref_plane: &plane,
+            center_mv: Mv::ZERO,
+            // ref_mv has col=128 ≥ THRESH (64), so use_mv_hp returns
+            // false → no EighthPel level regardless of allow_hp.
+            ref_mv: Mv { row: 0, col: 128 },
+            mv_limits: MvLimits::new(-16, 16, -16, 16),
+            error_per_bit: 1,
+            mv_costs: &costs,
+            allow_hp: true,
+            forced_stop: SubPixelForcedStop::EighthPel,
+            iters_per_step: 2,
+        };
+        let r = find_best_sub_pixel_tree_pruned_more(&params);
+        // Identical planes → MV stays at zero; LSB still asserted as
+        // a property test of "no 1/8-pel arithmetic was performed".
+        assert_eq!(
+            r.best_mv.col & 1,
+            0,
+            "large ref_mv → no EighthPel branch; got col={}",
+            r.best_mv.col
+        );
+        assert_eq!(
+            r.best_mv.row & 1,
+            0,
+            "large ref_mv → no EighthPel branch; got row={}",
+            r.best_mv.row
+        );
+    }
+
+    /// Unsupported block size: `Block4x8` is non-square and falls into
+    /// `svf_for`'s `_ => None` arm. In release mode the search returns
+    /// the center MV scaled to 1/8-pel units with zero distortion.
+    /// In debug mode the debug_assert fires (test uses `should_panic`).
+    #[test]
+    #[should_panic(expected = "sub_pixel_variance not ported")]
+    fn sub_pixel_search_unsupported_block_size_panics_in_debug() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+        let pw = 64;
+        let ph = 64;
+        let data = make_plane(pw, ph, 11);
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let params = SubPixelSearchParams {
+            block_size: BlockSize::Block4x8, // non-square → no SVF
+            src_plane: &plane,
+            src_offset: (16, 16),
+            ref_plane: &plane,
+            center_mv: Mv { row: 1, col: 2 }, // full-pel; ×8 = (8, 16)
+            ref_mv: Mv::ZERO,
+            mv_limits: MvLimits::new(-16, 16, -16, 16),
+            error_per_bit: 1,
+            mv_costs: &costs,
+            allow_hp: true,
+            forced_stop: SubPixelForcedStop::EighthPel,
+            iters_per_step: 2,
+        };
+        let _r = find_best_sub_pixel_tree_pruned_more(&params);
+    }
+
+    /// Edge case: tight `mv_limits` that prevent any out-of-zero
+    /// movement — search must converge to (0,0) without
+    /// out-of-bounds reads.
+    #[test]
+    fn sub_pixel_search_zero_mv_limits_stays_at_origin() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+        let pw = 64;
+        let ph = 64;
+        let data = make_plane(pw, ph, 11);
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let params = SubPixelSearchParams {
+            block_size: BlockSize::Block8x8,
+            src_plane: &plane,
+            src_offset: (16, 16),
+            ref_plane: &plane,
+            center_mv: Mv::ZERO,
+            ref_mv: Mv::ZERO,
+            // Zero-range mv_limits force ALL non-zero candidates out
+            // of bounds — try_subpel returns u32::MAX for them.
+            mv_limits: MvLimits::new(0, 0, 0, 0),
+            error_per_bit: 1,
+            mv_costs: &costs,
+            allow_hp: true,
+            forced_stop: SubPixelForcedStop::EighthPel,
+            iters_per_step: 2,
+        };
+        let r = find_best_sub_pixel_tree_pruned_more(&params);
+        assert_eq!(r.best_mv, Mv::ZERO, "tight limits force origin");
+    }
+
     #[test]
     fn sub_pixel_search_respects_forced_stop() {
         // forced_stop = QuarterPel: the search must NOT enter the

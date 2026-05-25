@@ -96,6 +96,57 @@ mod tests {
         assert_eq!(costs[2], 1024);
     }
 
+    /// Asymmetric probability: at `prob=1` (almost certain bit-1), the
+    /// "0" branch is expensive and the "1" branch is cheap. Hand-traced
+    /// expected: `vp9_cost_bit(1, false)` ≫ `vp9_cost_bit(1, true)`.
+    #[test]
+    fn asymmetric_prob_costs_differ() {
+        let tree: [i8; 2] = [-0, -1];
+        let probs: [u8; 1] = [1]; // P(bit=0) = 1/256 → 1 is "near-certain"
+        let mut costs = [0i32; 2];
+        vp9_cost_tokens(&mut costs, &tree, &probs);
+        // Leaf 0 path takes the "0" branch: expensive.
+        // Leaf 1 path takes the "1" branch: cheap.
+        assert!(
+            costs[0] > costs[1],
+            "asymmetric prob: cost[0]={} should be > cost[1]={}",
+            costs[0],
+            costs[1]
+        );
+    }
+
+    /// Deep unbalanced tree: 5 leaves. Verifies the recursion handles
+    /// nested internal nodes and that each leaf's accumulated cost is
+    /// the sum of all decisions on its path.
+    /// ```text
+    ///        root (i=0, probs[0])
+    ///        /                \
+    ///   internal 2          leaf 0
+    ///   /         \
+    /// leaf 1    internal 4
+    ///           /         \
+    ///        leaf 2     internal 6
+    ///                   /         \
+    ///                leaf 3     leaf 4
+    /// ```
+    #[test]
+    fn deep_unbalanced_tree() {
+        let tree: [i8; 8] = [2, -0, -1, 4, -2, 6, -3, -4];
+        let probs: [u8; 4] = [128, 128, 128, 128];
+        let mut costs = [0i32; 5];
+        vp9_cost_tokens(&mut costs, &tree, &probs);
+        // Leaf 0: one branch at root. cost = 512.
+        assert_eq!(costs[0], 512);
+        // Leaf 1: 2 branches. cost = 1024.
+        assert_eq!(costs[1], 1024);
+        // Leaf 2: 3 branches. cost = 1536.
+        assert_eq!(costs[2], 1536);
+        // Leaf 3: 4 branches. cost = 2048.
+        assert_eq!(costs[3], 2048);
+        // Leaf 4: 4 branches. cost = 2048.
+        assert_eq!(costs[4], 2048);
+    }
+
     /// `vp9_cost_tokens_skip` zeros the EOB-leaf cost to just the
     /// EOB-prob = 0 branch and skips its sub-tree.
     #[test]

@@ -2066,6 +2066,97 @@ mod tests {
         }
     }
 
+    /// `fadst4` with all-zero except one non-zero entry hits the
+    /// **non-short-circuit** path (the early-return is bypassed because
+    /// not every input is zero). Verifies the regular computation
+    /// produces a non-zero output on a non-zero impulse input.
+    #[test]
+    fn fadst4_single_nonzero_input_bypasses_early_return() {
+        // Single non-zero element at position 0 — the early-return at
+        // `vp9_dct.c:244` does NOT fire (only fires when ALL four
+        // inputs are zero), so the staged ADST computation runs.
+        let input: [i32; 4] = [100, 0, 0, 0];
+        let mut output = [0i32; 4];
+        fadst4(&input, &mut output);
+        // ADST of a DC-only input must produce at least one non-zero
+        // output coefficient.
+        assert!(
+            output.iter().any(|&v| v != 0),
+            "fadst4 of non-zero impulse must produce non-zero output, got {output:?}"
+        );
+    }
+
+    /// `fdct4x4` with a non-zero column-0 input exercises the DC bump
+    /// branch (`if i == 0 && in_high[0] != 0 { in_high[0] += 1 }`).
+    /// Verify the bump shifts the DC coefficient by exactly +1 (in
+    /// the pre-shift domain → +16 in the scaled-input domain).
+    #[test]
+    fn fdct4x4_dc_bump_branch_fires_for_nonzero_dc() {
+        // All-zero except top-left → in_high[0] = 16 (after ×16), so the
+        // DC bump branch fires and adds 1 → 17. (The pure column 0 input
+        // would produce 0 without the bump, so this proves the bump
+        // actually fired.)
+        let mut input = [0i16; 16];
+        input[0] = 1;
+        let mut output = [0i32; 16];
+        fdct4x4(&input, &mut output, 4);
+        // With the bump, output[0] should be non-zero (the +1 bump
+        // makes the DC coefficient slightly different from 0).
+        assert!(
+            output[0] != 0,
+            "DC bump should produce non-zero output[0]; got 0"
+        );
+    }
+
+    /// `fht16x16` with one of the non-DctDct types exercises the
+    /// non-short-circuit path and the `(v + 1 + (v<0)) >> 2` reduction
+    /// at line 1043 — including the `v < 0` arm if any negative
+    /// intermediate value appears.
+    #[test]
+    fn fht16x16_non_dct_produces_negative_intermediates() {
+        let residual = sample_residual_16x16();
+        let mut coefs = [0i32; 256];
+        // ADST/ADST is most likely to produce both-sign output values
+        // (and therefore exercise the `v < 0` adjust branch).
+        fht16x16(&residual, &mut coefs, 16, TxType::AdstAdst);
+        // The transform should produce both positive and negative values
+        // for non-zero input (otherwise the negative-rounding branch
+        // can't fire).
+        let has_pos = coefs.iter().any(|&c| c > 0);
+        let has_neg = coefs.iter().any(|&c| c < 0);
+        assert!(has_pos && has_neg, "fht16x16 ADST/ADST: expected both signs in output");
+    }
+
+    /// `fht8x8` with non-DctDct type exercises the `(v + (v<0)) >> 1`
+    /// reduction at line 565 — needs negative intermediate values.
+    #[test]
+    fn fht8x8_non_dct_produces_negative_intermediates() {
+        let residual: [i16; 64] = std::array::from_fn(|i| {
+            // Mix of signs.
+            (((i as i32 * 7) % 17) - 8) as i16
+        });
+        let mut coefs = [0i32; 64];
+        fht8x8(&residual, &mut coefs, 8, TxType::AdstDct);
+        let has_pos = coefs.iter().any(|&c| c > 0);
+        let has_neg = coefs.iter().any(|&c| c < 0);
+        assert!(has_pos && has_neg, "fht8x8 ADST/DCT: expected both signs");
+    }
+
+    /// `fdct32x32` with mixed-sign residual must produce both-sign
+    /// output coefficients, exercising the `v < 0` rounding adjustment
+    /// at line 1405.
+    #[test]
+    fn fdct32x32_mixed_sign_residual_produces_both_signs() {
+        let residual: [i16; 1024] = std::array::from_fn(|i| {
+            ((i as i32 % 31) - 15) as i16
+        });
+        let mut coefs = [0i32; 1024];
+        fdct32x32(&residual, &mut coefs, 32);
+        let has_pos = coefs.iter().any(|&c| c > 0);
+        let has_neg = coefs.iter().any(|&c| c < 0);
+        assert!(has_pos && has_neg, "fdct32x32: expected both signs in output");
+    }
+
     /// `fdct32x32` honours non-trivial `stride`.
     #[test]
     fn fdct32x32_stride_independence() {

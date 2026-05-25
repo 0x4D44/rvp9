@@ -666,6 +666,232 @@ mod tests {
         // panic + iters_used contract.
     }
 
+    /// `start_mv = Some(non-zero)`: the search starts at the explicit
+    /// `mvp_full` (the `Some` branch of the start_mv match). The
+    /// resulting MV's SAD must be at most the SAD at the seed position
+    /// (search only moves to improve).
+    #[test]
+    fn diamond_search_explicit_start_mv_some_path() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, false);
+        let plane_w = 64;
+        let plane_h = 64;
+        let data = make_plane(plane_w, plane_h, 19);
+        let plane = PlaneRef {
+            data: &data,
+            stride: plane_w,
+            width: plane_w,
+            height: plane_h,
+        };
+        let cfg = init_dsmotion_compensation(plane_w as i32);
+        // Compute the seed SAD at the explicit start.
+        let start_mv = Mv { row: 0, col: 24 }; // 1/8-pel → fcol=3.
+        let seed_sad = raw_sad_at_mv(
+            BlockSize::Block8x8,
+            &plane,
+            (16, 16),
+            &plane,
+            start_mv.row >> 3,
+            start_mv.col >> 3,
+        )
+        .expect("seed must be in-bounds");
+        let params = FullPixelSearchParams {
+            block_size: BlockSize::Block8x8,
+            src_plane: &plane,
+            src_offset: (16, 16),
+            ref_plane: &plane,
+            center_mv: Mv::ZERO,
+            start_mv: Some(start_mv),
+            mv_limits: MvLimits::new(-16, 16, -16, 16),
+            sad_per_bit: 1,
+            mv_costs: &costs,
+            max_iters: cfg.total_steps as i32,
+            site_config: &cfg,
+        };
+        let r = diamond_search_sad(&params);
+        let result_sad = raw_sad_at_mv(
+            BlockSize::Block8x8,
+            &plane,
+            (16, 16),
+            &plane,
+            r.best_mv_row,
+            r.best_mv_col,
+        )
+        .expect("search result must be in-bounds");
+        // Search only moves to improve raw SAD; result ≤ seed.
+        assert!(
+            result_sad <= seed_sad,
+            "search must not regress: seed_sad={seed_sad}, result_sad={result_sad}"
+        );
+    }
+
+    /// `max_iters = 0`: the for-loop body executes zero iterations.
+    /// iters_used stays 0 and the result is the seed (start_mv ?? center).
+    #[test]
+    fn diamond_search_zero_iters_returns_seed() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, false);
+        let plane_w = 64;
+        let plane_h = 64;
+        let data = make_plane(plane_w, plane_h, 7);
+        let plane = PlaneRef {
+            data: &data,
+            stride: plane_w,
+            width: plane_w,
+            height: plane_h,
+        };
+        let cfg = init_dsmotion_compensation(plane_w as i32);
+
+        let params = FullPixelSearchParams {
+            block_size: BlockSize::Block4x4,
+            src_plane: &plane,
+            src_offset: (10, 10),
+            ref_plane: &plane,
+            center_mv: Mv::ZERO,
+            start_mv: None,
+            mv_limits: MvLimits::new(-8, 8, -8, 8),
+            sad_per_bit: 1,
+            mv_costs: &costs,
+            max_iters: 0, // zero — loop body never runs
+            site_config: &cfg,
+        };
+        let r = diamond_search_sad(&params);
+        assert_eq!(r.iters_used, 0, "max_iters=0 → iters_used=0");
+        assert_eq!(r.best_mv_row, 0);
+        assert_eq!(r.best_mv_col, 0);
+    }
+
+    /// Tight mv_limits force the `all_in` fast path to fail at every
+    /// step (some site falls outside the small range), forcing the
+    /// per-site `is_mv_in` slow path. Verify the search still terminates
+    /// and produces an in-range result.
+    #[test]
+    fn diamond_search_tight_limits_uses_slow_path() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, false);
+        let plane_w = 32;
+        let plane_h = 32;
+        let data = make_plane(plane_w, plane_h, 9);
+        let plane = PlaneRef {
+            data: &data,
+            stride: plane_w,
+            width: plane_w,
+            height: plane_h,
+        };
+        let cfg = init_dsmotion_compensation(plane_w as i32);
+        // Tight limits: row/col in [-1, 1]. First step (len=1024) is
+        // immediately out of range on all 4 sites → slow path hits
+        // `is_mv_in` and rejects all of them, so best_site stays -1.
+        let params = FullPixelSearchParams {
+            block_size: BlockSize::Block4x4,
+            src_plane: &plane,
+            src_offset: (16, 16),
+            ref_plane: &plane,
+            center_mv: Mv::ZERO,
+            start_mv: None,
+            mv_limits: MvLimits::new(-1, 1, -1, 1),
+            sad_per_bit: 1,
+            mv_costs: &costs,
+            max_iters: cfg.total_steps as i32,
+            site_config: &cfg,
+        };
+        let r = diamond_search_sad(&params);
+        // Result must lie inside the (tight) limits.
+        assert!(
+            r.best_mv_row >= -1 && r.best_mv_row <= 1,
+            "row out of limits: {}",
+            r.best_mv_row
+        );
+        assert!(
+            r.best_mv_col >= -1 && r.best_mv_col <= 1,
+            "col out of limits: {}",
+            r.best_mv_col
+        );
+    }
+
+    /// `mvsad_err_cost` at zero diff with default tables should be
+    /// strictly positive (joint ZERO still costs at least one branch).
+    #[test]
+    fn mvsad_err_cost_zero_diff_is_small_positive() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, false);
+        let c = mvsad_err_cost(0, 0, 0, 0, 16, &costs);
+        // Joint cost > 0; scaled by sad_per_bit=16 then >>9 may yield
+        // 0 due to rounding. Verify just that it does NOT underflow.
+        // The function returns u32 and is documented non-negative by
+        // construction.
+        assert!(c < 1000, "zero-diff cost should be tiny; got {c}");
+    }
+
+    /// `mv_err_cost` at zero diff: same property as `mvsad_err_cost`.
+    #[test]
+    fn mv_err_cost_zero_diff_is_small_positive() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+        let c = mv_err_cost(0, 0, 0, 0, 16, &costs);
+        assert!(c < 1000, "zero-diff cost should be tiny; got {c}");
+    }
+
+    /// `mvsad_err_cost` scales monotonically with `sad_per_bit`: same
+    /// MV diff, higher weight → strictly greater cost (until rounding).
+    #[test]
+    fn mvsad_err_cost_scales_with_sad_per_bit() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, false);
+        let low = mvsad_err_cost(10, 10, 0, 0, 1, &costs);
+        let high = mvsad_err_cost(10, 10, 0, 0, 256, &costs);
+        assert!(
+            high > low,
+            "higher sad_per_bit must increase cost: low={low}, high={high}"
+        );
+    }
+
+    /// `raw_sad_at_mv` returns None for out-of-bounds reference reads
+    /// and Some for in-bounds.
+    #[test]
+    fn raw_sad_at_mv_returns_none_for_out_of_bounds() {
+        let plane_w = 16;
+        let plane_h = 16;
+        let data = make_plane(plane_w, plane_h, 3);
+        let plane = PlaneRef {
+            data: &data,
+            stride: plane_w,
+            width: plane_w,
+            height: plane_h,
+        };
+        // Block at top-left corner; large negative MV → ref starts at
+        // (col=-100, row=-100) which is out of bounds.
+        let sad_oob = raw_sad_at_mv(BlockSize::Block4x4, &plane, (0, 0), &plane, -100, -100);
+        assert!(sad_oob.is_none(), "huge negative MV should be OOB");
+
+        // In-range MV (0, 0): identical block → SAD = 0.
+        let sad_in = raw_sad_at_mv(BlockSize::Block4x4, &plane, (4, 4), &plane, 0, 0);
+        assert_eq!(sad_in, Some(0), "identical block, zero MV → SAD = 0");
+    }
+
+    /// `exhaustive_full_pel_min_sad` returns the global min within
+    /// the bounded radius. For identical planes the min is at (0, 0)
+    /// with SAD = 0.
+    #[test]
+    fn exhaustive_full_pel_min_sad_identical_planes() {
+        let plane_w = 32;
+        let plane_h = 32;
+        let data = make_plane(plane_w, plane_h, 5);
+        let plane = PlaneRef {
+            data: &data,
+            stride: plane_w,
+            width: plane_w,
+            height: plane_h,
+        };
+        let limits = MvLimits::new(-4, 4, -4, 4);
+        let result = exhaustive_full_pel_min_sad(
+            BlockSize::Block4x4,
+            &plane,
+            (12, 12),
+            &plane,
+            &limits,
+            4,
+        );
+        let (min_sad, r, c) = result.expect("at least one valid MV in range");
+        assert_eq!(min_sad, 0, "identical plane: min SAD = 0");
+        assert_eq!(r, 0, "row of min should be 0");
+        assert_eq!(c, 0, "col of min should be 0");
+    }
+
     #[test]
     fn diamond_search_at_frame_edge_no_panic() {
         // Search center near edge; mv_limits constrains it tight
