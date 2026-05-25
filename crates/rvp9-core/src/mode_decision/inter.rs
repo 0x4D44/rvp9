@@ -674,6 +674,27 @@ pub struct PickInterModeParams<'a> {
     /// `vp9_pickmode.c:1352`). rvp9 doesn't run skin detection; callers
     /// pass `false`.
     pub is_skin: bool,
+
+    /// P18 — libvpx `sf.reference_masking` speed-feature flag
+    /// (`vp9_pickmode.c:2195`, `vp9_speed_features.c:250 / 517`). When
+    /// `true`, the picker computes `pred_mv_sad` for each enabled
+    /// reference frame upfront (via [`crate::mv_search::mv_pred::mv_pred_sad_seed`],
+    /// port of `vp9_mv_pred`), then suppresses every candidate for a
+    /// ref whose best-MV SAD is more than twice LAST's. Mirrors
+    /// libvpx's `ref_frame_skip_mask |= (1 << ref_frame)` at
+    /// `vp9_pickmode.c:2200-2204`:
+    ///
+    /// ```c
+    /// i = (ref_frame == LAST_FRAME) ? GOLDEN_FRAME : LAST_FRAME;
+    /// if (x->pred_mv_sad[ref_frame] > (x->pred_mv_sad[i] << 1))
+    ///   ref_frame_skip_mask |= (1 << ref_frame);
+    /// ```
+    ///
+    /// Default ON for rvp9 (single rt config at cpu-used 6-8 — libvpx
+    /// `vp9_speed_features.c:250` sets it to `1` outside dynamic
+    /// resize, and the realtime path at line 517 keeps it on for the
+    /// single-spatial-layer case).
+    pub reference_masking: bool,
 }
 
 /// Result of [`pick_inter_mode`].
@@ -781,6 +802,60 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
         },
     };
 
+    // P18 — `ref_frame_skip_mask` / `reference_masking`. libvpx
+    // `vp9_pickmode.c:2194-2218`. Compute `pred_mv_sad[LAST]` and
+    // `pred_mv_sad[GOLDEN]` upfront via [`mv_pred_sad_seed`] (the rvp9
+    // port of `vp9_mv_pred`, which libvpx calls in `find_predictors`
+    // at `vp9_pickmode.c:1289-1293` before the candidate loop). Then
+    // build the skip mask: a non-LAST ref is masked when its
+    // pred_mv_sad exceeds LAST's doubled. For rvp9 the only non-LAST
+    // ref is GOLDEN, so the check reduces to:
+    //
+    //   pred_mv_sad[GOLDEN] > pred_mv_sad[LAST] << 1
+    //
+    // Mirror of `vp9_pickmode.c:2200-2204` (the
+    // `usable_ref_frame < ALTREF_FRAME` branch — rvp9 caps
+    // `usable_ref_frame` at GOLDEN). Bit 1 of the mask = LAST,
+    // bit 2 = GOLDEN, matching libvpx's `1 << ref_frame` indexing
+    // (`LAST_FRAME = 1`, `GOLDEN_FRAME = 2`).
+    let (pred_mv_sad_last, pred_mv_sad_golden) = if params.reference_masking {
+        let last_cands = [last_mvc_safe.nearest, last_mvc_safe.near];
+        let (_, sad_last) = crate::mv_search::mv_pred::mv_pred_sad_seed(
+            params.src_plane,
+            params.last_ref_plane,
+            params.src_offset,
+            &last_cands,
+            params.block_size,
+        );
+        let golden_cands = [golden_mvc_safe.nearest, golden_mvc_safe.near];
+        let (_, sad_golden) = crate::mv_search::mv_pred::mv_pred_sad_seed(
+            params.src_plane,
+            params.golden_ref_plane,
+            params.src_offset,
+            &golden_cands,
+            params.block_size,
+        );
+        (sad_last, sad_golden)
+    } else {
+        (u32::MAX, u32::MAX)
+    };
+    // Bit indices: 1 = LAST, 2 = GOLDEN (libvpx convention).
+    let mut ref_frame_skip_mask: u32 = 0;
+    if params.reference_masking
+        && pred_mv_sad_last != u32::MAX
+        && pred_mv_sad_golden != u32::MAX
+    {
+        // `pred_mv_sad_last << 1` — guarded against overflow on the
+        // very-high-SAD edge (a u32 MAX/2 SAD would never trigger the
+        // condition anyway since the comparison `> << 1` becomes false
+        // once shifted past the wraparound; saturate to MAX to keep
+        // the check well-defined).
+        let last_doubled = pred_mv_sad_last.saturating_mul(2);
+        if pred_mv_sad_golden > last_doubled {
+            ref_frame_skip_mask |= 1 << 2; // GOLDEN
+        }
+    }
+
     // mode_checked[ref_idx][mode_idx] — tracks which (ref, MV) pairs
     // have been evaluated for duplicate-MV skip. ref_idx: 0=LAST,
     // 1=GOLDEN. mode_idx: InterMode::idx() (0=NEAREST,1=NEAR,2=ZERO,3=NEW).
@@ -823,6 +898,20 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
             (1, InterMode::NearestMv) if !params.golden_nearest_in_bounds => continue,
             (1, InterMode::NearMv) if !params.golden_near_in_bounds => continue,
             _ => {}
+        }
+
+        // P18 — `ref_frame_skip_mask` veto. Mirrors libvpx
+        // `vp9_pickmode.c:2217` (`if (ref_frame_skip_mask & (1 <<
+        // ref_frame)) continue;`). The mask was built upfront based
+        // on `pred_mv_sad` thresholds; a set bit causes every
+        // remaining candidate for that ref frame to be skipped.
+        let ref_bit: u32 = match ref_frame {
+            RefFrame::LastFrame => 1 << 1,
+            RefFrame::GoldenFrame => 1 << 2,
+            _ => 0,
+        };
+        if ref_frame_skip_mask & ref_bit != 0 {
+            continue;
         }
 
         // P15 — libvpx `vp9_pickmode.c:2166`:
@@ -3516,6 +3605,10 @@ mod tests {
             noise_estimate: NoiseEstimate::default(),
             lowvar_highsumdiff: false,
             is_skin: false,
+            // P18 — default ON for legacy harness, matching the
+            // encoder caller's setting. Tests that need to compare
+            // mask-on vs mask-off override this field directly.
+            reference_masking: true,
         }
     }
 
@@ -4792,6 +4885,255 @@ mod tests {
             res_b.best_rd_cost >= expected_bias_floor,
             "P13: bias-active RD ({}) should be ≥ +12.5% over un-biased ({})",
             res_b.best_rd_cost, expected_bias_floor,
+        );
+    }
+
+    /// **P18 — `ref_frame_skip_mask` end-to-end proof.**
+    ///
+    /// Constructs a scenario where:
+    ///   - LAST has moderate noise but its pred_mv_sad is much lower
+    ///     than GOLDEN's (mask threshold satisfied).
+    ///   - GOLDEN's NEAREST=(0,0) sees mismatched content (high SAD),
+    ///     but its diamond NEWMV search can recover a perfect content
+    ///     match elsewhere — so without the mask GOLDEN would win on
+    ///     recon SSE.
+    ///
+    /// Then:
+    ///   - With `reference_masking = true`: every GOLDEN candidate is
+    ///     suppressed before evaluation → picker picks `LastFrame`.
+    ///   - With `reference_masking = false`: GOLDEN's NEWMV finds the
+    ///     diamond-recoverable perfect-match position → picker picks
+    ///     `GoldenFrame`.
+    ///
+    /// The mask is the ONLY control variable that flips the outcome
+    /// — this is the headline anti-stub assertion (libvpx
+    /// `vp9_pickmode.c:2200-2204`).
+    #[test]
+    fn p18_ref_frame_skip_mask_flips_picked_ref() {
+        let pw = 64;
+        let ph = 64;
+        // Source: deterministic chaotic plane.
+        let src_data = make_plane(pw, ph, 0xA51C);
+        let src_plane = PlaneRef {
+            data: &src_data, stride: pw, width: pw, height: ph,
+        };
+
+        // LAST: a noisy version of source. ZERO-MV recon has
+        // nonzero distortion; LAST's pred_mv_sad@(0,0) is the noise
+        // SAD (low, but > 0).
+        let mut last_data = src_data.clone();
+        let mut noise_state: u32 = 0xDEAD_BEEF;
+        for r in 0..16 {
+            for c in 0..16 {
+                noise_state ^= noise_state << 13;
+                noise_state ^= noise_state >> 17;
+                noise_state ^= noise_state << 5;
+                let idx = (16 + r) * pw + (16 + c);
+                // Inject ±20 magnitude noise so LAST's recon
+                // residual survives quant at q=50.
+                let n = ((noise_state & 0xff) as i16) - 128;
+                let perturbed = last_data[idx] as i16 + (n / 6); // ±21
+                last_data[idx] = perturbed.clamp(0, 255) as u8;
+            }
+        }
+        let last_ref = PlaneRef {
+            data: &last_data, stride: pw, width: pw, height: ph,
+        };
+
+        // GOLDEN: source = exact copy of source ZERO-MV → ZERO-MV
+        // recon is a perfect match. BUT we override the GOLDEN MV
+        // candidates to point WAY off (e.g., row=64, col=64 in Q3 =
+        // (8, 8) full-pel) so `pred_mv_sad[GOLDEN]` is high (chaotic
+        // data at a random offset). The mask fires on the bad
+        // NEAREST seed; meanwhile ZEROMV on GOLDEN is rate-cheap and
+        // perfect-recon, so GOLDEN ZERO wins when mask is OFF.
+        let golden_data = src_data.clone();
+        let golden_ref = PlaneRef {
+            data: &golden_data, stride: pw, width: pw, height: ph,
+        };
+
+        let harness = TestHarness::new(pw, 50);
+        let fc = FrameContext::new_default();
+        let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
+        let intra_y_costs: [i32; 10] = intra_costs[0];
+        let last_mvc = MvCandidates::default(); // NEAREST = NEAR = (0,0)
+        // GOLDEN's NEAREST/NEAR point at chaotic noise (well outside
+        // the source block, sourcing junk from the rest of the
+        // plane). This drives `pred_mv_sad[GOLDEN]` high without
+        // making GOLDEN unable to win — because ZEROMV is still on
+        // the candidate list and bypasses the bad NEAREST entirely.
+        let golden_mvc = MvCandidates {
+            nearest: Mv { row: 64, col: 64 }, // 8 full-pel down-right
+            near: Mv { row: 64, col: 64 },
+        };
+        let cands_last = [Mv::ZERO, Mv::ZERO];
+        let cands_golden = [
+            Mv { row: 64, col: 64 },
+            Mv { row: 64, col: 64 },
+        ];
+
+        // --- Test invariant: confirm the libvpx threshold IS
+        // satisfied on this scenario (so the mask SHOULD fire). ---
+        let (_, sad_last) = crate::mv_search::mv_pred::mv_pred_sad_seed(
+            &src_plane, &last_ref, (16, 16), &cands_last, BlockSize::Block16x16,
+        );
+        let (_, sad_golden) = crate::mv_search::mv_pred::mv_pred_sad_seed(
+            &src_plane, &golden_ref, (16, 16), &cands_golden, BlockSize::Block16x16,
+        );
+        assert!(
+            sad_golden > sad_last.saturating_mul(2),
+            "P18 oracle setup: GOLDEN pred_mv_sad ({sad_golden}) must \
+             exceed 2 × LAST pred_mv_sad ({sad_last}) for the libvpx \
+             threshold to fire (vp9_pickmode.c:2200-2204)",
+        );
+
+        let make_p = |mask_on: bool| -> PickInterModeParams<'_> {
+            let mut p = make_dual_ref_params(
+                &harness,
+                &intra_y_costs,
+                BlockSize::Block16x16,
+                &src_plane,
+                &last_ref,
+                (16, 16),
+                &last_mvc,
+                &golden_mvc,
+                MvLimits::new(-12, 12, -12, 12),
+                50,
+            );
+            // Override GOLDEN ref plane (helper points both refs at
+            // the same plane by default).
+            p.golden_ref_plane = &golden_ref;
+            p.reference_masking = mask_on;
+            // Disable encode-breakout so the mask is the only
+            // control variable — otherwise LAST ZERO could short-
+            // circuit the loop on both branches.
+            p.encode_breakout = 0;
+            p
+        };
+
+        let res_on = pick_inter_mode(&make_p(true));
+        let res_off = pick_inter_mode(&make_p(false));
+
+        // Positive assertion (1) — HEADLINE: with mask ON, every
+        // GOLDEN candidate is skipped, so the picker must select
+        // LAST.
+        assert_eq!(
+            res_on.picked_ref_frame,
+            RefFrame::LastFrame,
+            "P18 mask ON: GOLDEN must be skipped (sad_last={sad_last}, \
+             sad_golden={sad_golden}, threshold satisfied); picker \
+             chose {:?} (rd={}, mode={:?}, mv=({},{}))",
+            res_on.picked_ref_frame, res_on.best_rd_cost,
+            res_on.best_mode, res_on.best_mv.col, res_on.best_mv.row,
+        );
+
+        // Positive assertion (2) — HEADLINE: with mask OFF, GOLDEN's
+        // ZEROMV candidate (which IS in `RT_INTER_MODES`) finds
+        // perfect recon on the identical GOLDEN plane and wins on
+        // RD. Picker picks GOLDEN. This proves the mask was the ONLY
+        // thing suppressing GOLDEN in (1).
+        assert_eq!(
+            res_off.picked_ref_frame,
+            RefFrame::GoldenFrame,
+            "P18 mask OFF: GOLDEN's ZEROMV must win on the identical \
+             plane; picker chose {:?} (rd={}, mode={:?}, mv=({},{})). \
+             Control: res_on picked {:?} rd={}.",
+            res_off.picked_ref_frame, res_off.best_rd_cost,
+            res_off.best_mode, res_off.best_mv.col, res_off.best_mv.row,
+            res_on.picked_ref_frame, res_on.best_rd_cost,
+        );
+
+        // Positive assertion (3) — the mask-OFF branch must have a
+        // strictly lower RD cost (it had access to GOLDEN's perfect-
+        // recon candidate that mask-ON suppressed). If RDs match,
+        // both branches took the same path → mask is a no-op.
+        assert!(
+            res_off.best_rd_cost < res_on.best_rd_cost,
+            "P18: mask-OFF RD ({}) should be < mask-ON RD ({}) — \
+             GOLDEN's recon win must surface when the mask is off",
+            res_off.best_rd_cost, res_on.best_rd_cost,
+        );
+    }
+
+    /// **P18 control — mask must NOT fire when GOLDEN is competitive.**
+    ///
+    /// When `pred_mv_sad[GOLDEN]` is NOT more than twice
+    /// `pred_mv_sad[LAST]`, the libvpx threshold is not met and the
+    /// mask should remain clear. Verifies the threshold formula's
+    /// direction (libvpx `vp9_pickmode.c:2202`: strict `>`).
+    #[test]
+    fn p18_ref_frame_skip_mask_does_not_fire_below_threshold() {
+        let pw = 64;
+        let ph = 64;
+        let src_data = make_plane(pw, ph, 0x77BB);
+        let src_plane = PlaneRef {
+            data: &src_data, stride: pw, width: pw, height: ph,
+        };
+        // LAST and GOLDEN both = source (perfect match).
+        // sad_last = 0, sad_golden = 0. Threshold `0 > 0 << 1` =
+        // `0 > 0` is FALSE → mask does NOT fire.
+        let last_ref = PlaneRef {
+            data: &src_data, stride: pw, width: pw, height: ph,
+        };
+        let golden_data = src_data.clone();
+        let golden_ref = PlaneRef {
+            data: &golden_data, stride: pw, width: pw, height: ph,
+        };
+
+        let cands = [Mv::ZERO, Mv::ZERO];
+        let (_, sad_last) = crate::mv_search::mv_pred::mv_pred_sad_seed(
+            &src_plane, &last_ref, (16, 16), &cands, BlockSize::Block16x16,
+        );
+        let (_, sad_golden) = crate::mv_search::mv_pred::mv_pred_sad_seed(
+            &src_plane, &golden_ref, (16, 16), &cands, BlockSize::Block16x16,
+        );
+        assert_eq!(sad_last, 0);
+        assert_eq!(sad_golden, 0);
+        // libvpx threshold: `golden > last << 1`. With both 0,
+        // `0 > 0` is FALSE.
+        assert!(
+            sad_golden <= sad_last.saturating_mul(2),
+            "P18 control: threshold must not fire when SADs are equal",
+        );
+
+        let harness = TestHarness::new(pw, 50);
+        let fc = FrameContext::new_default();
+        let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
+        let intra_y_costs: [i32; 10] = intra_costs[0];
+        let mvc = MvCandidates::default();
+        let mut params = make_dual_ref_params(
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &src_plane,
+            &last_ref,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-8, 8, -8, 8),
+            50,
+        );
+        params.golden_ref_plane = &golden_ref;
+        params.reference_masking = true;
+        params.encode_breakout = 0;
+
+        let res = pick_inter_mode(&params);
+        // Both refs are equally perfect → picker may pick either.
+        // The point of this test is that the mask did NOT spuriously
+        // suppress GOLDEN — assert the result is finite and on one
+        // of the inter refs (NOT intra fallback).
+        assert!(
+            matches!(
+                res.picked_ref_frame,
+                RefFrame::LastFrame | RefFrame::GoldenFrame
+            ),
+            "P18 control: with mask threshold NOT satisfied, picker \
+             must explore both refs and pick an inter winner; got {:?}",
+            res.picked_ref_frame,
+        );
+        assert_eq!(
+            res.best_distortion, 0,
+            "P18 control: both refs are perfect matches → distortion = 0",
         );
     }
 

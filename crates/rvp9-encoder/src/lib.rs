@@ -3327,6 +3327,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     noise_estimate: rvp9_core::mode_decision::inter::NoiseEstimate::default(),
                     lowvar_highsumdiff: false,
                     is_skin: false,
+                    // P18 — `sf.reference_masking` default. libvpx
+                    // `vp9_speed_features.c:250 / 517` keeps this on
+                    // for the realtime single-spatial-layer path,
+                    // which is the rvp9 operating point.
+                    reference_masking: true,
                 };
                 let unified_pick = pick_inter_mode(&pick_params);
 
