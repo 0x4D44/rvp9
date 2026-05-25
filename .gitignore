@@ -10,6 +10,14 @@ Cargo.lock.bak
 *.swp
 *.swo
 
+# Claude Code agent worktrees (per-agent isolated copies of the repo
+# that the harness manages). Path is created on demand under .claude/.
+.claude/
+
+# Ad-hoc profiler dumps (e.g. .profile/tile_t1_t4.tsv) — host-specific
+# samples produced by perf/superluminal runs, not part of the codebase.
+.profile/
+
 # OS
 Thumbs.db
 .DS_Store
