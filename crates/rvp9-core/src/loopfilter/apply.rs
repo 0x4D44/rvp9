@@ -46,6 +46,153 @@ use crate::transforms::TxSize;
 /// `MI_BLOCK_SIZE` (`vp9_enums.h:25`).
 const MI_BLOCK_SIZE: usize = 8;
 
+// ----------------------------------------------------------------------------
+// Wave 2 — row-parallel loopfilter primitive (commit 1).
+//
+// `SharedFrame` carries the [`Yv12Buffer`] planes as raw pointers + per-plane
+// total lengths and strides, plus the chroma format. The wrapper is `Send +
+// Sync` even though it points at the same allocation that the caller still
+// owns mutably — this is sound under the temporal-exclusion protocol described
+// in `wrk_docs/2026.05.24 - HLD - Phase3 row-parallel loopfilter.md` §4:
+// concurrent LF workers each own a distinct SB row, the per-row progress
+// protocol guarantees adjacent rows are temporally disjoint (the H pass at
+// the top of row R+1 cannot start until row R's H pass has finished), and the
+// horizontal kernel's 8-pixel cross-row write is always covered by row R's
+// completion gate.
+//
+// At commit 1 the wrapper is constructed once per call inside
+// [`loop_filter_frame_with_non420`] and immediately handed to a single-threaded
+// loop over [`loop_filter_sb_row`]. The parallel driver lands in commit 3.
+// ----------------------------------------------------------------------------
+
+/// Send/Sync wrapper around the three planes of a [`Yv12Buffer`]. Holds raw
+/// `*mut u8` pointers + lengths + strides so worker threads can reconstruct
+/// `&mut [u8]` slices ephemerally without going through `&mut Yv12Buffer`.
+///
+/// # Safety
+///
+/// The pointers and lengths must address valid (`buffer_alloc`-backed)
+/// memory that outlives every access. The decoder's [`Yv12Buffer`] satisfies
+/// this trivially because the buffer is owned by the caller and lives across
+/// the entire `loop_filter_frame_*` call (and across the enclosing
+/// `WorkerPool::scope` for the parallel driver in commit 3).
+///
+/// Concurrent writes are made safe by the per-SB-row progress protocol — see
+/// the parent module docstring and `wrk_docs/2026.05.24 ... §4`.
+#[derive(Copy, Clone)]
+pub struct SharedFrame {
+    y_ptr: *mut u8,
+    u_ptr: *mut u8,
+    v_ptr: *mut u8,
+    y_len: usize,
+    u_len: usize,
+    v_len: usize,
+    y_stride: usize,
+    uv_stride: usize,
+    chroma: ChromaFormat,
+}
+
+// Soundness: see the struct-level doc comment + Phase 3 HLD §4. The pointer
+// values are stable across the LF call; concurrent access is exclusive per
+// pixel by the row-progress protocol.
+unsafe impl Send for SharedFrame {}
+unsafe impl Sync for SharedFrame {}
+
+impl SharedFrame {
+    /// Construct a [`SharedFrame`] from a mutable [`Yv12Buffer`] borrow. The
+    /// returned wrapper borrows from `yv12`'s allocation; callers MUST keep
+    /// `yv12` alive (and refrain from any other `&mut yv12` access) for the
+    /// entire useful lifetime of the wrapper.
+    ///
+    /// In the serial path that lifetime is the body of the calling function;
+    /// in the parallel path (commit 3) it is the enclosing
+    /// `WorkerPool::scope` — every LF worker joins before the scope returns,
+    /// so the wrapper's pointer access never outlives the buffer.
+    #[inline]
+    pub fn from_yv12(yv12: &mut Yv12Buffer) -> Self {
+        let chroma = yv12.chroma();
+        let (y_ptr, y_len, y_stride) = {
+            let mut y = yv12.y_plane_mut();
+            let stride = y.stride();
+            let data = y.data_mut();
+            (data.as_mut_ptr(), data.len(), stride)
+        };
+        let (u_ptr, u_len, uv_stride) = {
+            let mut u = yv12.u_plane_mut();
+            let stride = u.stride();
+            let data = u.data_mut();
+            (data.as_mut_ptr(), data.len(), stride)
+        };
+        let (v_ptr, v_len, _) = {
+            let mut v = yv12.v_plane_mut();
+            let stride = v.stride();
+            let data = v.data_mut();
+            (data.as_mut_ptr(), data.len(), stride)
+        };
+        Self {
+            y_ptr,
+            u_ptr,
+            v_ptr,
+            y_len,
+            u_len,
+            v_len,
+            y_stride,
+            uv_stride,
+            chroma,
+        }
+    }
+
+    /// Reconstruct a `&mut [u8]` slice over the Y plane.
+    ///
+    /// # Safety
+    ///
+    /// Caller guarantees no other live reference to the Y plane exists for
+    /// the lifetime of the returned slice. Under the row-progress protocol
+    /// the caller owns a unique SB row; the slice spans the full plane but
+    /// only pixels within the caller's owned row range may be written. See
+    /// `Phase3` HLD §4.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub unsafe fn y_slice(&self) -> &mut [u8] {
+        // SAFETY: contract above.
+        unsafe { std::slice::from_raw_parts_mut(self.y_ptr, self.y_len) }
+    }
+
+    /// Reconstruct a `&mut [u8]` slice over the U plane. See [`Self::y_slice`].
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub unsafe fn u_slice(&self) -> &mut [u8] {
+        // SAFETY: contract on [`Self::y_slice`].
+        unsafe { std::slice::from_raw_parts_mut(self.u_ptr, self.u_len) }
+    }
+
+    /// Reconstruct a `&mut [u8]` slice over the V plane. See [`Self::y_slice`].
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub unsafe fn v_slice(&self) -> &mut [u8] {
+        // SAFETY: contract on [`Self::y_slice`].
+        unsafe { std::slice::from_raw_parts_mut(self.v_ptr, self.v_len) }
+    }
+
+    /// Y-plane row stride in bytes.
+    #[inline]
+    pub fn y_stride(&self) -> usize {
+        self.y_stride
+    }
+
+    /// U/V row stride in bytes.
+    #[inline]
+    pub fn uv_stride(&self) -> usize {
+        self.uv_stride
+    }
+
+    /// Chroma format of the underlying buffer.
+    #[inline]
+    pub fn chroma(&self) -> ChromaFormat {
+        self.chroma
+    }
+}
+
 /// Per-TX-size index into [`LoopFilterMask`] arrays. Matches the
 /// `TxSize` enum ordering.
 const TX_4X4: usize = 0;
@@ -223,19 +370,116 @@ pub fn loop_filter_frame_with_non420(
     let sb_start = start_mi_row / MI_BLOCK_SIZE;
     let sb_end = end_mi_row.div_ceil(MI_BLOCK_SIZE).min(sb_rows);
 
+    // Wave 2 commit 1 — build a [`SharedFrame`] once at the top and run a
+    // thin loop over [`loop_filter_sb_row`]. The single-threaded body is
+    // bitwise identical to the pre-refactor inline version; the only
+    // observable difference is that pixel access goes through raw pointers
+    // reconstructed inside `loop_filter_sb_row` rather than re-borrowing
+    // `yv12.y_plane_mut()` per SB. Both forms address the same bytes; the
+    // dispatch table is loaded once and threaded through.
+    let shared = SharedFrame::from_yv12(yv12);
     for sb_row in sb_start..sb_end {
-        let mi_row = sb_row * MI_BLOCK_SIZE;
-        for sb_col in 0..sb_cols {
-            let mi_col = sb_col * MI_BLOCK_SIZE;
-            let lfm = &lfm_grid[sb_row * lfm_stride + sb_col];
+        // SAFETY: serial path — no other thread holds a reference to the
+        // planes; each `loop_filter_sb_row` call temporarily reconstructs
+        // `&mut [u8]` slices through `SharedFrame` for the duration of the
+        // call only.
+        unsafe {
+            loop_filter_sb_row(
+                &shared,
+                lfm_grid,
+                lfm_stride,
+                sb_row,
+                sb_cols,
+                mi_rows,
+                mi_cols,
+                info,
+                non420,
+                dispatch,
+            );
+        }
+    }
+}
 
-            // Y plane (ss = 0).
-            {
-                let mut y = yv12.y_plane_mut();
-                let stride = y.stride();
-                filter_block_plane_ss00(
-                    y.data_mut(),
-                    stride,
+/// Apply the loop filter to one SB row of the frame. Extracted from the
+/// inner body of [`loop_filter_frame_with_non420`] (Wave 2 commit 1) so the
+/// commit-3 parallel driver can dispatch one SB row per LF worker. The
+/// serial path calls this in a loop — both behaviours are byte-identical to
+/// the pre-refactor inline version.
+///
+/// `sb_row` is the SB-row index within the frame (0 ≤ sb_row < sb_rows).
+/// All other arguments mirror [`loop_filter_frame_with_non420`].
+///
+/// # Safety
+///
+/// Caller guarantees that for the duration of this call, no other thread
+/// writes pixels in this SB row's owned rectangle nor in the bottom 8 pixel
+/// rows of the previous SB row (the cross-row write zone of the H pass at
+/// the top of this SB row). The row-progress protocol in commit 3
+/// (`progress_in` + `progress_out` atomics in the parallel driver) enforces
+/// this. The serial caller in this commit calls it in raster order with no
+/// other writers — trivially safe.
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn loop_filter_sb_row(
+    shared: &SharedFrame,
+    lfm_grid: &[LoopFilterMask],
+    lfm_stride: usize,
+    sb_row: usize,
+    sb_cols: usize,
+    mi_rows: usize,
+    mi_cols: usize,
+    info: &LoopFilterInfo,
+    non420: Option<Non420Inputs<'_>>,
+    dispatch: &SimdDispatch,
+) {
+    let chroma = shared.chroma;
+    let mi_row = sb_row * MI_BLOCK_SIZE;
+    let y_stride = shared.y_stride;
+    let uv_stride = shared.uv_stride;
+    // SAFETY: contract on this function; serial path holds the unique
+    // borrow on the underlying `Yv12Buffer`. The slices are scoped to the
+    // body of this function — no other reference to the planes can exist.
+    let (y_data, u_data, v_data) = unsafe {
+        (
+            shared.y_slice(),
+            shared.u_slice(),
+            shared.v_slice(),
+        )
+    };
+    for sb_col in 0..sb_cols {
+        let mi_col = sb_col * MI_BLOCK_SIZE;
+        let lfm = &lfm_grid[sb_row * lfm_stride + sb_col];
+
+        // Y plane (ss = 0).
+        filter_block_plane_ss00(
+            y_data,
+            y_stride,
+            lfm,
+            mi_row,
+            mi_col,
+            mi_rows,
+            info,
+            dispatch,
+        );
+        // U / V planes. Dispatch on the established chroma format:
+        //   - Yuv420 → ss11 (4×4 chroma grid; UV masks).
+        //   - Yuv444 → ss00 (8×8 chroma grid == luma; Y masks).
+        // Mirrors libvpx `loop_filter_rows` `LF_PATH_420` /
+        // `LF_PATH_444` (`vp9_loopfilter.c:1452-1458`).
+        match chroma {
+            ChromaFormat::Yuv420 => {
+                filter_block_plane_ss11(
+                    u_data,
+                    uv_stride,
+                    lfm,
+                    mi_row,
+                    mi_col,
+                    mi_rows,
+                    info,
+                    dispatch,
+                );
+                filter_block_plane_ss11(
+                    v_data,
+                    uv_stride,
                     lfm,
                     mi_row,
                     mi_col,
@@ -244,130 +488,77 @@ pub fn loop_filter_frame_with_non420(
                     dispatch,
                 );
             }
-            // U / V planes. Dispatch on the established chroma format:
-            //   - Yuv420 → ss11 (4×4 chroma grid; UV masks).
-            //   - Yuv444 → ss00 (8×8 chroma grid == luma; Y masks).
-            // Mirrors libvpx `loop_filter_rows` `LF_PATH_420` /
-            // `LF_PATH_444` (`vp9_loopfilter.c:1452-1458`).
-            match chroma {
-                ChromaFormat::Yuv420 => {
-                    {
-                        let mut u = yv12.u_plane_mut();
-                        let stride = u.stride();
-                        filter_block_plane_ss11(
-                            u.data_mut(),
-                            stride,
-                            lfm,
-                            mi_row,
-                            mi_col,
-                            mi_rows,
-                            info,
-                            dispatch,
-                        );
-                    }
-                    {
-                        let mut v = yv12.v_plane_mut();
-                        let stride = v.stride();
-                        filter_block_plane_ss11(
-                            v.data_mut(),
-                            stride,
-                            lfm,
-                            mi_row,
-                            mi_col,
-                            mi_rows,
-                            info,
-                            dispatch,
-                        );
-                    }
-                }
-                ChromaFormat::Yuv444 => {
-                    // 4:4:4 chroma == luma grid: reuse the Y masks via
-                    // ss00 (libvpx `vp9_filter_block_plane_ss00` for
-                    // `LF_PATH_444`). The chroma plane is full-resolution,
-                    // so the same SB-origin formula as luma applies.
-                    {
-                        let mut u = yv12.u_plane_mut();
-                        let stride = u.stride();
-                        filter_block_plane_ss00(
-                            u.data_mut(),
-                            stride,
-                            lfm,
-                            mi_row,
-                            mi_col,
-                            mi_rows,
-                            info,
-                            dispatch,
-                        );
-                    }
-                    {
-                        let mut v = yv12.v_plane_mut();
-                        let stride = v.stride();
-                        filter_block_plane_ss00(
-                            v.data_mut(),
-                            stride,
-                            lfm,
-                            mi_row,
-                            mi_col,
-                            mi_rows,
-                            info,
-                            dispatch,
-                        );
-                    }
-                }
-                // Asymmetric subsampling (4:2:2 / 4:4:0) — the
-                // `LF_PATH_SLOW` path in libvpx (`vp9_loopfilter.c:1459-
-                // 1462`). The packed SB mask doesn't carry the right
-                // chroma layout, so `filter_block_plane_non420` walks
-                // the MI grid directly per chroma row. Requires the
-                // caller to pass `Non420Inputs` — without those the
-                // non420 path cannot run.
-                ChromaFormat::Yuv422 | ChromaFormat::Yuv440 => {
-                    let n420 = non420.expect(
-                        "loop_filter_frame called on Yuv422 / Yuv440 buffer \
-                         without Non420Inputs — use loop_filter_frame_with_non420 \
-                         and pass Some(Non420Inputs { .. })",
-                    );
-                    let ss_x = chroma.subsampling_x();
-                    let ss_y = chroma.subsampling_y();
-                    {
-                        let mut u = yv12.u_plane_mut();
-                        let stride = u.stride();
-                        filter_block_plane_non420(
-                            u.data_mut(),
-                            stride,
-                            n420.mi_grid,
-                            n420.mi_stride,
-                            mi_row,
-                            mi_col,
-                            mi_rows,
-                            mi_cols,
-                            ss_x,
-                            ss_y,
-                            info,
-                            n420.levels,
-                            dispatch,
-                        );
-                    }
-                    {
-                        let mut v = yv12.v_plane_mut();
-                        let stride = v.stride();
-                        filter_block_plane_non420(
-                            v.data_mut(),
-                            stride,
-                            n420.mi_grid,
-                            n420.mi_stride,
-                            mi_row,
-                            mi_col,
-                            mi_rows,
-                            mi_cols,
-                            ss_x,
-                            ss_y,
-                            info,
-                            n420.levels,
-                            dispatch,
-                        );
-                    }
-                }
+            ChromaFormat::Yuv444 => {
+                // 4:4:4 chroma == luma grid: reuse the Y masks via
+                // ss00 (libvpx `vp9_filter_block_plane_ss00` for
+                // `LF_PATH_444`). The chroma plane is full-resolution,
+                // so the same SB-origin formula as luma applies.
+                filter_block_plane_ss00(
+                    u_data,
+                    uv_stride,
+                    lfm,
+                    mi_row,
+                    mi_col,
+                    mi_rows,
+                    info,
+                    dispatch,
+                );
+                filter_block_plane_ss00(
+                    v_data,
+                    uv_stride,
+                    lfm,
+                    mi_row,
+                    mi_col,
+                    mi_rows,
+                    info,
+                    dispatch,
+                );
+            }
+            // Asymmetric subsampling (4:2:2 / 4:4:0) — the
+            // `LF_PATH_SLOW` path in libvpx (`vp9_loopfilter.c:1459-
+            // 1462`). The packed SB mask doesn't carry the right
+            // chroma layout, so `filter_block_plane_non420` walks
+            // the MI grid directly per chroma row. Requires the
+            // caller to pass `Non420Inputs` — without those the
+            // non420 path cannot run.
+            ChromaFormat::Yuv422 | ChromaFormat::Yuv440 => {
+                let n420 = non420.expect(
+                    "loop_filter_frame called on Yuv422 / Yuv440 buffer \
+                     without Non420Inputs — use loop_filter_frame_with_non420 \
+                     and pass Some(Non420Inputs { .. })",
+                );
+                let ss_x = chroma.subsampling_x();
+                let ss_y = chroma.subsampling_y();
+                filter_block_plane_non420(
+                    u_data,
+                    uv_stride,
+                    n420.mi_grid,
+                    n420.mi_stride,
+                    mi_row,
+                    mi_col,
+                    mi_rows,
+                    mi_cols,
+                    ss_x,
+                    ss_y,
+                    info,
+                    n420.levels,
+                    dispatch,
+                );
+                filter_block_plane_non420(
+                    v_data,
+                    uv_stride,
+                    n420.mi_grid,
+                    n420.mi_stride,
+                    mi_row,
+                    mi_col,
+                    mi_rows,
+                    mi_cols,
+                    ss_x,
+                    ss_y,
+                    info,
+                    n420.levels,
+                    dispatch,
+                );
             }
         }
     }

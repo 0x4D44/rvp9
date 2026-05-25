@@ -3251,6 +3251,22 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     &neighbours,
                 );
 
+                // P13 — extract neighbour MVs for vp9_NEWMV_diff_bias.
+                // Mirrors libvpx `xd->above_mi->mv[0]` /
+                // `xd->left_mi->mv[0]` (vp9_pickmode.c:1316-1325). For
+                // intra / OOB neighbours we pass `None`, matching
+                // libvpx's `xd->above_mi == NULL` and `as_int !=
+                // INVALID_MV` checks. The MV is the neighbour's
+                // bitstream MV (`mvs[0]` from BlockMode::Inter).
+                let neighbour_mv = |mi: Option<&rvp9_core::mode_info::ModeInfo>| -> Option<Mv> {
+                    match mi.map(|m| m.mode) {
+                        Some(rvp9_core::mode_info::BlockMode::Inter { mvs, .. }) => Some(mvs[0]),
+                        _ => None,
+                    }
+                };
+                let above_mv_p13 = neighbour_mv(nb_above);
+                let left_mv_p13 = neighbour_mv(nb_left);
+
                 let pick_params = PickInterModeParams {
                     block_size: leaf_bsize,
                     src_plane: &src_y,
@@ -3301,6 +3317,16 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     encode_breakout: 20,
                     dequant_dc: quantizer.dequant[0] as u16,
                     dequant_ac: quantizer.dequant[1] as u16,
+                    // P13 — vp9_NEWMV_diff_bias inputs. rvp9 has no
+                    // noise estimator / skin detector / lowvar-highsumdiff
+                    // tracker — those sub-clauses stay disabled (faithful
+                    // port of libvpx pre-`vp9_update_noise_estimate`
+                    // behaviour). The magnitude-driven bias is active.
+                    above_mv: above_mv_p13,
+                    left_mv: left_mv_p13,
+                    noise_estimate: rvp9_core::mode_decision::inter::NoiseEstimate::default(),
+                    lowvar_highsumdiff: false,
+                    is_skin: false,
                 };
                 let unified_pick = pick_inter_mode(&pick_params);
 

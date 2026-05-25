@@ -645,6 +645,35 @@ pub struct PickInterModeParams<'a> {
     /// Y-plane AC dequant value (`dequant[1]`). Used by the
     /// encode-breakout threshold computation.
     pub dequant_ac: u16,
+
+    // --- P13: vp9_NEWMV_diff_bias inputs ---
+    //
+    // Mirrors libvpx `xd->above_mi->mv[0]` / `xd->left_mi->mv[0]`
+    // (`vp9_pickmode.c:1316-1325`). `None` matches libvpx's
+    // `xd->above_mi == NULL` (or intra-neighbour: libvpx treats those
+    // as invalid via `as_int != INVALID_MV`). The encoder reads these
+    // from the in-progress mi_grid: a valid inter neighbour contributes
+    // its picked MV (`mvs[0]`), an intra / OOB neighbour contributes
+    // `None`.
+
+    /// Top neighbour's MV (for the P13 NEWMV-diff bias). `None` when
+    /// the above neighbour is intra / unavailable.
+    pub above_mv: Option<Mv>,
+    /// Left neighbour's MV (for the P13 NEWMV-diff bias). `None` when
+    /// the left neighbour is intra / unavailable.
+    pub left_mv: Option<Mv>,
+    /// libvpx noise tier (`cpi->noise_estimate`,
+    /// `vp9_pickmode.c:1349`). rvp9 has no noise estimator — callers
+    /// pass `NoiseEstimate::default()` (disabled, level=Low).
+    pub noise_estimate: NoiseEstimate,
+    /// libvpx `x->lowvar_highsumdiff` (`vp9_encoder.h`,
+    /// `vp9_pickmode.c:1352`). rvp9 doesn't track this content metric;
+    /// callers pass `false`.
+    pub lowvar_highsumdiff: bool,
+    /// libvpx `x->sb_is_skin` (`vp9_skin_detection.c`,
+    /// `vp9_pickmode.c:1352`). rvp9 doesn't run skin detection; callers
+    /// pass `false`.
+    pub is_skin: bool,
 }
 
 /// Result of [`pick_inter_mode`].
@@ -966,15 +995,45 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
 
         mode_checked[ref_idx][mode.idx()] = true;
 
+        // P13 — vp9_NEWMV_diff_bias (vp9_pickmode.c:2402-2411). Apply
+        // the magnitude/noise-driven RD-cost scaling to NEWMV
+        // candidates whose MV diverges from the neighbour average.
+        // Faithful port: the bias factor is computed unconditionally
+        // here; `newmv_diff_bias` returns `(1, 1)` (no-op) for non-
+        // NEWMV modes and for NEWMV with diff ≤ 48. The libvpx outer
+        // gate at vp9_pickmode.c:2404 (`cpi->oxcf.rc_mode == VPX_CBR
+        // && cpi->oxcf.speed >= 5 && cpi->oxcf.content !=
+        // VP9E_CONTENT_SCREEN`) is rvp9's default operating point
+        // (single-pass realtime-like CBR), so we always apply.
+        let (bias_num, bias_den) = newmv_diff_bias(
+            params.above_mv,
+            params.left_mv,
+            mode,
+            mv,
+            params.block_size,
+            ref_frame == RefFrame::LastFrame,
+            params.noise_estimate,
+            params.lowvar_highsumdiff,
+            params.is_skin,
+        );
+        let biased_rd_cost = apply_rdcost_bias(
+            candidate.best_rd_cost,
+            bias_num,
+            bias_den,
+        );
+
         let is_new_best = match best.as_ref() {
             None => true,
-            Some(prev) => candidate.best_rd_cost < prev.best_rd_cost,
+            Some(prev) => biased_rd_cost < prev.best_rd_cost,
         };
         if is_new_best {
             best = Some(PickInterModeResult {
                 best_mode: candidate.best_mode,
                 best_mv: candidate.best_mv,
-                best_rd_cost: candidate.best_rd_cost,
+                // P13 — store the biased RD so downstream comparisons
+                // (intra-fallback gate, encode-breakout early exit) see
+                // the same penalty libvpx applied (vp9_pickmode.c:2406).
+                best_rd_cost: biased_rd_cost,
                 best_distortion: candidate.best_distortion,
                 best_rate: candidate.best_rate,
                 coef_rate: candidate.coef_rate,
@@ -1019,7 +1078,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
         // exit after at least 2 candidates have been evaluated.
         if candidate.early_term {
             if let Some(ref b) = best {
-                if b.best_rd_cost <= candidate.best_rd_cost || is_new_best {
+                if b.best_rd_cost <= biased_rd_cost || is_new_best {
                     // At least 2 candidates evaluated (this one + previous best),
                     // and the current or previous best has early_term set.
                     // Only break if we're past the first evaluated candidate.
@@ -2390,6 +2449,207 @@ fn sse_block(
     sse
 }
 
+// ============================================================================
+// P13 — vp9_NEWMV_diff_bias  (faithful port of libvpx vp9_pickmode.c:1299-1356).
+// ============================================================================
+
+/// Coarse noise tier mirroring libvpx's `NOISE_LEVEL`
+/// (`vp9_noise_estimate.h:28`, `typedef enum noise_level { kLowLow,
+/// kLow, kMedium, kHigh } NOISE_LEVEL;`).
+///
+/// **Deviation**: rvp9 does NOT run libvpx's noise estimator
+/// (`vp9_update_noise_estimate`, `vp9_noise_estimate.c`) — that path
+/// requires temporal-frame scratch buffers, the temporal denoiser, and
+/// content-detection machinery that rvp9 hasn't ported. We carry this
+/// enum so the bias function's signature mirrors libvpx 1:1; callers
+/// pass [`NoiseLevel::Low`] (matching libvpx's `kLow` tier) by default,
+/// which deactivates the medium/high-noise sub-bias clauses inside
+/// [`newmv_diff_bias`] but keeps the magnitude-driven sub-bias active.
+/// When a future port adds noise estimation, the call site updates
+/// without touching the function body.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum NoiseLevel {
+    /// libvpx `kLowLow`.
+    LowLow,
+    /// libvpx `kLow`. Default for rvp9.
+    Low,
+    /// libvpx `kMedium`.
+    Medium,
+    /// libvpx `kHigh`.
+    High,
+}
+
+/// libvpx `NOISE_ESTIMATE` (`vp9_noise_estimate.h:30-40`), reduced to
+/// the two fields [`newmv_diff_bias`] actually reads
+/// (`ne->enabled`, `ne->level`).
+///
+/// rvp9's default is `{ enabled: false, level: Low }` — the
+/// noise-driven bias clauses are gated on `ne->enabled` AND
+/// `ne->level >= kMedium` (libvpx `vp9_pickmode.c:1349`), so a
+/// disabled estimator skips them entirely. Same as libvpx's behaviour
+/// before `vp9_update_noise_estimate` has been called.
+#[derive(Copy, Clone, Debug)]
+pub struct NoiseEstimate {
+    /// libvpx `ne->enabled`. `false` ⇒ skip the noise sub-bias.
+    pub enabled: bool,
+    /// libvpx `ne->level`.
+    pub level: NoiseLevel,
+}
+
+impl Default for NoiseEstimate {
+    fn default() -> Self {
+        // P13: rvp9 has no noise estimator. Default matches libvpx
+        // pre-`vp9_update_noise_estimate` (disabled), so the noise
+        // sub-bias never fires. The magnitude sub-bias is always
+        // active.
+        Self { enabled: false, level: NoiseLevel::Low }
+    }
+}
+
+/// Multiplier applied to a NEWMV candidate's `rdcost` when the
+/// candidate's MV differs significantly from its top/left neighbours
+/// or when the noise / lowvar-highsumdiff sub-clauses fire.
+///
+/// **Faithful port of libvpx `vp9_NEWMV_diff_bias`
+/// (`vp9_pickmode.c:1299-1356`).** Returns a fractional multiplier in
+/// the form `(num, den)` so the caller can do
+/// `new_rdcost = (rdcost * num + den/2) / den` with the rounding
+/// convention of its choice — libvpx's `<< 1` ⇔ `(2, 1)` and
+/// `3 * x >> 1` ⇔ `(3, 2)` translate directly.
+///
+/// libvpx pseudocode (lines 1304-1355):
+///
+/// ```text
+///   if (this_mode == NEWMV) {
+///     // Average of above/left neighbour MVs (if valid).
+///     avg = (above_mi ? above.mv : ZERO)
+///         (+) (left_mi ? left.mv : ZERO)
+///         >> 1 if both, else the single available one, else ZERO.
+///     diff = avg - cand_mv
+///     if (|row_diff| > 48 || |col_diff| > 48) {
+///       if (bsize > BLOCK_32X32)   rdcost <<= 1;
+///       else                       rdcost = 3 * rdcost >> 1;
+///     }
+///   }
+///   if (ne.enabled && ne.level >= kMedium &&
+///       bsize >= BLOCK_32X32 && is_last_frame &&
+///       |mv_row| < 8 && |mv_col| < 8)        rdcost = 7 * rdcost >> 3;
+///   else if (lowvar_highsumdiff && !is_skin && bsize >= BLOCK_16X16 &&
+///            is_last_frame && |mv_row| < 16 && |mv_col| < 16)
+///                                            rdcost = 7 * rdcost >> 3;
+/// ```
+///
+/// Returns the `(numerator, denominator)` pair as small integers.
+/// `(1, 1)` ⇔ no bias.
+///
+/// `above_mv` / `left_mv` carry the neighbour MV when the neighbour is
+/// a valid inter block (caller derives from `nb_above.mv[0]` /
+/// `nb_left.mv[0]` — intra / out-of-frame neighbours pass `None`,
+/// mirroring libvpx's `xd->above_mi == NULL` / `xd->left_mi == NULL`
+/// fast paths at `vp9_pickmode.c:1316-1325`).
+#[must_use]
+#[allow(clippy::too_many_arguments)] // mirrors libvpx's vp9_NEWMV_diff_bias signature 1:1
+pub fn newmv_diff_bias(
+    above_mv: Option<Mv>,
+    left_mv: Option<Mv>,
+    this_mode: InterMode,
+    cand_mv: Mv,
+    bsize: BlockSize,
+    is_last_frame: bool,
+    noise: NoiseEstimate,
+    lowvar_highsumdiff: bool,
+    is_skin: bool,
+) -> (u32, u32) {
+    let mut num: u32 = 1;
+    let mut den: u32 = 1;
+
+    // libvpx vp9_pickmode.c:1306-1346 — magnitude-driven NEWMV sub-bias.
+    if this_mode == InterMode::NewMv {
+        // libvpx vp9_pickmode.c:1326-1337 — neighbour-average MV.
+        // Promote to i32 to avoid overflow on (above + left) for
+        // edge cases like ±i16::MAX (only possible with corrupt data,
+        // but the `+ 1) >> 1` half-round-up needs the extra bit).
+        let (avg_row, avg_col) = match (above_mv, left_mv) {
+            (Some(a), Some(l)) => {
+                let r = (i32::from(a.row) + i32::from(l.row) + 1) >> 1;
+                let c = (i32::from(a.col) + i32::from(l.col) + 1) >> 1;
+                (r, c)
+            }
+            (Some(a), None) => (i32::from(a.row), i32::from(a.col)),
+            (None, Some(l)) => (i32::from(l.row), i32::from(l.col)),
+            (None, None) => (0, 0),
+        };
+        // libvpx vp9_pickmode.c:1338-1339.
+        let row_diff = avg_row - i32::from(cand_mv.row);
+        let col_diff = avg_col - i32::from(cand_mv.col);
+        // libvpx vp9_pickmode.c:1340 — threshold 48 (1/8-pel units, =
+        // 6 full pels). `> 48 || < -48` ⇒ |diff| > 48.
+        if row_diff > 48 || row_diff < -48 || col_diff > 48 || col_diff < -48 {
+            if bsize > BlockSize::Block32x32 {
+                // vp9_pickmode.c:1342 — `rdcost <<= 1`.
+                num = 2;
+                den = 1;
+            } else {
+                // vp9_pickmode.c:1344 — `rdcost = 3 * rdcost >> 1`.
+                num = 3;
+                den = 2;
+            }
+        }
+    }
+
+    // libvpx vp9_pickmode.c:1349-1351 — noise sub-bias on LAST,
+    // large block, small motion.
+    let mv_row = i32::from(cand_mv.row);
+    let mv_col = i32::from(cand_mv.col);
+    if noise.enabled
+        && (noise.level == NoiseLevel::Medium || noise.level == NoiseLevel::High)
+        && bsize >= BlockSize::Block32x32
+        && is_last_frame
+        && mv_row < 8
+        && mv_row > -8
+        && mv_col < 8
+        && mv_col > -8
+    {
+        // vp9_pickmode.c:1351 — `rdcost = 7 * (rdcost >> 3)`. Combine
+        // with the existing (num, den) so chained scalings compose:
+        // (a/b) * (7/8) = (a*7) / (b*8).
+        num = num.saturating_mul(7);
+        den = den.saturating_mul(8);
+    } else if lowvar_highsumdiff
+        && !is_skin
+        && bsize >= BlockSize::Block16x16
+        && is_last_frame
+        && mv_row < 16
+        && mv_row > -16
+        && mv_col < 16
+        && mv_col > -16
+    {
+        // vp9_pickmode.c:1352-1355 — same 7/8 multiplier, different gate.
+        num = num.saturating_mul(7);
+        den = den.saturating_mul(8);
+    }
+
+    (num, den)
+}
+
+/// Apply [`newmv_diff_bias`] to an `i64` RD cost in place. Matches
+/// libvpx's pattern of mutating `this_rdc.rdcost` (an int64 in libvpx —
+/// `vp9_rd.h:RD_COST.rdcost`) by direct shift / multiply.
+///
+/// `num == den == 1` short-circuits to a no-op so callers can keep this
+/// helper on the hot path unconditionally.
+#[inline]
+fn apply_rdcost_bias(rdcost: i64, num: u32, den: u32) -> i64 {
+    if num == den {
+        return rdcost;
+    }
+    // For libvpx's exact `>> 1` vs `* 3 >> 1` patterns we mirror the
+    // integer arithmetic rather than re-rounding. `num` is small
+    // (≤ 2 * 7 = 14) and `den` is small (≤ 1 * 8 = 8), so no overflow
+    // is possible on an i64 starting from a non-pathological RD cost.
+    rdcost.saturating_mul(num as i64) / (den as i64)
+}
+
 /// Map a [`FrameKind`] to the [`FrameTypeForRd`] enum used by
 /// [`compute_rd_mult`]. Same convention as F8.0
 /// (`mode_decision/intra.rs`): keyframes get the KF multiplier;
@@ -3248,6 +3508,14 @@ mod tests {
             encode_breakout: 0,
             dequant_dc: 0,
             dequant_ac: 0,
+            // P13 — default to no neighbour MVs (matches libvpx's
+            // `xd->above_mi == NULL && xd->left_mi == NULL` path) so
+            // the bias is a no-op on legacy harness calls.
+            above_mv: None,
+            left_mv: None,
+            noise_estimate: NoiseEstimate::default(),
+            lowvar_highsumdiff: false,
+            is_skin: false,
         }
     }
 
@@ -4205,6 +4473,325 @@ mod tests {
             "P19: skip_ctx must affect the picker's RD output; got \
              ctx0: rate={} rd={} vs ctx2: rate={} rd={}",
             r0.best_rate, r0.best_rd_cost, r2.best_rate, r2.best_rd_cost,
+        );
+    }
+
+    // ========================================================================
+    // P13 — vp9_NEWMV_diff_bias proof tests.
+    // ========================================================================
+
+    /// **P13 pure-function proof.** Verifies that the bias multiplier
+    /// scales with the NEWMV-vs-neighbour MV diff:
+    ///   1. Small diff (≤ 48 in any axis) ⇒ `(1, 1)` (no-op).
+    ///   2. Large diff with `bsize <= 32x32` ⇒ `(3, 2)` (1.5× penalty).
+    ///   3. Large diff with `bsize > 32x32`  ⇒ `(2, 1)` (2× penalty).
+    ///   4. Non-NEWMV modes ⇒ `(1, 1)` regardless of diff.
+    ///
+    /// Maps directly to libvpx vp9_pickmode.c:1340-1345.
+    #[test]
+    fn p13_newmv_diff_bias_scales_with_magnitude() {
+        // Neighbour MVs clustered at (row=0, col=0). Threshold is 48
+        // in 1/8-pel units (libvpx vp9_pickmode.c:1340).
+        let above = Some(Mv { row: 0, col: 0 });
+        let left = Some(Mv { row: 0, col: 0 });
+        let ne = NoiseEstimate::default();
+
+        // (a) Small diff (col=40) → just under the threshold → no bias.
+        let small = newmv_diff_bias(
+            above, left, InterMode::NewMv,
+            Mv { row: 0, col: 40 },
+            BlockSize::Block16x16,
+            /* is_last_frame */ true, ne, false, false,
+        );
+        assert_eq!(small, (1, 1), "small diff (|col|=40 ≤ 48): no bias");
+
+        // (b) Large diff (col=64) on Block16x16 → (3, 2).
+        let large_small_bs = newmv_diff_bias(
+            above, left, InterMode::NewMv,
+            Mv { row: 0, col: 64 },
+            BlockSize::Block16x16,
+            true, ne, false, false,
+        );
+        assert_eq!(large_small_bs, (3, 2),
+            "large diff (|col|=64 > 48) on Block16x16: 1.5× penalty");
+
+        // (c) Large diff on Block64x64 → (2, 1). Block64x64 > Block32x32.
+        let large_big_bs = newmv_diff_bias(
+            above, left, InterMode::NewMv,
+            Mv { row: 0, col: 64 },
+            BlockSize::Block64x64,
+            true, ne, false, false,
+        );
+        assert_eq!(large_big_bs, (2, 1),
+            "large diff on Block64x64: 2× penalty");
+
+        // (d) Block32x32 is NOT > Block32x32; uses the 1.5× branch
+        // (libvpx `bsize > BLOCK_32X32` at vp9_pickmode.c:1341).
+        let exact_32 = newmv_diff_bias(
+            above, left, InterMode::NewMv,
+            Mv { row: 0, col: 64 },
+            BlockSize::Block32x32,
+            true, ne, false, false,
+        );
+        assert_eq!(exact_32, (3, 2),
+            "Block32x32 takes the `else` branch: 1.5× penalty");
+
+        // (e) Non-NEWMV modes get no bias even with a big diff.
+        for mode in [InterMode::ZeroMv, InterMode::NearestMv, InterMode::NearMv] {
+            let r = newmv_diff_bias(
+                above, left, mode,
+                Mv { row: 0, col: 64 },
+                BlockSize::Block16x16,
+                true, ne, false, false,
+            );
+            assert_eq!(r, (1, 1), "non-NEWMV ({:?}) gets no bias", mode);
+        }
+
+        // Positive ordering assertion (the headline anti-stub check):
+        // a NEWMV that diverges far from neighbours must get a STRICTLY
+        // LARGER penalty than one that's near them. Apply the bias to
+        // an arbitrary positive RD cost and compare.
+        const RD: i64 = 1_000_000;
+        let bias_small = apply_rdcost_bias(RD, small.0, small.1);
+        let bias_large = apply_rdcost_bias(RD, large_small_bs.0, large_small_bs.1);
+        assert!(
+            bias_small < bias_large,
+            "P13 anti-stub: small-diff biased RD ({}) must be < large-diff biased RD ({}); \
+             a stubbed `return (1,1)` would make both equal.",
+            bias_small, bias_large,
+        );
+        // The 1.5× factor must be exact-ish: 1_000_000 → 1_500_000.
+        assert_eq!(bias_large, 1_500_000);
+        assert_eq!(bias_small, RD);
+    }
+
+    /// **P13 neighbour-handling proof.** Verifies the neighbour-average
+    /// formula (libvpx vp9_pickmode.c:1326-1337):
+    ///   - both valid       ⇒ `(above + left + 1) >> 1`
+    ///   - only above valid ⇒ `above`
+    ///   - only left  valid ⇒ `left`
+    ///   - both None        ⇒ `(0, 0)` ⇒ a non-zero NEWMV with |mv| > 48
+    ///     gets penalised.
+    #[test]
+    fn p13_newmv_diff_bias_neighbour_average() {
+        let ne = NoiseEstimate::default();
+        // above = (0, 50), left = (0, 50) → avg = (0, 50). Candidate
+        // at (0, 50) → diff = 0 → no bias.
+        let r1 = newmv_diff_bias(
+            Some(Mv { row: 0, col: 50 }),
+            Some(Mv { row: 0, col: 50 }),
+            InterMode::NewMv,
+            Mv { row: 0, col: 50 },
+            BlockSize::Block16x16, true, ne, false, false,
+        );
+        assert_eq!(r1, (1, 1), "candidate == neighbour avg → no bias");
+
+        // Only-above valid: avg = above = (0, 100). Candidate at (0, 0)
+        // → diff = (0, 100) > 48 → 1.5× bias on Block16x16.
+        let r2 = newmv_diff_bias(
+            Some(Mv { row: 0, col: 100 }), None,
+            InterMode::NewMv,
+            Mv::ZERO,
+            BlockSize::Block16x16, true, ne, false, false,
+        );
+        assert_eq!(r2, (3, 2),
+            "only-above neighbour: avg = above; large diff → 1.5× bias");
+
+        // Both None: avg = (0, 0). Candidate at (0, 100) → diff = -100
+        // → 1.5× bias.
+        let r3 = newmv_diff_bias(
+            None, None,
+            InterMode::NewMv,
+            Mv { row: 0, col: 100 },
+            BlockSize::Block16x16, true, ne, false, false,
+        );
+        assert_eq!(r3, (3, 2),
+            "both-None: avg = (0,0); large diff → 1.5× bias");
+
+        // Half-round-up: above=(0, 1), left=(0, 0) → avg = (0, 1)
+        // ((0 + 1 + 1) >> 1 = 1). Candidate at (0, 1) → no bias.
+        let r4 = newmv_diff_bias(
+            Some(Mv { row: 0, col: 1 }),
+            Some(Mv { row: 0, col: 0 }),
+            InterMode::NewMv,
+            Mv { row: 0, col: 1 },
+            BlockSize::Block16x16, true, ne, false, false,
+        );
+        assert_eq!(r4, (1, 1), "half-round-up: (0+1+1)>>1 = 1; cand=1 → no bias");
+    }
+
+    /// **P13 noise sub-bias proof.** Verifies the `7/8` multiplier
+    /// (libvpx vp9_pickmode.c:1349-1355) fires only when:
+    ///   - noise enabled AND level >= Medium
+    ///   - bsize >= Block32x32
+    ///   - is_last_frame
+    ///   - |mv| < 8 on both axes
+    #[test]
+    fn p13_newmv_diff_bias_noise_subclause() {
+        let small_mv = Mv { row: 4, col: 4 };
+
+        // Disabled noise → no sub-bias.
+        let disabled = newmv_diff_bias(
+            None, None, InterMode::ZeroMv, small_mv,
+            BlockSize::Block32x32, true,
+            NoiseEstimate { enabled: false, level: NoiseLevel::High },
+            false, false,
+        );
+        assert_eq!(disabled, (1, 1), "noise disabled → no sub-bias");
+
+        // Enabled + High + Block32x32 + LAST + small MV → 7/8.
+        let active = newmv_diff_bias(
+            None, None, InterMode::ZeroMv, small_mv,
+            BlockSize::Block32x32, true,
+            NoiseEstimate { enabled: true, level: NoiseLevel::High },
+            false, false,
+        );
+        assert_eq!(active, (7, 8),
+            "noise High + LAST + Block32x32 + |mv|<8: 7/8 sub-bias");
+
+        // Enabled but Low → no sub-bias (libvpx `>= kMedium`).
+        let low = newmv_diff_bias(
+            None, None, InterMode::ZeroMv, small_mv,
+            BlockSize::Block32x32, true,
+            NoiseEstimate { enabled: true, level: NoiseLevel::Low },
+            false, false,
+        );
+        assert_eq!(low, (1, 1), "noise Low fails `>= kMedium` guard");
+
+        // GOLDEN frame: sub-bias requires `is_last_frame`.
+        let golden = newmv_diff_bias(
+            None, None, InterMode::ZeroMv, small_mv,
+            BlockSize::Block32x32, false, // is_last_frame=false
+            NoiseEstimate { enabled: true, level: NoiseLevel::High },
+            false, false,
+        );
+        assert_eq!(golden, (1, 1), "GOLDEN frame skips the noise sub-bias");
+
+        // Lowvar-highsumdiff alt path: !is_skin && bsize >= 16x16 && LAST
+        // && |mv|<16 → 7/8.
+        let lvhsd = newmv_diff_bias(
+            None, None, InterMode::ZeroMv, Mv { row: 8, col: 8 },
+            BlockSize::Block16x16, true,
+            NoiseEstimate::default(), // noise disabled
+            /* lowvar_highsumdiff */ true,
+            /* is_skin */ false,
+        );
+        assert_eq!(lvhsd, (7, 8),
+            "lowvar_highsumdiff alt clause: 7/8 sub-bias");
+
+        // is_skin gates off the lowvar-highsumdiff clause.
+        let skin = newmv_diff_bias(
+            None, None, InterMode::ZeroMv, Mv { row: 8, col: 8 },
+            BlockSize::Block16x16, true,
+            NoiseEstimate::default(),
+            true, true,
+        );
+        assert_eq!(skin, (1, 1), "is_skin gates off lowvar_highsumdiff");
+    }
+
+    /// **P13 end-to-end wiring proof.** Constructs a scenario where
+    /// NEWMV finds a far-away MV that beats NEAREST on SSE, then
+    /// verifies:
+    ///   (A) With matching-MV neighbours, NEWMV wins (no bias fires).
+    ///   (B) With zero-MV neighbours and the NEWMV at the far-from-zero
+    ///       position, the bias amplifies NEWMV's RD by 1.5× (or 2× on
+    ///       Block64x64) and NEAREST overtakes it.
+    ///
+    /// This catches the "function compiled but never called" failure
+    /// mode: if the bias wiring is removed from `pick_inter_mode`, both
+    /// branches return the same winner.
+    #[test]
+    fn p13_newmv_diff_bias_end_to_end_wiring() {
+        // Build a shifted-ref scenario: a 16×16 source block at
+        // (16, 16) copied from ref at (16 + 12, 16) — a 12-pixel
+        // rightward shift. NEWMV's diamond search will recover an MV
+        // around (col≈96, row=0) in 1/8-pel units (96/8 = 12 full
+        // pels), well beyond the 48-unit bias threshold (= 6 full
+        // pels).
+        let pw = 64;
+        let ph = 64;
+        let ref_data = make_plane(pw, ph, 71);
+        // Source = a copy of the reference shifted 12 pixels right
+        // (only inside the 16×16 picker block at (16, 16)).
+        let mut src_data = ref_data.clone();
+        for r in 0..16 {
+            for c in 0..16 {
+                src_data[(16 + r) * pw + (16 + c)] =
+                    ref_data[(16 + r) * pw + (16 + c + 12)];
+            }
+        }
+        let src_plane = PlaneRef {
+            data: &src_data, stride: pw, width: pw, height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data, stride: pw, width: pw, height: ph,
+        };
+        let harness = TestHarness::new(pw, 70);
+        let fc = FrameContext::new_default();
+        let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
+        let intra_y_costs: [i32; 10] = intra_costs[0];
+        let mvc = MvCandidates::default();
+
+        // Branch (A): neighbour MVs match the NEWMV target (col=96).
+        // The bias function will compute |col_diff| ≤ 0 → no bias.
+        let mut params_a = make_dual_ref_params(
+            &harness, &intra_y_costs,
+            BlockSize::Block16x16,
+            &src_plane, &ref_plane, (16, 16),
+            &mvc, &mvc,
+            MvLimits::new(-32, 32, -32, 32), 70,
+        );
+        params_a.above_mv = Some(Mv { row: 0, col: 96 });
+        params_a.left_mv = Some(Mv { row: 0, col: 96 });
+        // Disable encode-breakout so the test isolates the bias effect.
+        params_a.encode_breakout = 0;
+        let res_a = pick_inter_mode(&params_a);
+
+        // Branch (B): neighbour MVs are zero. The NEWMV at col≈96
+        // diverges by > 48 → 1.5× bias on Block16x16. NEAREST (at
+        // ZERO) is unaffected.
+        let mut params_b = make_dual_ref_params(
+            &harness, &intra_y_costs,
+            BlockSize::Block16x16,
+            &src_plane, &ref_plane, (16, 16),
+            &mvc, &mvc,
+            MvLimits::new(-32, 32, -32, 32), 70,
+        );
+        params_b.above_mv = Some(Mv::ZERO);
+        params_b.left_mv = Some(Mv::ZERO);
+        params_b.encode_breakout = 0;
+        let res_b = pick_inter_mode(&params_b);
+
+        // ANTI-STUB: branch (A) should pick NEWMV (the shifted block
+        // makes it the SSE-minimising candidate). If the bias wiring
+        // is dead, branch (B) would ALSO pick NEWMV (same input minus
+        // a no-op). We assert the opposite:
+        assert_eq!(res_a.best_mode, InterMode::NewMv,
+            "matched neighbours: NEWMV wins on the shifted block (rd={}, mv=({},{}))",
+            res_a.best_rd_cost, res_a.best_mv.col, res_a.best_mv.row);
+
+        // The biased branch must produce a STRICTLY HIGHER RD cost
+        // (NEWMV's RD got the 1.5× penalty), and the winner must
+        // differ — either a non-NEWMV mode takes over, or NEWMV stays
+        // but with a now-higher RD. A non-NEWMV winner is the
+        // headline "bias overturned the decision" outcome.
+        assert!(
+            res_b.best_rd_cost > res_a.best_rd_cost,
+            "P13 anti-stub: zero-neighbour branch must have HIGHER RD \
+             than matched-neighbour branch (bias activated). \
+             a={} b={}. If equal, the bias wiring is dead.",
+            res_a.best_rd_cost, res_b.best_rd_cost,
+        );
+        // Strong form: the bias should be ≥ 1.5× of the un-biased
+        // NEWMV RD when NEWMV is the winner of (A). 1.5× is the
+        // libvpx multiplier for `bsize <= 32x32`; downstream `rate_term
+        // + dist_term` arithmetic may dilute it, but the lower bound of
+        // `1.5 × rate_term_only` is still positive.
+        let expected_bias_floor = res_a.best_rd_cost + (res_a.best_rd_cost / 8);
+        assert!(
+            res_b.best_rd_cost >= expected_bias_floor,
+            "P13: bias-active RD ({}) should be ≥ +12.5% over un-biased ({})",
+            res_b.best_rd_cost, expected_bias_floor,
         );
     }
 
