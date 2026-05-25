@@ -982,6 +982,325 @@ mod tests {
         }
     }
 
+    /// `from_variance_hint`: an all-Block64x64 hint produces exactly
+    /// one leaf at the top-left, and every cell carries Block64x64
+    /// after construction.
+    #[test]
+    fn from_variance_hint_all_64x64_yields_one_leaf() {
+        let hint = uniform_hint(BlockSize::Block64x64);
+        let result = NonRdPartitionResult::from_variance_hint(&hint);
+        assert_eq!(result.leaves.len(), 1);
+        assert_eq!(result.leaves[0].mi_row_in_sb, 0);
+        assert_eq!(result.leaves[0].mi_col_in_sb, 0);
+        assert_eq!(result.leaves[0].bsize, BlockSize::Block64x64);
+        // Cells must mirror the hint.
+        for row in &result.cells {
+            for &c in row {
+                assert_eq!(c, BlockSize::Block64x64);
+            }
+        }
+    }
+
+    /// `from_variance_hint`: an all-Block8x8 hint produces 64 leaves
+    /// (one per 8×8 cell). The `visited` map keeps each leaf unique.
+    #[test]
+    fn from_variance_hint_all_8x8_yields_64_leaves() {
+        let hint = uniform_hint(BlockSize::Block8x8);
+        let result = NonRdPartitionResult::from_variance_hint(&hint);
+        assert_eq!(result.leaves.len(), 64);
+        // Every leaf must be Block8x8 with `pick == IMPOSSIBLE`.
+        for leaf in &result.leaves {
+            assert_eq!(leaf.bsize, BlockSize::Block8x8);
+            assert_eq!(leaf.pick, PartitionRdCandidate::IMPOSSIBLE);
+        }
+    }
+
+    /// `from_variance_hint`: a mixed hint produces the right number
+    /// of leaves: one 32×32 leaf (top-left) + 12 Block16x16 leaves
+    /// (remaining 3 quadrants). Exercises the `visited[r][c]` skip
+    /// branch (line 276) when entering an already-claimed cell.
+    #[test]
+    fn from_variance_hint_mixed_skips_visited_cells() {
+        let mut hint = uniform_hint(BlockSize::Block16x16);
+        // Top-left 4×4 cells (one Block32x32 leaf).
+        for r in 0..4 {
+            for c in 0..4 {
+                hint.cells[r][c] = BlockSize::Block32x32;
+            }
+        }
+        let result = NonRdPartitionResult::from_variance_hint(&hint);
+        // 1 (32×32) + 12 (the 16×16 quadrants in rows 0..4 cols 4..8,
+        // rows 4..8 cols 0..4, rows 4..8 cols 4..8).
+        // Specifically: each 32×32 quadrant has 4 × Block16x16 leaves,
+        // and three such quadrants → 12 leaves + 1 = 13.
+        assert_eq!(result.leaves.len(), 13);
+        // Top-left is a Block32x32 leaf at (0,0).
+        let top_left = result
+            .leaves
+            .iter()
+            .find(|l| l.mi_row_in_sb == 0 && l.mi_col_in_sb == 0)
+            .expect("top-left leaf");
+        assert_eq!(top_left.bsize, BlockSize::Block32x32);
+    }
+
+    /// `variance_hint_bounds`: defensive `min > max` clamp. Constructed
+    /// case: we can't directly cause `min > max` since the floor lifts
+    /// both equally — but the test demonstrates the canonical "all
+    /// Block64x64" path where min == max and no defensive clamp fires.
+    /// Combined with the all-8x8 test we cover the floor + clamp
+    /// branches.
+    #[test]
+    fn variance_hint_bounds_all_64x64_returns_max_max() {
+        let hint = uniform_hint(BlockSize::Block64x64);
+        let (min_bs, max_bs) = variance_hint_bounds(&hint);
+        assert_eq!(min_bs, BlockSize::Block64x64);
+        assert_eq!(max_bs, BlockSize::Block64x64);
+    }
+
+    /// `nonrd_pick_partition`: picker returns `None` for every NONE
+    /// candidate. The descent must fall back to the variance hint via
+    /// `inherit_hint`, leaving the hint's leaves intact. Exercises:
+    ///   - `none_allowed.then(...)` flatten returning None (lines
+    ///     509-516 false path),
+    ///   - `if let Some(child_bsize) = ...` False (line 532) at
+    ///     Block16x16,
+    ///   - `inherit_hint` body (lines 691-720).
+    #[test]
+    fn picker_returns_none_falls_back_to_hint() {
+        let fc = FrameContext::new_default();
+        let pc = partition_costs(&fc);
+        let hint = uniform_hint(BlockSize::Block16x16);
+        let params = make_params(&pc, BlockSize::Block16x16, BlockSize::Block64x64);
+        // Picker rejects every NONE candidate.
+        let mut picker = |_x: usize, _y: usize, _bs: BlockSize| None;
+        let result = nonrd_pick_partition(&hint, &params, &mut picker);
+        // With NONE infeasible at every level, the descent inherits
+        // the hint's Block16x16 leaves throughout.
+        assert_eq!(result.leaves.len(), 16);
+        for leaf in &result.leaves {
+            assert_eq!(leaf.bsize, BlockSize::Block16x16);
+            assert_eq!(leaf.pick, PartitionRdCandidate::IMPOSSIBLE);
+        }
+        // Every cell must match the hint.
+        for row in &result.cells {
+            for &c in row {
+                assert_eq!(c, BlockSize::Block16x16);
+            }
+        }
+    }
+
+    /// `nonrd_pick_partition` with `max_partition_size = Block16x16`:
+    /// the descent's call at Block64x64 has `none_allowed` False
+    /// (bsize > max). The SPLIT branch fires, NONE is never tried
+    /// at 64×64. Exercises line 498 False path.
+    #[test]
+    fn none_disallowed_when_bsize_exceeds_max() {
+        let fc = FrameContext::new_default();
+        let pc = partition_costs(&fc);
+        let hint = uniform_hint(BlockSize::Block16x16);
+        let params = make_params(&pc, BlockSize::Block16x16, BlockSize::Block16x16);
+        // Picker tracks every bsize it sees so the test can verify
+        // that NONE was NEVER tried at Block32x32 or Block64x64.
+        let seen = std::cell::RefCell::new(Vec::<BlockSize>::new());
+        let mut picker = |_x: usize, _y: usize, bs: BlockSize| {
+            seen.borrow_mut().push(bs);
+            Some(PartitionRdCandidate {
+                rate: 10,
+                dist: 1,
+                mv: Mv::ZERO,
+                mode: 0,
+                ref_frame: 0,
+            })
+        };
+        let _ = nonrd_pick_partition(&hint, &params, &mut picker);
+        let calls = seen.into_inner();
+        // The picker should only ever be invoked at Block16x16 (since
+        // 32×32 and 64×64 have bsize > max_partition_size).
+        assert!(
+            calls.iter().all(|&bs| bs == BlockSize::Block16x16),
+            "picker should only see Block16x16, got: {calls:?}",
+        );
+        assert!(
+            !calls.is_empty(),
+            "picker must have been called at least once at Block16x16",
+        );
+    }
+
+    /// `nonrd_pick_partition` with `min_partition_size = Block32x32`:
+    /// at Block16x16 the descent's NONE check fails (bsize < min).
+    /// The recursion below 32x32 is also capped (`bsize_at_floor`
+    /// True). The end result: NONE wins at 32x32 (the smallest
+    /// allowed). Exercises line 499 False path.
+    #[test]
+    fn none_disallowed_when_bsize_below_min() {
+        let fc = FrameContext::new_default();
+        let pc = partition_costs(&fc);
+        let hint = uniform_hint(BlockSize::Block32x32);
+        let params = make_params(&pc, BlockSize::Block32x32, BlockSize::Block64x64);
+        // Picker returns very low cost only at sizes >= 32x32. At
+        // smaller sizes it would crash — but we won't see those calls
+        // because min_partition_size = Block32x32.
+        let mut picker = |_x: usize, _y: usize, bs: BlockSize| match bs {
+            BlockSize::Block16x16 | BlockSize::Block8x8 => {
+                panic!("picker invoked at bsize < min: {bs:?}")
+            }
+            _ => Some(PartitionRdCandidate {
+                rate: 10,
+                dist: 1,
+                mv: Mv::ZERO,
+                mode: 0,
+                ref_frame: 0,
+            }),
+        };
+        let result = nonrd_pick_partition(&hint, &params, &mut picker);
+        // The descent picks either Block64x64 (NONE wins at top) or
+        // 4× Block32x32 (SPLIT wins). Either way, no leaves smaller
+        // than 32×32.
+        for leaf in &result.leaves {
+            assert!(
+                matches!(
+                    leaf.bsize,
+                    BlockSize::Block32x32 | BlockSize::Block64x64
+                ),
+                "no leaf below min_partition_size: got {:?}",
+                leaf.bsize,
+            );
+        }
+    }
+
+    /// `commit_leaf`: NONE wins at Block64x64 after some children
+    /// have speculatively committed Block32x32 leaves during the
+    /// SPLIT exploration. The `state.leaves.retain` body (lines
+    /// 669-673) must drop the speculative leaves so we end up with
+    /// exactly one Block64x64 leaf. Exercises the `retain` true
+    /// branch (children removed).
+    #[test]
+    fn commit_leaf_drops_speculative_children() {
+        let fc = FrameContext::new_default();
+        let pc = partition_costs(&fc);
+        let hint = uniform_hint(BlockSize::Block16x16);
+        let params = make_params(&pc, BlockSize::Block16x16, BlockSize::Block64x64);
+        // Picker: very low cost at 64x64 → NONE wins. Modest cost at
+        // 32x32 → SPLIT children also feasible (they get pushed as
+        // speculative leaves), but their RD sum is worse than the
+        // 64×64 NONE → commit_leaf rolls them back.
+        let mut picker = |_x: usize, _y: usize, bs: BlockSize| {
+            let (r, d) = match bs {
+                BlockSize::Block64x64 => (10u32, 1u32),
+                BlockSize::Block32x32 => (100, 50_000),
+                BlockSize::Block16x16 => (1000, 100_000),
+                _ => (u32::MAX, u32::MAX),
+            };
+            Some(PartitionRdCandidate {
+                rate: r,
+                dist: d,
+                mv: Mv::ZERO,
+                mode: 0,
+                ref_frame: 0,
+            })
+        };
+        let result = nonrd_pick_partition(&hint, &params, &mut picker);
+        // After commit_leaf rolls back the speculative SPLIT children,
+        // we must end up with exactly one Block64x64 leaf.
+        assert_eq!(
+            result.leaves.len(),
+            1,
+            "commit_leaf must roll back speculative children, got leaves: {:?}",
+            result
+                .leaves
+                .iter()
+                .map(|l| (l.mi_row_in_sb, l.mi_col_in_sb, l.bsize))
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(result.leaves[0].bsize, BlockSize::Block64x64);
+    }
+
+    /// SPLIT loses on the final RD comparison (line 587 False
+    /// branch): all four children evaluate successfully (no early-out)
+    /// but the summed SPLIT cost exceeds the NONE best. The result
+    /// must be a single NONE leaf at this level.
+    #[test]
+    fn split_loses_on_final_comparison() {
+        let fc = FrameContext::new_default();
+        let pc = partition_costs(&fc);
+        let hint = uniform_hint(BlockSize::Block16x16);
+        let params = make_params(&pc, BlockSize::Block16x16, BlockSize::Block64x64);
+        // Picker: NONE at 64×64 is very cheap. NONE at 32×32 is just
+        // barely affordable per child (no early-out) but 4× exceeds
+        // the 64×64 cost. NONE at 16×16 is similar.
+        let mut picker = |_x: usize, _y: usize, bs: BlockSize| {
+            let (r, d) = match bs {
+                BlockSize::Block64x64 => (10u32, 100u32),
+                // Each 32x32 child is (rate=30, dist=80). rd per child
+                // ≈ lambda*30/512 + 80<<7 = small. 4× still beats
+                // 64×64? 4*(30, 80) = (120, 320). rd_split = ~256*128
+                // + 120*lambda/512. We want this > 64x64 NONE rd:
+                // 100<<7 = 12800. 320<<7 = 40960. Definitely larger.
+                BlockSize::Block32x32 => (30, 80),
+                BlockSize::Block16x16 => (40, 20),
+                _ => (u32::MAX, u32::MAX),
+            };
+            Some(PartitionRdCandidate {
+                rate: r,
+                dist: d,
+                mv: Mv::ZERO,
+                mode: 0,
+                ref_frame: 0,
+            })
+        };
+        let result = nonrd_pick_partition(&hint, &params, &mut picker);
+        // SPLIT loses → committed as a single Block64x64 leaf.
+        assert_eq!(result.leaves.len(), 1);
+        assert_eq!(result.leaves[0].bsize, BlockSize::Block64x64);
+    }
+
+    /// Early-out path (line 570): a SPLIT child's accumulated RD
+    /// already exceeds the NONE best, so the remaining children are
+    /// skipped. We can't observe the early-out directly, but we can
+    /// verify the result is consistent with the NONE winner (i.e.
+    /// SPLIT did not get committed even though some children were
+    /// evaluated).
+    #[test]
+    fn split_early_out_when_partial_sum_exceeds_best() {
+        let fc = FrameContext::new_default();
+        let pc = partition_costs(&fc);
+        let hint = uniform_hint(BlockSize::Block16x16);
+        let params = make_params(&pc, BlockSize::Block16x16, BlockSize::Block64x64);
+        // Picker: extremely cheap NONE at 64×64 (best_rd_cost ≈ ~128),
+        // very expensive children at 32×32. The first child's RD
+        // alone exceeds the NONE best → early-out kicks in.
+        let call_count = std::cell::Cell::new(0u32);
+        let mut picker = |_x: usize, _y: usize, bs: BlockSize| {
+            call_count.set(call_count.get() + 1);
+            let (r, d) = match bs {
+                BlockSize::Block64x64 => (1u32, 1u32),
+                BlockSize::Block32x32 => (10_000, 1_000_000_000),
+                _ => (u32::MAX, u32::MAX),
+            };
+            Some(PartitionRdCandidate {
+                rate: r,
+                dist: d,
+                mv: Mv::ZERO,
+                mode: 0,
+                ref_frame: 0,
+            })
+        };
+        let result = nonrd_pick_partition(&hint, &params, &mut picker);
+        // NONE at 64×64 must be the winner.
+        assert_eq!(result.leaves.len(), 1);
+        assert_eq!(result.leaves[0].bsize, BlockSize::Block64x64);
+        // The picker was called for at least the 64×64 NONE + one
+        // 32×32 NONE before early-out. The early-out invariant: total
+        // picker calls is strictly less than the "all children fully
+        // explored" count (4 children × 4 grandchildren = 16 at 32×32
+        // level if every child fully recursed).
+        assert!(
+            call_count.get() < 20,
+            "early-out should bound picker calls, got {}",
+            call_count.get(),
+        );
+    }
+
     /// **Test 6 — NONE-vs-SPLIT RD comparison: SPLIT wins when
     /// children sum is cheaper.**
     /// Picker returns very high cost for the 64×64 NONE candidate but

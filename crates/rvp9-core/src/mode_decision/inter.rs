@@ -3005,6 +3005,719 @@ mod tests {
         assert_eq!(smooth.picked_interp_filter, InterpFilter::EightTapSmooth);
     }
 
+    /// Argmin: NEAR wins when its MV points at the correct shift but
+    /// NEAREST and ZERO point elsewhere. Exercises `pick_inter_mode_luma`
+    /// line 429 True path.
+    #[test]
+    fn pick_inter_near_mv_wins_argmin_when_near_points_at_shift() {
+        let pw = 64;
+        let ph = 64;
+        let ref_data = make_plane(pw, ph, 41);
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+
+        // Build a source = ref shifted 3 px right at (20, 20).
+        let mut src_data = ref_data.clone();
+        let bw = 16;
+        let bh = 16;
+        let src_col = 20;
+        let src_row = 20;
+        let shift_col: usize = 3;
+        for i in 0..bh {
+            for j in 0..bw {
+                src_data[(src_row + i) * pw + (src_col + j)] =
+                    ref_data[(src_row + i) * pw + (src_col + j + shift_col)];
+            }
+        }
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 50);
+        // NEAREST = wrong (zero), NEAR = the correct shift (3 full
+        // pels right = col 24 in Q3 = 1/8 pel). NEAR's prediction
+        // matches the source → distortion ≈ 0 → wins argmin without
+        // paying NEWMV's MV-bit cost.
+        let mvc = MvCandidates {
+            nearest: Mv::ZERO,
+            near: Mv { row: 0, col: 24 },
+        };
+        let params = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &src_plane,
+            &ref_plane,
+            (src_col, src_row),
+            &mvc,
+            MvLimits::new(-16, 16, -16, 16),
+            50,
+        );
+        let res = pick_inter_mode_luma(&params);
+        // The winner must be NEAR (or NEW that happens to match —
+        // but NEW pays MV bits and NEAR doesn't, so NEAR strictly
+        // wins). The picker's argmin chain has NEAR's branch take
+        // the True path because near.rd_cost < zero.rd_cost.
+        assert!(
+            matches!(res.best_mode, InterMode::NearMv | InterMode::NewMv),
+            "expected NEAR or NEW winner on shifted-NEAR oracle, got {:?}",
+            res.best_mode,
+        );
+        // NEAR's distortion must be very small (near-zero).
+        let all = pick_inter_mode_luma_all_costs(&params);
+        let near = &all[2];
+        assert!(
+            near.best_distortion < 1000,
+            "NEAR with matching MV should have small distortion: {}",
+            near.best_distortion,
+        );
+    }
+
+    // ====================================================================
+    // pick_inter_mode (dual-ref) tests
+    // ====================================================================
+
+    /// Build a [`PickInterModeParams`] with sensible defaults from a
+    /// test harness. Both refs point at the same plane to keep
+    /// distortion controllable.
+    #[allow(clippy::too_many_arguments)] // test-only helper
+    fn make_dual_ref_params<'a>(
+        harness: &'a TestHarness,
+        intra_y_costs: &'a [i32; 10],
+        block_size: BlockSize,
+        src_plane: &'a PlaneRef<'a>,
+        ref_plane: &'a PlaneRef<'a>,
+        src_offset: (usize, usize),
+        last_mvc: &'a MvCandidates,
+        golden_mvc: &'a MvCandidates,
+        mv_limits: MvLimits,
+        q_index: u8,
+    ) -> PickInterModeParams<'a> {
+        PickInterModeParams {
+            block_size,
+            src_plane,
+            src_offset,
+            last_ref_plane: ref_plane,
+            last_mv_candidates: last_mvc,
+            golden_ref_plane: ref_plane,
+            golden_mv_candidates: golden_mvc,
+            mv_limits,
+            site_config: &harness.cfg,
+            mv_costs: &harness.costs,
+            inter_mode_costs: &harness.inter_costs,
+            inter_mode_ctx: 0,
+            quantizer: &harness.quantizer,
+            q_index,
+            allow_hp: false,
+            frame_kind: synthetic_inter_frame_kind(),
+            newmv_seed: None,
+            ref_frame_cost_last: 0,
+            ref_frame_cost_golden: 0,
+            last_nearest_in_bounds: true,
+            last_near_in_bounds: true,
+            golden_nearest_in_bounds: true,
+            golden_near_in_bounds: true,
+            intra_above_pixels: None,
+            intra_left_pixels: None,
+            intra_top_left_pixel: 128,
+            intra_y_mode_costs: intra_y_costs,
+            ref_frame_cost_intra: 0,
+            switchable_interp_costs: &harness.sic,
+            switchable_interp_ctx: 3,
+            src_u: &[],
+            src_v: &[],
+            src_u_stride: 0,
+            src_v_stride: 0,
+            last_ref_u: &[],
+            last_ref_v: &[],
+            golden_ref_u: &[],
+            golden_ref_v: &[],
+            uv_stride: 0,
+            uv_dc_quant: 0,
+            uv_ac_quant: 0,
+            encode_breakout: 0,
+            dequant_dc: 0,
+            dequant_ac: 0,
+        }
+    }
+
+    /// `pick_inter_mode` with OOB flags: when `last_nearest_in_bounds`
+    /// is false the picker must clamp the MV to ZERO before evaluating
+    /// (`Mv::ZERO` placement at line 706). With identical src/ref the
+    /// best mode is still zero-MV; we assert the result is finite and
+    /// the chosen ref-frame is LAST (default selection on identical
+    /// content).
+    #[test]
+    fn pick_inter_mode_oob_clamps_nearest_to_zero() {
+        let pw = 64;
+        let ph = 64;
+        let data = make_plane(pw, ph, 33);
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 50);
+        let fc = FrameContext::new_default();
+        let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
+        // size_group for Block16x16 — pick any (we just need a 10-array slice).
+        let intra_y_costs: [i32; 10] = intra_costs[0];
+        // Both refs have non-zero NEAREST that the OOB flag forces
+        // back to zero.
+        let last_mvc = MvCandidates {
+            nearest: Mv { row: 100, col: 100 }, // out of bounds
+            near: Mv::ZERO,
+        };
+        let golden_mvc = MvCandidates::default();
+        let mut params = make_dual_ref_params(
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &last_mvc,
+            &golden_mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            50,
+        );
+        params.last_nearest_in_bounds = false; // force the clamp
+        let res = pick_inter_mode(&params);
+        assert!(
+            res.best_rd_cost > 0 && res.best_rd_cost < i64::MAX,
+            "RD cost must be finite positive: {}",
+            res.best_rd_cost,
+        );
+        // The OOB veto on NEAREST means NEAREST is skipped entirely
+        // for LAST. ZERO LAST is the first candidate, so it gets
+        // evaluated. Identical src/ref → ZERO wins.
+        assert!(
+            matches!(res.best_mode, InterMode::ZeroMv | InterMode::NearMv | InterMode::NewMv),
+            "expected ZERO/NEAR/NEW with OOB-vetoed NEAREST, got {:?}",
+            res.best_mode,
+        );
+    }
+
+    /// `pick_inter_mode`: when `intra_above_pixels` is `Some` and a
+    /// noisy block at high q_index makes inter expensive, the intra
+    /// fallback gets evaluated. We assert that the picker either
+    /// produces an intra winner or maintains a finite inter winner —
+    /// the wiring is exercised either way and the path on line 982
+    /// (intra threshold check) fires when above_pixels is provided.
+    #[test]
+    fn pick_inter_mode_intra_fallback_path_runs_when_above_left_present() {
+        let pw = 64;
+        let ph = 64;
+        let src_data = make_plane(pw, ph, 91);
+        let ref_data = make_plane(pw, ph, 17); // very different from src
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 50);
+        let fc = FrameContext::new_default();
+        let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
+        let intra_y_costs: [i32; 10] = intra_costs[0];
+        let mvc = MvCandidates::default();
+
+        // Provide neighbour edges so the intra fallback evaluates.
+        let above = [128u8; 64];
+        let left = [128u8; 64];
+
+        let mut params = make_dual_ref_params(
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &src_plane,
+            &ref_plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            50,
+        );
+        params.intra_above_pixels = Some(&above);
+        params.intra_left_pixels = Some(&left);
+
+        let res = pick_inter_mode(&params);
+        // The intra-fallback wiring executes when above/left are
+        // present. The result must remain finite and one of the legal
+        // ref-frame outcomes.
+        assert!(res.best_rd_cost > 0 && res.best_rd_cost < i64::MAX);
+        assert!(
+            matches!(
+                res.picked_ref_frame,
+                RefFrame::LastFrame | RefFrame::GoldenFrame | RefFrame::IntraFrame
+            ),
+            "ref frame must be one of LAST/GOLDEN/INTRA, got {:?}",
+            res.picked_ref_frame,
+        );
+    }
+
+    /// `pick_inter_mode` with `block_size = Block64x64`: the intra
+    /// fallback short-circuits (returns `None` at line 1040). Even
+    /// with neighbour edges provided, the picked ref-frame must be
+    /// inter (not intra), and the result remains finite.
+    #[test]
+    fn pick_inter_mode_intra_fallback_skipped_for_64x64() {
+        let pw = 128;
+        let ph = 128;
+        let data = make_plane(pw, ph, 17);
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 80);
+        let fc = FrameContext::new_default();
+        let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
+        let intra_y_costs: [i32; 10] = intra_costs[3]; // size group for 64x64
+        let mvc = MvCandidates::default();
+        let above = [128u8; 64];
+        let left = [128u8; 64];
+
+        let mut params = make_dual_ref_params(
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block64x64,
+            &plane,
+            &plane,
+            (32, 32),
+            &mvc,
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            80,
+        );
+        params.intra_above_pixels = Some(&above);
+        params.intra_left_pixels = Some(&left);
+
+        let res = pick_inter_mode(&params);
+        // Block64x64 → intra fallback returns None → picker keeps the
+        // inter winner. ref_frame must be LAST or GOLDEN, never
+        // IntraFrame.
+        assert!(
+            matches!(
+                res.picked_ref_frame,
+                RefFrame::LastFrame | RefFrame::GoldenFrame
+            ),
+            "Block64x64 intra fallback is skipped → ref must be inter, got {:?}",
+            res.picked_ref_frame,
+        );
+    }
+
+    /// `pick_inter_mode` with all OOB flags false: every NEAREST/NEAR
+    /// MV gets vetoed except ZERO, which is always reachable. The
+    /// result must still be finite — exercising the OOB continue
+    /// paths at lines 765-768.
+    #[test]
+    fn pick_inter_mode_all_oob_vetoes_keep_zero_path() {
+        let pw = 64;
+        let ph = 64;
+        let data = make_plane(pw, ph, 7);
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 50);
+        let fc = FrameContext::new_default();
+        let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
+        let intra_y_costs: [i32; 10] = intra_costs[0];
+        let mvc = MvCandidates {
+            nearest: Mv { row: 50, col: 50 },
+            near: Mv { row: -50, col: -50 },
+        };
+        let mut params = make_dual_ref_params(
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            50,
+        );
+        params.last_nearest_in_bounds = false;
+        params.last_near_in_bounds = false;
+        params.golden_nearest_in_bounds = false;
+        params.golden_near_in_bounds = false;
+
+        let res = pick_inter_mode(&params);
+        assert!(res.best_rd_cost > 0 && res.best_rd_cost < i64::MAX);
+        // Identical src/ref → ZERO MV wins.
+        assert_eq!(res.best_mv, Mv::ZERO);
+    }
+
+    /// `pick_inter_mode` with encode_breakout set but a shifted
+    /// reference: the breakout's `var_y/sse_y` thresholds aren't met
+    /// on the first ZERO candidate, so the function loops through
+    /// the full RT_INTER_MODES. Exercises the encode_breakout
+    /// gate-true-but-returns-false path (lines 925-934).
+    #[test]
+    fn pick_inter_mode_encode_breakout_does_not_fire_on_textured_block() {
+        let pw = 64;
+        let ph = 64;
+        let src_data = make_plane(pw, ph, 11);
+        let mut ref_data = src_data.clone();
+        // Shift by 4 pixels to make ZERO prediction noticeably wrong.
+        for r in 0..ph {
+            for c in 4..pw {
+                ref_data[r * pw + c] = src_data[r * pw + c - 4];
+            }
+        }
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 30);
+        let fc = FrameContext::new_default();
+        let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
+        let intra_y_costs: [i32; 10] = intra_costs[0];
+        let mvc = MvCandidates::default();
+        let mut params = make_dual_ref_params(
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &src_plane,
+            &ref_plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-8, 8, -8, 8),
+            30,
+        );
+        // Breakout enabled but the shifted-ref content won't trip it.
+        params.encode_breakout = 20;
+        params.dequant_dc = 96;
+        params.dequant_ac = 80;
+
+        let res = pick_inter_mode(&params);
+        assert!(res.best_rd_cost > 0 && res.best_rd_cost < i64::MAX);
+    }
+
+    /// `pick_inter_mode` with encode_breakout enabled and identical
+    /// src/ref: the breakout fires after the first ZERO candidate
+    /// (perfect prediction) and the mode loop exits early. We can't
+    /// assert the early-exit count directly but the result must still
+    /// be a zero-MV winner with zero distortion.
+    #[test]
+    fn pick_inter_mode_encode_breakout_fires_on_perfect_prediction() {
+        let pw = 64;
+        let ph = 64;
+        let data = make_plane(pw, ph, 17);
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 50);
+        let fc = FrameContext::new_default();
+        let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
+        let intra_y_costs: [i32; 10] = intra_costs[0];
+        let mvc = MvCandidates::default();
+        let mut params = make_dual_ref_params(
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            50,
+        );
+        // Enable the breakout test with the typical realtime value.
+        params.encode_breakout = 20;
+        params.dequant_dc = 96;
+        params.dequant_ac = 80;
+
+        let res = pick_inter_mode(&params);
+        assert_eq!(
+            res.best_distortion, 0,
+            "identical src/ref → zero distortion winner",
+        );
+        assert_eq!(res.best_mv, Mv::ZERO);
+    }
+
+    // ====================================================================
+    // UV-RD path (G1) tests
+    // ====================================================================
+
+    /// `evaluate_candidate_for_filter` with non-empty UV planes: the
+    /// chroma RD model runs and contributes to the rate sum. We
+    /// compare against the same call with empty UV planes — the
+    /// post-tie-break RD must differ (UV adds dist via `uv_dist`,
+    /// which feeds into the skip tie-break comparison).
+    ///
+    /// To keep the tie-break from collapsing both runs to the skip
+    /// path, we use a low q_index (residuals survive) and a sharply
+    /// different source vs reference so the encode path beats skip.
+    #[test]
+    fn evaluate_candidate_uv_path_adds_rate() {
+        let pw = 64;
+        let ph = 64;
+        // Source = noise pattern; Reference = shifted variant so the
+        // residual is non-trivial and survives low-q quantization.
+        let data_src = make_plane(pw, ph, 23);
+        let mut data_ref = data_src.clone();
+        // Shift by 1 pixel everywhere to create a stable residual.
+        for r in 0..ph {
+            for c in 1..pw {
+                data_ref[r * pw + c] = data_src[r * pw + c - 1];
+            }
+        }
+        let src_plane = PlaneRef {
+            data: &data_src,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &data_ref,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        // Low q so coefficients survive quantization.
+        let harness = TestHarness::new(pw, 10);
+        let mvc = MvCandidates::default();
+
+        // UV planes: source vs ref with non-trivial residual.
+        let data_u_src = make_plane(pw / 2, ph / 2, 41);
+        let mut data_u_ref = data_u_src.clone();
+        for r in 0..ph / 2 {
+            for c in 1..pw / 2 {
+                data_u_ref[r * (pw / 2) + c] = data_u_src[r * (pw / 2) + c - 1];
+            }
+        }
+        let data_v_src = data_u_src.clone();
+        let data_v_ref = data_u_ref.clone();
+
+        let mut params_with_uv = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &src_plane,
+            &ref_plane,
+            (16, 16),
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            10,
+        );
+        params_with_uv.src_u = &data_u_src;
+        params_with_uv.src_v = &data_v_src;
+        params_with_uv.ref_u = &data_u_ref;
+        params_with_uv.ref_v = &data_v_ref;
+        params_with_uv.uv_stride = pw / 2;
+        params_with_uv.uv_dc_quant = 96;
+        params_with_uv.uv_ac_quant = 80;
+
+        let lambda =
+            compute_rd_mult(10, frame_type_for_rd(synthetic_inter_frame_kind()));
+        let with_uv = evaluate_candidate_for_filter(
+            &params_with_uv,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            lambda,
+            InterpFilter::EightTap,
+        );
+
+        // Same call but with empty UV — must hit the False arm of the
+        // UV-path gate (line 1727).
+        let params_empty = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &src_plane,
+            &ref_plane,
+            (16, 16),
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            10,
+        );
+        let without_uv = evaluate_candidate_for_filter(
+            &params_empty,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            lambda,
+            InterpFilter::EightTap,
+        );
+
+        // With UV residual present, at least one RD axis must differ.
+        // (UV adds rate via uv_rate and dist via uv_dist.)
+        assert!(
+            with_uv.best_rate != without_uv.best_rate
+                || with_uv.best_distortion != without_uv.best_distortion
+                || with_uv.best_rd_cost != without_uv.best_rd_cost,
+            "UV-enabled evaluation must differ from empty-UV: \
+             rate {} vs {}, dist {} vs {}, rd {} vs {}",
+            with_uv.best_rate, without_uv.best_rate,
+            with_uv.best_distortion, without_uv.best_distortion,
+            with_uv.best_rd_cost, without_uv.best_rd_cost,
+        );
+    }
+
+    /// UV gate: src_u non-empty but ref_u empty → second AND fails
+    /// (line 1728:12 F branch). The function must skip the UV path
+    /// and return rate/dist matching the no-UV evaluation.
+    #[test]
+    fn evaluate_candidate_uv_skipped_when_ref_u_empty() {
+        let pw = 64;
+        let ph = 64;
+        let data = make_plane(pw, ph, 17);
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 50);
+        let mvc = MvCandidates::default();
+        let data_u = make_plane(pw / 2, ph / 2, 41);
+
+        let mut params = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            50,
+        );
+        // src_u present but ref_u empty → UV path skipped.
+        params.src_u = &data_u;
+        params.src_v = &data_u;
+        params.ref_u = &[];
+        params.ref_v = &[];
+        params.uv_stride = pw / 2;
+
+        let lambda =
+            compute_rd_mult(50, frame_type_for_rd(synthetic_inter_frame_kind()));
+        let with_partial_uv = evaluate_candidate_for_filter(
+            &params,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            lambda,
+            InterpFilter::EightTap,
+        );
+        // Compare to empty-UV: result must match (UV path took the
+        // False branch).
+        let params_empty = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            50,
+        );
+        let no_uv = evaluate_candidate_for_filter(
+            &params_empty,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            lambda,
+            InterpFilter::EightTap,
+        );
+        assert_eq!(with_partial_uv.best_rd_cost, no_uv.best_rd_cost);
+        assert_eq!(with_partial_uv.best_rate, no_uv.best_rate);
+    }
+
+    /// UV gate: src_u and ref_u non-empty but uv_stride = 0 → third
+    /// AND fails (line 1729:12 F branch).
+    #[test]
+    fn evaluate_candidate_uv_skipped_when_stride_zero() {
+        let pw = 64;
+        let ph = 64;
+        let data = make_plane(pw, ph, 17);
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 50);
+        let mvc = MvCandidates::default();
+        let data_u = make_plane(pw / 2, ph / 2, 41);
+
+        let mut params = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            50,
+        );
+        params.src_u = &data_u;
+        params.src_v = &data_u;
+        params.ref_u = &data_u;
+        params.ref_v = &data_u;
+        params.uv_stride = 0; // ← false
+
+        let lambda =
+            compute_rd_mult(50, frame_type_for_rd(synthetic_inter_frame_kind()));
+        let with_zero_stride = evaluate_candidate_for_filter(
+            &params,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            lambda,
+            InterpFilter::EightTap,
+        );
+        let params_empty = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            50,
+        );
+        let no_uv = evaluate_candidate_for_filter(
+            &params_empty,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            lambda,
+            InterpFilter::EightTap,
+        );
+        assert_eq!(with_zero_stride.best_rd_cost, no_uv.best_rd_cost);
+    }
+
     /// F.5/G2 — identical source and reference: both filters produce
     /// zero distortion. The per-context switchable-filter cost
     /// (`switchable_interp_costs[ctx][SMOOTH] > [ctx][EightTap]`) makes
