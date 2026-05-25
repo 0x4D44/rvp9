@@ -2933,4 +2933,2717 @@ mod tests {
             },
         );
     }
+
+    // ---------- Stage 5 — branch-coverage tests -------------------------
+    //
+    // The tests below target the missed-branch dimensions in
+    // `read_inter_block_mode_info` / `write_inter_block_mode_info` and the
+    // surrounding `get_pred_context_*` helpers. Each test exercises a
+    // specific dimension (compound reference, reference-mode Select,
+    // switchable interp filter context, `is_inter` context, sub-8 mixed
+    // modes, etc.) via the `round_trip` / `round_trip_sub8` oracle plus
+    // a dimension-specific assertion that proves the path was actually
+    // hit (not just any inter block).
+
+    /// Build an inter `ModeInfo` for tests that need a fully-specified
+    /// neighbour with `interp_filter`. Matches `inter_neighbour` but
+    /// lets the caller pick the mode / filter / ref-frame combo.
+    fn inter_neighbour_full(
+        block_size: BlockSize,
+        mode: InterMode,
+        ref_frames: [RefFrame; 2],
+        mvs: [Mv; 2],
+        interp_filter: InterpFilter,
+    ) -> ModeInfo {
+        ModeInfo {
+            block_size,
+            tx_size: TxSize::Tx8x8,
+            skip: false,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Inter {
+                mode,
+                ref_frames,
+                mvs,
+                interp_filter,
+            },
+            bmi: Default::default(),
+        }
+    }
+
+    fn intra_neighbour(block_size: BlockSize) -> ModeInfo {
+        ModeInfo {
+            block_size,
+            tx_size: TxSize::Tx8x8,
+            skip: false,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        }
+    }
+
+    // ----- Compound reference: all 3 fixed pairs (LAST+GOLDEN,
+    //       LAST+ALTREF, GOLDEN+ALTREF) round-trip via `Compound` mode
+
+    /// Compound `[LAST, GOLDEN]` with sign_bias all-zero → fixed =
+    /// ALTREF, var = [LAST, GOLDEN]. idx = sign_bias[ALTREF] = 0, so
+    /// `ref_frames[0] = ALTREF` ... but we want [LAST, GOLDEN].
+    /// Choose sign-bias such that the fixed slot lands in `[1]` and
+    /// the var bit picks `var_ref[1] = GOLDEN` in slot 0.
+    ///
+    /// Easiest: with `sign_bias[ALTREF] = false` (fixed = ALTREF, idx
+    /// = 0), `ref_frames[0] = ALTREF`. Not what we want.
+    ///
+    /// Use sign_bias = `[LAST=false, GOLDEN=false, ALTREF=true]` →
+    /// fixed=ALTREF, var=[LAST, GOLDEN]; idx=1 so `ref_frames[1] =
+    /// ALTREF`, `ref_frames[0] = var[bit]`. Picking `bit=1` →
+    /// `var_ref[1] = GOLDEN`, so `ref_frames = [GOLDEN, ALTREF]`.
+    /// That's not [LAST, GOLDEN] either. To actually get
+    /// [LAST, GOLDEN] we need fixed = neither LAST nor GOLDEN →
+    /// fixed = ALTREF AND ref_frames slot for it should be position 0
+    /// → idx = 0 → sign_bias[ALTREF] = 0. Then ref_frames[1] is var
+    /// (LAST or GOLDEN). Setting bit = 1 picks GOLDEN: ref_frames =
+    /// [ALTREF, GOLDEN] — order ALTREF/GOLDEN. Choosing bit=0 →
+    /// [ALTREF, LAST].
+    ///
+    /// So the natural compound pair is whichever the libvpx-derived
+    /// layout produces; just round-trip a known compound pair and
+    /// confirm both refs survive.
+    #[test]
+    fn compound_lastframe_altrefframe_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        // sign_bias = [false, false, true] (header LAST/GOLDEN/ALTREF).
+        params.sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&params.sign_bias);
+        params.comp_fixed_ref = fixed;
+        params.comp_var_ref = var;
+        params.reference_mode = ReferenceMode::Compound;
+        // fixed = ALTREF, var = [LAST, GOLDEN].
+        assert_eq!(fixed, RefFrame::AltrefFrame);
+        assert_eq!(var, [RefFrame::LastFrame, RefFrame::GoldenFrame]);
+        // sign_bias[ALTREF] = true → idx = 1 → ref_frames[1] = ALTREF.
+        // Pick the variable ref so it lands in slot 0.
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let got = round_trip(&fc, &params, &nb, BlockSize::Block16x16, &bounds, None, &mi);
+        match got.mode {
+            BlockMode::Inter { ref_frames, .. } => {
+                assert_eq!(ref_frames, [RefFrame::LastFrame, RefFrame::AltrefFrame]);
+            }
+            _ => panic!("expected Inter"),
+        }
+    }
+
+    /// Compound `[GOLDEN, ALTREF]` via sign_bias = `[false, true,
+    /// false]` (LAST/ALTREF share sign) → fixed = GOLDEN.
+    #[test]
+    fn compound_goldenframe_altrefframe_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.sign_bias = sign_bias_from_header(&[false, true, false]);
+        let (fixed, var) = setup_compound_reference_mode(&params.sign_bias);
+        // LAST=0, GOLDEN=1, ALTREF=0 → LAST and ALTREF share → fixed=GOLDEN.
+        params.comp_fixed_ref = fixed;
+        params.comp_var_ref = var;
+        params.reference_mode = ReferenceMode::Compound;
+        assert_eq!(fixed, RefFrame::GoldenFrame);
+        assert_eq!(var, [RefFrame::LastFrame, RefFrame::AltrefFrame]);
+        // sign_bias[GOLDEN] = true → idx = 1 → ref_frames[1] = GOLDEN.
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::AltrefFrame, RefFrame::GoldenFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let got = round_trip(&fc, &params, &nb, BlockSize::Block16x16, &bounds, None, &mi);
+        match got.mode {
+            BlockMode::Inter { ref_frames, .. } => {
+                assert_eq!(ref_frames, [RefFrame::AltrefFrame, RefFrame::GoldenFrame]);
+            }
+            _ => panic!("expected Inter"),
+        }
+    }
+
+    /// Compound `[LAST, GOLDEN]` via sign_bias = `[true, false, false]`
+    /// (GOLDEN/ALTREF share sign) → fixed = LAST.
+    #[test]
+    fn compound_lastframe_goldenframe_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.sign_bias = sign_bias_from_header(&[true, false, false]);
+        let (fixed, var) = setup_compound_reference_mode(&params.sign_bias);
+        params.comp_fixed_ref = fixed;
+        params.comp_var_ref = var;
+        params.reference_mode = ReferenceMode::Compound;
+        assert_eq!(fixed, RefFrame::LastFrame);
+        assert_eq!(var, [RefFrame::GoldenFrame, RefFrame::AltrefFrame]);
+        // sign_bias[LAST] = true → idx = 1 → ref_frames[1] = LAST.
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::LastFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let got = round_trip(&fc, &params, &nb, BlockSize::Block16x16, &bounds, None, &mi);
+        match got.mode {
+            BlockMode::Inter { ref_frames, .. } => {
+                assert_eq!(ref_frames, [RefFrame::GoldenFrame, RefFrame::LastFrame]);
+            }
+            _ => panic!("expected Inter"),
+        }
+    }
+
+    /// Compound NEWMV with `[LAST, ALTREF]` and per-ref MVs. Verifies
+    /// `read_mv` runs for each compound slot.
+    #[test]
+    fn compound_newmv_per_ref_mvs_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&params.sign_bias);
+        params.comp_fixed_ref = fixed;
+        params.comp_var_ref = var;
+        params.reference_mode = ReferenceMode::Compound;
+        params.allow_high_precision_mv = true;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let mvs = [Mv { row: 8, col: -4 }, Mv { row: -12, col: 6 }];
+        let mi = build_inter_mi(
+            BlockSize::Block16x16,
+            InterMode::NewMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            mvs,
+            InterpFilter::EightTap,
+        );
+        let got = round_trip(&fc, &params, &nb, BlockSize::Block16x16, &bounds, None, &mi);
+        match got.mode {
+            BlockMode::Inter { mvs: got_mvs, .. } => {
+                assert_eq!(got_mvs, mvs, "both compound MVs survive");
+            }
+            _ => panic!("expected Inter"),
+        }
+    }
+
+    // ----- Reference-mode SELECT: compound bit + each context arm
+
+    /// Reference-mode `Select` with a single-ref output. The encoder
+    /// emits the `comp_inter` bit = 0, then the single-ref bits.
+    /// `comp_inter_ctx = 1` (no neighbours → libvpx `else` arm at
+    /// `vp9_pred_common.c:80`).
+    #[test]
+    fn reference_mode_select_single_no_neighbours_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.reference_mode = ReferenceMode::Select;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let got = round_trip(&fc, &params, &nb, BlockSize::Block16x16, &bounds, None, &mi);
+        match got.mode {
+            BlockMode::Inter { ref_frames, .. } => {
+                // Single-ref: slot 1 = NoRefFrame.
+                assert_eq!(ref_frames[1], RefFrame::NoRefFrame);
+            }
+            _ => panic!("expected Inter"),
+        }
+    }
+
+    /// Reference-mode `Select` with a compound output. The encoder
+    /// emits `comp_inter` bit = 1 then the compound bit.
+    #[test]
+    fn reference_mode_select_compound_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&params.sign_bias);
+        params.comp_fixed_ref = fixed;
+        params.comp_var_ref = var;
+        params.reference_mode = ReferenceMode::Select;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let got = round_trip(&fc, &params, &nb, BlockSize::Block16x16, &bounds, None, &mi);
+        match got.mode {
+            BlockMode::Inter { ref_frames, .. } => {
+                assert!(ref_frames[1].is_inter(), "compound: slot 1 is a real ref");
+            }
+            _ => panic!("expected Inter"),
+        }
+    }
+
+    /// `get_reference_mode_context` boundary: above + left both
+    /// single-ref, both match `comp_fixed_ref` → ctx = 0 (XOR = 0).
+    /// Verify via a Select-mode round-trip with the matching
+    /// neighbours.
+    #[test]
+    fn reference_mode_select_ctx_both_match_fixed() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&params.sign_bias);
+        params.comp_fixed_ref = fixed;
+        params.comp_var_ref = var;
+        params.reference_mode = ReferenceMode::Select;
+        // fixed = ALTREF; build two single-ref ALTREF neighbours.
+        let above = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::AltrefFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let left = above; // same shape
+        let nb = ListNeighbours::new()
+            .with(Position { row: -1, col: 0 }, &above)
+            .with(Position { row: 0, col: -1 }, &left);
+        let ctx = get_reference_mode_context(Some(&above), Some(&left), fixed);
+        assert_eq!(ctx, 0, "both neighbours single, both match fixed → XOR=0");
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let _ = round_trip(&fc, &params, &nb, BlockSize::Block16x16, &bounds, None, &mi);
+    }
+
+    /// `get_reference_mode_context`: above single-ref matches fixed,
+    /// left does NOT → ctx = 1 (XOR = 1).
+    #[test]
+    fn reference_mode_select_ctx_xor_mismatch() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&params.sign_bias);
+        params.comp_fixed_ref = fixed;
+        params.comp_var_ref = var;
+        params.reference_mode = ReferenceMode::Select;
+        // above = ALTREF (= fixed), left = LAST (≠ fixed).
+        let above = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::AltrefFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let left = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let nb = ListNeighbours::new()
+            .with(Position { row: -1, col: 0 }, &above)
+            .with(Position { row: 0, col: -1 }, &left);
+        let ctx = get_reference_mode_context(Some(&above), Some(&left), fixed);
+        assert_eq!(ctx, 1);
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let _ = round_trip(&fc, &params, &nb, BlockSize::Block16x16, &bounds, None, &mi);
+    }
+
+    /// `get_reference_mode_context` ctx = 4 path: both neighbours are
+    /// compound. Verify the context number AND a round-trip succeeds.
+    #[test]
+    fn reference_mode_select_ctx_both_compound() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&params.sign_bias);
+        params.comp_fixed_ref = fixed;
+        params.comp_var_ref = var;
+        params.reference_mode = ReferenceMode::Select;
+        // Both neighbours compound [LAST, ALTREF].
+        let nb_mi = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let nb = ListNeighbours::new()
+            .with(Position { row: -1, col: 0 }, &nb_mi)
+            .with(Position { row: 0, col: -1 }, &nb_mi);
+        let ctx = get_reference_mode_context(Some(&nb_mi), Some(&nb_mi), fixed);
+        assert_eq!(ctx, 4);
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let _ = round_trip(&fc, &params, &nb, BlockSize::Block16x16, &bounds, None, &mi);
+    }
+
+    /// `get_reference_mode_context` ctx = 3 path: a single edge with
+    /// a compound neighbour.
+    #[test]
+    fn reference_mode_select_ctx_single_edge_compound() {
+        let nb_mi = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx_above = get_reference_mode_context(Some(&nb_mi), None, RefFrame::AltrefFrame);
+        assert_eq!(ctx_above, 3, "single edge compound → ctx 3");
+        let ctx_left = get_reference_mode_context(None, Some(&nb_mi), RefFrame::AltrefFrame);
+        assert_eq!(ctx_left, 3);
+    }
+
+    /// `get_reference_mode_context` boundary: one neighbour single +
+    /// other compound → ctx 2 + (ref0 == comp_fixed_ref || intra)
+    /// path.
+    #[test]
+    fn reference_mode_select_ctx_single_plus_compound() {
+        // above = single LAST, left = compound [LAST, ALTREF]; fixed
+        // = ALTREF. above is single, !a_has_second; left has second
+        // → match `else if !a_has_second` branch → 2 + (ref0(above)
+        // == ALTREF || !is_inter(above)) → above is inter LAST → 2 + 0
+        // = 2.
+        let above = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let left = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_reference_mode_context(Some(&above), Some(&left), RefFrame::AltrefFrame);
+        assert_eq!(ctx, 2, "single+compound, above_single ref0≠fixed → ctx 2");
+    }
+
+    // ----- Switchable interpolation filter: 3 contexts × 3 filters
+
+    /// Switchable interp with both neighbours present using EightTap
+    /// filter → ctx = 0 (libvpx: left==above==0).
+    #[test]
+    fn switchable_interp_ctx0_round_trip_eighttap() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.interp_filter = InterpFilter::Switchable;
+        let nb_mi = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let nb = ListNeighbours::new()
+            .with(Position { row: -1, col: 0 }, &nb_mi)
+            .with(Position { row: 0, col: -1 }, &nb_mi);
+        let ctx = get_pred_context_switchable_interp(Some(&nb_mi), Some(&nb_mi));
+        assert_eq!(ctx, 0, "both EightTap → ctx 0");
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let _ = round_trip(&fc, &params, &nb, BlockSize::Block16x16, &bounds, None, &mi);
+    }
+
+    /// Switchable interp: both neighbours EightTapSmooth → ctx = 1.
+    #[test]
+    fn switchable_interp_ctx1_smooth_neighbours() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.interp_filter = InterpFilter::Switchable;
+        let nb_mi = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTapSmooth,
+        );
+        let nb = ListNeighbours::new()
+            .with(Position { row: -1, col: 0 }, &nb_mi)
+            .with(Position { row: 0, col: -1 }, &nb_mi);
+        let ctx = get_pred_context_switchable_interp(Some(&nb_mi), Some(&nb_mi));
+        assert_eq!(ctx, InterpFilter::EightTapSmooth as usize);
+        let bounds = loose_bounds();
+        // Round-trip with the same filter as neighbours to keep the
+        // round-trip simple.
+        let mi = build_inter_mi(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTapSmooth,
+        );
+        let got = round_trip(&fc, &params, &nb, BlockSize::Block16x16, &bounds, None, &mi);
+        match got.mode {
+            BlockMode::Inter { interp_filter, .. } => {
+                assert_eq!(interp_filter, InterpFilter::EightTapSmooth);
+            }
+            _ => panic!("expected Inter"),
+        }
+    }
+
+    /// Switchable interp: both neighbours EightTapSharp → ctx = 2.
+    #[test]
+    fn switchable_interp_ctx2_sharp_neighbours() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.interp_filter = InterpFilter::Switchable;
+        let nb_mi = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTapSharp,
+        );
+        let nb = ListNeighbours::new()
+            .with(Position { row: -1, col: 0 }, &nb_mi)
+            .with(Position { row: 0, col: -1 }, &nb_mi);
+        let ctx = get_pred_context_switchable_interp(Some(&nb_mi), Some(&nb_mi));
+        assert_eq!(ctx, InterpFilter::EightTapSharp as usize);
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTapSharp,
+        );
+        let got = round_trip(&fc, &params, &nb, BlockSize::Block16x16, &bounds, None, &mi);
+        match got.mode {
+            BlockMode::Inter { interp_filter, .. } => {
+                assert_eq!(interp_filter, InterpFilter::EightTapSharp);
+            }
+            _ => panic!("expected Inter"),
+        }
+    }
+
+    /// Switchable interp: neighbours have mismatched filters → ctx =
+    /// SWITCHABLE_FILTERS = 3 (sentinel).
+    #[test]
+    fn switchable_interp_ctx3_mismatched_neighbours() {
+        let above = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let left = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTapSharp,
+        );
+        let ctx = get_pred_context_switchable_interp(Some(&above), Some(&left));
+        assert_eq!(ctx, SWITCHABLE_FILTERS);
+    }
+
+    /// Switchable interp: above is intra → uses left's filter (intra
+    /// neighbour collapses to sentinel; the other axis wins).
+    #[test]
+    fn switchable_interp_intra_above_uses_left() {
+        let above = intra_neighbour(BlockSize::Block16x16);
+        let left = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTapSmooth,
+        );
+        let ctx = get_pred_context_switchable_interp(Some(&above), Some(&left));
+        // above_type = SWITCHABLE_FILTERS (sentinel; intra). left_type
+        // = EightTapSmooth = 1. left != above → above is sentinel →
+        // ctx = left = 1.
+        assert_eq!(ctx, InterpFilter::EightTapSmooth as usize);
+    }
+
+    /// All-3 switchable filters round-trip via Switchable mode + no
+    /// neighbours (ctx = 3). Exercises each `SWITCHABLE_INTERP_TREE`
+    /// arm at the same context.
+    #[test]
+    fn switchable_interp_all_three_filters_no_neighbours_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.interp_filter = InterpFilter::Switchable;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        for filter in [
+            InterpFilter::EightTap,
+            InterpFilter::EightTapSmooth,
+            InterpFilter::EightTapSharp,
+        ] {
+            let mi = build_inter_mi(
+                BlockSize::Block16x16,
+                InterMode::ZeroMv,
+                [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                [Mv::ZERO; 2],
+                filter,
+            );
+            let got = round_trip(&fc, &params, &nb, BlockSize::Block16x16, &bounds, None, &mi);
+            match got.mode {
+                BlockMode::Inter { interp_filter, .. } => assert_eq!(interp_filter, filter),
+                _ => panic!("expected Inter for filter {filter:?}"),
+            }
+        }
+    }
+
+    // ----- get_intra_inter_context: each of 4 contexts
+
+    #[test]
+    fn intra_inter_context_no_neighbours() {
+        assert_eq!(get_intra_inter_context(None, None), 0);
+    }
+
+    #[test]
+    fn intra_inter_context_single_inter_edge() {
+        let above = inter_neighbour(BlockSize::Block16x16, Mv::ZERO);
+        // single edge (above), not intra → ctx = 2 * 0 = 0.
+        assert_eq!(get_intra_inter_context(Some(&above), None), 0);
+    }
+
+    #[test]
+    fn intra_inter_context_single_intra_edge() {
+        let above = intra_neighbour(BlockSize::Block16x16);
+        // single edge, intra → ctx = 2 * 1 = 2.
+        assert_eq!(get_intra_inter_context(Some(&above), None), 2);
+    }
+
+    #[test]
+    fn intra_inter_context_both_inter() {
+        let n = inter_neighbour(BlockSize::Block16x16, Mv::ZERO);
+        // both present and inter → ctx = 0 (left_intra || above_intra = false).
+        assert_eq!(get_intra_inter_context(Some(&n), Some(&n)), 0);
+    }
+
+    #[test]
+    fn intra_inter_context_one_intra_one_inter() {
+        let intra = intra_neighbour(BlockSize::Block16x16);
+        let inter = inter_neighbour(BlockSize::Block16x16, Mv::ZERO);
+        // one intra → ctx = 1.
+        assert_eq!(get_intra_inter_context(Some(&intra), Some(&inter)), 1);
+        assert_eq!(get_intra_inter_context(Some(&inter), Some(&intra)), 1);
+    }
+
+    #[test]
+    fn intra_inter_context_both_intra() {
+        let intra = intra_neighbour(BlockSize::Block16x16);
+        assert_eq!(get_intra_inter_context(Some(&intra), Some(&intra)), 3);
+    }
+
+    // ----- get_pred_context_single_ref_p1: contexts 0..=4
+
+    /// Both intra neighbours → ctx = 2.
+    #[test]
+    fn single_ref_p1_both_intra() {
+        let intra = intra_neighbour(BlockSize::Block16x16);
+        let ctx = get_pred_context_single_ref_p1(Some(&intra), Some(&intra));
+        assert_eq!(ctx, 2);
+    }
+
+    /// One intra + one inter LAST (single-ref) edge → ctx = 4 *
+    /// (ref0(edge) == LAST) = 4.
+    #[test]
+    fn single_ref_p1_intra_plus_inter_last() {
+        let intra = intra_neighbour(BlockSize::Block16x16);
+        let inter = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p1(Some(&intra), Some(&inter));
+        assert_eq!(ctx, 4);
+    }
+
+    /// One intra + one inter GOLDEN (single-ref) edge → ctx = 0.
+    #[test]
+    fn single_ref_p1_intra_plus_inter_golden() {
+        let intra = intra_neighbour(BlockSize::Block16x16);
+        let inter = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p1(Some(&intra), Some(&inter));
+        assert_eq!(ctx, 0);
+    }
+
+    /// One intra + one inter compound w/ LAST in either slot → ctx =
+    /// 1 + (has LAST) = 2.
+    #[test]
+    fn single_ref_p1_intra_plus_inter_compound_with_last() {
+        let intra = intra_neighbour(BlockSize::Block16x16);
+        let inter = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p1(Some(&intra), Some(&inter));
+        assert_eq!(ctx, 2);
+    }
+
+    /// Both inter single-ref, both LAST → ctx = 2*1 + 2*1 = 4.
+    #[test]
+    fn single_ref_p1_both_inter_single_both_last() {
+        let inter = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p1(Some(&inter), Some(&inter));
+        assert_eq!(ctx, 4);
+    }
+
+    /// Both inter, one LAST, one GOLDEN → ctx = 2*1 + 2*0 = 2.
+    #[test]
+    fn single_ref_p1_both_inter_one_last_one_golden() {
+        let last = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let golden = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p1(Some(&last), Some(&golden));
+        assert_eq!(ctx, 2);
+    }
+
+    /// Both inter compound, has LAST somewhere → ctx = 1 + 1 = 2.
+    #[test]
+    fn single_ref_p1_both_compound_with_last() {
+        let inter = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p1(Some(&inter), Some(&inter));
+        assert_eq!(ctx, 2);
+    }
+
+    /// Both inter compound, no LAST → ctx = 1 + 0 = 1.
+    #[test]
+    fn single_ref_p1_both_compound_no_last() {
+        let inter = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p1(Some(&inter), Some(&inter));
+        assert_eq!(ctx, 1);
+    }
+
+    /// One compound + one single: rfs (single) == LAST → ctx = 3 + 1
+    /// (crf1/crf2 has LAST).
+    #[test]
+    fn single_ref_p1_compound_plus_single_both_last_paths() {
+        let compound = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let single_last = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        // above = single LAST → !a_has_second; left = compound. rfs =
+        // above0 = LAST; crf1=left0=LAST, crf2=left1=ALTREF. rfs == LAST
+        // → 3 + (crf1==LAST || crf2==LAST) = 3 + 1 = 4.
+        let ctx = get_pred_context_single_ref_p1(Some(&single_last), Some(&compound));
+        assert_eq!(ctx, 4);
+    }
+
+    /// One compound + one single: rfs (single) ≠ LAST → ctx =
+    /// (crf1/crf2 has LAST).
+    #[test]
+    fn single_ref_p1_compound_plus_single_not_last() {
+        let compound = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let single_golden = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        // above = single GOLDEN → rfs = GOLDEN (≠ LAST). crf1/2 =
+        // left0/1 = GOLDEN/ALTREF → neither is LAST → ctx = 0.
+        let ctx = get_pred_context_single_ref_p1(Some(&single_golden), Some(&compound));
+        assert_eq!(ctx, 0);
+    }
+
+    /// Single edge: intra → ctx = 2.
+    #[test]
+    fn single_ref_p1_single_edge_intra() {
+        let intra = intra_neighbour(BlockSize::Block16x16);
+        let ctx = get_pred_context_single_ref_p1(Some(&intra), None);
+        assert_eq!(ctx, 2);
+    }
+
+    /// Single edge: inter single LAST → ctx = 4.
+    #[test]
+    fn single_ref_p1_single_edge_inter_last() {
+        let inter = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p1(None, Some(&inter));
+        assert_eq!(ctx, 4);
+    }
+
+    /// Single edge: inter compound w/ LAST → ctx = 1 + 1 = 2.
+    #[test]
+    fn single_ref_p1_single_edge_compound_last() {
+        let inter = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p1(Some(&inter), None);
+        assert_eq!(ctx, 2);
+    }
+
+    /// Single edge: inter compound, no LAST → ctx = 1.
+    #[test]
+    fn single_ref_p1_single_edge_compound_no_last() {
+        let inter = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p1(Some(&inter), None);
+        assert_eq!(ctx, 1);
+    }
+
+    // ----- get_pred_context_single_ref_p2: various arms
+
+    /// Both intra → ctx = 2.
+    #[test]
+    fn single_ref_p2_both_intra() {
+        let intra = intra_neighbour(BlockSize::Block16x16);
+        let ctx = get_pred_context_single_ref_p2(Some(&intra), Some(&intra));
+        assert_eq!(ctx, 2);
+    }
+
+    /// Intra + inter single LAST → ctx = 3.
+    #[test]
+    fn single_ref_p2_intra_plus_single_last() {
+        let intra = intra_neighbour(BlockSize::Block16x16);
+        let last = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p2(Some(&intra), Some(&last));
+        assert_eq!(ctx, 3);
+    }
+
+    /// Intra + inter single GOLDEN → ctx = 4.
+    #[test]
+    fn single_ref_p2_intra_plus_single_golden() {
+        let intra = intra_neighbour(BlockSize::Block16x16);
+        let golden = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p2(Some(&intra), Some(&golden));
+        assert_eq!(ctx, 4);
+    }
+
+    /// Intra + inter single ALTREF → ctx = 0.
+    #[test]
+    fn single_ref_p2_intra_plus_single_altref() {
+        let intra = intra_neighbour(BlockSize::Block16x16);
+        let altref = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::AltrefFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p2(Some(&intra), Some(&altref));
+        assert_eq!(ctx, 0);
+    }
+
+    /// Intra + compound w/ GOLDEN → ctx = 1 + 2*1 = 3.
+    #[test]
+    fn single_ref_p2_intra_plus_compound_with_golden() {
+        let intra = intra_neighbour(BlockSize::Block16x16);
+        let compound = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::GoldenFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p2(Some(&intra), Some(&compound));
+        assert_eq!(ctx, 3);
+    }
+
+    /// Both compound w/ matching ref pairs and a GOLDEN → ctx = 3.
+    #[test]
+    fn single_ref_p2_both_compound_matching_golden() {
+        let inter = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::GoldenFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p2(Some(&inter), Some(&inter));
+        assert_eq!(ctx, 3);
+    }
+
+    /// Both compound with mismatched ref pairs → ctx = 2.
+    #[test]
+    fn single_ref_p2_both_compound_mismatched() {
+        let a = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::GoldenFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let b = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p2(Some(&a), Some(&b));
+        assert_eq!(ctx, 2);
+    }
+
+    /// Compound + single GOLDEN: rfs (single) = GOLDEN → ctx = 3 + 0
+    /// (compound has neither GOLDEN/ALTREF → check). compound = [LAST,
+    /// ALTREF] → crf1=LAST, crf2=ALTREF → neither GOLDEN → ctx = 3 + 0
+    /// = 3.
+    #[test]
+    fn single_ref_p2_compound_plus_single_golden() {
+        let compound = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let single = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p2(Some(&single), Some(&compound));
+        assert_eq!(ctx, 3);
+    }
+
+    /// Single edge: inter single LAST → ctx = 2.
+    #[test]
+    fn single_ref_p2_single_edge_inter_last() {
+        let last = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p2(Some(&last), None);
+        assert_eq!(ctx, 2);
+    }
+
+    /// Single edge: inter single GOLDEN → ctx = 4.
+    #[test]
+    fn single_ref_p2_single_edge_inter_golden() {
+        let golden = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p2(Some(&golden), None);
+        assert_eq!(ctx, 4);
+    }
+
+    /// Single edge: inter compound with GOLDEN → ctx = 3.
+    #[test]
+    fn single_ref_p2_single_edge_compound_golden() {
+        let inter = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::GoldenFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p2(Some(&inter), None);
+        assert_eq!(ctx, 3);
+    }
+
+    /// Single edge: inter compound, no GOLDEN → ctx = 0.
+    #[test]
+    fn single_ref_p2_single_edge_compound_no_golden() {
+        let inter = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p2(Some(&inter), None);
+        assert_eq!(ctx, 0);
+    }
+
+    // ----- get_pred_context_comp_ref_p: various arms
+
+    /// Both intra → ctx = 2.
+    #[test]
+    fn comp_ref_p_both_intra() {
+        let sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&sign_bias);
+        let intra = intra_neighbour(BlockSize::Block16x16);
+        let ctx = get_pred_context_comp_ref_p(Some(&intra), Some(&intra), &sign_bias, fixed, var);
+        assert_eq!(ctx, 2);
+    }
+
+    /// One intra + one compound: single-ref branch.
+    #[test]
+    fn comp_ref_p_intra_plus_compound() {
+        let sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&sign_bias);
+        let intra = intra_neighbour(BlockSize::Block16x16);
+        // compound [LAST, ALTREF]; var = [LAST, GOLDEN]; var[1] =
+        // GOLDEN. For edge=compound: var_ref_of(edge) takes index 1
+        // (since sign_bias[ALTREF]=true → fix_ref_idx=1, var_ref_idx=0).
+        // var_ref_of(edge) = ref_frames[0] = LAST. var1 = GOLDEN.
+        // 1 + 2*(LAST != GOLDEN) = 1 + 2 = 3.
+        let compound = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx =
+            get_pred_context_comp_ref_p(Some(&intra), Some(&compound), &sign_bias, fixed, var);
+        assert_eq!(ctx, 3);
+    }
+
+    /// Single edge with intra → ctx = 2 (intra branch).
+    #[test]
+    fn comp_ref_p_single_intra_edge() {
+        let sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&sign_bias);
+        let intra = intra_neighbour(BlockSize::Block16x16);
+        let ctx_above = get_pred_context_comp_ref_p(Some(&intra), None, &sign_bias, fixed, var);
+        assert_eq!(ctx_above, 2);
+    }
+
+    /// Single edge compound (has_second_ref true) → ctx = 4 * (var_ref
+    /// != var1).
+    #[test]
+    fn comp_ref_p_single_compound_edge_mismatch() {
+        let sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&sign_bias);
+        // var = [LAST, GOLDEN]; var1 = GOLDEN.
+        // edge compound [LAST, ALTREF]; var_ref_of = ref_frames[0] =
+        // LAST ≠ GOLDEN → ctx = 4 * 1 = 4.
+        let inter = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_comp_ref_p(Some(&inter), None, &sign_bias, fixed, var);
+        assert_eq!(ctx, 4);
+    }
+
+    /// Single edge compound match → ctx = 0.
+    #[test]
+    fn comp_ref_p_single_compound_edge_match() {
+        let sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&sign_bias);
+        // var = [LAST, GOLDEN]; var1 = GOLDEN. Edge compound: pick
+        // ref slot 0 = GOLDEN → var_ref_of = GOLDEN == var1 → ctx = 0.
+        let inter = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_comp_ref_p(Some(&inter), None, &sign_bias, fixed, var);
+        assert_eq!(ctx, 0);
+    }
+
+    /// Single edge single-ref: 3 * (ref0 != var1).
+    #[test]
+    fn comp_ref_p_single_singleref_edge_no_match() {
+        let sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&sign_bias);
+        // var1 = GOLDEN. single ref = LAST → 3 * 1 = 3.
+        let inter = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_comp_ref_p(Some(&inter), None, &sign_bias, fixed, var);
+        assert_eq!(ctx, 3);
+    }
+
+    /// Single edge single-ref: 3 * 0 = 0 when ref == var1.
+    #[test]
+    fn comp_ref_p_single_singleref_edge_match() {
+        let sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&sign_bias);
+        // var1 = GOLDEN; single ref = GOLDEN → 0.
+        let inter = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_comp_ref_p(Some(&inter), None, &sign_bias, fixed, var);
+        assert_eq!(ctx, 0);
+    }
+
+    /// `get_reference_mode_context`: above compound + left single
+    /// → hits the `!l_has_second` arm (lines 282-283).
+    #[test]
+    fn reference_mode_ctx_above_compound_left_single() {
+        let sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, _var) = setup_compound_reference_mode(&sign_bias);
+        let above = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let left = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        // a_has_second=true, l_has_second=false → `!l_has_second`
+        // branch: 2 + (ref0(left) == fixed || !is_inter(left)).
+        // left is inter LAST; fixed = ALTREF; LAST != ALTREF →
+        // !is_inter false → 2 + 0 = 2.
+        let ctx = get_reference_mode_context(Some(&above), Some(&left), fixed);
+        assert_eq!(ctx, 2);
+    }
+
+    /// `get_reference_mode_context`: above compound + left single
+    /// matching fixed → ctx = 3 (2 + 1).
+    #[test]
+    fn reference_mode_ctx_above_compound_left_single_match() {
+        let sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, _var) = setup_compound_reference_mode(&sign_bias);
+        let above = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let left = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::AltrefFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        // ref0(left) = ALTREF == fixed → 2 + 1 = 3.
+        let ctx = get_reference_mode_context(Some(&above), Some(&left), fixed);
+        assert_eq!(ctx, 3);
+    }
+
+    /// `comp_ref_p`: one intra + one single neighbour → exercises
+    /// the `1 + 2*(ref0(edge) != var1)` branch (line 332).
+    #[test]
+    fn comp_ref_p_intra_plus_single_inter() {
+        let sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&sign_bias);
+        // var1 = GOLDEN. single neighbour ref0 = LAST → not GOLDEN
+        // → 1 + 2 = 3.
+        let intra = intra_neighbour(BlockSize::Block16x16);
+        let single = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_comp_ref_p(Some(&intra), Some(&single), &sign_bias, fixed, var);
+        assert_eq!(ctx, 3);
+    }
+
+    /// `comp_ref_p`: l_sg || a_sg (one single one compound), neither
+    /// vrfc nor rfs equals var1 → ctx = 4 (line 362).
+    /// Setup: above = single ALTREF (vrfa=ALTREF), left = compound
+    /// [LAST, ALTREF] → var_ref_of(left) = LAST. var1=GOLDEN.
+    /// l_sg = false (compound), a_sg = true. vrfc = vrfl (since
+    /// !l_sg) = LAST. rfs = vrfa (since a_sg) = ALTREF.
+    /// vrfc==var1? LAST==GOLDEN: no. rfs==var1? ALTREF==GOLDEN: no.
+    /// → ctx = 4.
+    #[test]
+    fn comp_ref_p_compound_plus_single_neither_var1() {
+        let sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&sign_bias);
+        let above = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::AltrefFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let left = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_comp_ref_p(Some(&above), Some(&left), &sign_bias, fixed, var);
+        assert_eq!(ctx, 4);
+    }
+
+    /// `single_ref_p1`: intra + compound w/ LAST in slot 1 (only) →
+    /// 1 + (ref0==LAST || ref1==LAST) where ref0 is not LAST and
+    /// ref1 is LAST → 1 + 1 = 2 (exercises ref1 check at line 406).
+    #[test]
+    fn single_ref_p1_intra_plus_compound_last_only_in_slot1() {
+        let intra = intra_neighbour(BlockSize::Block16x16);
+        let compound = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::LastFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p1(Some(&intra), Some(&compound));
+        assert_eq!(ctx, 2);
+    }
+
+    /// `comp_ref_p` no neighbours → ctx = 2.
+    #[test]
+    fn comp_ref_p_no_neighbours() {
+        let sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&sign_bias);
+        let ctx = get_pred_context_comp_ref_p(None, None, &sign_bias, fixed, var);
+        assert_eq!(ctx, 2);
+    }
+
+    // ----- get_mode_context: each value 0..=6 via neighbour shapes
+
+    /// Counter = 0 → ctx 2.
+    #[test]
+    fn mode_context_no_neighbours_both_predicted() {
+        let nb = ListNeighbours::new();
+        assert_eq!(get_mode_context(BlockSize::Block16x16, &nb), 2);
+    }
+
+    /// Counter = 3 (one ZERO) → ctx 1.
+    #[test]
+    fn mode_context_one_zero_neighbour_ctx1() {
+        let zero_n = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let nb = ListNeighbours::new().with(Position { row: -1, col: 0 }, &zero_n);
+        // counter = 0 (single neighbour, ZERO contributes 3) → wait,
+        // ZEROMV contributes 3 per table → counter = 3 → ctx 1.
+        assert_eq!(get_mode_context(BlockSize::Block16x16, &nb), 1);
+    }
+
+    /// Counter = 6 (two ZEROs) → ctx 0 (BOTH_ZERO).
+    #[test]
+    fn mode_context_two_zero_neighbours_ctx0() {
+        let zero_n = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let nb = ListNeighbours::new()
+            .with(Position { row: -1, col: 0 }, &zero_n)
+            .with(Position { row: 0, col: -1 }, &zero_n);
+        // counter = 6 → ctx 0.
+        assert_eq!(get_mode_context(BlockSize::Block16x16, &nb), 0);
+    }
+
+    /// Counter = 9 (one intra) → ctx 5 (INTRA_PLUS_NON_INTRA).
+    #[test]
+    fn mode_context_one_intra_neighbour_ctx5() {
+        let intra = intra_neighbour(BlockSize::Block16x16);
+        let nb = ListNeighbours::new().with(Position { row: -1, col: 0 }, &intra);
+        assert_eq!(get_mode_context(BlockSize::Block16x16, &nb), 5);
+    }
+
+    /// Counter = 2 (two NEW) → ctx 4 (BOTH_NEW).
+    #[test]
+    fn mode_context_two_new_neighbours_ctx4() {
+        let new_n = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::NewMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let nb = ListNeighbours::new()
+            .with(Position { row: -1, col: 0 }, &new_n)
+            .with(Position { row: 0, col: -1 }, &new_n);
+        // 1 + 1 = 2 → ctx 4.
+        assert_eq!(get_mode_context(BlockSize::Block16x16, &nb), 4);
+    }
+
+    // ----- Round-trip for each parent block size (8x8..=64x64) with
+    //       NEWMV — exercises `resolve_parent_mvs` for each size
+
+    fn parent_newmv_round_trip(bsize: BlockSize) {
+        let fc = FrameContext::new_default();
+        let params = default_params();
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            bsize,
+            InterMode::NewMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv { row: 4, col: -2 }, Mv::ZERO],
+            InterpFilter::EightTap,
+        );
+        let got = round_trip(&fc, &params, &nb, bsize, &bounds, None, &mi);
+        match got.mode {
+            BlockMode::Inter { mode, .. } => assert_eq!(mode, InterMode::NewMv),
+            _ => panic!("expected Inter"),
+        }
+    }
+
+    #[test]
+    fn parent_newmv_block8x8() {
+        parent_newmv_round_trip(BlockSize::Block8x8);
+    }
+    #[test]
+    fn parent_newmv_block8x16() {
+        parent_newmv_round_trip(BlockSize::Block8x16);
+    }
+    #[test]
+    fn parent_newmv_block16x8() {
+        parent_newmv_round_trip(BlockSize::Block16x8);
+    }
+    #[test]
+    fn parent_newmv_block16x32() {
+        parent_newmv_round_trip(BlockSize::Block16x32);
+    }
+    #[test]
+    fn parent_newmv_block32x16() {
+        parent_newmv_round_trip(BlockSize::Block32x16);
+    }
+    #[test]
+    fn parent_newmv_block32x32() {
+        parent_newmv_round_trip(BlockSize::Block32x32);
+    }
+    #[test]
+    fn parent_newmv_block32x64() {
+        parent_newmv_round_trip(BlockSize::Block32x64);
+    }
+    #[test]
+    fn parent_newmv_block64x32() {
+        parent_newmv_round_trip(BlockSize::Block64x32);
+    }
+    #[test]
+    fn parent_newmv_block64x64() {
+        parent_newmv_round_trip(BlockSize::Block64x64);
+    }
+
+    /// NEARMV at 16x16 with two distinct neighbours: list count = 2;
+    /// the decoder picks mvs[1] = left.
+    #[test]
+    fn parent_nearmv_with_two_distinct_neighbours_round_trip() {
+        let fc = FrameContext::new_default();
+        let params = default_params();
+        let bsize = BlockSize::Block16x16;
+        let above_mv = Mv { row: 4, col: -2 };
+        let left_mv = Mv { row: -8, col: 12 };
+        let above = inter_neighbour(bsize, above_mv);
+        let left = inter_neighbour(bsize, left_mv);
+        let nb = ListNeighbours::new()
+            .with(Position { row: -1, col: 0 }, &above)
+            .with(Position { row: 0, col: -1 }, &left);
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            bsize,
+            InterMode::NearMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [left_mv, Mv::ZERO],
+            InterpFilter::EightTap,
+        );
+        let got = round_trip(&fc, &params, &nb, bsize, &bounds, None, &mi);
+        match got.mode {
+            BlockMode::Inter { mvs, .. } => {
+                assert_eq!(mvs[0], left_mv, "NEAR = list[1] = left");
+            }
+            _ => panic!("expected Inter"),
+        }
+    }
+
+    // ----- Sub-8 round trips: NEW with neighbours; mixed sizes
+
+    /// Block4x8 with mixed modes — top-half ZERO, bottom-half NEW.
+    /// The replication invariant means bmi[2] = bmi[0] (also ZERO)
+    /// and bmi[3] = bmi[1] (NEW with the new MV).
+    #[test]
+    fn sub8_block4x8_mixed_zero_new_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.allow_high_precision_mv = true;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block4x8;
+        let entries = [
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::NewMv, [Mv { row: 6, col: -4 }, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::NewMv, [Mv { row: 6, col: -4 }, Mv::ZERO]),
+        ];
+        let mi = build_sub8_inter_mi(
+            bsize,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            InterpFilter::EightTap,
+            entries,
+        );
+        let _ = round_trip_sub8(&fc, &params, &nb, bsize, &bounds, None, &mi);
+    }
+
+    /// Block8x4 with mixed modes.
+    #[test]
+    fn sub8_block8x4_mixed_zero_new_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.allow_high_precision_mv = true;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block8x4;
+        let entries = [
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::NewMv, [Mv { row: -4, col: 8 }, Mv::ZERO]),
+            (InterMode::NewMv, [Mv { row: -4, col: 8 }, Mv::ZERO]),
+        ];
+        let mi = build_sub8_inter_mi(
+            bsize,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            InterpFilter::EightTap,
+            entries,
+        );
+        let _ = round_trip_sub8(&fc, &params, &nb, bsize, &bounds, None, &mi);
+    }
+
+    /// Sub-8 round-trip with switchable interpolation filter (sharp).
+    #[test]
+    fn sub8_block4x4_switchable_sharp_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.interp_filter = InterpFilter::Switchable;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block4x4;
+        let entries = [
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+        ];
+        let mi = build_sub8_inter_mi(
+            bsize,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            InterpFilter::EightTapSharp,
+            entries,
+        );
+        let got = round_trip_sub8(&fc, &params, &nb, bsize, &bounds, None, &mi);
+        match got.mode {
+            BlockMode::Inter { interp_filter, .. } => {
+                assert_eq!(interp_filter, InterpFilter::EightTapSharp);
+            }
+            _ => panic!("expected Inter"),
+        }
+    }
+
+    /// Sub-8 compound NEWMV: each sub-block ZeroMv with two ref slots
+    /// populated. Verify both compound refs round-trip via sub-8.
+    #[test]
+    fn sub8_block4x8_compound_zero_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&params.sign_bias);
+        params.comp_fixed_ref = fixed;
+        params.comp_var_ref = var;
+        params.reference_mode = ReferenceMode::Compound;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block4x8;
+        let entries = [
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+        ];
+        let mi = build_sub8_inter_mi(
+            bsize,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            InterpFilter::EightTap,
+            entries,
+        );
+        let got = round_trip_sub8(&fc, &params, &nb, bsize, &bounds, None, &mi);
+        match got.mode {
+            BlockMode::Inter { ref_frames, .. } => {
+                assert_eq!(ref_frames, [RefFrame::LastFrame, RefFrame::AltrefFrame]);
+            }
+            _ => panic!("expected Inter"),
+        }
+    }
+
+    /// Sub-8 round-trip with `Block8x4` compound.
+    #[test]
+    fn sub8_block8x4_compound_zero_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&params.sign_bias);
+        params.comp_fixed_ref = fixed;
+        params.comp_var_ref = var;
+        params.reference_mode = ReferenceMode::Compound;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block8x4;
+        let entries = [
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+            (InterMode::ZeroMv, [Mv::ZERO, Mv::ZERO]),
+        ];
+        let mi = build_sub8_inter_mi(
+            bsize,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            InterpFilter::EightTap,
+            entries,
+        );
+        let _ = round_trip_sub8(&fc, &params, &nb, bsize, &bounds, None, &mi);
+    }
+
+    // ----- Single-ref GOLDEN / ALTREF round-trips at parent level
+
+    /// Single-ref GOLDEN at 16x16, NEWMV. Exercises the `bit0=1,
+    /// bit1=0` single-ref path.
+    #[test]
+    fn parent_newmv_single_golden_round_trip() {
+        let fc = FrameContext::new_default();
+        let params = default_params();
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            BlockSize::Block16x16,
+            InterMode::NewMv,
+            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+            [Mv { row: 6, col: -2 }, Mv::ZERO],
+            InterpFilter::EightTap,
+        );
+        let got = round_trip(&fc, &params, &nb, BlockSize::Block16x16, &bounds, None, &mi);
+        match got.mode {
+            BlockMode::Inter { ref_frames, .. } => {
+                assert_eq!(ref_frames[0], RefFrame::GoldenFrame);
+            }
+            _ => panic!("expected Inter"),
+        }
+    }
+
+    /// Single-ref ALTREF at 16x16, NEWMV. Exercises the `bit0=1,
+    /// bit1=1` single-ref path.
+    #[test]
+    fn parent_newmv_single_altref_round_trip() {
+        let fc = FrameContext::new_default();
+        let params = default_params();
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            BlockSize::Block16x16,
+            InterMode::NewMv,
+            [RefFrame::AltrefFrame, RefFrame::NoRefFrame],
+            [Mv { row: -6, col: 2 }, Mv::ZERO],
+            InterpFilter::EightTap,
+        );
+        let got = round_trip(&fc, &params, &nb, BlockSize::Block16x16, &bounds, None, &mi);
+        match got.mode {
+            BlockMode::Inter { ref_frames, .. } => {
+                assert_eq!(ref_frames[0], RefFrame::AltrefFrame);
+            }
+            _ => panic!("expected Inter"),
+        }
+    }
+
+    /// Single-ref GOLDEN with NEAR — exercises NEAR list builder with
+    /// the non-LAST single ref.
+    #[test]
+    fn parent_nearmv_single_golden_round_trip() {
+        let fc = FrameContext::new_default();
+        let params = default_params();
+        let bsize = BlockSize::Block16x16;
+        let above = inter_neighbour_full(
+            bsize,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+            [Mv { row: 4, col: 0 }, Mv::ZERO],
+            InterpFilter::EightTap,
+        );
+        let left = inter_neighbour_full(
+            bsize,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+            [Mv { row: -2, col: 6 }, Mv::ZERO],
+            InterpFilter::EightTap,
+        );
+        let nb = ListNeighbours::new()
+            .with(Position { row: -1, col: 0 }, &above)
+            .with(Position { row: 0, col: -1 }, &left);
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            bsize,
+            InterMode::NearMv,
+            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+            // list[1] = left.
+            [Mv { row: -2, col: 6 }, Mv::ZERO],
+            InterpFilter::EightTap,
+        );
+        let _ = round_trip(&fc, &params, &nb, bsize, &bounds, None, &mi);
+    }
+
+    // ----- mode_counts accumulation: compound, single-ref non-LAST,
+    //       switchable interp filter, ref-mode select
+
+    /// `read_inter_block_mode_info` with mode_counts populated, in
+    /// compound mode → exercises the `c.comp_ref` write path.
+    #[test]
+    fn read_inter_block_mode_info_populates_comp_ref_count() {
+        use crate::entropy::adapt::FrameCounts;
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&params.sign_bias);
+        params.comp_fixed_ref = fixed;
+        params.comp_var_ref = var;
+        params.reference_mode = ReferenceMode::Compound;
+
+        let bsize = BlockSize::Block16x16;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+
+        // Encode a known compound block via the writer.
+        let mi = build_inter_mi(
+            bsize,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let mut buf = vec![0u8; 256];
+        let size = {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            write_inter_block_mode_info(
+                &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, None,
+            )
+            .expect("writer ok");
+            finalise(w)
+        };
+        buf.truncate(size);
+
+        let mut reader = BoolReader::new(&buf).expect("init");
+        let mut got = skeleton_mi(bsize);
+        let mut mode_counts = FrameCounts::default();
+        read_inter_block_mode_info(
+            &mut reader,
+            &fc,
+            None,
+            Some(&mut mode_counts),
+            &params,
+            &nb,
+            bsize,
+            &bounds,
+            None,
+            &mut got,
+        );
+        // The comp_ref counter at the relevant ctx must have been
+        // incremented exactly once.
+        let total_comp_ref: usize = mode_counts
+            .comp_ref
+            .iter()
+            .map(|p| p[0] + p[1])
+            .sum::<u32>() as usize;
+        assert_eq!(total_comp_ref, 1, "comp_ref incremented exactly once");
+    }
+
+    /// Single-ref GOLDEN with mode_counts populated → exercises
+    /// `c.single_ref[ctx1][1][bit1=0]` increment.
+    #[test]
+    fn read_inter_block_mode_info_populates_single_ref_p2_count() {
+        use crate::entropy::adapt::FrameCounts;
+        let fc = FrameContext::new_default();
+        let params = default_params();
+        let bsize = BlockSize::Block16x16;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            bsize,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let mut buf = vec![0u8; 256];
+        let size = {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            write_inter_block_mode_info(
+                &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, None,
+            )
+            .expect("writer ok");
+            finalise(w)
+        };
+        buf.truncate(size);
+
+        let mut reader = BoolReader::new(&buf).expect("init");
+        let mut got = skeleton_mi(bsize);
+        let mut mode_counts = FrameCounts::default();
+        read_inter_block_mode_info(
+            &mut reader,
+            &fc,
+            None,
+            Some(&mut mode_counts),
+            &params,
+            &nb,
+            bsize,
+            &bounds,
+            None,
+            &mut got,
+        );
+        // single_ref[ctx0][0] (p1) and single_ref[ctx1][1] (p2)
+        // both incremented. We don't depend on the specific ctx but
+        // we assert the slot-1 (p2) accumulator was touched.
+        let total_p2: u32 = mode_counts
+            .single_ref
+            .iter()
+            .map(|c| c[1][0] + c[1][1])
+            .sum();
+        assert_eq!(total_p2, 1, "single_ref p2 (bit1) incremented");
+        // Bit1 = 0 (GOLDEN), so the [1][0] slot should be 1.
+        let total_bit1_zero: u32 = mode_counts.single_ref.iter().map(|c| c[1][0]).sum();
+        assert_eq!(total_bit1_zero, 1, "bit1=0 for GOLDEN");
+        // The decoded GOLDEN ref must round-trip.
+        match got.mode {
+            BlockMode::Inter { ref_frames, .. } => {
+                assert_eq!(ref_frames[0], RefFrame::GoldenFrame);
+            }
+            _ => panic!("expected Inter"),
+        }
+    }
+
+    /// `read_inter_block_mode_info` with reference_mode=Select +
+    /// counts populated → exercises `comp_inter` count.
+    #[test]
+    fn read_inter_block_mode_info_populates_comp_inter_count() {
+        use crate::entropy::adapt::FrameCounts;
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.reference_mode = ReferenceMode::Select;
+
+        let bsize = BlockSize::Block16x16;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            bsize,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+
+        let mut buf = vec![0u8; 256];
+        let size = {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            write_inter_block_mode_info(
+                &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, None,
+            )
+            .expect("writer ok");
+            finalise(w)
+        };
+        buf.truncate(size);
+
+        let mut reader = BoolReader::new(&buf).expect("init");
+        let mut got = skeleton_mi(bsize);
+        let mut mode_counts = FrameCounts::default();
+        read_inter_block_mode_info(
+            &mut reader,
+            &fc,
+            None,
+            Some(&mut mode_counts),
+            &params,
+            &nb,
+            bsize,
+            &bounds,
+            None,
+            &mut got,
+        );
+        let total_comp_inter: u32 = mode_counts
+            .comp_inter
+            .iter()
+            .map(|c| c[0] + c[1])
+            .sum();
+        assert_eq!(total_comp_inter, 1, "comp_inter counted once");
+    }
+
+    /// `read_inter_block_mode_info` with switchable interp +
+    /// counts populated → exercises `switchable_interp` count.
+    #[test]
+    fn read_inter_block_mode_info_populates_switchable_interp_count() {
+        use crate::entropy::adapt::FrameCounts;
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.interp_filter = InterpFilter::Switchable;
+
+        let bsize = BlockSize::Block16x16;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            bsize,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTapSharp,
+        );
+        let mut buf = vec![0u8; 256];
+        let size = {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            write_inter_block_mode_info(
+                &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, None,
+            )
+            .expect("writer ok");
+            finalise(w)
+        };
+        buf.truncate(size);
+
+        let mut reader = BoolReader::new(&buf).expect("init");
+        let mut got = skeleton_mi(bsize);
+        let mut mode_counts = FrameCounts::default();
+        read_inter_block_mode_info(
+            &mut reader,
+            &fc,
+            None,
+            Some(&mut mode_counts),
+            &params,
+            &nb,
+            bsize,
+            &bounds,
+            None,
+            &mut got,
+        );
+        let total: u32 = mode_counts
+            .switchable_interp
+            .iter()
+            .map(|c| c.iter().sum::<u32>())
+            .sum();
+        assert_eq!(total, 1);
+    }
+
+    // ----- Writer-side count plumbing — exercises the `counts` arg
+    //       in write_inter_block_mode_info (parallel to reader)
+
+    /// Writer accumulates `single_ref` count for GOLDEN target.
+    #[test]
+    fn write_inter_block_mode_info_populates_single_ref_p2_count() {
+        let fc = FrameContext::new_default();
+        let params = default_params();
+        let bsize = BlockSize::Block16x16;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            bsize,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let mut buf = vec![0u8; 256];
+        let mut counts = FrameCounts::default();
+        {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            write_inter_block_mode_info(
+                &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, Some(&mut counts),
+            )
+            .expect("writer ok");
+            let _ = finalise(w);
+        }
+        let total_p1: u32 = counts.single_ref.iter().map(|c| c[0][0] + c[0][1]).sum();
+        let total_p2: u32 = counts.single_ref.iter().map(|c| c[1][0] + c[1][1]).sum();
+        assert_eq!(total_p1, 1, "single_ref p1 written once");
+        assert_eq!(total_p2, 1, "single_ref p2 written once (GOLDEN target)");
+    }
+
+    /// Writer accumulates `single_ref` count for ALTREF target —
+    /// p2 bit = 1.
+    #[test]
+    fn write_inter_block_mode_info_populates_single_ref_altref_count() {
+        let fc = FrameContext::new_default();
+        let params = default_params();
+        let bsize = BlockSize::Block16x16;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            bsize,
+            InterMode::ZeroMv,
+            [RefFrame::AltrefFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let mut buf = vec![0u8; 256];
+        let mut counts = FrameCounts::default();
+        {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            write_inter_block_mode_info(
+                &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, Some(&mut counts),
+            )
+            .expect("writer ok");
+            let _ = finalise(w);
+        }
+        // For ALTREF the bit1 = 1 → single_ref[ctx1][1][1] += 1.
+        let total_bit1_one: u32 = counts.single_ref.iter().map(|c| c[1][1]).sum();
+        assert_eq!(total_bit1_one, 1, "ALTREF: p2 bit=1");
+    }
+
+    /// Writer compound path: accumulates `comp_ref` count.
+    #[test]
+    fn write_inter_block_mode_info_populates_comp_ref_count() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&params.sign_bias);
+        params.comp_fixed_ref = fixed;
+        params.comp_var_ref = var;
+        params.reference_mode = ReferenceMode::Compound;
+        let bsize = BlockSize::Block16x16;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            bsize,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let mut buf = vec![0u8; 256];
+        let mut counts = FrameCounts::default();
+        {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            write_inter_block_mode_info(
+                &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, Some(&mut counts),
+            )
+            .expect("writer ok");
+            let _ = finalise(w);
+        }
+        let total: u32 = counts.comp_ref.iter().map(|c| c[0] + c[1]).sum();
+        assert_eq!(total, 1, "comp_ref counted once");
+    }
+
+    /// Writer Select path: accumulates `comp_inter` count.
+    #[test]
+    fn write_inter_block_mode_info_populates_comp_inter_count() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.reference_mode = ReferenceMode::Select;
+        let bsize = BlockSize::Block16x16;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            bsize,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let mut buf = vec![0u8; 256];
+        let mut counts = FrameCounts::default();
+        {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            write_inter_block_mode_info(
+                &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, Some(&mut counts),
+            )
+            .expect("writer ok");
+            let _ = finalise(w);
+        }
+        let total: u32 = counts.comp_inter.iter().map(|c| c[0] + c[1]).sum();
+        assert_eq!(total, 1);
+    }
+
+    /// Writer switchable interp: accumulates `switchable_interp`.
+    #[test]
+    fn write_inter_block_mode_info_populates_switchable_interp_count() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.interp_filter = InterpFilter::Switchable;
+        let bsize = BlockSize::Block16x16;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            bsize,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTapSmooth,
+        );
+        let mut buf = vec![0u8; 256];
+        let mut counts = FrameCounts::default();
+        {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            write_inter_block_mode_info(
+                &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, Some(&mut counts),
+            )
+            .expect("writer ok");
+            let _ = finalise(w);
+        }
+        let total: u32 = counts
+            .switchable_interp
+            .iter()
+            .map(|c| c.iter().sum::<u32>())
+            .sum();
+        assert_eq!(total, 1);
+    }
+
+    /// Writer NEWMV: accumulates `inter_mode` count for the NEW
+    /// leaf.
+    #[test]
+    fn write_inter_block_mode_info_populates_inter_mode_count_new() {
+        let fc = FrameContext::new_default();
+        let params = default_params();
+        let bsize = BlockSize::Block16x16;
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let mi = build_inter_mi(
+            bsize,
+            InterMode::NewMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv { row: 4, col: 0 }, Mv::ZERO],
+            InterpFilter::EightTap,
+        );
+        let mut buf = vec![0u8; 256];
+        let mut counts = FrameCounts::default();
+        {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            write_inter_block_mode_info(
+                &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, Some(&mut counts),
+            )
+            .expect("writer ok");
+            let _ = finalise(w);
+        }
+        let total: u32 = counts.inter_mode.iter().map(|c| c.iter().sum::<u32>()).sum();
+        assert_eq!(total, 1);
+        // NEW = idx 3 → the [_][3] slot incremented.
+        let total_new: u32 = counts.inter_mode.iter().map(|c| c[InterMode::NewMv.idx()]).sum();
+        assert_eq!(total_new, 1, "NEWMV slot incremented");
+    }
+
+    // ----- get_pred_context_switchable_interp: the "above_type ==
+    //       sentinel" branch (left has filter, above is sentinel)
+
+    /// Switchable interp ctx: left has filter, above is sentinel
+    /// (None) → ctx = left's filter.
+    #[test]
+    fn switchable_interp_ctx_above_sentinel_left_real() {
+        let left = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTapSharp,
+        );
+        // above = None (sentinel), left = EightTapSharp.
+        let ctx = get_pred_context_switchable_interp(None, Some(&left));
+        assert_eq!(ctx, InterpFilter::EightTapSharp as usize);
+    }
+
+    /// Switchable interp ctx: above = intra (sentinel), left = real.
+    #[test]
+    fn switchable_interp_ctx_above_intra_left_real() {
+        let above = intra_neighbour(BlockSize::Block16x16);
+        let left = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTapSharp,
+        );
+        let ctx = get_pred_context_switchable_interp(Some(&above), Some(&left));
+        assert_eq!(ctx, InterpFilter::EightTapSharp as usize);
+    }
+
+    // ----- get_reference_mode_context: edge has_second_ref vs not
+
+    /// `get_reference_mode_context` single-edge intra → ctx = 1
+    /// (no compound, `!is_inter_block` → has_second_ref returns
+    /// false for intra → reads `ref0(edge) == comp_fixed_ref` where
+    /// ref0 of intra = IntraFrame).
+    #[test]
+    fn reference_mode_ctx_single_edge_intra() {
+        let intra = intra_neighbour(BlockSize::Block16x16);
+        // For intra edge: has_second_ref = false; ref0(edge) = IntraFrame.
+        // IntraFrame != ALTREF → ctx = 0.
+        let ctx = get_reference_mode_context(Some(&intra), None, RefFrame::AltrefFrame);
+        assert_eq!(ctx, 0);
+    }
+
+    /// `get_reference_mode_context` no neighbours → ctx = 1.
+    #[test]
+    fn reference_mode_ctx_no_neighbours() {
+        let ctx = get_reference_mode_context(None, None, RefFrame::AltrefFrame);
+        assert_eq!(ctx, 1);
+    }
+
+    // ----- get_pred_context_comp_ref_p: inter+inter compound branch
+    //       arms (lines 343-367 in the production code)
+
+    /// `comp_ref_p`: both single-ref, both equal & equal to var1 → ctx 0.
+    /// vrfa = vrfl = ref0(above/left); var1 = comp_var_ref[1].
+    /// Setup: sign_bias = `[false, false, true]` → fixed=ALTREF,
+    /// var=[LAST, GOLDEN], var1=GOLDEN. Both neighbours single-ref
+    /// GOLDEN → vrfa==vrfl==GOLDEN==var1 → ctx = 0.
+    #[test]
+    fn comp_ref_p_both_inter_single_both_var1() {
+        let sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&sign_bias);
+        let n = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_comp_ref_p(Some(&n), Some(&n), &sign_bias, fixed, var);
+        assert_eq!(ctx, 0);
+    }
+
+    /// `comp_ref_p`: both single, vrfa == comp_fixed_ref AND vrfl ==
+    /// comp_var_ref[0] → ctx = 4 (first cross-match branch).
+    /// Setup: fixed=ALTREF, var=[LAST, GOLDEN]. above=ALTREF,
+    /// left=LAST → vrfa=ALTREF=fixed, vrfl=LAST=var[0] → ctx = 4.
+    #[test]
+    fn comp_ref_p_both_inter_single_fixed_var0_cross() {
+        let sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&sign_bias);
+        let above = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::AltrefFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let left = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_comp_ref_p(Some(&above), Some(&left), &sign_bias, fixed, var);
+        assert_eq!(ctx, 4);
+    }
+
+    /// `comp_ref_p`: both single, vrfa == vrfl but != var1 → ctx = 3.
+    /// Setup: both LAST → vrfa=vrfl=LAST. var1=GOLDEN.
+    /// Not the cross-match branch (LAST==var[0] but also need
+    /// vrfl==fixed). LAST ≠ ALTREF, so we fall through to vrfa==vrfl.
+    #[test]
+    fn comp_ref_p_both_inter_single_same_not_var1() {
+        let sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&sign_bias);
+        let n = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        // vrfa=vrfl=LAST, var1=GOLDEN, comp_fixed_ref=ALTREF,
+        // comp_var_ref[0]=LAST → vrfa==comp_fixed_ref? ALTREF==LAST?
+        // No. vrfl==comp_fixed_ref? No. Not the cross branch. vrfa
+        // == vrfl true → ctx = 3.
+        let ctx = get_pred_context_comp_ref_p(Some(&n), Some(&n), &sign_bias, fixed, var);
+        assert_eq!(ctx, 3);
+    }
+
+    /// `comp_ref_p`: both single, vrfa != vrfl, neither cross-match
+    /// → ctx = 1.
+    /// Setup: above=LAST, left=GOLDEN. var=[LAST,GOLDEN], fixed=ALTREF.
+    /// vrfa=LAST, vrfl=GOLDEN. vrfa==var1? var1=GOLDEN, LAST≠GOLDEN.
+    /// vrfa==vrfl? No. Cross: LAST=fixed? No. GOLDEN=fixed? No.
+    /// vrfa==vrfl? No → ctx = 1.
+    #[test]
+    fn comp_ref_p_both_inter_single_distinct_no_match() {
+        let sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&sign_bias);
+        let above = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let left = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_comp_ref_p(Some(&above), Some(&left), &sign_bias, fixed, var);
+        assert_eq!(ctx, 1);
+    }
+
+    /// `comp_ref_p`: one compound + one single, vrfc==var1, rfs!=var1
+    /// → ctx = 1.
+    /// Setup: above = single LAST, left = compound [LAST,GOLDEN].
+    /// var=[LAST,GOLDEN], var1=GOLDEN, fixed=ALTREF. var_ref_idx = 0
+    /// (sign_bias[ALTREF]=true → fix_ref_idx=1 → var_ref_idx=0).
+    /// l_sg = !has_second(left) = false (left is compound).
+    /// a_sg = !has_second(above) = true.
+    /// vrfa = ref0(above) = LAST. vrfl = var_ref_of(left) =
+    /// ref_frames[0] = LAST.
+    /// vrfa == vrfl: LAST==LAST true; var1=GOLDEN ≠ vrfa → not arm 0.
+    /// l_sg && a_sg: false (only one is single).
+    /// l_sg || a_sg true (a_sg). vrfc: l_sg=false → vrfc = vrfl =
+    /// LAST. rfs: a_sg=true → rfs = vrfa = LAST.
+    /// vrfc == var1? LAST == GOLDEN? No. rfs == var1? No → else → 4.
+    /// So this would be ctx 4. Let's get ctx 1 differently.
+    ///
+    /// For vrfc == var1 = GOLDEN, rfs != var1: need single edge ref0
+    /// != GOLDEN AND compound edge var_ref_of == GOLDEN.
+    /// Set above = single LAST (rfs=LAST), left = compound
+    /// [GOLDEN, ALTREF] → var_ref_of(left) = ref_frames[0] = GOLDEN.
+    #[test]
+    fn comp_ref_p_compound_plus_single_vrfc_var1() {
+        let sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&sign_bias);
+        // var1 = GOLDEN.
+        let above = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let left = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_comp_ref_p(Some(&above), Some(&left), &sign_bias, fixed, var);
+        // a_sg = true (above single), vrfa = LAST. l_sg = false
+        // (left compound). vrfl = ref_frames[var_ref_idx=0] = GOLDEN.
+        // vrfa != vrfl. l_sg || a_sg true.
+        // vrfc = vrfl = GOLDEN. rfs = vrfa = LAST.
+        // vrfc == var1 = GOLDEN: YES. rfs != var1: YES. → ctx = 1.
+        assert_eq!(ctx, 1);
+    }
+
+    /// `comp_ref_p`: one compound + one single, rfs==var1, vrfc!=var1
+    /// → ctx = 2.
+    /// Setup: above single GOLDEN (rfs=GOLDEN=var1), left compound
+    /// [LAST, ALTREF] → var_ref_of(left)=LAST (≠var1).
+    #[test]
+    fn comp_ref_p_compound_plus_single_rfs_var1() {
+        let sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&sign_bias);
+        let above = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let left = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_comp_ref_p(Some(&above), Some(&left), &sign_bias, fixed, var);
+        assert_eq!(ctx, 2);
+    }
+
+    /// `comp_ref_p`: both compound, vrfa==vrfl != var1 → ctx = 4.
+    #[test]
+    fn comp_ref_p_both_compound_equal_not_var1() {
+        let sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&sign_bias);
+        // Both compound [LAST, ALTREF] → var_ref_of = LAST.
+        // var1 = GOLDEN. LAST != GOLDEN.
+        let n = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_comp_ref_p(Some(&n), Some(&n), &sign_bias, fixed, var);
+        assert_eq!(ctx, 4);
+    }
+
+    /// `comp_ref_p`: both compound, vrfa != vrfl → ctx = 2.
+    #[test]
+    fn comp_ref_p_both_compound_distinct() {
+        let sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&sign_bias);
+        let above = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let left = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_comp_ref_p(Some(&above), Some(&left), &sign_bias, fixed, var);
+        assert_eq!(ctx, 2);
+    }
+
+    // ----- get_pred_context_single_ref_p2: inter+inter detailed arms
+
+    /// `single_ref_p2`: both inter compound, same ref pair, has
+    /// GOLDEN → ctx = 3.
+    /// (Already covered above; this complements with no GOLDEN.)
+    #[test]
+    fn single_ref_p2_both_compound_same_no_golden_zero() {
+        let n = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        // Same pair, no GOLDEN → 3 * 0 = 0.
+        let ctx = get_pred_context_single_ref_p2(Some(&n), Some(&n));
+        assert_eq!(ctx, 0);
+    }
+
+    /// `single_ref_p2`: one compound + one single GOLDEN where rfs
+    /// = GOLDEN → ctx = 3.
+    #[test]
+    fn single_ref_p2_compound_single_rfs_golden_no_match() {
+        // compound = [LAST, ALTREF] (no GOLDEN); single GOLDEN.
+        // rfs = GOLDEN → 3 + (crf1 or crf2 == GOLDEN). LAST/ALTREF
+        // → 0 → ctx = 3.
+        let compound = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let single = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        // single above + compound left.
+        let ctx = get_pred_context_single_ref_p2(Some(&single), Some(&compound));
+        assert_eq!(ctx, 3);
+    }
+
+    /// `single_ref_p2`: one compound + one single ALTREF where rfs
+    /// = ALTREF, crf has GOLDEN → ctx = 1.
+    #[test]
+    fn single_ref_p2_compound_single_rfs_altref_crf_golden() {
+        let compound = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::GoldenFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let single = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::AltrefFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        // single above + compound left. rfs = above0 = ALTREF.
+        // crf1=left0=LAST, crf2=left1=GOLDEN. ALTREF branch: ctx = (crf
+        // has GOLDEN) = 1.
+        let ctx = get_pred_context_single_ref_p2(Some(&single), Some(&compound));
+        assert_eq!(ctx, 1);
+    }
+
+    /// `single_ref_p2`: one compound + one single LAST where rfs =
+    /// LAST (neither GOLDEN nor ALTREF) and crf doesn't have GOLDEN
+    /// → ctx = 1 (1 + 2*0).
+    #[test]
+    fn single_ref_p2_compound_single_rfs_last_no_golden() {
+        let compound = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let single = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p2(Some(&single), Some(&compound));
+        // rfs = LAST (neither GOLDEN nor ALTREF). 1 + 2*0 = 1.
+        assert_eq!(ctx, 1);
+    }
+
+    /// `single_ref_p2`: one compound + one single LAST where crf has
+    /// GOLDEN → ctx = 1 + 2 = 3.
+    #[test]
+    fn single_ref_p2_compound_single_rfs_last_crf_golden() {
+        let compound = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::GoldenFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let single = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p2(Some(&single), Some(&compound));
+        assert_eq!(ctx, 3);
+    }
+
+    /// `single_ref_p2`: both inter single, both LAST → ctx = 3.
+    #[test]
+    fn single_ref_p2_both_inter_single_both_last() {
+        let n = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p2(Some(&n), Some(&n));
+        assert_eq!(ctx, 3);
+    }
+
+    /// `single_ref_p2`: both inter single, one LAST one GOLDEN →
+    /// ctx = 4.
+    #[test]
+    fn single_ref_p2_both_inter_single_one_last_one_golden() {
+        let last = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let golden = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p2(Some(&last), Some(&golden));
+        assert_eq!(ctx, 4);
+    }
+
+    /// `single_ref_p2`: both inter single, one LAST one ALTREF →
+    /// ctx = 0 (4 * (ALTREF == GOLDEN) = 0).
+    #[test]
+    fn single_ref_p2_both_inter_single_one_last_one_altref() {
+        let last = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let altref = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::AltrefFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p2(Some(&last), Some(&altref));
+        assert_eq!(ctx, 0);
+    }
+
+    /// `single_ref_p2`: both inter single, no LAST, one GOLDEN +
+    /// one ALTREF → ctx = 2 * 1 + 2 * 0 = 2.
+    #[test]
+    fn single_ref_p2_both_inter_single_no_last_one_golden() {
+        let golden = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let altref = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::AltrefFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let ctx = get_pred_context_single_ref_p2(Some(&golden), Some(&altref));
+        assert_eq!(ctx, 2);
+    }
+
+    /// `single_ref_p2`: single edge intra → ctx = 2.
+    #[test]
+    fn single_ref_p2_single_edge_intra() {
+        let intra = intra_neighbour(BlockSize::Block16x16);
+        let ctx = get_pred_context_single_ref_p2(Some(&intra), None);
+        assert_eq!(ctx, 2);
+    }
+
+    /// `single_ref_p2`: no neighbours → ctx = 2.
+    #[test]
+    fn single_ref_p2_no_neighbours() {
+        let ctx = get_pred_context_single_ref_p2(None, None);
+        assert_eq!(ctx, 2);
+    }
+
+    /// `single_ref_p1`: no neighbours → ctx = 2.
+    #[test]
+    fn single_ref_p1_no_neighbours() {
+        let ctx = get_pred_context_single_ref_p1(None, None);
+        assert_eq!(ctx, 2);
+    }
+
+    // ----- InterModeWriteError Display impl
+
+    /// `InterModeWriteError::NotInter` Display formatting.
+    #[test]
+    fn inter_mode_write_error_display_not_inter() {
+        let e = InterModeWriteError::NotInter;
+        let s = format!("{e}");
+        assert!(s.contains("expected"), "actual: {s}");
+        assert!(s.contains("Inter"), "actual: {s}");
+    }
+
+    /// `InterModeWriteError::Sub8InvalidSubMode` Display formatting.
+    #[test]
+    fn inter_mode_write_error_display_sub8_invalid_sub_mode() {
+        let e = InterModeWriteError::Sub8InvalidSubMode { j: 1, raw: 42 };
+        let s = format!("{e}");
+        assert!(s.contains("bmi[1]"), "actual: {s}");
+        assert!(s.contains("42"), "actual: {s}");
+    }
+
+    /// `InterModeWriteError::Sub8ParentModeMismatch` Display
+    /// formatting.
+    #[test]
+    fn inter_mode_write_error_display_parent_mode_mismatch() {
+        let e = InterModeWriteError::Sub8ParentModeMismatch { parent: 3, last_sub: 0 };
+        let s = format!("{e}");
+        assert!(s.contains("parent mode"), "actual: {s}");
+        assert!(s.contains('3') && s.contains('0'), "actual: {s}");
+    }
+
+    // ----- write_sub8_bmi error path: invalid sub-mode index
+
+    /// `write_inter_block_mode_info` for a sub-8 block whose bmi[j]
+    /// has an invalid `as_mode` raw byte → `Sub8InvalidSubMode`.
+    #[test]
+    fn write_sub8_rejects_invalid_sub_mode_index() {
+        let fc = FrameContext::new_default();
+        let params = default_params();
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block4x4;
+        // Build a valid sub-8 cell and corrupt bmi[0].as_mode to an
+        // invalid index (4 — InterMode has only 0..=3).
+        let entries = [
+            (InterMode::ZeroMv, [Mv::ZERO; 2]),
+            (InterMode::ZeroMv, [Mv::ZERO; 2]),
+            (InterMode::ZeroMv, [Mv::ZERO; 2]),
+            (InterMode::ZeroMv, [Mv::ZERO; 2]),
+        ];
+        let mut mi = build_sub8_inter_mi(
+            bsize,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            InterpFilter::EightTap,
+            entries,
+        );
+        mi.bmi[0].as_mode = 99;
+        let mut buf = vec![0u8; 64];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        let err = write_inter_block_mode_info(
+            &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, None,
+        )
+        .expect_err("expected Sub8InvalidSubMode");
+        assert!(
+            matches!(err, InterModeWriteError::Sub8InvalidSubMode { j: 0, raw: 99 }),
+            "actual: {err:?}",
+        );
+    }
+
+    /// Compound NEAR at 16x16: exercises NEAR list builder for both
+    /// compound slots (per-ref `find_mv_refs` runs twice).
+    #[test]
+    fn parent_compound_nearmv_round_trip() {
+        let fc = FrameContext::new_default();
+        let mut params = default_params();
+        params.sign_bias = sign_bias_from_header(&[false, false, true]);
+        let (fixed, var) = setup_compound_reference_mode(&params.sign_bias);
+        params.comp_fixed_ref = fixed;
+        params.comp_var_ref = var;
+        params.reference_mode = ReferenceMode::Compound;
+        let bsize = BlockSize::Block16x16;
+        let above = inter_neighbour_full(
+            bsize,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv { row: 4, col: 0 }, Mv { row: -8, col: 0 }],
+            InterpFilter::EightTap,
+        );
+        let left = inter_neighbour_full(
+            bsize,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv { row: -4, col: 2 }, Mv { row: 8, col: -2 }],
+            InterpFilter::EightTap,
+        );
+        let nb = ListNeighbours::new()
+            .with(Position { row: -1, col: 0 }, &above)
+            .with(Position { row: 0, col: -1 }, &left);
+        let bounds = loose_bounds();
+        // For NEAR with two distinct neighbours: list[1] = left's MV
+        // for each ref slot.
+        let mi = build_inter_mi(
+            bsize,
+            InterMode::NearMv,
+            [RefFrame::LastFrame, RefFrame::AltrefFrame],
+            [Mv { row: -4, col: 2 }, Mv { row: 8, col: -2 }],
+            InterpFilter::EightTap,
+        );
+        let _ = round_trip(&fc, &params, &nb, bsize, &bounds, None, &mi);
+    }
 }
