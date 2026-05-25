@@ -863,6 +863,94 @@ mod tests {
         assert_eq!(sad_in, Some(0), "identical block, zero MV → SAD = 0");
     }
 
+    /// `raw_sad_at_mv` returns Some for in-range MV; the `negative
+    /// row` and `out-of-width` arms in `block_at` are exercised via
+    /// negative-coord and beyond-width tests.
+    #[test]
+    fn raw_sad_at_mv_negative_row_returns_none() {
+        let plane_w = 16;
+        let plane_h = 16;
+        let data = make_plane(plane_w, plane_h, 4);
+        let plane = PlaneRef {
+            data: &data,
+            stride: plane_w,
+            width: plane_w,
+            height: plane_h,
+        };
+        // Block at (0, 0); MV (-1, 0) → ref starts at (col=0, row=-1).
+        // Negative row → `block_at` returns None.
+        let sad = raw_sad_at_mv(BlockSize::Block4x4, &plane, (0, 0), &plane, -1, 0);
+        assert!(sad.is_none(), "negative row MV → None");
+        // Same for negative col.
+        let sad = raw_sad_at_mv(BlockSize::Block4x4, &plane, (0, 0), &plane, 0, -1);
+        assert!(sad.is_none(), "negative col MV → None");
+    }
+
+    /// `raw_sad_at_mv` returns None when reference block extends past
+    /// the plane's right or bottom edge.
+    #[test]
+    fn raw_sad_at_mv_beyond_width_returns_none() {
+        let plane_w = 16;
+        let plane_h = 16;
+        let data = make_plane(plane_w, plane_h, 4);
+        let plane = PlaneRef {
+            data: &data,
+            stride: plane_w,
+            width: plane_w,
+            height: plane_h,
+        };
+        // 4x4 block at (12, 0). MV (0, 5) → ref at (col=17) which is
+        // past the plane width (16). `block_at` returns None.
+        let sad = raw_sad_at_mv(BlockSize::Block4x4, &plane, (12, 0), &plane, 0, 5);
+        assert!(sad.is_none(), "MV beyond plane width → None");
+        // Beyond plane height.
+        let sad = raw_sad_at_mv(BlockSize::Block4x4, &plane, (0, 12), &plane, 5, 0);
+        assert!(sad.is_none(), "MV beyond plane height → None");
+    }
+
+    /// `mv_err_cost` scales monotonically with `error_per_bit`: same
+    /// MV diff, higher weight → strictly greater cost.
+    #[test]
+    fn mv_err_cost_scales_with_error_per_bit() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+        let low = mv_err_cost(20, 20, 0, 0, 1, &costs);
+        let high = mv_err_cost(20, 20, 0, 0, 4096, &costs);
+        assert!(
+            high > low,
+            "higher error_per_bit must increase cost: low={low}, high={high}"
+        );
+    }
+
+    /// `exhaustive_full_pel_min_sad` returns None when no MV in the
+    /// `mv_limits ∩ [-max_radius, max_radius]` rectangle produces a
+    /// valid reference read. Achievable when the entire search window
+    /// is out of bounds.
+    #[test]
+    fn exhaustive_full_pel_min_sad_no_valid_mv_returns_none() {
+        let plane_w = 8;
+        let plane_h = 8;
+        let data = make_plane(plane_w, plane_h, 1);
+        let plane = PlaneRef {
+            data: &data,
+            stride: plane_w,
+            width: plane_w,
+            height: plane_h,
+        };
+        // Block at (0, 0); limits force only negative MVs to be
+        // considered, but `sad_at` returns None for them (out of
+        // bounds on the ref side).
+        let limits = MvLimits::new(-4, -1, -4, -1);
+        let r = exhaustive_full_pel_min_sad(
+            BlockSize::Block4x4,
+            &plane,
+            (0, 0),
+            &plane,
+            &limits,
+            8,
+        );
+        assert!(r.is_none(), "all candidate MVs OOB → None");
+    }
+
     /// `exhaustive_full_pel_min_sad` returns the global min within
     /// the bounded radius. For identical planes the min is at (0, 0)
     /// with SAD = 0.

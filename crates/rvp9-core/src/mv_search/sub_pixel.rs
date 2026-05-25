@@ -1052,6 +1052,103 @@ mod tests {
         let _r = find_best_sub_pixel_tree_pruned_more(&params);
     }
 
+    /// Block at the very top-left of the reference plane forces the
+    /// sub-pel search to consider candidates with negative ref offsets
+    /// — the `ref_col_i < 0 || ref_row_i < 0` arm in `try_subpel`
+    /// fires for those, returning `u32::MAX`. The search must still
+    /// terminate without panicking.
+    #[test]
+    fn sub_pixel_search_at_origin_blocks_negative_ref_reads() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+        let pw = 64;
+        let ph = 64;
+        let data = make_plane(pw, ph, 11);
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let params = SubPixelSearchParams {
+            block_size: BlockSize::Block8x8,
+            // Block at (0, 0) — any negative MV would underflow ref
+            // reads. The search WILL try negative-direction candidates
+            // (FIRST_LEVEL_CHECKS includes `(center_r - hstep,
+            // center_c)`), which `try_subpel` must reject via the
+            // `ref_col_i < 0 || ref_row_i < 0` guard.
+            src_plane: &plane,
+            src_offset: (0, 0),
+            ref_plane: &plane,
+            center_mv: Mv::ZERO,
+            ref_mv: Mv::ZERO,
+            mv_limits: MvLimits::new(-16, 16, -16, 16),
+            error_per_bit: 1,
+            mv_costs: &costs,
+            allow_hp: true,
+            forced_stop: SubPixelForcedStop::EighthPel,
+            iters_per_step: 2,
+        };
+        let r = find_best_sub_pixel_tree_pruned_more(&params);
+        // Should converge at (0, 0) — any non-zero MV would force a
+        // negative ref read which costs u32::MAX, dominating any cost.
+        assert_eq!(
+            r.best_mv,
+            Mv::ZERO,
+            "block at (0,0): negative ref reads rejected → MV stays at zero"
+        );
+    }
+
+    /// Block at the very bottom-right of the reference plane forces
+    /// `ref_col + bw + 1 > ref_plane.width` and
+    /// `ref_row + bh + 1 > ref_plane.height` branches in `try_subpel`
+    /// to fire for positive-direction candidates.
+    #[test]
+    fn sub_pixel_search_at_bottom_right_blocks_oob_ref_reads() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+        let pw = 64;
+        let ph = 64;
+        let data = make_plane(pw, ph, 11);
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let bw = 8;
+        let bh = 8;
+        let params = SubPixelSearchParams {
+            block_size: BlockSize::Block8x8,
+            // Block at (pw - bw, ph - bh) — positive MVs in any axis
+            // would overrun. The sub-pel kernel also reads `(bh+1) ×
+            // (bw+1)` so even subpel-only positions need headroom.
+            src_plane: &plane,
+            src_offset: (pw - bw, ph - bh),
+            ref_plane: &plane,
+            center_mv: Mv::ZERO,
+            ref_mv: Mv::ZERO,
+            mv_limits: MvLimits::new(-16, 16, -16, 16),
+            error_per_bit: 1,
+            mv_costs: &costs,
+            allow_hp: true,
+            forced_stop: SubPixelForcedStop::EighthPel,
+            iters_per_step: 2,
+        };
+        let r = find_best_sub_pixel_tree_pruned_more(&params);
+        // The search must not move into the out-of-bounds direction
+        // (positive col or row would force the +1 halo to overrun the
+        // plane), so cols & rows stay ≤ 0.
+        assert!(
+            r.best_mv.row <= 0,
+            "bottom-right block: row must stay ≤ 0 (got {})",
+            r.best_mv.row
+        );
+        assert!(
+            r.best_mv.col <= 0,
+            "bottom-right block: col must stay ≤ 0 (got {})",
+            r.best_mv.col
+        );
+    }
+
     /// Edge case: tight `mv_limits` that prevent any out-of-zero
     /// movement — search must converge to (0,0) without
     /// out-of-bounds reads.
