@@ -221,10 +221,57 @@ impl SharedFrame {
 // `SPIN_YIELD_THRESHOLD` iterations to be friendly under oversubscription.
 // ----------------------------------------------------------------------------
 
+// `AtomicI32` is imported here (rather than per-callsite) so the C2
+// column-wavefront worker can share the import line. The C1 commit
+// only exposes `nsync_for_width` + the new spin constant; the atomic
+// type and `Ordering::Acquire/Release` usage land with the worker.
+#[allow(unused_imports)] // wired by C2 (column-wavefront worker)
+use std::sync::atomic::AtomicI32;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
-/// Spin cap before yielding (libvpx-equivalent budget).
+/// Spin cap before yielding (libvpx-equivalent budget). Applied by the
+/// (legacy) row-barrier worker [`run_row_mt_lf_worker`]. The new
+/// column-wavefront worker (`run_split_edge_lf_worker`, lands in C2)
+/// uses [`SPIN_YIELD_THRESHOLD_WAVEFRONT`] — finer-grained gates spin
+/// less aggressively.
 const SPIN_YIELD_THRESHOLD: u32 = 8192;
+
+/// Spin cap for the column-wavefront LF worker (Lever B v2). Per
+/// HLD §3.8 — column-wavefront gates fire once per nsync-boundary SB
+/// column, and under a healthy wavefront the gate passes on the first
+/// load; budget of 256 is enough to absorb the few-microsecond per-SB
+/// latency without burning CPU. Will be consumed by C2's worker.
+#[allow(dead_code)] // wired by C2 (column-wavefront worker)
+const SPIN_YIELD_THRESHOLD_WAVEFRONT: u32 = 256;
+
+/// libvpx `get_sync_range` (`vp9_thread_common.c:264-275`). Returns the
+/// per-row nsync stagger — the number of SB columns row r-1 must be
+/// ahead of row r before row r's H-pass at column c can safely fire.
+/// Width buckets:
+///
+/// | width      | nsync |
+/// |------------|-------|
+/// | < 640      | 1     |
+/// | ≤ 1280     | 2     |
+/// | ≤ 4096     | 4     |
+/// | > 4096     | 8     |
+///
+/// Returned value is `i32` because the per-row `cur_sb_col` array is
+/// `AtomicI32` (initialised to `-1`); the gate math `c <=
+/// cur_sb_col[r-1] - nsync` needs signed semantics at the boundary
+/// where `cur_sb_col[r-1] - nsync` goes negative.
+#[inline]
+pub const fn nsync_for_width(width: u32) -> i32 {
+    if width < 640 {
+        1
+    } else if width <= 1280 {
+        2
+    } else if width <= 4096 {
+        4
+    } else {
+        8
+    }
+}
 
 /// Read-only inputs to the per-row mask build. Shared across all LF
 /// workers; immutable for the duration of the parallel driver call.
@@ -308,13 +355,15 @@ pub struct RowMtLfState<'a> {
     pub sb_cols: usize,
     /// Decode-side per-SB-row counter (written by tile workers via
     /// `fetch_add(1, Release)`; LF workers Acquire-load until the value
-    /// reaches `tile_cols_at_row[r]`).
+    /// reaches `tile_cols_at_row`).
     pub decode_progress: &'a [AtomicU32],
-    /// Required decode-progress value per row before LF can start. For
-    /// the typical tile_rows == 1 column-split case this is `[num_tiles;
-    /// sb_rows]`. For tile_rows > 1, entry `r` counts how many tiles
-    /// cover SB row `r`.
-    pub tile_cols_at_row: &'a [u32],
+    /// Required decode-progress value before LF can start. Since the
+    /// tile-decode scope has already joined by the time the LF
+    /// dispatcher fires, this is a frame-wide constant (`num_tiles`)
+    /// rather than a per-row table. Lever B v2 C1 collapsed the dead
+    /// `Vec<u32>` per-row allocation into a single scalar (HLD §3.5 +
+    /// §5 row 2).
+    pub tile_cols_at_row: u32,
     /// LF-side per-SB-row done flag. `lf_progress[r] = 1` once row r's
     /// filter is complete (both V/H passes, all planes, all cols).
     pub lf_progress: &'a [AtomicU32],
@@ -377,7 +426,7 @@ pub unsafe fn run_row_mt_lf_worker(state: &RowMtLfState<'_>, dispatch: &SimdDisp
         // `decode_tile_intra` / `decode_tile_inter` (Wave 2 C2). The
         // happens-before relation guarantees every pixel write inside
         // `decode_partition` is visible to this worker.
-        let required = state.tile_cols_at_row[r];
+        let required = state.tile_cols_at_row;
         spin_then_yield(|| state.decode_progress[r].load(Ordering::Acquire) >= required);
 
         // Gate 2 — wait until the previous row's LF is complete. The

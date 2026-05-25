@@ -3694,19 +3694,18 @@ fn apply_loop_filter_to_frame_dispatching(
         (0..sb_rows).map(|_| AtomicU32::new(0)).collect();
     let next_lf_row = AtomicUsize::new(0);
     // `decode_progress` was allocated by the caller (one per tile worker
-    // scope). `tile_cols_at_row` collapses to a frame-wide `num_tiles`
-    // because the decode scope has already joined — every cell is at its
-    // target. Build a per-row `[num_tiles; sb_rows]` so the gate trivially
-    // passes. (For a future single-scope revision, the caller would pass
-    // a real `tile_cols_at_row` table.)
-    let tile_cols_at_row: Vec<u32> = (0..sb_rows)
-        .map(|r| {
-            // The C2 atomic increments once per (tile, sb_row); the
-            // current value is the actual count of tiles that decoded
-            // row r. The gate compares decode_progress[r] >= this.
-            decode_progress.unwrap()[r].load(std::sync::atomic::Ordering::Acquire)
-        })
-        .collect();
+    // scope). After the tile-decode scope has joined, every per-row
+    // counter is at the same frame-wide constant (the number of tiles
+    // that cover the row — `num_tiles` for the tile_rows == 1 case).
+    // Lever B v2 C1 collapsed the dead `Vec<u32>` per-row allocation
+    // into a single scalar (HLD §3.5 + §5 row 2). Pick the row-0
+    // counter as the frame-wide constant; the gate trivially passes
+    // on first load.
+    let tile_cols_at_row: u32 = if sb_rows > 0 {
+        decode_progress.unwrap()[0].load(std::sync::atomic::Ordering::Acquire)
+    } else {
+        0
+    };
 
     let chroma = yv12.chroma();
     let chroma_is_asymmetric = matches!(
@@ -3740,7 +3739,7 @@ fn apply_loop_filter_to_frame_dispatching(
         sb_rows,
         sb_cols,
         decode_progress: decode_progress.unwrap(),
-        tile_cols_at_row: &tile_cols_at_row,
+        tile_cols_at_row,
         lf_progress: &lf_progress,
         next_lf_row: &next_lf_row,
     };
