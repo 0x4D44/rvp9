@@ -67,5 +67,5 @@ pub use search_site::{
 pub use mv_pred::mv_pred_sad_seed;
 pub use sub_pixel::{
     SubPixelForcedStop, SubPixelSearchParams, SubPixelSearchResult,
-    find_best_sub_pixel_tree_pruned_more,
+    adaptive_subpel_force_stop, find_best_sub_pixel_tree_pruned_more,
 };

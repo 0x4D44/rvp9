@@ -64,6 +64,47 @@ pub enum SubPixelForcedStop {
     HalfPel = 2,
 }
 
+/// P14 — libvpx-style adaptive `subpel_force_stop` selector.
+///
+/// Mirrors `combined_motion_search` lines 239-246 in
+/// `third_party/libvpx/vp9/encoder/vp9_pickmode.c`:
+///
+/// ```c
+/// if (cpi->sf.mv.enable_adaptive_subpel_force_stop) {
+///   const int mv_thresh = cpi->sf.mv.adapt_subpel_force_stop.mv_thresh;
+///   if (abs(tmp_mv->as_mv.row) >= mv_thresh ||
+///       abs(tmp_mv->as_mv.col) >= mv_thresh)
+///     subpel_force_stop = cpi->sf.mv.adapt_subpel_force_stop.force_stop_above;
+///   else
+///     subpel_force_stop = cpi->sf.mv.adapt_subpel_force_stop.force_stop_below;
+/// }
+/// ```
+///
+/// At the only speed where libvpx enables this (speed 9, set in
+/// `vp9_speed_features.c:803-806`):
+///
+/// * `mv_thresh = 1` (full-pel units, i.e. any non-zero full-pel MV).
+/// * `force_stop_below = QUARTER_PEL` (small/zero MV → 1/4-pel refine).
+/// * `force_stop_above = HALF_PEL`    (large MV → stop at 1/2-pel).
+///
+/// `full_pel_mv` is the post-`vp9_full_pixel_search` MV in **full-pel
+/// units** (matches libvpx's `tmp_mv->as_mv` at the point of the test
+/// — see `vp9_pickmode.c:212-221`, where `tmp_mv->as_mv` is filled by
+/// the full-pixel search and then converted to Q3 only after the
+/// adaptive selector runs).
+#[inline]
+pub fn adaptive_subpel_force_stop(full_pel_mv: Mv) -> SubPixelForcedStop {
+    // libvpx speed-9 default: mv_thresh = 1 full-pel unit.
+    const MV_THRESH: i32 = 1;
+    let row = (full_pel_mv.row as i32).abs();
+    let col = (full_pel_mv.col as i32).abs();
+    if row >= MV_THRESH || col >= MV_THRESH {
+        SubPixelForcedStop::HalfPel
+    } else {
+        SubPixelForcedStop::QuarterPel
+    }
+}
+
 /// Input parameters to [`find_best_sub_pixel_tree_pruned_more`].
 pub struct SubPixelSearchParams<'a> {
     /// Block size — picks the sub-pel-variance kernel.
@@ -1246,6 +1287,151 @@ mod tests {
             0,
             "forced_stop=QuarterPel: row LSB (1/8-pel) must be zero; got row={}",
             r.best_mv.row
+        );
+    }
+
+    /// P14 — unit test for [`adaptive_subpel_force_stop`]. Mirrors the
+    /// libvpx speed-9 settings in `vp9_speed_features.c:803-806`:
+    /// `mv_thresh = 1`, `force_stop_below = QUARTER_PEL`,
+    /// `force_stop_above = HALF_PEL`.
+    #[test]
+    fn p14_adaptive_force_stop_thresholds_match_libvpx() {
+        // Zero MV: below threshold (|0| < 1) → QuarterPel.
+        assert_eq!(
+            adaptive_subpel_force_stop(Mv { row: 0, col: 0 }),
+            SubPixelForcedStop::QuarterPel,
+            "zero MV must select QuarterPel (libvpx force_stop_below)"
+        );
+        // Any non-zero MV (positive or negative, row or col) is at
+        // libvpx's threshold (mv_thresh = 1 full-pel unit).
+        for mv in [
+            Mv { row: 1, col: 0 },
+            Mv { row: 0, col: 1 },
+            Mv { row: -1, col: 0 },
+            Mv { row: 0, col: -1 },
+            Mv { row: 7, col: -23 },
+            Mv { row: i16::MAX, col: 0 },
+            Mv { row: i16::MIN, col: 0 },
+        ] {
+            assert_eq!(
+                adaptive_subpel_force_stop(mv),
+                SubPixelForcedStop::HalfPel,
+                "|row| or |col| >= 1 must select HalfPel; got mv={mv:?}",
+            );
+        }
+    }
+
+    /// P14 — end-to-end proof that the adaptive selector is wired to the
+    /// sub-pel search and that the small-vs-large MV paths produce
+    /// *observably different* refinement granularity.
+    ///
+    /// Setup: build a source that is the reference shifted by a 1/4-pel
+    /// horizontal phase. With `forced_stop = QuarterPel` (small-MV
+    /// path) the search reaches the 1/4-pel attractor (col & 1 == 0,
+    /// col != 0). With `forced_stop = HalfPel` (large-MV path) the
+    /// search is capped at the 1/2-pel grid (col & 3 == 0), so the
+    /// 1/4-pel optimum is unreachable.
+    ///
+    /// This is a positive assertion that would fail if
+    /// `adaptive_subpel_force_stop` were replaced by a stub that
+    /// always returned `QuarterPel` (or `EighthPel`): the large-MV
+    /// branch's `col & 3 == 0` invariant would break the moment the
+    /// search resolved any 1/4-pel offset.
+    #[test]
+    fn p14_adaptive_force_stop_changes_sub_pel_granularity() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+        let pw = 64;
+        let ph = 64;
+        let ref_data = make_plane(pw, ph, 11);
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+
+        // Build a 1/4-pel-shifted "source" block at (24, 24): bilinear
+        // taps [96, 32] / 128 (phase 2/8 = 1/4-pel column shift).
+        let mut src_data = ref_data.clone();
+        let src_col = 24usize;
+        let src_row = 24usize;
+        let bw = 8usize;
+        let bh = 8usize;
+        for i in 0..bh {
+            for j in 0..bw {
+                let a = i32::from(ref_data[(src_row + i) * pw + (src_col + j)]);
+                let b = i32::from(ref_data[(src_row + i) * pw + (src_col + j + 1)]);
+                let v = (a * 96 + b * 32 + 64) >> 7;
+                src_data[(src_row + i) * pw + (src_col + j)] = v as u8;
+            }
+        }
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+
+        let make_params = |forced_stop: SubPixelForcedStop| SubPixelSearchParams {
+            block_size: BlockSize::Block8x8,
+            src_plane: &src_plane,
+            src_offset: (src_col, src_row),
+            ref_plane: &ref_plane,
+            center_mv: Mv::ZERO,
+            ref_mv: Mv::ZERO,
+            mv_limits: MvLimits::new(-16, 16, -16, 16),
+            error_per_bit: 1,
+            mv_costs: &costs,
+            allow_hp: false,
+            forced_stop,
+            iters_per_step: 2,
+        };
+
+        // Small full-pel MV (|row|,|col| < 1): adaptive selects
+        // QuarterPel. The search can resolve the 1/4-pel attractor.
+        let small_stop = adaptive_subpel_force_stop(Mv { row: 0, col: 0 });
+        assert_eq!(small_stop, SubPixelForcedStop::QuarterPel);
+        let r_small = find_best_sub_pixel_tree_pruned_more(&make_params(small_stop));
+        assert_eq!(
+            r_small.best_mv.col & 1,
+            0,
+            "QuarterPel path: col must be on the 1/4-pel grid (LSB 0); got col={}",
+            r_small.best_mv.col
+        );
+        assert!(
+            r_small.best_mv.col == 2 || r_small.best_mv.col == 4,
+            "QuarterPel path: expected col ∈ {{2, 4}} for 1/4-pel attractor; got col={}",
+            r_small.best_mv.col
+        );
+
+        // Large full-pel MV (|row| >= 1): adaptive selects HalfPel.
+        // The 1/4-pel attractor is now unreachable: col must be on
+        // the 1/2-pel grid (low 2 bits zero).
+        let large_stop = adaptive_subpel_force_stop(Mv { row: 5, col: -7 });
+        assert_eq!(large_stop, SubPixelForcedStop::HalfPel);
+        let r_large = find_best_sub_pixel_tree_pruned_more(&make_params(large_stop));
+        assert_eq!(
+            r_large.best_mv.col & 3,
+            0,
+            "HalfPel path: col must be on the 1/2-pel grid (low 2 bits 0); got col={}",
+            r_large.best_mv.col
+        );
+        assert_eq!(
+            r_large.best_mv.row & 3,
+            0,
+            "HalfPel path: row must be on the 1/2-pel grid (low 2 bits 0); got row={}",
+            r_large.best_mv.row
+        );
+
+        // The two paths MUST produce different MVs for this attractor:
+        // small_stop resolves a 1/4-pel offset (col=2), large_stop
+        // collapses it to a 1/2-pel offset (col ∈ {0, 4}).
+        assert_ne!(
+            r_small.best_mv, r_large.best_mv,
+            "P14 wiring failed: small-MV and large-MV adaptive paths produced \
+             the same sub-pel MV {:?}; the adaptive selector did not change \
+             the search granularity",
+            r_small.best_mv
         );
     }
 }

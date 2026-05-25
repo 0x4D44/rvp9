@@ -112,7 +112,8 @@ use crate::mv_search::full_pixel::{
 use crate::mv_search::mv_limits::MvLimits;
 use crate::mv_search::search_site::SearchSiteConfig;
 use crate::mv_search::sub_pixel::{
-    SubPixelForcedStop, SubPixelSearchParams, find_best_sub_pixel_tree_pruned_more,
+    SubPixelSearchParams, adaptive_subpel_force_stop,
+    find_best_sub_pixel_tree_pruned_more,
 };
 use crate::mode_decision::hadamard::{hadamard_8x8, hadamard_16x16, hadamard_32x32};
 use crate::quant::forward::{
@@ -1368,10 +1369,18 @@ fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
         );
     }
 
-    // Hand off to sub-pel. The sub-pel search only supports the 5
-    // square block sizes (Block4x4 / 8 / 16 / 32 / 64); F8.1 v1's
-    // supported sizes (Block16x16 / Block32x32 / Block64x64) are all
-    // in that set.
+    // P14 — adaptive `subpel_force_stop` (libvpx
+    // `vp9_pickmode.c:239-246`). For large full-pel MVs we stop at
+    // 1/2-pel; for zero/small full-pel MVs we refine to 1/4-pel. The
+    // libvpx speed-9 thresholds are reproduced bug-for-bug in
+    // [`adaptive_subpel_force_stop`]. rvp9 locks the rt path to
+    // cpu-used 6-8 and applies the adaptive selector unconditionally
+    // — strictly this is wider than libvpx (which only enables it at
+    // speed 9 via `vp9_speed_features.c:803-806`) but the rvp9 target
+    // is a single rt config, so we follow the rt-leaning behaviour
+    // here. EIGHTH_PEL is no longer reachable for NEWMV; libvpx's
+    // speed-9 setter likewise never selects it for NEWMV.
+    let forced_stop = adaptive_subpel_force_stop(center_mv_fp);
     let sub = find_best_sub_pixel_tree_pruned_more(&SubPixelSearchParams {
         block_size: params.block_size,
         src_plane: params.src_plane,
@@ -1383,7 +1392,7 @@ fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
         error_per_bit: DEFAULT_ERROR_PER_BIT,
         mv_costs: params.mv_costs,
         allow_hp: params.allow_hp,
-        forced_stop: SubPixelForcedStop::EighthPel,
+        forced_stop,
         // libvpx rt default: `sf.mv.subpel_search_level = 2`
         // (`vp9_speed_features.c:929`), enabling SECOND_LEVEL_CHECKS
         // after each pyramid level's FIRST_LEVEL_CHECKS.
