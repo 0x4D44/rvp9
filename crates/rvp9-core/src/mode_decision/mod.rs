@@ -48,6 +48,7 @@ pub mod intra;
 pub mod model_rd;
 pub mod nonrd_partition;
 pub mod partition;
+pub mod rd_thresh;
 
 /// libvpx `RDDIV_BITS` (`vp9_rd.h:26`).
 pub const RDDIV_BITS: u32 = 7;

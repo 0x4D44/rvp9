@@ -2344,6 +2344,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // this is still `FrameContext::new_default()` (matching libvpx's
     // frame-N-adapts-frame-N+1 convention).
     frame_context: &FrameContext,
+    // P20 — adaptive RD-threshold state (libvpx
+    // `vp9_pickmode.c:2241-2247` gate state). Read by the picker for
+    // each candidate's effective threshold; mutated after each pick
+    // via `update_thresh_freq_fact` to decay the winner and
+    // increment losers. Persists across frames.
+    rd_thresh_table: &mut rvp9_core::mode_decision::rd_thresh::RdThreshTable,
 ) -> VecBackedInterCoefSource {
     use rvp9_core::bitstream::frame::{InterpFilter as WireInterpFilter, MAX_INTER_REFS};
     use rvp9_core::bitstream::header::FrameKind as WireFrameKind;
@@ -3267,6 +3273,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let above_mv_p13 = neighbour_mv(nb_above);
                 let left_mv_p13 = neighbour_mv(nb_left);
 
+                // P20 — re-borrow the persistent RD-threshold table
+                // immutably for the picker. The mutable borrow for
+                // the post-pick `update_thresh_freq_fact` call below
+                // is acquired separately after `unified_pick` returns
+                // so the borrows do not overlap.
+                let rd_thresh_table_ref: Option<
+                    &rvp9_core::mode_decision::rd_thresh::RdThreshTable,
+                > = Some(&*rd_thresh_table);
+
                 let pick_params = PickInterModeParams {
                     block_size: leaf_bsize,
                     src_plane: &src_y,
@@ -3332,8 +3347,40 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // for the realtime single-spatial-layer path,
                     // which is the rvp9 operating point.
                     reference_masking: true,
+                    // P20 — adaptive RD-threshold table, owned by the
+                    // streaming encoder. Default ON (libvpx default
+                    // at cpu-used 6+, vp9_speed_features.c:752 sets
+                    // `sf.adaptive_rd_thresh = 4`, matched in
+                    // mode_decision::rd_thresh::ADAPTIVE_RD_THRESH).
+                    rd_thresh_table: rd_thresh_table_ref,
                 };
                 let unified_pick = pick_inter_mode(&pick_params);
+
+                // P20 — drop the immutable borrow held by `pick_params`
+                // so the mutable update can proceed.
+                drop(pick_params);
+                let _ = rd_thresh_table_ref; // consume binding
+
+                // P20 — update `thresh_freq_fact` after the pick.
+                // Mirrors libvpx `vp9_pickmode.c:2725-2738`: decay the
+                // winning (ref, mode) slot's fact and increment every
+                // other inter slot for the winning ref. Skip for
+                // intra-winning picks (libvpx's intra-loop branch at
+                // `vp9_pickmode.c:2708-2724` updates intra slots,
+                // which rvp9's gate does not read — see the
+                // `rd_thresh` module's divergence note).
+                if matches!(
+                    unified_pick.picked_ref_frame,
+                    rvp9_core::mode_info::RefFrame::LastFrame
+                        | rvp9_core::mode_info::RefFrame::GoldenFrame,
+                ) {
+                    rvp9_core::mode_decision::rd_thresh::update_thresh_freq_fact(
+                        rd_thresh_table,
+                        leaf_bsize,
+                        unified_pick.picked_ref_frame,
+                        unified_pick.best_mode,
+                    );
+                }
 
                 // Phase 2b — let intra-winning picks flow through.
                 // When `picked_ref_frame == IntraFrame`, the encoder

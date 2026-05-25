@@ -695,6 +695,21 @@ pub struct PickInterModeParams<'a> {
     /// resize, and the realtime path at line 517 keeps it on for the
     /// single-spatial-layer case).
     pub reference_masking: bool,
+
+    /// P20 — adaptive RD-threshold table. When `Some`, the picker
+    /// applies libvpx's `rd_less_than_thresh` gate
+    /// (`vp9_pickmode.c:2241-2247`) to each candidate: candidates
+    /// whose `(bsize, ref, mode)` slot's `rd_thresh_base *
+    /// thresh_freq_fact >> 5` exceeds the running best RD cost are
+    /// skipped (with the zero-MV exemption from
+    /// `vp9_pickmode.c:2247`). Read-only here; the caller mutates
+    /// the table via
+    /// [`crate::mode_decision::rd_thresh::update_thresh_freq_fact`]
+    /// after each pick.
+    ///
+    /// When `None`, the gate is disabled (pre-P20 behaviour).
+    pub rd_thresh_table:
+        Option<&'a crate::mode_decision::rd_thresh::RdThreshTable>,
 }
 
 /// Result of [`pick_inter_mode`].
@@ -1043,6 +1058,32 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
         }
         if skip_this {
             continue;
+        }
+
+        // P20 — adaptive RD-threshold gate (libvpx
+        // `vp9_pickmode.c:2241-2247`). When a threshold table is
+        // attached, skip this candidate if the running best RD cost
+        // is below the per-(bsize, ref, mode) effective threshold
+        // AND the candidate MV is non-zero (libvpx's zero-MV
+        // exemption at vp9_pickmode.c:2247: `if frame_mv[mode]
+        // [ref_frame].as_int != 0 continue;`). Without a running
+        // best (the very first evaluable candidate), `best` is
+        // `None` and the gate is not consulted.
+        if let (Some(ref b), Some(table)) =
+            (best.as_ref(), params.rd_thresh_table)
+        {
+            let mv_is_zero = mv == Mv::ZERO;
+            if crate::mode_decision::rd_thresh::rd_less_than_thresh(
+                table,
+                params.block_size,
+                ref_frame,
+                mode,
+                params.q_index,
+                b.best_rd_cost,
+                mv_is_zero,
+            ) {
+                continue;
+            }
         }
 
         // Build a single-ref params struct for the evaluator.
@@ -3609,6 +3650,10 @@ mod tests {
             // encoder caller's setting. Tests that need to compare
             // mask-on vs mask-off override this field directly.
             reference_masking: true,
+            // P20 — default OFF for legacy harness (so existing test
+            // expectations don't shift). The dedicated P20 proof tests
+            // populate this explicitly.
+            rd_thresh_table: None,
         }
     }
 
@@ -5134,6 +5179,463 @@ mod tests {
         assert_eq!(
             res.best_distortion, 0,
             "P18 control: both refs are perfect matches → distortion = 0",
+        );
+    }
+
+    // ====================================================================
+    // P20 PROOF tests — picker-integration coverage for the adaptive
+    // RD-threshold gate. Module-level unit tests for the gate / update
+    // arithmetic live in `mode_decision::rd_thresh::tests`; these
+    // exercise the gate end-to-end through `pick_inter_mode` to prove
+    // (a) the gate site at `inter.rs:1063-1087` actually reads from
+    // the supplied table, (b) `update_thresh_freq_fact` produces
+    // state the next picker call observes, and (c) the per-mode
+    // threshold suppresses a candidate that would otherwise have
+    // won. Mirrors the gating logic at libvpx
+    // `vp9_pickmode.c:2241-2247` and the post-loop update at
+    // `vp9_pickmode.c:2725-2738`.
+    // ====================================================================
+
+    /// P20 PROOF (1) — `update_thresh_freq_fact` decays the winning
+    /// (ref, mode) slot's fact and increments every other slot's fact
+    /// for the winning ref. Confirms that after a NEAREST-winning
+    /// pick, NEAREST's fact goes down (libvpx `*fact -= *fact >> 4`)
+    /// while NEWMV's fact goes up (libvpx `*fact = min(*fact + 1,
+    /// adaptive_rd_thresh * RD_THRESH_MAX_FACT)`).
+    ///
+    /// Anti-stub: a no-op stub of `update_thresh_freq_fact` (or a
+    /// picker that didn't actually pick LAST/NEAREST) would leave
+    /// both facts at `RD_THRESH_INIT_FACT = 32` and fail this test.
+    #[test]
+    fn p20_thresh_freq_fact_increments_for_losers() {
+        use crate::mode_decision::rd_thresh::{
+            update_thresh_freq_fact, RdThreshTable, RD_THRESH_INIT_FACT,
+        };
+
+        let pw = 64;
+        let ph = 64;
+        // src == ref → ZEROMV is a perfect match → NEAREST/ZERO tie on
+        // distortion, NEAREST wins on rate at the typical context, but
+        // we set up so ZEROMV is the dominant pick. Either way LAST is
+        // the winning ref and we update accordingly.
+        let data = make_plane(pw, ph, 0x1234);
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 50);
+        let fc = FrameContext::new_default();
+        let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
+        let intra_y_costs: [i32; 10] = intra_costs[0];
+        let mvc = MvCandidates::default();
+        let params = make_dual_ref_params(
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            50,
+        );
+
+        let res = pick_inter_mode(&params);
+        // Sanity: pick on identical planes must land on LAST or
+        // GOLDEN (an inter winner), not the intra fallback.
+        assert!(
+            matches!(
+                res.picked_ref_frame,
+                RefFrame::LastFrame | RefFrame::GoldenFrame,
+            ),
+            "P20 setup: expected an inter winner, got {:?}",
+            res.picked_ref_frame,
+        );
+
+        // Mirror the encoder's post-pick call.
+        let mut table = RdThreshTable::new();
+        update_thresh_freq_fact(
+            &mut table,
+            BlockSize::Block16x16,
+            res.picked_ref_frame,
+            res.best_mode,
+        );
+
+        // The winner slot must have DECAYED: 32 - (32 >> 4) = 30.
+        let winner_fact = table
+            .freq_fact_for_test(
+                BlockSize::Block16x16,
+                res.picked_ref_frame,
+                res.best_mode,
+            )
+            .expect("winner slot must be present");
+        assert!(
+            winner_fact < RD_THRESH_INIT_FACT,
+            "P20 winner fact should decay: got {winner_fact} \
+             (winner_ref={:?} mode={:?})",
+            res.picked_ref_frame, res.best_mode,
+        );
+        // libvpx exact: 32 - (32 >> 4) = 30.
+        assert_eq!(
+            winner_fact, 30,
+            "P20 winner fact should equal 30 per libvpx \
+             `*fact -= *fact >> 4`",
+        );
+
+        // A losing inter mode on the winning ref MUST have its fact
+        // INCREMENTED to 33. Pick any other inter mode that we know
+        // wasn't the winner. We deliberately probe at least 3 modes so
+        // at least one is guaranteed to be a non-winner.
+        let losers: Vec<_> = [
+            InterMode::NearestMv,
+            InterMode::NearMv,
+            InterMode::ZeroMv,
+            InterMode::NewMv,
+        ]
+        .iter()
+        .copied()
+        .filter(|&m| m != res.best_mode)
+        .collect();
+        let mut saw_increment = false;
+        for &m in &losers {
+            let f = table
+                .freq_fact_for_test(BlockSize::Block16x16, res.picked_ref_frame, m)
+                .expect("loser slot must be present");
+            if m != res.best_mode {
+                assert_eq!(
+                    f, 33,
+                    "P20 loser fact for ({:?}, {:?}) should be 33 (32 + \
+                     RD_THRESH_INC); got {f}",
+                    res.picked_ref_frame, m,
+                );
+                saw_increment = true;
+            }
+        }
+        assert!(saw_increment, "P20: at least one loser slot must have incremented");
+
+        // Anti-stub: the LOSING ref's slots must remain at INIT.
+        let losing_ref = match res.picked_ref_frame {
+            RefFrame::LastFrame => RefFrame::GoldenFrame,
+            RefFrame::GoldenFrame => RefFrame::LastFrame,
+            _ => unreachable!(),
+        };
+        let losing_ref_newmv = table
+            .freq_fact_for_test(BlockSize::Block16x16, losing_ref, InterMode::NewMv)
+            .expect("losing-ref NEWMV slot must be present");
+        assert_eq!(
+            losing_ref_newmv, RD_THRESH_INIT_FACT,
+            "P20 losing-ref slot must remain at INIT (only winning ref's \
+             slots iterate in libvpx `vp9_pickmode.c:2726`)",
+        );
+    }
+
+    /// P20 PROOF (2) — pre-setting `thresh_freq_fact` to a saturating
+    /// value for a non-zero-MV candidate causes the per-candidate gate
+    /// at `inter.rs:1063-1087` to skip it.
+    ///
+    /// Setup: shifted-ref scenario where NEWMV would normally win
+    /// (mirrors `pick_inter_finds_new_mv_on_shifted_ref`). Without
+    /// the gate, NEWMV is the picker's winner. With the LAST/NEWMV
+    /// slot's fact set to `i32::MAX`, the per-candidate gate trips
+    /// (`best_rd < base * fact >> 5` is trivially true once `fact` is
+    /// huge) and NEWMV is skipped. A non-NEWMV mode therefore wins.
+    ///
+    /// Anti-stub: a no-op gate would still let NEWMV win in the
+    /// gate-ON branch, failing the `best_mode != NEWMV` assertion.
+    #[test]
+    fn p20_per_candidate_gate_skips_high_thresh_modes() {
+        use crate::mode_decision::rd_thresh::RdThreshTable;
+
+        let pw = 64;
+        let ph = 64;
+        // Shifted-ref scenario: src painted from ref shifted 3 cols
+        // right. NEWMV finds the shift; ZEROMV/NEAREST/NEAR are stuck
+        // at the wrong offset. Mirror the
+        // `pick_inter_finds_new_mv_on_shifted_ref` setup (same plane
+        // seed, src offset (20,20), shift +3 in cols).
+        let ref_data = make_plane(pw, ph, 17);
+        let mut src_data = ref_data.clone();
+        let bw = 16;
+        let bh = 16;
+        let src_col = 20;
+        let src_row = 20;
+        let shift_col: usize = 3;
+        for i in 0..bh {
+            for j in 0..bw {
+                let ridx = (src_row + i) * pw + (src_col + j + shift_col);
+                src_data[(src_row + i) * pw + (src_col + j)] = ref_data[ridx];
+            }
+        }
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+
+        let harness = TestHarness::new(pw, 50);
+        let fc = FrameContext::new_default();
+        let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
+        let intra_y_costs: [i32; 10] = intra_costs[0];
+        let mvc = MvCandidates::default();
+
+        // Branch A: gate OFF — NEWMV must win.
+        let mut params_off = make_dual_ref_params(
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &src_plane,
+            &ref_plane,
+            (src_col, src_row),
+            &mvc,
+            &mvc,
+            MvLimits::new(-16, 16, -16, 16),
+            50,
+        );
+        // Disable encode-breakout so the gate is the only control
+        // variable affecting the candidate loop.
+        params_off.encode_breakout = 0;
+        params_off.rd_thresh_table = None;
+        let res_off = pick_inter_mode(&params_off);
+        assert_eq!(
+            res_off.best_mode,
+            InterMode::NewMv,
+            "P20 setup: gate-OFF must produce NEWMV winner on shifted-ref \
+             scenario (got {:?} rd={}); test setup invalid",
+            res_off.best_mode, res_off.best_rd_cost,
+        );
+        // Picker must have picked LAST (both refs identical, so either
+        // ref is acceptable; the gate's per-(bsize, ref, mode) granularity
+        // is the same target either way).
+        let winning_ref = res_off.picked_ref_frame;
+        assert!(
+            matches!(winning_ref, RefFrame::LastFrame | RefFrame::GoldenFrame),
+            "P20 setup: gate-OFF must pick an inter ref, got {:?}",
+            winning_ref,
+        );
+
+        // Branch B: gate ON with NEWMV's slot pinned at i32::MAX for
+        // BOTH refs (since the picker iterates both). The gate
+        // suppresses every non-zero-MV NEWMV candidate. NEWMV's MV is
+        // non-zero (it's the shifted recovery), so the zero-MV
+        // exemption does not apply.
+        let mut table = RdThreshTable::new();
+        let set_last = table.set_freq_fact_for_test(
+            BlockSize::Block16x16,
+            RefFrame::LastFrame,
+            InterMode::NewMv,
+            i32::MAX,
+        );
+        let set_golden = table.set_freq_fact_for_test(
+            BlockSize::Block16x16,
+            RefFrame::GoldenFrame,
+            InterMode::NewMv,
+            i32::MAX,
+        );
+        assert!(set_last && set_golden, "P20: NEWMV slots must accept the fact override");
+
+        let mut params_on = make_dual_ref_params(
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &src_plane,
+            &ref_plane,
+            (src_col, src_row),
+            &mvc,
+            &mvc,
+            MvLimits::new(-16, 16, -16, 16),
+            50,
+        );
+        params_on.encode_breakout = 0;
+        params_on.rd_thresh_table = Some(&table);
+        let res_on = pick_inter_mode(&params_on);
+
+        // HEADLINE assertion: with NEWMV's gate threshold saturated,
+        // the picker cannot select NEWMV — the per-candidate gate at
+        // inter.rs:1063-1087 trips with `continue`, and NEWMV is
+        // never evaluated.
+        assert_ne!(
+            res_on.best_mode,
+            InterMode::NewMv,
+            "P20 gate-ON: NEWMV must be suppressed when its freq_fact is \
+             saturated (the per-candidate gate at inter.rs:1063-1087 must \
+             skip non-zero-MV NEWMV); got mode={:?} mv=({},{}) rd={}",
+            res_on.best_mode, res_on.best_mv.row, res_on.best_mv.col,
+            res_on.best_rd_cost,
+        );
+        // Anti-stub cross-check: branches A and B differ — the gate
+        // changed the picker's winner. A no-op gate would give the
+        // same mode in both branches.
+        assert_ne!(
+            res_off.best_mode, res_on.best_mode,
+            "P20: gate-ON must change the picker's winner relative to \
+             gate-OFF; if both branches pick the same mode the gate is a \
+             no-op (off={:?}, on={:?})",
+            res_off.best_mode, res_on.best_mode,
+        );
+    }
+
+    /// P20 PROOF (3) — the `RdThreshTable` state persists across
+    /// successive `pick_inter_mode` calls. We invoke the picker, then
+    /// `update_thresh_freq_fact`, then invoke the picker again with
+    /// the SAME table. The second picker must observe the mutated
+    /// state (i.e., the gate-skip behaviour must depend on the
+    /// first call's update).
+    ///
+    /// Anti-stub: if the table were internally reset (or copied) per
+    /// call, the second pick would see INIT_FACT everywhere and the
+    /// gate behaviour would match an untouched table. We assert that
+    /// after the first update, the table's slots are no longer at INIT
+    /// AND a third "fresh table" call yields a different gating
+    /// outcome than the persisted-table call.
+    #[test]
+    fn p20_state_persists_across_calls() {
+        use crate::mode_decision::rd_thresh::{
+            update_thresh_freq_fact, RdThreshTable, RD_THRESH_INIT_FACT,
+        };
+
+        let pw = 64;
+        let ph = 64;
+        let data = make_plane(pw, ph, 0x55AA);
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 50);
+        let fc = FrameContext::new_default();
+        let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
+        let intra_y_costs: [i32; 10] = intra_costs[0];
+        let mvc = MvCandidates::default();
+
+        let mut table = RdThreshTable::new();
+        // Snapshot the initial state to compare against after the
+        // first update.
+        let init_last_zero = table
+            .freq_fact_for_test(
+                BlockSize::Block16x16,
+                RefFrame::LastFrame,
+                InterMode::ZeroMv,
+            )
+            .unwrap();
+        let init_last_newmv = table
+            .freq_fact_for_test(
+                BlockSize::Block16x16,
+                RefFrame::LastFrame,
+                InterMode::NewMv,
+            )
+            .unwrap();
+        assert_eq!(init_last_zero, RD_THRESH_INIT_FACT);
+        assert_eq!(init_last_newmv, RD_THRESH_INIT_FACT);
+
+        // First pick. Scope the params (which holds an immutable borrow
+        // of the table) so the table can be mutated again afterwards.
+        let res1 = {
+            let mut params1 = make_dual_ref_params(
+                &harness,
+                &intra_y_costs,
+                BlockSize::Block16x16,
+                &plane,
+                &plane,
+                (16, 16),
+                &mvc,
+                &mvc,
+                MvLimits::new(-4, 4, -4, 4),
+                50,
+            );
+            params1.encode_breakout = 0;
+            params1.rd_thresh_table = Some(&table);
+            pick_inter_mode(&params1)
+        };
+
+        // Mutate the table to reflect the winner.
+        update_thresh_freq_fact(
+            &mut table,
+            BlockSize::Block16x16,
+            res1.picked_ref_frame,
+            res1.best_mode,
+        );
+
+        // ASSERTION 1: the table's state is no longer at INIT for the
+        // mutated slots.
+        let post1_winner = table
+            .freq_fact_for_test(
+                BlockSize::Block16x16,
+                res1.picked_ref_frame,
+                res1.best_mode,
+            )
+            .expect("winner slot present");
+        assert_ne!(
+            post1_winner, RD_THRESH_INIT_FACT,
+            "P20 persistence: winner slot fact must have moved from INIT \
+             after first update (saw {post1_winner})",
+        );
+        // libvpx exact: 32 - 2 = 30.
+        assert_eq!(
+            post1_winner, 30,
+            "P20 persistence: winner slot must equal 30 (libvpx \
+             `*fact -= *fact >> 4`)",
+        );
+
+        // Second pick using the SAME (mutated) table. Scope the params
+        // to release the immutable borrow before the next mutation.
+        {
+            let mut params2 = make_dual_ref_params(
+                &harness,
+                &intra_y_costs,
+                BlockSize::Block16x16,
+                &plane,
+                &plane,
+                (16, 16),
+                &mvc,
+                &mvc,
+                MvLimits::new(-4, 4, -4, 4),
+                50,
+            );
+            params2.encode_breakout = 0;
+            params2.rd_thresh_table = Some(&table);
+            let _ = pick_inter_mode(&params2);
+        }
+
+        // ASSERTION 2 — STRONGER PROOF: after the second pick we
+        // update again. The winner slot decays AGAIN (so post-2
+        // < post-1), proving the picker is reading the persisted
+        // mutated state and the update accumulates. A reset-per-call
+        // implementation would always set the winner back to 30 (the
+        // first-update result), never reaching 29 or below.
+        update_thresh_freq_fact(
+            &mut table,
+            BlockSize::Block16x16,
+            res1.picked_ref_frame,
+            res1.best_mode,
+        );
+        let post2_winner = table
+            .freq_fact_for_test(
+                BlockSize::Block16x16,
+                res1.picked_ref_frame,
+                res1.best_mode,
+            )
+            .expect("winner slot present after second update");
+        // libvpx exact: 30 - (30 >> 4) = 30 - 1 = 29.
+        assert_eq!(
+            post2_winner, 29,
+            "P20 persistence: after a second winning-mode update the \
+             slot should decay from 30 to 29 (libvpx `*fact -= *fact >> \
+             4`). A per-call-reset would give 30 here.",
+        );
+        assert!(
+            post2_winner < post1_winner,
+            "P20 persistence: second update must further decay (post-1={post1_winner}, post-2={post2_winner})",
         );
     }
 

@@ -360,6 +360,15 @@ pub struct StreamEncoder {
     /// keyframes (the decoder's `vp9_setup_past_independence` resets the
     /// bank).
     decoder_fc_state: FrameContext,
+    /// P20 — adaptive RD-threshold table (libvpx
+    /// `vp9_pickmode.c:2241-2247` gate state). One per stream;
+    /// re-initialised to libvpx's `RD_THRESH_INIT_FACT = 32` every
+    /// keyframe (mirrors `vp9_encodeframe.c:5874-5875`,
+    /// `vp9_setup_past_independence`'s implicit reset path for
+    /// tile-state). After each inter pick the encoder calls
+    /// [`rvp9_core::mode_decision::rd_thresh::update_thresh_freq_fact`]
+    /// to decay the winner's fact and increment the losers.
+    rd_thresh_table: rvp9_core::mode_decision::rd_thresh::RdThreshTable,
 }
 
 /// A14 — GOLDEN refresh period for the inter path (Phase A
@@ -445,6 +454,9 @@ impl StreamEncoder {
             // P0b — start from default; reset on every keyframe.
             frame_context: FrameContext::new_default(),
             decoder_fc_state: FrameContext::new_default(),
+            // P20 — fresh adaptive-RD-threshold table at INIT_FACT.
+            rd_thresh_table:
+                rvp9_core::mode_decision::rd_thresh::RdThreshTable::new(),
         })
     }
 
@@ -995,6 +1007,8 @@ impl StreamEncoder {
             prev_grid_slice,
             &mut cur_mv_grid,
             &self.frame_context,
+            // P20 — adaptive RD-threshold state, owned by the stream.
+            &mut self.rd_thresh_table,
         );
 
         // F11.0 — apply the in-loop deblocking filter to the encoder's
