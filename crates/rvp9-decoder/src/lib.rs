@@ -538,6 +538,44 @@ pub struct Decoder {
     /// take + clear + resize at frame start, rotate with
     /// [`Self::last_frame_mi_grid`] at frame end.
     scratch_mi_grid: Vec<Option<ModeInfo>>,
+    /// Wave-4 per-tile scratch pool for the parallel-decode path's
+    /// `Mutex<Option<Vec<u8>>>` seg-ids slots. Replaces the
+    /// per-frame `vec![0u8; mi_rows * mi_cols]` allocation at each
+    /// `InterTileSlot` / `TileSlot` construction site. The pool grows
+    /// lazily to `max(n_tiles_seen)` and persists across frames; each
+    /// frame the parallel path takes `n_tiles` Vecs out, hands them to
+    /// the slot structs, then puts them back during the merge loop
+    /// (where the slot's seg_ids Vec is already in hand). On the
+    /// fallback (single-thread / single-tile) path the pool is
+    /// untouched.
+    tile_seg_id_pool: Vec<Vec<u8>>,
+    /// Wave-4 per-tile scratch pool for the parallel inter-decode
+    /// path's `Mutex<Option<Vec<PrevFrameMvRef>>>` mv-grid slots.
+    /// Same shape as [`Self::tile_seg_id_pool`] — populated lazily,
+    /// drained per-frame, returned during merge.
+    tile_mv_grid_pool: Vec<Vec<rvp9_core::inter::mv_ref::PrevFrameMvRef>>,
+    /// Wave-4 recycled scratch slab for the per-frame `cur_mv_grid`
+    /// Vec. Unlike `scratch_segment_ids` / `scratch_mi_grid` this
+    /// cannot use a direct rotation pattern because the just-decoded
+    /// `cur_mv_grid` gets wrapped in an `Arc` and SHARED with multiple
+    /// `mv_grids[i]` ref slots plus `prev_frame_mv_grid` (see the end
+    /// of `decode_inter_frame`). Instead, at frame END we try to
+    /// recover the underlying Vec from the OLD `prev_frame_mv_grid`
+    /// Arc via `Arc::try_unwrap` BEFORE the new Arc overwrites the
+    /// field — `try_unwrap` succeeds iff no `mv_grids[i]` slot still
+    /// holds the same Arc (which happens once `refresh_frame_flags`
+    /// has cycled past that frame). On success the recovered Vec
+    /// (already at the right capacity) gets cleared and stashed here
+    /// for next-frame reuse. On failure the Arc is just dropped (one
+    /// strong-ref decrement); the next frame allocates fresh and the
+    /// chance of recovery comes back later.
+    ///
+    /// Empty (`Vec::new()`) before the first frame OR whenever the
+    /// last frame's prev_frame_mv_grid was still ref-shared at end-
+    /// of-frame. The allocation amortises to the steady-state
+    /// `Arc::try_unwrap`-success rate; on typical inter-frame streams
+    /// (5-10 frame ref cycle) recovery succeeds within a few frames.
+    scratch_mv_grid: Vec<rvp9_core::inter::mv_ref::PrevFrameMvRef>,
     /// G4.1 — Arc-shared SIMD dispatch table. Constructed once per
     /// `Decoder::new` via `rvp9_core::dsp::init()` (`OnceLock`-backed),
     /// then borrowed at frame entry and threaded down into
@@ -716,6 +754,9 @@ impl Decoder {
             last_frame_mi_dims: (0, 0),
             scratch_segment_ids: Vec::new(),
             scratch_mi_grid: Vec::new(),
+            scratch_mv_grid: Vec::new(),
+            tile_seg_id_pool: Vec::new(),
+            tile_mv_grid_pool: Vec::new(),
             // G4.1 — populate the process-wide SimdDispatch once at
             // decoder construction. Subsequent calls to `dsp::init` are
             // free (Arc::clone of the OnceLock slot). HLD-simd §2.2
@@ -1660,13 +1701,25 @@ impl Decoder {
                     }
                 })
                 .collect();
+            // Wave-4: draw per-tile seg-id Vecs from the recycled
+            // pool. Pop until we have `num_tiles`; allocate fresh for
+            // any shortfall. Each Vec is cleared + resized so the
+            // worker sees a zeroed slab regardless of prior contents.
+            let mut tile_seg_ids: Vec<Vec<u8>> = Vec::with_capacity(num_tiles);
+            for _ in 0..num_tiles {
+                let mut v = self.tile_seg_id_pool.pop().unwrap_or_default();
+                v.clear();
+                v.resize(mi_rows * mi_cols, 0);
+                tile_seg_ids.push(v);
+            }
             let slots: Vec<TileSlot> = tile_views
                 .into_iter()
                 .zip(mi_views)
-                .map(|(view, mi_v)| TileSlot {
+                .zip(tile_seg_ids)
+                .map(|((view, mi_v), seg)| TileSlot {
                     view: Mutex::new(Some(view)),
                     mi_view: Mutex::new(Some(mi_v)),
-                    seg_ids: Mutex::new(Some(vec![0u8; mi_rows * mi_cols])),
+                    seg_ids: Mutex::new(Some(seg)),
                     counts: Mutex::new(Some(Box::new(
                         rvp9_core::entropy::adapt::CoefCountsBank::default(),
                     ))),
@@ -1834,6 +1887,9 @@ impl Decoder {
                     cur_segment_ids[row_base + mc_start..row_base + mc_end]
                         .copy_from_slice(&seg_ids[row_base + mc_start..row_base + mc_end]);
                 }
+                // Wave-4: return the seg-id slab to the decoder pool
+                // so the next frame skips the allocation.
+                self.tile_seg_id_pool.push(seg_ids);
 
                 tile_decode_ctxs.push((bounds, decode_ctx));
             }
@@ -2059,7 +2115,15 @@ impl Decoder {
         // `last_intra_only == 1` for intra-only) anyway, but null-ing
         // the field keeps state hygiene matching libvpx (intra frames
         // produce no MVs to carry forward).
-        self.prev_frame_mv_grid = None;
+        //
+        // Wave-4 reuse: same `Arc::try_unwrap` recovery as the inter
+        // path — claim the Vec back if it isn't externally shared so
+        // the next (inter) frame can skip the allocation.
+        if let Some(arc) = self.prev_frame_mv_grid.take() {
+            if let Ok(vec) = std::sync::Arc::try_unwrap(arc) {
+                self.scratch_mv_grid = vec;
+            }
+        }
         self.prev_frame_mv_grid_dims = (0, 0);
 
         self.have_resync = false;
@@ -2531,10 +2595,20 @@ impl Decoder {
             };
         // Verify the prev grid is correctly sized for this frame.
         let prev_mv_grid = prev_mv_grid.filter(|g| g.len() >= mi_rows * mi_cols);
-        // Allocate fresh current-frame MV grid (zero-init = all
-        // `(NoRefFrame, NoRefFrame)` entries with zero MVs).
-        let mut cur_mv_grid =
-            vec![rvp9_core::inter::mv_ref::PrevFrameMvRef::default(); mi_rows * mi_cols];
+        // Wave-4 reuse: take the recycled `cur_mv_grid` slab if the
+        // end-of-frame `Arc::try_unwrap` was able to recover it on the
+        // last frame. Empty otherwise — the first frame after a key /
+        // intra-only / ref-cycle-tail pays one fresh allocation. Same
+        // zero-init semantics as the original `vec![default(); N]`
+        // (the default `PrevFrameMvRef` is `(NoRefFrame, NoRefFrame)`
+        // with zero MVs); `clear` drops the contents and `resize` fills
+        // with default values.
+        let mut cur_mv_grid = std::mem::take(&mut self.scratch_mv_grid);
+        cur_mv_grid.clear();
+        cur_mv_grid.resize(
+            mi_rows * mi_cols,
+            rvp9_core::inter::mv_ref::PrevFrameMvRef::default(),
+        );
 
         // D.10 — populate `prev_segment_ids` view for segment-id
         // inheritance and allocate the current frame's seg-id slab.
@@ -2666,17 +2740,35 @@ impl Decoder {
                     }
                 })
                 .collect();
+            // Wave-4: draw per-tile seg-id + mv-grid Vecs from the
+            // recycled pools. Pop n_tiles each; allocate fresh on
+            // shortfall; clear + resize for this frame's MI dims.
+            let mut tile_seg_ids: Vec<Vec<u8>> = Vec::with_capacity(num_tiles);
+            let mut tile_mv_grids: Vec<Vec<rvp9_core::inter::mv_ref::PrevFrameMvRef>> =
+                Vec::with_capacity(num_tiles);
+            for _ in 0..num_tiles {
+                let mut s = self.tile_seg_id_pool.pop().unwrap_or_default();
+                s.clear();
+                s.resize(mi_rows * mi_cols, 0);
+                tile_seg_ids.push(s);
+                let mut m = self.tile_mv_grid_pool.pop().unwrap_or_default();
+                m.clear();
+                m.resize(
+                    mi_rows * mi_cols,
+                    rvp9_core::inter::mv_ref::PrevFrameMvRef::default(),
+                );
+                tile_mv_grids.push(m);
+            }
             let slots: Vec<InterTileSlot> = tile_views
                 .into_iter()
                 .zip(mi_views)
-                .map(|(view, mi_v)| InterTileSlot {
+                .zip(tile_seg_ids)
+                .zip(tile_mv_grids)
+                .map(|(((view, mi_v), seg), mv)| InterTileSlot {
                     view: Mutex::new(Some(view)),
                     mi_view: Mutex::new(Some(mi_v)),
-                    seg_ids: Mutex::new(Some(vec![0u8; mi_rows * mi_cols])),
-                    mv_grid: Mutex::new(Some(vec![
-                        rvp9_core::inter::mv_ref::PrevFrameMvRef::default();
-                        mi_rows * mi_cols
-                    ])),
+                    seg_ids: Mutex::new(Some(seg)),
+                    mv_grid: Mutex::new(Some(mv)),
                     mv_counts: Mutex::new(Some(Box::new(
                         rvp9_core::entropy::mv_probs::NmvCounts::default(),
                     ))),
@@ -2877,6 +2969,10 @@ impl Decoder {
                     cur_mv_grid[row_base + mc_start..row_base + mc_end]
                         .copy_from_slice(&mv_grid[row_base + mc_start..row_base + mc_end]);
                 }
+                // Wave-4: return the seg-id + mv-grid slabs to their
+                // respective decoder pools for next-frame reuse.
+                self.tile_seg_id_pool.push(seg_ids);
+                self.tile_mv_grid_pool.push(mv_grid);
 
                 tile_decode_ctxs.push((bounds, decode_ctx));
             }
@@ -3133,7 +3229,32 @@ impl Decoder {
         // independent of which `ref_frame_map` slots were refreshed.
         // Matches libvpx `vp9_decoder.c:478` — fires for every non-
         // show-existing decode (we already early-return for that path).
-        self.prev_frame_mv_grid = Some(cur_mv_grid_arc.clone());
+        //
+        // Wave-4 reuse: BEFORE overwriting `prev_frame_mv_grid` with
+        // the new Arc, try to recover the underlying Vec from the OLD
+        // Arc via `Arc::try_unwrap`. Succeeds iff no `mv_grids[i]`
+        // slot still holds the same Arc — i.e. once enough
+        // refresh_frame_flags cycles have passed for that frame's
+        // ref-map entries to be overwritten. On success the recovered
+        // Vec (already at the right capacity) is parked in
+        // `scratch_mv_grid` for the next frame's `cur_mv_grid` to
+        // claim. On failure (Arc still externally shared) we just
+        // drop the local handle — one strong-ref decrement, nothing
+        // else changes. See the `scratch_mv_grid` field doc for
+        // recovery-rate notes.
+        let old_prev_mv = std::mem::replace(
+            &mut self.prev_frame_mv_grid,
+            Some(cur_mv_grid_arc.clone()),
+        );
+        if let Some(arc) = old_prev_mv {
+            if let Ok(vec) = std::sync::Arc::try_unwrap(arc) {
+                self.scratch_mv_grid = vec;
+            }
+            // Else: Arc still shared via mv_grids[i]; drop it here
+            // (the slot clones keep the data alive). No leak — the
+            // Arc's last owner will drop the Vec when its
+            // refresh_frame_flags bit gets cleared in a future frame.
+        }
         self.prev_frame_mv_grid_dims = (mi_rows, mi_cols);
 
         self.last_frame_was_key = false;
