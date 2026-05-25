@@ -100,9 +100,19 @@ pub(crate) struct TraceFlags {
     /// `RVP9_DUMP_LF_MASKS` (any value) — per-SB loopfilter-mask dump.
     /// Per-SB in `dump_lf_masks` — ~500 calls/frame at 1080p.
     pub dump_lf_masks: bool,
-    /// Wave 2 C4 — `RVP9_DISABLE_ROW_MT` (any value) — force the
-    /// serial loopfilter path. Defaults OFF (i.e. row-MT enabled by
-    /// default). Used as a kill switch for CI A/B and incident response.
+    /// Wave 2 C4 — row-MT loopfilter is **opt-in** via `RVP9_ROW_MT=1`.
+    /// Default state is `disable_row_mt = true` (i.e. the legacy serial
+    /// LF runs); setting `RVP9_ROW_MT=1` flips this to false.
+    ///
+    /// The 2026-05-25 A/B sweep showed row-MT REGRESSES multi-thread
+    /// performance by 7-24% on the four headline fixtures (`tile_1x4
+    /// t=4`, `testsrc_1080p30 t=4`, `testsrc_1080p60 t=4/8`); the LF
+    /// no longer dominates frame time after Wave 1's IDCT i16 ports +
+    /// Wave 4's alloc pooling, and the row-MT scope overhead exceeds
+    /// the parallelism win. Default-off keeps the dispatching code
+    /// landed (testable, validated bit-exact) without exposing the
+    /// regression in production. See `wave-2-row-parallel-lf.md` for
+    /// the measurement.
     pub disable_row_mt: bool,
 }
 
@@ -139,7 +149,12 @@ impl TraceFlags {
             trace_fc: get("RVP9_TRACE_FC").as_deref() == Some("1"),
             dump_altref: get("RVP9_DUMP_ALTREF"),
             dump_lf_masks: any("RVP9_DUMP_LF_MASKS"),
-            disable_row_mt: any("RVP9_DISABLE_ROW_MT"),
+            // Wave 2 — row-MT LF is opt-in. Default state is
+            // `disable_row_mt = true`; setting `RVP9_ROW_MT=1` flips to
+            // false. See the field docstring for the rationale (A/B
+            // showed regression on multi-thread fixtures after
+            // upstream Wave 1 + 4 reduced LF's frame-time share).
+            disable_row_mt: !eq1("RVP9_ROW_MT"),
         }
     }
 

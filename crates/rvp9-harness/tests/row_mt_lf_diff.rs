@@ -7,8 +7,19 @@
 //! between the two runs — the row-MT path MUST produce byte-identical
 //! output to the serial path.
 //!
-//! Also runs each vector with `RVP9_DISABLE_ROW_MT` set, to validate the
-//! kill switch falls back to the serial implementation cleanly.
+//! Row-MT is opt-in (Wave 2 outcome — see HLD A/B); this test sets
+//! `RVP9_ROW_MT=1` before constructing the multi-thread Decoder so the
+//! row-MT dispatching path is actually exercised (without it the
+//! parallel-thread decoder would fall through to the legacy serial LF
+//! and the differential test would just compare serial-vs-serial).
+//!
+//! IMPORTANT: the env var is read once via `OnceLock` on the first
+//! `trace_flags()` access. The harness `set_var` BEFORE constructing
+//! the Decoder, so the OnceLock initialises with `RVP9_ROW_MT=1`. If
+//! another test in the same process inits `trace_flags` first WITHOUT
+//! the var set, this test will silently skip the row-MT path. The
+//! `tests/` directory layout (one process per `--test`) means this
+//! file runs in isolation.
 
 use rvp9_decoder::Decoder;
 use rvp9_harness::container::read_packets;
@@ -74,6 +85,16 @@ const MULTI_TILE_VECTORS: &[&str] = &[
 
 #[test]
 fn row_mt_lf_matches_serial_on_multi_tile_vectors() {
+    // Opt in to the row-MT LF dispatch path BEFORE constructing any
+    // Decoder so `trace_flags()`'s OnceLock initialises with row-MT
+    // enabled. Removing this line would silently fold the test into
+    // a serial-vs-serial comparison (still useful for catching the
+    // refactor of Wave 2 C1, but no longer exercising the row-MT
+    // dispatch from C3/C4).
+    // SAFETY: tests in `tests/` are single-threaded by default in
+    // cargo's harness; no other thread reads env vars at this point.
+    unsafe { std::env::set_var("RVP9_ROW_MT", "1") };
+
     let dir = vectors_dir();
     if !dir.exists() {
         eprintln!("vectors dir missing — skip");
