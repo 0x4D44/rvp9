@@ -1115,8 +1115,10 @@ fn dec_summary_emits_summary_line() {
         .expect("run rvp9dec --summary");
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let stderr = String::from_utf8_lossy(&out.stderr);
+    // vpxdec-compatible format (rvp9dec.rs:340):
+    //   "<frame_in> decoded frames/<frame_out> showed frames in <us> us (<fps> fps)"
     assert!(
-        stderr.contains("decoded") && stderr.contains("displayed frame"),
+        stderr.contains("decoded frames") && stderr.contains("showed frames"),
         "stderr must contain summary line, got: {stderr}"
     );
     let _ = std::fs::remove_file(&ivf);
@@ -1779,13 +1781,16 @@ fn dec_ivf_zero_framerate_uses_default() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("decoded 0"),
+        stderr.contains("0 decoded frames"),
         "summary must report 0 frames, got: {stderr}"
     );
     let _ = std::fs::remove_file(&path);
 }
 
-/// `--summary` reports the exact count for skip+limit.
+/// `--summary` reports decoded + showed counts on a single vpxdec-compatible
+/// line. Note: the vpxdec-compatible format intentionally omits the `emitted`
+/// (post-skip-and-limit) count to stay byte-compatible with vpxdec's
+/// `show_progress` output (see rvp9dec.rs:342-345).
 #[test]
 fn dec_summary_reports_skipped_and_emitted_counts() {
     let ivf = encode_synthetic_ivf("sum_counts");
@@ -1796,13 +1801,14 @@ fn dec_summary_reports_skipped_and_emitted_counts() {
         .expect("run rvp9dec");
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let stderr = String::from_utf8_lossy(&out.stderr);
-    // Summary line has shape "decoded N displayed frame(s), emitted M".
-    // skip=1, limit=2 ⇒ emitted=2 (the 2 frames after the 1 skipped one);
-    // displayed-frames-seen = 1 (skip) + 2 (emitted) + remainder (3, all
-    // counted because the limit-reached branch still bumps `shown`).
+    // Summary line: "<frame_in> decoded frames/<frame_out> showed frames in ...".
+    // The 6-frame synthetic IVF feeds all 6 to the decoder regardless of
+    // --skip/--limit (those are output-side controls); `showed` counts every
+    // displayed frame seen during the decode loop (including the one
+    // skipped and the 3 past --limit), so both should be 6.
     assert!(
-        stderr.contains("emitted 2"),
-        "summary must report 'emitted 2', got: {stderr}"
+        stderr.contains("6 decoded frames") && stderr.contains("6 showed frames"),
+        "summary must report 6 decoded / 6 showed frames, got: {stderr}"
     );
     let _ = std::fs::remove_file(&ivf);
 }
@@ -1865,7 +1871,7 @@ fn dec_ivf_zero_den_uses_default_framerate() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("decoded 0"),
+        stderr.contains("0 decoded frames"),
         "summary must report 0 frames, got: {stderr}"
     );
     let _ = std::fs::remove_file(&path);
@@ -1907,7 +1913,7 @@ fn dec_webm_large_non_ivf_data_uses_default_framerate() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("decoded 0"),
+        stderr.contains("0 decoded frames"),
         "zero-block webm must report 0 frames, got: {stderr}"
     );
     let _ = std::fs::remove_file(&path);
@@ -1932,7 +1938,7 @@ fn dec_empty_webm_decodes_zero_frames() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("decoded 0"),
+        stderr.contains("0 decoded frames"),
         "summary must report 0 frames for empty webm, got: {stderr}"
     );
     let _ = std::fs::remove_file(&path);
