@@ -91,3 +91,102 @@ pub fn take_snapshot() -> PredStats {
         snap
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Single-test sweep that exercises every branch in this module
+    /// in deterministic order. We share the process-wide
+    /// `PREDSTAT_ON` atomic with other tests, but `STATS` is
+    /// thread-local so the per-thread accumulator is private. We
+    /// restore the atomic to its prior value on exit so the global
+    /// state isn't perturbed for any concurrent test that might
+    /// happen to be observing it.
+    #[test]
+    fn full_coverage_sweep() {
+        // Save & restore the global atomic so we don't perturb
+        // concurrent tests. Drop guard pattern in case of panic.
+        struct Restore(bool);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                PREDSTAT_ON.store(self.0, Ordering::Relaxed);
+            }
+        }
+        let _restore = Restore(PREDSTAT_ON.load(Ordering::Relaxed));
+
+        // Ensure our thread starts with a clean accumulator
+        // regardless of whatever earlier in-thread state existed.
+        let _ = take_snapshot();
+
+        // ---------------------------------------------------------
+        // Branch 1: enabled() == false → record_y_residual is a no-op.
+        // ---------------------------------------------------------
+        PREDSTAT_ON.store(false, Ordering::Relaxed);
+        assert!(!enabled(), "atomic should be off");
+
+        // Use a non-trivial residual to make a missed early-return obvious.
+        let residual_4x4: [i16; 16] = [
+            10, -10, 10, -10, // row 0
+            -5, 5, -5, 5, // row 1
+            3, -3, 3, -3, // row 2
+            -1, 1, -1, 1, // row 3
+        ];
+        // tx_side = 4, txsize_idx = 0 (4x4)
+        record_y_residual(&residual_4x4, 4, 0);
+        let snap_disabled = take_snapshot();
+        assert_eq!(
+            snap_disabled.y_pred_sse, 0,
+            "record_y_residual must be a no-op when disabled",
+        );
+        assert_eq!(snap_disabled.y_pixels, 0);
+        assert_eq!(snap_disabled.txsize_hist, [0; 4]);
+
+        // ---------------------------------------------------------
+        // Branch 2: enabled() == true with txsize_idx in-bounds
+        // (txsize_idx < 4). Hand-compute the expected SSE.
+        // ---------------------------------------------------------
+        PREDSTAT_ON.store(true, Ordering::Relaxed);
+        assert!(enabled());
+
+        // Hand-computed SSE for `residual_4x4`:
+        // 4 * (10^2) + 4 * (5^2) + 4 * (3^2) + 4 * (1^2)
+        //   = 400 + 100 + 36 + 4 = 540
+        let expected_sse: u64 = 540;
+
+        // Record with txsize_idx = 2 (16x16). Note: tx_side and
+        // txsize_idx are independent in this API — `tx_side` controls
+        // how many residual entries we sum, while `txsize_idx`
+        // selects the histogram bin. We deliberately use tx_side=4
+        // (so the SSE math is hand-checked) with txsize_idx=2 (so
+        // we hit the in-bounds bin in the middle).
+        record_y_residual(&residual_4x4, 4, 2);
+        let snap = take_snapshot();
+        assert_eq!(snap.y_pred_sse, expected_sse);
+        assert_eq!(snap.y_pixels, 16, "tx_side*tx_side = 4*4 = 16");
+        assert_eq!(snap.txsize_hist, [0, 0, 1, 0]);
+
+        // ---------------------------------------------------------
+        // Branch 3: enabled() == true with txsize_idx >= 4
+        // (out-of-bounds clamp). Histogram unchanged; sse/pixels
+        // still accumulate.
+        // ---------------------------------------------------------
+        record_y_residual(&residual_4x4, 4, 99);
+        let snap = take_snapshot();
+        assert_eq!(snap.y_pred_sse, expected_sse);
+        assert_eq!(snap.y_pixels, 16);
+        assert_eq!(
+            snap.txsize_hist,
+            [0, 0, 0, 0],
+            "out-of-bounds txsize_idx must NOT touch the histogram",
+        );
+
+        // ---------------------------------------------------------
+        // Snapshot is reset by take_snapshot: re-take returns zeros.
+        // ---------------------------------------------------------
+        let snap = take_snapshot();
+        assert_eq!(snap.y_pred_sse, 0);
+        assert_eq!(snap.y_pixels, 0);
+        assert_eq!(snap.txsize_hist, [0; 4]);
+    }
+}

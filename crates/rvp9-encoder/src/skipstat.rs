@@ -81,3 +81,116 @@ pub fn take_snapshot() -> SkipStats {
         snap
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Single-test sweep that covers every branch in this module
+    /// in deterministic order. The accumulator (`STATS`) is
+    /// thread-local; the on/off atomic is global, so we save and
+    /// restore it around the test to be friendly to concurrent
+    /// runners.
+    #[test]
+    fn full_coverage_sweep() {
+        struct Restore(bool);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                SKIPSTAT_ON.store(self.0, Ordering::Relaxed);
+            }
+        }
+        let _restore = Restore(SKIPSTAT_ON.load(Ordering::Relaxed));
+
+        // Make sure our thread starts fresh.
+        let _ = take_snapshot();
+
+        // ---------------------------------------------------------
+        // Branch: enabled() == false → record_leaf is a no-op.
+        // ---------------------------------------------------------
+        SKIPSTAT_ON.store(false, Ordering::Relaxed);
+        assert!(!enabled());
+        record_leaf(true, 100);
+        record_leaf(false, 7);
+        let snap_disabled = take_snapshot();
+        assert_eq!(snap_disabled.leaves, 0, "no-op when disabled");
+        assert_eq!(snap_disabled.skip_leaves, 0);
+        assert_eq!(snap_disabled.nonskip_leaves, 0);
+        assert_eq!(snap_disabled.nonskip_eob_sum, 0);
+        assert_eq!(snap_disabled.nonskip_tiny, 0);
+
+        // ---------------------------------------------------------
+        // Branch: skip == true. Only `skip_leaves` and `leaves`
+        // bump; `nonskip_*` fields untouched regardless of eob.
+        // (eob is ignored in the skip arm.)
+        // ---------------------------------------------------------
+        SKIPSTAT_ON.store(true, Ordering::Relaxed);
+        record_leaf(true, 999);
+        let snap = take_snapshot();
+        assert_eq!(snap.leaves, 1);
+        assert_eq!(snap.skip_leaves, 1);
+        assert_eq!(snap.nonskip_leaves, 0);
+        assert_eq!(snap.nonskip_eob_sum, 0);
+        assert_eq!(snap.nonskip_tiny, 0);
+
+        // ---------------------------------------------------------
+        // Branch: skip == false && leaf_total_eob <= 4.
+        // All three nonskip_* fields bump, including `tiny`.
+        // ---------------------------------------------------------
+        record_leaf(false, 2);
+        let snap = take_snapshot();
+        assert_eq!(snap.leaves, 1);
+        assert_eq!(snap.skip_leaves, 0);
+        assert_eq!(snap.nonskip_leaves, 1);
+        assert_eq!(snap.nonskip_eob_sum, 2);
+        assert_eq!(snap.nonskip_tiny, 1);
+
+        // Boundary: eob == 4 still counts as tiny (<=).
+        record_leaf(false, 4);
+        let snap = take_snapshot();
+        assert_eq!(snap.nonskip_leaves, 1);
+        assert_eq!(snap.nonskip_eob_sum, 4);
+        assert_eq!(snap.nonskip_tiny, 1, "eob == 4 should fall in tiny arm");
+
+        // ---------------------------------------------------------
+        // Branch: skip == false && leaf_total_eob > 4.
+        // nonskip_leaves and nonskip_eob_sum bump; nonskip_tiny does NOT.
+        // ---------------------------------------------------------
+        record_leaf(false, 100);
+        let snap = take_snapshot();
+        assert_eq!(snap.leaves, 1);
+        assert_eq!(snap.nonskip_leaves, 1);
+        assert_eq!(snap.nonskip_eob_sum, 100);
+        assert_eq!(
+            snap.nonskip_tiny, 0,
+            "eob > 4 must NOT bump the tiny counter",
+        );
+
+        // Boundary: eob == 5 is the first "not tiny" value.
+        record_leaf(false, 5);
+        let snap = take_snapshot();
+        assert_eq!(snap.nonskip_eob_sum, 5);
+        assert_eq!(snap.nonskip_tiny, 0, "eob == 5 must NOT be tiny");
+
+        // ---------------------------------------------------------
+        // Multiple records accumulate; take_snapshot resets to zero.
+        // ---------------------------------------------------------
+        record_leaf(true, 0);
+        record_leaf(true, 0);
+        record_leaf(false, 3);
+        record_leaf(false, 50);
+        let snap = take_snapshot();
+        assert_eq!(snap.leaves, 4);
+        assert_eq!(snap.skip_leaves, 2);
+        assert_eq!(snap.nonskip_leaves, 2);
+        assert_eq!(snap.nonskip_eob_sum, 53);
+        assert_eq!(snap.nonskip_tiny, 1, "only the eob=3 leaf is tiny");
+
+        // After taking the snapshot, accumulator is back to zero.
+        let snap = take_snapshot();
+        assert_eq!(snap.leaves, 0);
+        assert_eq!(snap.skip_leaves, 0);
+        assert_eq!(snap.nonskip_leaves, 0);
+        assert_eq!(snap.nonskip_eob_sum, 0);
+        assert_eq!(snap.nonskip_tiny, 0);
+    }
+}

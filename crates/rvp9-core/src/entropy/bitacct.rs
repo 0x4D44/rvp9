@@ -115,3 +115,146 @@ pub fn take_snapshot() -> [f64; N_CATEGORIES] {
         snap
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Hand-computed bit cost for one (`bit`, `prob`) symbol, used as
+    /// the test oracle. Mirrors the formula in [`record`] so the test
+    /// fails if anyone tweaks one without the other.
+    fn expected_bits(bit: u8, prob: u8) -> f64 {
+        let p0 = f64::from(prob) / 256.0;
+        let p_used = if bit == 0 { p0 } else { 1.0 - p0 };
+        let p_used = p_used.max(1.0 / 512.0);
+        -p_used.log2()
+    }
+
+    fn approx_eq(a: f64, b: f64) {
+        assert!(
+            (a - b).abs() < 1e-9,
+            "expected {b}, got {a} (delta {})",
+            (a - b).abs(),
+        );
+    }
+
+    /// Single-test sweep that covers every branch in this module
+    /// (the `enabled()` gate in `set_category`, the bit==0/bit!=0
+    /// ternary inside `record`, and the `.max(1.0/512.0)` clamp).
+    #[test]
+    fn full_coverage_sweep() {
+        struct Restore(bool);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                BITACCT_ON.store(self.0, Ordering::Relaxed);
+            }
+        }
+        let _restore = Restore(BITACCT_ON.load(Ordering::Relaxed));
+
+        // Drain any thread-local state from prior tests on this thread.
+        let _ = take_snapshot();
+
+        // ---------------------------------------------------------
+        // Branch: enabled() == false → set_category is a no-op.
+        // ---------------------------------------------------------
+        BITACCT_ON.store(false, Ordering::Relaxed);
+        assert!(!enabled());
+        // Force CURRENT to a known starting value while enabled, then
+        // disable and try to change it; verify the change did not stick.
+        BITACCT_ON.store(true, Ordering::Relaxed);
+        set_category(BitCategory::Partition);
+        BITACCT_ON.store(false, Ordering::Relaxed);
+        set_category(BitCategory::Coef); // should be a no-op
+        // Re-enable, record one bit, and verify it landed in
+        // Partition (the last category we successfully set), proving
+        // the disabled `set_category` call was ignored.
+        BITACCT_ON.store(true, Ordering::Relaxed);
+        record(0, 128);
+        let snap = take_snapshot();
+        approx_eq(snap[BitCategory::Partition as usize], 1.0); // -log2(128/256) = 1.0
+        for (i, &v) in snap.iter().enumerate() {
+            if i != BitCategory::Partition as usize {
+                approx_eq(v, 0.0);
+            }
+        }
+
+        // ---------------------------------------------------------
+        // Branch: bit == 0 (uses p0 directly).
+        // prob=128 → p0 = 0.5 → -log2(0.5) = 1.0 bit
+        // prob=64  → p0 = 0.25 → -log2(0.25) = 2.0 bits
+        // ---------------------------------------------------------
+        set_category(BitCategory::Skip);
+        record(0, 128);
+        record(0, 64);
+        let snap = take_snapshot();
+        approx_eq(snap[BitCategory::Skip as usize], 1.0 + 2.0);
+
+        // ---------------------------------------------------------
+        // Branch: bit != 0 (uses 1 - p0).
+        // bit=1, prob=128 → p_used = 0.5 → 1.0 bit
+        // bit=1, prob=64  → p_used = 0.75 → -log2(0.75) ≈ 0.4150375
+        // ---------------------------------------------------------
+        set_category(BitCategory::IsInter);
+        record(1, 128);
+        record(1, 64);
+        let snap = take_snapshot();
+        let expected = expected_bits(1, 128) + expected_bits(1, 64);
+        approx_eq(snap[BitCategory::IsInter as usize], expected);
+
+        // ---------------------------------------------------------
+        // Branch: NOT clamped (bit=1, prob=255 → p_used = 1/256,
+        // which is greater than 1/512, so the `.max()` is a no-op).
+        // -log2(1/256) = 8.0 bits.
+        // ---------------------------------------------------------
+        set_category(BitCategory::TxSize);
+        record(1, 255);
+        let snap = take_snapshot();
+        approx_eq(snap[BitCategory::TxSize as usize], 8.0);
+
+        // ---------------------------------------------------------
+        // Branch: clamp DOES fire (bit=0, prob=0 → p0 = 0,
+        // clamped to 1/512 → -log2(1/512) = 9.0 bits).
+        // ---------------------------------------------------------
+        set_category(BitCategory::ModeRef);
+        record(0, 0);
+        let snap = take_snapshot();
+        approx_eq(snap[BitCategory::ModeRef as usize], 9.0);
+
+        // ---------------------------------------------------------
+        // Cross-check: every category is independently addressed,
+        // and switching categories mid-frame routes subsequent bits
+        // to the new bucket.
+        // ---------------------------------------------------------
+        set_category(BitCategory::MvDelta);
+        record(0, 64); // 2.0 bits → MvDelta
+        set_category(BitCategory::Coef);
+        record(1, 128); // 1.0 bit → Coef
+        set_category(BitCategory::SegId);
+        record(0, 128); // 1.0 bit → SegId
+        set_category(BitCategory::Other);
+        record(1, 64); // ~0.415 bits → Other
+        let snap = take_snapshot();
+        approx_eq(snap[BitCategory::MvDelta as usize], 2.0);
+        approx_eq(snap[BitCategory::Coef as usize], 1.0);
+        approx_eq(snap[BitCategory::SegId as usize], 1.0);
+        approx_eq(
+            snap[BitCategory::Other as usize],
+            expected_bits(1, 64),
+        );
+
+        // ---------------------------------------------------------
+        // take_snapshot resets state; a follow-up snapshot is zero.
+        // ---------------------------------------------------------
+        let snap = take_snapshot();
+        for &v in &snap {
+            approx_eq(v, 0.0);
+        }
+
+        // ---------------------------------------------------------
+        // N_CATEGORIES is the array length the snapshot returns —
+        // lock in the public contract.
+        // ---------------------------------------------------------
+        assert_eq!(snap.len(), N_CATEGORIES);
+        assert_eq!(N_CATEGORIES, 9);
+    }
+}

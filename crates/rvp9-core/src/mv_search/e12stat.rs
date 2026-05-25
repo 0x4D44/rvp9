@@ -128,3 +128,136 @@ pub fn take_snapshot() -> DiamondStats {
         snap
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Single-test sweep covering every branch:
+    ///   * `enabled()` gate in `record`
+    ///   * `enabled()` gate in `record_argmin`
+    ///   * `sad_newmv <= sad_oracle` arm in `record`
+    ///   * `sad_newmv < sad_zero` arm in `record`
+    ///   * `seeded` arm in `record`
+    ///   * `newmv_won` arm in `record_argmin`
+    #[test]
+    fn full_coverage_sweep() {
+        struct Restore(bool);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                ON.store(self.0, Ordering::Relaxed);
+            }
+        }
+        let _restore = Restore(ON.load(Ordering::Relaxed));
+
+        // Drain thread-local state.
+        let _ = take_snapshot();
+
+        // ---------------------------------------------------------
+        // Branch: enabled() == false → both record* are no-ops.
+        // ---------------------------------------------------------
+        ON.store(false, Ordering::Relaxed);
+        assert!(!enabled());
+        record(1000, 500, 300, true, 7);
+        record_argmin(true);
+        let snap = take_snapshot();
+        assert_eq!(snap.leaves, 0, "record disabled no-op");
+        assert_eq!(snap.argmin_leaves, 0, "record_argmin disabled no-op");
+        assert_eq!(snap.seeded_leaves, 0);
+        assert_eq!(snap.newmv_won, 0);
+
+        // ---------------------------------------------------------
+        // Enable and hit every arm of `record`:
+        // (a) newmv == oracle AND improved on zero AND seeded.
+        //     sad_zero=100, sad_newmv=50, sad_oracle=50 → reached_oracle++,
+        //     improved_on_zero++, seeded_leaves++.
+        // ---------------------------------------------------------
+        ON.store(true, Ordering::Relaxed);
+        assert!(enabled());
+
+        record(100, 50, 50, true, 7);
+        let snap = take_snapshot();
+        assert_eq!(snap.leaves, 1);
+        assert_eq!(snap.sad_zero, 100);
+        assert_eq!(snap.sad_newmv, 50);
+        assert_eq!(snap.sad_oracle, 50);
+        assert_eq!(snap.reached_oracle, 1, "newmv == oracle");
+        assert_eq!(snap.improved_on_zero, 1, "newmv < zero");
+        assert_eq!(snap.seeded_leaves, 1, "seeded=true");
+        assert_eq!(snap.mv_mag_sum, 7);
+
+        // (b) newmv < oracle (also <= oracle) AND improved on zero AND NOT seeded.
+        record(200, 30, 40, false, 5);
+        let snap = take_snapshot();
+        assert_eq!(snap.leaves, 1);
+        assert_eq!(snap.reached_oracle, 1, "30 <= 40 still counts");
+        assert_eq!(snap.improved_on_zero, 1);
+        assert_eq!(snap.seeded_leaves, 0, "seeded=false must NOT bump");
+        assert_eq!(snap.mv_mag_sum, 5);
+
+        // (c) newmv > oracle (failed to reach) AND did NOT improve on zero AND not seeded.
+        //     sad_zero=50, sad_newmv=100, sad_oracle=30 → none of the optional bumps.
+        record(50, 100, 30, false, 0);
+        let snap = take_snapshot();
+        assert_eq!(snap.leaves, 1);
+        assert_eq!(snap.sad_zero, 50);
+        assert_eq!(snap.sad_newmv, 100);
+        assert_eq!(snap.sad_oracle, 30);
+        assert_eq!(snap.reached_oracle, 0, "100 > 30, did NOT reach oracle");
+        assert_eq!(snap.improved_on_zero, 0, "100 >= 50, did NOT improve on zero");
+        assert_eq!(snap.seeded_leaves, 0);
+        assert_eq!(snap.mv_mag_sum, 0);
+
+        // (d) Boundary: newmv == zero is NOT strictly less than zero
+        //     (improved_on_zero uses `<`, not `<=`).
+        record(100, 100, 50, false, 3);
+        let snap = take_snapshot();
+        assert_eq!(snap.improved_on_zero, 0, "newmv == zero is not 'improved'");
+
+        // ---------------------------------------------------------
+        // record_argmin: newmv_won==true bumps both; ==false bumps only argmin_leaves.
+        // ---------------------------------------------------------
+        record_argmin(true);
+        let snap = take_snapshot();
+        assert_eq!(snap.argmin_leaves, 1);
+        assert_eq!(snap.newmv_won, 1);
+
+        record_argmin(false);
+        let snap = take_snapshot();
+        assert_eq!(snap.argmin_leaves, 1);
+        assert_eq!(snap.newmv_won, 0, "newmv_won=false must NOT bump");
+
+        // ---------------------------------------------------------
+        // Accumulation across many calls.
+        // ---------------------------------------------------------
+        record(100, 50, 60, true, 2);
+        record(80, 40, 40, false, 1);
+        record_argmin(true);
+        record_argmin(true);
+        record_argmin(false);
+        let snap = take_snapshot();
+        assert_eq!(snap.leaves, 2);
+        assert_eq!(snap.sad_zero, 180);
+        assert_eq!(snap.sad_newmv, 90);
+        assert_eq!(snap.sad_oracle, 100);
+        assert_eq!(snap.reached_oracle, 2, "both 50<=60 and 40<=40");
+        assert_eq!(snap.improved_on_zero, 2);
+        assert_eq!(snap.seeded_leaves, 1);
+        assert_eq!(snap.mv_mag_sum, 3);
+        assert_eq!(snap.argmin_leaves, 3);
+        assert_eq!(snap.newmv_won, 2);
+
+        // take_snapshot resets state.
+        let snap = take_snapshot();
+        assert_eq!(snap.leaves, 0);
+        assert_eq!(snap.sad_zero, 0);
+        assert_eq!(snap.sad_newmv, 0);
+        assert_eq!(snap.sad_oracle, 0);
+        assert_eq!(snap.reached_oracle, 0);
+        assert_eq!(snap.improved_on_zero, 0);
+        assert_eq!(snap.seeded_leaves, 0);
+        assert_eq!(snap.mv_mag_sum, 0);
+        assert_eq!(snap.argmin_leaves, 0);
+        assert_eq!(snap.newmv_won, 0);
+    }
+}

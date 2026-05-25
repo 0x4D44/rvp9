@@ -348,3 +348,652 @@ pub fn record_leaf(
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ===========================================================
+    // Fixture helpers
+    // ===========================================================
+
+    /// Build a reference plane with a non-linear hash pattern. The
+    /// pattern is chosen so that no integer translation up to
+    /// `±FULL_RANGE` pels yields a coincident byte pattern — this
+    /// makes MV=(0,0) the *unique* global minimum when src == refp.
+    /// A purely linear `(a*y + b*x + c) mod 256` pattern would alias
+    /// under translations that satisfy `a*dy + b*dx ≡ 0 (mod 256)`,
+    /// so we use a multiplicative hash with avalanche.
+    fn make_pattern_plane(w: usize, h: usize) -> Vec<u8> {
+        let mut buf = vec![0u8; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                let v = (y as u32)
+                    .wrapping_mul(0x9E37_79B1)
+                    .wrapping_add((x as u32).wrapping_mul(0x85EB_CA77))
+                    .wrapping_add(0x12_3456);
+                let v = v.wrapping_mul(0xC2B2_AE3D);
+                // Final XOR-fold so the top bits inform the bottom.
+                let v = v ^ v.rotate_right(13);
+                buf[y * w + x] = v as u8;
+            }
+        }
+        buf
+    }
+
+    /// Build a shifted copy: out[y][x] = base[y+dy][x+dx]. Used to
+    /// fabricate a "source" whose oracle-best MV is a known integer
+    /// offset. Caller must keep (dy, dx) inside the base plane.
+    fn shifted_plane(base: &[u8], w: usize, h: usize, dy: usize, dx: usize) -> Vec<u8> {
+        let mut out = vec![0u8; w * h];
+        for y in 0..(h - dy) {
+            for x in 0..(w - dx) {
+                out[y * w + x] = base[(y + dy) * w + (x + dx)];
+            }
+        }
+        out
+    }
+
+    /// Process-wide lock so tests that mutate `E12_ON` don't race
+    /// each other (cargo test runs them on parallel threads but the
+    /// atomic is shared). Pure functions that do not touch the atom
+    /// (`pred_sse`, `oracle_best`, `psnr`) do not need to hold this.
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Drop guard that restores the global enable atomic on test exit
+    /// and keeps the per-process mutex held for the full test
+    /// duration so concurrent record_leaf-based tests serialise.
+    struct EnableGuard {
+        prior: bool,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+    impl EnableGuard {
+        fn acquire() -> Self {
+            let lock = TEST_LOCK
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            Self {
+                prior: E12_ON.load(Ordering::Relaxed),
+                _lock: lock,
+            }
+        }
+    }
+    impl Drop for EnableGuard {
+        fn drop(&mut self) {
+            E12_ON.store(self.prior, Ordering::Relaxed);
+        }
+    }
+
+    /// Drain the thread-local STATS, LEAF_SEQ and PRINTED so the
+    /// test starts from a known baseline regardless of in-thread
+    /// ordering with other tests.
+    fn reset_thread_local() {
+        let _ = take_snapshot();
+        LEAF_SEQ.with(|s| *s.borrow_mut() = 0);
+        PRINTED.with(|p| *p.borrow_mut() = 0);
+    }
+
+    // ===========================================================
+    // psnr — every arithmetic arm
+    // ===========================================================
+
+    #[test]
+    fn psnr_zero_sse_returns_sentinel() {
+        assert_eq!(psnr(0, 64), 100.0, "sse==0 takes the early-return arm");
+    }
+
+    #[test]
+    fn psnr_worst_case_zero_db() {
+        // MSE = 255^2 exactly → PSNR = 10 * log10(1) = 0.
+        let px: u64 = 64;
+        let sse = 255u64 * 255u64 * px;
+        let got = psnr(sse, px);
+        assert!(
+            (got - 0.0).abs() < 1e-9,
+            "expected 0 dB at MSE=255², got {got}",
+        );
+    }
+
+    #[test]
+    fn psnr_known_intermediate_value() {
+        // SSE = px → MSE = 1 → PSNR = 10*log10(255² / 1) = 48.13080…
+        let px: u64 = 64;
+        let sse: u64 = px;
+        let expected = 10.0 * (255.0_f64 * 255.0).log10();
+        let got = psnr(sse, px);
+        assert!(
+            (got - expected).abs() < 1e-9,
+            "expected {expected} dB, got {got}",
+        );
+    }
+
+    // ===========================================================
+    // pred_sse — every branch
+    // ===========================================================
+
+    #[test]
+    fn pred_sse_zero_mv_on_identity_planes_is_zero() {
+        // src == refp, no motion → pred matches src exactly.
+        let w = 64;
+        let h = 64;
+        let plane = make_pattern_plane(w, h);
+        let sse = pred_sse(&plane, w, &plane, w, w, h, 16, 16, 8, 8, Mv::ZERO)
+            .expect("ZERO mv should be in-bounds for a centered block");
+        assert_eq!(sse, 0, "identity prediction must give SSE = 0");
+    }
+
+    #[test]
+    fn pred_sse_nonzero_mv_on_pattern_yields_positive_sse() {
+        // src == refp, MV != 0 → prediction reads a shifted view of
+        // refp; with our non-trivial pattern that's NOT equal to src.
+        let w = 64;
+        let h = 64;
+        let plane = make_pattern_plane(w, h);
+        // mv.col = 16 in Q4 = 1 full pel to the right; subpel = 0.
+        let mv = Mv { row: 0, col: 16 };
+        let sse = pred_sse(&plane, w, &plane, w, w, h, 16, 16, 8, 8, mv)
+            .expect("integer +1 pel inside a 64×64 plane is in-bounds");
+        // Hand-compute: at every (r, c) the diff is
+        //   src[16+r][16+c] - refp[16+r][17+c]
+        // = (37r + 17(16+c) + 5) - (37r + 17(17+c) + 5)   mod 256
+        // = -17  mod 256                                  → 239 (as u8 sub)
+        // But we subtract as i64, so the diff is exactly -17, sse per
+        // pixel = 289. Over 64 pels: 64 * 289 = 18_496.
+        // BUT: the pattern is mod 256, so wrap-arounds appear. We
+        // therefore compute the oracle sum directly here.
+        let mut hand: u64 = 0;
+        for r in 0..8 {
+            for c in 0..8 {
+                let s = i64::from(plane[(16 + r) * w + (16 + c)]);
+                let p = i64::from(plane[(16 + r) * w + (17 + c)]);
+                let d = s - p;
+                hand += (d * d) as u64;
+            }
+        }
+        assert_eq!(sse, hand, "pred_sse must equal the hand-computed SSE");
+        assert!(sse > 0, "shifted view of non-trivial pattern cannot be zero");
+    }
+
+    #[test]
+    fn pred_sse_subpel_motion_triggers_halo() {
+        // Sub-pel MV → row_pre/col_pre = -3 and win_w/h += 7.
+        // We need px,py >= 3 and px+bw+7 <= ref_w, py+bh+7 <= ref_h
+        // for the halo window to be in-bounds.
+        let w = 64;
+        let h = 64;
+        let plane = make_pattern_plane(w, h);
+        let mv = Mv { row: 8, col: 8 }; // half-pel diagonal (Q4)
+        let sse = pred_sse(&plane, w, &plane, w, w, h, 16, 16, 8, 8, mv);
+        assert!(
+            sse.is_some(),
+            "sub-pel halo at px=py=16, bw=bh=8 fits inside 64×64",
+        );
+        assert!(sse.unwrap() > 0, "half-pel filtered prediction != source");
+    }
+
+    #[test]
+    fn pred_sse_subpel_x_only_triggers_col_halo_only() {
+        // Sub-pel x but integer y → only col_pre / win_w extended.
+        let w = 64;
+        let h = 64;
+        let plane = make_pattern_plane(w, h);
+        let mv = Mv { row: 0, col: 8 };
+        let sse = pred_sse(&plane, w, &plane, w, w, h, 16, 16, 8, 8, mv);
+        assert!(sse.is_some());
+    }
+
+    #[test]
+    fn pred_sse_subpel_y_only_triggers_row_halo_only() {
+        // Integer x but sub-pel y → only row_pre / win_h extended.
+        let w = 64;
+        let h = 64;
+        let plane = make_pattern_plane(w, h);
+        let mv = Mv { row: 8, col: 0 };
+        let sse = pred_sse(&plane, w, &plane, w, w, h, 16, 16, 8, 8, mv);
+        assert!(sse.is_some());
+    }
+
+    #[test]
+    fn pred_sse_returns_none_when_win_x_negative() {
+        // Negative MV at left edge → win_x < 0.
+        let w = 64;
+        let h = 64;
+        let plane = make_pattern_plane(w, h);
+        // mv.col = -32 means int_x shift of -2 (Q4 → pel), at px=0
+        // win_x = -2 → < 0.
+        let mv = Mv { row: 0, col: -32 };
+        assert!(
+            pred_sse(&plane, w, &plane, w, w, h, 0, 16, 8, 8, mv).is_none(),
+            "win_x < 0 must return None",
+        );
+    }
+
+    #[test]
+    fn pred_sse_returns_none_when_win_y_negative() {
+        let w = 64;
+        let h = 64;
+        let plane = make_pattern_plane(w, h);
+        let mv = Mv { row: -32, col: 0 };
+        assert!(
+            pred_sse(&plane, w, &plane, w, w, h, 16, 0, 8, 8, mv).is_none(),
+            "win_y < 0 must return None",
+        );
+    }
+
+    #[test]
+    fn pred_sse_returns_none_when_window_exceeds_ref_w() {
+        let w = 64;
+        let h = 64;
+        let plane = make_pattern_plane(w, h);
+        // Block at px = 56, bw = 8 → block ends at col 64. With
+        // mv.col = 32 (= +2 pel), window starts at px+2 = 58 and
+        // ends at 58+8 = 66 > 64.
+        let mv = Mv { row: 0, col: 32 };
+        assert!(
+            pred_sse(&plane, w, &plane, w, w, h, 56, 16, 8, 8, mv).is_none(),
+            "win_x + win_w > ref_w must return None",
+        );
+    }
+
+    #[test]
+    fn pred_sse_returns_none_when_window_exceeds_ref_h() {
+        let w = 64;
+        let h = 64;
+        let plane = make_pattern_plane(w, h);
+        let mv = Mv { row: 32, col: 0 };
+        assert!(
+            pred_sse(&plane, w, &plane, w, w, h, 16, 56, 8, 8, mv).is_none(),
+            "win_y + win_h > ref_h must return None",
+        );
+    }
+
+    // ===========================================================
+    // oracle_best — every branch
+    // ===========================================================
+
+    #[test]
+    fn oracle_best_finds_zero_mv_on_identity_planes() {
+        let w = 64;
+        let h = 64;
+        let plane = make_pattern_plane(w, h);
+        let (fp_mv, fp_sse, best_mv, best_sse) =
+            oracle_best(&plane, w, &plane, w, w, h, 16, 16, 8, 8)
+                .expect("interior block has many in-bounds candidates");
+        assert_eq!(best_mv, Mv::ZERO, "MV=ZERO is the unique global minimum");
+        assert_eq!(best_sse, 0);
+        assert_eq!(fp_mv, Mv::ZERO);
+        assert_eq!(fp_sse, 0);
+    }
+
+    #[test]
+    fn oracle_best_finds_translation_in_shifted_source() {
+        let w = 64;
+        let h = 64;
+        let refp = make_pattern_plane(w, h);
+        // src is the +1 pel down-right view of refp. Then the
+        // matching MV is (16, 16) in Q4 (+1 pel each axis).
+        let src = shifted_plane(&refp, w, h, 1, 1);
+
+        // Sample inside the valid (no-edge) region so the matching MV
+        // is in-bounds for the oracle window.
+        let (_, _, best_mv, best_sse) =
+            oracle_best(&src, w, &refp, w, w, h, 16, 16, 8, 8)
+                .expect("centered block has the matching MV in-bounds");
+        assert_eq!(best_mv, Mv { row: 16, col: 16 });
+        assert_eq!(
+            best_sse, 0,
+            "exact translation must give zero prediction SSE",
+        );
+    }
+
+    #[test]
+    fn oracle_best_returns_none_when_no_candidate_is_in_bounds() {
+        // A reference plane just barely smaller than the block. Even
+        // MV=(0,0) needs a `bw × bh` window starting at (px, py);
+        // pick px,py,bw,bh so that bw > ref_w.
+        let plane = make_pattern_plane(4, 4); // 4×4 plane
+        let result = oracle_best(&plane, 4, &plane, 4, 4, 4, 0, 0, 8, 8);
+        assert!(
+            result.is_none(),
+            "no in-bounds candidate exists → phase-1 best? returns None",
+        );
+    }
+
+    // ===========================================================
+    // record_leaf — every branch
+    // ===========================================================
+
+    #[test]
+    fn record_leaf_no_op_when_disabled() {
+        let _g = EnableGuard::acquire();
+        E12_ON.store(false, Ordering::Relaxed);
+        reset_thread_local();
+
+        let w = 64;
+        let h = 64;
+        let plane = make_pattern_plane(w, h);
+        record_leaf(
+            &plane,
+            w,
+            &plane,
+            w,
+            w,
+            h,
+            16,
+            16,
+            8,
+            8,
+            Mv::ZERO,
+            Mv::ZERO,
+        );
+        let snap = take_snapshot();
+        assert_eq!(snap.n, 0, "disabled record_leaf must not accumulate");
+        assert_eq!(snap.sse_zero, 0);
+        assert_eq!(snap.sse_oracle, 0);
+        assert_eq!(snap.px, 0);
+    }
+
+    #[test]
+    fn record_leaf_sample_stride_filters_most_calls() {
+        // With SAMPLE_STRIDE = 7, only every 7th call evaluates the
+        // oracle. We make 14 calls → expect exactly 2 accumulator
+        // bumps (seq=0 and seq=7).
+        let _g = EnableGuard::acquire();
+        E12_ON.store(true, Ordering::Relaxed);
+        reset_thread_local();
+
+        let w = 64;
+        let h = 64;
+        let plane = make_pattern_plane(w, h);
+        for _ in 0..14 {
+            record_leaf(
+                &plane,
+                w,
+                &plane,
+                w,
+                w,
+                h,
+                16,
+                16,
+                8,
+                8,
+                Mv::ZERO,
+                Mv::ZERO,
+            );
+        }
+        let snap = take_snapshot();
+        assert_eq!(snap.n, 2, "SAMPLE_STRIDE = 7 → 2 of 14 calls evaluated");
+        // Both calls are identity (src=refp); SSE everywhere = 0 for
+        // ZERO mv. Oracle agrees → sse_oracle = 0, oracle_subpel = 0.
+        assert_eq!(snap.sse_zero, 0);
+        assert_eq!(snap.sse_rvp9, 0);
+        assert_eq!(snap.sse_newmv, 0);
+        assert_eq!(snap.sse_oracle_fp, 0);
+        assert_eq!(snap.sse_oracle, 0);
+        assert_eq!(snap.px, 2 * 8 * 8);
+        // Oracle's best MV is ZERO → not sub-pel; psnr(0,*) = 100,
+        // so beats threshold (100 - 100 = 0 < 2 dB) is NOT met.
+        assert_eq!(snap.oracle_subpel, 0);
+        assert_eq!(snap.oracle_beats_rvp9, 0);
+    }
+
+    #[test]
+    fn record_leaf_oob_zero_mv_short_circuits_silently() {
+        // First call inside SAMPLE_STRIDE window with px so close to
+        // the right edge that the ZERO-MV `pred_sse` itself is OOB →
+        // the `match pred_sse(...) { Some(v) => v, None => return }`
+        // arm fires for sse_zero.
+        let _g = EnableGuard::acquire();
+        E12_ON.store(true, Ordering::Relaxed);
+        reset_thread_local();
+
+        let w = 64;
+        let h = 64;
+        let plane = make_pattern_plane(w, h);
+        // px=60, bw=8 → window ends at col 68 > 64 → OOB.
+        record_leaf(
+            &plane, w, &plane, w, w, h, 60, 16, 8, 8, Mv::ZERO, Mv::ZERO,
+        );
+        let snap = take_snapshot();
+        assert_eq!(
+            snap.n, 0,
+            "OOB ZERO-MV must early-return without bumping accumulator",
+        );
+    }
+
+    #[test]
+    fn record_leaf_oracle_short_circuits_when_plane_too_small() {
+        // Make sure SAMPLE_STRIDE picks up this call (first call on
+        // a fresh thread-local), then trigger oracle_best to return
+        // None. We use a tiny reference plane (4×4) and a block size
+        // (8×8) that has no in-bounds candidates anywhere; the
+        // sse_zero pred_sse also returns None, so we never reach the
+        // oracle. To hit the explicit oracle short-circuit, we need
+        // sse_zero to succeed but oracle_best to fail.
+        //
+        // Trick: make the ref plane exactly big enough for ZERO MV
+        // (so sse_zero = Some) but small enough that EVERY non-zero
+        // oracle candidate is OOB. With ref_w = ref_h = 8 + 1 = 9
+        // and px = py = 0, bw = bh = 8:
+        //   ZERO MV → win=(0,0)..(8,8) ⊆ (0,0)..(9,9) ✓
+        //   MV = (8, 8) → subpel halo, win_y = -3 → OOB
+        //   MV = (-8, -8) → subpel halo, win_y = -3 → OOB
+        //   MV = (16, 16) → int_y = 1, win_y = 1, win_h = 8,
+        //                   win_y+win_h = 9 ≤ 9 ✓ — IN-BOUNDS.
+        //
+        // So a 9×9 plane still leaves at least one in-bounds candidate
+        // besides (0,0). With ref_w = ref_h = 8 exactly:
+        //   ZERO MV → win=(0,0)..(8,8) ⊆ (0,0)..(8,8) ✓
+        //   MV = (16, 0) → int_y = 1, win_y = 1, win_y+win_h = 9 > 8 OOB.
+        //   MV = (-16, 0) → int_y = -1, win_y = -1 < 0 OOB.
+        //   All non-zero candidates have either subpel halo OOB or
+        //   integer shift OOB.
+        //
+        // BUT this case keeps oracle returning Some(...) with MV=ZERO
+        // because at least ZERO itself succeeds — so oracle never
+        // returns None here. The accumulator DOES bump.
+        //
+        // To make oracle_best return None we need EVERY candidate to
+        // be OOB — including ZERO. But then sse_zero also returns
+        // None, taking the *earlier* None arm. We therefore cannot
+        // reach the explicit `oracle_best == None` arm without
+        // sse_zero also being None — the two failure regions
+        // coincide. We document that here and assert the symmetric
+        // behaviour: tiny plane where ZERO is OOB returns
+        // accumulator unchanged.
+        let _g = EnableGuard::acquire();
+        E12_ON.store(true, Ordering::Relaxed);
+        reset_thread_local();
+
+        let small = make_pattern_plane(4, 4);
+        record_leaf(
+            &small, 4, &small, 4, 4, 4, 0, 0, 8, 8, Mv::ZERO, Mv::ZERO,
+        );
+        let snap = take_snapshot();
+        assert_eq!(
+            snap.n, 0,
+            "any None along the chain must abort without accumulating",
+        );
+    }
+
+    #[test]
+    fn record_leaf_records_oracle_subpel_and_beats_arms() {
+        // We construct a scenario where the oracle's best MV is
+        // sub-pel — by making src match refp at a *quarter*-pel
+        // shift. With our integer-coordinate pattern that is hard
+        // to make exact (no quarter-pel interpolation lookup), but
+        // we can at least force `subpel` true by checking that the
+        // oracle subpel-and-beats path executes.
+        //
+        // Instead, we exercise the simpler `oracle_beats_rvp9` arm:
+        // shipped MV = ZERO (which has large SSE on our shifted
+        // source) while the oracle finds a translation MV with SSE
+        // = 0 — that gives ≥ 2 dB margin trivially (anything vs 100
+        // dB).
+        let _g = EnableGuard::acquire();
+        E12_ON.store(true, Ordering::Relaxed);
+        reset_thread_local();
+
+        let w = 64;
+        let h = 64;
+        let refp = make_pattern_plane(w, h);
+        let src = shifted_plane(&refp, w, h, 1, 1);
+
+        // First call — seq=0, picks it up. shipped rvp9_mv = ZERO,
+        // newmv_raw = ZERO. Oracle finds (16, 16) with SSE = 0.
+        record_leaf(
+            &src, w, &refp, w, w, h, 16, 16, 8, 8, Mv::ZERO, Mv::ZERO,
+        );
+        let snap = take_snapshot();
+        assert_eq!(snap.n, 1);
+        assert_eq!(snap.sse_oracle, 0, "exact-shift oracle has SSE=0");
+        assert_eq!(snap.sse_oracle_fp, 0);
+        assert!(snap.sse_rvp9 > 0, "ZERO MV vs shifted source has SSE>0");
+        assert!(snap.sse_zero > 0);
+        // Oracle MV (16, 16) is integer-pel → 16 & 7 = 0 on both
+        // axes, NOT sub-pel.
+        assert_eq!(snap.oracle_subpel, 0);
+        // psnr(rvp9, blk_px) is finite; psnr(0, blk_px) = 100 →
+        // beats by ≥ 2 dB.
+        assert_eq!(snap.oracle_beats_rvp9, 1);
+        assert_eq!(snap.px, 8 * 8);
+    }
+
+    #[test]
+    fn take_snapshot_resets_thread_local() {
+        let _g = EnableGuard::acquire();
+        E12_ON.store(true, Ordering::Relaxed);
+        reset_thread_local();
+
+        let w = 64;
+        let h = 64;
+        let plane = make_pattern_plane(w, h);
+        record_leaf(
+            &plane,
+            w,
+            &plane,
+            w,
+            w,
+            h,
+            16,
+            16,
+            8,
+            8,
+            Mv::ZERO,
+            Mv::ZERO,
+        );
+        let first = take_snapshot();
+        assert_eq!(first.n, 1, "one accumulating call");
+        let second = take_snapshot();
+        assert_eq!(second.n, 0, "snapshot drains the thread-local");
+        assert_eq!(second.sse_oracle, 0);
+        assert_eq!(second.px, 0);
+    }
+
+    #[test]
+    fn init_from_env_reflects_environment() {
+        let _g = EnableGuard::acquire();
+        // SAFETY: we save/restore the global atomic; concurrent tests
+        // don't read RVP9_E12_ORACLE during their own work because
+        // they all force the atomic explicitly.
+        // unset → disabled
+        // SAFETY: We are deliberately mutating an env var inside a
+        // test that has exclusive control over the E12_ON atomic for
+        // its duration (via the EnableGuard above). No concurrent
+        // test depends on RVP9_E12_ORACLE — they all set the atomic
+        // directly. The change is reverted before the test returns.
+        unsafe {
+            std::env::remove_var("RVP9_E12_ORACLE");
+        }
+        init_from_env();
+        assert!(!enabled(), "unset env var → disabled");
+
+        // SAFETY: see note above.
+        unsafe {
+            std::env::set_var("RVP9_E12_ORACLE", "1");
+        }
+        init_from_env();
+        assert!(enabled(), "non-zero env var → enabled");
+
+        // SAFETY: see note above.
+        unsafe {
+            std::env::set_var("RVP9_E12_ORACLE", "0");
+        }
+        init_from_env();
+        assert!(!enabled(), "literal \"0\" → disabled");
+
+        // SAFETY: see note above.
+        unsafe {
+            std::env::remove_var("RVP9_E12_ORACLE");
+        }
+    }
+
+    #[test]
+    fn record_leaf_uses_fallback_when_rvp9_or_newmv_oob() {
+        // rvp9_mv and newmv_raw can both be OOB (the search returned
+        // something outside the un-extended ref). pred_sse returns
+        // None for them, so record_leaf falls back via `unwrap_or`
+        // — sse_rvp9 falls back to sse_zero, sse_newmv to sse_rvp9.
+        let _g = EnableGuard::acquire();
+        E12_ON.store(true, Ordering::Relaxed);
+        reset_thread_local();
+
+        let w = 64;
+        let h = 64;
+        let plane = make_pattern_plane(w, h);
+        // ZERO mv at (16,16) is in-bounds, so sse_zero succeeds.
+        // rvp9_mv chosen with huge col so the window goes OOB.
+        let rvp9_oob = Mv { row: 0, col: 32_000 };
+        let newmv_oob = Mv { row: 32_000, col: 0 };
+        record_leaf(
+            &plane, w, &plane, w, w, h, 16, 16, 8, 8, rvp9_oob, newmv_oob,
+        );
+        let snap = take_snapshot();
+        assert_eq!(snap.n, 1);
+        // Both fall back: sse_rvp9 == sse_zero == 0, sse_newmv ==
+        // sse_rvp9 == 0.
+        assert_eq!(snap.sse_zero, 0);
+        assert_eq!(snap.sse_rvp9, 0, "OOB rvp9_mv falls back to sse_zero");
+        assert_eq!(snap.sse_newmv, 0, "OOB newmv_raw falls back to sse_rvp9");
+    }
+
+    #[test]
+    fn record_leaf_print_limit_does_not_panic() {
+        // Drive enough calls to push PRINTED past PRINT_LIMIT and
+        // exercise the `if *p < PRINT_LIMIT` false arm. Each
+        // accumulating call (every 7th) bumps PRINTED, so we need
+        // SAMPLE_STRIDE * (PRINT_LIMIT + 1) calls to fully exhaust.
+        let _g = EnableGuard::acquire();
+        E12_ON.store(true, Ordering::Relaxed);
+        reset_thread_local();
+
+        let w = 64;
+        let h = 64;
+        let plane = make_pattern_plane(w, h);
+        let n_calls = SAMPLE_STRIDE * (PRINT_LIMIT + 2);
+        for _ in 0..n_calls {
+            record_leaf(
+                &plane,
+                w,
+                &plane,
+                w,
+                w,
+                h,
+                16,
+                16,
+                8,
+                8,
+                Mv::ZERO,
+                Mv::ZERO,
+            );
+        }
+        let snap = take_snapshot();
+        // PRINT_LIMIT + 2 accumulating calls → snap.n == PRINT_LIMIT + 2.
+        assert_eq!(snap.n as usize, PRINT_LIMIT + 2);
+        // PRINTED counter should be saturated at PRINT_LIMIT.
+        let printed = PRINTED.with(|p| *p.borrow());
+        assert_eq!(printed, PRINT_LIMIT, "PRINTED saturates at PRINT_LIMIT");
+        // Reset PRINTED so we don't perturb the next test on this thread.
+        PRINTED.with(|p| *p.borrow_mut() = 0);
+    }
+}
