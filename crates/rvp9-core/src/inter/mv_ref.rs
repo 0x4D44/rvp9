@@ -1572,4 +1572,730 @@ mod tests {
             "salvage candidate dedups against spatial; slot 1 stays zero"
         );
     }
+
+    // ---------- Stage 5 — branch-coverage tests -------------------------
+
+    /// `lower_mv_precision` at the HP threshold boundary: a reference
+    /// MV exactly at |64| (the threshold) must use the 1/4-pel path
+    /// (`use_mv_hp` returns false for `|v| >= 64`).
+    #[test]
+    fn lower_mv_precision_hp_threshold_boundary_at_64() {
+        // |row| = 64 → `use_mv_hp` returns false → LSB cleared.
+        let mv = Mv { row: 64, col: 7 };
+        assert_eq!(lower_mv_precision(mv, true), Mv { row: 64, col: 6 });
+        // |row| = 63 → `use_mv_hp` returns true → HP preserved.
+        let mv2 = Mv { row: 63, col: 7 };
+        assert_eq!(lower_mv_precision(mv2, true), mv2);
+    }
+
+    /// `lower_mv_precision` with HP enabled but the col axis is the
+    /// one that fails (|col| >= 64). Exercises the per-axis check in
+    /// `use_mv_hp` (it ANDs both axes).
+    #[test]
+    fn lower_mv_precision_hp_fails_when_col_axis_large() {
+        let mv = Mv { row: 5, col: -200 };
+        // |col| = 200 ≥ 64 → fallback to 1/4-pel; both axes' LSB
+        // cleared.
+        assert_eq!(lower_mv_precision(mv, true), Mv { row: 4, col: -200 });
+    }
+
+    /// `lower_mv_precision` with both negative axes hitting the
+    /// "(v + 1) & !1" rounding path (negative odd).
+    #[test]
+    fn lower_mv_precision_negative_odd_rounds_toward_zero() {
+        let mv = Mv { row: -3, col: -1 };
+        assert_eq!(lower_mv_precision(mv, false), Mv { row: -2, col: 0 });
+    }
+
+    /// `BlockBounds::new`: each axis derived from the libvpx
+    /// `set_mi_row_col` formula. Spot-check with mi_row = mi_col = 0
+    /// (frame corner): top/left = 0, bottom/right = positive.
+    #[test]
+    fn block_bounds_from_mi_coords_corner() {
+        let b = BlockBounds::new(0, 0, 8, 8, 8, 8);
+        assert_eq!(b.top, 0);
+        assert_eq!(b.left, 0);
+        // (mi_rows - bh - mi_row) * MI_SIZE * 8 = 0.
+        assert_eq!(b.bottom, 0);
+        assert_eq!(b.right, 0);
+    }
+
+    /// `clamp_mv_ref` clamps row above bottom edge: candidate MV
+    /// with huge positive row.
+    #[test]
+    fn clamp_mv_ref_clamps_row_bottom() {
+        let above_mv = Mv { row: 32_000, col: 0 };
+        let above = inter_mi(BlockSize::Block16x16, RefFrame::LastFrame, above_mv);
+        let nb = ListNeighbours::new().with(Position { row: -1, col: 0 }, &above);
+        let bounds = BlockBounds {
+            left: -1024,
+            right: 1024,
+            top: -1024,
+            bottom: 1024,
+        };
+        let sign_bias = [false; 4];
+
+        let list = find_mv_refs(
+            InterMode::NearestMv,
+            BlockSize::Block16x16,
+            RefFrame::LastFrame,
+            &nb,
+            &sign_bias,
+            &bounds,
+            None,
+        );
+        // row clamped to bottom + MV_BORDER = 1024 + 128 = 1152.
+        assert_eq!(list.mvs[0], Mv { row: 1152, col: 0 });
+    }
+
+    /// `clamp_mv_ref` clamps row to top edge: candidate MV with
+    /// huge negative row.
+    #[test]
+    fn clamp_mv_ref_clamps_row_top() {
+        let above_mv = Mv { row: -32_000, col: 0 };
+        let above = inter_mi(BlockSize::Block16x16, RefFrame::LastFrame, above_mv);
+        let nb = ListNeighbours::new().with(Position { row: -1, col: 0 }, &above);
+        let bounds = BlockBounds {
+            left: -1024,
+            right: 1024,
+            top: -1024,
+            bottom: 1024,
+        };
+        let sign_bias = [false; 4];
+
+        let list = find_mv_refs(
+            InterMode::NearestMv,
+            BlockSize::Block16x16,
+            RefFrame::LastFrame,
+            &nb,
+            &sign_bias,
+            &bounds,
+            None,
+        );
+        // row clamped to top - MV_BORDER = -1024 - 128 = -1152.
+        assert_eq!(list.mvs[0], Mv { row: -1152, col: 0 });
+    }
+
+    /// `clamp_mv_ref` clamps col to right edge.
+    #[test]
+    fn clamp_mv_ref_clamps_col_right() {
+        let above_mv = Mv { row: 0, col: 32_000 };
+        let above = inter_mi(BlockSize::Block16x16, RefFrame::LastFrame, above_mv);
+        let nb = ListNeighbours::new().with(Position { row: -1, col: 0 }, &above);
+        let bounds = BlockBounds {
+            left: -512,
+            right: 512,
+            top: -512,
+            bottom: 512,
+        };
+        let sign_bias = [false; 4];
+
+        let list = find_mv_refs(
+            InterMode::NearestMv,
+            BlockSize::Block16x16,
+            RefFrame::LastFrame,
+            &nb,
+            &sign_bias,
+            &bounds,
+            None,
+        );
+        // col clamped to right + MV_BORDER = 512 + 128 = 640.
+        assert_eq!(list.mvs[0], Mv { row: 0, col: 640 });
+    }
+
+    /// `find_mv_refs` second-walk pulls a candidate's slot-1 MV when
+    /// its `ref_frame[1]` differs from current ref AND scales by
+    /// sign-bias. Setup: compound neighbour `[LAST, GOLDEN]` with two
+    /// distinct MVs; we ask for ALTREF (matches neither). The second
+    /// walk hits the `has_second_ref && r1 != ref_frame && mv1 != mv0`
+    /// branch (libvpx `vp9_mvref_common.c:99-122`).
+    #[test]
+    fn second_walk_pulls_compound_slot1_with_distinct_mv() {
+        let above = inter_mi_compound(
+            BlockSize::Block16x16,
+            [RefFrame::LastFrame, RefFrame::GoldenFrame],
+            [Mv { row: 10, col: 0 }, Mv { row: -20, col: 30 }],
+        );
+        let nb = ListNeighbours::new().with(Position { row: -1, col: 0 }, &above);
+        let bounds = loose_bounds();
+        // ALTREF sign-bias differs from LAST/GOLDEN, but for ref ==
+        // ALTREF the first walk skips (neither slot matches). Then
+        // the second walk: slot 0 (LAST) ≠ ALTREF → adds scaled
+        // (LAST==ALTREF sign bias? LAST=false, ALTREF=false → no
+        // negate) → slot 0 MV. Slot 1 (GOLDEN) ≠ ALTREF and mv1 !=
+        // mv0 → adds scaled slot-1 MV.
+        let sign_bias = [false; 4];
+
+        let list = find_mv_refs(
+            InterMode::NearMv,
+            BlockSize::Block16x16,
+            RefFrame::AltrefFrame,
+            &nb,
+            &sign_bias,
+            &bounds,
+            None,
+        );
+        // First: slot-0 LAST mv (sign-bias equal → no negate).
+        assert_eq!(list.mvs[0], Mv { row: 10, col: 0 });
+        // Second: slot-1 GOLDEN mv (sign-bias equal → no negate).
+        assert_eq!(list.mvs[1], Mv { row: -20, col: 30 });
+        assert_eq!(list.count, 2);
+    }
+
+    /// `find_mv_refs` second-walk dedups slot 0 and slot 1 of a
+    /// compound neighbour when both MVs are equal: only the slot-0
+    /// candidate is added (slot 1 skipped via `mv1 != mv0` gate).
+    #[test]
+    fn second_walk_skips_compound_slot1_when_mv1_equals_mv0() {
+        let dup_mv = Mv { row: 7, col: 11 };
+        let above = inter_mi_compound(
+            BlockSize::Block16x16,
+            [RefFrame::LastFrame, RefFrame::GoldenFrame],
+            [dup_mv, dup_mv],
+        );
+        let nb = ListNeighbours::new().with(Position { row: -1, col: 0 }, &above);
+        let bounds = loose_bounds();
+        let sign_bias = [false; 4];
+
+        let list = find_mv_refs(
+            InterMode::NearMv,
+            BlockSize::Block16x16,
+            RefFrame::AltrefFrame,
+            &nb,
+            &sign_bias,
+            &bounds,
+            None,
+        );
+        // Only slot-0 MV added; slot 1 dedups out (mv1 == mv0).
+        assert_eq!(list.mvs[0], dup_mv);
+        assert_eq!(list.mvs[1], Mv::ZERO);
+        assert_eq!(list.count, 2, "NEARMV target");
+    }
+
+    /// `find_mv_refs` second-walk: candidate's slot-0 ref equals
+    /// current ref → first-walk hit, skip the `r0 != ref_frame`
+    /// branch in second walk for that candidate. We verify that a
+    /// single-ref LAST neighbour doesn't double-count its MV.
+    #[test]
+    fn second_walk_skips_matching_slot0_ref() {
+        let above_mv = Mv { row: 5, col: -3 };
+        let above = inter_mi(BlockSize::Block16x16, RefFrame::LastFrame, above_mv);
+        let nb = ListNeighbours::new().with(Position { row: -1, col: 0 }, &above);
+        let bounds = loose_bounds();
+        let sign_bias = [false; 4];
+
+        let list = find_mv_refs(
+            InterMode::NearMv,
+            BlockSize::Block16x16,
+            RefFrame::LastFrame,
+            &nb,
+            &sign_bias,
+            &bounds,
+            None,
+        );
+        // First walk added slot-0 MV; second walk's `r0 != ref_frame`
+        // is false → no duplicate. `count == 2` from NEARMV finish.
+        assert_eq!(list.mvs[0], above_mv);
+        assert_eq!(list.mvs[1], Mv::ZERO);
+    }
+
+    /// `find_mv_refs` with NEARMV: a left neighbour after an above
+    /// neighbour fills slot 1. The two-walk path is exercised across
+    /// the whole 8-position scan.
+    #[test]
+    fn nearmv_left_after_above_fills_slot1() {
+        let above_mv = Mv { row: 10, col: 0 };
+        let left_mv = Mv { row: 0, col: 10 };
+        let above = inter_mi(BlockSize::Block16x16, RefFrame::LastFrame, above_mv);
+        let left = inter_mi(BlockSize::Block16x16, RefFrame::LastFrame, left_mv);
+        let nb = ListNeighbours::new()
+            .with(Position { row: -1, col: 0 }, &above)
+            .with(Position { row: 0, col: -1 }, &left);
+        let bounds = loose_bounds();
+        let sign_bias = [false; 4];
+
+        let list = find_mv_refs(
+            InterMode::NearMv,
+            BlockSize::Block16x16,
+            RefFrame::LastFrame,
+            &nb,
+            &sign_bias,
+            &bounds,
+            None,
+        );
+        assert_eq!(list.mvs[0], above_mv);
+        assert_eq!(list.mvs[1], left_mv);
+        assert_eq!(list.count, 2);
+    }
+
+    /// `append_sub8x8_mvs_for_idx` for j=1 NEARESTMV returns
+    /// `bmi[0].as_mv[ref_idx]` (libvpx fast-path).
+    #[test]
+    fn sub8_append_j1_nearestmv_returns_bmi0() {
+        let parent = {
+            let mut p = inter_mi(BlockSize::Block4x4, RefFrame::LastFrame, Mv::ZERO);
+            p.bmi[0].as_mv[0] = Mv { row: 17, col: -3 };
+            p
+        };
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let sign_bias = [false; 4];
+
+        let got = append_sub8x8_mvs_for_idx(
+            InterMode::NearestMv,
+            &parent,
+            BlockSize::Block4x4,
+            RefFrame::LastFrame,
+            /* ref_idx */ 0,
+            /* j */ 1,
+            &nb,
+            &sign_bias,
+            &bounds,
+            None,
+        );
+        assert_eq!(got, Mv { row: 17, col: -3 });
+    }
+
+    /// `append_sub8x8_mvs_for_idx` for j=2 NEARESTMV also returns
+    /// `bmi[0].as_mv[ref_idx]`.
+    #[test]
+    fn sub8_append_j2_nearestmv_returns_bmi0() {
+        let parent = {
+            let mut p = inter_mi(BlockSize::Block4x4, RefFrame::LastFrame, Mv::ZERO);
+            p.bmi[0].as_mv[0] = Mv { row: -5, col: 11 };
+            p
+        };
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let sign_bias = [false; 4];
+
+        let got = append_sub8x8_mvs_for_idx(
+            InterMode::NearestMv,
+            &parent,
+            BlockSize::Block4x4,
+            RefFrame::LastFrame,
+            0,
+            2,
+            &nb,
+            &sign_bias,
+            &bounds,
+            None,
+        );
+        assert_eq!(got, Mv { row: -5, col: 11 });
+    }
+
+    /// `append_sub8x8_mvs_for_idx` for j=3 NEARESTMV returns
+    /// `bmi[2].as_mv[ref_idx]`.
+    #[test]
+    fn sub8_append_j3_nearestmv_returns_bmi2() {
+        let parent = {
+            let mut p = inter_mi(BlockSize::Block4x4, RefFrame::LastFrame, Mv::ZERO);
+            p.bmi[2].as_mv[0] = Mv { row: 22, col: 44 };
+            p
+        };
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let sign_bias = [false; 4];
+
+        let got = append_sub8x8_mvs_for_idx(
+            InterMode::NearestMv,
+            &parent,
+            BlockSize::Block4x4,
+            RefFrame::LastFrame,
+            0,
+            3,
+            &nb,
+            &sign_bias,
+            &bounds,
+            None,
+        );
+        assert_eq!(got, Mv { row: 22, col: 44 });
+    }
+
+    /// `append_sub8x8_mvs_for_idx` for j=1 NEARMV with bmi[0] ≠
+    /// list.mvs[0] returns `list.mvs[0]` (libvpx "first differing
+    /// candidate" fallback). Setup: empty neighbours so `list = zeros`;
+    /// bmi[0] = non-zero → bmi[0] ≠ list.mvs[0] = 0 → returns 0.
+    #[test]
+    fn sub8_append_j1_nearmv_returns_list0_when_bmi0_differs() {
+        let parent = {
+            let mut p = inter_mi(BlockSize::Block4x4, RefFrame::LastFrame, Mv::ZERO);
+            p.bmi[0].as_mv[0] = Mv { row: 10, col: -5 };
+            p
+        };
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let sign_bias = [false; 4];
+
+        let got = append_sub8x8_mvs_for_idx(
+            InterMode::NearMv,
+            &parent,
+            BlockSize::Block4x4,
+            RefFrame::LastFrame,
+            0,
+            1,
+            &nb,
+            &sign_bias,
+            &bounds,
+            None,
+        );
+        // bmi[0] != list.mvs[0] (= 0) → returns list.mvs[0] = 0.
+        assert_eq!(got, Mv::ZERO);
+    }
+
+    /// `append_sub8x8_mvs_for_idx` for j=1 NEARMV when bmi[0] equals
+    /// list.mvs[0] AND list.mvs[1]: returns Mv::ZERO (the all-equal
+    /// fallback).
+    #[test]
+    fn sub8_append_j1_nearmv_returns_zero_when_all_equal() {
+        // Set parent.bmi[0] to (0, 0); empty neighbours → list both
+        // zero. All three (bmi[0], list[0], list[1]) equal → ZERO.
+        let parent = inter_mi(BlockSize::Block4x4, RefFrame::LastFrame, Mv::ZERO);
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let sign_bias = [false; 4];
+
+        let got = append_sub8x8_mvs_for_idx(
+            InterMode::NearMv,
+            &parent,
+            BlockSize::Block4x4,
+            RefFrame::LastFrame,
+            0,
+            1,
+            &nb,
+            &sign_bias,
+            &bounds,
+            None,
+        );
+        assert_eq!(got, Mv::ZERO);
+    }
+
+    /// `append_sub8x8_mvs_for_idx` for j=3 NEARMV: bmi[2] != bmi[1]
+    /// → returns bmi[1].
+    #[test]
+    fn sub8_append_j3_nearmv_returns_bmi1_when_differs() {
+        let parent = {
+            let mut p = inter_mi(BlockSize::Block4x4, RefFrame::LastFrame, Mv::ZERO);
+            p.bmi[1].as_mv[0] = Mv { row: 6, col: 6 };
+            p.bmi[2].as_mv[0] = Mv { row: 9, col: -9 };
+            p
+        };
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let sign_bias = [false; 4];
+
+        let got = append_sub8x8_mvs_for_idx(
+            InterMode::NearMv,
+            &parent,
+            BlockSize::Block4x4,
+            RefFrame::LastFrame,
+            0,
+            3,
+            &nb,
+            &sign_bias,
+            &bounds,
+            None,
+        );
+        assert_eq!(got, Mv { row: 6, col: 6 }, "bmi[1] differs from bmi[2]");
+    }
+
+    /// `append_sub8x8_mvs_for_idx` for j=3 NEARMV: bmi[2] == bmi[1]
+    /// but != bmi[0] → returns bmi[0].
+    #[test]
+    fn sub8_append_j3_nearmv_returns_bmi0_when_bmi1_matches() {
+        let shared = Mv { row: 4, col: 4 };
+        let parent = {
+            let mut p = inter_mi(BlockSize::Block4x4, RefFrame::LastFrame, Mv::ZERO);
+            p.bmi[0].as_mv[0] = Mv { row: 8, col: -2 };
+            p.bmi[1].as_mv[0] = shared;
+            p.bmi[2].as_mv[0] = shared;
+            p
+        };
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let sign_bias = [false; 4];
+
+        let got = append_sub8x8_mvs_for_idx(
+            InterMode::NearMv,
+            &parent,
+            BlockSize::Block4x4,
+            RefFrame::LastFrame,
+            0,
+            3,
+            &nb,
+            &sign_bias,
+            &bounds,
+            None,
+        );
+        assert_eq!(got, Mv { row: 8, col: -2 });
+    }
+
+    /// `append_sub8x8_mvs_for_idx` for j=3 NEARMV: bmi[2] == bmi[1]
+    /// == bmi[0] but != list.mvs[0] → returns list.mvs[0]. Setup:
+    /// all three bmi entries equal a known value; provide a
+    /// neighbour so dec_find_mv_refs returns a different MV.
+    #[test]
+    fn sub8_append_j3_nearmv_returns_list0_when_all_bmi_equal() {
+        let shared_bmi = Mv { row: 2, col: 2 };
+        let neighbour_mv = Mv { row: -5, col: 5 };
+        let mut parent = inter_mi(BlockSize::Block4x4, RefFrame::LastFrame, Mv::ZERO);
+        parent.bmi[0].as_mv[0] = shared_bmi;
+        parent.bmi[1].as_mv[0] = shared_bmi;
+        parent.bmi[2].as_mv[0] = shared_bmi;
+        // Provide a parent-path neighbour so `dec_find_mv_refs(j=3)`
+        // produces a distinct candidate at list.mvs[0].
+        let above = inter_mi(BlockSize::Block16x16, RefFrame::LastFrame, neighbour_mv);
+        let nb = ListNeighbours::new().with(Position { row: -1, col: 0 }, &above);
+        let bounds = loose_bounds();
+        let sign_bias = [false; 4];
+
+        let got = append_sub8x8_mvs_for_idx(
+            InterMode::NearMv,
+            &parent,
+            BlockSize::Block4x4,
+            RefFrame::LastFrame,
+            0,
+            3,
+            &nb,
+            &sign_bias,
+            &bounds,
+            None,
+        );
+        assert_eq!(got, neighbour_mv, "list.mvs[0] from dec_find_mv_refs");
+    }
+
+    /// `append_sub8x8_mvs_for_idx` for j=3 NEARMV: all bmi entries
+    /// equal a known value AND that equals list.mvs[0]; list.mvs[1]
+    /// also equals (memset 0) → returns Mv::ZERO (the all-equal
+    /// fallback in the last branch).
+    #[test]
+    fn sub8_append_j3_nearmv_returns_zero_when_all_equal_to_list() {
+        // bmi[0..3] = 0; empty neighbours → list = zeros. All four
+        // match → returns Mv::ZERO.
+        let parent = inter_mi(BlockSize::Block4x4, RefFrame::LastFrame, Mv::ZERO);
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let sign_bias = [false; 4];
+
+        let got = append_sub8x8_mvs_for_idx(
+            InterMode::NearMv,
+            &parent,
+            BlockSize::Block4x4,
+            RefFrame::LastFrame,
+            0,
+            3,
+            &nb,
+            &sign_bias,
+            &bounds,
+            None,
+        );
+        assert_eq!(got, Mv::ZERO);
+    }
+
+    /// `dec_find_mv_refs` with NEARMV but only one neighbour: the
+    /// second-walk path runs (since `different_ref_found = false`
+    /// is NOT set when first walk found a match), but adds no new
+    /// candidate. `count == 2` via finish.
+    #[test]
+    fn nearmv_single_neighbour_finish_pads_to_two() {
+        let above_mv = Mv { row: 4, col: -2 };
+        let above = inter_mi(BlockSize::Block16x16, RefFrame::LastFrame, above_mv);
+        let nb = ListNeighbours::new().with(Position { row: -1, col: 0 }, &above);
+        let bounds = loose_bounds();
+        let sign_bias = [false; 4];
+
+        let list = find_mv_refs(
+            InterMode::NearMv,
+            BlockSize::Block16x16,
+            RefFrame::LastFrame,
+            &nb,
+            &sign_bias,
+            &bounds,
+            None,
+        );
+        assert_eq!(list.mvs[0], above_mv);
+        assert_eq!(list.mvs[1], Mv::ZERO);
+        assert_eq!(list.count, 2, "finish pads NEARMV target to 2");
+    }
+
+    /// `dec_find_mv_refs` prev-frame slot-1 matching-ref salvage:
+    /// `prev.ref_frames[0] != ref_frame` but `prev.ref_frames[1] ==
+    /// ref_frame`. Mirrors the second `else if` branch of the first
+    /// salvage pass.
+    #[test]
+    fn prev_salvage_matching_slot1() {
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let sign_bias = [false; 4];
+        let prev_mv1 = Mv { row: 11, col: -22 };
+        let prev = PrevFrameMvRef {
+            mvs: [Mv { row: 99, col: 99 }, prev_mv1],
+            ref_frames: [RefFrame::GoldenFrame, RefFrame::LastFrame],
+        };
+
+        let list = find_mv_refs(
+            InterMode::NearestMv,
+            BlockSize::Block16x16,
+            RefFrame::LastFrame,
+            &nb,
+            &sign_bias,
+            &bounds,
+            Some(prev),
+        );
+        // Slot 0 is GOLDEN ≠ LAST → skip. Slot 1 is LAST → matches.
+        // prev_mv1 lifted into the list.
+        assert_eq!(list.mvs[0], prev_mv1);
+        assert_eq!(list.count, 1);
+    }
+
+    /// `append_sub8x8_mvs_for_idx` for j=1 NEAR with bmi[0] equal to
+    /// list.mvs[0] but ≠ list.mvs[1] → returns list.mvs[1] (line 801
+    /// fallback). Setup: bmi[0] = (0, 0); neighbour so that
+    /// list.mvs[0] = (0, 0) (after clamping) and list.mvs[1] = a
+    /// different MV. The sub-8 `dec_find_mv_refs(j=1)` needs two
+    /// matching-ref neighbours that produce distinct entries.
+    #[test]
+    fn sub8_append_j1_nearmv_returns_list1_when_bmi0_matches_list0() {
+        // bmi[0] = Mv::ZERO. We need
+        // dec_find_mv_refs(b_mode=NEAR, j=1) to return:
+        //   list.mvs[0] = ZERO (matches bmi[0])
+        //   list.mvs[1] = some other MV
+        //
+        // For sub-8 path the first 2 scan positions go through
+        // get_sub_block_mv with block=1; for Block4x4 those positions
+        // are (-1, 0) and (0, -1). With block_idx=1,
+        // IDX_N_COLUMN_TO_SUBBLOCK[1][1]=3 (col==0 key) and
+        // IDX_N_COLUMN_TO_SUBBLOCK[1][0]=1 (col!=0 key).
+        // So for above at (-1, 0): col==0 → sub_idx=3 → bmi[3].
+        // For left at (0, -1): col!=0 → sub_idx=1 → bmi[1].
+        //
+        // Set above.bmi[3].as_mv[0] = ZERO (matches bmi[0] of caller)
+        // Set left.bmi[1].as_mv[0] = (5, 5) (different).
+        let mut above = inter_mi(BlockSize::Block4x4, RefFrame::LastFrame, Mv::ZERO);
+        above.bmi[3].as_mv[0] = Mv::ZERO;
+        let mut left = inter_mi(BlockSize::Block4x4, RefFrame::LastFrame, Mv::ZERO);
+        left.bmi[1].as_mv[0] = Mv { row: 5, col: 5 };
+        let parent = inter_mi(BlockSize::Block4x4, RefFrame::LastFrame, Mv::ZERO);
+        // parent.bmi[0] is default = (0,0).
+        let nb = ListNeighbours::new()
+            .with(Position { row: -1, col: 0 }, &above)
+            .with(Position { row: 0, col: -1 }, &left);
+        let bounds = loose_bounds();
+        let sign_bias = [false; 4];
+
+        let got = append_sub8x8_mvs_for_idx(
+            InterMode::NearMv,
+            &parent,
+            BlockSize::Block4x4,
+            RefFrame::LastFrame,
+            0,
+            1,
+            &nb,
+            &sign_bias,
+            &bounds,
+            None,
+        );
+        // bmi[0] = ZERO, list.mvs[0] = ZERO (above), list.mvs[1] =
+        // (5, 5) (left). bmi[0] == list.mvs[0] AND bmi[0] !=
+        // list.mvs[1] → returns list.mvs[1] = (5, 5).
+        assert_eq!(got, Mv { row: 5, col: 5 });
+    }
+
+    /// `append_sub8x8_mvs_for_idx` for j=3 NEAR when all bmi equal
+    /// list[0] but ≠ list[1] → returns list.mvs[1] (line 831 path).
+    /// Setup: bmi[0..3] all equal; neighbours arranged so
+    /// dec_find_mv_refs(j=3) returns list[0] = that same value AND
+    /// list[1] = a different value.
+    #[test]
+    fn sub8_append_j3_nearmv_returns_list1_when_all_bmi_equal_list0() {
+        let shared = Mv { row: 4, col: 4 };
+        let mut parent = inter_mi(BlockSize::Block4x4, RefFrame::LastFrame, Mv::ZERO);
+        parent.bmi[0].as_mv[0] = shared;
+        parent.bmi[1].as_mv[0] = shared;
+        parent.bmi[2].as_mv[0] = shared;
+        // For Block4x4 with j=3:
+        //   IDX_N_COLUMN_TO_SUBBLOCK[3][1] = 3 (col==0 key)
+        //   IDX_N_COLUMN_TO_SUBBLOCK[3][0] = 3 (col!=0 key)
+        // Both above and left look at sub-idx 3 of the neighbour.
+        // Above at (-1, 0): col==0 → key=1 → IDX[3][1] = 3. So
+        // above.bmi[3] is read.
+        // Left at (0, -1): col!=0 → key=0 → IDX[3][0] = 3. left.bmi[3].
+        let mut above = inter_mi(BlockSize::Block4x4, RefFrame::LastFrame, Mv::ZERO);
+        above.bmi[3].as_mv[0] = shared; // matches bmi[2..0] → list[0]
+        let mut left = inter_mi(BlockSize::Block4x4, RefFrame::LastFrame, Mv::ZERO);
+        left.bmi[3].as_mv[0] = Mv { row: -7, col: 11 }; // distinct → list[1]
+        let nb = ListNeighbours::new()
+            .with(Position { row: -1, col: 0 }, &above)
+            .with(Position { row: 0, col: -1 }, &left);
+        let bounds = loose_bounds();
+        let sign_bias = [false; 4];
+
+        let got = append_sub8x8_mvs_for_idx(
+            InterMode::NearMv,
+            &parent,
+            BlockSize::Block4x4,
+            RefFrame::LastFrame,
+            0,
+            3,
+            &nb,
+            &sign_bias,
+            &bounds,
+            None,
+        );
+        // bmi[2] == bmi[1] == bmi[0] == list[0] == shared.
+        // bmi[2] != list[1] → returns list[1] = (-7, 11).
+        assert_eq!(got, Mv { row: -7, col: 11 });
+    }
+
+    /// `PrevFrameMvRef::default()` returns a zero-MV / NoRefFrame
+    /// pair. Verifies the default impl branch is exercised.
+    #[test]
+    fn prev_frame_mv_ref_default_is_zero() {
+        let p = PrevFrameMvRef::default();
+        assert_eq!(p.mvs, [Mv::ZERO; 2]);
+        assert_eq!(p.ref_frames, [RefFrame::NoRefFrame; 2]);
+    }
+
+    /// `ref_sign_bias_at` with `NoRefFrame` returns `false` (the
+    /// "out-of-range" arm). The function is total but this slot is
+    /// never queried in practice.
+    #[test]
+    fn ref_sign_bias_at_no_ref_frame_is_false() {
+        let sign_bias = [true; 4];
+        assert!(!ref_sign_bias_at(&sign_bias, RefFrame::NoRefFrame));
+    }
+
+    /// `dec_find_mv_refs` different-ref prev salvage scales prev slot
+    /// 1 when slot 0 was a match (which short-circuited the matching
+    /// pass) — i.e. when slot 0 is the queried ref, the second
+    /// salvage pass examines slot 1 with `r1 != ref_frame && mv1 !=
+    /// mv0`. Exercise NEARMV (no early break) so the salvage runs.
+    #[test]
+    fn prev_salvage_different_ref_slot1() {
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let mut sign_bias = [false; 4];
+        sign_bias[RefFrame::GoldenFrame as usize] = true;
+        let prev = PrevFrameMvRef {
+            // Slot 0: LAST with MV (1, 1) — first-pass match adds it.
+            // Slot 1: GOLDEN with MV (5, 7), differs from slot 0 →
+            // second-pass adds scaled (-5, -7).
+            mvs: [Mv { row: 1, col: 1 }, Mv { row: 5, col: 7 }],
+            ref_frames: [RefFrame::LastFrame, RefFrame::GoldenFrame],
+        };
+
+        let list = find_mv_refs(
+            InterMode::NearMv,
+            BlockSize::Block16x16,
+            RefFrame::LastFrame,
+            &nb,
+            &sign_bias,
+            &bounds,
+            Some(prev),
+        );
+        assert_eq!(list.mvs[0], Mv { row: 1, col: 1 });
+        // Sign-bias differs (LAST=false, GOLDEN=true) → negate.
+        assert_eq!(list.mvs[1], Mv { row: -5, col: -7 });
+        assert_eq!(list.count, 2);
+    }
 }
