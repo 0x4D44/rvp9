@@ -96,6 +96,14 @@ pub struct InterBlockInputs<'a> {
     /// corresponding `mi.ref_frames[i]` is an inter ref; `None` if it's
     /// `NoRefFrame`. Caller resolves the ref-pool lookup beforehand.
     pub refs: [Option<&'a Yv12Buffer>; 2],
+    /// Per-ref [`ScaleFactors`] aligned with `refs`. Frame-level
+    /// optimization (mirrors libvpx
+    /// `vp9_setup_scale_factors_for_frame` at
+    /// `vp9_decodeframe.c:2928-2935`, called once per active ref per
+    /// frame instead of per inter block). `sfs[i]` is `Some` iff
+    /// `refs[i]` is `Some`. If `None`, the per-block driver falls back
+    /// to constructing on the fly (for tests / legacy paths).
+    pub sfs: [Option<ScaleFactors>; 2],
     /// `(dc, ac)` dequantisers per plane (Y, U, V) for this block's
     /// segment.
     pub dequant_per_plane: [(i32, i32); 3],
@@ -196,25 +204,34 @@ pub fn reconstruct_inter_block<D: TileFrameDst>(
     debug_assert!(ref_frames[0].is_inter(), "ref[0] must be inter");
     let is_compound = ref_frames[1].is_inter();
 
+    // Per-ref ScaleFactors. Tier 1 optimization (mirrors libvpx
+    // `vp9_setup_scale_factors_for_frame`, called once per ref per
+    // frame at `vp9_decodeframe.c:2928-2935`): use the pre-computed
+    // `inputs.sfs[r]` when provided by the caller (production decoder
+    // path). Legacy callers (tests) that pass `sfs[r] = None` fall
+    // back to constructing fresh from the ref buffer's dims.
     let mut sfs: [Option<ScaleFactors>; 2] = [None, None];
     let num_refs = 1 + usize::from(is_compound);
     #[allow(clippy::needless_range_loop)] // indexes both `inputs.refs` and `sfs`
     for r in 0..num_refs {
         let ref_buf = inputs.refs[r]
             .expect("caller must resolve ref-pool slot for each active ref");
-        // D.24: use crop (visible) dims, not aligned dims, to match
-        // libvpx `vp9_setup_scale_factors_for_frame` which is called
-        // with `ref_buf->buf->y_crop_width / y_crop_height` against
-        // `cm->width / cm->height` (the raw, un-aligned dims) — see
-        // `vp9_decodeframe.c:2928-2935`. For frames whose dims are
-        // 8-multiples the two coincide; for resize vectors (e.g.
-        // 282×173) they differ and the scale factor mismatches.
-        let sf = ScaleFactors::new(
-            ref_buf.width(),
-            ref_buf.height(),
-            inputs.cur_y_width,
-            inputs.cur_y_height,
-        );
+        let sf = match inputs.sfs[r] {
+            Some(sf) => sf,
+            None => {
+                // D.24: use crop (visible) dims, not aligned dims, to
+                // match libvpx `vp9_setup_scale_factors_for_frame` —
+                // see `vp9_decodeframe.c:2928-2935`. Fallback path for
+                // unit tests that build `InterBlockInputs` without the
+                // pre-computed frame SFs.
+                ScaleFactors::new(
+                    ref_buf.width(),
+                    ref_buf.height(),
+                    inputs.cur_y_width,
+                    inputs.cur_y_height,
+                )
+            }
+        };
         debug_assert!(
             sf.is_valid(),
             "ref dimensions must be in libvpx envelope"
@@ -1387,6 +1404,7 @@ mod tests {
             cur_y_width: cur_w,
             cur_y_height: cur_h,
             refs: [Some(&ref_buf), None],
+            sfs: [None, None],
             dequant_per_plane: [(8, 16); 3],
             lossless: false,
             mi_rows: 1 << 16,
@@ -1476,6 +1494,7 @@ mod tests {
             cur_y_width: cur_w,
             cur_y_height: cur_h,
             refs: [Some(&ref_buf), None],
+            sfs: [None, None],
             dequant_per_plane: [(8, 16); 3],
             lossless: false,
             mi_rows: 1 << 16,
@@ -1550,6 +1569,7 @@ mod tests {
             cur_y_width: cur_w,
             cur_y_height: cur_h,
             refs: [Some(&ref_buf), None],
+            sfs: [None, None],
             dequant_per_plane: [(8, 16); 3],
             lossless: false,
             mi_rows: 1 << 16,
@@ -1628,6 +1648,7 @@ mod tests {
             cur_y_width: cur_w,
             cur_y_height: cur_h,
             refs: [Some(&ref0), Some(&ref1)],
+            sfs: [None, None],
             dequant_per_plane: [(8, 16); 3],
             lossless: false,
             mi_rows: 1 << 16,
@@ -1761,6 +1782,7 @@ mod tests {
             cur_y_width: cur_w,
             cur_y_height: cur_h,
             refs: [Some(&ref_buf), None],
+            sfs: [None, None],
             dequant_per_plane: [(8, 16); 3],
             lossless: false,
             mi_rows: 1 << 16,
@@ -1855,6 +1877,7 @@ mod tests {
             cur_y_width: cur_w,
             cur_y_height: cur_h,
             refs: [Some(&ref_buf), None],
+            sfs: [None, None],
             dequant_per_plane: [(8, 16); 3],
             lossless: false,
             mi_rows: 1 << 16,
@@ -2022,6 +2045,7 @@ mod tests {
             cur_y_width: cur_w,
             cur_y_height: cur_h,
             refs: [Some(&ref_buf), None],
+            sfs: [None, None],
             dequant_per_plane: [(8, 16); 3],
             lossless: false,
             mi_rows: 1 << 16,
@@ -2890,6 +2914,7 @@ mod tests {
             cur_y_width: cur_w,
             cur_y_height: cur_h,
             refs: [Some(&ref_buf), None],
+            sfs: [None, None],
             dequant_per_plane: [(8, 16); 3],
             lossless: true, // exercise the lossless-flag plumb
             mi_rows: 1 << 16,

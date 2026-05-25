@@ -2433,11 +2433,36 @@ impl Decoder {
         // alive for the lifetime of this scope.
         let refs_borrowed: [Option<&Yv12Buffer>; 3] =
             [refs[0].as_deref(), refs[1].as_deref(), refs[2].as_deref()];
+        // Tier 1 optimization (mirrors libvpx
+        // `vp9_setup_scale_factors_for_frame` at
+        // `vp9_decodeframe.c:2928-2935`, called once per active ref per
+        // frame): pre-compute each active ref's per-frame
+        // `ScaleFactors` so the per-inter-block driver can look them up
+        // from `inputs.sfs[r]` instead of running the Q14 fixed-point
+        // arithmetic on every block. The SFs depend only on
+        // (ref crop dims, cur frame crop dims), both frame-level
+        // invariants.
+        let frame_scale_factors: [Option<rvp9_core::inter::scale::ScaleFactors>; 3] = {
+            let mut sfs = [None, None, None];
+            for (i, r) in refs_borrowed.iter().enumerate() {
+                if let Some(buf) = r {
+                    let sf = rvp9_core::inter::scale::ScaleFactors::new(
+                        buf.width(),
+                        buf.height(),
+                        cur_y_width,
+                        cur_y_height,
+                    );
+                    sfs[i] = Some(sf);
+                }
+            }
+            sfs
+        };
         let params = InterFrameDecodeParams {
             base,
             cur_y_width,
             cur_y_height,
             refs: refs_borrowed,
+            frame_scale_factors,
             inter_params,
         };
 
