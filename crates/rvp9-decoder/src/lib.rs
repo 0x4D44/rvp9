@@ -1563,10 +1563,16 @@ impl Decoder {
         // Finding-4 reuse: same pattern as `cur_segment_ids` above —
         // take the recycled slab, clear-and-resize, then rotate at
         // frame end with `last_frame_mi_grid`.
+        // Wave 5b commit 1 — resize with `Some(default_padding_modeinfo())`
+        // instead of `None`. Tile workers overwrite covered cells with
+        // `Some(real)`; un-covered cells (past-frame quadrants + sub-leaf
+        // duplication slots) keep the padding default. After tile decode
+        // every cell is `Some`, so the LF materialisation collapses to a
+        // trivial `cell.expect(...)` (no None placeholder hunt).
         let mut frame_mi_grid: Vec<Option<ModeInfo>> =
             std::mem::take(&mut self.scratch_mi_grid);
         frame_mi_grid.clear();
-        frame_mi_grid.resize(mi_rows * mi_cols, None);
+        frame_mi_grid.resize(mi_rows * mi_cols, Some(default_padding_modeinfo()));
         // G5.1 — real parallel tile dispatch. Eligibility:
         //   * `tile_rows == 1` — column-only split makes per-tile
         //     pixel rectangles disjoint by construction (VP9 tile-col
@@ -2661,10 +2667,16 @@ impl Decoder {
         //
         // Finding-4 reuse: take the recycled slab, clear-and-resize,
         // rotate at frame end with `last_frame_mi_grid`.
+        // Wave 5b commit 1 — resize with `Some(default_padding_modeinfo())`
+        // instead of `None`. Tile workers overwrite covered cells with
+        // `Some(real)`; un-covered cells (past-frame quadrants + sub-leaf
+        // duplication slots) keep the padding default. After tile decode
+        // every cell is `Some`, so the LF materialisation collapses to a
+        // trivial `cell.expect(...)` (no None placeholder hunt).
         let mut frame_mi_grid: Vec<Option<ModeInfo>> =
             std::mem::take(&mut self.scratch_mi_grid);
         frame_mi_grid.clear();
-        frame_mi_grid.resize(mi_rows * mi_cols, None);
+        frame_mi_grid.resize(mi_rows * mi_cols, Some(default_padding_modeinfo()));
         // G5.1 — parallel tile dispatch. See the matching block in
         // `decode_intra_frame_inner` for the rationale + eligibility
         // gate. The inter path additionally fans out the per-tile
@@ -3505,16 +3517,22 @@ fn apply_loop_filter_to_frame(
     // duplication" convention) likewise stay as the placeholder, but
     // `setup_mask` only reads the partition leaf's top-left MI at
     // each leaf boundary, so the duplication isn't required.
-    let placeholder = mi_grid
-        .iter()
-        .find_map(|cell| cell.as_ref().cloned())
-        .unwrap_or_else(default_padding_modeinfo);
+    // Wave 5b commit 1 — frame_mi_grid is pre-filled with
+    // `Some(default_padding_modeinfo())` at frame start (see
+    // `decode_intra_frame_inner` / `decode_inter_frame_inner`); tile
+    // workers overwrite the cells they cover with `Some(real)`. After
+    // tile decode every cell is therefore `Some`, so the materialisation
+    // collapses to a per-cell `expect` (no None placeholder hunt, no
+    // per-cell match arm).
+    debug_assert!(
+        mi_grid.iter().all(|c| c.is_some()),
+        "Wave 5b commit 1: frame_mi_grid must be fully populated at LF entry",
+    );
     let mut frame_mi: Vec<ModeInfo> = Vec::with_capacity(mi_grid.len().max(1));
     for cell in mi_grid {
-        match cell {
-            Some(mi) => frame_mi.push(*mi),
-            None => frame_mi.push(placeholder),
-        }
+        frame_mi.push(cell.expect(
+            "Wave 5b commit 1: frame_mi_grid cells are pre-filled with \n             default_padding_modeinfo at frame start; tile workers only \n             overwrite cells with `Some(real)` (never None)",
+        ));
     }
 
     let mut lfm_grid: Vec<LoopFilterMask> = vec![LoopFilterMask::default(); sb_rows * sb_cols];
@@ -3682,16 +3700,22 @@ fn apply_loop_filter_to_frame_dispatching(
 
     // Materialise the full-frame `Vec<ModeInfo>` (placeholder for None
     // cells). Identical to the serial path; same placeholder selection.
-    let placeholder = mi_grid
-        .iter()
-        .find_map(|cell| cell.as_ref().cloned())
-        .unwrap_or_else(default_padding_modeinfo);
+    // Wave 5b commit 1 — frame_mi_grid is pre-filled with
+    // `Some(default_padding_modeinfo())` at frame start (see
+    // `decode_intra_frame_inner` / `decode_inter_frame_inner`); tile
+    // workers overwrite the cells they cover with `Some(real)`. After
+    // tile decode every cell is therefore `Some`, so the materialisation
+    // collapses to a per-cell `expect` (no None placeholder hunt, no
+    // per-cell match arm).
+    debug_assert!(
+        mi_grid.iter().all(|c| c.is_some()),
+        "Wave 5b commit 1: frame_mi_grid must be fully populated at LF entry",
+    );
     let mut frame_mi: Vec<ModeInfo> = Vec::with_capacity(mi_grid.len().max(1));
     for cell in mi_grid {
-        match cell {
-            Some(mi) => frame_mi.push(*mi),
-            None => frame_mi.push(placeholder),
-        }
+        frame_mi.push(cell.expect(
+            "Wave 5b commit 1: frame_mi_grid cells are pre-filled with \n             default_padding_modeinfo at frame start; tile workers only \n             overwrite cells with `Some(real)` (never None)",
+        ));
     }
 
     // Per-row LF-progress flags + the dispatcher counter. Both live on
