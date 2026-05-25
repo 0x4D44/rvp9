@@ -34,3 +34,8 @@ static_assertions = "1.1"
 # rejects regular-dep cycles, and the encoder's own dev-dep on the
 # decoder is the symmetric case (round-trip integration tests).
 rvp9-encoder = { path = "../rvp9-encoder" }
+# Stage 11 coverage boost — used by `tests/conformance_coverage.rs`
+# to read IVF/WebM containers and compute the libvpx-style visible
+# MD5 digest. Avoids the dev-dep cycle through `rvp9-harness` which
+# depends on `rvp9-decoder` regularly.
+rvp9-io = { path = "../rvp9-io" }

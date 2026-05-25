@@ -305,4 +305,198 @@ mod tests {
         assert_eq!(frames[1], f1);
         assert!((fr - 30.0).abs() < 1e-9);
     }
+
+    // -----------------------------------------------------------------
+    // Stage 11 coverage push — header parse + read_cropped error
+    // contracts. Each test writes a tiny synthetic y4m to a temp
+    // file, then asserts the specific `io::ErrorKind` / payload.
+    // -----------------------------------------------------------------
+
+    fn write_temp(content: &[u8], suffix: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "rvp9_io_y4m_test_{}_{}.y4m",
+            std::process::id(),
+            suffix,
+        ));
+        std::fs::write(&path, content).expect("write temp");
+        path
+    }
+
+    #[test]
+    fn parse_header_rejects_missing_magic() {
+        let path = write_temp(b"NOTYUV4MPEG2 W16 H16 F30:1\n", "no_magic");
+        let mut f = std::fs::File::open(&path).expect("open");
+        let err = parse_header(&mut f).unwrap_err();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(format!("{err}").contains("magic"));
+    }
+
+    #[test]
+    fn parse_header_rejects_unsupported_chroma() {
+        // C444 is not a 4:2:0 variant — rejected.
+        let path = write_temp(b"YUV4MPEG2 W16 H16 F30:1 C444\n", "c444");
+        let mut f = std::fs::File::open(&path).expect("open");
+        let err = parse_header(&mut f).unwrap_err();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(format!("{err}").contains("chroma"));
+    }
+
+    #[test]
+    fn parse_header_accepts_c420jpeg_c420paldv_c420mpeg2() {
+        for variant in ["420", "420jpeg", "420mpeg2", "420paldv"] {
+            let line = format!("YUV4MPEG2 W16 H16 F25:1 C{variant}\n");
+            let path = write_temp(line.as_bytes(), variant);
+            let mut f = std::fs::File::open(&path).expect("open");
+            let hdr = parse_header(&mut f).unwrap_or_else(|e| panic!("variant {variant}: {e}"));
+            let _ = std::fs::remove_file(&path);
+            assert_eq!(hdr.w, 16);
+            assert_eq!(hdr.h, 16);
+            assert_eq!(hdr.fps_num, 25);
+            assert_eq!(hdr.fps_den, 1);
+        }
+    }
+
+    #[test]
+    fn parse_header_rejects_missing_w_h_f() {
+        // No W, H, or F fields.
+        let path = write_temp(b"YUV4MPEG2 C420\n", "no_whf");
+        let mut f = std::fs::File::open(&path).expect("open");
+        let err = parse_header(&mut f).unwrap_err();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(format!("{err}").contains("required"));
+    }
+
+    #[test]
+    fn header_framerate_returns_ratio() {
+        let h = Y4mHeader {
+            w: 100,
+            h: 100,
+            fps_num: 60,
+            fps_den: 2,
+        };
+        let fr = h.framerate();
+        assert!((fr - 30.0).abs() < 1e-9, "framerate computed wrong: {fr}");
+    }
+
+    #[test]
+    fn read_cropped_rejects_oversize_crop() {
+        // Build a minimal y4m header (no frames) and ask for a crop
+        // larger than the source.
+        let path = write_temp(b"YUV4MPEG2 W16 H16 F30:1 C420\n", "oversize");
+        let err = read_cropped(&path, 32, 32, 1).unwrap_err();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(format!("{err}").contains("exceeds"));
+    }
+
+    #[test]
+    fn read_cropped_rejects_odd_crop() {
+        let path = write_temp(b"YUV4MPEG2 W32 H32 F30:1 C420\n", "odd_crop");
+        let err = read_cropped(&path, 5, 4, 1).unwrap_err();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(format!("{err}").contains("even"));
+    }
+
+    #[test]
+    fn read_cropped_zero_n_returns_empty_immediately() {
+        let path = write_temp(b"YUV4MPEG2 W16 H16 F30:1 C420\n", "n0");
+        let (frames, fr) = read_cropped(&path, 16, 16, 0).expect("read");
+        let _ = std::fs::remove_file(&path);
+        assert!(frames.is_empty(), "n=0 returned {} frames", frames.len());
+        assert!((fr - 30.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn read_cropped_eof_before_frame_breaks_loop() {
+        // Valid header, no FRAME body → loop iter 0's read_exact
+        // fails → break.
+        let path = write_temp(b"YUV4MPEG2 W16 H16 F30:1 C420\n", "eof");
+        let (frames, fr) = read_cropped(&path, 16, 16, 5).expect("read");
+        let _ = std::fs::remove_file(&path);
+        assert!(frames.is_empty());
+        assert!((fr - 30.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn read_cropped_missing_frame_tag_errors() {
+        // 6-byte body that is NOT b"FRAME\n" (and not b"FRAME?…\n").
+        let mut buf = b"YUV4MPEG2 W16 H16 F30:1 C420\n".to_vec();
+        buf.extend_from_slice(b"NOTAGZ"); // 6 bytes not starting with FRAME
+        let path = write_temp(&buf, "no_frame_tag");
+        let err = read_cropped(&path, 16, 16, 1).unwrap_err();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(format!("{err}").contains("FRAME"));
+    }
+
+    #[test]
+    fn read_cropped_frame_with_params_consumes_until_newline() {
+        // FRAME tag followed by params (e.g. " I0") that consume the
+        // 6th byte and then more bytes until a newline. Body of
+        // 16*16 + 2*(8*8) = 384 bytes follows.
+        let mut buf = b"YUV4MPEG2 W16 H16 F30:1 C420\n".to_vec();
+        buf.extend_from_slice(b"FRAME"); // 5 bytes
+        buf.push(b' '); // 6th byte is space — not newline → enters slow-path loop
+        buf.extend_from_slice(b"I0\n"); // params terminated by newline
+        // Body: 16*16 y + 2*8*8 uv = 384 bytes of zeros.
+        buf.extend_from_slice(&vec![0u8; 256 + 2 * 64]);
+        let path = write_temp(&buf, "frame_params");
+        let (frames, _) = read_cropped(&path, 16, 16, 1).expect("read with params");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(frames.len(), 1);
+        // All zeros in → all zeros out (no offset, full-frame crop).
+        assert!(frames[0].0.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn read_cropped_frame_params_eof_errors() {
+        // FRAME + non-newline byte, then EOF inside the params loop.
+        let mut buf = b"YUV4MPEG2 W16 H16 F30:1 C420\n".to_vec();
+        buf.extend_from_slice(b"FRAME"); // 5 bytes
+        buf.push(b' '); // 6th byte
+        // No newline before EOF → triggers
+        // "EOF in FRAME params" error.
+        let path = write_temp(&buf, "frame_eof");
+        let err = read_cropped(&path, 16, 16, 1).unwrap_err();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+        assert!(format!("{err}").contains("FRAME params"));
+    }
+
+    #[test]
+    fn read_cropped_centre_crop_offset_is_correct() {
+        // 16x16 source, crop 8x8 → off_x = (16-8)/2 = 4, off_y = 4.
+        // Fill the Y plane with a known pattern so we can verify the
+        // crop window.
+        let mut buf = b"YUV4MPEG2 W16 H16 F30:1 C420\n".to_vec();
+        buf.extend_from_slice(b"FRAME\n");
+        // Y: each byte = row*16 + col. So Y[row=4..12][col=4..12].
+        let mut y = vec![0u8; 16 * 16];
+        for r in 0..16 {
+            for c in 0..16 {
+                y[r * 16 + c] = (r * 16 + c) as u8;
+            }
+        }
+        buf.extend_from_slice(&y);
+        // U/V planes — constant, irrelevant.
+        buf.extend_from_slice(&[64u8; 8 * 8]);
+        buf.extend_from_slice(&[192u8; 8 * 8]);
+        let path = write_temp(&buf, "centre_crop");
+        let (frames, _) = read_cropped(&path, 8, 8, 1).expect("read centre");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(frames.len(), 1);
+        let (y_crop, u_crop, v_crop) = &frames[0];
+        // First row of crop is source row 4, cols 4..12.
+        assert_eq!(y_crop[0], (4u32 * 16 + 4) as u8);
+        assert_eq!(y_crop[7], (4u32 * 16 + 11) as u8);
+        // Last row of crop is source row 11, cols 4..12.
+        assert_eq!(y_crop[7 * 8 + 7], (11u32 * 16 + 11) as u8);
+        // U/V planes are constants → entire crop is that constant.
+        assert!(u_crop.iter().all(|&b| b == 64));
+        assert!(v_crop.iter().all(|&b| b == 192));
+    }
 }

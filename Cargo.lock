@@ -382,6 +382,7 @@ version = "0.1.0"
 dependencies = [
  "rvp9-core",
  "rvp9-encoder",
+ "rvp9-io",
  "static_assertions",
 ]
 
