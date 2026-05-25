@@ -1603,6 +1603,16 @@ impl Decoder {
         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
         let frame_wall_start = std::time::Instant::now();
 
+        // Wave 2 C4 — per-SB-row decode-complete counter, hoisted above
+        // the `parallel` branch so the post-scope LF dispatch can read it.
+        // `None` for the inline path (no consumer, no signal).
+        let sb_rows_pf = mi_rows.div_ceil(SB_MI_SIZE);
+        let decode_progress: Option<Vec<std::sync::atomic::AtomicU32>> = if parallel {
+            Some((0..sb_rows_pf).map(|_| std::sync::atomic::AtomicU32::new(0)).collect())
+        } else {
+            None
+        };
+
         let frame_contexts = &self.frame_contexts;
         let simd_dispatch = &self.simd_dispatch;
         if parallel {
@@ -1624,18 +1634,6 @@ impl Decoder {
                     tile_buf.col,
                 ));
             }
-
-            // Wave 2 C2 — per-SB-row decode-complete counter. Each tile
-            // worker `fetch_add(1, Release)`s `decode_progress[r]` after
-            // finishing SB row `r` for its column range; once the counter
-            // reaches `tile_cols_at_row[r]`, the row is decode-complete
-            // frame-wide and the LF consumer (commit 3 + 4) can filter it.
-            // Allocated as a single contiguous `Vec<AtomicU32>` sized to
-            // `sb_rows`; lives on the caller's stack across the
-            // `worker_pool.scope` and is borrowed `'frame` by each worker.
-            let sb_rows_pf = mi_rows.div_ceil(SB_MI_SIZE);
-            let decode_progress: Vec<std::sync::atomic::AtomicU32> =
-                (0..sb_rows_pf).map(|_| std::sync::atomic::AtomicU32::new(0)).collect();
 
             // Per-tile slots: each slot owns the scratch yv12, the
             // worker-local seg-id map, the worker-local counts, and
@@ -1735,7 +1733,10 @@ impl Decoder {
             // Borrow as a slice so the worker closure captures a `'frame`
             // shared reference (lifetime-bound to the scope) rather than
             // the owning Vec — matches how other 'frame borrows are passed.
-            let decode_progress_ref: &[std::sync::atomic::AtomicU32] = &decode_progress;
+            // `decode_progress` is Some here (we set it above under the
+            // same `if parallel` gate); unwrap is safe.
+            let decode_progress_ref: &[std::sync::atomic::AtomicU32] =
+                decode_progress.as_ref().expect("decode_progress allocated on parallel path");
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             let t_submit_start = profile::now_cycles();
             // T-5: scope closure returns the rdtsc taken just after
@@ -2019,8 +2020,14 @@ impl Decoder {
         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
         let t_lf_start = profile::now_cycles();
         if filter_level > 0 && !lf_disabled {
-            apply_loop_filter_to_frame(
+            // Wave 2 C4 — row-MT LF dispatch. `decode_progress` is
+            // Some(...) only on the parallel-tile-decode path; the
+            // dispatcher falls through to the serial implementation
+            // otherwise (and also when `RVP9_DISABLE_ROW_MT=1` or the
+            // worker count / sb_rows fall below the threshold).
+            apply_loop_filter_to_frame_dispatching(
                 &mut yv12,
+                &mut self.worker_pool,
                 &frame_mi_grid,
                 mi_cols,
                 mi_rows,
@@ -2029,6 +2036,8 @@ impl Decoder {
                 tail.loop_filter.sharpness_level,
                 self.lf_deltas,
                 SegmentationLfView::from_segmentation(&resolved_seg),
+                decode_progress.as_deref(),
+                self.num_threads.get(),
             );
         }
         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
@@ -2673,6 +2682,17 @@ impl Decoder {
         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
         let frame_wall_start = std::time::Instant::now();
 
+        // Wave 2 C4 — per-SB-row decode-complete counter (inter path).
+        // Hoisted above the `parallel` branch so the post-scope LF
+        // dispatch can read it. See the matching declaration in
+        // `decode_intra_frame_inner` for the protocol.
+        let sb_rows_pf = mi_rows.div_ceil(SB_MI_SIZE);
+        let decode_progress: Option<Vec<std::sync::atomic::AtomicU32>> = if parallel {
+            Some((0..sb_rows_pf).map(|_| std::sync::atomic::AtomicU32::new(0)).collect())
+        } else {
+            None
+        };
+
         let frame_contexts = &self.frame_contexts;
         let simd_dispatch = &self.simd_dispatch;
         if parallel {
@@ -2689,13 +2709,6 @@ impl Decoder {
                     tile_buf.col,
                 ));
             }
-
-            // Wave 2 C2 — per-SB-row decode-complete counter (inter path).
-            // See the matching block in `decode_intra_frame_inner` for the
-            // protocol; the inter path's signal point is identical.
-            let sb_rows_pf = mi_rows.div_ceil(SB_MI_SIZE);
-            let decode_progress: Vec<std::sync::atomic::AtomicU32> =
-                (0..sb_rows_pf).map(|_| std::sync::atomic::AtomicU32::new(0)).collect();
 
             // Phase 1 — direct-to-frame tile decode for inter frames.
             struct InterTileSlot {
@@ -2788,7 +2801,9 @@ impl Decoder {
             let params_ref = &params;
             let prev_mv_grid_ref = prev_mv_grid;
             let prev_seg_ref = prev_seg_ids_slice;
-            let decode_progress_ref: &[std::sync::atomic::AtomicU32] = &decode_progress;
+            // `decode_progress` is Some here (set above under the same gate).
+            let decode_progress_ref: &[std::sync::atomic::AtomicU32] =
+                decode_progress.as_ref().expect("decode_progress allocated on parallel path");
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             let t_submit_start = profile::now_cycles();
             let _submit_done_cycles = self.worker_pool.scope(|scope| {
@@ -3137,8 +3152,10 @@ impl Decoder {
         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
         let t_lf_start = profile::now_cycles();
         if filter_level > 0 && !lf_disabled {
-            apply_loop_filter_to_frame(
+            // Wave 2 C4 — see the matching call site in `decode_keyframe`.
+            apply_loop_filter_to_frame_dispatching(
                 &mut yv12,
+                &mut self.worker_pool,
                 &frame_mi_grid,
                 mi_cols,
                 mi_rows,
@@ -3147,6 +3164,8 @@ impl Decoder {
                 tail.loop_filter.sharpness_level,
                 self.lf_deltas,
                 SegmentationLfView::from_segmentation(&resolved_seg),
+                decode_progress.as_deref(),
+                self.num_threads.get(),
             );
         }
         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
@@ -3565,15 +3584,11 @@ fn apply_loop_filter_to_frame(
 /// scope's `join-on-return` discipline guarantees no worker outlives the
 /// stack-frame storage.
 ///
-/// Wired into `decode_keyframe` / `decode_inter_frame` in commit 4 — at
-/// this commit nothing calls it yet.
-///
 /// # Safety
 ///
 /// The borrowed references inside `state` must outlive every worker —
 /// guaranteed by the `FrameScope`'s `'frame` lifetime + the join-on-return
 /// discipline.
-#[allow(dead_code)]
 fn apply_loop_filter_to_frame_parallel<'frame>(
     scope: &rvp9_core::tile_threading::FrameScope<'_, 'frame>,
     state: &'frame rvp9_core::loopfilter::apply::RowMtLfState<'frame>,
@@ -3599,6 +3614,150 @@ fn apply_loop_filter_to_frame_parallel<'frame>(
             }
         });
     }
+}
+
+/// Wave 2 C4 — top-level LF dispatcher that picks between the row-MT
+/// parallel path and the legacy serial path.
+///
+/// Eligibility for row-MT (must all hold):
+///   * `num_workers >= 2` (no point single-threading the parallel path).
+///   * `sb_rows >= 2` (sub-SB-row frames have no work to parallelise).
+///   * `trace_flags().disable_row_mt == false` (kill switch off).
+///
+/// If any gate fails, fall through to the serial [`apply_loop_filter_to_frame`].
+///
+/// `decode_progress` MUST be sized to `sb_rows` and already published by
+/// the tile workers (Wave 2 C2). At commit 4, the tile-decode scope joins
+/// BEFORE this function is called, so every `decode_progress[r]` is
+/// already at `tile_cols_at_row[r]` and the LF workers' Acquire gate
+/// passes immediately. The gate is retained for forward-compatibility
+/// with a single-scope topology in a future revision.
+#[allow(clippy::too_many_arguments)]
+fn apply_loop_filter_to_frame_dispatching(
+    yv12: &mut Yv12Buffer,
+    worker_pool: &mut rvp9_core::tile_threading::WorkerPool,
+    mi_grid: &[Option<ModeInfo>],
+    mi_stride: usize,
+    mi_rows: usize,
+    mi_cols: usize,
+    filter_level: u8,
+    sharpness_level: u8,
+    lf_deltas: ResolvedLfDeltas,
+    seg_view: SegmentationLfView,
+    decode_progress: Option<&[std::sync::atomic::AtomicU32]>,
+    num_workers: usize,
+) {
+    let row_mt_disabled = crate::trace_flags::trace_flags().disable_row_mt;
+    let sb_rows = mi_rows.div_ceil(SB_MI_SIZE);
+    let sb_cols = mi_cols.div_ceil(SB_MI_SIZE);
+    let eligible = !row_mt_disabled
+        && num_workers >= 2
+        && sb_rows >= 2
+        && decode_progress.is_some();
+
+    if !eligible {
+        // Serial fallback — same call as pre-C4.
+        apply_loop_filter_to_frame(
+            yv12,
+            mi_grid,
+            mi_stride,
+            mi_rows,
+            mi_cols,
+            filter_level,
+            sharpness_level,
+            lf_deltas,
+            seg_view,
+        );
+        return;
+    }
+
+    // ---- Row-MT path ----
+    use rvp9_core::loopfilter::apply::{
+        Non420Inputs, RowMaskInputs, RowMtLfState, SharedFrame,
+    };
+    use std::sync::atomic::{AtomicU32, AtomicUsize};
+
+    let levels = resolve_filter_levels(filter_level, lf_deltas, seg_view);
+    let info = LoopFilterInfo::new(sharpness_level);
+
+    // Materialise the full-frame `Vec<ModeInfo>` (placeholder for None
+    // cells). Identical to the serial path; same placeholder selection.
+    let placeholder = mi_grid
+        .iter()
+        .find_map(|cell| cell.as_ref().cloned())
+        .unwrap_or_else(default_padding_modeinfo);
+    let mut frame_mi: Vec<ModeInfo> = Vec::with_capacity(mi_grid.len().max(1));
+    for cell in mi_grid {
+        match cell {
+            Some(mi) => frame_mi.push(*mi),
+            None => frame_mi.push(placeholder),
+        }
+    }
+
+    // Per-row LF-progress flags + the dispatcher counter. Both live on
+    // this stack frame across the scope.
+    let lf_progress: Vec<AtomicU32> =
+        (0..sb_rows).map(|_| AtomicU32::new(0)).collect();
+    let next_lf_row = AtomicUsize::new(0);
+    // `decode_progress` was allocated by the caller (one per tile worker
+    // scope). `tile_cols_at_row` collapses to a frame-wide `num_tiles`
+    // because the decode scope has already joined — every cell is at its
+    // target. Build a per-row `[num_tiles; sb_rows]` so the gate trivially
+    // passes. (For a future single-scope revision, the caller would pass
+    // a real `tile_cols_at_row` table.)
+    let tile_cols_at_row: Vec<u32> = (0..sb_rows)
+        .map(|r| {
+            // The C2 atomic increments once per (tile, sb_row); the
+            // current value is the actual count of tiles that decoded
+            // row r. The gate compares decode_progress[r] >= this.
+            decode_progress.unwrap()[r].load(std::sync::atomic::Ordering::Acquire)
+        })
+        .collect();
+
+    let chroma = yv12.chroma();
+    let chroma_is_asymmetric = matches!(
+        chroma,
+        rvp9_core::bitstream::ChromaFormat::Yuv422
+            | rvp9_core::bitstream::ChromaFormat::Yuv440
+    );
+    let non420 = if chroma_is_asymmetric {
+        Some(Non420Inputs {
+            mi_grid: &frame_mi,
+            mi_stride,
+            levels: &levels,
+        })
+    } else {
+        None
+    };
+
+    let shared = SharedFrame::from_yv12(yv12);
+    let row_inputs = RowMaskInputs {
+        mi_grid: &frame_mi,
+        mi_stride,
+        mi_rows,
+        mi_cols,
+        levels: &levels,
+    };
+    let state = RowMtLfState {
+        shared,
+        info: &info,
+        row_inputs,
+        non420,
+        sb_rows,
+        sb_cols,
+        decode_progress: decode_progress.unwrap(),
+        tile_cols_at_row: &tile_cols_at_row,
+        lf_progress: &lf_progress,
+        next_lf_row: &next_lf_row,
+    };
+
+    // Run the LF dispatch in its own scope. Submit N copies of the
+    // self-distributing worker hook; the dispatcher counter inside
+    // ensures every SB row runs exactly once even if the worker count
+    // exceeds the row count.
+    worker_pool.scope(|scope| {
+        apply_loop_filter_to_frame_parallel(scope, &state, num_workers);
+    });
 }
 
 /// Stage 3 stretch M.10 diagnostic: dump the per-SB

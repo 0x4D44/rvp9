@@ -100,6 +100,10 @@ pub(crate) struct TraceFlags {
     /// `RVP9_DUMP_LF_MASKS` (any value) — per-SB loopfilter-mask dump.
     /// Per-SB in `dump_lf_masks` — ~500 calls/frame at 1080p.
     pub dump_lf_masks: bool,
+    /// Wave 2 C4 — `RVP9_DISABLE_ROW_MT` (any value) — force the
+    /// serial loopfilter path. Defaults OFF (i.e. row-MT enabled by
+    /// default). Used as a kill switch for CI A/B and incident response.
+    pub disable_row_mt: bool,
 }
 
 impl TraceFlags {
@@ -135,6 +139,7 @@ impl TraceFlags {
             trace_fc: get("RVP9_TRACE_FC").as_deref() == Some("1"),
             dump_altref: get("RVP9_DUMP_ALTREF"),
             dump_lf_masks: any("RVP9_DUMP_LF_MASKS"),
+            disable_row_mt: any("RVP9_DISABLE_ROW_MT"),
         }
     }
 
