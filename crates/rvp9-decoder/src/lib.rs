@@ -1584,6 +1584,18 @@ impl Decoder {
                 ));
             }
 
+            // Wave 2 C2 — per-SB-row decode-complete counter. Each tile
+            // worker `fetch_add(1, Release)`s `decode_progress[r]` after
+            // finishing SB row `r` for its column range; once the counter
+            // reaches `tile_cols_at_row[r]`, the row is decode-complete
+            // frame-wide and the LF consumer (commit 3 + 4) can filter it.
+            // Allocated as a single contiguous `Vec<AtomicU32>` sized to
+            // `sb_rows`; lives on the caller's stack across the
+            // `worker_pool.scope` and is borrowed `'frame` by each worker.
+            let sb_rows_pf = mi_rows.div_ceil(SB_MI_SIZE);
+            let decode_progress: Vec<std::sync::atomic::AtomicU32> =
+                (0..sb_rows_pf).map(|_| std::sync::atomic::AtomicU32::new(0)).collect();
+
             // Per-tile slots: each slot owns the scratch yv12, the
             // worker-local seg-id map, the worker-local counts, and
             // an `Option<TileDecodeCtx>` filled by the worker. The
@@ -1667,6 +1679,10 @@ impl Decoder {
             // Borrow shared immutables.
             let fc = &frame_contexts[fc_idx];
             let params_ref = &params;
+            // Borrow as a slice so the worker closure captures a `'frame`
+            // shared reference (lifetime-bound to the scope) rather than
+            // the owning Vec — matches how other 'frame borrows are passed.
+            let decode_progress_ref: &[std::sync::atomic::AtomicU32] = &decode_progress;
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             let t_submit_start = profile::now_cycles();
             // T-5: scope closure returns the rdtsc taken just after
@@ -1722,6 +1738,7 @@ impl Decoder {
                             &mut seg_ids,
                             simd_dispatch,
                             mi_v,
+                            Some(decode_progress_ref),
                         );
                         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                         let t_decode_end = profile::now_cycles();
@@ -1869,6 +1886,8 @@ impl Decoder {
                         &mut cur_segment_ids,
                         simd_dispatch,
                         mi_view,
+                        // Inline path: no LF consumer → no signal needed.
+                        None,
                     )
                     .map_err(DecodeError::TileDecode)?;
                     tile_decode_ctxs.push((bounds, decode_ctx));
@@ -2597,6 +2616,13 @@ impl Decoder {
                 ));
             }
 
+            // Wave 2 C2 — per-SB-row decode-complete counter (inter path).
+            // See the matching block in `decode_intra_frame_inner` for the
+            // protocol; the inter path's signal point is identical.
+            let sb_rows_pf = mi_rows.div_ceil(SB_MI_SIZE);
+            let decode_progress: Vec<std::sync::atomic::AtomicU32> =
+                (0..sb_rows_pf).map(|_| std::sync::atomic::AtomicU32::new(0)).collect();
+
             // Phase 1 — direct-to-frame tile decode for inter frames.
             struct InterTileSlot {
                 view: Mutex<Option<TileFrameView>>,
@@ -2670,6 +2696,7 @@ impl Decoder {
             let params_ref = &params;
             let prev_mv_grid_ref = prev_mv_grid;
             let prev_seg_ref = prev_seg_ids_slice;
+            let decode_progress_ref: &[std::sync::atomic::AtomicU32] = &decode_progress;
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             let t_submit_start = profile::now_cycles();
             let _submit_done_cycles = self.worker_pool.scope(|scope| {
@@ -2741,6 +2768,7 @@ impl Decoder {
                             &mut seg_ids,
                             simd_dispatch,
                             mi_v,
+                            Some(decode_progress_ref),
                         );
                         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                         let t_decode_end = profile::now_cycles();
@@ -2905,6 +2933,8 @@ impl Decoder {
                         &mut cur_segment_ids,
                         simd_dispatch,
                         mi_view,
+                        // Inline path: no LF consumer → no signal needed.
+                        None,
                     )
                     .map_err(DecodeError::TileDecode)?;
                     tile_decode_ctxs.push((bounds, decode_ctx));

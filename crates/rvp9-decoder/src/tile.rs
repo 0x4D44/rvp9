@@ -377,6 +377,7 @@ pub fn decode_tile_intra<D: TileFrameDst>(
     cur_segment_ids: &mut [u8],
     dispatch: &SimdDispatch,
     mi_view: crate::tile_ctx::TileMiView,
+    decode_progress: Option<&[std::sync::atomic::AtomicU32]>,
 ) -> Result<TileDecodeCtx, TileDecodeError> {
     // G7.2: the per-block decode chain is `ss`-aware for all four legal
     // VP9 chroma formats (G7.1a parametric geometry / G7.1b inter MC /
@@ -456,6 +457,24 @@ pub fn decode_tile_intra<D: TileFrameDst>(
                 dispatch,
             );
             mi_col += MI_BLOCK_SIZE;
+        }
+        // Wave 2 C2 — publish "this tile finished SB row R" to the row-MT
+        // LF consumer. The consumer (commit 3 + 4) waits until the counter
+        // reaches `tile_cols_at_row[R]` before filtering row R. Release
+        // ordering pairs with the LF worker's Acquire load: every pixel
+        // write inside `decode_partition` happens-before the LF worker's
+        // read. `None` = serial dispatch path (single-threaded knob or
+        // single-tile frame) — no consumer, skip the atomic.
+        if let Some(progress) = decode_progress {
+            let sb_row = mi_row / MI_BLOCK_SIZE;
+            // Debug-only sanity: `decode_progress` is sized to `sb_rows`.
+            // Out-of-bounds means the caller mis-sized the array.
+            debug_assert!(
+                sb_row < progress.len(),
+                "decode_progress OOB: sb_row={sb_row} len={}",
+                progress.len()
+            );
+            progress[sb_row].fetch_add(1, std::sync::atomic::Ordering::Release);
         }
         mi_row += MI_BLOCK_SIZE;
     }
@@ -1486,6 +1505,7 @@ pub fn decode_tile_inter<D: TileFrameDst>(
     cur_segment_ids: &mut [u8],
     dispatch: &SimdDispatch,
     mi_view: crate::tile_ctx::TileMiView,
+    decode_progress: Option<&[std::sync::atomic::AtomicU32]>,
 ) -> Result<TileDecodeCtx, TileDecodeError> {
     // G7.1c: see `decode_tile_intra` for rationale.
     debug_assert!(
@@ -1539,6 +1559,17 @@ pub fn decode_tile_inter<D: TileFrameDst>(
                 dispatch,
             );
             mi_col += MI_BLOCK_SIZE;
+        }
+        // Wave 2 C2 — publish per-SB-row decode completion. See the
+        // sibling block in `decode_tile_intra` for the protocol details.
+        if let Some(progress) = decode_progress {
+            let sb_row = mi_row / MI_BLOCK_SIZE;
+            debug_assert!(
+                sb_row < progress.len(),
+                "decode_progress OOB: sb_row={sb_row} len={}",
+                progress.len()
+            );
+            progress[sb_row].fetch_add(1, std::sync::atomic::Ordering::Release);
         }
         mi_row += MI_BLOCK_SIZE;
     }
