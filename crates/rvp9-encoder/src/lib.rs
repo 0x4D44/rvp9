@@ -3230,6 +3230,26 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 };
                 let switchable_interp_ctx =
                     get_pred_context_switchable_interp(nb_above, nb_left);
+                // P19 — per-block skip-prob context, libvpx
+                // `vp9_pred_common.h:55-61` (`above.skip + left.skip`).
+                // Threaded into the picker's skip-flag tie-break.
+                let skip_ctx =
+                    rvp9_core::inter::get_pred_context_skip(nb_above, nb_left);
+                // P15 — libvpx `const_motion[ref_frame]` from
+                // `mv_refs_rt` (`vp9_pickmode.c:60-153`). Set when the
+                // first 2 spatial neighbours don't yield 2 distinct
+                // same-ref MVs; the picker uses it to skip NEARMV
+                // (`vp9_pickmode.c:2166`).
+                let last_const_motion = rvp9_core::inter::mv_refs_rt_const_motion(
+                    leaf_bsize,
+                    RefFrame::LastFrame,
+                    &neighbours,
+                );
+                let golden_const_motion = rvp9_core::inter::mv_refs_rt_const_motion(
+                    leaf_bsize,
+                    RefFrame::GoldenFrame,
+                    &neighbours,
+                );
 
                 let pick_params = PickInterModeParams {
                     block_size: leaf_bsize,
@@ -3262,6 +3282,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     ref_frame_cost_intra,
                     switchable_interp_costs: &sic,
                     switchable_interp_ctx,
+                    skip_ctx,
+                    last_const_motion,
+                    golden_const_motion,
                     // G1 — UV planes for chroma RD in the picker.
                     src_u: input_yuv.1,
                     src_u_stride: uvw,
@@ -3319,6 +3342,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 ref_frame_rate_cost: ref_frame_cost_last,
                                 switchable_interp_costs: &sic,
                                 switchable_interp_ctx,
+                                skip_ctx: Some(skip_ctx),
                                 src_u: input_yuv.1,
                                 src_v: input_yuv.2,
                                 ref_u: last_recon_yuv.1,
@@ -3372,6 +3396,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         ref_frame_rate_cost: ref_frame_cost_last,
                         switchable_interp_costs: &sic,
                         switchable_interp_ctx,
+                        skip_ctx: Some(skip_ctx),
                         src_u: input_yuv.1,
                         src_v: input_yuv.2,
                         ref_u: last_recon_yuv.1,

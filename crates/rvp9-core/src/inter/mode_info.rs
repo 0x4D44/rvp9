@@ -187,6 +187,34 @@ pub fn get_pred_context_switchable_interp(
     ctx as usize
 }
 
+/// libvpx `vp9_get_skip_context` (`vp9_pred_common.h:55-61`).
+///
+/// ```c
+/// static INLINE int vp9_get_skip_context(const MACROBLOCKD *xd) {
+///   const MODE_INFO *const above_mi = xd->above_mi;
+///   const MODE_INFO *const left_mi  = xd->left_mi;
+///   const int above_skip = (above_mi != NULL) ? above_mi->skip : 0;
+///   const int left_skip  = (left_mi  != NULL) ? left_mi->skip  : 0;
+///   return above_skip + left_skip;
+/// }
+/// ```
+///
+/// Returns `above.skip + left.skip` as an index into the 3-entry
+/// `skip_probs[SKIP_CONTEXTS]` table. Missing neighbours contribute 0.
+///
+/// Used by the picker's skip-flag tie-break
+/// (`vp9_pickmode.c:2355-2362`) to pick `cm->fc->skip_probs[ctx]` —
+/// see [`crate::mode_decision::inter::pick_inter_mode`].
+#[must_use]
+pub fn get_pred_context_skip(
+    above: Option<&ModeInfo>,
+    left: Option<&ModeInfo>,
+) -> usize {
+    let above_skip = above.is_some_and(|mi| mi.skip) as usize;
+    let left_skip = left.is_some_and(|mi| mi.skip) as usize;
+    above_skip + left_skip
+}
+
 /// Read the per-block switchable-interpolation filter. Mirrors libvpx
 /// `read_switchable_interp_filter` (`vp9_decodemv.c:343-352`). Only
 /// called when the frame's `interp_filter == Switchable`.

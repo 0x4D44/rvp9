@@ -92,6 +92,7 @@ fn picker_finds_motion_on_shifted_block() {
         ref_frame_rate_cost: 0,
         switchable_interp_costs: &sic,
         switchable_interp_ctx: 3,
+        skip_ctx: None,
         src_u: &[],
         src_v: &[],
         ref_u: &[],

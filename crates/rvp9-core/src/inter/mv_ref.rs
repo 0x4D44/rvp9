@@ -692,6 +692,65 @@ pub fn find_mv_refs<N: NeighbourLookup>(
     )
 }
 
+/// libvpx `mv_refs_rt` const_motion return value
+/// (`vp9_pickmode.c:60-153`). Returns `true` when the picker's
+/// realtime-path NEARMV evaluation can be skipped for `ref_frame`.
+///
+/// In `mv_refs_rt`, `const_motion` starts at 0 and is set to 1 after
+/// the first 2-spatial-neighbour loop **only when** that loop did
+/// NOT find 2 distinct same-ref MVs (the `goto Done` inside
+/// `ADD_MV_REF_LIST` short-circuits past the `const_motion = 1`
+/// assignment when a second distinct MV gets added).
+///
+/// Equivalently: `const_motion == 1` iff scanning the first 2
+/// entries of `MV_REF_BLOCKS[block_size]` yields strictly fewer than
+/// 2 distinct same-ref MVs (either both neighbours have the same MV
+/// for `ref_frame`, or at most one neighbour matches `ref_frame`).
+///
+/// The picker uses this at `vp9_pickmode.c:2166`:
+///
+/// ```c
+/// if (const_motion[ref_frame] && this_mode == NEARMV) continue;
+/// ```
+///
+/// — i.e. when const_motion is set, NEARMV is redundant (NEAR would
+/// either equal NEAREST or come from a non-spatial fallback that the
+/// picker doesn't trust).
+#[must_use]
+pub fn mv_refs_rt_const_motion<N: NeighbourLookup>(
+    block_size: BlockSize,
+    ref_frame: RefFrame,
+    neighbours: &N,
+) -> bool {
+    let mv_ref_search = &MV_REF_BLOCKS[block_size.idx()];
+    let mut first: Option<Mv> = None;
+    for &mv_ref in mv_ref_search.iter().take(2) {
+        if let Some(candidate_mi) = neighbours.get(mv_ref) {
+            // libvpx's `ADD_MV_REF_LIST` only adds when slot 0 matches
+            // `ref_frame`; the EB variant also tries slot 1, but the
+            // non-EB `ADD_MV_REF_LIST` in `mv_refs_rt` does NOT — see
+            // `vp9_pickmode.c:89-91` (only `ref_frame[0] == ref_frame`
+            // is checked in the first loop).
+            if candidate_ref(candidate_mi, 0) == ref_frame {
+                let mv = get_sub_block_mv(candidate_mi, 0, mv_ref.col, -1);
+                match first {
+                    None => first = Some(mv),
+                    Some(prev) if prev != mv => {
+                        // Second distinct same-ref MV → `ADD_MV_REF_LIST`
+                        // takes the `goto Done` branch BEFORE
+                        // `const_motion = 1`. Result: const_motion = 0.
+                        return false;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    // Fell off the first 2-neighbour loop without adding 2 distinct
+    // same-ref MVs → `const_motion = 1` line is reached.
+    true
+}
+
 /// Pick the best ref MV from the candidate list for use as the
 /// `NEWMV` residual reference. Mirrors libvpx
 /// `vp9_decodemv.c:779-780` (`tmp_mvs[refmv_count - 1]`).
