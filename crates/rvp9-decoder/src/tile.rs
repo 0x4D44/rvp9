@@ -227,8 +227,19 @@ impl PartitionCtx {
     /// tile-relative row (the modulo with `MI_MASK` already handles
     /// the SB-row reset, mirroring `mi_row & MI_MASK`).
     fn context(&self, mi_row_in_tile: usize, mi_col_in_tile: usize, bsl: usize) -> usize {
-        let above = (self.above_partition[mi_col_in_tile] >> bsl) & 1;
-        let left = (self.left_partition[mi_row_in_tile & MI_MASK] >> bsl) & 1;
+        debug_assert!(mi_col_in_tile < self.above_partition.len());
+        // SAFETY: `decode_partition` calls only descend while
+        // `mi_col < bounds.mi_col_end` (see `decode_tile_intra`/`inter`
+        // outer loop); `mi_col_in_tile = mi_col - bounds.mi_col_start
+        // < tile_mi_cols = above_partition.len()`.
+        let above_byte = unsafe { *self.above_partition.get_unchecked(mi_col_in_tile) };
+        // `mi_row_in_tile & MI_MASK` is 0..=7; `left_partition` has
+        // length `MI_BLOCK_SIZE = 8`, so this is always safe.
+        // SAFETY: `(mi_row_in_tile & 7) < 8 = left_partition.len()` by
+        // construction.
+        let left_byte = unsafe { *self.left_partition.get_unchecked(mi_row_in_tile & MI_MASK) };
+        let above = (above_byte >> bsl) & 1;
+        let left = (left_byte >> bsl) & 1;
         (usize::from(left) * 2 + usize::from(above)) + bsl * PARTITION_PLOFFSET
     }
 
@@ -1439,6 +1450,13 @@ pub struct InterFrameDecodeParams<'a> {
     /// per-block reader either avoid the ref (single-ref blocks pinning
     /// LAST) or panic if a missing ref is selected.
     pub refs: [Option<&'a Yv12Buffer>; 3],
+    /// Per-logical-ref pre-computed [`ScaleFactors`] (`[LAST, GOLDEN,
+    /// ALTREF]`). Tier 1 optimization: mirrors libvpx
+    /// `vp9_setup_scale_factors_for_frame` which is called once per
+    /// active ref per frame at `vp9_decodeframe.c:2928-2935` rather
+    /// than per inter block. `frame_scale_factors[i]` is `Some` iff
+    /// `refs[i]` is `Some`.
+    pub frame_scale_factors: [Option<rvp9_core::inter::scale::ScaleFactors>; 3],
     /// Inter mode read params (sign bias / compound fixed/var refs /
     /// reference_mode / interp_filter / allow_high_precision_mv).
     pub inter_params: InterModeReadParams,
@@ -2115,17 +2133,25 @@ fn decode_inter_block<D: TileFrameDst>(
         }
         // 2. Resolve per-block refs against params.refs (LAST=0,
         //    GOLDEN=1, ALTREF=2) and the decoded mi.ref_frames pair.
-        let block_refs = match mi.mode {
+        //    Tier 1 optimization: also look up the per-frame
+        //    pre-computed `ScaleFactors` for the matching logical ref
+        //    slot (parallel to `params.refs`). The SFs were built once
+        //    at the top of `decode_inter_frame`; here we just thread
+        //    the right index through.
+        let (block_refs, block_sfs) = match mi.mode {
             BlockMode::Inter { ref_frames, .. } => {
-                let resolve = |rf: RefFrame| -> Option<&Yv12Buffer> {
+                let resolve = |rf: RefFrame|
+                    -> (Option<&Yv12Buffer>, Option<rvp9_core::inter::scale::ScaleFactors>) {
                     match rf {
-                        RefFrame::LastFrame => params.refs[0],
-                        RefFrame::GoldenFrame => params.refs[1],
-                        RefFrame::AltrefFrame => params.refs[2],
-                        _ => None,
+                        RefFrame::LastFrame => (params.refs[0], params.frame_scale_factors[0]),
+                        RefFrame::GoldenFrame => (params.refs[1], params.frame_scale_factors[1]),
+                        RefFrame::AltrefFrame => (params.refs[2], params.frame_scale_factors[2]),
+                        _ => (None, None),
                     }
                 };
-                [resolve(ref_frames[0]), resolve(ref_frames[1])]
+                let (r0, s0) = resolve(ref_frames[0]);
+                let (r1, s1) = resolve(ref_frames[1]);
+                ([r0, r1], [s0, s1])
             }
             _ => unreachable!("read_inter_block_mode_info must populate Inter"),
         };
@@ -2140,6 +2166,7 @@ fn decode_inter_block<D: TileFrameDst>(
                 cur_y_width: params.cur_y_width,
                 cur_y_height: params.cur_y_height,
                 refs: block_refs,
+                sfs: block_sfs,
                 dequant_per_plane: [dequant_y, dequant_u, dequant_v],
                 lossless: params.base.lossless,
                 mi_rows: params.base.mi_rows,

@@ -247,13 +247,43 @@ fn get_band_translate(tx_size: TxSize) -> &'static [u8] {
 /// `get_coef_context` (`vp9_scan.h:35-40`). Compute the next
 /// scan-position's token-tree context as
 /// `(1 + token_cache[nb[2c]] + token_cache[nb[2c+1]]) >> 1`.
+///
+/// # Safety contract (caller's responsibility)
+///
+/// - `c < n_coeffs` where `n_coeffs` is the active TX block's
+///   `tx_size.n_coeffs()`. `neighbors` is sized
+///   `(n_coeffs + 1) * MAX_NEIGHBORS = (n_coeffs + 1) * 2`, so
+///   `MAX_NEIGHBORS * c + 1 < neighbors.len()`.
+/// - `token_cache.len() >= n_coeffs`. The neighbour values themselves
+///   are pre-generated table data with values in `0..n_coeffs`
+///   (verified in scan-order tests; see
+///   `crates/rvp9-core/src/transforms/scans.rs`).
 #[inline]
 #[must_use]
 fn get_coef_context(neighbors: &[i16], token_cache: &[u8], c: usize) -> usize {
     let base = MAX_NEIGHBORS * c;
-    let nb0 = neighbors[base] as usize;
-    let nb1 = neighbors[base + 1] as usize;
-    (1 + usize::from(token_cache[nb0]) + usize::from(token_cache[nb1])) >> 1
+    debug_assert!(base + 1 < neighbors.len(), "neighbors OOB at c={c}");
+    // SAFETY: Caller guarantees `c < n_coeffs` (see fn-doc safety
+    // contract); `neighbors.len() = (n_coeffs + 1) * 2`, so
+    // `base = 2*c` and `base + 1` are both `< neighbors.len()`.
+    let (nb0, nb1) = unsafe {
+        (
+            *neighbors.get_unchecked(base) as usize,
+            *neighbors.get_unchecked(base + 1) as usize,
+        )
+    };
+    debug_assert!(nb0 < token_cache.len(), "token_cache OOB nb0={nb0}");
+    debug_assert!(nb1 < token_cache.len(), "token_cache OOB nb1={nb1}");
+    // SAFETY: neighbour values come from `scans.rs` static tables
+    // whose entries are `0..n_coeffs`; `token_cache.len() >= n_coeffs`
+    // by the caller's contract.
+    let (t0, t1) = unsafe {
+        (
+            *token_cache.get_unchecked(nb0),
+            *token_cache.get_unchecked(nb1),
+        )
+    };
+    (1 + usize::from(t0) + usize::from(t1)) >> 1
 }
 
 /// Read `n` raw bits MSB-first under the given per-bit probability
@@ -463,9 +493,36 @@ pub fn decode_coefs(
         None
     };
 
+    // Hot-loop bound invariants (proof obligations for the
+    // `get_unchecked` sites below):
+    //
+    // 1. `seg_eob <= tx_size.n_coeffs()` — asserted at fn entry.
+    // 2. `band_translate.len() >= tx_size.n_coeffs()` — for `Tx4x4`
+    //    `band_translate` is `VP9_COEFBAND_TRANS_4X4` (len 16 = 4×4
+    //    n_coeffs); for every other size it's `VP9_COEFBAND_TRANS_8X8PLUS`
+    //    (len 1024 = 32×32 n_coeffs ≥ every other size). So
+    //    `c < seg_eob ≤ n_coeffs ≤ band_translate.len()`.
+    // 3. `band_translate` values are in `0..COEF_BANDS=6` (verified by
+    //    inspection of the static initialisers above). `ctx <= 2`
+    //    (`combine_entropy_contexts` returns `0..=2`; `get_coef_context`
+    //    returns `(1 + a + b) >> 1` with `a, b ∈ {0..=5}` from the
+    //    token-tree, so `ctx ∈ 0..=5 < COEFF_CONTEXTS=6`). So
+    //    `coef_probs[band][ctx]` is in bounds.
+    // 4. `scan.scan.len() == tx_size.n_coeffs() >= seg_eob`, and
+    //    `scan.scan[c] < n_coeffs` (raster index into the same TX block).
+    //    `token_cache.len() == DECODE_COEFS_SCRATCH_CAP = 1024 ≥
+    //    n_coeffs`, so `token_cache[scan.scan[c]]` is in bounds.
+    debug_assert!(band_translate.len() >= seg_eob);
+    debug_assert!(scan.scan.len() >= seg_eob);
+
     'outer: while c < seg_eob {
-        let band = band_translate[c] as usize;
-        let prob = &coef_probs[band][ctx];
+        // SAFETY: invariant (2) above — `c < seg_eob ≤ band_translate.len()`.
+        let band = unsafe { *band_translate.get_unchecked(c) } as usize;
+        debug_assert!(band < COEF_BANDS);
+        debug_assert!(ctx < COEFF_CONTEXTS);
+        // SAFETY: invariant (3) above — `band < COEF_BANDS` and
+        // `ctx < COEFF_CONTEXTS` (both from token-tree state).
+        let prob = unsafe { coef_probs.get_unchecked(band).get_unchecked(ctx) };
 
         if let Some(ref mut cs) = counts {
             cs.eob_branch_counts[band][ctx] += 1;
@@ -488,7 +545,13 @@ pub fn decode_coefs(
             }
             // dqv switches to AC once we leave scan position 0.
             dqv = ac_dq;
-            token_cache[scan.scan[c] as usize] = 0;
+            // SAFETY: invariant (4) — `c < seg_eob ≤ scan.scan.len()`
+            // and `scan.scan[c]` is a raster index into the same TX
+            // block (< n_coeffs ≤ token_cache.len()).
+            let scan_c = unsafe { *scan.scan.get_unchecked(c) } as usize;
+            debug_assert!(scan_c < token_cache.len());
+            // SAFETY: see above; `scan_c < n_coeffs ≤ token_cache.len()`.
+            unsafe { *token_cache.get_unchecked_mut(scan_c) = 0; }
             c += 1;
             if c >= seg_eob {
                 // Loop exits naturally (no EOB token consumed). Use a
@@ -497,8 +560,13 @@ pub fn decode_coefs(
                 break 'outer;
             }
             ctx = get_coef_context(scan.neighbors, &token_cache, c);
-            band_local = band_translate[c] as usize;
-            prob_local = &coef_probs[band_local][ctx];
+            // SAFETY: invariant (2) — `c < seg_eob ≤ band_translate.len()`.
+            band_local = unsafe { *band_translate.get_unchecked(c) } as usize;
+            debug_assert!(band_local < COEF_BANDS);
+            debug_assert!(ctx < COEFF_CONTEXTS);
+            // SAFETY: invariant (3) — `band_local < COEF_BANDS`
+            // and `ctx < COEFF_CONTEXTS`.
+            prob_local = unsafe { coef_probs.get_unchecked(band_local).get_unchecked(ctx) };
         }
 
         // ONE-vs-higher branch.
@@ -517,7 +585,15 @@ pub fn decode_coefs(
         // Pass 2 (after the loop) applies the uniform formula
         // `mag = (val * dqv) >> dq_shift; out = sign ? -mag : mag`
         // for every captured entry.
-        let raster_idx = scan.scan[c] as usize;
+        // SAFETY: invariant (4) — `c < seg_eob ≤ scan.scan.len()`.
+        let raster_idx = unsafe { *scan.scan.get_unchecked(c) } as usize;
+        debug_assert!(raster_idx < token_cache.len());
+        // SAFETY: invariant (4) — `raster_idx = scan.scan[c]` is a
+        // raster position in this TX block (< n_coeffs ≤ token_cache.len()).
+        // Capture an aliased mut pointer to the cell we'll update once
+        // per non-zero-token branch, so we don't re-bounds-check on
+        // every arm.
+        let tc_slot: &mut u8 = unsafe { token_cache.get_unchecked_mut(raster_idx) };
         let val: i32;
         if reader.read(prob_local[ONE_CONTEXT_NODE]) != 0 {
             // High branch — walk the Pareto8 row.
@@ -529,7 +605,7 @@ pub fn decode_coefs(
             if reader.read(p[0]) != 0 {
                 // HIGH_LOW or CAT_THREE/FOUR/FIVE/SIX.
                 if reader.read(p[3]) != 0 {
-                    token_cache[scan.scan[c] as usize] = 5;
+                    *tc_slot = 5;
                     val = if reader.read(p[5]) != 0 {
                         if reader.read(p[7]) != 0 {
                             // CAT6.
@@ -546,7 +622,7 @@ pub fn decode_coefs(
                         CAT3_MIN_VAL + read_coeff_bits(reader, &VP9_CAT3_PROB)
                     };
                 } else {
-                    token_cache[scan.scan[c] as usize] = 4;
+                    *tc_slot = 4;
                     val = if reader.read(p[4]) != 0 {
                         // CAT2.
                         CAT2_MIN_VAL + read_coeff_bits(reader, &VP9_CAT2_PROB)
@@ -558,11 +634,11 @@ pub fn decode_coefs(
             } else {
                 // No high-magnitude bits → token is TWO, THREE, or FOUR.
                 if reader.read(p[1]) != 0 {
-                    token_cache[scan.scan[c] as usize] = 3;
+                    *tc_slot = 3;
                     // THREE_TOKEN or FOUR_TOKEN.
                     val = 3 + i32::from(reader.read(p[2]));
                 } else {
-                    token_cache[scan.scan[c] as usize] = 2;
+                    *tc_slot = 2;
                     // TWO_TOKEN.
                     val = 2;
                 }
@@ -572,7 +648,7 @@ pub fn decode_coefs(
             if let Some(ref mut cs) = counts {
                 cs.coef_counts[band_local][ctx][ONE_TOKEN] += 1;
             }
-            token_cache[scan.scan[c] as usize] = 1;
+            *tc_slot = 1;
             val = 1;
         }
 
