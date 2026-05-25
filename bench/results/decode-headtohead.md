@@ -1,7 +1,7 @@
-# decode head-to-head — 2026-05-24T23:33:29Z
+# decode head-to-head — 2026-05-25T00:26:44Z
 
 host: windows-x86_64  unpinned  build: release (3c8d6d1ddea4abc4)
-rvp9: 3d4ee6c  vpxdec: WebM Project VP9 Decoder v1.14.1 (D:\language\rvp9-2\build\libvpx\vpxdec.exe)
+rvp9: 86aaa92  vpxdec: WebM Project VP9 Decoder v1.14.1 (D:\language\rvp9-2\build\libvpx\vpxdec.exe)
 reps: R=3 per vpxdec row (median); rvp9 timing window per HLD §3
 rvp9 runs: 1 (summary row = run 1; CSV ledger captures all runs)
 
@@ -18,15 +18,15 @@ note: vpxdec value is per-frame mean from `vpxdec --noblit --summary -t N`,
 
 | fixture            | res        | tiles | threads | rvp9 p50 us | rvp9 mean us | vpxdec mean us | ratio (rvp9/vpx) | budget us | gate        |
 |--------------------|------------|-------|---------|-------------|--------------|----------------|------------------|-----------|-------------|
-| quantizer-00       | 352x288    |     1 |       1 |      1613.9 |       1667.4 |         6520.0 |             0.26 |         - | n/a         |
-| tile_1x4           | 1920x1080  |     4 |       1 |     16192.2 |      15667.9 |         3563.6 |             4.40 |         - | n/a         |
-| tile_1x4           | 1920x1080  |     4 |       4 |      8064.3 |       7988.9 |         2150.9 |             3.71 |         - | n/a         |
-| testsrc_720p30     | 1280x720   |     1 |       1 |      5396.7 |       4860.9 |          603.2 |             8.06 |     33000 | PASS-info   |
-| testsrc_1080p30    | 1920x1080  |     4 |       2 |      7429.4 |       7161.4 |          750.4 |             9.54 |     33000 | PASS-info   |
-| testsrc_1080p30    | 1920x1080  |     4 |       4 |      4520.7 |       5369.5 |          557.3 |             9.64 |     33000 | PASS-info   |
-| testsrc_1080p60    | 1920x1080  |     4 |       4 |      4106.1 |       4519.5 |          592.6 |             7.63 |     16000 | PASS-info   |
-| testsrc_1080p60    | 1920x1080  |     4 |       8 |      4415.2 |       7440.6 |          530.9 |            14.01 |     16000 | PASS-info   |
-| foreman-fp1        | 352x288    |     1 |       1 |       757.9 |        744.1 |          323.2 |             2.30 |         - | n/a         |
+| quantizer-00       | 352x288    |     1 |       1 |      1700.3 |       1740.1 |         5354.5 |             0.32 |         - | n/a         |
+| tile_1x4           | 1920x1080  |     4 |       1 |     15652.3 |      14839.2 |         3045.9 |             4.87 |         - | n/a         |
+| tile_1x4           | 1920x1080  |     4 |       4 |      7602.7 |       7518.0 |         2084.0 |             3.61 |         - | n/a         |
+| testsrc_720p30     | 1280x720   |     1 |       1 |      4978.5 |       4502.3 |          552.0 |             8.16 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       2 |      7202.8 |       7004.9 |          760.6 |             9.21 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       4 |      4477.7 |       5236.8 |          520.9 |            10.05 |     33000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       4 |      3990.8 |       4331.0 |          559.6 |             7.74 |     16000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       8 |      4228.6 |       4647.7 |          529.2 |             8.78 |     16000 | PASS-info   |
+| foreman-fp1        | 352x288    |     1 |       1 |       662.3 |        642.4 |          283.9 |             2.26 |         - | n/a         |
 
 ## Methodology
 

@@ -1234,9 +1234,15 @@ impl SimdDispatch {
         // One per-kernel selection clause per slot; each clause picks
         // the AVX2 safe wrapper on supported CPUs and the scalar
         // reference otherwise.
+        // i16-lane SSE2 dense 8×8 idct (libvpx `vpx_idct8x8_64_add_sse2`
+        // port) — 2x throughput vs the i32-lane AVX2 path. SSE2 is
+        // universal on x86_64, so the gate is always true; we keep the
+        // `caps.sse2` check for parity with the other SIMD slots. The
+        // AVX2 wrapper `idct8x8_add_avx2` is retained for EOB fast
+        // paths and iht use.
         #[cfg(target_arch = "x86_64")]
-        let idct8x8_add: fn(&[i32; 64], &mut [u8], usize) = if caps.avx2 {
-            crate::dsp::x86_64::idct8x8_add_avx2
+        let idct8x8_add: fn(&[i32; 64], &mut [u8], usize) = if caps.sse2 {
+            crate::dsp::x86_64::idct8x8_add_sse2_64
         } else {
             scalar_idct8x8_add
         };
@@ -1306,9 +1312,17 @@ impl SimdDispatch {
         #[cfg(not(target_arch = "x86_64"))]
         let idct16x16_add: fn(&[i32; 256], &mut [u8], usize) = scalar_idct16x16_add;
 
+        // Route dense 32×32 IDCT to the SSE2 i16-lane kernel
+        // (`idct32x32_add_sse2_1024`). The i16-lane SSE2 path packs
+        // 16 i16 lanes per xmm — twice the density of the i32-lane
+        // AVX2 path (`idct32x32_add_avx2`, retained for the EOB-34 /
+        // EOB-135 fast paths) — and ports the same saturating-vs-
+        // modular semantics already documented for the 16×16 SSE2
+        // kernel. See `crates/rvp9-core/src/dsp/x86_64/idct32x32_sse2_1024.rs`
+        // module docstring for the divergence analysis.
         #[cfg(target_arch = "x86_64")]
-        let idct32x32_add: fn(&[i32; 1024], &mut [u8], usize) = if caps.avx2 {
-            crate::dsp::x86_64::idct32x32_add_avx2
+        let idct32x32_add: fn(&[i32; 1024], &mut [u8], usize) = if caps.sse2 {
+            crate::dsp::x86_64::idct32x32_add_sse2_1024
         } else {
             scalar_idct32x32_add
         };
@@ -2643,7 +2657,7 @@ mod tests {
         assert_eq!(d.caps, caps);
     }
 
-    /// Forcing `avx2 = false` falls back to the scalar reference for
+    /// Forcing `sse2 = false` falls back to the scalar reference for
     /// the idct8x8 slot. Verified by function-pointer identity.
     ///
     /// **Skipped under miri**: miri does not preserve `fn` pointer
@@ -2655,18 +2669,26 @@ mod tests {
     /// The native test on stable / nightly continues to assert the
     /// invariant; this attribute only suppresses spurious miri failures.
     /// Applied identically to every fn-pointer-identity test below.
+    ///
+    /// **Note:** the gate switched from `caps.avx2` to `caps.sse2` when
+    /// the i16-lane SSE2 dense kernel `idct8x8_add_sse2_64` was wired in
+    /// (libvpx `vpx_idct8x8_64_add_sse2` port). The scalar fallback is
+    /// only selected when SSE2 is also unavailable (which on x86_64 is
+    /// only reachable via forced caps in tests; SSE2 is architecturally
+    /// universal).
     #[cfg(target_arch = "x86_64")]
     #[cfg_attr(miri, ignore)]
     #[test]
     fn forced_scalar_caps_installs_scalar_idct8x8() {
         let mut caps = detect();
+        caps.sse2 = false;
         caps.avx2 = false;
         let d = SimdDispatch::build(caps);
         let scalar: fn(&[i32; 64], &mut [u8], usize) = crate::transforms::inverse::idct8x8_64_add;
         assert_eq!(
             d.idct8x8_add() as usize,
             scalar as usize,
-            "avx2=false must install the scalar idct8x8_64_add"
+            "sse2=false must install the scalar idct8x8_64_add"
         );
     }
 
@@ -2791,20 +2813,23 @@ mod tests {
         );
     }
 
-    /// Forcing `avx2 = false` falls back to the scalar reference for
-    /// the G4-α idct32x32 slot.
+    /// Forcing `avx2 = false, sse2 = false` falls back to the scalar
+    /// reference for the dense idct32x32 slot. (SSE2 i16-lane kernel is
+    /// the preferred path on x86_64 and ranks above AVX2 since the
+    /// 32×32 flip — see dispatch wiring.)
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn forced_scalar_caps_installs_scalar_idct32x32() {
         let mut caps = detect();
         caps.avx2 = false;
+        caps.sse2 = false;
         let d = SimdDispatch::build(caps);
         let scalar: fn(&[i32; 1024], &mut [u8], usize) =
             crate::transforms::inverse::idct32x32_1024_add;
         assert_eq!(
             d.idct32x32_add() as usize,
             scalar as usize,
-            "avx2=false must install the scalar idct32x32_1024_add"
+            "avx2=false, sse2=false must install the scalar idct32x32_1024_add"
         );
     }
 

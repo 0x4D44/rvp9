@@ -86,7 +86,7 @@ use super::idct8x8_12_sse2::butterfly;
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse2")]
 #[inline]
-unsafe fn load_input_data8(data: *const i32) -> __m128i {
+pub(crate) unsafe fn load_input_data8(data: *const i32) -> __m128i {
     let in0 = _mm_loadu_si128(data as *const __m128i);
     let in1 = _mm_loadu_si128(data.add(4) as *const __m128i);
     _mm_packs_epi32(in0, in1)
@@ -120,7 +120,7 @@ unsafe fn load_input_data8(data: *const i32) -> __m128i {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse2")]
 #[inline]
-unsafe fn transpose_16bit_8x8(in_: &[__m128i; 8], out: &mut [__m128i; 8]) {
+pub(crate) unsafe fn transpose_16bit_8x8(in_: &[__m128i; 8], out: &mut [__m128i; 8]) {
     // Stage 1 — 16-bit unpacks.
     let a0 = _mm_unpacklo_epi16(in_[0], in_[1]);
     let a1 = _mm_unpacklo_epi16(in_[2], in_[3]);
