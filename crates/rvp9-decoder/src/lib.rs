@@ -515,6 +515,29 @@ pub struct Decoder {
     /// `(mi_rows, mi_cols)` of [`Self::last_frame_mi_grid`]. `(0, 0)`
     /// before any non-`ShowExistingFrame` frame has decoded.
     last_frame_mi_dims: (u32, u32),
+    /// Recycled scratch slab for the per-frame `cur_segment_ids` Vec
+    /// (Finding 4 of the 2026-05-24 rvp9-vs-libvpx comparison —
+    /// libvpx pre-allocates and reuses these buffers, rvp9 used to
+    /// allocate fresh on every frame). At frame start the decoder
+    /// takes this Vec (leaving an empty placeholder), `clear` +
+    /// `resize` it for the new frame's dimensions, fills it during
+    /// tile decode, then at frame end ROTATES: the just-decoded slab
+    /// becomes [`Self::prev_segment_ids`], the OLD `prev_segment_ids`
+    /// (already at the right capacity) becomes the new
+    /// `scratch_segment_ids`. Capacity is retained across frames at
+    /// no allocator cost.
+    ///
+    /// Empty (`Vec::new()`) before the first frame; transient empty
+    /// also occurs WHILE a frame is decoding (Vec is out at the
+    /// per-frame locals). On an error mid-frame the locals drop, the
+    /// scratch stays empty, and the next frame re-allocates — that's
+    /// equivalent to today's behaviour for the error path.
+    scratch_segment_ids: Vec<u8>,
+    /// Recycled scratch slab for the per-frame `frame_mi_grid` Vec.
+    /// Same rotation pattern as [`Self::scratch_segment_ids`] —
+    /// take + clear + resize at frame start, rotate with
+    /// [`Self::last_frame_mi_grid`] at frame end.
+    scratch_mi_grid: Vec<Option<ModeInfo>>,
     /// G4.1 — Arc-shared SIMD dispatch table. Constructed once per
     /// `Decoder::new` via `rvp9_core::dsp::init()` (`OnceLock`-backed),
     /// then borrowed at frame entry and threaded down into
@@ -691,6 +714,8 @@ impl Decoder {
             seg_abs_delta: false,
             last_frame_mi_grid: Vec::new(),
             last_frame_mi_dims: (0, 0),
+            scratch_segment_ids: Vec::new(),
+            scratch_mi_grid: Vec::new(),
             // G4.1 — populate the process-wide SimdDispatch once at
             // decoder construction. Subsequent calls to `dsp::init` are
             // free (Arc::clone of the OnceLock slot). HLD-simd §2.2
@@ -1470,7 +1495,14 @@ impl Decoder {
         // or default every cell to 0. After decode finishes we wipe
         // `prev_segment_ids` (libvpx `vp9_setup_past_independence` at
         // `vp9_entropymode.c:424-437`) — keyframes RESET the seg map.
-        let mut cur_segment_ids = vec![0u8; mi_rows * mi_cols];
+        //
+        // Finding-4 reuse: take the recycled slab from the decoder,
+        // clear-and-resize for this frame's MI dims. The rotation at
+        // end-of-frame puts the OLD `prev_segment_ids` back into
+        // `scratch_segment_ids` so capacity carries forward.
+        let mut cur_segment_ids = std::mem::take(&mut self.scratch_segment_ids);
+        cur_segment_ids.clear();
+        cur_segment_ids.resize(mi_rows * mi_cols, 0);
 
         // Stage 3 Task E.2 — iterate `(tile_row, tile_col)` in raster
         // order, decoding each tile sequentially with a fresh per-tile
@@ -1486,7 +1518,14 @@ impl Decoder {
         // Phase 2 — pre-allocate the frame-wide MI grid. Tiles write
         // directly into this grid via TileMiView, eliminating the
         // post-decode `build_frame_mi_grid` stitch step.
-        let mut frame_mi_grid: Vec<Option<ModeInfo>> = vec![None; mi_rows * mi_cols];
+        //
+        // Finding-4 reuse: same pattern as `cur_segment_ids` above —
+        // take the recycled slab, clear-and-resize, then rotate at
+        // frame end with `last_frame_mi_grid`.
+        let mut frame_mi_grid: Vec<Option<ModeInfo>> =
+            std::mem::take(&mut self.scratch_mi_grid);
+        frame_mi_grid.clear();
+        frame_mi_grid.resize(mi_rows * mi_cols, None);
         // G5.1 — real parallel tile dispatch. Eligibility:
         //   * `tile_rows == 1` — column-only split makes per-tile
         //     pixel rectangles disjoint by construction (VP9 tile-col
@@ -2046,11 +2085,23 @@ impl Decoder {
                 eprintln!("[rvp9_seg] keyframe row{r}:{}", row);
             }
         }
-        self.prev_segment_ids = cur_segment_ids;
+        // Finding-4 rotation (intra path). The just-decoded
+        // `cur_segment_ids` becomes the new `prev_segment_ids`; the
+        // OLD `prev_segment_ids` slab (already at the right capacity
+        // pre-rotation) becomes the recycled scratch for the next
+        // frame's allocation-free `cur_segment_ids` build. Same
+        // discipline as libvpx's `swap_current_and_last_seg_map`
+        // (`vp9_alloccommon.c:vp9_swap_current_and_last_seg_map`).
+        let old_prev_seg = std::mem::replace(&mut self.prev_segment_ids, cur_segment_ids);
+        self.scratch_segment_ids = old_prev_seg;
         self.prev_segment_ids_dims = (mi_rows, mi_cols);
         // Strategy A (Stage 4 design §9 commit 4) — publish the
         // stitched frame-wide mi grid for the bitstream-diff harness.
-        self.last_frame_mi_grid = frame_mi_grid;
+        // Same rotation pattern: cycle the OLD `last_frame_mi_grid`
+        // back into `scratch_mi_grid` so its capacity is reused on
+        // the next frame.
+        let old_last_mi = std::mem::replace(&mut self.last_frame_mi_grid, frame_mi_grid);
+        self.scratch_mi_grid = old_last_mi;
         self.last_frame_mi_dims = (mi_rows as u32, mi_cols as u32);
         Ok(frame_buf)
     }
@@ -2461,7 +2512,13 @@ impl Decoder {
         } else {
             &[]
         };
-        let mut cur_segment_ids = vec![0u8; mi_rows * mi_cols];
+        // Finding-4 reuse: take the recycled `cur_segment_ids` slab
+        // out of the decoder, clear-and-resize for this frame. End-
+        // of-frame rotation puts the OLD `prev_segment_ids` back into
+        // the scratch so capacity is retained for the next frame.
+        let mut cur_segment_ids = std::mem::take(&mut self.scratch_segment_ids);
+        cur_segment_ids.clear();
+        cur_segment_ids.resize(mi_rows * mi_cols, 0);
 
         // Stage 3 Task E.2 — iterate `(tile_row, tile_col)` in raster
         // order. Each tile is decoded sequentially with its own fresh
@@ -2474,7 +2531,13 @@ impl Decoder {
         let mut tile_decode_ctxs: Vec<(tile::TileBounds, TileDecodeCtx)> =
             Vec::with_capacity(buffers.len());
         // Phase 2 — pre-allocate the frame-wide MI grid (inter path).
-        let mut frame_mi_grid: Vec<Option<ModeInfo>> = vec![None; mi_rows * mi_cols];
+        //
+        // Finding-4 reuse: take the recycled slab, clear-and-resize,
+        // rotate at frame end with `last_frame_mi_grid`.
+        let mut frame_mi_grid: Vec<Option<ModeInfo>> =
+            std::mem::take(&mut self.scratch_mi_grid);
+        frame_mi_grid.clear();
+        frame_mi_grid.resize(mi_rows * mi_cols, None);
         // G5.1 — parallel tile dispatch. See the matching block in
         // `decode_intra_frame_inner` for the rationale + eligibility
         // gate. The inter path additionally fans out the per-tile
@@ -3044,11 +3107,17 @@ impl Decoder {
                 eprintln!("[rvp9_seg] inter row{r}:{}", row);
             }
         }
-        self.prev_segment_ids = cur_segment_ids;
+        // Finding-4 rotation (inter path). Same pattern as the intra
+        // path: cycle the OLD `prev_segment_ids` / `last_frame_mi_grid`
+        // back into the scratch fields so the next frame inherits the
+        // allocator capacity.
+        let old_prev_seg = std::mem::replace(&mut self.prev_segment_ids, cur_segment_ids);
+        self.scratch_segment_ids = old_prev_seg;
         self.prev_segment_ids_dims = (mi_rows, mi_cols);
         // Strategy A (Stage 4 design §9 commit 4) — publish the
         // stitched frame-wide mi grid for the bitstream-diff harness.
-        self.last_frame_mi_grid = frame_mi_grid;
+        let old_last_mi = std::mem::replace(&mut self.last_frame_mi_grid, frame_mi_grid);
+        self.scratch_mi_grid = old_last_mi;
         self.last_frame_mi_dims = (mi_rows as u32, mi_cols as u32);
         Ok(frame_buf)
     }
