@@ -3353,6 +3353,41 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // `sf.adaptive_rd_thresh = 4`, matched in
                     // mode_decision::rd_thresh::ADAPTIVE_RD_THRESH).
                     rd_thresh_table: rd_thresh_table_ref,
+                    // §10 — content-adaptive picker gates. rvp9 has no
+                    // noise estimator / skin detector / scene-change
+                    // detector / content-state classifier / source-SAD
+                    // pass, so each gate's input defaults to libvpx's
+                    // pre-init / disabled value. This is functionally
+                    // honest: libvpx's picker, when called before those
+                    // analysis passes have run, sees the same disabled
+                    // inputs and the same picker-output (the gates are
+                    // no-ops). Refs:
+                    //   - source_variance — libvpx vp9_pickmode.c:1781
+                    //     initialises to UINT_MAX (= SOURCE_VARIANCE_
+                    //     UNCOMPUTED).
+                    //   - short_circuit_flat_blocks — speed-feature
+                    //     flag, default 0 (vp9_speed_features.c
+                    //     pre-init).
+                    //   - force_skip_low_temp_var — derived from
+                    //     x->variance_low[]; pre-init 0.
+                    //   - content_state_sb — pre-init kLowSadLowSumdiff
+                    //     (vp9_encodeframe.c:5574: x->content_state_sb
+                    //     = 0; only kVeryHighSad = nonzero triggers the
+                    //     gate).
+                    //   - is_screen_content — cpi->oxcf.content default
+                    //     CAMERA / DEFAULT.
+                    //   - zero_temp_sad_source — None matches libvpx
+                    //     pre-init (x->zero_temp_sad_source = 0,
+                    //     compute_source_sad_onepass = 0).
+                    //   - scene_change_detected — cpi->rc.high_source_
+                    //     sad pre-init 0.
+                    short_circuit_flat_blocks: false,
+                    source_variance: rvp9_core::mode_decision::inter::SOURCE_VARIANCE_UNCOMPUTED,
+                    force_skip_low_temp_var: false,
+                    content_state_sb: rvp9_core::mode_decision::inter::ContentStateSb::Normal,
+                    is_screen_content: false,
+                    zero_temp_sad_source: None,
+                    scene_change_detected: false,
                 };
                 let unified_pick = pick_inter_mode(&pick_params);
 
