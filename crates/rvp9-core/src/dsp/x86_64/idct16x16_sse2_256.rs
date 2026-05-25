@@ -60,7 +60,9 @@ use crate::transforms::constants::{
 };
 
 #[cfg(target_arch = "x86_64")]
-use super::idct8x8_12_sse2::butterfly;
+use super::idct8x8_12_sse2::{
+    butterfly, idct_calc_wraplow_sse2, idct_madd_round_shift_sse2, pair_set_epi16,
+};
 
 // ---------------------------------------------------------------------
 // New helpers (line-by-line ports from libvpx).
@@ -497,6 +499,456 @@ pub fn idct16x16_add_sse2_256(input: &[i32; 256], dst: &mut [u8], stride: usize)
     // gate is essentially free. The unit-test path gates each call on
     // a runtime `is_x86_feature_detected!("sse2")` check.
     unsafe { idct16x16_add_sse2_256_inner(input, dst, stride) }
+}
+
+// ---------------------------------------------------------------------
+// Higher-EOB fast-path kernels — i16-lane SSE2.
+//
+// Line-by-line ports of libvpx `vpx_idct16x16_38_add_sse2` and
+// `vpx_idct16x16_10_add_sse2` (`inv_txfm_sse2.c:433-484`) together with
+// the inner `idct16x16_10_pass1` / `idct16x16_10_pass2` helpers
+// (`inv_txfm_sse2.h:429-597`). Same saturating-vs-modular semantics as
+// the dense `_256` kernel — see module docstring.
+// ---------------------------------------------------------------------
+
+/// `idct16x16_38_add` — EOB ≤ 38 contract: the non-zero coefficients
+/// are confined to the top-left 8×8 sub-block (rows 0..8 of the 16-row
+/// input have non-zeros in cols 0..8; everything else is zero).
+///
+/// # Safety
+///
+/// Caller must guarantee:
+/// - The running CPU supports SSE2 (universal on x86_64).
+/// - `dst` has at least `15 * stride + 16` bytes of valid storage.
+// G4: loads from `dst` use _mm_loadl_epi64 (unaligned)
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse2")]
+unsafe fn idct16x16_add_sse2_38_inner(input: &[i32; 256], dst: &mut [u8], stride: usize) {
+    debug_assert!(dst.len() >= stride * 15 + 16, "dst too small for 16x16 add");
+
+    let zero = _mm_setzero_si128();
+    let mut in_: [__m128i; 16] = [zero; 16];
+    let mut temp: [__m128i; 16] = [zero; 16];
+    let mut out_: [__m128i; 16] = [zero; 16];
+
+    // Row pass: load the top-left 8 rows × 8 cols, transpose in place,
+    // zero-fill positions 8..16, then a single idct16_8col. Mirrors
+    // libvpx `inv_txfm_sse2.c:438-444`.
+    idct16_load8x8(input.as_ptr(), &mut in_[..8]);
+    {
+        let src: [__m128i; 8] = [
+            in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], in_[7],
+        ];
+        let mut tmp: [__m128i; 8] = [zero; 8];
+        transpose_16bit_8x8(&src, &mut tmp);
+        in_[..8].copy_from_slice(&tmp);
+    }
+    // Positions 8..16 are already zero from the initialiser.
+    let in_copy = in_;
+    idct16_8col(&in_copy, &mut temp);
+
+    // Column pass: 2 strips of 8 cols, 16 rows each. Each strip
+    // transposes `temp[i..i+8]`, runs idct16_8col, then 16 write_buffer_8x1
+    // calls. Mirrors libvpx `inv_txfm_sse2.c:446-456`.
+    let mut dest_ptr = dst.as_mut_ptr();
+    let mut i = 0usize;
+    while i < 16 {
+        {
+            let src: [__m128i; 8] = [
+                temp[i],
+                temp[i + 1],
+                temp[i + 2],
+                temp[i + 3],
+                temp[i + 4],
+                temp[i + 5],
+                temp[i + 6],
+                temp[i + 7],
+            ];
+            let mut tmp: [__m128i; 8] = [zero; 8];
+            transpose_16bit_8x8(&src, &mut tmp);
+            in_[..8].copy_from_slice(&tmp);
+        }
+        // libvpx zeroes nothing here — `in_[8..16]` from the row pass
+        // hold scratch data, but `idct16_8col` reads all 16 inputs. We
+        // must replicate libvpx's behaviour: the upper 8 inputs retain
+        // whatever was left from the row pass. In libvpx's source the
+        // local `__m128i in[16]` is re-used so positions 8..16 carry the
+        // residual from the prior `idct16_8col` write — but `idct16_8col`
+        // only writes 16 outputs, NOT the in[] buffer. The libvpx caller
+        // overwrites in[0..8] from the transpose and leaves in[8..16]
+        // holding the post-row-pass values from `idct16_8col`'s WRITE
+        // into temp[]. Re-reading the source carefully:
+        //
+        //   idct16_load8x8(input, in);        // writes in[0..8]
+        //   transpose_16bit_8x8(in, in);      // overwrites in[0..8]
+        //   for (i = 8; i < 16; i++) in[i] = zero;  // zeros in[8..16]
+        //   idct16_8col(in, temp);            // reads in[0..16]
+        //   for (i = 0; i < 16; i += 8) {
+        //     transpose_16bit_8x8(temp + i, in);  // writes in[0..8]
+        //     idct16_8col(in, out);                // reads in[0..16] !
+        //
+        // So between the row pass and the column pass, in[8..16] are
+        // still zero (set by the explicit zero-fill before the row
+        // pass; the row pass `idct16_8col(in, temp)` doesn't write back
+        // to `in`). The column-pass transpose only overwrites in[0..8].
+        // We need to keep in[8..16] zero across iterations too — our
+        // helper writes only in_[..8] (matching), but the second
+        // iteration of the column-pass loop must also preserve zero in
+        // in_[8..16]. They are still zero from the initialiser; the
+        // row-pass `idct16_8col(&in_copy, &mut temp)` writes to `temp`,
+        // not `in_`. Good.
+        let in_copy_c = in_;
+        idct16_8col(&in_copy_c, &mut out_);
+
+        for j in 0..16 {
+            write_buffer_8x1(dest_ptr.add(j * stride), out_[j]);
+        }
+        dest_ptr = dest_ptr.add(8);
+        i += 8;
+    }
+}
+
+/// Safe wrapper for the SSE2 i16-lane EOB ≤ 38 16×16 IDCT.
+#[cfg(target_arch = "x86_64")]
+pub fn idct16x16_add_sse2_38(input: &[i32; 256], dst: &mut [u8], stride: usize) {
+    // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
+    // when `caps.sse2 == true`. SSE2 is universal on x86_64.
+    unsafe { idct16x16_add_sse2_38_inner(input, dst, stride) }
+}
+
+// ---------------------------------------------------------------------
+// EOB ≤ 10 — sparse top-left 4×4 fast path.
+// ---------------------------------------------------------------------
+
+/// `load_input_data4(data)` — load 4 i32 coefficients and pack to 4 i16
+/// lanes in the low half of an `__m128i` (upper half zero). Mirrors
+/// libvpx `inv_txfm_sse2.h:101-109` (HBD branch).
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse2")]
+#[inline]
+unsafe fn load_input_data4(data: *const i32) -> __m128i {
+    let v = _mm_loadu_si128(data as *const __m128i);
+    _mm_packs_epi32(v, _mm_setzero_si128())
+}
+
+/// `transpose_16bit_4x4(in[4]) -> out[2]` — 4×4 transpose of the low
+/// 4 i16 lanes of 4 input rows into 2 packed outputs (2 transposed rows
+/// per `__m128i`). Mirrors libvpx `transpose_sse2.h:95-113`.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse2")]
+#[inline]
+unsafe fn transpose_16bit_4x4(in_: &[__m128i; 4], out: &mut [__m128i; 2]) {
+    let a0 = _mm_unpacklo_epi16(in_[0], in_[1]);
+    let a1 = _mm_unpacklo_epi16(in_[2], in_[3]);
+    out[0] = _mm_unpacklo_epi32(a0, a1);
+    out[1] = _mm_unpackhi_epi32(a0, a1);
+}
+
+/// `transpose_16bit_4x8(in[8]) -> out[4]` — 4×8 transpose using only the
+/// low 4 lanes of each 8 input rows. Mirrors libvpx
+/// `transpose_sse2.h:115-155`.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse2")]
+#[inline]
+unsafe fn transpose_16bit_4x8(in_: &[__m128i], out: &mut [__m128i]) {
+    let a0 = _mm_unpacklo_epi16(in_[0], in_[1]);
+    let a1 = _mm_unpacklo_epi16(in_[2], in_[3]);
+    let a2 = _mm_unpacklo_epi16(in_[4], in_[5]);
+    let a3 = _mm_unpacklo_epi16(in_[6], in_[7]);
+
+    let b0 = _mm_unpacklo_epi32(a0, a1);
+    let b1 = _mm_unpacklo_epi32(a2, a3);
+    let b2 = _mm_unpackhi_epi32(a0, a1);
+    let b3 = _mm_unpackhi_epi32(a2, a3);
+
+    out[0] = _mm_unpacklo_epi64(b0, b1);
+    out[1] = _mm_unpackhi_epi64(b0, b1);
+    out[2] = _mm_unpacklo_epi64(b2, b3);
+    out[3] = _mm_unpackhi_epi64(b2, b3);
+}
+
+/// `butterfly_cospi16(in)` — half-butterfly with cospi_16 multiplier,
+/// reading only the low 8 lanes (upper 8 zero). Returns 8 i16 lanes.
+/// Mirrors libvpx `inv_txfm_sse2.h:92-97`.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse2")]
+#[inline]
+unsafe fn butterfly_cospi16(in_: __m128i) -> __m128i {
+    let zero = _mm_setzero_si128();
+    let cst = pair_set_epi16(COSPI_16_64 as i16, COSPI_16_64 as i16);
+    let lo = _mm_unpacklo_epi16(in_, zero);
+    let hi = _mm_unpackhi_epi16(in_, zero);
+    idct_calc_wraplow_sse2(lo, hi, cst)
+}
+
+/// `idct16x16_10_pass1(input[4]) -> output[16]` — row pass for the
+/// EOB ≤ 10 contract. Reads only the first 4 input rows, processes the
+/// top-left 4×4 sub-block via the sparse path. Mirrors libvpx
+/// `inv_txfm_sse2.h:429-532`.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse2")]
+unsafe fn idct16x16_10_pass1(input: &[__m128i; 4], output: &mut [__m128i; 16]) {
+    let zero = _mm_setzero_si128();
+    let k_p16_p16 = pair_set_epi16(COSPI_16_64 as i16, COSPI_16_64 as i16);
+    let k_m16_p16 = pair_set_epi16(-(COSPI_16_64 as i16), COSPI_16_64 as i16);
+
+    let mut step1: [__m128i; 16] = [zero; 16];
+    let mut step2: [__m128i; 16] = [zero; 16];
+
+    // transpose_16bit_4x4 places the 4 input rows' low 4 lanes into
+    // `output[0]` / `output[1]` (each holding 2 transposed rows).
+    {
+        let mut tmp: [__m128i; 2] = [zero; 2];
+        transpose_16bit_4x4(input, &mut tmp);
+        output[0] = tmp[0];
+        output[1] = tmp[1];
+    }
+
+    // stage 2
+    {
+        let k_p30_m02 = pair_set_epi16(COSPI_30_64 as i16, -(COSPI_2_64 as i16));
+        let k_p02_p30 = pair_set_epi16(COSPI_2_64 as i16, COSPI_30_64 as i16);
+        let k_p06_m26 = pair_set_epi16(COSPI_6_64 as i16, -(COSPI_26_64 as i16));
+        let k_p26_p06 = pair_set_epi16(COSPI_26_64 as i16, COSPI_6_64 as i16);
+        let lo_1_15 = _mm_unpackhi_epi16(output[0], zero);
+        let lo_13_3 = _mm_unpackhi_epi16(zero, output[1]);
+        step2[8] = idct_calc_wraplow_sse2(k_p30_m02, k_p02_p30, lo_1_15);
+        step2[11] = idct_calc_wraplow_sse2(k_p06_m26, k_p26_p06, lo_13_3);
+    }
+
+    // stage 3
+    {
+        let k_p28_m04 = pair_set_epi16(COSPI_28_64 as i16, -(COSPI_4_64 as i16));
+        let k_p04_p28 = pair_set_epi16(COSPI_4_64 as i16, COSPI_28_64 as i16);
+        let lo_2_14 = _mm_unpacklo_epi16(output[1], zero);
+        step1[4] = idct_calc_wraplow_sse2(k_p28_m04, k_p04_p28, lo_2_14);
+        step1[13] = _mm_unpackhi_epi64(step2[11], zero);
+        step1[14] = _mm_unpackhi_epi64(step2[8], zero);
+    }
+
+    // stage 4
+    {
+        let k_m08_p24 = pair_set_epi16(-(COSPI_8_64 as i16), COSPI_24_64 as i16);
+        let k_p24_p08 = pair_set_epi16(COSPI_24_64 as i16, COSPI_8_64 as i16);
+        let k_m24_m08 = pair_set_epi16(-(COSPI_24_64 as i16), -(COSPI_8_64 as i16));
+        let lo_0_8 = _mm_unpacklo_epi16(output[0], zero);
+        let lo_9_14 = _mm_unpacklo_epi16(step2[8], step1[14]);
+        let lo_10_13 = _mm_unpacklo_epi16(step2[11], step1[13]);
+        let t = idct_madd_round_shift_sse2(lo_0_8, k_p16_p16);
+        step1[0] = _mm_packs_epi32(t, t);
+        step2[9] = idct_calc_wraplow_sse2(k_m08_p24, k_p24_p08, lo_9_14);
+        step2[10] = idct_calc_wraplow_sse2(k_m24_m08, k_m08_p24, lo_10_13);
+        step2[6] = _mm_unpackhi_epi64(step1[4], zero);
+    }
+
+    // stage 5
+    {
+        let lo_5_6 = _mm_unpacklo_epi16(step1[4], step2[6]);
+        step1[6] = idct_calc_wraplow_sse2(k_p16_p16, k_m16_p16, lo_5_6);
+        step1[8] = _mm_add_epi16(step2[8], step2[11]);
+        step1[9] = _mm_add_epi16(step2[9], step2[10]);
+        step1[10] = _mm_sub_epi16(step2[9], step2[10]);
+        step1[11] = _mm_sub_epi16(step2[8], step2[11]);
+        step1[12] = _mm_unpackhi_epi64(step1[11], zero);
+        step1[13] = _mm_unpackhi_epi64(step1[10], zero);
+        step1[14] = _mm_unpackhi_epi64(step1[9], zero);
+        step1[15] = _mm_unpackhi_epi64(step1[8], zero);
+    }
+
+    // stage 6
+    {
+        let lo_10_13 = _mm_unpacklo_epi16(step1[10], step1[13]);
+        let lo_11_12 = _mm_unpacklo_epi16(step1[11], step1[12]);
+        step2[10] = idct_calc_wraplow_sse2(k_m16_p16, k_p16_p16, lo_10_13);
+        step2[11] = idct_calc_wraplow_sse2(k_m16_p16, k_p16_p16, lo_11_12);
+        step2[13] = _mm_unpackhi_epi64(step2[10], zero);
+        step2[12] = _mm_unpackhi_epi64(step2[11], zero);
+        step2[3] = _mm_add_epi16(step1[0], step1[4]);
+        step2[1] = _mm_add_epi16(step1[0], step1[6]);
+        step2[6] = _mm_sub_epi16(step1[0], step1[6]);
+        step2[4] = _mm_sub_epi16(step1[0], step1[4]);
+        step2[0] = _mm_unpackhi_epi64(step2[3], zero);
+        step2[2] = _mm_unpackhi_epi64(step2[1], zero);
+        step2[5] = _mm_unpackhi_epi64(step2[6], zero);
+        step2[7] = _mm_unpackhi_epi64(step2[4], zero);
+    }
+
+    // stage 7 (left 8x16 only)
+    output[0] = _mm_add_epi16(step2[0], step1[15]);
+    output[1] = _mm_add_epi16(step2[1], step1[14]);
+    output[2] = _mm_add_epi16(step2[2], step2[13]);
+    output[3] = _mm_add_epi16(step2[3], step2[12]);
+    output[4] = _mm_add_epi16(step2[4], step2[11]);
+    output[5] = _mm_add_epi16(step2[5], step2[10]);
+    output[6] = _mm_add_epi16(step2[6], step1[9]);
+    output[7] = _mm_add_epi16(step2[7], step1[8]);
+    output[8] = _mm_sub_epi16(step2[7], step1[8]);
+    output[9] = _mm_sub_epi16(step2[6], step1[9]);
+    output[10] = _mm_sub_epi16(step2[5], step2[10]);
+    output[11] = _mm_sub_epi16(step2[4], step2[11]);
+    output[12] = _mm_sub_epi16(step2[3], step2[12]);
+    output[13] = _mm_sub_epi16(step2[2], step2[13]);
+    output[14] = _mm_sub_epi16(step2[1], step1[14]);
+    output[15] = _mm_sub_epi16(step2[0], step1[15]);
+}
+
+/// `idct16x16_10_pass2(l[8]) -> io[16]` — column pass for the EOB ≤ 10
+/// contract. Reads the first 8 rows of the row-pass result; the upper 8
+/// produce zero output and are folded out by the sparse-stage tree.
+/// Mirrors libvpx `inv_txfm_sse2.h:534-597`.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse2")]
+unsafe fn idct16x16_10_pass2(l: &[__m128i], io: &mut [__m128i; 16]) {
+    let zero = _mm_setzero_si128();
+    let mut step1: [__m128i; 16] = [zero; 16];
+    let mut step2: [__m128i; 16] = [zero; 16];
+
+    // transpose_16bit_4x8: l[0..8] → io[0..4].
+    transpose_16bit_4x8(l, &mut io[..4]);
+
+    // stage 2
+    let (s2_8, s2_15) = butterfly(io[1], zero, COSPI_30_64 as i16, COSPI_2_64 as i16);
+    step2[8] = s2_8;
+    step2[15] = s2_15;
+    let (s2_11, s2_12) = butterfly(zero, io[3], COSPI_6_64 as i16, COSPI_26_64 as i16);
+    step2[11] = s2_11;
+    step2[12] = s2_12;
+
+    // stage 3
+    let (s1_4, s1_7) = butterfly(io[2], zero, COSPI_28_64 as i16, COSPI_4_64 as i16);
+    step1[4] = s1_4;
+    step1[7] = s1_7;
+
+    // stage 4
+    step1[0] = butterfly_cospi16(io[0]);
+    let (s2_9, s2_14) = butterfly(
+        step2[15],
+        step2[8],
+        COSPI_24_64 as i16,
+        COSPI_8_64 as i16,
+    );
+    step2[9] = s2_9;
+    step2[14] = s2_14;
+    let (s2_13, s2_10) = butterfly(
+        step2[11],
+        step2[12],
+        -(COSPI_8_64 as i16),
+        -(COSPI_24_64 as i16),
+    );
+    step2[10] = s2_10;
+    step2[13] = s2_13;
+
+    // stage 5
+    let (s1_5, s1_6) = butterfly(
+        step1[7],
+        step1[4],
+        COSPI_16_64 as i16,
+        COSPI_16_64 as i16,
+    );
+    step1[5] = s1_5;
+    step1[6] = s1_6;
+    step1[8] = _mm_add_epi16(step2[8], step2[11]);
+    step1[9] = _mm_add_epi16(step2[9], step2[10]);
+    step1[10] = _mm_sub_epi16(step2[9], step2[10]);
+    step1[11] = _mm_sub_epi16(step2[8], step2[11]);
+    step1[12] = _mm_sub_epi16(step2[15], step2[12]);
+    step1[13] = _mm_sub_epi16(step2[14], step2[13]);
+    step1[14] = _mm_add_epi16(step2[14], step2[13]);
+    step1[15] = _mm_add_epi16(step2[15], step2[12]);
+
+    // stage 6
+    step2[0] = _mm_add_epi16(step1[0], step1[7]);
+    step2[1] = _mm_add_epi16(step1[0], step1[6]);
+    step2[2] = _mm_add_epi16(step1[0], step1[5]);
+    step2[3] = _mm_add_epi16(step1[0], step1[4]);
+    step2[4] = _mm_sub_epi16(step1[0], step1[4]);
+    step2[5] = _mm_sub_epi16(step1[0], step1[5]);
+    step2[6] = _mm_sub_epi16(step1[0], step1[6]);
+    step2[7] = _mm_sub_epi16(step1[0], step1[7]);
+    let (s2_10b, s2_13b) = butterfly(
+        step1[13],
+        step1[10],
+        COSPI_16_64 as i16,
+        COSPI_16_64 as i16,
+    );
+    step2[10] = s2_10b;
+    step2[13] = s2_13b;
+    let (s2_11b, s2_12b) = butterfly(
+        step1[12],
+        step1[11],
+        COSPI_16_64 as i16,
+        COSPI_16_64 as i16,
+    );
+    step2[11] = s2_11b;
+    step2[12] = s2_12b;
+
+    // stage 7
+    io[0] = _mm_add_epi16(step2[0], step1[15]);
+    io[1] = _mm_add_epi16(step2[1], step1[14]);
+    io[2] = _mm_add_epi16(step2[2], step2[13]);
+    io[3] = _mm_add_epi16(step2[3], step2[12]);
+    io[4] = _mm_add_epi16(step2[4], step2[11]);
+    io[5] = _mm_add_epi16(step2[5], step2[10]);
+    io[6] = _mm_add_epi16(step2[6], step1[9]);
+    io[7] = _mm_add_epi16(step2[7], step1[8]);
+    io[8] = _mm_sub_epi16(step2[7], step1[8]);
+    io[9] = _mm_sub_epi16(step2[6], step1[9]);
+    io[10] = _mm_sub_epi16(step2[5], step2[10]);
+    io[11] = _mm_sub_epi16(step2[4], step2[11]);
+    io[12] = _mm_sub_epi16(step2[3], step2[12]);
+    io[13] = _mm_sub_epi16(step2[2], step2[13]);
+    io[14] = _mm_sub_epi16(step2[1], step1[14]);
+    io[15] = _mm_sub_epi16(step2[0], step1[15]);
+}
+
+/// `idct16x16_10_add` — EOB ≤ 10 contract: non-zero coefs confined to
+/// the top-left 4×4 sub-block. Mirrors libvpx
+/// `inv_txfm_sse2.c:459-484`.
+///
+/// # Safety
+///
+/// Caller must guarantee:
+/// - The running CPU supports SSE2.
+/// - `dst` has at least `15 * stride + 16` bytes of valid storage.
+// G4: loads from `dst` use _mm_loadl_epi64 (unaligned)
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse2")]
+unsafe fn idct16x16_add_sse2_10_inner(input: &[i32; 256], dst: &mut [u8], stride: usize) {
+    debug_assert!(dst.len() >= stride * 15 + 16, "dst too small for 16x16 add");
+
+    let zero = _mm_setzero_si128();
+    let mut in_: [__m128i; 16] = [zero; 16];
+    let mut l: [__m128i; 16] = [zero; 16];
+
+    // Row pass: load 4 i32 lanes from each of the first 4 input rows
+    // (row stride = 16 i32). load_input_data4 packs to 4 i16 + 4 zero.
+    let p: [__m128i; 4] = [
+        load_input_data4(input.as_ptr()),
+        load_input_data4(input.as_ptr().add(16)),
+        load_input_data4(input.as_ptr().add(32)),
+        load_input_data4(input.as_ptr().add(48)),
+    ];
+    idct16x16_10_pass1(&p, &mut l);
+
+    // Column pass: 2 strips of 8 cols × 16 rows.
+    let mut dest_ptr = dst.as_mut_ptr();
+    let mut i = 0usize;
+    while i < 16 {
+        idct16x16_10_pass2(&l[i..i + 8], &mut in_);
+        for j in 0..16 {
+            write_buffer_8x1(dest_ptr.add(j * stride), in_[j]);
+        }
+        dest_ptr = dest_ptr.add(8);
+        i += 8;
+    }
+}
+
+/// Safe wrapper for the SSE2 i16-lane EOB ≤ 10 16×16 IDCT.
+#[cfg(target_arch = "x86_64")]
+pub fn idct16x16_add_sse2_10(input: &[i32; 256], dst: &mut [u8], stride: usize) {
+    // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
+    // when `caps.sse2 == true`. SSE2 is universal on x86_64.
+    unsafe { idct16x16_add_sse2_10_inner(input, dst, stride) }
 }
 
 #[cfg(all(test, target_arch = "x86_64", not(miri)))]
