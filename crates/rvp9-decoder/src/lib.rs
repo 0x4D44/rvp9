@@ -538,6 +538,22 @@ pub struct Decoder {
     /// take + clear + resize at frame start, rotate with
     /// [`Self::last_frame_mi_grid`] at frame end.
     scratch_mi_grid: Vec<Option<ModeInfo>>,
+    /// Wave-4 per-tile scratch pool for the parallel-decode path's
+    /// `Mutex<Option<Vec<u8>>>` seg-ids slots. Replaces the
+    /// per-frame `vec![0u8; mi_rows * mi_cols]` allocation at each
+    /// `InterTileSlot` / `TileSlot` construction site. The pool grows
+    /// lazily to `max(n_tiles_seen)` and persists across frames; each
+    /// frame the parallel path takes `n_tiles` Vecs out, hands them to
+    /// the slot structs, then puts them back during the merge loop
+    /// (where the slot's seg_ids Vec is already in hand). On the
+    /// fallback (single-thread / single-tile) path the pool is
+    /// untouched.
+    tile_seg_id_pool: Vec<Vec<u8>>,
+    /// Wave-4 per-tile scratch pool for the parallel inter-decode
+    /// path's `Mutex<Option<Vec<PrevFrameMvRef>>>` mv-grid slots.
+    /// Same shape as [`Self::tile_seg_id_pool`] — populated lazily,
+    /// drained per-frame, returned during merge.
+    tile_mv_grid_pool: Vec<Vec<rvp9_core::inter::mv_ref::PrevFrameMvRef>>,
     /// Wave-4 recycled scratch slab for the per-frame `cur_mv_grid`
     /// Vec. Unlike `scratch_segment_ids` / `scratch_mi_grid` this
     /// cannot use a direct rotation pattern because the just-decoded
@@ -739,6 +755,8 @@ impl Decoder {
             scratch_segment_ids: Vec::new(),
             scratch_mi_grid: Vec::new(),
             scratch_mv_grid: Vec::new(),
+            tile_seg_id_pool: Vec::new(),
+            tile_mv_grid_pool: Vec::new(),
             // G4.1 — populate the process-wide SimdDispatch once at
             // decoder construction. Subsequent calls to `dsp::init` are
             // free (Arc::clone of the OnceLock slot). HLD-simd §2.2
@@ -1671,13 +1689,25 @@ impl Decoder {
                     }
                 })
                 .collect();
+            // Wave-4: draw per-tile seg-id Vecs from the recycled
+            // pool. Pop until we have `num_tiles`; allocate fresh for
+            // any shortfall. Each Vec is cleared + resized so the
+            // worker sees a zeroed slab regardless of prior contents.
+            let mut tile_seg_ids: Vec<Vec<u8>> = Vec::with_capacity(num_tiles);
+            for _ in 0..num_tiles {
+                let mut v = self.tile_seg_id_pool.pop().unwrap_or_default();
+                v.clear();
+                v.resize(mi_rows * mi_cols, 0);
+                tile_seg_ids.push(v);
+            }
             let slots: Vec<TileSlot> = tile_views
                 .into_iter()
                 .zip(mi_views)
-                .map(|(view, mi_v)| TileSlot {
+                .zip(tile_seg_ids)
+                .map(|((view, mi_v), seg)| TileSlot {
                     view: Mutex::new(Some(view)),
                     mi_view: Mutex::new(Some(mi_v)),
-                    seg_ids: Mutex::new(Some(vec![0u8; mi_rows * mi_cols])),
+                    seg_ids: Mutex::new(Some(seg)),
                     counts: Mutex::new(Some(Box::new(
                         rvp9_core::entropy::adapt::CoefCountsBank::default(),
                     ))),
@@ -1840,6 +1870,9 @@ impl Decoder {
                     cur_segment_ids[row_base + mc_start..row_base + mc_end]
                         .copy_from_slice(&seg_ids[row_base + mc_start..row_base + mc_end]);
                 }
+                // Wave-4: return the seg-id slab to the decoder pool
+                // so the next frame skips the allocation.
+                self.tile_seg_id_pool.push(seg_ids);
 
                 tile_decode_ctxs.push((bounds, decode_ctx));
             }
@@ -2681,17 +2714,35 @@ impl Decoder {
                     }
                 })
                 .collect();
+            // Wave-4: draw per-tile seg-id + mv-grid Vecs from the
+            // recycled pools. Pop n_tiles each; allocate fresh on
+            // shortfall; clear + resize for this frame's MI dims.
+            let mut tile_seg_ids: Vec<Vec<u8>> = Vec::with_capacity(num_tiles);
+            let mut tile_mv_grids: Vec<Vec<rvp9_core::inter::mv_ref::PrevFrameMvRef>> =
+                Vec::with_capacity(num_tiles);
+            for _ in 0..num_tiles {
+                let mut s = self.tile_seg_id_pool.pop().unwrap_or_default();
+                s.clear();
+                s.resize(mi_rows * mi_cols, 0);
+                tile_seg_ids.push(s);
+                let mut m = self.tile_mv_grid_pool.pop().unwrap_or_default();
+                m.clear();
+                m.resize(
+                    mi_rows * mi_cols,
+                    rvp9_core::inter::mv_ref::PrevFrameMvRef::default(),
+                );
+                tile_mv_grids.push(m);
+            }
             let slots: Vec<InterTileSlot> = tile_views
                 .into_iter()
                 .zip(mi_views)
-                .map(|(view, mi_v)| InterTileSlot {
+                .zip(tile_seg_ids)
+                .zip(tile_mv_grids)
+                .map(|(((view, mi_v), seg), mv)| InterTileSlot {
                     view: Mutex::new(Some(view)),
                     mi_view: Mutex::new(Some(mi_v)),
-                    seg_ids: Mutex::new(Some(vec![0u8; mi_rows * mi_cols])),
-                    mv_grid: Mutex::new(Some(vec![
-                        rvp9_core::inter::mv_ref::PrevFrameMvRef::default();
-                        mi_rows * mi_cols
-                    ])),
+                    seg_ids: Mutex::new(Some(seg)),
+                    mv_grid: Mutex::new(Some(mv)),
                     mv_counts: Mutex::new(Some(Box::new(
                         rvp9_core::entropy::mv_probs::NmvCounts::default(),
                     ))),
@@ -2890,6 +2941,10 @@ impl Decoder {
                     cur_mv_grid[row_base + mc_start..row_base + mc_end]
                         .copy_from_slice(&mv_grid[row_base + mc_start..row_base + mc_end]);
                 }
+                // Wave-4: return the seg-id + mv-grid slabs to their
+                // respective decoder pools for next-frame reuse.
+                self.tile_seg_id_pool.push(seg_ids);
+                self.tile_mv_grid_pool.push(mv_grid);
 
                 tile_decode_ctxs.push((bounds, decode_ctx));
             }
