@@ -213,4 +213,148 @@ mod tests {
         };
         assert!(cfg.validate().is_err());
     }
+
+    #[test]
+    fn validate_rejects_zero_target_bitrate() {
+        let cfg = RateControlConfig {
+            target_bitrate_bps: 0,
+            ..RateControlConfig::default()
+        };
+        assert_eq!(
+            cfg.validate(),
+            Err("target_bitrate_bps must be > 0"),
+        );
+    }
+
+    #[test]
+    fn validate_rejects_negative_framerate() {
+        let cfg = RateControlConfig {
+            framerate: -1.0,
+            ..RateControlConfig::default()
+        };
+        assert_eq!(
+            cfg.validate(),
+            Err("framerate must be a positive finite number"),
+        );
+    }
+
+    #[test]
+    fn validate_rejects_nan_framerate() {
+        let cfg = RateControlConfig {
+            framerate: f64::NAN,
+            ..RateControlConfig::default()
+        };
+        assert_eq!(
+            cfg.validate(),
+            Err("framerate must be a positive finite number"),
+        );
+    }
+
+    #[test]
+    fn validate_rejects_infinite_framerate() {
+        let cfg = RateControlConfig {
+            framerate: f64::INFINITY,
+            ..RateControlConfig::default()
+        };
+        assert_eq!(
+            cfg.validate(),
+            Err("framerate must be a positive finite number"),
+        );
+    }
+
+    #[test]
+    fn validate_rejects_zero_frame_width() {
+        let cfg = RateControlConfig {
+            frame_width: 0,
+            ..RateControlConfig::default()
+        };
+        assert_eq!(
+            cfg.validate(),
+            Err("frame_width / frame_height must be > 0"),
+        );
+    }
+
+    #[test]
+    fn validate_rejects_zero_frame_height() {
+        let cfg = RateControlConfig {
+            frame_height: 0,
+            ..RateControlConfig::default()
+        };
+        assert_eq!(
+            cfg.validate(),
+            Err("frame_width / frame_height must be > 0"),
+        );
+    }
+
+    #[test]
+    fn validate_rejects_optimal_buffer_above_buffer_size() {
+        let cfg = RateControlConfig {
+            buffer_size_ms: 1000,
+            optimal_buffer_ms: 2000,
+            starting_buffer_ms: 500,
+            ..RateControlConfig::default()
+        };
+        assert_eq!(
+            cfg.validate(),
+            Err("optimal_buffer_ms must be <= buffer_size_ms"),
+        );
+    }
+
+    #[test]
+    fn validate_rejects_starting_buffer_above_buffer_size() {
+        let cfg = RateControlConfig {
+            buffer_size_ms: 1000,
+            optimal_buffer_ms: 500,
+            starting_buffer_ms: 2000,
+            ..RateControlConfig::default()
+        };
+        assert_eq!(
+            cfg.validate(),
+            Err("starting_buffer_ms must be <= buffer_size_ms"),
+        );
+    }
+
+    #[test]
+    fn validate_rejects_zero_gop_length() {
+        let cfg = RateControlConfig {
+            gop_length: 0,
+            ..RateControlConfig::default()
+        };
+        assert_eq!(cfg.validate(), Err("gop_length must be > 0"));
+    }
+
+    #[test]
+    fn validate_rejects_nonpositive_bpm_multiplier() {
+        let cfg = RateControlConfig {
+            bits_per_mb_multiplier: 0.0,
+            ..RateControlConfig::default()
+        };
+        assert_eq!(
+            cfg.validate(),
+            Err("bits_per_mb_multiplier must be a positive finite number"),
+        );
+    }
+
+    #[test]
+    fn validate_rejects_nan_bpm_multiplier() {
+        let cfg = RateControlConfig {
+            bits_per_mb_multiplier: f64::NAN,
+            ..RateControlConfig::default()
+        };
+        assert_eq!(
+            cfg.validate(),
+            Err("bits_per_mb_multiplier must be a positive finite number"),
+        );
+    }
+
+    #[test]
+    fn mbs_rounds_up_for_non_multiple_of_16() {
+        // 17 px wide ⇒ 2 MB columns (ceil-div). 16 px tall ⇒ 1 MB row.
+        let cfg = RateControlConfig {
+            frame_width: 17,
+            frame_height: 16,
+            ..RateControlConfig::default()
+        };
+        assert_eq!(cfg.mbs(), 2);
+    }
 }

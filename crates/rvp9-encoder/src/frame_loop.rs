@@ -4158,5 +4158,700 @@ mod tests {
         );
     }
 
+    // =================================================================
+    // Stage 7 config / frame validation coverage.
+    //
+    // The branches below cover each rejected `EncoderConfig` field
+    // combination and each `encode_frame` plane-validation failure path
+    // exposed by `StreamEncoder::new` and `StreamEncoder::encode_frame`.
+    // =================================================================
+
+    /// Helper: a baseline valid `EncoderConfig` for tweaking.
+    fn baseline_config() -> EncoderConfig {
+        EncoderConfig {
+            width: 64,
+            height: 64,
+            framerate: 30.0,
+            target_bitrate_bps: 1_000_000,
+            gop_length: 30,
+            aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
+        }
+    }
+
+    #[test]
+    fn stream_encoder_rejects_zero_width() {
+        let cfg = EncoderConfig { width: 0, ..baseline_config() };
+        let err = match StreamEncoder::new(cfg) {
+            Err(e) => e,
+            Ok(_) => panic!("expected StreamEncoder::new to fail"),
+        };
+        match err {
+            EncodeError::InvalidConfig(msg) => {
+                assert!(msg.contains("width"), "expected width error, got: {msg}");
+            }
+            other => panic!("expected InvalidConfig, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn stream_encoder_rejects_non_multiple_of_64_width() {
+        let cfg = EncoderConfig { width: 65, ..baseline_config() };
+        let err = match StreamEncoder::new(cfg) {
+            Err(e) => e,
+            Ok(_) => panic!("expected StreamEncoder::new to fail"),
+        };
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("width")),
+            "expected InvalidConfig referencing width",
+        );
+    }
+
+    #[test]
+    fn stream_encoder_rejects_zero_height() {
+        let cfg = EncoderConfig { height: 0, ..baseline_config() };
+        let err = match StreamEncoder::new(cfg) {
+            Err(e) => e,
+            Ok(_) => panic!("expected StreamEncoder::new to fail"),
+        };
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("height")),
+            "expected InvalidConfig referencing height",
+        );
+    }
+
+    #[test]
+    fn stream_encoder_rejects_non_multiple_of_64_height() {
+        let cfg = EncoderConfig { height: 65, ..baseline_config() };
+        let err = match StreamEncoder::new(cfg) {
+            Err(e) => e,
+            Ok(_) => panic!("expected StreamEncoder::new to fail"),
+        };
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("height")),
+            "expected InvalidConfig referencing height",
+        );
+    }
+
+    #[test]
+    fn stream_encoder_rejects_zero_gop_length() {
+        let cfg = EncoderConfig { gop_length: 0, ..baseline_config() };
+        let err = match StreamEncoder::new(cfg) {
+            Err(e) => e,
+            Ok(_) => panic!("expected StreamEncoder::new to fail"),
+        };
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("gop_length")),
+            "expected InvalidConfig referencing gop_length",
+        );
+    }
+
+    #[test]
+    fn stream_encoder_rejects_zero_framerate() {
+        let cfg = EncoderConfig { framerate: 0.0, ..baseline_config() };
+        let err = match StreamEncoder::new(cfg) {
+            Err(e) => e,
+            Ok(_) => panic!("expected StreamEncoder::new to fail"),
+        };
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("framerate")),
+            "expected InvalidConfig referencing framerate",
+        );
+    }
+
+    #[test]
+    fn stream_encoder_rejects_negative_framerate() {
+        let cfg = EncoderConfig { framerate: -1.0, ..baseline_config() };
+        let err = match StreamEncoder::new(cfg) {
+            Err(e) => e,
+            Ok(_) => panic!("expected StreamEncoder::new to fail"),
+        };
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("framerate")),
+            "expected InvalidConfig referencing framerate",
+        );
+    }
+
+    #[test]
+    fn stream_encoder_rejects_nan_framerate() {
+        let cfg = EncoderConfig { framerate: f64::NAN, ..baseline_config() };
+        let err = match StreamEncoder::new(cfg) {
+            Err(e) => e,
+            Ok(_) => panic!("expected StreamEncoder::new to fail"),
+        };
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("framerate")),
+            "expected InvalidConfig referencing framerate",
+        );
+    }
+
+    #[test]
+    fn stream_encoder_rejects_zero_bitrate() {
+        let cfg = EncoderConfig { target_bitrate_bps: 0, ..baseline_config() };
+        let err = match StreamEncoder::new(cfg) {
+            Err(e) => e,
+            Ok(_) => panic!("expected StreamEncoder::new to fail"),
+        };
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("target_bitrate_bps")),
+            "expected InvalidConfig referencing target_bitrate_bps",
+        );
+    }
+
+    #[test]
+    fn encode_frame_rejects_short_y_stride() {
+        let mut enc = StreamEncoder::new(baseline_config()).unwrap();
+        let y = vec![128u8; 64 * 64];
+        let u = vec![128u8; 32 * 32];
+        let v = vec![128u8; 32 * 32];
+        let bad = YuvFrameRef {
+            y: &y,
+            u: &u,
+            v: &v,
+            y_stride: 32, // < width
+            u_stride: 32,
+            v_stride: 32,
+        };
+        let err = enc.encode_frame(&bad).unwrap_err();
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("y_stride")),
+            "expected y_stride InvalidConfig, got: {err:?}",
+        );
+    }
+
+    #[test]
+    fn encode_frame_rejects_short_u_stride() {
+        let mut enc = StreamEncoder::new(baseline_config()).unwrap();
+        let y = vec![128u8; 64 * 64];
+        let u = vec![128u8; 32 * 32];
+        let v = vec![128u8; 32 * 32];
+        let bad = YuvFrameRef {
+            y: &y,
+            u: &u,
+            v: &v,
+            y_stride: 64,
+            u_stride: 16, // < width/2
+            v_stride: 32,
+        };
+        let err = enc.encode_frame(&bad).unwrap_err();
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("u_stride")),
+            "expected u_stride InvalidConfig, got: {err:?}",
+        );
+    }
+
+    #[test]
+    fn encode_frame_rejects_short_v_stride() {
+        let mut enc = StreamEncoder::new(baseline_config()).unwrap();
+        let y = vec![128u8; 64 * 64];
+        let u = vec![128u8; 32 * 32];
+        let v = vec![128u8; 32 * 32];
+        let bad = YuvFrameRef {
+            y: &y,
+            u: &u,
+            v: &v,
+            y_stride: 64,
+            u_stride: 32,
+            v_stride: 16, // < width/2
+        };
+        let err = enc.encode_frame(&bad).unwrap_err();
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("v_stride")),
+            "expected v_stride InvalidConfig, got: {err:?}",
+        );
+    }
+
+    #[test]
+    fn encode_frame_rejects_undersized_y_plane() {
+        let mut enc = StreamEncoder::new(baseline_config()).unwrap();
+        // Y plane too short for stride * height.
+        let y = vec![128u8; 64 * 32]; // half height
+        let u = vec![128u8; 32 * 32];
+        let v = vec![128u8; 32 * 32];
+        let bad = YuvFrameRef {
+            y: &y,
+            u: &u,
+            v: &v,
+            y_stride: 64,
+            u_stride: 32,
+            v_stride: 32,
+        };
+        let err = enc.encode_frame(&bad).unwrap_err();
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("plane lengths")),
+            "expected plane-lengths InvalidConfig, got: {err:?}",
+        );
+    }
+
+    #[test]
+    fn encode_frame_rejects_undersized_u_plane() {
+        let mut enc = StreamEncoder::new(baseline_config()).unwrap();
+        let y = vec![128u8; 64 * 64];
+        let u = vec![128u8; 32 * 16]; // half height
+        let v = vec![128u8; 32 * 32];
+        let bad = YuvFrameRef {
+            y: &y,
+            u: &u,
+            v: &v,
+            y_stride: 64,
+            u_stride: 32,
+            v_stride: 32,
+        };
+        let err = enc.encode_frame(&bad).unwrap_err();
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("plane lengths")),
+            "expected plane-lengths InvalidConfig, got: {err:?}",
+        );
+    }
+
+    #[test]
+    fn encode_frame_rejects_undersized_v_plane() {
+        let mut enc = StreamEncoder::new(baseline_config()).unwrap();
+        let y = vec![128u8; 64 * 64];
+        let u = vec![128u8; 32 * 32];
+        let v = vec![128u8; 32 * 16]; // half height
+        let bad = YuvFrameRef {
+            y: &y,
+            u: &u,
+            v: &v,
+            y_stride: 64,
+            u_stride: 32,
+            v_stride: 32,
+        };
+        let err = enc.encode_frame(&bad).unwrap_err();
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("plane lengths")),
+            "expected plane-lengths InvalidConfig, got: {err:?}",
+        );
+    }
+
+    #[test]
+    fn frame_kind_from_public_to_rate_control_round_trips() {
+        // Covers the From impl arms.
+        let rc_key: RcFrameKind = FrameKind::Key.into();
+        assert_eq!(rc_key, RcFrameKind::Key);
+        let rc_inter: RcFrameKind = FrameKind::Inter.into();
+        assert_eq!(rc_inter, RcFrameKind::Inter);
+    }
+
+    #[test]
+    fn frame_kind_is_key_discriminator() {
+        assert!(FrameKind::Key.is_key());
+        assert!(!FrameKind::Inter.is_key());
+    }
+
+    #[test]
+    fn encoder_config_new_populates_defaults() {
+        let cfg = EncoderConfig::new(128, 64);
+        assert_eq!(cfg.width, 128);
+        assert_eq!(cfg.height, 64);
+        assert_eq!(cfg.framerate, 30.0);
+        assert_eq!(cfg.target_bitrate_bps, 1_000_000);
+        assert_eq!(cfg.gop_length, 60);
+        assert_eq!(cfg.aq_mode, AqMode::Off);
+        assert!(cfg.use_prev_frame_mvs);
+    }
+
+    #[test]
+    fn aq_mode_default_is_off() {
+        let aq = AqMode::default();
+        assert_eq!(aq, AqMode::Off);
+    }
+
+    #[test]
+    fn stream_encoder_new_initializes_aq_state_off() {
+        let cfg = EncoderConfig { aq_mode: AqMode::Off, ..baseline_config() };
+        let enc = StreamEncoder::new(cfg).unwrap();
+        assert!(enc.cyclic_refresh.is_none(), "AQ off ⇒ no CR state");
+    }
+
+    #[test]
+    fn stream_encoder_new_initializes_aq_state_cyclic_refresh() {
+        let cfg = EncoderConfig { aq_mode: AqMode::CyclicRefresh, ..baseline_config() };
+        let enc = StreamEncoder::new(cfg).unwrap();
+        assert!(enc.cyclic_refresh.is_some(), "AQ CyclicRefresh ⇒ CR state present");
+    }
+
+    #[test]
+    fn stream_encoder_frame_idx_advances_per_call() {
+        let mut enc = StreamEncoder::new(baseline_config()).unwrap();
+        assert_eq!(enc.frame_idx(), 0);
+        let (y, u, v) = gradient_frame(64, 64);
+        let _ = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        assert_eq!(enc.frame_idx(), 1);
+        let _ = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        assert_eq!(enc.frame_idx(), 2);
+    }
+
+    #[test]
+    fn build_segmentation_params_disabled_returns_default_header() {
+        let deltas: [Option<i16>; 8] = [None; 8];
+        let p = build_segmentation_params(false, &deltas);
+        assert!(!p.enabled);
+        assert!(!p.update_map);
+        assert!(!p.update_data);
+        // Feature data must stay all-None when disabled.
+        for seg in p.feature_data.iter() {
+            for feat in seg.iter() {
+                assert!(feat.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn build_segmentation_params_enabled_carries_feature_data() {
+        let mut deltas: [Option<i16>; 8] = [None; 8];
+        deltas[1] = Some(-8);
+        deltas[3] = Some(12);
+        let p = build_segmentation_params(true, &deltas);
+        assert!(p.enabled);
+        assert!(p.update_map);
+        assert!(!p.temporal_update);
+        assert!(p.update_data);
+        assert!(!p.abs_delta);
+        assert_eq!(p.feature_data[1][0], Some(-8));
+        assert_eq!(p.feature_data[3][0], Some(12));
+        // Other segments stay None.
+        assert!(p.feature_data[0][0].is_none());
+        assert!(p.feature_data[2][0].is_none());
+    }
+
+    #[test]
+    fn stream_encoder_public_accessors_round_trip() {
+        // Exercise the public read-only accessors on `StreamEncoder`:
+        // `config()`, `rate_control()`, `diag_last_recon_y/u/v`.
+        let cfg = baseline_config();
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+
+        // config() returns the original config.
+        assert_eq!(enc.config().width, 64);
+        assert_eq!(enc.config().height, 64);
+
+        // rate_control() returns a ref to the internal RC.
+        let rc = enc.rate_control();
+        assert!(rc.avg_frame_bandwidth > 0);
+
+        // Buffers initialized to zero; lengths match (width * height) etc.
+        assert_eq!(enc.diag_last_recon_y().len(), 64 * 64);
+        assert_eq!(enc.diag_last_recon_u().len(), 32 * 32);
+        assert_eq!(enc.diag_last_recon_v().len(), 32 * 32);
+        // Before any encode, they're zero.
+        assert!(enc.diag_last_recon_y().iter().all(|&b| b == 0));
+
+        // Drive a frame; recon now non-zero.
+        let (y, u, v) = gradient_frame(64, 64);
+        let _ = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        // Y plane now has reconstructed content (matches encoder recon).
+        assert!(enc.diag_last_recon_y().iter().any(|&b| b > 0));
+    }
+
+    #[test]
+    fn prev_grid_gate_open_returns_false_after_keyframe() {
+        // After encoding a single KF, the prev_mv_grid gate should NOT
+        // open (last_frame_was_key == true gates it shut).
+        let cfg = EncoderConfig { use_prev_frame_mvs: true, ..baseline_config() };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let (y, u, v) = gradient_frame(64, 64);
+        let _ = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        // After KF, dims are (8, 8). Gate must say not-open because
+        // last_frame_was_key == true.
+        assert!(
+            !enc.prev_grid_gate_open_for_test(8, 8),
+            "gate must be closed after keyframe",
+        );
+    }
+
+    #[test]
+    fn prev_grid_gate_open_returns_true_after_inter_when_enabled() {
+        let cfg = EncoderConfig { use_prev_frame_mvs: true, ..baseline_config() };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let (y, u, v) = gradient_frame(64, 64);
+        // KF then inter.
+        let _ = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        let _ = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        // Now last frame was inter; gate should open at matching dims.
+        assert!(
+            enc.prev_grid_gate_open_for_test(8, 8),
+            "gate must be open after inter with matching dims",
+        );
+        // Mismatched dims close the gate.
+        assert!(
+            !enc.prev_grid_gate_open_for_test(16, 16),
+            "gate must close at mismatched dims",
+        );
+    }
+
+    #[test]
+    fn prev_grid_gate_open_returns_false_when_config_disables() {
+        let cfg = EncoderConfig { use_prev_frame_mvs: false, ..baseline_config() };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let (y, u, v) = gradient_frame(64, 64);
+        let _ = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        let _ = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        // Config disables; gate must be shut even after inter.
+        assert!(
+            !enc.prev_grid_gate_open_for_test(8, 8),
+            "gate must be closed when config.use_prev_frame_mvs == false",
+        );
+    }
+
+    #[test]
+    fn prev_mv_grid_for_test_populated_after_first_frame() {
+        let mut enc = StreamEncoder::new(baseline_config()).unwrap();
+        // None before first frame.
+        assert!(enc.prev_mv_grid_for_test().is_none());
+        let (y, u, v) = gradient_frame(64, 64);
+        let _ = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        // Populated after KF.
+        let (grid, (rows, cols)) = enc.prev_mv_grid_for_test().expect("populated");
+        assert_eq!((rows, cols), (8, 8));
+        assert_eq!(grid.len(), 8 * 8);
+    }
+
+    /// Serial guard for env-mutating tests. The encoder reads several
+    /// `RVP9_*` env vars at run-time; tests that flip those vars must
+    /// not race against other tests reading them. We use a global
+    /// `Mutex<()>` to serialize the env-mutating tests below.
+    fn env_test_mutex() -> std::sync::MutexGuard<'static, ()> {
+        static MTX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        // poisoned: recover and proceed (other test panicked while
+        // holding it — env vars are still safe to set/unset).
+        MTX.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    #[test]
+    fn encode_frame_respects_fixed_q_env_override() {
+        // Drive the `RVP9_FIXED_Q` env-gated diagnostic branch in
+        // `encode_frame` (frame_loop.rs:586-589). The Q override
+        // bypasses the rate controller's pick.
+        let _guard = env_test_mutex();
+        let key = "RVP9_FIXED_Q";
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe {
+            std::env::set_var(key, "100");
+        }
+        let mut enc = StreamEncoder::new(baseline_config()).unwrap();
+        let (y, u, v) = gradient_frame(64, 64);
+        let f = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        unsafe {
+            std::env::remove_var(key);
+        }
+        assert_eq!(f.q_index, 100, "RVP9_FIXED_Q must pin frame Q to 100");
+    }
+
+    #[test]
+    fn encode_frame_e8_trace_env_diag_runs() {
+        // Drive the RVP9_E8_TRACE env-gated diagnostic branch.
+        let _guard = env_test_mutex();
+        let key = "RVP9_E8_TRACE";
+        unsafe {
+            std::env::set_var(key, "1");
+        }
+        let mut enc = StreamEncoder::new(baseline_config()).unwrap();
+        let (y, u, v) = gradient_frame(64, 64);
+        let f = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        unsafe {
+            std::env::remove_var(key);
+        }
+        assert!(f.actual_bits > 0, "encode must succeed under E8 trace");
+    }
+
+    #[test]
+    fn encode_frame_bpm_verify_env_diag_runs() {
+        // Drive the RVP9_DIAG_BPM_VERIFY env-gated diagnostic branch.
+        let _guard = env_test_mutex();
+        let key = "RVP9_DIAG_BPM_VERIFY";
+        unsafe {
+            std::env::set_var(key, "1");
+        }
+        let mut enc = StreamEncoder::new(baseline_config()).unwrap();
+        let (y, u, v) = gradient_frame(64, 64);
+        let f = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        unsafe {
+            std::env::remove_var(key);
+        }
+        assert!(f.actual_bits > 0, "encode must succeed under BPM verify");
+    }
+
+    #[test]
+    fn encode_frame_part_hist_env_diag_runs_on_inter() {
+        // Drive the RVP9_PART_HIST env-gated diagnostic in
+        // `choose_partitions_for_frame` (frame_loop.rs:1281-1299).
+        // Only fires on inter frames; encode KF + inter.
+        let _guard = env_test_mutex();
+        let key = "RVP9_PART_HIST";
+        unsafe {
+            std::env::set_var(key, "1");
+        }
+        let mut enc = StreamEncoder::new(baseline_config()).unwrap();
+        let (y, u, v) = gradient_frame(64, 64);
+        let _ = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        let inter = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        unsafe {
+            std::env::remove_var(key);
+        }
+        assert_eq!(inter.frame_kind, FrameKind::Inter);
+    }
+
+    #[test]
+    fn build_inter_mi_grid_inter_winner_emits_block_mode_inter() {
+        // Phase 2b — when `picked_intra_mode` is None, the helper emits
+        // `BlockMode::Inter` with the picker's mode/mv/ref_frame.
+        let leaves = vec![InterPartitionLeafDesc {
+            mi_row_in_sb: 0,
+            mi_col_in_sb: 0,
+            leaf_bsize: BlockSize::Block64x64,
+            picked_mode: InterMode::NewMv,
+            picked_mv: Mv { row: 8, col: -4 },
+            skip: false,
+            segment_id: 0,
+            picked_ref_frame: RefFrame::GoldenFrame,
+            picked_interp_filter: InterpFilter::EightTap,
+            picked_intra_mode: None,
+        }];
+        let sb_partitions = vec![leaves];
+        let grid = build_inter_mi_grid_from_picker(8, 8, &sb_partitions);
+        // Top-left cell.
+        let cell = grid[0].expect("cell must be populated");
+        match cell.mode {
+            BlockMode::Inter { mode, ref_frames, mvs, .. } => {
+                assert_eq!(mode, InterMode::NewMv);
+                assert_eq!(ref_frames[0], RefFrame::GoldenFrame);
+                assert_eq!(mvs[0].row, 8);
+                assert_eq!(mvs[0].col, -4);
+            }
+            BlockMode::Intra { .. } => panic!("expected Inter, got Intra"),
+        }
+    }
+
+    #[test]
+    fn build_inter_mi_grid_intra_winner_emits_block_mode_intra() {
+        // Phase 2b coverage — when `picked_intra_mode` is Some(_),
+        // the helper emits `BlockMode::Intra` with the picked Y mode.
+        let leaves = vec![InterPartitionLeafDesc {
+            mi_row_in_sb: 0,
+            mi_col_in_sb: 0,
+            leaf_bsize: BlockSize::Block64x64,
+            picked_mode: InterMode::ZeroMv,
+            picked_mv: Mv::ZERO,
+            skip: false,
+            segment_id: 0,
+            picked_ref_frame: RefFrame::IntraFrame,
+            picked_interp_filter: InterpFilter::EightTap,
+            picked_intra_mode: Some(IntraMode::V),
+        }];
+        let sb_partitions = vec![leaves];
+        let grid = build_inter_mi_grid_from_picker(8, 8, &sb_partitions);
+        let cell = grid[0].expect("cell must be populated");
+        match cell.mode {
+            BlockMode::Intra { y_mode, uv_mode } => {
+                assert_eq!(y_mode, IntraMode::V);
+                // v1: UV always DC.
+                assert_eq!(uv_mode, IntraMode::Dc);
+            }
+            BlockMode::Inter { .. } => panic!("expected Intra, got Inter"),
+        }
+    }
+
+    #[test]
+    fn leaves_from_decision_emits_one_leaf_per_unique_64x64() {
+        // PartitionDecision with all cells set to Block64x64 → one leaf.
+        let decision = PartitionDecision {
+            cells: [[BlockSize::Block64x64; 8]; 8],
+        };
+        let leaves = leaves_from_decision(&decision);
+        assert_eq!(leaves.len(), 1);
+        assert_eq!(leaves[0].leaf_bsize, BlockSize::Block64x64);
+        assert_eq!(leaves[0].mi_row_in_sb, 0);
+        assert_eq!(leaves[0].mi_col_in_sb, 0);
+    }
+
+    #[test]
+    fn leaves_from_decision_emits_four_leaves_per_32x32_split() {
+        // PartitionDecision split into 4 × 32×32 cells.
+        let mut cells = [[BlockSize::Block32x32; 8]; 8];
+        // Set the lower-right quadrant cells correctly.
+        for cells_row in cells.iter_mut().take(8) {
+            for cell in cells_row.iter_mut().take(8) {
+                *cell = BlockSize::Block32x32;
+            }
+        }
+        let decision = PartitionDecision { cells };
+        let leaves = leaves_from_decision(&decision);
+        assert_eq!(leaves.len(), 4);
+        // Each 32x32 leaf covers 4×4 mi cells.
+        for leaf in &leaves {
+            assert_eq!(leaf.leaf_bsize, BlockSize::Block32x32);
+        }
+    }
+
+    #[test]
+    fn leaves_from_decision_emits_sixteen_leaves_per_16x16_split() {
+        let cells = [[BlockSize::Block16x16; 8]; 8];
+        let decision = PartitionDecision { cells };
+        let leaves = leaves_from_decision(&decision);
+        assert_eq!(leaves.len(), 16);
+    }
+
+    #[test]
+    fn leaves_from_decision_emits_sixty_four_leaves_per_8x8_split() {
+        let cells = [[BlockSize::Block8x8; 8]; 8];
+        let decision = PartitionDecision { cells };
+        let leaves = leaves_from_decision(&decision);
+        assert_eq!(leaves.len(), 64);
+    }
+
+    #[test]
+    fn gather_coded_segments_splats_leaf_data() {
+        // Single 64×64 SB with a 32×32 leaf at (0,0) carrying seg_id=2,
+        // skip=true, and a 16×16 leaf at (4,0) carrying seg_id=5, skip=false.
+        let mi_rows = 8usize;
+        let mi_cols = 8usize;
+        let mut leaves = Vec::new();
+        leaves.push(InterPartitionLeafDesc {
+            mi_row_in_sb: 0,
+            mi_col_in_sb: 0,
+            leaf_bsize: BlockSize::Block32x32,
+            picked_mode: InterMode::ZeroMv,
+            picked_mv: Mv::ZERO,
+            skip: true,
+            segment_id: 2,
+            picked_ref_frame: RefFrame::LastFrame,
+            picked_interp_filter: InterpFilter::EightTap,
+            picked_intra_mode: None,
+        });
+        leaves.push(InterPartitionLeafDesc {
+            mi_row_in_sb: 4,
+            mi_col_in_sb: 0,
+            leaf_bsize: BlockSize::Block16x16,
+            picked_mode: InterMode::NewMv,
+            picked_mv: Mv::ZERO,
+            skip: false,
+            segment_id: 5,
+            picked_ref_frame: RefFrame::LastFrame,
+            picked_interp_filter: InterpFilter::EightTap,
+            picked_intra_mode: None,
+        });
+        let sb_partitions = vec![leaves];
+
+        let (segs, skips) = gather_coded_segments_and_skip(mi_rows, mi_cols, &sb_partitions);
+
+        // Top-left 4×4 area of mi-cells covered by 32×32 leaf → seg 2, skip true.
+        for r in 0..4 {
+            for c in 0..4 {
+                let idx = r * mi_cols + c;
+                assert_eq!(segs[idx], 2, "32x32 leaf row {r} col {c}");
+                assert!(skips[idx], "32x32 leaf row {r} col {c} should be skip=true");
+            }
+        }
+        // The 16×16 leaf at (4,0) covers cells (4..6) × (0..2): seg 5, skip false.
+        for r in 4..6 {
+            for c in 0..2 {
+                let idx = r * mi_cols + c;
+                assert_eq!(segs[idx], 5, "16x16 leaf row {r} col {c}");
+                assert!(!skips[idx], "16x16 leaf row {r} col {c} should be skip=false");
+            }
+        }
+    }
 }
 

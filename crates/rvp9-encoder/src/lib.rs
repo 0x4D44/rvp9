@@ -4535,6 +4535,302 @@ mod tests {
     }
 
     #[test]
+    fn encoder_rejects_zero_width() {
+        // 0 passes is_multiple_of(64), so the explicit zero-width
+        // check on line 187-189 is reachable.
+        let err = Encoder::new(Config::new(0, 64, 50)).unwrap_err();
+        match err {
+            EncodeError::InvalidConfig(msg) => {
+                assert!(msg.contains("non-zero"), "expected non-zero error: {msg}");
+            }
+            other => panic!("expected InvalidConfig, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn encoder_rejects_zero_height() {
+        let err = Encoder::new(Config::new(64, 0, 50)).unwrap_err();
+        match err {
+            EncodeError::InvalidConfig(msg) => {
+                assert!(msg.contains("non-zero"), "expected non-zero error: {msg}");
+            }
+            other => panic!("expected InvalidConfig, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn encode_error_display_invalid_config_includes_reason() {
+        let err = EncodeError::InvalidConfig("widget");
+        let s = format!("{err}");
+        assert!(
+            s.contains("widget"),
+            "InvalidConfig display should include the reason: {s}",
+        );
+        assert!(
+            s.contains("invalid encoder config"),
+            "InvalidConfig display should include the leading label: {s}",
+        );
+    }
+
+    #[test]
+    fn encode_error_display_bitstream_variant() {
+        let e = EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge);
+        let s = format!("{e}");
+        assert!(s.contains("bitstream writer error"), "got: {s}");
+    }
+
+    #[test]
+    fn encode_error_from_bitstream_error_round_trips() {
+        let inner = BitstreamError::CompressedHeaderTooLarge;
+        let wrapped: EncodeError = inner.into();
+        assert!(matches!(wrapped, EncodeError::Bitstream(_)));
+    }
+
+    #[test]
+    fn encode_error_from_modes_writer_error_round_trips() {
+        // Pick any valid ModesWriterError variant.
+        let inner = ModesWriterError::MissingCell { mi_row: 0, mi_col: 0 };
+        let wrapped: EncodeError = inner.into();
+        assert!(matches!(wrapped, EncodeError::Modes(_)));
+        // Display should label the variant.
+        let s = format!("{wrapped}");
+        assert!(s.contains("mode-info writer error"), "got: {s}");
+    }
+
+    #[test]
+    fn encode_synthetic_dc_intra_with_residuals_rejects_short_input_y() {
+        let cfg = Config::new(64, 64, 50);
+        let enc = Encoder::new(cfg).unwrap();
+        // Short Y input.
+        let y = vec![0u8; 32 * 32];
+        let u = vec![128u8; 32 * 32];
+        let v = vec![128u8; 32 * 32];
+        let mut y_recon = vec![0u8; 64 * 64];
+        let mut u_recon = vec![0u8; 32 * 32];
+        let mut v_recon = vec![0u8; 32 * 32];
+        let err = enc
+            .encode_synthetic_dc_intra_with_residuals(
+                (&y, &u, &v),
+                (&mut y_recon, &mut u_recon, &mut v_recon),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("input_yuv")),
+            "expected input_yuv error, got: {err:?}",
+        );
+    }
+
+    #[test]
+    fn encode_synthetic_dc_intra_with_residuals_rejects_short_recon_y() {
+        let cfg = Config::new(64, 64, 50);
+        let enc = Encoder::new(cfg).unwrap();
+        let y = vec![128u8; 64 * 64];
+        let u = vec![128u8; 32 * 32];
+        let v = vec![128u8; 32 * 32];
+        // Short recon Y.
+        let mut y_recon = vec![0u8; 32 * 32];
+        let mut u_recon = vec![0u8; 32 * 32];
+        let mut v_recon = vec![0u8; 32 * 32];
+        let err = enc
+            .encode_synthetic_dc_intra_with_residuals(
+                (&y, &u, &v),
+                (&mut y_recon, &mut u_recon, &mut v_recon),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("recon_yuv_out")),
+            "expected recon_yuv_out error, got: {err:?}",
+        );
+    }
+
+    #[test]
+    fn config_new_const_round_trips() {
+        // Exercise the const constructor: assignment + field reads.
+        const CFG: Config = Config::new(128, 128, 100);
+        assert_eq!(CFG.width, 128);
+        assert_eq!(CFG.height, 128);
+        assert_eq!(CFG.base_qindex, 100);
+    }
+
+    #[test]
+    fn vec_backed_intra_coef_source_round_trips() {
+        // Exercises VecBackedIntraCoefSource::new + insert + get_block_coefs.
+        use rvp9_core::bitstream::IntraCoefSource;
+        let mut src = VecBackedIntraCoefSource::new(64, 64);
+        assert_eq!(src.width(), 64);
+        assert_eq!(src.height(), 64);
+        let coefs = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        src.insert(0, 0, 0, 0, 0, coefs.clone(), 5);
+        let (got_coefs, got_eob) = src.get_block_coefs(0, 0, 0, 0, 0, TxSize::Tx4x4);
+        assert_eq!(&got_coefs[..16], &coefs[..16]);
+        assert_eq!(got_eob, 5);
+    }
+
+    #[test]
+    fn vec_backed_inter_coef_source_round_trips() {
+        use rvp9_core::bitstream::InterCoefSource;
+        let mut src = VecBackedInterCoefSource::new(128, 64);
+        assert_eq!(src.width(), 128);
+        assert_eq!(src.height(), 64);
+        let coefs = vec![10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160];
+        src.insert(1, 2, 1, 0, 0, coefs.clone(), 7);
+        let (got_coefs, got_eob) = src.get_block_coefs(1, 2, 1, 0, 0, TxSize::Tx4x4);
+        assert_eq!(&got_coefs[..16], &coefs[..16]);
+        assert_eq!(got_eob, 7);
+    }
+
+    /// Serial guard for env-mutating tests that touch the global
+    /// E12/F02 oracle flags or RVP9_* env vars.
+    fn env_test_mutex() -> std::sync::MutexGuard<'static, ()> {
+        static MTX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        MTX.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn streaming_config() -> frame_loop::EncoderConfig {
+        frame_loop::EncoderConfig {
+            width: 64,
+            height: 64,
+            framerate: 30.0,
+            target_bitrate_bps: 1_000_000,
+            gop_length: 30,
+            aq_mode: frame_loop::AqMode::Off,
+            use_prev_frame_mvs: false,
+        }
+    }
+
+    fn yuv_view_64<'a>(y: &'a [u8], u: &'a [u8], v: &'a [u8]) -> frame_loop::YuvFrameRef<'a> {
+        frame_loop::YuvFrameRef {
+            y, u, v,
+            y_stride: 64,
+            u_stride: 32,
+            v_stride: 32,
+        }
+    }
+
+    fn flat_frame() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        (vec![128u8; 64 * 64], vec![128u8; 32 * 32], vec![128u8; 32 * 32])
+    }
+
+    #[test]
+    fn encode_with_f02_oracle_enabled_runs_record_paths() {
+        let _guard = env_test_mutex();
+        let key = "RVP9_F02_ORACLE";
+        // SAFETY: serialised via env_test_mutex.
+        unsafe { std::env::set_var(key, "1"); }
+        crate::f02_oracle::init_from_env();
+        assert!(crate::f02_oracle::is_enabled());
+
+        let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
+        let (y, u, v) = flat_frame();
+        let _kf = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
+        let _inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
+
+        let decisions = crate::f02_oracle::drain_frame();
+        assert!(
+            !decisions.is_empty(),
+            "F02 oracle should have recorded ≥1 decision when enabled",
+        );
+
+        unsafe { std::env::remove_var(key); }
+        crate::f02_oracle::init_from_env();
+        assert!(!crate::f02_oracle::is_enabled());
+    }
+
+    #[test]
+    fn encode_with_e12_oracle_enabled_runs_record_paths() {
+        let _guard = env_test_mutex();
+        let key = "RVP9_E12_ORACLE";
+        unsafe { std::env::set_var(key, "1"); }
+        crate::e12stat::init_from_env();
+        assert!(crate::e12stat::enabled());
+
+        let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
+        let (y, u, v) = flat_frame();
+        let _kf = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
+        let inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
+        assert!(inter.actual_bits > 0);
+
+        unsafe { std::env::remove_var(key); }
+        crate::e12stat::init_from_env();
+        assert!(!crate::e12stat::enabled());
+    }
+
+    #[test]
+    fn encode_with_f3_nonrd_partition_runs_descent_path() {
+        let _guard = env_test_mutex();
+        let key = "RVP9_F3_NONRD_PARTITION_ENABLE";
+        unsafe { std::env::set_var(key, "1"); }
+
+        let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
+        let (y, u, v) = flat_frame();
+        let _kf = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
+        let inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
+        assert_eq!(inter.frame_kind, frame_loop::FrameKind::Inter);
+
+        unsafe { std::env::remove_var(key); }
+    }
+
+    #[test]
+    fn encode_with_diag_picker_env_runs_eprintln_paths() {
+        let _guard = env_test_mutex();
+        let key = "RVP9_DIAG_PICKER";
+        unsafe { std::env::set_var(key, "1"); }
+        let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
+        let (y, u, v) = flat_frame();
+        let _kf = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
+        let inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
+        unsafe { std::env::remove_var(key); }
+        assert_eq!(inter.frame_kind, frame_loop::FrameKind::Inter);
+    }
+
+    #[test]
+    fn encode_with_diag_intpro_env_runs_eprintln_paths() {
+        let _guard = env_test_mutex();
+        unsafe {
+            std::env::set_var("RVP9_DIAG_INTPRO", "1");
+            std::env::set_var("RVP9_DIAG_INTPRO_SB", "1");
+        }
+        let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
+        let (y, u, v) = flat_frame();
+        let _kf = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
+        let inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
+        unsafe {
+            std::env::remove_var("RVP9_DIAG_INTPRO");
+            std::env::remove_var("RVP9_DIAG_INTPRO_SB");
+        }
+        assert!(inter.actual_bits > 0);
+    }
+
+    #[test]
+    fn encode_with_diag_intra_env_runs_eprintln_paths() {
+        let _guard = env_test_mutex();
+        unsafe { std::env::set_var("RVP9_DIAG_INTRA", "1"); }
+        let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
+        let (y, u, v) = flat_frame();
+        let kf = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
+        unsafe { std::env::remove_var("RVP9_DIAG_INTRA"); }
+        assert_eq!(kf.frame_kind, frame_loop::FrameKind::Key);
+    }
+
+    #[test]
+    fn encode_with_e3_mvdiag_and_golden_env_runs_eprintln_paths() {
+        let _guard = env_test_mutex();
+        unsafe {
+            std::env::set_var("RVP9_E3_MVDIAG", "1");
+            std::env::set_var("RVP9_DIAG_GOLDEN_PICKS", "1");
+        }
+        let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
+        let (y, u, v) = flat_frame();
+        let _kf = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
+        let inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
+        unsafe {
+            std::env::remove_var("RVP9_E3_MVDIAG");
+            std::env::remove_var("RVP9_DIAG_GOLDEN_PICKS");
+        }
+        assert!(inter.actual_bits > 0);
+    }
+
+    #[test]
     fn encoder_accepts_canonical_config() {
         let enc = Encoder::new(Config::new(64, 64, 50)).expect("valid config");
         assert_eq!(enc.config().width, 64);

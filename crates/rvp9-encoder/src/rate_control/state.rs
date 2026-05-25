@@ -438,4 +438,100 @@ mod tests {
         // 5000 ms at 1 Mbps == 5,000,000 bits.
         assert_eq!(ms_to_bits(cfg.optimal_buffer_ms, cfg.target_bitrate_bps), 5_000_000);
     }
+
+    #[test]
+    fn advance_frame_at_zero_does_not_underflow() {
+        // Covers the `else` arm in `advance_frame` (frames_to_key == 0
+        // path). Without the guard a saturating subtraction would still
+        // be needed; the explicit branch leaves frames_to_key at 0.
+        let mut rc = RateControl::new(RateControlConfig::default());
+        rc.frames_to_key = 0;
+        rc.frames_since_key = 5;
+        rc.advance_frame();
+        assert_eq!(rc.frames_to_key, 0, "frames_to_key must stay at zero");
+        assert_eq!(rc.frames_since_key, 6, "frames_since_key must increment");
+    }
+
+    #[test]
+    fn advance_frame_saturates_frames_since_key() {
+        // Covers the saturating_add path in `advance_frame`.
+        let mut rc = RateControl::new(RateControlConfig::default());
+        rc.frames_to_key = 1;
+        rc.frames_since_key = u32::MAX;
+        rc.advance_frame();
+        assert_eq!(
+            rc.frames_since_key,
+            u32::MAX,
+            "frames_since_key must saturate at u32::MAX",
+        );
+        assert_eq!(rc.frames_to_key, 0, "frames_to_key must decrement");
+    }
+
+    #[test]
+    fn avg_frame_bw_clamps_huge_bitrate_to_u32_max() {
+        // Covers the `rounded > f64::from(u32::MAX)` arm in
+        // `avg_frame_bw`. Use a tiny framerate so target/framerate
+        // exceeds u32::MAX.
+        let cfg = RateControlConfig {
+            target_bitrate_bps: u32::MAX,
+            framerate: 0.01, // forces avg_frame_bw = u32::MAX / 0.01 → > u32::MAX
+            ..RateControlConfig::default()
+        };
+        let got = avg_frame_bw(&cfg);
+        assert_eq!(got, u32::MAX, "avg_frame_bw must clamp at u32::MAX");
+    }
+
+    #[test]
+    fn predicted_bits_at_picked_q_returns_positive_estimate() {
+        // Exercises `RateControl::predicted_bits_at_picked_q` (diagnostic
+        // accessor for the A10 instrumentation). Run a pick so
+        // last_picked_qindex is populated; the predicted bits must be a
+        // sane positive count.
+        let mut rc = RateControl::new(RateControlConfig::default());
+        let _ = rc.pick_q_and_bounds(FrameKind::Key);
+        let predicted_key = rc.predicted_bits_at_picked_q(FrameKind::Key);
+        assert!(
+            predicted_key > 0,
+            "predicted bits must be positive after a pick: got {predicted_key}",
+        );
+        let predicted_inter = rc.predicted_bits_at_picked_q(FrameKind::Inter);
+        assert!(
+            predicted_inter > 0,
+            "predicted inter bits must be positive: got {predicted_inter}",
+        );
+    }
+
+    #[test]
+    fn e8_trace_snapshot_carries_buffer_state() {
+        // Exercises `e8_trace_snapshot` (diagnostic E8 accessor). The
+        // returned snapshot must match the underlying rc state.
+        let mut rc = RateControl::new(RateControlConfig::default());
+        let _ = rc.pick_q_and_bounds(FrameKind::Inter);
+        let snap = rc.e8_trace_snapshot();
+        assert_eq!(snap.buffer_level, rc.buffer_level);
+        assert_eq!(snap.optimal_buffer_level, rc.optimal_buffer_level);
+        assert_eq!(snap.critical_level, rc.optimal_buffer_level >> 3);
+        assert_eq!(snap.maximum_buffer_size, rc.maximum_buffer_size);
+        assert_eq!(snap.ambient_qp_inter, i32::from(rc.avg_frame_qindex_inter));
+        assert_eq!(snap.active_worst, i32::from(rc.active_max_qindex));
+        assert_eq!(snap.active_best, i32::from(rc.active_min_qindex));
+        assert_eq!(snap.picked_q, i32::from(rc.last_picked_qindex));
+        assert_eq!(snap.this_frame_target, rc.this_frame_target);
+    }
+
+    #[test]
+    fn config_accessor_round_trips() {
+        // The public `config` getter returns a borrow of the original
+        // config snapshot. Verify the snapshot is byte-equal on a
+        // representative non-default config.
+        let cfg = RateControlConfig {
+            target_bitrate_bps: 2_500_000,
+            framerate: 24.0,
+            ..RateControlConfig::default()
+        };
+        let rc = RateControl::new(cfg);
+        let got = rc.config();
+        assert_eq!(got.target_bitrate_bps, 2_500_000);
+        assert!((got.framerate - 24.0).abs() < f64::EPSILON);
+    }
 }
