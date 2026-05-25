@@ -1,7 +1,7 @@
-# decode head-to-head — 2026-05-25T00:51:30Z
+# decode head-to-head — 2026-05-25T01:52:14Z
 
 host: windows-x86_64  unpinned  build: release (3c8d6d1ddea4abc4)
-rvp9: 8137400  vpxdec: WebM Project VP9 Decoder v1.14.1 (D:\language\rvp9-2\build\libvpx\vpxdec.exe)
+rvp9: 7b268ab  vpxdec: WebM Project VP9 Decoder v1.14.1 (D:\language\rvp9-2\build\libvpx\vpxdec.exe)
 reps: R=3 per vpxdec row (median); rvp9 timing window per HLD §3
 rvp9 runs: 3 (summary row = run 1; CSV ledger captures all runs)
 
@@ -18,15 +18,15 @@ note: vpxdec value is per-frame mean from `vpxdec --noblit --summary -t N`,
 
 | fixture            | res        | tiles | threads | rvp9 p50 us | rvp9 mean us | vpxdec mean us | ratio (rvp9/vpx) | budget us | gate        |
 |--------------------|------------|-------|---------|-------------|--------------|----------------|------------------|-----------|-------------|
-| quantizer-00       | 352x288    |     1 |       1 |      1649.5 |       1697.8 |                |                ∞ |         - | n/a         |
-| tile_1x4           | 1920x1080  |     4 |       1 |     15131.0 |      14571.4 |                |                ∞ |         - | n/a         |
-| tile_1x4           | 1920x1080  |     4 |       4 |      7158.2 |       7047.3 |                |                ∞ |         - | n/a         |
-| testsrc_720p30     | 1280x720   |     1 |       1 |      4612.5 |       4188.6 |                |                ∞ |     33000 | PASS-info   |
-| testsrc_1080p30    | 1920x1080  |     4 |       2 |      6346.1 |       6461.8 |                |                ∞ |     33000 | PASS-info   |
-| testsrc_1080p30    | 1920x1080  |     4 |       4 |      4475.5 |       5153.8 |                |                ∞ |     33000 | PASS-info   |
-| testsrc_1080p60    | 1920x1080  |     4 |       4 |      3313.9 |       3665.6 |                |                ∞ |     16000 | PASS-info   |
-| testsrc_1080p60    | 1920x1080  |     4 |       8 |      3283.1 |       3655.4 |                |                ∞ |     16000 | PASS-info   |
-| foreman-fp1        | 352x288    |     1 |       1 |       648.7 |        626.2 |                |                ∞ |         - | n/a         |
+| quantizer-00       | 352x288    |     1 |       1 |      2000.2 |       2072.2 |         5251.0 |             0.39 |         - | n/a         |
+| tile_1x4           | 1920x1080  |     4 |       1 |     15840.8 |      15774.3 |         3342.9 |             4.72 |         - | n/a         |
+| tile_1x4           | 1920x1080  |     4 |       4 |      7730.4 |       7558.2 |         2144.0 |             3.53 |         - | n/a         |
+| testsrc_720p30     | 1280x720   |     1 |       1 |      4809.1 |       4317.5 |          570.3 |             7.57 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       2 |      7115.0 |       7196.0 |          689.5 |            10.44 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       4 |      4115.1 |       4920.5 |          566.1 |             8.69 |     33000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       4 |      3538.8 |       3922.6 |          599.7 |             6.54 |     16000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       8 |      3567.1 |       3943.5 |          517.4 |             7.62 |     16000 | PASS-info   |
+| foreman-fp1        | 352x288    |     1 |       1 |       696.5 |        671.2 |          322.8 |             2.08 |         - | n/a         |
 
 ## Methodology
 
@@ -47,5 +47,3 @@ note: vpxdec value is per-frame mean from `vpxdec --noblit --summary -t N`,
   fixture×threads (same 	imestamp, un_index=1..3).
   Pair with `bench-compare --baseline <ts1> --candidate <ts2>`
   for Mann-Whitney U significance against a previous sweep.
-- vpxdec sweep skipped (-SkipVpxdec); vpxdec_* and
-  ratio_mean columns blank in the CSV for this timestamp.
