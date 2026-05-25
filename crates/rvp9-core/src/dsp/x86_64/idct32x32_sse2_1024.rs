@@ -67,7 +67,7 @@ use crate::transforms::constants::{
 };
 
 #[cfg(target_arch = "x86_64")]
-use super::idct8x8_12_sse2::butterfly;
+use super::idct8x8_12_sse2::{butterfly, idct_calc_wraplow_sse2, pair_set_epi16};
 
 // ---------------------------------------------------------------------
 // Tiny shared helpers (line-by-line ports from libvpx).
@@ -748,6 +748,319 @@ unsafe fn idct32x32_add_sse2_1024_inner(input: &[i32; 1024], dst: &mut [u8], str
         dest_ptr = dest_ptr.add(8);
         i += 8;
     }
+}
+
+// ---------------------------------------------------------------------
+// Higher-EOB fast-path kernels — i16-lane SSE2.
+//
+// Line-by-line ports of libvpx `vpx_idct32x32_34_add_sse2` and
+// `vpx_idct32x32_135_add_sse2` (`inv_txfm_sse2.c:997-1217`) together
+// with the EOB-34 quarter helpers `idct32_34_8x32_*` from
+// `inv_txfm_sse2.c:890-994`. Same saturating-vs-modular semantics as
+// the dense `_1024` kernel — see module docstring.
+// ---------------------------------------------------------------------
+
+/// `idct32_34_8x32_quarter_1(in_, out)` — even-input quarter of the
+/// EOB-34 sparse 1-D 32-pt idct. Reads only `in_[0]` and `in_[4]`;
+/// writes `out[0..8]`. Mirrors libvpx `inv_txfm_sse2.c:890-923`.
+///
+/// # Safety
+///
+/// Caller must guarantee the running CPU supports SSE2.
+// G4: loads from `dst` use _mm_loadl_epi64 (unaligned) — helper does no `dst` I/O
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse2")]
+#[inline]
+unsafe fn idct32_34_8x32_quarter_1(in_: &[__m128i; 32], out: &mut [__m128i]) {
+    let zero = _mm_setzero_si128();
+    let mut step1: [__m128i; 8] = [zero; 8];
+    let mut step2: [__m128i; 8] = [zero; 8];
+
+    // stage 3
+    let (s4, s7) = butterfly(in_[4], zero, COSPI_28_64 as i16, COSPI_4_64 as i16);
+    step1[4] = s4;
+    step1[7] = s7;
+
+    // stage 4
+    step2[0] = butterfly_cospi16(in_[0]);
+    step2[4] = step1[4];
+    step2[5] = step1[4];
+    step2[6] = step1[7];
+    step2[7] = step1[7];
+
+    // stage 5
+    step1[0] = step2[0];
+    step1[1] = step2[0];
+    step1[2] = step2[0];
+    step1[3] = step2[0];
+    step1[4] = step2[4];
+    let (s5, s6) = butterfly(step2[6], step2[5], COSPI_16_64 as i16, COSPI_16_64 as i16);
+    step1[5] = s5;
+    step1[6] = s6;
+    step1[7] = step2[7];
+
+    // stage 6
+    out[0] = _mm_add_epi16(step1[0], step1[7]);
+    out[1] = _mm_add_epi16(step1[1], step1[6]);
+    out[2] = _mm_add_epi16(step1[2], step1[5]);
+    out[3] = _mm_add_epi16(step1[3], step1[4]);
+    out[4] = _mm_sub_epi16(step1[3], step1[4]);
+    out[5] = _mm_sub_epi16(step1[2], step1[5]);
+    out[6] = _mm_sub_epi16(step1[1], step1[6]);
+    out[7] = _mm_sub_epi16(step1[0], step1[7]);
+}
+
+/// `butterfly_cospi16(in)` — half-butterfly with cospi_16, reading only
+/// the low 8 lanes (upper 8 zero). Mirrors libvpx
+/// `inv_txfm_sse2.h:92-97`. Local copy avoids re-exporting from the
+/// 16x16 SSE2 module.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse2")]
+#[inline]
+unsafe fn butterfly_cospi16(in_: __m128i) -> __m128i {
+    let zero = _mm_setzero_si128();
+    let cst = pair_set_epi16(COSPI_16_64 as i16, COSPI_16_64 as i16);
+    let lo = _mm_unpacklo_epi16(in_, zero);
+    let hi = _mm_unpackhi_epi16(in_, zero);
+    idct_calc_wraplow_sse2(lo, hi, cst)
+}
+
+/// `idct32_34_8x32_quarter_2(in_, out)` — quarter-2 of the EOB-34
+/// sparse 1-D. Reads `in_[2]` and `in_[6]`; updates `out[8..16]`.
+/// Mirrors libvpx `inv_txfm_sse2.c:928-948`.
+///
+/// # Safety
+///
+/// Caller must guarantee the running CPU supports SSE2.
+// G4: loads from `dst` use _mm_loadl_epi64 (unaligned) — helper does no `dst` I/O
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse2")]
+#[inline]
+unsafe fn idct32_34_8x32_quarter_2(in_: &[__m128i; 32], out: &mut [__m128i]) {
+    let zero = _mm_setzero_si128();
+    let mut step1: [__m128i; 16] = [zero; 16];
+
+    // stage 2
+    let (s8, s15) = butterfly(in_[2], zero, COSPI_30_64 as i16, COSPI_2_64 as i16);
+    let (s11, s12) = butterfly(zero, in_[6], COSPI_6_64 as i16, COSPI_26_64 as i16);
+
+    // stage 3
+    step1[8] = s8;
+    step1[9] = s8;
+    step1[14] = s15;
+    step1[15] = s15;
+    step1[10] = s11;
+    step1[11] = s11;
+    step1[12] = s12;
+    step1[13] = s12;
+
+    idct32_8x32_quarter_2_stage_4_to_6(&mut step1, out);
+}
+
+/// `idct32_34_8x32_quarter_1_2(in_, out)` — combine quarters 1+2, then
+/// size-16 add/sub butterfly. Mirrors libvpx `inv_txfm_sse2.c:950-957`.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse2")]
+#[inline]
+unsafe fn idct32_34_8x32_quarter_1_2(in_: &[__m128i; 32], out: &mut [__m128i; 32]) {
+    let mut temp: [__m128i; 16] = [_mm_setzero_si128(); 16];
+    idct32_34_8x32_quarter_1(in_, &mut temp);
+    idct32_34_8x32_quarter_2(in_, &mut temp);
+    add_sub_butterfly(&temp, &mut out[..16], 16);
+}
+
+/// `idct32_34_8x32_quarter_3_4(in_, out)` — odd-index quarter of the
+/// EOB-34 sparse 1-D. Reads `in_[1, 3, 5, 7]`; writes `out[16..32]`.
+/// Mirrors libvpx `inv_txfm_sse2.c:962-984`.
+///
+/// # Safety
+///
+/// Caller must guarantee the running CPU supports SSE2.
+// G4: loads from `dst` use _mm_loadl_epi64 (unaligned) — helper does no `dst` I/O
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse2")]
+#[inline]
+unsafe fn idct32_34_8x32_quarter_3_4(in_: &[__m128i; 32], out: &mut [__m128i; 32]) {
+    let zero = _mm_setzero_si128();
+    let mut step1: [__m128i; 32] = [zero; 32];
+
+    // stage 1
+    let (a16, a31) = butterfly(in_[1], zero, COSPI_31_64 as i16, COSPI_1_64 as i16);
+    step1[16] = a16;
+    step1[31] = a31;
+    let (a19, a28) = butterfly(zero, in_[7], COSPI_7_64 as i16, COSPI_25_64 as i16);
+    step1[19] = a19;
+    step1[28] = a28;
+    let (a20, a27) = butterfly(in_[5], zero, COSPI_27_64 as i16, COSPI_5_64 as i16);
+    step1[20] = a20;
+    step1[27] = a27;
+    let (a23, a24) = butterfly(zero, in_[3], COSPI_3_64 as i16, COSPI_29_64 as i16);
+    step1[23] = a23;
+    step1[24] = a24;
+
+    // stage 3 (libvpx skips stage 2 — sparse inputs make step2 == step1)
+    let (b17, b30) = butterfly(step1[31], step1[16], COSPI_28_64 as i16, COSPI_4_64 as i16);
+    step1[17] = b17;
+    step1[30] = b30;
+    let (b18, b29) = butterfly(
+        step1[28],
+        step1[19],
+        -(COSPI_4_64 as i16),
+        COSPI_28_64 as i16,
+    );
+    step1[18] = b18;
+    step1[29] = b29;
+    let (b21, b26) = butterfly(step1[27], step1[20], COSPI_12_64 as i16, COSPI_20_64 as i16);
+    step1[21] = b21;
+    step1[26] = b26;
+    let (b22, b25) = butterfly(
+        step1[24],
+        step1[23],
+        -(COSPI_20_64 as i16),
+        COSPI_12_64 as i16,
+    );
+    step1[22] = b22;
+    step1[25] = b25;
+
+    idct32_8x32_quarter_3_4_stage_4_to_7(&mut step1, out);
+}
+
+/// `idct32_34_8x32(in_, out)` — full 1-D 32-pt IDCT for the EOB-34
+/// sparse contract. Mirrors libvpx `inv_txfm_sse2.c:986-994`.
+///
+/// # Safety
+///
+/// Caller must guarantee the running CPU supports SSE2.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse2")]
+unsafe fn idct32_34_8x32(in_: &[__m128i; 32], out: &mut [__m128i; 32]) {
+    let mut temp: [__m128i; 32] = [_mm_setzero_si128(); 32];
+
+    idct32_34_8x32_quarter_1_2(in_, &mut temp);
+    idct32_34_8x32_quarter_3_4(in_, &mut temp);
+    let temp_copy = temp;
+    add_sub_butterfly(&temp_copy, out, 32);
+}
+
+/// Inner SSE2 implementation of the EOB ≤ 34 32×32 IDCT + residual
+/// add. Mirrors libvpx `vpx_idct32x32_34_add_sse2`
+/// (`inv_txfm_sse2.c:997-1017`).
+///
+/// # Safety
+///
+/// Caller must guarantee:
+/// - The running CPU supports SSE2.
+/// - `dst` has at least `31 * stride + 32` bytes of valid storage.
+// G4: loads from `dst` use _mm_loadl_epi64 (unaligned)
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse2")]
+unsafe fn idct32x32_add_sse2_34_inner(input: &[i32; 1024], dst: &mut [u8], stride: usize) {
+    debug_assert!(
+        dst.len() >= stride * 31 + 32,
+        "dst too small for 32x32 add"
+    );
+
+    let zero = _mm_setzero_si128();
+    let mut io: [__m128i; 32] = [zero; 32];
+    let mut col: [__m128i; 32] = [zero; 32];
+
+    // Row pass: load only the top-left 8×8 (rows 0..8, cols 0..8) since
+    // EOB ≤ 34 confines non-zero coefs to that sub-block. Positions
+    // 8..32 of `io` stay zero from the initialiser.
+    load_transpose_16bit_8x8(input.as_ptr(), 32, &mut io[..8]);
+    idct32_34_8x32(&io, &mut col);
+
+    // Column pass: 4 strips of 8 cols × 32 rows.
+    let mut dest_ptr = dst.as_mut_ptr();
+    let mut i = 0usize;
+    while i < 32 {
+        transpose_16bit_8x8(&col[i..i + 8], &mut io[..8]);
+        // libvpx re-zeros nothing here — the prior column-pass iteration
+        // leaves io[8..32] holding `idct32_34_8x32` outputs; but the
+        // next call to `idct32_34_8x32` only reads in_[0, 2, 4, 6, 1, 3,
+        // 5, 7] (sparse-quarter contract). So we need to zero io[8..32]
+        // to match libvpx's `__m128i io[32]` initial-zero contract.
+        //
+        // Actually libvpx's source reuses `io` without re-zeroing —
+        // see the loop body at `inv_txfm_sse2.c:1006-1013`. The trick is
+        // that `idct32_34_8x32_sse2` only **reads** in_[0..8]; positions
+        // 8..32 are never read. So we can match libvpx exactly: only
+        // overwrite io[0..8] from the transpose, leave io[8..32] as-is.
+        let io_copy = io;
+        idct32_34_8x32(&io_copy, &mut io);
+        store_buffer_8x32(&mut io, dest_ptr, stride);
+
+        dest_ptr = dest_ptr.add(8);
+        i += 8;
+    }
+}
+
+/// Safe wrapper for the SSE2 i16-lane EOB ≤ 34 32×32 IDCT.
+#[cfg(target_arch = "x86_64")]
+pub fn idct32x32_add_sse2_34(coeffs: &[i32; 1024], dst: &mut [u8], stride: usize) {
+    // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
+    // when `caps.sse2 == true`. SSE2 is universal on x86_64.
+    unsafe { idct32x32_add_sse2_34_inner(coeffs, dst, stride) }
+}
+
+/// Inner SSE2 implementation of the EOB ≤ 135 32×32 IDCT + residual
+/// add. Mirrors libvpx `vpx_idct32x32_135_add_sse2`
+/// (`inv_txfm_sse2.c:1192-1217`).
+///
+/// # Safety
+///
+/// Caller must guarantee:
+/// - The running CPU supports SSE2.
+/// - `dst` has at least `31 * stride + 32` bytes of valid storage.
+// G4: loads from `dst` use _mm_loadl_epi64 (unaligned)
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse2")]
+unsafe fn idct32x32_add_sse2_135_inner(input: &[i32; 1024], dst: &mut [u8], stride: usize) {
+    debug_assert!(
+        dst.len() >= stride * 31 + 32,
+        "dst too small for 32x32 add"
+    );
+
+    let zero = _mm_setzero_si128();
+    let mut in_: [__m128i; 32] = [zero; 32];
+    let mut out_: [__m128i; 32] = [zero; 32];
+    let mut col: [[__m128i; 32]; 2] = [[zero; 32]; 2];
+
+    // libvpx zeroes in_[16..32] explicitly — already zero from init.
+
+    // Row pass: 2 strips × (8 rows × 16 cols / 2 sub-blocks). EOB ≤ 135
+    // confines coefs to top-left 16x16, so rows 16..32 and cols 16..32
+    // are all zero. We load 2× 8x8 sub-blocks per strip (cols 0..16).
+    let mut input_ptr = input.as_ptr();
+    for strip in 0..2 {
+        load_transpose_16bit_8x8(input_ptr, 32, &mut in_[..8]);
+        load_transpose_16bit_8x8(input_ptr.add(8), 32, &mut in_[8..16]);
+        idct32_1024_8x32(&in_, &mut col[strip]);
+        input_ptr = input_ptr.add(32 * 8);
+    }
+
+    // Column pass: 4 strips of 8 cols × 32 rows.
+    let mut dest_ptr = dst.as_mut_ptr();
+    let mut i = 0usize;
+    while i < 32 {
+        transpose_16bit_8x8(&col[0][i..i + 8], &mut in_[..8]);
+        transpose_16bit_8x8(&col[1][i..i + 8], &mut in_[8..16]);
+        // in_[16..32] still zero (initialiser; the row-pass loop didn't
+        // touch them since we only filled in_[..16]).
+        idct32_1024_8x32(&in_, &mut out_);
+        store_buffer_8x32(&mut out_, dest_ptr, stride);
+
+        dest_ptr = dest_ptr.add(8);
+        i += 8;
+    }
+}
+
+/// Safe wrapper for the SSE2 i16-lane EOB ≤ 135 32×32 IDCT.
+#[cfg(target_arch = "x86_64")]
+pub fn idct32x32_add_sse2_135(coeffs: &[i32; 1024], dst: &mut [u8], stride: usize) {
+    // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
+    // when `caps.sse2 == true`. SSE2 is universal on x86_64.
+    unsafe { idct32x32_add_sse2_135_inner(coeffs, dst, stride) }
 }
 
 /// Safe wrapper for the SSE2 i16-lane dense `idct32x32_1024_add` kernel.
