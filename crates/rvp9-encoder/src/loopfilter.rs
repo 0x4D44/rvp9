@@ -173,21 +173,23 @@ pub(crate) fn apply_loop_filter_to_tight_recon(
     let sb_rows = mi_rows.div_ceil(SB_MI_SIZE);
     let sb_cols = mi_cols.div_ceil(SB_MI_SIZE);
 
-    // Materialise the full-frame ModeInfo grid (one entry per 8×8
-    // luma cell). `setup_mask` expects `&[ModeInfo]` indexed as
-    // `mi[r*stride + c]`. The encoder's `mi_grid` is
-    // `&[Option<ModeInfo>]`; backfill `None` cells with a
-    // placeholder cloned from the first populated cell.
+    // Wave 7 C1 — `setup_mask` now takes `&[Option<ModeInfo>]`
+    // directly, mirroring the decoder's frame_mi_grid layout. The
+    // encoder's partition picker may leave sub-leaf MI cells `None`
+    // (those cells are never read by the partition walker because
+    // libvpx's "MI pointer duplication" only matters for the
+    // top-left cell of each leaf). For safety we back-fill any
+    // remaining `None`s with a cloned placeholder before calling
+    // setup_mask, so the LF reader's `.expect()` never trips even on
+    // adversarial picker output.
     let placeholder = mi_grid
         .iter()
         .find_map(|c| c.as_ref().cloned())
         .unwrap_or_else(default_placeholder_mode_info);
-    let mut frame_mi: Vec<ModeInfo> = Vec::with_capacity(mi_grid.len().max(1));
+    let mut frame_mi_opt: Vec<Option<ModeInfo>> =
+        Vec::with_capacity(mi_grid.len().max(1));
     for cell in mi_grid {
-        match cell {
-            Some(mi) => frame_mi.push(*mi),
-            None => frame_mi.push(placeholder),
-        }
+        frame_mi_opt.push(Some(cell.unwrap_or(placeholder)));
     }
 
     // Build per-SB masks, then dispatch the apply driver.
@@ -201,7 +203,7 @@ pub(crate) fn apply_loop_filter_to_tight_recon(
             setup_mask(
                 mi_row as u32,
                 mi_col as u32,
-                &frame_mi,
+                &frame_mi_opt,
                 mi_cols,
                 mi_rows as u32,
                 mi_cols as u32,

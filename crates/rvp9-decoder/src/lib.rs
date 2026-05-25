@@ -3502,38 +3502,17 @@ fn apply_loop_filter_to_frame(
     let sb_rows = mi_rows.div_ceil(SB_MI_SIZE);
     let sb_cols = mi_cols.div_ceil(SB_MI_SIZE);
 
-    // Materialise the full-frame ModeInfo grid (one entry per 8×8
-    // luma cell, row-major with stride = mi_stride). `setup_mask`
-    // expects a flat `&[ModeInfo]` indexed as `mi[r*stride + c]`,
-    // mirroring libvpx's `cm->mi_grid_visible` pointer array
-    // (`vp9_onyxc_int.h:mi_grid_visible`). For the single-tile path
-    // the tile grid IS the frame grid.
-    //
-    // Cells the partition walker won't reach (past-frame quadrants,
-    // bounded by `mi_rows` / `mi_cols`) get a placeholder; the
-    // walker's `max_rows` / `max_cols` clamp guarantees those cells
-    // are never read. Sub-leaf MI cells inside a >8×8 partition that
-    // weren't explicitly written by the decoder (libvpx's "mi pointer
-    // duplication" convention) likewise stay as the placeholder, but
-    // `setup_mask` only reads the partition leaf's top-left MI at
-    // each leaf boundary, so the duplication isn't required.
     // Wave 5b commit 1 — frame_mi_grid is pre-filled with
     // `Some(default_padding_modeinfo())` at frame start (see
     // `decode_intra_frame_inner` / `decode_inter_frame_inner`); tile
     // workers overwrite the cells they cover with `Some(real)`. After
-    // tile decode every cell is therefore `Some`, so the materialisation
-    // collapses to a per-cell `expect` (no None placeholder hunt, no
-    // per-cell match arm).
+    // tile decode every cell is `Some`, so `setup_mask` /
+    // `filter_block_plane_non420` can borrow the slab directly
+    // (Wave 7 C1) — no per-frame `Vec<ModeInfo>` materialisation.
     debug_assert!(
         mi_grid.iter().all(|c| c.is_some()),
         "Wave 5b commit 1: frame_mi_grid must be fully populated at LF entry",
     );
-    let mut frame_mi: Vec<ModeInfo> = Vec::with_capacity(mi_grid.len().max(1));
-    for cell in mi_grid {
-        frame_mi.push(cell.expect(
-            "Wave 5b commit 1: frame_mi_grid cells are pre-filled with \n             default_padding_modeinfo at frame start; tile workers only \n             overwrite cells with `Some(real)` (never None)",
-        ));
-    }
 
     let mut lfm_grid: Vec<LoopFilterMask> = vec![LoopFilterMask::default(); sb_rows * sb_cols];
 
@@ -3546,7 +3525,7 @@ fn apply_loop_filter_to_frame(
             setup_mask(
                 mi_row as u32,
                 mi_col as u32,
-                &frame_mi,
+                mi_grid,
                 mi_stride,
                 mi_rows as u32,
                 mi_cols as u32,
@@ -3560,7 +3539,7 @@ fn apply_loop_filter_to_frame(
                 mi_cols as u32,
                 lfm,
             );
-            dump_lf_masks(lfm, &frame_mi, mi_stride, mi_rows, mi_cols, sb_row, sb_col);
+            dump_lf_masks(lfm, mi_grid, mi_stride, mi_rows, mi_cols, sb_row, sb_col);
         }
     }
 
@@ -3580,7 +3559,7 @@ fn apply_loop_filter_to_frame(
         0,
         mi_rows,
         Some(rvp9_core::loopfilter::apply::Non420Inputs {
-            mi_grid: &frame_mi,
+            mi_grid,
             mi_stride,
             levels: &levels,
         }),
@@ -3698,25 +3677,16 @@ fn apply_loop_filter_to_frame_dispatching(
     let levels = resolve_filter_levels(filter_level, lf_deltas, seg_view);
     let info = LoopFilterInfo::new(sharpness_level);
 
-    // Materialise the full-frame `Vec<ModeInfo>` (placeholder for None
-    // cells). Identical to the serial path; same placeholder selection.
     // Wave 5b commit 1 — frame_mi_grid is pre-filled with
     // `Some(default_padding_modeinfo())` at frame start (see
     // `decode_intra_frame_inner` / `decode_inter_frame_inner`); tile
     // workers overwrite the cells they cover with `Some(real)`. After
-    // tile decode every cell is therefore `Some`, so the materialisation
-    // collapses to a per-cell `expect` (no None placeholder hunt, no
-    // per-cell match arm).
+    // tile decode every cell is `Some`, so `RowMaskInputs.mi_grid`
+    // can borrow the slab directly (Wave 7 C1).
     debug_assert!(
         mi_grid.iter().all(|c| c.is_some()),
         "Wave 5b commit 1: frame_mi_grid must be fully populated at LF entry",
     );
-    let mut frame_mi: Vec<ModeInfo> = Vec::with_capacity(mi_grid.len().max(1));
-    for cell in mi_grid {
-        frame_mi.push(cell.expect(
-            "Wave 5b commit 1: frame_mi_grid cells are pre-filled with \n             default_padding_modeinfo at frame start; tile workers only \n             overwrite cells with `Some(real)` (never None)",
-        ));
-    }
 
     // Per-row LF-progress flags + the dispatcher counter. Both live on
     // this stack frame across the scope.
@@ -3746,7 +3716,7 @@ fn apply_loop_filter_to_frame_dispatching(
     );
     let non420 = if chroma_is_asymmetric {
         Some(Non420Inputs {
-            mi_grid: &frame_mi,
+            mi_grid,
             mi_stride,
             levels: &levels,
         })
@@ -3756,7 +3726,7 @@ fn apply_loop_filter_to_frame_dispatching(
 
     let shared = SharedFrame::from_yv12(yv12);
     let row_inputs = RowMaskInputs {
-        mi_grid: &frame_mi,
+        mi_grid,
         mi_stride,
         mi_rows,
         mi_cols,
@@ -3792,7 +3762,7 @@ fn apply_loop_filter_to_frame_dispatching(
 /// access per SB — was a syscall pre-R.3).
 fn dump_lf_masks(
     lfm: &LoopFilterMask,
-    frame_mi: &[ModeInfo],
+    frame_mi: &[Option<ModeInfo>],
     mi_stride: usize,
     mi_rows: usize,
     mi_cols: usize,
@@ -3828,8 +3798,14 @@ fn dump_lf_masks(
     for r in 0..mi_rows {
         let mut row_str = String::new();
         for c in 0..mi_cols {
-            let mi = &frame_mi[r * mi_stride + c];
-            let tag = match mi.block_size {
+            // Pre-fill (Wave 5b) means every cell is Some; fall back
+            // to a placeholder tag for any rogue None just so the
+            // dump never panics under a hypothetical broken state.
+            let bs = frame_mi[r * mi_stride + c]
+                .as_ref()
+                .map(|mi| mi.block_size)
+                .unwrap_or(BlockSize::Block8x8);
+            let tag = match bs {
                 BlockSize::Block4x4 => "4x4 ",
                 BlockSize::Block8x8 => "8x8 ",
                 BlockSize::Block16x16 => "16x16",

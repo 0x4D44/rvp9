@@ -231,7 +231,11 @@ const SPIN_YIELD_THRESHOLD: u32 = 8192;
 #[derive(Copy, Clone)]
 pub struct RowMaskInputs<'a> {
     /// Full-frame MI slab, row-major, `mi_grid[r * mi_stride + c]`.
-    pub mi_grid: &'a [ModeInfo],
+    /// Wave 5b commit 1 (`fa06a1f`) pre-fills the decoder/encoder
+    /// MI slab with `Some(default_padding_modeinfo())` before tile
+    /// workers start, so the LF readers can borrow the slab directly
+    /// (no per-frame `Vec<ModeInfo>` materialisation).
+    pub mi_grid: &'a [Option<ModeInfo>],
     /// Stride in MI cells per row.
     pub mi_stride: usize,
     /// Frame MI extents.
@@ -480,7 +484,9 @@ const TX_16X16: usize = 2;
 #[derive(Copy, Clone, Debug)]
 pub struct Non420Inputs<'a> {
     /// Frame-wide MI slab, row-major, indexed `[r * mi_stride + c]`.
-    pub mi_grid: &'a [ModeInfo],
+    /// Same `Option`-wrapped convention as [`RowMaskInputs::mi_grid`]
+    /// (Wave 5b commit 1 + Wave 7 commit 1).
+    pub mi_grid: &'a [Option<ModeInfo>],
     /// Stride in MI cells per row.
     pub mi_stride: usize,
     /// Per-frame `[seg][ref][mode]` filter-level cube (output of
@@ -1088,7 +1094,7 @@ fn is_inter_block(mi: &ModeInfo) -> bool {
 fn filter_block_plane_non420(
     pixels: &mut [u8],
     stride: usize,
-    mi_grid: &[ModeInfo],
+    mi_grid: &[Option<ModeInfo>],
     mi_grid_stride: usize,
     mi_row: usize,
     mi_col: usize,
@@ -1149,7 +1155,9 @@ fn filter_block_plane_non420(
 
         let mut c = 0usize;
         while c < MI_BLOCK_SIZE && mi_col + c < mi_cols {
-            let mi = &mi_grid[row_base + c];
+            let mi = mi_grid[row_base + c]
+                .as_ref()
+                .expect("Wave 5b: frame_mi_grid pre-filled with Some");
             let sb_type = mi.block_size;
             let skip_this = mi.skip && is_inter_block(mi);
 
@@ -2516,7 +2524,8 @@ mod tests {
         // derived by `uv_plane_tx_size`. The block at (r=2, c=2) (luma
         // pixel col 16) has a "left edge" the non-420 walker should
         // emit a chroma vertical edge for at chroma col 8.
-        let mi_grid: Vec<ModeInfo> = vec![intra_mi(BlockSize::Block16x16, TxSize::Tx8x8); 8 * 8];
+        let mi_grid: Vec<Option<ModeInfo>> =
+            vec![Some(intra_mi(BlockSize::Block16x16, TxSize::Tx8x8)); 8 * 8];
         let levels = flat_levels(30);
 
         // The 420 mask grid is unused by the non420 dispatch; pass a
@@ -2577,7 +2586,8 @@ mod tests {
         }
         let u_before = snapshot_u(&buf);
 
-        let mi_grid: Vec<ModeInfo> = vec![intra_mi(BlockSize::Block16x16, TxSize::Tx8x8); 8 * 8];
+        let mi_grid: Vec<Option<ModeInfo>> =
+            vec![Some(intra_mi(BlockSize::Block16x16, TxSize::Tx8x8)); 8 * 8];
         let levels = flat_levels(30);
 
         let info = LoopFilterInfo::new(0);
@@ -2635,7 +2645,8 @@ mod tests {
         let u_before = snapshot_u(&buf);
 
         // One Block64x64 with TX_32X32 covers the whole SB.
-        let mi_grid: Vec<ModeInfo> = vec![intra_mi(BlockSize::Block64x64, TxSize::Tx32x32); 64];
+        let mi_grid: Vec<Option<ModeInfo>> =
+            vec![Some(intra_mi(BlockSize::Block64x64, TxSize::Tx32x32)); 64];
         let levels = flat_levels(30);
 
         let info = LoopFilterInfo::new(0);
@@ -2690,7 +2701,8 @@ mod tests {
 
         // Block8x8 + TX_4X4 → chroma TX_4X4 (the internal-4x4 edge
         // arm fires).
-        let mi_grid: Vec<ModeInfo> = vec![intra_mi(BlockSize::Block8x8, TxSize::Tx4x4); 64];
+        let mi_grid: Vec<Option<ModeInfo>> =
+            vec![Some(intra_mi(BlockSize::Block8x8, TxSize::Tx4x4)); 64];
         let levels = flat_levels(30);
 
         let info = LoopFilterInfo::new(0);
@@ -2742,7 +2754,8 @@ mod tests {
         }
         let u_before = snapshot_u(&buf);
 
-        let mi_grid: Vec<ModeInfo> = vec![intra_mi(BlockSize::Block32x32, TxSize::Tx16x16); 64];
+        let mi_grid: Vec<Option<ModeInfo>> =
+            vec![Some(intra_mi(BlockSize::Block32x32, TxSize::Tx16x16)); 64];
         let levels = flat_levels(30);
 
         let info = LoopFilterInfo::new(0);
@@ -2806,7 +2819,7 @@ mod tests {
             RefFrame::LastFrame,
             false,
         );
-        let mi_grid: Vec<ModeInfo> = vec![mi; 64];
+        let mi_grid: Vec<Option<ModeInfo>> = vec![Some(mi); 64];
 
         let info = LoopFilterInfo::new(0);
         let non420 = Non420Inputs {
@@ -2869,7 +2882,7 @@ mod tests {
             RefFrame::LastFrame,
             true,
         );
-        let mi_grid: Vec<ModeInfo> = vec![mi; 64];
+        let mi_grid: Vec<Option<ModeInfo>> = vec![Some(mi); 64];
         // Build a level table where ZeroMv/LAST → 30. (We need a
         // non-zero level so the walker DOESN'T short-circuit on
         // `lvl == 0`; the test point is the *skip-based* suppression
@@ -2955,7 +2968,8 @@ mod tests {
         // c=0 and c=2 (Block16x16 → n_8x8_wide=2 → block_edge at c
         // & 1 == 0). The border mask clears bit 0 (chroma col 0)
         // but bit 1 (chroma col 8) survives.
-        let mi_grid: Vec<ModeInfo> = vec![intra_mi(BlockSize::Block16x16, TxSize::Tx8x8); 64];
+        let mi_grid: Vec<Option<ModeInfo>> =
+            vec![Some(intra_mi(BlockSize::Block16x16, TxSize::Tx8x8)); 64];
         let levels = flat_levels(30);
 
         let info = LoopFilterInfo::new(0);
@@ -3023,7 +3037,8 @@ mod tests {
         // where `mask_4x4_int[r] |= bit`. At the very last row,
         // `skip_border_4x4_r` should suppress that contribution in
         // the horizontal pass.
-        let mi_grid: Vec<ModeInfo> = vec![intra_mi(BlockSize::Block8x8, TxSize::Tx4x4); 64];
+        let mi_grid: Vec<Option<ModeInfo>> =
+            vec![Some(intra_mi(BlockSize::Block8x8, TxSize::Tx4x4)); 64];
         let levels = flat_levels(30);
 
         let info = LoopFilterInfo::new(0);
@@ -3087,7 +3102,8 @@ mod tests {
         let u_before = snapshot_u(&buf);
 
         // 16×8 MI grid (128 luma / 8 = 16 cols, 64 / 8 = 8 rows).
-        let mi_grid: Vec<ModeInfo> = vec![intra_mi(BlockSize::Block16x16, TxSize::Tx8x8); 16 * 8];
+        let mi_grid: Vec<Option<ModeInfo>> =
+            vec![Some(intra_mi(BlockSize::Block16x16, TxSize::Tx8x8)); 16 * 8];
         let levels = flat_levels(30);
 
         // 2 SBs across, 1 SB tall. Both mask grids are zero (the
@@ -3148,7 +3164,8 @@ mod tests {
 
         // Block4x4 + TX_4X4 throughout. n_4x4_wide = 1 → the else
         // branches of the block_edge_left/above ternaries fire.
-        let mi_grid: Vec<ModeInfo> = vec![intra_mi(BlockSize::Block4x4, TxSize::Tx4x4); 64];
+        let mi_grid: Vec<Option<ModeInfo>> =
+            vec![Some(intra_mi(BlockSize::Block4x4, TxSize::Tx4x4)); 64];
         let levels = flat_levels(30);
 
         let info = LoopFilterInfo::new(0);

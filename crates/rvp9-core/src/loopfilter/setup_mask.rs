@@ -99,12 +99,19 @@ fn inputs_for(mi: &ModeInfo, levels: &FrameFilterLevels, shift_y: u32, shift_uv:
 /// Walk the partition tree of one 64×64 superblock and populate
 /// `lfm` with the per-edge bit-fields.
 ///
-/// `mi8x8` is a row-major slice of the per-8×8 `ModeInfo` grid; cell
-/// `(r, c)` lives at `mi8x8[r * mi_stride + c]`. `mi_row` /
-/// `mi_col` are the top-left 8×8 coordinates of the superblock in
-/// the MI grid; `mi_rows` / `mi_cols` are the full-frame grid
-/// extents so the walker can skip out-of-frame quadrants past the
-/// frame edge.
+/// `mi8x8` is a row-major slice of the per-8×8 `Option<ModeInfo>`
+/// grid; cell `(r, c)` lives at `mi8x8[r * mi_stride + c]`.
+/// Wave 5b commit 1 (`fa06a1f`) pre-fills the decoder's frame-wide MI
+/// slab with `Some(default_padding_modeinfo())` before tile workers
+/// start, so every cell the walker reads is guaranteed `Some(_)`; the
+/// inline `.expect()` at the read sites is therefore "free" in the
+/// branch-predictor sense and lets the walker borrow the grid
+/// directly without a per-frame `Vec<ModeInfo>` materialisation.
+///
+/// `mi_row` / `mi_col` are the top-left 8×8 coordinates of the
+/// superblock in the MI grid; `mi_rows` / `mi_cols` are the
+/// full-frame grid extents so the walker can skip out-of-frame
+/// quadrants past the frame edge.
 ///
 /// `levels` is the resolved `[seg][ref][mode]` filter-level cube
 /// (typically the output of [`crate::loopfilter::resolve_filter_levels`]).
@@ -115,12 +122,14 @@ fn inputs_for(mi: &ModeInfo, levels: &FrameFilterLevels, shift_y: u32, shift_uv:
 ///
 /// Panics if `mi8x8` is too short for the SB's MI cells (i.e. if
 /// `(mi_row + r) * mi_stride + (mi_col + c)` is out of bounds for
-/// any in-frame cell visited by the walker).
+/// any in-frame cell visited by the walker), or if any cell visited
+/// by the walker is `None` (the Wave 5b pre-fill guarantees this
+/// never happens at the decoder/encoder LF call sites).
 #[allow(clippy::too_many_arguments)]
 pub fn setup_mask(
     mi_row: u32,
     mi_col: u32,
-    mi8x8: &[ModeInfo],
+    mi8x8: &[Option<ModeInfo>],
     mi_stride: usize,
     mi_rows: u32,
     mi_cols: u32,
@@ -143,8 +152,11 @@ pub fn setup_mask(
 
     // Top-left MI of the superblock. libvpx asserts `mip[0] != NULL`
     // before the switch (`:917`); the analogous safety in rvp9 is
-    // that the slice is in-bounds for the (0, 0) cell.
-    let top = &mi8x8[idx_at(0, 0)];
+    // that the slice is in-bounds for the (0, 0) cell and that
+    // Wave 5b's pre-fill made it `Some`.
+    let top = mi8x8[idx_at(0, 0)]
+        .as_ref()
+        .expect("Wave 5b: frame_mi_grid pre-filled with Some");
 
     match top.block_size {
         // ------------------------------------------------------------------
@@ -159,7 +171,9 @@ pub fn setup_mask(
         BlockSize::Block64x32 => {
             build_masks(&inputs_for(top, levels, 0, 0), lfm);
             if 4 < max_rows {
-                let bot = &mi8x8[idx_at(4, 0)];
+                let bot = mi8x8[idx_at(4, 0)]
+                    .as_ref()
+                    .expect("Wave 5b: frame_mi_grid pre-filled with Some");
                 build_masks(&inputs_for(bot, levels, 32, 8), lfm);
             }
         }
@@ -169,7 +183,9 @@ pub fn setup_mask(
         BlockSize::Block32x64 => {
             build_masks(&inputs_for(top, levels, 0, 0), lfm);
             if 4 < max_cols {
-                let right = &mi8x8[idx_at(0, 4)];
+                let right = mi8x8[idx_at(0, 4)]
+                    .as_ref()
+                    .expect("Wave 5b: frame_mi_grid pre-filled with Some");
                 build_masks(&inputs_for(right, levels, 4, 2), lfm);
             }
         }
@@ -198,7 +214,7 @@ const SHIFT_8_Y: [u32; 4] = [0, 1, 8, 9];
 fn walk_four_32x32(
     mi_row: u32,
     mi_col: u32,
-    mi8x8: &[ModeInfo],
+    mi8x8: &[Option<ModeInfo>],
     mi_stride: usize,
     max_rows: u32,
     max_cols: u32,
@@ -218,7 +234,9 @@ fn walk_four_32x32(
         let shift_y_32 = SHIFT_32_Y[idx_32 as usize];
         let shift_uv_32 = SHIFT_32_UV[idx_32 as usize];
 
-        let q32 = &mi8x8[idx_at(q32_row, q32_col)];
+        let q32 = mi8x8[idx_at(q32_row, q32_col)]
+            .as_ref()
+            .expect("Wave 5b: frame_mi_grid pre-filled with Some");
         match q32.block_size {
             BlockSize::Block32x32 => {
                 build_masks(&inputs_for(q32, levels, shift_y_32, shift_uv_32), lfm);
@@ -226,7 +244,9 @@ fn walk_four_32x32(
             BlockSize::Block32x16 => {
                 build_masks(&inputs_for(q32, levels, shift_y_32, shift_uv_32), lfm);
                 if q32_row + 2 < max_rows {
-                    let bot = &mi8x8[idx_at(q32_row + 2, q32_col)];
+                    let bot = mi8x8[idx_at(q32_row + 2, q32_col)]
+                        .as_ref()
+                        .expect("Wave 5b: frame_mi_grid pre-filled with Some");
                     build_masks(
                         &inputs_for(bot, levels, shift_y_32 + 16, shift_uv_32 + 4),
                         lfm,
@@ -236,7 +256,9 @@ fn walk_four_32x32(
             BlockSize::Block16x32 => {
                 build_masks(&inputs_for(q32, levels, shift_y_32, shift_uv_32), lfm);
                 if q32_col + 2 < max_cols {
-                    let right = &mi8x8[idx_at(q32_row, q32_col + 2)];
+                    let right = mi8x8[idx_at(q32_row, q32_col + 2)]
+                        .as_ref()
+                        .expect("Wave 5b: frame_mi_grid pre-filled with Some");
                     build_masks(
                         &inputs_for(right, levels, shift_y_32 + 2, shift_uv_32 + 1),
                         lfm,
@@ -270,7 +292,7 @@ fn walk_four_32x32(
 fn walk_four_16x16(
     mi_row: u32,
     mi_col: u32,
-    mi8x8: &[ModeInfo],
+    mi8x8: &[Option<ModeInfo>],
     mi_stride: usize,
     max_rows: u32,
     max_cols: u32,
@@ -294,7 +316,9 @@ fn walk_four_16x16(
         let shift_y_16 = shift_y_32 + SHIFT_16_Y[idx_16 as usize];
         let shift_uv_16 = shift_uv_32 + SHIFT_16_UV[idx_16 as usize];
 
-        let q16 = &mi8x8[idx_at(q16_row, q16_col)];
+        let q16 = mi8x8[idx_at(q16_row, q16_col)]
+            .as_ref()
+            .expect("Wave 5b: frame_mi_grid pre-filled with Some");
         match q16.block_size {
             BlockSize::Block16x16 => {
                 build_masks(&inputs_for(q16, levels, shift_y_16, shift_uv_16), lfm);
@@ -302,7 +326,9 @@ fn walk_four_16x16(
             BlockSize::Block16x8 => {
                 build_masks(&inputs_for(q16, levels, shift_y_16, shift_uv_16), lfm);
                 if q16_row + 1 < max_rows {
-                    let bot = &mi8x8[idx_at(q16_row + 1, q16_col)];
+                    let bot = mi8x8[idx_at(q16_row + 1, q16_col)]
+                        .as_ref()
+                        .expect("Wave 5b: frame_mi_grid pre-filled with Some");
                     // 16×8 bottom-half is Y-only: libvpx tracks UV
                     // only at the first 8×8 of a 16×16 group.
                     build_y_mask(&inputs_for(bot, levels, shift_y_16 + 8, 0), lfm);
@@ -311,7 +337,9 @@ fn walk_four_16x16(
             BlockSize::Block8x16 => {
                 build_masks(&inputs_for(q16, levels, shift_y_16, shift_uv_16), lfm);
                 if q16_col + 1 < max_cols {
-                    let right = &mi8x8[idx_at(q16_row, q16_col + 1)];
+                    let right = mi8x8[idx_at(q16_row, q16_col + 1)]
+                        .as_ref()
+                        .expect("Wave 5b: frame_mi_grid pre-filled with Some");
                     build_y_mask(&inputs_for(right, levels, shift_y_16 + 1, 0), lfm);
                 }
             }
@@ -322,7 +350,9 @@ fn walk_four_16x16(
                 // libvpx invokes `build_masks` (full) for it then
                 // `build_y_mask` for the remaining three.
                 // (`vp9_loopfilter.c:985-1000`.)
-                let first = &mi8x8[idx_at(q16_row, q16_col)];
+                let first = mi8x8[idx_at(q16_row, q16_col)]
+                    .as_ref()
+                    .expect("Wave 5b: frame_mi_grid pre-filled with Some");
                 build_masks(
                     &inputs_for(first, levels, shift_y_16 + SHIFT_8_Y[0], shift_uv_16),
                     lfm,
@@ -333,7 +363,9 @@ fn walk_four_16x16(
                     if q8_col >= max_cols || q8_row >= max_rows {
                         continue;
                     }
-                    let q8 = &mi8x8[idx_at(q8_row, q8_col)];
+                    let q8 = mi8x8[idx_at(q8_row, q8_col)]
+                        .as_ref()
+                        .expect("Wave 5b: frame_mi_grid pre-filled with Some");
                     build_y_mask(
                         &inputs_for(q8, levels, shift_y_16 + SHIFT_8_Y[idx_8 as usize], 0),
                         lfm,
@@ -426,9 +458,10 @@ mod tests {
 
     /// Replicate `mi` across an 8×8 MI grid (the libvpx convention
     /// for partition-tree leaves ≥ 8×8: every covered MI cell
-    /// holds the same pointer).
-    fn fill_grid(mi: ModeInfo) -> Vec<ModeInfo> {
-        vec![mi; 64]
+    /// holds the same pointer). Wrapped in `Some(_)` to match the
+    /// post-W7-C1 `&[Option<ModeInfo>]` signature of `setup_mask`.
+    fn fill_grid(mi: ModeInfo) -> Vec<Option<ModeInfo>> {
+        vec![Some(mi); 64]
     }
 
     /// `mode_lf_idx` returns 0 for intra, 0 for `ZEROMV`, 1 for
@@ -593,10 +626,10 @@ mod tests {
         // 8×8 MI cell).
         //
         // Cells (0,0), (0,1), (1,0), (1,1) all hold a Block4x4 MI.
-        grid[0] = intra_4x4();
-        grid[1] = intra_4x4();
-        grid[8] = intra_4x4();
-        grid[9] = intra_4x4();
+        grid[0] = Some(intra_4x4());
+        grid[1] = Some(intra_4x4());
+        grid[8] = Some(intra_4x4());
+        grid[9] = Some(intra_4x4());
 
         let levels = flat_levels(5);
 
@@ -891,7 +924,7 @@ mod tests {
         // is at (2, 0).
         for r in 0..4 {
             for c in 0..4 {
-                grid[r * 8 + c] = mi32x16;
+                grid[r * 8 + c] = Some(mi32x16);
             }
         }
         let levels = flat_levels(15);
@@ -958,7 +991,7 @@ mod tests {
         // Top-left 32x32 quadrant gets a Block16x32 pair.
         for r in 0..4 {
             for c in 0..4 {
-                grid[r * 8 + c] = mi16x32;
+                grid[r * 8 + c] = Some(mi16x32);
             }
         }
         let levels = flat_levels(15);
@@ -1015,10 +1048,10 @@ mod tests {
         let mut grid = fill_grid(mi16);
         // Top-left 16x16 region (cells (0,0), (0,1), (1,0), (1,1))
         // gets a Block16x8 pair.
-        grid[0] = mi16x8;
-        grid[1] = mi16x8;
-        grid[8] = mi16x8;
-        grid[9] = mi16x8;
+        grid[0] = Some(mi16x8);
+        grid[1] = Some(mi16x8);
+        grid[8] = Some(mi16x8);
+        grid[9] = Some(mi16x8);
         let levels = flat_levels(12);
 
         let mut got = LoopFilterMask::ZERO;
@@ -1065,10 +1098,10 @@ mod tests {
         let mi8x16 = intra_leaf(BlockSize::Block8x16, TxSize::Tx8x8);
         let mi16 = intra_leaf(BlockSize::Block16x16, TxSize::Tx8x8);
         let mut grid = fill_grid(mi16);
-        grid[0] = mi8x16;
-        grid[1] = mi8x16;
-        grid[8] = mi8x16;
-        grid[9] = mi8x16;
+        grid[0] = Some(mi8x16);
+        grid[1] = Some(mi8x16);
+        grid[8] = Some(mi8x16);
+        grid[9] = Some(mi8x16);
         let levels = flat_levels(12);
 
         let mut got = LoopFilterMask::ZERO;
@@ -1113,10 +1146,10 @@ mod tests {
         let mi16 = intra_leaf(BlockSize::Block16x16, TxSize::Tx8x8);
         let mut grid = fill_grid(mi16);
         // Top-left 16x16 region split into 4 × 8x8.
-        grid[0] = mi8;
-        grid[1] = mi8;
-        grid[8] = mi8;
-        grid[9] = mi8;
+        grid[0] = Some(mi8);
+        grid[1] = Some(mi8);
+        grid[8] = Some(mi8);
+        grid[9] = Some(mi8);
         let levels = flat_levels(7);
 
         let mut got = LoopFilterMask::ZERO;
