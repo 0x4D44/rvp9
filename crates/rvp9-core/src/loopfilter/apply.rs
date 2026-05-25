@@ -193,6 +193,229 @@ impl SharedFrame {
     }
 }
 
+// ----------------------------------------------------------------------------
+// Wave 2 commit 3 — row-MT loopfilter worker hook.
+//
+// Public entry point: [`run_row_mt_lf_worker`]. The decoder driver
+// (`apply_loop_filter_to_frame_parallel` in `crates/rvp9-decoder/src/lib.rs`)
+// allocates the work-queue / per-row progress atomics on the caller's stack
+// and submits N copies of [`run_row_mt_lf_worker`] into the same
+// `WorkerPool::scope` that runs tile decode jobs. Each worker pulls SB rows
+// from `next_lf_row.fetch_add(1, Relaxed)`, waits for the decode-progress
+// gate, waits for the previous row's LF-progress gate, builds the per-row
+// mask in-place (so mask build overlaps with decode for un-filtered rows),
+// applies [`loop_filter_sb_row`] for that row, and stores
+// `lf_progress[r] = 1`.
+//
+// Per-row mask build: workers materialise a tiny `Vec<LoopFilterMask>` of
+// length `sb_cols` for their assigned row, fill it via [`super::setup_mask`]
+// + [`super::adjust_mask`], then hand it to [`loop_filter_sb_row`] with
+// `lfm_stride = sb_cols` and `sb_row = 0` (the row was extracted; the
+// per-row primitive indexes `lfm_grid[0 * sb_cols + sb_col]` for the
+// in-row column). This keeps the worker's allocator footprint bounded to
+// one row at a time and avoids materialising the full `sb_rows × sb_cols`
+// mask grid up front (which the serial path does).
+//
+// Synchronisation: see Phase 3 HLD §4 (`wrk_docs/2026.05.24 ...`). Acquire/
+// Release on the two atomic arrays is sufficient; spin-wait yields after
+// `SPIN_YIELD_THRESHOLD` iterations to be friendly under oversubscription.
+// ----------------------------------------------------------------------------
+
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+
+/// Spin cap before yielding (libvpx-equivalent budget).
+const SPIN_YIELD_THRESHOLD: u32 = 8192;
+
+/// Read-only inputs to the per-row mask build. Shared across all LF
+/// workers; immutable for the duration of the parallel driver call.
+#[derive(Copy, Clone)]
+pub struct RowMaskInputs<'a> {
+    /// Full-frame MI slab, row-major, `mi_grid[r * mi_stride + c]`.
+    pub mi_grid: &'a [ModeInfo],
+    /// Stride in MI cells per row.
+    pub mi_stride: usize,
+    /// Frame MI extents.
+    pub mi_rows: usize,
+    /// Frame MI extents.
+    pub mi_cols: usize,
+    /// Per-frame `[seg][ref][mode]` filter-level cube.
+    pub levels: &'a FrameFilterLevels,
+}
+
+/// Build the `sb_cols` mask entries for one SB row in-place. Output slice
+/// MUST have length ≥ `sb_cols`. Mirrors the inner two `for sb_row / sb_col`
+/// loops of the serial mask-build in
+/// `crates/rvp9-decoder/src/lib.rs::apply_loop_filter_to_frame`. Extracted
+/// so the row-MT worker can run it per-row and overlap with decode.
+pub fn build_lfm_row(
+    sb_row: usize,
+    sb_cols: usize,
+    inputs: &RowMaskInputs<'_>,
+    out: &mut [LoopFilterMask],
+) {
+    debug_assert!(out.len() >= sb_cols);
+    for sb_col in 0..sb_cols {
+        let mi_row = sb_row * MI_BLOCK_SIZE;
+        let mi_col = sb_col * MI_BLOCK_SIZE;
+        let lfm = &mut out[sb_col];
+        *lfm = LoopFilterMask::default();
+        crate::loopfilter::setup_mask(
+            mi_row as u32,
+            mi_col as u32,
+            inputs.mi_grid,
+            inputs.mi_stride,
+            inputs.mi_rows as u32,
+            inputs.mi_cols as u32,
+            inputs.levels,
+            lfm,
+        );
+        crate::loopfilter::adjust_mask(
+            mi_row as u32,
+            mi_col as u32,
+            inputs.mi_rows as u32,
+            inputs.mi_cols as u32,
+            lfm,
+        );
+    }
+}
+
+/// Shared per-frame state for the row-MT LF worker pool. All fields are
+/// borrowed; the owning storage lives on the decoder's stack frame across
+/// the enclosing `WorkerPool::scope` call.
+///
+/// Constructed by `apply_loop_filter_to_frame_parallel` in the decoder. The
+/// raw-pointer / Send+Sync invariants on [`SharedFrame`] still apply: each
+/// worker owns a unique SB row at any moment, the row-progress protocol
+/// guarantees temporal exclusion at the row boundaries.
+pub struct RowMtLfState<'a> {
+    /// Output frame planes.
+    pub shared: SharedFrame,
+    /// Per-frame loopfilter info table (immutable).
+    pub info: &'a LoopFilterInfo,
+    /// Per-row mask-build inputs (immutable).
+    pub row_inputs: RowMaskInputs<'a>,
+    /// Optional `Non420Inputs` for asymmetric-chroma frames. `Some` for
+    /// 4:2:2 / 4:4:0; `None` for 4:2:0 / 4:4:4. Required by
+    /// [`loop_filter_sb_row`].
+    pub non420: Option<Non420Inputs<'a>>,
+    /// Frame dimensions in SB units.
+    pub sb_rows: usize,
+    /// Frame dimensions in SB units.
+    pub sb_cols: usize,
+    /// Decode-side per-SB-row counter (written by tile workers via
+    /// `fetch_add(1, Release)`; LF workers Acquire-load until the value
+    /// reaches `tile_cols_at_row[r]`).
+    pub decode_progress: &'a [AtomicU32],
+    /// Required decode-progress value per row before LF can start. For
+    /// the typical tile_rows == 1 column-split case this is `[num_tiles;
+    /// sb_rows]`. For tile_rows > 1, entry `r` counts how many tiles
+    /// cover SB row `r`.
+    pub tile_cols_at_row: &'a [u32],
+    /// LF-side per-SB-row done flag. `lf_progress[r] = 1` once row r's
+    /// filter is complete (both V/H passes, all planes, all cols).
+    pub lf_progress: &'a [AtomicU32],
+    /// Monotonic LF row-dispatcher. Workers `fetch_add(1, Relaxed)` to
+    /// claim their next row. Initialised to 0 by the driver.
+    pub next_lf_row: &'a AtomicUsize,
+}
+
+/// Spin-wait with bounded budget, falling back to `thread::yield_now`. The
+/// caller's predicate must be checked between iterations. Returns when
+/// `pred()` is true.
+#[inline]
+fn spin_then_yield<F: FnMut() -> bool>(mut pred: F) {
+    let mut spins: u32 = 0;
+    while !pred() {
+        if spins < SPIN_YIELD_THRESHOLD {
+            std::hint::spin_loop();
+            spins += 1;
+        } else {
+            std::thread::yield_now();
+            spins = 0;
+        }
+    }
+}
+
+/// Row-MT LF worker hook — runs on a worker thread submitted to the
+/// `WorkerPool::scope`. Pulls SB rows from `state.next_lf_row` until
+/// exhausted, gates on `decode_progress` + `lf_progress` per row, then
+/// builds the row's mask and applies [`loop_filter_sb_row`].
+///
+/// Mirrors libvpx's `row_mt_worker_hook` shape (`vp9_decoder.c`) under
+/// the wavefront stagger described in
+/// `wrk_docs/2026.05.24 - HLD - Phase3 row-parallel loopfilter.md` §3.6.
+///
+/// # Safety
+///
+/// Caller (the decoder driver) MUST guarantee that:
+/// - `state.shared`'s underlying [`Yv12Buffer`] outlives every call to this
+///   function (enforced by the `'frame`-bound `WorkerPool::scope`).
+/// - The row-progress invariants are honoured: no other thread writes
+///   pixels in this row's owned rectangle or in the bottom 8 pixel rows of
+///   the previous SB row. The internal Acquire on `lf_progress[r-1]`
+///   provides that guarantee per the protocol — but only if no other code
+///   path bypasses the protocol to write into the same planes.
+pub unsafe fn run_row_mt_lf_worker(state: &RowMtLfState<'_>, dispatch: &SimdDispatch) {
+    // Per-worker scratch — at most `sb_cols` entries. Allocated once per
+    // worker invocation; reused across all rows the worker claims.
+    let mut row_lfm: Vec<LoopFilterMask> =
+        vec![LoopFilterMask::default(); state.sb_cols];
+
+    loop {
+        // Claim the next SB row from the dispatcher.
+        let r = state.next_lf_row.fetch_add(1, Ordering::Relaxed);
+        if r >= state.sb_rows {
+            return;
+        }
+
+        // Gate 1 — wait until all tiles have finished decoding SB row r.
+        // Acquire-load pairs with the tile worker's Release fetch_add in
+        // `decode_tile_intra` / `decode_tile_inter` (Wave 2 C2). The
+        // happens-before relation guarantees every pixel write inside
+        // `decode_partition` is visible to this worker.
+        let required = state.tile_cols_at_row[r];
+        spin_then_yield(|| state.decode_progress[r].load(Ordering::Acquire) >= required);
+
+        // Gate 2 — wait until the previous row's LF is complete. The
+        // top-edge H pass of row r reads/writes 8 pixel rows above the
+        // SB boundary (= the bottom 8 rows of row r-1). Row r-1's writer
+        // must have completed both V and H passes before row r can run.
+        if r > 0 {
+            spin_then_yield(|| state.lf_progress[r - 1].load(Ordering::Acquire) != 0);
+        }
+
+        // Build this row's mask in worker-local scratch.
+        build_lfm_row(r, state.sb_cols, &state.row_inputs, &mut row_lfm);
+
+        // Apply the LF for this row. `lfm_stride = sb_cols` and
+        // `sb_row = 0` because `row_lfm` is exactly the one row of mask
+        // data; the pixel coordinate `mi_row` is the real frame row.
+        // SAFETY: the gates above guarantee no other thread is writing
+        // pixels in this row's owned rectangle (Phase 3 HLD §4
+        // temporal-exclusion argument).
+        let mi_row = r * MI_BLOCK_SIZE;
+        unsafe {
+            loop_filter_sb_row(
+                &state.shared,
+                &row_lfm,
+                state.sb_cols,
+                0,
+                mi_row,
+                state.sb_cols,
+                state.row_inputs.mi_rows,
+                state.row_inputs.mi_cols,
+                state.info,
+                state.non420,
+                dispatch,
+            );
+        }
+
+        // Publish completion. Release ordering pairs with the next
+        // worker's Acquire load above.
+        state.lf_progress[r].store(1, Ordering::Release);
+    }
+}
+
 /// Per-TX-size index into [`LoopFilterMask`] arrays. Matches the
 /// `TxSize` enum ordering.
 const TX_4X4: usize = 0;
@@ -379,6 +602,7 @@ pub fn loop_filter_frame_with_non420(
     // dispatch table is loaded once and threaded through.
     let shared = SharedFrame::from_yv12(yv12);
     for sb_row in sb_start..sb_end {
+        let mi_row = sb_row * MI_BLOCK_SIZE;
         // SAFETY: serial path — no other thread holds a reference to the
         // planes; each `loop_filter_sb_row` call temporarily reconstructs
         // `&mut [u8]` slices through `SharedFrame` for the duration of the
@@ -389,6 +613,7 @@ pub fn loop_filter_frame_with_non420(
                 lfm_grid,
                 lfm_stride,
                 sb_row,
+                mi_row,
                 sb_cols,
                 mi_rows,
                 mi_cols,
@@ -406,8 +631,13 @@ pub fn loop_filter_frame_with_non420(
 /// serial path calls this in a loop — both behaviours are byte-identical to
 /// the pre-refactor inline version.
 ///
-/// `sb_row` is the SB-row index within the frame (0 ≤ sb_row < sb_rows).
-/// All other arguments mirror [`loop_filter_frame_with_non420`].
+/// `sb_row` is the SB-row index used to index `lfm_grid` (i.e. the row
+/// inside the mask-grid storage). `mi_row` is the MI-row coordinate used
+/// for pixel addressing in the frame (= `sb_row * MI_BLOCK_SIZE` when the
+/// mask grid spans the whole frame, but the row-MT driver materialises
+/// per-row mask buffers and passes `sb_row = 0`, `mi_row = real_r * 8` so
+/// the same primitive handles both layouts). All other arguments mirror
+/// [`loop_filter_frame_with_non420`].
 ///
 /// # Safety
 ///
@@ -424,6 +654,7 @@ pub unsafe fn loop_filter_sb_row(
     lfm_grid: &[LoopFilterMask],
     lfm_stride: usize,
     sb_row: usize,
+    mi_row: usize,
     sb_cols: usize,
     mi_rows: usize,
     mi_cols: usize,
@@ -432,7 +663,6 @@ pub unsafe fn loop_filter_sb_row(
     dispatch: &SimdDispatch,
 ) {
     let chroma = shared.chroma;
-    let mi_row = sb_row * MI_BLOCK_SIZE;
     let y_stride = shared.y_stride;
     let uv_stride = shared.uv_stride;
     // SAFETY: contract on this function; serial path holds the unique

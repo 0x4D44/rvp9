@@ -3550,6 +3550,57 @@ fn apply_loop_filter_to_frame(
     );
 }
 
+/// Wave 2 C3 — row-MT loopfilter driver.
+///
+/// Submits `num_workers` LF jobs into the supplied `FrameScope`. Each job
+/// runs the per-row work hook in `rvp9_core::loopfilter::apply::
+/// run_row_mt_lf_worker`, pulling SB rows from a shared work queue, gating
+/// on the decode-progress array published by tile workers (Wave 2 C2) AND
+/// on the previous row's LF completion, then building the per-row mask
+/// in-place and applying [`loop_filter_sb_row`].
+///
+/// All scratch state (work counter, LF progress flags, per-row state
+/// struct) is allocated on the caller's stack frame; the workers borrow
+/// them via the `'frame` lifetime tied to the enclosing scope. The
+/// scope's `join-on-return` discipline guarantees no worker outlives the
+/// stack-frame storage.
+///
+/// Wired into `decode_keyframe` / `decode_inter_frame` in commit 4 — at
+/// this commit nothing calls it yet.
+///
+/// # Safety
+///
+/// The borrowed references inside `state` must outlive every worker —
+/// guaranteed by the `FrameScope`'s `'frame` lifetime + the join-on-return
+/// discipline.
+#[allow(dead_code)]
+fn apply_loop_filter_to_frame_parallel<'frame>(
+    scope: &rvp9_core::tile_threading::FrameScope<'_, 'frame>,
+    state: &'frame rvp9_core::loopfilter::apply::RowMtLfState<'frame>,
+    num_workers: usize,
+) {
+    // The driver consumes `state` (the caller-owned RowMtLfState populated
+    // with all the borrows). Submitting it directly into each worker's
+    // closure means the workers never have to reconstruct the borrow set
+    // themselves. The closures `Copy` the `&RowMtLfState` reference, which
+    // is `Send + Sync` because every contained borrow is `Send + Sync`
+    // (atomic slices, `&`-references to immutable data, and `SharedFrame`
+    // which is `Send + Sync` by impl).
+    let simd_dispatch = rvp9_core::dsp::get();
+    for _ in 0..num_workers {
+        let st: &'frame rvp9_core::loopfilter::apply::RowMtLfState<'frame> = state;
+        let dispatch = simd_dispatch.clone();
+        scope.submit(move || {
+            // SAFETY: the row-progress protocol enforced by the LF worker
+            // hook itself guarantees that for the SB rows this worker
+            // claims, no other thread is writing the same pixels.
+            unsafe {
+                rvp9_core::loopfilter::apply::run_row_mt_lf_worker(st, &dispatch);
+            }
+        });
+    }
+}
+
 /// Stage 3 stretch M.10 diagnostic: dump the per-SB
 /// [`LoopFilterMask`] + the visible mi-grid block-size tile, gated by
 /// `RVP9_DUMP_LF_MASKS=1`. Used to audit K2.c's wireup against
