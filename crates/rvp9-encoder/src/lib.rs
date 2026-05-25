@@ -2350,6 +2350,16 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // via `update_thresh_freq_fact` to decay the winner and
     // increment losers. Persists across frames.
     rd_thresh_table: &mut rvp9_core::mode_decision::rd_thresh::RdThreshTable,
+    // §11 — frames since the last GOLDEN refresh
+    // (libvpx `cpi->rc.frames_since_golden`). Feeds the `bias_golden`
+    // gate's `frames_since_golden > 4` predicate
+    // (`vp9_pickmode.c:2237-2239`).
+    frames_since_golden: u32,
+    // §11 — libvpx `get_chessboard_index(cm->current_video_frame) =
+    // current_video_frame & 1` (`vp9_common.h:88-90`). Feeds the
+    // `cb_pred_filter_search` chessboard predicate at
+    // `vp9_pickmode.c:1855`.
+    chessboard_index: u32,
 ) -> VecBackedInterCoefSource {
     use rvp9_core::bitstream::frame::{InterpFilter as WireInterpFilter, MAX_INTER_REFS};
     use rvp9_core::bitstream::header::FrameKind as WireFrameKind;
@@ -3388,6 +3398,42 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     is_screen_content: false,
                     zero_temp_sad_source: None,
                     scene_change_detected: false,
+                    // §11 — speed-feature gates for cpu-used-6/7/8. Defaults
+                    // mirror libvpx `vp9_speed_features.c:585-793` for the
+                    // realtime path:
+                    //  - `inter_mode_mask` — NEAREST_NEW_ZERO for 32x32+
+                    //    (vp9_speed_features.c:603-606, speed 5+; preserved
+                    //    at speed 6/7/8).
+                    //  - `limit_newmv_early_exit` — `1` at speed 5/6/7 CBR
+                    //    (vp9_speed_features.c:639); back to `0` at speed 8
+                    //    (vp9_speed_features.c:790). rvp9 op-points cpu-used
+                    //    6/7 so `true`.
+                    //  - `bias_golden` — `1` at speed 5+ CBR non-SVC
+                    //    (vp9_speed_features.c:640).
+                    //  - `cb_pred_filter_search` — `2` at speed 6 above
+                    //    1280×720 (vp9_speed_features.c:658). rvp9 has no
+                    //    resolution-dependent toggle so default `false`;
+                    //    encoders that target the >720p path may opt in.
+                    //  - `disable_golden_ref` — `1` only at speed-9 CBR
+                    //    (vp9_speed_features.c:811). Off at our op point.
+                    //  - `max_intra_bsize` — `Block32x32` at speed 5+
+                    //    (vp9_speed_features.c:571). Matches the previous
+                    //    hardcoded `Block64x64` skip.
+                    //  - `rt_intra_dc_only_low_content` — `1` only at
+                    //    speed-8 (vp9_speed_features.c:770). Default `false`
+                    //    here keeps intra-fallback quality at speed 6/7.
+                    inter_mode_mask:
+                        rvp9_core::mode_decision::inter::default_inter_mode_mask(),
+                    limit_newmv_early_exit: true,
+                    bias_golden: true,
+                    frames_since_golden,
+                    cb_pred_filter_search: false,
+                    mi_row: leaf_mi_row as u32,
+                    mi_col: leaf_mi_col as u32,
+                    chessboard_index,
+                    disable_golden_ref: false,
+                    max_intra_bsize: rvp9_core::block::BlockSize::Block32x32,
+                    rt_intra_dc_only_low_content: false,
                 };
                 let unified_pick = pick_inter_mode(&pick_params);
 
@@ -3409,11 +3455,22 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     rvp9_core::mode_info::RefFrame::LastFrame
                         | rvp9_core::mode_info::RefFrame::GoldenFrame,
                 ) {
-                    rvp9_core::mode_decision::rd_thresh::update_thresh_freq_fact(
+                    // §11 — `limit_newmv_early_exit` participates in
+                    // the freq-fact update at libvpx
+                    // `vp9_pickmode.c:1147-1149`. Encoder default
+                    // matches the cpu-used-6/7 setting:
+                    // `limit_newmv_early_exit = true`. rvp9 has no
+                    // source-variance pass yet so we pass `u32::MAX`
+                    // (libvpx pre-init = `UINT_MAX`); the low-cap
+                    // branch is therefore not yet active in
+                    // production, but the wiring is in place.
+                    rvp9_core::mode_decision::rd_thresh::update_thresh_freq_fact_with_s11(
                         rd_thresh_table,
                         leaf_bsize,
                         unified_pick.picked_ref_frame,
                         unified_pick.best_mode,
+                        /* limit_newmv_early_exit = */ true,
+                        /* source_variance = */ u32::MAX,
                     );
                 }
 

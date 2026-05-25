@@ -339,11 +339,39 @@ pub fn rd_less_than_thresh(
 /// fan-out (the rvp9 picker's intra fallback is rare and the
 /// per-leaf fact churn on intra slots wouldn't affect the picker
 /// without those slots being read).
+///
+/// The §11 `limit_newmv_early_exit` flag and `source_variance` value
+/// gate the libvpx low-cap branch at `vp9_pickmode.c:1147-1149`:
+/// non-winning `(LAST, NEWMV)` on a flat block (`source_variance < 5`)
+/// caps `thresh_freq_fact` at `RD_THRESH_INIT_FACT` (= 32) instead of
+/// the regular `ADAPTIVE_RD_THRESH * RD_THRESH_MAX_FACT`. Callers
+/// that do not run §11 should pass
+/// `(limit_newmv_early_exit = false, source_variance = u32::MAX)`.
 pub fn update_thresh_freq_fact(
     table: &mut RdThreshTable,
     bsize: BlockSize,
     winning_ref: RefFrame,
     winning_mode: InterMode,
+) {
+    update_thresh_freq_fact_with_s11(
+        table,
+        bsize,
+        winning_ref,
+        winning_mode,
+        /* limit_newmv_early_exit = */ false,
+        /* source_variance = */ u32::MAX,
+    );
+}
+
+/// §11 — full update form with `limit_newmv_early_exit` /
+/// `source_variance` inputs.
+pub fn update_thresh_freq_fact_with_s11(
+    table: &mut RdThreshTable,
+    bsize: BlockSize,
+    winning_ref: RefFrame,
+    winning_mode: InterMode,
+    limit_newmv_early_exit: bool,
+    source_variance: u32,
 ) {
     let bsize_idx = bsize.idx();
     let winner_idx = match thr_mode_idx(winning_ref, winning_mode) {
@@ -380,8 +408,26 @@ pub fn update_thresh_freq_fact(
             if idx == winner_idx {
                 *f -= *f >> 4;
             } else {
+                // §11 — `limit_newmv_early_exit` cap variant
+                // (`vp9_pickmode.c:1147-1149`). For non-winning
+                // (LAST, NEWMV) on a flat block, libvpx caps the
+                // freq_fact at 32 (= RD_THRESH_INIT_FACT) rather
+                // than the regular ADAPTIVE_RD_THRESH * 64. Keeping
+                // the cap low prevents NEWMV from accumulating a
+                // saturating penalty that would gate it out
+                // permanently on textured content that turns flat
+                // for a few frames.
+                let effective_cap = if limit_newmv_early_exit
+                    && rf == RefFrame::LastFrame
+                    && m == InterMode::NewMv
+                    && source_variance < 5
+                {
+                    RD_THRESH_INIT_FACT
+                } else {
+                    cap
+                };
                 let inc = (*f).saturating_add(RD_THRESH_INC);
-                *f = inc.min(cap);
+                *f = inc.min(effective_cap);
             }
         }
     }

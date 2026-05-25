@@ -1009,6 +1009,14 @@ impl StreamEncoder {
             &self.frame_context,
             // P20 — adaptive RD-threshold state, owned by the stream.
             &mut self.rd_thresh_table,
+            // §11 — `bias_golden` input (frames since GOLDEN was last
+            // refreshed) and `cb_pred_filter_search` input
+            // (chessboard index = video-frame-index & 1; the stream's
+            // GOLDEN counter toggles each inter frame, giving us the
+            // same per-frame parity libvpx derives from
+            // `current_video_frame & 1`).
+            self.frames_since_golden_refresh,
+            self.frames_since_golden_refresh & 1,
         );
 
         // F11.0 — apply the in-loop deblocking filter to the encoder's
