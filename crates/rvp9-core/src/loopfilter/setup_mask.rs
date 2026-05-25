@@ -692,6 +692,573 @@ mod tests {
         assert_eq!(got, LoopFilterMask::ZERO);
     }
 
+    /// A partition leaf at `block_size` with `tx_size` and intra mode.
+    /// Helper used by the partition-tree tests below; the existing
+    /// helpers above are special-cased to `Block64x64 / 16x16 / 8x8 /
+    /// 4x4` so this lets us cover the other shapes (32x32 / 32x16 /
+    /// 16x32 / 64x32 / 32x64 / 16x8 / 8x16) without repeating the
+    /// struct boilerplate.
+    fn intra_leaf(block_size: BlockSize, tx_size: TxSize) -> ModeInfo {
+        ModeInfo {
+            block_size,
+            tx_size,
+            skip: false,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        }
+    }
+
+    /// An inter leaf at `block_size` with `mode`/`ref_frame`. Used by
+    /// the `get_filter_level_mi` resolution tests so we can pin which
+    /// LUT slot (`[seg][ref][mode_lf_idx]`) the walker reads.
+    fn inter_leaf(
+        block_size: BlockSize,
+        tx_size: TxSize,
+        mode: InterMode,
+        ref_frame: RefFrame,
+    ) -> ModeInfo {
+        ModeInfo {
+            block_size,
+            tx_size,
+            skip: false,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Inter {
+                mode,
+                ref_frames: [ref_frame, RefFrame::NoRefFrame],
+                mvs: [Mv::ZERO, Mv::ZERO],
+                interp_filter: InterpFilter::EightTap,
+            },
+            bmi: Default::default(),
+        }
+    }
+
+    /// 64×32 top-level partition: top half + bottom half. Covers the
+    /// `BlockSize::Block64x32` arm of `setup_mask`.
+    #[test]
+    fn setup_mask_64x32_top_and_bottom_halves() {
+        // Whole SB is one Block64x32 partition pair: cells (0..4, 0..8)
+        // are the top 64x32, (4..8, 0..8) are the bottom 64x32.
+        let mi = intra_leaf(BlockSize::Block64x32, TxSize::Tx16x16);
+        let grid = fill_grid(mi);
+        let levels = flat_levels(20);
+
+        let mut got = LoopFilterMask::ZERO;
+        setup_mask(0, 0, &grid, 8, 8, 8, &levels, &mut got);
+
+        // Every lfl_y must be 20 (both halves paint all 64 cells).
+        assert_eq!(got.lfl_y, [20u8; 64]);
+
+        // Hand-pin against two `build_masks` calls at shifts (0, 0) and
+        // (32, 8) on the 64×32 leaf — exactly what the arm does.
+        let mut expected = LoopFilterMask::ZERO;
+        build_masks(&inputs_for(&mi, &levels, 0, 0), &mut expected);
+        build_masks(&inputs_for(&mi, &levels, 32, 8), &mut expected);
+        assert_eq!(got, expected);
+    }
+
+    /// 64×32 with frame-bottom clamp: when only the top half is in
+    /// frame (`max_rows == 4`), the `if 4 < max_rows` branch must
+    /// short-circuit the bottom-half `build_masks` call.
+    #[test]
+    fn setup_mask_64x32_clipped_to_top_half_only() {
+        let mi = intra_leaf(BlockSize::Block64x32, TxSize::Tx16x16);
+        let grid = fill_grid(mi);
+        let levels = flat_levels(20);
+
+        // mi_rows = 4 ⇒ max_rows = 4 ⇒ `if 4 < 4` is false ⇒ bottom
+        // half skipped. Only top-row lfl_y cells get painted.
+        let mut got = LoopFilterMask::ZERO;
+        setup_mask(0, 0, &grid, 8, 4, 8, &levels, &mut got);
+
+        // Top 4 rows of the lfl_y grid painted = 20; rows 4..8 = 0.
+        for r in 0..4 {
+            for c in 0..8 {
+                assert_eq!(got.lfl_y[r * 8 + c], 20, "(r,c) = ({r}, {c})");
+            }
+        }
+        for r in 4..8 {
+            for c in 0..8 {
+                assert_eq!(
+                    got.lfl_y[r * 8 + c],
+                    0,
+                    "past-frame (r,c) = ({r}, {c})"
+                );
+            }
+        }
+    }
+
+    /// 32×64 top-level partition: left half + right half. Covers the
+    /// `BlockSize::Block32x64` arm of `setup_mask`.
+    #[test]
+    fn setup_mask_32x64_left_and_right_halves() {
+        let mi = intra_leaf(BlockSize::Block32x64, TxSize::Tx16x16);
+        let grid = fill_grid(mi);
+        let levels = flat_levels(20);
+
+        let mut got = LoopFilterMask::ZERO;
+        setup_mask(0, 0, &grid, 8, 8, 8, &levels, &mut got);
+
+        // Both halves cover the entire SB → every lfl_y = 20.
+        assert_eq!(got.lfl_y, [20u8; 64]);
+
+        // Pin against two `build_masks` calls at shifts (0, 0) and
+        // (4, 2) on the 32×64 leaf.
+        let mut expected = LoopFilterMask::ZERO;
+        build_masks(&inputs_for(&mi, &levels, 0, 0), &mut expected);
+        build_masks(&inputs_for(&mi, &levels, 4, 2), &mut expected);
+        assert_eq!(got, expected);
+    }
+
+    /// 32×64 with frame-right clamp: only the left half is in frame
+    /// (`max_cols == 4`), the `if 4 < max_cols` branch must skip the
+    /// right-half `build_masks` call.
+    #[test]
+    fn setup_mask_32x64_clipped_to_left_half_only() {
+        let mi = intra_leaf(BlockSize::Block32x64, TxSize::Tx16x16);
+        let grid = fill_grid(mi);
+        let levels = flat_levels(20);
+
+        let mut got = LoopFilterMask::ZERO;
+        setup_mask(0, 0, &grid, 8, 8, 4, &levels, &mut got);
+
+        // Left 4 columns painted; cols 4..8 untouched.
+        for r in 0..8 {
+            for c in 0..4 {
+                assert_eq!(got.lfl_y[r * 8 + c], 20, "(r,c) = ({r}, {c})");
+            }
+            for c in 4..8 {
+                assert_eq!(
+                    got.lfl_y[r * 8 + c],
+                    0,
+                    "past-frame (r,c) = ({r}, {c})"
+                );
+            }
+        }
+    }
+
+    /// 32×32 quadrant partition: four `Block32x32` leaves at the four
+    /// quadrants. Covers the `Block32x32` arm of `walk_four_32x32`
+    /// (currently only the `_ =>` arm via Block16x16 / Block8x8 base
+    /// grids was exercised).
+    #[test]
+    fn setup_mask_32x32_four_quadrants() {
+        // Top-left of every 32x32 quadrant = Block32x32. The other
+        // MIs in each quadrant don't matter — the walker only reads
+        // `q32 = mi8x8[(q32_row, q32_col)]`.
+        let mi32 = intra_leaf(BlockSize::Block32x32, TxSize::Tx16x16);
+        let grid = fill_grid(mi32);
+        let levels = flat_levels(15);
+
+        let mut got = LoopFilterMask::ZERO;
+        setup_mask(0, 0, &grid, 8, 8, 8, &levels, &mut got);
+
+        // Each quadrant's `build_masks` paints its 4x4 (8x8 units)
+        // region of the lfl_y grid. All 4 quadrants together =
+        // every cell painted with 15.
+        assert_eq!(got.lfl_y, [15u8; 64]);
+
+        // Pin against direct build_masks calls at SHIFT_32_Y /
+        // SHIFT_32_UV positions.
+        let mut expected = LoopFilterMask::ZERO;
+        for i in 0..4 {
+            build_masks(
+                &inputs_for(&mi32, &levels, SHIFT_32_Y[i], SHIFT_32_UV[i]),
+                &mut expected,
+            );
+        }
+        assert_eq!(got, expected);
+    }
+
+    /// 32×16 partition within a 32x32 quadrant: top half + bottom
+    /// half. Covers the `Block32x16` arm of `walk_four_32x32` and
+    /// its `q32_row + 2 < max_rows` branch.
+    #[test]
+    fn setup_mask_32x16_within_top_left_quadrant() {
+        // Top-left 32x32 quadrant: Block32x16 partition pair. Other
+        // quadrants stay Block32x32 so the walker can recurse there
+        // too without surprising us.
+        let mi32x16 = intra_leaf(BlockSize::Block32x16, TxSize::Tx8x8);
+        let mi32 = intra_leaf(BlockSize::Block32x32, TxSize::Tx16x16);
+        let mut grid = fill_grid(mi32);
+        // Cells covered by the top-left 32x32 quadrant (rows 0..4, cols
+        // 0..4): place the 32x16 partition at (0,0). The bottom half
+        // is at (2, 0).
+        for r in 0..4 {
+            for c in 0..4 {
+                grid[r * 8 + c] = mi32x16;
+            }
+        }
+        let levels = flat_levels(15);
+
+        let mut got = LoopFilterMask::ZERO;
+        setup_mask(0, 0, &grid, 8, 8, 8, &levels, &mut got);
+
+        // The top-left quadrant should have its top-half + bottom-half
+        // contributions both applied (q32_row=0, q32_row+2=2 < 4).
+        // Pin via direct build_masks calls.
+        let mut expected = LoopFilterMask::ZERO;
+        // Top-left quadrant: 32x16 top + 32x16 bottom.
+        build_masks(&inputs_for(&mi32x16, &levels, 0, 0), &mut expected);
+        build_masks(&inputs_for(&mi32x16, &levels, 16, 4), &mut expected);
+        // Other 3 quadrants: each a Block32x32.
+        for i in 1..4 {
+            build_masks(
+                &inputs_for(&mi32, &levels, SHIFT_32_Y[i], SHIFT_32_UV[i]),
+                &mut expected,
+            );
+        }
+        assert_eq!(got, expected);
+    }
+
+    /// 32×16 with the bottom half clipped off (`q32_row + 2 >=
+    /// max_rows`). Tests the `if q32_row + 2 < max_rows` guard.
+    #[test]
+    fn setup_mask_32x16_clipped_bottom_half_skipped() {
+        // mi_rows = 2 ⇒ max_rows = 2 ⇒ only the top half of the
+        // top-left 32x16 fits. The bottom half (q32_row=0, +2=2 ≥
+        // max_rows=2) must be skipped.
+        let mi32x16 = intra_leaf(BlockSize::Block32x16, TxSize::Tx8x8);
+        let grid = fill_grid(mi32x16);
+        let levels = flat_levels(15);
+
+        let mut got = LoopFilterMask::ZERO;
+        setup_mask(0, 0, &grid, 8, 2, 8, &levels, &mut got);
+
+        // Only the top 2 rows × first 4 cols of lfl_y (the top-half
+        // 32x16) get painted. Rows 2..8 stay 0.
+        for r in 0..2 {
+            for c in 0..4 {
+                assert_eq!(got.lfl_y[r * 8 + c], 15, "in-frame (r,c) = ({r}, {c})");
+            }
+        }
+        for r in 2..8 {
+            for c in 0..8 {
+                assert_eq!(
+                    got.lfl_y[r * 8 + c],
+                    0,
+                    "past-frame (r,c) = ({r}, {c})"
+                );
+            }
+        }
+    }
+
+    /// 16×32 partition within a 32x32 quadrant: left half + right
+    /// half. Covers the `Block16x32` arm of `walk_four_32x32`.
+    #[test]
+    fn setup_mask_16x32_within_top_left_quadrant() {
+        let mi16x32 = intra_leaf(BlockSize::Block16x32, TxSize::Tx8x8);
+        let mi32 = intra_leaf(BlockSize::Block32x32, TxSize::Tx16x16);
+        let mut grid = fill_grid(mi32);
+        // Top-left 32x32 quadrant gets a Block16x32 pair.
+        for r in 0..4 {
+            for c in 0..4 {
+                grid[r * 8 + c] = mi16x32;
+            }
+        }
+        let levels = flat_levels(15);
+
+        let mut got = LoopFilterMask::ZERO;
+        setup_mask(0, 0, &grid, 8, 8, 8, &levels, &mut got);
+
+        let mut expected = LoopFilterMask::ZERO;
+        build_masks(&inputs_for(&mi16x32, &levels, 0, 0), &mut expected);
+        build_masks(&inputs_for(&mi16x32, &levels, 2, 1), &mut expected);
+        for i in 1..4 {
+            build_masks(
+                &inputs_for(&mi32, &levels, SHIFT_32_Y[i], SHIFT_32_UV[i]),
+                &mut expected,
+            );
+        }
+        assert_eq!(got, expected);
+    }
+
+    /// 16×32 with the right half clipped off (`q32_col + 2 >=
+    /// max_cols`). Tests the `if q32_col + 2 < max_cols` guard.
+    #[test]
+    fn setup_mask_16x32_clipped_right_half_skipped() {
+        let mi16x32 = intra_leaf(BlockSize::Block16x32, TxSize::Tx8x8);
+        let grid = fill_grid(mi16x32);
+        let levels = flat_levels(15);
+
+        // max_cols = 2 ⇒ q32_col=0, +2=2 ≥ 2 ⇒ right half skipped.
+        let mut got = LoopFilterMask::ZERO;
+        setup_mask(0, 0, &grid, 8, 8, 2, &levels, &mut got);
+
+        // Only top-left 2x4 (rows 0..4, cols 0..2) painted.
+        for r in 0..4 {
+            for c in 0..2 {
+                assert_eq!(got.lfl_y[r * 8 + c], 15, "in-frame (r,c) = ({r}, {c})");
+            }
+            for c in 2..8 {
+                assert_eq!(
+                    got.lfl_y[r * 8 + c],
+                    0,
+                    "past-frame (r,c) = ({r}, {c})"
+                );
+            }
+        }
+    }
+
+    /// 16×8 partition within a 16×16 region: top half (Block16x8) +
+    /// bottom half (Block16x8) via `build_y_mask`. Covers the
+    /// `Block16x8` arm of `walk_four_16x16`.
+    #[test]
+    fn setup_mask_16x8_within_top_left_quadrant() {
+        let mi16x8 = intra_leaf(BlockSize::Block16x8, TxSize::Tx8x8);
+        let mi16 = intra_leaf(BlockSize::Block16x16, TxSize::Tx8x8);
+        let mut grid = fill_grid(mi16);
+        // Top-left 16x16 region (cells (0,0), (0,1), (1,0), (1,1))
+        // gets a Block16x8 pair.
+        grid[0] = mi16x8;
+        grid[1] = mi16x8;
+        grid[8] = mi16x8;
+        grid[9] = mi16x8;
+        let levels = flat_levels(12);
+
+        let mut got = LoopFilterMask::ZERO;
+        setup_mask(0, 0, &grid, 8, 8, 8, &levels, &mut got);
+
+        // The 16x8 arm: build_masks at (shift_y_16, shift_uv_16) for
+        // the top, then build_y_mask at (shift_y_16 + 8, 0) for the
+        // bottom (Y-only — chroma stays whole at 4:2:0).
+        //
+        // Pin lfl_y bit positions: top 16x8 paints cells (0,0)
+        // (0,1) (lfl_y[0], [1]) with 12; bottom 16x8 paints (1,0)
+        // (1,1) (lfl_y[8], [9]) with 12.
+        assert_eq!(got.lfl_y[0], 12, "top-left 16x8 cell (0,0)");
+        assert_eq!(got.lfl_y[1], 12, "top-left 16x8 cell (0,1)");
+        assert_eq!(got.lfl_y[8], 12, "bot-left 16x8 cell (1,0)");
+        assert_eq!(got.lfl_y[9], 12, "bot-left 16x8 cell (1,1)");
+    }
+
+    /// 16×8 with the bottom half clipped (`q16_row + 1 >= max_rows`).
+    /// Tests the `if q16_row + 1 < max_rows` guard.
+    #[test]
+    fn setup_mask_16x8_clipped_bottom_skipped() {
+        let mi16x8 = intra_leaf(BlockSize::Block16x8, TxSize::Tx8x8);
+        let grid = fill_grid(mi16x8);
+        let levels = flat_levels(12);
+
+        // max_rows = 1 ⇒ only row 0 in frame. q16_row=0, +1=1 ≥ 1 ⇒
+        // bottom-half build_y_mask skipped.
+        let mut got = LoopFilterMask::ZERO;
+        setup_mask(0, 0, &grid, 8, 1, 2, &levels, &mut got);
+
+        // Cells (0,0) (0,1) painted; (1,0) (1,1) stay 0.
+        assert_eq!(got.lfl_y[0], 12, "top in-frame (0,0)");
+        assert_eq!(got.lfl_y[1], 12, "top in-frame (0,1)");
+        assert_eq!(got.lfl_y[8], 0, "bot clipped (1,0)");
+        assert_eq!(got.lfl_y[9], 0, "bot clipped (1,1)");
+    }
+
+    /// 8×16 partition within a 16×16 region: left half (Block8x16) +
+    /// right half (Block8x16) via `build_y_mask`. Covers the
+    /// `Block8x16` arm of `walk_four_16x16`.
+    #[test]
+    fn setup_mask_8x16_within_top_left_quadrant() {
+        let mi8x16 = intra_leaf(BlockSize::Block8x16, TxSize::Tx8x8);
+        let mi16 = intra_leaf(BlockSize::Block16x16, TxSize::Tx8x8);
+        let mut grid = fill_grid(mi16);
+        grid[0] = mi8x16;
+        grid[1] = mi8x16;
+        grid[8] = mi8x16;
+        grid[9] = mi8x16;
+        let levels = flat_levels(12);
+
+        let mut got = LoopFilterMask::ZERO;
+        setup_mask(0, 0, &grid, 8, 8, 8, &levels, &mut got);
+
+        // Left 8x16 paints cells (0,0) + (1,0); right 8x16 paints
+        // (0,1) + (1,1). Net: top-left 2x2 of lfl_y = 12.
+        assert_eq!(got.lfl_y[0], 12, "left 8x16 (0,0)");
+        assert_eq!(got.lfl_y[8], 12, "left 8x16 (1,0)");
+        assert_eq!(got.lfl_y[1], 12, "right 8x16 (0,1)");
+        assert_eq!(got.lfl_y[9], 12, "right 8x16 (1,1)");
+    }
+
+    /// 8×16 with the right half clipped (`q16_col + 1 >= max_cols`).
+    /// Tests the `if q16_col + 1 < max_cols` guard.
+    #[test]
+    fn setup_mask_8x16_clipped_right_skipped() {
+        let mi8x16 = intra_leaf(BlockSize::Block8x16, TxSize::Tx8x8);
+        let grid = fill_grid(mi8x16);
+        let levels = flat_levels(12);
+
+        // max_cols = 1 ⇒ q16_col=0, +1=1 ≥ 1 ⇒ right half skipped.
+        let mut got = LoopFilterMask::ZERO;
+        setup_mask(0, 0, &grid, 8, 2, 1, &levels, &mut got);
+
+        // Cells (0,0) (1,0) painted; (0,1) (1,1) stay 0.
+        assert_eq!(got.lfl_y[0], 12, "left in-frame (0,0)");
+        assert_eq!(got.lfl_y[8], 12, "left in-frame (1,0)");
+        assert_eq!(got.lfl_y[1], 0, "right clipped (0,1)");
+        assert_eq!(got.lfl_y[9], 0, "right clipped (1,1)");
+    }
+
+    /// Sub-16 partition with four 8×8 leaves (Block8x8 each). Covers
+    /// the `walk_four_16x16` `_ =>` arm's `idx_8 in 1..4` loop with
+    /// all positions in-frame. (The existing `setup_mask_4x4_leaf_*`
+    /// test takes the same code path with Block4x4 leaves; this one
+    /// pins Block8x8 leaves to ensure the 8×8 LUT shift bookkeeping
+    /// is correct for non-trivial partitions.)
+    #[test]
+    fn setup_mask_8x8_four_leaves_within_top_left_16x16() {
+        let mi8 = intra_leaf(BlockSize::Block8x8, TxSize::Tx8x8);
+        let mi16 = intra_leaf(BlockSize::Block16x16, TxSize::Tx8x8);
+        let mut grid = fill_grid(mi16);
+        // Top-left 16x16 region split into 4 × 8x8.
+        grid[0] = mi8;
+        grid[1] = mi8;
+        grid[8] = mi8;
+        grid[9] = mi8;
+        let levels = flat_levels(7);
+
+        let mut got = LoopFilterMask::ZERO;
+        setup_mask(0, 0, &grid, 8, 8, 8, &levels, &mut got);
+
+        // Each 8x8 leaf paints one cell of lfl_y with 7. The 4 cells
+        // covering the 16x16 region = positions 0, 1, 8, 9.
+        assert_eq!(got.lfl_y[0], 7, "8x8 leaf at SB-cell (0,0)");
+        assert_eq!(got.lfl_y[1], 7, "8x8 leaf at SB-cell (0,1)");
+        assert_eq!(got.lfl_y[8], 7, "8x8 leaf at SB-cell (1,0)");
+        assert_eq!(got.lfl_y[9], 7, "8x8 leaf at SB-cell (1,1)");
+    }
+
+    /// Sub-16 / sub-8 with idx_8 clipped off the frame: a 4×4 split
+    /// at the very bottom-right of a tiny frame so `q8_row >=
+    /// max_rows` triggers the inner-loop continue.
+    #[test]
+    fn setup_mask_8x8_sub16_clips_idx8_past_frame() {
+        // max_rows = 1, max_cols = 2 ⇒ only the (0, 0) and (0, 1)
+        // 8x8 cells are in frame. The sub-16 walker tries idx_8 ∈
+        // {1, 2, 3}; idx_8 = 1 (q8_row=0, q8_col=1) is in frame and
+        // contributes; idx_8 = 2 (q8_row=1, q8_col=0) and idx_8 = 3
+        // (q8_row=1, q8_col=1) are past the bottom row and must be
+        // skipped by the `if q8_row >= max_rows` guard.
+        let mi8 = intra_leaf(BlockSize::Block8x8, TxSize::Tx8x8);
+        let grid = fill_grid(mi8);
+        let levels = flat_levels(7);
+
+        let mut got = LoopFilterMask::ZERO;
+        setup_mask(0, 0, &grid, 8, 1, 2, &levels, &mut got);
+
+        // Only cells (0,0) (idx_8=0, build_masks) and (0,1) (idx_8=1,
+        // build_y_mask) painted. (1,0) (1,1) stay 0.
+        assert_eq!(got.lfl_y[0], 7, "idx_8=0 in-frame (0,0)");
+        assert_eq!(got.lfl_y[1], 7, "idx_8=1 in-frame (0,1)");
+        assert_eq!(got.lfl_y[8], 0, "idx_8=2 clipped (1,0)");
+        assert_eq!(got.lfl_y[9], 0, "idx_8=3 clipped (1,1)");
+    }
+
+    /// `get_filter_level_mi` resolution for inter ZeroMv: should pull
+    /// from `levels[seg][LastFrame=1][mode_lf_idx=0]` (ZEROMV LUT
+    /// slot). Pin by setting a level only at that exact slot and
+    /// confirming `setup_mask` paints lfl_y with it.
+    #[test]
+    fn setup_mask_inter_zeromv_resolves_to_lut_idx_0() {
+        // Build a per-slot levels cube where only [0][LAST=1][0] = 25;
+        // everything else stays 0. ZeroMv resolves to mode_lf_idx 0;
+        // LAST resolves to ref_idx 1. So an inter-ZeroMv-LAST block
+        // should produce filter_level 25, painting lfl_y.
+        let mut levels = flat_levels(0);
+        levels[0][1][0] = 25;
+
+        let mi = inter_leaf(
+            BlockSize::Block64x64,
+            TxSize::Tx32x32,
+            InterMode::ZeroMv,
+            RefFrame::LastFrame,
+        );
+        let grid = fill_grid(mi);
+
+        let mut got = LoopFilterMask::ZERO;
+        setup_mask(0, 0, &grid, 8, 8, 8, &levels, &mut got);
+
+        // Every cell painted with 25 — every read of the LUT hits
+        // [0][1][0].
+        assert_eq!(got.lfl_y, [25u8; 64]);
+    }
+
+    /// `get_filter_level_mi` resolution for inter NewMv: should pull
+    /// from `levels[seg][LastFrame=1][mode_lf_idx=1]`. Setting only
+    /// that slot must paint lfl_y; the [seg][LAST][0] slot must NOT
+    /// be consulted.
+    #[test]
+    fn setup_mask_inter_newmv_resolves_to_lut_idx_1() {
+        let mut levels = flat_levels(0);
+        // Put a poison value at idx 0 to ensure NewMv does NOT read it.
+        levels[0][1][0] = 99;
+        levels[0][1][1] = 25;
+
+        let mi = inter_leaf(
+            BlockSize::Block64x64,
+            TxSize::Tx32x32,
+            InterMode::NewMv,
+            RefFrame::LastFrame,
+        );
+        let grid = fill_grid(mi);
+
+        let mut got = LoopFilterMask::ZERO;
+        setup_mask(0, 0, &grid, 8, 8, 8, &levels, &mut got);
+
+        // Expect 25 everywhere — NewMv pulled from idx 1, not 0.
+        assert_eq!(got.lfl_y, [25u8; 64]);
+    }
+
+    /// Sub-16 / sub-8 with idx_8 clipped on the *column* axis:
+    /// max_cols = 1 so `q8_col=1` (idx_8=1 or 3) is out of frame and
+    /// the `q8_col >= max_cols` guard fires for those iterations.
+    /// (The row-clip sibling `setup_mask_8x8_sub16_clips_idx8_past_frame`
+    /// covers the q8_row branch.)
+    #[test]
+    fn setup_mask_8x8_sub16_clips_idx8_past_col_frame() {
+        let mi8 = intra_leaf(BlockSize::Block8x8, TxSize::Tx8x8);
+        let grid = fill_grid(mi8);
+        let levels = flat_levels(7);
+
+        // max_cols = 1 ⇒ only the (0,0) and (1,0) 8x8 cells fit in
+        // the column dimension. idx_8 = 1 (q8_col = 1) and 3 (q8_col
+        // = 1) trigger the `q8_col >= max_cols` continue.
+        let mut got = LoopFilterMask::ZERO;
+        setup_mask(0, 0, &grid, 8, 2, 1, &levels, &mut got);
+
+        // Cells (0,0) painted (idx_8=0 via build_masks), (1,0)
+        // painted (idx_8=2 via build_y_mask, q8_row=1<1 fails? no,
+        // q8_row=1 < max_rows=2 is true, q8_col=0 < max_cols=1 true);
+        // idx_8=1 and idx_8=3 (q8_col=1≥1) skipped.
+        assert_eq!(got.lfl_y[0], 7, "idx_8=0 in-frame (0,0)");
+        assert_eq!(got.lfl_y[8], 7, "idx_8=2 in-frame (1,0)");
+        assert_eq!(got.lfl_y[1], 0, "idx_8=1 col-clipped (0,1)");
+        assert_eq!(got.lfl_y[9], 0, "idx_8=3 col-clipped (1,1)");
+    }
+
+    /// `get_filter_level_mi` resolution for inter NearestMv with
+    /// AltrefFrame ref: pulls from `levels[seg][ALTREF=3][1]`.
+    #[test]
+    fn setup_mask_inter_nearestmv_altref_resolves_correctly() {
+        let mut levels = flat_levels(0);
+        levels[0][3][1] = 18;
+
+        let mi = inter_leaf(
+            BlockSize::Block64x64,
+            TxSize::Tx32x32,
+            InterMode::NearestMv,
+            RefFrame::AltrefFrame,
+        );
+        let grid = fill_grid(mi);
+
+        let mut got = LoopFilterMask::ZERO;
+        setup_mask(0, 0, &grid, 8, 8, 8, &levels, &mut got);
+
+        assert_eq!(got.lfl_y, [18u8; 64]);
+    }
+
     /// `setup_mask` zeroes the `lfm` at entry (mirrors libvpx's
     /// `vp9_zero(*lfm)` at `:916`).
     #[test]
