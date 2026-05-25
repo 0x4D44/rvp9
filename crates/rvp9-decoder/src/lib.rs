@@ -7801,4 +7801,632 @@ mod tests {
             }
         }
     }
+
+    // ===== Coverage Stage 6 — additional lib.rs branch coverage =====
+
+    /// `Decoder::with_threads(N)` honours its argument verbatim for
+    /// N ∈ {1, 2, 4, 8}. Validates the `num_threads()` accessor and
+    /// catches a regression where the constructor would coerce to a
+    /// default rather than the explicit count.
+    #[test]
+    fn with_threads_honours_explicit_count() {
+        for n in [1usize, 2, 4, 8] {
+            let dec = Decoder::with_threads(std::num::NonZeroUsize::new(n).unwrap());
+            assert_eq!(dec.num_threads().get(), n);
+            // Fresh state: no occupied pool slots, no resync done yet.
+            assert_eq!(dec.frame_pool().occupied_count(), 0);
+            assert!(dec.needs_resync());
+        }
+    }
+
+    /// `Decoder::default()` is equivalent to `Decoder::new()` — same
+    /// fresh-state contract. Pin this so future Default derives don't
+    /// accidentally pre-populate fields.
+    #[test]
+    fn default_constructor_matches_new() {
+        let dec = Decoder::default();
+        assert_eq!(dec.frame_pool().occupied_count(), 0);
+        assert!(dec.needs_resync());
+        for i in 0..FRAME_CONTEXTS {
+            assert!(dec.frame_context(i).initialized);
+        }
+    }
+
+    /// `merge_lf_params` with `mode_ref_delta_update = false` leaves the
+    /// existing deltas in place but updates the `enabled` flag.
+    #[test]
+    fn merge_lf_params_skip_update_keeps_existing_deltas() {
+        let mut dec = Decoder::new();
+        // First frame: enable + update with non-default deltas.
+        dec.merge_lf_params(&rvp9_core::bitstream::LoopFilterParams {
+            filter_level: 30,
+            sharpness_level: 0,
+            mode_ref_delta_enabled: true,
+            mode_ref_delta_update: true,
+            ref_deltas: [Some(2), Some(-3), Some(4), Some(-5)],
+            mode_deltas: [Some(1), Some(-2)],
+        });
+        assert_eq!(dec.lf_deltas().ref_deltas, [2, -3, 4, -5]);
+        assert_eq!(dec.lf_deltas().mode_deltas, [1, -2]);
+
+        // Second frame: enabled but no update — every Some(...) value
+        // here MUST be ignored.
+        dec.merge_lf_params(&rvp9_core::bitstream::LoopFilterParams {
+            filter_level: 50,
+            sharpness_level: 0,
+            mode_ref_delta_enabled: true,
+            mode_ref_delta_update: false,
+            ref_deltas: [Some(99); 4],
+            mode_deltas: [Some(99); 2],
+        });
+        assert!(dec.lf_deltas().enabled);
+        // Deltas must be the values from the first frame, NOT 99.
+        assert_eq!(dec.lf_deltas().ref_deltas, [2, -3, 4, -5]);
+        assert_eq!(dec.lf_deltas().mode_deltas, [1, -2]);
+    }
+
+    /// `parse_packet` on a single-frame packet returns one frame.
+    /// Verifies the `Superframe::Single` arm.
+    #[test]
+    fn parse_packet_single_frame_routing() {
+        let buf = build_minimal_keyframe();
+        let mut dec = Decoder::new();
+        let frames = dec.parse_packet(&buf).expect("valid single keyframe");
+        assert_eq!(frames.count(), 1);
+        // `IntoIterator` should yield exactly one frame too.
+        let collected: Vec<_> = frames.into_iter().collect();
+        assert_eq!(collected.len(), 1);
+    }
+
+    /// `parse_packet` rejects a malformed superframe whose declared
+    /// frame size overruns the payload — exercises the
+    /// `Superframe::Multi` truncation branch.
+    #[test]
+    fn parse_packet_superframe_with_oversized_size_rejected() {
+        let k = build_minimal_keyframe();
+        // Craft a 2-frame superframe whose advertised sizes are both
+        // equal to the full keyframe — but only ONE keyframe is in the
+        // payload (then the trailing index). The parser sees the second
+        // declared frame extending past the available bytes.
+        let mut packet = Vec::new();
+        packet.extend_from_slice(&k); // only one frame's worth of payload.
+        let frame_size = k.len();
+        let mag = 2u8;
+        let frames_count = 2u8;
+        let marker = 0xc0 | ((mag - 1) << 3) | (frames_count - 1);
+        packet.push(marker);
+        for _ in 0..frames_count {
+            packet.push((frame_size & 0xff) as u8);
+            packet.push(((frame_size >> 8) & 0xff) as u8);
+        }
+        packet.push(marker);
+
+        let mut dec = Decoder::new();
+        match dec.parse_packet(&packet) {
+            Ok(_) => panic!("oversized superframe index must reject"),
+            Err(err) => assert!(
+                matches!(
+                    err,
+                    rvp9_core::bitstream::BitstreamError::InvalidSuperframeIndex { .. }
+                ),
+                "expected InvalidSuperframeIndex variant, got {err:?}",
+            ),
+        }
+    }
+
+    /// `refresh_ref_frame_sizes` for a keyframe sets EVERY slot to
+    /// the frame's width and height (implicit refresh_frame_flags=0xFF).
+    /// Validates the keyframe arm.
+    #[test]
+    fn refresh_ref_frame_sizes_keyframe_sets_every_slot() {
+        let buf = build_minimal_keyframe();
+        let mut dec = Decoder::new();
+        let frames = dec.parse_packet(&buf).expect("valid keyframe");
+        drop(frames);
+        // After parsing the keyframe, every slot must carry (320, 240).
+        for (i, slot) in dec.ref_frame_sizes.iter().enumerate() {
+            assert_eq!(
+                *slot,
+                Some((320, 240)),
+                "ref_frame_sizes[{i}] not populated by keyframe"
+            );
+        }
+    }
+
+    /// `refresh_ref_frame_sizes` for an intra-only frame honours the
+    /// `refresh_frame_flags` mask — only slots whose bit is set
+    /// receive the new size.
+    #[test]
+    fn refresh_ref_frame_sizes_intra_only_honours_mask() {
+        // refresh_frame_flags = 0b00100100 — slots 2 and 5 only.
+        let buf = build_minimal_intra_only(/* reset */ 0, /* mask */ 0b0010_0100, 16);
+        let mut dec = Decoder::new();
+        // Pre-populate other slots with a sentinel so we can detect
+        // accidental overwrites.
+        for slot in dec.ref_frame_sizes.iter_mut() {
+            *slot = Some((1, 1));
+        }
+        let frames = dec.parse_packet(&buf).expect("valid intra-only");
+        drop(frames);
+        for (i, slot) in dec.ref_frame_sizes.iter().enumerate() {
+            if (0b0010_0100u8 >> i) & 1 != 0 {
+                assert_eq!(*slot, Some((320, 240)), "slot {i} (in mask)");
+            } else {
+                assert_eq!(*slot, Some((1, 1)), "slot {i} (NOT in mask)");
+            }
+        }
+    }
+
+    /// `write_ref_slot` (via the test alias `set_ref_slot`) re-points
+    /// a ref-map slot to a different pool slot, incrementing the new
+    /// slot's refcount and decrementing the old one's.
+    #[test]
+    fn write_ref_slot_dec_old_inc_new_on_change() {
+        use rvp9_core::bitstream::ChromaFormat;
+        use rvp9_core::frame::{BorderUsage, ByteAlignment, FrameBuf, Yv12Buffer};
+        use std::sync::Arc;
+        let mut dec = Decoder::new();
+        // Park two distinct FrameBufs in pool slots 0 and 1.
+        let f0: FrameBuf = Arc::new(
+            Yv12Buffer::alloc(
+                64,
+                64,
+                ChromaFormat::Yuv420,
+                BorderUsage::Decoder,
+                ByteAlignment::Legacy,
+            )
+            .unwrap(),
+        );
+        let f1: FrameBuf = Arc::new(
+            Yv12Buffer::alloc(
+                64,
+                64,
+                ChromaFormat::Yuv420,
+                BorderUsage::Decoder,
+                ByteAlignment::Legacy,
+            )
+            .unwrap(),
+        );
+        dec.frame_pool_mut().assign_slot(0, f0).unwrap();
+        dec.frame_pool_mut().assign_slot(1, f1).unwrap();
+        // ref_frame_map[3] = pool slot 0 → refcount(0) = 1.
+        dec.set_ref_slot(3, 0);
+        assert_eq!(dec.frame_pool().ref_count(0), 1);
+        assert_eq!(dec.frame_pool().ref_count(1), 0);
+        // ref_frame_map[3] = pool slot 1 → refcount(0) -= 1, refcount(1) += 1.
+        dec.set_ref_slot(3, 1);
+        assert_eq!(dec.frame_pool().ref_count(0), 0);
+        assert_eq!(dec.frame_pool().ref_count(1), 1);
+    }
+
+    /// `write_ref_slot` is a no-op when the slot already holds the
+    /// requested pool index — refcount stays the same (one dec + one
+    /// inc would cancel, but the short-circuit avoids both).
+    #[test]
+    fn write_ref_slot_same_index_is_noop() {
+        use rvp9_core::bitstream::ChromaFormat;
+        use rvp9_core::frame::{BorderUsage, ByteAlignment, FrameBuf, Yv12Buffer};
+        use std::sync::Arc;
+        let mut dec = Decoder::new();
+        let f: FrameBuf = Arc::new(
+            Yv12Buffer::alloc(
+                64,
+                64,
+                ChromaFormat::Yuv420,
+                BorderUsage::Decoder,
+                ByteAlignment::Legacy,
+            )
+            .unwrap(),
+        );
+        dec.frame_pool_mut().assign_slot(2, f).unwrap();
+        dec.set_ref_slot(0, 2);
+        assert_eq!(dec.frame_pool().ref_count(2), 1);
+        dec.set_ref_slot(0, 2); // same idx — should NOT double-bump.
+        assert_eq!(dec.frame_pool().ref_count(2), 1);
+    }
+
+    /// `decode_frame` dispatches `ShowExistingFrame` to the
+    /// show-existing handler. Verifies the arm via observable
+    /// side-effect: an empty slot surfaces as `EmptySlot`, not as a
+    /// wrong-frame-kind error.
+    #[test]
+    fn decode_frame_show_existing_dispatch() {
+        let mut dec = Decoder::new();
+        let buf = build_show_existing_frame(0);
+        let parsed = dec.parse_packet(&buf).expect("valid show-existing");
+        let header = parsed.frames()[0].header.clone();
+        let header_end = parsed.frames()[0].header_end_byte;
+        let body: Vec<u8> = parsed.frames()[0].full_frame_data.to_vec();
+        drop(parsed);
+        let frame = ParsedFrame {
+            header,
+            header_end_byte: header_end,
+            full_frame_data: &body,
+        };
+        let err = dec.decode_frame(&frame).expect_err("empty slot");
+        assert_eq!(err, DecodeError::EmptySlot { slot: 0 });
+    }
+
+    /// `decode_show_existing_frame` returns `EmptySlot { slot: N }` and
+    /// the slot index matches the header's referenced slot — verifies
+    /// the payload is the requested slot, not zero.
+    #[test]
+    fn decode_show_existing_frame_empty_reports_requested_slot() {
+        let mut dec = Decoder::new();
+        for slot in 0u8..rvp9_core::bitstream::REF_FRAMES as u8 {
+            let buf = build_show_existing_frame(slot);
+            let parsed = dec.parse_packet(&buf).unwrap();
+            let frame = &parsed.frames()[0];
+            let err = dec.decode_show_existing_frame(&frame.header).unwrap_err();
+            assert_eq!(
+                err,
+                DecodeError::EmptySlot { slot },
+                "must report the requested slot"
+            );
+        }
+    }
+
+    /// `frame_pool_mut` accessor allows mutable use of the frame pool.
+    /// Validates the field exposure plus the post-assign visibility
+    /// via `ref_frame_buf` (which walks both indirections).
+    #[test]
+    fn frame_pool_mut_assign_then_ref_frame_buf_resolves() {
+        use rvp9_core::bitstream::ChromaFormat;
+        use rvp9_core::frame::{BorderUsage, ByteAlignment, FrameBuf, Yv12Buffer};
+        use std::sync::Arc;
+        let mut dec = Decoder::new();
+        let f: FrameBuf = Arc::new(
+            Yv12Buffer::alloc(
+                64,
+                64,
+                ChromaFormat::Yuv420,
+                BorderUsage::Decoder,
+                ByteAlignment::Legacy,
+            )
+            .unwrap(),
+        );
+        dec.frame_pool_mut().assign_slot(4, f.clone()).unwrap();
+        dec.set_ref_slot(7, 4);
+        let resolved = dec.ref_frame_buf(7).expect("ref slot 7 populated");
+        assert!(Arc::ptr_eq(&resolved, &f));
+        // Out-of-range ref_idx returns None (defensive bounds).
+        assert!(dec.ref_frame_buf(99).is_none());
+    }
+
+    /// `parse_compressed_partition` declared > available surfaces
+    /// `TruncatedCompressedHeader` with the actual values.
+    #[test]
+    fn parse_compressed_partition_truncated_reports_sizes() {
+        // Use the lossless keyframe builder, then truncate the payload
+        // so that header_end + first_partition_size > total.
+        let mut buf = build_lossless_keyframe_with_compressed_size(64);
+        // Truncate to just past the uncompressed header — the first-
+        // partition-size declares 64 bytes but we cut the buffer to 8
+        // bytes of compressed payload.
+        let truncated_len = {
+            let mut dec = Decoder::new();
+            let frames = dec.parse_packet(&buf).expect("valid header");
+            let header_end = frames.frames()[0].header_end_byte;
+            drop(frames);
+            header_end + 8
+        };
+        buf.truncate(truncated_len);
+        let mut dec = Decoder::new();
+        let frames = dec.parse_packet(&buf).expect("valid header");
+        let header = frames.frames()[0].header.clone();
+        let header_end = frames.frames()[0].header_end_byte;
+        let body: Vec<u8> = frames.frames()[0].full_frame_data.to_vec();
+        drop(frames);
+        let parsed = ParsedFrame {
+            header,
+            header_end_byte: header_end,
+            full_frame_data: &body,
+        };
+        let err = dec.parse_compressed_partition(&parsed).expect_err("truncated");
+        match err {
+            DecodeError::TruncatedCompressedHeader { declared, available } => {
+                // Declared = header_end + 64; available = truncated buffer len.
+                assert!(declared > available);
+                assert_eq!(available, body.len());
+            }
+            other => panic!("expected TruncatedCompressedHeader, got {other:?}"),
+        }
+    }
+
+    /// `DecodeError::Display` prints something sensible for each variant.
+    /// Lock the formats to catch accidental drift in user-facing strings.
+    #[test]
+    fn decode_error_display_strings_pin_format() {
+        let cases: [(DecodeError, &str); 6] = [
+            (DecodeError::WrongFrameKind, "frame kind is inappropriate"),
+            (DecodeError::EmptySlot { slot: 4 }, "pool slot 4"),
+            (DecodeError::EmptyInterRef { slot: 7 }, "empty ref_frame_map slot 7"),
+            (
+                DecodeError::TruncatedCompressedHeader {
+                    declared: 100,
+                    available: 50,
+                },
+                "declared 100",
+            ),
+            (
+                DecodeError::Unimplemented {
+                    reason: "synthetic test reason",
+                },
+                "unimplemented: synthetic test reason",
+            ),
+            (DecodeError::FrameAlloc, "frame allocation failed"),
+        ];
+        for (err, fragment) in cases {
+            let s = format!("{err}");
+            assert!(
+                s.contains(fragment),
+                "Display for {err:?} does not contain {fragment:?}: got {s}"
+            );
+        }
+    }
+
+    /// `DecodeError::UnsupportedProfile` Display mentions the profile.
+    #[test]
+    fn decode_error_unsupported_profile_display_includes_profile() {
+        let err = DecodeError::UnsupportedProfile { profile: 2 };
+        let s = format!("{err}");
+        assert!(s.contains("2"), "Display must include profile number, got {s}");
+    }
+
+    /// `PacketFrames::IntoIter` consumes the iterator and yields the
+    /// same `ParsedFrame` instances `frames()` returns.
+    #[test]
+    fn packet_frames_into_iter_yields_all_frames() {
+        let buf = build_minimal_keyframe();
+        let mut dec = Decoder::new();
+        let parsed = dec.parse_packet(&buf).expect("valid");
+        let count = parsed.count();
+        let collected: Vec<_> = parsed.into_iter().collect();
+        assert_eq!(collected.len(), count);
+        assert_eq!(collected.len(), 1);
+        assert_eq!(collected[0].header.width, 320);
+    }
+
+    /// HBD profiles (Profile 2 / 3, BitDepth::Ten or Twelve) reject at
+    /// `decode_frame` with `UnsupportedProfile` carrying the profile
+    /// number. Track T phase 0 gate. Exercise via a hand-built
+    /// `ParsedFrame` (the parser would reject HBD too, but the gate
+    /// fires before any parser work in `decode_frame`).
+    #[test]
+    fn decode_frame_rejects_hbd_with_unsupported_profile() {
+        use rvp9_core::bitstream::header::HeaderTail;
+        use rvp9_core::bitstream::sub_parsers::{
+            LoopFilterParams, MAX_PROB, PREDICTION_PROBS, QuantizationParams, SEG_TREE_PROBS,
+            SegmentationParams, TileInfo,
+        };
+        use rvp9_core::bitstream::{
+            BitDepth, ChromaFormat, ColorRange, ColorSpace, Profile, UncompressedHeader,
+        };
+        let mut dec = Decoder::new();
+        let tail = HeaderTail {
+            refresh_frame_context: true,
+            frame_parallel_decoding_mode: false,
+            frame_context_idx: 0,
+            loop_filter: LoopFilterParams {
+                filter_level: 0,
+                sharpness_level: 0,
+                mode_ref_delta_enabled: false,
+                mode_ref_delta_update: false,
+                ref_deltas: [None; 4],
+                mode_deltas: [None; 2],
+            },
+            quantization: QuantizationParams {
+                base_qindex: 50,
+                y_dc_delta_q: 0,
+                uv_dc_delta_q: 0,
+                uv_ac_delta_q: 0,
+            },
+            segmentation: SegmentationParams {
+                enabled: false,
+                update_map: false,
+                temporal_update: false,
+                tree_probs: [MAX_PROB; SEG_TREE_PROBS],
+                pred_probs: [MAX_PROB; PREDICTION_PROBS],
+                update_data: false,
+                abs_delta: false,
+                feature_data: Default::default(),
+            },
+            tile_info: TileInfo {
+                log2_tile_cols: 0,
+                log2_tile_rows: 0,
+            },
+            first_partition_size: 0,
+        };
+        let header = UncompressedHeader {
+            kind: FrameKind::KeyFrame,
+            profile: Profile::Profile2,
+            show_frame: true,
+            error_resilient: false,
+            bit_depth: BitDepth::Ten,
+            color_space: ColorSpace::Bt709,
+            color_range: ColorRange::Studio,
+            chroma: ChromaFormat::Yuv420,
+            width: 64,
+            height: 64,
+            render_size: None,
+            tail: Some(tail),
+        };
+        let empty: [u8; 0] = [];
+        let parsed = ParsedFrame {
+            header,
+            header_end_byte: 0,
+            full_frame_data: &empty,
+        };
+        let err = dec.decode_frame(&parsed).expect_err("HBD must be rejected");
+        match err {
+            DecodeError::UnsupportedProfile { profile } => assert_eq!(profile, 2),
+            other => panic!("expected UnsupportedProfile, got {other:?}"),
+        }
+    }
+
+    /// Twelve-bit profile 3 also routes through the HBD gate.
+    #[test]
+    fn decode_frame_rejects_twelve_bit_with_unsupported_profile() {
+        use rvp9_core::bitstream::header::HeaderTail;
+        use rvp9_core::bitstream::sub_parsers::{
+            LoopFilterParams, MAX_PROB, PREDICTION_PROBS, QuantizationParams, SEG_TREE_PROBS,
+            SegmentationParams, TileInfo,
+        };
+        use rvp9_core::bitstream::{
+            BitDepth, ChromaFormat, ColorRange, ColorSpace, Profile, UncompressedHeader,
+        };
+        let mut dec = Decoder::new();
+        let tail = HeaderTail {
+            refresh_frame_context: true,
+            frame_parallel_decoding_mode: false,
+            frame_context_idx: 0,
+            loop_filter: LoopFilterParams {
+                filter_level: 0,
+                sharpness_level: 0,
+                mode_ref_delta_enabled: false,
+                mode_ref_delta_update: false,
+                ref_deltas: [None; 4],
+                mode_deltas: [None; 2],
+            },
+            quantization: QuantizationParams {
+                base_qindex: 50,
+                y_dc_delta_q: 0,
+                uv_dc_delta_q: 0,
+                uv_ac_delta_q: 0,
+            },
+            segmentation: SegmentationParams {
+                enabled: false,
+                update_map: false,
+                temporal_update: false,
+                tree_probs: [MAX_PROB; SEG_TREE_PROBS],
+                pred_probs: [MAX_PROB; PREDICTION_PROBS],
+                update_data: false,
+                abs_delta: false,
+                feature_data: Default::default(),
+            },
+            tile_info: TileInfo {
+                log2_tile_cols: 0,
+                log2_tile_rows: 0,
+            },
+            first_partition_size: 0,
+        };
+        let header = UncompressedHeader {
+            kind: FrameKind::KeyFrame,
+            profile: Profile::Profile3,
+            show_frame: true,
+            error_resilient: false,
+            bit_depth: BitDepth::Twelve,
+            color_space: ColorSpace::Bt709,
+            color_range: ColorRange::Studio,
+            chroma: ChromaFormat::Yuv444,
+            width: 64,
+            height: 64,
+            render_size: None,
+            tail: Some(tail),
+        };
+        let empty: [u8; 0] = [];
+        let parsed = ParsedFrame {
+            header,
+            header_end_byte: 0,
+            full_frame_data: &empty,
+        };
+        let err = dec.decode_frame(&parsed).expect_err("12-bit must be rejected");
+        match err {
+            DecodeError::UnsupportedProfile { profile } => assert_eq!(profile, 3),
+            other => panic!("expected UnsupportedProfile, got {other:?}"),
+        }
+    }
+
+    /// `tile_scratch_pool_buffer_count` starts at zero and grows on
+    /// demand. The pool's first growth happens when the worker pool
+    /// dispatches per-tile jobs in parallel mode.
+    #[test]
+    fn tile_scratch_pool_starts_empty() {
+        let dec = Decoder::new();
+        assert_eq!(dec.tile_scratch_pool_buffer_count(), 0);
+    }
+
+    /// `merge_lf_params` with mixed Some/None applies only the Some
+    /// slots and keeps existing values for None.
+    #[test]
+    fn merge_lf_params_some_overrides_none_keeps_value() {
+        let mut dec = Decoder::new();
+        // First merge: set all to known values.
+        dec.merge_lf_params(&rvp9_core::bitstream::LoopFilterParams {
+            filter_level: 30,
+            sharpness_level: 0,
+            mode_ref_delta_enabled: true,
+            mode_ref_delta_update: true,
+            ref_deltas: [Some(1), Some(2), Some(3), Some(4)],
+            mode_deltas: [Some(5), Some(6)],
+        });
+        assert_eq!(dec.lf_deltas().ref_deltas, [1, 2, 3, 4]);
+        assert_eq!(dec.lf_deltas().mode_deltas, [5, 6]);
+        // Second merge: partial overlay — only ref[0] and mode[1].
+        dec.merge_lf_params(&rvp9_core::bitstream::LoopFilterParams {
+            filter_level: 30,
+            sharpness_level: 0,
+            mode_ref_delta_enabled: true,
+            mode_ref_delta_update: true,
+            ref_deltas: [Some(99), None, None, None],
+            mode_deltas: [None, Some(88)],
+        });
+        let d = dec.lf_deltas();
+        assert_eq!(d.ref_deltas, [99, 2, 3, 4]);
+        assert_eq!(d.mode_deltas, [5, 88]);
+    }
+
+    /// `parse_packet` with a `fps = 0` keyframe header is rejected by
+    /// the parser layer itself with `InvalidFirstPartitionSize`. Pin
+    /// this as the contract at parse time so future relaxation of the
+    /// gate would surface in this test rather than silently re-routing
+    /// downstream.
+    #[test]
+    fn parse_packet_fps_zero_keyframe_rejected_at_parse_time() {
+        let mut buf = vec![0u8; 256];
+        let mut w = RawBitWriter::new(&mut buf);
+        w.write_literal(sync::FRAME_MARKER as u32, 2);
+        w.write_bit(0);
+        w.write_bit(0);
+        w.write_bit(0);
+        w.write_bit(0); // frame_type = KEY
+        w.write_bit(1);
+        w.write_bit(0);
+        w.write_literal(sync::SYNC_CODE_0 as u32, 8);
+        w.write_literal(sync::SYNC_CODE_1 as u32, 8);
+        w.write_literal(sync::SYNC_CODE_2 as u32, 8);
+        w.write_literal(ColorSpace::Bt601 as u32, 3);
+        w.write_bit(0);
+        w.write_literal(63, 16);
+        w.write_literal(63, 16);
+        w.write_bit(0);
+        w.write_bit(0);
+        w.write_bit(0);
+        w.write_literal(0, 2);
+        w.write_literal(0, 6);
+        w.write_literal(0, 3);
+        w.write_bit(0);
+        w.write_literal(0, 8);
+        w.write_bit(0);
+        w.write_bit(0);
+        w.write_bit(0);
+        w.write_bit(0);
+        w.write_bit(0);
+        w.write_literal(0, 16); // fps = 0
+        for _ in 0..8 {
+            w.write_literal(0, 8);
+        }
+        let used = w.bytes_written();
+        buf.truncate(used + 4);
+        let mut dec = Decoder::new();
+        let err = dec.parse_packet(&buf).err().expect("fps=0 must fail parsing");
+        // The header parser surfaces InvalidFirstPartitionSize for fps=0.
+        assert!(
+            matches!(
+                err,
+                rvp9_core::bitstream::BitstreamError::InvalidFirstPartitionSize
+            ),
+            "expected InvalidFirstPartitionSize, got {err:?}",
+        );
+    }
 }

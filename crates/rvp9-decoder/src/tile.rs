@@ -2985,4 +2985,600 @@ mod tests {
         let cur_bmi = [BmiInfo::default(); 4];
         assert_eq!(left_block_mode(0, &cur_bmi, left), IntraMode::Dc);
     }
+
+    // ===== Coverage Stage 6 — additional tile.rs branch coverage =====
+
+    /// Frame-edge `None` `above` returns `Dc` for `block` ∈ {0, 1}
+    /// (libvpx `vp9_above_block_mode` `vp9_blockd.c:25-35` `if (!above_mi)
+    /// return DC_PRED`).
+    #[test]
+    fn above_block_mode_no_neighbour_returns_dc() {
+        let cur_bmi = [BmiInfo::default(); 4];
+        assert_eq!(above_block_mode(0, &cur_bmi, None), IntraMode::Dc);
+        assert_eq!(above_block_mode(1, &cur_bmi, None), IntraMode::Dc);
+    }
+
+    /// Frame-edge `None` `left` returns `Dc` for `block` ∈ {0, 2}.
+    #[test]
+    fn left_block_mode_no_neighbour_returns_dc() {
+        let cur_bmi = [BmiInfo::default(); 4];
+        assert_eq!(left_block_mode(0, &cur_bmi, None), IntraMode::Dc);
+        assert_eq!(left_block_mode(2, &cur_bmi, None), IntraMode::Dc);
+    }
+
+    /// For sub-blocks at `block ∈ {2, 3}`, `above_block_mode` reads
+    /// `cur_bmi[block - 2]` — the parent's already-decoded top-row
+    /// bmi. Verifies the non-edge path independent of the above
+    /// neighbour.
+    #[test]
+    fn above_block_mode_reads_parent_bmi_for_block2_3() {
+        let mut cur_bmi = [BmiInfo::default(); 4];
+        cur_bmi[0].as_mode = IntraMode::V as u8;
+        cur_bmi[1].as_mode = IntraMode::H as u8;
+        // above neighbour doesn't matter for these.
+        assert_eq!(above_block_mode(2, &cur_bmi, None), IntraMode::V);
+        assert_eq!(above_block_mode(3, &cur_bmi, None), IntraMode::H);
+    }
+
+    /// For sub-blocks at `block ∈ {1, 3}`, `left_block_mode` reads
+    /// `cur_bmi[block - 1]` — the parent's already-decoded left-column
+    /// bmi.
+    #[test]
+    fn left_block_mode_reads_parent_bmi_for_block1_3() {
+        let mut cur_bmi = [BmiInfo::default(); 4];
+        cur_bmi[0].as_mode = IntraMode::D45 as u8;
+        cur_bmi[2].as_mode = IntraMode::D135 as u8;
+        assert_eq!(left_block_mode(1, &cur_bmi, None), IntraMode::D45);
+        assert_eq!(left_block_mode(3, &cur_bmi, None), IntraMode::D135);
+    }
+
+    /// An inter `above` neighbour collapses to `Dc` regardless of bmi
+    /// / block_size.
+    #[test]
+    fn above_block_mode_inter_neighbour_collapses_to_dc() {
+        use rvp9_core::bitstream::frame::InterpFilter;
+        use rvp9_core::mode_info::{InterMode, Mv, RefFrame};
+        let n_bmi = [BmiInfo::default(); 4];
+        let above = Some((
+            BlockSize::Block16x16,
+            BlockMode::Inter {
+                mode: InterMode::NewMv,
+                ref_frames: [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+                mvs: [Mv::ZERO; 2],
+                interp_filter: InterpFilter::EightTap,
+            },
+            n_bmi,
+        ));
+        let cur_bmi = [BmiInfo::default(); 4];
+        assert_eq!(above_block_mode(0, &cur_bmi, above), IntraMode::Dc);
+        assert_eq!(above_block_mode(1, &cur_bmi, above), IntraMode::Dc);
+    }
+
+    /// `neighbour_get_y_mode` for `≥ 8x8` neighbour returns `y_mode`
+    /// regardless of `block` index.
+    #[test]
+    fn neighbour_get_y_mode_large_block_returns_parent() {
+        let bmi = [BmiInfo::default(); 4];
+        for block in 0..4 {
+            assert_eq!(
+                neighbour_get_y_mode(BlockSize::Block32x32, IntraMode::Tm, &bmi, block),
+                IntraMode::Tm
+            );
+        }
+    }
+
+    /// `neighbour_get_y_mode` for sub-8 with invalid `as_mode` value
+    /// (≥ INTRA_MODES) falls back to the parent `y_mode`. Guards the
+    /// `unwrap_or(y_mode)` fallback path.
+    #[test]
+    fn neighbour_get_y_mode_sub8_invalid_bmi_falls_back_to_parent() {
+        let mut bmi = [BmiInfo::default(); 4];
+        bmi[0].as_mode = 250; // not a legal IntraMode
+        assert_eq!(
+            neighbour_get_y_mode(BlockSize::Block4x4, IntraMode::H, &bmi, 0),
+            IntraMode::H
+        );
+    }
+
+    /// `tile_mi_offset` clamps the result to `mi_dim` (corner case for
+    /// the right-/bottom-most tile when the mi grid doesn't align).
+    #[test]
+    fn tile_mi_offset_clamps_to_mi_dim() {
+        // mi=30 (240/8 height, 3 sb rows × 8 mi each = 24, rounded to 24,
+        // then add: aligned = 32). For single tile, offset(1) = 32, clamp
+        // to mi_dim = 30.
+        assert_eq!(tile_mi_offset(1, 30, 0), 30);
+    }
+
+    /// `tile_bounds` for a 2x2 tile split (log2_cols = log2_rows = 1)
+    /// on a 32-mi-wide frame returns the right-half / lower-half tile.
+    #[test]
+    fn tile_bounds_two_by_two_split_bottom_right_tile() {
+        let info = TileInfo {
+            log2_tile_cols: 1,
+            log2_tile_rows: 1,
+        };
+        let b = tile_bounds(&info, 32, 32, 1, 1);
+        // 32 mi = 4 sb cols. (1*4)>>1 = 2 → mi_col_start = 16.
+        // (2*4)>>1 = 4 → mi_col_end = 32.
+        assert_eq!(b.mi_col_start, 16);
+        assert_eq!(b.mi_col_end, 32);
+        assert_eq!(b.mi_row_start, 16);
+        assert_eq!(b.mi_row_end, 32);
+    }
+
+    /// `PartitionCtx::context` for an 8x8 block one column right of a
+    /// previously-recorded 32x32 split. Verifies the `above` bits
+    /// dominate the context for the next block.
+    #[test]
+    fn partition_ctx_after_split_context_shifts() {
+        let mut ctx = PartitionCtx::new(16);
+        // Record a 64x64 → 32x32 split: above=8, left=8 across 8 mi.
+        ctx.update(0, 0, BlockSize::Block32x32, 8);
+        // Query at bsl=0 (8x8 block) inside the recorded region.
+        // above=(8 >> 0) & 1 = 0; left=(8 >> 0) & 1 = 0; ctx = 0.
+        assert_eq!(ctx.context(0, 0, 0), 0);
+        // At bsl=3 (64x64) the above and left bits both read 1 (= bit
+        // 3 of 8). ctx = 1 * 2 + 1 + 12 = 15.
+        assert_eq!(ctx.context(0, 0, 3), 15);
+    }
+
+    /// `PartitionCtx::reset_left` clears only the `left_partition`
+    /// array; `above_partition` survives.
+    #[test]
+    fn partition_ctx_reset_left_preserves_above() {
+        let mut ctx = PartitionCtx::new(8);
+        ctx.update(0, 0, BlockSize::Block16x16, 2);
+        // `update` wrote above and left.
+        assert_ne!(ctx.above_partition, vec![0u8; 8]);
+        assert_ne!(ctx.left_partition, [0u8; 8]);
+        ctx.reset_left();
+        assert_ne!(ctx.above_partition, vec![0u8; 8]); // preserved
+        assert_eq!(ctx.left_partition, [0u8; 8]); // cleared
+    }
+
+    /// `kf_y_mode_probs_for` selects the row indexed by
+    /// `(above_mode, left_mode)`. Confirms the contract that both the
+    /// above- and left-neighbour modes feed the 2-D probability table.
+    #[test]
+    fn kf_y_mode_probs_for_uses_neighbour_pair() {
+        let cur_bmi = [BmiInfo::default(); 4];
+        // No neighbours → both modes Dc → row [Dc][Dc].
+        let probs = kf_y_mode_probs_for(0, &cur_bmi, None, None);
+        let expected = VP9_KF_Y_MODE_PROB[IntraMode::Dc as usize][IntraMode::Dc as usize];
+        assert_eq!(probs, expected);
+        // With above = V (16x16 intra), left = H (8x8 intra) — both
+        // ≥ 8x8 so the parent y_mode is read directly.
+        let nb_bmi = [BmiInfo::default(); 4];
+        let above = Some((
+            BlockSize::Block16x16,
+            BlockMode::Intra {
+                y_mode: IntraMode::V,
+                uv_mode: IntraMode::Dc,
+            },
+            nb_bmi,
+        ));
+        let left = Some((
+            BlockSize::Block16x16,
+            BlockMode::Intra {
+                y_mode: IntraMode::H,
+                uv_mode: IntraMode::Dc,
+            },
+            nb_bmi,
+        ));
+        let probs2 = kf_y_mode_probs_for(0, &cur_bmi, above, left);
+        let expected2 = VP9_KF_Y_MODE_PROB[IntraMode::V as usize][IntraMode::H as usize];
+        assert_eq!(probs2, expected2);
+    }
+
+    /// `plane_ss` returns `(0, 0)` for plane 0 regardless of chroma
+    /// format, and the chroma's `(subsampling_x, subsampling_y)` for
+    /// planes 1 and 2. Mirrors libvpx's per-plane `pd->subsampling_*`
+    /// setup.
+    #[test]
+    fn plane_ss_chroma_subsampling_rules() {
+        for (chroma, expected_uv) in [
+            (ChromaFormat::Yuv420, (1usize, 1usize)),
+            (ChromaFormat::Yuv422, (1usize, 0usize)),
+            (ChromaFormat::Yuv440, (0usize, 1usize)),
+            (ChromaFormat::Yuv444, (0usize, 0usize)),
+        ] {
+            assert_eq!(plane_ss(chroma, 0), (0, 0), "plane 0 always (0,0)");
+            assert_eq!(plane_ss(chroma, 1), expected_uv, "plane 1 @ {chroma:?}");
+            assert_eq!(plane_ss(chroma, 2), expected_uv, "plane 2 @ {chroma:?}");
+        }
+    }
+
+    /// `plane_dequant` for plane 0 (Y) uses `y_dc_delta_q` and zero
+    /// for AC delta. Validates the per-plane dequant lookup against
+    /// the libvpx contract.
+    #[test]
+    fn plane_dequant_y_plane_uses_y_dc_delta() {
+        use rvp9_core::quant::{ac_quant, dc_quant};
+        let params = FrameDecodeParams {
+            mi_cols: 8,
+            mi_rows: 8,
+            tx_mode: TxMode::AllowTx32x32,
+            segmentation_update_map: false,
+            segmentation_enabled: false,
+            segmentation_temporal_update: false,
+            seg_tree_probs: [128; rvp9_core::bitstream::SEG_TREE_PROBS],
+            seg_pred_probs: [128; rvp9_core::bitstream::PREDICTION_PROBS],
+            lossless: false,
+            base_qindex: 100,
+            y_dc_delta_q: 5,
+            uv_dc_delta_q: -3,
+            uv_ac_delta_q: 7,
+            seg_alt_q: [None; rvp9_core::loopfilter::MAX_SEGMENTS],
+            seg_abs_delta: false,
+        };
+        let (dc, ac) = plane_dequant(&params, 0, 0);
+        let want_dc = dc_quant(100, 5, BitDepth::Eight) as i32;
+        let want_ac = ac_quant(100, 0, BitDepth::Eight) as i32;
+        assert_eq!(dc, want_dc);
+        assert_eq!(ac, want_ac);
+    }
+
+    /// `plane_dequant` for plane 1/2 (UV) uses `uv_dc_delta_q` and
+    /// `uv_ac_delta_q`. Asymmetric from luma per libvpx
+    /// `vp9_init_plane_quantizers`.
+    #[test]
+    fn plane_dequant_uv_plane_uses_uv_deltas() {
+        use rvp9_core::quant::{ac_quant, dc_quant};
+        let params = FrameDecodeParams {
+            mi_cols: 8,
+            mi_rows: 8,
+            tx_mode: TxMode::AllowTx32x32,
+            segmentation_update_map: false,
+            segmentation_enabled: false,
+            segmentation_temporal_update: false,
+            seg_tree_probs: [128; rvp9_core::bitstream::SEG_TREE_PROBS],
+            seg_pred_probs: [128; rvp9_core::bitstream::PREDICTION_PROBS],
+            lossless: false,
+            base_qindex: 120,
+            y_dc_delta_q: 5,
+            uv_dc_delta_q: -3,
+            uv_ac_delta_q: 7,
+            seg_alt_q: [None; rvp9_core::loopfilter::MAX_SEGMENTS],
+            seg_abs_delta: false,
+        };
+        let (dc_u, ac_u) = plane_dequant(&params, 1, 0);
+        assert_eq!(dc_u, dc_quant(120, -3, BitDepth::Eight) as i32);
+        assert_eq!(ac_u, ac_quant(120, 7, BitDepth::Eight) as i32);
+        let (dc_v, ac_v) = plane_dequant(&params, 2, 0);
+        assert_eq!(dc_v, dc_quant(120, -3, BitDepth::Eight) as i32);
+        assert_eq!(ac_v, ac_quant(120, 7, BitDepth::Eight) as i32);
+    }
+
+    /// `plane_dequant` honours per-segment alt-Q when the segment has a
+    /// `Some(alt)` slot. Verifies the segment-id branch produces a
+    /// different qindex than the base path.
+    #[test]
+    fn plane_dequant_segment_alt_q_overrides_base_qindex() {
+        use rvp9_core::quant::{dc_quant, get_qindex};
+        let mut seg_alt = [None; rvp9_core::loopfilter::MAX_SEGMENTS];
+        seg_alt[2] = Some(40i16);
+        let params = FrameDecodeParams {
+            mi_cols: 8,
+            mi_rows: 8,
+            tx_mode: TxMode::AllowTx32x32,
+            segmentation_update_map: false,
+            segmentation_enabled: true,
+            segmentation_temporal_update: false,
+            seg_tree_probs: [128; rvp9_core::bitstream::SEG_TREE_PROBS],
+            seg_pred_probs: [128; rvp9_core::bitstream::PREDICTION_PROBS],
+            lossless: false,
+            base_qindex: 100,
+            y_dc_delta_q: 0,
+            uv_dc_delta_q: 0,
+            uv_ac_delta_q: 0,
+            seg_alt_q: seg_alt,
+            seg_abs_delta: true,
+        };
+        // Segment 2: alt = 40, abs_delta = true → qindex resolves to 40.
+        let (dc, _) = plane_dequant(&params, 0, 2);
+        let want = dc_quant(get_qindex(40, true, 100), 0, BitDepth::Eight) as i32;
+        assert_eq!(dc, want);
+        // Segment 0 (no alt) → qindex stays at base = 100.
+        let (dc0, _) = plane_dequant(&params, 0, 0);
+        assert_eq!(dc0, dc_quant(100, 0, BitDepth::Eight) as i32);
+        assert_ne!(dc, dc0, "alt-Q must produce a different dequant than base");
+    }
+
+    /// `splat_segment_id` writes every cell in the rectangle and
+    /// silently clamps any cell whose index exceeds the buffer.
+    #[test]
+    fn splat_segment_id_writes_rectangle_and_clamps() {
+        let mut seg = vec![0u8; 8 * 8];
+        splat_segment_id(&mut seg, 8, 1, 2, 3, 2, 5);
+        // Rectangle covers rows 1..3, cols 2..5.
+        for r in 0..8 {
+            for c in 0..8 {
+                let v = seg[r * 8 + c];
+                if (1..3).contains(&r) && (2..5).contains(&c) {
+                    assert_eq!(v, 5, "({r},{c}) inside splat");
+                } else {
+                    assert_eq!(v, 0, "({r},{c}) outside splat");
+                }
+            }
+        }
+        // Overshoot: cells past the buffer must not panic.
+        splat_segment_id(&mut seg, 8, 7, 7, 4, 4, 9);
+        assert_eq!(seg[7 * 8 + 7], 9);
+    }
+
+    /// `write_mv_grid_block` writes the entry across the rectangle.
+    /// Out-of-bounds cells are silently skipped.
+    #[test]
+    fn write_mv_grid_block_splats_entry() {
+        use rvp9_core::inter::mv_ref::PrevFrameMvRef;
+        use rvp9_core::mode_info::{Mv, RefFrame};
+        let mut grid = vec![PrevFrameMvRef::default(); 4 * 4];
+        let entry = PrevFrameMvRef {
+            mvs: [Mv { row: 7, col: -3 }, Mv::ZERO],
+            ref_frames: [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+        };
+        write_mv_grid_block(&mut grid, 4, 1, 1, 2, 2, entry);
+        for r in 0..4 {
+            for c in 0..4 {
+                let cell = grid[r * 4 + c];
+                if (1..3).contains(&r) && (1..3).contains(&c) {
+                    assert_eq!(cell, entry, "({r},{c}) inside splat");
+                } else {
+                    assert_eq!(cell, PrevFrameMvRef::default(), "({r},{c}) untouched");
+                }
+            }
+        }
+    }
+
+    /// `reset_skip_context` for a >= 8x8 block writes the full
+    /// `n_4x4` extent and leaves cells outside untouched.
+    #[test]
+    fn reset_skip_context_block16x16_clears_coef_flags() {
+        use crate::tile_ctx::TileCoefCtx;
+        let mut ctx = TileCoefCtx::new(8);
+        // Pre-fill Y above/left flags so we can see them clear.
+        for x4 in 0..ctx.above_coef_width(0) {
+            ctx.set_coef_flags(0, x4, 0, 1, 1, true);
+        }
+        for y4 in 0..ctx.left_coef_height(0) {
+            ctx.set_coef_flags(0, 0, y4, 1, 1, true);
+        }
+        let mi = ModeInfo {
+            block_size: BlockSize::Block16x16,
+            tx_size: TxSize::Tx16x16,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        // mi at tile (mi_row_in_tile=0, mi_col_in_tile=0). 16x16 = 4
+        // 4x4 cells. Clears Y above[0..4].
+        reset_skip_context(&mut ctx, &mi, 0, 0, ChromaFormat::Yuv420);
+        for x4 in 0..4 {
+            assert_eq!(ctx.above_coef(0, x4), 0, "Y above[{x4}] should be reset");
+        }
+        for y4 in 0..4 {
+            assert_eq!(ctx.left_coef(0, y4), 0, "Y left[{y4}] should be reset");
+        }
+        // Cells outside the 16x16 span on Y are untouched (still 1).
+        for x4 in 4..ctx.above_coef_width(0) {
+            assert_eq!(ctx.above_coef(0, x4), 1, "Y above[{x4}] outside span");
+        }
+    }
+
+    /// `reset_skip_context` for a sub-8 block (Block4x4) uses the
+    /// `(2 >> ss_x, 2 >> ss_y)` parent-mi extent across all planes.
+    /// Y span = 2 cells; chroma span (4:2:0) = 1 cell.
+    #[test]
+    fn reset_skip_context_sub8_block4x4_uses_parent_mi_span() {
+        use crate::tile_ctx::TileCoefCtx;
+        let mut ctx = TileCoefCtx::new(8);
+        for x4 in 0..ctx.above_coef_width(0) {
+            ctx.set_coef_flags(0, x4, 0, 1, 1, true);
+        }
+        for x4 in 0..ctx.above_coef_width(1) {
+            ctx.set_coef_flags(1, x4, 0, 1, 1, true);
+        }
+        let mi = ModeInfo {
+            block_size: BlockSize::Block4x4,
+            tx_size: TxSize::Tx4x4,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        reset_skip_context(&mut ctx, &mi, 0, 0, ChromaFormat::Yuv420);
+        // Y span = 2 cells (n4_w = 2 >> 0 = 2).
+        assert_eq!(ctx.above_coef(0, 0), 0);
+        assert_eq!(ctx.above_coef(0, 1), 0);
+        // Y outside span still 1.
+        assert_eq!(ctx.above_coef(0, 2), 1);
+        // Chroma span (ss_x=1) = 2>>1 = 1 cell.
+        assert_eq!(ctx.above_coef(1, 0), 0);
+        // Chroma outside span still 1.
+        if ctx.above_coef_width(1) > 1 {
+            assert_eq!(ctx.above_coef(1, 1), 1);
+        }
+    }
+
+    /// `reset_skip_context` for Block32x32 clears 8 4x4 cells on the
+    /// Y plane and the chroma plane writes its 4x4-extent
+    /// (Block16x16 chroma at 4:2:0 → 4 4x4 cells).
+    #[test]
+    fn reset_skip_context_block32x32_full_extent() {
+        use crate::tile_ctx::TileCoefCtx;
+        let mut ctx = TileCoefCtx::new(16); // wider tile to hold 32x32.
+        for x4 in 0..ctx.above_coef_width(0) {
+            ctx.set_coef_flags(0, x4, 0, 1, 1, true);
+        }
+        let mi = ModeInfo {
+            block_size: BlockSize::Block32x32,
+            tx_size: TxSize::Tx32x32,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        reset_skip_context(&mut ctx, &mi, 0, 0, ChromaFormat::Yuv420);
+        // Y span = 8 cells.
+        for x4 in 0..8 {
+            assert_eq!(ctx.above_coef(0, x4), 0, "Y above[{x4}]");
+        }
+    }
+
+    /// `read_keyframe_y_mode` (non-traced wrapper) for the `>= 8x8` arm
+    /// reads exactly one `IntraMode` value via the
+    /// `VP9_KF_Y_MODE_PROB[above][left]` table. bmi remains all-zero.
+    #[test]
+    fn read_keyframe_y_mode_ge_8x8_reads_single_mode() {
+        use rvp9_core::entropy::BoolWriter;
+        use rvp9_core::mode_info::INTRA_MODE_TREE;
+
+        fn subtree_contains(node: i8, target: IntraMode) -> bool {
+            if node <= 0 {
+                (-node) as u8 == target as u8
+            } else {
+                let i = node as usize;
+                subtree_contains(INTRA_MODE_TREE[i], target)
+                    || subtree_contains(INTRA_MODE_TREE[i + 1], target)
+            }
+        }
+        fn encode_intra_mode(target: IntraMode, probs: &[u8; 9], w: &mut BoolWriter) {
+            let mut i: usize = 0;
+            loop {
+                let prob = probs[i >> 1];
+                let left = INTRA_MODE_TREE[i];
+                let right = INTRA_MODE_TREE[i + 1];
+                let bit = if subtree_contains(left, target) { 0 } else { 1 };
+                w.write(bit, prob);
+                let next = if bit == 0 { left } else { right };
+                if next <= 0 {
+                    break;
+                }
+                i = next as usize;
+            }
+        }
+
+        // For frame top-left with no neighbours, the [Dc][Dc] row is used.
+        let probs = VP9_KF_Y_MODE_PROB[IntraMode::Dc as usize][IntraMode::Dc as usize];
+        let mut buf = vec![0u8; 64];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        encode_intra_mode(IntraMode::Tm, &probs, &mut w);
+        for _ in 0..16 {
+            w.write_bit(0);
+        }
+        let n = w.stop_encode().unwrap();
+        buf.truncate(n);
+
+        let mut r = BoolReader::new(&buf).unwrap();
+        let (mode, bmi) = read_keyframe_y_mode(&mut r, BlockSize::Block16x16, None, None);
+        assert_eq!(mode, IntraMode::Tm);
+        for b in &bmi {
+            assert_eq!(b.as_mode, 0, "bmi untouched for ≥ 8x8");
+        }
+    }
+
+    /// D.4 — `read_intra_in_inter_mode_info` for BLOCK_4x8 reads two
+    /// per-bmi modes, both via `fc.y_mode_prob[0]`. bmi[0]=bmi[2]=m0,
+    /// bmi[1]=bmi[3]=m1, and `mi.mode = bmi[3].as_mode = m1`.
+    #[test]
+    fn intra_in_inter_block4x8_duplicates_columns() {
+        use rvp9_core::entropy::{BoolWriter, FrameContext};
+        use rvp9_core::mode_info::INTRA_MODE_TREE;
+        fn subtree_contains(node: i8, target: IntraMode) -> bool {
+            if node <= 0 {
+                (-node) as u8 == target as u8
+            } else {
+                let i = node as usize;
+                subtree_contains(INTRA_MODE_TREE[i], target)
+                    || subtree_contains(INTRA_MODE_TREE[i + 1], target)
+            }
+        }
+        fn encode_intra_mode(target: IntraMode, probs: &[u8; 9], w: &mut BoolWriter) {
+            let mut i: usize = 0;
+            loop {
+                let prob = probs[i >> 1];
+                let left = INTRA_MODE_TREE[i];
+                let right = INTRA_MODE_TREE[i + 1];
+                let bit = if subtree_contains(left, target) { 0 } else { 1 };
+                w.write(bit, prob);
+                let next = if bit == 0 { left } else { right };
+                if next <= 0 {
+                    break;
+                }
+                i = next as usize;
+            }
+        }
+        let fc = FrameContext::new_default();
+        let y_probs = fc.y_mode_prob[0];
+        let mut buf = vec![0u8; 64];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        encode_intra_mode(IntraMode::D45, &y_probs, &mut w);
+        encode_intra_mode(IntraMode::D135, &y_probs, &mut w);
+        encode_intra_mode(IntraMode::Dc, &fc.uv_mode_prob[IntraMode::D135 as usize], &mut w);
+        for _ in 0..16 {
+            w.write_bit(0);
+        }
+        let n = w.stop_encode().unwrap();
+        buf.truncate(n);
+
+        let mut r = BoolReader::new(&buf).unwrap();
+        let (y_mode, _uv, bmi) =
+            read_intra_in_inter_mode_info(&mut r, &fc, BlockSize::Block4x8, None);
+        assert_eq!(y_mode, IntraMode::D135);
+        assert_eq!(bmi[0].as_mode, IntraMode::D45 as u8);
+        assert_eq!(bmi[1].as_mode, IntraMode::D135 as u8);
+        assert_eq!(bmi[2].as_mode, IntraMode::D45 as u8);
+        assert_eq!(bmi[3].as_mode, IntraMode::D135 as u8);
+    }
+
+    /// `clamp_block_mvs` (retired Phase D.5 helper still in the codebase)
+    /// reduces a centred block's MV bounds symmetrically. Verifies the
+    /// clamp produces an MV inside the safe range when the input is
+    /// at the i16 extreme.
+    #[test]
+    fn clamp_block_mvs_pins_mvs_inside_safe_range() {
+        use rvp9_core::bitstream::frame::InterpFilter;
+        use rvp9_core::mode_info::{InterMode, Mv, RefFrame};
+        let mut mi = ModeInfo {
+            block_size: BlockSize::Block16x16,
+            tx_size: TxSize::Tx16x16,
+            skip: false,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Inter {
+                mode: InterMode::NewMv,
+                ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                mvs: [
+                    Mv { row: i16::MAX, col: i16::MAX },
+                    Mv::ZERO,
+                ],
+                interp_filter: InterpFilter::EightTap,
+            },
+            bmi: Default::default(),
+        };
+        // Block at the centre of a 64x64 frame; bw_mi = bh_mi = 2.
+        clamp_block_mvs(&mut mi, 4, 4, 2, 2, 64, 64);
+        if let BlockMode::Inter { mvs, .. } = mi.mode {
+            // Both components must have been clamped to a finite range
+            // (no longer i16::MAX).
+            assert!(mvs[0].row < i16::MAX);
+            assert!(mvs[0].col < i16::MAX);
+        } else {
+            panic!("mode mutated unexpectedly");
+        }
+    }
 }

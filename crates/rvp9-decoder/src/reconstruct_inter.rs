@@ -2415,4 +2415,502 @@ mod tests {
         // Row 3: still clamped.
         assert_eq!(&dst[12..16], &[0xB0, 0xB1, 0xB1, 0xB1]);
     }
+
+    // ===== Coverage Stage 6 — additional reconstruct_inter.rs coverage =====
+
+    /// `plane_ss` parity with the tile.rs helper — plane 0 always
+    /// (0, 0); chroma planes take the format's subsampling.
+    #[test]
+    fn plane_ss_inter_module_chroma_subsampling_rules() {
+        for (chroma, expected_uv) in [
+            (ChromaFormat::Yuv420, (1usize, 1usize)),
+            (ChromaFormat::Yuv422, (1usize, 0usize)),
+            (ChromaFormat::Yuv440, (0usize, 1usize)),
+            (ChromaFormat::Yuv444, (0usize, 0usize)),
+        ] {
+            assert_eq!(super::plane_ss(chroma, 0), (0, 0));
+            assert_eq!(super::plane_ss(chroma, 1), expected_uv, "{chroma:?} U");
+            assert_eq!(super::plane_ss(chroma, 2), expected_uv, "{chroma:?} V");
+        }
+    }
+
+    /// `round_mv_comp_q2` matches libvpx's sign-aware "round to nearest"
+    /// rule (`vp9_reconinter.c:77-79`).
+    #[test]
+    fn round_mv_comp_q2_matches_libvpx() {
+        assert_eq!(super::round_mv_comp_q2(0), 0);
+        assert_eq!(super::round_mv_comp_q2(1), 1);
+        assert_eq!(super::round_mv_comp_q2(2), 1);
+        assert_eq!(super::round_mv_comp_q2(3), 2);
+        assert_eq!(super::round_mv_comp_q2(-1), -1);
+        assert_eq!(super::round_mv_comp_q2(-2), -1);
+        assert_eq!(super::round_mv_comp_q2(-3), -2);
+    }
+
+    /// `mi_mv_pred_q4` averages all four bmi MVs for the requested
+    /// ref index. Validate against a hand-computed sum.
+    #[test]
+    fn mi_mv_pred_q4_averages_four_bmi_for_ref() {
+        let bmi = [
+            BmiInfo { as_mode: 0, as_mv: [Mv { row: 4, col: 2 }, Mv { row: 100, col: -50 }] },
+            BmiInfo { as_mode: 0, as_mv: [Mv { row: 4, col: 4 }, Mv::ZERO] },
+            BmiInfo { as_mode: 0, as_mv: [Mv { row: 8, col: -2 }, Mv::ZERO] },
+            BmiInfo { as_mode: 0, as_mv: [Mv { row: 4, col: 4 }, Mv::ZERO] },
+        ];
+        // Sum row: 4+4+8+4 = 20; round to (20+2)/4 = 5.
+        // Sum col: 2+4-2+4 = 8; round to (8+2)/4 = 2.
+        let got = super::mi_mv_pred_q4(&bmi, 0);
+        assert_eq!(got, Mv { row: 5, col: 2 });
+        // For ref idx 1, only bmi[0] is non-zero: sum (100, -50).
+        // (100+2)/4 = 25; (-50-2)/4 = -13.
+        let got1 = super::mi_mv_pred_q4(&bmi, 1);
+        assert_eq!(got1, Mv { row: 25, col: -13 });
+    }
+
+    /// `mi_mv_pred_q2` averages two bmi MVs for the chosen indices.
+    #[test]
+    fn mi_mv_pred_q2_averages_two_bmi() {
+        let bmi = [
+            BmiInfo { as_mode: 0, as_mv: [Mv { row: 6, col: -4 }, Mv::ZERO] },
+            BmiInfo { as_mode: 0, as_mv: [Mv { row: 4, col: -2 }, Mv::ZERO] },
+            BmiInfo { as_mode: 0, as_mv: [Mv { row: 0, col: 0 }, Mv::ZERO] },
+            BmiInfo { as_mode: 0, as_mv: [Mv { row: 0, col: 0 }, Mv::ZERO] },
+        ];
+        // avg{bmi[0], bmi[1]}: row (6+4)=10 → (10+1)/2 = 5; col (-4-2)=-6 → (-6-1)/2 = -3.
+        let got = super::mi_mv_pred_q2(&bmi, 0, 0, 1);
+        assert_eq!(got, Mv { row: 5, col: -3 });
+    }
+
+    /// `RefPlaneCrop::for_plane` returns Y crop dims for plane 0 and
+    /// chroma crop dims for planes 1 and 2.
+    #[test]
+    fn ref_plane_crop_y_and_uv_dims() {
+        let buf = Yv12Buffer::alloc(
+            64,
+            48,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
+        let y = super::RefPlaneCrop::for_plane(&buf, 0);
+        assert_eq!(y.crop_w, 64);
+        assert_eq!(y.crop_h, 48);
+        let u = super::RefPlaneCrop::for_plane(&buf, 1);
+        assert_eq!(u.crop_w, 32);
+        assert_eq!(u.crop_h, 24);
+        let v = super::RefPlaneCrop::for_plane(&buf, 2);
+        assert_eq!(v.crop_w, 32);
+        assert_eq!(v.crop_h, 24);
+    }
+
+    /// `inverse_transform_add_dct` for `Tx4x4` with `eob = 1` (DC-only)
+    /// routes through the `idct4x4_1_add` fast path. Validate the
+    /// output matches a direct call.
+    #[test]
+    fn inverse_transform_add_dct_tx4x4_eob1_matches_direct() {
+        use rvp9_core::transforms::inverse::idct4x4_1_add;
+        let mut coefs = [0i32; 16];
+        coefs[0] = 100;
+        let mut dst_wrap = [0u8; 16];
+        let mut dst_ref = [0u8; 16];
+        super::inverse_transform_add_dct(
+            TxSize::Tx4x4,
+            &coefs,
+            1,
+            &mut dst_wrap,
+            4,
+            false,
+            &test_dispatch(),
+        );
+        idct4x4_1_add(100, &mut dst_ref, 4);
+        assert_eq!(dst_wrap, dst_ref);
+    }
+
+    /// `inverse_transform_add_dct` for `Tx4x4` with `lossless = true`
+    /// routes through the inverse Walsh-Hadamard path.
+    #[test]
+    fn inverse_transform_add_dct_tx4x4_lossless_routes_iwht() {
+        use rvp9_core::transforms::inverse::iwht4x4_16_add;
+        let mut coefs = [0i32; 16];
+        coefs[0] = 16;
+        coefs[5] = 4;
+        let mut dst_wrap = [0u8; 16];
+        let mut dst_ref = [0u8; 16];
+        super::inverse_transform_add_dct(
+            TxSize::Tx4x4,
+            &coefs,
+            6, // eob > 1 → 16-coeff path
+            &mut dst_wrap,
+            4,
+            true,
+            &test_dispatch(),
+        );
+        iwht4x4_16_add(&coefs, &mut dst_ref, 4);
+        assert_eq!(dst_wrap, dst_ref);
+    }
+
+    /// `inverse_transform_add_dct` for `Tx8x8` with eob = 1 (DC-only).
+    #[test]
+    fn inverse_transform_add_dct_tx8x8_eob1() {
+        use rvp9_core::transforms::inverse::idct8x8_1_add;
+        let mut coefs = [0i32; 64];
+        coefs[0] = 200;
+        let mut dst_wrap = [0u8; 64];
+        let mut dst_ref = [0u8; 64];
+        super::inverse_transform_add_dct(
+            TxSize::Tx8x8,
+            &coefs,
+            1,
+            &mut dst_wrap,
+            8,
+            false,
+            &test_dispatch(),
+        );
+        idct8x8_1_add(200, &mut dst_ref, 8);
+        assert_eq!(dst_wrap, dst_ref);
+    }
+
+    /// `inverse_transform_add_dct` for `Tx16x16` with eob = 1 (DC-only).
+    #[test]
+    fn inverse_transform_add_dct_tx16x16_eob1() {
+        use rvp9_core::transforms::inverse::idct16x16_1_add;
+        let mut coefs = [0i32; 256];
+        coefs[0] = 50;
+        let mut dst_wrap = vec![0u8; 16 * 16];
+        let mut dst_ref = vec![0u8; 16 * 16];
+        super::inverse_transform_add_dct(
+            TxSize::Tx16x16,
+            &coefs,
+            1,
+            &mut dst_wrap,
+            16,
+            false,
+            &test_dispatch(),
+        );
+        idct16x16_1_add(50, &mut dst_ref, 16);
+        assert_eq!(dst_wrap, dst_ref);
+    }
+
+    /// `inverse_transform_add_dct` for `Tx32x32` with eob = 1 (DC-only).
+    #[test]
+    fn inverse_transform_add_dct_tx32x32_eob1() {
+        use rvp9_core::transforms::inverse::idct32x32_1_add;
+        let mut coefs = vec![0i32; 1024];
+        coefs[0] = 30;
+        let mut dst_wrap = vec![0u8; 32 * 32];
+        let mut dst_ref = vec![0u8; 32 * 32];
+        super::inverse_transform_add_dct(
+            TxSize::Tx32x32,
+            &coefs,
+            1,
+            &mut dst_wrap,
+            32,
+            false,
+            &test_dispatch(),
+        );
+        idct32x32_1_add(30, &mut dst_ref, 32);
+        assert_eq!(dst_wrap, dst_ref);
+    }
+
+    /// `build_mc_border` with `y` clamped to the top edge (y < 0):
+    /// every output row reads from the visible row 0 (the wrapper
+    /// clamps `y_clamped = 0` for negative y).
+    #[test]
+    fn build_mc_border_top_edge_clamps_to_row_zero() {
+        let src = [
+            0x10u8, 0x20, 0x30, 0x00,
+            0xF0,   0xF1, 0xF2, 0x00,
+            0x00,   0x00, 0x00, 0x00,
+            0x00,   0x00, 0x00, 0x00,
+        ];
+        let mut dst = [0u8; 12];
+        super::build_mc_border(
+            &src,
+            4,
+            &mut dst,
+            3,
+            /* x */ 0,
+            /* y */ -2,
+            /* b_w */ 3,
+            /* b_h */ 4,
+            /* w */ 3,
+            /* h */ 2,
+        );
+        // Rows -2 / -1 clamp to row 0 → [0x10, 0x20, 0x30].
+        assert_eq!(&dst[0..3], &[0x10, 0x20, 0x30]);
+        assert_eq!(&dst[3..6], &[0x10, 0x20, 0x30]);
+        // Row 0 (y=0) is the visible top row, no clamp.
+        assert_eq!(&dst[6..9], &[0x10, 0x20, 0x30]);
+        // Row 1 (y=1) is row 1.
+        assert_eq!(&dst[9..12], &[0xF0, 0xF1, 0xF2]);
+    }
+
+    /// `RefPlaneCrop::for_plane` for a 4:4:4 buffer returns full
+    /// crop dims on all three planes (chroma matches luma).
+    #[test]
+    fn ref_plane_crop_yuv444_chroma_matches_luma() {
+        let buf = Yv12Buffer::alloc(
+            64,
+            48,
+            ChromaFormat::Yuv444,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
+        let y = super::RefPlaneCrop::for_plane(&buf, 0);
+        let u = super::RefPlaneCrop::for_plane(&buf, 1);
+        assert_eq!((u.crop_w, u.crop_h), (y.crop_w, y.crop_h));
+    }
+
+    /// `inverse_transform_add_dct` Tx8x8 sparse (eob ∈ (1, 12]) routes
+    /// via `idct8x8_12_add`.
+    #[test]
+    fn inverse_transform_add_dct_tx8x8_sparse_routes_via_12_add() {
+        let mut coefs = [0i32; 64];
+        coefs[0] = 50;
+        coefs[1] = 10;
+        coefs[8] = 5;
+        let mut dst_wrap = [128u8; 64];
+        let mut dst_ref = [128u8; 64];
+        super::inverse_transform_add_dct(
+            TxSize::Tx8x8,
+            &coefs,
+            5,
+            &mut dst_wrap,
+            8,
+            false,
+            &test_dispatch(),
+        );
+        (test_dispatch().idct8x8_12_add())(&coefs, &mut dst_ref, 8);
+        assert_eq!(dst_wrap, dst_ref);
+    }
+
+    /// `inverse_transform_add_dct` Tx8x8 dense (eob > 12) routes via
+    /// `idct8x8_add`.
+    #[test]
+    fn inverse_transform_add_dct_tx8x8_dense_routes_via_full_add() {
+        let mut coefs = [0i32; 64];
+        for cell in &mut coefs[..20] {
+            *cell = 3;
+        }
+        let mut dst_wrap = [128u8; 64];
+        let mut dst_ref = [128u8; 64];
+        super::inverse_transform_add_dct(
+            TxSize::Tx8x8,
+            &coefs,
+            15,
+            &mut dst_wrap,
+            8,
+            false,
+            &test_dispatch(),
+        );
+        (test_dispatch().idct8x8_add())(&coefs, &mut dst_ref, 8);
+        assert_eq!(dst_wrap, dst_ref);
+    }
+
+    /// `inverse_transform_add_dct` Tx16x16 sparse (eob ∈ (1, 10]).
+    #[test]
+    fn inverse_transform_add_dct_tx16x16_sparse_routes_via_10_add() {
+        let mut coefs = [0i32; 256];
+        coefs[0] = 40;
+        coefs[1] = 8;
+        let mut dst_wrap = [128u8; 256];
+        let mut dst_ref = [128u8; 256];
+        super::inverse_transform_add_dct(
+            TxSize::Tx16x16,
+            &coefs,
+            3,
+            &mut dst_wrap,
+            16,
+            false,
+            &test_dispatch(),
+        );
+        (test_dispatch().idct16x16_10_add())(&coefs, &mut dst_ref, 16);
+        assert_eq!(dst_wrap, dst_ref);
+    }
+
+    /// `inverse_transform_add_dct` Tx16x16 mid (eob ∈ (10, 38]).
+    #[test]
+    fn inverse_transform_add_dct_tx16x16_mid_routes_via_38_add() {
+        let mut coefs = [0i32; 256];
+        for cell in &mut coefs[..15] {
+            *cell = 4;
+        }
+        let mut dst_wrap = [128u8; 256];
+        let mut dst_ref = [128u8; 256];
+        super::inverse_transform_add_dct(
+            TxSize::Tx16x16,
+            &coefs,
+            20,
+            &mut dst_wrap,
+            16,
+            false,
+            &test_dispatch(),
+        );
+        (test_dispatch().idct16x16_38_add())(&coefs, &mut dst_ref, 16);
+        assert_eq!(dst_wrap, dst_ref);
+    }
+
+    /// `inverse_transform_add_dct` Tx16x16 dense (eob > 38).
+    #[test]
+    fn inverse_transform_add_dct_tx16x16_dense_routes_via_full_add() {
+        let mut coefs = [0i32; 256];
+        for cell in &mut coefs[..60] {
+            *cell = 2;
+        }
+        let mut dst_wrap = [128u8; 256];
+        let mut dst_ref = [128u8; 256];
+        super::inverse_transform_add_dct(
+            TxSize::Tx16x16,
+            &coefs,
+            50,
+            &mut dst_wrap,
+            16,
+            false,
+            &test_dispatch(),
+        );
+        (test_dispatch().idct16x16_add())(&coefs, &mut dst_ref, 16);
+        assert_eq!(dst_wrap, dst_ref);
+    }
+
+    /// `inverse_transform_add_dct` Tx32x32 sparse (eob ∈ (1, 34]).
+    #[test]
+    fn inverse_transform_add_dct_tx32x32_sparse_routes_via_34_add() {
+        let mut coefs = Box::new([0i32; 1024]);
+        coefs[0] = 30;
+        coefs[1] = 4;
+        let mut dst_wrap = vec![128u8; 1024];
+        let mut dst_ref = vec![128u8; 1024];
+        super::inverse_transform_add_dct(
+            TxSize::Tx32x32,
+            coefs.as_slice(),
+            10,
+            &mut dst_wrap,
+            32,
+            false,
+            &test_dispatch(),
+        );
+        (test_dispatch().idct32x32_34_add())(&coefs, &mut dst_ref, 32);
+        assert_eq!(dst_wrap, dst_ref);
+    }
+
+    /// `inverse_transform_add_dct` Tx32x32 mid (eob ∈ (34, 135]).
+    #[test]
+    fn inverse_transform_add_dct_tx32x32_mid_routes_via_135_add() {
+        let mut coefs = Box::new([0i32; 1024]);
+        coefs[0] = 20;
+        for cell in &mut coefs[1..50] {
+            *cell = 2;
+        }
+        let mut dst_wrap = vec![128u8; 1024];
+        let mut dst_ref = vec![128u8; 1024];
+        super::inverse_transform_add_dct(
+            TxSize::Tx32x32,
+            coefs.as_slice(),
+            100,
+            &mut dst_wrap,
+            32,
+            false,
+            &test_dispatch(),
+        );
+        (test_dispatch().idct32x32_135_add())(&coefs, &mut dst_ref, 32);
+        assert_eq!(dst_wrap, dst_ref);
+    }
+
+    /// `inverse_transform_add_dct` Tx32x32 dense (eob > 135).
+    #[test]
+    fn inverse_transform_add_dct_tx32x32_dense_routes_via_full_add() {
+        let mut coefs = Box::new([0i32; 1024]);
+        for cell in &mut coefs[..200] {
+            *cell = 1;
+        }
+        let mut dst_wrap = vec![128u8; 1024];
+        let mut dst_ref = vec![128u8; 1024];
+        super::inverse_transform_add_dct(
+            TxSize::Tx32x32,
+            coefs.as_slice(),
+            150,
+            &mut dst_wrap,
+            32,
+            false,
+            &test_dispatch(),
+        );
+        (test_dispatch().idct32x32_add())(&coefs, &mut dst_ref, 32);
+        assert_eq!(dst_wrap, dst_ref);
+    }
+
+    /// `inverse_transform_add_dct` Tx4x4 + eob > 1 + non-lossless
+    /// routes via the SIMD-dispatched `idct4x4_add`.
+    #[test]
+    fn inverse_transform_add_dct_tx4x4_eob_gt1_uses_16_add() {
+        let mut coefs = [0i32; 16];
+        coefs[0] = 40;
+        coefs[1] = 10;
+        let mut dst_wrap = [128u8; 16];
+        let mut dst_ref = [128u8; 16];
+        super::inverse_transform_add_dct(
+            TxSize::Tx4x4,
+            &coefs,
+            2,
+            &mut dst_wrap,
+            4,
+            false,
+            &test_dispatch(),
+        );
+        (test_dispatch().idct4x4_add())(&coefs, &mut dst_ref, 4);
+        assert_eq!(dst_wrap, dst_ref);
+    }
+
+    /// Construct `InterBlockInputs` with `lossless = true` and drive
+    /// `reconstruct_inter_block` for a Tx4x4 skip block. The lossless
+    /// flag is threaded through but skip path doesn't hit the
+    /// IT-add — so this just exercises the InterBlockInputs path and
+    /// confirms the dst region matches the ref.
+    #[test]
+    fn inter_inputs_lossless_flag_threads_through_skip_path() {
+        let cur_w = 64u32;
+        let cur_h = 64u32;
+        let ref_buf = make_ref(cur_w, cur_h);
+        let mut dst = Yv12Buffer::alloc(
+            cur_w, cur_h, ChromaFormat::Yuv420,
+            BorderUsage::Decoder, ByteAlignment::Legacy,
+        ).unwrap();
+        dst.y_plane_mut().fill(0xAA);
+
+        let fc = fc_flat_eob_inter();
+        let bytes = vec![0u8; 4];
+        let mut reader = BoolReader::new(&bytes).unwrap();
+        let mut coef_ctx = TileCoefCtx::new(cur_w as usize / 8);
+
+        let mut mi = inter_mi(BlockSize::Block16x16, TxSize::Tx16x16, Mv::ZERO);
+        mi.skip = true;
+
+        let inputs = InterBlockInputs {
+            cur_y_width: cur_w,
+            cur_y_height: cur_h,
+            refs: [Some(&ref_buf), None],
+            dequant_per_plane: [(8, 16); 3],
+            lossless: true, // exercise the lossless-flag plumb
+            mi_rows: 1 << 16,
+            mi_cols: 1 << 16,
+        };
+        reconstruct_inter_block(
+            &mut reader, &fc, None, &mut coef_ctx, &mi,
+            0, 0, 0, 0, 0,
+            &inputs, &mut dst,
+            &test_dispatch(),
+        );
+        // dst region equals ref region (Mv = 0 + identity scale = direct
+        // copy via convolve_copy).
+        let dst_y = dst.y_plane();
+        let ref_y = ref_buf.y_plane();
+        for row in 0..16 {
+            assert_eq!(
+                &dst_y.data()[row * dst_y.stride()..row * dst_y.stride() + 16],
+                &ref_y.data()[row * ref_y.stride()..row * ref_y.stride() + 16],
+                "Y row {row}"
+            );
+        }
+    }
 }
