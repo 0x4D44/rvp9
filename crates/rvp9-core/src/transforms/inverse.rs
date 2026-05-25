@@ -2874,6 +2874,185 @@ mod tests {
         assert_eq!(dest, expected);
     }
 
+    // ------------------------------------------------------------------
+    // Stage 9 — full iht dispatch coverage. Each (TxSize, TxType) arm
+    // must be exercised; we pin every arm via a non-trivial input and
+    // a hand-picked direct-kernel reference.
+    // ------------------------------------------------------------------
+
+    /// `iht4x4_16_add` dispatch sweep: every TxType produces output
+    /// matching the direct (row × col) 1D transform composition with
+    /// `ROUND_POWER_OF_TWO(_, 4)` column shift.
+    #[test]
+    #[allow(clippy::type_complexity, clippy::needless_range_loop)]
+    fn iht4x4_dispatch_sweep_matches_direct_composition() {
+        let mut input = [0i32; 16];
+        input[0] = 256;
+        input[5] = -64;
+        input[10] = 32;
+
+        for tx_type in [
+            TxType::DctDct,
+            TxType::AdstDct,
+            TxType::DctAdst,
+            TxType::AdstAdst,
+        ] {
+            let mut dst_disp = [128u8; 16];
+            iht4x4_16_add(&input, &mut dst_disp, 4, tx_type);
+
+            // Direct: row_xform on each row, then col_xform on each col.
+            // Mirror `iht_4_dispatch`: row=second field, col=first field
+            // (libvpx struct order `{cols, rows}`).
+            let (row_xform, col_xform): (
+                fn(&[i32; 4], &mut [i32; 4]),
+                fn(&[i32; 4], &mut [i32; 4]),
+            ) = match tx_type {
+                TxType::DctDct => (idct4, idct4),
+                TxType::AdstDct => (idct4, iadst4),
+                TxType::DctAdst => (iadst4, idct4),
+                TxType::AdstAdst => (iadst4, iadst4),
+            };
+            let mut intermediate = [0i32; 16];
+            for r in 0..4 {
+                let row_in: &[i32; 4] = input[r * 4..r * 4 + 4].try_into().unwrap();
+                let row_out: &mut [i32; 4] =
+                    (&mut intermediate[r * 4..r * 4 + 4]).try_into().unwrap();
+                row_xform(row_in, row_out);
+            }
+            let mut dst_direct = [128u8; 16];
+            for c in 0..4 {
+                let col_in: [i32; 4] = [
+                    intermediate[c],
+                    intermediate[4 + c],
+                    intermediate[8 + c],
+                    intermediate[12 + c],
+                ];
+                let mut col_out = [0i32; 4];
+                col_xform(&col_in, &mut col_out);
+                for r in 0..4 {
+                    let shifted = (col_out[r] as i64 + 8) >> 4;
+                    let dst_idx = r * 4 + c;
+                    let cur = dst_direct[dst_idx];
+                    let v = cur as i64 + shifted;
+                    dst_direct[dst_idx] = v.clamp(0, 255) as u8;
+                }
+            }
+            assert_eq!(dst_disp, dst_direct, "iht4x4 tx_type {tx_type:?}");
+        }
+    }
+
+    /// `iht8x8_64_add` dispatch sweep — same pattern as the 4×4 sweep,
+    /// at the 8×8 size with `>> 5` column shift.
+    #[test]
+    #[allow(clippy::type_complexity, clippy::needless_range_loop)]
+    fn iht8x8_dispatch_sweep_matches_direct_composition() {
+        let mut input = [0i32; 64];
+        input[0] = 1024;
+        input[1] = 200;
+        input[9] = -64;
+        input[17] = 32;
+
+        for tx_type in [
+            TxType::DctDct,
+            TxType::AdstDct,
+            TxType::DctAdst,
+            TxType::AdstAdst,
+        ] {
+            let mut dst_disp = [100u8; 64];
+            iht8x8_64_add(&input, &mut dst_disp, 8, tx_type);
+
+            let (row_xform, col_xform): (
+                fn(&[i32; 8], &mut [i32; 8]),
+                fn(&[i32; 8], &mut [i32; 8]),
+            ) = match tx_type {
+                TxType::DctDct => (idct8, idct8),
+                TxType::AdstDct => (idct8, iadst8),
+                TxType::DctAdst => (iadst8, idct8),
+                TxType::AdstAdst => (iadst8, iadst8),
+            };
+            let mut intermediate = [0i32; 64];
+            for r in 0..8 {
+                let row_in: &[i32; 8] = input[r * 8..r * 8 + 8].try_into().unwrap();
+                let row_out: &mut [i32; 8] =
+                    (&mut intermediate[r * 8..r * 8 + 8]).try_into().unwrap();
+                row_xform(row_in, row_out);
+            }
+            let mut dst_direct = [100u8; 64];
+            let mut col_in = [0i32; 8];
+            let mut col_out = [0i32; 8];
+            for c in 0..8 {
+                for r in 0..8 {
+                    col_in[r] = intermediate[r * 8 + c];
+                }
+                col_xform(&col_in, &mut col_out);
+                for r in 0..8 {
+                    let shifted = (col_out[r] as i64 + 16) >> 5;
+                    let dst_idx = r * 8 + c;
+                    let cur = dst_direct[dst_idx];
+                    let v = cur as i64 + shifted;
+                    dst_direct[dst_idx] = v.clamp(0, 255) as u8;
+                }
+            }
+            assert_eq!(dst_disp, dst_direct, "iht8x8 tx_type {tx_type:?}");
+        }
+    }
+
+    /// `iht16x16_256_add` dispatch sweep — pins every TxType arm at the
+    /// 16×16 size with `>> 6` column shift.
+    #[test]
+    #[allow(clippy::type_complexity, clippy::needless_range_loop)]
+    fn iht16x16_dispatch_sweep_matches_direct_composition() {
+        let mut input = [0i32; 256];
+        input[0] = 2048;
+        input[1] = 256;
+        input[17] = -64;
+        input[33] = 16;
+
+        for tx_type in [
+            TxType::DctDct,
+            TxType::AdstDct,
+            TxType::DctAdst,
+            TxType::AdstAdst,
+        ] {
+            let mut dst_disp = vec![80u8; 256];
+            iht16x16_256_add(&input, &mut dst_disp, 16, tx_type);
+
+            let (row_xform, col_xform): (
+                fn(&[i32; 16], &mut [i32; 16]),
+                fn(&[i32; 16], &mut [i32; 16]),
+            ) = match tx_type {
+                TxType::DctDct => (idct16, idct16),
+                TxType::AdstDct => (idct16, iadst16),
+                TxType::DctAdst => (iadst16, idct16),
+                TxType::AdstAdst => (iadst16, iadst16),
+            };
+            let mut intermediate = [0i32; 256];
+            for r in 0..16 {
+                let row_in: &[i32; 16] = input[r * 16..r * 16 + 16].try_into().unwrap();
+                let row_out: &mut [i32; 16] =
+                    (&mut intermediate[r * 16..r * 16 + 16]).try_into().unwrap();
+                row_xform(row_in, row_out);
+            }
+            let mut dst_direct = vec![80u8; 256];
+            let mut col_in = [0i32; 16];
+            let mut col_out = [0i32; 16];
+            for c in 0..16 {
+                for r in 0..16 {
+                    col_in[r] = intermediate[r * 16 + c];
+                }
+                col_xform(&col_in, &mut col_out);
+                for r in 0..16 {
+                    let shifted = (col_out[r] as i64 + 32) >> 6;
+                    let dst_idx = r * 16 + c;
+                    let cur = dst_direct[dst_idx];
+                    let v = cur as i64 + shifted;
+                    dst_direct[dst_idx] = v.clamp(0, 255) as u8;
+                }
+            }
+            assert_eq!(dst_disp, dst_direct, "iht16x16 tx_type {tx_type:?}");
+        }
+    }
+
     /// The three non-DCT-DCT TxTypes produce different output from
     /// DctDct for the same non-trivial input (sanity check that the
     /// dispatch actually changes behaviour).

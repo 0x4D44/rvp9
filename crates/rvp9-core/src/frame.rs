@@ -2768,6 +2768,309 @@ mod tests {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Stage 9 — frame.rs branch coverage gaps
+    // ------------------------------------------------------------------
+
+    /// `Yv12Buffer::alloc` with non-Legacy byte alignment exercises
+    /// the `pad_after` closure's `alignment > 1` arm (the Legacy path
+    /// uses `alignment == 1` so its body returns 0 immediately).
+    #[test]
+    fn alloc_with_non_legacy_byte_alignment_succeeds() {
+        let b = Yv12Buffer::alloc(
+            64,
+            48,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::V32,
+        )
+        .expect("V32 alignment allocates cleanly");
+        assert_eq!(b.width(), 64);
+        // V128 — the larger pad case exercises the same arm at different
+        // alignment magnitudes.
+        let b = Yv12Buffer::alloc(
+            64,
+            48,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::V128,
+        )
+        .expect("V128 alignment allocates cleanly");
+        assert_eq!(b.width(), 64);
+    }
+
+    /// `Yv12ScratchPool::geometry_eq` returns false at each field in
+    /// the `&&` chain. We construct pairs of buffers differing in
+    /// exactly one of crop_height / chroma / border / strides / etc.
+    /// to walk every short-circuit arm.
+    #[test]
+    fn scratch_pool_geometry_eq_false_arms() {
+        let a = Yv12Buffer::alloc(
+            64,
+            48,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
+        // Different crop_height (also flows through aligned dims +
+        // y_offset/u_offset/v_offset). 64×48 vs 64×32 differ only in
+        // crop_height & dependent computed fields, exercising the
+        // crop_height arm of the && chain.
+        let b_height = Yv12Buffer::alloc(
+            64,
+            32,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
+        assert!(!Yv12ScratchPool::geometry_eq(&a, &b_height));
+
+        // Different chroma format → ss differs → chroma_*/uv_*/offset
+        // differ.
+        let b_chroma = Yv12Buffer::alloc(
+            64,
+            48,
+            ChromaFormat::Yuv444,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
+        assert!(!Yv12ScratchPool::geometry_eq(&a, &b_chroma));
+
+        // Different border (32 vs 64) → strides change.
+        let b_border = Yv12Buffer::alloc(
+            64,
+            48,
+            ChromaFormat::Yuv420,
+            BorderUsage::Custom(64),
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
+        assert!(!Yv12ScratchPool::geometry_eq(&a, &b_border));
+
+        // Different crop_width.
+        let b_width = Yv12Buffer::alloc(
+            128,
+            48,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
+        assert!(!Yv12ScratchPool::geometry_eq(&a, &b_width));
+
+        // Identical → true (this also pins the "all arms true" success).
+        let a2 = a.clone_geometry().unwrap();
+        assert!(Yv12ScratchPool::geometry_eq(&a, &a2));
+    }
+
+    /// `BorderUsage::Custom(n)` with `n % 32 == 0` is the valid arm of
+    /// the custom-border check. Pin this against the rejection arm
+    /// (already covered by `alloc_border_must_be_multiple_of_32`).
+    #[test]
+    fn alloc_custom_border_valid_multiple_of_32_succeeds() {
+        let b = Yv12Buffer::alloc(
+            64,
+            64,
+            ChromaFormat::Yuv420,
+            BorderUsage::Custom(64),
+            ByteAlignment::Legacy,
+        )
+        .expect("multiple-of-32 custom border is valid");
+        assert_eq!(b.border(), 64);
+    }
+
+    /// `set_metadata` with `render_size = None` falls back to the
+    /// `(crop_width, crop_height)` defaults via the `unwrap_or` branch
+    /// (distinct from the `Some(..)` branch already covered by
+    /// `metadata_setter`).
+    #[test]
+    fn set_metadata_none_render_size_falls_back_to_crop_dims() {
+        let mut b = Yv12Buffer::alloc(
+            100,
+            80,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .expect("ok");
+        // First set a non-default render size.
+        b.set_metadata(ColorSpace::Bt709, ColorRange::Full, Some((50, 40)));
+        assert_eq!(b.render_size(), (50, 40));
+        // Now pass None — render size should fall back to crop dims.
+        b.set_metadata(ColorSpace::Bt2020, ColorRange::Studio, None);
+        assert_eq!(b.render_size(), (100, 80));
+        assert_eq!(b.color_space(), ColorSpace::Bt2020);
+    }
+
+    /// `merge_tile_columns_from` (wrapper) with `col_start == col_end`
+    /// (zero-width tile range) is a no-op — exercises the
+    /// `if y_col_len > 0` / `if uv_col_len > 0` false arms.
+    #[test]
+    fn merge_tile_columns_zero_width_is_noop() {
+        let mut dst = Yv12Buffer::alloc(
+            64,
+            32,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .expect("alloc");
+        dst.y_plane_mut().fill(0xAA);
+        dst.u_plane_mut().fill(0xBB);
+        dst.v_plane_mut().fill(0xCC);
+
+        let mut src = dst.clone_geometry().expect("clone");
+        src.y_plane_mut().fill(0x11); // different bytes
+        src.u_plane_mut().fill(0x22);
+        src.v_plane_mut().fill(0x33);
+
+        // Zero-width range: should not modify dst.
+        dst.merge_tile_columns_from(&src, 32, 32);
+
+        let y = dst.y_plane();
+        let u = dst.u_plane();
+        let v = dst.v_plane();
+        assert_eq!(y.row(0)[0], 0xAA, "Y left unchanged");
+        assert_eq!(u.row(0)[0], 0xBB, "U left unchanged");
+        assert_eq!(v.row(0)[0], 0xCC, "V left unchanged");
+    }
+
+    /// `Yv12ScratchPool::put` with a geometry-mismatched buffer + a
+    /// non-empty cache drops the cached entries and keeps the new ones.
+    /// Exercises the `geometry_eq` false branch in `put`.
+    #[test]
+    fn scratch_pool_put_geometry_mismatch_drops_cached() {
+        let _guard = scratch_alloc_counter_lock().lock().unwrap();
+        let small = Yv12Buffer::alloc(
+            32,
+            32,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
+        let large = Yv12Buffer::alloc(
+            128,
+            96,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
+        let mut pool = Yv12ScratchPool::new();
+
+        // Step 1: park small-geometry buffers in the cache.
+        let small_bufs = pool.take(2, &small).unwrap();
+        pool.put(small_bufs);
+        assert_eq!(pool.buffer_count(), 2);
+
+        // Step 2: take a large-geometry buffer fresh (this discards the
+        // cache via the `take` path — the put-mismatch arm is the
+        // dual: cache holds geometry A, put with geometry B). We need
+        // to reach `put`'s mismatch branch directly: the cache must
+        // have small-geometry, and we put large-geometry without first
+        // calling `take(_, &large)` (which would also drop the cache).
+        //
+        // Re-park small first by taking and putting once more.
+        let small_bufs = pool.take(1, &small).unwrap();
+        pool.put(small_bufs);
+        assert_eq!(pool.buffer_count(), 2);
+
+        // Now construct a large-geometry buffer OUTSIDE the pool, then
+        // call put. The geometry mismatch should drop the small cache.
+        let large_buf = large.clone_geometry().unwrap();
+        pool.put(vec![large_buf]);
+        // Cache size = 1 (small entries dropped, only the large one
+        // remains).
+        assert_eq!(pool.buffer_count(), 1);
+        // Confirm the surviving buffer has large geometry.
+        let bufs = pool.take(1, &large).unwrap();
+        assert_eq!(bufs.len(), 1);
+        assert!(Yv12ScratchPool::geometry_eq(&bufs[0], &large));
+    }
+
+    /// `extend_frame_borders` free-function alias matches
+    /// `Yv12Buffer::extend_borders` byte-for-byte.
+    #[test]
+    fn extend_frame_borders_alias_matches_method() {
+        let mut a = Yv12Buffer::alloc(
+            32,
+            32,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
+        let mut b = Yv12Buffer::alloc(
+            32,
+            32,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
+        a.y_plane_mut().fill(0x5A);
+        b.y_plane_mut().fill(0x5A);
+        a.extend_borders();
+        extend_frame_borders(&mut b);
+        assert_eq!(a.buffer_alloc, b.buffer_alloc);
+    }
+
+    /// `FramePoolError::Display` covers each variant's branch.
+    #[test]
+    fn frame_pool_error_display_each_variant() {
+        let s_no_free = format!("{}", FramePoolError::NoFreeSlot);
+        assert!(s_no_free.contains("no free frame-pool slot"));
+        let s_oob = format!("{}", FramePoolError::SlotOutOfRange { slot: 42 });
+        assert!(s_oob.contains("42"));
+        assert!(s_oob.contains("out of range"));
+    }
+
+    /// `FrameAllocError::Display` covers each variant's branch.
+    #[test]
+    fn frame_alloc_error_display_each_variant() {
+        let s_empty = format!("{}", FrameAllocError::EmptyDimensions { width: 0, height: 240 });
+        assert!(s_empty.contains("empty"));
+        assert!(s_empty.contains("0"));
+        let s_large = format!(
+            "{}",
+            FrameAllocError::DimensionsTooLarge {
+                width: 100_000,
+                height: 100_000,
+            },
+        );
+        assert!(s_large.contains("too large"));
+        let s_border = format!("{}", FrameAllocError::BorderNotMultipleOf32 { border: 48 });
+        assert!(s_border.contains("48"));
+    }
+
+    /// `merge_tile_rect_from` with `row_start == row_end` is a no-op
+    /// — both the Y and UV row loops never execute.
+    #[test]
+    fn merge_tile_rect_zero_height_is_noop() {
+        let mut dst = Yv12Buffer::alloc(
+            64,
+            32,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .expect("alloc");
+        dst.y_plane_mut().fill(0xAA);
+        let mut src = dst.clone_geometry().unwrap();
+        src.y_plane_mut().fill(0x11);
+
+        dst.merge_tile_rect_from(&src, 16, 16, 0, 64);
+        // dst unchanged at every visible row.
+        for r in 0..32 {
+            let val = dst.y_plane().row(r)[0];
+            assert_eq!(val, 0xAA, "row {r}");
+        }
+    }
+
     /// `merge_tile_columns_from` (the G5.1 wrapper) must produce the
     /// same output as `merge_tile_rect_from(src, 0, y_height, c0, c1)`.
     /// Asserts backward compatibility for the tile_rows==1 path.

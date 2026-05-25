@@ -2388,6 +2388,519 @@ mod tests {
         assert_eq!(ctx.above_left, plane[above_ref_start - 1]);
     }
 
+    // ------------------------------------------------------------------
+    // Stage 9 — dispatch-table sweep coverage
+    //
+    // Below: exhaustive sweeps over every `(IntraMode, BlockSize)` pair
+    // exercising `intra_predict`'s dispatch table. Each test asserts
+    // bit-identical output between the dispatched call and a direct
+    // call to the scalar kernel for that mode at that size. This pins
+    // every `match` arm in `intra_predict` so future SIMD wiring changes
+    // can't silently mis-route a (mode, size) pair to the wrong kernel.
+    // ------------------------------------------------------------------
+
+    /// Build a synthetic edge context for a `bs × bs` block where
+    /// `above`/`left`/`above_left` are uniquely identifiable. The
+    /// `above` slice is sized for the directional `2*bs` consumers.
+    fn make_edges_for_dispatch(bs: usize) -> (Vec<u8>, Vec<u8>, u8) {
+        let above: Vec<u8> = (0..2 * bs as u8).map(|i| 10 + 3 * i).collect();
+        let left: Vec<u8> = (0..bs as u8).map(|i| 50 + 5 * i).collect();
+        let above_left = 7u8;
+        (above, left, above_left)
+    }
+
+    /// Dispatch sweep: every (`IntraMode`, `bs`) pair through
+    /// `intra_predict` must produce the same bytes as a direct kernel
+    /// call. `bs == 4` D45/D63/D207 route through the `*_4x4`
+    /// specialisations; `bs > 4` modes route through the generic kernels.
+    #[test]
+    fn intra_predict_dispatch_sweep_all_modes_all_sizes() {
+        for &bs in &[4usize, 8, 16, 32] {
+            let (above, left, al) = make_edges_for_dispatch(bs);
+            let ctx = PredCtx {
+                above: &above,
+                left: &left,
+                above_left: al,
+            };
+            for raw_mode in 0u8..=9 {
+                let mode = IntraMode::from_u8(raw_mode).unwrap();
+
+                let mut dst_disp = vec![0u8; bs * bs];
+                intra_predict(
+                    mode,
+                    &mut dst_disp,
+                    bs,
+                    bs,
+                    ctx,
+                    DcAvailability {
+                        above_available: true,
+                        left_available: true,
+                    },
+                    &scalar_dispatch(),
+                );
+
+                // Hand-pick the scalar kernel matching the (mode, bs)
+                // dispatch path inside `intra_predict`.
+                let mut dst_direct = vec![0u8; bs * bs];
+                match mode {
+                    IntraMode::Dc => {
+                        // bs=4 + both-avail routes through dc_predictor_4x4
+                        // slot; all other bs go through the
+                        // `dc_predict_with_availability` path. Both produce
+                        // the same bytes as `dc_predictor`.
+                        dc_predictor(&mut dst_direct, bs, bs, ctx);
+                    }
+                    IntraMode::V => v_predictor(&mut dst_direct, bs, bs, ctx),
+                    IntraMode::H => h_predictor(&mut dst_direct, bs, bs, ctx),
+                    IntraMode::Tm => tm_predictor(&mut dst_direct, bs, bs, ctx),
+                    IntraMode::D45 => {
+                        if bs == 4 {
+                            d45_predictor_4x4(&mut dst_direct, bs, &above);
+                        } else {
+                            d45_predictor(&mut dst_direct, bs, bs, &above);
+                        }
+                    }
+                    IntraMode::D63 => {
+                        if bs == 4 {
+                            d63_predictor_4x4(&mut dst_direct, bs, &above);
+                        } else {
+                            d63_predictor(&mut dst_direct, bs, bs, &above);
+                        }
+                    }
+                    IntraMode::D207 => {
+                        if bs == 4 {
+                            d207_predictor_4x4(&mut dst_direct, bs, &left);
+                        } else {
+                            d207_predictor(&mut dst_direct, bs, bs, &left);
+                        }
+                    }
+                    IntraMode::D135 => d135_predictor(&mut dst_direct, bs, bs, ctx),
+                    IntraMode::D117 => d117_predictor(&mut dst_direct, bs, bs, ctx),
+                    IntraMode::D153 => d153_predictor(&mut dst_direct, bs, bs, ctx),
+                }
+
+                assert_eq!(
+                    dst_disp, dst_direct,
+                    "dispatch mismatch at mode={mode:?}, bs={bs}",
+                );
+            }
+        }
+    }
+
+    /// DC-availability dispatch sweep at every block size. Each of the
+    /// four `(above_available, left_available)` arms routes to the
+    /// correct kernel for every `bs ∈ {4, 8, 16, 32}`. With uniform
+    /// above (=16) and left (=32) the DC values are hand-computable:
+    /// both → 24; above-only → 16; left-only → 32; neither → 128.
+    #[test]
+    fn dc_predict_with_availability_sweep_all_sizes() {
+        let dispatch = scalar_dispatch();
+        for &bs in &[4usize, 8, 16, 32] {
+            let above = vec![16u8; bs];
+            let left = vec![32u8; bs];
+
+            // Both available.
+            let mut dst = vec![0u8; bs * bs];
+            dc_predict_with_availability(
+                &mut dst,
+                bs,
+                bs,
+                &above,
+                &left,
+                DcAvailability {
+                    above_available: true,
+                    left_available: true,
+                },
+                &dispatch,
+            );
+            assert!(
+                dst.iter().all(|&v| v == 24),
+                "bs={bs} both-avail expected 24",
+            );
+
+            // Above only.
+            let mut dst = vec![0u8; bs * bs];
+            dc_predict_with_availability(
+                &mut dst,
+                bs,
+                bs,
+                &above,
+                &left,
+                DcAvailability {
+                    above_available: true,
+                    left_available: false,
+                },
+                &dispatch,
+            );
+            assert!(
+                dst.iter().all(|&v| v == 16),
+                "bs={bs} above-only expected 16",
+            );
+
+            // Left only.
+            let mut dst = vec![0u8; bs * bs];
+            dc_predict_with_availability(
+                &mut dst,
+                bs,
+                bs,
+                &above,
+                &left,
+                DcAvailability {
+                    above_available: false,
+                    left_available: true,
+                },
+                &dispatch,
+            );
+            assert!(
+                dst.iter().all(|&v| v == 32),
+                "bs={bs} left-only expected 32",
+            );
+
+            // Neither.
+            let mut dst = vec![0u8; bs * bs];
+            dc_predict_with_availability(
+                &mut dst,
+                bs,
+                bs,
+                &above,
+                &left,
+                DcAvailability {
+                    above_available: false,
+                    left_available: false,
+                },
+                &dispatch,
+            );
+            assert!(
+                dst.iter().all(|&v| v == 128),
+                "bs={bs} neither expected 128",
+            );
+        }
+    }
+
+    /// `extend_mask` covers every `IntraMode` arm — exercise each via
+    /// `build_intra_predictors` with a unique mode-specific edge fill
+    /// expectation. The point is to walk the `match mode` table in
+    /// `extend_mask` for every variant.
+    #[test]
+    fn build_intra_predictors_extend_mask_sweep_all_modes_unavailable_neighbours() {
+        // All-unavailable neighbours: every mode falls through the
+        // `127`/`129` fill paths. Use a narrow plane that satisfies
+        // the in-frame bound checks; have_top=false / have_left=false
+        // forces the fallback path inside the NEED_* branches.
+        let (plane, stride, w, h) = synth_plane();
+        for raw_mode in 0u8..=9 {
+            let mode = IntraMode::from_u8(raw_mode).unwrap();
+            let mut edges = EdgeBuffers::new();
+            build_intra_predictors(
+                &plane, stride, 1, 1, w, h,
+                TxSize::Tx4x4, mode,
+                false, false, false, &mut edges,
+            );
+            let ctx = edges.pred_ctx(4);
+            // Every mode's `above_left` resolves through ABOVE_UNAVAILABLE_FILL
+            // (127) when no NEED_LEFT/NEED_ABOVE fallback wrote it — the
+            // NEED_ABOVERIGHT mode (D45/D63) also writes 127 in the else
+            // branch of its `have_top` guard.
+            match mode {
+                IntraMode::D207 => {
+                    // NEED_LEFT only → left=129, above untouched.
+                    assert_eq!(ctx.left, &[129u8; 4][..], "D207 left");
+                }
+                IntraMode::H => {
+                    // NEED_LEFT only.
+                    assert_eq!(ctx.left, &[129u8; 4][..], "H left");
+                }
+                IntraMode::V => {
+                    // NEED_ABOVE only.
+                    assert_eq!(&ctx.above[..4], &[127u8; 4][..], "V above");
+                    assert_eq!(ctx.above_left, 127);
+                }
+                IntraMode::D45 | IntraMode::D63 => {
+                    // NEED_ABOVERIGHT only → above [0..2*bs] = 127.
+                    assert_eq!(&ctx.above[..8], &[127u8; 8][..], "{mode:?} above 2*bs");
+                    assert_eq!(ctx.above_left, 127);
+                }
+                _ => {
+                    // DC, D135, D117, D153, TM: NEED_LEFT | NEED_ABOVE.
+                    assert_eq!(&ctx.above[..4], &[127u8; 4][..], "{mode:?} above");
+                    assert_eq!(ctx.left, &[129u8; 4][..], "{mode:?} left");
+                    assert_eq!(ctx.above_left, 127, "{mode:?} above_left");
+                }
+            }
+        }
+    }
+
+    /// `build_intra_predictors` NEED_ABOVERIGHT fast-path with
+    /// `bs == 4 + have_right + !right_clipped`: the `(bs == 4 &&
+    /// have_right)` branch copies the next `bs` above-right pixels
+    /// from the plane in one go.
+    #[test]
+    fn build_intra_predictors_d45_4x4_have_right_no_clip() {
+        let (plane, stride, w, h) = synth_plane();
+        let mut edges = EdgeBuffers::new();
+        let bs = 4;
+        // px_x + bs == 12 well within width=64; have_right=true →
+        // fast-path that reads above[bs..2*bs] from the plane.
+        let (px_x, px_y) = (8, 4);
+        build_intra_predictors(
+            &plane, stride, px_x, px_y, w, h,
+            TxSize::Tx4x4, IntraMode::D45,
+            true, true, true, &mut edges,
+        );
+        let above_ref_start = (px_y - 1) * stride + px_x;
+        let ctx = edges.pred_ctx(bs);
+        for i in 0..2 * bs {
+            assert_eq!(
+                ctx.above[i],
+                plane[above_ref_start + i],
+                "above[{i}] should be plane byte (fast path)",
+            );
+        }
+    }
+
+    /// `build_intra_predictors` NEED_ABOVERIGHT slow-path: the
+    /// `right_clipped` (= `px_x + bs > plane_width`) branch with `bs == 4`.
+    /// Hits the "fewer than bs pixels in-frame" sub-case where
+    /// `px_x + bs > plane_width` makes the first two sub-cases
+    /// (`px_x + 2*bs <= plane_width` and `px_x + bs <= plane_width`)
+    /// both fail.
+    #[test]
+    fn build_intra_predictors_d45_4x4_fewer_than_bs_pixels_in_frame() {
+        let stride = 32;
+        let width = 6; // px_x=4, bs=4 → px_x + bs = 8 > 6
+        let height = 32;
+        let mut plane = vec![0u8; stride * height];
+        for y in 0..height {
+            for x in 0..width {
+                plane[y * stride + x] = (y * 11 + x * 13 + 3) as u8;
+            }
+        }
+        let mut edges = EdgeBuffers::new();
+        let bs = 4;
+        let (px_x, px_y) = (4, 8);
+        build_intra_predictors(
+            &plane, stride, px_x, px_y, width, height,
+            TxSize::Tx4x4, IntraMode::D45,
+            true, true, false, &mut edges,
+        );
+        let ctx = edges.pred_ctx(bs);
+        let r = width - px_x; // 2 in-frame samples
+        let above_ref_start = (px_y - 1) * stride + px_x;
+        for i in 0..r {
+            assert_eq!(ctx.above[i], plane[above_ref_start + i]);
+        }
+        let last = plane[above_ref_start + r - 1];
+        for i in r..2 * bs {
+            assert_eq!(ctx.above[i], last, "above[{i}] replicated");
+        }
+    }
+
+    /// `build_intra_predictors` NEED_ABOVERIGHT slow path at bs=8:
+    /// `right_clipped` triggers, falls through to the "fewer than bs
+    /// pixels in-frame" branch (the only slow-path branch reachable
+    /// given the `right_clipped = px_x + bs > plane_width` precondition).
+    #[test]
+    fn build_intra_predictors_d45_8x8_fewer_than_bs_in_frame_slow_path() {
+        let stride = 32;
+        let width = 12; // px_x=8, bs=8 → px_x + bs = 16 > 12
+        let height = 32;
+        let mut plane = vec![0u8; stride * height];
+        for y in 0..height {
+            for x in 0..width {
+                plane[y * stride + x] = (y * 7 + x * 11 + 2) as u8;
+            }
+        }
+        let mut edges = EdgeBuffers::new();
+        let bs = 8;
+        let (px_x, px_y) = (8, 8);
+        build_intra_predictors(
+            &plane, stride, px_x, px_y, width, height,
+            TxSize::Tx8x8, IntraMode::D45,
+            true, true, false, &mut edges,
+        );
+        let ctx = edges.pred_ctx(bs);
+        let above_ref_start = (px_y - 1) * stride + px_x;
+        let r = width - px_x; // 4
+        for i in 0..r {
+            assert_eq!(ctx.above[i], plane[above_ref_start + i]);
+        }
+        let last = plane[above_ref_start + r - 1];
+        for i in r..2 * bs {
+            assert_eq!(ctx.above[i], last, "above[{i}] replicated");
+        }
+    }
+
+    /// `build_intra_predictors` NEED_ABOVERIGHT fast-path **without**
+    /// `have_right`: exercises the `else` branch of the
+    /// `bs == 4 && have_right` ternary that replicates the trailing
+    /// `bs` pixels from the last in-frame above byte.
+    #[test]
+    fn build_intra_predictors_d45_fast_path_no_have_right_replicates() {
+        let (plane, stride, w, h) = synth_plane();
+        let mut edges = EdgeBuffers::new();
+        let bs = 4;
+        let (px_x, px_y) = (8, 4);
+        // have_right=false → trailing bs bytes replicate from above[bs-1].
+        build_intra_predictors(
+            &plane, stride, px_x, px_y, w, h,
+            TxSize::Tx4x4, IntraMode::D45,
+            true, true, false, &mut edges,
+        );
+        let ctx = edges.pred_ctx(bs);
+        let above_ref_start = (px_y - 1) * stride + px_x;
+        for i in 0..bs {
+            assert_eq!(ctx.above[i], plane[above_ref_start + i]);
+        }
+        let last = plane[above_ref_start + bs - 1];
+        for i in bs..2 * bs {
+            assert_eq!(ctx.above[i], last);
+        }
+    }
+
+    /// `build_intra_predictors` NEED_ABOVERIGHT fewer-than-bs path
+    /// where `have_right=false` (the `have_right=true` variant of this
+    /// path doesn't exist — the fast-paths are only taken when
+    /// `have_right == true` AND `bs == 4`, and `bs == 4` + fewer-than-bs
+    /// in-frame is what the no_have_right path already covers).
+    /// This test pins the `bs > 4` slow-path's fewer-than-bs branch.
+    #[test]
+    fn build_intra_predictors_d45_8x8_fewer_than_bs_pixels_in_frame() {
+        let stride = 32;
+        let width = 12; // px_x=8, bs=8 → px_x + bs = 16 > 12, r=4 < bs
+        let height = 32;
+        let mut plane = vec![0u8; stride * height];
+        for y in 0..height {
+            for x in 0..width {
+                plane[y * stride + x] = (y * 7 + x * 11 + 2) as u8;
+            }
+        }
+        let mut edges = EdgeBuffers::new();
+        let bs = 8;
+        let (px_x, px_y) = (8, 8);
+        build_intra_predictors(
+            &plane, stride, px_x, px_y, width, height,
+            TxSize::Tx8x8, IntraMode::D45,
+            true, true, false, &mut edges,
+        );
+        let ctx = edges.pred_ctx(bs);
+        let above_ref_start = (px_y - 1) * stride + px_x;
+        let r = width - px_x; // 4
+        for i in 0..r {
+            assert_eq!(ctx.above[i], plane[above_ref_start + i]);
+        }
+        let last = plane[above_ref_start + r - 1];
+        for i in r..2 * bs {
+            assert_eq!(ctx.above[i], last, "above[{i}] replicated");
+        }
+    }
+
+    /// `build_intra_predictors` NEED_ABOVE right-clipped slow path with
+    /// `have_top == true`: `px_x + bs > plane_width` triggers the
+    /// in-frame replication branch on the NEED_ABOVE path (separate
+    /// from the NEED_ABOVERIGHT path covered above).
+    #[test]
+    fn build_intra_predictors_v_right_clipped_with_have_left() {
+        let stride = 32;
+        let width = 12;
+        let height = 32;
+        let mut plane = vec![0u8; stride * height];
+        for y in 0..height {
+            for x in 0..width {
+                plane[y * stride + x] = (y * 5 + x * 7 + 3) as u8;
+            }
+        }
+        let mut edges = EdgeBuffers::new();
+        let bs = 8;
+        let (px_x, px_y) = (8, 4);
+        // V (NEED_ABOVE), have_left=true → above_left comes from plane.
+        build_intra_predictors(
+            &plane, stride, px_x, px_y, width, height,
+            TxSize::Tx8x8, IntraMode::V,
+            true, true, false, &mut edges,
+        );
+        let ctx = edges.pred_ctx(bs);
+        let above_ref_start = (px_y - 1) * stride + px_x;
+        let r = width - px_x; // 4
+        for i in 0..r {
+            assert_eq!(ctx.above[i], plane[above_ref_start + i]);
+        }
+        let last = plane[above_ref_start + r - 1];
+        for i in r..bs {
+            assert_eq!(ctx.above[i], last);
+        }
+        // above_left from plane (have_left=true).
+        assert_eq!(ctx.above_left, plane[above_ref_start - 1]);
+    }
+
+    /// `build_intra_predictors` H mode left fallback when `have_left=false`:
+    /// every left[i] becomes LEFT_UNAVAILABLE_FILL = 129.
+    #[test]
+    fn build_intra_predictors_h_have_left_false() {
+        let (plane, stride, w, h) = synth_plane();
+        let mut edges = EdgeBuffers::new();
+        build_intra_predictors(
+            &plane, stride, 8, 8, w, h,
+            TxSize::Tx8x8, IntraMode::H,
+            true, false, false, &mut edges,
+        );
+        let ctx = edges.pred_ctx(8);
+        assert_eq!(ctx.left, &[129u8; 8][..]);
+    }
+
+    /// `build_intra_predictors` NEED_ABOVERIGHT (D45) with
+    /// `have_left=false`: `above_left` falls to
+    /// `LEFT_UNAVAILABLE_FILL = 129`. Pins the `have_left == false`
+    /// arm of the NEED_ABOVERIGHT `above_row[-1]` write.
+    #[test]
+    fn build_intra_predictors_d45_have_left_false_uses_129() {
+        let (plane, stride, w, h) = synth_plane();
+        let mut edges = EdgeBuffers::new();
+        let bs = 4;
+        let (px_x, px_y) = (8, 4);
+        build_intra_predictors(
+            &plane, stride, px_x, px_y, w, h,
+            TxSize::Tx4x4, IntraMode::D45,
+            true, /*have_left=*/ false, false, &mut edges,
+        );
+        let ctx = edges.pred_ctx(bs);
+        // above row comes from the plane; above_left is 129 because
+        // have_left=false.
+        assert_eq!(ctx.above_left, 129);
+    }
+
+    /// `build_intra_predictors` D207 (NEED_LEFT only) with bottom-clipped
+    /// plane — exercises the "extend_bottom < bs" left-column slow path
+    /// in the NEED_LEFT branch.
+    #[test]
+    fn build_intra_predictors_d207_bottom_clipped() {
+        let stride = 32;
+        let width = 32;
+        let height = 12;
+        let mut plane = vec![0u8; stride * height];
+        for y in 0..height {
+            for x in 0..width {
+                plane[y * stride + x] = (y * 2 + x * 3 + 4) as u8;
+            }
+        }
+        let mut edges = EdgeBuffers::new();
+        let bs = 8;
+        let (px_x, px_y) = (4, 8); // px_y + bs = 16 > 12 → slow path
+        build_intra_predictors(
+            &plane, stride, px_x, px_y, width, height,
+            TxSize::Tx8x8, IntraMode::D207,
+            true, true, false, &mut edges,
+        );
+        let ctx = edges.pred_ctx(bs);
+        let extend_bottom = height - px_y;
+        for i in 0..extend_bottom {
+            assert_eq!(ctx.left[i], plane[(px_y + i) * stride + (px_x - 1)]);
+        }
+        let last = plane[(px_y + extend_bottom - 1) * stride + (px_x - 1)];
+        for i in extend_bottom..bs {
+            assert_eq!(ctx.left[i], last);
+        }
+    }
+
     #[test]
     fn build_predictors_then_intra_predict_round_trip() {
         // End-to-end: build_intra_predictors → intra_predict produces

@@ -1479,6 +1479,494 @@ mod tests {
         round_trip(&parsed, &NO_REFS, fp_size);
     }
 
+    // ------------------------------------------------------------------
+    // Stage 9 — branch coverage gaps in bitstream/header.rs
+    // ------------------------------------------------------------------
+
+    /// Profile 1 keyframe: hits the `Profile::Profile1` branch in
+    /// `read_bitdepth_colorspace_sampling`'s subsampling / color-config
+    /// section. Profile 1 reads two subsampling bits plus a reserved 0
+    /// bit when color_space != Srgb.
+    #[test]
+    fn keyframe_profile1_4_2_2_subsampling() {
+        let buf = build_header(|w| {
+            w.write_literal(sync::FRAME_MARKER as u32, 2);
+            // Profile 1: low=1, high=0 → raw = 1.
+            w.write_bit(1);
+            w.write_bit(0);
+            w.write_bit(0); // show_existing = 0
+            w.write_bit(0); // frame_type = KEY
+            w.write_bit(1); // show_frame = 1
+            w.write_bit(0); // error_resilient = 0
+            w.write_literal(sync::SYNC_CODE_0 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_1 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_2 as u32, 8);
+            // Profile 1: no bit_depth bit (Profile 0/1 → 8-bit fixed).
+            w.write_literal(ColorSpace::Bt601 as u32, 3); // color_space != sRGB
+            w.write_bit(0); // color_range = Studio
+            // Profile 1: ss_x, ss_y, reserved=0
+            w.write_bit(1); // ss_x = 1
+            w.write_bit(0); // ss_y = 0 → 4:2:2
+            w.write_bit(0); // reserved
+            // frame size
+            w.write_literal(319, 16);
+            w.write_literal(239, 16);
+            w.write_bit(0); // no render size
+            write_minimal_tail(w, 320);
+            for _ in 0..8 {
+                w.write_literal(0, 8);
+            }
+        });
+        let (hdr, _) = parse_uncompressed_header(&buf, &NO_REFS).expect("valid Profile 1");
+        assert_eq!(hdr.profile, Profile::Profile1);
+        assert_eq!(hdr.bit_depth, BitDepth::Eight);
+        assert_eq!(hdr.chroma, ChromaFormat::Yuv422);
+        assert_eq!(hdr.color_range, ColorRange::Studio);
+    }
+
+    /// Profile 2 keyframe with bit_depth = 10: exercises the
+    /// `Profile2 | Profile3` HBD branch reading 1 bit (`ten_or_twelve`)
+    /// to pick between `BitDepth::Ten` (0) and `BitDepth::Twelve` (1).
+    #[test]
+    fn keyframe_profile2_bit_depth_10() {
+        let buf = build_header(|w| {
+            w.write_literal(sync::FRAME_MARKER as u32, 2);
+            // Profile 2: low=0, high=1 → raw = 2.
+            w.write_bit(0);
+            w.write_bit(1);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(1);
+            w.write_bit(0);
+            w.write_literal(sync::SYNC_CODE_0 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_1 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_2 as u32, 8);
+            w.write_bit(0); // ten_or_twelve = 0 → BitDepth::Ten
+            w.write_literal(ColorSpace::Bt709 as u32, 3);
+            w.write_bit(0); // color_range = Studio
+            // Profile 2: no subsampling bits (forced to 4:2:0).
+            w.write_literal(319, 16);
+            w.write_literal(239, 16);
+            w.write_bit(0);
+            write_minimal_tail(w, 320);
+            for _ in 0..8 {
+                w.write_literal(0, 8);
+            }
+        });
+        let (hdr, _) = parse_uncompressed_header(&buf, &NO_REFS).expect("valid Profile 2");
+        assert_eq!(hdr.profile, Profile::Profile2);
+        assert_eq!(hdr.bit_depth, BitDepth::Ten);
+        assert_eq!(hdr.chroma, ChromaFormat::Yuv420);
+    }
+
+    /// Profile 3 keyframe with bit_depth = 12: hits the `ten_or_twelve
+    /// = 1` arm. Profile 3 also reads subsampling bits since it's
+    /// `Profile1 | Profile3` for that branch.
+    #[test]
+    fn keyframe_profile3_bit_depth_12_4_4_4() {
+        let buf = build_header(|w| {
+            w.write_literal(sync::FRAME_MARKER as u32, 2);
+            // Profile 3: low=1, high=1, extra=0 → raw=3.
+            w.write_bit(1);
+            w.write_bit(1);
+            w.write_bit(0); // extra bit (only read when profile > 2)
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(1);
+            w.write_bit(0);
+            w.write_literal(sync::SYNC_CODE_0 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_1 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_2 as u32, 8);
+            w.write_bit(1); // ten_or_twelve = 1 → BitDepth::Twelve
+            w.write_literal(ColorSpace::Bt709 as u32, 3);
+            w.write_bit(1); // color_range = Full
+            w.write_bit(0); // ss_x = 0
+            w.write_bit(0); // ss_y = 0 → 4:4:4
+            w.write_bit(0); // reserved
+            w.write_literal(319, 16);
+            w.write_literal(239, 16);
+            w.write_bit(0);
+            write_minimal_tail(w, 320);
+            for _ in 0..8 {
+                w.write_literal(0, 8);
+            }
+        });
+        let (hdr, _) = parse_uncompressed_header(&buf, &NO_REFS).expect("valid Profile 3");
+        assert_eq!(hdr.profile, Profile::Profile3);
+        assert_eq!(hdr.bit_depth, BitDepth::Twelve);
+        assert_eq!(hdr.chroma, ChromaFormat::Yuv444);
+        assert_eq!(hdr.color_range, ColorRange::Full);
+    }
+
+    /// Profile 1 keyframe with `color_space = Srgb`: triggers the
+    /// sRGB branch, which requires Profile 1/3 + 4:4:4 + reserved 0
+    /// bit. Pins the Srgb true-arm path.
+    #[test]
+    fn keyframe_profile1_srgb_color_space() {
+        let buf = build_header(|w| {
+            w.write_literal(sync::FRAME_MARKER as u32, 2);
+            // Profile 1: low=1, high=0.
+            w.write_bit(1);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(1);
+            w.write_bit(0);
+            w.write_literal(sync::SYNC_CODE_0 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_1 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_2 as u32, 8);
+            w.write_literal(ColorSpace::Srgb as u32, 3);
+            // sRGB branch: 1 reserved bit = 0.
+            w.write_bit(0);
+            w.write_literal(319, 16);
+            w.write_literal(239, 16);
+            w.write_bit(0);
+            write_minimal_tail(w, 320);
+            for _ in 0..8 {
+                w.write_literal(0, 8);
+            }
+        });
+        let (hdr, _) = parse_uncompressed_header(&buf, &NO_REFS).expect("valid sRGB Profile 1");
+        assert_eq!(hdr.color_space, ColorSpace::Srgb);
+        assert_eq!(hdr.color_range, ColorRange::Full); // sRGB forces full
+        assert_eq!(hdr.chroma, ChromaFormat::Yuv444); // sRGB forces 4:4:4
+    }
+
+    /// Profile 0 with `color_space = Srgb` is invalid — sRGB requires
+    /// Profile 1/3. Surface as `InconsistentSrgb`.
+    #[test]
+    fn keyframe_profile0_srgb_rejected_as_inconsistent() {
+        let buf = build_header(|w| {
+            w.write_literal(sync::FRAME_MARKER as u32, 2);
+            // Profile 0.
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(1);
+            w.write_bit(0);
+            w.write_literal(sync::SYNC_CODE_0 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_1 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_2 as u32, 8);
+            w.write_literal(ColorSpace::Srgb as u32, 3);
+            // No further color/range bits; the parser must reject
+            // BEFORE reading the reserved bit.
+            for _ in 0..16 {
+                w.write_literal(0, 8);
+            }
+        });
+        let err = parse_uncompressed_header(&buf, &NO_REFS).unwrap_err();
+        assert_eq!(err, BitstreamError::InconsistentSrgb);
+    }
+
+    /// Profile 1 + sRGB with a non-zero reserved bit triggers
+    /// `InconsistentSrgb`. Hits the second `InconsistentSrgb` arm.
+    #[test]
+    fn keyframe_profile1_srgb_reserved_bit_one_rejected() {
+        let buf = build_header(|w| {
+            w.write_literal(sync::FRAME_MARKER as u32, 2);
+            w.write_bit(1); // low
+            w.write_bit(0); // high → Profile 1
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(1);
+            w.write_bit(0);
+            w.write_literal(sync::SYNC_CODE_0 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_1 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_2 as u32, 8);
+            w.write_literal(ColorSpace::Srgb as u32, 3);
+            w.write_bit(1); // reserved bit = 1 → reject
+            for _ in 0..16 {
+                w.write_literal(0, 8);
+            }
+        });
+        let err = parse_uncompressed_header(&buf, &NO_REFS).unwrap_err();
+        assert_eq!(err, BitstreamError::InconsistentSrgb);
+    }
+
+    /// Profile 1 non-sRGB with a non-zero reserved bit (in the
+    /// subsampling block) triggers `InconsistentSrgb`. Pins the third
+    /// `InconsistentSrgb` arm.
+    #[test]
+    fn keyframe_profile1_non_srgb_reserved_bit_one_rejected() {
+        let buf = build_header(|w| {
+            w.write_literal(sync::FRAME_MARKER as u32, 2);
+            w.write_bit(1); // low
+            w.write_bit(0); // high → Profile 1
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(1);
+            w.write_bit(0);
+            w.write_literal(sync::SYNC_CODE_0 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_1 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_2 as u32, 8);
+            w.write_literal(ColorSpace::Bt709 as u32, 3);
+            w.write_bit(0); // color_range
+            w.write_bit(0); // ss_x
+            w.write_bit(0); // ss_y
+            w.write_bit(1); // reserved → reject
+            for _ in 0..16 {
+                w.write_literal(0, 8);
+            }
+        });
+        let err = parse_uncompressed_header(&buf, &NO_REFS).unwrap_err();
+        assert_eq!(err, BitstreamError::InconsistentSrgb);
+    }
+
+    /// `error_resilient = 1` on a keyframe forces `(rfc = false,
+    /// fpdm = true)` in the shared post-disposition tail. Exercises
+    /// the `if error_resilient` true branch (the false branch is
+    /// covered by every other keyframe test).
+    #[test]
+    fn keyframe_error_resilient_forces_fpdm_true() {
+        let buf = build_header(|w| {
+            w.write_literal(sync::FRAME_MARKER as u32, 2);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(1);
+            w.write_bit(1); // error_resilient = 1
+            w.write_literal(sync::SYNC_CODE_0 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_1 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_2 as u32, 8);
+            w.write_literal(ColorSpace::Bt601 as u32, 3);
+            w.write_bit(0);
+            w.write_literal(319, 16);
+            w.write_literal(239, 16);
+            w.write_bit(0);
+            // Skip the rfc/fpdm bits since error_resilient forces them.
+            // frame_context_idx (2 bits)
+            w.write_literal(0, 2);
+            // loopfilter / quant / segmentation / tile / fp_size
+            w.write_literal(0, 6);
+            w.write_literal(0, 3);
+            w.write_bit(0);
+            w.write_literal(0, 8);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(0);
+            w.write_bit(0); // log2_tile_rows = 0 (no col bits at 320)
+            w.write_literal(1, 16);
+            for _ in 0..8 {
+                w.write_literal(0, 8);
+            }
+        });
+        let (hdr, _) = parse_uncompressed_header(&buf, &NO_REFS).expect("valid keyframe");
+        let tail = hdr.tail.expect("tail must be present");
+        assert!(!tail.refresh_frame_context);
+        assert!(tail.frame_parallel_decoding_mode);
+        assert!(hdr.error_resilient);
+    }
+
+    /// `read_interp_filter` literal=0 → `InterpFilter::EightTapSmooth`.
+    /// `read_interp_filter` literal=2 → `InterpFilter::EightTapSharp`.
+    /// `read_interp_filter` literal=3 → `InterpFilter::Bilinear`.
+    /// These pin the non-Switchable branch of `read_interp_filter`'s
+    /// literal table.
+    #[test]
+    fn inter_frame_interp_filter_all_literals() {
+        for (literal, expected) in [
+            (0u32, InterpFilter::EightTapSmooth),
+            (1u32, InterpFilter::EightTap),
+            (2u32, InterpFilter::EightTapSharp),
+            (3u32, InterpFilter::Bilinear),
+        ] {
+            let buf = build_header(|w| {
+                w.write_literal(sync::FRAME_MARKER as u32, 2);
+                w.write_bit(0); // Profile 0
+                w.write_bit(0);
+                w.write_bit(0);
+                w.write_bit(1); // INTER
+                w.write_bit(1); // show_frame
+                w.write_bit(0); // !error_resilient
+                w.write_literal(0, 2); // reset_frame_context
+                w.write_literal(0, 8); // refresh_frame_flags
+                for _ in 0..3 {
+                    w.write_literal(0, 3); // ref_idx
+                    w.write_bit(0); // sign_bias
+                }
+                w.write_bit(0); // size_in_found[0]
+                w.write_bit(0); // [1]
+                w.write_bit(0); // [2]
+                w.write_literal(319, 16); // fresh width
+                w.write_literal(239, 16);
+                w.write_bit(0); // no render
+                w.write_bit(0); // !allow_high_precision_mv
+                w.write_bit(0); // not switchable
+                w.write_literal(literal, 2); // interp literal
+                write_minimal_tail(w, 320);
+                for _ in 0..8 {
+                    w.write_literal(0, 8);
+                }
+            });
+            let (hdr, _) = parse_uncompressed_header(&buf, &NO_REFS).expect("valid inter");
+            match hdr.kind {
+                FrameKind::InterFrame { interp_filter, .. } => {
+                    assert_eq!(interp_filter, expected, "literal {literal}");
+                }
+                _ => panic!("expected InterFrame"),
+            }
+        }
+    }
+
+    /// Round-trip a Profile 0 inter frame with `show_frame = false` —
+    /// hits the `if !h.show_frame { wb.write_bit(0); }` arm of the
+    /// inter writer (the show_frame=true case is the existing default).
+    #[test]
+    fn write_inter_frame_show_frame_false_round_trip() {
+        let mut hdr = make_inter(InterpFilter::EightTap, false);
+        hdr.show_frame = false;
+        round_trip(&hdr, &NO_REFS, 7);
+    }
+
+    /// Round-trip an intra-only frame with `error_resilient = true` —
+    /// the writer skips emitting the `reset_frame_context` bits.
+    /// Also exercises the post-tail `error_resilient` arm that forces
+    /// `fpdm = true`.
+    #[test]
+    fn write_intra_only_error_resilient_round_trip() {
+        let hdr = UncompressedHeader {
+            kind: FrameKind::IntraOnly {
+                reset_frame_context: 0,
+                refresh_frame_flags: 0x0F,
+            },
+            profile: Profile::Profile0,
+            show_frame: false,
+            error_resilient: true,
+            bit_depth: BitDepth::Eight,
+            color_space: ColorSpace::Bt601,
+            color_range: ColorRange::Studio,
+            chroma: ChromaFormat::Yuv420,
+            width: 320,
+            height: 240,
+            render_size: None,
+            tail: Some(HeaderTail {
+                refresh_frame_context: false,
+                frame_parallel_decoding_mode: true, // forced when error_resilient
+                ..default_tail()
+            }),
+        };
+        round_trip(&hdr, &NO_REFS, 3);
+    }
+
+    /// Profile 2 intra-only frame: hits the `profile != Profile::Profile0`
+    /// true branch in the intra-only color-config read (the parser reads
+    /// a full color config instead of using the Profile 0 defaults).
+    #[test]
+    fn intra_only_profile2_reads_full_color_config() {
+        let buf = build_header(|w| {
+            w.write_literal(sync::FRAME_MARKER as u32, 2);
+            // Profile 2: low=0, high=1.
+            w.write_bit(0);
+            w.write_bit(1);
+            w.write_bit(0); // show_existing
+            w.write_bit(1); // frame_type INTER
+            w.write_bit(0); // show_frame = 0
+            w.write_bit(0); // error_resilient = 0
+            w.write_bit(1); // intra_only = 1
+            w.write_literal(0, 2); // reset_frame_context
+            w.write_literal(sync::SYNC_CODE_0 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_1 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_2 as u32, 8);
+            // Profile 2 color config: ten_or_twelve bit + cs + range
+            w.write_bit(1); // ten_or_twelve = 1 → 12-bit
+            w.write_literal(ColorSpace::Bt709 as u32, 3);
+            w.write_bit(1); // color_range = Full
+            // Profile 2: no subsampling bits — forced to 4:2:0.
+            w.write_literal(0x5A, 8); // refresh_frame_flags
+            w.write_literal(319, 16);
+            w.write_literal(239, 16);
+            w.write_bit(0); // no render size
+            write_minimal_tail(w, 320);
+            for _ in 0..8 {
+                w.write_literal(0, 8);
+            }
+        });
+        let (hdr, _) = parse_uncompressed_header(&buf, &NO_REFS).expect("valid Profile 2 intra-only");
+        assert_eq!(hdr.profile, Profile::Profile2);
+        assert_eq!(hdr.bit_depth, BitDepth::Twelve);
+        assert_eq!(hdr.color_space, ColorSpace::Bt709);
+        assert_eq!(hdr.color_range, ColorRange::Full);
+        assert_eq!(hdr.chroma, ChromaFormat::Yuv420);
+        match hdr.kind {
+            FrameKind::IntraOnly { refresh_frame_flags, .. } => {
+                assert_eq!(refresh_frame_flags, 0x5A);
+            }
+            other => panic!("expected IntraOnly, got {other:?}"),
+        }
+    }
+
+    /// Round-trip an InterFrame with `error_resilient = true`. Hits
+    /// the `if !h.error_resilient` false arm in the InterFrame writer
+    /// (the writer skips emitting `reset_frame_context` bits when
+    /// error_resilient is set).
+    #[test]
+    fn write_inter_frame_error_resilient_round_trip() {
+        let mut hdr = make_inter(InterpFilter::EightTap, false);
+        hdr.error_resilient = true;
+        // error_resilient forces fpdm=true on the parser side.
+        if let Some(t) = hdr.tail.as_mut() {
+            t.refresh_frame_context = false;
+            t.frame_parallel_decoding_mode = true;
+        }
+        round_trip(&hdr, &NO_REFS, 5);
+    }
+
+    /// `write_uncompressed_header` returns `BufferFull` if the writer's
+    /// underlying buffer overflows. Hits the `if wb.has_error()` true
+    /// arm in `finalise`.
+    #[test]
+    fn write_uncompressed_header_buffer_full_returns_error() {
+        let hdr = make_keyframe(320, 240);
+        // Use a buffer too small to hold even the smallest valid header.
+        let mut buf = vec![0u8; 4];
+        let mut wb = RawBitWriter::new(&mut buf);
+        let err = write_uncompressed_header(&mut wb, &hdr, 1).unwrap_err();
+        assert!(matches!(err, BitstreamError::BufferFull));
+    }
+
+    /// Truncated keyframe (cut mid-frame-size) returns `Truncated`
+    /// from `read_frame_size`'s `?`. Pins the `?` propagation arm of
+    /// `read_frame_size`.
+    #[test]
+    fn keyframe_truncated_frame_size_returns_truncated() {
+        // Stop the buffer right after the sync code (before the
+        // 32-bit frame size). The parser's `read_literal(16)` for
+        // width should fail.
+        let buf = build_header(|w| {
+            w.write_literal(sync::FRAME_MARKER as u32, 2);
+            w.write_bit(0); // profile low
+            w.write_bit(0); // profile high
+            w.write_bit(0); // show_existing
+            w.write_bit(0); // frame_type KEY
+            w.write_bit(1); // show_frame
+            w.write_bit(0); // error_resilient
+            w.write_literal(sync::SYNC_CODE_0 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_1 as u32, 8);
+            w.write_literal(sync::SYNC_CODE_2 as u32, 8);
+            w.write_literal(ColorSpace::Bt601 as u32, 3);
+            w.write_bit(0); // color_range
+            // No width/height/render/tail — truncated.
+        });
+        // Force buffer truncation: don't add trailing padding bytes.
+        let err = parse_uncompressed_header(&buf, &NO_REFS).unwrap_err();
+        assert!(matches!(err, BitstreamError::Truncated { .. }));
+    }
+
+    /// `write_uncompressed_header` rejects non-Profile-0 inputs with
+    /// `UnsupportedProfile`. Pins the early-return branch.
+    #[test]
+    fn write_uncompressed_header_rejects_non_profile_0() {
+        let mut hdr = make_keyframe(320, 240);
+        hdr.profile = Profile::Profile1;
+        let mut buf = vec![0u8; 256];
+        let mut wb = RawBitWriter::new(&mut buf);
+        let err = write_uncompressed_header(&mut wb, &hdr, 1).unwrap_err();
+        assert!(matches!(err, BitstreamError::UnsupportedProfile { profile: 1 }));
+    }
+
     /// `first_partition_size = 0` triggers `InvalidFirstPartitionSize`
     /// (libvpx :2856-2858).
     #[test]

@@ -2814,6 +2814,136 @@ mod tests {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Stage 9 — additional `decode_coefs` branch coverage
+    // ------------------------------------------------------------------
+
+    /// `decode_coefs` accepts `seg_eob < n_coeffs` (per-segment cap) and
+    /// stops cleanly when the EOB token arrives before `seg_eob`. The
+    /// existing `block_runs_to_seg_eob_via_zero_run` test exercises the
+    /// "zero-run advances c past seg_eob" path; this test exercises a
+    /// short seg_eob with normal NOT-EOB + EOB termination.
+    #[test]
+    fn decode_coefs_short_seg_eob_stops_early() {
+        let probs = flat_coef_probs(64, 64, 64);
+        // Encode: pos 0 ONE_TOKEN, then EOB at pos 1. seg_eob = 5
+        // (smaller than n_coeffs=16) — both `seg_eob` and the EOB token
+        // bound the loop.
+        let bytes = encode(|w| {
+            w.write(1, 64); // NOT-EOB at pos 0
+            w.write(1, 64); // NOT-ZERO
+            w.write(0, 64); // ONE_TOKEN
+            w.write_bit(0); // positive
+            w.write(0, 64); // EOB at pos 1
+        });
+        let mut r = BoolReader::new(&bytes).unwrap();
+        let scan = default_scan_4x4();
+        let mut dqc = vec![0i32; 16];
+        let eob = decode_coefs(
+            &mut r,
+            &probs,
+            None,
+            &scan,
+            0,
+            TxSize::Tx4x4,
+            5, // shortened seg_eob
+            (3, 5),
+            &mut dqc,
+        );
+        assert_eq!(eob, 1);
+        assert_eq!(dqc[scan.scan[0] as usize], 3);
+    }
+
+    /// `decode_coefs` with `counts = Some(&mut ...)` AND a zero-run
+    /// AND a non-zero-token must bump every applicable counter on every
+    /// loop iteration. Hits the `if let Some(ref mut cs) = counts`
+    /// branch inside the inner zero-run loop (previously only exercised
+    /// without a zero-run).
+    #[test]
+    fn decode_coefs_counts_with_zero_run_and_value_tree() {
+        let probs = flat_coef_probs(64, 64, 64);
+        // Pos 0: NOT-EOB, ZERO (run of 1).
+        // Pos 1: NOT-ZERO, ONE_TOKEN, sign positive.
+        // Pos 2: EOB.
+        let bytes = encode(|w| {
+            w.write(1, 64); // NOT-EOB pos 0
+            w.write(0, 64); // ZERO at pos 0
+            w.write(1, 64); // NOT-ZERO at pos 1
+            w.write(0, 64); // ONE_TOKEN
+            w.write_bit(0); // positive
+            w.write(0, 64); // EOB pos 2
+        });
+        let mut r = BoolReader::new(&bytes).unwrap();
+        let scan = default_scan_4x4();
+        let mut dqc = vec![0i32; 16];
+        let mut coef_counts: CoefCountsBlock = [[[0; UNCONSTRAINED_NODES + 1]; COEFF_CONTEXTS]; COEF_BANDS];
+        let mut eob_branch_counts: EobBranchCountsBlock = [[0; COEFF_CONTEXTS]; COEF_BANDS];
+        let mut counts = DecodeCoefCounts {
+            coef_counts: &mut coef_counts,
+            eob_branch_counts: &mut eob_branch_counts,
+        };
+        let eob = decode_coefs(
+            &mut r,
+            &probs,
+            Some(&mut counts),
+            &scan,
+            0,
+            TxSize::Tx4x4,
+            16,
+            (7, 11),
+            &mut dqc,
+        );
+        assert_eq!(eob, 2);
+        // Pin a ZERO_TOKEN bump (inner zero-run path's counts update)
+        // and an EOB tally for at least one band.
+        let zero_total: u32 = coef_counts.iter().flatten().map(|t| t[ZERO_TOKEN]).sum();
+        assert!(zero_total >= 1, "expected at least one ZERO_TOKEN tally");
+        let one_total: u32 = coef_counts.iter().flatten().map(|t| t[ONE_TOKEN]).sum();
+        assert_eq!(one_total, 1, "exactly one ONE_TOKEN");
+        let eob_total: u32 = coef_counts.iter().flatten().map(|t| t[EOB_MODEL_TOKEN]).sum();
+        assert_eq!(eob_total, 1, "exactly one EOB_MODEL_TOKEN");
+        let eob_branch_total: u32 = eob_branch_counts.iter().flatten().sum();
+        // Two outer iterations: pos 0 (NOT-EOB → ZERO → NOT-ZERO →
+        // ONE_TOKEN at pos 1, inner zero-run advances c) and pos 2
+        // (EOB). The eob_branch_counts bumps once at the top of each
+        // outer iteration before the EOB read.
+        assert_eq!(eob_branch_total, 2, "two eob branch tallies");
+    }
+
+    /// `encode_coefs` with `eob == seg_eob` AND a leading zero-run of
+    /// length seg_eob-1 followed by one non-zero token at scan[seg_eob-1]:
+    /// the inner zero-loop runs for 15 positions (emits ZERO ×15), then
+    /// hits coef != 0 at c=15, emits the value tree, advances c to 16.
+    /// The outer loop's `while c < eob` exits naturally (c=16=eob),
+    /// and the `if eob < seg_eob` terminal-EOB guard is FALSE (no
+    /// terminal EOB emitted). Decoder exits via its `c >= max_eob`
+    /// guard. Pins the encoder's terminal-EOB `eob < seg_eob` false arm.
+    #[test]
+    fn encode_coefs_full_block_with_leading_zero_run_no_terminal_eob() {
+        let probs = flat_coef_probs(64, 64, 64);
+        let scan = default_scan_4x4();
+        let mut raw = vec![0i32; 16];
+        // Last scan position non-zero — forces eob = 16 == seg_eob.
+        raw[scan.scan[15] as usize] = 1;
+        let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 16);
+        assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 16);
+    }
+
+    /// `encode_coefs` THREE vs FOUR_TOKEN split via Pareto p[2]:
+    /// 3 emits `(0 @ p[2])` and 4 emits `(1 @ p[2])`. Round-trip both
+    /// to pin both arms of the THREE-or-FOUR branch.
+    #[test]
+    fn encode_coefs_three_and_four_tokens_round_trip() {
+        for &v in &[3i32, -3, 4, -4] {
+            let probs = flat_coef_probs(64, 64, 100);
+            let scan = default_scan_4x4();
+            let mut raw = vec![0i32; 16];
+            raw[scan.scan[0] as usize] = v;
+            let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+            assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
+        }
+    }
+
     #[test]
     fn encode_coefs_round_trips_all_tx_sizes() {
         use crate::transforms::scans::{

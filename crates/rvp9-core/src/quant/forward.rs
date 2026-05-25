@@ -1134,6 +1134,247 @@ mod tests {
         assert_eq!(qp.dequant[1], ac_quant(60, 0, BitDepth::Eight));
     }
 
+    // ------------------------------------------------------------------
+    // Stage 9 — fill remaining branch coverage gaps in quant/forward.rs
+    // ------------------------------------------------------------------
+
+    /// `vp9_quantize_b_32x32` with `skip_block = true` zeros both
+    /// output buffers and returns `eob = 0`.
+    #[test]
+    fn vp9_quantize_b_32x32_skip_block_zeroes_everything() {
+        let coeff = vec![1000i32; 1024];
+        let mut qcoeff = vec![99i16; 1024]; // pre-seeded — must be cleared
+        let mut dqcoeff = vec![99i16; 1024];
+        let scan = crate::transforms::scans::DEFAULT_SCAN_32X32;
+        let eob = vp9_quantize_b_32x32(
+            &coeff,
+            true,
+            &[10, 10],
+            &[4, 4],
+            &[16384, 16384],
+            &[1, 1],
+            &mut qcoeff,
+            &mut dqcoeff,
+            &[8, 8],
+            &scan,
+        );
+        assert_eq!(eob, 0);
+        assert!(qcoeff.iter().all(|&v| v == 0));
+        assert!(dqcoeff.iter().all(|&v| v == 0));
+    }
+
+    /// `vp9_quantize_fp` with `skip_block = true` zeros both buffers
+    /// and returns `eob = 0`.
+    #[test]
+    fn vp9_quantize_fp_skip_block_zeroes_everything() {
+        let coeff = [1000i32; 16];
+        let mut qcoeff = [99i16; 16];
+        let mut dqcoeff = [99i16; 16];
+        let scan = default_scan_4x4();
+        let eob = vp9_quantize_fp(
+            &coeff,
+            16,
+            true,
+            &[4, 4],
+            &[16384, 16384],
+            &mut qcoeff,
+            &mut dqcoeff,
+            &[8, 8],
+            scan.scan,
+        );
+        assert_eq!(eob, 0);
+        assert!(qcoeff.iter().all(|&v| v == 0));
+        assert!(dqcoeff.iter().all(|&v| v == 0));
+    }
+
+    /// `vp9_quantize_fp_32x32` with `skip_block = true` zeros and
+    /// returns 0. Exercises the skip arm of the 32×32 fp kernel.
+    #[test]
+    fn vp9_quantize_fp_32x32_skip_block_zeroes_everything() {
+        let coeff = vec![5000i32; 1024];
+        let mut qcoeff = vec![123i16; 1024];
+        let mut dqcoeff = vec![123i16; 1024];
+        let scan = crate::transforms::scans::DEFAULT_SCAN_32X32;
+        let eob = vp9_quantize_fp_32x32(
+            &coeff,
+            true,
+            &[4, 4],
+            &[16384, 16384],
+            &mut qcoeff,
+            &mut dqcoeff,
+            &[8, 8],
+            &scan,
+        );
+        assert_eq!(eob, 0);
+        assert!(qcoeff.iter().all(|&v| v == 0));
+        assert!(dqcoeff.iter().all(|&v| v == 0));
+    }
+
+    /// `vp9_quantize_fp_32x32` with a coefficient ABOVE the
+    /// `dequant >> 2` gate at scan position 0 produces a non-zero
+    /// qcoeff/dqcoeff. Exercises the `if abs_coeff >= dq>>2` true
+    /// branch of the fp_32x32 kernel.
+    #[test]
+    fn vp9_quantize_fp_32x32_above_dequant_gate_produces_nonzero() {
+        let qp = init_plane_quantizers(60, QuantizerDeltas::Y);
+        let mut coeff = vec![0i32; 1024];
+        coeff[0] = 4000; // well above dequant/2 and the fp threshold
+        let mut qcoeff = vec![0i16; 1024];
+        let mut dqcoeff = vec![0i16; 1024];
+        let scan = crate::transforms::scans::DEFAULT_SCAN_32X32;
+        let eob = vp9_quantize_fp_32x32(
+            &coeff,
+            false,
+            &qp.round_fp,
+            &qp.quant_fp,
+            &mut qcoeff,
+            &mut dqcoeff,
+            &qp.dequant,
+            &scan,
+        );
+        assert!(eob >= 1, "above-gate input should produce nonzero qcoeff");
+        assert_ne!(qcoeff[0], 0);
+        // Reconstruction invariant: dqcoeff = qcoeff * dequant / 2.
+        assert_eq!(
+            i32::from(dqcoeff[0]),
+            (i32::from(qcoeff[0]) * i32::from(qp.dequant[0])) / 2,
+        );
+    }
+
+    /// `vp9_quantize_fp_32x32` with a coefficient BELOW the
+    /// `dequant >> 2` gate yields zero qcoeff/dqcoeff. Exercises the
+    /// `if abs_coeff >= dq>>2` false branch.
+    #[test]
+    fn vp9_quantize_fp_32x32_below_dequant_gate_quantizes_to_zero() {
+        let qp = init_plane_quantizers(60, QuantizerDeltas::Y);
+        let mut coeff = vec![0i32; 1024];
+        // dequant[0] >> 2 = qp.dequant[0] / 4. Use 0.
+        coeff[0] = 0;
+        let mut qcoeff = vec![0i16; 1024];
+        let mut dqcoeff = vec![0i16; 1024];
+        let scan = crate::transforms::scans::DEFAULT_SCAN_32X32;
+        let eob = vp9_quantize_fp_32x32(
+            &coeff,
+            false,
+            &qp.round_fp,
+            &qp.quant_fp,
+            &mut qcoeff,
+            &mut dqcoeff,
+            &qp.dequant,
+            &scan,
+        );
+        assert_eq!(eob, 0, "zero input → eob=0");
+        assert!(qcoeff.iter().all(|&v| v == 0));
+        assert!(dqcoeff.iter().all(|&v| v == 0));
+    }
+
+    /// `vp9_quantize_b_32x32` round-trip with negative inputs covers
+    /// the `coeff_sign != 0` arithmetic path on the 32×32 kernel.
+    #[test]
+    fn vp9_quantize_b_32x32_negative_coeff_preserves_sign() {
+        let qp = init_plane_quantizers(80, QuantizerDeltas::Y);
+        let mut coeff = vec![0i32; 1024];
+        coeff[0] = -3000; // above zbin
+        let mut qcoeff = vec![0i16; 1024];
+        let mut dqcoeff = vec![0i16; 1024];
+        let scan = crate::transforms::scans::DEFAULT_SCAN_32X32;
+        let eob = vp9_quantize_b_32x32(
+            &coeff,
+            false,
+            &qp.zbin,
+            &qp.round,
+            &qp.quant,
+            &qp.quant_shift,
+            &mut qcoeff,
+            &mut dqcoeff,
+            &qp.dequant,
+            &scan,
+        );
+        assert!(eob >= 1);
+        assert!(qcoeff[0] < 0, "negative input → negative qcoeff");
+        assert!(dqcoeff[0] < 0);
+    }
+
+    /// `init_plane_quantizers` at high `q_index` (e.g. 240) where
+    /// `dc_quant(q, 0) >= 148` hits the `qzbin_factor = 80` branch
+    /// (the lower-than-148 path uses 84). Both branches must be
+    /// reachable for `qzbin_factor_8bit` to be fully covered.
+    #[test]
+    fn init_plane_quantizers_high_q_uses_qzbin_factor_80() {
+        let qp_low = init_plane_quantizers(60, QuantizerDeltas::Y);
+        let qp_high = init_plane_quantizers(240, QuantizerDeltas::Y);
+        // Both produce non-default (nonzero) results.
+        assert!(qp_low.zbin[0] != 0);
+        assert!(qp_high.zbin[0] != 0);
+        // High q has a larger dequant (the lookup table grows
+        // monotonically with q).
+        assert!(
+            qp_high.dequant[0] > qp_low.dequant[0],
+            "q=240 dequant should exceed q=60",
+        );
+        // Spot-check: at q=240, `dc_quant(240) >= 148` should hold
+        // (it's far past the 84/80 cutoff).
+        assert!(
+            dc_quant(240, 0, BitDepth::Eight) >= 148,
+            "q=240 dc_quant must be >= 148 to exercise the 80-factor branch",
+        );
+    }
+
+    /// `init_plane_quantizers` for chroma with `ac_delta != 0` hits
+    /// the `ac_quant(q, ac_delta, ...)` path with a non-zero delta —
+    /// distinct from the `Y` default which has `ac_delta = 0`.
+    #[test]
+    fn init_plane_quantizers_uv_with_ac_delta_differs_from_y() {
+        let qp_y = init_plane_quantizers(60, QuantizerDeltas::Y);
+        let qp_uv = init_plane_quantizers(
+            60,
+            QuantizerDeltas {
+                dc_delta: 0,
+                ac_delta: 4,
+            },
+        );
+        // The AC dequant must differ between Y (ac_delta=0) and UV
+        // (ac_delta=4) at q=60.
+        assert_ne!(qp_y.dequant[1], qp_uv.dequant[1]);
+        // DC dequant matches (same dc_delta=0).
+        assert_eq!(qp_y.dequant[0], qp_uv.dequant[0]);
+    }
+
+    /// `plane_dequant_pair` returns `(dc_quant, ac_quant)` for the
+    /// given `(q_index, deltas)`. Compare against the lookup helpers.
+    #[test]
+    fn plane_dequant_pair_matches_dc_ac_quant_helpers() {
+        let deltas = QuantizerDeltas {
+            dc_delta: -2,
+            ac_delta: 6,
+        };
+        let (dc, ac) = plane_dequant_pair(80, deltas);
+        assert_eq!(dc, dc_quant(80, -2, BitDepth::Eight));
+        assert_eq!(ac, ac_quant(80, 6, BitDepth::Eight));
+    }
+
+    /// `n_coeffs_for(TxSize)` matches the underlying enum method.
+    #[test]
+    fn n_coeffs_for_matches_tx_size_n_coeffs() {
+        for tx in [
+            TxSize::Tx4x4,
+            TxSize::Tx8x8,
+            TxSize::Tx16x16,
+            TxSize::Tx32x32,
+        ] {
+            assert_eq!(n_coeffs_for(tx), tx.n_coeffs());
+        }
+    }
+
+    /// `scan_for_forward(order)` returns the scan slice. Trivial pass
+    /// through — pin it to keep the convenience helper exercised.
+    #[test]
+    fn scan_for_forward_returns_scan_slice() {
+        let scan = default_scan_4x4();
+        let forward = scan_for_forward(&scan);
+        assert_eq!(forward, scan.scan);
+    }
+
     /// Hand-verified: `invert_quant(8)` should yield the libvpx values
     /// for `dequant = 8`. From the algorithm: `l = floor(log2(8)) = 3`,
     /// so `m = 1 + (1 << 19) / 8 = 1 + 65536 = 65537`, `quant = 65537 -
