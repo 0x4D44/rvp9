@@ -41,12 +41,72 @@ pub mod transforms;
 // read by hot-path core kernels (intra-pred, entropy detokenize).
 mod trace_flags;
 
-/// The pixel type. Per **D-01 RESOLVED** (PLAN.md §3): 8-bit only in v1.
-/// HBD (10-bit / 12-bit) is deferred to Stage 6+; v1 ships a concrete `u8`
-/// type, not a generic over pixel depth.
+/// The 8-bit pixel type. Per **D-01 RESOLVED** (PLAN.md §3): 8-bit is
+/// the only pixel storage currently driven by kernel code.
+///
+/// libvpx parity: `uint8_t` plane storage when
+/// `CONFIG_VP9_HIGHBITDEPTH == 0`. The HBD path uses
+/// [`HbdPixel`] (`uint16_t` in libvpx) and lives behind the
+/// `highbitdepth` feature flag (W6.1 scaffold); the kernel pairs
+/// themselves are pending (see `dsp/highbd.rs`).
 ///
 /// See `notes/hld/00-architecture.md` §7 ("8-bit-only pixel-type policy").
 pub type Pixel = u8;
+
+/// The 16-bit pixel container used by the HBD kernel pairs. Only
+/// available under `--features highbitdepth`. Matches libvpx's
+/// `uint16_t` plane storage in `CONFIG_VP9_HIGHBITDEPTH` (see
+/// `vpx_scale/yv12config.h:67`, `YV12_FLAG_HIGHBITDEPTH = 8`).
+///
+/// W6.1 scaffold — the kernels themselves are unimplemented stubs in
+/// [`dsp::highbd`].
+#[cfg(feature = "highbitdepth")]
+pub type HbdPixel = u16;
+
+/// Bit-depth of the pixel pipeline. Default builds expose only
+/// [`Bd8`](BitDepth::Bd8); `--features highbitdepth` adds
+/// [`Bd10`](BitDepth::Bd10) and [`Bd12`](BitDepth::Bd12). Mirrors libvpx
+/// `enum vpx_bit_depth_t` (`vpx/vpx_image.h:42-46`).
+///
+/// W6.1 scaffold (vpxenc parity port). This is **separate** from
+/// [`bitstream::BitDepth`] (`Eight`/`Ten`/`Twelve`) which is the
+/// wire-format enum read from the uncompressed header; the
+/// crate-root enum here tracks the pixel-storage choice used by
+/// kernels and frame buffers.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[repr(u8)]
+pub enum BitDepth {
+    /// 8-bit (default).
+    Bd8 = 8,
+    /// 10-bit (only available under `--features highbitdepth`).
+    #[cfg(feature = "highbitdepth")]
+    Bd10 = 10,
+    /// 12-bit (only available under `--features highbitdepth`).
+    #[cfg(feature = "highbitdepth")]
+    Bd12 = 12,
+}
+
+impl BitDepth {
+    /// Numeric bit-depth (8/10/12).
+    #[must_use]
+    #[inline]
+    pub const fn bits(self) -> u8 {
+        match self {
+            Self::Bd8 => 8,
+            #[cfg(feature = "highbitdepth")]
+            Self::Bd10 => 10,
+            #[cfg(feature = "highbitdepth")]
+            Self::Bd12 => 12,
+        }
+    }
+}
+
+impl Default for BitDepth {
+    #[inline]
+    fn default() -> Self {
+        Self::Bd8
+    }
+}
 
 /// The transform-domain coefficient type (low magnitude). 16-bit signed,
 /// matching libvpx's `tran_low_t` at `CONFIG_VP9_HIGHBITDEPTH == 0`.
@@ -57,3 +117,30 @@ pub type Coeff = i16;
 /// DCT intermediates can exceed 16 bits before the scale-back step. See
 /// `notes/hld/00-architecture.md` §6 for the integer-width policy.
 pub type TranLow = i32;
+
+#[cfg(test)]
+mod bit_depth_scaffold_tests {
+    //! W6.1 scaffold — pin the cardinality and `.bits()` semantics of the
+    //! crate-root [`BitDepth`] enum. Default builds see one variant
+    //! (`Bd8`); the `highbitdepth` feature adds `Bd10` and `Bd12`. The
+    //! `HbdPixel` alias is exercised under the feature too.
+
+    use super::BitDepth;
+
+    #[test]
+    fn bd8_bits_is_eight() {
+        assert_eq!(BitDepth::Bd8.bits(), 8);
+        assert_eq!(BitDepth::default(), BitDepth::Bd8);
+    }
+
+    #[cfg(feature = "highbitdepth")]
+    #[test]
+    fn hbd_variants_have_correct_bits() {
+        assert_eq!(BitDepth::Bd10.bits(), 10);
+        assert_eq!(BitDepth::Bd12.bits(), 12);
+        // HbdPixel exists and is u16-shaped — pin via a const-eval.
+        const _ASSERT_SIZE: () = {
+            assert!(std::mem::size_of::<super::HbdPixel>() == 2);
+        };
+    }
+}

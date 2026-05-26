@@ -10,6 +10,16 @@ description = "Shared VP9 codec primitives: bitstream, entropy, transforms, intr
 [lints]
 workspace = true
 
+[features]
+# W6.1 — High Bit Depth scaffold. Default OFF; ON flips
+# `Pixel = u8` to `Pixel = u16` and exposes the `BitDepth::Bd10/Bd12`
+# variants alongside `Bd8`. The kernel pairs themselves (HBD SAD,
+# variance, FDCT, IDCT, predictors, loop filter, quantize) are NOT
+# implemented under this feature — see `dsp/highbd.rs` for the stub
+# surface. libvpx parity: `CONFIG_VP9_HIGHBITDEPTH` configure switch
+# plus `YV12_FLAG_HIGHBITDEPTH = 8` in `vpx_scale/yv12config.h:67`.
+highbitdepth = []
+
 [dependencies]
 # G5 — tile-threaded decode. MPMC `Receiver` is required because the
 # worker pool has one job queue feeding many worker threads (each
