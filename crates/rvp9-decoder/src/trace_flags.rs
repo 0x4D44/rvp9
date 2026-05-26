@@ -114,6 +114,13 @@ pub(crate) struct TraceFlags {
     /// regression in production. See `wave-2-row-parallel-lf.md` for
     /// the measurement.
     pub disable_row_mt: bool,
+    /// Lever B v2 (HLD §5 row 3) — column-wavefront LF worker is
+    /// opt-in via `RVP9_USE_COLUMN_WAVEFRONT=1`. Default OFF (false);
+    /// when set, the LF dispatcher routes through
+    /// `run_split_edge_lf_worker` instead of the legacy row-barrier
+    /// `run_row_mt_lf_worker`. Lands dormant at C2 — exercised by the
+    /// differential test (`row_mt_lf_diff`) under both states.
+    pub use_column_wavefront: bool,
 }
 
 impl TraceFlags {
@@ -155,6 +162,12 @@ impl TraceFlags {
             // showed regression on multi-thread fixtures after
             // upstream Wave 1 + 4 reduced LF's frame-time share).
             disable_row_mt: !eq1("RVP9_ROW_MT"),
+            // Lever B v2 C2 — column-wavefront LF worker. Opt-in,
+            // default OFF. When the gate is met (C3 perf-gate), the
+            // default flips ON via the dispatcher (no env var change
+            // required); until then this env var is the only way to
+            // exercise the new worker.
+            use_column_wavefront: eq1("RVP9_USE_COLUMN_WAVEFRONT"),
         }
     }
 

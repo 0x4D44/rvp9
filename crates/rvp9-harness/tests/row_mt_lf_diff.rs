@@ -13,13 +13,20 @@
 //! parallel-thread decoder would fall through to the legacy serial LF
 //! and the differential test would just compare serial-vs-serial).
 //!
-//! IMPORTANT: the env var is read once via `OnceLock` on the first
+//! Lever B v2 C2 (HLD §6.2) extends this test to also exercise the
+//! new column-wavefront worker path via `RVP9_USE_COLUMN_WAVEFRONT=1`
+//! — both paths must produce byte-identical YV12 to serial. Both env
+//! vars set together inside the same test process work because
+//! `trace_flags()`'s `OnceLock` reads them simultaneously on first
+//! access.
+//!
+//! IMPORTANT: the env vars are read once via `OnceLock` on the first
 //! `trace_flags()` access. The harness `set_var` BEFORE constructing
-//! the Decoder, so the OnceLock initialises with `RVP9_ROW_MT=1`. If
-//! another test in the same process inits `trace_flags` first WITHOUT
-//! the var set, this test will silently skip the row-MT path. The
-//! `tests/` directory layout (one process per `--test`) means this
-//! file runs in isolation.
+//! the Decoder, so the OnceLock initialises with both env vars set.
+//! If another test in the same process inits `trace_flags` first
+//! WITHOUT the vars set, this test will silently skip the new paths.
+//! The `tests/` directory layout (one process per `--test`) means
+//! this file runs in isolation.
 
 use rvp9_decoder::Decoder;
 use rvp9_harness::container::read_packets;

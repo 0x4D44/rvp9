@@ -3613,6 +3613,43 @@ fn apply_loop_filter_to_frame_parallel<'frame>(
     }
 }
 
+/// Lever B v2 C2 — column-wavefront LF driver. Submits `num_workers`
+/// copies of `run_split_edge_lf_worker` into the supplied scope, each
+/// with a unique `worker_id ∈ 0..num_workers`. The static row
+/// distribution inside the worker assigns each row to exactly one
+/// worker (`row r ↦ worker r % num_workers`).
+///
+/// Mirrors libvpx's loop in `vp9_loop_filter_rows_mt`
+/// (`vp9_thread_common.c:182-200`). Per HLD §3.6 / §10 #1, only
+/// `num_workers` jobs are submitted — NOT one job per SB.
+fn apply_loop_filter_to_frame_column_wavefront<'frame>(
+    scope: &rvp9_core::tile_threading::FrameScope<'_, 'frame>,
+    state: &'frame rvp9_core::loopfilter::apply::ColumnWavefrontLfState<'frame>,
+    num_workers: usize,
+) {
+    let simd_dispatch = rvp9_core::dsp::get();
+    for worker_id in 0..num_workers {
+        let st: &'frame rvp9_core::loopfilter::apply::ColumnWavefrontLfState<'frame> =
+            state;
+        let dispatch = simd_dispatch.clone();
+        scope.submit(move || {
+            // SAFETY: the wavefront sync protocol inside the worker
+            // (Acquire on cur_sb_col[r-1] before reading row r-1's
+            // pixel hazard zone; Release on cur_sb_col[r] after
+            // writing row r) guarantees no concurrent writer
+            // overlaps this worker's owned pixels.
+            unsafe {
+                rvp9_core::loopfilter::apply::run_split_edge_lf_worker(
+                    st,
+                    worker_id,
+                    num_workers,
+                    &dispatch,
+                );
+            }
+        });
+    }
+}
+
 /// Wave 2 C4 — top-level LF dispatcher that picks between the row-MT
 /// parallel path and the legacy serial path.
 ///
@@ -3664,6 +3701,26 @@ fn apply_loop_filter_to_frame_dispatching(
             sharpness_level,
             lf_deltas,
             seg_view,
+        );
+        return;
+    }
+
+    // Lever B v2 C2 — when `RVP9_USE_COLUMN_WAVEFRONT=1`, route to the
+    // new column-wavefront worker. Default state is OFF (legacy
+    // row-barrier worker still serves `RVP9_ROW_MT=1`).
+    if crate::trace_flags::trace_flags().use_column_wavefront {
+        apply_loop_filter_to_frame_column_wavefront_dispatch(
+            yv12,
+            worker_pool,
+            mi_grid,
+            mi_stride,
+            mi_rows,
+            mi_cols,
+            filter_level,
+            sharpness_level,
+            lf_deltas,
+            seg_view,
+            num_workers,
         );
         return;
     }
@@ -3750,6 +3807,111 @@ fn apply_loop_filter_to_frame_dispatching(
     // exceeds the row count.
     worker_pool.scope(|scope| {
         apply_loop_filter_to_frame_parallel(scope, &state, num_workers);
+    });
+}
+
+/// Lever B v2 C2 — column-wavefront dispatcher. Allocates the
+/// `cur_sb_col` atomic vector (one per SB row, initialised to -1),
+/// builds the `ColumnWavefrontLfState`, and submits `num_workers`
+/// worker jobs. Worker count is capped per HLD §3.6: the inner
+/// `nsync_for_width` value is consulted at runtime from `mi_cols * 8`.
+///
+/// Default OFF (gated by `RVP9_USE_COLUMN_WAVEFRONT=1` at C2). C3
+/// flips the default after the perf gate is met.
+///
+/// Mirrors libvpx's `vp9_loop_filter_alloc` + `vp9_loop_filter_rows_mt`
+/// (`vp9_thread_common.c:160-200`).
+#[allow(clippy::too_many_arguments)]
+fn apply_loop_filter_to_frame_column_wavefront_dispatch(
+    yv12: &mut Yv12Buffer,
+    worker_pool: &mut rvp9_core::tile_threading::WorkerPool,
+    mi_grid: &[Option<ModeInfo>],
+    mi_stride: usize,
+    mi_rows: usize,
+    mi_cols: usize,
+    filter_level: u8,
+    sharpness_level: u8,
+    lf_deltas: ResolvedLfDeltas,
+    seg_view: SegmentationLfView,
+    num_workers: usize,
+) {
+    use rvp9_core::loopfilter::apply::{
+        ColumnWavefrontLfState, Non420Inputs, RowMaskInputs, SharedFrame,
+    };
+    use std::sync::atomic::AtomicI32;
+
+    let levels = resolve_filter_levels(filter_level, lf_deltas, seg_view);
+    let info = LoopFilterInfo::new(sharpness_level);
+
+    let sb_rows = mi_rows.div_ceil(SB_MI_SIZE);
+    let sb_cols = mi_cols.div_ceil(SB_MI_SIZE);
+
+    debug_assert!(
+        mi_grid.iter().all(|c| c.is_some()),
+        "Wave 5b commit 1: frame_mi_grid must be fully populated at LF entry",
+    );
+
+    // Per-SB-row most-recently-completed column. Initialised to -1
+    // (libvpx `vp9_thread_common.c:181` memset(-1)). Workers store
+    // `c >= 0` after each SB; the wavefront gate compares
+    // `cur_sb_col[r-1] >= c + nsync - 1`.
+    let cur_sb_col: Vec<AtomicI32> =
+        (0..sb_rows).map(|_| AtomicI32::new(-1)).collect();
+
+    // HLD §3.6 cap: `min(num_workers, max(1, num_tile_cols), sb_rows)`.
+    // At C2 the dispatcher does not yet have access to `num_tile_cols`
+    // (would require threading another arg through). The C3 commit
+    // wires that. For C2, cap at `min(num_workers, sb_rows)` which is
+    // already libvpx's pre-tile-cols cap. Per HLD §10 #8 we do not
+    // under-cap; the additional num_tile_cols cap only matters when
+    // num_workers > num_tile_cols, which the differential test
+    // exercises on tile_1x2/4/8 (num_tile_cols ∈ {2, 4, 8}). C3 ties
+    // the loose end.
+    let num_lf_workers = num_workers.min(sb_rows).max(1);
+
+    let chroma = yv12.chroma();
+    let chroma_is_asymmetric = matches!(
+        chroma,
+        rvp9_core::bitstream::ChromaFormat::Yuv422
+            | rvp9_core::bitstream::ChromaFormat::Yuv440
+    );
+    let non420 = if chroma_is_asymmetric {
+        Some(Non420Inputs {
+            mi_grid,
+            mi_stride,
+            levels: &levels,
+        })
+    } else {
+        None
+    };
+
+    let shared = SharedFrame::from_yv12(yv12);
+    let row_inputs = RowMaskInputs {
+        mi_grid,
+        mi_stride,
+        mi_rows,
+        mi_cols,
+    levels: &levels,
+    };
+
+    // libvpx `get_sync_range(width)` — pixel width = mi_cols * 8.
+    let nsync = rvp9_core::loopfilter::apply::nsync_for_width(
+        (mi_cols * 8) as u32,
+    );
+
+    let state = ColumnWavefrontLfState {
+        shared,
+        info: &info,
+        row_inputs,
+        non420,
+        sb_rows,
+        sb_cols,
+        cur_sb_col: &cur_sb_col,
+        nsync,
+    };
+
+    worker_pool.scope(|scope| {
+        apply_loop_filter_to_frame_column_wavefront(scope, &state, num_lf_workers);
     });
 }
 
