@@ -1126,6 +1126,51 @@ mod tests {
             StreamEncoder::new(cfg).expect("StreamEncoder must accept --noise-sensitivity=1");
         assert_eq!(enc.config().noise_sensitivity, 1);
     }
+
+    /// PROOF (W7.8 q-range CLI plumb) — `--min-q <0..=255>` and
+    /// `--max-q <0..=255>` flow through to
+    /// `EncoderConfig::{min,max}_qindex` (and from there to the
+    /// rate-controller's CBR Q clamp). Re-audit pass 2 #7 flagged
+    /// these as "parse-and-store without consumer". This PROOF pins
+    /// the wiring; the consumer side is `RateControl::pick_q` which
+    /// already honours `cfg.{min,max}_qindex`.
+    ///
+    /// Anti-G3: passing `--min-q=10 --max-q=200` must surface as
+    /// `cfg.min_qindex == 10` / `cfg.max_qindex == 200`. A stripped
+    /// wiring would pin both to defaults (4, 255).
+    #[test]
+    fn w7_8_q_range_plumbs_into_encoder_config() {
+        let table = flag_table();
+
+        // Default (flags omitted) → libvpx CBR preset (4, 255).
+        let o = EncOpts::default();
+        let cfg = build_encoder_config_for_test(&o);
+        assert_eq!(cfg.min_qindex, 4, "default min_qindex must be 4");
+        assert_eq!(cfg.max_qindex, 255, "default max_qindex must be 255");
+
+        // Explicit values land on the config.
+        let mut o = EncOpts::default();
+        args::parse(&table, &mut o, &s(&["--min-q=10", "--max-q=200"]), "rvp9enc").unwrap();
+        let cfg = build_encoder_config_for_test(&o);
+        assert_eq!(cfg.min_qindex, 10);
+        assert_eq!(cfg.max_qindex, 200);
+
+        // The encoder accepts the wired config (a sanity end-to-end —
+        // `StreamEncoder::new` validates `min_qindex <= max_qindex`
+        // via `RateControlConfig::validate`).
+        let enc = StreamEncoder::new(cfg).expect("min<max must accept");
+        assert_eq!(enc.config().min_qindex, 10);
+        assert_eq!(enc.config().max_qindex, 200);
+
+        // Inverted range must be rejected at construction time.
+        let mut o = EncOpts::default();
+        args::parse(&table, &mut o, &s(&["--min-q=200", "--max-q=10"]), "rvp9enc").unwrap();
+        let cfg = build_encoder_config_for_test(&o);
+        assert!(
+            StreamEncoder::new(cfg).is_err(),
+            "min_qindex > max_qindex must be rejected by validation",
+        );
+    }
 }
 
 /// Test-only — builds a minimal valid `EncoderConfig` from `EncOpts`
@@ -1148,5 +1193,11 @@ fn build_encoder_config_for_test(opts: &EncOpts) -> EncoderConfig {
             .noise_sensitivity
             .map(|v| v.min(6) as u8)
             .unwrap_or(0),
+        // Re-audit pass 2 #7 follow-up: plumb the CLI's `--min-q` /
+        // `--max-q` selection through to the rate controller. Default
+        // (4, 255) mirrors EncoderConfig's default + the libvpx CBR
+        // preset; unspecified callers keep byte-identical behaviour.
+        min_qindex: opts.min_q.map(|v| v.min(255) as u8).unwrap_or(4),
+        max_qindex: opts.max_q.map(|v| v.min(255) as u8).unwrap_or(255),
     }
 }
