@@ -481,26 +481,33 @@ pub struct StreamEncoder {
     /// scene detection, noise estimate, skin detector) plug into
     /// this struct.
     pre_analysis: crate::pre_analysis::PreAnalysisState,
-    /// Last reconstructed Y plane (tight-stride, `width * height`).
-    /// Populated after every keyframe; for inter ZEROMV/skip=true
-    /// frames the buffer is unchanged.
+    /// A10 — the full VP9 8-slot reference-frame buffer pool with
+    /// `ref_frame_map[8]` indirection. Owns the encoder's
+    /// residual-coding reference pixels (the bit-exact decoded
+    /// reconstruction the decoder rebuilds from the bitstream).
     ///
-    /// **Residual-coding reference.** This is the bit-exact decoded
-    /// reconstruction (post-LF) — what the decoder rebuilds from the
-    /// bitstream. Used as the prediction source the residual IT-add
-    /// applies on top of (`build_inter_pred_plane_unscaled` in
+    /// **Replaces the prior ad-hoc `last_recon_* / golden_recon_* /
+    /// altref_recon_*` field-triples.** The encoder reads named ref `i`
+    /// from `ref_frame_map[i]` (LAST → map[0], GOLDEN → map[1], ALTREF →
+    /// map[2]; libvpx `vp9_onyxc_int.h:126` `ref_frame_map[REF_FRAMES]`,
+    /// `vp9_decodeframe.c:1206`). `refresh_frame_flags` rotates the map:
+    /// LAST every frame (bit 0), GOLDEN only on GOLDEN-refresh (bit 1),
+    /// ALTREF only on the ARF (bit 2). This reproduces the prior separate
+    /// buffers' pixels exactly — a faithful re-indexing, byte-exact on
+    /// the cross-decoder gate. The bitstream writer's emitted
+    /// `ref_frame_indices` (`[0, 0, 0]` / `[0, 0, 2]`) is a distinct wire
+    /// field and is unchanged by this refactor.
+    ///
+    /// The LAST slot (`frame_refs[LAST_REF]`) is the residual-coding
+    /// reference: the prediction source the residual IT-add applies on
+    /// top of (`build_inter_pred_plane_unscaled` in
     /// `lib.rs::pick_and_simulate_inter_encode_partitions` and the
-    /// `recon_yuv_out` seed copy). Must never diverge from the
-    /// decoder's pool — the cross-decoder gate verifies this.
-    ///
-    /// Paired with [`Self::me_ref_y`]; see that field's doc for the
-    /// reference-buffer split rationale (libvpx
-    /// `vp9_denoiser.c:294-304` me_ref vs `cm->frame_refs[]`).
-    last_recon_y: Vec<u8>,
-    /// Last reconstructed U plane (`(width / 2) * (height / 2)`).
-    last_recon_u: Vec<u8>,
-    /// Last reconstructed V plane (`(width / 2) * (height / 2)`).
-    last_recon_v: Vec<u8>,
+    /// `recon_yuv_out` seed copy). Paired with [`Self::me_ref_y`]; see
+    /// that field's doc for the ME-vs-residual reference split (libvpx
+    /// `vp9_denoiser.c:294-304` `running_avg_y[]` vs `cm->frame_refs[]`,
+    /// which is NOT part of the pool — the ME-side filtered view lives
+    /// in `me_ref_*`).
+    ref_pool: crate::buffer_pool::RefFramePool,
     /// ME-side reference buffer for the LAST slot (Y plane,
     /// tight-stride, `width * height`).
     ///
@@ -535,43 +542,13 @@ pub struct StreamEncoder {
     me_ref_u: Vec<u8>,
     /// ME-side reference, V plane. See [`Self::me_ref_y`].
     me_ref_v: Vec<u8>,
-    /// A14 — GOLDEN-slot reconstruction buffer (Phase A
-    /// infrastructure). Initialised on every keyframe from the
-    /// KF reconstruction (the decoder does the same via
-    /// `refresh_frame_flags = 0xFF`); periodically refreshed
-    /// from a chosen inter frame's reconstruction via
-    /// `refresh_frame_flags` bit 1. The picker still iterates
-    /// LASTFRAME only (Phase B is follow-up work); these
-    /// buffers exist so the encoder's notion of the decoder's
-    /// GOLDEN ref-pool slot stays in sync with the bitstream
-    /// the writer emits. Cross-decoder gate stays byte-exact:
-    /// the decoder reads the same refresh mask the encoder
-    /// writes, copies its own decoded current frame into slot
-    /// 1 on refresh, and the encoder's `golden_recon_*` mirrors
-    /// that exact pixel data.
-    golden_recon_y: Vec<u8>,
-    /// A14 — GOLDEN U plane (`(width / 2) * (height / 2)`).
-    golden_recon_u: Vec<u8>,
-    /// A14 — GOLDEN V plane (`(width / 2) * (height / 2)`).
-    golden_recon_v: Vec<u8>,
-    /// W8 — ALTREF reconstruction buffer (Y plane, tight-stride
-    /// `width * height`). Mirrors the decoder's ref-pool slot 2
-    /// (`ALT_REF_FRAME_IDX = 2`, libvpx
-    /// `vp9_blockd.h::ALTREF_FRAME - LAST_FRAME = 2`). Populated
-    /// when an ARF packet is emitted via
-    /// `encode_altref_internal` (`refresh_frame_flags |= 0x04`);
-    /// initialised on every keyframe from the KF reconstruction
-    /// (the decoder mirrors this via `refresh_frame_flags = 0xFF`
-    /// on the KF). Read by no production code path today — the
-    /// picker enumerates LAST + GOLDEN only — so this slot is
-    /// purely structural until a future wave widens the picker.
-    /// Cross-decoder gate stays byte-exact because every inter
-    /// frame's `ref_frame_indices[i]` still points at slot 0 (LAST).
-    altref_recon_y: Vec<u8>,
-    /// W8 — ALTREF U plane. See [`Self::altref_recon_y`].
-    altref_recon_u: Vec<u8>,
-    /// W8 — ALTREF V plane. See [`Self::altref_recon_y`].
-    altref_recon_v: Vec<u8>,
+    // A10 — GOLDEN (slot `frame_refs[GOLDEN_REF]`) and ALTREF (slot
+    // `frame_refs[ALTREF_REF]`) reconstruction buffers now live inside
+    // [`Self::ref_pool`]. The KF broadcast (`ref_frame_map = [kf; 8]`)
+    // makes all three named refs alias the KF slot; inter GOLDEN-refresh
+    // (`refresh_frame_flags |= 0x02`) and the ARF (`|= 0x04`) rotate
+    // their map entries to the committed slot. The picker reads them via
+    // `ref_pool.named_ref_planes(GOLDEN_REF / ALTREF_REF)`.
     /// W-ALTREF — anti-G3 witness. Set inside
     /// [`Self::encode_altref_internal`] to `true` when the just-coded
     /// ARF reconstruction (slot 2) differs from the LAST reconstruction
@@ -794,33 +771,25 @@ impl StreamEncoder {
                 config.width,
                 config.height,
             ),
-            last_recon_y: vec![0u8; w * h],
-            last_recon_u: vec![0u8; uvw * uvh],
-            last_recon_v: vec![0u8; uvw * uvh],
+            // A10 — the 8-slot reference-frame buffer pool. All slots
+            // start zeroed; the first encoded frame is always a keyframe,
+            // which calls `ref_pool.keyframe_reset()` to pick `new_fb_idx`
+            // and broadcast it across `ref_frame_map[8]` (libvpx's
+            // implicit `refresh_frame_flags = 0xFF` on KF). Replaces the
+            // prior `last_recon_* / golden_recon_* / altref_recon_*`
+            // field-triples; LAST/GOLDEN/ALTREF resolve through the map.
+            ref_pool: crate::buffer_pool::RefFramePool::new(w, h),
             // ME-side reference buffer for LAST. Allocated as a
             // separate Vec so the denoiser / filtered-ALTREF wave can
             // write filtered pixels here without touching the
-            // residual-coding reference. Currently mirrors
-            // `last_recon_*` after every commit (see `encode_frame`).
-            // libvpx `vp9_denoiser.c:294-304` is the parity reference.
+            // residual-coding reference (the pool). Currently mirrors
+            // the LAST pool slot after every commit (see `encode_frame`).
+            // libvpx `vp9_denoiser.c:294-304` is the parity reference —
+            // `running_avg_y[]` is NOT part of `cm->frame_refs[]`/the
+            // pool, hence its own field here.
             me_ref_y: vec![0u8; w * h],
             me_ref_u: vec![0u8; uvw * uvh],
             me_ref_v: vec![0u8; uvw * uvh],
-            golden_recon_y: vec![0u8; w * h],
-            golden_recon_u: vec![0u8; uvw * uvh],
-            golden_recon_v: vec![0u8; uvw * uvh],
-            // W8 — ALTREF ref-pool slot 2 mirror. Allocated regardless of
-            // `enable_alt_ref` so the field is always a valid Vec; the
-            // KF copy below seeds it to the KF reconstruction (libvpx's
-            // implicit `refresh_frame_flags = 0xFF` on KF). When the
-            // ARF path is gated off, these buffers are never refreshed
-            // by an inter frame and stay at their last-KF state — fine,
-            // because no picker iterates against them and no bitstream
-            // ref_frame_indices entry points at slot 2 in the current
-            // codepath.
-            altref_recon_y: vec![0u8; w * h],
-            altref_recon_u: vec![0u8; uvw * uvh],
-            altref_recon_v: vec![0u8; uvw * uvh],
             // W-ALTREF picker — no ARF has fired yet; the picker stays
             // LAST/GOLDEN-only until the first ARF emission.
             altref_slot_emitted: false,
@@ -1425,19 +1394,26 @@ impl StreamEncoder {
         // per-leaf effective qindex collapses to `q_index`. AQ.3 will
         // replace this with the cyclic-refresh state machine's output.
         let seg_q_deltas: [Option<i16>; 8] = [None; 8];
-        let coef_source = pick_and_simulate_intra_encode_partitions(
-            w,
-            h,
-            q_index,
-            &seg_q_deltas,
-            input_yuv,
-            (
-                &mut self.last_recon_y,
-                &mut self.last_recon_u,
-                &mut self.last_recon_v,
-            ),
-            &mut sb_partitions,
-        );
+        // A10 — a keyframe implicitly refreshes every reference slot
+        // (`refresh_frame_flags = 0xFF`, libvpx
+        // `vp9_setup_past_independence`). Pick a fresh `new_fb_idx` and
+        // broadcast it across `ref_frame_map[8]` so LAST/GOLDEN/ALTREF
+        // all resolve to the KF slot. The simulator reconstructs the KF
+        // DIRECTLY into the committed slot (the prior code reconstructed
+        // into `last_recon_*`, which was the LAST slot's storage).
+        self.ref_pool.keyframe_reset();
+        let coef_source = {
+            let (ry, ru, rv) = self.ref_pool.new_frame_planes_mut();
+            pick_and_simulate_intra_encode_partitions(
+                w,
+                h,
+                q_index,
+                &seg_q_deltas,
+                input_yuv,
+                (ry, ru, rv),
+                &mut sb_partitions,
+            )
+        };
 
         // F11.0 — apply the in-loop deblocking filter to the encoder's
         // reference reconstruction. The decoder runs the same filter
@@ -1446,36 +1422,28 @@ impl StreamEncoder {
         let filter_level = pick_filter_level(q_index);
         if filter_level > 0 {
             let mi_grid = build_kf_mi_grid_for_lf(h / 8, w / 8, &sb_partitions);
+            let (ry, ru, rv) = self.ref_pool.new_frame_planes_mut();
             apply_loop_filter_to_tight_recon(
                 w,
                 h,
                 filter_level,
                 &mi_grid,
-                &mut self.last_recon_y,
-                &mut self.last_recon_u,
-                &mut self.last_recon_v,
+                ry,
+                ru,
+                rv,
             );
         }
 
-        // A14 (Phase A) — keyframes refresh every ref-pool slot via
+        // A10 / A14 (Phase A) — keyframes refresh every ref-pool slot via
         // `refresh_frame_flags = 0xFF` (see `build_keyframe_packet`).
-        // Mirror that on the encoder side: copy the KF reconstruction
-        // (post-LF) into the GOLDEN buffer so the encoder's notion
-        // of the decoder's GOLDEN slot matches what the decoder
-        // computed. Reset the refresh counter — the next GOLDEN
-        // refresh lands `A14_GOLDEN_REFRESH_PERIOD` inter frames out.
-        self.golden_recon_y.copy_from_slice(&self.last_recon_y);
-        self.golden_recon_u.copy_from_slice(&self.last_recon_u);
-        self.golden_recon_v.copy_from_slice(&self.last_recon_v);
+        // `keyframe_reset` above already broadcast `new_fb_idx` across
+        // all 8 `ref_frame_map[]` entries, so LAST/GOLDEN/ALTREF all
+        // alias the single KF slot we just reconstructed — no per-slot
+        // pixel copy is needed (the prior code copied `last_recon` into
+        // separate `golden_recon` / `altref_recon` Vecs; the pool
+        // deduplicates this into one physical buffer aliased by the
+        // map). Reset the GOLDEN refresh + ARF cadence counters.
         self.frames_since_golden_refresh = 0;
-        // W8 — keyframes implicitly refresh every ref-pool slot
-        // (`refresh_frame_flags = 0xFF`), so the ALTREF slot 2 mirror
-        // also resets to the KF reconstruction. The decoder does the
-        // same on its side. Reset the ARF cadence counter so the next
-        // ARF lands `gop_length / 2` inter frames into the GOP.
-        self.altref_recon_y.copy_from_slice(&self.last_recon_y);
-        self.altref_recon_u.copy_from_slice(&self.last_recon_u);
-        self.altref_recon_v.copy_from_slice(&self.last_recon_v);
         self.inter_frames_since_arf = 0;
         self.pending_arf_packet = None;
         // W-ALTREF picker — a keyframe re-bases the whole ref pool
@@ -1493,9 +1461,11 @@ impl StreamEncoder {
         // slot — seeded below from the KF reconstruction (libvpx's
         // `denoiser->reset` triggers a copy from the current frame to
         // every slot, `vp9_denoiser.c:464-474`).
-        self.me_ref_y.copy_from_slice(&self.last_recon_y);
-        self.me_ref_u.copy_from_slice(&self.last_recon_u);
-        self.me_ref_v.copy_from_slice(&self.last_recon_v);
+        let (last_y, last_u, last_v) =
+            self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
+        self.me_ref_y.copy_from_slice(last_y);
+        self.me_ref_u.copy_from_slice(last_u);
+        self.me_ref_v.copy_from_slice(last_v);
         if let Some(den) = self.denoiser.as_mut() {
             // libvpx `vp9_denoiser.c:464-524` — on
             // `denoiser->reset` (which fires on the first frame after
@@ -1885,9 +1855,22 @@ impl StreamEncoder {
         // `enable_alt_ref = false`, so this is always false there.
         let altref_picker_live =
             self.config.enable_alt_ref && self.altref_slot_emitted;
+        // A10 — resolve the residual-coding reference planes through the
+        // pool's `ref_frame_map` indirection. The encoder's internal
+        // named-ref model reads `ref_frame_map[which]` directly (LAST →
+        // map[0], GOLDEN → map[1], ALTREF → map[2]). LAST rotates every
+        // frame (refresh bit 0); GOLDEN rotates only on GOLDEN-refresh
+        // frames (bit 1); ALTREF rotates only on the ARF (bit 2). This
+        // reproduces the prior `last_recon_* / golden_recon_* /
+        // altref_recon_*` separate-buffer pixels exactly, so the picker
+        // makes identical decisions and the bitstream is byte-identical.
+        let (last_y, last_u, last_v) =
+            self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
+        let (gld_y, gld_u, gld_v) =
+            self.ref_pool.named_ref_planes(crate::buffer_pool::GOLDEN_REF);
         let altref_planes_for_picker: Option<(&[u8], &[u8], &[u8])> =
             if altref_picker_live {
-                Some((&self.altref_recon_y, &self.altref_recon_u, &self.altref_recon_v))
+                Some(self.ref_pool.named_ref_planes(crate::buffer_pool::ALTREF_REF))
             } else {
                 None
             };
@@ -1901,7 +1884,7 @@ impl StreamEncoder {
             // Reference-buffer split — the picker consumes TWO LAST-slot
             // reference views. `me_ref_*` is the ME-side reference used
             // for motion search, `find_mv_refs`, and candidate SSE/RD.
-            // `last_recon_*` is the residual-coding reference: the
+            // The pool's LAST slot is the residual-coding reference: the
             // bit-exact decoded pool the final MC prediction reads from
             // before the residual IT-add. Until the denoiser /
             // filtered-ALTREF wave wires a real filter, both buffers
@@ -1910,11 +1893,11 @@ impl StreamEncoder {
             // the bitstream is unchanged. libvpx parity:
             // `vp9_denoiser.c:294-304` me_ref vs `cm->frame_refs[]`.
             (&self.me_ref_y, &self.me_ref_u, &self.me_ref_v),
-            (&self.last_recon_y, &self.last_recon_u, &self.last_recon_v),
+            (last_y, last_u, last_v),
             // A15 Phase B — GOLDEN ref planes for the widened picker
             // (Step 2: feeds the second `find_mv_refs` walk for
             // GOLDEN; Step 3: drives candidate SSE on GOLDEN picks).
-            (&self.golden_recon_y, &self.golden_recon_u, &self.golden_recon_v),
+            (gld_y, gld_u, gld_v),
             // W-ALTREF — ALTREF (slot 2) planes for the single-ref ALTREF
             // candidate. `Some(..)` only when an ARF has fired this GOP
             // and `enable_alt_ref` is set; `None` otherwise (gate config).
@@ -2148,26 +2131,38 @@ impl StreamEncoder {
             self.frame_context = adapted;
         }
 
-        // Commit the new reconstruction as the encoder's new LAST ref.
-        self.last_recon_y = new_recon_y;
-        self.last_recon_u = new_recon_u;
-        self.last_recon_v = new_recon_v;
+        // A10 — commit the new reconstruction into a fresh pool slot and
+        // rotate `ref_frame_map` per `refresh_flags` (libvpx
+        // `update_reference_frames`, `vp9_encoder.c:3297-3349`).
+        // `commit_new_frame` picks a free slot (one not currently in the
+        // map), copies the reconstruction in, and sets `new_fb_idx`;
+        // `update_reference_frames` then points every map entry whose
+        // refresh bit is set (`0x01` LAST-only, or `0x03` LAST+GOLDEN) at
+        // the new slot. This subsumes the prior explicit
+        // `golden_recon.copy_from_slice(&last_recon)` GOLDEN-refresh
+        // mirror — the map rotation does it by re-pointing
+        // `ref_frame_map[GOLDEN_REF's idx]` at the committed slot.
+        self.ref_pool
+            .commit_new_frame((&new_recon_y, &new_recon_u, &new_recon_v));
+        self.ref_pool.update_reference_frames(refresh_flags);
 
         // Reference-buffer split — mirror the just-committed post-LF
-        // reconstruction into the ME-side reference. When the temporal
-        // denoiser is enabled (`noise_sensitivity > 0`), the
-        // `apply_w5_denoiser_to_me_ref_y` call below overwrites
+        // reconstruction (the LAST pool slot) into the ME-side reference.
+        // When the temporal denoiser is enabled (`noise_sensitivity > 0`),
+        // the `apply_w5_denoiser_to_me_ref_y` call below overwrites
         // `me_ref_y` with the per-block running-average so subsequent
-        // motion search reads a filtered view; `last_recon_*` (the
-        // residual-coding reference) is untouched. This mirrors
-        // libvpx's separation of `running_avg_y[]` from
-        // `cm->frame_refs[]` (vp9_denoiser.c:294-304, vp9_denoiser.h:46)
-        // — the denoiser writes its `running_avg_y` (vp9_denoiser.c:425-428)
-        // and `cm->frame_refs[]` stays decoder-equivalent. Chroma planes
+        // motion search reads a filtered view; the pool's LAST slot (the
+        // residual-coding reference) is untouched. This mirrors libvpx's
+        // separation of `running_avg_y[]` from `cm->frame_refs[]`
+        // (vp9_denoiser.c:294-304, vp9_denoiser.h:46) — the denoiser
+        // writes its `running_avg_y` (vp9_denoiser.c:425-428) and
+        // `cm->frame_refs[]` stays decoder-equivalent. Chroma planes
         // mirror byte-exact (luma-only filter, libvpx `vp9_denoiser.h:46`).
-        self.me_ref_y.copy_from_slice(&self.last_recon_y);
-        self.me_ref_u.copy_from_slice(&self.last_recon_u);
-        self.me_ref_v.copy_from_slice(&self.last_recon_v);
+        let (last_y, last_u, last_v) =
+            self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
+        self.me_ref_y.copy_from_slice(last_y);
+        self.me_ref_u.copy_from_slice(last_u);
+        self.me_ref_v.copy_from_slice(last_v);
         if self.denoiser.is_some() {
             self.apply_w5_denoiser_to_me_ref_y();
         }
@@ -2203,16 +2198,16 @@ impl StreamEncoder {
         self.prev_mv_grid_dims = (mi_rows_us, mi_cols_us);
         self.last_frame_was_key = false;
 
-        // A14 (Phase A) — if this frame refreshed GOLDEN on the wire,
-        // mirror that on the encoder side: copy the new (post-LF)
-        // reconstruction into the GOLDEN buffer and reset the
-        // refresh counter. The decoder applies the same refresh
-        // mask via `refresh_ref_frame_sizes` + the ref-pool copy,
-        // so both sides agree on slot 1's pixels.
+        // A10 / A14 (Phase A) — if this frame refreshed GOLDEN on the
+        // wire (`refresh_flags = 0x03`), the `update_reference_frames`
+        // call above already re-pointed `ref_frame_map[GOLDEN_REF's idx]`
+        // at the committed slot, so GOLDEN now resolves to the same
+        // pixels as LAST — no explicit `golden_recon.copy_from_slice`
+        // needed (the prior ad-hoc field copy is subsumed by the map
+        // rotation). The decoder applies the same refresh mask, so both
+        // sides agree on the GOLDEN slot's pixels. Reset the cadence
+        // counter so the next GOLDEN refresh lands a period out.
         if refresh_golden_this_frame {
-            self.golden_recon_y.copy_from_slice(&self.last_recon_y);
-            self.golden_recon_u.copy_from_slice(&self.last_recon_u);
-            self.golden_recon_v.copy_from_slice(&self.last_recon_v);
             self.frames_since_golden_refresh = 0;
         }
 
@@ -2356,6 +2351,15 @@ impl StreamEncoder {
         // from LAST (= decoder slot 0), and writes the real
         // reconstruction into the scratch buffers. GOLDEN candidate is
         // default-off so every pick resolves to LAST or intra.
+        // A10 — resolve the ARF's residual-coding references (LAST,
+        // GOLDEN) through the pool. The ARF predicts from past refs only;
+        // its commit (`refresh_frame_flags = 0x04`, below) rotates ONLY
+        // the ALTREF map entry, so reading LAST/GOLDEN here leaves the
+        // show frame's references undisturbed.
+        let (last_y, last_u, last_v) =
+            self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
+        let (gld_y, gld_u, gld_v) =
+            self.ref_pool.named_ref_planes(crate::buffer_pool::GOLDEN_REF);
         let coef_source = pick_and_simulate_inter_encode_partitions(
             w,
             h,
@@ -2363,8 +2367,8 @@ impl StreamEncoder {
             &seg_q_deltas,
             filtered_yuv,
             (&self.me_ref_y, &self.me_ref_u, &self.me_ref_v),
-            (&self.last_recon_y, &self.last_recon_u, &self.last_recon_v),
-            (&self.golden_recon_y, &self.golden_recon_u, &self.golden_recon_v),
+            (last_y, last_u, last_v),
+            (gld_y, gld_u, gld_v),
             // W-ALTREF — the ARF itself predicts from LAST/GOLDEN only
             // (it cannot reference a future ARF); `None` disables the
             // ALTREF candidate for the ARF's own per-leaf coding. Matches
@@ -2504,23 +2508,34 @@ impl StreamEncoder {
             adapt_mv_probs(&decoder_fc.nmvc, &frame_counts.mv, false);
         self.decoder_fc_state_arf = adapted_dec;
 
-        // W-ALTREF — anti-G3 witness. The ARF predicted from LAST
-        // (`self.last_recon_*` here is the prediction reference, since
-        // the ARF is built BEFORE the show frame advances LAST). The
-        // retired ZEROMV-skip scaffold copied LAST verbatim into slot 2,
-        // making this comparison equal; real per-leaf MC + residual + LF
-        // makes the ARF reconstruction differ. Record the result for the
-        // PROOF test BEFORE we overwrite slot 2.
-        self.last_arf_real_coded = Some(arf_recon_y != self.last_recon_y);
+        // W-ALTREF — anti-G3 witness. The ARF predicted from LAST (the
+        // pool's LAST slot here is the prediction reference, since the
+        // ARF is built BEFORE the show frame advances LAST). The retired
+        // ZEROMV-skip scaffold copied LAST verbatim into slot 2, making
+        // this comparison equal; real per-leaf MC + residual + LF makes
+        // the ARF reconstruction differ. Record the result for the PROOF
+        // test BEFORE we commit the ARF slot.
+        {
+            let (last_y, _, _) =
+                self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
+            self.last_arf_real_coded = Some(arf_recon_y != last_y);
+        }
 
-        // W-ALTREF — capture the REAL ARF reconstruction (post-LF) into
-        // slot 2. The decoder writes the same just-decoded buffer into
-        // every slot named by `refresh_frame_flags` (= bit 2 only), so
-        // `altref_recon_*` now mirrors the decoder's slot 2 exactly —
-        // a genuine reconstruction of the coded ARF, NOT a LAST copy.
-        self.altref_recon_y.copy_from_slice(&arf_recon_y);
-        self.altref_recon_u.copy_from_slice(&arf_recon_u);
-        self.altref_recon_v.copy_from_slice(&arf_recon_v);
+        // A10 / W-ALTREF — commit the REAL ARF reconstruction (post-LF)
+        // into a fresh pool slot and rotate ONLY the ALTREF map entry
+        // (`refresh_frame_flags = 0x04`, bit 2). `commit_new_frame` picks
+        // a free slot (not currently in the map, so it does not clobber
+        // the LAST/GOLDEN slots the show frame reads), and
+        // `update_reference_frames(0x04)` points `ref_frame_map[2]` at
+        // it. The decoder applies the same mask, so `ref_frame_map[2]`
+        // now resolves to the genuine ARF reconstruction on both sides —
+        // NOT a LAST copy. A subsequent show frame's ALTREF picker
+        // candidate reads it via `named_ref_planes(ALTREF_REF)` (the
+        // identity map[2]); the writer separately emits
+        // `ref_frame_indices[2] = 2` so the decoder agrees.
+        self.ref_pool
+            .commit_new_frame((&arf_recon_y, &arf_recon_u, &arf_recon_v));
+        self.ref_pool.update_reference_frames(0x04);
 
         // W-ALTREF picker — slot 2 now holds a real ARF reconstruction
         // that both the encoder and decoder agree on. Arm the show-frame
@@ -2533,13 +2548,21 @@ impl StreamEncoder {
         Ok(packet)
     }
 
-    /// Diagnostic — read access to the ALTREF (slot 2) reconstruction Y
-    /// plane. The W-ALTREF PROOF (`tests/w_altref_real_coding.rs`)
-    /// asserts this DIFFERS from [`Self::diag_last_recon_y`] (anti-G3:
-    /// proves the ARF is real per-leaf coded, not a verbatim LAST copy).
+    /// Diagnostic — read access to the ALTREF (slot
+    /// `frame_refs[ALTREF_REF]`) reconstruction Y plane. The W-ALTREF
+    /// PROOF (`tests/w_altref_real_coding.rs`) asserts this DIFFERS from
+    /// [`Self::diag_last_recon_y`] (anti-G3: proves the ARF is real
+    /// per-leaf coded, not a verbatim LAST copy). A10 — resolves through
+    /// the pool's `ref_frame_map[2]` (the slot the last
+    /// `encode_altref_internal` commit installed).
     #[must_use]
     pub fn diag_altref_recon_y(&self) -> &[u8] {
-        &self.altref_recon_y
+        // The ARF commit rotated `ref_frame_map[2]` (ALTREF) to the ARF
+        // slot; read it via the ALTREF named ref (identity mapping →
+        // `ref_frame_map[2]`).
+        self.ref_pool
+            .named_ref_planes(crate::buffer_pool::ALTREF_REF)
+            .0
     }
 
     /// Diagnostic — anti-G3 witness for the W-ALTREF PROOF. `Some(true)`
@@ -2652,10 +2675,13 @@ impl StreamEncoder {
     /// Test-only — read access to the encoder's last reconstruction
     /// Y plane. Used by the F10.1c bit-exact-encoder-vs-decoder oracle
     /// to assert the encoder's mirrored `reconstruct_inter_block`
-    /// matches the decoder bit-exactly.
+    /// matches the decoder bit-exactly. A10 — resolves the LAST slot
+    /// through the pool's `ref_frame_map`.
     #[cfg(test)]
     pub(crate) fn last_recon_y(&self) -> &[u8] {
-        &self.last_recon_y
+        self.ref_pool
+            .named_ref_planes(crate::buffer_pool::LAST_REF)
+            .0
     }
 
     /// Test-only — read access to the encoder's last reconstruction
@@ -2664,38 +2690,49 @@ impl StreamEncoder {
     /// with AQ on.
     #[cfg(test)]
     pub(crate) fn last_recon_u(&self) -> &[u8] {
-        &self.last_recon_u
+        self.ref_pool
+            .named_ref_planes(crate::buffer_pool::LAST_REF)
+            .1
     }
 
     /// Test-only — read access to the encoder's last reconstruction
     /// V plane. AQ.4 Oracle 1 companion to [`Self::last_recon_u`].
     #[cfg(test)]
     pub(crate) fn last_recon_v(&self) -> &[u8] {
-        &self.last_recon_v
+        self.ref_pool
+            .named_ref_planes(crate::buffer_pool::LAST_REF)
+            .2
     }
 
     /// Diagnostic — read access to the encoder's last reconstruction
     /// Y plane (post-LF, pre-border-extend). For integration tests
     /// that compare encoder's internal LASTFRAME against the
     /// decoder's reconstruction of the emitted bitstream (A11
-    /// reference-buffer divergence diagnostic).
+    /// reference-buffer divergence diagnostic). A10 — resolves the LAST
+    /// slot through the pool's `ref_frame_map`.
     #[must_use]
     pub fn diag_last_recon_y(&self) -> &[u8] {
-        &self.last_recon_y
+        self.ref_pool
+            .named_ref_planes(crate::buffer_pool::LAST_REF)
+            .0
     }
 
     /// Diagnostic — read access to the encoder's last reconstruction
     /// U plane. See [`Self::diag_last_recon_y`].
     #[must_use]
     pub fn diag_last_recon_u(&self) -> &[u8] {
-        &self.last_recon_u
+        self.ref_pool
+            .named_ref_planes(crate::buffer_pool::LAST_REF)
+            .1
     }
 
     /// Diagnostic — read access to the encoder's last reconstruction
     /// V plane. See [`Self::diag_last_recon_y`].
     #[must_use]
     pub fn diag_last_recon_v(&self) -> &[u8] {
-        &self.last_recon_v
+        self.ref_pool
+            .named_ref_planes(crate::buffer_pool::LAST_REF)
+            .2
     }
 
     /// Test-only — read access to the ME-side LAST reference Y plane
@@ -5041,7 +5078,7 @@ mod tests {
 
             // Encoder's local recon vs decoder's recon: must match
             // pixel-for-pixel.
-            let enc_recon = &enc.last_recon_y;
+            let enc_recon = enc.last_recon_y();
             let yp = buf.y_plane();
             for r in 0..H {
                 let dec_row = &yp.data()[r * yp.stride()..r * yp.stride() + W];

@@ -1,0 +1,247 @@
+// Integration test: stderr IS the output mechanism (diagnostic
+// reporting), mirroring `cross_decoder_gate.rs` / `w_altref_real_coding.rs`.
+// The workspace's `print_stderr = "deny"` lint targets library code, not
+// this binary.
+#![allow(clippy::print_stderr)]
+#![allow(missing_docs)]
+
+//! A10 — PROOF: the full VP9 8-slot reference-frame buffer pool
+//! (`RefFramePool` + `ref_frame_map[8]` indirection) on `StreamEncoder`.
+//!
+//! This is a **gate-safe refactor**: the encoder's prior ad-hoc
+//! `last_recon_* / golden_recon_* / altref_recon_*` field-triples are
+//! generalised into the libvpx-faithful 8-slot pool, with LAST / GOLDEN
+//! / ALTREF resolving to physical slots via
+//! `ref_frame_map[ref_frame_idx[i]]`. The default encode path's emitted
+//! bytes are unchanged — the pool is a faithful re-indexing, not a
+//! behaviour change.
+//!
+//! Oracles:
+//!
+//! 1. **Byte-identity regression (the critical refactor oracle).**
+//!    Encode a fixed synthetic clip (deterministic moving gradient, no
+//!    corpus dependency) and assert the concatenated packet bytes hash
+//!    to a captured golden. This proves the refactor changed *nothing*
+//!    about the emitted bitstream. The golden was captured by running
+//!    this exact encode against the PRE-refactor code (the ad-hoc
+//!    `last_recon_*` fields) and confirming the POST-refactor encode
+//!    produces identical bytes.
+//!
+//! 2. **Self-decode round-trip.** The encoded stream decodes cleanly
+//!    through rvp9-decoder (the bytes are valid VP9, not just stable).
+//!
+//! Anti-G3: if the pool indirection is bypassed/stubbed (e.g. LAST/
+//! GOLDEN/ALTREF stop resolving through `ref_frame_map`, or the
+//! `update_reference_frames` rotation is removed), the encoded bytes
+//! diverge and oracle 1 fails. The clip is chosen to exercise the
+//! GOLDEN-refresh path (`gop_length` short enough that the
+//! `A14_GOLDEN_REFRESH_PERIOD` fires within the run), so a regression in
+//! the GOLDEN map rotation is observable.
+//!
+//! libvpx file:line citations:
+//! - `vp9/common/vp9_onyxc_int.h:35-42` — `REF_FRAMES = 8`,
+//!   `REFS_PER_FRAME = 3`, `FRAME_BUFFERS`, `INVALID_IDX`.
+//! - `vp9/common/vp9_onyxc_int.h:126` — `ref_frame_map[REF_FRAMES]`.
+//! - `vp9/decoder/vp9_decodeframe.c:1206` —
+//!   `cm->frame_refs[i].idx = cm->ref_frame_map[ref_frame_idx[i]]`.
+//! - `vp9/encoder/vp9_encoder.c:3297-3349` — `update_reference_frames`
+//!   walks `refresh_frame_flags` and rotates `ref_frame_map[]`.
+
+use rvp9_decoder::{Decoder, ParsedFrame};
+use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
+
+const W: u32 = 128;
+const H: u32 = 128;
+const N_FRAMES: u32 = 12;
+
+fn yuv_view<'a>(y: &'a [u8], u: &'a [u8], v: &'a [u8], w: usize) -> YuvFrameRef<'a> {
+    YuvFrameRef {
+        y,
+        u,
+        v,
+        y_stride: w,
+        u_stride: w / 2,
+        v_stride: w / 2,
+    }
+}
+
+/// Deterministic moving-gradient source frame at index `idx`. Each
+/// frame translates a 2-D gradient by `idx` pixels, giving real motion
+/// the inter picker can search against (so the encoded stream exercises
+/// non-trivial reference reads — and thus the pool indirection).
+fn moving_gradient(idx: u32) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let w = W as usize;
+    let h = H as usize;
+    let uvw = w / 2;
+    let uvh = h / 2;
+    let mut y = vec![0u8; w * h];
+    let shift = (idx * 3) as usize;
+    for r in 0..h {
+        for c in 0..w {
+            // Diagonal gradient translated by `shift`, wrapped to 8 bit.
+            let v = ((r + c + shift) * 2) as u8;
+            y[r * w + c] = v;
+        }
+    }
+    let mut u = vec![0u8; uvw * uvh];
+    let mut v_pl = vec![0u8; uvw * uvh];
+    for r in 0..uvh {
+        for c in 0..uvw {
+            u[r * uvw + c] = (128 + ((r + shift) as i32 % 40 - 20)) as u8;
+            v_pl[r * uvw + c] = (128 + ((c + shift) as i32 % 40 - 20)) as u8;
+        }
+    }
+    (y, u, v_pl)
+}
+
+/// FNV-1a 64-bit hash over a byte slice — a dependency-free stable
+/// digest for the byte-identity golden. (Collision risk is irrelevant:
+/// this is a regression check against a known-good value, not a
+/// security primitive.)
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// Encode the fixed clip with a deterministic config and return the
+/// concatenated packet bytes. The config exercises the GOLDEN-refresh
+/// path: `gop_length = 16` keeps the run inside one GOP after the
+/// frame-0 keyframe, and `A14_GOLDEN_REFRESH_PERIOD = 8` fires a
+/// GOLDEN refresh (`refresh_frame_flags = 0x03`) on inter frame 8 — so
+/// the `ref_frame_map` GOLDEN rotation is on the encode path. ALTREF is
+/// OFF (matching the cross-decoder gate's config) so the stream stays
+/// the LAST/GOLDEN-only baseline.
+fn encode_fixed_clip() -> Vec<u8> {
+    let cfg = EncoderConfig {
+        width: W,
+        height: H,
+        framerate: 30.0,
+        target_bitrate_bps: 1_000_000,
+        gop_length: 16,
+        aq_mode: AqMode::Off,
+        use_prev_frame_mvs: false,
+        speed: 7,
+        deadline: rvp9_encoder::Deadline::Realtime,
+        noise_sensitivity: 0,
+        bit_depth: rvp9_core::BitDepth::Bd8,
+        lag_in_frames: 0,
+        enable_alt_ref: false,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
+        min_qindex: 4,
+        max_qindex: 255,
+    };
+    let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
+    let mut stream = Vec::new();
+    for idx in 0..N_FRAMES {
+        let (y, u, v) = moving_gradient(idx);
+        let pkt = enc
+            .encode_frame(&yuv_view(&y, &u, &v, W as usize))
+            .expect("encode_frame");
+        stream.extend_from_slice(&pkt.data);
+    }
+    stream
+}
+
+/// A10 PROOF oracle 1 — BYTE-IDENTITY REGRESSION.
+///
+/// The captured golden is the FNV-1a hash of the concatenated packet
+/// bytes produced by `encode_fixed_clip` against the PRE-refactor code
+/// (the ad-hoc `last_recon_* / golden_recon_* / altref_recon_*`
+/// fields). The POST-refactor encode (LAST/GOLDEN/ALTREF resolving
+/// through the pool's `ref_frame_map`) MUST produce byte-identical
+/// output — the refactor changed the encoder's internal reference
+/// bookkeeping, not the emitted bitstream.
+///
+/// If this fails, the slot mapping is wrong: either a named ref
+/// resolved to the wrong slot, or `update_reference_frames` rotated the
+/// map incorrectly. Do NOT update the golden to match a changed stream
+/// — fix the mapping.
+#[test]
+fn a10_byte_identity_pre_vs_post_refactor() {
+    // Golden captured against the PRE-refactor encoder (the ad-hoc
+    // `last_recon_* / golden_recon_* / altref_recon_*` fields) and
+    // re-confirmed against the POST-refactor pool encoder — byte-
+    // identical (len 6211, fnv1a 0x959781b702249817). See the test's
+    // module doc for the capture procedure.
+    const GOLDEN_HASH: u64 = 0x9597_81b7_0224_9817;
+    const GOLDEN_LEN: usize = 6211;
+
+    let stream = encode_fixed_clip();
+    let hash = fnv1a(&stream);
+    eprintln!(
+        "A10 byte-identity: len = {}, fnv1a = {:#018x}",
+        stream.len(),
+        hash
+    );
+    assert_eq!(
+        stream.len(),
+        GOLDEN_LEN,
+        "encoded stream length changed — the refactor altered the bitstream",
+    );
+    assert_eq!(
+        hash, GOLDEN_HASH,
+        "encoded stream bytes changed — the pool refactor is NOT byte-identical. \
+         The slot mapping (ref_frame_map / frame_refs / update_reference_frames) \
+         must reproduce the exact pre-refactor reference reads. Do NOT update the \
+         golden to match a changed stream.",
+    );
+}
+
+/// A10 PROOF oracle 2 — the encoded stream is valid VP9 (decodes
+/// cleanly through rvp9-decoder, not just hashing to a stable value).
+#[test]
+fn a10_pool_stream_decodes_cleanly() {
+    let stream = encode_fixed_clip();
+    // Re-encode per-frame so we can hand each packet to the decoder
+    // (the concatenated `stream` above is for hashing only).
+    let cfg = EncoderConfig {
+        width: W,
+        height: H,
+        framerate: 30.0,
+        target_bitrate_bps: 1_000_000,
+        gop_length: 16,
+        aq_mode: AqMode::Off,
+        use_prev_frame_mvs: false,
+        speed: 7,
+        deadline: rvp9_encoder::Deadline::Realtime,
+        noise_sensitivity: 0,
+        bit_depth: rvp9_core::BitDepth::Bd8,
+        lag_in_frames: 0,
+        enable_alt_ref: false,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
+        min_qindex: 4,
+        max_qindex: 255,
+    };
+    let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
+    let mut dec = Decoder::new();
+    let mut decoded = 0u32;
+    for idx in 0..N_FRAMES {
+        let (y, u, v) = moving_gradient(idx);
+        let pkt = enc
+            .encode_frame(&yuv_view(&y, &u, &v, W as usize))
+            .expect("encode_frame");
+        let parsed = dec.parse_packet(&pkt.data).expect("parse_packet");
+        let frames: Vec<ParsedFrame<'_>> = parsed
+            .frames()
+            .iter()
+            .map(|pf| ParsedFrame {
+                header: pf.header.clone(),
+                header_end_byte: pf.header_end_byte,
+                full_frame_data: pf.full_frame_data,
+            })
+            .collect();
+        for f in &frames {
+            let _buf = dec.decode_frame(f).expect("decode_frame");
+            decoded += 1;
+        }
+    }
+    assert!(decoded >= N_FRAMES, "every frame must decode");
+    // Touch `stream` so the encode-for-hash path is exercised too.
+    assert!(!stream.is_empty());
+}
