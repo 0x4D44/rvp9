@@ -115,26 +115,12 @@ pub enum AqMode {
     CyclicRefresh,
 }
 
-/// vpxenc deadline class — the speed-vs-quality preset the encoder
-/// operates under (libvpx `vpxenc.c:123-130`, mirroring
-/// `VPX_DL_REALTIME` / `VPX_DL_GOOD_QUALITY` / `VPX_DL_BEST_QUALITY`).
-///
-/// Wave 0.2 of the vpxenc parity port introduces this on
-/// [`EncoderConfig`]; the W0.3 speed-features dispatcher consumes
-/// `(speed, deadline)` to drive `SpeedFeatures`.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
-pub enum Deadline {
-    /// `--best` — best-quality deadline (libvpx `vpxenc.c:125-126`,
-    /// `VPX_DL_BEST_QUALITY`).
-    Best,
-    /// `--good` — good-quality deadline (libvpx `vpxenc.c:127-128`,
-    /// `VPX_DL_GOOD_QUALITY`). The vpxenc default.
-    #[default]
-    Good,
-    /// `--rt` — real-time deadline (libvpx `vpxenc.c:129-130`,
-    /// `VPX_DL_REALTIME`).
-    Realtime,
-}
+// W0.3(vpxenc parity, A7 P0): `Deadline` is re-exported from rvp9-core
+// so the speed-features dispatcher in
+// `rvp9_core::mode_decision::speed_features` can take it as a parameter
+// without rvp9-core depending on rvp9-encoder. The public path
+// `rvp9_encoder::Deadline` is preserved for W0.2 callers (CLI, tests).
+pub use rvp9_core::mode_decision::speed_features::Deadline;
 
 /// Public configuration for the F10.0 streaming encoder.
 ///
