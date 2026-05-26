@@ -71,6 +71,7 @@ use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, Mv, RefFrame};
 use rvp9_core::transforms::{TxMode, TxSize};
 
 pub mod aq_cyclic_refresh;
+pub mod bitstream_gates;
 pub mod buffer_pool;
 pub mod compound;
 pub mod denoiser;

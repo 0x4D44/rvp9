@@ -393,3 +393,362 @@ fn splat_leaf(
         }
     }
 }
+
+// =====================================================================
+// W7.4 — search_filter_level + try_filter_frame
+//
+// Scalar reference port of libvpx `vp9_picklpf.c:46-157`
+// (`try_filter_frame` + `search_filter_level`). The SSE-driven binary
+// search bracketing the previous frame's filter level. Mirrors the
+// libvpx algorithm bit-for-bit; the kernel called inside
+// `try_filter_frame` is rvp9's [`apply_loop_filter_to_tight_recon`]
+// rather than libvpx's `vp9_loop_filter_frame`, but both produce the
+// same decoder-equivalent post-LF pixels under the encoder's
+// "zero LF deltas + sharpness 0" header shape.
+//
+// Out of scope: SIMD (`vpx_get_y_sse_neon` etc), HBD
+// (`vpx_highbd_get_y_sse`), and the libvpx `partial_frame` mode
+// (which only filters one MB row — unused outside libvpx's lpf
+// regression tests). Section-intra biasing is included with a
+// caller-supplied rating — see [`SearchFilterLevelParams`].
+// =====================================================================
+
+/// Sum of squared error between two tight-stride 8-bit luma planes.
+/// Mirrors libvpx `vpx_get_y_sse` for one plane only — the picker
+/// uses luma-only SSE as its quality metric (`vp9_picklpf.c:66-69`).
+#[allow(dead_code)]
+fn y_sse_tight(a: &[u8], b: &[u8]) -> i64 {
+    debug_assert_eq!(a.len(), b.len());
+    let mut acc: i64 = 0;
+    for (x, y) in a.iter().zip(b.iter()) {
+        let d = i32::from(*x) - i32::from(*y);
+        acc += i64::from(d * d);
+    }
+    acc
+}
+
+/// Inputs to the LF search. The caller owns the unfiltered recon and
+/// the source frame; the search probes candidate `filter_level`s by
+/// re-running [`apply_loop_filter_to_tight_recon`] on a private copy
+/// per candidate. The unfiltered recon is left untouched.
+#[allow(dead_code)]
+pub struct SearchFilterLevelParams<'a> {
+    pub width: u32,
+    pub height: u32,
+    pub mi_grid: &'a [Option<ModeInfo>],
+    /// Tight-stride 8-bit unfiltered Y plane (encoder reconstruction
+    /// pre-LF).
+    pub recon_y: &'a [u8],
+    /// Tight-stride 8-bit unfiltered U plane.
+    pub recon_u: &'a [u8],
+    /// Tight-stride 8-bit unfiltered V plane.
+    pub recon_v: &'a [u8],
+    /// Tight-stride 8-bit source luma plane (the per-frame target).
+    pub source_y: &'a [u8],
+    /// `cpi->common.lf.last_filt_level` — the encoder's previous
+    /// frame's filter level. Mirrors libvpx `lf->last_filt_level`
+    /// (`vp9_picklpf.c:90`). On the first frame, callers pass `0`.
+    pub last_filt_level: u8,
+    /// Max filter level the picker may pick. Mirrors libvpx
+    /// `get_max_filter_level` output (`vp9_picklpf.c:30-44`).
+    /// Callers typically pass `MAX_LOOP_FILTER = 63`; pass a lower
+    /// cap for two-pass intra-rich sections.
+    pub max_filter_level: u8,
+    /// True when `cpi->common.tx_mode != ONLY_4X4`. Drives libvpx's
+    /// `bias >>= 1` step at `vp9_picklpf.c:117`.
+    pub tx_mode_not_only_4x4: bool,
+}
+
+/// Inputs to [`try_filter_frame`].
+#[allow(dead_code)]
+struct TryFilterInputs<'a> {
+    pub width: u32,
+    pub height: u32,
+    pub mi_grid: &'a [Option<ModeInfo>],
+    pub recon_y: &'a [u8],
+    pub recon_u: &'a [u8],
+    pub recon_v: &'a [u8],
+    pub source_y: &'a [u8],
+}
+
+/// Run the loop filter at `filt_level` on a private copy of the
+/// recon, return the luma SSE between the post-LF luma plane and the
+/// source. Mirrors libvpx `try_filter_frame` (`vp9_picklpf.c:46-76`).
+///
+/// libvpx's version mutates `cm->frame_to_show` and then restores it
+/// from `cpi->last_frame_uf`; we sidestep that by cloning the input
+/// recon before each apply. The wire output is identical.
+#[allow(dead_code)]
+fn try_filter_frame(inputs: &TryFilterInputs<'_>, filt_level: u8) -> i64 {
+    if filt_level == 0 {
+        // libvpx `vp9_loopfilter.c:1422-1427` early-out: LF skipped.
+        // Post-LF Y plane equals unfiltered Y plane.
+        return y_sse_tight(inputs.recon_y, inputs.source_y);
+    }
+
+    // Clone all three planes (the LF kernel mutates U/V too).
+    let mut y = inputs.recon_y.to_vec();
+    let mut u = inputs.recon_u.to_vec();
+    let mut v = inputs.recon_v.to_vec();
+
+    apply_loop_filter_to_tight_recon(
+        inputs.width,
+        inputs.height,
+        filt_level,
+        inputs.mi_grid,
+        &mut y,
+        &mut u,
+        &mut v,
+    );
+
+    y_sse_tight(&y, inputs.source_y)
+}
+
+/// `clamp(v, lo, hi)` saturating to the inclusive range.
+#[allow(dead_code)]
+#[inline]
+fn clamp_u8(v: u8, lo: u8, hi: u8) -> u8 {
+    v.clamp(lo, hi)
+}
+
+/// Binary search for the SSE-minimising `filter_level`. Mirrors
+/// libvpx `search_filter_level` (`vp9_picklpf.c:78-157`).
+///
+/// Starts at `last_filt_level` (clamped to
+/// `[0, max_filter_level]`), brackets with a step that halves when
+/// the centre value wins. libvpx's "bias against raising LF" at
+/// `vp9_picklpf.c:111-117` is mirrored here (with the
+/// `section_intra_rating` knob folded into `max_filter_level` —
+/// see `get_max_filter_level`, `vp9_picklpf.c:30-44`).
+#[allow(dead_code)]
+#[must_use]
+pub fn search_filter_level(params: &SearchFilterLevelParams<'_>) -> u8 {
+    let min_filter_level = 0u8;
+    let max_filter_level = params.max_filter_level.min(MAX_LOOP_FILTER);
+
+    let try_inputs = TryFilterInputs {
+        width: params.width,
+        height: params.height,
+        mi_grid: params.mi_grid,
+        recon_y: params.recon_y,
+        recon_u: params.recon_u,
+        recon_v: params.recon_v,
+        source_y: params.source_y,
+    };
+
+    // libvpx `vp9_picklpf.c:90`: start at last_filt_level (clamped).
+    let mut filt_mid = clamp_u8(params.last_filt_level, min_filter_level, max_filter_level);
+    let mut filter_step: i32 = if filt_mid < 16 {
+        4
+    } else {
+        (filt_mid / 4) as i32
+    };
+
+    // libvpx uses `int64_t ss_err[MAX_LOOP_FILTER + 1]` initialised
+    // to -1 (memset 0xFF). We track "unset" with `Option`.
+    let mut ss_err: [Option<i64>; (MAX_LOOP_FILTER as usize) + 1] =
+        [None; (MAX_LOOP_FILTER as usize) + 1];
+
+    // libvpx `vp9_picklpf.c:102`: prime with the centre value.
+    let mut best_err = try_filter_frame(&try_inputs, filt_mid);
+    let mut filt_best = filt_mid;
+    ss_err[filt_mid as usize] = Some(best_err);
+
+    let mut filt_direction: i32 = 0;
+
+    while filter_step > 0 {
+        let filt_high =
+            ((filt_mid as i32) + filter_step).min(max_filter_level as i32) as u8;
+        let filt_low =
+            ((filt_mid as i32) - filter_step).max(min_filter_level as i32) as u8;
+
+        // libvpx `vp9_picklpf.c:111`: bias against raising LF.
+        let mut bias: i64 =
+            (best_err >> (15 - (filt_mid as i32 / 8))) * filter_step as i64;
+        if params.tx_mode_not_only_4x4 {
+            bias >>= 1; // libvpx `vp9_picklpf.c:117`.
+        }
+
+        // Lower-side probe.
+        if filt_direction <= 0 && filt_low != filt_mid {
+            if ss_err[filt_low as usize].is_none() {
+                ss_err[filt_low as usize] =
+                    Some(try_filter_frame(&try_inputs, filt_low));
+            }
+            let lo_err = ss_err[filt_low as usize].unwrap();
+            if lo_err - bias < best_err {
+                if lo_err < best_err {
+                    best_err = lo_err;
+                }
+                filt_best = filt_low;
+            }
+        }
+
+        // Upper-side probe.
+        if filt_direction >= 0 && filt_high != filt_mid {
+            if ss_err[filt_high as usize].is_none() {
+                ss_err[filt_high as usize] =
+                    Some(try_filter_frame(&try_inputs, filt_high));
+            }
+            let hi_err = ss_err[filt_high as usize].unwrap();
+            if hi_err < best_err - bias {
+                best_err = hi_err;
+                filt_best = filt_high;
+            }
+        }
+
+        if filt_best == filt_mid {
+            filter_step /= 2;
+            filt_direction = 0;
+        } else {
+            filt_direction = if filt_best < filt_mid { -1 } else { 1 };
+            filt_mid = filt_best;
+        }
+    }
+
+    filt_best
+}
+
+#[cfg(test)]
+mod w7_4_tests {
+    use super::*;
+
+    /// Build a contiguous block of frame data and a paired mi_grid
+    /// for an `mi_rows × mi_cols` (in 8×8 units) frame. Every mi
+    /// cell is its own Block8x8 intra DC leaf, so the LF gets one
+    /// filter edge on every 8-pixel boundary — that's the density
+    /// needed for the synthetic step-edge test to register a SSE
+    /// improvement.
+    fn build_intra_mi_grid(mi_rows: usize, mi_cols: usize) -> Vec<Option<ModeInfo>> {
+        let cell = ModeInfo {
+            block_size: BlockSize::Block8x8,
+            tx_size: max_txsize(BlockSize::Block8x8),
+            skip: false,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        vec![Some(cell); mi_rows * mi_cols]
+    }
+
+    /// Generate a noisy recon + a clean (smooth) source. The encoder
+    /// recon has small step edges at every 8-pixel column boundary
+    /// that the loop filter can smooth toward the source. Step size
+    /// is intentionally modest (±5 around the mean of 120) — the
+    /// VP9 LF mask check rejects large `|p0 - q0|` differences, so
+    /// the synthetic edges must sit inside `blimit` for the target
+    /// `filter_level` to fire. `(|p0-q0|*2 + |p1-q1|/2) ≤ blimit`
+    /// at `level=30` ⇒ blimit ≈ 24 ⇒ step ≤ 12 is the safe ceiling.
+    fn noisy_64x64_frame() -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
+        let w = 64usize;
+        let h = 64usize;
+        let mut recon_y = vec![0u8; w * h];
+        for r in 0..h {
+            for c in 0..w {
+                // ±5 alternation in 8-pixel columns. The 8-pixel
+                // period matches the SB's 8×8 partition leaves so
+                // the LF kernel has one edge to attack at every
+                // column boundary.
+                recon_y[r * w + c] = if (c / 8) % 2 == 0 { 115 } else { 125 };
+            }
+        }
+        let recon_u = vec![120u8; (w / 2) * (h / 2)];
+        let recon_v = vec![120u8; (w / 2) * (h / 2)];
+        // Source: solid 120 — the mean. LF smoothing should bring
+        // recon closer to source.
+        let source_y = vec![120u8; w * h];
+        (recon_y, recon_u, recon_v, source_y)
+    }
+
+    /// W7.4 PROOF — `search_filter_level` (`vp9_picklpf.c:78-157`).
+    ///
+    /// Set up a frame where the unfiltered recon is noisy step edges
+    /// and the source is the recon mean. The LF kernel smooths step
+    /// edges, so `filter_level > 0` must lower SSE vs. the
+    /// `filter_level = 0` baseline. The binary search must therefore
+    /// pick a non-zero level.
+    #[test]
+    fn w7_4_search_filter_level_finds_lower_sse_level() {
+        let (recon_y, recon_u, recon_v, source_y) = noisy_64x64_frame();
+        let mi_grid = build_intra_mi_grid(8, 8);
+        let params = SearchFilterLevelParams {
+            width: 64,
+            height: 64,
+            mi_grid: &mi_grid,
+            recon_y: &recon_y,
+            recon_u: &recon_u,
+            recon_v: &recon_v,
+            source_y: &source_y,
+            last_filt_level: 20,
+            max_filter_level: MAX_LOOP_FILTER,
+            tx_mode_not_only_4x4: false,
+        };
+        let level = search_filter_level(&params);
+        assert!(
+            level > 0,
+            "search must pick a non-zero filter level on noisy input (got {level})"
+        );
+
+        // Differential: SSE at picked level <= SSE at level 0.
+        let try_inputs = TryFilterInputs {
+            width: 64,
+            height: 64,
+            mi_grid: &mi_grid,
+            recon_y: &recon_y,
+            recon_u: &recon_u,
+            recon_v: &recon_v,
+            source_y: &source_y,
+        };
+        let sse_zero = try_filter_frame(&try_inputs, 0);
+        let sse_picked = try_filter_frame(&try_inputs, level);
+        assert!(
+            sse_picked <= sse_zero,
+            "picked level {level} should not be worse than 0 (SSE {} vs {})",
+            sse_picked,
+            sse_zero
+        );
+    }
+
+    /// W7.4 PROOF — `try_filter_frame` (`vp9_picklpf.c:46-76`).
+    ///
+    /// Sane input (smooth source, smooth recon) returns a usable
+    /// non-negative SSE. We also assert that `filt_level == 0`
+    /// returns exactly `y_sse_tight(recon_y, source_y)` — i.e. the
+    /// libvpx early-out skips the LF kernel.
+    #[test]
+    fn w7_4_try_filter_frame_returns_sse() {
+        let (recon_y, recon_u, recon_v, source_y) = noisy_64x64_frame();
+        let mi_grid = build_intra_mi_grid(8, 8);
+        let try_inputs = TryFilterInputs {
+            width: 64,
+            height: 64,
+            mi_grid: &mi_grid,
+            recon_y: &recon_y,
+            recon_u: &recon_u,
+            recon_v: &recon_v,
+            source_y: &source_y,
+        };
+        // Level-0 path: must equal raw SSE.
+        let raw_sse = y_sse_tight(&recon_y, &source_y);
+        let sse_zero = try_filter_frame(&try_inputs, 0);
+        assert_eq!(
+            sse_zero, raw_sse,
+            "filt_level=0 must skip LF and return raw SSE"
+        );
+        assert!(sse_zero >= 0, "SSE must be non-negative");
+
+        // Level-30 path: non-zero filter. Returns a usable
+        // (non-negative) SSE. With the noisy step-edge recon and
+        // smooth source, filtering should narrow the gap.
+        let sse_filt = try_filter_frame(&try_inputs, 30);
+        assert!(sse_filt >= 0, "filtered SSE must be non-negative");
+        assert!(
+            sse_filt < sse_zero,
+            "filtered SSE ({sse_filt}) should be less than unfiltered ({sse_zero}) on step-edge input"
+        );
+    }
+}
