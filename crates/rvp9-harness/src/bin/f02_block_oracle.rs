@@ -210,6 +210,8 @@ fn drive_rvp9_leg(
         gop_length: 30,
         aq_mode: AqMode::Off,
         use_prev_frame_mvs: false,
+        speed: 0,
+        deadline: rvp9_encoder::Deadline::Good,
     };
     let mut enc = StreamEncoder::new(cfg)?;
     let (yuv_frames, _src_fps) = read_cropped(

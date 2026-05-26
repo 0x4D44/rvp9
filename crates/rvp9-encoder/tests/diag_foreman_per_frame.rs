@@ -162,6 +162,8 @@ fn diag_foreman_per_frame() {
             gop_length: N_FRAMES + 1,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
+            speed: 0,
+            deadline: rvp9_encoder::Deadline::Good,
         };
         let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
         let mut dec = Decoder::new();

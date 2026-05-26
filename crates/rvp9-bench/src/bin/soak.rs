@@ -318,6 +318,8 @@ fn run_one_iteration(
         gop_length: frames_per_iter + 1,
         aq_mode: AqMode::Off,
         use_prev_frame_mvs: false,
+        speed: 0,
+        deadline: rvp9_encoder::Deadline::Good,
     };
     let mut enc = StreamEncoder::new(cfg)
         .map_err(|e| format!("StreamEncoder::new: {e:?}"))?;

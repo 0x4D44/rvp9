@@ -123,6 +123,8 @@ fn run_rvp9(
         gop_length,
         aq_mode,
         use_prev_frame_mvs: false,
+        speed: 0,
+        deadline: rvp9_encoder::Deadline::Good,
     };
     let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
     let mut dec = Decoder::new();

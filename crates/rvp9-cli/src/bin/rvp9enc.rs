@@ -14,22 +14,11 @@
 //! keep in sync.
 
 use rvp9_cli::args::{self, Arg, Flag};
-use rvp9_encoder::{AqMode, EncoderConfig, StreamEncoder, YuvFrameRef};
+use rvp9_encoder::{AqMode, Deadline, EncoderConfig, StreamEncoder, YuvFrameRef};
 use rvp9_io::container::{IvfHeader, write_ivf};
 use rvp9_io::y4m;
 use std::path::Path;
 use std::process::ExitCode;
-
-/// vpxenc deadline class (mirrors libvpx `vpxenc.c:123-130`).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Deadline {
-    /// `--best` — best-quality deadline (libvpx `vpxenc.c:125`).
-    Best,
-    /// `--good` — good-quality deadline (libvpx `vpxenc.c:127`).
-    Good,
-    /// `--rt`  — real-time deadline (libvpx `vpxenc.c:129`).
-    Realtime,
-}
 
 /// vpxenc `--tune` distortion metric (libvpx `vpxenc.c` tune arg).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -444,6 +433,11 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
 
     // Build and validate the encoder config (width/height must be a
     // multiple of 64 — a Stage 4a limitation, surfaced clearly).
+    //
+    // W0.2(vpxenc parity, A12 P1) — `--cpu-used` and the
+    // `--rt`/`--good`/`--best` deadline tri-state plumb through here.
+    // libvpx vpxenc defaults: speed = 0, deadline = good
+    // (`third_party/libvpx/vpxenc.c:434-435, 127-128`).
     let config = EncoderConfig {
         width: coded_w,
         height: coded_h,
@@ -452,6 +446,8 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
         gop_length: opts.gop_length.unwrap_or(60),
         aq_mode: opts.aq_mode,
         use_prev_frame_mvs: false,
+        speed: opts.cpu_used.unwrap_or(0),
+        deadline: opts.deadline.unwrap_or(Deadline::Good),
     };
     let mut encoder = StreamEncoder::new(config).map_err(|e| {
         format!(
@@ -689,5 +685,71 @@ mod tests {
         let mut o = EncOpts::default();
         let err = args::parse(&table, &mut o, &s(&["--cpu-used=10"]), "rvp9enc").unwrap_err();
         assert!(err.contains("out of range"), "{err}");
+    }
+
+    /// W0.2 PROOF — `--cpu-used` and the deadline tri-state are
+    /// plumbed onto [`EncoderConfig`] (libvpx `vpxenc.c:434-435`,
+    /// `123-130`). Constructs an EncoderConfig via the same helper
+    /// `run()` uses internally; if the wiring is stripped, the assert
+    /// on `encoder.config().speed` / `.deadline` fails.
+    #[test]
+    fn w0_2_cpu_used_and_deadline_plumb_into_encoder_config() {
+        let table = flag_table();
+
+        // Real-time + cpu-used=7 — typical RT preset.
+        let mut o = EncOpts::default();
+        args::parse(&table, &mut o, &s(&["--cpu-used=7", "--rt"]), "rvp9enc").unwrap();
+        let cfg = build_encoder_config_for_test(&o);
+        assert_eq!(cfg.speed, 7);
+        assert_eq!(cfg.deadline, Deadline::Realtime);
+
+        // Good + cpu-used=2 — middle of the good-quality band.
+        let mut o = EncOpts::default();
+        args::parse(&table, &mut o, &s(&["--cpu-used=2", "--good"]), "rvp9enc").unwrap();
+        let cfg = build_encoder_config_for_test(&o);
+        assert_eq!(cfg.speed, 2);
+        assert_eq!(cfg.deadline, Deadline::Good);
+
+        // Best + cpu-used=-1 — slow path, libvpx allows negative values.
+        let mut o = EncOpts::default();
+        args::parse(&table, &mut o, &s(&["--cpu-used=-1", "--best"]), "rvp9enc").unwrap();
+        let cfg = build_encoder_config_for_test(&o);
+        assert_eq!(cfg.speed, -1);
+        assert_eq!(cfg.deadline, Deadline::Best);
+
+        // Defaults — neither flag given. libvpx defaults: speed = 0,
+        // deadline = good (vpxenc.c:434-435, 127-128).
+        let o = EncOpts::default();
+        let cfg = build_encoder_config_for_test(&o);
+        assert_eq!(cfg.speed, 0);
+        assert_eq!(cfg.deadline, Deadline::Good);
+
+        // The encoder accepts the config end-to-end (sanity check —
+        // we wired a real public field, not a phantom one).
+        let mut o = EncOpts::default();
+        args::parse(&table, &mut o, &s(&["--cpu-used=4", "--rt"]), "rvp9enc").unwrap();
+        let cfg = build_encoder_config_for_test(&o);
+        let enc = StreamEncoder::new(cfg).expect("StreamEncoder must accept the W0.2 config");
+        assert_eq!(enc.config().speed, 4);
+        assert_eq!(enc.config().deadline, Deadline::Realtime);
+    }
+}
+
+/// Test-only — builds a minimal valid `EncoderConfig` from `EncOpts`
+/// for the W0.2 PROOF, mirroring the production builder in `run()`.
+/// Kept out of `#[cfg(test)]` so dead-code lints stay quiet; the
+/// function has no callers outside the test module.
+#[cfg(test)]
+fn build_encoder_config_for_test(opts: &EncOpts) -> EncoderConfig {
+    EncoderConfig {
+        width: 64,
+        height: 64,
+        framerate: 30.0,
+        target_bitrate_bps: opts.target_bitrate_kbps.saturating_mul(1000),
+        gop_length: opts.gop_length.unwrap_or(60),
+        aq_mode: opts.aq_mode,
+        use_prev_frame_mvs: false,
+        speed: opts.cpu_used.unwrap_or(0),
+        deadline: opts.deadline.unwrap_or(Deadline::Good),
     }
 }

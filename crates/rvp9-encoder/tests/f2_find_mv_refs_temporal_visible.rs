@@ -130,6 +130,8 @@ fn make_encoder(use_prev_frame_mvs: bool) -> StreamEncoder {
         // See F.2 HLD §12 ship-state addendum and the
         // divergence-ledger 2026-05-23 F.2 entry.
         use_prev_frame_mvs,
+        speed: 0,
+        deadline: rvp9_encoder::Deadline::Good,
     };
     StreamEncoder::new(cfg).expect("StreamEncoder::new")
 }

@@ -79,7 +79,7 @@ pub mod predstat;
 pub mod rate_control;
 pub mod skipstat;
 
-pub use frame_loop::{AqMode, EncodedFrame, EncoderConfig, FrameKind as StreamFrameKind, StreamEncoder, YuvFrameRef};
+pub use frame_loop::{AqMode, Deadline, EncodedFrame, EncoderConfig, FrameKind as StreamFrameKind, StreamEncoder, YuvFrameRef};
 
 /// Encoder configuration.
 ///
@@ -5178,6 +5178,8 @@ mod tests {
             gop_length: 30,
             aq_mode: frame_loop::AqMode::Off,
             use_prev_frame_mvs: false,
+            speed: 0,
+            deadline: Deadline::Good,
         }
     }
 

@@ -86,6 +86,8 @@ fn e4_overshoot_accounting_foreman_100k() {
         gop_length: N_FRAMES + 1, // one keyframe at frame 0
         aq_mode: AqMode::Off,
         use_prev_frame_mvs: false,
+        speed: 0,
+        deadline: rvp9_encoder::Deadline::Good,
     };
     let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
 

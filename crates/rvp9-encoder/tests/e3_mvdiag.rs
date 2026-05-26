@@ -69,6 +69,8 @@ fn e3_foreman_newmv_diag() {
         gop_length: frames.len() as u32 + 1,
         aq_mode: AqMode::Off,
         use_prev_frame_mvs: false,
+        speed: 0,
+        deadline: rvp9_encoder::Deadline::Good,
     };
     let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
 
