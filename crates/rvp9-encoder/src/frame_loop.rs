@@ -752,6 +752,22 @@ impl StreamEncoder {
                 self.rate_control.frames_since_key,
             );
         }
+        // W2.4(vpxenc parity, A5 P3): noise estimator
+        // (libvpx `vp9_noise_estimate.c:109-302`). Updates
+        // `pre_analysis.noise_estimate.{enabled, level}` — the
+        // 2-field consumer-facing view the picker reads via
+        // `vp9_NEWMV_diff_bias` (libvpx `vp9_pickmode.c:1299-1356`).
+        // Same RT gate as W2.2/W2.3; the internal frame-period
+        // sub-sampling (`frame_counter % 8 == 0`, libvpx line 132)
+        // and the resolution gate (≥640×360 from
+        // `enable_noise_estimation`, libvpx line 70) live inside
+        // the call, so it's safe to invoke unconditionally on RT.
+        if self.pre_analysis.compute_source_sad_onepass {
+            self.pre_analysis.compute_noise_estimate(
+                &y_tight,
+                self.rate_control.frames_since_key,
+            );
+        }
 
         let packet = match frame_kind {
             FrameKind::Key => self.encode_keyframe_internal(
