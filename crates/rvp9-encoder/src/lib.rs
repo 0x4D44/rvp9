@@ -2580,28 +2580,46 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         ]
     };
 
-    // F.3 (2026-05-23, infrastructure-only) — motion-aware partition
-    // descent (libvpx `nonrd_pick_partition`,
-    // `vp9_encodeframe.c:4922-5210`).
+    // A4 (2026-05-27) — recursive RD-optimal partition descent
+    // (libvpx `rd_pick_partition` / `nonrd_pick_partition`,
+    // `vp9_encodeframe.c:4922-5210`). This is the real recursive
+    // NONE-vs-SPLIT RD comparison: for each 64×64 SB it evaluates
+    // PARTITION_NONE at the current size via the real
+    // `pick_inter_mode` leaf picker, recurses into 4 quadrants for
+    // PARTITION_SPLIT (64→32→16), and keeps the minimum-RD partition.
+    // The chosen tree replaces `sb_partitions[sb_idx]` (the
+    // variance-hint leaf list) before the per-leaf picker loop runs.
     //
-    // **Default OFF**, gated behind `RVP9_F3_NONRD_PARTITION_ENABLE=1`.
-    // Mirrors the F.1 / F.2 infrastructure-only pattern (see F.3 HLD
-    // §11 ship-state addendum and `notes/divergence-ledger.md` F.3
-    // ship-state entry).
+    // **A4 promotes this from the F.3 infrastructure-only default-OFF
+    // state to the encoder's default partition decision.** Pre-A4 the
+    // partition SHAPE was always the variance heuristic
+    // (`choose_partitioning`, `vp9_encodeframe.c:1261`); the RDO leaf
+    // machinery only re-priced MODES inside fixed leaves. Now the
+    // SHAPE itself is RD-chosen.
     //
-    // When the gate is set, this branch runs the descent per SB
-    // BEFORE the per-leaf picker loop. The descent's output replaces
-    // `sb_partitions[sb_idx]` (the variance-hint leaf list) with a
-    // new leaf list reflecting the motion-aware RD-driven decision.
-    // The existing per-leaf picker loop then runs over the new
-    // leaves unchanged.
+    // Set `RVP9_A4_RD_PARTITION_DISABLE=1` to opt OUT (fall back to the
+    // pure variance-hint partition — the pre-A4 behaviour). The legacy
+    // `RVP9_F3_NONRD_PARTITION_ENABLE` env var is still honoured as a
+    // force-ON for back-compat with the F.3 diagnostic tests, but the
+    // descent now runs by default regardless.
     //
-    // F.4 owns flipping this default and replacing the descent's
-    // simplified mode-picker callback with a call into the real
-    // `pick_inter_mode_luma`. The infrastructure here proves the
-    // wiring; it does NOT drive byte-stream output at defaults.
+    // ## Scope (A4 first cut — honest scope-down, recorded)
+    //
+    // - **Square NONE / SPLIT only.** No PARTITION_HORZ / PARTITION_VERT
+    //   (libvpx defers rect at `speed >= 5`, `vp9_encodeframe.c:4957`).
+    //   The rect arms are a documented A4 follow-up; the descent's
+    //   square 64→32→16 NONE/SPLIT comparison is the highest-value core.
+    // - **Recursion caps at Block16x16.** Block8x8 leaves are inherited
+    //   from the variance hint (the leaf picker bails to ZERO+skip at
+    //   8×8 — see the `picker_supported` guard below).
+    // - **Inter frames only.** The keyframe path keeps the variance /
+    //   intra-shape partitioner; a KF RD descent is a follow-up.
+    // - **min/max block-size clamps** come from `variance_hint_bounds`
+    //   (libvpx `x->{min,max}_partition_size`), with the R3 floor at
+    //   Block16x16.
     let f3_nonrd_partition_enabled =
-        std::env::var_os("RVP9_F3_NONRD_PARTITION_ENABLE").is_some();
+        std::env::var_os("RVP9_A4_RD_PARTITION_DISABLE").is_none()
+            || std::env::var_os("RVP9_F3_NONRD_PARTITION_ENABLE").is_some();
     let f3_partition_costs = if f3_nonrd_partition_enabled {
         Some(partition_costs(&FrameContext::new_default()))
     } else {
@@ -2861,24 +2879,20 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 }
             }
 
-            // F.3 (infrastructure-only) — when
-            // `RVP9_F3_NONRD_PARTITION_ENABLE=1` is set, run the
-            // motion-aware RD descent BEFORE the per-leaf picker
-            // loop. The descent replaces this SB's variance-hint
-            // leaf list with a new one reflecting the
-            // RD-vs-variance comparison. At default (env unset),
-            // this branch is skipped and the existing picker loop
-            // runs over the variance-hint leaves byte-identical to
-            // pre-F.3.
+            // A4 — recursive RD partition descent (default ON; opt out
+            // with `RVP9_A4_RD_PARTITION_DISABLE=1`). Runs the
+            // NONE-vs-SPLIT RD comparison BEFORE the per-leaf picker
+            // loop and replaces this SB's variance-hint leaf list with
+            // the RD-chosen tree. When opted out, this branch is
+            // skipped and the picker loop runs over the variance-hint
+            // leaves (pre-A4 behaviour).
             //
-            // The simplified mode-picker callback here computes a
-            // ZERO-MV SSE rate-distortion proxy (NOT the real
-            // `pick_inter_mode_luma`). F.4 owns replacing this
-            // with the real picker when activating F.3 — that
-            // requires lambda recalibration per the F.3 HLD §11
-            // ship-state addendum. For infrastructure-only
-            // purposes the callback proves the wiring: descent →
-            // callback → per-position RD → new leaf list.
+            // The mode-picker callback below is the REAL `pick_inter_mode`
+            // (the same picker the post-descent per-leaf loop uses), so
+            // the descent ranks partitions by genuine motion-aware RD
+            // (NEWMV / NEARESTMV winners + coef/mode/mv rate), not a
+            // synthetic proxy. The two paths exercise the same picker at
+            // different sub-block resolutions.
             if f3_nonrd_partition_enabled {
                 use rvp9_core::block::BlockSize as BS;
                 use rvp9_core::mode_decision::partition::PartitionDecision;
@@ -3295,6 +3309,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
                 let descent_result =
                     nonrd_pick_partition(&hint, &params, &mut descent_picker);
+
+                // A4 anti-G3 diagnostic: count this SB if the RD
+                // descent chose a partition SHAPE that differs from the
+                // variance hint. A stubbed / fixed descent that echoed
+                // the hint would never bump this; the PROOF test
+                // (`tests/w_rd_partition.rs`) asserts it advances on
+                // content where RD and variance disagree.
+                if descent_result.cells != hint.cells {
+                    crate::rdo::inter_dispatch::RD_PARTITION_RESHAPED_SBS
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
 
                 // 5. Convert the descent's leaf list back into
                 //    `Vec<InterPartitionLeafDesc>`. Preserve the
@@ -5837,10 +5862,13 @@ mod tests {
             // test, so these env-var mutations are serialised.
             unsafe {
                 std::env::set_var("RVP9_F02_ORACLE", "1");
+                // A4: the descent is now default-ON, so "gate off" must
+                // explicitly DISABLE it via the opt-out var; "gate on"
+                // is the default but we clear the opt-out to be sure.
                 if gate_on {
-                    std::env::set_var("RVP9_F3_NONRD_PARTITION_ENABLE", "1");
+                    std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
                 } else {
-                    std::env::remove_var("RVP9_F3_NONRD_PARTITION_ENABLE");
+                    std::env::set_var("RVP9_A4_RD_PARTITION_DISABLE", "1");
                 }
             }
             crate::f02_oracle::init_from_env();
@@ -5868,6 +5896,7 @@ mod tests {
         unsafe {
             std::env::remove_var("RVP9_F02_ORACLE");
             std::env::remove_var("RVP9_F3_NONRD_PARTITION_ENABLE");
+            std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
         }
         crate::f02_oracle::init_from_env();
 
@@ -5896,20 +5925,21 @@ mod tests {
         );
     }
 
-    /// P12 PROOF — with the F.3 gate OFF (default), the encoder
-    /// produces byte-identical output to before the callback change.
-    /// We can't compare against a frozen-byte baseline here (the test
-    /// harness doesn't carry one), but we CAN verify that the existing
-    /// "encode KF + inter" two-frame flow still produces a non-empty
-    /// inter packet whose decoded shape matches the unchanged path.
-    /// Coupled with `encode_with_f3_nonrd_partition_runs_descent_path`
-    /// (gate-ON smoke test) and the rest of the encoder suite (gate
-    /// unset throughout), this confirms the default path is intact.
+    /// A4 smoke — the default encode path (RD partition descent now
+    /// default-ON, no env vars set) still produces a well-formed KF +
+    /// inter packet pair. Pre-A4 this asserted "descent OFF = unchanged
+    /// output"; A4 promotes the descent to the default, so this is now
+    /// a default-path liveness check (the descent runs; the two-frame
+    /// flow still yields non-empty Key + Inter packets). The
+    /// cross-decoder gate proves the default stream is valid VP9.
     #[test]
     fn p12_real_callback_default_state_unchanged() {
         let _guard = env_test_mutex();
-        // Defensive: ensure the gate is OFF.
-        unsafe { std::env::remove_var("RVP9_F3_NONRD_PARTITION_ENABLE"); }
+        // Default path: no descent env vars set (descent is default-ON).
+        unsafe {
+            std::env::remove_var("RVP9_F3_NONRD_PARTITION_ENABLE");
+            std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
+        }
 
         let mut enc =
             frame_loop::StreamEncoder::new(streaming_config()).unwrap();

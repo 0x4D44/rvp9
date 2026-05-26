@@ -260,12 +260,29 @@ fn rdo_dispatch_routes_at_speed3_and_decodes() {
         }
     };
 
+    // A4 (2026-05-27): this test proves leaf-MODE routing (8x8 / 16x16 /
+    // 32x32 leaves reach the RDO picker), which is orthogonal to A4's
+    // partition-SHAPE descent. With the A4 RD partition descent ON (now
+    // the default), the descent caps at Block16x16 and merges the
+    // variance partitioner's 8x8 leaves into larger blocks BEFORE the
+    // RDO picker sees them — so the 8x8 sub-counter would read zero for
+    // a reason unrelated to leaf-mode routing. We disable the descent
+    // here so the variance partitioner's 8x8 leaves survive to the RDO
+    // picker, isolating the routing claim this test owns. The A4
+    // PROOF (`tests/w_rd_partition.rs`) owns the partition-shape claim.
+    //
+    // SAFETY: separate test binary / process; no parallel test mutates
+    // this env var.
+    unsafe { std::env::set_var("RVP9_A4_RD_PARTITION_DISABLE", "1"); }
+
     // --- speed = 3: RDO picker active for 8x8 / 16x16 / 32x32 leaves ---
     let (rdo_packets, rdo_invocations, rdo_invocations_8x8) =
         encode_at_speed(&frames, framerate, 3);
     // --- speed = 7: realtime picker, RDO never invoked ---
     let (rt_packets, rt_invocations, rt_invocations_8x8) =
         encode_at_speed(&frames, framerate, 7);
+
+    unsafe { std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE"); }
 
     eprintln!("speed=3 RDO invocations: {rdo_invocations} (8x8: {rdo_invocations_8x8})");
     eprintln!("speed=7 RDO invocations: {rt_invocations} (8x8: {rt_invocations_8x8})");

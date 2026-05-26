@@ -110,6 +110,22 @@ fn make_encoder(use_prev_frame_mvs: bool) -> StreamEncoder {
 
 #[test]
 fn a18_prev_frame_mvs_grid_populated_after_first_inter() {
+    // A4 (2026-05-27): this test owns the A18 prev-MV-grid plumbing
+    // claim, including the §8.5 invariant "the picker emits no
+    // intra-in-inter cells on this synthetic input". That invariant is
+    // sensitive to the partition SHAPE: with the A4 RD partition descent
+    // ON (now the default) the reshaped leaves can surface an intra
+    // winner at an SB edge on the moving-square clip. Disable the
+    // descent here so the variance-hint shapes that this assertion was
+    // calibrated against are restored; A4's shape behaviour is proven
+    // separately in `tests/w_rd_partition.rs`. The sibling test
+    // (`..._chains_across_inter_frames`) is descent-agnostic (it only
+    // requires LastFrame cells present), so a leaked env var is benign.
+    //
+    // SAFETY: integration binary; set-only avoids a toggle race with the
+    // sibling test, which tolerates either descent state.
+    unsafe { std::env::set_var("RVP9_A4_RD_PARTITION_DISABLE", "1"); }
+
     let w_us = W as usize;
     let mut enc = make_encoder(/* use_prev_frame_mvs = */ true);
 

@@ -116,6 +116,23 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 /// OFF (matching the cross-decoder gate's config) so the stream stays
 /// the LAST/GOLDEN-only baseline.
 fn encode_fixed_clip() -> Vec<u8> {
+    // A4 (2026-05-27): the A10 byte-identity golden (len 6211, fnv1a
+    // 0x959781b702249817) was captured against the encoder with the
+    // partition path in its pre-A4 state (variance-hint shapes; the RD
+    // descent was infrastructure-only / default-OFF). A4 promotes the
+    // RD partition descent to the default, which legitimately changes
+    // the emitted bytes. This test owns the A10 POOL-REFACTOR
+    // byte-identity claim, NOT the partition shape — so we pin the
+    // pre-A4 partition path here by disabling the descent. A4's stream
+    // change is proven valid separately by `tests/w_rd_partition.rs`
+    // (vpxdec byte-exact) and the cross_decoder_gate. Do NOT update the
+    // golden to A4's stream — that would conflate two independent
+    // oracles.
+    //
+    // SAFETY: integration binary; both tests here want the descent off
+    // (the decode test is descent-agnostic), so set-only is race-free.
+    unsafe { std::env::set_var("RVP9_A4_RD_PARTITION_DISABLE", "1"); }
+
     let cfg = EncoderConfig {
         width: W,
         height: H,

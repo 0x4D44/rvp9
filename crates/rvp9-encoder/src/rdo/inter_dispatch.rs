@@ -93,6 +93,21 @@ pub static RDO_DISPATCH_INVOCATIONS: std::sync::atomic::AtomicU64 =
 pub static RDO_DISPATCH_INVOCATIONS_8X8: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
+/// A4 — count of superblocks whose RD partition descent
+/// (`nonrd_pick_partition`) chose a partition SHAPE that DIFFERS from
+/// the variance-hint baseline (a different per-cell leaf-size grid).
+/// Incremented once per SB the recursive NONE-vs-SPLIT RD comparison
+/// re-shapes. The PROOF test (`tests/w_rd_partition.rs`) asserts this
+/// advances on content where RD and variance disagree — proving the
+/// partition shape is genuinely RD-chosen, not a fixed/stubbed grid
+/// (anti-G3). A stub that returned the hint unchanged would leave this
+/// at zero and fail the proof. libvpx parity: the
+/// `pc_tree->partitioning` write in `rd_pick_partition`
+/// (`vp9/encoder/vp9_encodeframe.c:4284`) — the RD comparison's
+/// chosen partition tag.
+pub static RD_PARTITION_RESHAPED_SBS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 /// W-ALTREF — count of leaves whose RDO winner selected
 /// `RefFrame::AltrefFrame` (single-ref ALTREF, slot 2). Incremented
 /// once per leaf the dispatch resolves to ALTREF. The PROOF test
