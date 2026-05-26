@@ -740,6 +740,18 @@ impl StreamEncoder {
         if self.pre_analysis.compute_source_sad_onepass {
             self.pre_analysis.compute_avg_source_sad(&y_tight);
         }
+        // W2.3(vpxenc parity, A5 P2): one-pass scene detection
+        // (libvpx `vp9_ratectrl.c:3034-3216`). Updates
+        // `pre_analysis.{high_source_sad, scene_cut_force_key_frame,
+        // prev_avg_source_sad}`. Same gating as W2.2 — RT only;
+        // skipped post-KF when Last_Source is None. Consumes
+        // `rate_control.frames_since_key` for the post-KF gate.
+        if self.pre_analysis.compute_source_sad_onepass {
+            self.pre_analysis.compute_scene_detection(
+                &y_tight,
+                self.rate_control.frames_since_key,
+            );
+        }
 
         let packet = match frame_kind {
             FrameKind::Key => self.encode_keyframe_internal(

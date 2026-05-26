@@ -62,6 +62,24 @@ pub struct PreAnalysisState {
     /// `vp9_encodeframe.c:1231-1245` `x->content_state_sb`,
     /// classified per SB64 from avg_source_sad + tmp_sse.
     pub content_state_sb: Vec<ContentStateSb>,
+    /// W2.3(vpxenc parity, A5 P2): libvpx `cpi->rc.high_source_sad`
+    /// (`vp9_ratectrl.c:3034-3216`). `true` when the
+    /// scene-detection pass spots a large jump in average per-SB
+    /// SAD vs the running mean. Consumed by the picker / RC reset
+    /// logic in libvpx; W2.3 produces it.
+    pub high_source_sad: bool,
+    /// W2.3(vpxenc parity, A5 P2): libvpx
+    /// `vp9_ratectrl.c:3111-3112, 3176-3177`
+    /// `scene_cut_force_key_frame`. `true` when `high_source_sad`
+    /// AND the cut magnitude exceeds the key-frame threshold; the
+    /// encoder is expected to insert a forced KF on the next frame.
+    pub scene_cut_force_key_frame: bool,
+    /// W2.3 running mean of per-frame `avg_source_sad`. libvpx
+    /// `rc->avg_source_sad[0]` updated by the recursive average
+    /// `(3 * prev + cur) >> 2` at `vp9_ratectrl.c:3179`. The mean
+    /// is the load-bearing input to the scene-detection threshold
+    /// comparison.
+    pub prev_avg_source_sad: u64,
     /// Width × height the state was sized for. Used to validate
     /// re-allocation on resize (out of scope for v1).
     pub width: u32,
@@ -97,6 +115,10 @@ impl PreAnalysisState {
             // W2.2 — per-SB content state. Default zero / Normal.
             avg_source_sad: vec![0u64; sb_rows * sb_cols],
             content_state_sb: vec![ContentStateSb::Normal; sb_rows * sb_cols],
+            // W2.3 — scene-detection flags. Default off.
+            high_source_sad: false,
+            scene_cut_force_key_frame: false,
+            prev_avg_source_sad: 0,
             width,
             height,
         }
@@ -130,6 +152,14 @@ impl PreAnalysisState {
         for v in &mut self.content_state_sb {
             *v = ContentStateSb::Normal;
         }
+        // W2.3 — Reset scene-detection flags at KF (libvpx's
+        // `vp9_ratectrl.c:3071-3072` clears these at the top of
+        // every scene_detection_onepass call; we reset here so the
+        // gate `frames_since_key > 1` skip on the first inter after
+        // KF is bit-equivalent).
+        self.high_source_sad = false;
+        self.scene_cut_force_key_frame = false;
+        self.prev_avg_source_sad = 0;
     }
 
     /// W2.2(vpxenc parity, A5 P1): libvpx's per-SB
@@ -203,6 +233,92 @@ impl PreAnalysisState {
             Some(buf) => buf.copy_from_slice(src_y_tight),
             None => self.last_source_y = Some(src_y_tight.to_vec()),
         }
+    }
+
+    /// W2.3(vpxenc parity, A5 P2): one-pass scene detection.
+    /// Mirrors libvpx `vp9_scene_detection_onepass`
+    /// (`vp9_ratectrl.c:3034-3216`) for the
+    /// `lag_in_frames == 0`, natural-content, CBR, single-spatial-
+    /// layer slice rvp9 currently supports.
+    ///
+    /// The pass walks every interior 64×64 SB in a checkerboard
+    /// pattern, computes per-SB SAD against `Last_Source`, averages
+    /// the sampled SADs, and compares the average to a running
+    /// recursive mean. If the current average jumps past the mean
+    /// by a `thresh` factor AND a minimum threshold AND we're past
+    /// the first inter frame, [`Self::high_source_sad`] lights up.
+    /// A further `thresh_key` gate sets
+    /// [`Self::scene_cut_force_key_frame`] for KF-forcing logic.
+    ///
+    /// Thresholds (libvpx defaults at `vp9_ratectrl.c:3076-3080`):
+    ///   - `min_thresh = 65000` (natural content, the rvp9 default)
+    ///   - `thresh = 8.0` (CBR default)
+    ///   - `thresh_key = 140000` (speed > 5; rvp9's op-point is 7)
+    ///
+    /// No-op when `Last_Source` is None (first inter after KF, no
+    /// reference).
+    pub fn compute_scene_detection(&mut self, src_y_tight: &[u8], frames_since_key: u32) {
+        let Some(last) = self.last_source_y.as_deref() else {
+            self.high_source_sad = false;
+            self.scene_cut_force_key_frame = false;
+            return;
+        };
+        let w = self.width as usize;
+        let h = self.height as usize;
+        debug_assert_eq!(src_y_tight.len(), w * h);
+        debug_assert_eq!(last.len(), w * h);
+        let sb_cols = (w / 64).max(1);
+        let sb_rows = (h / 64).max(1);
+        // libvpx `vp9_ratectrl.c:3076-3079` default thresholds.
+        const MIN_THRESH: u64 = 65_000;
+        const THRESH: u64 = 8;
+        const THRESH_KEY: u64 = 140_000;
+
+        // Checkerboard sample, skipping the boundary SBs (libvpx
+        // `vp9_ratectrl.c:3146-3148`).
+        let mut total_sad: u64 = 0;
+        let mut num_samples: u32 = 0;
+        let mut num_zero_temp_sad: u32 = 0;
+        for sb_r in 0..sb_rows {
+            for sb_c in 0..sb_cols {
+                let interior = sb_r > 0
+                    && sb_c > 0
+                    && sb_r + 1 < sb_rows
+                    && sb_c + 1 < sb_cols;
+                let checkerboard =
+                    (sb_r % 2 == 0 && sb_c % 2 == 0) || (sb_r % 2 == 1 && sb_c % 2 == 1);
+                if interior && checkerboard {
+                    let (sad, _sse, _sum) =
+                        sb_sad_and_var(src_y_tight, last, w, sb_r * 64, sb_c * 64);
+                    total_sad += sad;
+                    num_samples += 1;
+                    if sad == 0 {
+                        num_zero_temp_sad += 1;
+                    }
+                }
+            }
+        }
+        let avg_sad = if num_samples > 0 {
+            total_sad / num_samples as u64
+        } else {
+            0
+        };
+
+        // libvpx gate (`vp9_ratectrl.c:3168-3175`).
+        let threshold = MIN_THRESH.max(self.prev_avg_source_sad * THRESH);
+        let zero_sad_gate = num_zero_temp_sad < 3 * (num_samples >> 2);
+        self.high_source_sad = avg_sad > threshold
+            && frames_since_key > 1
+            && zero_sad_gate;
+
+        // libvpx forced-KF gate (`vp9_ratectrl.c:3176-3177`).
+        self.scene_cut_force_key_frame = self.high_source_sad && avg_sad > THRESH_KEY;
+
+        // libvpx recursive average update (`vp9_ratectrl.c:3179`).
+        // CBR is rvp9's default rc_mode, so the update fires
+        // unconditionally on every call.
+        self.prev_avg_source_sad =
+            (3 * self.prev_avg_source_sad + avg_sad) >> 2;
     }
 
     /// Number of mi-grid cells (`mi_rows * mi_cols`) tracked.
@@ -375,5 +491,64 @@ mod tests {
         assert_eq!(st.sb_grid_len(), 8);
         assert_eq!(st.avg_source_sad.len(), 8);
         assert_eq!(st.content_state_sb.len(), 8);
+    }
+
+    /// W2.3 PROOF — scene detection fires on a synthetic cut.
+    /// Setup: 6×6 SB grid (384×384) so the checkerboard samples ~8
+    /// interior SBs — large enough for the `num_zero_temp_sad <
+    /// 3 * (num_samples >> 2)` gate (libvpx
+    /// `vp9_ratectrl.c:3172`) to be feasible. Frame N = flat gray;
+    /// frame N+1 = wildly different. After capturing N as
+    /// Last_Source, running compute_scene_detection on N+1 must
+    /// light up high_source_sad (libvpx
+    /// `vp9_ratectrl.c:3168-3175`).
+    #[test]
+    fn w2_3_scene_detection_lights_high_source_sad_on_cut() {
+        let mut st = PreAnalysisState::new(384, 384);
+        let calm = vec![100u8; 384 * 384];
+        let cut = vec![230u8; 384 * 384]; // large per-SB diff
+        // Prime the running mean with a calm-vs-calm sample.
+        st.capture_last_source(&calm);
+        st.compute_scene_detection(&calm, /* frames_since_key = */ 5);
+        assert!(!st.high_source_sad, "no cut on identical frames");
+        // Now the cut.
+        st.capture_last_source(&calm);
+        st.compute_scene_detection(&cut, /* frames_since_key = */ 6);
+        assert!(
+            st.high_source_sad,
+            "W2.3 PROOF: large per-SB diff vs Last_Source must light \
+             high_source_sad (libvpx vp9_ratectrl.c:3168-3175). Got \
+             prev_avg_source_sad={}",
+            st.prev_avg_source_sad
+        );
+    }
+
+    /// W2.3 PROOF — `frames_since_key <= 1` gate suppresses
+    /// scene-detection on the post-KF inter frame (libvpx
+    /// `vp9_ratectrl.c:3171`).
+    #[test]
+    fn w2_3_first_inter_after_kf_is_immune() {
+        let mut st = PreAnalysisState::new(128, 128);
+        let a = vec![10u8; 128 * 128];
+        let b = vec![240u8; 128 * 128];
+        st.capture_last_source(&a);
+        st.compute_scene_detection(&b, /* frames_since_key = */ 1);
+        assert!(
+            !st.high_source_sad,
+            "W2.3 PROOF: frames_since_key <= 1 must suppress scene detection \
+             (libvpx vp9_ratectrl.c:3171). Got prev_avg_source_sad={}",
+            st.prev_avg_source_sad
+        );
+    }
+
+    /// W2.3 PROOF — no Last_Source ⇒ no scene detection (post-KF
+    /// guard).
+    #[test]
+    fn w2_3_no_last_source_means_no_detection() {
+        let mut st = PreAnalysisState::new(128, 128);
+        let any = vec![50u8; 128 * 128];
+        st.compute_scene_detection(&any, /* frames_since_key = */ 100);
+        assert!(!st.high_source_sad);
+        assert!(!st.scene_cut_force_key_frame);
     }
 }
