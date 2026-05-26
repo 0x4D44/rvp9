@@ -87,6 +87,7 @@ pub mod segmentation;
 pub mod skipstat;
 pub mod svc;
 pub mod temporal_filter;
+pub mod tpl;
 
 pub use frame_loop::{AqMode, Deadline, EncodedFrame, EncoderConfig, FrameKind as StreamFrameKind, StreamEncoder, YuvFrameRef};
 
