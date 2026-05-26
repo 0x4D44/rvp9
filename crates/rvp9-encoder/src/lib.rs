@@ -2305,11 +2305,20 @@ pub(crate) struct InterPartitionLeafDesc {
 ///    `reconstruct_inter_block` IT-add sequence). Store
 ///    `(qcoeffs, eob)` per (plane, tx) in the returned coef source.
 ///
-/// `last_recon_yuv` is the previous frame's reconstruction (the
-/// LASTFRAME ref under our zero-MV-no-update reference scheme); the
-/// encoder reads it for prediction. `recon_yuv_out` is filled with the
-/// new frame's reconstruction (the encoder's "what the decoder will
-/// produce" prediction-correctness oracle).
+/// Reference-buffer split (libvpx parity, denoiser / filtered-ALTREF
+/// prerequisite): the LAST slot is exposed as two parallel views.
+/// `me_ref_yuv` is the ME-side reference read by motion search,
+/// `find_mv_refs`, candidate SSE/RD, and the partition picker (libvpx
+/// `running_avg_y`, `vp9/encoder/vp9_denoiser.c:294-304`).
+/// `last_recon_yuv` is the residual-coding reference — the bit-exact
+/// decoded reconstruction the final MC prediction reads from before the
+/// residual IT-add (libvpx `cm->frame_refs[]`). The cross-decoder gate
+/// pins `last_recon_yuv` byte-exact against the decoder; `me_ref_yuv`
+/// is free to be a filtered/denoised view in a later wave. Until then
+/// the caller (`StreamEncoder`) keeps them byte-identical.
+/// `recon_yuv_out` is filled with the new frame's reconstruction (the
+/// encoder's "what the decoder will produce" prediction-correctness
+/// oracle).
 ///
 /// Walks SBs/leaves in raster order — same convention as the F10.1b
 /// intra simulator + writer.
@@ -2322,6 +2331,31 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     base_qindex: u8,
     seg_q_deltas: &[Option<i16>; 8],
     input_yuv: (&[u8], &[u8], &[u8]),
+    // Reference-buffer split — the LAST slot exposes TWO views to the
+    // picker:
+    //
+    //   * `me_ref_yuv`: the ME-side reference (libvpx
+    //     `vp9_denoiser.c:294-304` `running_avg_y`). Read by motion
+    //     analysis paths only — `find_mv_refs`, motion search seeds,
+    //     candidate SSE/RD, the diamond/subpel refinement, the chroma
+    //     context the picker hands to `pick_inter_mode`. May diverge
+    //     from `last_recon_yuv` once the denoiser / filtered-ALTREF
+    //     wave fills it with filtered pixels; until then the caller
+    //     keeps them byte-identical.
+    //
+    //   * `last_recon_yuv`: the residual-coding reference (libvpx
+    //     `cm->frame_refs[]`). The bit-exact decoded pool the final MC
+    //     prediction reads from before the residual IT-add. Must never
+    //     diverge from the decoder — the cross-decoder gate verifies
+    //     this. Read by the up-front `recon_yuv_out` seed copy and the
+    //     per-leaf `build_inter_pred_plane_unscaled` plane selector
+    //     (the residual-coding MC).
+    //
+    // Aliasing the same buffer for both would not be a real split; the
+    // caller allocates separate `Vec`s in `StreamEncoder`. See the
+    // `me_ref_y` field doc in `frame_loop.rs` and the
+    // `reference_split_me_and_pred_identical_initially` PROOF.
+    me_ref_yuv: (&[u8], &[u8], &[u8]),
     last_recon_yuv: (&[u8], &[u8], &[u8]),
     // A15 Phase B — GOLDEN ref planes for the widened picker
     // ({LAST,GOLDEN} × {ZERO,NEAREST,NEAR,NEW}). Step 2: used
@@ -2449,9 +2483,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         sb_cols,
     );
 
-    // Plane refs into the input + last-recon buffers.
+    // Plane refs into the input + ME-side LAST reference buffer.
+    //
+    // Reference-buffer split: `ref_y` is the LAST-slot Y plane fed to
+    // motion search, `find_mv_refs`, the per-leaf NEWMV diamond /
+    // subpel refinement, the candidate SSE accumulation, and the
+    // partition-side RD analysis. All of these are ME-side accesses
+    // (libvpx `running_avg_y`); the residual-coding MC reads from
+    // `last_recon_yuv` directly via the per-plane selector inside the
+    // SB walk further down. Until the denoiser wave wires a real
+    // filter, `me_ref_yuv` and `last_recon_yuv` are byte-identical.
     let src_y = PlaneRef { data: input_yuv.0, stride: w, width: w, height: h };
-    let ref_y = PlaneRef { data: last_recon_yuv.0, stride: w, width: w, height: h };
+    let ref_y = PlaneRef { data: me_ref_yuv.0, stride: w, width: w, height: h };
     // A15 Phase B — GOLDEN Y plane ref for the widened picker.
     // Used in Step 3 to drive candidate SSE/RD when iterating
     // `{LAST, GOLDEN} × {ZERO, NEAREST, NEAR, NEW}`. The
@@ -3093,8 +3136,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             src_u_stride: uvw,
                             src_v: input_yuv.2,
                             src_v_stride: uvw,
-                            last_ref_u: last_recon_yuv.1,
-                            last_ref_v: last_recon_yuv.2,
+                            // Reference-buffer split — picker chroma
+                            // SSE/RD reads the ME-side LAST view.
+                            last_ref_u: me_ref_yuv.1,
+                            last_ref_v: me_ref_yuv.2,
                             golden_ref_u: golden_recon_yuv.1,
                             golden_ref_v: golden_recon_yuv.2,
                             uv_stride: uvw,
@@ -3693,8 +3738,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let last_inputs = RefInputs {
                         available: true,
                         ref_y: &ref_y,
-                        ref_u: last_recon_yuv.1,
-                        ref_v: last_recon_yuv.2,
+                        // Reference-buffer split — RDO picker chroma
+                        // reads the ME-side LAST view.
+                        ref_u: me_ref_yuv.1,
+                        ref_v: me_ref_yuv.2,
                         nearest: mvc.nearest,
                         near: mvc.near,
                         nearest_in_bounds: mv_in_bounds(mvc.nearest),
@@ -3815,8 +3862,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     src_u_stride: uvw,
                     src_v: input_yuv.2,
                     src_v_stride: uvw,
-                    last_ref_u: last_recon_yuv.1,
-                    last_ref_v: last_recon_yuv.2,
+                    // Reference-buffer split — picker chroma SSE/RD
+                    // reads the ME-side LAST view.
+                    last_ref_u: me_ref_yuv.1,
+                    last_ref_v: me_ref_yuv.2,
                     golden_ref_u: golden_recon_yuv.1,
                     golden_ref_v: golden_recon_yuv.2,
                     uv_stride: uvw,
@@ -4030,8 +4079,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 skip_ctx: Some(skip_ctx),
                                 src_u: input_yuv.1,
                                 src_v: input_yuv.2,
-                                ref_u: last_recon_yuv.1,
-                                ref_v: last_recon_yuv.2,
+                                // Reference-buffer split — diagnostic
+                                // (e12) candidate sweep is ME-side.
+                                ref_u: me_ref_yuv.1,
+                                ref_v: me_ref_yuv.2,
                                 uv_stride: uvw,
                                 uv_dc_quant: uv_dc_dq as u32,
                                 uv_ac_quant: uv_ac_dq as u32,
@@ -4084,8 +4135,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         skip_ctx: Some(skip_ctx),
                         src_u: input_yuv.1,
                         src_v: input_yuv.2,
-                        ref_u: last_recon_yuv.1,
-                        ref_v: last_recon_yuv.2,
+                        // Reference-buffer split — diagnostic (e3)
+                        // candidate sweep is ME-side.
+                        ref_u: me_ref_yuv.1,
+                        ref_v: me_ref_yuv.2,
                         uv_stride: uvw,
                         uv_dc_quant: uv_dc_dq as u32,
                         uv_ac_quant: uv_ac_dq as u32,

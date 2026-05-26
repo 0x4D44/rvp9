@@ -382,11 +382,57 @@ pub struct StreamEncoder {
     /// Last reconstructed Y plane (tight-stride, `width * height`).
     /// Populated after every keyframe; for inter ZEROMV/skip=true
     /// frames the buffer is unchanged.
+    ///
+    /// **Residual-coding reference.** This is the bit-exact decoded
+    /// reconstruction (post-LF) — what the decoder rebuilds from the
+    /// bitstream. Used as the prediction source the residual IT-add
+    /// applies on top of (`build_inter_pred_plane_unscaled` in
+    /// `lib.rs::pick_and_simulate_inter_encode_partitions` and the
+    /// `recon_yuv_out` seed copy). Must never diverge from the
+    /// decoder's pool — the cross-decoder gate verifies this.
+    ///
+    /// Paired with [`Self::me_ref_y`]; see that field's doc for the
+    /// reference-buffer split rationale (libvpx
+    /// `vp9_denoiser.c:294-304` me_ref vs `cm->frame_refs[]`).
     last_recon_y: Vec<u8>,
     /// Last reconstructed U plane (`(width / 2) * (height / 2)`).
     last_recon_u: Vec<u8>,
     /// Last reconstructed V plane (`(width / 2) * (height / 2)`).
     last_recon_v: Vec<u8>,
+    /// ME-side reference buffer for the LAST slot (Y plane,
+    /// tight-stride, `width * height`).
+    ///
+    /// **Reference-buffer split (denoiser / filtered-ALTREF
+    /// prerequisite).** rvp9 historically used a single reference
+    /// buffer per slot ([`Self::last_recon_y`]) for both ME analysis
+    /// and the residual-coding reference. libvpx keeps these separate
+    /// (`VP9_DENOISER::running_avg_y[]` vs `cm->frame_refs[]`,
+    /// `vp9/encoder/vp9_denoiser.c:294-304`,
+    /// `vp9/encoder/vp9_denoiser.h:46`): the residual-coding reference
+    /// must match the decoder's pool byte-exactly, while the ME-side
+    /// reference is free to be a filtered/denoised view that biases
+    /// motion search without desyncing the bitstream.
+    ///
+    /// This field is the ME-side reference. It feeds:
+    ///   - the variance-based partition picker
+    ///     ([`choose_partitions_for_frame`]) — partition analysis is
+    ///     a form of motion analysis,
+    ///   - `find_mv_refs` + the per-leaf motion search and SSE/RD
+    ///     evaluation inside
+    ///     `lib.rs::pick_and_simulate_inter_encode_partitions`.
+    ///
+    /// Until the denoiser / filtered-ALTREF wave fills it differently,
+    /// `me_ref_*` mirrors `last_recon_*` byte-for-byte (committed in
+    /// `encode_frame` after every encoded frame). The PROOF test
+    /// `reference_split_me_and_pred_identical_initially` asserts this
+    /// equality in steady state. When the denoiser is later wired to
+    /// write filtered pixels into `me_ref_*`, that test fails until it
+    /// is updated — the intended anti-G3 signal.
+    me_ref_y: Vec<u8>,
+    /// ME-side reference, U plane. See [`Self::me_ref_y`].
+    me_ref_u: Vec<u8>,
+    /// ME-side reference, V plane. See [`Self::me_ref_y`].
+    me_ref_v: Vec<u8>,
     /// A14 — GOLDEN-slot reconstruction buffer (Phase A
     /// infrastructure). Initialised on every keyframe from the
     /// KF reconstruction (the decoder does the same via
@@ -548,6 +594,15 @@ impl StreamEncoder {
             last_recon_y: vec![0u8; w * h],
             last_recon_u: vec![0u8; uvw * uvh],
             last_recon_v: vec![0u8; uvw * uvh],
+            // ME-side reference buffer for LAST. Allocated as a
+            // separate Vec so the denoiser / filtered-ALTREF wave can
+            // write filtered pixels here without touching the
+            // residual-coding reference. Currently mirrors
+            // `last_recon_*` after every commit (see `encode_frame`).
+            // libvpx `vp9_denoiser.c:294-304` is the parity reference.
+            me_ref_y: vec![0u8; w * h],
+            me_ref_u: vec![0u8; uvw * uvh],
+            me_ref_v: vec![0u8; uvw * uvh],
             golden_recon_y: vec![0u8; w * h],
             golden_recon_u: vec![0u8; uvw * uvh],
             golden_recon_v: vec![0u8; uvw * uvh],
@@ -1031,6 +1086,16 @@ impl StreamEncoder {
         self.golden_recon_v.copy_from_slice(&self.last_recon_v);
         self.frames_since_golden_refresh = 0;
 
+        // Reference-buffer split — mirror the post-LF KF reconstruction
+        // into the ME-side reference buffer. Until the denoiser /
+        // filtered-ALTREF wave fills `me_ref_*` differently, the
+        // ME-side buffer is byte-identical to the residual-coding
+        // reference (`last_recon_*`). See the `me_ref_y` field doc and
+        // the `reference_split_me_and_pred_identical_initially` PROOF.
+        self.me_ref_y.copy_from_slice(&self.last_recon_y);
+        self.me_ref_u.copy_from_slice(&self.last_recon_u);
+        self.me_ref_v.copy_from_slice(&self.last_recon_v);
+
         // A18 — Keyframes reset the prev-frame MV grid to all-intra
         // (libvpx `vp9_setup_past_independence` zeroes
         // `cm->cur_frame->mvs` with `ref_frame[0] = INTRA_FRAME`,
@@ -1118,12 +1183,22 @@ impl StreamEncoder {
             };
 
         // F10.1a — F8.2 variance-based partition decision per SB.
+        //
+        // Reference-buffer split: the variance picker is part of the
+        // ME-side analysis pipeline (its source-vs-ref variance feeds
+        // partition decisions, not the bitstream residual). Read from
+        // `me_ref_y` rather than `last_recon_y` so the denoiser /
+        // filtered-ALTREF wave can later bias partitioning without
+        // touching the residual-coding reference. While the split is
+        // initially structural-only (`me_ref_* == last_recon_*` after
+        // every commit), reading from `me_ref_y` here keeps every ME
+        // call site on the ME-side buffer.
         let sb_partitions_intra_shape = choose_partitions_for_frame(
             w as usize,
             h as usize,
             q_index,
             input_yuv.0,
-            &self.last_recon_y,
+            &self.me_ref_y,
             /* is_keyframe = */ false,
             // E2: inter-frame VBP thresholds depend on the rate
             // controller's running `avg_frame_qindex[INTER_FRAME]` to
@@ -1241,6 +1316,18 @@ impl StreamEncoder {
             q_index,
             &seg_q_deltas,
             input_yuv,
+            // Reference-buffer split — the picker consumes TWO LAST-slot
+            // reference views. `me_ref_*` is the ME-side reference used
+            // for motion search, `find_mv_refs`, and candidate SSE/RD.
+            // `last_recon_*` is the residual-coding reference: the
+            // bit-exact decoded pool the final MC prediction reads from
+            // before the residual IT-add. Until the denoiser /
+            // filtered-ALTREF wave wires a real filter, both buffers
+            // are byte-identical (verified by
+            // `reference_split_me_and_pred_identical_initially`), so
+            // the bitstream is unchanged. libvpx parity:
+            // `vp9_denoiser.c:294-304` me_ref vs `cm->frame_refs[]`.
+            (&self.me_ref_y, &self.me_ref_u, &self.me_ref_v),
             (&self.last_recon_y, &self.last_recon_u, &self.last_recon_v),
             // A15 Phase B — GOLDEN ref planes for the widened picker
             // (Step 2: feeds the second `find_mv_refs` walk for
@@ -1457,6 +1544,20 @@ impl StreamEncoder {
         self.last_recon_u = new_recon_u;
         self.last_recon_v = new_recon_v;
 
+        // Reference-buffer split — mirror the just-committed post-LF
+        // reconstruction into the ME-side reference. The denoiser /
+        // filtered-ALTREF wave will replace this `copy_from_slice` with
+        // a real per-block filter pass (libvpx's `running_avg_y[]`
+        // family, `vp9_denoiser.c:464-524`). Until then `me_ref_*`
+        // stays byte-identical to `last_recon_*` — the
+        // `reference_split_me_and_pred_identical_initially` PROOF
+        // asserts this equality and will fail (the intended anti-G3
+        // signal) the moment a real filter is wired without updating
+        // the test.
+        self.me_ref_y.copy_from_slice(&self.last_recon_y);
+        self.me_ref_u.copy_from_slice(&self.last_recon_u);
+        self.me_ref_v.copy_from_slice(&self.last_recon_v);
+
         // A18 — Commit the per-leaf MV grid for the next inter
         // frame's `use_prev_frame_mvs` salvage path. Mirrors the
         // decoder's end-of-frame swap at `lib.rs:2240-2255` —
@@ -1577,6 +1678,32 @@ impl StreamEncoder {
     #[must_use]
     pub fn diag_last_recon_v(&self) -> &[u8] {
         &self.last_recon_v
+    }
+
+    /// Test-only — read access to the ME-side LAST reference Y plane
+    /// (the reference-buffer-split companion to [`Self::last_recon_y`]).
+    /// Used by `reference_split_me_and_pred_identical_initially` (the
+    /// structural-split PROOF) to assert that until the denoiser /
+    /// filtered-ALTREF wave fills `me_ref_*` with filtered pixels, it
+    /// stays byte-identical to `last_recon_*` after every encoded
+    /// frame.
+    #[cfg(test)]
+    pub(crate) fn me_ref_y(&self) -> &[u8] {
+        &self.me_ref_y
+    }
+
+    /// Test-only — read access to the ME-side LAST reference U plane.
+    /// See [`Self::me_ref_y`].
+    #[cfg(test)]
+    pub(crate) fn me_ref_u(&self) -> &[u8] {
+        &self.me_ref_u
+    }
+
+    /// Test-only — read access to the ME-side LAST reference V plane.
+    /// See [`Self::me_ref_y`].
+    #[cfg(test)]
+    pub(crate) fn me_ref_v(&self) -> &[u8] {
+        &self.me_ref_v
     }
 }
 
@@ -5047,6 +5174,109 @@ mod tests {
                 assert!(feat.is_none());
             }
         }
+    }
+
+    /// Reference-buffer split PROOF (denoiser / filtered-ALTREF
+    /// prerequisite). rvp9 historically used one reference buffer per
+    /// slot for both ME analysis and the residual-coding reference;
+    /// libvpx keeps them separate (`vp9_denoiser.c:294-304` me_ref
+    /// vs `cm->frame_refs[]`). This refactor adds parallel
+    /// `me_ref_*` buffers alongside `last_recon_*` and routes the ME
+    /// call sites to `me_ref_*` while keeping the residual-coding
+    /// MC on `last_recon_*`.
+    ///
+    /// Until the denoiser wave wires a real filter, the caller mirrors
+    /// `last_recon_*` into `me_ref_*` after every commit, so both
+    /// buffers carry the same bytes. This test asserts that equality
+    /// after a KF + several inter frames — proving the split is
+    /// structurally in place (separate `Vec` storage, all call sites
+    /// routed) without changing the bitstream.
+    ///
+    /// **Anti-G3 signal**: when a later wave fills `me_ref_*` with
+    /// filtered pixels (per-block denoised running average), this
+    /// assertion fails until the test is updated to compare against
+    /// the filtered expectation. That failure is the right signal:
+    /// it means the ME-side buffer actually diverged from the
+    /// residual-coding reference, which is the entire point of the
+    /// split.
+    #[test]
+    fn reference_split_me_and_pred_identical_initially() {
+        // Encode a KF + several inter frames against a small 64×64
+        // gradient. After each frame, `me_ref_*` must equal
+        // `last_recon_*` byte-for-byte (no filtering applied yet).
+        let cfg = baseline_config();
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let (y, u, v) = gradient_frame(64, 64);
+
+        // Initial state: both ME-side and residual-coding buffers are
+        // zero-allocated and equal in length.
+        assert_eq!(enc.me_ref_y().len(), enc.last_recon_y().len());
+        assert_eq!(enc.me_ref_u().len(), enc.last_recon_u().len());
+        assert_eq!(enc.me_ref_v().len(), enc.last_recon_v().len());
+        assert_eq!(enc.me_ref_y(), enc.last_recon_y());
+
+        // Drive a KF — the encoder reconstructs the frame (post-LF)
+        // into `last_recon_*` and mirrors into `me_ref_*`.
+        let _kf = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        assert_eq!(
+            enc.me_ref_y(),
+            enc.last_recon_y(),
+            "after KF, me_ref_y must equal last_recon_y (no filter yet)",
+        );
+        assert_eq!(
+            enc.me_ref_u(),
+            enc.last_recon_u(),
+            "after KF, me_ref_u must equal last_recon_u (no filter yet)",
+        );
+        assert_eq!(
+            enc.me_ref_v(),
+            enc.last_recon_v(),
+            "after KF, me_ref_v must equal last_recon_v (no filter yet)",
+        );
+
+        // Drive several inter frames. After each commit the encoder
+        // mirrors `last_recon_*` into `me_ref_*`. The two must stay
+        // byte-identical.
+        for frame_no in 1..=3u32 {
+            let _f = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+            assert_eq!(
+                enc.me_ref_y(),
+                enc.last_recon_y(),
+                "after inter frame {frame_no}, me_ref_y must equal last_recon_y",
+            );
+            assert_eq!(
+                enc.me_ref_u(),
+                enc.last_recon_u(),
+                "after inter frame {frame_no}, me_ref_u must equal last_recon_u",
+            );
+            assert_eq!(
+                enc.me_ref_v(),
+                enc.last_recon_v(),
+                "after inter frame {frame_no}, me_ref_v must equal last_recon_v",
+            );
+        }
+
+        // Anti-cheat: the buffers MUST be separate `Vec` storage, not
+        // an alias. If a later refactor accidentally aliases them
+        // (e.g. via a shared `Arc`), this `as_ptr()` comparison
+        // catches it: byte-identical content but distinct backing
+        // allocations is the only correct structural split.
+        assert_ne!(
+            enc.me_ref_y().as_ptr(),
+            enc.last_recon_y().as_ptr(),
+            "me_ref_y and last_recon_y must be separately allocated \
+             — a shared buffer is not a real split",
+        );
+        assert_ne!(
+            enc.me_ref_u().as_ptr(),
+            enc.last_recon_u().as_ptr(),
+            "me_ref_u and last_recon_u must be separately allocated",
+        );
+        assert_ne!(
+            enc.me_ref_v().as_ptr(),
+            enc.last_recon_v().as_ptr(),
+            "me_ref_v and last_recon_v must be separately allocated",
+        );
     }
 
     #[test]
