@@ -1,9 +1,9 @@
-# decode head-to-head — 2026-05-25T09:55:52Z
+# decode head-to-head — 2026-05-26T01:16:55Z
 
 host: windows-x86_64  unpinned  build: release (3c8d6d1ddea4abc4)
-rvp9: 021c9b8  vpxdec: WebM Project VP9 Decoder v1.14.1 (D:\language\rvp9-2\build\libvpx\vpxdec.exe)
+rvp9: 9b76a75  vpxdec: WebM Project VP9 Decoder v1.14.1 (D:\language\rvp9-2\build\libvpx\vpxdec.exe)
 reps: R=5 per vpxdec row (median); rvp9 timing window per HLD §3
-rvp9 runs: 3 (summary row = run 1; CSV ledger captures all runs)
+rvp9 runs: 1 (summary row = run 1; CSV ledger captures all runs)
 
 note: vpxdec value is per-frame mean from `vpxdec --noblit --summary -t N`,
       including construction/teardown overhead (negligible on >=1000-frame
@@ -18,15 +18,15 @@ note: vpxdec value is per-frame mean from `vpxdec --noblit --summary -t N`,
 
 | fixture            | res        | tiles | threads | rvp9 p50 us | rvp9 mean us | vpxdec mean us | ratio (rvp9/vpx) | budget us | gate        |
 |--------------------|------------|-------|---------|-------------|--------------|----------------|------------------|-----------|-------------|
-| quantizer-00       | 352x288    |     1 |       1 |      1341.4 |       1388.1 |         5495.0 |             0.25 |         - | n/a         |
-| tile_1x4           | 1920x1080  |     4 |       1 |     12745.3 |      12261.6 |         3286.4 |             3.73 |         - | n/a         |
-| tile_1x4           | 1920x1080  |     4 |       4 |      6671.3 |       6622.2 |         2130.6 |             3.11 |         - | n/a         |
-| testsrc_720p30     | 1280x720   |     1 |       1 |      3953.2 |       3584.0 |          558.9 |             6.41 |     33000 | PASS-info   |
-| testsrc_1080p30    | 1920x1080  |     4 |       2 |      5858.6 |       6137.0 |          705.0 |             8.70 |     33000 | PASS-info   |
-| testsrc_1080p30    | 1920x1080  |     4 |       4 |      3653.2 |       4310.8 |          628.2 |             6.86 |     33000 | PASS-info   |
-| testsrc_1080p60    | 1920x1080  |     4 |       4 |      3493.2 |       3737.4 |          556.6 |             6.71 |     16000 | PASS-info   |
-| testsrc_1080p60    | 1920x1080  |     4 |       8 |      3862.8 |       4165.9 |          535.3 |             7.78 |     16000 | PASS-info   |
-| foreman-fp1        | 352x288    |     1 |       1 |       572.2 |        575.7 |          294.8 |             1.95 |         - | n/a         |
+| quantizer-00       | 352x288    |     1 |       1 |      1673.6 |       1720.6 |         6068.5 |             0.28 |         - | n/a         |
+| tile_1x4           | 1920x1080  |     4 |       1 |     15809.6 |      14652.6 |         3793.0 |             3.86 |         - | n/a         |
+| tile_1x4           | 1920x1080  |     4 |       4 |      5473.3 |       5332.1 |         2704.6 |             1.97 |         - | n/a         |
+| testsrc_720p30     | 1280x720   |     1 |       1 |      5105.2 |       4540.3 |          612.1 |             7.42 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       2 |      6653.5 |       5453.2 |          973.6 |             5.60 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       4 |      3867.3 |       3593.7 |          621.9 |             5.78 |     33000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       4 |      2252.0 |       2697.7 |          604.1 |             4.47 |     16000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       8 |      2312.4 |       2779.1 |          581.6 |             4.78 |     16000 | PASS-info   |
+| foreman-fp1        | 352x288    |     1 |       1 |       731.4 |        730.1 |          311.5 |             2.34 |         - | n/a         |
 
 ## Methodology
 
@@ -42,8 +42,3 @@ note: vpxdec value is per-frame mean from `vpxdec --noblit --summary -t N`,
   with vpxdec which has no per-frame surface).
 - Gate is informational on unpinned hosts; pinned-host promotion
   deferred to the dedicated Linux CI runner (HLD §1 + §6).
-- Multi-run sweep: -Runs 3. The summary table above shows
-  run 1 only; the CSV ledger contains all 3 rows per
-  fixture×threads (same 	imestamp, un_index=1..3).
-  Pair with `bench-compare --baseline <ts1> --candidate <ts2>`
-  for Mann-Whitney U significance against a previous sweep.
