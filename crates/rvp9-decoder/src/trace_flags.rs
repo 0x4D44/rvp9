@@ -117,16 +117,6 @@ pub(crate) struct TraceFlags {
     /// libvpx's column-wavefront, which beats serial decisively;
     /// hence the flip.
     pub disable_row_mt: bool,
-    /// Lever B v2 (HLD §5 row 3) — column-wavefront LF worker.
-    /// Default ON (C3 perf gate met: serial LF 1197µs → wavefront
-    /// 443µs, frame 2555µs → 1889µs on testsrc_1080p30 t=4).
-    /// Setting `RVP9_DISABLE_COLUMN_WAVEFRONT=1` routes the LF
-    /// dispatcher back to the legacy `run_row_mt_lf_worker`
-    /// (row-barrier) — kept as a debug bypass.
-    ///
-    /// The legacy `RVP9_USE_COLUMN_WAVEFRONT=1` opt-in still works
-    /// (idempotent with the new default) but is no longer required.
-    pub use_column_wavefront: bool,
 }
 
 impl TraceFlags {
@@ -172,12 +162,6 @@ impl TraceFlags {
             // an explicit opt-in (no behavioural difference vs the
             // new default).
             disable_row_mt: any("RVP9_DISABLE_LF_MT"),
-            // Lever B v2 C3 — column-wavefront LF worker default ON
-            // (perf gate met). Default = true (wavefront), unless
-            // `RVP9_DISABLE_COLUMN_WAVEFRONT=1` is set (legacy
-            // row-barrier worker). `RVP9_USE_COLUMN_WAVEFRONT=1` is
-            // still accepted (idempotent with the default).
-            use_column_wavefront: !any("RVP9_DISABLE_COLUMN_WAVEFRONT"),
         }
     }
 

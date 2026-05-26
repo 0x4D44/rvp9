@@ -1,20 +1,16 @@
-//! Lever B v2 C2 differential test — exercises the column-wavefront
-//! row-MT loopfilter worker.
+//! Lever B v2 differential test — exercises the column-wavefront
+//! row-MT loopfilter worker (the default for the row-MT LF path
+//! after C3).
 //!
-//! Sibling of `row_mt_lf_diff.rs` which exercises the legacy row-barrier
-//! worker. Here we set BOTH `RVP9_ROW_MT=1` (so the dispatcher takes
-//! the parallel path) AND `RVP9_USE_COLUMN_WAVEFRONT=1` (so the
-//! dispatcher routes to `run_split_edge_lf_worker` instead of
-//! `run_row_mt_lf_worker`).
+//! Each vector decodes once with `threads=1` (serial LF path) and
+//! once with `threads=4` (column-wavefront). The per-frame YV12 MD5s
+//! MUST match — proof that the new wavefront worker is
+//! bitwise-identical to serial.
 //!
-//! Each multi-tile vector decodes once with `threads=1` (serial LF
-//! path, no env vars consulted) and once with `threads=4`
-//! (column-wavefront). The per-frame YV12 MD5s MUST match — proof
-//! that the new wavefront worker is bitwise-identical to serial.
-//!
-//! The per-process `trace_flags()` OnceLock isolates this test binary
-//! from `row_mt_lf_diff.rs` — cargo runs each `tests/*.rs` in a fresh
-//! process, so the two test files see independent env-var snapshots.
+//! Covers both multi-tile fixtures (where the wavefront fires on
+//! multiple SB rows concurrently) and single-tile fixtures (where
+//! the dispatcher's `num_tile_cols == 1` cap reduces `num_lf_workers`
+//! to 1, exercising the cap-fallback path).
 
 use rvp9_decoder::Decoder;
 use rvp9_harness::container::read_packets;
@@ -89,11 +85,12 @@ const SINGLE_TILE_LF_VECTORS: &[&str] = &[
 
 #[test]
 fn column_wavefront_lf_matches_serial_on_multi_tile_vectors() {
-    // Activate row-MT + column-wavefront BEFORE constructing any Decoder.
-    // SAFETY: tests in `tests/` are single-threaded by default in
-    // cargo's harness; no other thread reads env vars at this point.
-    unsafe { std::env::set_var("RVP9_ROW_MT", "1") };
-    unsafe { std::env::set_var("RVP9_USE_COLUMN_WAVEFRONT", "1") };
+    // Column-wavefront LF MT is the default after Lever B v2 C3;
+    // no env-var setup needed for the t=4 path to take it. We
+    // explicitly do NOT set RVP9_DISABLE_LF_MT (would force serial)
+    // or RVP9_DISABLE_COLUMN_WAVEFRONT (retired in C4 — legacy
+    // worker is gone). The threads=1 baseline still walks the
+    // serial LF path (dispatcher's `num_workers >= 2` gate).
 
     let dir = vectors_dir();
     if !dir.exists() {
