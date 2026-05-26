@@ -61,7 +61,10 @@ use rvp9_core::bitstream::frame::InterpFilter;
 use rvp9_core::block::{BlockSize, max_txsize, uv_plane_block_size, uv_plane_tx_size};
 use rvp9_core::cost::SwitchableInterpCosts;
 use rvp9_core::cost::coef_cost::CoefCostTable;
-use rvp9_core::inter::filter::{FILTER_TAPS, convolve8, convolve8_horiz, convolve8_vert, convolve_copy, kernel_for};
+use rvp9_core::inter::filter::{
+    FILTER_TAPS, convolve8, convolve8_avg, convolve8_avg_horiz, convolve8_avg_vert,
+    convolve8_horiz, convolve8_vert, convolve_avg, convolve_copy, kernel_for,
+};
 use rvp9_core::mode_info::{InterMode, Mv};
 use rvp9_core::mv_search::full_pixel::PlaneRef;
 use rvp9_core::quant::forward::PlaneQuantizers;
@@ -477,6 +480,285 @@ pub fn handle_inter_mode_single_ref(
     }
 }
 
+/// Inputs for the compound (bidirectional) inter-mode RD. Mirrors
+/// [`HandleInterModeParams`] but carries TWO reference bundles and TWO
+/// MVs — the {LAST, ALTREF} compound pair. The prediction is the
+/// rounding-up average of the two single-ref predictions
+/// (`(pred0 + pred1 + 1) >> 1`), exactly as the decoder reconstructs it.
+///
+/// libvpx parity: `handle_inter_mode`'s compound branch builds the
+/// averaged prediction via `vp9_build_inter_predictors_sb`
+/// (`vp9_rdopt.c:3043`, with `is_compound = 1`), which calls
+/// `build_inter_predictors` (`vp9/common/vp9_reconinter.c:126-207`):
+/// ref 0 writes the prediction, ref 1 (>0) overlays it with the `_avg`
+/// convolve kernels. The residual RD is the SAME `super_block_yrd`
+/// (`vp9_rdopt.c:3119`) the single-ref path runs.
+pub struct HandleInterCompoundParams<'a> {
+    /// Block size (≤ 32×32 single-tile scope).
+    pub bsize: BlockSize,
+    /// Y source plane.
+    pub src_plane: &'a PlaneRef<'a>,
+    /// Top-left of the block in luma samples `(col, row)`.
+    pub src_offset: (usize, usize),
+    /// Reference 0 Y plane (mi-grid slot 0 = LAST).
+    pub ref0_plane: &'a PlaneRef<'a>,
+    /// Reference 1 Y plane (mi-grid slot 1 = ALTREF).
+    pub ref1_plane: &'a PlaneRef<'a>,
+    /// MV for ref 0 (1/8-pel).
+    pub mv0: Mv,
+    /// MV for ref 1 (1/8-pel).
+    pub mv1: Mv,
+    /// Compound inter mode (ZEROMV / NEWMV in v1).
+    pub this_mode: InterMode,
+    /// `cost_mv_ref(mode, ctx)` mode rate (compound ctx).
+    pub inter_mode_rate: u32,
+    /// Sum of both refs' NEWMV residual rates (0 for ZEROMV).
+    pub newmv_rate: u32,
+    /// `rdmult` (lambda).
+    pub rdmult: i64,
+    /// Y quantizers.
+    pub y_quant: &'a PlaneQuantizers,
+    /// Chroma quantizers.
+    pub uv_quant: &'a PlaneQuantizers,
+    /// Coefficient-bit cost table.
+    pub coef_costs: &'a CoefCostTable,
+    /// `tx_size` signalling cost.
+    pub tx_size_cost: [u32; 4],
+    /// Skip-bit cost (skip = false).
+    pub skip_cost0: u32,
+    /// Skip-bit cost (skip = true).
+    pub skip_cost1: u32,
+    /// Switchable-interp cost table.
+    pub switchable_interp_costs: &'a SwitchableInterpCosts,
+    /// Switchable-interp context.
+    pub switchable_interp_ctx: usize,
+    /// U source plane.
+    pub src_u: &'a [u8],
+    /// V source plane.
+    pub src_v: &'a [u8],
+    /// Ref 0 U plane.
+    pub ref0_u: &'a [u8],
+    /// Ref 0 V plane.
+    pub ref0_v: &'a [u8],
+    /// Ref 1 U plane.
+    pub ref1_u: &'a [u8],
+    /// Ref 1 V plane.
+    pub ref1_v: &'a [u8],
+    /// Chroma stride (4:2:0).
+    pub uv_stride: usize,
+}
+
+/// Run the compound (bidirectional averaging) inter-mode RD. Walks the 3
+/// switchable filters; for each, builds the averaged prediction
+/// (ref0 then ref1-avg, matching the decoder's `is_compound_avg = r > 0`
+/// recon and `round_avg` rounding `filter.rs:188`), forms the residual,
+/// and runs the real [`super_block_yrd`] on Y + chroma. Returns the
+/// winning `(filter, rate, dist, rd)`.
+///
+/// Both references share the single per-block interp filter the wire
+/// format carries (`write_inter_block_mode_info` emits ONE switchable
+/// filter per block, `mode_info.rs:1121`); the decoder applies it to
+/// both MC passes.
+#[must_use]
+pub fn handle_inter_mode_compound(
+    params: &HandleInterCompoundParams<'_>,
+) -> HandleInterModeResult {
+    let mut filter_cache: [Option<FilterRd>; SWITCHABLE_FILTERS] = [None; SWITCHABLE_FILTERS];
+    let filters = [
+        InterpFilter::EightTap,
+        InterpFilter::EightTapSmooth,
+        InterpFilter::EightTapSharp,
+    ];
+
+    for (i, &filter) in filters.iter().enumerate() {
+        let rs = switchable_filter_rate(
+            params.switchable_interp_costs,
+            params.switchable_interp_ctx,
+            filter,
+        );
+        let plane_rd = evaluate_compound_filter_rd(params, filter);
+        let rate = plane_rd.rate.saturating_add(rs);
+        let rd = rdcost(params.rdmult, i64::from(rate), plane_rd.dist);
+        filter_cache[i] = Some(FilterRd {
+            rd,
+            rate,
+            dist: plane_rd.dist,
+            skip_txfm_sb: plane_rd.skippable,
+            skip_sse_sb: plane_rd.sse,
+        });
+    }
+
+    let winning_idx = filter_cache
+        .iter()
+        .enumerate()
+        .filter_map(|(i, slot)| slot.map(|s| (i, s.rd)))
+        .min_by_key(|(_, rd)| *rd)
+        .map(|(i, _)| i)
+        .expect("at least one filter slot must be populated");
+    let winning = filter_cache[winning_idx].expect("just selected");
+    let best_filter = filters[winning_idx];
+
+    let mode_bits = params.inter_mode_rate.saturating_add(params.newmv_rate);
+    let total_rate = mode_bits.saturating_add(winning.rate);
+
+    let rd_encode = rdcost(
+        params.rdmult,
+        i64::from(total_rate.saturating_add(params.skip_cost0)),
+        winning.dist,
+    );
+    let rd_skip = rdcost(
+        params.rdmult,
+        i64::from(mode_bits.saturating_add(params.skip_cost1)),
+        winning.skip_sse_sb,
+    );
+    let take_skip = winning.skip_txfm_sb || rd_skip < rd_encode;
+    let (final_rate, final_dist, disable_skip) = if take_skip {
+        (
+            mode_bits.saturating_add(params.skip_cost1),
+            winning.skip_sse_sb,
+            true,
+        )
+    } else {
+        (
+            total_rate.saturating_add(params.skip_cost0),
+            winning.dist,
+            false,
+        )
+    };
+    let final_rd = rdcost(params.rdmult, i64::from(final_rate), final_dist);
+
+    HandleInterModeResult {
+        best_filter,
+        rate: final_rate,
+        dist: final_dist,
+        rd: final_rd,
+        disable_skip,
+        filter_cache,
+    }
+}
+
+/// Compound per-plane RD: builds the averaged prediction for one filter
+/// and runs `super_block_yrd` on Y + chroma. The averaging is the
+/// decoder-exact `(pred0 + pred1 + 1) >> 1`.
+fn evaluate_compound_filter_rd(
+    params: &HandleInterCompoundParams<'_>,
+    filter: InterpFilter,
+) -> PlaneRd {
+    let bw = usize::from(params.bsize.width());
+    let bh = usize::from(params.bsize.height());
+    let y_tx = max_txsize(params.bsize);
+
+    // --- Y plane: pred0 then ref1-avg, matching the decoder's r-loop. ---
+    let mut y_pred = [0u8; 64 * 64];
+    build_inter_pred(
+        params.ref0_plane,
+        params.src_offset.0,
+        params.src_offset.1,
+        params.mv0,
+        bw,
+        bh,
+        &mut y_pred,
+        bw,
+        filter,
+    );
+    build_inter_pred_avg(
+        params.ref1_plane,
+        params.src_offset.0,
+        params.src_offset.1,
+        params.mv1,
+        bw,
+        bh,
+        &mut y_pred,
+        bw,
+        filter,
+    );
+    let y_rd = plane_super_block_yrd(
+        params.src_plane.data,
+        params.src_plane.stride,
+        params.src_offset,
+        &y_pred,
+        bw,
+        bw,
+        bh,
+        y_tx,
+        TxMode::TxModeSelect,
+        params.y_quant,
+        params.coef_costs,
+        0,
+        params.rdmult,
+        params.tx_size_cost,
+        params.skip_cost0,
+        params.skip_cost1,
+    );
+
+    let mut rate = y_rd.rate;
+    let mut dist = y_rd.dist;
+    let mut sse = y_rd.sse;
+    let mut skippable = y_rd.skip;
+
+    // --- Chroma planes (4:2:0). ---
+    if !params.src_u.is_empty() && !params.ref0_u.is_empty() && params.uv_stride > 0 {
+        let uv_bw = bw >> 1;
+        let uv_bh = bh >> 1;
+        let uv_x = params.src_offset.0 >> 1;
+        let uv_y = params.src_offset.1 >> 1;
+        let uv_mv0 = Mv { row: params.mv0.row / 2, col: params.mv0.col / 2 };
+        let uv_mv1 = Mv { row: params.mv1.row / 2, col: params.mv1.col / 2 };
+        let uv_tx = uv_plane_tx_size(params.bsize, y_tx, 1, 1);
+        let _ = uv_plane_block_size(params.bsize, 1, 1);
+        let uv_h = params.ref0_u.len() / params.uv_stride;
+
+        for (src_uv, ref0_uv, ref1_uv) in [
+            (params.src_u, params.ref0_u, params.ref1_u),
+            (params.src_v, params.ref0_v, params.ref1_v),
+        ] {
+            let ref0_plane = PlaneRef {
+                data: ref0_uv,
+                stride: params.uv_stride,
+                width: params.uv_stride,
+                height: uv_h,
+            };
+            let ref1_plane = PlaneRef {
+                data: ref1_uv,
+                stride: params.uv_stride,
+                width: params.uv_stride,
+                height: uv_h,
+            };
+            let mut uv_pred = [0u8; 32 * 32];
+            build_inter_pred(
+                &ref0_plane, uv_x, uv_y, uv_mv0, uv_bw, uv_bh, &mut uv_pred, uv_bw, filter,
+            );
+            build_inter_pred_avg(
+                &ref1_plane, uv_x, uv_y, uv_mv1, uv_bw, uv_bh, &mut uv_pred, uv_bw, filter,
+            );
+            let uv_rd = plane_super_block_yrd(
+                src_uv,
+                params.uv_stride,
+                (uv_x, uv_y),
+                &uv_pred,
+                uv_bw,
+                uv_bw,
+                uv_bh,
+                uv_tx,
+                TxMode::TxModeSelect,
+                params.uv_quant,
+                params.coef_costs,
+                1,
+                params.rdmult,
+                params.tx_size_cost,
+                params.skip_cost0,
+                params.skip_cost1,
+            );
+            rate = rate.saturating_add(uv_rd.rate);
+            dist = dist.saturating_add(uv_rd.dist);
+            sse = sse.saturating_add(uv_rd.sse);
+            skippable = skippable && uv_rd.skip;
+        }
+    }
+
+    PlaneRd { rate, dist, sse, skippable }
+}
+
 /// Real per-plane RD for one `(mode, mv, filter)` triplet: builds the
 /// 8-tap prediction, forms the residual, and runs [`super_block_yrd`]
 /// on the Y plane plus (when chroma planes are present) the U and V
@@ -819,6 +1101,77 @@ fn build_inter_pred(
         }
         (true, true) => {
             convolve8(
+                src_slice, ref_plane.stride, dst, dst_stride, filter_x, filter_y, bw, bh,
+            );
+        }
+    }
+}
+
+/// Build a `bw × bh` inter prediction at `src_offset + (mv >> 3)` and
+/// **average** it into the existing `dst` contents with rounding-up bias
+/// `(dst + pred + 1) >> 1`. This is the compound second-reference pass:
+/// the first reference's prediction is already in `dst` (built by
+/// [`build_inter_pred`] with the non-avg kernels), and this call overlays
+/// the second reference using the `_avg` convolve variants.
+///
+/// Mirrors the decoder's compound recon (`reconstruct_inter.rs:331-476`,
+/// `is_compound_avg = r > 0`) and libvpx `build_inter_predictors`
+/// (`vp9/common/vp9_reconinter.c:126-207`) which dispatches to
+/// `vpx_convolve_avg` / `vpx_convolve8_avg*` (`vpx_dsp/vpx_convolve.c:44,
+/// 90, 225`) for the `r > 0` reference. The rounding MUST match
+/// `round_avg` (`filter.rs:188`, libvpx `ROUND_POWER_OF_TWO(a+b, 1)`)
+/// exactly — a 1-LSB error fails the byte-exact vpxdec gate.
+#[allow(clippy::too_many_arguments)]
+fn build_inter_pred_avg(
+    ref_plane: &PlaneRef<'_>,
+    src_x: usize,
+    src_y: usize,
+    mv: Mv,
+    bw: usize,
+    bh: usize,
+    dst: &mut [u8],
+    dst_stride: usize,
+    filter: InterpFilter,
+) {
+    let int_row = (mv.row as i32) >> 3;
+    let int_col = (mv.col as i32) >> 3;
+    let subpel_y_q4 = ((mv.row as i32) & 7) << 1;
+    let subpel_x_q4 = ((mv.col as i32) & 7) << 1;
+
+    let ref_x = src_x as isize + int_col as isize;
+    let ref_y = src_y as isize + int_row as isize;
+
+    let x_nonzero = subpel_x_q4 != 0;
+    let y_nonzero = subpel_y_q4 != 0;
+
+    let pad_x = if x_nonzero { (FILTER_TAPS / 2 - 1) as isize } else { 0 };
+    let pad_y = if y_nonzero { (FILTER_TAPS / 2 - 1) as isize } else { 0 };
+    let win_x = ref_x - pad_x;
+    let win_y = ref_y - pad_y;
+    debug_assert!(
+        win_x >= 0 && win_y >= 0,
+        "compound inter pred read window out of bounds: ({win_x}, {win_y})",
+    );
+
+    let src_start = (win_y as usize) * ref_plane.stride + (win_x as usize);
+    let src_slice = &ref_plane.data[src_start..];
+
+    let kernel = kernel_for(filter);
+    let filter_x = &kernel[subpel_x_q4 as usize];
+    let filter_y = &kernel[subpel_y_q4 as usize];
+
+    match (x_nonzero, y_nonzero) {
+        (false, false) => {
+            convolve_avg(src_slice, ref_plane.stride, dst, dst_stride, bw, bh);
+        }
+        (true, false) => {
+            convolve8_avg_horiz(src_slice, ref_plane.stride, dst, dst_stride, filter_x, bw, bh);
+        }
+        (false, true) => {
+            convolve8_avg_vert(src_slice, ref_plane.stride, dst, dst_stride, filter_y, bw, bh);
+        }
+        (true, true) => {
+            convolve8_avg(
                 src_slice, ref_plane.stride, dst, dst_stride, filter_x, filter_y, bw, bh,
             );
         }

@@ -1779,6 +1779,8 @@ impl StreamEncoder {
                                 picked_interp_filter:
                                     rvp9_core::bitstream::frame::InterpFilter::EightTap,
                                 picked_intra_mode: None,
+                                picked_ref_frame2: RefFrame::NoRefFrame,
+                                picked_mv2: Mv::ZERO,
                             }
                         })
                         .collect()
@@ -2279,6 +2281,8 @@ impl StreamEncoder {
                             picked_interp_filter:
                                 rvp9_core::bitstream::frame::InterpFilter::EightTap,
                             picked_intra_mode: None,
+                            picked_ref_frame2: RefFrame::NoRefFrame,
+                            picked_mv2: Mv::ZERO,
                         })
                         .collect()
                 })
@@ -2929,6 +2933,22 @@ fn build_inter_mi_grid_from_picker(
                             y_mode: intra_mode,
                             uv_mode: IntraMode::Dc, // v1: always DC for UV
                         }
+                    } else if leaf.picked_ref_frame2.is_inter() {
+                        // W-COMPOUND — compound (bidirectional) leaf. The
+                        // mi-grid cell carries `ref_frames = [LAST, ALTREF]`
+                        // (slot 0 = `picked_ref_frame` = LAST = the pair's
+                        // `comp_var_ref[0]`; slot 1 = `picked_ref_frame2` =
+                        // ALTREF = `comp_fixed_ref`) and two MVs. The core
+                        // writer derives `is_compound` from
+                        // `ref_frames[1].is_inter()` (`mode_info.rs:1013`),
+                        // emits the `comp_inter`/`comp_ref` bits, and writes
+                        // both NEWMV residuals (`mode_info.rs:1155-1184`).
+                        BlockMode::Inter {
+                            mode: leaf.picked_mode,
+                            ref_frames: [leaf.picked_ref_frame, leaf.picked_ref_frame2],
+                            mvs: [leaf.picked_mv, leaf.picked_mv2],
+                            interp_filter: InterpFilter::EightTap,
+                        }
                     } else {
                         BlockMode::Inter {
                             mode: leaf.picked_mode,
@@ -3221,16 +3241,44 @@ fn build_inter_packet_with_residuals(
     // (Phase 2c). The writer emits per-block switchable-interp bits
     // and the picker's chosen filter goes on the wire.
     let interp_filter_frame = InterpFilter::Switchable;
+
+    // W-COMPOUND — compound is legal for this frame iff at least two of
+    // the three reference sign biases differ (libvpx
+    // `vp9_compound_reference_allowed`, `vp9/common/vp9_pred_common.c:16-
+    // 22`). The decoder derives the SAME predicate from the header sign
+    // biases (`rvp9-decoder/src/lib.rs:2317`) to decide whether the
+    // `reference_mode` field is present in the compressed header. When
+    // every bias is equal (the normal inter frame with
+    // `enable_alt_ref = false`, i.e. the cross-decoder gate) this is
+    // `false`, no `reference_mode` field is emitted, and the bitstream is
+    // byte-identical to the single-ref path. When the ALTREF picker is
+    // live the header passes `[false, false, true]` → `true`, so the
+    // encoder emits `REFERENCE_MODE_SELECT` and per-block `comp_inter`
+    // bits select compound vs single per leaf (libvpx
+    // `setup_compound_reference_mode` + `cm->reference_mode` in
+    // `vp9_rdopt.c`, frame-header writer `vp9/encoder/vp9_bitstream.c::
+    // write_frame_reference_mode`).
+    let compound_allowed = ref_frame_sign_biases[1] != ref_frame_sign_biases[0]
+        || ref_frame_sign_biases[2] != ref_frame_sign_biases[0];
+    // REFERENCE_MODE_SELECT lets each block choose single vs compound via
+    // the per-block `comp_inter` bit — the right choice when only SOME
+    // leaves benefit from the {LAST, ALTREF} average. When compound is
+    // not allowed we MUST stay SINGLE_REFERENCE (gate-safety).
+    let reference_mode_frame = if compound_allowed {
+        ReferenceMode::Select
+    } else {
+        ReferenceMode::Single
+    };
     let opts = CompressedHeaderOptions {
         lossless: false,
         intra_only: false,
         interp_filter: interp_filter_frame,
-        compound_allowed: false,
+        compound_allowed,
         allow_high_precision_mv: false,
     };
     let target = CompressedHeaderResult {
         tx_mode: TxMode::AllowTx32x32,
-        reference_mode: ReferenceMode::Single,
+        reference_mode: reference_mode_frame,
     };
 
     let mut compressed_buf = vec![0u8; 16 * 1024];
@@ -3265,7 +3313,11 @@ fn build_inter_packet_with_residuals(
     let params = InterModeReadParams {
         allow_high_precision_mv: false,
         interp_filter: interp_filter_frame,
-        reference_mode: ReferenceMode::Single,
+        // W-COMPOUND — MUST match the compressed-header `reference_mode`
+        // (Select when compound is allowed for this frame), so the
+        // per-block writer emits the `comp_inter`/`comp_ref` bits the
+        // decoder's `read_ref_frames` expects.
+        reference_mode: reference_mode_frame,
         comp_fixed_ref,
         comp_var_ref,
         sign_bias,
@@ -6698,6 +6750,8 @@ mod tests {
             picked_ref_frame: RefFrame::GoldenFrame,
             picked_interp_filter: InterpFilter::EightTap,
             picked_intra_mode: None,
+            picked_ref_frame2: RefFrame::NoRefFrame,
+            picked_mv2: Mv::ZERO,
         }];
         let sb_partitions = vec![leaves];
         let grid = build_inter_mi_grid_from_picker(8, 8, &sb_partitions);
@@ -6729,6 +6783,8 @@ mod tests {
             picked_ref_frame: RefFrame::IntraFrame,
             picked_interp_filter: InterpFilter::EightTap,
             picked_intra_mode: Some(IntraMode::V),
+            picked_ref_frame2: RefFrame::NoRefFrame,
+            picked_mv2: Mv::ZERO,
         }];
         let sb_partitions = vec![leaves];
         let grid = build_inter_mi_grid_from_picker(8, 8, &sb_partitions);
@@ -6809,6 +6865,8 @@ mod tests {
             picked_ref_frame: RefFrame::LastFrame,
             picked_interp_filter: InterpFilter::EightTap,
             picked_intra_mode: None,
+            picked_ref_frame2: RefFrame::NoRefFrame,
+            picked_mv2: Mv::ZERO,
         });
         leaves.push(InterPartitionLeafDesc {
             mi_row_in_sb: 4,
@@ -6821,6 +6879,8 @@ mod tests {
             picked_ref_frame: RefFrame::LastFrame,
             picked_interp_filter: InterpFilter::EightTap,
             picked_intra_mode: None,
+            picked_ref_frame2: RefFrame::NoRefFrame,
+            picked_mv2: Mv::ZERO,
         });
         let sb_partitions = vec![leaves];
 

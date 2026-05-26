@@ -2282,6 +2282,16 @@ pub(crate) struct InterPartitionLeafDesc {
     /// Phase 2b — intra mode when `picked_ref_frame == IntraFrame`.
     /// One of `{Dc, V, H}` in v1. `None` for inter winners.
     pub picked_intra_mode: Option<rvp9_core::intra_pred::IntraMode>,
+    /// W-COMPOUND — second reference for a compound (bidirectional)
+    /// winner (mi-grid slot 1 = `AltrefFrame`). `RefFrame::NoRefFrame`
+    /// for single-ref leaves (the default). When this is a real inter
+    /// ref the leaf is compound: the writer derives `is_compound` from
+    /// `ref_frames[1].is_inter()` (`mode_info.rs:1013`) and the encoder
+    /// simulator builds the averaged {slot0, slot1} prediction.
+    pub picked_ref_frame2: RefFrame,
+    /// W-COMPOUND — MV for the slot 1 (ALTREF) reference of a compound
+    /// winner; `Mv::ZERO` for single-ref leaves.
+    pub picked_mv2: Mv,
 }
 
 /// F10.1c — Drive the F8.1 inter mode picker per leaf and run the
@@ -3318,6 +3328,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         picked_interp_filter:
                             rvp9_core::bitstream::frame::InterpFilter::EightTap,
                         picked_intra_mode: None,
+                        picked_ref_frame2: RefFrame::NoRefFrame,
+                        picked_mv2: Mv::ZERO,
                     });
                 }
                 sb_partitions[sb_idx] = new_leaves;
@@ -3783,6 +3795,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // bitstream the writer emits; libvpx's sub-8 driver
                 // (`vp9_rdopt.c:4285-5060`) is for sub-8 partitions
                 // (Block4x4/Block4x8/Block8x4) which rvp9 never emits.
+                // W-COMPOUND — capture a compound winner's second
+                // reference + MV (mi-grid slot 1 = ALTREF). `None` for a
+                // single-ref winner. The `PickInterModeResult` mapping
+                // below drops the second ref/MV (that struct is single-ref
+                // only), so we hoist it into this sibling capture and apply
+                // it to the leaf desc after the pick resolves.
+                let mut rdo_compound_second: Option<(RefFrame, Mv)> = None;
                 let rdo_unified: Option<
                     rvp9_core::mode_decision::inter::PickInterModeResult,
                 > = if rdo_speed_gated
@@ -3845,6 +3864,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         last: last_inputs,
                         golden: golden_inputs,
                         altref: altref_inputs,
+                        // W-COMPOUND — the {LAST, ALTREF} compound
+                        // candidate is enumerated iff the ALTREF slot is
+                        // live (= `enable_alt_ref && ARF emitted`), the
+                        // same gate that flips the frame's sign bias and
+                        // reference_mode to Select. When `false` no
+                        // compound candidate is scored and the picker is
+                        // byte-identical to the single-ref path.
+                        compound_enabled: altref_available,
                         mv_limits,
                         site_config: &site_config,
                         mv_costs: &mv_costs,
@@ -3867,6 +3894,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         sad_per_bit: 16,
                     };
                     pick_inter_sb_leaf(&dispatch_leaf).map(|r| {
+                        // W-COMPOUND — hoist the second ref/MV out of the
+                        // dispatch result before it's flattened into the
+                        // single-ref `PickInterModeResult`.
+                        if r.ref_frame2.is_inter() {
+                            rdo_compound_second = Some((r.ref_frame2, r.mv2));
+                        }
                         rvp9_core::mode_decision::inter::PickInterModeResult {
                             best_mode: r.mode,
                             best_mv: r.mv,
@@ -4310,6 +4343,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 sb_partitions[sb_idx][leaf_idx].picked_mv = pick.best_mv;
                 sb_partitions[sb_idx][leaf_idx].skip = false;
                 sb_partitions[sb_idx][leaf_idx].picked_ref_frame = picked_ref;
+                // W-COMPOUND — record the second reference + MV for a
+                // compound winner (slot 1 = ALTREF). The leaf desc carries
+                // `NoRefFrame` / `Mv::ZERO` for single-ref leaves. The
+                // recon path + mi-grid splat both branch on this.
+                if let Some((ref2, mv2)) = rdo_compound_second {
+                    sb_partitions[sb_idx][leaf_idx].picked_ref_frame2 = ref2;
+                    sb_partitions[sb_idx][leaf_idx].picked_mv2 = mv2;
+                } else {
+                    sb_partitions[sb_idx][leaf_idx].picked_ref_frame2 =
+                        RefFrame::NoRefFrame;
+                    sb_partitions[sb_idx][leaf_idx].picked_mv2 = Mv::ZERO;
+                }
                 // F.5 — record the per-leaf interpolation filter so the
                 // writer (via `splat_inter_leaf_into_mi_grid`) and the
                 // encoder simulator's per-plane MC step below both use
@@ -4629,6 +4674,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         // IT-add). Uses the unscaled `inter_predictor` path
                         // (encoder ref dims = current dims, so identity
                         // scale).
+                        //
+                        // W-COMPOUND — for a compound leaf this builds the
+                        // slot-0 (LAST) prediction first (`is_compound_avg =
+                        // false`); the slot-1 (ALTREF) prediction is
+                        // averaged into it below. This matches the decoder's
+                        // `for r in 0..num_refs` recon loop
+                        // (`reconstruct_inter.rs:331`, `is_compound_avg = r >
+                        // 0`): slot 0 writes, slot 1 averages.
                         build_inter_pred_plane_unscaled(
                             ref_plane_data,
                             plane_stride,
@@ -4643,7 +4696,62 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             recon_plane,
                             plane_stride,
                             sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
+                            /* is_compound_avg = */ false,
                         );
+
+                        // W-COMPOUND — second-reference averaging pass. A
+                        // compound leaf carries `picked_ref_frame2 ==
+                        // AltrefFrame` (the {LAST, ALTREF} pair, where slot
+                        // 0 = LAST = `picked_ref`). Build the ALTREF
+                        // prediction at `picked_mv2` and average it into the
+                        // recon plane `(dst + pred + 1) >> 1` via the `_avg`
+                        // convolve kernels, exactly as the decoder does for
+                        // `r == 1` (`reconstruct_inter.rs:409`,
+                        // `is_compound_avg = r > 0`). The ALTREF slot is
+                        // guaranteed available (a leaf can only carry a
+                        // compound second ref when the picker's `altref`
+                        // bundle — gated on `altref_available` — was live).
+                        let leaf_ref2 =
+                            sb_partitions[sb_idx][leaf_idx].picked_ref_frame2;
+                        if leaf_ref2.is_inter() {
+                            debug_assert_eq!(
+                                leaf_ref2,
+                                RefFrame::AltrefFrame,
+                                "compound second ref must be ALTREF (the \
+                                 {{LAST, ALTREF}} pair's comp_fixed_ref)"
+                            );
+                            debug_assert_eq!(
+                                picked_ref,
+                                RefFrame::LastFrame,
+                                "compound first ref (slot 0) must be LAST"
+                            );
+                            let mv2 = sb_partitions[sb_idx][leaf_idx].picked_mv2;
+                            let mv2_q4_col =
+                                i32::from(mv2.col) * (1i32 << (1 - ss_x as i32));
+                            let mv2_q4_row =
+                                i32::from(mv2.row) * (1i32 << (1 - ss_y as i32));
+                            let ref2_plane_data = match plane {
+                                0 => altref_yuv().0,
+                                1 => altref_yuv().1,
+                                _ => altref_yuv().2,
+                            };
+                            build_inter_pred_plane_unscaled(
+                                ref2_plane_data,
+                                plane_stride,
+                                plane_w,
+                                plane_h,
+                                plane_px_x,
+                                plane_px_y,
+                                block_w_px,
+                                block_h_px,
+                                mv2_q4_col,
+                                mv2_q4_row,
+                                recon_plane,
+                                plane_stride,
+                                sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
+                                /* is_compound_avg = */ true,
+                            );
+                        }
 
                         // Per-TX residual emission. Walk in plane 4×4
                         // raster (same order the writer walks).
@@ -4978,6 +5086,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         mvs: [Mv::ZERO; 2],
                         ref_frames: [RefFrame::IntraFrame, RefFrame::NoRefFrame],
                     }
+                } else if leaf.picked_ref_frame2.is_inter() {
+                    // W-COMPOUND — carry both refs + both MVs so the next
+                    // frame's `find_mv_refs` sees the compound block the
+                    // same way the decoder's `cur_mv_grid` write-back does
+                    // (`tile.rs:2141-2155`).
+                    PrevFrameMvRef {
+                        mvs: [leaf.picked_mv, leaf.picked_mv2],
+                        ref_frames: [leaf.picked_ref_frame, leaf.picked_ref_frame2],
+                    }
                 } else {
                     PrevFrameMvRef {
                         mvs: [leaf.picked_mv, Mv::ZERO],
@@ -5030,6 +5147,13 @@ fn build_inter_pred_plane_unscaled(
     // matches what the decoder will produce when reading the per-block
     // switchable-filter bits the writer emits.
     interp_filter: rvp9_core::bitstream::frame::InterpFilter,
+    // W-COMPOUND — `true` for the second (ALTREF) reference of a
+    // compound leaf: the prediction is averaged into the existing `dst`
+    // contents `(dst + pred + 1) >> 1` via the `_avg` convolve kernels,
+    // matching the decoder's `is_compound_avg = r > 0` recon
+    // (`reconstruct_inter.rs:331-476`). `false` for single-ref leaves and
+    // for the first (LAST) reference of a compound leaf.
+    is_compound_avg: bool,
 ) {
     use rvp9_core::inter::filter::{SUBPEL_BITS, SUBPEL_MASK};
     use rvp9_core::inter::scale::{ScaleFactors, inter_predictor};
@@ -5069,7 +5193,7 @@ fn build_inter_pred_plane_unscaled(
         interp_filter,
         bw,
         bh,
-        /* is_compound_avg = */ false,
+        is_compound_avg,
     );
 }
 

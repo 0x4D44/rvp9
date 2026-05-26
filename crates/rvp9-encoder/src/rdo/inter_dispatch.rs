@@ -106,6 +106,22 @@ pub static RDO_DISPATCH_INVOCATIONS_8X8: std::sync::atomic::AtomicU64 =
 pub static RDO_DISPATCH_ALTREF_PICKS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
+/// W-COMPOUND — count of leaves whose RDO winner selected a compound
+/// (bidirectional) {LAST, ALTREF} prediction. Incremented once per leaf
+/// the dispatch resolves to compound. The PROOF test
+/// (`tests/w_compound_proof.rs`) asserts this advances when
+/// `compound_enabled = true` on content where the averaged prediction
+/// beats both single-refs — and that it stays at zero when compound is
+/// disabled (the gate-safety invariant). libvpx parity:
+/// `vp9_rd_pick_inter_mode_sb` evaluates compound modes when
+/// `cm->reference_mode != SINGLE_REFERENCE`
+/// (`vp9/encoder/vp9_rdopt.c:3543-3556`, the `comp_modes` half of the
+/// candidate loop); the averaged prediction is built by
+/// `vp9_build_inter_predictors_sb` with `is_compound = 1`
+/// (`vp9/common/vp9_reconinter.c:126-207`).
+pub static RDO_DISPATCH_COMPOUND_PICKS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 /// Per-ref-frame plane + candidate bundle the caller assembles from the
 /// running mi-grid (same `find_mv_refs` it already runs for the RT path).
 pub struct RefInputs<'a> {
@@ -160,6 +176,16 @@ pub struct InterDispatchLeaf<'a> {
     /// loop; `cpi->ref_frame_flags & VP9_ALT_FLAG`
     /// (`vp9_rdopt.c:3535`) gates whether ALTREF is iterated.
     pub altref: RefInputs<'a>,
+    /// W-COMPOUND — enable the {LAST, ALTREF} compound (bidirectional)
+    /// candidate. `true` only when `altref.available` AND the frame
+    /// emits a compound-capable reference_mode (Select). When `false` no
+    /// compound candidate is enumerated and the picker is byte-identical
+    /// to the single-ref path — the gate-safety invariant. The caller
+    /// sets this to `altref_available` (= `enable_alt_ref && ARF
+    /// emitted`), the same gate that flips the frame's sign bias and
+    /// reference_mode. libvpx parity: compound modes are evaluated iff
+    /// `cm->reference_mode != SINGLE_REFERENCE` (`vp9_rdopt.c:3543`).
+    pub compound_enabled: bool,
     /// Full-pel MV envelope (no-border-extend), shared with NEWMV search.
     pub mv_limits: MvLimits,
     /// Diamond search site config.
@@ -234,10 +260,22 @@ impl InterDispatchLeaf<'_> {
 pub struct InterDispatchResult {
     /// Winning inter mode (post NEWMV→NEAREST/NEAR/ZERO rewrite).
     pub mode: InterMode,
-    /// Winning MV (1/8-pel).
+    /// Winning MV (1/8-pel). For a compound winner this is the MV for
+    /// the mi-grid slot 0 reference (`ref_frame`).
     pub mv: Mv,
-    /// Winning ref-frame (`LastFrame` / `GoldenFrame`).
+    /// Winning ref-frame (`LastFrame` / `GoldenFrame` / `AltrefFrame`).
+    /// For a compound winner this is the mi-grid slot 0 reference
+    /// (`LastFrame`, matching the {LAST, ALTREF} pair's `comp_var_ref`).
     pub ref_frame: RefFrame,
+    /// W-COMPOUND — the second reference for a compound winner
+    /// (mi-grid slot 1 = `AltrefFrame`); `NoRefFrame` for a single-ref
+    /// winner. The emit path writes `ref_frames = [ref_frame, ref_frame2]`
+    /// and `mvs = [mv, mv2]`; the core writer derives `is_compound` from
+    /// `ref_frames[1].is_inter()` (`mode_info.rs:1013`).
+    pub ref_frame2: RefFrame,
+    /// W-COMPOUND — the MV for the slot 1 (ALTREF) reference of a
+    /// compound winner; `Mv::ZERO` for a single-ref winner.
+    pub mv2: Mv,
     /// Winning interp filter.
     pub interp_filter: InterpFilter,
 }
@@ -539,16 +577,166 @@ pub fn pick_inter_sb_leaf(leaf: &InterDispatchLeaf<'_>) -> Option<InterDispatchR
     if matches!(leaf.bsize, BlockSize::Block8x8) {
         RDO_DISPATCH_INVOCATIONS_8X8.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
-    // W-ALTREF — anti-G3 witness: count leaves the RDO winner resolved to
-    // ALTREF. Asserted by `tests/w_altref_picker.rs`.
-    if matches!(pick.ref_frame, RefFrame::AltrefFrame) {
-        RDO_DISPATCH_ALTREF_PICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
 
-    Some(InterDispatchResult {
+    // The single-ref winner is the comparison baseline. Default the
+    // result to it; the compound candidate may override below.
+    let mut result = InterDispatchResult {
         mode: pick.mode,
         mv: pick.mv,
         ref_frame: pick.ref_frame,
+        ref_frame2: RefFrame::NoRefFrame,
+        mv2: Mv::ZERO,
         interp_filter: winner.best_filter,
-    })
+    };
+
+    // W-COMPOUND — evaluate the {LAST, ALTREF} compound (bidirectional)
+    // candidate, gated by `compound_enabled` (= altref_available &&
+    // reference_mode == Select). When disabled this entire branch is
+    // skipped and the picker is byte-identical to the single-ref path.
+    // libvpx evaluates compound modes when `cm->reference_mode !=
+    // SINGLE_REFERENCE` (`vp9/encoder/vp9_rdopt.c:3543-3556`).
+    if leaf.compound_enabled && leaf.last.available && leaf.altref.available {
+        if let Some(comp) = evaluate_compound_candidate(
+            leaf,
+            imc,
+            ctx,
+            last_newmv,
+            last_newmv_rate,
+            altref_newmv,
+            altref_newmv_rate,
+        ) {
+            // RD argmin against the single-ref winner (`winner.rd`).
+            if comp.rd < winner.rd {
+                result = InterDispatchResult {
+                    mode: comp.mode,
+                    // mi-grid slot 0 = LAST (the compound var_ref[0]).
+                    mv: comp.mv0,
+                    ref_frame: RefFrame::LastFrame,
+                    // mi-grid slot 1 = ALTREF (the compound fixed_ref).
+                    ref_frame2: RefFrame::AltrefFrame,
+                    mv2: comp.mv1,
+                    interp_filter: comp.interp_filter,
+                };
+                RDO_DISPATCH_COMPOUND_PICKS
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+    }
+
+    // W-ALTREF — anti-G3 witness: count leaves the RDO winner resolved to
+    // ALTREF (single-ref). Asserted by `tests/w_altref_picker.rs`. A
+    // compound override above leaves `result.ref_frame == LastFrame`, so
+    // this counter is not bumped for compound leaves.
+    if matches!(result.ref_frame, RefFrame::AltrefFrame)
+        && matches!(result.ref_frame2, RefFrame::NoRefFrame)
+    {
+        RDO_DISPATCH_ALTREF_PICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    Some(result)
+}
+
+/// W-COMPOUND — compound candidate winner (a {LAST, ALTREF} averaged
+/// prediction). `mv0` is the LAST (slot 0) MV, `mv1` the ALTREF (slot 1)
+/// MV.
+struct CompoundCandidate {
+    mode: InterMode,
+    mv0: Mv,
+    mv1: Mv,
+    interp_filter: InterpFilter,
+    rd: i64,
+}
+
+/// Evaluate the {LAST, ALTREF} compound candidate(s) for one leaf and
+/// return the lowest-RD compound winner, or `None` if none could be
+/// scored (e.g. an MV fell out of bounds).
+///
+/// ## MV-search scope (DOCUMENTED DEFERRAL)
+///
+/// libvpx's `joint_motion_search` (`vp9/encoder/vp9_rdopt.c:2386-2480`)
+/// iteratively refines the two MVs (fix one, search the other, alternate
+/// up to 4 iterations). This wave SCOPES DOWN to **independent single-ref
+/// MVs reused for the compound pair**: the LAST and ALTREF NEWMV searches
+/// already run for the single-ref candidates (`single_motion_search`,
+/// `vp9_rdopt.c:2564`), and the compound NEWMV pred is formed from those
+/// two independent results. The averaged prediction + residual RD are
+/// fully real; only the joint iterative refinement is deferred (it would
+/// at best tighten the residual a little further). The ZEROMV compound
+/// candidate (both MVs zero) is also evaluated.
+fn evaluate_compound_candidate(
+    leaf: &InterDispatchLeaf<'_>,
+    imc: &InterModeCosts,
+    ctx: usize,
+    last_newmv: Option<Mv>,
+    last_newmv_rate: u32,
+    altref_newmv: Option<Mv>,
+    altref_newmv_rate: u32,
+) -> Option<CompoundCandidate> {
+    use crate::rdo::handle_inter::{HandleInterCompoundParams, handle_inter_mode_compound};
+
+    // Build the shared compound-params factory for a (mode, mv0, mv1,
+    // newmv_rate) candidate. ref0 = LAST (slot 0), ref1 = ALTREF (slot 1).
+    let eval = |mode: InterMode, mv0: Mv, mv1: Mv, newmv_rate: u32| -> CompoundCandidate {
+        let params = HandleInterCompoundParams {
+            bsize: leaf.bsize,
+            src_plane: leaf.src_y,
+            src_offset: leaf.src_offset,
+            ref0_plane: leaf.last.ref_y,
+            ref1_plane: leaf.altref.ref_y,
+            mv0,
+            mv1,
+            this_mode: mode,
+            inter_mode_rate: real_mode_rate(imc, ctx, mode),
+            newmv_rate,
+            rdmult: leaf.rdmult,
+            y_quant: leaf.y_quant,
+            uv_quant: leaf.uv_quant,
+            coef_costs: leaf.coef_costs,
+            tx_size_cost: leaf.tx_size_cost,
+            skip_cost0: leaf.skip_cost0,
+            skip_cost1: leaf.skip_cost1,
+            switchable_interp_costs: leaf.switchable_interp_costs,
+            switchable_interp_ctx: leaf.switchable_interp_ctx,
+            src_u: leaf.src_u,
+            src_v: leaf.src_v,
+            ref0_u: leaf.last.ref_u,
+            ref0_v: leaf.last.ref_v,
+            ref1_u: leaf.altref.ref_u,
+            ref1_v: leaf.altref.ref_v,
+            uv_stride: leaf.uv_stride,
+        };
+        let r = handle_inter_mode_compound(&params);
+        CompoundCandidate {
+            mode,
+            mv0,
+            mv1,
+            interp_filter: r.best_filter,
+            rd: r.rd,
+        }
+    };
+
+    let mut best: Option<CompoundCandidate> = None;
+    let mut consider = |cand: CompoundCandidate| {
+        let take = best.as_ref().map_or(true, |b| cand.rd < b.rd);
+        if take {
+            best = Some(cand);
+        }
+    };
+
+    // ZEROMV compound — both MVs zero (always in bounds).
+    consider(eval(InterMode::ZeroMv, Mv::ZERO, Mv::ZERO, 0));
+
+    // NEWMV compound — independent single-ref MVs reused for the pair.
+    // Both NEWMV searches must have produced in-bounds MVs (the caller
+    // already vetoed OOB results to `None`).
+    if let (Some(mv0), Some(mv1)) = (last_newmv, altref_newmv) {
+        consider(eval(
+            InterMode::NewMv,
+            mv0,
+            mv1,
+            last_newmv_rate.saturating_add(altref_newmv_rate),
+        ));
+    }
+
+    best
 }
