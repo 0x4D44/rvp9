@@ -361,7 +361,7 @@ pub struct ColumnWavefrontLfState<'a> {
 /// 1. Builds the row's mask in a worker-local `Vec<LoopFilterMask>`.
 /// 2. For each SB column `c = 0..sb_cols`:
 ///    - **Sync-read**: at nsync-boundary columns (`c % nsync == 0`),
-///      spin until `cur_sb_col[r-1] >= c + nsync - 1` so row r-1 is
+///      spin until `cur_sb_col[r-1] >= c + nsync` so row r-1 is
 ///      nsync columns ahead.
 ///    - Apply the per-SB filter via [`apply_one_sb`].
 ///    - **Sync-write**: at nsync-boundary completions, publish `c`
@@ -805,7 +805,7 @@ pub unsafe fn loop_filter_sb_row(
 /// Caller guarantees that no other thread writes pixels in this SB's
 /// owned rectangle nor in the cross-row write zone of the H-pass at
 /// this SB's top edge (the bottom 8 luma rows of the SB-row above).
-/// The column-wavefront's `cur_sb_col[r-1] >= c + nsync - 1` gate
+/// The column-wavefront's `cur_sb_col[r-1] >= c + nsync` gate
 /// provides that guarantee under the protocol described in HLD §3.
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn apply_one_sb(
