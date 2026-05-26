@@ -28,6 +28,7 @@
 //! consumers (W2.6) plug into these slots over the rest of Wave 2.
 
 use crate::frame_loop::Deadline;
+use rvp9_core::mode_decision::inter::ContentStateSb;
 
 /// W2.1(vpxenc parity, A5 P0) — per-frame pre-analysis state owned
 /// by `StreamEncoder`. Allocated once at encoder construction and
@@ -53,6 +54,14 @@ pub struct PreAnalysisState {
     /// reference. `None` before the first encoded frame (which is
     /// always a keyframe — the avg-SAD pass is meaningless for KFs).
     pub last_source_y: Option<Vec<u8>>,
+    /// W2.2(vpxenc parity, A5 P1): libvpx
+    /// `vp9_encodeframe.c:1209-1257` `tmp_sad` per SB64. Indexed
+    /// `[sb_row * sb_cols + sb_col]`; sized `sb_rows * sb_cols`.
+    pub avg_source_sad: Vec<u64>,
+    /// W2.2(vpxenc parity, A5 P1): libvpx
+    /// `vp9_encodeframe.c:1231-1245` `x->content_state_sb`,
+    /// classified per SB64 from avg_source_sad + tmp_sse.
+    pub content_state_sb: Vec<ContentStateSb>,
     /// Width × height the state was sized for. Used to validate
     /// re-allocation on resize (out of scope for v1).
     pub width: u32,
@@ -78,11 +87,16 @@ impl PreAnalysisState {
         );
         let mi_rows = (height / 8) as usize;
         let mi_cols = (width / 8) as usize;
+        let sb_rows = (height / 64).max(1) as usize;
+        let sb_cols = (width / 64).max(1) as usize;
         Self {
             consec_zero_mv: vec![0u8; mi_rows * mi_cols],
             // Updated per-frame by `update_per_frame_gates`.
             compute_source_sad_onepass: false,
             last_source_y: None,
+            // W2.2 — per-SB content state. Default zero / Normal.
+            avg_source_sad: vec![0u64; sb_rows * sb_cols],
+            content_state_sb: vec![ContentStateSb::Normal; sb_rows * sb_cols],
             width,
             height,
         }
@@ -106,6 +120,72 @@ impl PreAnalysisState {
         // is no longer a useful avg-SAD reference across a scene
         // boundary.
         self.last_source_y = None;
+        // W2.2 — Reset per-SB classifications at KF (libvpx default
+        // is kLowSadLowSumdiff = Normal at allocation, and the next
+        // post-KF inter frame skips the avg-SAD pass since
+        // Last_Source is None).
+        for v in &mut self.avg_source_sad {
+            *v = 0;
+        }
+        for v in &mut self.content_state_sb {
+            *v = ContentStateSb::Normal;
+        }
+    }
+
+    /// W2.2(vpxenc parity, A5 P1): libvpx's per-SB
+    /// `avg_source_sad` pass (`vp9_encodeframe.c:1209-1257`).
+    /// Walks every 64×64 SB in the source, computes SAD + variance
+    /// against the previous source frame, and classifies the SB's
+    /// content state.
+    ///
+    /// libvpx tracks 6 content states (`kLowSadLowSumdiff`,
+    /// `kLowSadHighSumdiff`, `kHighSadLowSumdiff`,
+    /// `kHighSadHighSumdiff`, `kLowVarHighSumdiff`, `kVeryHighSad`).
+    /// rvp9 currently consumes only the 2-state simplification
+    /// (`Normal` / `VeryHighSad`) — see
+    /// `crates/rvp9-core/src/mode_decision/inter.rs::ContentStateSb`.
+    /// The producer here writes the simplified label; the 6-state
+    /// expansion lands when the consumer side grows
+    /// (Wave 4+ partition / AQ gates).
+    ///
+    /// Caller must ensure `src_y_tight` and `self.last_source_y` are
+    /// the same `width × height` tight-stride plane. No-op if
+    /// `last_source_y` is `None` (post-KF first inter frame).
+    pub fn compute_avg_source_sad(&mut self, src_y_tight: &[u8]) {
+        let Some(last) = self.last_source_y.as_deref() else {
+            return;
+        };
+        let w = self.width as usize;
+        let h = self.height as usize;
+        debug_assert_eq!(src_y_tight.len(), w * h);
+        debug_assert_eq!(last.len(), w * h);
+        // libvpx threshold (`vp9_encodeframe.c:1219`).
+        const AVG_SOURCE_SAD_THRESHOLD: u64 = 10_000;
+        let sb_cols = (w / 64).max(1);
+        let sb_rows = (h / 64).max(1);
+        for sb_r in 0..sb_rows {
+            for sb_c in 0..sb_cols {
+                let (sad, sse, sum) = sb_sad_and_var(
+                    src_y_tight, last, w, sb_r * 64, sb_c * 64,
+                );
+                // libvpx: variance = sse - ((sum * sum) >> 12)
+                let var = sse.saturating_sub((sum * sum) >> 12);
+                let idx = sb_r * sb_cols + sb_c;
+                self.avg_source_sad[idx] = sad;
+                // libvpx `vp9_encodeframe.c:1243-1244` — only the
+                // `kVeryHighSad` arm has a consumer in rvp9 today.
+                self.content_state_sb[idx] =
+                    if sad > (AVG_SOURCE_SAD_THRESHOLD << 1) {
+                        ContentStateSb::VeryHighSad
+                    } else {
+                        // Other libvpx states all collapse to Normal
+                        // in rvp9's 2-state enum until the consumer
+                        // side expands (Wave 4+).
+                        let _ = var; // computed for future expansion
+                        ContentStateSb::Normal
+                    };
+            }
+        }
     }
 
     /// Save the just-encoded source's luma plane for the next
@@ -130,6 +210,44 @@ impl PreAnalysisState {
     pub fn mi_grid_len(&self) -> usize {
         self.consec_zero_mv.len()
     }
+
+    /// Number of SB64 cells (`sb_rows * sb_cols`) tracked by the
+    /// W2.2 content-state pass.
+    #[must_use]
+    pub fn sb_grid_len(&self) -> usize {
+        self.content_state_sb.len()
+    }
+}
+
+/// Compute SAD, SSE, and pixel-sum-of-difference for one 64×64 SB at
+/// `(sb_r_pix, sb_c_pix)` on tight-stride source planes. Mirrors
+/// libvpx's `vpx_sad64x64` + `vpx_variance64x64`
+/// (`vp9_encodeframe.c:1226-1229`) scalar reference. Returns
+/// `(sad, sse, |sum|)`. Used only by [`PreAnalysisState::compute_avg_source_sad`];
+/// SIMD parity lands when the encoder hot path consumes this (Wave
+/// 4+).
+fn sb_sad_and_var(
+    src: &[u8],
+    last: &[u8],
+    stride: usize,
+    sb_r_pix: usize,
+    sb_c_pix: usize,
+) -> (u64, u64, u64) {
+    let mut sad: u64 = 0;
+    let mut sse: u64 = 0;
+    let mut sum: i64 = 0;
+    for r in 0..64 {
+        let base = (sb_r_pix + r) * stride + sb_c_pix;
+        for c in 0..64 {
+            let s = src[base + c] as i32;
+            let l = last[base + c] as i32;
+            let d = s - l;
+            sad += d.unsigned_abs() as u64;
+            sse += (d as i64 * d as i64) as u64;
+            sum += d as i64;
+        }
+    }
+    (sad, sse, sum.unsigned_abs())
 }
 
 #[cfg(test)]
@@ -195,5 +313,67 @@ mod tests {
         let src2 = vec![99u8; 64 * 64];
         st.capture_last_source(&src2);
         assert_eq!(st.last_source_y.as_deref(), Some(src2.as_slice()));
+    }
+
+    /// W2.2 PROOF — `compute_avg_source_sad` is a no-op when
+    /// Last_Source is None (libvpx-equivalent of the first inter
+    /// frame after a KF — no reference to diff against).
+    #[test]
+    fn w2_2_avg_source_sad_noop_without_last_source() {
+        let mut st = PreAnalysisState::new(64, 64);
+        let src = vec![100u8; 64 * 64];
+        st.compute_avg_source_sad(&src);
+        // No reference ⇒ no state changed.
+        for v in &st.avg_source_sad {
+            assert_eq!(*v, 0);
+        }
+        for c in &st.content_state_sb {
+            assert_eq!(*c, ContentStateSb::Normal);
+        }
+    }
+
+    /// W2.2 PROOF — identical source + last_source ⇒ zero SAD ⇒
+    /// Normal classification. libvpx `vp9_encodeframe.c:1231`:
+    /// `tmp_sad == 0` ⇒ kLowSadLowSumdiff (Normal in rvp9).
+    #[test]
+    fn w2_2_avg_source_sad_zero_on_identical_frames() {
+        let mut st = PreAnalysisState::new(128, 128);
+        let frame = vec![100u8; 128 * 128];
+        st.capture_last_source(&frame);
+        st.compute_avg_source_sad(&frame);
+        for v in &st.avg_source_sad {
+            assert_eq!(*v, 0, "identical frames must produce SAD = 0");
+        }
+        for c in &st.content_state_sb {
+            assert_eq!(*c, ContentStateSb::Normal);
+        }
+    }
+
+    /// W2.2 PROOF — a large-magnitude per-SB diff lights up
+    /// `VeryHighSad`. libvpx `vp9_encodeframe.c:1243-1244`:
+    /// `tmp_sad > 2 * AVG_SOURCE_SAD_THRESHOLD` ⇒ kVeryHighSad.
+    /// At 64×64 = 4096 pixels per SB, a per-pixel diff of 6
+    /// produces SAD = 24576 > 20000.
+    #[test]
+    fn w2_2_avg_source_sad_lights_up_very_high_sad() {
+        let mut st = PreAnalysisState::new(64, 64);
+        let zero = vec![0u8; 64 * 64];
+        let bright = vec![6u8; 64 * 64];
+        st.capture_last_source(&zero);
+        st.compute_avg_source_sad(&bright);
+        // The single SB's SAD must exceed 2 * 10_000.
+        assert!(st.avg_source_sad[0] > 20_000);
+        assert_eq!(st.content_state_sb[0], ContentStateSb::VeryHighSad);
+    }
+
+    /// W2.2 PROOF — SB-grid sizing matches the encoder's
+    /// `sb_rows × sb_cols`.
+    #[test]
+    fn w2_2_sb_grid_sized_correctly() {
+        // 256×128 frame ⇒ 4 sb_cols × 2 sb_rows = 8.
+        let st = PreAnalysisState::new(256, 128);
+        assert_eq!(st.sb_grid_len(), 8);
+        assert_eq!(st.avg_source_sad.len(), 8);
+        assert_eq!(st.content_state_sb.len(), 8);
     }
 }

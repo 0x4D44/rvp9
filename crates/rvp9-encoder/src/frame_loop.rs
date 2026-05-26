@@ -662,6 +662,17 @@ impl StreamEncoder {
             // (`vp9_alloccommon.c:81-91`).
             self.pre_analysis.keyframe_reset();
         }
+        // W2.2(vpxenc parity, A5 P1): per-SB avg-source-SAD +
+        // content_state_sb classification. Runs after the lookahead
+        // pop (so `y_tight` is the current source), guarded by the
+        // `compute_source_sad_onepass` gate (RT only) and the
+        // `last_source_y` availability (skipped on KF / first inter
+        // after KF). libvpx `vp9_encodeframe.c:1209-1257`.
+        //
+        // Note: this is the "tight buffer" we get below from the
+        // lookahead pop. We compute the pre-analysis pass against
+        // it BEFORE encode_keyframe_internal / encode_inter_internal
+        // runs.
 
         // Pick Q via the rate controller.
         let (q_index, _q_lo, _q_hi) = self.rate_control.pick_q_and_bounds(frame_kind.into());
@@ -718,6 +729,17 @@ impl StreamEncoder {
         let y_tight = entry.y.clone();
         let u_tight = entry.u.clone();
         let v_tight = entry.v.clone();
+
+        // W2.2(vpxenc parity, A5 P1): run the avg-source-SAD pass
+        // against the previous source frame (libvpx
+        // `vp9_encodeframe.c:1209-1257`). No-op when
+        // `compute_source_sad_onepass == false` (non-RT deadlines)
+        // OR `last_source_y == None` (first frame post-KF). Updates
+        // `pre_analysis.avg_source_sad[]` and
+        // `pre_analysis.content_state_sb[]` for every SB64.
+        if self.pre_analysis.compute_source_sad_onepass {
+            self.pre_analysis.compute_avg_source_sad(&y_tight);
+        }
 
         let packet = match frame_kind {
             FrameKind::Key => self.encode_keyframe_internal(
