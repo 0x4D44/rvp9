@@ -454,6 +454,7 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
         use_prev_frame_mvs: false,
         speed: opts.cpu_used.unwrap_or(7),
         deadline: opts.deadline.unwrap_or(Deadline::Realtime),
+        noise_sensitivity: 0,
     };
     let mut encoder = StreamEncoder::new(config).map_err(|e| {
         format!(
@@ -759,5 +760,6 @@ fn build_encoder_config_for_test(opts: &EncOpts) -> EncoderConfig {
         use_prev_frame_mvs: false,
         speed: opts.cpu_used.unwrap_or(7),
         deadline: opts.deadline.unwrap_or(Deadline::Realtime),
+        noise_sensitivity: 0,
     }
 }
