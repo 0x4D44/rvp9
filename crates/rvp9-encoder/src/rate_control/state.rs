@@ -269,8 +269,33 @@ impl RateControl {
     /// within (e.g. segment-level Q deltas, AQ adjustments).
     ///
     /// Wraps [`super::cbr::pick_q_and_bounds`].
+    ///
+    /// W1.6(vpxenc parity, A3 P0) — dispatches on `config.rc_mode`
+    /// (libvpx `vp9_ratectrl.c:1587-1609`). Only `RcMode::Cbr` is
+    /// ported today; the other arms panic with an explicit
+    /// "not yet implemented" message naming the wave that will land
+    /// them.
     pub fn pick_q_and_bounds(&mut self, frame_kind: FrameKind) -> (u8, u8, u8) {
-        cbr::pick_q_and_bounds(self, frame_kind)
+        use super::RcMode;
+        match self.config.rc_mode {
+            RcMode::Cbr => cbr::pick_q_and_bounds(self, frame_kind),
+            RcMode::Vbr => panic!(
+                "rate_control: 1-pass VBR (RcMode::Vbr) is not yet \
+                 implemented; lands in master inventory Wave 4+ (A3 \
+                 vbr path). libvpx `vp9_ratectrl.c:1587-1609`."
+            ),
+            RcMode::Cq => panic!(
+                "rate_control: constrained-quality (RcMode::Cq) is \
+                 not yet implemented; lands in master inventory \
+                 Wave 4+ (A3 cq path). libvpx \
+                 `vp9_ratectrl.c:1587-1609`."
+            ),
+            RcMode::Q => panic!(
+                "rate_control: constant-quantizer (RcMode::Q) is not \
+                 yet implemented; lands in master inventory Wave 4+ \
+                 (A3 q path). libvpx `vp9_ratectrl.c:1587-1609`."
+            ),
+        }
     }
 
     /// Update internal state after the frame has been encoded.
@@ -533,5 +558,60 @@ mod tests {
         let got = rc.config();
         assert_eq!(got.target_bitrate_bps, 2_500_000);
         assert!((got.framerate - 24.0).abs() < f64::EPSILON);
+    }
+
+    /// W1.6 PROOF — CBR is the default and works end-to-end through
+    /// `pick_q_and_bounds`. Anti-G3: if a regression rewires the
+    /// dispatcher to always panic, this fails immediately.
+    #[test]
+    fn w1_6_pick_q_and_bounds_cbr_path_works() {
+        use super::super::RcMode;
+        let cfg = RateControlConfig::default();
+        assert_eq!(cfg.rc_mode, RcMode::Cbr, "Default must be CBR");
+        let mut rc = RateControl::new(cfg);
+        let (q, lo, hi) = rc.pick_q_and_bounds(FrameKind::Key);
+        assert!(q >= lo && q <= hi, "picked q={q} must lie in [{lo},{hi}]");
+    }
+
+    /// W1.6 PROOF — VBR dispatch arm panics with a citation. If a
+    /// future patch silently routes VBR to the CBR path (faking
+    /// support), this `#[should_panic]` test stops compiling cleanly
+    /// or stops panicking; either way, the test fails.
+    #[test]
+    #[should_panic(expected = "1-pass VBR")]
+    fn w1_6_vbr_dispatch_panics_with_libvpx_citation() {
+        use super::super::RcMode;
+        let cfg = RateControlConfig {
+            rc_mode: RcMode::Vbr,
+            ..RateControlConfig::default()
+        };
+        let mut rc = RateControl::new(cfg);
+        let _ = rc.pick_q_and_bounds(FrameKind::Inter);
+    }
+
+    /// W1.6 PROOF — CQ arm panics distinctly.
+    #[test]
+    #[should_panic(expected = "constrained-quality")]
+    fn w1_6_cq_dispatch_panics_with_libvpx_citation() {
+        use super::super::RcMode;
+        let cfg = RateControlConfig {
+            rc_mode: RcMode::Cq,
+            ..RateControlConfig::default()
+        };
+        let mut rc = RateControl::new(cfg);
+        let _ = rc.pick_q_and_bounds(FrameKind::Inter);
+    }
+
+    /// W1.6 PROOF — Q arm panics distinctly.
+    #[test]
+    #[should_panic(expected = "constant-quantizer")]
+    fn w1_6_q_dispatch_panics_with_libvpx_citation() {
+        use super::super::RcMode;
+        let cfg = RateControlConfig {
+            rc_mode: RcMode::Q,
+            ..RateControlConfig::default()
+        };
+        let mut rc = RateControl::new(cfg);
+        let _ = rc.pick_q_and_bounds(FrameKind::Inter);
     }
 }

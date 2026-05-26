@@ -99,6 +99,15 @@ pub struct RateControlConfig {
     /// Must be `> 0.0`. `validate()` rejects non-positive / non-
     /// finite values.
     pub bits_per_mb_multiplier: f64,
+
+    /// W1.6(vpxenc parity, A3 P0): rate-control mode selector.
+    /// Mirrors libvpx's `oxcf.rc_mode` (`vp9_ratectrl.c:1587-1609`
+    /// dispatch site). Only [`super::RcMode::Cbr`] has a ported path
+    /// today; the other arms panic with a "not yet implemented"
+    /// message naming the wave that will land them. Default = Cbr,
+    /// matching rvp9's current behaviour and vpxenc's `--end-usage=cbr`
+    /// CLI gate.
+    pub rc_mode: super::RcMode,
 }
 
 impl Default for RateControlConfig {
@@ -122,6 +131,9 @@ impl Default for RateControlConfig {
             // textured / high-motion content can raise this to
             // compensate for the simplified estimator.
             bits_per_mb_multiplier: 1.0,
+            // W1.6(vpxenc parity): CBR is the only ported RC mode
+            // today; the other arms in `pick_q_and_bounds` panic.
+            rc_mode: super::RcMode::Cbr,
         }
     }
 }

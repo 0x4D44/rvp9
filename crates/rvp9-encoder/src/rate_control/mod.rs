@@ -104,6 +104,40 @@ pub mod state;
 pub use config::RateControlConfig;
 pub use state::{E8Trace, RateControl};
 
+/// W1.6(vpxenc parity, A3 P0): rate-control mode discriminator.
+///
+/// Mirrors libvpx's `VPX_CBR` / `VPX_VBR` / `VPX_CQ` / `VPX_Q` enum
+/// (libvpx `vpx_encoder.h` `enum vpx_rc_mode`) and the per-frame
+/// dispatch at `vp9_ratectrl.c:1587-1609`:
+///
+/// ```text
+/// if (pass == 0) {
+///   if (rc_mode == VPX_CBR) cbr_path(...);
+///   else                    vbr_path(...);  // 1-pass VBR
+/// } else {
+///   two_pass_path(...);
+/// }
+/// ```
+///
+/// rvp9 currently only ports the CBR path; the other arms panic with
+/// an explicit "not yet implemented" message that names the wave that
+/// will land them (see [`RateControl::pick_q_and_bounds`]). When a
+/// future wave (W4 RDO / W6 2-pass) brings them online, the dispatch
+/// is the single switch site that needs updating.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
+pub enum RcMode {
+    /// Constant bit-rate, real-time. libvpx `VPX_CBR`. rvp9 default.
+    #[default]
+    Cbr,
+    /// One-pass variable bit-rate. libvpx `VPX_VBR`. Lands in a later
+    /// wave (master inventory: A3 P1+).
+    Vbr,
+    /// Constrained-quality. libvpx `VPX_CQ`. Lands in a later wave.
+    Cq,
+    /// Constant quantizer. libvpx `VPX_Q`. Lands in a later wave.
+    Q,
+}
+
 /// Frame-kind discriminant for the rate-control API.
 ///
 /// Intentionally narrower than the wire-format
