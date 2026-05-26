@@ -14,6 +14,7 @@
 //! keep in sync.
 
 use rvp9_cli::args::{self, Arg, Flag};
+use rvp9_encoder::lookahead::MAX_LAG_BUFFERS;
 use rvp9_encoder::{AqMode, Deadline, EncoderConfig, StreamEncoder, YuvFrameRef};
 use rvp9_io::container::{IvfHeader, write_ivf};
 use rvp9_io::y4m;
@@ -695,6 +696,15 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
         // (W0.1) but the encoder refuses non-Bd8 until the HBD kernel
         // pairs land (W6.4 follow-up).
         bit_depth: rvp9_core::BitDepth::Bd8,
+        // vpxenc `--lag-in-frames` (libvpx `vpxenc.c:220-221`,
+        // capped at `MAX_LAG_BUFFERS = 25` per
+        // `vp9_lookahead.h::MAX_LAG_BUFFERS`). The lookahead context
+        // also clamps internally; the explicit cap here keeps the
+        // user-visible domain matching libvpx.
+        lag_in_frames: opts
+            .lag_in_frames
+            .map(|v| v.min(MAX_LAG_BUFFERS as u32))
+            .unwrap_or(0),
     };
     let mut encoder = StreamEncoder::new(config).map_err(|e| {
         format!(
@@ -704,6 +714,15 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
     })?;
 
     // Encode every frame; collect the per-frame VP9 packets.
+    //
+    // libvpx `vp9_encoder.c::vp9_get_compressed_data` splits the
+    // pipeline so the encoder may return no packet on the first
+    // `lag_in_frames` pushes (the lookahead ring fills before the
+    // first pop fires). rvp9 mirrors that with
+    // [`StreamEncoder::encode_frame_delayed`] (returns `None` until
+    // steady-state) + [`StreamEncoder::flush`] (drains the tail at
+    // end-of-stream — libvpx's `vpxenc.c::main` flush loop passing
+    // a NULL frame).
     let mut packets: Vec<Vec<u8>> = Vec::with_capacity(frames.len());
     let mut total_bits: u64 = 0;
     for (y, u, v) in &frames {
@@ -715,9 +734,20 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
             u_stride: (coded_w / 2) as usize,
             v_stride: (coded_w / 2) as usize,
         };
-        let enc = encoder
-            .encode_frame(&view)
-            .map_err(|e| format!("encode_frame: {e}"))?;
+        if let Some(enc) = encoder
+            .encode_frame_delayed(&view)
+            .map_err(|e| format!("encode_frame: {e}"))?
+        {
+            total_bits += u64::from(enc.actual_bits);
+            packets.push(enc.data);
+        }
+    }
+    // End-of-stream: drain any frames still buffered in the
+    // lookahead. With `lag_in_frames == 0` this is a no-op (the
+    // ring is empty after the synchronous push/pop in
+    // `encode_frame_delayed`).
+    for r in encoder.flush() {
+        let enc = r.map_err(|e| format!("encode_frame (flush): {e}"))?;
         total_bits += u64::from(enc.actual_bits);
         packets.push(enc.data);
     }
@@ -1205,5 +1235,6 @@ fn build_encoder_config_for_test(opts: &EncOpts) -> EncoderConfig {
         min_qindex: opts.min_q.map(|v| v.min(255) as u8).unwrap_or(4),
         max_qindex: opts.max_q.map(|v| v.min(255) as u8).unwrap_or(255),
         bit_depth: rvp9_core::BitDepth::Bd8,
+        lag_in_frames: 0,
     }
 }

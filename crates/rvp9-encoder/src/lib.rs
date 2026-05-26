@@ -5466,6 +5466,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         }

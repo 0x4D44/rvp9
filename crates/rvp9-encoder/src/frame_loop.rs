@@ -210,6 +210,27 @@ pub struct EncoderConfig {
     /// Mirrors libvpx `oxcf.bit_depth` (`vp9_encoder.h` /
     /// `vpxenc.c::set_encoder_config`).
     pub bit_depth: BitDepth,
+    /// vpxenc `--lag-in-frames` (libvpx `vpxenc.c:220-221`,
+    /// `vp9_encoder.h::VP9EncoderConfig::lag_in_frames`). Number of
+    /// future source frames the encoder buffers before emitting the
+    /// first encoded packet. `0` (the default) reproduces the legacy
+    /// synchronous behaviour: one input frame yields one encoded
+    /// packet from [`StreamEncoder::encode_frame`].
+    ///
+    /// Non-zero values activate the libvpx-faithful delayed-output
+    /// path (`vp9_encoder.c::vp9_get_compressed_data` —
+    /// `vp9_lookahead_pop(drain=false)` blocks until the ring is
+    /// filled to depth, see `vp9_lookahead.c::vp9_lookahead_pop`).
+    /// Callers must use [`StreamEncoder::encode_frame_delayed`] and
+    /// [`StreamEncoder::flush`] when `lag_in_frames > 0`; the
+    /// synchronous [`StreamEncoder::encode_frame`] entry-point
+    /// errors in that mode.
+    ///
+    /// Range: `0..=` [`crate::lookahead::MAX_LAG_BUFFERS`] (libvpx
+    /// caps at 25, `vp9_lookahead.h::MAX_LAG_BUFFERS`). Values above
+    /// the cap are clamped by the lookahead context (see
+    /// [`crate::lookahead::LookaheadCtx::new`]).
+    pub lag_in_frames: u32,
 }
 
 impl EncoderConfig {
@@ -246,6 +267,11 @@ impl EncoderConfig {
             // Bd10/Bd12 variants are only constructible under
             // `--features rvp9-core/highbitdepth`.
             bit_depth: BitDepth::Bd8,
+            // vpxenc parity (`vpxenc.c:220-221`) — default 0. The
+            // synchronous one-in-one-out `encode_frame` path stays
+            // byte-identical to the pre-Wave-N behaviour when this
+            // is left at 0.
+            lag_in_frames: 0,
         }
     }
 
@@ -607,14 +633,17 @@ impl StreamEncoder {
             rate_control,
             frame_idx: 0,
             // W1.5(vpxenc parity, A19): source-frame lookahead.
-            // Depth=0 (passthrough) — CLI's `--lag-in-frames` plumb
-            // lands in a later wave. With MAX_PRE_FRAMES=1 the ring's
-            // max_sz = 2: push, drain to pop, prev-source slot
-            // retained for peek(-1).
+            // Depth = `config.lag_in_frames` (libvpx
+            // `vp9_lookahead_init` is called with `oxcf->lag_in_frames`
+            // at `vp9_encoder.c::vp9_create_compressor`). With
+            // MAX_PRE_FRAMES=1 the ring's max_sz = lag+1: push,
+            // drain to pop, prev-source slot retained for peek(-1).
+            // `LookaheadCtx::new` clamps to `[1, MAX_LAG_BUFFERS]`
+            // internally (libvpx `vp9_lookahead.c:55-58`).
             lookahead: crate::lookahead::LookaheadCtx::new(
                 config.width,
                 config.height,
-                0,
+                config.lag_in_frames as usize,
             ),
             // W2.1(vpxenc parity, A5 P0): pre-analysis state.
             pre_analysis: crate::pre_analysis::PreAnalysisState::new(
@@ -745,21 +774,70 @@ impl StreamEncoder {
     /// Encode one input YUV frame; return the produced VP9 frame
     /// packet.
     ///
+    /// This is the legacy synchronous one-in-one-out entry-point.
+    /// **Requires `config.lag_in_frames == 0`** (the default); with a
+    /// non-zero lag the encoder buffers source frames and the caller
+    /// must use [`Self::encode_frame_delayed`] + [`Self::flush`]
+    /// instead. Equivalent to `encode_frame_delayed().unwrap()` in
+    /// the `lag = 0` case (`lookahead.pop(drain=false)` succeeds
+    /// immediately because the ring fills at sz=1 when depth=0,
+    /// libvpx `vp9_lookahead.c:55-58` + `vp9_lookahead.c:201-209`).
+    ///
     /// # Errors
     ///
     /// - [`EncodeError::InvalidConfig`] if the YUV planes don't match
-    ///   the encoder's `(width, height)`.
+    ///   the encoder's `(width, height)`, or if `lag_in_frames > 0`
+    ///   (use [`Self::encode_frame_delayed`]).
     /// - [`EncodeError::Bitstream`] / [`EncodeError::Modes`] if any
     ///   wire-format writer fails.
     pub fn encode_frame(
         &mut self,
         yuv: &YuvFrameRef<'_>,
     ) -> Result<EncodedFrame, EncodeError> {
-        // F.0.2 oracle — stamp the current frame index on the thread-
-        // local sink so picker-hook BlockDecisions carry the right
-        // `frame_idx` (one cell store; no-op when unset).
-        crate::f02_oracle::set_frame_idx(self.frame_idx);
+        if self.config.lag_in_frames != 0 {
+            return Err(EncodeError::InvalidConfig(
+                "encode_frame requires lag_in_frames == 0; \
+                 use encode_frame_delayed() + flush() when lag > 0",
+            ));
+        }
+        // With lag = 0, the lookahead ring's `max_sz = 1 + MAX_PRE_FRAMES`
+        // (libvpx `vp9_lookahead.c:55-58`), so a single push immediately
+        // satisfies the steady-state pop condition (`sz == max_sz -
+        // MAX_PRE_FRAMES = 1`). `encode_frame_delayed` always returns
+        // `Some` in this mode — `expect` is the load-bearing
+        // contract.
+        match self.encode_frame_delayed(yuv)? {
+            Some(pkt) => Ok(pkt),
+            None => unreachable!(
+                "encode_frame_delayed must yield a packet on every \
+                 call when lag_in_frames == 0 (libvpx \
+                 vp9_lookahead.c:201-209: the ring fills at depth=1)"
+            ),
+        }
+    }
 
+    /// Push one source frame through the lookahead and (when the
+    /// ring is filled to its configured `lag_in_frames` depth) emit
+    /// the resulting encoded packet. Mirrors libvpx's split between
+    /// `vp9_receive_raw_frame` (push) and `vp9_get_compressed_data`
+    /// (steady-state pop) — see `vp9_encoder.c::vp9_get_compressed_data`
+    /// at the `vp9_lookahead_pop(.., 0)` call site, where libvpx
+    /// returns no packet until the ring is full.
+    ///
+    /// Returns `Ok(None)` for the first `lag_in_frames` calls (the
+    /// push succeeded but the steady-state pop has not yet fired);
+    /// thereafter returns `Ok(Some(pkt))` on every call. Use
+    /// [`Self::flush`] at end-of-stream to drain the tail.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::encode_frame`] except that mismatched
+    /// `lag_in_frames` is allowed (this is the delayed-output
+    /// entry-point).
+    pub fn encode_frame_delayed(
+        &mut self,
+        yuv: &YuvFrameRef<'_>,
+    ) -> Result<Option<EncodedFrame>, EncodeError> {
         // Validate plane lengths against configured dimensions.
         let w = self.config.width as usize;
         let h = self.config.height as usize;
@@ -782,6 +860,78 @@ impl StreamEncoder {
                 "yuv plane lengths must cover stride * height",
             ));
         }
+
+        // W1.5(vpxenc parity, A19 rows 20-21): push the source frame
+        // into the lookahead ring (libvpx `vp9_receive_raw_frame` →
+        // `vp9_lookahead_push`, `vp9_lookahead.c:93-199`). The push
+        // timestamps use `frame_idx_pushed` (a monotonic counter of
+        // pushes) — not `self.frame_idx`, which counts ENCODED
+        // frames and lags by `lag_in_frames` while the ring fills.
+        let push_idx = self.lookahead.next_show_idx() as i64;
+        self.lookahead
+            .push(yuv, push_idx, push_idx + 1, 0)
+            .map_err(|_| EncodeError::InvalidConfig(
+                "lookahead push rejected: dim mismatch or ring full",
+            ))?;
+
+        // Steady-state pop: libvpx `vp9_lookahead.c:205` —
+        // `pop(drain=false)` returns None until `sz == max_sz -
+        // MAX_PRE_FRAMES` (i.e. the ring is filled to its configured
+        // depth). For the first `lag_in_frames` pushes after init,
+        // this returns None and we hand back `Ok(None)` to the
+        // caller; thereafter every push drains one packet.
+        self.try_encode_one_popped(/* drain = */ false)
+    }
+
+    /// Drain the lookahead at end-of-stream. Mirrors libvpx's
+    /// end-of-stream loop in `vpxenc.c::main` which calls
+    /// `vpx_codec_encode(.., NULL, ..)` repeatedly to flush the
+    /// remaining `lag_in_frames` frames out of the ring (the
+    /// `lookahead_pop(.., flush=1)` path,
+    /// `vp9_lookahead.c:201-209`).
+    ///
+    /// Returns one entry per remaining frame, in encode order. After
+    /// `flush()` the lookahead is empty and the encoder will accept
+    /// new pushes (the libvpx behaviour: the codec context is
+    /// reusable).
+    pub fn flush(&mut self) -> Vec<Result<EncodedFrame, EncodeError>> {
+        let mut out = Vec::new();
+        loop {
+            match self.try_encode_one_popped(/* drain = */ true) {
+                Ok(Some(pkt)) => out.push(Ok(pkt)),
+                Ok(None) => break,
+                Err(e) => {
+                    out.push(Err(e));
+                    break;
+                }
+            }
+        }
+        out
+    }
+
+    /// Try to pop one entry from the lookahead and encode it. Returns
+    /// `Ok(None)` when the pop returned None (ring not yet filled to
+    /// depth, or empty in the drain case). All the per-frame encode
+    /// work — frame-kind decision, rate control, pre-analysis,
+    /// keyframe vs inter dispatch, post-encode bookkeeping — lives
+    /// here.
+    fn try_encode_one_popped(
+        &mut self,
+        drain: bool,
+    ) -> Result<Option<EncodedFrame>, EncodeError> {
+        // The lookahead borrow can't outlive the encode call (it
+        // mutates `self` via the rate controller / encode paths), so
+        // copy the popped planes into owned Vecs and release the
+        // borrow before doing any other work.
+        let (y_tight, u_tight, v_tight) = match self.lookahead.pop(drain) {
+            Some(entry) => (entry.y.clone(), entry.u.clone(), entry.v.clone()),
+            None => return Ok(None),
+        };
+
+        // F.0.2 oracle — stamp the current frame index on the thread-
+        // local sink so picker-hook BlockDecisions carry the right
+        // `frame_idx` (one cell store; no-op when unset).
+        crate::f02_oracle::set_frame_idx(self.frame_idx);
 
         // Decide frame kind. Frames at `frame_idx % gop_length == 0`
         // are keyframes (so frame 0 is always KF; with `gop_length =
@@ -810,17 +960,6 @@ impl StreamEncoder {
             // (`vp9_alloccommon.c:81-91`).
             self.pre_analysis.keyframe_reset();
         }
-        // W2.2(vpxenc parity, A5 P1): per-SB avg-source-SAD +
-        // content_state_sb classification. Runs after the lookahead
-        // pop (so `y_tight` is the current source), guarded by the
-        // `compute_source_sad_onepass` gate (RT only) and the
-        // `last_source_y` availability (skipped on KF / first inter
-        // after KF). libvpx `vp9_encodeframe.c:1209-1257`.
-        //
-        // Note: this is the "tight buffer" we get below from the
-        // lookahead pop. We compute the pre-analysis pass against
-        // it BEFORE encode_keyframe_internal / encode_inter_internal
-        // runs.
 
         // Pick Q via the rate controller.
         let (q_index, _q_lo, _q_hi) = self.rate_control.pick_q_and_bounds(frame_kind.into());
@@ -851,32 +990,6 @@ impl StreamEncoder {
         // buffer is over-full; the F5.1 simulator's quantizer math
         // doesn't support lossless (qindex 0), so we clamp to 1.
         let q_index = q_index.max(1);
-
-        // W1.5(vpxenc parity, A19 rows 20-21): route the source frame
-        // through the lookahead ring. Libvpx splits this into
-        // `vp9_receive_raw_frame` (push) and the consumer-side pop
-        // in `vp9_get_compressed_data`; rvp9 folds both into
-        // `encode_frame` since the public API is synchronous (one
-        // encoded packet per pushed frame) until `--lag-in-frames`
-        // is wired. With depth=0 the ring is effectively passthrough:
-        // push then drain immediately. The lookahead's `next_show_idx`
-        // counter advances per push — a test-accessor below exposes
-        // it as the W1.5 wiring PROOF.
-        self.lookahead
-            .push(yuv, i64::from(self.frame_idx), i64::from(self.frame_idx) + 1, 0)
-            .map_err(|_| EncodeError::InvalidConfig(
-                "lookahead push rejected: dim mismatch or ring full",
-            ))?;
-        // Pop with drain=true (depth=0 means the steady-state pop
-        // condition is meaningless; we want pop to succeed
-        // unconditionally after each push).
-        let entry = self
-            .lookahead
-            .pop(/* drain = */ true)
-            .expect("lookahead must yield the just-pushed frame");
-        let y_tight = entry.y.clone();
-        let u_tight = entry.u.clone();
-        let v_tight = entry.v.clone();
 
         // W2.2(vpxenc parity, A5 P1): run the avg-source-SAD pass
         // against the previous source frame (libvpx
@@ -1014,12 +1127,12 @@ impl StreamEncoder {
         // buffer (Wave 1's BufferPool tracks recon, not source).
         self.pre_analysis.capture_last_source(&y_tight);
 
-        Ok(EncodedFrame {
+        Ok(Some(EncodedFrame {
             data: packet,
             frame_kind,
             q_index,
             actual_bits,
-        })
+        }))
     }
 
     /// Keyframe internal: drive the F5.1 simulator to produce per-TX
@@ -2757,6 +2870,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -2794,6 +2908,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -2843,6 +2958,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -2905,6 +3021,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -2947,6 +3064,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -2973,6 +3091,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3006,6 +3125,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3036,6 +3156,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3057,6 +3178,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3138,6 +3260,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3191,6 +3314,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3246,6 +3370,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3331,6 +3456,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3480,6 +3606,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3556,6 +3683,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3792,6 +3920,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3845,6 +3974,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3960,6 +4090,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4036,6 +4167,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4089,6 +4221,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4161,6 +4294,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4224,6 +4358,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4304,6 +4439,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4350,6 +4486,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4419,6 +4556,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4480,6 +4618,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4557,6 +4696,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4640,6 +4780,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4750,6 +4891,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4943,6 +5085,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5063,6 +5206,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         }
@@ -5986,6 +6130,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6040,6 +6185,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6060,6 +6206,222 @@ mod tests {
                  is stripped, this stays at 0."
             );
         }
+    }
+
+    /// PROOF — `lag_in_frames > 0` activates libvpx's delayed-output
+    /// path. Mirrors the libvpx contract:
+    ///
+    /// - `vp9_lookahead.c::vp9_lookahead_push` queues each source
+    ///   into the ring (`vp9_lookahead.c:93-199`);
+    /// - `vp9_lookahead.c::vp9_lookahead_pop(.., flush=0)` returns
+    ///   `NULL` until `sz == max_sz - MAX_PRE_FRAMES` (libvpx
+    ///   `vp9_lookahead.c:205`). With `depth = lag_in_frames` and
+    ///   `MAX_PRE_FRAMES = 1`, the ring fills when `sz == depth`;
+    /// - `vp9_encoder.c::vp9_get_compressed_data` translates a
+    ///   NULL pop into "no packet this call".
+    ///
+    /// With `lag_in_frames = 4`, encoding 10 frames must produce
+    /// exactly 10 encoded packets in monotonic order. By libvpx's
+    /// `sz == depth` rule the **first 3** `encode_frame_delayed`
+    /// calls return `Ok(None)` (pushes 1..3 leave sz=1..3 < 4); on
+    /// **push 4** sz hits 4 and the pop fires immediately. The
+    /// remaining 6 pushes (5..10) each fire a pop in steady state,
+    /// so the producer side yields `3 None + 7 Some` for 10
+    /// pushes. `flush()` then drains the residual `depth - 1 = 3`
+    /// entries from the ring (the steady-state sz post-pop is
+    /// depth-1).
+    ///
+    /// Net: **3 None pushes + 7 Some pushes + 3 flushed = 10
+    /// encoded packets total**.
+    ///
+    /// Anti-G3: if the lookahead is hardcoded to `depth=0` again or
+    /// the delayed-output path is short-circuited (e.g. forcing
+    /// `drain=true` on every pop), one of three failure modes lands:
+    /// the early-return count is wrong, the total packet count
+    /// differs from 10, or the per-packet kind/order check breaks.
+    #[test]
+    fn w_lag_in_frames_delays_output_then_flushes() {
+        const LAG: u32 = 4;
+        const N: u32 = 10;
+        // libvpx's `sz == depth` semantics: first `depth - 1`
+        // pushes return None; thereafter pops are steady-state. See
+        // `vp9_lookahead.c:201-209`.
+        const EXPECTED_NONES: u32 = LAG - 1;
+
+        let cfg = EncoderConfig {
+            width: 64,
+            height: 64,
+            framerate: 30.0,
+            target_bitrate_bps: 1_000_000,
+            // Single GOP so every frame past the first is an Inter —
+            // the q-index sequence stays informative across the
+            // whole 10-frame run.
+            gop_length: 64,
+            aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
+            speed: 7,
+            deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: LAG,
+            min_qindex: 4,
+            max_qindex: 255,
+        };
+        let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
+
+        // Use the same gradient_frame seed across the 10 inputs so
+        // the ordering check works on packet count + frame-kind
+        // alone (the bytes depend on rate-control state).
+        let (y, u, v) = gradient_frame(64, 64);
+        let view = yuv_view(&y, &u, &v, 64);
+
+        let mut none_count = 0u32;
+        let mut packets: Vec<EncodedFrame> = Vec::new();
+        for i in 0..N {
+            match enc
+                .encode_frame_delayed(&view)
+                .expect("encode_frame_delayed must accept the frame")
+            {
+                Some(pkt) => packets.push(pkt),
+                None => {
+                    none_count += 1;
+                    assert!(
+                        i < EXPECTED_NONES,
+                        "encode_frame_delayed returned None at push #{i} \
+                         past the libvpx ring-fill point (depth={LAG}, \
+                         pop fires at push #{LAG} per \
+                         vp9_lookahead.c:205)."
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            none_count, EXPECTED_NONES,
+            "first {EXPECTED_NONES} pushes must return Ok(None) (libvpx \
+             vp9_lookahead.c:201-209: pop fires when sz == depth = \
+             {LAG}; pushes 1..{EXPECTED_NONES} leave sz < depth). If \
+             the wiring forces drain=true on every pop, none_count \
+             drops to 0; if depth defaults back to 0, this drops to 0 \
+             too."
+        );
+        assert_eq!(
+            packets.len() as u32,
+            N - EXPECTED_NONES,
+            "after the ring fills, every push must drain one packet"
+        );
+
+        // Drain the lookahead tail — libvpx's vpxenc.c flush loop
+        // (`vpxenc.c::main` repeatedly calling `vpx_codec_encode`
+        // with a NULL source frame → `vp9_lookahead_pop(.., 1)`).
+        // Steady-state sz post-pop is `depth - 1`, so flush yields
+        // `depth - 1` packets.
+        for r in enc.flush() {
+            packets.push(r.expect("flush() must succeed on a clean stream"));
+        }
+        assert_eq!(
+            packets.len() as u32,
+            N,
+            "encoding {N} frames at lag_in_frames={LAG} must yield {N} \
+             encoded packets: {} during push + {} during flush.",
+            N - EXPECTED_NONES,
+            EXPECTED_NONES,
+        );
+
+        // First packet is the keyframe; subsequent ones are inter.
+        assert_eq!(
+            packets[0].frame_kind,
+            FrameKind::Key,
+            "frame 0 must be the keyframe"
+        );
+        for (i, p) in packets.iter().enumerate().skip(1) {
+            assert_eq!(
+                p.frame_kind,
+                FrameKind::Inter,
+                "frame {i} must be inter (gop_length > N)"
+            );
+        }
+
+        // Every packet must carry real bits (anti-G3: a stub that
+        // returns empty packets would still hit the count check).
+        for (i, p) in packets.iter().enumerate() {
+            assert!(
+                p.actual_bits > 0,
+                "packet {i} must contain bits (got 0 — encode path stubbed?)"
+            );
+        }
+    }
+
+    /// PROOF — with `lag_in_frames = 0` the synchronous
+    /// `encode_frame` entry-point still returns one packet per
+    /// call. This is the byte-identical-to-legacy guard: any
+    /// refactor that breaks the `lag=0` short-circuit (e.g.
+    /// `drain=false` on the only push) trips here without needing
+    /// a cross-decoder gate run.
+    #[test]
+    fn w_lag_in_frames_zero_stays_synchronous() {
+        let cfg = EncoderConfig {
+            width: 64,
+            height: 64,
+            framerate: 30.0,
+            target_bitrate_bps: 1_000_000,
+            gop_length: 30,
+            aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
+            speed: 7,
+            deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
+            min_qindex: 4,
+            max_qindex: 255,
+        };
+        assert_eq!(cfg.lag_in_frames, 0, "default literal must be 0");
+        let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
+        let (y, u, v) = gradient_frame(64, 64);
+        for _ in 0..3 {
+            let pkt = enc
+                .encode_frame(&yuv_view(&y, &u, &v, 64))
+                .expect("encode_frame must succeed at lag=0");
+            assert!(pkt.actual_bits > 0);
+        }
+        // flush() is a no-op at lag=0 (the ring drains synchronously
+        // on every push).
+        let tail = enc.flush();
+        assert!(
+            tail.is_empty(),
+            "flush() at lag=0 must drain zero frames; got {} tail packets",
+            tail.len(),
+        );
+    }
+
+    /// PROOF — with `lag_in_frames > 0` the synchronous
+    /// `encode_frame` entry-point is rejected with InvalidConfig.
+    /// Callers MUST use the delayed API. Anti-G3 against a future
+    /// refactor that silently buffers inside `encode_frame`.
+    #[test]
+    fn w_lag_in_frames_nonzero_rejects_sync_encode_frame() {
+        let cfg = EncoderConfig {
+            width: 64,
+            height: 64,
+            framerate: 30.0,
+            target_bitrate_bps: 1_000_000,
+            gop_length: 30,
+            aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
+            speed: 7,
+            deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 2,
+            min_qindex: 4,
+            max_qindex: 255,
+        };
+        let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
+        let (y, u, v) = gradient_frame(64, 64);
+        let err = enc
+            .encode_frame(&yuv_view(&y, &u, &v, 64))
+            .expect_err("encode_frame at lag > 0 must reject");
+        matches!(err, EncodeError::InvalidConfig(_));
     }
 
     /// W0.5 PROOF — inter frames now emit
@@ -6088,6 +6450,7 @@ mod tests {
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6177,6 +6540,7 @@ mod tests {
                 deadline: Deadline::Realtime,
                 noise_sensitivity: 0,
                 bit_depth: rvp9_core::BitDepth::Bd8,
+                lag_in_frames: 0,
                 min_qindex: 4,
                 max_qindex: 255,
             };
