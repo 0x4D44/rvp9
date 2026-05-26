@@ -194,37 +194,56 @@ impl SharedFrame {
 }
 
 // ----------------------------------------------------------------------------
-// Wave 2 commit 3 — row-MT loopfilter worker hook.
+// Row-MT loopfilter — libvpx-faithful column-wavefront protocol
+// (Lever B v2, replaces the Wave 2 row-barrier worker retired in C4).
 //
-// Public entry point: [`run_row_mt_lf_worker`]. The decoder driver
-// (`apply_loop_filter_to_frame_parallel` in `crates/rvp9-decoder/src/lib.rs`)
-// allocates the work-queue / per-row progress atomics on the caller's stack
-// and submits N copies of [`run_row_mt_lf_worker`] into the same
-// `WorkerPool::scope` that runs tile decode jobs. Each worker pulls SB rows
-// from `next_lf_row.fetch_add(1, Relaxed)`, waits for the decode-progress
-// gate, waits for the previous row's LF-progress gate, builds the per-row
-// mask in-place (so mask build overlaps with decode for un-filtered rows),
-// applies [`loop_filter_sb_row`] for that row, and stores
-// `lf_progress[r] = 1`.
-//
-// Per-row mask build: workers materialise a tiny `Vec<LoopFilterMask>` of
-// length `sb_cols` for their assigned row, fill it via [`super::setup_mask`]
-// + [`super::adjust_mask`], then hand it to [`loop_filter_sb_row`] with
-// `lfm_stride = sb_cols` and `sb_row = 0` (the row was extracted; the
-// per-row primitive indexes `lfm_grid[0 * sb_cols + sb_col]` for the
-// in-row column). This keeps the worker's allocator footprint bounded to
-// one row at a time and avoids materialising the full `sb_rows × sb_cols`
-// mask grid up front (which the serial path does).
-//
-// Synchronisation: see Phase 3 HLD §4 (`wrk_docs/2026.05.24 ...`). Acquire/
-// Release on the two atomic arrays is sufficient; spin-wait yields after
-// `SPIN_YIELD_THRESHOLD` iterations to be friendly under oversubscription.
+// Public entry point: [`run_split_edge_lf_worker`]. The decoder driver
+// (`apply_loop_filter_to_frame_column_wavefront_dispatch` in
+// `crates/rvp9-decoder/src/lib.rs`) allocates the `cur_sb_col` atomic
+// array on the caller's stack and submits `num_lf_workers` worker jobs
+// into the LF dispatch scope. See
+// `wrk_docs/2026.05.25 - HLD - Lever B v2 split-edge row-MT LF.md` for
+// the design contract (mirrors libvpx
+// `vp9/common/vp9_thread_common.c:24-200`).
 // ----------------------------------------------------------------------------
 
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, Ordering};
 
-/// Spin cap before yielding (libvpx-equivalent budget).
-const SPIN_YIELD_THRESHOLD: u32 = 8192;
+/// Spin cap for the column-wavefront LF worker (Lever B v2). Per
+/// HLD §3.8 — column-wavefront gates fire once per nsync-boundary SB
+/// column, and under a healthy wavefront the gate passes on the first
+/// load; budget of 256 is enough to absorb the few-microsecond per-SB
+/// latency without burning CPU.
+const SPIN_YIELD_THRESHOLD_WAVEFRONT: u32 = 256;
+
+/// libvpx `get_sync_range` (`vp9_thread_common.c:264-275`). Returns the
+/// per-row nsync stagger — the number of SB columns row r-1 must be
+/// ahead of row r before row r's H-pass at column c can safely fire.
+/// Width buckets:
+///
+/// | width      | nsync |
+/// |------------|-------|
+/// | < 640      | 1     |
+/// | ≤ 1280     | 2     |
+/// | ≤ 4096     | 4     |
+/// | > 4096     | 8     |
+///
+/// Returned value is `i32` because the per-row `cur_sb_col` array is
+/// `AtomicI32` (initialised to `-1`); the gate math `c <=
+/// cur_sb_col[r-1] - nsync` needs signed semantics at the boundary
+/// where `cur_sb_col[r-1] - nsync` goes negative.
+#[inline]
+pub const fn nsync_for_width(width: u32) -> i32 {
+    if width < 640 {
+        1
+    } else if width <= 1280 {
+        2
+    } else if width <= 4096 {
+        4
+    } else {
+        8
+    }
+}
 
 /// Read-only inputs to the per-row mask build. Shared across all LF
 /// workers; immutable for the duration of the parallel driver call.
@@ -283,54 +302,15 @@ pub fn build_lfm_row(
     }
 }
 
-/// Shared per-frame state for the row-MT LF worker pool. All fields are
-/// borrowed; the owning storage lives on the decoder's stack frame across
-/// the enclosing `WorkerPool::scope` call.
-///
-/// Constructed by `apply_loop_filter_to_frame_parallel` in the decoder. The
-/// raw-pointer / Send+Sync invariants on [`SharedFrame`] still apply: each
-/// worker owns a unique SB row at any moment, the row-progress protocol
-/// guarantees temporal exclusion at the row boundaries.
-pub struct RowMtLfState<'a> {
-    /// Output frame planes.
-    pub shared: SharedFrame,
-    /// Per-frame loopfilter info table (immutable).
-    pub info: &'a LoopFilterInfo,
-    /// Per-row mask-build inputs (immutable).
-    pub row_inputs: RowMaskInputs<'a>,
-    /// Optional `Non420Inputs` for asymmetric-chroma frames. `Some` for
-    /// 4:2:2 / 4:4:0; `None` for 4:2:0 / 4:4:4. Required by
-    /// [`loop_filter_sb_row`].
-    pub non420: Option<Non420Inputs<'a>>,
-    /// Frame dimensions in SB units.
-    pub sb_rows: usize,
-    /// Frame dimensions in SB units.
-    pub sb_cols: usize,
-    /// Decode-side per-SB-row counter (written by tile workers via
-    /// `fetch_add(1, Release)`; LF workers Acquire-load until the value
-    /// reaches `tile_cols_at_row[r]`).
-    pub decode_progress: &'a [AtomicU32],
-    /// Required decode-progress value per row before LF can start. For
-    /// the typical tile_rows == 1 column-split case this is `[num_tiles;
-    /// sb_rows]`. For tile_rows > 1, entry `r` counts how many tiles
-    /// cover SB row `r`.
-    pub tile_cols_at_row: &'a [u32],
-    /// LF-side per-SB-row done flag. `lf_progress[r] = 1` once row r's
-    /// filter is complete (both V/H passes, all planes, all cols).
-    pub lf_progress: &'a [AtomicU32],
-    /// Monotonic LF row-dispatcher. Workers `fetch_add(1, Relaxed)` to
-    /// claim their next row. Initialised to 0 by the driver.
-    pub next_lf_row: &'a AtomicUsize,
-}
-
-/// Spin-wait with bounded budget, falling back to `thread::yield_now`. The
-/// caller's predicate must be checked between iterations. Returns when
-/// `pred()` is true.
+/// Spin-then-yield primitive tuned for the column-wavefront. Under a
+/// healthy wavefront, the gate passes on the first load; the small
+/// budget absorbs the few-microsecond per-SB latency without burning
+/// CPU. See HLD §3.8.
 #[inline]
-fn spin_then_yield<F: FnMut() -> bool>(mut pred: F) {
+fn spin_then_yield_wavefront<F: FnMut() -> bool>(mut pred: F) {
     let mut spins: u32 = 0;
     while !pred() {
-        if spins < SPIN_YIELD_THRESHOLD {
+        if spins < SPIN_YIELD_THRESHOLD_WAVEFRONT {
             std::hint::spin_loop();
             spins += 1;
         } else {
@@ -340,83 +320,173 @@ fn spin_then_yield<F: FnMut() -> bool>(mut pred: F) {
     }
 }
 
-/// Row-MT LF worker hook — runs on a worker thread submitted to the
-/// `WorkerPool::scope`. Pulls SB rows from `state.next_lf_row` until
-/// exhausted, gates on `decode_progress` + `lf_progress` per row, then
-/// builds the row's mask and applies [`loop_filter_sb_row`].
+/// Per-frame state for the column-wavefront LF worker pool. Mirrors
+/// libvpx's `VP9LfSync` (`vp9_thread_common.c:24-49`) but uses atomic
+/// + spin instead of mutex/condvar (HLD §3.2 + §10 #10).
 ///
-/// Mirrors libvpx's `row_mt_worker_hook` shape (`vp9_decoder.c`) under
-/// the wavefront stagger described in
-/// `wrk_docs/2026.05.24 - HLD - Phase3 row-parallel loopfilter.md` §3.6.
+/// Constructed by the decoder driver; submitted to `WorkerPool::scope`
+/// alongside `num_workers` copies of [`run_split_edge_lf_worker`]. Each
+/// worker carries its `worker_id` (0..num_workers) and walks the rows
+/// `worker_id, worker_id + num_workers, …` (static distribution,
+/// libvpx `vp9_thread_common.c:65`).
+pub struct ColumnWavefrontLfState<'a> {
+    /// Output frame planes.
+    pub shared: SharedFrame,
+    /// Per-frame loopfilter info table (immutable).
+    pub info: &'a LoopFilterInfo,
+    /// Per-row mask-build inputs (immutable). Mask build is co-located
+    /// with the per-row worker — see HLD §3.4.
+    pub row_inputs: RowMaskInputs<'a>,
+    /// Optional `Non420Inputs` for asymmetric-chroma frames. `Some` for
+    /// 4:2:2 / 4:4:0; `None` for 4:2:0 / 4:4:4.
+    pub non420: Option<Non420Inputs<'a>>,
+    /// Frame dimensions in SB units.
+    pub sb_rows: usize,
+    /// Frame dimensions in SB units.
+    pub sb_cols: usize,
+    /// Per-row most-recently-completed SB column. Length == sb_rows;
+    /// initialised to `-1`. Mirrors libvpx `VP9LfSync::cur_sb_col`
+    /// (`vp9_thread_common.c:181`).
+    pub cur_sb_col: &'a [AtomicI32],
+    /// libvpx `get_sync_range(width)` — the per-row stagger in SB
+    /// columns. Power of two (1, 2, 4, 8). See `nsync_for_width`.
+    pub nsync: i32,
+}
+
+/// Column-wavefront LF worker hook. One worker job is submitted per
+/// `worker_id ∈ 0..num_workers`; each worker walks rows
+/// `worker_id, worker_id + num_workers, ...` (static distribution).
+///
+/// Per row, the worker:
+/// 1. Builds the row's mask in a worker-local `Vec<LoopFilterMask>`.
+/// 2. For each SB column `c = 0..sb_cols`:
+///    - **Sync-read**: at nsync-boundary columns (`c % nsync == 0`),
+///      spin until `cur_sb_col[r-1] >= c + nsync - 1` so row r-1 is
+///      nsync columns ahead.
+///    - Apply the per-SB filter via [`apply_one_sb`].
+///    - **Sync-write**: at nsync-boundary completions, publish `c`
+///      with `Release`. The last column publishes `sb_cols + nsync`
+///      so any trailing rows always wake (libvpx
+///      `vp9_thread_common.c:58`).
+///
+/// See HLD §4 for the pseudocode contract and the ordering rationale
+/// (§4.1) — Acquire-on-read pairs with Release-on-write to guarantee
+/// row r-1's H-pass pixel writes at column c+nsync are visible before
+/// row r reads them at column c.
 ///
 /// # Safety
 ///
 /// Caller (the decoder driver) MUST guarantee that:
-/// - `state.shared`'s underlying [`Yv12Buffer`] outlives every call to this
-///   function (enforced by the `'frame`-bound `WorkerPool::scope`).
-/// - The row-progress invariants are honoured: no other thread writes
-///   pixels in this row's owned rectangle or in the bottom 8 pixel rows of
-///   the previous SB row. The internal Acquire on `lf_progress[r-1]`
-///   provides that guarantee per the protocol — but only if no other code
-///   path bypasses the protocol to write into the same planes.
-pub unsafe fn run_row_mt_lf_worker(state: &RowMtLfState<'_>, dispatch: &SimdDispatch) {
-    // Per-worker scratch — at most `sb_cols` entries. Allocated once per
-    // worker invocation; reused across all rows the worker claims.
+/// - `state.shared`'s underlying [`Yv12Buffer`] outlives every call
+///   (enforced by the `'frame`-bound `WorkerPool::scope`).
+/// - No other thread bypasses the wavefront to write into the planes.
+///
+/// Soundness of the wavefront — see HLD §3.2: the cross-row hazard at
+/// the top-of-SB H-edge reads/writes within row r-1's bottom 8 luma
+/// rows; row r-1's V+H at column c+nsync is complete before row r
+/// touches that hazard zone at column c.
+pub unsafe fn run_split_edge_lf_worker(
+    state: &ColumnWavefrontLfState<'_>,
+    worker_id: usize,
+    num_workers: usize,
+    dispatch: &SimdDispatch,
+) {
+    // Per-worker scratch, allocated once per invocation and reused
+    // across every row the worker claims (HLD §10 #6).
     let mut row_lfm: Vec<LoopFilterMask> =
         vec![LoopFilterMask::default(); state.sb_cols];
 
-    loop {
-        // Claim the next SB row from the dispatcher.
-        let r = state.next_lf_row.fetch_add(1, Ordering::Relaxed);
-        if r >= state.sb_rows {
-            return;
-        }
+    let chroma = state.shared.chroma;
+    let y_stride = state.shared.y_stride;
+    let uv_stride = state.shared.uv_stride;
+    let nsync = state.nsync;
+    let nsync_mask: i32 = nsync - 1; // power-of-two assumption
+    let sb_cols_i = state.sb_cols as i32;
 
-        // Gate 1 — wait until all tiles have finished decoding SB row r.
-        // Acquire-load pairs with the tile worker's Release fetch_add in
-        // `decode_tile_intra` / `decode_tile_inter` (Wave 2 C2). The
-        // happens-before relation guarantees every pixel write inside
-        // `decode_partition` is visible to this worker.
-        let required = state.tile_cols_at_row[r];
-        spin_then_yield(|| state.decode_progress[r].load(Ordering::Acquire) >= required);
-
-        // Gate 2 — wait until the previous row's LF is complete. The
-        // top-edge H pass of row r reads/writes 8 pixel rows above the
-        // SB boundary (= the bottom 8 rows of row r-1). Row r-1's writer
-        // must have completed both V and H passes before row r can run.
-        if r > 0 {
-            spin_then_yield(|| state.lf_progress[r - 1].load(Ordering::Acquire) != 0);
-        }
-
-        // Build this row's mask in worker-local scratch.
+    // libvpx static row distribution — worker i handles rows
+    // i, i+nworkers, i+2*nworkers, ...
+    let mut r = worker_id;
+    while r < state.sb_rows {
+        // Per-row mask build (co-located, Wave 7 model — see HLD §3.4).
         build_lfm_row(r, state.sb_cols, &state.row_inputs, &mut row_lfm);
 
-        // Apply the LF for this row. `lfm_stride = sb_cols` and
-        // `sb_row = 0` because `row_lfm` is exactly the one row of mask
-        // data; the pixel coordinate `mi_row` is the real frame row.
-        // SAFETY: the gates above guarantee no other thread is writing
-        // pixels in this row's owned rectangle (Phase 3 HLD §4
-        // temporal-exclusion argument).
         let mi_row = r * MI_BLOCK_SIZE;
-        unsafe {
-            loop_filter_sb_row(
-                &state.shared,
-                &row_lfm,
-                state.sb_cols,
-                0,
+
+        // Acquire the plane slices once per row (matches the legacy
+        // worker's pattern and the serial path — minimises raw-pointer
+        // → slice reconstructions and keeps slice lifetimes bounded
+        // to the row body, where the wavefront gates ensure no
+        // overlapping concurrent writes from other workers).
+        //
+        // SAFETY: the wavefront sync below (Acquire on cur_sb_col[r-1])
+        // guarantees no concurrent writer overlaps this row's owned
+        // pixel rectangle (row r's 64 px row × frame width) or the
+        // cross-row hazard zone (the bottom 8 luma rows of row r-1
+        // at the current SB column).
+        let (y_data, u_data, v_data) = unsafe {
+            (
+                state.shared.y_slice(),
+                state.shared.u_slice(),
+                state.shared.v_slice(),
+            )
+        };
+
+        for c in 0..sb_cols_i {
+            // Sync-read (libvpx `vp9_thread_common.c:42-52`): gate
+            // fires only at nsync boundaries. Row r-1 must be nsync
+            // columns ahead of row r before row r's H-pass at column c
+            // can safely run.
+            if r > 0 && (c & nsync_mask) == 0 {
+                // libvpx `vp9_thread_common.c:47`:
+                //   while (c > cur_sb_col[r-1] - nsync) ⇒ unblocks
+                //   when `cur_sb_col[r-1] >= c + nsync`. The HLD §4
+                //   pseudocode wrote `c + nsync - 1`; per HLD §3.3's
+                //   own rephrasing the correct constant is `c + nsync`
+                //   (and libvpx C is the load-bearing reference).
+                let prev = &state.cur_sb_col[r - 1];
+                let required = c + nsync;
+                spin_then_yield_wavefront(|| {
+                    prev.load(Ordering::Acquire) >= required
+                });
+            }
+
+            // Apply the per-SB unit (Y V+H, then U V+H, then V V+H).
+            // Bitwise-identical to the serial path's per-SB body.
+            apply_one_sb_inner(
+                chroma,
+                y_data,
+                y_stride,
+                u_data,
+                v_data,
+                uv_stride,
+                &row_lfm[c as usize],
                 mi_row,
-                state.sb_cols,
+                (c as usize) * MI_BLOCK_SIZE,
                 state.row_inputs.mi_rows,
                 state.row_inputs.mi_cols,
                 state.info,
                 state.non420,
                 dispatch,
             );
+
+            // Sync-write (libvpx `vp9_thread_common.c:58`): publish at
+            // nsync-boundary completions, and unconditionally on the
+            // last column (with `sb_cols + nsync`) so any trailing
+            // rows that may be blocked on `cur_sb_col[r-1] >= ...`
+            // always wake.
+            if c == sb_cols_i - 1 {
+                // libvpx writes a sentinel high value so the next row's
+                // wavefront gate trivially passes for the remainder of
+                // its columns.
+                state
+                    .cur_sb_col[r]
+                    .store(sb_cols_i + nsync, Ordering::Release);
+            } else if (c & nsync_mask) == nsync_mask {
+                state.cur_sb_col[r].store(c, Ordering::Release);
+            }
         }
 
-        // Publish completion. Release ordering pairs with the next
-        // worker's Acquire load above.
-        state.lf_progress[r].store(1, Ordering::Release);
+        r += num_workers;
     }
 }
 
@@ -668,6 +738,17 @@ pub unsafe fn loop_filter_sb_row(
     non420: Option<Non420Inputs<'_>>,
     dispatch: &SimdDispatch,
 ) {
+    // Lever B v2 C2 — the per-SB body is factored into [`apply_one_sb`]
+    // so the column-wavefront LF worker can call the same per-SB
+    // primitive with sync-read/sync-write straddling the call. The
+    // serial loop below remains bitwise-identical to the pre-C2
+    // version: it acquires the three plane slices once and walks
+    // `sb_cols` SBs in raster order, but each iteration's body is the
+    // same as `apply_one_sb`'s inner work (just without re-reconstructing
+    // the slices per SB). For maintenance, this version retains the
+    // inline slices for the hot serial path (avoids one raw-pointer →
+    // slice reconstruction per SB); the C2 helper handles the worker's
+    // per-SB call from a fresh frame each iteration.
     let chroma = shared.chroma;
     let y_stride = shared.y_stride;
     let uv_stride = shared.uv_stride;
@@ -685,117 +766,221 @@ pub unsafe fn loop_filter_sb_row(
         let mi_col = sb_col * MI_BLOCK_SIZE;
         let lfm = &lfm_grid[sb_row * lfm_stride + sb_col];
 
-        // Y plane (ss = 0).
-        filter_block_plane_ss00(
+        apply_one_sb_inner(
+            chroma,
             y_data,
             y_stride,
+            u_data,
+            v_data,
+            uv_stride,
             lfm,
             mi_row,
             mi_col,
             mi_rows,
+            mi_cols,
             info,
+            non420,
             dispatch,
         );
-        // U / V planes. Dispatch on the established chroma format:
-        //   - Yuv420 → ss11 (4×4 chroma grid; UV masks).
-        //   - Yuv444 → ss00 (8×8 chroma grid == luma; Y masks).
-        // Mirrors libvpx `loop_filter_rows` `LF_PATH_420` /
-        // `LF_PATH_444` (`vp9_loopfilter.c:1452-1458`).
-        match chroma {
-            ChromaFormat::Yuv420 => {
-                filter_block_plane_ss11(
-                    u_data,
-                    uv_stride,
-                    lfm,
-                    mi_row,
-                    mi_col,
-                    mi_rows,
-                    info,
-                    dispatch,
-                );
-                filter_block_plane_ss11(
-                    v_data,
-                    uv_stride,
-                    lfm,
-                    mi_row,
-                    mi_col,
-                    mi_rows,
-                    info,
-                    dispatch,
-                );
-            }
-            ChromaFormat::Yuv444 => {
-                // 4:4:4 chroma == luma grid: reuse the Y masks via
-                // ss00 (libvpx `vp9_filter_block_plane_ss00` for
-                // `LF_PATH_444`). The chroma plane is full-resolution,
-                // so the same SB-origin formula as luma applies.
-                filter_block_plane_ss00(
-                    u_data,
-                    uv_stride,
-                    lfm,
-                    mi_row,
-                    mi_col,
-                    mi_rows,
-                    info,
-                    dispatch,
-                );
-                filter_block_plane_ss00(
-                    v_data,
-                    uv_stride,
-                    lfm,
-                    mi_row,
-                    mi_col,
-                    mi_rows,
-                    info,
-                    dispatch,
-                );
-            }
-            // Asymmetric subsampling (4:2:2 / 4:4:0) — the
-            // `LF_PATH_SLOW` path in libvpx (`vp9_loopfilter.c:1459-
-            // 1462`). The packed SB mask doesn't carry the right
-            // chroma layout, so `filter_block_plane_non420` walks
-            // the MI grid directly per chroma row. Requires the
-            // caller to pass `Non420Inputs` — without those the
-            // non420 path cannot run.
-            ChromaFormat::Yuv422 | ChromaFormat::Yuv440 => {
-                let n420 = non420.expect(
-                    "loop_filter_frame called on Yuv422 / Yuv440 buffer \
-                     without Non420Inputs — use loop_filter_frame_with_non420 \
-                     and pass Some(Non420Inputs { .. })",
-                );
-                let ss_x = chroma.subsampling_x();
-                let ss_y = chroma.subsampling_y();
-                filter_block_plane_non420(
-                    u_data,
-                    uv_stride,
-                    n420.mi_grid,
-                    n420.mi_stride,
-                    mi_row,
-                    mi_col,
-                    mi_rows,
-                    mi_cols,
-                    ss_x,
-                    ss_y,
-                    info,
-                    n420.levels,
-                    dispatch,
-                );
-                filter_block_plane_non420(
-                    v_data,
-                    uv_stride,
-                    n420.mi_grid,
-                    n420.mi_stride,
-                    mi_row,
-                    mi_col,
-                    mi_rows,
-                    mi_cols,
-                    ss_x,
-                    ss_y,
-                    info,
-                    n420.levels,
-                    dispatch,
-                );
-            }
+    }
+}
+
+/// Apply the loop filter to a single 64×64 superblock — the per-SB
+/// primitive shared by the serial row-walker [`loop_filter_sb_row`] and
+/// the Lever B v2 column-wavefront worker [`run_split_edge_lf_worker`].
+///
+/// Mirrors the body of libvpx's `loop_filter_rows` per-mi_col iteration
+/// (`vp9_loopfilter.c:1430-1465`): Y vertical+horizontal via
+/// `vp9_filter_block_plane_ss00`, then U/V via the chroma-format-
+/// appropriate kernel (ss11 / ss00 / non420).
+///
+/// `shared` holds the three plane raw pointers; the function reconstructs
+/// the slices internally. This is the worker entry — the serial path
+/// inlines the slice acquisition once outside the per-SB loop and calls
+/// the [`apply_one_sb_inner`] helper directly to avoid the per-SB
+/// raw-pointer-to-slice overhead.
+///
+/// # Safety
+///
+/// Caller guarantees that no other thread writes pixels in this SB's
+/// owned rectangle nor in the cross-row write zone of the H-pass at
+/// this SB's top edge (the bottom 8 luma rows of the SB-row above).
+/// The column-wavefront's `cur_sb_col[r-1] >= c + nsync - 1` gate
+/// provides that guarantee under the protocol described in HLD §3.
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn apply_one_sb(
+    shared: &SharedFrame,
+    lfm: &LoopFilterMask,
+    mi_row: usize,
+    mi_col: usize,
+    mi_rows: usize,
+    mi_cols: usize,
+    info: &LoopFilterInfo,
+    non420: Option<Non420Inputs<'_>>,
+    dispatch: &SimdDispatch,
+) {
+    let chroma = shared.chroma;
+    let y_stride = shared.y_stride;
+    let uv_stride = shared.uv_stride;
+    // SAFETY: caller contract guarantees no overlapping write in this
+    // SB's pixel rectangle. Slices are scoped to this function body.
+    let (y_data, u_data, v_data) = unsafe {
+        (
+            shared.y_slice(),
+            shared.u_slice(),
+            shared.v_slice(),
+        )
+    };
+    apply_one_sb_inner(
+        chroma,
+        y_data,
+        y_stride,
+        u_data,
+        v_data,
+        uv_stride,
+        lfm,
+        mi_row,
+        mi_col,
+        mi_rows,
+        mi_cols,
+        info,
+        non420,
+        dispatch,
+    );
+}
+
+/// Inner per-SB helper that takes plane slices directly. Used by both
+/// the serial row walker (which acquires slices once outside the row
+/// loop) and the public `apply_one_sb` entry (which acquires them per
+/// SB call for the column-wavefront worker).
+#[allow(clippy::too_many_arguments)]
+#[inline]
+fn apply_one_sb_inner(
+    chroma: ChromaFormat,
+    y_data: &mut [u8],
+    y_stride: usize,
+    u_data: &mut [u8],
+    v_data: &mut [u8],
+    uv_stride: usize,
+    lfm: &LoopFilterMask,
+    mi_row: usize,
+    mi_col: usize,
+    mi_rows: usize,
+    mi_cols: usize,
+    info: &LoopFilterInfo,
+    non420: Option<Non420Inputs<'_>>,
+    dispatch: &SimdDispatch,
+) {
+    // Y plane (ss = 0).
+    filter_block_plane_ss00(
+        y_data,
+        y_stride,
+        lfm,
+        mi_row,
+        mi_col,
+        mi_rows,
+        info,
+        dispatch,
+    );
+    // U / V planes. Dispatch on the established chroma format:
+    //   - Yuv420 → ss11 (4×4 chroma grid; UV masks).
+    //   - Yuv444 → ss00 (8×8 chroma grid == luma; Y masks).
+    // Mirrors libvpx `loop_filter_rows` `LF_PATH_420` /
+    // `LF_PATH_444` (`vp9_loopfilter.c:1452-1458`).
+    match chroma {
+        ChromaFormat::Yuv420 => {
+            filter_block_plane_ss11(
+                u_data,
+                uv_stride,
+                lfm,
+                mi_row,
+                mi_col,
+                mi_rows,
+                info,
+                dispatch,
+            );
+            filter_block_plane_ss11(
+                v_data,
+                uv_stride,
+                lfm,
+                mi_row,
+                mi_col,
+                mi_rows,
+                info,
+                dispatch,
+            );
+        }
+        ChromaFormat::Yuv444 => {
+            // 4:4:4 chroma == luma grid: reuse the Y masks via
+            // ss00 (libvpx `vp9_filter_block_plane_ss00` for
+            // `LF_PATH_444`). The chroma plane is full-resolution,
+            // so the same SB-origin formula as luma applies.
+            filter_block_plane_ss00(
+                u_data,
+                uv_stride,
+                lfm,
+                mi_row,
+                mi_col,
+                mi_rows,
+                info,
+                dispatch,
+            );
+            filter_block_plane_ss00(
+                v_data,
+                uv_stride,
+                lfm,
+                mi_row,
+                mi_col,
+                mi_rows,
+                info,
+                dispatch,
+            );
+        }
+        // Asymmetric subsampling (4:2:2 / 4:4:0) — the
+        // `LF_PATH_SLOW` path in libvpx (`vp9_loopfilter.c:1459-
+        // 1462`). The packed SB mask doesn't carry the right
+        // chroma layout, so `filter_block_plane_non420` walks
+        // the MI grid directly per chroma row. Requires the
+        // caller to pass `Non420Inputs` — without those the
+        // non420 path cannot run.
+        ChromaFormat::Yuv422 | ChromaFormat::Yuv440 => {
+            let n420 = non420.expect(
+                "loop_filter_frame called on Yuv422 / Yuv440 buffer \
+                 without Non420Inputs — use loop_filter_frame_with_non420 \
+                 and pass Some(Non420Inputs { .. })",
+            );
+            let ss_x = chroma.subsampling_x();
+            let ss_y = chroma.subsampling_y();
+            filter_block_plane_non420(
+                u_data,
+                uv_stride,
+                n420.mi_grid,
+                n420.mi_stride,
+                mi_row,
+                mi_col,
+                mi_rows,
+                mi_cols,
+                ss_x,
+                ss_y,
+                info,
+                n420.levels,
+                dispatch,
+            );
+            filter_block_plane_non420(
+                v_data,
+                uv_stride,
+                n420.mi_grid,
+                n420.mi_stride,
+                mi_row,
+                mi_col,
+                mi_rows,
+                mi_cols,
+                ss_x,
+                ss_y,
+                info,
+                n420.levels,
+                dispatch,
+            );
         }
     }
 }

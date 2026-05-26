@@ -2044,6 +2044,7 @@ impl Decoder {
                 SegmentationLfView::from_segmentation(&resolved_seg),
                 decode_progress.as_deref(),
                 self.num_threads.get(),
+                tile_cols as usize,
             );
         }
         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
@@ -3178,6 +3179,7 @@ impl Decoder {
                 SegmentationLfView::from_segmentation(&resolved_seg),
                 decode_progress.as_deref(),
                 self.num_threads.get(),
+                tile_cols as usize,
             );
         }
         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
@@ -3575,60 +3577,63 @@ fn apply_loop_filter_to_frame(
 /// on the previous row's LF completion, then building the per-row mask
 /// in-place and applying [`loop_filter_sb_row`].
 ///
-/// All scratch state (work counter, LF progress flags, per-row state
-/// struct) is allocated on the caller's stack frame; the workers borrow
-/// them via the `'frame` lifetime tied to the enclosing scope. The
-/// scope's `join-on-return` discipline guarantees no worker outlives the
-/// stack-frame storage.
+/// Lever B v2 C2 — column-wavefront LF driver. Submits `num_workers`
+/// copies of `run_split_edge_lf_worker` into the supplied scope, each
+/// with a unique `worker_id ∈ 0..num_workers`. The static row
+/// distribution inside the worker assigns each row to exactly one
+/// worker (`row r ↦ worker r % num_workers`).
 ///
-/// # Safety
-///
-/// The borrowed references inside `state` must outlive every worker —
-/// guaranteed by the `FrameScope`'s `'frame` lifetime + the join-on-return
-/// discipline.
-fn apply_loop_filter_to_frame_parallel<'frame>(
+/// Mirrors libvpx's loop in `vp9_loop_filter_rows_mt`
+/// (`vp9_thread_common.c:182-200`). Per HLD §3.6 / §10 #1, only
+/// `num_workers` jobs are submitted — NOT one job per SB.
+fn apply_loop_filter_to_frame_column_wavefront<'frame>(
     scope: &rvp9_core::tile_threading::FrameScope<'_, 'frame>,
-    state: &'frame rvp9_core::loopfilter::apply::RowMtLfState<'frame>,
+    state: &'frame rvp9_core::loopfilter::apply::ColumnWavefrontLfState<'frame>,
     num_workers: usize,
 ) {
-    // The driver consumes `state` (the caller-owned RowMtLfState populated
-    // with all the borrows). Submitting it directly into each worker's
-    // closure means the workers never have to reconstruct the borrow set
-    // themselves. The closures `Copy` the `&RowMtLfState` reference, which
-    // is `Send + Sync` because every contained borrow is `Send + Sync`
-    // (atomic slices, `&`-references to immutable data, and `SharedFrame`
-    // which is `Send + Sync` by impl).
     let simd_dispatch = rvp9_core::dsp::get();
-    for _ in 0..num_workers {
-        let st: &'frame rvp9_core::loopfilter::apply::RowMtLfState<'frame> = state;
+    for worker_id in 0..num_workers {
+        let st: &'frame rvp9_core::loopfilter::apply::ColumnWavefrontLfState<'frame> =
+            state;
         let dispatch = simd_dispatch.clone();
         scope.submit(move || {
-            // SAFETY: the row-progress protocol enforced by the LF worker
-            // hook itself guarantees that for the SB rows this worker
-            // claims, no other thread is writing the same pixels.
+            // SAFETY: the wavefront sync protocol inside the worker
+            // (Acquire on cur_sb_col[r-1] before reading row r-1's
+            // pixel hazard zone; Release on cur_sb_col[r] after
+            // writing row r) guarantees no concurrent writer
+            // overlaps this worker's owned pixels.
             unsafe {
-                rvp9_core::loopfilter::apply::run_row_mt_lf_worker(st, &dispatch);
+                rvp9_core::loopfilter::apply::run_split_edge_lf_worker(
+                    st,
+                    worker_id,
+                    num_workers,
+                    &dispatch,
+                );
             }
         });
     }
 }
 
-/// Wave 2 C4 — top-level LF dispatcher that picks between the row-MT
-/// parallel path and the legacy serial path.
+/// Top-level LF dispatcher — picks between the serial path and the
+/// Lever B v2 column-wavefront row-MT path.
 ///
 /// Eligibility for row-MT (must all hold):
 ///   * `num_workers >= 2` (no point single-threading the parallel path).
 ///   * `sb_rows >= 2` (sub-SB-row frames have no work to parallelise).
-///   * `trace_flags().disable_row_mt == false` (kill switch off).
+///   * `trace_flags().disable_row_mt == false` (kill switch off — set
+///     `RVP9_DISABLE_LF_MT=1` to force serial).
+///   * `decode_progress.is_some()` (the parallel-tile-decode path was
+///     taken — needed as the eligibility signal; the wavefront worker
+///     itself synchronises via WorkerPool scope-join + its own
+///     atomic protocol).
 ///
-/// If any gate fails, fall through to the serial [`apply_loop_filter_to_frame`].
+/// If any gate fails, fall through to the serial
+/// [`apply_loop_filter_to_frame`].
 ///
-/// `decode_progress` MUST be sized to `sb_rows` and already published by
-/// the tile workers (Wave 2 C2). At commit 4, the tile-decode scope joins
-/// BEFORE this function is called, so every `decode_progress[r]` is
-/// already at `tile_cols_at_row[r]` and the LF workers' Acquire gate
-/// passes immediately. The gate is retained for forward-compatibility
-/// with a single-scope topology in a future revision.
+/// `decode_progress` is consumed only as the eligibility predicate
+/// (`is_some()`). The wavefront worker does not read its contents
+/// directly — the dispatcher's scope-join with the tile-decode scope
+/// provides the happens-before guarantee for tile pixel writes.
 #[allow(clippy::too_many_arguments)]
 fn apply_loop_filter_to_frame_dispatching(
     yv12: &mut Yv12Buffer,
@@ -3643,17 +3648,17 @@ fn apply_loop_filter_to_frame_dispatching(
     seg_view: SegmentationLfView,
     decode_progress: Option<&[std::sync::atomic::AtomicU32]>,
     num_workers: usize,
+    num_tile_cols: usize,
 ) {
     let row_mt_disabled = crate::trace_flags::trace_flags().disable_row_mt;
     let sb_rows = mi_rows.div_ceil(SB_MI_SIZE);
-    let sb_cols = mi_cols.div_ceil(SB_MI_SIZE);
     let eligible = !row_mt_disabled
         && num_workers >= 2
         && sb_rows >= 2
         && decode_progress.is_some();
 
     if !eligible {
-        // Serial fallback — same call as pre-C4.
+        // Serial fallback.
         apply_loop_filter_to_frame(
             yv12,
             mi_grid,
@@ -3668,45 +3673,81 @@ fn apply_loop_filter_to_frame_dispatching(
         return;
     }
 
-    // ---- Row-MT path ----
+    apply_loop_filter_to_frame_column_wavefront_dispatch(
+        yv12,
+        worker_pool,
+        mi_grid,
+        mi_stride,
+        mi_rows,
+        mi_cols,
+        filter_level,
+        sharpness_level,
+        lf_deltas,
+        seg_view,
+        num_workers,
+        num_tile_cols,
+    );
+}
+
+/// Lever B v2 C2 — column-wavefront dispatcher. Allocates the
+/// `cur_sb_col` atomic vector (one per SB row, initialised to -1),
+/// builds the `ColumnWavefrontLfState`, and submits `num_workers`
+/// worker jobs. Worker count is capped per HLD §3.6: the inner
+/// `nsync_for_width` value is consulted at runtime from `mi_cols * 8`.
+///
+/// Default OFF (gated by `RVP9_USE_COLUMN_WAVEFRONT=1` at C2). C3
+/// flips the default after the perf gate is met.
+///
+/// Mirrors libvpx's `vp9_loop_filter_alloc` + `vp9_loop_filter_rows_mt`
+/// (`vp9_thread_common.c:160-200`).
+#[allow(clippy::too_many_arguments)]
+fn apply_loop_filter_to_frame_column_wavefront_dispatch(
+    yv12: &mut Yv12Buffer,
+    worker_pool: &mut rvp9_core::tile_threading::WorkerPool,
+    mi_grid: &[Option<ModeInfo>],
+    mi_stride: usize,
+    mi_rows: usize,
+    mi_cols: usize,
+    filter_level: u8,
+    sharpness_level: u8,
+    lf_deltas: ResolvedLfDeltas,
+    seg_view: SegmentationLfView,
+    num_workers: usize,
+    num_tile_cols: usize,
+) {
     use rvp9_core::loopfilter::apply::{
-        Non420Inputs, RowMaskInputs, RowMtLfState, SharedFrame,
+        ColumnWavefrontLfState, Non420Inputs, RowMaskInputs, SharedFrame,
     };
-    use std::sync::atomic::{AtomicU32, AtomicUsize};
+    use std::sync::atomic::AtomicI32;
 
     let levels = resolve_filter_levels(filter_level, lf_deltas, seg_view);
     let info = LoopFilterInfo::new(sharpness_level);
 
-    // Wave 5b commit 1 — frame_mi_grid is pre-filled with
-    // `Some(default_padding_modeinfo())` at frame start (see
-    // `decode_intra_frame_inner` / `decode_inter_frame_inner`); tile
-    // workers overwrite the cells they cover with `Some(real)`. After
-    // tile decode every cell is `Some`, so `RowMaskInputs.mi_grid`
-    // can borrow the slab directly (Wave 7 C1).
+    let sb_rows = mi_rows.div_ceil(SB_MI_SIZE);
+    let sb_cols = mi_cols.div_ceil(SB_MI_SIZE);
+
     debug_assert!(
         mi_grid.iter().all(|c| c.is_some()),
         "Wave 5b commit 1: frame_mi_grid must be fully populated at LF entry",
     );
 
-    // Per-row LF-progress flags + the dispatcher counter. Both live on
-    // this stack frame across the scope.
-    let lf_progress: Vec<AtomicU32> =
-        (0..sb_rows).map(|_| AtomicU32::new(0)).collect();
-    let next_lf_row = AtomicUsize::new(0);
-    // `decode_progress` was allocated by the caller (one per tile worker
-    // scope). `tile_cols_at_row` collapses to a frame-wide `num_tiles`
-    // because the decode scope has already joined — every cell is at its
-    // target. Build a per-row `[num_tiles; sb_rows]` so the gate trivially
-    // passes. (For a future single-scope revision, the caller would pass
-    // a real `tile_cols_at_row` table.)
-    let tile_cols_at_row: Vec<u32> = (0..sb_rows)
-        .map(|r| {
-            // The C2 atomic increments once per (tile, sb_row); the
-            // current value is the actual count of tiles that decoded
-            // row r. The gate compares decode_progress[r] >= this.
-            decode_progress.unwrap()[r].load(std::sync::atomic::Ordering::Acquire)
-        })
-        .collect();
+    // Per-SB-row most-recently-completed column. Initialised to -1
+    // (libvpx `vp9_thread_common.c:181` memset(-1)). Workers store
+    // `c >= 0` after each SB; the wavefront gate compares
+    // `cur_sb_col[r-1] >= c + nsync - 1`.
+    let cur_sb_col: Vec<AtomicI32> =
+        (0..sb_rows).map(|_| AtomicI32::new(-1)).collect();
+
+    // HLD §3.6 cap: `min(num_workers, max(1, num_tile_cols), sb_rows)`.
+    // Mirrors libvpx vp9_thread_common.c:165-170. Capping at
+    // num_tile_cols is critical because the column-wavefront's
+    // effective parallelism is bounded by the number of independent
+    // rows in flight — beyond num_tile_cols, adding workers just
+    // adds contention.
+    let num_lf_workers = num_workers
+        .min(num_tile_cols.max(1))
+        .min(sb_rows)
+        .max(1);
 
     let chroma = yv12.chroma();
     let chroma_is_asymmetric = matches!(
@@ -3730,27 +3771,27 @@ fn apply_loop_filter_to_frame_dispatching(
         mi_stride,
         mi_rows,
         mi_cols,
-        levels: &levels,
+    levels: &levels,
     };
-    let state = RowMtLfState {
+
+    // libvpx `get_sync_range(width)` — pixel width = mi_cols * 8.
+    let nsync = rvp9_core::loopfilter::apply::nsync_for_width(
+        (mi_cols * 8) as u32,
+    );
+
+    let state = ColumnWavefrontLfState {
         shared,
         info: &info,
         row_inputs,
         non420,
         sb_rows,
         sb_cols,
-        decode_progress: decode_progress.unwrap(),
-        tile_cols_at_row: &tile_cols_at_row,
-        lf_progress: &lf_progress,
-        next_lf_row: &next_lf_row,
+        cur_sb_col: &cur_sb_col,
+        nsync,
     };
 
-    // Run the LF dispatch in its own scope. Submit N copies of the
-    // self-distributing worker hook; the dispatcher counter inside
-    // ensures every SB row runs exactly once even if the worker count
-    // exceeds the row count.
     worker_pool.scope(|scope| {
-        apply_loop_filter_to_frame_parallel(scope, &state, num_workers);
+        apply_loop_filter_to_frame_column_wavefront(scope, &state, num_lf_workers);
     });
 }
 
