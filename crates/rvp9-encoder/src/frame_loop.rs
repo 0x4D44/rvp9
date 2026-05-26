@@ -768,6 +768,28 @@ impl StreamEncoder {
                 self.rate_control.frames_since_key,
             );
         }
+        // W2.5(vpxenc parity, A5 P4): per-mi skin detector (libvpx
+        // `vp9_skin_detection.c:18-127`, `vpx_dsp/skin_detection.c:49-79`).
+        // Updates `pre_analysis.skin_map[]` for every 8×8 mi cell.
+        // libvpx invokes this inside the per-SB `vp9_compute_skin_sb`
+        // (`vp9_encodeframe.c:5560`) under `cpi->use_skin_detection`;
+        // we run it once per frame in pre-analysis, consumed by the
+        // picker once the consumer side is wired.
+        if self.pre_analysis.compute_source_sad_onepass {
+            self.pre_analysis.compute_skin_map(&y_tight, &u_tight, &v_tight);
+        }
+        // W2.6(vpxenc parity, A4 P6): per-SB color-sensitivity flags
+        // (libvpx `chroma_check` at `vp9_encodeframe.c:1173-1207`).
+        // Updates `pre_analysis.color_sensitivity_sb[]`. Same RT gate
+        // and Last_Source dependency as W2.2/W2.3; the call is safe
+        // unconditionally (no-op when Last_Source is None).
+        if self.pre_analysis.compute_source_sad_onepass {
+            self.pre_analysis.compute_color_sensitivity_frame(
+                &y_tight,
+                &u_tight,
+                &v_tight,
+            );
+        }
 
         let packet = match frame_kind {
             FrameKind::Key => self.encode_keyframe_internal(

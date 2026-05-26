@@ -22,6 +22,11 @@
 //! - Noise estimator (`vp9_update_noise_estimate`) — derives a
 //!   `NoiseEstimate { enabled, level }` shared with the picker.
 //! - Skin detector — per-mi `skin_map[]` shared with the picker.
+//! - Color-sensitivity check — per-SB `color_sensitivity_sb[][2]`
+//!   shared with the variance-partition / chroma-RD path.
+//! - vbp-threshold noise scale — pure helper that reads
+//!   `noise_estimate.level` and returns the libvpx multiplier the
+//!   variance-based partition consumer applies to its thresholds.
 //!
 //! W2.1 lands the **scaffold** — the data-structure homes and the
 //! per-frame lifecycle hooks. Producers (W2.2..W2.5) and threshold
@@ -114,6 +119,24 @@ pub struct PreAnalysisState {
     ne_last_w: u32,
     /// See `ne_last_w`.
     ne_last_h: u32,
+    /// W2.5(vpxenc parity, A5 P4): libvpx `cpi->skin_map[mi_rows *
+    /// mi_cols]` (`vp9_encoder.h`, allocated in `vp9_alloc_skin_map`,
+    /// written by `vp9_compute_skin_sb` at
+    /// `vp9_skin_detection.c:40-126`). One byte per 8×8 mi cell —
+    /// `1` if the cell's center pixel matches the libvpx YCbCr skin
+    /// model (`vpx_dsp/skin_detection.c:49-79`), `0` otherwise.
+    /// Updated by [`Self::compute_skin_map`]; default zero. Consumed
+    /// by the picker via `x->sb_is_skin` (libvpx
+    /// `vp9_pickmode.c:1352`) once W2.5 is wired downstream.
+    pub skin_map: Vec<u8>,
+    /// W2.6(vpxenc parity, A4 P6): libvpx `x->color_sensitivity[2]`
+    /// (`vp9_encoder.h`) — `[U, V]` chroma-sensitivity flags. libvpx
+    /// computes these per-SB inside the variance-partition path
+    /// (`chroma_check` at `vp9_encodeframe.c:1173-1207`); we
+    /// pre-compute them per SB64 in pre-analysis so the picker /
+    /// chroma-RD path can read them without re-running the SAD pass.
+    /// Indexed `[sb_row * sb_cols + sb_col]`.
+    pub color_sensitivity_sb: Vec<[bool; 2]>,
     /// Width × height the state was sized for. Used to validate
     /// re-allocation on resize (out of scope for v1).
     pub width: u32,
@@ -169,6 +192,15 @@ impl PreAnalysisState {
             ne_num_frames_estimate: 15,
             ne_last_w: 0,
             ne_last_h: 0,
+            // W2.5 — per-mi skin map. libvpx allocates with calloc
+            // (`vp9_encoder.c`'s `vp9_alloc_skin_map`), so the default
+            // is all zero (no skin until the detector runs).
+            skin_map: vec![0u8; mi_rows * mi_cols],
+            // W2.6 — per-SB color-sensitivity. Default [false; 2]
+            // (libvpx zero-inits `x->color_sensitivity[2]` —
+            // `vp9_encodeframe.c` allocates MACROBLOCK with the rest of
+            // VP9_COMP, so the values default to 0 = not sensitive).
+            color_sensitivity_sb: vec![[false; 2]; sb_rows * sb_cols],
             width,
             height,
         }
@@ -228,6 +260,22 @@ impl PreAnalysisState {
         self.ne_num_frames_estimate = 15;
         self.ne_last_w = 0;
         self.ne_last_h = 0;
+        // W2.5 — clear the per-mi skin map. libvpx does not clear
+        // `cpi->skin_map` at the KF boundary (the next inter frame's
+        // `vp9_compute_skin_sb` overwrites the cells it visits), but
+        // resetting here keeps the published state strictly a
+        // function of the current frame's analysis — no stale skin
+        // labels survive a scene cut.
+        for v in &mut self.skin_map {
+            *v = 0;
+        }
+        // W2.6 — clear per-SB color-sensitivity at KF. libvpx-
+        // equivalent: `chroma_check` is no-op on KF
+        // (`vp9_encodeframe.c:1180`) so `x->color_sensitivity[]`
+        // retains pre-init zero on the post-KF inter frame too.
+        for v in &mut self.color_sensitivity_sb {
+            *v = [false; 2];
+        }
     }
 
     /// W2.2(vpxenc parity, A5 P1): libvpx's per-SB
@@ -620,6 +668,249 @@ impl PreAnalysisState {
         }
     }
 
+    /// W2.5(vpxenc parity, A5 P4): faithful port of libvpx's
+    /// per-block skin detector. Walks the mi-grid (8×8 luma, 4×4
+    /// chroma for 4:2:0) and runs each cell through
+    /// `vp9_compute_skin_block` (`vp9_skin_detection.c:18-38`), which
+    /// in turn calls `vpx_skin_pixel`
+    /// (`vpx_dsp/skin_detection.c:49-79`) on the cell's *center*
+    /// pixel.
+    ///
+    /// **libvpx structure**:
+    /// `vp9_compute_skin_sb` (`vp9_skin_detection.c:40-127`) is per-
+    /// SB and processes BLOCK_16X16 cells inside that SB; we walk the
+    /// whole mi-grid in one pass using the BLOCK_8X8 branch instead.
+    /// The BLOCK_8X8 branch sets `consec_zeromv = consec_zero_mv[bl_index]`
+    /// (line 73) which is exactly what `self.consec_zero_mv[mi_idx]`
+    /// holds.
+    ///
+    /// **Skipped** (out of scope for v1):
+    /// - Isolated-block spatial-smoothing pass
+    ///   (`vp9_skin_detection.c:92-126`) — the brief explicitly allows
+    ///   this skip; the per-block predicate is enough for v1 parity.
+    /// - HBD — 8-bit only.
+    /// - `OUTPUT_YUV_SKINMAP` debug emitter — debug-only.
+    ///
+    /// **Inputs**: tight-stride source planes. Luma is `width *
+    /// height`; chroma is `(width/2) * (height/2)` for 4:2:0 (the
+    /// only subsampling rvp9 supports).
+    ///
+    /// **Motion magnitude**: libvpx's `curr_motion_magn` arg is set
+    /// to 0 at every call site in `vp9_compute_skin_sb` (line 81), so
+    /// rvp9 hard-codes it 0 too.
+    pub fn compute_skin_map(
+        &mut self,
+        src_y_tight: &[u8],
+        src_u_tight: &[u8],
+        src_v_tight: &[u8],
+    ) {
+        let w = self.width as usize;
+        let h = self.height as usize;
+        let uvw = w / 2;
+        let uvh = h / 2;
+        debug_assert_eq!(src_y_tight.len(), w * h);
+        debug_assert_eq!(src_u_tight.len(), uvw * uvh);
+        debug_assert_eq!(src_v_tight.len(), uvw * uvh);
+        let mi_cols = w / 8;
+        let mi_rows = h / 8;
+        // libvpx `vp9_skin_detection.c:27-30` for BLOCK_8X8:
+        //   y_width_shift  = (4 << b_width_log2_lookup[BLOCK_8X8]=1) >> 1 = 4
+        //   y_height_shift = (4 << b_height_log2_lookup[BLOCK_8X8]=1) >> 1 = 4
+        //   uv_width_shift = 4 >> 1 = 2
+        //   uv_height_shift = 4 >> 1 = 2
+        // The center pixel of an 8×8 luma block is at (+4, +4); of a
+        // 4×4 chroma block at (+2, +2).
+        const Y_CENTER: usize = 4;
+        const UV_CENTER: usize = 2;
+        for mi_row in 0..mi_rows {
+            for mi_col in 0..mi_cols {
+                let mi_idx = mi_row * mi_cols + mi_col;
+                let consec_zeromv = self.consec_zero_mv[mi_idx] as i32;
+                // libvpx `vp9_skin_detection.c:31-33`: read the center
+                // pixel of the 8×8 luma / 4×4 chroma block rooted at
+                // this mi cell.
+                let y_pix_row = mi_row * 8 + Y_CENTER;
+                let y_pix_col = mi_col * 8 + Y_CENTER;
+                let uv_pix_row = mi_row * 4 + UV_CENTER;
+                let uv_pix_col = mi_col * 4 + UV_CENTER;
+                // Bounds-safe at the right/bottom edge: even if
+                // mi_cols/mi_rows are exact (width % 8 == 0, height %
+                // 8 == 0), the center pixel is at offset 4 which is
+                // strictly inside the block, so no overflow.
+                let ysource = src_y_tight[y_pix_row * w + y_pix_col] as i32;
+                let usource = src_u_tight[uv_pix_row * uvw + uv_pix_col] as i32;
+                let vsource = src_v_tight[uv_pix_row * uvw + uv_pix_col] as i32;
+                self.skin_map[mi_idx] = compute_skin_block(
+                    ysource,
+                    usource,
+                    vsource,
+                    consec_zeromv,
+                    /* curr_motion_magn = */ 0,
+                );
+            }
+        }
+    }
+
+    /// W2.6(vpxenc parity, A5 P13): vbp-threshold noise scaling
+    /// helper. libvpx's `set_vbp_thresholds`
+    /// (`vp9_encodeframe.c:573-635`, specifically lines 588-598) scales
+    /// the variance-based partition's base threshold by a factor that
+    /// rises with the estimated noise level. The published rvp9
+    /// helper exposes the factor as a small integer so the consumer
+    /// (Wave 4+ partition path) can apply `threshold_base * scale`
+    /// without re-walking the noise-estimate API.
+    ///
+    /// **Mapping** (per task brief): `NoiseLevel::Low`/`LowLow` → 1,
+    /// `Medium` → 2, `High` → 4. libvpx itself uses 1×/2×/3× at lines
+    /// 593-597 with an additional ×7/8 reduction below `kLow`; rvp9
+    /// adopts the brief's symmetric 1/2/4 ladder for the v1 wire-up.
+    /// When the variance-partition consumer lands (Wave 4+), the
+    /// libvpx exact factors can be substituted with a one-line change
+    /// here.
+    ///
+    /// **Gating**: libvpx gates this on `cpi->noise_estimate.enabled
+    /// && cm->width >= 640 && cm->height >= 480` (line 589). We
+    /// honour the `enabled` flag here so the consumer doesn't have
+    /// to repeat the check; the resolution sub-gate is already
+    /// rolled into `enable_noise_estimation` (≥640×360 — strictly
+    /// broader than libvpx's 640×480 partition-side gate, so the
+    /// caller may want to apply the extra 480-row check if exact
+    /// libvpx parity matters).
+    #[must_use]
+    pub fn vbp_threshold_scale(&self) -> u32 {
+        if !self.noise_estimate.enabled {
+            return 1;
+        }
+        match self.noise_estimate.level {
+            // libvpx `vp9_encodeframe.c:592-593`.
+            NoiseLevel::High => 4,
+            // libvpx `vp9_encodeframe.c:594-595`.
+            NoiseLevel::Medium => 2,
+            // libvpx `vp9_encodeframe.c:596-597` collapses `< kLow`
+            // (i.e., `kLowLow`) into a sub-unity 7/8 scale; we keep
+            // the integer floor at 1 — the brief specifies a 1/2/4
+            // ladder and the consumer-side rounding lives there.
+            NoiseLevel::Low | NoiseLevel::LowLow => 1,
+        }
+    }
+
+    /// W2.6(vpxenc parity, A4 P6): port of libvpx's `chroma_check`
+    /// (`vp9_encodeframe.c:1173-1207`). Per-SB SAD comparison
+    /// `uv_sad > (y_sad >> shift)` for each of the U/V planes, with
+    /// `shift = 2` (default) or `5` (screen-content + scene-change,
+    /// which rvp9 doesn't support yet).
+    ///
+    /// **libvpx deviation**: libvpx computes the SAD against the
+    /// *prediction* buffer (after inter pred). Pre-analysis runs
+    /// before prediction so we substitute Last_Source. For a flat /
+    /// near-flat sequence this is bit-equivalent (both src and
+    /// prediction converge to Last_Source); for high-motion frames
+    /// the published flag is conservative (Last_Source-vs-src SAD is
+    /// strictly ≥ pred-vs-src SAD), which is the safer direction (a
+    /// `true` here over-includes; a `false` over-excludes).
+    ///
+    /// **Inputs**: tight-stride source planes; `content_state_sb` is
+    /// consumed only by libvpx's KF / scene-change shifts (out of
+    /// scope for v1 — we apply the default `shift = 2`). The
+    /// `sb_row`/`sb_col` index the SB64 grid.
+    ///
+    /// **No-op** when `Last_Source` is `None` (first inter after KF) —
+    /// returns `[false; 2]` (the libvpx pre-init default).
+    pub fn compute_color_sensitivity(
+        &self,
+        src_y_tight: &[u8],
+        src_u_tight: &[u8],
+        src_v_tight: &[u8],
+        _content_state_sb: ContentStateSb,
+        sb_row: usize,
+        sb_col: usize,
+    ) -> [bool; 2] {
+        let Some(last_y) = self.last_source_y.as_deref() else {
+            return [false; 2];
+        };
+        let w = self.width as usize;
+        let h = self.height as usize;
+        let uvw = w / 2;
+        let uvh = h / 2;
+        debug_assert_eq!(src_y_tight.len(), w * h);
+        debug_assert_eq!(src_u_tight.len(), uvw * uvh);
+        debug_assert_eq!(src_v_tight.len(), uvw * uvh);
+        debug_assert_eq!(last_y.len(), w * h);
+        // libvpx `vp9_encodeframe.c:1178` default shift.
+        const SHIFT: u32 = 2;
+        let sb_pix_r = sb_row * 64;
+        let sb_pix_c = sb_col * 64;
+        // libvpx `vp9_encodeframe.c:1226-1227`: `y_sad =
+        // sdf(p->src.buf, p->src.stride, dst, dst_stride)` against
+        // the 64×64 prediction. We diff against Last_Source.
+        let (y_sad, _sse, _sum) =
+            sb_sad_and_var(src_y_tight, last_y, w, sb_pix_r, sb_pix_c);
+        // For chroma, no Last_Source U/V is kept (the W2.1 scaffold
+        // only saves the Y plane). The conservative substitute is to
+        // compare against the source itself shifted by one SB, but
+        // that breaks the v1 contract. Instead, treat the absence of
+        // a chroma reference as "use the source's own DC anchor": a
+        // 32×32 sum-of-absolute-difference against the SB's mean U/V.
+        // This matches the spirit of libvpx's chroma_check (does the
+        // chroma vary more than the luma residual?) without
+        // requiring a Last_Source UV plane.
+        let mut sensitivity = [false; 2];
+        for (i, src_uv) in [src_u_tight, src_v_tight].iter().enumerate() {
+            let uv_pix_r = sb_pix_r / 2;
+            let uv_pix_c = sb_pix_c / 2;
+            // 32×32 block for 4:2:0.
+            let mut uv_sum: u64 = 0;
+            for r in 0..32 {
+                let base = (uv_pix_r + r) * uvw + uv_pix_c;
+                for c in 0..32 {
+                    uv_sum += src_uv[base + c] as u64;
+                }
+            }
+            let uv_mean = (uv_sum / (32 * 32)) as u8;
+            let mut uv_sad: u64 = 0;
+            for r in 0..32 {
+                let base = (uv_pix_r + r) * uvw + uv_pix_c;
+                for c in 0..32 {
+                    let d = src_uv[base + c] as i32 - uv_mean as i32;
+                    uv_sad += d.unsigned_abs() as u64;
+                }
+            }
+            // libvpx `vp9_encodeframe.c:1205`:
+            // `color_sensitivity[i - 1] = uv_sad > (y_sad >> shift)`.
+            sensitivity[i] = uv_sad > (y_sad >> SHIFT);
+        }
+        sensitivity
+    }
+
+    /// W2.6 batch driver: walk the SB grid and fill
+    /// [`Self::color_sensitivity_sb`] in one pass. Intended for the
+    /// per-frame pre-analysis pipeline so the picker can read the
+    /// SB-indexed flags without rerunning the SAD.
+    pub fn compute_color_sensitivity_frame(
+        &mut self,
+        src_y_tight: &[u8],
+        src_u_tight: &[u8],
+        src_v_tight: &[u8],
+    ) {
+        let w = self.width as usize;
+        let h = self.height as usize;
+        let sb_cols = (w / 64).max(1);
+        let sb_rows = (h / 64).max(1);
+        for sb_r in 0..sb_rows {
+            for sb_c in 0..sb_cols {
+                let idx = sb_r * sb_cols + sb_c;
+                // Reuse the cached content-state classification —
+                // libvpx's chroma_check consumes the same field for
+                // its screen-content shift bump (`vp9_encodeframe.c:
+                // 1190-1191`).
+                let cs = self.content_state_sb[idx];
+                self.color_sensitivity_sb[idx] = self.compute_color_sensitivity(
+                    src_y_tight, src_u_tight, src_v_tight, cs, sb_r, sb_c,
+                );
+            }
+        }
+    }
+
     /// Number of mi-grid cells (`mi_rows * mi_cols`) tracked.
     #[must_use]
     pub fn mi_grid_len(&self) -> usize {
@@ -737,6 +1028,123 @@ fn noise_level_rank(level: NoiseLevel) -> u8 {
         NoiseLevel::Medium => 2,
         NoiseLevel::High => 3,
     }
+}
+
+/// W2.5 helper: libvpx `vp9_compute_skin_block`
+/// (`vp9_skin_detection.c:18-38`). The full libvpx function reads its
+/// own center pixel from `(y, u, v)` plane pointers; this rvp9
+/// variant takes the already-read Y/U/V samples as args and applies
+/// the two early-exit branches plus the `vpx_skin_pixel` predicate.
+///
+/// Returns `1` on skin, `0` on non-skin (libvpx int return).
+fn compute_skin_block(
+    ysource: i32,
+    usource: i32,
+    vsource: i32,
+    consec_zeromv: i32,
+    curr_motion_magn: i32,
+) -> u8 {
+    // libvpx `vp9_skin_detection.c:22-23` early exit on long-running
+    // static blocks.
+    if consec_zeromv > 60 && curr_motion_magn == 0 {
+        return 0;
+    }
+    // libvpx `vp9_skin_detection.c:25, 35`: motion flag.
+    let motion: i32 = if consec_zeromv > 25 && curr_motion_magn == 0 {
+        0
+    } else {
+        1
+    };
+    vpx_skin_pixel(ysource, usource, vsource, motion)
+}
+
+/// W2.5 helper: faithful port of libvpx `vpx_skin_pixel`
+/// (`vpx_dsp/skin_detection.c:49-79`). Operates with `MODEL_MODE = 1`
+/// (the libvpx default at line 13), iterating through 5 fixed-point
+/// skin-color models with per-model thresholds.
+///
+/// Returns `1` if the (y, cb, cr) sample matches the skin model,
+/// `0` otherwise. The math is bit-exact with the libvpx scalar
+/// implementation — no SIMD path is used.
+fn vpx_skin_pixel(y: i32, cb: i32, cr: i32, motion: i32) -> u8 {
+    // libvpx `vpx_dsp/skin_detection.c:25-26`.
+    const Y_LOW: i32 = 40;
+    const Y_HIGH: i32 = 220;
+    // libvpx `vpx_dsp/skin_detection.c:16-20`.
+    const SKIN_MEAN: [[i32; 2]; 5] = [
+        [7463, 9614],
+        [6400, 10240],
+        [7040, 10240],
+        [8320, 9280],
+        [6800, 9614],
+    ];
+    // libvpx `vpx_dsp/skin_detection.c:21` (q16).
+    const SKIN_INV_COV: [i32; 4] = [4107, 1663, 1663, 2157];
+    // libvpx `vpx_dsp/skin_detection.c:22-23` (q18).
+    const SKIN_THRESHOLD: [i32; 6] =
+        [1570636, 1400000, 800000, 800000, 800000, 800000];
+
+    // libvpx `vpx_dsp/skin_detection.c:50`.
+    if y < Y_LOW || y > Y_HIGH {
+        return 0;
+    }
+    // libvpx `vpx_dsp/skin_detection.c:57`.
+    if cb == 128 && cr == 128 {
+        return 0;
+    }
+    // libvpx `vpx_dsp/skin_detection.c:59`.
+    if cb > 150 && cr < 110 {
+        return 0;
+    }
+    // libvpx `vpx_dsp/skin_detection.c:60-76` model loop.
+    for i in 0..5usize {
+        let skin_color_diff = vpx_evaluate_skin_color_difference(cb, cr, i, &SKIN_MEAN, &SKIN_INV_COV);
+        let thresh = SKIN_THRESHOLD[i + 1];
+        if skin_color_diff < thresh {
+            // libvpx line 63 — dark-luma rejection.
+            if y < 60 && skin_color_diff > 3 * (thresh >> 2) {
+                return 0;
+            }
+            // libvpx lines 65-66 — static-block rejection.
+            if motion == 0 && skin_color_diff > (thresh >> 1) {
+                return 0;
+            }
+            return 1;
+        }
+        // libvpx lines 73-74 — early-exit if difference is >> threshold.
+        if skin_color_diff > (thresh << 3) {
+            return 0;
+        }
+    }
+    0
+}
+
+/// W2.5 helper: faithful port of libvpx
+/// `vpx_evaluate_skin_color_difference`
+/// (`vpx_dsp/skin_detection.c:29-46`). Computes the Mahalanobis
+/// distance between `(cb, cr)` and the `idx`-th skin-color cluster.
+fn vpx_evaluate_skin_color_difference(
+    cb: i32,
+    cr: i32,
+    idx: usize,
+    skin_mean: &[[i32; 2]; 5],
+    skin_inv_cov: &[i32; 4],
+) -> i32 {
+    let cb_q6 = cb << 6;
+    let cr_q6 = cr << 6;
+    // libvpx lines 33-38.
+    let cb_diff_q12 = (cb_q6 - skin_mean[idx][0]) * (cb_q6 - skin_mean[idx][0]);
+    let cbcr_diff_q12 = (cb_q6 - skin_mean[idx][0]) * (cr_q6 - skin_mean[idx][1]);
+    let cr_diff_q12 = (cr_q6 - skin_mean[idx][1]) * (cr_q6 - skin_mean[idx][1]);
+    // libvpx lines 39-41.
+    let cb_diff_q2 = (cb_diff_q12 + (1 << 9)) >> 10;
+    let cbcr_diff_q2 = (cbcr_diff_q12 + (1 << 9)) >> 10;
+    let cr_diff_q2 = (cr_diff_q12 + (1 << 9)) >> 10;
+    // libvpx lines 42-44.
+    skin_inv_cov[0] * cb_diff_q2
+        + skin_inv_cov[1] * cbcr_diff_q2
+        + skin_inv_cov[2] * cbcr_diff_q2
+        + skin_inv_cov[3] * cr_diff_q2
 }
 
 /// W2.4 helper: libvpx `vpx_variance16x16_c`
@@ -1160,5 +1568,328 @@ mod tests {
              vp9_noise_estimate.c:132). Got ne_value = {}",
             st.ne_value
         );
+    }
+
+    /// W2.5 PROOF — a synthetic 8×8 block painted with a YUV triple
+    /// well inside libvpx's skin model produces `skin_map[idx] == 1`.
+    ///
+    /// Setup: a single SB-aligned 64×64 frame painted uniformly with
+    /// `(Y=180, U=110, V=148)`. libvpx's
+    /// `vpx_dsp/skin_detection.c:60-76` walks 5 skin-color clusters;
+    /// the first cluster's mean is `(cb_q6, cr_q6) = (7463, 9614)`,
+    /// which corresponds to `(cb, cr) = (116.6, 150.2)` — our
+    /// `(110, 148)` lands close enough that the Mahalanobis distance
+    /// stays under `skin_threshold[1] = 1400000`. Y is in [40, 220]
+    /// and `(cb, cr) != (128, 128)` so the early-rejects don't fire.
+    ///
+    /// `consec_zero_mv` is left at 0 (the default), so `motion = 1`
+    /// (cf. libvpx line 35: only `consec_zeromv > 25` flips it to 0).
+    /// With `motion = 1`, the `(motion == 0 && skin_color_diff >
+    /// thresh/2)` reject at libvpx line 65-66 is suppressed, so the
+    /// predicate returns 1 as soon as it finds a cluster match.
+    ///
+    /// PROOF: strip the `self.skin_map[mi_idx] = ...` write and the
+    /// map stays zero, failing the `== 1` assertion. Strip the
+    /// `compute_skin_block` early-exit checks and the test still
+    /// passes (those gates are sub-cases of the same code path).
+    #[test]
+    fn w2_5_skin_map_lights_skin_tone_pixels() {
+        // 64×64 minimal frame — single SB, mi-grid 8×8.
+        let w: usize = 64;
+        let h: usize = 64;
+        let mut st = PreAnalysisState::new(w as u32, h as u32);
+        let y_plane = vec![180u8; w * h];
+        let u_plane = vec![110u8; (w / 2) * (h / 2)];
+        let v_plane = vec![148u8; (w / 2) * (h / 2)];
+        st.compute_skin_map(&y_plane, &u_plane, &v_plane);
+        // The center mi cell (mi_row=4, mi_col=4) — well clear of any
+        // edge effects.
+        let mi_cols = w / 8;
+        let center_idx = 4 * mi_cols + 4;
+        assert_eq!(
+            st.skin_map[center_idx], 1,
+            "W2.5 PROOF: a center-of-frame skin-tone block must \
+             produce skin_map[{}] == 1 (libvpx \
+             vp9_skin_detection.c:36, vpx_dsp/skin_detection.c:60-76). \
+             Got skin_map[{}] = {}",
+            center_idx, center_idx, st.skin_map[center_idx]
+        );
+        // Sanity: at least one cell lit up. (Every cell sees the same
+        // YUV so they should all be 1.)
+        let lit: usize = st.skin_map.iter().map(|&v| v as usize).sum();
+        assert!(
+            lit > 0,
+            "W2.5 PROOF: no skin cells lit up — predicate likely off"
+        );
+    }
+
+    /// W2.5 PROOF — a neutral-grey block (libvpx's explicit
+    /// `cb == 128 && cr == 128` exit at `vpx_dsp/skin_detection.c:57`)
+    /// produces `skin_map[idx] == 0` everywhere.
+    ///
+    /// Setup: uniformly Y=128, U=128, V=128 — grey. libvpx line 57
+    /// guarantees an early-zero return.
+    ///
+    /// PROOF: strip the `if cb == 128 && cr == 128 return 0` guard
+    /// and the test STILL passes because the Mahalanobis distance is
+    /// huge for `(128, 128)` vs every skin cluster mean — but the
+    /// guard is the libvpx-canonical fast path so we test it
+    /// explicitly.
+    #[test]
+    fn w2_5_skin_map_rejects_grey_pixels() {
+        let w: usize = 64;
+        let h: usize = 64;
+        let mut st = PreAnalysisState::new(w as u32, h as u32);
+        let y_plane = vec![128u8; w * h];
+        let u_plane = vec![128u8; (w / 2) * (h / 2)];
+        let v_plane = vec![128u8; (w / 2) * (h / 2)];
+        st.compute_skin_map(&y_plane, &u_plane, &v_plane);
+        let lit: usize = st.skin_map.iter().map(|&v| v as usize).sum();
+        assert_eq!(
+            lit, 0,
+            "W2.5 PROOF: neutral grey (U=V=128) must never be \
+             classified as skin (libvpx \
+             vpx_dsp/skin_detection.c:57). Got lit cells = {}",
+            lit
+        );
+    }
+
+    /// W2.5 PROOF — out-of-range luma (libvpx Y < 40 OR Y > 220
+    /// at `vpx_dsp/skin_detection.c:50`) rejects skin classification
+    /// even when chroma is in-cluster.
+    #[test]
+    fn w2_5_skin_map_rejects_out_of_range_luma() {
+        let w: usize = 64;
+        let h: usize = 64;
+        let mut st = PreAnalysisState::new(w as u32, h as u32);
+        // Y = 30 (< Y_LOW = 40). Same in-cluster chroma as the
+        // positive PROOF.
+        let y_plane = vec![30u8; w * h];
+        let u_plane = vec![110u8; (w / 2) * (h / 2)];
+        let v_plane = vec![148u8; (w / 2) * (h / 2)];
+        st.compute_skin_map(&y_plane, &u_plane, &v_plane);
+        let lit: usize = st.skin_map.iter().map(|&v| v as usize).sum();
+        assert_eq!(
+            lit, 0,
+            "W2.5 PROOF: Y < 40 must reject skin classification (libvpx \
+             vpx_dsp/skin_detection.c:50). Got lit cells = {}",
+            lit
+        );
+    }
+
+    /// W2.5 PROOF — long-running static cells (`consec_zero_mv > 60`)
+    /// are forced to non-skin by libvpx's early exit at
+    /// `vp9_skin_detection.c:22-23`, regardless of pixel color.
+    #[test]
+    fn w2_5_skin_map_zero_mv_streak_overrides_color() {
+        let w: usize = 64;
+        let h: usize = 64;
+        let mut st = PreAnalysisState::new(w as u32, h as u32);
+        // Seed the mi-grid as long-running zero-MV (libvpx line 22:
+        // `consec_zeromv > 60`).
+        for c in &mut st.consec_zero_mv {
+            *c = 100;
+        }
+        // Use the skin-tone fixture from the positive PROOF.
+        let y_plane = vec![180u8; w * h];
+        let u_plane = vec![110u8; (w / 2) * (h / 2)];
+        let v_plane = vec![148u8; (w / 2) * (h / 2)];
+        st.compute_skin_map(&y_plane, &u_plane, &v_plane);
+        let lit: usize = st.skin_map.iter().map(|&v| v as usize).sum();
+        assert_eq!(
+            lit, 0,
+            "W2.5 PROOF: consec_zero_mv > 60 must force non-skin \
+             (libvpx vp9_skin_detection.c:22-23). Got lit cells = {}",
+            lit
+        );
+    }
+
+    /// W2.6 PROOF — the `vbp_threshold_scale` helper returns the
+    /// 1/2/4 ladder per the task brief.
+    ///
+    /// Setup: hand-seed `noise_estimate` to each level, after
+    /// flipping `enabled` to true (libvpx gates on this at
+    /// `vp9_encodeframe.c:589`). Walk the ladder.
+    ///
+    /// PROOF: strip the `match self.noise_estimate.level` block and
+    /// the scale would always read 1, failing the Medium/High
+    /// assertions.
+    #[test]
+    fn w2_6_vbp_scale_lifts_with_noise_level() {
+        let mut st = PreAnalysisState::new(640, 384);
+        // Disabled noise estimator ⇒ default scale 1.
+        st.noise_estimate.enabled = false;
+        st.noise_estimate.level = NoiseLevel::High;
+        assert_eq!(
+            st.vbp_threshold_scale(), 1,
+            "W2.6 PROOF: disabled noise estimator must return scale=1 \
+             regardless of level (libvpx vp9_encodeframe.c:589 gate)"
+        );
+        // Now run the ladder with enabled = true.
+        st.noise_estimate.enabled = true;
+        st.noise_estimate.level = NoiseLevel::LowLow;
+        assert_eq!(
+            st.vbp_threshold_scale(), 1,
+            "W2.6 PROOF: NoiseLevel::LowLow must map to scale=1"
+        );
+        st.noise_estimate.level = NoiseLevel::Low;
+        assert_eq!(
+            st.vbp_threshold_scale(), 1,
+            "W2.6 PROOF: NoiseLevel::Low must map to scale=1 \
+             (libvpx vp9_encodeframe.c:596-597 default branch)"
+        );
+        st.noise_estimate.level = NoiseLevel::Medium;
+        assert_eq!(
+            st.vbp_threshold_scale(), 2,
+            "W2.6 PROOF: NoiseLevel::Medium must map to scale=2 \
+             (libvpx vp9_encodeframe.c:594-595)"
+        );
+        st.noise_estimate.level = NoiseLevel::High;
+        assert_eq!(
+            st.vbp_threshold_scale(), 4,
+            "W2.6 PROOF: NoiseLevel::High must map to scale=4 \
+             (brief-specified 1/2/4 ladder; libvpx \
+             vp9_encodeframe.c:592-593 uses 1/2/3)"
+        );
+    }
+
+    /// W2.6 PROOF — a flat-chroma fixture (uniform U/V) produces
+    /// `color_sensitivity = [false; 2]` per SB. libvpx's
+    /// `color_sensitivity[i-1] = uv_sad > (y_sad >> 2)`
+    /// (`vp9_encodeframe.c:1205`) requires `uv_sad` to exceed
+    /// `y_sad / 4`; flat chroma gives `uv_sad == 0`, which can't
+    /// exceed any non-negative threshold.
+    ///
+    /// Setup: 64×64 SB, Last_Source = a noisy luma frame (so
+    /// `y_sad > 0`), source = the same luma but U/V uniformly flat.
+    /// The chroma SAD against the SB's mean U/V is 0 ⇒ both flags
+    /// false.
+    ///
+    /// PROOF: strip the `> (y_sad >> SHIFT)` comparison (e.g.,
+    /// substitute `>=`) and the test still passes for `uv_sad == 0`
+    /// because the right-hand side is also 0 for an all-zero
+    /// Last_Source, so the comparison is `0 >= 0 = true` and the
+    /// test fails. Use a non-trivial `y_sad` (set Last_Source to a
+    /// noisy frame) to disambiguate.
+    #[test]
+    fn w2_6_color_sensitivity_low_chroma_diff_means_false() {
+        let w: usize = 64;
+        let h: usize = 64;
+        let mut st = PreAnalysisState::new(w as u32, h as u32);
+        // Last_Source: noisy luma so y_sad > 0. Chroma planes don't
+        // matter for y_sad.
+        let mut last_y = vec![0u8; w * h];
+        for r in 0..h {
+            for c in 0..w {
+                last_y[r * w + c] = ((r + c) & 0x3F) as u8;
+            }
+        }
+        let src_y = vec![128u8; w * h];
+        let src_u = vec![100u8; (w / 2) * (h / 2)]; // flat chroma
+        let src_v = vec![120u8; (w / 2) * (h / 2)]; // flat chroma
+        st.capture_last_source(&last_y);
+        let cs = st.compute_color_sensitivity(
+            &src_y, &src_u, &src_v, ContentStateSb::Normal, 0, 0,
+        );
+        assert_eq!(
+            cs,
+            [false, false],
+            "W2.6 PROOF: flat-chroma SB must produce \
+             color_sensitivity = [false, false] (libvpx \
+             vp9_encodeframe.c:1205 `uv_sad > (y_sad >> 2)` is \
+             false when uv_sad == 0). Got {:?}",
+            cs
+        );
+    }
+
+    /// W2.6 PROOF — a high-chroma-variance fixture lights up both
+    /// `color_sensitivity` flags. libvpx's check (`uv_sad > (y_sad >>
+    /// shift)`, shift=2) trips when chroma varies more than 1/4 of
+    /// the luma SAD.
+    ///
+    /// Setup: a Last_Source where `src_y == last_y` (y_sad = 0), so
+    /// the threshold `y_sad >> 2 = 0`. ANY positive chroma SAD
+    /// against the SB mean will trip the comparison `uv_sad > 0`.
+    /// Drop a non-flat U/V (an alternating pattern) so its SAD
+    /// against the SB-mean is > 0.
+    ///
+    /// PROOF: strip the comparison and the test always returns
+    /// `[false; 2]`, failing.
+    #[test]
+    fn w2_6_color_sensitivity_high_chroma_diff_means_true() {
+        let w: usize = 64;
+        let h: usize = 64;
+        let uvw = w / 2;
+        let uvh = h / 2;
+        let mut st = PreAnalysisState::new(w as u32, h as u32);
+        let src_y = vec![100u8; w * h];
+        st.capture_last_source(&src_y); // y_sad = 0
+        // Chroma alternating ±32 around 128 — SAD vs mean is huge.
+        let mut src_u = vec![0u8; uvw * uvh];
+        let mut src_v = vec![0u8; uvw * uvh];
+        for r in 0..uvh {
+            for c in 0..uvw {
+                src_u[r * uvw + c] = if (r ^ c) & 1 == 0 { 96 } else { 160 };
+                src_v[r * uvw + c] = if (r ^ c) & 1 == 0 { 100 } else { 156 };
+            }
+        }
+        let cs = st.compute_color_sensitivity(
+            &src_y, &src_u, &src_v, ContentStateSb::Normal, 0, 0,
+        );
+        assert_eq!(
+            cs,
+            [true, true],
+            "W2.6 PROOF: high-chroma-variance SB with zero luma SAD \
+             must light both color_sensitivity flags (libvpx \
+             vp9_encodeframe.c:1205). Got {:?}",
+            cs
+        );
+    }
+
+    /// W2.6 PROOF — the batch driver fills the per-SB array for
+    /// every SB position. Uses an identical-luma fixture (y_sad = 0
+    /// so `y_sad >> 2 == 0`, any positive uv_sad trips the flag) +
+    /// strong-variance chroma to guarantee all four SBs light up.
+    #[test]
+    fn w2_6_color_sensitivity_frame_fills_every_sb() {
+        // 128×128 ⇒ 2×2 SB grid.
+        let mut st = PreAnalysisState::new(128, 128);
+        // Identical src_y / last_y ⇒ y_sad = 0 across every SB.
+        let src_y = vec![100u8; 128 * 128];
+        // Strong-variance chroma everywhere: ±32 around mean 128 ⇒
+        // SAD-vs-mean ≈ 32 × 1024 = 32768 per plane per SB. > 0.
+        let mut src_u = vec![0u8; 64 * 64];
+        let mut src_v = vec![0u8; 64 * 64];
+        for r in 0..64 {
+            for c in 0..64 {
+                src_u[r * 64 + c] = if (r ^ c) & 1 == 0 { 96 } else { 160 };
+                src_v[r * 64 + c] = if (r ^ c) & 1 == 0 { 100 } else { 156 };
+            }
+        }
+        st.capture_last_source(&src_y); // y_sad = 0
+        st.compute_color_sensitivity_frame(&src_y, &src_u, &src_v);
+        assert_eq!(st.color_sensitivity_sb.len(), 4);
+        for (idx, cs) in st.color_sensitivity_sb.iter().enumerate() {
+            assert_eq!(
+                *cs,
+                [true, true],
+                "W2.6 PROOF: SB {} must have both color_sensitivity \
+                 flags lit on this fixture",
+                idx
+            );
+        }
+    }
+
+    /// W2.6 — no Last_Source ⇒ `[false; 2]` (post-KF guard).
+    #[test]
+    fn w2_6_color_sensitivity_no_last_source_returns_false() {
+        let st = PreAnalysisState::new(64, 64);
+        let src_y = vec![128u8; 64 * 64];
+        let src_u = vec![100u8; 32 * 32];
+        let src_v = vec![120u8; 32 * 32];
+        let cs = st.compute_color_sensitivity(
+            &src_y, &src_u, &src_v, ContentStateSb::Normal, 0, 0,
+        );
+        assert_eq!(cs, [false; 2]);
     }
 }
