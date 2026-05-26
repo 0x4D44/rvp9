@@ -62,6 +62,7 @@ fn diag_foreman_kf_partitions() {
                     frame_width: W,
                     frame_height: H,
                     avg_inter_qindex: q,
+                    noise_threshold_scale: 1,
                 };
                 let decision = choose_partitioning(&params);
                 count_decision(&decision, &mut bsize_counts);

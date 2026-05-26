@@ -926,6 +926,11 @@ impl StreamEncoder {
             // Keyframe: `avg_inter_qindex` is unused by the KF threshold
             // path. Pass the running inter average anyway for clarity.
             self.rate_control.avg_frame_qindex_inter,
+            // W2.6 — KF branch ignores `noise_threshold_scale` (libvpx
+            // gates the noise multiplier on the non-key path only). Pass
+            // `1` for the no-op multiplier; the producer's value still
+            // applies on the inter path below.
+            1,
         );
 
         // F10.1b — pick the Y intra mode per leaf via
@@ -1081,6 +1086,12 @@ impl StreamEncoder {
             // pick the `>200`/`>220` thresholds[2] boost (foreman 100k
             // settles ≈211, so the `>200` branch fires).
             self.rate_control.avg_frame_qindex_inter,
+            // W2.6 — pre-analysis noise-driven VBP threshold scale.
+            // Returns 1 when the noise estimator is disabled (so this
+            // is a no-op multiplier for the common case where
+            // `noise_sensitivity == 0`); returns 2 or 4 on noisier
+            // input and broadens the threshold ladder accordingly.
+            self.pre_analysis.vbp_threshold_scale(),
         );
 
         // Convert the intra-shaped partition descriptors into inter-
@@ -1545,6 +1556,12 @@ fn choose_partitions_for_frame(
     ref_y: &[u8],
     is_keyframe: bool,
     avg_inter_qindex: u8,
+    // W2.6 — pre-analysis noise threshold scale. `1` keeps the legacy
+    // inter threshold ladder untouched; ≥2 multiplies the per-level
+    // VBP threshold so noisier inputs split less aggressively (matches
+    // libvpx `set_vbp_thresholds:588-598`). Keyframes ignore this
+    // value (the KF branch doesn't apply the noise scale).
+    noise_threshold_scale: u32,
 ) -> Vec<Vec<PartitionLeafDesc>> {
     let sb_cols = width_px / 64;
     let sb_rows = height_px / 64;
@@ -1575,6 +1592,7 @@ fn choose_partitions_for_frame(
                 frame_width: width_px,
                 frame_height: height_px,
                 avg_inter_qindex,
+                noise_threshold_scale,
             };
             let decision = choose_partitioning(&params);
             // E2 diagnostic (env-gated): accumulate per-8×8-cell area by

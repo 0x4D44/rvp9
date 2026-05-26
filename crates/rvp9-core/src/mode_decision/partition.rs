@@ -202,6 +202,17 @@ pub struct PartitionSearchParams<'a> {
     /// inter frames this picks the `>200` / `>220` `thresholds[2]`
     /// boost. Ignored on keyframes.
     pub avg_inter_qindex: u8,
+    /// W2.6 — vbp_threshold noise scale from pre-analysis. Mirrors the
+    /// noise-driven multiplier libvpx applies inside
+    /// `set_vbp_thresholds` (`vp9_encodeframe.c:588-598`): on the inter
+    /// branch the per-level threshold is multiplied by this factor
+    /// (1× / 2× / 4× for `NoiseLevel::Low|LowLow` / `Medium` / `High`
+    /// respectively — see
+    /// [`crate::pre_analysis::PreAnalysisState::vbp_threshold_scale`]).
+    /// Pass `1` to disable (default; no-op multiplier). The keyframe
+    /// threshold branch ignores this value (libvpx applies the scale
+    /// only on the non-key branch).
+    pub noise_threshold_scale: u32,
 }
 
 /// Per-level threshold for variance-based partition decisions.
@@ -282,7 +293,13 @@ impl VbpThresholds {
     /// classification), no noise/denoiser scaling, no
     /// `disable_16x16part_nonkey`. Those modulations are off at cpu-used
     /// 7 for our target inputs; see the divergence ledger.
-    fn for_inter(q_index: u8, avg_inter_qindex: u8, width: usize, height: usize) -> Self {
+    fn for_inter(
+        q_index: u8,
+        avg_inter_qindex: u8,
+        width: usize,
+        height: usize,
+        noise_threshold_scale: u32,
+    ) -> Self {
         // speed/cpu-used = 7 ⇒ variance_part_thresh_mult = 1.
         let (_dc, ac) = plane_dequant_pair(i32::from(q_index), QuantizerDeltas::Y);
         let base = ac as u64;
@@ -323,12 +340,22 @@ impl VbpThresholds {
         // Fold out the 256× fixed-point scale and floor at 1, exactly
         // as `for_keyframe` does.
         let scale = 256u64;
+        // W2.6 — apply the pre-analysis noise scale to the raw base
+        // **before** the 256× fold-out and the `.max(1)` floor, so the
+        // multiplier is preserved even when the unscaled per-level
+        // value would round to zero. Mirrors libvpx
+        // `set_vbp_thresholds:588-598`: `thresholds[i] *= noise_factor`
+        // is applied on the still-256×-fixed-point values, then the
+        // partition descent compares against per-pixel variance. Clamp
+        // the scale to ≥1 so a zero from the producer can't zero out
+        // every threshold (matches `vbp_threshold_scale`'s contract).
+        let noise_mult = u64::from(noise_threshold_scale.max(1));
         Self {
             thresholds: [
-                (t0 / scale).max(1),
-                (t1 / scale).max(1),
-                (t2 / scale).max(1),
-                (t3 / scale).max(1),
+                ((t0 * noise_mult) / scale).max(1),
+                ((t1 * noise_mult) / scale).max(1),
+                ((t2 * noise_mult) / scale).max(1),
+                ((t3 * noise_mult) / scale).max(1),
             ],
         }
     }
@@ -350,6 +377,7 @@ pub fn choose_partitioning(params: &PartitionSearchParams<'_>) -> PartitionDecis
             params.avg_inter_qindex,
             params.frame_width,
             params.frame_height,
+            params.noise_threshold_scale,
         )
     };
 
@@ -566,6 +594,10 @@ mod tests {
             frame_width: 64,
             frame_height: 64,
             avg_inter_qindex: q_index,
+            // W2.6 — default scale of 1 keeps the legacy threshold
+            // arithmetic untouched (the pre-analysis helper returns 1
+            // when its noise estimator is disabled).
+            noise_threshold_scale: 1,
         }
     }
 
@@ -1006,6 +1038,7 @@ mod tests {
             frame_width: 256, // small-res branch
             frame_height: 256,
             avg_inter_qindex: 230, // > 220 → t2 <<= 2
+            noise_threshold_scale: 1,
         };
         let d = choose_partitioning(&params);
         assert!(d.is_valid_partition());
@@ -1039,6 +1072,7 @@ mod tests {
             frame_width: 1024,
             frame_height: 512,
             avg_inter_qindex: 50,
+            noise_threshold_scale: 1,
         };
         let d = choose_partitioning(&params);
         assert!(d.is_valid_partition());
@@ -1068,6 +1102,7 @@ mod tests {
             frame_width: 1600,
             frame_height: 900,
             avg_inter_qindex: 50,
+            noise_threshold_scale: 1,
         };
         let d = choose_partitioning(&params);
         assert!(d.is_valid_partition());
@@ -1091,6 +1126,7 @@ mod tests {
             frame_width: 3840,
             frame_height: 2160,
             avg_inter_qindex: 50,
+            noise_threshold_scale: 1,
         };
         let d = choose_partitioning(&params);
         assert!(d.is_valid_partition());
@@ -1115,6 +1151,7 @@ mod tests {
             frame_width: 320, // <= 352
             frame_height: 480, // > 288 → second operand false
             avg_inter_qindex: 50,
+            noise_threshold_scale: 1,
         };
         let d = choose_partitioning(&params);
         assert!(d.is_valid_partition());
@@ -1139,6 +1176,7 @@ mod tests {
             frame_width: 1024, // < 1280
             frame_height: 768, // >= 720 → second operand false
             avg_inter_qindex: 50,
+            noise_threshold_scale: 1,
         };
         let d = choose_partitioning(&params);
         assert!(d.is_valid_partition());
@@ -1163,6 +1201,7 @@ mod tests {
             frame_width: 1600, // < 1920
             frame_height: 1200, // >= 1080 → second operand false
             avg_inter_qindex: 50,
+            noise_threshold_scale: 1,
         };
         let d = choose_partitioning(&params);
         assert!(d.is_valid_partition());
@@ -1187,8 +1226,51 @@ mod tests {
             frame_width: 256,
             frame_height: 256,
             avg_inter_qindex: 210, // 200 < x <= 220 → t2 <<= 1
+            noise_threshold_scale: 1,
         };
         let d = choose_partitioning(&params);
         assert!(d.is_valid_partition());
+    }
+
+    /// PROOF W2.6 (noise scale lifts inter thresholds) — libvpx
+    /// `vp9_encodeframe.c:588-598` multiplies the inter VBP threshold
+    /// by a noise-driven factor. Verify that `VbpThresholds::for_inter`
+    /// scales each per-level threshold by that factor (applied to the
+    /// pre-`/256` base, then floored at 1).
+    ///
+    /// Anti-G3: passing scale=2 vs scale=1 must lift the thresholds; a
+    /// stripped multiply would leave the values identical. We use a
+    /// high q (255) so the base ladder is large enough that the
+    /// multiplier is observable on every level (small-res levels
+    /// `t0 = base >> 3` are too small at low q to discriminate after
+    /// the `/256` fold-out + `.max(1)` floor).
+    #[test]
+    fn w2_6_for_inter_applies_noise_threshold_scale() {
+        // 720p inter branch (`width < 1280 && height < 720`): t0=base,
+        // t1=(5*base)>>2, t2=base<<7, t3=base<<2 — large enough at
+        // q=255 that the noise multiplier shows up post-256× fold.
+        let baseline = VbpThresholds::for_inter(/* q */ 255, /* avg_q */ 50, 1024, 512, 1);
+        let scaled_2 = VbpThresholds::for_inter(255, 50, 1024, 512, 2);
+        let scaled_4 = VbpThresholds::for_inter(255, 50, 1024, 512, 4);
+        for i in 0..4 {
+            assert!(
+                scaled_2.thresholds[i] > baseline.thresholds[i],
+                "level {i}: scale=2 must lift baseline ({} vs {})",
+                scaled_2.thresholds[i],
+                baseline.thresholds[i],
+            );
+            assert!(
+                scaled_4.thresholds[i] > scaled_2.thresholds[i],
+                "level {i}: scale=4 must lift scale=2 ({} vs {})",
+                scaled_4.thresholds[i],
+                scaled_2.thresholds[i],
+            );
+        }
+        // Scale=0 must clamp to 1 (no degenerate zero thresholds).
+        let scaled_0 = VbpThresholds::for_inter(255, 50, 1024, 512, 0);
+        assert_eq!(
+            scaled_0.thresholds, baseline.thresholds,
+            "scale=0 must clamp to 1× (no-op)",
+        );
     }
 }
