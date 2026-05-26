@@ -142,22 +142,16 @@ fn enc_unknown_short_flag_rejected() {
     );
 }
 
-/// rvp9enc must surface "[not yet]" decoder/encoder flags as hard errors
-/// — never silent no-ops. Pick one specifically marked `apply: None` in
-/// the flag table.
-#[test]
-fn enc_not_yet_flag_errors_loudly() {
-    let out = Command::new(enc_bin())
-        .args(["--webm", "in.y4m"])
-        .output()
-        .expect("run rvp9enc");
-    assert!(!out.status.success());
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("--webm") && stderr.contains("not supported yet"),
-        "stderr must reject --webm with 'not supported yet', got: {stderr}"
-    );
-}
+// `enc_not_yet_flag_errors_loudly` (former rvp9enc integration test) was
+// retired by W0.1 of the vpxenc parity port: every previously-rejected
+// flag (`--webm`, `--cpu-used`, `--rt`, ...) now has `apply: Some(_)` and
+// is stored on `EncOpts` for later waves to consume. The "recognised but
+// not supported yet" rejection contract that powers args::Flag::apply ==
+// None still exists and is unit-tested at
+// `crates/rvp9-cli/src/args.rs::tests::unsupported_flag_errors_not_silently_ignored`
+// against a synthetic flag table — it would re-engage automatically the
+// moment a new libvpx flag is added to rvp9enc's table without an
+// `apply` handler, so the catalogue is still fail-loud by construction.
 
 // ========================================================================
 // --codec validation (both binaries)

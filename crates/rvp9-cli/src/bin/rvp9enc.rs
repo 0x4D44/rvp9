@@ -20,7 +20,41 @@ use rvp9_io::y4m;
 use std::path::Path;
 use std::process::ExitCode;
 
+/// vpxenc deadline class (mirrors libvpx `vpxenc.c:123-130`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Deadline {
+    /// `--best` — best-quality deadline (libvpx `vpxenc.c:125`).
+    Best,
+    /// `--good` — good-quality deadline (libvpx `vpxenc.c:127`).
+    Good,
+    /// `--rt`  — real-time deadline (libvpx `vpxenc.c:129`).
+    Realtime,
+}
+
+/// vpxenc `--tune` distortion metric (libvpx `vpxenc.c` tune arg).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TuneMetric {
+    Psnr,
+    Ssim,
+}
+
+/// vpxenc `--tune-content` (libvpx `vpxenc.c:500-508`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TuneContent {
+    Default,
+    Screen,
+    Film,
+}
+
 /// Parsed encoder options (the config builder the flag table fills in).
+///
+/// Fields below the `// ---- W0.1: stored, not yet plumbed` divider are
+/// parsed and stored verbatim; later waves in the master inventory plumb
+/// them through to [`EncoderConfig`] / `SpeedFeatures` / SVC. Storing
+/// (instead of rejecting) lets us land the long tail of `vpxenc` flag
+/// parity in one cheap step, with a single PROOF test guarding against
+/// silent regression to the prior "recognised but not supported yet"
+/// error path.
 struct EncOpts {
     width: Option<u32>,
     height: Option<u32>,
@@ -34,6 +68,60 @@ struct EncOpts {
     verbose: bool,
     help: bool,
     version: bool,
+
+    // ---- W0.1: stored, not yet plumbed (master inventory A12 P0).
+    /// `--profile` (libvpx `vpxenc.c:200`). VP9: 0..=3.
+    profile: Option<u8>,
+    /// `--best` / `--good` / `--rt` (libvpx `vpxenc.c:125-130`).
+    deadline: Option<Deadline>,
+    /// `--cpu-used` (libvpx `vpxenc.c:434-435`). VP9 range: -9..=9.
+    cpu_used: Option<i32>,
+    /// `--threads` / `-t` (libvpx `vpxenc.c:198-199`).
+    threads: Option<u32>,
+    /// `--tile-columns` (libvpx `vpxenc.c:439-440`). log2, 0..=6.
+    tile_columns: Option<u8>,
+    /// `--tile-rows` (libvpx `vpxenc.c:441-443`). log2, 0..=2.
+    tile_rows: Option<u8>,
+    /// `--kf-min-dist` (libvpx `vpxenc.c:358-359`).
+    kf_min_dist: Option<u32>,
+    /// `--disable-kf` (libvpx `vpxenc.c` kf_disabled near line 362).
+    disable_kf: bool,
+    /// `--min-q` (libvpx `vpxenc.c` min_quantizer).
+    min_q: Option<u32>,
+    /// `--max-q` (libvpx `vpxenc.c` max_quantizer).
+    max_q: Option<u32>,
+    /// `--cq-level` (libvpx `vpxenc.c:385`).
+    cq_level: Option<u32>,
+    /// `--buf-sz` (libvpx `vpxenc.c:275-276`, ms).
+    buf_sz_ms: Option<u32>,
+    /// `--buf-initial-sz` (libvpx `vpxenc.c:277-278`, ms).
+    buf_initial_sz_ms: Option<u32>,
+    /// `--buf-optimal-sz` (libvpx `vpxenc.c:279`, ms).
+    buf_optimal_sz_ms: Option<u32>,
+    /// `--undershoot-pct` (libvpx `vpxenc.c:271-272`).
+    undershoot_pct: Option<u32>,
+    /// `--overshoot-pct` (libvpx `vpxenc.c:273-274`).
+    overshoot_pct: Option<u32>,
+    /// `--lossless` (libvpx `vpxenc.c:448-449`). 0/1.
+    lossless: Option<bool>,
+    /// `--frame-parallel` (libvpx `vpxenc.c:450-451`). 0/1.
+    frame_parallel: Option<bool>,
+    /// `--error-resilient` (libvpx `vpxenc.c:218-219`).
+    error_resilient: Option<u32>,
+    /// `--tune` (libvpx `vpxenc.c` tune arg).
+    tune: Option<TuneMetric>,
+    /// `--tune-content` (libvpx `vpxenc.c:500-508`).
+    tune_content: Option<TuneContent>,
+    /// `--noise-sensitivity` (libvpx `vpxenc.c:367-368`).
+    noise_sensitivity: Option<u32>,
+    /// `--svc` (libvpx `vpxenc.c` SVC enable).
+    svc: bool,
+    /// `--bit-depth` (libvpx `vpxenc.c:492-495`). 8/10/12.
+    bit_depth: Option<u8>,
+    /// `--psnr` (libvpx `vpxenc.c:135-136`).
+    psnr: bool,
+    /// `--webm` — WebM container output toggle.
+    webm: bool,
 }
 
 impl Default for EncOpts {
@@ -52,6 +140,34 @@ impl Default for EncOpts {
             verbose: false,
             help: false,
             version: false,
+
+            // ---- W0.1: stored, not yet plumbed.
+            profile: None,
+            deadline: None,
+            cpu_used: None,
+            threads: None,
+            tile_columns: None,
+            tile_rows: None,
+            kf_min_dist: None,
+            disable_kf: false,
+            min_q: None,
+            max_q: None,
+            cq_level: None,
+            buf_sz_ms: None,
+            buf_initial_sz_ms: None,
+            buf_optimal_sz_ms: None,
+            undershoot_pct: None,
+            overshoot_pct: None,
+            lossless: None,
+            frame_parallel: None,
+            error_resilient: None,
+            tune: None,
+            tune_content: None,
+            noise_sensitivity: None,
+            svc: false,
+            bit_depth: None,
+            psnr: false,
+            webm: false,
         }
     }
 }
@@ -90,35 +206,63 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             apply: Some(|_, _| Ok(())) },
         Flag { long: "verbose", short: Some('v'), arg: Arg::None, help: "verbose progress",
             apply: Some(|o, _| { o.verbose = true; Ok(()) }) },
-        // Recognised but not implemented yet — error if used.
-        Flag { long: "profile", short: None, arg: Arg::Required, help: "bitstream profile", apply: None },
-        Flag { long: "rt", short: None, arg: Arg::None, help: "real-time deadline", apply: None },
-        Flag { long: "good", short: None, arg: Arg::None, help: "good-quality deadline", apply: None },
-        Flag { long: "best", short: None, arg: Arg::None, help: "best-quality deadline", apply: None },
-        Flag { long: "cpu-used", short: None, arg: Arg::Required, help: "speed/quality tradeoff", apply: None },
-        Flag { long: "threads", short: Some('t'), arg: Arg::Required, help: "encode threads", apply: None },
-        Flag { long: "tile-columns", short: None, arg: Arg::Required, help: "log2 tile columns", apply: None },
-        Flag { long: "tile-rows", short: None, arg: Arg::Required, help: "log2 tile rows", apply: None },
-        Flag { long: "kf-min-dist", short: None, arg: Arg::Required, help: "min keyframe interval", apply: None },
-        Flag { long: "disable-kf", short: None, arg: Arg::None, help: "disable keyframes", apply: None },
-        Flag { long: "min-q", short: None, arg: Arg::Required, help: "minimum quantizer", apply: None },
-        Flag { long: "max-q", short: None, arg: Arg::Required, help: "maximum quantizer", apply: None },
-        Flag { long: "cq-level", short: None, arg: Arg::Required, help: "constant/constrained quality level", apply: None },
-        Flag { long: "buf-sz", short: None, arg: Arg::Required, help: "client buffer size (ms)", apply: None },
-        Flag { long: "buf-initial-sz", short: None, arg: Arg::Required, help: "initial buffer size (ms)", apply: None },
-        Flag { long: "buf-optimal-sz", short: None, arg: Arg::Required, help: "optimal buffer size (ms)", apply: None },
-        Flag { long: "undershoot-pct", short: None, arg: Arg::Required, help: "datarate undershoot %", apply: None },
-        Flag { long: "overshoot-pct", short: None, arg: Arg::Required, help: "datarate overshoot %", apply: None },
-        Flag { long: "lossless", short: None, arg: Arg::Required, help: "lossless coding", apply: None },
-        Flag { long: "frame-parallel", short: None, arg: Arg::Required, help: "frame-parallel decoding", apply: None },
-        Flag { long: "error-resilient", short: None, arg: Arg::Required, help: "error resilient mode", apply: None },
-        Flag { long: "tune", short: None, arg: Arg::Required, help: "distortion metric to tune", apply: None },
-        Flag { long: "tune-content", short: None, arg: Arg::Required, help: "content type to tune", apply: None },
-        Flag { long: "noise-sensitivity", short: None, arg: Arg::Required, help: "denoiser strength", apply: None },
-        Flag { long: "svc", short: None, arg: Arg::None, help: "scalable video coding", apply: None },
-        Flag { long: "bit-depth", short: None, arg: Arg::Required, help: "bit depth (8/10/12)", apply: None },
-        Flag { long: "psnr", short: None, arg: Arg::None, help: "report PSNR", apply: None },
-        Flag { long: "webm", short: None, arg: Arg::None, help: "WebM output", apply: None },
+        // W0.1: parsed and stored on EncOpts; later waves consume.
+        Flag { long: "profile", short: None, arg: Arg::Required, help: "bitstream profile (0..=3)",
+            apply: Some(|o, v| { o.profile = Some(parse_profile(v)?); Ok(()) }) },
+        Flag { long: "rt", short: None, arg: Arg::None, help: "real-time deadline",
+            apply: Some(|o, _| { o.deadline = Some(Deadline::Realtime); Ok(()) }) },
+        Flag { long: "good", short: None, arg: Arg::None, help: "good-quality deadline",
+            apply: Some(|o, _| { o.deadline = Some(Deadline::Good); Ok(()) }) },
+        Flag { long: "best", short: None, arg: Arg::None, help: "best-quality deadline",
+            apply: Some(|o, _| { o.deadline = Some(Deadline::Best); Ok(()) }) },
+        Flag { long: "cpu-used", short: None, arg: Arg::Required, help: "speed/quality tradeoff (-9..=9)",
+            apply: Some(|o, v| { o.cpu_used = Some(parse_cpu_used(v)?); Ok(()) }) },
+        Flag { long: "threads", short: Some('t'), arg: Arg::Required, help: "encode threads",
+            apply: Some(|o, v| { o.threads = Some(args::parse_value(v, "rvp9enc", "--threads")?); Ok(()) }) },
+        Flag { long: "tile-columns", short: None, arg: Arg::Required, help: "log2 tile columns (0..=6)",
+            apply: Some(|o, v| { o.tile_columns = Some(parse_log2(v, "--tile-columns", 6)?); Ok(()) }) },
+        Flag { long: "tile-rows", short: None, arg: Arg::Required, help: "log2 tile rows (0..=2)",
+            apply: Some(|o, v| { o.tile_rows = Some(parse_log2(v, "--tile-rows", 2)?); Ok(()) }) },
+        Flag { long: "kf-min-dist", short: None, arg: Arg::Required, help: "min keyframe interval",
+            apply: Some(|o, v| { o.kf_min_dist = Some(args::parse_value(v, "rvp9enc", "--kf-min-dist")?); Ok(()) }) },
+        Flag { long: "disable-kf", short: None, arg: Arg::None, help: "disable keyframes",
+            apply: Some(|o, _| { o.disable_kf = true; Ok(()) }) },
+        Flag { long: "min-q", short: None, arg: Arg::Required, help: "minimum quantizer",
+            apply: Some(|o, v| { o.min_q = Some(args::parse_value(v, "rvp9enc", "--min-q")?); Ok(()) }) },
+        Flag { long: "max-q", short: None, arg: Arg::Required, help: "maximum quantizer",
+            apply: Some(|o, v| { o.max_q = Some(args::parse_value(v, "rvp9enc", "--max-q")?); Ok(()) }) },
+        Flag { long: "cq-level", short: None, arg: Arg::Required, help: "constant/constrained quality level",
+            apply: Some(|o, v| { o.cq_level = Some(args::parse_value(v, "rvp9enc", "--cq-level")?); Ok(()) }) },
+        Flag { long: "buf-sz", short: None, arg: Arg::Required, help: "client buffer size (ms)",
+            apply: Some(|o, v| { o.buf_sz_ms = Some(args::parse_value(v, "rvp9enc", "--buf-sz")?); Ok(()) }) },
+        Flag { long: "buf-initial-sz", short: None, arg: Arg::Required, help: "initial buffer size (ms)",
+            apply: Some(|o, v| { o.buf_initial_sz_ms = Some(args::parse_value(v, "rvp9enc", "--buf-initial-sz")?); Ok(()) }) },
+        Flag { long: "buf-optimal-sz", short: None, arg: Arg::Required, help: "optimal buffer size (ms)",
+            apply: Some(|o, v| { o.buf_optimal_sz_ms = Some(args::parse_value(v, "rvp9enc", "--buf-optimal-sz")?); Ok(()) }) },
+        Flag { long: "undershoot-pct", short: None, arg: Arg::Required, help: "datarate undershoot %",
+            apply: Some(|o, v| { o.undershoot_pct = Some(args::parse_value(v, "rvp9enc", "--undershoot-pct")?); Ok(()) }) },
+        Flag { long: "overshoot-pct", short: None, arg: Arg::Required, help: "datarate overshoot %",
+            apply: Some(|o, v| { o.overshoot_pct = Some(args::parse_value(v, "rvp9enc", "--overshoot-pct")?); Ok(()) }) },
+        Flag { long: "lossless", short: None, arg: Arg::Required, help: "lossless coding (0/1)",
+            apply: Some(|o, v| { o.lossless = Some(parse_bool01(v, "--lossless")?); Ok(()) }) },
+        Flag { long: "frame-parallel", short: None, arg: Arg::Required, help: "frame-parallel decoding (0/1)",
+            apply: Some(|o, v| { o.frame_parallel = Some(parse_bool01(v, "--frame-parallel")?); Ok(()) }) },
+        Flag { long: "error-resilient", short: None, arg: Arg::Required, help: "error resilient mode",
+            apply: Some(|o, v| { o.error_resilient = Some(args::parse_value(v, "rvp9enc", "--error-resilient")?); Ok(()) }) },
+        Flag { long: "tune", short: None, arg: Arg::Required, help: "distortion metric to tune (psnr/ssim)",
+            apply: Some(|o, v| { o.tune = Some(parse_tune(v)?); Ok(()) }) },
+        Flag { long: "tune-content", short: None, arg: Arg::Required, help: "content type to tune (default/screen/film)",
+            apply: Some(|o, v| { o.tune_content = Some(parse_tune_content(v)?); Ok(()) }) },
+        Flag { long: "noise-sensitivity", short: None, arg: Arg::Required, help: "denoiser strength",
+            apply: Some(|o, v| { o.noise_sensitivity = Some(args::parse_value(v, "rvp9enc", "--noise-sensitivity")?); Ok(()) }) },
+        Flag { long: "svc", short: None, arg: Arg::None, help: "scalable video coding",
+            apply: Some(|o, _| { o.svc = true; Ok(()) }) },
+        Flag { long: "bit-depth", short: None, arg: Arg::Required, help: "bit depth (8/10/12)",
+            apply: Some(|o, v| { o.bit_depth = Some(parse_bit_depth(v)?); Ok(()) }) },
+        Flag { long: "psnr", short: None, arg: Arg::None, help: "report PSNR",
+            apply: Some(|o, _| { o.psnr = true; Ok(()) }) },
+        Flag { long: "webm", short: None, arg: Arg::None, help: "WebM output",
+            apply: Some(|o, _| { o.webm = true; Ok(()) }) },
     ]
 }
 
@@ -161,6 +305,73 @@ fn parse_fps(v: Option<String>) -> Result<(u32, u32), String> {
 
 fn req(v: Option<String>, flag: &str) -> Result<String, String> {
     v.ok_or_else(|| format!("rvp9enc: {flag} requires a value"))
+}
+
+// ---- W0.1 helpers: small parsers for the formerly-rejected flags.
+// Each cites the libvpx range it enforces (see EncOpts field comments).
+
+fn parse_profile(v: Option<String>) -> Result<u8, String> {
+    let n: u8 = args::parse_value(v, "rvp9enc", "--profile")?;
+    if n > 3 {
+        return Err(format!("rvp9enc: --profile={n} out of range (0..=3)"));
+    }
+    Ok(n)
+}
+
+fn parse_cpu_used(v: Option<String>) -> Result<i32, String> {
+    let n: i32 = args::parse_value(v, "rvp9enc", "--cpu-used")?;
+    if !(-9..=9).contains(&n) {
+        return Err(format!("rvp9enc: --cpu-used={n} out of range (-9..=9)"));
+    }
+    Ok(n)
+}
+
+fn parse_log2(v: Option<String>, flag: &str, max: u8) -> Result<u8, String> {
+    let n: u8 = args::parse_value(v, "rvp9enc", flag)?;
+    if n > max {
+        return Err(format!("rvp9enc: {flag}={n} out of range (0..={max})"));
+    }
+    Ok(n)
+}
+
+fn parse_bool01(v: Option<String>, flag: &str) -> Result<bool, String> {
+    match v.as_deref() {
+        Some("0") => Ok(false),
+        Some("1") => Ok(true),
+        Some(other) => Err(format!("rvp9enc: {flag}={other} not understood (use 0 or 1)")),
+        None => Err(format!("rvp9enc: {flag} requires a value")),
+    }
+}
+
+fn parse_tune(v: Option<String>) -> Result<TuneMetric, String> {
+    match v.as_deref() {
+        Some("psnr") => Ok(TuneMetric::Psnr),
+        Some("ssim") => Ok(TuneMetric::Ssim),
+        Some(other) => Err(format!("rvp9enc: --tune={other} not understood (use psnr or ssim)")),
+        None => Err("rvp9enc: --tune requires a value".to_string()),
+    }
+}
+
+fn parse_tune_content(v: Option<String>) -> Result<TuneContent, String> {
+    match v.as_deref() {
+        Some("default") => Ok(TuneContent::Default),
+        Some("screen") => Ok(TuneContent::Screen),
+        Some("film") => Ok(TuneContent::Film),
+        Some(other) => Err(format!(
+            "rvp9enc: --tune-content={other} not understood (use default/screen/film)"
+        )),
+        None => Err("rvp9enc: --tune-content requires a value".to_string()),
+    }
+}
+
+fn parse_bit_depth(v: Option<String>) -> Result<u8, String> {
+    match v.as_deref() {
+        Some("8") => Ok(8),
+        Some("10") => Ok(10),
+        Some("12") => Ok(12),
+        Some(other) => Err(format!("rvp9enc: --bit-depth={other} not understood (use 8/10/12)")),
+        None => Err("rvp9enc: --bit-depth requires a value".to_string()),
+    }
 }
 
 const USAGE: &str = "rvp9enc [options] -o <out.ivf> <input.y4m|input.yuv>";
@@ -365,4 +576,118 @@ fn read_raw_input(input: &Path, opts: &EncOpts) -> Result<FramesAndDims, String>
         frames.push((y, u, v));
     }
     Ok((frames, fps, coded_w, coded_h))
+}
+
+#[cfg(test)]
+mod tests {
+    //! PROOF tests for Wave 0 of the vpxenc parity port.
+    //!
+    //! These tests fail loudly if a formerly-wired flag is reverted to
+    //! `apply: None` (the prior "recognised but not supported yet"
+    //! rejection path), which is the master inventory's W0.1 anti-G3
+    //! guard. Each assertion below pins one flag → one EncOpts slot.
+
+    use super::*;
+
+    fn s(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    /// W0.1 PROOF — every formerly-rejected vpxenc flag is now parsed
+    /// and stored on `EncOpts`. If any `apply` slot regresses to `None`,
+    /// `args::parse` rejects the flag with "not supported yet" and this
+    /// test fails. Citations: libvpx `vpxenc.c:125-130, 198-200, 218,
+    /// 271-279, 358-368, 385, 434-450, 492, 500-508`.
+    #[test]
+    fn w0_1_all_formerly_rejected_flags_are_now_stored() {
+        let table = flag_table();
+        let argv = s(&[
+            "--profile=2",
+            "--rt",
+            "--cpu-used=5",
+            "--threads=4",
+            "--tile-columns=2",
+            "--tile-rows=1",
+            "--kf-min-dist=8",
+            "--disable-kf",
+            "--min-q=2",
+            "--max-q=63",
+            "--cq-level=32",
+            "--buf-sz=6000",
+            "--buf-initial-sz=4000",
+            "--buf-optimal-sz=5000",
+            "--undershoot-pct=25",
+            "--overshoot-pct=50",
+            "--lossless=0",
+            "--frame-parallel=1",
+            "--error-resilient=1",
+            "--tune=psnr",
+            "--tune-content=screen",
+            "--noise-sensitivity=2",
+            "--svc",
+            "--bit-depth=10",
+            "--psnr",
+            "--webm",
+        ]);
+        let mut opts = EncOpts::default();
+        let pos = args::parse(&table, &mut opts, &argv, "rvp9enc").unwrap_or_else(|e| {
+            panic!(
+                "W0.1 PROOF: parse() rejected a formerly-wired flag — \
+                 has any `apply: Some(_)` regressed to `None`? err={e}"
+            )
+        });
+        assert!(pos.is_empty(), "no positionals expected, got {pos:?}");
+        // Per-flag pinning — fails if the apply callback no longer
+        // writes to the corresponding EncOpts slot.
+        assert_eq!(opts.profile, Some(2));
+        assert_eq!(opts.deadline, Some(Deadline::Realtime));
+        assert_eq!(opts.cpu_used, Some(5));
+        assert_eq!(opts.threads, Some(4));
+        assert_eq!(opts.tile_columns, Some(2));
+        assert_eq!(opts.tile_rows, Some(1));
+        assert_eq!(opts.kf_min_dist, Some(8));
+        assert!(opts.disable_kf);
+        assert_eq!(opts.min_q, Some(2));
+        assert_eq!(opts.max_q, Some(63));
+        assert_eq!(opts.cq_level, Some(32));
+        assert_eq!(opts.buf_sz_ms, Some(6000));
+        assert_eq!(opts.buf_initial_sz_ms, Some(4000));
+        assert_eq!(opts.buf_optimal_sz_ms, Some(5000));
+        assert_eq!(opts.undershoot_pct, Some(25));
+        assert_eq!(opts.overshoot_pct, Some(50));
+        assert_eq!(opts.lossless, Some(false));
+        assert_eq!(opts.frame_parallel, Some(true));
+        assert_eq!(opts.error_resilient, Some(1));
+        assert_eq!(opts.tune, Some(TuneMetric::Psnr));
+        assert_eq!(opts.tune_content, Some(TuneContent::Screen));
+        assert_eq!(opts.noise_sensitivity, Some(2));
+        assert!(opts.svc);
+        assert_eq!(opts.bit_depth, Some(10));
+        assert!(opts.psnr);
+        assert!(opts.webm);
+    }
+
+    /// `--good` and `--best` are mutually exclusive with `--rt` (the
+    /// last one wins, mirroring vpxenc). Pin both directions so a
+    /// regression that drops `Deadline::Good`/`Best` is caught.
+    #[test]
+    fn w0_1_deadline_good_and_best_distinct_from_rt() {
+        let table = flag_table();
+        let mut a = EncOpts::default();
+        args::parse(&table, &mut a, &s(&["--good"]), "rvp9enc").unwrap();
+        assert_eq!(a.deadline, Some(Deadline::Good));
+        let mut b = EncOpts::default();
+        args::parse(&table, &mut b, &s(&["--best"]), "rvp9enc").unwrap();
+        assert_eq!(b.deadline, Some(Deadline::Best));
+    }
+
+    /// Range checks survive: libvpx VP9 enforces `--cpu-used` in
+    /// -9..=9 (`vpxenc.c:434-435`), so out-of-range must still reject.
+    #[test]
+    fn w0_1_cpu_used_range_enforced() {
+        let table = flag_table();
+        let mut o = EncOpts::default();
+        let err = args::parse(&table, &mut o, &s(&["--cpu-used=10"]), "rvp9enc").unwrap_err();
+        assert!(err.contains("out of range"), "{err}");
+    }
 }

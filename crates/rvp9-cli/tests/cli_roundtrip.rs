@@ -132,17 +132,26 @@ fn md5_is_deterministic_and_per_frame() {
     let _ = std::fs::remove_file(&ivf);
 }
 
+/// Unrecognised long options must still hard-error from rvp9enc — this
+/// is the unknown-flag rejection path (`args::parse` reports `unknown
+/// option`). The sibling "recognised but not supported yet" path
+/// (`apply: None`) was retired from rvp9enc's table by W0.1 of the
+/// vpxenc parity port (every previously-rejected flag is now stored on
+/// `EncOpts`). That path is still unit-tested against a synthetic table
+/// at `crates/rvp9-cli/src/args.rs::tests::unsupported_flag_errors_not_silently_ignored`,
+/// so it re-engages automatically the moment a new libvpx flag is added
+/// to the table without an `apply` handler.
 #[test]
 fn unsupported_flag_fails_loudly() {
     let out = Command::new(enc_bin())
-        .args(["--svc", "-o", "x.ivf", "in.y4m"])
+        .args(["--no-such-flag-xyz", "-o", "x.ivf", "in.y4m"])
         .output()
         .expect("run rvp9enc");
     assert!(!out.status.success(), "must exit non-zero");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("not supported yet"),
-        "expected 'not supported yet', got: {stderr}"
+        stderr.contains("unknown option") && stderr.contains("--no-such-flag-xyz"),
+        "expected 'unknown option' rejection, got: {stderr}"
     );
 }
 
@@ -164,30 +173,25 @@ fn non_multiple_of_64_rejected_clearly() {
 
 #[test]
 fn help_lists_supported_and_not_yet_tags() {
-    // Every CLI binary must mark at least some flags as `[supported]`
-    // — that's the load-bearing affordance for users scanning `--help`.
+    // Every CLI binary must mark its flags as `[supported]` in the
+    // `--help` listing — that's the load-bearing affordance for users
+    // scanning the table.
     //
-    // `[not yet]` is *also* expected to appear in the surface as long
-    // as the codec has unimplemented flags. As of e434ff5 the decoder
-    // (`rvp9dec`) has zero unimplemented flags — all 9 previously-
-    // unwired niche flags now accept gracefully — so `[not yet]` no
-    // longer appears in its help. The encoder still has many unwired
-    // flags. Asserting `[not yet]` *across the union* of binaries
-    // keeps the original intent (we surface unsupported features
-    // honestly to the user) without flagging "fully wired" as a
-    // regression.
-    let mut combined = String::new();
+    // The `[not yet]` tag is the catalogue marker for `apply: None`
+    // entries (libvpx flags recognised by rvp9 but not yet wired). As
+    // of W0.1 of the vpxenc parity port, every flag currently in the
+    // encoder's table is `apply: Some(_)` (stored on `EncOpts`, ready
+    // for downstream waves), so `[not yet]` does not appear today.
+    // The mechanism re-engages the moment a new libvpx flag is added
+    // without a handler — see args::tests for the synthetic-table
+    // proof. Asserting only `[supported]` keeps the user-facing
+    // affordance pinned without flagging "fully wired" as a regression.
     for bin in [enc_bin(), dec_bin()] {
         let out = Command::new(&bin).arg("--help").output().expect("run --help");
         assert!(out.status.success());
         let text = String::from_utf8_lossy(&out.stdout);
         assert!(text.contains("[supported]"), "no supported tag in {bin:?}");
-        combined.push_str(&text);
     }
-    assert!(
-        combined.contains("[not yet]"),
-        "no not-yet tag in any CLI binary; if the encoder is now fully wired, update this test",
-    );
 }
 
 // ---- Q.1.B: `--threads` wiring ------------------------------------------------
