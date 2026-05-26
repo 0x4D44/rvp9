@@ -705,6 +705,11 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
             .lag_in_frames
             .map(|v| v.min(MAX_LAG_BUFFERS as u32))
             .unwrap_or(0),
+        // W8 — ALTREF emission stays off in the CLI default; the user
+        // opts in via `--auto-alt-ref` (libvpx parity, not yet plumbed
+        // through `EncOpts`). The encoder self-gates on `lag_in_frames`
+        // being large enough to feed the temporal filter's peek.
+        enable_alt_ref: false,
     };
     let mut encoder = StreamEncoder::new(config).map_err(|e| {
         format!(
@@ -1236,5 +1241,6 @@ fn build_encoder_config_for_test(opts: &EncOpts) -> EncoderConfig {
         max_qindex: opts.max_q.map(|v| v.min(255) as u8).unwrap_or(255),
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
+        enable_alt_ref: false,
     }
 }

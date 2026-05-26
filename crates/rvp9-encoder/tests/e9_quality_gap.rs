@@ -142,6 +142,7 @@ fn measure_rvp9_fixed_q(fixed_q: u8, frames: &[YuvFrameBuf], framerate: f64) -> 
         noise_sensitivity: 0,
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
+        enable_alt_ref: false,
         min_qindex: 4,
         max_qindex: 255,
     };

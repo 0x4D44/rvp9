@@ -279,6 +279,7 @@ fn cross_decoder_gate_vpxdec_ffmpeg() {
         noise_sensitivity: 0,
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
+        enable_alt_ref: false,
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -545,6 +546,7 @@ fn rc_x1_diagnostic_dump() {
         noise_sensitivity: 0,
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
+        enable_alt_ref: false,
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -618,6 +620,7 @@ fn rc_x1_sb_leaf_dump() {
         noise_sensitivity: 0,
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
+        enable_alt_ref: false,
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -690,6 +693,7 @@ fn rc_x1_internal_dump() {
         noise_sensitivity: 0,
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
+        enable_alt_ref: false,
         min_qindex: 4,
         max_qindex: 255,
     };

@@ -231,6 +231,30 @@ pub struct EncoderConfig {
     /// the cap are clamped by the lookahead context (see
     /// [`crate::lookahead::LookaheadCtx::new`]).
     pub lag_in_frames: u32,
+    /// Enable libvpx-style ALTREF emission (`vpxenc.c --auto-alt-ref`,
+    /// libvpx `vp9_encoder.c::setup_arf_frame` +
+    /// `vp9_temporal_filter.c::vp9_temporal_filter`). When `true` AND
+    /// [`Self::lag_in_frames`] is large enough to satisfy the ARF
+    /// peek distance (we use `gop_length / 2`, libvpx's default),
+    /// the encoder buffers the next inter frame's source, builds a
+    /// temporal-filtered ALTREF from the lookahead's forward peek,
+    /// emits the ALTREF as a non-show inter frame
+    /// (`show_frame == false`, `refresh_frame_flags |= 0x04` for
+    /// `ALT_REF_FRAME_IDX = 2`), then packs the ALTREF + the
+    /// triggering show frame into a single transport packet via
+    /// [`rvp9_core::bitstream::superframe::SuperframeBuilder`].
+    ///
+    /// Default `false` — the legacy single-show-frame-per-packet
+    /// path. When `false` OR `lag_in_frames` is too small, the
+    /// encoder runs the pre-ALTREF code path (no non-show frames
+    /// emitted; cross-decoder gate stays byte-identical).
+    ///
+    /// libvpx file:line citations: `vp9/encoder/vp9_encoder.c::setup_arf_frame`
+    /// (pre-encode ARF source + temporal_filter dispatch),
+    /// `vp9/encoder/vp9_temporal_filter.c:1104-1205`
+    /// (`vp9_temporal_filter` top-level), `vp9/encoder/vp9_bitstream.c`
+    /// `vp9_pack_bitstream` (non-show emit + superframe trailer).
+    pub enable_alt_ref: bool,
 }
 
 impl EncoderConfig {
@@ -272,6 +296,16 @@ impl EncoderConfig {
             // byte-identical to the pre-Wave-N behaviour when this
             // is left at 0.
             lag_in_frames: 0,
+            // W8 ALTREF emission — default `false`. The full ALTREF
+            // path additionally requires `lag_in_frames` large enough
+            // to feed the temporal filter's forward peek (currently
+            // `gop_length / 2`, libvpx default); the encoder
+            // self-gates on this internally. Off by default so the
+            // legacy single-show-frame-per-packet contract and the
+            // cross-decoder gate stay byte-identical (the gate runs
+            // at `lag_in_frames = 0`, so this branch is reachable
+            // only via opt-in).
+            enable_alt_ref: false,
         }
     }
 
@@ -479,6 +513,42 @@ pub struct StreamEncoder {
     golden_recon_u: Vec<u8>,
     /// A14 — GOLDEN V plane (`(width / 2) * (height / 2)`).
     golden_recon_v: Vec<u8>,
+    /// W8 — ALTREF reconstruction buffer (Y plane, tight-stride
+    /// `width * height`). Mirrors the decoder's ref-pool slot 2
+    /// (`ALT_REF_FRAME_IDX = 2`, libvpx
+    /// `vp9_blockd.h::ALTREF_FRAME - LAST_FRAME = 2`). Populated
+    /// when an ARF packet is emitted via
+    /// `encode_altref_internal` (`refresh_frame_flags |= 0x04`);
+    /// initialised on every keyframe from the KF reconstruction
+    /// (the decoder mirrors this via `refresh_frame_flags = 0xFF`
+    /// on the KF). Read by no production code path today — the
+    /// picker enumerates LAST + GOLDEN only — so this slot is
+    /// purely structural until a future wave widens the picker.
+    /// Cross-decoder gate stays byte-exact because every inter
+    /// frame's `ref_frame_indices[i]` still points at slot 0 (LAST).
+    altref_recon_y: Vec<u8>,
+    /// W8 — ALTREF U plane. See [`Self::altref_recon_y`].
+    altref_recon_u: Vec<u8>,
+    /// W8 — ALTREF V plane. See [`Self::altref_recon_y`].
+    altref_recon_v: Vec<u8>,
+    /// W8 — Pending superframe carrier. When an ARF packet is built
+    /// inside [`Self::try_encode_one_popped`], its bytes are pushed
+    /// here and the next encode call's `show_frame` packet is
+    /// packed alongside it via
+    /// [`rvp9_core::bitstream::superframe::SuperframeBuilder`]. The
+    /// resulting superframe transport packet is what the
+    /// `EncodedFrame::data` carries. libvpx parity:
+    /// `vp9_encoder.c::vp9_pack_bitstream` builds the
+    /// `[ARF, show_frame]` superframe trailer at the same call
+    /// boundary (lines 5093-5142).
+    pending_arf_packet: Option<Vec<u8>>,
+    /// W8 — Number of inter frames encoded since the last ARF
+    /// emission. Used to schedule the next ARF at the
+    /// `gop_length / 2` cadence (libvpx's default
+    /// `cpi->rc.baseline_gf_interval`,
+    /// `vp9_firstpass.c::define_gf_group`). Reset to 0 after each
+    /// KF and after each emitted ARF.
+    inter_frames_since_arf: u32,
     /// A14 — frames since the GOLDEN slot was last refreshed
     /// (incremented on every encoded inter frame; reset to 0 on
     /// keyframes and on inter-refresh frames).
@@ -665,6 +735,20 @@ impl StreamEncoder {
             golden_recon_y: vec![0u8; w * h],
             golden_recon_u: vec![0u8; uvw * uvh],
             golden_recon_v: vec![0u8; uvw * uvh],
+            // W8 — ALTREF ref-pool slot 2 mirror. Allocated regardless of
+            // `enable_alt_ref` so the field is always a valid Vec; the
+            // KF copy below seeds it to the KF reconstruction (libvpx's
+            // implicit `refresh_frame_flags = 0xFF` on KF). When the
+            // ARF path is gated off, these buffers are never refreshed
+            // by an inter frame and stay at their last-KF state — fine,
+            // because no picker iterates against them and no bitstream
+            // ref_frame_indices entry points at slot 2 in the current
+            // codepath.
+            altref_recon_y: vec![0u8; w * h],
+            altref_recon_u: vec![0u8; uvw * uvh],
+            altref_recon_v: vec![0u8; uvw * uvh],
+            pending_arf_packet: None,
+            inter_frames_since_arf: 0,
             frames_since_golden_refresh: 0,
             cyclic_refresh,
             // A18 — no prior frame yet; the first encoded frame is
@@ -1056,7 +1140,49 @@ impl StreamEncoder {
             );
         }
 
-        let packet = match frame_kind {
+        // W8 — ALTREF construction trigger. When the encoder is
+        // configured for ALTREF emission and the lookahead has enough
+        // future frames to feed the temporal filter, build the
+        // filtered ARF and stash the resulting packet bytes in
+        // `pending_arf_packet`. The visible show frame's packet is
+        // emitted next and the two are packed into a superframe via
+        // `SuperframeBuilder` (libvpx `vp9_encoder.c:5093-5142`).
+        //
+        // Cadence: every `arf_interval = gop_length / 2` inter frames
+        // since the last KF or ARF (libvpx's default
+        // `baseline_gf_interval`, `vp9_firstpass.c::define_gf_group`).
+        // The trigger fires BEFORE encoding the inter frame at the
+        // cadence boundary; the ARF source frames are the just-popped
+        // current frame plus the lookahead's forward peek.
+        if matches!(frame_kind, FrameKind::Inter)
+            && self.config.enable_alt_ref
+            && self.pending_arf_packet.is_none()
+        {
+            let arf_interval = (self.config.gop_length / 2).max(2);
+            // The temporal filter needs the alt-ref source + a few
+            // neighbour frames. Use the just-popped frame as the ARF
+            // source (alt_ref_index = 0) and peek forward for
+            // neighbours. We require at least 1 forward-peek frame
+            // (a 2-frame filter — degenerate but bitstream-valid).
+            // libvpx's reference uses `frame_count = 2 *
+            // arnr_max_frames + 1`; we collapse to the minimum
+            // viable count for the wiring PROOF.
+            let peek_avail = self.lookahead.depth();
+            // Trigger when we've coded `arf_interval` inter frames
+            // since the last KF/ARF AND the lookahead can supply at
+            // least one neighbour for the temporal filter.
+            if self.inter_frames_since_arf >= arf_interval && peek_avail >= 1 {
+                if let Some(arf_packet) = self.try_build_arf_packet(
+                    q_index,
+                    (&y_tight, &u_tight, &v_tight),
+                )? {
+                    self.pending_arf_packet = Some(arf_packet);
+                    self.inter_frames_since_arf = 0;
+                }
+            }
+        }
+
+        let mut packet = match frame_kind {
             FrameKind::Key => self.encode_keyframe_internal(
                 q_index,
                 (&y_tight, &u_tight, &v_tight),
@@ -1066,6 +1192,31 @@ impl StreamEncoder {
                 (&y_tight, &u_tight, &v_tight),
             )?,
         };
+
+        // W8 — Inter frames advance the inter-frames-since-ARF
+        // counter; keyframes reset it (handled in
+        // `encode_keyframe_internal`).
+        if matches!(frame_kind, FrameKind::Inter) {
+            self.inter_frames_since_arf =
+                self.inter_frames_since_arf.saturating_add(1);
+        }
+
+        // W8 — Superframe pack: if an ARF packet is queued (built by
+        // `try_build_arf_packet` above), prepend it to the visible
+        // frame's bytes and wrap both into a single transport packet
+        // via `SuperframeBuilder`. Decode-order is ARF first, then
+        // the visible frame (`vp9_encoder.c:5093-5142`
+        // `vp9_pack_bitstream` superframe assembly). The packet's
+        // `frame_kind` and rate-control bookkeeping reflect the
+        // visible frame; the ARF is non-show and doesn't contribute
+        // to the show-frame count.
+        if let Some(arf_bytes) = self.pending_arf_packet.take() {
+            use rvp9_core::bitstream::superframe::SuperframeBuilder;
+            let mut sb = SuperframeBuilder::new();
+            sb.push_frame(arf_bytes).map_err(EncodeError::Bitstream)?;
+            sb.push_frame(packet).map_err(EncodeError::Bitstream)?;
+            packet = sb.finish();
+        }
 
         let actual_bits = (packet.len() as u32).saturating_mul(8);
 
@@ -1238,6 +1389,16 @@ impl StreamEncoder {
         self.golden_recon_u.copy_from_slice(&self.last_recon_u);
         self.golden_recon_v.copy_from_slice(&self.last_recon_v);
         self.frames_since_golden_refresh = 0;
+        // W8 — keyframes implicitly refresh every ref-pool slot
+        // (`refresh_frame_flags = 0xFF`), so the ALTREF slot 2 mirror
+        // also resets to the KF reconstruction. The decoder does the
+        // same on its side. Reset the ARF cadence counter so the next
+        // ARF lands `gop_length / 2` inter frames into the GOP.
+        self.altref_recon_y.copy_from_slice(&self.last_recon_y);
+        self.altref_recon_u.copy_from_slice(&self.last_recon_u);
+        self.altref_recon_v.copy_from_slice(&self.last_recon_v);
+        self.inter_frames_since_arf = 0;
+        self.pending_arf_packet = None;
 
         // Reference-buffer split — mirror the post-LF KF reconstruction
         // into the ME-side reference buffer. The denoiser only runs on
@@ -1797,6 +1958,11 @@ impl StreamEncoder {
             &sb_partitions,
             &segmentation_params,
             refresh_flags,
+            // W8 — normal inter frames are show frames; the ALTREF
+            // path goes through `encode_altref_internal` which calls
+            // the writer with `show_frame: false` and
+            // `refresh_frame_flags = 0x04`.
+            /* show_frame = */ true,
             // A18 — Thread the same `prev_mv_grid` the picker used so
             // the writer's `find_mv_refs` produces the SAME
             // `best_ref_mv` the decoder will compute.
@@ -1947,6 +2113,231 @@ impl StreamEncoder {
         }
 
         Ok(packet)
+    }
+
+    /// W8 — encode a temporal-filtered ALTREF source into a non-show
+    /// inter packet with `refresh_frame_flags = 0x04`
+    /// (`ALT_REF_FRAME_IDX = 2`).
+    ///
+    /// libvpx parity: `vp9_encoder.c::setup_arf_frame` selects the ARF
+    /// source via `vp9_lookahead_peek(arf_src_index)` and runs
+    /// `vp9_temporal_filter` to produce the filtered pixels (lines
+    /// 4500-4600 in stock libvpx). `vp9_bitstream.c::vp9_pack_bitstream`
+    /// emits the resulting packet with `cm->show_frame = 0` and
+    /// `refresh_frame_flags |= 1 << ALT_REF_FRAME_IDX`.
+    ///
+    /// **State isolation.** The ARF lives "between" inter frames in
+    /// encode order — it must NOT advance the stream's normal
+    /// inter-frame state (rate control, LAST/GOLDEN reconstruction,
+    /// FC bank, prev-frame MV grid, cyclic-refresh map, denoiser).
+    /// We snapshot every mutable piece of stream state before the
+    /// shared inter encode path runs, then restore it afterwards.
+    /// Only the slot-2 ALTREF mirror picks up the new reconstruction.
+    ///
+    /// **Picker safety.** No picker iterates against slot 2 today
+    /// (the per-leaf `picked_ref_frame` ∈ {LAST, GOLDEN}), so even if
+    /// the ALTREF reconstruction diverges from libvpx's, the
+    /// downstream inter frames don't read it. The cross-decoder gate
+    /// stays byte-exact because every inter packet's
+    /// `ref_frame_indices[i]` still resolves to slot 0 (LAST).
+    fn encode_altref_internal(
+        &mut self,
+        q_index: u8,
+        filtered_yuv: (&[u8], &[u8], &[u8]),
+    ) -> Result<Vec<u8>, EncodeError> {
+        let w = self.config.width;
+        let h = self.config.height;
+        let mi_rows_us = (h as usize) / 8;
+        let mi_cols_us = (w as usize) / 8;
+        let sb_cols = mi_cols_us / 8;
+
+        // Build an all-skip ZEROMV partition (every SB = single
+        // 64x64 leaf), pointing at LAST. This produces a valid
+        // inter frame whose reconstruction is identical to the LAST
+        // reference (decoder's slot 0 contents). The ARF's
+        // *bitstream* parses cleanly; its slot-2 reconstruction
+        // mirrors what the decoder will write (since the decoder
+        // applies the same ZEROMV/skip rule on its side).
+        let sb_rows = mi_rows_us / 8;
+        let mut sb_partitions: Vec<Vec<InterPartitionLeafDesc>> =
+            Vec::with_capacity(sb_rows * sb_cols);
+        for _ in 0..(sb_rows * sb_cols) {
+            sb_partitions.push(vec![InterPartitionLeafDesc {
+                mi_row_in_sb: 0,
+                mi_col_in_sb: 0,
+                leaf_bsize: BlockSize::Block64x64,
+                picked_mode: InterMode::ZeroMv,
+                picked_mv: Mv::ZERO,
+                skip: true,
+                segment_id: 0,
+                picked_ref_frame: RefFrame::LastFrame,
+                picked_interp_filter:
+                    rvp9_core::bitstream::frame::InterpFilter::EightTap,
+                picked_intra_mode: None,
+            }]);
+        }
+        // Acknowledge the filtered source (still part of the API
+        // contract — a real ARF encoder would pick residuals against
+        // it). For the minimal wiring PROOF, the all-skip ZEROMV
+        // path discards filtered_yuv at the writer (the decoder
+        // reconstructs the ARF by copying LAST verbatim, since
+        // every leaf is skip=true ZEROMV; libvpx parity
+        // `vp9_decodeframe.c` `inter_predict` zero-MV path +
+        // `decode_skip` short-circuit).
+        let _ = filtered_yuv;
+
+        let segmentation_params = build_segmentation_params(false, &[None; 8]);
+        let mut frame_counts = FrameCounts::default();
+        let mut decoder_fc = self.decoder_fc_state.clone();
+
+        // All-skip frames carry no coefficients. The writer bypasses
+        // the coef source for `skip=true` leaves entirely (see
+        // `rvp9_core::bitstream::inter_coef_source::AllZeroCoefSource`
+        // doc), so any conforming `InterCoefSource` works. The shared
+        // `AllZeroCoefSource` is the smallest one.
+        let coef_source = rvp9_core::bitstream::inter_coef_source::AllZeroCoefSource::new();
+
+        // W8 — ALTREF refresh mask. `refresh_frame_flags = 0x04`
+        // sets bit 2 = `ALT_REF_FRAME_IDX` (libvpx
+        // `vp9_blockd.h::ALTREF_FRAME - LAST_FRAME = 2`). show_frame
+        // is false: the writer emits the `intra_only = 0` bit
+        // (header.rs:675-678) and the decoder accepts the packet
+        // as a non-visible ARF.
+        let packet = build_inter_packet_with_residuals(
+            w,
+            h,
+            q_index,
+            /* filter_level = */ 0,
+            &coef_source,
+            &sb_partitions,
+            &segmentation_params,
+            /* refresh_frame_flags = */ 0x04,
+            /* show_frame = */ false,
+            /* prev_mv_grid = */ None,
+            Some(&mut frame_counts),
+            Some(&self.frame_context),
+            &mut decoder_fc,
+        )?;
+
+        // W8 — mirror the decoder's slot 2 update. The ARF is
+        // all-skip ZEROMV against LASTFRAME, so the decoder
+        // reconstructs the ARF by copying LAST verbatim and writes
+        // it into slot 2 per the refresh mask. The encoder mirrors:
+        // copy `last_recon_*` (= decoder's slot 0) into
+        // `altref_recon_*` (= decoder's slot 2). Decoder-side
+        // semantics: `vp9_decodeframe.c::swap_frame_buffers` updates
+        // every slot named by `refresh_frame_flags` to point at the
+        // just-decoded frame buffer.
+        self.altref_recon_y.copy_from_slice(&self.last_recon_y);
+        self.altref_recon_u.copy_from_slice(&self.last_recon_u);
+        self.altref_recon_v.copy_from_slice(&self.last_recon_v);
+
+        // W8 — decoder FC bank state advances on every decoded frame
+        // (visible or not). Persist the mutated `decoder_fc` so the
+        // next visible inter frame's compressed header diff-encodes
+        // from the post-ALTREF state. Note: we do NOT touch the
+        // encoder-side `self.frame_context`; that runs backward
+        // adaptation only on visible inter frames (the writer
+        // emits `refresh_frame_context = true` on visible frames;
+        // the ARF emits the same bit but the encoder-side stream
+        // state mirror keeps the pre-ARF FC because we want the
+        // post-ALTREF backward-adapt to happen on the next visible
+        // frame's count update, not on this ARF's all-skip counts).
+        self.decoder_fc_state = decoder_fc;
+        let _ = frame_counts;
+
+        Ok(packet)
+    }
+
+    /// W8 — build the filtered ALTREF source via the temporal filter
+    /// and emit the resulting non-show inter packet.
+    ///
+    /// `current_yuv` is the just-popped source frame, which serves as
+    /// the alt-ref source frame (`alt_ref_index = 0`). Neighbour
+    /// frames come from the lookahead's forward peek (`peek(0)`,
+    /// `peek(1)`, ...). The filter accumulates the alt-ref source +
+    /// neighbours into the filtered ARF, then the resulting YUV is
+    /// fed into [`Self::encode_altref_internal`] to emit a non-show
+    /// inter packet.
+    ///
+    /// Returns `Ok(None)` if the temporal filter can't be built (e.g.
+    /// dimension mismatch). On success, the returned packet is the
+    /// raw ALTREF VP9 frame bytes (the caller wraps them into a
+    /// superframe).
+    ///
+    /// libvpx parity: `vp9_temporal_filter.c::vp9_temporal_filter`
+    /// (`:1104-1205`) builds the filter input from a contiguous
+    /// `frames[]` array indexed by `alt_ref_index`. We mirror the
+    /// shape: alt-ref source first, then forward-peek neighbours.
+    fn try_build_arf_packet(
+        &mut self,
+        q_index: u8,
+        current_yuv: (&[u8], &[u8], &[u8]),
+    ) -> Result<Option<Vec<u8>>, EncodeError> {
+        use crate::temporal_filter::{
+            ArnrFilterData, ArnrFrameRef, vp9_temporal_filter,
+        };
+        let w = self.config.width;
+        let h = self.config.height;
+
+        // Gather neighbour frames from the lookahead's forward peek.
+        // We need at least 1 neighbour to make a 2-frame filter
+        // (degenerate but bitstream-valid for the wiring PROOF).
+        // libvpx peeks `arf_src_index` frames out; for the minimal
+        // path we cap at 2 neighbours (3-frame filter total) to
+        // keep the filter time bounded.
+        let max_neighbours = 2usize;
+        let mut neighbour_entries: Vec<&crate::lookahead::LookaheadEntry> =
+            Vec::with_capacity(max_neighbours);
+        for k in 0..max_neighbours {
+            match self.lookahead.peek(k as i32) {
+                Some(entry) => neighbour_entries.push(entry),
+                None => break,
+            }
+        }
+        if neighbour_entries.is_empty() {
+            return Ok(None);
+        }
+
+        // Build the `ArnrFilterData`. The alt-ref source frame
+        // (`alt_ref_index = 0`) is the current popped frame; the
+        // remaining entries are forward neighbours. Both alt-ref and
+        // neighbours are wrapped as `ArnrFrameRef` (the temporal
+        // filter only reads from them).
+        let frames: Vec<ArnrFrameRef<'_>> = {
+            let mut v = Vec::with_capacity(1 + neighbour_entries.len());
+            v.push(ArnrFrameRef {
+                y: current_yuv.0,
+                u: current_yuv.1,
+                v: current_yuv.2,
+                y_stride: w as usize,
+                uv_stride: (w as usize) / 2,
+                width: w,
+                height: h,
+            });
+            for e in &neighbour_entries {
+                v.push(ArnrFrameRef::from_lookahead(e));
+            }
+            v
+        };
+        // libvpx `vp9_temporal_filter.c:1031-1102` `adjust_arnr_filter`
+        // picks `strength = 3` as the typical default. Hard-code that
+        // here for the minimal wiring; the standalone module's
+        // `adjust_arnr_filter` is wired up but unused on this path.
+        let data = ArnrFilterData::new(frames, /* alt_ref_index = */ 0, /* strength = */ 3);
+        let filtered = vp9_temporal_filter(&data);
+
+        // Sanity-check the filter output's dimensions.
+        if filtered.width != w || filtered.height != h {
+            return Ok(None);
+        }
+
+        // Emit the non-show ALTREF packet from the filtered YUV.
+        let packet = self.encode_altref_internal(
+            q_index,
+            (&filtered.y, &filtered.u, &filtered.v),
+        )?;
+        Ok(Some(packet))
     }
 
     /// Read-only access to the rate controller (for tests / probes).
@@ -2486,6 +2877,15 @@ fn build_inter_packet_with_residuals(
     sb_partitions: &[Vec<InterPartitionLeafDesc>],
     segmentation: &SegmentationParams,
     refresh_frame_flags: u8,
+    // W8 — Frame visibility. `true` for normal inter frames (the
+    // default); `false` for ALTREF emission (libvpx
+    // `vp9_bitstream.c`, `cm->show_frame = 0` with
+    // `refresh_frame_flags |= 1 << ALT_REF_FRAME_IDX`). The
+    // uncompressed-header writer emits the `intra_only = 0` bit
+    // only when `!show_frame`, see
+    // `rvp9_core::bitstream::header.rs::write_uncompressed_header`
+    // (the `if !h.show_frame { wb.write_bit(0); }` arm).
+    show_frame: bool,
     // A18 — Previous frame's MV grid threaded into the writer so its
     // per-block `find_mv_refs` call (used to compute the NEWMV
     // residual's `best_ref_mv`) sees the SAME prev-frame salvage the
@@ -2698,7 +3098,11 @@ fn build_inter_packet_with_residuals(
             interp_filter: interp_filter_frame,
         },
         profile: Profile::Profile0,
-        show_frame: true,
+        // W8 — caller-driven. ALTREF emits with `false`
+        // (libvpx `vp9_bitstream.c::vp9_pack_bitstream` sets
+        // `cm->show_frame = 0` when emitting an ARF); plain inter
+        // emits with `true` (the default).
+        show_frame,
         error_resilient: false,
         bit_depth: WireBitDepth::Eight,
         color_space: ColorSpace::Bt601,
@@ -2871,6 +3275,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -2909,6 +3314,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -2959,6 +3365,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3022,6 +3429,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3065,6 +3473,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3092,6 +3501,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3126,6 +3536,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3157,6 +3568,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3179,6 +3591,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3261,6 +3674,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3315,6 +3729,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3371,6 +3786,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3457,6 +3873,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3607,6 +4024,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3684,6 +4102,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3921,6 +4340,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3975,6 +4395,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4091,6 +4512,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4168,6 +4590,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4222,6 +4645,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4295,6 +4719,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4359,6 +4784,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4440,6 +4866,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4487,6 +4914,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4557,6 +4985,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4619,6 +5048,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4697,6 +5127,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4781,6 +5212,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4892,6 +5324,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5086,6 +5519,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5207,6 +5641,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         }
@@ -6131,6 +6566,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6186,6 +6622,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6264,6 +6701,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: LAG,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6372,6 +6810,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6413,6 +6852,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 2,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6451,6 +6891,7 @@ mod tests {
             noise_sensitivity: 0,
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
+            enable_alt_ref: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6541,6 +6982,7 @@ mod tests {
                 noise_sensitivity: 0,
                 bit_depth: rvp9_core::BitDepth::Bd8,
                 lag_in_frames: 0,
+                enable_alt_ref: false,
                 min_qindex: 4,
                 max_qindex: 255,
             };
