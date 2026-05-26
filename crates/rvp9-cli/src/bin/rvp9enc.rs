@@ -436,8 +436,14 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
     //
     // W0.2(vpxenc parity, A12 P1) — `--cpu-used` and the
     // `--rt`/`--good`/`--best` deadline tri-state plumb through here.
-    // libvpx vpxenc defaults: speed = 0, deadline = good
-    // (`third_party/libvpx/vpxenc.c:434-435, 127-128`).
+    //
+    // W0.4(vpxenc parity, A7 P1+P2) — defaults pin to rvp9's actual
+    // op-point: `cpu-used=7 --rt`. vpxenc's library defaults are
+    // (`cpu-used=0 --good`, `vpxenc.c:434-435, 127-128`), but rvp9
+    // doesn't yet have a functional good-quality / best-quality path
+    // (those land with Wave 4's RDO driver); until then the CLI's
+    // implicit defaults must mirror what rvp9 can actually encode
+    // today. Flip back to (0, Good) when W4 lands.
     let config = EncoderConfig {
         width: coded_w,
         height: coded_h,
@@ -446,8 +452,8 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
         gop_length: opts.gop_length.unwrap_or(60),
         aq_mode: opts.aq_mode,
         use_prev_frame_mvs: false,
-        speed: opts.cpu_used.unwrap_or(0),
-        deadline: opts.deadline.unwrap_or(Deadline::Good),
+        speed: opts.cpu_used.unwrap_or(7),
+        deadline: opts.deadline.unwrap_or(Deadline::Realtime),
     };
     let mut encoder = StreamEncoder::new(config).map_err(|e| {
         format!(
@@ -717,12 +723,14 @@ mod tests {
         assert_eq!(cfg.speed, -1);
         assert_eq!(cfg.deadline, Deadline::Best);
 
-        // Defaults — neither flag given. libvpx defaults: speed = 0,
-        // deadline = good (vpxenc.c:434-435, 127-128).
+        // Defaults — neither flag given. W0.4 pins rvp9's CLI default
+        // to (speed=7, Realtime), the actual op point rvp9 can encode
+        // today. (The vpxenc-canonical default is (0, Good); W4 brings
+        // the RDO path online and flips this back.)
         let o = EncOpts::default();
         let cfg = build_encoder_config_for_test(&o);
-        assert_eq!(cfg.speed, 0);
-        assert_eq!(cfg.deadline, Deadline::Good);
+        assert_eq!(cfg.speed, 7);
+        assert_eq!(cfg.deadline, Deadline::Realtime);
 
         // The encoder accepts the config end-to-end (sanity check —
         // we wired a real public field, not a phantom one).
@@ -749,7 +757,7 @@ fn build_encoder_config_for_test(opts: &EncOpts) -> EncoderConfig {
         gop_length: opts.gop_length.unwrap_or(60),
         aq_mode: opts.aq_mode,
         use_prev_frame_mvs: false,
-        speed: opts.cpu_used.unwrap_or(0),
-        deadline: opts.deadline.unwrap_or(Deadline::Good),
+        speed: opts.cpu_used.unwrap_or(7),
+        deadline: opts.deadline.unwrap_or(Deadline::Realtime),
     }
 }

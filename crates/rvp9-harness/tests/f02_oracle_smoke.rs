@@ -75,8 +75,8 @@ fn single_sb_config() -> EncoderConfig {
         gop_length: 30,
         aq_mode: AqMode::Off,
         use_prev_frame_mvs: false,
-        speed: 0,
-        deadline: rvp9_encoder::Deadline::Good,
+        speed: 7,
+        deadline: rvp9_encoder::Deadline::Realtime,
     }
 }
 

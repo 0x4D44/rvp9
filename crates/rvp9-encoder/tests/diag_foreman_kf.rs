@@ -79,8 +79,8 @@ fn diag_foreman_kf() {
             gop_length: 1,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: rvp9_encoder::Deadline::Good,
+            speed: 7,
+            deadline: rvp9_encoder::Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
         let mut dec = Decoder::new();

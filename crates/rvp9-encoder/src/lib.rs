@@ -2360,6 +2360,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // `cb_pred_filter_search` chessboard predicate at
     // `vp9_pickmode.c:1855`.
     chessboard_index: u32,
+    // W0.4(vpxenc parity, A7 P1+P2) — per-frame speed-feature inputs.
+    // The dispatcher at the top of this function computes the
+    // `SpeedFeatures` set from `(speed, deadline, width, height,
+    // content_tier)` and the per-leaf `PickInterModeParams` literals
+    // below read from it instead of hard-coding the §11 values.
+    speed: i32,
+    deadline: rvp9_core::mode_decision::speed_features::Deadline,
+    content_tier: rvp9_core::mode_decision::speed_features::ContentTier,
 ) -> VecBackedInterCoefSource {
     use rvp9_core::bitstream::frame::{InterpFilter as WireInterpFilter, MAX_INTER_REFS};
     use rvp9_core::bitstream::header::FrameKind as WireFrameKind;
@@ -2376,10 +2384,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     use rvp9_core::mode_decision::nonrd_partition::{
         NonRdDescentParams, PartitionRdCandidate, nonrd_pick_partition, variance_hint_bounds,
     };
+    use rvp9_core::mode_decision::speed_features::{self as sf_mod};
     use rvp9_core::mv_search::int_pro_me::int_pro_motion_estimation;
     use rvp9_core::mv_search::mv_limits::MvLimits;
     use rvp9_core::mv_search::{PlaneRef, init_dsmotion_compensation};
     use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers, plane_dequant_pair};
+
+    // W0.4: compute the per-frame `SpeedFeatures` once. The dispatcher
+    // is pure — no side effects on `cpi` like libvpx's
+    // `vp9_set_speed_features_framesize_{independent,dependent}` —
+    // and the result is consumed by every per-leaf
+    // `PickInterModeParams` literal below.
+    let sf = sf_mod::dispatch(speed, deadline, width, height, content_tier);
 
     let w = width as usize;
     let h = height as usize;
@@ -3058,16 +3074,20 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             scene_change_detected: false,
                             inter_mode_mask:
                                 rvp9_core::mode_decision::inter::default_inter_mode_mask(),
-                            limit_newmv_early_exit: true,
-                            bias_golden: true,
+                            // W0.4: SF fields now flow from the
+                            // dispatcher computed at the top of this
+                            // function; the literal previously
+                            // hard-coded the cpu-used-6/7 RT values.
+                            limit_newmv_early_exit: sf.limit_newmv_early_exit,
+                            bias_golden: sf.bias_golden,
                             frames_since_golden,
-                            cb_pred_filter_search: false,
+                            cb_pred_filter_search: sf.cb_pred_filter_search,
                             mi_row: leaf_mi_row as u32,
                             mi_col: leaf_mi_col as u32,
                             chessboard_index,
-                            disable_golden_ref: false,
-                            max_intra_bsize: rvp9_core::block::BlockSize::Block32x32,
-                            rt_intra_dc_only_low_content: false,
+                            disable_golden_ref: sf.disable_golden_ref,
+                            max_intra_bsize: sf.max_intra_bsize,
+                            rt_intra_dc_only_low_content: sf.rt_intra_dc_only_low_content,
                         };
                         let result = pick_inter_mode(&pick_params);
                         // Translate to the descent's PartitionRdCandidate.
@@ -3712,16 +3732,20 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     //    here keeps intra-fallback quality at speed 6/7.
                     inter_mode_mask:
                         rvp9_core::mode_decision::inter::default_inter_mode_mask(),
-                    limit_newmv_early_exit: true,
-                    bias_golden: true,
+                    // W0.4: see top of `pick_and_simulate_inter_
+                    // encode_partitions` — the dispatcher computed
+                    // `sf` once per frame and every per-leaf literal
+                    // reads from it instead of hard-coding §11 values.
+                    limit_newmv_early_exit: sf.limit_newmv_early_exit,
+                    bias_golden: sf.bias_golden,
                     frames_since_golden,
-                    cb_pred_filter_search: false,
+                    cb_pred_filter_search: sf.cb_pred_filter_search,
                     mi_row: leaf_mi_row as u32,
                     mi_col: leaf_mi_col as u32,
                     chessboard_index,
-                    disable_golden_ref: false,
-                    max_intra_bsize: rvp9_core::block::BlockSize::Block32x32,
-                    rt_intra_dc_only_low_content: false,
+                    disable_golden_ref: sf.disable_golden_ref,
+                    max_intra_bsize: sf.max_intra_bsize,
+                    rt_intra_dc_only_low_content: sf.rt_intra_dc_only_low_content,
                 };
                 let unified_pick = pick_inter_mode(&pick_params);
 
@@ -5178,8 +5202,8 @@ mod tests {
             gop_length: 30,
             aq_mode: frame_loop::AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         }
     }
 

@@ -192,10 +192,16 @@ impl EncoderConfig {
             gop_length: 60,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: true,
-            // libvpx vpxenc defaults: cpu_used = 0, deadline = good
-            // (`vpxenc.c:434-435, 127-128`).
-            speed: 0,
-            deadline: Deadline::Good,
+            // W0.4(vpxenc parity, A7 P2): rvp9 op-point defaults —
+            // `cpu-used=7 --rt`. This matches the §11 hardcodes the
+            // dispatcher replaces (libvpx `vp9_speed_features.c:585-810`,
+            // speed 5+ RT path); preserves bit-identical behaviour for
+            // every existing caller that builds `EncoderConfig` via
+            // this constructor. Override per-call when porting the
+            // slower presets (cpu-used 0..=4 RDO, W4) or higher
+            // realtime ones (cpu-used 8/9, W7) lands.
+            speed: 7,
+            deadline: Deadline::Realtime,
         }
     }
 
@@ -1037,6 +1043,15 @@ impl StreamEncoder {
             // `current_video_frame & 1`).
             self.frames_since_golden_refresh,
             self.frames_since_golden_refresh & 1,
+            // W0.4(vpxenc parity, A7 P1+P2) — per-frame
+            // speed-feature dispatcher inputs from `EncoderConfig`.
+            // `--tune-content` is parsed by the CLI (W0.1) but not
+            // plumbed onto `EncoderConfig` yet; default to
+            // `ContentTier::Default` until a content-tier field is
+            // added in a later wave (no encoder consumer yet).
+            self.config.speed,
+            self.config.deadline,
+            rvp9_core::mode_decision::speed_features::ContentTier::Default,
         );
 
         // F11.0 — apply the in-loop deblocking filter to the encoder's
@@ -2093,8 +2108,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -2126,8 +2141,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -2171,8 +2186,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -2229,8 +2244,8 @@ mod tests {
             gop_length: 3,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -2267,8 +2282,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc_low = StreamEncoder::new(cfg_low).unwrap();
         // Pump a few KF-then-inter cycles so the buffer feedback
@@ -2289,8 +2304,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc_high = StreamEncoder::new(cfg_high).unwrap();
         let mut last_high_q = 0u8;
@@ -2318,8 +2333,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(128, 64);
@@ -2344,8 +2359,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         assert!(StreamEncoder::new(cfg).is_err());
     }
@@ -2361,8 +2376,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2438,8 +2453,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2487,8 +2502,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2538,8 +2553,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2619,8 +2634,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2764,8 +2779,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2836,8 +2851,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -3068,8 +3083,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y0, u0, v0) = gradient_frame(128, 128);
@@ -3117,8 +3132,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -3228,8 +3243,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -3300,8 +3315,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -3349,8 +3364,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -3417,8 +3432,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3476,8 +3491,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3552,8 +3567,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3594,8 +3609,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::CyclicRefresh,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3659,8 +3674,8 @@ mod tests {
             gop_length: 100, // single KF, then N inter frames
             aq_mode: AqMode::CyclicRefresh,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3716,8 +3731,8 @@ mod tests {
             gop_length: 6, // KF at frames 0 and 6
             aq_mode: AqMode::CyclicRefresh,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3789,8 +3804,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::CyclicRefresh,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -3868,8 +3883,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::CyclicRefresh,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -3974,8 +3989,8 @@ mod tests {
             gop_length: 100, // single KF
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let cfg_on = EncoderConfig { aq_mode: AqMode::CyclicRefresh, ..cfg_off };
 
@@ -4163,8 +4178,8 @@ mod tests {
             gop_length: 100,
             aq_mode: AqMode::CyclicRefresh,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -4279,8 +4294,8 @@ mod tests {
             gop_length: 30,
             aq_mode: AqMode::Off,
             use_prev_frame_mvs: false,
-            speed: 0,
-            deadline: Deadline::Good,
+            speed: 7,
+            deadline: Deadline::Realtime,
         }
     }
 
@@ -4957,6 +4972,95 @@ mod tests {
                 assert!(!skips[idx], "16x16 leaf row {r} col {c} should be skip=false");
             }
         }
+    }
+
+    /// W0.4 PROOF — the speed-features dispatcher is the source of
+    /// truth for the per-leaf `PickInterModeParams` literal in
+    /// `pick_and_simulate_inter_encode_partitions`. Changing
+    /// `EncoderConfig.speed` is observable in the encoded bytes.
+    ///
+    /// Mechanism: at speed 6, the dispatcher returns
+    /// `cb_pred_filter_search = true` for resolutions > 1280×720
+    /// (libvpx `vp9_speed_features.c:658`); at the same resolution
+    /// speed 7 returns `false`. The picker's per-CB interp-filter
+    /// search consumes this gate at `vp9_pickmode.c:1852-1858`, so
+    /// the chosen interpolation filter (and therefore the bytes the
+    /// writer emits) diverges between the two encodes.
+    ///
+    /// 1280×720 exactly sits on the libvpx threshold (`size >
+    /// 1280*720` requires strict greater-than), so use 1280×768 —
+    /// the next multiple of 64 above 720, which exceeds the gate.
+    ///
+    /// If the W0.4 wiring is stripped (the dispatcher's output is
+    /// ignored and the §11 hardcodes return), both encodes pick the
+    /// same modes and the bytes match — failing this test.
+    #[test]
+    fn w0_4_dispatcher_wiring_changes_encoded_bytes() {
+        const W: u32 = 1280;
+        const H: u32 = 768;
+
+        /// Build a frame with a translating bright square so the
+        /// picker has a real NEWMV/ZERO/NEAREST choice. Without a
+        /// moving feature the picker collapses to a degenerate ZERO
+        /// pick and SF gates have no observable effect.
+        fn moving_square(frame_idx: i32) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+            let w = W as usize;
+            let h = H as usize;
+            let mut y = vec![0u8; w * h];
+            // Gradient background so non-square SBs have real content.
+            for r in 0..h {
+                for c in 0..w {
+                    y[r * w + c] = ((r ^ c) & 0xff) as u8;
+                }
+            }
+            // Bright 32×32 square at (32 * frame_idx, 32 * frame_idx).
+            let sq = 32usize;
+            let off = (32 * frame_idx).clamp(0, (w - sq) as i32) as usize;
+            for r in 0..sq {
+                for c in 0..sq {
+                    let rr = (off + r).min(h - 1);
+                    let cc = (off + c).min(w - 1);
+                    y[rr * w + cc] = 230;
+                }
+            }
+            let u = vec![128u8; (w / 2) * (h / 2)];
+            let v = vec![128u8; (w / 2) * (h / 2)];
+            (y, u, v)
+        }
+
+        fn encode_clip_at(speed: i32) -> Vec<u8> {
+            let cfg = EncoderConfig {
+                width: W,
+                height: H,
+                framerate: 30.0,
+                target_bitrate_bps: 2_000_000,
+                gop_length: 30,
+                aq_mode: AqMode::Off,
+                use_prev_frame_mvs: false,
+                speed,
+                deadline: Deadline::Realtime,
+            };
+            let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
+            let mut bytes = Vec::new();
+            for i in 0..3i32 {
+                let (y, u, v) = moving_square(i);
+                let pkt = enc.encode_frame(&yuv_view(&y, &u, &v, W as usize)).unwrap();
+                bytes.extend_from_slice(&pkt.data);
+            }
+            bytes
+        }
+
+        let at_6 = encode_clip_at(6);
+        let at_7 = encode_clip_at(7);
+        assert_ne!(
+            at_6, at_7,
+            "W0.4 PROOF: at 1280×768, speed 6 vs 7 must produce \
+             different encoded bytes (the dispatcher flips \
+             cb_pred_filter_search between them, libvpx \
+             vp9_speed_features.c:658). If this assertion fails, the \
+             dispatcher's output is being ignored and the §11 \
+             hardcodes are still live somewhere."
+        );
     }
 }
 

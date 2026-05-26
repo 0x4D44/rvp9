@@ -65,7 +65,12 @@ def transform(text: str, deadline_path: str) -> tuple[str, int]:
             continue
         out.append(text[last:m.end()])
         indent = m.group("indent")
-        out.append(f"{indent}speed: 0,\n{indent}deadline: {deadline_path}::Good,\n")
+        # W0.4 update: rvp9 op-point default is cpu-used=7, Realtime
+        # (matches §11 hardcodes). Previously emitted (0, Good) — vpxenc
+        # default — which the W0.3 dispatcher would translate to a
+        # *different* SF set, breaking existing tests that implicitly
+        # depended on §11 behaviour. See W0.4 commit for rationale.
+        out.append(f"{indent}speed: 7,\n{indent}deadline: {deadline_path}::Realtime,\n")
         last = m.end()
         count += 1
     out.append(text[last:])

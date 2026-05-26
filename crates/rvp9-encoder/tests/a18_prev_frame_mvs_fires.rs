@@ -90,8 +90,8 @@ fn make_encoder(use_prev_frame_mvs: bool) -> StreamEncoder {
         gop_length: 32,
         aq_mode: AqMode::Off,
         use_prev_frame_mvs,
-        speed: 0,
-        deadline: rvp9_encoder::Deadline::Good,
+        speed: 7,
+        deadline: rvp9_encoder::Deadline::Realtime,
     };
     StreamEncoder::new(cfg).expect("StreamEncoder::new")
 }

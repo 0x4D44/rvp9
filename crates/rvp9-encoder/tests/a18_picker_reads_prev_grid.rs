@@ -88,8 +88,8 @@ fn a18_picker_reads_prev_grid_when_activated() {
         aq_mode: AqMode::Off,
         // F.0.3 — activate the prev-frame MV salvage path.
         use_prev_frame_mvs: true,
-        speed: 0,
-        deadline: rvp9_encoder::Deadline::Good,
+        speed: 7,
+        deadline: rvp9_encoder::Deadline::Realtime,
     };
     let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
 
@@ -183,8 +183,8 @@ fn a18_picker_reads_nothing_when_default_off() {
         gop_length: 32,
         aq_mode: AqMode::Off,
         use_prev_frame_mvs: false,
-        speed: 0,
-        deadline: rvp9_encoder::Deadline::Good,
+        speed: 7,
+        deadline: rvp9_encoder::Deadline::Realtime,
     };
     let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
 
