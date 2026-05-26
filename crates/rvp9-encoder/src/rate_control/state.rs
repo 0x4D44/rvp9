@@ -284,17 +284,33 @@ impl RateControl {
                  implemented; lands in master inventory Wave 4+ (A3 \
                  vbr path). libvpx `vp9_ratectrl.c:1587-1609`."
             ),
-            RcMode::Cq => panic!(
-                "rate_control: constrained-quality (RcMode::Cq) is \
-                 not yet implemented; lands in master inventory \
-                 Wave 4+ (A3 cq path). libvpx \
-                 `vp9_ratectrl.c:1587-1609`."
-            ),
-            RcMode::Q => panic!(
-                "rate_control: constant-quantizer (RcMode::Q) is not \
-                 yet implemented; lands in master inventory Wave 4+ \
-                 (A3 q path). libvpx `vp9_ratectrl.c:1587-1609`."
-            ),
+            // PHASE-3 integration: Constrained-Quality (CQ). Runs the
+            // CBR regulator, then clamps the picked Q to be ≥
+            // cq_level. Mirrors libvpx's CQ semantics: cq_level is a
+            // quality FLOOR — the regulator can raise Q above it for
+            // bitrate, but never go below it for quality. libvpx
+            // `vp9_ratectrl.c::vp9_rc_pick_q_and_bounds_one_pass_cbr`
+            // CQ branch (search for `cq_level`).
+            RcMode::Cq => {
+                let (q, lo, hi) = cbr::pick_q_and_bounds(self, frame_kind);
+                let floor = self.config.cq_level;
+                (q.max(floor), lo.max(floor), hi.max(floor))
+            }
+            // PHASE-3 integration: Constant-Quantizer (Q). Pins Q at
+            // cq_level for every frame; keyframes get a libvpx-style
+            // small qdelta (KF lower than inter for quality). Mirrors
+            // libvpx's VPX_Q short-circuit (`vp9_ratectrl.c`, search
+            // for `oxcf->rc_mode == VPX_Q`). No rate-control loop —
+            // the regulator is bypassed entirely.
+            RcMode::Q => {
+                let q_inter = self.config.cq_level;
+                let q_kf = q_inter.saturating_sub(8); // libvpx KF qdelta ≈ -8
+                let q = match frame_kind {
+                    FrameKind::Key => q_kf,
+                    FrameKind::Inter => q_inter,
+                };
+                (q, q, q)
+            }
         }
     }
 
@@ -589,26 +605,61 @@ mod tests {
         let _ = rc.pick_q_and_bounds(FrameKind::Inter);
     }
 
-    /// W1.6 PROOF — CQ arm panics distinctly.
+    /// PHASE-3 PROOF — Constrained-Quality mode clamps the picked Q
+    /// to be ≥ cq_level (libvpx CQ semantics: cq_level is a quality
+    /// FLOOR). The CBR regulator may legitimately pick a low Q when
+    /// the buffer is full; CQ raises it. PROOF: with cq_level=100,
+    /// the picked Q on a fresh CBR-style controller is ≥ 100.
     #[test]
-    #[should_panic(expected = "constrained-quality")]
-    fn w1_6_cq_dispatch_panics_with_libvpx_citation() {
+    fn cq_mode_clamps_q_to_floor() {
         use super::super::RcMode;
         let cfg = RateControlConfig {
             rc_mode: RcMode::Cq,
+            cq_level: 100,
             ..RateControlConfig::default()
         };
         let mut rc = RateControl::new(cfg);
-        let _ = rc.pick_q_and_bounds(FrameKind::Inter);
+        let (q, lo, hi) = rc.pick_q_and_bounds(FrameKind::Inter);
+        assert!(
+            q >= 100,
+            "CQ PROOF: q={q} must be >= cq_level (100); got (q,lo,hi)=({q},{lo},{hi})"
+        );
+        assert!(lo >= 100, "CQ PROOF: lo={lo} must be >= cq_level (100)");
+        assert!(hi >= 100, "CQ PROOF: hi={hi} must be >= cq_level (100)");
     }
 
-    /// W1.6 PROOF — Q arm panics distinctly.
+    /// PHASE-3 PROOF — Constant-Quantizer mode pins Q at cq_level on
+    /// inter frames; KF gets a libvpx-style small qdelta (≈ -8).
+    /// libvpx VPX_Q short-circuit at `vp9_ratectrl.c`.
     #[test]
-    #[should_panic(expected = "constant-quantizer")]
-    fn w1_6_q_dispatch_panics_with_libvpx_citation() {
+    fn q_mode_pins_qindex_at_cq_level() {
         use super::super::RcMode;
         let cfg = RateControlConfig {
             rc_mode: RcMode::Q,
+            cq_level: 100,
+            ..RateControlConfig::default()
+        };
+        let mut rc = RateControl::new(cfg);
+        let (q_inter, lo_i, hi_i) = rc.pick_q_and_bounds(FrameKind::Inter);
+        assert_eq!(q_inter, 100, "Q PROOF: inter q must be cq_level");
+        assert_eq!(lo_i, 100);
+        assert_eq!(hi_i, 100);
+        let (q_kf, lo_k, hi_k) = rc.pick_q_and_bounds(FrameKind::Key);
+        assert_eq!(q_kf, 92, "Q PROOF: KF q must be cq_level - 8 (libvpx KF qdelta)");
+        assert_eq!(lo_k, 92);
+        assert_eq!(hi_k, 92);
+    }
+
+    /// Anti-G3: VBR is the only RC arm that still panics; the W1.6
+    /// VBR PROOF guards that future patches don't silently route VBR
+    /// to one of the now-real arms (which would be the wrong rate
+    /// model).
+    #[test]
+    #[should_panic(expected = "1-pass VBR")]
+    fn vbr_remains_unimplemented() {
+        use super::super::RcMode;
+        let cfg = RateControlConfig {
+            rc_mode: RcMode::Vbr,
             ..RateControlConfig::default()
         };
         let mut rc = RateControl::new(cfg);

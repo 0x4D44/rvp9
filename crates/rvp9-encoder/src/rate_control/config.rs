@@ -108,6 +108,15 @@ pub struct RateControlConfig {
     /// matching rvp9's current behaviour and vpxenc's `--end-usage=cbr`
     /// CLI gate.
     pub rc_mode: super::RcMode,
+
+    /// vpxenc `--cq-level` / libvpx `oxcf.cq_level` (`vp9_ratectrl.c`).
+    /// Q-index used by [`super::RcMode::Q`] (pinned per-frame) and
+    /// as the quality FLOOR for [`super::RcMode::Cq`] (CBR-style
+    /// regulator can pick `q >= cq_level` only). Ignored by CBR.
+    /// Default 0 (unused by CBR; if Q-mode is selected with the
+    /// default, the encoder pins at qindex 0 which is the
+    /// lossless edge — set cq_level explicitly).
+    pub cq_level: u8,
 }
 
 impl Default for RateControlConfig {
@@ -134,6 +143,9 @@ impl Default for RateControlConfig {
             // W1.6(vpxenc parity): CBR is the only ported RC mode
             // today; the other arms in `pick_q_and_bounds` panic.
             rc_mode: super::RcMode::Cbr,
+            // Q + CQ rate-control floor. 0 means unused for CBR /
+            // default-set-explicitly for Q/CQ.
+            cq_level: 0,
         }
     }
 }
