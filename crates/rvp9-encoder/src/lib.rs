@@ -2467,6 +2467,36 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let mv_costs = build_nmv_cost_table(&frame_context.nmvc, /* allow_hp = */ false);
     let site_config = init_dsmotion_compensation(w as i32);
 
+    // W4 RDO dispatch — speed≤4 routes the per-leaf mode decision through
+    // the transform-domain RDO picker (`rdo::pick_inter_sb` driven by the
+    // now-real `handle_inter`) instead of the realtime `pick_inter_mode`.
+    // Built once per frame: the coef-bit cost table, skip-bit costs, and
+    // a per-actual-size tx_size signalling cost (constant across a leaf's
+    // mode candidates since `handle_inter` pins the tx to
+    // `max_txsize(bsize)`; it cancels in the per-leaf argmin). libvpx
+    // `vp9_rdopt.c:3438-4187` (driver) / `vp9_encodeframe.c:1975-2107`
+    // (rd_pick_sb_modes dispatch).
+    let rdo_speed_gated = speed.unsigned_abs() <= 4;
+    let rdo_coef_costs = rvp9_core::cost::coef_cost::build_coef_cost_table(frame_context);
+    let rdo_skip_costs = rvp9_core::cost::skip_costs(frame_context);
+    let rdo_tx_size_costs = rvp9_core::cost::tx_size_costs(frame_context);
+    // Skip-bit cost at the middle skip context (the per-leaf skip_ctx
+    // shifts this equally for every candidate, so the argmin is
+    // unaffected; the middle context is the libvpx-neutral choice).
+    let rdo_skip_cost0 = rdo_skip_costs[1][0].max(0) as u32;
+    let rdo_skip_cost1 = rdo_skip_costs[1][1].max(0) as u32;
+    // Flat per-actual-size tx_size cost at (max=TX_32X32, ctx=0). Indexed
+    // by `TxSize as usize`; only ≤ max entries are meaningful.
+    let rdo_tx_size_cost: [u32; 4] = {
+        let row = &rdo_tx_size_costs.data[2][0];
+        [
+            row[0].max(0) as u32,
+            row[1].max(0) as u32,
+            row[2].max(0) as u32,
+            row[3].max(0) as u32,
+        ]
+    };
+
     // F.3 (2026-05-23, infrastructure-only) — motion-aware partition
     // descent (libvpx `nonrd_pick_partition`,
     // `vp9_encodeframe.c:4922-5210`).
@@ -3636,6 +3666,107 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let above_mv_p13 = neighbour_mv(nb_above);
                 let left_mv_p13 = neighbour_mv(nb_left);
 
+                // W4 RDO dispatch (speed≤4). For blocks in `handle_inter`'s
+                // single-tile scope (16×16 / 32×32) route the per-leaf mode
+                // decision through the transform-domain RDO picker. The
+                // winner `(mode, mv, ref, filter)` is mapped into a
+                // `PickInterModeResult` so the rest of this loop (leaf
+                // field writes, the shared emit TX walk, the mi-grid splat)
+                // runs UNCHANGED — the coef-source bridge is shared. When
+                // the RDO picker can't decide the leaf (both refs OOB-only)
+                // we fall through to the RT picker. 8×8 / 64×64 always fall
+                // through (out of `handle_inter` scope). libvpx
+                // `vp9_rdopt.c:3438-4187` driver; `vp9_encodeframe.c:1975-
+                // 2107` rd_pick_sb_modes dispatch.
+                let rdo_unified: Option<
+                    rvp9_core::mode_decision::inter::PickInterModeResult,
+                > = if rdo_speed_gated
+                    && crate::rdo::inter_dispatch::InterDispatchLeaf::rdo_supported(leaf_bsize)
+                {
+                    use crate::rdo::inter_dispatch::{
+                        InterDispatchLeaf, RefInputs, pick_inter_sb_leaf,
+                    };
+                    let rdmult = i64::from(rvp9_core::cost::compute_rd_mult(
+                        i32::from(leaf_qindex),
+                        rvp9_core::cost::FrameTypeForRd::Inter,
+                    ));
+                    let last_inputs = RefInputs {
+                        available: true,
+                        ref_y: &ref_y,
+                        ref_u: last_recon_yuv.1,
+                        ref_v: last_recon_yuv.2,
+                        nearest: mvc.nearest,
+                        near: mvc.near,
+                        nearest_in_bounds: mv_in_bounds(mvc.nearest),
+                        near_in_bounds: mv_in_bounds(mvc.near),
+                    };
+                    let golden_inputs = RefInputs {
+                        // GOLDEN availability mirrors the RT picker's
+                        // `disable_golden_ref` speed-feature.
+                        available: !sf.disable_golden_ref,
+                        ref_y: &ref_y_golden,
+                        ref_u: golden_recon_yuv.1,
+                        ref_v: golden_recon_yuv.2,
+                        nearest: mvc_golden.nearest,
+                        near: mvc_golden.near,
+                        nearest_in_bounds: mv_in_bounds(mvc_golden.nearest),
+                        near_in_bounds: mv_in_bounds(mvc_golden.near),
+                    };
+                    let dispatch_leaf = InterDispatchLeaf {
+                        bsize: leaf_bsize,
+                        src_y: &src_y,
+                        src_offset: (leaf_px_x, leaf_px_y),
+                        src_u: input_yuv.1,
+                        src_v: input_yuv.2,
+                        uv_stride: uvw,
+                        last: last_inputs,
+                        golden: golden_inputs,
+                        mv_limits,
+                        site_config: &site_config,
+                        mv_costs: &mv_costs,
+                        newmv_seed: sb_newmv_seed,
+                        // UV uses zero quant deltas (matches the RT path's
+                        // `plane_dequant_pair` call with zero deltas), so
+                        // the Y quantizer doubles as the chroma quantizer.
+                        y_quant: &quantizer,
+                        uv_quant: &quantizer,
+                        coef_costs: &rdo_coef_costs,
+                        inter_mode_costs: &inter_costs,
+                        inter_mode_ctx,
+                        switchable_interp_costs: &sic,
+                        switchable_interp_ctx,
+                        rdmult,
+                        tx_size_cost: rdo_tx_size_cost,
+                        skip_cost0: rdo_skip_cost0,
+                        skip_cost1: rdo_skip_cost1,
+                        error_per_bit: 16,
+                        sad_per_bit: 16,
+                    };
+                    pick_inter_sb_leaf(&dispatch_leaf).map(|r| {
+                        rvp9_core::mode_decision::inter::PickInterModeResult {
+                            best_mode: r.mode,
+                            best_mv: r.mv,
+                            // RD/dist/rate fields are consumed only by the
+                            // env-gated per-leaf diagnostics below; the
+                            // shared emit walk + writer read only
+                            // (mode, mv, ref, filter). The RDO picker's
+                            // internal RD is not surfaced here.
+                            best_rd_cost: 0,
+                            best_distortion: 0,
+                            best_rate: 0,
+                            coef_rate: 0,
+                            coef_dist: 0,
+                            picked_interp_filter: r.interp_filter,
+                            picked_ref_frame: r.ref_frame,
+                            picked_intra_mode: None,
+                            var_y: 0,
+                            sse_y: 0,
+                        }
+                    })
+                } else {
+                    None
+                };
+
                 // P20 — re-borrow the persistent RD-threshold table
                 // immutably for the picker. The mutable borrow for
                 // the post-pick `update_thresh_freq_fact` call below
@@ -3809,7 +3940,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     max_intra_bsize: sf.max_intra_bsize,
                     rt_intra_dc_only_low_content: sf.rt_intra_dc_only_low_content,
                 };
-                let unified_pick = pick_inter_mode(&pick_params);
+                // W4 RDO dispatch: at speed≤4 the RDO picker (if it
+                // decided this leaf) is the source of truth; otherwise run
+                // the RT picker. `pick_params` is still built above so the
+                // RT fallback (and its borrows) are ready, but the RT
+                // picker only runs when RDO didn't decide the leaf — a
+                // dispatch that ran RDO then discarded it for the RT result
+                // would be the forbidden cheat.
+                let unified_pick = match rdo_unified {
+                    Some(rdo) => rdo,
+                    None => pick_inter_mode(&pick_params),
+                };
 
                 // P20 — drop the immutable borrow held by `pick_params`
                 // so the mutable update can proceed.

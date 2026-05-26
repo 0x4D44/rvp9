@@ -30,6 +30,7 @@ pub mod block_yrd;
 pub mod cost_coeffs;
 pub mod discount_newmv;
 pub mod handle_inter;
+pub mod inter_dispatch;
 pub mod pick_inter_sb;
 pub mod pick_partition;
 pub mod ref_costs;
