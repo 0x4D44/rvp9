@@ -1151,21 +1151,45 @@ impl StreamEncoder {
             Some(&self.frame_context),
             &mut decoder_fc,
         )?;
-        self.decoder_fc_state = decoder_fc;
 
-        // P0b — backward-adapt the frame context. Mirrors libvpx's
-        // `vp9_adapt_mode_probs` + `vp9_adapt_coef_probs` +
-        // `vp9_adapt_mv_probs` sequence called after each decoded frame
-        // when `refresh_frame_context == true`.
+        // W0.5(vpxenc parity, A2 P0 / A1 P5): with `refresh_frame_
+        // context = true` set in the inter-frame header tail
+        // (frame_loop.rs:1892), the decoder runs its own backward
+        // adaptation post-frame (libvpx `vp9_decodeframe.c:adapt_*`
+        // sequence). The encoder's `decoder_fc_state` mirror must
+        // match — apply the same backward-adaptation sequence to
+        // `decoder_fc` before persisting. Once both sides converge,
+        // the next frame's compressed-header diff against
+        // `decoder_fc_state` matches what the decoder will actually
+        // have, so the FC stays in sync across the GOP.
+        let interp_switchable = true; // F.5 — always Switchable (Phase 2c)
+        let tx_mode_select = false; // AllowTx32x32, not TxModeSelect
+        let (cs, uf) = coef_adapt_params(
+            false, /* not intra-only */
+            self.last_frame_was_key,
+        );
+
+        // Backward-adapt the decoder-side mirror first (so we can
+        // assign it before borrowing `self` again).
         {
-            let interp_switchable = true; // F.5 — always Switchable (Phase 2c)
-            let tx_mode_select = false; // AllowTx32x32, not TxModeSelect
+            let mut adapted_dec = adapt_mode_probs(
+                &decoder_fc, &frame_counts, interp_switchable, tx_mode_select,
+            );
+            adapted_dec.coef_probs =
+                adapt_coef_probs(&decoder_fc.coef_probs, &frame_counts.coef, cs, uf);
+            adapted_dec.nmvc =
+                adapt_mv_probs(&decoder_fc.nmvc, &frame_counts.mv, false);
+            self.decoder_fc_state = adapted_dec;
+        }
+
+        // P0b — backward-adapt the encoder-side frame context.
+        // Mirrors libvpx's `vp9_adapt_mode_probs` +
+        // `vp9_adapt_coef_probs` + `vp9_adapt_mv_probs` sequence
+        // called after each decoded frame when
+        // `refresh_frame_context == true`.
+        {
             let mut adapted = adapt_mode_probs(
                 &self.frame_context, &frame_counts, interp_switchable, tx_mode_select,
-            );
-            let (cs, uf) = coef_adapt_params(
-                false, /* not intra-only */
-                self.last_frame_was_key,
             );
             adapted.coef_probs =
                 adapt_coef_probs(&self.frame_context.coef_probs, &frame_counts.coef, cs, uf);
@@ -1880,16 +1904,17 @@ fn build_inter_packet_with_residuals(
     // and `vp9_encodeframe.c:5612` for the simple RT case). We
     // mirror that here under the single-ref single-LASTFRAME shape
     // emitted by this encoder.
-    // P0b — keep `refresh_frame_context: false`. The encoder adapts
-    // its FC internally via backward adaptation on accumulated counts,
-    // but does NOT tell the decoder to adapt. Instead, each frame's
-    // compressed header diff-encodes the adapted FC against the
-    // decoder's default FC, so the decoder reads the same adapted
-    // probs the encoder used. This avoids the need for complete
-    // coef-count accumulation (which would be required for encoder-
-    // decoder FC-bank sync under `refresh_frame_context: true`).
+    // W0.5(vpxenc parity, A2 P0 / A1 P5): emit
+    // `refresh_frame_context = true` on inter frames (libvpx
+    // `vp9_encoder.c:5833-5836` — vpxenc default). The decoder
+    // performs its own backward adaptation post-frame; the encoder
+    // mirrors that adaptation onto `decoder_fc_state` at the inter
+    // entry point (`frame_loop.rs:1153-1180`) so both sides stay in
+    // sync across the GOP. The previous deviation (always-`false` +
+    // diff-against-default each frame) cost FC bits and was a
+    // documented rvp9-specific simplification; W0.5 retires it.
     let tail = HeaderTail {
-        refresh_frame_context: false,
+        refresh_frame_context: true,
         frame_parallel_decoding_mode: false,
         frame_context_idx: 0,
         loop_filter: LoopFilterParams {
@@ -4972,6 +4997,50 @@ mod tests {
                 assert!(!skips[idx], "16x16 leaf row {r} col {c} should be skip=false");
             }
         }
+    }
+
+    /// W0.5 PROOF — inter frames now emit
+    /// `refresh_frame_context = true` (libvpx
+    /// `vp9_encoder.c:5833-5836`), telling the decoder to run its own
+    /// backward adaptation post-frame. The encoder mirrors that
+    /// adaptation onto `decoder_fc_state` so both sides stay in sync.
+    ///
+    /// Parses the emitted uncompressed header from an inter packet
+    /// and asserts the bit is `true`. If the wiring is reverted (the
+    /// `HeaderTail { refresh_frame_context: false, ... }` literal at
+    /// frame_loop.rs's inter path returns), the parsed bit flips to
+    /// `false` and this assertion fails — anti-G3 wiring guard.
+    #[test]
+    fn w0_5_inter_frame_emits_refresh_frame_context_true() {
+        use rvp9_core::bitstream::header::parse_uncompressed_header;
+        let cfg = EncoderConfig {
+            width: 64,
+            height: 64,
+            framerate: 30.0,
+            target_bitrate_bps: 1_000_000,
+            gop_length: 30,
+            aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
+            speed: 7,
+            deadline: Deadline::Realtime,
+        };
+        let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
+        // Frame 0 — KF (skipped; W0.5 does not change KF refresh bit).
+        let (y, u, v) = gradient_frame(64, 64);
+        let _kf = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        // Frame 1 — inter. Parse its uncompressed header and check
+        // the refresh_frame_context bit.
+        let inter = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        const NO_REFS: [Option<(u32, u32)>; 8] = [None; 8];
+        let (hdr, _cursor) = parse_uncompressed_header(&inter.data, &NO_REFS)
+            .expect("emitted inter packet must parse");
+        let tail = hdr.tail.as_ref().expect("inter frame must carry a HeaderTail");
+        assert!(
+            tail.refresh_frame_context,
+            "W0.5 PROOF: inter frame must emit refresh_frame_context = true \
+             (libvpx vp9_encoder.c:5833-5836). If this fails, the inter \
+             HeaderTail literal at frame_loop.rs has reverted to false."
+        );
     }
 
     /// W0.4 PROOF — the speed-features dispatcher is the source of
