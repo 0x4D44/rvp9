@@ -66,7 +66,7 @@ use rvp9_core::mode_info::{InterMode, Mv};
 use rvp9_core::mv_search::full_pixel::PlaneRef;
 use rvp9_core::quant::forward::PlaneQuantizers;
 use rvp9_core::transforms::inverse::{
-    idct8x8_64_add, idct16x16_256_add, idct32x32_1024_add,
+    idct4x4_16_add, idct8x8_64_add, idct16x16_256_add, idct32x32_1024_add,
 };
 use rvp9_core::transforms::scans::scan_for;
 use rvp9_core::transforms::{TxMode, TxSize, TxType};
@@ -749,10 +749,15 @@ fn reconstruct_tile(
             idct32x32_1024_add(buf.as_ref(), recon, recon_stride);
         }
         TxSize::Tx4x4 => {
-            // Single-tile scope covers ≥ 8×8 blocks (the partition driver
-            // never hands sub-8 tiles to this path). Leaving recon = pred
-            // is conservative; the eob != 0 branch is unreachable here.
-            debug_assert!(false, "Tx4x4 tiles are out of handle_inter scope");
+            // Block8x8 chroma path: `uv_plane_tx_size(Block8x8, Tx8x8,
+            // 1, 1) = Tx4x4` so the chroma walk lands a single 4×4 tile
+            // here. Mirrors libvpx `vpx_idct4x4_16_add` invoked by
+            // `inv_txfm_add` (`vp9/common/vp9_idct.c:79`).
+            let mut buf = [0i32; 16];
+            for (b, &d) in buf.iter_mut().zip(dqcoeff.iter()) {
+                *b = i32::from(d);
+            }
+            idct4x4_16_add(&buf, recon, recon_stride);
         }
     }
 }

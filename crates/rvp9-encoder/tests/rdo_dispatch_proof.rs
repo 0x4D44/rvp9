@@ -10,13 +10,19 @@
 //! and that the resulting bitstream still decodes through the rvp9
 //! decoder to valid frames.
 //!
-//! Two assertions form the anti-cheat gate:
+//! Three assertions form the anti-cheat gate:
 //!
 //! 1. **Routing.** The global `RDO_DISPATCH_INVOCATIONS` counter advances
 //!    on a `speed = 3` encode and stays put on a `speed = 7` encode. A
 //!    dispatch that called RDO and then discarded its result for the RT
-//!    path would still bump the counter — so this is paired with #2.
-//! 2. **Effect + decodability.** The `speed = 3` (RDO) and `speed = 7`
+//!    path would still bump the counter — so this is paired with #3.
+//! 2. **Block8x8 routing (W4 extend-to-8x8).** The
+//!    `RDO_DISPATCH_INVOCATIONS_8X8` sub-counter advances on the
+//!    `speed = 3` encode, proving the W4-extend commit actually routes
+//!    8×8 leaves (not just 16/32) through RDO. The variance partitioner
+//!    descends to 8×8 on textured regions of the testsrc clip, so the
+//!    counter must advance.
+//! 3. **Effect + decodability.** The `speed = 3` (RDO) and `speed = 7`
 //!    (RT) byte streams DIFFER on a real-motion clip, AND BOTH decode
 //!    through `rvp9-decoder` to the expected number of frames. If the
 //!    RDO output were silently discarded for the RT result the two byte
@@ -27,7 +33,9 @@
 //! it is safe to run in environments without the corpus.
 
 use rvp9_decoder::Decoder;
-use rvp9_encoder::rdo::inter_dispatch::RDO_DISPATCH_INVOCATIONS;
+use rvp9_encoder::rdo::inter_dispatch::{
+    RDO_DISPATCH_INVOCATIONS, RDO_DISPATCH_INVOCATIONS_8X8,
+};
 use rvp9_encoder::{AqMode, EncoderConfig, StreamEncoder, YuvFrameRef};
 use rvp9_harness::container::{IvfHeader, write_ivf};
 use rvp9_harness::y4m::{probe_testsrc_720p, read_cropped as y4m_read_cropped};
@@ -69,14 +77,17 @@ fn config_at_speed(framerate: f64, speed: i32) -> EncoderConfig {
     }
 }
 
-/// Encode the clip at `speed`, returning the per-frame packet bytes and
-/// the number of RDO-dispatch invocations consumed by this encode.
+/// Encode the clip at `speed`, returning the per-frame packet bytes,
+/// the total RDO-dispatch invocations consumed by this encode, and the
+/// Block8x8-only invocations (the sub-counter the W4-extend-to-8x8 proof
+/// asserts on).
 fn encode_at_speed(
     frames: &[(Vec<u8>, Vec<u8>, Vec<u8>)],
     framerate: f64,
     speed: i32,
-) -> (Vec<Vec<u8>>, u64) {
+) -> (Vec<Vec<u8>>, u64, u64) {
     let before = RDO_DISPATCH_INVOCATIONS.load(Ordering::Relaxed);
+    let before_8x8 = RDO_DISPATCH_INVOCATIONS_8X8.load(Ordering::Relaxed);
     let mut enc = StreamEncoder::new(config_at_speed(framerate, speed)).expect("StreamEncoder::new");
     let mut packets = Vec::with_capacity(frames.len());
     for (y, u, v) in frames {
@@ -84,7 +95,8 @@ fn encode_at_speed(
         packets.push(pkt.data);
     }
     let after = RDO_DISPATCH_INVOCATIONS.load(Ordering::Relaxed);
-    (packets, after - before)
+    let after_8x8 = RDO_DISPATCH_INVOCATIONS_8X8.load(Ordering::Relaxed);
+    (packets, after - before, after_8x8 - before_8x8)
 }
 
 /// Decode every packet through rvp9-decoder; return the number of frames
@@ -244,13 +256,15 @@ fn rdo_dispatch_routes_at_speed3_and_decodes() {
         }
     };
 
-    // --- speed = 3: RDO picker active for 16x16 / 32x32 leaves ---
-    let (rdo_packets, rdo_invocations) = encode_at_speed(&frames, framerate, 3);
+    // --- speed = 3: RDO picker active for 8x8 / 16x16 / 32x32 leaves ---
+    let (rdo_packets, rdo_invocations, rdo_invocations_8x8) =
+        encode_at_speed(&frames, framerate, 3);
     // --- speed = 7: realtime picker, RDO never invoked ---
-    let (rt_packets, rt_invocations) = encode_at_speed(&frames, framerate, 7);
+    let (rt_packets, rt_invocations, rt_invocations_8x8) =
+        encode_at_speed(&frames, framerate, 7);
 
-    eprintln!("speed=3 RDO invocations: {rdo_invocations}");
-    eprintln!("speed=7 RDO invocations: {rt_invocations}");
+    eprintln!("speed=3 RDO invocations: {rdo_invocations} (8x8: {rdo_invocations_8x8})");
+    eprintln!("speed=7 RDO invocations: {rt_invocations} (8x8: {rt_invocations_8x8})");
 
     // Assertion #1 (routing): RDO ran at speed 3, not at speed 7.
     assert!(
@@ -261,6 +275,21 @@ fn rdo_dispatch_routes_at_speed3_and_decodes() {
     assert_eq!(
         rt_invocations, 0,
         "RDO dispatch was invoked at speed=7 — the gate leaked into the RT path"
+    );
+    // Assertion #1b (8x8 routing): the W4-extend-to-8x8 commit must route
+    // Block8x8 leaves through RDO too. Real motion at 256x256 with the
+    // variance partitioner produces 8x8 leaves on textured regions, so
+    // the counter must advance. The speed=7 (RT) path must NOT touch the
+    // 8x8 sub-counter (the same gate the total counter checks).
+    assert!(
+        rdo_invocations_8x8 > 0,
+        "RDO dispatch was never invoked for a Block8x8 leaf at speed=3 — \
+         the W4-extend-to-8x8 path is not routing 8x8 leaves through RDO"
+    );
+    assert_eq!(
+        rt_invocations_8x8, 0,
+        "RDO dispatch was invoked for a Block8x8 leaf at speed=7 — the \
+         RDO gate leaked into the RT path for 8x8"
     );
 
     // Assertion #2 (effect): the two byte streams differ. Identical bytes
@@ -294,7 +323,8 @@ fn rdo_dispatch_routes_at_speed3_and_decodes() {
     verify_rdo_through_vpxdec(&rdo_packets, framerate);
 
     eprintln!(
-        "PROOF PASS: speed=3 routed {rdo_invocations} leaves through RDO; both \
-         streams decode ({rdo_decoded}/{rt_decoded} frames); streams differ."
+        "PROOF PASS: speed=3 routed {rdo_invocations} leaves through RDO \
+         ({rdo_invocations_8x8} of them Block8x8); both streams decode \
+         ({rdo_decoded}/{rt_decoded} frames); streams differ."
     );
 }

@@ -39,9 +39,11 @@
 //! ## Scope (recorded deviations)
 //!
 //! - **Blocks ≤ 32×32 only** (`handle_inter`'s single transform-tile
-//!   scope, [`crate::rdo::handle_inter`] module docs). 8×8 and 64×64
-//!   fall back to the RT picker within the speed≤4 path; the caller
-//!   gates on this via [`InterDispatchLeaf::rdo_supported`].
+//!   scope, [`crate::rdo::handle_inter`] module docs). 8×8 leaves are
+//!   covered (one mi-grid cell with `Tx8x8` luma / `Tx4x4` chroma —
+//!   single tile each); 64×64 falls back to the RT picker within the
+//!   speed≤4 path; the caller gates on this via
+//!   [`InterDispatchLeaf::rdo_supported`].
 //! - **Single-ref.** `{LAST, GOLDEN}`; compound is out of W4 scope.
 //! - **Intra fallback disabled** — see item 3. A leaf whose true best
 //!   is intra is decided by the inter cross-product here; the RT path's
@@ -80,6 +82,13 @@ use crate::rdo::single_mv_search::{
 pub static RDO_DISPATCH_INVOCATIONS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
+/// Per-bsize RDO-dispatch invocation counter for Block8x8 leaves. Lets
+/// the PROOF test confirm 8×8 leaves specifically route through RDO
+/// (the 16/32 routing was already proven). Incremented from
+/// `pick_inter_sb_leaf` alongside `RDO_DISPATCH_INVOCATIONS`.
+pub static RDO_DISPATCH_INVOCATIONS_8X8: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 /// Per-ref-frame plane + candidate bundle the caller assembles from the
 /// running mi-grid (same `find_mv_refs` it already runs for the RT path).
 pub struct RefInputs<'a> {
@@ -108,7 +117,7 @@ pub struct RefInputs<'a> {
 /// context the RT loop already computes (plane views, offsets, cost
 /// tables, quantizers, MV envelope).
 pub struct InterDispatchLeaf<'a> {
-    /// Block size (must be 16×16 or 32×32 — see [`Self::rdo_supported`]).
+    /// Block size (must be 8×8, 16×16, or 32×32 — see [`Self::rdo_supported`]).
     pub bsize: BlockSize,
     /// Y source plane.
     pub src_y: &'a PlaneRef<'a>,
@@ -164,9 +173,32 @@ impl InterDispatchLeaf<'_> {
     /// `true` iff this leaf's block size is in `handle_inter`'s scope
     /// (single transform tile, ≤ 32×32). The caller falls back to the
     /// RT picker otherwise.
+    ///
+    /// **Block8x8 note.** rvp9-2 emits Block8x8 leaves as a single mi-grid
+    /// cell with one `(mode, mv, ref, filter)` (`splat_inter_leaf_into_mi_grid`),
+    /// using `max_txsize(Block8x8) = Tx8x8` for luma and `Tx4x4` for 4:2:0
+    /// chroma. This is the single-transform-tile case
+    /// `handle_inter_mode_single_ref` handles directly — we do NOT route
+    /// 8×8 through `rdo::sub8` because that picker produces 4 separate
+    /// sub-block winners (one per 4×4 sub-block, mirroring libvpx
+    /// `rd_pick_best_sub8x8_mode`), and the rvp9 emit-walk has no
+    /// plumbing for 4 sub-block MVs in a Block8x8 inter leaf (see the
+    /// "Untouched for ≥8×8 partitions" note on `ModeInfo::bmi`,
+    /// `mode_info.rs:1019`). Treating the 8×8 leaf as one block with
+    /// `handle_inter_mode_single_ref` matches the bitstream the writer
+    /// actually emits.
+    ///
+    /// libvpx refs: `vp9_rdopt.c:4285-5060` is the sub-8 driver libvpx
+    /// uses when the partitioner descends below 8×8; `rd_pick_sb_modes`
+    /// at `vp9_encodeframe.c:1975-2107` dispatches Block8x8 through
+    /// `vp9_rd_pick_inter_mode_sb` (the single-tile driver) — that is
+    /// the path we mirror here.
     #[must_use]
     pub fn rdo_supported(bsize: BlockSize) -> bool {
-        matches!(bsize, BlockSize::Block16x16 | BlockSize::Block32x32)
+        matches!(
+            bsize,
+            BlockSize::Block8x8 | BlockSize::Block16x16 | BlockSize::Block32x32,
+        )
     }
 }
 
@@ -438,6 +470,9 @@ pub fn pick_inter_sb_leaf(leaf: &InterDispatchLeaf<'_>) -> Option<InterDispatchR
     let winner: HandleInterModeResult = handle_inter_mode_single_ref(&winner_params);
 
     RDO_DISPATCH_INVOCATIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if matches!(leaf.bsize, BlockSize::Block8x8) {
+        RDO_DISPATCH_INVOCATIONS_8X8.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
 
     Some(InterDispatchResult {
         mode: pick.mode,

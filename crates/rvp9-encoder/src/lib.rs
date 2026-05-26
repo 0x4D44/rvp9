@@ -3712,17 +3712,21 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let left_mv_p13 = neighbour_mv(nb_left);
 
                 // W4 RDO dispatch (speed≤4). For blocks in `handle_inter`'s
-                // single-tile scope (16×16 / 32×32) route the per-leaf mode
-                // decision through the transform-domain RDO picker. The
-                // winner `(mode, mv, ref, filter)` is mapped into a
+                // single-tile scope (8×8 / 16×16 / 32×32) route the per-leaf
+                // mode decision through the transform-domain RDO picker.
+                // The winner `(mode, mv, ref, filter)` is mapped into a
                 // `PickInterModeResult` so the rest of this loop (leaf
                 // field writes, the shared emit TX walk, the mi-grid splat)
                 // runs UNCHANGED — the coef-source bridge is shared. When
                 // the RDO picker can't decide the leaf (both refs OOB-only)
-                // we fall through to the RT picker. 8×8 / 64×64 always fall
+                // we fall through to the RT picker. 64×64 always falls
                 // through (out of `handle_inter` scope). libvpx
                 // `vp9_rdopt.c:3438-4187` driver; `vp9_encodeframe.c:1975-
-                // 2107` rd_pick_sb_modes dispatch.
+                // 2107` rd_pick_sb_modes dispatch. 8×8 is treated as a
+                // single tile (Tx8x8 luma + Tx4x4 chroma) matching the
+                // bitstream the writer emits; libvpx's sub-8 driver
+                // (`vp9_rdopt.c:4285-5060`) is for sub-8 partitions
+                // (Block4x4/Block4x8/Block8x4) which rvp9 never emits.
                 let rdo_unified: Option<
                     rvp9_core::mode_decision::inter::PickInterModeResult,
                 > = if rdo_speed_gated
