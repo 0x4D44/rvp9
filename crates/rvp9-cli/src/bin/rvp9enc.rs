@@ -674,7 +674,18 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
         use_prev_frame_mvs: false,
         speed: opts.cpu_used.unwrap_or(7),
         deadline: opts.deadline.unwrap_or(Deadline::Realtime),
-        noise_sensitivity: 0,
+        // W5.1 plumb (re-audit pass 2 follow-up): CLI's
+        // `--noise-sensitivity <0..=6>` now feeds the encoder's
+        // `noise_sensitivity` gate so the W2.4 noise estimator + the
+        // downstream W2.6 vbp_threshold_scale activate when the user
+        // requests denoising. Default stays `0` (estimator off) when
+        // the flag is omitted, matching vpxenc's CLI default. Clamp
+        // to the 0..=6 range libvpx supports (range-checked at parse
+        // time by `set_encoder_config`, but be defensive: cap to u8).
+        noise_sensitivity: opts
+            .noise_sensitivity
+            .map(|v| v.min(6) as u8)
+            .unwrap_or(0),
     };
     let mut encoder = StreamEncoder::new(config).map_err(|e| {
         format!(
@@ -1067,6 +1078,50 @@ mod tests {
         assert_eq!(enc.config().speed, 4);
         assert_eq!(enc.config().deadline, Deadline::Realtime);
     }
+
+    /// PROOF (W5.1 CLI plumb) — re-audit pass 2 follow-up. The
+    /// `--noise-sensitivity <0..=6>` flag is parsed but was not
+    /// previously threaded into [`EncoderConfig::noise_sensitivity`]
+    /// (literal `0` hardcoded in both the production `run()` and the
+    /// test-only `build_encoder_config_for_test`). The
+    /// post-89beb5e noise-estimator gate keys off this field, so the
+    /// CLI value MUST land on the config — otherwise the user's
+    /// `--noise-sensitivity > 0` request is silently ignored.
+    ///
+    /// Anti-G3: passing `--noise-sensitivity=3` must surface as
+    /// `cfg.noise_sensitivity == 3`. A stripped wiring would leave
+    /// it at the default `0`.
+    #[test]
+    fn w5_1_noise_sensitivity_plumbs_into_encoder_config() {
+        let table = flag_table();
+
+        // Default (flag omitted) → 0 (estimator off).
+        let o = EncOpts::default();
+        let cfg = build_encoder_config_for_test(&o);
+        assert_eq!(cfg.noise_sensitivity, 0, "default must be 0");
+
+        // Explicit non-zero value lands on the config field.
+        let mut o = EncOpts::default();
+        args::parse(&table, &mut o, &s(&["--noise-sensitivity=3"]), "rvp9enc").unwrap();
+        let cfg = build_encoder_config_for_test(&o);
+        assert_eq!(cfg.noise_sensitivity, 3, "--noise-sensitivity=3 must plumb");
+
+        // Out-of-range values clamp to 6 (libvpx caps the denoiser
+        // at level 6; the parser's range-check should catch this too,
+        // but the saturation guard is the defensive belt-and-braces).
+        let mut o = EncOpts::default();
+        o.noise_sensitivity = Some(99);
+        let cfg = build_encoder_config_for_test(&o);
+        assert_eq!(cfg.noise_sensitivity, 6, "99 must clamp to 6");
+
+        // Verify the encoder accepts the wired config end-to-end.
+        let mut o = EncOpts::default();
+        args::parse(&table, &mut o, &s(&["--noise-sensitivity=1"]), "rvp9enc").unwrap();
+        let cfg = build_encoder_config_for_test(&o);
+        let enc =
+            StreamEncoder::new(cfg).expect("StreamEncoder must accept --noise-sensitivity=1");
+        assert_eq!(enc.config().noise_sensitivity, 1);
+    }
 }
 
 /// Test-only — builds a minimal valid `EncoderConfig` from `EncOpts`
@@ -1085,6 +1140,9 @@ fn build_encoder_config_for_test(opts: &EncOpts) -> EncoderConfig {
         use_prev_frame_mvs: false,
         speed: opts.cpu_used.unwrap_or(7),
         deadline: opts.deadline.unwrap_or(Deadline::Realtime),
-        noise_sensitivity: 0,
+        noise_sensitivity: opts
+            .noise_sensitivity
+            .map(|v| v.min(6) as u8)
+            .unwrap_or(0),
     }
 }
