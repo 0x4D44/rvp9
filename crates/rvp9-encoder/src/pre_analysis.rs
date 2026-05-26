@@ -461,7 +461,16 @@ impl PreAnalysisState {
     /// `width * height`) and the frame counter
     /// (libvpx `cm->current_video_frame`); the frame-period gate
     /// `frame_counter % 8 == 0` (line 132) keys off this.
-    pub fn compute_noise_estimate(&mut self, src_y_tight: &[u8], frame_counter: u32) {
+    pub fn compute_noise_estimate(
+        &mut self,
+        src_y_tight: &[u8],
+        frame_counter: u32,
+        // PHASE-3 integration: libvpx's full `enable_noise_estimation`
+        // gate (`vp9_noise_estimate.c:52-74`) requires the temporal
+        // denoiser to be configured (`cpi->oxcf.noise_sensitivity >
+        // 0`). Pass 0 to disable the estimator regardless of resolution.
+        noise_sensitivity: u8,
+    ) {
         // libvpx `vp9_noise_estimate.c:112` — low-res branch (used by
         // `thresh_consec_zeromv` for the denoiser-on path; rvp9 has
         // no denoiser so the default `thresh_consec_zeromv = 6` from
@@ -473,9 +482,12 @@ impl PreAnalysisState {
         // would lower this to 2 for 640<w<=1920.
         const THRESH_CONSEC_ZEROMV: u8 = 6;
 
-        // libvpx line 129. Recomputed every call.
-        self.noise_estimate.enabled =
-            enable_noise_estimation(self.width, self.height);
+        // libvpx line 129. Recomputed every call. PHASE-3 integration:
+        // also gate on `noise_sensitivity > 0` (libvpx's full
+        // `enable_noise_estimation` predicate at
+        // vp9_noise_estimate.c:52-74).
+        self.noise_estimate.enabled = noise_sensitivity > 0
+            && enable_noise_estimation(self.width, self.height);
 
         let w = self.width as usize;
         let h = self.height as usize;
@@ -1398,7 +1410,7 @@ mod tests {
         // window (15). Use `frames_since_key` values that satisfy
         // the `% 8 == 0` gate (libvpx line 132).
         for k in 1..=15u32 {
-            st.compute_noise_estimate(&flat, k * 8);
+            st.compute_noise_estimate(&flat, k * 8, /* noise_sensitivity */ 1);
         }
         // libvpx line 129: enable_noise_estimation must be true at
         // ≥640×360.
@@ -1483,8 +1495,8 @@ mod tests {
         // returns after seeding last_w/last_h (lines 140-142). The
         // second call lands in the main arm and actually walks the
         // histogram.
-        st.compute_noise_estimate(&src, /* frames_since_key = */ 8);
-        st.compute_noise_estimate(&src, /* frames_since_key = */ 16);
+        st.compute_noise_estimate(&src, /* frames_since_key = */ 8, /* noise_sensitivity */ 1);
+        st.compute_noise_estimate(&src, /* frames_since_key = */ 16, /* noise_sensitivity */ 1);
         // libvpx line 280 must have moved ne_value off zero.
         assert!(
             st.ne_value > 0,
@@ -1525,7 +1537,7 @@ mod tests {
         for c in &mut st.consec_zero_mv {
             *c = 100;
         }
-        st.compute_noise_estimate(&flat, /* frames_since_key = */ 8);
+        st.compute_noise_estimate(&flat, /* frames_since_key = */ 8, /* noise_sensitivity */ 1);
         // libvpx `enable_noise_estimation` requires width*height >=
         // 640*360. 320×240 = 76800 < 230400 ⇒ enabled stays false.
         assert!(
@@ -1559,7 +1571,7 @@ mod tests {
         st.capture_last_source(&last);
         // Call with frame_counter values that fail % 8 == 0.
         for fc in [1u32, 2, 3, 5, 7, 9, 15] {
-            st.compute_noise_estimate(&src, fc);
+            st.compute_noise_estimate(&src, fc, /* noise_sensitivity */ 1);
         }
         assert_eq!(
             st.ne_value, 0,

@@ -775,6 +775,10 @@ impl StreamEncoder {
             self.pre_analysis.compute_noise_estimate(
                 &y_tight,
                 self.rate_control.frames_since_key,
+                // PHASE-3 integration: gate noise estimator on
+                // `noise_sensitivity > 0` (libvpx
+                // vp9_noise_estimate.c:52-74). Default 0 → disabled.
+                self.config.noise_sensitivity,
             );
         }
         // W2.5(vpxenc parity, A5 P4): per-mi skin detector (libvpx
