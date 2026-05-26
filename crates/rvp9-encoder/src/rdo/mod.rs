@@ -15,7 +15,8 @@
 //! | [`cost_coeffs`] | `vp9_rdopt.c:358-459` (cost_coeffs + band_counts walker) |
 //! | [`trellis`]     | `vp9_encodemb.c:66-487` (xform_quant_fp / dc / vp9_optimize_b) |
 //! | [`pick_partition`] | `vp9_encodeframe.c:3985-4489` (rd_pick_partition, NONE+SPLIT) + `vp9_encodeframe.c:1975-2107` (rd_pick_sb_modes) |
-//! | [`sub8`]        | `vp9_rdopt.c:4285-5060` (vp9_rd_pick_inter_mode_sub8x8 skeleton) |
+//! | [`sub8`]        | `vp9_rdopt.c:4285-5060` (vp9_rd_pick_inter_mode_sub8x8 skeleton) + `vp9_rdopt.c:2077-2428` (rd_pick_best_sub8x8_mode, compound arm) |
+//! | [`sub8_kf_intra`] | `vp9_rdopt.c:1061-1297` (rd_pick_intra4x4block) + `vp9_rdopt.c:1299-1360` (rd_pick_intra_sub_8x8_y_mode) |
 //!
 //! ## Scope
 //!
@@ -34,4 +35,5 @@ pub mod pick_partition;
 pub mod ref_costs;
 pub mod single_mv_search;
 pub mod sub8;
+pub mod sub8_kf_intra;
 pub mod trellis;
