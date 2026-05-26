@@ -320,6 +320,12 @@ pub struct StreamEncoder {
     /// (passthrough) until the CLI plumbs `--lag-in-frames` in a
     /// later wave (master inventory: A19 P0 follow-up).
     lookahead: crate::lookahead::LookaheadCtx,
+    /// W2.1(vpxenc parity, A5 P0): per-frame pre-analysis state —
+    /// `consec_zero_mv[]`, `compute_source_sad_onepass` gate, and
+    /// the Last_Source view. The W2.2+ producers (avg_source_sad,
+    /// scene detection, noise estimate, skin detector) plug into
+    /// this struct.
+    pre_analysis: crate::pre_analysis::PreAnalysisState,
     /// Last reconstructed Y plane (tight-stride, `width * height`).
     /// Populated after every keyframe; for inter ZEROMV/skip=true
     /// frames the buffer is unchanged.
@@ -481,6 +487,11 @@ impl StreamEncoder {
                 config.height,
                 0,
             ),
+            // W2.1(vpxenc parity, A5 P0): pre-analysis state.
+            pre_analysis: crate::pre_analysis::PreAnalysisState::new(
+                config.width,
+                config.height,
+            ),
             last_recon_y: vec![0u8; w * h],
             last_recon_u: vec![0u8; uvw * uvh],
             last_recon_v: vec![0u8; uvw * uvh],
@@ -519,6 +530,16 @@ impl StreamEncoder {
     #[must_use]
     pub fn lookahead_next_show_idx_for_test(&self) -> u64 {
         self.lookahead.next_show_idx()
+    }
+
+    /// W2.1 test-only accessor: the pre-analysis state. Used by
+    /// `tests::w2_1_pre_analysis_lifecycle_runs_per_frame` to verify
+    /// `update_per_frame_gates` + `capture_last_source` actually run
+    /// inside `encode_frame`.
+    #[cfg(test)]
+    #[must_use]
+    pub fn pre_analysis_for_test(&self) -> &crate::pre_analysis::PreAnalysisState {
+        &self.pre_analysis
     }
 
     /// Frame counter — number of frames passed to [`Self::encode_frame`]
@@ -629,6 +650,18 @@ impl StreamEncoder {
         } else {
             FrameKind::Inter
         };
+
+        // W2.1(vpxenc parity, A5 P0): update per-frame pre-analysis
+        // gates. Mirrors libvpx `vp9_encoder.c:3984` —
+        // `compute_source_sad_onepass = (oxcf.mode == REALTIME)`.
+        // The W2.2 avg-source-SAD pass keys off this gate.
+        self.pre_analysis.update_per_frame_gates(self.config.deadline);
+        if matches!(frame_kind, FrameKind::Key) {
+            // libvpx zeroes `consec_zero_mv[]` and invalidates
+            // `Last_Source` at KF boundaries
+            // (`vp9_alloccommon.c:81-91`).
+            self.pre_analysis.keyframe_reset();
+        }
 
         // Pick Q via the rate controller.
         let (q_index, _q_lo, _q_hi) = self.rate_control.pick_q_and_bounds(frame_kind.into());
@@ -747,6 +780,15 @@ impl StreamEncoder {
             .postencode_update(actual_bits, frame_kind.into());
         self.rate_control.advance_frame();
         self.frame_idx = self.frame_idx.saturating_add(1);
+
+        // W2.1(vpxenc parity, A5 P0): capture this frame's source as
+        // the next frame's Last_Source. libvpx
+        // `vp9_encoder.c::encode_frame_to_data_rate` does this via
+        // the `cpi->Last_Source = cpi->Source` swap after the encode
+        // completes; we mirror it explicitly with a copy because
+        // rvp9 doesn't keep the source frame around as a ref-counted
+        // buffer (Wave 1's BufferPool tracks recon, not source).
+        self.pre_analysis.capture_last_source(&y_tight);
 
         Ok(EncodedFrame {
             data: packet,
@@ -5033,6 +5075,61 @@ mod tests {
                 assert!(!skips[idx], "16x16 leaf row {r} col {c} should be skip=false");
             }
         }
+    }
+
+    /// W2.1 PROOF — the pre-analysis lifecycle runs per frame. The
+    /// CLI/encoder default `EncoderConfig::new()` is (speed=7,
+    /// Realtime), so libvpx's `cpi->compute_source_sad_onepass =
+    /// (mode == REALTIME)` (libvpx `vp9_encoder.c:3984`) must light
+    /// up `true` after the first `encode_frame`. Also asserts the
+    /// post-encode capture: after the second `encode_frame`, the
+    /// pre_analysis `Last_Source` view holds the second source's
+    /// luma plane.
+    ///
+    /// If `update_per_frame_gates` or `capture_last_source` is
+    /// stripped from `encode_frame`, this PROOF fails — anti-G3
+    /// wiring guard.
+    #[test]
+    fn w2_1_pre_analysis_lifecycle_runs_per_frame() {
+        let cfg = EncoderConfig {
+            width: 64,
+            height: 64,
+            framerate: 30.0,
+            target_bitrate_bps: 1_000_000,
+            gop_length: 30,
+            aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
+            speed: 7,
+            deadline: Deadline::Realtime,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        // Initial state: gates off (haven't run yet), no Last_Source.
+        let pa0 = enc.pre_analysis_for_test();
+        assert!(!pa0.compute_source_sad_onepass);
+        assert!(pa0.last_source_y.is_none());
+        // Encode frame 0 (KF — keyframe_reset fires; gates update).
+        let (y, u, v) = gradient_frame(64, 64);
+        let _ = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        let pa1 = enc.pre_analysis_for_test();
+        assert!(
+            pa1.compute_source_sad_onepass,
+            "W2.1 PROOF: Realtime deadline must light compute_source_sad_onepass \
+             (libvpx vp9_encoder.c:3984). If update_per_frame_gates is stripped, \
+             this stays false."
+        );
+        assert!(
+            pa1.last_source_y.is_some(),
+            "W2.1 PROOF: capture_last_source must populate Last_Source after \
+             encode_frame returns. If stripped, this stays None."
+        );
+        // Encode frame 1 (inter) — Last_Source should swap to the
+        // new source (we use a different gradient seed).
+        let (y2, u2, v2) = gradient_frame(64, 64);
+        let _ = enc.encode_frame(&yuv_view(&y2, &u2, &v2, 64)).unwrap();
+        let pa2 = enc.pre_analysis_for_test();
+        let captured = pa2.last_source_y.as_ref().unwrap();
+        assert_eq!(captured.len(), 64 * 64);
+        assert_eq!(&captured[..], &y2[..], "W2.1: Last_Source must hold frame 1");
     }
 
     /// W1.5 PROOF — `encode_frame` pushes each input through the
