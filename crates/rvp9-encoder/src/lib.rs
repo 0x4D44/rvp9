@@ -75,6 +75,7 @@ pub mod e12stat;
 pub mod f02_oracle;
 pub mod frame_loop;
 pub(crate) mod loopfilter;
+pub mod lookahead;
 pub mod predstat;
 pub mod rate_control;
 pub mod skipstat;
