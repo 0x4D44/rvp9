@@ -35,6 +35,32 @@ enum TuneContent {
     Film,
 }
 
+/// vpxenc `--test-decode` (libvpx `vpxenc.c:138-145`). Tri-state matching
+/// libvpx's `test_decode_enum`: off (silent), warn (log mismatch), fatal
+/// (abort on mismatch).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TestDecode {
+    Off,
+    Warn,
+    Fatal,
+}
+
+/// vpxenc `--color-space` (libvpx `vpxenc.c:471-485`). Mirrors the
+/// `color_space_enum` set; numeric values track `VPX_CS_*` for later
+/// wiring. Kept here as an enum so unknown values reject at the CLI
+/// layer rather than reaching libvpx.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ColorSpace {
+    Unknown,
+    Bt601,
+    Bt709,
+    Smpte170,
+    Smpte240,
+    Bt2020,
+    Reserved,
+    SRgb,
+}
+
 /// Parsed encoder options (the config builder the flag table fills in).
 ///
 /// Fields below the `// ---- W0.1: stored, not yet plumbed` divider are
@@ -111,6 +137,70 @@ struct EncOpts {
     psnr: bool,
     /// `--webm` — WebM container output toggle.
     webm: bool,
+
+    // ---- W7.8: long-tail vpxenc flags (master inventory A12 tail).
+    //
+    // Each field below is stored verbatim by the flag table; plumbing
+    // into [`EncoderConfig`] / two-pass / SVC / loop-filter paths lands
+    // in later waves. Unknown values reject at the CLI layer so we
+    // never silently misconfigure libvpx-style downstreams. Skipped
+    // here per Arthur's audit: `--arnr-type` (vpxenc.c:378-379),
+    // `--output-partitions` / `-P` (vpxenc.c:151-153) — both
+    // OUT-OF-SCOPE for the vpxenc parity port.
+    //
+    /// `--auto-alt-ref` (libvpx `vpxenc.c:436-438`). VP9 range 0..=6:
+    /// 0 disables, 1 single ARF, 2+ enables multi-layer ARF.
+    auto_alt_ref: Option<u32>,
+    /// `--arnr-maxframes` (libvpx `vpxenc.c:374-375`). 0..=15.
+    arnr_maxframes: Option<u32>,
+    /// `--arnr-strength` (libvpx `vpxenc.c:376-377`). 0..=6.
+    arnr_strength: Option<u32>,
+    /// `--pass` (libvpx `vpxenc.c:115-116`). 1 or 2.
+    pass: Option<u32>,
+    /// `--fpf` (libvpx `vpxenc.c:117-118`). First-pass stats file name.
+    fpf: Option<String>,
+    /// `--rate-hist` (libvpx `vpxenc.c:156-157`). Bucket count for the
+    /// per-frame rate histogram.
+    rate_hist: Option<u32>,
+    /// `--q-hist` (libvpx `vpxenc.c:154-155`). Bucket count for the
+    /// quantizer histogram.
+    q_hist: Option<u32>,
+    /// `--test-decode` (libvpx `vpxenc.c:138-145`). off / warn / fatal.
+    test_decode: Option<TestDecode>,
+    /// `--enable-tpl` (libvpx `vpxenc.c:445-446`). 0/1 — temporal
+    /// dependency model.
+    enable_tpl: Option<bool>,
+    /// `--frame-boost` (libvpx `vpxenc.c:459-461`). 0/1 — periodic
+    /// boost.
+    frame_boost: Option<bool>,
+    /// `--max-inter-rate` (libvpx `vpxenc.c:462-463`). Max P-frame
+    /// bitrate (pct).
+    max_inter_rate_pct: Option<u32>,
+    /// `--min-gf-interval` (libvpx `vpxenc.c:464-466`).
+    min_gf_interval: Option<u32>,
+    /// `--max-gf-interval` (libvpx `vpxenc.c:467-469`).
+    max_gf_interval: Option<u32>,
+    /// `--color-space` (libvpx `vpxenc.c:483-485`, enum at 471-481).
+    color_space: Option<ColorSpace>,
+    /// `--alt-ref-aq` (libvpx `vpxenc.c:456-458`). 0/1.
+    alt_ref_aq: Option<bool>,
+    /// `--input-bit-depth` (libvpx `vpxenc.c:496-497`).
+    input_bit_depth: Option<u8>,
+    /// `--lag-in-frames` (libvpx `vpxenc.c:220-221`).
+    lag_in_frames: Option<u32>,
+    /// `--target-level` (libvpx `vpxenc.c:510-519`). 0/255 + level
+    /// values (10..=62); the libvpx help text catalogues the semantics.
+    target_level: Option<u32>,
+    /// `--row-mt` (libvpx `vpxenc.c:521-523`). 0/1.
+    row_mt: Option<bool>,
+    /// `--resize-allowed` (libvpx `vpxenc.c:248-249`). 0/1.
+    resize_allowed: Option<bool>,
+    /// `--resize-width` (libvpx `vpxenc.c:250-251`).
+    resize_width: Option<u32>,
+    /// `--resize-height` (libvpx `vpxenc.c:252-253`).
+    resize_height: Option<u32>,
+    /// `--quiet` / `-q` (libvpx `vpxenc.c:131-132`). Suppress progress.
+    quiet: bool,
 }
 
 impl Default for EncOpts {
@@ -157,6 +247,31 @@ impl Default for EncOpts {
             bit_depth: None,
             psnr: false,
             webm: false,
+
+            // ---- W7.8: long-tail vpxenc flags.
+            auto_alt_ref: None,
+            arnr_maxframes: None,
+            arnr_strength: None,
+            pass: None,
+            fpf: None,
+            rate_hist: None,
+            q_hist: None,
+            test_decode: None,
+            enable_tpl: None,
+            frame_boost: None,
+            max_inter_rate_pct: None,
+            min_gf_interval: None,
+            max_gf_interval: None,
+            color_space: None,
+            alt_ref_aq: None,
+            input_bit_depth: None,
+            lag_in_frames: None,
+            target_level: None,
+            row_mt: None,
+            resize_allowed: None,
+            resize_width: None,
+            resize_height: None,
+            quiet: false,
         }
     }
 }
@@ -252,6 +367,58 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             apply: Some(|o, _| { o.psnr = true; Ok(()) }) },
         Flag { long: "webm", short: None, arg: Arg::None, help: "WebM output",
             apply: Some(|o, _| { o.webm = true; Ok(()) }) },
+        // ---- W7.8: long-tail vpxenc flags (parsed + stored; later
+        // waves plumb into EncoderConfig / two-pass / SVC / LF paths).
+        // SKIPPED per Arthur's audit: `--arnr-type` (vpxenc.c:378-379)
+        // and `--output-partitions` / `-P` (vpxenc.c:151-153) are
+        // OUT-OF-SCOPE — they survive in the "recognised-but-not-yet"
+        // bucket via absence from the flag table.
+        Flag { long: "auto-alt-ref", short: None, arg: Arg::Required, help: "auto alt-ref frames (0..=6)",
+            apply: Some(|o, v| { o.auto_alt_ref = Some(parse_range(v, "--auto-alt-ref", 0, 6)?); Ok(()) }) },
+        Flag { long: "arnr-maxframes", short: None, arg: Arg::Required, help: "AltRef max frames (0..=15)",
+            apply: Some(|o, v| { o.arnr_maxframes = Some(parse_range(v, "--arnr-maxframes", 0, 15)?); Ok(()) }) },
+        Flag { long: "arnr-strength", short: None, arg: Arg::Required, help: "AltRef filter strength (0..=6)",
+            apply: Some(|o, v| { o.arnr_strength = Some(parse_range(v, "--arnr-strength", 0, 6)?); Ok(()) }) },
+        Flag { long: "pass", short: None, arg: Arg::Required, help: "pass to execute (1 or 2)",
+            apply: Some(|o, v| { o.pass = Some(parse_pass(v)?); Ok(()) }) },
+        Flag { long: "fpf", short: None, arg: Arg::Required, help: "first-pass statistics file",
+            apply: Some(|o, v| { o.fpf = Some(req(v, "--fpf")?); Ok(()) }) },
+        Flag { long: "rate-hist", short: None, arg: Arg::Required, help: "rate histogram bucket count",
+            apply: Some(|o, v| { o.rate_hist = Some(args::parse_value(v, "rvp9enc", "--rate-hist")?); Ok(()) }) },
+        Flag { long: "q-hist", short: None, arg: Arg::Required, help: "quantizer histogram bucket count",
+            apply: Some(|o, v| { o.q_hist = Some(args::parse_value(v, "rvp9enc", "--q-hist")?); Ok(()) }) },
+        Flag { long: "test-decode", short: None, arg: Arg::Required, help: "encode/decode mismatch test (off/warn/fatal)",
+            apply: Some(|o, v| { o.test_decode = Some(parse_test_decode(v)?); Ok(()) }) },
+        Flag { long: "enable-tpl", short: None, arg: Arg::Required, help: "enable temporal dependency model (0/1)",
+            apply: Some(|o, v| { o.enable_tpl = Some(parse_bool01(v, "--enable-tpl")?); Ok(()) }) },
+        Flag { long: "frame-boost", short: None, arg: Arg::Required, help: "frame periodic boost (0/1)",
+            apply: Some(|o, v| { o.frame_boost = Some(parse_bool01(v, "--frame-boost")?); Ok(()) }) },
+        Flag { long: "max-inter-rate", short: None, arg: Arg::Required, help: "max P-frame bitrate (pct)",
+            apply: Some(|o, v| { o.max_inter_rate_pct = Some(args::parse_value(v, "rvp9enc", "--max-inter-rate")?); Ok(()) }) },
+        Flag { long: "min-gf-interval", short: None, arg: Arg::Required, help: "min gf/arf frame interval",
+            apply: Some(|o, v| { o.min_gf_interval = Some(args::parse_value(v, "rvp9enc", "--min-gf-interval")?); Ok(()) }) },
+        Flag { long: "max-gf-interval", short: None, arg: Arg::Required, help: "max gf/arf frame interval",
+            apply: Some(|o, v| { o.max_gf_interval = Some(args::parse_value(v, "rvp9enc", "--max-gf-interval")?); Ok(()) }) },
+        Flag { long: "color-space", short: None, arg: Arg::Required, help: "color space of input content",
+            apply: Some(|o, v| { o.color_space = Some(parse_color_space(v)?); Ok(()) }) },
+        Flag { long: "alt-ref-aq", short: None, arg: Arg::Required, help: "adaptive quant for alt-ref (0/1)",
+            apply: Some(|o, v| { o.alt_ref_aq = Some(parse_bool01(v, "--alt-ref-aq")?); Ok(()) }) },
+        Flag { long: "input-bit-depth", short: None, arg: Arg::Required, help: "input bit depth (8/10/12)",
+            apply: Some(|o, v| { o.input_bit_depth = Some(parse_bit_depth(v)?); Ok(()) }) },
+        Flag { long: "lag-in-frames", short: None, arg: Arg::Required, help: "max frames to lag",
+            apply: Some(|o, v| { o.lag_in_frames = Some(args::parse_value(v, "rvp9enc", "--lag-in-frames")?); Ok(()) }) },
+        Flag { long: "target-level", short: None, arg: Arg::Required, help: "target level (0/255 + 10..=62)",
+            apply: Some(|o, v| { o.target_level = Some(args::parse_value(v, "rvp9enc", "--target-level")?); Ok(()) }) },
+        Flag { long: "row-mt", short: None, arg: Arg::Required, help: "row-based MT in VP9 (0/1)",
+            apply: Some(|o, v| { o.row_mt = Some(parse_bool01(v, "--row-mt")?); Ok(()) }) },
+        Flag { long: "resize-allowed", short: None, arg: Arg::Required, help: "spatial resampling (0/1)",
+            apply: Some(|o, v| { o.resize_allowed = Some(parse_bool01(v, "--resize-allowed")?); Ok(()) }) },
+        Flag { long: "resize-width", short: None, arg: Arg::Required, help: "resized encoded width",
+            apply: Some(|o, v| { o.resize_width = Some(args::parse_value(v, "rvp9enc", "--resize-width")?); Ok(()) }) },
+        Flag { long: "resize-height", short: None, arg: Arg::Required, help: "resized encoded height",
+            apply: Some(|o, v| { o.resize_height = Some(args::parse_value(v, "rvp9enc", "--resize-height")?); Ok(()) }) },
+        Flag { long: "quiet", short: Some('q'), arg: Arg::None, help: "do not print encode progress",
+            apply: Some(|o, _| { o.quiet = true; Ok(()) }) },
     ]
 }
 
@@ -360,6 +527,59 @@ fn parse_bit_depth(v: Option<String>) -> Result<u8, String> {
         Some("12") => Ok(12),
         Some(other) => Err(format!("rvp9enc: --bit-depth={other} not understood (use 8/10/12)")),
         None => Err("rvp9enc: --bit-depth requires a value".to_string()),
+    }
+}
+
+// ---- W7.8 helpers: parsers for the long-tail flags. Each enforces
+// the same domain libvpx documents at the cited line.
+
+fn parse_range(v: Option<String>, flag: &str, lo: u32, hi: u32) -> Result<u32, String> {
+    let n: u32 = args::parse_value(v, "rvp9enc", flag)?;
+    if n < lo || n > hi {
+        return Err(format!("rvp9enc: {flag}={n} out of range ({lo}..={hi})"));
+    }
+    Ok(n)
+}
+
+/// libvpx `vpxenc.c:115-116` — `--pass` is 1 or 2.
+fn parse_pass(v: Option<String>) -> Result<u32, String> {
+    match v.as_deref() {
+        Some("1") => Ok(1),
+        Some("2") => Ok(2),
+        Some(other) => Err(format!("rvp9enc: --pass={other} not understood (use 1 or 2)")),
+        None => Err("rvp9enc: --pass requires a value".to_string()),
+    }
+}
+
+/// libvpx `vpxenc.c:138-145` — `--test-decode` tri-state.
+fn parse_test_decode(v: Option<String>) -> Result<TestDecode, String> {
+    match v.as_deref() {
+        Some("off") => Ok(TestDecode::Off),
+        Some("warn") => Ok(TestDecode::Warn),
+        Some("fatal") => Ok(TestDecode::Fatal),
+        Some(other) => Err(format!(
+            "rvp9enc: --test-decode={other} not understood (use off/warn/fatal)"
+        )),
+        None => Err("rvp9enc: --test-decode requires a value".to_string()),
+    }
+}
+
+/// libvpx `vpxenc.c:471-485` — `--color-space` enum.
+fn parse_color_space(v: Option<String>) -> Result<ColorSpace, String> {
+    match v.as_deref() {
+        Some("unknown") => Ok(ColorSpace::Unknown),
+        Some("bt601") => Ok(ColorSpace::Bt601),
+        Some("bt709") => Ok(ColorSpace::Bt709),
+        Some("smpte170") => Ok(ColorSpace::Smpte170),
+        Some("smpte240") => Ok(ColorSpace::Smpte240),
+        Some("bt2020") => Ok(ColorSpace::Bt2020),
+        Some("reserved") => Ok(ColorSpace::Reserved),
+        Some("sRGB") => Ok(ColorSpace::SRgb),
+        Some(other) => Err(format!(
+            "rvp9enc: --color-space={other} not understood \
+             (unknown/bt601/bt709/smpte170/smpte240/bt2020/reserved/sRGB)"
+        )),
+        None => Err("rvp9enc: --color-space requires a value".to_string()),
     }
 }
 
@@ -692,6 +912,111 @@ mod tests {
         let mut o = EncOpts::default();
         let err = args::parse(&table, &mut o, &s(&["--cpu-used=10"]), "rvp9enc").unwrap_err();
         assert!(err.contains("out of range"), "{err}");
+    }
+
+    /// W7.8 PROOF — every long-tail vpxenc flag added by Wave 7.8 is
+    /// parsed and stored on [`EncOpts`]. Like the W0.1 PROOF, this
+    /// fails loudly if any `apply` slot regresses to `None` (which
+    /// would route the flag through the "recognised but not supported
+    /// yet" rejection path and break vpxenc CLI parity for benchmark
+    /// harnesses).
+    ///
+    /// Citations: libvpx `vpxenc.c:115-118` (`--pass`/`--fpf`),
+    /// `131-132` (`--quiet`), `138-145` (`--test-decode`),
+    /// `154-157` (`--q-hist`/`--rate-hist`), `220-221` (`--lag-in-frames`),
+    /// `248-253` (`--resize-*`), `374-377` (`--arnr-maxframes`/`-strength`),
+    /// `436-438` (`--auto-alt-ref`), `445-446` (`--enable-tpl`),
+    /// `456-461` (`--alt-ref-aq`/`--frame-boost`),
+    /// `462-469` (`--max-inter-rate`/`--min/max-gf-interval`),
+    /// `471-485` (`--color-space`), `496-497` (`--input-bit-depth`),
+    /// `510-519` (`--target-level`), `521-523` (`--row-mt`).
+    /// Skipped: `--arnr-type` (`vpxenc.c:378-379`) and
+    /// `--output-partitions` / `-P` (`vpxenc.c:151-153`) — OUT-OF-SCOPE
+    /// per Arthur's audit, intentionally absent from the flag table.
+    #[test]
+    fn w7_8_long_tail_flags_all_stored() {
+        let table = flag_table();
+        let argv = s(&[
+            "--auto-alt-ref=2",
+            "--arnr-maxframes=7",
+            "--arnr-strength=5",
+            "--pass=2",
+            "--fpf=stats.fpf",
+            "--rate-hist=64",
+            "--q-hist=32",
+            "--test-decode=warn",
+            "--enable-tpl=1",
+            "--frame-boost=0",
+            "--max-inter-rate=120",
+            "--min-gf-interval=4",
+            "--max-gf-interval=16",
+            "--color-space=bt709",
+            "--alt-ref-aq=1",
+            "--input-bit-depth=8",
+            "--lag-in-frames=25",
+            "--target-level=41",
+            "--row-mt=1",
+            "--resize-allowed=1",
+            "--resize-width=640",
+            "--resize-height=360",
+            "--quiet",
+        ]);
+        let mut opts = EncOpts::default();
+        let pos = args::parse(&table, &mut opts, &argv, "rvp9enc").unwrap_or_else(|e| {
+            panic!(
+                "W7.8 PROOF: parse() rejected a Wave-7.8 long-tail flag — \
+                 has any `apply: Some(_)` regressed to `None`? err={e}"
+            )
+        });
+        assert!(pos.is_empty(), "no positionals expected, got {pos:?}");
+        assert_eq!(opts.auto_alt_ref, Some(2));
+        assert_eq!(opts.arnr_maxframes, Some(7));
+        assert_eq!(opts.arnr_strength, Some(5));
+        assert_eq!(opts.pass, Some(2));
+        assert_eq!(opts.fpf.as_deref(), Some("stats.fpf"));
+        assert_eq!(opts.rate_hist, Some(64));
+        assert_eq!(opts.q_hist, Some(32));
+        assert_eq!(opts.test_decode, Some(TestDecode::Warn));
+        assert_eq!(opts.enable_tpl, Some(true));
+        assert_eq!(opts.frame_boost, Some(false));
+        assert_eq!(opts.max_inter_rate_pct, Some(120));
+        assert_eq!(opts.min_gf_interval, Some(4));
+        assert_eq!(opts.max_gf_interval, Some(16));
+        assert_eq!(opts.color_space, Some(ColorSpace::Bt709));
+        assert_eq!(opts.alt_ref_aq, Some(true));
+        assert_eq!(opts.input_bit_depth, Some(8));
+        assert_eq!(opts.lag_in_frames, Some(25));
+        assert_eq!(opts.target_level, Some(41));
+        assert_eq!(opts.row_mt, Some(true));
+        assert_eq!(opts.resize_allowed, Some(true));
+        assert_eq!(opts.resize_width, Some(640));
+        assert_eq!(opts.resize_height, Some(360));
+        assert!(opts.quiet);
+    }
+
+    /// W7.8 — `--auto-alt-ref` range guard (libvpx `vpxenc.c:436-438`
+    /// documents 0..=6). Out-of-range must still reject so we don't
+    /// silently forward bogus values into a later config-build wave.
+    #[test]
+    fn w7_8_auto_alt_ref_range_enforced() {
+        let table = flag_table();
+        let mut o = EncOpts::default();
+        let err = args::parse(&table, &mut o, &s(&["--auto-alt-ref=7"]), "rvp9enc").unwrap_err();
+        assert!(err.contains("out of range"), "{err}");
+    }
+
+    /// W7.8 — `--arnr-type` is OUT-OF-SCOPE per Arthur's audit; the
+    /// flag is intentionally absent from the table so libvpx-style use
+    /// fails with `unknown option`, not silently accepted. (Mirrors the
+    /// design principle that absence = "not recognised", presence with
+    /// `apply: None` = "recognised but not yet". Arnr-type is the
+    /// former; it should never become the latter.)
+    #[test]
+    fn w7_8_arnr_type_remains_out_of_scope() {
+        let table = flag_table();
+        let mut o = EncOpts::default();
+        let err = args::parse(&table, &mut o, &s(&["--arnr-type=1"]), "rvp9enc").unwrap_err();
+        assert!(err.contains("unknown option"), "{err}");
     }
 
     /// W0.2 PROOF — `--cpu-used` and the deadline tri-state are
