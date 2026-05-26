@@ -176,6 +176,14 @@ pub struct EncoderConfig {
     /// vpxenc deadline class (libvpx `vpxenc.c:123-130`). Defaults to
     /// [`Deadline::Good`] to match vpxenc's default.
     pub deadline: Deadline,
+    /// W5.1(vpxenc parity, A17 row 30) — `oxcf.noise_sensitivity`
+    /// (libvpx `vp9_encoder.h::VP9EncoderConfig::noise_sensitivity`,
+    /// CLI plumb at `vpxenc.c::set_encoder_config` → `noise_sensitivity`).
+    /// Valid range `0..=6`. `0` disables the temporal denoiser; any
+    /// non-zero value enables it (the magnitude maps to libvpx's
+    /// `VP9_DENOISER_LEVEL` via `vp9_denoiser_set_noise_level`).
+    /// Defaults to `0` (denoiser off), matching vpxenc's CLI default.
+    pub noise_sensitivity: u8,
 }
 
 impl EncoderConfig {
@@ -202,6 +210,7 @@ impl EncoderConfig {
             // realtime ones (cpu-used 8/9, W7) lands.
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         }
     }
 
@@ -2285,6 +2294,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -2318,6 +2328,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -2363,6 +2374,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -2421,6 +2433,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -2459,6 +2472,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc_low = StreamEncoder::new(cfg_low).unwrap();
         // Pump a few KF-then-inter cycles so the buffer feedback
@@ -2481,6 +2495,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc_high = StreamEncoder::new(cfg_high).unwrap();
         let mut last_high_q = 0u8;
@@ -2510,6 +2525,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(128, 64);
@@ -2536,6 +2552,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         assert!(StreamEncoder::new(cfg).is_err());
     }
@@ -2553,6 +2570,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2630,6 +2648,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2679,6 +2698,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2730,6 +2750,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2811,6 +2832,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2956,6 +2978,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -3028,6 +3051,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -3260,6 +3284,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y0, u0, v0) = gradient_frame(128, 128);
@@ -3309,6 +3334,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -3420,6 +3446,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -3492,6 +3519,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -3541,6 +3569,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -3609,6 +3638,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3668,6 +3698,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3744,6 +3775,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3786,6 +3818,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3851,6 +3884,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3908,6 +3942,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3981,6 +4016,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -4060,6 +4096,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -4166,6 +4203,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let cfg_on = EncoderConfig { aq_mode: AqMode::CyclicRefresh, ..cfg_off };
 
@@ -4355,6 +4393,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -4471,6 +4510,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         }
     }
 
@@ -5173,6 +5213,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         // Initial state: gates off (haven't run yet), no Last_Source.
@@ -5223,6 +5264,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
         assert_eq!(
@@ -5267,6 +5309,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
         // Frame 0 — KF (skipped; W0.5 does not change KF refresh bit).
@@ -5352,6 +5395,7 @@ mod tests {
                 use_prev_frame_mvs: false,
                 speed,
                 deadline: Deadline::Realtime,
+                noise_sensitivity: 0,
             };
             let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
             let mut bytes = Vec::new();

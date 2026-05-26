@@ -212,6 +212,7 @@ fn drive_rvp9_leg(
         use_prev_frame_mvs: false,
         speed: 7,
         deadline: rvp9_encoder::Deadline::Realtime,
+        noise_sensitivity: 0,
     };
     let mut enc = StreamEncoder::new(cfg)?;
     let (yuv_frames, _src_fps) = read_cropped(

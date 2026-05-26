@@ -73,6 +73,7 @@ use rvp9_core::transforms::{TxMode, TxSize};
 pub mod aq_cyclic_refresh;
 pub mod buffer_pool;
 pub mod compound;
+pub mod denoiser;
 pub mod e12stat;
 pub mod f02_oracle;
 pub mod frame_loop;
@@ -5210,6 +5211,7 @@ mod tests {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
         }
     }
 

@@ -77,6 +77,7 @@ fn single_sb_config() -> EncoderConfig {
         use_prev_frame_mvs: false,
         speed: 7,
         deadline: rvp9_encoder::Deadline::Realtime,
+        noise_sensitivity: 0,
     }
 }
 

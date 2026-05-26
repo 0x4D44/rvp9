@@ -320,6 +320,7 @@ fn run_one_iteration(
         use_prev_frame_mvs: false,
         speed: 0,
         deadline: rvp9_encoder::Deadline::Good,
+        noise_sensitivity: 0,
     };
     let mut enc = StreamEncoder::new(cfg)
         .map_err(|e| format!("StreamEncoder::new: {e:?}"))?;

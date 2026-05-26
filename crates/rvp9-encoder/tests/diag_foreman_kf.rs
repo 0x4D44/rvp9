@@ -81,6 +81,7 @@ fn diag_foreman_kf() {
             use_prev_frame_mvs: false,
             speed: 7,
             deadline: rvp9_encoder::Deadline::Realtime,
+            noise_sensitivity: 0,
         };
         let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
         let mut dec = Decoder::new();
