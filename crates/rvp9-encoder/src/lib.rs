@@ -80,6 +80,7 @@ pub mod f02_oracle;
 pub mod frame_loop;
 pub(crate) mod loopfilter;
 pub mod lookahead;
+pub mod ml_partition;
 pub mod pre_analysis;
 pub mod predstat;
 pub mod rate_control;
