@@ -313,6 +313,13 @@ pub struct StreamEncoder {
     config: EncoderConfig,
     rate_control: RateControl,
     frame_idx: u32,
+    /// W1.5(vpxenc parity, A19 rows 20-21): source-frame lookahead
+    /// ring. Mirrors libvpx's `cpi->lookahead`
+    /// (`vp9_encoder.c::vp9_receive_raw_frame` pushes;
+    /// `vp9_get_compressed_data` pops). Depth defaults to 0
+    /// (passthrough) until the CLI plumbs `--lag-in-frames` in a
+    /// later wave (master inventory: A19 P0 follow-up).
+    lookahead: crate::lookahead::LookaheadCtx,
     /// Last reconstructed Y plane (tight-stride, `width * height`).
     /// Populated after every keyframe; for inter ZEROMV/skip=true
     /// frames the buffer is unchanged.
@@ -464,6 +471,16 @@ impl StreamEncoder {
             config,
             rate_control,
             frame_idx: 0,
+            // W1.5(vpxenc parity, A19): source-frame lookahead.
+            // Depth=0 (passthrough) — CLI's `--lag-in-frames` plumb
+            // lands in a later wave. With MAX_PRE_FRAMES=1 the ring's
+            // max_sz = 2: push, drain to pop, prev-source slot
+            // retained for peek(-1).
+            lookahead: crate::lookahead::LookaheadCtx::new(
+                config.width,
+                config.height,
+                0,
+            ),
             last_recon_y: vec![0u8; w * h],
             last_recon_u: vec![0u8; uvw * uvh],
             last_recon_v: vec![0u8; uvw * uvh],
@@ -490,6 +507,18 @@ impl StreamEncoder {
     #[must_use]
     pub fn config(&self) -> &EncoderConfig {
         &self.config
+    }
+
+    /// W1.5 test-only accessor: the lookahead ring's monotonic
+    /// `next_show_idx` counter. Advances once per
+    /// [`Self::encode_frame`] call. Used by
+    /// `tests::w1_5_lookahead_push_advances_show_idx` as the wiring
+    /// PROOF (anti-G3: if the lookahead push is stripped from
+    /// `encode_frame`, this counter stays at 0).
+    #[cfg(test)]
+    #[must_use]
+    pub fn lookahead_next_show_idx_for_test(&self) -> u64 {
+        self.lookahead.next_show_idx()
     }
 
     /// Frame counter — number of frames passed to [`Self::encode_frame`]
@@ -631,24 +660,31 @@ impl StreamEncoder {
         // doesn't support lossless (qindex 0), so we clamp to 1.
         let q_index = q_index.max(1);
 
-        // Compact tight-stride Y/U/V buffers from the strided input —
-        // the F5.1 simulator and the wire-format writers expect tight
-        // stride. (Allocating per-frame is wasteful in the steady
-        // state; a future revision will keep the buffers in the
-        // encoder struct.)
-        let mut y_tight = vec![0u8; w * h];
-        let mut u_tight = vec![0u8; uvw * uvh];
-        let mut v_tight = vec![0u8; uvw * uvh];
-        for r in 0..h {
-            y_tight[r * w..r * w + w]
-                .copy_from_slice(&yuv.y[r * yuv.y_stride..r * yuv.y_stride + w]);
-        }
-        for r in 0..uvh {
-            u_tight[r * uvw..r * uvw + uvw]
-                .copy_from_slice(&yuv.u[r * yuv.u_stride..r * yuv.u_stride + uvw]);
-            v_tight[r * uvw..r * uvw + uvw]
-                .copy_from_slice(&yuv.v[r * yuv.v_stride..r * yuv.v_stride + uvw]);
-        }
+        // W1.5(vpxenc parity, A19 rows 20-21): route the source frame
+        // through the lookahead ring. Libvpx splits this into
+        // `vp9_receive_raw_frame` (push) and the consumer-side pop
+        // in `vp9_get_compressed_data`; rvp9 folds both into
+        // `encode_frame` since the public API is synchronous (one
+        // encoded packet per pushed frame) until `--lag-in-frames`
+        // is wired. With depth=0 the ring is effectively passthrough:
+        // push then drain immediately. The lookahead's `next_show_idx`
+        // counter advances per push — a test-accessor below exposes
+        // it as the W1.5 wiring PROOF.
+        self.lookahead
+            .push(yuv, i64::from(self.frame_idx), i64::from(self.frame_idx) + 1, 0)
+            .map_err(|_| EncodeError::InvalidConfig(
+                "lookahead push rejected: dim mismatch or ring full",
+            ))?;
+        // Pop with drain=true (depth=0 means the steady-state pop
+        // condition is meaningless; we want pop to succeed
+        // unconditionally after each push).
+        let entry = self
+            .lookahead
+            .pop(/* drain = */ true)
+            .expect("lookahead must yield the just-pushed frame");
+        let y_tight = entry.y.clone();
+        let u_tight = entry.u.clone();
+        let v_tight = entry.v.clone();
 
         let packet = match frame_kind {
             FrameKind::Key => self.encode_keyframe_internal(
@@ -4996,6 +5032,45 @@ mod tests {
                 assert_eq!(segs[idx], 5, "16x16 leaf row {r} col {c}");
                 assert!(!skips[idx], "16x16 leaf row {r} col {c} should be skip=false");
             }
+        }
+    }
+
+    /// W1.5 PROOF — `encode_frame` pushes each input through the
+    /// lookahead ring (libvpx `vp9_receive_raw_frame` → `lookahead`
+    /// at `vp9_lookahead.c:93-199`) and pops it back out before
+    /// encoding. The lookahead's `next_show_idx` counter advances
+    /// once per push, so encoding N frames must leave the counter
+    /// at N. If the producer/consumer wiring is stripped, the
+    /// counter stays at 0 — anti-G3 wiring guard.
+    #[test]
+    fn w1_5_lookahead_push_advances_show_idx() {
+        let cfg = EncoderConfig {
+            width: 64,
+            height: 64,
+            framerate: 30.0,
+            target_bitrate_bps: 1_000_000,
+            gop_length: 30,
+            aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
+            speed: 7,
+            deadline: Deadline::Realtime,
+        };
+        let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
+        assert_eq!(
+            enc.lookahead_next_show_idx_for_test(),
+            0,
+            "lookahead starts at next_show_idx = 0"
+        );
+        let (y, u, v) = gradient_frame(64, 64);
+        for expected in 1..=3u64 {
+            let _ = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+            assert_eq!(
+                enc.lookahead_next_show_idx_for_test(),
+                expected,
+                "W1.5 PROOF: lookahead.next_show_idx must advance once per \
+                 encode_frame (libvpx vp9_lookahead.c:196-197). If the push \
+                 is stripped, this stays at 0."
+            );
         }
     }
 
