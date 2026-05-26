@@ -81,6 +81,7 @@ pub mod lookahead;
 pub mod pre_analysis;
 pub mod predstat;
 pub mod rate_control;
+pub mod rdo;
 pub mod skipstat;
 pub mod temporal_filter;
 
