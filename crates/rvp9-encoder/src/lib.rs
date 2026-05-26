@@ -81,6 +81,7 @@ pub mod pre_analysis;
 pub mod predstat;
 pub mod rate_control;
 pub mod skipstat;
+pub mod temporal_filter;
 
 pub use frame_loop::{AqMode, Deadline, EncodedFrame, EncoderConfig, FrameKind as StreamFrameKind, StreamEncoder, YuvFrameRef};
 
