@@ -1227,9 +1227,36 @@ impl StreamEncoder {
         // after IT-add). Must run BEFORE we commit `new_recon_*` into
         // `last_recon_*` so the next inter frame's reference is the
         // post-LF pixels — same as the decoder's pool.
-        let filter_level = pick_filter_level(q_index);
+        //
+        // PHASE-3 integration: at speed <= 4 (Good/Best path), use the
+        // W7.4 search_filter_level SSE-driven binary search. At higher
+        // speeds (RT op-point default for rvp9), the fixed q-derived
+        // formula `pick_filter_level(q_index)` is faster and matches
+        // libvpx's RT speed-feature default
+        // (`vp9_speed_features.c::set_rt_speed_feature_framesize_
+        // independent` `lpf_pick = LPF_PICK_FROM_Q`).
+        let mi_grid = build_inter_mi_grid_for_lf(h / 8, w / 8, &sb_partitions);
+        let filter_level = if self.config.speed.unsigned_abs() <= 4 {
+            // libvpx `vp9_picklpf.c:46-157` search.
+            crate::loopfilter::search_filter_level(
+                &crate::loopfilter::SearchFilterLevelParams {
+                    width: w as u32,
+                    height: h as u32,
+                    mi_grid: &mi_grid,
+                    recon_y: &new_recon_y,
+                    recon_u: &new_recon_u,
+                    recon_v: &new_recon_v,
+                    source_y: input_yuv.0,
+                    last_filt_level: 0, // TODO: track last_filt_level on StreamEncoder
+                    max_filter_level: 63, // libvpx MAX_LOOP_FILTER
+
+                    tx_mode_not_only_4x4: true,
+                },
+            )
+        } else {
+            pick_filter_level(q_index)
+        };
         if filter_level > 0 {
-            let mi_grid = build_inter_mi_grid_for_lf(h / 8, w / 8, &sb_partitions);
             apply_loop_filter_to_tight_recon(
                 w,
                 h,
