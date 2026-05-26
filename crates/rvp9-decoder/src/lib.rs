@@ -2044,6 +2044,7 @@ impl Decoder {
                 SegmentationLfView::from_segmentation(&resolved_seg),
                 decode_progress.as_deref(),
                 self.num_threads.get(),
+                tile_cols as usize,
             );
         }
         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
@@ -3178,6 +3179,7 @@ impl Decoder {
                 SegmentationLfView::from_segmentation(&resolved_seg),
                 decode_progress.as_deref(),
                 self.num_threads.get(),
+                tile_cols as usize,
             );
         }
         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
@@ -3680,6 +3682,7 @@ fn apply_loop_filter_to_frame_dispatching(
     seg_view: SegmentationLfView,
     decode_progress: Option<&[std::sync::atomic::AtomicU32]>,
     num_workers: usize,
+    num_tile_cols: usize,
 ) {
     let row_mt_disabled = crate::trace_flags::trace_flags().disable_row_mt;
     let sb_rows = mi_rows.div_ceil(SB_MI_SIZE);
@@ -3721,6 +3724,7 @@ fn apply_loop_filter_to_frame_dispatching(
             lf_deltas,
             seg_view,
             num_workers,
+            num_tile_cols,
         );
         return;
     }
@@ -3834,6 +3838,7 @@ fn apply_loop_filter_to_frame_column_wavefront_dispatch(
     lf_deltas: ResolvedLfDeltas,
     seg_view: SegmentationLfView,
     num_workers: usize,
+    num_tile_cols: usize,
 ) {
     use rvp9_core::loopfilter::apply::{
         ColumnWavefrontLfState, Non420Inputs, RowMaskInputs, SharedFrame,
@@ -3859,15 +3864,15 @@ fn apply_loop_filter_to_frame_column_wavefront_dispatch(
         (0..sb_rows).map(|_| AtomicI32::new(-1)).collect();
 
     // HLD §3.6 cap: `min(num_workers, max(1, num_tile_cols), sb_rows)`.
-    // At C2 the dispatcher does not yet have access to `num_tile_cols`
-    // (would require threading another arg through). The C3 commit
-    // wires that. For C2, cap at `min(num_workers, sb_rows)` which is
-    // already libvpx's pre-tile-cols cap. Per HLD §10 #8 we do not
-    // under-cap; the additional num_tile_cols cap only matters when
-    // num_workers > num_tile_cols, which the differential test
-    // exercises on tile_1x2/4/8 (num_tile_cols ∈ {2, 4, 8}). C3 ties
-    // the loose end.
-    let num_lf_workers = num_workers.min(sb_rows).max(1);
+    // Mirrors libvpx vp9_thread_common.c:165-170. Capping at
+    // num_tile_cols is critical because the column-wavefront's
+    // effective parallelism is bounded by the number of independent
+    // rows in flight — beyond num_tile_cols, adding workers just
+    // adds contention.
+    let num_lf_workers = num_workers
+        .min(num_tile_cols.max(1))
+        .min(sb_rows)
+        .max(1);
 
     let chroma = yv12.chroma();
     let chroma_is_asymmetric = matches!(

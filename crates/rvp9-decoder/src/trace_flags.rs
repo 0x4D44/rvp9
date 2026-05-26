@@ -100,26 +100,32 @@ pub(crate) struct TraceFlags {
     /// `RVP9_DUMP_LF_MASKS` (any value) — per-SB loopfilter-mask dump.
     /// Per-SB in `dump_lf_masks` — ~500 calls/frame at 1080p.
     pub dump_lf_masks: bool,
-    /// Wave 2 C4 — row-MT loopfilter is **opt-in** via `RVP9_ROW_MT=1`.
-    /// Default state is `disable_row_mt = true` (i.e. the legacy serial
-    /// LF runs); setting `RVP9_ROW_MT=1` flips this to false.
+    /// Row-MT loopfilter enabled state. Default ON (false =
+    /// "not disabled") after the Lever B v2 C3 perf gate: serial LF
+    /// 1197µs → column-wavefront 443µs (-63%), frame 2555µs → 1889µs
+    /// (-26%) on testsrc_1080p30 t=4.
     ///
-    /// The 2026-05-25 A/B sweep showed row-MT REGRESSES multi-thread
-    /// performance by 7-24% on the four headline fixtures (`tile_1x4
-    /// t=4`, `testsrc_1080p30 t=4`, `testsrc_1080p60 t=4/8`); the LF
-    /// no longer dominates frame time after Wave 1's IDCT i16 ports +
-    /// Wave 4's alloc pooling, and the row-MT scope overhead exceeds
-    /// the parallelism win. Default-off keeps the dispatching code
-    /// landed (testable, validated bit-exact) without exposing the
-    /// regression in production. See `wave-2-row-parallel-lf.md` for
-    /// the measurement.
+    /// Set `RVP9_DISABLE_LF_MT=1` to fall back to the legacy serial
+    /// LF (e.g. for differential testing or as a kill switch). The
+    /// older `RVP9_ROW_MT=1` opt-in is still honoured (idempotent
+    /// with the new default) and remains the documented way to
+    /// explicitly enable MT for older callers.
+    ///
+    /// Historical note: Wave 2 landed row-MT dormant (default OFF)
+    /// because the row-barrier worker REGRESSED 7-24% on the four
+    /// headline fixtures. Lever B v2 replaced the row-barrier with
+    /// libvpx's column-wavefront, which beats serial decisively;
+    /// hence the flip.
     pub disable_row_mt: bool,
-    /// Lever B v2 (HLD §5 row 3) — column-wavefront LF worker is
-    /// opt-in via `RVP9_USE_COLUMN_WAVEFRONT=1`. Default OFF (false);
-    /// when set, the LF dispatcher routes through
-    /// `run_split_edge_lf_worker` instead of the legacy row-barrier
-    /// `run_row_mt_lf_worker`. Lands dormant at C2 — exercised by the
-    /// differential test (`row_mt_lf_diff`) under both states.
+    /// Lever B v2 (HLD §5 row 3) — column-wavefront LF worker.
+    /// Default ON (C3 perf gate met: serial LF 1197µs → wavefront
+    /// 443µs, frame 2555µs → 1889µs on testsrc_1080p30 t=4).
+    /// Setting `RVP9_DISABLE_COLUMN_WAVEFRONT=1` routes the LF
+    /// dispatcher back to the legacy `run_row_mt_lf_worker`
+    /// (row-barrier) — kept as a debug bypass.
+    ///
+    /// The legacy `RVP9_USE_COLUMN_WAVEFRONT=1` opt-in still works
+    /// (idempotent with the new default) but is no longer required.
     pub use_column_wavefront: bool,
 }
 
@@ -161,13 +167,17 @@ impl TraceFlags {
             // false. See the field docstring for the rationale (A/B
             // showed regression on multi-thread fixtures after
             // upstream Wave 1 + 4 reduced LF's frame-time share).
-            disable_row_mt: !eq1("RVP9_ROW_MT"),
-            // Lever B v2 C2 — column-wavefront LF worker. Opt-in,
-            // default OFF. When the gate is met (C3 perf-gate), the
-            // default flips ON via the dispatcher (no env var change
-            // required); until then this env var is the only way to
-            // exercise the new worker.
-            use_column_wavefront: eq1("RVP9_USE_COLUMN_WAVEFRONT"),
+            // Default ON (LF MT enabled); set `RVP9_DISABLE_LF_MT=1`
+            // to revert to serial LF. `RVP9_ROW_MT=1` still works as
+            // an explicit opt-in (no behavioural difference vs the
+            // new default).
+            disable_row_mt: any("RVP9_DISABLE_LF_MT"),
+            // Lever B v2 C3 — column-wavefront LF worker default ON
+            // (perf gate met). Default = true (wavefront), unless
+            // `RVP9_DISABLE_COLUMN_WAVEFRONT=1` is set (legacy
+            // row-barrier worker). `RVP9_USE_COLUMN_WAVEFRONT=1` is
+            // still accepted (idempotent with the default).
+            use_column_wavefront: !any("RVP9_DISABLE_COLUMN_WAVEFRONT"),
         }
     }
 

@@ -92,15 +92,22 @@ const MULTI_TILE_VECTORS: &[&str] = &[
 
 #[test]
 fn row_mt_lf_matches_serial_on_multi_tile_vectors() {
-    // Opt in to the row-MT LF dispatch path BEFORE constructing any
-    // Decoder so `trace_flags()`'s OnceLock initialises with row-MT
-    // enabled. Removing this line would silently fold the test into
-    // a serial-vs-serial comparison (still useful for catching the
-    // refactor of Wave 2 C1, but no longer exercising the row-MT
-    // dispatch from C3/C4).
+    // Lever B v2 C3 flipped the dispatcher's LF-worker default to
+    // column-wavefront. To exercise the LEGACY row-barrier worker
+    // (the original Wave 2 path) this test sets
+    // `RVP9_DISABLE_COLUMN_WAVEFRONT=1`. With MT now default-on
+    // (no env var needed) the dispatcher routes the t=4 path to
+    // `run_row_mt_lf_worker`, matching this test's historical
+    // scope. The new worker has its own diff test
+    // (`column_wavefront_lf_diff.rs`).
+    //
+    // `RVP9_ROW_MT=1` is set too for compatibility with the env-var
+    // OnceLock that other tests may have inited (idempotent with
+    // the new MT default).
     // SAFETY: tests in `tests/` are single-threaded by default in
     // cargo's harness; no other thread reads env vars at this point.
     unsafe { std::env::set_var("RVP9_ROW_MT", "1") };
+    unsafe { std::env::set_var("RVP9_DISABLE_COLUMN_WAVEFRONT", "1") };
 
     let dir = vectors_dir();
     if !dir.exists() {
