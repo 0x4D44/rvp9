@@ -686,6 +686,10 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
             .noise_sensitivity
             .map(|v| v.min(6) as u8)
             .unwrap_or(0),
+        // PHASE-3 integration: CLI `--min-q` / `--max-q` (W7.8) →
+        // EncoderConfig. Defaults mirror RateControlConfig::default().
+        min_qindex: opts.min_q.map(|v| v.min(255) as u8).unwrap_or(4),
+        max_qindex: opts.max_q.map(|v| v.min(255) as u8).unwrap_or(255),
     };
     let mut encoder = StreamEncoder::new(config).map_err(|e| {
         format!(

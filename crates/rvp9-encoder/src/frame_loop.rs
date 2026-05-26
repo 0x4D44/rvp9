@@ -184,6 +184,16 @@ pub struct EncoderConfig {
     /// `VP9_DENOISER_LEVEL` via `vp9_denoiser_set_noise_level`).
     /// Defaults to `0` (denoiser off), matching vpxenc's CLI default.
     pub noise_sensitivity: u8,
+    /// Best (lowest) allowed Q-index. Mirrors libvpx
+    /// `oxcf.best_allowed_q` (CLI: `--min-q`). The CBR Q controller
+    /// won't pick anything below this. `0` defaults to the
+    /// [`RateControlConfig::min_qindex`] default (4 for the CBR/RT
+    /// preset). Range: `0..=max_qindex`.
+    pub min_qindex: u8,
+    /// Worst (highest) allowed Q-index. Mirrors libvpx
+    /// `oxcf.worst_allowed_q` (CLI: `--max-q`). The CBR Q controller
+    /// won't pick anything above this. Range: `min_qindex..=255`.
+    pub max_qindex: u8,
 }
 
 impl EncoderConfig {
@@ -211,6 +221,11 @@ impl EncoderConfig {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            // Mirror the RateControlConfig CBR/RT defaults
+            // (min=4 / max=255) so unspecified callers inherit the
+            // libvpx-faithful preset.
+            min_qindex: 4,
+            max_qindex: 255,
         }
     }
 
@@ -240,6 +255,16 @@ impl EncoderConfig {
             frame_width: self.width,
             frame_height: self.height,
             bits_per_mb_multiplier,
+            // Re-audit pass 2 #7 follow-up: thread the user's
+            // `--min-q` / `--max-q` selection through to the rate
+            // controller. The CBR Q regulator clamps `pick_q` between
+            // these bounds (libvpx `oxcf.best_allowed_q` /
+            // `worst_allowed_q`). When the CLI omits the flags the
+            // `EncoderConfig::new` defaults (4, 255) match the
+            // pre-existing `RateControlConfig` defaults, preserving
+            // byte-identical behaviour for legacy callers.
+            min_qindex: self.min_qindex,
+            max_qindex: self.max_qindex,
             ..defaults
         }
     }
@@ -2374,6 +2399,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -2408,6 +2435,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -2454,6 +2483,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -2513,6 +2544,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -2552,6 +2585,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc_low = StreamEncoder::new(cfg_low).unwrap();
         // Pump a few KF-then-inter cycles so the buffer feedback
@@ -2575,6 +2610,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc_high = StreamEncoder::new(cfg_high).unwrap();
         let mut last_high_q = 0u8;
@@ -2605,6 +2642,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(128, 64);
@@ -2632,6 +2671,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         assert!(StreamEncoder::new(cfg).is_err());
     }
@@ -2650,6 +2691,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2728,6 +2771,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2778,6 +2823,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2830,6 +2877,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -2912,6 +2961,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -3058,6 +3109,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -3131,6 +3184,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
@@ -3364,6 +3419,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y0, u0, v0) = gradient_frame(128, 128);
@@ -3414,6 +3471,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
 
@@ -3526,6 +3585,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -3599,6 +3660,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -3649,6 +3712,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -3718,6 +3783,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3778,6 +3845,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3855,6 +3924,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3898,6 +3969,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -3964,6 +4037,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -4022,6 +4097,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(W, H);
@@ -4096,6 +4173,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -4176,6 +4255,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -4283,6 +4364,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let cfg_on = EncoderConfig { aq_mode: AqMode::CyclicRefresh, ..cfg_off };
 
@@ -4473,6 +4556,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
@@ -4590,6 +4675,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         }
     }
 
@@ -5293,6 +5380,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         // Initial state: gates off (haven't run yet), no Last_Source.
@@ -5344,6 +5433,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
         assert_eq!(
@@ -5389,6 +5480,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
         // Frame 0 — KF (skipped; W0.5 does not change KF refresh bit).
@@ -5475,6 +5568,8 @@ mod tests {
                 speed,
                 deadline: Deadline::Realtime,
                 noise_sensitivity: 0,
+                min_qindex: 4,
+                max_qindex: 255,
             };
             let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
             let mut bytes = Vec::new();

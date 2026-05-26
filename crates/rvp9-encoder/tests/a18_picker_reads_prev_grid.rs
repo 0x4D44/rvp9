@@ -91,6 +91,8 @@ fn a18_picker_reads_prev_grid_when_activated() {
         speed: 7,
         deadline: rvp9_encoder::Deadline::Realtime,
         noise_sensitivity: 0,
+        min_qindex: 4,
+        max_qindex: 255,
     };
     let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
 
@@ -187,6 +189,8 @@ fn a18_picker_reads_nothing_when_default_off() {
         speed: 7,
         deadline: rvp9_encoder::Deadline::Realtime,
         noise_sensitivity: 0,
+        min_qindex: 4,
+        max_qindex: 255,
     };
     let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
 

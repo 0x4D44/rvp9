@@ -80,6 +80,8 @@ fn e13_diamond_oracle_foreman() {
         speed: 7,
         deadline: rvp9_encoder::Deadline::Realtime,
         noise_sensitivity: 0,
+        min_qindex: 4,
+        max_qindex: 255,
     };
     let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
 

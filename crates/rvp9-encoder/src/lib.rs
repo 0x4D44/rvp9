@@ -5267,6 +5267,8 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            min_qindex: 4,
+            max_qindex: 255,
         }
     }
 
