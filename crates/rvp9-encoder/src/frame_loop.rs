@@ -1404,6 +1404,27 @@ impl StreamEncoder {
         // `cm->prev_frame = cm->cur_frame`, fires after every
         // non-`show_existing_frame` decode. This frame was an inter
         // frame, so `last_frame_was_key` becomes `false`.
+
+        // PHASE-3 integration: post-encode update of
+        // `consec_zero_mv[]` from the picker's per-leaf MV choices.
+        // libvpx `vp9_encoder.c::update_consec_zero_mv_count`. The
+        // W2.4 noise estimator's `frame_low_motion` count
+        // (vp9_noise_estimate.c:182-188) reads this. Without this
+        // update the counter stays at zero forever → noise estimator
+        // never sees `frame_low_motion = true`.
+        for (idx, cell) in cur_mv_grid.iter().enumerate() {
+            if idx >= self.pre_analysis.consec_zero_mv.len() {
+                break;
+            }
+            let mv0 = cell.mvs[0];
+            if mv0.row == 0 && mv0.col == 0 {
+                self.pre_analysis.consec_zero_mv[idx] =
+                    self.pre_analysis.consec_zero_mv[idx].saturating_add(1);
+            } else {
+                self.pre_analysis.consec_zero_mv[idx] = 0;
+            }
+        }
+
         self.prev_mv_grid = Some(cur_mv_grid);
         self.prev_mv_grid_dims = (mi_rows_us, mi_cols_us);
         self.last_frame_was_key = false;
