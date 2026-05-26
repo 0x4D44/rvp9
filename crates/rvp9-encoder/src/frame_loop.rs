@@ -531,6 +531,15 @@ pub struct StreamEncoder {
     altref_recon_u: Vec<u8>,
     /// W8 — ALTREF V plane. See [`Self::altref_recon_y`].
     altref_recon_v: Vec<u8>,
+    /// W-ALTREF — anti-G3 witness. Set inside
+    /// [`Self::encode_altref_internal`] to `true` when the just-coded
+    /// ARF reconstruction (slot 2) differs from the LAST reconstruction
+    /// it predicted against. The retired ZEROMV-skip scaffold made slot
+    /// 2 a verbatim LAST copy (this would stay `false`); real per-leaf
+    /// coding makes it differ. Read by the PROOF test
+    /// (`tests/w_altref_real_coding.rs`) via
+    /// [`Self::diag_last_arf_real_coded`]. `None` until the first ARF.
+    last_arf_real_coded: Option<bool>,
     /// W8 — Pending superframe carrier. When an ARF packet is built
     /// inside [`Self::try_encode_one_popped`], its bytes are pushed
     /// here and the next encode call's `show_frame` packet is
@@ -595,6 +604,17 @@ pub struct StreamEncoder {
     /// keyframes (the decoder's `vp9_setup_past_independence` resets the
     /// bank).
     decoder_fc_state: FrameContext,
+    /// W-ALTREF — mirror of the decoder's FC bank slot 1. libvpx routes
+    /// ARFs to `frame_context_idx = 1` (`vp9_encoder.c:818-819`), so the
+    /// ARF reads its compressed-header "pre" FC from bank 1 and writes
+    /// its backward-adapted result back to bank 1 — leaving the show
+    /// frames' bank 0 (`decoder_fc_state`) untouched across the non-show
+    /// ARF. Starts at defaults; the only writer is
+    /// [`Self::encode_altref_internal`]. (The encoder, like its decoder,
+    /// keeps banks across the KF boundary — see the `decoder_fc_state`
+    /// note. With a single GOP-leading KF this matches vpxdec's
+    /// all-banks-default startup state, preserving byte-exactness.)
+    decoder_fc_state_arf: FrameContext,
     /// P20 — adaptive RD-threshold table (libvpx
     /// `vp9_pickmode.c:2241-2247` gate state). One per stream;
     /// re-initialised to libvpx's `RD_THRESH_INIT_FACT = 32` every
@@ -747,6 +767,7 @@ impl StreamEncoder {
             altref_recon_y: vec![0u8; w * h],
             altref_recon_u: vec![0u8; uvw * uvh],
             altref_recon_v: vec![0u8; uvw * uvh],
+            last_arf_real_coded: None,
             pending_arf_packet: None,
             inter_frames_since_arf: 0,
             frames_since_golden_refresh: 0,
@@ -759,6 +780,7 @@ impl StreamEncoder {
             // P0b — start from default; reset on every keyframe.
             frame_context: FrameContext::new_default(),
             decoder_fc_state: FrameContext::new_default(),
+            decoder_fc_state_arf: FrameContext::new_default(),
             // P20 — fresh adaptive-RD-threshold table at INIT_FACT.
             rd_thresh_table:
                 rvp9_core::mode_decision::rd_thresh::RdThreshTable::new(),
@@ -1963,6 +1985,13 @@ impl StreamEncoder {
             // the writer with `show_frame: false` and
             // `refresh_frame_flags = 0x04`.
             /* show_frame = */ true,
+            // W-ALTREF — normal inter frames reference LAST/GOLDEN
+            // (both past in display order) and never name ALTREF in
+            // their ref set, so every sign bias is `false` (libvpx
+            // `set_ref_sign_bias`: a ref is biased only when it points
+            // at a FUTURE frame). Keeps the cross-decoder gate's wire
+            // bytes unchanged.
+            /* ref_frame_sign_biases = */ [false, false, false],
             // A18 — Thread the same `prev_mv_grid` the picker used so
             // the writer's `find_mv_refs` produces the SAME
             // `best_ref_mv` the decoder will compute.
@@ -1976,6 +2005,9 @@ impl StreamEncoder {
             // adaptation.
             Some(&self.frame_context),
             &mut decoder_fc,
+            // W-ALTREF — show frames use FC bank 0 (libvpx
+            // `frame_context_idx = refresh_alt_ref_frame = 0`).
+            /* frame_context_idx = */ 0,
         )?;
 
         // W0.5(vpxenc parity, A2 P0 / A1 P5): with `refresh_frame_
@@ -2115,31 +2147,41 @@ impl StreamEncoder {
         Ok(packet)
     }
 
-    /// W8 — encode a temporal-filtered ALTREF source into a non-show
-    /// inter packet with `refresh_frame_flags = 0x04`
-    /// (`ALT_REF_FRAME_IDX = 2`).
+    /// W-ALTREF — REAL per-leaf coding of the temporally-filtered
+    /// ALTREF source into a non-show inter packet with
+    /// `refresh_frame_flags = 0x04` (`ALT_REF_FRAME_IDX = 2`).
     ///
-    /// libvpx parity: `vp9_encoder.c::setup_arf_frame` selects the ARF
-    /// source via `vp9_lookahead_peek(arf_src_index)` and runs
-    /// `vp9_temporal_filter` to produce the filtered pixels (lines
-    /// 4500-4600 in stock libvpx). `vp9_bitstream.c::vp9_pack_bitstream`
-    /// emits the resulting packet with `cm->show_frame = 0` and
-    /// `refresh_frame_flags |= 1 << ALT_REF_FRAME_IDX`.
+    /// libvpx parity: `vp9_encoder.c::encode_frame_to_data_rate`
+    /// (:5093-5142) runs the ARF as a *normal frame encode* — the same
+    /// per-block RD partition descent (`vp9_rdopt.c` / `vp9_pickmode.c`)
+    /// the show frames use, just with `cm->show_frame = 0`, the
+    /// temporally-filtered source (`vp9_temporal_filter`), and
+    /// `refresh_frame_flags |= 1 << ALT_REF_FRAME_IDX`. We mirror that
+    /// exactly: the *same* variance partition picker +
+    /// `pick_and_simulate_inter_encode_partitions` (the show-frame
+    /// real-RD path) runs on the filtered pixels, choosing intra or
+    /// inter-from-LAST per leaf by RD and producing a genuine
+    /// reconstruction the decoder reproduces bit-for-bit.
     ///
-    /// **State isolation.** The ARF lives "between" inter frames in
-    /// encode order — it must NOT advance the stream's normal
-    /// inter-frame state (rate control, LAST/GOLDEN reconstruction,
-    /// FC bank, prev-frame MV grid, cyclic-refresh map, denoiser).
-    /// We snapshot every mutable piece of stream state before the
-    /// shared inter encode path runs, then restore it afterwards.
-    /// Only the slot-2 ALTREF mirror picks up the new reconstruction.
+    /// **Scope (honest).** The picker's GOLDEN candidate is default-off
+    /// (libvpx-parity, `lib.rs` A15 Phase B Step 5 — commit 63abe6e), so
+    /// every coded leaf resolves to LAST (slot 0) or intra. Inter-from-
+    /// GOLDEN/ALTREF coding for the ARF is deferred until GOLDEN
+    /// selection is turned on stream-wide (it would need
+    /// `ref_frame_indices[1] = 1` and a matching encoder GOLDEN-slot
+    /// reference). This is still REAL coding: real MC-from-LAST + real
+    /// forward-quantised residual against the filtered source, not the
+    /// retired ZEROMV-skip copy.
     ///
-    /// **Picker safety.** No picker iterates against slot 2 today
-    /// (the per-leaf `picked_ref_frame` ∈ {LAST, GOLDEN}), so even if
-    /// the ALTREF reconstruction diverges from libvpx's, the
-    /// downstream inter frames don't read it. The cross-decoder gate
-    /// stays byte-exact because every inter packet's
-    /// `ref_frame_indices[i]` still resolves to slot 0 (LAST).
+    /// **State isolation.** The ARF lives "between" show frames in
+    /// encode order and must NOT advance the stream's normal
+    /// inter-frame state (rate control, LAST/GOLDEN/ME reconstruction,
+    /// `frame_context`, prev-frame MV grid, cyclic-refresh map,
+    /// denoiser, RD-threshold table, GOLDEN cadence). It runs the
+    /// picker against *local* scratch buffers and a *cloned*
+    /// RD-threshold table, then writes only `altref_recon_*` (slot 2)
+    /// and `decoder_fc_state` (which the decoder DOES advance on every
+    /// decoded frame, visible or not — see below).
     fn encode_altref_internal(
         &mut self,
         q_index: u8,
@@ -2147,106 +2189,257 @@ impl StreamEncoder {
     ) -> Result<Vec<u8>, EncodeError> {
         let w = self.config.width;
         let h = self.config.height;
-        let mi_rows_us = (h as usize) / 8;
-        let mi_cols_us = (w as usize) / 8;
-        let sb_cols = mi_cols_us / 8;
+        let w_us = w as usize;
+        let h_us = h as usize;
+        let mi_rows_us = h_us / 8;
+        let mi_cols_us = w_us / 8;
 
-        // Build an all-skip ZEROMV partition (every SB = single
-        // 64x64 leaf), pointing at LAST. This produces a valid
-        // inter frame whose reconstruction is identical to the LAST
-        // reference (decoder's slot 0 contents). The ARF's
-        // *bitstream* parses cleanly; its slot-2 reconstruction
-        // mirrors what the decoder will write (since the decoder
-        // applies the same ZEROMV/skip rule on its side).
-        let sb_rows = mi_rows_us / 8;
+        // Real-RD partition decision on the FILTERED source, against the
+        // LAST reconstruction (the ARF inter-predicts from LAST). Same
+        // F8.2 variance picker the show-frame path uses
+        // (`encode_inter_internal`), so the ARF gets a content-driven
+        // partition instead of one flat 64×64 leaf.
+        let sb_partitions_intra_shape = choose_partitions_for_frame(
+            w_us,
+            h_us,
+            q_index,
+            filtered_yuv.0,
+            &self.me_ref_y,
+            /* is_keyframe = */ false,
+            self.rate_control.avg_frame_qindex_inter,
+            self.pre_analysis.vbp_threshold_scale(),
+        );
+
+        // Convert the intra-shaped descriptors into inter-shaped leaves
+        // (segmentation off for the ARF — AQ does not run on it).
         let mut sb_partitions: Vec<Vec<InterPartitionLeafDesc>> =
-            Vec::with_capacity(sb_rows * sb_cols);
-        for _ in 0..(sb_rows * sb_cols) {
-            sb_partitions.push(vec![InterPartitionLeafDesc {
-                mi_row_in_sb: 0,
-                mi_col_in_sb: 0,
-                leaf_bsize: BlockSize::Block64x64,
-                picked_mode: InterMode::ZeroMv,
-                picked_mv: Mv::ZERO,
-                skip: true,
-                segment_id: 0,
-                picked_ref_frame: RefFrame::LastFrame,
-                picked_interp_filter:
-                    rvp9_core::bitstream::frame::InterpFilter::EightTap,
-                picked_intra_mode: None,
-            }]);
+            sb_partitions_intra_shape
+                .iter()
+                .map(|leaves| {
+                    leaves
+                        .iter()
+                        .map(|l| InterPartitionLeafDesc {
+                            mi_row_in_sb: l.mi_row_in_sb,
+                            mi_col_in_sb: l.mi_col_in_sb,
+                            leaf_bsize: l.leaf_bsize,
+                            picked_mode: InterMode::ZeroMv,
+                            picked_mv: Mv::ZERO,
+                            skip: true,
+                            segment_id: 0,
+                            picked_ref_frame: RefFrame::LastFrame,
+                            picked_interp_filter:
+                                rvp9_core::bitstream::frame::InterpFilter::EightTap,
+                            picked_intra_mode: None,
+                        })
+                        .collect()
+                })
+                .collect();
+
+        // Local scratch reconstruction — the ARF's real decoded output.
+        // Never aliases `last_recon_*` (state isolation); captured into
+        // slot 2 below.
+        let uvw = w_us / 2;
+        let uvh = h_us / 2;
+        let mut arf_recon_y = vec![0u8; w_us * h_us];
+        let mut arf_recon_u = vec![0u8; uvw * uvh];
+        let mut arf_recon_v = vec![0u8; uvw * uvh];
+
+        // Local per-leaf MV grid (discarded — the ARF must not become
+        // the next show frame's `prev_mv_grid`). The ARF disables the
+        // `use_prev_frame_mvs` salvage (`prev_mv_grid = None`) so its
+        // writer-side `find_mv_refs` matches the decoder's.
+        let mut arf_mv_grid =
+            vec![PrevFrameMvRef::default(); mi_rows_us * mi_cols_us];
+        let seg_q_deltas: [Option<i16>; 8] = [None; 8];
+
+        // Clone the RD-threshold table so the picker's
+        // `update_thresh_freq_fact` decay does not leak into the show
+        // frames' adaptive thresholds (state isolation).
+        let mut arf_rd_thresh = self.rd_thresh_table.clone();
+
+        // The same real-RD picker + simulator the show-frame path runs
+        // (`encode_inter_internal`). Reads the filtered source, predicts
+        // from LAST (= decoder slot 0), and writes the real
+        // reconstruction into the scratch buffers. GOLDEN candidate is
+        // default-off so every pick resolves to LAST or intra.
+        let coef_source = pick_and_simulate_inter_encode_partitions(
+            w,
+            h,
+            q_index,
+            &seg_q_deltas,
+            filtered_yuv,
+            (&self.me_ref_y, &self.me_ref_u, &self.me_ref_v),
+            (&self.last_recon_y, &self.last_recon_u, &self.last_recon_v),
+            (&self.golden_recon_y, &self.golden_recon_u, &self.golden_recon_v),
+            (&mut arf_recon_y, &mut arf_recon_u, &mut arf_recon_v),
+            &mut sb_partitions,
+            // ARF disables prev-frame-MV salvage (libvpx never feeds the
+            // ARF the show stream's prev MVs); keeps writer/decoder
+            // `find_mv_refs` in lock-step.
+            None,
+            &mut arf_mv_grid,
+            &self.frame_context,
+            &mut arf_rd_thresh,
+            self.frames_since_golden_refresh,
+            self.frames_since_golden_refresh & 1,
+            self.config.speed,
+            self.config.deadline,
+            rvp9_core::mode_decision::speed_features::ContentTier::Default,
+            self.pre_analysis.noise_estimate,
+            self.pre_analysis.high_source_sad,
+            &self.pre_analysis.content_state_sb,
+            &self.pre_analysis.skin_map,
+        );
+
+        // In-loop deblock on the ARF reconstruction — the decoder runs
+        // the same `filter_level` after IT-add, so the
+        // encoder↔decoder bit-exact invariant survives LF. Mirrors the
+        // show-frame path's LF block in `encode_inter_internal`.
+        let mi_grid =
+            build_inter_mi_grid_for_lf(h / 8, w / 8, &sb_partitions);
+        let filter_level = if self.config.speed.unsigned_abs() <= 4 {
+            crate::loopfilter::search_filter_level(
+                &crate::loopfilter::SearchFilterLevelParams {
+                    width: w,
+                    height: h,
+                    mi_grid: &mi_grid,
+                    recon_y: &arf_recon_y,
+                    recon_u: &arf_recon_u,
+                    recon_v: &arf_recon_v,
+                    source_y: filtered_yuv.0,
+                    last_filt_level: 0,
+                    max_filter_level: 63,
+                    tx_mode_not_only_4x4: true,
+                },
+            )
+        } else {
+            pick_filter_level(q_index)
+        };
+        if filter_level > 0 {
+            apply_loop_filter_to_tight_recon(
+                w,
+                h,
+                filter_level,
+                &mi_grid,
+                &mut arf_recon_y,
+                &mut arf_recon_u,
+                &mut arf_recon_v,
+            );
         }
-        // Acknowledge the filtered source (still part of the API
-        // contract — a real ARF encoder would pick residuals against
-        // it). For the minimal wiring PROOF, the all-skip ZEROMV
-        // path discards filtered_yuv at the writer (the decoder
-        // reconstructs the ARF by copying LAST verbatim, since
-        // every leaf is skip=true ZEROMV; libvpx parity
-        // `vp9_decodeframe.c` `inter_predict` zero-MV path +
-        // `decode_skip` short-circuit).
-        let _ = filtered_yuv;
 
         let segmentation_params = build_segmentation_params(false, &[None; 8]);
         let mut frame_counts = FrameCounts::default();
-        let mut decoder_fc = self.decoder_fc_state.clone();
 
-        // All-skip frames carry no coefficients. The writer bypasses
-        // the coef source for `skip=true` leaves entirely (see
-        // `rvp9_core::bitstream::inter_coef_source::AllZeroCoefSource`
-        // doc), so any conforming `InterCoefSource` works. The shared
-        // `AllZeroCoefSource` is the smallest one.
-        let coef_source = rvp9_core::bitstream::inter_coef_source::AllZeroCoefSource::new();
+        // W-ALTREF — the ARF reads/writes FC bank 1 (libvpx
+        // `vp9_setup_frame:818-819`: `frame_context_idx =
+        // refresh_alt_ref_frame = 1`). The compressed header diff-encodes
+        // from the encoder's bank-1 mirror (`decoder_fc_state_arf`)
+        // toward the picker's working FC (`self.frame_context`), exactly
+        // as the show path diffs bank 0. CRITICAL: routing the ARF to
+        // bank 1 leaves the show frames' bank 0 (`decoder_fc_state`)
+        // untouched, so the post-ARF show frame still diff-encodes from
+        // the un-ARF-adapted bank 0 — matching what the decoder reads.
+        let mut decoder_fc = self.decoder_fc_state_arf.clone();
 
-        // W8 — ALTREF refresh mask. `refresh_frame_flags = 0x04`
+        // W-ALTREF — ALTREF refresh mask. `refresh_frame_flags = 0x04`
         // sets bit 2 = `ALT_REF_FRAME_IDX` (libvpx
-        // `vp9_blockd.h::ALTREF_FRAME - LAST_FRAME = 2`). show_frame
-        // is false: the writer emits the `intra_only = 0` bit
-        // (header.rs:675-678) and the decoder accepts the packet
-        // as a non-visible ARF.
+        // `vp9_blockd.h::ALTREF_FRAME - LAST_FRAME = 2`). show_frame is
+        // false: the writer emits the `intra_only = 0` bit
+        // (header.rs:675-678) and the decoder accepts the packet as a
+        // non-visible ARF. Sign bias `[false, false, false]`: the ARF
+        // itself references LAST/GOLDEN (both past in display order), so
+        // none of its references are sign-biased (libvpx
+        // `set_ref_sign_bias`). The ALTREF's *own* backward-ref status
+        // is encoded on the header of any FUTURE frame that names it.
         let packet = build_inter_packet_with_residuals(
             w,
             h,
             q_index,
-            /* filter_level = */ 0,
+            filter_level,
             &coef_source,
             &sb_partitions,
             &segmentation_params,
             /* refresh_frame_flags = */ 0x04,
             /* show_frame = */ false,
+            /* ref_frame_sign_biases = */ [false, false, false],
             /* prev_mv_grid = */ None,
             Some(&mut frame_counts),
             Some(&self.frame_context),
             &mut decoder_fc,
+            // W-ALTREF — ARF FC bank 1 (libvpx
+            // `frame_context_idx = refresh_alt_ref_frame = 1`).
+            /* frame_context_idx = */ 1,
         )?;
 
-        // W8 — mirror the decoder's slot 2 update. The ARF is
-        // all-skip ZEROMV against LASTFRAME, so the decoder
-        // reconstructs the ARF by copying LAST verbatim and writes
-        // it into slot 2 per the refresh mask. The encoder mirrors:
-        // copy `last_recon_*` (= decoder's slot 0) into
-        // `altref_recon_*` (= decoder's slot 2). Decoder-side
-        // semantics: `vp9_decodeframe.c::swap_frame_buffers` updates
-        // every slot named by `refresh_frame_flags` to point at the
-        // just-decoded frame buffer.
-        self.altref_recon_y.copy_from_slice(&self.last_recon_y);
-        self.altref_recon_u.copy_from_slice(&self.last_recon_u);
-        self.altref_recon_v.copy_from_slice(&self.last_recon_v);
+        // W-ALTREF — the ARF emits `refresh_frame_context = true`
+        // (`build_inter_packet_with_residuals` HeaderTail), so the
+        // decoder backward-adapts FC bank 1 after decoding the ARF and
+        // writes it back to `frame_contexts[1]`. The encoder mirrors the
+        // same adaptation into its bank-1 slot. Bank 0 is NOT touched —
+        // the next show frame's compressed header still diffs from the
+        // pre-ARF bank 0, matching the decoder. Mirrors the show-frame
+        // adaptation in `encode_inter_internal`.
+        let interp_switchable = true;
+        let tx_mode_select = false;
+        let (cs, uf) = coef_adapt_params(
+            /* not intra-only = */ false,
+            // The frame BEFORE the ARF in decode order is a show inter
+            // frame (the ARF only fires mid-GOP, never right after a
+            // KF — `inter_frames_since_arf >= arf_interval >= 2`), so
+            // `last_frame_was_key` is false here. Pass it straight
+            // through for parity with the show path.
+            self.last_frame_was_key,
+        );
+        let mut adapted_dec = adapt_mode_probs(
+            &decoder_fc,
+            &frame_counts,
+            interp_switchable,
+            tx_mode_select,
+        );
+        adapted_dec.coef_probs =
+            adapt_coef_probs(&decoder_fc.coef_probs, &frame_counts.coef, cs, uf);
+        adapted_dec.nmvc =
+            adapt_mv_probs(&decoder_fc.nmvc, &frame_counts.mv, false);
+        self.decoder_fc_state_arf = adapted_dec;
 
-        // W8 — decoder FC bank state advances on every decoded frame
-        // (visible or not). Persist the mutated `decoder_fc` so the
-        // next visible inter frame's compressed header diff-encodes
-        // from the post-ALTREF state. Note: we do NOT touch the
-        // encoder-side `self.frame_context`; that runs backward
-        // adaptation only on visible inter frames (the writer
-        // emits `refresh_frame_context = true` on visible frames;
-        // the ARF emits the same bit but the encoder-side stream
-        // state mirror keeps the pre-ARF FC because we want the
-        // post-ALTREF backward-adapt to happen on the next visible
-        // frame's count update, not on this ARF's all-skip counts).
-        self.decoder_fc_state = decoder_fc;
-        let _ = frame_counts;
+        // W-ALTREF — anti-G3 witness. The ARF predicted from LAST
+        // (`self.last_recon_*` here is the prediction reference, since
+        // the ARF is built BEFORE the show frame advances LAST). The
+        // retired ZEROMV-skip scaffold copied LAST verbatim into slot 2,
+        // making this comparison equal; real per-leaf MC + residual + LF
+        // makes the ARF reconstruction differ. Record the result for the
+        // PROOF test BEFORE we overwrite slot 2.
+        self.last_arf_real_coded = Some(arf_recon_y != self.last_recon_y);
+
+        // W-ALTREF — capture the REAL ARF reconstruction (post-LF) into
+        // slot 2. The decoder writes the same just-decoded buffer into
+        // every slot named by `refresh_frame_flags` (= bit 2 only), so
+        // `altref_recon_*` now mirrors the decoder's slot 2 exactly —
+        // a genuine reconstruction of the coded ARF, NOT a LAST copy.
+        self.altref_recon_y.copy_from_slice(&arf_recon_y);
+        self.altref_recon_u.copy_from_slice(&arf_recon_u);
+        self.altref_recon_v.copy_from_slice(&arf_recon_v);
 
         Ok(packet)
+    }
+
+    /// Diagnostic — read access to the ALTREF (slot 2) reconstruction Y
+    /// plane. The W-ALTREF PROOF (`tests/w_altref_real_coding.rs`)
+    /// asserts this DIFFERS from [`Self::diag_last_recon_y`] (anti-G3:
+    /// proves the ARF is real per-leaf coded, not a verbatim LAST copy).
+    #[must_use]
+    pub fn diag_altref_recon_y(&self) -> &[u8] {
+        &self.altref_recon_y
+    }
+
+    /// Diagnostic — anti-G3 witness for the W-ALTREF PROOF. `Some(true)`
+    /// once a real-coded ARF whose reconstruction differs from the LAST
+    /// it predicted against has been emitted; `Some(false)` would mean
+    /// the ARF reconstruction was a verbatim LAST copy (the retired
+    /// ZEROMV-skip scaffold); `None` if no ARF has fired yet.
+    #[must_use]
+    pub fn diag_last_arf_real_coded(&self) -> Option<bool> {
+        self.last_arf_real_coded
     }
 
     /// W8 — build the filtered ALTREF source via the temporal filter
@@ -2886,6 +3079,20 @@ fn build_inter_packet_with_residuals(
     // `rvp9_core::bitstream::header.rs::write_uncompressed_header`
     // (the `if !h.show_frame { wb.write_bit(0); }` arm).
     show_frame: bool,
+    // W-ALTREF — per-logical-ref sign bias `[LAST, GOLDEN, ALTREF]`.
+    // libvpx `vp9_encoder.c::set_ref_sign_bias` (:5034-5049): a ref is
+    // "sign-biased" (backward) when `cur_frame_index <
+    // ref_buffer->frame_index`, i.e. it points at a FUTURE display-order
+    // frame. The ALTREF, built from forward-peek neighbours, lives ahead
+    // of the frames that reference it, so a frame naming ALTREF in its
+    // ref set carries `sign_bias[ALTREF] = true`. LAST/GOLDEN point at
+    // past frames → `false`. The ARF's OWN header references LAST/GOLDEN
+    // only (both past), so it passes `[false, false, false]`. This
+    // value is written into both the uncompressed-header
+    // `ref_frame_sign_biases[]` (decoder `vp9_decodeframe.c:2744`) and
+    // the per-block `InterModeReadParams.sign_bias` so the MV-ref
+    // candidate scan applies the same sign flip both sides.
+    ref_frame_sign_biases: [bool; 3],
     // A18 — Previous frame's MV grid threaded into the writer so its
     // per-block `find_mv_refs` call (used to compute the NEWMV
     // residual's `best_ref_mv`) sees the SAME prev-frame salvage the
@@ -2908,6 +3115,15 @@ fn build_inter_packet_with_residuals(
     // the "pre" side, so after the call `decoder_fc` holds the FC
     // both sides actually use for this frame's tile data.
     decoder_fc: &mut FrameContext,
+    // W-ALTREF — which of the decoder's four FC banks this frame
+    // reads/writes (libvpx `vp9_encoder.c::vp9_setup_frame:818-819`:
+    // `frame_context_idx = refresh_alt_ref_frame`, so ARFs use bank 1
+    // and show frames use bank 0). The decoder reads `cm->fc =
+    // frame_contexts[frame_context_idx]` and, with
+    // `refresh_frame_context`, writes the adapted result back to the
+    // SAME bank. Routing the ARF to bank 1 keeps the show frames' bank
+    // 0 pristine across the non-show ARF.
+    frame_context_idx: u8,
 ) -> Result<Vec<u8>, EncodeError> {
     use rvp9_core::bitstream::SegmentationWriteParams;
     let mi_rows = height / 8;
@@ -2956,7 +3172,13 @@ fn build_inter_packet_with_residuals(
         mi_col_end: mi_cols as usize,
     };
 
-    let sign_bias = sign_bias_from_header(&[false, false, false]);
+    // W-ALTREF — derive the 4-entry per-RefFrame sign-bias array from
+    // the caller's 3-entry `[LAST, GOLDEN, ALTREF]` header bias.
+    // `sign_bias_from_header` prepends the INTRA_FRAME slot (always
+    // false) → `[INTRA=false, LAST, GOLDEN, ALTREF]`. Normal inter
+    // frames pass `[false, false, false]` (no ALTREF in ref set);
+    // a frame referencing the ARF would pass `[false, false, true]`.
+    let sign_bias = sign_bias_from_header(&ref_frame_sign_biases);
     let (comp_fixed_ref, comp_var_ref) = setup_compound_reference_mode(&sign_bias);
     // F.5 — Switchable at the frame level (gated, see above). The
     // writer's `write_inter_mode_info` (`mode_info.rs:1063-1071`)
@@ -3049,7 +3271,7 @@ fn build_inter_packet_with_residuals(
     let tail = HeaderTail {
         refresh_frame_context: true,
         frame_parallel_decoding_mode: false,
-        frame_context_idx: 0,
+        frame_context_idx,
         loop_filter: LoopFilterParams {
             // F11.0 — emit the F11.0-picked filter_level (matches the
             // pass applied to the encoder's reference reconstruction).
@@ -3088,7 +3310,10 @@ fn build_inter_packet_with_residuals(
             // `encode_inter_internal` for the period state machine.
             refresh_frame_flags,
             ref_frame_indices: [0; MAX_INTER_REFS],
-            ref_frame_sign_biases: [false; MAX_INTER_REFS],
+            // W-ALTREF — caller-supplied per-ref sign bias (libvpx
+            // `set_ref_sign_bias`, :5034-5049). `MAX_INTER_REFS == 3`
+            // maps 1:1 onto the `[LAST, GOLDEN, ALTREF]` header bias.
+            ref_frame_sign_biases,
             allow_high_precision_mv: false,
             // F.5 — Switchable at the frame level (unconditionally
             // active, Phase 2c). The uncompressed-header writer emits
