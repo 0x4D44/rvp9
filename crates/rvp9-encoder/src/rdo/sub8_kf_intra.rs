@@ -380,6 +380,126 @@ mod tests {
         assert!(pick_intra_sub_8x8_y_mode(&params).is_none());
     }
 
+    /// PROOF W7.9 anti-G3 (per-mode discrimination) — re-audit
+    /// pass 2 flagged `w7_9_kf_intra_4x4_picks_a_y_mode` as an
+    /// argmin tautology (the picker is defined as "return the
+    /// lowest-RD candidate", so the original test only verifies the
+    /// definition).
+    ///
+    /// This stronger PROOF runs the picker once per intra mode with
+    /// that mode as the unique RD minimum, and asserts the winner's
+    /// mode field tracks the perturbation. If the inner-loop iteration
+    /// were stripped (e.g. `return candidates[0]`), the winner would
+    /// stay pinned at `IntraMode::Dc` regardless of input.
+    #[test]
+    fn w7_9_kf_intra_4x4_picker_tracks_per_mode_perturbations() {
+        let modes = [
+            IntraMode::Dc,
+            IntraMode::V,
+            IntraMode::H,
+            IntraMode::Tm,
+            IntraMode::D45,
+            IntraMode::D135,
+            IntraMode::D117,
+            IntraMode::D153,
+            IntraMode::D207,
+            IntraMode::D63,
+        ];
+        for &target in &modes {
+            let mut cands = Vec::with_capacity(modes.len());
+            for &m in &modes {
+                // Baseline RD = 100_000; target mode gets 10_000 (must win).
+                let rd = if m == target { 10_000 } else { 100_000 };
+                cands.push(make_cand(0, m, rd));
+            }
+            let params = PickIntra4x4Params {
+                blk_idx: 0,
+                candidates: &cands,
+                rd_thresh: i64::MAX,
+            };
+            let w = pick_intra4x4_block(&params).expect("winner");
+            assert_eq!(
+                w.mode, target,
+                "perturbing mode {target:?} to the unique min must elect it (got {:?})",
+                w.mode,
+            );
+            assert_eq!(w.rd, 10_000, "winner.rd tracks the perturbation");
+        }
+    }
+
+    /// PROOF W7.9 anti-G3 (sub-block independence) — re-audit pass 2
+    /// flagged `w7_9_kf_intra_sub_8x8_iterates_all_4_subblocks` as
+    /// tautological. The original asserted "each sub-block's argmin
+    /// is returned at its own index", but didn't prove the iteration
+    /// loop processes every slot — a stripped implementation that
+    /// hardcoded `sub_winners[i] = candidates[i]` would still pass.
+    ///
+    /// This stronger PROOF takes the baseline scenario (every sub-block
+    /// has multiple candidates) and perturbs ONE sub-block's winner at
+    /// a time — verifying that ONLY that slot's chosen mode shifts.
+    /// A stripped per-slot loop (or a "return the first cand per slot"
+    /// strip) would not respond to the perturbation.
+    #[test]
+    fn w7_9_kf_intra_sub_8x8_each_subblock_independently_affects_its_winner() {
+        // Baseline winners: sub 0 → V, 1 → H, 2 → Tm, 3 → Dc.
+        let baseline = vec![
+            make_cand(0, IntraMode::Dc, 90_000),
+            make_cand(0, IntraMode::V, 50_000),
+            make_cand(1, IntraMode::Dc, 90_000),
+            make_cand(1, IntraMode::H, 40_000),
+            make_cand(2, IntraMode::Dc, 80_000),
+            make_cand(2, IntraMode::Tm, 30_000),
+            make_cand(3, IntraMode::Dc, 25_000),
+            make_cand(3, IntraMode::H, 95_000),
+        ];
+        let params = PickIntraSub8x8Params {
+            parent_bsize: BlockSize::Block8x8,
+            candidates: &baseline,
+            best_rd: i64::MAX,
+        };
+        let base = pick_intra_sub_8x8_y_mode(&params).expect("baseline winner");
+        let base_modes = [
+            base.sub_winners[0].mode,
+            base.sub_winners[1].mode,
+            base.sub_winners[2].mode,
+            base.sub_winners[3].mode,
+        ];
+        assert_eq!(base_modes, [IntraMode::V, IntraMode::H, IntraMode::Tm, IntraMode::Dc]);
+
+        // Perturb each sub-block in turn: drop the *other* candidate's
+        // RD below the baseline winner, and verify only THAT slot's
+        // mode flips. Sub-blocks not perturbed must keep the baseline
+        // winner.
+        for target_blk in 0..NUM_SUB_BLOCKS as u8 {
+            let mut perturbed: Vec<KfIntraCandidate> = baseline.clone();
+            // For target_blk, override the DC candidate to win.
+            for c in perturbed.iter_mut() {
+                if c.blk_idx == target_blk && c.mode == IntraMode::Dc {
+                    c.rd = 1_000; // becomes the new min for this sub.
+                }
+            }
+            let p = PickIntraSub8x8Params {
+                parent_bsize: BlockSize::Block8x8,
+                candidates: &perturbed,
+                best_rd: i64::MAX,
+            };
+            let r = pick_intra_sub_8x8_y_mode(&p).expect("perturbed winner");
+            for slot in 0..NUM_SUB_BLOCKS {
+                let got = r.sub_winners[slot].mode;
+                let expected = if slot as u8 == target_blk {
+                    IntraMode::Dc
+                } else {
+                    base_modes[slot]
+                };
+                assert_eq!(
+                    got, expected,
+                    "perturbing sub {target_blk}: slot {slot} expected {expected:?}, got {got:?} \
+                     (perturbing one slot must not affect the others)",
+                );
+            }
+        }
+    }
+
     /// libvpx `vp9_rdopt.c:1337`: per-sub miss (no candidate beats
     /// the running cap) → outer picker returns INT64_MAX → we return
     /// None.
