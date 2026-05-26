@@ -80,7 +80,7 @@ impl RateFactorLevel {
 /// Convert a Q-index to the libvpx "q value" — `ac_quant(qindex, 0) /
 /// 4.0`. Mirrors `vp9_convert_qindex_to_q` (`vp9_ratectrl.c:163-171`)
 /// for the 8-bit path.
-fn qindex_to_q(qindex: i32) -> f64 {
+pub(super) fn qindex_to_q(qindex: i32) -> f64 {
     // Encoder rate control — 8-bit only (HBD encoder out of scope for
     // Track T phase 0).
     f64::from(ac_quant(qindex, 0, BitDepth::Eight)) / 4.0
@@ -228,7 +228,7 @@ pub(super) fn estimate_bits_at_q(
 /// 2. Iterate `i` from `active_best` upwards.
 /// 3. First `i` whose `bits_per_mb_at_this_q` ≤ target wins (with the
 ///    "pick i-1 if the previous overshot less" tie-break libvpx uses).
-fn regulate_q(
+pub(super) fn regulate_q(
     frame_kind: FrameKind,
     target_bits_per_frame: u32,
     active_best: i32,
@@ -399,7 +399,7 @@ const KF_ACTIVE_QUALITY_BASIS_CAP: i32 = 122;
 /// Port of libvpx `get_minq_index` (`vp9_ratectrl.c:118-135`). Finds the
 /// smallest qindex whose q-value (`ac_quant/4`) is ≥ the cubic-curve
 /// target `minqtarget = min((x3·maxq + x2)·maxq + x1)·maxq, maxq)`.
-fn get_minq_index(maxq: f64, x3: f64, x2: f64, x1: f64) -> i32 {
+pub(super) fn get_minq_index(maxq: f64, x3: f64, x2: f64, x1: f64) -> i32 {
     let minqtarget = (((x3 * maxq + x2) * maxq + x1) * maxq).min(maxq);
     // Special-case the step from q2.0 down to lossless.
     if minqtarget <= 2.0 {
@@ -458,7 +458,7 @@ fn get_active_quality(
 /// `regulate_q` from crashing the keyframe Q to the `best_quality`
 /// floor when the (large, libvpx-faithful) keyframe target combines
 /// with rvp9's under-predicting keyframe `bits_per_mb` estimator.
-fn get_kf_active_quality(q: i32) -> i32 {
+pub(super) fn get_kf_active_quality(q: i32) -> i32 {
     get_active_quality(
         q,
         KF_ACTIVE_QUALITY_BOOST,

@@ -100,6 +100,7 @@ pub mod cbr;
 pub mod config;
 pub mod postencode;
 pub mod state;
+pub mod vbr;
 
 pub use config::RateControlConfig;
 pub use state::{E8Trace, RateControl};

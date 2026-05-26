@@ -6,7 +6,7 @@
 //! cross-referencing; Rust idioms (i64 → `i64`, no explicit `*const`
 //! pointers, no SVC arrays) replace the C-isms.
 
-use super::{FrameKind, RateControlConfig, cbr, postencode};
+use super::{FrameKind, RateControlConfig, cbr, postencode, vbr};
 use cbr::RATE_FACTOR_LEVELS;
 
 /// Running rate-control state.
@@ -279,11 +279,16 @@ impl RateControl {
         use super::RcMode;
         match self.config.rc_mode {
             RcMode::Cbr => cbr::pick_q_and_bounds(self, frame_kind),
-            RcMode::Vbr => panic!(
-                "rate_control: 1-pass VBR (RcMode::Vbr) is not yet \
-                 implemented; lands in master inventory Wave 4+ (A3 \
-                 vbr path). libvpx `vp9_ratectrl.c:1587-1609`."
-            ),
+            // One-pass VBR. Port of libvpx
+            // `rc_pick_q_and_bounds_one_pass_vbr`
+            // (`vp9_ratectrl.c:1138-1303`). The 2-pass arm
+            // (`rc_pick_q_and_bounds_two_pass`, `vp9_ratectrl.c:1542`)
+            // remains deferred — it needs a first-pass-stats writer +
+            // reader that doesn't exist in rvp9 yet (see the explicit
+            // `unimplemented!` below). The W1.6 VBR PROOF test (now
+            // renamed to gate one-pass behaviour) lives in
+            // `tests/w_vbr_rc_proof.rs`.
+            RcMode::Vbr => vbr::pick_q_and_bounds(self, frame_kind),
             // PHASE-3 integration: Constrained-Quality (CQ). Runs the
             // CBR regulator, then clamps the picked Q to be ≥
             // cq_level. Mirrors libvpx's CQ semantics: cq_level is a
@@ -589,20 +594,27 @@ mod tests {
         assert!(q >= lo && q <= hi, "picked q={q} must lie in [{lo},{hi}]");
     }
 
-    /// W1.6 PROOF — VBR dispatch arm panics with a citation. If a
-    /// future patch silently routes VBR to the CBR path (faking
-    /// support), this `#[should_panic]` test stops compiling cleanly
-    /// or stops panicking; either way, the test fails.
+    /// W_VBR PROOF — VBR dispatch arm reaches the one-pass VBR
+    /// implementation and returns a valid `(q, lo, hi)` triple. Replaces
+    /// the previous `#[should_panic]` guard now that VBR is ported
+    /// (libvpx `vp9_ratectrl.c:1138-1303`
+    /// `rc_pick_q_and_bounds_one_pass_vbr`).
     #[test]
-    #[should_panic(expected = "1-pass VBR")]
-    fn w1_6_vbr_dispatch_panics_with_libvpx_citation() {
+    fn w_vbr_dispatch_returns_valid_triple() {
         use super::super::RcMode;
         let cfg = RateControlConfig {
             rc_mode: RcMode::Vbr,
             ..RateControlConfig::default()
         };
         let mut rc = RateControl::new(cfg);
-        let _ = rc.pick_q_and_bounds(FrameKind::Inter);
+        // First frame is a KF in our model (frames_to_key == 0,
+        // total_actual_bits == 0).
+        let (q, lo, hi) = rc.pick_q_and_bounds(FrameKind::Key);
+        assert!(lo <= q && q <= hi, "VBR pick must satisfy lo<=q<=hi");
+        assert!(
+            i32::from(lo) >= rc.best_quality && i32::from(hi) <= rc.worst_quality,
+            "VBR bounds must lie within [best_quality, worst_quality]"
+        );
     }
 
     /// PHASE-3 PROOF — Constrained-Quality mode clamps the picked Q
@@ -650,19 +662,40 @@ mod tests {
         assert_eq!(hi_k, 92);
     }
 
-    /// Anti-G3: VBR is the only RC arm that still panics; the W1.6
-    /// VBR PROOF guards that future patches don't silently route VBR
-    /// to one of the now-real arms (which would be the wrong rate
-    /// model).
+    /// W_VBR PROOF — VBR is now a ported arm (`super::vbr::
+    /// pick_q_and_bounds`). This test guards that the dispatcher
+    /// actually routes VBR through the VBR implementation, not the CBR
+    /// or Q paths, by checking the active_worst VBR ambient-driven
+    /// model produces a different `(active_min, active_max)` for VBR
+    /// than CBR's buffer-driven model at the SAME starting state.
+    /// libvpx `vp9_ratectrl.c:1587-1609` dispatch / `:905-928` VBR
+    /// active_worst.
     #[test]
-    #[should_panic(expected = "1-pass VBR")]
-    fn vbr_remains_unimplemented() {
+    fn vbr_dispatch_differs_from_cbr_at_first_frame() {
         use super::super::RcMode;
-        let cfg = RateControlConfig {
+        // CBR baseline.
+        let mut cfg_cbr = RateControlConfig::default();
+        cfg_cbr.rc_mode = RcMode::Cbr;
+        let mut rc_cbr = RateControl::new(cfg_cbr);
+        let _ = rc_cbr.pick_q_and_bounds(FrameKind::Key);
+
+        // VBR side-by-side.
+        let cfg_vbr = RateControlConfig {
             rc_mode: RcMode::Vbr,
             ..RateControlConfig::default()
         };
-        let mut rc = RateControl::new(cfg);
-        let _ = rc.pick_q_and_bounds(FrameKind::Inter);
+        let mut rc_vbr = RateControl::new(cfg_vbr);
+        let _ = rc_vbr.pick_q_and_bounds(FrameKind::Key);
+
+        // The two rate models pick different per-frame targets on the
+        // first KF (CBR: starting_buffer_level/2 ~= 2_000_000; VBR:
+        // avg_bw * 25 ~= 833_333). That target difference + different
+        // active_worst computation must produce some observable state
+        // difference. Easiest oracle: `this_frame_target` differs.
+        assert_ne!(
+            rc_cbr.this_frame_target, rc_vbr.this_frame_target,
+            "CBR and VBR must pick different per-frame KF targets \
+             (CBR: starting_buf/2; VBR: avg * kf_ratio=25)"
+        );
     }
 }
