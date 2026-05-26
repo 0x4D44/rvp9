@@ -25,4 +25,9 @@
 pub mod block_error;
 pub mod block_yrd;
 pub mod cost_coeffs;
+pub mod discount_newmv;
+pub mod handle_inter;
+pub mod pick_inter_sb;
+pub mod ref_costs;
+pub mod single_mv_search;
 pub mod trellis;
