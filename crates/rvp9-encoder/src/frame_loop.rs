@@ -58,11 +58,16 @@ use rvp9_core::bitstream::sub_parsers::{
     SegmentationParams, TileInfo,
 };
 use rvp9_core::bitstream::{
-    BitDepth, BitstreamError, ChromaFormat, ColorRange, ColorSpace, CompressedHeaderOptions,
-    CompressedHeaderResult, FrameKind as WireFrameKind, InterCoefSource, InterpFilter,
-    ModesTileBounds, Profile, RawBitWriter, UncompressedHeader, write_compressed_header,
-    write_tile_intra_keyframe, write_tile_inter, write_uncompressed_header,
+    BitDepth as WireBitDepth, BitstreamError, ChromaFormat, ColorRange, ColorSpace,
+    CompressedHeaderOptions, CompressedHeaderResult, FrameKind as WireFrameKind, InterCoefSource,
+    InterpFilter, ModesTileBounds, Profile, RawBitWriter, UncompressedHeader,
+    write_compressed_header, write_tile_intra_keyframe, write_tile_inter,
+    write_uncompressed_header,
 };
+// W6.2(vpxenc parity, HBD scaffold) — pixel-pipeline bit-depth. **Not**
+// the same as the wire-format `WireBitDepth` (`Eight`/`Ten`/`Twelve`)
+// above; this one is the kernel-side u8-vs-u16 marker.
+use rvp9_core::BitDepth;
 use rvp9_core::block::{BlockSize, max_txsize};
 use rvp9_core::coef_ctx::TileCoefCtx;
 use rvp9_core::entropy::{BoolWriter, FrameContext, FrameCounts, adapt_coef_probs,
@@ -194,6 +199,16 @@ pub struct EncoderConfig {
     /// `oxcf.worst_allowed_q` (CLI: `--max-q`). The CBR Q controller
     /// won't pick anything above this. Range: `min_qindex..=255`.
     pub max_qindex: u8,
+    /// W6.2(vpxenc parity, HBD scaffold) — pixel bit-depth. Defaults to
+    /// [`BitDepth::Bd8`]; the `Bd10`/`Bd12` variants are only constructible
+    /// under `--features rvp9-core/highbitdepth`. **Currently a metadata
+    /// field only** — kernel paths are u8 across the board; setting this
+    /// to a non-`Bd8` value causes the encoder to refuse the frame (HBD
+    /// kernel pairs land in W6.4 + follow-up).
+    ///
+    /// Mirrors libvpx `oxcf.bit_depth` (`vp9_encoder.h` /
+    /// `vpxenc.c::set_encoder_config`).
+    pub bit_depth: BitDepth,
 }
 
 impl EncoderConfig {
@@ -226,6 +241,10 @@ impl EncoderConfig {
             // libvpx-faithful preset.
             min_qindex: 4,
             max_qindex: 255,
+            // W6.2(vpxenc parity, HBD scaffold) — default 8-bit. The
+            // Bd10/Bd12 variants are only constructible under
+            // `--features rvp9-core/highbitdepth`.
+            bit_depth: BitDepth::Bd8,
         }
     }
 
@@ -1964,7 +1983,7 @@ fn build_keyframe_packet(
         profile: Profile::Profile0,
         show_frame: true,
         error_resilient: false,
-        bit_depth: BitDepth::Eight,
+        bit_depth: WireBitDepth::Eight,
         color_space: ColorSpace::Bt601,
         color_range: ColorRange::Studio,
         chroma: ChromaFormat::Yuv420,
@@ -2230,7 +2249,7 @@ fn build_inter_packet_with_residuals(
         profile: Profile::Profile0,
         show_frame: true,
         error_resilient: false,
-        bit_depth: BitDepth::Eight,
+        bit_depth: WireBitDepth::Eight,
         color_space: ColorSpace::Bt601,
         color_range: ColorRange::Studio,
         chroma: ChromaFormat::Yuv420,
@@ -2399,6 +2418,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -2435,6 +2455,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -2483,6 +2504,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -2544,6 +2566,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -2585,6 +2608,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -2610,6 +2634,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -2642,6 +2667,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -2671,6 +2697,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -2691,6 +2718,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -2771,6 +2799,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -2823,6 +2852,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -2877,6 +2907,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -2961,6 +2992,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3109,6 +3141,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3184,6 +3217,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3419,6 +3453,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3471,6 +3506,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3585,6 +3621,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3660,6 +3697,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3712,6 +3750,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3783,6 +3822,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3845,6 +3885,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3924,6 +3965,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3969,6 +4011,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4037,6 +4080,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4097,6 +4141,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4173,6 +4218,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4255,6 +4301,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4364,6 +4411,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4556,6 +4604,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4675,6 +4724,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         }
@@ -5380,6 +5430,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5433,6 +5484,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5480,6 +5532,7 @@ mod tests {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5568,6 +5621,7 @@ mod tests {
                 speed,
                 deadline: Deadline::Realtime,
                 noise_sensitivity: 0,
+                bit_depth: rvp9_core::BitDepth::Bd8,
                 min_qindex: 4,
                 max_qindex: 255,
             };

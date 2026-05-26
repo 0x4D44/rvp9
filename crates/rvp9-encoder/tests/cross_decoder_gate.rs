@@ -277,6 +277,7 @@ fn cross_decoder_gate_vpxdec_ffmpeg() {
         speed: 7,
         deadline: rvp9_encoder::Deadline::Realtime,
         noise_sensitivity: 0,
+        bit_depth: rvp9_core::BitDepth::Bd8,
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -541,6 +542,7 @@ fn rc_x1_diagnostic_dump() {
         speed: 7,
         deadline: rvp9_encoder::Deadline::Realtime,
         noise_sensitivity: 0,
+        bit_depth: rvp9_core::BitDepth::Bd8,
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -612,6 +614,7 @@ fn rc_x1_sb_leaf_dump() {
         speed: 7,
         deadline: rvp9_encoder::Deadline::Realtime,
         noise_sensitivity: 0,
+        bit_depth: rvp9_core::BitDepth::Bd8,
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -682,6 +685,7 @@ fn rc_x1_internal_dump() {
         speed: 7,
         deadline: rvp9_encoder::Deadline::Realtime,
         noise_sensitivity: 0,
+        bit_depth: rvp9_core::BitDepth::Bd8,
         min_qindex: 4,
         max_qindex: 255,
     };

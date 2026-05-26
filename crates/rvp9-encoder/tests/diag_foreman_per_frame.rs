@@ -165,6 +165,7 @@ fn diag_foreman_per_frame() {
             speed: 7,
             deadline: rvp9_encoder::Deadline::Realtime,
             noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
             min_qindex: 4,
             max_qindex: 255,
         };

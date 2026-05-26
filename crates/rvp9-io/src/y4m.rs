@@ -84,6 +84,21 @@ pub fn parse_header(f: &mut std::fs::File) -> std::io::Result<Y4mHeader> {
             fps_den = sp.next().and_then(|d| d.parse().ok());
         } else if let Some(v) = tok.strip_prefix('C') {
             chroma_ok = matches!(v, "420" | "420jpeg" | "420mpeg2" | "420paldv");
+            // W6.2(vpxenc parity, HBD scaffold): recognise the 10/12-bit
+            // 4:2:0 y4m chroma tags (`C420p10`, `C420p12`) and reject
+            // them with a clear "not yet implemented" error rather than
+            // the generic chroma rejection. libvpx ingests these via
+            // `vpx_img_alloc` with a `VPX_IMG_FMT_HIGHBITDEPTH` flag
+            // (`y4minput.c::y4m_input_open`); the rvp9 HBD pixel pipeline
+            // (u16 plane storage + kernel pairs) lands in the W6.4
+            // follow-up, so for now we surface a precise diagnostic.
+            if matches!(v, "420p10" | "420p12" | "420p16") {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "HBD y4m ingest (C420p10/p12) not yet implemented — \
+                     coming in the W6.4 HBD kernel-pair follow-up",
+                ));
+            }
         }
     }
     if !chroma_ok {
@@ -341,6 +356,32 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
         assert!(format!("{err}").contains("chroma"));
+    }
+
+    /// W6.2 PROOF — 10/12-bit y4m chroma tags are rejected with a
+    /// precise HBD-not-implemented diagnostic (libvpx
+    /// `y4minput.c::y4m_input_open` ingests them via the HBD image
+    /// flag; rvp9's HBD pixel pipeline lands in W6.4). If the HBD
+    /// recognition is stripped, these tags fall through to the generic
+    /// "unsupported chroma" error and the `.kind()` assertion fails.
+    #[test]
+    fn w6_2_parse_header_rejects_hbd_chroma_with_precise_error() {
+        for variant in ["420p10", "420p12", "420p16"] {
+            let line = format!("YUV4MPEG2 W16 H16 F25:1 C{variant}\n");
+            let path = write_temp(line.as_bytes(), variant);
+            let mut f = std::fs::File::open(&path).expect("open");
+            let err = parse_header(&mut f).unwrap_err();
+            let _ = std::fs::remove_file(&path);
+            assert_eq!(
+                err.kind(),
+                std::io::ErrorKind::Unsupported,
+                "variant {variant} must reject as Unsupported"
+            );
+            assert!(
+                format!("{err}").contains("HBD"),
+                "variant {variant}: error must name HBD: {err}"
+            );
+        }
     }
 
     #[test]

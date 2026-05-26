@@ -690,6 +690,11 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
         // EncoderConfig. Defaults mirror RateControlConfig::default().
         min_qindex: opts.min_q.map(|v| v.min(255) as u8).unwrap_or(4),
         max_qindex: opts.max_q.map(|v| v.min(255) as u8).unwrap_or(255),
+        // W6.2(vpxenc parity, HBD scaffold): pixel bit-depth. rvp9
+        // only encodes 8-bit today; --bit-depth=10/12 is parsed
+        // (W0.1) but the encoder refuses non-Bd8 until the HBD kernel
+        // pairs land (W6.4 follow-up).
+        bit_depth: rvp9_core::BitDepth::Bd8,
     };
     let mut encoder = StreamEncoder::new(config).map_err(|e| {
         format!(
@@ -1199,5 +1204,6 @@ fn build_encoder_config_for_test(opts: &EncOpts) -> EncoderConfig {
         // preset; unspecified callers keep byte-identical behaviour.
         min_qindex: opts.min_q.map(|v| v.min(255) as u8).unwrap_or(4),
         max_qindex: opts.max_q.map(|v| v.min(255) as u8).unwrap_or(255),
+        bit_depth: rvp9_core::BitDepth::Bd8,
     }
 }
