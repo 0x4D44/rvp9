@@ -44,7 +44,7 @@
 //! That gate re-establishes as the F.4 exit criterion per the HLD.
 
 use rvp9_decoder::{Decoder, ParsedFrame};
-use rvp9_encoder::{AqMode, EncoderConfig, StreamEncoder, YuvFrameRef};
+use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 use rvp9_harness::container::{IvfHeader, write_ivf};
 use rvp9_harness::y4m::{probe_testsrc_720p, read_cropped as y4m_read_cropped};
 use std::path::{Path, PathBuf};
@@ -280,6 +280,8 @@ fn cross_decoder_gate_vpxdec_ffmpeg() {
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
         enable_alt_ref: false,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -547,6 +549,8 @@ fn rc_x1_diagnostic_dump() {
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
         enable_alt_ref: false,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -621,6 +625,8 @@ fn rc_x1_sb_leaf_dump() {
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
         enable_alt_ref: false,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -694,6 +700,8 @@ fn rc_x1_internal_dump() {
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
         enable_alt_ref: false,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
         min_qindex: 4,
         max_qindex: 255,
     };

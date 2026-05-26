@@ -15,7 +15,7 @@
 
 use rvp9_cli::args::{self, Arg, Flag};
 use rvp9_encoder::lookahead::MAX_LAG_BUFFERS;
-use rvp9_encoder::{AqMode, Deadline, EncoderConfig, StreamEncoder, YuvFrameRef};
+use rvp9_encoder::{AqMode, Deadline, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 use rvp9_io::container::{IvfHeader, write_ivf};
 use rvp9_io::y4m;
 use std::path::Path;
@@ -79,6 +79,11 @@ struct EncOpts {
     target_bitrate_kbps: u32,
     gop_length: Option<u32>,
     aq_mode: AqMode,
+    /// `--end-usage` (libvpx `vpxenc.c` `--end-usage`,
+    /// `vpx_encoder.h enum vpx_rc_mode`). Rate-control regulator:
+    /// `cbr` (default) / `vbr` / `cq` / `q`. Plumbed onto
+    /// [`EncoderConfig::rc_mode`] at construction.
+    rc_mode: RcMode,
     output: Option<String>,
     limit: Option<usize>,
     verbose: bool,
@@ -215,6 +220,10 @@ impl Default for EncOpts {
             target_bitrate_kbps: 1000,
             gop_length: None,
             aq_mode: AqMode::Off,
+            // libvpx default `--end-usage=cbr` (the only mode rvp9's CLI
+            // exposed pre-re-audit-pass-3); the cross-decoder gate runs
+            // at this default so it stays byte-identical.
+            rc_mode: RcMode::Cbr,
             output: None,
             limit: None,
             verbose: false,
@@ -297,8 +306,8 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             apply: Some(|o, v| { let (n, d) = parse_fps(v)?; o.fps_num = Some(n); o.fps_den = Some(d); Ok(()) }) },
         Flag { long: "target-bitrate", short: None, arg: Arg::Required, help: "target bitrate in kbps",
             apply: Some(|o, v| { o.target_bitrate_kbps = args::parse_value(v, "rvp9enc", "--target-bitrate")?; Ok(()) }) },
-        Flag { long: "end-usage", short: None, arg: Arg::Required, help: "rate control mode (cbr)",
-            apply: Some(|_, v| validate_eq(v, "cbr", "--end-usage")) },
+        Flag { long: "end-usage", short: None, arg: Arg::Required, help: "rate control mode (cbr/vbr/cq/q)",
+            apply: Some(|o, v| { o.rc_mode = parse_end_usage(v)?; Ok(()) }) },
         Flag { long: "passes", short: Some('p'), arg: Arg::Required, help: "number of passes (1)",
             apply: Some(|_, v| validate_eq(v, "1", "--passes")) },
         Flag { long: "kf-max-dist", short: None, arg: Arg::Required, help: "max keyframe interval",
@@ -439,6 +448,24 @@ fn parse_aq_mode(v: Option<String>) -> Result<AqMode, String> {
             "rvp9enc: --aq-mode={other} not supported yet (only 0=off, 3=cyclic-refresh)"
         )),
         None => Err("rvp9enc: --aq-mode requires a value".to_string()),
+    }
+}
+
+/// Parse `--end-usage` (libvpx `vpxenc.c` `--end-usage`,
+/// `vpx_encoder.h enum vpx_rc_mode`). rvp9 ports all four one-pass
+/// regulators (CBR + the VBR/CQ/Q arms of
+/// `RateControl::pick_q_and_bounds`); the 2-pass driver is out of
+/// scope, so only the single-pass mode names are accepted here.
+fn parse_end_usage(v: Option<String>) -> Result<RcMode, String> {
+    match v.as_deref() {
+        Some("cbr") => Ok(RcMode::Cbr),
+        Some("vbr") => Ok(RcMode::Vbr),
+        Some("cq") => Ok(RcMode::Cq),
+        Some("q") => Ok(RcMode::Q),
+        Some(other) => Err(format!(
+            "rvp9enc: --end-usage={other} not understood (use cbr/vbr/cq/q)"
+        )),
+        None => Err("rvp9enc: --end-usage requires a value".to_string()),
     }
 }
 
@@ -652,65 +679,18 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
         return Err("input contained no frames".to_string());
     }
 
-    // Build and validate the encoder config (width/height must be a
-    // multiple of 64 — a Stage 4a limitation, surfaced clearly).
-    //
-    // W0.2(vpxenc parity, A12 P1) — `--cpu-used` and the
-    // `--rt`/`--good`/`--best` deadline tri-state plumb through here.
-    //
-    // W0.4(vpxenc parity, A7 P1+P2) — defaults pin to rvp9's actual
-    // op-point: `cpu-used=7 --rt`. vpxenc's library defaults are
-    // (`cpu-used=0 --good`, `vpxenc.c:434-435, 127-128`), but rvp9
-    // doesn't yet have a functional good-quality / best-quality path
-    // (those land with Wave 4's RDO driver); until then the CLI's
-    // implicit defaults must mirror what rvp9 can actually encode
-    // today. Flip back to (0, Good) when W4 lands.
-    let config = EncoderConfig {
-        width: coded_w,
-        height: coded_h,
-        framerate: f64::from(fps_num) / f64::from(fps_den),
-        target_bitrate_bps: opts.target_bitrate_kbps.saturating_mul(1000),
-        gop_length: opts.gop_length.unwrap_or(60),
-        aq_mode: opts.aq_mode,
-        use_prev_frame_mvs: false,
-        speed: opts.cpu_used.unwrap_or(7),
-        deadline: opts.deadline.unwrap_or(Deadline::Realtime),
-        // W5.1 plumb (re-audit pass 2 follow-up): CLI's
-        // `--noise-sensitivity <0..=6>` now feeds the encoder's
-        // `noise_sensitivity` gate so the W2.4 noise estimator + the
-        // downstream W2.6 vbp_threshold_scale activate when the user
-        // requests denoising. Default stays `0` (estimator off) when
-        // the flag is omitted, matching vpxenc's CLI default. Clamp
-        // to the 0..=6 range libvpx supports (range-checked at parse
-        // time by `set_encoder_config`, but be defensive: cap to u8).
-        noise_sensitivity: opts
-            .noise_sensitivity
-            .map(|v| v.min(6) as u8)
-            .unwrap_or(0),
-        // PHASE-3 integration: CLI `--min-q` / `--max-q` (W7.8) →
-        // EncoderConfig. Defaults mirror RateControlConfig::default().
-        min_qindex: opts.min_q.map(|v| v.min(255) as u8).unwrap_or(4),
-        max_qindex: opts.max_q.map(|v| v.min(255) as u8).unwrap_or(255),
-        // W6.2(vpxenc parity, HBD scaffold): pixel bit-depth. rvp9
-        // only encodes 8-bit today; --bit-depth=10/12 is parsed
-        // (W0.1) but the encoder refuses non-Bd8 until the HBD kernel
-        // pairs land (W6.4 follow-up).
-        bit_depth: rvp9_core::BitDepth::Bd8,
-        // vpxenc `--lag-in-frames` (libvpx `vpxenc.c:220-221`,
-        // capped at `MAX_LAG_BUFFERS = 25` per
-        // `vp9_lookahead.h::MAX_LAG_BUFFERS`). The lookahead context
-        // also clamps internally; the explicit cap here keeps the
-        // user-visible domain matching libvpx.
-        lag_in_frames: opts
-            .lag_in_frames
-            .map(|v| v.min(MAX_LAG_BUFFERS as u32))
-            .unwrap_or(0),
-        // W8 — ALTREF emission stays off in the CLI default; the user
-        // opts in via `--auto-alt-ref` (libvpx parity, not yet plumbed
-        // through `EncOpts`). The encoder self-gates on `lag_in_frames`
-        // being large enough to feed the temporal filter's peek.
-        enable_alt_ref: false,
-    };
+    // Build and validate the encoder config via the shared
+    // `build_encoder_config` mapping (the single CLI→encoder source of
+    // truth; see its doc-comment for the per-flag libvpx citations).
+    // Width/height must be a multiple of 64 — a Stage 4a limitation,
+    // surfaced clearly by `StreamEncoder::new` below.
+    let config = build_encoder_config(
+        opts,
+        coded_w,
+        coded_h,
+        f64::from(fps_num) / f64::from(fps_den),
+        opts.target_bitrate_kbps.saturating_mul(1000),
+    );
     let mut encoder = StreamEncoder::new(config).map_err(|e| {
         format!(
             "{e} (note: the Stage 4a encoder requires coded dimensions \
@@ -1211,36 +1191,221 @@ mod tests {
             "min_qindex > max_qindex must be rejected by validation",
         );
     }
+
+    /// PROOF (re-audit pass 3 — `--end-usage` CLI reachability).
+    ///
+    /// Re-audit pass 3 (`wrk_docs/2026.05.26 - REAUDIT pass 3 ...`,
+    /// commit 511ee0e) found the VBR/CQ/Q one-pass regulators are
+    /// fully ported and byte-exact-verified, but a CLI user could not
+    /// reach them: `--end-usage` only accepted the literal "cbr" and
+    /// `EncoderConfig` had no `rc_mode` field, so
+    /// `to_rate_control_config` always fell back to the
+    /// `RateControlConfig` default (Cbr).
+    ///
+    /// This PROOF drives the END-TO-END path: parse → `EncOpts` →
+    /// `build_encoder_config` (the production mapping) → `EncoderConfig`
+    /// → `StreamEncoder::new` → `rate_control().config()`. The last hop
+    /// proves `to_rate_control_config` actually carried `rc_mode` to
+    /// the controller (the `EncoderConfig.rc_mode` assertion alone
+    /// would only prove parsing). A stripped `..defaults` mapping or a
+    /// reverted `--end-usage` handler reverts the controller to Cbr and
+    /// fails this test.
+    ///
+    /// libvpx flag: `vpxenc.c --end-usage` /
+    /// `vpx_encoder.h enum vpx_rc_mode`.
+    #[test]
+    fn reaudit3_end_usage_plumbs_into_rate_control() {
+        let table = flag_table();
+        let req = ["--target-bitrate=500", "-w", "64", "-h", "64"];
+
+        // Default (flag omitted) → Cbr (the gate's mode; must stay so).
+        let o = EncOpts::default();
+        let cfg = build_encoder_config_for_test(&o);
+        assert_eq!(cfg.rc_mode, RcMode::Cbr, "default --end-usage must be cbr");
+        let enc = StreamEncoder::new(cfg).expect("cbr config must build");
+        assert_eq!(
+            enc.rate_control().config().rc_mode,
+            RcMode::Cbr,
+            "default mode must reach the controller as Cbr",
+        );
+
+        // --end-usage=vbr → Vbr, end to end.
+        let mut o = EncOpts::default();
+        let mut a = vec!["--end-usage=vbr".to_string()];
+        a.extend(req.iter().map(|s| s.to_string()));
+        args::parse(&table, &mut o, &a, "rvp9enc").unwrap();
+        let cfg = build_encoder_config_for_test(&o);
+        assert_eq!(cfg.rc_mode, RcMode::Vbr, "--end-usage=vbr must set rc_mode");
+        let enc = StreamEncoder::new(cfg).expect("vbr config must build");
+        assert_eq!(
+            enc.rate_control().config().rc_mode,
+            RcMode::Vbr,
+            "vbr must reach the controller (proves to_rate_control_config carried it)",
+        );
+
+        // --end-usage=cq + --cq-level=N → Cq, cq_level == N, end to end.
+        let mut o = EncOpts::default();
+        let mut a = vec!["--end-usage=cq".to_string(), "--cq-level=48".to_string()];
+        a.extend(req.iter().map(|s| s.to_string()));
+        args::parse(&table, &mut o, &a, "rvp9enc").unwrap();
+        let cfg = build_encoder_config_for_test(&o);
+        assert_eq!(cfg.rc_mode, RcMode::Cq, "--end-usage=cq must set rc_mode");
+        assert_eq!(cfg.cq_level, 48, "--cq-level=48 must set cq_level");
+        let enc = StreamEncoder::new(cfg).expect("cq config must build");
+        assert_eq!(enc.rate_control().config().rc_mode, RcMode::Cq);
+        assert_eq!(
+            enc.rate_control().config().cq_level,
+            48,
+            "cq_level must reach the controller",
+        );
+
+        // --end-usage=q → Q.
+        let mut o = EncOpts::default();
+        let mut a = vec!["--end-usage=q".to_string(), "--cq-level=60".to_string()];
+        a.extend(req.iter().map(|s| s.to_string()));
+        args::parse(&table, &mut o, &a, "rvp9enc").unwrap();
+        let cfg = build_encoder_config_for_test(&o);
+        assert_eq!(cfg.rc_mode, RcMode::Q, "--end-usage=q must set rc_mode");
+        assert_eq!(cfg.cq_level, 60);
+        let enc = StreamEncoder::new(cfg).expect("q config must build");
+        assert_eq!(enc.rate_control().config().rc_mode, RcMode::Q);
+
+        // --cq-level out of range clamps to 255 (q-index domain).
+        let mut o = EncOpts::default();
+        o.cq_level = Some(9999);
+        let cfg = build_encoder_config_for_test(&o);
+        assert_eq!(cfg.cq_level, 255, "cq_level must clamp to the 0..=255 q-index domain");
+
+        // An unknown mode is rejected at parse time (not silently Cbr).
+        let mut o = EncOpts::default();
+        assert!(
+            args::parse(&table, &mut o, &s(&["--end-usage=bogus"]), "rvp9enc").is_err(),
+            "--end-usage=bogus must reject, not default to cbr",
+        );
+    }
+
+    /// PROOF (re-audit pass 3 — `--auto-alt-ref` CLI reachability).
+    ///
+    /// `--auto-alt-ref` was parsed into `opts.auto_alt_ref` (range
+    /// 0..=6) but never consumed: `enable_alt_ref: false` was hardcoded
+    /// at the `EncoderConfig` construction site, so the ALTREF emission
+    /// path (fully ported + byte-exact in `w8_altref_emit`) was
+    /// CLI-unreachable. This PROOF pins the mapping: any non-zero value
+    /// enables ALTREF; 0 / absent leaves it off (the gate's default).
+    ///
+    /// libvpx flag: `vpxenc.c:436-438 --auto-alt-ref` (VP9 0..=6).
+    #[test]
+    fn reaudit3_auto_alt_ref_plumbs_into_encoder_config() {
+        let table = flag_table();
+
+        // Absent → false (the cross-decoder gate's default).
+        let o = EncOpts::default();
+        let cfg = build_encoder_config_for_test(&o);
+        assert!(!cfg.enable_alt_ref, "absent --auto-alt-ref must be false");
+
+        // --auto-alt-ref=0 → false (explicit disable).
+        let mut o = EncOpts::default();
+        args::parse(&table, &mut o, &s(&["--auto-alt-ref=0"]), "rvp9enc").unwrap();
+        let cfg = build_encoder_config_for_test(&o);
+        assert!(!cfg.enable_alt_ref, "--auto-alt-ref=0 must be false");
+
+        // --auto-alt-ref=1 → true (single ARF).
+        let mut o = EncOpts::default();
+        args::parse(&table, &mut o, &s(&["--auto-alt-ref=1"]), "rvp9enc").unwrap();
+        let cfg = build_encoder_config_for_test(&o);
+        assert!(cfg.enable_alt_ref, "--auto-alt-ref=1 must enable ALTREF");
+
+        // --auto-alt-ref=6 (max) → true (multi-layer maps to enable).
+        let mut o = EncOpts::default();
+        args::parse(&table, &mut o, &s(&["--auto-alt-ref=6"]), "rvp9enc").unwrap();
+        let cfg = build_encoder_config_for_test(&o);
+        assert!(cfg.enable_alt_ref, "--auto-alt-ref=6 must enable ALTREF");
+    }
 }
 
-/// Test-only — builds a minimal valid `EncoderConfig` from `EncOpts`
-/// for the W0.2 PROOF, mirroring the production builder in `run()`.
-/// Kept out of `#[cfg(test)]` so dead-code lints stay quiet; the
-/// function has no callers outside the test module.
-#[cfg(test)]
-fn build_encoder_config_for_test(opts: &EncOpts) -> EncoderConfig {
+/// Build the [`EncoderConfig`] from the parsed [`EncOpts`] plus the
+/// runtime-derived geometry/bitrate. This is the SINGLE source of truth
+/// for the CLI→encoder mapping: `run()` calls it for the real encode,
+/// and the PROOF tests call it (via [`build_encoder_config_for_test`])
+/// so they exercise exactly the production plumbing — if a field's
+/// wiring is stripped, both the encode and the test break.
+///
+/// libvpx flag→config citations: `--end-usage` /
+/// `vpx_encoder.h enum vpx_rc_mode` → `rc_mode`; `--cq-level`
+/// (`vpxenc.c:385`) → `cq_level`; `--auto-alt-ref` (`vpxenc.c:436-438`)
+/// → `enable_alt_ref`.
+fn build_encoder_config(
+    opts: &EncOpts,
+    width: u32,
+    height: u32,
+    framerate: f64,
+    target_bitrate_bps: u32,
+) -> EncoderConfig {
     EncoderConfig {
-        width: 64,
-        height: 64,
-        framerate: 30.0,
-        target_bitrate_bps: opts.target_bitrate_kbps.saturating_mul(1000),
+        width,
+        height,
+        framerate,
+        target_bitrate_bps,
         gop_length: opts.gop_length.unwrap_or(60),
         aq_mode: opts.aq_mode,
         use_prev_frame_mvs: false,
+        // W0.2/W0.4 (vpxenc parity): `--cpu-used` + `--rt`/`--good`/
+        // `--best` deadline tri-state. Defaults pin to rvp9's actual
+        // op-point (`cpu-used=7 --rt`); flip to (0, Good) when W4 lands.
         speed: opts.cpu_used.unwrap_or(7),
         deadline: opts.deadline.unwrap_or(Deadline::Realtime),
+        // W5.1 plumb (re-audit pass 2 follow-up): CLI's
+        // `--noise-sensitivity <0..=6>` feeds the encoder's
+        // `noise_sensitivity` gate. Default `0` (estimator off) matches
+        // vpxenc's CLI default; cap to the 0..=6 range libvpx supports.
         noise_sensitivity: opts
             .noise_sensitivity
             .map(|v| v.min(6) as u8)
             .unwrap_or(0),
-        // Re-audit pass 2 #7 follow-up: plumb the CLI's `--min-q` /
-        // `--max-q` selection through to the rate controller. Default
-        // (4, 255) mirrors EncoderConfig's default + the libvpx CBR
-        // preset; unspecified callers keep byte-identical behaviour.
+        // PHASE-3 integration: CLI `--min-q` / `--max-q` (W7.8) →
+        // EncoderConfig. Defaults mirror RateControlConfig::default().
         min_qindex: opts.min_q.map(|v| v.min(255) as u8).unwrap_or(4),
         max_qindex: opts.max_q.map(|v| v.min(255) as u8).unwrap_or(255),
+        // W6.2(vpxenc parity, HBD scaffold): pixel bit-depth. rvp9 only
+        // encodes 8-bit today; --bit-depth=10/12 is parsed (W0.1) but
+        // the encoder refuses non-Bd8 until the HBD kernel pairs land.
         bit_depth: rvp9_core::BitDepth::Bd8,
-        lag_in_frames: 0,
-        enable_alt_ref: false,
+        // vpxenc `--lag-in-frames` (libvpx `vpxenc.c:220-221`, capped at
+        // `MAX_LAG_BUFFERS = 25`). The lookahead context also clamps
+        // internally; the explicit cap keeps the domain matching libvpx.
+        lag_in_frames: opts
+            .lag_in_frames
+            .map(|v| v.min(MAX_LAG_BUFFERS as u32))
+            .unwrap_or(0),
+        // Re-audit pass 3: `--auto-alt-ref` (libvpx `vpxenc.c:436-438`)
+        // now opts ALTREF emission in. Any non-zero value enables it
+        // (libvpx's 1 = single ARF, 2+ = multi-layer; rvp9 emits the
+        // single-ARF path either way). The encoder self-gates on
+        // `lag_in_frames` being large enough to feed the temporal
+        // filter's peek, so absent/0 keeps the legacy
+        // single-show-frame path (gate stays byte-identical).
+        enable_alt_ref: opts.auto_alt_ref.map(|v| v > 0).unwrap_or(false),
+        // Re-audit pass 3: `--end-usage` (libvpx
+        // `vpx_encoder.h enum vpx_rc_mode`) selects the regulator
+        // `RateControl::pick_q_and_bounds` dispatches on. Default Cbr.
+        rc_mode: opts.rc_mode,
+        // Re-audit pass 3: `--cq-level` (libvpx `vpxenc.c:385`) — the
+        // quality target consumed by the Cq (floor) / Q (pinned) arms.
+        // Inert under Cbr/Vbr. Cap to the 0..=255 q-index domain.
+        cq_level: opts.cq_level.map(|v| v.min(255) as u8).unwrap_or(0),
     }
+}
+
+/// Test-only thin wrapper over [`build_encoder_config`] pinning a
+/// minimal 64×64 / 30 fps geometry so the PROOF tests can drive the
+/// real production mapping with just an [`EncOpts`].
+#[cfg(test)]
+fn build_encoder_config_for_test(opts: &EncOpts) -> EncoderConfig {
+    build_encoder_config(
+        opts,
+        64,
+        64,
+        30.0,
+        opts.target_bitrate_kbps.saturating_mul(1000),
+    )
 }

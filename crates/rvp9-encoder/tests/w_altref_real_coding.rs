@@ -39,7 +39,7 @@
 //!   sign-bias rule wired into the header.
 
 use rvp9_decoder::{Decoder, ParsedFrame};
-use rvp9_encoder::{AqMode, EncoderConfig, StreamEncoder, YuvFrameRef};
+use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 use rvp9_harness::container::{IvfHeader, write_ivf};
 use rvp9_harness::y4m::{probe_testsrc_720p, read_cropped as y4m_read_cropped};
 use std::path::{Path, PathBuf};
@@ -189,6 +189,8 @@ fn altref_slot2_differs_from_last_recon() {
         // neighbour for the temporal filter when the cadence fires.
         lag_in_frames: 9,
         enable_alt_ref: true,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -257,6 +259,8 @@ fn altref_stream_byte_exact_vpxdec() {
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 9,
         enable_alt_ref: true,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
         min_qindex: 4,
         max_qindex: 255,
     };

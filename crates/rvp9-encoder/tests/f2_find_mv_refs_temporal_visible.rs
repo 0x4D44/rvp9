@@ -60,7 +60,7 @@ use rvp9_core::inter::{
     find_mv_refs, sign_bias_from_header, BlockBounds, NeighbourLookup, Position, PrevFrameMvRef,
 };
 use rvp9_core::mode_info::{InterMode, ModeInfo, Mv, RefFrame};
-use rvp9_encoder::{AqMode, EncoderConfig, StreamEncoder, StreamFrameKind, YuvFrameRef};
+use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, StreamFrameKind, YuvFrameRef};
 
 // ---------------------------------------------------------------------------
 // Synthetic source — a bright square that translates by a full-pel offset.
@@ -136,6 +136,8 @@ fn make_encoder(use_prev_frame_mvs: bool) -> StreamEncoder {
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
         enable_alt_ref: false,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
         min_qindex: 4,
         max_qindex: 255,
     };

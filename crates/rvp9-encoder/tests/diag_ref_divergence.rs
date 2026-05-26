@@ -20,7 +20,7 @@
 //! ```
 
 use rvp9_decoder::{Decoder, ParsedFrame};
-use rvp9_encoder::{AqMode, EncoderConfig, StreamEncoder, YuvFrameRef};
+use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 use rvp9_harness::y4m::{probe_foreman_cif, probe_testsrc_720p, read_cropped as y4m_read_cropped};
 
 fn yuv_view<'a>(y: &'a [u8], u: &'a [u8], v: &'a [u8], w: usize) -> YuvFrameRef<'a> {
@@ -105,6 +105,8 @@ fn run_diagnostic(
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
         enable_alt_ref: false,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
         min_qindex: 4,
         max_qindex: 255,
     };

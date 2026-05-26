@@ -120,11 +120,13 @@ pub use state::{E8Trace, RateControl};
 /// }
 /// ```
 ///
-/// rvp9 currently only ports the CBR path; the other arms panic with
-/// an explicit "not yet implemented" message that names the wave that
-/// will land them (see [`RateControl::pick_q_and_bounds`]). When a
-/// future wave (W4 RDO / W6 2-pass) brings them online, the dispatch
-/// is the single switch site that needs updating.
+/// rvp9 ports all four one-pass regulators: `Cbr`, `Vbr`, `Cq`, and
+/// `Q` are live arms of [`RateControl::pick_q_and_bounds`] (the
+/// 2-pass driver, which needs a first-pass-stats writer/reader, is the
+/// only deferred path). Re-audit pass 3 (2026-05-26) wired
+/// [`crate::EncoderConfig`]'s `rc_mode` field + the CLI `--end-usage`
+/// flag through to this discriminator so a CLI user can actually
+/// select them.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
 pub enum RcMode {
     /// Constant bit-rate, real-time. libvpx `VPX_CBR`. rvp9 default.

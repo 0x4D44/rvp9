@@ -24,7 +24,7 @@
 
 use rvp9_decoder::Decoder;
 use rvp9_encoder::{
-    e12stat, AqMode, EncoderConfig, StreamEncoder, StreamFrameKind, YuvFrameRef,
+    e12stat, AqMode, EncoderConfig, RcMode, StreamEncoder, StreamFrameKind, YuvFrameRef,
 };
 use rvp9_harness::y4m::{probe_foreman_cif, read_cropped, YuvFrameBuf};
 
@@ -95,6 +95,8 @@ fn e12_oracle_foreman() {
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
         enable_alt_ref: false,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
         min_qindex: 4,
         max_qindex: 255,
     };

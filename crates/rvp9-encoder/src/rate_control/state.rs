@@ -271,10 +271,10 @@ impl RateControl {
     /// Wraps [`super::cbr::pick_q_and_bounds`].
     ///
     /// W1.6(vpxenc parity, A3 P0) — dispatches on `config.rc_mode`
-    /// (libvpx `vp9_ratectrl.c:1587-1609`). Only `RcMode::Cbr` is
-    /// ported today; the other arms panic with an explicit
-    /// "not yet implemented" message naming the wave that will land
-    /// them.
+    /// (libvpx `vp9_ratectrl.c:1587-1609`). All four one-pass arms
+    /// (`Cbr` / `Vbr` / `Cq` / `Q`) are live; only the 2-pass driver
+    /// is deferred. Re-audit pass 3 made every arm CLI-reachable via
+    /// `--end-usage`.
     pub fn pick_q_and_bounds(&mut self, frame_kind: FrameKind) -> (u8, u8, u8) {
         use super::RcMode;
         match self.config.rc_mode {

@@ -8,7 +8,7 @@
 #![allow(clippy::print_stderr)]
 
 use rvp9_core::mv_search::e12stat;
-use rvp9_encoder::{AqMode, EncoderConfig, StreamEncoder, StreamFrameKind, YuvFrameRef};
+use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, StreamFrameKind, YuvFrameRef};
 use rvp9_harness::y4m::{probe_foreman_cif, read_cropped, YuvFrameBuf};
 
 const W: u32 = 256;
@@ -83,6 +83,8 @@ fn e13_diamond_oracle_foreman() {
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
         enable_alt_ref: false,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
         min_qindex: 4,
         max_qindex: 255,
     };

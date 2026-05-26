@@ -88,7 +88,7 @@ use crate::loopfilter::{
     apply_loop_filter_to_tight_recon, build_inter_mi_grid_for_lf, build_kf_mi_grid_for_lf,
     pick_filter_level,
 };
-use crate::rate_control::{FrameKind as RcFrameKind, RateControl, RateControlConfig};
+use crate::rate_control::{FrameKind as RcFrameKind, RateControl, RateControlConfig, RcMode};
 use crate::{
     EncodeError, InterPartitionLeafDesc, PartitionLeafDesc,
     pick_and_simulate_intra_encode_partitions, pick_and_simulate_inter_encode_partitions,
@@ -255,6 +255,31 @@ pub struct EncoderConfig {
     /// (`vp9_temporal_filter` top-level), `vp9/encoder/vp9_bitstream.c`
     /// `vp9_pack_bitstream` (non-show emit + superframe trailer).
     pub enable_alt_ref: bool,
+    /// vpxenc `--end-usage` (libvpx `vpxenc.c` `--end-usage` arg,
+    /// `vpx_encoder.h enum vpx_rc_mode`). Selects the rate-control
+    /// regulator the per-frame Q is picked by. Threaded straight onto
+    /// [`RateControlConfig::rc_mode`] in `to_rate_control_config`
+    /// so [`RateControl::pick_q_and_bounds`] dispatches on it
+    /// (`vp9_ratectrl.c:1587-1609`).
+    ///
+    /// Default [`RcMode::Cbr`] — the constant-bit-rate real-time
+    /// regulator that the cross-decoder gate runs at. The
+    /// [`RcMode::Vbr`] / [`RcMode::Cq`] / [`RcMode::Q`] arms are real
+    /// one-pass ports (see [`RateControl::pick_q_and_bounds`]); they
+    /// activate only via opt-in so the gate stays byte-identical.
+    pub rc_mode: RcMode,
+    /// vpxenc `--cq-level` (libvpx `vpxenc.c:385`,
+    /// `vp9_encoder.h::VP9EncoderConfig::cq_level`). The quality target
+    /// consumed when [`Self::rc_mode`] is [`RcMode::Cq`] (a quality
+    /// FLOOR the regulator may exceed for bitrate) or [`RcMode::Q`]
+    /// (the constant quantizer pinned for every frame). Ignored for
+    /// [`RcMode::Cbr`] / [`RcMode::Vbr`]. Range `0..=255` (a VP9
+    /// q-index). Threaded onto [`RateControlConfig::cq_level`] in
+    /// `to_rate_control_config`.
+    ///
+    /// Default `0` — matches the [`RateControlConfig`] default and is
+    /// inert under the default [`RcMode::Cbr`].
+    pub cq_level: u8,
 }
 
 impl EncoderConfig {
@@ -306,6 +331,12 @@ impl EncoderConfig {
             // at `lag_in_frames = 0`, so this branch is reachable
             // only via opt-in).
             enable_alt_ref: false,
+            // Default to libvpx's CBR real-time regulator and an inert
+            // cq_level. The cross-decoder gate builds its config via
+            // this constructor's field set, so these defaults keep it
+            // byte-identical.
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
         }
     }
 
@@ -345,6 +376,16 @@ impl EncoderConfig {
             // byte-identical behaviour for legacy callers.
             min_qindex: self.min_qindex,
             max_qindex: self.max_qindex,
+            // Re-audit pass 3 follow-up: thread the user's
+            // `--end-usage` / `--cq-level` selection onto the rate
+            // controller. `pick_q_and_bounds` dispatches on `rc_mode`
+            // (`vp9_ratectrl.c:1587-1609`); `cq_level` is consumed by
+            // the Cq / Q arms. When the CLI omits the flags the
+            // `EncoderConfig::new` defaults (Cbr, 0) match the
+            // pre-existing `RateControlConfig` defaults, preserving
+            // byte-identical behaviour for legacy callers.
+            rc_mode: self.rc_mode,
+            cq_level: self.cq_level,
             ..defaults
         }
     }
@@ -3633,6 +3674,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3672,6 +3715,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3723,6 +3768,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3787,6 +3834,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3831,6 +3880,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3859,6 +3910,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3894,6 +3947,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3926,6 +3981,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3949,6 +4006,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4032,6 +4091,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4087,6 +4148,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4144,6 +4207,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4231,6 +4296,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4382,6 +4449,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4460,6 +4529,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4698,6 +4769,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4753,6 +4826,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4870,6 +4945,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4948,6 +5025,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5003,6 +5082,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5077,6 +5158,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5142,6 +5225,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5224,6 +5309,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5272,6 +5359,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5343,6 +5432,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5406,6 +5497,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5485,6 +5578,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5570,6 +5665,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5682,6 +5779,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5877,6 +5976,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5999,6 +6100,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         }
@@ -6932,6 +7035,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6988,6 +7093,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7067,6 +7174,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: LAG,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7176,6 +7285,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7218,6 +7329,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 2,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7257,6 +7370,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7348,6 +7463,8 @@ mod tests {
                 bit_depth: rvp9_core::BitDepth::Bd8,
                 lag_in_frames: 0,
                 enable_alt_ref: false,
+                rc_mode: RcMode::Cbr,
+                cq_level: 0,
                 min_qindex: 4,
                 max_qindex: 255,
             };

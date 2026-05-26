@@ -58,7 +58,7 @@
 
 use rvp9_decoder::{Decoder, ParsedFrame};
 use rvp9_encoder::rdo::inter_dispatch::RDO_DISPATCH_COMPOUND_PICKS;
-use rvp9_encoder::{AqMode, EncoderConfig, StreamEncoder, YuvFrameRef};
+use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 use rvp9_harness::container::{IvfHeader, write_ivf};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -197,6 +197,8 @@ fn config(enable_alt_ref: bool) -> EncoderConfig {
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 9,
         enable_alt_ref,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
         min_qindex: 4,
         max_qindex: 255,
     }

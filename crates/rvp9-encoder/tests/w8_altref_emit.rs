@@ -31,7 +31,7 @@
 #![allow(missing_docs)]
 
 use rvp9_decoder::Decoder;
-use rvp9_encoder::{AqMode, EncoderConfig, StreamEncoder, YuvFrameRef};
+use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 
 const W: u32 = 64;
 const H: u32 = 64;
@@ -86,6 +86,8 @@ fn encode_with_altref(n_frames: u32, gop_length: u32, lag: u32) -> Vec<Vec<u8>> 
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: lag,
         enable_alt_ref: true,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -181,6 +183,8 @@ fn w8_altref_disabled_emits_no_non_show_packet() {
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 8,
         enable_alt_ref: false, // <- the gate
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
         min_qindex: 4,
         max_qindex: 255,
     };

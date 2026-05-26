@@ -92,6 +92,11 @@ pub mod temporal_filter;
 pub mod tpl;
 
 pub use frame_loop::{AqMode, Deadline, EncodedFrame, EncoderConfig, FrameKind as StreamFrameKind, StreamEncoder, YuvFrameRef};
+// Re-audit pass 3: `EncoderConfig::rc_mode` is a public field of type
+// `rate_control::RcMode`, so the discriminator must be reachable from
+// the crate root for callers (CLI, tests, benches) constructing a
+// config literal without reaching into the `rate_control` submodule.
+pub use rate_control::RcMode;
 
 /// Encoder configuration.
 ///
@@ -5692,6 +5697,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
             min_qindex: 4,
             max_qindex: 255,
         }

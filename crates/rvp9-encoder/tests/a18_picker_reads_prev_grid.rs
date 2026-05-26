@@ -22,7 +22,7 @@
 #![allow(missing_docs)]
 
 use rvp9_core::mode_info::RefFrame;
-use rvp9_encoder::{AqMode, EncoderConfig, StreamEncoder, StreamFrameKind, YuvFrameRef};
+use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, StreamFrameKind, YuvFrameRef};
 
 const W: u32 = 128;
 const H: u32 = 128;
@@ -94,6 +94,8 @@ fn a18_picker_reads_prev_grid_when_activated() {
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
         enable_alt_ref: false,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -195,6 +197,8 @@ fn a18_picker_reads_nothing_when_default_off() {
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
         enable_alt_ref: false,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
         min_qindex: 4,
         max_qindex: 255,
     };

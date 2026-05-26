@@ -192,18 +192,20 @@ fn dec_codec_vp8_rejected() {
 // Encoder enum-value flags
 // ========================================================================
 
-/// `--end-usage` accepts only `cbr` (per the wired flag table).
+/// `--end-usage` accepts the four one-pass modes (`cbr`/`vbr`/`cq`/`q`)
+/// since re-audit pass 3 wired `rc_mode` through to the controller. An
+/// unknown mode is rejected (not silently treated as `cbr`).
 #[test]
-fn enc_end_usage_vbr_rejected() {
+fn enc_end_usage_unknown_rejected() {
     let out = Command::new(enc_bin())
-        .args(["--end-usage", "vbr", "in.y4m"])
+        .args(["--end-usage", "bogus", "in.y4m"])
         .output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("--end-usage") && stderr.contains("cbr"),
-        "stderr must name --end-usage and 'cbr', got: {stderr}"
+        stderr.contains("--end-usage") && stderr.contains("cbr/vbr/cq/q"),
+        "stderr must name --end-usage and the accepted modes, got: {stderr}"
     );
 }
 

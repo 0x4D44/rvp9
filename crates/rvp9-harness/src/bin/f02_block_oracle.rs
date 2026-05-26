@@ -29,7 +29,7 @@
 //! ```
 
 use rvp9_encoder::f02_oracle::{self, BlockDecision};
-use rvp9_encoder::{AqMode, EncoderConfig, StreamEncoder, YuvFrameRef};
+use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 use rvp9_harness::f02_schema::parse_jsonl_stream;
 use rvp9_harness::y4m::read_cropped;
 use std::fs::{File, OpenOptions};
@@ -216,6 +216,8 @@ fn drive_rvp9_leg(
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
         enable_alt_ref: false,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
         min_qindex: 4,
         max_qindex: 255,
     };

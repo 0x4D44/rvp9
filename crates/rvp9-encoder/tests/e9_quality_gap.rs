@@ -28,7 +28,7 @@
 use rvp9_core::entropy::bitacct;
 use rvp9_decoder::{Decoder, ParsedFrame};
 use rvp9_encoder::{
-    predstat, skipstat, AqMode, EncoderConfig, StreamEncoder, StreamFrameKind, YuvFrameRef,
+    predstat, skipstat, AqMode, EncoderConfig, RcMode, StreamEncoder, StreamFrameKind, YuvFrameRef,
 };
 use rvp9_harness::y4m::{probe_foreman_cif, read_cropped, YuvFrameBuf};
 use std::path::{Path, PathBuf};
@@ -143,6 +143,8 @@ fn measure_rvp9_fixed_q(fixed_q: u8, frames: &[YuvFrameBuf], framerate: f64) -> 
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
         enable_alt_ref: false,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
         min_qindex: 4,
         max_qindex: 255,
     };

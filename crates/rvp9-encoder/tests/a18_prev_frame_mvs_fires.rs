@@ -18,7 +18,7 @@
 #![allow(missing_docs)]
 
 use rvp9_core::mode_info::RefFrame;
-use rvp9_encoder::{AqMode, EncoderConfig, StreamEncoder, StreamFrameKind, YuvFrameRef};
+use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, StreamFrameKind, YuvFrameRef};
 
 // ---------------------------------------------------------------------------
 // Synthetic source — a small motion sequence the picker can land NEWMV on.
@@ -96,6 +96,8 @@ fn make_encoder(use_prev_frame_mvs: bool) -> StreamEncoder {
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
         enable_alt_ref: false,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
         min_qindex: 4,
         max_qindex: 255,
     };
