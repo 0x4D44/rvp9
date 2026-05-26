@@ -85,6 +85,7 @@ pub mod rate_control;
 pub mod rdo;
 pub mod segmentation;
 pub mod skipstat;
+pub mod svc;
 pub mod temporal_filter;
 
 pub use frame_loop::{AqMode, Deadline, EncodedFrame, EncoderConfig, FrameKind as StreamFrameKind, StreamEncoder, YuvFrameRef};
