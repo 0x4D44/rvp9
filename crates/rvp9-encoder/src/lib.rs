@@ -2380,6 +2380,20 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     speed: i32,
     deadline: rvp9_core::mode_decision::speed_features::Deadline,
     content_tier: rvp9_core::mode_decision::speed_features::ContentTier,
+    // PHASE-3 integration: thread W2.x pre-analysis producer outputs
+    // into the per-leaf PickInterModeParams literals. Mirrors libvpx's
+    // `cpi->noise_estimate` (vp9_encoder.h:971), `x->content_state_sb`
+    // (vp9_encodeframe.c:1209-1257), and `cpi->rc.high_source_sad`
+    // (vp9_ratectrl.c:3034-3216). Previously the picker saw default
+    // values (NoiseEstimate::default, ContentStateSb::Normal,
+    // scene_change_detected=false), which masked the W2.x producer
+    // work behind a no-op consumer — the gap the re-audit caught.
+    noise_estimate_frame: rvp9_core::mode_decision::inter::NoiseEstimate,
+    scene_change_detected_frame: bool,
+    // Per-SB `content_state_sb[sb_rows * sb_cols]` from W2.2.
+    content_state_sb_grid: &[rvp9_core::mode_decision::inter::ContentStateSb],
+    // Per-mi `skin_map[mi_rows * mi_cols]` from W2.5 (0 = non-skin).
+    skin_map: &[u8],
 ) -> VecBackedInterCoefSource {
     use rvp9_core::bitstream::frame::{InterpFilter as WireInterpFilter, MAX_INTER_REFS};
     use rvp9_core::bitstream::header::FrameKind as WireFrameKind;
@@ -3061,10 +3075,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             dequant_ac: quantizer.dequant[1] as u16,
                             above_mv: above_mv_p13,
                             left_mv: left_mv_p13,
-                            noise_estimate:
-                                rvp9_core::mode_decision::inter::NoiseEstimate::default(),
+                            // PHASE-3 integration: frame-level noise tier
+                            // from W2.4 noise estimator.
+                            noise_estimate: noise_estimate_frame,
                             lowvar_highsumdiff: false,
-                            is_skin: false,
+                            // PHASE-3 integration: per-mi skin bit from
+                            // W2.5 skin detector.
+                            is_skin: {
+                                let mi_cols = (width / 8) as usize;
+                                let mi_idx =
+                                    leaf_mi_row * mi_cols + leaf_mi_col;
+                                skin_map.get(mi_idx).copied().unwrap_or(0) != 0
+                            },
                             reference_masking: true,
                             // P20 — disabled in the descent: the adaptive
                             // RD-threshold table is mutated post-pick by
@@ -3079,11 +3101,22 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             source_variance:
                                 rvp9_core::mode_decision::inter::SOURCE_VARIANCE_UNCOMPUTED,
                             force_skip_low_temp_var: false,
-                            content_state_sb:
-                                rvp9_core::mode_decision::inter::ContentStateSb::Normal,
+                            // PHASE-3 integration: per-SB content_state
+                            // from W2.2 avg_source_sad pass. Index via
+                            // (leaf_mi_row/8, leaf_mi_col/8) — the SB
+                            // grid resolution is 64×64 luma.
+                            content_state_sb: {
+                                let sb_cols = (width / 64).max(1) as usize;
+                                let sb_idx =
+                                    (leaf_mi_row / 8) * sb_cols + (leaf_mi_col / 8);
+                                content_state_sb_grid
+                                    .get(sb_idx)
+                                    .copied()
+                                    .unwrap_or(rvp9_core::mode_decision::inter::ContentStateSb::Normal)
+                            },
                             is_screen_content: false,
                             zero_temp_sad_source: None,
-                            scene_change_detected: false,
+                            scene_change_detected: scene_change_detected_frame,
                             inter_mode_mask:
                                 rvp9_core::mode_decision::inter::default_inter_mode_mask(),
                             // W0.4: SF fields now flow from the
@@ -3669,9 +3702,16 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // behaviour). The magnitude-driven bias is active.
                     above_mv: above_mv_p13,
                     left_mv: left_mv_p13,
-                    noise_estimate: rvp9_core::mode_decision::inter::NoiseEstimate::default(),
+                    // PHASE-3 integration: frame-level noise tier from
+                    // W2.4 noise estimator.
+                    noise_estimate: noise_estimate_frame,
                     lowvar_highsumdiff: false,
-                    is_skin: false,
+                    // PHASE-3 integration: per-mi skin bit from W2.5.
+                    is_skin: {
+                        let mi_cols = (width / 8) as usize;
+                        let mi_idx = leaf_mi_row * mi_cols + leaf_mi_col;
+                        skin_map.get(mi_idx).copied().unwrap_or(0) != 0
+                    },
                     // P18 — `sf.reference_masking` default. libvpx
                     // `vp9_speed_features.c:250 / 517` keeps this on
                     // for the realtime single-spatial-layer path,
@@ -3714,10 +3754,20 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     short_circuit_flat_blocks: false,
                     source_variance: rvp9_core::mode_decision::inter::SOURCE_VARIANCE_UNCOMPUTED,
                     force_skip_low_temp_var: false,
-                    content_state_sb: rvp9_core::mode_decision::inter::ContentStateSb::Normal,
+                    // PHASE-3 integration: per-SB content_state from
+                    // W2.2 avg_source_sad pass. Look up by SB grid.
+                    content_state_sb: {
+                        let sb_cols = (width / 64).max(1) as usize;
+                        let sb_idx =
+                            (leaf_mi_row / 8) * sb_cols + (leaf_mi_col / 8);
+                        content_state_sb_grid
+                            .get(sb_idx)
+                            .copied()
+                            .unwrap_or(rvp9_core::mode_decision::inter::ContentStateSb::Normal)
+                    },
                     is_screen_content: false,
                     zero_temp_sad_source: None,
-                    scene_change_detected: false,
+                    scene_change_detected: scene_change_detected_frame,
                     // §11 — speed-feature gates for cpu-used-6/7/8. Defaults
                     // mirror libvpx `vp9_speed_features.c:585-793` for the
                     // realtime path:
