@@ -44,7 +44,11 @@
 //!   single tile each); 64×64 falls back to the RT picker within the
 //!   speed≤4 path; the caller gates on this via
 //!   [`InterDispatchLeaf::rdo_supported`].
-//! - **Single-ref.** `{LAST, GOLDEN}`; compound is out of W4 scope.
+//! - **Single-ref.** `{LAST, GOLDEN, ALTREF}` (ALTREF gated on
+//!   `enable_alt_ref` + an emitted ARF, slot 2 valid); compound is out
+//!   of scope. libvpx iterates all three single refs in the candidate
+//!   loop `for (ref_frame = LAST_FRAME; ref_frame <= ALTREF_FRAME; …)`
+//!   (`vp9_rdopt.c:3533`).
 //! - **Intra fallback disabled** — see item 3. A leaf whose true best
 //!   is intra is decided by the inter cross-product here; the RT path's
 //!   richer intra-in-inter evaluation is not invoked in the RDO branch.
@@ -87,6 +91,19 @@ pub static RDO_DISPATCH_INVOCATIONS: std::sync::atomic::AtomicU64 =
 /// (the 16/32 routing was already proven). Incremented from
 /// `pick_inter_sb_leaf` alongside `RDO_DISPATCH_INVOCATIONS`.
 pub static RDO_DISPATCH_INVOCATIONS_8X8: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// W-ALTREF — count of leaves whose RDO winner selected
+/// `RefFrame::AltrefFrame` (single-ref ALTREF, slot 2). Incremented
+/// once per leaf the dispatch resolves to ALTREF. The PROOF test
+/// (`tests/w_altref_picker.rs`) asserts this advances when
+/// `enable_alt_ref = true` on content where the (filtered) ALTREF beats
+/// LAST — and that it stays at zero when ALTREF iteration is stripped.
+/// libvpx parity: `vp9_rd_pick_inter_mode_sb`'s ref-candidate loop
+/// `for (ref_frame = LAST_FRAME; ref_frame <= ALTREF_FRAME; ++ref_frame)`
+/// (`vp9/encoder/vp9_rdopt.c:3533`, :3545, :4349) iterates ALTREF as a
+/// first-class single-ref candidate.
+pub static RDO_DISPATCH_ALTREF_PICKS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
 /// Per-ref-frame plane + candidate bundle the caller assembles from the
@@ -133,6 +150,16 @@ pub struct InterDispatchLeaf<'a> {
     pub last: RefInputs<'a>,
     /// GOLDEN ref bundle.
     pub golden: RefInputs<'a>,
+    /// W-ALTREF — ALTREF (ref-pool slot 2) ref bundle. `available` is
+    /// `false` unless `enable_alt_ref` is set AND a real ARF has been
+    /// emitted (so slot 2 holds a meaningful reconstruction). When
+    /// `available == false` the ALTREF candidate is never scored and the
+    /// picker behaviour is byte-identical to the LAST/GOLDEN-only path —
+    /// the gate-safety invariant. libvpx parity: `setup_buffer_inter`
+    /// (`vp9_rdopt.c:2511`) wires the ALTREF buffer for the candidate
+    /// loop; `cpi->ref_frame_flags & VP9_ALT_FLAG`
+    /// (`vp9_rdopt.c:3535`) gates whether ALTREF is iterated.
+    pub altref: RefInputs<'a>,
     /// Full-pel MV envelope (no-border-extend), shared with NEWMV search.
     pub mv_limits: MvLimits,
     /// Diamond search site config.
@@ -351,6 +378,16 @@ pub fn pick_inter_sb_leaf(leaf: &InterDispatchLeaf<'_>) -> Option<InterDispatchR
     } else {
         (None, 0)
     };
+    // W-ALTREF — single-ref ALTREF NEWMV search against slot 2. The
+    // search is ref-agnostic (it consumes `leaf.altref.ref_y` as the
+    // reference plane), so motion search against the backward ALTREF
+    // reference is the same diamond + sub-pel refinement LAST/GOLDEN
+    // use. libvpx `single_motion_search` (`vp9_rdopt.c:2564`).
+    let (altref_newmv, altref_newmv_rate) = if leaf.altref.available {
+        search_newmv(leaf, &leaf.altref)
+    } else {
+        (None, 0)
+    };
 
     // OOB veto: substitute Mv::ZERO for an out-of-bounds NEAREST/NEAR so
     // the runner's prediction never over-reads the plane (mirror of the
@@ -368,6 +405,12 @@ pub fn pick_inter_sb_leaf(leaf: &InterDispatchLeaf<'_>) -> Option<InterDispatchR
         near: if leaf.golden.near_in_bounds { leaf.golden.near } else { Mv::ZERO },
         newmv: golden_newmv,
         newmv_rate: golden_newmv_rate,
+    };
+    let altref_cands = RefMvCandidates {
+        nearest: if leaf.altref.nearest_in_bounds { leaf.altref.nearest } else { Mv::ZERO },
+        near: if leaf.altref.near_in_bounds { leaf.altref.near } else { Mv::ZERO },
+        newmv: altref_newmv,
+        newmv_rate: altref_newmv_rate,
     };
 
     // Item 1 — HandleInterRunner factory per ref. Each closure builds
@@ -402,6 +445,20 @@ pub fn pick_inter_sb_leaf(leaf: &InterDispatchLeaf<'_>) -> Option<InterDispatchR
         } else {
             None
         };
+    // W-ALTREF — ALTREF runner: identical real transform-domain RD as
+    // LAST/GOLDEN, just against slot 2's planes. No synthetic/SAD model.
+    let altref_runner: Option<crate::rdo::pick_inter_sb::HandleInterRunner> =
+        if leaf.altref.available {
+            let leaf_ref: &InterDispatchLeaf = leaf;
+            let refs: &RefInputs = &leaf.altref;
+            Some(Box::new(move |mode: InterMode, mv: Mv, _placeholder: u32, newmv_rate: u32| {
+                let mode_rate = real_mode_rate(imc, ctx, mode);
+                let params = make_handle_params(leaf_ref, refs, mode, mv, mode_rate, newmv_rate);
+                Some(handle_inter_mode_single_ref(&params))
+            }))
+        } else {
+            None
+        };
 
     let per_ref = [
         // IntraFrame slot — unused (intra fallback disabled).
@@ -423,11 +480,14 @@ pub fn pick_inter_sb_leaf(leaf: &InterDispatchLeaf<'_>) -> Option<InterDispatchR
             handle_inter_runner: golden_runner,
             rdmult: leaf.rdmult,
         },
-        // AltrefFrame slot — unavailable (single-LAST/GOLDEN scheme).
+        // W-ALTREF — AltrefFrame slot (ref-pool slot 2). Gated by
+        // `leaf.altref.available` (= enable_alt_ref && ARF emitted). When
+        // unavailable this collapses to the previous LAST/GOLDEN-only
+        // behaviour exactly. libvpx `vp9_rdopt.c:3533-3543` setup loop.
         RefFrameInput {
-            available: false,
-            candidates: RefMvCandidates::default(),
-            handle_inter_runner: None,
+            available: leaf.altref.available,
+            candidates: altref_cands,
+            handle_inter_runner: altref_runner,
             rdmult: leaf.rdmult,
         },
     ];
@@ -458,11 +518,17 @@ pub fn pick_inter_sb_leaf(leaf: &InterDispatchLeaf<'_>) -> Option<InterDispatchR
     let refs = match pick.ref_frame {
         RefFrame::LastFrame => &leaf.last,
         RefFrame::GoldenFrame => &leaf.golden,
+        RefFrame::AltrefFrame => &leaf.altref,
         _ => return None,
     };
     let mode_rate = real_mode_rate(imc, ctx, pick.mode);
     let newmv_rate = if matches!(pick.mode, InterMode::NewMv) {
-        if matches!(pick.ref_frame, RefFrame::LastFrame) { last_newmv_rate } else { golden_newmv_rate }
+        match pick.ref_frame {
+            RefFrame::LastFrame => last_newmv_rate,
+            RefFrame::GoldenFrame => golden_newmv_rate,
+            RefFrame::AltrefFrame => altref_newmv_rate,
+            _ => 0,
+        }
     } else {
         0
     };
@@ -472,6 +538,11 @@ pub fn pick_inter_sb_leaf(leaf: &InterDispatchLeaf<'_>) -> Option<InterDispatchR
     RDO_DISPATCH_INVOCATIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if matches!(leaf.bsize, BlockSize::Block8x8) {
         RDO_DISPATCH_INVOCATIONS_8X8.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    // W-ALTREF — anti-G3 witness: count leaves the RDO winner resolved to
+    // ALTREF. Asserted by `tests/w_altref_picker.rs`.
+    if matches!(pick.ref_frame, RefFrame::AltrefFrame) {
+        RDO_DISPATCH_ALTREF_PICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     Some(InterDispatchResult {

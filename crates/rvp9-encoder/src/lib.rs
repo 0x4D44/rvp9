@@ -2367,6 +2367,20 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // they mirror what the decoder writes when reading
     // `refresh_frame_flags & 0x02`).
     golden_recon_yuv: (&[u8], &[u8], &[u8]),
+    // W-ALTREF — ALTREF (ref-pool slot 2) reference planes for the
+    // single-ref ALTREF picker candidate. `Some(..)` ONLY when
+    // `enable_alt_ref` is set AND a real ARF has already been emitted
+    // (so the decoder's slot 2 holds a meaningful reconstruction and the
+    // show frame's header points `ref_frame_indices[2]` at slot 2 with
+    // `sign_bias[ALTREF] = true`). `None` ⇒ the ALTREF candidate is
+    // never enumerated and the picker behaviour is byte-identical to the
+    // LAST/GOLDEN-only path (the gate-safety invariant: the sacred
+    // cross-decoder gate runs with `enable_alt_ref = false`, so this is
+    // always `None` there). libvpx parity: `setup_buffer_inter`
+    // (`vp9_rdopt.c:2511`) wires the ALTREF buffer into the candidate
+    // loop; `cpi->ref_frame_flags & VP9_ALT_FLAG` (`vp9_rdopt.c:3535`)
+    // gates whether ALTREF is iterated.
+    altref_recon_yuv: Option<(&[u8], &[u8], &[u8])>,
     recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
     sb_partitions: &mut [Vec<InterPartitionLeafDesc>],
     // A18 — Previous frame's MV grid for `find_mv_refs` salvage
@@ -2501,6 +2515,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // encoder calls `pick_inter_mode_luma` once per ref-plane,
     // then takes the min-RD winner across both rankings.
     let ref_y_golden = PlaneRef { data: golden_recon_yuv.0, stride: w, width: w, height: h };
+    // W-ALTREF — ALTREF Y plane ref for the single-ref ALTREF candidate.
+    // `altref_available` is the single gate: `true` only when the caller
+    // passed `Some(..)` (= enable_alt_ref && ARF emitted). When `false`,
+    // the picker never enumerates ALTREF and the bitstream is unchanged.
+    let altref_available = altref_recon_yuv.is_some();
+    let ref_y_altref = altref_recon_yuv.map(|(y, _, _)| PlaneRef {
+        data: y,
+        stride: w,
+        width: w,
+        height: h,
+    });
 
     // Picker harness — built once per frame. The per-leaf
     // `PlaneQuantizers` is rebuilt inside the SB walk below (AQ.1)
@@ -2623,6 +2648,21 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             + vp9_cost_bit(single_ref_p1, true)
             + vp9_cost_bit(single_ref_p2, false)
     };
+    // W-ALTREF — single-ref ALTREF signalling cost. libvpx
+    // `vp9_rdopt.c:2464-2468` (`estimate_ref_frame_costs`): ALTREF takes
+    // the `single_ref_p1 = 1` (GOLDEN/ALTREF subtree) then
+    // `single_ref_p2 = 1` (ALTREF, not GOLDEN) branch.
+    let ref_frame_cost_altref: u32 = {
+        use rvp9_core::cost::vp9_cost_bit;
+        use rvp9_core::entropy::DEFAULT_INTRA_INTER_PROB;
+        use rvp9_core::entropy::DEFAULT_SINGLE_REF_PROB;
+        let intra_inter_p = DEFAULT_INTRA_INTER_PROB[2];
+        let single_ref_p1 = DEFAULT_SINGLE_REF_PROB[2][0];
+        let single_ref_p2 = DEFAULT_SINGLE_REF_PROB[2][1];
+        vp9_cost_bit(intra_inter_p, true)
+            + vp9_cost_bit(single_ref_p1, true)
+            + vp9_cost_bit(single_ref_p2, true)
+    };
 
     // Phase 2b — ref_frame_cost for INTRA_FRAME. libvpx's
     // `init_ref_frame_cost` at `vp9_pickmode.c:1222`:
@@ -2721,13 +2761,24 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // cost prohibitively favours NEARESTMV/ZEROMV with mv=(0,0) - the
     // reconstruction then drifts further from the source every frame.
     //
-    // Sign-bias is all-`false` under our single-LASTFRAME ref scheme
-    // (matches `frame_loop::build_inter_packet_with_residuals`).
+    // Sign-bias: LAST/GOLDEN point at past display-order frames (no
+    // bias). W-ALTREF — when the ALTREF candidate is live the ALTREF
+    // points at a FUTURE display-order frame, so `sign_bias[ALTREF] =
+    // true` (libvpx `set_ref_sign_bias`, `vp9_encoder.c:5034-5049`). This
+    // MUST match the show-frame header's `ref_frame_sign_biases` and the
+    // decoder's per-block `find_mv_refs` so the MV-ref candidate scan
+    // applies the same sign flip on both sides
+    // (`frame_loop::build_inter_packet_with_residuals`). When ALTREF is
+    // NOT live (the gate's config) this stays `[false, false, false]` —
+    // byte-identical to today. Note: the flip only affects candidate
+    // scans that involve an ALTREF-referencing neighbour, which can only
+    // exist once an ALTREF leaf is selected — impossible when ALTREF is
+    // off — so the LAST/GOLDEN scans are unaffected regardless.
     let mi_rows_us = h / 8;
     let mi_cols_us = w / 8;
     let mut mi_grid: Vec<Option<rvp9_core::mode_info::ModeInfo>> =
         vec![None; mi_rows_us * mi_cols_us];
-    let sign_bias = sign_bias_from_header(&[false, false, false]);
+    let sign_bias = sign_bias_from_header(&[false, false, altref_available]);
 
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
@@ -3565,6 +3616,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // per ref frame and taking the min-RD winner across
                 // both rankings.
                 let mvc_golden = build_mvc(RefFrame::GoldenFrame);
+                // W-ALTREF — ALTREF MV candidates. `build_mvc` is
+                // ref-agnostic; the `sign_bias[ALTREF]` flip (set above
+                // when ALTREF is live) is applied inside `find_mv_refs`.
+                // Only consumed when `altref_available` is true.
+                let mvc_altref = build_mvc(RefFrame::AltrefFrame);
 
                 // AQ.1 — per-leaf effective qindex from the leaf's
                 // `segment_id` + the frame-level `seg_q_deltas` table.
@@ -3763,6 +3819,22 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         nearest_in_bounds: mv_in_bounds(mvc_golden.nearest),
                         near_in_bounds: mv_in_bounds(mvc_golden.near),
                     };
+                    // W-ALTREF — ALTREF single-ref candidate bundle.
+                    // `available` is the single gate (`altref_available`,
+                    // i.e. enable_alt_ref && ARF emitted). When `false`
+                    // the planes are placeholders the runner never reads
+                    // (the driver skips unavailable refs), so the picker
+                    // is byte-identical to the LAST/GOLDEN-only path.
+                    let altref_inputs = RefInputs {
+                        available: altref_available,
+                        ref_y: ref_y_altref.as_ref().unwrap_or(&ref_y),
+                        ref_u: altref_recon_yuv.map_or(me_ref_yuv.1, |(_, u, _)| u),
+                        ref_v: altref_recon_yuv.map_or(me_ref_yuv.2, |(_, _, v)| v),
+                        nearest: mvc_altref.nearest,
+                        near: mvc_altref.near,
+                        nearest_in_bounds: mv_in_bounds(mvc_altref.nearest),
+                        near_in_bounds: mv_in_bounds(mvc_altref.near),
+                    };
                     let dispatch_leaf = InterDispatchLeaf {
                         bsize: leaf_bsize,
                         src_y: &src_y,
@@ -3772,6 +3844,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         uv_stride: uvw,
                         last: last_inputs,
                         golden: golden_inputs,
+                        altref: altref_inputs,
                         mv_limits,
                         site_config: &site_config,
                         mv_costs: &mv_costs,
@@ -4510,7 +4583,32 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         // the writer encodes in the ref-frame bits, so
                         // the encoder simulator must mirror that to keep
                         // the recon byte-exact.
+                        // W-ALTREF — when the picker selected ALTREF the
+                        // residual-coding MC must read from slot 2's
+                        // reconstruction (the decoder's
+                        // `reconstruct_inter_block` reads
+                        // `refs[ALTREF]`). `altref_recon_yuv` is
+                        // guaranteed `Some` here: a leaf can only carry
+                        // `picked_ref == AltrefFrame` when `altref_
+                        // available` was true (the picker's `altref`
+                        // slot was unavailable otherwise). The `.expect`
+                        // documents that structural invariant.
+                        let altref_yuv = || {
+                            altref_recon_yuv.expect(
+                                "ALTREF leaf selected but altref_recon_yuv is None — \
+                                 the picker must not select ALTREF unless its slot is available",
+                            )
+                        };
                         let (input_plane, ref_plane_data, recon_plane) = match (plane, picked_ref) {
+                            (0, RefFrame::AltrefFrame) => {
+                                (input_yuv.0, altref_yuv().0, &mut *recon_yuv_out.0)
+                            }
+                            (1, RefFrame::AltrefFrame) => {
+                                (input_yuv.1, altref_yuv().1, &mut *recon_yuv_out.1)
+                            }
+                            (_, RefFrame::AltrefFrame) => {
+                                (input_yuv.2, altref_yuv().2, &mut *recon_yuv_out.2)
+                            }
                             (0, RefFrame::GoldenFrame) => {
                                 (input_yuv.0, golden_recon_yuv.0, &mut *recon_yuv_out.0)
                             }
@@ -4670,6 +4768,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         if matches!(final_mode, InterMode::NewMv) {
                             let mvc_ref = match final_ref {
                                 RefFrame::GoldenFrame => mvc_golden.nearest,
+                                RefFrame::AltrefFrame => mvc_altref.nearest,
                                 _ => mvc.nearest,
                             };
                             let ref_mv = if mv_in_bounds(mvc_ref) {
@@ -4695,6 +4794,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // is the inter-mode cost.
                     let ref_cost = match final_ref {
                         RefFrame::GoldenFrame => ref_frame_cost_golden,
+                        RefFrame::AltrefFrame => ref_frame_cost_altref,
                         _ => ref_frame_cost_last,
                     };
                     let mode_bits_est = pick

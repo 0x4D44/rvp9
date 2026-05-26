@@ -51,7 +51,7 @@
 //!   reference buffer doesn't change. This is sufficient for the
 //!   "encode → decode" oracle.
 
-use rvp9_core::bitstream::frame::{MAX_INTER_REFS, ReferenceMode};
+use rvp9_core::bitstream::frame::ReferenceMode;
 use rvp9_core::bitstream::header::HeaderTail;
 use rvp9_core::bitstream::sub_parsers::{
     LoopFilterParams, MAX_PROB, PREDICTION_PROBS, QuantizationParams, SEG_TREE_PROBS,
@@ -540,6 +540,19 @@ pub struct StreamEncoder {
     /// (`tests/w_altref_real_coding.rs`) via
     /// [`Self::diag_last_arf_real_coded`]. `None` until the first ARF.
     last_arf_real_coded: Option<bool>,
+    /// W-ALTREF picker — `true` once a real ARF has been emitted in the
+    /// current GOP (set in [`Self::encode_altref_internal`], reset on
+    /// every keyframe). This is the gate the show-frame inter picker
+    /// consults: only when `config.enable_alt_ref && altref_slot_emitted`
+    /// does the picker iterate ALTREF (ref-pool slot 2) as a single-ref
+    /// candidate, and only then does the show frame's header point
+    /// `ref_frame_indices[2]` at slot 2 with `sign_bias[ALTREF] = true`.
+    /// When `false` (the cross-decoder gate's config, `enable_alt_ref =
+    /// false`) the picker and the header bytes are byte-identical to the
+    /// LAST/GOLDEN-only path. libvpx parity: `cpi->ref_frame_flags &
+    /// VP9_ALT_FLAG` (`vp9_rdopt.c:3535`) gates the ALTREF candidate;
+    /// the flag is set once the ARF buffer is populated.
+    altref_slot_emitted: bool,
     /// W8 — Pending superframe carrier. When an ARF packet is built
     /// inside [`Self::try_encode_one_popped`], its bytes are pushed
     /// here and the next encode call's `show_frame` packet is
@@ -767,6 +780,9 @@ impl StreamEncoder {
             altref_recon_y: vec![0u8; w * h],
             altref_recon_u: vec![0u8; uvw * uvh],
             altref_recon_v: vec![0u8; uvw * uvh],
+            // W-ALTREF picker — no ARF has fired yet; the picker stays
+            // LAST/GOLDEN-only until the first ARF emission.
+            altref_slot_emitted: false,
             last_arf_real_coded: None,
             pending_arf_packet: None,
             inter_frames_since_arf: 0,
@@ -1421,6 +1437,11 @@ impl StreamEncoder {
         self.altref_recon_v.copy_from_slice(&self.last_recon_v);
         self.inter_frames_since_arf = 0;
         self.pending_arf_packet = None;
+        // W-ALTREF picker — a keyframe re-bases the whole ref pool
+        // (`refresh_frame_flags = 0xFF`); the GOP's first ARF has not
+        // fired yet, so the show-frame picker reverts to LAST/GOLDEN-only
+        // until the next `encode_altref_internal` sets this true again.
+        self.altref_slot_emitted = false;
 
         // Reference-buffer split — mirror the post-LF KF reconstruction
         // into the ME-side reference buffer. The denoiser only runs on
@@ -1812,6 +1833,22 @@ impl StreamEncoder {
         let mut cur_mv_grid =
             vec![PrevFrameMvRef::default(); mi_rows_us * mi_cols_us];
 
+        // W-ALTREF picker — the single gate for ALTREF candidate
+        // iteration on this show frame: ALTREF is configured AND a real
+        // ARF has fired in this GOP (slot 2 is meaningful, and decoded
+        // before this frame in the superframe). When false, the picker
+        // is LAST/GOLDEN-only and the header sign-bias / ref_frame_indices
+        // are unchanged — the cross-decoder gate runs here with
+        // `enable_alt_ref = false`, so this is always false there.
+        let altref_picker_live =
+            self.config.enable_alt_ref && self.altref_slot_emitted;
+        let altref_planes_for_picker: Option<(&[u8], &[u8], &[u8])> =
+            if altref_picker_live {
+                Some((&self.altref_recon_y, &self.altref_recon_u, &self.altref_recon_v))
+            } else {
+                None
+            };
+
         let coef_source = pick_and_simulate_inter_encode_partitions(
             w,
             h,
@@ -1835,6 +1872,10 @@ impl StreamEncoder {
             // (Step 2: feeds the second `find_mv_refs` walk for
             // GOLDEN; Step 3: drives candidate SSE on GOLDEN picks).
             (&self.golden_recon_y, &self.golden_recon_u, &self.golden_recon_v),
+            // W-ALTREF — ALTREF (slot 2) planes for the single-ref ALTREF
+            // candidate. `Some(..)` only when an ARF has fired this GOP
+            // and `enable_alt_ref` is set; `None` otherwise (gate config).
+            altref_planes_for_picker,
             (&mut new_recon_y, &mut new_recon_u, &mut new_recon_v),
             &mut sb_partitions,
             prev_grid_slice,
@@ -1985,13 +2026,21 @@ impl StreamEncoder {
             // the writer with `show_frame: false` and
             // `refresh_frame_flags = 0x04`.
             /* show_frame = */ true,
-            // W-ALTREF — normal inter frames reference LAST/GOLDEN
-            // (both past in display order) and never name ALTREF in
-            // their ref set, so every sign bias is `false` (libvpx
-            // `set_ref_sign_bias`: a ref is biased only when it points
-            // at a FUTURE frame). Keeps the cross-decoder gate's wire
-            // bytes unchanged.
-            /* ref_frame_sign_biases = */ [false, false, false],
+            // W-ALTREF — when the ALTREF picker candidate is live this
+            // show frame may name ALTREF in its ref set, so the ALTREF
+            // slot is sign-biased (it points at a FUTURE display-order
+            // frame; libvpx `set_ref_sign_bias`). LAST/GOLDEN point at
+            // past frames → `false`. When NOT live (the cross-decoder
+            // gate's config, `enable_alt_ref = false`) this is
+            // `[false, false, false]` — wire bytes unchanged. This MUST
+            // match the picker's `sign_bias` in
+            // `pick_and_simulate_inter_encode_partitions`.
+            /* ref_frame_sign_biases = */ [false, false, altref_picker_live],
+            // W-ALTREF — point the ALTREF logical ref at pool slot 2 when
+            // the candidate is live (`[0, 0, 2]`); otherwise `[0, 0, 0]`
+            // (unchanged from A11, every logical ref → slot 0).
+            /* ref_frame_indices = */
+            [0, 0, if altref_picker_live { 2 } else { 0 }],
             // A18 — Thread the same `prev_mv_grid` the picker used so
             // the writer's `find_mv_refs` produces the SAME
             // `best_ref_mv` the decoder will compute.
@@ -2271,6 +2320,11 @@ impl StreamEncoder {
             (&self.me_ref_y, &self.me_ref_u, &self.me_ref_v),
             (&self.last_recon_y, &self.last_recon_u, &self.last_recon_v),
             (&self.golden_recon_y, &self.golden_recon_u, &self.golden_recon_v),
+            // W-ALTREF — the ARF itself predicts from LAST/GOLDEN only
+            // (it cannot reference a future ARF); `None` disables the
+            // ALTREF candidate for the ARF's own per-leaf coding. Matches
+            // the documented ARF scope (LAST/intra per leaf).
+            None,
             (&mut arf_recon_y, &mut arf_recon_u, &mut arf_recon_v),
             &mut sb_partitions,
             // ARF disables prev-frame-MV salvage (libvpx never feeds the
@@ -2362,6 +2416,9 @@ impl StreamEncoder {
             /* refresh_frame_flags = */ 0x04,
             /* show_frame = */ false,
             /* ref_frame_sign_biases = */ [false, false, false],
+            // W-ALTREF — the ARF references LAST/GOLDEN only (slot 0/1),
+            // never a future ARF, so its logical-ref map is `[0, 0, 0]`.
+            /* ref_frame_indices = */ [0, 0, 0],
             /* prev_mv_grid = */ None,
             Some(&mut frame_counts),
             Some(&self.frame_context),
@@ -2419,6 +2476,14 @@ impl StreamEncoder {
         self.altref_recon_y.copy_from_slice(&arf_recon_y);
         self.altref_recon_u.copy_from_slice(&arf_recon_u);
         self.altref_recon_v.copy_from_slice(&arf_recon_v);
+
+        // W-ALTREF picker — slot 2 now holds a real ARF reconstruction
+        // that both the encoder and decoder agree on. Arm the show-frame
+        // picker's ALTREF candidate for the rest of this GOP (libvpx sets
+        // `cpi->ref_frame_flags |= VP9_ALT_FLAG` once the ARF buffer is
+        // valid). This show frame (decoded AFTER the ARF in the
+        // superframe) may now name ALTREF in its ref set.
+        self.altref_slot_emitted = true;
 
         Ok(packet)
     }
@@ -3093,6 +3158,18 @@ fn build_inter_packet_with_residuals(
     // the per-block `InterModeReadParams.sign_bias` so the MV-ref
     // candidate scan applies the same sign flip both sides.
     ref_frame_sign_biases: [bool; 3],
+    // W-ALTREF — the 3-entry logical-ref → ref-pool-slot map
+    // `[LAST, GOLDEN, ALTREF]` written into the uncompressed header
+    // (libvpx `vp9_bitstream.c::write_uncompressed_header`,
+    // `cm->ref_frame_map[get_ref_frame_map_idx(cpi, ref_frame)]`). The
+    // decoder resolves each logical inter ref via
+    // `refs[i] = ref_frame_buf(ref_frame_indices[i])`
+    // (`rvp9-decoder/src/lib.rs:2295-2312`). Normal LAST/GOLDEN-only
+    // frames pass `[0, 0, 0]` (every logical ref points at slot 0,
+    // unchanged from A11). A show frame that may name ALTREF passes
+    // `[0, 0, 2]` so a block with `ref_frame == ALTREF` reads ref-pool
+    // slot 2 (where the ARF refreshed, `refresh_frame_flags = 0x04`).
+    ref_frame_indices: [u8; 3],
     // A18 — Previous frame's MV grid threaded into the writer so its
     // per-block `find_mv_refs` call (used to compute the NEWMV
     // residual's `best_ref_mv`) sees the SAME prev-frame salvage the
@@ -3309,7 +3386,10 @@ fn build_inter_packet_with_residuals(
             // `0x03` for inter-that-also-refreshes-GOLDEN. See
             // `encode_inter_internal` for the period state machine.
             refresh_frame_flags,
-            ref_frame_indices: [0; MAX_INTER_REFS],
+            // W-ALTREF — caller-supplied logical-ref → pool-slot map.
+            // `[0, 0, 0]` for LAST/GOLDEN-only frames (unchanged); a
+            // show frame that may name ALTREF passes `[0, 0, 2]`.
+            ref_frame_indices,
             // W-ALTREF — caller-supplied per-ref sign bias (libvpx
             // `set_ref_sign_bias`, :5034-5049). `MAX_INTER_REFS == 3`
             // maps 1:1 onto the `[LAST, GOLDEN, ALTREF]` header bias.
