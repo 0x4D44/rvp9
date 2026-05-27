@@ -67,6 +67,41 @@ pub enum ContentTier {
     Film,
 }
 
+/// libvpx `ML_PARTITION_RD_FEATURES sf->rd_ml_partition`
+/// (`vp9_speed_features.h`). The slice rvp9's A21 partition-pruning
+/// integration consumes — the `search_breakout` gate + its
+/// per-quantiser-context thresholds. Other libvpx fields
+/// (`search_early_termination`, `var_pruning`, `prune_rect_thresh`)
+/// are documented A21 follow-ups (rvp9's descent is square NONE/SPLIT
+/// only, so rect-pruning has nothing to gate today).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct RdMlPartition {
+    /// libvpx `sf->rd_ml_partition.search_breakout`
+    /// (`vp9_speed_features.c:94, 115, 153, 177, 880`). Enables the
+    /// `ml_predict_breakout` partition-search breakout
+    /// (`vp9_encodeframe.c:4161-4168`). On at speed 0/1 (Good preset,
+    /// below 1080p); off at the best-quality defaults and speed 2+.
+    pub search_breakout: bool,
+    /// libvpx `sf->rd_ml_partition.search_breakout_thresh[q_ctx]`
+    /// (`vp9_speed_features.c:96-102, 125-133, 158-160`). Indexed by
+    /// the q-context `qindex>=200 ? 0 : (qindex>=150 ? 1 : 2)`. A
+    /// positive `ml_predict_breakout` linear score `>= thresh` votes
+    /// to stop the partition search.
+    pub search_breakout_thresh: [f32; 3],
+}
+
+impl RdMlPartition {
+    /// libvpx best-quality defaults (`vp9_speed_features.c:879-880`):
+    /// breakout off.
+    #[must_use]
+    pub const fn defaults() -> Self {
+        Self {
+            search_breakout: false,
+            search_breakout_thresh: [0.0, 0.0, 0.0],
+        }
+    }
+}
+
 /// Per-frame speed-feature decisions.
 ///
 /// Mirrors the libvpx `SPEED_FEATURES` struct (`vp9_speed_features.h`)
@@ -74,7 +109,7 @@ pub enum ContentTier {
 /// currently consumes (lib.rs:3713-3724). Later waves grow this to
 /// match libvpx's full SF surface; each new field comes paired with
 /// the libvpx `file:line` it was lifted from.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SpeedFeatures {
     /// libvpx `sf->limit_newmv_early_exit` (`vp9_speed_features.c:639,
     /// 790`). `1` at speed 5/6/7 CBR; `0` at speed 8.
@@ -97,6 +132,10 @@ pub struct SpeedFeatures {
     /// libvpx `sf->rt_intra_dc_only_low_content`
     /// (`vp9_speed_features.c:770`). `1` only at speed 8.
     pub rt_intra_dc_only_low_content: bool,
+    /// libvpx `sf->rd_ml_partition` (`vp9_speed_features.h`). A21 —
+    /// the ML partition-search breakout gate + thresholds consumed by
+    /// the RD partition descent.
+    pub rd_ml_partition: RdMlPartition,
 }
 
 impl SpeedFeatures {
@@ -121,6 +160,10 @@ impl SpeedFeatures {
             // RT path tightens to 32x32, see vp9_speed_features.c:571).
             max_intra_bsize: BlockSize::Block64x64,
             rt_intra_dc_only_low_content: false,
+            // libvpx `vp9_speed_features.c:879-880` — breakout off in
+            // the best-quality defaults; the Good/RT framesize-dependent
+            // arms turn it on per resolution + speed.
+            rd_ml_partition: RdMlPartition::defaults(),
         }
     }
 }
@@ -226,8 +269,8 @@ fn apply_rt(
 fn apply_good(
     sf: &mut SpeedFeatures,
     mag: u32,
-    _width: u32,
-    _height: u32,
+    width: u32,
+    height: u32,
     _content: ContentTier,
 ) {
     // libvpx `vp9_speed_features.c:571` — speed 5+ caps intra search
@@ -235,9 +278,48 @@ fn apply_good(
     if mag >= 5 {
         sf.max_intra_bsize = BlockSize::Block32x32;
     }
-    // No further Good-arm overrides land in W0.3. Wave 4 (RDO driver)
-    // brings the speed 0..=4 good-quality switch arms with their full
-    // libvpx citation set.
+
+    // A21 — `rd_ml_partition.search_breakout` gate + thresholds, lifted
+    // from libvpx `set_good_speed_feature_framesize_dependent`
+    // (`vp9_speed_features.c:81-180`). The `min(w, h)` resolution
+    // tiers gate which thresholds apply.
+    let min_dim = width.min(height);
+    let is_720p_or_larger = min_dim >= 720;
+    let is_1080p_or_larger = min_dim >= 1080;
+
+    // libvpx `:93-104` — speed 0 Good (and the speed>=1 arm reasserts
+    // it at `:115`): breakout on below 1080p.
+    if mag <= 1 && !is_1080p_or_larger {
+        sf.rd_ml_partition.search_breakout = true;
+        if mag == 0 {
+            // libvpx `:95-103`.
+            sf.rd_ml_partition.search_breakout_thresh = if is_720p_or_larger {
+                [0.0, 0.0, 0.0]
+            } else {
+                [2.5, 1.5, 1.5]
+            };
+        } else {
+            // libvpx `:121-134` (speed >= 1).
+            sf.rd_ml_partition.search_breakout_thresh = if is_720p_or_larger {
+                [-5.0, -5.0, -9.0]
+            } else {
+                [-1.0, -1.0, -1.0]
+            };
+        }
+    }
+
+    // libvpx `:144-161` — speed 2 keeps breakout on only below 720p
+    // (with relaxed thresholds); `:176-177` — speed 3+ turns it off.
+    if mag == 2 && !is_720p_or_larger {
+        sf.rd_ml_partition.search_breakout = true;
+        sf.rd_ml_partition.search_breakout_thresh = [0.0, -1.0, -4.0];
+    }
+    // speed >= 3 (and speed 2 at 720p+) leave breakout off (the
+    // best-quality default), so no further assignment is needed.
+
+    // No further Good-arm overrides land here. Wave 4 (RDO driver)
+    // brings the remaining speed 0..=4 good-quality switch arms with
+    // their full libvpx citation set.
 }
 
 #[cfg(test)]
@@ -255,10 +337,47 @@ mod tests {
     #[test]
     fn w0_3_speed0_good_default_is_best_quality_defaults() {
         let sf = dispatch(0, Deadline::Good, 640, 480, ContentTier::Default);
-        assert_eq!(sf, SpeedFeatures::best_quality_defaults());
+        // The W0.3 mode/intra fields stay at the best-quality defaults
+        // at speed 0 Good. (A21 enables `rd_ml_partition.search_breakout`
+        // at this resolution per libvpx `vp9_speed_features.c:94`, so a
+        // whole-struct equality no longer holds — that field is checked
+        // separately in `a21_*` below.)
         assert_eq!(sf.max_intra_bsize, BlockSize::Block64x64);
         assert!(!sf.limit_newmv_early_exit);
         assert!(!sf.bias_golden);
+        assert!(!sf.cb_pred_filter_search);
+        assert!(!sf.disable_golden_ref);
+        assert!(!sf.rt_intra_dc_only_low_content);
+    }
+
+    /// A21 — `rd_ml_partition.search_breakout` is ENABLED at speed 0/1
+    /// Good below 1080p, with the libvpx resolution-tiered thresholds
+    /// (`vp9_speed_features.c:93-134`), and DISABLED at speed 3+ and in
+    /// the best-quality defaults (`:879-880`).
+    #[test]
+    fn a21_rd_ml_partition_breakout_gate() {
+        // Speed 0, SD (<720p): on, thresh [2.5, 1.5, 1.5] (libvpx :100-102).
+        let sd0 = dispatch(0, Deadline::Good, 640, 480, ContentTier::Default);
+        assert!(sd0.rd_ml_partition.search_breakout);
+        assert_eq!(sd0.rd_ml_partition.search_breakout_thresh, [2.5, 1.5, 1.5]);
+
+        // Speed 0, 720p: on, thresh [0, 0, 0] (libvpx :96-98).
+        let hd0 = dispatch(0, Deadline::Good, 1280, 720, ContentTier::Default);
+        assert!(hd0.rd_ml_partition.search_breakout);
+        assert_eq!(hd0.rd_ml_partition.search_breakout_thresh, [0.0, 0.0, 0.0]);
+
+        // Speed 0, 1080p: off (libvpx :93 `!is_1080p_or_larger`).
+        let fhd0 = dispatch(0, Deadline::Good, 1920, 1080, ContentTier::Default);
+        assert!(!fhd0.rd_ml_partition.search_breakout);
+
+        // Speed 1, SD: on, thresh [-1, -1, -1] (libvpx :131-133).
+        let sd1 = dispatch(1, Deadline::Good, 640, 480, ContentTier::Default);
+        assert!(sd1.rd_ml_partition.search_breakout);
+        assert_eq!(sd1.rd_ml_partition.search_breakout_thresh, [-1.0, -1.0, -1.0]);
+
+        // Speed 3, SD: off (libvpx :176-177).
+        let sd3 = dispatch(3, Deadline::Good, 640, 480, ContentTier::Default);
+        assert!(!sd3.rd_ml_partition.search_breakout);
     }
 
     /// Speed 7 / Realtime — the rvp9 §11 hardcodes at lib.rs:3713-3724.

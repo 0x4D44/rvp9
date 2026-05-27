@@ -212,6 +212,75 @@ where
     }
 }
 
+/// A21 — partition-search breakout hook (libvpx `ml_predict_breakout`
+/// gate, `vp9/encoder/vp9_encodeframe.c:4161-4168`).
+///
+/// After the descent evaluates PARTITION_NONE at a block and that NONE
+/// candidate IMPROVES the running best RD, libvpx consults the ML
+/// breakout model: if it votes "stop searching", `do_split` (and
+/// `do_rect`) are forced to 0 — the SPLIT recursion at this block is
+/// skipped entirely. This trait abstracts that vote so the encoder can
+/// plug the real `ml_partition::ml_predict_breakout` (with real source
+/// variance + AC quantiser + rdmult features) without pulling the
+/// `ml_partition` module into `rvp9-core`.
+///
+/// The hook is consulted ONLY when a NONE candidate is feasible and won
+/// the current best at this block (mirroring libvpx's placement inside
+/// the `this_rdc.rdcost < best_rdc.rdcost` arm at
+/// `vp9_encodeframe.c:4140-4168`). Returning `true` suppresses the SPLIT
+/// branch for this block.
+pub trait BreakoutPruner {
+    /// Vote on whether to stop the partition search at this block.
+    ///
+    /// - `sb_local_x_8x8`, `sb_local_y_8x8`: top-left of the block in
+    ///   8×8 mi units within the SB.
+    /// - `bsize`: the block the NONE candidate was evaluated at.
+    /// - `none_rate`, `none_dist`: the winning NONE candidate's rate
+    ///   (`vp9_prob_cost` units, incl. `partition_cost[NONE]`) and
+    ///   distortion (SSE) — libvpx's `this_rdc.rate` / `this_rdc.dist`
+    ///   at `vp9_encodeframe.c:4165`.
+    ///
+    /// Returns `true` to force `do_split = 0` (skip the SPLIT recursion).
+    fn breakout(
+        &mut self,
+        sb_local_x_8x8: usize,
+        sb_local_y_8x8: usize,
+        bsize: BlockSize,
+        none_rate: u32,
+        none_dist: u32,
+    ) -> bool;
+}
+
+/// No-op breakout pruner — never votes to break out. Used as the
+/// default when the speed feature `sf.rd_ml_partition.search_breakout`
+/// is off, so the descent behaves exactly as the pre-A21 baseline.
+pub struct NoBreakout;
+
+impl BreakoutPruner for NoBreakout {
+    #[inline]
+    fn breakout(&mut self, _: usize, _: usize, _: BlockSize, _: u32, _: u32) -> bool {
+        false
+    }
+}
+
+/// Allow naked closures as breakout pruners (so the encoder can plug an
+/// inline `ml_predict_breakout` adapter without a named struct).
+impl<F> BreakoutPruner for F
+where
+    F: FnMut(usize, usize, BlockSize, u32, u32) -> bool,
+{
+    fn breakout(
+        &mut self,
+        sb_local_x_8x8: usize,
+        sb_local_y_8x8: usize,
+        bsize: BlockSize,
+        none_rate: u32,
+        none_dist: u32,
+    ) -> bool {
+        (self)(sb_local_x_8x8, sb_local_y_8x8, bsize, none_rate, none_dist)
+    }
+}
+
 /// Caller-supplied bounds + parameters for one descent invocation.
 pub struct NonRdDescentParams<'a> {
     /// libvpx `x->min_partition_size` — the descent never recurses
@@ -420,6 +489,26 @@ pub fn nonrd_pick_partition<P: ModePickerFn>(
     params: &NonRdDescentParams<'_>,
     picker: &mut P,
 ) -> NonRdPartitionResult {
+    // No breakout pruning (pre-A21 behaviour). Equivalent to libvpx with
+    // `sf.rd_ml_partition.search_breakout = 0`.
+    nonrd_pick_partition_with_breakout(hint, params, picker, &mut NoBreakout)
+}
+
+/// As [`nonrd_pick_partition`], but with an A21 ML partition-search
+/// breakout hook (libvpx `ml_predict_breakout` gate,
+/// `vp9/encoder/vp9_encodeframe.c:4161-4168`).
+///
+/// The `breakout` pruner is consulted after a NONE candidate wins the
+/// current best at a block; a `true` vote suppresses that block's SPLIT
+/// recursion. Pass [`NoBreakout`] to disable (identical to
+/// [`nonrd_pick_partition`]).
+#[must_use]
+pub fn nonrd_pick_partition_with_breakout<P: ModePickerFn, B: BreakoutPruner>(
+    hint: &PartitionDecision,
+    params: &NonRdDescentParams<'_>,
+    picker: &mut P,
+    breakout: &mut B,
+) -> NonRdPartitionResult {
     let mut state = DescentState {
         cells: [[BlockSize::Block8x8; SB_GRID]; SB_GRID],
         leaves: Vec::with_capacity(16),
@@ -449,6 +538,7 @@ pub fn nonrd_pick_partition<P: ModePickerFn>(
         hint,
         params,
         picker,
+        breakout,
         (0, 0),
         BlockSize::Block64x64,
         ctx_above,
@@ -475,10 +565,11 @@ struct DescentState {
 // load-bearing (hint, bounds, picker, origin, bsize, above/left ctx,
 // state accumulator). Refactoring to a struct would just hide the
 // stack frame.
-fn descend<P: ModePickerFn>(
+fn descend<P: ModePickerFn, B: BreakoutPruner>(
     hint: &PartitionDecision,
     params: &NonRdDescentParams<'_>,
     picker: &mut P,
+    breakout: &mut B,
     origin_8x8: (usize, usize),
     bsize: BlockSize,
     above: bool,
@@ -506,6 +597,11 @@ fn descend<P: ModePickerFn>(
     // Try PARTITION_NONE.
     let mut best_pick: Option<PartitionRdCandidate> = None;
     let mut best_rd_cost: i64 = i64::MAX;
+    // A21 — `do_split` gate (libvpx `vp9_encodeframe.c:4004`,
+    // `int do_split = bsize >= BLOCK_8X8`). The ML breakout pruner can
+    // force this to `false` after a winning NONE pick, suppressing the
+    // SPLIT recursion at this block.
+    let mut do_split = true;
     if let Some(cand) = none_allowed
         .then(|| picker.pick(col_8x8, row_8x8, bsize))
         .flatten()
@@ -522,14 +618,28 @@ fn descend<P: ModePickerFn>(
                 mode: cand.mode,
                 ref_frame: cand.ref_frame,
             });
+            // A21 — ML partition-search breakout. libvpx consults
+            // `ml_predict_breakout` inside the `this_rdc.rdcost <
+            // best_rdc.rdcost` arm (`vp9_encodeframe.c:4140-4168`):
+            // when it votes to stop, `do_split = 0; do_rect = 0`. We
+            // pass libvpx's `this_rdc.rate` (rate WITH the NONE
+            // partition cost folded in, matching the `:4136`
+            // `this_rdc.rate += partition_cost[NONE]` that precedes the
+            // breakout call at `:4165`) and `this_rdc.dist`.
+            if breakout.breakout(col_8x8, row_8x8, bsize, rate_total, cand.dist) {
+                do_split = false;
+            }
         }
     }
 
     // Try PARTITION_SPLIT — only if we have a child size to recurse
-    // into AND we haven't hit the floor.
+    // into AND we haven't hit the floor AND the breakout pruner didn't
+    // veto the split.
     let mut split_pick: Option<(u32, u32)> = None; // (sum_rate, sum_dist)
     let mut split_children: [Option<DescendResult>; 4] = [None, None, None, None];
-    if let Some(child_bsize) = (!bsize_at_floor).then(|| subsize_for_split(bsize)).flatten() {
+    if let Some(child_bsize) =
+        (do_split && !bsize_at_floor).then(|| subsize_for_split(bsize)).flatten()
+    {
         let step = split_step_8x8(bsize);
         let mut sum_rate: u32 = split_cost;
         let mut sum_dist: u32 = 0;
@@ -553,6 +663,7 @@ fn descend<P: ModePickerFn>(
                 hint,
                 params,
                 picker,
+                breakout,
                 child_origin,
                 child_bsize,
                 above,

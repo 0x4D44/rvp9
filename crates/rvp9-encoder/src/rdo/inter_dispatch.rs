@@ -108,6 +108,22 @@ pub static RDO_DISPATCH_INVOCATIONS_8X8: std::sync::atomic::AtomicU64 =
 pub static RD_PARTITION_RESHAPED_SBS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
+/// A21 — count of blocks where the ML partition-search breakout pruner
+/// (`ml_partition::ml_predict_breakout`, libvpx
+/// `vp9/encoder/vp9_encodeframe.c:4161-4168`) FIRED: voted to stop the
+/// partition search after a winning PARTITION_NONE pick, suppressing
+/// that block's SPLIT recursion. Incremented once per block the real NN
+/// breakout model votes to break out. The PROOF test
+/// (`tests/w_ml_partition.rs`) asserts this advances when the breakout
+/// speed feature is enabled and stays at zero when disabled — proving
+/// the pruner is wired to the real model and actually skips partition
+/// evaluations (anti-G3). A stub that never voted breakout would leave
+/// this at zero and fail the proof. libvpx parity: the `do_split = 0;
+/// do_rect = 0;` inside `if (ml_predict_breakout(...))`
+/// (`vp9_encodeframe.c:4165-4168`).
+pub static ML_PARTITION_BREAKOUT_FIRED: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 /// W-ALTREF — count of leaves whose RDO winner selected
 /// `RefFrame::AltrefFrame` (single-ref ALTREF, slot 2). Incremented
 /// once per leaf the dispatch resolves to ALTREF. The PROOF test

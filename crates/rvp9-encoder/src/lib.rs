@@ -2471,7 +2471,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         PickInterModeParams, pick_inter_mode,
     };
     use rvp9_core::mode_decision::nonrd_partition::{
-        NonRdDescentParams, PartitionRdCandidate, nonrd_pick_partition, variance_hint_bounds,
+        NonRdDescentParams, PartitionRdCandidate, nonrd_pick_partition,
+        nonrd_pick_partition_with_breakout, variance_hint_bounds,
     };
     use rvp9_core::mode_decision::speed_features::{self as sf_mod};
     use rvp9_core::mv_search::int_pro_me::int_pro_motion_estimation;
@@ -3307,8 +3308,106 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         })
                     };
 
-                let descent_result =
-                    nonrd_pick_partition(&hint, &params, &mut descent_picker);
+                // A21 — ML partition-search breakout pruner
+                // (`ml_partition::ml_predict_breakout`, libvpx
+                // `vp9_encodeframe.c:4161-4168`). Active only when the
+                // speed feature `sf.rd_ml_partition.search_breakout` is
+                // on AND `cm->base_qindex >= 100` (libvpx :4163). When
+                // active, after the descent's NONE pick wins at a block
+                // the real NN breakout model votes — a positive linear
+                // score `>= search_breakout_thresh[q_ctx]` forces
+                // `do_split = 0`, skipping that block's SPLIT recursion.
+                //
+                // Features are REAL: source-block Y variance vs. zeros
+                // (`vf(src, zeros) >> num_pels_log2`, libvpx :3301-3304),
+                // the NONE pick's rate/dist, `x->rdmult` (= f3_rd_mult),
+                // and `vp9_ac_quant(base_qindex)`. No synthetic shortcut.
+                let ml_breakout_active = sf.rd_ml_partition.search_breakout
+                    && i32::from(base_qindex) >= 100;
+                let descent_result = if ml_breakout_active {
+                    use rvp9_core::block::BlockSize as BS;
+                    let src_y_buf: &[u8] = input_yuv.0;
+                    let q_idx = i32::from(base_qindex);
+                    let ac_q =
+                        i32::from(rvp9_core::quant::ac_quant(q_idx, 0, BitDepth::Eight));
+                    let breakout_thresh = sf.rd_ml_partition.search_breakout_thresh;
+                    // 64-byte zero reference (libvpx `vp9_64_zeros`,
+                    // :3253) — variance core reads it row-by-row with a
+                    // zero stride so the same 64 bytes cover any block.
+                    let zeros = [0u8; 64];
+                    let mut breakout = |sb_local_x_8x8: usize,
+                                        sb_local_y_8x8: usize,
+                                        bs: BS,
+                                        none_rate: u32,
+                                        none_dist: u32|
+                     -> bool {
+                        // libvpx only consults breakout at 64/32/16/8.
+                        if !matches!(
+                            bs,
+                            BS::Block8x8 | BS::Block16x16 | BS::Block32x32 | BS::Block64x64,
+                        ) {
+                            return false;
+                        }
+                        let px_x = (sb_col * 8 + sb_local_x_8x8) * 8;
+                        let px_y = (sb_row * 8 + sb_local_y_8x8) * 8;
+                        let bw_px = usize::from(bs.width());
+                        let bh_px = usize::from(bs.height());
+                        if px_x + bw_px > w || px_y + bh_px > h {
+                            return false;
+                        }
+                        // Source-block variance vs. zeros, shifted by
+                        // num_pels_log2 (libvpx :3301-3304).
+                        let src_off = px_y * w + px_x;
+                        let (var, _sse) = rvp9_core::dsp::distortion::variance(
+                            &src_y_buf[src_off..],
+                            w,
+                            &zeros,
+                            0,
+                            bw_px,
+                            bh_px,
+                        );
+                        let num_pels_log2 =
+                            bs.width_log2() as u32 + bs.height_log2() as u32;
+                        let var_shifted = var >> num_pels_log2;
+                        // q_ctx (libvpx :3259).
+                        let q_ctx = if q_idx >= 200 {
+                            0usize
+                        } else if q_idx >= 150 {
+                            1
+                        } else {
+                            2
+                        };
+                        let bin = crate::ml_partition::BreakoutInput {
+                            bsize: bs,
+                            base_qindex: q_idx,
+                            width: w as i32,
+                            height: h as i32,
+                            ac_q,
+                            var_shifted,
+                            rd_rate: none_rate.min(i32::MAX as u32) as i32,
+                            // libvpx :3309 — clamp dist to INT_MAX, THEN
+                            // shift right by num_pels_log2.
+                            rd_dist_shifted: i64::from(none_dist.min(i32::MAX as u32))
+                                >> num_pels_log2,
+                            rdmult: f3_rd_mult.min(i32::MAX as u32) as i32,
+                            breakout_thresh: breakout_thresh[q_ctx],
+                        };
+                        let fired = crate::ml_partition::ml_predict_breakout(&bin);
+                        if fired {
+                            crate::rdo::inter_dispatch::ML_PARTITION_BREAKOUT_FIRED
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        fired
+                    };
+                    nonrd_pick_partition_with_breakout(
+                        &hint,
+                        &params,
+                        &mut descent_picker,
+                        &mut breakout,
+                    )
+                } else {
+                    nonrd_pick_partition(&hint, &params, &mut descent_picker)
+                };
 
                 // A4 anti-G3 diagnostic: count this SB if the RD
                 // descent chose a partition SHAPE that differs from the
