@@ -902,6 +902,11 @@ pub struct StreamEncoder {
     /// libvpx `cm->last_frame_type == KEY_FRAME`, gates
     /// `use_prev_frame_mvs`).
     last_frame_was_key: bool,
+    /// DRIFT-DIAG — snapshot of the most-recent frame's reconstruction
+    /// BEFORE the in-loop loop filter was applied. Lets a diagnostic
+    /// test isolate residual/MC divergence (pre-LF) from loop-filter
+    /// divergence (post-LF) against the true decode. Tight-stride Y/U/V.
+    diag_prelf_recon: Option<(Vec<u8>, Vec<u8>, Vec<u8>)>,
     /// P0b — Persistent frame context for backward adaptation. Reset to
     /// `FrameContext::new_default()` on every keyframe (mirrors libvpx's
     /// `vp9_setup_past_independence` which resets FC bank 0). After each
@@ -1178,6 +1183,7 @@ impl StreamEncoder {
             prev_mv_grid: None,
             prev_mv_grid_dims: (0, 0),
             last_frame_was_key: false,
+            diag_prelf_recon: None,
             // P0b — start from default; reset on every keyframe.
             frame_context: FrameContext::new_default(),
             decoder_fc_state: FrameContext::new_default(),
@@ -1835,6 +1841,11 @@ impl StreamEncoder {
         // with the same `filter_level` after IT-add, so the
         // encoder↔decoder bit-exact invariant survives LF.
         let filter_level = pick_filter_level(q_index);
+        {
+            // DRIFT-DIAG — snapshot pre-LF KF recon.
+            let (ry, ru, rv) = self.ref_pool.new_frame_planes_mut();
+            self.diag_prelf_recon = Some((ry.to_vec(), ru.to_vec(), rv.to_vec()));
+        }
         if filter_level > 0 {
             let mi_grid = build_kf_mi_grid_for_lf(h / 8, w / 8, &sb_partitions);
             let (ry, ru, rv) = self.ref_pool.new_frame_planes_mut();
@@ -2538,6 +2549,10 @@ impl StreamEncoder {
         } else {
             pick_filter_level(q_index)
         };
+        // DRIFT-DIAG — capture the pre-LF reconstruction so a diagnostic
+        // test can separate residual/MC divergence from LF divergence.
+        self.diag_prelf_recon =
+            Some((new_recon_y.clone(), new_recon_u.clone(), new_recon_v.clone()));
         if filter_level > 0 {
             apply_loop_filter_to_tight_recon(
                 w,
@@ -3339,6 +3354,18 @@ impl StreamEncoder {
         self.ref_pool
             .named_ref_planes(crate::buffer_pool::LAST_REF)
             .2
+    }
+
+    /// DRIFT-DIAG — read access to the most-recent frame's reconstruction
+    /// BEFORE the in-loop loop filter. `(Y, U, V)` tight-stride planes.
+    /// `None` before the first encoded frame. Lets a diagnostic separate
+    /// residual/MC divergence (pre-LF) from loop-filter divergence
+    /// (post-LF). See [`Self::diag_last_recon_y`] for the post-LF view.
+    #[must_use]
+    pub fn diag_prelf_recon(&self) -> Option<(&[u8], &[u8], &[u8])> {
+        self.diag_prelf_recon
+            .as_ref()
+            .map(|(y, u, v)| (y.as_slice(), u.as_slice(), v.as_slice()))
     }
 
     /// Test-only — read access to the ME-side LAST reference Y plane
