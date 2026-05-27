@@ -117,6 +117,22 @@ pub(crate) struct TraceFlags {
     /// libvpx's column-wavefront, which beats serial decisively;
     /// hence the flip.
     pub disable_row_mt: bool,
+    /// `RVP9_LF_OVERLAP_POOL` (any value) — engage the Phase 1
+    /// separate-pool loop-filter overlap path (HLD
+    /// `2026.05.27 - HLD - Separate LF thread pool.md` §3).
+    ///
+    /// Default **OFF** per HLD §11 condition 2: when unset, the
+    /// decoder runs the legacy two-scope LF path (decode scope
+    /// joins, then LF scope runs) unchanged — byte-identical
+    /// output. When set, eligible frames (`tile_rows == 1 &&
+    /// num_threads >= 2 && filter_level > 0 && LF pool present`)
+    /// dispatch LF jobs to the dedicated `LfWorkerPool` so they
+    /// overlap decode wall.
+    ///
+    /// Phase 1 ships dormant — the PGO end-to-end A/B on
+    /// `testsrc_1080p30 t=4` decides whether the flag becomes
+    /// default ON.
+    pub lf_overlap_pool: bool,
 }
 
 impl TraceFlags {
@@ -162,6 +178,8 @@ impl TraceFlags {
             // an explicit opt-in (no behavioural difference vs the
             // new default).
             disable_row_mt: any("RVP9_DISABLE_LF_MT"),
+            // Phase 1 separate-LF-pool: default OFF.
+            lf_overlap_pool: any("RVP9_LF_OVERLAP_POOL"),
         }
     }
 

@@ -163,3 +163,116 @@ in place. For now: this document lives at
 named here (`WorkerPool::scope`, `FrameScope::submit`, the
 `pending` / `done_rx` / `panics` triple, the unsafe transmutes) are
 renamed or moved, this document MUST be updated alongside.
+
+## 7. `LfWorkerPool` — Phase 1 separate-pool LF overlap
+
+`LfWorkerPool` (in [`lf_pool.rs`](lf_pool.rs)) is a structurally
+parallel, purpose-specialised pool used by the Phase 1 separate-pool
+LF overlap (HLD `2026.05.27 - HLD - Separate LF thread pool.md`). It
+mirrors libvpx's `pbi->lf_worker` non-row_mt topology — a long-lived
+worker thread that runs the column-wavefront LF kernel **concurrently
+with** the main decode worker pool, gated on the per-SB-row
+`decode_progress` atomic vector published by tile workers.
+
+### 7.1 The unsafe site
+
+[`LfWorkerPool::dispatch`](lf_pool.rs) has the same closure-erasure
+transmute as `FrameScope::submit`:
+
+```rust
+let boxed_frame: Box<dyn FnOnce() + Send + 'frame> = Box::new(job_with_signal);
+let boxed_static: Box<dyn FnOnce() + Send + 'static> =
+    unsafe { std::mem::transmute(boxed_frame) };
+```
+
+### 7.2 Soundness chain (`LfBatchHandle::wait` joins the borrow)
+
+The chain mirrors §2 above with one shape change: instead of a
+blocking scope-API (`scope()` joins before returning), `dispatch`
+returns an `LfBatchHandle<'pool, 'frame>` whose `wait()` is the
+temporal-exclusion edge:
+
+- **(a) Lifetime parameterisation.** `LfBatchHandle` carries
+  `PhantomData<&'frame ()>` so the borrow checker treats the handle
+  as borrowing `'frame`. The caller cannot drop the borrowed data
+  before consuming the handle.
+
+- **(b) `wait()` joins.** The wrapper around the user closure does
+  `done_tx.send(LfOutcome)` UNCONDITIONALLY after running the closure
+  (same liveness invariant M1 as `FrameScope::submit`). `wait()`
+  blocks on `done_rx.recv()`. After `wait()` returns, no worker
+  thread is accessing the closure's `'frame`-borrowed data.
+
+- **(c) `Drop` is the fallback.** If the caller does not call
+  `wait()` explicitly, `LfBatchHandle::Drop` blocks on `done_rx.recv`
+  before returning — a best-effort liveness path. The structural
+  soundness comes from the `'frame` lifetime in the handle's type:
+  the borrow checker disallows dropping the borrowed data before
+  dropping the handle.
+
+- **(d) `mem::forget` defense — documented contract on `unsafe fn
+  dispatch`.** `LfBatchHandle: !Copy`, but `mem::forget(handle)` is
+  type-correct: it consumes the handle (ending its `'frame` borrow)
+  WITHOUT running `Drop`, which would let the LF worker continue
+  raw-pointer access to per-frame state past the borrow's end —
+  undefined behaviour. The borrow-checker does NOT structurally
+  prevent this; the previous claim that the `'frame` PhantomData
+  "structurally prevents `mem::forget`" was incorrect.
+
+  Instead, `LfWorkerPool::dispatch` is marked **`unsafe fn`**, and
+  the documented safety contract obliges every caller to wrap the
+  call in `unsafe { ... }` and uphold the no-`mem::forget`
+  invariant. Best-effort defence-in-depth: the handle's own `Drop`
+  blocks on `done_rx.recv` so the natural end-of-scope path is
+  sound. The two production call sites
+  (`crates/rvp9-decoder/src/lib.rs` intra and inter LF-overlap
+  dispatches) bind the handle to a named local and consume it via
+  `handle.wait()` after the decode scope; neither path forgets it.
+  In-tree tests follow the same pattern.
+
+- **(e) Cross-pool ordering.** Decode workers and LF workers live in
+  **physically separate** OS thread pools (`WorkerPool` vs
+  `LfWorkerPool`). They share access to:
+  - The frame buffer via `SharedFrame` raw pointers (decode writes
+    pixels; LF reads-then-writes pixels).
+  - The `decode_progress: &[AtomicU32]` slice (decode writes via
+    `fetch_add(1, Release)` per SB row; LF reads via
+    `load(Acquire)`).
+  - The `frame_mi_grid: &[Option<ModeInfo>]` (decode writes via
+    `TileMiView`; LF reads via `RowMaskInputs.mi_grid`).
+
+  The **temporal partitioning** that makes the shared access sound:
+  - **Invariant L1 (HLD §4.3):** LF of row `r` may begin only after
+    `decode_progress[(r+lf_delay).min(sb_rows-1)] >= num_tile_cols`,
+    where `lf_delay = 1`. Each tile worker bumps
+    `decode_progress[r]` with `Release` after finishing all writes
+    to row `r`'s pixels and mi-grid cells. LF's `Acquire` load
+    of the same atomic happens-before its subsequent reads. The
+    Acquire/Release pair is thread-set-agnostic in the Rust memory
+    model — cross-pool synchronisation is identical to in-pool
+    synchronisation.
+  - **Intra-frame VP9 spec:** intra-prediction at row `r` reads
+    neighbours from rows ≤ `r`. With `lf_delay = 1`, LF of row `r-1`
+    starts only after every tile completed row `r`, which is after
+    every intra-pred read of row `r-1`'s pixels. No read-vs-write
+    race.
+
+### 7.3 `SharedFrame` semantics — unchanged
+
+`LfWorkerPool` does NOT modify `SharedFrame`'s ownership semantics
+(HLD §6 DO-NOT list #5; preserved from Lever B v2). Cross-pool
+aliasing is sound because of (e) above, not because `SharedFrame`
+relaxes any invariant.
+
+### 7.4 What this contract does NOT cover (LfWorkerPool)
+
+- **Borrow ordering inside the LF worker.** The LF state's `'frame`
+  references (decode_progress, cur_sb_col, frame_mi_grid, levels,
+  info, SharedFrame) all share one `'frame` lifetime. The handle
+  parameterises over `'frame` and `wait()`s before any of them go
+  out of scope. Caller is responsible for keeping all state alive
+  through the matching `wait()`.
+
+- **Reentrancy.** `LfWorkerPool` is not designed for nested
+  dispatches (the single long-lived thread serialises them). A future
+  N_LF > 1 patch will need to revisit the dispatch protocol.

@@ -612,6 +612,18 @@ pub struct Decoder {
     /// keeps conformance at 201/0/0/0/201 and inter-thread-count
     /// determinism at `decode(N=1) == decode(N=2)` byte-for-byte.
     worker_pool: rvp9_core::tile_threading::WorkerPool,
+    /// Phase 1 (separate LF pool, HLD `2026.05.27 - HLD - Separate LF
+    /// thread pool.md` §3): a dedicated long-lived worker thread that
+    /// runs the column-wavefront loop-filter in parallel with the main
+    /// decode pool. `Some(pool)` when constructed with enough logical
+    /// threads to avoid oversubscription (cores-available math at
+    /// [`lf_pool_size`]); `None` otherwise.
+    ///
+    /// Dispatch is **flag-gated** by `RVP9_LF_OVERLAP_POOL=1` (default
+    /// OFF). When the flag is off, this pool is constructed but never
+    /// dispatched; the existing two-scope LF path runs unchanged. See
+    /// HLD §11 condition 2.
+    lf_worker_pool: Option<rvp9_core::tile_threading::LfWorkerPool>,
     /// G5.2 — recycled per-tile scratch-buffer pool. Replaces the
     /// G5.1 per-tile fresh-`clone_geometry()` allocation pattern,
     /// which at 1080p × 8 tiles × 60 fps was ~1.44 GB/s of allocator
@@ -725,6 +737,18 @@ impl Decoder {
         // exactly one worker. Uniform with multi-threaded shapes:
         // no code-path bifurcation per HLD V6 §G5.
         let worker_pool = rvp9_core::tile_threading::WorkerPool::new(n);
+
+        // Phase 1 separate-LF-pool (HLD `2026.05.27 - HLD - Separate
+        // LF thread pool.md` §3.5): construct the long-lived LF worker
+        // pool when the cores-available math accommodates it (decode
+        // threads + N_LF + 1 main ≤ logical). On insufficient hosts
+        // (e.g. 4-core no-HT), `lf_pool_size` returns `None` and the
+        // overlap path is unavailable — decoder behaves identically to
+        // pre-Phase-1.
+        //
+        // N_LF = 1 (HLD §11 condition 1; matches libvpx pbi->lf_worker).
+        let lf_worker_pool: Option<rvp9_core::tile_threading::LfWorkerPool> =
+            lf_pool_size(n).map(rvp9_core::tile_threading::LfWorkerPool::new);
         Self {
             num_threads: n,
             frame_pool: DecoderFramePool::new(),
@@ -764,6 +788,7 @@ impl Decoder {
             // worker can spawn.
             simd_dispatch: rvp9_core::dsp::init(),
             worker_pool,
+            lf_worker_pool,
             tile_scratch_pool: Yv12ScratchPool::new(),
         }
     }
@@ -1619,6 +1644,33 @@ impl Decoder {
             None
         };
 
+        // Phase 1 separate-LF-pool overlap (HLD `2026.05.27 - HLD -
+        // Separate LF thread pool.md` §6.4 hoist): reset keyframe
+        // LF deltas to libvpx's `setup_past_independence` defaults
+        // and merge the header's overrides BEFORE the decode scope
+        // so the LF state can be built pre-decode. Behaviour is
+        // identical to the original location (no prev_mv_grid borrow
+        // in the keyframe path means hoisting is conflict-free here).
+        //
+        // Semantic equivalence: the decode scope and the post-decode
+        // entropy-adapt step do NOT read `self.lf_deltas`, so
+        // reordering this update across them produces byte-identical
+        // output. The legacy intra LF call below also reads from
+        // `self.lf_deltas`, which now holds the same merged value as
+        // it would have at the legacy site.
+        self.lf_deltas = ResolvedLfDeltas {
+            ref_deltas: [1, 0, -1, -1],
+            mode_deltas: [0, 0],
+            enabled: true,
+        };
+        self.merge_lf_params(&tail.loop_filter);
+        let filter_level = tail.loop_filter.filter_level;
+        let lf_disabled = crate::trace_flags::trace_flags().disable_lf;
+        // Set true inside the parallel branch when the LF overlap path
+        // dispatched the LF worker — gates out the legacy post-decode
+        // LF apply call below.
+        let mut lf_handled_by_overlap: bool = false;
+
         let frame_contexts = &self.frame_contexts;
         let simd_dispatch = &self.simd_dispatch;
         if parallel {
@@ -1743,6 +1795,134 @@ impl Decoder {
             // same `if parallel` gate); unwrap is safe.
             let decode_progress_ref: &[std::sync::atomic::AtomicU32] =
                 decode_progress.as_ref().expect("decode_progress allocated on parallel path");
+
+            // ----------------------------------------------------------
+            // Phase 1 separate-LF-pool overlap (keyframe path). See the
+            // matching block in `decode_inter_frame` for the SAFETY
+            // chain and the Invariant L1 argument.
+            // ----------------------------------------------------------
+            let lf_pool_ref: Option<&rvp9_core::tile_threading::LfWorkerPool> =
+                self.lf_worker_pool.as_ref();
+            let trace_flags_ref = crate::trace_flags::trace_flags();
+            let row_mt_disabled = trace_flags_ref.disable_row_mt;
+            let lf_overlap_pool_eligible = trace_flags_ref.lf_overlap_pool
+                && lf_pool_ref.is_some()
+                && self.num_threads.get() >= 2
+                && tile_rows == 1
+                && filter_level > 0
+                && !lf_disabled
+                && !row_mt_disabled
+                && sb_rows_pf >= 2;
+
+            let cur_sb_col_overlap: Vec<std::sync::atomic::AtomicI32> = if lf_overlap_pool_eligible
+            {
+                (0..sb_rows_pf)
+                    .map(|_| std::sync::atomic::AtomicI32::new(-1))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let lf_levels_overlap: rvp9_core::loopfilter::FrameFilterLevels =
+                if lf_overlap_pool_eligible {
+                    rvp9_core::loopfilter::resolve_filter_levels(
+                        filter_level,
+                        self.lf_deltas,
+                        SegmentationLfView::from_segmentation(&resolved_seg),
+                    )
+                } else {
+                    rvp9_core::loopfilter::FrameFilterLevels::default()
+                };
+            let lf_info_overlap = rvp9_core::loopfilter::LoopFilterInfo::new(
+                tail.loop_filter.sharpness_level,
+            );
+            let lf_state_overlap: Option<rvp9_core::loopfilter::apply::ColumnWavefrontLfState<'_>> =
+                if lf_overlap_pool_eligible {
+                    let shared = rvp9_core::loopfilter::apply::SharedFrame::from_yv12(&mut yv12);
+                    let row_inputs = rvp9_core::loopfilter::apply::RowMaskInputs {
+                        mi_grid: frame_mi_grid.as_slice(),
+                        mi_stride: mi_cols,
+                        mi_rows,
+                        mi_cols,
+                        levels: &lf_levels_overlap,
+                    };
+                    let chroma = yv12.chroma();
+                    let chroma_is_asymmetric = matches!(
+                        chroma,
+                        rvp9_core::bitstream::ChromaFormat::Yuv422
+                            | rvp9_core::bitstream::ChromaFormat::Yuv440
+                    );
+                    let non420 = if chroma_is_asymmetric {
+                        Some(rvp9_core::loopfilter::apply::Non420Inputs {
+                            mi_grid: frame_mi_grid.as_slice(),
+                            mi_stride: mi_cols,
+                            levels: &lf_levels_overlap,
+                        })
+                    } else {
+                        None
+                    };
+                    let sb_cols_l = mi_cols.div_ceil(SB_MI_SIZE);
+                    let nsync = rvp9_core::loopfilter::apply::nsync_for_width(
+                        (mi_cols * 8) as u32,
+                    );
+                    Some(rvp9_core::loopfilter::apply::ColumnWavefrontLfState {
+                        shared,
+                        info: &lf_info_overlap,
+                        row_inputs,
+                        non420,
+                        sb_rows: sb_rows_pf,
+                        sb_cols: sb_cols_l,
+                        cur_sb_col: cur_sb_col_overlap.as_slice(),
+                        nsync,
+                        decode_progress: Some(decode_progress_ref),
+                        num_tile_cols: tile_cols as i32,
+                        lf_delay: 1,
+                    })
+                } else {
+                    None
+                };
+
+            let simd_dispatch_for_lf = self.simd_dispatch.clone();
+            let lf_overlap_handle = match (lf_pool_ref, lf_state_overlap.as_ref()) {
+                (Some(pool), Some(state)) if lf_overlap_pool_eligible => {
+                    let n_lf = pool.num_workers().get();
+                    let dispatch = simd_dispatch_for_lf;
+                    let lf_job = move || {
+                        for worker_id in 0..n_lf {
+                            // SAFETY: see HLD §6.2 — wavefront
+                            // sync protocol (Invariant L1 on
+                            // `decode_progress` and L2 on
+                            // `cur_sb_col`) gates concurrent
+                            // access to per-frame state.
+                            unsafe {
+                                rvp9_core::loopfilter::apply::run_split_edge_lf_worker(
+                                    state,
+                                    worker_id,
+                                    n_lf,
+                                    &dispatch,
+                                );
+                            }
+                        }
+                    };
+                    // SAFETY: `LfWorkerPool::dispatch` is unsafe
+                    // because the returned handle must NOT be
+                    // `mem::forget`'d — its `Drop` (or `wait()`) is
+                    // the temporal-exclusion edge for the worker's
+                    // raw-pointer per-frame access. We bind the
+                    // handle to `lf_overlap_handle` and consume it
+                    // via `handle.wait()` after the decode scope and
+                    // the merge step (see the matching
+                    // `if let Some(h) = lf_overlap_handle` join
+                    // below). No code path forgets it.
+                    Some(unsafe { pool.dispatch(lf_job) })
+                }
+                _ => None,
+            };
+            lf_handled_by_overlap = lf_overlap_handle.is_some();
+            if lf_handled_by_overlap {
+                RVP9_LF_OVERLAP_POOL_FRAMES
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             let t_submit_start = profile::now_cycles();
             // T-5: scope closure returns the rdtsc taken just after
@@ -1912,6 +2092,11 @@ impl Decoder {
                     ..profile::PerFrameTiming::default()
                 });
             }
+            // Phase 1 separate-LF-pool overlap: join LF worker before
+            // anything else touches the frame buffer.
+            if let Some(handle) = lf_overlap_handle {
+                handle.wait();
+            }
             if let Some(e) = merge_err {
                 return Err(e);
             }
@@ -1999,24 +2184,14 @@ impl Decoder {
         //    is zero (LF is a frame-level no-op — see libvpx
         //    `vp9_loopfilter.c:1422-1427`).
         //
-        //    Keyframes invoke libvpx's `vp9_setup_past_independence`
-        //    (`vp9_entropymode.c:424-469`), which resets the LF deltas
-        //    to the keyframe defaults `{INTRA:+1, LAST:0, GOLDEN:-1,
-        //    ALTREF:-1}` with `mode_ref_delta_enabled = true` BEFORE
-        //    `setup_loopfilter` parses the header. We mirror that
-        //    here so the header's "no update" path inherits the
-        //    correct baseline rather than the all-zeros startup state.
-        self.lf_deltas = ResolvedLfDeltas {
-            ref_deltas: [1, 0, -1, -1],
-            mode_deltas: [0, 0],
-            enabled: true,
-        };
-        self.merge_lf_params(&tail.loop_filter);
-        let filter_level = tail.loop_filter.filter_level;
-        // Stage 3 stretch M.13 — `RVP9_DISABLE_LF=1` skips the loop-filter
-        // apply driver, exposing pre-LF reconstruction for cascade
-        // analysis (dump_frame_diff vs vpxdec's post-LF YUV).
-        let lf_disabled = crate::trace_flags::trace_flags().disable_lf;
+        //    The `self.lf_deltas` reset to keyframe defaults +
+        //    `merge_lf_params` + `filter_level` extraction were
+        //    hoisted above the `parallel` branch so the Phase 1 LF
+        //    overlap path can dispatch the LF worker pool BEFORE the
+        //    decode scope opens. The legacy two-scope path (when
+        //    overlap is OFF or ineligible) is reached here only when
+        //    `lf_handled_by_overlap` is false.
+        //
         // Phase 2 — the frame-wide MI grid is already populated by
         // tile workers via TileMiView. No stitch step needed.
         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
@@ -2025,7 +2200,7 @@ impl Decoder {
         let t_grid_end = t_grid_start; // grid_stitch = 0
         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
         let t_lf_start = profile::now_cycles();
-        if filter_level > 0 && !lf_disabled {
+        if filter_level > 0 && !lf_disabled && !lf_handled_by_overlap {
             // Wave 2 C4 — row-MT LF dispatch. `decode_progress` is
             // Some(...) only on the parallel-tile-decode path; the
             // dispatcher falls through to the serial implementation
@@ -2706,6 +2881,46 @@ impl Decoder {
             None
         };
 
+        // Phase 1 separate-LF-pool overlap (HLD `2026.05.27 - HLD -
+        // Separate LF thread pool.md` §6.4 hoist): the LF parameters
+        // depend only on `tail.loop_filter` (frame-header bitstream,
+        // already parsed) and `resolved_seg` (resolved above at line
+        // ~2526) — neither is mutated by the decode scope or by the
+        // post-decode merge.
+        //
+        // We CAN'T call `self.merge_lf_params` here because
+        // `prev_mv_grid` borrows `self.prev_frame_mv_grid` for the
+        // rest of the function (used inside the decode scope closure
+        // below) — `&mut self` would conflict. Instead, snapshot the
+        // post-merge `lf_deltas` into a local with the same logic the
+        // method uses; the legacy `self.merge_lf_params` call at its
+        // original site (post-decode-scope) continues to update
+        // `self.lf_deltas` for the legacy LF path.
+        let lf_deltas_after_merge: ResolvedLfDeltas = {
+            let lf = &tail.loop_filter;
+            let mut d = self.lf_deltas;
+            d.enabled = lf.mode_ref_delta_enabled;
+            if lf.mode_ref_delta_update {
+                for (i, slot) in lf.ref_deltas.iter().enumerate() {
+                    if let Some(v) = slot {
+                        d.ref_deltas[i] = *v;
+                    }
+                }
+                for (i, slot) in lf.mode_deltas.iter().enumerate() {
+                    if let Some(v) = slot {
+                        d.mode_deltas[i] = *v;
+                    }
+                }
+            }
+            d
+        };
+        let filter_level = tail.loop_filter.filter_level;
+        let lf_disabled = crate::trace_flags::trace_flags().disable_lf;
+        // Set true inside the parallel branch when the LF overlap path
+        // dispatched the LF worker — gates out the legacy post-decode
+        // LF apply call below.
+        let mut lf_handled_by_overlap: bool = false;
+
         let frame_contexts = &self.frame_contexts;
         let simd_dispatch = &self.simd_dispatch;
         if parallel {
@@ -2817,6 +3032,165 @@ impl Decoder {
             // `decode_progress` is Some here (set above under the same gate).
             let decode_progress_ref: &[std::sync::atomic::AtomicU32] =
                 decode_progress.as_ref().expect("decode_progress allocated on parallel path");
+
+            // ----------------------------------------------------------
+            // Phase 1 separate-LF-pool overlap (HLD `2026.05.27 - HLD -
+            // Separate LF thread pool.md` §3.3): build the LF state
+            // and dispatch to the LF worker pool BEFORE submitting
+            // decode jobs. The LF worker spins on the L1 gate
+            // (`decode_progress[r+1] >= num_tile_cols`); as decode
+            // workers publish progress per SB row, the LF worker
+            // begins filtering trailing rows in parallel.
+            //
+            // Eligibility (HLD §6.3): flag ON + LF pool present +
+            // tile_rows == 1 + filter_level > 0 + LF MT not disabled.
+            // Falls back to the legacy two-scope path otherwise.
+            // ----------------------------------------------------------
+            let lf_pool_ref: Option<&rvp9_core::tile_threading::LfWorkerPool> =
+                self.lf_worker_pool.as_ref();
+            let trace_flags_ref = crate::trace_flags::trace_flags();
+            let row_mt_disabled = trace_flags_ref.disable_row_mt;
+            let lf_overlap_pool_eligible = trace_flags_ref.lf_overlap_pool
+                && lf_pool_ref.is_some()
+                && self.num_threads.get() >= 2
+                && tile_rows == 1
+                && filter_level > 0
+                && !lf_disabled
+                && !row_mt_disabled
+                && sb_rows_pf >= 2;
+
+            // Per-row most-recently-completed column for the column
+            // wavefront. Mirrors the legacy two-scope dispatcher
+            // (`apply_loop_filter_to_frame_column_wavefront_dispatch`).
+            // We allocate unconditionally here so the borrowed slice
+            // referenced by `ColumnWavefrontLfState` has a stable
+            // lifetime even on the not-eligible path (Vec is dropped
+            // at function end either way). The Vec is only consumed
+            // when eligibility holds.
+            let cur_sb_col_overlap: Vec<std::sync::atomic::AtomicI32> = if lf_overlap_pool_eligible
+            {
+                (0..sb_rows_pf)
+                    .map(|_| std::sync::atomic::AtomicI32::new(-1))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let lf_levels_overlap: rvp9_core::loopfilter::FrameFilterLevels =
+                if lf_overlap_pool_eligible {
+                    rvp9_core::loopfilter::resolve_filter_levels(
+                        filter_level,
+                        lf_deltas_after_merge,
+                        SegmentationLfView::from_segmentation(&resolved_seg),
+                    )
+                } else {
+                    rvp9_core::loopfilter::FrameFilterLevels::default()
+                };
+            let lf_info_overlap = rvp9_core::loopfilter::LoopFilterInfo::new(
+                tail.loop_filter.sharpness_level,
+            );
+            // Build the SB-major LF state. SAFETY: `SharedFrame`
+            // raw-ptr access into `yv12` coexists with decode workers'
+            // `TileFrameView` raw-ptr access; the L1 + L2 wavefront
+            // gates provide the temporal-exclusion edge that makes the
+            // aliasing sound. See HLD §6.2 SAFETY chain and the
+            // module-adjacent `tile_threading/SAFETY.md`.
+            let lf_state_overlap: Option<rvp9_core::loopfilter::apply::ColumnWavefrontLfState<'_>> =
+                if lf_overlap_pool_eligible {
+                    let shared = rvp9_core::loopfilter::apply::SharedFrame::from_yv12(&mut yv12);
+                    let row_inputs = rvp9_core::loopfilter::apply::RowMaskInputs {
+                        mi_grid: frame_mi_grid.as_slice(),
+                        mi_stride: mi_cols,
+                        mi_rows,
+                        mi_cols,
+                        levels: &lf_levels_overlap,
+                    };
+                    let chroma = yv12.chroma();
+                    let chroma_is_asymmetric = matches!(
+                        chroma,
+                        rvp9_core::bitstream::ChromaFormat::Yuv422
+                            | rvp9_core::bitstream::ChromaFormat::Yuv440
+                    );
+                    let non420 = if chroma_is_asymmetric {
+                        Some(rvp9_core::loopfilter::apply::Non420Inputs {
+                            mi_grid: frame_mi_grid.as_slice(),
+                            mi_stride: mi_cols,
+                            levels: &lf_levels_overlap,
+                        })
+                    } else {
+                        None
+                    };
+                    let sb_cols_l = mi_cols.div_ceil(SB_MI_SIZE);
+                    let nsync = rvp9_core::loopfilter::apply::nsync_for_width(
+                        (mi_cols * 8) as u32,
+                    );
+                    Some(rvp9_core::loopfilter::apply::ColumnWavefrontLfState {
+                        shared,
+                        info: &lf_info_overlap,
+                        row_inputs,
+                        non420,
+                        sb_rows: sb_rows_pf,
+                        sb_cols: sb_cols_l,
+                        cur_sb_col: cur_sb_col_overlap.as_slice(),
+                        nsync,
+                        decode_progress: Some(decode_progress_ref),
+                        num_tile_cols: tile_cols as i32,
+                        lf_delay: 1,
+                    })
+                } else {
+                    None
+                };
+
+            // Dispatch the LF batch to the separate pool BEFORE the
+            // decode scope opens. The LF worker spins on the L1 gate
+            // (sub-µs per check) while decode workers ramp up; the
+            // moment row 0 of every tile is complete, LF begins.
+            //
+            // Worker count is Phase 1 N_LF = 1 (HLD §11 condition 1).
+            let simd_dispatch_for_lf = self.simd_dispatch.clone();
+            let lf_overlap_handle = match (lf_pool_ref, lf_state_overlap.as_ref()) {
+                (Some(pool), Some(state)) if lf_overlap_pool_eligible => {
+                    let n_lf = pool.num_workers().get();
+                    let dispatch = simd_dispatch_for_lf;
+                    let lf_job = move || {
+                        // SAFETY: see HLD §6.2 — the wavefront sync
+                        // protocol inside `run_split_edge_lf_worker`
+                        // (Invariant L1 on `decode_progress` and L2
+                        // on `cur_sb_col`) guarantees no concurrent
+                        // writer overlaps this worker's owned pixels.
+                        // The `LfBatchHandle::wait` below joins this
+                        // worker before the frame-state borrows
+                        // expire.
+                        for worker_id in 0..n_lf {
+                            unsafe {
+                                rvp9_core::loopfilter::apply::run_split_edge_lf_worker(
+                                    state,
+                                    worker_id,
+                                    n_lf,
+                                    &dispatch,
+                                );
+                            }
+                        }
+                    };
+                    // SAFETY: `LfWorkerPool::dispatch` is unsafe
+                    // because the returned handle must NOT be
+                    // `mem::forget`'d — its `Drop` (or `wait()`) is
+                    // the temporal-exclusion edge for the worker's
+                    // raw-pointer per-frame access. We bind the
+                    // handle to `lf_overlap_handle` and consume it
+                    // via `handle.wait()` after the decode scope and
+                    // the merge step (see the matching
+                    // `if let Some(h) = lf_overlap_handle` join
+                    // below). No code path forgets it.
+                    Some(unsafe { pool.dispatch(lf_job) })
+                }
+                _ => None,
+            };
+            lf_handled_by_overlap = lf_overlap_handle.is_some();
+            if lf_handled_by_overlap {
+                RVP9_LF_OVERLAP_POOL_FRAMES
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             let t_submit_start = profile::now_cycles();
             let _submit_done_cycles = self.worker_pool.scope(|scope| {
@@ -3016,6 +3390,19 @@ impl Decoder {
                     ..profile::PerFrameTiming::default()
                 });
             }
+            // Phase 1 separate-LF-pool overlap: join the LF worker
+            // before doing anything else with the frame buffer. By
+            // construction (decode scope has joined; merge does not
+            // touch yv12 or frame_mi_grid), the LF worker should be
+            // done or nearly so by the time we get here.
+            if let Some(handle) = lf_overlap_handle {
+                handle.wait();
+            }
+            // `lf_state_overlap` and `cur_sb_col_overlap` go out of
+            // scope at the end of the `if parallel` block; their
+            // borrows on `frame_mi_grid` and `decode_progress` are
+            // released. The LF handle's `wait()` above ensures the
+            // worker thread is no longer accessing them.
             if let Some(e) = merge_err {
                 return Err(e);
             }
@@ -3148,14 +3535,18 @@ impl Decoder {
         // through the same `vp9_loopfilter.c:vp9_loop_filter_frame`
         // entry point as keyframes (`vp9_decodeframe.c:2867`).
         //
-        // Without this wireup the inter pre-LF reconstruction was
-        // being MD5'd against libvpx's post-LF dump — a per-frame +5/-5
-        // edge-smoothing diff cascading across the whole frame. Same
-        // pattern as M.9's "filter_level > 0 keyframes fail" finding,
-        // here for the inter path.
+        // Mutate `self.lf_deltas` now via the existing
+        // `merge_lf_params` method (which the legacy LF call below
+        // reads). The Phase 1 LF overlap path used a `lf_deltas_after_merge`
+        // snapshot computed pre-decode-scope; the merge here brings
+        // `self.lf_deltas` into the same final state. Sanity-check
+        // (debug only): both must match.
         self.merge_lf_params(&tail.loop_filter);
-        let filter_level = tail.loop_filter.filter_level;
-        let lf_disabled = crate::trace_flags::trace_flags().disable_lf;
+        debug_assert_eq!(
+            self.lf_deltas, lf_deltas_after_merge,
+            "Phase 1 LF overlap snapshot must produce the same result as `merge_lf_params`; one of them has drifted (regression guard)"
+        );
+        //
         // Phase 2 — the frame-wide MI grid is already populated by
         // tile workers via TileMiView. No stitch step needed.
         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
@@ -3164,7 +3555,7 @@ impl Decoder {
         let t_grid_end = t_grid_start; // grid_stitch = 0
         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
         let t_lf_start = profile::now_cycles();
-        if filter_level > 0 && !lf_disabled {
+        if filter_level > 0 && !lf_disabled && !lf_handled_by_overlap {
             // Wave 2 C4 — see the matching call site in `decode_keyframe`.
             apply_loop_filter_to_frame_dispatching(
                 &mut yv12,
@@ -3614,6 +4005,41 @@ fn apply_loop_filter_to_frame_column_wavefront<'frame>(
     }
 }
 
+/// Diagnostic counter — incremented by every frame that engages the
+/// Phase 1 LF overlap path. Lets tests assert "the overlap actually
+/// fired" rather than silently passing through the legacy path. Reset
+/// is not exposed (tests call `load(Relaxed)` after the decode loop
+/// they care about, then compare).
+pub static RVP9_LF_OVERLAP_POOL_FRAMES: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Compute the LF worker count for the Phase 1 separate-pool overlap
+/// (HLD `2026.05.27 - HLD - Separate LF thread pool.md` §3.5).
+///
+/// **Phase 1 hard cap** (HLD §11 condition 1): N_LF = 1 to match
+/// libvpx's `pbi->lf_worker` exactly. The cores-available guard makes
+/// the pool unavailable when the host can't accommodate
+/// `num_decode_threads + N_LF + 1 (main)` logical threads — in which
+/// case we silently fall back to the legacy two-scope LF path. On a
+/// 24-logical host (Arrow Lake HX 8P+16E, the team-lead's box) the
+/// guard passes; on a 4-core no-HT box it does not.
+///
+/// Returns `None` to signal "no overlap available on this host" — the
+/// decoder still functions, just without the new path. Returns
+/// `Some(NonZeroUsize::new(1).unwrap())` when overlap is feasible.
+fn lf_pool_size(num_decode_threads: std::num::NonZeroUsize) -> Option<std::num::NonZeroUsize> {
+    let n_lf: usize = 1; // Phase 1: HLD §11 condition 1.
+    let needed = num_decode_threads.get().saturating_add(n_lf).saturating_add(1);
+    let available = std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1);
+    if available >= needed {
+        std::num::NonZeroUsize::new(n_lf)
+    } else {
+        None
+    }
+}
+
 /// Top-level LF dispatcher — picks between the serial path and the
 /// Lever B v2 column-wavefront row-MT path.
 ///
@@ -3788,6 +4214,12 @@ fn apply_loop_filter_to_frame_column_wavefront_dispatch(
         sb_cols,
         cur_sb_col: &cur_sb_col,
         nsync,
+        // Legacy two-scope path: the decode `WorkerPool::scope` has
+        // already joined before we get here, so Invariant L1 trivially
+        // holds — `decode_progress = None` skips the gate.
+        decode_progress: None,
+        num_tile_cols: num_tile_cols as i32,
+        lf_delay: 1,
     };
 
     worker_pool.scope(|scope| {
