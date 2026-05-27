@@ -213,6 +213,9 @@ unsafe fn dc_predict_full_avx2_inner(
 /// [`crate::intra_pred::dc_predictor`] which takes a `PredCtx`). The
 /// dispatch slot [`crate::dsp::SimdDispatch::dc_predict_full`] points
 /// at this wrapper on AVX2 hosts and at the scalar adapter elsewhere.
+/// `bs ∈ {4, 8, 16, 32}` for the AVX2 specialisations; `bs = 64`
+/// (Block64x64) falls back to scalar — see the matching note in
+/// [`crate::dsp::x86_64::dc_predict_left_avx2`].
 #[cfg(target_arch = "x86_64")]
 pub fn dc_predict_full_avx2(
     dst: &mut [u8],
@@ -221,6 +224,17 @@ pub fn dc_predict_full_avx2(
     above: &[u8],
     left: &[u8],
 ) {
+    if bs == 64 {
+        let ctx = crate::intra_pred::PredCtx {
+            above,
+            left,
+            // dc_predictor (full-neighbours arm) does not read
+            // `above_left`; supply any byte.
+            above_left: 0,
+        };
+        crate::intra_pred::dc_predictor(dst, stride, bs, ctx);
+        return;
+    }
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
     // when `caps.avx2 == true`. Caps are detected once at OnceLock
     // init time (see `crate::dsp::dispatch::init`) and are monotonic

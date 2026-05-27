@@ -182,21 +182,26 @@ fn encode_fixed_clip() -> Vec<u8> {
 /// — fix the mapping.
 #[test]
 fn a10_byte_identity_pre_vs_post_refactor() {
-    // Golden re-captured (2026-05-27) after the DRIFT-FIX that makes the
-    // encoder mirror the decoder's structural `use_prev_frame_mvs` gate
-    // and re-pins NEAREST/NEAR MVs to the causal-grid `find_mv_refs`
-    // result. That fix intentionally changes the emitted bitstream
-    // (different ref-MV derivation → different mode/MV entropy bits;
-    // the stream is shorter — 6211→6117 — because the prev-frame MV
-    // salvage yields better ref-MVs). The new stream is verified
-    // byte-exact encoder-recon-vs-decode by `drift_diag` and passes the
-    // 4/4 cross-decoder gate, so this is a correct, intentional golden
-    // update — NOT a masked regression. The pool-mapping invariant this
-    // oracle originally guarded still holds (the slot resolution is
-    // unchanged); only the upstream MV decisions moved.
-    // Pre-fix golden was (len 6211, fnv1a 0x959781b702249817).
-    const GOLDEN_HASH: u64 = 0xe37f_ff50_d932_1fda;
-    const GOLDEN_LEN: usize = 6117;
+    // Golden re-captured (2026-05-27) after the Track F intra-lambda KF
+    // Q-policy fix that makes `pick_q_and_bounds` (KF arm) match libvpx
+    // `vp9_ratectrl.c:1013-1042` exactly: first frame uses
+    // `best_quality` as the active_best floor, subsequent KFs use
+    // `get_kf_active_quality(avg_frame_qindex[KEY])`. The previous
+    // `KF_ACTIVE_QUALITY_BASIS_CAP = 122` workaround pinned the KF Q at
+    // ~57 regardless of bitrate; removing it lets high-bitrate KFs
+    // reach near-lossless (the fix closes 1.2 dB of the Track F PSNR
+    // gap at 1200/2000k cpu7). That intentionally changes the emitted
+    // bitstream (the KF in this 12-frame fixture now codes at q=4
+    // instead of q=57, producing a larger KF and a longer stream —
+    // 6117→7870). The new stream is verified byte-exact
+    // encoder-recon-vs-decode by `drift_diag` and passes the 4/4
+    // cross-decoder gate, so this is a correct, intentional golden
+    // update — NOT a masked regression. The pool-mapping invariant
+    // this oracle originally guarded still holds (the slot resolution
+    // is unchanged); only the upstream KF Q decision moved.
+    // Pre-fix golden was (len 6117, fnv1a 0xe37fff50d9321fda).
+    const GOLDEN_HASH: u64 = 0x7c61_9264_55c8_75c2;
+    const GOLDEN_LEN: usize = 7870;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

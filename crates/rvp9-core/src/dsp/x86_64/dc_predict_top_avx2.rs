@@ -160,8 +160,16 @@ unsafe fn dc_predict_top_avx2_inner(
 /// The dispatch slot [`crate::dsp::SimdDispatch::dc_predict_top`]
 /// points at this wrapper on AVX2 hosts and at the scalar reference
 /// (`crate::intra_pred::dc_top_predictor`) elsewhere.
+///
+/// `bs ∈ {4, 8, 16, 32}` for the AVX2 specialisations; `bs = 64`
+/// (Block64x64) falls back to scalar — see the matching note in
+/// [`crate::dsp::x86_64::dc_predict_left_avx2`].
 #[cfg(target_arch = "x86_64")]
 pub fn dc_predict_top_avx2(dst: &mut [u8], stride: usize, bs: usize, above: &[u8]) {
+    if bs == 64 {
+        crate::intra_pred::dc_top_predictor(dst, stride, bs, above);
+        return;
+    }
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
     // when `caps.avx2 == true`. Caps are detected once at OnceLock
     // init time (see `crate::dsp::dispatch::init`) and are monotonic

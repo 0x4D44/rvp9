@@ -132,8 +132,23 @@ unsafe fn dc_predict_left_avx2_inner(
 /// The dispatch slot [`crate::dsp::SimdDispatch::dc_predict_left`]
 /// points at this wrapper on AVX2 hosts and at the scalar reference
 /// (`crate::intra_pred::dc_left_predictor`) elsewhere.
+///
+/// The AVX2 specialisations cover `bs ∈ {4, 8, 16, 32}` — the four
+/// sizes VP9 intra prediction emits for ≤ Block32x32 blocks. For
+/// `bs = 64` (Block64x64) we fall back to the scalar reference: the
+/// inter picker's Block64x64 intra fallback exercises this path when
+/// the encoder picks a 64x64 leaf at low Q (Track F intra/lambda gap
+/// fix made this code path reachable at high bitrates). The scalar
+/// path is bit-exact with the AVX2 lanes for the supported sizes, so
+/// the fallback preserves the kernel contract; it just runs the
+/// scalar code on a Block64x64 input instead of panicking.
 #[cfg(target_arch = "x86_64")]
 pub fn dc_predict_left_avx2(dst: &mut [u8], stride: usize, bs: usize, left: &[u8]) {
+    // bs = 64 is not in the AVX2 specialisation set; route to scalar.
+    if bs == 64 {
+        crate::intra_pred::dc_left_predictor(dst, stride, bs, left);
+        return;
+    }
     // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
     // when `caps.avx2 == true`. Caps are detected once at OnceLock
     // init time (see `crate::dsp::dispatch::init`) and are monotonic

@@ -386,15 +386,14 @@ const KF_HIGH: i32 = 5000;
 /// statistics have been gathered yet (every realtime CBR keyframe).
 const KF_ACTIVE_QUALITY_BOOST: i32 = 32;
 
-/// Ceiling on the `active_worst_quality` basis fed to
-/// [`get_kf_active_quality`]. libvpx indexes the LUT by the keyframe's
-/// `active_worst_quality`; on the first frame that ambient is seeded at
-/// `worst_quality` (255), which over-floors rvp9's keyframe (the LUT
-/// returns ≈195 there). libvpx escapes this via its content-aware
-/// `bits_per_mb` rate model, which rvp9 lacks. Capping the basis at this
-/// realtime keyframe-Q neighbourhood lands the floor at the
-/// libvpx-matched ≈57 on textured content. DOCUMENTED DIVERGENCE (E7).
-const KF_ACTIVE_QUALITY_BASIS_CAP: i32 = 122;
+// (Removed 2026-05-27, Track F intra-lambda gap fix.) The previous
+// `KF_ACTIVE_QUALITY_BASIS_CAP = 122` clamped the basis fed to
+// `get_kf_active_quality`, pinning the first KF at q≈57 (PSNR ~42 dB)
+// regardless of bitrate. That capped KF quality and propagated through
+// the GOP via inter prediction. The libvpx-faithful KF Q policy
+// (`pick_q_and_bounds` KF arm) now matches `vp9_ratectrl.c:1013-1042`
+// exactly: first frame uses `best_quality` as the floor, subsequent KFs
+// use `get_kf_active_quality(avg_frame_qindex[KEY])`.
 
 /// Port of libvpx `get_minq_index` (`vp9_ratectrl.c:118-135`). Finds the
 /// smallest qindex whose q-value (`ac_quant/4`) is ≥ the cubic-curve
@@ -538,34 +537,52 @@ pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> 
         FrameKind::Key => {
             // libvpx `rc_pick_q_and_bounds_one_pass_cbr` keyframe branch
             // (`vp9_ratectrl.c:1013-1042`). The keyframe gets a buffer-
-            // driven `active_worst_quality` (same model as the inter
-            // path) and an `active_best_quality` FLOOR from
-            // `get_kf_active_quality`. That floor is the lever this fix
-            // (E7) restores: without it, `regulate_q` walks the keyframe
-            // Q all the way down to `best_quality` (q≈4) chasing the
-            // large libvpx-faithful keyframe target, because rvp9's
-            // keyframe `bits_per_mb` enumerator under-predicts the true
-            // intra cost on textured content. The floor pins the
-            // keyframe at a quality-appropriate Q (≈57 on foreman),
-            // matching libvpx's content-aware rate model from the
-            // outside.
+            // driven `active_worst_quality` (same model as the inter path)
+            // and an `active_best_quality` FLOOR.
+            //
+            // libvpx behaviour (`vp9_ratectrl.c:1013-1042`):
+            //   * `active_best = rc->best_quality`  (default 0, default
+            //     CBR-realtime = 4)  — the unconditional starting point.
+            //   * `if (current_video_frame > 0)` (i.e. not the first frame
+            //     of the stream): override `active_best` with
+            //     `get_kf_active_quality(avg_frame_qindex[KEY])`. The KF
+            //     basis is the previous KF's qindex, NOT the current
+            //     buffer-driven `active_worst`.
+            //   * `regulate_q` then walks the [best, worst] range looking
+            //     for the Q whose `bits_per_mb` estimate hits the KF
+            //     target.
+            //
+            // Track F intra-lambda gap fix (2026-05-27): the previous rvp9
+            // policy used `get_kf_active_quality(min(active_worst, 122))`
+            // unconditionally and floored the KF at q≈57 regardless of
+            // bitrate. That capped KF PSNR at ~42 dB and propagated through
+            // the GOP via inter prediction (every inter frame predicts
+            // against a 42-dB KF). The libvpx-faithful version below lets
+            // the first KF take `best_quality` as the floor so high-
+            // bitrate KFs can land near-lossless (where libvpx is), and
+            // uses the previous KF's qindex (NOT active_worst) as the
+            // basis on subsequent KFs.
             let worst = active_worst_quality(rc, i32::from(rc.avg_frame_qindex_key));
-            // `get_kf_active_quality` is indexed by the keyframe's
-            // `active_worst_quality` (the `q` argument in libvpx). On the
-            // first frame of a stream, libvpx's `avg_frame_qindex[KEY]`
-            // seed is `worst_quality` (255) and its content-aware
-            // `bits_per_mb` rate model lands the keyframe at q≈57 from a
-            // `best_quality` floor. rvp9's enumerator-over-Q estimator
-            // can't reproduce that content awareness, so we instead floor
-            // the keyframe via the LUT — but feeding the raw 255 ambient
-            // over-floors (kf_high_motion_minq[255] ≈ 195). We clamp the
-            // LUT basis to [`KF_ACTIVE_QUALITY_BASIS_CAP`], a realtime
-            // keyframe-Q neighbourhood that yields a libvpx-matched floor
-            // (≈57 on foreman). DOCUMENTED DIVERGENCE — see the E7 ledger
-            // entry: the cap stands in for libvpx's content-aware rate
-            // model on the keyframe.
-            let basis = worst.min(KF_ACTIVE_QUALITY_BASIS_CAP);
-            let best = get_kf_active_quality(basis);
+            // First frame of the stream: `avg_frame_qindex_key` is still
+            // seeded at `worst_quality`. `total_actual_bits == 0 &&
+            // frames_since_key == 0` is rvp9's first-frame predicate
+            // (matches `calc_iframe_target_size` above).
+            let is_first_frame =
+                rc.total_actual_bits == 0 && rc.frames_since_key == 0;
+            let best = if is_first_frame {
+                // libvpx `vp9_ratectrl.c:1014` — `active_best_quality =
+                // rc->best_quality`. No further adjustment fires for
+                // `current_video_frame == 0`.
+                rc.best_quality
+            } else {
+                // libvpx `vp9_ratectrl.c:1029-1041` — subsequent KFs use
+                // the previous KF's qindex as the basis (NOT the buffer-
+                // driven `active_worst`). Small-image adjustment skipped:
+                // `q_adj_factor = 0.75` for clips ≤ 352x288 would lower
+                // `best` further (libvpx lines 1033-1041); the small-
+                // image case lands `best` even lower, only helping.
+                get_kf_active_quality(i32::from(rc.avg_frame_qindex_key))
+            };
             (best.min(worst), worst)
         }
         FrameKind::Inter => {

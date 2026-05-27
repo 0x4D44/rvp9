@@ -271,20 +271,23 @@ fn gop_topology_schedule_matches_emitted_frames() {
 /// changed stream — fix the schedule.
 #[test]
 fn gop_topology_byte_identity() {
-    // Golden re-captured (2026-05-27) after the DRIFT-FIX (encoder now
-    // mirrors the decoder's structural `use_prev_frame_mvs` gate and
-    // re-pins NEAREST/NEAR MVs to the causal-grid `find_mv_refs` result).
-    // That fix intentionally changes the emitted bitstream (different
-    // ref-MV derivation → different mode/MV bits; the stream shrinks
-    // 26015→25670 from better prev-frame-MV salvage). The GOP *schedule*
-    // this oracle guards is unchanged — the per-frame refresh-mask
-    // assertions above (KfUpdate 0xFF / GfUpdate 0x03 / LfUpdate 0x01)
-    // still hold; only the upstream per-block MV decisions moved. The
-    // new stream is verified byte-exact encoder-recon-vs-decode by
+    // Golden re-captured (2026-05-27) after the Track F intra-lambda KF
+    // Q-policy fix (`pick_q_and_bounds` KF arm now matches libvpx
+    // `vp9_ratectrl.c:1013-1042` — first frame uses `best_quality`,
+    // subsequent KFs use `get_kf_active_quality(avg_frame_qindex[KEY])`).
+    // The previous `KF_ACTIVE_QUALITY_BASIS_CAP = 122` workaround pinned
+    // the KF Q at ~57 regardless of bitrate; removing it lets KFs reach
+    // best_quality (closes 1.2 dB of the Track F PSNR gap at 1200/2000k
+    // cpu7). That intentionally changes the emitted bitstream (KFs now
+    // code at lower Q → more KF bits → stream grows 25670→26222). The
+    // GOP *schedule* this oracle guards is unchanged — the per-frame
+    // refresh-mask assertions above (KfUpdate 0xFF / GfUpdate 0x03 /
+    // LfUpdate 0x01) still hold; only the upstream KF Q decision moved.
+    // The new stream is verified byte-exact encoder-recon-vs-decode by
     // `drift_diag` and passes the 4/4 cross-decoder gate.
-    // Pre-fix golden was (len 26015, fnv1a 0xc077248934d1d266).
-    const GOLDEN_HASH: u64 = 0xeee1_7494_2d66_2023;
-    const GOLDEN_LEN: usize = 25670;
+    // Pre-fix golden was (len 25670, fnv1a 0xeee174942d662023).
+    const GOLDEN_HASH: u64 = 0x3152_5167_cc03_2401;
+    const GOLDEN_LEN: usize = 26222;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);
