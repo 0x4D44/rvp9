@@ -619,10 +619,10 @@ pub struct Decoder {
     /// threads to avoid oversubscription (cores-available math at
     /// [`lf_pool_size`]); `None` otherwise.
     ///
-    /// Dispatch is **flag-gated** by `RVP9_LF_OVERLAP_POOL=1` (default
-    /// OFF). When the flag is off, this pool is constructed but never
-    /// dispatched; the existing two-scope LF path runs unchanged. See
-    /// HLD §11 condition 2.
+    /// Dispatch is **default ON** after the +8.14% mean PGO win on
+    /// testsrc_1080p30 t=4. Set `RVP9_DISABLE_LF_OVERLAP_POOL=1` to
+    /// fall back to the legacy two-scope LF path. See the
+    /// `lf_overlap_pool` field doc on [`crate::trace_flags::TraceFlags`].
     lf_worker_pool: Option<rvp9_core::tile_threading::LfWorkerPool>,
     /// G5.2 — recycled per-tile scratch-buffer pool. Replaces the
     /// G5.1 per-tile fresh-`clone_geometry()` allocation pattern,

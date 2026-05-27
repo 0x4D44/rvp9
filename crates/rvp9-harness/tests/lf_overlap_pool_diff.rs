@@ -2,10 +2,10 @@
 //! `2026.05.27 - HLD - Separate LF thread pool.md` §7.1).
 //!
 //! Each vector decodes once with `threads=1` (serial decode + serial
-//! LF — the golden reference) and once with `threads=4` +
-//! `RVP9_LF_OVERLAP_POOL=1` (the new overlap path). The per-frame YV12
-//! MD5s MUST match — proof that the new LF pool's L1 gate produces
-//! bitwise-identical output to the legacy two-scope path.
+//! LF — the golden reference) and once with `threads=4` (the overlap
+//! path, default ON after the +8.14% mean PGO win on testsrc t=4). The
+//! per-frame YV12 MD5s MUST match — proof that the new LF pool's L1
+//! gate produces bitwise-identical output to the legacy two-scope path.
 //!
 //! Failure mode this catches: L1 off-by-one — LF starting one SB-row
 //! too early and filtering pixels that a future intra-prediction read
@@ -13,13 +13,11 @@
 //!
 //! Run via:
 //! ```text
-//! $env:RVP9_LF_OVERLAP_POOL = "1"
 //! cargo test -p rvp9-harness --test lf_overlap_pool_diff
 //! ```
 //!
-//! When `RVP9_LF_OVERLAP_POOL` is unset (default), the test still
-//! runs but the threads=4 branch silently uses the legacy two-scope
-//! path — equivalent to the existing `column_wavefront_lf_diff` test.
+//! To force the legacy two-scope path (for differential against
+//! that explicitly), set `RVP9_DISABLE_LF_OVERLAP_POOL=1`.
 
 use rvp9_decoder::Decoder;
 use rvp9_harness::container::read_packets;
@@ -124,7 +122,7 @@ fn lf_overlap_pool_matches_serial() {
             assert_eq!(
                 s, p,
                 "{name} frame {i}: MD5 mismatch between threads=1 \
-                 (serial baseline) and threads=4 + RVP9_LF_OVERLAP_POOL \
+                 (serial baseline) and threads=4 overlap path \
                  (serial={s:02x?} vs overlap={p:02x?})",
             );
         }
@@ -136,20 +134,20 @@ fn lf_overlap_pool_matches_serial() {
          populate tests/conformance/vectors via scripts/fetch-vectors.sh"
     );
 
-    // If `RVP9_LF_OVERLAP_POOL=1` is set, the threads=4 decode of any
-    // multi-tile fixture above MUST have engaged the overlap path —
-    // verifies the test is actually exercising the new code, not
-    // silently passing on the legacy two-scope path.
+    // The overlap path is default ON; the threads=4 decode of any
+    // multi-tile fixture above MUST have engaged it — verifies the
+    // test is actually exercising the new code, not silently passing
+    // on the legacy two-scope path. Skip the check only when the
+    // operator explicitly disabled it.
     let overlap_frames_post =
         rvp9_decoder::RVP9_LF_OVERLAP_POOL_FRAMES.load(std::sync::atomic::Ordering::Relaxed);
-    if std::env::var("RVP9_LF_OVERLAP_POOL").is_ok() {
+    if std::env::var("RVP9_DISABLE_LF_OVERLAP_POOL").is_err() {
         assert!(
             overlap_frames_post > overlap_frames_pre,
-            "RVP9_LF_OVERLAP_POOL was set but the overlap path \
-             never engaged (counter: pre={overlap_frames_pre} \
-             post={overlap_frames_post}). Either the LF pool \
-             construction skipped (cores-available math), or the \
-             eligibility check rejected every vector.",
+            "overlap path is default ON but never engaged \
+             (counter: pre={overlap_frames_pre} post={overlap_frames_post}). \
+             Either the LF pool construction skipped (cores-available \
+             math), or the eligibility check rejected every vector.",
         );
     }
 }

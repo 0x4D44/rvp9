@@ -5,11 +5,13 @@
 # `testsrc_1080p30 t=4` + sanity rows. ≥8 iters/binary; report
 # median, p50, stdev.
 #
-# Variant A (baseline): PGO-built without RVP9_LF_OVERLAP_POOL
-#                       (target/release/decode-headtohead-baseline.exe)
-# Variant B (candidate): PGO-built with RVP9_LF_OVERLAP_POOL
-#                       (target/release/decode-headtohead-candidate.exe).
-#                       Run with the env var set.
+# Variant A (baseline): legacy two-scope LF path
+#                       (set RVP9_DISABLE_LF_OVERLAP_POOL=1 to force OFF
+#                       on the candidate binary; or use a baseline build
+#                       predating the default flip).
+# Variant B (candidate): separate-pool overlap path (default ON after
+#                       the +8.14% mean PGO win on testsrc_1080p30 t=4).
+#                       Run with NO opt-out env var set.
 #
 # Interleave A B A B ... so any host drift (thermal, background
 # load) hits both variants equally.
@@ -56,11 +58,11 @@ function Invoke-OneRow {
     param([string]$Exe, [hashtable]$Row, [int]$Iter, [string]$Variant)
     $rowSpec = "$($Row.Label)=$($Row.Path):$($Row.Threads)"
     $outTsv = Join-Path $outDir "$Variant-iter$Iter-$($Row.Label)-t$($Row.Threads).tsv"
-    # Set env var via wrapper for the candidate.
-    if ($Variant -eq 'candidate') {
-        $env:RVP9_LF_OVERLAP_POOL = '1'
+    # Set opt-out env var on the baseline (legacy two-scope) variant.
+    if ($Variant -eq 'baseline') {
+        $env:RVP9_DISABLE_LF_OVERLAP_POOL = '1'
     } else {
-        Remove-Item Env:\RVP9_LF_OVERLAP_POOL -ErrorAction SilentlyContinue
+        Remove-Item Env:\RVP9_DISABLE_LF_OVERLAP_POOL -ErrorAction SilentlyContinue
     }
     # PowerShell turns native stderr into ErrorRecord objects which
     # halt under $ErrorActionPreference='Stop'. Temporarily switch.
@@ -68,7 +70,7 @@ function Invoke-OneRow {
     $ErrorActionPreference = 'Continue'
     $output = & $Exe --row $rowSpec --out $outTsv --run-index $Iter 2>&1 | Out-String -Stream
     $ErrorActionPreference = $prevEAP
-    Remove-Item Env:\RVP9_LF_OVERLAP_POOL -ErrorAction SilentlyContinue
+    Remove-Item Env:\RVP9_DISABLE_LF_OVERLAP_POOL -ErrorAction SilentlyContinue
     # Parse output for "  <label> <threads> ... p50= NNNN.Nus"
     foreach ($line in $output) {
         if ($line -match "p50=\s*([\d.]+)us\s+mean=\s*([\d.]+)us") {
