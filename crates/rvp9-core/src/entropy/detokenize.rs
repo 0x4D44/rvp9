@@ -62,48 +62,41 @@ use crate::coef_ctx::{TileCoefCtx, combine_entropy_contexts};
 use crate::transforms::scans::{ScanOrder, scan_for};
 use crate::transforms::types::{MAX_NEIGHBORS, TxSize, TxType};
 
-/// Capacity floor for the per-thread `decode_coefs` scratch buffers.
-/// Matches the worst-case TX block (`TxSize::Tx32x32` → 32 × 32 = 1024
-/// coefficients). Allocated once per thread on first use; reused
-/// (with `Vec::clear`) across every subsequent `decode_coefs` call so
-/// the hot path costs zero heap allocations.
+/// Capacity of the per-thread `decode_coefs` `token_cache`. Matches the
+/// worst-case TX block (`TxSize::Tx32x32` → 32 × 32 = 1024 coefficients).
+/// Allocated once per thread on first use and reused across every
+/// subsequent `decode_coefs` call so the hot path costs zero heap
+/// allocations.
 const DECODE_COEFS_SCRATCH_CAP: usize = 1024;
 
 /// Per-thread reusable scratch for [`decode_coefs`]. R.2 (2026-05-23):
-/// hoists the 5 `Vec` allocations that previously happened on EVERY
-/// `decode_coefs` call (~30k-60k calls per 1080p frame → 150k-300k
-/// `malloc`/`free` pairs/frame on Windows) into a single thread-local
-/// `RefCell`. Each call clears the Vecs (preserves capacity, no
-/// realloc) and zeros only the prefix of `token_cache` it will read
-/// (sized to `tx_size.n_coeffs()`).
+/// hoists the `token_cache` allocation that previously happened on
+/// EVERY `decode_coefs` call (~30k-60k calls per 1080p frame) into a
+/// single thread-local `RefCell`. Each call zeros only the prefix of
+/// `token_cache` it will read (sized to `tx_size.n_coeffs()`).
 ///
 /// Thread-locality means each tile worker has its own scratch — zero
 /// contention, no Mutex needed. The `RefCell` is cheap (single byte
 /// borrow flag) and decode_coefs does not recursively call itself or
-/// any function that would re-enter the borrow (verified: the AVX2
-/// `plane_dequant_finisher` dispatch is a quant kernel, not a
-/// decoder).
+/// any function that would re-enter the borrow.
+///
+/// HLD 2026-05-27 Phase 1 (fused single-pass revert): the four pass-1
+/// deposit `Vec`s (`scratch_raster/dqv/val/sign`) that fed the Wave H
+/// H5/H6 two-pass `plane_dequant_finisher` dispatch were removed. The
+/// token loop now fuses the dequant multiply + writeback inline (the
+/// libvpx-faithful shape), so only `token_cache` remains — it is still
+/// needed for `get_coef_context` neighbour-magnitude lookups.
 struct DecodeCoefsScratch {
     /// Indexed-write buffer; reads via `get_coef_context`. Sized to
     /// `DECODE_COEFS_SCRATCH_CAP`; we zero `[..tx_size.n_coeffs()]`
     /// per call.
     token_cache: Vec<u8>,
-    /// Pass-1 push targets for the Wave H H5 split. Cleared per call;
-    /// capacity preserved.
-    scratch_raster: Vec<u16>,
-    scratch_dqv: Vec<i16>,
-    scratch_val: Vec<i16>,
-    scratch_sign: Vec<u8>,
 }
 
 impl DecodeCoefsScratch {
     fn new() -> Self {
         Self {
             token_cache: vec![0u8; DECODE_COEFS_SCRATCH_CAP],
-            scratch_raster: Vec::with_capacity(DECODE_COEFS_SCRATCH_CAP),
-            scratch_dqv: Vec::with_capacity(DECODE_COEFS_SCRATCH_CAP),
-            scratch_val: Vec::with_capacity(DECODE_COEFS_SCRATCH_CAP),
-            scratch_sign: Vec::with_capacity(DECODE_COEFS_SCRATCH_CAP),
         }
     }
 }
@@ -393,31 +386,19 @@ pub fn decode_coefs(
     let band_translate = get_band_translate(tx_size);
     let dq_shift: u32 = if matches!(tx_size, TxSize::Tx32x32) { 1 } else { 0 };
 
-    // R.2: hoist all 5 `decode_coefs` scratch buffers to a per-thread
-    // `RefCell` (see `DecodeCoefsScratch` above). The `with_borrow_mut`
-    // closure scopes the borrow for the rest of the function body;
-    // we destructure into split `&mut Vec<...>` bindings so the existing
-    // call-site code (`token_cache`, `scratch_raster`, etc.) compiles
-    // unchanged. `Vec::clear()` preserves capacity → zero heap alloc
-    // on the warm path.
+    // R.2: hoist the `decode_coefs` `token_cache` scratch buffer to a
+    // per-thread `RefCell` (see `DecodeCoefsScratch` above). The
+    // `with_borrow_mut` closure scopes the borrow for the rest of the
+    // function body. (HLD 2026-05-27 Phase 1: the four pass-1 deposit
+    // Vecs are gone — see the fused token loop below.)
     DECODE_COEFS_SCRATCH.with_borrow_mut(|scratch| {
-    let DecodeCoefsScratch {
-        token_cache,
-        scratch_raster,
-        scratch_dqv,
-        scratch_val,
-        scratch_sign,
-    } = scratch;
+    let DecodeCoefsScratch { token_cache } = scratch;
     // Zero only the prefix `token_cache[..n_coeffs]` we'll actually
     // read/write. `token_cache.len() == DECODE_COEFS_SCRATCH_CAP` is
     // an invariant established at construction.
     for slot in &mut token_cache[..tx_size.n_coeffs()] {
         *slot = 0;
     }
-    scratch_raster.clear();
-    scratch_dqv.clear();
-    scratch_val.clear();
-    scratch_sign.clear();
 
     let mut ctx = initial_pt;
     let mut c = 0usize;
@@ -428,48 +409,27 @@ pub fn decode_coefs(
     // `:171,254`).
     let mut dqv = dc_dq;
 
-    // Wave H H5 — full two-pass dequant split for ALL token arms.
+    // HLD 2026-05-27 Phase 1 — fused single-pass token loop (libvpx
+    // `decode_coefs`, `vp9/decoder/vp9_detokenize.c:115-261`).
     //
-    // Architectural goal (originally filed as F12 blocker, see
-    // `notes/wave-g-f12-blocker.md` and `notes/wave-h-g7-prototype.md`):
-    // separate per-coefficient dequant arithmetic from the bool-coder
-    // loop so that the dequant arithmetic can be vectorised. Wave G G7
-    // landed the ONE_TOKEN arm as a prototype; H5 extends the same
-    // pattern to every remaining token arm (TWO_TOKEN, THREE_TOKEN,
-    // FOUR_TOKEN, CAT1..6).
+    // Reverts the Wave H H5/H6 two-pass dequant split. The moment a
+    // non-zero coefficient's `val` and `sign` are known we compute
+    // `v = (val * dqv) >> dq_shift` and write
+    // `dq_coefs_out[raster_idx] = if sign { -v } else { v }` inline —
+    // exactly as [`decode_coefs_libvpx_ref`] does. No scratch deposit
+    // arrays, no pass 2, no `plane_dequant_finisher` dispatch.
     //
-    // Pass-1 scratch layout: four parallel arrays, one entry per
-    // non-zero coefficient. Each entry records:
-    //   - `raster_idx` (u16): scan[c], i.e. the position in the
-    //     transform block to write the dequantised coefficient into.
-    //   - `dqv`        (i16): the dequant value sampled AT the time
-    //     this coefficient was decoded. Captures DC vs AC: scan
-    //     position 0 sees `dc_dq`, positions 1..eob see `ac_dq`. Do
-    //     NOT recompute this in Pass 2 from scan position — the
-    //     zero-run logic flips `dqv` to `ac_dq` mid-iteration, so the
-    //     "DC vs AC by scan position" rule isn't a clean function of
-    //     `raster_idx` alone here.
-    //   - `val`        (i16): the pre-dequant integer multiplier. The
-    //     per-arm formula was `v = (val * dqv) >> dq_shift`, with
-    //     `val ∈ {1, 2, 3, 4, CAT_min + ext_bits}`. The maximum value
-    //     is CAT6 = 67 + (2^14 - 1) = 16450, comfortably within i16.
-    //   - `sign`       (u8): the raw sign bit, read inside the
-    //     bool-coder loop (entropy-coded → cannot defer).
-    //
-    // Pass-2 uniform formula: `mag = (val * dqv) >> dq_shift; out =
-    // if sign { -mag } else { mag }`. This collapses to the
-    // pre-refactor arithmetic exactly for every arm:
-    //   - ONE_TOKEN     : val=1   → mag = dqv >> dq_shift
-    //   - TWO_TOKEN     : val=2   → mag = (2 * dqv) >> dq_shift
-    //   - THREE/FOUR    : val=3|4 → mag = (three_or_four * dqv) >> dq_shift
-    //   - CAT1..6       : val=CATn_MIN_VAL + ext bits → mag = (val * dqv) >> dq_shift
-    //
-    // Memory cost: ~7 bytes per entry * seg_eob = ≤ 7 KiB for a 32×32
-    // block (worst case all non-zero). R.2 (2026-05-23): hoisted to a
-    // per-thread `RefCell<DecodeCoefsScratch>` so the allocations
-    // happen ONCE per thread, not per call. The destructured `&mut
-    // Vec<...>` bindings above carry the same names as the old locals,
-    // so the rest of the body is unchanged.
+    // Why revert (measured, auditable): the H5/H6 split pushed every
+    // non-zero coefficient into four scratch `Vec`s in pass 1, then in
+    // pass 2 did an `OnceLock` atomic load + an indirect AVX2
+    // `plane_dequant_finisher` call on EVERY transform block. The
+    // measured workload is eob-dominated (≈95.5% of blocks decode to
+    // eob == 0; the AVX2 main loop — needing ≥8 entries — fires on only
+    // ≈2.6% of blocks), so the per-block two-pass + indirect-dispatch
+    // tax was paid on the all-zero common case to vectorise 1-in-40
+    // blocks. The fused loop is the libvpx-faithful shape and removes
+    // that tax. The `plane_dequant_finisher` kernel + its differential
+    // tests stay in `quant`/`dsp`; we just no longer call them here.
 
     // Stage 3 stretch M.6 — runtime differential against the libvpx
     // verbatim reference port. Gated by `RVP9_DEBUG_REFCOEFS=1`. When
@@ -571,20 +531,12 @@ pub fn decode_coefs(
 
         // ONE-vs-higher branch.
         //
-        // Wave H H5: every arm now defers its dequant arithmetic into
-        // pass 2. The per-arm work inside this loop is reduced to:
-        //   (a) reading the entropy-coded bits that select the token,
-        //   (b) updating `token_cache` (used for context selection of
-        //       the NEXT coefficient — must stay in-loop, in original
-        //       sequence),
-        //   (c) updating `counts` for backward adaptation,
-        //   (d) computing the integer multiplier `val`,
-        //   (e) reading the sign bit (entropy-coded → must stay in-loop),
-        //   (f) depositing `(raster_idx, dqv, val, sign)` into scratch.
-        //
-        // Pass 2 (after the loop) applies the uniform formula
-        // `mag = (val * dqv) >> dq_shift; out = sign ? -mag : mag`
-        // for every captured entry.
+        // HLD 2026-05-27 Phase 1 — fused single pass. Each arm reads the
+        // entropy-coded token bits, updates `token_cache` (used for the
+        // NEXT coefficient's context — must stay in-loop, in scan order),
+        // updates `counts`, and computes the integer multiplier `val`.
+        // The dequant multiply + writeback happen inline immediately
+        // after the sign read (below), exactly as libvpx does.
         // SAFETY: invariant (4) — `c < seg_eob ≤ scan.scan.len()`.
         let raster_idx = unsafe { *scan.scan.get_unchecked(c) } as usize;
         debug_assert!(raster_idx < token_cache.len());
@@ -657,33 +609,30 @@ pub fn decode_coefs(
         // read would corrupt all subsequent reads.
         let sign_bit = reader.read_bit();
 
-        // Pass-1 deposit: record (raster_idx, dqv, val, sign) for the
-        // pass-2 arithmetic. `dq_coefs_out[raster_idx]` was zeroed at
-        // the function top so leaving it untouched here is correct —
-        // pass 2 will overwrite. CAT6's maximum `val` is
-        // `67 + 2^14 - 1 = 16450`, which fits in i16; smaller arms
-        // are obviously within range. `dqv` comes from
-        // `plane_dequant_pair` whose return type is `(i16, i16)` so
-        // the i16 narrowing is loss-free.
-        debug_assert!(dqv.unsigned_abs() <= i16::MAX as u32);
-        debug_assert!(raster_idx <= u16::MAX as usize);
-        debug_assert!((0..=i32::from(i16::MAX)).contains(&val));
-        scratch_raster.push(raster_idx as u16);
-        scratch_dqv.push(dqv as i16);
-        scratch_val.push(val as i16);
-        scratch_sign.push(sign_bit);
+        // Fused dequant + writeback (libvpx `vp9_detokenize.c:218-250`).
+        // `val > 0` and `dqv >= 0` for all valid VP9 streams, so the
+        // product is non-negative and the arithmetic right shift matches
+        // libvpx's `(val * dqv) >> dq_shift`. Collapses per-arm to:
+        //   ONE_TOKEN  val=1, TWO_TOKEN val=2, THREE/FOUR val=3|4,
+        //   CAT1..6    val=CATn_MIN_VAL + ext bits (max CAT6 = 16450).
+        let v = (val * dqv) >> dq_shift;
+        let signed_v = if sign_bit != 0 { -v } else { v };
+        // Checked write (mirrors `decode_coefs_libvpx_ref` and the old
+        // `plane_dequant_finisher` scatter, both of which indexed
+        // `dq_coefs_out[raster_idx]` checked). `raster_idx = scan.scan[c]`
+        // is a raster position in `0..n_coeffs`; production always passes
+        // `dq_coefs_out.len() >= n_coeffs` (every recon caller uses
+        // `seg_eob = tx_size.n_coeffs()`), so this never panics on real
+        // streams. Kept checked to preserve the pre-revert OOB behaviour
+        // for tests that pass a truncated `seg_eob`.
+        dq_coefs_out[raster_idx] = signed_v;
 
         // Stage 3 stretch M.17 — print scan[c] and write index for Tx8x8.
-        // The post-pass-2 dequantised value is reconstructed here so
-        // the trace stays meaningful (the actual writeback happens in
-        // pass 2 below).
         if matches!(tx_size, TxSize::Tx8x8)
             && crate::trace_flags::trace_flags().debug_scan_write
         {
-            let mag = (val * dqv) >> dq_shift;
-            let trace_v = if sign_bit != 0 { -mag } else { mag };
             eprintln!(
-                "RVP9_DBG_SCAN_WRITE c={c} scan[c]={raster_idx} v={trace_v} dq_coefs_out.len={}",
+                "RVP9_DBG_SCAN_WRITE c={c} scan[c]={raster_idx} v={signed_v} dq_coefs_out.len={}",
                 dq_coefs_out.len()
             );
         }
@@ -694,55 +643,6 @@ pub fn decode_coefs(
         }
         dqv = ac_dq;
     }
-
-    // Wave H H5 — pass 2: uniform vectorisable dequant arithmetic +
-    // writeback for every coefficient deposited by pass 1.
-    //
-    // Each iteration is independent (no loop-carried state, no
-    // bool-coder reads), so this loop is trivially auto-vectorisable
-    // by LLVM and is the consumption point for the H6 AVX2
-    // `plane_dequant_pair`-family kernel: gather (val, dqv) pairs,
-    // perform the i32 multiply + arithmetic right shift, conditionally
-    // negate by `sign`, and scatter to `dq_coefs_out[raster_idx]`.
-    //
-    // Bit-exactness vs the fused path: the pre-refactor arithmetic
-    // for every arm reduces to `signed_v = if sign { -((val * dqv) >>
-    // dq_shift) } else { (val * dqv) >> dq_shift }` with
-    // arm-specific `val` constants:
-    //   - ONE_TOKEN     val=1   (collapse: `v = dqv >> dq_shift`)
-    //   - TWO_TOKEN     val=2
-    //   - THREE/FOUR    val=3|4
-    //   - CAT1..6       val=CATn_MIN_VAL + extension bits
-    // The unified Pass 2 computes that formula uniformly. Because
-    // `val > 0` and `dqv >= 0` for all valid VP9 streams, the product
-    // is non-negative and the arithmetic right shift behaves
-    // identically to the per-arm inline arithmetic the pre-refactor
-    // code performed.
-    debug_assert_eq!(scratch_raster.len(), scratch_dqv.len());
-    debug_assert_eq!(scratch_raster.len(), scratch_val.len());
-    debug_assert_eq!(scratch_raster.len(), scratch_sign.len());
-    // Wave H H6 — pass-2 dequant arithmetic via the AVX2-capable
-    // `plane_dequant_finisher` slot. On AVX2 hosts this processes 8
-    // i32 lanes per iteration (`_mm256_mullo_epi32` +
-    // `_mm256_sra_epi32` + `_mm256_sign_epi32`) with a scalar tail;
-    // on non-AVX2 hosts it falls back to the bit-exact scalar
-    // reference (`crate::quant::plane_dequant_finisher`). `dsp::get()`
-    // is one atomic load on the process-wide OnceLock; the dispatch
-    // table is constructed once per process and cached.
-    // R.14: try `get_ref()` (borrowed ref) instead of `get()` (Arc clone).
-    // R.13 tried this on inter_predictor and regressed; trying here in
-    // decode_coefs (a different call site) — the dispatch is used
-    // immediately for one indirect call and dropped, so eliminating
-    // the atomic increment may help on coefficient-dense fixtures.
-    let dispatch = crate::dsp::get_ref();
-    (dispatch.plane_dequant_finisher())(
-        &scratch_raster,
-        &scratch_dqv,
-        &scratch_val,
-        &scratch_sign,
-        dq_shift,
-        dq_coefs_out,
-    );
 
     // Stage 3 stretch M.6 — post-decode differential. The reference port
     // was deliberately frozen back at M.4 (verbatim transcription of
@@ -2396,7 +2296,10 @@ mod tests {
             (TxSize::Tx32x32, default_scan_32x32, "default_32x32"),
         ];
 
-        const N_PER_CONFIG: usize = 10; // 100 total across 10 configs
+        // HLD 2026-05-27 §4.1 Phase 1 acceptance gate: ≥1000 differential
+        // cases across all four tx sizes and all scan orders. 100 per
+        // config × 10 configs = 1000 total.
+        const N_PER_CONFIG: usize = 100; // 1000 total across 10 configs
 
         for (tx_size, scan_fn, label) in configs {
             for iter in 0..N_PER_CONFIG {
