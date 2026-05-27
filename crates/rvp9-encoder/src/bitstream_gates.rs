@@ -7,6 +7,20 @@
 //!   that picks the best replacement probability for a given pair of
 //!   `(zero_count, one_count)` branch counts. Mirrors libvpx
 //!   `vp9_prob_diff_update_savings_search` (`vp9_subexp.c:117-139`).
+//! - [`prob_diff_update_savings_search_model`] — the PIVOT_NODE
+//!   variant that scores the full coefficient sub-tree under the
+//!   Pareto-8 model (`VP9_PARETO8_FULL`) rather than a single binary
+//!   branch. Mirrors libvpx
+//!   `vp9_prob_diff_update_savings_search_model` (`vp9_subexp.c:141-180`).
+//!   Used by libvpx's TWO_LOOP coef updater for `t == PIVOT_NODE`
+//!   (`vp9_bitstream.c:569-575`) — the case the plain search cannot
+//!   model because the pivot prob drives 8 downstream model nodes.
+//! - [`build_coef_branch_cts`] — the per-(plane,ref,band,ctx)
+//!   `build_tree_distribution` body (`vp9_bitstream.c:518-543`): walks
+//!   the FULL 12-token coefficient distribution through
+//!   `vp9_tree_probs_from_distribution` to produce the
+//!   `[ENTROPY_NODES][2]` branch counts the model search consumes,
+//!   plus the per-node "ideal" probabilities (`get_binary_prob`).
 //! - [`update_coef_probs_common`] — for one TX size, runs the
 //!   "TWO_LOOP" path of libvpx's coef-prob updater: first a dry-run
 //!   scan to compute aggregate `savings`, then either gate=0 (no
@@ -39,11 +53,12 @@
 
 use rvp9_core::bitstream::InterpFilter;
 use rvp9_core::bitstream::frame::REF_FRAMES;
+use rvp9_core::cost::coef_cost::{ENTROPY_NODES, ENTROPY_TOKENS, PIVOT_NODE};
 use rvp9_core::cost::prob_cost::{VP9_PROB_COST_SHIFT, vp9_cost_one, vp9_cost_zero};
 use rvp9_core::entropy::BoolWriter;
 use rvp9_core::entropy::{
-    DIFF_UPDATE_PROB, SWITCHABLE_FILTERS, SWITCHABLE_FILTER_CONTEXTS, remap_prob,
-    write_prob_diff_update,
+    DIFF_UPDATE_PROB, MODEL_NODES, SWITCHABLE_FILTERS, SWITCHABLE_FILTER_CONTEXTS,
+    UNCONSTRAINED_NODES, VP9_PARETO8_FULL, get_binary_prob, remap_prob, write_prob_diff_update,
 };
 
 // =====================================================================
@@ -152,6 +167,190 @@ pub fn prob_diff_update_savings_search(
         savings: best_savings,
     }
 }
+
+// ---------------------------------------------------------------------
+// PIVOT_NODE model search + build_tree_distribution
+// ---------------------------------------------------------------------
+//
+// These are the two libvpx pieces the original W7.1 port omitted (its
+// documented deviation): the PIVOT_NODE model search needs the FULL
+// 12-token coefficient distribution (it scores 8 downstream Pareto-8
+// model nodes), and `build_tree_distribution` is what turns the raw
+// token counts into the `[ENTROPY_NODES][2]` branch counts that search
+// consumes. They are pure functions with no bitstream side effects;
+// wiring them into the live compressed-header writer additionally needs
+// full-12-token count plumbing + a two-pass encode (see the W-coef-prob
+// journal). They land here as the verified building blocks.
+
+// `vp9_coef_tree[TREE_SIZE(ENTROPY_TOKENS)]` from libvpx
+// `vp9_tokenize.c:75-87`. libvpx stores leaves as `-token` and internal
+// children as positive tree indices, using `tree[i] <= 0` to detect a
+// leaf and `num_events[-tree[i]]` to read its count. That encoding is
+// ambiguous in Rust for `-ZERO_TOKEN == 0` vs `-EOB_TOKEN == -11` once
+// a leaf overlaps index 0, so we split the table in two:
+//
+// - `LEAF_TOKEN[p]` resolves the leaf token value at tree slot `p`
+//   positionally (255 = internal node, recurse instead). This carries
+//   the `-token` information unambiguously.
+// - `COEF_TREE_CHILD[p]` holds the child tree index for the internal
+//   slots; it is only read when `LEAF_TOKEN[p] == 255`.
+//
+// Slot index → libvpx tree row (each row = 2 slots = one parent):
+//   0/1 EOB|→2   2/3 ZERO|→4   4/5 ONE|→6   6/7 →8|→12
+//   8/9 TWO|→10  10/11 THREE|FOUR   12/13 →14|→16
+//   14/15 CAT1|CAT2  16/17 →18|→20  18/19 CAT3|CAT4  20/21 CAT5|CAT6
+#[rustfmt::skip]
+static LEAF_TOKEN: [u8; 2 * (ENTROPY_TOKENS - 1)] = [
+    11, 255,  // EOB_TOKEN(11) | internal→2
+     0, 255,  // ZERO_TOKEN(0) | internal→4
+     1, 255,  // ONE_TOKEN(1)  | internal→6
+    255, 255, // internal→8    | internal→12
+     2, 255,  // TWO_TOKEN(2)  | internal→10
+     3,  4,   // THREE(3)      | FOUR(4)
+    255, 255, // internal→14   | internal→16
+     5,  6,   // CAT1(5)       | CAT2(6)
+    255, 255, // internal→18   | internal→20
+     7,  8,   // CAT3(7)       | CAT4(8)
+     9, 10,   // CAT5(9)       | CAT6(10)
+];
+
+/// Child tree index for each internal slot (read only where
+/// `LEAF_TOKEN == 255`). 255 marks "leaf slot, unused".
+#[rustfmt::skip]
+static COEF_TREE_CHILD: [u8; 2 * (ENTROPY_TOKENS - 1)] = [
+    255,  2,
+    255,  4,
+    255,  6,
+      8, 12,
+    255, 10,
+    255, 255,
+     14, 16,
+    255, 255,
+     18, 20,
+    255, 255,
+    255, 255,
+];
+
+/// `convert_distribution` (`vp9_treewriter.c:34-52`) — recursively sum
+/// the per-token event counts up the `VP9_COEF_TREE`, writing each
+/// internal node's `[left, right]` split into `branch_ct`. Returns the
+/// total events under subtree rooted at tree index `i`.
+fn convert_distribution(i: usize, num_events: &[u32; ENTROPY_TOKENS], branch_ct: &mut [[u32; 2]]) -> u32 {
+    let left = if LEAF_TOKEN[i] != 255 {
+        num_events[LEAF_TOKEN[i] as usize]
+    } else {
+        convert_distribution(COEF_TREE_CHILD[i] as usize, num_events, branch_ct)
+    };
+    let right = if LEAF_TOKEN[i + 1] != 255 {
+        num_events[LEAF_TOKEN[i + 1] as usize]
+    } else {
+        convert_distribution(COEF_TREE_CHILD[i + 1] as usize, num_events, branch_ct)
+    };
+    branch_ct[i >> 1][0] = left;
+    branch_ct[i >> 1][1] = right;
+    left + right
+}
+
+/// The `build_tree_distribution` body for one `(plane, ref, band, ctx)`
+/// slot. Mirrors libvpx `build_tree_distribution`
+/// (`vp9_bitstream.c:518-543`):
+///
+/// 1. `vp9_tree_probs_from_distribution(vp9_coef_tree, branch_ct, counts)`
+///    fills `branch_ct[ENTROPY_NODES][2]` from the full 12-token count
+///    histogram.
+/// 2. Node 0 (the EOB branch) is OVERWRITTEN: its `[1]` slot becomes
+///    `eob_branch_total - branch_ct[0][0]` (the # of positions that
+///    were NOT EOB), matching libvpx `:533-534`.
+/// 3. The three UNCONSTRAINED_NODES "ideal" probabilities are
+///    `get_binary_prob(branch_ct[m][0], branch_ct[m][1])` (`:535-538`).
+///
+/// `counts` is the full per-token histogram `[ENTROPY_TOKENS]`;
+/// `eob_branch_total` is libvpx's `eob_branch_ct[i][j][k][l]`. Returns
+/// the branch counts (all `ENTROPY_NODES`) and the 3 ideal node probs.
+#[must_use]
+pub fn build_coef_branch_cts(
+    counts: &[u32; ENTROPY_TOKENS],
+    eob_branch_total: u32,
+) -> ([[u32; 2]; ENTROPY_NODES], [u8; UNCONSTRAINED_NODES]) {
+    let mut branch_ct = [[0u32; 2]; ENTROPY_NODES];
+    convert_distribution(0, counts, &mut branch_ct);
+    // libvpx `:533-534`: node 0's "one" branch is the non-EOB count.
+    branch_ct[0][1] = eob_branch_total.saturating_sub(branch_ct[0][0]);
+    let mut probs = [0u8; UNCONSTRAINED_NODES];
+    for m in 0..UNCONSTRAINED_NODES {
+        probs[m] = get_binary_prob(branch_ct[m][0], branch_ct[m][1]);
+    }
+    (branch_ct, probs)
+}
+
+/// PIVOT_NODE savings search. Mirrors libvpx
+/// `vp9_prob_diff_update_savings_search_model` (`vp9_subexp.c:141-180`).
+///
+/// Unlike the plain search, the pivot probability `oldp`/`newp` does not
+/// score a single branch — it indexes `VP9_PARETO8_FULL[p - 1]`, an
+/// 8-entry model that supplies the probabilities for the 8 downstream
+/// model nodes. So the baseline / candidate costs sum the PIVOT node's
+/// own branch cost PLUS the 8 model-node branch costs evaluated under
+/// the model probs. `branch_ct` is the full `[ENTROPY_NODES][2]` from
+/// [`build_coef_branch_cts`].
+///
+/// `start_newp` is the caller's "ideal" pivot prob (libvpx's `*bestp`
+/// on entry, i.e. `new_coef_probs[..][PIVOT_NODE]`). `stepsize` is
+/// libvpx `cpi->sf.coeff_prob_appx_step` (1 for the reference encoder).
+#[must_use]
+pub fn prob_diff_update_savings_search_model(
+    branch_ct: &[[u32; 2]; ENTROPY_NODES],
+    oldp: u8,
+    start_newp: u8,
+    upd: u8,
+    stepsize: i32,
+) -> SavingsSearch {
+    debug_assert!(stepsize > 0);
+    let step_sign: i64 = if start_newp > oldp { -1 } else { 1 };
+    let step: i64 = i64::from(stepsize) * step_sign;
+    let upd_cost = i64::from(vp9_cost_one(upd)) - i64::from(vp9_cost_zero(upd));
+
+    // Baseline cost under `oldp`: the pivot branch + the 8 model nodes
+    // scored with VP9_PARETO8_FULL[oldp - 1]. libvpx `vp9_subexp.c:152-155`.
+    let oldplist = &VP9_PARETO8_FULL[(oldp as usize) - 1];
+    let mut old_b = cost_branch256(branch_ct[PIVOT_NODE], oldp);
+    for i in UNCONSTRAINED_NODES..ENTROPY_NODES {
+        old_b += cost_branch256(branch_ct[i], oldplist[i - UNCONSTRAINED_NODES]);
+    }
+
+    let mut best_savings: i64 = 0;
+    let mut best_newp = oldp;
+
+    if old_b > upd_cost + (MIN_DELP_BITS << VP9_PROB_COST_SHIFT) {
+        // libvpx `:163`: `for (newp = *bestp; (newp-oldp)*step_sign < 0; newp += step)`.
+        let mut newp = i64::from(start_newp);
+        while (newp - i64::from(oldp)) * step_sign < 0 {
+            if !(1..=255).contains(&newp) {
+                newp += step;
+                continue;
+            }
+            let newplist = &VP9_PARETO8_FULL[(newp as usize) - 1];
+            let mut new_b = cost_branch256(branch_ct[PIVOT_NODE], newp as u8);
+            for i in UNCONSTRAINED_NODES..ENTROPY_NODES {
+                new_b += cost_branch256(branch_ct[i], newplist[i - UNCONSTRAINED_NODES]);
+            }
+            let update_b = prob_diff_update_cost(newp as u8, oldp) + upd_cost;
+            let savings = old_b - new_b - update_b;
+            if savings > best_savings {
+                best_savings = savings;
+                best_newp = newp as u8;
+            }
+            newp += step;
+        }
+    }
+
+    SavingsSearch {
+        best_newp,
+        savings: best_savings,
+    }
+}
+
+const _: () = assert!(MODEL_NODES == ENTROPY_NODES - UNCONSTRAINED_NODES);
 
 /// `tx_totals_gate(tx_total)` — the libvpx outer-loop gate that
 /// suppresses the entire per-TX-size coef-prob update when there
@@ -549,6 +748,171 @@ mod tests {
         // `old_probs` unchanged.
         assert_eq!(old_probs, vec![128u8; 8]);
     }
+
+    /// W-coef-prob PROOF — `build_coef_branch_cts` /
+    /// `build_tree_distribution` (`vp9_bitstream.c:518-543`,
+    /// `vp9_treewriter.c:34-58`).
+    ///
+    /// DIFFERENTIAL ORACLE: the three UNCONSTRAINED_NODES branch counts
+    /// the tree produces MUST equal the model-token derivation already
+    /// used by `rvp9_core::entropy::adapt::adapt_coef_probs`
+    /// (`adapt.rs:614-618`):
+    ///   node0 (EOB):  [#eob,  eob_total - #eob]
+    ///   node1 (ZERO): [#zero, #one + #two+]
+    ///   node2 (ONE):  [#one,  #two+]
+    /// where `#two+` sums TWO..CAT6. Two independent paths (full-12-token
+    /// tree walk vs. model-token folding) must agree — that is the
+    /// oracle. The test also asserts the 8 MODEL nodes (3..10) carry the
+    /// within-TWO+ distribution the model search needs (non-zero here),
+    /// which the model-token folding alone CANNOT recover.
+    #[test]
+    fn w_coef_build_tree_distribution_matches_model_token_derivation() {
+        // Full 12-token histogram. Token values:
+        // ZERO=0 ONE=1 TWO=2 THREE=3 FOUR=4 CAT1=5 CAT2=6 CAT3=7
+        // CAT4=8 CAT5=9 CAT6=10 EOB=11.
+        let counts: [u32; ENTROPY_TOKENS] = [
+            900, // ZERO
+            300, // ONE
+            120, // TWO
+            60,  // THREE
+            30,  // FOUR
+            20,  // CAT1
+            10,  // CAT2
+            8,   // CAT3
+            4,   // CAT4
+            2,   // CAT5
+            1,   // CAT6
+            500, // EOB
+        ];
+        // eob_branch_total = every position an EOB decision was
+        // attempted = (#non-eob tokens) + (#eob). Non-eob = all but EOB.
+        let non_eob: u32 = counts[0..11].iter().sum();
+        let eob_total = non_eob + counts[11];
+
+        let (branch_ct, probs) = build_coef_branch_cts(&counts, eob_total);
+
+        // --- adapt.rs model-token derivation (the oracle) ---
+        let n0 = counts[ZERO_TOKEN_IDX];
+        let n1 = counts[ONE_TOKEN_IDX];
+        let n2: u32 = counts[2..11].iter().sum(); // TWO..CAT6
+        let neob = counts[11];
+        let expect = [
+            [neob, eob_total - neob], // node 0 (EOB)
+            [n0, n1 + n2],            // node 1 (ZERO)
+            [n1, n2],                 // node 2 (ONE / PIVOT)
+        ];
+        for m in 0..UNCONSTRAINED_NODES {
+            assert_eq!(
+                branch_ct[m], expect[m],
+                "unconstrained node {m} branch count must match the \
+                 adapt.rs model-token derivation"
+            );
+            assert_eq!(
+                probs[m],
+                get_binary_prob(expect[m][0], expect[m][1]),
+                "node {m} ideal prob must be get_binary_prob of the branch ct"
+            );
+        }
+
+        // --- model nodes 3..10 must be populated (the info the
+        // 4-token model loses) ---
+        let model_sum: u32 = (UNCONSTRAINED_NODES..ENTROPY_NODES)
+            .map(|i| branch_ct[i][0] + branch_ct[i][1])
+            .sum();
+        assert!(
+            model_sum > 0,
+            "model nodes 3..10 must carry the within-TWO+ distribution \
+             (got all-zero — the tree walk failed)"
+        );
+        // node 3 (LOW_VAL: TWO|THREE|FOUR vs CAT1..CAT6) split.
+        // left = TWO+THREE+FOUR, right = CAT1..CAT6.
+        let low = counts[2] + counts[3] + counts[4];
+        let high: u32 = counts[5..11].iter().sum();
+        assert_eq!(branch_ct[3], [low, high], "LOW_VAL node split");
+    }
+
+    /// W-coef-prob PROOF — `prob_diff_update_savings_search_model`
+    /// (`vp9_subexp.c:141-180`), the PIVOT_NODE branch libvpx uses at
+    /// `vp9_bitstream.c:569-575`.
+    ///
+    /// The ORIGINAL W7.1 port ADMITTED skipping this (its module
+    /// deviation note). This test proves the model search is now
+    /// exercised AND is genuinely different from the plain search: on
+    /// the same pivot branch counts, the model search ALSO charges the 8
+    /// downstream Pareto-8 nodes, so its savings/best_newp differ from
+    /// what the plain (single-branch) search returns for the pivot node.
+    #[test]
+    fn w_coef_pivot_model_search_exercised_and_differs_from_plain() {
+        // Build a full distribution where the pivot branch (ONE vs
+        // TWO+) is HEAVILY skewed toward ONE so the ideal pivot prob is
+        // far above the default 128 — and the 8 model nodes carry real
+        // mass so the model search has downstream cost to optimise.
+        let counts: [u32; ENTROPY_TOKENS] = [
+            2000, 3000, 80, 40, 20, 12, 6, 4, 2, 1, 1, 1500,
+        ];
+        let non_eob: u32 = counts[0..11].iter().sum();
+        let eob_total = non_eob + counts[11];
+        let (branch_ct, probs) = build_coef_branch_cts(&counts, eob_total);
+
+        let oldp: u8 = 128;
+        let start_newp = probs[PIVOT_NODE]; // libvpx feeds new_coef_probs[..][PIVOT].
+        assert_ne!(
+            start_newp, oldp,
+            "test setup: pivot ideal prob must differ from oldp so the \
+             search has a range to walk (got {start_newp})"
+        );
+        let model = prob_diff_update_savings_search_model(
+            &branch_ct,
+            oldp,
+            start_newp,
+            DIFF_UPDATE_PROB,
+            1, // stepsize = coeff_prob_appx_step (reference encoder = 1)
+        );
+
+        // The model search must MOVE the pivot prob and report savings.
+        assert_ne!(
+            model.best_newp, oldp,
+            "model search must move the pivot prob on a skewed distribution"
+        );
+        assert!(
+            model.savings > 0,
+            "model search savings must be positive (got {})",
+            model.savings
+        );
+
+        // Differential vs the PLAIN search on JUST the pivot branch
+        // (node 2 = [#one, #two+]): the plain search ignores the 8
+        // downstream model nodes, so its result generally differs. If
+        // they coincided, the model port would be redundant — assert
+        // they differ in savings OR best_newp to prove the model arm
+        // adds information.
+        let plain = prob_diff_update_savings_search(
+            branch_ct[PIVOT_NODE],
+            oldp,
+            start_newp,
+            DIFF_UPDATE_PROB,
+        );
+        assert!(
+            model.savings != plain.savings || model.best_newp != plain.best_newp,
+            "model search must differ from the plain pivot-branch search \
+             (model: newp={} sav={}; plain: newp={} sav={}) — otherwise the \
+             8 Pareto-8 model nodes are not being scored",
+            model.best_newp, model.savings, plain.best_newp, plain.savings
+        );
+
+        // Zero-distribution sanity: no events ⇒ no savings, prob stays.
+        let zero = [[0u32; 2]; ENTROPY_NODES];
+        let none = prob_diff_update_savings_search_model(
+            &zero, oldp, 200, DIFF_UPDATE_PROB, 1,
+        );
+        assert_eq!(none.best_newp, oldp, "no events ⇒ keep oldp");
+        assert_eq!(none.savings, 0, "no events ⇒ zero savings");
+    }
+
+    // Local token-index aliases for the test above (the production
+    // constants live in rvp9_core::entropy::detokenize).
+    const ZERO_TOKEN_IDX: usize = 0;
+    const ONE_TOKEN_IDX: usize = 1;
 
     // ----- W7.2 -----
 
