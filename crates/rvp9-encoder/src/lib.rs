@@ -1329,10 +1329,6 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
         vp9_quantize_b_32x32,
     };
     use rvp9_core::transforms::forward::{fdct32x32, fht4x4, fht8x8, fht16x16};
-    use rvp9_core::transforms::inverse::{
-        idct32x32_1024_add, idct4x4_16_add, idct8x8_64_add, idct16x16_256_add,
-        iht4x4_16_add, iht8x8_64_add, iht16x16_256_add,
-    };
     use rvp9_core::transforms::scans::scan_for;
     use rvp9_core::transforms::TxType;
 
@@ -1610,76 +1606,27 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
                             let eob_usize = eob as usize;
 
                             // 6. Inverse-DCT-add of the dequant coefs.
+                            //    DRIFT-FIX — route through the shared
+                            //    `intra_inverse_transform_add` so the KF
+                            //    reconstruction is byte-identical to the
+                            //    decoder's eob-bucketed, SIMD-dispatched
+                            //    `inverse_transform_add` (was: scalar full
+                            //    kernel only, which diverged ±1 from the
+                            //    decoder's sparse/SIMD kernels and seeded
+                            //    the keyframe intra-prediction cascade).
                             let mut dq_i32 = vec![0i32; n];
                             for i in 0..n {
                                 dq_i32[i] = dqcoeff_i16[i] as i32;
                             }
                             if eob_usize > 0 {
-                                match plane_tx {
-                                    TxSize::Tx32x32 => {
-                                        let mut buf = [0i32; 1024];
-                                        buf.copy_from_slice(&dq_i32[..]);
-                                        idct32x32_1024_add(
-                                            &buf,
-                                            &mut recon_plane[dst_off..],
-                                            plane_stride,
-                                        );
-                                    }
-                                    TxSize::Tx16x16 => {
-                                        let mut buf = [0i32; 256];
-                                        buf.copy_from_slice(&dq_i32[..]);
-                                        if tx_type == TxType::DctDct {
-                                            idct16x16_256_add(
-                                                &buf,
-                                                &mut recon_plane[dst_off..],
-                                                plane_stride,
-                                            );
-                                        } else {
-                                            iht16x16_256_add(
-                                                &buf,
-                                                &mut recon_plane[dst_off..],
-                                                plane_stride,
-                                                tx_type,
-                                            );
-                                        }
-                                    }
-                                    TxSize::Tx8x8 => {
-                                        let mut buf = [0i32; 64];
-                                        buf.copy_from_slice(&dq_i32[..]);
-                                        if tx_type == TxType::DctDct {
-                                            idct8x8_64_add(
-                                                &buf,
-                                                &mut recon_plane[dst_off..],
-                                                plane_stride,
-                                            );
-                                        } else {
-                                            iht8x8_64_add(
-                                                &buf,
-                                                &mut recon_plane[dst_off..],
-                                                plane_stride,
-                                                tx_type,
-                                            );
-                                        }
-                                    }
-                                    TxSize::Tx4x4 => {
-                                        let mut buf = [0i32; 16];
-                                        buf.copy_from_slice(&dq_i32[..]);
-                                        if tx_type == TxType::DctDct {
-                                            idct4x4_16_add(
-                                                &buf,
-                                                &mut recon_plane[dst_off..],
-                                                plane_stride,
-                                            );
-                                        } else {
-                                            iht4x4_16_add(
-                                                &buf,
-                                                &mut recon_plane[dst_off..],
-                                                plane_stride,
-                                                tx_type,
-                                            );
-                                        }
-                                    }
-                                }
+                                intra_inverse_transform_add(
+                                    plane_tx,
+                                    tx_type,
+                                    &dq_i32,
+                                    eob_usize,
+                                    &mut recon_plane[dst_off..],
+                                    plane_stride,
+                                );
                             }
 
                             // 7. Record qcoeff buffer + eob, keyed by
@@ -5723,11 +5670,111 @@ fn inter_forward_quant_one_tx(
     (qcoeff_i32, dqcoeff_i32, eob as usize)
 }
 
-/// Inverse-DCT-add for inter (DctDct only). Mirrors the decoder's
-/// `inverse_transform_add_dct` at
-/// `rvp9-decoder::reconstruct_inter::inverse_transform_add_dct`. `eob`
-/// is the number of decoded scan positions (caller has already filtered
-/// `eob > 0`).
+/// DRIFT-FIX — inverse-transform-add that is BYTE-IDENTICAL to the
+/// decoder's `inverse_transform_add` (`rvp9-decoder::reconstruct.rs`).
+///
+/// The encoder's stored reconstruction MUST equal the true decode of its
+/// own bitstream, otherwise the next inter frame predicts from a
+/// reference that drifts away from what the decoder reconstructs — the
+/// SEVERITY-1 inter-frame drift. The drift originated here: the encoder
+/// used to call the *scalar* full kernels (`idct16x16_256_add`, …)
+/// unconditionally, while the decoder routes every TX block through
+/// [`SimdDispatch`] with the SAME eob-bucketed fast paths it picks at
+/// decode time (`idct16x16_10_add` / `_38_add` / dense SSE2 / etc.).
+/// Those SIMD/eob-bucketed kernels are NOT bit-exact to the scalar full
+/// kernel (e.g. `idct16x16_38_add` differs by ±1 per pixel), so any TX
+/// block whose eob lands in a different bucket reconstructs ±1 in the
+/// encoder vs the decoder. That ±1 seeds an intra-prediction cascade on
+/// the keyframe and compounds across every inter frame.
+///
+/// This helper replicates the decoder's dispatch exactly:
+///   * same `tx_type`-keyed DCT-vs-IHT split,
+///   * same eob buckets (`==1` DC fast path, `≤10/≤38` 16×16 sparse,
+///     `≤12` 8×8 sparse, `≤34/≤135` 32×32 sparse),
+///   * same [`SimdDispatch`] slots (so the encoder picks the AVX2/SSE2
+///     kernel the decoder will pick on the same host).
+///
+/// Non-lossless 8-bit only (the encoder never emits lossless here).
+/// Caller must ensure `eob > 0`.
+fn enc_inverse_transform_add(
+    plane_tx: TxSize,
+    tx_type: rvp9_core::transforms::TxType,
+    dq_input: &[i32],
+    eob: usize,
+    dst: &mut [u8],
+    stride: usize,
+) {
+    use rvp9_core::transforms::TxType;
+    use rvp9_core::transforms::inverse::{
+        idct4x4_1_add, idct8x8_1_add, idct16x16_1_add, idct32x32_1_add,
+    };
+
+    debug_assert!(eob > 0, "enc_inverse_transform_add called with eob == 0");
+    let dispatch = rvp9_core::dsp::get();
+
+    match plane_tx {
+        TxSize::Tx4x4 => {
+            let coefs: &[i32; 16] = dq_input.try_into().expect("Tx4x4 takes 16 coefs");
+            if tx_type == TxType::DctDct {
+                if eob > 1 {
+                    (dispatch.idct4x4_add())(coefs, dst, stride);
+                } else {
+                    idct4x4_1_add(coefs[0], dst, stride);
+                }
+            } else {
+                (dispatch.iht4x4_add())(coefs, dst, stride, tx_type);
+            }
+        }
+        TxSize::Tx8x8 => {
+            let coefs: &[i32; 64] = dq_input.try_into().expect("Tx8x8 takes 64 coefs");
+            if tx_type == TxType::DctDct {
+                if eob == 1 {
+                    idct8x8_1_add(coefs[0], dst, stride);
+                } else if eob <= 12 {
+                    (dispatch.idct8x8_12_add())(coefs, dst, stride);
+                } else {
+                    (dispatch.idct8x8_add())(coefs, dst, stride);
+                }
+            } else {
+                (dispatch.iht8x8_add())(coefs, dst, stride, tx_type);
+            }
+        }
+        TxSize::Tx16x16 => {
+            let coefs: &[i32; 256] = dq_input.try_into().expect("Tx16x16 takes 256 coefs");
+            if tx_type == TxType::DctDct {
+                if eob == 1 {
+                    idct16x16_1_add(coefs[0], dst, stride);
+                } else if eob <= 10 {
+                    (dispatch.idct16x16_10_add())(coefs, dst, stride);
+                } else if eob <= 38 {
+                    (dispatch.idct16x16_38_add())(coefs, dst, stride);
+                } else {
+                    (dispatch.idct16x16_add())(coefs, dst, stride);
+                }
+            } else {
+                (dispatch.iht16x16_add())(coefs, dst, stride, tx_type);
+            }
+        }
+        TxSize::Tx32x32 => {
+            // No 32×32 hybrid exists; always pure IDCT.
+            let coefs: &[i32; 1024] = dq_input.try_into().expect("Tx32x32 takes 1024 coefs");
+            if eob == 1 {
+                idct32x32_1_add(coefs[0], dst, stride);
+            } else if eob <= 34 {
+                (dispatch.idct32x32_34_add())(coefs, dst, stride);
+            } else if eob <= 135 {
+                (dispatch.idct32x32_135_add())(coefs, dst, stride);
+            } else {
+                (dispatch.idct32x32_add())(coefs, dst, stride);
+            }
+        }
+    }
+}
+
+/// Inverse-DCT-add for inter (DctDct only). Delegates to
+/// [`enc_inverse_transform_add`] so the inter committed reconstruction is
+/// byte-identical to the decoder. `eob` is the number of decoded scan
+/// positions (caller has already filtered `eob > 0`).
 fn inter_inverse_dct_add(
     plane_tx: TxSize,
     dq_input: &[i32],
@@ -5735,47 +5782,14 @@ fn inter_inverse_dct_add(
     dst: &mut [u8],
     stride: usize,
 ) {
-    use rvp9_core::transforms::inverse::{
-        idct4x4_1_add, idct4x4_16_add, idct8x8_1_add, idct8x8_64_add, idct16x16_1_add,
-        idct16x16_256_add, idct32x32_1_add, idct32x32_1024_add,
-    };
-
-    debug_assert!(eob > 0, "inter_inverse_dct_add called with eob == 0");
-
-    match plane_tx {
-        TxSize::Tx4x4 => {
-            let coefs: &[i32; 16] = dq_input.try_into().expect("Tx4x4 takes 16 coefs");
-            if eob > 1 {
-                idct4x4_16_add(coefs, dst, stride);
-            } else {
-                idct4x4_1_add(coefs[0], dst, stride);
-            }
-        }
-        TxSize::Tx8x8 => {
-            let coefs: &[i32; 64] = dq_input.try_into().expect("Tx8x8 takes 64 coefs");
-            if eob == 1 {
-                idct8x8_1_add(coefs[0], dst, stride);
-            } else {
-                idct8x8_64_add(coefs, dst, stride);
-            }
-        }
-        TxSize::Tx16x16 => {
-            let coefs: &[i32; 256] = dq_input.try_into().expect("Tx16x16 takes 256 coefs");
-            if eob == 1 {
-                idct16x16_1_add(coefs[0], dst, stride);
-            } else {
-                idct16x16_256_add(coefs, dst, stride);
-            }
-        }
-        TxSize::Tx32x32 => {
-            let coefs: &[i32; 1024] = dq_input.try_into().expect("Tx32x32 takes 1024 coefs");
-            if eob == 1 {
-                idct32x32_1_add(coefs[0], dst, stride);
-            } else {
-                idct32x32_1024_add(coefs, dst, stride);
-            }
-        }
-    }
+    enc_inverse_transform_add(
+        plane_tx,
+        rvp9_core::transforms::TxType::DctDct,
+        dq_input,
+        eob,
+        dst,
+        stride,
+    );
 }
 
 /// G5 — Forward hybrid transform + forward quant of one TX block for the
@@ -5860,11 +5874,10 @@ fn intra_forward_quant_one_tx(
 }
 
 /// G5 — Inverse transform-add for intra paths (both keyframe and
-/// intra-in-inter). Unlike `inter_inverse_dct_add`, this dispatches
-/// to the IHT variants (`iht4x4_16_add` / `iht8x8_64_add` /
-/// `iht16x16_256_add`) when `tx_type != DctDct`. The eob==1 fast path
-/// (`idct*_1_add`) applies only for DctDct (no single-coef IHT variants
-/// exist in libvpx).
+/// intra-in-inter). Delegates to [`enc_inverse_transform_add`] so the
+/// intra committed reconstruction is byte-identical to the decoder's
+/// eob-bucketed, SIMD-dispatched `inverse_transform_add` (incl. the
+/// `tx_type`-keyed IHT split for non-DctDct hybrid blocks).
 ///
 /// Caller must ensure `eob > 0`.
 fn intra_inverse_transform_add(
@@ -5875,62 +5888,7 @@ fn intra_inverse_transform_add(
     dst: &mut [u8],
     stride: usize,
 ) {
-    use rvp9_core::transforms::TxType;
-    use rvp9_core::transforms::inverse::{
-        idct4x4_1_add, idct4x4_16_add, idct8x8_1_add, idct8x8_64_add,
-        idct16x16_1_add, idct16x16_256_add, idct32x32_1_add, idct32x32_1024_add,
-        iht4x4_16_add, iht8x8_64_add, iht16x16_256_add,
-    };
-
-    debug_assert!(eob > 0, "intra_inverse_transform_add called with eob == 0");
-
-    match plane_tx {
-        TxSize::Tx4x4 => {
-            let coefs: &[i32; 16] = dq_input.try_into().expect("Tx4x4 takes 16 coefs");
-            if tx_type == TxType::DctDct {
-                if eob > 1 {
-                    idct4x4_16_add(coefs, dst, stride);
-                } else {
-                    idct4x4_1_add(coefs[0], dst, stride);
-                }
-            } else {
-                iht4x4_16_add(coefs, dst, stride, tx_type);
-            }
-        }
-        TxSize::Tx8x8 => {
-            let coefs: &[i32; 64] = dq_input.try_into().expect("Tx8x8 takes 64 coefs");
-            if tx_type == TxType::DctDct {
-                if eob == 1 {
-                    idct8x8_1_add(coefs[0], dst, stride);
-                } else {
-                    idct8x8_64_add(coefs, dst, stride);
-                }
-            } else {
-                iht8x8_64_add(coefs, dst, stride, tx_type);
-            }
-        }
-        TxSize::Tx16x16 => {
-            let coefs: &[i32; 256] = dq_input.try_into().expect("Tx16x16 takes 256 coefs");
-            if tx_type == TxType::DctDct {
-                if eob == 1 {
-                    idct16x16_1_add(coefs[0], dst, stride);
-                } else {
-                    idct16x16_256_add(coefs, dst, stride);
-                }
-            } else {
-                iht16x16_256_add(coefs, dst, stride, tx_type);
-            }
-        }
-        TxSize::Tx32x32 => {
-            // Tx32x32 is always DctDct (no hybrid 32×32 in VP9).
-            let coefs: &[i32; 1024] = dq_input.try_into().expect("Tx32x32 takes 1024 coefs");
-            if eob == 1 {
-                idct32x32_1_add(coefs[0], dst, stride);
-            } else {
-                idct32x32_1024_add(coefs, dst, stride);
-            }
-        }
-    }
+    enc_inverse_transform_add(plane_tx, tx_type, dq_input, eob, dst, stride);
 }
 
 #[cfg(test)]

@@ -3493,50 +3493,84 @@ fn choose_partitions_for_frame(
     out
 }
 
-/// Walk a [`PartitionDecision`]'s 8×8 cell grid in raster order and
-/// return one [`PartitionLeafDesc`] per unique leaf (top-left cell
-/// only). Caller invariant: `decision` passes
+/// Walk a [`PartitionDecision`]'s 8×8 cell grid in VP9 **coding (Z-)
+/// order** and return one [`PartitionLeafDesc`] per unique leaf
+/// (top-left cell only). Caller invariant: `decision` passes
 /// [`PartitionDecision::is_valid_partition`] — which the F8.2 picker
 /// always guarantees.
+///
+/// DRIFT-FIX — the leaf order MUST be the recursive quadtree Z-order
+/// (TL, TR, BL, BR at every split level), not raster order. The
+/// intra-prediction simulator reconstructs leaves in this vector's
+/// order, and a leaf's left/above neighbour samples are only valid if
+/// the neighbour leaf was reconstructed earlier — exactly the decoder's
+/// coding-order invariant. With raster order, a bottom-right 32×32 leaf
+/// was predicted before its bottom-left neighbour existed, so its
+/// left-column samples read zero-initialised recon and the DC predictor
+/// produced a value ~19 below the decoder's (which sees the real,
+/// already-decoded bottom-left edge). That seeded the keyframe
+/// reconstruction divergence and compounded across inter frames. All
+/// `splat_*` consumers (the mi-grid the writer reads) are
+/// order-independent, so reordering the vector only fixes the simulator
+/// reconstruction order; the emitted bitstream is unchanged.
 fn leaves_from_decision(decision: &PartitionDecision) -> Vec<PartitionLeafDesc> {
-    let mut leaves = Vec::with_capacity(64);
-    let mut visited = [[false; 8]; 8];
-    for r in 0..8 {
-        for c in 0..8 {
-            if visited[r][c] {
-                continue;
-            }
-            let bs = decision.cells[r][c];
-            let cells_wide = match bs {
-                BlockSize::Block8x8 => 1usize,
-                BlockSize::Block16x16 => 2,
-                BlockSize::Block32x32 => 4,
-                BlockSize::Block64x64 => 8,
-                other => panic!("F10.1a leaves_from_decision: unsupported leaf {other:?}"),
-            };
-            for dr in 0..cells_wide {
-                for dc in 0..cells_wide {
-                    visited[r + dr][c + dc] = true;
-                }
-            }
-            leaves.push(PartitionLeafDesc {
-                mi_row_in_sb: r,
-                mi_col_in_sb: c,
-                leaf_bsize: bs,
-                // F10.1b — placeholder. The KF path mutates this via
-                // `pick_and_simulate_intra_encode_partitions`. The
-                // inter path doesn't read it.
-                predicted_y_mode: IntraMode::Dc,
-                // F10.1b chroma picker (Stage 4a' chroma-DC closure)
-                // mutates this on the KF path too. Inter path ignores
-                // it (inter leaves are not intra-coded).
-                predicted_uv_mode: IntraMode::Dc,
-                // AQ.1 — default to segment 0 (no Q-delta). AQ.3 will
-                // populate this from the cyclic-refresh state machine.
-                segment_id: 0,
-            });
+    fn make_leaf(r: usize, c: usize, bs: BlockSize) -> PartitionLeafDesc {
+        PartitionLeafDesc {
+            mi_row_in_sb: r,
+            mi_col_in_sb: c,
+            leaf_bsize: bs,
+            // F10.1b — placeholder. The KF path mutates this via
+            // `pick_and_simulate_intra_encode_partitions`. The inter
+            // path doesn't read it.
+            predicted_y_mode: IntraMode::Dc,
+            // F10.1b chroma picker (Stage 4a' chroma-DC closure) mutates
+            // this on the KF path too. Inter path ignores it.
+            predicted_uv_mode: IntraMode::Dc,
+            // AQ.1 — default to segment 0 (no Q-delta). AQ.3 will
+            // populate this from the cyclic-refresh state machine.
+            segment_id: 0,
         }
     }
+
+    fn cells_wide(bs: BlockSize) -> usize {
+        match bs {
+            BlockSize::Block8x8 => 1,
+            BlockSize::Block16x16 => 2,
+            BlockSize::Block32x32 => 4,
+            BlockSize::Block64x64 => 8,
+            other => panic!("F10.1a leaves_from_decision: unsupported leaf {other:?}"),
+        }
+    }
+
+    /// Recurse a square region `[r, r+size) × [c, c+size)` (in 8×8
+    /// cells) in quadtree Z-order. If the leaf at the region's top-left
+    /// fills the whole region, emit it; otherwise split into the four
+    /// quadrants (TL, TR, BL, BR) and recurse — mirroring libvpx's
+    /// `decode_partition` recursion the decoder follows.
+    fn walk(
+        decision: &PartitionDecision,
+        r: usize,
+        c: usize,
+        size: usize,
+        out: &mut Vec<PartitionLeafDesc>,
+    ) {
+        let bs = decision.cells[r][c];
+        let leaf_w = cells_wide(bs);
+        if leaf_w >= size {
+            // Leaf fills (or covers) this region — emit it.
+            out.push(make_leaf(r, c, bs));
+            return;
+        }
+        // This region is split: recurse into the four quadrants.
+        let half = size / 2;
+        walk(decision, r, c, half, out); // TL
+        walk(decision, r, c + half, half, out); // TR
+        walk(decision, r + half, c, half, out); // BL
+        walk(decision, r + half, c + half, half, out); // BR
+    }
+
+    let mut leaves = Vec::with_capacity(64);
+    walk(decision, 0, 0, 8, &mut leaves);
     leaves
 }
 
@@ -3670,7 +3704,19 @@ fn build_inter_mi_grid_from_picker(
                             mode: leaf.picked_mode,
                             ref_frames: [leaf.picked_ref_frame, leaf.picked_ref_frame2],
                             mvs: [leaf.picked_mv, leaf.picked_mv2],
-                            interp_filter: InterpFilter::EightTap,
+                            // DRIFT-FIX — emit the leaf's PICKED interp filter,
+                            // not a hardcoded EightTap. The frame-level filter
+                            // is `Switchable`, so the writer serialises this
+                            // per-block filter and the decoder reconstructs
+                            // with it. The simulator already reconstructed the
+                            // encoder's reference using `picked_interp_filter`
+                            // (lib.rs MC call site); hardcoding EightTap here
+                            // made the writer emit a DIFFERENT filter than the
+                            // one the encoder predicted with, so the decoder's
+                            // MC (EightTap) diverged from the encoder's stored
+                            // reference (e.g. EightTapSmooth) — compounding
+                            // inter-frame drift.
+                            interp_filter: leaf.picked_interp_filter,
                         }
                     } else {
                         BlockMode::Inter {
@@ -3686,7 +3732,10 @@ fn build_inter_mi_grid_from_picker(
                             // GOLDEN's ref-buffer slot for reconstruction.
                             ref_frames: [leaf.picked_ref_frame, RefFrame::NoRefFrame],
                             mvs: [leaf.picked_mv, Mv::ZERO],
-                            interp_filter: InterpFilter::EightTap,
+                            // DRIFT-FIX — see the compound arm above: emit the
+                            // picked per-block filter so the decoder's MC
+                            // matches the encoder's stored reference.
+                            interp_filter: leaf.picked_interp_filter,
                         }
                     },
                     bmi: Default::default(),
