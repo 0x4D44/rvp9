@@ -108,6 +108,23 @@ pub static RDO_DISPATCH_INVOCATIONS_8X8: std::sync::atomic::AtomicU64 =
 pub static RD_PARTITION_RESHAPED_SBS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
+/// A4-rect — count of rectangular leaves (`PARTITION_HORZ` /
+/// `PARTITION_VERT` subsizes) the recursive RD partition descent emitted
+/// into the final per-SB leaf list. Incremented once per rect leaf the
+/// descent commits (so a HORZ/VERT decision at one block bumps it by 2 —
+/// the two stacked / side-by-side halves). A leaf is "rectangular" when
+/// `width != height` (Block64x32 / Block32x16 / Block16x8 and their VERT
+/// mirrors). The PROOF test (`tests/w_rd_partition_rect.rs`) asserts this
+/// advances on content with a strong horizontal / vertical edge — proving
+/// the descent genuinely evaluates and can pick rect partitions
+/// (anti-G3). A descent that only ever emitted square leaves (rect never
+/// evaluated, or evaluated but never winning) would leave this at zero
+/// and fail the proof. libvpx parity: `pc_tree->partitioning =
+/// PARTITION_HORZ` / `PARTITION_VERT` in `rd_pick_partition`
+/// (`vp9/encoder/vp9_encodeframe.c:4383` / `:4433`).
+pub static RD_PARTITION_RECT_LEAVES: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 /// A21 — count of blocks where the ML partition-search breakout pruner
 /// (`ml_partition::ml_predict_breakout`, libvpx
 /// `vp9/encoder/vp9_encodeframe.c:4161-4168`) FIRED: voted to stop the

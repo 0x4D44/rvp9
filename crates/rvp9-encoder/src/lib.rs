@@ -3025,17 +3025,19 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         if leaf_px_x + bw_px > w || leaf_px_y + bh_px > h {
                             return None;
                         }
-                        // The picker is wired for these 4 luma sizes. The
-                        // descent caps at Block16x16 (HLD §4.3) so 8×8 is
-                        // never queried by the descent itself — defensive
-                        // guard kept for symmetry with the post-descent
-                        // loop.
-                        if !matches!(
+                        // The picker handles all square sizes plus the
+                        // six rect sizes the A4-rect descent evaluates
+                        // (PARTITION_HORZ / PARTITION_VERT subsizes of
+                        // 64/32/16: Block64x32 / Block32x16 / Block16x8 and
+                        // their VERT mirrors). The descent caps at
+                        // Block16x16 (HLD §4.3) so the smallest queried
+                        // rect is 16x8 / 8x16. Sub-8 sizes are never
+                        // queried — defensive guard returns None.
+                        if matches!(
                             bs,
-                            BlockSize::Block8x8
-                                | BlockSize::Block16x16
-                                | BlockSize::Block32x32
-                                | BlockSize::Block64x64,
+                            BlockSize::Block4x4
+                                | BlockSize::Block4x8
+                                | BlockSize::Block8x4,
                         ) {
                             return None;
                         }
@@ -3472,6 +3474,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let mut new_leaves: Vec<InterPartitionLeafDesc> =
                     Vec::with_capacity(descent_result.leaves.len());
                 for leaf in &descent_result.leaves {
+                    // A4-rect anti-G3 diagnostic: count each rectangular
+                    // leaf (`width != height`) the descent committed. A
+                    // HORZ/VERT decision contributes 2 (the two halves).
+                    // The PROOF test (`tests/w_rd_partition_rect.rs`)
+                    // asserts this advances on a horizontal/vertical-edge
+                    // clip — a descent that never picked rect would leave
+                    // it at zero and fail.
+                    if leaf.bsize.width() != leaf.bsize.height() {
+                        crate::rdo::inter_dispatch::RD_PARTITION_RECT_LEAVES
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
                     // Look up segment_id from the variance hint's
                     // leaf list at this position. Default to 0 if
                     // not found (defensive — should always match
@@ -3522,19 +3535,19 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let bw = usize::from(leaf_bsize.width());
                 let bh = usize::from(leaf_bsize.height());
 
-                // F8.1 picker supports Block8x8 / Block16x16 /
-                // Block32x32 / Block64x64. Any other size (sub-8
-                // partitions emitted wire-format-only by F8.2) falls
-                // back to ZEROMV / skip = true; the recon for those
-                // leaves equals the reference (already populated via
-                // the up-front copy above), and no coef entries are
-                // recorded.
-                let picker_supported = matches!(
+                // The picker + recon path support every square size plus
+                // the six rect sizes the A4-rect descent can emit
+                // (PARTITION_HORZ / PARTITION_VERT subsizes:
+                // Block64x32 / Block32x16 / Block16x8 / Block32x64 /
+                // Block16x32 / Block8x16). The recon TX walk, UV-plane
+                // helpers (`f5_uv_plane_block_size` / `f5_uv_plane_tx_size`)
+                // and the bitstream writer (`infer_inter_partition`,
+                // which maps a rect leaf size to PARTITION_HORZ/VERT) are
+                // all rect-aware. Only the three sub-8 sizes (which rvp9
+                // never emits) fall back to ZEROMV / skip = true.
+                let picker_supported = !matches!(
                     leaf_bsize,
-                    BlockSize::Block8x8
-                        | BlockSize::Block16x16
-                        | BlockSize::Block32x32
-                        | BlockSize::Block64x64
+                    BlockSize::Block4x4 | BlockSize::Block4x8 | BlockSize::Block8x4
                 );
 
                 if !picker_supported {

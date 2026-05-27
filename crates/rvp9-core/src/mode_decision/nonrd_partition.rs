@@ -19,13 +19,22 @@
 //! F.4 owns flipping the env gate ON as part of lambda recalibration
 //! (see `notes/divergence-ledger.md` F.3 ship-state entry).
 //!
-//! ## Scope (F.3 first cut)
+//! ## Scope (F.3 first cut + A4-rect, 2026-05-27)
 //!
-//! Per the F.3 HLD §2.3 / §4.3 / §10:
+//! Per the F.3 HLD §2.3 / §4.3 / §10, extended by A4-rect:
 //!
-//! - **Square partitions only.** No PARTITION_HORZ / PARTITION_VERT
-//!   (libvpx defers these at `speed >= 5`,
-//!   `vp9_encodeframe.c:4957`).
+//! - **Rectangular partitions ADDED (A4-rect).** At each square parent
+//!   the descent now also evaluates PARTITION_HORZ (two `w × h/2`
+//!   blocks stacked) and PARTITION_VERT (two `w/2 × h` blocks side by
+//!   side), coding each rect as TWO sub-blocks at the rect size (NOT
+//!   recursed) and summing their RD — mirroring libvpx
+//!   `rd_pick_partition` (`vp9_encodeframe.c:4342-4436`). The
+//!   `partition_{horz,vert}_allowed` size constraints
+//!   (`vp9_encodeframe.c:4018-4021`, `bsize >= BLOCK_8X8`) are honoured
+//!   via the `!bsize_at_floor` + `bsize <= max_partition_size` gates.
+//!   Frame-edge `force_{horz,vert}_split` overrides are not modelled
+//!   (the descent runs only on 64-aligned SBs; the picker callback's
+//!   SB-edge guard makes any off-frame rect half infeasible).
 //! - **Recursion caps at Block16x16.** The existing picker bails to
 //!   ZERO+skip at Block8x8 (`crates/rvp9-encoder/src/lib.rs:2660-2711`);
 //!   F.3 inherits that. Any 8×8 leaves come from the variance hint.
@@ -64,7 +73,7 @@
 //! for known motion patterns. The encoder's integration in `lib.rs`
 //! supplies a real callback driven by `pick_inter_mode_luma`.
 
-use crate::block::BlockSize;
+use crate::block::{BlockSize, PartitionType};
 use crate::cost::symbol_costs::PartitionCosts;
 use crate::mode_decision::partition::{PartitionDecision, SB_8X8_GRID};
 use crate::mode_decision::rd_cost;
@@ -75,9 +84,13 @@ use crate::mode_info::Mv;
 /// re-export.
 const SB_GRID: usize = SB_8X8_GRID;
 
-/// libvpx `PARTITION_NONE = 0` / `PARTITION_SPLIT = 3` — see
-/// `vp9/common/vp9_enums.h:84-89`.
+/// libvpx `PARTITION_NONE = 0` / `PARTITION_HORZ = 1` /
+/// `PARTITION_VERT = 2` / `PARTITION_SPLIT = 3` — see
+/// `vp9/common/vp9_enums.h:84-89`. The `partition_cost` table is indexed
+/// `[ctx][PARTITION_*]` in the same order.
 const PARTITION_NONE_IDX: usize = 0;
+const PARTITION_HORZ_IDX: usize = 1;
+const PARTITION_VERT_IDX: usize = 2;
 const PARTITION_SPLIT_IDX: usize = 3;
 
 /// libvpx `partition_plane_context` (`vp9_onyxc_int.h:451-462`) reduces
@@ -466,6 +479,43 @@ fn split_step_8x8(bsize: BlockSize) -> usize {
     }
 }
 
+/// The child block size produced by `PARTITION_HORZ` (top + bottom, each
+/// `w × h/2`). Mirrors libvpx `get_subsize(bsize, PARTITION_HORZ)`
+/// (`vp9_common_data.c` `subsize_lookup`). Only the square 64/32/16
+/// parents the descent walks are listed — others return `None`.
+fn subsize_for_horz(bsize: BlockSize) -> Option<BlockSize> {
+    match bsize {
+        BlockSize::Block64x64 => Some(BlockSize::Block64x32),
+        BlockSize::Block32x32 => Some(BlockSize::Block32x16),
+        BlockSize::Block16x16 => Some(BlockSize::Block16x8),
+        _ => None,
+    }
+}
+
+/// The child block size produced by `PARTITION_VERT` (left + right, each
+/// `w/2 × h`). Mirrors libvpx `get_subsize(bsize, PARTITION_VERT)`.
+fn subsize_for_vert(bsize: BlockSize) -> Option<BlockSize> {
+    match bsize {
+        BlockSize::Block64x64 => Some(BlockSize::Block32x64),
+        BlockSize::Block32x32 => Some(BlockSize::Block16x32),
+        BlockSize::Block16x16 => Some(BlockSize::Block8x16),
+        _ => None,
+    }
+}
+
+/// SB-internal step (in 8×8 cells) between the two rect halves at
+/// `bsize`. For HORZ this is the row offset to the bottom half; for VERT
+/// the column offset to the right half. Equal to `hbs` (half the parent
+/// width in 8×8 cells).
+fn rect_half_step_8x8(bsize: BlockSize) -> usize {
+    match bsize {
+        BlockSize::Block64x64 => 4,
+        BlockSize::Block32x32 => 2,
+        BlockSize::Block16x16 => 1,
+        _ => 1,
+    }
+}
+
 /// Run the F.3 motion-aware partition descent for one 64×64 SB.
 ///
 /// The descent walks the SB top-down (64→32→16). At each `bsize` it
@@ -702,7 +752,121 @@ fn descend<P: ModePickerFn, B: BreakoutPruner>(
         }
     }
 
-    // Commit the winner into the cell grid + leaves.
+    // A4-rect — PARTITION_HORZ / PARTITION_VERT.
+    //
+    // libvpx `rd_pick_partition` (`vp9_encodeframe.c:4342-4436`) codes
+    // each rect as TWO sub-blocks at the rect subsize (NOT recursed):
+    // HORZ = top+bottom (`w × h/2` each), VERT = left+right
+    // (`w/2 × h` each). It sums the two sub-block RDs + the rect
+    // partition_cost and keeps the result if it beats the running best.
+    //
+    // `partition_horz_allowed` / `partition_vert_allowed`
+    // (`vp9_encodeframe.c:4018-4021`): both require `bsize >= BLOCK_8X8`
+    // and (for 4:2:0, `yss == xss == 1`) the `yss <= xss` / `xss <= yss`
+    // chroma-subsampling gates BOTH hold. The `force_{horz,vert}_split`
+    // frame-edge overrides are not modelled here — the descent only runs
+    // on 64-aligned SBs (the picker callback's SB-edge guard returns
+    // `None` for any rect half that would walk past the frame, which the
+    // sum below treats as infeasible, falling back to NONE/SPLIT).
+    //
+    // Rect is evaluated even when the breakout pruner vetoed SPLIT
+    // (`do_split = false` also sets libvpx's `do_rect = 0`), to keep the
+    // A21 semantics: when breakout fires, skip rect too.
+    let mut rect_pick: Option<(PartitionType, PartitionRdCandidate, PartitionRdCandidate)> = None;
+    // Rect is gated like PARTITION_NONE on the upper bound: never search
+    // a rect at a parent LARGER than `max_partition_size`. The variance
+    // hint already excluded that parent size, so its rect halves are not
+    // worth ranking (and searching them would invoke the picker at sizes
+    // the hint ruled out). The `bsize >= BLOCK_8X8` half of libvpx's
+    // `partition_{horz,vert}_allowed` (`vp9_encodeframe.c:4019/4021`) is
+    // covered by `!bsize_at_floor` (the descent floors at Block16x16).
+    let rect_within_max = (bsize as u8) <= (params.max_partition_size as u8);
+    if do_split && !bsize_at_floor && rect_within_max {
+        // HORZ then VERT, in libvpx order.
+        let horz_step = rect_half_step_8x8(bsize);
+        if let Some(sub) = subsize_for_horz(bsize) {
+            let horz_cost =
+                params.partition_costs[part_ctx][PARTITION_HORZ_IDX].max(0) as u32;
+            // Top half at (row, col); bottom half at (row + hbs, col).
+            if let (Some(top), Some(bot)) = (
+                feasible_rect_pick(picker, col_8x8, row_8x8, sub),
+                (row_8x8 + horz_step < SB_GRID)
+                    .then(|| feasible_rect_pick(picker, col_8x8, row_8x8 + horz_step, sub))
+                    .flatten(),
+            ) {
+                let sum_rate = top.rate.saturating_add(bot.rate).saturating_add(horz_cost);
+                let sum_dist = top.dist.saturating_add(bot.dist);
+                let rdc = rd_cost(params.rd_mult, sum_rate, sum_dist);
+                if rdc < best_rd_cost {
+                    best_rd_cost = rdc;
+                    rect_pick = Some((PartitionType::Horz, top, bot));
+                }
+            }
+        }
+        let vert_step = rect_half_step_8x8(bsize);
+        if let Some(sub) = subsize_for_vert(bsize) {
+            let vert_cost =
+                params.partition_costs[part_ctx][PARTITION_VERT_IDX].max(0) as u32;
+            // Left half at (row, col); right half at (row, col + hbs).
+            if let (Some(left_pick), Some(right_pick)) = (
+                feasible_rect_pick(picker, col_8x8, row_8x8, sub),
+                (col_8x8 + vert_step < SB_GRID)
+                    .then(|| feasible_rect_pick(picker, col_8x8 + vert_step, row_8x8, sub))
+                    .flatten(),
+            ) {
+                let sum_rate = left_pick
+                    .rate
+                    .saturating_add(right_pick.rate)
+                    .saturating_add(vert_cost);
+                let sum_dist = left_pick.dist.saturating_add(right_pick.dist);
+                let rdc = rd_cost(params.rd_mult, sum_rate, sum_dist);
+                if rdc < best_rd_cost {
+                    best_rd_cost = rdc;
+                    rect_pick = Some((PartitionType::Vert, left_pick, right_pick));
+                }
+            }
+        }
+    }
+
+    // Commit the winner into the cell grid + leaves. Precedence follows
+    // the running `best_rd_cost`: whichever candidate last lowered it
+    // wins. Because NONE / SPLIT / HORZ / VERT are evaluated in that
+    // order and each only records its pick when it strictly beats the
+    // best so far, the winner is the one whose `*_pick` is set with the
+    // lowest RD. We check SPLIT first (it's mutually exclusive with rect
+    // — both can't have lowered the best past each other), then rect,
+    // then NONE.
+    if let Some((part, a, b)) = rect_pick {
+        // Rect wins — roll back any speculative SPLIT children and
+        // commit the two rect leaves.
+        let step = rect_half_step_8x8(bsize);
+        let (sub, a_origin, b_origin) = match part {
+            PartitionType::Horz => (
+                subsize_for_horz(bsize).expect("horz subsize exists"),
+                (row_8x8, col_8x8),
+                (row_8x8 + step, col_8x8),
+            ),
+            PartitionType::Vert => (
+                subsize_for_vert(bsize).expect("vert subsize exists"),
+                (row_8x8, col_8x8),
+                (row_8x8, col_8x8 + step),
+            ),
+            _ => unreachable!("rect_pick only carries Horz/Vert"),
+        };
+        let rect_cost = match part {
+            PartitionType::Horz => params.partition_costs[part_ctx][PARTITION_HORZ_IDX],
+            _ => params.partition_costs[part_ctx][PARTITION_VERT_IDX],
+        }
+        .max(0) as u32;
+        commit_rect_leaves(state, row_8x8, col_8x8, bsize, sub, a_origin, a, b_origin, b);
+        let sum_rate = a.rate.saturating_add(b.rate).saturating_add(rect_cost);
+        let sum_dist = a.dist.saturating_add(b.dist);
+        return Some(DescendResult {
+            rate: sum_rate,
+            dist: sum_dist,
+            rd_cost: best_rd_cost,
+        });
+    }
     if let Some((rate, dist)) = split_pick {
         // SPLIT wins — commit children's leaves (already pushed during
         // recursion via their NONE branch). Nothing further to do at
@@ -714,8 +878,8 @@ fn descend<P: ModePickerFn, B: BreakoutPruner>(
         });
     }
     if let Some(pick) = best_pick {
-        // NONE wins (or SPLIT wasn't feasible) — commit this block as
-        // a single leaf, overwriting any children we tentatively
+        // NONE wins (or SPLIT/rect weren't feasible) — commit this block
+        // as a single leaf, overwriting any children we tentatively
         // committed during recursion. Recursion only commits children
         // when their *own* NONE wins, so the worst case is a few
         // dropped leaves; we rebuild this sub-block cleanly here.
@@ -727,13 +891,81 @@ fn descend<P: ModePickerFn, B: BreakoutPruner>(
         });
     }
 
-    // Neither NONE nor SPLIT was feasible at this level — fall back
-    // to the variance hint. The hint's leaves at this position become
-    // our leaves; the descent contributes no RD signal here (parent's
-    // SPLIT sum will mark this as infeasible and the parent's NONE
-    // wins by default).
+    // Neither NONE nor SPLIT nor rect was feasible at this level — fall
+    // back to the variance hint. The hint's leaves at this position
+    // become our leaves; the descent contributes no RD signal here
+    // (parent's SPLIT sum will mark this as infeasible and the parent's
+    // NONE wins by default).
     inherit_hint(hint, state, row_8x8, col_8x8, bsize);
     None
+}
+
+/// Evaluate the picker for one rect half at `(col_8x8, row_8x8)` with
+/// rect size `sub`. Returns `None` when the picker reports the candidate
+/// infeasible (e.g. the rect half walks past a frame edge). The rate /
+/// dist are returned WITHOUT the rect partition cost folded in — the
+/// caller sums the two halves then adds the single rect partition cost
+/// once (matching libvpx `vp9_encodeframe.c:4345` / `:4355`, where
+/// `part_mode_rate` is added once to the summed sub-block RD).
+fn feasible_rect_pick<P: ModePickerFn>(
+    picker: &mut P,
+    col_8x8: usize,
+    row_8x8: usize,
+    sub: BlockSize,
+) -> Option<PartitionRdCandidate> {
+    picker.pick(col_8x8, row_8x8, sub)
+}
+
+/// Commit two rect sub-block leaves (HORZ top+bottom, or VERT
+/// left+right) at rect size `sub`, rolling back any speculative SPLIT
+/// children in the parent's region first (same invariant as
+/// [`commit_leaf`]). The parent occupies the `bsize` span starting at
+/// `(parent_row, parent_col)`; the two halves are at `a_origin` /
+/// `b_origin` (in 8×8 mi units within the SB).
+#[allow(clippy::too_many_arguments)]
+fn commit_rect_leaves(
+    state: &mut DescentState,
+    parent_row: usize,
+    parent_col: usize,
+    bsize: BlockSize,
+    sub: BlockSize,
+    a_origin: (usize, usize),
+    a_pick: PartitionRdCandidate,
+    b_origin: (usize, usize),
+    b_pick: PartitionRdCandidate,
+) {
+    let parent_span = cells_wide_for(bsize);
+    // Drop any leaves tentatively committed inside the parent's region
+    // during a now-losing SPLIT branch.
+    state.leaves.retain(|leaf| {
+        let lr = leaf.mi_row_in_sb;
+        let lc = leaf.mi_col_in_sb;
+        !(lr >= parent_row
+            && lr < parent_row + parent_span
+            && lc >= parent_col
+            && lc < parent_col + parent_span)
+    });
+    // Splat each rect half's cells + push its leaf.
+    let (sub_w, sub_h) = (
+        sub.n_8x8_wide() as usize,
+        sub.n_8x8_high() as usize,
+    );
+    for &(origin, pick) in &[(a_origin, a_pick), (b_origin, b_pick)] {
+        let (r0, c0) = origin;
+        for dr in 0..sub_h {
+            for dc in 0..sub_w {
+                if r0 + dr < SB_GRID && c0 + dc < SB_GRID {
+                    state.cells[r0 + dr][c0 + dc] = sub;
+                }
+            }
+        }
+        state.leaves.push(NonRdLeaf {
+            mi_row_in_sb: r0,
+            mi_col_in_sb: c0,
+            bsize: sub,
+            pick,
+        });
+    }
 }
 
 /// Result returned by [`descend`] for a sub-block — the totals the
@@ -1453,6 +1685,171 @@ mod tests {
                 .iter()
                 .map(|l| (l.mi_row_in_sb, l.mi_col_in_sb, l.bsize))
                 .collect::<Vec<_>>(),
+        );
+    }
+
+    /// **A4-rect Test — PARTITION_HORZ wins on a horizontal edge.**
+    /// Picker reports cheap RD for the two `64×32` HORZ halves and
+    /// expensive RD for everything else (NONE at 64×64, the 32×32 SPLIT
+    /// quadrants, and the 32×64 VERT halves). The descent must emit
+    /// PARTITION_HORZ at 64×64 → two `Block64x32` leaves stacked.
+    #[test]
+    fn horz_wins_on_horizontal_edge() {
+        let fc = FrameContext::new_default();
+        let pc = partition_costs(&fc);
+        let hint = uniform_hint(BlockSize::Block16x16);
+        let params = make_params(&pc, BlockSize::Block16x16, BlockSize::Block64x64);
+        let mut picker = |_x: usize, _y: usize, bs: BlockSize| {
+            let (r, d) = match bs {
+                // Cheap HORZ halves.
+                BlockSize::Block64x32 => (20u32, 5u32),
+                // Everything else expensive so HORZ wins outright.
+                BlockSize::Block64x64 => (10_000, 1_000_000),
+                BlockSize::Block32x64 => (10_000, 1_000_000),
+                BlockSize::Block32x32 => (10_000, 1_000_000),
+                BlockSize::Block16x16 => (10_000, 1_000_000),
+                _ => (10_000, 1_000_000),
+            };
+            Some(PartitionRdCandidate {
+                rate: r,
+                dist: d,
+                mv: Mv::ZERO,
+                mode: 0,
+                ref_frame: 0,
+            })
+        };
+        let result = nonrd_pick_partition(&hint, &params, &mut picker);
+        // Two Block64x32 leaves: top at (0,0), bottom at (4,0).
+        let horz: Vec<_> = result
+            .leaves
+            .iter()
+            .filter(|l| matches!(l.bsize, BlockSize::Block64x32))
+            .map(|l| (l.mi_row_in_sb, l.mi_col_in_sb))
+            .collect();
+        assert_eq!(
+            horz.len(),
+            2,
+            "expected exactly 2 Block64x32 HORZ leaves, got leaves: {:?}",
+            result
+                .leaves
+                .iter()
+                .map(|l| (l.mi_row_in_sb, l.mi_col_in_sb, l.bsize))
+                .collect::<Vec<_>>(),
+        );
+        assert!(horz.contains(&(0, 0)), "HORZ top leaf at (0,0) missing");
+        assert!(horz.contains(&(4, 0)), "HORZ bottom leaf at (4,0) missing");
+        // The full SB cell grid must be Block64x32 (both halves tile it).
+        for row in &result.cells {
+            for &c in row {
+                assert_eq!(c, BlockSize::Block64x32);
+            }
+        }
+    }
+
+    /// **A4-rect Test — PARTITION_VERT wins on a vertical edge.**
+    /// Mirror of the HORZ test: cheap `32×64` VERT halves, expensive
+    /// everything else. The descent must emit PARTITION_VERT at 64×64 →
+    /// two `Block32x64` leaves side by side at (0,0) and (0,4).
+    #[test]
+    fn vert_wins_on_vertical_edge() {
+        let fc = FrameContext::new_default();
+        let pc = partition_costs(&fc);
+        let hint = uniform_hint(BlockSize::Block16x16);
+        let params = make_params(&pc, BlockSize::Block16x16, BlockSize::Block64x64);
+        let mut picker = |_x: usize, _y: usize, bs: BlockSize| {
+            let (r, d) = match bs {
+                BlockSize::Block32x64 => (20u32, 5u32),
+                _ => (10_000, 1_000_000),
+            };
+            Some(PartitionRdCandidate {
+                rate: r,
+                dist: d,
+                mv: Mv::ZERO,
+                mode: 0,
+                ref_frame: 0,
+            })
+        };
+        let result = nonrd_pick_partition(&hint, &params, &mut picker);
+        let vert: Vec<_> = result
+            .leaves
+            .iter()
+            .filter(|l| matches!(l.bsize, BlockSize::Block32x64))
+            .map(|l| (l.mi_row_in_sb, l.mi_col_in_sb))
+            .collect();
+        assert_eq!(
+            vert.len(),
+            2,
+            "expected exactly 2 Block32x64 VERT leaves, got leaves: {:?}",
+            result
+                .leaves
+                .iter()
+                .map(|l| (l.mi_row_in_sb, l.mi_col_in_sb, l.bsize))
+                .collect::<Vec<_>>(),
+        );
+        assert!(vert.contains(&(0, 0)), "VERT left leaf at (0,0) missing");
+        assert!(vert.contains(&(0, 4)), "VERT right leaf at (0,4) missing");
+        for row in &result.cells {
+            for &c in row {
+                assert_eq!(c, BlockSize::Block32x64);
+            }
+        }
+    }
+
+    /// **A4-rect Test — HORZ at 32×32 inside a SPLIT.**
+    /// Force a 64→split, then make HORZ cheapest at each 32×32 quadrant
+    /// (cheap `32×16` halves). Each quadrant must become two Block32x16
+    /// leaves → 8 total. Exercises rect commit nested under SPLIT and the
+    /// speculative-child rollback.
+    #[test]
+    fn horz_at_32x32_under_split() {
+        let fc = FrameContext::new_default();
+        let pc = partition_costs(&fc);
+        let hint = uniform_hint(BlockSize::Block16x16);
+        let params = make_params(&pc, BlockSize::Block16x16, BlockSize::Block64x64);
+        let mut picker = |_x: usize, _y: usize, bs: BlockSize| {
+            let (r, d) = match bs {
+                // 64×64 NONE and its rects expensive → SPLIT preferred.
+                BlockSize::Block64x64 => (10_000, 10_000_000),
+                BlockSize::Block64x32 => (10_000, 10_000_000),
+                BlockSize::Block32x64 => (10_000, 10_000_000),
+                // 32×32 NONE moderate; 32×16 HORZ halves cheapest.
+                BlockSize::Block32x32 => (500, 50_000),
+                BlockSize::Block32x16 => (20, 50),
+                BlockSize::Block16x32 => (500, 50_000),
+                // 16×16 expensive so quadrants don't sub-split further.
+                BlockSize::Block16x16 => (10_000, 10_000_000),
+                _ => (10_000, 10_000_000),
+            };
+            Some(PartitionRdCandidate {
+                rate: r,
+                dist: d,
+                mv: Mv::ZERO,
+                mode: 0,
+                ref_frame: 0,
+            })
+        };
+        let result = nonrd_pick_partition(&hint, &params, &mut picker);
+        let n_32x16 = result
+            .leaves
+            .iter()
+            .filter(|l| matches!(l.bsize, BlockSize::Block32x16))
+            .count();
+        assert_eq!(
+            n_32x16, 8,
+            "expected 8 Block32x16 HORZ leaves (2 per 32×32 quadrant), got: {:?}",
+            result
+                .leaves
+                .iter()
+                .map(|l| (l.mi_row_in_sb, l.mi_col_in_sb, l.bsize))
+                .collect::<Vec<_>>(),
+        );
+        // No square 32×32 leaf should survive (every quadrant went HORZ).
+        assert!(
+            !result
+                .leaves
+                .iter()
+                .any(|l| matches!(l.bsize, BlockSize::Block32x32)),
+            "no Block32x32 leaf should remain when HORZ wins every quadrant",
         );
     }
 }

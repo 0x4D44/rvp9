@@ -363,13 +363,23 @@ macro_rules! sub_pixel_variance_fn {
     };
 }
 
-// Subset required by `vp9_find_best_sub_pixel_tree_pruned_more` per the
-// F6.0 task brief: 4x4, 8x8, 16x16, 32x32, 64x64.
+// Square sizes (F6.0): 4x4, 8x8, 16x16, 32x32, 64x64.
 sub_pixel_variance_fn!(vpx_sub_pixel_variance4x4, 4, 4);
 sub_pixel_variance_fn!(vpx_sub_pixel_variance8x8, 8, 8);
 sub_pixel_variance_fn!(vpx_sub_pixel_variance16x16, 16, 16);
 sub_pixel_variance_fn!(vpx_sub_pixel_variance32x32, 32, 32);
 sub_pixel_variance_fn!(vpx_sub_pixel_variance64x64, 64, 64);
+
+// Rectangular sizes (A4-rect): the six PARTITION_HORZ / PARTITION_VERT
+// subsizes the recursive RD partition descent can emit at 64/32/16
+// parents. The `sub_pixel_variance` core is `(w, h)`-generic so each is
+// a one-line macro expansion mirroring libvpx's `SUBPIX_VAR(W, H)`.
+sub_pixel_variance_fn!(vpx_sub_pixel_variance16x8, 16, 8);
+sub_pixel_variance_fn!(vpx_sub_pixel_variance8x16, 8, 16);
+sub_pixel_variance_fn!(vpx_sub_pixel_variance32x16, 32, 16);
+sub_pixel_variance_fn!(vpx_sub_pixel_variance16x32, 16, 32);
+sub_pixel_variance_fn!(vpx_sub_pixel_variance64x32, 64, 32);
+sub_pixel_variance_fn!(vpx_sub_pixel_variance32x64, 32, 64);
 
 #[cfg(test)]
 mod tests {

@@ -37,8 +37,10 @@
 use crate::block::BlockSize;
 use crate::cost::mv_cost::MvCosts;
 use crate::dsp::distortion::{
-    vpx_sub_pixel_variance16x16, vpx_sub_pixel_variance32x32, vpx_sub_pixel_variance4x4,
-    vpx_sub_pixel_variance64x64, vpx_sub_pixel_variance8x8,
+    vpx_sub_pixel_variance16x8, vpx_sub_pixel_variance16x16, vpx_sub_pixel_variance16x32,
+    vpx_sub_pixel_variance32x16, vpx_sub_pixel_variance32x32, vpx_sub_pixel_variance32x64,
+    vpx_sub_pixel_variance4x4, vpx_sub_pixel_variance64x32, vpx_sub_pixel_variance64x64,
+    vpx_sub_pixel_variance8x16, vpx_sub_pixel_variance8x8,
 };
 use crate::inter::mv::use_mv_hp;
 use crate::mode_info::Mv;
@@ -158,11 +160,12 @@ pub struct SubPixelSearchResult {
 
 /// Dispatch sub-pel-variance by block size.
 ///
-/// **Constraint:** only the 5 square sizes 4x4, 8x8, 16x16, 32x32,
-/// 64x64 are ported (per F6.0). Other block sizes panic in debug,
-/// and return zero-variance in release as a fail-soft. Mode-decision
-/// must avoid calling sub-pel search on non-square blocks until the
-/// remaining 8 sub-pel-variance kernels land.
+/// Ports the 5 square sizes (F6.0: 4x4, 8x8, 16x16, 32x32, 64x64) plus
+/// the 6 rectangular sizes the A4-rect partition descent emits at
+/// 64/32/16 parents (16x8, 8x16, 32x16, 16x32, 64x32, 32x64). The two
+/// remaining sub-8 rect sizes (4x8, 8x4) are not ported — rvp9 never
+/// descends below 8×8 in the partition search, so they return `None`
+/// (debug-asserts, fail-soft to zero-variance in release).
 #[inline]
 fn svf_for(bsize: BlockSize) -> Option<SvfFn> {
     match bsize {
@@ -171,6 +174,13 @@ fn svf_for(bsize: BlockSize) -> Option<SvfFn> {
         BlockSize::Block16x16 => Some(vpx_sub_pixel_variance16x16),
         BlockSize::Block32x32 => Some(vpx_sub_pixel_variance32x32),
         BlockSize::Block64x64 => Some(vpx_sub_pixel_variance64x64),
+        // A4-rect — HORZ / VERT subsizes.
+        BlockSize::Block16x8 => Some(vpx_sub_pixel_variance16x8),
+        BlockSize::Block8x16 => Some(vpx_sub_pixel_variance8x16),
+        BlockSize::Block32x16 => Some(vpx_sub_pixel_variance32x16),
+        BlockSize::Block16x32 => Some(vpx_sub_pixel_variance16x32),
+        BlockSize::Block64x32 => Some(vpx_sub_pixel_variance64x32),
+        BlockSize::Block32x64 => Some(vpx_sub_pixel_variance32x64),
         _ => None,
     }
 }

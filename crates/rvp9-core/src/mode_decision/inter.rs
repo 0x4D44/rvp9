@@ -1756,6 +1756,23 @@ fn evaluate_intra_fallback(
         return None;
     }
 
+    // A4-rect — intra-in-inter is square-only here. This fallback does a
+    // single whole-block intra prediction (`intra_predict` is square:
+    // one `bs` side, square edge buffers). On a rectangular block
+    // (`width != height`) that would mispredict (a `bw × bw` square
+    // instead of `bw × bh`) and over-read the `left`/`above` edge
+    // buffers. libvpx tiles intra-in-inter prediction per-TX
+    // (`vp9_pickmode.c:2517-2646` walks `max_txsize` blocks), which the
+    // rvp9 picker has not ported — so for the rect HORZ/VERT subsizes the
+    // A4-rect descent emits we skip the intra fallback and rank inter
+    // modes only. This is a measurement gap (intra-in-inter signal is
+    // absent on rect leaves), not a correctness gap: the chosen inter
+    // candidate reconstructs and decodes byte-exact. Square leaves are
+    // unaffected.
+    if params.block_size.width() != params.block_size.height() {
+        return None;
+    }
+
     let bw = usize::from(params.block_size.width());
     let bh = usize::from(params.block_size.height());
     let tx_size = crate::block::max_txsize(params.block_size);
