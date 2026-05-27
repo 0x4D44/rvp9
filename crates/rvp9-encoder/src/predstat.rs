@@ -25,6 +25,76 @@ use std::cell::RefCell;
 
 static PREDSTAT_ON: AtomicBool = AtomicBool::new(false);
 
+thread_local! {
+    /// Whole-frame Y prediction snapshot (tight-stride `frame_w × frame_h`).
+    /// Filled by [`record_y_pred_block`] when prediction-capture is active;
+    /// taken by [`take_pred_frame`]. Empty until the first frame populates
+    /// it. This is the `diag_pred` backing store — the per-pixel companion
+    /// to the per-block [`PredStats::y_pred_sse`] accumulator.
+    static PRED_FRAME: RefCell<PredFrame> = const {
+        RefCell::new(PredFrame { y: Vec::new(), w: 0, h: 0 })
+    };
+}
+
+/// Whole-frame Y prediction snapshot. `y` is tight-stride `w × h`. Used
+/// by the `stage_sse_diag` oracle to compute per-frame pred-SSE against
+/// the source over the FULL frame (every pixel, including skip leaves) —
+/// the per-pixel companion to the per-TX [`PredStats`] accumulator.
+#[derive(Clone, Debug, Default)]
+pub struct PredFrame {
+    /// Tight-stride Y prediction pixels, `w * h` long (empty if no frame
+    /// captured).
+    pub y: Vec<u8>,
+    /// Frame width in pixels.
+    pub w: usize,
+    /// Frame height in pixels.
+    pub h: usize,
+}
+
+/// Record one Y-plane transform block's PREDICTION pixels into the
+/// whole-frame snapshot. `pred` is the prediction plane (tight-stride
+/// `frame_w`), `(px_x, px_y)` the block's top-left, `tx_side` the block
+/// edge. `frame_w`/`frame_h` size the snapshot on first call per frame.
+/// No-op unless enabled. Companion to [`record_y_residual`] — same call
+/// sites, captures the pixels the residual is formed against.
+#[inline]
+pub fn record_y_pred_block(
+    pred: &[u8],
+    pred_stride: usize,
+    px_x: usize,
+    px_y: usize,
+    tx_side: usize,
+    frame_w: usize,
+    frame_h: usize,
+) {
+    if !enabled() {
+        return;
+    }
+    PRED_FRAME.with(|pf| {
+        let mut pf = pf.borrow_mut();
+        if pf.w != frame_w || pf.h != frame_h || pf.y.len() != frame_w * frame_h {
+            pf.w = frame_w;
+            pf.h = frame_h;
+            pf.y = vec![0u8; frame_w * frame_h];
+        }
+        for r in 0..tx_side {
+            let src_off = (px_y + r) * pred_stride + px_x;
+            let dst_off = (px_y + r) * frame_w + px_x;
+            pf.y[dst_off..dst_off + tx_side]
+                .copy_from_slice(&pred[src_off..src_off + tx_side]);
+        }
+    });
+}
+
+/// Take and reset the whole-frame Y prediction snapshot for the current
+/// thread. Returns an empty [`PredFrame`] if none was captured.
+pub fn take_pred_frame() -> PredFrame {
+    PRED_FRAME.with(|pf| {
+        let mut pf = pf.borrow_mut();
+        std::mem::take(&mut *pf)
+    })
+}
+
 /// Per-frame prediction-error aggregate (Y plane only).
 #[derive(Copy, Clone, Debug, Default)]
 pub struct PredStats {

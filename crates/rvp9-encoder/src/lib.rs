@@ -1527,6 +1527,19 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
                                     tx_side,
                                     plane_tx as usize,
                                 );
+                                // E9/stage-SSE DIAG — capture the Y prediction
+                                // pixels (pre-residual) into the whole-frame
+                                // `diag_pred` snapshot. `recon_plane` holds
+                                // pure prediction here.
+                                crate::predstat::record_y_pred_block(
+                                    recon_plane,
+                                    plane_stride,
+                                    tx_px_x,
+                                    tx_px_y,
+                                    tx_side,
+                                    plane_w,
+                                    plane_h,
+                                );
                             }
 
                             // TX type. Y plane: `plane_mode.tx_type()`
@@ -4801,6 +4814,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                         tx_side,
                                         plane_tx as usize,
                                     );
+                                    // E9/stage-SSE DIAG — capture Y intra
+                                    // prediction pixels into `diag_pred`.
+                                    crate::predstat::record_y_pred_block(
+                                        recon_plane,
+                                        plane_stride,
+                                        tx_px_x,
+                                        tx_px_y,
+                                        tx_side,
+                                        plane_w,
+                                        plane_h,
+                                    );
                                 }
 
                                 // Steps 3-4: forward hybrid transform + quant.
@@ -5054,6 +5078,19 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                         &residual,
                                         tx_side,
                                         plane_tx as usize,
+                                    );
+                                    // E9/stage-SSE DIAG — capture Y MC
+                                    // prediction pixels into `diag_pred`.
+                                    // `recon_plane` holds pure MC prediction
+                                    // for this TX (residual not yet added).
+                                    crate::predstat::record_y_pred_block(
+                                        recon_plane,
+                                        plane_stride,
+                                        tx_px_x,
+                                        tx_px_y,
+                                        tx_side,
+                                        plane_w,
+                                        plane_h,
                                     );
                                 }
 

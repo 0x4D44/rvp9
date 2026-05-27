@@ -914,6 +914,16 @@ pub struct StreamEncoder {
     /// test isolate residual/MC divergence (pre-LF) from loop-filter
     /// divergence (post-LF) against the true decode. Tight-stride Y/U/V.
     diag_prelf_recon: Option<(Vec<u8>, Vec<u8>, Vec<u8>)>,
+    /// STAGE-SSE DIAG — snapshot of the most-recent frame's whole-frame
+    /// Y PREDICTION (motion-compensated / intra, before any residual).
+    /// Captured only when the `RVP9_E9_PREDSTAT` env gate is active (the
+    /// predstat thread-local fills the per-TX prediction pixels). Lets
+    /// the `stage_sse_diag` oracle compute per-frame pred-SSE against the
+    /// source over the FULL Y frame — the prediction-stage companion to
+    /// [`Self::diag_prelf_recon`] (post-quant) and
+    /// [`Self::diag_last_recon_y`] (post-recon). `None` before the first
+    /// encoded frame or when the gate is off.
+    diag_pred: Option<crate::predstat::PredFrame>,
     /// P0b — Persistent frame context for backward adaptation. Reset to
     /// `FrameContext::new_default()` on every keyframe (mirrors libvpx's
     /// `vp9_setup_past_independence` which resets FC bank 0). After each
@@ -1192,6 +1202,7 @@ impl StreamEncoder {
             last_frame_was_key: false,
             last_show_frame: false,
             diag_prelf_recon: None,
+            diag_pred: None,
             // P0b — start from default; reset on every keyframe.
             frame_context: FrameContext::new_default(),
             decoder_fc_state: FrameContext::new_default(),
@@ -1859,6 +1870,12 @@ impl StreamEncoder {
             let (ry, ru, rv) = self.ref_pool.new_frame_planes_mut();
             self.diag_prelf_recon = Some((ry.to_vec(), ru.to_vec(), rv.to_vec()));
         }
+        // STAGE-SSE DIAG — pull the whole-frame Y prediction the predstat
+        // taps captured during the picker pass (no-op / empty unless the
+        // `RVP9_E9_PREDSTAT` gate is on). Resets the predstat pred-frame
+        // accumulator for the next frame; the per-TX `PredStats` (taken via
+        // `predstat::take_snapshot`) is a separate accumulator, untouched.
+        self.diag_pred = Some(crate::predstat::take_pred_frame());
         if filter_level > 0 {
             let mi_grid = build_kf_mi_grid_for_lf(h / 8, w / 8, &sb_partitions);
             let (ry, ru, rv) = self.ref_pool.new_frame_planes_mut();
@@ -2577,6 +2594,11 @@ impl StreamEncoder {
         // test can separate residual/MC divergence from LF divergence.
         self.diag_prelf_recon =
             Some((new_recon_y.clone(), new_recon_u.clone(), new_recon_v.clone()));
+        // STAGE-SSE DIAG — pull the whole-frame Y prediction snapshot the
+        // predstat taps captured during the inter picker pass (empty
+        // unless the `RVP9_E9_PREDSTAT` gate is on). See the KF site for
+        // the accumulator-reset note.
+        self.diag_pred = Some(crate::predstat::take_pred_frame());
         if filter_level > 0 {
             apply_loop_filter_to_tight_recon(
                 w,
@@ -3438,6 +3460,26 @@ impl StreamEncoder {
         self.diag_prelf_recon
             .as_ref()
             .map(|(y, u, v)| (y.as_slice(), u.as_slice(), v.as_slice()))
+    }
+
+    /// STAGE-SSE DIAG — read access to the most-recent frame's whole-frame
+    /// Y PREDICTION (motion-compensated / intra, BEFORE any residual). The
+    /// per-pixel companion to [`Self::diag_prelf_recon`] (prediction +
+    /// residual, pre-LF) and [`Self::diag_last_recon_y`] (post-LF). Returns
+    /// the tight-stride `width × height` Y prediction buffer.
+    ///
+    /// Populated only when the `RVP9_E9_PREDSTAT` env gate is active (the
+    /// predstat taps fill the buffer during the picker pass). Returns
+    /// `None` before the first encoded frame; returns an empty-`y` buffer
+    /// when the gate is off (no capture happened). Used by the
+    /// `stage_sse_diag` oracle to compute per-frame pred-SSE against the
+    /// source over the full Y frame, localising the quality gap to the
+    /// prediction / quantization / loop-filter / reference stage.
+    ///
+    /// Instrumentation only — no coding behaviour depends on this.
+    #[must_use]
+    pub fn diag_pred_y(&self) -> Option<&[u8]> {
+        self.diag_pred.as_ref().map(|pf| pf.y.as_slice())
     }
 
     /// Test-only — read access to the ME-side LAST reference Y plane
