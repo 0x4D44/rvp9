@@ -2458,6 +2458,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     content_state_sb_grid: &[rvp9_core::mode_decision::inter::ContentStateSb],
     // Per-mi `skin_map[mi_rows * mi_cols]` from W2.5 (0 = non-skin).
     skin_map: &[u8],
+    // A23 — opt-in TPL rdmult adjustment. `Some((tpl_frame, r0))` only
+    // when `config.enable_tpl` is set AND the single-GOP forward TPL pass
+    // produced a valid frame grid for this frame; `None` otherwise (the
+    // gate config, byte-identical to the pre-A23 path). When `Some`, the
+    // per-64x64-SB `cb_rdmult` from `tpl::get_rdmult_delta`
+    // (`vp9_encodeframe.c:3719-3768`) substitutes the base rdmult fed to
+    // the inter RDO leaf (the consumer hook, `vp9_encodeframe.c:2235-2242`).
+    tpl_rdmult: Option<(&crate::tpl::TplDepFrame, f64)>,
 ) -> VecBackedInterCoefSource {
     use rvp9_core::bitstream::frame::{InterpFilter as WireInterpFilter, MAX_INTER_REFS};
     use rvp9_core::bitstream::header::FrameKind as WireFrameKind;
@@ -2818,6 +2826,41 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
             let sb_idx = sb_row * sb_cols + sb_col;
+
+            // A23 — per-64x64-SB TPL `cb_rdmult` (libvpx
+            // `get_rdmult_delta`, `vp9_encodeframe.c:3719-3768`). Computed
+            // once per SB when the TPL pass produced a valid grid; reused
+            // for every leaf in the SB (libvpx caches it on `x->cb_rdmult`
+            // before descending the SB). `None` when TPL is off — the
+            // base rdmult is then used unchanged (byte-identical path).
+            let tpl_sb_cb_rdmult: Option<i32> = tpl_rdmult.and_then(|(tf, r0)| {
+                // libvpx feeds `BLOCK_64X64` at the SB's mi top-left, the
+                // base q-index rdmult (Inter frame), and gates the
+                // adjustment to `gf_group_index < MAX_ARF_GOP_SIZE` and
+                // `layer_depth <= 1` (a linear-P-chain leaf is layer 0,
+                // index 1, both inside the gate).
+                let orig = rvp9_core::cost::compute_rd_mult(
+                    i32::from(base_qindex),
+                    rvp9_core::cost::FrameTypeForRd::Inter,
+                ) as i32;
+                let delta = crate::tpl::get_rdmult_delta(
+                    tf,
+                    sb_row * 8,
+                    sb_col * 8,
+                    rvp9_core::block::BlockSize::Block64x64,
+                    orig,
+                    r0,
+                    mi_rows_us,
+                    mi_cols_us,
+                    /* gf_group_index = */ 1,
+                    /* layer_depth   = */ 0,
+                );
+                if delta.used_tpl && delta.cb_rdmult != orig {
+                    Some(delta.cb_rdmult)
+                } else {
+                    None
+                }
+            });
 
             // A3'-int-pro - SB-level coarse ME (libvpx
             // `vp9_int_pro_motion_estimation`,
@@ -3940,10 +3983,23 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     use crate::rdo::inter_dispatch::{
                         InterDispatchLeaf, RefInputs, pick_inter_sb_leaf,
                     };
-                    let rdmult = i64::from(rvp9_core::cost::compute_rd_mult(
+                    // A23 — consumer hook (libvpx `vp9_encodeframe.c:2235-
+                    // 2242`): `x->rdmult = x->cb_rdmult` when the TPL model
+                    // is enabled. `tpl_sb_cb_rdmult` is `Some` only when
+                    // TPL is on AND the SB's `get_rdmult_delta` produced a
+                    // value distinct from the base rdmult; otherwise the
+                    // base q-index rdmult is used (byte-identical path).
+                    let base_rdmult = rvp9_core::cost::compute_rd_mult(
                         i32::from(leaf_qindex),
                         rvp9_core::cost::FrameTypeForRd::Inter,
-                    ));
+                    ) as i32;
+                    let rdmult = if let Some(cb) = tpl_sb_cb_rdmult {
+                        crate::tpl::TPL_RDMULT_ADJUSTED_BLOCKS
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        i64::from(cb)
+                    } else {
+                        i64::from(base_rdmult)
+                    };
                     let last_inputs = RefInputs {
                         available: true,
                         ref_y: &ref_y,
@@ -5825,6 +5881,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         }

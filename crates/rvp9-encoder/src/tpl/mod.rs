@@ -44,12 +44,28 @@
 //! sibling crate, so they share the private internals of the
 //! sub-modules.
 
+pub mod driver;
 pub mod mode_est;
 pub mod rdmult;
 pub mod stats;
 pub mod update;
 
+pub use driver::{TplPassResult, TplWindowFrame, run_single_gop_tpl};
 pub use mode_est::{IntraTplMode, ModeEstInputs, ModeEstResult, mode_estimation};
+
+/// A23 anti-G3 diagnostic — count of inter-leaf RDO dispatches that
+/// received a TPL-adjusted rdmult DIFFERENT from the base rdmult (i.e.
+/// `get_rdmult_delta` returned `used_tpl == true` AND `cb_rdmult !=
+/// base_rdmult`). Bumped at the `cb_rdmult` consumer hook in
+/// `lib.rs::pick_and_simulate_inter_encode_partitions` only when
+/// `enable_tpl` is on. With `enable_tpl` off it never advances (the
+/// hook substitution is gated). The PROOF test
+/// (`tests/w_tpl.rs`) asserts it is `> 0` on content with motion when
+/// TPL is enabled and `== 0` when disabled — a stubbed dispenser (all
+/// `mc_dep_cost == intra_cost` → `beta == 1` → no delta) would leave it
+/// at 0, failing the test.
+pub static TPL_RDMULT_ADJUSTED_BLOCKS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 pub use rdmult::{RdmultDelta, get_rdmult_delta, rdo_apply_cb_rdmult, vp9_get_adaptive_rdmult};
 pub use stats::{
     GfPicture, MAX_ARF_GOP_SIZE, MAX_ARF_LAYERS, MAX_INTER_REF_FRAMES, MAX_LAG_BUFFERS, MI_SIZE,

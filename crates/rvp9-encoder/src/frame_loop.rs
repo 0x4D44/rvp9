@@ -308,6 +308,26 @@ pub struct EncoderConfig {
     /// (resolution scalability) is a documented follow-up and is NOT
     /// modelled by this field. Range: `1..=3`.
     pub temporal_layers: u32,
+    /// A23 — opt-in Temporal-dependency Model (TPL). When `true` the
+    /// encoder runs a single-GOP forward TPL pass before each inter
+    /// frame's mode decision (a coarse per-8x8-block motion search over
+    /// the lookahead SOURCE frames + intra/inter SATD cost model +
+    /// backward `mc_dep_cost` propagation, libvpx
+    /// `vp9/encoder/vp9_tpl_model.c::mc_flow_dispenser`), and substitutes
+    /// the TPL-derived per-superblock `cb_rdmult` for the base rdmult fed
+    /// to the inter RDO picker (`get_rdmult_delta`,
+    /// `vp9/encoder/vp9_encodeframe.c:3719-3768`; consumer hook
+    /// `:2235-2242`).
+    ///
+    /// **Default `false`.** TPL changes the RDO lambda, so it changes
+    /// mode/MV preference and therefore the produced bitstream. With it
+    /// OFF the encoder is byte-identical to the pre-A23 path (the
+    /// cross-decoder gate runs `enable_tpl = false`). With it ON the
+    /// stream is still valid VP9 (byte-exact through vpxdec) but differs
+    /// from the TPL-off stream. libvpx parity: `cpi->sf.enable_tpl_model`
+    /// (`vp9_speed_features.c`), gated additionally on
+    /// `aq_mode ∈ {NO_AQ, PERCEPTUAL_AQ}` at the consumer hook.
+    pub enable_tpl: bool,
 }
 
 impl EncoderConfig {
@@ -369,6 +389,11 @@ impl EncoderConfig {
             // cross-decoder gate builds its config via this constructor,
             // so this default keeps it byte-identical.
             temporal_layers: 1,
+            // A23 — TPL opt-in, default OFF. Keeps the cross-decoder gate
+            // byte-identical (the gate config builds via this constructor
+            // / a full struct literal). Flip to `true` to activate the
+            // single-GOP forward TPL rdmult pass.
+            enable_tpl: false,
         }
     }
 
@@ -2130,6 +2155,41 @@ impl StreamEncoder {
         // `enable_alt_ref = false`, so this is always false there.
         let altref_picker_live =
             self.config.enable_alt_ref && self.altref_slot_emitted;
+        // A23 — opt-in single-GOP forward TPL pass. When `enable_tpl` is
+        // set we gather a forward window of GOP SOURCE frames (the frame
+        // being coded + the inter frames that follow it in display order,
+        // taken from the lookahead's forward peek) and run the
+        // `mc_flow_dispenser`-equivalent driver
+        // (`crate::tpl::run_single_gop_tpl`). The driver produces this
+        // frame's `TplDepFrame` with real `mc_dep_cost` accumulated from
+        // its downstream dependents; the picker then substitutes the
+        // TPL-derived per-SB `cb_rdmult` for the base rdmult.
+        //
+        // The forward peeks are CLONED into owned Vecs so the lookahead
+        // borrow is released before the `ref_pool` borrow below (the
+        // driver also needs the committed LAST recon for the window's
+        // first frame). When `enable_tpl` is off, OR no forward frame is
+        // buffered (lag_in_frames == 0 — the gate config), the window has
+        // a single frame, no propagation occurs, and TPL is `None` (the
+        // byte-identical path). libvpx `vp9_tpl_model.c:1138-1255`
+        // (`mc_flow_dispenser`), `vp9_encodeframe.c:6151-6162` (r0).
+        let tpl_window_fwd: Vec<Vec<u8>> = if self.config.enable_tpl {
+            // ARF cadence bounds the linear chain (libvpx walks the GF
+            // group up to `gf_group_size`); we cap the forward window at
+            // `gf_interval` downstream frames, limited by availability.
+            let max_fwd = self.gf_group.gf_interval() as usize;
+            let mut fwd = Vec::with_capacity(max_fwd);
+            for k in 0..max_fwd {
+                match self.lookahead.peek(k as i32) {
+                    Some(entry) => fwd.push(entry.y.clone()),
+                    None => break,
+                }
+            }
+            fwd
+        } else {
+            Vec::new()
+        };
+
         // A10 — resolve the residual-coding reference planes through the
         // pool's `ref_frame_map` indirection. The encoder's internal
         // named-ref model reads `ref_frame_map[which]` directly (LAST →
@@ -2141,6 +2201,32 @@ impl StreamEncoder {
         // makes identical decisions and the bitstream is byte-identical.
         let (last_y, last_u, last_v) =
             self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
+
+        // A23 — run the TPL driver now that both the source window and
+        // the LAST recon are in hand. `tpl_result` is `Some` only when
+        // `enable_tpl` is on AND the window has >= 2 frames (so real
+        // backward propagation occurs); otherwise the picker sees `None`.
+        let tpl_result: Option<crate::tpl::TplPassResult> =
+            if self.config.enable_tpl && !tpl_window_fwd.is_empty() {
+                let mut window: Vec<crate::tpl::TplWindowFrame<'_>> =
+                    Vec::with_capacity(1 + tpl_window_fwd.len());
+                window.push(crate::tpl::TplWindowFrame { y: input_yuv.0 });
+                for f in &tpl_window_fwd {
+                    window.push(crate::tpl::TplWindowFrame { y: f });
+                }
+                Some(crate::tpl::run_single_gop_tpl(
+                    &window,
+                    last_y,
+                    w as usize,
+                    h as usize,
+                    i32::from(q_index),
+                    &self.frame_context,
+                ))
+            } else {
+                None
+            };
+        let tpl_rdmult_arg: Option<(&crate::tpl::TplDepFrame, f64)> =
+            tpl_result.as_ref().map(|r| (&r.coded_frame, r.r0));
         let (gld_y, gld_u, gld_v) =
             self.ref_pool.named_ref_planes(crate::buffer_pool::GOLDEN_REF);
         let altref_planes_for_picker: Option<(&[u8], &[u8], &[u8])> =
@@ -2210,6 +2296,9 @@ impl StreamEncoder {
             self.pre_analysis.high_source_sad,
             &self.pre_analysis.content_state_sb,
             &self.pre_analysis.skin_map,
+            // A23 — TPL rdmult adjustment (opt-in). `None` unless
+            // `enable_tpl` produced a valid forward-propagated grid.
+            tpl_rdmult_arg,
         );
 
         // F11.0 — apply the in-loop deblocking filter to the encoder's
@@ -2682,6 +2771,11 @@ impl StreamEncoder {
             self.pre_analysis.high_source_sad,
             &self.pre_analysis.content_state_sb,
             &self.pre_analysis.skin_map,
+            // A23 — TPL is not wired into the non-show ARF's own coding in
+            // this bounded increment (documented follow-up: the ARF is a
+            // TPL `gf_picture[1]` frame in libvpx). Pass `None` — the ARF
+            // path is byte-identical to the pre-A23 behaviour.
+            None,
         );
 
         // In-loop deblock on the ARF reconstruction — the decoder runs
@@ -4004,6 +4098,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4046,6 +4141,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4100,6 +4196,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4167,6 +4264,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4214,6 +4312,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4245,6 +4344,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4283,6 +4383,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4318,6 +4419,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4453,6 +4555,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4539,6 +4642,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4597,6 +4701,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4657,6 +4762,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4747,6 +4853,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4901,6 +5008,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4982,6 +5090,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5223,6 +5332,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5281,6 +5391,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5401,6 +5512,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5482,6 +5594,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5540,6 +5653,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5617,6 +5731,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5685,6 +5800,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5770,6 +5886,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5821,6 +5938,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5895,6 +6013,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5961,6 +6080,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6043,6 +6163,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6131,6 +6252,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6246,6 +6368,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6444,6 +6567,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6569,6 +6693,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         }
@@ -7505,6 +7630,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7564,6 +7690,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7646,6 +7773,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7758,6 +7886,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7803,6 +7932,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7845,6 +7975,7 @@ mod tests {
             rc_mode: RcMode::Cbr,
             cq_level: 0,
             temporal_layers: 1,
+            enable_tpl: false,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7939,6 +8070,7 @@ mod tests {
                 rc_mode: RcMode::Cbr,
                 cq_level: 0,
                 temporal_layers: 1,
+                enable_tpl: false,
                 min_qindex: 4,
                 max_qindex: 255,
             };

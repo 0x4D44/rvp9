@@ -283,6 +283,7 @@ fn cross_decoder_gate_vpxdec_ffmpeg() {
         rc_mode: RcMode::Cbr,
         cq_level: 0,
         temporal_layers: 1,
+        enable_tpl: false,
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -553,6 +554,7 @@ fn rc_x1_diagnostic_dump() {
         rc_mode: RcMode::Cbr,
         cq_level: 0,
         temporal_layers: 1,
+        enable_tpl: false,
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -630,6 +632,7 @@ fn rc_x1_sb_leaf_dump() {
         rc_mode: RcMode::Cbr,
         cq_level: 0,
         temporal_layers: 1,
+        enable_tpl: false,
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -706,6 +709,7 @@ fn rc_x1_internal_dump() {
         rc_mode: RcMode::Cbr,
         cq_level: 0,
         temporal_layers: 1,
+        enable_tpl: false,
         min_qindex: 4,
         max_qindex: 255,
     };

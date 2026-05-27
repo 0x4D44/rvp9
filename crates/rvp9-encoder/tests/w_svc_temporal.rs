@@ -99,6 +99,7 @@ fn svc_config(framerate: f64, temporal_layers: u32) -> EncoderConfig {
         min_qindex: 4,
         max_qindex: 255,
         temporal_layers,
+        enable_tpl: false,
     }
 }
 

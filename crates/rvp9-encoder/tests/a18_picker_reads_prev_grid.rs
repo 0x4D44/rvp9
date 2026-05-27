@@ -97,6 +97,7 @@ fn a18_picker_reads_prev_grid_when_activated() {
         rc_mode: RcMode::Cbr,
         cq_level: 0,
         temporal_layers: 1,
+        enable_tpl: false,
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -201,6 +202,7 @@ fn a18_picker_reads_nothing_when_default_off() {
         rc_mode: RcMode::Cbr,
         cq_level: 0,
         temporal_layers: 1,
+        enable_tpl: false,
         min_qindex: 4,
         max_qindex: 255,
     };
