@@ -2480,8 +2480,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         PickInterModeParams, pick_inter_mode,
     };
     use rvp9_core::mode_decision::nonrd_partition::{
-        NonRdDescentParams, PartitionRdCandidate, nonrd_pick_partition,
-        nonrd_pick_partition_with_breakout, variance_hint_bounds,
+        NonRdDescentParams, PartitionRdCandidate, nonrd_pick_partition_with_pruners,
+        variance_hint_bounds,
     };
     use rvp9_core::mode_decision::speed_features::{self as sf_mod};
     use rvp9_core::mv_search::int_pro_me::int_pro_motion_estimation;
@@ -3370,13 +3370,31 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // and `vp9_ac_quant(base_qindex)`. No synthetic shortcut.
                 let ml_breakout_active = sf.rd_ml_partition.search_breakout
                     && i32::from(base_qindex) >= 100;
-                let descent_result = if ml_breakout_active {
+                // A21-rect — ML rectangular-partition pruner
+                // (`ml_partition::ml_prune_rect_partition`, libvpx
+                // `vp9_encodeframe.c:3334-3425`; gate at :4332-4339).
+                // Active when ANY of the 16/32/64 `prune_rect_thresh`
+                // entries is non-negative (libvpx leaves the model off
+                // per-size via `thresh < 0`). The gate / RT presets set
+                // all thresholds to -1 so the pruner is INERT there;
+                // Good speed 0/1 turn it on. libvpx also gates on
+                // `!frame_is_intra_only` — the inter descent only runs
+                // on non-KF frames, so that holds here.
+                let ml_rect_active = sf.rd_ml_partition.prune_rect_thresh[1] >= 0
+                    || sf.rd_ml_partition.prune_rect_thresh[2] >= 0
+                    || sf.rd_ml_partition.prune_rect_thresh[3] >= 0;
+
+                let descent_result = {
                     use rvp9_core::block::BlockSize as BS;
+                    use rvp9_core::mode_decision::nonrd_partition::RectPruneRdContext;
                     let src_y_buf: &[u8] = input_yuv.0;
                     let q_idx = i32::from(base_qindex);
                     let ac_q =
                         i32::from(rvp9_core::quant::ac_quant(q_idx, 0, BitDepth::Eight));
+                    let dc_q =
+                        i32::from(rvp9_core::quant::dc_quant(q_idx, 0, BitDepth::Eight));
                     let breakout_thresh = sf.rd_ml_partition.search_breakout_thresh;
+                    let prune_rect_thresh = sf.rd_ml_partition.prune_rect_thresh;
                     // 64-byte zero reference (libvpx `vp9_64_zeros`,
                     // :3253) — variance core reads it row-by-row with a
                     // zero stride so the same 64 bytes cover any block.
@@ -3387,6 +3405,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                         none_rate: u32,
                                         none_dist: u32|
                      -> bool {
+                        if !ml_breakout_active {
+                            return false;
+                        }
                         // libvpx only consults breakout at 64/32/16/8.
                         if !matches!(
                             bs,
@@ -3445,14 +3466,87 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         }
                         fired
                     };
-                    nonrd_pick_partition_with_breakout(
+
+                    // A21-rect — real `ml_prune_rect_partition` adapter.
+                    // Features are REAL: `vp9_dc_quant(base_qindex)`,
+                    // `pc_tree->partitioning == NONE`, `ref_rd`
+                    // (best_rdc.rdcost), the NONE arm's RD, and the 4
+                    // SPLIT children's NONE-arm RDs (libvpx :3380-3401).
+                    // The model's `max_score - thresh` margin decides
+                    // which rect arms stay allowed; a pruned arm skips
+                    // its picker invocations. The ANTI-G3 counter bumps
+                    // once per arm the model removes (so a stub that
+                    // never pruned leaves it at 0).
+                    let mut rect_prune = |sb_local_x_8x8: usize,
+                                          sb_local_y_8x8: usize,
+                                          bs: BS,
+                                          rd: RectPruneRdContext,
+                                          allow_horz_in: bool,
+                                          allow_vert_in: bool|
+                     -> (bool, bool) {
+                        if !ml_rect_active {
+                            return (allow_horz_in, allow_vert_in);
+                        }
+                        // Model only covers 16/32/64 (libvpx 8×8 = break).
+                        let thresh = match bs {
+                            BS::Block16x16 => prune_rect_thresh[1],
+                            BS::Block32x32 => prune_rect_thresh[2],
+                            BS::Block64x64 => prune_rect_thresh[3],
+                            _ => return (allow_horz_in, allow_vert_in),
+                        };
+                        if thresh < 0 {
+                            return (allow_horz_in, allow_vert_in);
+                        }
+                        // `ref_rd` is libvpx `best_rdc.rdcost`; if
+                        // nothing was feasible the pruner is a no-op.
+                        let ref_rd = match rd.best_rd_cost {
+                            Some(r) => r,
+                            None => return (allow_horz_in, allow_vert_in),
+                        };
+                        let _ = (sb_local_x_8x8, sb_local_y_8x8);
+                        let rin = crate::ml_partition::RectPruneInput {
+                            bsize: bs,
+                            dc_q,
+                            thresh,
+                            ref_rd,
+                            partitioning_is_none: rd.partitioning_is_none,
+                            // libvpx reads `pc_tree->none.rdcost`; -1 (an
+                            // out-of-range sentinel the model treats as
+                            // "invalid" → rd_ratio = 2.0) when NONE was
+                            // infeasible, matching libvpx's uninitialised
+                            // `INT64_MAX` guard at :3393.
+                            none_rdcost: rd.none_rd_cost.unwrap_or(-1),
+                            split_none_rdcost: [
+                                rd.split_none_rd_cost[0].unwrap_or(-1),
+                                rd.split_none_rd_cost[1].unwrap_or(-1),
+                                rd.split_none_rd_cost[2].unwrap_or(-1),
+                                rd.split_none_rd_cost[3].unwrap_or(-1),
+                            ],
+                        };
+                        let dec = crate::ml_partition::ml_prune_rect_partition(
+                            &rin,
+                            allow_horz_in,
+                            allow_vert_in,
+                        );
+                        // ANTI-G3: count each arm the model removed.
+                        if allow_horz_in && !dec.allow_horz {
+                            crate::rdo::inter_dispatch::ML_PARTITION_RECT_PRUNED
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        if allow_vert_in && !dec.allow_vert {
+                            crate::rdo::inter_dispatch::ML_PARTITION_RECT_PRUNED
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        (dec.allow_horz, dec.allow_vert)
+                    };
+
+                    nonrd_pick_partition_with_pruners(
                         &hint,
                         &params,
                         &mut descent_picker,
                         &mut breakout,
+                        &mut rect_prune,
                     )
-                } else {
-                    nonrd_pick_partition(&hint, &params, &mut descent_picker)
                 };
 
                 // A4 anti-G3 diagnostic: count this SB if the RD

@@ -69,11 +69,11 @@ pub enum ContentTier {
 
 /// libvpx `ML_PARTITION_RD_FEATURES sf->rd_ml_partition`
 /// (`vp9_speed_features.h`). The slice rvp9's A21 partition-pruning
-/// integration consumes — the `search_breakout` gate + its
-/// per-quantiser-context thresholds. Other libvpx fields
-/// (`search_early_termination`, `var_pruning`, `prune_rect_thresh`)
-/// are documented A21 follow-ups (rvp9's descent is square NONE/SPLIT
-/// only, so rect-pruning has nothing to gate today).
+/// integration consumes — the `search_breakout` gate + thresholds and
+/// (A21-rect) the `prune_rect_thresh` rect-pruning thresholds. Other
+/// libvpx fields (`search_early_termination`, `var_pruning`) are
+/// documented A21 follow-ups (`search_early_termination` is speed-0
+/// only; `var_pruning` needs the `simple_motion_search` pre-pass).
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct RdMlPartition {
     /// libvpx `sf->rd_ml_partition.search_breakout`
@@ -88,16 +88,30 @@ pub struct RdMlPartition {
     /// positive `ml_predict_breakout` linear score `>= thresh` votes
     /// to stop the partition search.
     pub search_breakout_thresh: [f32; 3],
+    /// libvpx `sf->rd_ml_partition.prune_rect_thresh[bsize_idx]`
+    /// (`vp9_speed_features.c:253-256, 274-276, 340-342, 1012-1015`).
+    /// Indexed `[0]`=8×8 (always -1, unused), `[1]`=16×16, `[2]`=32×32,
+    /// `[3]`=64×64. Drives `ml_prune_rect_partition`
+    /// (`vp9_encodeframe.c:3334-3425`, called at :4337): the model's
+    /// `max_score - thresh` margin decides which rect arms
+    /// (PARTITION_HORZ / PARTITION_VERT) stay allowed. A negative
+    /// thresh disables the model for that size (libvpx :3366
+    /// `if (thresh < 0) return;`). Good speed 0: `[-1, 350, 325, 250]`;
+    /// speed 1: `[-1, 225, 225, 225]`; speed 2+ and the best-quality /
+    /// RT defaults: all `-1` (off).
+    pub prune_rect_thresh: [i32; 4],
 }
 
 impl RdMlPartition {
-    /// libvpx best-quality defaults (`vp9_speed_features.c:879-880`):
-    /// breakout off.
+    /// libvpx best-quality / RT defaults (`vp9_speed_features.c:879-880`,
+    /// `:1012-1015`): breakout off, rect-pruning off (all thresholds
+    /// negative).
     #[must_use]
     pub const fn defaults() -> Self {
         Self {
             search_breakout: false,
             search_breakout_thresh: [0.0, 0.0, 0.0],
+            prune_rect_thresh: [-1, -1, -1, -1],
         }
     }
 }
@@ -317,6 +331,25 @@ fn apply_good(
     // speed >= 3 (and speed 2 at 720p+) leave breakout off (the
     // best-quality default), so no further assignment is needed.
 
+    // A21-rect — `rd_ml_partition.prune_rect_thresh`, lifted from
+    // libvpx `set_good_speed_feature_framesize_independent`
+    // (`vp9_speed_features.c:253-256, 274-276, 340-342`). These are
+    // resolution-INDEPENDENT (unlike search_breakout above). Drives
+    // `ml_prune_rect_partition` (`vp9_encodeframe.c:3334-3425`); a
+    // negative thresh disables the model for that size. Index `[0]` is
+    // 8×8 (always -1; the model has no 8×8 arm).
+    if mag == 0 {
+        // libvpx `:253-256` — speed 0 Good base.
+        sf.rd_ml_partition.prune_rect_thresh = [-1, 350, 325, 250];
+    } else if mag == 1 {
+        // libvpx `:274-276` — speed 1 tightens 16/32/64 to 225.
+        sf.rd_ml_partition.prune_rect_thresh = [-1, 225, 225, 225];
+    } else {
+        // libvpx `:340-342` — speed 2+ disables rect-pruning (all -1).
+        // (Best-quality / RT defaults already start at all -1.)
+        sf.rd_ml_partition.prune_rect_thresh = [-1, -1, -1, -1];
+    }
+
     // No further Good-arm overrides land here. Wave 4 (RDO driver)
     // brings the remaining speed 0..=4 good-quality switch arms with
     // their full libvpx citation set.
@@ -378,6 +411,34 @@ mod tests {
         // Speed 3, SD: off (libvpx :176-177).
         let sd3 = dispatch(3, Deadline::Good, 640, 480, ContentTier::Default);
         assert!(!sd3.rd_ml_partition.search_breakout);
+    }
+
+    /// A21-rect — `rd_ml_partition.prune_rect_thresh` matches libvpx's
+    /// resolution-INDEPENDENT good-quality settings
+    /// (`vp9_speed_features.c:253-256, 274-276, 340-342`) and is OFF
+    /// (all -1) at the Realtime / best-quality defaults (`:1012-1015`).
+    #[test]
+    fn a21_rd_ml_partition_rect_prune_thresh_gate() {
+        // Speed 0 Good — [-1, 350, 325, 250] (libvpx :253-256).
+        // Resolution-independent: same at SD and 1080p.
+        let g0_sd = dispatch(0, Deadline::Good, 640, 480, ContentTier::Default);
+        assert_eq!(g0_sd.rd_ml_partition.prune_rect_thresh, [-1, 350, 325, 250]);
+        let g0_fhd = dispatch(0, Deadline::Good, 1920, 1080, ContentTier::Default);
+        assert_eq!(g0_fhd.rd_ml_partition.prune_rect_thresh, [-1, 350, 325, 250]);
+
+        // Speed 1 Good — [-1, 225, 225, 225] (libvpx :274-276).
+        let g1 = dispatch(1, Deadline::Good, 640, 480, ContentTier::Default);
+        assert_eq!(g1.rd_ml_partition.prune_rect_thresh, [-1, 225, 225, 225]);
+
+        // Speed 2 Good — off (libvpx :340-342).
+        let g2 = dispatch(2, Deadline::Good, 640, 480, ContentTier::Default);
+        assert_eq!(g2.rd_ml_partition.prune_rect_thresh, [-1, -1, -1, -1]);
+
+        // Speed 7 Realtime — off (libvpx :1012-1015 / best-quality
+        // defaults). The sacred gate runs here, so the rect pruner is
+        // inert on the gate stream.
+        let rt7 = dispatch(7, Deadline::Realtime, 1280, 720, ContentTier::Default);
+        assert_eq!(rt7.rd_ml_partition.prune_rect_thresh, [-1, -1, -1, -1]);
     }
 
     /// Speed 7 / Realtime — the rvp9 §11 hardcodes at lib.rs:3713-3724.

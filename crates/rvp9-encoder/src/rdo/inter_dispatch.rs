@@ -141,6 +141,23 @@ pub static RD_PARTITION_RECT_LEAVES: std::sync::atomic::AtomicU64 =
 pub static ML_PARTITION_BREAKOUT_FIRED: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
+/// A21-rect — count of rectangular-partition ARMS the ML rect-prune
+/// model (`ml_partition::ml_prune_rect_partition`, libvpx
+/// `vp9/encoder/vp9_encodeframe.c:3334-3425`; gate at :4337) REMOVED:
+/// it ran after NONE+SPLIT and voted to skip PARTITION_HORZ and/or
+/// PARTITION_VERT at a block. Incremented once per arm the real NN model
+/// disallows (so a block where it prunes both bumps it by 2). The PROOF
+/// test (`tests/w_ml_rect_prune.rs`) asserts this advances when the
+/// `prune_rect_thresh` speed feature is enabled and stays at zero at the
+/// gate's speed (where all thresholds are -1) — proving the pruner is
+/// wired to the real model and actually skips rect evaluations (anti-G3).
+/// A stub that never pruned would leave this at zero and fail the proof.
+/// libvpx parity: `*allow_horz = *allow_horz && horz;` /
+/// `*allow_vert = *allow_vert && vert;` (`vp9_encodeframe.c:3422-3423`),
+/// which short-circuit the rect search at :4343 / :4393.
+pub static ML_PARTITION_RECT_PRUNED: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 /// W-ALTREF — count of leaves whose RDO winner selected
 /// `RefFrame::AltrefFrame` (single-ref ALTREF, slot 2). Incremented
 /// once per leaf the dispatch resolves to ALTREF. The PROOF test

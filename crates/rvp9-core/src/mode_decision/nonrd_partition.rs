@@ -276,6 +276,111 @@ impl BreakoutPruner for NoBreakout {
     }
 }
 
+/// The RD inputs `ml_prune_rect_partition` reads about the current
+/// block, gathered by the descent AFTER it has evaluated PARTITION_NONE
+/// and PARTITION_SPLIT (mirroring libvpx's call placement at
+/// `vp9/encoder/vp9_encodeframe.c:4332-4339`, which runs after the
+/// NONE/SPLIT arms have populated `pc_tree`).
+#[derive(Copy, Clone, Debug)]
+pub struct RectPruneRdContext {
+    /// libvpx `best_rdc.rdcost` — the running best RD at this block
+    /// (the `ref_rd` argument, `vp9_encodeframe.c:4338`). `None` when
+    /// no arm was feasible (the rect pruner is then not consulted).
+    pub best_rd_cost: Option<i64>,
+    /// libvpx `pc_tree->none.rdcost` — the PARTITION_NONE arm's RD at
+    /// this block, or `None` if NONE was infeasible.
+    pub none_rd_cost: Option<i64>,
+    /// libvpx `pc_tree->split[i]->none.rdcost` — each SPLIT child's own
+    /// PARTITION_NONE-arm RD (NOT the child's best). `None` per slot if
+    /// that child's NONE arm was infeasible.
+    pub split_none_rd_cost: [Option<i64>; 4],
+    /// libvpx `pc_tree->partitioning == PARTITION_NONE` — whether NONE
+    /// is the partition currently winning at this block.
+    pub partitioning_is_none: bool,
+}
+
+/// A21-rect — rectangular-partition pruning hook (libvpx
+/// `ml_prune_rect_partition`, `vp9/encoder/vp9_encodeframe.c:3334-3425`;
+/// gate at `:4332-4339`).
+///
+/// After the descent has evaluated PARTITION_NONE and PARTITION_SPLIT at
+/// a block, libvpx consults the ML rect-prune model to decide whether
+/// the PARTITION_HORZ / PARTITION_VERT arms are still worth searching,
+/// ANDing the verdict into the pre-existing `partition_horz_allowed` /
+/// `partition_vert_allowed` masks. This trait abstracts that vote so the
+/// encoder can plug the real `ml_partition::ml_prune_rect_partition`
+/// (with the real DC quantiser + RD features) without pulling the
+/// `ml_partition` module into `rvp9-core`.
+///
+/// The hook is consulted ONLY at blocks where rect is otherwise eligible
+/// (`do_split && !bsize_at_floor && rect_within_max`, i.e. libvpx's
+/// `(partition_horz_allowed || partition_vert_allowed) && bsize >
+/// BLOCK_8X8` at `:4334`). The returned `(allow_horz, allow_vert)` gate
+/// the descent's rect evaluation: a `false` skips that rect arm's picker
+/// invocations entirely.
+pub trait RectPruner {
+    /// Vote on which rectangular arms to keep at this block.
+    ///
+    /// - `sb_local_x_8x8`, `sb_local_y_8x8`: top-left of the block in
+    ///   8×8 mi units within the SB.
+    /// - `bsize`: the square parent being partitioned (16/32/64).
+    /// - `rd`: the NONE/SPLIT RD context gathered so far.
+    /// - `allow_horz_in`, `allow_vert_in`: the pre-existing arm masks
+    ///   (both `true` at the descent's call site — the size gates are
+    ///   handled by the caller before this hook).
+    ///
+    /// Returns `(allow_horz, allow_vert)`; each is the input AND the
+    /// model verdict (libvpx `:3422-3423`).
+    fn prune_rect(
+        &mut self,
+        sb_local_x_8x8: usize,
+        sb_local_y_8x8: usize,
+        bsize: BlockSize,
+        rd: RectPruneRdContext,
+        allow_horz_in: bool,
+        allow_vert_in: bool,
+    ) -> (bool, bool);
+}
+
+/// No-op rect pruner — keeps both arms (never prunes). Used as the
+/// default when `sf.rd_ml_partition.prune_rect_thresh` disables the
+/// model, so the descent behaves exactly as the pre-A21-rect baseline.
+pub struct NoRectPrune;
+
+impl RectPruner for NoRectPrune {
+    #[inline]
+    fn prune_rect(
+        &mut self,
+        _: usize,
+        _: usize,
+        _: BlockSize,
+        _: RectPruneRdContext,
+        allow_horz_in: bool,
+        allow_vert_in: bool,
+    ) -> (bool, bool) {
+        (allow_horz_in, allow_vert_in)
+    }
+}
+
+/// Allow naked closures as rect pruners (so the encoder can plug an
+/// inline `ml_prune_rect_partition` adapter without a named struct).
+impl<F> RectPruner for F
+where
+    F: FnMut(usize, usize, BlockSize, RectPruneRdContext, bool, bool) -> (bool, bool),
+{
+    fn prune_rect(
+        &mut self,
+        sb_local_x_8x8: usize,
+        sb_local_y_8x8: usize,
+        bsize: BlockSize,
+        rd: RectPruneRdContext,
+        allow_horz_in: bool,
+        allow_vert_in: bool,
+    ) -> (bool, bool) {
+        (self)(sb_local_x_8x8, sb_local_y_8x8, bsize, rd, allow_horz_in, allow_vert_in)
+    }
+}
+
 /// Allow naked closures as breakout pruners (so the encoder can plug an
 /// inline `ml_predict_breakout` adapter without a named struct).
 impl<F> BreakoutPruner for F
@@ -559,6 +664,28 @@ pub fn nonrd_pick_partition_with_breakout<P: ModePickerFn, B: BreakoutPruner>(
     picker: &mut P,
     breakout: &mut B,
 ) -> NonRdPartitionResult {
+    // No rect pruning (pre-A21-rect behaviour). Equivalent to libvpx with
+    // `sf.rd_ml_partition.prune_rect_thresh[*] < 0`.
+    nonrd_pick_partition_with_pruners(hint, params, picker, breakout, &mut NoRectPrune)
+}
+
+/// As [`nonrd_pick_partition_with_breakout`], but ALSO with an A21-rect
+/// ML rectangular-partition pruning hook (libvpx `ml_prune_rect_partition`,
+/// `vp9/encoder/vp9_encodeframe.c:3334-3425`; gate at `:4332-4339`).
+///
+/// The `rect_prune` hook is consulted after NONE + SPLIT are evaluated
+/// at a rect-eligible block; its `(allow_horz, allow_vert)` verdict
+/// gates whether each rect arm's picker invocations run at all. Pass
+/// [`NoRectPrune`] to disable (identical to
+/// [`nonrd_pick_partition_with_breakout`]).
+#[must_use]
+pub fn nonrd_pick_partition_with_pruners<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
+    hint: &PartitionDecision,
+    params: &NonRdDescentParams<'_>,
+    picker: &mut P,
+    breakout: &mut B,
+    rect_prune: &mut R,
+) -> NonRdPartitionResult {
     let mut state = DescentState {
         cells: [[BlockSize::Block8x8; SB_GRID]; SB_GRID],
         leaves: Vec::with_capacity(16),
@@ -589,6 +716,7 @@ pub fn nonrd_pick_partition_with_breakout<P: ModePickerFn, B: BreakoutPruner>(
         params,
         picker,
         breakout,
+        rect_prune,
         (0, 0),
         BlockSize::Block64x64,
         ctx_above,
@@ -615,11 +743,12 @@ struct DescentState {
 // load-bearing (hint, bounds, picker, origin, bsize, above/left ctx,
 // state accumulator). Refactoring to a struct would just hide the
 // stack frame.
-fn descend<P: ModePickerFn, B: BreakoutPruner>(
+fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
     hint: &PartitionDecision,
     params: &NonRdDescentParams<'_>,
     picker: &mut P,
     breakout: &mut B,
+    rect_prune: &mut R,
     origin_8x8: (usize, usize),
     bsize: BlockSize,
     above: bool,
@@ -647,6 +776,11 @@ fn descend<P: ModePickerFn, B: BreakoutPruner>(
     // Try PARTITION_NONE.
     let mut best_pick: Option<PartitionRdCandidate> = None;
     let mut best_rd_cost: i64 = i64::MAX;
+    // A21-rect — the PARTITION_NONE arm's own RD cost (libvpx
+    // `pc_tree->none.rdcost`), captured separately from `best_rd_cost`
+    // so the rect pruner gets the NONE arm even after SPLIT/rect lower
+    // the running best. `None` when NONE was infeasible.
+    let mut none_rd_cost: Option<i64> = None;
     // A21 — `do_split` gate (libvpx `vp9_encodeframe.c:4004`,
     // `int do_split = bsize >= BLOCK_8X8`). The ML breakout pruner can
     // force this to `false` after a winning NONE pick, suppressing the
@@ -659,6 +793,7 @@ fn descend<P: ModePickerFn, B: BreakoutPruner>(
         // Add partition_cost[NONE] to rate (libvpx :5010).
         let rate_total = cand.rate.saturating_add(none_cost);
         let rdc = rd_cost(params.rd_mult, rate_total, cand.dist);
+        none_rd_cost = Some(rdc);
         if rdc < best_rd_cost {
             best_rd_cost = rdc;
             best_pick = Some(PartitionRdCandidate {
@@ -714,6 +849,7 @@ fn descend<P: ModePickerFn, B: BreakoutPruner>(
                 params,
                 picker,
                 breakout,
+                rect_prune,
                 child_origin,
                 child_bsize,
                 above,
@@ -782,47 +918,84 @@ fn descend<P: ModePickerFn, B: BreakoutPruner>(
     // covered by `!bsize_at_floor` (the descent floors at Block16x16).
     let rect_within_max = (bsize as u8) <= (params.max_partition_size as u8);
     if do_split && !bsize_at_floor && rect_within_max {
-        // HORZ then VERT, in libvpx order.
+        // A21-rect — consult the ML rect-prune model (libvpx
+        // `ml_prune_rect_partition`, `vp9_encodeframe.c:3334-3425`;
+        // gate at `:4332-4339`). It runs AFTER NONE + SPLIT and ANDs
+        // its verdict into the per-arm allow masks. libvpx's
+        // `do_ml_rect_partition_pruning` gate requires both arms not
+        // already force-disabled and `bsize > BLOCK_8X8` — here both
+        // arms start `true` and `!bsize_at_floor` covers the size
+        // floor. `best_rdc.rdcost` (= our running `best_rd_cost`, which
+        // already absorbed NONE + SPLIT) is the `ref_rd` feature.
+        //
+        // `pc_tree->partitioning == PARTITION_NONE`: NONE is the
+        // current winner iff it produced a pick AND SPLIT did not lower
+        // the running best past it (`split_pick.is_none()`).
+        let partitioning_is_none = best_pick.is_some() && split_pick.is_none();
+        let rd_ctx = RectPruneRdContext {
+            best_rd_cost: (best_rd_cost != i64::MAX).then_some(best_rd_cost),
+            none_rd_cost,
+            split_none_rd_cost: [
+                split_children[0].and_then(|r| r.none_rd_cost),
+                split_children[1].and_then(|r| r.none_rd_cost),
+                split_children[2].and_then(|r| r.none_rd_cost),
+                split_children[3].and_then(|r| r.none_rd_cost),
+            ],
+            partitioning_is_none,
+        };
+        let (allow_horz, allow_vert) =
+            rect_prune.prune_rect(col_8x8, row_8x8, bsize, rd_ctx, true, true);
+
+        // HORZ then VERT, in libvpx order. Each arm is gated by the
+        // rect pruner's verdict (`allow_horz` / `allow_vert`); a pruned
+        // arm skips ALL its picker invocations (libvpx's
+        // `partition_horz_allowed` / `partition_vert_allowed` short-
+        // circuit at `:4343` / `:4393`).
         let horz_step = rect_half_step_8x8(bsize);
-        if let Some(sub) = subsize_for_horz(bsize) {
-            let horz_cost =
-                params.partition_costs[part_ctx][PARTITION_HORZ_IDX].max(0) as u32;
-            // Top half at (row, col); bottom half at (row + hbs, col).
-            if let (Some(top), Some(bot)) = (
-                feasible_rect_pick(picker, col_8x8, row_8x8, sub),
-                (row_8x8 + horz_step < SB_GRID)
-                    .then(|| feasible_rect_pick(picker, col_8x8, row_8x8 + horz_step, sub))
-                    .flatten(),
-            ) {
-                let sum_rate = top.rate.saturating_add(bot.rate).saturating_add(horz_cost);
-                let sum_dist = top.dist.saturating_add(bot.dist);
-                let rdc = rd_cost(params.rd_mult, sum_rate, sum_dist);
-                if rdc < best_rd_cost {
-                    best_rd_cost = rdc;
-                    rect_pick = Some((PartitionType::Horz, top, bot));
+        if allow_horz {
+            if let Some(sub) = subsize_for_horz(bsize) {
+                let horz_cost =
+                    params.partition_costs[part_ctx][PARTITION_HORZ_IDX].max(0) as u32;
+                // Top half at (row, col); bottom half at (row + hbs, col).
+                if let (Some(top), Some(bot)) = (
+                    feasible_rect_pick(picker, col_8x8, row_8x8, sub),
+                    (row_8x8 + horz_step < SB_GRID)
+                        .then(|| feasible_rect_pick(picker, col_8x8, row_8x8 + horz_step, sub))
+                        .flatten(),
+                ) {
+                    let sum_rate =
+                        top.rate.saturating_add(bot.rate).saturating_add(horz_cost);
+                    let sum_dist = top.dist.saturating_add(bot.dist);
+                    let rdc = rd_cost(params.rd_mult, sum_rate, sum_dist);
+                    if rdc < best_rd_cost {
+                        best_rd_cost = rdc;
+                        rect_pick = Some((PartitionType::Horz, top, bot));
+                    }
                 }
             }
         }
         let vert_step = rect_half_step_8x8(bsize);
-        if let Some(sub) = subsize_for_vert(bsize) {
-            let vert_cost =
-                params.partition_costs[part_ctx][PARTITION_VERT_IDX].max(0) as u32;
-            // Left half at (row, col); right half at (row, col + hbs).
-            if let (Some(left_pick), Some(right_pick)) = (
-                feasible_rect_pick(picker, col_8x8, row_8x8, sub),
-                (col_8x8 + vert_step < SB_GRID)
-                    .then(|| feasible_rect_pick(picker, col_8x8 + vert_step, row_8x8, sub))
-                    .flatten(),
-            ) {
-                let sum_rate = left_pick
-                    .rate
-                    .saturating_add(right_pick.rate)
-                    .saturating_add(vert_cost);
-                let sum_dist = left_pick.dist.saturating_add(right_pick.dist);
-                let rdc = rd_cost(params.rd_mult, sum_rate, sum_dist);
-                if rdc < best_rd_cost {
-                    best_rd_cost = rdc;
-                    rect_pick = Some((PartitionType::Vert, left_pick, right_pick));
+        if allow_vert {
+            if let Some(sub) = subsize_for_vert(bsize) {
+                let vert_cost =
+                    params.partition_costs[part_ctx][PARTITION_VERT_IDX].max(0) as u32;
+                // Left half at (row, col); right half at (row, col + hbs).
+                if let (Some(left_pick), Some(right_pick)) = (
+                    feasible_rect_pick(picker, col_8x8, row_8x8, sub),
+                    (col_8x8 + vert_step < SB_GRID)
+                        .then(|| feasible_rect_pick(picker, col_8x8 + vert_step, row_8x8, sub))
+                        .flatten(),
+                ) {
+                    let sum_rate = left_pick
+                        .rate
+                        .saturating_add(right_pick.rate)
+                        .saturating_add(vert_cost);
+                    let sum_dist = left_pick.dist.saturating_add(right_pick.dist);
+                    let rdc = rd_cost(params.rd_mult, sum_rate, sum_dist);
+                    if rdc < best_rd_cost {
+                        best_rd_cost = rdc;
+                        rect_pick = Some((PartitionType::Vert, left_pick, right_pick));
+                    }
                 }
             }
         }
@@ -865,6 +1038,7 @@ fn descend<P: ModePickerFn, B: BreakoutPruner>(
             rate: sum_rate,
             dist: sum_dist,
             rd_cost: best_rd_cost,
+            none_rd_cost,
         });
     }
     if let Some((rate, dist)) = split_pick {
@@ -875,6 +1049,7 @@ fn descend<P: ModePickerFn, B: BreakoutPruner>(
             rate,
             dist,
             rd_cost: best_rd_cost,
+            none_rd_cost,
         });
     }
     if let Some(pick) = best_pick {
@@ -888,6 +1063,7 @@ fn descend<P: ModePickerFn, B: BreakoutPruner>(
             rate: pick.rate,
             dist: pick.dist,
             rd_cost: best_rd_cost,
+            none_rd_cost,
         });
     }
 
@@ -976,6 +1152,11 @@ struct DescendResult {
     dist: u32,
     #[allow(dead_code)] // useful for diagnostics; tests don't read it
     rd_cost: i64,
+    /// A21-rect — this sub-block's PARTITION_NONE-arm RD cost (libvpx
+    /// `pc_tree->none.rdcost`). Surfaced so a parent's rect pruner can
+    /// read each SPLIT child's NONE arm. `None` when NONE was
+    /// infeasible at this sub-block.
+    none_rd_cost: Option<i64>,
 }
 
 /// Commit a single leaf at `(row_8x8, col_8x8)` with size `bsize` and
@@ -1850,6 +2031,118 @@ mod tests {
                 .iter()
                 .any(|l| matches!(l.bsize, BlockSize::Block32x32)),
             "no Block32x32 leaf should remain when HORZ wins every quadrant",
+        );
+    }
+
+    /// **A21-rect Test — RectPruner disallowing HORZ suppresses it.**
+    /// Same HORZ-wins picker as `horz_wins_on_horizontal_edge`, but a
+    /// `RectPruner` that vetoes the HORZ arm (`allow_horz = false`). The
+    /// descent must NOT emit any `Block64x32` leaf — it falls back to
+    /// the next-best arm (here NONE / SPLIT). The pruner must also have
+    /// been CONSULTED (the recorded `(bsize, ctx)` proves real feature
+    /// flow, not a stub). Anti-G3: a no-op hook would leave HORZ winning.
+    #[test]
+    fn rect_pruner_vetoing_horz_suppresses_it() {
+        let fc = FrameContext::new_default();
+        let pc = partition_costs(&fc);
+        let hint = uniform_hint(BlockSize::Block16x16);
+        let params = make_params(&pc, BlockSize::Block16x16, BlockSize::Block64x64);
+        let mut picker = |_x: usize, _y: usize, bs: BlockSize| {
+            let (r, d) = match bs {
+                BlockSize::Block64x32 => (20u32, 5u32),
+                _ => (10_000, 1_000_000),
+            };
+            Some(PartitionRdCandidate {
+                rate: r,
+                dist: d,
+                mv: Mv::ZERO,
+                mode: 0,
+                ref_frame: 0,
+            })
+        };
+        // Pruner: veto HORZ everywhere, keep VERT. Record the
+        // (bsize, partitioning_is_none, ref_rd-present) tuples it saw so
+        // we can assert it received real RD context.
+        let mut seen: Vec<(BlockSize, bool, bool)> = Vec::new();
+        let mut pruner =
+            |_x: usize,
+             _y: usize,
+             bs: BlockSize,
+             rd: RectPruneRdContext,
+             _ah: bool,
+             av: bool|
+             -> (bool, bool) {
+                seen.push((bs, rd.partitioning_is_none, rd.best_rd_cost.is_some()));
+                (false, av) // disallow HORZ, keep VERT
+            };
+        let result = nonrd_pick_partition_with_pruners(
+            &hint,
+            &params,
+            &mut picker,
+            &mut NoBreakout,
+            &mut pruner,
+        );
+        // HORZ was vetoed → no Block64x32 leaf can appear.
+        assert!(
+            !result
+                .leaves
+                .iter()
+                .any(|l| matches!(l.bsize, BlockSize::Block64x32)),
+            "HORZ vetoed by the rect pruner, but a Block64x32 leaf appeared: {:?}",
+            result
+                .leaves
+                .iter()
+                .map(|l| (l.mi_row_in_sb, l.mi_col_in_sb, l.bsize))
+                .collect::<Vec<_>>(),
+        );
+        // The pruner must have been consulted at least once at 64×64
+        // with a present ref_rd (real RD context, not a stub).
+        assert!(
+            seen.iter()
+                .any(|&(bs, _, ref_present)| bs == BlockSize::Block64x64 && ref_present),
+            "rect pruner was never consulted at 64×64 with a ref_rd: {:?}",
+            seen,
+        );
+    }
+
+    /// **A21-rect Test — NoRectPrune is a transparent pass-through.**
+    /// With the default `NoRectPrune`, the rect-pruner path must produce
+    /// EXACTLY the same result as the plain breakout-only descent (the
+    /// pre-A21-rect baseline) — proving the hook adds zero behaviour when
+    /// inactive (gate-faithfulness: the sacred gate runs with rect-prune
+    /// off and must stay byte-identical).
+    #[test]
+    fn no_rect_prune_matches_baseline() {
+        let fc = FrameContext::new_default();
+        let pc = partition_costs(&fc);
+        let hint = uniform_hint(BlockSize::Block16x16);
+        let params = make_params(&pc, BlockSize::Block16x16, BlockSize::Block64x64);
+        let picker_fn = |_x: usize, _y: usize, bs: BlockSize| {
+            let (r, d) = match bs {
+                BlockSize::Block64x32 => (20u32, 5u32),
+                _ => (10_000, 1_000_000),
+            };
+            Some(PartitionRdCandidate {
+                rate: r,
+                dist: d,
+                mv: Mv::ZERO,
+                mode: 0,
+                ref_frame: 0,
+            })
+        };
+        let mut p1 = picker_fn;
+        let baseline = nonrd_pick_partition(&hint, &params, &mut p1);
+        let mut p2 = picker_fn;
+        let with_pruner = nonrd_pick_partition_with_pruners(
+            &hint,
+            &params,
+            &mut p2,
+            &mut NoBreakout,
+            &mut NoRectPrune,
+        );
+        assert_eq!(
+            baseline, with_pruner,
+            "NoRectPrune must be a transparent pass-through (baseline parity)",
         );
     }
 }
