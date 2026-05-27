@@ -209,6 +209,120 @@ fn drift_diag_foreman() {
     run_for_speed(7, &frames256, 256, 256, fr256);
 }
 
+/// Localize the FIRST diverging 8x8 MI blocks on inter frame 2 at
+/// 320x256 cpu7 (the residual-drift case after the GOLDEN ref-index
+/// fix). Reports the decoded mode/mv/ref so we can identify which code
+/// path still diverges.
+#[test]
+#[ignore = "DRIFT-DIAG — per-block localization of frame-2 residual divergence"]
+fn drift_diag_localize_frame2() {
+    use rvp9_core::mode_info::BlockMode;
+    const W: u32 = 320;
+    const H: u32 = 256;
+    const N: usize = 3;
+
+    let Some(path) = corpus_path() else {
+        eprintln!("[SKIPPED] corpus missing");
+        return;
+    };
+    let (frames, framerate) = y4m_read_cropped(&path, W, H, N).expect("read");
+
+    let cfg = EncoderConfig {
+        width: W, height: H, framerate, target_bitrate_bps: 700_000,
+        gop_length: N as u32 + 1, aq_mode: AqMode::Off, use_prev_frame_mvs: false,
+        speed: 7, deadline: rvp9_encoder::Deadline::Realtime, noise_sensitivity: 0,
+        bit_depth: rvp9_core::BitDepth::Bd8, lag_in_frames: 0, enable_alt_ref: false,
+        rc_mode: RcMode::Cbr, cq_level: 0, temporal_layers: 1, enable_tpl: false,
+        min_qindex: 4, max_qindex: 255,
+    };
+    let mut enc = StreamEncoder::new(cfg).expect("enc");
+    let mut dec = Decoder::new();
+    let w_us = W as usize;
+
+    for (idx, (y, u, v)) in frames.iter().enumerate() {
+        let pkt = enc.encode_frame(&yuv_view(y, u, v, w_us)).expect("encode");
+        let parsed = decode_packet(&mut dec, &pkt.data);
+        let dec_buf = dec.decode_frame(&parsed[0]).expect("decode");
+        if idx != 2 {
+            continue;
+        }
+        let dec_y = yv12_plane_tight(&dec_buf.y_plane(), w_us, H as usize);
+        let py = enc.diag_last_recon_y().to_vec();
+        let grid = dec.last_frame_mi_grid();
+        let (mi_rows, mi_cols) = dec.last_frame_mi_dims();
+        let mi_cols_us = mi_cols as usize;
+
+        eprintln!("=== frame 2 per-8x8 Y divergence (post-LF enc vs decode) ===");
+        let mut shown = 0;
+        let mut total_div_blocks = 0;
+        let mut ref_hist = [0u32; 4]; // intra, last, golden, altref
+        for mr in 0..mi_rows as usize {
+            for mc in 0..mi_cols_us {
+                let mut blk_sse: u64 = 0;
+                let mut blk_max: i32 = 0;
+                for r in 0..8 {
+                    for c in 0..8 {
+                        let px = mr * 8 + r;
+                        let pxc = mc * 8 + c;
+                        if px >= H as usize || pxc >= w_us {
+                            continue;
+                        }
+                        let off = px * w_us + pxc;
+                        let d = i32::from(py[off]) - i32::from(dec_y[off]);
+                        blk_sse += (d * d) as u64;
+                        blk_max = blk_max.max(d.abs());
+                    }
+                }
+                if blk_sse == 0 {
+                    continue;
+                }
+                total_div_blocks += 1;
+                let cell = grid[mr * mi_cols_us + mc];
+                if let Some(mi) = cell {
+                    match mi.mode {
+                        BlockMode::Inter { ref_frames, .. } => {
+                            use rvp9_core::mode_info::RefFrame;
+                            match ref_frames[0] {
+                                RefFrame::LastFrame => ref_hist[1] += 1,
+                                RefFrame::GoldenFrame => ref_hist[2] += 1,
+                                RefFrame::AltrefFrame => ref_hist[3] += 1,
+                                _ => {}
+                            }
+                        }
+                        BlockMode::Intra { .. } => ref_hist[0] += 1,
+                    }
+                }
+                if shown < 24 {
+                    shown += 1;
+                    let desc = match cell {
+                        Some(mi) => match mi.mode {
+                            BlockMode::Inter { mode, mvs, ref_frames, interp_filter } => format!(
+                                "INTER {:?} mv=({},{}) ref={:?} interp={:?} bs={:?} sk={} tx={:?}",
+                                mode, mvs[0].row, mvs[0].col, ref_frames[0], interp_filter,
+                                mi.block_size, u8::from(mi.skip), mi.tx_size,
+                            ),
+                            BlockMode::Intra { y_mode, .. } => format!(
+                                "INTRA y={:?} bs={:?} sk={} tx={:?}",
+                                y_mode, mi.block_size, u8::from(mi.skip), mi.tx_size,
+                            ),
+                        },
+                        None => "None".to_string(),
+                    };
+                    eprintln!(
+                        "  mi=({:>2},{:>2}) sse={:>6} max={:>3} | {}",
+                        mr, mc, blk_sse, blk_max, desc
+                    );
+                }
+            }
+        }
+        eprintln!("  (showed {shown} of {total_div_blocks} diverging blocks)");
+        eprintln!(
+            "  diverging-block ref histogram: intra={} last={} golden={} altref={}",
+            ref_hist[0], ref_hist[1], ref_hist[2], ref_hist[3]
+        );
+    }
+}
+
 /// Localize the FIRST diverging 8x8 MI block on inter frame 1 at
 /// 256x256 (the clean KF-SSE-0 case), reporting the decoded
 /// mode/mv/ref/skip so we can identify which code path diverges.

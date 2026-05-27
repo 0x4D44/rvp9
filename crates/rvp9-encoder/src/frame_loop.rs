@@ -2670,11 +2670,32 @@ impl StreamEncoder {
             // match the picker's `sign_bias` in
             // `pick_and_simulate_inter_encode_partitions`.
             /* ref_frame_sign_biases = */ [false, false, altref_picker_live],
-            // W-ALTREF — point the ALTREF logical ref at pool slot 2 when
-            // the candidate is live (`[0, 0, 2]`); otherwise `[0, 0, 0]`
-            // (unchanged from A11, every logical ref → slot 0).
-            /* ref_frame_indices = */
-            [0, 0, if altref_picker_live { 2 } else { 0 }],
+            // DRIFT-FIX (GOLDEN ref-index) — the encoder's internal
+            // named-ref model resolves LAST/GOLDEN/ALTREF through the
+            // IDENTITY selector `named_ref_planes(i) = slots[
+            // ref_frame_map[i]]` (LAST→map[0], GOLDEN→map[1],
+            // ALTREF→map[2]; see `RefFramePool::frame_refs`). The decoder
+            // resolves logical ref `i` as `ref_frame_map[ref_frame_indices
+            // [i]]` (`rvp9-decoder/src/lib.rs:2295`). For the encoder's
+            // GOLDEN prediction to read the SAME physical slot the decoder
+            // resolves, the wire `ref_frame_indices` MUST be the identity
+            // `[0, 1, 2]` — NOT the prior `[0, 0, 0]` collapse.
+            //
+            // The prior `[0, 0, 0]` told the decoder "GOLDEN → ref_frame_
+            // map[0]". After frame 1's LAST-only refresh (`0x01`),
+            // `ref_frame_map[0]` holds frame 1 while the encoder's GOLDEN
+            // (map[1]) still holds the frame-0 KF (GOLDEN only rotates on
+            // the `0x03` golden-refresh). So a GOLDEN-picked block was
+            // predicted by the encoder from the KF but reconstructed by
+            // the decoder from frame 1 → SEVERITY-1 inter-frame drift from
+            // frame 2 onward. The identity map keeps both sides in
+            // lock-step (the refresh rotation is applied identically on
+            // both — decoder `lib.rs:2112`, encoder
+            // `update_reference_frames`). ALTREF stays at slot 2 (identity)
+            // whether or not the picker candidate is live; the index is
+            // only consulted by the decoder for blocks that actually name
+            // ALTREF, which the picker only emits when `altref_picker_live`.
+            /* ref_frame_indices = */ [0, 1, 2],
             // A18 — Thread the same `prev_mv_grid` the picker used so
             // the writer's `find_mv_refs` produces the SAME
             // `best_ref_mv` the decoder will compute.
@@ -3086,9 +3107,15 @@ impl StreamEncoder {
             /* refresh_frame_flags = */ 0x04,
             /* show_frame = */ false,
             /* ref_frame_sign_biases = */ [false, false, false],
-            // W-ALTREF — the ARF references LAST/GOLDEN only (slot 0/1),
-            // never a future ARF, so its logical-ref map is `[0, 0, 0]`.
-            /* ref_frame_indices = */ [0, 0, 0],
+            // DRIFT-FIX (GOLDEN ref-index) — identity logical-ref map so a
+            // GOLDEN-picked ARF block reads the decoder's GOLDEN slot
+            // (`ref_frame_map[1]`), matching the encoder's
+            // `named_ref_planes(GOLDEN_REF)`. The ARF never names a future
+            // ARF, but ALTREF→slot 2 (identity) is harmless: no ARF leaf
+            // picks ALTREF (the candidate is `None` above). See the
+            // show-frame `ref_frame_indices` comment for the full
+            // rationale.
+            /* ref_frame_indices = */ [0, 1, 2],
             /* prev_mv_grid = */ None,
             Some(&mut frame_counts),
             Some(&self.frame_context),
