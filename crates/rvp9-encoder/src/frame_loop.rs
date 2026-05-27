@@ -3654,6 +3654,10 @@ fn leaves_from_decision(decision: &PartitionDecision) -> Vec<PartitionLeafDesc> 
             // AQ.1 — default to segment 0 (no Q-delta). AQ.3 will
             // populate this from the cyclic-refresh state machine.
             segment_id: 0,
+            // Track-F iter8 — default to max; the KF intra TX-size RD loop
+            // (`choose_intra_luma_tx_size`) overwrites it during
+            // `pick_and_simulate_intra_encode_partitions`.
+            picked_tx_size: max_txsize(bs),
         }
     }
 
@@ -3746,7 +3750,12 @@ fn build_kf_mi_grid(
                 let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
                 let cell = ModeInfo {
                     block_size: leaf.leaf_bsize,
-                    tx_size: max_txsize(leaf.leaf_bsize),
+                    // Track-F iter8 — per-block RD-chosen intra tx_size from
+                    // the simulator (`choose_intra_luma_tx_size`). The KF
+                    // modes writer signals it under `tx_mode = TxModeSelect`.
+                    // KF leaves are never skip (`skip: false` below), so
+                    // `allow_select` is always true — no skip cap needed.
+                    tx_size: leaf.picked_tx_size,
                     skip: false,
                     segment_id: 0,
                     seg_id_predicted: false,
@@ -3924,7 +3933,11 @@ fn build_keyframe_packet(
         allow_high_precision_mv: false,
     };
     let target = CompressedHeaderResult {
-        tx_mode: TxMode::AllowTx32x32,
+        // Track-F iter8 — `TxModeSelect` enables per-block intra tx_size
+        // signalling on the KF. The intra TX-size RD loop
+        // (`choose_intra_luma_tx_size`) RD-picks each leaf's Y tx_size;
+        // the KF modes writer emits the selected-tx tree bits.
+        tx_mode: TxMode::TxModeSelect,
         reference_mode: ReferenceMode::Single,
     };
 
@@ -3960,6 +3973,7 @@ fn build_keyframe_packet(
             mi_cols,
             tile_bounds,
             &post_fc,
+            target.tx_mode,
             /* seg = */ None,
             &mut coef_ctx,
             coef_source,
@@ -5445,6 +5459,7 @@ mod tests {
                     predicted_y_mode: IntraMode::V,
                     predicted_uv_mode: IntraMode::Dc,
                     segment_id: 0,
+                    picked_tx_size: max_txsize(BlockSize::Block8x8),
                 });
             }
         }

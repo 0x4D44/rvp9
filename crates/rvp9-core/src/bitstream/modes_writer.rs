@@ -505,9 +505,11 @@ impl NeighbourCtx {
 ///
 /// # Caller contract
 ///
-/// - The compressed header must commit `tx_mode = AllowTx32x32` (or
-///   any non-`TxModeSelect` mode whose
-///   `tx_mode_to_biggest_tx_size` matches each leaf's `tx_size`).
+/// - The compressed header must commit the same `tx_mode` passed here.
+///   Under `TxModeSelect` (Track-F iter8) each leaf's RD-chosen
+///   `tx_size` is signalled on the wire via [`write_tx_size`]; under any
+///   non-select mode no tx_size bits are emitted and the decoder derives
+///   `tx_size = min(max_tx, tx_mode_to_biggest_tx_size(tx_mode))`.
 /// - The uncompressed header must commit `segmentation.enabled =
 ///   false`.
 /// - The frame must be a keyframe (or intra-only) and its
@@ -534,6 +536,7 @@ pub fn write_tile_intra_keyframe(
     mi_cols: u32,
     tile_bounds: TileBounds,
     fc: &FrameContext,
+    tx_mode: TxMode,
     seg: Option<SegmentationWriteParams<'_>>,
     coef_ctx: &mut TileCoefCtx,
     coef_source: &dyn IntraCoefSource,
@@ -576,12 +579,14 @@ pub fn write_tile_intra_keyframe(
                 &mut nbr_ctx,
                 &tile_bounds,
                 mi_grid,
+                mi_rows_us,
                 mi_cols_us,
                 mi_row,
                 mi_col,
                 BlockSize::Block64x64,
                 4, // n4x4_l2 for 64x64 = log2(16) = 4
                 fc,
+                tx_mode,
                 seg,
                 coef_ctx,
                 coef_source,
@@ -823,18 +828,21 @@ fn write_partition(
 /// scope; [`infer_partition`] forces BLOCK_8x8 parents to
 /// `PARTITION_NONE`.
 #[allow(clippy::too_many_arguments)] // mirrors libvpx 1:1
+#[allow(clippy::too_many_arguments)]
 fn write_partition_tree(
     bw: &mut BoolWriter<'_>,
     part_ctx: &mut PartitionCtx,
     nbr_ctx: &mut NeighbourCtx,
     bounds: &TileBounds,
     mi_grid: &[Option<ModeInfo>],
+    mi_rows: usize,
     mi_cols: usize,
     mi_row: usize,
     mi_col: usize,
     bsize: BlockSize,
     n4x4_l2: u8,
     fc: &FrameContext,
+    tx_mode: TxMode,
     seg: Option<SegmentationWriteParams<'_>>,
     coef_ctx: &mut TileCoefCtx,
     coef_source: &dyn IntraCoefSource,
@@ -879,7 +887,8 @@ fn write_partition_tree(
             let mi = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
             write_block_intra_keyframe(
-                bw, fc, seg, nbr_ctx, bounds, mi_row, mi_col, sub, &mi, coef_ctx, coef_source,
+                bw, fc, tx_mode, seg, nbr_ctx, bounds, mi_grid, mi_rows, mi_cols, mi_row,
+                mi_col, sub, &mi, coef_ctx, coef_source,
             )?;
         }
         PartitionType::Horz => {
@@ -888,7 +897,8 @@ fn write_partition_tree(
             let top = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
             write_block_intra_keyframe(
-                bw, fc, seg, nbr_ctx, bounds, mi_row, mi_col, sub, &top, coef_ctx, coef_source,
+                bw, fc, tx_mode, seg, nbr_ctx, bounds, mi_grid, mi_rows, mi_cols, mi_row,
+                mi_col, sub, &top, coef_ctx, coef_source,
             )?;
             let mi_row_b = mi_row + hbs;
             let bot = mi_grid_get(mi_grid, mi_cols, mi_row_b, mi_col).ok_or(
@@ -898,14 +908,16 @@ fn write_partition_tree(
                 },
             )?;
             write_block_intra_keyframe(
-                bw, fc, seg, nbr_ctx, bounds, mi_row_b, mi_col, sub, &bot, coef_ctx, coef_source,
+                bw, fc, tx_mode, seg, nbr_ctx, bounds, mi_grid, mi_rows, mi_cols, mi_row_b,
+                mi_col, sub, &bot, coef_ctx, coef_source,
             )?;
         }
         PartitionType::Vert => {
             let left = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
             write_block_intra_keyframe(
-                bw, fc, seg, nbr_ctx, bounds, mi_row, mi_col, sub, &left, coef_ctx, coef_source,
+                bw, fc, tx_mode, seg, nbr_ctx, bounds, mi_grid, mi_rows, mi_cols, mi_row,
+                mi_col, sub, &left, coef_ctx, coef_source,
             )?;
             let mi_col_r = mi_col + hbs;
             let right = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col_r).ok_or(
@@ -915,15 +927,16 @@ fn write_partition_tree(
                 },
             )?;
             write_block_intra_keyframe(
-                bw, fc, seg, nbr_ctx, bounds, mi_row, mi_col_r, sub, &right, coef_ctx, coef_source,
+                bw, fc, tx_mode, seg, nbr_ctx, bounds, mi_grid, mi_rows, mi_cols, mi_row,
+                mi_col_r, sub, &right, coef_ctx, coef_source,
             )?;
         }
         PartitionType::Split => {
             // 4-way recursion in (mi_row | +hbs, mi_col | +hbs) order
             // — same order as the decoder.
             write_partition_tree(
-                bw, part_ctx, nbr_ctx, bounds, mi_grid, mi_cols, mi_row, mi_col, sub, n8x8_l2,
-                fc, seg, coef_ctx, coef_source,
+                bw, part_ctx, nbr_ctx, bounds, mi_grid, mi_rows, mi_cols, mi_row, mi_col,
+                sub, n8x8_l2, fc, tx_mode, seg, coef_ctx, coef_source,
             )?;
             write_partition_tree(
                 bw,
@@ -931,12 +944,14 @@ fn write_partition_tree(
                 nbr_ctx,
                 bounds,
                 mi_grid,
+                mi_rows,
                 mi_cols,
                 mi_row,
                 mi_col + hbs,
                 sub,
                 n8x8_l2,
                 fc,
+                tx_mode,
                 seg,
                 coef_ctx,
                 coef_source,
@@ -947,12 +962,14 @@ fn write_partition_tree(
                 nbr_ctx,
                 bounds,
                 mi_grid,
+                mi_rows,
                 mi_cols,
                 mi_row + hbs,
                 mi_col,
                 sub,
                 n8x8_l2,
                 fc,
+                tx_mode,
                 seg,
                 coef_ctx,
                 coef_source,
@@ -963,12 +980,14 @@ fn write_partition_tree(
                 nbr_ctx,
                 bounds,
                 mi_grid,
+                mi_rows,
                 mi_cols,
                 mi_row + hbs,
                 mi_col + hbs,
                 sub,
                 n8x8_l2,
                 fc,
+                tx_mode,
                 seg,
                 coef_ctx,
                 coef_source,
@@ -1011,12 +1030,17 @@ fn write_partition_tree(
 /// state. Mirrors the relevant slice of the decoder's
 /// `TileDecodeCtx::write_block`.
 #[allow(clippy::too_many_arguments)] // mirrors the decoder's per-block call
+#[allow(clippy::too_many_arguments)]
 fn write_block_intra_keyframe(
     bw: &mut BoolWriter<'_>,
     fc: &FrameContext,
+    tx_mode: TxMode,
     seg: Option<SegmentationWriteParams<'_>>,
     nbr_ctx: &mut NeighbourCtx,
     bounds: &TileBounds,
+    mi_grid: &[Option<ModeInfo>],
+    mi_rows: usize,
+    mi_cols: usize,
     mi_row: usize,
     mi_col: usize,
     leaf_bsize: BlockSize,
@@ -1075,18 +1099,64 @@ fn write_block_intra_keyframe(
     //    read_skip`).
     bw.write(u8::from(mi.skip), fc.skip_probs[skip_ctx]);
 
-    // 2. Intra Y mode against `VP9_KF_Y_MODE_PROB[above][left]`.
+    // 2. tx_size. The decoder reads tx_size RIGHT AFTER skip and BEFORE
+    //    the Y mode (`rvp9_decoder::tile::decode_block`, read_skip ->
+    //    read_tx_size -> read_keyframe_y_mode). For intra blocks
+    //    `allow_select = !lossless` is always true (the KF is never
+    //    lossless here and KF leaves never skip). Under `TxModeSelect`
+    //    (Track-F iter8) the per-block RD-chosen `mi.tx_size` is signalled
+    //    via the selected-tx-size tree; under any non-select mode
+    //    `write_tx_size` emits no bits and the decoder derives the size
+    //    from `min(max_tx, tx_mode_to_biggest_tx_size(tx_mode))`. The
+    //    tx-size context comes from the above/left neighbours' (tx_size,
+    //    skip) — the same `MiGridNeighbourLookup` the inter writer uses.
+    let allow_select = !mi.skip; // intra: `!is_inter = true`, so == !skip
+    let max_tx = max_txsize(leaf_bsize);
+    let tx_neighbours =
+        MiGridNeighbourLookup::new(mi_grid, mi_cols, mi_row, mi_col, mi_rows);
+    let tx_above = tx_neighbours.get(Position { row: -1, col: 0 });
+    let tx_left = tx_neighbours.get(Position { row: 0, col: -1 });
+    let tx_ctx = if max_tx >= TxSize::Tx8x8 {
+        get_tx_size_context(
+            tx_above.map(|m| (m.tx_size, m.skip)),
+            tx_left.map(|m| (m.tx_size, m.skip)),
+            max_tx,
+        )
+    } else {
+        0
+    };
+    // Mirror the decoder's `allow_select == false` derivation so the
+    // writer accepts any `mi.tx_size` consistent with it; in select mode
+    // trust the caller's RD-chosen size.
+    let effective_tx_size = if allow_select && tx_mode == TxMode::TxModeSelect {
+        mi.tx_size
+    } else {
+        let cap = tx_mode_to_biggest_tx_size(tx_mode) as u8;
+        let raw = core::cmp::min(max_tx as u8, cap);
+        match raw {
+            0 => TxSize::Tx4x4,
+            1 => TxSize::Tx8x8,
+            2 => TxSize::Tx16x16,
+            _ => TxSize::Tx32x32,
+        }
+    };
+    crate::mode_info::write_tx_size(
+        bw,
+        &fc.tx_probs,
+        tx_mode,
+        max_tx,
+        allow_select,
+        tx_ctx,
+        effective_tx_size,
+    );
+
+    // 3. Intra Y mode against `VP9_KF_Y_MODE_PROB[above][left]`.
     let y_probs = &VP9_KF_Y_MODE_PROB[above_mode as usize][left_mode as usize];
     write_intra_mode(bw, y_probs, y_mode);
 
-    // 3. Intra UV mode against `VP9_KF_UV_MODE_PROB[y_mode]`.
+    // 4. Intra UV mode against `VP9_KF_UV_MODE_PROB[y_mode]`.
     let uv_probs = &VP9_KF_UV_MODE_PROB[y_mode as usize];
     write_intra_mode(bw, uv_probs, uv_mode);
-
-    // 4. tx_size — NOT emitted on the wire when `tx_mode !=
-    //    TxModeSelect`. The caller commits this via the compressed
-    //    header. The decoder derives `tx_size = min(max_tx,
-    //    tx_mode_to_biggest_tx_size(tx_mode))` per-block.
 
     // 5. Residual coefs. The decoder's `reconstruct_intra_planes`
     //    walks each plane × each TX position, decoding tokens via
@@ -1105,7 +1175,10 @@ fn write_block_intra_keyframe(
             mi_row,
             mi_col,
             leaf_bsize,
-            mi.tx_size,
+            // Residual TX walk uses the size actually signalled (==
+            // mi.tx_size in the KF select path; the derived cap
+            // otherwise), so the token stream matches the decoder's walk.
+            effective_tx_size,
             y_mode,
             uv_mode,
         );
@@ -2367,6 +2440,11 @@ mod tests {
             mi_cols,
             tile_bounds,
             fc,
+            // Existing tests pin cells to Tx32x32 + the AllowTx32x32 non-
+            // select mode, so no tx_size bits are emitted (the decoder
+            // derives the size). The Track-F iter8 select-path bytes are
+            // exercised by the cross-decoder gate + drift_diag harnesses.
+            TxMode::AllowTx32x32,
             /* seg = */ None,
             &mut coef_ctx,
             &coef_source,
@@ -2480,9 +2558,13 @@ mod tests {
             write_block_intra_keyframe(
                 &mut bw,
                 &fc,
+                TxMode::AllowTx32x32,
                 /* seg = */ None,
                 &mut nbr_ctx,
                 &bounds,
+                &grid,
+                8,
+                8,
                 0,
                 0,
                 BlockSize::Block64x64,
@@ -2600,6 +2682,7 @@ mod tests {
             8,
             bounds,
             &fc,
+            TxMode::AllowTx32x32,
             /* seg = */ None,
             &mut coef_ctx,
             &coef_source,
@@ -4877,16 +4960,23 @@ mod tests {
                 mi_col_end: 8,
             };
             let mut nbr_ctx = NeighbourCtx::new(8);
-            let mut mi = make_dc_grid(8, 8)[0].expect("populated cell");
-            mi.segment_id = 3;
+            let mut grid = make_dc_grid(8, 8);
+            for cell in grid.iter_mut().flatten() {
+                cell.segment_id = 3;
+            }
+            let mi = grid[0].expect("populated cell");
             let mut coef_ctx = TileCoefCtx::new(8);
             let coef_source = crate::bitstream::AllZeroIntraCoefSource::new();
             write_block_intra_keyframe(
                 &mut bw,
                 &fc,
+                TxMode::AllowTx32x32,
                 Some(SegmentationWriteParams { tree_probs: &tree_probs }),
                 &mut nbr_ctx,
                 &bounds,
+                &grid,
+                8,
+                8,
                 0,
                 0,
                 BlockSize::Block64x64,
@@ -4949,6 +5039,7 @@ mod tests {
                     mi_cols,
                     bounds,
                     &fc,
+                    TxMode::AllowTx32x32,
                     Some(SegmentationWriteParams { tree_probs: &tree_probs }),
                     &mut coef_ctx,
                     &coef_source,
@@ -5015,6 +5106,7 @@ mod tests {
                 mi_cols,
                 bounds,
                 &fc,
+                TxMode::AllowTx32x32,
                 Some(SegmentationWriteParams { tree_probs: &tree_probs }),
                 &mut coef_ctx,
                 &coef_source,
@@ -5224,6 +5316,7 @@ mod tests {
             mi_cols,
             bounds,
             &fc,
+            TxMode::AllowTx32x32,
             Some(SegmentationWriteParams { tree_probs: &tree_probs }),
             &mut coef_ctx,
             &coef_source,
@@ -6260,6 +6353,7 @@ mod tests {
             mi_cols,
             bad_bounds,
             &fc,
+            TxMode::AllowTx32x32,
             None,
             &mut coef_ctx,
             &coef_source,
@@ -6292,6 +6386,7 @@ mod tests {
             mi_cols,
             bounds,
             &fc,
+            TxMode::AllowTx32x32,
             None,
             &mut coef_ctx,
             &coef_source,
@@ -6563,6 +6658,7 @@ mod tests {
             mi_cols,
             bounds,
             &fc(),
+            TxMode::AllowTx32x32,
             None,
             &mut coef_ctx,
             &coef_source,
@@ -6696,6 +6792,7 @@ mod tests {
             mi_cols,
             bounds,
             &fc(),
+            TxMode::AllowTx32x32,
             None,
             &mut coef_ctx,
             &coef_source,
@@ -6728,6 +6825,7 @@ mod tests {
             bmi: Default::default(),
         };
         let _ = &mut bad; // silence unused-mut for future edits
+        let grid: Vec<Option<ModeInfo>> = vec![Some(bad); 64];
         let mut buf = vec![0u8; 256];
         let mut bw = BoolWriter::start_encode(&mut buf);
         let mut coef_ctx = TileCoefCtx::new(8);
@@ -6735,9 +6833,13 @@ mod tests {
         let err = write_block_intra_keyframe(
             &mut bw,
             &fc,
+            TxMode::AllowTx32x32,
             None,
             &mut nbr_ctx,
             &bounds,
+            &grid,
+            8,
+            8,
             0,
             0,
             BlockSize::Block64x64,
@@ -6773,6 +6875,7 @@ mod tests {
             },
             bmi: Default::default(),
         };
+        let grid: Vec<Option<ModeInfo>> = vec![Some(bad); 64];
         let mut buf = vec![0u8; 256];
         let mut bw = BoolWriter::start_encode(&mut buf);
         let mut coef_ctx = TileCoefCtx::new(8);
@@ -6780,9 +6883,13 @@ mod tests {
         let err = write_block_intra_keyframe(
             &mut bw,
             &fc,
+            TxMode::AllowTx32x32,
             None,
             &mut nbr_ctx,
             &bounds,
+            &grid,
+            8,
+            8,
             0,
             0,
             BlockSize::Block64x64,
@@ -6933,6 +7040,7 @@ mod tests {
             mi_cols,
             bounds,
             &fc,
+            TxMode::AllowTx32x32,
             None,
             &mut coef_ctx,
             &coef_source,
@@ -6979,6 +7087,7 @@ mod tests {
             mi_cols,
             bounds,
             &fc,
+            TxMode::AllowTx32x32,
             None,
             &mut coef_ctx,
             &coef_source,
@@ -7533,6 +7642,7 @@ mod tests {
             mi_cols,
             bounds,
             &fc,
+            TxMode::AllowTx32x32,
             None,
             &mut coef_ctx,
             &coef_source,

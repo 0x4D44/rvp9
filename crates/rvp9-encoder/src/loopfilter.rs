@@ -298,7 +298,11 @@ pub(crate) fn build_kf_mi_grid_for_lf(
                 let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
                 let cell = ModeInfo {
                     block_size: leaf.leaf_bsize,
-                    tx_size: max_txsize(leaf.leaf_bsize),
+                    // Track-F iter8 — the LF mask must read the same per-block
+                    // tx_size the decoder derives from the bitstream
+                    // (`leaf.picked_tx_size`), or the encoder's in-loop LF
+                    // diverges from the decoder's and seeds drift.
+                    tx_size: leaf.picked_tx_size,
                     skip: false,
                     segment_id: 0,
                     seg_id_predicted: false,

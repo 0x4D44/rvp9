@@ -6105,6 +6105,7 @@ mod tests {
                 mi_cols,
                 tile_bounds,
                 &post_fc,
+                rvp9_core::transforms::TxMode::AllowTx32x32,
                 None, // AQ.0: seg = None (no segmentation in this test)
                 &mut coef_ctx,
                 &coef_source,
@@ -6351,6 +6352,7 @@ mod tests {
                 mi_cols,
                 tile_bounds,
                 &post_fc,
+                rvp9_core::transforms::TxMode::AllowTx32x32,
                 None, // AQ.0: seg = None (no segmentation in this test)
                 &mut coef_ctx,
                 &coef_source,
@@ -6617,6 +6619,7 @@ mod tests {
                 mi_cols,
                 tile_bounds,
                 &kf_post_fc,
+                rvp9_core::transforms::TxMode::AllowTx32x32,
                 None, // AQ.0: seg = None (no segmentation in this test)
                 &mut coef_ctx,
                 &coef_source,
@@ -6999,6 +7002,7 @@ mod tests {
                 mi_cols,
                 tile_bounds,
                 &kf_post_fc,
+                rvp9_core::transforms::TxMode::AllowTx32x32,
                 None, // AQ.0: seg = None (no segmentation in this test)
                 &mut coef_ctx,
                 &coef_source,
@@ -7334,6 +7338,7 @@ mod tests {
                 mi_cols,
                 tile_bounds,
                 &kf_post_fc,
+                rvp9_core::transforms::TxMode::AllowTx32x32,
                 None, // AQ.0: seg = None (no segmentation in this test)
                 &mut coef_ctx,
                 &coef_source,
@@ -7697,6 +7702,7 @@ mod tests {
                 mi_cols,
                 tile_bounds,
                 &kf_post_fc,
+                rvp9_core::transforms::TxMode::AllowTx32x32,
                 None, // AQ.0: seg = None (no segmentation in this test)
                 &mut coef_ctx,
                 &coef_source,
@@ -8110,6 +8116,7 @@ mod tests {
                 mi_cols,
                 tile_bounds,
                 &kf_post_fc,
+                rvp9_core::transforms::TxMode::AllowTx32x32,
                 None, // AQ.0: seg = None (no segmentation in this test)
                 &mut coef_ctx,
                 &coef_source,
@@ -8463,6 +8470,7 @@ mod tests {
                 mi_cols,
                 tile_bounds,
                 &kf_post_fc,
+                rvp9_core::transforms::TxMode::AllowTx32x32,
                 None, // AQ.0: seg = None (no segmentation in this test)
                 &mut coef_ctx,
                 &coef_source,
