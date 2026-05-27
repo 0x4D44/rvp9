@@ -37,6 +37,11 @@ env/
 *.tmp
 *.log
 
+# Python bytecode cache (e.g. scripts/__pycache__/*.pyc from running
+# scripts/psnr_per_frame.py etc).
+__pycache__/
+*.pyc
+
 # Test data — gitignored, fetched by scripts/
 tests/conformance/vectors/
 # Real-world corpus (HLD §G8):
