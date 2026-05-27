@@ -170,6 +170,7 @@ fn diag_foreman_per_frame() {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };

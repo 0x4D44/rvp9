@@ -191,6 +191,7 @@ fn altref_slot2_differs_from_last_recon() {
         enable_alt_ref: true,
         rc_mode: RcMode::Cbr,
         cq_level: 0,
+        temporal_layers: 1,
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -261,6 +262,7 @@ fn altref_stream_byte_exact_vpxdec() {
         enable_alt_ref: true,
         rc_mode: RcMode::Cbr,
         cq_level: 0,
+        temporal_layers: 1,
         min_qindex: 4,
         max_qindex: 255,
     };

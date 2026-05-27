@@ -137,6 +137,12 @@ struct EncOpts {
     noise_sensitivity: Option<u32>,
     /// `--svc` (libvpx `vpxenc.c` SVC enable).
     svc: bool,
+    /// A18 — `--temporal-layers <N>` (1..=3). Frame-rate-scalable
+    /// temporal SVC. `1` (default) disables SVC; `2`/`3` activate the
+    /// libvpx 0-1-0-1 / 0-2-1-2 patterns (`vp9_svc_layercontext.c`).
+    /// libvpx's equivalent is `--ts-number-layers` on the `vpxenc` SVC
+    /// path; rvp9 exposes the temporal count directly.
+    temporal_layers: Option<u32>,
     /// `--bit-depth` (libvpx `vpxenc.c:492-495`). 8/10/12.
     bit_depth: Option<u8>,
     /// `--psnr` (libvpx `vpxenc.c:135-136`).
@@ -254,6 +260,7 @@ impl Default for EncOpts {
             tune_content: None,
             noise_sensitivity: None,
             svc: false,
+            temporal_layers: None,
             bit_depth: None,
             psnr: false,
             webm: false,
@@ -371,6 +378,8 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             apply: Some(|o, v| { o.noise_sensitivity = Some(args::parse_value(v, "rvp9enc", "--noise-sensitivity")?); Ok(()) }) },
         Flag { long: "svc", short: None, arg: Arg::None, help: "scalable video coding",
             apply: Some(|o, _| { o.svc = true; Ok(()) }) },
+        Flag { long: "temporal-layers", short: None, arg: Arg::Required, help: "temporal SVC layers (1..=3)",
+            apply: Some(|o, v| { o.temporal_layers = Some(args::parse_value(v, "rvp9enc", "--temporal-layers")?); Ok(()) }) },
         Flag { long: "bit-depth", short: None, arg: Arg::Required, help: "bit depth (8/10/12)",
             apply: Some(|o, v| { o.bit_depth = Some(parse_bit_depth(v)?); Ok(()) }) },
         Flag { long: "psnr", short: None, arg: Arg::None, help: "report PSNR",
@@ -1393,6 +1402,11 @@ fn build_encoder_config(
         // quality target consumed by the Cq (floor) / Q (pinned) arms.
         // Inert under Cbr/Vbr. Cap to the 0..=255 q-index domain.
         cq_level: opts.cq_level.map(|v| v.min(255) as u8).unwrap_or(0),
+        // A18 — `--temporal-layers <N>` (1..=3) → temporal SVC. Default 1
+        // (SVC off). `StreamEncoder::new` validates the range and the
+        // SVC/ALTREF mutual exclusion; values outside 1..=3 are rejected
+        // there with a clear `InvalidConfig`.
+        temporal_layers: opts.temporal_layers.unwrap_or(1),
     }
 }
 

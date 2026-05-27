@@ -199,6 +199,7 @@ fn config(enable_alt_ref: bool) -> EncoderConfig {
         enable_alt_ref,
         rc_mode: RcMode::Cbr,
         cq_level: 0,
+        temporal_layers: 1,
         min_qindex: 4,
         max_qindex: 255,
     }

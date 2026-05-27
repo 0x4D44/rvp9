@@ -138,6 +138,7 @@ fn make_encoder(use_prev_frame_mvs: bool) -> StreamEncoder {
         enable_alt_ref: false,
         rc_mode: RcMode::Cbr,
         cq_level: 0,
+        temporal_layers: 1,
         min_qindex: 4,
         max_qindex: 255,
     };

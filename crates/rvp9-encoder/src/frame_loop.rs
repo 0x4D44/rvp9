@@ -280,6 +280,34 @@ pub struct EncoderConfig {
     /// Default `0` — matches the [`RateControlConfig`] default and is
     /// inert under the default [`RcMode::Cbr`].
     pub cq_level: u8,
+    /// A18 (SVC) — number of TEMPORAL layers for frame-rate scalability.
+    /// `1` (the default) disables SVC: the encoder runs the legacy
+    /// single-layer path byte-identically (the cross-decoder gate's
+    /// config). `2` activates the libvpx 0-1-0-1 pattern
+    /// (`VP9E_TEMPORAL_LAYERING_MODE_0101`,
+    /// `vp9_svc_layercontext.c:626-684`); `3` the 0-2-1-2 pattern
+    /// (`VP9E_TEMPORAL_LAYERING_MODE_0212`,
+    /// `vp9_svc_layercontext.c:517-621`).
+    ///
+    /// When `> 1` the encoder assigns each inter frame a
+    /// `temporal_layer_id` from the layering pattern (driven by the
+    /// [`crate::svc::Svc`] scaffold's temporal setters) and overrides the
+    /// per-frame `refresh_frame_flags` so that higher-temporal-layer
+    /// frames are NON-REFERENCE (refresh nothing the base layer reads),
+    /// making the stream temporally scalable. The reference reads stay on
+    /// the LAST slot, so the produced bitstream is standard VP9 and
+    /// byte-exact decodable by vpxdec (it plays all layers). The
+    /// per-frame `temporal_layer_id` is surfaced on
+    /// [`EncodedFrame::temporal_layer_id`] — it is encoder-side metadata
+    /// (libvpx `vpx_svc_layer_id`), NOT a VP9 wire field.
+    ///
+    /// SVC and ALTREF (`enable_alt_ref`) / the golden-refresh cadence are
+    /// mutually exclusive: the temporal pattern owns the per-frame
+    /// reference structure, so when `temporal_layers > 1` the encoder
+    /// forces the single-LAST-slot layered schedule. SPATIAL SVC
+    /// (resolution scalability) is a documented follow-up and is NOT
+    /// modelled by this field. Range: `1..=3`.
+    pub temporal_layers: u32,
 }
 
 impl EncoderConfig {
@@ -337,6 +365,10 @@ impl EncoderConfig {
             // byte-identical.
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            // A18 (SVC) — default 1 (single-layer / SVC off). The
+            // cross-decoder gate builds its config via this constructor,
+            // so this default keeps it byte-identical.
+            temporal_layers: 1,
         }
     }
 
@@ -427,6 +459,16 @@ pub struct EncodedFrame {
     /// Bit count of `data` (== `data.len() * 8`). Mirrors what the
     /// rate controller saw via `postencode_update`.
     pub actual_bits: u32,
+    /// A18 (SVC) — the temporal layer this frame belongs to (0 = base /
+    /// tl0). Encoder-side metadata mirroring libvpx `vpx_svc_layer_id`
+    /// (`vp9/encoder/vp9_svc_layercontext.c::vp9_one_pass_cbr_svc_start_layer`
+    /// sets `cpi->svc.temporal_layer_id`); it is NOT a VP9 bitstream
+    /// field. Always `0` for single-layer encodes
+    /// (`EncoderConfig::temporal_layers == 1`). For temporal SVC the
+    /// value follows the layering pattern (e.g. 0,1,0,1 for 2 layers,
+    /// 0,2,1,2 for 3). Higher values mark non-reference / droppable
+    /// frames (the upper layers a frame-rate-scalable consumer may skip).
+    pub temporal_layer_id: u8,
 }
 
 /// Public frame-kind discriminant for the F10.0 API. Narrower than the
@@ -684,6 +726,43 @@ pub struct StreamEncoder {
     /// `vp9_denoiser.c:425-428` running_avg_y write,
     /// `vp9_denoiser.c:464-524` ref-update bookkeeping).
     denoiser: Option<Denoiser>,
+    /// A18 (SVC) — temporal-layer context. `Some(..)` iff
+    /// `config.temporal_layers > 1`. Mirrors libvpx `cpi->svc`
+    /// (`VP9_COMP::svc`, `vp9_svc_layercontext.h`); the encoder calls
+    /// [`crate::svc::Svc::apply_temporal_layering`] once per inter frame
+    /// to derive the frame's `temporal_layer_id` and ref/refresh flags
+    /// (`vp9_one_pass_cbr_svc_start_layer`,
+    /// `vp9_svc_layercontext.c:769-830`). `None` for single-layer
+    /// encodes — the legacy path is then byte-identical.
+    svc: Option<crate::svc::Svc>,
+    /// A18 (SVC) — the temporal-layer decision computed for the inter
+    /// frame currently being encoded. Set by [`Self::svc_assign_layer`]
+    /// in `try_encode_one_popped` (before the kind dispatch) and consumed
+    /// by `encode_inter_internal` to override `refresh_frame_flags`, and
+    /// by the packet-builder epilogue to tag
+    /// [`EncodedFrame::temporal_layer_id`]. `None` when SVC is disabled
+    /// or for keyframes (always tl0 with the default 0xFF refresh).
+    svc_frame: Option<SvcFrameDecision>,
+}
+
+/// A18 (SVC) — the per-frame temporal-layer decision for one inter
+/// frame. Derived from the [`crate::svc::Svc`] scaffold's temporal
+/// setter (`vp9_svc_layercontext.c:517-720`) and the encoder's
+/// single-LAST-slot pool model.
+#[derive(Copy, Clone, Debug)]
+struct SvcFrameDecision {
+    /// `cpi->svc.temporal_layer_id` for this frame (0 = base). Surfaced
+    /// on [`EncodedFrame::temporal_layer_id`].
+    temporal_layer_id: u8,
+    /// Wire `refresh_frame_flags` this frame must emit. `0x01` for base
+    /// (tl0) frames (refresh LAST); `0x00` for higher-layer frames
+    /// (non-reference / droppable — refresh nothing the base layer
+    /// reads). This is the rvp9 single-LAST-slot projection of libvpx's
+    /// per-layer `ext_refresh_*` flags (`vp9_svc_layercontext.c:637-665`):
+    /// the base layer refreshes the slot the next base frame reads; the
+    /// enhancement layer refreshes only a slot the base never reads, so
+    /// in the identity pool it refreshes nothing.
+    refresh_frame_flags: u8,
 }
 
 /// W5.5 — LAST_FRAME ref-slot index inside `Denoiser::running_avg_y`.
@@ -728,6 +807,23 @@ impl StreamEncoder {
         if config.gop_length == 0 {
             return Err(EncodeError::InvalidConfig("gop_length must be > 0"));
         }
+        // A18 (SVC) — temporal-layer count must be in 1..=3 (1 = off).
+        // The temporal setters this encoder drives are the 2-layer
+        // (`set_flags_and_fb_idx_for_temporal_mode2`) and 3-layer
+        // (`..mode3`) patterns (`vp9_svc_layercontext.c:517-684`); higher
+        // counts need additional patterns libvpx does not provide for the
+        // fixed (non-bypass) mode. SVC and ALTREF emission are mutually
+        // exclusive (the temporal pattern owns the reference structure).
+        if config.temporal_layers == 0 || config.temporal_layers > 3 {
+            return Err(EncodeError::InvalidConfig(
+                "temporal_layers must be in 1..=3 (1 disables SVC)",
+            ));
+        }
+        if config.temporal_layers > 1 && config.enable_alt_ref {
+            return Err(EncodeError::InvalidConfig(
+                "temporal SVC (temporal_layers > 1) is mutually exclusive with enable_alt_ref",
+            ));
+        }
         if !config.framerate.is_finite() || config.framerate <= 0.0 {
             return Err(EncodeError::InvalidConfig(
                 "framerate must be positive and finite",
@@ -765,6 +861,39 @@ impl StreamEncoder {
         // refresh flags (see the `gf_group` field doc).
         let gf_group =
             crate::gop::GfGroup::new(config.gop_length, config.enable_alt_ref);
+
+        // A18 (SVC) — build the temporal-layer context when configured
+        // for > 1 temporal layer. Mirrors libvpx `vp9_init_layer_context`
+        // (`vp9_svc_layercontext.c:105-181`) for the one-pass CBR path:
+        // `number_spatial_layers = 1` (temporal-only SVC; spatial SVC is
+        // a documented follow-up), `number_temporal_layers = N`, one
+        // `LayerContext` per temporal slot. The per-layer target
+        // bandwidth follows libvpx's default geometric split
+        // (`vp9_svc_layercontext.c:131` reads
+        // `oxcf->layer_target_bitrate[layer]`); the rvp9 CLI does not yet
+        // expose per-layer bitrates, so we split the stream target evenly
+        // — the split only affects per-layer RC budgeting, never the
+        // bitstream's frame structure, so the byte-exact gate is
+        // unaffected.
+        let svc_ctx = if config.temporal_layers > 1 {
+            let n_tl = config.temporal_layers as i32;
+            let mut svc = crate::svc::Svc::new();
+            svc.use_svc = true;
+            svc.pass = 0;
+            svc.spatial_layer_to_encode = 0;
+            svc.temporal_layering_mode = match config.temporal_layers {
+                2 => crate::svc::TemporalLayeringMode::Pattern0101,
+                _ => crate::svc::TemporalLayeringMode::Pattern0212,
+            };
+            // Even per-layer bitrate split (placeholder until a CLI
+            // per-layer-bitrate flag lands). One slot per temporal layer.
+            let per_layer = (config.target_bitrate_bps as i32) / n_tl;
+            let targets: Vec<i32> = (0..n_tl).map(|_| per_layer).collect();
+            svc.alloc_layers(1, n_tl, rc_config, &targets);
+            Some(svc)
+        } else {
+            None
+        };
 
         Ok(Self {
             config,
@@ -838,6 +967,18 @@ impl StreamEncoder {
             } else {
                 None
             },
+            // A18 (SVC) — build the temporal-layer context iff configured
+            // for > 1 temporal layer. `alloc_layers` mirrors libvpx
+            // `vp9_init_layer_context` (`vp9_svc_layercontext.c:105-181`):
+            // one LayerContext per (spatial=1, temporal=N) slot, each
+            // boxing a RateControl seeded from the stream config. The
+            // `temporal_layering_mode` selects the 0-1-0-1 (mode2) or
+            // 0-2-1-2 (mode3) pattern setter
+            // (`vp9_svc_layercontext.c:819-830`).
+            svc: svc_ctx,
+            // A18 (SVC) — no per-frame decision until the first inter
+            // frame runs `svc_assign_layer`.
+            svc_frame: None,
         })
     }
 
@@ -1101,6 +1242,16 @@ impl StreamEncoder {
             _ => FrameKind::Inter,
         };
 
+        // A18 (SVC) — assign this frame's temporal layer before the
+        // per-kind encode dispatch. For keyframes the layer is always tl0
+        // (libvpx resets `current_video_frame_in_layer` and the base
+        // layer is always present); the KF keeps its 0xFF refresh, so
+        // `svc_frame` stays `None` on keyframes and the inter override
+        // never fires for them. For inter frames this runs the scaffold's
+        // temporal setter and records the (temporal_layer_id,
+        // refresh_frame_flags) decision in `self.svc_frame`.
+        self.svc_assign_layer(frame_kind);
+
         // W2.1(vpxenc parity, A5 P0): update per-frame pre-analysis
         // gates. Mirrors libvpx `vp9_encoder.c:3984` —
         // `compute_source_sad_onepass = (oxcf.mode == REALTIME)`.
@@ -1349,11 +1500,24 @@ impl StreamEncoder {
         // buffer (Wave 1's BufferPool tracks recon, not source).
         self.pre_analysis.capture_last_source(&y_tight);
 
+        // A18 (SVC) — tag the frame's temporal layer. The decision was
+        // computed by `svc_assign_layer` before the encode; keyframes
+        // (and all single-layer frames) are tl0.
+        let temporal_layer_id = self
+            .svc_frame
+            .map(|d| d.temporal_layer_id)
+            .unwrap_or(0);
+        // A18 (SVC) — clear the per-frame decision now it has been
+        // consumed (refresh override in `encode_inter_internal`, tag
+        // here). The next frame's `svc_assign_layer` recomputes it.
+        self.svc_frame = None;
+
         Ok(Some(EncodedFrame {
             data: packet,
             frame_kind,
             q_index,
             actual_bits,
+            temporal_layer_id,
         }))
     }
 
@@ -1678,6 +1842,94 @@ impl StreamEncoder {
                 .copy_from_slice(&head[INTRA_FRAME_IDX].y_buffer);
         }
         den.current_denoiser_frame = den.current_denoiser_frame.saturating_add(1);
+    }
+
+    /// A18 (SVC) — assign the current frame's temporal layer and derive
+    /// the (temporal_layer_id, refresh_frame_flags) decision, storing it
+    /// in [`Self::svc_frame`]. No-op (clears `svc_frame`) when SVC is
+    /// disabled or for keyframes.
+    ///
+    /// This is the encoder-driver wrapper libvpx names
+    /// `vp9_one_pass_cbr_svc_start_layer` /
+    /// `vp9_one_pass_svc_start_layer` (`vp9_svc_layercontext.c:769-830`):
+    /// it sets `spatial_layer_to_encode`, runs the configured temporal
+    /// setter via [`crate::svc::Svc::apply_temporal_layering`] (which
+    /// reads the base-tl0 layer's `current_video_frame_in_layer` modulo
+    /// the pattern length to compute `temporal_layer_id` —
+    /// `vp9_svc_layercontext.c:527-530` for mode3, `:629-634` for mode2),
+    /// then advances the base layer's frame counter for the next call.
+    ///
+    /// The scaffold's `current_{lst,gld,alt}_fb_idx` /
+    /// `ext_refresh_*_frame` outputs target libvpx's 8-slot pool; rvp9's
+    /// encoder uses the identity single-LAST-slot pool model (LAST =
+    /// `ref_frame_map[0]`), so we project the per-layer decision onto a
+    /// single refresh flag: tl0 frames refresh LAST (`0x01`) — they are
+    /// the reference the next tl0 frame reads — while enhancement-layer
+    /// frames (`temporal_layer_id > 0`) refresh nothing (`0x00`), making
+    /// them non-reference / droppable. That is exactly the temporal-
+    /// scalability invariant: dropping the top layer leaves a valid,
+    /// lower-frame-rate stream. The frames still READ LAST (slot 0), so
+    /// the picker / residual path is unchanged and the bitstream is
+    /// standard VP9 (byte-exact through vpxdec).
+    ///
+    /// **Scope (honest).** The 2-layer (0-1-0-1) pattern is fully
+    /// faithful: the only enhancement layer (tl1) is genuinely
+    /// non-reference. The 3-layer (0-2-1-2) pattern tags
+    /// `temporal_layer_id` per libvpx (`:527-530`) but, in rvp9's
+    /// single-LAST-slot pool, the mid layer (tl1) is also projected to
+    /// `0x00` rather than refreshing a distinct slot the top layer (tl2)
+    /// could reference. This collapses the 3-level reference HIERARCHY to
+    /// "base + droppable rest" — the stream is still standard VP9
+    /// (byte-exact through vpxdec) and the layer-id tagging is correct,
+    /// but a true 3-tier prediction structure (tl2 -> tl1 -> tl0) needs
+    /// the multi-slot fb_idx routing the scaffold computes
+    /// (`current_{lst,gld,alt}_fb_idx`, `:591-616`) wired into a
+    /// multi-slot encoder ref model — a documented follow-up alongside
+    /// spatial SVC.
+    fn svc_assign_layer(&mut self, frame_kind: FrameKind) {
+        // Keyframes are always tl0 and keep their 0xFF broadcast refresh
+        // (handled by `encode_keyframe_internal`); no inter override.
+        let Some(svc) = self.svc.as_mut() else {
+            self.svc_frame = None;
+            return;
+        };
+        if matches!(frame_kind, FrameKind::Key) {
+            // libvpx resets the per-layer frame counter at the KF
+            // boundary (`vp9_svc_layercontext.c` sets `is_key_frame` and
+            // the layer's `current_video_frame_in_layer` is reset via
+            // `vp9_restore_layer_context`). Reset the base-layer counter
+            // so the first post-KF inter frame starts the pattern at tl0.
+            for lc in &mut svc.layer_context {
+                lc.current_video_frame_in_layer = 0;
+                lc.is_key_frame = true;
+            }
+            self.svc_frame = None;
+            return;
+        }
+
+        // Inter frame: run the configured temporal setter. It reads the
+        // base-tl0 layer slot's `current_video_frame_in_layer` to compute
+        // the pattern position.
+        svc.spatial_layer_to_encode = 0;
+        svc.apply_temporal_layering();
+        let temporal_layer_id = svc.temporal_layer_id.max(0) as u8;
+
+        // Advance the base-tl0 layer's frame counter for the next inter
+        // frame (libvpx `vp9_save_layer_context` bumps
+        // `current_video_frame_in_layer`; the setters read it the next
+        // call). The base slot at this single spatial layer is index 0.
+        svc.layer_context[0].current_video_frame_in_layer =
+            svc.layer_context[0].current_video_frame_in_layer.wrapping_add(1);
+        for lc in &mut svc.layer_context {
+            lc.is_key_frame = false;
+        }
+
+        // Project onto the single-LAST-slot refresh flag (see method doc).
+        let refresh_frame_flags = if temporal_layer_id == 0 { 0x01 } else { 0x00 };
+        self.svc_frame = Some(SvcFrameDecision {
+            temporal_layer_id,
+            refresh_frame_flags,
+        });
     }
 
     /// Inter internal: F10.1c — drive F8.2 partition + F8.1 inter mode
@@ -2056,7 +2308,17 @@ impl StreamEncoder {
             self.frames_since_golden_refresh.saturating_add(1);
         let refresh_golden_this_frame =
             matches!(frame_sched.update_type, crate::gop::FrameUpdateType::GfUpdate);
-        let refresh_flags: u8 = frame_sched.refresh_frame_flags;
+        // A18 (SVC) — when temporal SVC is active, the layering pattern
+        // (not the GfGroup golden/altref cadence) owns this frame's
+        // refresh structure. `svc_assign_layer` computed the override:
+        // tl0 → 0x01 (refresh LAST), enhancement layers → 0x00 (refresh
+        // nothing — non-reference / droppable). The SVC config forbids
+        // ALTREF and the even-temporal-bitrate split means GOLDEN cadence
+        // never engages, so this cleanly replaces `frame_sched`'s flag.
+        let refresh_flags: u8 = match self.svc_frame {
+            Some(d) => d.refresh_frame_flags,
+            None => frame_sched.refresh_frame_flags,
+        };
 
         // Build the packet from the populated coef source + leaf
         // descriptors. P0b — accumulate counts for backward adaptation.
@@ -3741,6 +4003,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3782,6 +4045,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3835,6 +4099,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3901,6 +4166,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3947,6 +4213,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -3977,6 +4244,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4014,6 +4282,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4048,10 +4317,120 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
         assert!(StreamEncoder::new(cfg).is_err());
+    }
+
+    /// A18 (SVC) — config validation: `temporal_layers` must be in
+    /// 1..=3, and SVC (`> 1`) is mutually exclusive with `enable_alt_ref`.
+    /// Mirrors the `StreamEncoder::new` guards (the temporal setters this
+    /// encoder drives are the 2-/3-layer patterns,
+    /// `vp9_svc_layercontext.c:517-684`).
+    #[test]
+    fn a18_svc_config_validation() {
+        // temporal_layers = 0 is rejected.
+        let mut cfg = EncoderConfig::new(64, 64);
+        cfg.temporal_layers = 0;
+        assert!(StreamEncoder::new(cfg).is_err(), "temporal_layers=0 must reject");
+        // temporal_layers = 4 (> 3) is rejected.
+        let mut cfg = EncoderConfig::new(64, 64);
+        cfg.temporal_layers = 4;
+        assert!(StreamEncoder::new(cfg).is_err(), "temporal_layers=4 must reject");
+        // temporal_layers > 1 with enable_alt_ref is rejected.
+        let mut cfg = EncoderConfig::new(64, 64);
+        cfg.temporal_layers = 2;
+        cfg.enable_alt_ref = true;
+        assert!(
+            StreamEncoder::new(cfg).is_err(),
+            "temporal SVC + ALTREF must be mutually exclusive"
+        );
+        // temporal_layers = 1 (default) and 2/3 (SVC) without ALTREF are
+        // accepted.
+        for n in [1u32, 2, 3] {
+            let mut cfg = EncoderConfig::new(64, 64);
+            cfg.temporal_layers = n;
+            assert!(
+                StreamEncoder::new(cfg).is_ok(),
+                "temporal_layers={n} (no ALTREF) must be accepted"
+            );
+        }
+    }
+
+    /// A18 (SVC) — single-layer encodes tag every frame as
+    /// `temporal_layer_id == 0` (the SVC path is inert when
+    /// `temporal_layers == 1`). Anti-G3: this fails if the SVC tagging
+    /// leaks into the default path. Uses a tiny synthetic gradient so the
+    /// test is fast and corpus-free.
+    #[test]
+    fn a18_single_layer_tags_all_tl0() {
+        let w = 64usize;
+        let h = 64usize;
+        let y: Vec<u8> = (0..w * h).map(|i| (i % 256) as u8).collect();
+        let uv = vec![128u8; (w / 2) * (h / 2)];
+        let view = YuvFrameRef {
+            y: &y,
+            u: &uv,
+            v: &uv,
+            y_stride: w,
+            u_stride: w / 2,
+            v_stride: w / 2,
+        };
+        let mut cfg = EncoderConfig::new(w as u32, h as u32);
+        cfg.gop_length = 10;
+        let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
+        for _ in 0..5 {
+            let pkt = enc.encode_frame(&view).expect("encode_frame");
+            assert_eq!(
+                pkt.temporal_layer_id, 0,
+                "single-layer encode must tag temporal_layer_id 0"
+            );
+        }
+    }
+
+    /// A18 (SVC) — the 2-layer (0-1-0-1) temporal pattern is live end-to-
+    /// end through the public encoder API: the keyframe is tl0 and the
+    /// subsequent inter frames alternate 0,1,0,1
+    /// (`set_flags_and_fb_idx_for_temporal_mode2:629-634`,
+    /// `tl = current_video_frame_in_layer & 1`). Corpus-free synthetic
+    /// input. Anti-G3: a stubbed/inert SVC path tags all-tl0 and fails
+    /// the alternation assertion.
+    #[test]
+    fn a18_temporal_svc_2layer_pattern_live() {
+        let w = 64usize;
+        let h = 64usize;
+        let y: Vec<u8> = (0..w * h).map(|i| (i * 3 % 256) as u8).collect();
+        let uv = vec![128u8; (w / 2) * (h / 2)];
+        let view = YuvFrameRef {
+            y: &y,
+            u: &uv,
+            v: &uv,
+            y_stride: w,
+            u_stride: w / 2,
+            v_stride: w / 2,
+        };
+        let mut cfg = EncoderConfig::new(w as u32, h as u32);
+        cfg.gop_length = 20;
+        cfg.temporal_layers = 2;
+        let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
+        let mut tids = Vec::new();
+        for _ in 0..6 {
+            let pkt = enc.encode_frame(&view).expect("encode_frame");
+            tids.push(pkt.temporal_layer_id);
+        }
+        // Frame 0 = KF (tl0); inter frames 0,1,0,1,0 → full [0,0,1,0,1,0].
+        assert_eq!(
+            tids,
+            vec![0u8, 0, 1, 0, 1, 0],
+            "2-layer temporal SVC must follow the libvpx 0-1-0-1 pattern \
+             (KF tl0, then alternating)"
+        );
+        assert!(
+            tids.iter().any(|&t| t == 1),
+            "must produce at least one tl1 enhancement frame"
+        );
     }
 
     /// T8 — Encoder accepts a strided YUV input (y_stride > width).
@@ -4073,6 +4452,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4158,6 +4538,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4215,6 +4596,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4274,6 +4656,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4363,6 +4746,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4516,6 +4900,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4596,6 +4981,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4836,6 +5222,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -4893,6 +5280,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5012,6 +5400,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5092,6 +5481,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5149,6 +5539,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5225,6 +5616,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5292,6 +5684,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5376,6 +5769,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5426,6 +5820,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5499,6 +5894,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5564,6 +5960,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5645,6 +6042,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5732,6 +6130,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5846,6 +6245,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6043,6 +6443,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6167,6 +6568,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         }
@@ -7102,6 +7504,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7160,6 +7563,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7241,6 +7645,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7352,6 +7757,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7396,6 +7802,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7437,6 +7844,7 @@ mod tests {
             enable_alt_ref: false,
             rc_mode: RcMode::Cbr,
             cq_level: 0,
+            temporal_layers: 1,
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7530,6 +7938,7 @@ mod tests {
                 enable_alt_ref: false,
                 rc_mode: RcMode::Cbr,
                 cq_level: 0,
+                temporal_layers: 1,
                 min_qindex: 4,
                 max_qindex: 255,
             };

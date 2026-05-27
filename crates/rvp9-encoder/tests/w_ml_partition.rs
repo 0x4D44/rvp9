@@ -87,6 +87,7 @@ fn config(framerate: f64, speed: i32, deadline: Deadline) -> EncoderConfig {
         enable_alt_ref: false,
         rc_mode: RcMode::Cbr,
         cq_level: 0,
+        temporal_layers: 1,
         min_qindex: 4,
         max_qindex: 255,
     }

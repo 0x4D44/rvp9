@@ -88,6 +88,7 @@ fn encode_with_altref(n_frames: u32, gop_length: u32, lag: u32) -> Vec<Vec<u8>> 
         enable_alt_ref: true,
         rc_mode: RcMode::Cbr,
         cq_level: 0,
+        temporal_layers: 1,
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -185,6 +186,7 @@ fn w8_altref_disabled_emits_no_non_show_packet() {
         enable_alt_ref: false, // <- the gate
         rc_mode: RcMode::Cbr,
         cq_level: 0,
+        temporal_layers: 1,
         min_qindex: 4,
         max_qindex: 255,
     };
