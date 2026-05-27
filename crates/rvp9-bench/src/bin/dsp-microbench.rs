@@ -322,10 +322,213 @@ fn main() {
     let arg = std::env::args().nth(1);
     match arg.as_deref() {
         Some("bool_reader") => run_bool_reader(),
+        Some("vs_libvpx") => run_vs_libvpx(),
         Some(other) => {
-            eprintln!("unknown case '{other}' — valid: bool_reader (no arg = DSP suite)");
+            eprintln!(
+                "unknown case '{other}' — valid: bool_reader, vs_libvpx (no arg = DSP suite)"
+            );
             std::process::exit(2);
         }
         None => run(),
     }
+}
+
+/// Head-to-head DSP kernel bench against libvpx (decoder kernel audit,
+/// 2026-05-26).
+///
+/// Companion to `tools/libvpx_kernel_bench/main.c`. Generates identical
+/// inputs via the same LCG seeds, calls the matching rvp9 kernel through
+/// the production `Dsp` dispatch table (so we measure what the decoder
+/// actually runs, including any ISA-tier gap), and prints CSV in the same
+/// shape as the C harness:
+///
+///     side,kernel,size,ns_per_iter,input_fnv64,output_fnv64
+///
+/// The audit driver joins on `(kernel, size)`, asserts the input/output
+/// FNV-1a 64-bit hashes match (bit-exactness), then prints the ratio.
+fn run_vs_libvpx() {
+    // Process-wide dispatch table — same one decode_frame touches.
+    // `init()` is idempotent and runs caps detection once.
+    let dsp = rvp9_core::dsp::init();
+    let batches: u32 = 200;
+
+    // IDCT family. Seeds + iters mirror tools/libvpx_kernel_bench/main.c
+    // exactly so both rigs feed each kernel byte-identical coefficients.
+    bench_idct_case(dsp.idct4x4_add(), "idct4x4_16_add", "4x4", 4, 0xAA10, 16000, batches);
+    bench_idct_case(dsp.idct8x8_add(), "idct8x8_64_add", "8x8", 8, 0xAA11, 12000, batches);
+    bench_idct_case(dsp.idct8x8_12_add(), "idct8x8_12_add", "8x8", 8, 0xAA12, 12000, batches);
+    bench_idct_case(dsp.idct16x16_add(), "idct16x16_256_add", "16x16", 16, 0xAA13, 8000, batches);
+    bench_idct_case(dsp.idct16x16_10_add(), "idct16x16_10_add", "16x16", 16, 0xAA14, 8000, batches);
+    bench_idct_case(dsp.idct16x16_38_add(), "idct16x16_38_add", "16x16", 16, 0xAA01, 8000, batches);
+    bench_idct_case(dsp.idct32x32_add(), "idct32x32_1024_add", "32x32", 32, 0xAA15, 2000, batches);
+    bench_idct_case(dsp.idct32x32_34_add(), "idct32x32_34_add", "32x32", 32, 0xAA16, 2000, batches);
+    bench_idct_case(dsp.idct32x32_135_add(), "idct32x32_135_add", "32x32", 32, 0xAA02, 2000, batches);
+
+    // Convolve8 family. mode: 0 = 2D, 1 = horiz-only, 2 = vert-only.
+    bench_conv_case("convolve8_2d_halfpel", "8x8", 8, 8, 0, 0xAB08, 16000, batches);
+    bench_conv_case("convolve8_2d_halfpel", "16x16", 16, 16, 0, 0xAB10, 8000, batches);
+    bench_conv_case("convolve8_2d_halfpel", "32x32", 32, 32, 0, 0xAB20, 3000, batches);
+    bench_conv_case("convolve8_2d_halfpel", "64x64", 64, 64, 0, 0xAA03, 2000, batches);
+    bench_conv_case("convolve8_horiz_halfpel", "16x16", 16, 16, 1, 0xAC10, 12000, batches);
+    bench_conv_case("convolve8_horiz_halfpel", "64x64", 64, 64, 1, 0xAC40, 3000, batches);
+    bench_conv_case("convolve8_vert_halfpel", "16x16", 16, 16, 2, 0xAD10, 12000, batches);
+    bench_conv_case("convolve8_vert_halfpel", "64x64", 64, 64, 2, 0xAD40, 3000, batches);
+}
+
+/// Bench one IDCT-add kernel against its libvpx twin. `N` (coefficient
+/// count) is inferred from the dispatch fn-pointer type; `dim` is the
+/// block dimension. Hashes the `dim×dim` footprint (no stride padding)
+/// so the C side can match without agreeing on padding layout.
+fn bench_idct_case<const N: usize>(
+    f: fn(&[i32; N], &mut [u8], usize),
+    name: &str,
+    size: &str,
+    dim: usize,
+    seed: u32,
+    iters: u32,
+    batches: u32,
+) {
+    let mut input = [0i32; N];
+    fill_idct_input_seeded(&mut input, seed);
+    let in_hash = fnv1a64_i32(&input);
+
+    let stride = dim + 16; // same on the libvpx side
+    let mut dest = vec![0u8; dim * stride + 64];
+
+    // Verify pass: one call from a zero dest, hash the dim×dim footprint.
+    f(&input, &mut dest, stride);
+    let mut packed = vec![0u8; dim * dim];
+    for r in 0..dim {
+        packed[r * dim..r * dim + dim].copy_from_slice(&dest[r * stride..r * stride + dim]);
+    }
+    let out_hash = fnv1a64_bytes(&packed);
+
+    dest.iter_mut().for_each(|b| *b = 0);
+    let ns = bench_min_ns(batches, iters, || {
+        f(black_box(&input), black_box(&mut dest), stride);
+    });
+    println!("rvp9,{name},{size},{ns:.2},{in_hash:016x},{out_hash:016x}");
+}
+
+/// Bench one convolve8 case against its libvpx twin. `mode`: 0 = 2D,
+/// 1 = horiz-only, 2 = vert-only. The half-pel coefficients come from
+/// `EIGHTTAP_KERNEL[8]` (= libvpx `vp9_sub_pel_filters_8[8]`). rvp9's
+/// `src` argument is the filter footprint top-left for every mode; the
+/// libvpx side offsets its `src` per-mode so its internal shift lands on
+/// the same byte (see main.c `conv_thunk`).
+fn bench_conv_case(
+    name: &str,
+    size: &str,
+    w: usize,
+    h: usize,
+    mode: u8,
+    seed: u32,
+    iters: u32,
+    batches: u32,
+) {
+    use rvp9_core::inter::filter::EIGHTTAP_KERNEL;
+
+    let src_stride: usize = 80;
+    let dst_stride: usize = 64;
+    let mut src_buf = vec![0u8; 80 * 80];
+    fill_bytes_seeded(&mut src_buf, seed);
+    let in_hash = fnv1a64_bytes(&src_buf);
+    let filt = &EIGHTTAP_KERNEL[8];
+    let mut dst = vec![0u8; 64 * 64];
+
+    let do_conv = |dst: &mut [u8]| {
+        #[cfg(target_arch = "x86_64")]
+        {
+            use rvp9_core::dsp::x86_64::{
+                convolve8_avx2, convolve8_horiz_avx2, convolve8_vert_avx2,
+            };
+            match mode {
+                1 => convolve8_horiz_avx2(&src_buf, src_stride, dst, dst_stride, filt, w, h),
+                2 => convolve8_vert_avx2(&src_buf, src_stride, dst, dst_stride, filt, w, h),
+                _ => convolve8_avx2(&src_buf, src_stride, dst, dst_stride, filt, filt, w, h),
+            }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            use rvp9_core::inter::filter::{convolve8, convolve8_horiz, convolve8_vert};
+            match mode {
+                1 => convolve8_horiz(&src_buf, src_stride, dst, dst_stride, filt, w, h),
+                2 => convolve8_vert(&src_buf, src_stride, dst, dst_stride, filt, w, h),
+                _ => convolve8(&src_buf, src_stride, dst, dst_stride, filt, filt, w, h),
+            }
+        }
+    };
+
+    do_conv(dst.as_mut_slice());
+    let mut packed = vec![0u8; w * h];
+    for r in 0..h {
+        packed[r * w..r * w + w].copy_from_slice(&dst[r * dst_stride..r * dst_stride + w]);
+    }
+    let out_hash = fnv1a64_bytes(&packed);
+
+    dst.iter_mut().for_each(|b| *b = 0);
+    let ns = bench_min_ns(batches, iters, || {
+        do_conv(black_box(dst.as_mut_slice()));
+    });
+    println!("rvp9,{name},{size},{ns:.2},{in_hash:016x},{out_hash:016x}");
+}
+
+// LCG mirrored bit-for-bit with the C harness:
+//   state = state * 1664525 + 1013904223
+//   byte  = (state >> 24) & 0xFF
+fn lcg_step_byte(state: &mut u32) -> u8 {
+    *state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+    ((*state >> 24) & 0xFF) as u8
+}
+
+fn fill_idct_input_seeded(out: &mut [i32], seed: u32) {
+    let mut s = seed;
+    for v in out.iter_mut() {
+        let lo = u32::from(lcg_step_byte(&mut s));
+        let hi = u32::from(lcg_step_byte(&mut s));
+        let bits = (lo | (hi << 8)) & 0x3FF;
+        *v = bits as i32 - 0x200;
+    }
+}
+
+fn fill_bytes_seeded(out: &mut [u8], seed: u32) {
+    let mut s = seed;
+    for b in out.iter_mut() {
+        *b = lcg_step_byte(&mut s);
+    }
+}
+
+fn fnv1a64_bytes(buf: &[u8]) -> u64 {
+    let mut h: u64 = 0xCBF2_9CE4_8422_2325;
+    for &b in buf {
+        h ^= u64::from(b);
+        // FNV-1a 64-bit prime = 0x100000001B3 = 2^40 + 0x1B3 — note the
+        // 2^40 not 2^32. An earlier draft of this file had 0x10000_01B3
+        // (2^32 + 0x1B3), which left the lower 32 bits of the hash
+        // matching the C side (correct prime) while garbling the upper —
+        // a multiplier-truncation bug with a very distinctive
+        // signature.
+        h = h.wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    h
+}
+
+/// Hash a `[i32]` as the underlying little-endian byte sequence — must
+/// match the C harness's `fnv1a64(input, sizeof input)` byte view.
+fn fnv1a64_i32(buf: &[i32]) -> u64 {
+    let mut h: u64 = 0xCBF2_9CE4_8422_2325;
+    for &v in buf {
+        let bytes = v.to_le_bytes();
+        for &b in &bytes {
+            h ^= u64::from(b);
+            // FNV-1a 64-bit prime = 0x100000001B3 = 2^40 + 0x1B3 — note the
+        // 2^40 not 2^32. An earlier draft of this file had 0x10000_01B3
+        // (2^32 + 0x1B3), which left the lower 32 bits of the hash
+        // matching the C side (correct prime) while garbling the upper —
+        // a multiplier-truncation bug with a very distinctive
+        // signature.
+        h = h.wrapping_mul(0x0000_0100_0000_01B3);
+        }
+    }
+    h
 }

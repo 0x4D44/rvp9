@@ -1,0 +1,4 @@
+# Build artifact — produced by `make` against build/libvpx/libvpx.a.
+# Rebuild locally; not checked in.
+libvpx_kernel_bench.exe
+*.o
