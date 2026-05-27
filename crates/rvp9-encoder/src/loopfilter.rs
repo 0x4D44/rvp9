@@ -342,7 +342,17 @@ pub(crate) fn build_inter_mi_grid_for_lf(
                 let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
                 let cell = ModeInfo {
                     block_size: leaf.leaf_bsize,
-                    tx_size: max_txsize(leaf.leaf_bsize),
+                    // Track-F iter7 — use the RD-chosen tx_size so the LF
+                    // transform-edge mask matches the coded tx boundaries
+                    // (the deblocker filters on TX edges; a mismatch with
+                    // the decoder's mask would re-introduce drift). For a
+                    // SKIP inter leaf the decoder derives `tx_size = max_tx`
+                    // (`allow_select` false), so report that here too.
+                    tx_size: if leaf.skip {
+                        max_txsize(leaf.leaf_bsize)
+                    } else {
+                        leaf.picked_tx_size
+                    },
                     skip: leaf.skip,
                     segment_id: 0,
                     seg_id_predicted: false,

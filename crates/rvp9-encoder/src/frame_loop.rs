@@ -2340,6 +2340,9 @@ impl StreamEncoder {
                                 picked_intra_mode: None,
                                 picked_ref_frame2: RefFrame::NoRefFrame,
                                 picked_mv2: Mv::ZERO,
+                                // Track-F iter7 — default to max; the
+                                // simulator's TX-size RD loop overwrites it.
+                                picked_tx_size: max_txsize(l.leaf_bsize),
                             }
                         })
                         .collect()
@@ -2771,7 +2774,10 @@ impl StreamEncoder {
         // `decoder_fc_state` matches what the decoder will actually
         // have, so the FC stays in sync across the GOP.
         let interp_switchable = true; // F.5 — always Switchable (Phase 2c)
-        let tx_mode_select = false; // AllowTx32x32, not TxModeSelect
+        // Track-F iter7 — the inter frame now codes `TxModeSelect`, so the
+        // decoder backward-adapts `tx_probs` from the per-block tx_size
+        // counts. The encoder's FC mirror must do the same to stay in sync.
+        let tx_mode_select = true;
         let (cs, uf) = coef_adapt_params(
             false, /* not intra-only */
             self.last_frame_was_key,
@@ -3005,6 +3011,9 @@ impl StreamEncoder {
                             picked_intra_mode: None,
                             picked_ref_frame2: RefFrame::NoRefFrame,
                             picked_mv2: Mv::ZERO,
+                            // Track-F iter7 — default to max; the simulator's
+                            // TX-size RD loop overwrites it.
+                            picked_tx_size: max_txsize(l.leaf_bsize),
                         })
                         .collect()
                 })
@@ -3183,7 +3192,9 @@ impl StreamEncoder {
         // pre-ARF bank 0, matching the decoder. Mirrors the show-frame
         // adaptation in `encode_inter_internal`.
         let interp_switchable = true;
-        let tx_mode_select = false;
+        // Track-F iter7 — ARF also codes `TxModeSelect` (shares
+        // `build_inter_packet_with_residuals`); adapt tx_probs to match.
+        let tx_mode_select = true;
         let (cs, uf) = coef_adapt_params(
             /* not intra-only = */ false,
             // The frame BEFORE the ARF in decode order is a show inter
@@ -3785,7 +3796,17 @@ fn build_inter_mi_grid_from_picker(
                 let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
                 let cell = ModeInfo {
                     block_size: leaf.leaf_bsize,
-                    tx_size: max_txsize(leaf.leaf_bsize),
+                    // Track-F iter7 — per-block RD-chosen tx_size from the
+                    // simulator (`choose_inter_luma_tx_size`). The modes
+                    // writer signals it under `tx_mode = TxModeSelect`.
+                    // For a SKIP inter leaf `allow_select` is false, so the
+                    // decoder derives `tx_size = min(max_tx, biggest) =
+                    // max_tx`; the grid must report that to stay in sync.
+                    tx_size: if leaf.skip {
+                        max_txsize(leaf.leaf_bsize)
+                    } else {
+                        leaf.picked_tx_size
+                    },
                     skip: leaf.skip,
                     // AQ.3 — carry the leaf's segment_id into the mi_grid
                     // so the modes_writer emits the per-leaf segment_id
@@ -4167,7 +4188,11 @@ fn build_inter_packet_with_residuals(
         allow_high_precision_mv: false,
     };
     let target = CompressedHeaderResult {
-        tx_mode: TxMode::AllowTx32x32,
+        // Track-F iter7 — `TxModeSelect` enables per-block tx_size signalling.
+        // The simulator (`choose_inter_luma_tx_size`) RD-picks each leaf's Y
+        // tx_size; the modes writer emits the selected-tx tree bits and the
+        // compressed header carries the tx_probs + per-size coef tables.
+        tx_mode: TxMode::TxModeSelect,
         reference_mode: reference_mode_frame,
     };
 
@@ -4246,7 +4271,10 @@ fn build_inter_packet_with_residuals(
             &mut bw,
             &mut count_fc,
             &params,
-            TxMode::AllowTx32x32,
+            // Track-F iter7 — the count pass must use the same `tx_mode` as
+            // the real tile pass so the per-block tx_size derivation (and
+            // thus the coef tile sizes read from `coef_source`) match.
+            target.tx_mode,
             &mi_grid,
             mi_rows,
             mi_cols,
@@ -4314,7 +4342,10 @@ fn build_inter_packet_with_residuals(
             &mut bw,
             decoder_fc,
             &params,
-            TxMode::AllowTx32x32,
+            // Track-F iter7 — must match the compressed-header `tx_mode` so
+            // the writer emits per-block tx_size bits and the decoder reads
+            // them (both `TxModeSelect`).
+            target.tx_mode,
             &mi_grid,
             mi_rows,
             mi_cols,
@@ -8003,6 +8034,7 @@ mod tests {
             picked_intra_mode: None,
             picked_ref_frame2: RefFrame::NoRefFrame,
             picked_mv2: Mv::ZERO,
+            picked_tx_size: max_txsize(BlockSize::Block64x64),
         }];
         let sb_partitions = vec![leaves];
         let grid = build_inter_mi_grid_from_picker(8, 8, &sb_partitions);
@@ -8036,6 +8068,7 @@ mod tests {
             picked_intra_mode: Some(IntraMode::V),
             picked_ref_frame2: RefFrame::NoRefFrame,
             picked_mv2: Mv::ZERO,
+            picked_tx_size: max_txsize(BlockSize::Block64x64),
         }];
         let sb_partitions = vec![leaves];
         let grid = build_inter_mi_grid_from_picker(8, 8, &sb_partitions);
@@ -8118,6 +8151,7 @@ mod tests {
             picked_intra_mode: None,
             picked_ref_frame2: RefFrame::NoRefFrame,
             picked_mv2: Mv::ZERO,
+            picked_tx_size: max_txsize(BlockSize::Block32x32),
         });
         leaves.push(InterPartitionLeafDesc {
             mi_row_in_sb: 4,
@@ -8132,6 +8166,7 @@ mod tests {
             picked_intra_mode: None,
             picked_ref_frame2: RefFrame::NoRefFrame,
             picked_mv2: Mv::ZERO,
+            picked_tx_size: max_txsize(BlockSize::Block16x16),
         });
         let sb_partitions = vec![leaves];
 

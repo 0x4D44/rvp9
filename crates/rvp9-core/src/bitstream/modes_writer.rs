@@ -1901,21 +1901,36 @@ fn write_inter_block_leaf(
         effective_tx_size,
     );
     // P0b — accumulate tx-size count. Mirrors the decoder's
-    // `read_tx_size` count logic in `mode_info.rs`. The tx_totals
-    // field accumulates unconditionally (select or not).
+    // `read_tx_size` count logic in `mode_info.rs`: the per-context
+    // p-counts (which `adapt_mode_probs` consumes for tx_probs backward
+    // adaptation) are incremented ONLY in the selected-tx-size branch
+    // (`allow_select && tx_mode == TxModeSelect && max_tx >= Tx8x8`).
+    // In the non-select branch libvpx (and the decoder) skip the
+    // increment, so the writer must too — otherwise skip-inter leaves
+    // (allow_select == false) over-count vs the decoder and desync the
+    // adapted tx_probs across the GOP. `tx_totals` is encoder-only
+    // bookkeeping (the decoder never tracks it); keep it accumulating
+    // for parity with libvpx's tokenize accounting.
+    let tx_counts_selected = allow_select && tx_mode == TxMode::TxModeSelect;
     if let Some(c) = counts.as_deref_mut() {
         let tx_idx = effective_tx_size as usize;
         match max_tx {
             TxSize::Tx32x32 => {
-                c.tx.p32x32[tx_ctx][tx_idx] += 1;
+                if tx_counts_selected {
+                    c.tx.p32x32[tx_ctx][tx_idx] += 1;
+                }
                 c.tx.tx_totals[tx_idx] += 1;
             }
             TxSize::Tx16x16 => {
-                c.tx.p16x16[tx_ctx][tx_idx] += 1;
+                if tx_counts_selected {
+                    c.tx.p16x16[tx_ctx][tx_idx] += 1;
+                }
                 c.tx.tx_totals[tx_idx] += 1;
             }
             TxSize::Tx8x8 => {
-                c.tx.p8x8[tx_ctx][tx_idx] += 1;
+                if tx_counts_selected {
+                    c.tx.p8x8[tx_ctx][tx_idx] += 1;
+                }
                 c.tx.tx_totals[tx_idx] += 1;
             }
             TxSize::Tx4x4 => {} // no choice to count

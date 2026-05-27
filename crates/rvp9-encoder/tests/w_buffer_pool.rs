@@ -200,8 +200,22 @@ fn a10_byte_identity_pre_vs_post_refactor() {
     // this oracle originally guarded still holds (the slot resolution
     // is unchanged); only the upstream KF Q decision moved.
     // Pre-fix golden was (len 6117, fnv1a 0xe37fff50d9321fda).
-    const GOLDEN_HASH: u64 = 0x7c61_9264_55c8_75c2;
-    const GOLDEN_LEN: usize = 7870;
+    //
+    // Re-captured again (2026-05-27, Track-F iter7) after enabling
+    // per-block transform-size RD selection. Inter frames now code
+    // `tx_mode = TxModeSelect` and signal each leaf's RD-chosen Y
+    // tx_size (libvpx `super_block_yrd` / `choose_tx_size_from_rd`);
+    // most inter Y blocks now use Tx4x4/Tx8x8 instead of the prior
+    // always-`max_txsize`, which intentionally changes the emitted
+    // bitstream (7870→7912). The new stream is verified byte-exact
+    // encoder-recon-vs-decode by `drift_diag` (SSE=0 every frame) and
+    // passes the 4/4 cross-decoder gate (rvp9-decoder / vpxdec / ffmpeg
+    // all agree), so this is a correct, intentional golden update — NOT
+    // a masked regression. The pool-mapping invariant this oracle
+    // guards is unchanged. Prior iter golden: (len 7870, fnv1a
+    // 0x7c619264_55c875c2).
+    const GOLDEN_HASH: u64 = 0xf243_704e_e93e_b334;
+    const GOLDEN_LEN: usize = 7912;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

@@ -2258,6 +2258,13 @@ pub(crate) struct InterPartitionLeafDesc {
     /// W-COMPOUND — MV for the slot 1 (ALTREF) reference of a compound
     /// winner; `Mv::ZERO` for single-ref leaves.
     pub picked_mv2: Mv,
+    /// Track-F iter7 — per-block RD-chosen luma transform size. The inter
+    /// simulator's `choose_inter_luma_tx_size` (libvpx `super_block_yrd`)
+    /// fills this; both mi-grid builders splat it into `mi.tx_size` and
+    /// the modes writer signals it under `tx_mode = TxModeSelect`.
+    /// Defaults to `max_txsize(leaf_bsize)` (the pre-iter7 always-max
+    /// behaviour) on skip-fallback / intra-in-inter leaves.
+    pub picked_tx_size: TxSize,
 }
 
 /// F10.1c — Drive the F8.1 inter mode picker per leaf and run the
@@ -3570,6 +3577,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         picked_intra_mode: None,
                         picked_ref_frame2: RefFrame::NoRefFrame,
                         picked_mv2: Mv::ZERO,
+                        // Track-F iter7 — default to max; the simulator's
+                        // TX-size RD loop overwrites it.
+                        picked_tx_size: rvp9_core::block::max_txsize(leaf.bsize),
                     });
                 }
                 sb_partitions[sb_idx] = new_leaves;
@@ -3888,6 +3898,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     i32::from(leaf_qindex),
                     QuantizerDeltas::Y,
                 );
+                // Track-F iter7 — rdmult for the per-block TX-size RD loop
+                // (`choose_inter_luma_tx_size`). libvpx `compute_rd_mult`
+                // at the leaf's effective qindex (inter frame).
+                let tx_rd_rdmult = i64::from(rvp9_core::cost::compute_rd_mult(
+                    i32::from(leaf_qindex),
+                    rvp9_core::cost::FrameTypeForRd::Inter,
+                ));
                 // G1 — UV dequant pair for chroma model_rd.
                 let (uv_dc_dq, uv_ac_dq) = plane_dequant_pair(
                     i32::from(leaf_qindex),
@@ -4879,6 +4896,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // Per-plane recon + residual emission. Mirrors the
                     // decoder's `reconstruct_inter_block` plane / TX walk
                     // (rvp9-decoder::reconstruct_inter, lines 199-554).
+                    //
+                    // Track-F iter7 — per-block TX-size RD selection. The Y
+                    // plane runs `choose_inter_luma_tx_size` (libvpx
+                    // `super_block_yrd` / `choose_tx_size_from_rd`) AFTER its
+                    // MC prediction is built; `chosen_luma_tx` then drives
+                    // the Y coding walk + the UV cap, and is stored on the
+                    // leaf so the writer signals it under `TxModeSelect`.
+                    let mut chosen_luma_tx = rvp9_core::block::max_txsize(leaf_bsize);
                     for plane in 0..3 {
                         let ss_x = F5_SUBSAMPLING_X[plane];
                         let ss_y = F5_SUBSAMPLING_Y[plane];
@@ -4891,17 +4916,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         } else {
                             f5_uv_plane_block_size(leaf_bsize)
                         };
-                        let luma_tx = rvp9_core::block::max_txsize(leaf_bsize);
-                        let plane_tx = if plane == 0 {
-                            luma_tx
-                        } else {
-                            f5_uv_plane_tx_size(leaf_bsize, luma_tx)
-                        };
-
+                        // Y plane TX size is RD-chosen below (after the MC
+                        // prediction is built); `plane_tx` / `tx_step_4x4` /
+                        // `tx_side` are derived from `chosen_luma_tx` at that
+                        // point. UV is capped to the Y size.
                         let plane_bw_4x4 = plane_bsize.n_4x4_wide() as usize;
                         let plane_bh_4x4 = plane_bsize.n_4x4_high() as usize;
-                        let tx_step_4x4 = 1usize << (plane_tx as usize);
-                        let tx_side = plane_tx.side();
 
                         // Plane-pixel coord of leaf's top-left.
                         let plane_px_x = (leaf_mi_col * 8) >> ss_x;
@@ -5048,6 +5068,35 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             );
                         }
 
+                        // Track-F iter7 — per-block TX-size RD selection.
+                        // `recon_plane` now holds the pure Y MC prediction
+                        // (residual not yet added) — the input the libvpx
+                        // `super_block_yrd` loop needs. Decide the Y tx_size
+                        // here, then re-derive the per-tile coding params
+                        // (`plane_tx` / `tx_step_4x4` / `tx_side`) from it.
+                        // For inter the prediction is TX-size-independent, so
+                        // this is a faithful RD-domain size search.
+                        if plane == 0 {
+                            chosen_luma_tx = choose_inter_luma_tx_size(
+                                input_plane,
+                                recon_plane,
+                                plane_stride,
+                                plane_px_x,
+                                plane_px_y,
+                                leaf_bsize,
+                                &quantizer,
+                                &rdo_coef_costs,
+                                tx_rd_rdmult,
+                            );
+                        }
+                        let plane_tx = if plane == 0 {
+                            chosen_luma_tx
+                        } else {
+                            f5_uv_plane_tx_size(leaf_bsize, chosen_luma_tx)
+                        };
+                        let tx_step_4x4 = 1usize << (plane_tx as usize);
+                        let tx_side = plane_tx.side();
+
                         // Per-TX residual emission. Walk in plane 4×4
                         // raster (same order the writer walks).
                         let mut tx_y4_local = 0usize;
@@ -5133,6 +5182,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             tx_y4_local += tx_step_4x4;
                         }
                     }
+
+                    // Track-F iter7 — record the RD-chosen Y tx_size so the
+                    // mi-grid builders (`build_inter_mi_grid_from_picker` /
+                    // `_for_lf`) splat it and the modes writer signals it
+                    // under `TxModeSelect`.
+                    sb_partitions[sb_idx][leaf_idx].picked_tx_size = chosen_luma_tx;
 
                     // RC.X1 — if no coefs in the entire leaf were non-zero,
                     // flip the leaf to skip=true. Mirrors libvpx's
@@ -5736,6 +5791,212 @@ fn inter_forward_quant_one_tx(
     let qcoeff_i32: Vec<i32> = qcoeff_i16.into_iter().map(i32::from).collect();
     let dqcoeff_i32: Vec<i32> = dqcoeff_i16.into_iter().map(i32::from).collect();
     (qcoeff_i32, dqcoeff_i32, eob as usize)
+}
+
+/// Track-F iter7 — per-block transform-size RD selection for the inter Y
+/// plane. libvpx ref: `vp9/encoder/vp9_rdopt.c` `super_block_yrd` /
+/// `choose_tx_size_from_rd` / `txfm_rd_in_plane` (the good-quality
+/// RD-domain TX-size loop).
+///
+/// For an INTER leaf the motion-compensated prediction (already written
+/// into `recon_plane`) is TX-size-independent, so the residual `src -
+/// pred` is identical for every candidate TX size. This lets us walk all
+/// legal TX sizes — `Tx4x4` up to `max_txsize(leaf_bsize)` — compute the
+/// per-size RD cost (transform-domain quant distortion + coefficient
+/// rate + the per-size tx_size signalling bit), and return the size
+/// minimising `D + lambda * R`.
+///
+/// The RD metric mirrors libvpx's `block_rd_txfm` / `dist_block`
+/// transform-domain branch: distortion is `vp9_block_error(coeff,
+/// dqcoeff) >> shift` summed across the leaf's tiles, and the rate is
+/// `cost_coeffs` summed across tiles with a leaf-local propagating
+/// entropy context (the absolute above/left offset from the persistent
+/// `TileCoefCtx` is small relative to the distortion-driven difference
+/// between sizes and cancels across candidates, so a leaf-local context
+/// seeded at zero is a faithful approximation for the SIZE decision).
+///
+/// Returns the chosen luma `TxSize`. The caller then codes the leaf with
+/// it and the writer signals it (under `tx_mode = TxModeSelect`).
+fn choose_inter_luma_tx_size(
+    input_plane: &[u8],
+    recon_plane: &[u8],
+    plane_stride: usize,
+    plane_px_x: usize,
+    plane_px_y: usize,
+    leaf_bsize: BlockSize,
+    quantizer: &rvp9_core::quant::forward::PlaneQuantizers,
+    coef_costs: &rvp9_core::cost::coef_cost::CoefCostTable,
+    rdmult: i64,
+) -> TxSize {
+    use rvp9_core::quant::forward::{
+        scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32,
+    };
+    use rvp9_core::transforms::TxType;
+    use rvp9_core::transforms::forward::{fdct8x8, fdct16x16, fdct32x32, fht4x4};
+    use rvp9_core::transforms::scans::scan_for;
+
+    let max_tx = rvp9_core::block::max_txsize(leaf_bsize);
+    // Sub-8 leaves only have Tx4x4 — no decision to make.
+    if max_tx == TxSize::Tx4x4 {
+        return TxSize::Tx4x4;
+    }
+
+    let plane_bw_4x4 = leaf_bsize.n_4x4_wide() as usize;
+    let plane_bh_4x4 = leaf_bsize.n_4x4_high() as usize;
+    let dequant_pair = [quantizer.dequant[0], quantizer.dequant[1]];
+
+    // libvpx `RDCOST(RM, DM, R, D) = ((RM * R + 256) >> 9) + (D << 7)`.
+    let rdcost = |rate: u32, dist: i64| -> i64 {
+        let rate_term = (rdmult.saturating_mul(i64::from(rate)) + 256) >> 9;
+        rate_term.saturating_add(dist << 7)
+    };
+    let mut best_tx = max_tx;
+    let mut best_rd = i64::MAX;
+
+    // Walk every candidate size from max down to Tx4x4 (libvpx walks the
+    // full depth in the good-quality path; the realtime/RT op-point still
+    // benefits because the residual transform is cheap relative to ME).
+    for n in (0..=(max_tx as usize)).rev() {
+        let tx_size = match n {
+            0 => TxSize::Tx4x4,
+            1 => TxSize::Tx8x8,
+            2 => TxSize::Tx16x16,
+            _ => TxSize::Tx32x32,
+        };
+        let tx_side = tx_size.side();
+        let tx_step_4x4 = 1usize << (tx_size as usize);
+        let ncoef = tx_size.n_coeffs();
+        let scan = scan_for(tx_size, TxType::DctDct);
+        let scan_slice = scan_for_forward(&scan);
+        let shift = if matches!(tx_size, TxSize::Tx32x32) { 0 } else { 2 };
+
+        let mut total_dist: i64 = 0;
+        let mut total_rate: u32 = 0;
+        // Leaf-local propagating entropy context: above[col4], left[row4].
+        let mut above_ctx = vec![0u8; plane_bw_4x4];
+        let mut left_ctx = vec![0u8; plane_bh_4x4];
+
+        let mut coefs = vec![0i32; ncoef];
+        let mut qcoeff_i16 = vec![0i16; ncoef];
+        let mut dqcoeff_i16 = vec![0i16; ncoef];
+        let mut residual = vec![0i16; tx_side * tx_side];
+
+        let mut ty4 = 0usize;
+        while ty4 < plane_bh_4x4 {
+            let mut tx4 = 0usize;
+            while tx4 < plane_bw_4x4 {
+                let tx_px_x = plane_px_x + tx4 * 4;
+                let tx_px_y = plane_px_y + ty4 * 4;
+                // Residual = source - MC prediction (in recon_plane).
+                for r in 0..tx_side {
+                    let row = (tx_px_y + r) * plane_stride + tx_px_x;
+                    for c in 0..tx_side {
+                        let s = i16::from(input_plane[row + c]);
+                        let p = i16::from(recon_plane[row + c]);
+                        residual[r * tx_side + c] = s - p;
+                    }
+                }
+                // Forward transform (inter = DctDct).
+                match tx_size {
+                    TxSize::Tx4x4 => {
+                        let mut buf = [0i32; 16];
+                        fht4x4(&residual, &mut buf, tx_side, TxType::DctDct);
+                        coefs.copy_from_slice(&buf[..]);
+                    }
+                    TxSize::Tx8x8 => {
+                        let mut buf = [0i32; 64];
+                        fdct8x8(&residual, &mut buf, tx_side);
+                        coefs.copy_from_slice(&buf[..]);
+                    }
+                    TxSize::Tx16x16 => {
+                        let mut buf = [0i32; 256];
+                        fdct16x16(&residual, &mut buf, tx_side);
+                        coefs.copy_from_slice(&buf[..]);
+                    }
+                    TxSize::Tx32x32 => {
+                        let mut buf = [0i32; 1024];
+                        fdct32x32(&residual, &mut buf, tx_side);
+                        coefs.copy_from_slice(&buf[..]);
+                    }
+                }
+                let eob = match tx_size {
+                    TxSize::Tx32x32 => vp9_quantize_b_32x32(
+                        &coefs,
+                        false,
+                        &quantizer.zbin,
+                        &quantizer.round,
+                        &quantizer.quant,
+                        &quantizer.quant_shift,
+                        &mut qcoeff_i16,
+                        &mut dqcoeff_i16,
+                        &dequant_pair,
+                        scan_slice,
+                    ),
+                    _ => vp9_quantize_b(
+                        &coefs,
+                        ncoef,
+                        false,
+                        &quantizer.zbin,
+                        &quantizer.round,
+                        &quantizer.quant,
+                        &quantizer.quant_shift,
+                        &mut qcoeff_i16,
+                        &mut dqcoeff_i16,
+                        &dequant_pair,
+                        scan_slice,
+                    ),
+                };
+                // Transform-domain distortion: vp9_block_error >> shift.
+                let (err, _ssz) =
+                    crate::rdo::block_error::vp9_block_error(&coefs, &dqcoeff_i16);
+                total_dist += err >> shift;
+
+                // Coefficient rate via cost_coeffs with the leaf-local
+                // entropy context (above[col] + left[row], capped to 0..2).
+                let above = above_ctx[tx4];
+                let left = left_ctx[ty4];
+                let coeff_ctx =
+                    rvp9_core::coef_ctx::combine_entropy_contexts(above, left);
+                total_rate = total_rate.saturating_add(crate::rdo::cost_coeffs::cost_coeffs(
+                    &qcoeff_i16,
+                    scan.scan,
+                    eob as u16,
+                    tx_size,
+                    /* plane_type = */ 0,
+                    /* ref_type (inter) = */ 1,
+                    coeff_ctx,
+                    coef_costs,
+                ));
+                // Propagate the "had non-zero coef" flag across the tile's
+                // 4×4 footprint in the leaf-local above/left arrays.
+                let nz = u8::from(eob > 0);
+                for c in 0..tx_step_4x4 {
+                    if tx4 + c < plane_bw_4x4 {
+                        above_ctx[tx4 + c] = nz;
+                    }
+                }
+                for r in 0..tx_step_4x4 {
+                    if ty4 + r < plane_bh_4x4 {
+                        left_ctx[ty4 + r] = nz;
+                    }
+                }
+
+                tx4 += tx_step_4x4;
+            }
+            ty4 += tx_step_4x4;
+        }
+
+        let rd = rdcost(total_rate, total_dist);
+        // Strict `<` keeps the larger TX on ties (libvpx walks high→low
+        // and keeps the first/biggest on equality — matches the prior
+        // always-max behaviour for residual-free leaves).
+        if rd < best_rd {
+            best_rd = rd;
+            best_tx = tx_size;
+        }
+    }
+
+    best_tx
 }
 
 /// DRIFT-FIX — inverse-transform-add that is BYTE-IDENTICAL to the

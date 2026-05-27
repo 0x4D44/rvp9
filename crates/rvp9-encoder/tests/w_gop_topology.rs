@@ -286,8 +286,19 @@ fn gop_topology_byte_identity() {
     // The new stream is verified byte-exact encoder-recon-vs-decode by
     // `drift_diag` and passes the 4/4 cross-decoder gate.
     // Pre-fix golden was (len 25670, fnv1a 0xeee174942d662023).
-    const GOLDEN_HASH: u64 = 0x3152_5167_cc03_2401;
-    const GOLDEN_LEN: usize = 26222;
+    //
+    // Re-captured again (2026-05-27, Track-F iter7) after enabling
+    // per-block transform-size RD selection. Inter frames now code
+    // `tx_mode = TxModeSelect` and signal each leaf's RD-chosen Y
+    // tx_size (libvpx `super_block_yrd` / `choose_tx_size_from_rd`),
+    // intentionally changing the bitstream (26222→27405). The GOP
+    // *schedule* this oracle guards is unchanged (the refresh-mask
+    // assertions above still hold). The new stream is verified
+    // byte-exact encoder-recon-vs-decode by `drift_diag` (SSE=0 every
+    // frame) and passes the 4/4 cross-decoder gate. Prior iter golden:
+    // (len 26222, fnv1a 0x31525167_cc032401).
+    const GOLDEN_HASH: u64 = 0xdb38_0fd1_fcc1_ac6b;
+    const GOLDEN_LEN: usize = 27405;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);
