@@ -78,6 +78,7 @@ pub mod denoiser;
 pub mod e12stat;
 pub mod f02_oracle;
 pub mod frame_loop;
+pub mod gop;
 pub(crate) mod loopfilter;
 pub mod lookahead;
 pub mod ml_partition;

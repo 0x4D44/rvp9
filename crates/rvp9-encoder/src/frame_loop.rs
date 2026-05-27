@@ -468,6 +468,21 @@ pub struct StreamEncoder {
     config: EncoderConfig,
     rate_control: RateControl,
     frame_idx: u32,
+    /// GOP topology — the libvpx-faithful golden-frame-group schedule
+    /// (`crate::gop::GfGroup`, modelling `GF_GROUP` from
+    /// `vp9_firstpass.h:80-100`). Single source of truth for each
+    /// display frame's update TYPE (KF / GF / normal-inter), the wire
+    /// `refresh_frame_flags` mask, and the ARF cadence. Built once from
+    /// `config.gop_length` + `config.enable_alt_ref` (the 1-pass
+    /// schedule is a deterministic function of the GOP-relative offset);
+    /// consulted via `gf_group.schedule(self.frame_idx)`. Replaces the
+    /// ad-hoc `inter_frames_since_arf` / `frames_since_golden_refresh`
+    /// counters as the schedule authority — those counters' decisions
+    /// (KF at `frame_idx % gop == 0`, GOLDEN refresh every 8 inter
+    /// frames, ARF at the half-GOP cadence) are now reads from this
+    /// struct. TPL (A23) + 2-pass VBR consume `update_type[]` /
+    /// `arf_src_offset[]` / `gf_group_size` from here in later waves.
+    gf_group: crate::gop::GfGroup,
     /// W1.5(vpxenc parity, A19 rows 20-21): source-frame lookahead
     /// ring. Mirrors libvpx's `cpi->lookahead`
     /// (`vp9_encoder.c::vp9_receive_raw_frame` pushes;
@@ -686,15 +701,10 @@ const LAST_FRAME_IDX: usize = 1;
 /// `running_avg_y[LAST_FRAME_IDX]`) as the zero-MV `mc_avg`.
 const W5_DENOISE_TILE: usize = 16;
 
-/// A14 — GOLDEN refresh period for the inter path (Phase A
-/// infrastructure). Every Nth inter frame refreshes the GOLDEN
-/// slot via `refresh_frame_flags` bit 1. libvpx's CBR-RT path
-/// uses an adaptive interval (`vp9_rc_pick_frame_type` with
-/// `cpi->refresh_golden_frame` driven by
-/// `vp9_cyclic_refresh_set_golden_update`) typically in the
-/// 8-15 frame range; we pin a constant 8 for v1 to keep the
-/// behaviour deterministic and self-tunable later.
-const A14_GOLDEN_REFRESH_PERIOD: u32 = 8;
+// A14 — GOLDEN refresh period for the inter path moved to the GOP
+// topology module as `crate::gop::GOLDEN_REFRESH_PERIOD` (the schedule
+// authority). The frame loop now reads the refresh disposition from
+// `gf_group.schedule(frame_idx)` rather than a local counter+constant.
 
 impl StreamEncoder {
     /// Construct a streaming encoder from `config`.
@@ -749,10 +759,18 @@ impl StreamEncoder {
             )),
         };
 
+        // GOP topology — build the golden-frame-group schedule from the
+        // 1-pass inputs before `config` is moved into the struct. The
+        // schedule is the single source of truth for per-frame type +
+        // refresh flags (see the `gf_group` field doc).
+        let gf_group =
+            crate::gop::GfGroup::new(config.gop_length, config.enable_alt_ref);
+
         Ok(Self {
             config,
             rate_control,
             frame_idx: 0,
+            gf_group,
             // W1.5(vpxenc parity, A19): source-frame lookahead.
             // Depth = `config.lag_in_frames` (libvpx
             // `vp9_lookahead_init` is called with `oxcf->lag_in_frames`
@@ -1065,20 +1083,22 @@ impl StreamEncoder {
         // `frame_idx` (one cell store; no-op when unset).
         crate::f02_oracle::set_frame_idx(self.frame_idx);
 
-        // Decide frame kind. Frames at `frame_idx % gop_length == 0`
-        // are keyframes (so frame 0 is always KF; with `gop_length =
-        // N`, KFs land at frames 0, N, 2N, ...). We drive this from
-        // the encoder's own counter rather than the rate-controller's
+        // Decide frame kind from the GOP topology schedule. Frames at
+        // `frame_idx % gop_length == 0` are keyframes (so frame 0 is
+        // always KF; with `gop_length = N`, KFs land at frames 0, N, 2N,
+        // ...). The `GfGroup` resolves this via the GOP-relative offset
+        // (`gop_offset == 0` ⇒ `KfUpdate`), replacing the prior inline
+        // `frame_idx.is_multiple_of(gop)` test. We drive KF placement
+        // from the schedule rather than the rate-controller's
         // `frames_to_key` because the user-facing contract on
         // `gop_length` is "every N frames" — the rate-controller's
         // off-by-one accounting of `frames_to_key` is fine for its
         // internal budgeting but isn't the right oracle for KF
         // placement.
-        let gop = self.config.gop_length.max(1);
-        let frame_kind = if self.frame_idx.is_multiple_of(gop) {
-            FrameKind::Key
-        } else {
-            FrameKind::Inter
+        let frame_sched = self.gf_group.schedule(self.frame_idx);
+        let frame_kind = match frame_sched.update_type {
+            crate::gop::FrameUpdateType::KfUpdate => FrameKind::Key,
+            _ => FrameKind::Inter,
         };
 
         // W2.1(vpxenc parity, A5 P0): update per-frame pre-analysis
@@ -1196,9 +1216,13 @@ impl StreamEncoder {
         // emitted next and the two are packed into a superframe via
         // `SuperframeBuilder` (libvpx `vp9_encoder.c:5093-5142`).
         //
-        // Cadence: every `arf_interval = gop_length / 2` inter frames
-        // since the last KF or ARF (libvpx's default
+        // Cadence: the GOP topology schedule's `arf_before` flag fires
+        // once `gf_interval = max(gop_length / 2, 2)` inter frames have
+        // been coded since the last KF (libvpx's default
         // `baseline_gf_interval`, `vp9_firstpass.c::define_gf_group`).
+        // This replaces the prior inline `inter_frames_since_arf >=
+        // arf_interval` test — the `GfGroup` resolves the same decision
+        // from the GOP-relative offset (ARF at offset `gf_interval + 1`).
         // The trigger fires BEFORE encoding the inter frame at the
         // cadence boundary; the ARF source frames are the just-popped
         // current frame plus the lookahead's forward peek.
@@ -1206,7 +1230,6 @@ impl StreamEncoder {
             && self.config.enable_alt_ref
             && self.pending_arf_packet.is_none()
         {
-            let arf_interval = (self.config.gop_length / 2).max(2);
             // The temporal filter needs the alt-ref source + a few
             // neighbour frames. Use the just-popped frame as the ARF
             // source (alt_ref_index = 0) and peek forward for
@@ -1216,10 +1239,10 @@ impl StreamEncoder {
             // arnr_max_frames + 1`; we collapse to the minimum
             // viable count for the wiring PROOF.
             let peek_avail = self.lookahead.depth();
-            // Trigger when we've coded `arf_interval` inter frames
-            // since the last KF/ARF AND the lookahead can supply at
-            // least one neighbour for the temporal filter.
-            if self.inter_frames_since_arf >= arf_interval && peek_avail >= 1 {
+            // Trigger from the schedule (the `arf_before` flag) AND the
+            // lookahead can supply at least one neighbour for the
+            // temporal filter.
+            if frame_sched.arf_before && peek_avail >= 1 {
                 if let Some(arf_packet) = self.try_build_arf_packet(
                     q_index,
                     (&y_tight, &u_tight, &v_tight),
@@ -2000,16 +2023,19 @@ impl StreamEncoder {
         let segmentation_params =
             build_segmentation_params(segmentation_enabled, &seg_q_deltas);
 
-        // A14 (Phase A) — decide whether this inter frame refreshes
-        // the GOLDEN slot. Period: `A14_GOLDEN_REFRESH_PERIOD` inter
-        // frames between refreshes. The counter is incremented BEFORE
-        // the check so the first inter frame after a KF (when the
-        // counter is at 0 from the KF reset) gets `counter == 1` on
-        // the check — meaning the first GOLDEN refresh lands at
-        // inter-frame N (where N == period). That matches libvpx's
-        // `cpi->refresh_golden_frame` cadence (refresh after the
+        // A14 (Phase A) — decide whether this inter frame refreshes the
+        // GOLDEN slot, now driven by the GOP topology schedule. The
+        // `GfGroup` resolves the frame's `update_type` from its
+        // GOP-relative offset: `GfUpdate` (refresh `0x03`, LAST+GOLDEN)
+        // at offsets that are multiples of `GOLDEN_REFRESH_PERIOD` (8,
+        // 16, ...), `LfUpdate` (refresh `0x01`, LAST only) elsewhere.
+        // This reproduces the prior `frames_since_golden_refresh`
+        // increment-then-check state machine exactly: that counter
+        // (reset on KF and after each refresh) reached the period at the
+        // same display offsets the schedule marks `GfUpdate`. libvpx
+        // parity: `cpi->refresh_golden_frame` cadence (refresh after the
         // GF group reaches its planned length, never on the first
-        // post-KF frame).
+        // post-KF frame), `vp9_firstpass.c::define_gf_group`.
         //
         // Phase A is INFRASTRUCTURE ONLY — the picker still iterates
         // LASTFRAME only (Phase B follow-up), so this refresh bit
@@ -2020,15 +2046,17 @@ impl StreamEncoder {
         // those buffers and the wire-format selection bits already
         // emitted by `write_inter_block_mode_info` will resolve to
         // the right slot.
+        //
+        // The `frames_since_golden_refresh` counter is kept in lock-step
+        // (incremented here, reset on refresh below / on KF) because the
+        // ARF picker path and diagnostics still read it; the SCHEDULE,
+        // not the counter, is now the refresh-flag authority.
+        let frame_sched = self.gf_group.schedule(self.frame_idx);
         self.frames_since_golden_refresh =
             self.frames_since_golden_refresh.saturating_add(1);
         let refresh_golden_this_frame =
-            self.frames_since_golden_refresh >= A14_GOLDEN_REFRESH_PERIOD;
-        let refresh_flags: u8 = if refresh_golden_this_frame {
-            0x03 // LAST (bit 0) + GOLDEN (bit 1)
-        } else {
-            0x01 // LAST only — A11's baseline
-        };
+            matches!(frame_sched.update_type, crate::gop::FrameUpdateType::GfUpdate);
+        let refresh_flags: u8 = frame_sched.refresh_frame_flags;
 
         // Build the packet from the populated coef source + leaf
         // descriptors. P0b — accumulate counts for backward adaptation.
