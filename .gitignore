@@ -17,6 +17,11 @@ Cargo.lock.bak
 # Ad-hoc profiler dumps (e.g. .profile/tile_t1_t4.tsv) — host-specific
 # samples produced by perf/superluminal runs, not part of the codebase.
 .profile/
+# Superluminal/profile JSON exports written at repo root by ad-hoc
+# capture scripts (e.g. profile_headline.json.gz, profile_t1.json.gz,
+# profile_*.json.syms.json). Host-specific samples — never commit.
+/profile_*.json.gz
+/profile_*.json.syms.json
 
 # OS
 Thumbs.db
