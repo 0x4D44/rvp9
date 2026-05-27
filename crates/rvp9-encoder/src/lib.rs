@@ -92,7 +92,7 @@ pub mod svc;
 pub mod temporal_filter;
 pub mod tpl;
 
-pub use frame_loop::{AqMode, Deadline, EncodedFrame, EncoderConfig, FrameKind as StreamFrameKind, StreamEncoder, YuvFrameRef};
+pub use frame_loop::{AqMode, Deadline, EncodedFrame, EncoderConfig, FrameKind as StreamFrameKind, StreamEncoder, YuvFrameRef, encode_two_pass};
 // Re-audit pass 3: `EncoderConfig::rc_mode` is a public field of type
 // `rate_control::RcMode`, so the discriminator must be reachable from
 // the crate root for callers (CLI, tests, benches) constructing a

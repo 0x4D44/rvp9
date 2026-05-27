@@ -100,10 +100,12 @@ pub mod cbr;
 pub mod config;
 pub mod postencode;
 pub mod state;
+pub mod two_pass;
 pub mod vbr;
 
 pub use config::RateControlConfig;
 pub use state::{E8Trace, RateControl};
+pub use two_pass::{FirstPassStats, TwoPassState};
 
 /// W1.6(vpxenc parity, A3 P0): rate-control mode discriminator.
 ///
@@ -120,13 +122,14 @@ pub use state::{E8Trace, RateControl};
 /// }
 /// ```
 ///
-/// rvp9 ports all four one-pass regulators: `Cbr`, `Vbr`, `Cq`, and
-/// `Q` are live arms of [`RateControl::pick_q_and_bounds`] (the
-/// 2-pass driver, which needs a first-pass-stats writer/reader, is the
-/// only deferred path). Re-audit pass 3 (2026-05-26) wired
-/// [`crate::EncoderConfig`]'s `rc_mode` field + the CLI `--end-usage`
-/// flag through to this discriminator so a CLI user can actually
-/// select them.
+/// rvp9 ports the whole rate-control family: the four one-pass
+/// regulators (`Cbr`, `Vbr`, `Cq`, `Q`) plus the two-pass driver
+/// (`VbrTwoPass`) are all live arms of
+/// [`RateControl::pick_q_and_bounds`]. Re-audit pass 3 (2026-05-26)
+/// wired [`crate::EncoderConfig`]'s `rc_mode` field + the CLI
+/// `--end-usage` flag through to the one-pass arms; the two-pass arm is
+/// selected via `--passes 2` / [`crate::frame_loop::encode_two_pass`]
+/// (it consumes per-frame [`FirstPassStats`] gathered in a first pass).
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
 pub enum RcMode {
     /// Constant bit-rate, real-time. libvpx `VPX_CBR`. rvp9 default.
@@ -139,6 +142,17 @@ pub enum RcMode {
     Cq,
     /// Constant quantizer. libvpx `VPX_Q`. Lands in a later wave.
     Q,
+    /// Two-pass VBR. libvpx `pass == 2` + `VPX_VBR`
+    /// (`vp9_ratectrl.c:1606-1608` dispatch → `rc_pick_q_and_bounds_two_pass`,
+    /// `vp9_ratectrl.c:1427`). A per-SEQUENCE two-pass: a stats-only
+    /// first pass gathers per-frame [`FirstPassStats`], then this arm
+    /// allocates the sequence bit budget across frames by their relative
+    /// coded-error and regulates Q to hit each frame's allocated target.
+    /// Requires a [`TwoPassState`] attached to the controller via
+    /// [`RateControl::attach_two_pass`]; the encoder's two-pass driver
+    /// (`crate::frame_loop::encode_two_pass`) wires it. Opt-in (not the
+    /// default), so the 1-pass byte-exact gate is unaffected.
+    VbrTwoPass,
 }
 
 /// Frame-kind discriminant for the rate-control API.

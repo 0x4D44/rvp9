@@ -209,18 +209,41 @@ fn enc_end_usage_unknown_rejected() {
     );
 }
 
-/// `--passes 2` is rejected (only 1-pass is implemented).
+/// `--passes 2` is now ACCEPTED at parse time — two-pass VBR is
+/// implemented (`rvp9_encoder::encode_two_pass`). The encode here fails
+/// only because no input/output is supplied; the `--passes` flag itself
+/// must NOT be the rejection reason (it parses fine). A regression that
+/// reverted `--passes 2` to "not supported" would surface the old
+/// "--passes" error string here.
 #[test]
-fn enc_passes_two_rejected() {
+fn enc_passes_two_accepted_at_parse_time() {
     let out = Command::new(enc_bin())
         .args(["--passes", "2", "in.y4m"])
+        .output()
+        .expect("run rvp9enc");
+    // Run still fails (no -o / missing file), but NOT because --passes
+    // was rejected.
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("--passes=2 not understood")
+            && !stderr.contains("--passes is recognised but not supported"),
+        "--passes 2 must be accepted (two-pass VBR is implemented); got: {stderr}"
+    );
+}
+
+/// `--passes 3` is rejected — only 1 or 2 passes are valid.
+#[test]
+fn enc_passes_three_rejected() {
+    let out = Command::new(enc_bin())
+        .args(["--passes", "3", "in.y4m"])
         .output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("--passes"),
-        "stderr must name --passes, got: {stderr}"
+        stderr.contains("--passes") && stderr.contains("1 or 2"),
+        "stderr must reject --passes=3 naming the valid range, got: {stderr}"
     );
 }
 

@@ -53,7 +53,9 @@
 //!   `rc->worst_quality` directly. We do the same via the
 //!   `frames_since_key == 0 && total_actual_bits == 0` predicate
 //!   (mirrors the CBR keyframe path).
-//! - **Two-pass.** Tracked in the 2-pass deferral in `state.rs`.
+//! - **Two-pass.** Landed as the separate [`super::RcMode::VbrTwoPass`]
+//!   arm (port of `rc_pick_q_and_bounds_two_pass`, `vp9_ratectrl.c:1427`)
+//!   driven by [`super::two_pass`]; not part of this one-pass module.
 
 use super::cbr::{
     FRAME_OVERHEAD_BITS, get_kf_active_quality, get_minq_index, get_rate_correction_factor,

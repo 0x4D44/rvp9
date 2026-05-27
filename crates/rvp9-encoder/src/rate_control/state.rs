@@ -6,7 +6,7 @@
 //! cross-referencing; Rust idioms (i64 → `i64`, no explicit `*const`
 //! pointers, no SVC arrays) replace the C-isms.
 
-use super::{FrameKind, RateControlConfig, cbr, postencode, vbr};
+use super::{FrameKind, RateControlConfig, TwoPassState, cbr, postencode, two_pass, vbr};
 use cbr::RATE_FACTOR_LEVELS;
 
 /// Running rate-control state.
@@ -164,6 +164,15 @@ pub struct RateControl {
 
     /// Original config (snapshot for re-init).
     config: RateControlConfig,
+
+    /// Two-pass driver state, present only under
+    /// [`super::RcMode::VbrTwoPass`]. Carries the first-pass stats buffer
+    /// and the precomputed per-frame bit allocation that drive the
+    /// 2-pass `pick_q` arm. `None` for every one-pass mode (CBR / 1-pass
+    /// VBR / CQ / Q), so those paths are byte-identical to before this
+    /// field existed. Attached by the encoder's two-pass driver via
+    /// [`RateControl::attach_two_pass`].
+    pub(super) two_pass: Option<TwoPassState>,
 }
 
 impl RateControl {
@@ -258,7 +267,19 @@ impl RateControl {
             starting_buffer_level,
 
             config,
+            // One-pass modes leave this None (byte-identical path); the
+            // two-pass driver attaches it via `attach_two_pass`.
+            two_pass: None,
         }
+    }
+
+    /// Attach the [`TwoPassState`] for a [`super::RcMode::VbrTwoPass`]
+    /// encode. The encoder's two-pass driver calls this once, after the
+    /// first pass has gathered the per-frame [`super::FirstPassStats`],
+    /// before the second pass begins. The 2-pass `pick_q_and_bounds` arm
+    /// reads the per-frame bit allocation from here.
+    pub fn attach_two_pass(&mut self, state: TwoPassState) {
+        self.two_pass = Some(state);
     }
 
     /// Pick the Q-index for the next frame.
@@ -271,23 +292,26 @@ impl RateControl {
     /// Wraps [`super::cbr::pick_q_and_bounds`].
     ///
     /// W1.6(vpxenc parity, A3 P0) — dispatches on `config.rc_mode`
-    /// (libvpx `vp9_ratectrl.c:1587-1609`). All four one-pass arms
-    /// (`Cbr` / `Vbr` / `Cq` / `Q`) are live; only the 2-pass driver
-    /// is deferred. Re-audit pass 3 made every arm CLI-reachable via
-    /// `--end-usage`.
+    /// (libvpx `vp9_ratectrl.c:1587-1609`). All five arms are now live:
+    /// the four one-pass regulators (`Cbr` / `Vbr` / `Cq` / `Q`,
+    /// CLI-reachable via `--end-usage`) plus the two-pass driver
+    /// (`VbrTwoPass`, reachable via `--passes 2` /
+    /// [`crate::frame_loop::encode_two_pass`]). The 2-pass arm completes
+    /// the rate-control family — it consumes the first-pass stats
+    /// attached via [`Self::attach_two_pass`].
     pub fn pick_q_and_bounds(&mut self, frame_kind: FrameKind) -> (u8, u8, u8) {
         use super::RcMode;
         match self.config.rc_mode {
             RcMode::Cbr => cbr::pick_q_and_bounds(self, frame_kind),
             // One-pass VBR. Port of libvpx
             // `rc_pick_q_and_bounds_one_pass_vbr`
-            // (`vp9_ratectrl.c:1138-1303`). The 2-pass arm
-            // (`rc_pick_q_and_bounds_two_pass`, `vp9_ratectrl.c:1542`)
-            // remains deferred — it needs a first-pass-stats writer +
-            // reader that doesn't exist in rvp9 yet (see the explicit
-            // `unimplemented!` below). The W1.6 VBR PROOF test (now
-            // renamed to gate one-pass behaviour) lives in
-            // `tests/w_vbr_rc_proof.rs`.
+            // (`vp9_ratectrl.c:1138-1303`). The two-pass arm
+            // (`RcMode::VbrTwoPass`, port of
+            // `rc_pick_q_and_bounds_two_pass`, `vp9_ratectrl.c:1427`)
+            // is the separate `VbrTwoPass` dispatch below — it consumes
+            // first-pass stats attached via `attach_two_pass`. The W1.6
+            // one-pass VBR PROOF lives in `tests/w_vbr_rc_proof.rs`; the
+            // two-pass PROOF in `tests/w_2pass_vbr.rs`.
             RcMode::Vbr => vbr::pick_q_and_bounds(self, frame_kind),
             // PHASE-3 integration: Constrained-Quality (CQ). Runs the
             // CBR regulator, then clamps the picked Q to be ≥
@@ -316,6 +340,14 @@ impl RateControl {
                 };
                 (q, q, q)
             }
+            // Two-pass VBR. Port of libvpx's `pass == 2` dispatch
+            // (`vp9_ratectrl.c:1606-1608`) → `rc_pick_q_and_bounds_two_pass`
+            // (`vp9_ratectrl.c:1427`). Consumes the first-pass stats
+            // attached via `attach_two_pass`: the per-frame target is the
+            // stats-driven bit allocation, NOT the flat 1-pass target.
+            // This is the last rate-control mode to land — completing the
+            // CBR / 1-pass VBR / CQ / Q / 2-pass-VBR family.
+            RcMode::VbrTwoPass => two_pass::pick_q_and_bounds(self, frame_kind),
         }
     }
 
@@ -341,6 +373,11 @@ impl RateControl {
             self.frames_to_key -= 1;
         }
         self.frames_since_key = self.frames_since_key.saturating_add(1);
+        // Two-pass: advance the stats cursor so the next pick reads the
+        // next frame's allocation. No-op for one-pass modes.
+        if let Some(tp) = self.two_pass.as_mut() {
+            tp.advance();
+        }
     }
 
     /// Read-only access to the snapshot config.

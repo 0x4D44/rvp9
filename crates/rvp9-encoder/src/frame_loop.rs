@@ -88,7 +88,9 @@ use crate::loopfilter::{
     apply_loop_filter_to_tight_recon, build_inter_mi_grid_for_lf, build_kf_mi_grid_for_lf,
     pick_filter_level,
 };
-use crate::rate_control::{FrameKind as RcFrameKind, RateControl, RateControlConfig, RcMode};
+use crate::rate_control::{
+    FirstPassStats, FrameKind as RcFrameKind, RateControl, RateControlConfig, RcMode, TwoPassState,
+};
 use crate::{
     EncodeError, InterPartitionLeafDesc, PartitionLeafDesc,
     pick_and_simulate_intra_encode_partitions, pick_and_simulate_inter_encode_partitions,
@@ -446,6 +448,207 @@ impl EncoderConfig {
             ..defaults
         }
     }
+}
+
+/// Fixed quantizer the first pass codes every frame at. libvpx's
+/// `vp9_first_pass` codes at a constant quantizer so the gathered
+/// `coded_error` reflects content complexity, not a rate-driven Q that
+/// varies frame-to-frame (`vp9_firstpass.c:1392`, the first pass sets a
+/// fixed `q` for the whole pass). A mid-range q-index isolates the
+/// per-frame residual energy signal.
+const FIRST_PASS_QINDEX: u8 = 128;
+
+/// Encode `frames` with **two-pass VBR** rate control.
+///
+/// This is the per-SEQUENCE two-pass driver (libvpx's two-pass model,
+/// `vp9/encoder/vp9_firstpass.c` + the `pass == 2` path in
+/// `vp9/encoder/vp9_ratectrl.c`):
+///
+/// 1. **First pass** — encode the whole sequence at a fixed quantizer
+///    ([`FIRST_PASS_QINDEX`]) in a stats-only mode, gathering per-frame
+///    [`FirstPassStats`] (`coded_error` from the actual coded
+///    reconstruction, a DC-intra `intra_error` proxy, and a
+///    motion-effectiveness `pcnt_inter` proxy). The first-pass bitstream
+///    is discarded (mirrors libvpx writing stats to a file and throwing
+///    away the pass-1 output). See [`gather_first_pass_stats`].
+/// 2. **Second pass** — build a [`TwoPassState`] that distributes the
+///    sequence bit budget across frames proportional to their
+///    first-pass coded-error score (libvpx `gf_group->bit_allocation`,
+///    `vp9_firstpass.c:2334-2440`), attach it to a fresh encoder running
+///    [`RcMode::VbrTwoPass`], and re-encode emitting the real bitstream.
+///    The 2-pass `pick_q_and_bounds` arm regulates each frame's Q to hit
+///    its stats-driven target.
+///
+/// The two passes are independent `StreamEncoder` runs over the same
+/// input, so the one-pass synchronous `encode_frame` contract — and the
+/// cross-decoder gate's byte-exact 1-pass CBR path — are untouched.
+///
+/// `config.rc_mode` is overridden internally (first pass forces
+/// [`RcMode::Q`] at the fixed quantizer; second pass forces
+/// [`RcMode::VbrTwoPass`]). The caller selects two-pass via the encoder
+/// driver / CLI `--passes 2`, not by setting `rc_mode` directly.
+///
+/// # Errors
+///
+/// Propagates any [`EncodeError`] from either pass (invalid config,
+/// bitstream write failure, plane-size mismatch).
+pub fn encode_two_pass(
+    config: EncoderConfig,
+    frames: &[YuvFrameRef<'_>],
+) -> Result<Vec<EncodedFrame>, EncodeError> {
+    // ---- PASS 1: gather first-pass stats (stats-only, output discarded).
+    let stats = gather_first_pass_stats(config, frames)?;
+
+    // ---- Build the second-pass allocation from the gathered stats.
+    // The sequence bit budget is `avg_frame_bandwidth * n_frames`; the
+    // allocation distributes it by each frame's coded-error score.
+    let rc_cfg = config.to_rate_control_config();
+    let avg_frame_bandwidth = RateControl::new(rc_cfg).avg_frame_bandwidth;
+    let two_pass_state = TwoPassState::new(stats, avg_frame_bandwidth);
+
+    // ---- PASS 2: re-encode emitting the real bitstream under VbrTwoPass.
+    let mut pass2_config = config;
+    pass2_config.rc_mode = RcMode::VbrTwoPass;
+    // The two-pass driver runs the synchronous one-in-one-out path; force
+    // lag off so `encode_frame` accepts each frame. DOCUMENTED DIVERGENCE:
+    // lag/ALTREF interaction with two-pass is a follow-up (libvpx threads
+    // the ARF schedule through `define_gf_group` using the same stats).
+    pass2_config.lag_in_frames = 0;
+    let mut enc = StreamEncoder::new(pass2_config)?;
+    enc.rate_control.attach_two_pass(two_pass_state);
+
+    let mut out = Vec::with_capacity(frames.len());
+    for yuv in frames {
+        // Two-pass uses the synchronous one-in-one-out path (lag is
+        // forced off below in pass2_config sanitisation if needed).
+        out.push(enc.encode_frame(yuv)?);
+    }
+    for r in enc.flush() {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+/// Run the stats-only first pass: encode every frame at a fixed
+/// quantizer and record per-frame [`FirstPassStats`].
+///
+/// Mirrors libvpx `vp9_first_pass` (`vp9_firstpass.c:1392`): code each
+/// frame at a constant quantizer, measure the coded error, and write a
+/// stats record. We compute three genuine, content-driven stats from the
+/// actual encode:
+///
+/// - `coded_error` — SSE of the post-loop-filter Y reconstruction vs the
+///   source Y. The dominant complexity signal.
+/// - `intra_error` — SSE of a DC (frame-mean) intra prediction vs the
+///   source Y. A cheap proxy for libvpx's per-MB best-intra error.
+/// - `pcnt_inter` — `clamp(1 - coded_error / intra_error, 0, 1)` for
+///   inter frames (high when motion comp beats intra), `0.0` for KFs.
+///
+/// The bitstream produced here is discarded; only the stats survive.
+fn gather_first_pass_stats(
+    config: EncoderConfig,
+    frames: &[YuvFrameRef<'_>],
+) -> Result<Vec<FirstPassStats>, EncodeError> {
+    // First pass codes at a fixed quantizer (RcMode::Q pins Q per frame),
+    // so coded_error reflects content complexity, not a rate-driven Q.
+    let mut fp_config = config;
+    fp_config.rc_mode = RcMode::Q;
+    fp_config.cq_level = FIRST_PASS_QINDEX;
+    // Stats-only synchronous pass — lag off (see encode_two_pass note).
+    fp_config.lag_in_frames = 0;
+    let mut enc = StreamEncoder::new(fp_config)?;
+
+    let w = config.width as usize;
+    let h = config.height as usize;
+
+    let mut stats = Vec::with_capacity(frames.len());
+    for yuv in frames {
+        let encoded = enc.encode_frame(yuv)?;
+        let is_key = encoded.frame_kind.is_key();
+
+        // coded_error: SSE(source Y, recon Y). Both are read over the
+        // coded width/height; the recon is tight-stride width*height,
+        // the source is strided by `yuv.y_stride`.
+        let recon_y = enc.diag_last_recon_y();
+        let coded_error = sse_strided_vs_tight(yuv.y, yuv.y_stride, recon_y, w, h);
+
+        // intra_error: SSE(source Y, DC-mean prediction). A flat-frame
+        // intra prediction's error is the source's variance * N — a
+        // content-complexity proxy that needs no second buffer.
+        let intra_error = sse_vs_dc_mean(yuv.y, yuv.y_stride, w, h);
+
+        // pcnt_inter: how much inter prediction beat intra. For KF it's
+        // 0 (no inter). For inter frames, the further coded_error falls
+        // below intra_error, the more "explained by inter" the frame is.
+        let pcnt_inter = if is_key {
+            0.0
+        } else if intra_error > 0.0 {
+            (1.0 - coded_error / intra_error).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
+        stats.push(FirstPassStats {
+            is_key,
+            coded_error,
+            intra_error,
+            pcnt_inter,
+        });
+    }
+    Ok(stats)
+}
+
+/// Sum of squared error between a strided source plane and a tight-stride
+/// reconstruction plane over a `w * h` window.
+fn sse_strided_vs_tight(src: &[u8], src_stride: usize, recon: &[u8], w: usize, h: usize) -> f64 {
+    let mut sse: f64 = 0.0;
+    for row in 0..h {
+        let s_off = row * src_stride;
+        let r_off = row * w;
+        if s_off + w > src.len() || r_off + w > recon.len() {
+            break;
+        }
+        for col in 0..w {
+            let d = f64::from(src[s_off + col]) - f64::from(recon[r_off + col]);
+            sse += d * d;
+        }
+    }
+    sse
+}
+
+/// Sum of squared error of a strided source plane vs its own DC (mean)
+/// value over a `w * h` window — the error a flat-DC intra prediction
+/// would incur. This is `variance * N` and serves as the `intra_error`
+/// complexity proxy.
+fn sse_vs_dc_mean(src: &[u8], src_stride: usize, w: usize, h: usize) -> f64 {
+    let mut sum: f64 = 0.0;
+    let mut count: usize = 0;
+    for row in 0..h {
+        let s_off = row * src_stride;
+        if s_off + w > src.len() {
+            break;
+        }
+        for col in 0..w {
+            sum += f64::from(src[s_off + col]);
+            count += 1;
+        }
+    }
+    if count == 0 {
+        return 0.0;
+    }
+    let mean = sum / count as f64;
+    let mut sse: f64 = 0.0;
+    for row in 0..h {
+        let s_off = row * src_stride;
+        if s_off + w > src.len() {
+            break;
+        }
+        for col in 0..w {
+            let d = f64::from(src[s_off + col]) - mean;
+            sse += d * d;
+        }
+    }
+    sse
 }
 
 /// Borrowed view over a 4:2:0 YUV input frame.

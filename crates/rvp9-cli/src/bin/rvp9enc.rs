@@ -15,7 +15,9 @@
 
 use rvp9_cli::args::{self, Arg, Flag};
 use rvp9_encoder::lookahead::MAX_LAG_BUFFERS;
-use rvp9_encoder::{AqMode, Deadline, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
+use rvp9_encoder::{
+    AqMode, Deadline, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef, encode_two_pass,
+};
 use rvp9_io::container::{IvfHeader, write_ivf};
 use rvp9_io::y4m;
 use std::path::Path;
@@ -169,6 +171,13 @@ struct EncOpts {
     arnr_strength: Option<u32>,
     /// `--pass` (libvpx `vpxenc.c:115-116`). 1 or 2.
     pass: Option<u32>,
+    /// `--passes` / `-p` (libvpx `vpxenc.c:113-114`). Number of passes:
+    /// `1` (default, the one-pass regulators) or `2` (two-pass VBR).
+    /// When `2`, the encoder runs the per-sequence two-pass driver
+    /// (`rvp9_encoder::encode_two_pass`): a stats-only first pass over the
+    /// whole input, then a stats-driven second pass emitting the
+    /// bitstream.
+    passes: u32,
     /// `--fpf` (libvpx `vpxenc.c:117-118`). First-pass stats file name.
     fpf: Option<String>,
     /// `--rate-hist` (libvpx `vpxenc.c:156-157`). Bucket count for the
@@ -270,6 +279,9 @@ impl Default for EncOpts {
             arnr_maxframes: None,
             arnr_strength: None,
             pass: None,
+            // Default 1 pass (the one-pass regulators / cross-decoder gate
+            // config). `--passes 2` opts into two-pass VBR.
+            passes: 1,
             fpf: None,
             rate_hist: None,
             q_hist: None,
@@ -315,8 +327,8 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             apply: Some(|o, v| { o.target_bitrate_kbps = args::parse_value(v, "rvp9enc", "--target-bitrate")?; Ok(()) }) },
         Flag { long: "end-usage", short: None, arg: Arg::Required, help: "rate control mode (cbr/vbr/cq/q)",
             apply: Some(|o, v| { o.rc_mode = parse_end_usage(v)?; Ok(()) }) },
-        Flag { long: "passes", short: Some('p'), arg: Arg::Required, help: "number of passes (1)",
-            apply: Some(|_, v| validate_eq(v, "1", "--passes")) },
+        Flag { long: "passes", short: Some('p'), arg: Arg::Required, help: "number of passes (1 or 2)",
+            apply: Some(|o, v| { o.passes = parse_passes(v)?; Ok(()) }) },
         Flag { long: "kf-max-dist", short: None, arg: Arg::Required, help: "max keyframe interval",
             apply: Some(|o, v| { o.gop_length = Some(args::parse_value(v, "rvp9enc", "--kf-max-dist")?); Ok(()) }) },
         Flag { long: "aq-mode", short: None, arg: Arg::Required, help: "adaptive quant (0=off, 3=cyclic)",
@@ -588,6 +600,17 @@ fn parse_pass(v: Option<String>) -> Result<u32, String> {
     }
 }
 
+/// libvpx `vpxenc.c:113-114` — `--passes` / `-p` is 1 or 2. `2` selects
+/// the two-pass VBR driver (`rvp9_encoder::encode_two_pass`).
+fn parse_passes(v: Option<String>) -> Result<u32, String> {
+    match v.as_deref() {
+        Some("1") => Ok(1),
+        Some("2") => Ok(2),
+        Some(other) => Err(format!("rvp9enc: --passes={other} not understood (use 1 or 2)")),
+        None => Err("rvp9enc: --passes requires a value".to_string()),
+    }
+}
+
 /// libvpx `vpxenc.c:138-145` — `--test-decode` tri-state.
 fn parse_test_decode(v: Option<String>) -> Result<TestDecode, String> {
     match v.as_deref() {
@@ -700,6 +723,16 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
         f64::from(fps_num) / f64::from(fps_den),
         opts.target_bitrate_kbps.saturating_mul(1000),
     );
+    // Two-pass VBR (`--passes 2`): run the per-sequence two-pass driver.
+    // A stats-only first pass over the whole input gathers per-frame
+    // coded-error stats, then a stats-driven second pass emits the
+    // bitstream. libvpx `vpxenc.c:113-114 --passes`; driver:
+    // `rvp9_encoder::encode_two_pass`. Kept entirely separate from the
+    // one-pass synchronous path below so that path stays byte-identical.
+    if opts.passes == 2 {
+        return run_two_pass(opts, &config, &frames, coded_w, coded_h, fps_num, fps_den, output);
+    }
+
     let mut encoder = StreamEncoder::new(config).map_err(|e| {
         format!(
             "{e} (note: the Stage 4a encoder requires coded dimensions \
@@ -761,6 +794,67 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
         };
         eprintln!(
             "rvp9enc: encoded {} frame(s) at {}x{}, ~{:.1} kbps -> {output}",
+            frames.len(),
+            coded_w,
+            coded_h,
+            kbps
+        );
+    }
+    Ok(())
+}
+
+/// Two-pass VBR encode path (`--passes 2`).
+///
+/// Collects every input frame into a borrowed [`YuvFrameRef`] and hands
+/// the whole sequence to `rvp9_encoder::encode_two_pass`, which runs the
+/// stats-only first pass then the stats-driven second pass and returns
+/// the per-frame packets. Muxes the result into IVF exactly like the
+/// one-pass path. Kept separate so the one-pass path stays untouched.
+#[allow(clippy::too_many_arguments)]
+fn run_two_pass(
+    opts: &EncOpts,
+    config: &EncoderConfig,
+    frames: &[y4m::YuvFrameBuf],
+    coded_w: u32,
+    coded_h: u32,
+    fps_num: u32,
+    fps_den: u32,
+    output: &str,
+) -> Result<(), String> {
+    let views: Vec<YuvFrameRef<'_>> = frames
+        .iter()
+        .map(|(y, u, v)| YuvFrameRef {
+            y,
+            u,
+            v,
+            y_stride: coded_w as usize,
+            u_stride: (coded_w / 2) as usize,
+            v_stride: (coded_w / 2) as usize,
+        })
+        .collect();
+
+    let encoded = encode_two_pass(*config, &views).map_err(|e| {
+        format!(
+            "two-pass encode: {e} (note: the Stage 4a encoder requires \
+             coded dimensions that are multiples of 64 — use -w/-h to crop)"
+        )
+    })?;
+
+    let total_bits: u64 = encoded.iter().map(|e| u64::from(e.actual_bits)).sum();
+    let packets: Vec<&[u8]> = encoded.iter().map(|e| e.data.as_slice()).collect();
+    let header = IvfHeader::vp9(coded_w as u16, coded_h as u16, fps_num, fps_den);
+    let mut out = std::fs::File::create(output).map_err(|e| format!("creating {output}: {e}"))?;
+    write_ivf(&mut out, &header, &packets).map_err(|e| format!("writing IVF: {e}"))?;
+
+    if opts.verbose {
+        let secs = frames.len() as f64 * f64::from(fps_den) / f64::from(fps_num);
+        let kbps = if secs > 0.0 {
+            (total_bits as f64 / secs) / 1000.0
+        } else {
+            0.0
+        };
+        eprintln!(
+            "rvp9enc: two-pass encoded {} frame(s) at {}x{}, ~{:.1} kbps -> {output}",
             frames.len(),
             coded_w,
             coded_h,
@@ -1407,6 +1501,9 @@ fn build_encoder_config(
         // SVC/ALTREF mutual exclusion; values outside 1..=3 are rejected
         // there with a clear `InvalidConfig`.
         temporal_layers: opts.temporal_layers.unwrap_or(1),
+        // A23 — `--enable-tpl` (libvpx `vpxenc.c:445-446`) → TPL rdmult
+        // pass. Default OFF (cross-decoder gate runs `enable_tpl = false`).
+        enable_tpl: opts.enable_tpl.unwrap_or(false),
     }
 }
 
