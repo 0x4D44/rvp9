@@ -207,7 +207,7 @@ impl SharedFrame {
 // `vp9/common/vp9_thread_common.c:24-200`).
 // ----------------------------------------------------------------------------
 
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 
 /// Spin cap for the column-wavefront LF worker (Lever B v2). Per
 /// HLD §3.8 — column-wavefront gates fire once per nsync-boundary SB
@@ -351,6 +351,37 @@ pub struct ColumnWavefrontLfState<'a> {
     /// libvpx `get_sync_range(width)` — the per-row stagger in SB
     /// columns. Power of two (1, 2, 4, 8). See `nsync_for_width`.
     pub nsync: i32,
+    /// **Invariant L1 gate** (HLD `2026.05.27 - HLD - Reduce t4 worker
+    /// idle.md` §4.3): an LF worker may apply SB-row `r` only after
+    /// `decode_progress[(r + lf_delay).min(sb_rows-1)].load(Acquire)
+    /// >= num_tile_cols` — i.e. every tile has finished decoding the
+    /// row below (`r + 1`) the row LF is about to write.
+    ///
+    /// `Some(slice)` engages the gate (separate-pool LF overlap mode);
+    /// `None` skips the gate (legacy two-scope mode, where the decode
+    /// `WorkerPool::scope` has already joined before LF starts so L1
+    /// trivially holds). Default for the two-scope dispatcher is
+    /// `None`.
+    ///
+    /// **Soundness:** the matching Release edge is each tile worker's
+    /// `decode_progress[r].fetch_add(1, Release)` at the end of each
+    /// SB row. Acquire-on-load here pairs with Release-on-store there
+    /// across pool boundaries — the Rust memory model is
+    /// thread-set-agnostic. See HLD §6.2 SAFETY chain.
+    pub decode_progress: Option<&'a [AtomicU32]>,
+    /// Number of tile columns in the current frame. Used by the L1
+    /// gate: row `r` is "fully decoded" when `decode_progress[r] ==
+    /// num_tile_cols` (every tile has bumped its per-row counter).
+    /// Meaningful only when `decode_progress` is `Some`; ignored when
+    /// `None`.
+    pub num_tile_cols: i32,
+    /// **Invariant L1 delay** in SB rows (HLD §4.3): LF of row `r`
+    /// waits until decode of row `r + lf_delay` completes. The HLD's
+    /// load-bearing analysis sets `lf_delay = 1` so that every intra-
+    /// pred read of row `r-1`'s pixels (which happens during decode of
+    /// row `r` in the same tile) is complete before LF writes those
+    /// pixels. Phase 1: hard-coded to 1.
+    pub lf_delay: i32,
 }
 
 /// Column-wavefront LF worker hook. One worker job is submitted per
@@ -407,6 +438,45 @@ pub unsafe fn run_split_edge_lf_worker(
     // i, i+nworkers, i+2*nworkers, ...
     let mut r = worker_id;
     while r < state.sb_rows {
+        // **Invariant L1** (HLD `2026.05.27 - HLD - Reduce t4 worker
+        // idle.md` §4.3): before filtering ANY column of SB-row r,
+        // wait until every tile has reconstructed row (r + lf_delay).
+        // This guarantees every intra-prediction read of row r's
+        // pixels (which happens during decode of row r+1 in each
+        // tile) is complete before LF of row r writes those pixels.
+        //
+        // The gate is bypassed when `decode_progress` is `None`
+        // (legacy two-scope LF: the decode `WorkerPool::scope` has
+        // already joined, so L1 trivially holds).
+        //
+        // SAFETY chain (HLD §6.2): the Acquire-on-load here pairs with
+        // each tile worker's `decode_progress[r].fetch_add(1, Release)`
+        // — cross-thread (and cross-pool) Release/Acquire is sound
+        // under the Rust memory model.
+        if let Some(decode_progress) = state.decode_progress {
+            let gate_row = ((r as i32) + state.lf_delay)
+                .min(state.sb_rows as i32 - 1)
+                .max(0) as usize;
+            let num_tile_cols = state.num_tile_cols;
+            spin_then_yield_wavefront(|| {
+                (decode_progress[gate_row].load(Ordering::Acquire) as i32) >= num_tile_cols
+            });
+
+            // Debug-only assertion belt-and-braces: after the spin
+            // returns, L1 must hold. Cheap in debug, gated out in
+            // release.
+            #[cfg(debug_assertions)]
+            debug_assert!(
+                (decode_progress[gate_row].load(Ordering::Acquire) as i32) >= num_tile_cols,
+                "Invariant L1 violated: LF row {} started before \
+                 decode_progress[{}]={} >= num_tile_cols={}",
+                r,
+                gate_row,
+                decode_progress[gate_row].load(Ordering::Acquire),
+                num_tile_cols,
+            );
+        }
+
         // Per-row mask build (co-located, Wave 7 model — see HLD §3.4).
         build_lfm_row(r, state.sb_cols, &state.row_inputs, &mut row_lfm);
 

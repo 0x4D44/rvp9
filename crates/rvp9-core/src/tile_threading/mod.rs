@@ -39,8 +39,10 @@
 //!
 //! [`Decoder`]: rvp9_decoder::Decoder
 
+mod lf_pool;
 mod pool;
 mod scope;
 
+pub use lf_pool::{LfBatchHandle, LfWorkerPool};
 pub use pool::WorkerPool;
 pub use scope::FrameScope;
