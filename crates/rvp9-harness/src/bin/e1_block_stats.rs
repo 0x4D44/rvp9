@@ -313,6 +313,7 @@ fn run_rvp9(target_bitrate_bps: u32, framerate: f64, frames: &[YuvFrameBuf]) -> 
         rc_mode: RcMode::Cbr,
         cq_level: 0,
         temporal_layers: 1,
+        enable_tpl: false,
         min_qindex: 4,
         max_qindex: 255,
     };
