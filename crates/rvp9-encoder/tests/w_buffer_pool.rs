@@ -182,13 +182,21 @@ fn encode_fixed_clip() -> Vec<u8> {
 /// — fix the mapping.
 #[test]
 fn a10_byte_identity_pre_vs_post_refactor() {
-    // Golden captured against the PRE-refactor encoder (the ad-hoc
-    // `last_recon_* / golden_recon_* / altref_recon_*` fields) and
-    // re-confirmed against the POST-refactor pool encoder — byte-
-    // identical (len 6211, fnv1a 0x959781b702249817). See the test's
-    // module doc for the capture procedure.
-    const GOLDEN_HASH: u64 = 0x9597_81b7_0224_9817;
-    const GOLDEN_LEN: usize = 6211;
+    // Golden re-captured (2026-05-27) after the DRIFT-FIX that makes the
+    // encoder mirror the decoder's structural `use_prev_frame_mvs` gate
+    // and re-pins NEAREST/NEAR MVs to the causal-grid `find_mv_refs`
+    // result. That fix intentionally changes the emitted bitstream
+    // (different ref-MV derivation → different mode/MV entropy bits;
+    // the stream is shorter — 6211→6117 — because the prev-frame MV
+    // salvage yields better ref-MVs). The new stream is verified
+    // byte-exact encoder-recon-vs-decode by `drift_diag` and passes the
+    // 4/4 cross-decoder gate, so this is a correct, intentional golden
+    // update — NOT a masked regression. The pool-mapping invariant this
+    // oracle originally guarded still holds (the slot resolution is
+    // unchanged); only the upstream MV decisions moved.
+    // Pre-fix golden was (len 6211, fnv1a 0x959781b702249817).
+    const GOLDEN_HASH: u64 = 0xe37f_ff50_d932_1fda;
+    const GOLDEN_LEN: usize = 6117;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

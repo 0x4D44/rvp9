@@ -271,15 +271,20 @@ fn gop_topology_schedule_matches_emitted_frames() {
 /// changed stream — fix the schedule.
 #[test]
 fn gop_topology_byte_identity() {
-    // Golden captured against the GfGroup-wired encoder AND confirmed
-    // byte-identical to the PRE-refactor counter encoder: both produce
-    // len = 26015, fnv1a = 0xc077248934d1d266 for this exact clip
-    // (40 frames, gop=16, enable_alt_ref=false, A4 descent pinned off).
-    // The pre-refactor capture was taken by stashing the GfGroup wiring
-    // and re-running the identical encode — see the journal at
-    // `wrk_journals/2026.05.27 - JRN - GOP topology landed.md`.
-    const GOLDEN_HASH: u64 = 0xc077_2489_34d1_d266;
-    const GOLDEN_LEN: usize = 26015;
+    // Golden re-captured (2026-05-27) after the DRIFT-FIX (encoder now
+    // mirrors the decoder's structural `use_prev_frame_mvs` gate and
+    // re-pins NEAREST/NEAR MVs to the causal-grid `find_mv_refs` result).
+    // That fix intentionally changes the emitted bitstream (different
+    // ref-MV derivation → different mode/MV bits; the stream shrinks
+    // 26015→25670 from better prev-frame-MV salvage). The GOP *schedule*
+    // this oracle guards is unchanged — the per-frame refresh-mask
+    // assertions above (KfUpdate 0xFF / GfUpdate 0x03 / LfUpdate 0x01)
+    // still hold; only the upstream per-block MV decisions moved. The
+    // new stream is verified byte-exact encoder-recon-vs-decode by
+    // `drift_diag` and passes the 4/4 cross-decoder gate.
+    // Pre-fix golden was (len 26015, fnv1a 0xc077248934d1d266).
+    const GOLDEN_HASH: u64 = 0xeee1_7494_2d66_2023;
+    const GOLDEN_LEN: usize = 25670;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

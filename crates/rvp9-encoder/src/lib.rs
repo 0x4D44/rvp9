@@ -4394,8 +4394,39 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // residual) instead of MC + residual. The writer
                 // emits the intra-in-inter wire format (is_inter=0,
                 // y_mode, uv_mode).
-                let pick = unified_pick;
+                let mut pick = unified_pick;
                 let picked_ref = pick.picked_ref_frame;
+
+                // DRIFT-FIX — NEAREST/NEAR carry NO MV bits on the wire;
+                // the DECODER reconstructs their MV via `find_mv_refs` on
+                // its CAUSAL mode-info grid (the cells decoded so far in
+                // z-order). The encoder's recon must use the IDENTICAL
+                // value, otherwise its reconstructed reference diverges
+                // from the true decode (inter-frame drift). The picker's
+                // `best_mv` is NOT a reliable source: the RT picker reads
+                // a causal grid that matches, but the cpu≤4 RDO descent
+                // picks during the partition search with a grid that lacks
+                // the within-SB neighbours present at decode time — so its
+                // NEAREST/NEAR `best_mv` can disagree with the decoder
+                // (observed at frame edges). `mvc*` here are rebuilt from
+                // the recon loop's causal `mi_grid` (committed up to this
+                // leaf in z-order — exactly the decoder's view), so we
+                // re-pin the picked MV to the matching candidate. This is
+                // a no-op for the RT picker (its `mvc` already drove the
+                // pick) and corrects the RDO descent. (NEWMV codes an
+                // explicit delta on top of the ref-MV, so its `best_mv`
+                // stays authoritative; ZEROMV is always (0,0).)
+                if matches!(pick.best_mode, InterMode::NearestMv | InterMode::NearMv) {
+                    let causal = match picked_ref {
+                        RefFrame::GoldenFrame => &mvc_golden,
+                        RefFrame::AltrefFrame => &mvc_altref,
+                        _ => &mvc,
+                    };
+                    pick.best_mv = match pick.best_mode {
+                        InterMode::NearestMv => causal.nearest,
+                        _ => causal.near,
+                    };
+                }
 
                 // E12 (2026-05-22) — search-failure-vs-prediction-ceiling
                 // oracle. Read-only diagnostic, env-gated

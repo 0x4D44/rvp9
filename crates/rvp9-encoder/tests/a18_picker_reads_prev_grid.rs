@@ -177,10 +177,18 @@ fn a18_picker_reads_prev_grid_when_activated() {
 }
 
 #[test]
-fn a18_picker_reads_nothing_when_default_off() {
-    // Same harness but with the default `use_prev_frame_mvs = false`.
-    // The gate must STAY CLOSED on frame 2 even though the dims match
-    // and the previous frame was an inter frame.
+fn a18_picker_gate_is_structural_not_config_gated() {
+    // DRIFT-FIX — the decoder computes `use_prev_frame_mvs` PURELY from
+    // frame structure (`!error_resilient && size_match && !last_intra_only
+    // && last_show_frame && last_frame_type != KEY_FRAME`); it is NOT a
+    // header bit the encoder can toggle. So when the structural gate is
+    // open the decoder WILL salvage the collocated prev-frame MV in
+    // `find_mv_refs`, changing the NEAREST/NEAR ref-MV it derives. The
+    // encoder's picker/recon/writer must mirror that REGARDLESS of the
+    // `config.use_prev_frame_mvs` knob, otherwise the encoder's
+    // reconstructed reference diverges from the true decode (the
+    // SEVERITY-1 inter-frame drift). This test previously asserted the
+    // opposite (gate stays closed when config is off) — that was the bug.
     let w_us = W as usize;
     let mi_rows = (H as usize) / 8;
     let mi_cols = (W as usize) / 8;
@@ -192,6 +200,7 @@ fn a18_picker_reads_nothing_when_default_off() {
         target_bitrate_bps: 500_000,
         gop_length: 32,
         aq_mode: AqMode::Off,
+        // Config flag OFF — the gate must STILL open (structural).
         use_prev_frame_mvs: false,
         speed: 7,
         deadline: rvp9_encoder::Deadline::Realtime,
@@ -211,15 +220,21 @@ fn a18_picker_reads_nothing_when_default_off() {
     let (y0, u0, v0) = synthetic_frame(20, 20);
     enc.encode_frame(&yuv_view(&y0, &u0, &v0, w_us))
         .expect("encode KF");
+    // After a KF the gate is closed (last_frame_was_key = true).
+    assert!(
+        !enc.prev_grid_gate_open_for_test(mi_rows, mi_cols),
+        "after a KF the gate must be closed regardless of config"
+    );
 
     let (y1, u1, v1) = synthetic_frame(44, 44);
     enc.encode_frame(&yuv_view(&y1, &u1, &v1, w_us))
         .expect("encode inter 1");
 
-    // With config OFF, the gate must NOT open on frame 2.
+    // After a SHOW inter frame the gate OPENS even with config OFF —
+    // mirroring the decoder's structural `use_prev_frame_mvs`.
     assert!(
-        !enc.prev_grid_gate_open_for_test(mi_rows, mi_cols),
-        "default-off config must keep prev_grid_slice = None on frame 2 \
-         (do-no-harm gate; HLD §6.4)"
+        enc.prev_grid_gate_open_for_test(mi_rows, mi_cols),
+        "the gate must open after a show inter frame regardless of \
+         config.use_prev_frame_mvs (it mirrors the decoder's structural gate)"
     );
 }

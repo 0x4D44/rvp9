@@ -902,6 +902,13 @@ pub struct StreamEncoder {
     /// libvpx `cm->last_frame_type == KEY_FRAME`, gates
     /// `use_prev_frame_mvs`).
     last_frame_was_key: bool,
+    /// DRIFT-FIX — `true` iff the most-recently-emitted frame was a
+    /// SHOW frame (mirrors the decoder's `last_show_frame`, part of the
+    /// `use_prev_frame_mvs` predicate `vp9_decodeframe.c:2983-2986`). A
+    /// non-show ALTREF clears this so the following show frame's
+    /// `use_prev_frame_mvs` gate is closed — exactly as the decoder
+    /// computes it. Seeded `false` (no frame emitted yet).
+    last_show_frame: bool,
     /// DRIFT-DIAG — snapshot of the most-recent frame's reconstruction
     /// BEFORE the in-loop loop filter was applied. Lets a diagnostic
     /// test isolate residual/MC divergence (pre-LF) from loop-filter
@@ -1183,6 +1190,7 @@ impl StreamEncoder {
             prev_mv_grid: None,
             prev_mv_grid_dims: (0, 0),
             last_frame_was_key: false,
+            last_show_frame: false,
             diag_prelf_recon: None,
             // P0b — start from default; reset on every keyframe.
             frame_context: FrameContext::new_default(),
@@ -1291,9 +1299,14 @@ impl StreamEncoder {
         mi_rows: usize,
         mi_cols: usize,
     ) -> bool {
+        // DRIFT-FIX — mirrors the real gate in `encode_inter_internal`:
+        // the decoder computes `use_prev_frame_mvs` purely structurally
+        // (`!last_frame_was_key && last_show_frame && size_match`), so the
+        // encoder must too — it is NOT a header bit and cannot be gated on
+        // `config.use_prev_frame_mvs`.
         !self.last_frame_was_key
+            && self.last_show_frame
             && self.prev_mv_grid_dims == (mi_rows, mi_cols)
-            && self.config.use_prev_frame_mvs
     }
 
     /// Encode one input YUV frame; return the produced VP9 frame
@@ -1930,6 +1943,10 @@ impl StreamEncoder {
         self.prev_mv_grid = Some(vec![intra_cell; mi_rows * mi_cols]);
         self.prev_mv_grid_dims = (mi_rows, mi_cols);
         self.last_frame_was_key = true;
+        // DRIFT-FIX — a keyframe is a SHOW frame. (The `use_prev_frame_mvs`
+        // gate on the NEXT frame is still closed by `last_frame_was_key`,
+        // but track show-state uniformly so the predicate is complete.)
+        self.last_show_frame = true;
         // P0b — do NOT reset the frame context on keyframes. libvpx's
         // `vp9_setup_past_independence` resets all FC banks, but our
         // decoder does not replicate this reset for keyframes. Leaving
@@ -2336,20 +2353,27 @@ impl StreamEncoder {
         // pass `None` so `find_mv_refs` skips the prev-frame salvage
         // (matches the decoder's behaviour on the same gate, which
         // keeps the cross-decoder byte-exact invariant intact).
-        // A18 / F.0.3 — Compute libvpx's `use_prev_frame_mvs` gate output
-        // and AND it with the public `EncoderConfig::use_prev_frame_mvs`
-        // activation field (default `false`). Until F.1's block_yrd-aware
-        // RD model lands, activating exposes a picker-RD regression on
-        // testsrc (+240pp BD-rate) — see
-        // `wrk_docs/Track_F/F0.3_HLD_prev_frame_mvs.md` §2.5. The storage,
-        // write-back, and per-leaf reader plumbing all stay live so flipping
-        // `config.use_prev_frame_mvs = true` (per-test or once F.1/F.2 land)
-        // is a single config change with no further wiring.
+        // DRIFT-FIX — the decoder computes `use_prev_frame_mvs` PURELY
+        // from frame structure (`vp9_decodeframe.c:2983-2986`):
+        //   !error_resilient && size_match && !last_intra_only &&
+        //   last_show_frame && last_frame_type != KEY_FRAME.
+        // It is NOT a header bit the encoder can toggle. So if the gate
+        // is open the decoder WILL pull the collocated prev-frame MV into
+        // `find_mv_refs`'s salvage pass, changing the NEAREST/NEAR ref-MV
+        // it derives for the affected blocks. Previously the encoder
+        // additionally AND'd this with `config.use_prev_frame_mvs`
+        // (default `false`), so the picker/recon passed `prev_mv_grid =
+        // None` while the decoder used the grid — making the encoder's
+        // reconstructed reference DIVERGE from the true decode (the
+        // SEVERITY-1 inter-frame drift). We must mirror the decoder's
+        // structural predicate exactly, dropping the config AND: the
+        // encoder doesn't emit error_resilient / intra-only frames in
+        // this scope, so the gate collapses to "previous frame was a
+        // SHOW, non-KEY frame of the same size".
         let gate_open = !self.last_frame_was_key
+            && self.last_show_frame
             && self.prev_mv_grid_dims == (mi_rows_us, mi_cols_us);
-        let prev_grid_slice: Option<&[PrevFrameMvRef]> = if gate_open
-            && self.config.use_prev_frame_mvs
-        {
+        let prev_grid_slice: Option<&[PrevFrameMvRef]> = if gate_open {
             self.prev_mv_grid.as_deref()
         } else {
             None
@@ -2834,6 +2858,9 @@ impl StreamEncoder {
         self.prev_mv_grid = Some(cur_mv_grid);
         self.prev_mv_grid_dims = (mi_rows_us, mi_cols_us);
         self.last_frame_was_key = false;
+        // DRIFT-FIX — this is a SHOW inter frame, so the next frame's
+        // decoder-side `use_prev_frame_mvs` gate sees `last_show_frame`.
+        self.last_show_frame = true;
 
         // A10 / A14 (Phase A) — if this frame refreshed GOLDEN on the
         // wire (`refresh_flags = 0x03`), the `update_reference_frames`
@@ -3193,6 +3220,13 @@ impl StreamEncoder {
         // superframe) may now name ALTREF in its ref set.
         self.altref_slot_emitted = true;
 
+        // DRIFT-FIX — the ARF is a NON-SHOW frame. The decoder records
+        // `last_show_frame = false` after decoding it, so the FOLLOWING
+        // show frame's `use_prev_frame_mvs` gate is CLOSED. Mirror that
+        // here so the encoder's picker/recon/writer skip the prev-frame
+        // MV salvage on the post-ARF show frame, matching the decoder.
+        self.last_show_frame = false;
+
         Ok(packet)
     }
 
@@ -3381,6 +3415,17 @@ impl StreamEncoder {
         self.ref_pool
             .named_ref_planes(crate::buffer_pool::LAST_REF)
             .2
+    }
+
+    /// Diagnostic — read access to the encoder's GOLDEN reconstruction
+    /// Y plane (the slot inter frames predict GOLDEN-ref blocks from).
+    /// Used by the drift-fix diagnostic to verify the encoder's stored
+    /// GOLDEN ref is byte-identical to the decoder's GOLDEN buffer.
+    #[must_use]
+    pub fn diag_golden_recon_y(&self) -> &[u8] {
+        self.ref_pool
+            .named_ref_planes(crate::buffer_pool::GOLDEN_REF)
+            .0
     }
 
     /// DRIFT-DIAG — read access to the most-recent frame's reconstruction
@@ -7780,16 +7825,24 @@ mod tests {
     }
 
     #[test]
-    fn prev_grid_gate_open_returns_false_when_config_disables() {
+    fn prev_grid_gate_open_independent_of_config_flag() {
+        // DRIFT-FIX — the decoder computes `use_prev_frame_mvs` purely
+        // from frame structure; it is NOT a header bit. So the encoder's
+        // gate must open after a SHOW inter frame REGARDLESS of
+        // `config.use_prev_frame_mvs`, otherwise the encoder's
+        // reconstruction diverges from the true decode (the SEVERITY-1
+        // inter-frame drift). Previously this test asserted the opposite
+        // (gate shut when config disables) — that was the bug.
         let cfg = EncoderConfig { use_prev_frame_mvs: false, ..baseline_config() };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
         let _ = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
         let _ = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
-        // Config disables; gate must be shut even after inter.
+        // After a SHOW inter frame, the gate is open even with the
+        // config flag off — it mirrors the decoder's structural gate.
         assert!(
-            !enc.prev_grid_gate_open_for_test(8, 8),
-            "gate must be closed when config.use_prev_frame_mvs == false",
+            enc.prev_grid_gate_open_for_test(8, 8),
+            "gate must open after a show inter frame regardless of config",
         );
     }
 
