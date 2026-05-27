@@ -2620,6 +2620,17 @@ impl StreamEncoder {
         // `decoder_fc` holds the FC the decoder ended up with (compressed
         // header diffs applied); we persist it back for the next frame.
         let mut decoder_fc = self.decoder_fc_state.clone();
+        // A6 — snapshot the PRE-header decoder FC. Backward adaptation
+        // (libvpx `vp9_adapt_*`) reads `pre_fc = cm->frame_contexts[idx]`
+        // — the bank state BEFORE this frame's compressed-header diff
+        // updates land (decoder: `lib.rs:2330-2343`). Under Strategy B
+        // the post-header coef_probs equalled this pre-header value (a
+        // full re-signal of the prior adapted FC), so adapting from the
+        // post-header `decoder_fc` happened to match. TWO_LOOP only
+        // partially updates the coef tables, so the post-header value
+        // differs from `pre_fc`; the encoder MUST adapt from the
+        // pre-header snapshot to stay in lock-step with the decoder.
+        let pre_header_decoder_fc = decoder_fc.clone();
         let packet = build_inter_packet_with_residuals(
             w,
             h,
@@ -2686,14 +2697,22 @@ impl StreamEncoder {
 
         // Backward-adapt the decoder-side mirror first (so we can
         // assign it before borrowing `self` again).
+        //
+        // A6 — adapt from `pre_header_decoder_fc` (the bank BEFORE this
+        // frame's header diff updates), matching the decoder's
+        // `pre_fc = cm->frame_contexts[idx]` snapshot
+        // (`rvp9-decoder/src/lib.rs:2342-2343`, `:3136-3142`). Using the
+        // post-header `decoder_fc` here desynced under TWO_LOOP (the
+        // partial coef update means post-header != pre-header).
         {
             let mut adapted_dec = adapt_mode_probs(
-                &decoder_fc, &frame_counts, interp_switchable, tx_mode_select,
+                &pre_header_decoder_fc, &frame_counts, interp_switchable, tx_mode_select,
             );
-            adapted_dec.coef_probs =
-                adapt_coef_probs(&decoder_fc.coef_probs, &frame_counts.coef, cs, uf);
+            adapted_dec.coef_probs = adapt_coef_probs(
+                &pre_header_decoder_fc.coef_probs, &frame_counts.coef, cs, uf,
+            );
             adapted_dec.nmvc =
-                adapt_mv_probs(&decoder_fc.nmvc, &frame_counts.mv, false);
+                adapt_mv_probs(&pre_header_decoder_fc.nmvc, &frame_counts.mv, false);
             self.decoder_fc_state = adapted_dec;
         }
 
@@ -3334,6 +3353,18 @@ impl StreamEncoder {
         &self.me_ref_y
     }
 
+    /// Test-only — the encoder's mirror of the decoder's FC bank 0
+    /// state. Used by the A6 TWO_LOOP cross-frame sync PROOF to assert
+    /// the encoder's `oldp` base matches the real decoder's FC after
+    /// each frame (the backward-adaptation reproduction the brief
+    /// flags as the real correctness test).
+    #[cfg(test)]
+    pub(crate) fn decoder_fc_state_coef_probs(
+        &self,
+    ) -> &[rvp9_core::entropy::CoeffProbsModel; 4] {
+        &self.decoder_fc_state.coef_probs
+    }
+
     /// Test-only — read access to the ME-side LAST reference U plane.
     /// See [`Self::me_ref_y`].
     #[cfg(test)]
@@ -3689,7 +3720,11 @@ fn build_keyframe_packet(
     let mut compressed_buf = vec![0u8; 16 * 1024];
     let compressed_len = {
         let mut bw = BoolWriter::start_encode(&mut compressed_buf);
-        write_compressed_header(&mut bw, &mut pre_fc, &post_fc, opts, &target)?;
+        // A6 — keyframe stays on the Strategy-B (no-plan) coef path:
+        // `pre_fc == post_fc` for the KF, so it emits an all-`0` coef
+        // table (no updates) byte-identically to the pre-TWO_LOOP
+        // behaviour. TWO_LOOP fires on the count-bearing inter frames.
+        write_compressed_header(&mut bw, &mut pre_fc, &post_fc, opts, &target, None)?;
         bw.stop_encode()
             .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
     };
@@ -3946,15 +3981,6 @@ fn build_inter_packet_with_residuals(
         reference_mode: reference_mode_frame,
     };
 
-    let mut compressed_buf = vec![0u8; 16 * 1024];
-    let compressed_len = {
-        let mut bw = BoolWriter::start_encode(&mut compressed_buf);
-        write_compressed_header(&mut bw, decoder_fc, &post_fc, opts, &target)?;
-        bw.stop_encode()
-            .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
-    };
-    compressed_buf.truncate(compressed_len);
-
     let tile_bounds = ModesTileBounds {
         mi_row_start: 0,
         mi_row_end: mi_rows as usize,
@@ -4001,6 +4027,84 @@ fn build_inter_packet_with_residuals(
     } else {
         None
     };
+
+    // A6 TWO_LOOP — COUNT PASS before the compressed header.
+    //
+    // libvpx tokenizes the frame BEFORE `write_compressed_header`, so
+    // `update_coef_probs` can run its savings search against THIS
+    // frame's coefficient counts (`vp9_bitstream.c:1316-1394` runs
+    // `pack_mb_tokens` accounting before `write_compressed_header`,
+    // which calls `update_coef_probs`). rvp9 writes the header first,
+    // so we add a dry run: encode the SAME tile data into a throwaway
+    // buffer with a `FrameCounts` whose `coef_full` is the full 12-token
+    // histogram. Token VALUES come from `coef_source` (residuals) and
+    // are probability-INDEPENDENT, so the counts produced here are
+    // identical to the real tile pass's regardless of which FC is used.
+    // We clone `decoder_fc` so this pass never mutates the live mirror.
+    let mut count_fc = decoder_fc.clone();
+    let mut count_counts = FrameCounts {
+        coef_full: Some(rvp9_core::entropy::new_coef12_bank()),
+        ..FrameCounts::default()
+    };
+    {
+        let mut scratch =
+            vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
+        let mut bw = BoolWriter::start_encode(&mut scratch);
+        let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+        let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
+        write_tile_inter(
+            &mut bw,
+            &mut count_fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &mi_grid,
+            mi_rows,
+            mi_cols,
+            tile_bounds,
+            seg_write,
+            prev_mv_grid,
+            &mut coef_ctx,
+            coef_source,
+            Some(&mut count_counts),
+        )?;
+        // We discard `scratch` — only the gathered counts matter.
+    }
+
+    // A6 — build the live TWO_LOOP coef-prob update plan from THIS
+    // frame's full 12-token counts, scored against the PRE-frame FC
+    // (`decoder_fc.coef_probs`, libvpx `oldp`). Replaces "Strategy B"
+    // (force-update-on-diff against `post_fc`). libvpx
+    // `update_coef_probs` / `update_coef_probs_common`
+    // (`vp9_bitstream.c:545-699`).
+    let coef_plan = count_counts.coef_full.as_ref().map(|full| {
+        crate::bitstream_gates::build_coef_prob_update_plan(
+            full,
+            &count_counts.coef.eob_branch,
+            &decoder_fc.coef_probs,
+            target.tx_mode,
+        )
+    });
+
+    // A6 — emit the compressed header. The coef-prob tables are written
+    // via the TWO_LOOP `coef_plan`; `write_compressed_header` mutates
+    // `decoder_fc.coef_probs` in place to the post-update probs (the
+    // decoder lands on the same state from the same wire bits), so the
+    // tile pass below codes against the synced FC.
+    let mut compressed_buf = vec![0u8; 16 * 1024];
+    let compressed_len = {
+        let mut bw = BoolWriter::start_encode(&mut compressed_buf);
+        write_compressed_header(
+            &mut bw,
+            decoder_fc,
+            &post_fc,
+            opts,
+            &target,
+            coef_plan.as_ref(),
+        )?;
+        bw.stop_encode()
+            .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
+    };
+    compressed_buf.truncate(compressed_len);
 
     // F10.1c — sized generously (per-pixel × 4) since real residuals
     // can dominate the bit budget at higher Q indices.
@@ -5766,6 +5870,57 @@ mod tests {
             "F10.2-T1: min PSNR = {min:.2} dB (per-frame: {psnrs:?}) — \
              expected > 25 dB",
         );
+    }
+
+    /// A6 PROOF — TWO_LOOP cross-frame FC sync. Encodes a noisy
+    /// multi-frame sequence (high-entropy content that drives real
+    /// coef-prob updates) and asserts the encoder's `decoder_fc_state`
+    /// coef_probs mirror EXACTLY matches the real rvp9-decoder's FC bank
+    /// (bank 0) after each frame. This is the brief's "real test of
+    /// correctness": the header updates + forward (backward) adaptation
+    /// must reproduce on the decoder. The desync this guards against was
+    /// the backward-adapt base — the decoder adapts from the PRE-header
+    /// FC (`rvp9-decoder/src/lib.rs:2342`), so the encoder must too;
+    /// adapting from the post-header (partial-TWO_LOOP-update) FC drifts
+    /// and corrupts the stream by ~frame 4.
+    #[test]
+    fn a6_twoloop_decoder_fc_stays_synced_across_frames() {
+        const W: usize = 128;
+        const H: usize = 128;
+        const N_FRAMES: u32 = 6;
+        let cfg = EncoderConfig {
+            width: W as u32, height: H as u32, framerate: 30.0,
+            target_bitrate_bps: 800_000, gop_length: 30, aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false, speed: 7, deadline: Deadline::Realtime,
+            noise_sensitivity: 0, bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0, enable_alt_ref: false, rc_mode: RcMode::Cbr,
+            cq_level: 0, temporal_layers: 1, enable_tpl: false,
+            min_qindex: 4, max_qindex: 255,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let mut dec = Decoder::new();
+        // Pseudo-random high-entropy content (triggers real coef-prob
+        // updates, unlike the smooth gradient).
+        let mut seed = 0x1234_5678u32;
+        let mut next = || { seed = seed.wrapping_mul(1664525).wrapping_add(1013904223); (seed >> 24) as u8 };
+        for idx in 0..N_FRAMES {
+            let y: Vec<u8> = (0..W*H).map(|_| next()).collect();
+            let u = vec![128u8; (W/2)*(H/2)];
+            let v = vec![128u8; (W/2)*(H/2)];
+            let pkt = enc.encode_frame(&yuv_view(&y, &u, &v, W)).expect("encode_frame");
+            let frames = decode_packet(&mut dec, &pkt.data);
+            for pf in &frames { let _ = dec.decode_frame(pf).expect("decode_frame"); }
+            let enc_fc = enc.decoder_fc_state_coef_probs();
+            let dec_fc = &dec.frame_context(0).coef_probs;
+            if enc_fc != dec_fc {
+                for tx in 0..4 { for p in 0..2 { for r in 0..2 { for b in 0..6 { for c in 0..6 { for s in 0..3 {
+                    if enc_fc[tx][p][r][b][c][s] != dec_fc[tx][p][r][b][c][s] {
+                        panic!("frame {idx} FC desync at tx={tx} p={p} r={r} b={b} c={c} s={s}: enc={} dec={}",
+                            enc_fc[tx][p][r][b][c][s], dec_fc[tx][p][r][b][c][s]);
+                    }
+                }}}}}}
+            }
+        }
     }
 
     /// T2 — Bit-exact invariant across multiple frames.

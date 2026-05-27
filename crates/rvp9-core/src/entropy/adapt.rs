@@ -61,7 +61,8 @@ use super::default_probs::{
     SKIP_CONTEXTS, SWITCHABLE_FILTER_CONTEXTS, SWITCHABLE_FILTERS,
 };
 use super::detokenize::{
-    CoefCountsBlock, EOB_MODEL_TOKEN, EobBranchCountsBlock, ONE_TOKEN, TWO_TOKEN, ZERO_TOKEN,
+    CoefCountsBlock, CoefFullCountsBlock, EOB_MODEL_TOKEN, EobBranchCountsBlock, ONE_TOKEN,
+    TWO_TOKEN, ZERO_TOKEN,
 };
 use super::frame_context::{FrameContext, TX_SIZES};
 use super::mv_probs::{
@@ -129,6 +130,27 @@ impl Default for CoefCountsBank {
                 TX_SIZES],
         }
     }
+}
+
+/// ENCODER-ONLY full 12-token coefficient histogram, the
+/// `[tx_size][plane_type][ref_type]` bank of [`CoefFullCountsBlock`].
+/// Mirrors libvpx `cpi->td.rd_counts.coef_counts` (`vp9_encoder.h:379`,
+/// `vp9_coeff_count coef_counts[TX_SIZES][PLANE_TYPES]`). The decoder
+/// never builds this — it only needs the 4-token model histogram for
+/// backward adaptation. The encoder's TWO_LOOP coef-prob writer needs
+/// the full distribution so its PIVOT_NODE model search can score the 8
+/// downstream Pareto-8 nodes (`build_coef_branch_cts`). Boxed because it
+/// is ~55 KiB and is only allocated when the encoder requests it.
+pub type Coef12Bank =
+    [[[CoefFullCountsBlock; REF_TYPES]; PLANE_TYPES]; TX_SIZES];
+
+/// Allocate a zeroed [`Coef12Bank`] on the heap.
+#[must_use]
+pub fn new_coef12_bank() -> Box<Coef12Bank> {
+    Box::new(
+        [[[[[[0u32; super::detokenize::ENTROPY_TOKENS]; COEFF_CONTEXTS]; COEF_BANDS]; REF_TYPES];
+            PLANE_TYPES]; TX_SIZES],
+    )
 }
 
 impl CoefCountsBank {
@@ -249,6 +271,15 @@ pub struct FrameCounts {
     pub skip: [[u32; 2]; SKIP_CONTEXTS],
     /// MV counts.
     pub mv: NmvCounts,
+    /// ENCODER-ONLY full 12-token coefficient histogram. `None` on the
+    /// decoder path and on encoder paths that don't need TWO_LOOP coef
+    /// updates. When `Some`, the tile writer's per-TX `encode_coefs`
+    /// bumps the exact 12-token bucket in parallel with the 4-token
+    /// `coef` model histogram, feeding the compressed-header TWO_LOOP
+    /// savings search. Boxed + optional so the decoder's
+    /// `FrameCounts::default()` stays a cheap all-zero value and its
+    /// `==` / `add` behaviour is unchanged (always `None`).
+    pub coef_full: Option<Box<Coef12Bank>>,
 }
 
 impl FrameCounts {
@@ -317,6 +348,24 @@ impl FrameCounts {
             }
         }
         self.mv.add(&other.mv);
+        // ENCODER-ONLY: fold the full 12-token histogram when present on
+        // both sides (per-tile-worker merge). The decoder leaves this
+        // `None`, so this is a no-op on the decode path.
+        if let (Some(dst), Some(src)) = (self.coef_full.as_mut(), other.coef_full.as_ref()) {
+            for (tx_a, tx_b) in dst.iter_mut().zip(src.iter()) {
+                for (pt_a, pt_b) in tx_a.iter_mut().zip(tx_b.iter()) {
+                    for (rt_a, rt_b) in pt_a.iter_mut().zip(pt_b.iter()) {
+                        for (band_a, band_b) in rt_a.iter_mut().zip(rt_b.iter()) {
+                            for (ctx_a, ctx_b) in band_a.iter_mut().zip(band_b.iter()) {
+                                for (a, b) in ctx_a.iter_mut().zip(ctx_b.iter()) {
+                                    *a += *b;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

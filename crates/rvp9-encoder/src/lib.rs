@@ -467,7 +467,7 @@ impl Encoder {
         let mut compressed_buf = vec![0u8; 16 * 1024];
         let compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut compressed_buf);
-            write_compressed_header(&mut bw, &mut pre_fc, &post_fc, opts, &target)?;
+            write_compressed_header(&mut bw, &mut pre_fc, &post_fc, opts, &target, None)?;
             bw.stop_encode()
                 .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
         };
@@ -619,7 +619,7 @@ impl Encoder {
         let mut compressed_buf = vec![0u8; 16 * 1024];
         let compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut compressed_buf);
-            write_compressed_header(&mut bw, &mut pre_fc, &post_fc, opts, &target)?;
+            write_compressed_header(&mut bw, &mut pre_fc, &post_fc, opts, &target, None)?;
             bw.stop_encode()
                 .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
         };
@@ -785,7 +785,7 @@ impl Encoder {
         let mut compressed_buf = vec![0u8; 16 * 1024];
         let compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut compressed_buf);
-            write_compressed_header(&mut bw, &mut pre_fc, &post_fc, opts, &target)?;
+            write_compressed_header(&mut bw, &mut pre_fc, &post_fc, opts, &target, None)?;
             bw.stop_encode()
                 .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
         };
@@ -6604,7 +6604,7 @@ mod tests {
         let mut compressed_buf = vec![0u8; 16 * 1024];
         let compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut compressed_buf);
-            write_compressed_header(&mut bw, &mut pre_fc, &post_fc, opts, &target)?;
+            write_compressed_header(&mut bw, &mut pre_fc, &post_fc, opts, &target, None)?;
             bw.stop_encode()
                 .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
         };

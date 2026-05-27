@@ -58,6 +58,7 @@ use crate::entropy::{
     REF_TYPES, SKIP_CONTEXTS, SWITCHABLE_FILTER_CONTEXTS, SWITCHABLE_FILTERS, TX_SIZES,
     UNCONSTRAINED_NODES, cond_prob_diff_update, diff_update_prob,
 };
+use crate::entropy::{DIFF_UPDATE_PROB, write_prob_diff_update};
 use crate::transforms::TxMode;
 
 /// Per-frame state the compressed-header parser needs from the
@@ -666,12 +667,61 @@ pub fn write_skip_probs(
     }
 }
 
+/// One per-slot coefficient-probability update decision produced by
+/// the encoder's TWO_LOOP savings search. The slot order matches the
+/// writer's deterministic traversal (`plane × ref × band ×
+/// band_coeff_contexts(band) × UNCONSTRAINED_NODES`), so the writer
+/// consumes the per-TX-size `Vec<CoefSlotUpdate>` in order without
+/// needing the indices.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CoefSlotUpdate {
+    /// Whether this slot signals a probability update (libvpx `u`).
+    pub update: bool,
+    /// The replacement probability when `update` (libvpx `newp`).
+    /// Ignored when `!update`.
+    pub newp: u8,
+}
+
+/// The encoder's per-TX-size TWO_LOOP coef-prob update plan, mirroring
+/// the decision libvpx `update_coef_probs_common` makes in its dry-run
+/// loop (`vp9_bitstream.c:556-593`). The decision (savings search) is
+/// computed encoder-side from the frame's full 12-token counts; this
+/// struct carries only the WIRE-shaped outcome so the core writer can
+/// emit it at the correct bitstream position without depending on the
+/// encoder crate.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CoefProbTxPlan {
+    /// libvpx `update[1] == 0 || savings < 0` ⇒ write a single `0`
+    /// gate bit and skip the whole table (no per-slot bits). Also set
+    /// for the `tx_totals[tx] <= 20` outer gate (`vp9_bitstream.c:690`).
+    pub suppress: bool,
+    /// Per-slot decisions in writer-traversal order. Empty when
+    /// `suppress` (the writer never reads them then).
+    pub slots: Vec<CoefSlotUpdate>,
+}
+
+/// The full TWO_LOOP plan for one frame: one [`CoefProbTxPlan`] per TX
+/// size. Built by the encoder, consumed by [`write_coef_probs`].
+pub type CoefProbUpdatePlan = [CoefProbTxPlan; TX_SIZES];
+
 /// Diff-update the coefficient probability tables for every TX
 /// size `[TX_4X4 .. max_tx_size(tx_mode)]`. Inverse of
 /// [`read_coef_probs`]. Mirrors libvpx `update_coef_probs`
-/// (`vp9_bitstream.c:435-498`) using the "always update if diff"
-/// policy: emits the per-TX-size `update_probs` gate bit as `1`
-/// iff any slot in that table differs from `pre`.
+/// (`vp9_bitstream.c:683-699`) + `update_coef_probs_common`
+/// (`vp9_bitstream.c:545-625`, TWO_LOOP branch).
+///
+/// When `plan` is `Some`, the writer emits the encoder's TWO_LOOP
+/// decision: per TX size, a `0` gate bit when the table is suppressed,
+/// else a `1` gate bit followed by the per-slot updates. The `pre`
+/// table is mutated in place to the post-update probabilities (the
+/// decoder lands on the same state from the same wire bits), so the
+/// caller's `decoder_fc` mirror tracks the decoder exactly.
+///
+/// When `plan` is `None`, falls back to the "always update if diff"
+/// Strategy-B policy (emit `1` when any slot differs from `pre`, then
+/// `cond_prob_diff_update` every slot). This is the keyframe / no-count
+/// path: with `pre == post` it emits an all-`0` table, byte-identical
+/// to the pre-TWO_LOOP behaviour.
 ///
 /// TX sizes beyond `max_tx_size(tx_mode)` are not in the wire
 /// format at all and must therefore match between `pre` and `post`
@@ -681,11 +731,15 @@ pub fn write_coef_probs(
     pre: &mut [CoeffProbsModel; TX_SIZES],
     post: &[CoeffProbsModel; TX_SIZES],
     tx_mode: TxMode,
+    plan: Option<&CoefProbUpdatePlan>,
 ) {
     let max_tx_size = tx_mode_to_biggest_tx_size(tx_mode);
     for (tx_idx, (pre_table, post_table)) in pre.iter_mut().zip(post.iter()).enumerate() {
         if tx_idx <= max_tx_size {
-            write_coef_probs_common(bw, pre_table, post_table);
+            match plan {
+                Some(p) => write_coef_probs_common_twoloop(bw, pre_table, &p[tx_idx]),
+                None => write_coef_probs_common(bw, pre_table, post_table),
+            }
         } else {
             debug_assert_eq!(
                 pre_table, post_table,
@@ -696,10 +750,57 @@ pub fn write_coef_probs(
     }
 }
 
-/// Per-TX-size body of [`write_coef_probs`]. Mirrors libvpx
-/// `update_coef_probs_common` (`vp9_bitstream.c:435-498`) at the
-/// "update bit" granularity. We always emit `update=1` when any
-/// slot differs and walk every slot (each with its own gate).
+/// Per-TX-size body of [`write_coef_probs`] for the TWO_LOOP path.
+/// Mirrors libvpx `update_coef_probs_common` loop2
+/// (`vp9_bitstream.c:590-624`): emit the gate bit, then (when not
+/// suppressed) walk every slot in the same order the dry-run produced
+/// the plan, emitting `vpx_write(u, DIFF_UPDATE_PROB)` and, on `u`, the
+/// `prob_diff_update` payload + the in-place `*oldp = newp` mutation.
+fn write_coef_probs_common_twoloop(
+    bw: &mut BoolWriter<'_>,
+    pre: &mut CoeffProbsModel,
+    plan: &CoefProbTxPlan,
+) {
+    if plan.suppress {
+        bw.write_bit(0);
+        return;
+    }
+    bw.write_bit(1);
+    let mut slot_idx = 0usize;
+    for pre_plane in pre.iter_mut().take(PLANE_TYPES) {
+        for pre_ref in pre_plane.iter_mut().take(REF_TYPES) {
+            for (band_idx, pre_band) in pre_ref.iter_mut().take(COEF_BANDS).enumerate() {
+                let n_contexts = band_coeff_contexts(band_idx);
+                for pre_ctx in pre_band.iter_mut().take(n_contexts) {
+                    for pre_slot in pre_ctx.iter_mut().take(UNCONSTRAINED_NODES) {
+                        let s = plan.slots[slot_idx];
+                        slot_idx += 1;
+                        if s.update {
+                            // libvpx `vpx_write(bc, 1, upd)` +
+                            // `vp9_write_prob_diff_update` + `*oldp = newp`.
+                            bw.write(1, DIFF_UPDATE_PROB);
+                            write_prob_diff_update(bw, s.newp, *pre_slot);
+                            *pre_slot = s.newp;
+                        } else {
+                            // libvpx `vpx_write(bc, 0, upd)`.
+                            bw.write(0, DIFF_UPDATE_PROB);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    debug_assert_eq!(
+        slot_idx,
+        plan.slots.len(),
+        "TWO_LOOP plan slot count must match the writer traversal"
+    );
+}
+
+/// Per-TX-size body of [`write_coef_probs`] for the Strategy-B
+/// fallback (no TWO_LOOP plan). Emits `update=1` when any slot differs
+/// and walks every slot (each with its own gate via
+/// `cond_prob_diff_update`).
 fn write_coef_probs_common(
     bw: &mut BoolWriter<'_>,
     pre: &mut CoeffProbsModel,
@@ -990,6 +1091,11 @@ pub fn write_compressed_header(
     post_fc: &FrameContext,
     opts: CompressedHeaderOptions,
     target: &CompressedHeaderResult,
+    // A6 — when `Some`, the coef-prob tables are emitted via the
+    // TWO_LOOP plan (savings search decided encoder-side from the
+    // frame's full 12-token counts) instead of Strategy B. The other
+    // prob tables always use the diff-against-`post_fc` path.
+    coef_plan: Option<&CoefProbUpdatePlan>,
 ) -> Result<(), BitstreamError> {
     let tx_mode = target.tx_mode;
     let reference_mode = target.reference_mode;
@@ -1016,7 +1122,7 @@ pub fn write_compressed_header(
     }
 
     // 3. Coef probs (gated per TX size by tx_mode).
-    write_coef_probs(bw, &mut pre_fc.coef_probs, &post_fc.coef_probs, tx_mode);
+    write_coef_probs(bw, &mut pre_fc.coef_probs, &post_fc.coef_probs, tx_mode, coef_plan);
 
     // 4. Skip probs.
     write_skip_probs(bw, &mut pre_fc.skip_probs, &post_fc.skip_probs);
@@ -2014,7 +2120,7 @@ mod tests {
     ) -> Vec<u8> {
         let mut buf = vec![0u8; 16 * 1024];
         let mut bw = BoolWriter::start_encode(&mut buf);
-        write_compressed_header(&mut bw, pre_fc, post_fc, opts, &target).expect("encode");
+        write_compressed_header(&mut bw, pre_fc, post_fc, opts, &target, None).expect("encode");
         let size = bw.stop_encode().expect("stop_encode");
         buf.truncate(size);
         buf

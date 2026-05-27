@@ -1249,7 +1249,8 @@ fn write_intra_block_residual(
                     seg_eob,
                     coefs,
                     eob,
-                    None, // KF path: no coef count accumulation
+                    None, // KF path: no 4-token coef count accumulation
+                    None, // KF path: no 12-token TWO_LOOP count pass
                 );
                 tx_x4_local += tx_step_4x4;
             }
@@ -2008,6 +2009,17 @@ fn write_inter_block_leaf(
             _ => IntraMode::Dc,
         };
         set_category(BitCategory::Coef);
+        // A6 TWO_LOOP — split the `FrameCounts` borrow into the 4-token
+        // `.coef` model bank (backward adaptation) and the optional
+        // encoder-only full 12-token `.coef_full` bank (count pass).
+        // Disjoint fields, so a single `&mut` destructure is sound.
+        let (coef_bank, coef_full_bank): (
+            Option<&mut CoefCountsBank>,
+            Option<&mut crate::entropy::adapt::Coef12Bank>,
+        ) = match counts {
+            Some(c) => (Some(&mut c.coef), c.coef_full.as_deref_mut()),
+            None => (None, None),
+        };
         write_inter_block_residual(
             bw,
             fc,
@@ -2019,7 +2031,8 @@ fn write_inter_block_leaf(
             effective_tx_size,
             is_inter,
             residual_y_mode,
-            counts.as_deref_mut().map(|c| &mut c.coef),
+            coef_bank,
+            coef_full_bank,
         );
     } else {
         // RC.X1 — mirror libvpx's `dec_reset_skip_context`
@@ -2176,6 +2189,8 @@ fn write_inter_block_residual(
     y_mode: IntraMode,
     // G3 -- coef count accumulation for backward adaptation.
     mut counts: Option<&mut CoefCountsBank>,
+    // A6 TWO_LOOP -- encoder-only full 12-token histogram (count pass).
+    mut full_counts: Option<&mut crate::entropy::adapt::Coef12Bank>,
 ) {
     let mi_col_in_tile = mi_col; // single-tile scope (see fn doc).
     let mi_row_in_sb = mi_row & MI_MASK;
@@ -2276,6 +2291,7 @@ fn write_inter_block_residual(
                     coefs,
                     eob,
                     counts.as_deref_mut(),
+                    full_counts.as_deref_mut(),
                 );
                 tx_x4_local += tx_step_4x4;
             }

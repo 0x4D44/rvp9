@@ -53,13 +53,19 @@
 
 use rvp9_core::bitstream::InterpFilter;
 use rvp9_core::bitstream::frame::REF_FRAMES;
+use rvp9_core::bitstream::{
+    CoefProbUpdatePlan, CoefSlotUpdate, tx_mode_to_biggest_tx_size,
+};
 use rvp9_core::cost::coef_cost::{ENTROPY_NODES, ENTROPY_TOKENS, PIVOT_NODE};
 use rvp9_core::cost::prob_cost::{VP9_PROB_COST_SHIFT, vp9_cost_one, vp9_cost_zero};
 use rvp9_core::entropy::BoolWriter;
 use rvp9_core::entropy::{
-    DIFF_UPDATE_PROB, MODEL_NODES, SWITCHABLE_FILTERS, SWITCHABLE_FILTER_CONTEXTS,
-    UNCONSTRAINED_NODES, VP9_PARETO8_FULL, get_binary_prob, remap_prob, write_prob_diff_update,
+    COEF_BANDS, COEFF_CONTEXTS, Coef12Bank, CoeffProbsModel, DIFF_UPDATE_PROB,
+    EobBranchCountsBlock, MODEL_NODES, PLANE_TYPES, REF_TYPES, SWITCHABLE_FILTERS,
+    SWITCHABLE_FILTER_CONTEXTS, TX_SIZES, UNCONSTRAINED_NODES, VP9_PARETO8_FULL, get_binary_prob,
+    remap_prob, write_prob_diff_update,
 };
+use rvp9_core::transforms::TxMode;
 
 // =====================================================================
 // W7.1 — prob_diff_update_savings_search + update_coef_probs_common
@@ -364,6 +370,175 @@ const _: () = assert!(MODEL_NODES == ENTROPY_NODES - UNCONSTRAINED_NODES);
 #[must_use]
 pub fn tx_totals_gate_skips(tx_total: u32) -> bool {
     tx_total <= 20
+}
+
+/// `BAND_COEFF_CONTEXTS(band)` (`vp9_entropy.h:108`): band 0 uses only
+/// the first 3 of `COEFF_CONTEXTS`, bands 1..5 use all 6.
+#[inline]
+const fn band_coeff_contexts(band: usize) -> usize {
+    if band == 0 { 3 } else { COEFF_CONTEXTS }
+}
+
+/// A6 anti-G3 observability — number of per-TX-size coef-prob tables
+/// the TWO_LOOP plan UPDATED (emitted gate bit 1 + ≥1 slot update)
+/// across the encode. Incremented in [`build_coef_prob_update_plan`].
+pub static COEF_PROB_TABLES_UPDATED: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// A6 anti-G3 observability — number of per-TX-size coef-prob tables
+/// the TWO_LOOP plan SUPPRESSED **despite at least one slot whose ideal
+/// prob differs from `oldp`** (the aggregate `savings < 0`, so the whole
+/// table is gated off). This is the case "Strategy B"
+/// (force-update-on-diff) can NEVER produce: Strategy B emits gate bit 1
+/// whenever ANY slot differs. A non-zero value here on a real encode is
+/// the live-TWO_LOOP proof.
+pub static COEF_PROB_TABLES_SUPPRESSED_WITH_DIFF: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// A6 — build the per-frame TWO_LOOP coefficient-probability update
+/// plan from THIS frame's full 12-token counts. The live replacement
+/// for "Strategy B" (force-update-on-diff): runs libvpx's
+/// `update_coef_probs` (`vp9_bitstream.c:683-699`) +
+/// `update_coef_probs_common` TWO_LOOP dry-run (`:556-593`) to decide,
+/// per TX size and per slot, whether to signal a coefficient-prob
+/// update and to what value.
+///
+/// Inputs:
+/// - `full_counts` — the encoder-only full 12-token histogram
+///   (`Coef12Bank`) gathered by the count pass.
+/// - `eob_branch` — the per-`(tx,plane,ref)` EOB-branch tally from the
+///   same count pass (libvpx `cm->counts.eob_branch`).
+/// - `old_probs` — the PRE-frame coefficient probabilities
+///   (`cpi->common.fc->coef_probs`, i.e. the decoder's FC bank state
+///   = `decoder_fc.coef_probs`). These are libvpx's `oldp`.
+/// - `tx_mode` — gates which TX sizes are in the wire format.
+///
+/// The returned [`CoefProbUpdatePlan`] is consumed by
+/// `write_compressed_header(.., Some(&plan))`: the writer emits the
+/// gate bits + per-slot updates and mutates its `pre`/`decoder_fc`
+/// in place to the post-update probs (so the encoder mirror tracks the
+/// decoder exactly). `new_coef_probs` and `frame_branch_ct` are derived
+/// per slot from the counts via [`build_coef_branch_cts`] (libvpx
+/// `build_tree_distribution`, `:518-543`).
+#[must_use]
+pub fn build_coef_prob_update_plan(
+    full_counts: &Coef12Bank,
+    eob_branch: &[[[EobBranchCountsBlock; REF_TYPES]; PLANE_TYPES]; TX_SIZES],
+    old_probs: &[CoeffProbsModel; TX_SIZES],
+    tx_mode: TxMode,
+) -> CoefProbUpdatePlan {
+    // `coeff_prob_appx_step = 1` — the reference TWO_LOOP step
+    // (`vp9_speed_features.c:933`).
+    const STEPSIZE: i32 = 1;
+    let max_tx = tx_mode_to_biggest_tx_size(tx_mode);
+    let zero_cost = i64::from(vp9_cost_zero(DIFF_UPDATE_PROB));
+
+    let mut plan: CoefProbUpdatePlan = Default::default();
+    for (tx_idx, tx_plan) in plan.iter_mut().enumerate() {
+        if tx_idx > max_tx {
+            // Not in the wire format; the writer skips these TX sizes
+            // (asserts pre == post). Leave the plan entry default.
+            continue;
+        }
+
+        // libvpx `update_coef_probs` outer gate (`vp9_bitstream.c:690`):
+        // `tx.tx_totals[tx_size] <= 20` ⇒ write a single `0` and skip.
+        // rvp9's `tx_totals` does not count Tx4x4 blocks, so we instead
+        // gate on the total token mass for this TX size (the gate's
+        // intent: "too few tokens to bother"). A zeroed table (the KF
+        // pattern, or a TX size with no coded blocks) is suppressed.
+        let mut tx_total: u32 = 0;
+        for plane in 0..PLANE_TYPES {
+            for r in 0..REF_TYPES {
+                for band in 0..COEF_BANDS {
+                    for ctx in 0..band_coeff_contexts(band) {
+                        for tok in 0..ENTROPY_TOKENS {
+                            tx_total = tx_total
+                                .saturating_add(full_counts[tx_idx][plane][r][band][ctx][tok]);
+                        }
+                    }
+                }
+            }
+        }
+        if tx_totals_gate_skips(tx_total) {
+            tx_plan.suppress = true;
+            tx_plan.slots.clear();
+            continue;
+        }
+
+        // Per-slot dry run (libvpx `:560-586`): walk
+        // plane × ref × band × band_coeff_contexts(band) ×
+        // UNCONSTRAINED_NODES, accumulating `savings` and the per-slot
+        // `(update, newp)` decision so the writer can replay it.
+        let mut slots: Vec<CoefSlotUpdate> = Vec::new();
+        let mut savings_total: i64 = 0;
+        let mut updates: usize = 0;
+        // anti-G3: did ANY slot's ideal prob differ from `oldp`? That is
+        // exactly the condition under which Strategy B would force a
+        // gate-1 update. If the table is then SUPPRESSED (savings < 0),
+        // TWO_LOOP diverges from Strategy B.
+        let mut any_candidate_diff = false;
+        for plane in 0..PLANE_TYPES {
+            for r in 0..REF_TYPES {
+                for band in 0..COEF_BANDS {
+                    for ctx in 0..band_coeff_contexts(band) {
+                        let counts = &full_counts[tx_idx][plane][r][band][ctx];
+                        let eob_total = eob_branch[tx_idx][plane][r][band][ctx];
+                        // build_tree_distribution body: branch counts +
+                        // the 3 "ideal" unconstrained probs.
+                        let (branch_ct, ideal) = build_coef_branch_cts(counts, eob_total);
+                        let oldp_slot = &old_probs[tx_idx][plane][r][band][ctx];
+                        for t in 0..UNCONSTRAINED_NODES {
+                            let oldp = oldp_slot[t];
+                            let start_newp = ideal[t];
+                            let search = if t == PIVOT_NODE {
+                                prob_diff_update_savings_search_model(
+                                    &branch_ct, oldp, start_newp, DIFF_UPDATE_PROB, STEPSIZE,
+                                )
+                            } else {
+                                prob_diff_update_savings_search(
+                                    branch_ct[t], oldp, start_newp, DIFF_UPDATE_PROB,
+                                )
+                            };
+                            let u = search.savings > 0 && search.best_newp != oldp;
+                            // A slot whose ideal (search) prob differs
+                            // from oldp is one Strategy B would signal.
+                            if start_newp != oldp || search.best_newp != oldp {
+                                any_candidate_diff = true;
+                            }
+                            if u {
+                                savings_total += search.savings - zero_cost;
+                                updates += 1;
+                            } else {
+                                savings_total -= zero_cost;
+                            }
+                            slots.push(CoefSlotUpdate {
+                                update: u,
+                                newp: if u { search.best_newp } else { oldp },
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // libvpx `:590`: `update[1] == 0 || savings < 0` ⇒ suppress.
+        use std::sync::atomic::Ordering::Relaxed;
+        if updates == 0 || savings_total < 0 {
+            tx_plan.suppress = true;
+            tx_plan.slots.clear();
+            // anti-G3: a table SUPPRESSED despite a would-update slot is
+            // the Strategy-B-impossible outcome.
+            if any_candidate_diff {
+                COEF_PROB_TABLES_SUPPRESSED_WITH_DIFF.fetch_add(1, Relaxed);
+            }
+        } else {
+            tx_plan.suppress = false;
+            tx_plan.slots = slots;
+            COEF_PROB_TABLES_UPDATED.fetch_add(1, Relaxed);
+        }
+    }
+    plan
 }
 
 /// One per-slot count pair, ordered `[zero_count, one_count]`.

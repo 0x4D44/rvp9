@@ -153,6 +153,10 @@ pub fn decode_block_tokens(
     let mut counts_slice = coef_counts.map(|bank| DecodeCoefCounts {
         coef_counts: &mut bank.coef[tx_size as usize][plane_type][ref_type],
         eob_branch_counts: &mut bank.eob_branch[tx_size as usize][plane_type][ref_type],
+        // Decoder backward adaptation only needs the 4-token model
+        // histogram; the full 12-token bank is an encoder-only TWO_LOOP
+        // input (`detokenize::DecodeCoefCounts::full_counts`).
+        full_counts: None,
     });
 
     // libvpx `vp9_scan_orders[tx_size][tx_type]`

@@ -5645,7 +5645,7 @@ mod tests {
         let mut compressed_buf = vec![0u8; 16 * 1024];
         let compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut compressed_buf);
-            write_compressed_header(&mut bw, &mut pre_fc, &post_fc, opts, &target)
+            write_compressed_header(&mut bw, &mut pre_fc, &post_fc, opts, &target, None)
                 .expect("write_compressed_header");
             bw.stop_encode().expect("stop_encode compressed header")
         };
@@ -5892,7 +5892,7 @@ mod tests {
         let mut compressed_buf = vec![0u8; 16 * 1024];
         let compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut compressed_buf);
-            write_compressed_header(&mut bw, &mut pre_fc, &post_fc, opts, &target)
+            write_compressed_header(&mut bw, &mut pre_fc, &post_fc, opts, &target, None)
                 .expect("write_compressed_header");
             bw.stop_encode().expect("stop_encode compressed header")
         };
@@ -6165,7 +6165,7 @@ mod tests {
         let mut kf_compressed_buf = vec![0u8; 16 * 1024];
         let kf_compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_compressed_buf);
-            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target)
+            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target, None)
                 .expect("write_compressed_header keyframe");
             bw.stop_encode().expect("stop_encode kf compressed")
         };
@@ -6296,6 +6296,7 @@ mod tests {
                 &inter_post_fc,
                 inter_opts,
                 &inter_target,
+                None,
             )
             .expect("write_compressed_header inter");
             bw.stop_encode().expect("stop_encode inter compressed")
@@ -6546,7 +6547,7 @@ mod tests {
         let mut kf_compressed_buf = vec![0u8; 16 * 1024];
         let kf_compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_compressed_buf);
-            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target)
+            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target, None)
                 .expect("kf compressed header");
             bw.stop_encode().expect("stop_encode kf compressed")
         };
@@ -6656,6 +6657,7 @@ mod tests {
                 &inter_target_fc,
                 inter_opts,
                 &inter_target,
+                None,
             )
             .expect("inter compressed header");
             bw.stop_encode().expect("stop_encode inter compressed")
@@ -6881,7 +6883,7 @@ mod tests {
         let mut kf_compressed_buf = vec![0u8; 16 * 1024];
         let kf_compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_compressed_buf);
-            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target)
+            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target, None)
                 .expect("kf compressed");
             bw.stop_encode().expect("stop_encode kf compressed")
         };
@@ -7012,6 +7014,7 @@ mod tests {
                 &inter_target_fc,
                 inter_opts,
                 &inter_target,
+                None,
             )
             .expect("inter compressed");
             bw.stop_encode().expect("stop_encode inter compressed")
@@ -7242,7 +7245,7 @@ mod tests {
         let mut kf_compressed_buf = vec![0u8; 16 * 1024];
         let kf_compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_compressed_buf);
-            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target)
+            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target, None)
                 .expect("write_compressed_header keyframe");
             bw.stop_encode().expect("stop_encode kf compressed")
         };
@@ -7356,6 +7359,7 @@ mod tests {
                 &inter_post_fc,
                 inter_opts,
                 &inter_target,
+                None,
             )
             .expect("write_compressed_header inter");
             bw.stop_encode().expect("stop_encode inter compressed")
@@ -7654,7 +7658,7 @@ mod tests {
         let mut kf_compressed_buf = vec![0u8; 16 * 1024];
         let kf_compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_compressed_buf);
-            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target)
+            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target, None)
                 .expect("write_compressed_header kf");
             bw.stop_encode().expect("stop_encode kf compressed")
         };
@@ -7767,6 +7771,7 @@ mod tests {
                 &inter_post_fc,
                 inter_opts,
                 &inter_target,
+                None,
             )
             .expect("write_compressed_header inter");
             bw.stop_encode().expect("stop_encode inter compressed")
@@ -8006,7 +8011,7 @@ mod tests {
         let mut kf_compressed_buf = vec![0u8; 16 * 1024];
         let kf_compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_compressed_buf);
-            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target)
+            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target, None)
                 .expect("kf compressed header");
             bw.stop_encode().expect("stop_encode kf compressed")
         };
@@ -8114,6 +8119,7 @@ mod tests {
                 &inter_target_fc,
                 inter_opts,
                 &inter_target,
+                None,
             )
             .expect("inter compressed header");
             bw.stop_encode().expect("stop_encode inter compressed")

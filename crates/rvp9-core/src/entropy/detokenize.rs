@@ -209,6 +209,21 @@ pub type CoefCountsBlock = [[[u32; UNCONSTRAINED_NODES + 1]; COEFF_CONTEXTS]; CO
 /// [ref]`). Indexed `[band][ctx]`.
 pub type EobBranchCountsBlock = [[u32; COEFF_CONTEXTS]; COEF_BANDS];
 
+/// Number of distinct coefficient tokens (libvpx `ENTROPY_TOKENS = 12`):
+/// ZERO, ONE, TWO, THREE, FOUR, CAT1..CAT6, EOB.
+pub const ENTROPY_TOKENS: usize = 12;
+
+/// Per-block FULL 12-token coefficient histogram (libvpx
+/// `vp9_coeff_count`, `vp9_encoder.h:379`), projected to one
+/// `(tx_size, plane_type, ref_type)`. Indexed `[band][ctx][token]`
+/// where `token` ranges over the full `ENTROPY_TOKENS` set (so TWO..CAT6
+/// are NOT collapsed, unlike [`CoefCountsBlock`]). This is the
+/// ENCODER-ONLY histogram the TWO_LOOP coef-prob savings search needs to
+/// score the 8 downstream Pareto-8 model nodes; the decoder never
+/// populates it.
+pub type CoefFullCountsBlock =
+    [[[u32; ENTROPY_TOKENS]; COEFF_CONTEXTS]; COEF_BANDS];
+
 /// Mutable per-block count buckets bundled into one struct so the
 /// caller passes a single `Option<&mut DecodeCoefCounts>` instead of
 /// juggling two count handles. Mirrors libvpx's
@@ -223,6 +238,14 @@ pub struct DecodeCoefCounts<'a> {
     /// (libvpx increments this BEFORE the EOB read, so it counts
     /// every position at which an EOB decision was attempted).
     pub eob_branch_counts: &'a mut EobBranchCountsBlock,
+    /// ENCODER-ONLY full 12-token histogram (libvpx `vp9_coeff_count`).
+    /// `None` on the decoder path (it only needs the 4-token model
+    /// histogram for backward adaptation). When `Some`, [`encode_coefs`]
+    /// bumps the EXACT token (ZERO/ONE/TWO/THREE/FOUR/CAT1..CAT6/EOB) at
+    /// each scan position, in parallel with the 4-token `coef_counts`,
+    /// so the TWO_LOOP header savings search can build the full branch
+    /// distribution via `build_coef_branch_cts`.
+    pub full_counts: Option<&'a mut CoefFullCountsBlock>,
 }
 
 /// Pick the coefband translate table for `tx_size`.
@@ -895,6 +918,27 @@ fn write_coeff_bits(bw: &mut BoolWriter<'_>, val: i32, probs: &[u8]) {
     }
 }
 
+/// Map a non-zero coefficient magnitude `abs_val` (>= 2; the ONE and
+/// ZERO cases are handled at their own classification points) onto the
+/// libvpx 12-token bucket index (TWO=2 .. CAT6=10). Mirrors the
+/// value-tree breakdown libvpx `vp9_tokenize.c` uses (and the encoder's
+/// own emit path below). CAT boundaries match the `*_MIN_VAL` constants.
+#[inline]
+#[must_use]
+fn full_token_from_abs(abs_val: i32) -> usize {
+    match abs_val {
+        2 => TWO_TOKEN,        // 2
+        3 => 3,                // THREE_TOKEN
+        4 => 4,                // FOUR_TOKEN
+        5..=6 => 5,            // CAT1: 5..=6
+        7..=10 => 6,           // CAT2: 7..=10
+        11..=18 => 7,          // CAT3: 11..=18
+        19..=34 => 8,          // CAT4: 19..=34
+        35..=66 => 9,          // CAT5: 35..=66
+        _ => 10,               // CAT6: >= 67
+    }
+}
+
 /// Encode one transform block's coefficients — the encoder-side mirror
 /// of [`decode_coefs`].
 ///
@@ -1016,6 +1060,9 @@ pub fn encode_coefs(
             if let Some(ref mut ct) = counts {
                 let b = band_translate[c] as usize;
                 ct.coef_counts[b][ctx][ZERO_TOKEN] += 1;
+                if let Some(full) = ct.full_counts.as_deref_mut() {
+                    full[b][ctx][ZERO_TOKEN] += 1;
+                }
             }
             token_cache[raster_idx] = 0;
             c += 1;
@@ -1054,15 +1101,24 @@ pub fn encode_coefs(
             if let Some(ref mut ct) = counts {
                 let b = band_translate[c] as usize;
                 ct.coef_counts[b][ctx][ONE_TOKEN] += 1;
+                if let Some(full) = ct.full_counts.as_deref_mut() {
+                    full[b][ctx][ONE_TOKEN] += 1;
+                }
             }
             token_cache[raster_idx] = 1;
         } else {
             // TWO-or-higher branch.
             bw.write(1, local_prob[ONE_CONTEXT_NODE]);
-            // (D) G3 — count TWO_TOKEN (absorbs TWO through CAT6).
+            // (D) G3 — count TWO_TOKEN (absorbs TWO through CAT6) for the
+            // 4-token model histogram, AND the EXACT 12-token bucket for
+            // the encoder-only TWO_LOOP histogram. `full_token_from_abs`
+            // maps |coef| onto libvpx's TWO/THREE/FOUR/CAT1..CAT6 tokens.
             if let Some(ref mut ct) = counts {
                 let b = band_translate[c] as usize;
                 ct.coef_counts[b][ctx][TWO_TOKEN] += 1;
+                if let Some(full) = ct.full_counts.as_deref_mut() {
+                    full[b][ctx][full_token_from_abs(abs_val)] += 1;
+                }
             }
             let p = &VP9_PARETO8_FULL[(local_prob[PIVOT_NODE] - 1) as usize];
             if abs_val <= 4 {
@@ -1169,6 +1225,10 @@ pub fn encode_coefs(
         if let Some(ref mut ct) = counts {
             ct.eob_branch_counts[band][ctx] += 1;
             ct.coef_counts[band][ctx][EOB_MODEL_TOKEN] += 1;
+            if let Some(full) = ct.full_counts.as_deref_mut() {
+                // libvpx EOB_TOKEN = 11 is the last 12-token slot.
+                full[band][ctx][ENTROPY_TOKENS - 1] += 1;
+            }
         }
         let prob = &coef_probs[band][ctx];
         bw.write(0, prob[EOB_CONTEXT_NODE]);
@@ -1235,6 +1295,9 @@ pub fn write_block_tokens(
     raw_coefs: &[i32],
     eob: usize,
     counts: Option<&mut CoefCountsBank>,
+    // ENCODER-ONLY full 12-token histogram (TWO_LOOP). `None` on the
+    // decoder/keyframe paths; threaded in parallel with `counts`.
+    full_counts: Option<&mut crate::entropy::adapt::Coef12Bank>,
 ) {
     // libvpx `get_plane_type`: Y → 0, UV → 1
     // (`vp9_blockd.h:210-212`).
@@ -1272,13 +1335,22 @@ pub fn write_block_tokens(
     let initial_pt = combine_entropy_contexts(a_any, l_any);
 
     // G3 — slice the per-frame counts to per-block DecodeCoefCounts.
-    let mut block_counts = counts.map(|c| {
-        let plane_type = usize::from(plane > 0);
-        DecodeCoefCounts {
-            coef_counts: &mut c.coef[tx_size as usize][plane_type][ref_type],
-            eob_branch_counts: &mut c.eob_branch[tx_size as usize][plane_type][ref_type],
+    // The optional full 12-token bank (TWO_LOOP) is sliced the same way
+    // and attached when present. We need a `DecodeCoefCounts` whenever
+    // EITHER bank is present, so the per-block slices come from two
+    // independent `Option`s.
+    let mut block_counts = match (counts, full_counts) {
+        (Some(c), full) => {
+            let full_slice =
+                full.map(|f| &mut f[tx_size as usize][plane_type][ref_type]);
+            Some(DecodeCoefCounts {
+                coef_counts: &mut c.coef[tx_size as usize][plane_type][ref_type],
+                eob_branch_counts: &mut c.eob_branch[tx_size as usize][plane_type][ref_type],
+                full_counts: full_slice,
+            })
         }
-    });
+        (None, _) => None,
+    };
     encode_coefs(bw, coef_probs, &scan, initial_pt, tx_size, seg_eob, raw_coefs, eob,
                  block_counts.as_mut());
 
@@ -1723,6 +1795,7 @@ mod tests {
         let mut counts = DecodeCoefCounts {
             coef_counts: &mut coef_counts,
             eob_branch_counts: &mut eob_branch_counts,
+            full_counts: None,
         };
         let eob = decode_coefs(
             &mut r,
@@ -2784,6 +2857,7 @@ mod tests {
         let mut counts = DecodeCoefCounts {
             coef_counts: &mut coef_counts,
             eob_branch_counts: &mut eob_branch_counts,
+            full_counts: None,
         };
         let eob = decode_coefs(
             &mut r,
@@ -2996,6 +3070,7 @@ mod tests {
                 seg_eob,
                 raw_coefs,
                 eob,
+                None,
                 None,
             );
             // Pad with trailing zero bits so the reader can fill its
@@ -3238,11 +3313,11 @@ mod tests {
             let mut bw = BoolWriter::start_encode(&mut buf);
             write_block_tokens(
                 &mut bw, &fc, &mut enc_ctx, 0, 0, 0,
-                TxSize::Tx4x4, TxType::DctDct, 0, 16, &raw_a, eob_a, None,
+                TxSize::Tx4x4, TxType::DctDct, 0, 16, &raw_a, eob_a, None, None,
             );
             write_block_tokens(
                 &mut bw, &fc, &mut enc_ctx, 0, 1, 0,
-                TxSize::Tx4x4, TxType::DctDct, 0, 16, &raw_b, eob_b, None,
+                TxSize::Tx4x4, TxType::DctDct, 0, 16, &raw_b, eob_b, None, None,
             );
             for _ in 0..32 {
                 bw.write_bit(0);
@@ -3387,6 +3462,7 @@ mod tests {
             let mut counts = DecodeCoefCounts {
                 coef_counts: &mut coef_counts,
                 eob_branch_counts: &mut eob_branch_counts,
+                full_counts: None,
             };
             encode_coefs(&mut bw, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1,
                          Some(&mut counts));
@@ -3446,5 +3522,83 @@ mod tests {
             bw.stop_encode().unwrap()
         };
         // If we got here, the None path didn't panic.
+    }
+
+    /// A6 DIFFERENTIAL ORACLE — the counts `encode_coefs` accumulates
+    /// MUST equal the counts `decode_coefs` accumulates for the same
+    /// block. The TWO_LOOP backward-adaptation sync depends on this:
+    /// the encoder's `decoder_fc_state` is adapted from the encoder's
+    /// counts, the decoder's FC from its own; if they disagree the FC
+    /// banks drift and the stream becomes invalid (the brief's "real
+    /// test of correctness"). This was latent under Strategy B (full
+    /// re-signal masked any drift).
+    #[test]
+    fn a6_encode_decode_counts_match() {
+        // Test both Tx4x4 (16) and Tx8x8 (64) — the FC-sync desync
+        // showed up at Tx8x8.
+        for &(tx, ncoef) in &[(TxSize::Tx4x4, 16usize), (TxSize::Tx8x8, 64usize)] {
+            let probs = flat_coef_probs(96, 110, 120);
+            let scan = scan_for(tx, TxType::DctDct);
+            // Representative layouts, including eob == ncoef (block runs
+            // to the end → NO terminal EOB token) and a long zero run
+            // that ends the block.
+            let cases: &[(&[(usize, i32)], usize)] = &[
+                (&[(0, 1)], 1),
+                (&[(0, 0), (1, 3)], 2),
+                (&[(0, 2), (1, 0), (2, 0), (3, 7)], 4),
+                (&[(0, 1), (1, 1), (2, 1)], 3),
+                (&[], 0),
+                // eob == ncoef: last scan position carries a coefficient,
+                // so the block runs to the end and NO terminal EOB bit is
+                // emitted — the encoder/decoder loop-exit asymmetry case.
+                (&[(0, 1), (ncoef - 1, 2)], ncoef),
+                // Trailing zero run inside the block then a final coef at
+                // the last position.
+                (&[(0, 3), (ncoef - 1, 1)], ncoef),
+            ];
+            for (positions, eob) in cases {
+                let mut raw = vec![0i32; ncoef];
+                for &(p, v) in positions.iter() {
+                    raw[scan.scan[p] as usize] = v;
+                }
+                let mut enc_coef: CoefCountsBlock =
+                    [[[0u32; UNCONSTRAINED_NODES + 1]; COEFF_CONTEXTS]; COEF_BANDS];
+                let mut enc_eob: EobBranchCountsBlock =
+                    [[0u32; COEFF_CONTEXTS]; COEF_BANDS];
+                let mut buf = vec![0u8; 1024];
+                let n = {
+                    let mut bw = BoolWriter::start_encode(&mut buf);
+                    let mut ec = DecodeCoefCounts {
+                        coef_counts: &mut enc_coef,
+                        eob_branch_counts: &mut enc_eob,
+                        full_counts: None,
+                    };
+                    encode_coefs(&mut bw, &probs, &scan, 0, tx, ncoef, &raw,
+                                 *eob, Some(&mut ec));
+                    for _ in 0..16 { bw.write_bit(0); }
+                    bw.stop_encode().unwrap()
+                };
+                buf.truncate(n);
+                let mut dec_coef: CoefCountsBlock =
+                    [[[0u32; UNCONSTRAINED_NODES + 1]; COEFF_CONTEXTS]; COEF_BANDS];
+                let mut dec_eob: EobBranchCountsBlock =
+                    [[0u32; COEFF_CONTEXTS]; COEF_BANDS];
+                let mut dqc = vec![0i32; ncoef];
+                let mut r = BoolReader::new(&buf).unwrap();
+                let mut dc = DecodeCoefCounts {
+                    coef_counts: &mut dec_coef,
+                    eob_branch_counts: &mut dec_eob,
+                    full_counts: None,
+                };
+                let got_eob = decode_coefs(&mut r, &probs, Some(&mut dc), &scan,
+                                           0, tx, ncoef, (1, 1), &mut dqc);
+                assert_eq!(got_eob, *eob,
+                           "round-trip eob for {tx:?} {positions:?}");
+                assert_eq!(enc_eob, dec_eob,
+                           "eob_branch counts diverge for {tx:?} {positions:?}");
+                assert_eq!(enc_coef, dec_coef,
+                           "coef_counts diverge for {tx:?} {positions:?}");
+            }
+        }
     }
 }
