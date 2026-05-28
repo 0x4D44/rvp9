@@ -17,35 +17,49 @@
 //!
 //! ## Algorithm
 //!
-//! Two column-width tiers:
+//! Three column-width tiers, all using a **sliding-window** dataflow
+//! (libvpx `vpx_filter_block1d{16,8}_v8_avx2` ported to Rust): seven
+//! source rows are primed once and held in registers, and each inner
+//! iteration loads only the new trailing row(s) instead of re-loading
+//! all eight per output row.
 //!
 //! * `w - cg >= 32` — 256-bit fast path, 32 columns per group, used by
 //!   the 32- and 64-wide VP9 block sizes (and pass 2 of the 2-D
-//!   convolve). A **sliding-window** dataflow holds the eight
-//!   contributing source rows in eight 256-bit registers `r[0..8]`
-//!   (one full 256-bit row load each), processing **two output rows
-//!   per inner iteration**: reduce the current window, slide it down
-//!   one row (`r[0..7] = r[1..8]`; load the new trailing row `r[7]`),
-//!   reduce again, then slide once more for the next pair. Each new
-//!   output row costs a single 256-bit row load instead of the eight a
-//!   naive per-row re-load would need. Odd `h` is finished by a one-row
-//!   tail that re-primes the trailing register.
+//!   convolve). Holds the eight contributing source rows in eight
+//!   256-bit registers `r[0..8]` (one full 256-bit row load each) and
+//!   processes **two output rows per inner iteration**: reduce the
+//!   current window, slide it down one row (`r[0..7] = r[1..8]`; load
+//!   the new trailing row `r[7]`), reduce again, then slide once more
+//!   for the next pair. Each new output row costs a single 256-bit row
+//!   load instead of eight. Odd `h` is finished by a one-row tail that
+//!   re-primes the trailing register.
 //!
-//! * `cg < w` (remaining `gw = min(w - cg, 16)`, i.e. 16 / 8 / 4) —
-//!   128-bit per-row path: for each output row, load the eight
-//!   contributing source rows (`gw` bytes each) and reduce. `gw == 16`
-//!   emits a full 16-byte row via `packus(lo, hi)`; `gw == 8` /
-//!   `gw == 4` use the low half only. (The 256-bit pair-row port of
-//!   this tier — libvpx `vpx_filter_block1d{16,8}_v8_avx2` — is future
-//!   work; see the optimization-drive journal.)
+//! * `gw == 16` / `gw == 8` (the `cg < w` tier with `gw >= 8`) —
+//!   256-bit **pair-row** path mirroring
+//!   `vpx_filter_block1d{16,8}_v8_avx2`. Each 256-bit register pairs
+//!   two adjacent source rows (`row k` in the low 128-bit lane,
+//!   `row k+1` in the high lane — see `pair_rows`). Pre-`unpack`ing
+//!   adjacent pairs builds the byte-interleaved tap-pair operands
+//!   `ss_lo[0..2]` (+`ss_hi[0..2]` for the 16-wide high 8 columns);
+//!   one `vconv256_pair` then yields **two output rows at once** —
+//!   output row `y` in the low lane, `y+1` in the high lane. Each pair
+//!   loads only two new rows and slides the `ss` window by two.
+//!   `gw == 16` emits two full 16-byte rows via `packus(lo, hi)` +
+//!   per-lane store; `gw == 8` uses the low lane only with `storel`.
+//!   Odd `h` falls to a one-row 128-bit `vconv` tail.
 //!
-//! Both tiers feed the same verified reduction: per output column the
-//! eight rows are byte-interleaved into tap-pair operands
-//! (`unpacklo` for the low 8 columns, `unpackhi` for the high 8) and
-//! fed through 4× `maddubs`, then reduced in libvpx's
-//! `(x0+x2) + (x1+x3) + 64` order with the saturating final add and
-//! `srai 7`; `packus_epi16` clips to `[0, 255]`. This reduction order
-//! is the bit-exact contract — see [`combine`] / [`combine256`].
+//! * `gw == 4` — the rare narrow tail keeps the original single-row
+//!   128-bit path (4-byte loads + low-half reduction). Pair-row 4-byte
+//!   paths add complexity for negligible win; the analogue is the
+//!   horiz drive's `w >= 8` gate on its pair loop.
+//!
+//! All tiers feed the same verified reduction: the eight rows are
+//! byte-interleaved into tap-pair operands (`unpacklo` for the low 8
+//! columns, `unpackhi` for the high 8) and fed through 4× `maddubs`,
+//! then reduced in libvpx's `(x0+x2) + (x1+x3) + 64` order with the
+//! saturating final add and `srai 7`; `packus_epi16` clips to
+//! `[0, 255]`. This reduction order is the bit-exact contract — see
+//! [`combine`] / [`combine256`].
 //!
 //! ## Bounds
 //!
@@ -308,9 +322,9 @@ unsafe fn convolve8_vert_avx2_inner(
     //
     // Bound: pair `(y, y+1)` loads rows `y..=y+7`. For the contract
     // (last loadable row `h+6`) the pair loop runs while
-    // `y+7 <= h+6`, i.e., `y+1 < h`. The tail then handles `y == h-1`
-    // (which only reads row `h+5` at most, since its window prefix is
-    // already populated from the prior iter).
+    // `y+7 <= h+6`, i.e., `y+1 < h`. The tail then handles `y == h-1`,
+    // re-priming `r[7]` to row `y+7 = h+6` — exactly the last loadable
+    // row (its window prefix is already populated from the prior iter).
     if w - cg >= 32 {
         let g01 = tap_pair256(filter_y[0], filter_y[1]);
         let g23 = tap_pair256(filter_y[2], filter_y[3]);
@@ -396,19 +410,19 @@ unsafe fn convolve8_vert_avx2_inner(
         }
     }
 
-    // 256-bit broadcast tap pairs for the 8/16-wide pair-row paths
-    // below. (Re)derived here so the path is independent of whether the
-    // 32-col fast path ran — for `w ∈ {8, 16}` it never did.)
-    let g01 = tap_pair256(filter_y[0], filter_y[1]);
-    let g23 = tap_pair256(filter_y[2], filter_y[3]);
-    let g45 = tap_pair256(filter_y[4], filter_y[5]);
-    let g67 = tap_pair256(filter_y[6], filter_y[7]);
-
     while cg < w {
         let gw = (w - cg).min(16);
         let col_ptr = src_ptr.add(cg);
 
         if gw >= 8 {
+            // 256-bit broadcast tap pairs for the pair-row path. Derived
+            // here (not hoisted) so they cost nothing when only the
+            // 32-col fast path or the `gw == 4` tail runs.
+            let g01 = tap_pair256(filter_y[0], filter_y[1]);
+            let g23 = tap_pair256(filter_y[2], filter_y[3]);
+            let g45 = tap_pair256(filter_y[4], filter_y[5]);
+            let g67 = tap_pair256(filter_y[6], filter_y[7]);
+
             // Pair-row sliding window mirroring libvpx
             // `vpx_filter_block1d{16,8}_v8_avx2`. Each 256-bit register
             // pairs two adjacent source rows (`row k` low lane,
@@ -431,18 +445,29 @@ unsafe fn convolve8_vert_avx2_inner(
             let s: [__m128i; 7] =
                 core::array::from_fn(|k| load_cols(col_ptr.add(k * src_stride), gw));
             // Pre-pack tap-pair operands for taps (0,1)/(2,3)/(4,5).
+            // Slot [3] (tap pair (6,7)) is filled fresh each iteration
+            // before use; seed it with slot [2] to avoid an out-of-loop
+            // dummy load.
+            let r01 = pair_rows(s[0], s[1]);
+            let r12 = pair_rows(s[1], s[2]);
+            let r23 = pair_rows(s[2], s[3]);
+            let r34 = pair_rows(s[3], s[4]);
+            let r45 = pair_rows(s[4], s[5]);
+            let r56 = pair_rows(s[5], s[6]);
+            let ss_lo2 = _mm256_unpacklo_epi8(r45, r56);
             let mut ss_lo: [__m256i; 4] = [
-                _mm256_unpacklo_epi8(pair_rows(s[0], s[1]), pair_rows(s[1], s[2])),
-                _mm256_unpacklo_epi8(pair_rows(s[2], s[3]), pair_rows(s[3], s[4])),
-                _mm256_unpacklo_epi8(pair_rows(s[4], s[5]), pair_rows(s[5], s[6])),
-                _mm256_castsi128_si256(_mm_loadu_si128(col_ptr as *const _)),
+                _mm256_unpacklo_epi8(r01, r12),
+                _mm256_unpacklo_epi8(r23, r34),
+                ss_lo2,
+                ss_lo2,
             ];
             let mut ss_hi: [__m256i; 4] = if do_hi {
+                let ss_hi2 = _mm256_unpackhi_epi8(r45, r56);
                 [
-                    _mm256_unpackhi_epi8(pair_rows(s[0], s[1]), pair_rows(s[1], s[2])),
-                    _mm256_unpackhi_epi8(pair_rows(s[2], s[3]), pair_rows(s[3], s[4])),
-                    _mm256_unpackhi_epi8(pair_rows(s[4], s[5]), pair_rows(s[5], s[6])),
-                    ss_lo[3],
+                    _mm256_unpackhi_epi8(r01, r12),
+                    _mm256_unpackhi_epi8(r23, r34),
+                    ss_hi2,
+                    ss_hi2,
                 ]
             } else {
                 ss_lo
@@ -641,6 +666,107 @@ mod tests {
                             "mismatch w={w} h={h} filter={filter:?}"
                         );
                     }
+                }
+            }
+        }
+    }
+
+    /// Shapes the head-to-head harness doesn't hit but production
+    /// callers and the 2-D composite can: odd heights (force the
+    /// 1-row pair tail), `h == 1` / `h == 2` corners (zero or one
+    /// pair), and **tight-stride** cases (`src_stride == w`, no slack)
+    /// that guard against a pair-row vertical over-read.
+    ///
+    /// The vertical analogue of the horiz `w == 4` OOB: the pair loop
+    /// produces two output rows `(y, y+1)` and must only ever read
+    /// source rows `y..=y+8` while `y + 1 < h`. The largest read is
+    /// then row `(h - 2) + 8 = h + 6` — exactly the contract's last
+    /// loadable row. A buggy slide that loaded row `h + 7` would
+    /// overrun a tightly-sized `src` (no slack) and trip a Vec OOB
+    /// under MIRI / read adjacent heap under release. Pinned seed so
+    /// failures bisect cleanly.
+    #[test]
+    fn differential_odd_and_narrow_shapes() {
+        require_avx2!();
+        // (w, h, src_stride). `src_stride == 0` ⇒ randomized stride
+        // with slack; `src_stride > 0` pins it to that exact tight
+        // value.
+        //
+        // Shapes exercised:
+        //   - (8, 8, 8) / (16, 16, 16) — headline widths at tight
+        //     stride; the pair loop's last read must stop at `h + 6`.
+        //   - (8, 7, 8) / (16, 15, 16) — odd h, forces the 1-row tail
+        //     after the pair loop (tight stride).
+        //   - (8, 1, 8) / (16, 1, 16) — h == 1: zero pairs, tail-only.
+        //   - (8, 2, 8) / (16, 2, 16) — h == 2: exactly one pair, no
+        //     tail.
+        //   - (32, 33, 32) — odd h through the 256-bit fast path
+        //     (tight stride) — exercises that path's pair + tail too.
+        //   - (32, 32, 32) — even h, 256-bit fast path (tight stride):
+        //     the `h + 6` boundary is reached via the slide-by-1
+        //     `r[7] = row(y+8)` at `y == h-2` (no odd-h tail re-prime),
+        //     covering the slide path the odd-h cases miss.
+        //   - (64, 16, 64) — even h at the widest width (tight stride):
+        //     two 256-bit column groups (`cg = 0` and `cg = 32`), each
+        //     hitting `h + 6` via the same slide-by-1 path.
+        //   - (8, 9, 0) / (16, 17, 0) — odd h with slack (sanity).
+        //   - (4, 8, 4) — w == 4 stays on the single-row path (the
+        //     pair loop is gated on `gw >= 8`); guards against
+        //     accidentally routing the narrow width through a pair
+        //     path.
+        let shapes: &[(usize, usize, usize)] = &[
+            (8, 8, 8),
+            (16, 16, 16),
+            (8, 7, 8),
+            (16, 15, 16),
+            (8, 1, 8),
+            (16, 1, 16),
+            (8, 2, 8),
+            (16, 2, 16),
+            (32, 33, 32),
+            (32, 32, 32),
+            (64, 16, 64),
+            (8, 9, 0),
+            (16, 17, 0),
+            (4, 8, 4),
+        ];
+        let kernels = [
+            &EIGHTTAP_KERNEL,
+            &EIGHTTAP_SMOOTH_KERNEL,
+            &EIGHTTAP_SHARP_KERNEL,
+            &BILINEAR_KERNEL,
+        ];
+        let mut state: u32 = 0xDEAD_BEEF;
+        for &(w, h, fixed_stride) in shapes {
+            for kernel in kernels {
+                // A few sub-pel rows: every-other-tap-zero (1),
+                // mid-range (4), half-pel symmetric (8),
+                // asymmetric-high (12).
+                for &r in &[1usize, 4, 8, 12] {
+                    let filter = &kernel[r];
+                    let src_stride = if fixed_stride > 0 {
+                        fixed_stride
+                    } else {
+                        w + (lcg_next(&mut state) as usize & 0x7)
+                    };
+                    let dst_stride = w + (lcg_next(&mut state) as usize & 0x7);
+                    // Exact scalar contract footprint — **no slack** —
+                    // so any pair-row over-read past row `h + 6` trips
+                    // a Vec OOB (MIRI) or reads adjacent heap (release).
+                    let src_len = (h - 1 + 7) * src_stride + w;
+                    let dst_len = (h - 1) * dst_stride + w;
+                    let mut src = vec![0u8; src_len];
+                    for s in src.iter_mut() {
+                        *s = (lcg_next(&mut state) & 0xFF) as u8;
+                    }
+                    let mut dst_scalar = vec![0u8; dst_len];
+                    let mut dst_avx2 = vec![0u8; dst_len];
+                    convolve8_vert(&src, src_stride, &mut dst_scalar, dst_stride, filter, w, h);
+                    convolve8_vert_avx2(&src, src_stride, &mut dst_avx2, dst_stride, filter, w, h);
+                    assert_eq!(
+                        dst_scalar, dst_avx2,
+                        "mismatch w={w} h={h} src_stride={src_stride} r={r} filter={filter:?}"
+                    );
                 }
             }
         }
