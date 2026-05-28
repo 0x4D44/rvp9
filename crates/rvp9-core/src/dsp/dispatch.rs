@@ -708,10 +708,11 @@ pub struct SimdDispatch {
     /// G4-α — 32×32 inverse DCT + residual add (full-density 1024
     /// variant). Signature mirrors the scalar reference
     /// [`crate::transforms::inverse::idct32x32_1024_add`]. On x86_64
-    /// AVX2 CPUs this points at the safe wrapper
-    /// [`crate::dsp::x86_64::idct32x32_add_avx2`]; otherwise it points
-    /// at the scalar reference. The 34/135-bucket fast paths land in
-    /// [`SimdDispatch::idct32x32_34_add`] /
+    /// AVX2 CPUs this points at the i16-lane safe wrapper
+    /// [`crate::dsp::x86_64::idct32x32_add_avx2_1024`]; on SSE2-only
+    /// CPUs at [`crate::dsp::x86_64::idct32x32_add_sse2_1024`];
+    /// otherwise at the scalar reference. The 34/135-bucket fast paths
+    /// land in [`SimdDispatch::idct32x32_34_add`] /
     /// [`SimdDispatch::idct32x32_135_add`].
     pub(crate) idct32x32_add: fn(input: &[i32; 1024], dst: &mut [u8], stride: usize),
 
@@ -1286,16 +1287,31 @@ impl SimdDispatch {
         #[cfg(not(target_arch = "x86_64"))]
         let idct16x16_add: fn(&[i32; 256], &mut [u8], usize) = scalar_idct16x16_add;
 
-        // Route dense 32×32 IDCT to the SSE2 i16-lane kernel
-        // (`idct32x32_add_sse2_1024`). The i16-lane SSE2 path packs
-        // 16 i16 lanes per xmm — twice the density of the i32-lane
-        // AVX2 path (`idct32x32_add_avx2`, retained for the EOB-34 /
-        // EOB-135 fast paths) — and ports the same saturating-vs-
-        // modular semantics already documented for the 16×16 SSE2
-        // kernel. See `crates/rvp9-core/src/dsp/x86_64/idct32x32_sse2_1024.rs`
-        // module docstring for the divergence analysis.
+        // Route dense 32×32 IDCT, preferring the AVX2 i16-lane kernel
+        // (`idct32x32_add_avx2_1024`) when available, then the SSE2
+        // i16-lane kernel (`idct32x32_add_sse2_1024`), then scalar.
+        //
+        // Both i16-lane kernels share the SAME flowgraph, cospi
+        // constants, `(x+8192)>>14` round-shift and saturating
+        // `packs_epi32` wraplow (the saturating-vs-modular divergence vs
+        // the scalar reference is documented for the SSE2 kernel and
+        // agrees on every real VP9 bitstream + the 201-vector corpus).
+        // The AVX2 variant just widens 8 i16 lanes/xmm to 16 i16
+        // lanes/ymm — 2 row-strips + 2 col-strips instead of 4+4,
+        // halving the transpose / instruction count. This is a straight
+        // port of libvpx's `vpx_idct32x32_1024_add_avx2`, mirroring the
+        // i16-lane win pattern already proven for the 16×16 AVX2 flip.
+        // See `crates/rvp9-core/src/dsp/x86_64/idct32x32_avx2_1024.rs`
+        // (and the SSE2 sibling) module docstrings.
+        //
+        // The i32-lane `idct32x32_add_avx2` is now unused by any dispatch
+        // slot (the EOB-34/135 paths use the SSE2 i16-lane kernels); it is
+        // retained via its re-export and self-tests pending a possible
+        // future removal.
         #[cfg(target_arch = "x86_64")]
-        let idct32x32_add: fn(&[i32; 1024], &mut [u8], usize) = if caps.sse2 {
+        let idct32x32_add: fn(&[i32; 1024], &mut [u8], usize) = if caps.avx2 {
+            crate::dsp::x86_64::idct32x32_add_avx2_1024
+        } else if caps.sse2 {
             crate::dsp::x86_64::idct32x32_add_sse2_1024
         } else {
             scalar_idct32x32_add
@@ -2720,9 +2736,9 @@ mod tests {
     }
 
     /// Forcing `avx2 = false, sse2 = false` falls back to the scalar
-    /// reference for the dense idct32x32 slot. (SSE2 i16-lane kernel is
-    /// the preferred path on x86_64 and ranks above AVX2 since the
-    /// 32×32 flip — see dispatch wiring.)
+    /// reference for the dense idct32x32 slot. (The AVX2 i16-lane kernel
+    /// is the preferred path on x86_64, then SSE2 i16-lane, then scalar
+    /// — see dispatch wiring + `idct32x32_dense_slot_prefers_avx2`.)
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn forced_scalar_caps_installs_scalar_idct32x32() {
@@ -2736,6 +2752,42 @@ mod tests {
             d.idct32x32_add() as usize,
             scalar as usize,
             "avx2=false, sse2=false must install the scalar idct32x32_1024_add"
+        );
+    }
+
+    /// The dense 32×32 slot prefers the AVX2 i16-lane kernel when AVX2
+    /// is present, falls back to the SSE2 i16-lane kernel on SSE2-only
+    /// CPUs (AVX2 forced off), and the scalar otherwise. Mirrors the
+    /// `if caps.avx2 { avx2 } else if caps.sse2 { sse2 } else { scalar }`
+    /// dispatch chain.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn idct32x32_dense_slot_prefers_avx2() {
+        let avx2: fn(&[i32; 1024], &mut [u8], usize) =
+            crate::dsp::x86_64::idct32x32_add_avx2_1024;
+        let sse2: fn(&[i32; 1024], &mut [u8], usize) =
+            crate::dsp::x86_64::idct32x32_add_sse2_1024;
+
+        // avx2=true → AVX2 i16-lane kernel.
+        let mut caps_avx2 = detect();
+        caps_avx2.avx2 = true;
+        caps_avx2.sse2 = true;
+        let d_avx2 = SimdDispatch::build(caps_avx2);
+        assert_eq!(
+            d_avx2.idct32x32_add() as usize,
+            avx2 as usize,
+            "avx2=true must install the AVX2 i16-lane idct32x32_add_avx2_1024"
+        );
+
+        // avx2=false, sse2=true → SSE2 i16-lane kernel.
+        let mut caps_sse2 = detect();
+        caps_sse2.avx2 = false;
+        caps_sse2.sse2 = true;
+        let d_sse2 = SimdDispatch::build(caps_sse2);
+        assert_eq!(
+            d_sse2.idct32x32_add() as usize,
+            sse2 as usize,
+            "avx2=false, sse2=true must install the SSE2 i16-lane idct32x32_add_sse2_1024"
         );
     }
 

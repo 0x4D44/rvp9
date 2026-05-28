@@ -646,6 +646,20 @@ unsafe fn idct32_1024_8x32(in_: &[__m128i; 32], out: &mut [__m128i; 32]) {
     add_sub_butterfly(&temp_copy, out, 32);
 }
 
+/// Test-only accessor for the private 1-D engine [`idct32_1024_8x32`],
+/// used as the SSE2 oracle by the AVX2 sibling kernel's `idct32_1d_*`
+/// equality proptest (`super::idct32x32_avx2_1024`). Does not alter any
+/// kernel logic — a thin pass-through.
+///
+/// # Safety
+///
+/// Caller must guarantee the running CPU supports SSE2.
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+#[target_feature(enable = "sse2")]
+pub unsafe fn idct32_1024_8x32_for_test(in_: &[__m128i; 32], out: &mut [__m128i; 32]) {
+    idct32_1024_8x32(in_, out)
+}
+
 // ---------------------------------------------------------------------
 // Top-level kernel.
 // ---------------------------------------------------------------------
