@@ -47,11 +47,11 @@
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
     __m128i, _mm_adds_epi8, _mm_adds_epu8, _mm_adds_epu16, _mm_and_si128, _mm_andnot_si128,
-    _mm_cmpeq_epi8, _mm_loadl_epi64, _mm_max_epu8, _mm_or_si128, _mm_packs_epi16,
-    _mm_packus_epi16, _mm_set1_epi8, _mm_set1_epi16, _mm_setzero_si128, _mm_srai_epi16,
-    _mm_srli_epi16, _mm_storel_epi64, _mm_subs_epi8, _mm_subs_epu8, _mm_unpackhi_epi16,
-    _mm_unpackhi_epi32, _mm_unpackhi_epi64, _mm_unpackhi_epi8, _mm_unpacklo_epi16,
-    _mm_unpacklo_epi32, _mm_unpacklo_epi64, _mm_unpacklo_epi8, _mm_xor_si128,
+    _mm_cmpeq_epi8, _mm_loadl_epi64, _mm_max_epu8, _mm_or_si128, _mm_packs_epi16, _mm_packus_epi16,
+    _mm_set1_epi8, _mm_set1_epi16, _mm_setzero_si128, _mm_srai_epi16, _mm_srli_epi16,
+    _mm_storel_epi64, _mm_subs_epi8, _mm_subs_epu8, _mm_unpackhi_epi8, _mm_unpackhi_epi16,
+    _mm_unpackhi_epi32, _mm_unpackhi_epi64, _mm_unpacklo_epi8, _mm_unpacklo_epi16,
+    _mm_unpacklo_epi32, _mm_unpacklo_epi64, _mm_xor_si128,
 };
 
 /// Load 8 contiguous u8s from `pixels[off..off+8]` into the low 64
@@ -89,8 +89,14 @@ unsafe fn store_row(pixels: *mut u8, off: usize, v: __m128i) {
 #[target_feature(enable = "avx2")]
 #[inline]
 unsafe fn transpose_8x8(
-    r0: __m128i, r1: __m128i, r2: __m128i, r3: __m128i,
-    r4: __m128i, r5: __m128i, r6: __m128i, r7: __m128i,
+    r0: __m128i,
+    r1: __m128i,
+    r2: __m128i,
+    r3: __m128i,
+    r4: __m128i,
+    r5: __m128i,
+    r6: __m128i,
+    r7: __m128i,
 ) -> [__m128i; 8] {
     let t0 = _mm_unpacklo_epi8(r0, r1);
     let t1 = _mm_unpacklo_epi8(r2, r3);
@@ -181,8 +187,14 @@ unsafe fn srai_i8<const N: i32>(x: __m128i) -> __m128i {
 unsafe fn filter_mask_avx2(
     blimit: u8,
     limit: u8,
-    p3: __m128i, p2: __m128i, p1: __m128i, p0: __m128i,
-    q0: __m128i, q1: __m128i, q2: __m128i, q3: __m128i,
+    p3: __m128i,
+    p2: __m128i,
+    p1: __m128i,
+    p0: __m128i,
+    q0: __m128i,
+    q1: __m128i,
+    q2: __m128i,
+    q3: __m128i,
 ) -> __m128i {
     let limit_v = _mm_set1_epi8(limit as i8);
     let blimit_v = _mm_set1_epi8(blimit as i8);
@@ -218,10 +230,7 @@ unsafe fn filter_mask_avx2(
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn hev_mask_avx2(
-    thresh: u8,
-    p1: __m128i, p0: __m128i, q0: __m128i, q1: __m128i,
-) -> __m128i {
+unsafe fn hev_mask_avx2(thresh: u8, p1: __m128i, p0: __m128i, q0: __m128i, q1: __m128i) -> __m128i {
     let thresh_v = _mm_set1_epi8(thresh as i8);
     let abs_p1p0 = abs_diff_u8(p1, p0);
     let abs_q1q0 = abs_diff_u8(q1, q0);
@@ -238,8 +247,14 @@ unsafe fn hev_mask_avx2(
 #[inline]
 unsafe fn flat_mask4_avx2(
     thresh: u8,
-    p3: __m128i, p2: __m128i, p1: __m128i, p0: __m128i,
-    q0: __m128i, q1: __m128i, q2: __m128i, q3: __m128i,
+    p3: __m128i,
+    p2: __m128i,
+    p1: __m128i,
+    p0: __m128i,
+    q0: __m128i,
+    q1: __m128i,
+    q2: __m128i,
+    q3: __m128i,
 ) -> __m128i {
     // scalar: mask = -1 if any of these > thresh; flat = NOT(mask).
     let thresh_v = _mm_set1_epi8(thresh as i8);
@@ -269,7 +284,10 @@ unsafe fn flat_mask4_avx2(
 unsafe fn filter4_inner(
     filter_mask: __m128i,
     hev: __m128i,
-    p1: __m128i, p0: __m128i, q0: __m128i, q1: __m128i,
+    p1: __m128i,
+    p0: __m128i,
+    q0: __m128i,
+    q1: __m128i,
 ) -> (__m128i, __m128i, __m128i, __m128i) {
     let sign = _mm_set1_epi8(-128i8);
     let ps1 = _mm_xor_si128(p1, sign);
@@ -345,8 +363,14 @@ unsafe fn widen_u8_to_u16_lo(x: __m128i) -> __m128i {
 #[target_feature(enable = "avx2")]
 #[inline]
 unsafe fn filter8_wide(
-    p3: __m128i, p2: __m128i, p1: __m128i, p0: __m128i,
-    q0: __m128i, q1: __m128i, q2: __m128i, q3: __m128i,
+    p3: __m128i,
+    p2: __m128i,
+    p1: __m128i,
+    p0: __m128i,
+    q0: __m128i,
+    q1: __m128i,
+    q2: __m128i,
+    q3: __m128i,
 ) -> (__m128i, __m128i, __m128i, __m128i, __m128i, __m128i) {
     // Widen each tap to u16. Only the low 8 lanes carry data per the
     // 8-row layout.
@@ -450,8 +474,14 @@ unsafe fn filter8_avx2(
     filter_mask: __m128i,
     hev: __m128i,
     flat: __m128i,
-    p3: __m128i, p2: __m128i, p1: __m128i, p0: __m128i,
-    q0: __m128i, q1: __m128i, q2: __m128i, q3: __m128i,
+    p3: __m128i,
+    p2: __m128i,
+    p1: __m128i,
+    p0: __m128i,
+    q0: __m128i,
+    q1: __m128i,
+    q2: __m128i,
+    q3: __m128i,
 ) -> (__m128i, __m128i, __m128i, __m128i, __m128i, __m128i) {
     // Apply-wide mask: lanes where flat AND mask are both 0xff.
     let apply_wide = _mm_and_si128(flat, filter_mask);
@@ -460,8 +490,7 @@ unsafe fn filter8_avx2(
     let (p1_f4, p0_f4, q0_f4, q1_f4) = filter4_inner(filter_mask, hev, p1, p0, q0, q1);
 
     // 7-tap wider outputs.
-    let (op2_w, op1_w, op0_w, oq0_w, oq1_w, oq2_w) =
-        filter8_wide(p3, p2, p1, p0, q0, q1, q2, q3);
+    let (op2_w, op1_w, op0_w, oq0_w, oq1_w, oq2_w) = filter8_wide(p3, p2, p1, p0, q0, q1, q2, q3);
 
     // Blend per lane:
     //   wide lanes -> 7-tap; else -> filter4 (for inner four),
@@ -557,8 +586,14 @@ unsafe fn lpf_vertical_8_avx2_inner(
     // 8 bytes [c0[j], c1[j], ..., c7[j]]. The 8x8 transpose is its
     // own inverse — apply the same transpose helper.
     let rows = transpose_8x8(
-        cols_out[0], cols_out[1], cols_out[2], cols_out[3],
-        cols_out[4], cols_out[5], cols_out[6], cols_out[7],
+        cols_out[0],
+        cols_out[1],
+        cols_out[2],
+        cols_out[3],
+        cols_out[4],
+        cols_out[5],
+        cols_out[6],
+        cols_out[7],
     );
 
     // Store each row's 8 bytes at the original load offset.
@@ -757,8 +792,8 @@ mod tests {
     #[test]
     fn dispatch_round_trip() {
         require_avx2!();
-        use crate::dsp::caps::detect;
         use crate::dsp::SimdDispatch;
+        use crate::dsp::caps::detect;
 
         let mut caps = detect();
         caps.avx2 = true;

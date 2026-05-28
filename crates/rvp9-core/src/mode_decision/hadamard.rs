@@ -240,21 +240,14 @@ mod tests {
         // for orthogonal Hadamard with normalization H * H^T = N*I,
         // where here N = 64 (8x8 transform without sqrt(N) factor).
         // Use small random-ish input.
-        let src: [i16; 64] = std::array::from_fn(|i| {
-            ((i as i16) % 11) - 5
-        });
-        let input_energy: i64 = src
-            .iter()
-            .map(|&v| i64::from(v) * i64::from(v))
-            .sum();
+        let src: [i16; 64] = std::array::from_fn(|i| ((i as i16) % 11) - 5);
+        let input_energy: i64 = src.iter().map(|&v| i64::from(v) * i64::from(v)).sum();
         let mut coeff = [0i16; 64];
         hadamard_8x8(&src, 8, &mut coeff);
-        let coeff_energy: i64 = coeff
-            .iter()
-            .map(|&v| i64::from(v) * i64::from(v))
-            .sum();
+        let coeff_energy: i64 = coeff.iter().map(|&v| i64::from(v) * i64::from(v)).sum();
         assert_eq!(
-            coeff_energy, 64 * input_energy,
+            coeff_energy,
+            64 * input_energy,
             "Parseval: coeff energy = 64 * input energy for 8x8 WHT"
         );
     }

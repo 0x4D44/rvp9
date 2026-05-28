@@ -38,7 +38,6 @@
 //! `int16_t step[]` slot. This preserves bit-exactness against libvpx
 //! for inputs whose intermediates exceed 16 bits.
 
-use super::types::TxType;
 use super::constants::{
     COSPI_1_64, COSPI_2_64, COSPI_3_64, COSPI_4_64, COSPI_5_64, COSPI_6_64, COSPI_7_64, COSPI_8_64,
     COSPI_9_64, COSPI_10_64, COSPI_11_64, COSPI_12_64, COSPI_13_64, COSPI_14_64, COSPI_15_64,
@@ -47,6 +46,7 @@ use super::constants::{
     COSPI_30_64, COSPI_31_64, SINPI_1_9, SINPI_2_9, SINPI_3_9, SINPI_4_9, clip_pixel_add,
     dct_const_round_shift, highbd_clip_pixel_add, highbd_wraplow, wraplow,
 };
+use super::types::TxType;
 
 /// 1D 4-point inverse DCT. Output values are stored as `i32` but each
 /// step and output assignment is `wraplow`-truncated to mirror the
@@ -60,10 +60,8 @@ pub fn idct4(input: &[i32; 4], output: &mut [i32; 4]) {
     let temp2: i64 = (input[0] as i64 - input[2] as i64) * COSPI_16_64 as i64;
     let step0: i32 = wraplow(dct_const_round_shift(temp1) as i32);
     let step1: i32 = wraplow(dct_const_round_shift(temp2) as i32);
-    let temp1: i64 =
-        input[1] as i64 * COSPI_24_64 as i64 - input[3] as i64 * COSPI_8_64 as i64;
-    let temp2: i64 =
-        input[1] as i64 * COSPI_8_64 as i64 + input[3] as i64 * COSPI_24_64 as i64;
+    let temp1: i64 = input[1] as i64 * COSPI_24_64 as i64 - input[3] as i64 * COSPI_8_64 as i64;
+    let temp2: i64 = input[1] as i64 * COSPI_8_64 as i64 + input[3] as i64 * COSPI_24_64 as i64;
     let step2: i32 = wraplow(dct_const_round_shift(temp1) as i32);
     let step3: i32 = wraplow(dct_const_round_shift(temp2) as i32);
 
@@ -90,9 +88,7 @@ pub fn idct4x4_16_add(input: &[i32; 16], dest: &mut [u8], stride: usize) {
     // Row pass.
     for r in 0..4 {
         let row_in: &[i32; 4] = input[r * 4..r * 4 + 4].try_into().unwrap();
-        let row_out_mut: &mut [i32; 4] = (&mut intermediate[r * 4..r * 4 + 4])
-            .try_into()
-            .unwrap();
+        let row_out_mut: &mut [i32; 4] = (&mut intermediate[r * 4..r * 4 + 4]).try_into().unwrap();
         idct4(row_in, row_out_mut);
     }
 
@@ -153,10 +149,8 @@ pub fn highbd_idct4(input: &[i32; 4], output: &mut [i32; 4], bd: u32) {
     let temp2: i64 = (input[0] as i64 - input[2] as i64) * COSPI_16_64 as i64;
     let step0: i32 = highbd_wraplow(dct_const_round_shift(temp1) as i32, bd);
     let step1: i32 = highbd_wraplow(dct_const_round_shift(temp2) as i32, bd);
-    let temp1: i64 =
-        input[1] as i64 * COSPI_24_64 as i64 - input[3] as i64 * COSPI_8_64 as i64;
-    let temp2: i64 =
-        input[1] as i64 * COSPI_8_64 as i64 + input[3] as i64 * COSPI_24_64 as i64;
+    let temp1: i64 = input[1] as i64 * COSPI_24_64 as i64 - input[3] as i64 * COSPI_8_64 as i64;
+    let temp2: i64 = input[1] as i64 * COSPI_8_64 as i64 + input[3] as i64 * COSPI_24_64 as i64;
     let step2: i32 = highbd_wraplow(dct_const_round_shift(temp1) as i32, bd);
     let step3: i32 = highbd_wraplow(dct_const_round_shift(temp2) as i32, bd);
 
@@ -183,12 +177,7 @@ pub fn highbd_idct4(input: &[i32; 4], output: &mut [i32; 4], bd: u32) {
 /// `bd ∈ {8, 10, 12}`. Dispatched through
 /// [`crate::dsp::SimdDispatch::highbd_idct4x4_add`] (Track T phase 0
 /// scalar reference; no SIMD HBD kernels in this track).
-pub fn highbd_idct4x4_16_add(
-    input: &[i32; 16],
-    dest: &mut [u16],
-    stride: usize,
-    bd: u32,
-) {
+pub fn highbd_idct4x4_16_add(input: &[i32; 16], dest: &mut [u16], stride: usize, bd: u32) {
     debug_assert!(
         dest.len() >= stride * 3 + 4,
         "dest too small for 4x4 HBD add"
@@ -199,9 +188,7 @@ pub fn highbd_idct4x4_16_add(
     // Row pass.
     for r in 0..4 {
         let row_in: &[i32; 4] = input[r * 4..r * 4 + 4].try_into().unwrap();
-        let row_out_mut: &mut [i32; 4] = (&mut intermediate[r * 4..r * 4 + 4])
-            .try_into()
-            .unwrap();
+        let row_out_mut: &mut [i32; 4] = (&mut intermediate[r * 4..r * 4 + 4]).try_into().unwrap();
         highbd_idct4(row_in, row_out_mut, bd);
     }
 
@@ -219,8 +206,7 @@ pub fn highbd_idct4x4_16_add(
             // ROUND_POWER_OF_TWO(col_out[r], 4) per libvpx
             // `vpx_dsp/inv_txfm.c:1474`.
             let shifted = (col_out[r] as i64 + 8) >> 4;
-            dest[r * stride + c] =
-                highbd_clip_pixel_add(dest[r * stride + c], shifted, bd);
+            dest[r * stride + c] = highbd_clip_pixel_add(dest[r * stride + c], shifted, bd);
         }
     }
 }
@@ -302,9 +288,7 @@ pub fn idct8x8_64_add(input: &[i32; 64], dest: &mut [u8], stride: usize) {
     // Row pass.
     for r in 0..8 {
         let row_in: &[i32; 8] = input[r * 8..r * 8 + 8].try_into().unwrap();
-        let row_out_mut: &mut [i32; 8] = (&mut intermediate[r * 8..r * 8 + 8])
-            .try_into()
-            .unwrap();
+        let row_out_mut: &mut [i32; 8] = (&mut intermediate[r * 8..r * 8 + 8]).try_into().unwrap();
         idct8(row_in, row_out_mut);
     }
 
@@ -357,9 +341,7 @@ pub fn idct8x8_12_add(input: &[i32; 64], dest: &mut [u8], stride: usize) {
     // Row pass — first 4 rows only.
     for r in 0..4 {
         let row_in: &[i32; 8] = input[r * 8..r * 8 + 8].try_into().unwrap();
-        let row_out_mut: &mut [i32; 8] = (&mut intermediate[r * 8..r * 8 + 8])
-            .try_into()
-            .unwrap();
+        let row_out_mut: &mut [i32; 8] = (&mut intermediate[r * 8..r * 8 + 8]).try_into().unwrap();
         idct8(row_in, row_out_mut);
     }
 
@@ -580,16 +562,18 @@ pub fn idct16(input: &[i32; 16], output: &mut [i32; 16]) {
 /// `ROUND_POWER_OF_TWO(_, 6)` per `vpx_idct16x16_256_add_c`
 /// (`vpx_dsp/inv_txfm.c:722-745`).
 pub fn idct16x16_256_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
-    debug_assert!(dest.len() >= stride * 15 + 16, "dest too small for 16x16 add");
+    debug_assert!(
+        dest.len() >= stride * 15 + 16,
+        "dest too small for 16x16 add"
+    );
 
     let mut intermediate = [0i32; 256];
 
     // Row pass.
     for r in 0..16 {
         let row_in: &[i32; 16] = input[r * 16..r * 16 + 16].try_into().unwrap();
-        let row_out_mut: &mut [i32; 16] = (&mut intermediate[r * 16..r * 16 + 16])
-            .try_into()
-            .unwrap();
+        let row_out_mut: &mut [i32; 16] =
+            (&mut intermediate[r * 16..r * 16 + 16]).try_into().unwrap();
         idct16(row_in, row_out_mut);
     }
 
@@ -624,7 +608,10 @@ pub fn idct16x16_256_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
 /// ignored and the output diverges from the full kernel. Callers are
 /// responsible for the eob bucket gate.
 pub fn idct16x16_10_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
-    debug_assert!(dest.len() >= stride * 15 + 16, "dest too small for 16x16 add");
+    debug_assert!(
+        dest.len() >= stride * 15 + 16,
+        "dest too small for 16x16 add"
+    );
 
     // Intermediate buffer — rows 4..16 stay zero because the
     // corresponding input rows are assumed zero (caller contract).
@@ -633,9 +620,8 @@ pub fn idct16x16_10_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
     // Row pass — first 4 rows only.
     for r in 0..4 {
         let row_in: &[i32; 16] = input[r * 16..r * 16 + 16].try_into().unwrap();
-        let row_out_mut: &mut [i32; 16] = (&mut intermediate[r * 16..r * 16 + 16])
-            .try_into()
-            .unwrap();
+        let row_out_mut: &mut [i32; 16] =
+            (&mut intermediate[r * 16..r * 16 + 16]).try_into().unwrap();
         idct16(row_in, row_out_mut);
     }
 
@@ -668,16 +654,18 @@ pub fn idct16x16_10_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
 /// ignored and the output diverges from the full kernel. Callers are
 /// responsible for the eob bucket gate.
 pub fn idct16x16_38_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
-    debug_assert!(dest.len() >= stride * 15 + 16, "dest too small for 16x16 add");
+    debug_assert!(
+        dest.len() >= stride * 15 + 16,
+        "dest too small for 16x16 add"
+    );
 
     let mut intermediate = [0i32; 256];
 
     // Row pass — first 8 rows only.
     for r in 0..8 {
         let row_in: &[i32; 16] = input[r * 16..r * 16 + 16].try_into().unwrap();
-        let row_out_mut: &mut [i32; 16] = (&mut intermediate[r * 16..r * 16 + 16])
-            .try_into()
-            .unwrap();
+        let row_out_mut: &mut [i32; 16] =
+            (&mut intermediate[r * 16..r * 16 + 16]).try_into().unwrap();
         idct16(row_in, row_out_mut);
     }
 
@@ -702,7 +690,10 @@ pub fn idct16x16_38_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
 /// `cospi_16_64` passes (each `wraplow`-truncated) then
 /// `ROUND_POWER_OF_TWO(_, 6)`.
 pub fn idct16x16_1_add(input: i32, dest: &mut [u8], stride: usize) {
-    debug_assert!(dest.len() >= stride * 15 + 16, "dest too small for 16x16 add");
+    debug_assert!(
+        dest.len() >= stride * 15 + 16,
+        "dest too small for 16x16 add"
+    );
 
     let out1 = wraplow(dct_const_round_shift((input as i64) * (COSPI_16_64 as i64)) as i32);
     let out2 = wraplow(dct_const_round_shift((out1 as i64) * (COSPI_16_64 as i64)) as i32);
@@ -1100,7 +1091,10 @@ pub fn idct32(input: &[i32; 32], output: &mut [i32; 32]) {
 /// coefficients of a row are zero, the row pass is replaced by a
 /// memset(0).
 pub fn idct32x32_1024_add(input: &[i32; 1024], dest: &mut [u8], stride: usize) {
-    debug_assert!(dest.len() >= stride * 31 + 32, "dest too small for 32x32 add");
+    debug_assert!(
+        dest.len() >= stride * 31 + 32,
+        "dest too small for 32x32 add"
+    );
 
     let mut intermediate = [0i32; 1024];
 
@@ -1109,9 +1103,8 @@ pub fn idct32x32_1024_add(input: &[i32; 1024], dest: &mut [u8], stride: usize) {
         let row_in: &[i32; 32] = input[r * 32..r * 32 + 32].try_into().unwrap();
         // OR-reduce to detect all-zero row (matches libvpx zero_coeff check).
         let any_nonzero = row_in.iter().any(|&v| v != 0);
-        let row_out_mut: &mut [i32; 32] = (&mut intermediate[r * 32..r * 32 + 32])
-            .try_into()
-            .unwrap();
+        let row_out_mut: &mut [i32; 32] =
+            (&mut intermediate[r * 32..r * 32 + 32]).try_into().unwrap();
         if any_nonzero {
             idct32(row_in, row_out_mut);
         }
@@ -1150,7 +1143,10 @@ pub fn idct32x32_1024_add(input: &[i32; 1024], dest: &mut [u8], stride: usize) {
 /// ignored and the output diverges from the full kernel. Callers are
 /// responsible for the eob bucket gate.
 pub fn idct32x32_34_add(input: &[i32; 1024], dest: &mut [u8], stride: usize) {
-    debug_assert!(dest.len() >= stride * 31 + 32, "dest too small for 32x32 add");
+    debug_assert!(
+        dest.len() >= stride * 31 + 32,
+        "dest too small for 32x32 add"
+    );
 
     // Intermediate buffer — rows 8..32 stay zero because the
     // corresponding input rows are assumed zero (caller contract).
@@ -1159,9 +1155,8 @@ pub fn idct32x32_34_add(input: &[i32; 1024], dest: &mut [u8], stride: usize) {
     // Row pass — first 8 rows only.
     for r in 0..8 {
         let row_in: &[i32; 32] = input[r * 32..r * 32 + 32].try_into().unwrap();
-        let row_out_mut: &mut [i32; 32] = (&mut intermediate[r * 32..r * 32 + 32])
-            .try_into()
-            .unwrap();
+        let row_out_mut: &mut [i32; 32] =
+            (&mut intermediate[r * 32..r * 32 + 32]).try_into().unwrap();
         idct32(row_in, row_out_mut);
     }
 
@@ -1195,16 +1190,18 @@ pub fn idct32x32_34_add(input: &[i32; 1024], dest: &mut [u8], stride: usize) {
 /// ignored and the output diverges from the full kernel. Callers are
 /// responsible for the eob bucket gate.
 pub fn idct32x32_135_add(input: &[i32; 1024], dest: &mut [u8], stride: usize) {
-    debug_assert!(dest.len() >= stride * 31 + 32, "dest too small for 32x32 add");
+    debug_assert!(
+        dest.len() >= stride * 31 + 32,
+        "dest too small for 32x32 add"
+    );
 
     let mut intermediate = [0i32; 1024];
 
     // Row pass — first 16 rows only.
     for r in 0..16 {
         let row_in: &[i32; 32] = input[r * 32..r * 32 + 32].try_into().unwrap();
-        let row_out_mut: &mut [i32; 32] = (&mut intermediate[r * 32..r * 32 + 32])
-            .try_into()
-            .unwrap();
+        let row_out_mut: &mut [i32; 32] =
+            (&mut intermediate[r * 32..r * 32 + 32]).try_into().unwrap();
         idct32(row_in, row_out_mut);
     }
 
@@ -1229,7 +1226,10 @@ pub fn idct32x32_135_add(input: &[i32; 1024], dest: &mut [u8], stride: usize) {
 /// `cospi_16_64` passes (each `wraplow`-truncated) then
 /// `ROUND_POWER_OF_TWO(_, 6)`.
 pub fn idct32x32_1_add(input: i32, dest: &mut [u8], stride: usize) {
-    debug_assert!(dest.len() >= stride * 31 + 32, "dest too small for 32x32 add");
+    debug_assert!(
+        dest.len() >= stride * 31 + 32,
+        "dest too small for 32x32 add"
+    );
 
     let out1 = wraplow(dct_const_round_shift((input as i64) * (COSPI_16_64 as i64)) as i32);
     let out2 = wraplow(dct_const_round_shift((out1 as i64) * (COSPI_16_64 as i64)) as i32);
@@ -1390,9 +1390,7 @@ pub fn iadst16(input: &[i32; 16], output: &mut [i32; 16]) {
     let mut x14: i32 = input[1];
     let mut x15: i32 = input[14];
 
-    if (x0 | x1 | x2 | x3 | x4 | x5 | x6 | x7 | x8 | x9 | x10 | x11 | x12 | x13 | x14 | x15)
-        == 0
-    {
+    if (x0 | x1 | x2 | x3 | x4 | x5 | x6 | x7 | x8 | x9 | x10 | x11 | x12 | x13 | x14 | x15) == 0 {
         output.fill(0);
         return;
     }
@@ -1733,9 +1731,7 @@ pub fn iht4x4_16_add(input: &[i32; 16], dest: &mut [u8], stride: usize, tx_type:
     // Row pass.
     for r in 0..4 {
         let row_in: &[i32; 4] = input[r * 4..r * 4 + 4].try_into().unwrap();
-        let row_out_mut: &mut [i32; 4] = (&mut intermediate[r * 4..r * 4 + 4])
-            .try_into()
-            .unwrap();
+        let row_out_mut: &mut [i32; 4] = (&mut intermediate[r * 4..r * 4 + 4]).try_into().unwrap();
         row_xform(row_in, row_out_mut);
     }
 
@@ -1770,9 +1766,7 @@ pub fn iht8x8_64_add(input: &[i32; 64], dest: &mut [u8], stride: usize, tx_type:
 
     for r in 0..8 {
         let row_in: &[i32; 8] = input[r * 8..r * 8 + 8].try_into().unwrap();
-        let row_out_mut: &mut [i32; 8] = (&mut intermediate[r * 8..r * 8 + 8])
-            .try_into()
-            .unwrap();
+        let row_out_mut: &mut [i32; 8] = (&mut intermediate[r * 8..r * 8 + 8]).try_into().unwrap();
         row_xform(row_in, row_out_mut);
     }
 
@@ -1797,16 +1791,18 @@ pub fn iht8x8_64_add(input: &[i32; 64], dest: &mut [u8], stride: usize, tx_type:
 ///
 /// Mirrors `vp9_iht16x16_256_add_c` (`vp9/common/vp9_idct.c:92-116`).
 pub fn iht16x16_256_add(input: &[i32; 256], dest: &mut [u8], stride: usize, tx_type: TxType) {
-    debug_assert!(dest.len() >= stride * 15 + 16, "dest too small for 16x16 add");
+    debug_assert!(
+        dest.len() >= stride * 15 + 16,
+        "dest too small for 16x16 add"
+    );
 
     let (row_xform, col_xform) = iht_16_dispatch(tx_type);
     let mut intermediate = [0i32; 256];
 
     for r in 0..16 {
         let row_in: &[i32; 16] = input[r * 16..r * 16 + 16].try_into().unwrap();
-        let row_out_mut: &mut [i32; 16] = (&mut intermediate[r * 16..r * 16 + 16])
-            .try_into()
-            .unwrap();
+        let row_out_mut: &mut [i32; 16] =
+            (&mut intermediate[r * 16..r * 16 + 16]).try_into().unwrap();
         row_xform(row_in, row_out_mut);
     }
 
@@ -1845,13 +1841,9 @@ mod tests {
     /// the libvpx oracle iht run.
     #[test]
     fn m13_v_block_24_12_iht4x4_probe() {
-        let dq_coefs: [i32; 16] =
-            [0, 231, -231, 231, -231, 0, 231, 0, 0, 0, 0, 0, 231, 0, 0, 0];
+        let dq_coefs: [i32; 16] = [0, 231, -231, 231, -231, 0, 231, 0, 0, 0, 0, 0, 231, 0, 0, 0];
         let mut dst = [
-            88u8, 96, 101, 109,
-            88,   96, 101, 109,
-            88,   96, 101, 109,
-            88,   96, 101, 109,
+            88u8, 96, 101, 109, 88, 96, 101, 109, 88, 96, 101, 109, 88, 96, 101, 109,
         ];
         iht4x4_16_add(&dq_coefs, &mut dst, 4, TxType::AdstDct);
         eprintln!("M13 V-block (24,12) iht4x4 output:");
@@ -2110,10 +2102,7 @@ mod tests {
         // they'd agree regardless, but staying in-bounds keeps the
         // fixture realistic).
         let corner: [i32; 16] = [
-            1024, -512, 256, -128,
-            512, -256, 128, 64,
-            -384, 192, -96, 48,
-            256, -128, 64, 32,
+            1024, -512, 256, -128, 512, -256, 128, 64, -384, 192, -96, 48, 256, -128, 64, 32,
         ];
         for (i, &v) in corner.iter().enumerate() {
             let r = i / 4;
@@ -2619,9 +2608,18 @@ mod tests {
         idct32x32_34_add(&input, &mut dest_34, 32);
         idct32x32_135_add(&input, &mut dest_135, 32);
         idct32x32_1_add(dc, &mut dest_dc, 32);
-        assert_eq!(dest_full, dest_34, "_34_add must match _1024_add for DC-only");
-        assert_eq!(dest_full, dest_135, "_135_add must match _1024_add for DC-only");
-        assert_eq!(dest_full, dest_dc, "_1_add must match _1024_add for DC-only");
+        assert_eq!(
+            dest_full, dest_34,
+            "_34_add must match _1024_add for DC-only"
+        );
+        assert_eq!(
+            dest_full, dest_135,
+            "_135_add must match _1024_add for DC-only"
+        );
+        assert_eq!(
+            dest_full, dest_dc,
+            "_1_add must match _1024_add for DC-only"
+        );
     }
 
     // ---- iadst family ----
@@ -2770,7 +2768,10 @@ mod tests {
             let input = [0i32; 16];
             let mut dest = [128u8; 16];
             iht4x4_16_add(&input, &mut dest, 4, tx_type);
-            assert_eq!(dest, [128; 16], "tx_type {tx_type:?} did not preserve zero-input dest");
+            assert_eq!(
+                dest, [128; 16],
+                "tx_type {tx_type:?} did not preserve zero-input dest"
+            );
         }
     }
 
@@ -2787,7 +2788,10 @@ mod tests {
             let input = [0i32; 64];
             let mut dest = [128u8; 64];
             iht8x8_64_add(&input, &mut dest, 8, tx_type);
-            assert_eq!(dest, [128; 64], "tx_type {tx_type:?} did not preserve zero-input dest");
+            assert_eq!(
+                dest, [128; 64],
+                "tx_type {tx_type:?} did not preserve zero-input dest"
+            );
         }
     }
 
@@ -2840,10 +2844,8 @@ mod tests {
         iht4x4_16_add(&input, &mut dest, 4, TxType::DctAdst);
         let row = [1u8, 2, 2, 3];
         let expected: [u8; 16] = [
-            row[0], row[1], row[2], row[3],
-            row[0], row[1], row[2], row[3],
-            row[0], row[1], row[2], row[3],
-            row[0], row[1], row[2], row[3],
+            row[0], row[1], row[2], row[3], row[0], row[1], row[2], row[3], row[0], row[1], row[2],
+            row[3], row[0], row[1], row[2], row[3],
         ];
         assert_eq!(dest, expected);
     }
@@ -2868,9 +2870,7 @@ mod tests {
         input[0] = 64;
         let mut dest = [0u8; 16];
         iht4x4_16_add(&input, &mut dest, 4, TxType::AdstDct);
-        let expected: [u8; 16] = [
-            1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3,
-        ];
+        let expected: [u8; 16] = [1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3];
         assert_eq!(dest, expected);
     }
 
@@ -3175,10 +3175,8 @@ mod tests {
         let temp2 = (input[0] as i64 - input[2] as i64) * REF_COSPI_16_64;
         let step0 = ref_wraplow(ref_dct_const_round_shift(temp1)) as i16 as i32;
         let step1 = ref_wraplow(ref_dct_const_round_shift(temp2)) as i16 as i32;
-        let temp1 =
-            input[1] as i64 * REF_COSPI_24_64 - input[3] as i64 * REF_COSPI_8_64;
-        let temp2 =
-            input[1] as i64 * REF_COSPI_8_64 + input[3] as i64 * REF_COSPI_24_64;
+        let temp1 = input[1] as i64 * REF_COSPI_24_64 - input[3] as i64 * REF_COSPI_8_64;
+        let temp2 = input[1] as i64 * REF_COSPI_8_64 + input[3] as i64 * REF_COSPI_24_64;
         let step2 = ref_wraplow(ref_dct_const_round_shift(temp1)) as i16 as i32;
         let step3 = ref_wraplow(ref_dct_const_round_shift(temp2)) as i16 as i32;
 
@@ -3189,12 +3187,7 @@ mod tests {
     }
 
     /// Reference `vp9_iht4x4_16_add_c` — `vp9/common/vp9_idct.c:20-50`.
-    fn ref_iht4x4_16_add(
-        input: &[i32; 16],
-        dest: &mut [u8],
-        stride: usize,
-        tx_type: TxType,
-    ) {
+    fn ref_iht4x4_16_add(input: &[i32; 16], dest: &mut [u8], stride: usize, tx_type: TxType) {
         type Xform = fn(&[i32; 4], &mut [i32; 4]);
         // Stage 3 stretch M.8 fix: libvpx's `transform_2d` struct is
         // `{ transform_1d cols, rows; }`. Brace-initializer order is
@@ -3213,8 +3206,7 @@ mod tests {
         // Row pass.
         for i in 0..4 {
             let row_in: &[i32; 4] = input[i * 4..i * 4 + 4].try_into().unwrap();
-            let row_out: &mut [i32; 4] =
-                (&mut out[i * 4..i * 4 + 4]).try_into().unwrap();
+            let row_out: &mut [i32; 4] = (&mut out[i * 4..i * 4 + 4]).try_into().unwrap();
             rows(row_in, row_out);
         }
 
@@ -3228,8 +3220,7 @@ mod tests {
             cols(&temp_in, &mut temp_out);
             for j in 0..4 {
                 let rounded = (temp_out[j] as i64 + 8) >> 4;
-                dest[j * stride + i] =
-                    ref_clip_pixel_add(dest[j * stride + i], rounded);
+                dest[j * stride + i] = ref_clip_pixel_add(dest[j * stride + i], rounded);
             }
         }
     }
@@ -3304,22 +3295,13 @@ mod tests {
         // scan-positions. Includes the cascade-suspect pattern.
         let inputs: &[[i32; 16]] = &[
             // DC + a few small AC. Realistic H-mode 4×4 residual shape.
-            [16, -8, 4, 0,
-              0,  0, 0, 0,
-              0,  0, 0, 0,
-              0,  0, 0, 0],
+            [16, -8, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             // A negative DC + scan-position-1 col_scan pattern.
-            [-32, 16, 0, 0,
-              -8,  4, 0, 0,
-              0,   0, 0, 0,
-              0,   0, 0, 0],
+            [-32, 16, 0, 0, -8, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             // The kind of coef distribution that produces the
             // M.1-reported residual `[+0f, +09, -10, +03]` order
             // of magnitude.
-            [64, -16, 8, -4,
-              0,   0, 0,  0,
-              0,   0, 0,  0,
-              0,   0, 0,  0],
+            [64, -16, 8, -4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         ];
 
         for (idx, input) in inputs.iter().enumerate() {

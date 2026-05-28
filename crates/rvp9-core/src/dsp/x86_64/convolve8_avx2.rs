@@ -99,7 +99,7 @@ mod tests {
     //! Scalar-vs-AVX2 differential tests for `convolve8_avx2`.
     use super::convolve8_avx2;
     use crate::inter::filter::{
-        convolve8, BILINEAR_KERNEL, EIGHTTAP_KERNEL, EIGHTTAP_SHARP_KERNEL, EIGHTTAP_SMOOTH_KERNEL,
+        BILINEAR_KERNEL, EIGHTTAP_KERNEL, EIGHTTAP_SHARP_KERNEL, EIGHTTAP_SMOOTH_KERNEL, convolve8,
     };
 
     macro_rules! require_avx2 {
@@ -165,10 +165,24 @@ mod tests {
                 let mut dst_scalar = vec![0u8; dst_len];
                 let mut dst_avx2 = vec![0u8; dst_len];
                 convolve8(
-                    &src, src_stride, &mut dst_scalar, dst_stride, filter_x, filter_y, w, h,
+                    &src,
+                    src_stride,
+                    &mut dst_scalar,
+                    dst_stride,
+                    filter_x,
+                    filter_y,
+                    w,
+                    h,
                 );
                 convolve8_avx2(
-                    &src, src_stride, &mut dst_avx2, dst_stride, filter_x, filter_y, w, h,
+                    &src,
+                    src_stride,
+                    &mut dst_avx2,
+                    dst_stride,
+                    filter_x,
+                    filter_y,
+                    w,
+                    h,
                 );
                 assert_eq!(
                     dst_scalar, dst_avx2,
@@ -182,8 +196,8 @@ mod tests {
     #[test]
     fn dispatch_round_trip() {
         require_avx2!();
-        use crate::dsp::caps::detect;
         use crate::dsp::SimdDispatch;
+        use crate::dsp::caps::detect;
 
         let mut caps_avx2 = detect();
         caps_avx2.avx2 = true;
@@ -206,7 +220,10 @@ mod tests {
             let mut dst_scalar = vec![0u8; h * w];
             (d_avx2.convolve8())(&src, stride, &mut dst_avx2, w, fx, fy, w, h);
             (d_scalar.convolve8())(&src, stride, &mut dst_scalar, w, fx, fy, w, h);
-            assert_eq!(dst_avx2, dst_scalar, "dispatch round-trip mismatch w={w} h={h}");
+            assert_eq!(
+                dst_avx2, dst_scalar,
+                "dispatch round-trip mismatch w={w} h={h}"
+            );
         }
     }
 }

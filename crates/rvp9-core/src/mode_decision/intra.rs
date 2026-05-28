@@ -65,9 +65,9 @@
 //! Keep the mode with minimum `rd_cost`. Returns the winner.
 
 use crate::Pixel;
-use crate::block::{BlockSize, max_txsize};
 use crate::bitstream::header::FrameKind;
-use crate::cost::{compute_rd_mult, FrameTypeForRd};
+use crate::block::{BlockSize, max_txsize};
+use crate::cost::{FrameTypeForRd, compute_rd_mult};
 use crate::intra_pred::{
     ABOVE_UNAVAILABLE_FILL, DcAvailability, IntraMode, LEFT_UNAVAILABLE_FILL, NUM_INTRA_MODES,
     PredCtx, intra_predict,
@@ -369,7 +369,14 @@ pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSear
         // 4. Forward quant (use `vp9_quantize_b_32x32` for 32×32, plain
         //    for everything else — libvpx convention from
         //    `vp9_encodemb.c::vp9_xform_quant`).
-        let scan = scan_for(tx_size, if tx_size == TxSize::Tx32x32 { TxType::DctDct } else { tx_type });
+        let scan = scan_for(
+            tx_size,
+            if tx_size == TxSize::Tx32x32 {
+                TxType::DctDct
+            } else {
+                tx_type
+            },
+        );
         let scan_slice = scan_for_forward(&scan);
         for q in qcoeff[..n].iter_mut() {
             *q = 0;
@@ -652,19 +659,9 @@ pub fn pick_intra_mode_uv(params: &UvIntraModeSearchParams<'_>) -> IntraModeSear
 
         for plane in 0..2usize {
             let (src_plane, above_row, above_left, left_col) = if plane == 0 {
-                (
-                    params.u_src_plane,
-                    &u_above_row,
-                    u_above_left,
-                    &u_left_col,
-                )
+                (params.u_src_plane, &u_above_row, u_above_left, &u_left_col)
             } else {
-                (
-                    params.v_src_plane,
-                    &v_above_row,
-                    v_above_left,
-                    &v_left_col,
-                )
+                (params.v_src_plane, &v_above_row, v_above_left, &v_left_col)
             };
 
             let ctx = PredCtx {
@@ -989,8 +986,9 @@ mod tests {
         let costs = intra_y_mode_costs_kf_table();
 
         // `above` matches the source's column pattern → V_PRED is exact.
-        let above_pixels: Vec<u8> =
-            (0..bs).map(|c| if c % 2 == 0 { 0u8 } else { 255 }).collect();
+        let above_pixels: Vec<u8> = (0..bs)
+            .map(|c| if c % 2 == 0 { 0u8 } else { 255 })
+            .collect();
         // `left` is the source's column 0 = 0 everywhere → H_PRED
         // gives the *wrong* prediction (predicts 0 everywhere; can't
         // recover the alternating columns even after dequant since the
@@ -1087,8 +1085,9 @@ mod tests {
         // `left` matches the source's column 0 row-pattern → H_PRED
         // is exact. `above` is the source's row 0 value broadcast =
         // 0 → V_PRED gives the wrong prediction.
-        let left_pixels: Vec<u8> =
-            (0..bs).map(|r| if r % 2 == 0 { 0u8 } else { 255 }).collect();
+        let left_pixels: Vec<u8> = (0..bs)
+            .map(|r| if r % 2 == 0 { 0u8 } else { 255 })
+            .collect();
         let above_pixels: Vec<u8> = vec![0u8; bs];
 
         let params = IntraModeSearchParams {
@@ -1218,7 +1217,11 @@ mod tests {
         );
 
         let all_costs = pick_intra_mode_luma_all_costs(&params);
-        assert_eq!(all_costs.len(), NUM_INTRA_MODES, "must evaluate all 10 modes");
+        assert_eq!(
+            all_costs.len(),
+            NUM_INTRA_MODES,
+            "must evaluate all 10 modes"
+        );
         // Each mode's rate must be the table cost (> 0 for default
         // probs). Every distortion is u32 (already non-negative).
         for (i, c) in all_costs.iter().enumerate() {
@@ -1230,8 +1233,10 @@ mod tests {
         // And the winner from the regular call should equal the
         // min-rd-cost entry of all_costs.
         let main = pick_intra_mode_luma(&params);
-        let min_entry =
-            all_costs.iter().min_by_key(|r| r.best_rd_cost).expect("non-empty");
+        let min_entry = all_costs
+            .iter()
+            .min_by_key(|r| r.best_rd_cost)
+            .expect("non-empty");
         assert_eq!(main.best_mode, min_entry.best_mode);
         assert_eq!(main.best_rd_cost, min_entry.best_rd_cost);
     }
@@ -1340,7 +1345,11 @@ mod tests {
 
             let scan = scan_for(
                 tx_size,
-                if tx_size == TxSize::Tx32x32 { TxType::DctDct } else { tx_type },
+                if tx_size == TxSize::Tx32x32 {
+                    TxType::DctDct
+                } else {
+                    tx_type
+                },
             );
             let scan_slice = scan_for_forward(&scan);
             for q in qcoeff[..n].iter_mut() {
@@ -1349,8 +1358,7 @@ mod tests {
             for d in dqcoeff[..n].iter_mut() {
                 *d = 0;
             }
-            let dequant_pair =
-                [params.quantizer.dequant[0], params.quantizer.dequant[1]];
+            let dequant_pair = [params.quantizer.dequant[0], params.quantizer.dequant[1]];
             let eob = if tx_size == TxSize::Tx32x32 {
                 vp9_quantize_b_32x32(
                     &coefs[..1024],
@@ -1388,8 +1396,7 @@ mod tests {
             }
             // Transform-domain block_yrd distortion — matches the
             // production picker.
-            let (dist, _skippable) =
-                block_yrd_distortion(&coefs[..n], &dq32[..n], n, tx_size);
+            let (dist, _skippable) = block_yrd_distortion(&coefs[..n], &dq32[..n], n, tx_size);
 
             // Keep recon path so the helper diverges from the production
             // picker only in the bookkeeping (records every mode rather
@@ -1515,7 +1522,12 @@ mod tests {
     /// residual produces all-zero coef *and* all-zero dqcoeff).
     #[test]
     fn block_yrd_distortion_zero_residual_is_zero() {
-        for &tx in &[TxSize::Tx4x4, TxSize::Tx8x8, TxSize::Tx16x16, TxSize::Tx32x32] {
+        for &tx in &[
+            TxSize::Tx4x4,
+            TxSize::Tx8x8,
+            TxSize::Tx16x16,
+            TxSize::Tx32x32,
+        ] {
             let n = tx.n_coeffs();
             let coef = vec![0i32; n];
             let dqcoeff = vec![0i32; n];
@@ -1592,8 +1604,9 @@ mod tests {
         let quantizer = init_plane_quantizers(i32::from(q_index), QuantizerDeltas::Y);
         let costs = intra_y_mode_costs_kf_table();
 
-        let above_pixels: Vec<u8> =
-            (0..bs).map(|c| if c % 2 == 0 { 30u8 } else { 220 }).collect();
+        let above_pixels: Vec<u8> = (0..bs)
+            .map(|c| if c % 2 == 0 { 30u8 } else { 220 })
+            .collect();
         let left_pixels: Vec<u8> = vec![30u8; bs];
 
         let params = IntraModeSearchParams {
@@ -1659,8 +1672,9 @@ mod tests {
         let quantizer = init_plane_quantizers(i32::from(q_index), QuantizerDeltas::Y);
         let costs = intra_y_mode_costs_kf_table();
 
-        let left_pixels: Vec<u8> =
-            (0..bs).map(|r| if r % 2 == 0 { 30u8 } else { 220 }).collect();
+        let left_pixels: Vec<u8> = (0..bs)
+            .map(|r| if r % 2 == 0 { 30u8 } else { 220 })
+            .collect();
         let above_pixels: Vec<u8> = vec![30u8; bs];
 
         let params = IntraModeSearchParams {

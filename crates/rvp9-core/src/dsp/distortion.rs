@@ -285,8 +285,8 @@ pub fn vpx_get4x4sse_cs(src: &[u8], src_stride: usize, reference: &[u8], ref_str
 macro_rules! variance_fn {
     ($name:ident, $w:expr, $h:expr) => {
         #[doc = concat!("Variance for a ", stringify!($w), "×", stringify!($h),
-                       " block. Mirrors `vpx_variance", stringify!($w), "x",
-                       stringify!($h), "_c` in libvpx.")]
+                               " block. Mirrors `vpx_variance", stringify!($w), "x",
+                               stringify!($h), "_c` in libvpx.")]
         pub fn $name(
             src: &[u8],
             src_stride: usize,
@@ -315,14 +315,9 @@ variance_fn!(vpx_variance64x64, 64, 64);
 macro_rules! sad_fn {
     ($name:ident, $w:expr, $h:expr) => {
         #[doc = concat!("SAD for a ", stringify!($w), "×", stringify!($h),
-                       " block. Mirrors `vpx_sad", stringify!($w), "x",
-                       stringify!($h), "_c` in libvpx.")]
-        pub fn $name(
-            src: &[u8],
-            src_stride: usize,
-            reference: &[u8],
-            ref_stride: usize,
-        ) -> u32 {
+                               " block. Mirrors `vpx_sad", stringify!($w), "x",
+                               stringify!($h), "_c` in libvpx.")]
+        pub fn $name(src: &[u8], src_stride: usize, reference: &[u8], ref_stride: usize) -> u32 {
             sad(src, src_stride, reference, ref_stride, $w, $h)
         }
     };
@@ -345,9 +340,9 @@ sad_fn!(vpx_sad64x64, 64, 64);
 macro_rules! sub_pixel_variance_fn {
     ($name:ident, $w:expr, $h:expr) => {
         #[doc = concat!("Sub-pixel variance for a ", stringify!($w), "×",
-                       stringify!($h),
-                       " block. Mirrors `vpx_sub_pixel_variance",
-                       stringify!($w), "x", stringify!($h), "_c` in libvpx.")]
+                               stringify!($h),
+                               " block. Mirrors `vpx_sub_pixel_variance",
+                               stringify!($w), "x", stringify!($h), "_c` in libvpx.")]
         pub fn $name(
             src: &[u8],
             src_stride: usize,
@@ -479,8 +474,7 @@ mod tests {
             *v = ((i * 3 + 41) & 0xff) as u8;
         }
 
-        let (sub_var, sub_sse) =
-            vpx_sub_pixel_variance8x8(&src, src_stride, 0, 0, &reference, 8);
+        let (sub_var, sub_sse) = vpx_sub_pixel_variance8x8(&src, src_stride, 0, 0, &reference, 8);
 
         // For comparison: copy the same 8×8 region out of `src` so plain
         // variance sees identical pixels to what the (0,0) filter copied.
@@ -655,8 +649,14 @@ mod tests {
                 *slot = (i as u8).wrapping_mul(5).wrapping_add(11);
             }
             let (var, sse) = var_fn(&src, w, &reference, w);
-            assert!(sse > 0, "size {w}x{h}: sse must be > 0 for non-equal blocks");
-            assert!(var <= sse, "size {w}x{h}: var ({var}) must be ≤ sse ({sse})");
+            assert!(
+                sse > 0,
+                "size {w}x{h}: sse must be > 0 for non-equal blocks"
+            );
+            assert!(
+                var <= sse,
+                "size {w}x{h}: var ({var}) must be ≤ sse ({sse})"
+            );
         }
     }
 
@@ -699,10 +699,7 @@ mod tests {
                     var, 0,
                     "flat 8x8 sub-pel variance at (x={xoff}, y={yoff}): var={var}, sse={sse}"
                 );
-                assert_eq!(
-                    sse, 0,
-                    "flat 8x8 sub-pel sse at (x={xoff}, y={yoff})"
-                );
+                assert_eq!(sse, 0, "flat 8x8 sub-pel sse at (x={xoff}, y={yoff})");
             }
         }
     }
@@ -756,6 +753,9 @@ mod tests {
         let reference = flat(97, 16);
         let (var, sse) = vpx_variance4x4(&src, 4, &reference, 4);
         assert_eq!(sse, 16 * 9, "sse = N * k² = 16 * 9 = 144");
-        assert_eq!(var, 0, "variance is exactly zero when block is shifted by a constant");
+        assert_eq!(
+            var, 0,
+            "variance is exactly zero when block is shifted by a constant"
+        );
     }
 }

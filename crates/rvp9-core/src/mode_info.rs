@@ -597,11 +597,7 @@ pub fn get_tx_size_context(
 /// blocks never reach the selected-tx-size path).
 #[inline]
 #[must_use]
-fn get_tx_probs(
-    tx_probs: &DefaultTxProbs,
-    max_tx_size: TxSize,
-    ctx: usize,
-) -> Option<&[u8]> {
+fn get_tx_probs(tx_probs: &DefaultTxProbs, max_tx_size: TxSize, ctx: usize) -> Option<&[u8]> {
     match max_tx_size {
         TxSize::Tx8x8 => Some(&tx_probs.p8x8[ctx]),
         TxSize::Tx16x16 => Some(&tx_probs.p16x16[ctx]),
@@ -898,7 +894,10 @@ impl RefFrame {
     #[inline]
     #[must_use]
     pub const fn is_inter(self) -> bool {
-        matches!(self, Self::LastFrame | Self::GoldenFrame | Self::AltrefFrame)
+        matches!(
+            self,
+            Self::LastFrame | Self::GoldenFrame | Self::AltrefFrame
+        )
     }
 }
 
@@ -1275,7 +1274,11 @@ mod tests {
                 }
                 let left = SEGMENT_TREE[i as usize];
                 let right = SEGMENT_TREE[i as usize + 1];
-                let bit = if subtree_contains(&SEGMENT_TREE, left, target) { 0 } else { 1 };
+                let bit = if subtree_contains(&SEGMENT_TREE, left, target) {
+                    0
+                } else {
+                    1
+                };
                 w.write(bit, probs[(i >> 1) as usize]);
                 let next = if bit == 0 { left } else { right };
                 if next <= 0 {
@@ -1556,8 +1559,14 @@ mod tests {
         let cases = [
             (PartitionType::None, vec![(0u8, probs[0])]),
             (PartitionType::Horz, vec![(1, probs[0]), (0, probs[1])]),
-            (PartitionType::Vert, vec![(1, probs[0]), (1, probs[1]), (0, probs[2])]),
-            (PartitionType::Split, vec![(1, probs[0]), (1, probs[1]), (1, probs[2])]),
+            (
+                PartitionType::Vert,
+                vec![(1, probs[0]), (1, probs[1]), (0, probs[2])],
+            ),
+            (
+                PartitionType::Split,
+                vec![(1, probs[0]), (1, probs[1]), (1, probs[2])],
+            ),
         ];
 
         for (expected, bits) in cases {
@@ -1632,7 +1641,13 @@ mod tests {
         let sr_probs = [[120u8, 80u8]; REF_CONTEXTS];
         let buf = build_one_bit(1, sr_probs[4][1]);
         let mut r = BoolReader::new(&buf).expect("init");
-        assert!(read_single_ref_bit(&mut r, &sr_probs, 4, 1, Some(&mut counts)));
+        assert!(read_single_ref_bit(
+            &mut r,
+            &sr_probs,
+            4,
+            1,
+            Some(&mut counts)
+        ));
         assert_eq!(counts.single_ref[4][1][1], 1);
 
         // read_partition: ctx=7, encoded as PartitionType::Horz (`1 0`).
@@ -1680,8 +1695,12 @@ mod tests {
         let size = w.stop_encode().expect("ok");
         buf.truncate(size);
         let mut r = BoolReader::new(&buf).expect("init");
-        let m =
-            read_intra_mode_uv(&mut r, &probs, /* y_mode = */ IntraMode::H, Some(&mut counts));
+        let m = read_intra_mode_uv(
+            &mut r,
+            &probs,
+            /* y_mode = */ IntraMode::H,
+            Some(&mut counts),
+        );
         assert_eq!(m, IntraMode::Dc);
         assert_eq!(
             counts.uv_mode[IntraMode::H as usize][IntraMode::Dc as usize],
@@ -1845,29 +1864,17 @@ mod tests {
         // Left missing → mirrors above. Sum = above + above = 2*0
         // = 0 < 3 → ctx 0.
         assert_eq!(
-            get_tx_size_context(
-                Some((TxSize::Tx4x4, false)),
-                None,
-                TxSize::Tx32x32,
-            ),
+            get_tx_size_context(Some((TxSize::Tx4x4, false)), None, TxSize::Tx32x32,),
             0
         );
         // Left missing, above = Tx32x32. Sum = 3 + 3 = 6 > 3 → ctx 1.
         assert_eq!(
-            get_tx_size_context(
-                Some((TxSize::Tx32x32, false)),
-                None,
-                TxSize::Tx32x32,
-            ),
+            get_tx_size_context(Some((TxSize::Tx32x32, false)), None, TxSize::Tx32x32,),
             1
         );
         // Above missing → mirrors left.
         assert_eq!(
-            get_tx_size_context(
-                None,
-                Some((TxSize::Tx32x32, false)),
-                TxSize::Tx32x32,
-            ),
+            get_tx_size_context(None, Some((TxSize::Tx32x32, false)), TxSize::Tx32x32,),
             1
         );
     }
@@ -1877,18 +1884,9 @@ mod tests {
     /// `1` for `max_tx_size > 0`.
     #[test]
     fn get_tx_size_context_no_neighbours() {
-        assert_eq!(
-            get_tx_size_context(None, None, TxSize::Tx32x32),
-            1
-        );
-        assert_eq!(
-            get_tx_size_context(None, None, TxSize::Tx16x16),
-            1
-        );
-        assert_eq!(
-            get_tx_size_context(None, None, TxSize::Tx8x8),
-            1
-        );
+        assert_eq!(get_tx_size_context(None, None, TxSize::Tx32x32), 1);
+        assert_eq!(get_tx_size_context(None, None, TxSize::Tx16x16), 1);
+        assert_eq!(get_tx_size_context(None, None, TxSize::Tx8x8), 1);
     }
 
     /// `read_tx_size` non-select path: returns `min(max_tx_size,
@@ -2095,8 +2093,15 @@ mod tests {
         let size = w.stop_encode().expect("ok");
         buf.truncate(size);
         let mut r = BoolReader::new(&buf).expect("init");
-        let got =
-            read_tx_size(&mut r, &custom_tx, TxMode::TxModeSelect, TxSize::Tx8x8, true, 0, None);
+        let got = read_tx_size(
+            &mut r,
+            &custom_tx,
+            TxMode::TxModeSelect,
+            TxSize::Tx8x8,
+            true,
+            0,
+            None,
+        );
         assert_eq!(got, TxSize::Tx4x4, "ctx=0 should pick Tx4x4");
 
         // ctx 1: encode bit=1 at p=1.
@@ -2109,8 +2114,15 @@ mod tests {
         let size = w.stop_encode().expect("ok");
         buf.truncate(size);
         let mut r = BoolReader::new(&buf).expect("init");
-        let got =
-            read_tx_size(&mut r, &custom_tx, TxMode::TxModeSelect, TxSize::Tx8x8, true, 1, None);
+        let got = read_tx_size(
+            &mut r,
+            &custom_tx,
+            TxMode::TxModeSelect,
+            TxSize::Tx8x8,
+            true,
+            1,
+            None,
+        );
         assert_eq!(got, TxSize::Tx8x8, "ctx=1 should pick Tx8x8");
     }
 
@@ -2125,10 +2137,18 @@ mod tests {
 
         let cases: &[(TxSize, &[TxSize])] = &[
             (TxSize::Tx8x8, &[TxSize::Tx4x4, TxSize::Tx8x8]),
-            (TxSize::Tx16x16, &[TxSize::Tx4x4, TxSize::Tx8x8, TxSize::Tx16x16]),
+            (
+                TxSize::Tx16x16,
+                &[TxSize::Tx4x4, TxSize::Tx8x8, TxSize::Tx16x16],
+            ),
             (
                 TxSize::Tx32x32,
-                &[TxSize::Tx4x4, TxSize::Tx8x8, TxSize::Tx16x16, TxSize::Tx32x32],
+                &[
+                    TxSize::Tx4x4,
+                    TxSize::Tx8x8,
+                    TxSize::Tx16x16,
+                    TxSize::Tx32x32,
+                ],
             ),
         ];
 
@@ -2188,7 +2208,12 @@ mod tests {
         let non_select_cases: &[(TxMode, bool, TxSize, TxSize)] = &[
             (TxMode::AllowTx32x32, true, TxSize::Tx32x32, TxSize::Tx32x32),
             // allow_select=false forces the cap path even with TxModeSelect.
-            (TxMode::TxModeSelect, false, TxSize::Tx32x32, TxSize::Tx32x32),
+            (
+                TxMode::TxModeSelect,
+                false,
+                TxSize::Tx32x32,
+                TxSize::Tx32x32,
+            ),
             // AllowTx16x16 caps tx_size at Tx16x16 regardless of max.
             (TxMode::AllowTx16x16, true, TxSize::Tx32x32, TxSize::Tx16x16),
             // OnlyTx4x4 caps to Tx4x4.
@@ -2228,8 +2253,15 @@ mod tests {
             // Also verify that read_tx_size returns the expected
             // derived value with no further reads (sentinel was the
             // first/only read).
-            let got =
-                read_tx_size(&mut r, &fc.tx_probs, *tx_mode, *max_tx, *allow_select, 0, None);
+            let got = read_tx_size(
+                &mut r,
+                &fc.tx_probs,
+                *tx_mode,
+                *max_tx,
+                *allow_select,
+                0,
+                None,
+            );
             assert_eq!(
                 got, *expected_tx_size,
                 "decoder derivation disagrees with writer expectation"
@@ -2260,7 +2292,11 @@ mod tests {
         loop {
             let left = SEGMENT_TREE[i as usize];
             let right = SEGMENT_TREE[i as usize + 1];
-            let bit = if subtree_contains(&SEGMENT_TREE, left, target) { 0 } else { 1 };
+            let bit = if subtree_contains(&SEGMENT_TREE, left, target) {
+                0
+            } else {
+                1
+            };
             w.write(bit, tree_probs[(i >> 1) as usize]);
             let next = if bit == 0 { left } else { right };
             if next <= 0 {
@@ -2345,8 +2381,9 @@ mod tests {
         let prev: [u8; 4] = [5, 5, 5, 5];
 
         let mut r = BoolReader::new(&buf).expect("init");
-        let (got_id, seg_pred) =
-            read_inter_segment_id(&mut r, &seg, &prev, mi_stride, 0, 0, 2, 2, /* ctx = */ 1);
+        let (got_id, seg_pred) = read_inter_segment_id(
+            &mut r, &seg, &prev, mi_stride, 0, 0, 2, 2, /* ctx = */ 1,
+        );
         assert_eq!(got_id, 5, "inherited segment_id");
         assert!(seg_pred, "seg_id_predicted bit fires for pred_flag = 1");
     }
@@ -2380,7 +2417,11 @@ mod tests {
         loop {
             let left = SEGMENT_TREE[i as usize];
             let right = SEGMENT_TREE[i as usize + 1];
-            let bit = if subtree_contains(&SEGMENT_TREE, left, target) { 0 } else { 1 };
+            let bit = if subtree_contains(&SEGMENT_TREE, left, target) {
+                0
+            } else {
+                1
+            };
             w.write(bit, tree_probs[(i >> 1) as usize]);
             let next = if bit == 0 { left } else { right };
             if next <= 0 {
@@ -2409,7 +2450,10 @@ mod tests {
         let (got_id, seg_pred) =
             read_inter_segment_id(&mut r, &seg, &prev, 2, 0, 0, 2, 2, /* ctx = */ 2);
         assert_eq!(got_id, target, "tree-decoded segment_id");
-        assert!(!seg_pred, "seg_id_predicted bit stays false on tree-decode arm");
+        assert!(
+            !seg_pred,
+            "seg_id_predicted bit stays false on tree-decode arm"
+        );
     }
 
     /// D.10 — `update_map == true`, `temporal_update == false`:
@@ -2429,8 +2473,7 @@ mod tests {
         let prev: [u8; 4] = [7, 7, 7, 7];
 
         let mut r = BoolReader::new(&buf).expect("init");
-        let (got_id, seg_pred) =
-            read_inter_segment_id(&mut r, &seg, &prev, 2, 0, 0, 2, 2, 0);
+        let (got_id, seg_pred) = read_inter_segment_id(&mut r, &seg, &prev, 2, 0, 0, 2, 2, 0);
         assert_eq!(got_id, 2);
         assert!(!seg_pred);
     }
@@ -2499,8 +2542,7 @@ mod tests {
         buf.truncate(size);
 
         let mut r = BoolReader::new(&buf).expect("init");
-        let (got_id, seg_pred) =
-            read_inter_segment_id(&mut r, &seg, &prev, 2, 0, 0, 2, 2, 0);
+        let (got_id, seg_pred) = read_inter_segment_id(&mut r, &seg, &prev, 2, 0, 0, 2, 2, 0);
         assert_eq!(got_id, 0);
         assert!(!seg_pred);
         // Bool-reader still pristine — verifies no bits were consumed.

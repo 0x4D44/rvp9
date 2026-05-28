@@ -87,13 +87,13 @@
 //! 8. `rd_cost = ROUND_POWER_OF_TWO(R * lambda, 9) + (D << 7)` —
 //!    libvpx `RDCOST` macro at `vp9_rd.h:29-30`.
 
+use crate::Pixel;
 use crate::bitstream::frame::InterpFilter;
 use crate::bitstream::header::FrameKind;
 use crate::block::{BLOCK_SIZES, BlockSize};
 use crate::cost::mv_cost::{MvCosts, mv_cost};
 use crate::cost::{
-    FrameTypeForRd, InterModeCosts, SwitchableInterpCosts,
-    compute_rd_mult, get_intra_cost_penalty,
+    FrameTypeForRd, InterModeCosts, SwitchableInterpCosts, compute_rd_mult, get_intra_cost_penalty,
 };
 use crate::entropy::default_probs::INTER_MODE_CONTEXTS;
 use crate::inter::filter::{FILTER_TAPS, kernel_for};
@@ -101,31 +101,27 @@ use crate::intra_pred::{
     ABOVE_UNAVAILABLE_FILL, DcAvailability, IntraMode, LEFT_UNAVAILABLE_FILL, PredCtx,
     intra_predict,
 };
-use crate::mode_decision::block_yrd::{
-    BlockYrdResult, block_error_fp_i32, satd_i16,
+use crate::mode_decision::block_yrd::{BlockYrdResult, block_error_fp_i32, satd_i16};
+use crate::mode_decision::hadamard::{hadamard_8x8, hadamard_16x16, hadamard_32x32};
+use crate::mode_decision::model_rd::{
+    SkipTxfm, model_rd_for_sb_uv, model_rd_for_sb_y, model_rd_for_sb_y_large,
 };
 use crate::mode_decision::rd_cost;
 use crate::mode_info::{InterMode, Mv, RefFrame};
-use crate::mv_search::full_pixel::{
-    FullPixelSearchParams, PlaneRef, diamond_search_sad,
-};
+use crate::mv_search::full_pixel::{FullPixelSearchParams, PlaneRef, diamond_search_sad};
 use crate::mv_search::mv_limits::MvLimits;
 use crate::mv_search::search_site::SearchSiteConfig;
 use crate::mv_search::sub_pixel::{
-    SubPixelSearchParams, adaptive_subpel_force_stop,
-    find_best_sub_pixel_tree_pruned_more,
+    SubPixelSearchParams, adaptive_subpel_force_stop, find_best_sub_pixel_tree_pruned_more,
 };
-use crate::mode_decision::hadamard::{hadamard_8x8, hadamard_16x16, hadamard_32x32};
 use crate::quant::forward::{
-    PlaneQuantizers, scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32,
-    vp9_quantize_fp, vp9_quantize_fp_32x32,
+    PlaneQuantizers, scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32, vp9_quantize_fp,
+    vp9_quantize_fp_32x32,
 };
 use crate::transforms::forward::{fdct8x8, fdct16x16, fdct32x32};
 use crate::transforms::inverse::{idct8x8_64_add, idct16x16_256_add, idct32x32_1024_add};
 use crate::transforms::scans::scan_for;
 use crate::transforms::{TxMode, TxSize, TxType};
-use crate::mode_decision::model_rd::{model_rd_for_sb_y, model_rd_for_sb_y_large, model_rd_for_sb_uv, SkipTxfm};
-use crate::Pixel;
 
 /// Fallback skip-context for [`InterModeSearchParams`] / test paths
 /// that don't supply a real `skip_ctx`. The picker prefers the
@@ -298,7 +294,6 @@ pub struct InterModeSearchParams<'a> {
     pub skip_ctx: Option<usize>,
 
     // --- G1: UV RD fields ---
-
     /// Source U plane (full frame buffer).
     pub src_u: &'a [u8],
     /// Source V plane (full frame buffer).
@@ -567,7 +562,6 @@ pub struct PickInterModeParams<'a> {
     // `Some`, the picker evaluates DC/V/H intra modes after the inter
     // loop and may pick `RefFrame::IntraFrame` if they beat the best
     // inter candidate.
-
     /// Reconstructed row above the block (≥ `bw` pixels), or `None` when
     /// the block is at the top frame edge.
     pub intra_above_pixels: Option<&'a [Pixel]>,
@@ -609,7 +603,6 @@ pub struct PickInterModeParams<'a> {
     pub golden_const_motion: bool,
 
     // --- G1: UV RD fields ---
-
     /// Source U plane (full frame buffer).
     pub src_u: &'a [u8],
     /// Source U plane stride.
@@ -634,7 +627,6 @@ pub struct PickInterModeParams<'a> {
     pub uv_ac_quant: u32,
 
     // --- G4: encode breakout test fields ---
-
     /// Per-frame quality knob for the encode-breakout test
     /// (`vp9_pickmode.c:933-1036`). Typically 20 for realtime speed >= 5.
     /// Set to 0 to disable the breakout test.
@@ -655,7 +647,6 @@ pub struct PickInterModeParams<'a> {
     // from the in-progress mi_grid: a valid inter neighbour contributes
     // its picked MV (`mvs[0]`), an intra / OOB neighbour contributes
     // `None`.
-
     /// Top neighbour's MV (for the P13 NEWMV-diff bias). `None` when
     /// the above neighbour is intra / unavailable.
     pub above_mv: Option<Mv>,
@@ -708,8 +699,7 @@ pub struct PickInterModeParams<'a> {
     /// after each pick.
     ///
     /// When `None`, the gate is disabled (pre-P20 behaviour).
-    pub rd_thresh_table:
-        Option<&'a crate::mode_decision::rd_thresh::RdThreshTable>,
+    pub rd_thresh_table: Option<&'a crate::mode_decision::rd_thresh::RdThreshTable>,
 
     // ------------------------------------------------------------------
     // §10 — content-adaptive picker gates.
@@ -720,7 +710,6 @@ pub struct PickInterModeParams<'a> {
     // actively wired by the encoder when [`short_circuit_flat_blocks`]
     // is enabled (`vp9_pickmode.c:1882`).
     // ------------------------------------------------------------------
-
     /// libvpx `sf.short_circuit_flat_blocks` speed-feature flag
     /// (`vp9_speed_features.c:486-487`). When `true`, the picker reads
     /// [`source_variance`] and applies the flat-block gates documented at
@@ -787,7 +776,6 @@ pub struct PickInterModeParams<'a> {
     // Default values reflect libvpx's cpu-used-6/7/8 realtime
     // configuration (`vp9_speed_features.c:585-793`).
     // ------------------------------------------------------------------
-
     /// libvpx `cpi->sf.inter_mode_mask[bsize]` (`vp9_speed_features.h:504`,
     /// gate site `vp9_pickmode.c:2140`). Bit `m` set ⇒ inter mode `m`
     /// (= [`InterMode::idx`]) is allowed for blocks of size `bsize`.
@@ -1080,10 +1068,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
     };
     // Bit indices: 1 = LAST, 2 = GOLDEN (libvpx convention).
     let mut ref_frame_skip_mask: u32 = 0;
-    if params.reference_masking
-        && pred_mv_sad_last != u32::MAX
-        && pred_mv_sad_golden != u32::MAX
-    {
+    if params.reference_masking && pred_mv_sad_last != u32::MAX && pred_mv_sad_golden != u32::MAX {
         // `pred_mv_sad_last << 1` — guarded against overflow on the
         // very-high-SAD edge (a u32 MAX/2 SAD would never trigger the
         // condition anyway since the comparison `> << 1` becomes false
@@ -1104,9 +1089,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
     // *active* case (the flag is `1` only at speed-9 CBR — the rvp9 op
     // point's default is `0`, so this branch is effectively a no-op
     // unless the encoder explicitly opts in).
-    if params.disable_golden_ref
-        && params.content_state_sb != ContentStateSb::VeryHighSad
-    {
+    if params.disable_golden_ref && params.content_state_sb != ContentStateSb::VeryHighSad {
         ref_frame_skip_mask |= 1 << 2; // GOLDEN
     }
 
@@ -1130,8 +1113,16 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
             RefFrame::GoldenFrame => 1,
             _ => unreachable!(),
         };
-        let mvc_safe = if ref_idx == 0 { &last_mvc_safe } else { &golden_mvc_safe };
-        let ref_plane = if ref_idx == 0 { params.last_ref_plane } else { params.golden_ref_plane };
+        let mvc_safe = if ref_idx == 0 {
+            &last_mvc_safe
+        } else {
+            &golden_mvc_safe
+        };
+        let ref_plane = if ref_idx == 0 {
+            params.last_ref_plane
+        } else {
+            params.golden_ref_plane
+        };
         let ref_frame_rate_cost = if ref_idx == 0 {
             params.ref_frame_cost_last
         } else {
@@ -1273,10 +1264,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
         // ≈ the source, so the only useful motion is zero. (rvp9 has no
         // SVC inter-layer path, so the `force_mv_inter_layer` guard is
         // always true here.)
-        if params.force_skip_low_temp_var
-            && ref_frame == RefFrame::GoldenFrame
-            && !probe_mv_zero
-        {
+        if params.force_skip_low_temp_var && ref_frame == RefFrame::GoldenFrame && !probe_mv_zero {
             continue;
         }
 
@@ -1317,7 +1305,11 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
             InterMode::NearMv => mvc_safe.near,
             InterMode::NewMv => {
                 // Lazily run the NEWMV search for this ref frame.
-                let cached = if ref_idx == 0 { &mut newmv_last } else { &mut newmv_golden };
+                let cached = if ref_idx == 0 {
+                    &mut newmv_last
+                } else {
+                    &mut newmv_golden
+                };
                 if cached.is_none() {
                     let single_params = InterModeSearchParams {
                         block_size: params.block_size,
@@ -1439,17 +1431,12 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
         // `mode_rd_thresh = mode_rd_thresh << 3;` step). The shift
         // is applied INSIDE the P20 block since libvpx applies it
         // immediately before the `rd_less_than_thresh` call.
-        if let (Some(ref b), Some(table)) =
-            (best.as_ref(), params.rd_thresh_table)
-        {
+        if let (Some(ref b), Some(table)) = (best.as_ref(), params.rd_thresh_table) {
             let mv_is_zero = mv == Mv::ZERO;
             if !mv_is_zero {
-                if let Some(thresh) = table.effective_thresh(
-                    params.block_size,
-                    ref_frame,
-                    mode,
-                    params.q_index,
-                ) {
+                if let Some(thresh) =
+                    table.effective_thresh(params.block_size, ref_frame, mode, params.q_index)
+                {
                     let biased_thresh = if params.bias_golden
                         && ref_frame == RefFrame::GoldenFrame
                         && params.frames_since_golden > 4
@@ -1528,7 +1515,12 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
         };
 
         let candidate = evaluate_candidate_with_filter_set(
-            &single_params, mode, mv, ref_mv, lambda, filter_set,
+            &single_params,
+            mode,
+            mv,
+            ref_mv,
+            lambda,
+            filter_set,
         );
 
         mode_checked[ref_idx][mode.idx()] = true;
@@ -1554,11 +1546,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
             params.lowvar_highsumdiff,
             params.is_skin,
         );
-        let mut biased_rd_cost = apply_rdcost_bias(
-            candidate.best_rd_cost,
-            bias_num,
-            bias_den,
-        );
+        let mut biased_rd_cost = apply_rdcost_bias(candidate.best_rd_cost, bias_num, bias_den);
 
         // §10 — screen-content bias-against-zero-last (libvpx
         // `vp9_pickmode.c:2429-2434`):
@@ -1875,7 +1863,11 @@ fn evaluate_intra_fallback(
         recon[..bw * bh].copy_from_slice(&pred[..bw * bh]);
 
         let by = if mrd.skip_txfm == SkipTxfm::AcDc {
-            BlockYrdResult { coef_rate: 0, coef_dist: 0, skippable: true }
+            BlockYrdResult {
+                coef_rate: 0,
+                coef_dist: 0,
+                skippable: true,
+            }
         } else {
             // We need an InterModeSearchParams to call
             // `reconstruct_via_round_trip`. Build one using LAST ref
@@ -1910,9 +1902,7 @@ fn evaluate_intra_fallback(
                 uv_dc_quant: params.uv_dc_quant,
                 uv_ac_quant: params.uv_ac_quant,
             };
-            reconstruct_via_round_trip(
-                &single_params, &pred, &mut recon, bw, bh, picked_tx_size,
-            )
+            reconstruct_via_round_trip(&single_params, &pred, &mut recon, bw, bh, picked_tx_size)
         };
 
         // 4. Distortion = SSE(src, recon).
@@ -2065,7 +2055,9 @@ fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
         }
     } else {
         // mv_pred found nothing viable — fall back to int_pro seed.
-        params.newmv_seed.map(|seed| clamp_mv_to_limits(seed, &params.mv_limits))
+        params
+            .newmv_seed
+            .map(|seed| clamp_mv_to_limits(seed, &params.mv_limits))
     };
     let full = diamond_search_sad(&FullPixelSearchParams {
         block_size: params.block_size,
@@ -2093,24 +2085,36 @@ fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
     if crate::mv_search::e12stat::enabled() {
         use crate::mv_search::full_pixel::{exhaustive_full_pel_min_sad, raw_sad_at_mv};
         let sad_zero = raw_sad_at_mv(
-            params.block_size, params.src_plane, params.src_offset,
-            params.ref_plane, 0, 0,
+            params.block_size,
+            params.src_plane,
+            params.src_offset,
+            params.ref_plane,
+            0,
+            0,
         )
         .unwrap_or(u32::MAX);
         let sad_newmv = raw_sad_at_mv(
-            params.block_size, params.src_plane, params.src_offset,
-            params.ref_plane, center_mv_fp.row, center_mv_fp.col,
+            params.block_size,
+            params.src_plane,
+            params.src_offset,
+            params.ref_plane,
+            center_mv_fp.row,
+            center_mv_fp.col,
         )
         .unwrap_or(u32::MAX);
         // Cap the exhaustive scan radius so the diagnostic stays
         // tractable; foreman's true motion is well within ±32 full-pel.
         let sad_oracle = exhaustive_full_pel_min_sad(
-            params.block_size, params.src_plane, params.src_offset,
-            params.ref_plane, &params.mv_limits, 48,
+            params.block_size,
+            params.src_plane,
+            params.src_offset,
+            params.ref_plane,
+            &params.mv_limits,
+            48,
         )
         .map_or(u32::MAX, |(s, _, _)| s);
-        let mv_mag = center_mv_fp.row.unsigned_abs() as u32
-            + center_mv_fp.col.unsigned_abs() as u32;
+        let mv_mag =
+            center_mv_fp.row.unsigned_abs() as u32 + center_mv_fp.col.unsigned_abs() as u32;
         crate::mv_search::e12stat::record(
             sad_zero,
             sad_newmv,
@@ -2185,14 +2189,7 @@ fn evaluate_candidate(
     ref_mv: Mv,
     lambda: u32,
 ) -> InterModeSearchResult {
-    evaluate_candidate_with_filter_set(
-        params,
-        mode,
-        mv,
-        ref_mv,
-        lambda,
-        f5_filter_search_set(),
-    )
+    evaluate_candidate_with_filter_set(params, mode, mv, ref_mv, lambda, f5_filter_search_set())
 }
 
 /// §11 — `cb_pred_filter_search` variant of [`evaluate_candidate`].
@@ -2340,7 +2337,11 @@ fn evaluate_candidate_for_filter(
     // and produce the same `BlockYrdResult` that `block_yrd` would for
     // an all-zero qcoeff block: coef_rate=0, coef_dist=0, skippable=true.
     let by = if mrd.skip_txfm == SkipTxfm::AcDc {
-        BlockYrdResult { coef_rate: 0, coef_dist: 0, skippable: true }
+        BlockYrdResult {
+            coef_rate: 0,
+            coef_dist: 0,
+            skippable: true,
+        }
     } else {
         reconstruct_via_round_trip(params, &pred, &mut recon, bw, bh, tx_size)
     };
@@ -2385,13 +2386,18 @@ fn evaluate_candidate_for_filter(
             let row_off = sy * params.src_plane.stride + sx;
             let src_row = &params.src_plane.data[row_off..row_off + 16];
             let recon_row = &recon[..16];
-            eprintln!("      FULL mode={:?} mv=({},{}) src_row0={:?} recon_row0={:?} bw={} sse={}",
-                mode, mv.row, mv.col, src_row, recon_row, bw, sse);
+            eprintln!(
+                "      FULL mode={:?} mv=({},{}) src_row0={:?} recon_row0={:?} bw={} sse={}",
+                mode, mv.row, mv.col, src_row, recon_row, bw, sse
+            );
             // Also row 5 (middle of small block).
             let row5_off = (sy + 5) * params.src_plane.stride + sx;
             let src_row5 = &params.src_plane.data[row5_off..row5_off + 16];
             let recon_row5 = &recon[5 * bw..5 * bw + 16];
-            eprintln!("           src_row5={:?} recon_row5={:?}", src_row5, recon_row5);
+            eprintln!(
+                "           src_row5={:?} recon_row5={:?}",
+                src_row5, recon_row5
+            );
         }
     }
     // A0 diagnostic — print per-candidate src/pred/recon comparison.
@@ -2409,7 +2415,9 @@ fn evaluate_candidate_for_filter(
             let ref_y = (sy as i32) + (i32::from(mv.row) >> 3);
             let ref0 = if ref_x >= 0 && ref_y >= 0 {
                 params.ref_plane.data[(ref_y as usize) * params.ref_plane.stride + (ref_x as usize)]
-            } else { 0 };
+            } else {
+                0
+            };
             eprintln!(
                 "      eval mode={:?} mv=({},{}) src[0..2]=({},{}) ref[0]={} pred[0..2]=({},{}) recon[0..2]=({},{}) sse={}",
                 mode, mv.row, mv.col, src0, src1, ref0, pred0, pred1, recon0, recon1, sse
@@ -2427,8 +2435,7 @@ fn evaluate_candidate_for_filter(
     // damps the raw `mv_cost` before it is added to `mode_rate` and
     // fed into RDCOST. Skipping the scaling over-charges MV bits by
     // 128/108 ≈ 1.185×, which biases the picker against NEWMV.
-    let mode_rate = params.inter_mode_costs[params.inter_mode_ctx][mode.idx()]
-        .max(0) as u32;
+    let mode_rate = params.inter_mode_costs[params.inter_mode_ctx][mode.idx()].max(0) as u32;
     let mv_rate = if matches!(mode, InterMode::NewMv) {
         let diff_row = mv.row.wrapping_sub(ref_mv.row);
         let diff_col = mv.col.wrapping_sub(ref_mv.col);
@@ -2498,9 +2505,8 @@ fn evaluate_candidate_for_filter(
     // ALL filters (including EightTap) get their true cost; the old
     // `EightTap == 0` special-case is gone — the table already encodes
     // EightTap's cost (low in ctx=0 but nonzero).
-    let filter_rate: u32 = params.switchable_interp_costs
-        [params.switchable_interp_ctx][filter as usize]
-        .max(0) as u32;
+    let filter_rate: u32 =
+        params.switchable_interp_costs[params.switchable_interp_ctx][filter as usize].max(0) as u32;
 
     // G1 — UV model-RD (libvpx `vp9_pickmode.c:2378-2393`).
     //
@@ -2511,73 +2517,90 @@ fn evaluate_candidate_for_filter(
     //
     // Only runs when UV planes are provided (non-empty src_u). Test
     // harnesses pass empty slices to skip this path.
-    let (uv_rate, uv_dist): (u32, i64) = if !params.src_u.is_empty()
-        && !params.ref_u.is_empty()
-        && params.uv_stride > 0
-    {
-        let uv_bw = bw >> 1;
-        let uv_bh = bh >> 1;
-        // Chroma offset = luma offset >> 1 (4:2:0).
-        let uv_x = params.src_offset.0 >> 1;
-        let uv_y = params.src_offset.1 >> 1;
+    let (uv_rate, uv_dist): (u32, i64) =
+        if !params.src_u.is_empty() && !params.ref_u.is_empty() && params.uv_stride > 0 {
+            let uv_bw = bw >> 1;
+            let uv_bh = bh >> 1;
+            // Chroma offset = luma offset >> 1 (4:2:0).
+            let uv_x = params.src_offset.0 >> 1;
+            let uv_y = params.src_offset.1 >> 1;
 
-        // Chroma MV: VP9 4:2:0 scales the luma Q3 MV by halving for
-        // the half-resolution chroma plane. `build_inter_prediction`
-        // interprets its MV in Q3 of the plane's native pixel grid,
-        // so we pass `mv / 2` to get the correct integer + sub-pel
-        // displacement on the chroma plane.
-        let uv_mv = Mv {
-            row: mv.row / 2,
-            col: mv.col / 2,
+            // Chroma MV: VP9 4:2:0 scales the luma Q3 MV by halving for
+            // the half-resolution chroma plane. `build_inter_prediction`
+            // interprets its MV in Q3 of the plane's native pixel grid,
+            // so we pass `mv / 2` to get the correct integer + sub-pel
+            // displacement on the chroma plane.
+            let uv_mv = Mv {
+                row: mv.row / 2,
+                col: mv.col / 2,
+            };
+
+            // Build UV MC predictions into scratch buffers.
+            let mut pred_u = [0u8; 32 * 32];
+            let mut pred_v = [0u8; 32 * 32];
+            {
+                let ref_u_plane = PlaneRef {
+                    data: params.ref_u,
+                    stride: params.uv_stride,
+                    width: params.uv_stride, // full chroma width
+                    height: params.ref_u.len() / params.uv_stride,
+                };
+                build_inter_prediction(
+                    &ref_u_plane,
+                    uv_x,
+                    uv_y,
+                    uv_mv,
+                    uv_bw,
+                    uv_bh,
+                    &mut pred_u,
+                    uv_bw,
+                    filter,
+                );
+            }
+            {
+                let ref_v_plane = PlaneRef {
+                    data: params.ref_v,
+                    stride: params.uv_stride,
+                    width: params.uv_stride,
+                    height: params.ref_v.len() / params.uv_stride,
+                };
+                build_inter_prediction(
+                    &ref_v_plane,
+                    uv_x,
+                    uv_y,
+                    uv_mv,
+                    uv_bw,
+                    uv_bh,
+                    &mut pred_v,
+                    uv_bw,
+                    filter,
+                );
+            }
+
+            // Source UV at the chroma offset.
+            let src_u_start = uv_y * params.uv_stride + uv_x;
+            let src_v_start = uv_y * params.uv_stride + uv_x;
+
+            let uv_rd = model_rd_for_sb_uv(
+                &params.src_u[src_u_start..],
+                params.uv_stride,
+                &pred_u,
+                uv_bw,
+                &params.src_v[src_v_start..],
+                params.uv_stride,
+                &pred_v,
+                uv_bw,
+                bw,
+                bh, // luma dimensions — halved internally
+                params.block_size,
+                params.uv_dc_quant,
+                params.uv_ac_quant,
+            );
+
+            (uv_rd.rate.max(0) as u32, uv_rd.dist)
+        } else {
+            (0, 0)
         };
-
-        // Build UV MC predictions into scratch buffers.
-        let mut pred_u = [0u8; 32 * 32];
-        let mut pred_v = [0u8; 32 * 32];
-        {
-            let ref_u_plane = PlaneRef {
-                data: params.ref_u,
-                stride: params.uv_stride,
-                width: params.uv_stride, // full chroma width
-                height: params.ref_u.len() / params.uv_stride,
-            };
-            build_inter_prediction(
-                &ref_u_plane, uv_x, uv_y, uv_mv, uv_bw, uv_bh,
-                &mut pred_u, uv_bw, filter,
-            );
-        }
-        {
-            let ref_v_plane = PlaneRef {
-                data: params.ref_v,
-                stride: params.uv_stride,
-                width: params.uv_stride,
-                height: params.ref_v.len() / params.uv_stride,
-            };
-            build_inter_prediction(
-                &ref_v_plane, uv_x, uv_y, uv_mv, uv_bw, uv_bh,
-                &mut pred_v, uv_bw, filter,
-            );
-        }
-
-        // Source UV at the chroma offset.
-        let src_u_start = uv_y * params.uv_stride + uv_x;
-        let src_v_start = uv_y * params.uv_stride + uv_x;
-
-        let uv_rd = model_rd_for_sb_uv(
-            &params.src_u[src_u_start..], params.uv_stride,
-            &pred_u, uv_bw,
-            &params.src_v[src_v_start..], params.uv_stride,
-            &pred_v, uv_bw,
-            bw, bh, // luma dimensions — halved internally
-            params.block_size,
-            params.uv_dc_quant,
-            params.uv_ac_quant,
-        );
-
-        (uv_rd.rate.max(0) as u32, uv_rd.dist)
-    } else {
-        (0, 0)
-    };
 
     // Add UV dist to luma dist (libvpx `vp9_pickmode.c:2390-2393`).
     let dist = (dist as i64 + uv_dist).clamp(0, u32::MAX as i64) as u32;
@@ -2616,14 +2639,7 @@ fn evaluate_candidate_for_filter(
     // neutral 50/50 — `vp9_cost_bit(128, 0) ==
     // vp9_cost_bit(128, 1) == 512` = 1 bit in 1/512 units).
     // Threading the real per-block skip context is a follow-up.
-    let sse_after_pred = sse_block(
-        params.src_plane,
-        params.src_offset,
-        &pred,
-        bw,
-        bw,
-        bh,
-    );
+    let sse_after_pred = sse_block(params.src_plane, params.src_offset, &pred, bw, bw, bh);
     let sse_after_pred_u32 = sse_after_pred.min(u32::MAX as u64) as u32;
     // P19 — use the caller-supplied per-block skip context when
     // present (computed via `vp9_get_pred_context_skip(above_skip +
@@ -2724,8 +2740,16 @@ fn build_inter_prediction(
     let y_nonzero = subpel_y_q4 != 0;
 
     // Compute the read-window's top-left.
-    let pad_x = if x_nonzero { (FILTER_TAPS / 2 - 1) as isize } else { 0 };
-    let pad_y = if y_nonzero { (FILTER_TAPS / 2 - 1) as isize } else { 0 };
+    let pad_x = if x_nonzero {
+        (FILTER_TAPS / 2 - 1) as isize
+    } else {
+        0
+    };
+    let pad_y = if y_nonzero {
+        (FILTER_TAPS / 2 - 1) as isize
+    } else {
+        0
+    };
     let win_x = ref_x - pad_x;
     let win_y = ref_y - pad_y;
 
@@ -2736,10 +2760,8 @@ fn build_inter_prediction(
         win_x >= 0 && win_y >= 0,
         "inter pred read window out of bounds: ({win_x}, {win_y})",
     );
-    let win_h = bh
-        + if y_nonzero { FILTER_TAPS - 1 } else { 0 };
-    let win_w = bw
-        + if x_nonzero { FILTER_TAPS - 1 } else { 0 };
+    let win_h = bh + if y_nonzero { FILTER_TAPS - 1 } else { 0 };
+    let win_w = bw + if x_nonzero { FILTER_TAPS - 1 } else { 0 };
     debug_assert!(
         (win_x as usize) + win_w <= ref_plane.width,
         "inter pred read window beyond ref width: x={win_x} + w={win_w} > {}",
@@ -2765,17 +2787,34 @@ fn build_inter_prediction(
     match (x_nonzero, y_nonzero) {
         (false, false) => {
             crate::inter::filter::convolve_copy(
-                src_slice, ref_plane.stride, dst, dst_stride, bw, bh,
+                src_slice,
+                ref_plane.stride,
+                dst,
+                dst_stride,
+                bw,
+                bh,
             );
         }
         (true, false) => {
             crate::inter::filter::convolve8_horiz(
-                src_slice, ref_plane.stride, dst, dst_stride, filter_x, bw, bh,
+                src_slice,
+                ref_plane.stride,
+                dst,
+                dst_stride,
+                filter_x,
+                bw,
+                bh,
             );
         }
         (false, true) => {
             crate::inter::filter::convolve8_vert(
-                src_slice, ref_plane.stride, dst, dst_stride, filter_y, bw, bh,
+                src_slice,
+                ref_plane.stride,
+                dst,
+                dst_stride,
+                filter_y,
+                bw,
+                bh,
             );
         }
         (true, true) => {
@@ -2993,14 +3032,12 @@ fn reconstruct_via_round_trip(
             by_skippable &= had_eob == 0;
             by_eob_cost = by_eob_cost.saturating_add(1);
             if had_eob == 1 {
-                by_rate_satd = by_rate_satd
-                    .saturating_add(i32::from(had_qcoeff[0]).unsigned_abs());
+                by_rate_satd = by_rate_satd.saturating_add(i32::from(had_qcoeff[0]).unsigned_abs());
             } else if had_eob > 1 {
-                by_rate_satd =
-                    by_rate_satd.saturating_add(satd_i16(&had_qcoeff[..n]));
+                by_rate_satd = by_rate_satd.saturating_add(satd_i16(&had_qcoeff[..n]));
             }
-            by_dist = by_dist
-                .saturating_add(block_error_fp_i32(&had_coeff[..n], &had_dqcoeff[..n]) >> 2);
+            by_dist =
+                by_dist.saturating_add(block_error_fp_i32(&had_coeff[..n], &had_dqcoeff[..n]) >> 2);
 
             // 4. Reconstruct tile: tx_recon = pred + idct(dq).
             for r in 0..tx_side {
@@ -3053,8 +3090,7 @@ fn reconstruct_via_round_trip(
     // blocks (large qcoeffs ⇒ rate_satd > 2_097_152 ⇒ shifted_rate >
     // u32::MAX) all clipped to u32::MAX. Saturate-cast back to u32
     // happens in `evaluate_candidate` at the rate-sum site.
-    let shifted_rate =
-        (by_rate_satd as u64) << (2 + crate::cost::VP9_PROB_COST_SHIFT);
+    let shifted_rate = (by_rate_satd as u64) << (2 + crate::cost::VP9_PROB_COST_SHIFT);
     let eob_term = (by_eob_cost as u64) << crate::cost::VP9_PROB_COST_SHIFT;
     let coef_rate = shifted_rate.saturating_add(eob_term);
     BlockYrdResult {
@@ -3241,7 +3277,10 @@ impl Default for NoiseEstimate {
         // pre-`vp9_update_noise_estimate` (disabled), so the noise
         // sub-bias never fires. The magnitude sub-bias is always
         // active.
-        Self { enabled: false, level: NoiseLevel::Low }
+        Self {
+            enabled: false,
+            level: NoiseLevel::Low,
+        }
     }
 }
 
@@ -3406,12 +3445,12 @@ fn frame_type_for_rd(kind: FrameKind) -> FrameTypeForRd {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bitstream::frame::{InterpFilter, MAX_INTER_REFS};
+    use crate::cost::SwitchableInterpCosts;
     use crate::cost::mv_cost::build_nmv_cost_table;
     use crate::cost::symbol_costs::{inter_mode_costs, switchable_interp_costs};
-    use crate::cost::SwitchableInterpCosts;
     use crate::entropy::frame_context::FrameContext;
     use crate::entropy::mv_probs::DEFAULT_NMV_CONTEXT;
-    use crate::bitstream::frame::{InterpFilter, MAX_INTER_REFS};
     use crate::mv_search::init_dsmotion_compensation;
     use crate::quant::forward::{QuantizerDeltas, init_plane_quantizers};
 
@@ -3461,8 +3500,7 @@ mod tests {
             let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, false);
             let inter_costs = inter_mode_costs(&fc);
             let sic = switchable_interp_costs(&fc);
-            let quantizer =
-                init_plane_quantizers(i32::from(q_index), QuantizerDeltas::Y);
+            let quantizer = init_plane_quantizers(i32::from(q_index), QuantizerDeltas::Y);
             let cfg = init_dsmotion_compensation(plane_w as i32);
             Self {
                 costs,
@@ -3567,7 +3605,10 @@ mod tests {
                 InterMode::ZeroMv | InterMode::NearestMv | InterMode::NearMv
             ),
             "identical planes → expected ZEROMV / NEARESTMV / NEARMV, got {:?} (rd={}, dist={}, rate={})",
-            res.best_mode, res.best_rd_cost, res.best_distortion, res.best_rate,
+            res.best_mode,
+            res.best_rd_cost,
+            res.best_distortion,
+            res.best_rate,
         );
         assert_eq!(res.best_mv, Mv::ZERO);
         assert_eq!(
@@ -3605,8 +3646,8 @@ mod tests {
         let shift_row: i16 = 0;
         for i in 0..bh {
             for j in 0..bw {
-                let ridx = (src_row + i + shift_row as usize) * pw
-                    + (src_col + j + shift_col as usize);
+                let ridx =
+                    (src_row + i + shift_row as usize) * pw + (src_col + j + shift_col as usize);
                 src_data[(src_row + i) * pw + (src_col + j)] = ref_data[ridx];
             }
         }
@@ -3640,7 +3681,8 @@ mod tests {
         assert!(
             new.best_distortion < zero.best_distortion,
             "NEWMV dist ({}) should be < ZEROMV dist ({})",
-            new.best_distortion, zero.best_distortion,
+            new.best_distortion,
+            zero.best_distortion,
         );
         // The recovered MV must be near (col=24, row=0) in 1/8-pel
         // units (24 = 3 full pels × 8). Allow ±2 in case the sub-pel
@@ -3663,7 +3705,8 @@ mod tests {
             main.best_mode,
             InterMode::NewMv,
             "shifted-ref: expected NEWMV winner, got {:?} (rd={})",
-            main.best_mode, main.best_rd_cost,
+            main.best_mode,
+            main.best_rd_cost,
         );
     }
 
@@ -3748,8 +3791,15 @@ mod tests {
         assert_eq!(all[3].best_mode, InterMode::NewMv);
         // Each must produce a finite rate / dist / rd entry.
         for (i, c) in all.iter().enumerate() {
-            assert!(c.best_rd_cost > 0, "slot {i}: rd_cost {} must be > 0", c.best_rd_cost);
-            assert!(c.best_rd_cost < i64::MAX, "slot {i}: rd_cost must be finite");
+            assert!(
+                c.best_rd_cost > 0,
+                "slot {i}: rd_cost {} must be > 0",
+                c.best_rd_cost
+            );
+            assert!(
+                c.best_rd_cost < i64::MAX,
+                "slot {i}: rd_cost must be finite"
+            );
         }
     }
 
@@ -3936,8 +3986,7 @@ mod tests {
         // Direct per-filter evaluation: both filters should produce
         // zero distortion (identical src/ref, integer-pel MV → both
         // filters copy the centre pixel).
-        let lambda =
-            compute_rd_mult(50, frame_type_for_rd(synthetic_inter_frame_kind()));
+        let lambda = compute_rd_mult(50, frame_type_for_rd(synthetic_inter_frame_kind()));
         let eight = evaluate_candidate_for_filter(
             &params,
             InterMode::ZeroMv,
@@ -4031,8 +4080,7 @@ mod tests {
             80,
         );
 
-        let lambda =
-            compute_rd_mult(80, frame_type_for_rd(synthetic_inter_frame_kind()));
+        let lambda = compute_rd_mult(80, frame_type_for_rd(synthetic_inter_frame_kind()));
         let eight = evaluate_candidate_for_filter(
             &params,
             InterMode::NearestMv,
@@ -4079,10 +4127,8 @@ mod tests {
             - sic[ctx][InterpFilter::EightTap as usize])
             .unsigned_abs() as u64;
         let coef_rate_delta = smooth.coef_rate.abs_diff(eight.coef_rate);
-        let observed_rate_delta =
-            u64::from(smooth.best_rate.abs_diff(eight.best_rate));
-        let expected_floor =
-            filter_cost_delta.saturating_sub(coef_rate_delta);
+        let observed_rate_delta = u64::from(smooth.best_rate.abs_diff(eight.best_rate));
+        let expected_floor = filter_cost_delta.saturating_sub(coef_rate_delta);
         assert!(
             observed_rate_delta >= expected_floor,
             "G2 switchable-rate floor: |smooth.rate {} - eight.rate {}| = {} \
@@ -4346,7 +4392,10 @@ mod tests {
         // for LAST. ZERO LAST is the first candidate, so it gets
         // evaluated. Identical src/ref → ZERO wins.
         assert!(
-            matches!(res.best_mode, InterMode::ZeroMv | InterMode::NearMv | InterMode::NewMv),
+            matches!(
+                res.best_mode,
+                InterMode::ZeroMv | InterMode::NearMv | InterMode::NewMv
+            ),
             "expected ZERO/NEAR/NEW with OOB-vetoed NEAREST, got {:?}",
             res.best_mode,
         );
@@ -4687,8 +4736,7 @@ mod tests {
         params_with_uv.uv_dc_quant = 96;
         params_with_uv.uv_ac_quant = 80;
 
-        let lambda =
-            compute_rd_mult(10, frame_type_for_rd(synthetic_inter_frame_kind()));
+        let lambda = compute_rd_mult(10, frame_type_for_rd(synthetic_inter_frame_kind()));
         let with_uv = evaluate_candidate_for_filter(
             &params_with_uv,
             InterMode::ZeroMv,
@@ -4727,9 +4775,12 @@ mod tests {
                 || with_uv.best_rd_cost != without_uv.best_rd_cost,
             "UV-enabled evaluation must differ from empty-UV: \
              rate {} vs {}, dist {} vs {}, rd {} vs {}",
-            with_uv.best_rate, without_uv.best_rate,
-            with_uv.best_distortion, without_uv.best_distortion,
-            with_uv.best_rd_cost, without_uv.best_rd_cost,
+            with_uv.best_rate,
+            without_uv.best_rate,
+            with_uv.best_distortion,
+            without_uv.best_distortion,
+            with_uv.best_rd_cost,
+            without_uv.best_rd_cost,
         );
     }
 
@@ -4768,8 +4819,7 @@ mod tests {
         params.ref_v = &[];
         params.uv_stride = pw / 2;
 
-        let lambda =
-            compute_rd_mult(50, frame_type_for_rd(synthetic_inter_frame_kind()));
+        let lambda = compute_rd_mult(50, frame_type_for_rd(synthetic_inter_frame_kind()));
         let with_partial_uv = evaluate_candidate_for_filter(
             &params,
             InterMode::ZeroMv,
@@ -4835,8 +4885,7 @@ mod tests {
         params.ref_v = &data_u;
         params.uv_stride = 0; // ← false
 
-        let lambda =
-            compute_rd_mult(50, frame_type_for_rd(synthetic_inter_frame_kind()));
+        let lambda = compute_rd_mult(50, frame_type_for_rd(synthetic_inter_frame_kind()));
         let with_zero_stride = evaluate_candidate_for_filter(
             &params,
             InterMode::ZeroMv,
@@ -4938,10 +4987,16 @@ mod tests {
             }
         }
         let src_plane = PlaneRef {
-            data: &src_data, stride: pw, width: pw, height: ph,
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
         };
         let ref_plane = PlaneRef {
-            data: &ref_data, stride: pw, width: pw, height: ph,
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
         };
         let harness = TestHarness::new(pw, 100);
         let fc = FrameContext::new_default();
@@ -4983,8 +5038,10 @@ mod tests {
             InterMode::NearMv,
             "baseline (const_motion=false): expected NEARMV winner to \
              prove the P15 scenario activates; got mode={:?} ref={:?} mv=({}, {})",
-            baseline.best_mode, baseline.picked_ref_frame,
-            baseline.best_mv.row, baseline.best_mv.col,
+            baseline.best_mode,
+            baseline.picked_ref_frame,
+            baseline.best_mv.row,
+            baseline.best_mv.col,
         );
         assert_eq!(
             baseline.picked_ref_frame,
@@ -5016,8 +5073,10 @@ mod tests {
                 || with_skip.picked_ref_frame != baseline.picked_ref_frame,
             "P15 skip must cause a different pick than the baseline; \
              baseline: ({:?}, {:?}) vs with_skip: ({:?}, {:?})",
-            baseline.picked_ref_frame, baseline.best_mode,
-            with_skip.picked_ref_frame, with_skip.best_mode,
+            baseline.picked_ref_frame,
+            baseline.best_mode,
+            with_skip.picked_ref_frame,
+            with_skip.best_mode,
         );
     }
 
@@ -5048,7 +5107,10 @@ mod tests {
         let ph = 64;
         let data = make_plane(pw, ph, 23);
         let plane = PlaneRef {
-            data: &data, stride: pw, width: pw, height: ph,
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
         };
         let harness = TestHarness::new(pw, 50);
         let fc = FrameContext::new_default();
@@ -5093,8 +5155,10 @@ mod tests {
                 && res.best_mv == Mv::ZERO),
             "P17: (LAST, NEARMV) with MV=0 must be deduplicated against \
              (LAST, ZEROMV); got picked_ref={:?} mode={:?} mv=({}, {}) rd={}",
-            res.picked_ref_frame, res.best_mode,
-            res.best_mv.row, res.best_mv.col,
+            res.picked_ref_frame,
+            res.best_mode,
+            res.best_mv.row,
+            res.best_mv.col,
             res.best_rd_cost,
         );
 
@@ -5127,11 +5191,11 @@ mod tests {
     ///       `skip_ctx`).
     #[test]
     fn p19_skip_ctx_threaded() {
-        use crate::inter::get_pred_context_skip;
-        use crate::mode_info::{BlockMode, ModeInfo};
         use crate::block::BlockSize as BS;
-        use crate::transforms::TxSize;
+        use crate::inter::get_pred_context_skip;
         use crate::intra_pred::IntraMode;
+        use crate::mode_info::{BlockMode, ModeInfo};
+        use crate::transforms::TxSize;
 
         // Build two MIs: one with skip=true, one with skip=false.
         let mk = |skip: bool| ModeInfo {
@@ -5140,7 +5204,10 @@ mod tests {
             skip,
             segment_id: 0,
             seg_id_predicted: false,
-            mode: BlockMode::Intra { y_mode: IntraMode::Dc, uv_mode: IntraMode::Dc },
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
             bmi: Default::default(),
         };
         let mi_skip = mk(true);
@@ -5148,8 +5215,7 @@ mod tests {
 
         // Three contexts. (None, None) and (noskip, noskip) → ctx=0.
         let ctx_zero = get_pred_context_skip(None, None);
-        let ctx_zero_b =
-            get_pred_context_skip(Some(&mi_noskip), Some(&mi_noskip));
+        let ctx_zero_b = get_pred_context_skip(Some(&mi_noskip), Some(&mi_noskip));
         // (skip, noskip) and (noskip, skip) → ctx=1.
         let ctx_one_a = get_pred_context_skip(Some(&mi_skip), Some(&mi_noskip));
         let ctx_one_b = get_pred_context_skip(Some(&mi_noskip), Some(&mi_skip));
@@ -5182,7 +5248,9 @@ mod tests {
         assert!(
             cost0 != cost1 || cost1 != cost2,
             "vp9_cost_bit must differ across at least one ctx pair; got {}, {}, {}",
-            cost0, cost1, cost2,
+            cost0,
+            cost1,
+            cost2,
         );
 
         // End-to-end wiring: build two `InterModeSearchParams` that
@@ -5203,17 +5271,24 @@ mod tests {
             }
         }
         let src_plane = PlaneRef {
-            data: &src_data, stride: pw, width: pw, height: ph,
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
         };
         let ref_plane = PlaneRef {
-            data: &ref_data, stride: pw, width: pw, height: ph,
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
         };
         let harness = TestHarness::new(pw, 10);
         let mvc = MvCandidates::default();
         let mut p_ctx0 = make_params(
             &harness,
             BlockSize::Block16x16,
-            &src_plane, &ref_plane,
+            &src_plane,
+            &ref_plane,
             (16, 16),
             &mvc,
             MvLimits::new(-4, 4, -4, 4),
@@ -5223,7 +5298,8 @@ mod tests {
         let mut p_ctx2 = make_params(
             &harness,
             BlockSize::Block16x16,
-            &src_plane, &ref_plane,
+            &src_plane,
+            &ref_plane,
             (16, 16),
             &mvc,
             MvLimits::new(-4, 4, -4, 4),
@@ -5232,11 +5308,19 @@ mod tests {
         p_ctx2.skip_ctx = Some(2);
         let lambda = compute_rd_mult(10, frame_type_for_rd(synthetic_inter_frame_kind()));
         let r0 = evaluate_candidate_for_filter(
-            &p_ctx0, InterMode::ZeroMv, Mv::ZERO, Mv::ZERO, lambda,
+            &p_ctx0,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            lambda,
             InterpFilter::EightTap,
         );
         let r2 = evaluate_candidate_for_filter(
-            &p_ctx2, InterMode::ZeroMv, Mv::ZERO, Mv::ZERO, lambda,
+            &p_ctx2,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            lambda,
             InterpFilter::EightTap,
         );
         // The encode path's rate includes skip_false_cost (a function
@@ -5247,7 +5331,10 @@ mod tests {
             r0.best_rate != r2.best_rate || r0.best_rd_cost != r2.best_rd_cost,
             "P19: skip_ctx must affect the picker's RD output; got \
              ctx0: rate={} rd={} vs ctx2: rate={} rd={}",
-            r0.best_rate, r0.best_rd_cost, r2.best_rate, r2.best_rd_cost,
+            r0.best_rate,
+            r0.best_rd_cost,
+            r2.best_rate,
+            r2.best_rd_cost,
         );
     }
 
@@ -5273,51 +5360,81 @@ mod tests {
 
         // (a) Small diff (col=40) → just under the threshold → no bias.
         let small = newmv_diff_bias(
-            above, left, InterMode::NewMv,
+            above,
+            left,
+            InterMode::NewMv,
             Mv { row: 0, col: 40 },
             BlockSize::Block16x16,
-            /* is_last_frame */ true, ne, false, false,
+            /* is_last_frame */ true,
+            ne,
+            false,
+            false,
         );
         assert_eq!(small, (1, 1), "small diff (|col|=40 ≤ 48): no bias");
 
         // (b) Large diff (col=64) on Block16x16 → (3, 2).
         let large_small_bs = newmv_diff_bias(
-            above, left, InterMode::NewMv,
+            above,
+            left,
+            InterMode::NewMv,
             Mv { row: 0, col: 64 },
             BlockSize::Block16x16,
-            true, ne, false, false,
+            true,
+            ne,
+            false,
+            false,
         );
-        assert_eq!(large_small_bs, (3, 2),
-            "large diff (|col|=64 > 48) on Block16x16: 1.5× penalty");
+        assert_eq!(
+            large_small_bs,
+            (3, 2),
+            "large diff (|col|=64 > 48) on Block16x16: 1.5× penalty"
+        );
 
         // (c) Large diff on Block64x64 → (2, 1). Block64x64 > Block32x32.
         let large_big_bs = newmv_diff_bias(
-            above, left, InterMode::NewMv,
+            above,
+            left,
+            InterMode::NewMv,
             Mv { row: 0, col: 64 },
             BlockSize::Block64x64,
-            true, ne, false, false,
+            true,
+            ne,
+            false,
+            false,
         );
-        assert_eq!(large_big_bs, (2, 1),
-            "large diff on Block64x64: 2× penalty");
+        assert_eq!(large_big_bs, (2, 1), "large diff on Block64x64: 2× penalty");
 
         // (d) Block32x32 is NOT > Block32x32; uses the 1.5× branch
         // (libvpx `bsize > BLOCK_32X32` at vp9_pickmode.c:1341).
         let exact_32 = newmv_diff_bias(
-            above, left, InterMode::NewMv,
+            above,
+            left,
+            InterMode::NewMv,
             Mv { row: 0, col: 64 },
             BlockSize::Block32x32,
-            true, ne, false, false,
+            true,
+            ne,
+            false,
+            false,
         );
-        assert_eq!(exact_32, (3, 2),
-            "Block32x32 takes the `else` branch: 1.5× penalty");
+        assert_eq!(
+            exact_32,
+            (3, 2),
+            "Block32x32 takes the `else` branch: 1.5× penalty"
+        );
 
         // (e) Non-NEWMV modes get no bias even with a big diff.
         for mode in [InterMode::ZeroMv, InterMode::NearestMv, InterMode::NearMv] {
             let r = newmv_diff_bias(
-                above, left, mode,
+                above,
+                left,
+                mode,
                 Mv { row: 0, col: 64 },
                 BlockSize::Block16x16,
-                true, ne, false, false,
+                true,
+                ne,
+                false,
+                false,
             );
             assert_eq!(r, (1, 1), "non-NEWMV ({:?}) gets no bias", mode);
         }
@@ -5333,7 +5450,8 @@ mod tests {
             bias_small < bias_large,
             "P13 anti-stub: small-diff biased RD ({}) must be < large-diff biased RD ({}); \
              a stubbed `return (1,1)` would make both equal.",
-            bias_small, bias_large,
+            bias_small,
+            bias_large,
         );
         // The 1.5× factor must be exact-ish: 1_000_000 → 1_500_000.
         assert_eq!(bias_large, 1_500_000);
@@ -5357,31 +5475,47 @@ mod tests {
             Some(Mv { row: 0, col: 50 }),
             InterMode::NewMv,
             Mv { row: 0, col: 50 },
-            BlockSize::Block16x16, true, ne, false, false,
+            BlockSize::Block16x16,
+            true,
+            ne,
+            false,
+            false,
         );
         assert_eq!(r1, (1, 1), "candidate == neighbour avg → no bias");
 
         // Only-above valid: avg = above = (0, 100). Candidate at (0, 0)
         // → diff = (0, 100) > 48 → 1.5× bias on Block16x16.
         let r2 = newmv_diff_bias(
-            Some(Mv { row: 0, col: 100 }), None,
+            Some(Mv { row: 0, col: 100 }),
+            None,
             InterMode::NewMv,
             Mv::ZERO,
-            BlockSize::Block16x16, true, ne, false, false,
+            BlockSize::Block16x16,
+            true,
+            ne,
+            false,
+            false,
         );
-        assert_eq!(r2, (3, 2),
-            "only-above neighbour: avg = above; large diff → 1.5× bias");
+        assert_eq!(
+            r2,
+            (3, 2),
+            "only-above neighbour: avg = above; large diff → 1.5× bias"
+        );
 
         // Both None: avg = (0, 0). Candidate at (0, 100) → diff = -100
         // → 1.5× bias.
         let r3 = newmv_diff_bias(
-            None, None,
+            None,
+            None,
             InterMode::NewMv,
             Mv { row: 0, col: 100 },
-            BlockSize::Block16x16, true, ne, false, false,
+            BlockSize::Block16x16,
+            true,
+            ne,
+            false,
+            false,
         );
-        assert_eq!(r3, (3, 2),
-            "both-None: avg = (0,0); large diff → 1.5× bias");
+        assert_eq!(r3, (3, 2), "both-None: avg = (0,0); large diff → 1.5× bias");
 
         // Half-round-up: above=(0, 1), left=(0, 0) → avg = (0, 1)
         // ((0 + 1 + 1) >> 1 = 1). Candidate at (0, 1) → no bias.
@@ -5390,9 +5524,17 @@ mod tests {
             Some(Mv { row: 0, col: 0 }),
             InterMode::NewMv,
             Mv { row: 0, col: 1 },
-            BlockSize::Block16x16, true, ne, false, false,
+            BlockSize::Block16x16,
+            true,
+            ne,
+            false,
+            false,
         );
-        assert_eq!(r4, (1, 1), "half-round-up: (0+1+1)>>1 = 1; cand=1 → no bias");
+        assert_eq!(
+            r4,
+            (1, 1),
+            "half-round-up: (0+1+1)>>1 = 1; cand=1 → no bias"
+        );
     }
 
     /// **P13 noise sub-bias proof.** Verifies the `7/8` multiplier
@@ -5407,59 +5549,102 @@ mod tests {
 
         // Disabled noise → no sub-bias.
         let disabled = newmv_diff_bias(
-            None, None, InterMode::ZeroMv, small_mv,
-            BlockSize::Block32x32, true,
-            NoiseEstimate { enabled: false, level: NoiseLevel::High },
-            false, false,
+            None,
+            None,
+            InterMode::ZeroMv,
+            small_mv,
+            BlockSize::Block32x32,
+            true,
+            NoiseEstimate {
+                enabled: false,
+                level: NoiseLevel::High,
+            },
+            false,
+            false,
         );
         assert_eq!(disabled, (1, 1), "noise disabled → no sub-bias");
 
         // Enabled + High + Block32x32 + LAST + small MV → 7/8.
         let active = newmv_diff_bias(
-            None, None, InterMode::ZeroMv, small_mv,
-            BlockSize::Block32x32, true,
-            NoiseEstimate { enabled: true, level: NoiseLevel::High },
-            false, false,
+            None,
+            None,
+            InterMode::ZeroMv,
+            small_mv,
+            BlockSize::Block32x32,
+            true,
+            NoiseEstimate {
+                enabled: true,
+                level: NoiseLevel::High,
+            },
+            false,
+            false,
         );
-        assert_eq!(active, (7, 8),
-            "noise High + LAST + Block32x32 + |mv|<8: 7/8 sub-bias");
+        assert_eq!(
+            active,
+            (7, 8),
+            "noise High + LAST + Block32x32 + |mv|<8: 7/8 sub-bias"
+        );
 
         // Enabled but Low → no sub-bias (libvpx `>= kMedium`).
         let low = newmv_diff_bias(
-            None, None, InterMode::ZeroMv, small_mv,
-            BlockSize::Block32x32, true,
-            NoiseEstimate { enabled: true, level: NoiseLevel::Low },
-            false, false,
+            None,
+            None,
+            InterMode::ZeroMv,
+            small_mv,
+            BlockSize::Block32x32,
+            true,
+            NoiseEstimate {
+                enabled: true,
+                level: NoiseLevel::Low,
+            },
+            false,
+            false,
         );
         assert_eq!(low, (1, 1), "noise Low fails `>= kMedium` guard");
 
         // GOLDEN frame: sub-bias requires `is_last_frame`.
         let golden = newmv_diff_bias(
-            None, None, InterMode::ZeroMv, small_mv,
-            BlockSize::Block32x32, false, // is_last_frame=false
-            NoiseEstimate { enabled: true, level: NoiseLevel::High },
-            false, false,
+            None,
+            None,
+            InterMode::ZeroMv,
+            small_mv,
+            BlockSize::Block32x32,
+            false, // is_last_frame=false
+            NoiseEstimate {
+                enabled: true,
+                level: NoiseLevel::High,
+            },
+            false,
+            false,
         );
         assert_eq!(golden, (1, 1), "GOLDEN frame skips the noise sub-bias");
 
         // Lowvar-highsumdiff alt path: !is_skin && bsize >= 16x16 && LAST
         // && |mv|<16 → 7/8.
         let lvhsd = newmv_diff_bias(
-            None, None, InterMode::ZeroMv, Mv { row: 8, col: 8 },
-            BlockSize::Block16x16, true,
+            None,
+            None,
+            InterMode::ZeroMv,
+            Mv { row: 8, col: 8 },
+            BlockSize::Block16x16,
+            true,
             NoiseEstimate::default(), // noise disabled
             /* lowvar_highsumdiff */ true,
             /* is_skin */ false,
         );
-        assert_eq!(lvhsd, (7, 8),
-            "lowvar_highsumdiff alt clause: 7/8 sub-bias");
+        assert_eq!(lvhsd, (7, 8), "lowvar_highsumdiff alt clause: 7/8 sub-bias");
 
         // is_skin gates off the lowvar-highsumdiff clause.
         let skin = newmv_diff_bias(
-            None, None, InterMode::ZeroMv, Mv { row: 8, col: 8 },
-            BlockSize::Block16x16, true,
+            None,
+            None,
+            InterMode::ZeroMv,
+            Mv { row: 8, col: 8 },
+            BlockSize::Block16x16,
+            true,
             NoiseEstimate::default(),
-            true, true,
+            true,
+            true,
         );
         assert_eq!(skin, (1, 1), "is_skin gates off lowvar_highsumdiff");
     }
@@ -5491,15 +5676,20 @@ mod tests {
         let mut src_data = ref_data.clone();
         for r in 0..16 {
             for c in 0..16 {
-                src_data[(16 + r) * pw + (16 + c)] =
-                    ref_data[(16 + r) * pw + (16 + c + 12)];
+                src_data[(16 + r) * pw + (16 + c)] = ref_data[(16 + r) * pw + (16 + c + 12)];
             }
         }
         let src_plane = PlaneRef {
-            data: &src_data, stride: pw, width: pw, height: ph,
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
         };
         let ref_plane = PlaneRef {
-            data: &ref_data, stride: pw, width: pw, height: ph,
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
         };
         let harness = TestHarness::new(pw, 70);
         let fc = FrameContext::new_default();
@@ -5510,11 +5700,16 @@ mod tests {
         // Branch (A): neighbour MVs match the NEWMV target (col=96).
         // The bias function will compute |col_diff| ≤ 0 → no bias.
         let mut params_a = make_dual_ref_params(
-            &harness, &intra_y_costs,
+            &harness,
+            &intra_y_costs,
             BlockSize::Block16x16,
-            &src_plane, &ref_plane, (16, 16),
-            &mvc, &mvc,
-            MvLimits::new(-32, 32, -32, 32), 70,
+            &src_plane,
+            &ref_plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-32, 32, -32, 32),
+            70,
         );
         params_a.above_mv = Some(Mv { row: 0, col: 96 });
         params_a.left_mv = Some(Mv { row: 0, col: 96 });
@@ -5526,11 +5721,16 @@ mod tests {
         // diverges by > 48 → 1.5× bias on Block16x16. NEAREST (at
         // ZERO) is unaffected.
         let mut params_b = make_dual_ref_params(
-            &harness, &intra_y_costs,
+            &harness,
+            &intra_y_costs,
             BlockSize::Block16x16,
-            &src_plane, &ref_plane, (16, 16),
-            &mvc, &mvc,
-            MvLimits::new(-32, 32, -32, 32), 70,
+            &src_plane,
+            &ref_plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-32, 32, -32, 32),
+            70,
         );
         params_b.above_mv = Some(Mv::ZERO);
         params_b.left_mv = Some(Mv::ZERO);
@@ -5541,9 +5741,14 @@ mod tests {
         // makes it the SSE-minimising candidate). If the bias wiring
         // is dead, branch (B) would ALSO pick NEWMV (same input minus
         // a no-op). We assert the opposite:
-        assert_eq!(res_a.best_mode, InterMode::NewMv,
+        assert_eq!(
+            res_a.best_mode,
+            InterMode::NewMv,
             "matched neighbours: NEWMV wins on the shifted block (rd={}, mv=({},{}))",
-            res_a.best_rd_cost, res_a.best_mv.col, res_a.best_mv.row);
+            res_a.best_rd_cost,
+            res_a.best_mv.col,
+            res_a.best_mv.row
+        );
 
         // The biased branch must produce a STRICTLY HIGHER RD cost
         // (NEWMV's RD got the 1.5× penalty), and the winner must
@@ -5555,7 +5760,8 @@ mod tests {
             "P13 anti-stub: zero-neighbour branch must have HIGHER RD \
              than matched-neighbour branch (bias activated). \
              a={} b={}. If equal, the bias wiring is dead.",
-            res_a.best_rd_cost, res_b.best_rd_cost,
+            res_a.best_rd_cost,
+            res_b.best_rd_cost,
         );
         // Strong form: the bias should be ≥ 1.5× of the un-biased
         // NEWMV RD when NEWMV is the winner of (A). 1.5× is the
@@ -5566,7 +5772,8 @@ mod tests {
         assert!(
             res_b.best_rd_cost >= expected_bias_floor,
             "P13: bias-active RD ({}) should be ≥ +12.5% over un-biased ({})",
-            res_b.best_rd_cost, expected_bias_floor,
+            res_b.best_rd_cost,
+            expected_bias_floor,
         );
     }
 
@@ -5597,7 +5804,10 @@ mod tests {
         // Source: deterministic chaotic plane.
         let src_data = make_plane(pw, ph, 0xA51C);
         let src_plane = PlaneRef {
-            data: &src_data, stride: pw, width: pw, height: ph,
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
         };
 
         // LAST: a noisy version of source. ZERO-MV recon has
@@ -5619,7 +5829,10 @@ mod tests {
             }
         }
         let last_ref = PlaneRef {
-            data: &last_data, stride: pw, width: pw, height: ph,
+            data: &last_data,
+            stride: pw,
+            width: pw,
+            height: ph,
         };
 
         // GOLDEN: source = exact copy of source ZERO-MV → ZERO-MV
@@ -5631,7 +5844,10 @@ mod tests {
         // perfect-recon, so GOLDEN ZERO wins when mask is OFF.
         let golden_data = src_data.clone();
         let golden_ref = PlaneRef {
-            data: &golden_data, stride: pw, width: pw, height: ph,
+            data: &golden_data,
+            stride: pw,
+            width: pw,
+            height: ph,
         };
 
         let harness = TestHarness::new(pw, 50);
@@ -5649,18 +5865,23 @@ mod tests {
             near: Mv { row: 64, col: 64 },
         };
         let cands_last = [Mv::ZERO, Mv::ZERO];
-        let cands_golden = [
-            Mv { row: 64, col: 64 },
-            Mv { row: 64, col: 64 },
-        ];
+        let cands_golden = [Mv { row: 64, col: 64 }, Mv { row: 64, col: 64 }];
 
         // --- Test invariant: confirm the libvpx threshold IS
         // satisfied on this scenario (so the mask SHOULD fire). ---
         let (_, sad_last) = crate::mv_search::mv_pred::mv_pred_sad_seed(
-            &src_plane, &last_ref, (16, 16), &cands_last, BlockSize::Block16x16,
+            &src_plane,
+            &last_ref,
+            (16, 16),
+            &cands_last,
+            BlockSize::Block16x16,
         );
         let (_, sad_golden) = crate::mv_search::mv_pred::mv_pred_sad_seed(
-            &src_plane, &golden_ref, (16, 16), &cands_golden, BlockSize::Block16x16,
+            &src_plane,
+            &golden_ref,
+            (16, 16),
+            &cands_golden,
+            BlockSize::Block16x16,
         );
         assert!(
             sad_golden > sad_last.saturating_mul(2),
@@ -5705,8 +5926,11 @@ mod tests {
             "P18 mask ON: GOLDEN must be skipped (sad_last={sad_last}, \
              sad_golden={sad_golden}, threshold satisfied); picker \
              chose {:?} (rd={}, mode={:?}, mv=({},{}))",
-            res_on.picked_ref_frame, res_on.best_rd_cost,
-            res_on.best_mode, res_on.best_mv.col, res_on.best_mv.row,
+            res_on.picked_ref_frame,
+            res_on.best_rd_cost,
+            res_on.best_mode,
+            res_on.best_mv.col,
+            res_on.best_mv.row,
         );
 
         // Positive assertion (2) — HEADLINE: with mask OFF, GOLDEN's
@@ -5720,9 +5944,13 @@ mod tests {
             "P18 mask OFF: GOLDEN's ZEROMV must win on the identical \
              plane; picker chose {:?} (rd={}, mode={:?}, mv=({},{})). \
              Control: res_on picked {:?} rd={}.",
-            res_off.picked_ref_frame, res_off.best_rd_cost,
-            res_off.best_mode, res_off.best_mv.col, res_off.best_mv.row,
-            res_on.picked_ref_frame, res_on.best_rd_cost,
+            res_off.picked_ref_frame,
+            res_off.best_rd_cost,
+            res_off.best_mode,
+            res_off.best_mv.col,
+            res_off.best_mv.row,
+            res_on.picked_ref_frame,
+            res_on.best_rd_cost,
         );
 
         // Positive assertion (3) — the mask-OFF branch must have a
@@ -5733,7 +5961,8 @@ mod tests {
             res_off.best_rd_cost < res_on.best_rd_cost,
             "P18: mask-OFF RD ({}) should be < mask-ON RD ({}) — \
              GOLDEN's recon win must surface when the mask is off",
-            res_off.best_rd_cost, res_on.best_rd_cost,
+            res_off.best_rd_cost,
+            res_on.best_rd_cost,
         );
     }
 
@@ -5749,25 +5978,42 @@ mod tests {
         let ph = 64;
         let src_data = make_plane(pw, ph, 0x77BB);
         let src_plane = PlaneRef {
-            data: &src_data, stride: pw, width: pw, height: ph,
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
         };
         // LAST and GOLDEN both = source (perfect match).
         // sad_last = 0, sad_golden = 0. Threshold `0 > 0 << 1` =
         // `0 > 0` is FALSE → mask does NOT fire.
         let last_ref = PlaneRef {
-            data: &src_data, stride: pw, width: pw, height: ph,
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
         };
         let golden_data = src_data.clone();
         let golden_ref = PlaneRef {
-            data: &golden_data, stride: pw, width: pw, height: ph,
+            data: &golden_data,
+            stride: pw,
+            width: pw,
+            height: ph,
         };
 
         let cands = [Mv::ZERO, Mv::ZERO];
         let (_, sad_last) = crate::mv_search::mv_pred::mv_pred_sad_seed(
-            &src_plane, &last_ref, (16, 16), &cands, BlockSize::Block16x16,
+            &src_plane,
+            &last_ref,
+            (16, 16),
+            &cands,
+            BlockSize::Block16x16,
         );
         let (_, sad_golden) = crate::mv_search::mv_pred::mv_pred_sad_seed(
-            &src_plane, &golden_ref, (16, 16), &cands, BlockSize::Block16x16,
+            &src_plane,
+            &golden_ref,
+            (16, 16),
+            &cands,
+            BlockSize::Block16x16,
         );
         assert_eq!(sad_last, 0);
         assert_eq!(sad_golden, 0);
@@ -5846,7 +6092,7 @@ mod tests {
     #[test]
     fn p20_thresh_freq_fact_increments_for_losers() {
         use crate::mode_decision::rd_thresh::{
-            update_thresh_freq_fact, RdThreshTable, RD_THRESH_INIT_FACT,
+            RD_THRESH_INIT_FACT, RdThreshTable, update_thresh_freq_fact,
         };
 
         let pw = 64;
@@ -5903,17 +6149,14 @@ mod tests {
 
         // The winner slot must have DECAYED: 32 - (32 >> 4) = 30.
         let winner_fact = table
-            .freq_fact_for_test(
-                BlockSize::Block16x16,
-                res.picked_ref_frame,
-                res.best_mode,
-            )
+            .freq_fact_for_test(BlockSize::Block16x16, res.picked_ref_frame, res.best_mode)
             .expect("winner slot must be present");
         assert!(
             winner_fact < RD_THRESH_INIT_FACT,
             "P20 winner fact should decay: got {winner_fact} \
              (winner_ref={:?} mode={:?})",
-            res.picked_ref_frame, res.best_mode,
+            res.picked_ref_frame,
+            res.best_mode,
         );
         // libvpx exact: 32 - (32 >> 4) = 30.
         assert_eq!(
@@ -5951,7 +6194,10 @@ mod tests {
                 saw_increment = true;
             }
         }
-        assert!(saw_increment, "P20: at least one loser slot must have incremented");
+        assert!(
+            saw_increment,
+            "P20: at least one loser slot must have incremented"
+        );
 
         // Anti-stub: the LOSING ref's slots must remain at INIT.
         let losing_ref = match res.picked_ref_frame {
@@ -6048,7 +6294,8 @@ mod tests {
             InterMode::NewMv,
             "P20 setup: gate-OFF must produce NEWMV winner on shifted-ref \
              scenario (got {:?} rd={}); test setup invalid",
-            res_off.best_mode, res_off.best_rd_cost,
+            res_off.best_mode,
+            res_off.best_rd_cost,
         );
         // Picker must have picked LAST (both refs identical, so either
         // ref is acceptable; the gate's per-(bsize, ref, mode) granularity
@@ -6078,7 +6325,10 @@ mod tests {
             InterMode::NewMv,
             i32::MAX,
         );
-        assert!(set_last && set_golden, "P20: NEWMV slots must accept the fact override");
+        assert!(
+            set_last && set_golden,
+            "P20: NEWMV slots must accept the fact override"
+        );
 
         let mut params_on = make_dual_ref_params(
             &harness,
@@ -6106,7 +6356,9 @@ mod tests {
             "P20 gate-ON: NEWMV must be suppressed when its freq_fact is \
              saturated (the per-candidate gate at inter.rs:1063-1087 must \
              skip non-zero-MV NEWMV); got mode={:?} mv=({},{}) rd={}",
-            res_on.best_mode, res_on.best_mv.row, res_on.best_mv.col,
+            res_on.best_mode,
+            res_on.best_mv.row,
+            res_on.best_mv.col,
             res_on.best_rd_cost,
         );
         // Anti-stub cross-check: branches A and B differ — the gate
@@ -6137,7 +6389,7 @@ mod tests {
     #[test]
     fn p20_state_persists_across_calls() {
         use crate::mode_decision::rd_thresh::{
-            update_thresh_freq_fact, RdThreshTable, RD_THRESH_INIT_FACT,
+            RD_THRESH_INIT_FACT, RdThreshTable, update_thresh_freq_fact,
         };
 
         let pw = 64;
@@ -6166,11 +6418,7 @@ mod tests {
             )
             .unwrap();
         let init_last_newmv = table
-            .freq_fact_for_test(
-                BlockSize::Block16x16,
-                RefFrame::LastFrame,
-                InterMode::NewMv,
-            )
+            .freq_fact_for_test(BlockSize::Block16x16, RefFrame::LastFrame, InterMode::NewMv)
             .unwrap();
         assert_eq!(init_last_zero, RD_THRESH_INIT_FACT);
         assert_eq!(init_last_newmv, RD_THRESH_INIT_FACT);
@@ -6206,11 +6454,7 @@ mod tests {
         // ASSERTION 1: the table's state is no longer at INIT for the
         // mutated slots.
         let post1_winner = table
-            .freq_fact_for_test(
-                BlockSize::Block16x16,
-                res1.picked_ref_frame,
-                res1.best_mode,
-            )
+            .freq_fact_for_test(BlockSize::Block16x16, res1.picked_ref_frame, res1.best_mode)
             .expect("winner slot present");
         assert_ne!(
             post1_winner, RD_THRESH_INIT_FACT,
@@ -6257,11 +6501,7 @@ mod tests {
             res1.best_mode,
         );
         let post2_winner = table
-            .freq_fact_for_test(
-                BlockSize::Block16x16,
-                res1.picked_ref_frame,
-                res1.best_mode,
-            )
+            .freq_fact_for_test(BlockSize::Block16x16, res1.picked_ref_frame, res1.best_mode)
             .expect("winner slot present after second update");
         // libvpx exact: 30 - (30 >> 4) = 30 - 1 = 29.
         assert_eq!(
@@ -6342,7 +6582,12 @@ mod tests {
         let pw = 64;
         let ph = 64;
         let data = make_plane(pw, ph, 0x55AA);
-        let plane = PlaneRef { data: &data, stride: pw, width: pw, height: ph };
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
         let harness = TestHarness::new(pw, 50);
         let fc = FrameContext::new_default();
         let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
@@ -6354,9 +6599,16 @@ mod tests {
             near: Mv { row: 32, col: 32 },
         };
         let mut params = make_dual_ref_params(
-            &harness, &intra_y_costs, BlockSize::Block16x16,
-            &plane, &plane, (16, 16), &mvc, &mvc,
-            MvLimits::new(-12, 12, -12, 12), 50,
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-12, 12, -12, 12),
+            50,
         );
         params.is_screen_content = true;
         params.source_variance = 0;
@@ -6366,11 +6618,14 @@ mod tests {
         let res = pick_inter_mode(&params);
         // Only ZEROMV candidates survived the gate.
         assert_eq!(
-            res.best_mv, Mv::ZERO,
+            res.best_mv,
+            Mv::ZERO,
             "§10 screen-content + source_variance=0: every non-zero-MV \
              candidate must be skipped (libvpx vp9_pickmode.c:2134-2137); \
              picker returned mv=({},{}) mode={:?}",
-            res.best_mv.col, res.best_mv.row, res.best_mode,
+            res.best_mv.col,
+            res.best_mv.row,
+            res.best_mode,
         );
     }
 
@@ -6391,8 +6646,18 @@ mod tests {
                 ref_data[r * pw + c] = src_data[sr * pw + sc];
             }
         }
-        let src_plane = PlaneRef { data: &src_data, stride: pw, width: pw, height: ph };
-        let ref_plane = PlaneRef { data: &ref_data, stride: pw, width: pw, height: ph };
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
         let harness = TestHarness::new(pw, 50);
         let fc = FrameContext::new_default();
         let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
@@ -6402,9 +6667,16 @@ mod tests {
             near: Mv { row: 32, col: 32 },
         };
         let mut params = make_dual_ref_params(
-            &harness, &intra_y_costs, BlockSize::Block16x16,
-            &src_plane, &ref_plane, (16, 16), &mvc, &mvc,
-            MvLimits::new(-12, 12, -12, 12), 50,
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &src_plane,
+            &ref_plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-12, 12, -12, 12),
+            50,
         );
         params.is_screen_content = false; // gate off
         params.source_variance = 0;
@@ -6450,9 +6722,24 @@ mod tests {
         }
         // GOLDEN: identical to source → GOLDEN ZeroMV is perfect.
         let golden_data = src_data.clone();
-        let src_plane = PlaneRef { data: &src_data, stride: pw, width: pw, height: ph };
-        let last_ref = PlaneRef { data: &last_data, stride: pw, width: pw, height: ph };
-        let golden_ref = PlaneRef { data: &golden_data, stride: pw, width: pw, height: ph };
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let last_ref = PlaneRef {
+            data: &last_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let golden_ref = PlaneRef {
+            data: &golden_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
         let harness = TestHarness::new(pw, 50);
         let fc = FrameContext::new_default();
         let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
@@ -6470,9 +6757,16 @@ mod tests {
         };
         let make_p = |flag_on: bool| -> PickInterModeParams<'_> {
             let mut p = make_dual_ref_params(
-                &harness, &intra_y_costs, BlockSize::Block16x16,
-                &src_plane, &last_ref, (16, 16), &last_mvc, &golden_mvc,
-                MvLimits::new(-12, 12, -12, 12), 50,
+                &harness,
+                &intra_y_costs,
+                BlockSize::Block16x16,
+                &src_plane,
+                &last_ref,
+                (16, 16),
+                &last_mvc,
+                &golden_mvc,
+                MvLimits::new(-12, 12, -12, 12),
+                50,
             );
             p.golden_ref_plane = &golden_ref;
             p.force_skip_low_temp_var = flag_on;
@@ -6489,8 +6783,8 @@ mod tests {
 
         // Positive assertion (1) — with flag ON, picker must NOT pick
         // a (GOLDEN, non-zero-MV) winner.
-        let golden_nonzero_on = res_on.picked_ref_frame == RefFrame::GoldenFrame
-            && res_on.best_mv != Mv::ZERO;
+        let golden_nonzero_on =
+            res_on.picked_ref_frame == RefFrame::GoldenFrame && res_on.best_mv != Mv::ZERO;
         assert!(
             !golden_nonzero_on,
             "§10 force_skip_low_temp_var ON: GOLDEN+non-zero MV must be \
@@ -6507,19 +6801,24 @@ mod tests {
         // (`vp9_pickmode.c:2173`: `frame_mv[this_mode][ref_frame].as_int
         // != 0`).
         assert_eq!(
-            res_off.picked_ref_frame, RefFrame::GoldenFrame,
+            res_off.picked_ref_frame,
+            RefFrame::GoldenFrame,
             "§10 control (flag OFF): GOLDEN ZeroMV identical content \
              must win; got ref={:?} mv=({},{})",
-            res_off.picked_ref_frame, res_off.best_mv.col, res_off.best_mv.row,
+            res_off.picked_ref_frame,
+            res_off.best_mv.col,
+            res_off.best_mv.row,
         );
         assert_eq!(
-            res_off.best_mv, Mv::ZERO,
+            res_off.best_mv,
+            Mv::ZERO,
             "§10 control: GOLDEN ZeroMV wins on identical content",
         );
         // Flag-ON also picks (GOLDEN, ZeroMV) since it's exempted from
         // the gate (zero MV).
         assert_eq!(
-            res_on.picked_ref_frame, RefFrame::GoldenFrame,
+            res_on.picked_ref_frame,
+            RefFrame::GoldenFrame,
             "§10 force_skip_low_temp_var: (GOLDEN, ZeroMV) is exempted \
              from the gate (libvpx checks `as_int != 0`); got ref={:?}",
             res_on.picked_ref_frame,
@@ -6564,8 +6863,18 @@ mod tests {
                 src_data[(src_row + i) * pw + (src_col + j)] = ref_data[ridx];
             }
         }
-        let src_plane = PlaneRef { data: &src_data, stride: pw, width: pw, height: ph };
-        let last_ref = PlaneRef { data: &ref_data, stride: pw, width: pw, height: ph };
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let last_ref = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
         let harness = TestHarness::new(pw, 50);
         let fc = FrameContext::new_default();
         let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
@@ -6573,9 +6882,16 @@ mod tests {
         let mvc = MvCandidates::default();
         let make_p = |flag_on: bool, csb: ContentStateSb| -> PickInterModeParams<'_> {
             let mut p = make_dual_ref_params(
-                &harness, &intra_y_costs, BlockSize::Block16x16,
-                &src_plane, &last_ref, (src_col, src_row), &mvc, &mvc,
-                MvLimits::new(-16, 16, -16, 16), 50,
+                &harness,
+                &intra_y_costs,
+                BlockSize::Block16x16,
+                &src_plane,
+                &last_ref,
+                (src_col, src_row),
+                &mvc,
+                &mvc,
+                MvLimits::new(-16, 16, -16, 16),
+                50,
             );
             p.force_skip_low_temp_var = flag_on;
             p.content_state_sb = csb;
@@ -6589,13 +6905,16 @@ mod tests {
         // RD-optimal winner here).
         let baseline = pick_inter_mode(&make_p(false, ContentStateSb::Normal));
         assert_eq!(
-            baseline.best_mode, InterMode::NewMv,
+            baseline.best_mode,
+            InterMode::NewMv,
             "§10 oracle setup: with the shift, baseline (no §10 gates) \
              must pick LAST NewMv; got {:?} ref={:?}",
-            baseline.best_mode, baseline.picked_ref_frame,
+            baseline.best_mode,
+            baseline.picked_ref_frame,
         );
         assert_eq!(
-            baseline.picked_ref_frame, RefFrame::LastFrame,
+            baseline.picked_ref_frame,
+            RefFrame::LastFrame,
             "§10 oracle setup: LAST is the winning ref",
         );
 
@@ -6613,21 +6932,26 @@ mod tests {
             "§10 force_skip_low_temp_var + content_state_sb=Normal: \
              LAST+NewMv must be skipped (libvpx vp9_pickmode.c:2177); \
              picker chose ref={:?} mode={:?} mv=({},{})",
-            res_skipped.picked_ref_frame, res_skipped.best_mode,
-            res_skipped.best_mv.col, res_skipped.best_mv.row,
+            res_skipped.picked_ref_frame,
+            res_skipped.best_mode,
+            res_skipped.best_mv.col,
+            res_skipped.best_mv.row,
         );
 
         // Positive assertion (2) — with content_state_sb=VeryHighSad,
         // the gate's `!= kVeryHighSad` clause is false, so LAST NEWMV is
         // allowed and wins (same as baseline).
         assert_eq!(
-            res_allowed.best_mode, InterMode::NewMv,
+            res_allowed.best_mode,
+            InterMode::NewMv,
             "§10 control (csb=VeryHighSad): the gate's content_state \
              clause is false → LAST NEWMV reachable; got mode={:?} ref={:?}",
-            res_allowed.best_mode, res_allowed.picked_ref_frame,
+            res_allowed.best_mode,
+            res_allowed.picked_ref_frame,
         );
         assert_eq!(
-            res_allowed.picked_ref_frame, RefFrame::LastFrame,
+            res_allowed.picked_ref_frame,
+            RefFrame::LastFrame,
             "§10 control (csb=VeryHighSad): LAST is the winning ref",
         );
     }
@@ -6644,7 +6968,12 @@ mod tests {
         let pw = 64;
         let ph = 64;
         let data = make_plane(pw, ph, 0xCAFE);
-        let plane = PlaneRef { data: &data, stride: pw, width: pw, height: ph };
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
         let harness = TestHarness::new(pw, 50);
         let fc = FrameContext::new_default();
         let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
@@ -6655,9 +6984,16 @@ mod tests {
             near: Mv { row: 32, col: 32 },
         };
         let mut params = make_dual_ref_params(
-            &harness, &intra_y_costs, BlockSize::Block16x16,
-            &plane, &plane, (16, 16), &mvc, &mvc,
-            MvLimits::new(-12, 12, -12, 12), 50,
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-12, 12, -12, 12),
+            50,
         );
         params.is_screen_content = true;
         // Source-SAD computed, equals zero → zero_temp_sad_source = true.
@@ -6667,11 +7003,14 @@ mod tests {
         params.reference_masking = false;
         let res = pick_inter_mode(&params);
         assert_eq!(
-            res.best_mv, Mv::ZERO,
+            res.best_mv,
+            Mv::ZERO,
             "§10 screen-content + zero_temp_sad_source=true: every \
              non-zero-MV must be skipped (libvpx vp9_pickmode.c:2128-2129); \
              picker returned mv=({},{}) mode={:?}",
-            res.best_mv.col, res.best_mv.row, res.best_mode,
+            res.best_mv.col,
+            res.best_mv.row,
+            res.best_mode,
         );
     }
 
@@ -6699,7 +7038,12 @@ mod tests {
         let pw = 64;
         let ph = 64;
         let data = make_plane(pw, ph, 0x4242);
-        let plane = PlaneRef { data: &data, stride: pw, width: pw, height: ph };
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
         let harness = TestHarness::new(pw, 50);
         let fc = FrameContext::new_default();
         let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
@@ -6707,9 +7051,16 @@ mod tests {
         let mvc = MvCandidates::default();
         let make_p = |scene_on: bool| -> PickInterModeParams<'_> {
             let mut p = make_dual_ref_params(
-                &harness, &intra_y_costs, BlockSize::Block16x16,
-                &plane, &plane, (16, 16), &mvc, &mvc,
-                MvLimits::new(-12, 12, -12, 12), 50,
+                &harness,
+                &intra_y_costs,
+                BlockSize::Block16x16,
+                &plane,
+                &plane,
+                (16, 16),
+                &mvc,
+                &mvc,
+                MvLimits::new(-12, 12, -12, 12),
+                50,
             );
             // Set encode_breakout to a value that WILL trigger
             // breakout on identical src/ref (libvpx default for
@@ -6782,9 +7133,24 @@ mod tests {
         }
         // GOLDEN: identical to source so GOLDEN ZeroMV is perfect.
         let golden_data = src_data.clone();
-        let src_plane = PlaneRef { data: &src_data, stride: pw, width: pw, height: ph };
-        let last_ref = PlaneRef { data: &last_data, stride: pw, width: pw, height: ph };
-        let golden_ref = PlaneRef { data: &golden_data, stride: pw, width: pw, height: ph };
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let last_ref = PlaneRef {
+            data: &last_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let golden_ref = PlaneRef {
+            data: &golden_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
         let harness = TestHarness::new(pw, 50);
         let fc = FrameContext::new_default();
         let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
@@ -6792,9 +7158,16 @@ mod tests {
         let mvc = MvCandidates::default();
         let make_p = |scene_on: bool| -> PickInterModeParams<'_> {
             let mut p = make_dual_ref_params(
-                &harness, &intra_y_costs, BlockSize::Block16x16,
-                &src_plane, &last_ref, (16, 16), &mvc, &mvc,
-                MvLimits::new(-12, 12, -12, 12), 50,
+                &harness,
+                &intra_y_costs,
+                BlockSize::Block16x16,
+                &src_plane,
+                &last_ref,
+                (16, 16),
+                &mvc,
+                &mvc,
+                MvLimits::new(-12, 12, -12, 12),
+                50,
             );
             p.golden_ref_plane = &golden_ref;
             p.is_screen_content = true;
@@ -6814,8 +7187,8 @@ mod tests {
         // Concretely: with the gate ON, GOLDEN must win (or any non-
         // (LAST, ZeroMV) winner). The control branch (gate OFF) may
         // pick either LAST or GOLDEN ZeroMV based on un-biased costs.
-        let last_zero_on = res_on.picked_ref_frame == RefFrame::LastFrame
-            && res_on.best_mv == Mv::ZERO;
+        let last_zero_on =
+            res_on.picked_ref_frame == RefFrame::LastFrame && res_on.best_mv == Mv::ZERO;
         assert!(
             !last_zero_on,
             "§10 screen-content + scene-change: LAST ZeroMV must be \
@@ -6846,25 +7219,28 @@ mod tests {
         // Direct test of newmv_diff_bias: with lowvar_highsumdiff =
         // true + active conditions, the multiplier is 7/8.
         let bias_active = newmv_diff_bias(
-            None, None, // no neighbours
+            None,
+            None, // no neighbours
             InterMode::NewMv,
-            Mv { row: 8, col: 8 }, // |mv| < 16 → noise clause active
-            BlockSize::Block16x16, // >= 16x16
-            true, // is_last_frame
+            Mv { row: 8, col: 8 },    // |mv| < 16 → noise clause active
+            BlockSize::Block16x16,    // >= 16x16
+            true,                     // is_last_frame
             NoiseEstimate::default(), // disabled, doesn't fire
-            true, // lowvar_highsumdiff
-            false, // is_skin
+            true,                     // lowvar_highsumdiff
+            false,                    // is_skin
         );
         // 1 * 7 / 1 * 8 = (7, 8).
         assert_eq!(
-            bias_active, (7, 8),
+            bias_active,
+            (7, 8),
             "§10 lowvar_highsumdiff: P13 bias must produce 7/8 \
              multiplier when active (libvpx vp9_pickmode.c:1352-1355)",
         );
 
         // With is_skin = true the clause is suppressed → (1, 1).
         let bias_skin_suppressed = newmv_diff_bias(
-            None, None,
+            None,
+            None,
             InterMode::NewMv,
             Mv { row: 8, col: 8 },
             BlockSize::Block16x16,
@@ -6874,7 +7250,8 @@ mod tests {
             true, // is_skin TRUE — suppresses the lowvar clause
         );
         assert_eq!(
-            bias_skin_suppressed, (1, 1),
+            bias_skin_suppressed,
+            (1, 1),
             "§10 is_skin: suppresses lowvar_highsumdiff sub-clause \
              (libvpx vp9_pickmode.c:1352)",
         );
@@ -6903,17 +7280,34 @@ mod tests {
                 src_data[(src_row + i) * pw + (src_col + j)] = ref_data[ridx];
             }
         }
-        let src_plane = PlaneRef { data: &src_data, stride: pw, width: pw, height: ph };
-        let last_ref = PlaneRef { data: &ref_data, stride: pw, width: pw, height: ph };
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let last_ref = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
         let harness = TestHarness::new(pw, 50);
         let fc = FrameContext::new_default();
         let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
         let intra_y_costs: [i32; 10] = intra_costs[0];
         let mvc = MvCandidates::default();
         let mut params = make_dual_ref_params(
-            &harness, &intra_y_costs, BlockSize::Block16x16,
-            &src_plane, &last_ref, (src_col, src_row), &mvc, &mvc,
-            MvLimits::new(-16, 16, -16, 16), 50,
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &src_plane,
+            &last_ref,
+            (src_col, src_row),
+            &mvc,
+            &mvc,
+            MvLimits::new(-16, 16, -16, 16),
+            50,
         );
         params.force_skip_low_temp_var = true;
         params.content_state_sb = ContentStateSb::VeryHighSad;
@@ -6922,14 +7316,17 @@ mod tests {
         let res = pick_inter_mode(&params);
         // Positive assertion — LAST+NEWMV must be reachable.
         assert_eq!(
-            res.picked_ref_frame, RefFrame::LastFrame,
+            res.picked_ref_frame,
+            RefFrame::LastFrame,
             "§10 content_state_sb=VeryHighSad: LAST must be the winning \
              ref (libvpx vp9_pickmode.c:2177 `!= kVeryHighSad` clause is \
              false); got ref={:?} mode={:?}",
-            res.picked_ref_frame, res.best_mode,
+            res.picked_ref_frame,
+            res.best_mode,
         );
         assert_eq!(
-            res.best_mode, InterMode::NewMv,
+            res.best_mode,
+            InterMode::NewMv,
             "§10 content_state_sb=VeryHighSad: LAST+NewMv reachable \
              (gate skipped); got mode={:?}",
             res.best_mode,
@@ -6968,16 +7365,33 @@ mod tests {
                     ref_data[(src_row + i) * pw + (src_col + j + 3)];
             }
         }
-        let src_plane = PlaneRef { data: &src_data, stride: pw, width: pw, height: ph };
-        let last_ref = PlaneRef { data: &ref_data, stride: pw, width: pw, height: ph };
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let last_ref = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
         let harness = TestHarness::new(pw, 50);
         let fc = FrameContext::new_default();
         let intra_y_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc)[0];
         let mvc = MvCandidates::default();
         let mut params = make_dual_ref_params(
-            &harness, &intra_y_costs, BlockSize::Block16x16,
-            &src_plane, &last_ref, (src_col, src_row), &mvc, &mvc,
-            MvLimits::new(-16, 16, -16, 16), 50,
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &src_plane,
+            &last_ref,
+            (src_col, src_row),
+            &mvc,
+            &mvc,
+            MvLimits::new(-16, 16, -16, 16),
+            50,
         );
         params.encode_breakout = 0;
         params.reference_masking = false;
@@ -7000,7 +7414,8 @@ mod tests {
         params.inter_mode_mask = tightened;
         let active = pick_inter_mode(&params);
         assert_ne!(
-            active.best_mode, InterMode::NewMv,
+            active.best_mode,
+            InterMode::NewMv,
             "§11 inter_mode_mask ACTIVE: NEWMV bit cleared but picker \
              returned NEWMV — gate is stubbed",
         );
@@ -7025,12 +7440,13 @@ mod tests {
         // (4 * 64 = 256). After the update, the gate must clamp it
         // back down to RD_THRESH_INIT_FACT = 32.
         let mut active = RdThreshTable::new();
-        active.set_freq_fact_for_test(
-            bsize, RefFrame::LastFrame, InterMode::NewMv, 256,
-        );
+        active.set_freq_fact_for_test(bsize, RefFrame::LastFrame, InterMode::NewMv, 256);
         // Winning mode != NEWMV so NEWMV stays a "loser".
         update_thresh_freq_fact_with_s11(
-            &mut active, bsize, RefFrame::LastFrame, InterMode::NearestMv,
+            &mut active,
+            bsize,
+            RefFrame::LastFrame,
+            InterMode::NearestMv,
             /* limit_newmv_early_exit = */ true,
             /* source_variance = */ 0,
         );
@@ -7047,11 +7463,12 @@ mod tests {
         // Control 1: flag off — high cap of 256 must hold (the slot
         // stays at min(256 + 1, 4 * 64) = 256).
         let mut control_off = RdThreshTable::new();
-        control_off.set_freq_fact_for_test(
-            bsize, RefFrame::LastFrame, InterMode::NewMv, 256,
-        );
+        control_off.set_freq_fact_for_test(bsize, RefFrame::LastFrame, InterMode::NewMv, 256);
         update_thresh_freq_fact_with_s11(
-            &mut control_off, bsize, RefFrame::LastFrame, InterMode::NearestMv,
+            &mut control_off,
+            bsize,
+            RefFrame::LastFrame,
+            InterMode::NearestMv,
             /* limit_newmv_early_exit = */ false,
             /* source_variance = */ 0,
         );
@@ -7067,11 +7484,12 @@ mod tests {
 
         // Control 2: flag on but source_variance >= 5 — gate misses.
         let mut control_hi = RdThreshTable::new();
-        control_hi.set_freq_fact_for_test(
-            bsize, RefFrame::LastFrame, InterMode::NewMv, 256,
-        );
+        control_hi.set_freq_fact_for_test(bsize, RefFrame::LastFrame, InterMode::NewMv, 256);
         update_thresh_freq_fact_with_s11(
-            &mut control_hi, bsize, RefFrame::LastFrame, InterMode::NearestMv,
+            &mut control_hi,
+            bsize,
+            RefFrame::LastFrame,
+            InterMode::NearestMv,
             true,
             /* source_variance = */ 5, // libvpx threshold is `< 5`
         );
@@ -7106,7 +7524,12 @@ mod tests {
         let pw = 64;
         let ph = 64;
         let data = make_plane(pw, ph, 9);
-        let plane = PlaneRef { data: &data, stride: pw, width: pw, height: ph };
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
         let harness = TestHarness::new(pw, 50);
         let fc = FrameContext::new_default();
         let intra_y_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc)[0];
@@ -7125,9 +7548,16 @@ mod tests {
         };
         let table = crate::mode_decision::rd_thresh::RdThreshTable::new();
         let mut params = make_dual_ref_params(
-            &harness, &intra_y_costs, BlockSize::Block16x16,
-            &plane, &plane, (16, 16), &last_mvc, &golden_mvc,
-            MvLimits::new(-16, 16, -16, 16), 50,
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &last_mvc,
+            &golden_mvc,
+            MvLimits::new(-16, 16, -16, 16),
+            50,
         );
         params.encode_breakout = 0;
         params.reference_masking = false;
@@ -7173,7 +7603,8 @@ mod tests {
         // `thresh.saturating_mul(8)` when fragmented; verify the
         // arithmetic matches the libvpx `<< 3`.
         assert_eq!(
-            thresh.saturating_mul(8), thresh << 3,
+            thresh.saturating_mul(8),
+            thresh << 3,
             "§11 bias_golden: shift must be `<< 3` (libvpx \
              vp9_pickmode.c:2239); got mul-vs-shift mismatch",
         );
@@ -7193,15 +7624,27 @@ mod tests {
         let pw = 64;
         let ph = 64;
         let data = make_plane(pw, ph, 21);
-        let plane = PlaneRef { data: &data, stride: pw, width: pw, height: ph };
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
         let harness = TestHarness::new(pw, 50);
         let fc = FrameContext::new_default();
         let intra_y_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc)[0];
         let mvc = MvCandidates::default();
         let mut params = make_dual_ref_params(
-            &harness, &intra_y_costs, BlockSize::Block16x16,
-            &plane, &plane, (16, 16), &mvc, &mvc,
-            MvLimits::new(-16, 16, -16, 16), 50,
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-16, 16, -16, 16),
+            50,
         );
         params.encode_breakout = 0;
         params.reference_masking = false;
@@ -7281,7 +7724,12 @@ mod tests {
         let pw = 64;
         let ph = 64;
         let data = make_plane(pw, ph, 31);
-        let plane = PlaneRef { data: &data, stride: pw, width: pw, height: ph };
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
         let harness = TestHarness::new(pw, 50);
         let fc = FrameContext::new_default();
         let intra_y_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc)[0];
@@ -7290,9 +7738,16 @@ mod tests {
         // pick either (ties broken by candidate order: LAST first).
         let mvc = MvCandidates::default();
         let mut params = make_dual_ref_params(
-            &harness, &intra_y_costs, BlockSize::Block16x16,
-            &plane, &plane, (16, 16), &mvc, &mvc,
-            MvLimits::new(-16, 16, -16, 16), 50,
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-16, 16, -16, 16),
+            50,
         );
         params.encode_breakout = 0;
         params.reference_masking = false; // isolate the §11 gate
@@ -7302,7 +7757,8 @@ mod tests {
         params.disable_golden_ref = true;
         let active = pick_inter_mode(&params);
         assert_eq!(
-            active.picked_ref_frame, RefFrame::LastFrame,
+            active.picked_ref_frame,
+            RefFrame::LastFrame,
             "§11 disable_golden_ref ACTIVE: GOLDEN must be masked, \
              picker should pick LAST; got {:?}",
             active.picked_ref_frame,
@@ -7344,15 +7800,27 @@ mod tests {
         let pw = 64;
         let ph = 64;
         let data = make_plane(pw, ph, 31);
-        let plane = PlaneRef { data: &data, stride: pw, width: pw, height: ph };
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
         let harness = TestHarness::new(pw, 50);
         let fc = FrameContext::new_default();
         let intra_y_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc)[0];
         let mvc = MvCandidates::default();
         let mut params = make_dual_ref_params(
-            &harness, &intra_y_costs, BlockSize::Block16x16,
-            &plane, &plane, (16, 16), &mvc, &mvc,
-            MvLimits::new(-16, 16, -16, 16), 50,
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-16, 16, -16, 16),
+            50,
         );
         params.encode_breakout = 0;
         params.reference_masking = false;
@@ -7382,7 +7850,12 @@ mod tests {
         let pw = 64;
         let ph = 64;
         let data = make_plane(pw, ph, 7);
-        let plane = PlaneRef { data: &data, stride: pw, width: pw, height: ph };
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
         let harness = TestHarness::new(pw, 50);
         let fc = FrameContext::new_default();
         let intra_y_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc)[0];
@@ -7390,9 +7863,16 @@ mod tests {
         let above_pixels: Vec<u8> = (0..64).map(|i| (i as u8) ^ 0xa5).collect();
         let left_pixels: Vec<u8> = (0..64).map(|i| (i as u8) ^ 0x5a).collect();
         let mut params = make_dual_ref_params(
-            &harness, &intra_y_costs, BlockSize::Block32x32,
-            &plane, &plane, (16, 16), &mvc, &mvc,
-            MvLimits::new(-16, 16, -16, 16), 50,
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block32x32,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-16, 16, -16, 16),
+            50,
         );
         // Provide neighbour pixels so intra fallback CAN run when not
         // gated.
@@ -7444,7 +7924,12 @@ mod tests {
                 data[y * pw + x] = (x as u8).wrapping_mul(3);
             }
         }
-        let plane = PlaneRef { data: &data, stride: pw, width: pw, height: ph };
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
         let harness = TestHarness::new(pw, 50);
         let fc = FrameContext::new_default();
         let intra_y_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc)[0];
@@ -7455,9 +7940,16 @@ mod tests {
         let above_pixels: Vec<u8> = (0..32).map(|x| (x as u8).wrapping_mul(3)).collect();
         let left_pixels: Vec<u8> = (0..32).map(|_y| 0u8).collect();
         let mut params = make_dual_ref_params(
-            &harness, &intra_y_costs, BlockSize::Block16x16,
-            &plane, &plane, (16, 16), &mvc, &mvc,
-            MvLimits::new(-16, 16, -16, 16), 50,
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-16, 16, -16, 16),
+            50,
         );
         params.intra_above_pixels = Some(&above_pixels);
         params.intra_left_pixels = Some(&left_pixels);
@@ -7475,7 +7967,8 @@ mod tests {
         let active = evaluate_intra_fallback(&params, lambda, cp);
         if let Some(res) = active {
             assert_eq!(
-                res.picked_intra_mode, Some(IntraMode::Dc),
+                res.picked_intra_mode,
+                Some(IntraMode::Dc),
                 "§11 rt_intra_dc_only_low_content ACTIVE: only DC may \
                  win on normal content (libvpx vp9_pickmode.c:2571); \
                  got {:?}",
@@ -7522,7 +8015,12 @@ mod tests {
                 data[y * pw + x] = (x as u8).wrapping_mul(3);
             }
         }
-        let plane = PlaneRef { data: &data, stride: pw, width: pw, height: ph };
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
         let harness = TestHarness::new(pw, 50);
         let fc = FrameContext::new_default();
         let intra_y_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc)[0];
@@ -7530,9 +8028,16 @@ mod tests {
         let above_pixels: Vec<u8> = (0..32).map(|x| (x as u8).wrapping_mul(3)).collect();
         let left_pixels: Vec<u8> = (0..32).map(|_y| 0u8).collect();
         let mut params = make_dual_ref_params(
-            &harness, &intra_y_costs, BlockSize::Block16x16,
-            &plane, &plane, (16, 16), &mvc, &mvc,
-            MvLimits::new(-16, 16, -16, 16), 50,
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-16, 16, -16, 16),
+            50,
         );
         params.intra_above_pixels = Some(&above_pixels);
         params.intra_left_pixels = Some(&left_pixels);
@@ -7552,5 +8057,4 @@ mod tests {
              intra fallback must still run",
         );
     }
-
 }

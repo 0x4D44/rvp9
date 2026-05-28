@@ -406,7 +406,12 @@ mod tests {
     #[test]
     fn round_trip_skewed_probabilities() {
         let bits: Vec<(u8, u8)> = (0..150)
-            .map(|i| (((i * 19) & 1) as u8, if (i * 7) & 1 == 0 { 32 } else { 224 }))
+            .map(|i| {
+                (
+                    ((i * 19) & 1) as u8,
+                    if (i * 7) & 1 == 0 { 32 } else { 224 },
+                )
+            })
             .collect();
         let mut buf = vec![0u8; 256];
         let n = {

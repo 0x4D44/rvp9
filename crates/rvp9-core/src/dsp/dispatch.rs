@@ -137,16 +137,12 @@ fn parse_lpf_avx2_mask(s: Option<&str>) -> LpfAvx2Mask {
     mask
 }
 use crate::transforms::inverse::{
-    highbd_idct4x4_16_add as scalar_highbd_idct4x4_add,
-    idct4x4_16_add as scalar_idct4x4_add, idct8x8_64_add as scalar_idct8x8_add,
-    idct16x16_10_add as scalar_idct16x16_10_add,
-    idct16x16_38_add as scalar_idct16x16_38_add,
-    idct16x16_256_add as scalar_idct16x16_add,
-    idct32x32_135_add as scalar_idct32x32_135_add,
-    idct32x32_34_add as scalar_idct32x32_34_add,
-    idct32x32_1024_add as scalar_idct32x32_add,
-    iht4x4_16_add as scalar_iht4x4_add, iht8x8_64_add as scalar_iht8x8_add,
-    iht16x16_256_add as scalar_iht16x16_add,
+    highbd_idct4x4_16_add as scalar_highbd_idct4x4_add, idct4x4_16_add as scalar_idct4x4_add,
+    idct8x8_64_add as scalar_idct8x8_add, idct16x16_10_add as scalar_idct16x16_10_add,
+    idct16x16_38_add as scalar_idct16x16_38_add, idct16x16_256_add as scalar_idct16x16_add,
+    idct32x32_34_add as scalar_idct32x32_34_add, idct32x32_135_add as scalar_idct32x32_135_add,
+    idct32x32_1024_add as scalar_idct32x32_add, iht4x4_16_add as scalar_iht4x4_add,
+    iht8x8_64_add as scalar_iht8x8_add, iht16x16_256_add as scalar_iht16x16_add,
 };
 use crate::transforms::types::TxType;
 
@@ -171,13 +167,7 @@ fn scalar_dc_predictor_4x4(dst: &mut [u8], stride: usize, above: &[u8], left: &[
 /// rebuilds a minimal context so the slot holds the flat
 /// `(dst, stride, bs, above, left)` signature shared with the AVX2
 /// kernel [`crate::dsp::x86_64::dc_predict_full_avx2`].
-fn scalar_dc_predict_full(
-    dst: &mut [u8],
-    stride: usize,
-    bs: usize,
-    above: &[u8],
-    left: &[u8],
-) {
+fn scalar_dc_predict_full(dst: &mut [u8], stride: usize, bs: usize, above: &[u8], left: &[u8]) {
     let ctx = crate::intra_pred::PredCtx {
         above,
         left,
@@ -230,7 +220,7 @@ fn scalar_v_predictor(dst: &mut [u8], stride: usize, bs: usize, above: &[u8]) {
 /// flat slot signature `(dst, stride, bs, left)`.
 fn scalar_h_predictor(dst: &mut [u8], stride: usize, bs: usize, left: &[u8]) {
     let ctx = crate::intra_pred::PredCtx {
-        above: &[],    // H_PRED ignores `above`.
+        above: &[], // H_PRED ignores `above`.
         left,
         above_left: 0, // H_PRED ignores `above_left`.
     };
@@ -704,8 +694,7 @@ pub struct SimdDispatch {
     /// in the decoder lifts (T-1 phase 1+). Until then this slot is
     /// reachable from unit tests only — no decoder call sites in
     /// phase 0.
-    pub(crate) highbd_idct4x4_add:
-        fn(input: &[i32; 16], dst: &mut [u16], stride: usize, bd: u32),
+    pub(crate) highbd_idct4x4_add: fn(input: &[i32; 16], dst: &mut [u16], stride: usize, bd: u32),
 
     /// G4.2 — 16×16 inverse DCT + residual add (full-density 256
     /// variant). Signature mirrors the scalar reference
@@ -778,16 +767,14 @@ pub struct SimdDispatch {
     /// CPUs this points at the safe wrapper
     /// [`crate::dsp::x86_64::iht4x4_add_avx2`]; otherwise it points at
     /// the scalar reference.
-    pub(crate) iht4x4_add:
-        fn(input: &[i32; 16], dst: &mut [u8], stride: usize, tx_type: TxType),
+    pub(crate) iht4x4_add: fn(input: &[i32; 16], dst: &mut [u8], stride: usize, tx_type: TxType),
 
     /// G4-β — 8×8 hybrid inverse transform. Signature mirrors
     /// [`crate::transforms::inverse::iht8x8_64_add`]. On x86_64 AVX2
     /// CPUs this points at the safe wrapper
     /// [`crate::dsp::x86_64::iht8x8_add_avx2`]; otherwise it points at
     /// the scalar reference.
-    pub(crate) iht8x8_add:
-        fn(input: &[i32; 64], dst: &mut [u8], stride: usize, tx_type: TxType),
+    pub(crate) iht8x8_add: fn(input: &[i32; 64], dst: &mut [u8], stride: usize, tx_type: TxType),
 
     /// Wave F F5 — 16×16 hybrid inverse transform (ADST/DCT
     /// combinations). Signature mirrors
@@ -796,8 +783,7 @@ pub struct SimdDispatch {
     /// this points at the safe wrapper
     /// [`crate::dsp::x86_64::iht16x16_add_avx2`]; otherwise it points
     /// at the scalar reference.
-    pub(crate) iht16x16_add:
-        fn(input: &[i32; 256], dst: &mut [u8], stride: usize, tx_type: TxType),
+    pub(crate) iht16x16_add: fn(input: &[i32; 256], dst: &mut [u8], stride: usize, tx_type: TxType),
 
     /// G4.3a — DC intra-predictor at `bs = 4`. Signature is the
     /// flat-arg form `(dst, stride, above, left)` (compare:
@@ -839,14 +825,8 @@ pub struct SimdDispatch {
     /// [`crate::dsp::x86_64::tm_predictor_avx2`]; otherwise it points
     /// at a thin scalar adapter that re-builds a `PredCtx`. The kernel
     /// is size-parametric on `bs ∈ {4, 8, 16, 32}`.
-    pub(crate) tm_predictor: fn(
-        dst: &mut [u8],
-        stride: usize,
-        bs: usize,
-        above: &[u8],
-        left: &[u8],
-        above_left: u8,
-    ),
+    pub(crate) tm_predictor:
+        fn(dst: &mut [u8], stride: usize, bs: usize, above: &[u8], left: &[u8], above_left: u8),
 
     /// Wave K K1 — D45_PRED directional intra-predictor (`above`-only).
     /// Flat-arg form `(dst, stride, bs, above)`; the slot fn internally
@@ -893,13 +873,8 @@ pub struct SimdDispatch {
     /// slot covers the wider sizes. The router in
     /// `crate::intra_pred::dc_predict_with_availability` picks between
     /// the two based on `bs`.
-    pub(crate) dc_predict_full: fn(
-        dst: &mut [u8],
-        stride: usize,
-        bs: usize,
-        above: &[u8],
-        left: &[u8],
-    ),
+    pub(crate) dc_predict_full:
+        fn(dst: &mut [u8], stride: usize, bs: usize, above: &[u8], left: &[u8]),
 
     /// Wave I I4 — size-parametric DC_PRED predictor (above-only).
     /// Covers the `(true, false)` availability arm. Signature is the
@@ -1282,8 +1257,7 @@ impl SimdDispatch {
         // Track T phase 0 — HBD 4×4 inverse DCT scalar reference. No
         // SIMD HBD kernels in this track; the slot is populated with
         // the scalar reference unconditionally.
-        let highbd_idct4x4_add: fn(&[i32; 16], &mut [u16], usize, u32) =
-            scalar_highbd_idct4x4_add;
+        let highbd_idct4x4_add: fn(&[i32; 16], &mut [u16], usize, u32) = scalar_highbd_idct4x4_add;
 
         // Track-T T-4 Slice 1.5 — `idct16x16_256_add` dispatch FLIPPED.
         //
@@ -1677,120 +1651,48 @@ impl SimdDispatch {
         // already H7-bisection clean (V4/H4/V8/H8). The 16-tap duals
         // remain scalar pending H4 (after H7 fixes V16). ----
         #[cfg(target_arch = "x86_64")]
-        let lpf_vertical_4_dual: fn(
-            &mut [u8],
-            usize,
-            usize,
-            u8,
-            u8,
-            u8,
-            u8,
-            u8,
-            u8,
-        ) = if caps.avx2 {
+        let lpf_vertical_4_dual: fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) = if caps.avx2
+        {
             crate::dsp::x86_64::lpf_vertical_4_dual_avx2
         } else {
             scalar_lpf_vertical_4_dual
         };
         #[cfg(not(target_arch = "x86_64"))]
-        let lpf_vertical_4_dual: fn(
-            &mut [u8],
-            usize,
-            usize,
-            u8,
-            u8,
-            u8,
-            u8,
-            u8,
-            u8,
-        ) = scalar_lpf_vertical_4_dual;
+        let lpf_vertical_4_dual: fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) =
+            scalar_lpf_vertical_4_dual;
 
         #[cfg(target_arch = "x86_64")]
-        let lpf_horizontal_4_dual: fn(
-            &mut [u8],
-            usize,
-            usize,
-            u8,
-            u8,
-            u8,
-            u8,
-            u8,
-            u8,
-        ) = if caps.avx2 {
-            crate::dsp::x86_64::lpf_horizontal_4_dual_avx2
-        } else {
-            scalar_lpf_horizontal_4_dual
-        };
+        let lpf_horizontal_4_dual: fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) =
+            if caps.avx2 {
+                crate::dsp::x86_64::lpf_horizontal_4_dual_avx2
+            } else {
+                scalar_lpf_horizontal_4_dual
+            };
         #[cfg(not(target_arch = "x86_64"))]
-        let lpf_horizontal_4_dual: fn(
-            &mut [u8],
-            usize,
-            usize,
-            u8,
-            u8,
-            u8,
-            u8,
-            u8,
-            u8,
-        ) = scalar_lpf_horizontal_4_dual;
+        let lpf_horizontal_4_dual: fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) =
+            scalar_lpf_horizontal_4_dual;
 
         #[cfg(target_arch = "x86_64")]
-        let lpf_vertical_8_dual: fn(
-            &mut [u8],
-            usize,
-            usize,
-            u8,
-            u8,
-            u8,
-            u8,
-            u8,
-            u8,
-        ) = if caps.avx2 {
+        let lpf_vertical_8_dual: fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) = if caps.avx2
+        {
             crate::dsp::x86_64::lpf_vertical_8_dual_avx2
         } else {
             scalar_lpf_vertical_8_dual
         };
         #[cfg(not(target_arch = "x86_64"))]
-        let lpf_vertical_8_dual: fn(
-            &mut [u8],
-            usize,
-            usize,
-            u8,
-            u8,
-            u8,
-            u8,
-            u8,
-            u8,
-        ) = scalar_lpf_vertical_8_dual;
+        let lpf_vertical_8_dual: fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) =
+            scalar_lpf_vertical_8_dual;
 
         #[cfg(target_arch = "x86_64")]
-        let lpf_horizontal_8_dual: fn(
-            &mut [u8],
-            usize,
-            usize,
-            u8,
-            u8,
-            u8,
-            u8,
-            u8,
-            u8,
-        ) = if caps.avx2 {
-            crate::dsp::x86_64::lpf_horizontal_8_dual_avx2
-        } else {
-            scalar_lpf_horizontal_8_dual
-        };
+        let lpf_horizontal_8_dual: fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) =
+            if caps.avx2 {
+                crate::dsp::x86_64::lpf_horizontal_8_dual_avx2
+            } else {
+                scalar_lpf_horizontal_8_dual
+            };
         #[cfg(not(target_arch = "x86_64"))]
-        let lpf_horizontal_8_dual: fn(
-            &mut [u8],
-            usize,
-            usize,
-            u8,
-            u8,
-            u8,
-            u8,
-            u8,
-            u8,
-        ) = scalar_lpf_horizontal_8_dual;
+        let lpf_horizontal_8_dual: fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) =
+            scalar_lpf_horizontal_8_dual;
 
         // 16-tap duals share a single threshold set (libvpx convention).
         // Wave H H4 promoted both to AVX2 via two-singles delegation
@@ -1825,27 +1727,15 @@ impl SimdDispatch {
         // `_mm256_sign_epi32(mag, ±1)` matches `if sign { -mag } else
         // { mag }` exactly. Scalar tail covers `< 8` remaining entries.
         #[cfg(target_arch = "x86_64")]
-        let plane_dequant_finisher: fn(
-            &[u16],
-            &[i16],
-            &[i16],
-            &[u8],
-            u32,
-            &mut [i32],
-        ) = if caps.avx2 {
-            crate::dsp::x86_64::plane_dequant_finisher_avx2
-        } else {
-            scalar_plane_dequant_finisher
-        };
+        let plane_dequant_finisher: fn(&[u16], &[i16], &[i16], &[u8], u32, &mut [i32]) =
+            if caps.avx2 {
+                crate::dsp::x86_64::plane_dequant_finisher_avx2
+            } else {
+                scalar_plane_dequant_finisher
+            };
         #[cfg(not(target_arch = "x86_64"))]
-        let plane_dequant_finisher: fn(
-            &[u16],
-            &[i16],
-            &[i16],
-            &[u8],
-            u32,
-            &mut [i32],
-        ) = scalar_plane_dequant_finisher;
+        let plane_dequant_finisher: fn(&[u16], &[i16], &[i16], &[u8], u32, &mut [i32]) =
+            scalar_plane_dequant_finisher;
 
         // ---- Wave I I5 — motion-compensation dispatch slots. Direct
         // aliases of the existing scalar `crate::inter::filter::*` fns
@@ -1925,26 +1815,54 @@ impl SimdDispatch {
         ) = crate::inter::filter::convolve8;
         // ---- Wave J J6 — AVX2 convolve8_avg_horiz promotion. ----
         #[cfg(target_arch = "x86_64")]
-        let convolve8_avg_horiz: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
-            if caps.avx2 {
-                crate::dsp::x86_64::convolve8_avg_horiz_avx2
-            } else {
-                crate::inter::filter::convolve8_avg_horiz
-            };
+        let convolve8_avg_horiz: fn(
+            &[u8],
+            usize,
+            &mut [u8],
+            usize,
+            &[i16; 8],
+            usize,
+            usize,
+        ) = if caps.avx2 {
+            crate::dsp::x86_64::convolve8_avg_horiz_avx2
+        } else {
+            crate::inter::filter::convolve8_avg_horiz
+        };
         #[cfg(not(target_arch = "x86_64"))]
-        let convolve8_avg_horiz: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
-            crate::inter::filter::convolve8_avg_horiz;
+        let convolve8_avg_horiz: fn(
+            &[u8],
+            usize,
+            &mut [u8],
+            usize,
+            &[i16; 8],
+            usize,
+            usize,
+        ) = crate::inter::filter::convolve8_avg_horiz;
         // ---- Wave J J7 — AVX2 convolve8_avg_vert promotion. ----
         #[cfg(target_arch = "x86_64")]
-        let convolve8_avg_vert: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
-            if caps.avx2 {
-                crate::dsp::x86_64::convolve8_avg_vert_avx2
-            } else {
-                crate::inter::filter::convolve8_avg_vert
-            };
+        let convolve8_avg_vert: fn(
+            &[u8],
+            usize,
+            &mut [u8],
+            usize,
+            &[i16; 8],
+            usize,
+            usize,
+        ) = if caps.avx2 {
+            crate::dsp::x86_64::convolve8_avg_vert_avx2
+        } else {
+            crate::inter::filter::convolve8_avg_vert
+        };
         #[cfg(not(target_arch = "x86_64"))]
-        let convolve8_avg_vert: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
-            crate::inter::filter::convolve8_avg_vert;
+        let convolve8_avg_vert: fn(
+            &[u8],
+            usize,
+            &mut [u8],
+            usize,
+            &[i16; 8],
+            usize,
+            usize,
+        ) = crate::inter::filter::convolve8_avg_vert;
         // ---- Wave J J8 — AVX2 convolve8_avg (full 2-D) promotion. ----
         #[cfg(target_arch = "x86_64")]
         let convolve8_avg: fn(
@@ -2231,9 +2149,7 @@ impl SimdDispatch {
     /// (which takes a `PredCtx`).
     #[inline]
     #[must_use]
-    pub fn tm_predictor(
-        &self,
-    ) -> fn(&mut [u8], usize, usize, &[u8], &[u8], u8) {
+    pub fn tm_predictor(&self) -> fn(&mut [u8], usize, usize, &[u8], &[u8], u8) {
         self.tm_predictor
     }
 
@@ -2390,9 +2306,7 @@ impl SimdDispatch {
     /// at H1 close; H2 fills with AVX2.
     #[inline]
     #[must_use]
-    pub fn lpf_vertical_4_dual(
-        &self,
-    ) -> fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) {
+    pub fn lpf_vertical_4_dual(&self) -> fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) {
         self.lpf_vertical_4_dual
     }
 
@@ -2400,9 +2314,7 @@ impl SimdDispatch {
     /// at H1 close; H2 fills with AVX2.
     #[inline]
     #[must_use]
-    pub fn lpf_horizontal_4_dual(
-        &self,
-    ) -> fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) {
+    pub fn lpf_horizontal_4_dual(&self) -> fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) {
         self.lpf_horizontal_4_dual
     }
 
@@ -2410,9 +2322,7 @@ impl SimdDispatch {
     /// at H1 close; H3 fills with AVX2.
     #[inline]
     #[must_use]
-    pub fn lpf_vertical_8_dual(
-        &self,
-    ) -> fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) {
+    pub fn lpf_vertical_8_dual(&self) -> fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) {
         self.lpf_vertical_8_dual
     }
 
@@ -2420,9 +2330,7 @@ impl SimdDispatch {
     /// at H1 close; H3 fills with AVX2.
     #[inline]
     #[must_use]
-    pub fn lpf_horizontal_8_dual(
-        &self,
-    ) -> fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) {
+    pub fn lpf_horizontal_8_dual(&self) -> fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) {
         self.lpf_horizontal_8_dual
     }
 
@@ -2449,9 +2357,7 @@ impl SimdDispatch {
     /// when `caps.avx2`, scalar reference otherwise.
     #[inline]
     #[must_use]
-    pub fn plane_dequant_finisher(
-        &self,
-    ) -> fn(&[u16], &[i16], &[i16], &[u8], u32, &mut [i32]) {
+    pub fn plane_dequant_finisher(&self) -> fn(&[u16], &[i16], &[i16], &[u8], u32, &mut [i32]) {
         self.plane_dequant_finisher
     }
 
@@ -2477,9 +2383,7 @@ impl SimdDispatch {
     /// Scalar only at I5; AVX2 promotion deferred to Wave J.
     #[inline]
     #[must_use]
-    pub fn convolve8_horiz(
-        &self,
-    ) -> fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) {
+    pub fn convolve8_horiz(&self) -> fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) {
         self.convolve8_horiz
     }
 
@@ -2487,9 +2391,7 @@ impl SimdDispatch {
     /// Scalar only at I5; AVX2 promotion deferred to Wave J.
     #[inline]
     #[must_use]
-    pub fn convolve8_vert(
-        &self,
-    ) -> fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) {
+    pub fn convolve8_vert(&self) -> fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) {
         self.convolve8_vert
     }
 
@@ -2772,8 +2674,7 @@ mod tests {
         caps.avx2 = false;
         caps.sse2 = true;
         let d = SimdDispatch::build(caps);
-        let sse2: fn(&[i32; 256], &mut [u8], usize) =
-            crate::dsp::x86_64::idct16x16_add_sse2_256;
+        let sse2: fn(&[i32; 256], &mut [u8], usize) = crate::dsp::x86_64::idct16x16_add_sse2_256;
         assert_eq!(
             d.idct16x16_add() as usize,
             sse2 as usize,
@@ -2892,8 +2793,7 @@ mod tests {
         assert_eq!(d_scalar.idct32x32_135_add() as usize, scalar_135 as usize);
 
         // sse2=true → SSE2 wrappers (NOT the scalar pointers).
-        let sse2_34: fn(&[i32; 1024], &mut [u8], usize) =
-            crate::dsp::x86_64::idct32x32_add_sse2_34;
+        let sse2_34: fn(&[i32; 1024], &mut [u8], usize) = crate::dsp::x86_64::idct32x32_add_sse2_34;
         let sse2_135: fn(&[i32; 1024], &mut [u8], usize) =
             crate::dsp::x86_64::idct32x32_add_sse2_135;
         let mut caps_sse2 = detect();
@@ -2996,10 +2896,8 @@ mod tests {
             crate::transforms::inverse::idct16x16_10_add;
         let scalar_38: fn(&[i32; 256], &mut [u8], usize) =
             crate::transforms::inverse::idct16x16_38_add;
-        let sse2_10: fn(&[i32; 256], &mut [u8], usize) =
-            crate::dsp::x86_64::idct16x16_add_sse2_10;
-        let sse2_38: fn(&[i32; 256], &mut [u8], usize) =
-            crate::dsp::x86_64::idct16x16_add_sse2_38;
+        let sse2_10: fn(&[i32; 256], &mut [u8], usize) = crate::dsp::x86_64::idct16x16_add_sse2_10;
+        let sse2_38: fn(&[i32; 256], &mut [u8], usize) = crate::dsp::x86_64::idct16x16_add_sse2_38;
 
         // SSE2 caps → SSE2 wrapper installed (NOT scalar).
         let mut caps = detect();
@@ -3079,8 +2977,7 @@ mod tests {
         let d = SimdDispatch::build(caps);
         // Fn-pointer-identity check: AVX2 caps must install the AVX2
         // safe wrapper.
-        let avx2_fp: fn(&mut [u8], usize, usize, &[u8]) =
-            crate::dsp::x86_64::v_predictor_avx2;
+        let avx2_fp: fn(&mut [u8], usize, usize, &[u8]) = crate::dsp::x86_64::v_predictor_avx2;
         assert_eq!(
             d.v_predictor() as usize,
             avx2_fp as usize,
@@ -3095,7 +2992,10 @@ mod tests {
             let mut dst_scalar = vec![0u8; bs * bs];
             (d.v_predictor())(&mut dst_slot, bs, bs, &above);
             scalar(&mut dst_scalar, bs, bs, &above);
-            assert_eq!(dst_slot, dst_scalar, "v_predictor parity mismatch at bs={bs}");
+            assert_eq!(
+                dst_slot, dst_scalar,
+                "v_predictor parity mismatch at bs={bs}"
+            );
         }
     }
 
@@ -3133,8 +3033,7 @@ mod tests {
         let d = SimdDispatch::build(caps);
         // Fn-pointer-identity check: AVX2 caps must install the AVX2
         // safe wrapper.
-        let avx2_fp: fn(&mut [u8], usize, usize, &[u8]) =
-            crate::dsp::x86_64::h_predictor_avx2;
+        let avx2_fp: fn(&mut [u8], usize, usize, &[u8]) = crate::dsp::x86_64::h_predictor_avx2;
         assert_eq!(
             d.h_predictor() as usize,
             avx2_fp as usize,
@@ -3149,7 +3048,10 @@ mod tests {
             let mut dst_scalar = vec![0u8; bs * bs];
             (d.h_predictor())(&mut dst_slot, bs, bs, &left);
             scalar(&mut dst_scalar, bs, bs, &left);
-            assert_eq!(dst_slot, dst_scalar, "h_predictor parity mismatch at bs={bs}");
+            assert_eq!(
+                dst_slot, dst_scalar,
+                "h_predictor parity mismatch at bs={bs}"
+            );
         }
     }
 
@@ -3243,7 +3145,10 @@ mod tests {
             ),
         ];
         for &(slot, avx2_fp, scalar_fp, name) in cases4 {
-            assert_eq!(slot as usize, avx2_fp as usize, "avx2=true must install {name}_avx2");
+            assert_eq!(
+                slot as usize, avx2_fp as usize,
+                "avx2=true must install {name}_avx2"
+            );
             assert_ne!(
                 slot as usize, scalar_fp as usize,
                 "avx2=true must NOT install scalar {name}"
@@ -3272,7 +3177,10 @@ mod tests {
             ),
         ];
         for &(slot, avx2_fp, scalar_fp, name) in cases6 {
-            assert_eq!(slot as usize, avx2_fp as usize, "avx2=true must install {name}_avx2");
+            assert_eq!(
+                slot as usize, avx2_fp as usize,
+                "avx2=true must install {name}_avx2"
+            );
             assert_ne!(
                 slot as usize, scalar_fp as usize,
                 "avx2=true must NOT install scalar {name}"
@@ -3587,15 +3495,27 @@ mod tests {
     #[test]
     fn parse_lpf_avx2_mask_grammar() {
         // Unset / empty -> DEFAULT (all 6 kernels post-H7 fix)
-        assert_eq!(super::parse_lpf_avx2_mask(None), super::LpfAvx2Mask::DEFAULT);
-        assert_eq!(super::parse_lpf_avx2_mask(Some("")), super::LpfAvx2Mask::DEFAULT);
+        assert_eq!(
+            super::parse_lpf_avx2_mask(None),
+            super::LpfAvx2Mask::DEFAULT
+        );
+        assert_eq!(
+            super::parse_lpf_avx2_mask(Some("")),
+            super::LpfAvx2Mask::DEFAULT
+        );
         // DEFAULT == ALL post-H7 — keep the bisection grammar intact
         // for future SIMD work even though the gate is now a no-op.
         assert_eq!(super::LpfAvx2Mask::DEFAULT, super::LpfAvx2Mask::ALL);
         // "0" -> NONE
-        assert_eq!(super::parse_lpf_avx2_mask(Some("0")), super::LpfAvx2Mask::NONE);
+        assert_eq!(
+            super::parse_lpf_avx2_mask(Some("0")),
+            super::LpfAvx2Mask::NONE
+        );
         // "1" -> ALL
-        assert_eq!(super::parse_lpf_avx2_mask(Some("1")), super::LpfAvx2Mask::ALL);
+        assert_eq!(
+            super::parse_lpf_avx2_mask(Some("1")),
+            super::LpfAvx2Mask::ALL
+        );
         // Comma list: only listed kernels.
         let m = super::parse_lpf_avx2_mask(Some("v4,h4"));
         assert!(m.contains(super::LpfAvx2Mask::V4));
@@ -3847,16 +3767,8 @@ mod tests {
         let mut caps = detect();
         caps.avx2 = true;
         let d = SimdDispatch::build(caps);
-        let avx2_fp: fn(
-            &[u8],
-            usize,
-            &mut [u8],
-            usize,
-            &[i16; 8],
-            &[i16; 8],
-            usize,
-            usize,
-        ) = crate::dsp::x86_64::convolve8_avx2;
+        let avx2_fp: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], &[i16; 8], usize, usize) =
+            crate::dsp::x86_64::convolve8_avx2;
         assert_eq!(
             d.convolve8() as usize,
             avx2_fp as usize,
@@ -3872,16 +3784,8 @@ mod tests {
         let mut caps = detect();
         caps.avx2 = false;
         let d = SimdDispatch::build(caps);
-        let scalar: fn(
-            &[u8],
-            usize,
-            &mut [u8],
-            usize,
-            &[i16; 8],
-            &[i16; 8],
-            usize,
-            usize,
-        ) = crate::inter::filter::convolve8;
+        let scalar: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], &[i16; 8], usize, usize) =
+            crate::inter::filter::convolve8;
         assert_eq!(
             d.convolve8() as usize,
             scalar as usize,
@@ -3974,16 +3878,8 @@ mod tests {
         let mut caps = detect();
         caps.avx2 = true;
         let d = SimdDispatch::build(caps);
-        let avx2_fp: fn(
-            &[u8],
-            usize,
-            &mut [u8],
-            usize,
-            &[i16; 8],
-            &[i16; 8],
-            usize,
-            usize,
-        ) = crate::dsp::x86_64::convolve8_avg_avx2;
+        let avx2_fp: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], &[i16; 8], usize, usize) =
+            crate::dsp::x86_64::convolve8_avg_avx2;
         assert_eq!(
             d.convolve8_avg() as usize,
             avx2_fp as usize,
@@ -3999,16 +3895,8 @@ mod tests {
         let mut caps = detect();
         caps.avx2 = false;
         let d = SimdDispatch::build(caps);
-        let scalar: fn(
-            &[u8],
-            usize,
-            &mut [u8],
-            usize,
-            &[i16; 8],
-            &[i16; 8],
-            usize,
-            usize,
-        ) = crate::inter::filter::convolve8_avg;
+        let scalar: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], &[i16; 8], usize, usize) =
+            crate::inter::filter::convolve8_avg;
         assert_eq!(
             d.convolve8_avg() as usize,
             scalar as usize,
@@ -4075,7 +3963,7 @@ mod tests {
     fn inter_predictor_unscaled_routes_through_dispatch_convolve_copy() {
         use crate::bitstream::frame::InterpFilter;
         use crate::inter::filter::convolve_copy;
-        use crate::inter::scale::{inter_predictor, ScaleFactors};
+        use crate::inter::scale::{ScaleFactors, inter_predictor};
 
         // 16x16 src with a deterministic ramp; identity scale, zero
         // subpel offsets, no compound avg ⇒ the (false, false, false)

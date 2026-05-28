@@ -41,8 +41,8 @@
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
-    _mm256_loadu_si256, _mm256_storeu_si256, _mm_loadl_epi64, _mm_loadu_si128, _mm_storel_epi64,
-    _mm_storeu_si128,
+    _mm_loadl_epi64, _mm_loadu_si128, _mm_storel_epi64, _mm_storeu_si128, _mm256_loadu_si256,
+    _mm256_storeu_si256,
 };
 
 /// AVX2 implementation of the size-parametric V_PRED intra-predictor.
@@ -147,7 +147,7 @@ mod tests {
     //! sweep every `bs ∈ {4, 8, 16, 32}` with deterministic LCG-seeded
     //! random `above` rows, plus a dispatch round-trip guard.
     use super::v_predictor_avx2;
-    use crate::intra_pred::{v_predictor, PredCtx};
+    use crate::intra_pred::{PredCtx, v_predictor};
 
     macro_rules! require_avx2 {
         () => {
@@ -227,8 +227,8 @@ mod tests {
     #[test]
     fn dispatch_round_trip() {
         require_avx2!();
-        use crate::dsp::caps::detect;
         use crate::dsp::SimdDispatch;
+        use crate::dsp::caps::detect;
 
         let mut caps_avx2 = detect();
         caps_avx2.avx2 = true;
@@ -240,14 +240,15 @@ mod tests {
 
         for bs in [4usize, 8, 16, 32] {
             // Deterministic input — `above[i] = i*7 + bs as u8`.
-            let above: Vec<u8> = (0..bs)
-                .map(|i| (i as u32 * 7 + bs as u32) as u8)
-                .collect();
+            let above: Vec<u8> = (0..bs).map(|i| (i as u32 * 7 + bs as u32) as u8).collect();
             let mut dst_avx2 = vec![0u8; bs * bs];
             let mut dst_scalar = vec![0u8; bs * bs];
             (dispatch_avx2.v_predictor())(&mut dst_avx2, bs, bs, &above);
             (dispatch_scalar.v_predictor())(&mut dst_scalar, bs, bs, &above);
-            assert_eq!(dst_avx2, dst_scalar, "dispatch round-trip mismatch at bs={bs}");
+            assert_eq!(
+                dst_avx2, dst_scalar,
+                "dispatch round-trip mismatch at bs={bs}"
+            );
         }
     }
 

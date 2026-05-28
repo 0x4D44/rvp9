@@ -59,14 +59,7 @@ pub fn lpf_vertical_4_dual_avx2(
     // exactly. The single AVX2 wrapper carries its own SAFETY note
     // (caps invariant via dispatch OnceLock + scalar bounds contract).
     lpf_vertical_4_avx2(pixels, s_index, pitch, blimit0, limit0, thresh0);
-    lpf_vertical_4_avx2(
-        pixels,
-        s_index + 8 * pitch,
-        pitch,
-        blimit1,
-        limit1,
-        thresh1,
-    );
+    lpf_vertical_4_avx2(pixels, s_index + 8 * pitch, pitch, blimit1, limit1, thresh1);
 }
 
 // Miri cannot interpret AVX2 intrinsics, so this tests module is
@@ -115,7 +108,15 @@ mod tests {
         let mut scalar = buf.to_vec();
         let mut avx2 = buf.to_vec();
         lpf_vertical_4_dual(
-            &mut scalar, s_index, pitch, blimit0, limit0, thresh0, blimit1, limit1, thresh1,
+            &mut scalar,
+            s_index,
+            pitch,
+            blimit0,
+            limit0,
+            thresh0,
+            blimit1,
+            limit1,
+            thresh1,
         );
         lpf_vertical_4_dual_avx2(
             &mut avx2, s_index, pitch, blimit0, limit0, thresh0, blimit1, limit1, thresh1,
@@ -187,8 +188,8 @@ mod tests {
     #[test]
     fn dispatch_round_trip() {
         require_avx2!();
-        use crate::dsp::caps::detect;
         use crate::dsp::SimdDispatch;
+        use crate::dsp::caps::detect;
 
         let mut caps = detect();
         caps.avx2 = true;

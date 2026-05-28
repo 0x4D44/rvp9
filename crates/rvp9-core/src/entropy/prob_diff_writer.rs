@@ -28,8 +28,8 @@
 //! skip that — the encoder above us has already decided which
 //! probs it wants to change.
 
-use super::diff_update::{DIFF_UPDATE_PROB, MAX_PROB};
 use super::BoolWriter;
+use super::diff_update::{DIFF_UPDATE_PROB, MAX_PROB};
 
 /// Forward permutation — encoder-side analogue of
 /// [`super::diff_update::INV_MAP_TABLE`]. `MAP_TABLE[i] = j` iff
@@ -176,8 +176,8 @@ pub fn cond_prob_diff_update(w: &mut BoolWriter<'_>, oldp: &mut u8, newp: u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entropy::diff_update::{diff_update_prob, inv_remap_prob};
     use crate::entropy::BoolReader;
+    use crate::entropy::diff_update::{diff_update_prob, inv_remap_prob};
 
     fn build_bitstream<F>(f: F) -> Vec<u8>
     where

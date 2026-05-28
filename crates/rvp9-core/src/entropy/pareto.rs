@@ -312,7 +312,10 @@ mod tests {
         // pivot = 2 — verifiable directly against libvpx :114.
         assert_eq!(VP9_PARETO8_FULL[1], [6, 86, 128, 11, 87, 42, 91, 52]);
         // pivot = 255 (libvpx :367).
-        assert_eq!(VP9_PARETO8_FULL[254], [255, 246, 247, 255, 239, 255, 253, 255]);
+        assert_eq!(
+            VP9_PARETO8_FULL[254],
+            [255, 246, 247, 255, 239, 255, 253, 255]
+        );
     }
 
     /// Per libvpx comment (`vp9_entropy.c:108-111`): every odd line is
@@ -335,9 +338,7 @@ mod tests {
             let prev = &VP9_PARETO8_FULL[odd_i - 1];
             let cur = &VP9_PARETO8_FULL[odd_i];
             let next = &VP9_PARETO8_FULL[odd_i + 1];
-            for (((&p, &c), &n), node) in
-                prev.iter().zip(cur.iter()).zip(next.iter()).zip(0..)
-            {
+            for (((&p, &c), &n), node) in prev.iter().zip(cur.iter()).zip(next.iter()).zip(0..) {
                 let expected = (p as u16 + n as u16) >> 1;
                 assert_eq!(
                     c as u16, expected,

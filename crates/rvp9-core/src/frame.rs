@@ -258,9 +258,8 @@ impl Yv12Buffer {
         let y_pad_after = pad_after(yplane_size, align);
         let uv_pad_after = pad_after(uvplane_size, align);
         let total = yplane_size + y_pad_after + uvplane_size + uv_pad_after + uvplane_size;
-        let total_usize = usize::try_from(total).map_err(|_| {
-            FrameAllocError::DimensionsTooLarge { width, height }
-        })?;
+        let total_usize = usize::try_from(total)
+            .map_err(|_| FrameAllocError::DimensionsTooLarge { width, height })?;
 
         // Allocate zeroed.
         let buffer_alloc: Box<[u8]> = vec![0u8; total_usize].into_boxed_slice();
@@ -940,8 +939,7 @@ impl Yv12ScratchPool {
                 // tests can detect non-zero allocs on the hot
                 // path post-warmup.
                 let fresh = template.clone_geometry()?;
-                RVP9_G5_2_SCRATCH_ALLOCS
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                RVP9_G5_2_SCRATCH_ALLOCS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 out.push(fresh);
             }
         }
@@ -1184,7 +1182,10 @@ impl core::fmt::Display for FramePoolError {
         match self {
             Self::NoFreeSlot => f.write_str("no free frame-pool slot available"),
             Self::SlotOutOfRange { slot } => {
-                write!(f, "frame-pool slot {slot} out of range (0..{DECODER_FRAME_BUFFERS})")
+                write!(
+                    f,
+                    "frame-pool slot {slot} out of range (0..{DECODER_FRAME_BUFFERS})"
+                )
             }
         }
     }
@@ -1944,7 +1945,9 @@ mod tests {
         let ptr_before_recycle = Arc::as_ptr(&external[3]);
         external.swap_remove(3);
         let new_frame = make_frame(16, 16);
-        let slot = pool.acquire_free(new_frame.clone()).expect("recycles slot 3");
+        let slot = pool
+            .acquire_free(new_frame.clone())
+            .expect("recycles slot 3");
         assert_eq!(slot, 3);
         // The replaced slot now holds the new Arc, not the old.
         assert!(Arc::ptr_eq(&pool.get(3).unwrap(), &new_frame));
@@ -2046,7 +2049,12 @@ mod tests {
 
         let border = b.border() as i32;
         // Sample 4 corners of each border ring.
-        for &(r, c) in &[(-border, -border), (-1, -1), (47, 64), (47 + border - 1, 64 + border - 1)] {
+        for &(r, c) in &[
+            (-border, -border),
+            (-1, -1),
+            (47, 64),
+            (47 + border - 1, 64 + border - 1),
+        ] {
             assert_eq!(read_y_at(&b, r, c), 128, "Y at ({r},{c})");
         }
         let uv_border = (b.border() >> 1) as i32; // 4:2:0
@@ -2228,11 +2236,17 @@ mod tests {
         // Copy a's visible region into b before extension (so
         // border bytes start matching post-extend a).
         for r in 0..32 {
-            b.y_plane_mut().row_mut(r).copy_from_slice(a.y_plane().row(r));
+            b.y_plane_mut()
+                .row_mut(r)
+                .copy_from_slice(a.y_plane().row(r));
         }
         for r in 0..16 {
-            b.u_plane_mut().row_mut(r).copy_from_slice(a.u_plane().row(r));
-            b.v_plane_mut().row_mut(r).copy_from_slice(a.v_plane().row(r));
+            b.u_plane_mut()
+                .row_mut(r)
+                .copy_from_slice(a.u_plane().row(r));
+            b.v_plane_mut()
+                .row_mut(r)
+                .copy_from_slice(a.v_plane().row(r));
         }
         a.extend_borders();
         b.extend_borders();
@@ -2262,7 +2276,7 @@ mod tests {
         // whose 8-tap halo reads 3 pixels into the left border must
         // produce the same output as the same convolve on a manually
         // edge-replicated reference. Uses the C.1 scalar 8-tap kernel.
-        use crate::inter::filter::{convolve8_horiz, EIGHTTAP_KERNEL};
+        use crate::inter::filter::{EIGHTTAP_KERNEL, convolve8_horiz};
 
         let w = 16usize;
         let h = 8usize;
@@ -2428,7 +2442,8 @@ mod tests {
     #[test]
     fn clone_geometry_matches_source_dimensions() {
         let src = Yv12Buffer::alloc(
-            128, 96,
+            128,
+            96,
             ChromaFormat::Yuv420,
             BorderUsage::Decoder,
             ByteAlignment::Legacy,
@@ -2451,7 +2466,8 @@ mod tests {
         // [0, 64) and [64, 128). Build a fresh dst, merge each range
         // and confirm bytes round-trip.
         let mut src_a = Yv12Buffer::alloc(
-            128, 64,
+            128,
+            64,
             ChromaFormat::Yuv420,
             BorderUsage::Decoder,
             ByteAlignment::Legacy,
@@ -3032,7 +3048,13 @@ mod tests {
     /// `FrameAllocError::Display` covers each variant's branch.
     #[test]
     fn frame_alloc_error_display_each_variant() {
-        let s_empty = format!("{}", FrameAllocError::EmptyDimensions { width: 0, height: 240 });
+        let s_empty = format!(
+            "{}",
+            FrameAllocError::EmptyDimensions {
+                width: 0,
+                height: 240
+            }
+        );
         assert!(s_empty.contains("empty"));
         assert!(s_empty.contains("0"));
         let s_large = format!(

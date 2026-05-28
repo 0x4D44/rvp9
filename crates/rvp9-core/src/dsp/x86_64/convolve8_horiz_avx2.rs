@@ -67,12 +67,12 @@
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
-    __m128i, __m256i, _mm256_add_epi16, _mm256_adds_epi16, _mm256_castsi128_si256,
+    __m128i, __m256i, _mm_add_epi16, _mm_adds_epi16, _mm_cvtsi128_si32, _mm_loadu_si128,
+    _mm_maddubs_epi16, _mm_packus_epi16, _mm_set1_epi16, _mm_setr_epi8, _mm_shuffle_epi8,
+    _mm_srai_epi16, _mm_storel_epi64, _mm256_add_epi16, _mm256_adds_epi16, _mm256_castsi128_si256,
     _mm256_castsi256_si128, _mm256_extracti128_si256, _mm256_inserti128_si256,
     _mm256_maddubs_epi16, _mm256_packus_epi16, _mm256_set1_epi16, _mm256_shuffle_epi8,
-    _mm256_srai_epi16, _mm_add_epi16, _mm_adds_epi16, _mm_cvtsi128_si32, _mm_loadu_si128,
-    _mm_maddubs_epi16, _mm_packus_epi16, _mm_set1_epi16, _mm_setr_epi8, _mm_shuffle_epi8,
-    _mm_srai_epi16, _mm_storel_epi64,
+    _mm256_srai_epi16,
 };
 
 /// Pack two adjacent filter taps into the replicated i8-pair form
@@ -148,10 +148,18 @@ unsafe fn convolve8_8x2(
 ) -> __m256i {
     // Shuffle masks replicated across both 128-bit lanes — the same
     // four tap-pair gathers used by `convolve8_8`, broadcast.
-    let m01 = bcast_mask(_mm_setr_epi8(0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8));
-    let m23 = bcast_mask(_mm_setr_epi8(2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10));
-    let m45 = bcast_mask(_mm_setr_epi8(4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12));
-    let m67 = bcast_mask(_mm_setr_epi8(6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 14));
+    let m01 = bcast_mask(_mm_setr_epi8(
+        0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8,
+    ));
+    let m23 = bcast_mask(_mm_setr_epi8(
+        2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10,
+    ));
+    let m45 = bcast_mask(_mm_setr_epi8(
+        4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12,
+    ));
+    let m67 = bcast_mask(_mm_setr_epi8(
+        6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 14,
+    ));
 
     let x0 = _mm256_maddubs_epi16(_mm256_shuffle_epi8(s, m01), f01);
     let x1 = _mm256_maddubs_epi16(_mm256_shuffle_epi8(s, m23), f23);
@@ -405,8 +413,8 @@ mod tests {
     //! Scalar-vs-AVX2 differential tests for `convolve8_horiz_avx2`.
     use super::convolve8_horiz_avx2;
     use crate::inter::filter::{
-        convolve8_horiz, BILINEAR_KERNEL, EIGHTTAP_KERNEL, EIGHTTAP_SHARP_KERNEL,
-        EIGHTTAP_SMOOTH_KERNEL,
+        BILINEAR_KERNEL, EIGHTTAP_KERNEL, EIGHTTAP_SHARP_KERNEL, EIGHTTAP_SMOOTH_KERNEL,
+        convolve8_horiz,
     };
 
     macro_rules! require_avx2 {
@@ -469,7 +477,15 @@ mod tests {
                         }
                         let mut dst_scalar = vec![0u8; dst_len];
                         let mut dst_avx2 = vec![0u8; dst_len];
-                        convolve8_horiz(&src, src_stride, &mut dst_scalar, dst_stride, filter, w, h);
+                        convolve8_horiz(
+                            &src,
+                            src_stride,
+                            &mut dst_scalar,
+                            dst_stride,
+                            filter,
+                            w,
+                            h,
+                        );
                         convolve8_horiz_avx2(
                             &src,
                             src_stride,
@@ -573,9 +589,7 @@ mod tests {
                     let mut dst_scalar = vec![0u8; dst_len];
                     let mut dst_avx2 = vec![0u8; dst_len];
                     convolve8_horiz(&src, src_stride, &mut dst_scalar, dst_stride, filter, w, h);
-                    convolve8_horiz_avx2(
-                        &src, src_stride, &mut dst_avx2, dst_stride, filter, w, h,
-                    );
+                    convolve8_horiz_avx2(&src, src_stride, &mut dst_avx2, dst_stride, filter, w, h);
                     assert_eq!(
                         dst_scalar, dst_avx2,
                         "mismatch w={w} h={h} src_stride={src_stride} r={r} filter={filter:?}"
@@ -602,7 +616,11 @@ mod tests {
         let mut dst = vec![0u8; w];
         convolve8_horiz_avx2(&src, w + 7, &mut dst, w, filter, w, h);
         // Output must not equal src[3..3+w] (the integer-pel passthrough).
-        assert_ne!(&dst[..], &src[3..3 + w], "half-pel filter must blur the ramp");
+        assert_ne!(
+            &dst[..],
+            &src[3..3 + w],
+            "half-pel filter must blur the ramp"
+        );
     }
 
     /// Round-trip through SimdDispatch with forced-AVX2 and
@@ -610,8 +628,8 @@ mod tests {
     #[test]
     fn dispatch_round_trip() {
         require_avx2!();
-        use crate::dsp::caps::detect;
         use crate::dsp::SimdDispatch;
+        use crate::dsp::caps::detect;
 
         let mut caps_avx2 = detect();
         caps_avx2.avx2 = true;
@@ -633,7 +651,10 @@ mod tests {
             let mut dst_scalar = vec![0u8; h * w];
             (d_avx2.convolve8_horiz())(&src, stride, &mut dst_avx2, w, filter, w, h);
             (d_scalar.convolve8_horiz())(&src, stride, &mut dst_scalar, w, filter, w, h);
-            assert_eq!(dst_avx2, dst_scalar, "dispatch round-trip mismatch w={w} h={h}");
+            assert_eq!(
+                dst_avx2, dst_scalar,
+                "dispatch round-trip mismatch w={w} h={h}"
+            );
         }
     }
 }

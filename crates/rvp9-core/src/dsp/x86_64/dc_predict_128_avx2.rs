@@ -31,7 +31,7 @@
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
-    _mm256_set1_epi8, _mm256_storeu_si256, _mm_set1_epi8, _mm_storel_epi64, _mm_storeu_si128,
+    _mm_set1_epi8, _mm_storel_epi64, _mm_storeu_si128, _mm256_set1_epi8, _mm256_storeu_si256,
 };
 
 /// AVX2 implementation of DC_128 — fill a `bs × bs` block with 128.
@@ -55,10 +55,7 @@ unsafe fn dc_predict_128_avx2_inner(dst: &mut [u8], stride: usize, bs: usize) {
         4 => {
             let row: u32 = 0x8080_8080; // 128 broadcast across 4 bytes
             for r in 0..4 {
-                core::ptr::write_unaligned(
-                    dst.as_mut_ptr().add(r * stride) as *mut u32,
-                    row,
-                );
+                core::ptr::write_unaligned(dst.as_mut_ptr().add(r * stride) as *mut u32, row);
             }
         }
         8 => {
@@ -169,8 +166,8 @@ mod tests {
     #[test]
     fn dispatch_round_trip() {
         require_avx2!();
-        use crate::dsp::caps::detect;
         use crate::dsp::SimdDispatch;
+        use crate::dsp::caps::detect;
 
         let mut caps_avx2 = detect();
         caps_avx2.avx2 = true;

@@ -68,8 +68,7 @@ pub fn rd_cost(rd_mult: u32, rate: u32, dist: u32) -> i64 {
     // caller plumbs in a bogus rate × mult product).
     let r_rm = (rate as i64).saturating_mul(rd_mult as i64);
     // ROUND_POWER_OF_TWO(r_rm, 9).
-    let rate_term =
-        (r_rm + (1i64 << (VP9_PROB_COST_SHIFT - 1))) >> VP9_PROB_COST_SHIFT;
+    let rate_term = (r_rm + (1i64 << (VP9_PROB_COST_SHIFT - 1))) >> VP9_PROB_COST_SHIFT;
     // D << 7 (dist is u32 → i64 cast is exact).
     let dist_term = (dist as i64) << RDDIV_BITS;
     rate_term + dist_term

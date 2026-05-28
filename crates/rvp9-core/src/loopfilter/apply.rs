@@ -424,8 +424,7 @@ pub unsafe fn run_split_edge_lf_worker(
 ) {
     // Per-worker scratch, allocated once per invocation and reused
     // across every row the worker claims (HLD §10 #6).
-    let mut row_lfm: Vec<LoopFilterMask> =
-        vec![LoopFilterMask::default(); state.sb_cols];
+    let mut row_lfm: Vec<LoopFilterMask> = vec![LoopFilterMask::default(); state.sb_cols];
 
     let chroma = state.shared.chroma;
     let y_stride = state.shared.y_stride;
@@ -515,9 +514,7 @@ pub unsafe fn run_split_edge_lf_worker(
                 //   (and libvpx C is the load-bearing reference).
                 let prev = &state.cur_sb_col[r - 1];
                 let required = c + nsync;
-                spin_then_yield_wavefront(|| {
-                    prev.load(Ordering::Acquire) >= required
-                });
+                spin_then_yield_wavefront(|| prev.load(Ordering::Acquire) >= required);
             }
 
             // Apply the per-SB unit (Y V+H, then U V+H, then V V+H).
@@ -548,9 +545,7 @@ pub unsafe fn run_split_edge_lf_worker(
                 // libvpx writes a sentinel high value so the next row's
                 // wavefront gate trivially passes for the remainder of
                 // its columns.
-                state
-                    .cur_sb_col[r]
-                    .store(sb_cols_i + nsync, Ordering::Release);
+                state.cur_sb_col[r].store(sb_cols_i + nsync, Ordering::Release);
             } else if (c & nsync_mask) == nsync_mask {
                 state.cur_sb_col[r].store(c, Ordering::Release);
             }
@@ -755,17 +750,8 @@ pub fn loop_filter_frame_with_non420(
         // call only.
         unsafe {
             loop_filter_sb_row(
-                &shared,
-                lfm_grid,
-                lfm_stride,
-                sb_row,
-                mi_row,
-                sb_cols,
-                mi_rows,
-                mi_cols,
-                info,
-                non420,
-                dispatch,
+                &shared, lfm_grid, lfm_stride, sb_row, mi_row, sb_cols, mi_rows, mi_cols, info,
+                non420, dispatch,
             );
         }
     }
@@ -825,32 +811,15 @@ pub unsafe fn loop_filter_sb_row(
     // SAFETY: contract on this function; serial path holds the unique
     // borrow on the underlying `Yv12Buffer`. The slices are scoped to the
     // body of this function — no other reference to the planes can exist.
-    let (y_data, u_data, v_data) = unsafe {
-        (
-            shared.y_slice(),
-            shared.u_slice(),
-            shared.v_slice(),
-        )
-    };
+    let (y_data, u_data, v_data) =
+        unsafe { (shared.y_slice(), shared.u_slice(), shared.v_slice()) };
     for sb_col in 0..sb_cols {
         let mi_col = sb_col * MI_BLOCK_SIZE;
         let lfm = &lfm_grid[sb_row * lfm_stride + sb_col];
 
         apply_one_sb_inner(
-            chroma,
-            y_data,
-            y_stride,
-            u_data,
-            v_data,
-            uv_stride,
-            lfm,
-            mi_row,
-            mi_col,
-            mi_rows,
-            mi_cols,
-            info,
-            non420,
-            dispatch,
+            chroma, y_data, y_stride, u_data, v_data, uv_stride, lfm, mi_row, mi_col, mi_rows,
+            mi_cols, info, non420, dispatch,
         );
     }
 }
@@ -894,28 +863,11 @@ pub unsafe fn apply_one_sb(
     let uv_stride = shared.uv_stride;
     // SAFETY: caller contract guarantees no overlapping write in this
     // SB's pixel rectangle. Slices are scoped to this function body.
-    let (y_data, u_data, v_data) = unsafe {
-        (
-            shared.y_slice(),
-            shared.u_slice(),
-            shared.v_slice(),
-        )
-    };
+    let (y_data, u_data, v_data) =
+        unsafe { (shared.y_slice(), shared.u_slice(), shared.v_slice()) };
     apply_one_sb_inner(
-        chroma,
-        y_data,
-        y_stride,
-        u_data,
-        v_data,
-        uv_stride,
-        lfm,
-        mi_row,
-        mi_col,
-        mi_rows,
-        mi_cols,
-        info,
-        non420,
-        dispatch,
+        chroma, y_data, y_stride, u_data, v_data, uv_stride, lfm, mi_row, mi_col, mi_rows, mi_cols,
+        info, non420, dispatch,
     );
 }
 
@@ -943,14 +895,7 @@ fn apply_one_sb_inner(
 ) {
     // Y plane (ss = 0).
     filter_block_plane_ss00(
-        y_data,
-        y_stride,
-        lfm,
-        mi_row,
-        mi_col,
-        mi_rows,
-        info,
-        dispatch,
+        y_data, y_stride, lfm, mi_row, mi_col, mi_rows, info, dispatch,
     );
     // U / V planes. Dispatch on the established chroma format:
     //   - Yuv420 → ss11 (4×4 chroma grid; UV masks).
@@ -960,24 +905,10 @@ fn apply_one_sb_inner(
     match chroma {
         ChromaFormat::Yuv420 => {
             filter_block_plane_ss11(
-                u_data,
-                uv_stride,
-                lfm,
-                mi_row,
-                mi_col,
-                mi_rows,
-                info,
-                dispatch,
+                u_data, uv_stride, lfm, mi_row, mi_col, mi_rows, info, dispatch,
             );
             filter_block_plane_ss11(
-                v_data,
-                uv_stride,
-                lfm,
-                mi_row,
-                mi_col,
-                mi_rows,
-                info,
-                dispatch,
+                v_data, uv_stride, lfm, mi_row, mi_col, mi_rows, info, dispatch,
             );
         }
         ChromaFormat::Yuv444 => {
@@ -986,24 +917,10 @@ fn apply_one_sb_inner(
             // `LF_PATH_444`). The chroma plane is full-resolution,
             // so the same SB-origin formula as luma applies.
             filter_block_plane_ss00(
-                u_data,
-                uv_stride,
-                lfm,
-                mi_row,
-                mi_col,
-                mi_rows,
-                info,
-                dispatch,
+                u_data, uv_stride, lfm, mi_row, mi_col, mi_rows, info, dispatch,
             );
             filter_block_plane_ss00(
-                v_data,
-                uv_stride,
-                lfm,
-                mi_row,
-                mi_col,
-                mi_rows,
-                info,
-                dispatch,
+                v_data, uv_stride, lfm, mi_row, mi_col, mi_rows, info, dispatch,
             );
         }
         // Asymmetric subsampling (4:2:2 / 4:4:0) — the
@@ -1389,8 +1306,7 @@ fn filter_block_plane_non420(
     //
     // The plane origin is `((mi_row * MI_BLOCK_SIZE) >> ss_y) * stride
     // + ((mi_col * MI_BLOCK_SIZE) >> ss_x)`.
-    let sb_origin = ((mi_row * MI_BLOCK_SIZE) >> ssy) * stride
-        + ((mi_col * MI_BLOCK_SIZE) >> ssx);
+    let sb_origin = ((mi_row * MI_BLOCK_SIZE) >> ssy) * stride + ((mi_col * MI_BLOCK_SIZE) >> ssx);
 
     // ============================================================
     // Vertical pass: build per-row vertical-edge masks AND dispatch
@@ -1564,7 +1480,11 @@ fn filter_block_plane_non420(
     let mut r = 0usize;
     while r < MI_BLOCK_SIZE && mi_row + r < mi_rows {
         let skip_border_4x4_r = ss_y && mi_row + r == mi_rows - 1;
-        let mask_4x4_int_r = if skip_border_4x4_r { 0 } else { mask_4x4_int[r] };
+        let mask_4x4_int_r = if skip_border_4x4_r {
+            0
+        } else {
+            mask_4x4_int[r]
+        };
 
         let (m16, m8, m4) = if mi_row + r == 0 {
             (0u32, 0u32, 0u32)
@@ -2126,7 +2046,6 @@ mod tests {
         .expect("alloc 64x64 frame")
     }
 
-
     /// Hash the visible Y region for cheap equality checks. We
     /// deliberately read row-by-row to skip the border bytes.
     fn snapshot_y(buf: &Yv12Buffer) -> Vec<u8> {
@@ -2264,7 +2183,10 @@ mod tests {
                 let pre = if c < 8 { 60u8 } else { 90u8 };
                 buf.y_plane().row(r)[c] != pre
             });
-            assert!(any_changed, "row={r}: 4-tap kernel should have changed something");
+            assert!(
+                any_changed,
+                "row={r}: 4-tap kernel should have changed something"
+            );
         }
         // Rows 16..64: untouched.
         for r in 16..buf.y_plane().height() {
@@ -2629,14 +2551,8 @@ mod tests {
     /// by the non-420 and 4:4:4 tests where the chroma-plane shape
     /// matters.
     fn alloc_64x64_chroma(chroma: ChromaFormat) -> Yv12Buffer {
-        Yv12Buffer::alloc(
-            64,
-            64,
-            chroma,
-            BorderUsage::Decoder,
-            ByteAlignment::Legacy,
-        )
-        .expect("alloc 64x64 frame")
+        Yv12Buffer::alloc(64, 64, chroma, BorderUsage::Decoder, ByteAlignment::Legacy)
+            .expect("alloc 64x64 frame")
     }
 
     /// Intra-DC `ModeInfo` builder used to populate the MI grid for
@@ -2688,8 +2604,8 @@ mod tests {
     /// holds the same level. Borrowed from `setup_mask.rs`'s test
     /// mod for use here.
     fn flat_levels(level: u8) -> crate::loopfilter::FrameFilterLevels {
-        [[[level; crate::loopfilter::MAX_MODE_LF_DELTAS];
-            crate::loopfilter::MAX_REF_FRAMES]; crate::loopfilter::MAX_SEGMENTS]
+        [[[level; crate::loopfilter::MAX_MODE_LF_DELTAS]; crate::loopfilter::MAX_REF_FRAMES];
+            crate::loopfilter::MAX_SEGMENTS]
     }
 
     /// 4:4:4 chroma path (`LF_PATH_444`): U and V planes are filtered
@@ -2794,19 +2710,7 @@ mod tests {
             mi_stride: 8,
             levels: &levels,
         };
-        loop_filter_frame_with_non420(
-            &mut buf,
-            &[lfm],
-            1,
-            1,
-            1,
-            8,
-            8,
-            &info,
-            0,
-            8,
-            Some(non420),
-        );
+        loop_filter_frame_with_non420(&mut buf, &[lfm], 1, 1, 1, 8, 8, &info, 0, 8, Some(non420));
 
         let u_after = snapshot_u(&buf);
         assert_ne!(
@@ -3623,7 +3527,10 @@ mod tests {
             }
         }
         // Row 0 should have been touched.
-        assert_ne!(y_before, y_after, "first-row-only vertical kernel should fire");
+        assert_ne!(
+            y_before, y_after,
+            "first-row-only vertical kernel should fire"
+        );
     }
 
     /// Y vertical row2: both rows have `mask_16x16` set → dual v16
@@ -3911,7 +3818,10 @@ mod tests {
         loop_filter_frame(&mut buf, &[lfm], 1, 1, 1, 8, 8, &info, 0, 8);
 
         let y_after = snapshot_y(&buf);
-        assert_ne!(y_before, y_after, "second-row-only int_4x4 kernel should fire");
+        assert_ne!(
+            y_before, y_after,
+            "second-row-only int_4x4 kernel should fire"
+        );
     }
 
     /// Y horizontal: a gap in the mask — bit 0 set, bit 1 clear, bit
@@ -4137,7 +4047,10 @@ mod tests {
         loop_filter_frame(&mut buf, &[lfm], 1, 1, 1, 8, 8, &info, 0, 8);
 
         let y_after = snapshot_y(&buf);
-        assert_ne!(y_before, y_after, "only-int_4x4 path should fire h4 at mid-block");
+        assert_ne!(
+            y_before, y_after,
+            "only-int_4x4 path should fire h4 at mid-block"
+        );
     }
 
     /// Y horizontal: `mask_4x4_int & 2 != 0` (only the second column

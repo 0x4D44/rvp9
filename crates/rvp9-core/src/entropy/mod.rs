@@ -46,14 +46,11 @@ pub use adapt::{
 };
 pub use bool_reader::{BoolReader, BoolReaderSnapshot};
 pub use bool_writer::BoolWriter;
-pub use detokenize::{
-    CoefBandCtxProbs, CoefCountsBlock, CoefFullCountsBlock, DecodeCoefCounts, EOB_MODEL_TOKEN,
-    ENTROPY_TOKENS, EobBranchCountsBlock, ONE_TOKEN, TWO_TOKEN, VP9_CAT1_PROB, VP9_CAT2_PROB,
-    VP9_CAT3_PROB, VP9_CAT4_PROB, VP9_CAT5_PROB, VP9_CAT6_PROB, VP9_COEFBAND_TRANS_4X4,
-    VP9_COEFBAND_TRANS_8X8PLUS, ZERO_TOKEN, decode_coefs, encode_coefs, write_block_tokens,
+pub use coef_probs::{
+    COEF_BANDS, COEFF_CONTEXTS, CoeffProbsModel, DEFAULT_COEF_PROBS_4X4, DEFAULT_COEF_PROBS_8X8,
+    DEFAULT_COEF_PROBS_16X16, DEFAULT_COEF_PROBS_32X32, PLANE_TYPES, REF_TYPES,
+    UNCONSTRAINED_NODES,
 };
-pub use diff_update::{DIFF_UPDATE_PROB, diff_update_prob, inv_remap_prob};
-pub use prob_diff_writer::{cond_prob_diff_update, remap_prob, write_prob_diff_update};
 pub use default_probs::{
     BLOCK_SIZE_GROUPS, COMP_INTER_CONTEXTS, DEFAULT_COMP_INTER_PROB, DEFAULT_COMP_REF_PROB,
     DEFAULT_IF_UV_PROBS, DEFAULT_IF_Y_PROBS, DEFAULT_INTER_MODE_PROBS, DEFAULT_INTRA_INTER_PROB,
@@ -62,11 +59,13 @@ pub use default_probs::{
     INTER_MODES, INTRA_INTER_CONTEXTS, INTRA_MODES, PARTITION_CONTEXTS, PARTITION_TYPES,
     REF_CONTEXTS, SKIP_CONTEXTS, SWITCHABLE_FILTER_CONTEXTS, SWITCHABLE_FILTERS,
 };
-pub use coef_probs::{
-    COEFF_CONTEXTS, COEF_BANDS, CoeffProbsModel, DEFAULT_COEF_PROBS_16X16,
-    DEFAULT_COEF_PROBS_32X32, DEFAULT_COEF_PROBS_4X4, DEFAULT_COEF_PROBS_8X8, PLANE_TYPES,
-    REF_TYPES, UNCONSTRAINED_NODES,
+pub use detokenize::{
+    CoefBandCtxProbs, CoefCountsBlock, CoefFullCountsBlock, DecodeCoefCounts, ENTROPY_TOKENS,
+    EOB_MODEL_TOKEN, EobBranchCountsBlock, ONE_TOKEN, TWO_TOKEN, VP9_CAT1_PROB, VP9_CAT2_PROB,
+    VP9_CAT3_PROB, VP9_CAT4_PROB, VP9_CAT5_PROB, VP9_CAT6_PROB, VP9_COEFBAND_TRANS_4X4,
+    VP9_COEFBAND_TRANS_8X8PLUS, ZERO_TOKEN, decode_coefs, encode_coefs, write_block_tokens,
 };
+pub use diff_update::{DIFF_UPDATE_PROB, diff_update_prob, inv_remap_prob};
 pub use frame_context::{FRAME_CONTEXTS, FRAME_CONTEXTS_LOG2, FrameContext, TX_SIZES};
 pub use kf_probs::{VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB};
 pub use mv_probs::{
@@ -74,6 +73,7 @@ pub use mv_probs::{
     MV_OFFSET_BITS, NmvComponent, NmvComponentCounts, NmvContext, NmvCounts,
 };
 pub use pareto::{COEFF_PROB_MODELS, MODEL_NODES, VP9_PARETO8_FULL};
+pub use prob_diff_writer::{cond_prob_diff_update, remap_prob, write_prob_diff_update};
 pub use tables::VPX_NORM;
 
 /// The probability value `128` — the maximum-entropy point that

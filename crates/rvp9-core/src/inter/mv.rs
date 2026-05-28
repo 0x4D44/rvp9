@@ -317,8 +317,7 @@ pub fn read_mv_component(
         if is_class0 {
             let di = d as usize;
             c.class0[di] = c.class0[di].saturating_add(1);
-            c.class0_fp[di][fr as usize] =
-                c.class0_fp[di][fr as usize].saturating_add(1);
+            c.class0_fp[di][fr as usize] = c.class0_fp[di][fr as usize].saturating_add(1);
             c.class0_hp[hp as usize] = c.class0_hp[hp as usize].saturating_add(1);
         } else {
             let n = mv_class as usize + CLASS0_BITS - 1;
@@ -372,8 +371,8 @@ pub fn read_mv(
     mut counts: Option<&mut NmvCounts>,
 ) -> Mv {
     let joint_raw = reader.read_tree(&MV_JOINT_TREE, &nmv_context.joints);
-    let joint = MvJoint::from_u8(joint_raw as u8)
-        .expect("MV_JOINT_TREE always returns a valid MV_JOINT_*");
+    let joint =
+        MvJoint::from_u8(joint_raw as u8).expect("MV_JOINT_TREE always returns a valid MV_JOINT_*");
     let use_hp = allow_hp && use_mv_hp(ref_mv);
 
     let mut diff = Mv::ZERO;
@@ -529,7 +528,10 @@ pub fn write_mv_component(
     use_hp: bool,
     comp_counts: Option<&mut NmvComponentCounts>,
 ) {
-    debug_assert!(diff != 0, "write_mv_component: zero handled by joint short-circuit");
+    debug_assert!(
+        diff != 0,
+        "write_mv_component: zero handled by joint short-circuit"
+    );
 
     let sign: u8 = if diff < 0 { 1 } else { 0 };
     // `abs_diff` is `abs(diff)` widened to u32. `i16::unsigned_abs`
@@ -674,13 +676,19 @@ pub fn write_mv(
 
     if joint.vertical() {
         write_mv_component(
-            bw, diff.row, &nmv_context.comps[0], use_hp,
+            bw,
+            diff.row,
+            &nmv_context.comps[0],
+            use_hp,
             mv_counts.as_deref_mut().map(|c| &mut c.comps[0]),
         );
     }
     if joint.horizontal() {
         write_mv_component(
-            bw, diff.col, &nmv_context.comps[1], use_hp,
+            bw,
+            diff.col,
+            &nmv_context.comps[1],
+            use_hp,
             mv_counts.map(|c| &mut c.comps[1]),
         );
     }
@@ -1029,17 +1037,17 @@ mod tests {
         // → class 10. Pick a representative magnitude in the middle
         // of each window (value = mag = z + 1).
         let cases: &[(MvClass, i16)] = &[
-            (MvClass::Class0, 4),       // z=3
-            (MvClass::Class1, 24),      // z=23,   z>>3=2 → log=1
-            (MvClass::Class2, 48),      // z=47,   z>>3=5 → log=2
-            (MvClass::Class3, 96),      // z=95,   z>>3=11 → log=3
-            (MvClass::Class4, 192),     // z=191,  z>>3=23 → log=4
-            (MvClass::Class5, 384),     // z=383,  z>>3=47 → log=5
-            (MvClass::Class6, 768),     // z=767,  z>>3=95 → log=6
-            (MvClass::Class7, 1536),    // z=1535, z>>3=191 → log=7
-            (MvClass::Class8, 3072),    // z=3071, z>>3=383 → log=8
-            (MvClass::Class9, 6144),    // z=6143, z>>3=767 → log=9
-            (MvClass::Class10, 12288),  // z=12287 ≥ 8192 → class 10
+            (MvClass::Class0, 4),      // z=3
+            (MvClass::Class1, 24),     // z=23,   z>>3=2 → log=1
+            (MvClass::Class2, 48),     // z=47,   z>>3=5 → log=2
+            (MvClass::Class3, 96),     // z=95,   z>>3=11 → log=3
+            (MvClass::Class4, 192),    // z=191,  z>>3=23 → log=4
+            (MvClass::Class5, 384),    // z=383,  z>>3=47 → log=5
+            (MvClass::Class6, 768),    // z=767,  z>>3=95 → log=6
+            (MvClass::Class7, 1536),   // z=1535, z>>3=191 → log=7
+            (MvClass::Class8, 3072),   // z=3071, z>>3=383 → log=8
+            (MvClass::Class9, 6144),   // z=6143, z>>3=767 → log=9
+            (MvClass::Class10, 12288), // z=12287 ≥ 8192 → class 10
         ];
         for &(expected_class, value) in cases {
             let buf = encode_component(value, comp, /* use_hp = */ true);
@@ -1154,7 +1162,13 @@ mod tests {
         let buf = encode_mv(Mv::ZERO, ctx, true);
         let mut r = BoolReader::new(&buf).expect("init");
         let mut counts = NmvCounts::default();
-        let got = read_mv(&mut r, Mv { row: 50, col: 50 }, true, ctx, Some(&mut counts));
+        let got = read_mv(
+            &mut r,
+            Mv { row: 50, col: 50 },
+            true,
+            ctx,
+            Some(&mut counts),
+        );
         assert_eq!(got, Mv { row: 50, col: 50 });
         assert_eq!(counts.joints, [1, 0, 0, 0]);
         // No per-component counts moved.
@@ -1187,7 +1201,13 @@ mod tests {
         let buf = encode_mv(Mv { row: 0, col: 4 }, ctx, false);
         let mut r = BoolReader::new(&buf).expect("init");
         let mut counts = NmvCounts::default();
-        let _ = read_mv(&mut r, Mv { row: 200, col: 200 }, true, ctx, Some(&mut counts));
+        let _ = read_mv(
+            &mut r,
+            Mv { row: 200, col: 200 },
+            true,
+            ctx,
+            Some(&mut counts),
+        );
         assert_eq!(counts.comps[1].class0_hp, [0, 1]);
     }
 

@@ -114,8 +114,14 @@ unsafe fn mul_const(x: __m256i, c: i32) -> __m256i {
 #[inline]
 #[allow(clippy::too_many_arguments)]
 unsafe fn transpose8x8_i32(
-    r0: __m256i, r1: __m256i, r2: __m256i, r3: __m256i,
-    r4: __m256i, r5: __m256i, r6: __m256i, r7: __m256i,
+    r0: __m256i,
+    r1: __m256i,
+    r2: __m256i,
+    r3: __m256i,
+    r4: __m256i,
+    r5: __m256i,
+    r6: __m256i,
+    r7: __m256i,
 ) -> [__m256i; 8] {
     let a0 = _mm256_unpacklo_epi32(r0, r1);
     let a1 = _mm256_unpackhi_epi32(r0, r1);
@@ -367,8 +373,9 @@ unsafe fn idct16_avx2(v: [__m256i; 16]) -> [__m256i; 16] {
     let o14 = wrap(_mm256_sub_epi32(s6_1, s6_14));
     let o15 = wrap(_mm256_sub_epi32(s6_0, s6_15));
 
-    [o0, o1, o2, o3, o4, o5, o6, o7,
-     o8, o9, o10, o11, o12, o13, o14, o15]
+    [
+        o0, o1, o2, o3, o4, o5, o6, o7, o8, o9, o10, o11, o12, o13, o14, o15,
+    ]
 }
 
 // ---------------------------------------------------------------------
@@ -386,17 +393,18 @@ unsafe fn idct16_avx2(v: [__m256i; 16]) -> [__m256i; 16] {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn idct16_pass_8rows(
-    lo: [__m256i; 8],
-    hi: [__m256i; 8],
-) -> ([__m256i; 8], [__m256i; 8]) {
+unsafe fn idct16_pass_8rows(lo: [__m256i; 8], hi: [__m256i; 8]) -> ([__m256i; 8], [__m256i; 8]) {
     let v: [__m256i; 16] = [
-        lo[0], lo[1], lo[2], lo[3], lo[4], lo[5], lo[6], lo[7],
-        hi[0], hi[1], hi[2], hi[3], hi[4], hi[5], hi[6], hi[7],
+        lo[0], lo[1], lo[2], lo[3], lo[4], lo[5], lo[6], lo[7], hi[0], hi[1], hi[2], hi[3], hi[4],
+        hi[5], hi[6], hi[7],
     ];
     let out = idct16_avx2(v);
-    let out_lo: [__m256i; 8] = [out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7]];
-    let out_hi: [__m256i; 8] = [out[8], out[9], out[10], out[11], out[12], out[13], out[14], out[15]];
+    let out_lo: [__m256i; 8] = [
+        out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7],
+    ];
+    let out_hi: [__m256i; 8] = [
+        out[8], out[9], out[10], out[11], out[12], out[13], out[14], out[15],
+    ];
     (out_lo, out_hi)
 }
 
@@ -434,7 +442,10 @@ unsafe fn idct16_pass_8rows(
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn idct16x16_add_avx2_inner(input: &[i32; 256], dest: &mut [u8], stride: usize) {
-    debug_assert!(dest.len() >= stride * 15 + 16, "dest too small for 16x16 add");
+    debug_assert!(
+        dest.len() >= stride * 15 + 16,
+        "dest too small for 16x16 add"
+    );
 
     // Stack scratch for the intermediate (post-row-pass) 16×16 matrix
     // in row-major i32 layout. The column pass reads from this; the
@@ -478,12 +489,10 @@ unsafe fn idct16x16_add_avx2_inner(input: &[i32; 256], dest: &mut [u8], stride: 
         // output positions 0..8 of intermediate row r, `hi_rows[r]` =
         // output positions 8..16.
         let lo_rows = transpose8x8_i32(
-            out_lo[0], out_lo[1], out_lo[2], out_lo[3],
-            out_lo[4], out_lo[5], out_lo[6], out_lo[7],
+            out_lo[0], out_lo[1], out_lo[2], out_lo[3], out_lo[4], out_lo[5], out_lo[6], out_lo[7],
         );
         let hi_rows = transpose8x8_i32(
-            out_hi[0], out_hi[1], out_hi[2], out_hi[3],
-            out_hi[4], out_hi[5], out_hi[6], out_hi[7],
+            out_hi[0], out_hi[1], out_hi[2], out_hi[3], out_hi[4], out_hi[5], out_hi[6], out_hi[7],
         );
 
         // Store into intermediate (row-major).
@@ -541,8 +550,8 @@ unsafe fn idct16x16_add_avx2_inner(input: &[i32; 256], dest: &mut [u8], stride: 
     let round = _mm256_set1_epi32(32);
     let zero = _mm_setzero_si128();
     for r in 0..16 {
-        let lo_i32 = col_outputs[r];           // cols 0..8 of row r
-        let hi_i32 = col_outputs[16 + r];      // cols 8..16 of row r
+        let lo_i32 = col_outputs[r]; // cols 0..8 of row r
+        let hi_i32 = col_outputs[16 + r]; // cols 8..16 of row r
 
         let lo_i32 = _mm256_srai_epi32(_mm256_add_epi32(lo_i32, round), 6);
         let hi_i32 = _mm256_srai_epi32(_mm256_add_epi32(hi_i32, round), 6);
@@ -860,8 +869,8 @@ mod tests {
     #[test]
     fn idct16x16_dispatch_round_trip() {
         require_avx2!();
-        use crate::dsp::caps::detect;
         use crate::dsp::SimdDispatch;
+        use crate::dsp::caps::detect;
 
         let mut caps = detect();
         caps.avx2 = true;
@@ -1022,15 +1031,12 @@ mod tests {
                 // Load 8 rows of 8 i32 from src[row_group*8 + r][col_group*8 ..]
                 let mut rs: [__m256i; 8] = [super::_mm256_set1_epi32(0); 8];
                 for r in 0..8 {
-                    let p = src
-                        .as_ptr()
-                        .add((row_group * 8 + r) * 16 + col_group * 8)
+                    let p = src.as_ptr().add((row_group * 8 + r) * 16 + col_group * 8)
                         as *const __m256i;
                     rs[r] = _mm256_loadu_si256(p);
                 }
-                let cols = super::transpose8x8_i32(
-                    rs[0], rs[1], rs[2], rs[3], rs[4], rs[5], rs[6], rs[7],
-                );
+                let cols =
+                    super::transpose8x8_i32(rs[0], rs[1], rs[2], rs[3], rs[4], rs[5], rs[6], rs[7]);
                 // Store into the swapped quadrant of dst:
                 //   destination row group = col_group
                 //   destination col group = row_group

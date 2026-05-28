@@ -39,19 +39,18 @@
 
 use crate::bitstream::{InterpFilter, ReferenceMode};
 use crate::block::BlockSize;
+use crate::entropy::bitacct::{BitCategory, set_category};
 use crate::entropy::{
-    BoolReader, BoolWriter, FrameContext, FrameCounts, NmvCounts, COMP_INTER_CONTEXTS,
-    INTER_MODE_CONTEXTS, INTRA_INTER_CONTEXTS, REF_CONTEXTS, SWITCHABLE_FILTERS,
-    SWITCHABLE_FILTER_CONTEXTS,
+    BoolReader, BoolWriter, COMP_INTER_CONTEXTS, FrameContext, FrameCounts, INTER_MODE_CONTEXTS,
+    INTRA_INTER_CONTEXTS, NmvCounts, REF_CONTEXTS, SWITCHABLE_FILTER_CONTEXTS, SWITCHABLE_FILTERS,
 };
-use crate::entropy::bitacct::{set_category, BitCategory};
 use crate::inter::mv::{read_mv, write_mv, write_tree};
 use crate::inter::mv_ref::{
-    append_sub8x8_mvs_for_idx, find_mv_refs, lower_mv_precision, BlockBounds, NeighbourLookup,
-    Position, PrevFrameMvRef,
+    BlockBounds, NeighbourLookup, Position, PrevFrameMvRef, append_sub8x8_mvs_for_idx,
+    find_mv_refs, lower_mv_precision,
 };
 use crate::mode_info::{
-    read_inter_mode, BlockMode, BmiInfo, InterMode, ModeInfo, Mv, RefFrame, INTER_MODE_TREE,
+    BlockMode, BmiInfo, INTER_MODE_TREE, InterMode, ModeInfo, Mv, RefFrame, read_inter_mode,
 };
 
 /// libvpx `vp9_switchable_interp_tree` (`vp9_entropymode.c:337-338`).
@@ -78,10 +77,7 @@ pub static SWITCHABLE_INTERP_TREE: [i8; 2 * SWITCHABLE_FILTERS - 2] = [
 /// 1 for NEW). The intra block's `BlockMode::Intra` always
 /// contributes 9; the inter modes contribute per [`InterMode::idx`].
 const MODE_2_COUNTER_INTER: [i32; 4] = [
-    /* NEARESTMV */ 0,
-    /* NEARMV    */ 0,
-    /* ZEROMV    */ 3,
-    /* NEWMV     */ 1,
+    /* NEARESTMV */ 0, /* NEARMV    */ 0, /* ZEROMV    */ 3, /* NEWMV     */ 1,
 ];
 const MODE_2_COUNTER_INTRA: i32 = 9;
 
@@ -123,10 +119,7 @@ const COUNTER_TO_CONTEXT: [u8; 19] = [
 /// candidate's `mode_2_counter` contribution. The summed counter is
 /// then mapped through [`COUNTER_TO_CONTEXT`].
 #[must_use]
-pub fn get_mode_context<N: NeighbourLookup>(
-    block_size: BlockSize,
-    neighbours: &N,
-) -> usize {
+pub fn get_mode_context<N: NeighbourLookup>(block_size: BlockSize, neighbours: &N) -> usize {
     let mv_ref_search = &crate::inter::mv_ref::MV_REF_BLOCKS[block_size.idx()];
     let mut counter: i32 = 0;
     for &mv_ref in mv_ref_search.iter().take(2) {
@@ -206,10 +199,7 @@ pub fn get_pred_context_switchable_interp(
 /// (`vp9_pickmode.c:2355-2362`) to pick `cm->fc->skip_probs[ctx]` —
 /// see [`crate::mode_decision::inter::pick_inter_mode`].
 #[must_use]
-pub fn get_pred_context_skip(
-    above: Option<&ModeInfo>,
-    left: Option<&ModeInfo>,
-) -> usize {
+pub fn get_pred_context_skip(above: Option<&ModeInfo>, left: Option<&ModeInfo>) -> usize {
     let above_skip = above.is_some_and(|mi| mi.skip) as usize;
     let left_skip = left.is_some_and(|mi| mi.skip) as usize;
     above_skip + left_skip
@@ -303,13 +293,9 @@ pub fn get_reference_mode_context(
             let l_match = ref0(left) == comp_fixed_ref;
             usize::from(a_match ^ l_match)
         } else if !a_has_second {
-            2 + usize::from(
-                ref0(above) == comp_fixed_ref || !is_inter_block(above),
-            )
+            2 + usize::from(ref0(above) == comp_fixed_ref || !is_inter_block(above))
         } else if !l_has_second {
-            2 + usize::from(
-                ref0(left) == comp_fixed_ref || !is_inter_block(left),
-            )
+            2 + usize::from(ref0(left) == comp_fixed_ref || !is_inter_block(left))
         } else {
             4
         }
@@ -413,10 +399,7 @@ pub fn get_pred_context_comp_ref_p(
 /// (`vp9_pred_common.c:167-231`). 0..=4 context for the single-ref
 /// first selection bit (`bit0` of single-ref decode).
 #[must_use]
-pub fn get_pred_context_single_ref_p1(
-    above: Option<&ModeInfo>,
-    left: Option<&ModeInfo>,
-) -> usize {
+pub fn get_pred_context_single_ref_p1(above: Option<&ModeInfo>, left: Option<&ModeInfo>) -> usize {
     let has_above = above.is_some();
     let has_left = left.is_some();
     if has_above && has_left {
@@ -430,8 +413,7 @@ pub fn get_pred_context_single_ref_p1(
                 4 * usize::from(ref0(edge) == RefFrame::LastFrame)
             } else {
                 1 + usize::from(
-                    ref0(edge) == RefFrame::LastFrame
-                        || ref1(edge) == RefFrame::LastFrame,
+                    ref0(edge) == RefFrame::LastFrame || ref1(edge) == RefFrame::LastFrame,
                 )
             }
         } else {
@@ -453,13 +435,9 @@ pub fn get_pred_context_single_ref_p1(
                 let crf1 = if a_has_second { above0 } else { left0 };
                 let crf2 = if a_has_second { above1 } else { left1 };
                 if rfs == RefFrame::LastFrame {
-                    3 + usize::from(
-                        crf1 == RefFrame::LastFrame || crf2 == RefFrame::LastFrame,
-                    )
+                    3 + usize::from(crf1 == RefFrame::LastFrame || crf2 == RefFrame::LastFrame)
                 } else {
-                    usize::from(
-                        crf1 == RefFrame::LastFrame || crf2 == RefFrame::LastFrame,
-                    )
+                    usize::from(crf1 == RefFrame::LastFrame || crf2 == RefFrame::LastFrame)
                 }
             } else {
                 2 * usize::from(above0 == RefFrame::LastFrame)
@@ -473,9 +451,7 @@ pub fn get_pred_context_single_ref_p1(
         } else if !has_second_ref(edge) {
             4 * usize::from(ref0(edge) == RefFrame::LastFrame)
         } else {
-            1 + usize::from(
-                ref0(edge) == RefFrame::LastFrame || ref1(edge) == RefFrame::LastFrame,
-            )
+            1 + usize::from(ref0(edge) == RefFrame::LastFrame || ref1(edge) == RefFrame::LastFrame)
         }
     } else {
         2
@@ -486,10 +462,7 @@ pub fn get_pred_context_single_ref_p1(
 /// (`vp9_pred_common.c:233-316`). 0..=4 context for the single-ref
 /// second selection bit (`bit1` — GOLDEN vs ALTREF).
 #[must_use]
-pub fn get_pred_context_single_ref_p2(
-    above: Option<&ModeInfo>,
-    left: Option<&ModeInfo>,
-) -> usize {
+pub fn get_pred_context_single_ref_p2(above: Option<&ModeInfo>, left: Option<&ModeInfo>) -> usize {
     let has_above = above.is_some();
     let has_left = left.is_some();
     if has_above && has_left {
@@ -507,8 +480,7 @@ pub fn get_pred_context_single_ref_p2(
                 }
             } else {
                 1 + 2 * usize::from(
-                    ref0(edge) == RefFrame::GoldenFrame
-                        || ref1(edge) == RefFrame::GoldenFrame,
+                    ref0(edge) == RefFrame::GoldenFrame || ref1(edge) == RefFrame::GoldenFrame,
                 )
             }
         } else {
@@ -534,13 +506,9 @@ pub fn get_pred_context_single_ref_p2(
                 let crf1 = if a_has_second { above0 } else { left0 };
                 let crf2 = if a_has_second { above1 } else { left1 };
                 if rfs == RefFrame::GoldenFrame {
-                    3 + usize::from(
-                        crf1 == RefFrame::GoldenFrame || crf2 == RefFrame::GoldenFrame,
-                    )
+                    3 + usize::from(crf1 == RefFrame::GoldenFrame || crf2 == RefFrame::GoldenFrame)
                 } else if rfs == RefFrame::AltrefFrame {
-                    usize::from(
-                        crf1 == RefFrame::GoldenFrame || crf2 == RefFrame::GoldenFrame,
-                    )
+                    usize::from(crf1 == RefFrame::GoldenFrame || crf2 == RefFrame::GoldenFrame)
                 } else {
                     1 + 2 * usize::from(
                         crf1 == RefFrame::GoldenFrame || crf2 == RefFrame::GoldenFrame,
@@ -549,7 +517,11 @@ pub fn get_pred_context_single_ref_p2(
             } else if above0 == RefFrame::LastFrame && left0 == RefFrame::LastFrame {
                 3
             } else if above0 == RefFrame::LastFrame || left0 == RefFrame::LastFrame {
-                let edge0 = if above0 == RefFrame::LastFrame { left0 } else { above0 };
+                let edge0 = if above0 == RefFrame::LastFrame {
+                    left0
+                } else {
+                    above0
+                };
                 4 * usize::from(edge0 == RefFrame::GoldenFrame)
             } else {
                 2 * usize::from(above0 == RefFrame::GoldenFrame)
@@ -558,9 +530,7 @@ pub fn get_pred_context_single_ref_p2(
         }
     } else if has_above || has_left {
         let edge = if has_above { above } else { left };
-        if !is_inter_block(edge)
-            || (ref0(edge) == RefFrame::LastFrame && !has_second_ref(edge))
-        {
+        if !is_inter_block(edge) || (ref0(edge) == RefFrame::LastFrame && !has_second_ref(edge)) {
             2
         } else if !has_second_ref(edge) {
             4 * usize::from(ref0(edge) == RefFrame::GoldenFrame)
@@ -669,10 +639,7 @@ pub fn read_ref_frames(
 /// the inter-mode reader for callers that pre-compute it before
 /// reaching here.
 #[must_use]
-pub fn get_intra_inter_context(
-    above: Option<&ModeInfo>,
-    left: Option<&ModeInfo>,
-) -> usize {
+pub fn get_intra_inter_context(above: Option<&ModeInfo>, left: Option<&ModeInfo>) -> usize {
     let has_above = above.is_some();
     let has_left = left.is_some();
     let ctx = if has_above && has_left {
@@ -735,9 +702,7 @@ pub struct InterModeReadParams {
 /// (when `reference_mode != Single`) to populate the
 /// [`InterModeReadParams`] fixed/var slots.
 #[must_use]
-pub fn setup_compound_reference_mode(
-    sign_bias: &[bool; 4],
-) -> (RefFrame, [RefFrame; 2]) {
+pub fn setup_compound_reference_mode(sign_bias: &[bool; 4]) -> (RefFrame, [RefFrame; 2]) {
     let last = sign_bias[RefFrame::LastFrame as usize];
     let golden = sign_bias[RefFrame::GoldenFrame as usize];
     let altref = sign_bias[RefFrame::AltrefFrame as usize];
@@ -1168,8 +1133,7 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
                 prev_mv,
             );
             let idx = list.count.saturating_sub(1).min(list.mvs.len() - 1);
-            let best_ref_mv =
-                lower_mv_precision(list.mvs[idx], params.allow_high_precision_mv);
+            let best_ref_mv = lower_mv_precision(list.mvs[idx], params.allow_high_precision_mv);
             set_category(BitCategory::MvDelta);
             write_mv(
                 bw,
@@ -1288,18 +1252,14 @@ fn write_sub8_bmi<N: NeighbourLookup>(
                                 bounds,
                                 prev_mv,
                             );
-                            best_ref_mvs_for_new[r] = lower_mv_precision(
-                                list.mvs[0],
-                                params.allow_high_precision_mv,
-                            );
+                            best_ref_mvs_for_new[r] =
+                                lower_mv_precision(list.mvs[0], params.allow_high_precision_mv);
                         }
                         got_mv_refs_for_new = true;
                     }
                     // 2. Emit the per-ref MV residual.
                     set_category(BitCategory::MvDelta);
-                    for (r, &ref_mv) in
-                        best_ref_mvs_for_new.iter().enumerate().take(num_refs)
-                    {
+                    for (r, &ref_mv) in best_ref_mvs_for_new.iter().enumerate().take(num_refs) {
                         write_mv(
                             bw,
                             mi.bmi[j].as_mv[r],
@@ -1367,7 +1327,8 @@ fn write_sub8_bmi<N: NeighbourLookup>(
             // to have done the same so the writer's view matches.
             if num_4x4_h == 2 {
                 debug_assert_eq!(
-                    mi.bmi[j + 2], mi.bmi[j],
+                    mi.bmi[j + 2],
+                    mi.bmi[j],
                     "sub-8 replication: bmi[{}] must mirror bmi[{}]",
                     j + 2,
                     j,
@@ -1375,7 +1336,8 @@ fn write_sub8_bmi<N: NeighbourLookup>(
             }
             if num_4x4_w == 2 {
                 debug_assert_eq!(
-                    mi.bmi[j + 1], mi.bmi[j],
+                    mi.bmi[j + 1],
+                    mi.bmi[j],
                     "sub-8 replication: bmi[{}] must mirror bmi[{}]",
                     j + 1,
                     j,
@@ -1559,10 +1521,8 @@ fn resolve_sub8_bmi<N: NeighbourLookup>(
                                 bounds,
                                 prev_mv,
                             );
-                            best_ref_mvs_for_new[r] = lower_mv_precision(
-                                list.mvs[0],
-                                params.allow_high_precision_mv,
-                            );
+                            best_ref_mvs_for_new[r] =
+                                lower_mv_precision(list.mvs[0], params.allow_high_precision_mv);
                         }
                         got_mv_refs_for_new = true;
                     }
@@ -1619,7 +1579,7 @@ mod tests {
     use super::*;
     use crate::block::BlockSize;
     use crate::entropy::{BoolWriter, FrameContext};
-    use crate::inter::mv_ref::{sign_bias_from_header, NeighbourLookup};
+    use crate::inter::mv_ref::{NeighbourLookup, sign_bias_from_header};
     use crate::intra_pred::IntraMode;
     use crate::mode_info::BlockMode;
     use crate::transforms::TxSize;
@@ -1631,7 +1591,9 @@ mod tests {
     }
     impl<'a> ListNeighbours<'a> {
         fn new() -> Self {
-            Self { entries: Vec::new() }
+            Self {
+                entries: Vec::new(),
+            }
         }
         fn with(mut self, pos: Position, mi: &'a ModeInfo) -> Self {
             self.entries.push((pos, mi));
@@ -1755,12 +1717,7 @@ mod tests {
 
     /// Single-ref encoding: `LAST` is bit0=0; `GOLDEN`/`ALTREF` need
     /// bit0=1, bit1=0/1.
-    fn write_single_ref_bits(
-        w: &mut BoolWriter<'_>,
-        target: RefFrame,
-        probs0: u8,
-        probs1: u8,
-    ) {
+    fn write_single_ref_bits(w: &mut BoolWriter<'_>, target: RefFrame, probs0: u8, probs1: u8) {
         match target {
             RefFrame::LastFrame => w.write(0, probs0),
             RefFrame::GoldenFrame => {
@@ -1826,7 +1783,12 @@ mod tests {
         );
 
         match mi.mode {
-            BlockMode::Inter { mode, ref_frames, mvs, .. } => {
+            BlockMode::Inter {
+                mode,
+                ref_frames,
+                mvs,
+                ..
+            } => {
                 assert_eq!(mode, InterMode::ZeroMv);
                 assert_eq!(ref_frames, [RefFrame::LastFrame, RefFrame::NoRefFrame]);
                 assert_eq!(mvs, [Mv::ZERO, Mv::ZERO]);
@@ -1948,7 +1910,7 @@ mod tests {
     /// LAST neighbour's MV (= ref_mv).
     #[test]
     fn newmv_non_compound_reads_mv_once() {
-        use crate::inter::mv::{get_mv_joint, MvClass, MvJoint};
+        use crate::inter::mv::{MvClass, MvJoint, get_mv_joint};
         use crate::inter::mv_ref::sign_bias_from_header;
         let fc = FrameContext::new_default();
         let mut params = default_params();
@@ -2001,7 +1963,7 @@ mod tests {
         // d bit (class0 → one bit against class0[0]).
         let _ = MvClass::Class0;
         w.write(0, comp.class0[0]); // d=0
-                                    // fp tree at class0_fp[0] (`d=0`), target f=1 (`1 0`).
+        // fp tree at class0_fp[0] (`d=0`), target f=1 (`1 0`).
         w.write(1, comp.class0_fp[0][0]);
         w.write(0, comp.class0_fp[0][1]);
         // No HP bit because allow_hp = false.
@@ -2030,7 +1992,13 @@ mod tests {
             BlockMode::Inter { mode, mvs, .. } => {
                 assert_eq!(mode, InterMode::NewMv);
                 // result = ref_mv (above's MV) + diff.
-                assert_eq!(mvs[0], Mv { row: ref_mv.row + diff.row, col: 0 });
+                assert_eq!(
+                    mvs[0],
+                    Mv {
+                        row: ref_mv.row + diff.row,
+                        col: 0
+                    }
+                );
                 assert_eq!(mvs[1], Mv::ZERO);
             }
             _ => panic!("expected Inter"),
@@ -2115,7 +2083,7 @@ mod tests {
     /// non-zero diff on each.
     #[test]
     fn compound_newmv_reads_mv_twice() {
-        use crate::inter::mv::{get_mv_joint, MvJoint};
+        use crate::inter::mv::{MvJoint, get_mv_joint};
 
         let fc = FrameContext::new_default();
         // sign_bias: LAST=0, GOLDEN=0, ALTREF=1 → comp_fixed = ALT,
@@ -2189,7 +2157,12 @@ mod tests {
             &mut mi,
         );
         match mi.mode {
-            BlockMode::Inter { mode, ref_frames, mvs, .. } => {
+            BlockMode::Inter {
+                mode,
+                ref_frames,
+                mvs,
+                ..
+            } => {
                 assert_eq!(mode, InterMode::NewMv);
                 assert_eq!(ref_frames, [RefFrame::LastFrame, RefFrame::AltrefFrame]);
                 // Each MV is the encoded diff (0+4, 0+0).
@@ -2393,7 +2366,10 @@ mod tests {
         // Single-ref path: ctx0 sees bit0=0 (LastFrame).
         assert_eq!(mode_counts.single_ref[ctx0][0][0], 1);
         // Inter mode: ctx=`inter_ctx`, mode=NearestMv (idx 0).
-        assert_eq!(mode_counts.inter_mode[inter_ctx][InterMode::NearestMv.idx()], 1);
+        assert_eq!(
+            mode_counts.inter_mode[inter_ctx][InterMode::NearestMv.idx()],
+            1
+        );
         // No comp_inter / comp_ref / switchable_interp reads happen
         // here (reference_mode=Single, interp_filter≠Switchable).
         assert_eq!(mode_counts.comp_inter, FrameCounts::default().comp_inter);
@@ -2613,10 +2589,9 @@ mod tests {
         let mi = skeleton_mi(bsize);
         let mut buf = vec![0u8; 64];
         let mut w = BoolWriter::start_encode(&mut buf);
-        let err = write_inter_block_mode_info(
-            &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, None,
-        )
-        .expect_err("expected NotInter");
+        let err =
+            write_inter_block_mode_info(&mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, None)
+                .expect_err("expected NotInter");
         assert_eq!(err, InterModeWriteError::NotInter);
     }
 
@@ -2949,10 +2924,9 @@ mod tests {
         }
         let mut buf = vec![0u8; 64];
         let mut w = BoolWriter::start_encode(&mut buf);
-        let err = write_inter_block_mode_info(
-            &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, None,
-        )
-        .expect_err("expected Sub8ParentModeMismatch");
+        let err =
+            write_inter_block_mode_info(&mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, None)
+                .expect_err("expected Sub8ParentModeMismatch");
         assert_eq!(
             err,
             InterModeWriteError::Sub8ParentModeMismatch {
@@ -4676,10 +4650,8 @@ mod tests {
         let mut buf = vec![0u8; 256];
         let size = {
             let mut w = BoolWriter::start_encode(&mut buf);
-            write_inter_block_mode_info(
-                &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, None,
-            )
-            .expect("writer ok");
+            write_inter_block_mode_info(&mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, None)
+                .expect("writer ok");
             finalise(w)
         };
         buf.truncate(size);
@@ -4729,10 +4701,8 @@ mod tests {
         let mut buf = vec![0u8; 256];
         let size = {
             let mut w = BoolWriter::start_encode(&mut buf);
-            write_inter_block_mode_info(
-                &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, None,
-            )
-            .expect("writer ok");
+            write_inter_block_mode_info(&mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, None)
+                .expect("writer ok");
             finalise(w)
         };
         buf.truncate(size);
@@ -4796,10 +4766,8 @@ mod tests {
         let mut buf = vec![0u8; 256];
         let size = {
             let mut w = BoolWriter::start_encode(&mut buf);
-            write_inter_block_mode_info(
-                &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, None,
-            )
-            .expect("writer ok");
+            write_inter_block_mode_info(&mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, None)
+                .expect("writer ok");
             finalise(w)
         };
         buf.truncate(size);
@@ -4819,11 +4787,7 @@ mod tests {
             None,
             &mut got,
         );
-        let total_comp_inter: u32 = mode_counts
-            .comp_inter
-            .iter()
-            .map(|c| c[0] + c[1])
-            .sum();
+        let total_comp_inter: u32 = mode_counts.comp_inter.iter().map(|c| c[0] + c[1]).sum();
         assert_eq!(total_comp_inter, 1, "comp_inter counted once");
     }
 
@@ -4849,10 +4813,8 @@ mod tests {
         let mut buf = vec![0u8; 256];
         let size = {
             let mut w = BoolWriter::start_encode(&mut buf);
-            write_inter_block_mode_info(
-                &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, None,
-            )
-            .expect("writer ok");
+            write_inter_block_mode_info(&mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, None)
+                .expect("writer ok");
             finalise(w)
         };
         buf.truncate(size);
@@ -4903,7 +4865,15 @@ mod tests {
         {
             let mut w = BoolWriter::start_encode(&mut buf);
             write_inter_block_mode_info(
-                &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, Some(&mut counts),
+                &mut w,
+                &fc,
+                &params,
+                &nb,
+                bsize,
+                &bounds,
+                None,
+                &mi,
+                Some(&mut counts),
             )
             .expect("writer ok");
             let _ = finalise(w);
@@ -4935,7 +4905,15 @@ mod tests {
         {
             let mut w = BoolWriter::start_encode(&mut buf);
             write_inter_block_mode_info(
-                &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, Some(&mut counts),
+                &mut w,
+                &fc,
+                &params,
+                &nb,
+                bsize,
+                &bounds,
+                None,
+                &mi,
+                Some(&mut counts),
             )
             .expect("writer ok");
             let _ = finalise(w);
@@ -4970,7 +4948,15 @@ mod tests {
         {
             let mut w = BoolWriter::start_encode(&mut buf);
             write_inter_block_mode_info(
-                &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, Some(&mut counts),
+                &mut w,
+                &fc,
+                &params,
+                &nb,
+                bsize,
+                &bounds,
+                None,
+                &mi,
+                Some(&mut counts),
             )
             .expect("writer ok");
             let _ = finalise(w);
@@ -5000,7 +4986,15 @@ mod tests {
         {
             let mut w = BoolWriter::start_encode(&mut buf);
             write_inter_block_mode_info(
-                &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, Some(&mut counts),
+                &mut w,
+                &fc,
+                &params,
+                &nb,
+                bsize,
+                &bounds,
+                None,
+                &mi,
+                Some(&mut counts),
             )
             .expect("writer ok");
             let _ = finalise(w);
@@ -5030,7 +5024,15 @@ mod tests {
         {
             let mut w = BoolWriter::start_encode(&mut buf);
             write_inter_block_mode_info(
-                &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, Some(&mut counts),
+                &mut w,
+                &fc,
+                &params,
+                &nb,
+                bsize,
+                &bounds,
+                None,
+                &mi,
+                Some(&mut counts),
             )
             .expect("writer ok");
             let _ = finalise(w);
@@ -5064,15 +5066,31 @@ mod tests {
         {
             let mut w = BoolWriter::start_encode(&mut buf);
             write_inter_block_mode_info(
-                &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, Some(&mut counts),
+                &mut w,
+                &fc,
+                &params,
+                &nb,
+                bsize,
+                &bounds,
+                None,
+                &mi,
+                Some(&mut counts),
             )
             .expect("writer ok");
             let _ = finalise(w);
         }
-        let total: u32 = counts.inter_mode.iter().map(|c| c.iter().sum::<u32>()).sum();
+        let total: u32 = counts
+            .inter_mode
+            .iter()
+            .map(|c| c.iter().sum::<u32>())
+            .sum();
         assert_eq!(total, 1);
         // NEW = idx 3 → the [_][3] slot incremented.
-        let total_new: u32 = counts.inter_mode.iter().map(|c| c[InterMode::NewMv.idx()]).sum();
+        let total_new: u32 = counts
+            .inter_mode
+            .iter()
+            .map(|c| c[InterMode::NewMv.idx()])
+            .sum();
         assert_eq!(total_new, 1, "NEWMV slot incremented");
     }
 
@@ -5589,7 +5607,10 @@ mod tests {
     /// formatting.
     #[test]
     fn inter_mode_write_error_display_parent_mode_mismatch() {
-        let e = InterModeWriteError::Sub8ParentModeMismatch { parent: 3, last_sub: 0 };
+        let e = InterModeWriteError::Sub8ParentModeMismatch {
+            parent: 3,
+            last_sub: 0,
+        };
         let s = format!("{e}");
         assert!(s.contains("parent mode"), "actual: {s}");
         assert!(s.contains('3') && s.contains('0'), "actual: {s}");
@@ -5623,12 +5644,14 @@ mod tests {
         mi.bmi[0].as_mode = 99;
         let mut buf = vec![0u8; 64];
         let mut w = BoolWriter::start_encode(&mut buf);
-        let err = write_inter_block_mode_info(
-            &mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, None,
-        )
-        .expect_err("expected Sub8InvalidSubMode");
+        let err =
+            write_inter_block_mode_info(&mut w, &fc, &params, &nb, bsize, &bounds, None, &mi, None)
+                .expect_err("expected Sub8InvalidSubMode");
         assert!(
-            matches!(err, InterModeWriteError::Sub8InvalidSubMode { j: 0, raw: 99 }),
+            matches!(
+                err,
+                InterModeWriteError::Sub8InvalidSubMode { j: 0, raw: 99 }
+            ),
             "actual: {err:?}",
         );
     }

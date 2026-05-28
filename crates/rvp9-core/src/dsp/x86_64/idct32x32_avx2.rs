@@ -59,11 +59,11 @@ use core::arch::x86_64::{
 };
 
 use crate::transforms::constants::{
-    COSPI_1_64, COSPI_2_64, COSPI_3_64, COSPI_4_64, COSPI_5_64, COSPI_6_64, COSPI_7_64,
-    COSPI_8_64, COSPI_9_64, COSPI_10_64, COSPI_11_64, COSPI_12_64, COSPI_13_64, COSPI_14_64,
-    COSPI_15_64, COSPI_16_64, COSPI_17_64, COSPI_18_64, COSPI_19_64, COSPI_20_64, COSPI_21_64,
-    COSPI_22_64, COSPI_23_64, COSPI_24_64, COSPI_25_64, COSPI_26_64, COSPI_27_64, COSPI_28_64,
-    COSPI_29_64, COSPI_30_64, COSPI_31_64,
+    COSPI_1_64, COSPI_2_64, COSPI_3_64, COSPI_4_64, COSPI_5_64, COSPI_6_64, COSPI_7_64, COSPI_8_64,
+    COSPI_9_64, COSPI_10_64, COSPI_11_64, COSPI_12_64, COSPI_13_64, COSPI_14_64, COSPI_15_64,
+    COSPI_16_64, COSPI_17_64, COSPI_18_64, COSPI_19_64, COSPI_20_64, COSPI_21_64, COSPI_22_64,
+    COSPI_23_64, COSPI_24_64, COSPI_25_64, COSPI_26_64, COSPI_27_64, COSPI_28_64, COSPI_29_64,
+    COSPI_30_64, COSPI_31_64,
 };
 
 // ---------------------------------------------------------------------
@@ -116,8 +116,14 @@ unsafe fn mul_const(x: __m256i, c: i32) -> __m256i {
 #[inline]
 #[allow(clippy::too_many_arguments)]
 unsafe fn transpose8x8_i32(
-    r0: __m256i, r1: __m256i, r2: __m256i, r3: __m256i,
-    r4: __m256i, r5: __m256i, r6: __m256i, r7: __m256i,
+    r0: __m256i,
+    r1: __m256i,
+    r2: __m256i,
+    r3: __m256i,
+    r4: __m256i,
+    r5: __m256i,
+    r6: __m256i,
+    r7: __m256i,
 ) -> [__m256i; 8] {
     let a0 = _mm256_unpacklo_epi32(r0, r1);
     let a1 = _mm256_unpackhi_epi32(r0, r1);
@@ -613,10 +619,10 @@ unsafe fn idct32_avx2(v: [__m256i; 32]) -> [__m256i; 32] {
     let o30 = wrap(_mm256_sub_epi32(s7_1, s7_30));
     let o31 = wrap(_mm256_sub_epi32(s7_0, s7_31));
 
-    [o0, o1, o2, o3, o4, o5, o6, o7,
-     o8, o9, o10, o11, o12, o13, o14, o15,
-     o16, o17, o18, o19, o20, o21, o22, o23,
-     o24, o25, o26, o27, o28, o29, o30, o31]
+    [
+        o0, o1, o2, o3, o4, o5, o6, o7, o8, o9, o10, o11, o12, o13, o14, o15, o16, o17, o18, o19,
+        o20, o21, o22, o23, o24, o25, o26, o27, o28, o29, o30, o31,
+    ]
 }
 
 // ---------------------------------------------------------------------
@@ -636,16 +642,23 @@ unsafe fn idct32_pass_8rows(
     q3: [__m256i; 8],
 ) -> ([__m256i; 8], [__m256i; 8], [__m256i; 8], [__m256i; 8]) {
     let v: [__m256i; 32] = [
-        q0[0], q0[1], q0[2], q0[3], q0[4], q0[5], q0[6], q0[7],
-        q1[0], q1[1], q1[2], q1[3], q1[4], q1[5], q1[6], q1[7],
-        q2[0], q2[1], q2[2], q2[3], q2[4], q2[5], q2[6], q2[7],
-        q3[0], q3[1], q3[2], q3[3], q3[4], q3[5], q3[6], q3[7],
+        q0[0], q0[1], q0[2], q0[3], q0[4], q0[5], q0[6], q0[7], q1[0], q1[1], q1[2], q1[3], q1[4],
+        q1[5], q1[6], q1[7], q2[0], q2[1], q2[2], q2[3], q2[4], q2[5], q2[6], q2[7], q3[0], q3[1],
+        q3[2], q3[3], q3[4], q3[5], q3[6], q3[7],
     ];
     let out = idct32_avx2(v);
-    let r0: [__m256i; 8] = [out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7]];
-    let r1: [__m256i; 8] = [out[8], out[9], out[10], out[11], out[12], out[13], out[14], out[15]];
-    let r2: [__m256i; 8] = [out[16], out[17], out[18], out[19], out[20], out[21], out[22], out[23]];
-    let r3: [__m256i; 8] = [out[24], out[25], out[26], out[27], out[28], out[29], out[30], out[31]];
+    let r0: [__m256i; 8] = [
+        out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7],
+    ];
+    let r1: [__m256i; 8] = [
+        out[8], out[9], out[10], out[11], out[12], out[13], out[14], out[15],
+    ];
+    let r2: [__m256i; 8] = [
+        out[16], out[17], out[18], out[19], out[20], out[21], out[22], out[23],
+    ];
+    let r3: [__m256i; 8] = [
+        out[24], out[25], out[26], out[27], out[28], out[29], out[30], out[31],
+    ];
     (r0, r1, r2, r3)
 }
 
@@ -681,7 +694,10 @@ unsafe fn idct32_pass_8rows(
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn idct32x32_add_avx2_inner(input: &[i32; 1024], dest: &mut [u8], stride: usize) {
-    debug_assert!(dest.len() >= stride * 31 + 32, "dest too small for 32x32 add");
+    debug_assert!(
+        dest.len() >= stride * 31 + 32,
+        "dest too small for 32x32 add"
+    );
 
     // Stack scratch for the intermediate (post-row-pass) 32×32 matrix
     // in row-major i32 layout. The column pass reads from this.
@@ -769,20 +785,16 @@ unsafe fn idct32x32_add_avx2_inner(input: &[i32; 1024], dest: &mut [u8], stride:
         // out_q{Q}_rows[r] = output positions (Q*8..Q*8+8) of
         // intermediate row r of this group.
         let q0_rows = transpose8x8_i32(
-            out_q0[0], out_q0[1], out_q0[2], out_q0[3],
-            out_q0[4], out_q0[5], out_q0[6], out_q0[7],
+            out_q0[0], out_q0[1], out_q0[2], out_q0[3], out_q0[4], out_q0[5], out_q0[6], out_q0[7],
         );
         let q1_rows = transpose8x8_i32(
-            out_q1[0], out_q1[1], out_q1[2], out_q1[3],
-            out_q1[4], out_q1[5], out_q1[6], out_q1[7],
+            out_q1[0], out_q1[1], out_q1[2], out_q1[3], out_q1[4], out_q1[5], out_q1[6], out_q1[7],
         );
         let q2_rows = transpose8x8_i32(
-            out_q2[0], out_q2[1], out_q2[2], out_q2[3],
-            out_q2[4], out_q2[5], out_q2[6], out_q2[7],
+            out_q2[0], out_q2[1], out_q2[2], out_q2[3], out_q2[4], out_q2[5], out_q2[6], out_q2[7],
         );
         let q3_rows = transpose8x8_i32(
-            out_q3[0], out_q3[1], out_q3[2], out_q3[3],
-            out_q3[4], out_q3[5], out_q3[6], out_q3[7],
+            out_q3[0], out_q3[1], out_q3[2], out_q3[3], out_q3[4], out_q3[5], out_q3[6], out_q3[7],
         );
 
         // Store into intermediate (row-major). For row r in 0..8 of
@@ -832,10 +844,10 @@ unsafe fn idct32x32_add_avx2_inner(input: &[i32; 1024], dest: &mut [u8], stride:
     let zero = _mm_setzero_si128();
     for r in 0..32 {
         // 4 ymm: cols 0..8, 8..16, 16..24, 24..32 of row r.
-        let v0 = col_outputs[r];           // cols 0..8
-        let v1 = col_outputs[32 + r];      // cols 8..16
-        let v2 = col_outputs[64 + r];      // cols 16..24
-        let v3 = col_outputs[96 + r];      // cols 24..32
+        let v0 = col_outputs[r]; // cols 0..8
+        let v1 = col_outputs[32 + r]; // cols 8..16
+        let v2 = col_outputs[64 + r]; // cols 16..24
+        let v3 = col_outputs[96 + r]; // cols 24..32
 
         let v0 = _mm256_srai_epi32(_mm256_add_epi32(v0, round), 6);
         let v1 = _mm256_srai_epi32(_mm256_add_epi32(v1, round), 6);
@@ -1313,15 +1325,12 @@ mod tests {
             for col_group in 0..4usize {
                 let mut rs: [__m256i; 8] = [super::_mm256_set1_epi32(0); 8];
                 for r in 0..8 {
-                    let p = src
-                        .as_ptr()
-                        .add((row_group * 8 + r) * 32 + col_group * 8)
+                    let p = src.as_ptr().add((row_group * 8 + r) * 32 + col_group * 8)
                         as *const __m256i;
                     rs[r] = _mm256_loadu_si256(p);
                 }
-                let cols = super::transpose8x8_i32(
-                    rs[0], rs[1], rs[2], rs[3], rs[4], rs[5], rs[6], rs[7],
-                );
+                let cols =
+                    super::transpose8x8_i32(rs[0], rs[1], rs[2], rs[3], rs[4], rs[5], rs[6], rs[7]);
                 for k in 0..8 {
                     let p = dst
                         .as_mut_ptr()

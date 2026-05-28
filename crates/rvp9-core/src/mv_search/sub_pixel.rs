@@ -37,10 +37,10 @@
 use crate::block::BlockSize;
 use crate::cost::mv_cost::MvCosts;
 use crate::dsp::distortion::{
+    vpx_sub_pixel_variance4x4, vpx_sub_pixel_variance8x8, vpx_sub_pixel_variance8x16,
     vpx_sub_pixel_variance16x8, vpx_sub_pixel_variance16x16, vpx_sub_pixel_variance16x32,
     vpx_sub_pixel_variance32x16, vpx_sub_pixel_variance32x32, vpx_sub_pixel_variance32x64,
-    vpx_sub_pixel_variance4x4, vpx_sub_pixel_variance64x32, vpx_sub_pixel_variance64x64,
-    vpx_sub_pixel_variance8x16, vpx_sub_pixel_variance8x8,
+    vpx_sub_pixel_variance64x32, vpx_sub_pixel_variance64x64,
 };
 use crate::inter::mv::use_mv_hp;
 use crate::mode_info::Mv;
@@ -621,11 +621,7 @@ fn second_level_checks(
             subpel_limits,
         );
         // whichdir 0/1: up-direction; 2/3: down-direction.
-        let extra_r = if whichdir < 2 {
-            tr + hstep
-        } else {
-            tr - hstep
-        };
+        let extra_r = if whichdir < 2 { tr + hstep } else { tr - hstep };
         let _ = check(
             extra_r,
             tc + kc,
@@ -738,7 +734,9 @@ mod tests {
         let mut buf = vec![0u8; width * height];
         for i in 0..height {
             for j in 0..width {
-                let v = ((i as u32).wrapping_mul(7).wrapping_add((j as u32).wrapping_mul(seed))
+                let v = ((i as u32)
+                    .wrapping_mul(7)
+                    .wrapping_add((j as u32).wrapping_mul(seed))
                     .wrapping_add(40))
                     & 0xff;
                 buf[i * width + j] = v as u8;
@@ -1281,7 +1279,7 @@ mod tests {
             mv_limits: MvLimits::new(-16, 16, -16, 16),
             error_per_bit: 1,
             mv_costs: &costs,
-            allow_hp: true, // would normally enable HP
+            allow_hp: true,                              // would normally enable HP
             forced_stop: SubPixelForcedStop::QuarterPel, // ...but capped here.
             iters_per_step: 2,
         };
@@ -1320,8 +1318,14 @@ mod tests {
             Mv { row: -1, col: 0 },
             Mv { row: 0, col: -1 },
             Mv { row: 7, col: -23 },
-            Mv { row: i16::MAX, col: 0 },
-            Mv { row: i16::MIN, col: 0 },
+            Mv {
+                row: i16::MAX,
+                col: 0,
+            },
+            Mv {
+                row: i16::MIN,
+                col: 0,
+            },
         ] {
             assert_eq!(
                 adaptive_subpel_force_stop(mv),

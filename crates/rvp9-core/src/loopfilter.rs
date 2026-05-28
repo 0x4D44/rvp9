@@ -66,13 +66,13 @@ pub mod setup_mask;
 pub use adjust_mask::adjust_mask;
 pub use apply::loop_filter_frame;
 pub use mask::{BuildMaskInputs, LoopFilterMask, build_masks, build_y_mask, uv_txsize_420};
-pub use setup_mask::setup_mask;
 pub use mask_tables::{
     ABOVE_64X64_TXFORM_MASK_UV, ABOVE_64X64_TXFORM_MASK_Y, ABOVE_BORDER_UV, ABOVE_BORDER_Y,
     ABOVE_PREDICTION_MASK_UV, ABOVE_PREDICTION_MASK_Y, LEFT_64X64_TXFORM_MASK_UV,
     LEFT_64X64_TXFORM_MASK_Y, LEFT_BORDER_UV, LEFT_BORDER_Y, LEFT_PREDICTION_MASK_UV,
     LEFT_PREDICTION_MASK_Y, SIZE_MASK_UV, SIZE_MASK_Y,
 };
+pub use setup_mask::setup_mask;
 
 /// Maximum filter level. Mirrors libvpx `MAX_LOOP_FILTER`
 /// (`vp9_loopfilter.h:24`).
@@ -269,8 +269,7 @@ const fn filter_mask(
     if (q3 as i32 - q2 as i32).unsigned_abs() as i32 > lim {
         mask = -1;
     }
-    let mb_diff =
-        (p0i - q0i).unsigned_abs() as i32 * 2 + ((p1i - q1i).unsigned_abs() as i32) / 2;
+    let mb_diff = (p0i - q0i).unsigned_abs() as i32 * 2 + ((p1i - q1i).unsigned_abs() as i32) / 2;
     if mb_diff > blim {
         mask = -1;
     }
@@ -588,17 +587,8 @@ pub fn lpf_horizontal_8(
         let mut oq2 = q2;
         let mut oq3 = q3;
         filter8(
-            mask,
-            thresh,
-            flat,
-            &mut op3,
-            &mut op2,
-            &mut op1,
-            &mut op0,
-            &mut oq0,
-            &mut oq1,
-            &mut oq2,
-            &mut oq3,
+            mask, thresh, flat, &mut op3, &mut op2, &mut op1, &mut op0, &mut oq0, &mut oq1,
+            &mut oq2, &mut oq3,
         );
         pixels[s - 4 * pitch] = op3;
         pixels[s - 3 * pitch] = op2;
@@ -663,17 +653,8 @@ pub fn lpf_vertical_8(
         let mut oq2 = q2;
         let mut oq3 = q3;
         filter8(
-            mask,
-            thresh,
-            flat,
-            &mut op3,
-            &mut op2,
-            &mut op1,
-            &mut op0,
-            &mut oq0,
-            &mut oq1,
-            &mut oq2,
-            &mut oq3,
+            mask, thresh, flat, &mut op3, &mut op2, &mut op1, &mut op0, &mut oq0, &mut oq1,
+            &mut oq2, &mut oq3,
         );
         pixels[s - 4] = op3;
         pixels[s - 3] = op2;
@@ -802,12 +783,9 @@ fn filter16(
         // 15-tap [1,1,1,1,1,1,1,2,1,1,1,1,1,1,1].
         *op6 = round_power_of_two_4(p7 * 7 + p6 * 2 + p5 + p4 + p3 + p2 + p1 + p0 + q0);
         *op5 = round_power_of_two_4(p7 * 6 + p6 + p5 * 2 + p4 + p3 + p2 + p1 + p0 + q0 + q1);
-        *op4 = round_power_of_two_4(
-            p7 * 5 + p6 + p5 + p4 * 2 + p3 + p2 + p1 + p0 + q0 + q1 + q2,
-        );
-        *op3 = round_power_of_two_4(
-            p7 * 4 + p6 + p5 + p4 + p3 * 2 + p2 + p1 + p0 + q0 + q1 + q2 + q3,
-        );
+        *op4 = round_power_of_two_4(p7 * 5 + p6 + p5 + p4 * 2 + p3 + p2 + p1 + p0 + q0 + q1 + q2);
+        *op3 =
+            round_power_of_two_4(p7 * 4 + p6 + p5 + p4 + p3 * 2 + p2 + p1 + p0 + q0 + q1 + q2 + q3);
         *op2 = round_power_of_two_4(
             p7 * 3 + p6 + p5 + p4 + p3 + p2 * 2 + p1 + p0 + q0 + q1 + q2 + q3 + q4,
         );
@@ -826,12 +804,9 @@ fn filter16(
         *oq2 = round_power_of_two_4(
             p4 + p3 + p2 + p1 + p0 + q0 + q1 + q2 * 2 + q3 + q4 + q5 + q6 + q7 * 3,
         );
-        *oq3 = round_power_of_two_4(
-            p3 + p2 + p1 + p0 + q0 + q1 + q2 + q3 * 2 + q4 + q5 + q6 + q7 * 4,
-        );
-        *oq4 = round_power_of_two_4(
-            p2 + p1 + p0 + q0 + q1 + q2 + q3 + q4 * 2 + q5 + q6 + q7 * 5,
-        );
+        *oq3 =
+            round_power_of_two_4(p3 + p2 + p1 + p0 + q0 + q1 + q2 + q3 * 2 + q4 + q5 + q6 + q7 * 4);
+        *oq4 = round_power_of_two_4(p2 + p1 + p0 + q0 + q1 + q2 + q3 + q4 * 2 + q5 + q6 + q7 * 5);
         *oq5 = round_power_of_two_4(p1 + p0 + q0 + q1 + q2 + q3 + q4 + q5 * 2 + q6 + q7 * 6);
         *oq6 = round_power_of_two_4(p0 + q0 + q1 + q2 + q3 + q4 + q5 + q6 * 2 + q7 * 7);
     } else {
@@ -899,9 +874,9 @@ fn mb_lpf_horizontal_edge_w(
         let mut oq7 = pixels[s + 7 * pitch];
 
         filter16(
-            mask, thresh, flat, flat2, &mut op7, &mut op6, &mut op5, &mut op4, &mut op3,
-            &mut op2, &mut op1, &mut op0, &mut oq0, &mut oq1, &mut oq2, &mut oq3, &mut oq4,
-            &mut oq5, &mut oq6, &mut oq7,
+            mask, thresh, flat, flat2, &mut op7, &mut op6, &mut op5, &mut op4, &mut op3, &mut op2,
+            &mut op1, &mut op0, &mut oq0, &mut oq1, &mut oq2, &mut oq3, &mut oq4, &mut oq5,
+            &mut oq6, &mut oq7,
         );
 
         pixels[s - 8 * pitch] = op7;
@@ -1012,9 +987,9 @@ fn mb_lpf_vertical_edge_w(
         let mut oq7 = pixels[s + 7];
 
         filter16(
-            mask, thresh, flat, flat2, &mut op7, &mut op6, &mut op5, &mut op4, &mut op3,
-            &mut op2, &mut op1, &mut op0, &mut oq0, &mut oq1, &mut oq2, &mut oq3, &mut oq4,
-            &mut oq5, &mut oq6, &mut oq7,
+            mask, thresh, flat, flat2, &mut op7, &mut op6, &mut op5, &mut op4, &mut op3, &mut op2,
+            &mut op1, &mut op0, &mut oq0, &mut oq1, &mut oq2, &mut oq3, &mut oq4, &mut oq5,
+            &mut oq6, &mut oq7,
         );
 
         pixels[s - 8] = op7;
@@ -1376,7 +1351,14 @@ mod tests {
             }
         }
         let before = pixels;
-        lpf_horizontal_4(&mut pixels, 4 * 8, 8, /*blimit*/ 0, /*limit*/ 0, /*thresh*/ 0);
+        lpf_horizontal_4(
+            &mut pixels,
+            4 * 8,
+            8,
+            /*blimit*/ 0,
+            /*limit*/ 0,
+            /*thresh*/ 0,
+        );
         // limit=0, blimit=0: filter_mask returns 0 because the
         // |p0 - q0| * 2 = 100 > blimit = 0.
         assert_eq!(pixels, before);
@@ -1398,7 +1380,14 @@ mod tests {
         // allow |p0-q0|*2 + |p1-q1|/2 = 100 + 25 = 125. Use 200 to
         // be safely above.
         let before = pixels;
-        lpf_horizontal_4(&mut pixels, 4 * 8, 8, /*blimit*/ 200, /*limit*/ 20, /*thresh*/ 4);
+        lpf_horizontal_4(
+            &mut pixels,
+            4 * 8,
+            8,
+            /*blimit*/ 200,
+            /*limit*/ 20,
+            /*thresh*/ 4,
+        );
         // Edge pixels should change.
         assert_ne!(pixels, before);
         // Symmetry: column 0 vs column 7 should be identical since
@@ -1479,7 +1468,14 @@ mod tests {
             }
         }
         let before = pixels;
-        lpf_horizontal_8(&mut pixels, 4 * 8, 8, /*blimit*/ 200, /*limit*/ 20, /*thresh*/ 4);
+        lpf_horizontal_8(
+            &mut pixels,
+            4 * 8,
+            8,
+            /*blimit*/ 200,
+            /*limit*/ 20,
+            /*thresh*/ 4,
+        );
         assert_ne!(pixels, before);
         // 8-tap touches op2..oq2, not just op1..oq1. So row 2
         // (p2 row, index 2) and row 5 (q2 row, index 5) should
@@ -1519,7 +1515,14 @@ mod tests {
         // So 8-tap calls filter4 only — p2/q2 unchanged.
         let p2_before = pixels[2 * 8];
         let q2_before = pixels[5 * 8];
-        lpf_horizontal_8(&mut pixels, 4 * 8, 8, /*blimit*/ 200, /*limit*/ 30, /*thresh*/ 4);
+        lpf_horizontal_8(
+            &mut pixels,
+            4 * 8,
+            8,
+            /*blimit*/ 200,
+            /*limit*/ 30,
+            /*thresh*/ 4,
+        );
         // p2 / q2 unchanged because flat_mask4 failed and filter4
         // doesn't touch those rows.
         assert_eq!(pixels[2 * 8], p2_before);

@@ -42,9 +42,9 @@ pub use scans::{
     DEFAULT_SCAN_16X16, DEFAULT_SCAN_16X16_NEIGHBORS, DEFAULT_SCAN_32X32,
     DEFAULT_SCAN_32X32_NEIGHBORS, ROW_ISCAN_4X4, ROW_ISCAN_8X8, ROW_ISCAN_16X16, ROW_SCAN_4X4,
     ROW_SCAN_4X4_NEIGHBORS, ROW_SCAN_8X8, ROW_SCAN_8X8_NEIGHBORS, ROW_SCAN_16X16,
-    ROW_SCAN_16X16_NEIGHBORS, ScanOrder, col_scan_4x4, col_scan_8x8, col_scan_16x16,
-    default_scan, default_scan_4x4, default_scan_8x8, default_scan_16x16, default_scan_32x32,
-    row_scan_4x4, row_scan_8x8, row_scan_16x16, scan_for, scan_order_4x4, scan_order_8x8,
-    scan_order_16x16, scan_order_32x32,
+    ROW_SCAN_16X16_NEIGHBORS, ScanOrder, col_scan_4x4, col_scan_8x8, col_scan_16x16, default_scan,
+    default_scan_4x4, default_scan_8x8, default_scan_16x16, default_scan_32x32, row_scan_4x4,
+    row_scan_8x8, row_scan_16x16, scan_for, scan_order_4x4, scan_order_8x8, scan_order_16x16,
+    scan_order_32x32,
 };
 pub use types::{MAX_NEIGHBORS, TxMode, TxSize, TxType};

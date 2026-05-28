@@ -60,10 +60,10 @@
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
-    __m128i, _mm_add_epi16, _mm_add_epi32, _mm_cvtsi128_si32, _mm_cvtsi32_si128,
-    _mm_loadu_si128, _mm_mullo_epi32, _mm_packs_epi32, _mm_packus_epi16, _mm_set1_epi32,
-    _mm_setzero_si128, _mm_slli_epi32, _mm_srai_epi32, _mm_srli_si128, _mm_sub_epi32,
-    _mm_unpackhi_epi32, _mm_unpacklo_epi32, _mm_unpacklo_epi8,
+    __m128i, _mm_add_epi16, _mm_add_epi32, _mm_cvtsi32_si128, _mm_cvtsi128_si32, _mm_loadu_si128,
+    _mm_mullo_epi32, _mm_packs_epi32, _mm_packus_epi16, _mm_set1_epi32, _mm_setzero_si128,
+    _mm_slli_epi32, _mm_srai_epi32, _mm_srli_si128, _mm_sub_epi32, _mm_unpackhi_epi32,
+    _mm_unpacklo_epi8, _mm_unpacklo_epi32,
 };
 
 use crate::transforms::constants::{COSPI_8_64, COSPI_16_64, COSPI_24_64};
@@ -277,9 +277,7 @@ unsafe fn idct4x4_add_avx2_inner(input: &[i32; 16], dest: &mut [u8], stride: usi
     let round = _mm_set1_epi32(8);
     let zero = _mm_setzero_si128();
 
-    let row_pack = |row: __m128i| -> __m128i {
-        _mm_srai_epi32(_mm_add_epi32(row, round), 4)
-    };
+    let row_pack = |row: __m128i| -> __m128i { _mm_srai_epi32(_mm_add_epi32(row, round), 4) };
 
     // Pack rows (0, 1) and (2, 3) into one i16 register each. After
     // saturate-pack, lanes 0..3 = row a, lanes 4..7 = row b.
@@ -305,8 +303,7 @@ unsafe fn idct4x4_add_avx2_inner(input: &[i32; 16], dest: &mut [u8], stride: usi
         // SAFETY: within the unsafe fn we read 4 bytes from
         // `dest[dst_row_start..dst_row_start + 4]`. The debug_assert
         // bounds `dest.len() >= 3*stride + 4`.
-        let raw: i32 =
-            core::ptr::read_unaligned(dest.as_ptr().add(dst_row_start) as *const i32);
+        let raw: i32 = core::ptr::read_unaligned(dest.as_ptr().add(dst_row_start) as *const i32);
         let dst_u8 = _mm_cvtsi32_si128(raw);
         // Zero-extend the 4 u8 lanes to i16 (low 8 bytes; only the low
         // 4 are valid after the i32 load).
@@ -592,8 +589,8 @@ mod tests {
     #[test]
     fn idct4x4_dispatch_round_trip() {
         require_avx2!();
-        use crate::dsp::caps::detect;
         use crate::dsp::SimdDispatch;
+        use crate::dsp::caps::detect;
 
         let mut caps = detect();
         caps.avx2 = true;
@@ -641,8 +638,8 @@ mod tests {
     #[test]
     fn idct4x4_avx2_dispatch_slot_uses_avx2_path() {
         require_avx2!();
-        use crate::dsp::caps::detect;
         use crate::dsp::SimdDispatch;
+        use crate::dsp::caps::detect;
 
         let mut caps = detect();
         caps.avx2 = true;

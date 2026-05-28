@@ -103,7 +103,7 @@ pub fn d135_predictor_avx2(
 mod tests {
     //! Scalar-vs-AVX2 differential tests for `d135_predictor_avx2`.
     use super::d135_predictor_avx2;
-    use crate::intra_pred::{d135_predictor, PredCtx};
+    use crate::intra_pred::{PredCtx, d135_predictor};
 
     macro_rules! require_avx2 {
         () => {

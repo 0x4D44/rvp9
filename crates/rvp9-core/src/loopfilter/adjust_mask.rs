@@ -99,8 +99,7 @@ pub fn adjust_mask(mi_row: u32, mi_col: u32, mi_rows: u32, mi_cols: u32, lfm: &m
         // truncates cleanly back to `u16` because the top bit of
         // the u32 result is just past the u16 boundary
         // (1<<16 - 1 = 0xffff fits in u16).
-        let mask_uv: u16 =
-            ((1u32 << (((rows + 1) >> 1) << 2)) - 1) as u16;
+        let mask_uv: u16 = ((1u32 << (((rows + 1) >> 1) << 2)) - 1) as u16;
 
         // Mask off out-of-frame bits for TX_4X4 / TX_8X8 /
         // TX_16X16. The TX_32X32 slot is *not* masked — the apply
@@ -145,14 +144,12 @@ pub fn adjust_mask(mi_row: u32, mi_col: u32, mi_rows: u32, mi_cols: u32, lfm: &m
         let mask_y: u64 = ((1u64 << columns) - 1).wrapping_mul(0x0101_0101_0101_0101);
         // For UV: same idea on a 4-row × 4-col grid. UV columns =
         // (columns + 1) / 2.
-        let mask_uv: u16 =
-            ((1u16 << ((columns + 1) >> 1)) - 1).wrapping_mul(0x1111);
+        let mask_uv: u16 = ((1u16 << ((columns + 1) >> 1)) - 1).wrapping_mul(0x1111);
         // Internal-4×4 chroma edges do *not* apply on the last
         // visible column — that border is the implicit
         // frame-edge, which is never filtered. Hence a strictly
         // smaller mask.
-        let mask_uv_int: u16 =
-            ((1u16 << (columns >> 1)) - 1).wrapping_mul(0x1111);
+        let mask_uv_int: u16 = ((1u16 << (columns >> 1)) - 1).wrapping_mul(0x1111);
 
         for i in 0..TX_32X32 {
             lfm.left_y[i] &= mask_y;
@@ -391,12 +388,7 @@ mod tests {
         // bits, so steps 1 and 2 are no-ops; mi_row=0/mi_col=0
         // with mi_rows=mi_cols=8 → no right/bottom edge triggers.
         let mut lfm = LoopFilterMask {
-            left_y: [
-                0,
-                0xffff_ffff_ffff_ffff,
-                0,
-                0,
-            ],
+            left_y: [0, 0xffff_ffff_ffff_ffff, 0, 0],
             above_y: [0, 0xffff_ffff_ffff_ffff, 0, 0],
             int_4x4_y: 0xffff_ffff_ffff_ffff,
             left_uv: [0, 0xffff, 0, 0],

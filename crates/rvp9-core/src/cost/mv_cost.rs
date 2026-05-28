@@ -28,7 +28,7 @@
 use super::prob_cost::{vp9_cost_one, vp9_cost_zero};
 use super::tree_cost::vp9_cost_tokens;
 use crate::entropy::adapt::{
-    VP9_MV_CLASS0_TREE, VP9_MV_CLASS_TREE, VP9_MV_FP_TREE, VP9_MV_JOINT_TREE,
+    VP9_MV_CLASS_TREE, VP9_MV_CLASS0_TREE, VP9_MV_FP_TREE, VP9_MV_JOINT_TREE,
 };
 use crate::entropy::mv_probs::{
     CLASS0_BITS, CLASS0_SIZE, MV_CLASSES, MV_FP_SIZE, MV_JOINTS, MV_OFFSET_BITS, NmvComponent,
@@ -192,10 +192,8 @@ pub fn build_nmv_component_cost_table(mvcomp: &NmvComponent, usehp: bool) -> MvC
             };
             for f in 0..4u32 {
                 let c = whole_cost + fp_cost[f as usize];
-                let v = ((CLASS0_SIZE as i32) << (cls + 2))
-                    + ((d as i32) * 8)
-                    + ((f as i32) * 2)
-                    + 1;
+                let v =
+                    ((CLASS0_SIZE as i32) << (cls + 2)) + ((d as i32) * 8) + ((f as i32) * 2) + 1;
                 if usehp {
                     cost[(zero_idx as i32 + v) as usize] = c + hp_cost[0] + sign_cost[0];
                     cost[(zero_idx as i32 - v) as usize] = c + hp_cost[0] + sign_cost[1];
@@ -294,8 +292,7 @@ mod tests {
 
     #[test]
     fn component_cost_table_shape() {
-        let v_cost =
-            build_nmv_component_cost_table(&DEFAULT_NMV_CONTEXT.comps[0], false);
+        let v_cost = build_nmv_component_cost_table(&DEFAULT_NMV_CONTEXT.comps[0], false);
         assert_eq!(v_cost.cost.len(), MV_VALS);
         // The zero slot is special-cased to zero by libvpx semantics.
         assert_eq!(v_cost.cost[MV_MAX as usize], 0);
@@ -311,8 +308,7 @@ mod tests {
 
     #[test]
     fn highprec_increases_component_cost_when_v_minus_one_lsb_is_set() {
-        let no_hp =
-            build_nmv_component_cost_table(&DEFAULT_NMV_CONTEXT.comps[0], false);
+        let no_hp = build_nmv_component_cost_table(&DEFAULT_NMV_CONTEXT.comps[0], false);
         let hp = build_nmv_component_cost_table(&DEFAULT_NMV_CONTEXT.comps[0], true);
         // The high-precision variant adds an extra bit to non-zero
         // entries → strictly greater than the non-hp version.

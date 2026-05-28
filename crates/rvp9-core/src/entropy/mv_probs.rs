@@ -215,7 +215,10 @@ mod tests {
     fn default_nmv_vertical_component() {
         let v = &DEFAULT_NMV_CONTEXT.comps[0];
         assert_eq!(v.sign, 128);
-        assert_eq!(v.classes, [224, 144, 192, 168, 192, 176, 192, 198, 198, 245]);
+        assert_eq!(
+            v.classes,
+            [224, 144, 192, 168, 192, 176, 192, 198, 198, 245]
+        );
         assert_eq!(v.class0, [216]);
         assert_eq!(v.bits, [136, 140, 148, 160, 176, 192, 224, 234, 234, 240]);
         assert_eq!(v.class0_fp, [[128, 128, 64], [96, 112, 64]]);
@@ -228,7 +231,10 @@ mod tests {
     fn default_nmv_horizontal_component() {
         let h = &DEFAULT_NMV_CONTEXT.comps[1];
         assert_eq!(h.sign, 128);
-        assert_eq!(h.classes, [216, 128, 176, 160, 176, 176, 192, 198, 198, 208]);
+        assert_eq!(
+            h.classes,
+            [216, 128, 176, 160, 176, 176, 192, 198, 198, 208]
+        );
         assert_eq!(h.class0, [208]);
         // bits, class0_fp, fp, class0_hp, hp are identical to vertical.
         assert_eq!(h.bits, DEFAULT_NMV_CONTEXT.comps[0].bits);

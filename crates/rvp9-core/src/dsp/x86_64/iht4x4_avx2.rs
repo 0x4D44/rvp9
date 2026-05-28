@@ -70,10 +70,10 @@
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
-    __m128i, _mm_add_epi16, _mm_add_epi32, _mm_cvtsi128_si32, _mm_cvtsi32_si128,
-    _mm_loadu_si128, _mm_mullo_epi32, _mm_packs_epi32, _mm_packus_epi16, _mm_set1_epi32,
-    _mm_setzero_si128, _mm_slli_epi32, _mm_srai_epi32, _mm_srli_si128, _mm_sub_epi32,
-    _mm_unpackhi_epi32, _mm_unpacklo_epi32, _mm_unpacklo_epi8,
+    __m128i, _mm_add_epi16, _mm_add_epi32, _mm_cvtsi32_si128, _mm_cvtsi128_si32, _mm_loadu_si128,
+    _mm_mullo_epi32, _mm_packs_epi32, _mm_packus_epi16, _mm_set1_epi32, _mm_setzero_si128,
+    _mm_slli_epi32, _mm_srai_epi32, _mm_srli_si128, _mm_sub_epi32, _mm_unpackhi_epi32,
+    _mm_unpacklo_epi8, _mm_unpacklo_epi32,
 };
 
 use crate::transforms::constants::{
@@ -336,9 +336,7 @@ unsafe fn iht4x4_add_avx2_inner(
     let round = _mm_set1_epi32(8);
     let zero = _mm_setzero_si128();
 
-    let row_pack = |row: __m128i| -> __m128i {
-        _mm_srai_epi32(_mm_add_epi32(row, round), 4)
-    };
+    let row_pack = |row: __m128i| -> __m128i { _mm_srai_epi32(_mm_add_epi32(row, round), 4) };
 
     // Pack rows (0, 1) and (2, 3) into one i16 register each. After
     // saturate-pack, lanes 0..3 = row a, lanes 4..7 = row b.
@@ -363,8 +361,7 @@ unsafe fn iht4x4_add_avx2_inner(
         // SAFETY: within the unsafe fn we read 4 bytes from
         // `dest[dst_row_start..dst_row_start + 4]`. The debug_assert
         // bounds `dest.len() >= 3*stride + 4`.
-        let raw: i32 =
-            core::ptr::read_unaligned(dest.as_ptr().add(dst_row_start) as *const i32);
+        let raw: i32 = core::ptr::read_unaligned(dest.as_ptr().add(dst_row_start) as *const i32);
         let dst_u8 = _mm_cvtsi32_si128(raw);
         // Zero-extend the 4 u8 lanes to i16.
         let dst_i16 = _mm_unpacklo_epi8(dst_u8, zero);
@@ -716,11 +713,7 @@ mod tests {
                 i16::MIN as i32
             };
         }
-        [
-            [i16::MAX as i32; 16],
-            [i16::MIN as i32; 16],
-            alt,
-        ]
+        [[i16::MAX as i32; 16], [i16::MIN as i32; 16], alt]
     }
 
     fn run_pathological(tx_type: TxType) {
@@ -788,7 +781,10 @@ mod tests {
             let mut dst_scalar = dst_init;
             (dispatch_avx2.iht4x4_add())(&input, &mut dst_avx2, 4, tx_type);
             (dispatch_scalar.iht4x4_add())(&input, &mut dst_scalar, 4, tx_type);
-            assert_eq!(dst_avx2, dst_scalar, "dispatch mismatch tx_type={tx_type:?}");
+            assert_eq!(
+                dst_avx2, dst_scalar,
+                "dispatch mismatch tx_type={tx_type:?}"
+            );
         }
     }
 }

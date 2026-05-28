@@ -124,8 +124,14 @@ unsafe fn mul_const(x: __m256i, c: i32) -> __m256i {
 #[inline]
 #[allow(clippy::too_many_arguments)]
 unsafe fn transpose8x8_i32(
-    r0: __m256i, r1: __m256i, r2: __m256i, r3: __m256i,
-    r4: __m256i, r5: __m256i, r6: __m256i, r7: __m256i,
+    r0: __m256i,
+    r1: __m256i,
+    r2: __m256i,
+    r3: __m256i,
+    r4: __m256i,
+    r5: __m256i,
+    r6: __m256i,
+    r7: __m256i,
 ) -> [__m256i; 8] {
     let a0 = _mm256_unpacklo_epi32(r0, r1);
     let a1 = _mm256_unpackhi_epi32(r0, r1);
@@ -348,8 +354,7 @@ unsafe fn run_2d(input: [__m256i; 8], tx_type: TxType) -> [__m256i; 8] {
     // 8 rows. Allows the row-pass butterfly to act 8-way without any
     // in-lane shuffles.
     let cols = transpose8x8_i32(
-        input[0], input[1], input[2], input[3],
-        input[4], input[5], input[6], input[7],
+        input[0], input[1], input[2], input[3], input[4], input[5], input[6], input[7],
     );
 
     // Stage B: row pass.
@@ -366,8 +371,8 @@ unsafe fn run_2d(input: [__m256i; 8], tx_type: TxType) -> [__m256i; 8] {
     };
 
     let rows = transpose8x8_i32(
-        row_out[0], row_out[1], row_out[2], row_out[3],
-        row_out[4], row_out[5], row_out[6], row_out[7],
+        row_out[0], row_out[1], row_out[2], row_out[3], row_out[4], row_out[5], row_out[6],
+        row_out[7],
     );
 
     match tx_type {
@@ -778,11 +783,7 @@ mod tests {
                 i16::MIN as i32
             };
         }
-        [
-            [i16::MAX as i32; 64],
-            [i16::MIN as i32; 64],
-            alt,
-        ]
+        [[i16::MAX as i32; 64], [i16::MIN as i32; 64], alt]
     }
 
     fn run_pathological(tx_type: TxType) {
@@ -899,7 +900,10 @@ mod tests {
             let mut dst_scalar = dst_init;
             (dispatch_avx2.iht8x8_add())(&input, &mut dst_avx2, 8, tx_type);
             (dispatch_scalar.iht8x8_add())(&input, &mut dst_scalar, 8, tx_type);
-            assert_eq!(dst_avx2, dst_scalar, "dispatch mismatch tx_type={tx_type:?}");
+            assert_eq!(
+                dst_avx2, dst_scalar,
+                "dispatch mismatch tx_type={tx_type:?}"
+            );
         }
     }
 }

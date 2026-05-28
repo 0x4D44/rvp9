@@ -34,8 +34,7 @@ impl TraceFlags {
         Self {
             intra: std::env::var("RVP9_TRACE_INTRA").ok(),
             debug_refcoefs: std::env::var("RVP9_DEBUG_REFCOEFS").ok(),
-            debug_scan_write: std::env::var("RVP9_DEBUG_SCAN_WRITE")
-                .is_ok_and(|v| v == "1"),
+            debug_scan_write: std::env::var("RVP9_DEBUG_SCAN_WRITE").is_ok_and(|v| v == "1"),
         }
     }
 }

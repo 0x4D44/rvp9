@@ -793,7 +793,10 @@ mod tests {
         // KF path: high variance against flat-128 → no Block64x64.
         let kf_hist = block_size_histogram(&kf);
         let kf_64 = kf_hist.get(&BlockSize::Block64x64).copied().unwrap_or(0);
-        assert_eq!(kf_64, 0, "KF path on xorshift source should not land at 64x64");
+        assert_eq!(
+            kf_64, 0,
+            "KF path on xorshift source should not land at 64x64"
+        );
     }
 
     /// Every cell must carry a legal F8.2 block size, and the pattern
@@ -863,12 +866,18 @@ mod tests {
         // we instead build a pattern where one cell is Block16x16
         // adjacent to a Block32x32 covering it: i.e., overlap.
         bad.cells[0][0] = BlockSize::Block16x16; // breaks the 32x32 in quadrant 0
-        assert!(!bad.is_valid_partition(), "broken 32x32 quadrant must be invalid");
+        assert!(
+            !bad.is_valid_partition(),
+            "broken 32x32 quadrant must be invalid"
+        );
 
         // Illegal: a cell carries a non-square / sub-8 block size.
         let mut bad2 = all_8.clone();
         bad2.cells[0][0] = BlockSize::Block4x8;
-        assert!(!bad2.is_valid_partition(), "Block4x8 leaf is illegal in F8.2");
+        assert!(
+            !bad2.is_valid_partition(),
+            "Block4x8 leaf is illegal in F8.2"
+        );
     }
 
     /// `is_valid_partition`: alignment-failure return path (line 145).
@@ -1007,10 +1016,7 @@ mod tests {
         // an "overlap detected" outcome: stamp non-Block32x32 markers
         // INSIDE the first leaf's footprint.
         d.cells[1][1] = BlockSize::Block16x16; // breaks (0..4, 0..4)
-        assert!(
-            !d.is_valid_partition(),
-            "footprint inconsistent → invalid",
-        );
+        assert!(!d.is_valid_partition(), "footprint inconsistent → invalid",);
     }
 
     // -----------------------------------------------------------------------
@@ -1148,7 +1154,7 @@ mod tests {
             ref_offset_xy: (0, 0),
             is_keyframe: false,
             q_index: 50,
-            frame_width: 320, // <= 352
+            frame_width: 320,  // <= 352
             frame_height: 480, // > 288 → second operand false
             avg_inter_qindex: 50,
             noise_threshold_scale: 1,
@@ -1198,7 +1204,7 @@ mod tests {
             ref_offset_xy: (0, 0),
             is_keyframe: false,
             q_index: 50,
-            frame_width: 1600, // < 1920
+            frame_width: 1600,  // < 1920
             frame_height: 1200, // >= 1080 → second operand false
             avg_inter_qindex: 50,
             noise_threshold_scale: 1,
@@ -1249,7 +1255,8 @@ mod tests {
         // 720p inter branch (`width < 1280 && height < 720`): t0=base,
         // t1=(5*base)>>2, t2=base<<7, t3=base<<2 — large enough at
         // q=255 that the noise multiplier shows up post-256× fold.
-        let baseline = VbpThresholds::for_inter(/* q */ 255, /* avg_q */ 50, 1024, 512, 1);
+        let baseline =
+            VbpThresholds::for_inter(/* q */ 255, /* avg_q */ 50, 1024, 512, 1);
         let scaled_2 = VbpThresholds::for_inter(255, 50, 1024, 512, 2);
         let scaled_4 = VbpThresholds::for_inter(255, 50, 1024, 512, 4);
         for i in 0..4 {

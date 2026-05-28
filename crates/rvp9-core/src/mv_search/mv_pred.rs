@@ -91,9 +91,9 @@ pub fn mv_pred_sad_seed(
         // Evaluate SAD. `raw_sad_at_mv` returns `None` if the
         // reference block falls outside the plane — skip that
         // candidate.
-        if let Some(sad) = raw_sad_at_mv(
-            block_size, src_plane, src_offset, ref_plane, fp_row, fp_col,
-        ) {
+        if let Some(sad) =
+            raw_sad_at_mv(block_size, src_plane, src_offset, ref_plane, fp_row, fp_col)
+        {
             if sad < best_sad {
                 best_sad = sad;
                 best_mv = Mv {
@@ -123,12 +123,18 @@ mod tests {
         let w = 32;
         let h = 32;
         let data = make_plane(w, h, 128);
-        let plane = PlaneRef { data: &data, stride: w, width: w, height: h };
+        let plane = PlaneRef {
+            data: &data,
+            stride: w,
+            width: w,
+            height: h,
+        };
         let candidates = [
             Mv { row: 0, col: 0 },
             Mv { row: 8, col: 8 }, // 1 full-pel down-right
         ];
-        let (best, sad) = mv_pred_sad_seed(&plane, &plane, (0, 0), &candidates, BlockSize::Block8x8);
+        let (best, sad) =
+            mv_pred_sad_seed(&plane, &plane, (0, 0), &candidates, BlockSize::Block8x8);
         assert_eq!(sad, 0);
         assert_eq!(best, Mv::ZERO);
     }
@@ -140,13 +146,16 @@ mod tests {
         let w = 8;
         let h = 8;
         let data = make_plane(w, h, 100);
-        let plane = PlaneRef { data: &data, stride: w, width: w, height: h };
+        let plane = PlaneRef {
+            data: &data,
+            stride: w,
+            width: w,
+            height: h,
+        };
         // Candidates that point far outside the 8x8 plane.
-        let candidates = [
-            Mv { row: 800, col: 0 },
-            Mv { row: 0, col: 800 },
-        ];
-        let (best, sad) = mv_pred_sad_seed(&plane, &plane, (0, 0), &candidates, BlockSize::Block8x8);
+        let candidates = [Mv { row: 800, col: 0 }, Mv { row: 0, col: 800 }];
+        let (best, sad) =
+            mv_pred_sad_seed(&plane, &plane, (0, 0), &candidates, BlockSize::Block8x8);
         assert_eq!(best, Mv::ZERO);
         assert_eq!(sad, u32::MAX);
     }
@@ -157,12 +166,21 @@ mod tests {
         let w = 16;
         let h = 16;
         let data = make_plane(w, h, 42);
-        let plane = PlaneRef { data: &data, stride: w, width: w, height: h };
+        let plane = PlaneRef {
+            data: &data,
+            stride: w,
+            width: w,
+            height: h,
+        };
         let candidates = [
-            Mv { row: i16::MAX, col: i16::MAX },
+            Mv {
+                row: i16::MAX,
+                col: i16::MAX,
+            },
             Mv { row: 0, col: 0 },
         ];
-        let (best, sad) = mv_pred_sad_seed(&plane, &plane, (0, 0), &candidates, BlockSize::Block8x8);
+        let (best, sad) =
+            mv_pred_sad_seed(&plane, &plane, (0, 0), &candidates, BlockSize::Block8x8);
         assert_eq!(sad, 0);
         assert_eq!(best, Mv::ZERO);
     }
@@ -174,7 +192,12 @@ mod tests {
         let w = 32;
         let h = 32;
         let src_data = make_plane(w, h, 100);
-        let src = PlaneRef { data: &src_data, stride: w, width: w, height: h };
+        let src = PlaneRef {
+            data: &src_data,
+            stride: w,
+            width: w,
+            height: h,
+        };
 
         // Reference: mostly filled with 200 (high SAD at most positions),
         // but with an 8x8 block at (8, 8) filled with 100 (zero SAD there).
@@ -184,7 +207,12 @@ mod tests {
                 ref_data[r * w + c] = 100;
             }
         }
-        let refp = PlaneRef { data: &ref_data, stride: w, width: w, height: h };
+        let refp = PlaneRef {
+            data: &ref_data,
+            stride: w,
+            width: w,
+            height: h,
+        };
 
         // Candidate 0: (0,0) → high SAD.
         // Candidate 1: (8,8) in full-pel → (64,64) in Q3.
@@ -202,20 +230,20 @@ mod tests {
     fn q3_rounding() {
         // Positive: (val + 4) >> 3
         assert_eq!(q3_to_full_pel(0), 0);
-        assert_eq!(q3_to_full_pel(8), 1);   // exact full-pel
-        assert_eq!(q3_to_full_pel(4), 1);   // 0.5 → rounds up
-        assert_eq!(q3_to_full_pel(3), 0);   // 0.375 → rounds down
-        assert_eq!(q3_to_full_pel(7), 1);   // 0.875 → rounds up
+        assert_eq!(q3_to_full_pel(8), 1); // exact full-pel
+        assert_eq!(q3_to_full_pel(4), 1); // 0.5 → rounds up
+        assert_eq!(q3_to_full_pel(3), 0); // 0.375 → rounds down
+        assert_eq!(q3_to_full_pel(7), 1); // 0.875 → rounds up
         assert_eq!(q3_to_full_pel(16), 2);
 
         // Negative: (val + 3) >> 3 — arithmetic shift rounds toward -inf.
-        assert_eq!(q3_to_full_pel(-8), -1);  // -1.0 → -1
-        assert_eq!(q3_to_full_pel(-4), -1);  // -0.5 → -1 (not toward zero)
-        assert_eq!(q3_to_full_pel(-5), -1);  // -0.625 → -1
-        assert_eq!(q3_to_full_pel(-6), -1);  // -0.75 → -1
+        assert_eq!(q3_to_full_pel(-8), -1); // -1.0 → -1
+        assert_eq!(q3_to_full_pel(-4), -1); // -0.5 → -1 (not toward zero)
+        assert_eq!(q3_to_full_pel(-5), -1); // -0.625 → -1
+        assert_eq!(q3_to_full_pel(-6), -1); // -0.75 → -1
         assert_eq!(q3_to_full_pel(-16), -2); // -2.0 → -2
-        assert_eq!(q3_to_full_pel(-1), 0);   // -0.125 → 0 ((-1+3)>>3 = 0)
-        assert_eq!(q3_to_full_pel(-3), 0);   // -0.375 → 0 ((-3+3)>>3 = 0)
+        assert_eq!(q3_to_full_pel(-1), 0); // -0.125 → 0 ((-1+3)>>3 = 0)
+        assert_eq!(q3_to_full_pel(-3), 0); // -0.375 → 0 ((-3+3)>>3 = 0)
     }
 
     /// Empty candidate list returns default.
@@ -224,7 +252,12 @@ mod tests {
         let w = 16;
         let h = 16;
         let data = make_plane(w, h, 50);
-        let plane = PlaneRef { data: &data, stride: w, width: w, height: h };
+        let plane = PlaneRef {
+            data: &data,
+            stride: w,
+            width: w,
+            height: h,
+        };
         let (best, sad) = mv_pred_sad_seed(&plane, &plane, (0, 0), &[], BlockSize::Block8x8);
         assert_eq!(best, Mv::ZERO);
         assert_eq!(sad, u32::MAX);

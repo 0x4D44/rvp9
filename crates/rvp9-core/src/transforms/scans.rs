@@ -1443,8 +1443,14 @@ mod tests {
     #[test]
     fn default_scan_returns_per_size_default() {
         use crate::transforms::types::TxSize;
-        assert_eq!(default_scan(TxSize::Tx4x4).scan.as_ptr(), DEFAULT_SCAN_4X4.as_ptr());
-        assert_eq!(default_scan(TxSize::Tx8x8).scan.as_ptr(), DEFAULT_SCAN_8X8.as_ptr());
+        assert_eq!(
+            default_scan(TxSize::Tx4x4).scan.as_ptr(),
+            DEFAULT_SCAN_4X4.as_ptr()
+        );
+        assert_eq!(
+            default_scan(TxSize::Tx8x8).scan.as_ptr(),
+            DEFAULT_SCAN_8X8.as_ptr()
+        );
         assert_eq!(
             default_scan(TxSize::Tx16x16).scan.as_ptr(),
             DEFAULT_SCAN_16X16.as_ptr()

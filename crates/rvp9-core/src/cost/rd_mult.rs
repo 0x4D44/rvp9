@@ -98,10 +98,8 @@ pub fn compute_rd_mult_based_on_qindex(qindex: i32, frame: FrameTypeForRd) -> u3
 pub fn get_intra_cost_penalty(q_index: u8, bsize: BlockSize) -> u32 {
     let q = i32::from(dc_quant(i32::from(q_index), 0, BitDepth::Eight));
     let reduction_fac: u32 = match bsize {
-        BlockSize::Block4x4 | BlockSize::Block8x4 | BlockSize::Block4x8
-        | BlockSize::Block8x8 => 4,
-        BlockSize::Block16x8 | BlockSize::Block8x16
-        | BlockSize::Block16x16 => 2,
+        BlockSize::Block4x4 | BlockSize::Block8x4 | BlockSize::Block4x8 | BlockSize::Block8x8 => 4,
+        BlockSize::Block16x8 | BlockSize::Block8x16 | BlockSize::Block16x16 => 2,
         _ => 0,
     };
     ((20 * q) >> reduction_fac) as u32
@@ -217,11 +215,18 @@ mod tests {
     /// (dc_quant is monotone; the formula is `20 * dc_quant >> fac`).
     #[test]
     fn intra_cost_penalty_monotone() {
-        for bsize in [BlockSize::Block8x8, BlockSize::Block16x16, BlockSize::Block32x32] {
+        for bsize in [
+            BlockSize::Block8x8,
+            BlockSize::Block16x16,
+            BlockSize::Block32x32,
+        ] {
             let mut prev = get_intra_cost_penalty(0, bsize);
             for q in 1..=255u8 {
                 let v = get_intra_cost_penalty(q, bsize);
-                assert!(v >= prev, "non-monotone at q={q} bs={bsize:?}: prev={prev}, v={v}");
+                assert!(
+                    v >= prev,
+                    "non-monotone at q={q} bs={bsize:?}: prev={prev}, v={v}"
+                );
                 prev = v;
             }
         }

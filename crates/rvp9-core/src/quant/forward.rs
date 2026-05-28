@@ -165,7 +165,8 @@ pub fn vp9_quantize_b(
         let band = usize::from(i != 0);
 
         if abs_coeff >= zbins[band] {
-            let mut tmp = (abs_coeff + i32::from(round_ptr[band])).clamp(INT16_MIN_I32, INT16_MAX_I32);
+            let mut tmp =
+                (abs_coeff + i32::from(round_ptr[band])).clamp(INT16_MIN_I32, INT16_MAX_I32);
             tmp = ((((tmp * i32::from(quant_ptr[band])) >> 16) + tmp)
                 * i32::from(quant_shift_ptr[band]))
                 >> 16;
@@ -646,8 +647,15 @@ mod tests {
         let mut coeff = [0i32; 16];
         coeff[0] = 10;
         coeff[5] = 10;
-        let (qcoeff, dqcoeff, eob) =
-            quantize_b_4x4(&coeff, false, [20, 20], [4, 4], [16384, 16384], [1, 1], [8, 8]);
+        let (qcoeff, dqcoeff, eob) = quantize_b_4x4(
+            &coeff,
+            false,
+            [20, 20],
+            [4, 4],
+            [16384, 16384],
+            [1, 1],
+            [8, 8],
+        );
         assert_eq!(eob, 0);
         assert!(qcoeff.iter().all(|&v| v == 0));
         assert!(dqcoeff.iter().all(|&v| v == 0));
@@ -693,7 +701,10 @@ mod tests {
             qp.quant_shift,
             qp.dequant,
         );
-        assert!(qcoeff[0] < 0, "negative coeff should produce negative qcoeff");
+        assert!(
+            qcoeff[0] < 0,
+            "negative coeff should produce negative qcoeff"
+        );
         assert!(dqcoeff[0] < 0);
         assert!(eob >= 1);
     }
@@ -758,7 +769,10 @@ mod tests {
                 last_nonzero_scan_pos = Some(i);
             }
         }
-        assert!(last_nonzero_scan_pos.is_some(), "no non-zero qcoeff produced");
+        assert!(
+            last_nonzero_scan_pos.is_some(),
+            "no non-zero qcoeff produced"
+        );
         assert_eq!(eob as usize, last_nonzero_scan_pos.unwrap() + 1);
     }
 
@@ -791,7 +805,10 @@ mod tests {
             qp.quant_shift,
             qp.dequant,
         );
-        assert!(eob4 >= 1, "4×4 quantize should produce a non-zero qcoeff for dc_input={dc_input}");
+        assert!(
+            eob4 >= 1,
+            "4×4 quantize should produce a non-zero qcoeff for dc_input={dc_input}"
+        );
 
         // 32×32 with the same q=60 Y quantizers.
         let mut coeff_32 = vec![0i32; 1024];
@@ -811,7 +828,10 @@ mod tests {
             &qp.dequant,
             &scan32,
         );
-        assert!(eob32 >= 1, "32×32 quantize should produce a non-zero qcoeff");
+        assert!(
+            eob32 >= 1,
+            "32×32 quantize should produce a non-zero qcoeff"
+        );
 
         // The 32×32 inner shift is `>> 15` (one bit less than the 4×4
         // path's `>> 16`), so the qcoeff magnitude is roughly DOUBLE the
@@ -913,7 +933,10 @@ mod tests {
             &qp.dequant,
             scan.scan,
         );
-        assert_ne!(qcoeff[0], 0, "fp path produces a non-zero qcoeff for input = dequant");
+        assert_ne!(
+            qcoeff[0], 0,
+            "fp path produces a non-zero qcoeff for input = dequant"
+        );
         assert!(eob >= 1);
 
         // And demonstrate the original property: take an input that's
@@ -936,7 +959,10 @@ mod tests {
             qp.quant_shift,
             qp.dequant,
         );
-        assert_eq!(qb_small[0], 0, "vp9_quantize_b should zero coefficient below zbin");
+        assert_eq!(
+            qb_small[0], 0,
+            "vp9_quantize_b should zero coefficient below zbin"
+        );
 
         // Note: even quantize_fp may still round small_input to zero
         // because the post-shift threshold can be higher than zbin; but
@@ -1021,7 +1047,10 @@ mod tests {
             &qp.dequant,
             scan.scan,
         );
-        assert!(eob >= 1, "flat input should produce at least the DC coefficient");
+        assert!(
+            eob >= 1,
+            "flat input should produce at least the DC coefficient"
+        );
 
         // 3. Encode the qcoeffs through the entropy writer.
         let fc = FrameContext::new_default();

@@ -50,7 +50,7 @@
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
-    __m128i, __m256i, _mm_cvtsi128_si32, _mm_cvtsi32_si128, _mm_extract_epi16, _mm_loadl_epi64,
+    __m128i, __m256i, _mm_cvtsi32_si128, _mm_cvtsi128_si32, _mm_extract_epi16, _mm_loadl_epi64,
     _mm_loadu_si128, _mm_sad_epu8, _mm_set1_epi8, _mm_setzero_si128, _mm_storel_epi64,
     _mm_storeu_si128, _mm_unpacklo_epi32, _mm256_castsi128_si256, _mm256_castsi256_si128,
     _mm256_extracti128_si256, _mm256_inserti128_si256, _mm256_loadu_si256, _mm256_sad_epu8,
@@ -102,10 +102,7 @@ unsafe fn dc_predict_full_avx2_inner(
             let dc: u8 = ((sum + 4) >> 3) as u8;
             let row: u32 = (dc as u32) * 0x0101_0101;
             for r in 0..4 {
-                core::ptr::write_unaligned(
-                    dst.as_mut_ptr().add(r * stride) as *mut u32,
-                    row,
-                );
+                core::ptr::write_unaligned(dst.as_mut_ptr().add(r * stride) as *mut u32, row);
             }
         }
         8 => {
@@ -116,8 +113,7 @@ unsafe fn dc_predict_full_avx2_inner(
             let v_left: __m128i = _mm_loadl_epi64(left.as_ptr() as *const __m128i);
             // Compose: low 8 bytes = above, high 8 bytes = left. Use
             // _mm_unpacklo_epi64 to interleave the two 64-bit halves.
-            let v_packed: __m128i =
-                core::arch::x86_64::_mm_unpacklo_epi64(v_above, v_left);
+            let v_packed: __m128i = core::arch::x86_64::_mm_unpacklo_epi64(v_above, v_left);
             let zero = _mm_setzero_si128();
             let sad: __m128i = _mm_sad_epu8(v_packed, zero);
             // sad has 16-bit sums in lanes 0 and 4 (= byte indices 0..2
@@ -129,10 +125,7 @@ unsafe fn dc_predict_full_avx2_inner(
             let dc: u8 = ((sum + 8) >> 4) as u8;
             let row_v: __m128i = _mm_set1_epi8(dc as i8);
             for r in 0..8 {
-                _mm_storel_epi64(
-                    dst.as_mut_ptr().add(r * stride) as *mut __m128i,
-                    row_v,
-                );
+                _mm_storel_epi64(dst.as_mut_ptr().add(r * stride) as *mut __m128i, row_v);
             }
         }
         16 => {
@@ -145,10 +138,8 @@ unsafe fn dc_predict_full_avx2_inner(
             // `_mm256_set_m128i` is the conceptual op; use the
             // `castsi128_si256` + `inserti128` pair which is the
             // standardised form in `core::arch::x86_64`.
-            let v_packed: __m256i = _mm256_inserti128_si256::<1>(
-                _mm256_castsi128_si256(v_above),
-                v_left,
-            );
+            let v_packed: __m256i =
+                _mm256_inserti128_si256::<1>(_mm256_castsi128_si256(v_above), v_left);
             let zero = _mm256_setzero_si256();
             let sad: __m256i = _mm256_sad_epu8(v_packed, zero);
             // Sum the four 16-bit lane partials. Extract the two
@@ -164,10 +155,7 @@ unsafe fn dc_predict_full_avx2_inner(
             let dc: u8 = ((sum + 16) >> 5) as u8;
             let row_v: __m128i = _mm_set1_epi8(dc as i8);
             for r in 0..16 {
-                _mm_storeu_si128(
-                    dst.as_mut_ptr().add(r * stride) as *mut __m128i,
-                    row_v,
-                );
+                _mm_storeu_si128(dst.as_mut_ptr().add(r * stride) as *mut __m128i, row_v);
             }
         }
         32 => {
@@ -197,10 +185,7 @@ unsafe fn dc_predict_full_avx2_inner(
             let dc: u8 = ((sum + 32) >> 6) as u8;
             let row_v: __m256i = _mm256_set1_epi8(dc as i8);
             for r in 0..32 {
-                _mm256_storeu_si256(
-                    dst.as_mut_ptr().add(r * stride) as *mut __m256i,
-                    row_v,
-                );
+                _mm256_storeu_si256(dst.as_mut_ptr().add(r * stride) as *mut __m256i, row_v);
             }
         }
         _ => unreachable!("dc_predict_full_avx2: bs must be in {{4, 8, 16, 32}}"),
@@ -217,13 +202,7 @@ unsafe fn dc_predict_full_avx2_inner(
 /// (Block64x64) falls back to scalar — see the matching note in
 /// [`crate::dsp::x86_64::dc_predict_left_avx2`].
 #[cfg(target_arch = "x86_64")]
-pub fn dc_predict_full_avx2(
-    dst: &mut [u8],
-    stride: usize,
-    bs: usize,
-    above: &[u8],
-    left: &[u8],
-) {
+pub fn dc_predict_full_avx2(dst: &mut [u8], stride: usize, bs: usize, above: &[u8], left: &[u8]) {
     if bs == 64 {
         let ctx = crate::intra_pred::PredCtx {
             above,
@@ -249,7 +228,7 @@ mod tests {
     //! Scalar-vs-AVX2 differential tests for `dc_predict_full_avx2`.
 
     use super::dc_predict_full_avx2;
-    use crate::intra_pred::{dc_predictor, PredCtx};
+    use crate::intra_pred::{PredCtx, dc_predictor};
 
     macro_rules! require_avx2 {
         () => {
@@ -329,8 +308,8 @@ mod tests {
     #[test]
     fn dispatch_round_trip() {
         require_avx2!();
-        use crate::dsp::caps::detect;
         use crate::dsp::SimdDispatch;
+        use crate::dsp::caps::detect;
 
         let mut caps_avx2 = detect();
         caps_avx2.avx2 = true;
@@ -358,21 +337,12 @@ mod tests {
     fn directed_boundary_inputs() {
         require_avx2!();
         for bs in [4usize, 8, 16, 32] {
-            for &(a, l) in &[
-                (0u8, 0u8),
-                (255, 255),
-                (128, 128),
-                (0, 255),
-                (255, 0),
-            ] {
+            for &(a, l) in &[(0u8, 0u8), (255, 255), (128, 128), (0, 255), (255, 0)] {
                 let above = vec![a; bs];
                 let left = vec![l; bs];
                 let scalar = run_scalar(bs, &above, &left);
                 let avx2 = run_avx2(bs, &above, &left);
-                assert_eq!(
-                    scalar, avx2,
-                    "boundary mismatch bs={bs} above={a} left={l}",
-                );
+                assert_eq!(scalar, avx2, "boundary mismatch bs={bs} above={a} left={l}",);
             }
         }
     }

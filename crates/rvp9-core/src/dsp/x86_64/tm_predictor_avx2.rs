@@ -48,7 +48,7 @@
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
-    __m128i, __m256i, _mm_add_epi16, _mm_cvtepu8_epi16, _mm_cvtsi128_si32, _mm_cvtsi32_si128,
+    __m128i, __m256i, _mm_add_epi16, _mm_cvtepu8_epi16, _mm_cvtsi32_si128, _mm_cvtsi128_si32,
     _mm_loadl_epi64, _mm_loadu_si128, _mm_packus_epi16, _mm_set1_epi16, _mm_storel_epi64,
     _mm_storeu_si128, _mm256_add_epi16, _mm256_castsi256_si128, _mm256_cvtepu8_epi16,
     _mm256_extracti128_si256, _mm256_packus_epi16, _mm256_permute4x64_epi64, _mm256_set1_epi16,
@@ -102,16 +102,12 @@ unsafe fn tm_predictor_avx2_inner(
                 // result; only the low 4 are meaningful.
                 let packed: __m128i = _mm_packus_epi16(sum, sum);
                 let row_i32 = _mm_cvtsi128_si32(packed);
-                core::ptr::write_unaligned(
-                    dst.as_mut_ptr().add(r * stride) as *mut i32,
-                    row_i32,
-                );
+                core::ptr::write_unaligned(dst.as_mut_ptr().add(r * stride) as *mut i32, row_i32);
             }
         }
         8 => {
             // 8 bytes per row → one __m128i of 8 i16 lanes.
-            let above_v8: __m128i =
-                _mm_loadl_epi64(above.as_ptr() as *const __m128i);
+            let above_v8: __m128i = _mm_loadl_epi64(above.as_ptr() as *const __m128i);
             let above_v16: __m128i = _mm_cvtepu8_epi16(above_v8);
             for r in 0..8 {
                 let delta = left[r] as i32 - tl;
@@ -120,16 +116,12 @@ unsafe fn tm_predictor_avx2_inner(
                 // 8 i16 → 8 packed u8 with unsigned saturation; result
                 // lives in the low 8 bytes.
                 let packed: __m128i = _mm_packus_epi16(sum, sum);
-                _mm_storel_epi64(
-                    dst.as_mut_ptr().add(r * stride) as *mut __m128i,
-                    packed,
-                );
+                _mm_storel_epi64(dst.as_mut_ptr().add(r * stride) as *mut __m128i, packed);
             }
         }
         16 => {
             // 16 bytes per row → 16 i16 lanes in one __m256i.
-            let above_v8: __m128i =
-                _mm_loadu_si128(above.as_ptr() as *const __m128i);
+            let above_v8: __m128i = _mm_loadu_si128(above.as_ptr() as *const __m128i);
             let above_v16: __m256i = _mm256_cvtepu8_epi16(above_v8);
             for r in 0..16 {
                 let delta = left[r] as i32 - tl;
@@ -145,23 +137,17 @@ unsafe fn tm_predictor_avx2_inner(
                 // (3, 1, 2, 0)) brings them adjacent in the low 128
                 // bits.
                 let packed: __m256i = _mm256_packus_epi16(sum, sum);
-                let permuted: __m256i =
-                    _mm256_permute4x64_epi64(packed, 0b11_01_10_00);
+                let permuted: __m256i = _mm256_permute4x64_epi64(packed, 0b11_01_10_00);
                 let low: __m128i = _mm256_castsi256_si128(permuted);
-                _mm_storeu_si128(
-                    dst.as_mut_ptr().add(r * stride) as *mut __m128i,
-                    low,
-                );
+                _mm_storeu_si128(dst.as_mut_ptr().add(r * stride) as *mut __m128i, low);
             }
         }
         32 => {
             // 32 bytes per row → two 16-lane chunks. We load the two
             // halves of `above` once outside the loop; per row only the
             // delta broadcast + add + pack + permute is in-loop.
-            let above_lo_v8: __m128i =
-                _mm_loadu_si128(above.as_ptr() as *const __m128i);
-            let above_hi_v8: __m128i =
-                _mm_loadu_si128(above.as_ptr().add(16) as *const __m128i);
+            let above_lo_v8: __m128i = _mm_loadu_si128(above.as_ptr() as *const __m128i);
+            let above_hi_v8: __m128i = _mm_loadu_si128(above.as_ptr().add(16) as *const __m128i);
             let above_lo_v16: __m256i = _mm256_cvtepu8_epi16(above_lo_v8);
             let above_hi_v16: __m256i = _mm256_cvtepu8_epi16(above_hi_v8);
             for r in 0..32 {
@@ -170,18 +156,13 @@ unsafe fn tm_predictor_avx2_inner(
                 // Low 16 columns.
                 let sum_lo: __m256i = _mm256_add_epi16(delta_v, above_lo_v16);
                 let packed_lo: __m256i = _mm256_packus_epi16(sum_lo, sum_lo);
-                let permuted_lo: __m256i =
-                    _mm256_permute4x64_epi64(packed_lo, 0b11_01_10_00);
+                let permuted_lo: __m256i = _mm256_permute4x64_epi64(packed_lo, 0b11_01_10_00);
                 let low_bytes: __m128i = _mm256_castsi256_si128(permuted_lo);
-                _mm_storeu_si128(
-                    dst.as_mut_ptr().add(r * stride) as *mut __m128i,
-                    low_bytes,
-                );
+                _mm_storeu_si128(dst.as_mut_ptr().add(r * stride) as *mut __m128i, low_bytes);
                 // High 16 columns.
                 let sum_hi: __m256i = _mm256_add_epi16(delta_v, above_hi_v16);
                 let packed_hi: __m256i = _mm256_packus_epi16(sum_hi, sum_hi);
-                let permuted_hi: __m256i =
-                    _mm256_permute4x64_epi64(packed_hi, 0b11_01_10_00);
+                let permuted_hi: __m256i = _mm256_permute4x64_epi64(packed_hi, 0b11_01_10_00);
                 let high_bytes: __m128i = _mm256_castsi256_si128(permuted_hi);
                 _mm_storeu_si128(
                     dst.as_mut_ptr().add(r * stride + 16) as *mut __m128i,
@@ -244,7 +225,7 @@ mod tests {
     //! fixtures at both saturation boundaries.
 
     use super::tm_predictor_avx2;
-    use crate::intra_pred::{tm_predictor, PredCtx};
+    use crate::intra_pred::{PredCtx, tm_predictor};
 
     macro_rules! require_avx2 {
         () => {
@@ -344,8 +325,8 @@ mod tests {
     #[test]
     fn dispatch_round_trip() {
         require_avx2!();
-        use crate::dsp::caps::detect;
         use crate::dsp::SimdDispatch;
+        use crate::dsp::caps::detect;
 
         let mut caps_avx2 = detect();
         caps_avx2.avx2 = true;
@@ -362,26 +343,9 @@ mod tests {
 
             let mut dst_avx2 = vec![0u8; bs * bs];
             let mut dst_scalar = vec![0u8; bs * bs];
-            (dispatch_avx2.tm_predictor())(
-                &mut dst_avx2,
-                bs,
-                bs,
-                &above,
-                &left,
-                above_left,
-            );
-            (dispatch_scalar.tm_predictor())(
-                &mut dst_scalar,
-                bs,
-                bs,
-                &above,
-                &left,
-                above_left,
-            );
-            assert_eq!(
-                dst_avx2, dst_scalar,
-                "round-trip mismatch at bs={bs}",
-            );
+            (dispatch_avx2.tm_predictor())(&mut dst_avx2, bs, bs, &above, &left, above_left);
+            (dispatch_scalar.tm_predictor())(&mut dst_scalar, bs, bs, &above, &left, above_left);
+            assert_eq!(dst_avx2, dst_scalar, "round-trip mismatch at bs={bs}",);
         }
     }
 

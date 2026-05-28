@@ -471,10 +471,7 @@ mod tests {
             thr_mode_idx(RefFrame::LastFrame, InterMode::ZeroMv),
             Some(10),
         );
-        assert_eq!(
-            thr_mode_idx(RefFrame::LastFrame, InterMode::NewMv),
-            Some(4),
-        );
+        assert_eq!(thr_mode_idx(RefFrame::LastFrame, InterMode::NewMv), Some(4),);
         // GOLDEN row: { THR_NEARESTG(2), THR_NEARG(9), THR_ZEROG(11),
         // THR_NEWG(6) }.
         assert_eq!(
@@ -573,48 +570,32 @@ mod tests {
         let bsize = BlockSize::Block16x16;
         // Sanity: every slot starts at 32.
         assert_eq!(
-            table
-                .freq_fact_for_test(bsize, RefFrame::LastFrame, InterMode::NewMv),
+            table.freq_fact_for_test(bsize, RefFrame::LastFrame, InterMode::NewMv),
             Some(RD_THRESH_INIT_FACT),
         );
         // Winner: LAST / NEWMV.
-        update_thresh_freq_fact(
-            &mut table,
-            bsize,
-            RefFrame::LastFrame,
-            InterMode::NewMv,
-        );
+        update_thresh_freq_fact(&mut table, bsize, RefFrame::LastFrame, InterMode::NewMv);
         // Winner decayed by 32 >> 4 = 2 → 30.
         assert_eq!(
-            table
-                .freq_fact_for_test(bsize, RefFrame::LastFrame, InterMode::NewMv),
+            table.freq_fact_for_test(bsize, RefFrame::LastFrame, InterMode::NewMv),
             Some(30),
             "winner fact should decay to 30",
         );
         // Non-winner same ref incremented by 1 → 33.
         assert_eq!(
-            table
-                .freq_fact_for_test(bsize, RefFrame::LastFrame, InterMode::ZeroMv),
+            table.freq_fact_for_test(bsize, RefFrame::LastFrame, InterMode::ZeroMv),
             Some(33),
             "non-winner same-ref fact should increment",
         );
         // Different ref untouched (libvpx only iterates winning ref).
         assert_eq!(
-            table.freq_fact_for_test(
-                bsize,
-                RefFrame::GoldenFrame,
-                InterMode::NewMv,
-            ),
+            table.freq_fact_for_test(bsize, RefFrame::GoldenFrame, InterMode::NewMv,),
             Some(RD_THRESH_INIT_FACT),
             "losing-ref slot should be unchanged",
         );
         // Different bsize untouched.
         assert_eq!(
-            table.freq_fact_for_test(
-                BlockSize::Block32x32,
-                RefFrame::LastFrame,
-                InterMode::NewMv,
-            ),
+            table.freq_fact_for_test(BlockSize::Block32x32, RefFrame::LastFrame, InterMode::NewMv,),
             Some(RD_THRESH_INIT_FACT),
             "other-bsize slot should be unchanged",
         );
@@ -635,12 +616,7 @@ mod tests {
         let loser_before = table
             .effective_thresh(bsize, RefFrame::LastFrame, InterMode::ZeroMv, qindex)
             .unwrap();
-        update_thresh_freq_fact(
-            &mut table,
-            bsize,
-            RefFrame::LastFrame,
-            InterMode::NewMv,
-        );
+        update_thresh_freq_fact(&mut table, bsize, RefFrame::LastFrame, InterMode::NewMv);
         let winner_after = table
             .effective_thresh(bsize, RefFrame::LastFrame, InterMode::NewMv, qindex)
             .unwrap();
@@ -670,5 +646,4 @@ mod tests {
         let expected = expected.max(8);
         assert_eq!(v, expected, "q-factor formula must mirror libvpx exactly");
     }
-
 }

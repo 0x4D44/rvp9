@@ -66,9 +66,7 @@
 //!   `vp9_get_scaled_ref_frame` swap-out logic.
 
 use crate::block::BlockSize;
-use crate::dsp::distortion::{
-    vpx_sad8x8, vpx_sad16x16, vpx_sad32x32, vpx_sad64x64,
-};
+use crate::dsp::distortion::{vpx_sad8x8, vpx_sad16x16, vpx_sad32x32, vpx_sad64x64};
 use crate::mode_info::Mv;
 use crate::mv_search::full_pixel::PlaneRef;
 
@@ -178,12 +176,7 @@ fn int_pro_row_clamped(
 /// the reference starting at absolute `(base_y, base_x)`, clamping each
 /// read to the visible-plane border.
 #[inline]
-fn int_pro_col_clamped(
-    plane: &PlaneRef<'_>,
-    base_y: i32,
-    base_x: i32,
-    width: usize,
-) -> i32 {
+fn int_pro_col_clamped(plane: &PlaneRef<'_>, base_y: i32, base_x: i32, width: usize) -> i32 {
     let mut sum: i32 = 0;
     for c in 0..width {
         sum += i32::from(clamp_px(plane, base_y, base_x + c as i32));
@@ -306,7 +299,13 @@ fn vector_match(ref_vec: &[i16], src_vec: &[i16], bwl: u32) -> i32 {
 }
 
 /// Pick the matching 2D SAD kernel for an SB-supported block size.
-fn sad_block(bsize: BlockSize, src: &[u8], src_stride: usize, ref_block: &[u8], ref_stride: usize) -> u32 {
+fn sad_block(
+    bsize: BlockSize,
+    src: &[u8],
+    src_stride: usize,
+    ref_block: &[u8],
+    ref_stride: usize,
+) -> u32 {
     match bsize {
         BlockSize::Block8x8 => vpx_sad8x8(src, src_stride, ref_block, ref_stride),
         BlockSize::Block16x16 => vpx_sad16x16(src, src_stride, ref_block, ref_stride),
@@ -458,12 +457,7 @@ pub fn int_pro_motion_estimation(
         let norm_factor = 3 + (bw >> 5);
         let base_y_col = sb_px_y as i32 - (bh >> 1) as i32;
         for idx in 0..search_height {
-            let sum = int_pro_col_clamped(
-                ref_plane,
-                base_y_col + idx as i32,
-                sb_px_x as i32,
-                bw,
-            );
+            let sum = int_pro_col_clamped(ref_plane, base_y_col + idx as i32, sb_px_x as i32, bw);
             vbuf[idx] = (sum >> norm_factor) as i16;
         }
     }
@@ -492,9 +486,7 @@ pub fn int_pro_motion_estimation(
         for idx in 0..bw {
             let mut sum: i32 = 0;
             for i in 0..bh {
-                sum += i32::from(
-                    src_plane.data[(sb_px_y + i) * src_stride + sb_px_x + idx],
-                );
+                sum += i32::from(src_plane.data[(sb_px_y + i) * src_stride + sb_px_x + idx]);
             }
             src_hbuf[idx] = (sum / norm_factor) as i16;
         }
@@ -583,10 +575,8 @@ pub fn int_pro_motion_estimation(
     }
 
     // Convert full-pel → Q3 (1/8-pel).
-    let mv_row_q3 = (best_row * 8)
-        .clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
-    let mv_col_q3 = (best_col * 8)
-        .clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+    let mv_row_q3 = (best_row * 8).clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+    let mv_col_q3 = (best_col * 8).clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
 
     IntProMeResult {
         mv: Mv {
@@ -618,12 +608,28 @@ mod tests {
         let w = 256;
         let h = 256;
         let buf = vec![128u8; w * h];
-        let src = PlaneRef { data: &buf, stride: w, width: w, height: h };
-        let r = PlaneRef { data: &buf, stride: w, width: w, height: h };
+        let src = PlaneRef {
+            data: &buf,
+            stride: w,
+            width: w,
+            height: h,
+        };
+        let r = PlaneRef {
+            data: &buf,
+            stride: w,
+            width: w,
+            height: h,
+        };
         let result = int_pro_motion_estimation(&src, &r, 64, 64, BlockSize::Block64x64);
         // Block64x64 → bw = bh = 64 → result = (-32, -32) FP =
         // (-256, -256) Q3.
-        assert_eq!(result.mv, Mv { row: -256, col: -256 });
+        assert_eq!(
+            result.mv,
+            Mv {
+                row: -256,
+                col: -256
+            }
+        );
     }
 
     /// Source plane == reference plane with non-constant content
@@ -639,8 +645,18 @@ mod tests {
         let buf: Vec<u8> = (0..w * h)
             .map(|i| (((i * 73 + i / 13) ^ 0x5a) & 0xff) as u8)
             .collect();
-        let src = PlaneRef { data: &buf, stride: w, width: w, height: h };
-        let r = PlaneRef { data: &buf, stride: w, width: w, height: h };
+        let src = PlaneRef {
+            data: &buf,
+            stride: w,
+            width: w,
+            height: h,
+        };
+        let r = PlaneRef {
+            data: &buf,
+            stride: w,
+            width: w,
+            height: h,
+        };
         let result = int_pro_motion_estimation(&src, &r, 64, 64, BlockSize::Block64x64);
         // Should be zero (or very close) since src == ref.
         let row_fp = i32::from(result.mv.row) / 8;
@@ -669,7 +685,11 @@ mod tests {
                 for x in 0..w {
                     let sx = x as i32 - shift_x;
                     if sx >= 0 && (sx as usize) < w {
-                        buf[y * w + x] = if ((sx as usize) / 32).is_multiple_of(2) { 50 } else { 200 };
+                        buf[y * w + x] = if ((sx as usize) / 32).is_multiple_of(2) {
+                            50
+                        } else {
+                            200
+                        };
                     } else {
                         buf[y * w + x] = 128;
                     }
@@ -680,8 +700,18 @@ mod tests {
         let src_buf = make(0);
         let shift = 4i32;
         let ref_buf = make(-shift); // ref shifted LEFT by `shift`
-        let src = PlaneRef { data: &src_buf, stride: w, width: w, height: h };
-        let r = PlaneRef { data: &ref_buf, stride: w, width: w, height: h };
+        let src = PlaneRef {
+            data: &src_buf,
+            stride: w,
+            width: w,
+            height: h,
+        };
+        let r = PlaneRef {
+            data: &ref_buf,
+            stride: w,
+            width: w,
+            height: h,
+        };
         let result = int_pro_motion_estimation(&src, &r, 96, 96, BlockSize::Block64x64);
         // src is unshifted; ref has the pattern shifted LEFT by
         // `shift`. So ref[x] = src[x + shift], i.e. to match src
@@ -710,8 +740,18 @@ mod tests {
         let buf: Vec<u8> = (0..w * h)
             .map(|i| (((i * 73 + i / 13) ^ 0x5a) & 0xff) as u8)
             .collect();
-        let src = PlaneRef { data: &buf, stride: w, width: w, height: h };
-        let r = PlaneRef { data: &buf, stride: w, width: w, height: h };
+        let src = PlaneRef {
+            data: &buf,
+            stride: w,
+            width: w,
+            height: h,
+        };
+        let r = PlaneRef {
+            data: &buf,
+            stride: w,
+            width: w,
+            height: h,
+        };
         // Block64x64 at (0, 0): needs 32 pixels of left/top padding,
         // which the border-clamp supplies by replication.
         let result = int_pro_motion_estimation(&src, &r, 0, 0, BlockSize::Block64x64);
@@ -719,8 +759,14 @@ mod tests {
         // src == ref → stationary content → seed should be ~0 motion.
         let row_fp = i32::from(result.mv.row) / 8;
         let col_fp = i32::from(result.mv.col) / 8;
-        assert!(row_fp.abs() <= 1, "edge-SB row MV should be ~0, got {row_fp} FP");
-        assert!(col_fp.abs() <= 1, "edge-SB col MV should be ~0, got {col_fp} FP");
+        assert!(
+            row_fp.abs() <= 1,
+            "edge-SB row MV should be ~0, got {row_fp} FP"
+        );
+        assert!(
+            col_fp.abs() <= 1,
+            "edge-SB col MV should be ~0, got {col_fp} FP"
+        );
     }
 
     /// E10 — every SB of a 256×256 frame (4×4 grid of 64×64 SBs)
@@ -734,13 +780,27 @@ mod tests {
         let buf: Vec<u8> = (0..w * h)
             .map(|i| (((i * 73 + i / 13) ^ 0x5a) & 0xff) as u8)
             .collect();
-        let src = PlaneRef { data: &buf, stride: w, width: w, height: h };
-        let r = PlaneRef { data: &buf, stride: w, width: w, height: h };
+        let src = PlaneRef {
+            data: &buf,
+            stride: w,
+            width: w,
+            height: h,
+        };
+        let r = PlaneRef {
+            data: &buf,
+            stride: w,
+            width: w,
+            height: h,
+        };
         let mut seeded = 0;
         for sb_row in 0..4 {
             for sb_col in 0..4 {
                 let res = int_pro_motion_estimation(
-                    &src, &r, sb_col * 64, sb_row * 64, BlockSize::Block64x64,
+                    &src,
+                    &r,
+                    sb_col * 64,
+                    sb_row * 64,
+                    BlockSize::Block64x64,
                 );
                 if res.best_sad != u32::MAX {
                     seeded += 1;

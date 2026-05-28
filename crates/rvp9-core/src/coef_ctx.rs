@@ -186,7 +186,10 @@ impl TileCoefCtx {
             vec![0u8; y_left_h >> ss_y],
             vec![0u8; y_left_h >> ss_y],
         ];
-        Self { above_coef, left_coef }
+        Self {
+            above_coef,
+            left_coef,
+        }
     }
 
     /// Read the above-row coef-context byte for plane `plane` at

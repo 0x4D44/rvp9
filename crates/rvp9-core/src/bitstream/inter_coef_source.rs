@@ -111,9 +111,18 @@ mod tests {
     #[test]
     fn all_zero_coef_source_returns_zero_slice_per_tx_size() {
         let src = AllZeroCoefSource::new();
-        for tx in [TxSize::Tx4x4, TxSize::Tx8x8, TxSize::Tx16x16, TxSize::Tx32x32] {
+        for tx in [
+            TxSize::Tx4x4,
+            TxSize::Tx8x8,
+            TxSize::Tx16x16,
+            TxSize::Tx32x32,
+        ] {
             let (coefs, eob) = src.get_block_coefs(0, 0, 0, 0, 0, tx);
-            assert_eq!(coefs.len(), tx.n_coeffs(), "len matches n_coeffs for {tx:?}");
+            assert_eq!(
+                coefs.len(),
+                tx.n_coeffs(),
+                "len matches n_coeffs for {tx:?}"
+            );
             assert!(coefs.iter().all(|&v| v == 0), "all zero for {tx:?}");
             assert_eq!(eob, 0, "eob = 0 for {tx:?}");
         }

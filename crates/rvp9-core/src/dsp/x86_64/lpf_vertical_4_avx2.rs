@@ -52,9 +52,9 @@ use core::arch::x86_64::{
     __m128i, _mm_adds_epi8, _mm_adds_epu8, _mm_and_si128, _mm_andnot_si128, _mm_cmpeq_epi8,
     _mm_cvtsi128_si32, _mm_loadl_epi64, _mm_max_epu8, _mm_or_si128, _mm_packs_epi16,
     _mm_packus_epi16, _mm_set1_epi8, _mm_setzero_si128, _mm_shuffle_epi32, _mm_srai_epi16,
-    _mm_subs_epi8, _mm_subs_epu8, _mm_unpackhi_epi16, _mm_unpackhi_epi32, _mm_unpackhi_epi64,
-    _mm_unpackhi_epi8, _mm_unpacklo_epi16, _mm_unpacklo_epi32, _mm_unpacklo_epi64,
-    _mm_unpacklo_epi8, _mm_xor_si128,
+    _mm_subs_epi8, _mm_subs_epu8, _mm_unpackhi_epi8, _mm_unpackhi_epi16, _mm_unpackhi_epi32,
+    _mm_unpackhi_epi64, _mm_unpacklo_epi8, _mm_unpacklo_epi16, _mm_unpacklo_epi32,
+    _mm_unpacklo_epi64, _mm_xor_si128,
 };
 
 /// Load 8 contiguous u8s from `pixels[off..off+8]` into the low 64
@@ -79,8 +79,14 @@ unsafe fn load_row(pixels: *const u8, off: usize) -> __m128i {
 #[target_feature(enable = "avx2")]
 #[inline]
 unsafe fn transpose_8x8(
-    r0: __m128i, r1: __m128i, r2: __m128i, r3: __m128i,
-    r4: __m128i, r5: __m128i, r6: __m128i, r7: __m128i,
+    r0: __m128i,
+    r1: __m128i,
+    r2: __m128i,
+    r3: __m128i,
+    r4: __m128i,
+    r5: __m128i,
+    r6: __m128i,
+    r7: __m128i,
 ) -> [__m128i; 8] {
     // First stage: interleave pairs of rows as bytes.
     let t0 = _mm_unpacklo_epi8(r0, r1);
@@ -324,10 +330,7 @@ unsafe fn lpf_vertical_4_avx2_inner(
     let rows = [row0, row1, row2, row3, row4, row5, row6, row7];
     for (r, &val) in rows.iter().enumerate() {
         // G4: loads from `dst` use _mm_cvtsi128_si32 / write_unaligned (unaligned)
-        core::ptr::write_unaligned(
-            base.add(s_index + r * pitch - 2) as *mut i32,
-            val,
-        );
+        core::ptr::write_unaligned(base.add(s_index + r * pitch - 2) as *mut i32, val);
     }
 }
 
@@ -517,8 +520,8 @@ mod tests {
     #[test]
     fn dispatch_round_trip() {
         require_avx2!();
-        use crate::dsp::caps::detect;
         use crate::dsp::SimdDispatch;
+        use crate::dsp::caps::detect;
 
         let mut caps = detect();
         caps.avx2 = true;

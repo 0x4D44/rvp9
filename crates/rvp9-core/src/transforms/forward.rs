@@ -616,12 +616,7 @@ pub fn fdct16(input: &[i32; 16], output: &mut [i32; 16]) {
 /// Mirrors the body at `vp9/encoder/vp9_dct.c:120-232` and
 /// `vpx_dsp/fwd_txfm.c:245-352`.
 #[inline]
-fn fdct16_butterfly(
-    in_half: &[i64; 8],
-    step1: &[i64; 8],
-    output: &mut [i32],
-    base: usize,
-) {
+fn fdct16_butterfly(in_half: &[i64; 8], step1: &[i64; 8], output: &mut [i32], base: usize) {
     // ---- Even outputs (indices 0, 2, 4, 6, 8, 10, 12, 14): fdct8 sub-block on in_half ----
     let s0 = in_half[0] + in_half[7];
     let s1 = in_half[1] + in_half[6];
@@ -1193,10 +1188,8 @@ pub fn fdct32(input: &[i32; 32], output: &mut [i32; 32], round: bool) {
     out[17] = step[17];
     out[18] = dct_32_round(step[18] * -(COSPI_8_64 as i64) + step[29] * COSPI_24_64 as i64);
     out[19] = dct_32_round(step[19] * -(COSPI_8_64 as i64) + step[28] * COSPI_24_64 as i64);
-    out[20] =
-        dct_32_round(step[20] * -(COSPI_24_64 as i64) + step[27] * -(COSPI_8_64 as i64));
-    out[21] =
-        dct_32_round(step[21] * -(COSPI_24_64 as i64) + step[26] * -(COSPI_8_64 as i64));
+    out[20] = dct_32_round(step[20] * -(COSPI_24_64 as i64) + step[27] * -(COSPI_8_64 as i64));
+    out[21] = dct_32_round(step[21] * -(COSPI_24_64 as i64) + step[26] * -(COSPI_8_64 as i64));
     out[22] = step[22];
     out[23] = step[23];
     out[24] = step[24];
@@ -1261,13 +1254,11 @@ pub fn fdct32(input: &[i32; 32], output: &mut [i32; 32], round: bool) {
     out[15] = step[15] + step[14];
     out[16] = step[16];
     out[17] = dct_32_round(step[17] * -(COSPI_4_64 as i64) + step[30] * COSPI_28_64 as i64);
-    out[18] =
-        dct_32_round(step[18] * -(COSPI_28_64 as i64) + step[29] * -(COSPI_4_64 as i64));
+    out[18] = dct_32_round(step[18] * -(COSPI_28_64 as i64) + step[29] * -(COSPI_4_64 as i64));
     out[19] = step[19];
     out[20] = step[20];
     out[21] = dct_32_round(step[21] * -(COSPI_20_64 as i64) + step[26] * COSPI_12_64 as i64);
-    out[22] =
-        dct_32_round(step[22] * -(COSPI_12_64 as i64) + step[25] * -(COSPI_20_64 as i64));
+    out[22] = dct_32_round(step[22] * -(COSPI_12_64 as i64) + step[25] * -(COSPI_20_64 as i64));
     out[23] = step[23];
     out[24] = step[24];
     out[25] = dct_32_round(step[25] * COSPI_12_64 as i64 + step[22] * -(COSPI_20_64 as i64));
@@ -2124,7 +2115,10 @@ mod tests {
         // can't fire).
         let has_pos = coefs.iter().any(|&c| c > 0);
         let has_neg = coefs.iter().any(|&c| c < 0);
-        assert!(has_pos && has_neg, "fht16x16 ADST/ADST: expected both signs in output");
+        assert!(
+            has_pos && has_neg,
+            "fht16x16 ADST/ADST: expected both signs in output"
+        );
     }
 
     /// `fht8x8` with non-DctDct type exercises the `(v + (v<0)) >> 1`
@@ -2147,14 +2141,15 @@ mod tests {
     /// at line 1405.
     #[test]
     fn fdct32x32_mixed_sign_residual_produces_both_signs() {
-        let residual: [i16; 1024] = std::array::from_fn(|i| {
-            ((i as i32 % 31) - 15) as i16
-        });
+        let residual: [i16; 1024] = std::array::from_fn(|i| ((i as i32 % 31) - 15) as i16);
         let mut coefs = [0i32; 1024];
         fdct32x32(&residual, &mut coefs, 32);
         let has_pos = coefs.iter().any(|&c| c > 0);
         let has_neg = coefs.iter().any(|&c| c < 0);
-        assert!(has_pos && has_neg, "fdct32x32: expected both signs in output");
+        assert!(
+            has_pos && has_neg,
+            "fdct32x32: expected both signs in output"
+        );
     }
 
     /// `fdct32x32` honours non-trivial `stride`.

@@ -377,7 +377,14 @@ where
         allow_horz_in: bool,
         allow_vert_in: bool,
     ) -> (bool, bool) {
-        (self)(sb_local_x_8x8, sb_local_y_8x8, bsize, rd, allow_horz_in, allow_vert_in)
+        (self)(
+            sb_local_x_8x8,
+            sb_local_y_8x8,
+            bsize,
+            rd,
+            allow_horz_in,
+            allow_vert_in,
+        )
     }
 }
 
@@ -761,8 +768,8 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
     // Block16x16 (i.e. caller asked for Block8x8), we inherit the
     // variance hint's cells unchanged and return "infeasible" so the
     // parent's NONE comparison wins the tie if NONE was feasible.
-    let bsize_at_floor = (bsize as u8) <= (params.min_partition_size as u8)
-        || matches!(bsize, BlockSize::Block8x8);
+    let bsize_at_floor =
+        (bsize as u8) <= (params.min_partition_size as u8) || matches!(bsize, BlockSize::Block8x8);
 
     // PARTITION_NONE allowed?
     let none_allowed = (bsize as u8) <= (params.max_partition_size as u8)
@@ -822,8 +829,9 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
     // veto the split.
     let mut split_pick: Option<(u32, u32)> = None; // (sum_rate, sum_dist)
     let mut split_children: [Option<DescendResult>; 4] = [None, None, None, None];
-    if let Some(child_bsize) =
-        (do_split && !bsize_at_floor).then(|| subsize_for_split(bsize)).flatten()
+    if let Some(child_bsize) = (do_split && !bsize_at_floor)
+        .then(|| subsize_for_split(bsize))
+        .flatten()
     {
         let step = split_step_8x8(bsize);
         let mut sum_rate: u32 = split_cost;
@@ -954,8 +962,7 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
         let horz_step = rect_half_step_8x8(bsize);
         if allow_horz {
             if let Some(sub) = subsize_for_horz(bsize) {
-                let horz_cost =
-                    params.partition_costs[part_ctx][PARTITION_HORZ_IDX].max(0) as u32;
+                let horz_cost = params.partition_costs[part_ctx][PARTITION_HORZ_IDX].max(0) as u32;
                 // Top half at (row, col); bottom half at (row + hbs, col).
                 if let (Some(top), Some(bot)) = (
                     feasible_rect_pick(picker, col_8x8, row_8x8, sub),
@@ -963,8 +970,7 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
                         .then(|| feasible_rect_pick(picker, col_8x8, row_8x8 + horz_step, sub))
                         .flatten(),
                 ) {
-                    let sum_rate =
-                        top.rate.saturating_add(bot.rate).saturating_add(horz_cost);
+                    let sum_rate = top.rate.saturating_add(bot.rate).saturating_add(horz_cost);
                     let sum_dist = top.dist.saturating_add(bot.dist);
                     let rdc = rd_cost(params.rd_mult, sum_rate, sum_dist);
                     if rdc < best_rd_cost {
@@ -977,8 +983,7 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
         let vert_step = rect_half_step_8x8(bsize);
         if allow_vert {
             if let Some(sub) = subsize_for_vert(bsize) {
-                let vert_cost =
-                    params.partition_costs[part_ctx][PARTITION_VERT_IDX].max(0) as u32;
+                let vert_cost = params.partition_costs[part_ctx][PARTITION_VERT_IDX].max(0) as u32;
                 // Left half at (row, col); right half at (row, col + hbs).
                 if let (Some(left_pick), Some(right_pick)) = (
                     feasible_rect_pick(picker, col_8x8, row_8x8, sub),
@@ -1031,7 +1036,9 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
             _ => params.partition_costs[part_ctx][PARTITION_VERT_IDX],
         }
         .max(0) as u32;
-        commit_rect_leaves(state, row_8x8, col_8x8, bsize, sub, a_origin, a, b_origin, b);
+        commit_rect_leaves(
+            state, row_8x8, col_8x8, bsize, sub, a_origin, a, b_origin, b,
+        );
         let sum_rate = a.rate.saturating_add(b.rate).saturating_add(rect_cost);
         let sum_dist = a.dist.saturating_add(b.dist);
         return Some(DescendResult {
@@ -1122,10 +1129,7 @@ fn commit_rect_leaves(
             && lc < parent_col + parent_span)
     });
     // Splat each rect half's cells + push its leaf.
-    let (sub_w, sub_h) = (
-        sub.n_8x8_wide() as usize,
-        sub.n_8x8_high() as usize,
-    );
+    let (sub_w, sub_h) = (sub.n_8x8_wide() as usize, sub.n_8x8_high() as usize);
     for &(origin, pick) in &[(a_origin, a_pick), (b_origin, b_pick)] {
         let (r0, c0) = origin;
         for dr in 0..sub_h {
@@ -1494,8 +1498,7 @@ mod tests {
         ] {
             for (above, left) in [(false, false), (true, false), (false, true), (true, true)] {
                 let ctx = partition_plane_context(above, left, bsize);
-                let expected =
-                    (usize::from(left) * 2 + usize::from(above)) + expected_bsl * 4;
+                let expected = (usize::from(left) * 2 + usize::from(above)) + expected_bsl * 4;
                 assert_eq!(
                     ctx, expected,
                     "ctx mismatch for bsize={:?} above={} left={}: got {} expected {}",
@@ -1682,10 +1685,7 @@ mod tests {
         // than 32×32.
         for leaf in &result.leaves {
             assert!(
-                matches!(
-                    leaf.bsize,
-                    BlockSize::Block32x32 | BlockSize::Block64x64
-                ),
+                matches!(leaf.bsize, BlockSize::Block32x32 | BlockSize::Block64x64),
                 "no leaf below min_partition_size: got {:?}",
                 leaf.bsize,
             );
@@ -1859,7 +1859,8 @@ mod tests {
             .filter(|l| matches!(l.bsize, BlockSize::Block32x32))
             .count();
         assert_eq!(
-            n_32x32, 4,
+            n_32x32,
+            4,
             "expected 4 Block32x32 leaves after SPLIT, got leaves: {:?}",
             result
                 .leaves
@@ -2016,7 +2017,8 @@ mod tests {
             .filter(|l| matches!(l.bsize, BlockSize::Block32x16))
             .count();
         assert_eq!(
-            n_32x16, 8,
+            n_32x16,
+            8,
             "expected 8 Block32x16 HORZ leaves (2 per 32×32 quadrant), got: {:?}",
             result
                 .leaves
@@ -2064,17 +2066,16 @@ mod tests {
         // (bsize, partitioning_is_none, ref_rd-present) tuples it saw so
         // we can assert it received real RD context.
         let mut seen: Vec<(BlockSize, bool, bool)> = Vec::new();
-        let mut pruner =
-            |_x: usize,
-             _y: usize,
-             bs: BlockSize,
-             rd: RectPruneRdContext,
-             _ah: bool,
-             av: bool|
-             -> (bool, bool) {
-                seen.push((bs, rd.partitioning_is_none, rd.best_rd_cost.is_some()));
-                (false, av) // disallow HORZ, keep VERT
-            };
+        let mut pruner = |_x: usize,
+                          _y: usize,
+                          bs: BlockSize,
+                          rd: RectPruneRdContext,
+                          _ah: bool,
+                          av: bool|
+         -> (bool, bool) {
+            seen.push((bs, rd.partitioning_is_none, rd.best_rd_cost.is_some()));
+            (false, av) // disallow HORZ, keep VERT
+        };
         let result = nonrd_pick_partition_with_pruners(
             &hint,
             &params,

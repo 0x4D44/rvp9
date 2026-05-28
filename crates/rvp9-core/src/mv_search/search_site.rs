@@ -63,7 +63,12 @@ pub fn init_dsmotion_compensation(stride: i32) -> SearchSiteConfig {
         // Order matters: the `diamond_search_sad` all_in check at
         // `vp9_mcomp.c:2104-2107` peeks at indices [0..4] within each
         // step expecting (row_neg, row_pos, col_neg, col_pos).
-        let sites = [(-len as i16, 0i16), (len as i16, 0), (0, -len as i16), (0, len as i16)];
+        let sites = [
+            (-len as i16, 0i16),
+            (len as i16, 0),
+            (0, -len as i16),
+            (0, len as i16),
+        ];
         for (r, c) in sites {
             ss_mv.push((r, c));
             ss_os.push(isize::from(r) * stride + isize::from(c));
@@ -128,7 +133,10 @@ mod tests {
         let cfg = init_dsmotion_compensation(stride);
         for (i, &(r, c)) in cfg.ss_mv.iter().enumerate() {
             let expected = (r as isize) * (stride as isize) + (c as isize);
-            assert_eq!(cfg.ss_os[i], expected, "ss_os mismatch at i={i} (r={r}, c={c})");
+            assert_eq!(
+                cfg.ss_os[i], expected,
+                "ss_os mismatch at i={i} (r={r}, c={c})"
+            );
         }
     }
 }

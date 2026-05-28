@@ -26,9 +26,9 @@
 
 use super::intra_directional_common_avx2::{avg2_window, avg3_window, store_row};
 use core::arch::x86_64::{
-    __m128i, __m256i, _mm256_alignr_epi8, _mm256_insert_epi8, _mm256_loadu_si256,
-    _mm256_permute2x128_si256, _mm256_storeu_si256, _mm_insert_epi8, _mm_loadu_si128,
-    _mm_slli_si128, _mm_storeu_si128,
+    __m128i, __m256i, _mm_insert_epi8, _mm_loadu_si128, _mm_slli_si128, _mm_storeu_si128,
+    _mm256_alignr_epi8, _mm256_insert_epi8, _mm256_loadu_si256, _mm256_permute2x128_si256,
+    _mm256_storeu_si256,
 };
 
 /// AVX2 D153 predictor inner kernel.
@@ -136,7 +136,7 @@ pub fn d153_predictor_avx2(
 mod tests {
     //! Scalar-vs-AVX2 differential tests for `d153_predictor_avx2`.
     use super::d153_predictor_avx2;
-    use crate::intra_pred::{d153_predictor, PredCtx};
+    use crate::intra_pred::{PredCtx, d153_predictor};
 
     macro_rules! require_avx2 {
         () => {

@@ -75,13 +75,7 @@ pub fn enabled() -> bool {
 
 /// Record one NEWMV leaf's three SAD measurements.
 #[inline]
-pub fn record(
-    sad_zero: u32,
-    sad_newmv: u32,
-    sad_oracle: u32,
-    seeded: bool,
-    mv_mag: u32,
-) {
+pub fn record(sad_zero: u32, sad_newmv: u32, sad_oracle: u32, seeded: bool, mv_mag: u32) {
     if !enabled() {
         return;
     }
@@ -204,7 +198,10 @@ mod tests {
         assert_eq!(snap.sad_newmv, 100);
         assert_eq!(snap.sad_oracle, 30);
         assert_eq!(snap.reached_oracle, 0, "100 > 30, did NOT reach oracle");
-        assert_eq!(snap.improved_on_zero, 0, "100 >= 50, did NOT improve on zero");
+        assert_eq!(
+            snap.improved_on_zero, 0,
+            "100 >= 50, did NOT improve on zero"
+        );
         assert_eq!(snap.seeded_leaves, 0);
         assert_eq!(snap.mv_mag_sum, 0);
 

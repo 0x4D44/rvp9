@@ -56,7 +56,12 @@ impl MvLimits {
     #[inline]
     #[must_use]
     pub const fn new(col_min: i32, col_max: i32, row_min: i32, row_max: i32) -> Self {
-        Self { col_min, col_max, row_min, row_max }
+        Self {
+            col_min,
+            col_max,
+            row_min,
+            row_max,
+        }
     }
 }
 

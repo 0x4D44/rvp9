@@ -226,13 +226,7 @@ pub fn dispatch(
 ///
 /// Only the speed-specific overrides are listed; everything else
 /// stays at [`SpeedFeatures::best_quality_defaults`].
-fn apply_rt(
-    sf: &mut SpeedFeatures,
-    mag: u32,
-    width: u32,
-    height: u32,
-    _content: ContentTier,
-) {
+fn apply_rt(sf: &mut SpeedFeatures, mag: u32, width: u32, height: u32, _content: ContentTier) {
     // libvpx `vp9_speed_features.c:571` — speed 5+ caps intra search
     // at 32x32 even on the RT path.
     if mag >= 5 {
@@ -280,13 +274,7 @@ fn apply_rt(
 /// W0.3 covers only the slice of the Good path needed to differ from
 /// the best-quality defaults at speed >= 5. Slow-path SF (speed 0..=4)
 /// stays at defaults until Wave 4 brings the RDO driver online.
-fn apply_good(
-    sf: &mut SpeedFeatures,
-    mag: u32,
-    width: u32,
-    height: u32,
-    _content: ContentTier,
-) {
+fn apply_good(sf: &mut SpeedFeatures, mag: u32, width: u32, height: u32, _content: ContentTier) {
     // libvpx `vp9_speed_features.c:571` — speed 5+ caps intra search
     // at 32x32 across both Good and RT paths.
     if mag >= 5 {
@@ -406,7 +394,10 @@ mod tests {
         // Speed 1, SD: on, thresh [-1, -1, -1] (libvpx :131-133).
         let sd1 = dispatch(1, Deadline::Good, 640, 480, ContentTier::Default);
         assert!(sd1.rd_ml_partition.search_breakout);
-        assert_eq!(sd1.rd_ml_partition.search_breakout_thresh, [-1.0, -1.0, -1.0]);
+        assert_eq!(
+            sd1.rd_ml_partition.search_breakout_thresh,
+            [-1.0, -1.0, -1.0]
+        );
 
         // Speed 3, SD: off (libvpx :176-177).
         let sd3 = dispatch(3, Deadline::Good, 640, 480, ContentTier::Default);
@@ -424,7 +415,10 @@ mod tests {
         let g0_sd = dispatch(0, Deadline::Good, 640, 480, ContentTier::Default);
         assert_eq!(g0_sd.rd_ml_partition.prune_rect_thresh, [-1, 350, 325, 250]);
         let g0_fhd = dispatch(0, Deadline::Good, 1920, 1080, ContentTier::Default);
-        assert_eq!(g0_fhd.rd_ml_partition.prune_rect_thresh, [-1, 350, 325, 250]);
+        assert_eq!(
+            g0_fhd.rd_ml_partition.prune_rect_thresh,
+            [-1, 350, 325, 250]
+        );
 
         // Speed 1 Good — [-1, 225, 225, 225] (libvpx :274-276).
         let g1 = dispatch(1, Deadline::Good, 640, 480, ContentTier::Default);
@@ -505,7 +499,10 @@ mod tests {
         ] {
             let a = dispatch(speed, dl, 1280, 720, ContentTier::Default);
             let b = dispatch(speed, dl, 1280, 720, ContentTier::Default);
-            assert_eq!(a, b, "non-deterministic dispatch at speed={speed}, dl={dl:?}");
+            assert_eq!(
+                a, b,
+                "non-deterministic dispatch at speed={speed}, dl={dl:?}"
+            );
         }
     }
 

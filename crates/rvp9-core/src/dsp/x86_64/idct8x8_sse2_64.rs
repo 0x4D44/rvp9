@@ -63,9 +63,9 @@ use crate::transforms::constants::{
 };
 
 #[cfg(target_arch = "x86_64")]
-use super::idct16x16_sse2_256::{load_input_data8, transpose_16bit_8x8};
-#[cfg(target_arch = "x86_64")]
 use super::idct8x8_12_sse2::butterfly;
+#[cfg(target_arch = "x86_64")]
+use super::idct16x16_sse2_256::{load_input_data8, transpose_16bit_8x8};
 
 // ---------------------------------------------------------------------
 // Inner 1-D core (line-by-line port of libvpx `idct8`).

@@ -305,10 +305,10 @@ mod tests {
         // Hand-picked test vector: every (bit, prob) pair encoded must
         // decode to the same bit.
         let plan: Vec<(u8, u8)> = vec![
-            (0, 1),    // very low prob of 0 → encoding a 0 is rare/expensive
-            (1, 1),    // very high prob of 1 (since prob is P(0))
-            (0, 255),  // very high prob of 0 → cheap
-            (1, 255),  // very low prob of 1 → expensive
+            (0, 1),   // very low prob of 0 → encoding a 0 is rare/expensive
+            (1, 1),   // very high prob of 1 (since prob is P(0))
+            (0, 255), // very high prob of 0 → cheap
+            (1, 255), // very low prob of 1 → expensive
             (0, 128),
             (1, 128),
             (0, 64),
@@ -344,10 +344,10 @@ mod tests {
         let mut buf = vec![0u8; 64];
         let pos = {
             let mut w = BoolWriter::start_encode(&mut buf);
-            w.write_literal(0xA5, 8);          // 10100101
+            w.write_literal(0xA5, 8); // 10100101
             w.write_literal(0b101, 3);
-            w.write_literal(0x1234_5678, 32);  // full 32-bit
-            w.write_literal(0, 0);             // zero-bit literal is a no-op
+            w.write_literal(0x1234_5678, 32); // full 32-bit
+            w.write_literal(0, 0); // zero-bit literal is a no-op
             w.stop_encode().expect("stop_encode failed")
         };
         let mut r = BoolReader::new(&buf[..pos]).expect("reader init failed");
@@ -420,7 +420,10 @@ mod tests {
     #[test]
     fn stop_encode_error_display() {
         let s = format!("{}", StopEncodeError);
-        assert!(s.contains("overflow"), "Display should mention 'overflow', got: {s}");
+        assert!(
+            s.contains("overflow"),
+            "Display should mention 'overflow', got: {s}"
+        );
     }
 
     /// Round-trip a longer sequence with biased probabilities — this
@@ -527,8 +530,7 @@ mod tests {
             w.stop_encode().expect("stop_encode failed")
         };
         assert!(pos > 0, "even empty stream needs at least one byte");
-        let _ = BoolReader::new(&buf[..pos])
-            .expect("reader must initialize on empty stream");
+        let _ = BoolReader::new(&buf[..pos]).expect("reader must initialize on empty stream");
     }
 
     /// `pos()` advances monotonically and reaches the same final value
@@ -542,9 +544,6 @@ mod tests {
         }
         let pos_mid = w.pos();
         let final_pos = w.stop_encode().expect("stop_encode failed");
-        assert!(
-            final_pos >= pos_mid,
-            "stop_encode should not regress pos"
-        );
+        assert!(final_pos >= pos_mid, "stop_encode should not regress pos");
     }
 }

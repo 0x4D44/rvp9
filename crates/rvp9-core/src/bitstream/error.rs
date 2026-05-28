@@ -177,7 +177,10 @@ impl fmt::Display for BitstreamError {
                 "raw bit reader truncated: needed {needed} bytes, only {available} available"
             ),
             Self::InvalidFrameMarker { found } => {
-                write!(f, "invalid VP9 frame marker: expected 0b10, found 0b{found:02b}")
+                write!(
+                    f,
+                    "invalid VP9 frame marker: expected 0b10, found 0b{found:02b}"
+                )
             }
             Self::UnsupportedProfile { profile } => {
                 write!(f, "unsupported VP9 bitstream profile: {profile}")
@@ -190,7 +193,9 @@ impl fmt::Display for BitstreamError {
             Self::UnsupportedBitDepth { raw } => {
                 write!(f, "unsupported bit depth raw value: {raw}")
             }
-            Self::InconsistentSrgb => f.write_str("sRGB color space requires Profile 1/3 with 4:4:4 sampling"),
+            Self::InconsistentSrgb => {
+                f.write_str("sRGB color space requires Profile 1/3 with 4:4:4 sampling")
+            }
             Self::InvalidTileCols { log2_tile_cols } => {
                 write!(f, "invalid log2_tile_cols: {log2_tile_cols} (max 6)")
             }

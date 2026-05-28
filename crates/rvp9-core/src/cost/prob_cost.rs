@@ -65,7 +65,11 @@ pub fn vp9_cost_one(prob: u8) -> u32 {
 #[inline]
 #[must_use]
 pub fn vp9_cost_bit(prob: u8, bit: bool) -> u32 {
-    if bit { vp9_cost_one(prob) } else { vp9_cost_zero(prob) }
+    if bit {
+        vp9_cost_one(prob)
+    } else {
+        vp9_cost_zero(prob)
+    }
 }
 
 #[cfg(test)]
@@ -109,7 +113,10 @@ mod tests {
         for p in 1..255u8 {
             let here = vp9_cost_zero(p);
             let next = vp9_cost_zero(p + 1);
-            assert!(next <= here, "cost_zero non-monotone at p={p}: {here} -> {next}");
+            assert!(
+                next <= here,
+                "cost_zero non-monotone at p={p}: {here} -> {next}"
+            );
         }
     }
 

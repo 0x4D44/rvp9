@@ -110,7 +110,15 @@ mod tests {
         let mut scalar = buf.to_vec();
         let mut avx2 = buf.to_vec();
         lpf_horizontal_4_dual(
-            &mut scalar, s_index, pitch, blimit0, limit0, thresh0, blimit1, limit1, thresh1,
+            &mut scalar,
+            s_index,
+            pitch,
+            blimit0,
+            limit0,
+            thresh0,
+            blimit1,
+            limit1,
+            thresh1,
         );
         lpf_horizontal_4_dual_avx2(
             &mut avx2, s_index, pitch, blimit0, limit0, thresh0, blimit1, limit1, thresh1,
@@ -191,8 +199,8 @@ mod tests {
     #[test]
     fn dispatch_round_trip() {
         require_avx2!();
-        use crate::dsp::caps::detect;
         use crate::dsp::SimdDispatch;
+        use crate::dsp::caps::detect;
 
         let mut caps = detect();
         caps.avx2 = true;

@@ -32,7 +32,7 @@
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
-    __m128i, _mm_cvtsi128_si32, _mm_cvtsi32_si128, _mm_sad_epu8, _mm_set1_epi8, _mm_setzero_si128,
+    __m128i, _mm_cvtsi32_si128, _mm_cvtsi128_si32, _mm_sad_epu8, _mm_set1_epi8, _mm_setzero_si128,
 };
 
 /// AVX2 implementation of the 4×4 DC intra-predictor.
@@ -143,7 +143,7 @@ mod tests {
     //! `(above_sum, left_sum)` pair in `[0, 20]²`.
 
     use super::dc_predictor_4x4_avx2;
-    use crate::intra_pred::{dc_predictor, PredCtx};
+    use crate::intra_pred::{PredCtx, dc_predictor};
     use proptest::prelude::*;
 
     macro_rules! require_avx2 {
@@ -349,8 +349,8 @@ mod tests {
     #[test]
     fn dc_predictor_4x4_dispatch_round_trip() {
         require_avx2!();
-        use crate::dsp::caps::detect;
         use crate::dsp::SimdDispatch;
+        use crate::dsp::caps::detect;
 
         let mut caps = detect();
         caps.avx2 = true;

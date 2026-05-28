@@ -141,8 +141,7 @@ impl Default for CoefCountsBank {
 /// the full distribution so its PIVOT_NODE model search can score the 8
 /// downstream Pareto-8 nodes (`build_coef_branch_cts`). Boxed because it
 /// is ~55 KiB and is only allocated when the encoder requests it.
-pub type Coef12Bank =
-    [[[CoefFullCountsBlock; REF_TYPES]; PLANE_TYPES]; TX_SIZES];
+pub type Coef12Bank = [[[CoefFullCountsBlock; REF_TYPES]; PLANE_TYPES]; TX_SIZES];
 
 /// Allocate a zeroed [`Coef12Bank`] on the heap.
 #[must_use]
@@ -734,11 +733,13 @@ pub fn adapt_mode_probs(
 
     // intra_inter_prob — line 346-348.
     for i in 0..INTRA_INTER_CONTEXTS {
-        fc.intra_inter_prob[i] = mode_mv_merge_probs(pre_fc.intra_inter_prob[i], counts.intra_inter[i]);
+        fc.intra_inter_prob[i] =
+            mode_mv_merge_probs(pre_fc.intra_inter_prob[i], counts.intra_inter[i]);
     }
     // comp_inter_prob — line 349-351.
     for i in 0..COMP_INTER_CONTEXTS {
-        fc.comp_inter_prob[i] = mode_mv_merge_probs(pre_fc.comp_inter_prob[i], counts.comp_inter[i]);
+        fc.comp_inter_prob[i] =
+            mode_mv_merge_probs(pre_fc.comp_inter_prob[i], counts.comp_inter[i]);
     }
     // comp_ref_prob — line 352-354.
     for i in 0..REF_CONTEXTS {
@@ -1339,7 +1340,10 @@ mod tests {
             for c0 in 0..5u32 {
                 for c1 in 0..5u32 {
                     let p = merge_probs(pre, [c0, c1], 24, 112);
-                    assert!(p > 0 || pre == 0, "produced 0 from pre={pre} ct=[{c0},{c1}]");
+                    assert!(
+                        p > 0 || pre == 0,
+                        "produced 0 from pre={pre} ct=[{c0},{c1}]"
+                    );
                     let p2 = mode_mv_merge_probs(pre, [c0, c1]);
                     // mode_mv_merge_probs only returns pre when den==0;
                     // get_prob clamps to [1,255]; weighted_prob preserves

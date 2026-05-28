@@ -315,7 +315,11 @@ mod tests {
         let buf = build_superframe(&[&a, &b], 1);
         let sf = parse_superframe_index(&buf).unwrap();
         match sf {
-            Superframe::Multi { sizes, count, index_size } => {
+            Superframe::Multi {
+                sizes,
+                count,
+                index_size,
+            } => {
                 assert_eq!(count, 2);
                 assert_eq!(sizes[0], 8);
                 assert_eq!(sizes[1], 12);
@@ -333,7 +337,11 @@ mod tests {
         let buf = build_superframe(&frame_refs, 4);
         let sf = parse_superframe_index(&buf).unwrap();
         match sf {
-            Superframe::Multi { sizes, count, index_size } => {
+            Superframe::Multi {
+                sizes,
+                count,
+                index_size,
+            } => {
                 assert_eq!(count, 8);
                 for (i, &sz) in sizes.iter().take(8).enumerate() {
                     assert_eq!(sz as usize, 32 + i);
@@ -433,7 +441,11 @@ mod tests {
         let out = b.finish();
         let sf = parse_superframe_index(&out).unwrap();
         match sf {
-            Superframe::Multi { sizes, count, index_size } => {
+            Superframe::Multi {
+                sizes,
+                count,
+                index_size,
+            } => {
                 assert_eq!(count, 3);
                 assert_eq!(&sizes[..3], &[10, 25, 13]);
                 // mag=1 (all sizes fit in 1 byte) + 1 leading + 1 trailing + 3 size bytes.
@@ -451,7 +463,11 @@ mod tests {
         let out = b.finish();
         let sf = parse_superframe_index(&out).unwrap();
         match sf {
-            Superframe::Multi { sizes, count, index_size } => {
+            Superframe::Multi {
+                sizes,
+                count,
+                index_size,
+            } => {
                 assert_eq!(count, 2);
                 assert_eq!(&sizes[..2], &[300, 50]);
                 assert_eq!(index_size, 2 + 2 * 2); // mag=2, 2 frames
@@ -468,7 +484,9 @@ mod tests {
         b.push_frame(vec![0xbb; 1]).unwrap();
         let out = b.finish();
         match parse_superframe_index(&out).unwrap() {
-            Superframe::Multi { sizes, index_size, .. } => {
+            Superframe::Multi {
+                sizes, index_size, ..
+            } => {
                 assert_eq!(sizes[0], 0x10000);
                 assert_eq!(sizes[1], 1);
                 assert_eq!(index_size, 2 + 3 * 2);
@@ -481,7 +499,9 @@ mod tests {
         b.push_frame(vec![0xbb; 1]).unwrap();
         let out = b.finish();
         match parse_superframe_index(&out).unwrap() {
-            Superframe::Multi { sizes, index_size, .. } => {
+            Superframe::Multi {
+                sizes, index_size, ..
+            } => {
                 assert_eq!(sizes[0], 0x0100_0000);
                 assert_eq!(sizes[1], 1);
                 assert_eq!(index_size, 2 + 4 * 2);
@@ -499,7 +519,9 @@ mod tests {
         let err = b.push_frame(vec![0xbb]).unwrap_err();
         assert_eq!(
             err,
-            BitstreamError::SuperframeOverflow { limit: MAX_SUPERFRAME_FRAMES }
+            BitstreamError::SuperframeOverflow {
+                limit: MAX_SUPERFRAME_FRAMES
+            }
         );
     }
 

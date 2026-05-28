@@ -23,7 +23,7 @@
 //! here too.
 
 use super::tree_cost::{vp9_cost_tokens, vp9_cost_tokens_skip};
-use crate::entropy::coef_probs::{COEFF_CONTEXTS, COEF_BANDS, PLANE_TYPES, REF_TYPES};
+use crate::entropy::coef_probs::{COEF_BANDS, COEFF_CONTEXTS, PLANE_TYPES, REF_TYPES};
 use crate::entropy::frame_context::{FrameContext, TX_SIZES};
 use crate::entropy::pareto::{MODEL_NODES, VP9_PARETO8_FULL};
 
@@ -136,11 +136,7 @@ pub fn build_coef_cost_table(fc: &FrameContext) -> CoefCostTable {
                             continue;
                         }
                         let full = model_to_full_probs(ctx_model);
-                        vp9_cost_tokens(
-                            &mut table.data[t][i][j][k][l][0],
-                            &VP9_COEF_TREE,
-                            &full,
-                        );
+                        vp9_cost_tokens(&mut table.data[t][i][j][k][l][0], &VP9_COEF_TREE, &full);
                         vp9_cost_tokens_skip(
                             &mut table.data[t][i][j][k][l][1],
                             &VP9_COEF_TREE,
@@ -185,8 +181,7 @@ pub struct CoefCostIndex {
 #[must_use]
 pub fn coef_token_cost(table: &CoefCostTable, idx: CoefCostIndex) -> i32 {
     let s = usize::from(idx.skip_eob);
-    table.data[idx.tx_size][idx.plane_type][idx.ref_type][idx.band][idx.ctx][s]
-        [idx.token as usize]
+    table.data[idx.tx_size][idx.plane_type][idx.ref_type][idx.band][idx.ctx][s][idx.token as usize]
 }
 
 #[cfg(test)]
@@ -201,7 +196,10 @@ mod tests {
         // tx_4x4 / Y plane / intra / band 1 / ctx 0.
         let cell = &table.data[0][0][0][1][0][0];
         let nz = cell.iter().filter(|&&c| c > 0).count();
-        assert!(nz >= 8, "expected most tokens to have positive cost, got nz={nz}");
+        assert!(
+            nz >= 8,
+            "expected most tokens to have positive cost, got nz={nz}"
+        );
         for &c in cell {
             assert!(c >= 0, "negative cost = {c}");
             assert!(c < 100_000, "cost {c} too large");

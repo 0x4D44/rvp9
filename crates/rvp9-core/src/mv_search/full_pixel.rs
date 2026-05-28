@@ -250,11 +250,19 @@ fn sad_at(
 ) -> Option<u32> {
     let w = usize::from(block_size.width());
     let h = usize::from(block_size.height());
-    let (src_slice, src_stride) = block_at(src_plane, src_offset.0 as isize, src_offset.1 as isize, w, h)?;
+    let (src_slice, src_stride) = block_at(
+        src_plane,
+        src_offset.0 as isize,
+        src_offset.1 as isize,
+        w,
+        h,
+    )?;
     let ref_col = src_offset.0 as isize + isize::from(mv_col);
     let ref_row = src_offset.1 as isize + isize::from(mv_row);
     let (ref_slice, ref_stride) = block_at(ref_plane, ref_col, ref_row, w, h)?;
-    Some((sad_for(block_size))(src_slice, src_stride, ref_slice, ref_stride))
+    Some((sad_for(block_size))(
+        src_slice, src_stride, ref_slice, ref_stride,
+    ))
 }
 
 /// Raw SAD (no MV-cost) for the block at full-pel MV `(mv_row, mv_col)`.
@@ -294,12 +302,7 @@ pub fn exhaustive_full_pel_min_sad(
     for r in row_lo..=row_hi {
         for c in col_lo..=col_hi {
             if let Some(s) = sad_at(
-                block_size,
-                src_plane,
-                src_offset,
-                ref_plane,
-                r as i16,
-                c as i16,
+                block_size, src_plane, src_offset, ref_plane, r as i16, c as i16,
             ) && best.is_none_or(|(b, _, _)| s < b)
             {
                 best = Some((s, r as i16, c as i16));
@@ -352,10 +355,10 @@ pub fn diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearch
     // never begins out of the legal window. libvpx clamps `mvp_full`
     // identically inside `full_pixel_diamond` (`vp9_mcomp.c:2500`).
     let start_mv = params.start_mv.unwrap_or(params.center_mv);
-    let mut best_row =
-        (i32::from(start_mv.row >> 3)).clamp(params.mv_limits.row_min, params.mv_limits.row_max) as i16;
-    let mut best_col =
-        (i32::from(start_mv.col >> 3)).clamp(params.mv_limits.col_min, params.mv_limits.col_max) as i16;
+    let mut best_row = (i32::from(start_mv.row >> 3))
+        .clamp(params.mv_limits.row_min, params.mv_limits.row_max) as i16;
+    let mut best_col = (i32::from(start_mv.col >> 3))
+        .clamp(params.mv_limits.col_min, params.mv_limits.col_max) as i16;
 
     // Initial SAD; if out-of-bounds, fall back to u32::MAX so any
     // valid step is preferred.
@@ -367,9 +370,16 @@ pub fn diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearch
         best_row,
         best_col,
     ) {
-        Some(s) => s + mvsad_err_cost(
-            best_row, best_col, fcenter_row, fcenter_col, params.sad_per_bit, params.mv_costs,
-        ),
+        Some(s) => {
+            s + mvsad_err_cost(
+                best_row,
+                best_col,
+                fcenter_row,
+                fcenter_col,
+                params.sad_per_bit,
+                params.mv_costs,
+            )
+        }
         None => u32::MAX,
     };
 
@@ -594,7 +604,8 @@ mod tests {
         let shift_row = 0i16;
         for i in 0..bh {
             for j in 0..bw {
-                let r_idx = (src_row + i + shift_row as usize) * plane_w + (src_col + j + shift_col as usize);
+                let r_idx = (src_row + i + shift_row as usize) * plane_w
+                    + (src_col + j + shift_col as usize);
                 let s_idx = (src_row + i) * plane_w + (src_col + j);
                 src_data[s_idx] = ref_data[r_idx];
             }
@@ -626,7 +637,8 @@ mod tests {
             (r.best_mv_row, r.best_mv_col),
             (shift_row, shift_col),
             "expected MV ({shift_row}, {shift_col}), got ({}, {})",
-            r.best_mv_row, r.best_mv_col
+            r.best_mv_row,
+            r.best_mv_col
         );
     }
 
@@ -940,14 +952,8 @@ mod tests {
         // considered, but `sad_at` returns None for them (out of
         // bounds on the ref side).
         let limits = MvLimits::new(-4, -1, -4, -1);
-        let r = exhaustive_full_pel_min_sad(
-            BlockSize::Block4x4,
-            &plane,
-            (0, 0),
-            &plane,
-            &limits,
-            8,
-        );
+        let r =
+            exhaustive_full_pel_min_sad(BlockSize::Block4x4, &plane, (0, 0), &plane, &limits, 8);
         assert!(r.is_none(), "all candidate MVs OOB → None");
     }
 
@@ -966,14 +972,8 @@ mod tests {
             height: plane_h,
         };
         let limits = MvLimits::new(-4, 4, -4, 4);
-        let result = exhaustive_full_pel_min_sad(
-            BlockSize::Block4x4,
-            &plane,
-            (12, 12),
-            &plane,
-            &limits,
-            4,
-        );
+        let result =
+            exhaustive_full_pel_min_sad(BlockSize::Block4x4, &plane, (12, 12), &plane, &limits, 4);
         let (min_sad, r, c) = result.expect("at least one valid MV in range");
         assert_eq!(min_sad, 0, "identical plane: min SAD = 0");
         assert_eq!(r, 0, "row of min should be 0");

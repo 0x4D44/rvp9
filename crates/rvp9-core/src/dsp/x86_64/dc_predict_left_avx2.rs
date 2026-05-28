@@ -25,7 +25,7 @@
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
-    __m128i, __m256i, _mm_cvtsi128_si32, _mm_cvtsi32_si128, _mm_extract_epi16, _mm_loadl_epi64,
+    __m128i, __m256i, _mm_cvtsi32_si128, _mm_cvtsi128_si32, _mm_extract_epi16, _mm_loadl_epi64,
     _mm_loadu_si128, _mm_sad_epu8, _mm_set1_epi8, _mm_setzero_si128, _mm_storel_epi64,
     _mm_storeu_si128, _mm256_castsi256_si128, _mm256_extracti128_si256, _mm256_loadu_si256,
     _mm256_sad_epu8, _mm256_set1_epi8, _mm256_setzero_si256, _mm256_storeu_si256,
@@ -47,12 +47,7 @@ use core::arch::x86_64::{
 // G4: stores to `dst` use _mm256_storeu_si256 / _mm_storeu_si128 / _mm_storel_epi64 / write_unaligned (unaligned)
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn dc_predict_left_avx2_inner(
-    dst: &mut [u8],
-    stride: usize,
-    bs: usize,
-    left: &[u8],
-) {
+unsafe fn dc_predict_left_avx2_inner(dst: &mut [u8], stride: usize, bs: usize, left: &[u8]) {
     debug_assert!(left.len() >= bs);
     debug_assert!(dst.len() >= (bs - 1) * stride + bs);
     debug_assert!(matches!(bs, 4 | 8 | 16 | 32));
@@ -67,10 +62,7 @@ unsafe fn dc_predict_left_avx2_inner(
             let dc: u8 = ((sum + 2) >> 2) as u8;
             let row: u32 = (dc as u32) * 0x0101_0101;
             for r in 0..4 {
-                core::ptr::write_unaligned(
-                    dst.as_mut_ptr().add(r * stride) as *mut u32,
-                    row,
-                );
+                core::ptr::write_unaligned(dst.as_mut_ptr().add(r * stride) as *mut u32, row);
             }
         }
         8 => {
@@ -81,10 +73,7 @@ unsafe fn dc_predict_left_avx2_inner(
             let dc: u8 = ((sum + 4) >> 3) as u8;
             let row_v: __m128i = _mm_set1_epi8(dc as i8);
             for r in 0..8 {
-                _mm_storel_epi64(
-                    dst.as_mut_ptr().add(r * stride) as *mut __m128i,
-                    row_v,
-                );
+                _mm_storel_epi64(dst.as_mut_ptr().add(r * stride) as *mut __m128i, row_v);
             }
         }
         16 => {
@@ -97,10 +86,7 @@ unsafe fn dc_predict_left_avx2_inner(
             let dc: u8 = ((sum + 8) >> 4) as u8;
             let row_v: __m128i = _mm_set1_epi8(dc as i8);
             for r in 0..16 {
-                _mm_storeu_si128(
-                    dst.as_mut_ptr().add(r * stride) as *mut __m128i,
-                    row_v,
-                );
+                _mm_storeu_si128(dst.as_mut_ptr().add(r * stride) as *mut __m128i, row_v);
             }
         }
         32 => {
@@ -117,10 +103,7 @@ unsafe fn dc_predict_left_avx2_inner(
             let dc: u8 = ((sum + 16) >> 5) as u8;
             let row_v: __m256i = _mm256_set1_epi8(dc as i8);
             for r in 0..32 {
-                _mm256_storeu_si256(
-                    dst.as_mut_ptr().add(r * stride) as *mut __m256i,
-                    row_v,
-                );
+                _mm256_storeu_si256(dst.as_mut_ptr().add(r * stride) as *mut __m256i, row_v);
             }
         }
         _ => unreachable!("dc_predict_left_avx2: bs must be in {{4, 8, 16, 32}}"),
@@ -224,8 +207,8 @@ mod tests {
     #[test]
     fn dispatch_round_trip() {
         require_avx2!();
-        use crate::dsp::caps::detect;
         use crate::dsp::SimdDispatch;
+        use crate::dsp::caps::detect;
 
         let mut caps_avx2 = detect();
         caps_avx2.avx2 = true;

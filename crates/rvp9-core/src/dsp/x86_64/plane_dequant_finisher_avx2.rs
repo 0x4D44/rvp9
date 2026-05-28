@@ -49,10 +49,10 @@
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
-    __m128i, __m256i, _mm256_add_epi32, _mm256_castsi256_si128, _mm256_cvtepi16_epi32,
+    __m128i, __m256i, _mm_cvtsi32_si128, _mm_extract_epi16, _mm_extract_epi32, _mm_loadl_epi64,
+    _mm_loadu_si128, _mm256_add_epi32, _mm256_castsi256_si128, _mm256_cvtepi16_epi32,
     _mm256_cvtepu8_epi32, _mm256_extracti128_si256, _mm256_mullo_epi32, _mm256_set1_epi32,
-    _mm256_sign_epi32, _mm256_sra_epi32, _mm256_sub_epi32, _mm_cvtsi32_si128, _mm_extract_epi16,
-    _mm_extract_epi32, _mm_loadl_epi64, _mm_loadu_si128,
+    _mm256_sign_epi32, _mm256_sra_epi32, _mm256_sub_epi32,
 };
 
 /// AVX2 inner kernel. Processes `len = scratch_raster.len()` entries

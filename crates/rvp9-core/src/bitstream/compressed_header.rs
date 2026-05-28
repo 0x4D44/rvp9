@@ -316,10 +316,7 @@ pub fn read_intra_inter_probs(
 /// The caller computes `compound_allowed` from the active reference
 /// frames (at least two go in opposite time directions from the
 /// current frame); see libvpx `vp9_compound_reference_allowed`.
-pub fn read_frame_reference_mode(
-    r: &mut BoolReader<'_>,
-    compound_allowed: bool,
-) -> ReferenceMode {
+pub fn read_frame_reference_mode(r: &mut BoolReader<'_>, compound_allowed: bool) -> ReferenceMode {
     if !compound_allowed {
         return ReferenceMode::Single;
     }
@@ -1122,7 +1119,13 @@ pub fn write_compressed_header(
     }
 
     // 3. Coef probs (gated per TX size by tx_mode).
-    write_coef_probs(bw, &mut pre_fc.coef_probs, &post_fc.coef_probs, tx_mode, coef_plan);
+    write_coef_probs(
+        bw,
+        &mut pre_fc.coef_probs,
+        &post_fc.coef_probs,
+        tx_mode,
+        coef_plan,
+    );
 
     // 4. Skip probs.
     write_skip_probs(bw, &mut pre_fc.skip_probs, &post_fc.skip_probs);
@@ -1161,7 +1164,12 @@ pub fn write_compressed_header(
 
         write_y_mode_probs(bw, &mut pre_fc.y_mode_prob, &post_fc.y_mode_prob);
         write_partition_probs(bw, &mut pre_fc.partition_prob, &post_fc.partition_prob);
-        write_mv_probs(bw, &mut pre_fc.nmvc, &post_fc.nmvc, opts.allow_high_precision_mv);
+        write_mv_probs(
+            bw,
+            &mut pre_fc.nmvc,
+            &post_fc.nmvc,
+            opts.allow_high_precision_mv,
+        );
     }
 
     if bw.has_error() {
@@ -1386,10 +1394,8 @@ mod tests {
         };
 
         // Total slot count: 2 * 2 * (3 + 5*6) * 3 = 396 per TX size.
-        const N_SLOTS_PER_TX: usize = PLANE_TYPES
-            * REF_TYPES
-            * (3 + 5 * COEFF_CONTEXTS)
-            * UNCONSTRAINED_NODES;
+        const N_SLOTS_PER_TX: usize =
+            PLANE_TYPES * REF_TYPES * (3 + 5 * COEFF_CONTEXTS) * UNCONSTRAINED_NODES;
 
         let buf = build_bitstream(|w| {
             w.write_bit(1); // TX_4×4 update flag = 1
@@ -1994,8 +2000,7 @@ mod tests {
             allow_high_precision_mv: false,
         };
         // First byte = 0xff → marker bit (first MSB) = 1.
-        let err = parse_compressed_header(&[0xff, 0, 0, 0], &mut fc, opts)
-            .expect_err("must fail");
+        let err = parse_compressed_header(&[0xff, 0, 0, 0], &mut fc, opts).expect_err("must fail");
         assert!(matches!(err, BitstreamError::CompressedHeaderInvalidMarker));
     }
 
@@ -2065,10 +2070,8 @@ mod tests {
         // Sanity: pin the initial value the trace depends on.
         assert_eq!(DEFAULT_COEF_PROBS_4X4[0][0][0][0][0], 195);
 
-        const N_SLOTS_PER_TX: usize = PLANE_TYPES
-            * REF_TYPES
-            * (3 + 5 * COEFF_CONTEXTS)
-            * UNCONSTRAINED_NODES;
+        const N_SLOTS_PER_TX: usize =
+            PLANE_TYPES * REF_TYPES * (3 + 5 * COEFF_CONTEXTS) * UNCONSTRAINED_NODES;
 
         let buf = build_bitstream(|w| {
             w.write_bit(1); // TX_4×4 update flag = 1
@@ -2444,21 +2447,20 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn write_compressed_header_captured_frame_round_trip() {
-        use crate::bitstream::header::parse_uncompressed_header;
         use crate::bitstream::header::FrameKind;
         use crate::bitstream::header::RefFrameSizes;
+        use crate::bitstream::header::parse_uncompressed_header;
 
         let bytes = std::fs::read("../../tests/conformance/vectors/vp90-2-05-resize.ivf")
             .expect("test vector must be present");
         assert_eq!(&bytes[..4], b"DKIF");
-        let frame_size = u32::from_le_bytes(
-            bytes[32..36].try_into().expect("4 bytes available"),
-        ) as usize;
+        let frame_size =
+            u32::from_le_bytes(bytes[32..36].try_into().expect("4 bytes available")) as usize;
         let payload = &bytes[44..44 + frame_size];
 
         let no_refs = RefFrameSizes::default();
-        let (uh, uh_size) = parse_uncompressed_header(payload, &no_refs)
-            .expect("uncompressed parses");
+        let (uh, uh_size) =
+            parse_uncompressed_header(payload, &no_refs).expect("uncompressed parses");
         assert_eq!(uh.kind, FrameKind::KeyFrame);
         let tail = uh.tail.as_ref().expect("keyframe must carry a tail");
         let fp_size = tail.first_partition_size as usize;
@@ -2497,7 +2499,7 @@ mod tests {
         post.nmvc.joints[0] = 1;
         post.nmvc.joints[1] = 255;
         post.nmvc.joints[2] = 127;
-        post.nmvc.comps[0].sign = 99;  // 99 odd? 99=0b1100011 → yes
+        post.nmvc.comps[0].sign = 99; // 99 odd? 99=0b1100011 → yes
         post.nmvc.comps[0].classes[0] = 51;
         post.nmvc.comps[1].classes[9] = 73;
         post.nmvc.comps[0].class0_fp[0][0] = 33;

@@ -164,12 +164,11 @@ pub fn write_tile_buffers(
     for (i, payload) in tile_payloads.iter().enumerate() {
         let is_last = i + 1 == tile_payloads.len();
         if !is_last {
-            let size = u32::try_from(payload.len()).map_err(|_| {
-                BitstreamError::TileSizeOverflow {
+            let size =
+                u32::try_from(payload.len()).map_err(|_| BitstreamError::TileSizeOverflow {
                     tile_index: i,
                     bytes: payload.len(),
-                }
-            })?;
+                })?;
             out.extend_from_slice(&size.to_be_bytes());
         }
         out.extend_from_slice(payload);
@@ -265,7 +264,14 @@ mod tests {
         let mut buf = vec![0u8, 0, 0, 100];
         buf.extend_from_slice(&[0xff; 4]); // 4 trailing payload bytes
         let err = parse_tile_buffers(&buf, 2, 1).unwrap_err();
-        assert!(matches!(err, BitstreamError::InvalidTileSize { declared: 100, available: 4, .. }));
+        assert!(matches!(
+            err,
+            BitstreamError::InvalidTileSize {
+                declared: 100,
+                available: 4,
+                ..
+            }
+        ));
     }
 
     #[test]

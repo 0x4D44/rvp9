@@ -262,8 +262,8 @@ pub const fn subsize(parent: BlockSize, part: PartitionType) -> Option<BlockSize
 /// `max_txsize_lookup[BLOCK_SIZES]` (`vp9_common_data.c:90-93`).
 #[must_use]
 pub const fn max_txsize(bs: BlockSize) -> crate::transforms::TxSize {
-    use BlockSize::*;
     use crate::transforms::TxSize;
+    use BlockSize::*;
     match bs {
         Block4x4 | Block4x8 | Block8x4 => TxSize::Tx4x4,
         Block8x8 | Block8x16 | Block16x8 => TxSize::Tx8x8,
@@ -289,16 +289,40 @@ pub const fn ss_size_lookup(bsize: BlockSize, ss_x: usize, ss_y: usize) -> Optio
         [[Some(Block4x4), None], [None, None]],
         [[Some(Block4x8), Some(Block4x4)], [None, None]],
         [[Some(Block8x4), None], [Some(Block4x4), None]],
-        [[Some(Block8x8), Some(Block8x4)], [Some(Block4x8), Some(Block4x4)]],
+        [
+            [Some(Block8x8), Some(Block8x4)],
+            [Some(Block4x8), Some(Block4x4)],
+        ],
         [[Some(Block8x16), Some(Block8x8)], [None, Some(Block4x8)]],
         [[Some(Block16x8), None], [Some(Block8x8), Some(Block8x4)]],
-        [[Some(Block16x16), Some(Block16x8)], [Some(Block8x16), Some(Block8x8)]],
-        [[Some(Block16x32), Some(Block16x16)], [None, Some(Block8x16)]],
-        [[Some(Block32x16), None], [Some(Block16x16), Some(Block16x8)]],
-        [[Some(Block32x32), Some(Block32x16)], [Some(Block16x32), Some(Block16x16)]],
-        [[Some(Block32x64), Some(Block32x32)], [None, Some(Block16x32)]],
-        [[Some(Block64x32), None], [Some(Block32x32), Some(Block32x16)]],
-        [[Some(Block64x64), Some(Block64x32)], [Some(Block32x64), Some(Block32x32)]],
+        [
+            [Some(Block16x16), Some(Block16x8)],
+            [Some(Block8x16), Some(Block8x8)],
+        ],
+        [
+            [Some(Block16x32), Some(Block16x16)],
+            [None, Some(Block8x16)],
+        ],
+        [
+            [Some(Block32x16), None],
+            [Some(Block16x16), Some(Block16x8)],
+        ],
+        [
+            [Some(Block32x32), Some(Block32x16)],
+            [Some(Block16x32), Some(Block16x16)],
+        ],
+        [
+            [Some(Block32x64), Some(Block32x32)],
+            [None, Some(Block16x32)],
+        ],
+        [
+            [Some(Block64x32), None],
+            [Some(Block32x32), Some(Block32x16)],
+        ],
+        [
+            [Some(Block64x64), Some(Block64x32)],
+            [Some(Block32x64), Some(Block32x32)],
+        ],
     ];
     table[bsize.idx()][ss_x][ss_y]
 }
@@ -423,8 +447,8 @@ mod tests {
             BlockSize::Block64x32,
             BlockSize::Block64x64,
         ] {
-            let recovered = BlockSize::from_dimensions(bs.width(), bs.height())
-                .expect("legal dimensions");
+            let recovered =
+                BlockSize::from_dimensions(bs.width(), bs.height()).expect("legal dimensions");
             assert_eq!(recovered, bs);
         }
     }
@@ -433,7 +457,15 @@ mod tests {
     #[test]
     fn from_dimensions_rejects_illegal() {
         // VP9 disallows 4×16, 4×32, 16×4, 16×64, etc.
-        for (w, h) in [(4u8, 16), (4, 32), (16, 4), (16, 64), (64, 4), (3, 3), (5, 5)] {
+        for (w, h) in [
+            (4u8, 16),
+            (4, 32),
+            (16, 4),
+            (16, 64),
+            (64, 4),
+            (3, 3),
+            (5, 5),
+        ] {
             assert!(BlockSize::from_dimensions(w, h).is_none(), "({w}, {h})");
         }
     }
@@ -525,8 +557,8 @@ mod tests {
     /// (`vp9_common_data.c:90-93`).
     #[test]
     fn max_txsize_pin_libvpx() {
-        use BlockSize::*;
         use crate::transforms::TxSize;
+        use BlockSize::*;
         assert_eq!(max_txsize(Block4x4), TxSize::Tx4x4);
         assert_eq!(max_txsize(Block4x8), TxSize::Tx4x4);
         assert_eq!(max_txsize(Block8x4), TxSize::Tx4x4);
@@ -563,16 +595,36 @@ mod tests {
             [Some(Block4x4), None, None, None],
             [Some(Block4x8), Some(Block4x4), None, None],
             [Some(Block8x4), None, Some(Block4x4), None],
-            [Some(Block8x8), Some(Block8x4), Some(Block4x8), Some(Block4x4)],
+            [
+                Some(Block8x8),
+                Some(Block8x4),
+                Some(Block4x8),
+                Some(Block4x4),
+            ],
             [Some(Block8x16), Some(Block8x8), None, Some(Block4x8)],
             [Some(Block16x8), None, Some(Block8x8), Some(Block8x4)],
-            [Some(Block16x16), Some(Block16x8), Some(Block8x16), Some(Block8x8)],
+            [
+                Some(Block16x16),
+                Some(Block16x8),
+                Some(Block8x16),
+                Some(Block8x8),
+            ],
             [Some(Block16x32), Some(Block16x16), None, Some(Block8x16)],
             [Some(Block32x16), None, Some(Block16x16), Some(Block16x8)],
-            [Some(Block32x32), Some(Block32x16), Some(Block16x32), Some(Block16x16)],
+            [
+                Some(Block32x32),
+                Some(Block32x16),
+                Some(Block16x32),
+                Some(Block16x16),
+            ],
             [Some(Block32x64), Some(Block32x32), None, Some(Block16x32)],
             [Some(Block64x32), None, Some(Block32x32), Some(Block32x16)],
-            [Some(Block64x64), Some(Block64x32), Some(Block32x64), Some(Block32x32)],
+            [
+                Some(Block64x64),
+                Some(Block64x32),
+                Some(Block32x64),
+                Some(Block32x32),
+            ],
         ];
         for (i, &bsize) in ALL_BLOCK_SIZES.iter().enumerate() {
             for (j, &(ss_x, ss_y)) in [(0, 0), (0, 1), (1, 0), (1, 1)].iter().enumerate() {
@@ -622,12 +674,21 @@ mod tests {
     /// max TX, matching `min(luma_tx, max_txsize(uv_bsize))`.
     #[test]
     fn uv_plane_tx_size_420_caps() {
-        use BlockSize::*;
         use crate::transforms::TxSize;
+        use BlockSize::*;
         // Block16x16 -> uv Block8x8 -> max TX Tx8x8.
-        assert_eq!(uv_plane_tx_size(Block16x16, TxSize::Tx16x16, 1, 1), TxSize::Tx8x8);
-        assert_eq!(uv_plane_tx_size(Block16x16, TxSize::Tx4x4, 1, 1), TxSize::Tx4x4);
+        assert_eq!(
+            uv_plane_tx_size(Block16x16, TxSize::Tx16x16, 1, 1),
+            TxSize::Tx8x8
+        );
+        assert_eq!(
+            uv_plane_tx_size(Block16x16, TxSize::Tx4x4, 1, 1),
+            TxSize::Tx4x4
+        );
         // Block64x64 -> uv Block32x32 -> max TX Tx32x32 (no cap).
-        assert_eq!(uv_plane_tx_size(Block64x64, TxSize::Tx32x32, 1, 1), TxSize::Tx32x32);
+        assert_eq!(
+            uv_plane_tx_size(Block64x64, TxSize::Tx32x32, 1, 1),
+            TxSize::Tx32x32
+        );
     }
 }

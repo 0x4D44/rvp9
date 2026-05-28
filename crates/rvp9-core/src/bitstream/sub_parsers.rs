@@ -207,9 +207,7 @@ fn read_delta_q(rb: &mut RawBitReader<'_>) -> Result<i8, BitstreamError> {
 
 /// Parse the quantization sub-block. Mirrors `setup_quantization`
 /// (`vp9_decodeframe.c:1412-1425`).
-pub fn parse_quantization(
-    rb: &mut RawBitReader<'_>,
-) -> Result<QuantizationParams, BitstreamError> {
+pub fn parse_quantization(rb: &mut RawBitReader<'_>) -> Result<QuantizationParams, BitstreamError> {
     let base_qindex = rb.read_literal(QINDEX_BITS)? as u8;
     let y_dc_delta_q = read_delta_q(rb)?;
     let uv_dc_delta_q = read_delta_q(rb)?;
@@ -344,9 +342,7 @@ fn encode_unsigned_max(wb: &mut RawBitWriter<'_>, data: u32, max: u32) {
 
 /// Parse the segmentation sub-block. Mirrors `setup_segmentation`
 /// (`vp9_decodeframe.c:1332-1380`).
-pub fn parse_segmentation(
-    rb: &mut RawBitReader<'_>,
-) -> Result<SegmentationParams, BitstreamError> {
+pub fn parse_segmentation(rb: &mut RawBitReader<'_>) -> Result<SegmentationParams, BitstreamError> {
     let mut seg = SegmentationParams {
         tree_probs: [MAX_PROB; SEG_TREE_PROBS],
         pred_probs: [MAX_PROB; PREDICTION_PROBS],

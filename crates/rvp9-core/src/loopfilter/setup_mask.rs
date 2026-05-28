@@ -81,9 +81,12 @@ fn get_filter_level(levels: &FrameFilterLevels, mi: &ModeInfo) -> u8 {
 /// shifts. Pulls the resolved filter level from the per-frame cube
 /// and derives the chroma TX size via [`uv_txsize_420`].
 #[inline]
-fn inputs_for(mi: &ModeInfo, levels: &FrameFilterLevels, shift_y: u32, shift_uv: u32)
-    -> BuildMaskInputs
-{
+fn inputs_for(
+    mi: &ModeInfo,
+    levels: &FrameFilterLevels,
+    shift_y: u32,
+    shift_uv: u32,
+) -> BuildMaskInputs {
     BuildMaskInputs {
         block_size: mi.block_size,
         tx_size_y: mi.tx_size,
@@ -146,9 +149,8 @@ pub fn setup_mask(
     }
 
     // Index helper: absolute MI position → slice index.
-    let idx_at = |r: u32, c: u32| -> usize {
-        (mi_row + r) as usize * mi_stride + (mi_col + c) as usize
-    };
+    let idx_at =
+        |r: u32, c: u32| -> usize { (mi_row + r) as usize * mi_stride + (mi_col + c) as usize };
 
     // Top-left MI of the superblock. libvpx asserts `mip[0] != NULL`
     // before the switch (`:917`); the analogous safety in rvp9 is
@@ -193,7 +195,9 @@ pub fn setup_mask(
         // Otherwise: walk the 4 32×32 quadrants. Mirrors libvpx
         // `default:` branch at `vp9_loopfilter.c:933-1007`.
         // ------------------------------------------------------------------
-        _ => walk_four_32x32(mi_row, mi_col, mi8x8, mi_stride, max_rows, max_cols, levels, lfm),
+        _ => walk_four_32x32(
+            mi_row, mi_col, mi8x8, mi_stride, max_rows, max_cols, levels, lfm,
+        ),
     }
 }
 
@@ -221,9 +225,8 @@ fn walk_four_32x32(
     levels: &FrameFilterLevels,
     lfm: &mut LoopFilterMask,
 ) {
-    let idx_at = |r: u32, c: u32| -> usize {
-        (mi_row + r) as usize * mi_stride + (mi_col + c) as usize
-    };
+    let idx_at =
+        |r: u32, c: u32| -> usize { (mi_row + r) as usize * mi_stride + (mi_col + c) as usize };
 
     for idx_32 in 0u32..4 {
         let q32_row = (idx_32 >> 1) << 2; // 0 or 4
@@ -303,9 +306,8 @@ fn walk_four_16x16(
     levels: &FrameFilterLevels,
     lfm: &mut LoopFilterMask,
 ) {
-    let idx_at = |r: u32, c: u32| -> usize {
-        (mi_row + r) as usize * mi_stride + (mi_col + c) as usize
-    };
+    let idx_at =
+        |r: u32, c: u32| -> usize { (mi_row + r) as usize * mi_stride + (mi_col + c) as usize };
 
     for idx_16 in 0u32..4 {
         let q16_row = q32_row + ((idx_16 >> 1) << 1); // +0 or +2
@@ -388,8 +390,8 @@ mod tests {
     /// (seg, ref, mode) tuple to the same filter level. Useful for
     /// pinning the mask without dragging in segmentation deltas.
     fn flat_levels(level: u8) -> FrameFilterLevels {
-        [[[level; crate::loopfilter::MAX_MODE_LF_DELTAS];
-            crate::loopfilter::MAX_REF_FRAMES]; crate::loopfilter::MAX_SEGMENTS]
+        [[[level; crate::loopfilter::MAX_MODE_LF_DELTAS]; crate::loopfilter::MAX_REF_FRAMES];
+            crate::loopfilter::MAX_SEGMENTS]
     }
 
     /// A 64×64 intra `ModeInfo` with TX_32X32 luma transforms.
@@ -532,10 +534,7 @@ mod tests {
         // Expected: build_masks called once at shift = 0 on the
         // 64x64 intra block.
         let mut expected = LoopFilterMask::ZERO;
-        build_masks(
-            &inputs_for(&intra_64x64(), &levels, 0, 0),
-            &mut expected,
-        );
+        build_masks(&inputs_for(&intra_64x64(), &levels, 0, 0), &mut expected);
 
         assert_eq!(got, expected);
         // Hand-pin: every lfl_y entry is 33.
@@ -817,11 +816,7 @@ mod tests {
         }
         for r in 4..8 {
             for c in 0..8 {
-                assert_eq!(
-                    got.lfl_y[r * 8 + c],
-                    0,
-                    "past-frame (r,c) = ({r}, {c})"
-                );
+                assert_eq!(got.lfl_y[r * 8 + c], 0, "past-frame (r,c) = ({r}, {c})");
             }
         }
     }
@@ -866,11 +861,7 @@ mod tests {
                 assert_eq!(got.lfl_y[r * 8 + c], 20, "(r,c) = ({r}, {c})");
             }
             for c in 4..8 {
-                assert_eq!(
-                    got.lfl_y[r * 8 + c],
-                    0,
-                    "past-frame (r,c) = ({r}, {c})"
-                );
+                assert_eq!(got.lfl_y[r * 8 + c], 0, "past-frame (r,c) = ({r}, {c})");
             }
         }
     }
@@ -972,11 +963,7 @@ mod tests {
         }
         for r in 2..8 {
             for c in 0..8 {
-                assert_eq!(
-                    got.lfl_y[r * 8 + c],
-                    0,
-                    "past-frame (r,c) = ({r}, {c})"
-                );
+                assert_eq!(got.lfl_y[r * 8 + c], 0, "past-frame (r,c) = ({r}, {c})");
             }
         }
     }
@@ -1029,11 +1016,7 @@ mod tests {
                 assert_eq!(got.lfl_y[r * 8 + c], 15, "in-frame (r,c) = ({r}, {c})");
             }
             for c in 2..8 {
-                assert_eq!(
-                    got.lfl_y[r * 8 + c],
-                    0,
-                    "past-frame (r,c) = ({r}, {c})"
-                );
+                assert_eq!(got.lfl_y[r * 8 + c], 0, "past-frame (r,c) = ({r}, {c})");
             }
         }
     }

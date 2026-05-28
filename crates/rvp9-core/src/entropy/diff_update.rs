@@ -77,7 +77,11 @@ fn decode_uniform(r: &mut BoolReader<'_>) -> i32 {
     const L: u8 = 8;
     const M: i32 = (1 << L) - 191;
     let v = r.read_literal(L - 1) as i32;
-    if v < M { v } else { (v << 1) - M + r.read_bit() as i32 }
+    if v < M {
+        v
+    } else {
+        (v << 1) - M + r.read_bit() as i32
+    }
 }
 
 /// Decode a variable-length term-subexp value (used in the per-frame

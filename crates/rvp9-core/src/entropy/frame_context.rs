@@ -14,8 +14,8 @@
 //! deferred to Task 1e — that's the boolean-coder driver layer.
 
 use super::coef_probs::{
-    CoeffProbsModel, DEFAULT_COEF_PROBS_16X16, DEFAULT_COEF_PROBS_32X32, DEFAULT_COEF_PROBS_4X4,
-    DEFAULT_COEF_PROBS_8X8,
+    CoeffProbsModel, DEFAULT_COEF_PROBS_4X4, DEFAULT_COEF_PROBS_8X8, DEFAULT_COEF_PROBS_16X16,
+    DEFAULT_COEF_PROBS_32X32,
 };
 use super::default_probs::{
     BLOCK_SIZE_GROUPS, COMP_INTER_CONTEXTS, DEFAULT_COMP_INTER_PROB, DEFAULT_COMP_REF_PROB,

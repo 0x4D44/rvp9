@@ -252,11 +252,17 @@ mod tests {
         // above=dc, left=dc, first branch (libvpx :19).
         assert_eq!(VP9_KF_Y_MODE_PROB[0][0][0], 137);
         // above=tm, left=tm, last row (libvpx :145).
-        assert_eq!(VP9_KF_Y_MODE_PROB[9][9], [43, 81, 53, 140, 169, 204, 68, 84, 72]);
+        assert_eq!(
+            VP9_KF_Y_MODE_PROB[9][9],
+            [43, 81, 53, 140, 169, 204, 68, 84, 72]
+        );
         // UV y=dc, first branch (libvpx :150).
         assert_eq!(VP9_KF_UV_MODE_PROB[0][0], 144);
         // UV y=tm, last row (libvpx :159).
-        assert_eq!(VP9_KF_UV_MODE_PROB[9], [102, 19, 66, 162, 182, 122, 35, 59, 128]);
+        assert_eq!(
+            VP9_KF_UV_MODE_PROB[9],
+            [102, 19, 66, 162, 182, 122, 35, 59, 128]
+        );
         // Partition 64x64 -> 32x32, a/l both split (libvpx :206).
         assert_eq!(VP9_KF_PARTITION_PROBS[15], [12, 3, 3]);
     }

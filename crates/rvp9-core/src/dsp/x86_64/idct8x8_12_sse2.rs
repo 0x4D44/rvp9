@@ -71,8 +71,8 @@ use core::arch::x86_64::{
     __m128i, _mm_add_epi16, _mm_add_epi32, _mm_loadl_epi64, _mm_loadu_si128, _mm_madd_epi16,
     _mm_packs_epi32, _mm_packus_epi16, _mm_set1_epi16, _mm_set1_epi32, _mm_setzero_si128,
     _mm_srai_epi16, _mm_srai_epi32, _mm_storel_epi64, _mm_sub_epi16, _mm_unpackhi_epi16,
-    _mm_unpackhi_epi32, _mm_unpackhi_epi64, _mm_unpacklo_epi16, _mm_unpacklo_epi32,
-    _mm_unpacklo_epi64, _mm_unpacklo_epi8,
+    _mm_unpackhi_epi32, _mm_unpackhi_epi64, _mm_unpacklo_epi8, _mm_unpacklo_epi16,
+    _mm_unpacklo_epi32, _mm_unpacklo_epi64,
 };
 
 use crate::transforms::constants::{
@@ -441,9 +441,7 @@ mod tests {
     //! saturation-divergence rationale.
 
     use super::*;
-    use crate::transforms::constants::{
-        DCT_CONST_BITS, dct_const_round_shift, wraplow,
-    };
+    use crate::transforms::constants::{DCT_CONST_BITS, dct_const_round_shift, wraplow};
     use crate::transforms::inverse::{idct8, idct8x8_64_add};
     use core::arch::x86_64::_mm_storeu_si128;
     use proptest::prelude::*;
@@ -557,19 +555,19 @@ mod tests {
     // -----------------------------------------------------------------
 
     /// Scalar oracle: same as madd_round_shift but saturating-cast to i16.
-    fn scalar_calc_wraplow(
-        in0: [i16; 8],
-        in1: [i16; 8],
-        cospi: [i16; 8],
-    ) -> [i16; 8] {
+    fn scalar_calc_wraplow(in0: [i16; 8], in1: [i16; 8], cospi: [i16; 8]) -> [i16; 8] {
         let t0 = scalar_madd_round_shift(in0, cospi);
         let t1 = scalar_madd_round_shift(in1, cospi);
-        let sat = |v: i32| -> i16 {
-            v.clamp(i16::MIN as i32, i16::MAX as i32) as i16
-        };
+        let sat = |v: i32| -> i16 { v.clamp(i16::MIN as i32, i16::MAX as i32) as i16 };
         [
-            sat(t0[0]), sat(t0[1]), sat(t0[2]), sat(t0[3]),
-            sat(t1[0]), sat(t1[1]), sat(t1[2]), sat(t1[3]),
+            sat(t0[0]),
+            sat(t0[1]),
+            sat(t0[2]),
+            sat(t0[3]),
+            sat(t1[0]),
+            sat(t1[1]),
+            sat(t1[2]),
+            sat(t1[3]),
         ]
     }
 
@@ -607,15 +605,8 @@ mod tests {
     /// Scalar `butterfly(in0, in1, c0, c1) -> (out0, out1)` per libvpx.
     /// Each output lane k is `(in0[k] * c_a + in1[k] * c_b + 8192) >> 14`,
     /// saturating-cast to i16. For out0: c_a=c0, c_b=-c1. For out1: c_a=c1, c_b=c0.
-    fn scalar_butterfly(
-        in0: [i16; 8],
-        in1: [i16; 8],
-        c0: i16,
-        c1: i16,
-    ) -> ([i16; 8], [i16; 8]) {
-        let sat = |v: i32| -> i16 {
-            v.clamp(i16::MIN as i32, i16::MAX as i32) as i16
-        };
+    fn scalar_butterfly(in0: [i16; 8], in1: [i16; 8], c0: i16, c1: i16) -> ([i16; 8], [i16; 8]) {
+        let sat = |v: i32| -> i16 { v.clamp(i16::MIN as i32, i16::MAX as i32) as i16 };
         let mut out0 = [0i16; 8];
         let mut out1 = [0i16; 8];
         for k in 0..8 {
@@ -663,9 +654,8 @@ mod tests {
         require_sse2!();
         // Input row r = [r*10+0, r*10+1, r*10+2, r*10+3, X, X, X, X]
         // for r in 0..4.
-        let row_in = |r: i16| -> [i16; 8] {
-            [r * 10, r * 10 + 1, r * 10 + 2, r * 10 + 3, -1, -2, -3, -4]
-        };
+        let row_in =
+            |r: i16| -> [i16; 8] { [r * 10, r * 10 + 1, r * 10 + 2, r * 10 + 3, -1, -2, -3, -4] };
         // SAFETY: _mm_setzero_si128 has no preconditions; unsafe required only because it is a compiler intrinsic.
         let mut io: [__m128i; 8] = [unsafe { _mm_setzero_si128() }; 8];
         io[0] = pack_i16x8(row_in(0));
@@ -673,7 +663,9 @@ mod tests {
         io[2] = pack_i16x8(row_in(2));
         io[3] = pack_i16x8(row_in(3));
         // SAFETY: SSE2 gated by `require_sse2!()`.
-        unsafe { transpose_16bit_4x4(&mut io); }
+        unsafe {
+            transpose_16bit_4x4(&mut io);
+        }
         let r0 = extract_i16x8(io[0]);
         let r1 = extract_i16x8(io[1]);
         // Expected per libvpx comments:
@@ -825,10 +817,46 @@ mod tests {
         //
         // We use the encoding `rc = r * 10 + c` for entry (row r, col c).
         let rc = |r: i16, c: i16| -> i16 { r * 10 + c };
-        let in0 = [rc(3,0), rc(3,1), rc(3,2), rc(3,3), rc(0,0), rc(0,1), rc(0,2), rc(0,3)];
-        let in1 = [rc(2,0), rc(2,1), rc(2,2), rc(2,3), rc(1,0), rc(1,1), rc(1,2), rc(1,3)];
-        let in2 = [rc(4,0), rc(4,1), rc(4,2), rc(4,3), rc(7,0), rc(7,1), rc(7,2), rc(7,3)];
-        let in3 = [rc(5,0), rc(5,1), rc(5,2), rc(5,3), rc(6,0), rc(6,1), rc(6,2), rc(6,3)];
+        let in0 = [
+            rc(3, 0),
+            rc(3, 1),
+            rc(3, 2),
+            rc(3, 3),
+            rc(0, 0),
+            rc(0, 1),
+            rc(0, 2),
+            rc(0, 3),
+        ];
+        let in1 = [
+            rc(2, 0),
+            rc(2, 1),
+            rc(2, 2),
+            rc(2, 3),
+            rc(1, 0),
+            rc(1, 1),
+            rc(1, 2),
+            rc(1, 3),
+        ];
+        let in2 = [
+            rc(4, 0),
+            rc(4, 1),
+            rc(4, 2),
+            rc(4, 3),
+            rc(7, 0),
+            rc(7, 1),
+            rc(7, 2),
+            rc(7, 3),
+        ];
+        let in3 = [
+            rc(5, 0),
+            rc(5, 1),
+            rc(5, 2),
+            rc(5, 3),
+            rc(6, 0),
+            rc(6, 1),
+            rc(6, 2),
+            rc(6, 3),
+        ];
         let in_v: [__m128i; 4] = [
             pack_i16x8(in0),
             pack_i16x8(in1),
@@ -838,7 +866,9 @@ mod tests {
         // SAFETY: _mm_setzero_si128 has no preconditions; unsafe required only because it is a compiler intrinsic.
         let mut out_v: [__m128i; 8] = [unsafe { _mm_setzero_si128() }; 8];
         // SAFETY: SSE2 gated by `require_sse2!()`.
-        unsafe { idct8x8_12_transpose_16bit_4x8(&in_v, &mut out_v); }
+        unsafe {
+            idct8x8_12_transpose_16bit_4x8(&in_v, &mut out_v);
+        }
         // Expected:
         //   out[0]: 00 10 20 30  40 50 60 70
         //   out[1]: 01 11 21 31  41 51 61 71
@@ -846,8 +876,14 @@ mod tests {
         //   out[3]: 03 13 23 33  43 53 63 73
         let expected_col = |c: i16| -> [i16; 8] {
             [
-                rc(0, c), rc(1, c), rc(2, c), rc(3, c),
-                rc(4, c), rc(5, c), rc(6, c), rc(7, c),
+                rc(0, c),
+                rc(1, c),
+                rc(2, c),
+                rc(3, c),
+                rc(4, c),
+                rc(5, c),
+                rc(6, c),
+                rc(7, c),
             ]
         };
         assert_eq!(extract_i16x8(out_v[0]), expected_col(0));

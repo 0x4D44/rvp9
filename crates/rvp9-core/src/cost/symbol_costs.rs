@@ -11,6 +11,7 @@
 //! `vpx_tree_index` tree.
 
 use super::tree_cost::vp9_cost_tokens;
+use crate::cost::prob_cost::{vp9_cost_one, vp9_cost_zero};
 use crate::entropy::adapt::{
     VP9_INTER_MODE_TREE, VP9_INTRA_MODE_TREE, VP9_PARTITION_TREE, VP9_SWITCHABLE_INTERP_TREE,
 };
@@ -20,7 +21,6 @@ use crate::entropy::default_probs::{
 };
 use crate::entropy::frame_context::{FrameContext, TX_SIZES};
 use crate::entropy::kf_probs::{VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB};
-use crate::cost::prob_cost::{vp9_cost_one, vp9_cost_zero};
 
 // libvpx `TX_SIZE_CONTEXTS = 2`. Already pinned in
 // `bitstream::compressed_header::TX_SIZE_CONTEXTS`; we re-pin a local
@@ -97,8 +97,7 @@ pub fn intra_uv_mode_costs_inter(fc: &FrameContext) -> [[i32; INTRA_MODES]; INTR
 /// libvpx `cpi->y_mode_costs[i][j]` (`vp9_rd.c:96-101`), built from
 /// `vp9_kf_y_mode_prob[above][left]`.
 #[must_use]
-pub fn intra_y_mode_costs_kf_table()
--> [[[i32; INTRA_MODES]; INTRA_MODES]; INTRA_MODES] {
+pub fn intra_y_mode_costs_kf_table() -> [[[i32; INTRA_MODES]; INTRA_MODES]; INTRA_MODES] {
     let mut out = [[[0i32; INTRA_MODES]; INTRA_MODES]; INTRA_MODES];
     for (i, plane) in VP9_KF_Y_MODE_PROB.iter().enumerate() {
         for (j, probs) in plane.iter().enumerate() {
@@ -113,7 +112,11 @@ pub fn intra_y_mode_costs_kf_table()
 #[must_use]
 pub fn intra_y_mode_costs_kf(above: usize, left: usize) -> [i32; INTRA_MODES] {
     let mut out = [0i32; INTRA_MODES];
-    vp9_cost_tokens(&mut out, &VP9_INTRA_MODE_TREE, &VP9_KF_Y_MODE_PROB[above][left]);
+    vp9_cost_tokens(
+        &mut out,
+        &VP9_INTRA_MODE_TREE,
+        &VP9_KF_Y_MODE_PROB[above][left],
+    );
     out
 }
 
@@ -171,8 +174,7 @@ pub fn partition_costs_kf() -> KfPartitionCosts {
 /// libvpx `cpi->switchable_interp_costs[i]` (`vp9_rd.c:111-114`).
 #[must_use]
 pub fn switchable_interp_costs(fc: &FrameContext) -> SwitchableInterpCosts {
-    let mut out: SwitchableInterpCosts =
-        [[0i32; SWITCHABLE_FILTERS]; SWITCHABLE_FILTER_CONTEXTS];
+    let mut out: SwitchableInterpCosts = [[0i32; SWITCHABLE_FILTERS]; SWITCHABLE_FILTER_CONTEXTS];
     for (i, probs) in fc.switchable_interp_prob.iter().enumerate() {
         vp9_cost_tokens(&mut out[i], &VP9_SWITCHABLE_INTERP_TREE, probs);
     }

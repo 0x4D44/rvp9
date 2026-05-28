@@ -237,10 +237,7 @@ mod tests {
         approx_eq(snap[BitCategory::MvDelta as usize], 2.0);
         approx_eq(snap[BitCategory::Coef as usize], 1.0);
         approx_eq(snap[BitCategory::SegId as usize], 1.0);
-        approx_eq(
-            snap[BitCategory::Other as usize],
-            expected_bits(1, 64),
-        );
+        approx_eq(snap[BitCategory::Other as usize], expected_bits(1, 64));
 
         // ---------------------------------------------------------
         // take_snapshot resets state; a follow-up snapshot is zero.

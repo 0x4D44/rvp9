@@ -274,7 +274,6 @@ pub fn parse_uncompressed_header(
         render_size = read_render_size(&mut rb, width, height)?;
         kind = FrameKind::KeyFrame;
     } else {
-
         // Inter-frame branch. libvpx :2704-2766.
         let intra_only = if show_frame {
             false
@@ -983,7 +982,9 @@ mod tests {
         assert_eq!(hdr.width, 320);
         assert_eq!(hdr.height, 240);
         assert_eq!(hdr.render_size, None);
-        let tail = hdr.tail.expect("non-show-existing frames must carry a tail");
+        let tail = hdr
+            .tail
+            .expect("non-show-existing frames must carry a tail");
         assert!(!tail.refresh_frame_context);
         assert!(!tail.frame_parallel_decoding_mode);
         assert_eq!(tail.frame_context_idx, 0);
@@ -1051,7 +1052,9 @@ mod tests {
         let err = parse_uncompressed_header(&buf, &NO_REFS).unwrap_err();
         assert!(matches!(
             err,
-            BitstreamError::InvalidSyncCode { found: [0xff, 0x83, 0x42] }
+            BitstreamError::InvalidSyncCode {
+                found: [0xff, 0x83, 0x42]
+            }
         ));
     }
 
@@ -1299,8 +1302,7 @@ mod tests {
             wb.finish().expect("no overflow")
         };
         buf.truncate(used + 8); // padding so the byte-cursor reader has room
-        let (got, _cursor) =
-            parse_uncompressed_header(&buf, refs).expect("parse succeeds");
+        let (got, _cursor) = parse_uncompressed_header(&buf, refs).expect("parse succeeds");
 
         // The parser produces fresh `first_partition_size` from the wire;
         // patch the input copy to match before comparing the rest.
@@ -1455,19 +1457,16 @@ mod tests {
     fn captured_header_round_trip() {
         // IVF: 32-byte file header, then per-frame (4-byte size LE +
         // 8-byte pts + payload). We just grab the first frame.
-        let bytes = std::fs::read(
-            "../../tests/conformance/vectors/vp90-2-05-resize.ivf",
-        )
-        .expect("test vector must be present");
+        let bytes = std::fs::read("../../tests/conformance/vectors/vp90-2-05-resize.ivf")
+            .expect("test vector must be present");
         assert_eq!(&bytes[..4], b"DKIF", "not an IVF file");
-        let frame_size = u32::from_le_bytes(
-            bytes[32..36].try_into().expect("4 bytes available"),
-        ) as usize;
+        let frame_size =
+            u32::from_le_bytes(bytes[32..36].try_into().expect("4 bytes available")) as usize;
         let payload = &bytes[44..44 + frame_size];
 
         // First frame of a libvpx-encoded IVF is always a key frame.
-        let (parsed, _) = parse_uncompressed_header(payload, &NO_REFS)
-            .expect("captured keyframe parses");
+        let (parsed, _) =
+            parse_uncompressed_header(payload, &NO_REFS).expect("captured keyframe parses");
         assert_eq!(parsed.kind, FrameKind::KeyFrame);
 
         // Round-trip through the writer.
@@ -1884,14 +1883,18 @@ mod tests {
                 w.write_literal(0, 8);
             }
         });
-        let (hdr, _) = parse_uncompressed_header(&buf, &NO_REFS).expect("valid Profile 2 intra-only");
+        let (hdr, _) =
+            parse_uncompressed_header(&buf, &NO_REFS).expect("valid Profile 2 intra-only");
         assert_eq!(hdr.profile, Profile::Profile2);
         assert_eq!(hdr.bit_depth, BitDepth::Twelve);
         assert_eq!(hdr.color_space, ColorSpace::Bt709);
         assert_eq!(hdr.color_range, ColorRange::Full);
         assert_eq!(hdr.chroma, ChromaFormat::Yuv420);
         match hdr.kind {
-            FrameKind::IntraOnly { refresh_frame_flags, .. } => {
+            FrameKind::IntraOnly {
+                refresh_frame_flags,
+                ..
+            } => {
                 assert_eq!(refresh_frame_flags, 0x5A);
             }
             other => panic!("expected IntraOnly, got {other:?}"),
@@ -1964,7 +1967,10 @@ mod tests {
         let mut buf = vec![0u8; 256];
         let mut wb = RawBitWriter::new(&mut buf);
         let err = write_uncompressed_header(&mut wb, &hdr, 1).unwrap_err();
-        assert!(matches!(err, BitstreamError::UnsupportedProfile { profile: 1 }));
+        assert!(matches!(
+            err,
+            BitstreamError::UnsupportedProfile { profile: 1 }
+        ));
     }
 
     /// `first_partition_size = 0` triggers `InvalidFirstPartitionSize`

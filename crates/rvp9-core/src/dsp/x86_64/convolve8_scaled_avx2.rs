@@ -41,8 +41,8 @@
 
 use crate::inter::filter::SUBPEL_SHIFTS;
 use core::arch::x86_64::{
-    __m128i, _mm_add_epi32, _mm_avg_epu8, _mm_cvtepu8_epi16, _mm_cvtepu8_epi32, _mm_cvtsi128_si32,
-    _mm_cvtsi32_si128, _mm_loadl_epi64, _mm_loadu_si128, _mm_madd_epi16, _mm_mullo_epi32,
+    __m128i, _mm_add_epi32, _mm_avg_epu8, _mm_cvtepu8_epi16, _mm_cvtepu8_epi32, _mm_cvtsi32_si128,
+    _mm_cvtsi128_si32, _mm_loadl_epi64, _mm_loadu_si128, _mm_madd_epi16, _mm_mullo_epi32,
     _mm_packs_epi32, _mm_packus_epi16, _mm_set1_epi32, _mm_setzero_si128, _mm_shuffle_epi32,
     _mm_srai_epi32, _mm_storel_epi64, _mm_storeu_si128, _mm_unpackhi_epi64,
 };
@@ -198,7 +198,9 @@ unsafe fn convolve8_scaled_avx2_inner(
     let ih = (((h as i32 - 1) * y_step_q4 + y0_q4) >> SUBPEL_BITS) as usize + FILTER_TAPS;
     debug_assert!(ih <= 135);
     let mut inter = [0u8; INTER_CAP];
-    horiz_pass(src, src_stride, &mut inter, filters, x0_q4, x_step_q4, w, ih);
+    horiz_pass(
+        src, src_stride, &mut inter, filters, x0_q4, x_step_q4, w, ih,
+    );
     vert_pass(&inter, dst, dst_stride, filters, y0_q4, y_step_q4, w, h);
 }
 
@@ -254,7 +256,17 @@ unsafe fn convolve8_scaled_avg_avx2_inner(
     let mut pred = [0u8; 64 * 64];
     let pred_stride = 64;
     convolve8_scaled_avx2_inner(
-        src, src_stride, &mut pred, pred_stride, filters, x0_q4, x_step_q4, y0_q4, y_step_q4, w, h,
+        src,
+        src_stride,
+        &mut pred,
+        pred_stride,
+        filters,
+        x0_q4,
+        x_step_q4,
+        y0_q4,
+        y_step_q4,
+        w,
+        h,
     );
     let dst_ptr = dst.as_mut_ptr();
     let pred_ptr = pred.as_ptr();
@@ -313,8 +325,8 @@ mod tests {
     //! Scalar-vs-AVX2 differential tests for the scaled convolves.
     use super::{convolve8_scaled_avg_avx2, convolve8_scaled_avx2};
     use crate::inter::filter::{
-        convolve8_scaled, convolve8_scaled_avg, BILINEAR_KERNEL, EIGHTTAP_KERNEL,
-        EIGHTTAP_SHARP_KERNEL, EIGHTTAP_SMOOTH_KERNEL, SUBPEL_SHIFTS,
+        BILINEAR_KERNEL, EIGHTTAP_KERNEL, EIGHTTAP_SHARP_KERNEL, EIGHTTAP_SMOOTH_KERNEL,
+        SUBPEL_SHIFTS, convolve8_scaled, convolve8_scaled_avg,
     };
 
     macro_rules! require_avx2 {
@@ -382,12 +394,30 @@ mod tests {
                         let mut d_scalar = vec![0u8; dst_len];
                         let mut d_avx2 = vec![0u8; dst_len];
                         convolve8_scaled(
-                            &src, src_stride, &mut d_scalar, dst_stride, kernel, x0, x_step, y0,
-                            y_step, w, h,
+                            &src,
+                            src_stride,
+                            &mut d_scalar,
+                            dst_stride,
+                            kernel,
+                            x0,
+                            x_step,
+                            y0,
+                            y_step,
+                            w,
+                            h,
                         );
                         convolve8_scaled_avx2(
-                            &src, src_stride, &mut d_avx2, dst_stride, kernel, x0, x_step, y0,
-                            y_step, w, h,
+                            &src,
+                            src_stride,
+                            &mut d_avx2,
+                            dst_stride,
+                            kernel,
+                            x0,
+                            x_step,
+                            y0,
+                            y_step,
+                            w,
+                            h,
                         );
                         assert_eq!(
                             d_scalar, d_avx2,
@@ -430,12 +460,35 @@ mod tests {
                 }
                 let mut d_avx2 = d_scalar.clone();
                 convolve8_scaled_avg(
-                    &src, src_stride, &mut d_scalar, dst_stride, kernel, x0, step, y0, step, w, h,
+                    &src,
+                    src_stride,
+                    &mut d_scalar,
+                    dst_stride,
+                    kernel,
+                    x0,
+                    step,
+                    y0,
+                    step,
+                    w,
+                    h,
                 );
                 convolve8_scaled_avg_avx2(
-                    &src, src_stride, &mut d_avx2, dst_stride, kernel, x0, step, y0, step, w, h,
+                    &src,
+                    src_stride,
+                    &mut d_avx2,
+                    dst_stride,
+                    kernel,
+                    x0,
+                    step,
+                    y0,
+                    step,
+                    w,
+                    h,
                 );
-                assert_eq!(d_scalar, d_avx2, "scaled_avg mismatch w={w} h={h} step={step}");
+                assert_eq!(
+                    d_scalar, d_avx2,
+                    "scaled_avg mismatch w={w} h={h} step={step}"
+                );
             }
         }
     }

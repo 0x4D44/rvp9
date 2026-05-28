@@ -430,9 +430,7 @@ pub fn d63_predictor(dst: &mut [u8], stride: usize, bs: usize, above: &[u8]) {
         {
             let (head, tail) = dst.split_at_mut(r * stride);
             if size > 0 {
-                tail[..size].copy_from_slice(
-                    &head[copy_src_row_0..copy_src_row_0 + size],
-                );
+                tail[..size].copy_from_slice(&head[copy_src_row_0..copy_src_row_0 + size]);
             }
             tail[size..bs].fill(pad);
         }
@@ -778,14 +776,9 @@ pub fn intra_predict(
             }
             (IntraMode::D207, _) => (dispatch.d207_predictor())(dst, stride, bs, ctx.left),
             (IntraMode::D63, _) => (dispatch.d63_predictor())(dst, stride, bs, ctx.above),
-            (IntraMode::Tm, _) => (dispatch.tm_predictor())(
-                dst,
-                stride,
-                bs,
-                ctx.above,
-                ctx.left,
-                ctx.above_left,
-            ),
+            (IntraMode::Tm, _) => {
+                (dispatch.tm_predictor())(dst, stride, bs, ctx.above, ctx.left, ctx.above_left)
+            }
         }
     }
 
@@ -1109,13 +1102,11 @@ pub fn build_intra_predictors(
                 if px_x + 2 * bs <= plane_width {
                     // Full 2*bs above pixels are in-frame.
                     if have_right && bs == 4 {
-                        edges.above_data[16..16 + 2 * bs].copy_from_slice(
-                            &dst_plane[above_ref_start..above_ref_start + 2 * bs],
-                        );
+                        edges.above_data[16..16 + 2 * bs]
+                            .copy_from_slice(&dst_plane[above_ref_start..above_ref_start + 2 * bs]);
                     } else {
-                        edges.above_data[16..16 + bs].copy_from_slice(
-                            &dst_plane[above_ref_start..above_ref_start + bs],
-                        );
+                        edges.above_data[16..16 + bs]
+                            .copy_from_slice(&dst_plane[above_ref_start..above_ref_start + bs]);
                         let last = edges.above_data[16 + bs - 1];
                         edges.above_data[16 + bs..16 + 2 * bs].fill(last);
                     }
@@ -1123,24 +1114,21 @@ pub fn build_intra_predictors(
                     // `bs` pixels in-frame; replicate to fill 2*bs.
                     let r = plane_width - px_x; // in [bs, 2*bs)
                     if have_right && bs == 4 {
-                        edges.above_data[16..16 + r].copy_from_slice(
-                            &dst_plane[above_ref_start..above_ref_start + r],
-                        );
+                        edges.above_data[16..16 + r]
+                            .copy_from_slice(&dst_plane[above_ref_start..above_ref_start + r]);
                         let last = edges.above_data[16 + r - 1];
                         edges.above_data[16 + r..16 + 2 * bs].fill(last);
                     } else {
-                        edges.above_data[16..16 + bs].copy_from_slice(
-                            &dst_plane[above_ref_start..above_ref_start + bs],
-                        );
+                        edges.above_data[16..16 + bs]
+                            .copy_from_slice(&dst_plane[above_ref_start..above_ref_start + bs]);
                         let last = edges.above_data[16 + bs - 1];
                         edges.above_data[16 + bs..16 + 2 * bs].fill(last);
                     }
                 } else {
                     // Fewer than `bs` pixels in-frame.
                     let r = plane_width - px_x; // in [1, bs)
-                    edges.above_data[16..16 + r].copy_from_slice(
-                        &dst_plane[above_ref_start..above_ref_start + r],
-                    );
+                    edges.above_data[16..16 + r]
+                        .copy_from_slice(&dst_plane[above_ref_start..above_ref_start + r]);
                     let last = edges.above_data[16 + r - 1];
                     edges.above_data[16 + r..16 + 2 * bs].fill(last);
                 }
@@ -1305,7 +1293,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn dispatch_dc_pred_4x4_avx2_matches_scalar() {
-        use crate::dsp::caps::{detect, Caps};
+        use crate::dsp::caps::{Caps, detect};
 
         // Distinguishable neighbour samples so any per-lane bug shows up.
         let above = [10u8, 25, 80, 200, 17, 42, 63, 99];
@@ -1854,7 +1842,11 @@ mod tests {
         // yield a constant 100 block: every AVG2/AVG3 of 100s is 100.
         let above = [100u8; 8];
         let left = [100u8; 4];
-        let ctx = PredCtx { above: &above, left: &left, above_left: 100 };
+        let ctx = PredCtx {
+            above: &above,
+            left: &left,
+            above_left: 100,
+        };
         let mut dst = [0u8; 16];
         d117_predictor(&mut dst, 4, 4, ctx);
         assert_eq!(dst, [100u8; 16]);
@@ -1882,7 +1874,11 @@ mod tests {
         //            = (60 + 140 + 80 + 2) >> 2 = 282 >> 2 = 70
         let above = [20u8, 30, 40, 50];
         let left = [60u8, 70, 80, 90];
-        let ctx = PredCtx { above: &above, left: &left, above_left: 10 };
+        let ctx = PredCtx {
+            above: &above,
+            left: &left,
+            above_left: 10,
+        };
         let mut dst = [0u8; 16];
         d117_predictor(&mut dst, 4, 4, ctx);
         let at = |r: usize, c: usize| dst[r * 4 + c];
@@ -1899,7 +1895,11 @@ mod tests {
     fn d135_predictor_constant_input_is_constant() {
         let above = [100u8; 4];
         let left = [100u8; 4];
-        let ctx = PredCtx { above: &above, left: &left, above_left: 100 };
+        let ctx = PredCtx {
+            above: &above,
+            left: &left,
+            above_left: 100,
+        };
         let mut dst = [0u8; 16];
         d135_predictor(&mut dst, 4, 4, ctx);
         assert_eq!(dst, [100u8; 16]);
@@ -1915,7 +1915,11 @@ mod tests {
         //   = (40 + 100 + 60 + 2) >> 2 = 202 >> 2 = 50.
         let above = [60u8, 70, 80, 90];
         let left = [40u8, 30, 20, 10];
-        let ctx = PredCtx { above: &above, left: &left, above_left: 50 };
+        let ctx = PredCtx {
+            above: &above,
+            left: &left,
+            above_left: 50,
+        };
         let mut dst = [0u8; 16];
         d135_predictor(&mut dst, 4, 4, ctx);
         let at = |r: usize, c: usize| dst[r * 4 + c];
@@ -1951,16 +1955,20 @@ mod tests {
     fn d135_predictor_4x4_matches_libvpx_spec_m18_resize_sub0() {
         let above = [127u8, 127, 127, 127];
         let left = [73u8, 73, 73, 73];
-        let ctx = PredCtx { above: &above, left: &left, above_left: 127 };
+        let ctx = PredCtx {
+            above: &above,
+            left: &left,
+            above_left: 127,
+        };
         let mut dst = [0u8; 16];
         d135_predictor(&mut dst, 4, 4, ctx);
         let expect: [u8; 16] = [
-            114, 127, 127, 127,
-             87, 114, 127, 127,
-             73,  87, 114, 127,
-             73,  73,  87, 114,
+            114, 127, 127, 127, 87, 114, 127, 127, 73, 87, 114, 127, 73, 73, 87, 114,
         ];
-        assert_eq!(dst, expect, "D135 4x4 must match libvpx vpx_d135_predictor_4x4_c");
+        assert_eq!(
+            dst, expect,
+            "D135 4x4 must match libvpx vpx_d135_predictor_4x4_c"
+        );
     }
 
     /// Stage 3 stretch M.18 — second sub-block (rows 4..7) of the same
@@ -1973,16 +1981,20 @@ mod tests {
     fn d135_predictor_4x4_matches_libvpx_spec_m18_resize_sub1() {
         let above = [85u8, 76, 60, 61];
         let left = [49u8, 49, 49, 49];
-        let ctx = PredCtx { above: &above, left: &left, above_left: 73 };
+        let ctx = PredCtx {
+            above: &above,
+            left: &left,
+            above_left: 73,
+        };
         let mut dst = [0u8; 16];
         d135_predictor(&mut dst, 4, 4, ctx);
         let expect: [u8; 16] = [
-            70, 80, 74, 64,
-            55, 70, 80, 74,
-            49, 55, 70, 80,
-            49, 49, 55, 70,
+            70, 80, 74, 64, 55, 70, 80, 74, 49, 55, 70, 80, 49, 49, 55, 70,
         ];
-        assert_eq!(dst, expect, "D135 4x4 must match libvpx vpx_d135_predictor_4x4_c");
+        assert_eq!(
+            dst, expect,
+            "D135 4x4 must match libvpx vpx_d135_predictor_4x4_c"
+        );
     }
 
     /// Stage 3 stretch M.18 — paranoia cross-check for D117 and D153
@@ -1996,41 +2008,53 @@ mod tests {
     fn d117_predictor_4x4_coincides_with_libvpx_spec() {
         let above = [37u8, 53, 71, 89];
         let left = [17u8, 23, 29, 41];
-        let ctx = PredCtx { above: &above, left: &left, above_left: 11 };
+        let ctx = PredCtx {
+            above: &above,
+            left: &left,
+            above_left: 11,
+        };
         let mut dst = [0u8; 16];
         d117_predictor(&mut dst, 4, 4, ctx);
         // Values captured from vpx_d117_predictor_4x4_c via M.18 oracle.
         let expect: [u8; 16] = [
-            24, 45, 62, 80,
-            19, 35, 54, 71,
-            17, 24, 45, 62,
-            23, 19, 35, 54,
+            24, 45, 62, 80, 19, 35, 54, 71, 17, 24, 45, 62, 23, 19, 35, 54,
         ];
-        assert_eq!(dst, expect, "D117 generic at bs=4 must match libvpx 4x4 spec");
+        assert_eq!(
+            dst, expect,
+            "D117 generic at bs=4 must match libvpx 4x4 spec"
+        );
     }
 
     #[test]
     fn d153_predictor_4x4_coincides_with_libvpx_spec() {
         let above = [37u8, 53, 71, 89];
         let left = [17u8, 23, 29, 41];
-        let ctx = PredCtx { above: &above, left: &left, above_left: 11 };
+        let ctx = PredCtx {
+            above: &above,
+            left: &left,
+            above_left: 11,
+        };
         let mut dst = [0u8; 16];
         d153_predictor(&mut dst, 4, 4, ctx);
         // Values captured from vpx_d153_predictor_4x4_c via M.18 oracle.
         let expect: [u8; 16] = [
-            14, 19, 35, 54,
-            20, 17, 14, 19,
-            26, 23, 20, 17,
-            35, 31, 26, 23,
+            14, 19, 35, 54, 20, 17, 14, 19, 26, 23, 20, 17, 35, 31, 26, 23,
         ];
-        assert_eq!(dst, expect, "D153 generic at bs=4 must match libvpx 4x4 spec");
+        assert_eq!(
+            dst, expect,
+            "D153 generic at bs=4 must match libvpx 4x4 spec"
+        );
     }
 
     #[test]
     fn d153_predictor_constant_input_is_constant() {
         let above = [100u8; 4];
         let left = [100u8; 4];
-        let ctx = PredCtx { above: &above, left: &left, above_left: 100 };
+        let ctx = PredCtx {
+            above: &above,
+            left: &left,
+            above_left: 100,
+        };
         let mut dst = [0u8; 16];
         d153_predictor(&mut dst, 4, 4, ctx);
         assert_eq!(dst, [100u8; 16]);
@@ -2055,7 +2079,11 @@ mod tests {
         //             = (70+160+90+2)>>2 = 80
         let above = [20u8, 30, 40, 50];
         let left = [60u8, 70, 80, 90];
-        let ctx = PredCtx { above: &above, left: &left, above_left: 10 };
+        let ctx = PredCtx {
+            above: &above,
+            left: &left,
+            above_left: 10,
+        };
         let mut dst = [0u8; 16];
         d153_predictor(&mut dst, 4, 4, ctx);
         let at = |r: usize, c: usize| dst[r * 4 + c];
@@ -2091,17 +2119,44 @@ mod tests {
             let left: Vec<u8> = (0..bs as u8).map(|i| i * 2).collect();
             let mut dst = vec![0u8; bs * bs];
 
-            v_predictor(&mut dst, bs, bs, PredCtx { above: &above, left: &left, above_left: 50 });
+            v_predictor(
+                &mut dst,
+                bs,
+                bs,
+                PredCtx {
+                    above: &above,
+                    left: &left,
+                    above_left: 50,
+                },
+            );
             // Row 0 == above.
             assert_eq!(&dst[0..bs], &above[..]);
 
-            h_predictor(&mut dst, bs, bs, PredCtx { above: &above, left: &left, above_left: 50 });
+            h_predictor(
+                &mut dst,
+                bs,
+                bs,
+                PredCtx {
+                    above: &above,
+                    left: &left,
+                    above_left: 50,
+                },
+            );
             // Column 0 == left.
             for r in 0..bs {
                 assert_eq!(dst[r * bs], left[r]);
             }
 
-            dc_predictor(&mut dst, bs, bs, PredCtx { above: &above, left: &left, above_left: 50 });
+            dc_predictor(
+                &mut dst,
+                bs,
+                bs,
+                PredCtx {
+                    above: &above,
+                    left: &left,
+                    above_left: 50,
+                },
+            );
             // DC: rounded average of 2*bs values.
             let sum: u32 = above.iter().chain(left.iter()).map(|&v| v as u32).sum();
             let dc = ((sum + bs as u32) / (2 * bs as u32)) as u8;
@@ -2139,9 +2194,17 @@ mod tests {
         // Use (1, 1) so the plane bounds-check still passes; but with
         // have_top = have_left = false the function must NOT read pixels.
         build_intra_predictors(
-            &plane, stride, /*px_x=*/ 1, /*px_y=*/ 1, w, h,
-            TxSize::Tx4x4, IntraMode::Dc,
-            /*have_top=*/ false, /*have_left=*/ false, /*have_right=*/ false,
+            &plane,
+            stride,
+            /*px_x=*/ 1,
+            /*px_y=*/ 1,
+            w,
+            h,
+            TxSize::Tx4x4,
+            IntraMode::Dc,
+            /*have_top=*/ false,
+            /*have_left=*/ false,
+            /*have_right=*/ false,
             &mut edges,
         );
         let ctx = edges.pred_ctx(4);
@@ -2160,9 +2223,18 @@ mod tests {
         let bs = 4;
         let (px_x, px_y) = (10, 5);
         build_intra_predictors(
-            &plane, stride, px_x, px_y, w, h,
-            TxSize::Tx4x4, IntraMode::Dc,
-            true, false, false, &mut edges,
+            &plane,
+            stride,
+            px_x,
+            px_y,
+            w,
+            h,
+            TxSize::Tx4x4,
+            IntraMode::Dc,
+            true,
+            false,
+            false,
+            &mut edges,
         );
         let ctx = edges.pred_ctx(bs);
         // above row = plane[(px_y - 1) * stride + px_x .. + bs]
@@ -2182,9 +2254,18 @@ mod tests {
         let bs = 4;
         let (px_x, px_y) = (8, 8);
         build_intra_predictors(
-            &plane, stride, px_x, px_y, w, h,
-            TxSize::Tx4x4, IntraMode::Dc,
-            false, true, false, &mut edges,
+            &plane,
+            stride,
+            px_x,
+            px_y,
+            w,
+            h,
+            TxSize::Tx4x4,
+            IntraMode::Dc,
+            false,
+            true,
+            false,
+            &mut edges,
         );
         let ctx = edges.pred_ctx(bs);
         assert_eq!(&ctx.above[..bs], &[127u8; 4][..]);
@@ -2203,9 +2284,18 @@ mod tests {
         let bs = 4;
         let (px_x, px_y) = (8, 8);
         build_intra_predictors(
-            &plane, stride, px_x, px_y, w, h,
-            TxSize::Tx4x4, IntraMode::Dc,
-            true, true, false, &mut edges,
+            &plane,
+            stride,
+            px_x,
+            px_y,
+            w,
+            h,
+            TxSize::Tx4x4,
+            IntraMode::Dc,
+            true,
+            true,
+            false,
+            &mut edges,
         );
         let ctx = edges.pred_ctx(bs);
         let expected_above: Vec<u8> = (0..bs)
@@ -2230,9 +2320,18 @@ mod tests {
         let bs = 8;
         let (px_x, px_y) = (16, 8);
         build_intra_predictors(
-            &plane, stride, px_x, px_y, w, h,
-            TxSize::Tx8x8, IntraMode::D45,
-            true, true, /*have_right=*/ false, &mut edges,
+            &plane,
+            stride,
+            px_x,
+            px_y,
+            w,
+            h,
+            TxSize::Tx8x8,
+            IntraMode::D45,
+            true,
+            true,
+            /*have_right=*/ false,
+            &mut edges,
         );
         let ctx = edges.pred_ctx(bs);
         let above_ref_start = (px_y - 1) * stride + px_x;
@@ -2257,9 +2356,18 @@ mod tests {
         let bs = 4;
         let (px_x, px_y) = (8, 4);
         build_intra_predictors(
-            &plane, stride, px_x, px_y, w, h,
-            TxSize::Tx4x4, IntraMode::D45,
-            true, true, /*have_right=*/ true, &mut edges,
+            &plane,
+            stride,
+            px_x,
+            px_y,
+            w,
+            h,
+            TxSize::Tx4x4,
+            IntraMode::D45,
+            true,
+            true,
+            /*have_right=*/ true,
+            &mut edges,
         );
         let ctx = edges.pred_ctx(bs);
         let above_ref_start = (px_y - 1) * stride + px_x;
@@ -2281,9 +2389,18 @@ mod tests {
         let bs = 8;
         let (px_x, px_y) = (0, 8);
         build_intra_predictors(
-            &plane, stride, px_x, px_y, w, h,
-            TxSize::Tx8x8, IntraMode::V,
-            /*have_top=*/ true, /*have_left=*/ false, false, &mut edges,
+            &plane,
+            stride,
+            px_x,
+            px_y,
+            w,
+            h,
+            TxSize::Tx8x8,
+            IntraMode::V,
+            /*have_top=*/ true,
+            /*have_left=*/ false,
+            false,
+            &mut edges,
         );
         let ctx = edges.pred_ctx(bs);
         assert_eq!(ctx.above_left, 129);
@@ -2312,9 +2429,18 @@ mod tests {
         // Block at (px_x=8, px_y=8): px_x + bs = 16 > width=12 → slow path.
         let (px_x, px_y) = (8, 8);
         build_intra_predictors(
-            &plane, stride, px_x, px_y, width, height,
-            TxSize::Tx8x8, IntraMode::V,
-            true, true, false, &mut edges,
+            &plane,
+            stride,
+            px_x,
+            px_y,
+            width,
+            height,
+            TxSize::Tx8x8,
+            IntraMode::V,
+            true,
+            true,
+            false,
+            &mut edges,
         );
         let ctx = edges.pred_ctx(bs);
         let above_ref_start = (px_y - 1) * stride + px_x;
@@ -2345,9 +2471,18 @@ mod tests {
         // Block at (px_x=4, px_y=8): px_y + bs = 16 > height=12 → slow.
         let (px_x, px_y) = (4, 8);
         build_intra_predictors(
-            &plane, stride, px_x, px_y, width, height,
-            TxSize::Tx8x8, IntraMode::H,
-            true, true, false, &mut edges,
+            &plane,
+            stride,
+            px_x,
+            px_y,
+            width,
+            height,
+            TxSize::Tx8x8,
+            IntraMode::H,
+            true,
+            true,
+            false,
+            &mut edges,
         );
         let ctx = edges.pred_ctx(bs);
         let extend_bottom = height - px_y; // 4 in-frame rows
@@ -2369,9 +2504,18 @@ mod tests {
         let bs = 16;
         let (px_x, px_y) = (16, 16);
         build_intra_predictors(
-            &plane, stride, px_x, px_y, w, h,
-            TxSize::Tx16x16, IntraMode::Tm,
-            true, true, false, &mut edges,
+            &plane,
+            stride,
+            px_x,
+            px_y,
+            w,
+            h,
+            TxSize::Tx16x16,
+            IntraMode::Tm,
+            true,
+            true,
+            false,
+            &mut edges,
         );
         let ctx = edges.pred_ctx(bs);
         let above_ref_start = (px_y - 1) * stride + px_x;
@@ -2592,9 +2736,18 @@ mod tests {
             let mode = IntraMode::from_u8(raw_mode).unwrap();
             let mut edges = EdgeBuffers::new();
             build_intra_predictors(
-                &plane, stride, 1, 1, w, h,
-                TxSize::Tx4x4, mode,
-                false, false, false, &mut edges,
+                &plane,
+                stride,
+                1,
+                1,
+                w,
+                h,
+                TxSize::Tx4x4,
+                mode,
+                false,
+                false,
+                false,
+                &mut edges,
             );
             let ctx = edges.pred_ctx(4);
             // Every mode's `above_left` resolves through ABOVE_UNAVAILABLE_FILL
@@ -2643,9 +2796,18 @@ mod tests {
         // fast-path that reads above[bs..2*bs] from the plane.
         let (px_x, px_y) = (8, 4);
         build_intra_predictors(
-            &plane, stride, px_x, px_y, w, h,
-            TxSize::Tx4x4, IntraMode::D45,
-            true, true, true, &mut edges,
+            &plane,
+            stride,
+            px_x,
+            px_y,
+            w,
+            h,
+            TxSize::Tx4x4,
+            IntraMode::D45,
+            true,
+            true,
+            true,
+            &mut edges,
         );
         let above_ref_start = (px_y - 1) * stride + px_x;
         let ctx = edges.pred_ctx(bs);
@@ -2679,9 +2841,18 @@ mod tests {
         let bs = 4;
         let (px_x, px_y) = (4, 8);
         build_intra_predictors(
-            &plane, stride, px_x, px_y, width, height,
-            TxSize::Tx4x4, IntraMode::D45,
-            true, true, false, &mut edges,
+            &plane,
+            stride,
+            px_x,
+            px_y,
+            width,
+            height,
+            TxSize::Tx4x4,
+            IntraMode::D45,
+            true,
+            true,
+            false,
+            &mut edges,
         );
         let ctx = edges.pred_ctx(bs);
         let r = width - px_x; // 2 in-frame samples
@@ -2714,9 +2885,18 @@ mod tests {
         let bs = 8;
         let (px_x, px_y) = (8, 8);
         build_intra_predictors(
-            &plane, stride, px_x, px_y, width, height,
-            TxSize::Tx8x8, IntraMode::D45,
-            true, true, false, &mut edges,
+            &plane,
+            stride,
+            px_x,
+            px_y,
+            width,
+            height,
+            TxSize::Tx8x8,
+            IntraMode::D45,
+            true,
+            true,
+            false,
+            &mut edges,
         );
         let ctx = edges.pred_ctx(bs);
         let above_ref_start = (px_y - 1) * stride + px_x;
@@ -2742,9 +2922,18 @@ mod tests {
         let (px_x, px_y) = (8, 4);
         // have_right=false → trailing bs bytes replicate from above[bs-1].
         build_intra_predictors(
-            &plane, stride, px_x, px_y, w, h,
-            TxSize::Tx4x4, IntraMode::D45,
-            true, true, false, &mut edges,
+            &plane,
+            stride,
+            px_x,
+            px_y,
+            w,
+            h,
+            TxSize::Tx4x4,
+            IntraMode::D45,
+            true,
+            true,
+            false,
+            &mut edges,
         );
         let ctx = edges.pred_ctx(bs);
         let above_ref_start = (px_y - 1) * stride + px_x;
@@ -2778,9 +2967,18 @@ mod tests {
         let bs = 8;
         let (px_x, px_y) = (8, 8);
         build_intra_predictors(
-            &plane, stride, px_x, px_y, width, height,
-            TxSize::Tx8x8, IntraMode::D45,
-            true, true, false, &mut edges,
+            &plane,
+            stride,
+            px_x,
+            px_y,
+            width,
+            height,
+            TxSize::Tx8x8,
+            IntraMode::D45,
+            true,
+            true,
+            false,
+            &mut edges,
         );
         let ctx = edges.pred_ctx(bs);
         let above_ref_start = (px_y - 1) * stride + px_x;
@@ -2814,9 +3012,18 @@ mod tests {
         let (px_x, px_y) = (8, 4);
         // V (NEED_ABOVE), have_left=true → above_left comes from plane.
         build_intra_predictors(
-            &plane, stride, px_x, px_y, width, height,
-            TxSize::Tx8x8, IntraMode::V,
-            true, true, false, &mut edges,
+            &plane,
+            stride,
+            px_x,
+            px_y,
+            width,
+            height,
+            TxSize::Tx8x8,
+            IntraMode::V,
+            true,
+            true,
+            false,
+            &mut edges,
         );
         let ctx = edges.pred_ctx(bs);
         let above_ref_start = (px_y - 1) * stride + px_x;
@@ -2839,9 +3046,18 @@ mod tests {
         let (plane, stride, w, h) = synth_plane();
         let mut edges = EdgeBuffers::new();
         build_intra_predictors(
-            &plane, stride, 8, 8, w, h,
-            TxSize::Tx8x8, IntraMode::H,
-            true, false, false, &mut edges,
+            &plane,
+            stride,
+            8,
+            8,
+            w,
+            h,
+            TxSize::Tx8x8,
+            IntraMode::H,
+            true,
+            false,
+            false,
+            &mut edges,
         );
         let ctx = edges.pred_ctx(8);
         assert_eq!(ctx.left, &[129u8; 8][..]);
@@ -2858,9 +3074,18 @@ mod tests {
         let bs = 4;
         let (px_x, px_y) = (8, 4);
         build_intra_predictors(
-            &plane, stride, px_x, px_y, w, h,
-            TxSize::Tx4x4, IntraMode::D45,
-            true, /*have_left=*/ false, false, &mut edges,
+            &plane,
+            stride,
+            px_x,
+            px_y,
+            w,
+            h,
+            TxSize::Tx4x4,
+            IntraMode::D45,
+            true,
+            /*have_left=*/ false,
+            false,
+            &mut edges,
         );
         let ctx = edges.pred_ctx(bs);
         // above row comes from the plane; above_left is 129 because
@@ -2886,9 +3111,18 @@ mod tests {
         let bs = 8;
         let (px_x, px_y) = (4, 8); // px_y + bs = 16 > 12 → slow path
         build_intra_predictors(
-            &plane, stride, px_x, px_y, width, height,
-            TxSize::Tx8x8, IntraMode::D207,
-            true, true, false, &mut edges,
+            &plane,
+            stride,
+            px_x,
+            px_y,
+            width,
+            height,
+            TxSize::Tx8x8,
+            IntraMode::D207,
+            true,
+            true,
+            false,
+            &mut edges,
         );
         let ctx = edges.pred_ctx(bs);
         let extend_bottom = height - px_y;
@@ -2911,9 +3145,18 @@ mod tests {
         let bs = 4;
         let (px_x, px_y) = (4, 4);
         build_intra_predictors(
-            &plane, stride, px_x, px_y, w, h,
-            TxSize::Tx4x4, IntraMode::V,
-            true, true, false, &mut edges,
+            &plane,
+            stride,
+            px_x,
+            px_y,
+            w,
+            h,
+            TxSize::Tx4x4,
+            IntraMode::V,
+            true,
+            true,
+            false,
+            &mut edges,
         );
         let mut dst_from_builder = [0u8; 16];
         let avail = DcAvailability {
@@ -2934,7 +3177,9 @@ mod tests {
         // Reference path: build PredCtx by hand.
         let above_ref_start = (px_y - 1) * stride + px_x;
         let above: Vec<u8> = (0..bs).map(|i| plane[above_ref_start + i]).collect();
-        let left: Vec<u8> = (0..bs).map(|i| plane[(px_y + i) * stride + px_x - 1]).collect();
+        let left: Vec<u8> = (0..bs)
+            .map(|i| plane[(px_y + i) * stride + px_x - 1])
+            .collect();
         let manual_ctx = PredCtx {
             above: &above,
             left: &left,

@@ -30,7 +30,7 @@
 //! prediction kernels.
 
 #[cfg(target_arch = "x86_64")]
-use super::{convolve8_avx2, convolve8_horiz_avx2, convolve8_vert_avx2, convolve_avg_avx2};
+use super::{convolve_avg_avx2, convolve8_avx2, convolve8_horiz_avx2, convolve8_vert_avx2};
 
 /// AVX2 8-tap horizontal convolution with compound average.
 #[cfg(target_arch = "x86_64")]
@@ -93,8 +93,8 @@ mod tests {
     //! Differential tests vs the scalar `_avg` references.
     use super::{convolve8_avg_avx2, convolve8_avg_horiz_avx2, convolve8_avg_vert_avx2};
     use crate::inter::filter::{
-        convolve8_avg, convolve8_avg_horiz, convolve8_avg_vert, BILINEAR_KERNEL, EIGHTTAP_KERNEL,
-        EIGHTTAP_SHARP_KERNEL, EIGHTTAP_SMOOTH_KERNEL,
+        BILINEAR_KERNEL, EIGHTTAP_KERNEL, EIGHTTAP_SHARP_KERNEL, EIGHTTAP_SMOOTH_KERNEL,
+        convolve8_avg, convolve8_avg_horiz, convolve8_avg_vert,
     };
 
     macro_rules! require_avx2 {
@@ -156,10 +156,22 @@ mod tests {
                         }
                         let mut dst_avx2 = dst_scalar.clone();
                         convolve8_avg_horiz(
-                            &src, src_stride, &mut dst_scalar, dst_stride, filter, w, h,
+                            &src,
+                            src_stride,
+                            &mut dst_scalar,
+                            dst_stride,
+                            filter,
+                            w,
+                            h,
                         );
                         convolve8_avg_horiz_avx2(
-                            &src, src_stride, &mut dst_avx2, dst_stride, filter, w, h,
+                            &src,
+                            src_stride,
+                            &mut dst_avx2,
+                            dst_stride,
+                            filter,
+                            w,
+                            h,
                         );
                         assert_eq!(dst_scalar, dst_avx2, "avg_horiz w={w} h={h} f={filter:?}");
                     }
@@ -197,10 +209,22 @@ mod tests {
                         }
                         let mut dst_avx2 = dst_scalar.clone();
                         convolve8_avg_vert(
-                            &src, src_stride, &mut dst_scalar, dst_stride, filter, w, h,
+                            &src,
+                            src_stride,
+                            &mut dst_scalar,
+                            dst_stride,
+                            filter,
+                            w,
+                            h,
                         );
                         convolve8_avg_vert_avx2(
-                            &src, src_stride, &mut dst_avx2, dst_stride, filter, w, h,
+                            &src,
+                            src_stride,
+                            &mut dst_avx2,
+                            dst_stride,
+                            filter,
+                            w,
+                            h,
                         );
                         assert_eq!(dst_scalar, dst_avx2, "avg_vert w={w} h={h} f={filter:?}");
                     }
@@ -240,10 +264,24 @@ mod tests {
                 }
                 let mut dst_avx2 = dst_scalar.clone();
                 convolve8_avg(
-                    &src, src_stride, &mut dst_scalar, dst_stride, filter_x, filter_y, w, h,
+                    &src,
+                    src_stride,
+                    &mut dst_scalar,
+                    dst_stride,
+                    filter_x,
+                    filter_y,
+                    w,
+                    h,
                 );
                 convolve8_avg_avx2(
-                    &src, src_stride, &mut dst_avx2, dst_stride, filter_x, filter_y, w, h,
+                    &src,
+                    src_stride,
+                    &mut dst_avx2,
+                    dst_stride,
+                    filter_x,
+                    filter_y,
+                    w,
+                    h,
                 );
                 assert_eq!(
                     dst_scalar, dst_avx2,
@@ -257,8 +295,8 @@ mod tests {
     #[test]
     fn dispatch_round_trip() {
         require_avx2!();
-        use crate::dsp::caps::detect;
         use crate::dsp::SimdDispatch;
+        use crate::dsp::caps::detect;
 
         let mut caps_avx2 = detect();
         caps_avx2.avx2 = true;

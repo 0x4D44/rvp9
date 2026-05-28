@@ -164,8 +164,7 @@ pub static MV_REF_BLOCKS: [[Position; MVREF_NEIGHBOURS]; 13] = [
 /// `(block_idx, is_search_col_zero)` to the index of the 4×4
 /// sub-block within the parent's `bmi[4]` array. Used by
 /// [`get_sub_block_mv`].
-pub static IDX_N_COLUMN_TO_SUBBLOCK: [[usize; 2]; 4] =
-    [[1, 2], [1, 3], [3, 2], [3, 3]];
+pub static IDX_N_COLUMN_TO_SUBBLOCK: [[usize; 2]; 4] = [[1, 2], [1, 3], [3, 2], [3, 3]];
 
 /// libvpx `get_sub_block_mv` (`vp9_mvref_common.h:222-230`). For
 /// sub-8 candidates, picks one of the parent's `bmi[]` MVs based on
@@ -323,12 +322,7 @@ pub fn lower_mv_precision(mv: Mv, allow_hp: bool) -> Mv {
 /// INTRA, 1 = LAST, 2 = GOLDEN, 3 = ALTREF). The INTRA slot is never
 /// queried — `is_inter_block` callers exclude intra candidates.
 #[inline]
-fn scale_mv(
-    candidate_ref: RefFrame,
-    this_ref: RefFrame,
-    sign_bias: &[bool; 4],
-    mv: Mv,
-) -> Mv {
+fn scale_mv(candidate_ref: RefFrame, this_ref: RefFrame, sign_bias: &[bool; 4], mv: Mv) -> Mv {
     let cand = ref_sign_bias_at(sign_bias, candidate_ref);
     let this_ = ref_sign_bias_at(sign_bias, this_ref);
     if cand != this_ {
@@ -971,7 +965,9 @@ mod tests {
     }
     impl<'a> ListNeighbours<'a> {
         fn new() -> Self {
-            Self { entries: Vec::new() }
+            Self {
+                entries: Vec::new(),
+            }
         }
         fn with(mut self, pos: Position, mi: &'a ModeInfo) -> Self {
             self.entries.push((pos, mi));
@@ -1018,7 +1014,11 @@ mod tests {
                 None,
             );
             assert_eq!(list.mvs, [Mv::ZERO, Mv::ZERO], "mode={mode:?}");
-            let expected_count = if matches!(mode, InterMode::NearMv) { 2 } else { 1 };
+            let expected_count = if matches!(mode, InterMode::NearMv) {
+                2
+            } else {
+                1
+            };
             assert_eq!(list.count, expected_count, "mode={mode:?}");
         }
     }
@@ -1183,7 +1183,10 @@ mod tests {
     /// to `bounds.left - MV_BORDER` / `bounds.right + MV_BORDER`.
     #[test]
     fn clamping_at_frame_edges() {
-        let huge_mv = Mv { row: 10_000, col: -10_000 };
+        let huge_mv = Mv {
+            row: 10_000,
+            col: -10_000,
+        };
         let above = inter_mi(BlockSize::Block16x16, RefFrame::LastFrame, huge_mv);
         let nb = ListNeighbours::new().with(Position { row: -1, col: 0 }, &above);
         // Block at top-left of frame: left=0, top=0 (negative-zero
@@ -1208,7 +1211,13 @@ mod tests {
         // Expected clamp range:
         //   col ∈ [0 - 128, 64 + 128] = [-128, 192].
         //   row ∈ [0 - 128, 64 + 128] = [-128, 192].
-        assert_eq!(list.mvs[0], Mv { row: 192, col: -128 });
+        assert_eq!(
+            list.mvs[0],
+            Mv {
+                row: 192,
+                col: -128
+            }
+        );
     }
 
     /// `BlockBounds::new` mirrors libvpx `set_mi_row_col`.
@@ -1358,7 +1367,11 @@ mod tests {
             None,
             /* block = */ -1,
         );
-        assert_eq!(parent_list.mvs[0], Mv::ZERO, "parent path uses candidate.mv[0]");
+        assert_eq!(
+            parent_list.mvs[0],
+            Mv::ZERO,
+            "parent path uses candidate.mv[0]"
+        );
 
         let sub8_list = dec_find_mv_refs(
             InterMode::NearestMv,
@@ -1382,8 +1395,16 @@ mod tests {
     /// different neighbours and confirming `count == 1` (not 2).
     #[test]
     fn nearestmv_early_breaks_after_first() {
-        let above = inter_mi(BlockSize::Block16x16, RefFrame::LastFrame, Mv { row: 1, col: 1 });
-        let left = inter_mi(BlockSize::Block16x16, RefFrame::LastFrame, Mv { row: 2, col: 2 });
+        let above = inter_mi(
+            BlockSize::Block16x16,
+            RefFrame::LastFrame,
+            Mv { row: 1, col: 1 },
+        );
+        let left = inter_mi(
+            BlockSize::Block16x16,
+            RefFrame::LastFrame,
+            Mv { row: 2, col: 2 },
+        );
         let nb = ListNeighbours::new()
             .with(Position { row: -1, col: 0 }, &above)
             .with(Position { row: 0, col: -1 }, &left);
@@ -1683,7 +1704,10 @@ mod tests {
     /// with huge positive row.
     #[test]
     fn clamp_mv_ref_clamps_row_bottom() {
-        let above_mv = Mv { row: 32_000, col: 0 };
+        let above_mv = Mv {
+            row: 32_000,
+            col: 0,
+        };
         let above = inter_mi(BlockSize::Block16x16, RefFrame::LastFrame, above_mv);
         let nb = ListNeighbours::new().with(Position { row: -1, col: 0 }, &above);
         let bounds = BlockBounds {
@@ -1711,7 +1735,10 @@ mod tests {
     /// huge negative row.
     #[test]
     fn clamp_mv_ref_clamps_row_top() {
-        let above_mv = Mv { row: -32_000, col: 0 };
+        let above_mv = Mv {
+            row: -32_000,
+            col: 0,
+        };
         let above = inter_mi(BlockSize::Block16x16, RefFrame::LastFrame, above_mv);
         let nb = ListNeighbours::new().with(Position { row: -1, col: 0 }, &above);
         let bounds = BlockBounds {
@@ -1738,7 +1765,10 @@ mod tests {
     /// `clamp_mv_ref` clamps col to right edge.
     #[test]
     fn clamp_mv_ref_clamps_col_right() {
-        let above_mv = Mv { row: 0, col: 32_000 };
+        let above_mv = Mv {
+            row: 0,
+            col: 32_000,
+        };
         let above = inter_mi(BlockSize::Block16x16, RefFrame::LastFrame, above_mv);
         let nb = ListNeighbours::new().with(Position { row: -1, col: 0 }, &above);
         let bounds = BlockBounds {

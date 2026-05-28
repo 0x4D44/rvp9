@@ -43,7 +43,7 @@
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
-    _mm256_set1_epi8, _mm256_storeu_si256, _mm_set1_epi8, _mm_storel_epi64, _mm_storeu_si128,
+    _mm_set1_epi8, _mm_storel_epi64, _mm_storeu_si128, _mm256_set1_epi8, _mm256_storeu_si256,
 };
 
 /// AVX2 implementation of the size-parametric H_PRED intra-predictor.
@@ -148,7 +148,7 @@ mod tests {
     //! sweep every `bs ∈ {4, 8, 16, 32}` with deterministic LCG-seeded
     //! random `left` rows, plus a dispatch round-trip guard.
     use super::h_predictor_avx2;
-    use crate::intra_pred::{h_predictor, PredCtx};
+    use crate::intra_pred::{PredCtx, h_predictor};
 
     macro_rules! require_avx2 {
         () => {
@@ -217,17 +217,15 @@ mod tests {
         // Use a non-constant left[] so each row carries a distinct
         // broadcast byte; checks both broadcast correctness and the
         // per-row store offset.
-        let left: Vec<u8> = (0..32).map(|i| (i as u8).wrapping_mul(7).wrapping_add(11)).collect();
+        let left: Vec<u8> = (0..32)
+            .map(|i| (i as u8).wrapping_mul(7).wrapping_add(11))
+            .collect();
         let avx2 = run_avx2(&left, 32);
         assert_eq!(avx2.len(), 32 * 32);
         // Every byte of row r must equal left[r].
         for r in 0..32 {
             for c in 0..32 {
-                assert_eq!(
-                    avx2[r * 32 + c],
-                    left[r],
-                    "mismatch at row {r} col {c}"
-                );
+                assert_eq!(avx2[r * 32 + c], left[r], "mismatch at row {r} col {c}");
             }
         }
     }
@@ -237,8 +235,8 @@ mod tests {
     #[test]
     fn dispatch_round_trip() {
         require_avx2!();
-        use crate::dsp::caps::detect;
         use crate::dsp::SimdDispatch;
+        use crate::dsp::caps::detect;
 
         let mut caps_avx2 = detect();
         caps_avx2.avx2 = true;
@@ -250,9 +248,7 @@ mod tests {
 
         for bs in [4usize, 8, 16, 32] {
             // Deterministic input — `left[i] = i*11 + bs as u8`.
-            let left: Vec<u8> = (0..bs)
-                .map(|i| (i as u32 * 11 + bs as u32) as u8)
-                .collect();
+            let left: Vec<u8> = (0..bs).map(|i| (i as u32 * 11 + bs as u32) as u8).collect();
             let mut dst_avx2 = vec![0u8; bs * bs];
             let mut dst_scalar = vec![0u8; bs * bs];
             (dispatch_avx2.h_predictor())(&mut dst_avx2, bs, bs, &left);

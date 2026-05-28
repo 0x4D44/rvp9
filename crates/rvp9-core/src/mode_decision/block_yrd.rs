@@ -271,13 +271,7 @@ mod tests {
         // coef_rate is the EOB charge (`1 << VP9_PROB_COST_SHIFT`).
         let (c, q, dq) = zero_tile(256);
         let eobs = [0u16];
-        let r = block_yrd(
-            &[&c[..]],
-            &[&q[..]],
-            &[&dq[..]],
-            &eobs,
-            TxSize::Tx16x16,
-        );
+        let r = block_yrd(&[&c[..]], &[&q[..]], &[&dq[..]], &eobs, TxSize::Tx16x16);
         assert!(r.skippable, "all-zero qcoeff → skippable");
         // No SATD contribution; only the per-tile EOB cost.
         assert_eq!(
@@ -301,13 +295,7 @@ mod tests {
         let c = vec![0i32; n];
         let eobs = [1u16];
 
-        let r = block_yrd(
-            &[&c[..]],
-            &[&q[..]],
-            &[&dq[..]],
-            &eobs,
-            TxSize::Tx8x8,
-        );
+        let r = block_yrd(&[&c[..]], &[&q[..]], &[&dq[..]], &eobs, TxSize::Tx8x8);
         assert!(!r.skippable, "eob == 1 → not skippable");
 
         // Hand-compute the expected rate.
@@ -332,17 +320,10 @@ mod tests {
         let c = vec![0i32; n];
         let eobs = [3u16];
 
-        let r = block_yrd(
-            &[&c[..]],
-            &[&q[..]],
-            &[&dq[..]],
-            &eobs,
-            TxSize::Tx8x8,
-        );
+        let r = block_yrd(&[&c[..]], &[&q[..]], &[&dq[..]], &eobs, TxSize::Tx8x8);
         // satd = 5 + 3 + 4 = 12.
         let satd: u64 = 12;
-        let expected: u64 = ((satd << 2) << VP9_PROB_COST_SHIFT)
-            + (1u64 << VP9_PROB_COST_SHIFT);
+        let expected: u64 = ((satd << 2) << VP9_PROB_COST_SHIFT) + (1u64 << VP9_PROB_COST_SHIFT);
         assert_eq!(r.coef_rate, expected);
         assert!(!r.skippable);
     }
@@ -371,13 +352,7 @@ mod tests {
         let q = dq.clone();
         let eobs = [3u16];
 
-        let r = block_yrd(
-            &[&c[..]],
-            &[&q[..]],
-            &[&dq[..]],
-            &eobs,
-            TxSize::Tx8x8,
-        );
+        let r = block_yrd(&[&c[..]], &[&q[..]], &[&dq[..]], &eobs, TxSize::Tx8x8);
         // (4 + 4 + 4) >> 2 = 3.
         assert_eq!(r.coef_dist, 3);
     }
@@ -402,24 +377,13 @@ mod tests {
         let eob_a = [4u16];
         let eob_b = [4u16];
 
-        let r_a = block_yrd(
-            &[&c[..]],
-            &[&q_a[..]],
-            &[&dq[..]],
-            &eob_a,
-            TxSize::Tx16x16,
-        );
-        let r_b = block_yrd(
-            &[&c[..]],
-            &[&q_b[..]],
-            &[&dq[..]],
-            &eob_b,
-            TxSize::Tx16x16,
-        );
+        let r_a = block_yrd(&[&c[..]], &[&q_a[..]], &[&dq[..]], &eob_a, TxSize::Tx16x16);
+        let r_b = block_yrd(&[&c[..]], &[&q_b[..]], &[&dq[..]], &eob_b, TxSize::Tx16x16);
         assert!(
             r_b.coef_rate > r_a.coef_rate,
             "B's rate ({}) must exceed A's ({})",
-            r_b.coef_rate, r_a.coef_rate,
+            r_b.coef_rate,
+            r_a.coef_rate,
         );
     }
 

@@ -181,14 +181,11 @@ pub fn build_masks(inputs: &BuildMaskInputs, lfm: &mut LoopFilterMask) {
     }
 
     // 4. Transform-size edges, masked to the block's footprint.
-    lfm.above_y[tx_y] |=
-        (SIZE_MASK_Y[bs] & ABOVE_64X64_TXFORM_MASK_Y[tx_y]) << inputs.shift_y;
+    lfm.above_y[tx_y] |= (SIZE_MASK_Y[bs] & ABOVE_64X64_TXFORM_MASK_Y[tx_y]) << inputs.shift_y;
     lfm.above_uv[tx_uv] |=
         (SIZE_MASK_UV[bs] & ABOVE_64X64_TXFORM_MASK_UV[tx_uv]) << inputs.shift_uv;
-    lfm.left_y[tx_y] |=
-        (SIZE_MASK_Y[bs] & LEFT_64X64_TXFORM_MASK_Y[tx_y]) << inputs.shift_y;
-    lfm.left_uv[tx_uv] |=
-        (SIZE_MASK_UV[bs] & LEFT_64X64_TXFORM_MASK_UV[tx_uv]) << inputs.shift_uv;
+    lfm.left_y[tx_y] |= (SIZE_MASK_Y[bs] & LEFT_64X64_TXFORM_MASK_Y[tx_y]) << inputs.shift_y;
+    lfm.left_uv[tx_uv] |= (SIZE_MASK_UV[bs] & LEFT_64X64_TXFORM_MASK_UV[tx_uv]) << inputs.shift_uv;
 
     // 5. Interior 4x4 edges (only for blocks using TX_4×4).
     if inputs.tx_size_y == TxSize::Tx4x4 {
@@ -229,10 +226,8 @@ pub fn build_y_mask(inputs: &BuildMaskInputs, lfm: &mut LoopFilterMask) {
         return;
     }
 
-    lfm.above_y[tx_y] |=
-        (SIZE_MASK_Y[bs] & ABOVE_64X64_TXFORM_MASK_Y[tx_y]) << inputs.shift_y;
-    lfm.left_y[tx_y] |=
-        (SIZE_MASK_Y[bs] & LEFT_64X64_TXFORM_MASK_Y[tx_y]) << inputs.shift_y;
+    lfm.above_y[tx_y] |= (SIZE_MASK_Y[bs] & ABOVE_64X64_TXFORM_MASK_Y[tx_y]) << inputs.shift_y;
+    lfm.left_y[tx_y] |= (SIZE_MASK_Y[bs] & LEFT_64X64_TXFORM_MASK_Y[tx_y]) << inputs.shift_y;
 
     if inputs.tx_size_y == TxSize::Tx4x4 {
         lfm.int_4x4_y |= SIZE_MASK_Y[bs] << inputs.shift_y;
@@ -260,7 +255,10 @@ mod tests {
     #[test]
     fn uv_txsize_420_hand_checked() {
         // BLOCK_8X8 / tx_y = TX_8X8 / [1][1] = TX_4X4.
-        assert_eq!(uv_txsize_420(BlockSize::Block8x8, TxSize::Tx8x8), TxSize::Tx4x4);
+        assert_eq!(
+            uv_txsize_420(BlockSize::Block8x8, TxSize::Tx8x8),
+            TxSize::Tx4x4
+        );
         // BLOCK_16X16 / tx_y = TX_16X16 / [1][1] = TX_8X8.
         assert_eq!(
             uv_txsize_420(BlockSize::Block16x16, TxSize::Tx16x16),
@@ -277,7 +275,10 @@ mod tests {
             TxSize::Tx32x32
         );
         // BLOCK_4X4 / tx_y = TX_4X4 → TX_4X4.
-        assert_eq!(uv_txsize_420(BlockSize::Block4x4, TxSize::Tx4x4), TxSize::Tx4x4);
+        assert_eq!(
+            uv_txsize_420(BlockSize::Block4x4, TxSize::Tx4x4),
+            TxSize::Tx4x4
+        );
     }
 
     /// `build_masks` with `filter_level = 0` is a no-op.

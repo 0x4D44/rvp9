@@ -39,8 +39,7 @@
 #![cfg(target_arch = "x86_64")]
 
 use core::arch::x86_64::{
-    __m256i, _mm256_and_si256, _mm256_avg_epu8, _mm256_set1_epi8, _mm256_sub_epi8,
-    _mm256_xor_si256,
+    __m256i, _mm256_and_si256, _mm256_avg_epu8, _mm256_set1_epi8, _mm256_sub_epi8, _mm256_xor_si256,
 };
 
 /// `AVG3(x, y, z) = (x + 2y + z + 2) >> 2`, per 8-bit lane, 256-bit.
@@ -111,8 +110,8 @@ pub(crate) unsafe fn avg2_window(src: &[u8], out: &mut [u8]) {
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn store_row(dst: &mut [u8], src: &[u8], bs: usize) {
     use core::arch::x86_64::{
-        _mm256_loadu_si256, _mm256_storeu_si256, _mm_loadl_epi64, _mm_loadu_si128,
-        _mm_storel_epi64, _mm_storeu_si128,
+        _mm_loadl_epi64, _mm_loadu_si128, _mm_storel_epi64, _mm_storeu_si128, _mm256_loadu_si256,
+        _mm256_storeu_si256,
     };
     debug_assert!(src.len() >= bs && dst.len() >= bs);
     match bs {

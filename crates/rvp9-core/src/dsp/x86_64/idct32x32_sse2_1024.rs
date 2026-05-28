@@ -54,16 +54,16 @@
 use core::arch::x86_64::{
     __m128i, _mm_add_epi16, _mm_adds_epi16, _mm_loadl_epi64, _mm_loadu_si128, _mm_packs_epi32,
     _mm_packus_epi16, _mm_set1_epi16, _mm_setzero_si128, _mm_srai_epi16, _mm_storel_epi64,
-    _mm_sub_epi16, _mm_unpackhi_epi16, _mm_unpackhi_epi32, _mm_unpackhi_epi64,
-    _mm_unpacklo_epi16, _mm_unpacklo_epi32, _mm_unpacklo_epi64, _mm_unpacklo_epi8,
+    _mm_sub_epi16, _mm_unpackhi_epi16, _mm_unpackhi_epi32, _mm_unpackhi_epi64, _mm_unpacklo_epi8,
+    _mm_unpacklo_epi16, _mm_unpacklo_epi32, _mm_unpacklo_epi64,
 };
 
 use crate::transforms::constants::{
-    COSPI_1_64, COSPI_2_64, COSPI_3_64, COSPI_4_64, COSPI_5_64, COSPI_6_64, COSPI_7_64,
-    COSPI_8_64, COSPI_9_64, COSPI_10_64, COSPI_11_64, COSPI_12_64, COSPI_13_64, COSPI_14_64,
-    COSPI_15_64, COSPI_16_64, COSPI_17_64, COSPI_18_64, COSPI_19_64, COSPI_20_64, COSPI_21_64,
-    COSPI_22_64, COSPI_23_64, COSPI_24_64, COSPI_25_64, COSPI_26_64, COSPI_27_64, COSPI_28_64,
-    COSPI_29_64, COSPI_30_64, COSPI_31_64,
+    COSPI_1_64, COSPI_2_64, COSPI_3_64, COSPI_4_64, COSPI_5_64, COSPI_6_64, COSPI_7_64, COSPI_8_64,
+    COSPI_9_64, COSPI_10_64, COSPI_11_64, COSPI_12_64, COSPI_13_64, COSPI_14_64, COSPI_15_64,
+    COSPI_16_64, COSPI_17_64, COSPI_18_64, COSPI_19_64, COSPI_20_64, COSPI_21_64, COSPI_22_64,
+    COSPI_23_64, COSPI_24_64, COSPI_25_64, COSPI_26_64, COSPI_27_64, COSPI_28_64, COSPI_29_64,
+    COSPI_30_64, COSPI_31_64,
 };
 
 #[cfg(target_arch = "x86_64")]
@@ -300,20 +300,10 @@ unsafe fn idct32_8x32_quarter_2_stage_4_to_6(step1: &mut [__m128i; 16], out: &mu
     // stage 6
     out[8] = step1[8];
     out[9] = step1[9];
-    let (o10, o13) = butterfly(
-        step1[13],
-        step1[10],
-        COSPI_16_64 as i16,
-        COSPI_16_64 as i16,
-    );
+    let (o10, o13) = butterfly(step1[13], step1[10], COSPI_16_64 as i16, COSPI_16_64 as i16);
     out[10] = o10;
     out[13] = o13;
-    let (o11, o12) = butterfly(
-        step1[12],
-        step1[11],
-        COSPI_16_64 as i16,
-        COSPI_16_64 as i16,
-    );
+    let (o11, o12) = butterfly(step1[12], step1[11], COSPI_16_64 as i16, COSPI_16_64 as i16);
     out[11] = o11;
     out[12] = o12;
     out[14] = step1[14];
@@ -404,36 +394,16 @@ unsafe fn idct32_8x32_quarter_3_4_stage_4_to_7(step1: &mut [__m128i; 32], out: &
     out[31] = _mm_add_epi16(step1[24], step1[31]);
 
     // stage 7
-    let (o20, o27) = butterfly(
-        step2[27],
-        step2[20],
-        COSPI_16_64 as i16,
-        COSPI_16_64 as i16,
-    );
+    let (o20, o27) = butterfly(step2[27], step2[20], COSPI_16_64 as i16, COSPI_16_64 as i16);
     out[20] = o20;
     out[27] = o27;
-    let (o21, o26) = butterfly(
-        step2[26],
-        step2[21],
-        COSPI_16_64 as i16,
-        COSPI_16_64 as i16,
-    );
+    let (o21, o26) = butterfly(step2[26], step2[21], COSPI_16_64 as i16, COSPI_16_64 as i16);
     out[21] = o21;
     out[26] = o26;
-    let (o22, o25) = butterfly(
-        step2[25],
-        step2[22],
-        COSPI_16_64 as i16,
-        COSPI_16_64 as i16,
-    );
+    let (o22, o25) = butterfly(step2[25], step2[22], COSPI_16_64 as i16, COSPI_16_64 as i16);
     out[22] = o22;
     out[25] = o25;
-    let (o23, o24) = butterfly(
-        step2[24],
-        step2[23],
-        COSPI_16_64 as i16,
-        COSPI_16_64 as i16,
-    );
+    let (o23, o24) = butterfly(step2[24], step2[23], COSPI_16_64 as i16, COSPI_16_64 as i16);
     out[23] = o23;
     out[24] = o24;
 }
@@ -693,10 +663,7 @@ unsafe fn idct32_1024_8x32(in_: &[__m128i; 32], out: &mut [__m128i; 32]) {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse2")]
 unsafe fn idct32x32_add_sse2_1024_inner(input: &[i32; 1024], dst: &mut [u8], stride: usize) {
-    debug_assert!(
-        dst.len() >= stride * 31 + 32,
-        "dst too small for 32x32 add"
-    );
+    debug_assert!(dst.len() >= stride * 31 + 32, "dst too small for 32x32 add");
 
     let zero = _mm_setzero_si128();
     // `col[strip][k]` — the row-pass output buffer. Per libvpx, the row
@@ -955,10 +922,7 @@ unsafe fn idct32_34_8x32(in_: &[__m128i; 32], out: &mut [__m128i; 32]) {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse2")]
 unsafe fn idct32x32_add_sse2_34_inner(input: &[i32; 1024], dst: &mut [u8], stride: usize) {
-    debug_assert!(
-        dst.len() >= stride * 31 + 32,
-        "dst too small for 32x32 add"
-    );
+    debug_assert!(dst.len() >= stride * 31 + 32, "dst too small for 32x32 add");
 
     let zero = _mm_setzero_si128();
     let mut io: [__m128i; 32] = [zero; 32];
@@ -1016,10 +980,7 @@ pub fn idct32x32_add_sse2_34(coeffs: &[i32; 1024], dst: &mut [u8], stride: usize
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse2")]
 unsafe fn idct32x32_add_sse2_135_inner(input: &[i32; 1024], dst: &mut [u8], stride: usize) {
-    debug_assert!(
-        dst.len() >= stride * 31 + 32,
-        "dst too small for 32x32 add"
-    );
+    debug_assert!(dst.len() >= stride * 31 + 32, "dst too small for 32x32 add");
 
     let zero = _mm_setzero_si128();
     let mut in_: [__m128i; 32] = [zero; 32];

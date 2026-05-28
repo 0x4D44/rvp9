@@ -49,8 +49,8 @@
 use core::arch::x86_64::{
     __m128i, _mm_add_epi16, _mm_adds_epi16, _mm_loadl_epi64, _mm_loadu_si128, _mm_packs_epi32,
     _mm_packus_epi16, _mm_set1_epi16, _mm_setzero_si128, _mm_srai_epi16, _mm_storel_epi64,
-    _mm_sub_epi16, _mm_unpackhi_epi16, _mm_unpackhi_epi32, _mm_unpackhi_epi64,
-    _mm_unpacklo_epi16, _mm_unpacklo_epi32, _mm_unpacklo_epi64, _mm_unpacklo_epi8,
+    _mm_sub_epi16, _mm_unpackhi_epi16, _mm_unpackhi_epi32, _mm_unpackhi_epi64, _mm_unpacklo_epi8,
+    _mm_unpacklo_epi16, _mm_unpacklo_epi32, _mm_unpacklo_epi64,
 };
 
 use crate::transforms::constants::{
@@ -208,12 +208,8 @@ unsafe fn idct16_8col(in_: &[__m128i; 16], out: &mut [__m128i; 16]) {
     // the `step1[10], step1[13]` butterfly with -cospi_8, -cospi_24.
     let (s2_1, s2_0) = butterfly(in_[0], in_[8], COSPI_16_64 as i16, COSPI_16_64 as i16);
     let (s2_2, s2_3) = butterfly(in_[4], in_[12], COSPI_24_64 as i16, COSPI_8_64 as i16);
-    let (s2_9_new, s2_14_new) = butterfly(
-        step1[14],
-        step1[9],
-        COSPI_24_64 as i16,
-        COSPI_8_64 as i16,
-    );
+    let (s2_9_new, s2_14_new) =
+        butterfly(step1[14], step1[9], COSPI_24_64 as i16, COSPI_8_64 as i16);
     let (s2_13_new, s2_10_new) = butterfly(
         step1[10],
         step1[13],
@@ -242,12 +238,8 @@ unsafe fn idct16_8col(in_: &[__m128i; 16], out: &mut [__m128i; 16]) {
     step1[1] = _mm_add_epi16(step2[1], step2[2]);
     step1[2] = _mm_sub_epi16(step2[1], step2[2]);
     step1[3] = _mm_sub_epi16(step2[0], step2[3]);
-    let (s1_5_new, s1_6_new) = butterfly(
-        step2[6],
-        step2[5],
-        COSPI_16_64 as i16,
-        COSPI_16_64 as i16,
-    );
+    let (s1_5_new, s1_6_new) =
+        butterfly(step2[6], step2[5], COSPI_16_64 as i16, COSPI_16_64 as i16);
     step1[5] = s1_5_new;
     step1[6] = s1_6_new;
     step1[8] = _mm_add_epi16(step2[8], step2[11]);
@@ -268,18 +260,10 @@ unsafe fn idct16_8col(in_: &[__m128i; 16], out: &mut [__m128i; 16]) {
     step2[5] = _mm_sub_epi16(step1[2], step1[5]);
     step2[6] = _mm_sub_epi16(step1[1], step1[6]);
     step2[7] = _mm_sub_epi16(step1[0], step1[7]);
-    let (s2_10_b, s2_13_b) = butterfly(
-        step1[13],
-        step1[10],
-        COSPI_16_64 as i16,
-        COSPI_16_64 as i16,
-    );
-    let (s2_11_b, s2_12_b) = butterfly(
-        step1[12],
-        step1[11],
-        COSPI_16_64 as i16,
-        COSPI_16_64 as i16,
-    );
+    let (s2_10_b, s2_13_b) =
+        butterfly(step1[13], step1[10], COSPI_16_64 as i16, COSPI_16_64 as i16);
+    let (s2_11_b, s2_12_b) =
+        butterfly(step1[12], step1[11], COSPI_16_64 as i16, COSPI_16_64 as i16);
     step2[10] = s2_10_b;
     step2[11] = s2_11_b;
     step2[12] = s2_12_b;
@@ -821,12 +805,7 @@ unsafe fn idct16x16_10_pass2(l: &[__m128i], io: &mut [__m128i; 16]) {
 
     // stage 4
     step1[0] = butterfly_cospi16(io[0]);
-    let (s2_9, s2_14) = butterfly(
-        step2[15],
-        step2[8],
-        COSPI_24_64 as i16,
-        COSPI_8_64 as i16,
-    );
+    let (s2_9, s2_14) = butterfly(step2[15], step2[8], COSPI_24_64 as i16, COSPI_8_64 as i16);
     step2[9] = s2_9;
     step2[14] = s2_14;
     let (s2_13, s2_10) = butterfly(
@@ -839,12 +818,7 @@ unsafe fn idct16x16_10_pass2(l: &[__m128i], io: &mut [__m128i; 16]) {
     step2[13] = s2_13;
 
     // stage 5
-    let (s1_5, s1_6) = butterfly(
-        step1[7],
-        step1[4],
-        COSPI_16_64 as i16,
-        COSPI_16_64 as i16,
-    );
+    let (s1_5, s1_6) = butterfly(step1[7], step1[4], COSPI_16_64 as i16, COSPI_16_64 as i16);
     step1[5] = s1_5;
     step1[6] = s1_6;
     step1[8] = _mm_add_epi16(step2[8], step2[11]);
@@ -865,20 +839,10 @@ unsafe fn idct16x16_10_pass2(l: &[__m128i], io: &mut [__m128i; 16]) {
     step2[5] = _mm_sub_epi16(step1[0], step1[5]);
     step2[6] = _mm_sub_epi16(step1[0], step1[6]);
     step2[7] = _mm_sub_epi16(step1[0], step1[7]);
-    let (s2_10b, s2_13b) = butterfly(
-        step1[13],
-        step1[10],
-        COSPI_16_64 as i16,
-        COSPI_16_64 as i16,
-    );
+    let (s2_10b, s2_13b) = butterfly(step1[13], step1[10], COSPI_16_64 as i16, COSPI_16_64 as i16);
     step2[10] = s2_10b;
     step2[13] = s2_13b;
-    let (s2_11b, s2_12b) = butterfly(
-        step1[12],
-        step1[11],
-        COSPI_16_64 as i16,
-        COSPI_16_64 as i16,
-    );
+    let (s2_11b, s2_12b) = butterfly(step1[12], step1[11], COSPI_16_64 as i16, COSPI_16_64 as i16);
     step2[11] = s2_11b;
     step2[12] = s2_12b;
 

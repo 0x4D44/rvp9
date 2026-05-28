@@ -38,8 +38,8 @@
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
-    _mm256_loadu_si256, _mm256_storeu_si256, _mm_loadl_epi64, _mm_loadu_si128,
-    _mm_storel_epi64, _mm_storeu_si128,
+    _mm_loadl_epi64, _mm_loadu_si128, _mm_storel_epi64, _mm_storeu_si128, _mm256_loadu_si256,
+    _mm256_storeu_si256,
 };
 
 /// AVX2 implementation of integer-pel block copy.
@@ -221,10 +221,7 @@ mod tests {
                 scalar_convolve_copy(&src, src_stride, &mut dst_scalar, dst_stride, w, h);
                 convolve_copy_avx2(&src, src_stride, &mut dst_avx2, dst_stride, w, h);
 
-                assert_eq!(
-                    dst_scalar, dst_avx2,
-                    "AVX2/scalar mismatch at w={w}, h={h}"
-                );
+                assert_eq!(dst_scalar, dst_avx2, "AVX2/scalar mismatch at w={w}, h={h}");
             }
         }
     }
@@ -261,8 +258,8 @@ mod tests {
     #[test]
     fn dispatch_round_trip() {
         require_avx2!();
-        use crate::dsp::caps::detect;
         use crate::dsp::SimdDispatch;
+        use crate::dsp::caps::detect;
 
         let mut caps_avx2 = detect();
         caps_avx2.avx2 = true;
@@ -282,10 +279,7 @@ mod tests {
             let mut dst_s = vec![0u8; dst_len];
             (dispatch_avx2.convolve_copy())(&src, src_stride, &mut dst_a, dst_stride, w, h);
             (dispatch_scalar.convolve_copy())(&src, src_stride, &mut dst_s, dst_stride, w, h);
-            assert_eq!(
-                dst_a, dst_s,
-                "dispatch round-trip mismatch at w={w}, h={h}"
-            );
+            assert_eq!(dst_a, dst_s, "dispatch round-trip mismatch at w={w}, h={h}");
         }
     }
 }

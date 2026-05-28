@@ -1032,7 +1032,11 @@ mod tests {
         // 60, 65]. sum = -1*30 + 6*35 - 19*40 + 78*45 + 78*50 - 19*55
         // + 6*60 - 1*65.
         let taps = [30i32, 35, 40, 45, 50, 55, 60, 65];
-        let sum: i32 = taps.iter().zip(f.iter()).map(|(s, t)| s * i32::from(*t)).sum();
+        let sum: i32 = taps
+            .iter()
+            .zip(f.iter())
+            .map(|(s, t)| s * i32::from(*t))
+            .sum();
         let expected = ((sum + 64) >> 7).clamp(0, 255) as u8;
         assert_eq!(dst[5], expected);
     }
@@ -1381,24 +1385,8 @@ mod tests {
             let mut dst_kernel = vec![0u8; w * h];
             let mut dst_ref = vec![0u8; w * h];
             let src_off = horiz_src_start(pad, pad, stride);
-            convolve8_horiz(
-                &src[src_off..],
-                stride,
-                &mut dst_kernel,
-                w,
-                filter,
-                w,
-                h,
-            );
-            libvpx_convolve8_horiz_ref(
-                &src[src_off..],
-                stride,
-                &mut dst_ref,
-                w,
-                filter,
-                w,
-                h,
-            );
+            convolve8_horiz(&src[src_off..], stride, &mut dst_kernel, w, filter, w, h);
+            libvpx_convolve8_horiz_ref(&src[src_off..], stride, &mut dst_ref, w, filter, w, h);
             assert_eq!(
                 dst_kernel, dst_ref,
                 "horiz mismatch at iter={iter} subpel={subpel}"
@@ -1437,24 +1425,8 @@ mod tests {
             let mut dst_kernel = vec![0u8; w * h];
             let mut dst_ref = vec![0u8; w * h];
             let src_off = vert_src_start(pad, pad, stride);
-            convolve8_vert(
-                &src[src_off..],
-                stride,
-                &mut dst_kernel,
-                w,
-                filter,
-                w,
-                h,
-            );
-            libvpx_convolve8_vert_ref(
-                &src[src_off..],
-                stride,
-                &mut dst_ref,
-                w,
-                filter,
-                w,
-                h,
-            );
+            convolve8_vert(&src[src_off..], stride, &mut dst_kernel, w, filter, w, h);
+            libvpx_convolve8_vert_ref(&src[src_off..], stride, &mut dst_ref, w, filter, w, h);
             assert_eq!(
                 dst_kernel, dst_ref,
                 "vert mismatch at iter={iter} subpel={subpel}"

@@ -143,8 +143,14 @@ unsafe fn mul_const(x: __m256i, c: i32) -> __m256i {
 #[inline]
 #[allow(clippy::too_many_arguments)]
 unsafe fn transpose8x8_i32(
-    r0: __m256i, r1: __m256i, r2: __m256i, r3: __m256i,
-    r4: __m256i, r5: __m256i, r6: __m256i, r7: __m256i,
+    r0: __m256i,
+    r1: __m256i,
+    r2: __m256i,
+    r3: __m256i,
+    r4: __m256i,
+    r5: __m256i,
+    r6: __m256i,
+    r7: __m256i,
 ) -> [__m256i; 8] {
     // Stage 1: 32-bit unpack (pairs of rows).
     // unpacklo gives [r_i[0], r_j[0], r_i[1], r_j[1], r_i[4], r_j[4], r_i[5], r_j[5]]
@@ -326,8 +332,8 @@ unsafe fn idct8x8_add_avx2_inner(input: &[i32; 64], dst: &mut [u8], stride: usiz
     // column pass. After this, each ymm[r] = intermediate row r (8
     // columns in lanes). -----
     let rows = transpose8x8_i32(
-        row_out[0], row_out[1], row_out[2], row_out[3],
-        row_out[4], row_out[5], row_out[6], row_out[7],
+        row_out[0], row_out[1], row_out[2], row_out[3], row_out[4], row_out[5], row_out[6],
+        row_out[7],
     );
 
     // ----- Stage D: column pass.

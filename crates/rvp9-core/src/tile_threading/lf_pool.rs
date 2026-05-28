@@ -169,10 +169,7 @@ impl LfWorkerPool {
     /// [`LfBatchHandle::wait`] (or its `Drop`) then joins the worker
     /// before returning — see SAFETY.md and the per-line comments
     /// below.
-    pub unsafe fn dispatch<'pool, 'frame, F>(
-        &'pool self,
-        job: F,
-    ) -> LfBatchHandle<'pool, 'frame>
+    pub unsafe fn dispatch<'pool, 'frame, F>(&'pool self, job: F) -> LfBatchHandle<'pool, 'frame>
     where
         F: FnOnce() + Send + 'frame,
     {

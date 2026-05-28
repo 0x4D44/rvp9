@@ -81,20 +81,22 @@
 use super::error::BitstreamError;
 use super::inter_coef_source::InterCoefSource;
 use super::intra_coef_source::IntraCoefSource;
-use crate::block::{max_txsize, BlockSize, PartitionType, subsize};
-use crate::bitstream::compressed_header::tx_mode_to_biggest_tx_size;
 use crate::bitstream::SEG_TREE_PROBS;
+use crate::bitstream::compressed_header::tx_mode_to_biggest_tx_size;
+use crate::block::{BlockSize, PartitionType, max_txsize, subsize};
 use crate::coef_ctx::TileCoefCtx;
-use crate::entropy::{write_block_tokens, BoolWriter, FrameContext, FrameCounts,
-    VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB};
 use crate::entropy::adapt::CoefCountsBank;
-use crate::entropy::bitacct::{set_category, BitCategory};
+use crate::entropy::bitacct::{BitCategory, set_category};
+use crate::entropy::{
+    BoolWriter, FrameContext, FrameCounts, VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB,
+    VP9_KF_Y_MODE_PROB, write_block_tokens,
+};
 use crate::inter::mode_info::{
-    get_intra_inter_context, write_inter_block_mode_info, InterModeReadParams, InterModeWriteError,
+    InterModeReadParams, InterModeWriteError, get_intra_inter_context, write_inter_block_mode_info,
 };
 use crate::inter::mv_ref::{BlockBounds, NeighbourLookup, Position, PrevFrameMvRef};
 use crate::intra_pred::IntraMode;
-use crate::mode_info::{get_tx_size_context, write_segment_id, BlockMode, ModeInfo};
+use crate::mode_info::{BlockMode, ModeInfo, get_tx_size_context, write_segment_id};
 use crate::transforms::{TxMode, TxSize, TxType};
 
 /// Encoder-side segmentation context for the per-block writer.
@@ -778,11 +780,7 @@ fn infer_inter_partition(
 /// non-keyframe (inter) caller passes `&fc.partition_prob[ctx]`. Both
 /// have the same `[u8; 3]` shape — the reader walks the same tree
 /// regardless of which prob bank fed it.
-fn write_partition(
-    bw: &mut BoolWriter<'_>,
-    probs: &[u8; 3],
-    partition: PartitionType,
-) {
+fn write_partition(bw: &mut BoolWriter<'_>, probs: &[u8; 3], partition: PartitionType) {
     match partition {
         PartitionType::None => {
             bw.write(0, probs[0]);
@@ -887,8 +885,21 @@ fn write_partition_tree(
             let mi = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
             write_block_intra_keyframe(
-                bw, fc, tx_mode, seg, nbr_ctx, bounds, mi_grid, mi_rows, mi_cols, mi_row,
-                mi_col, sub, &mi, coef_ctx, coef_source,
+                bw,
+                fc,
+                tx_mode,
+                seg,
+                nbr_ctx,
+                bounds,
+                mi_grid,
+                mi_rows,
+                mi_cols,
+                mi_row,
+                mi_col,
+                sub,
+                &mi,
+                coef_ctx,
+                coef_source,
             )?;
         }
         PartitionType::Horz => {
@@ -897,8 +908,21 @@ fn write_partition_tree(
             let top = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
             write_block_intra_keyframe(
-                bw, fc, tx_mode, seg, nbr_ctx, bounds, mi_grid, mi_rows, mi_cols, mi_row,
-                mi_col, sub, &top, coef_ctx, coef_source,
+                bw,
+                fc,
+                tx_mode,
+                seg,
+                nbr_ctx,
+                bounds,
+                mi_grid,
+                mi_rows,
+                mi_cols,
+                mi_row,
+                mi_col,
+                sub,
+                &top,
+                coef_ctx,
+                coef_source,
             )?;
             let mi_row_b = mi_row + hbs;
             let bot = mi_grid_get(mi_grid, mi_cols, mi_row_b, mi_col).ok_or(
@@ -908,16 +932,42 @@ fn write_partition_tree(
                 },
             )?;
             write_block_intra_keyframe(
-                bw, fc, tx_mode, seg, nbr_ctx, bounds, mi_grid, mi_rows, mi_cols, mi_row_b,
-                mi_col, sub, &bot, coef_ctx, coef_source,
+                bw,
+                fc,
+                tx_mode,
+                seg,
+                nbr_ctx,
+                bounds,
+                mi_grid,
+                mi_rows,
+                mi_cols,
+                mi_row_b,
+                mi_col,
+                sub,
+                &bot,
+                coef_ctx,
+                coef_source,
             )?;
         }
         PartitionType::Vert => {
             let left = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
             write_block_intra_keyframe(
-                bw, fc, tx_mode, seg, nbr_ctx, bounds, mi_grid, mi_rows, mi_cols, mi_row,
-                mi_col, sub, &left, coef_ctx, coef_source,
+                bw,
+                fc,
+                tx_mode,
+                seg,
+                nbr_ctx,
+                bounds,
+                mi_grid,
+                mi_rows,
+                mi_cols,
+                mi_row,
+                mi_col,
+                sub,
+                &left,
+                coef_ctx,
+                coef_source,
             )?;
             let mi_col_r = mi_col + hbs;
             let right = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col_r).ok_or(
@@ -927,16 +977,43 @@ fn write_partition_tree(
                 },
             )?;
             write_block_intra_keyframe(
-                bw, fc, tx_mode, seg, nbr_ctx, bounds, mi_grid, mi_rows, mi_cols, mi_row,
-                mi_col_r, sub, &right, coef_ctx, coef_source,
+                bw,
+                fc,
+                tx_mode,
+                seg,
+                nbr_ctx,
+                bounds,
+                mi_grid,
+                mi_rows,
+                mi_cols,
+                mi_row,
+                mi_col_r,
+                sub,
+                &right,
+                coef_ctx,
+                coef_source,
             )?;
         }
         PartitionType::Split => {
             // 4-way recursion in (mi_row | +hbs, mi_col | +hbs) order
             // — same order as the decoder.
             write_partition_tree(
-                bw, part_ctx, nbr_ctx, bounds, mi_grid, mi_rows, mi_cols, mi_row, mi_col,
-                sub, n8x8_l2, fc, tx_mode, seg, coef_ctx, coef_source,
+                bw,
+                part_ctx,
+                nbr_ctx,
+                bounds,
+                mi_grid,
+                mi_rows,
+                mi_cols,
+                mi_row,
+                mi_col,
+                sub,
+                n8x8_l2,
+                fc,
+                tx_mode,
+                seg,
+                coef_ctx,
+                coef_source,
             )?;
             write_partition_tree(
                 bw,
@@ -1080,8 +1157,7 @@ fn write_block_intra_keyframe(
 
     let mi_row_in_tile = mi_row - bounds.mi_row_start;
     let mi_col_in_tile = mi_col - bounds.mi_col_start;
-    let (above_mode, left_mode, skip_ctx) =
-        nbr_ctx.neighbours_for(mi_row_in_tile, mi_col_in_tile);
+    let (above_mode, left_mode, skip_ctx) = nbr_ctx.neighbours_for(mi_row_in_tile, mi_col_in_tile);
 
     // 0. Segment_id. When `seg.is_some()`, the caller has committed
     //    `segmentation.enabled && segmentation.update_map` in the
@@ -1112,8 +1188,7 @@ fn write_block_intra_keyframe(
     //    skip) — the same `MiGridNeighbourLookup` the inter writer uses.
     let allow_select = !mi.skip; // intra: `!is_inter = true`, so == !skip
     let max_tx = max_txsize(leaf_bsize);
-    let tx_neighbours =
-        MiGridNeighbourLookup::new(mi_grid, mi_cols, mi_row, mi_col, mi_rows);
+    let tx_neighbours = MiGridNeighbourLookup::new(mi_grid, mi_cols, mi_row, mi_col, mi_rows);
     let tx_above = tx_neighbours.get(Position { row: -1, col: 0 });
     let tx_left = tx_neighbours.get(Position { row: 0, col: -1 });
     let tx_ctx = if max_tx >= TxSize::Tx8x8 {
@@ -1189,7 +1264,14 @@ fn write_block_intra_keyframe(
     //    the leaf's Y mode and skip flag.
     let x_mis = usize::from(leaf_bsize.n_8x8_wide());
     let y_mis = usize::from(leaf_bsize.n_8x8_high());
-    nbr_ctx.write_block(mi_row_in_tile, mi_col_in_tile, x_mis, y_mis, y_mode, mi.skip);
+    nbr_ctx.write_block(
+        mi_row_in_tile,
+        mi_col_in_tile,
+        x_mis,
+        y_mis,
+        y_mode,
+        mi.skip,
+    );
 
     Ok(())
 }
@@ -1682,8 +1764,22 @@ fn write_inter_partition_tree(
         let mi = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
             .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
         write_inter_block_leaf(
-            bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row, mi_col, sub, &mi,
-            seg, prev_mv_grid, coef_ctx, coef_source, counts.as_deref_mut(),
+            bw,
+            fc,
+            params,
+            tx_mode,
+            mi_grid,
+            mi_rows,
+            mi_cols,
+            mi_row,
+            mi_col,
+            sub,
+            &mi,
+            seg,
+            prev_mv_grid,
+            coef_ctx,
+            coef_source,
+            counts.as_deref_mut(),
         )?;
         if (bsize as u8) >= (BlockSize::Block8x8 as u8) {
             // Always fires for BLOCK_8x8 — the gate `bsize ==
@@ -1710,16 +1806,44 @@ fn write_inter_partition_tree(
             let mi = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
             write_inter_block_leaf(
-                bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row, mi_col, sub, &mi,
-                seg, prev_mv_grid, coef_ctx, coef_source, counts.as_deref_mut(),
+                bw,
+                fc,
+                params,
+                tx_mode,
+                mi_grid,
+                mi_rows,
+                mi_cols,
+                mi_row,
+                mi_col,
+                sub,
+                &mi,
+                seg,
+                prev_mv_grid,
+                coef_ctx,
+                coef_source,
+                counts.as_deref_mut(),
             )?;
         }
         PartitionType::Horz => {
             let top = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
             write_inter_block_leaf(
-                bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row, mi_col, sub, &top,
-                seg, prev_mv_grid, coef_ctx, coef_source, counts.as_deref_mut(),
+                bw,
+                fc,
+                params,
+                tx_mode,
+                mi_grid,
+                mi_rows,
+                mi_cols,
+                mi_row,
+                mi_col,
+                sub,
+                &top,
+                seg,
+                prev_mv_grid,
+                coef_ctx,
+                coef_source,
+                counts.as_deref_mut(),
             )?;
             let mi_row_b = mi_row + hbs;
             let bot = mi_grid_get(mi_grid, mi_cols, mi_row_b, mi_col).ok_or(
@@ -1729,16 +1853,44 @@ fn write_inter_partition_tree(
                 },
             )?;
             write_inter_block_leaf(
-                bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row_b, mi_col, sub, &bot,
-                seg, prev_mv_grid, coef_ctx, coef_source, counts.as_deref_mut(),
+                bw,
+                fc,
+                params,
+                tx_mode,
+                mi_grid,
+                mi_rows,
+                mi_cols,
+                mi_row_b,
+                mi_col,
+                sub,
+                &bot,
+                seg,
+                prev_mv_grid,
+                coef_ctx,
+                coef_source,
+                counts.as_deref_mut(),
             )?;
         }
         PartitionType::Vert => {
             let left = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
                 .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
             write_inter_block_leaf(
-                bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row, mi_col, sub, &left,
-                seg, prev_mv_grid, coef_ctx, coef_source, counts.as_deref_mut(),
+                bw,
+                fc,
+                params,
+                tx_mode,
+                mi_grid,
+                mi_rows,
+                mi_cols,
+                mi_row,
+                mi_col,
+                sub,
+                &left,
+                seg,
+                prev_mv_grid,
+                coef_ctx,
+                coef_source,
+                counts.as_deref_mut(),
             )?;
             let mi_col_r = mi_col + hbs;
             let right = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col_r).ok_or(
@@ -1748,14 +1900,43 @@ fn write_inter_partition_tree(
                 },
             )?;
             write_inter_block_leaf(
-                bw, fc, params, tx_mode, mi_grid, mi_rows, mi_cols, mi_row, mi_col_r, sub, &right,
-                seg, prev_mv_grid, coef_ctx, coef_source, counts.as_deref_mut(),
+                bw,
+                fc,
+                params,
+                tx_mode,
+                mi_grid,
+                mi_rows,
+                mi_cols,
+                mi_row,
+                mi_col_r,
+                sub,
+                &right,
+                seg,
+                prev_mv_grid,
+                coef_ctx,
+                coef_source,
+                counts.as_deref_mut(),
             )?;
         }
         PartitionType::Split => {
             write_inter_partition_tree(
-                bw, fc, params, tx_mode, part_ctx, bounds, mi_grid, mi_rows, mi_cols, mi_row,
-                mi_col, sub, n8x8_l2, seg, prev_mv_grid, coef_ctx, coef_source,
+                bw,
+                fc,
+                params,
+                tx_mode,
+                part_ctx,
+                bounds,
+                mi_grid,
+                mi_rows,
+                mi_cols,
+                mi_row,
+                mi_col,
+                sub,
+                n8x8_l2,
+                seg,
+                prev_mv_grid,
+                coef_ctx,
+                coef_source,
                 counts.as_deref_mut(),
             )?;
             write_inter_partition_tree(
@@ -1911,8 +2092,8 @@ fn write_inter_block_leaf(
     // 2. Skip flag. Pre-S4.16g this was hardcoded to `1`; phase 3
     //    of S4.16g widened the writer to accept `mi.skip == false`.
     //    Mirrors `decode_inter_block` step 2.
-    let skip_ctx = usize::from(above.is_some_and(|m| m.skip))
-        + usize::from(left.is_some_and(|m| m.skip));
+    let skip_ctx =
+        usize::from(above.is_some_and(|m| m.skip)) + usize::from(left.is_some_and(|m| m.skip));
     set_category(BitCategory::Skip);
     bw.write(u8::from(mi.skip), fc.skip_probs[skip_ctx]);
     // P0b — accumulate skip count.
@@ -2062,8 +2243,10 @@ fn write_inter_block_leaf(
             BlockSize::Block4x4 | BlockSize::Block4x8 | BlockSize::Block8x4 => 0,
             BlockSize::Block8x8 | BlockSize::Block8x16 | BlockSize::Block16x8 => 1,
             BlockSize::Block16x16 | BlockSize::Block16x32 | BlockSize::Block32x16 => 2,
-            BlockSize::Block32x32 | BlockSize::Block32x64
-            | BlockSize::Block64x32 | BlockSize::Block64x64 => 3,
+            BlockSize::Block32x32
+            | BlockSize::Block32x64
+            | BlockSize::Block64x32
+            | BlockSize::Block64x64 => 3,
         };
 
         set_category(BitCategory::ModeRef);
@@ -2608,7 +2791,13 @@ mod tests {
         };
         let mut bw = BoolWriter::start_encode(&mut buf);
         let err = write_tile_intra_keyframe_default(&mut bw, &grid, 8, 8, bounds, &fc).unwrap_err();
-        assert!(matches!(err, ModesWriterError::MissingCell { mi_row: 0, mi_col: 0 }));
+        assert!(matches!(
+            err,
+            ModesWriterError::MissingCell {
+                mi_row: 0,
+                mi_col: 0
+            }
+        ));
     }
 
     /// `write_tile_intra_keyframe` rejects a malformed grid where the
@@ -2884,9 +3073,8 @@ mod tests {
     fn write_block_intra_keyframe_accepts_all_intra_modes() {
         use crate::entropy::{BoolReader, BoolWriter, FrameContext};
         let fc = FrameContext::new_default();
-        let probs_for_above_left = |above: IntraMode, left: IntraMode| {
-            VP9_KF_Y_MODE_PROB[above as usize][left as usize]
-        };
+        let probs_for_above_left =
+            |above: IntraMode, left: IntraMode| VP9_KF_Y_MODE_PROB[above as usize][left as usize];
 
         for y_mode in [
             IntraMode::V,
@@ -2918,8 +3106,10 @@ mod tests {
                 let mut buf = vec![0u8; 2 * 1024];
                 let written = {
                     let mut bw = BoolWriter::start_encode(&mut buf);
-                    write_tile_intra_keyframe_default(&mut bw, &grid, mi_rows, mi_cols, bounds, &fc)
-                        .expect("write_tile_intra_keyframe");
+                    write_tile_intra_keyframe_default(
+                        &mut bw, &grid, mi_rows, mi_cols, bounds, &fc,
+                    )
+                    .expect("write_tile_intra_keyframe");
                     bw.stop_encode().expect("stop_encode")
                 };
                 buf.truncate(written);
@@ -2939,7 +3129,10 @@ mod tests {
                 // uv_mode against VP9_KF_UV_MODE_PROB[got_y]
                 let uv_probs = VP9_KF_UV_MODE_PROB[got_y as usize];
                 let got_uv = read_intra_mode_via_tree(&mut r, &uv_probs);
-                assert_eq!(got_uv, uv_mode, "UV mode parse for ({y_mode:?}, {uv_mode:?})");
+                assert_eq!(
+                    got_uv, uv_mode,
+                    "UV mode parse for ({y_mode:?}, {uv_mode:?})"
+                );
             }
         }
     }
@@ -3157,16 +3350,25 @@ mod tests {
         let mi_rows = 8u32;
         let mi_cols = 8u32;
         let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
-        splat_cell(&mut grid, mi_cols as usize, 0, 0, make_dc_cell(BlockSize::Block64x32));
-        splat_cell(&mut grid, mi_cols as usize, 4, 0, make_dc_cell(BlockSize::Block64x32));
+        splat_cell(
+            &mut grid,
+            mi_cols as usize,
+            0,
+            0,
+            make_dc_cell(BlockSize::Block64x32),
+        );
+        splat_cell(
+            &mut grid,
+            mi_cols as usize,
+            4,
+            0,
+            make_dc_cell(BlockSize::Block64x32),
+        );
 
         let leaves = encode_then_replay(mi_rows, mi_cols, &grid);
         assert_eq!(
             leaves,
-            vec![
-                (0, 0, BlockSize::Block64x32),
-                (4, 0, BlockSize::Block64x32),
-            ]
+            vec![(0, 0, BlockSize::Block64x32), (4, 0, BlockSize::Block64x32),]
         );
     }
 
@@ -3176,16 +3378,25 @@ mod tests {
         let mi_rows = 8u32;
         let mi_cols = 8u32;
         let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
-        splat_cell(&mut grid, mi_cols as usize, 0, 0, make_dc_cell(BlockSize::Block32x64));
-        splat_cell(&mut grid, mi_cols as usize, 0, 4, make_dc_cell(BlockSize::Block32x64));
+        splat_cell(
+            &mut grid,
+            mi_cols as usize,
+            0,
+            0,
+            make_dc_cell(BlockSize::Block32x64),
+        );
+        splat_cell(
+            &mut grid,
+            mi_cols as usize,
+            0,
+            4,
+            make_dc_cell(BlockSize::Block32x64),
+        );
 
         let leaves = encode_then_replay(mi_rows, mi_cols, &grid);
         assert_eq!(
             leaves,
-            vec![
-                (0, 0, BlockSize::Block32x64),
-                (0, 4, BlockSize::Block32x64),
-            ]
+            vec![(0, 0, BlockSize::Block32x64), (0, 4, BlockSize::Block32x64),]
         );
     }
 
@@ -3302,9 +3513,14 @@ mod tests {
     fn infer_partition_none() {
         let mi_cols = 8usize;
         let mut grid: Vec<Option<ModeInfo>> = vec![None; mi_cols * mi_cols];
-        splat_cell(&mut grid, mi_cols, 0, 0, make_dc_cell(BlockSize::Block64x64));
-        let p = infer_partition(&grid, mi_cols, 0, 0, BlockSize::Block64x64)
-            .expect("legal NONE");
+        splat_cell(
+            &mut grid,
+            mi_cols,
+            0,
+            0,
+            make_dc_cell(BlockSize::Block64x64),
+        );
+        let p = infer_partition(&grid, mi_cols, 0, 0, BlockSize::Block64x64).expect("legal NONE");
         assert_eq!(p, PartitionType::None);
     }
 
@@ -3314,9 +3530,14 @@ mod tests {
     fn infer_partition_horz() {
         let mi_cols = 8usize;
         let mut grid: Vec<Option<ModeInfo>> = vec![None; mi_cols * mi_cols];
-        splat_cell(&mut grid, mi_cols, 0, 0, make_dc_cell(BlockSize::Block64x32));
-        let p = infer_partition(&grid, mi_cols, 0, 0, BlockSize::Block64x64)
-            .expect("legal HORZ");
+        splat_cell(
+            &mut grid,
+            mi_cols,
+            0,
+            0,
+            make_dc_cell(BlockSize::Block64x32),
+        );
+        let p = infer_partition(&grid, mi_cols, 0, 0, BlockSize::Block64x64).expect("legal HORZ");
         assert_eq!(p, PartitionType::Horz);
     }
 
@@ -3326,9 +3547,14 @@ mod tests {
     fn infer_partition_vert() {
         let mi_cols = 8usize;
         let mut grid: Vec<Option<ModeInfo>> = vec![None; mi_cols * mi_cols];
-        splat_cell(&mut grid, mi_cols, 0, 0, make_dc_cell(BlockSize::Block32x64));
-        let p = infer_partition(&grid, mi_cols, 0, 0, BlockSize::Block64x64)
-            .expect("legal VERT");
+        splat_cell(
+            &mut grid,
+            mi_cols,
+            0,
+            0,
+            make_dc_cell(BlockSize::Block32x64),
+        );
+        let p = infer_partition(&grid, mi_cols, 0, 0, BlockSize::Block64x64).expect("legal VERT");
         assert_eq!(p, PartitionType::Vert);
     }
 
@@ -3339,9 +3565,14 @@ mod tests {
     fn infer_partition_split() {
         let mi_cols = 8usize;
         let mut grid: Vec<Option<ModeInfo>> = vec![None; mi_cols * mi_cols];
-        splat_cell(&mut grid, mi_cols, 0, 0, make_dc_cell(BlockSize::Block32x32));
-        let p = infer_partition(&grid, mi_cols, 0, 0, BlockSize::Block64x64)
-            .expect("legal SPLIT");
+        splat_cell(
+            &mut grid,
+            mi_cols,
+            0,
+            0,
+            make_dc_cell(BlockSize::Block32x32),
+        );
+        let p = infer_partition(&grid, mi_cols, 0, 0, BlockSize::Block64x64).expect("legal SPLIT");
         assert_eq!(p, PartitionType::Split);
     }
 
@@ -3402,14 +3633,38 @@ mod tests {
         let mi_cols = 8u32;
         let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
         // (0, 0) claims VERT (Block32x64).
-        splat_cell(&mut grid, mi_cols as usize, 0, 0, make_dc_cell(BlockSize::Block32x64));
+        splat_cell(
+            &mut grid,
+            mi_cols as usize,
+            0,
+            0,
+            make_dc_cell(BlockSize::Block32x64),
+        );
         // (0, 4) claims Block16x16 instead of the Block32x64 a real
         // VERT would require.
-        splat_cell(&mut grid, mi_cols as usize, 0, 4, make_dc_cell(BlockSize::Block16x16));
+        splat_cell(
+            &mut grid,
+            mi_cols as usize,
+            0,
+            4,
+            make_dc_cell(BlockSize::Block16x16),
+        );
         // Fill the bottom half so the writer doesn't trip on missing
         // cells first.
-        splat_cell(&mut grid, mi_cols as usize, 4, 0, make_dc_cell(BlockSize::Block32x32));
-        splat_cell(&mut grid, mi_cols as usize, 4, 4, make_dc_cell(BlockSize::Block32x32));
+        splat_cell(
+            &mut grid,
+            mi_cols as usize,
+            4,
+            0,
+            make_dc_cell(BlockSize::Block32x32),
+        );
+        splat_cell(
+            &mut grid,
+            mi_cols as usize,
+            4,
+            4,
+            make_dc_cell(BlockSize::Block32x32),
+        );
 
         let bounds = TileBounds {
             mi_row_start: 0,
@@ -3420,8 +3675,8 @@ mod tests {
         let fc = FrameContext::new_default();
         let mut buf = vec![0u8; 1024];
         let mut bw = BoolWriter::start_encode(&mut buf);
-        let err =
-            write_tile_intra_keyframe_default(&mut bw, &grid, mi_rows, mi_cols, bounds, &fc).unwrap_err();
+        let err = write_tile_intra_keyframe_default(&mut bw, &grid, mi_rows, mi_cols, bounds, &fc)
+            .unwrap_err();
         // The exact variant depends on where the mismatch surfaces.
         // For this grid: the top-level partition is inferred as VERT
         // (from the (0,0) leaf), then the second VERT leaf at (0,4)
@@ -3441,11 +3696,11 @@ mod tests {
 
     use crate::bitstream::{InterpFilter, ReferenceMode};
     use crate::inter::mode_info::{
-        get_intra_inter_context, get_mode_context, read_inter_block_mode_info,
-        setup_compound_reference_mode, InterModeReadParams,
+        InterModeReadParams, get_intra_inter_context, get_mode_context, read_inter_block_mode_info,
+        setup_compound_reference_mode,
     };
-    use crate::inter::mv_ref::{sign_bias_from_header, BlockBounds, PrevFrameMvRef};
-    use crate::mode_info::{read_is_inter, read_tx_size, BmiInfo, InterMode, Mv, RefFrame};
+    use crate::inter::mv_ref::{BlockBounds, PrevFrameMvRef, sign_bias_from_header};
+    use crate::mode_info::{BmiInfo, InterMode, Mv, RefFrame, read_is_inter, read_tx_size};
     use crate::transforms::TxMode;
 
     /// Default frame-level inter params: SINGLE ref mode, no sign-bias,
@@ -3553,7 +3808,8 @@ mod tests {
             } else {
                 0
             };
-            let tx_size = read_tx_size(r, &fc.tx_probs, tx_mode, max_tx, allow_select, tx_ctx, None);
+            let tx_size =
+                read_tx_size(r, &fc.tx_probs, tx_mode, max_tx, allow_select, tx_ctx, None);
             // Decode the mode info via the same per-block reader the
             // decoder uses, threading the same NeighbourLookup adapter.
             let bw_mi = i32::from(leaf_bsize.n_8x8_wide());
@@ -3566,8 +3822,7 @@ mod tests {
                 bw_mi,
                 bh_mi,
             );
-            let prev_mv =
-                prev_mv_grid.and_then(|g| g.get(mi_row * mi_cols + mi_col).copied());
+            let prev_mv = prev_mv_grid.and_then(|g| g.get(mi_row * mi_cols + mi_col).copied());
             let mut got = ModeInfo {
                 block_size: leaf_bsize,
                 tx_size,
@@ -3583,7 +3838,16 @@ mod tests {
                 bmi: [BmiInfo::default(); 4],
             };
             read_inter_block_mode_info(
-                r, fc, None, None, params, &nb, leaf_bsize, &bounds_block, prev_mv, &mut got,
+                r,
+                fc,
+                None,
+                None,
+                params,
+                &nb,
+                leaf_bsize,
+                &bounds_block,
+                prev_mv,
+                &mut got,
             );
             // Avoid an unused-variable lint when callers don't read it.
             let _ = get_mode_context(leaf_bsize, &nb);
@@ -3615,8 +3879,21 @@ mod tests {
             }
             PartitionType::Split => {
                 replay_inter_partition_tree(
-                    r, fc, params, tx_mode, part_ctx, mi_grid, mi_rows, mi_cols, bounds, mi_row,
-                    mi_col, sub, n8x8_l2, prev_mv_grid, leaves,
+                    r,
+                    fc,
+                    params,
+                    tx_mode,
+                    part_ctx,
+                    mi_grid,
+                    mi_rows,
+                    mi_cols,
+                    bounds,
+                    mi_row,
+                    mi_col,
+                    sub,
+                    n8x8_l2,
+                    prev_mv_grid,
+                    leaves,
                 );
                 replay_inter_partition_tree(
                     r,
@@ -3789,7 +4066,7 @@ mod tests {
     // S4.16g phase 3 — non-skip inter leaves with coef-source
     // -----------------------------------------------------------------
 
-    use crate::coef_ctx::{combine_entropy_contexts, TileCoefCtx};
+    use crate::coef_ctx::{TileCoefCtx, combine_entropy_contexts};
     use crate::entropy::detokenize::decode_coefs;
     use crate::transforms::scans::scan_for;
 
@@ -3867,7 +4144,11 @@ mod tests {
             let n = plane_tx.n_coeffs();
             // Identity dequant: (1, 1) for non-32x32; (2, 2) for 32x32
             // (mirrors `round_trip_block_tokens::identity_dq`).
-            let dq = if plane_tx == TxSize::Tx32x32 { (2, 2) } else { (1, 1) };
+            let dq = if plane_tx == TxSize::Tx32x32 {
+                (2, 2)
+            } else {
+                (1, 1)
+            };
 
             let mut tx_y4_local = 0usize;
             while tx_y4_local < plane_bh_4x4 {
@@ -3904,14 +4185,7 @@ mod tests {
                         dq,
                         &mut dq_out,
                     );
-                    coef_ctx.set_coef_flags(
-                        plane,
-                        x4,
-                        y4_in_sb,
-                        n_span,
-                        n_span,
-                        recovered_eob > 0,
-                    );
+                    coef_ctx.set_coef_flags(plane, x4, y4_in_sb, n_span, n_span, recovered_eob > 0);
                     out.push(RecoveredTx {
                         mi_row,
                         mi_col,
@@ -3963,93 +4237,100 @@ mod tests {
         let partition = read_partition(r, probs, ctx, None);
         let sub = subsize(bsize, partition).expect("legal subsize");
 
-        let read_leaf =
-            |r: &mut BoolReader<'_>,
-             coef_ctx: &mut TileCoefCtx,
-             leaves: &mut Vec<(usize, usize, ModeInfo)>,
-             residuals: &mut Vec<RecoveredTx>,
-             mi_row: usize,
-             mi_col: usize,
-             leaf_bsize: BlockSize| {
-                let nb = MiGridNeighbourLookup::new(mi_grid, mi_cols, mi_row, mi_col, mi_rows);
-                let above = nb.get(Position { row: -1, col: 0 }).copied();
-                let left = nb.get(Position { row: 0, col: -1 }).copied();
-                let skip_ctx = usize::from(above.is_some_and(|m| m.skip))
-                    + usize::from(left.is_some_and(|m| m.skip));
-                let skip = read_skip(r, &fc.skip_probs, skip_ctx, None);
-                let intra_inter_ctx = get_intra_inter_context(above.as_ref(), left.as_ref());
-                let is_inter = read_is_inter(r, &fc.intra_inter_prob, intra_inter_ctx, None);
-                assert!(is_inter, "is_inter @ ({mi_row}, {mi_col})");
-                let allow_select = !skip;
-                let max_tx = max_txsize(leaf_bsize);
-                let above_tx = above.map(|m| (m.tx_size, m.skip));
-                let left_tx = left.map(|m| (m.tx_size, m.skip));
-                let tx_ctx = if max_tx >= TxSize::Tx8x8 {
-                    get_tx_size_context(above_tx, left_tx, max_tx)
-                } else {
-                    0
-                };
-                let tx_size =
-                    read_tx_size(r, &fc.tx_probs, tx_mode, max_tx, allow_select, tx_ctx, None);
-                let bw_mi = i32::from(leaf_bsize.n_8x8_wide());
-                let bh_mi = i32::from(leaf_bsize.n_8x8_high());
-                let bounds_block = BlockBounds::new(
-                    mi_row as i32,
-                    mi_col as i32,
-                    mi_rows as i32,
-                    mi_cols as i32,
-                    bw_mi,
-                    bh_mi,
-                );
-                let prev_mv =
-                    prev_mv_grid.and_then(|g| g.get(mi_row * mi_cols + mi_col).copied());
-                let mut got = ModeInfo {
-                    block_size: leaf_bsize,
-                    tx_size,
-                    skip,
-                    segment_id: 0,
-                    seg_id_predicted: false,
-                    mode: BlockMode::Inter {
-                        mode: InterMode::NearestMv,
-                        ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
-                        mvs: [Mv::ZERO; 2],
-                        interp_filter: params.interp_filter,
-                    },
-                    bmi: [BmiInfo::default(); 4],
-                };
-                read_inter_block_mode_info(
-                    r, fc, None, None, params, &nb, leaf_bsize, &bounds_block, prev_mv, &mut got,
-                );
-                let _ = get_mode_context(leaf_bsize, &nb);
-                // Effective tx_size when allow_select is false matches
-                // the writer's derivation (min(max_tx, cap)).
-                let effective_tx = if allow_select && tx_mode == TxMode::TxModeSelect {
-                    tx_size
-                } else {
-                    let cap = tx_mode_to_biggest_tx_size(tx_mode) as u8;
-                    let raw = core::cmp::min(max_tx as u8, cap);
-                    match raw {
-                        0 => TxSize::Tx4x4,
-                        1 => TxSize::Tx8x8,
-                        2 => TxSize::Tx16x16,
-                        3 => TxSize::Tx32x32,
-                        _ => unreachable!(),
-                    }
-                };
-                if !skip {
-                    replay_inter_block_residual(
-                        r,
-                        fc,
-                        coef_ctx,
-                        mi_row,
-                        mi_col,
-                        leaf_bsize,
-                        effective_tx,
-                        residuals,
-                    );
-                }
-                leaves.push((mi_row, mi_col, got));
+        let read_leaf = |r: &mut BoolReader<'_>,
+                         coef_ctx: &mut TileCoefCtx,
+                         leaves: &mut Vec<(usize, usize, ModeInfo)>,
+                         residuals: &mut Vec<RecoveredTx>,
+                         mi_row: usize,
+                         mi_col: usize,
+                         leaf_bsize: BlockSize| {
+            let nb = MiGridNeighbourLookup::new(mi_grid, mi_cols, mi_row, mi_col, mi_rows);
+            let above = nb.get(Position { row: -1, col: 0 }).copied();
+            let left = nb.get(Position { row: 0, col: -1 }).copied();
+            let skip_ctx = usize::from(above.is_some_and(|m| m.skip))
+                + usize::from(left.is_some_and(|m| m.skip));
+            let skip = read_skip(r, &fc.skip_probs, skip_ctx, None);
+            let intra_inter_ctx = get_intra_inter_context(above.as_ref(), left.as_ref());
+            let is_inter = read_is_inter(r, &fc.intra_inter_prob, intra_inter_ctx, None);
+            assert!(is_inter, "is_inter @ ({mi_row}, {mi_col})");
+            let allow_select = !skip;
+            let max_tx = max_txsize(leaf_bsize);
+            let above_tx = above.map(|m| (m.tx_size, m.skip));
+            let left_tx = left.map(|m| (m.tx_size, m.skip));
+            let tx_ctx = if max_tx >= TxSize::Tx8x8 {
+                get_tx_size_context(above_tx, left_tx, max_tx)
+            } else {
+                0
             };
+            let tx_size =
+                read_tx_size(r, &fc.tx_probs, tx_mode, max_tx, allow_select, tx_ctx, None);
+            let bw_mi = i32::from(leaf_bsize.n_8x8_wide());
+            let bh_mi = i32::from(leaf_bsize.n_8x8_high());
+            let bounds_block = BlockBounds::new(
+                mi_row as i32,
+                mi_col as i32,
+                mi_rows as i32,
+                mi_cols as i32,
+                bw_mi,
+                bh_mi,
+            );
+            let prev_mv = prev_mv_grid.and_then(|g| g.get(mi_row * mi_cols + mi_col).copied());
+            let mut got = ModeInfo {
+                block_size: leaf_bsize,
+                tx_size,
+                skip,
+                segment_id: 0,
+                seg_id_predicted: false,
+                mode: BlockMode::Inter {
+                    mode: InterMode::NearestMv,
+                    ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                    mvs: [Mv::ZERO; 2],
+                    interp_filter: params.interp_filter,
+                },
+                bmi: [BmiInfo::default(); 4],
+            };
+            read_inter_block_mode_info(
+                r,
+                fc,
+                None,
+                None,
+                params,
+                &nb,
+                leaf_bsize,
+                &bounds_block,
+                prev_mv,
+                &mut got,
+            );
+            let _ = get_mode_context(leaf_bsize, &nb);
+            // Effective tx_size when allow_select is false matches
+            // the writer's derivation (min(max_tx, cap)).
+            let effective_tx = if allow_select && tx_mode == TxMode::TxModeSelect {
+                tx_size
+            } else {
+                let cap = tx_mode_to_biggest_tx_size(tx_mode) as u8;
+                let raw = core::cmp::min(max_tx as u8, cap);
+                match raw {
+                    0 => TxSize::Tx4x4,
+                    1 => TxSize::Tx8x8,
+                    2 => TxSize::Tx16x16,
+                    3 => TxSize::Tx32x32,
+                    _ => unreachable!(),
+                }
+            };
+            if !skip {
+                replay_inter_block_residual(
+                    r,
+                    fc,
+                    coef_ctx,
+                    mi_row,
+                    mi_col,
+                    leaf_bsize,
+                    effective_tx,
+                    residuals,
+                );
+            }
+            leaves.push((mi_row, mi_col, got));
+        };
 
         if hbs == 0 {
             read_leaf(r, coef_ctx, leaves, residuals, mi_row, mi_col, sub);
@@ -4073,20 +4354,80 @@ mod tests {
             }
             PartitionType::Split => {
                 replay_inter_partition_tree_with_coefs(
-                    r, fc, params, tx_mode, part_ctx, coef_ctx, mi_grid, mi_rows, mi_cols, bounds,
-                    mi_row, mi_col, sub, n8x8_l2, prev_mv_grid, leaves, residuals,
+                    r,
+                    fc,
+                    params,
+                    tx_mode,
+                    part_ctx,
+                    coef_ctx,
+                    mi_grid,
+                    mi_rows,
+                    mi_cols,
+                    bounds,
+                    mi_row,
+                    mi_col,
+                    sub,
+                    n8x8_l2,
+                    prev_mv_grid,
+                    leaves,
+                    residuals,
                 );
                 replay_inter_partition_tree_with_coefs(
-                    r, fc, params, tx_mode, part_ctx, coef_ctx, mi_grid, mi_rows, mi_cols, bounds,
-                    mi_row, mi_col + hbs, sub, n8x8_l2, prev_mv_grid, leaves, residuals,
+                    r,
+                    fc,
+                    params,
+                    tx_mode,
+                    part_ctx,
+                    coef_ctx,
+                    mi_grid,
+                    mi_rows,
+                    mi_cols,
+                    bounds,
+                    mi_row,
+                    mi_col + hbs,
+                    sub,
+                    n8x8_l2,
+                    prev_mv_grid,
+                    leaves,
+                    residuals,
                 );
                 replay_inter_partition_tree_with_coefs(
-                    r, fc, params, tx_mode, part_ctx, coef_ctx, mi_grid, mi_rows, mi_cols, bounds,
-                    mi_row + hbs, mi_col, sub, n8x8_l2, prev_mv_grid, leaves, residuals,
+                    r,
+                    fc,
+                    params,
+                    tx_mode,
+                    part_ctx,
+                    coef_ctx,
+                    mi_grid,
+                    mi_rows,
+                    mi_cols,
+                    bounds,
+                    mi_row + hbs,
+                    mi_col,
+                    sub,
+                    n8x8_l2,
+                    prev_mv_grid,
+                    leaves,
+                    residuals,
                 );
                 replay_inter_partition_tree_with_coefs(
-                    r, fc, params, tx_mode, part_ctx, coef_ctx, mi_grid, mi_rows, mi_cols, bounds,
-                    mi_row + hbs, mi_col + hbs, sub, n8x8_l2, prev_mv_grid, leaves, residuals,
+                    r,
+                    fc,
+                    params,
+                    tx_mode,
+                    part_ctx,
+                    coef_ctx,
+                    mi_grid,
+                    mi_rows,
+                    mi_cols,
+                    bounds,
+                    mi_row + hbs,
+                    mi_col + hbs,
+                    sub,
+                    n8x8_l2,
+                    prev_mv_grid,
+                    leaves,
+                    residuals,
                 );
             }
         }
@@ -4114,7 +4455,14 @@ mod tests {
         coef_source: &dyn InterCoefSource,
     ) -> Vec<(usize, usize, ModeInfo)> {
         let (leaves, _residuals) = encode_then_replay_inter_full(
-            fc, params, tx_mode, mi_rows, mi_cols, grid, prev_mv_grid, coef_source,
+            fc,
+            params,
+            tx_mode,
+            mi_rows,
+            mi_cols,
+            grid,
+            prev_mv_grid,
+            coef_source,
         );
         leaves
     }
@@ -4245,7 +4593,10 @@ mod tests {
         assert_eq!(residuals.len(), 6, "1 leaf × (4 Y + 1 U + 1 V) TX blocks");
         for tx in &residuals {
             assert_eq!(tx.eob, 0, "all-zero source ⇒ eob=0");
-            assert!(tx.coefs.iter().all(|&v| v == 0), "all-zero source ⇒ coefs all 0");
+            assert!(
+                tx.coefs.iter().all(|&v| v == 0),
+                "all-zero source ⇒ coefs all 0"
+            );
         }
     }
 
@@ -4584,8 +4935,7 @@ mod tests {
             [Mv::ZERO; 2],
             InterpFilter::EightTap,
         );
-        let mut grid: Vec<Option<ModeInfo>> =
-            vec![Some(plain_cell); (mi_rows * mi_cols) as usize];
+        let mut grid: Vec<Option<ModeInfo>> = vec![Some(plain_cell); (mi_rows * mi_cols) as usize];
 
         // ...then replace cell (0, 0) with a Block4x4 sub-8 leaf.
         grid[0] = Some(make_sub8_zero_inter_cell(BlockSize::Block4x4));
@@ -4628,8 +4978,7 @@ mod tests {
             [Mv::ZERO; 2],
             InterpFilter::EightTap,
         );
-        let mut grid: Vec<Option<ModeInfo>> =
-            vec![Some(plain_cell); (mi_rows * mi_cols) as usize];
+        let mut grid: Vec<Option<ModeInfo>> = vec![Some(plain_cell); (mi_rows * mi_cols) as usize];
         grid[0] = Some(make_sub8_zero_inter_cell(BlockSize::Block8x4));
 
         let leaves = encode_then_replay_inter(
@@ -4659,8 +5008,7 @@ mod tests {
             [Mv::ZERO; 2],
             InterpFilter::EightTap,
         );
-        let mut grid: Vec<Option<ModeInfo>> =
-            vec![Some(plain_cell); (mi_rows * mi_cols) as usize];
+        let mut grid: Vec<Option<ModeInfo>> = vec![Some(plain_cell); (mi_rows * mi_cols) as usize];
         grid[0] = Some(make_sub8_zero_inter_cell(BlockSize::Block4x8));
 
         let leaves = encode_then_replay_inter(
@@ -4886,7 +5234,13 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(err, ModesWriterError::MissingCell { mi_row: 0, mi_col: 0 }),
+            matches!(
+                err,
+                ModesWriterError::MissingCell {
+                    mi_row: 0,
+                    mi_col: 0
+                }
+            ),
             "got: {err:?}"
         );
     }
@@ -4925,7 +5279,10 @@ mod tests {
             None,
         )
         .unwrap_err();
-        assert!(matches!(err, ModesWriterError::NonMultipleOfSb { .. }), "got: {err:?}");
+        assert!(
+            matches!(err, ModesWriterError::NonMultipleOfSb { .. }),
+            "got: {err:?}"
+        );
     }
 
     // ---------------------------------------------------------------
@@ -4971,7 +5328,9 @@ mod tests {
                 &mut bw,
                 &fc,
                 TxMode::AllowTx32x32,
-                Some(SegmentationWriteParams { tree_probs: &tree_probs }),
+                Some(SegmentationWriteParams {
+                    tree_probs: &tree_probs,
+                }),
                 &mut nbr_ctx,
                 &bounds,
                 &grid,
@@ -5040,7 +5399,9 @@ mod tests {
                     bounds,
                     &fc,
                     TxMode::AllowTx32x32,
-                    Some(SegmentationWriteParams { tree_probs: &tree_probs }),
+                    Some(SegmentationWriteParams {
+                        tree_probs: &tree_probs,
+                    }),
                     &mut coef_ctx,
                     &coef_source,
                 )
@@ -5058,7 +5419,10 @@ mod tests {
             let p = read_partition(&mut r, &VP9_KF_PARTITION_PROBS[part_ctx], part_ctx, None);
             assert_eq!(p, PartitionType::None, "seg={target_seg}: partition");
             let got_seg = crate::mode_info::read_segment_id(&mut r, &tree_probs);
-            assert_eq!(got_seg, target_seg, "seg={target_seg}: recovered segment_id");
+            assert_eq!(
+                got_seg, target_seg,
+                "seg={target_seg}: recovered segment_id"
+            );
             let skip = read_skip(&mut r, &fc.skip_probs, 0, None);
             assert!(skip, "seg={target_seg}: skip");
         }
@@ -5107,7 +5471,9 @@ mod tests {
                 bounds,
                 &fc,
                 TxMode::AllowTx32x32,
-                Some(SegmentationWriteParams { tree_probs: &tree_probs }),
+                Some(SegmentationWriteParams {
+                    tree_probs: &tree_probs,
+                }),
                 &mut coef_ctx,
                 &coef_source,
             )
@@ -5204,7 +5570,9 @@ mod tests {
                 mi_rows,
                 mi_cols,
                 bounds,
-                Some(SegmentationWriteParams { tree_probs: &tree_probs }),
+                Some(SegmentationWriteParams {
+                    tree_probs: &tree_probs,
+                }),
                 /* prev_mv_grid = */ None,
                 &mut coef_ctx,
                 &coef_source,
@@ -5272,7 +5640,9 @@ mod tests {
             mi_rows,
             mi_cols,
             bounds,
-            Some(SegmentationWriteParams { tree_probs: &tree_probs }),
+            Some(SegmentationWriteParams {
+                tree_probs: &tree_probs,
+            }),
             None,
             &mut coef_ctx,
             &coef_source,
@@ -5317,7 +5687,9 @@ mod tests {
             bounds,
             &fc,
             TxMode::AllowTx32x32,
-            Some(SegmentationWriteParams { tree_probs: &tree_probs }),
+            Some(SegmentationWriteParams {
+                tree_probs: &tree_probs,
+            }),
             &mut coef_ctx,
             &coef_source,
         )
@@ -5358,8 +5730,15 @@ mod tests {
             InterpFilter::EightTap,
         );
         let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
-        let leaves =
-            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        let leaves = encode_then_replay_inter(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+        );
         assert_eq!(leaves.len(), 1);
         assert_inter_match(&cell, &leaves[0].2, "compound LAST+ALTREF ZEROMV 64x64");
     }
@@ -5388,8 +5767,15 @@ mod tests {
             InterpFilter::EightTap,
         );
         let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
-        let leaves =
-            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        let leaves = encode_then_replay_inter(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+        );
         assert_eq!(leaves.len(), 1);
         assert_inter_match(&cell, &leaves[0].2, "compound LAST+ALTREF NEWMV");
     }
@@ -5411,8 +5797,15 @@ mod tests {
             InterpFilter::EightTapSmooth,
         );
         let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
-        let leaves =
-            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        let leaves = encode_then_replay_inter(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+        );
         assert_eq!(leaves.len(), 1);
         assert_inter_match(&cell, &leaves[0].2, "switchable smooth 64x64 ZEROMV");
     }
@@ -5433,8 +5826,15 @@ mod tests {
             InterpFilter::EightTapSharp,
         );
         let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
-        let leaves =
-            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        let leaves = encode_then_replay_inter(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+        );
         assert_eq!(leaves.len(), 1);
         assert_inter_match(&cell, &leaves[0].2, "switchable sharp 64x64 ZEROMV");
     }
@@ -5456,8 +5856,15 @@ mod tests {
             InterpFilter::EightTap,
         );
         let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
-        let leaves =
-            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        let leaves = encode_then_replay_inter(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+        );
         assert_eq!(leaves.len(), 1);
         assert_inter_match(&cell, &leaves[0].2, "select+single");
     }
@@ -5483,8 +5890,15 @@ mod tests {
             InterpFilter::EightTap,
         );
         let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
-        let leaves =
-            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        let leaves = encode_then_replay_inter(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+        );
         assert_eq!(leaves.len(), 1);
         assert_inter_match(&cell, &leaves[0].2, "select+compound");
     }
@@ -5506,8 +5920,15 @@ mod tests {
             InterpFilter::EightTap,
         );
         let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
-        let leaves =
-            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        let leaves = encode_then_replay_inter(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+        );
         assert_eq!(leaves.len(), 1);
         assert_inter_match(&cell, &leaves[0].2, "single GOLDEN NEWMV");
     }
@@ -5529,8 +5950,15 @@ mod tests {
             InterpFilter::EightTap,
         );
         let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
-        let leaves =
-            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        let leaves = encode_then_replay_inter(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+        );
         assert_eq!(leaves.len(), 1);
         assert_inter_match(&cell, &leaves[0].2, "single ALTREF NEWMV");
     }
@@ -5553,8 +5981,15 @@ mod tests {
             InterpFilter::EightTap,
         );
         let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
-        let leaves =
-            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        let leaves = encode_then_replay_inter(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+        );
         assert_eq!(leaves.len(), 1);
         assert_inter_match(&cell, &leaves[0].2, "NEWMV both axes nonzero");
     }
@@ -5575,8 +6010,15 @@ mod tests {
             InterpFilter::EightTap,
         );
         let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
-        let leaves =
-            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        let leaves = encode_then_replay_inter(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+        );
         assert_eq!(leaves.len(), 1);
         assert_inter_match(&cell, &leaves[0].2, "NEWMV col only");
     }
@@ -5600,8 +6042,15 @@ mod tests {
             InterpFilter::EightTap,
         );
         let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
-        let leaves =
-            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        let leaves = encode_then_replay_inter(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+        );
         assert_eq!(leaves.len(), 1);
         assert_inter_match(&cell, &leaves[0].2, "NEWMV diff = Zero joint");
     }
@@ -5636,8 +6085,15 @@ mod tests {
         splat_cell(&mut grid, mi_cols as usize, 4, 0, cell_bl);
         splat_cell(&mut grid, mi_cols as usize, 4, 4, cell_br);
 
-        let leaves =
-            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        let leaves = encode_then_replay_inter(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+        );
         assert_eq!(leaves.len(), 4);
         let expected = [&cell_tl, &cell_tr, &cell_bl, &cell_br];
         for (i, ec) in expected.iter().enumerate() {
@@ -5668,8 +6124,15 @@ mod tests {
                 splat_cell(&mut grid, mi_cols as usize, r, c, cell);
             }
         }
-        let leaves =
-            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        let leaves = encode_then_replay_inter(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+        );
         assert_eq!(leaves.len(), 16, "16x16 grid: 16 leaves");
         for (_, _, mi) in &leaves {
             assert_eq!(mi.block_size, BlockSize::Block16x16);
@@ -5711,8 +6174,15 @@ mod tests {
                 splat_cell(&mut grid, mi_cols as usize, r, c, stamp);
             }
         }
-        let leaves =
-            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        let leaves = encode_then_replay_inter(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+        );
         // 2 (8x16) + 15 (16x16) = 17 leaves.
         assert_eq!(leaves.len(), 17);
         // First two leaves are the 8x16 pair.
@@ -5754,8 +6224,15 @@ mod tests {
                 splat_cell(&mut grid, mi_cols as usize, r, c, stamp);
             }
         }
-        let leaves =
-            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        let leaves = encode_then_replay_inter(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+        );
         assert_eq!(leaves.len(), 17);
         assert_eq!(leaves[0].2.block_size, BlockSize::Block16x8);
         assert_eq!(leaves[1].2.block_size, BlockSize::Block16x8);
@@ -5779,8 +6256,15 @@ mod tests {
         );
         splat_cell(&mut grid, mi_cols as usize, 0, 0, half);
         splat_cell(&mut grid, mi_cols as usize, 0, 4, half);
-        let leaves =
-            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        let leaves = encode_then_replay_inter(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+        );
         assert_eq!(leaves.len(), 2);
         assert_eq!(leaves[0].2.block_size, BlockSize::Block32x64);
         assert_eq!(leaves[1].2.block_size, BlockSize::Block32x64);
@@ -5804,8 +6288,15 @@ mod tests {
         );
         splat_cell(&mut grid, mi_cols as usize, 0, 0, half);
         splat_cell(&mut grid, mi_cols as usize, 4, 0, half);
-        let leaves =
-            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        let leaves = encode_then_replay_inter(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+        );
         assert_eq!(leaves.len(), 2);
         assert_eq!(leaves[0].2.block_size, BlockSize::Block64x32);
         assert_eq!(leaves[1].2.block_size, BlockSize::Block64x32);
@@ -6014,18 +6505,23 @@ mod tests {
         assert_eq!(total_partition, 1, "partition counted once");
         let total_skip: u32 = counts.skip.iter().map(|c| c[0] + c[1]).sum();
         assert_eq!(total_skip, 1);
-        let total_intra_inter: u32 =
-            counts.intra_inter.iter().map(|c| c[0] + c[1]).sum();
+        let total_intra_inter: u32 = counts.intra_inter.iter().map(|c| c[0] + c[1]).sum();
         assert_eq!(total_intra_inter, 1);
-        let total_inter_mode: u32 =
-            counts.inter_mode.iter().map(|c| c.iter().sum::<u32>()).sum();
+        let total_inter_mode: u32 = counts
+            .inter_mode
+            .iter()
+            .map(|c| c.iter().sum::<u32>())
+            .sum();
         assert_eq!(total_inter_mode, 1);
     }
 
     /// ModesWriterError Display impl coverage — each variant.
     #[test]
     fn s5_modes_writer_error_display_missing_cell() {
-        let e = ModesWriterError::MissingCell { mi_row: 1, mi_col: 2 };
+        let e = ModesWriterError::MissingCell {
+            mi_row: 1,
+            mi_col: 2,
+        };
         let s = format!("{e}");
         assert!(s.contains("missing cell"));
         assert!(s.contains('1') && s.contains('2'));
@@ -6057,28 +6553,40 @@ mod tests {
 
     #[test]
     fn s5_modes_writer_error_display_unsupported_block_mode() {
-        let e = ModesWriterError::UnsupportedBlockMode { mi_row: 5, mi_col: 6 };
+        let e = ModesWriterError::UnsupportedBlockMode {
+            mi_row: 5,
+            mi_col: 6,
+        };
         let s = format!("{e}");
         assert!(s.contains("intra"));
     }
 
     #[test]
     fn s5_modes_writer_error_display_unsupported_non_skip() {
-        let e = ModesWriterError::UnsupportedNonSkip { mi_row: 0, mi_col: 0 };
+        let e = ModesWriterError::UnsupportedNonSkip {
+            mi_row: 0,
+            mi_col: 0,
+        };
         let s = format!("{e}");
         assert!(s.contains("skip"));
     }
 
     #[test]
     fn s5_modes_writer_error_display_unsupported_segmentation() {
-        let e = ModesWriterError::UnsupportedSegmentation { mi_row: 0, mi_col: 0 };
+        let e = ModesWriterError::UnsupportedSegmentation {
+            mi_row: 0,
+            mi_col: 0,
+        };
         let s = format!("{e}");
         assert!(s.contains("segment_id"));
     }
 
     #[test]
     fn s5_modes_writer_error_display_non_multiple_of_sb() {
-        let e = ModesWriterError::NonMultipleOfSb { mi_rows: 5, mi_cols: 9 };
+        let e = ModesWriterError::NonMultipleOfSb {
+            mi_rows: 5,
+            mi_cols: 9,
+        };
         let s = format!("{e}");
         assert!(s.contains("multiples of 8"));
     }
@@ -6099,7 +6607,10 @@ mod tests {
 
     #[test]
     fn s5_modes_writer_error_display_unsupported_intra_in_inter() {
-        let e = ModesWriterError::UnsupportedIntraInInter { mi_row: 0, mi_col: 0 };
+        let e = ModesWriterError::UnsupportedIntraInInter {
+            mi_row: 0,
+            mi_col: 0,
+        };
         let s = format!("{e}");
         assert!(s.contains("intra-in-inter"));
     }
@@ -6143,7 +6654,10 @@ mod tests {
         // Direct call to `infer_inter_partition` with bsize=Block8x8.
         let err = infer_inter_partition(&grid, mi_cols as usize, 0, 0, BlockSize::Block8x8)
             .expect_err("inconsistent");
-        assert!(matches!(err, ModesWriterError::InconsistentPartitionTree { .. }));
+        assert!(matches!(
+            err,
+            ModesWriterError::InconsistentPartitionTree { .. }
+        ));
     }
 
     /// `infer_inter_partition` returns SPLIT for the canonical
@@ -6161,8 +6675,8 @@ mod tests {
             InterpFilter::EightTap,
         );
         grid[0] = Some(cell);
-        let p = infer_inter_partition(&grid, mi_cols as usize, 0, 0, BlockSize::Block8x8)
-            .expect("ok");
+        let p =
+            infer_inter_partition(&grid, mi_cols as usize, 0, 0, BlockSize::Block8x8).expect("ok");
         assert_eq!(p, PartitionType::Split);
     }
 
@@ -6216,14 +6730,16 @@ mod tests {
         .expect("ok");
         // 1 SPLIT at root + 4 NONE at the 32x32 leaves = 5 partition
         // entries.
-        let total_partition: u32 =
-            counts.partition.iter().map(|c| c.iter().sum::<u32>()).sum();
+        let total_partition: u32 = counts.partition.iter().map(|c| c.iter().sum::<u32>()).sum();
         assert_eq!(total_partition, 5);
         // 4 inter leaves → 4 skip entries, 4 inter_mode entries.
         let total_skip: u32 = counts.skip.iter().map(|c| c[0] + c[1]).sum();
         assert_eq!(total_skip, 4);
-        let total_inter_mode: u32 =
-            counts.inter_mode.iter().map(|c| c.iter().sum::<u32>()).sum();
+        let total_inter_mode: u32 = counts
+            .inter_mode
+            .iter()
+            .map(|c| c.iter().sum::<u32>())
+            .sum();
         assert_eq!(total_inter_mode, 4);
     }
 
@@ -6273,8 +6789,7 @@ mod tests {
         )
         .expect("ok");
         // 1 partition + 2 inter leaves.
-        let total_partition: u32 =
-            counts.partition.iter().map(|c| c.iter().sum::<u32>()).sum();
+        let total_partition: u32 = counts.partition.iter().map(|c| c.iter().sum::<u32>()).sum();
         assert_eq!(total_partition, 1, "1 HORZ partition at root");
         let total_skip: u32 = counts.skip.iter().map(|c| c[0] + c[1]).sum();
         assert_eq!(total_skip, 2);
@@ -6324,8 +6839,7 @@ mod tests {
             Some(&mut counts),
         )
         .expect("ok");
-        let total_partition: u32 =
-            counts.partition.iter().map(|c| c.iter().sum::<u32>()).sum();
+        let total_partition: u32 = counts.partition.iter().map(|c| c.iter().sum::<u32>()).sum();
         assert_eq!(total_partition, 1);
     }
 
@@ -6523,7 +7037,11 @@ mod tests {
         )
         .expect("ok");
         // 16 16x16 leaves → 16 inter_mode counts.
-        let total: u32 = counts.inter_mode.iter().map(|c| c.iter().sum::<u32>()).sum();
+        let total: u32 = counts
+            .inter_mode
+            .iter()
+            .map(|c| c.iter().sum::<u32>())
+            .sum();
         assert_eq!(total, 16);
     }
 
@@ -6576,7 +7094,11 @@ mod tests {
         )
         .expect("ok");
         // 64 8x8 leaves → 64 inter_mode counts.
-        let total: u32 = counts.inter_mode.iter().map(|c| c.iter().sum::<u32>()).sum();
+        let total: u32 = counts
+            .inter_mode
+            .iter()
+            .map(|c| c.iter().sum::<u32>())
+            .sum();
         assert_eq!(total, 64);
     }
 
@@ -6848,7 +7370,10 @@ mod tests {
             &coef_source,
         )
         .unwrap_err();
-        assert!(matches!(err, ModesWriterError::UnsupportedSegmentation { .. }));
+        assert!(matches!(
+            err,
+            ModesWriterError::UnsupportedSegmentation { .. }
+        ));
     }
 
     /// `write_block_intra_keyframe` rejects non-zero segment_id when
@@ -6898,7 +7423,10 @@ mod tests {
             &coef_source,
         )
         .unwrap_err();
-        assert!(matches!(err, ModesWriterError::UnsupportedSegmentation { .. }));
+        assert!(matches!(
+            err,
+            ModesWriterError::UnsupportedSegmentation { .. }
+        ));
     }
 
     /// HORZ partition with second leaf cell missing — should
@@ -6948,7 +7476,13 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(err, ModesWriterError::MissingCell { mi_row: 4, mi_col: 0 }),
+            matches!(
+                err,
+                ModesWriterError::MissingCell {
+                    mi_row: 4,
+                    mi_col: 0
+                }
+            ),
             "actual: {err:?}",
         );
     }
@@ -6997,7 +7531,13 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(err, ModesWriterError::MissingCell { mi_row: 0, mi_col: 4 }),
+            matches!(
+                err,
+                ModesWriterError::MissingCell {
+                    mi_row: 0,
+                    mi_col: 4
+                }
+            ),
             "actual: {err:?}",
         );
     }
@@ -7046,7 +7586,13 @@ mod tests {
             &coef_source,
         )
         .unwrap_err();
-        assert!(matches!(err, ModesWriterError::MissingCell { mi_row: 4, mi_col: 0 }));
+        assert!(matches!(
+            err,
+            ModesWriterError::MissingCell {
+                mi_row: 4,
+                mi_col: 0
+            }
+        ));
     }
 
     /// Keyframe VERT partition with missing right leaf.
@@ -7093,7 +7639,13 @@ mod tests {
             &coef_source,
         )
         .unwrap_err();
-        assert!(matches!(err, ModesWriterError::MissingCell { mi_row: 0, mi_col: 4 }));
+        assert!(matches!(
+            err,
+            ModesWriterError::MissingCell {
+                mi_row: 0,
+                mi_col: 4
+            }
+        ));
     }
 
     /// `InterModeWriteError` propagates through
@@ -7168,7 +7720,14 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(err, ModesWriterError::InterModeWrite { mi_row: 0, mi_col: 0, .. }),
+            matches!(
+                err,
+                ModesWriterError::InterModeWrite {
+                    mi_row: 0,
+                    mi_col: 0,
+                    ..
+                }
+            ),
             "actual: {err:?}",
         );
     }
@@ -7186,7 +7745,13 @@ mod tests {
             BlockSize::Block8x8,
             InterMode::NewMv,
             [RefFrame::LastFrame, RefFrame::NoRefFrame],
-            [Mv { row: 100, col: -100 }, Mv::ZERO],
+            [
+                Mv {
+                    row: 100,
+                    col: -100,
+                },
+                Mv::ZERO,
+            ],
             InterpFilter::EightTap,
         );
         cell.skip = false;
@@ -7377,7 +7942,14 @@ mod tests {
 
         let coef_source = crate::bitstream::AllZeroCoefSource::new();
         let (leaves, _residuals) = encode_then_replay_inter_full(
-            &fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None, &coef_source,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+            &coef_source,
         );
         assert_eq!(leaves.len(), 4);
         for (_, _, mi) in &leaves {
@@ -7405,7 +7977,14 @@ mod tests {
         splat_cell(&mut grid, mi_cols as usize, 4, 0, cell);
         let coef_source = crate::bitstream::AllZeroCoefSource::new();
         let (leaves, _) = encode_then_replay_inter_full(
-            &fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None, &coef_source,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+            &coef_source,
         );
         assert_eq!(leaves.len(), 2);
     }
@@ -7430,7 +8009,14 @@ mod tests {
         splat_cell(&mut grid, mi_cols as usize, 0, 4, cell);
         let coef_source = crate::bitstream::AllZeroCoefSource::new();
         let (leaves, _) = encode_then_replay_inter_full(
-            &fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None, &coef_source,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+            &coef_source,
         );
         assert_eq!(leaves.len(), 2);
     }
@@ -8037,7 +8623,11 @@ mod tests {
         )
         .expect("ok");
         // 16 leaves, 16 skip counts, 16 inter_mode counts.
-        let total: u32 = counts.inter_mode.iter().map(|c| c.iter().sum::<u32>()).sum();
+        let total: u32 = counts
+            .inter_mode
+            .iter()
+            .map(|c| c.iter().sum::<u32>())
+            .sum();
         assert_eq!(total, 16);
         // skip=false on each leaf.
         let total_skip: u32 = counts.skip.iter().map(|c| c[0] + c[1]).sum();
@@ -8081,7 +8671,10 @@ mod tests {
             None,
         )
         .expect_err("expected UnsupportedSegmentation");
-        assert!(matches!(err, ModesWriterError::UnsupportedSegmentation { .. }));
+        assert!(matches!(
+            err,
+            ModesWriterError::UnsupportedSegmentation { .. }
+        ));
     }
 
     /// Intra-in-inter leaf: the writer emits y_mode + uv_mode via
@@ -8213,8 +8806,15 @@ mod tests {
             InterpFilter::EightTapSharp,
         );
         let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
-        let leaves =
-            encode_then_replay_inter(&fc, &params, TxMode::AllowTx32x32, mi_rows, mi_cols, &grid, None);
+        let leaves = encode_then_replay_inter(
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            mi_rows,
+            mi_cols,
+            &grid,
+            None,
+        );
         assert_eq!(leaves.len(), 1);
         assert_inter_match(&cell, &leaves[0].2, "compound + sharp filter");
     }

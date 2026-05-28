@@ -221,8 +221,7 @@ pub const ENTROPY_TOKENS: usize = 12;
 /// ENCODER-ONLY histogram the TWO_LOOP coef-prob savings search needs to
 /// score the 8 downstream Pareto-8 model nodes; the decoder never
 /// populates it.
-pub type CoefFullCountsBlock =
-    [[[u32; ENTROPY_TOKENS]; COEFF_CONTEXTS]; COEF_BANDS];
+pub type CoefFullCountsBlock = [[[u32; ENTROPY_TOKENS]; COEFF_CONTEXTS]; COEF_BANDS];
 
 /// Mutable per-block count buckets bundled into one struct so the
 /// caller passes a single `Option<&mut DecodeCoefCounts>` instead of
@@ -407,7 +406,11 @@ pub fn decode_coefs(
     }
 
     let band_translate = get_band_translate(tx_size);
-    let dq_shift: u32 = if matches!(tx_size, TxSize::Tx32x32) { 1 } else { 0 };
+    let dq_shift: u32 = if matches!(tx_size, TxSize::Tx32x32) {
+        1
+    } else {
+        0
+    };
 
     // R.2: hoist the `decode_coefs` `token_cache` scratch buffer to a
     // per-thread `RefCell` (see `DecodeCoefsScratch` above). The
@@ -810,7 +813,11 @@ pub fn decode_coefs_libvpx_ref(
     } else {
         &VP9_COEFBAND_TRANS_8X8PLUS
     };
-    let dq_shift: u32 = if matches!(tx_size, TxSize::Tx32x32) { 1 } else { 0 };
+    let dq_shift: u32 = if matches!(tx_size, TxSize::Tx32x32) {
+        1
+    } else {
+        0
+    };
 
     let mut token_cache = vec![0u8; tx_size.n_coeffs()];
 
@@ -902,7 +909,6 @@ pub fn decode_coefs_libvpx_ref(
     c
 }
 
-
 /// Write `n` raw bits MSB-first under the given per-bit probability
 /// vector. Mirror of [`read_coeff_bits`] (libvpx `vp9_detokenize.c:107-113`)
 /// for the encoder side: emits `probs.len()` bits, with bit `i` of `val`
@@ -927,15 +933,15 @@ fn write_coeff_bits(bw: &mut BoolWriter<'_>, val: i32, probs: &[u8]) {
 #[must_use]
 fn full_token_from_abs(abs_val: i32) -> usize {
     match abs_val {
-        2 => TWO_TOKEN,        // 2
-        3 => 3,                // THREE_TOKEN
-        4 => 4,                // FOUR_TOKEN
-        5..=6 => 5,            // CAT1: 5..=6
-        7..=10 => 6,           // CAT2: 7..=10
-        11..=18 => 7,          // CAT3: 11..=18
-        19..=34 => 8,          // CAT4: 19..=34
-        35..=66 => 9,          // CAT5: 35..=66
-        _ => 10,               // CAT6: >= 67
+        2 => TWO_TOKEN, // 2
+        3 => 3,         // THREE_TOKEN
+        4 => 4,         // FOUR_TOKEN
+        5..=6 => 5,     // CAT1: 5..=6
+        7..=10 => 6,    // CAT2: 7..=10
+        11..=18 => 7,   // CAT3: 11..=18
+        19..=34 => 8,   // CAT4: 19..=34
+        35..=66 => 9,   // CAT5: 35..=66
+        _ => 10,        // CAT6: >= 67
     }
 }
 
@@ -1305,8 +1311,7 @@ pub fn write_block_tokens(
 
     // libvpx `cm->fc->coef_probs[tx_size][plane_type][ref_type]`
     // (`vp9_detokenize.c:159-161`).
-    let coef_probs: &CoefBandCtxProbs =
-        &fc.coef_probs[tx_size as usize][plane_type][ref_type];
+    let coef_probs: &CoefBandCtxProbs = &fc.coef_probs[tx_size as usize][plane_type][ref_type];
 
     // libvpx `vp9_scan_orders[tx_size][tx_type]`
     // (`vp9_decodeframe.c:326-328`).
@@ -1341,8 +1346,7 @@ pub fn write_block_tokens(
     // independent `Option`s.
     let mut block_counts = match (counts, full_counts) {
         (Some(c), full) => {
-            let full_slice =
-                full.map(|f| &mut f[tx_size as usize][plane_type][ref_type]);
+            let full_slice = full.map(|f| &mut f[tx_size as usize][plane_type][ref_type]);
             Some(DecodeCoefCounts {
                 coef_counts: &mut c.coef[tx_size as usize][plane_type][ref_type],
                 eob_branch_counts: &mut c.eob_branch[tx_size as usize][plane_type][ref_type],
@@ -1351,8 +1355,17 @@ pub fn write_block_tokens(
         }
         (None, _) => None,
     };
-    encode_coefs(bw, coef_probs, &scan, initial_pt, tx_size, seg_eob, raw_coefs, eob,
-                 block_counts.as_mut());
+    encode_coefs(
+        bw,
+        coef_probs,
+        &scan,
+        initial_pt,
+        tx_size,
+        seg_eob,
+        raw_coefs,
+        eob,
+        block_counts.as_mut(),
+    );
 
     // Writeback: splat `(eob > 0)` across the (n × n) sub-block
     // region. libvpx `vp9_detokenize.c:294/302/311/323`.
@@ -1790,8 +1803,7 @@ mod tests {
         let scan = default_scan_4x4();
         let mut coef_counts: CoefCountsBlock =
             [[[0u32; UNCONSTRAINED_NODES + 1]; COEFF_CONTEXTS]; COEF_BANDS];
-        let mut eob_branch_counts: EobBranchCountsBlock =
-            [[0u32; COEFF_CONTEXTS]; COEF_BANDS];
+        let mut eob_branch_counts: EobBranchCountsBlock = [[0u32; COEFF_CONTEXTS]; COEF_BANDS];
         let mut counts = DecodeCoefCounts {
             coef_counts: &mut coef_counts,
             eob_branch_counts: &mut eob_branch_counts,
@@ -1880,7 +1892,9 @@ mod tests {
         assert_eq!(VP9_CAT5_PROB, [180, 157, 141, 134, 130]);
         assert_eq!(
             VP9_CAT6_PROB,
-            [254, 254, 254, 252, 249, 243, 230, 196, 177, 153, 140, 133, 130, 129]
+            [
+                254, 254, 254, 252, 249, 243, 230, 196, 177, 153, 140, 133, 130, 129
+            ]
         );
     }
 
@@ -2085,7 +2099,11 @@ mod tests {
         } else {
             &VP9_COEFBAND_TRANS_8X8PLUS
         };
-        let dq_shift: u32 = if matches!(tx_size, TxSize::Tx32x32) { 1 } else { 0 };
+        let dq_shift: u32 = if matches!(tx_size, TxSize::Tx32x32) {
+            1
+        } else {
+            0
+        };
 
         // Determine an EOB roll: 30% empty (EOB@0), 60% truncated mid,
         // 10% full-length (run to seg_eob via zero-run).
@@ -2097,8 +2115,8 @@ mod tests {
             1 + (rng.next_range(n as u32) as usize % n)
         } else {
             n // attempt to run all the way (rarely reachable since the
-              // last position consumes the EOB read; we cap by max_eob
-              // path which exits via the inner zero-run early-return).
+            // last position consumes the EOB read; we cap by max_eob
+            // path which exits via the inner zero-run early-return).
         };
 
         let mut bytes = vec![0u8; n * 8 + 256]; // generous
@@ -2505,7 +2523,9 @@ mod tests {
         let mut buf = vec![0u8; tx_size.n_coeffs() * 8 + 256];
         let n = {
             let mut bw = BoolWriter::start_encode(&mut buf);
-            encode_coefs(&mut bw, probs, scan, initial_pt, tx_size, seg_eob, raw_coefs, eob, None);
+            encode_coefs(
+                &mut bw, probs, scan, initial_pt, tx_size, seg_eob, raw_coefs, eob, None,
+            );
             for _ in 0..32 {
                 bw.write_bit(0);
             }
@@ -2852,7 +2872,8 @@ mod tests {
         let mut r = BoolReader::new(&bytes).unwrap();
         let scan = default_scan_4x4();
         let mut dqc = vec![0i32; 16];
-        let mut coef_counts: CoefCountsBlock = [[[0; UNCONSTRAINED_NODES + 1]; COEFF_CONTEXTS]; COEF_BANDS];
+        let mut coef_counts: CoefCountsBlock =
+            [[[0; UNCONSTRAINED_NODES + 1]; COEFF_CONTEXTS]; COEF_BANDS];
         let mut eob_branch_counts: EobBranchCountsBlock = [[0; COEFF_CONTEXTS]; COEF_BANDS];
         let mut counts = DecodeCoefCounts {
             coef_counts: &mut coef_counts,
@@ -2877,7 +2898,11 @@ mod tests {
         assert!(zero_total >= 1, "expected at least one ZERO_TOKEN tally");
         let one_total: u32 = coef_counts.iter().flatten().map(|t| t[ONE_TOKEN]).sum();
         assert_eq!(one_total, 1, "exactly one ONE_TOKEN");
-        let eob_total: u32 = coef_counts.iter().flatten().map(|t| t[EOB_MODEL_TOKEN]).sum();
+        let eob_total: u32 = coef_counts
+            .iter()
+            .flatten()
+            .map(|t| t[EOB_MODEL_TOKEN])
+            .sum();
         assert_eq!(eob_total, 1, "exactly one EOB_MODEL_TOKEN");
         let eob_branch_total: u32 = eob_branch_counts.iter().flatten().sum();
         // Two outer iterations: pos 0 (NOT-EOB → ZERO → NOT-ZERO →
@@ -2923,9 +2948,7 @@ mod tests {
 
     #[test]
     fn encode_coefs_round_trips_all_tx_sizes() {
-        use crate::transforms::scans::{
-            default_scan_16x16, default_scan_32x32, default_scan_8x8,
-        };
+        use crate::transforms::scans::{default_scan_8x8, default_scan_16x16, default_scan_32x32};
         // Per-tx_size table of (TxSize, ScanOrder ctor). Tx32x32 will
         // use dq=(2,2) via `assert_round_trip`'s built-in switch.
         #[allow(clippy::type_complexity)] // one-off test config table
@@ -3085,8 +3108,7 @@ mod tests {
         // Decode side: replicate the per-TX-block setup
         // `decode_block_tokens` performs before its `decode_coefs` call.
         let plane_type = usize::from(plane > 0);
-        let coef_probs: &CoefBandCtxProbs =
-            &fc.coef_probs[tx_size as usize][plane_type][ref_type];
+        let coef_probs: &CoefBandCtxProbs = &fc.coef_probs[tx_size as usize][plane_type][ref_type];
         let scan = scan_for(tx_size, tx_type);
         let n_span = 1usize << (tx_size as usize);
         let a_any = fold_any_nonzero(&dec_ctx, plane, x4, n_span, true);
@@ -3097,11 +3119,21 @@ mod tests {
         let mut dq_out = vec![0i32; n];
         let dq = identity_dq(tx_size);
         let recovered_eob = decode_coefs(
-            &mut r, coef_probs, None, &scan, initial_pt, tx_size, seg_eob, dq,
+            &mut r,
+            coef_probs,
+            None,
+            &scan,
+            initial_pt,
+            tx_size,
+            seg_eob,
+            dq,
             &mut dq_out,
         );
 
-        assert_eq!(recovered_eob, eob, "eob mismatch (plane={plane}, x4={x4}, y4_in_sb={y4_in_sb})");
+        assert_eq!(
+            recovered_eob, eob,
+            "eob mismatch (plane={plane}, x4={x4}, y4_in_sb={y4_in_sb})"
+        );
         assert_eq!(&dq_out[..], &raw_coefs[..n], "coef mismatch");
 
         // Mirror the writeback into dec_ctx so the caller can compare
@@ -3134,7 +3166,9 @@ mod tests {
     fn write_block_tokens_y_intra_tx4x4_empty() {
         let raw = vec![0i32; 16];
         let ctx = round_trip_block_tokens(
-            0, 0, 0,
+            0,
+            0,
+            0,
             TxSize::Tx4x4,
             TxType::DctDct,
             0, // intra
@@ -3155,11 +3189,13 @@ mod tests {
     fn write_block_tokens_y_intra_tx4x4_three_nonzero() {
         let scan = scan_for(TxSize::Tx4x4, TxType::DctDct);
         let mut raw = vec![0i32; 16];
-        raw[scan.scan[0] as usize] = 1;   // ONE_TOKEN, positive
-        raw[scan.scan[1] as usize] = -2;  // TWO_TOKEN, negative
-        raw[scan.scan[2] as usize] = 7;   // CAT2 (7..=10), positive
+        raw[scan.scan[0] as usize] = 1; // ONE_TOKEN, positive
+        raw[scan.scan[1] as usize] = -2; // TWO_TOKEN, negative
+        raw[scan.scan[2] as usize] = 7; // CAT2 (7..=10), positive
         let ctx = round_trip_block_tokens(
-            0, 0, 0,
+            0,
+            0,
+            0,
             TxSize::Tx4x4,
             TxType::DctDct,
             0,
@@ -3182,11 +3218,17 @@ mod tests {
         let mut raw = vec![0i32; 64];
         // Fill scan[0..10] with small non-zero values.
         for c in 0..10 {
-            let v = if c % 2 == 0 { 1 + (c as i32) } else { -(1 + c as i32) };
+            let v = if c % 2 == 0 {
+                1 + (c as i32)
+            } else {
+                -(1 + c as i32)
+            };
             raw[scan.scan[c] as usize] = v;
         }
         let ctx = round_trip_block_tokens(
-            0, 0, 0,
+            0,
+            0,
+            0,
             TxSize::Tx8x8,
             TxType::DctDct,
             1, // inter
@@ -3212,14 +3254,16 @@ mod tests {
             let v: i32 = match c % 5 {
                 0 => 1,
                 1 => -1,
-                2 => 5,    // CAT1 (5..=6)
-                3 => -11,  // CAT3 (11..=18)
+                2 => 5,   // CAT1 (5..=6)
+                3 => -11, // CAT3 (11..=18)
                 _ => 3,
             };
             raw[scan.scan[c] as usize] = v;
         }
         let ctx = round_trip_block_tokens(
-            1, 0, 0,
+            1,
+            0,
+            0,
             TxSize::Tx16x16,
             TxType::DctDct,
             1,
@@ -3258,7 +3302,7 @@ mod tests {
                 0 | 4 => 0, // zero within run
                 1 => 1,
                 2 => -2,
-                3 => 5,    // CAT1
+                3 => 5, // CAT1
                 5 => 3,
                 _ => -1,
             };
@@ -3271,7 +3315,9 @@ mod tests {
         raw[scan.scan[63] as usize] = 1;
 
         let ctx = round_trip_block_tokens(
-            0, 0, 0,
+            0,
+            0,
+            0,
             TxSize::Tx32x32,
             TxType::DctDct,
             0,
@@ -3312,12 +3358,36 @@ mod tests {
         let written = {
             let mut bw = BoolWriter::start_encode(&mut buf);
             write_block_tokens(
-                &mut bw, &fc, &mut enc_ctx, 0, 0, 0,
-                TxSize::Tx4x4, TxType::DctDct, 0, 16, &raw_a, eob_a, None, None,
+                &mut bw,
+                &fc,
+                &mut enc_ctx,
+                0,
+                0,
+                0,
+                TxSize::Tx4x4,
+                TxType::DctDct,
+                0,
+                16,
+                &raw_a,
+                eob_a,
+                None,
+                None,
             );
             write_block_tokens(
-                &mut bw, &fc, &mut enc_ctx, 0, 1, 0,
-                TxSize::Tx4x4, TxType::DctDct, 0, 16, &raw_b, eob_b, None, None,
+                &mut bw,
+                &fc,
+                &mut enc_ctx,
+                0,
+                1,
+                0,
+                TxSize::Tx4x4,
+                TxType::DctDct,
+                0,
+                16,
+                &raw_b,
+                eob_b,
+                None,
+                None,
             );
             for _ in 0..32 {
                 bw.write_bit(0);
@@ -3345,8 +3415,15 @@ mod tests {
         assert_eq!(initial_pt_a, 0, "A at origin: pt=0");
         let mut dq_out_a = vec![0i32; 16];
         let recovered_eob_a = decode_coefs(
-            &mut r, coef_probs, None, &scan, initial_pt_a,
-            TxSize::Tx4x4, 16, (1, 1), &mut dq_out_a,
+            &mut r,
+            coef_probs,
+            None,
+            &scan,
+            initial_pt_a,
+            TxSize::Tx4x4,
+            16,
+            (1, 1),
+            &mut dq_out_a,
         );
         assert_eq!(recovered_eob_a, eob_a);
         assert_eq!(dq_out_a, raw_a);
@@ -3360,8 +3437,15 @@ mod tests {
         assert_eq!(initial_pt_b, 1, "B right of A: pt = 0 + 1 = 1");
         let mut dq_out_b = vec![0i32; 16];
         let recovered_eob_b = decode_coefs(
-            &mut r, coef_probs, None, &scan, initial_pt_b,
-            TxSize::Tx4x4, 16, (1, 1), &mut dq_out_b,
+            &mut r,
+            coef_probs,
+            None,
+            &scan,
+            initial_pt_b,
+            TxSize::Tx4x4,
+            16,
+            (1, 1),
+            &mut dq_out_b,
         );
         assert_eq!(recovered_eob_b, eob_b);
         assert_eq!(dq_out_b, raw_b);
@@ -3370,16 +3454,10 @@ mod tests {
         // Encoder / decoder ctxs end in the same state.
         for plane in 0..3 {
             for x in 0..enc_ctx.above_coef_width(plane) {
-                assert_eq!(
-                    enc_ctx.above_coef(plane, x),
-                    dec_ctx.above_coef(plane, x),
-                );
+                assert_eq!(enc_ctx.above_coef(plane, x), dec_ctx.above_coef(plane, x),);
             }
             for y in 0..enc_ctx.left_coef_height(plane) {
-                assert_eq!(
-                    enc_ctx.left_coef(plane, y),
-                    dec_ctx.left_coef(plane, y),
-                );
+                assert_eq!(enc_ctx.left_coef(plane, y), dec_ctx.left_coef(plane, y),);
             }
         }
     }
@@ -3396,7 +3474,9 @@ mod tests {
         raw[scan.scan[2] as usize] = 3;
         // seg_eob=5 (< n_coeffs=16), eob=3.
         round_trip_block_tokens(
-            0, 0, 0,
+            0,
+            0,
+            0,
             TxSize::Tx4x4,
             TxType::DctDct,
             0,
@@ -3418,7 +3498,8 @@ mod tests {
         raw[scan.scan[0] as usize] = 1;
         round_trip_block_tokens(
             0,
-            2, 2, // place the block away from origin so the seed cells aren't overwritten
+            2,
+            2, // place the block away from origin so the seed cells aren't overwritten
             TxSize::Tx4x4,
             TxType::DctDct,
             0,
@@ -3454,8 +3535,7 @@ mod tests {
 
         let mut coef_counts: CoefCountsBlock =
             [[[0u32; UNCONSTRAINED_NODES + 1]; COEFF_CONTEXTS]; COEF_BANDS];
-        let mut eob_branch_counts: EobBranchCountsBlock =
-            [[0u32; COEFF_CONTEXTS]; COEF_BANDS];
+        let mut eob_branch_counts: EobBranchCountsBlock = [[0u32; COEFF_CONTEXTS]; COEF_BANDS];
         let mut buf = vec![0u8; 256];
         let _ = {
             let mut bw = BoolWriter::start_encode(&mut buf);
@@ -3464,41 +3544,54 @@ mod tests {
                 eob_branch_counts: &mut eob_branch_counts,
                 full_counts: None,
             };
-            encode_coefs(&mut bw, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1,
-                         Some(&mut counts));
+            encode_coefs(
+                &mut bw,
+                &probs,
+                &scan,
+                0,
+                TxSize::Tx4x4,
+                16,
+                &raw,
+                1,
+                Some(&mut counts),
+            );
             bw.stop_encode().unwrap()
         };
 
         // Outer-loop iteration at c=0: eob_branch[0][0] += 1.
-        assert_eq!(eob_branch_counts[0][0], 1,
-                   "outer-loop eob_branch attempt at c=0");
+        assert_eq!(
+            eob_branch_counts[0][0], 1,
+            "outer-loop eob_branch attempt at c=0"
+        );
         // ONE_TOKEN at c=0: coef_counts[0][0][ONE_TOKEN] += 1.
-        assert_eq!(coef_counts[0][0][ONE_TOKEN], 1,
-                   "ONE_TOKEN tally at c=0");
+        assert_eq!(coef_counts[0][0][ONE_TOKEN], 1, "ONE_TOKEN tally at c=0");
 
         // Terminal EOB at eob=1 (eob<seg_eob=16 so terminal bit fires).
         // band = band_translate[1] (4x4: band 1), ctx = post-ONE_TOKEN ctx.
         // The exact (band, ctx) depends on `get_coef_context`, but
         // exactly one EOB_MODEL_TOKEN + one eob_branch must be tallied
         // SOMEWHERE in the table.
-        let total_eob_model: u32 = coef_counts.iter()
+        let total_eob_model: u32 = coef_counts
+            .iter()
             .flat_map(|b| b.iter())
             .map(|ctx| ctx[EOB_MODEL_TOKEN])
             .sum();
         assert_eq!(total_eob_model, 1, "exactly one terminal EOB_MODEL tally");
-        let total_eob_branch: u32 = eob_branch_counts.iter()
-            .flat_map(|b| b.iter())
-            .sum();
-        assert_eq!(total_eob_branch, 2,
-                   "two eob_branch attempts: one outer-loop, one terminal");
+        let total_eob_branch: u32 = eob_branch_counts.iter().flat_map(|b| b.iter()).sum();
+        assert_eq!(
+            total_eob_branch, 2,
+            "two eob_branch attempts: one outer-loop, one terminal"
+        );
 
         // Nothing else should have been touched.
-        let total_zero: u32 = coef_counts.iter()
+        let total_zero: u32 = coef_counts
+            .iter()
             .flat_map(|b| b.iter())
             .map(|ctx| ctx[ZERO_TOKEN])
             .sum();
         assert_eq!(total_zero, 0, "no ZERO_TOKEN tallies (no zeros in input)");
-        let total_two: u32 = coef_counts.iter()
+        let total_two: u32 = coef_counts
+            .iter()
             .flat_map(|b| b.iter())
             .map(|ctx| ctx[TWO_TOKEN])
             .sum();
@@ -3517,8 +3610,7 @@ mod tests {
         let mut buf = vec![0u8; 256];
         let _ = {
             let mut bw = BoolWriter::start_encode(&mut buf);
-            encode_coefs(&mut bw, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1,
-                         None);
+            encode_coefs(&mut bw, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1, None);
             bw.stop_encode().unwrap()
         };
         // If we got here, the None path didn't panic.
@@ -3563,8 +3655,7 @@ mod tests {
                 }
                 let mut enc_coef: CoefCountsBlock =
                     [[[0u32; UNCONSTRAINED_NODES + 1]; COEFF_CONTEXTS]; COEF_BANDS];
-                let mut enc_eob: EobBranchCountsBlock =
-                    [[0u32; COEFF_CONTEXTS]; COEF_BANDS];
+                let mut enc_eob: EobBranchCountsBlock = [[0u32; COEFF_CONTEXTS]; COEF_BANDS];
                 let mut buf = vec![0u8; 1024];
                 let n = {
                     let mut bw = BoolWriter::start_encode(&mut buf);
@@ -3573,16 +3664,26 @@ mod tests {
                         eob_branch_counts: &mut enc_eob,
                         full_counts: None,
                     };
-                    encode_coefs(&mut bw, &probs, &scan, 0, tx, ncoef, &raw,
-                                 *eob, Some(&mut ec));
-                    for _ in 0..16 { bw.write_bit(0); }
+                    encode_coefs(
+                        &mut bw,
+                        &probs,
+                        &scan,
+                        0,
+                        tx,
+                        ncoef,
+                        &raw,
+                        *eob,
+                        Some(&mut ec),
+                    );
+                    for _ in 0..16 {
+                        bw.write_bit(0);
+                    }
                     bw.stop_encode().unwrap()
                 };
                 buf.truncate(n);
                 let mut dec_coef: CoefCountsBlock =
                     [[[0u32; UNCONSTRAINED_NODES + 1]; COEFF_CONTEXTS]; COEF_BANDS];
-                let mut dec_eob: EobBranchCountsBlock =
-                    [[0u32; COEFF_CONTEXTS]; COEF_BANDS];
+                let mut dec_eob: EobBranchCountsBlock = [[0u32; COEFF_CONTEXTS]; COEF_BANDS];
                 let mut dqc = vec![0i32; ncoef];
                 let mut r = BoolReader::new(&buf).unwrap();
                 let mut dc = DecodeCoefCounts {
@@ -3590,14 +3691,26 @@ mod tests {
                     eob_branch_counts: &mut dec_eob,
                     full_counts: None,
                 };
-                let got_eob = decode_coefs(&mut r, &probs, Some(&mut dc), &scan,
-                                           0, tx, ncoef, (1, 1), &mut dqc);
-                assert_eq!(got_eob, *eob,
-                           "round-trip eob for {tx:?} {positions:?}");
-                assert_eq!(enc_eob, dec_eob,
-                           "eob_branch counts diverge for {tx:?} {positions:?}");
-                assert_eq!(enc_coef, dec_coef,
-                           "coef_counts diverge for {tx:?} {positions:?}");
+                let got_eob = decode_coefs(
+                    &mut r,
+                    &probs,
+                    Some(&mut dc),
+                    &scan,
+                    0,
+                    tx,
+                    ncoef,
+                    (1, 1),
+                    &mut dqc,
+                );
+                assert_eq!(got_eob, *eob, "round-trip eob for {tx:?} {positions:?}");
+                assert_eq!(
+                    enc_eob, dec_eob,
+                    "eob_branch counts diverge for {tx:?} {positions:?}"
+                );
+                assert_eq!(
+                    enc_coef, dec_coef,
+                    "coef_counts diverge for {tx:?} {positions:?}"
+                );
             }
         }
     }
