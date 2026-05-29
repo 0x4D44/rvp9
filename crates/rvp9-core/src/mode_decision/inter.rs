@@ -142,6 +142,48 @@ use crate::transforms::{TxMode, TxSize, TxType};
 // first call.
 // ---------------------------------------------------------------------
 
+/// Lever-3b / 3D — per-frame S2 skip-gate override (content-adaptive).
+///
+/// The S2 honest-skip gate is a measured content-split: it wins on
+/// high-spatial-activity natural content (foreman, +~3 dB) but regresses
+/// low-activity synthetic content (testsrc, −0.9..−1.1 dB) because the
+/// RD-domain mismatch over-states `coef_rate` when the pixel residual is
+/// tiny. A FRAME-level spatial-activity signal (source HF energy) cleanly
+/// separates the two corpora (measured: natural ≥ 9.4, synthetic ≤ 4.6),
+/// so the encoder can classify each frame and enable S2 only on
+/// "natural" frames.
+///
+/// The encoder sets this thread-local once per frame via
+/// [`set_frame_s2_gate`] (the picker runs single-threaded per frame, or
+/// the value is set on each worker before its leaves). `Some(true)` =>
+/// S2 honest-skip ON for this frame; `Some(false)` => OFF (libvpx
+/// tie-break, the byte-identical baseline). `None` (the default, and what
+/// every test / non-3D path sees) => fall back to the global env gate, so
+/// behaviour is unchanged unless the encoder opts in.
+mod frame_gate_override {
+    use std::cell::Cell;
+    thread_local! {
+        static FRAME_GATE: Cell<Option<bool>> = const { Cell::new(None) };
+    }
+    /// Current per-frame override (`None` = use the global env gate).
+    pub(super) fn get() -> Option<bool> {
+        FRAME_GATE.with(Cell::get)
+    }
+    /// Set the per-frame override for the current thread.
+    pub(super) fn set(value: Option<bool>) {
+        FRAME_GATE.with(|c| c.set(value));
+    }
+}
+
+/// Set the content-adaptive per-frame S2 skip-gate decision for the
+/// current thread. Called by the encoder's frame loop before picking a
+/// frame's modes. `Some(true)`/`Some(false)` force the gate on/off for
+/// this frame; `None` (the default) defers to the global `RVP9_S2_GATE`
+/// env. See [`frame_gate_override`].
+pub fn set_frame_s2_gate(value: Option<bool>) {
+    frame_gate_override::set(value);
+}
+
 /// S2.1 Y DCT-eob skip gate. **Default OFF.**
 ///
 /// Helps foreman ~+3 dB but content-dependently regresses other clips
@@ -149,6 +191,10 @@ use crate::transforms::{TxMode, TxSize, TxType};
 /// pending Lever-3b domain+lambda calibration. With the gate off the
 /// picker uses the ungated libvpx RD tie-break (the `1806f7a` baseline).
 /// Set `RVP9_S2_GATE=1` to enable the gate (recover the foreman win).
+///
+/// Lever-3b/3D: a per-frame content-adaptive override (set by the
+/// encoder via [`set_frame_s2_gate`]) takes precedence over the env gate
+/// when present, letting S2 be enabled only on "natural" frames.
 #[inline]
 fn s2_gate_enabled() -> bool {
     // Test-only deterministic override (set per-thread by the
@@ -157,6 +203,12 @@ fn s2_gate_enabled() -> bool {
     #[cfg(test)]
     if let Some(forced) = test_gate_override::get() {
         return forced;
+    }
+    // Lever-3b/3D content-adaptive per-frame override (set by the
+    // encoder). When present it fully decides the gate for this frame;
+    // when absent (the default everywhere else) the global env applies.
+    if let Some(frame) = frame_gate_override::get() {
+        return frame;
     }
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();

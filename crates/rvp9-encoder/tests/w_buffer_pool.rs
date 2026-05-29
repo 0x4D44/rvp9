@@ -214,8 +214,27 @@ fn a10_byte_identity_pre_vs_post_refactor() {
     // a masked regression. The pool-mapping invariant this oracle
     // guards is unchanged. Prior iter golden: (len 7870, fnv1a
     // 0x7c619264_55c875c2).
-    const GOLDEN_HASH: u64 = 0xf243_704e_e93e_b334;
-    const GOLDEN_LEN: usize = 7912;
+    //
+    // Re-captured again (2026-05-29) against current `main` after TWO
+    // stacked, independent deltas (both verified to leave the
+    // pool-mapping invariant intact):
+    //   (a) concurrent-agent DSP/fmt drift already on `main` (this is
+    //       pre-existing — encoding with `RVP9_3D=0`, which makes the
+    //       S2/3D change below inert, still diverges from the prior
+    //       golden: len 7912 -> 6448, fnv1a -> 0x6105a273_b8e501fb);
+    //   (b) the frame-adaptive S2 inter-RD skip gate (Lever-3b/3D),
+    //       DEFAULT-ON: this fixture's moving-gradient source classifies
+    //       as "natural" (hf_energy ~8 >= 7.0 threshold), so S2
+    //       honest-skip activates on its inter frames, shrinking the
+    //       stream further (6448 -> 6405).
+    // Decode-validated before update: sibling `a10_pool_stream_decodes_
+    // cleanly` passes (rvp9-decoder accepts every frame) AND the stream
+    // cross-decodes BYTE-EXACT through stock libvpx `vpxdec`
+    // (--i420, 12 frames * 24576 = 294912 bytes, exit 0). Correct,
+    // intentional golden update — NOT a masked regression. Prior iter
+    // golden: (len 7912, fnv1a 0xf243704e_e93eb334).
+    const GOLDEN_HASH: u64 = 0x96db_1a40_e2cb_4872;
+    const GOLDEN_LEN: usize = 6405;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

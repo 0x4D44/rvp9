@@ -651,6 +651,173 @@ fn sse_vs_dc_mean(src: &[u8], src_stride: usize, w: usize, h: usize) -> f64 {
     sse
 }
 
+/// Lever-3b / 3D measurement: candidate FRAME-LEVEL content signals
+/// computed purely from the source luma plane (tight stride `w`). Used
+/// only by the `RVP9_3D_DUMP` diagnostic to test whether foreman
+/// (natural motion) and testsrc (synthetic high-freq) separate at the
+/// frame level. All values are pure functions of the source — no
+/// bitstream effect.
+#[derive(Debug, Clone, Copy)]
+struct FrameContentSignals {
+    /// Global variance of the luma plane (`E[p^2] - E[p]^2`).
+    spatial_var: f64,
+    /// Mean absolute discrete Laplacian `|4p - up - down - left - right|`
+    /// over interior pixels — pixel-scale high-frequency spatial energy.
+    hf_energy: f64,
+    /// `hf_energy / (mean_abs_grad + 1)` — high-freq energy normalized by
+    /// gradual gradient activity. High when energy concentrates at the
+    /// pixel scale (synthetic detail) rather than smooth ramps.
+    hf_ratio: f64,
+    /// Mean absolute temporal difference vs the previous source frame
+    /// (0 when no previous frame, e.g. the first inter after a KF).
+    temporal_sad: f64,
+    /// `hf_energy / (temporal_sad + 1)`.
+    hf_over_tsad: f64,
+    /// Mean absolute first-difference gradient `(|p-left| + |p-up|)/2`
+    /// over interior pixels — overall spatial activity / edge density.
+    mean_abs_grad: f64,
+}
+
+/// Compute [`FrameContentSignals`] from a tight-stride `w * h` source
+/// luma plane and an optional previous source plane (same dims).
+fn frame_content_signals(
+    y: &[u8],
+    last: Option<&[u8]>,
+    w: usize,
+    h: usize,
+) -> FrameContentSignals {
+    if w < 3 || h < 3 || y.len() < w * h {
+        return FrameContentSignals {
+            spatial_var: 0.0,
+            hf_energy: 0.0,
+            hf_ratio: 0.0,
+            temporal_sad: 0.0,
+            hf_over_tsad: 0.0,
+            mean_abs_grad: 0.0,
+        };
+    }
+    // Global mean / variance.
+    let mut sum: f64 = 0.0;
+    let mut sum_sq: f64 = 0.0;
+    for &p in &y[..w * h] {
+        let v = f64::from(p);
+        sum += v;
+        sum_sq += v * v;
+    }
+    let n = (w * h) as f64;
+    let mean = sum / n;
+    let spatial_var = (sum_sq / n - mean * mean).max(0.0);
+
+    // Interior-pixel Laplacian (HF energy) and first-difference gradient.
+    let mut lap_sum: f64 = 0.0;
+    let mut grad_sum: f64 = 0.0;
+    let mut interior: u64 = 0;
+    for r in 1..h - 1 {
+        let row = r * w;
+        let up = (r - 1) * w;
+        let dn = (r + 1) * w;
+        for c in 1..w - 1 {
+            let p = i32::from(y[row + c]);
+            let l = i32::from(y[row + c - 1]);
+            let rgt = i32::from(y[row + c + 1]);
+            let u = i32::from(y[up + c]);
+            let d = i32::from(y[dn + c]);
+            let lap = (4 * p - l - rgt - u - d).unsigned_abs();
+            lap_sum += f64::from(lap);
+            let gx = (p - l).unsigned_abs();
+            let gy = (p - u).unsigned_abs();
+            grad_sum += f64::from(gx + gy) * 0.5;
+            interior += 1;
+        }
+    }
+    let interior_f = interior.max(1) as f64;
+    let hf_energy = lap_sum / interior_f;
+    let mean_abs_grad = grad_sum / interior_f;
+    let hf_ratio = hf_energy / (mean_abs_grad + 1.0);
+
+    // Temporal SAD vs previous source.
+    let temporal_sad = match last {
+        Some(prev) if prev.len() >= w * h => {
+            let mut sad: u64 = 0;
+            for i in 0..w * h {
+                sad += (i32::from(y[i]) - i32::from(prev[i])).unsigned_abs() as u64;
+            }
+            sad as f64 / n
+        }
+        _ => 0.0,
+    };
+    let hf_over_tsad = hf_energy / (temporal_sad + 1.0);
+
+    FrameContentSignals {
+        spatial_var,
+        hf_energy,
+        hf_ratio,
+        temporal_sad,
+        hf_over_tsad,
+        mean_abs_grad,
+    }
+}
+
+/// Lever-3b / 3D — lean per-frame spatial high-frequency energy: the
+/// mean absolute discrete Laplacian `|4p - up - down - left - right|`
+/// over interior pixels of a tight-stride `w * h` luma plane. This is
+/// the production content discriminator (only the HF term of
+/// [`frame_content_signals`], skipping the variance / temporal / gradient
+/// work). Cheap: one pass, integer ops per pixel.
+fn frame_hf_energy(y: &[u8], w: usize, h: usize) -> f64 {
+    if w < 3 || h < 3 || y.len() < w * h {
+        return 0.0;
+    }
+    let mut lap_sum: u64 = 0;
+    let mut interior: u64 = 0;
+    for r in 1..h - 1 {
+        let row = r * w;
+        let up = (r - 1) * w;
+        let dn = (r + 1) * w;
+        for c in 1..w - 1 {
+            let p = i32::from(y[row + c]);
+            let l = i32::from(y[row + c - 1]);
+            let rgt = i32::from(y[row + c + 1]);
+            let u = i32::from(y[up + c]);
+            let d = i32::from(y[dn + c]);
+            lap_sum += u64::from((4 * p - l - rgt - u - d).unsigned_abs());
+            interior += 1;
+        }
+    }
+    lap_sum as f64 / interior.max(1) as f64
+}
+
+/// Lever-3b / 3D — is the content-adaptive S2 frame gate enabled?
+///
+/// **Default ON.** With no env set the encoder classifies each frame by
+/// source HF energy and applies the S2 honest-skip gate on "natural"
+/// frames (`hf_energy >= thresh`, e.g. foreman, +~2.5 dB) while leaving
+/// "synthetic" frames (`< thresh`, e.g. testsrc) on the byte-identical
+/// libvpx tie-break baseline. Set `RVP9_3D=0` to force the classifier
+/// OFF (escape hatch for goldens / debug); any other value (or unset)
+/// leaves it ON. Read once (cached).
+fn three_d_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("RVP9_3D").map(|v| v != "0").unwrap_or(true))
+}
+
+/// Lever-3b / 3D — the source-HF-energy threshold separating "natural"
+/// (S2 helps, `>= thresh`) from "synthetic" (S2 hurts, `< thresh`)
+/// frames. Default 7.0, the midpoint of the measured gap
+/// [4.6 (synthetic ceiling) .. 9.4 (natural floor)]. Sweep via
+/// `RVP9_3D_THRESH=<float>`.
+fn three_d_thresh() -> f64 {
+    use std::sync::OnceLock;
+    static T: OnceLock<f64> = OnceLock::new();
+    *T.get_or_init(|| {
+        std::env::var("RVP9_3D_THRESH")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(7.0)
+    })
+}
+
 /// Borrowed view over a 4:2:0 YUV input frame.
 ///
 /// Plane lengths are checked at `encode_frame` call time against the
@@ -1616,6 +1783,65 @@ impl StreamEncoder {
                 &v_tight,
             );
         }
+
+        // Lever-3b / 3D content-discriminator measurement (env-gated).
+        // Dumps candidate FRAME-LEVEL content signals computed purely
+        // from the source luma so we can check whether foreman (natural
+        // motion) and testsrc (synthetic high-freq) separate at the
+        // frame level. No-op unless `RVP9_3D_DUMP` is set; never touches
+        // the bitstream.
+        if std::env::var_os("RVP9_3D_DUMP").is_some() {
+            let w = self.pre_analysis.width as usize;
+            let h = self.pre_analysis.height as usize;
+            let sig = frame_content_signals(
+                &y_tight,
+                self.pre_analysis.last_source_y.as_deref(),
+                w,
+                h,
+            );
+            #[allow(clippy::print_stderr)]
+            {
+                eprintln!(
+                    "[3D-sig] frame={} kind={:?} spatial_var={:.1} hf_energy={:.2} \
+                     hf_ratio={:.4} temporal_sad={:.2} hf_over_tsad={:.4} \
+                     mean_abs_grad={:.3}",
+                    self.frame_idx,
+                    frame_kind,
+                    sig.spatial_var,
+                    sig.hf_energy,
+                    sig.hf_ratio,
+                    sig.temporal_sad,
+                    sig.hf_over_tsad,
+                    sig.mean_abs_grad,
+                );
+            }
+        }
+
+        // Lever-3b / 3D — content-adaptive per-frame S2 skip-gate.
+        //
+        // The S2 honest-skip gate is a measured content-split: +~3 dB on
+        // high-spatial-activity natural content (foreman) but
+        // −0.9..−1.1 dB on low-activity synthetic content (testsrc),
+        // because the RD-domain mismatch over-states `coef_rate` when the
+        // pixel residual is tiny. A FRAME-level spatial high-frequency
+        // energy signal (mean absolute discrete Laplacian of the source
+        // luma) cleanly separates the two corpora across resolutions
+        // (measured INTER-frame ranges: foreman 9.4..12.3, testsrc
+        // 3.3..4.6 — a >2x gap). The classifier defaults ON
+        // (`three_d_enabled`): we classify each frame and enable S2 only
+        // on "natural" frames (`hf_energy >= thresh`), falling back to
+        // the byte-identical baseline tie-break on "synthetic" frames.
+        // `None` (only when `RVP9_3D=0` forces the classifier off) leaves
+        // the global `RVP9_S2_GATE` env in charge.
+        let s2_frame_override = if three_d_enabled() {
+            let w = self.pre_analysis.width as usize;
+            let h = self.pre_analysis.height as usize;
+            let hf_energy = frame_hf_energy(&y_tight, w, h);
+            Some(hf_energy >= three_d_thresh())
+        } else {
+            None
+        };
+        rvp9_core::mode_decision::inter::set_frame_s2_gate(s2_frame_override);
 
         // W8 — ALTREF construction trigger. When the encoder is
         // configured for ALTREF emission and the lookahead has enough
