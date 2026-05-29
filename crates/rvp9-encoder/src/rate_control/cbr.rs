@@ -386,14 +386,25 @@ const KF_HIGH: i32 = 5000;
 /// statistics have been gathered yet (every realtime CBR keyframe).
 const KF_ACTIVE_QUALITY_BOOST: i32 = 32;
 
-// (Removed 2026-05-27, Track F intra-lambda gap fix.) The previous
-// `KF_ACTIVE_QUALITY_BASIS_CAP = 122` clamped the basis fed to
-// `get_kf_active_quality`, pinning the first KF at q≈57 (PSNR ~42 dB)
-// regardless of bitrate. That capped KF quality and propagated through
-// the GOP via inter prediction. The libvpx-faithful KF Q policy
-// (`pick_q_and_bounds` KF arm) now matches `vp9_ratectrl.c:1013-1042`
-// exactly: first frame uses `best_quality` as the floor, subsequent KFs
-// use `get_kf_active_quality(avg_frame_qindex[KEY])`.
+/// Ceiling on the `active_worst_quality` basis fed to
+/// [`get_kf_active_quality`] when the budget gate decides a near-lossless
+/// first KF is unaffordable. libvpx indexes the LUT by the keyframe's
+/// `active_worst_quality`; on the first frame that ambient is seeded at
+/// `worst_quality` (255), which over-floors rvp9's keyframe (the LUT
+/// returns ≈195 there). libvpx escapes this via its content-aware
+/// `bits_per_mb` rate model, which rvp9 lacks. Capping the basis at this
+/// realtime keyframe-Q neighbourhood lands the floor at the
+/// libvpx-matched ≈57 on textured content.
+///
+/// History: removed by f971c4e (2026-05-27) when it dropped the
+/// unconditional first-KF cap to let high-bitrate KFs reach near-lossless
+/// (closing 1.2 dB at 1200/2000k). Re-introduced 2026-05-29, now gated:
+/// the cap fires ONLY when the rate model says the KF target can't afford
+/// near-lossless (the LOW-bitrate regime, where an uncapped KF starves
+/// the GOP). See the budget gate in [`pick_q_and_bounds`]'s KF arm.
+/// DOCUMENTED DIVERGENCE (E7) — the cap stands in for libvpx's
+/// content-aware rate model on the keyframe.
+const KF_ACTIVE_QUALITY_BASIS_CAP: i32 = 122;
 
 /// Port of libvpx `get_minq_index` (`vp9_ratectrl.c:118-135`). Finds the
 /// smallest qindex whose q-value (`ac_quant/4`) is ≥ the cubic-curve
@@ -571,9 +582,77 @@ pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> 
                 rc.total_actual_bits == 0 && rc.frames_since_key == 0;
             let best = if is_first_frame {
                 // libvpx `vp9_ratectrl.c:1014` — `active_best_quality =
-                // rc->best_quality`. No further adjustment fires for
-                // `current_video_frame == 0`.
-                rc.best_quality
+                // rc->best_quality` (near-lossless, q≈4). libvpx can
+                // afford this because its content-aware `bits_per_mb`
+                // estimator keeps the first KF inside the buffer; rvp9's
+                // enumerator-over-Q estimator cannot, so at LOW bitrate a
+                // near-lossless KF blows the buffer and starves the GOP.
+                //
+                // BUDGET GATE (2026-05-29). Take the near-lossless floor
+                // only when the buffer can AFFORD a near-lossless KF;
+                // otherwise restore the removed `get_kf_active_quality`
+                // cap (≈57). The gate is the rate model's own
+                // affordability test: `this_frame_target` (the KF target
+                // already computed above) expressed as bits-per-MB
+                // (`target_bpm`, the exact quantity `regulate_q` walks)
+                // versus what the model says a near-lossless KF actually
+                // costs per MB (`bits_per_mb_scaled(Key, best_quality, ...)`
+                // using the SAME correction factor + multiplier the
+                // regulator below walks). When the affordable budget can't
+                // even cover the model's near-lossless cost, near-lossless
+                // is unaffordable → cap. This self-scales with bitrate /
+                // frame size / GOP (no hardcoded bitrate): the KF spends
+                // proportionally less as bitrate drops, matching libvpx's
+                // intent. The basis fed to `get_kf_active_quality` reuses
+                // the removed `KF_ACTIVE_QUALITY_BASIS_CAP` (122 → q≈57 on
+                // textured content); feeding the raw 255 ambient over-floors.
+                //
+                // CQ interaction: `RcMode::Cq` also routes through this
+                // function, so the gate fires on CQ too. That is
+                // intentional and left as-is — both CBR and CQ are
+                // rate-aware (CQ still computes a per-frame target via
+                // `calc_iframe_target_size`), so the affordability test is
+                // sound for both. It has been validated on CBR; CQ behavior
+                // is unchanged by this gate beyond inheriting the same
+                // rate-model-driven cap.
+                //
+                // Measured separation (first-KF target_bpm vs the model's
+                // near-lossless cost ≈982k bpm at q=4), as measured
+                // 2026-05-29 (illustrative, not invariant):
+                //   * 100k/256x256 (LOW):   target_bpm=400k  < 982k → CAP (q≈57)
+                //   * 2000k/320x256 (HIGH): target_bpm=3.2M  ≥ 982k → near-lossless (q≈4)
+                //   * 1M/128x128 (goldens): target_bpm=16M   ≥ 982k → near-lossless (q≈4)
+                // The LOW regime caps with ~2.5x headroom; HIGH / golden
+                // pass with 3.3x / 16x headroom — a clean split.
+                let target_bpm: i64 = if rc.mbs == 0 {
+                    0
+                } else {
+                    (i64::from(rc.this_frame_target) << BPER_MB_NORMBITS) / i64::from(rc.mbs)
+                };
+                // The near-lossless cost MUST use the same rate model the
+                // regulator below walks (`bits_per_mb_scaled` with the
+                // current KF correction factor and the config multiplier),
+                // or the gate under-estimates cost under a non-unit
+                // `bits_per_mb_multiplier` and fails to cap the textured,
+                // low-bitrate content it exists to protect. On the first
+                // frame the KF correction factor is the seeded 1.0 and the
+                // default multiplier is 1.0, so this is byte-identical to
+                // `bits_per_mb(Key, best_quality, 1.0)` at default config.
+                let kf_cf = get_rate_correction_factor(rc, FrameKind::Key);
+                let kf_mult = rc.config().bits_per_mb_multiplier;
+                let near_lossless_bpm = i64::from(bits_per_mb_scaled(
+                    FrameKind::Key,
+                    rc.best_quality,
+                    kf_cf,
+                    kf_mult,
+                ));
+                if target_bpm >= near_lossless_bpm {
+                    // Buffer affords near-lossless — keep f971c4e's win.
+                    rc.best_quality
+                } else {
+                    // Budget too thin for near-lossless — restore the cap.
+                    get_kf_active_quality(KF_ACTIVE_QUALITY_BASIS_CAP)
+                }
             } else {
                 // libvpx `vp9_ratectrl.c:1029-1041` — subsequent KFs use
                 // the previous KF's qindex as the basis (NOT the buffer-
@@ -1297,5 +1376,63 @@ mod tests {
         let aw = active_worst_quality(&rc, 100);
         // Without an adjustment, active_worst stays at min(255, ambient*5/4) = 125.
         assert_eq!(aw, 125, "no adjustment when buff_lvl_step is zero");
+    }
+
+    /// Build a fresh first-frame controller for a clip-like config and
+    /// return the qindex the KF arm of `pick_q_and_bounds` selects.
+    fn first_kf_q(bps: u32, w: u32, h: u32, gop: u32) -> u8 {
+        let cfg = RateControlConfig {
+            target_bitrate_bps: bps,
+            framerate: 30.0,
+            frame_width: w,
+            frame_height: h,
+            gop_length: gop,
+            ..RateControlConfig::default()
+        };
+        let mut rc = RateControl::new(cfg);
+        rc.pick_q_and_bounds(FrameKind::Key).0
+    }
+
+    /// Budget gate — LOW bitrate. At 100 kbps on a 256x256 clip the
+    /// first-KF target buys only ~3 bits/pixel, far below what the rate
+    /// model says a near-lossless KF costs, so the gate must apply the
+    /// `get_kf_active_quality` floor (≈57). A near-lossless KF here would
+    /// burn ~150k bits and starve the GOP.
+    ///
+    /// Fails against pre-gate HEAD (uncapped → q≈20, below the floor).
+    #[test]
+    fn budget_gate_caps_kf_q_at_low_bitrate() {
+        let q = first_kf_q(100_000, 256, 256, 64);
+        assert!(
+            q >= 50,
+            "low-bitrate first KF must be capped near libvpx's q≈57, got q={q}",
+        );
+    }
+
+    /// Budget gate — HIGH bitrate. At 2000 kbps on a 320x256 clip the
+    /// KF target affords near-lossless (~24 bits/pixel), so the gate must
+    /// NOT bite: the first KF keeps `best_quality` as its floor and the
+    /// regulator lands near-lossless (q≈4). This preserves f971c4e's
+    /// high-bitrate win.
+    #[test]
+    fn budget_gate_keeps_kf_q_near_lossless_at_high_bitrate() {
+        let q = first_kf_q(2_000_000, 320, 256, 60);
+        assert!(
+            q < 30,
+            "high-bitrate first KF must stay near-lossless (uncapped), got q={q}",
+        );
+    }
+
+    /// Budget gate — the 1 Mbps / 128x128 golden fixture (w_buffer_pool /
+    /// w_gop_topology) affords near-lossless (~122 bits/pixel), so the
+    /// gate must NOT bite there either: the byte-identity goldens stay
+    /// valid because the KF Q decision is unchanged at that bitrate.
+    #[test]
+    fn budget_gate_does_not_bite_golden_fixture() {
+        let q = first_kf_q(1_000_000, 128, 128, 16);
+        assert!(
+            q < 30,
+            "golden-fixture first KF must stay near-lossless (gate must not bite), got q={q}",
+        );
     }
 }
