@@ -466,7 +466,7 @@ pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSear
         let rate = mode_cost_row[raw_mode as usize].max(0) as u32;
 
         // 9. RD cost.
-        let this_rd = rd_cost(lambda, rate, dist);
+        let this_rd = rd_cost(lambda, rate, u64::from(dist));
 
         if this_rd < best.best_rd_cost {
             best = IntraModeSearchResult {
@@ -774,7 +774,7 @@ pub fn pick_intra_mode_uv(params: &UvIntraModeSearchParams<'_>) -> IntraModeSear
         let rate = mode_cost_row[raw_mode as usize].max(0) as u32;
 
         // 8. RD cost.
-        let this_rd = rd_cost(lambda, rate, total_dist);
+        let this_rd = rd_cost(lambda, rate, u64::from(total_dist));
 
         if this_rd < best.best_rd_cost {
             best = IntraModeSearchResult {
@@ -1429,7 +1429,7 @@ mod tests {
                 }
             }
             let rate = mode_cost_row[raw_mode as usize].max(0) as u32;
-            let this_rd = rd_cost(lambda, rate, dist);
+            let this_rd = rd_cost(lambda, rate, u64::from(dist));
             results.push(IntraModeSearchResult {
                 best_mode: mode,
                 best_rd_cost: this_rd,

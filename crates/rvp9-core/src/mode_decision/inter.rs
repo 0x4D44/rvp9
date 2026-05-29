@@ -123,6 +123,125 @@ use crate::transforms::inverse::{idct8x8_64_add, idct16x16_256_add, idct32x32_10
 use crate::transforms::scans::scan_for;
 use crate::transforms::{TxMode, TxSize, TxType};
 
+// ---------------------------------------------------------------------
+// S2/S3 measurement toggles (env-read once, cached). These exist ONLY
+// to let one binary produce the before/after A/B the HLD's test plan
+// requires (cross-tab collapse, S2-alone vs S2+S3, AcDc option i vs the
+// old short-circuit) without rebuilding.
+//
+// **Shipped default = ALL OFF (2026-05-29).** With no env set the
+// picker behaves EXACTLY like the pre-S2 baseline (commit `1806f7a`):
+// byte-identical output, zero regression. The S2 skip gate is a real
+// quality lever (~+3 dB on foreman) but content-dependently REGRESSES
+// other clips (testsrc −0.9..−1.1 dB) because of an RD-domain mismatch
+// that needs future Lever-3b calibration (domain alignment + lambda
+// retune). Rather than ship a content-dependent win/loss, the gate +
+// its S3 follow-up land OFF, preserving the verified foreman win behind
+// a flag for that calibration work. Set the matching flag to enable a
+// lever for A/B isolation. Reads are a single relaxed atomic after the
+// first call.
+// ---------------------------------------------------------------------
+
+/// S2.1 Y DCT-eob skip gate. **Default OFF.**
+///
+/// Helps foreman ~+3 dB but content-dependently regresses other clips
+/// (testsrc −0.9..−1.1 dB) due to an RD-domain mismatch; gated OFF
+/// pending Lever-3b domain+lambda calibration. With the gate off the
+/// picker uses the ungated libvpx RD tie-break (the `1806f7a` baseline).
+/// Set `RVP9_S2_GATE=1` to enable the gate (recover the foreman win).
+#[inline]
+fn s2_gate_enabled() -> bool {
+    // Test-only deterministic override (set per-thread by the
+    // self-consistency oracle). Avoids global-env mutation flake: the
+    // override is thread-local, so concurrent tests cannot see it.
+    #[cfg(test)]
+    if let Some(forced) = test_gate_override::get() {
+        return forced;
+    }
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("RVP9_S2_GATE").map(|v| v == "1").unwrap_or(false))
+}
+
+/// S2.2 AcDc round-trip — run the DCT round-trip even on model-AcDc
+/// leaves. **Default OFF.**
+///
+/// Measured to be a pure no-op for output (it only changes the picker's
+/// internal cost, never the emitted bytes), so it is off by default. Set
+/// `RVP9_S2_ACDC_RT=1` to always run the round-trip; with it off the
+/// HEAD/baseline AcDc short-circuit applies (all-zero `BlockYrdResult`,
+/// no DCT eob).
+#[inline]
+fn s2_acdc_roundtrip_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("RVP9_S2_ACDC_RT").map(|v| v == "1").unwrap_or(false))
+}
+
+/// S3 RD-domain alignment (`dist → coef_dist`, skip side `sse << 4`).
+/// **Default OFF.**
+///
+/// The HLD predicted S3 was the magnitude lever and S2-alone would
+/// regress. The measurement found the OPPOSITE: S2-alone moves foreman,
+/// while S3 *on top of S2* over-spends bits and loses PSNR. A skip-shift
+/// sweep ({0,2,4,6,8}) could not recover S2-alone's quality at any
+/// shift. Root cause: feeding the Hadamard-domain `coef_dist` against
+/// rvp9's pixel-SSE-tuned `lambda` (`compute_rd_mult`, kept UNCHANGED)
+/// shifts the RD balance the wrong way — the same domain mismatch
+/// Lever-3b must calibrate. Set `RVP9_S3_DOMAIN=1` to A/B the
+/// coef-domain dist.
+#[inline]
+fn s3_domain_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("RVP9_S3_DOMAIN").map(|v| v == "1").unwrap_or(false))
+}
+
+/// S3 skip-side pixel-SSE rescale shift (default 4, libvpx). A/B only:
+/// `RVP9_S3_SKIPSHIFT=<n>` sweeps the shift to confirm the calibration.
+#[inline]
+fn s3_skip_shift() -> u32 {
+    use std::sync::OnceLock;
+    static SH: OnceLock<u32> = OnceLock::new();
+    *SH.get_or_init(|| {
+        std::env::var("RVP9_S3_SKIPSHIFT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4)
+    })
+}
+
+/// Test-only per-thread override for the S2 skip gate. Lets the
+/// self-consistency oracle force the gate ON deterministically without
+/// mutating the process-global `RVP9_S2_GATE` env (which would race
+/// across cargo's parallel test threads and is masked by the `OnceLock`
+/// cache anyway). The override is thread-local, so only the setting
+/// thread sees it; other tests keep the default (OFF).
+#[cfg(test)]
+mod test_gate_override {
+    use std::cell::Cell;
+
+    thread_local! {
+        static FORCE_GATE: Cell<Option<bool>> = const { Cell::new(None) };
+    }
+
+    /// Current per-thread override, if any.
+    pub(super) fn get() -> Option<bool> {
+        FORCE_GATE.with(Cell::get)
+    }
+
+    /// Run `f` with the gate forced to `value` for the current thread,
+    /// restoring the previous override on the way out (RAII via a guard
+    /// would be heavier; a closure suffices and is panic-safe enough for
+    /// a leaf assertion test).
+    pub(super) fn with<R>(value: bool, f: impl FnOnce() -> R) -> R {
+        let prev = FORCE_GATE.with(|c| c.replace(Some(value)));
+        let out = f();
+        FORCE_GATE.with(|c| c.set(prev));
+        out
+    }
+}
+
 /// Fallback skip-context for [`InterModeSearchParams`] / test paths
 /// that don't supply a real `skip_ctx`. The picker prefers the
 /// caller-provided `skip_ctx` field; this constant only acts when a
@@ -368,6 +487,17 @@ pub struct InterModeSearchResult {
     /// exit early after evaluating at least 2 candidates. Mirrors
     /// libvpx `early_term` at `vp9_pickmode.c:560-603`.
     pub early_term: bool,
+    /// **S2 diag** — sum of the winning candidate's Y DCT + `quantize_b`
+    /// eob (the reconstruction path matching the emit). The S1/S2
+    /// cross-tab compares this against the emit's `leaf_total_eob` to
+    /// decompose picker-skip / emit-code divergence by cause.
+    pub dct_eob_total: u64,
+    /// **S2 diag** — `true` iff the picker's tie-break collapsed this
+    /// candidate to the skip branch (`final_rate == skip_true_cost`,
+    /// i.e. the picker priced it as residual-free). Surfaced so the
+    /// emit-side cross-tab can pair "picker priced skip" with "emit
+    /// coded residual".
+    pub picker_skip: bool,
 }
 
 /// Run the libvpx-style inter-mode RD search for one luma block.
@@ -905,6 +1035,14 @@ pub struct PickInterModeResult {
     /// G4 — Y-plane SSE from the winning candidate's
     /// `model_rd_for_sb_y`. Used by the encode-breakout test.
     pub sse_y: u32,
+    /// **S2 diag** — winning candidate's Y DCT + `quantize_b` eob sum
+    /// (the reconstruction-path eob that matches the emit). 0 for intra
+    /// winners. Surfaced for the S1/S2 picker-skip / emit-code cross-tab.
+    pub dct_eob_total: u64,
+    /// **S2 diag** — `true` iff the picker priced the winning candidate
+    /// on the skip branch. `false` for intra winners. Surfaced for the
+    /// cross-tab; carries NO coding effect (the emit re-decides skip).
+    pub picker_skip: bool,
 }
 
 /// libvpx `INTER_*` inter-mode bitmask presets
@@ -1598,6 +1736,8 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                 picked_intra_mode: None,
                 var_y: candidate.var_y,
                 sse_y: candidate.sse_y,
+                dct_eob_total: candidate.dct_eob_total,
+                picker_skip: candidate.picker_skip,
             });
         }
 
@@ -1863,10 +2003,14 @@ fn evaluate_intra_fallback(
         recon[..bw * bh].copy_from_slice(&pred[..bw * bh]);
 
         let by = if mrd.skip_txfm == SkipTxfm::AcDc {
+            // Intra path is out of S2/S3 scope (HLD §5): keep the AcDc
+            // short-circuit and its all-zero result. `dct_eob_total` is
+            // 0 here, but no intra skip gate reads it (S2.1 is inter-only).
             BlockYrdResult {
                 coef_rate: 0,
                 coef_dist: 0,
                 skippable: true,
+                dct_eob_total: 0,
             }
         } else {
             // We need an InterModeSearchParams to call
@@ -1918,7 +2062,7 @@ fn evaluate_intra_fallback(
             .saturating_add(intra_cost_penalty)
             .saturating_add(effective_coef_rate);
 
-        let this_rd = rd_cost(lambda, rate, dist);
+        let this_rd = rd_cost(lambda, rate, u64::from(dist));
 
         let is_new_best = match best_intra.as_ref() {
             None => true,
@@ -1938,6 +2082,10 @@ fn evaluate_intra_fallback(
                 picked_intra_mode: Some(mode),
                 var_y: mrd.var_y,
                 sse_y: mrd.sse_y,
+                // Intra winner — the cross-tab is inter-only, so these
+                // are inert here.
+                dct_eob_total: by.dct_eob_total,
+                picker_skip: false,
             });
         }
     }
@@ -2338,17 +2486,35 @@ fn evaluate_candidate_for_filter(
     let mut recon = [0u8; 64 * 64];
     recon[..bw * bh].copy_from_slice(&pred[..bw * bh]);
 
-    // skip_txfm short-circuit (libvpx `vp9_pickmode.c:684-686`):
-    // When model_rd says both DC and AC quantize to zero, the entire
-    // residual vanishes. The prediction IS the reconstruction — `recon`
-    // already holds a copy of `pred`. Skip the expensive DCT round-trip
-    // and produce the same `BlockYrdResult` that `block_yrd` would for
-    // an all-zero qcoeff block: coef_rate=0, coef_dist=0, skippable=true.
-    let by = if mrd.skip_txfm == SkipTxfm::AcDc {
+    // **S2 AcDc resolution — option (i): always run the DCT round-trip.**
+    //
+    // The previous code took the libvpx `skip_txfm` short-circuit
+    // (`vp9_pickmode.c:684-686`): when `model_rd_for_sb_y` predicted both
+    // DC and AC quantize to zero (`SkipTxfm::AcDc`), it returned an
+    // all-zero `BlockYrdResult` and skipped the forward DCT + quantize.
+    // S1 measured this model call to be WRONG on the Y plane ~23 % of the
+    // time at CBR-100k (the emit's real DCT/quant_b finds a coefficient
+    // the variance model assumed away), and the short-circuit fired on
+    // ~53 % of leaves — so the AcDc divergence is *material*, not a rare
+    // confident skip. Keeping it would leave a large slice of the picker
+    // skip gate (S2.1) keying off an undefined DCT eob (0 by default),
+    // silently re-introducing the very divergence S2 is meant to close.
+    //
+    // Per the HLD §S2.2 pre-registered rule ("if AcDc leaves *often*
+    // diverge, choose (i)"), we run the real round-trip on every leaf so
+    // the Y skip gate keys uniformly off the true DCT eob. The emit is
+    // UNCHANGED (it still re-decides via `leaf_total_eob`,
+    // `lib.rs:5263`), so `cross_decoder_gate` stays 4/4 — this only makes
+    // the *picker* honest. Speed cost: one DCT+quantize per former-AcDc
+    // leaf on the picker hot path; measured against `realtime_gate_720p30`.
+    let by = if mrd.skip_txfm == SkipTxfm::AcDc && !s2_acdc_roundtrip_enabled() {
+        // A/B only: restore the HEAD AcDc short-circuit (no DCT round-trip,
+        // no real eob). Used to isolate the AcDc-option-(i) contribution.
         BlockYrdResult {
             coef_rate: 0,
             coef_dist: 0,
             skippable: true,
+            dct_eob_total: 0,
         }
     } else {
         reconstruct_via_round_trip(params, &pred, &mut recon, bw, bh, tx_size)
@@ -2493,13 +2659,17 @@ fn evaluate_candidate_for_filter(
     // land on this infrastructure; F.4 turns on the behaviour after
     // calibrating lambda.
     // F.4-2 (2026-05-23): `coef_rate` is now unconditionally part of
-    // the rate sum (env-gate removed per F.4 HLD §4.2). The F.4-1
-    // sweep (notes/F4-calibration-sweep.md, night-8 corrected) picked
-    // K1=4 at `inter.rs::reconstruct_via_round_trip` as the winning
-    // SATD-to-prob-cost scale exponent: foreman PSNR-delta drops
-    // +9.07 → +9.00 dB (modest +0.07 dB improvement; full +8 dB
-    // closure to libvpx needs structural work — DV-F1-1 Hadamard
-    // port — beyond F.4-2 scope).
+    // the rate sum (env-gate removed per F.4 HLD §4.2).
+    //
+    // **RETIRED (2026-05-29, Inter-RD reconciliation HLD §2.3).** A
+    // prior note here claimed the F.4-1 sweep "picked K1=4 … as the
+    // winning SATD-to-prob-cost scale exponent." That note was STALE
+    // and self-contradictory: the live code uses **K1=2** (the libvpx
+    // default — `<< (2 + VP9_PROB_COST_SHIFT)` here and in
+    // `reconstruct_via_round_trip`), and the K1 sweep is a dead end
+    // (~0.1 dB; the surviving note admitted only +0.07 dB). The real
+    // magnitude lever is the RD-**domain** alignment (S3 in this file:
+    // `dist → coef_dist`), not K1. Do NOT resurrect a K1 sweep.
     //
     // `by.coef_rate` is `u64` to avoid the early saturation that
     // hid K1 calibration signal at low q (night-8 saturation fix).
@@ -2663,18 +2833,66 @@ fn evaluate_candidate_for_filter(
     let skip_false_cost = crate::cost::vp9_cost_bit(skip_prob, false);
     let skip_true_cost = crate::cost::vp9_cost_bit(skip_prob, true);
 
-    let rd_encode = rd_cost(lambda, rate, dist);
-    let rd_skip = rd_cost(lambda, 0, sse_after_pred_u32);
-    let (final_rate, final_dist) = if rd_encode < rd_skip {
-        // Cheaper to encode the residual. Pay the skip=false bit.
-        (rate.saturating_add(skip_false_cost), dist)
+    // **S2.1 — gate the skip branch on the picker's own Y DCT eob.**
+    //
+    // libvpx's nonrd picker uses `is_skippable` (the real quantize eob)
+    // as the FIRST gate: a leaf may collapse to skip only if every Y
+    // coefficient quantizes to zero (`vp9_pickmode.c:2350-2362`,
+    // `*skippable &= (*eob == 0)`). rvp9's picker previously let the RD
+    // tie-break alone decide, so the skip branch could win on a leaf
+    // whose Y residual the emit then *codes* — discarding `coef_rate`
+    // and biasing the mode ranking toward rate-free ZEROMV/NEAREST. The
+    // gate restricts that collapse to leaves where the picker's own DCT
+    // eob (the path matching the emit's quantizer) is zero — the
+    // Y-luma slice the HLD's S2 honestly closes. When the Y residual
+    // *will* be coded (`dct_eob_total > 0`), the non-skip branch keeps
+    // the full `coef_rate` (already folded into `rate`), pricing the
+    // residual path honestly.
+    // With the gate disabled (A/B), `y_skippable` is forced true so the
+    // tie-break alone decides — the HEAD behaviour.
+    let y_skippable = !s2_gate_enabled() || by.dct_eob_total == 0;
+
+    // **S3 — RD-domain alignment (`dist → coef_dist`).**
+    //
+    // The picker's residual *rate* (`effective_coef_rate`, folded into
+    // `rate`) is a coefficient-domain quantity (SATD-of-qcoeff). HEAD
+    // paired it with a *pixel*-domain dist (SSE-of-recon), mixing
+    // domains so the libvpx-tuned `<< 2` SATD-to-bits scale overpriced
+    // residual candidates. S3 feeds the coefficient-domain `coef_dist`
+    // (`block_error_fp >> 2`, the same domain as `coef_rate`, matching
+    // libvpx's `block_yrd`), and rescales the skip-side *pixel* SSE
+    // `<< 4` to sit in that domain (libvpx `vp9_pickmode.c` skip
+    // tie-break). `lambda` / `compute_rd_mult` are UNCHANGED.
+    //
+    // `dist_encode` is the dist used for the encode (non-skip) RD;
+    // `dist_skip` for the skip RD. Both default to the S3 domain; the
+    // `RVP9_S3_DOMAIN=0` A/B reverts each to the HEAD pixel domain.
+    let coef_dist_u64 = by.coef_dist.max(0) as u64;
+    let (dist_encode, dist_skip): (u64, u64) = if s3_domain_enabled() {
+        (coef_dist_u64, sse_after_pred << s3_skip_shift())
     } else {
-        // Cheaper to skip. The decoder will see `sse_after_pred`
-        // as the distortion (no residual added on the inverse
-        // path); the rate collapses to the skip=true bit.
-        (skip_true_cost, sse_after_pred_u32)
+        (u64::from(dist), u64::from(sse_after_pred_u32))
     };
-    let this_rd = rd_cost(lambda, final_rate, final_dist);
+
+    let rd_encode = rd_cost(lambda, rate, dist_encode);
+    let rd_skip = rd_cost(lambda, 0, dist_skip);
+    let take_skip = y_skippable && rd_encode >= rd_skip;
+    // `final_dist` is the PIXEL-domain dist surfaced on the result
+    // (`best_distortion`, read by the encode-breakout test + F.0.2
+    // oracle — both expect pixel SSE). `final_dist_rd` is the
+    // domain-correct dist that feeds the ranking `this_rd`, so mode
+    // selection ranks in one consistent domain.
+    let (final_rate, final_dist, final_dist_rd) = if take_skip {
+        // Y quantizes to zero AND skip is cheaper. The decoder will see
+        // `sse_after_pred` as the distortion (no residual on the inverse
+        // path); the rate collapses to the skip=true bit.
+        (skip_true_cost, sse_after_pred_u32, dist_skip)
+    } else {
+        // Y residual WILL be coded (gate), or it is cheaper to encode it
+        // (tie-break). Pay the skip=false bit and keep `coef_rate`.
+        (rate.saturating_add(skip_false_cost), dist, dist_encode)
+    };
+    let this_rd = rd_cost(lambda, final_rate, final_dist_rd);
 
     // G6: set early_term when the large model detects a full skip on
     // a block >= 32x32.
@@ -2692,6 +2910,8 @@ fn evaluate_candidate_for_filter(
         var_y: mrd.var_y,
         sse_y: mrd.sse_y,
         early_term,
+        dct_eob_total: by.dct_eob_total,
+        picker_skip: take_skip,
     }
 }
 
@@ -2882,6 +3102,11 @@ fn reconstruct_via_round_trip(
     let mut by_eob_cost: u32 = 0;
     let mut by_rate_satd: u32 = 0;
     let mut by_dist: i64 = 0;
+    // S2 — sum of the DCT + `vp9_quantize_b` (reconstruction) eob across
+    // tiles. This is the quantize outcome that matches the emit's
+    // `inter_forward_quant_one_tx`, so it is the faithful Y-eob the
+    // picker's skip gate keys on (NOT the Hadamard `by_skippable`).
+    let mut by_dct_eob: u64 = 0;
 
     // Tile the block into (bw / tx_side) × (bh / tx_side) transforms.
     // For supported sizes (16/32/64), tx_side ∈ {16, 32} and
@@ -2991,6 +3216,11 @@ fn reconstruct_via_round_trip(
                     scan_slice,
                 )
             };
+            // S2 — accumulate the DCT/quant_b reconstruction eob. This
+            // mirrors, for Y, the emit's `leaf_total_eob` summation
+            // (`lib.rs:5241`), so the picker can predict the emit's
+            // residual-vs-skip decision on the Y plane.
+            by_dct_eob = by_dct_eob.saturating_add(u64::from(eob));
 
             // F.1 / Phase 4c — per-tile block_yrd accumulators via
             // Hadamard + quantize_fp (libvpx vp9_pickmode.c:768,
@@ -3110,6 +3340,7 @@ fn reconstruct_via_round_trip(
         coef_rate,
         coef_dist: by_dist,
         skippable: by_skippable,
+        dct_eob_total: by_dct_eob,
     }
 }
 
@@ -3721,6 +3952,82 @@ mod tests {
             main.best_mode,
             main.best_rd_cost,
         );
+    }
+
+    /// **S2.1 self-consistency oracle (HLD §6.5).** The Y skip gate's
+    /// guarantee is *one-directional*: a candidate may be priced on the
+    /// skip branch ONLY if the picker's own DCT eob is zero. Equivalently
+    /// `picker_skip ⟹ dct_eob_total == 0`. This pins the Y-slice
+    /// invariant S2 actually provides (NOT the full picker==emit
+    /// equality, which §1.2 shows is false). We build a high-residual
+    /// leaf (source decorrelated from the reference at low q) so at least
+    /// one candidate has a nonzero DCT eob, then assert no candidate with
+    /// a nonzero DCT eob was collapsed to skip.
+    ///
+    /// The gate ships default-OFF, so the invariant is only provided when
+    /// the gate is ON. We force it on deterministically via the
+    /// thread-local [`test_gate_override`] (NOT the process-global
+    /// `RVP9_S2_GATE` env, which would race across cargo's parallel test
+    /// threads and is masked by the toggle's `OnceLock` cache). The
+    /// assertion stays non-tautological: `dct_eob_total` and
+    /// `picker_skip` are computed independently inside the picker, and the
+    /// sanity check proves at least one nonzero-eob candidate exists.
+    #[test]
+    fn s2_skip_gate_never_skips_nonzero_dct_eob() {
+        let pw = 64;
+        let ph = 64;
+        // Decorrelated source and reference (different seeds) → large
+        // residual that survives quant at low q.
+        let ref_data = make_plane(pw, ph, 11);
+        let src_data = make_plane(pw, ph, 9001);
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+
+        // Low q (=20) keeps the quantizer fine enough that a decorrelated
+        // 16×16 residual produces a nonzero DCT eob.
+        let q = 20u8;
+        let harness = TestHarness::new(pw, q);
+        let mvc = MvCandidates::default();
+        let params = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &src_plane,
+            &ref_plane,
+            (16, 16),
+            &mvc,
+            MvLimits::new(-8, 8, -8, 8),
+            q,
+        );
+
+        // Force the gate ON for THIS thread only — the gate is the
+        // behaviour under test, and it is default-OFF in shipped builds.
+        let all = test_gate_override::with(true, || pick_inter_mode_luma_all_costs(&params));
+        // Sanity: the decorrelated residual must produce a nonzero DCT
+        // eob on at least one candidate (otherwise the test is vacuous).
+        assert!(
+            all.iter().any(|c| c.dct_eob_total > 0),
+            "test setup produced no nonzero DCT eob — not exercising the gate",
+        );
+        // The one-directional invariant: skip-priced ⟹ zero DCT eob.
+        for c in &all {
+            if c.picker_skip {
+                assert_eq!(
+                    c.dct_eob_total, 0,
+                    "S2 gate violated: candidate {:?} priced skip with DCT eob {}",
+                    c.best_mode, c.dct_eob_total,
+                );
+            }
+        }
     }
 
     /// Basic finite-RD-cost sanity check across the supported sizes.

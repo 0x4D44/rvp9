@@ -67,6 +67,17 @@ pub struct BlockYrdResult {
     /// `true` iff every tile had `eob == 0` (residual fully quantized to
     /// zero). Mirrors libvpx's `*skippable`.
     pub skippable: bool,
+    /// **S2 (2026-05-29):** sum of the **DCT + `vp9_quantize_b`** eob
+    /// across all tiles — the *reconstruction* quantize path, which
+    /// matches the emit's `inter_forward_quant_one_tx` (same transform
+    /// and quantizer). This is the faithful Y-eob predictor for the
+    /// picker's skip gate (`evaluate_candidate`). Note this is distinct
+    /// from [`skippable`], which is keyed off the **Hadamard /
+    /// `quantize_fp`** rate-proxy path (the libvpx `block_yrd` SATD
+    /// metric, which uses a *different* transform). For the canonical
+    /// [`block_yrd`] reference function (Hadamard-only) this stays 0;
+    /// only `reconstruct_via_round_trip` populates it.
+    pub dct_eob_total: u64,
 }
 
 /// Coefficient-bit-aware transform-domain RD estimate.
@@ -170,6 +181,10 @@ pub fn block_yrd(
         coef_rate,
         coef_dist: dist,
         skippable,
+        // The reference (Hadamard-only) path has no separate DCT/quant_b
+        // pass; the picker's `reconstruct_via_round_trip` is the only
+        // caller that populates `dct_eob_total`.
+        dct_eob_total: 0,
     }
 }
 

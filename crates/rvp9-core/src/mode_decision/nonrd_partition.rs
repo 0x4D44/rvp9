@@ -799,7 +799,7 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
     {
         // Add partition_cost[NONE] to rate (libvpx :5010).
         let rate_total = cand.rate.saturating_add(none_cost);
-        let rdc = rd_cost(params.rd_mult, rate_total, cand.dist);
+        let rdc = rd_cost(params.rd_mult, rate_total, u64::from(cand.dist));
         none_rd_cost = Some(rdc);
         if rdc < best_rd_cost {
             best_rd_cost = rdc;
@@ -871,7 +871,7 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
                     // libvpx :5042 early-out — if SPLIT already
                     // worse than the current best, stop walking
                     // siblings.
-                    let rdc_so_far = rd_cost(params.rd_mult, sum_rate, sum_dist);
+                    let rdc_so_far = rd_cost(params.rd_mult, sum_rate, u64::from(sum_dist));
                     if rdc_so_far >= best_rd_cost && best_pick.is_some() {
                         // Mark remaining quadrants infeasible (so
                         // we don't try to commit them).
@@ -888,7 +888,7 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
             }
         }
         if all_feasible {
-            let rdc_split = rd_cost(params.rd_mult, sum_rate, sum_dist);
+            let rdc_split = rd_cost(params.rd_mult, sum_rate, u64::from(sum_dist));
             if rdc_split < best_rd_cost {
                 best_rd_cost = rdc_split;
                 split_pick = Some((sum_rate, sum_dist));
@@ -972,7 +972,7 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
                 ) {
                     let sum_rate = top.rate.saturating_add(bot.rate).saturating_add(horz_cost);
                     let sum_dist = top.dist.saturating_add(bot.dist);
-                    let rdc = rd_cost(params.rd_mult, sum_rate, sum_dist);
+                    let rdc = rd_cost(params.rd_mult, sum_rate, u64::from(sum_dist));
                     if rdc < best_rd_cost {
                         best_rd_cost = rdc;
                         rect_pick = Some((PartitionType::Horz, top, bot));
@@ -996,7 +996,7 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
                         .saturating_add(right_pick.rate)
                         .saturating_add(vert_cost);
                     let sum_dist = left_pick.dist.saturating_add(right_pick.dist);
-                    let rdc = rd_cost(params.rd_mult, sum_rate, sum_dist);
+                    let rdc = rd_cost(params.rd_mult, sum_rate, u64::from(sum_dist));
                     if rdc < best_rd_cost {
                         best_rd_cost = rdc;
                         rect_pick = Some((PartitionType::Vert, left_pick, right_pick));

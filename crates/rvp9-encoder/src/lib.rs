@@ -2795,6 +2795,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let e3_diag_enabled = std::env::var("RVP9_E3_MVDIAG").is_ok();
     const E3_DIAG_SAMPLE_LIMIT: usize = 40;
     let mut e3_sample_printed: usize = 0;
+
+    // S2 cross-tab diag flag, read once. Gates BOTH the per-leaf print
+    // and the `leaf_y_eob` plane-split accumulation below, so the diag is
+    // truly zero-cost in the hot emit TX walk when `RVP9_S2_XTAB` is
+    // unset (the default).
+    let s2_xtab_enabled = std::env::var("RVP9_S2_XTAB").is_ok();
     // win counts indexed [ZERO, NEAREST, NEAR, NEW].
     let mut e3_win_counts = [0usize; 4];
     let mut e3_total_leaves: usize = 0;
@@ -4251,6 +4257,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             picked_intra_mode: None,
                             var_y: 0,
                             sse_y: 0,
+                            // S2 diag fields — the RDO (cpu<=4) path does
+                            // not surface the RT picker's skip/eob diag;
+                            // inert here (cross-tab targets the RT path).
+                            dct_eob_total: 0,
+                            picker_skip: false,
                         }
                     })
                 } else {
@@ -4758,6 +4769,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // a different `skip_prob` than what we wrote, desyncing
                 // the bool coder.
                 let mut leaf_total_eob: usize = 0;
+                // S2 cross-tab diag — split the emit eob by plane so the
+                // (picker_skip, emit_code) cross-tab can attribute
+                // divergence to Y vs chroma (HLD §S1 cause buckets). Only
+                // accumulated when `s2_xtab_enabled` (default off), so the
+                // emit hot loop pays nothing for it in shipped builds.
+                let mut leaf_y_eob: usize = 0;
 
                 if picked_ref == RefFrame::IntraFrame {
                     // G5 — intra-in-inter block. Single-pass TX walk:
@@ -4941,6 +4958,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 );
                                 // Step 7: accumulate eob for skip decision.
                                 leaf_total_eob += eob_usize;
+                                if s2_xtab_enabled && plane == 0 {
+                                    leaf_y_eob += eob_usize;
+                                }
 
                                 tx_x4_local += tx_step_4x4;
                             }
@@ -5239,6 +5259,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     eob_usize,
                                 );
                                 leaf_total_eob += eob_usize;
+                                if s2_xtab_enabled && plane == 0 {
+                                    leaf_y_eob += eob_usize;
+                                }
 
                                 tx_x4_local += tx_step_4x4;
                             }
@@ -5269,6 +5292,28 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     sb_partitions[sb_idx][leaf_idx].skip,
                     leaf_total_eob,
                 );
+                // S2 cross-tab diag — one machine-parseable line per
+                // *inter* leaf: picker's skip decision + picker Y DCT eob
+                // vs the emit's per-plane eob. Parsed offline into the
+                // (picker_skip, emit_code) cross-tab decomposed by cause
+                // (HLD §S1). Inter-only: `pick`'s S2 diag fields are
+                // meaningless for intra leaves. Env-gated; no behaviour.
+                if picked_ref != RefFrame::IntraFrame && s2_xtab_enabled {
+                    #[allow(clippy::print_stderr)]
+                    {
+                        let final_skip = sb_partitions[sb_idx][leaf_idx].skip;
+                        eprintln!(
+                            "S2XTAB pskip={} pdcteob={} ey={} euv={} etot={} fskip={} bs={:?}",
+                            u8::from(pick.picker_skip),
+                            pick.dct_eob_total,
+                            leaf_y_eob,
+                            leaf_total_eob - leaf_y_eob,
+                            leaf_total_eob,
+                            u8::from(final_skip),
+                            leaf_bsize,
+                        );
+                    }
+                }
                 if std::env::var("RVP9_DIAG_PICKER").is_ok() {
                     #[allow(clippy::print_stderr)]
                     {
