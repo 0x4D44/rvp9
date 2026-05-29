@@ -1,8 +1,8 @@
-# decode head-to-head — 2026-05-26T06:24:49Z
+# decode head-to-head — 2026-05-29T21:37:13Z
 
 host: windows-x86_64  unpinned  build: release (3c8d6d1ddea4abc4)
-rvp9: 1993974  vpxdec: WebM Project VP9 Decoder v1.14.1 (D:\language\rvp9-2\build\libvpx\vpxdec.exe)
-reps: R=5 per vpxdec row (median); rvp9 timing window per HLD §3
+rvp9: 07c70e4  vpxdec: WebM Project VP9 Decoder v1.14.1 (D:\language\rvp9-2\build\libvpx\vpxdec.exe)
+reps: R=9 per vpxdec row (median); rvp9 timing window per HLD §3
 rvp9 runs: 1 (summary row = run 1; CSV ledger captures all runs)
 
 note: vpxdec value is per-frame mean from `vpxdec --noblit --summary -t N`,
@@ -18,15 +18,15 @@ note: vpxdec value is per-frame mean from `vpxdec --noblit --summary -t N`,
 
 | fixture            | res        | tiles | threads | rvp9 p50 us | rvp9 mean us | vpxdec mean us | ratio (rvp9/vpx) | budget us | gate        |
 |--------------------|------------|-------|---------|-------------|--------------|----------------|------------------|-----------|-------------|
-| quantizer-00       | 352x288    |     1 |       1 |      1295.3 |       1331.6 |         5169.0 |             0.26 |         - | n/a         |
-| tile_1x4           | 1920x1080  |     4 |       1 |     10633.6 |      10277.5 |         3200.3 |             3.21 |         - | n/a         |
-| tile_1x4           | 1920x1080  |     4 |       4 |      4022.3 |       3962.8 |         1966.2 |             2.02 |         - | n/a         |
-| testsrc_720p30     | 1280x720   |     1 |       1 |      3511.2 |       3168.6 |          533.6 |             5.94 |     33000 | PASS-info   |
-| testsrc_1080p30    | 1920x1080  |     4 |       2 |      4776.3 |       4198.7 |          682.1 |             6.16 |     33000 | PASS-info   |
-| testsrc_1080p30    | 1920x1080  |     4 |       4 |      3024.1 |       2708.8 |          565.7 |             4.79 |     33000 | PASS-info   |
-| testsrc_1080p60    | 1920x1080  |     4 |       4 |      1615.3 |       1995.5 |          452.6 |             4.41 |     16000 | PASS-info   |
-| testsrc_1080p60    | 1920x1080  |     4 |       8 |      1621.5 |       1995.5 |          462.2 |             4.32 |     16000 | PASS-info   |
-| foreman-fp1        | 352x288    |     1 |       1 |       499.4 |        526.0 |          301.0 |             1.75 |         - | n/a         |
+| quantizer-00       | 352x288    |     1 |       1 |      1685.0 |       1729.8 |         6040.0 |             0.29 |         - | n/a         |
+| tile_1x4           | 1920x1080  |     4 |       1 |     15705.9 |      14895.4 |         4374.6 |             3.40 |         - | n/a         |
+| tile_1x4           | 1920x1080  |     4 |       4 |      4411.6 |       4407.4 |         2973.7 |             1.48 |         - | n/a         |
+| testsrc_720p30     | 1280x720   |     1 |       1 |      4976.4 |       4472.4 |          663.0 |             6.75 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       2 |      6214.3 |       5196.5 |         1129.5 |             4.60 |     33000 | PASS-info   |
+| testsrc_1080p30    | 1920x1080  |     4 |       4 |      3417.8 |       3093.7 |          720.0 |             4.30 |     33000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       4 |      2455.0 |       2588.4 |          677.7 |             3.82 |     16000 | PASS-info   |
+| testsrc_1080p60    | 1920x1080  |     4 |       8 |      2868.9 |       2917.5 |          685.1 |             4.26 |     16000 | PASS-info   |
+| foreman-fp1        | 352x288    |     1 |       1 |       711.3 |        665.5 |          332.9 |             2.00 |         - | n/a         |
 
 ## Methodology
 
@@ -35,7 +35,7 @@ note: vpxdec value is per-frame mean from `vpxdec --noblit --summary -t N`,
   `Decoder::decode_frame`; 30 warmup frames dropped; loop until
   >= 1000 timed frames per (fixture, threads). HLD §3.
 - vpxdec column: `vpxdec --noblit --summary -t N <fixture>` x
-  R=5 repetitions (odd; robust median). No calibration
+  R=9 repetitions (odd; robust median). No calibration
   constant — short fixtures (< 100 frames) include construction
   smear, disclosed in this header per HLD §11.1.
 - Ratio is rvp9 mean / vpxdec mean (mean-to-mean, apples to apples
