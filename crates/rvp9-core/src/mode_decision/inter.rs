@@ -1001,6 +1001,35 @@ pub struct PickInterModeParams<'a> {
     /// gating it harder is a quality-only change with little speed gain
     /// at the rvp9 op point).
     pub rt_intra_dc_only_low_content: bool,
+
+    // ------------------------------------------------------------------
+    // Phase-2 option-A — cached NEWMV-search reuse (seed-only / safe).
+    //
+    // When `Some`, the absolute NEWMV (1/8-pel) for the given ref frame
+    // is reused VERBATIM as the NEWMV candidate's MV instead of running
+    // the diamond + sub-pel search inside [`run_newmv_search`]. The
+    // picker still evaluates every candidate (ZERO / NEAREST / NEAR /
+    // NEW x refs) and RD-ranks them under the live causal context, so
+    // the mode DECISION is re-made on the causal grid; only the
+    // expensive motion SEARCH is skipped.
+    //
+    // Cross-decoder safety: the NEWMV MV is coded on the wire as a delta
+    // against the writer's causal `find_mv_refs` ref-MV, and the
+    // encoder's reconstruction uses the same absolute MV stored in the
+    // leaf desc. So any in-bounds absolute MV is self-consistent
+    // regardless of where it came from. The caller MUST guarantee the
+    // override is within the SAME `mv_limits` the picker uses (the
+    // descent uses the identical luma+chroma envelope formula, so this
+    // holds for descent-sourced overrides). NEAREST/NEAR are NOT reused
+    // here -- they are re-derived from the causal grid by the picker and
+    // the caller's DRIFT-FIX, preserving the cross-decoder invariant.
+    //
+    // `None` (default) = run the full NEWMV search (pre-Phase-2 path).
+    /// Cached LAST-ref NEWMV (1/8-pel) to reuse instead of searching.
+    pub newmv_override_last: Option<Mv>,
+    /// Phase-2 option-A -- cached GOLDEN NEWMV reuse. See
+    /// `newmv_override_last`.
+    pub newmv_override_golden: Option<Mv>,
 }
 
 /// Result of [`pick_inter_mode`].
@@ -1043,6 +1072,16 @@ pub struct PickInterModeResult {
     /// on the skip branch. `false` for intra winners. Surfaced for the
     /// cross-tab; carries NO coding effect (the emit re-decides skip).
     pub picker_skip: bool,
+    /// **Phase-2 option-A** — the LAST-ref NEWMV search RESULT this
+    /// pick computed (absolute MV, 1/8-pel), or `None` if the NEWMV
+    /// candidate for LAST was never reached (gated/skipped) so no search
+    /// ran. Surfaced so a partition descent can cache it and a later
+    /// causal-grid pass can reuse it as a `newmv_override_last`, skipping
+    /// the diamond + sub-pel search. Carries NO coding effect on its own.
+    pub newmv_search_last: Option<Mv>,
+    /// **Phase-2 option-A** — the GOLDEN-ref NEWMV search result. See
+    /// [`newmv_search_last`].
+    pub newmv_search_golden: Option<Mv>,
 }
 
 /// libvpx `INTER_*` inter-mode bitmask presets
@@ -1240,8 +1279,15 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
     let mut frame_mv: [[Mv; 4]; 2] = [[Mv::ZERO; 4]; 2];
 
     // NEWMV search results (lazily computed per ref frame).
-    let mut newmv_last: Option<Mv> = None;
-    let mut newmv_golden: Option<Mv> = None;
+    //
+    // Phase-2 option-A — seed the caches from the descent's cached
+    // NEWMV result when present. A populated cache makes the lazy NEWMV
+    // arm below skip `run_newmv_search` (the diamond + sub-pel search)
+    // and reuse the absolute MV verbatim. NEAREST/NEAR/context are still
+    // re-derived on the causal grid; only the expensive search is
+    // skipped. See `PickInterModeParams::newmv_override_last`.
+    let mut newmv_last: Option<Mv> = params.newmv_override_last;
+    let mut newmv_golden: Option<Mv> = params.newmv_override_golden;
 
     let mut best: Option<PickInterModeResult> = None;
 
@@ -1738,6 +1784,10 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                 sse_y: candidate.sse_y,
                 dct_eob_total: candidate.dct_eob_total,
                 picker_skip: candidate.picker_skip,
+                // Phase-2 option-A: set after the candidate loop from
+                // the accumulated per-ref NEWMV search caches.
+                newmv_search_last: None,
+                newmv_search_golden: None,
             });
         }
 
@@ -1833,6 +1883,16 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
             }
         }
     }
+
+    // Phase-2 option-A — surface the per-ref NEWMV search results so a
+    // partition descent can cache them and a later causal-grid pass can
+    // reuse them (skipping the diamond + sub-pel search). `newmv_last`/
+    // `newmv_golden` hold whatever NEWMV searches actually ran during the
+    // candidate loop (lazy: `None` if that ref's NEWMV candidate was
+    // gated/skipped). Set unconditionally here so the data survives even
+    // when the intra fallback replaced `best`.
+    best.newmv_search_last = newmv_last;
+    best.newmv_search_golden = newmv_golden;
 
     best
 }
@@ -2086,6 +2146,10 @@ fn evaluate_intra_fallback(
                 // are inert here.
                 dct_eob_total: by.dct_eob_total,
                 picker_skip: false,
+                // Intra fallback — no NEWMV search; overwritten by the
+                // caller (pick_inter_mode) before return anyway.
+                newmv_search_last: None,
+                newmv_search_golden: None,
             });
         }
     }
@@ -4657,6 +4721,8 @@ mod tests {
             disable_golden_ref: false,
             max_intra_bsize: BlockSize::Block64x64,
             rt_intra_dc_only_low_content: false,
+            newmv_override_last: None,
+            newmv_override_golden: None,
         }
     }
 

@@ -108,6 +108,22 @@ pub static RDO_DISPATCH_INVOCATIONS_8X8: std::sync::atomic::AtomicU64 =
 pub static RD_PARTITION_RESHAPED_SBS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
+/// Phase-2 option-A — count of final-pass leaves whose NEWMV motion
+/// SEARCH was REUSED from the partition descent's cached pick (the
+/// diamond + sub-pel search was skipped). The picker still RD-ranks all
+/// candidates on the causal grid; only the expensive NEWMV search is
+/// skipped. Positive control (HLD §4.3): a no-op masquerade that left
+/// the work unchanged would leave this at zero. Bumped once per leaf
+/// for which a descent NEWMV cache entry existed and was injected.
+pub static PHASE2_NEWMV_REUSED: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Phase-2 option-A — count of final-pass leaves with NO cached descent
+/// pick (the full NEWMV search ran). Together with [`PHASE2_NEWMV_REUSED`]
+/// this attributes every final-pass leaf to reuse vs fresh-search.
+pub static PHASE2_NEWMV_FRESH: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 /// A4-rect — count of rectangular leaves (`PARTITION_HORZ` /
 /// `PARTITION_VERT` subsizes) the recursive RD partition descent emitted
 /// into the final per-SB leaf list. Incremented once per rect leaf the

@@ -2660,6 +2660,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let f3_nonrd_partition_enabled =
         std::env::var_os("RVP9_A4_RD_PARTITION_DISABLE").is_none()
             || std::env::var_os("RVP9_F3_NONRD_PARTITION_ENABLE").is_some();
+    // Phase-2 option-A — cache + reuse the descent's NEWMV search
+    // result for the final per-leaf pass (seed-only / cross-decoder-safe
+    // variant). Default ON; opt OUT with `RVP9_PHASE2_REUSE_DISABLE=1`
+    // (the standing A/B knob for re-confirming the speed/quality split).
+    // Only meaningful when the descent runs (`f3_nonrd_partition_enabled`),
+    // since the cache is populated by the descent's picker calls.
+    let phase2_reuse_enabled = std::env::var_os("RVP9_PHASE2_REUSE_DISABLE").is_none();
     let f3_partition_costs = if f3_nonrd_partition_enabled {
         Some(partition_costs(&FrameContext::new_default()))
     } else {
@@ -2941,6 +2948,32 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             } else {
                 Some(int_pro.mv)
             };
+
+            // Phase-2 option-A — per-SB cache of the descent's picker
+            // results, keyed by (leaf_mi_row, leaf_mi_col, bsize). The
+            // descent_picker callback inserts the full PickInterModeResult
+            // for every (position, bsize) it evaluates; the final per-leaf
+            // loop looks up the COMMITTED leaf's (position, bsize) and
+            // reuses its NEWMV search result (R7: committed leaves are a
+            // subset of evaluated (position, bsize) pairs, and the descent
+            // never queries the same key twice, so no overwrite ambiguity).
+            // Cleared per SB. Empty when the descent is off or reuse is
+            // gated off — the final loop then runs the full search.
+            // Value: (full picker result, descent LAST MvCandidates,
+            // descent GOLDEN MvCandidates). Reuse of the cached NEWMV is
+            // gated on the final pass's CAUSAL (nearest, near) matching
+            // the descent's for that ref — the diamond seed derives from
+            // {nearest, near} and the rate cost is priced against nearest,
+            // so a full match means the fresh search would land on the
+            // same MV (faithful reuse). Any mismatch -> re-search (R2).
+            let mut descent_pick_cache: std::collections::HashMap<
+                (usize, usize, rvp9_core::block::BlockSize),
+                (
+                    rvp9_core::mode_decision::inter::PickInterModeResult,
+                    MvCandidates,
+                    MvCandidates,
+                ),
+            > = std::collections::HashMap::new();
 
             // A3'-int-pro diagnostic — per-SB seed activity. Set
             // RVP9_DIAG_INTPRO_SB=1 to enable (off by default to
@@ -3371,8 +3404,23 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             disable_golden_ref: sf.disable_golden_ref,
                             max_intra_bsize: sf.max_intra_bsize,
                             rt_intra_dc_only_low_content: sf.rt_intra_dc_only_low_content,
+                            // Phase-2 option-A: the descent computes the
+                            // NEWMV search fresh (it has no prior cache).
+                            newmv_override_last: None,
+                            newmv_override_golden: None,
                         };
                         let result = pick_inter_mode(&pick_params);
+                        // Phase-2 option-A — stash the FULL picker result
+                        // for this (position, bsize) so the final per-leaf
+                        // loop can reuse the NEWMV search if it commits this
+                        // exact leaf. Keyed by absolute mi position + bsize;
+                        // the descent never queries the same key twice.
+                        if phase2_reuse_enabled {
+                            descent_pick_cache.insert(
+                                (leaf_mi_row, leaf_mi_col, bs),
+                                (result, mvc, mvc_golden),
+                            );
+                        }
                         // Translate to the descent's PartitionRdCandidate.
                         // `best_rate` is already in `vp9_prob_cost` units
                         // (1/512-bit) — same family as the descent's
@@ -4262,6 +4310,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             // inert here (cross-tab targets the RT path).
                             dct_eob_total: 0,
                             picker_skip: false,
+                            // Phase-2 option-A: the RDO (cpu<=4) path
+                            // doesn't surface per-ref NEWMV searches.
+                            newmv_search_last: None,
+                            newmv_search_golden: None,
                         }
                     })
                 } else {
@@ -4276,6 +4328,72 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let rd_thresh_table_ref: Option<
                     &rvp9_core::mode_decision::rd_thresh::RdThreshTable,
                 > = Some(&*rd_thresh_table);
+
+                // Phase-2 option-A — reuse the partition descent's cached
+                // NEWMV search for this committed leaf. The cache holds the
+                // descent's full picker result keyed by (position, bsize);
+                // a hit means the descent already ran the diamond + sub-pel
+                // search for THIS exact leaf. We inject its per-ref NEWMV
+                // results as overrides so the final picker skips the search
+                // (the costly part) while STILL re-deriving NEAREST/NEAR,
+                // skip/inter-mode context, and the DRIFT-FIX on the causal
+                // grid — preserving the cross-decoder invariant (R1). The
+                // overrides are only CONSUMED if the picker reaches a NEWMV
+                // candidate for that ref (gated NEWMV candidates ignore
+                // them); and the descent's mv_limits == this pass's
+                // mv_limits, so the override is always in-bounds (R7-safe).
+                // Only the RT picker (`rdo_unified == None`) honours the
+                // overrides; the cpu<=4 RDO path runs its own search.
+                let (phase2_override_last, phase2_override_golden) =
+                    if phase2_reuse_enabled && rdo_unified.is_none() {
+                        match descent_pick_cache
+                            .get(&(leaf_mi_row, leaf_mi_col, leaf_bsize))
+                        {
+                            Some((cached, desc_mvc_last, desc_mvc_golden)) => {
+                                // MATCH GUARD (R2): only reuse the descent's
+                                // NEWMV when the final pass's CAUSAL
+                                // (nearest, near) pair equals the descent's
+                                // for that ref. The diamond search seed
+                                // derives from {nearest, near} and the rate
+                                // cost is priced against nearest; a full
+                                // match means the fresh search would land on
+                                // the SAME MV, so reuse is faithful. Any
+                                // mismatch -> re-search (avoids the R2 quality
+                                // wobble from re-pricing a stale-context MV).
+                                let ov_last = if mvc.nearest
+                                    == desc_mvc_last.nearest
+                                    && mvc.near == desc_mvc_last.near
+                                {
+                                    cached.newmv_search_last
+                                } else {
+                                    None
+                                };
+                                let ov_golden = if mvc_golden.nearest
+                                    == desc_mvc_golden.nearest
+                                    && mvc_golden.near == desc_mvc_golden.near
+                                {
+                                    cached.newmv_search_golden
+                                } else {
+                                    None
+                                };
+                                if ov_last.is_some() || ov_golden.is_some() {
+                                    crate::rdo::inter_dispatch::PHASE2_NEWMV_REUSED
+                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                } else {
+                                    crate::rdo::inter_dispatch::PHASE2_NEWMV_FRESH
+                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                }
+                                (ov_last, ov_golden)
+                            }
+                            None => {
+                                crate::rdo::inter_dispatch::PHASE2_NEWMV_FRESH
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                (None, None)
+                            }
+                        }
+                    } else {
+                        (None, None)
+                    };
 
                 let pick_params = PickInterModeParams {
                     block_size: leaf_bsize,
@@ -4442,6 +4560,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     disable_golden_ref: sf.disable_golden_ref,
                     max_intra_bsize: sf.max_intra_bsize,
                     rt_intra_dc_only_low_content: sf.rt_intra_dc_only_low_content,
+                    // Phase-2 option-A — descent NEWMV-search reuse.
+                    newmv_override_last: phase2_override_last,
+                    newmv_override_golden: phase2_override_golden,
                 };
                 // W4 RDO dispatch: at speed≤4 the RDO picker (if it
                 // decided this leaf) is the source of truth; otherwise run
