@@ -616,6 +616,39 @@ impl SadTable {
     }
 }
 
+/// 4-reference SAD fn type (P1-B / PR3):
+/// `(src, src_stride, &refs[4], ref_stride, &mut out[4])`. Writes
+/// `out[k] = Σ|src − refs[k]|` for `k ∈ 0..4`. Mirrors the scalar
+/// `crate::dsp::distortion::vpx_sad{W}x{H}x4d` shims and the AVX2
+/// `crate::dsp::x86_64::vpx_sad{W}x{H}x4d_avx2` wrappers — both share this
+/// signature, so a slot may hold either with no caller-visible change. Each
+/// output lane is byte-exact with the corresponding single [`SadFn`] result.
+pub type Sad4dFn = fn(&[u8], usize, &[&[u8]; 4], usize, &mut [u32; 4]);
+
+/// 13-entry 4-reference SAD dispatch table, one fn-pointer per VP9 block
+/// size, indexed by `BlockSize::idx()` (`0..13`). Mirrors libvpx's
+/// `cpi->fn_ptr[bsize].sdx4df` indirection. Used by the diamond search's
+/// `all_in` fast path (`crate::mv_search::full_pixel`) to evaluate the four
+/// axis-aligned candidate sites of a step in one call. Each entry is selected
+/// by one `if caps.avx2` clause in [`SimdDispatch::build`] — the AVX2 wrapper
+/// on AVX2 hosts, the scalar four-`sad` reference otherwise. Byte-exact across
+/// the two arms, and each lane byte-exact with the single-SAD slot.
+#[derive(Debug, Clone)]
+pub struct Sad4dTable {
+    /// Indexed by `BlockSize::idx()` (`0..=12`).
+    fns: [Sad4dFn; crate::block::BLOCK_SIZES],
+}
+
+impl Sad4dTable {
+    /// Resolve the 4-reference SAD kernel for `bsize`. Total over all 13 VP9
+    /// sizes.
+    #[inline]
+    #[must_use]
+    pub fn get(&self, bsize: crate::block::BlockSize) -> Sad4dFn {
+        self.fns[bsize.idx()]
+    }
+}
+
 /// The runtime SIMD kernel dispatch table.
 ///
 /// Populated once per process via [`init`] (production path). In-crate
@@ -1212,6 +1245,17 @@ pub struct SimdDispatch {
     /// [`SimdDispatch::sad`]; consumed by the diamond search
     /// (`crate::mv_search::full_pixel`) and `crate::mv_search::int_pro_me`.
     pub(crate) sad: SadTable,
+
+    /// PR3 — per-size 4-reference SAD (`sdx4df`) for the diamond search's
+    /// `all_in` fast path. Mirrors the scalar
+    /// `crate::dsp::distortion::vpx_sad{W}x{H}x4d` shims; on x86_64 AVX2 hosts
+    /// each entry points at the safe wrapper
+    /// `crate::dsp::x86_64::vpx_sad{W}x{H}x4d_avx2`, otherwise at the scalar
+    /// four-`sad` reference. Byte-exact across the two arms, and each output
+    /// lane byte-exact with the single-SAD [`SimdDispatch::sad`] slot.
+    /// Resolved via [`SimdDispatch::sad4d`]; consumed by
+    /// `crate::mv_search::full_pixel`.
+    pub(crate) sad4d: Sad4dTable,
 
     /// G4.4b — frame-border edge replication. Signature mirrors
     /// [`crate::frame::extend_frame_borders`]. **Currently scalar-only**:
@@ -2034,6 +2078,67 @@ impl SimdDispatch {
             }
         };
 
+        // ---- PR3 — per-size 4-reference SAD (sdx4df) table. ----
+        // One clause per VP9 block size, mirroring the single-SAD table: the
+        // AVX2 safe wrapper on AVX2 hosts, the scalar four-`sad` reference
+        // otherwise. Both arms are byte-exact (each lane is an integer
+        // `Σ|a − b|`), so the diamond search's `all_in` fast path sees
+        // identical SADs either way.
+        #[cfg(target_arch = "x86_64")]
+        let sad4d: Sad4dTable = {
+            use crate::dsp::distortion as sc;
+            use crate::dsp::x86_64 as av;
+            macro_rules! sad4d_slot {
+                ($scalar:path, $avx2:path) => {
+                    if caps.avx2 {
+                        $avx2 as Sad4dFn
+                    } else {
+                        $scalar as Sad4dFn
+                    }
+                };
+            }
+            // Order MUST match `BlockSize::idx()` (Block4x4 = 0 .. Block64x64 = 12).
+            Sad4dTable {
+                fns: [
+                    sad4d_slot!(sc::vpx_sad4x4x4d, av::vpx_sad4x4x4d_avx2),
+                    sad4d_slot!(sc::vpx_sad4x8x4d, av::vpx_sad4x8x4d_avx2),
+                    sad4d_slot!(sc::vpx_sad8x4x4d, av::vpx_sad8x4x4d_avx2),
+                    sad4d_slot!(sc::vpx_sad8x8x4d, av::vpx_sad8x8x4d_avx2),
+                    sad4d_slot!(sc::vpx_sad8x16x4d, av::vpx_sad8x16x4d_avx2),
+                    sad4d_slot!(sc::vpx_sad16x8x4d, av::vpx_sad16x8x4d_avx2),
+                    sad4d_slot!(sc::vpx_sad16x16x4d, av::vpx_sad16x16x4d_avx2),
+                    sad4d_slot!(sc::vpx_sad16x32x4d, av::vpx_sad16x32x4d_avx2),
+                    sad4d_slot!(sc::vpx_sad32x16x4d, av::vpx_sad32x16x4d_avx2),
+                    sad4d_slot!(sc::vpx_sad32x32x4d, av::vpx_sad32x32x4d_avx2),
+                    sad4d_slot!(sc::vpx_sad32x64x4d, av::vpx_sad32x64x4d_avx2),
+                    sad4d_slot!(sc::vpx_sad64x32x4d, av::vpx_sad64x32x4d_avx2),
+                    sad4d_slot!(sc::vpx_sad64x64x4d, av::vpx_sad64x64x4d_avx2),
+                ],
+            }
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let sad4d: Sad4dTable = {
+            let _ = caps;
+            use crate::dsp::distortion as sc;
+            Sad4dTable {
+                fns: [
+                    sc::vpx_sad4x4x4d as Sad4dFn,
+                    sc::vpx_sad4x8x4d,
+                    sc::vpx_sad8x4x4d,
+                    sc::vpx_sad8x8x4d,
+                    sc::vpx_sad8x16x4d,
+                    sc::vpx_sad16x8x4d,
+                    sc::vpx_sad16x16x4d,
+                    sc::vpx_sad16x32x4d,
+                    sc::vpx_sad32x16x4d,
+                    sc::vpx_sad32x32x4d,
+                    sc::vpx_sad32x64x4d,
+                    sc::vpx_sad64x32x4d,
+                    sc::vpx_sad64x64x4d,
+                ],
+            }
+        };
+
         // ---- G4.4b — scalar-only slot (deferral rationale on field doc). ----
         let extend_frame_borders: fn(&mut Yv12Buffer) = scalar_extend_frame_borders;
 
@@ -2090,6 +2195,7 @@ impl SimdDispatch {
             convolve8_scaled,
             convolve8_scaled_avg,
             sad,
+            sad4d,
             extend_frame_borders,
         }
     }
@@ -2599,6 +2705,18 @@ impl SimdDispatch {
     #[must_use]
     pub fn sad(&self, bsize: crate::block::BlockSize) -> SadFn {
         self.sad.get(bsize)
+    }
+
+    /// Resolve the per-size 4-reference SAD kernel for `bsize` (PR3). Returns
+    /// the AVX2 wrapper on AVX2 hosts and the scalar four-`sad` reference
+    /// otherwise; both are byte-exact, and each output lane is byte-exact with
+    /// the single-SAD [`SimdDispatch::sad`] slot. Resolve once per search call
+    /// and reuse across the `all_in` step loop so the `OnceLock` load in
+    /// `get_ref()` is amortized rather than paid per step.
+    #[inline]
+    #[must_use]
+    pub fn sad4d(&self, bsize: crate::block::BlockSize) -> Sad4dFn {
+        self.sad4d.get(bsize)
     }
 }
 

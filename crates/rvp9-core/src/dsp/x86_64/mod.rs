@@ -85,6 +85,7 @@ pub mod lpf_vertical_8_avx2;
 pub mod lpf_vertical_8_dual_avx2;
 pub mod plane_dequant_finisher_avx2;
 pub mod sad_avx2;
+pub mod sad4d_avx2;
 pub mod tm_predictor_avx2;
 pub mod v_predictor_avx2;
 
@@ -147,6 +148,12 @@ pub use sad_avx2::{
     vpx_sad4x4_avx2, vpx_sad4x8_avx2, vpx_sad8x4_avx2, vpx_sad8x8_avx2, vpx_sad8x16_avx2,
     vpx_sad16x8_avx2, vpx_sad16x16_avx2, vpx_sad16x32_avx2, vpx_sad32x16_avx2, vpx_sad32x32_avx2,
     vpx_sad32x64_avx2, vpx_sad64x32_avx2, vpx_sad64x64_avx2,
+};
+pub use sad4d_avx2::{
+    vpx_sad4x4x4d_avx2, vpx_sad4x8x4d_avx2, vpx_sad8x4x4d_avx2, vpx_sad8x8x4d_avx2,
+    vpx_sad8x16x4d_avx2, vpx_sad16x8x4d_avx2, vpx_sad16x16x4d_avx2, vpx_sad16x32x4d_avx2,
+    vpx_sad32x16x4d_avx2, vpx_sad32x32x4d_avx2, vpx_sad32x64x4d_avx2, vpx_sad64x32x4d_avx2,
+    vpx_sad64x64x4d_avx2,
 };
 pub use tm_predictor_avx2::tm_predictor_avx2;
 pub use v_predictor_avx2::v_predictor_avx2;

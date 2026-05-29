@@ -337,6 +337,56 @@ sad_fn!(vpx_sad32x64, 32, 64);
 sad_fn!(vpx_sad64x32, 64, 32);
 sad_fn!(vpx_sad64x64, 64, 64);
 
+/// Generic 4-reference SAD core (scalar reference for the `sad4d` dispatch
+/// slot, PR3). Writes `out[k] = Σ|src − refs[k]|` for `k ∈ 0..4` — exactly
+/// four independent [`sad`] calls. Mirrors libvpx `vpx_sad{W}x{H}x4d_c`,
+/// whose `_c` body is the same four-`sad` loop.
+pub fn sad4d(
+    src: &[u8],
+    src_stride: usize,
+    refs: &[&[u8]; 4],
+    ref_stride: usize,
+    w: usize,
+    h: usize,
+    out: &mut [u32; 4],
+) {
+    for k in 0..4 {
+        out[k] = sad(src, src_stride, refs[k], ref_stride, w, h);
+    }
+}
+
+macro_rules! sad4d_fn {
+    ($name:ident, $w:expr, $h:expr) => {
+        #[doc = concat!("4-reference SAD for a ", stringify!($w), "×",
+                               stringify!($h), " block. Mirrors `vpx_sad",
+                               stringify!($w), "x", stringify!($h),
+                               "x4d_c` in libvpx (four independent `sad` calls).")]
+        pub fn $name(
+            src: &[u8],
+            src_stride: usize,
+            refs: &[&[u8]; 4],
+            ref_stride: usize,
+            out: &mut [u32; 4],
+        ) {
+            sad4d(src, src_stride, refs, ref_stride, $w, $h, out)
+        }
+    };
+}
+
+sad4d_fn!(vpx_sad4x4x4d, 4, 4);
+sad4d_fn!(vpx_sad4x8x4d, 4, 8);
+sad4d_fn!(vpx_sad8x4x4d, 8, 4);
+sad4d_fn!(vpx_sad8x8x4d, 8, 8);
+sad4d_fn!(vpx_sad8x16x4d, 8, 16);
+sad4d_fn!(vpx_sad16x8x4d, 16, 8);
+sad4d_fn!(vpx_sad16x16x4d, 16, 16);
+sad4d_fn!(vpx_sad16x32x4d, 16, 32);
+sad4d_fn!(vpx_sad32x16x4d, 32, 16);
+sad4d_fn!(vpx_sad32x32x4d, 32, 32);
+sad4d_fn!(vpx_sad32x64x4d, 32, 64);
+sad4d_fn!(vpx_sad64x32x4d, 64, 32);
+sad4d_fn!(vpx_sad64x64x4d, 64, 64);
+
 macro_rules! sub_pixel_variance_fn {
     ($name:ident, $w:expr, $h:expr) => {
         #[doc = concat!("Sub-pixel variance for a ", stringify!($w), "×",

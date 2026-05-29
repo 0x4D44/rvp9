@@ -27,7 +27,7 @@
 
 use crate::block::BlockSize;
 use crate::cost::mv_cost::{MvCosts, mv_cost};
-use crate::dsp::dispatch::SadFn;
+use crate::dsp::dispatch::{Sad4dFn, SadFn};
 use crate::mode_info::Mv;
 use crate::mv_search::mv_limits::{MvLimits, is_mv_in};
 use crate::mv_search::search_site::SearchSiteConfig;
@@ -117,6 +117,17 @@ pub fn mv_err_cost(
 #[must_use]
 fn sad_for(bsize: BlockSize) -> SadFn {
     crate::dsp::get_ref().sad(bsize)
+}
+
+/// Dispatch the 4-reference SAD (`sdx4df`) kernel by block size (PR3).
+/// Mirrors libvpx `cpi->fn_ptr[bsize].sdx4df` — the AVX2 kernel on AVX2
+/// hosts, the scalar four-`sad` reference otherwise. Each output lane is
+/// byte-exact with [`sad_for`]. **Resolve once per search call** and reuse
+/// across every `all_in` step, amortizing the `get_ref()` OnceLock load.
+#[inline]
+#[must_use]
+fn sad4d_for(bsize: BlockSize) -> Sad4dFn {
+    crate::dsp::get_ref().sad4d(bsize)
 }
 
 /// Input parameters to a single full-pel diamond search call.
@@ -255,6 +266,101 @@ fn sad_at(
     Some(sad_fn(src_slice, src_stride, ref_slice, ref_stride))
 }
 
+/// Compute the four raw SADs for the four candidate MVs `mvs[t] =
+/// (mv_row, mv_col)` against the single source block at `src_offset`, using
+/// the 4-reference `sad4d` kernel when every candidate's reference block is
+/// in-plane (PR3).
+///
+/// Returns `out[t] = Some(sad)` exactly when [`sad_at`] would return
+/// `Some(sad)` for `mvs[t]`, and `None` exactly when [`sad_at`] would return
+/// `None` (source or that reference block falls outside its plane). The SAD
+/// value is **byte-identical** to [`sad_at`]'s — the `sad4d` kernel's lane
+/// `t` equals `sad_fn(src, ref_t)` by construction (proven in
+/// `dsp::x86_64::sad4d_avx2`), and the per-lane scalar fallback calls the same
+/// `sad_fn` [`sad_at`] uses.
+///
+/// Fast path (all four references in-plane, the overwhelmingly common
+/// `all_in` case): one `sad4d_fn` call loads the source row once and
+/// accumulates four running SADs. Slow path (any reference clipped by the
+/// plane rectangle — reachable because `all_in` only checks MV-space limits,
+/// not pixel bounds): fall back to per-lane single `sad_at`, preserving the
+/// exact `None` for the clipped lanes.
+///
+/// This helper changes ONLY the *source* of the four SAD values; the caller's
+/// `all_in` decision loop is byte-for-byte unchanged (same in-order scan,
+/// same mid-loop strict-`<` running-best mutation, same `mvsad_err_cost`
+/// augmentation). See `crate::mv_search::full_pixel::diamond_search_sad`.
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn sad4d_at(
+    block_size: BlockSize,
+    sad_fn: SadFn,
+    sad4d_fn: Sad4dFn,
+    src_plane: &PlaneRef<'_>,
+    src_offset: (usize, usize),
+    ref_plane: &PlaneRef<'_>,
+    mvs: &[(i16, i16); 4],
+) -> [Option<u32>; 4] {
+    let w = usize::from(block_size.width());
+    let h = usize::from(block_size.height());
+
+    // Source block — identical for all four candidates. If it is out of the
+    // source plane, every `sad_at` would short-circuit to `None`.
+    let Some((src_slice, src_stride)) = block_at(
+        src_plane,
+        src_offset.0 as isize,
+        src_offset.1 as isize,
+        w,
+        h,
+    ) else {
+        return [None; 4];
+    };
+
+    // Resolve each candidate's reference block (or `None` if clipped).
+    let mut ref_slices: [Option<&[u8]>; 4] = [None; 4];
+    let mut all_in_plane = true;
+    for t in 0..4 {
+        let ref_col = src_offset.0 as isize + isize::from(mvs[t].1);
+        let ref_row = src_offset.1 as isize + isize::from(mvs[t].0);
+        match block_at(ref_plane, ref_col, ref_row, w, h) {
+            // Every candidate shares `ref_plane.stride`, so we keep only the
+            // slice and use that single stride below.
+            Some((slice, _stride)) => ref_slices[t] = Some(slice),
+            None => all_in_plane = false,
+        }
+    }
+
+    if all_in_plane {
+        // Fast path: one batched call. All four references share the plane
+        // stride; each lane equals the single-SAD `sad_fn` result.
+        let refs: [&[u8]; 4] = [
+            ref_slices[0].unwrap(),
+            ref_slices[1].unwrap(),
+            ref_slices[2].unwrap(),
+            ref_slices[3].unwrap(),
+        ];
+        let mut out_sads = [0u32; 4];
+        sad4d_fn(src_slice, src_stride, &refs, ref_plane.stride, &mut out_sads);
+        [
+            Some(out_sads[0]),
+            Some(out_sads[1]),
+            Some(out_sads[2]),
+            Some(out_sads[3]),
+        ]
+    } else {
+        // Slow path: at least one reference clipped. Per lane, the in-plane
+        // ones get the same scalar `sad_fn` as `sad_at`; the clipped ones
+        // stay `None` — byte-identical to `sad_at` per site.
+        let mut out = [None; 4];
+        for t in 0..4 {
+            if let Some(slice) = ref_slices[t] {
+                out[t] = Some(sad_fn(src_slice, src_stride, slice, ref_plane.stride));
+            }
+        }
+        out
+    }
+}
+
 /// Raw SAD (no MV-cost) for the block at full-pel MV `(mv_row, mv_col)`.
 /// Returns `None` if the reference block falls outside the plane.
 /// Diagnostic helper used by the E12/E13 search-quality oracle.
@@ -338,11 +444,13 @@ pub fn diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearch
     debug_assert_eq!(site_config.searches_per_step, 4);
     let searches_per_step = site_config.searches_per_step as usize;
 
-    // Resolve the SAD kernel once per search call (P1-B hoist): the
+    // Resolve the SAD kernels once per search call (P1-B / PR3 hoist): the
     // dispatch `get_ref()` OnceLock load is amortized over every SAD in the
     // diamond instead of paid per-SAD. Byte-identical to the per-call
-    // resolution it replaces.
+    // resolution it replaces. `sad_fn` serves the initial/cross SADs and the
+    // slow path; `sad4d_fn` serves the `all_in` fast path's four axis sites.
     let sad_fn = sad_for(params.block_size);
+    let sad4d_fn = sad4d_for(params.block_size);
 
     // Convert center_mv (1/8-pel) to fcenter_mv (full-pel). This is the
     // cost-attractor / rate-reference MV (libvpx `ref_mv`).
@@ -417,20 +525,57 @@ pub fn diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearch
         let mut best_site: i32 = -1;
 
         if all_in {
+            // PR3: batch the four axis-site SADs with one `sad4d` call. The
+            // candidate MVs are exactly `best + ss_mv[base + t]` (the same
+            // `this_row`/`this_col` the per-site loop derives). `sad4d_at`
+            // returns `sads[t]` byte-identical to what `sad_at` returned per
+            // site — `Some(sad)` for in-plane references (each lane equal to
+            // the single-SAD kernel), `None` for any reference the plane
+            // rectangle clips. ONLY the SAD *source* changes below; the
+            // decision loop (in-order scan, mid-loop strict-`<` running-best,
+            // `mvsad_err_cost` augmentation) is byte-for-byte the original.
+            let mvs: [(i16, i16); 4] = [
+                {
+                    let (dr, dc) = site_config.ss_mv[base];
+                    (best_row + dr, best_col + dc)
+                },
+                {
+                    let (dr, dc) = site_config.ss_mv[base + 1];
+                    (best_row + dr, best_col + dc)
+                },
+                {
+                    let (dr, dc) = site_config.ss_mv[base + 2];
+                    (best_row + dr, best_col + dc)
+                },
+                {
+                    let (dr, dc) = site_config.ss_mv[base + 3];
+                    (best_row + dr, best_col + dc)
+                },
+            ];
+            let sads = sad4d_at(
+                params.block_size,
+                sad_fn,
+                sad4d_fn,
+                params.src_plane,
+                params.src_offset,
+                params.ref_plane,
+                &mvs,
+            );
+
+            // `needless_range_loop`: the index `t` is load-bearing — it
+            // selects `ss_mv[base + t]` (the cost MV) AND becomes `best_site`.
+            // The mandated gate-2-preserving contract requires this exact
+            // in-order indexed scan; an iterator zip would obscure it and the
+            // `best_site = t` assignment still needs the index.
+            #[allow(clippy::needless_range_loop)]
             for t in 0..searches_per_step {
                 let (dr, dc) = site_config.ss_mv[base + t];
                 let this_row = best_row + dr;
                 let this_col = best_col + dc;
-                // SAD without bounds check (covered by all_in).
-                if let Some(thissad) = sad_at(
-                    params.block_size,
-                    sad_fn,
-                    params.src_plane,
-                    params.src_offset,
-                    params.ref_plane,
-                    this_row,
-                    this_col,
-                ) && thissad < bestsad
+                // SAD without bounds check (covered by all_in): now sourced
+                // from the precomputed `sad4d` array (gate-2-preserving).
+                if let Some(thissad) = sads[t]
+                    && thissad < bestsad
                 {
                     let augmented = thissad
                         + mvsad_err_cost(
