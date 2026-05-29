@@ -256,7 +256,15 @@ pub struct ModelRdResult {
 /// - `var = sse - (sum(src[i] - pred[i]))^2 / n`
 ///
 /// This is the same computation as libvpx's `fn_ptr[bsize].vf()`.
+///
+/// The integer-exact `(sum, sse)` reduction over `src − pred` is delegated to
+/// `reduce` (the `SimdDispatch::variance` slot, resolved once by the caller and
+/// hoisted out of the hot loop). The scalar `saturating_sub` finisher below
+/// (libvpx `VAR(W, H)`) stays byte-for-byte regardless of whether the AVX2 or
+/// scalar reduction was used — both are byte-exact, so the finisher sees
+/// identical `(sum, sum_sq)`.
 fn compute_variance(
+    reduce: crate::dsp::dispatch::VarFn,
     src: &[u8],
     src_stride: usize,
     pred: &[u8],
@@ -264,17 +272,7 @@ fn compute_variance(
     bw: usize,
     bh: usize,
 ) -> (u32, u32) {
-    let mut sum: i64 = 0;
-    let mut sum_sq: u64 = 0;
-    for row in 0..bh {
-        let s_off = row * src_stride;
-        let p_off = row * pred_stride;
-        for col in 0..bw {
-            let diff = src[s_off + col] as i32 - pred[p_off + col] as i32;
-            sum += diff as i64;
-            sum_sq += (diff * diff) as u64;
-        }
-    }
+    let (sum, sum_sq) = reduce(src, src_stride, pred, pred_stride);
     let n = (bw * bh) as u64;
     let sse = sum_sq as u32;
     // var = sse - (sum * sum) / n
@@ -319,8 +317,11 @@ pub fn model_rd_for_sb_y(
     ac_thr: i64,
     tx_mode: TxMode,
 ) -> ModelRdResult {
-    // Step 1: variance / SSE of source vs prediction.
-    let (var, sse) = compute_variance(src, src_stride, pred, pred_stride, bw, bh);
+    // Step 1: variance / SSE of source vs prediction. The `(sum, sse)`
+    // reduction is dispatched (AVX2 / scalar, byte-exact); the scalar
+    // `saturating_sub` finisher inside `compute_variance` stays untouched.
+    let reduce = crate::dsp::get_ref().variance(bsize);
+    let (var, sse) = compute_variance(reduce, src, src_stride, pred, pred_stride, bw, bh);
 
     // Step 2: pick TX size.
     let tx_size = calculate_tx_size(bsize, var, sse, tx_mode);
@@ -472,13 +473,17 @@ pub fn model_rd_for_sb_uv(
     let mut rate_sum: i32 = 0;
     let mut dist_sum: i64 = 0;
 
+    // Hoist the `(sum, sse)` reduction slot once for both chroma planes; the
+    // scalar `saturating_sub` finisher inside `compute_variance` stays untouched.
+    let reduce = crate::dsp::get_ref().variance(uv_bsize);
+
     // Process both U and V planes (mirroring the `for i in
     // start_plane..=stop_plane` loop in libvpx).
     for (src, src_stride, pred, pred_stride) in [
         (src_u, src_u_stride, pred_u, pred_u_stride),
         (src_v, src_v_stride, pred_v, pred_v_stride),
     ] {
-        let (var, sse) = compute_variance(src, src_stride, pred, pred_stride, uv_bw, uv_bh);
+        let (var, sse) = compute_variance(reduce, src, src_stride, pred, pred_stride, uv_bw, uv_bh);
 
         // DC component: model_rd_from_var_lapndz(sse - var, ...)
         let (r_dc, d_dc) = model_rd_from_var_lapndz(sse - var, n_log2, dc_q);
@@ -562,7 +567,16 @@ pub fn encode_breakout_test(
 /// `k = (row/8) * (bw/8) + (col/8)`.
 ///
 /// Port of the `vpx_get8x8var` loop at `vp9_pickmode.c:442-476`.
+///
+/// The integer-exact per-cell `(sum, sse)` reduction over each 8×8 cell is
+/// delegated to `reduce` (the `SimdDispatch::get_var_sse_8x8` slot, resolved
+/// once by the caller and hoisted out of the cell grid). The scalar abs-diff
+/// `>>6` finisher (`var8x8`) and the `total_sse` / `total_sum` accumulation
+/// below stay byte-for-byte regardless of whether the AVX2 or scalar reduction
+/// was used — both are byte-exact, so each cell sees identical `(cell_sum,
+/// cell_sse)`.
 fn compute_variance_8x8(
+    reduce: fn(&[u8], usize, &[u8], usize) -> (i32, u32),
     src: &[u8],
     src_stride: usize,
     pred: &[u8],
@@ -583,18 +597,10 @@ fn compute_variance_8x8(
     for i in 0..nh {
         for j in 0..nw {
             let k = i * nw + j;
-            let mut cell_sum: i32 = 0;
-            let mut cell_sse: u32 = 0;
-
-            for row in 0..8 {
-                let s_off = (i * 8 + row) * src_stride + j * 8;
-                let p_off = (i * 8 + row) * pred_stride + j * 8;
-                for col in 0..8 {
-                    let diff = src[s_off + col] as i32 - pred[p_off + col] as i32;
-                    cell_sum += diff;
-                    cell_sse += (diff * diff) as u32;
-                }
-            }
+            let s_off = (i * 8) * src_stride + j * 8;
+            let p_off = (i * 8) * pred_stride + j * 8;
+            let (cell_sum, cell_sse) =
+                reduce(&src[s_off..], src_stride, &pred[p_off..], pred_stride);
 
             sse8x8[k] = cell_sse;
             sum8x8[k] = cell_sum;
@@ -693,9 +699,13 @@ pub fn model_rd_for_sb_y_large(
     ac_thr: i64,
     tx_mode: TxMode,
 ) -> ModelRdResult {
-    // Step 1: compute per-8x8 variance grid + totals.
+    // Step 1: compute per-8x8 variance grid + totals. The per-cell
+    // `(sum, sse)` reduction is dispatched (AVX2 / scalar, byte-exact); the
+    // scalar abs-diff `>>6` finisher inside `compute_variance_8x8` stays
+    // untouched, as does `aggregate_to_tx_size` below.
+    let reduce_8x8 = crate::dsp::get_ref().get_var_sse_8x8();
     let (total_sse, total_sum, sse8x8, sum8x8, var8x8) =
-        compute_variance_8x8(src, src_stride, pred, pred_stride, bw, bh);
+        compute_variance_8x8(reduce_8x8, src, src_stride, pred, pred_stride, bw, bh);
 
     // Step 2: whole-block variance from totals.
     let n = (bw * bh) as u64;
@@ -1002,7 +1012,8 @@ mod tests {
         // Identical src and pred → var=0, sse=0.
         let src = [128u8; 16 * 16];
         let pred = [128u8; 16 * 16];
-        let (var, sse) = compute_variance(&src, 16, &pred, 16, 16, 16);
+        let reduce = crate::dsp::distortion::var_sum_sse_16x16;
+        let (var, sse) = compute_variance(reduce, &src, 16, &pred, 16, 16, 16);
         assert_eq!(var, 0);
         assert_eq!(sse, 0);
     }
@@ -1013,7 +1024,8 @@ mod tests {
         // sse = 256 * 4 = 1024, mean = 2, var = sse - n*mean^2 = 1024 - 256*4 = 0.
         let src = [130u8; 16 * 16];
         let pred = [128u8; 16 * 16];
-        let (var, sse) = compute_variance(&src, 16, &pred, 16, 16, 16);
+        let reduce = crate::dsp::distortion::var_sum_sse_16x16;
+        let (var, sse) = compute_variance(reduce, &src, 16, &pred, 16, 16, 16);
         assert_eq!(sse, 1024);
         assert_eq!(var, 0, "uniform offset → zero variance");
     }
@@ -1028,7 +1040,8 @@ mod tests {
                 src[r * 8 + c] = if (r + c) % 2 == 0 { 129 } else { 127 };
             }
         }
-        let (var, sse) = compute_variance(&src, 8, &pred, 8, 8, 8);
+        let reduce = crate::dsp::distortion::var_sum_sse_8x8;
+        let (var, sse) = compute_variance(reduce, &src, 8, &pred, 8, 8, 8);
         // sse = 64 * 1 = 64, sum = 0 (equal +1 and -1), var = 64 - 0 = 64.
         assert_eq!(sse, 64);
         assert_eq!(var, 64);
@@ -1529,8 +1542,9 @@ mod tests {
         // Identical src and pred 32x32 -> all var8x8 = 0, sse8x8 = 0.
         let src = [128u8; 32 * 32];
         let pred = [128u8; 32 * 32];
+        let reduce = crate::dsp::distortion::get_var_sse_8x8;
         let (total_sse, total_sum, sse8x8, _sum8x8, var8x8) =
-            compute_variance_8x8(&src, 32, &pred, 32, 32, 32);
+            compute_variance_8x8(reduce, &src, 32, &pred, 32, 32, 32);
         assert_eq!(total_sse, 0);
         assert_eq!(total_sum, 0);
         let num_cells = (32 / 8) * (32 / 8); // = 16
@@ -1547,8 +1561,9 @@ mod tests {
         // k_sqr = 128*128 >> 6 = 256, var = |256 - 256| = 0.
         let src = [130u8; 32 * 32];
         let pred = [128u8; 32 * 32];
+        let reduce = crate::dsp::distortion::get_var_sse_8x8;
         let (total_sse, total_sum, sse8x8, sum8x8, var8x8) =
-            compute_variance_8x8(&src, 32, &pred, 32, 32, 32);
+            compute_variance_8x8(reduce, &src, 32, &pred, 32, 32, 32);
         let num_cells = 16;
         assert_eq!(total_sse, 256 * 16);
         assert_eq!(total_sum, 128 * 16);

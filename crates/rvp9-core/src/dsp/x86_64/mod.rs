@@ -86,8 +86,10 @@ pub mod lpf_vertical_8_dual_avx2;
 pub mod plane_dequant_finisher_avx2;
 pub mod sad_avx2;
 pub mod sad4d_avx2;
+pub mod subpel_variance_avx2;
 pub mod tm_predictor_avx2;
 pub mod v_predictor_avx2;
+pub mod variance_avx2;
 
 pub use convolve_avg_avx2::convolve_avg_avx2;
 pub use convolve_copy_avx2::convolve_copy_avx2;
@@ -155,5 +157,19 @@ pub use sad4d_avx2::{
     vpx_sad32x16x4d_avx2, vpx_sad32x32x4d_avx2, vpx_sad32x64x4d_avx2, vpx_sad64x32x4d_avx2,
     vpx_sad64x64x4d_avx2,
 };
+pub use subpel_variance_avx2::{
+    vpx_sub_pixel_variance4x4_avx2, vpx_sub_pixel_variance8x8_avx2,
+    vpx_sub_pixel_variance8x16_avx2, vpx_sub_pixel_variance16x8_avx2,
+    vpx_sub_pixel_variance16x16_avx2, vpx_sub_pixel_variance16x32_avx2,
+    vpx_sub_pixel_variance32x16_avx2, vpx_sub_pixel_variance32x32_avx2,
+    vpx_sub_pixel_variance32x64_avx2, vpx_sub_pixel_variance64x32_avx2,
+    vpx_sub_pixel_variance64x64_avx2,
+};
 pub use tm_predictor_avx2::tm_predictor_avx2;
 pub use v_predictor_avx2::v_predictor_avx2;
+pub use variance_avx2::{
+    get_var_sse_8x8_avx2, var_sum_sse_4x4_avx2, var_sum_sse_4x8_avx2, var_sum_sse_8x4_avx2,
+    var_sum_sse_8x8_avx2, var_sum_sse_8x16_avx2, var_sum_sse_16x8_avx2, var_sum_sse_16x16_avx2,
+    var_sum_sse_16x32_avx2, var_sum_sse_32x16_avx2, var_sum_sse_32x32_avx2, var_sum_sse_32x64_avx2,
+    var_sum_sse_64x32_avx2, var_sum_sse_64x64_avx2, var_sum_sse_avx2,
+};

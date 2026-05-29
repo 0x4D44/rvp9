@@ -649,6 +649,82 @@ impl Sad4dTable {
     }
 }
 
+/// Per-size block `(sum, sse)` reduction fn type (PR4):
+/// `(src, src_stride, pred, pred_stride) -> (sum, sse)`. Returns the
+/// integer-exact `sum = Σ(src − pred)` (signed `i64`) and `sse = Σ(src − pred)²`
+/// (`u64`) — the reduction the RD-model variance finishers consume. Mirrors the
+/// scalar `crate::dsp::distortion::var_sum_sse_{W}x{H}` shims and the AVX2
+/// `crate::dsp::x86_64::var_sum_sse_{W}x{H}_avx2` wrappers — both share this
+/// signature, so a slot may hold either with no caller-visible change. The
+/// three scalar finishers in `crate::mode_decision::model_rd` stay untouched;
+/// byte-identity reduces to "this reduction is integer-exact", which holds by
+/// construction.
+pub type VarFn = fn(&[u8], usize, &[u8], usize) -> (i64, u64);
+
+/// Per-8×8-cell `(sum, sse)` reduction fn type (PR4):
+/// `(src, src_stride, ref, ref_stride) -> (sum, sse)` over a fixed 8×8 cell.
+/// Parallel to [`VarFn`] but with the narrower `(i32, u32)` accumulator the
+/// large-block RD model's per-cell finisher consumes. The AVX2 wrapper and the
+/// scalar reference share this signature, so a slot may hold either with no
+/// caller-visible change.
+pub type CellVarFn = fn(&[u8], usize, &[u8], usize) -> (i32, u32);
+
+/// 13-entry block `(sum, sse)` reduction table, one fn-pointer per VP9 block
+/// size, indexed by `BlockSize::idx()` (`0..13`). Feeds the inter RD model's
+/// `compute_variance` (`crate::mode_decision::model_rd`), whose scalar
+/// `saturating_sub` finisher consumes the reduction unchanged. Each entry is
+/// selected by one `if caps.avx2` clause in [`SimdDispatch::build`] — the AVX2
+/// wrapper on AVX2 hosts, the scalar reference otherwise. Byte-exact across the
+/// two arms (integer-exact reduction, no overflow for any VP9 size).
+#[derive(Debug, Clone)]
+pub struct VarTable {
+    /// Indexed by `BlockSize::idx()` (`0..=12`).
+    fns: [VarFn; crate::block::BLOCK_SIZES],
+}
+
+impl VarTable {
+    /// Resolve the block `(sum, sse)` reduction kernel for `bsize`. Total over
+    /// all 13 VP9 sizes.
+    #[inline]
+    #[must_use]
+    pub fn get(&self, bsize: crate::block::BlockSize) -> VarFn {
+        self.fns[bsize.idx()]
+    }
+}
+
+/// Per-size sub-pixel-variance fn type (PR4):
+/// `(src, src_stride, xoffset, yoffset, ref, ref_stride) -> (var, sse)`.
+/// Mirrors the scalar `crate::dsp::distortion::vpx_sub_pixel_variance{W}x{H}`
+/// shims and the AVX2 `crate::dsp::x86_64::vpx_sub_pixel_variance{W}x{H}_avx2`
+/// wrappers — both share this signature (identical to
+/// `crate::mv_search::sub_pixel::SvfFn`). The AVX2 path interpolates a
+/// byte-identical `u8` bilinear temp then applies the same scalar variance
+/// finisher, so a slot may hold either with no caller-visible change.
+pub type SubpelVarFn = fn(&[u8], usize, usize, usize, &[u8], usize) -> (u32, u32);
+
+/// Per-size sub-pixel-variance dispatch table, indexed by `BlockSize::idx()`
+/// (`0..13`). Only the 11 sizes the sub-pel search emits (5 square + 6
+/// rectangular) carry a kernel; the two sub-8 rect sizes (4×8, 8×4) hold
+/// `None`, preserving the fail-soft `svf_for` semantics
+/// (`crate::mv_search::sub_pixel`). Each populated entry is selected by one
+/// `if caps.avx2` clause in [`SimdDispatch::build`] — the AVX2 wrapper on AVX2
+/// hosts, the scalar reference otherwise. Byte-exact across the two arms.
+#[derive(Debug, Clone)]
+pub struct SubpelVarTable {
+    /// Indexed by `BlockSize::idx()` (`0..=12`); `None` for unsupported sizes.
+    fns: [Option<SubpelVarFn>; crate::block::BLOCK_SIZES],
+}
+
+impl SubpelVarTable {
+    /// Resolve the sub-pixel-variance kernel for `bsize`, or `None` for the
+    /// two unsupported sub-8 rect sizes (4×8, 8×4).
+    #[inline]
+    #[must_use]
+    pub fn get(&self, bsize: crate::block::BlockSize) -> Option<SubpelVarFn> {
+        self.fns[bsize.idx()]
+    }
+}
+
 /// The runtime SIMD kernel dispatch table.
 ///
 /// Populated once per process via [`init`] (production path). In-crate
@@ -1256,6 +1332,37 @@ pub struct SimdDispatch {
     /// Resolved via [`SimdDispatch::sad4d`]; consumed by
     /// `crate::mv_search::full_pixel`.
     pub(crate) sad4d: Sad4dTable,
+
+    /// PR4 — per-size block `(sum, sse)` reduction for the inter RD model.
+    /// Mirrors the scalar `crate::dsp::distortion::var_sum_sse_{W}x{H}` shims;
+    /// on x86_64 AVX2 hosts each entry points at the safe wrapper
+    /// `crate::dsp::x86_64::var_sum_sse_{W}x{H}_avx2`, otherwise at the scalar
+    /// reference. Byte-exact across the two arms (integer-exact reduction).
+    /// Resolved via [`SimdDispatch::variance`]; consumed by
+    /// `crate::mode_decision::model_rd::compute_variance`, whose scalar
+    /// `saturating_sub` finisher stays untouched.
+    pub(crate) variance: VarTable,
+
+    /// PR4 — per-8×8-cell `(sum, sse)` reduction for the large-block RD model.
+    /// Mirrors the scalar `crate::dsp::distortion::get_var_sse_8x8`; on x86_64
+    /// AVX2 hosts points at `crate::dsp::x86_64::get_var_sse_8x8_avx2`,
+    /// otherwise at the scalar reference. Byte-exact across the two arms.
+    /// Resolved via [`SimdDispatch::get_var_sse_8x8`]; consumed per cell by
+    /// `crate::mode_decision::model_rd::compute_variance_8x8`, whose scalar
+    /// abs-diff `>>6` finisher (and the downstream `aggregate_to_tx_size`
+    /// abs-diff `>>tx_pixels_log2` finisher) stay untouched.
+    pub(crate) get_var_sse_8x8: CellVarFn,
+
+    /// PR4 — per-size sub-pixel variance for the sub-pel MV search. Mirrors the
+    /// scalar `crate::dsp::distortion::vpx_sub_pixel_variance{W}x{H}` shims; on
+    /// x86_64 AVX2 hosts each populated entry points at the safe wrapper
+    /// `crate::dsp::x86_64::vpx_sub_pixel_variance{W}x{H}_avx2`, otherwise at
+    /// the scalar reference. The two sub-8 rect sizes (4×8, 8×4) hold `None`
+    /// (fail-soft, preserving `svf_for`). Byte-exact across the two arms (the
+    /// AVX2 path interpolates a byte-identical `u8` temp then applies the same
+    /// scalar variance finisher). Resolved via [`SimdDispatch::subpel_variance`];
+    /// consumed by `crate::mv_search::sub_pixel`.
+    pub(crate) subpel_variance: SubpelVarTable,
 
     /// G4.4b — frame-border edge replication. Signature mirrors
     /// [`crate::frame::extend_frame_borders`]. **Currently scalar-only**:
@@ -2139,6 +2246,161 @@ impl SimdDispatch {
             }
         };
 
+        // ---- PR4 — per-size block (sum, sse) reduction table. ----
+        // One clause per VP9 block size: the AVX2 safe wrapper on AVX2 hosts,
+        // the scalar `var_sum_sse_{W}x{H}` reference otherwise. The two arms are
+        // byte-exact (integer reduction, no overflow), so the RD-model variance
+        // finishers see identical `(sum, sse)` either way.
+        #[cfg(target_arch = "x86_64")]
+        let variance: VarTable = {
+            use crate::dsp::distortion as sc;
+            use crate::dsp::x86_64 as av;
+            macro_rules! var_slot {
+                ($scalar:path, $avx2:path) => {
+                    if caps.avx2 {
+                        $avx2 as VarFn
+                    } else {
+                        $scalar as VarFn
+                    }
+                };
+            }
+            // Order MUST match `BlockSize::idx()` (Block4x4 = 0 .. Block64x64 = 12).
+            VarTable {
+                fns: [
+                    var_slot!(sc::var_sum_sse_4x4, av::var_sum_sse_4x4_avx2),
+                    var_slot!(sc::var_sum_sse_4x8, av::var_sum_sse_4x8_avx2),
+                    var_slot!(sc::var_sum_sse_8x4, av::var_sum_sse_8x4_avx2),
+                    var_slot!(sc::var_sum_sse_8x8, av::var_sum_sse_8x8_avx2),
+                    var_slot!(sc::var_sum_sse_8x16, av::var_sum_sse_8x16_avx2),
+                    var_slot!(sc::var_sum_sse_16x8, av::var_sum_sse_16x8_avx2),
+                    var_slot!(sc::var_sum_sse_16x16, av::var_sum_sse_16x16_avx2),
+                    var_slot!(sc::var_sum_sse_16x32, av::var_sum_sse_16x32_avx2),
+                    var_slot!(sc::var_sum_sse_32x16, av::var_sum_sse_32x16_avx2),
+                    var_slot!(sc::var_sum_sse_32x32, av::var_sum_sse_32x32_avx2),
+                    var_slot!(sc::var_sum_sse_32x64, av::var_sum_sse_32x64_avx2),
+                    var_slot!(sc::var_sum_sse_64x32, av::var_sum_sse_64x32_avx2),
+                    var_slot!(sc::var_sum_sse_64x64, av::var_sum_sse_64x64_avx2),
+                ],
+            }
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let variance: VarTable = {
+            let _ = caps;
+            use crate::dsp::distortion as sc;
+            VarTable {
+                fns: [
+                    sc::var_sum_sse_4x4 as VarFn,
+                    sc::var_sum_sse_4x8,
+                    sc::var_sum_sse_8x4,
+                    sc::var_sum_sse_8x8,
+                    sc::var_sum_sse_8x16,
+                    sc::var_sum_sse_16x8,
+                    sc::var_sum_sse_16x16,
+                    sc::var_sum_sse_16x32,
+                    sc::var_sum_sse_32x16,
+                    sc::var_sum_sse_32x32,
+                    sc::var_sum_sse_32x64,
+                    sc::var_sum_sse_64x32,
+                    sc::var_sum_sse_64x64,
+                ],
+            }
+        };
+
+        // ---- PR4 — per-8×8-cell (sum, sse) reduction slot. ----
+        #[cfg(target_arch = "x86_64")]
+        let get_var_sse_8x8: CellVarFn = if caps.avx2 {
+            crate::dsp::x86_64::get_var_sse_8x8_avx2
+        } else {
+            crate::dsp::distortion::get_var_sse_8x8
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let get_var_sse_8x8: CellVarFn = {
+            let _ = caps;
+            crate::dsp::distortion::get_var_sse_8x8
+        };
+
+        // ---- PR4 — per-size sub-pixel variance table. ----
+        // One clause per supported VP9 block size: the AVX2 safe wrapper on AVX2
+        // hosts, the scalar `vpx_sub_pixel_variance{W}x{H}` reference otherwise.
+        // The two sub-8 rect sizes (4×8, 8×4) hold `None`, preserving the
+        // fail-soft `svf_for` semantics. Byte-exact across the two arms.
+        #[cfg(target_arch = "x86_64")]
+        let subpel_variance: SubpelVarTable = {
+            use crate::dsp::distortion as sc;
+            use crate::dsp::x86_64 as av;
+            macro_rules! subpel_slot {
+                ($scalar:path, $avx2:path) => {
+                    Some(if caps.avx2 {
+                        $avx2 as SubpelVarFn
+                    } else {
+                        $scalar as SubpelVarFn
+                    })
+                };
+            }
+            // Order MUST match `BlockSize::idx()` (Block4x4 = 0 .. Block64x64 = 12).
+            // Indices 1 (4×8) and 2 (8×4) are unsupported → None.
+            SubpelVarTable {
+                fns: [
+                    subpel_slot!(sc::vpx_sub_pixel_variance4x4, av::vpx_sub_pixel_variance4x4_avx2),
+                    None,
+                    None,
+                    subpel_slot!(sc::vpx_sub_pixel_variance8x8, av::vpx_sub_pixel_variance8x8_avx2),
+                    subpel_slot!(sc::vpx_sub_pixel_variance8x16, av::vpx_sub_pixel_variance8x16_avx2),
+                    subpel_slot!(sc::vpx_sub_pixel_variance16x8, av::vpx_sub_pixel_variance16x8_avx2),
+                    subpel_slot!(
+                        sc::vpx_sub_pixel_variance16x16,
+                        av::vpx_sub_pixel_variance16x16_avx2
+                    ),
+                    subpel_slot!(
+                        sc::vpx_sub_pixel_variance16x32,
+                        av::vpx_sub_pixel_variance16x32_avx2
+                    ),
+                    subpel_slot!(
+                        sc::vpx_sub_pixel_variance32x16,
+                        av::vpx_sub_pixel_variance32x16_avx2
+                    ),
+                    subpel_slot!(
+                        sc::vpx_sub_pixel_variance32x32,
+                        av::vpx_sub_pixel_variance32x32_avx2
+                    ),
+                    subpel_slot!(
+                        sc::vpx_sub_pixel_variance32x64,
+                        av::vpx_sub_pixel_variance32x64_avx2
+                    ),
+                    subpel_slot!(
+                        sc::vpx_sub_pixel_variance64x32,
+                        av::vpx_sub_pixel_variance64x32_avx2
+                    ),
+                    subpel_slot!(
+                        sc::vpx_sub_pixel_variance64x64,
+                        av::vpx_sub_pixel_variance64x64_avx2
+                    ),
+                ],
+            }
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let subpel_variance: SubpelVarTable = {
+            let _ = caps;
+            use crate::dsp::distortion as sc;
+            SubpelVarTable {
+                fns: [
+                    Some(sc::vpx_sub_pixel_variance4x4 as SubpelVarFn),
+                    None,
+                    None,
+                    Some(sc::vpx_sub_pixel_variance8x8),
+                    Some(sc::vpx_sub_pixel_variance8x16),
+                    Some(sc::vpx_sub_pixel_variance16x8),
+                    Some(sc::vpx_sub_pixel_variance16x16),
+                    Some(sc::vpx_sub_pixel_variance16x32),
+                    Some(sc::vpx_sub_pixel_variance32x16),
+                    Some(sc::vpx_sub_pixel_variance32x32),
+                    Some(sc::vpx_sub_pixel_variance32x64),
+                    Some(sc::vpx_sub_pixel_variance64x32),
+                    Some(sc::vpx_sub_pixel_variance64x64),
+                ],
+            }
+        };
+
         // ---- G4.4b — scalar-only slot (deferral rationale on field doc). ----
         let extend_frame_borders: fn(&mut Yv12Buffer) = scalar_extend_frame_borders;
 
@@ -2196,6 +2458,9 @@ impl SimdDispatch {
             convolve8_scaled_avg,
             sad,
             sad4d,
+            variance,
+            get_var_sse_8x8,
+            subpel_variance,
             extend_frame_borders,
         }
     }
@@ -2717,6 +2982,40 @@ impl SimdDispatch {
     #[must_use]
     pub fn sad4d(&self, bsize: crate::block::BlockSize) -> Sad4dFn {
         self.sad4d.get(bsize)
+    }
+
+    /// Resolve the per-size block `(sum, sse)` reduction kernel for `bsize`
+    /// (PR4). Returns the AVX2 wrapper on AVX2 hosts and the scalar
+    /// `var_sum_sse_{W}x{H}` reference otherwise; both are byte-exact. The
+    /// caller (the inter RD model) applies its own scalar variance finisher.
+    /// Resolve once and reuse across the RD-model call so the `OnceLock` load
+    /// in `get_ref()` is amortized.
+    #[inline]
+    #[must_use]
+    pub fn variance(&self, bsize: crate::block::BlockSize) -> VarFn {
+        self.variance.get(bsize)
+    }
+
+    /// Resolve the per-8×8-cell `(sum, sse)` reduction kernel (PR4). Returns the
+    /// AVX2 wrapper on AVX2 hosts and the scalar `get_var_sse_8x8` reference
+    /// otherwise; both are byte-exact. The caller (the large-block RD model)
+    /// applies its own scalar abs-diff `>>6` finisher per cell. Resolve once and
+    /// reuse across the cell grid.
+    #[inline]
+    #[must_use]
+    pub fn get_var_sse_8x8(&self) -> CellVarFn {
+        self.get_var_sse_8x8
+    }
+
+    /// Resolve the per-size sub-pixel-variance kernel for `bsize` (PR4), or
+    /// `None` for the two unsupported sub-8 rect sizes (4×8, 8×4). Returns the
+    /// AVX2 wrapper on AVX2 hosts and the scalar `vpx_sub_pixel_variance{W}x{H}`
+    /// reference otherwise; both are byte-exact. Resolve once per sub-pel search
+    /// and reuse so the `OnceLock` load in `get_ref()` is amortized.
+    #[inline]
+    #[must_use]
+    pub fn subpel_variance(&self, bsize: crate::block::BlockSize) -> Option<SubpelVarFn> {
+        self.subpel_variance.get(bsize)
     }
 }
 

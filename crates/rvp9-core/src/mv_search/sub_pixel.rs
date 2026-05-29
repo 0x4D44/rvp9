@@ -36,12 +36,6 @@
 
 use crate::block::BlockSize;
 use crate::cost::mv_cost::MvCosts;
-use crate::dsp::distortion::{
-    vpx_sub_pixel_variance4x4, vpx_sub_pixel_variance8x8, vpx_sub_pixel_variance8x16,
-    vpx_sub_pixel_variance16x8, vpx_sub_pixel_variance16x16, vpx_sub_pixel_variance16x32,
-    vpx_sub_pixel_variance32x16, vpx_sub_pixel_variance32x32, vpx_sub_pixel_variance32x64,
-    vpx_sub_pixel_variance64x32, vpx_sub_pixel_variance64x64,
-};
 use crate::inter::mv::use_mv_hp;
 use crate::mode_info::Mv;
 use crate::mv_search::full_pixel::{PlaneRef, mv_err_cost};
@@ -160,29 +154,18 @@ pub struct SubPixelSearchResult {
 
 /// Dispatch sub-pel-variance by block size.
 ///
-/// Ports the 5 square sizes (F6.0: 4x4, 8x8, 16x16, 32x32, 64x64) plus
-/// the 6 rectangular sizes the A4-rect partition descent emits at
-/// 64/32/16 parents (16x8, 8x16, 32x16, 16x32, 64x32, 32x64). The two
-/// remaining sub-8 rect sizes (4x8, 8x4) are not ported — rvp9 never
-/// descends below 8×8 in the partition search, so they return `None`
-/// (debug-asserts, fail-soft to zero-variance in release).
+/// Resolves the `SimdDispatch::subpel_variance` slot for `bsize` (PR4): the
+/// AVX2 wrapper on AVX2 hosts, the scalar `vpx_sub_pixel_variance{W}x{H}`
+/// reference otherwise — both byte-exact. The slot covers the 5 square sizes
+/// (F6.0: 4x4, 8x8, 16x16, 32x32, 64x64) plus the 6 rectangular sizes the
+/// A4-rect partition descent emits at 64/32/16 parents (16x8, 8x16, 32x16,
+/// 16x32, 64x32, 32x64). The two remaining sub-8 rect sizes (4x8, 8x4) hold
+/// `None` — rvp9 never descends below 8×8 in the partition search, so they
+/// debug-assert and fail soft to zero-variance in release. Resolved once per
+/// search (threaded down as `svf`), so the `OnceLock` load is amortized.
 #[inline]
 fn svf_for(bsize: BlockSize) -> Option<SvfFn> {
-    match bsize {
-        BlockSize::Block4x4 => Some(vpx_sub_pixel_variance4x4),
-        BlockSize::Block8x8 => Some(vpx_sub_pixel_variance8x8),
-        BlockSize::Block16x16 => Some(vpx_sub_pixel_variance16x16),
-        BlockSize::Block32x32 => Some(vpx_sub_pixel_variance32x32),
-        BlockSize::Block64x64 => Some(vpx_sub_pixel_variance64x64),
-        // A4-rect — HORZ / VERT subsizes.
-        BlockSize::Block16x8 => Some(vpx_sub_pixel_variance16x8),
-        BlockSize::Block8x16 => Some(vpx_sub_pixel_variance8x16),
-        BlockSize::Block32x16 => Some(vpx_sub_pixel_variance32x16),
-        BlockSize::Block16x32 => Some(vpx_sub_pixel_variance16x32),
-        BlockSize::Block64x32 => Some(vpx_sub_pixel_variance64x32),
-        BlockSize::Block32x64 => Some(vpx_sub_pixel_variance32x64),
-        _ => None,
-    }
+    crate::dsp::get_ref().subpel_variance(bsize)
 }
 
 /// Helper: try to compute (variance + mv_err_cost) for a 1/8-pel

@@ -115,6 +115,102 @@ pub fn variance(
     (variance, sse)
 }
 
+/// Scalar `(sum, sse)` reduction over `src − pred` (PR4 dispatch reference).
+///
+/// Returns `(sum, sse)` with `sum = Σ(src − pred)` (signed) and
+/// `sse = Σ(src − pred)²`. This is **exactly the accumulation**
+/// `crate::mode_decision::model_rd::compute_variance` performs (`sum: i64`,
+/// `sum_sq: u64`) BEFORE its scalar `saturating_sub` finisher. The block
+/// variance dispatch slot (`SimdDispatch::variance`) holds this on non-AVX2
+/// hosts and the AVX2 `var_sum_sse_avx2` otherwise — both byte-exact, so the
+/// finisher (kept scalar in `model_rd`) sees identical `(sum, sse)`.
+pub fn var_sum_sse(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+    w: usize,
+    h: usize,
+) -> (i64, u64) {
+    debug_assert!(w > 0 && h > 0);
+    debug_assert!(src.len() >= (h - 1) * src_stride + w);
+    debug_assert!(pred.len() >= (h - 1) * pred_stride + w);
+
+    let mut sum: i64 = 0;
+    let mut sum_sq: u64 = 0;
+    for row in 0..h {
+        let s_off = row * src_stride;
+        let p_off = row * pred_stride;
+        for col in 0..w {
+            let diff = src[s_off + col] as i32 - pred[p_off + col] as i32;
+            sum += diff as i64;
+            sum_sq += (diff * diff) as u64;
+        }
+    }
+    (sum, sum_sq)
+}
+
+/// Scalar per-8×8-cell `(sum, sse)` reduction (PR4 dispatch reference).
+///
+/// Returns `(sum, sse)` for one 8×8 cell — exactly the per-cell accumulation
+/// `crate::mode_decision::model_rd::compute_variance_8x8` performs
+/// (`cell_sum: i32`, `cell_sse: u32`) BEFORE its scalar abs-diff `>>6`
+/// finisher. The `SimdDispatch::get_var_sse_8x8` slot holds this on non-AVX2
+/// hosts and the AVX2 `get_var_sse_8x8_avx2` otherwise — both byte-exact.
+pub fn get_var_sse_8x8(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+) -> (i32, u32) {
+    let mut cell_sum: i32 = 0;
+    let mut cell_sse: u32 = 0;
+    for row in 0..8 {
+        let s_off = row * src_stride;
+        let p_off = row * pred_stride;
+        for col in 0..8 {
+            let diff = src[s_off + col] as i32 - pred[p_off + col] as i32;
+            cell_sum += diff;
+            cell_sse += (diff * diff) as u32;
+        }
+    }
+    (cell_sum, cell_sse)
+}
+
+/// Per-size scalar `(sum, sse)` reduction shims — one per VP9 block size, the
+/// non-AVX2 arm of the `SimdDispatch::variance` table (PR4). Each is a thin
+/// `(w, h)`-specialised call into [`var_sum_sse`], mirroring the per-size SAD
+/// / variance shim convention.
+macro_rules! var_sum_sse_fn {
+    ($name:ident, $w:expr, $h:expr) => {
+        #[doc = concat!("Scalar (sum, sse) reduction for a ", stringify!($w), "×",
+                               stringify!($h), " block. Non-AVX2 arm of the ",
+                               "variance dispatch slot.")]
+        pub fn $name(
+            src: &[u8],
+            src_stride: usize,
+            pred: &[u8],
+            pred_stride: usize,
+        ) -> (i64, u64) {
+            var_sum_sse(src, src_stride, pred, pred_stride, $w, $h)
+        }
+    };
+}
+
+var_sum_sse_fn!(var_sum_sse_4x4, 4, 4);
+var_sum_sse_fn!(var_sum_sse_4x8, 4, 8);
+var_sum_sse_fn!(var_sum_sse_8x4, 8, 4);
+var_sum_sse_fn!(var_sum_sse_8x8, 8, 8);
+var_sum_sse_fn!(var_sum_sse_8x16, 8, 16);
+var_sum_sse_fn!(var_sum_sse_16x8, 16, 8);
+var_sum_sse_fn!(var_sum_sse_16x16, 16, 16);
+var_sum_sse_fn!(var_sum_sse_16x32, 16, 32);
+var_sum_sse_fn!(var_sum_sse_32x16, 32, 16);
+var_sum_sse_fn!(var_sum_sse_32x32, 32, 32);
+var_sum_sse_fn!(var_sum_sse_32x64, 32, 64);
+var_sum_sse_fn!(var_sum_sse_64x32, 64, 32);
+var_sum_sse_fn!(var_sum_sse_64x64, 64, 64);
+
 /// Generic SAD core — mirror of `static INLINE unsigned int sad(...)` in
 /// libvpx `vpx_dsp/sad.c` lines 20-33.
 pub fn sad(
