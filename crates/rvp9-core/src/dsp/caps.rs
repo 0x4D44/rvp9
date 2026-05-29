@@ -52,7 +52,23 @@ pub struct X86Caps {
 #[cfg(target_arch = "x86_64")]
 impl X86Caps {
     /// Detect the running CPU's x86_64 ISA support. Stable since Rust 1.27.
+    ///
+    /// **Byte-identity oracle hook** (HLD-simd-speed §8.2): when the env var
+    /// `RVP9_FORCE_SCALAR=1` is set, every ISA tier is masked to `false`,
+    /// forcing every `SimdDispatch` slot to its scalar reference arm. Because
+    /// `init()`/`get()`/`get_ref()` all build the process-wide table from
+    /// `SimdDispatch::build(detect())`, masking here makes the *entire* table
+    /// scalar — with no change to `build`'s visibility. This lets the
+    /// cross-process oracle encode the same input twice (forced-scalar vs
+    /// auto/AVX2) and byte-diff the bitstreams to prove no decision moved.
+    ///
+    /// Zero-cost when unset: the env read happens once at first dispatch
+    /// `get()` (the table is built once via the process-wide `OnceLock`).
     pub fn detect() -> Self {
+        if force_scalar_env() {
+            // All-false caps → every dispatch slot resolves to its scalar arm.
+            return Self::default();
+        }
         Self {
             sse2: std::is_x86_feature_detected!("sse2"),
             ssse3: std::is_x86_feature_detected!("ssse3"),
@@ -61,6 +77,16 @@ impl X86Caps {
             bmi2: std::is_x86_feature_detected!("bmi2"),
         }
     }
+}
+
+/// Returns `true` iff `RVP9_FORCE_SCALAR=1` is set in the environment.
+///
+/// Drives the forced-scalar leg of the cross-process byte-identity oracle
+/// (HLD-simd-speed §8.2). Only the exact value `"1"` enables it; any other
+/// value (or absence) leaves SIMD detection untouched.
+#[cfg(target_arch = "x86_64")]
+fn force_scalar_env() -> bool {
+    std::env::var_os("RVP9_FORCE_SCALAR").is_some_and(|v| v == "1")
 }
 
 /// aarch64 capability set. Populated by [`detect`] on aarch64 targets.
@@ -151,10 +177,93 @@ mod tests {
 
     /// Calling detect twice should return the same value (CPU caps don't
     /// change at runtime).
+    ///
+    /// Guarded against the byte-identity oracle's forced-scalar mask
+    /// (HLD-simd-speed §8.2): when `RVP9_FORCE_SCALAR=1`, `detect()` returns
+    /// all-false caps regardless of the host CPU. This test asserts the
+    /// *unmasked* path is deterministic, so it skips only when the mask is
+    /// actually engaged. The skip predicate reuses `force_scalar_env()` so it
+    /// matches `detect()`'s exact-`"1"` trigger — e.g. `RVP9_FORCE_SCALAR=0`
+    /// does NOT mask, so it must NOT skip.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn detect_is_stable() {
+        if force_scalar_env() {
+            return;
+        }
+        let a = detect();
+        let b = detect();
+        assert_eq!(format!("{a:?}"), format!("{b:?}"));
+    }
+
+    /// Non-x86_64 variant of [`detect_is_stable`]: those targets have no
+    /// `RVP9_FORCE_SCALAR` mask (the env hook is `#[cfg(target_arch =
+    /// "x86_64")]`), so detection is unconditionally deterministic.
+    #[cfg(not(target_arch = "x86_64"))]
     #[test]
     fn detect_is_stable() {
         let a = detect();
         let b = detect();
         assert_eq!(format!("{a:?}"), format!("{b:?}"));
+    }
+
+    /// The forced-scalar mask is two independent pieces, verified here
+    /// WITHOUT mutating the process-wide `RVP9_FORCE_SCALAR` env var.
+    ///
+    /// Mutating it via `set_var` in a parallel test process races with
+    /// concurrent `detect()`-based tests — `dispatch.rs` (the
+    /// `loopfilter_avx2_default_routing_avx2_cpu` test, ~line 3560)
+    /// documents exactly this flake and notes the crate has no
+    /// `serial_test` dep to serialise around it. So we prove the two halves
+    /// of the contract directly:
+    ///
+    /// 1. **Mask consequence** — `detect()`'s forced leg returns
+    ///    `X86Caps::default()` (all tiers `false`), which `SimdDispatch::build`
+    ///    must resolve to scalar reference slots. We build the table from a
+    ///    locally-constructed all-false caps (the exact value the forced leg
+    ///    returns) and check a representative AVX2-gated slot routes to its
+    ///    scalar arm. No env touched.
+    /// 2. **Predicate trigger** — `force_scalar_env()` reads the live env; in
+    ///    cargo's default test environment the var is unset, so it must read
+    ///    `false`. (The exact-`"1"` matching of the predicate is covered by
+    ///    its own definition; here we only pin that an unset env does not
+    ///    spuriously engage the mask.)
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn force_scalar_caps_route_dispatch_to_scalar() {
+        use crate::dsp::dispatch::SimdDispatch;
+
+        // (1) all-false caps == what detect()'s forced leg returns.
+        let masked = X86Caps::default();
+        assert!(!masked.avx2, "all-false caps must have avx2 = false");
+        assert_eq!(
+            masked,
+            X86Caps {
+                sse2: false,
+                ssse3: false,
+                sse4_1: false,
+                avx2: false,
+                bmi2: false,
+            },
+            "X86Caps::default() must be all-false (the forced-scalar leg value)"
+        );
+
+        // Build the dispatch table from those caps and confirm an
+        // AVX2-promoted slot resolves to its scalar reference — i.e. the
+        // forced-scalar leg yields a scalar table, no SIMD slot survives.
+        let d = SimdDispatch::build(masked);
+        let scalar_convolve8_horiz: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
+            crate::inter::filter::convolve8_horiz;
+        assert_eq!(
+            d.convolve8_horiz() as usize,
+            scalar_convolve8_horiz as usize,
+            "all-false caps must install the scalar convolve8_horiz reference"
+        );
+
+        // (2) the predicate does not fire in cargo's default (unset) env.
+        assert!(
+            !force_scalar_env(),
+            "RVP9_FORCE_SCALAR is unset in the default test env; mask must be off"
+        );
     }
 }

@@ -2242,9 +2242,17 @@ fn evaluate_candidate_for_filter(
     let bw = usize::from(params.block_size.width());
     let bh = usize::from(params.block_size.height());
 
+    // P1-A (HLD-simd-speed §4.1): resolve the SimdDispatch handle ONCE per
+    // candidate evaluation (not per `build_inter_prediction` call). This
+    // amortizes the `OnceLock` atomic load across the luma + 2 chroma MC
+    // convolve calls below. `get_ref()` is a single `OnceLock` load
+    // (`dispatch.rs:2539`).
+    let dsp = crate::dsp::get_ref();
+
     // Build the prediction in a per-block scratch buffer.
     let mut pred = [0u8; 64 * 64];
     build_inter_prediction(
+        dsp,
         params.ref_plane,
         params.src_offset.0,
         params.src_offset.1,
@@ -2546,6 +2554,7 @@ fn evaluate_candidate_for_filter(
                     height: params.ref_u.len() / params.uv_stride,
                 };
                 build_inter_prediction(
+                    dsp,
                     &ref_u_plane,
                     uv_x,
                     uv_y,
@@ -2565,6 +2574,7 @@ fn evaluate_candidate_for_filter(
                     height: params.ref_v.len() / params.uv_stride,
                 };
                 build_inter_prediction(
+                    dsp,
                     &ref_v_plane,
                     uv_x,
                     uv_y,
@@ -2703,6 +2713,7 @@ fn evaluate_candidate_for_filter(
 /// MV bounds for edge blocks.
 #[allow(clippy::too_many_arguments)] // mirrors libvpx's argument list 1:1
 fn build_inter_prediction(
+    dsp: &crate::dsp::SimdDispatch,
     ref_plane: &PlaneRef<'_>,
     src_x: usize,
     src_y: usize,
@@ -2784,19 +2795,21 @@ fn build_inter_prediction(
     let filter_x = &kernel[subpel_x_q4 as usize];
     let filter_y = &kernel[subpel_y_q4 as usize];
 
+    // P1-A (HLD-simd-speed §4.1): dispatch the MC convolve through the
+    // SimdDispatch table (`dsp`) instead of calling the scalar
+    // `inter::filter::convolve*` directly. The scalar arm of each slot IS
+    // the same `inter::filter::convolve*` fn this used to call
+    // (`dispatch.rs:1780/1801/1812/1831`), so the forced-scalar leg is a
+    // literal no-op swap; the AVX2 arm is conformance-proven byte-exact
+    // (`convolve8_avx2.rs:122/196`). Hence byte-identity-preserving. The
+    // `dsp` handle is hoisted to `evaluate_candidate_for_filter` (one
+    // `get_ref()` OnceLock load per candidate, not per convolve call).
     match (x_nonzero, y_nonzero) {
         (false, false) => {
-            crate::inter::filter::convolve_copy(
-                src_slice,
-                ref_plane.stride,
-                dst,
-                dst_stride,
-                bw,
-                bh,
-            );
+            (dsp.convolve_copy())(src_slice, ref_plane.stride, dst, dst_stride, bw, bh);
         }
         (true, false) => {
-            crate::inter::filter::convolve8_horiz(
+            (dsp.convolve8_horiz())(
                 src_slice,
                 ref_plane.stride,
                 dst,
@@ -2807,7 +2820,7 @@ fn build_inter_prediction(
             );
         }
         (false, true) => {
-            crate::inter::filter::convolve8_vert(
+            (dsp.convolve8_vert())(
                 src_slice,
                 ref_plane.stride,
                 dst,
@@ -2818,7 +2831,7 @@ fn build_inter_prediction(
             );
         }
         (true, true) => {
-            crate::inter::filter::convolve8(
+            (dsp.convolve8())(
                 src_slice,
                 ref_plane.stride,
                 dst,
