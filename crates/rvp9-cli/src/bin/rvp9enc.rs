@@ -785,6 +785,16 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
     let mut out = std::fs::File::create(output).map_err(|e| format!("creating {output}: {e}"))?;
     write_ivf(&mut out, &header, &packet_refs).map_err(|e| format!("writing IVF: {e}"))?;
 
+    // C2-β — measurement-only fire-rate of the size-gated ML-partition
+    // breakout. Reads the global counter exposed by the encoder; off
+    // unless `RVP9_C2B_STATS=1`. Proves the size gate: high on large
+    // frames, ZERO on small.
+    if std::env::var_os("RVP9_C2B_STATS").is_some() {
+        let fired = rvp9_encoder::rdo::inter_dispatch::ML_PARTITION_BREAKOUT_FIRED
+            .load(std::sync::atomic::Ordering::Relaxed);
+        eprintln!("rvp9enc: C2B ml-breakout fired {fired} times ({coded_w}x{coded_h})");
+    }
+
     if opts.verbose {
         let secs = frames.len() as f64 * f64::from(fps_den) / f64::from(fps_num);
         let kbps = if secs > 0.0 {
