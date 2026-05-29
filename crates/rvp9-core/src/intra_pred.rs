@@ -715,6 +715,7 @@ pub fn d207_predictor(dst: &mut [u8], stride: usize, bs: usize, left: &[u8]) {
 /// unconditionally on the materialised edges. DC is special because
 /// libvpx swaps in a different kernel that averages only the
 /// available neighbours instead of mixing in the 129 fill bytes.
+#[inline]
 pub fn intra_predict(
     mode: IntraMode,
     dst: &mut [u8],
@@ -790,40 +791,61 @@ pub fn intra_predict(
     //   RVP9_TRACE_INTRA=4x4       — only 4x4 calls
     //   (unset → no trace)
     if let Some(filter) = crate::trace_flags::trace_flags().intra.as_deref() {
-        let want = filter == "all" || (filter == "4x4" && bs == 4);
-        if want {
-            eprint!(
-                "RVP9_TRACE_INTRA mode={mode:?} bs={bs} above_left={} above=[",
-                ctx.above_left
-            );
-            for (i, &v) in ctx.above.iter().take(2 * bs).enumerate() {
-                if i > 0 {
-                    eprint!(",");
-                }
-                eprint!("{v}");
+        trace_intra_pred(filter, mode, bs, ctx, dst, stride);
+    }
+}
+
+/// Cold-path dump for the `RVP9_TRACE_INTRA` debug filter, factored out
+/// of [`intra_predict`] so the hot predictor body stays small enough for
+/// LTO to inline into the per-TX reconstruction loop (intra recon is the
+/// dominant decode cost — see
+/// `notes/2026.05.29 - NOTE - decoder perf intra diagnosis.md`).
+/// Behaviour is byte-identical to the inline form: same filter, same
+/// dump, same output.
+#[cold]
+#[inline(never)]
+fn trace_intra_pred(
+    filter: &str,
+    mode: IntraMode,
+    bs: usize,
+    ctx: PredCtx<'_>,
+    dst: &[u8],
+    stride: usize,
+) {
+    let want = filter == "all" || (filter == "4x4" && bs == 4);
+    if !want {
+        return;
+    }
+    eprint!(
+        "RVP9_TRACE_INTRA mode={mode:?} bs={bs} above_left={} above=[",
+        ctx.above_left
+    );
+    for (i, &v) in ctx.above.iter().take(2 * bs).enumerate() {
+        if i > 0 {
+            eprint!(",");
+        }
+        eprint!("{v}");
+    }
+    eprint!("] left=[");
+    for (i, &v) in ctx.left.iter().take(bs).enumerate() {
+        if i > 0 {
+            eprint!(",");
+        }
+        eprint!("{v}");
+    }
+    eprint!("] pred=[");
+    for r in 0..bs {
+        if r > 0 {
+            eprint!(";");
+        }
+        for c in 0..bs {
+            if c > 0 {
+                eprint!(",");
             }
-            eprint!("] left=[");
-            for (i, &v) in ctx.left.iter().take(bs).enumerate() {
-                if i > 0 {
-                    eprint!(",");
-                }
-                eprint!("{v}");
-            }
-            eprint!("] pred=[");
-            for r in 0..bs {
-                if r > 0 {
-                    eprint!(";");
-                }
-                for c in 0..bs {
-                    if c > 0 {
-                        eprint!(",");
-                    }
-                    eprint!("{}", dst[r * stride + c]);
-                }
-            }
-            eprintln!("]");
+            eprint!("{}", dst[r * stride + c]);
         }
     }
+    eprintln!("]");
 }
 
 /// Neighbour-availability hint for the DC predictor family. The
@@ -1037,8 +1059,21 @@ pub fn build_intra_predictors(
             // (libvpx checks `xd->mb_to_bottom_edge < 0`, equivalent).
             let extend_bottom_full = px_y + bs <= plane_height;
             if extend_bottom_full {
-                for i in 0..bs {
-                    edges.left_col[i] = dst_plane[base + i * dst_stride - 1];
+                // Hot interior-block path (this loop runs per intra TX
+                // sub-block — the dominant decode cost). Bound-check the
+                // strided read span ONCE via a sub-slice, then walk it
+                // with `step_by` (internally unchecked) and zip into
+                // `left_col[..bs]` (checked once). Elides the per-element
+                // bounds checks of the prior `for i in 0..bs` form.
+                // Byte-identical: same reads, same writes, same order.
+                let first = base - 1;
+                let last = first + (bs - 1) * dst_stride;
+                let span = &dst_plane[first..=last];
+                for (slot, &px) in edges.left_col[..bs]
+                    .iter_mut()
+                    .zip(span.iter().step_by(dst_stride))
+                {
+                    *slot = px;
                 }
             } else {
                 let extend_bottom = plane_height - px_y;

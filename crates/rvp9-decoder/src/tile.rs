@@ -1021,6 +1021,17 @@ fn reconstruct_intra_planes<D: TileFrameDst>(
     let tx_size = mi.tx_size;
     let chroma = dst_frame.chroma();
 
+    // Hoist the debug trace-flag reads out of the per-TX hot loop below.
+    // The flags are process-constant (env-derived `OnceLock`), so reading
+    // them once per intra-block avoids an atomic `OnceLock` load per TX
+    // sub-block. This loop runs ~150-226× per intra-block and intra
+    // reconstruction is the dominant decode cost (see the decoder-perf
+    // notes), so the per-TX `trace_flags()` calls were measurable churn
+    // in the hottest decode loop. Byte-identical: same flag values, just
+    // fewer reads.
+    let trace_intra_at = crate::trace_flags::trace_flags().intra_at.as_deref();
+    let trace_kfleaf = crate::trace_flags::trace_flags().kfleaf;
+
     if mi.skip {
         // libvpx `dec_reset_skip_context` — zero the per-plane above/
         // left coef-context cells covering the block.
@@ -1125,7 +1136,7 @@ fn reconstruct_intra_planes<D: TileFrameDst>(
                 //   RVP9_TRACE_INTRA_AT="plane,x,y" → exact-pixel match
                 //   RVP9_TRACE_INTRA_AT="plane,x..,y.."→ "at-or-after" probe
                 //   (unset → no trace)
-                if let Some(filter) = crate::trace_flags::trace_flags().intra_at.as_deref() {
+                if let Some(filter) = trace_intra_at {
                     let parts: Vec<&str> = filter.split(',').collect();
                     if parts.len() == 3 {
                         let p_ok = parts[0].parse::<usize>().ok() == Some(plane);
@@ -1169,7 +1180,7 @@ fn reconstruct_intra_planes<D: TileFrameDst>(
                 // D.15 per-plane / per-tx cursor pre-trace. Gated by
                 // RVP9_TRACE_KFLEAF=1; mirrors libvpx side at
                 // vp9_decodeframe.c::decode_block per-plane loop.
-                if crate::trace_flags::trace_flags().kfleaf {
+                if trace_kfleaf {
                     let (range, value, count, pos) = reader.cursor_state();
                     eprintln!(
                         "RVP9_DBG kfleaf mi=({mi_row},{mi_col}) plane={plane} row={loff} col={aoff} tx={plane_tx:?} pre (range={range}, value=0x{value:016x}, count={count}, pos={pos})"
