@@ -170,7 +170,7 @@ unsafe fn recon_and_store16(dest: *mut u8, in_x: __m256i) {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn store_buffer_16x32(in_: &mut [__m256i; 32], mut dst: *mut u8, stride: usize) {
+pub(super) unsafe fn store_buffer_16x32(in_: &mut [__m256i; 32], mut dst: *mut u8, stride: usize) {
     let final_rounding = _mm256_set1_epi16(1 << 5);
     let mut j = 0;
     while j < 32 {
@@ -298,7 +298,7 @@ unsafe fn build_transpose_t(src: &[__m256i]) -> [__m256i; 16] {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn transpose_16bit_16x16_avx2(io: &mut [__m256i]) {
+pub(super) unsafe fn transpose_16bit_16x16_avx2(io: &mut [__m256i]) {
     let t = build_transpose_t(io);
     let (top, bottom) = io.split_at_mut(8);
     transpose2_8x8_avx2(&t[0..8], top);
@@ -318,7 +318,7 @@ unsafe fn transpose_16bit_16x16_avx2(io: &mut [__m256i]) {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn transpose_16bit_16x16_avx2_to(src: &[__m256i], dst: &mut [__m256i]) {
+pub(super) unsafe fn transpose_16bit_16x16_avx2_to(src: &[__m256i], dst: &mut [__m256i]) {
     let t = build_transpose_t(src);
     let (top, bottom) = dst.split_at_mut(8);
     transpose2_8x8_avx2(&t[0..8], top);
@@ -714,7 +714,7 @@ unsafe fn idct32_1024_16x32_quarter_3_4(in_: &[__m256i; 32], out: &mut [__m256i;
 // G4: loads from `dst` use _mm_loadu_si128 (unaligned) — helper does no `dst` I/O
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn idct32_1024_16x32(io: &mut [__m256i; 32]) {
+pub(super) unsafe fn idct32_1024_16x32(io: &mut [__m256i; 32]) {
     let mut temp: [__m256i; 32] = [_mm256_setzero_si256(); 32];
 
     idct32_1024_16x32_quarter_1_2(io, &mut temp);
@@ -743,7 +743,7 @@ unsafe fn idct32_1024_16x32(io: &mut [__m256i; 32]) {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn idct_load16x16(input: *const i32, in_: &mut [__m256i], stride: usize) {
+pub(super) unsafe fn idct_load16x16(input: *const i32, in_: &mut [__m256i], stride: usize) {
     use core::arch::x86_64::_mm_packs_epi32;
     for (i, slot) in in_.iter_mut().take(16).enumerate() {
         let base = input.add(i * stride);

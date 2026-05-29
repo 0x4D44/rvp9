@@ -60,6 +60,7 @@ pub mod idct16x16_sse2_256;
 pub mod idct32x32_135_avx2;
 pub mod idct32x32_34_avx2;
 pub mod idct32x32_avx2;
+pub mod idct32x32_avx2_135;
 pub mod idct32x32_avx2_1024;
 pub mod idct32x32_sse2_1024;
 pub mod idct4x4_avx2;
@@ -120,6 +121,7 @@ pub use idct16x16_sse2_256::{
 pub use idct32x32_34_avx2::idct32x32_34_add_avx2;
 pub use idct32x32_135_avx2::idct32x32_135_add_avx2;
 pub use idct32x32_avx2::idct32x32_add_avx2;
+pub use idct32x32_avx2_135::idct32x32_add_avx2_135;
 pub use idct32x32_avx2_1024::idct32x32_add_avx2_1024;
 pub use idct32x32_sse2_1024::{
     idct32x32_add_sse2_34, idct32x32_add_sse2_135, idct32x32_add_sse2_1024,

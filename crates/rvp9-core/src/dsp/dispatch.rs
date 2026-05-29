@@ -1333,8 +1333,20 @@ impl SimdDispatch {
         #[cfg(not(target_arch = "x86_64"))]
         let idct32x32_34_add: fn(&[i32; 1024], &mut [u8], usize) = scalar_idct32x32_34_add;
 
+        // EOB-135 fast path. Prefer the AVX2 i16-lane partial kernel
+        // (`idct32x32_add_avx2_135`, a single row pass + 2 column passes
+        // of the 256-bit `idct32_1024_16x32` engine — 16 i16/ymm) when
+        // AVX2 is present, then the SSE2 i16-lane partial kernel (6 engine
+        // runs × 8 i16/xmm), then scalar. Same i16-lane widening win as
+        // the dense `idct32x32_add` flip; both SIMD kernels reuse the
+        // bit-exact-gated 1024 helpers and saturate identically. The
+        // i32-lane `idct32x32_135_add_avx2` remains unreferenced by any
+        // slot (retained via re-export + self-tests).
+        // See `crates/rvp9-core/src/dsp/x86_64/idct32x32_avx2_135.rs`.
         #[cfg(target_arch = "x86_64")]
-        let idct32x32_135_add: fn(&[i32; 1024], &mut [u8], usize) = if caps.sse2 {
+        let idct32x32_135_add: fn(&[i32; 1024], &mut [u8], usize) = if caps.avx2 {
+            crate::dsp::x86_64::idct32x32_add_avx2_135
+        } else if caps.sse2 {
             crate::dsp::x86_64::idct32x32_add_sse2_135
         } else {
             scalar_idct32x32_135_add
@@ -2828,11 +2840,15 @@ mod tests {
     }
 
     /// The 32×32 EOB-bucket slots route through the SSE2 i16-lane
-    /// safe wrappers when `caps.sse2 == true`, scalar otherwise.
+    /// safe wrappers on SSE2-only CPUs (AVX2 forced off), scalar when
+    /// neither is present. (The EOB-135 slot prefers the AVX2 i16-lane
+    /// kernel when AVX2 is present — see
+    /// `idct32x32_135_slot_prefers_avx2`. The EOB-34 slot has no AVX2
+    /// branch, so it stays SSE2 whenever `caps.sse2`.)
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn idct32x32_eob_bucket_slots_dispatch_correctly() {
-        // sse2=false → scalar fn pointers.
+        // sse2=false, avx2=false → scalar fn pointers.
         let mut caps = detect();
         caps.sse2 = false;
         caps.avx2 = false;
@@ -2844,12 +2860,13 @@ mod tests {
         assert_eq!(d_scalar.idct32x32_34_add() as usize, scalar_34 as usize);
         assert_eq!(d_scalar.idct32x32_135_add() as usize, scalar_135 as usize);
 
-        // sse2=true → SSE2 wrappers (NOT the scalar pointers).
+        // sse2=true, avx2=false → SSE2 wrappers (NOT the scalar pointers).
         let sse2_34: fn(&[i32; 1024], &mut [u8], usize) = crate::dsp::x86_64::idct32x32_add_sse2_34;
         let sse2_135: fn(&[i32; 1024], &mut [u8], usize) =
             crate::dsp::x86_64::idct32x32_add_sse2_135;
         let mut caps_sse2 = detect();
         caps_sse2.sse2 = true;
+        caps_sse2.avx2 = false;
         let d_sse2 = SimdDispatch::build(caps_sse2);
         assert_eq!(
             d_sse2.idct32x32_34_add() as usize,
@@ -2859,7 +2876,56 @@ mod tests {
         assert_eq!(
             d_sse2.idct32x32_135_add() as usize,
             sse2_135 as usize,
-            "sse2=true must install the SSE2 wrapper for idct32x32_135_add"
+            "sse2=true, avx2=false must install the SSE2 wrapper for idct32x32_135_add"
+        );
+    }
+
+    /// The EOB-135 32×32 slot prefers the AVX2 i16-lane partial kernel
+    /// when AVX2 is present, falls back to the SSE2 i16-lane partial
+    /// kernel on SSE2-only CPUs (AVX2 forced off), and the scalar
+    /// otherwise. Mirrors the dense slot's
+    /// `idct32x32_dense_slot_prefers_avx2`.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn idct32x32_135_slot_prefers_avx2() {
+        let avx2: fn(&[i32; 1024], &mut [u8], usize) =
+            crate::dsp::x86_64::idct32x32_add_avx2_135;
+        let sse2: fn(&[i32; 1024], &mut [u8], usize) =
+            crate::dsp::x86_64::idct32x32_add_sse2_135;
+        let scalar: fn(&[i32; 1024], &mut [u8], usize) =
+            crate::transforms::inverse::idct32x32_135_add;
+
+        // avx2=true → AVX2 i16-lane partial kernel.
+        let mut caps_avx2 = detect();
+        caps_avx2.avx2 = true;
+        caps_avx2.sse2 = true;
+        let d_avx2 = SimdDispatch::build(caps_avx2);
+        assert_eq!(
+            d_avx2.idct32x32_135_add() as usize,
+            avx2 as usize,
+            "avx2=true must install the AVX2 i16-lane idct32x32_add_avx2_135"
+        );
+
+        // avx2=false, sse2=true → SSE2 i16-lane partial kernel.
+        let mut caps_sse2 = detect();
+        caps_sse2.avx2 = false;
+        caps_sse2.sse2 = true;
+        let d_sse2 = SimdDispatch::build(caps_sse2);
+        assert_eq!(
+            d_sse2.idct32x32_135_add() as usize,
+            sse2 as usize,
+            "avx2=false, sse2=true must install the SSE2 i16-lane idct32x32_add_sse2_135"
+        );
+
+        // avx2=false, sse2=false → scalar.
+        let mut caps_scalar = detect();
+        caps_scalar.avx2 = false;
+        caps_scalar.sse2 = false;
+        let d_scalar = SimdDispatch::build(caps_scalar);
+        assert_eq!(
+            d_scalar.idct32x32_135_add() as usize,
+            scalar as usize,
+            "avx2=false, sse2=false must install the scalar idct32x32_135_add"
         );
     }
 

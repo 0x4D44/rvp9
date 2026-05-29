@@ -952,6 +952,13 @@ mod tests {
         let dispatch_avx2 = SimdDispatch::build(caps);
         let mut caps_scalar = detect();
         caps_scalar.avx2 = false;
+        // Also drop SSE2 so the "scalar" dispatch actually routes to the
+        // scalar reference. Without this, `caps_scalar` still dispatches
+        // to the SSE2 135 wrapper, which implements the stricter upstream
+        // libvpx top-left-16×16 contract and therefore diverges from both
+        // scalar and the i16-lane AVX2 135 kernel on inputs with non-zero
+        // coefficients in cols 16..32 of rows 0..16.
+        caps_scalar.sse2 = false;
         let dispatch_scalar = SimdDispatch::build(caps_scalar);
 
         let scalar_fp: fn(&[i32; 1024], &mut [u8], usize) = idct32x32_135_add;
