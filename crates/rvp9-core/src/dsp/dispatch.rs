@@ -589,6 +589,33 @@ pub type ScaledConvolveFn = fn(
     usize,
 );
 
+/// Per-size SAD fn type (P1-B): `(src, src_stride, ref, ref_stride) -> SAD`.
+/// Mirrors the scalar `crate::dsp::distortion::vpx_sad{W}x{H}` shims and
+/// the AVX2 `crate::dsp::x86_64::vpx_sad{W}x{H}_avx2` wrappers — both share
+/// this signature, so a slot may hold either with no caller-visible change.
+pub type SadFn = fn(&[u8], usize, &[u8], usize) -> u32;
+
+/// 13-entry SAD dispatch table, one fn-pointer per VP9 block size, indexed
+/// by `BlockSize::idx()` (`0..13`). Mirrors libvpx's `cpi->fn_ptr[bsize].sdf`
+/// indirection. Each entry is selected by one `if caps.avx2` clause in
+/// [`SimdDispatch::build`] — the AVX2 wrapper on AVX2 hosts, the scalar
+/// reference otherwise. Byte-exact across the two arms (SAD is an
+/// integer-exact `Σ|a − b|`).
+#[derive(Debug, Clone)]
+pub struct SadTable {
+    /// Indexed by `BlockSize::idx()` (`0..=12`).
+    fns: [SadFn; crate::block::BLOCK_SIZES],
+}
+
+impl SadTable {
+    /// Resolve the SAD kernel for `bsize`. Total over all 13 VP9 sizes.
+    #[inline]
+    #[must_use]
+    pub fn get(&self, bsize: crate::block::BlockSize) -> SadFn {
+        self.fns[bsize.idx()]
+    }
+}
+
 /// The runtime SIMD kernel dispatch table.
 ///
 /// Populated once per process via [`init`] (production path). In-crate
@@ -1175,6 +1202,16 @@ pub struct SimdDispatch {
     /// Mirrors [`crate::inter::filter::convolve8_scaled_avg`]. AVX2 on
     /// x86_64 when `caps.avx2`; scalar elsewhere.
     pub(crate) convolve8_scaled_avg: ScaledConvolveFn,
+
+    /// P1-B — per-size SAD (`Σ|a − b|`) for the full-pel motion search.
+    /// Mirrors the scalar `crate::dsp::distortion::vpx_sad{W}x{H}` shims;
+    /// on x86_64 AVX2 hosts each entry points at the safe wrapper
+    /// `crate::dsp::x86_64::vpx_sad{W}x{H}_avx2`, otherwise at the scalar
+    /// reference. Byte-exact across the two arms (integer-exact reduction,
+    /// no overflow in the u32 accumulator for any VP9 size). Resolved via
+    /// [`SimdDispatch::sad`]; consumed by the diamond search
+    /// (`crate::mv_search::full_pixel`) and `crate::mv_search::int_pro_me`.
+    pub(crate) sad: SadTable,
 
     /// G4.4b — frame-border edge replication. Signature mirrors
     /// [`crate::frame::extend_frame_borders`]. **Currently scalar-only**:
@@ -1937,6 +1974,66 @@ impl SimdDispatch {
         #[cfg(not(target_arch = "x86_64"))]
         let convolve8_scaled_avg: ScaledConvolveFn = crate::inter::filter::convolve8_scaled_avg;
 
+        // ---- P1-B — per-size SAD table. ----
+        // One clause per VP9 block size: the AVX2 safe wrapper on AVX2
+        // hosts, the scalar `vpx_sad{W}x{H}` reference otherwise. The two
+        // arms are byte-exact (integer `Σ|a − b|`, no u32 overflow), so the
+        // motion search sees identical SADs either way.
+        #[cfg(target_arch = "x86_64")]
+        let sad: SadTable = {
+            use crate::dsp::distortion as sc;
+            use crate::dsp::x86_64 as av;
+            macro_rules! sad_slot {
+                ($scalar:path, $avx2:path) => {
+                    if caps.avx2 {
+                        $avx2 as SadFn
+                    } else {
+                        $scalar as SadFn
+                    }
+                };
+            }
+            // Order MUST match `BlockSize::idx()` (Block4x4 = 0 .. Block64x64 = 12).
+            SadTable {
+                fns: [
+                    sad_slot!(sc::vpx_sad4x4, av::vpx_sad4x4_avx2),
+                    sad_slot!(sc::vpx_sad4x8, av::vpx_sad4x8_avx2),
+                    sad_slot!(sc::vpx_sad8x4, av::vpx_sad8x4_avx2),
+                    sad_slot!(sc::vpx_sad8x8, av::vpx_sad8x8_avx2),
+                    sad_slot!(sc::vpx_sad8x16, av::vpx_sad8x16_avx2),
+                    sad_slot!(sc::vpx_sad16x8, av::vpx_sad16x8_avx2),
+                    sad_slot!(sc::vpx_sad16x16, av::vpx_sad16x16_avx2),
+                    sad_slot!(sc::vpx_sad16x32, av::vpx_sad16x32_avx2),
+                    sad_slot!(sc::vpx_sad32x16, av::vpx_sad32x16_avx2),
+                    sad_slot!(sc::vpx_sad32x32, av::vpx_sad32x32_avx2),
+                    sad_slot!(sc::vpx_sad32x64, av::vpx_sad32x64_avx2),
+                    sad_slot!(sc::vpx_sad64x32, av::vpx_sad64x32_avx2),
+                    sad_slot!(sc::vpx_sad64x64, av::vpx_sad64x64_avx2),
+                ],
+            }
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let sad: SadTable = {
+            let _ = caps;
+            use crate::dsp::distortion as sc;
+            SadTable {
+                fns: [
+                    sc::vpx_sad4x4 as SadFn,
+                    sc::vpx_sad4x8,
+                    sc::vpx_sad8x4,
+                    sc::vpx_sad8x8,
+                    sc::vpx_sad8x16,
+                    sc::vpx_sad16x8,
+                    sc::vpx_sad16x16,
+                    sc::vpx_sad16x32,
+                    sc::vpx_sad32x16,
+                    sc::vpx_sad32x32,
+                    sc::vpx_sad32x64,
+                    sc::vpx_sad64x32,
+                    sc::vpx_sad64x64,
+                ],
+            }
+        };
+
         // ---- G4.4b — scalar-only slot (deferral rationale on field doc). ----
         let extend_frame_borders: fn(&mut Yv12Buffer) = scalar_extend_frame_borders;
 
@@ -1992,6 +2089,7 @@ impl SimdDispatch {
             convolve8_avg,
             convolve8_scaled,
             convolve8_scaled_avg,
+            sad,
             extend_frame_borders,
         }
     }
@@ -2489,6 +2587,18 @@ impl SimdDispatch {
     #[must_use]
     pub fn extend_frame_borders(&self) -> fn(&mut Yv12Buffer) {
         self.extend_frame_borders
+    }
+
+    /// Resolve the per-size SAD kernel for `bsize` (P1-B). Returns the AVX2
+    /// wrapper on AVX2 hosts and the scalar `vpx_sad{W}x{H}` reference
+    /// otherwise; both are byte-exact. Resolve once per search call and
+    /// reuse across the inner SAD loop (the table is a single fixed array,
+    /// so this is a plain index — but hoisting `get_ref()` out of the hot
+    /// loop still amortizes the OnceLock load).
+    #[inline]
+    #[must_use]
+    pub fn sad(&self, bsize: crate::block::BlockSize) -> SadFn {
+        self.sad.get(bsize)
     }
 }
 

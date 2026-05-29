@@ -27,10 +27,7 @@
 
 use crate::block::BlockSize;
 use crate::cost::mv_cost::{MvCosts, mv_cost};
-use crate::dsp::distortion::{
-    vpx_sad4x4, vpx_sad4x8, vpx_sad8x4, vpx_sad8x8, vpx_sad8x16, vpx_sad16x8, vpx_sad16x16,
-    vpx_sad16x32, vpx_sad32x16, vpx_sad32x32, vpx_sad32x64, vpx_sad64x32, vpx_sad64x64,
-};
+use crate::dsp::dispatch::SadFn;
 use crate::mode_info::Mv;
 use crate::mv_search::mv_limits::{MvLimits, is_mv_in};
 use crate::mv_search::search_site::SearchSiteConfig;
@@ -110,27 +107,16 @@ pub fn mv_err_cost(
 /// Dispatch SAD by block size. Returns a function pointer suitable
 /// for use in the search loop.
 ///
-/// The C source uses `cpi->fn_ptr[bsize].sdf`; we don't have that
-/// indirection yet, so a small `match` does the job. F7.0 lands the
-/// 13 SAD variants — all VP9 block sizes covered.
+/// The C source uses `cpi->fn_ptr[bsize].sdf`; the SAD dispatch table
+/// (`SimdDispatch::sad`, P1-B) is exactly that indirection — the AVX2
+/// kernel on AVX2 hosts, the scalar `vpx_sad{W}x{H}` reference otherwise,
+/// byte-exact across the two arms. **Resolve once per search call** and
+/// reuse across the inner SAD loop, so the `OnceLock` load in `get_ref()`
+/// is amortized rather than paid per SAD.
 #[inline]
 #[must_use]
-fn sad_for(bsize: BlockSize) -> fn(&[u8], usize, &[u8], usize) -> u32 {
-    match bsize {
-        BlockSize::Block4x4 => vpx_sad4x4,
-        BlockSize::Block4x8 => vpx_sad4x8,
-        BlockSize::Block8x4 => vpx_sad8x4,
-        BlockSize::Block8x8 => vpx_sad8x8,
-        BlockSize::Block8x16 => vpx_sad8x16,
-        BlockSize::Block16x8 => vpx_sad16x8,
-        BlockSize::Block16x16 => vpx_sad16x16,
-        BlockSize::Block16x32 => vpx_sad16x32,
-        BlockSize::Block32x16 => vpx_sad32x16,
-        BlockSize::Block32x32 => vpx_sad32x32,
-        BlockSize::Block32x64 => vpx_sad32x64,
-        BlockSize::Block64x32 => vpx_sad64x32,
-        BlockSize::Block64x64 => vpx_sad64x64,
-    }
+fn sad_for(bsize: BlockSize) -> SadFn {
+    crate::dsp::get_ref().sad(bsize)
 }
 
 /// Input parameters to a single full-pel diamond search call.
@@ -239,9 +225,15 @@ fn block_at<'a>(
 /// Compute SAD for the block at `(src_offset + mv)` in `ref_plane`
 /// versus the source block at `src_offset` in `src_plane`. Returns
 /// `None` if either block falls outside its plane.
+///
+/// `sad_fn` is the block-size-specific SAD kernel, resolved once per
+/// search call by the caller (hoisting the dispatch `get_ref()` out of
+/// the inner loop). Threading it in keeps the kernel selection out of the
+/// hot path while preserving byte-identical results.
 #[inline]
 fn sad_at(
     block_size: BlockSize,
+    sad_fn: SadFn,
     src_plane: &PlaneRef<'_>,
     src_offset: (usize, usize),
     ref_plane: &PlaneRef<'_>,
@@ -260,9 +252,7 @@ fn sad_at(
     let ref_col = src_offset.0 as isize + isize::from(mv_col);
     let ref_row = src_offset.1 as isize + isize::from(mv_row);
     let (ref_slice, ref_stride) = block_at(ref_plane, ref_col, ref_row, w, h)?;
-    Some((sad_for(block_size))(
-        src_slice, src_stride, ref_slice, ref_stride,
-    ))
+    Some(sad_fn(src_slice, src_stride, ref_slice, ref_stride))
 }
 
 /// Raw SAD (no MV-cost) for the block at full-pel MV `(mv_row, mv_col)`.
@@ -277,7 +267,10 @@ pub fn raw_sad_at_mv(
     mv_row: i16,
     mv_col: i16,
 ) -> Option<u32> {
-    sad_at(block_size, src_plane, src_offset, ref_plane, mv_row, mv_col)
+    let sad_fn = sad_for(block_size);
+    sad_at(
+        block_size, sad_fn, src_plane, src_offset, ref_plane, mv_row, mv_col,
+    )
 }
 
 /// Exhaustive raw-SAD scan over every full-pel MV inside `mv_limits`
@@ -299,10 +292,11 @@ pub fn exhaustive_full_pel_min_sad(
     let col_lo = mv_limits.col_min.max(-max_radius);
     let col_hi = mv_limits.col_max.min(max_radius);
     let mut best: Option<(u32, i16, i16)> = None;
+    let sad_fn = sad_for(block_size);
     for r in row_lo..=row_hi {
         for c in col_lo..=col_hi {
             if let Some(s) = sad_at(
-                block_size, src_plane, src_offset, ref_plane, r as i16, c as i16,
+                block_size, sad_fn, src_plane, src_offset, ref_plane, r as i16, c as i16,
             ) && best.is_none_or(|(b, _, _)| s < b)
             {
                 best = Some((s, r as i16, c as i16));
@@ -344,6 +338,12 @@ pub fn diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearch
     debug_assert_eq!(site_config.searches_per_step, 4);
     let searches_per_step = site_config.searches_per_step as usize;
 
+    // Resolve the SAD kernel once per search call (P1-B hoist): the
+    // dispatch `get_ref()` OnceLock load is amortized over every SAD in the
+    // diamond instead of paid per-SAD. Byte-identical to the per-call
+    // resolution it replaces.
+    let sad_fn = sad_for(params.block_size);
+
     // Convert center_mv (1/8-pel) to fcenter_mv (full-pel). This is the
     // cost-attractor / rate-reference MV (libvpx `ref_mv`).
     let fcenter_row = params.center_mv.row >> 3;
@@ -364,6 +364,7 @@ pub fn diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearch
     // valid step is preferred.
     let mut bestsad: u32 = match sad_at(
         params.block_size,
+        sad_fn,
         params.src_plane,
         params.src_offset,
         params.ref_plane,
@@ -423,6 +424,7 @@ pub fn diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearch
                 // SAD without bounds check (covered by all_in).
                 if let Some(thissad) = sad_at(
                     params.block_size,
+                    sad_fn,
                     params.src_plane,
                     params.src_offset,
                     params.ref_plane,
@@ -458,6 +460,7 @@ pub fn diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearch
                 let tc = this_col as i16;
                 if let Some(thissad) = sad_at(
                     params.block_size,
+                    sad_fn,
                     params.src_plane,
                     params.src_offset,
                     params.ref_plane,

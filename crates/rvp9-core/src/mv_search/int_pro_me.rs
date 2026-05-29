@@ -66,7 +66,7 @@
 //!   `vp9_get_scaled_ref_frame` swap-out logic.
 
 use crate::block::BlockSize;
-use crate::dsp::distortion::{vpx_sad8x8, vpx_sad16x16, vpx_sad32x32, vpx_sad64x64};
+use crate::dsp::dispatch::SadFn;
 use crate::mode_info::Mv;
 use crate::mv_search::full_pixel::PlaneRef;
 
@@ -298,19 +298,28 @@ fn vector_match(ref_vec: &[i16], src_vec: &[i16], bwl: u32) -> i32 {
     center - (bw >> 1)
 }
 
-/// Pick the matching 2D SAD kernel for an SB-supported block size.
+/// Run the 2D SAD for an SB-supported block size via the pre-resolved
+/// kernel `sad_fn`.
+///
+/// `sad_fn` is the dispatch-resolved SAD kernel for `bsize`, hoisted out
+/// of the search loop once per `int_pro_motion_estimation` call (P1-B).
+/// The `match` is **retained as a fail-soft gate**: only the four
+/// SB-supported sizes (8×8/16×16/32×32/64×64) invoke the kernel; any other
+/// `bsize` returns the `u32::MAX` sentinel verbatim (the same behaviour as
+/// before — never indexing a slot table out of bounds nor panicking).
 fn sad_block(
     bsize: BlockSize,
+    sad_fn: SadFn,
     src: &[u8],
     src_stride: usize,
     ref_block: &[u8],
     ref_stride: usize,
 ) -> u32 {
     match bsize {
-        BlockSize::Block8x8 => vpx_sad8x8(src, src_stride, ref_block, ref_stride),
-        BlockSize::Block16x16 => vpx_sad16x16(src, src_stride, ref_block, ref_stride),
-        BlockSize::Block32x32 => vpx_sad32x32(src, src_stride, ref_block, ref_stride),
-        BlockSize::Block64x64 => vpx_sad64x64(src, src_stride, ref_block, ref_stride),
+        BlockSize::Block8x8
+        | BlockSize::Block16x16
+        | BlockSize::Block32x32
+        | BlockSize::Block64x64 => sad_fn(src, src_stride, ref_block, ref_stride),
         _ => u32::MAX,
     }
 }
@@ -324,6 +333,7 @@ fn sad_block(
 /// instead of bailing.
 fn sad_block_clamped(
     bsize: BlockSize,
+    sad_fn: SadFn,
     src: &[u8],
     src_stride: usize,
     ref_plane: &PlaneRef<'_>,
@@ -339,7 +349,7 @@ fn sad_block_clamped(
             scratch[r * bw + c] = clamp_px(ref_plane, abs_y + r as i32, abs_x + c as i32);
         }
     }
-    sad_block(bsize, src, src_stride, &scratch[..bh * bw], bw)
+    sad_block(bsize, sad_fn, src, src_stride, &scratch[..bh * bw], bw)
 }
 
 /// `b_width_log2_lookup[bsize]` for the square SB block sizes we
@@ -518,10 +528,15 @@ pub fn int_pro_motion_estimation(
     // window can extend past any frame edge and replicates the border
     // pixel instead of bailing, so the diamond/cross refinement runs
     // for every SB including frame-edge SBs.
+    // Resolve the SAD kernel once per estimation call (P1-B hoist): the
+    // dispatch `get_ref()` OnceLock load is amortized over every 2D-SAD
+    // probe below instead of paid per probe. `sad_block` keeps its own
+    // fail-soft `match` so an unsupported `bsize` still returns `u32::MAX`.
+    let sad_fn = crate::dsp::get_ref().sad(bsize);
     let try_sad = |row: i32, col: i32| -> u32 {
         let abs_x = sb_px_x as i32 + col;
         let abs_y = sb_px_y as i32 + row;
-        sad_block_clamped(bsize, src_slice, src_stride, ref_plane, abs_y, abs_x)
+        sad_block_clamped(bsize, sad_fn, src_slice, src_stride, ref_plane, abs_y, abs_x)
     };
 
     let mut best_sad = try_sad(row, col);
