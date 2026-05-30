@@ -335,8 +335,29 @@ fn gop_topology_byte_identity() {
     // quirk on THIS fixture's 2nd-KF boundary is unrelated, as noted
     // above). Correct, intentional golden update — NOT a masked
     // regression. Prior iter golden: (len 23911, fnv1a 0x924a_2c35_b117_0a9b).
-    const GOLDEN_HASH: u64 = 0x6f4c_8c58_1914_1c48;
-    const GOLDEN_LEN: usize = 24240;
+    //
+    // Re-captured again (2026-05-30) after the NEARESTMV/ZEROMV tie-break
+    // fix (`mode_decision/inter.rs`, env `RVP9_NEAREST`, DEFAULT-ON). The
+    // fix makes the duplicate-MV skip unconditional (libvpx-faithful), so
+    // on the dominant `NEAREST==(0,0)` tie NEARESTMV wins over ZEROMV
+    // (previously rvp9's `mode_checked` guard let ZEROMV become the
+    // incumbent and the strict-`<` rule kept it). This fixture has such
+    // ties, so the chosen inter mode symbols change and the emitted
+    // bitstream shrinks (24240 -> 24225). The GOP *schedule* this oracle
+    // guards (refresh-mask assertions above) is unchanged. Decode-
+    // validated: the sibling `gop_topology_schedule_matches_emitted_frames`
+    // passes (rvp9-decoder parses every emitted frame of the fix-ON
+    // stream), and the separate `cross_decoder_gate` is BYTE-EXACT 4/4
+    // through vpxdec + ffmpeg on a fixed clip. (The pre-existing vpxdec
+    // strict-marker quirk on THIS fixture's 2nd-KF boundary — frame 18 —
+    // is unrelated, as noted above; it reproduces with `RVP9_3D=0`.)
+    // Confirmed `RVP9_NEAREST=0` restores this fixture's PRE-fix bytes
+    // EXACTLY (len 24240, fnv1a 0x6f4c_8c58_1914_1c48) — the delta is
+    // exactly the tie-fix, layered cleanly on top of the prior baseline.
+    // Correct, intentional golden update — NOT a masked regression. Prior
+    // iter golden: (len 24240, fnv1a 0x6f4c_8c58_1914_1c48).
+    const GOLDEN_HASH: u64 = 0x07f7_73a8_cb58_81df;
+    const GOLDEN_LEN: usize = 24225;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

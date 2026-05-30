@@ -241,8 +241,28 @@ fn a10_byte_identity_pre_vs_post_refactor() {
     // correct, intentional golden update — NOT a masked regression. The
     // pool-mapping invariant this oracle guards is unchanged. Prior iter
     // golden: (len 6405, fnv1a 0x96db_1a40_e2cb_4872).
-    const GOLDEN_HASH: u64 = 0xa461_95cb_ac7a_8578;
-    const GOLDEN_LEN: usize = 6445;
+    //
+    // Re-captured again (2026-05-30) after the NEARESTMV/ZEROMV tie-break
+    // fix (`mode_decision/inter.rs`, env `RVP9_NEAREST`, DEFAULT-ON). The
+    // fix makes the duplicate-MV skip unconditional (libvpx-faithful), so
+    // on the dominant `NEAREST==(0,0)` tie NEARESTMV wins over ZEROMV
+    // (previously rvp9's `mode_checked` guard let ZEROMV become the
+    // incumbent and the strict-`<` rule kept it). This fixture has such
+    // ties, so the chosen inter mode symbols change and the emitted
+    // bitstream shrinks (6445 -> 6408). Decode-validated before update:
+    // the fix-ON stream decodes BYTE-CLEAN through stock libvpx `vpxdec`
+    // (exit 0, all 12 frames, 294912 bytes, no drops/rejection), the
+    // sibling `a10_pool_stream_decodes_cleanly` passes (rvp9-decoder
+    // parses every frame), and the separate `cross_decoder_gate` is
+    // BYTE-EXACT 4/4 (vpxdec + ffmpeg). Confirmed `RVP9_NEAREST=0`
+    // restores this fixture's PRE-fix bytes EXACTLY (len 6445, fnv1a
+    // 0xa461_95cb_ac7a_8578) — the delta is exactly the tie-fix, layered
+    // cleanly on top of the prior baseline. Correct, intentional golden
+    // update — NOT a masked regression. The pool-mapping invariant this
+    // oracle guards is unchanged. Prior iter golden: (len 6445, fnv1a
+    // 0xa461_95cb_ac7a_8578).
+    const GOLDEN_HASH: u64 = 0xf54a_fa15_d33d_9571;
+    const GOLDEN_LEN: usize = 6408;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

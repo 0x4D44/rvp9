@@ -249,6 +249,25 @@ fn s3_domain_enabled() -> bool {
     *ON.get_or_init(|| std::env::var("RVP9_S3_DOMAIN").map(|v| v == "1").unwrap_or(false))
 }
 
+/// NEARESTMV/ZEROMV tie-break fix (HLD 2026.05.30). **Default ON.**
+///
+/// libvpx pre-populates `frame_mv[NEARESTMV]` before the candidate loop
+/// and then *unconditionally* skips any non-NEAREST mode whose MV equals
+/// NEAREST's (`vp9_pickmode.c:2286-2289`). rvp9 weakened that skip with a
+/// `mode_checked[NEARESTMV]` guard, which is false at iter-0 (ZEROMV runs
+/// first), so on the dominant `NEAREST==(0,0)` tie ZEROMV becomes the
+/// incumbent and the strict-`<` new-best rule keeps it — the opposite of
+/// libvpx. When ON (the default), the dedup is made unconditional (narrowed
+/// to the in-bounds NEAREST so the OOB-substitution safety is preserved), so
+/// NEARESTMV wins the tie like libvpx and the (0,0) cascade breaks.
+/// Set `RVP9_NEAREST=0` to restore the byte-identical baseline.
+#[inline]
+fn nearest_tie_fix_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("RVP9_NEAREST").map(|v| v != "0").unwrap_or(true))
+}
+
 /// S3 skip-side pixel-SSE rescale shift (default 4, libvpx). A/B only:
 /// `RVP9_S3_SKIPSHIFT=<n>` sweeps the shift to confirm the calibration.
 #[inline]
@@ -1330,6 +1349,20 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
     // (ref, mode) candidate. Populated on evaluation, read for dup check.
     let mut frame_mv: [[Mv; 4]; 2] = [[Mv::ZERO; 4]; 2];
 
+    // NEAREST tie-break fix (HLD 2026.05.30): mirror libvpx's
+    // `find_predictors` — pre-populate `frame_mv[NEARESTMV]` for each ref
+    // *before* the candidate loop (`vp9_pickmode.c:1285-1287`) so the
+    // unconditional duplicate-MV skip below can see NEAREST's MV at
+    // iter-0 (when `(LAST, ZEROMV)` runs first). The OOB substitution
+    // (`mvc_safe.nearest == ZERO` when not in bounds) is excluded by the
+    // `nearest_in_bounds` clause in the skip, so seeding the substituted
+    // zero here is harmless. Active by default; `RVP9_NEAREST=0` disables.
+    let nearest_tie_fix = nearest_tie_fix_enabled();
+    if nearest_tie_fix {
+        frame_mv[0][InterMode::NearestMv.idx()] = last_mvc_safe.nearest;
+        frame_mv[1][InterMode::NearestMv.idx()] = golden_mvc_safe.nearest;
+    }
+
     // NEWMV search results (lazily computed per ref frame).
     //
     // Phase-2 option-A — seed the caches from the descent's cached
@@ -1619,31 +1652,46 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
         //
         // In libvpx this is unconditional — `frame_mv[NEARESTMV]
         // [ref_frame]` is pre-populated by `find_predictors`
-        // (`vp9_pickmode.c:1285-1287`). In rvp9 we additionally guard
-        // on `mode_checked[NEARESTMV]` for two reasons:
-        //   1. rvp9's OOB-veto substitutes `Mv::ZERO` for
-        //      `mvc_safe.nearest` when the real NEAREST is out of
-        //      bounds. Without the guard, this rvp9-specific
-        //      substitution causes spurious skips (LAST ZERO becomes
-        //      "equal" to the substituted-zero NEAREST and gets
-        //      dropped, then NEAR / NEW for the same ref drop out
-        //      too — the loop can exit with zero evaluable candidates).
-        //   2. libvpx's iteration starts with `(LAST, ZEROMV)` then
-        //      `(LAST, NEARESTMV)`, so at iter-0 NEAREST hasn't run
-        //      yet but `frame_mv[NEARESTMV][LAST]` IS set upfront;
-        //      libvpx would skip ZEROMV iff `nearest == 0`. Our
-        //      `mode_checked` guard is strictly more conservative: it
-        //      lets the first candidate run unconditionally, then
-        //      applies the skip to LATER non-NEAREST candidates once
-        //      NEAREST has been evaluated. The downstream picker
-        //      cost-ranking still selects the libvpx-equivalent
-        //      winner (NEAREST and the duplicate-MV candidate have
-        //      identical predictions and identical SSE; only the
-        //      mode-rate differs).
-        if mode != InterMode::NearestMv
-            && mode_checked[ref_idx][InterMode::NearestMv.idx()]
-            && mv == frame_mv[ref_idx][InterMode::NearestMv.idx()]
-        {
+        // (`vp9_pickmode.c:1285-1287`), so on the `NEAREST==(0,0)` tie
+        // the iter-0 `(LAST, ZEROMV)` candidate is dropped and NEARESTMV
+        // wins. The baseline (`RVP9_NEAREST=0`) rvp9 path instead guards
+        // on `mode_checked[NEARESTMV]`, which is false at iter-0 (ZEROMV
+        // runs first) — so ZEROMV is evaluated, becomes the incumbent
+        // `best`, and the strict-`<` new-best rule keeps it on the tie.
+        // That over-picks ZEROMV / under-picks NEARESTMV vs libvpx and
+        // poisons the neighbour MV grid (NEAREST collapses to (0,0)).
+        //
+        // The default-on `RVP9_NEAREST` fix (HLD 2026.05.30) restores
+        // libvpx's behaviour: pre-populate `frame_mv[NEARESTMV]` (above)
+        // and make this skip *unconditional*, narrowed to the in-bounds
+        // NEAREST so the OOB-substitution safety the `mode_checked` guard
+        // provided is preserved (when NEAREST is OOB-substituted to ZERO,
+        // the skip must NOT fire or ZEROMV/NEAR/NEW could all be dropped,
+        // leaving an empty candidate set). When NEAREST is OOB it is also
+        // OOB-vetoed above, so ZEROMV is correctly the surviving zero-MV
+        // candidate.
+        //
+        // The `mode_checked` guard exists because rvp9's OOB-veto
+        // substitutes `Mv::ZERO` for `mvc_safe.nearest` when the real
+        // NEAREST is out of bounds; without the narrowing this skip would
+        // treat a clamped-to-zero NEAREST as equal to ZEROMV and drop it.
+        let nearest_dedup = if nearest_tie_fix {
+            // Unconditional (libvpx), narrowed to the in-bounds NEAREST.
+            let nearest_in_bounds = if ref_idx == 0 {
+                params.last_nearest_in_bounds
+            } else {
+                params.golden_nearest_in_bounds
+            };
+            mode != InterMode::NearestMv
+                && nearest_in_bounds
+                && mv == frame_mv[ref_idx][InterMode::NearestMv.idx()]
+        } else {
+            // Baseline: guarded on `mode_checked[NEARESTMV]`.
+            mode != InterMode::NearestMv
+                && mode_checked[ref_idx][InterMode::NearestMv.idx()]
+                && mv == frame_mv[ref_idx][InterMode::NearestMv.idx()]
+        };
+        if nearest_dedup {
             skip_this = true;
         }
         if skip_this {
