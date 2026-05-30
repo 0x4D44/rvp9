@@ -279,8 +279,21 @@ fn a10_byte_identity_pre_vs_post_refactor() {
     // NOT a masked regression. The pool-mapping invariant this oracle
     // guards is unchanged. Prior iter golden: (len 6408, fnv1a
     // 0xf54a_fa15_d33d_9571).
-    const GOLDEN_HASH: u64 = 0xa483_4ee0_ea34_311b;
-    const GOLDEN_LEN: usize = 6778;
+    //
+    // Re-captured again (2026-05-30) after the LPFQ loop-filter-level fix
+    // (`loopfilter.rs::pick_filter_level`, env `RVP9_LPFQ`, DEFAULT-ON).
+    // The legacy `(q_index >> 1)` proxy over-filtered at mid/low Q; LPFQ
+    // ports libvpx's calibrated `LPF_PICK_FROM_Q` (ac_quant-based, KF -4),
+    // which lowers the signaled `filter_level` (especially on the keyframe)
+    // and the post-LF recon — changing the emitted bitstream (6778 ->
+    // 6625). cross_decoder_gate BYTE-EXACT 4/4 (vpxdec + ffmpeg); sibling
+    // decode test passes. Confirmed `RVP9_LPFQ=0` restores this fixture's
+    // PRE-fix bytes EXACTLY (len 6778, fnv1a 0xa483_4ee0_ea34_311b) — the
+    // delta is exactly the LPFQ fix. Correct, intentional golden update —
+    // NOT a masked regression. Prior iter golden: (len 6778, fnv1a
+    // 0xa483_4ee0_ea34_311b).
+    const GOLDEN_HASH: u64 = 0xc87e_f0db_888f_275d;
+    const GOLDEN_LEN: usize = 6625;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

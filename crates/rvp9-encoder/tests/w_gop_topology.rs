@@ -371,8 +371,20 @@ fn gop_topology_byte_identity() {
     // 24225, fnv1a 0x07f7_73a8_cb58_81df) — the delta is exactly the RCFI
     // fix. Correct, intentional golden update — NOT a masked regression.
     // Prior iter golden: (len 24225, fnv1a 0x07f7_73a8_cb58_81df).
-    const GOLDEN_HASH: u64 = 0xd593_baa5_50f1_21e1;
-    const GOLDEN_LEN: usize = 24727;
+    //
+    // Re-captured again (2026-05-30) after the LPFQ loop-filter-level fix
+    // (`loopfilter.rs::pick_filter_level`, env `RVP9_LPFQ`, DEFAULT-ON):
+    // ports libvpx's calibrated `LPF_PICK_FROM_Q` (ac_quant-based, KF -4)
+    // replacing the legacy `(q_index >> 1)` over-filter, lowering the
+    // signaled `filter_level` and the post-LF recon → changed bitstream
+    // (24727 -> 23722). cross_decoder_gate BYTE-EXACT 4/4; sibling decode
+    // test passes. Confirmed `RVP9_LPFQ=0` restores this fixture's PRE-fix
+    // bytes EXACTLY (len 24727, fnv1a 0xd593_baa5_50f1_21e1) — the delta is
+    // exactly the LPFQ fix. Correct, intentional golden update — NOT a
+    // masked regression. Prior iter golden: (len 24727, fnv1a
+    // 0xd593_baa5_50f1_21e1).
+    const GOLDEN_HASH: u64 = 0xa7d6_45f0_28d1_8f7a;
+    const GOLDEN_LEN: usize = 23722;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

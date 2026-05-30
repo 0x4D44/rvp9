@@ -2090,7 +2090,7 @@ impl StreamEncoder {
         // reference reconstruction. The decoder runs the same filter
         // with the same `filter_level` after IT-add, so the
         // encoder↔decoder bit-exact invariant survives LF.
-        let filter_level = pick_filter_level(q_index);
+        let filter_level = pick_filter_level(q_index, true);
         {
             // DRIFT-DIAG — snapshot pre-LF KF recon.
             let (ry, ru, rv) = self.ref_pool.new_frame_planes_mut();
@@ -2817,7 +2817,7 @@ impl StreamEncoder {
                 },
             )
         } else {
-            pick_filter_level(q_index)
+            pick_filter_level(q_index, false)
         };
         // DRIFT-DIAG — capture the pre-LF reconstruction so a diagnostic
         // test can separate residual/MC divergence from LF divergence.
@@ -3342,7 +3342,7 @@ impl StreamEncoder {
                 },
             )
         } else {
-            pick_filter_level(q_index)
+            pick_filter_level(q_index, false)
         };
         if filter_level > 0 {
             apply_loop_filter_to_tight_recon(
@@ -6584,11 +6584,14 @@ mod tests {
             tail.loop_filter.filter_level,
             pkt.q_index
         );
-        // The picker is `(q >> 1) min 63`; cross-check.
-        let expected = (pkt.q_index >> 1).min(63);
+        // Cross-check the emitted KF filter_level against the picker
+        // (LPFQ libvpx `LPF_PICK_FROM_Q` by default, or the legacy proxy
+        // when `RVP9_LPFQ=0`) — using the same function the encoder calls,
+        // so the cross-check tracks whichever formula is active.
+        let expected = crate::loopfilter::pick_filter_level(pkt.q_index, true);
         assert_eq!(
             tail.loop_filter.filter_level, expected,
-            "F11.0-T1: filter_level should match the F11.0 picker formula"
+            "F11.0-T1: filter_level should match the picker formula"
         );
     }
 
@@ -6666,14 +6669,35 @@ mod tests {
     #[test]
     fn f11_0_lf_at_q_zero_is_zero() {
         use crate::loopfilter::pick_filter_level;
-        assert_eq!(pick_filter_level(0), 0, "q = 0 must yield filter_level = 0");
-        assert_eq!(pick_filter_level(1), 0, "q = 1 (encoder min) must yield filter_level = 0");
-        // Sanity: typical Q lands at the picker's formula.
-        assert_eq!(pick_filter_level(80), 40);
-        assert_eq!(pick_filter_level(120), 60);
-        // Saturates at MAX_LOOP_FILTER = 63.
-        assert_eq!(pick_filter_level(200), 63);
-        assert_eq!(pick_filter_level(255), 63);
+        // LPFQ (default-on) = libvpx `LPF_PICK_FROM_Q`. Assert the
+        // structural properties rather than fragile magic numbers.
+        //
+        // Lossless (q = 0) ⇒ no loop filter (the LF callers skip the pass
+        // on filter_level == 0).
+        assert_eq!(pick_filter_level(0, false), 0, "q = 0 (lossless) must disable LF");
+        assert_eq!(pick_filter_level(0, true), 0, "q = 0 (lossless) KF must disable LF");
+        // Monotonic non-decreasing in q, clamped to MAX_LOOP_FILTER (63),
+        // and the keyframe's -4 never lands above the inter level at the
+        // same q.
+        let mut prev = 0u8;
+        for q in 1u8..=255 {
+            let lvl = pick_filter_level(q, false);
+            assert!(lvl >= prev, "filter level must be monotonic in q (q = {q})");
+            assert!(lvl <= 63, "filter level must clamp to MAX_LOOP_FILTER (q = {q})");
+            assert!(
+                pick_filter_level(q, true) <= lvl,
+                "KF level (-4) must be <= inter level at q = {q}"
+            );
+            prev = lvl;
+        }
+        // Saturates at 63 for high q.
+        assert_eq!(pick_filter_level(255, false), 63);
+        // The fix: at the keyframe Q (~57) the calibrated formula lands far
+        // below the legacy `q >> 1` = 28 over-filter (≈5, not ≈28).
+        assert!(
+            pick_filter_level(57, true) < 15,
+            "KF over-filter fixed: level at q=57 should be ~5, was 28"
+        );
     }
 
     // ============================================================

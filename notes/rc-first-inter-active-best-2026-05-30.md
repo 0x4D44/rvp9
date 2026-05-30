@@ -59,7 +59,21 @@ Fix: apply the same target cap in the cap branch (cbr.rs else-branch, gated RVP9
   flake on aq_cyclic_refresh; green on re-run + single-threaded).
 - Scoped to the FIRST keyframe (`is_first_frame`). Subsequent-KF share-cap = future.
 
-## CUMULATIVE: foreman_cif cpu7 mean matched-bitrate Δ +3.00 → +2.51 dB this session.
+### LPFQ (loop-filter level = libvpx LPF_PICK_FROM_Q, default-ON) — universal win
+Diagnosis: rvp9's `pick_filter_level(q) = (q>>1).min(63)` over-filters at mid/low q.
+libvpx (cpu7 `sf->lpf_pick = LPF_PICK_FROM_Q`) uses an ac_quant-based calibrated
+formula: `filt_guess = ROUND_POWER_OF_TWO(ac_quant(q)*20723 + 1015158, 18)`, KF -4.
+At the KF q≈57: rvp9 proxy = 28 vs libvpx ≈5 → rvp9 over-smooths the anchor reference;
+every inter inherits the lost detail. Fix: port the formula (gated RVP9_LPFQ).
+- foreman mean +2.51 → **+2.43 dB** (250k +0.27 — q low enough for the over-filter to
+  bite; 25/100k small KF-propagated gains; 50k +0.03 noise).
+- testsrc STRICTLY better (sharp synthetic edges the over-filter blurred): 25k +1.83,
+  50k +1.03, 100k +3.19 dB, all at equal-or-fewer bits.
+- cross_decoder 4/4. goldens w_buffer_pool 6778→6625 + w_gop_topology 24727→23722
+  re-captured. 456/456 lib tests. f11 tests rewritten as property oracles.
+
+## CUMULATIVE: foreman_cif cpu7 mean matched-bitrate Δ +3.00 → +2.43 dB this session
+(RCFI + KFLB + LPFQ; testsrc strongly improved by LPFQ — no regression anywhere).
 
 ## Remaining gap (honest)
 - Mode/skip cost-model: EXHAUSTED (domain mismatch = Lever-3b, journal-confirmed NULL
