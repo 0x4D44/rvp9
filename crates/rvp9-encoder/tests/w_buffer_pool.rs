@@ -261,8 +261,26 @@ fn a10_byte_identity_pre_vs_post_refactor() {
     // update — NOT a masked regression. The pool-mapping invariant this
     // oracle guards is unchanged. Prior iter golden: (len 6445, fnv1a
     // 0xa461_95cb_ac7a_8578).
-    const GOLDEN_HASH: u64 = 0xf54a_fa15_d33d_9571;
-    const GOLDEN_LEN: usize = 6408;
+    //
+    // Re-captured again (2026-05-30) after the RCFI first-inter-frame
+    // active_best fix (`rate_control/cbr.rs`, env `RVP9_RCFI`, DEFAULT-ON).
+    // The fix ports libvpx `vp9_ratectrl.c:1058-1068`'s `current_video_frame
+    // > 1` split: the stream's FIRST inter frame now seeds active_best from
+    // `avg_frame_qindex[KEY]` (≈ the keyframe Q) instead of the seed-high
+    // (255) inter avg, letting it drop Q and invest in a higher-quality
+    // first reference (matching libvpx). On this 1 Mbps/128x128 fixture
+    // frame 1's Q drops, so it codes more bits and the stream grows
+    // (6408 -> 6778). The new stream decodes BYTE-CLEAN (sibling
+    // `a10_pool_stream_decodes_cleanly` passes) and `cross_decoder_gate`
+    // is BYTE-EXACT 4/4 (vpxdec + ffmpeg). Confirmed `RVP9_RCFI=0` restores
+    // this fixture's PRE-fix bytes EXACTLY (len 6408, fnv1a
+    // 0xf54a_fa15_d33d_9571) — the delta is exactly the RCFI fix, layered
+    // cleanly on the prior baseline. Correct, intentional golden update —
+    // NOT a masked regression. The pool-mapping invariant this oracle
+    // guards is unchanged. Prior iter golden: (len 6408, fnv1a
+    // 0xf54a_fa15_d33d_9571).
+    const GOLDEN_HASH: u64 = 0xa483_4ee0_ea34_311b;
+    const GOLDEN_LEN: usize = 6778;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

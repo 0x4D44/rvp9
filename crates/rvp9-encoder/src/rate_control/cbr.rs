@@ -455,6 +455,32 @@ fn kfcap_enabled() -> bool {
     std::env::var_os("RVP9_KFCAP").is_none_or(|v| v != "0")
 }
 
+/// RCFI (Track A2, 2026-05-30) — first-inter-frame `active_best` basis.
+///
+/// Default ON; `RVP9_RCFI=0` is the escape hatch that restores the
+/// pre-RCFI baseline byte-for-byte.
+///
+/// **What it fixes (measured).** rvp9 seeds `avg_frame_qindex_inter` to
+/// `max_qindex` (255). The Inter q-pick's `active_best` basis used that
+/// seed on the *first* inter frame, so `active_best = rtc_minq(255) ≈ 191`
+/// floored the frame's Q at ~191 → q≈242. libvpx instead seeds the first
+/// inter frame's `active_best` from `avg_frame_qindex[KEY]` (≈57 after the
+/// keyframe) — `vp9_ratectrl.c:1058-1068`'s `current_video_frame > 1`
+/// split — so its first inter drops to q≈114 and invests in a
+/// high-quality reference the rest of the GOP coasts on. rvp9's flat,
+/// starved first inter (q≈242, ~1840 bits) seeded a poor LASTFRAME that
+/// propagated 2-3 dB through the whole GOP.
+///
+/// **Mechanism = libvpx-faithful basis select.** When `current_video_frame
+/// <= 1` (the stream's first inter), seed the active_best basis from
+/// `avg_frame_qindex_key` instead of `avg_frame_qindex_inter`. Every later
+/// inter frame is unchanged (uses the inter avg). Bitstream-changing →
+/// goldens re-captured, cross_decoder-gated.
+#[inline]
+fn rcfi_enabled() -> bool {
+    std::env::var_os("RVP9_RCFI").is_none_or(|v| v != "0")
+}
+
 /// Port of libvpx `get_minq_index` (`vp9_ratectrl.c:118-135`). Finds the
 /// smallest qindex whose q-value (`ac_quant/4`) is ≥ the cubic-curve
 /// target `minqtarget = min((x3·maxq + x2)·maxq + x1)·maxq, maxq)`.
@@ -761,13 +787,25 @@ pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> 
         FrameKind::Inter => {
             let worst = active_worst_quality_inter(rc);
             // libvpx `rc_pick_q_and_bounds_one_pass_cbr:1057-1068`:
-            //   active_best = rtc_minq[avg_inter_q]   if avg_inter_q < worst
-            //                 rtc_minq[worst]         otherwise
-            let basis = if i32::from(rc.avg_frame_qindex_inter) < worst {
-                i32::from(rc.avg_frame_qindex_inter)
+            //   if current_video_frame > 1:  ambient = avg_frame_qindex[INTER]
+            //   else (stream's first inter): ambient = avg_frame_qindex[KEY]
+            //   active_best = rtc_minq[ambient]  if ambient < worst
+            //                 rtc_minq[worst]    otherwise
+            //
+            // RCFI (Track A2, default ON): rvp9 v1 always used the INTER
+            // ambient, but on the FIRST inter frame that field is still the
+            // seed (`max_qindex` = 255) → active_best ≈ 0.75*255 = 191 →
+            // q floored ~242, starving the first reference. The
+            // `current_video_frame <= 1` arm seeds from the keyframe's avg
+            // qindex (≈57) so the first inter can drop to q≈114 and build a
+            // high-quality LASTFRAME the rest of the GOP coasts on. See
+            // [`rcfi_enabled`]. `RVP9_RCFI=0` restores the seed-high basis.
+            let ambient = if rcfi_enabled() && rc.current_video_frame <= 1 {
+                i32::from(rc.avg_frame_qindex_key)
             } else {
-                worst
+                i32::from(rc.avg_frame_qindex_inter)
             };
+            let basis = if ambient < worst { ambient } else { worst };
             let best = rtc_minq_approx(rc, basis);
             (best.min(worst), worst)
         }

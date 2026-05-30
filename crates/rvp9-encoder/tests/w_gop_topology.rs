@@ -356,8 +356,23 @@ fn gop_topology_byte_identity() {
     // exactly the tie-fix, layered cleanly on top of the prior baseline.
     // Correct, intentional golden update — NOT a masked regression. Prior
     // iter golden: (len 24240, fnv1a 0x6f4c_8c58_1914_1c48).
-    const GOLDEN_HASH: u64 = 0x07f7_73a8_cb58_81df;
-    const GOLDEN_LEN: usize = 24225;
+    //
+    // Re-captured again (2026-05-30) after the RCFI first-inter-frame
+    // active_best fix (`rate_control/cbr.rs`, env `RVP9_RCFI`, DEFAULT-ON):
+    // libvpx `vp9_ratectrl.c:1058-1068`'s `current_video_frame > 1` split
+    // seeds the stream's FIRST inter frame's active_best from
+    // `avg_frame_qindex[KEY]` rather than the seed-high (255) inter avg, so
+    // that frame invests in a higher-quality first reference (Q drops, more
+    // bits) — matching libvpx. The first inter of each GOP after the 2nd KF
+    // is unaffected (uses the inter avg, current_video_frame > 1). Stream
+    // grows (24225 -> 24727). Decode-validated BYTE-CLEAN (sibling decode
+    // test passes) + `cross_decoder_gate` BYTE-EXACT 4/4. Confirmed
+    // `RVP9_RCFI=0` restores this fixture's PRE-fix bytes EXACTLY (len
+    // 24225, fnv1a 0x07f7_73a8_cb58_81df) — the delta is exactly the RCFI
+    // fix. Correct, intentional golden update — NOT a masked regression.
+    // Prior iter golden: (len 24225, fnv1a 0x07f7_73a8_cb58_81df).
+    const GOLDEN_HASH: u64 = 0xd593_baa5_50f1_21e1;
+    const GOLDEN_LEN: usize = 24727;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

@@ -118,6 +118,14 @@ pub struct RateControl {
     /// (`vp9_ratectrl.h:113`).
     pub frames_since_key: u32,
 
+    /// Absolute display-order frame index. Mirrors libvpx
+    /// `cm->current_video_frame` (`vp9_common.h`) — incremented once per
+    /// encoded show frame in [`Self::advance_frame`]. The 1-pass CBR
+    /// q-pick uses `current_video_frame > 1` to seed the first inter
+    /// frame's `active_best_quality` from the keyframe's avg qindex
+    /// rather than the (seed-high) inter avg (`vp9_ratectrl.c:1058-1068`).
+    pub current_video_frame: u32,
+
     /// Current keyframe Q-boost. libvpx `rc->kf_boost`
     /// (`vp9_ratectrl.h:101`).
     pub kf_boost: i32,
@@ -252,6 +260,7 @@ impl RateControl {
 
             frames_to_key: 0, // first frame must be a keyframe
             frames_since_key: 0,
+            current_video_frame: 0,
             kf_boost: config.kf_boost,
 
             total_actual_bits: 0,
@@ -373,6 +382,9 @@ impl RateControl {
             self.frames_to_key -= 1;
         }
         self.frames_since_key = self.frames_since_key.saturating_add(1);
+        // libvpx `cm->current_video_frame++` (per show frame). Used by
+        // the CBR q-pick's first-inter-frame active_best special case.
+        self.current_video_frame = self.current_video_frame.saturating_add(1);
         // Two-pass: advance the stats cursor so the next pick reads the
         // next frame's allocation. No-op for one-pass modes.
         if let Some(tp) = self.two_pass.as_mut() {
