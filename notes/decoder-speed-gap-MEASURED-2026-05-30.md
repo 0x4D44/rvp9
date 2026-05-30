@@ -340,6 +340,17 @@ grid-lookup READ cost on dense intra that slightly exceeds the per-block WRITE i
 give-back on the one case rvp9 already beats vpxdec 3.4x; net strongly positive. Worth an A/B
 of f65f2b2 vs its parent if dense-intra throughput matters.
 
+## testsrc (the synthetic weak point) — cumulative interleaved A/B, testsrc_720p30
+| | p50 (min-of-3) |
+|---|---|
+| NEW (HEAD, full session) | 1520.5 us |
+| BASE (pre-work 114ad7d)  | 1896.6 us |
+| speedup | **-19.8%** (all 3 rounds NEW-faster) |
+testsrc is high-res single-tile CHEAP content ⇒ fixed O(area) overhead dominates ⇒ the buffer
+pool + mi_grid + cur_mv_grid + seg-id persistence help most. testsrc 720p is now ~1520 us vs
+vpxdec ~606 us ≈ ~2.5x (down from the prior-notes 6.2x). The named weak point is massively
+closer; literal 1.0x parity on synthetic content (vpxdec near-instant) is the asm ceiling.
+
 ## O(area) grids now ALL addressed
 frame buffer (pool), mi_grid (persist), mv_grid + seg-ids (persist) — the four large
 per-frame grids. Remaining per-frame costs are O(perimeter) (border extension) or

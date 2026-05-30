@@ -81,10 +81,17 @@ fn parse_args() -> Args {
     let csv = get("--csv").map(PathBuf::from).unwrap_or(default_csv);
 
     let vectors = throughput::vectors_dir();
-    let fixtures: Vec<PathBuf> = throughput::DEFAULT_FIXTURES
-        .iter()
-        .map(|f| vectors.join(f))
-        .collect();
+    // `--fixture <path>` overrides the default vector set with a single
+    // explicit clip (used to profile non-default corpus clips, e.g.
+    // synthetic testsrc, where rvp9's fixed-overhead gap is worst).
+    let fixtures: Vec<PathBuf> = if let Some(p) = get("--fixture") {
+        vec![PathBuf::from(p)]
+    } else {
+        throughput::DEFAULT_FIXTURES
+            .iter()
+            .map(|f| vectors.join(f))
+            .collect()
+    };
 
     // Default to unpinned (dev box). Operator on the dedicated CI
     // runner opts in with `--pinned`.
