@@ -1606,8 +1606,16 @@ impl Decoder {
         // end-of-frame puts the OLD `prev_segment_ids` back into
         // `scratch_segment_ids` so capacity carries forward.
         let mut cur_segment_ids = std::mem::take(&mut self.scratch_segment_ids);
-        cur_segment_ids.clear();
-        cur_segment_ids.resize(mi_rows * mi_cols, 0);
+        // Persist across frames when dims are unchanged (same argument as
+        // `frame_mi_grid`): every block calls `splat_segment_id` over its
+        // covered cells unconditionally (writing the real id, or 0 when
+        // segmentation is off), and blocks tile the frame — so every cell
+        // is overwritten before the LF / next-frame seg-id-pred reads it.
+        // The zero re-fill is dead work when the recycled slab matches dims.
+        if cur_segment_ids.len() != mi_rows * mi_cols {
+            cur_segment_ids.clear();
+            cur_segment_ids.resize(mi_rows * mi_cols, 0);
+        }
 
         // Stage 3 Task E.2 — iterate `(tile_row, tile_col)` in raster
         // order, decoding each tile sequentially with a fresh per-tile
@@ -1819,8 +1827,14 @@ impl Decoder {
             let mut tile_seg_ids: Vec<Vec<u8>> = Vec::with_capacity(num_tiles);
             for _ in 0..num_tiles {
                 let mut v = self.tile_seg_id_pool.pop().unwrap_or_default();
-                v.clear();
-                v.resize(mi_rows * mi_cols, 0);
+                // Persist when dims match (same argument as the inter
+                // per-tile slabs): the worker writes/reads only its column
+                // range and the merge copies back only that range, so stale
+                // out-of-column contents are never read.
+                if v.len() != mi_rows * mi_cols {
+                    v.clear();
+                    v.resize(mi_rows * mi_cols, 0);
+                }
                 tile_seg_ids.push(v);
             }
             let slots: Vec<TileSlot> = tile_views
@@ -2847,11 +2861,23 @@ impl Decoder {
         // with zero MVs); `clear` drops the contents and `resize` fills
         // with default values.
         let mut cur_mv_grid = std::mem::take(&mut self.scratch_mv_grid);
-        cur_mv_grid.clear();
-        cur_mv_grid.resize(
-            mi_rows * mi_cols,
-            rvp9_core::inter::mv_ref::PrevFrameMvRef::default(),
-        );
+        // Persist across frames when dims are unchanged (same argument as
+        // `frame_mi_grid`): every in-grid cell is overwritten before any
+        // consumer reads it — the inline decode / tile merge writes a real
+        // MV or intra-entry into every cell; within-frame spatial MV-pred
+        // reads only already-decoded cells, and the NEXT frame's temporal
+        // MV-pred reads this fully-written grid. So the default re-fill is
+        // dead O(mi_rows*mi_cols) work (~20 B/cell, the 2nd-largest per-frame
+        // grid) when the recycled scratch already matches dims. The recycled
+        // slab holds a prior frame's real MVs; they are all overwritten.
+        // Byte-exact — conformance-gated (aq2 inter + tile_1x* multi-tile).
+        if cur_mv_grid.len() != mi_rows * mi_cols {
+            cur_mv_grid.clear();
+            cur_mv_grid.resize(
+                mi_rows * mi_cols,
+                rvp9_core::inter::mv_ref::PrevFrameMvRef::default(),
+            );
+        }
 
         // D.10 — populate `prev_segment_ids` view for segment-id
         // inheritance and allocate the current frame's seg-id slab.
@@ -2878,8 +2904,16 @@ impl Decoder {
         // of-frame rotation puts the OLD `prev_segment_ids` back into
         // the scratch so capacity is retained for the next frame.
         let mut cur_segment_ids = std::mem::take(&mut self.scratch_segment_ids);
-        cur_segment_ids.clear();
-        cur_segment_ids.resize(mi_rows * mi_cols, 0);
+        // Persist across frames when dims are unchanged (same argument as
+        // `frame_mi_grid`): every block calls `splat_segment_id` over its
+        // covered cells unconditionally (writing the real id, or 0 when
+        // segmentation is off), and blocks tile the frame — so every cell
+        // is overwritten before the LF / next-frame seg-id-pred reads it.
+        // The zero re-fill is dead work when the recycled slab matches dims.
+        if cur_segment_ids.len() != mi_rows * mi_cols {
+            cur_segment_ids.clear();
+            cur_segment_ids.resize(mi_rows * mi_cols, 0);
+        }
 
         // Stage 3 Task E.2 — iterate `(tile_row, tile_col)` in raster
         // order. Each tile is decoded sequentially with its own fresh
@@ -3055,17 +3089,31 @@ impl Decoder {
             let mut tile_seg_ids: Vec<Vec<u8>> = Vec::with_capacity(num_tiles);
             let mut tile_mv_grids: Vec<Vec<rvp9_core::inter::mv_ref::PrevFrameMvRef>> =
                 Vec::with_capacity(num_tiles);
+            // Persist the recycled per-tile slabs across frames when dims
+            // match (same argument as `frame_mi_grid` / `cur_mv_grid`): each
+            // tile worker writes its OWN column range and reads only within
+            // it (VP9 tiles are independent — no cross-tile neighbour reads),
+            // and the post-scope merge copies back only the tile's column
+            // range. So stale contents outside the tile's columns are never
+            // read, and inside-column cells are overwritten before read. The
+            // re-fill is dead work — and the worst per-frame O(area) cost on
+            // the multi-tile inter path (N × mi_rows*mi_cols, one full-frame
+            // slab PER TILE). Byte-exact — conformance-gated (tile_1x*).
             for _ in 0..num_tiles {
                 let mut s = self.tile_seg_id_pool.pop().unwrap_or_default();
-                s.clear();
-                s.resize(mi_rows * mi_cols, 0);
+                if s.len() != mi_rows * mi_cols {
+                    s.clear();
+                    s.resize(mi_rows * mi_cols, 0);
+                }
                 tile_seg_ids.push(s);
                 let mut m = self.tile_mv_grid_pool.pop().unwrap_or_default();
-                m.clear();
-                m.resize(
-                    mi_rows * mi_cols,
-                    rvp9_core::inter::mv_ref::PrevFrameMvRef::default(),
-                );
+                if m.len() != mi_rows * mi_cols {
+                    m.clear();
+                    m.resize(
+                        mi_rows * mi_cols,
+                        rvp9_core::inter::mv_ref::PrevFrameMvRef::default(),
+                    );
+                }
                 tile_mv_grids.push(m);
             }
             let slots: Vec<InterTileSlot> = tile_views
