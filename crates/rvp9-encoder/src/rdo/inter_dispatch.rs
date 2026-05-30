@@ -399,6 +399,21 @@ fn good_subpel_force_stop() -> SubPixelForcedStop {
     )
 }
 
+/// ENHMS (2026-05-30) — enhanced full-pel motion search for the cpu≤4
+/// GOOD-quality RDO path. libvpx's `sf.mv.enhanced_full_pixel_motion_search`
+/// re-runs the full-pel diamond from the other ref-MV seed slots
+/// (NEAREST/NEAR/int_pro) and keeps the best — a quality/thoroughness
+/// feature libvpx enables at its lowest cpu-used. rvp9's GOOD path had it
+/// OFF (RT-grade). Enabling it stacks on the SUBPEL fix (foreman cpu4
+/// +0.09..+0.11 dB on top; synthetic neutral-to-positive; cross-decoder
+/// byte-exact; ~1% encode-time cost). Cached (per-leaf hot path).
+/// `RVP9_ENHMS=0` restores the byte-identical pre-fix baseline.
+fn good_enhanced_full_pixel() -> bool {
+    use std::sync::OnceLock;
+    static E: OnceLock<bool> = OnceLock::new();
+    *E.get_or_init(|| std::env::var("RVP9_ENHMS").map(|v| v != "0").unwrap_or(true))
+}
+
 /// Pre-run [`single_motion_search`] for the NEWMV candidate of one ref
 /// frame. Returns `(Some(mv), rate_mv)` when the search succeeds and the
 /// MV stays inside `mv_limits`; `(None, 0)` otherwise (drops NEWMV).
@@ -418,7 +433,7 @@ fn search_newmv(leaf: &InterDispatchLeaf<'_>, refs: &RefInputs<'_>) -> (Option<M
         best_predmv_idx: if leaf.newmv_seed.is_some() { 2 } else { 0 },
         mv_step_param: 4,
         adaptive_motion_search: false,
-        enhanced_full_pixel_motion_search: false,
+        enhanced_full_pixel_motion_search: good_enhanced_full_pixel(),
         pred_mv_sad: 0,
         other_pred_mv_sad_min: u32::MAX,
         mv_limits: leaf.mv_limits,
