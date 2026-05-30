@@ -427,7 +427,6 @@ pub fn decode_tile_intra<D: TileFrameDst>(
     while mi_row < bounds.mi_row_end {
         // Reset per-SB-row state (mirrors libvpx
         // `vp9_decodeframe.c:2089-2092`).
-        decode_ctx.reset_left();
         coef_ctx.reset_left_coef();
         part_ctx.reset_left();
 
@@ -767,8 +766,8 @@ fn decode_block<D: TileFrameDst>(
     // plain bools so they outlive the borrow (libvpx's `xd->above_mi != NULL`
     // / `xd->left_mi != NULL` edge semantics — the inbound neighbour-exists
     // flags, not the just-written self-cell).
-    let above = decode_ctx.above(mi_col_in_tile);
-    let left = decode_ctx.left(mi_row_in_sb);
+    let above = decode_ctx.above(mi_row_in_tile, mi_col_in_tile);
+    let left = decode_ctx.left(mi_row_in_tile, mi_col_in_tile);
     let have_above_block = above.is_some();
     let have_left_block = left.is_some();
     let skip_ctx = usize::from(above.is_some_and(|m| m.skip))
@@ -866,7 +865,7 @@ fn decode_block<D: TileFrameDst>(
     let bh_mi = usize::from(bsize.n_8x8_high());
     let x_mis = bw_mi.min(params.mi_cols - mi_col);
     let y_mis = bh_mi.min(params.mi_rows - mi_row);
-    decode_ctx.write_block(mi_row_in_tile, mi_row_in_sb, mi_col_in_tile, x_mis, y_mis, &mi);
+    decode_ctx.write_block(mi_row_in_tile, mi_col_in_tile, x_mis, y_mis, &mi);
     // D.10 — splat the just-decoded segment_id into the current frame's
     // seg map. Keyframes either read a fresh ID via `read_segment_id`
     // (`update_map = true`) or default to 0 (`update_map = false`).
@@ -1545,7 +1544,6 @@ pub fn decode_tile_inter<D: TileFrameDst>(
 
     let mut mi_row = bounds.mi_row_start;
     while mi_row < bounds.mi_row_end {
-        decode_ctx.reset_left();
         coef_ctx.reset_left_coef();
         part_ctx.reset_left();
 
@@ -1881,11 +1879,11 @@ fn decode_inter_block<D: TileFrameDst>(
         pred_probs: params.base.seg_pred_probs,
     };
     let above_seg_id_pred = decode_ctx
-        .above(mi_col_in_tile)
+        .above(mi_row_in_tile, mi_col_in_tile)
         .map(|m| usize::from(m.seg_id_predicted))
         .unwrap_or(0);
     let left_seg_id_pred = decode_ctx
-        .left(mi_row_in_sb)
+        .left(mi_row_in_tile, mi_col_in_tile)
         .map(|m| usize::from(m.seg_id_predicted))
         .unwrap_or(0);
     let seg_id_pred_ctx = above_seg_id_pred + left_seg_id_pred;
@@ -1959,8 +1957,8 @@ fn decode_inter_block<D: TileFrameDst>(
     // before either arm's `write_block` mutates `decode_ctx`. `have_*_block`
     // are snapshotted as bools here so they outlive the borrow for the
     // intra-in-inter reconstruction arm.
-    let above = decode_ctx.above(mi_col_in_tile);
-    let left = decode_ctx.left(mi_row_in_sb);
+    let above = decode_ctx.above(mi_row_in_tile, mi_col_in_tile);
+    let left = decode_ctx.left(mi_row_in_tile, mi_col_in_tile);
     let have_above_block = above.is_some();
     let have_left_block = left.is_some();
     let skip_ctx = usize::from(above.is_some_and(|m| m.skip))
@@ -2243,7 +2241,7 @@ fn decode_inter_block<D: TileFrameDst>(
             );
         }
 
-        decode_ctx.write_block(mi_row_in_tile, mi_row_in_sb, mi_col_in_tile, x_mis, y_mis, &mi);
+        decode_ctx.write_block(mi_row_in_tile, mi_col_in_tile, x_mis, y_mis, &mi);
 
         // D.7 — write the decoded `(mv[2], ref_frame[2])` pair into the
         // current frame's MV grid, replicating across every (r, c) in
@@ -2298,7 +2296,7 @@ fn decode_inter_block<D: TileFrameDst>(
             mode: BlockMode::Intra { y_mode, uv_mode },
             bmi,
         };
-        decode_ctx.write_block(mi_row_in_tile, mi_row_in_sb, mi_col_in_tile, x_mis, y_mis, &mi);
+        decode_ctx.write_block(mi_row_in_tile, mi_col_in_tile, x_mis, y_mis, &mi);
 
         // D.7 — intra-in-inter blocks write `(0, IntraFrame)` to the
         // MV grid so the next frame's `find_mv_refs` salvage pass
