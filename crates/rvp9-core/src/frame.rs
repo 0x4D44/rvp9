@@ -654,6 +654,14 @@ impl Yv12Buffer {
         );
     }
 
+    /// Re-zero the entire backing allocation (Y+U+V planes incl. the
+    /// borders and stride padding). Used when recycling a pooled buffer
+    /// as a fresh decode target so its starting state is byte-identical
+    /// to a freshly-[`alloc`](Self::alloc)-ed (zero-initialised) buffer.
+    pub fn zero_pixels(&mut self) {
+        self.buffer_alloc.fill(0);
+    }
+
     /// G5.1: produce a fresh [`Yv12Buffer`] with identical geometry —
     /// same crop dimensions, aligned dimensions, strides, borders,
     /// chroma format, alignment — but with a freshly zero-initialised
@@ -1295,6 +1303,61 @@ impl DecoderFramePool {
             }
         }
         Err(FramePoolError::NoFreeSlot)
+    }
+
+    /// Reclaim a recyclable buffer's backing [`Yv12Buffer`] for reuse as
+    /// the next frame's decode target — mirrors libvpx `get_free_fb`,
+    /// which reuses a `frame_bufs[i]` whose `ref_count` hit 0 instead of
+    /// allocating a fresh one. This eliminates the per-frame fresh
+    /// allocation's first-touch page faults (the dominant per-frame fixed
+    /// cost on cheap/high-res content).
+    ///
+    /// A slot is recyclable iff its `Arc` is exclusive
+    /// (`strong_count == 1`, no external `FrameBuf` holder) **and**
+    /// `ref_counts[i] == 0` (no `ref_frame_map[i]` names it) — the SAME
+    /// freeness predicate as [`acquire_free`](Self::acquire_free), so
+    /// reuse can never alias a live reference (the `ref_counts` guard is
+    /// what prevents the G12-era "silent aliasing on recycle" bug). The
+    /// matching slot is emptied to `None`; a later `acquire_free`
+    /// re-parks the freshly-decoded frame.
+    ///
+    /// Geometry must match `(width, height, chroma)`; on a mid-stream
+    /// resolution change the mismatched buffers are left in place (a
+    /// later `acquire_free` drops them) and `None` is returned so the
+    /// caller allocates a correctly-sized buffer.
+    ///
+    /// The returned buffer's pixels are **stale** — the caller MUST zero
+    /// or fully overwrite it before any read.
+    #[must_use]
+    pub fn take_recyclable(
+        &mut self,
+        width: u32,
+        height: u32,
+        chroma: ChromaFormat,
+    ) -> Option<Yv12Buffer> {
+        for i in 0..self.slots.len() {
+            if self.ref_counts[i] != 0 {
+                continue;
+            }
+            let recyclable = match &self.slots[i] {
+                Some(arc) => {
+                    Arc::strong_count(arc) == 1
+                        && arc.width() == width
+                        && arc.height() == height
+                        && arc.chroma() == chroma
+                }
+                None => false,
+            };
+            if recyclable {
+                let arc = self.slots[i].take().expect("slot matched Some above");
+                // `strong_count == 1` was just verified and the pool is
+                // mutated only on the main thread at frame boundaries (no
+                // tile worker holds a clone at this point), so `try_unwrap`
+                // cannot fail; the `.ok()` drops on the impossible Err.
+                return Arc::try_unwrap(arc).ok();
+            }
+        }
+        None
     }
 
     /// Bump the logical ref-map refcount for `idx`. The decoder calls

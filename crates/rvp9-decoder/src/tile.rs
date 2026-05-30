@@ -758,8 +758,19 @@ fn decode_block<D: TileFrameDst>(
     dbg_cursor!(reader, "after read_segment_id");
     dbg_kfleaf!(reader, "after read_segment_id");
 
-    let above = decode_ctx.above(mi_col_in_tile).copied();
-    let left = decode_ctx.left(mi_row_in_sb).copied();
+    // `above`/`left` are borrowed `Option<&ModeInfo>` (Copy) — the field
+    // reads below avoid the per-block full-struct (~72 B ×2) copy that
+    // `.copied()` did; libvpx reads these neighbours through pointers. The
+    // immutable borrow ends at the last neighbour read (the y-mode read)
+    // BEFORE `write_block` mutates `decode_ctx`, so NLL keeps the borrow and
+    // the later mutation disjoint. `have_*_block` are snapshotted here as
+    // plain bools so they outlive the borrow (libvpx's `xd->above_mi != NULL`
+    // / `xd->left_mi != NULL` edge semantics — the inbound neighbour-exists
+    // flags, not the just-written self-cell).
+    let above = decode_ctx.above(mi_col_in_tile);
+    let left = decode_ctx.left(mi_row_in_sb);
+    let have_above_block = above.is_some();
+    let have_left_block = left.is_some();
     let skip_ctx = usize::from(above.is_some_and(|m| m.skip))
         + usize::from(left.is_some_and(|m| m.skip));
     // Keyframes don't call `adapt_mode_probs`; pass `None` for counts
@@ -873,13 +884,6 @@ fn decode_block<D: TileFrameDst>(
     );
 
     // --- Reconstruction ----------------------------------------------
-    //
-    // Snapshot inbound neighbour flags BEFORE write_block: libvpx checks
-    // `xd->above_mi != NULL` / `xd->left_mi != NULL` based on
-    // frame/tile-edge semantics, not the just-written self-cell.
-    let have_above_block = above.is_some();
-    let have_left_block = left.is_some();
-
     let dequant_y = plane_dequant(params, 0, segment_id);
     let dequant_u = plane_dequant(params, 1, segment_id);
     let dequant_v = plane_dequant(params, 2, segment_id);
@@ -1949,8 +1953,16 @@ fn decode_inter_block<D: TileFrameDst>(
     );
 
     // 2. skip flag.
-    let above = decode_ctx.above(mi_col_in_tile).copied();
-    let left = decode_ctx.left(mi_row_in_sb).copied();
+    // Borrowed `Option<&ModeInfo>` (Copy) — avoids the per-block full-struct
+    // (~72 B ×2) copy `.copied()` did (libvpx reads these neighbours through
+    // pointers). The borrow's last by-ref use is the tx-pair read below, well
+    // before either arm's `write_block` mutates `decode_ctx`. `have_*_block`
+    // are snapshotted as bools here so they outlive the borrow for the
+    // intra-in-inter reconstruction arm.
+    let above = decode_ctx.above(mi_col_in_tile);
+    let left = decode_ctx.left(mi_row_in_sb);
+    let have_above_block = above.is_some();
+    let have_left_block = left.is_some();
     let skip_ctx = usize::from(above.is_some_and(|m| m.skip))
         + usize::from(left.is_some_and(|m| m.skip));
     // D.11 trace — capture pre-skip bool-reader state so the
@@ -1995,7 +2007,7 @@ fn decode_inter_block<D: TileFrameDst>(
     }
 
     // 3. is_inter classification.
-    let intra_inter_ctx = get_intra_inter_context(above.as_ref(), left.as_ref());
+    let intra_inter_ctx = get_intra_inter_context(above, left);
     if let Some(filt) = trace_isinter
         && let Some((tr, tc)) = filt.split_once(',')
         && let (Ok(tr), Ok(tc)) = (tr.parse::<usize>(), tc.parse::<usize>())
@@ -2310,8 +2322,6 @@ fn decode_inter_block<D: TileFrameDst>(
             intra_entry,
         );
 
-        let have_above_block = above.is_some();
-        let have_left_block = left.is_some();
         let dequant_y = plane_dequant(&params.base, 0, segment_id);
         let dequant_u = plane_dequant(&params.base, 1, segment_id);
         let dequant_v = plane_dequant(&params.base, 2, segment_id);

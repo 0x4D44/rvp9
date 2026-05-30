@@ -145,6 +145,17 @@ pub static RVP9_TRACE_FRAME_COUNTER: std::sync::atomic::AtomicU32 =
 pub static RVP9_G5_1_PARALLEL_JOBS: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(0);
 
+/// Diagnostic counter: number of FRESH per-frame decode-target
+/// allocations (frame-pool MISS). After warm-up the per-frame decode
+/// buffer is recycled from the frame pool (libvpx `get_free_fb`), so
+/// this counter should stop growing — the
+/// `decode_target_buffer_is_pooled_after_warmup` test asserts no fresh
+/// allocs once the working set of ref buffers is established. Bumped
+/// exactly once per [`Yv12Buffer::alloc`] in
+/// [`Decoder::acquire_decode_target`].
+pub static RVP9_DECODE_TARGET_ALLOCS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 /// Top-level VP9 decoder state.
 ///
 /// Mirrors the role of libvpx's `VP9Decoder` + `VP9_COMMON` — owns
@@ -887,6 +898,37 @@ impl Decoder {
         self.write_ref_slot(i, pool_idx);
     }
 
+    /// Acquire the per-frame decode-target [`Yv12Buffer`].
+    ///
+    /// Reuses a recyclable buffer from the frame pool when one of
+    /// matching geometry is free (libvpx `get_free_fb`), re-zeroing it so
+    /// the starting state is byte-identical to a fresh allocation. This
+    /// avoids the per-frame fresh allocation's first-touch page faults —
+    /// the dominant content-independent per-frame cost (O(frame-area),
+    /// worst on cheap/high-res content). Falls back to a fresh zeroed
+    /// allocation on a pool miss (cold start / resolution change), bumping
+    /// [`RVP9_DECODE_TARGET_ALLOCS`] for visibility.
+    fn acquire_decode_target(
+        &mut self,
+        width: u32,
+        height: u32,
+        chroma: ChromaFormat,
+    ) -> Result<Yv12Buffer, DecodeError> {
+        if let Some(mut buf) = self.frame_pool.take_recyclable(width, height, chroma) {
+            buf.zero_pixels();
+            return Ok(buf);
+        }
+        RVP9_DECODE_TARGET_ALLOCS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Yv12Buffer::alloc(
+            width,
+            height,
+            chroma,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .map_err(|_| DecodeError::FrameAlloc)
+    }
+
     /// Borrow a specific frame-context bank (0..=3).
     ///
     /// # Panics
@@ -1494,14 +1536,11 @@ impl Decoder {
         //    from the parsed header — for Profile 0 always `Yuv420`,
         //    for Profile 1 one of the three non-420 sub-modes (gated
         //    upstream in `decode_frame` pending G7.1).
-        let mut yv12 = Yv12Buffer::alloc(
+        let mut yv12 = self.acquire_decode_target(
             frame.header.width,
             frame.header.height,
             frame.header.chroma,
-            BorderUsage::Decoder,
-            ByteAlignment::Legacy,
-        )
-        .map_err(|_| DecodeError::FrameAlloc)?;
+        )?;
 
         // 6. Per-frame state — drive every tile through a shared
         //    accumulator (counts) + shared output (`yv12`,
@@ -1596,8 +1635,24 @@ impl Decoder {
         // trivial `cell.expect(...)` (no None placeholder hunt).
         let mut frame_mi_grid: Vec<Option<ModeInfo>> =
             std::mem::take(&mut self.scratch_mi_grid);
-        frame_mi_grid.clear();
-        frame_mi_grid.resize(mi_rows * mi_cols, Some(default_padding_modeinfo()));
+        // Persist the grid across frames when dims are unchanged. VP9
+        // partitions tile the whole frame, so every in-grid cell is
+        // overwritten (`Some(real)`) by `write_block` during decode before
+        // any consumer (LF materialisation / neighbour / mv-ref) reads it —
+        // the prior frame's contents in covered cells are dead. Re-filling
+        // the entire grid with the padding default every frame is therefore
+        // wasted O(mi_rows*mi_cols) work (libvpx never re-inits its mi grid;
+        // it is allocated once and overwritten as pointers during decode).
+        // The scratch slab is reused via the end-of-frame rotation, so when
+        // its length already matches we keep it as-is and skip the bulk
+        // re-fill; we only (re)fill on a cold start / resolution change,
+        // where the length differs. Byte-exactness is conformance-gated
+        // (the aq2 100-frame + foreman 30-frame multi-frame MD5 vectors
+        // exercise this persistence path across many frames).
+        if frame_mi_grid.len() != mi_rows * mi_cols {
+            frame_mi_grid.clear();
+            frame_mi_grid.resize(mi_rows * mi_cols, Some(default_padding_modeinfo()));
+        }
         // G5.1 — real parallel tile dispatch. Eligibility:
         //   * `tile_rows == 1` — column-only split makes per-tile
         //     pixel rectangles disjoint by construction (VP9 tile-col
@@ -2639,14 +2694,11 @@ impl Decoder {
         // 5. Allocate destination FrameBuf. Chroma format flows from
         //    the parsed header — see the matching keyframe / intra-only
         //    site for the Profile 1 gating context.
-        let mut yv12 = Yv12Buffer::alloc(
+        let mut yv12 = self.acquire_decode_target(
             frame.header.width,
             frame.header.height,
             frame.header.chroma,
-            BorderUsage::Decoder,
-            ByteAlignment::Legacy,
-        )
-        .map_err(|_| DecodeError::FrameAlloc)?;
+        )?;
 
         // D.24: pass the raw (crop) width / height to ScaleFactors, not
         // the aligned 8-multiple. Libvpx feeds `cm->width / cm->height`
@@ -2851,8 +2903,24 @@ impl Decoder {
         // trivial `cell.expect(...)` (no None placeholder hunt).
         let mut frame_mi_grid: Vec<Option<ModeInfo>> =
             std::mem::take(&mut self.scratch_mi_grid);
-        frame_mi_grid.clear();
-        frame_mi_grid.resize(mi_rows * mi_cols, Some(default_padding_modeinfo()));
+        // Persist the grid across frames when dims are unchanged. VP9
+        // partitions tile the whole frame, so every in-grid cell is
+        // overwritten (`Some(real)`) by `write_block` during decode before
+        // any consumer (LF materialisation / neighbour / mv-ref) reads it —
+        // the prior frame's contents in covered cells are dead. Re-filling
+        // the entire grid with the padding default every frame is therefore
+        // wasted O(mi_rows*mi_cols) work (libvpx never re-inits its mi grid;
+        // it is allocated once and overwritten as pointers during decode).
+        // The scratch slab is reused via the end-of-frame rotation, so when
+        // its length already matches we keep it as-is and skip the bulk
+        // re-fill; we only (re)fill on a cold start / resolution change,
+        // where the length differs. Byte-exactness is conformance-gated
+        // (the aq2 100-frame + foreman 30-frame multi-frame MD5 vectors
+        // exercise this persistence path across many frames).
+        if frame_mi_grid.len() != mi_rows * mi_cols {
+            frame_mi_grid.clear();
+            frame_mi_grid.resize(mi_rows * mi_cols, Some(default_padding_modeinfo()));
+        }
         // G5.1 — parallel tile dispatch. See the matching block in
         // `decode_intra_frame_inner` for the rationale + eligibility
         // gate. The inter path additionally fans out the per-tile

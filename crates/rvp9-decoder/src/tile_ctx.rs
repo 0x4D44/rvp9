@@ -480,22 +480,24 @@ impl TileDecodeCtx {
         n_8x8_high: usize,
         mi: &ModeInfo,
     ) {
+        // Hoist the `Some(*mi)` copy out of every splat loop: bind it once
+        // so each covered cell is a `slice.fill`/`copy` of a local rather
+        // than re-dereferencing `mi` and re-constructing the `Option` per
+        // iteration. Byte-identical value written to the identical cells.
+        let mi_val = Some(*mi);
+
         // Above-row write: the block's bottom row is the row that
         // the block directly below in the NEXT SB row will see as
         // its above neighbour. For row/col reduction we collapse
         // this to the same `mi` value across the block's width.
         let col_end = (mi_col + n_8x8_wide).min(self.above.len());
-        for slot in &mut self.above[mi_col..col_end] {
-            *slot = Some(*mi);
-        }
+        self.above[mi_col..col_end].fill(mi_val);
 
         // Left-column write: the block's right edge is what the
         // block directly to the right in this SB row will see as
         // its left neighbour.
         let row_end = (mi_row_in_sb + n_8x8_high).min(self.left.len());
-        for slot in &mut self.left[mi_row_in_sb..row_end] {
-            *slot = Some(*mi);
-        }
+        self.left[mi_row_in_sb..row_end].fill(mi_val);
 
         // 2D grid splat: write into either the frame-wide grid via
         // TileMiView (Phase 2) or the tile-local mi_grid (legacy).
@@ -516,9 +518,7 @@ impl TileDecodeCtx {
                         view.ptr.add(base + abs_col),
                         col_end_grid - abs_col,
                     );
-                    for slot in slice.iter_mut() {
-                        *slot = Some(*mi);
-                    }
+                    slice.fill(mi_val);
                 }
             }
         } else if !self.mi_grid.is_empty() {
@@ -528,9 +528,7 @@ impl TileDecodeCtx {
             let col_end_grid = (mi_col + n_8x8_wide).min(stride);
             for r in mi_row..row_end_grid {
                 let base = r * stride;
-                for slot in &mut self.mi_grid[base + mi_col..base + col_end_grid] {
-                    *slot = Some(*mi);
-                }
+                self.mi_grid[base + mi_col..base + col_end_grid].fill(mi_val);
             }
         }
     }
