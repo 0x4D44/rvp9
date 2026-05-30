@@ -292,8 +292,17 @@ fn a10_byte_identity_pre_vs_post_refactor() {
     // delta is exactly the LPFQ fix. Correct, intentional golden update —
     // NOT a masked regression. Prior iter golden: (len 6778, fnv1a
     // 0xa483_4ee0_ea34_311b).
-    const GOLDEN_HASH: u64 = 0xc87e_f0db_888f_275d;
-    const GOLDEN_LEN: usize = 6625;
+    //
+    // Re-captured again (2026-05-30) after the LA HF-gated lambda
+    // calibration (`mode_decision/inter.rs`, env `RVP9_LA`, DEFAULT-ON):
+    // doubles the picker lambda on natural-content frames (this fixture's
+    // gradient classifies natural, hf>=7), making the picker more
+    // rate-conscious → fewer coded bits (6625 -> 6563). Decode-validated
+    // BYTE-CLEAN; `RVP9_LA=0` restores the PRE-LA bytes EXACTLY (len 6625,
+    // fnv1a 0xc87e_f0db_888f_275d). Correct, intentional golden update.
+    // Prior iter golden: (len 6625, fnv1a 0xc87e_f0db_888f_275d).
+    const GOLDEN_HASH: u64 = 0x612e_fb7c_61fa_a3d5;
+    const GOLDEN_LEN: usize = 6563;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

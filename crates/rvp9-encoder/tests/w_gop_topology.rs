@@ -383,8 +383,17 @@ fn gop_topology_byte_identity() {
     // exactly the LPFQ fix. Correct, intentional golden update — NOT a
     // masked regression. Prior iter golden: (len 24727, fnv1a
     // 0xd593_baa5_50f1_21e1).
-    const GOLDEN_HASH: u64 = 0xa7d6_45f0_28d1_8f7a;
-    const GOLDEN_LEN: usize = 23722;
+    //
+    // Re-captured again (2026-05-30) after the LA HF-gated lambda
+    // calibration (`mode_decision/inter.rs`, env `RVP9_LA`, DEFAULT-ON):
+    // doubles the picker lambda on natural-content frames (this fixture's
+    // gradient classifies natural), making the picker more rate-conscious
+    // → fewer coded bits (23722 -> 23434). Decode-validated BYTE-CLEAN;
+    // `RVP9_LA=0` restores PRE-LA bytes EXACTLY (len 23722, fnv1a
+    // 0xa7d6_45f0_28d1_8f7a). Correct, intentional golden update. Prior
+    // iter golden: (len 23722, fnv1a 0xa7d6_45f0_28d1_8f7a).
+    const GOLDEN_HASH: u64 = 0xb083_6c6d_2fd1_46bf;
+    const GOLDEN_LEN: usize = 23434;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

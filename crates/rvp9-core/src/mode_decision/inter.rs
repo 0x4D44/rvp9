@@ -230,6 +230,43 @@ fn s2_acdc_roundtrip_enabled() -> bool {
     *ON.get_or_init(|| std::env::var("RVP9_S2_ACDC_RT").map(|v| v == "1").unwrap_or(false))
 }
 
+/// LA (Track A6, 2026-05-30) — HF-gated natural-content lambda calibration.
+///
+/// Default ON (`m = 2`); `RVP9_LA=0` restores the pre-LA baseline
+/// byte-for-byte. `RVP9_LA_NUM`/`RVP9_LA_DEN` override the multiplier.
+///
+/// rvp9's `compute_rd_mult` (libvpx-faithful) is ~2× too LOW for natural
+/// content at this RT op-point: a clear, consistent sweep optimum (m<1
+/// worse, m≈2-2.5 best −0.08 dB, m>2.75 worse) shows the picker slightly
+/// under-weights rate, mildly over-coding residual the CBR loop then pays
+/// for with higher Q. Doubling lambda on natural frames recovers it. Gated
+/// by the SAME frame-level HF-energy classifier that makes S2 universal
+/// ([`s2_gate_enabled`]) so SYNTHETIC content (gate off) stays
+/// byte-identical — no foreman-overfit synthetic regression possible.
+#[inline]
+fn lambda_atten() -> Option<(u64, u64)> {
+    use std::sync::OnceLock;
+    static M: OnceLock<Option<(u64, u64)>> = OnceLock::new();
+    *M.get_or_init(|| {
+        if std::env::var("RVP9_LA").map(|v| v == "0").unwrap_or(false) {
+            return None;
+        }
+        let num = std::env::var("RVP9_LA_NUM")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(2);
+        let den = std::env::var("RVP9_LA_DEN")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(1);
+        if den == 0 || num == 0 {
+            None
+        } else {
+            Some((num, den))
+        }
+    })
+}
+
 /// S3 RD-domain alignment (`dist → coef_dist`, skip side `sse << 4`).
 /// **Default OFF.**
 ///
@@ -1245,10 +1282,18 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
         params.inter_mode_ctx,
     );
 
-    let lambda = compute_rd_mult(
+    let mut lambda = compute_rd_mult(
         i32::from(params.q_index),
         frame_type_for_rd(params.frame_kind),
     );
+    // LA (Track A6) — HF-gated natural-content lambda calibration. Only on
+    // natural frames (the same classifier S2 uses); synthetic stays
+    // byte-identical. See [`lambda_atten`].
+    if s2_gate_enabled() {
+        if let Some((num, den)) = lambda_atten() {
+            lambda = ((u64::from(lambda) * num) / den).min(u64::from(u32::MAX)) as u32;
+        }
+    }
 
     // Per-ref safe MVs: clamp OOB candidates to ZERO so the
     // evaluator doesn't read outside the reference plane.
