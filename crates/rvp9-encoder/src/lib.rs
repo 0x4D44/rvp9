@@ -5291,6 +5291,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 &quantizer,
                                 &rdo_coef_costs,
                                 tx_rd_rdmult,
+                                rdo_tx_size_cost,
                             );
                         }
                         let plane_tx = if plane == 0 {
@@ -6394,6 +6395,7 @@ fn choose_inter_luma_tx_size(
     quantizer: &rvp9_core::quant::forward::PlaneQuantizers,
     coef_costs: &rvp9_core::cost::coef_cost::CoefCostTable,
     rdmult: i64,
+    tx_size_cost: [u32; 4],
 ) -> TxSize {
     use rvp9_core::quant::forward::{
         scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32,
@@ -6552,6 +6554,19 @@ fn choose_inter_luma_tx_size(
             }
             ty4 += tx_step_4x4;
         }
+
+        // Charge the per-candidate tx-size SIGNALING cost, exactly as
+        // libvpx `choose_tx_size_from_rd` does (`r1 = r0 + r_tx_size`,
+        // `vp9_rdopt.c:957-1003`; rvp9's faithful port at
+        // `rdo/block_yrd.rs:214-228`). Without this term the smaller
+        // transforms look artificially cheap because the tx_probs tree
+        // charges more bits to code "the smaller size" than the max —
+        // omitting it biased the emit walk toward TX_4x4. `tx_size_cost`
+        // is the flat (max=TX_32X32, ctx=0) row already built once per
+        // frame for the RDO picker (`rdo_tx_size_cost`); ctx=0 is a
+        // documented approximation — the *relative* cost across sizes is
+        // what drives the argmin.
+        let total_rate = total_rate.saturating_add(tx_size_cost[tx_size as usize]);
 
         let rd = rdcost(total_rate, total_dist);
         // Strict `<` keeps the larger TX on ties (libvpx walks high→low

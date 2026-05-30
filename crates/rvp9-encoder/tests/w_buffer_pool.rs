@@ -227,14 +227,22 @@ fn a10_byte_identity_pre_vs_post_refactor() {
     //       as "natural" (hf_energy ~8 >= 7.0 threshold), so S2
     //       honest-skip activates on its inter frames, shrinking the
     //       stream further (6448 -> 6405).
-    // Decode-validated before update: sibling `a10_pool_stream_decodes_
-    // cleanly` passes (rvp9-decoder accepts every frame) AND the stream
-    // cross-decodes BYTE-EXACT through stock libvpx `vpxdec`
-    // (--i420, 12 frames * 24576 = 294912 bytes, exit 0). Correct,
-    // intentional golden update — NOT a masked regression. Prior iter
-    // golden: (len 7912, fnv1a 0xf243704e_e93eb334).
-    const GOLDEN_HASH: u64 = 0x96db_1a40_e2cb_4872;
-    const GOLDEN_LEN: usize = 6405;
+    // Re-captured again (2026-05-30) after adding the per-candidate
+    // tx-size SIGNALING cost to the inter TX-size emit walk
+    // `choose_inter_luma_tx_size` (libvpx `choose_tx_size_from_rd`'s
+    // `r1 = r0 + r_tx_size`). The walk previously omitted this term,
+    // under-pricing small transforms; charging it shifts inter Y blocks
+    // toward larger transforms (matched-Q foreman 4x4 share 76%->70% @
+    // Q80, 71%->61% @ Q120, 57%->46% @ Q160), which changes the signaled
+    // tx_size bits + coef tiling and therefore the emitted bitstream
+    // (6405 -> 6445). The new stream cross-decodes BYTE-EXACT through
+    // stock libvpx `vpxdec` AND ffmpeg (cross_decoder_gate 4/4 PASS) and
+    // the sibling `a10_pool_stream_decodes_cleanly` passes, so this is a
+    // correct, intentional golden update — NOT a masked regression. The
+    // pool-mapping invariant this oracle guards is unchanged. Prior iter
+    // golden: (len 6405, fnv1a 0x96db_1a40_e2cb_4872).
+    const GOLDEN_HASH: u64 = 0xa461_95cb_ac7a_8578;
+    const GOLDEN_LEN: usize = 6445;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

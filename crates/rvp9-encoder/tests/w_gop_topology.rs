@@ -320,8 +320,23 @@ fn gop_topology_byte_identity() {
     // at the 2nd-KF boundary, independent of the S2 activation here.
     // Correct, intentional golden update — NOT a masked regression.
     // Prior iter golden: (len 27405, fnv1a 0xdb380fd1_fcc1ac6b).
-    const GOLDEN_HASH: u64 = 0x924a_2c35_b117_0a9b;
-    const GOLDEN_LEN: usize = 23911;
+    //
+    // Re-captured again (2026-05-30) after adding the per-candidate
+    // tx-size SIGNALING cost to the inter TX-size emit walk
+    // `choose_inter_luma_tx_size` (libvpx `choose_tx_size_from_rd`'s
+    // `r1 = r0 + r_tx_size`, previously omitted). Charging it shifts the
+    // inter Y tx-size decision toward larger transforms, changing the
+    // signaled tx_size bits + coef tiling and therefore the emitted
+    // bitstream (23911 -> 24240). The GOP *schedule* this oracle guards
+    // (refresh-mask assertions above) is unchanged. Decode-validated:
+    // sibling `gop_topology_schedule_matches_emitted_frames` passes and
+    // the separate `cross_decoder_gate` is BYTE-EXACT 4/4 through vpxdec
+    // + ffmpeg on a fixed clip (the pre-existing vpxdec strict-marker
+    // quirk on THIS fixture's 2nd-KF boundary is unrelated, as noted
+    // above). Correct, intentional golden update — NOT a masked
+    // regression. Prior iter golden: (len 23911, fnv1a 0x924a_2c35_b117_0a9b).
+    const GOLDEN_HASH: u64 = 0x6f4c_8c58_1914_1c48;
+    const GOLDEN_LEN: usize = 24240;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);
