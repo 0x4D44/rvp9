@@ -481,6 +481,33 @@ fn rcfi_enabled() -> bool {
     std::env::var_os("RVP9_RCFI").is_none_or(|v| v != "0")
 }
 
+/// KFLB (Track A3, 2026-05-30) — low-bitrate keyframe-share cap.
+///
+/// Default ON; `RVP9_KFLB=0` is the escape hatch that restores the
+/// pre-KFLB baseline byte-for-byte.
+///
+/// **What it targets.** KFCAP (the 40%-of-GOP-budget keyframe target cap)
+/// only fires in the C1 *affordable* branch (`target_bpm >= near_lossless`).
+/// At LOW bitrate the C1 gate takes the *cap* branch instead: it floors
+/// `active_best` at ≈q57 but leaves the KF target un-shaved, so the KF
+/// over-allocates (foreman 25k KF ≈46344 bits vs libvpx 22824; 50k ≈75432
+/// vs 41168). KFLB applies the SAME 40%-of-GOP-budget target cap in the
+/// cap branch, so `regulate_q` walks Q above the ≈57 floor and the freed
+/// bits flow to the (Q255-saturated) inters — matching libvpx, whose KF Q
+/// adapts to bitrate. INERT at high bitrate (that path is the affordable
+/// branch, untouched) and inert when the KF target already fits the share
+/// ceiling.
+///
+/// **Measured (quality_gate foreman_cif cpu7):** mean matched-bitrate Δ
+/// +2.96 → +2.51 dB; 25k gap +3.08 → +2.35, 50k +3.86 → +2.80 (KF
+/// over-allocation was the low-bitrate trunk). 100k/250k inert. testsrc
+/// (synthetic) neutral-to-+0.31 dB (no regression). Scoped to the first
+/// keyframe (`is_first_frame`); subsequent-KF share-cap is future work.
+#[inline]
+fn kflb_enabled() -> bool {
+    std::env::var_os("RVP9_KFLB").is_none_or(|v| v != "0")
+}
+
 /// Port of libvpx `get_minq_index` (`vp9_ratectrl.c:118-135`). Finds the
 /// smallest qindex whose q-value (`ac_quant/4`) is ≥ the cubic-curve
 /// target `minqtarget = min((x3·maxq + x2)·maxq + x1)·maxq, maxq)`.
@@ -770,7 +797,29 @@ pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> 
                     }
                     rc.best_quality
                 } else {
-                    // Budget too thin for near-lossless — restore the cap.
+                    // Budget too thin for near-lossless — restore the cap
+                    // (active_best ≈ q57 floor).
+                    //
+                    // KFLB (Track A3, env-gated, default OFF). The cap
+                    // branch floors Q at ≈57 but does NOT share-cap the KF
+                    // target, so at low bitrate the KF still over-allocates
+                    // (it spends whatever q57 costs — e.g. 46344 bits on
+                    // foreman 25k vs libvpx 22824). Apply the same 40%-of-
+                    // GOP-budget target cap KFCAP uses in the affordable
+                    // branch, so `regulate_q` walks Q above the 57 floor and
+                    // the freed bits flow to the Q255-saturated inters. See
+                    // [`kflb_enabled`].
+                    if kflb_enabled() {
+                        let gop_budget: i64 = i64::from(rc.avg_frame_bandwidth)
+                            .saturating_mul(i64::from(rc.config().gop_length));
+                        let kf_cap_bits: i64 =
+                            gop_budget.saturating_mul(KFCAP_SHARE_NUM) / KFCAP_SHARE_DEN;
+                        if kf_cap_bits > i64::from(FRAME_OVERHEAD_BITS)
+                            && kf_cap_bits < i64::from(regulate_target_bits)
+                        {
+                            regulate_target_bits = kf_cap_bits as u32;
+                        }
+                    }
                     get_kf_active_quality(KF_ACTIVE_QUALITY_BASIS_CAP)
                 }
             } else {

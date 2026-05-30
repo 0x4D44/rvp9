@@ -37,3 +37,32 @@ mirroring libvpx exactly (single-GOP test fires it once on frame 1).
 - quality_gate foreman (expect mean Δ drop) + testsrc (no regression).
 - cross_decoder 4/4 byte-exact; goldens re-capture if needed.
 - e1 per-frame: frame-1 q should drop ~242→~114, bits rise.
+
+## RESULTS
+### RCFI (commit 56764d5, default-ON) — SMALL
+foreman mean +3.00 → +2.96 (+0.16 @250k only; 25/50/100k byte-identical —
+buffer/q-saturation prevents the first-inter investment from binding at low br).
+testsrc byte-identical. Faithful libvpx port; goldens w_buffer_pool + w_gop_topology
+re-captured.
+
+### KFLB (low-bitrate KF-share cap, default-ON) — BIG, the real low-br trunk
+Diagnosis: KFCAP (40%-of-GOP-budget KF target cap) only fires in C1's *affordable*
+branch. At LOW bitrate the C1 gate takes the *cap* branch (active_best≈q57 floor)
+and leaves the KF target un-shaved → KF over-allocates (foreman 25k KF 46344 bits vs
+libvpx 22824; 50k 75432 vs 41168). The 40% ceiling aligns with libvpx's KF sizes.
+Fix: apply the same target cap in the cap branch (cbr.rs else-branch, gated RVP9_KFLB).
+- foreman mean **+2.96 → +2.51 dB** (−0.45): 25k +3.08→+2.35 (br 68.9→57.5k),
+  50k +3.86→+2.80 (br 83.6→68.2k). 100k/250k inert (KF already fits the cap).
+- testsrc neutral-to-+0.31 (no regression). cross_decoder 4/4. goldens unchanged
+  (inert at fixture bitrates — KF target clamps to max_frame_bw == cap there).
+- 456/456 lib tests single-threaded (one parallel run hit a pre-existing env-race
+  flake on aq_cyclic_refresh; green on re-run + single-threaded).
+- Scoped to the FIRST keyframe (`is_first_frame`). Subsequent-KF share-cap = future.
+
+## CUMULATIVE: foreman_cif cpu7 mean matched-bitrate Δ +3.00 → +2.51 dB this session.
+
+## Remaining gap (honest)
+- Mode/skip cost-model: EXHAUSTED (domain mismatch = Lever-3b, journal-confirmed NULL
+  in-scope; differential read found picker otherwise faithful).
+- Biggest unexploited lever = ALT-REF / temporal-filtering architecture (libvpx builds
+  periodic high-quality refs + coasts; rvp9 flat). Multi-week, architectural → Arthur.
