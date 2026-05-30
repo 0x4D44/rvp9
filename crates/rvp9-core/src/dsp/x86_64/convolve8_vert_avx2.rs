@@ -298,10 +298,11 @@ unsafe fn convolve8_vert_avx2_inner(
         "convolve8_vert_avx2: tap out of i8 range (full-pel row must use convolve_copy)"
     );
 
-    let f01 = tap_pair(filter_y[0], filter_y[1]);
-    let f23 = tap_pair(filter_y[2], filter_y[3]);
-    let f45 = tap_pair(filter_y[4], filter_y[5]);
-    let f67 = tap_pair(filter_y[6], filter_y[7]);
+    // The 128-bit tap pairs (used only by the narrow `gw == 4` tail and
+    // the odd-h tail) are computed lazily at those sites — never for the
+    // common VP9 sizes (even heights, w ∈ {8,16,32,64}), which take the
+    // 256-bit pair-row path. This trims 4 broadcasts/call of fixed
+    // per-call setup off every common convolve (see notes/convolve8-audit).
 
     let src_ptr = src.as_ptr();
     let dst_ptr = dst.as_mut_ptr();
@@ -527,6 +528,13 @@ unsafe fn convolve8_vert_avx2_inner(
                 y += 2;
             }
 
+            // 128-bit tail operands = low lane of the pair-row taps (a
+            // free `castsi256_si128` register alias). Only consumed by the
+            // odd-h tail below, which never runs for even VP9 heights.
+            let f01 = _mm256_castsi256_si128(g01);
+            let f23 = _mm256_castsi256_si128(g23);
+            let f45 = _mm256_castsi256_si128(g45);
+            let f67 = _mm256_castsi256_si128(g67);
             // Odd-h tail: one output row at `y == h-1` via the 1-row
             // 128-bit path (reads rows `y..=y+7` = `h-1..=h+6`, all
             // within the contract).
@@ -549,6 +557,10 @@ unsafe fn convolve8_vert_avx2_inner(
             // single-row 128-bit path (mirrors the horiz drive's
             // `w >= 8` gate on its pair loop).
             debug_assert_eq!(gw, 4);
+            let f01 = tap_pair(filter_y[0], filter_y[1]);
+            let f23 = tap_pair(filter_y[2], filter_y[3]);
+            let f45 = tap_pair(filter_y[4], filter_y[5]);
+            let f67 = tap_pair(filter_y[6], filter_y[7]);
             for y in 0..h {
                 let rr: [__m128i; 8] =
                     core::array::from_fn(|k| load_cols(col_ptr.add((y + k) * src_stride), gw));

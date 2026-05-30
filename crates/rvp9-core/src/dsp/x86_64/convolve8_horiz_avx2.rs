@@ -75,17 +75,6 @@ use core::arch::x86_64::{
     _mm256_srai_epi16,
 };
 
-/// Pack two adjacent filter taps into the replicated i8-pair form
-/// consumed by `_mm_maddubs_epi16`'s signed operand. `lo` lands in the
-/// low byte of every 16-bit lane, `hi` in the high byte.
-#[cfg(target_arch = "x86_64")]
-#[inline]
-#[target_feature(enable = "avx2")]
-unsafe fn tap_pair_128(lo: i16, hi: i16) -> __m128i {
-    let packed = i16::from_le_bytes([lo as i8 as u8, hi as i8 as u8]);
-    _mm_set1_epi16(packed)
-}
-
 /// 256-bit broadcast of a tap pair. Both 128-bit lanes hold the same
 /// replicated `(lo, hi)` i8 pair so the same filter applies to row `y`
 /// (low lane) and row `y+1` (high lane).
@@ -290,16 +279,21 @@ unsafe fn convolve8_horiz_avx2_inner(
         "convolve8_horiz_avx2: tap out of i8 range (full-pel row must use convolve_copy)"
     );
 
-    // 128-bit tap pairs (used by the last-row scratch path).
-    let f01 = tap_pair_128(filter_x[0], filter_x[1]);
-    let f23 = tap_pair_128(filter_x[2], filter_x[3]);
-    let f45 = tap_pair_128(filter_x[4], filter_x[5]);
-    let f67 = tap_pair_128(filter_x[6], filter_x[7]);
-    // 256-bit broadcasted tap pairs (used by the 2-row main loop).
+    // 256-bit broadcasted tap pairs (used by the 2-row main loop). The
+    // 128-bit tail operands are the LOW LANE of these: a 256-bit
+    // `set1_epi16(packed)` and a 128-bit `set1_epi16(packed)` hold the
+    // same value, so `castsi256_si128` (a free register alias) derives
+    // the 128-bit form instead of issuing a second broadcast per call.
+    // Byte-identical; trims 4 broadcasts/call of fixed per-call setup
+    // (the dominant cost on small blocks — see notes/convolve8-audit).
     let f01_256 = tap_pair_256(filter_x[0], filter_x[1]);
     let f23_256 = tap_pair_256(filter_x[2], filter_x[3]);
     let f45_256 = tap_pair_256(filter_x[4], filter_x[5]);
     let f67_256 = tap_pair_256(filter_x[6], filter_x[7]);
+    let f01 = _mm256_castsi256_si128(f01_256);
+    let f23 = _mm256_castsi256_si128(f23_256);
+    let f45 = _mm256_castsi256_si128(f45_256);
+    let f67 = _mm256_castsi256_si128(f67_256);
 
     let src_ptr = src.as_ptr();
     let dst_ptr = dst.as_mut_ptr();
