@@ -423,6 +423,16 @@ pub struct NonRdDescentParams<'a> {
     /// Lambda from `compute_rd_mult(q_index, frame_type)`. Used in
     /// [`rd_cost`] for ranking NONE vs SPLIT.
     pub rd_mult: u32,
+    /// Phase A (`RVP9_P8`) gate. When `true`, `Block8x8` becomes a valid
+    /// PARTITION_NONE leaf candidate and `Block16x16` may PARTITION_SPLIT
+    /// into four `Block8x8` leaves (8×8 is the no-further-split floor).
+    /// When `false`, the descent floors at `Block16x16` exactly
+    /// as before (8×8 leaves only ever come from the variance hint).
+    ///
+    /// The 8×8 leaves the descent emits are picked + reconstructed by the
+    /// existing per-leaf loop (the picker already handles `Block8x8`);
+    /// this flag only widens the partition-search candidate set.
+    pub allow_8x8_leaf: bool,
 }
 
 /// One leaf of the descent's output — a sub-block within the SB.
@@ -764,17 +774,22 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
 ) -> Option<DescendResult> {
     let (row_8x8, col_8x8) = origin_8x8;
 
-    // §4.3 cap: never descend below the floor. When we'd step below
-    // Block16x16 (i.e. caller asked for Block8x8), we inherit the
-    // variance hint's cells unchanged and return "infeasible" so the
-    // parent's NONE comparison wins the tie if NONE was feasible.
+    // §4.3 cap: never descend below the floor. `Block8x8` is always the
+    // no-further-split floor — even with Phase A on, an 8×8 leaf is a
+    // terminal NONE (it never recurses into 4×4). When Phase A is OFF the
+    // floor also includes `min_partition_size` (which the variance hint
+    // keeps at `Block16x16`); with Phase A ON the call site lowers
+    // `min_partition_size` to `Block8x8`, so `Block16x16` is no longer at
+    // the floor and may PARTITION_SPLIT into four 8×8 children.
     let bsize_at_floor =
         (bsize as u8) <= (params.min_partition_size as u8) || matches!(bsize, BlockSize::Block8x8);
 
-    // PARTITION_NONE allowed?
+    // PARTITION_NONE allowed? Phase A (`allow_8x8_leaf`) lets `Block8x8`
+    // be a NONE candidate; otherwise it is excluded (pre-Phase-A
+    // behaviour: 8×8 leaves only come from the variance hint).
     let none_allowed = (bsize as u8) <= (params.max_partition_size as u8)
         && (bsize as u8) >= (params.min_partition_size as u8)
-        && !matches!(bsize, BlockSize::Block8x8);
+        && (params.allow_8x8_leaf || !matches!(bsize, BlockSize::Block8x8));
 
     let part_ctx = partition_plane_context(above, left, bsize);
     let none_cost = params.partition_costs[part_ctx][PARTITION_NONE_IDX].max(0) as u32;
@@ -1287,6 +1302,9 @@ mod tests {
             // Tests don't depend on the exact value; the rd_mult just
             // needs to be positive so the rate term participates.
             rd_mult: 200,
+            // Default OFF — existing descent tests assert pre-Phase-A
+            // behaviour (8×8 only from the variance hint).
+            allow_8x8_leaf: false,
         }
     }
 
@@ -1454,6 +1472,95 @@ mod tests {
         );
         for leaf in &result.leaves {
             assert_eq!(leaf.bsize, BlockSize::Block16x16);
+        }
+    }
+
+    /// **Phase A — `allow_8x8_leaf` SPLITs Block16x16 into four 8×8.**
+    /// With the Phase A gate on (`min_partition_size = Block8x8`,
+    /// `allow_8x8_leaf = true`, `max = Block16x16`), a 16×16 region whose
+    /// four 8×8 children each fit much better than the single 16×16 NONE
+    /// must SPLIT into four Block8x8 leaves. This proves the descent
+    /// mechanics: 8×8 is a NONE candidate AND 16×16 can split to it.
+    #[test]
+    fn phase_a_splits_16x16_into_8x8() {
+        let fc = FrameContext::new_default();
+        let pc = partition_costs(&fc);
+        let hint = uniform_hint(BlockSize::Block16x16);
+        let mut params = make_params(&pc, BlockSize::Block8x8, BlockSize::Block16x16);
+        params.allow_8x8_leaf = true;
+        // Picker: 16×16 NONE has high dist (a single MV can't cover the
+        // sub-block motion); each 8×8 child fits cheaply. So SPLIT
+        // (4× cheap 8×8) must beat 16×16 NONE at every 16×16 block.
+        let mut picker = |_x: usize, _y: usize, bs: BlockSize| {
+            let (rate, dist) = match bs {
+                BlockSize::Block8x8 => (10u32, 1u32),
+                BlockSize::Block16x16 => (40, 200_000),
+                // Larger sizes excluded by max_partition_size, but give
+                // them high cost so they never win if queried.
+                _ => (10_000, 1_000_000),
+            };
+            Some(PartitionRdCandidate {
+                rate,
+                dist,
+                mv: Mv::ZERO,
+                mode: 0,
+                ref_frame: 0,
+            })
+        };
+        let result = nonrd_pick_partition(&hint, &params, &mut picker);
+        // The whole SB is 16 × 16×16 regions; each must split into 4 8×8.
+        // Expect 64 Block8x8 leaves and zero non-8×8 leaves.
+        let n8 = result
+            .leaves
+            .iter()
+            .filter(|l| matches!(l.bsize, BlockSize::Block8x8))
+            .count();
+        assert_eq!(
+            n8, 64,
+            "Phase A: expected 64 descent-chosen Block8x8 leaves, got {n8} (leaves: {:?})",
+            result
+                .leaves
+                .iter()
+                .map(|l| (l.mi_row_in_sb, l.mi_col_in_sb, l.bsize))
+                .collect::<Vec<_>>(),
+        );
+        for row in &result.cells {
+            for &c in row {
+                assert_eq!(c, BlockSize::Block8x8, "every cell should be 8×8");
+            }
+        }
+    }
+
+    /// **Phase A OFF — 8×8 still never emitted by the descent.**
+    /// Same picker that makes 8×8 attractive, but with `allow_8x8_leaf`
+    /// off and `min_partition_size = Block16x16`: the descent must keep
+    /// the pre-Phase-A floor (no descent-chosen 8×8).
+    #[test]
+    fn phase_a_off_keeps_16x16_floor() {
+        let fc = FrameContext::new_default();
+        let pc = partition_costs(&fc);
+        let hint = uniform_hint(BlockSize::Block16x16);
+        let params = make_params(&pc, BlockSize::Block16x16, BlockSize::Block16x16);
+        let mut picker = |_x: usize, _y: usize, bs: BlockSize| {
+            let (rate, dist) = match bs {
+                BlockSize::Block8x8 => (10u32, 1u32),
+                BlockSize::Block16x16 => (40, 200_000),
+                _ => (10_000, 1_000_000),
+            };
+            Some(PartitionRdCandidate {
+                rate,
+                dist,
+                mv: Mv::ZERO,
+                mode: 0,
+                ref_frame: 0,
+            })
+        };
+        let result = nonrd_pick_partition(&hint, &params, &mut picker);
+        for leaf in &result.leaves {
+            assert!(
+                !matches!(leaf.bsize, BlockSize::Block8x8),
+                "Phase A OFF: descent must not emit Block8x8, got {leaf:?}",
+            );
         }
     }
 

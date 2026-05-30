@@ -141,6 +141,13 @@ pub static PHASE2_NEWMV_FRESH: std::sync::atomic::AtomicU64 =
 pub static RD_PARTITION_RECT_LEAVES: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
+/// Phase A (`RVP9_P8`) — count of `Block8x8` leaves the RD partition
+/// descent committed (8×8 NONE wins, or a 16×16 SPLIT into four 8×8s).
+/// Distinguishes descent-chosen 8×8 (Phase A mechanics) from
+/// variance-hint-inherited 8×8. Dumped when `RVP9_P8_STATS` is set.
+pub static RD_PARTITION_8X8_LEAVES: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 /// A21 — count of blocks where the ML partition-search breakout pruner
 /// (`ml_partition::ml_predict_breakout`, libvpx
 /// `vp9/encoder/vp9_encodeframe.c:4161-4168`) FIRED: voted to stop the

@@ -2667,6 +2667,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // Only meaningful when the descent runs (`f3_nonrd_partition_enabled`),
     // since the cache is populated by the descent's picker calls.
     let phase2_reuse_enabled = std::env::var_os("RVP9_PHASE2_REUSE_DISABLE").is_none();
+    // Phase A — enable 8×8 inter partitions in the A4 descent. Default
+    // ON; the per-block RD self-suppresses 8×8 where it doesn't pay
+    // (≈0% on synthetic, ≈32% on natural content). Set `RVP9_P8=0` as an
+    // escape hatch to force-disable, restoring byte-identical pre-Phase-A
+    // behaviour (goldens/debug). When ON, the descent lowers its
+    // `min_partition_size` floor to Block8x8 so Block16x16 may SPLIT into
+    // four 8×8 NONE leaves and 8×8 becomes a valid NONE candidate.
+    let p8_enabled = std::env::var("RVP9_P8").map(|v| v != "0").unwrap_or(true);
     let f3_partition_costs = if f3_nonrd_partition_enabled {
         Some(partition_costs(&FrameContext::new_default()))
     } else {
@@ -3039,6 +3047,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 //    variance hint, with the R3 floor at
                 //    Block16x16.
                 let (min_bs, max_bs) = variance_hint_bounds(&hint);
+                // Phase A (`RVP9_P8`) — lower the min floor to Block8x8 so
+                // the descent can SPLIT Block16x16 into four 8×8 leaves and
+                // treat 8×8 as a NONE candidate. Default ON; `RVP9_P8=0`
+                // keeps the R3 Block16x16 floor exactly as before.
+                let min_bs = if p8_enabled { BS::Block8x8 } else { min_bs };
 
                 // 3. Build the descent params.
                 let pcosts = f3_partition_costs
@@ -3049,6 +3062,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     max_partition_size: max_bs,
                     partition_costs: pcosts,
                     rd_mult: f3_rd_mult,
+                    allow_8x8_leaf: p8_enabled,
                 };
 
                 // 4. P12 (2026-05-25) — real `pick_inter_mode`
@@ -3661,6 +3675,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // it at zero and fail.
                     if leaf.bsize.width() != leaf.bsize.height() {
                         crate::rdo::inter_dispatch::RD_PARTITION_RECT_LEAVES
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    // Phase A (`RVP9_P8`) diagnostic — count each 8×8 leaf
+                    // the descent committed (descent-chosen, distinct from
+                    // variance-hint-inherited 8×8). Dumped via RVP9_P8_STATS.
+                    if matches!(leaf.bsize, BlockSize::Block8x8) {
+                        crate::rdo::inter_dispatch::RD_PARTITION_8X8_LEAVES
                             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
                     // Look up segment_id from the variance hint's
@@ -5599,6 +5620,37 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             eprintln!(
                 "[A3'-int-pro] frame summary: zero={} nearest={} near={} new={} skip={} nonzero_mv={} golden={}",
                 count_zero, count_nearest, count_near, count_new, count_skip, count_nonzero_mv, count_golden,
+            );
+        }
+    }
+
+    // Phase A (`RVP9_P8_STATS`) — per-frame partition-size distribution
+    // over the final leaf list (counts leaves, not area). Reports the
+    // descent-chosen 8×8 cumulative counter alongside, distinguishing
+    // "8×8 appears" mechanics from the variance-hint baseline.
+    if std::env::var_os("RVP9_P8_STATS").is_some() {
+        let mut n8 = 0usize;
+        let mut n16 = 0usize;
+        let mut n32 = 0usize;
+        let mut n64 = 0usize;
+        let mut nrect = 0usize;
+        for sb in sb_partitions.iter() {
+            for leaf in sb.iter() {
+                match leaf.leaf_bsize {
+                    BlockSize::Block8x8 => n8 += 1,
+                    BlockSize::Block16x16 => n16 += 1,
+                    BlockSize::Block32x32 => n32 += 1,
+                    BlockSize::Block64x64 => n64 += 1,
+                    _ => nrect += 1,
+                }
+            }
+        }
+        let descent_8x8 = crate::rdo::inter_dispatch::RD_PARTITION_8X8_LEAVES
+            .load(std::sync::atomic::Ordering::Relaxed);
+        #[allow(clippy::print_stderr)]
+        {
+            eprintln!(
+                "[P8] frame leaves: 8x8={n8} 16x16={n16} 32x32={n32} 64x64={n64} rect={nrect} | descent_8x8_cumulative={descent_8x8}",
             );
         }
     }
