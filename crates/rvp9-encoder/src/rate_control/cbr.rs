@@ -406,6 +406,55 @@ const KF_ACTIVE_QUALITY_BOOST: i32 = 32;
 /// content-aware rate model on the keyframe.
 const KF_ACTIVE_QUALITY_BASIS_CAP: i32 = 122;
 
+/// KFCAP (Track A1, 2026-05-30) — bitrate/budget-aware keyframe-share cap.
+///
+/// Default ON; `RVP9_KFCAP=0` is the escape hatch that restores the
+/// pre-KFCAP baseline byte-for-byte. Read once per pick (the KF arm of
+/// [`pick_q_and_bounds`] runs once per GOP, not in the per-MB regulator
+/// loop, so this is cheap).
+///
+/// **What it fixes (measured, post-Phase-A).** At ~250k on foreman the C1
+/// budget gate's affordable branch lets the first KF go near-lossless
+/// (q≈4), which spends ~60% of the whole stream. Post-Phase-A the inters
+/// code efficiently, so those bits are wasted on a KF the GOP can't use.
+/// KFCAP shaves the KF target so the freed bits flow to the inters.
+///
+/// **How it composes with C1 (and stays inert at high bitrate).** KFCAP
+/// lives strictly INSIDE C1's `target_bpm >= near_lossless_bpm` affordable
+/// branch — it never touches the low-bitrate CAP branch (C1 already caps
+/// there) nor the subsequent-KF branch. Within the affordable branch it
+/// fires ONLY when the rate model's predicted near-lossless KF cost
+/// (`near_lossless_bpm * mbs >> 9`, the SAME quantity C1's gate computes)
+/// exceeds [`KFCAP_SHARE_NUM`]/[`KFCAP_SHARE_DEN`] of the GOP budget
+/// (`avg_frame_bandwidth * gop_length`). The near-lossless KF cost is
+/// content-bounded (a fixed clip codes to roughly the same near-lossless
+/// size at any target bitrate) while the GOP budget scales with bitrate,
+/// so the predicted KF share falls as bitrate rises: measured ≈179% at
+/// 250k (BITES) vs ≈15-22% at 2000k (INERT). The high-bitrate near-lossless
+/// KF win (f971c4e / C1) is therefore untouched.
+///
+/// **Mechanism = target-fraction cap (HLD A2).** When it fires, the KF
+/// *target bits* are clamped to the share ceiling and the floor is left at
+/// `best_quality`; the existing `regulate_q` then walks Q up only as far as
+/// needed to hit the smaller target. This degrades gracefully (Q rises
+/// smoothly with the over-allocation) rather than slamming to the q≈57 C1
+/// floor.
+const KFCAP_SHARE_NUM: i64 = 2;
+/// See [`KFCAP_SHARE_NUM`]. 2/5 = 40% of the GOP budget — the cap ceiling
+/// on the predicted near-lossless KF cost. Chosen to sit cleanly between
+/// the 250k over-allocation (≈179% predicted share → bites) and the 2000k
+/// affordable regime (≈15-22% → inert).
+const KFCAP_SHARE_DEN: i64 = 5;
+
+/// Is the KFCAP keyframe-share cap enabled? Default ON; `RVP9_KFCAP=0`
+/// is the escape hatch that restores the pre-KFCAP baseline byte-for-byte
+/// (any other value, or the var being unset, leaves KFCAP enabled). See
+/// [`KFCAP_SHARE_NUM`].
+#[inline]
+fn kfcap_enabled() -> bool {
+    std::env::var_os("RVP9_KFCAP").is_none_or(|v| v != "0")
+}
+
 /// Port of libvpx `get_minq_index` (`vp9_ratectrl.c:118-135`). Finds the
 /// smallest qindex whose q-value (`ac_quant/4`) is ≥ the cubic-curve
 /// target `minqtarget = min((x3·maxq + x2)·maxq + x1)·maxq, maxq)`.
@@ -543,6 +592,13 @@ pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> 
     };
     rc.this_frame_target = target_bits;
 
+    // KFCAP (Track A1) — the regulator below uses `regulate_target_bits`,
+    // which is `target_bits` UNLESS the KFCAP gate (in the KF arm) shaves
+    // it. Default ON (env-gated); `RVP9_KFCAP=0` keeps it == `target_bits`
+    // → byte-identical to the pre-KFCAP baseline. See [`kfcap_enabled`] /
+    // [`KFCAP_SHARE_NUM`].
+    let mut regulate_target_bits = target_bits;
+
     // 2. Active Q range.
     let (active_best, active_worst) = match frame_kind {
         FrameKind::Key => {
@@ -648,6 +704,44 @@ pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> 
                 ));
                 if target_bpm >= near_lossless_bpm {
                     // Buffer affords near-lossless — keep f971c4e's win.
+                    //
+                    // KFCAP (Track A1, env-gated, default ON). Even when
+                    // near-lossless is "affordable" by the C1 buffer test,
+                    // at LOW/MID bitrate (e.g. 250k) the near-lossless KF
+                    // over-allocates: it costs far more than its fair share
+                    // of the GOP budget, starving the (now-efficient,
+                    // post-Phase-A) inters. Shave the KF target to a fixed
+                    // fraction of the GOP budget when the rate model's own
+                    // predicted near-lossless KF cost exceeds that share.
+                    // The floor stays `best_quality`; only the regulator's
+                    // target shrinks, so `regulate_q` walks Q up gracefully.
+                    // This composes with C1 (subset of its affordable
+                    // branch) and is INERT at high bitrate (the predicted
+                    // share is small there — see [`KFCAP_SHARE_NUM`]).
+                    if kfcap_enabled() {
+                        // Predicted near-lossless KF cost in bits (the SAME
+                        // quantity the C1 gate prices, scaled back to a
+                        // per-frame total): (near_lossless_bpm * mbs) >> 9.
+                        let pred_kf_bits: i64 = (near_lossless_bpm
+                            .saturating_mul(i64::from(rc.mbs)))
+                            >> BPER_MB_NORMBITS;
+                        // GOP budget = avg-frame-bits * gop_length.
+                        let gop_budget: i64 = i64::from(rc.avg_frame_bandwidth)
+                            .saturating_mul(i64::from(rc.config().gop_length));
+                        // Share ceiling on the KF (e.g. 40% of GOP budget).
+                        let kf_cap_bits: i64 =
+                            gop_budget.saturating_mul(KFCAP_SHARE_NUM) / KFCAP_SHARE_DEN;
+                        // Fire only when the predicted near-lossless KF would
+                        // blow the share ceiling AND the cap actually shrinks
+                        // the regulator target below what it is today (never
+                        // RAISE the target — that would be a different lever).
+                        if pred_kf_bits > kf_cap_bits
+                            && kf_cap_bits > i64::from(FRAME_OVERHEAD_BITS)
+                            && kf_cap_bits < i64::from(regulate_target_bits)
+                        {
+                            regulate_target_bits = kf_cap_bits as u32;
+                        }
+                    }
                     rc.best_quality
                 } else {
                     // Budget too thin for near-lossless — restore the cap.
@@ -687,7 +781,7 @@ pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> 
     let multiplier = rc.config().bits_per_mb_multiplier;
     let q = regulate_q(
         frame_kind,
-        target_bits,
+        regulate_target_bits,
         active_best,
         active_worst,
         rc.mbs,
@@ -1433,6 +1527,112 @@ mod tests {
         assert!(
             q < 30,
             "golden-fixture first KF must stay near-lossless (gate must not bite), got q={q}",
+        );
+    }
+
+    // ---- KFCAP (Track A1) composition tests ----
+    //
+    // `RVP9_KFCAP` is a process-global env var; these tests mutate it, so
+    // they must not run concurrently with each other. A shared mutex
+    // serialises them. Each test restores the prior value on exit.
+    //
+    // KFCAP is default ON: env unset (or any value != "0") ⇒ ON;
+    // `RVP9_KFCAP=0` ⇒ OFF (pre-KFCAP baseline). So `OFF` is `Some("0")`
+    // and `ON` is `None` (the default) below.
+
+    use std::sync::Mutex;
+    static KFCAP_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Run `f` with `RVP9_KFCAP` forced to `value` (or removed if `None`),
+    /// serialised against other KFCAP env tests, restoring the prior value.
+    fn with_kfcap_env<R>(value: Option<&str>, f: impl FnOnce() -> R) -> R {
+        let _guard = KFCAP_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var_os("RVP9_KFCAP");
+        // SAFETY: serialised by KFCAP_ENV_LOCK; no other thread in this
+        // crate reads RVP9_KFCAP outside this lock during these tests.
+        unsafe {
+            match value {
+                Some(v) => std::env::set_var("RVP9_KFCAP", v),
+                None => std::env::remove_var("RVP9_KFCAP"),
+            }
+        }
+        let out = f();
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("RVP9_KFCAP", v),
+                None => std::env::remove_var("RVP9_KFCAP"),
+            }
+        }
+        out
+    }
+
+    /// KFCAP — at 250k/256x256 the C1 affordable branch is taken (the KF
+    /// would otherwise go near-lossless, q≈4), but the predicted
+    /// near-lossless KF is ≈179% of the GOP budget, so KFCAP must shave
+    /// the target and the regulator must pick a HIGHER Q than the
+    /// uncapped (OFF, `RVP9_KFCAP=0`) baseline. This is the lever biting
+    /// where the KF is wasteful.
+    #[test]
+    fn kfcap_raises_kf_q_at_mid_bitrate_when_on() {
+        let q_off = with_kfcap_env(Some("0"), || first_kf_q(250_000, 256, 256, 33));
+        let q_on = with_kfcap_env(None, || first_kf_q(250_000, 256, 256, 33));
+        assert!(
+            q_off < 10,
+            "OFF baseline: 250k first KF must stay near-lossless (q≈4), got q={q_off}",
+        );
+        assert!(
+            q_on > q_off,
+            "KFCAP ON must RAISE the 250k KF Q above the uncapped baseline: \
+             off={q_off}, on={q_on}",
+        );
+    }
+
+    /// KFCAP — at 2000k/320x256 (the f971c4e regime) the predicted
+    /// near-lossless KF is only ≈15% of the GOP budget, well under the
+    /// 40% cap, so KFCAP must be INERT: the KF stays near-lossless
+    /// whether the gate is ON (default) or OFF (no high-bitrate
+    /// regression).
+    #[test]
+    fn kfcap_inert_at_high_bitrate() {
+        let q_off = with_kfcap_env(Some("0"), || first_kf_q(2_000_000, 320, 256, 60));
+        let q_on = with_kfcap_env(None, || first_kf_q(2_000_000, 320, 256, 60));
+        assert_eq!(
+            q_on, q_off,
+            "KFCAP must be INERT at 2000k (f971c4e regime): off={q_off}, on={q_on}",
+        );
+        assert!(
+            q_on < 30,
+            "2000k first KF must stay near-lossless with KFCAP on, got q={q_on}",
+        );
+    }
+
+    /// KFCAP — the escape hatch (`RVP9_KFCAP=0`) is byte-identical to the
+    /// pre-KFCAP baseline across the bitrate sweep (gate never fires ⇒
+    /// every Q matches the pre-KFCAP picks). Guards the "escape hatch
+    /// restores baseline" invariant.
+    #[test]
+    fn kfcap_off_matches_head_across_sweep() {
+        with_kfcap_env(Some("0"), || {
+            // 100k: C1 caps (KFCAP never reached — it's inside the
+            // affordable branch). 250k / 2000k: affordable branch, but
+            // KFCAP disabled ⇒ near-lossless q≈4.
+            assert!(first_kf_q(100_000, 256, 256, 64) >= 50, "100k still C1-capped");
+            assert!(first_kf_q(250_000, 256, 256, 33) < 10, "250k OFF near-lossless");
+            assert!(first_kf_q(2_000_000, 320, 256, 60) < 30, "2000k OFF near-lossless");
+        });
+    }
+
+    /// KFCAP — does not disturb the low-bitrate C1 CAP branch. At 100k the
+    /// C1 affordability test fails (target_bpm < near_lossless_bpm), so the
+    /// floor is `get_kf_active_quality(122)` ≈57 and the KFCAP block (which
+    /// lives in the OTHER branch) is never reached. ON and OFF must match.
+    #[test]
+    fn kfcap_does_not_double_cap_low_bitrate() {
+        let q_off = with_kfcap_env(Some("0"), || first_kf_q(100_000, 256, 256, 64));
+        let q_on = with_kfcap_env(None, || first_kf_q(100_000, 256, 256, 64));
+        assert_eq!(
+            q_on, q_off,
+            "KFCAP must not double-cap the C1 low-bitrate branch: off={q_off}, on={q_on}",
         );
     }
 }
