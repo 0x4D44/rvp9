@@ -285,3 +285,29 @@ See notes/perframe-zeroing-candidate-2026-05-30.md. **Needs Arthur's design nod.
 **Reframe for Arthur:** the memory-traffic thesis yields BIGGER wins than the prior "few %"
 plateau — the buffer pool alone is ~10%. The largest levers (pool, mi_grid) are architectural
 and want a design nod per our working agreement.
+
+## MEASURED END-TO-END (2026-05-30) — interleaved A/B, all 3 levers + per-block opts
+
+Method: `decode-throughput` (pinned, 30-frame warmup, p50 of 1000 timed frames), binary A =
+HEAD (1188d55 + f65f2b2) vs binary B = baseline (114ad7d, my 4 structural files reverted;
+prior-session convolve/detok kept constant in both). Alternated A,B,A,B ×3 in one machine-state
+window. min-of-3 p50 µs/frame:
+
+| fixture | resolution | A (mine) | B (base) | speedup |
+|---|---|---|---|---|
+| quantizer-00 | 352×288 (CIF, dense) | 1238.8 | 1310.9 | **5.5%** |
+| tile_1x2 | 1920×1080 | 6192.4 | 6523.5 | **5.1%** |
+| tile_1x4 | 1920×1080 | 3592.9 | 3946.7 | **9.0%** |
+| tile_1x8 | 3840×2160 (4K) | 9143.0 | 10108.9 | **9.6%** |
+
+**Robust: A beat B in ALL 12 pairs (3 rounds × 4 fixtures) — not noise.** The speedup GROWS with
+resolution (CIF 5.5% → 1080p → 4K 9.6%), the O(frame-area) signature predicted: per-frame
+page-fault + grid-memset elimination scale with frame area. This is the measured confirmation of
+the memory-traffic thesis — a robust ~5–10% end-to-end decode speedup (largest on high-res),
+byte-exact, on top of the prior kernel/detok wins. Closes the worst part of the vpxdec gap
+(cheap/high-res content) that micro-grind could not touch.
+
+## LANDED + COMMITTED (this session)
+- `1188d55` buffer pool + mi_grid persistence + per-block copy elision
+- `f65f2b2` above/left reduction removal (grid-based neighbours)
+Both byte-exact: conformance 6/6, real_world foreman 30/30, decoder unit tests, efficacy oracle.
