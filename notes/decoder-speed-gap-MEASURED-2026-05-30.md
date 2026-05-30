@@ -307,6 +307,28 @@ the memory-traffic thesis — a robust ~5–10% end-to-end decode speedup (large
 byte-exact, on top of the prior kernel/detok wins. Closes the worst part of the vpxdec gap
 (cheap/high-res content) that micro-grind could not touch.
 
+## MEASURED: mv_grid/seg-id persistence (282ffb4) — O(area) hunt, round 2
+Found by hunting for remaining per-frame O(area) re-fills after the buffer pool + mi_grid.
+The per-tile mv_grid was the worst: each tile slab is full-frame-sized but the worker uses
+only its columns, so a multi-tile inter frame did N full-frame `PrevFrameMvRef::default()`
+fills (up to 2.3 MB @720p / ~9 MB @4K for tile_1x8). Persisted all four grids (cur_mv_grid,
+per-tile tile_mv_grids + tile_seg_ids, cur_segment_ids) the same way as frame_mi_grid.
+
+Interleaved decode-throughput A/B (min-of-3 p50, HEAD vs 282ffb4~1):
+| fixture | tiles/res | NEW | BASE | speedup |
+|---|---|---|---|---|
+| quantizer-00 | 1, CIF intra | 1541.9 | 1511.1 | ~neutral (no mv_grid) |
+| tile_1x2 | 2, 1080p | 7721.3 | 7816.5 | ~1% |
+| tile_1x4 | 4, 1080p | 4548.3 | 4651.7 | ~2% |
+| **tile_1x8** | **8, 4K** | **10095.5** | **11600.3** | **~13%** |
+Scales with tile-count × resolution (the N-full-frame-fills signature). tile_1x8 NEW-faster
+in all 3 rounds. Byte-exact: conformance 6/6 (aq2 100 inter frames + tile_1x*), foreman 30/30.
+
+## O(area) grids now ALL addressed
+frame buffer (pool), mi_grid (persist), mv_grid + seg-ids (persist) — the four large
+per-frame grids. Remaining per-frame costs are O(perimeter) (border extension) or
+O(tile-width) (coef context) — an order of magnitude smaller.
+
 ## LANDED + COMMITTED (this session)
 - `1188d55` buffer pool + mi_grid persistence + per-block copy elision
 - `f65f2b2` above/left reduction removal (grid-based neighbours)
