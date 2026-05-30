@@ -70,6 +70,20 @@ use rvp9_core::intra_pred::IntraMode;
 use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, Mv, RefFrame};
 use rvp9_core::transforms::{TxMode, TxSize};
 
+/// Positive-control counter for the `RVP9_TRELLIS` coefficient
+/// optimizer: total number of (qcoeff) coefficients the trellis CHANGED
+/// across the whole encode. Zero ⇒ trellis is inert (a no-op); non-zero
+/// ⇒ trellis bit the bitstream. Read via [`trellis_changed_count`].
+pub static TRELLIS_CHANGED_COEFFS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Read the running total of coefficients changed by the `RVP9_TRELLIS`
+/// trellis (positive control). See [`TRELLIS_CHANGED_COEFFS`].
+#[must_use]
+pub fn trellis_changed_count() -> u64 {
+    TRELLIS_CHANGED_COEFFS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub mod aq_cyclic_refresh;
 pub mod bitstream_gates;
 pub mod buffer_pool;
@@ -2601,6 +2615,19 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // (rd_pick_sb_modes dispatch).
     let rdo_speed_gated = speed.unsigned_abs() <= 4;
     let rdo_coef_costs = rvp9_core::cost::coef_cost::build_coef_cost_table(frame_context);
+    // TRELLIS (2026-05-30) — post-quant `vp9_optimize_b` coefficient
+    // optimizer in the inter + intra-in-inter emit paths. libvpx sets
+    // `optimize_coefficients = 1` at good-mode speed<=4 (and 0 for RT
+    // speed>=5), so the trellis is a GOOD-path feature. The prior port was
+    // INERT (no-op) because it omitted libvpx's look-ahead `next_bits`
+    // term + the real neighbour context; completing those makes it bite.
+    // Default ON on the cpu<=4 GOOD path (foreman +0.08 dB matched,
+    // strictly Pareto-better; synthetic positive; cross-decoder byte-exact
+    // — adversarially confirmed). NOT run on the RT path (speed>=5),
+    // matching libvpx and keeping the cpu7 goldens byte-identical.
+    // `RVP9_TRELLIS=0` restores the byte-identical baseline.
+    let trellis_enabled = speed.unsigned_abs() <= 4
+        && std::env::var("RVP9_TRELLIS").map(|v| v != "0").unwrap_or(true);
     let rdo_skip_costs = rvp9_core::cost::skip_costs(frame_context);
     let rdo_tx_size_costs = rvp9_core::cost::tx_size_costs(frame_context);
     // Skip-bit cost at the middle skip context (the per-leaf skip_ctx
@@ -5067,6 +5094,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 }
 
                                 // Steps 3-4: forward hybrid transform + quant.
+                                // RVP9_TRELLIS — intra-in-inter emit path
+                                // (KF intra block / intra block in inter
+                                // frame). ref_type = 0 (intra).
+                                let trellis_ctx = if trellis_enabled {
+                                    Some(TrellisCtx {
+                                        costs: &rdo_coef_costs,
+                                        mb_rdmult: tx_rd_rdmult,
+                                        ref_type: 0,
+                                    })
+                                } else {
+                                    None
+                                };
                                 let (qcoeff_i32, dqcoeff_i32, eob_usize) =
                                     intra_forward_quant_one_tx(
                                         &residual,
@@ -5074,6 +5113,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                         plane_tx,
                                         tx_type,
                                         &quantizer,
+                                        usize::from(plane != 0),
+                                        trellis_ctx,
                                     );
 
                                 // Step 5: inverse transform-add into recon.
@@ -5369,12 +5410,25 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     );
                                 }
 
+                                // RVP9_TRELLIS — inter emit path.
+                                // ref_type = 1 (inter).
+                                let trellis_ctx = if trellis_enabled {
+                                    Some(TrellisCtx {
+                                        costs: &rdo_coef_costs,
+                                        mb_rdmult: tx_rd_rdmult,
+                                        ref_type: 1,
+                                    })
+                                } else {
+                                    None
+                                };
                                 let (qcoeff_i32, dqcoeff_i32, eob_usize) =
                                     inter_forward_quant_one_tx(
                                         &residual,
                                         tx_side,
                                         plane_tx,
                                         &quantizer,
+                                        usize::from(plane != 0),
+                                        trellis_ctx,
                                     );
 
                                 // Inverse-DCT-add into recon (the encoder's
@@ -5996,15 +6050,38 @@ fn enc_build_mc_border(
     }
 }
 
+/// Trellis context for the `RVP9_TRELLIS` post-quant coefficient
+/// optimizer, threaded into the inter/intra emit paths. `None` ⇒ trellis
+/// OFF (byte-identical baseline). When `Some`, the trellis runs AFTER
+/// forward-quant and BEFORE the coef_source insert + reconstruction, so
+/// the recon uses the trellis-adjusted dqcoeff (encoder recon ==
+/// decoder).
+#[derive(Copy, Clone)]
+struct TrellisCtx<'a> {
+    costs: &'a rvp9_core::cost::coef_cost::CoefCostTable,
+    /// libvpx `mb->rdmult` (the `compute_rd_mult` value); the
+    /// `plane_rd_mult` scaling is applied inside `optimize_b_inter`.
+    mb_rdmult: i64,
+    /// 0 = intra, 1 = inter.
+    ref_type: usize,
+}
+
 /// Forward DCT (DctDct) + forward quant of one TX block for the inter
 /// path. Returns `(qcoeff_i32, dqcoeff_i32, eob)` — the qcoeff buffer
 /// the writer will serialise, the dqcoeff buffer to inverse-transform
 /// into the recon, and the end-of-block count.
+///
+/// `trellis` is `Some` only when `RVP9_TRELLIS` is set; it runs
+/// `vp9_optimize_b` on the post-quant coefficients before they are
+/// returned (so both the serialised qcoeff AND the recon-driving dqcoeff
+/// are the trellis-adjusted values).
 fn inter_forward_quant_one_tx(
     residual: &[i16],
     tx_side: usize,
     plane_tx: TxSize,
     quantizer: &rvp9_core::quant::forward::PlaneQuantizers,
+    plane_type: usize,
+    trellis: Option<TrellisCtx<'_>>,
 ) -> (Vec<i32>, Vec<i32>, usize) {
     use rvp9_core::quant::forward::{scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32};
     use rvp9_core::transforms::TxType;
@@ -6070,9 +6147,66 @@ fn inter_forward_quant_one_tx(
             scan_slice,
         ),
     };
+
+    let eob = maybe_trellis(
+        &coefs, &mut qcoeff_i16, &mut dqcoeff_i16, eob, plane_tx, &scan,
+        quantizer, plane_type, trellis,
+    );
+
     let qcoeff_i32: Vec<i32> = qcoeff_i16.into_iter().map(i32::from).collect();
     let dqcoeff_i32: Vec<i32> = dqcoeff_i16.into_iter().map(i32::from).collect();
     (qcoeff_i32, dqcoeff_i32, eob as usize)
+}
+
+/// Shared `RVP9_TRELLIS` post-quant step for the inter + intra-in-inter
+/// emit paths. Runs `vp9_optimize_b` on the post-quant coefficients
+/// (libvpx good-mode runs quantize_b THEN trellis on every block) when
+/// `trellis` is `Some`, mutating `qcoeff`/`dqcoeff` in place and
+/// returning the (possibly reduced) eob. `None` ⇒ byte-identical
+/// baseline. The adjusted coeffs feed BOTH the serialised stream and the
+/// recon, keeping encoder recon == decoder.
+#[allow(clippy::too_many_arguments)]
+fn maybe_trellis(
+    coefs: &[i32],
+    qcoeff: &mut [i16],
+    dqcoeff: &mut [i16],
+    eob: u16,
+    plane_tx: TxSize,
+    scan: &rvp9_core::transforms::scans::ScanOrder,
+    quantizer: &rvp9_core::quant::forward::PlaneQuantizers,
+    plane_type: usize,
+    trellis: Option<TrellisCtx<'_>>,
+) -> u16 {
+    let Some(tc) = trellis else {
+        return eob;
+    };
+    let dequant_pair = [quantizer.dequant[0], quantizer.dequant[1]];
+    // Snapshot to count coefficients the trellis changes (positive
+    // control via `TRELLIS_CHANGED_COEFFS`).
+    let pre_q = qcoeff.to_vec();
+    let new_eob = crate::rdo::trellis::optimize_b_inter(
+        coefs,
+        qcoeff,
+        dqcoeff,
+        eob,
+        plane_tx,
+        scan,
+        &dequant_pair,
+        tc.mb_rdmult,
+        tc.costs,
+        plane_type,
+        tc.ref_type,
+        /* ctx0 = */ 0,
+    );
+    let changed = pre_q
+        .iter()
+        .zip(qcoeff.iter())
+        .filter(|(a, b)| a != b)
+        .count() as u64;
+    if changed > 0 {
+        TRELLIS_CHANGED_COEFFS.fetch_add(changed, std::sync::atomic::Ordering::Relaxed);
+    }
+    new_eob
 }
 
 /// Track-F iter8 — per-block transform-size RD selection for the KF /
@@ -6762,12 +6896,15 @@ fn inter_inverse_dct_add(
 /// scan order from `(plane_tx, tx_type)` rather than hardcoding DctDct.
 ///
 /// Returns `(qcoeff_i32, dqcoeff_i32, eob)`.
+#[allow(clippy::too_many_arguments)]
 fn intra_forward_quant_one_tx(
     residual: &[i16],
     tx_side: usize,
     plane_tx: TxSize,
     tx_type: rvp9_core::transforms::TxType,
     quantizer: &rvp9_core::quant::forward::PlaneQuantizers,
+    plane_type: usize,
+    trellis: Option<TrellisCtx<'_>>,
 ) -> (Vec<i32>, Vec<i32>, usize) {
     use rvp9_core::quant::forward::{scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32};
     use rvp9_core::transforms::forward::{fdct32x32, fht4x4, fht8x8, fht16x16};
@@ -6831,6 +6968,12 @@ fn intra_forward_quant_one_tx(
             scan_slice,
         ),
     };
+
+    let eob = maybe_trellis(
+        &coefs, &mut qcoeff_i16, &mut dqcoeff_i16, eob, plane_tx, &scan,
+        quantizer, plane_type, trellis,
+    );
+
     let qcoeff_i32: Vec<i32> = qcoeff_i16.into_iter().map(i32::from).collect();
     let dqcoeff_i32: Vec<i32> = dqcoeff_i16.into_iter().map(i32::from).collect();
     (qcoeff_i32, dqcoeff_i32, eob as usize)

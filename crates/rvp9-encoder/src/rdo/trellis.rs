@@ -25,7 +25,7 @@ use rvp9_core::quant::forward::{
     PlaneQuantizers, vp9_quantize_fp, vp9_quantize_fp_32x32,
 };
 use rvp9_core::transforms::forward::{fdct4x4, fdct8x8, fdct16x16, fdct32x32};
-use rvp9_core::transforms::scans::ScanOrder;
+pub use rvp9_core::transforms::scans::ScanOrder;
 use rvp9_core::transforms::TxSize;
 
 use crate::rdo::cost_coeffs::{
@@ -270,6 +270,16 @@ pub fn vp9_optimize_b(
     let shift = u32::from(matches!(tx_size, TxSize::Tx32x32));
     let band_translate = band_translate(tx_size);
     let scan_arr = scan.scan;
+    // libvpx `so->neighbors` — the {top, left} raster-position pairs
+    // used by `get_coef_context`. Length is `(n + 1) * 2` (the trailing
+    // pair is the EOB sentinel). This is the look-ahead's load-bearing
+    // input: it is what makes the next position's context depend on the
+    // CURRENT candidate's energy class.
+    let nb = scan.neighbors;
+    // libvpx `default_eob = 16 << (tx_size << 1)` (the full transform
+    // coefficient count). The look-ahead guard `i < default_eob - 1`
+    // (line 210) is `i < n - 1` here.
+    let default_eob = n;
 
     // libvpx initial-EOB rate (line 128-129): cost of EOB at the
     // initial-context band/ctx slot.
@@ -306,15 +316,15 @@ pub fn vp9_optimize_b(
         let rc = scan_arr[i] as usize;
         let x = i32::from(qcoeff[rc]);
         let band_cur = band_translate[i] as usize;
-        // Fast-coef ctx selection (libvpx line 138): for i==0 use
-        // ctx0; otherwise use `!prev_t` (the fast path). We use the
-        // fast path universally because the full neighbour-context
-        // logic depends on caller-side `nb` plumbing the W4.4
-        // standalone scope omits.
+        // libvpx line 138: `ctx_cur = (i == 0) ? ctx : get_coef_context(
+        // nb, token_cache, i)`. The full neighbour-context (NOT the
+        // fast `!prev_t` collapse) is what the look-ahead below needs:
+        // the next position's context depends on the energy class we
+        // write into `token_cache[rc]` for the chosen candidate.
         let ctx_cur = if i == 0 {
             ctx0
         } else {
-            usize::from(x_prev != 0)
+            get_coef_context(nb, &token_cache, i)
         };
         let token_tree_sel_cur = x_prev == 0;
 
@@ -361,49 +371,119 @@ pub fn vp9_optimize_b(
             dist_for_zero
         };
 
-        // libvpx lines 192-198: base rate + token-tree rate for each
-        // candidate.
+        // libvpx lines 192-198: `rate = base_bits + token_tree_cost`.
+        // `base_bits` is the extra-bits cost (sign + category bits) that
+        // libvpx's `vp9_get_token_cost` returns separately from the
+        // token-tree cost held in `token_costs`. rvp9's cost table is
+        // built with `vp9_cost_tokens` (token-tree only), so we add the
+        // extra-bits here — exactly mirroring `cost_coeffs`'
+        // `extra_bits_cost`. This is a real RD signal because t0 and t1
+        // (candidate x vs reduced x1) can fall in different categories.
         let t0 = vp9_get_token(x);
         let t1 = vp9_get_token(x1);
-        let rate0 = token_cost(
-            costs, tx_size, plane_type, ref_type, band_cur, ctx_cur, t0, token_tree_sel_cur,
-        );
-        let rate1 = token_cost(
-            costs, tx_size, plane_type, ref_type, band_cur, ctx_cur, t1, token_tree_sel_cur,
-        );
-        // No `base_bits` charge for cat1+; the per-token charge inside
-        // `token_cost` already covers the `vp9_extra_bits[t].cost`
-        // when the cost table is built with non-EOB tokens. (See
-        // build_coef_cost_table — it uses `vp9_cost_tokens` which
-        // doesn't include extra-bits; libvpx's `vp9_get_token_cost`
-        // returns extra-bits separately. We make the same fast-path
-        // approximation as the cost_coeffs module.)
+        let base_bits0 = extra_bits_cost(t0);
+        let base_bits1 = extra_bits_cost(t1);
+        let rate0 = base_bits0
+            + token_cost(
+                costs, tx_size, plane_type, ref_type, band_cur, ctx_cur, t0,
+                token_tree_sel_cur,
+            );
+        let rate1 = base_bits1
+            + token_cost(
+                costs, tx_size, plane_type, ref_type, band_cur, ctx_cur, t1,
+                token_tree_sel_cur,
+            );
 
-        // libvpx lines 206-234: also compute "what happens at the
-        // next position" for each candidate, to bias toward keeping
-        // x_prev != 0 (which helps subsequent contexts). We skip
-        // this look-ahead optimisation in the W4.4 baseline; the
-        // remaining trellis is faithful to libvpx without it (the
-        // look-ahead is a tightness optimisation, not a correctness
-        // requirement).
+        // libvpx lines 205-234: the LOOK-AHEAD term. For each candidate
+        // (x → t0, x1 → t1) compute the bit-cost the NEXT scan position
+        // would pay, GIVEN this candidate's energy class written into
+        // `token_cache[rc]`. This is the bias that makes the trellis
+        // bite: keeping x_prev != 0 raises the next position's context
+        // (cheaper there for non-zero), and the trellis only favours
+        // reducing a level when the look-ahead says the saving downstream
+        // outweighs the local rate/distortion change. Without it, the
+        // per-coef RD almost never favours x1, so trellis is inert.
+        //
+        // `next_bits{0,1}` — cost of coding the next coefficient's
+        // ALREADY-DECIDED token under the candidate's context.
+        // `next_eob_bits{0,1}` — cost of an EOB at the next position
+        // (used by the eob-move candidates).
+        let mut next_bits0: i64 = 0;
+        let mut next_bits1: i64 = 0;
+        let mut next_eob_bits0: i64 = 0;
+        let mut next_eob_bits1: i64 = 0;
+        if i < default_eob - 1 {
+            let band_next = band_translate[i + 1] as usize;
+            // libvpx line 213-214: the next position's token is the
+            // pre-trellis qcoeff token, or EOB if i+1 == eob.
+            let token_next: u8 = if i + 1 != eob as usize {
+                vp9_get_token(i32::from(qcoeff[scan_arr[i + 1] as usize]))
+            } else {
+                EOB_TOKEN
+            };
+            // Candidate 0 (keep x): write t0's energy class, recompute
+            // the next context, and the next token-tree selector is
+            // `(x == 0)` — but x != 0 in this branch, so it's `false`.
+            token_cache[rc] = VP9_PT_ENERGY_CLASS[t0 as usize];
+            let ctx_next0 = get_coef_context(nb, &token_cache, i + 1);
+            let sel_next0 = x == 0; // always false here, kept for fidelity
+            next_bits0 = i64::from(token_cost(
+                costs, tx_size, plane_type, ref_type, band_next, ctx_next0,
+                token_next, sel_next0,
+            ));
+            next_eob_bits0 = i64::from(token_cost(
+                costs, tx_size, plane_type, ref_type, band_next, ctx_next0,
+                EOB_TOKEN, sel_next0,
+            ));
+            // Candidate 1 (reduce to x1): write t1's energy class.
+            token_cache[rc] = VP9_PT_ENERGY_CLASS[t1 as usize];
+            let ctx_next1 = get_coef_context(nb, &token_cache, i + 1);
+            let sel_next1 = x1 == 0;
+            next_bits1 = i64::from(token_cost(
+                costs, tx_size, plane_type, ref_type, band_next, ctx_next1,
+                token_next, sel_next1,
+            ));
+            if x1 != 0 {
+                next_eob_bits1 = i64::from(token_cost(
+                    costs, tx_size, plane_type, ref_type, band_next, ctx_next1,
+                    EOB_TOKEN, sel_next1,
+                ));
+            }
+            // Restore `token_cache[rc]` to its pre-look-ahead value; the
+            // final write happens after the candidate is chosen below.
+            // libvpx leaves it set to t1's class here, then overwrites it
+            // in the pick block — we mirror by leaving it and letting the
+            // pick block set the authoritative value.
+        }
 
-        // libvpx lines 237-247: total RD for the two candidates.
-        let rd_cost0 = rd_cost(rdmult, rddiv, rate0, dist0);
-        let rd_cost1 = rd_cost(rdmult, rddiv, rate1, dist1);
+        // libvpx lines 237-238: total RD for the two candidates INCLUDES
+        // the look-ahead next_bits term.
+        let rd_cost0 = rd_cost(
+            rdmult,
+            rddiv,
+            (i64::from(rate0) + next_bits0).max(0) as u32,
+            dist0,
+        );
+        let rd_cost1 = rd_cost(
+            rdmult,
+            rddiv,
+            (i64::from(rate1) + next_bits1).max(0) as u32,
+            dist1,
+        );
         let rdcost_better_for_x1 = rd_cost1 < rd_cost0;
 
-        // libvpx lines 240-250: EOB candidates.
+        // libvpx lines 240-250: EOB candidates (also carry next_eob_bits).
         let eob_cost0 = rd_cost(
             rdmult,
             rddiv,
-            (accu_rate + i64::from(rate0)).max(0) as u32,
+            (accu_rate + i64::from(rate0) + next_eob_bits0).max(0) as u32,
             (accu_error + dist0 - dist_for_zero).max(0),
         );
         let (eob_cost1, eob_rdcost_better_for_x1) = if x1 != 0 {
             let cost1 = rd_cost(
                 rdmult,
                 rddiv,
-                (accu_rate + i64::from(rate1)).max(0) as u32,
+                (accu_rate + i64::from(rate1) + next_eob_bits1).max(0) as u32,
                 (accu_error + dist1 - dist_for_zero).max(0),
             );
             (cost1, cost1 < eob_cost0)
@@ -473,6 +553,54 @@ pub fn vp9_optimize_b(
     final_eob as u16
 }
 
+/// libvpx `plane_rd_mult[REF_TYPES][PLANE_TYPES]`
+/// (`vp9/encoder/vp9_encodemb.c:57-60`): `{{10, 6}, {8, 5}}` indexed
+/// `[ref][plane_type]` (ref: 0=intra, 1=inter; plane_type: 0=Y, 1=UV).
+const PLANE_RD_MULT: [[i64; 2]; 2] = [[10, 6], [8, 5]];
+
+/// High-level trellis entry for the encoder emit path. Wraps
+/// [`vp9_optimize_b`] with the libvpx `rdmult` derivation
+/// (`vp9_encodemb.c:87-92`, sharpness == 0):
+///
+/// ```text
+/// rdmult = (mb->rdmult * plane_rd_mult[ref][plane_type]) >> 1
+/// ```
+///
+/// `coefs` is the pre-quant `i32` forward-transform output. `qcoeff` /
+/// `dqcoeff` are the post-quant `i16` buffers (mutated in place). `eob`
+/// is the pre-trellis end-of-block. Returns the post-trellis eob.
+///
+/// `mb_rdmult` is the block RD multiplier (libvpx `mb->rdmult`, i.e. the
+/// same `compute_rd_mult` value the TX-size search uses); the
+/// `plane_rd_mult` scaling is applied here.
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub fn optimize_b_inter(
+    coefs: &[i32],
+    qcoeff: &mut [i16],
+    dqcoeff: &mut [i16],
+    eob: u16,
+    tx_size: TxSize,
+    scan: &ScanOrder,
+    dequant: &[i16; 2],
+    mb_rdmult: i64,
+    costs: &CoefCostTable,
+    plane_type: usize,
+    ref_type: usize,
+    ctx0: usize,
+) -> u16 {
+    if eob == 0 {
+        return 0;
+    }
+    let rdmult = (mb_rdmult * PLANE_RD_MULT[ref_type][plane_type]) >> 1;
+    // libvpx's `mb->rddiv` is unused inside the trellis `RDCOST` (it
+    // mirrors the macro which ignores rddiv); pass a placeholder.
+    vp9_optimize_b(
+        coefs, qcoeff, dqcoeff, eob, tx_size, scan, dequant, rdmult,
+        /* rddiv = */ 0, costs, plane_type, ref_type, ctx0,
+    )
+}
+
 /// libvpx `get_band_translate(tx_size)` (`vp9_entropy.h:132-135`).
 /// 4×4 uses `vp9_coefband_trans_4x4`; everything else uses
 /// `vp9_coefband_trans_8x8plus`. We construct the table inline from
@@ -500,6 +628,34 @@ fn band_translate(tx_size: TxSize) -> Vec<u8> {
         *slot = 5; // last band index
     }
     out
+}
+
+/// libvpx `get_coef_context(nb, token_cache, c)` (`vp9_scan.h:35-40`):
+/// `(1 + token_cache[nb[2c]] + token_cache[nb[2c+1]]) >> 1`. `nb` is the
+/// scan order's neighbours array (length `(n + 1) * 2`).
+#[inline]
+fn get_coef_context(nb: &[i16], token_cache: &[u8], c: usize) -> usize {
+    let n0 = nb[2 * c] as usize;
+    let n1 = nb[2 * c + 1] as usize;
+    ((1 + usize::from(token_cache[n0]) + usize::from(token_cache[n1])) >> 1).min(5)
+}
+
+/// Extra-bits cost (sign + category bits) for a coefficient token, in
+/// `vp9_prob_cost` 1/512-bit units. Mirrors `cost_coeffs`'
+/// `extra_bits_cost` (the `vp9_extra_bits[t].cost` half of libvpx's
+/// `vp9_get_token_cost`). Tokens ZERO..FOUR carry no extra bits.
+#[inline]
+fn extra_bits_cost(token: u8) -> u32 {
+    // ZERO, ONE, TWO, THREE, FOUR carry no extra bits.
+    // CAT1..CAT5 carry the libvpx `vp9_extra_bits[t].cost` values.
+    // CAT6 falls into the test-domain-excluded high path; mirror
+    // cost_coeffs' stand-in (14 bits at p≈128).
+    const EXTRA: [u32; 10] = [0, 0, 0, 0, 0, 159, 297, 579, 826, 1129];
+    if (token as usize) < EXTRA.len() {
+        EXTRA[token as usize]
+    } else {
+        14 * 256
+    }
 }
 
 #[inline]
