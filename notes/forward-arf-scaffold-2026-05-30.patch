@@ -1,0 +1,688 @@
+diff --git a/crates/rvp9-cli/src/bin/rvp9enc.rs b/crates/rvp9-cli/src/bin/rvp9enc.rs
+index c4ba89e..6bb6e71 100644
+--- a/crates/rvp9-cli/src/bin/rvp9enc.rs
++++ b/crates/rvp9-cli/src/bin/rvp9enc.rs
+@@ -795,6 +795,25 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
+         eprintln!("rvp9enc: C2B ml-breakout fired {fired} times ({coded_w}x{coded_h})");
+     }
+ 
++    // Forward-ARF / compound positive-control stats. Off unless
++    // `RVP9_ALTREF_STATS=1`. Reports how many leaves the RDO winner
++    // resolved to single-ref ALTREF vs the bidirectional {LAST, ALTREF}
++    // compound — the positive control proving the forward ARF actually
++    // feeds compound prediction.
++    if std::env::var_os("RVP9_ALTREF_STATS").is_some() {
++        use std::sync::atomic::Ordering::Relaxed;
++        let altref = rvp9_encoder::rdo::inter_dispatch::RDO_DISPATCH_ALTREF_PICKS
++            .load(Relaxed);
++        let compound = rvp9_encoder::rdo::inter_dispatch::RDO_DISPATCH_COMPOUND_PICKS
++            .load(Relaxed);
++        eprintln!(
++            "rvp9enc: ALTREF_STATS altref_single_picks={altref} compound_picks={compound} \
++             forward_arf={} overlays_emitted={}",
++            encoder.forward_arf_active(),
++            encoder.overlays_emitted(),
++        );
++    }
++
+     if opts.verbose {
+         let secs = frames.len() as f64 * f64::from(fps_den) / f64::from(fps_num);
+         let kbps = if secs > 0.0 {
+diff --git a/crates/rvp9-encoder/src/frame_loop.rs b/crates/rvp9-encoder/src/frame_loop.rs
+index f3695b9..6593889 100644
+--- a/crates/rvp9-encoder/src/frame_loop.rs
++++ b/crates/rvp9-encoder/src/frame_loop.rs
+@@ -1041,6 +1041,10 @@ pub struct StreamEncoder {
+     /// `vp9_firstpass.c::define_gf_group`). Reset to 0 after each
+     /// KF and after each emitted ARF.
+     inter_frames_since_arf: u32,
++    /// FORWARD-ARF — count of `show_existing_frame` overlays emitted (the
++    /// positive control proving the overlay path actually fires). Only
++    /// advances under the forward-ARF architecture (`RVP9_ALTREF=1`).
++    overlays_emitted: u32,
+     /// A14 — frames since the GOLDEN slot was last refreshed
+     /// (incremented on every encoded inter frame; reset to 0 on
+     /// keyframes and on inter-refresh frames).
+@@ -1276,8 +1280,20 @@ impl StreamEncoder {
+         // 1-pass inputs before `config` is moved into the struct. The
+         // schedule is the single source of truth for per-frame type +
+         // refresh flags (see the `gf_group` field doc).
+-        let gf_group =
+-            crate::gop::GfGroup::new(config.gop_length, config.enable_alt_ref);
++        // Forward-ARF gate: the libvpx-style forward ARF + overlay
++        // architecture activates only when `RVP9_ALTREF=1` is set in the
++        // environment AND ALTREF emission is configured. When the env is
++        // unset the schedule reproduces the legacy backward-ARF cadence
++        // exactly (byte-identical baseline), so the default production
++        // path is untouched.
++        let forward_arf = config.enable_alt_ref
++            && std::env::var_os("RVP9_ALTREF").is_some_and(|v| v == "1");
++        let gf_group = crate::gop::GfGroup::new_with_forward(
++            config.gop_length,
++            config.enable_alt_ref,
++            forward_arf,
++            config.lag_in_frames,
++        );
+ 
+         // A18 (SVC) — build the temporal-layer context when configured
+         // for > 1 temporal layer. Mirrors libvpx `vp9_init_layer_context`
+@@ -1360,6 +1376,7 @@ impl StreamEncoder {
+             last_arf_real_coded: None,
+             pending_arf_packet: None,
+             inter_frames_since_arf: 0,
++            overlays_emitted: 0,
+             frames_since_golden_refresh: 0,
+             cyclic_refresh,
+             // A18 — no prior frame yet; the first encoded frame is
+@@ -1667,6 +1684,58 @@ impl StreamEncoder {
+             _ => FrameKind::Inter,
+         };
+ 
++        // FORWARD-ARF — resolve this display position's forward-ARF
++        // disposition (GroupStart / Coast / Overlay / None). When the
++        // forward architecture is off this is always `None` and every
++        // branch below is skipped (byte-identical baseline).
++        let forward_slot = self.gf_group.forward_arf_slot(self.frame_idx);
++
++        // FORWARD-ARF — OVERLAY position: the ARF's display frame. Instead
++        // of re-encoding the source frame here, emit a tiny
++        // `show_existing_frame` header pointing at the ALTREF slot (2), so
++        // the non-show ARF's bits double as this visible frame. The source
++        // frame we just popped is consumed but NOT coded. We still run the
++        // rate-control bookkeeping + frame-index advance so downstream
++        // state stays consistent.
++        if matches!(forward_slot, crate::gop::ForwardArfSlot::Overlay)
++            && self.altref_slot_emitted
++            // DIAG sub-gate: RVP9_ALTREF_NOOVERLAY=1 suppresses overlay
++            // emission (the source frame is coded normally instead), to
++            // isolate forward-ARF-source bugs from overlay-reorder bugs.
++            && std::env::var_os("RVP9_ALTREF_NOOVERLAY").is_none()
++        {
++            // ALTREF slot index in the ref_frame_map is 2.
++            let packet = Self::emit_overlay_packet(2)?;
++            let actual_bits = (packet.len() as u32).saturating_mul(8);
++            self.rate_control
++                .postencode_update(actual_bits, RcFrameKind::Inter);
++            self.rate_control.advance_frame();
++            self.frame_idx = self.frame_idx.saturating_add(1);
++            // The overlay shows the ARF (a non-show frame): the decoder's
++            // `last_show_frame` becomes true (a frame WAS shown), but the
++            // ARF buffer itself is not re-decoded, so `last_frame_type`
++            // and the reference maps are unchanged. The next coast/group
++            // frame's `use_prev_frame_mvs` gate must mirror the decoder.
++            // The decoder, on a show_existing_frame, sets last_show_frame
++            // = 1 but does NOT touch the prev-frame MV grid (no decode),
++            // so we leave `self.prev_mv_grid` as-is and mark the prev
++            // frame as a shown non-key frame.
++            self.last_show_frame = true;
++            // Capture the source as Last_Source for scene detection parity
++            // (libvpx still advances Last_Source over the displayed frame).
++            self.pre_analysis.capture_last_source(&y_tight);
++            self.overlays_emitted = self.overlays_emitted.saturating_add(1);
++            return Ok(Some(EncodedFrame {
++                data: packet,
++                frame_kind: FrameKind::Inter,
++                // Overlay carries no coded residual; q is irrelevant
++                // (the decoder reads ref_frame_map[slot] verbatim).
++                q_index: 0,
++                actual_bits,
++                temporal_layer_id: 0,
++            }));
++        }
++
+         // A18 (SVC) — assign this frame's temporal layer before the
+         // per-kind encode dispatch. For keyframes the layer is always tl0
+         // (libvpx resets `current_video_frame_in_layer` and the base
+@@ -1865,26 +1934,42 @@ impl StreamEncoder {
+             && self.config.enable_alt_ref
+             && self.pending_arf_packet.is_none()
+         {
+-            // The temporal filter needs the alt-ref source + a few
+-            // neighbour frames. Use the just-popped frame as the ARF
+-            // source (alt_ref_index = 0) and peek forward for
+-            // neighbours. We require at least 1 forward-peek frame
+-            // (a 2-frame filter — degenerate but bitstream-valid).
+-            // libvpx's reference uses `frame_count = 2 *
+-            // arnr_max_frames + 1`; we collapse to the minimum
+-            // viable count for the wiring PROOF.
+-            let peek_avail = self.lookahead.depth();
+-            // Trigger from the schedule (the `arf_before` flag) AND the
+-            // lookahead can supply at least one neighbour for the
+-            // temporal filter.
+-            if frame_sched.arf_before && peek_avail >= 1 {
+-                if let Some(arf_packet) = self.try_build_arf_packet(
++            if let crate::gop::ForwardArfSlot::GroupStart { arf_src_offset } =
++                forward_slot
++            {
++                // FORWARD-ARF — build the ARF from the FUTURE frame
++                // `arf_src_offset` display positions ahead. The ARF is
++                // superframe-prepended to THIS group-start show frame and
++                // committed into the ALTREF slot (2), so the coast frames
++                // 1..gf_interval read it as a forward reference and a
++                // show_existing_frame overlay at the source's display
++                // position re-uses the ARF's bits.
++                if let Some(arf_packet) = self.try_build_forward_arf_packet(
+                     q_index,
+                     (&y_tight, &u_tight, &v_tight),
++                    arf_src_offset,
+                 )? {
+                     self.pending_arf_packet = Some(arf_packet);
+                     self.inter_frames_since_arf = 0;
+                 }
++            } else if !self.gf_group.forward_arf() {
++                // Legacy BACKWARD path — the temporal filter needs the
++                // alt-ref source + a few neighbour frames. Use the
++                // just-popped frame as the ARF source (alt_ref_index = 0)
++                // and peek forward for neighbours. We require at least 1
++                // forward-peek frame (a 2-frame filter — degenerate but
++                // bitstream-valid). Trigger from the schedule's
++                // `arf_before` flag.
++                let peek_avail = self.lookahead.depth();
++                if frame_sched.arf_before && peek_avail >= 1 {
++                    if let Some(arf_packet) = self.try_build_arf_packet(
++                        q_index,
++                        (&y_tight, &u_tight, &v_tight),
++                    )? {
++                        self.pending_arf_packet = Some(arf_packet);
++                        self.inter_frames_since_arf = 0;
++                    }
++                }
+             }
+         }
+ 
+@@ -2637,8 +2722,14 @@ impl StreamEncoder {
+         // is LAST/GOLDEN-only and the header sign-bias / ref_frame_indices
+         // are unchanged — the cross-decoder gate runs here with
+         // `enable_alt_ref = false`, so this is always false there.
+-        let altref_picker_live =
+-            self.config.enable_alt_ref && self.altref_slot_emitted;
++        let altref_picker_live = self.config.enable_alt_ref
++            && self.altref_slot_emitted
++            // DIAG sub-gate: RVP9_ALTREF_NOREF=1 keeps the forward ARF +
++            // overlay structure but forbids show frames from referencing
++            // the ALTREF (LAST/GOLDEN only), to isolate whether the
++            // cross-decoder desync is in the coast frame's ALTREF
++            // reference vs the ARF/overlay structure.
++            && std::env::var_os("RVP9_ALTREF_NOREF").is_none();
+         // A23 — opt-in single-GOP forward TPL pass. When `enable_tpl` is
+         // set we gather a forward window of GOP SOURCE frames (the frame
+         // being coded + the inter frames that follow it in display order,
+@@ -3369,6 +3460,18 @@ impl StreamEncoder {
+         // untouched, so the post-ARF show frame still diff-encodes from
+         // the un-ARF-adapted bank 0 — matching what the decoder reads.
+         let mut decoder_fc = self.decoder_fc_state_arf.clone();
++        // FORWARD-ARF multi-ARF FIX — snapshot bank 1 BEFORE the
++        // compressed-header diff mutates it. libvpx's `vp9_adapt_*` reads
++        // `pre_fc = cm->frame_contexts[idx]` — the bank state BEFORE this
++        // frame's compressed-header diff lands — exactly as the show-frame
++        // path (`pre_header_decoder_fc`, see `encode_inter_internal`). The
++        // prior code adapted bank 1 from the POST-diff `decoder_fc`, so
++        // the encoder's `decoder_fc_state_arf` diverged from the decoder's
++        // bank 1 after the FIRST ARF. That divergence was invisible with a
++        // single ARF per GOP (the legacy backward path) but a SECOND ARF
++        // (forward per-group cadence) reads the diverged bank 1 as its
++        // diff base, so its compressed header decodes wrong on vpxdec.
++        let pre_header_decoder_fc_arf = decoder_fc.clone();
+ 
+         // W-ALTREF — ALTREF refresh mask. `refresh_frame_flags = 0x04`
+         // sets bit 2 = `ALT_REF_FRAME_IDX` (libvpx
+@@ -3430,16 +3533,23 @@ impl StreamEncoder {
+             // through for parity with the show path.
+             self.last_frame_was_key,
+         );
++        // Adapt from the PRE-header bank-1 snapshot (libvpx `pre_fc`), NOT
++        // the post-diff `decoder_fc`, so the encoder's bank-1 mirror stays
++        // in lock-step with the decoder's backward adaptation.
+         let mut adapted_dec = adapt_mode_probs(
+-            &decoder_fc,
++            &pre_header_decoder_fc_arf,
+             &frame_counts,
+             interp_switchable,
+             tx_mode_select,
+         );
+-        adapted_dec.coef_probs =
+-            adapt_coef_probs(&decoder_fc.coef_probs, &frame_counts.coef, cs, uf);
++        adapted_dec.coef_probs = adapt_coef_probs(
++            &pre_header_decoder_fc_arf.coef_probs,
++            &frame_counts.coef,
++            cs,
++            uf,
++        );
+         adapted_dec.nmvc =
+-            adapt_mv_probs(&decoder_fc.nmvc, &frame_counts.mv, false);
++            adapt_mv_probs(&pre_header_decoder_fc_arf.nmvc, &frame_counts.mv, false);
+         self.decoder_fc_state_arf = adapted_dec;
+ 
+         // W-ALTREF — anti-G3 witness. The ARF predicted from LAST (the
+@@ -3607,12 +3717,146 @@ impl StreamEncoder {
+         Ok(Some(packet))
+     }
+ 
++    /// FORWARD-ARF — build the temporally-filtered ALTREF from a FUTURE
++    /// lookahead frame and emit the non-show inter packet.
++    ///
++    /// Unlike [`Self::try_build_arf_packet`] (which anchors the ARF on the
++    /// CURRENT popped frame — a backward reference), this anchors the ARF
++    /// on the frame `src_off` display positions ahead (`peek(src_off - 1)`),
++    /// so every coast frame in the group reads it as a genuine FORWARD
++    /// reference. The temporal filter blends a symmetric window of
++    /// neighbours around that future source (libvpx
++    /// `vp9_temporal_filter.c::vp9_temporal_filter` centres the ARNR
++    /// window on `alt_ref_index`). Returns `Ok(None)` if the lookahead
++    /// cannot supply the future source frame.
++    ///
++    /// `cur_yuv` is the just-popped group-start frame; it participates as a
++    /// trailing neighbour so the filter sees both past (the group start)
++    /// and future context around the source.
++    fn try_build_forward_arf_packet(
++        &mut self,
++        q_index: u8,
++        cur_yuv: (&[u8], &[u8], &[u8]),
++        src_off: u8,
++    ) -> Result<Option<Vec<u8>>, EncodeError> {
++        use crate::temporal_filter::{
++            ArnrFilterData, ArnrFrameRef, vp9_temporal_filter,
++        };
++        let w = self.config.width;
++        let h = self.config.height;
++        let src_idx = src_off as i32 - 1; // peek index of the future source
++
++        // The future source must be live in the lookahead ring.
++        if self.lookahead.peek(src_idx).is_none() {
++            return Ok(None);
++        }
++
++        // libvpx ARNR half-window. Keep it small (2 frames either side)
++        // for a bounded filter time; the source sits at the centre.
++        let half: i32 = 2;
++        // Gather neighbour peek indices in [src_idx-half, src_idx+half]
++        // excluding the source itself, restricted to live entries
++        // (peek >= 0). The current group-start frame (peek index -1
++        // conceptually) is added explicitly as the earliest neighbour.
++        let mut frames: Vec<ArnrFrameRef<'_>> = Vec::new();
++        // alt_ref source goes first (alt_ref_index = 0).
++        let src_entry = self
++            .lookahead
++            .peek(src_idx)
++            .expect("checked above");
++        frames.push(ArnrFrameRef::from_lookahead(src_entry));
++        // Trailing context: the group-start frame we just popped.
++        frames.push(ArnrFrameRef {
++            y: cur_yuv.0,
++            u: cur_yuv.1,
++            v: cur_yuv.2,
++            y_stride: w as usize,
++            uv_stride: (w as usize) / 2,
++            width: w,
++            height: h,
++        });
++        // Forward + backward neighbours around the source from the
++        // lookahead (excluding the source index itself).
++        for d in 1..=half {
++            for &cand in &[src_idx - d, src_idx + d] {
++                if cand >= 0 && cand != src_idx {
++                    if let Some(e) = self.lookahead.peek(cand) {
++                        frames.push(ArnrFrameRef::from_lookahead(e));
++                    }
++                }
++            }
++        }
++
++        let data =
++            ArnrFilterData::new(frames, /* alt_ref_index = */ 0, /* strength = */ 3);
++        let filtered = vp9_temporal_filter(&data);
++        if filtered.width != w || filtered.height != h {
++            return Ok(None);
++        }
++        let packet = self.encode_altref_internal(
++            q_index,
++            (&filtered.y, &filtered.u, &filtered.v),
++        )?;
++        Ok(Some(packet))
++    }
++
++    /// FORWARD-ARF — build a `show_existing_frame` OVERLAY packet that
++    /// tells the decoder to display the buffer in `ref_frame_map[slot]`.
++    /// This is the ARF's display position: instead of re-encoding the
++    /// frame, we emit this ~2-byte header so the (non-show) ARF's bits
++    /// double as the visible frame (libvpx `show_existing_frame`).
++    ///
++    /// VP9 wire format (`vp9_decodeframe.c:2663-2679`): 2-bit marker,
++    /// 2-bit profile, `show_existing_frame = 1`, 3-bit slot, then byte
++    /// align. The decoder's [`parse_uncompressed_header`] +
++    /// `decode_show_existing_frame` consume exactly this.
++    fn emit_overlay_packet(slot: u8) -> Result<Vec<u8>, EncodeError> {
++        let hdr = UncompressedHeader {
++            kind: WireFrameKind::ShowExistingFrame { slot },
++            profile: Profile::Profile0,
++            show_frame: true,
++            error_resilient: false,
++            bit_depth: rvp9_core::bitstream::frame::BitDepth::Eight,
++            color_space: rvp9_core::bitstream::frame::ColorSpace::Unknown,
++            color_range: rvp9_core::bitstream::frame::ColorRange::Studio,
++            chroma: rvp9_core::bitstream::frame::ChromaFormat::Yuv420,
++            width: 0,
++            height: 0,
++            render_size: None,
++            tail: None,
++        };
++        let mut buf = vec![0u8; 8];
++        let used = {
++            let mut wb = RawBitWriter::new(&mut buf);
++            write_uncompressed_header(&mut wb, &hdr, 0)
++                .map_err(EncodeError::Bitstream)?;
++            wb.finish().map_err(EncodeError::Bitstream)?
++        };
++        buf.truncate(used);
++        Ok(buf)
++    }
++
+     /// Read-only access to the rate controller (for tests / probes).
+     #[must_use]
+     pub fn rate_control(&self) -> &RateControl {
+         &self.rate_control
+     }
+ 
++    /// FORWARD-ARF positive control — number of `show_existing_frame`
++    /// overlays emitted so far. Zero unless the forward-ARF architecture
++    /// is active (`RVP9_ALTREF=1`) and at least one group completed.
++    #[must_use]
++    pub fn overlays_emitted(&self) -> u32 {
++        self.overlays_emitted
++    }
++
++    /// FORWARD-ARF positive control — `true` iff the forward ARF + overlay
++    /// architecture is active for this stream.
++    #[must_use]
++    pub fn forward_arf_active(&self) -> bool {
++        self.gf_group.forward_arf()
++    }
++
+     /// Test-only — read access to the encoder's last reconstruction
+     /// Y plane. Used by the F10.1c bit-exact-encoder-vs-decoder oracle
+     /// to assert the encoder's mirrored `reconstruct_inter_block`
+diff --git a/crates/rvp9-encoder/src/gop.rs b/crates/rvp9-encoder/src/gop.rs
+index 59b8105..7058769 100644
+--- a/crates/rvp9-encoder/src/gop.rs
++++ b/crates/rvp9-encoder/src/gop.rs
+@@ -75,6 +75,28 @@ pub enum FrameUpdateType {
+     OverlayUpdate = 4,
+ }
+ 
++/// Forward-ARF disposition of a single display position. Resolved by
++/// [`GfGroup::forward_arf_slot`]; only meaningful when the forward-ARF
++/// architecture is active.
++#[derive(Copy, Clone, Debug, Eq, PartialEq)]
++pub enum ForwardArfSlot {
++    /// Not part of a forward-ARF group (keyframe, or forward ARF off).
++    None,
++    /// The GF-group's first coded inter frame. A forward ARF (sourced
++    /// `arf_src_offset` display positions ahead) is built and
++    /// superframe-prepended ahead of this frame.
++    GroupStart {
++        /// Display-order distance from this frame to the ARF's source.
++        arf_src_offset: u8,
++    },
++    /// A normal coast frame inside the group (predicts from LAST + the
++    /// forward ALTREF).
++    Coast,
++    /// The ARF's display position — emitted as a `show_existing_frame`
++    /// OVERLAY pointing at the ALTREF slot, not re-encoded.
++    Overlay,
++}
++
+ /// GOLDEN-slot refresh period for the inter path, in inter frames since
+ /// the last keyframe / golden refresh. Mirrors the encoder's prior
+ /// `A14_GOLDEN_REFRESH_PERIOD` constant (`frame_loop.rs`) and libvpx's
+@@ -127,6 +149,20 @@ pub struct GfGroup {
+     gf_interval: u32,
+     /// `true` iff the encoder is configured for ALTREF emission.
+     enable_alt_ref: bool,
++    /// `true` iff the libvpx-style FORWARD ARF + overlay architecture is
++    /// active (`RVP9_ALTREF=1`). When `false` the schedule reproduces the
++    /// legacy BACKWARD-ARF cadence (ARF at offset `gf_interval + 1`,
++    /// sourced from the current frame, no overlay) — byte-identical to the
++    /// pre-forward-ARF baseline. When `true`:
++    ///
++    /// - The ARF fires at the GF-group START (the first inter frame after
++    ///   a KF or a previous overlay), sourced from the FUTURE frame
++    ///   `gf_interval` display positions ahead (`arf_src_offset =
++    ///   gf_interval`).
++    /// - A `show_existing_frame` OVERLAY is emitted at that future display
++    ///   position instead of re-encoding it, so the ARF's bits double as
++    ///   that show frame (libvpx `vp9_encoder.c` GF-group structure).
++    forward_arf: bool,
+ }
+ 
+ impl GfGroup {
+@@ -144,17 +180,64 @@ impl GfGroup {
+     /// `self.config.gop_length.max(1)`).
+     #[must_use]
+     pub fn new(gop_length: u32, enable_alt_ref: bool) -> Self {
++        Self::new_with_forward(gop_length, enable_alt_ref, false, 0)
++    }
++
++    /// Build the golden-frame group, optionally enabling the FORWARD ARF +
++    /// overlay architecture (`forward_arf`). `lookahead_depth` is the
++    /// configured `lag_in_frames` — the forward ARF source is peeked
++    /// `gf_interval` frames ahead, so the interval is clamped to fit the
++    /// lookahead ring (`gf_interval <= lookahead_depth`). In the
++    /// legacy backward path (`forward_arf == false`) the interval is the
++    /// half-GOP cadence exactly as before (byte-identical baseline).
++    #[must_use]
++    pub fn new_with_forward(
++        gop_length: u32,
++        enable_alt_ref: bool,
++        forward_arf: bool,
++        lookahead_depth: u32,
++    ) -> Self {
+         let gop_length = gop_length.max(1);
+-        // libvpx default `baseline_gf_interval` for the half-GOP ARF
+-        // cadence; `.max(2)` floors it so a 2-frame filter is viable.
++        if forward_arf {
++            // Forward ARF: the source frame sits `gf_interval` display
++            // positions ahead, peeked from the lookahead while coding the
++            // group-start frame. The peek happens AFTER the group-start
++            // frame is popped, so the ring depth is `lookahead_depth - 1`
++            // at that point and the source `peek(gf_interval - 1)` needs
++            // `gf_interval - 1 <= lookahead_depth - 2`, i.e.
++            // `gf_interval <= lookahead_depth - 1`. Clamp the interval so
++            // the source is reachable AND lands inside the current GOP. A
++            // libvpx-typical value (16) keeps the temporal-filter window
++            // and the bidirectional span well-balanced; floor at 4 so the
++            // group has real coast frames.
++            let cap = lookahead_depth
++                .saturating_sub(1)
++                .min(gop_length.saturating_sub(1));
++            let gf_interval = (gop_length / 2).min(16).min(cap).max(2);
++            return Self {
++                gop_length,
++                gf_interval,
++                enable_alt_ref,
++                forward_arf: true,
++            };
++        }
++        // Legacy backward path — half-GOP cadence (`.max(2)` floors it so
++        // a 2-frame filter is viable).
+         let gf_interval = (gop_length / 2).max(2);
+         Self {
+             gop_length,
+             gf_interval,
+             enable_alt_ref,
++            forward_arf: false,
+         }
+     }
+ 
++    /// `true` iff the forward-ARF + overlay architecture is active.
++    #[must_use]
++    pub const fn forward_arf(&self) -> bool {
++        self.forward_arf
++    }
++
+     /// GOP length in display frames (keyframe cadence).
+     #[must_use]
+     pub const fn gop_length(&self) -> u32 {
+@@ -264,6 +347,67 @@ impl GfGroup {
+         }
+     }
+ 
++    /// FORWARD-ARF schedule for a display-order `frame_idx`. Only
++    /// meaningful when [`Self::forward_arf`] is set. Returns the
++    /// [`ForwardArfSlot`] describing whether this display position is a
++    /// group-start (a forward ARF is emitted ahead of it), a coast frame,
++    /// or an OVERLAY (`show_existing_frame`) position.
++    ///
++    /// GOP layout (KF at offset 0, `G = gf_interval`):
++    /// - offset 0: keyframe (no ARF).
++    /// - groups start at inter offsets `1, 1+G, 1+2G, ...`.
++    /// - each group's overlay lands at `start + G - 1` (the ARF's display
++    ///   position) PROVIDED that position is still an inter frame strictly
++    ///   inside the GOP (`< gop_length`); otherwise the group is truncated
++    ///   (no ARF, no overlay) so we never emit an overlay across a KF.
++    #[must_use]
++    pub fn forward_arf_slot(&self, frame_idx: u32) -> ForwardArfSlot {
++        if !self.forward_arf || !self.enable_alt_ref {
++            return ForwardArfSlot::None;
++        }
++        let offset = self.gop_offset(frame_idx);
++        if offset == 0 {
++            return ForwardArfSlot::None;
++        }
++        let g = self.gf_interval;
++        // Lead-in: one normal inter frame is coded after the KF before
++        // the first GF group starts. libvpx never makes a non-show ARF the
++        // immediate post-KF frame; the first frame after a KF is a normal
++        // inter frame. This is REQUIRED for cross-decoder validity: a
++        // non-show frame placed immediately after a keyframe is rejected by
++        // libvpx's vpxdec ("Failed to decode tile data"). The 1-frame
++        // lead-in keeps the encoder off that path.
++        let lead_in: u32 = 1;
++        if offset <= lead_in {
++            return ForwardArfSlot::None;
++        }
++        // Position within the inter region (0-based from the first
++        // group-start inter frame at GOP offset `1 + lead_in`).
++        let inter_pos = offset - 1 - lead_in;
++        let pos_in_group = inter_pos % g;
++        let group_start_offset = offset - pos_in_group;
++        let overlay_offset = group_start_offset + g - 1;
++        // The group is only valid if its overlay position is an inter
++        // frame strictly inside this GOP (never coincident with / past the
++        // next KF). Otherwise the tail of the GOP runs as plain coast
++        // frames with no ARF.
++        let group_valid = overlay_offset < self.gop_length;
++        if !group_valid {
++            return ForwardArfSlot::None;
++        }
++        if pos_in_group == 0 {
++            // Group start — a forward ARF is built (sourced `g` display
++            // positions ahead) and superframe-prepended to this frame.
++            ForwardArfSlot::GroupStart {
++                arf_src_offset: g as u8,
++            }
++        } else if offset == overlay_offset {
++            ForwardArfSlot::Overlay
++        } else {
++            ForwardArfSlot::Coast
++        }
++    }
++
+     /// libvpx `gf_group.update_type[i]` accessor for a display-order
+     /// `frame_idx`. Thin wrapper over [`Self::schedule`] for consumers
+     /// that only need the update disposition.
+@@ -364,6 +508,95 @@ mod tests {
+         assert_eq!(g.gf_group_size(), 1);
+     }
+ 
++    #[test]
++    fn forward_arf_off_when_flag_unset() {
++        // Legacy backward path: forward_arf_slot is always None.
++        let g = GfGroup::new(60, true);
++        assert!(!g.forward_arf());
++        for idx in 0..120u32 {
++            assert_eq!(g.forward_arf_slot(idx), ForwardArfSlot::None, "f{idx}");
++        }
++    }
++
++    #[test]
++    fn forward_arf_group_cadence_gop60() {
++        // gop=60, lookahead=25 → gf_interval = min(30, 16, 24, 59) = 16.
++        // 1-frame KF lead-in: offset 1 is a normal frame; group 1 starts
++        // at offset 2, overlay at 2+16-1 = 17.
++        let g = GfGroup::new_with_forward(60, true, true, 25);
++        assert!(g.forward_arf());
++        assert_eq!(g.gf_interval(), 16);
++        // KF at 0, lead-in normal frame at 1.
++        assert_eq!(g.forward_arf_slot(0), ForwardArfSlot::None);
++        assert_eq!(g.forward_arf_slot(1), ForwardArfSlot::None);
++        // Group 1: start at offset 2, overlay at 17.
++        assert_eq!(
++            g.forward_arf_slot(2),
++            ForwardArfSlot::GroupStart { arf_src_offset: 16 }
++        );
++        for o in 3..17u32 {
++            assert_eq!(g.forward_arf_slot(o), ForwardArfSlot::Coast, "coast f{o}");
++        }
++        assert_eq!(g.forward_arf_slot(17), ForwardArfSlot::Overlay);
++        // Group 2: start at offset 18, overlay at 33.
++        assert_eq!(
++            g.forward_arf_slot(18),
++            ForwardArfSlot::GroupStart { arf_src_offset: 16 }
++        );
++        assert_eq!(g.forward_arf_slot(33), ForwardArfSlot::Overlay);
++        // Group 3: start at 34, overlay at 49.
++        assert_eq!(
++            g.forward_arf_slot(34),
++            ForwardArfSlot::GroupStart { arf_src_offset: 16 }
++        );
++        assert_eq!(g.forward_arf_slot(49), ForwardArfSlot::Overlay);
++        // Group 4 would start at 50, overlay at 65 >= gop 60 → invalid;
++        // the GOP tail (50..59) runs as plain frames (None).
++        for o in 50..60u32 {
++            assert_eq!(g.forward_arf_slot(o), ForwardArfSlot::None, "tail f{o}");
++        }
++        // Next GOP keyframe at 60, lead-in at 61, group 1 starts at 62.
++        assert_eq!(g.forward_arf_slot(60), ForwardArfSlot::None);
++        assert_eq!(g.forward_arf_slot(61), ForwardArfSlot::None);
++        assert_eq!(
++            g.forward_arf_slot(62),
++            ForwardArfSlot::GroupStart { arf_src_offset: 16 }
++        );
++    }
++
++    #[test]
++    fn forward_arf_interval_clamped_by_lookahead() {
++        // Small lookahead clamps the interval. The peek happens after the
++        // group-start frame is popped, so the source must fit in
++        // `lookahead_depth - 1`: depth 8 → interval 7. With the 1-frame
++        // lead-in, group 1 starts at offset 2, overlay at 2+7-1 = 8.
++        let g = GfGroup::new_with_forward(60, true, true, 8);
++        assert_eq!(g.gf_interval(), 7);
++        assert_eq!(
++            g.forward_arf_slot(2),
++            ForwardArfSlot::GroupStart { arf_src_offset: 7 }
++        );
++        assert_eq!(g.forward_arf_slot(8), ForwardArfSlot::Overlay);
++    }
++
++    #[test]
++    fn forward_arf_never_overlays_past_keyframe() {
++        // gop=20, lookahead=25 → interval=min(10,16,19,19)=10. With the
++        // lead-in, group 1 starts at offset 2, overlay at 2+10-1 = 11.
++        // Group 2 would start at 12, overlay at 21 >= next KF (20) →
++        // invalid, so 12..19 are plain frames.
++        let g = GfGroup::new_with_forward(20, true, true, 25);
++        assert_eq!(g.gf_interval(), 10);
++        assert_eq!(
++            g.forward_arf_slot(2),
++            ForwardArfSlot::GroupStart { arf_src_offset: 10 }
++        );
++        assert_eq!(g.forward_arf_slot(11), ForwardArfSlot::Overlay);
++        for o in 12..20u32 {
++            assert_eq!(g.forward_arf_slot(o), ForwardArfSlot::None, "f{o}");
++        }
++    }
++
+     #[test]
+     fn update_type_discriminants_match_libvpx() {
+         assert_eq!(FrameUpdateType::KfUpdate as u8, 0);
