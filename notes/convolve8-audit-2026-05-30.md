@@ -39,7 +39,27 @@ The common-case win (8x8/16x16) is FIXED-OVERHEAD: items 2 + 4 (+ investigate th
 broadcast and the vert small-size setup). Item 1 (16-wide horiz) helps the rarer large blocks.
 Convolve8 already got the 2-D memset-elision win this session (committed 2e6e0cf).
 
-## Status: ANALYSIS + BASELINE done; implementation is a focused next effort
+## LANDED (bdc204c): per-call tap-broadcast setup trimmed (both kernels)
+The one cleanly-reducible component of the small-block fixed overhead: the 8-tap coefficient
+broadcasts done per kernel call.
+- horiz: derive the 128-bit tail operands from the LOW LANE of the 256-bit main-loop broadcasts
+  via `castsi256_si128` (free) instead of a second `set1_epi16` set. −4 broadcasts/call.
+- vert: the 128-bit operands are consumed ONLY by the gw==4 / odd-h tails (never for the common
+  even-height VP9 sizes) — compute them lazily there instead of at the top. −4 broadcasts/call.
+Pure work-removal, byte-identical. Validated: 49 convolve differential tests + conformance 6/6.
+Magnitude is within this host's noise floor (every audit run drifts ±0.05 with machine load);
+structured audit showed improved absolute rvp9 times when the machine was quiet.
+
+## ASSESSMENT: the 16-wide horiz lever is NOT worth it; rest is at the ceiling
+On closer reading, rvp9's horiz already does 8-col×2-ROW per maddubs group (libvpx's pixel
+throughput) — the "16-wide" rewrite is a near-equivalent store-pattern reshuffle (~1 op/group),
+NOT the 1.5x the static analysis implied. The residual small-block gap is now: the 2-D wrapper's
+TLS+RefCell on the intermediate, the last-row scratch (over-read is real for tight src, so not
+trivially elidable), and inherent per-call kernel setup — each a handful of cycles, near the
+safe-Rust+AVX2 ceiling vs hand-tuned asm. Closing it to literal parity = instruction-by-instruction
+asm matching for ~1-2% end-to-end on motion content. Diminishing returns.
+
+## Status: tap-setup lever LANDED; further convolve out-tuning needs a full asm rewrite
 The AVX2 kernel rewrite is byte-exact-critical (maddubs operands + (x0+x2)+(x1+x3)+64 / sat-add
 / srai7 / packus reduction must stay identical; only data layout changes). Iterate with the FAST
 oracle (the differential_* unit tests, seconds) then gate on conformance 6/6.
