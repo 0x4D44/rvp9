@@ -74,8 +74,36 @@ use rvp9_core::transforms::inverse::{
 use rvp9_core::transforms::scans::scan_for;
 use rvp9_core::transforms::{TxMode, TxSize, TxType};
 
-use crate::rdo::block_yrd::{BlockInput, super_block_yrd};
+use crate::rdo::block_yrd::{BlockInput, SuperBlockYrdResult, dist_block_tx_domain, super_block_yrd};
+use crate::rdo::cost_coeffs::cost_coeffs;
 use crate::rdo::trellis::vp9_xform_quant_fp;
+
+use std::sync::OnceLock;
+
+/// TXRDO (2026-05-30) — RDO inner TX-size search for the cpu<=4 GOOD path.
+///
+/// `plane_super_block_yrd` built ONE recon at `tx = max_txsize(bsize)` and
+/// pinned `super_block_yrd` to it, so the leaf picker RD-ranked every
+/// `(mode, mv, ref, filter)` candidate at a SINGLE transform — an RT-grade
+/// shortcut vs libvpx good-mode (`handle_inter_mode` -> `super_block_yrd`
+/// -> `choose_tx_size_from_rd` walks all sizes). ON routes the Y plane
+/// through [`plane_tx_search_yrd`], a transform-domain TX-size walk
+/// (`vp9_block_error >> shift` distortion = Parseval-equivalent to pixel
+/// SSE, self-consistent per size) mirroring the emit's
+/// `choose_inter_luma_tx_size` (`lib.rs:6440`). It only changes WHICH
+/// candidate the picker ranks first — the emit independently re-chooses +
+/// writes the wire transform, so OFF / `RVP9_RDO_TXSEARCH=0` is
+/// byte-identical to the pre-fix baseline and ON stays cross-decoder
+/// byte-exact. Default ON; measured foreman cpu4 (stacked on the motion
+/// wins) +0.05/+0.08/+0.01 dB (Pareto), synthetic neutral.
+fn rdo_txsearch_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("RVP9_RDO_TXSEARCH")
+            .map(|v| v != "0")
+            .unwrap_or(true)
+    })
+}
 
 /// Number of switchable filters libvpx evaluates inside the inner
 /// filter loop. Mirrors `SWITCHABLE_FILTERS = 3` (libvpx
@@ -672,24 +700,43 @@ fn evaluate_compound_filter_rd(
         bw,
         filter,
     );
-    let y_rd = plane_super_block_yrd(
-        params.src_plane.data,
-        params.src_plane.stride,
-        params.src_offset,
-        &y_pred,
-        bw,
-        bw,
-        bh,
-        y_tx,
-        TxMode::TxModeSelect,
-        params.y_quant,
-        params.coef_costs,
-        0,
-        params.rdmult,
-        params.tx_size_cost,
-        params.skip_cost0,
-        params.skip_cost1,
-    );
+    let y_rd = if rdo_txsearch_enabled() {
+        plane_tx_search_yrd(
+            params.src_plane.data,
+            params.src_plane.stride,
+            params.src_offset,
+            &y_pred,
+            bw,
+            bw,
+            bh,
+            y_tx,
+            params.y_quant,
+            params.coef_costs,
+            params.rdmult,
+            params.tx_size_cost,
+            params.skip_cost0,
+            params.skip_cost1,
+        )
+    } else {
+        plane_super_block_yrd(
+            params.src_plane.data,
+            params.src_plane.stride,
+            params.src_offset,
+            &y_pred,
+            bw,
+            bw,
+            bh,
+            y_tx,
+            TxMode::TxModeSelect,
+            params.y_quant,
+            params.coef_costs,
+            0,
+            params.rdmult,
+            params.tx_size_cost,
+            params.skip_cost0,
+            params.skip_cost1,
+        )
+    };
 
     let mut rate = y_rd.rate;
     let mut dist = y_rd.dist;
@@ -795,24 +842,46 @@ fn evaluate_filter_rd(params: &HandleInterModeParams<'_>, filter: InterpFilter) 
         bw,
         filter,
     );
-    let y_rd = plane_super_block_yrd(
-        params.src_plane.data,
-        params.src_plane.stride,
-        params.src_offset,
-        &y_pred,
-        bw,
-        bw,
-        bh,
-        y_tx,
-        params.tx_mode,
-        params.y_quant,
-        params.coef_costs,
-        0, // plane_type: Y
-        params.rdmult,
-        params.tx_size_cost,
-        params.skip_cost0,
-        params.skip_cost1,
-    );
+    let y_rd = if rdo_txsearch_enabled() {
+        // RVP9_RDO_TXSEARCH=1: walk all TX sizes in the transform domain
+        // (self-consistent per candidate size), mirroring the emit path's
+        // `choose_inter_luma_tx_size`. Better mode/filter ranking.
+        plane_tx_search_yrd(
+            params.src_plane.data,
+            params.src_plane.stride,
+            params.src_offset,
+            &y_pred,
+            bw,
+            bw,
+            bh,
+            y_tx,
+            params.y_quant,
+            params.coef_costs,
+            params.rdmult,
+            params.tx_size_cost,
+            params.skip_cost0,
+            params.skip_cost1,
+        )
+    } else {
+        plane_super_block_yrd(
+            params.src_plane.data,
+            params.src_plane.stride,
+            params.src_offset,
+            &y_pred,
+            bw,
+            bw,
+            bh,
+            y_tx,
+            params.tx_mode,
+            params.y_quant,
+            params.coef_costs,
+            0, // plane_type: Y
+            params.rdmult,
+            params.tx_size_cost,
+            params.skip_cost0,
+            params.skip_cost1,
+        )
+    };
 
     let mut rate = y_rd.rate;
     let mut dist = y_rd.dist;
@@ -970,6 +1039,185 @@ fn plane_super_block_yrd(
         s1,
         tx_size_cost,
     )
+}
+
+/// `RVP9_RDO_TXSEARCH=1` Y-plane RD: walk all legal TX sizes for the
+/// block in the **transform domain** and return the size minimising
+/// `D + lambda * R`, in the [`SuperBlockYrdResult`] shape the caller's
+/// filter/mode argmin expects.
+///
+/// ## Why a separate walker (vs `super_block_yrd` + `TxModeSelect`)
+///
+/// `plane_super_block_yrd` builds ONE decoder-equivalent reconstruction
+/// at `tx == max_txsize(bsize)` and `super_block_yrd` measures
+/// *pixel-domain* distortion against it (`dist_block_pixel_domain`).
+/// Walking sub-max sizes through that path would measure their
+/// distortion against the WRONG (max-tx) recon. libvpx's inter
+/// `dist_block` instead uses the **transform-domain** distortion
+/// (`x->block_tx_domain`, `vp9_rdopt.c:570-600`): per candidate tx-size
+/// it forward-transforms + quantizes each tile and scores
+/// `vp9_block_error(coeff, dqcoeff) >> shift`, which is self-consistent
+/// per size (no shared recon). This walker mirrors that, tile-by-tile,
+/// exactly like the emit path's `choose_inter_luma_tx_size`
+/// (`lib.rs:6440-6634`).
+///
+/// The returned `(rate, dist, sse, skip)` units match the legacy
+/// single-tx path: `rate` is coef bits + the per-size `tx_size_cost`
+/// bit; `dist`/`sse` are libvpx-domain SSE (the same scale
+/// `dist_block_pixel_domain`'s `* 16` produces, by libvpx's transform
+/// scaling).
+#[allow(clippy::too_many_arguments)]
+fn plane_tx_search_yrd(
+    src: &[u8],
+    src_stride: usize,
+    src_offset: (usize, usize),
+    pred: &[u8],
+    pred_stride: usize,
+    bw: usize,
+    bh: usize,
+    max_tx: TxSize,
+    qp: &PlaneQuantizers,
+    coef_costs: &CoefCostTable,
+    rdmult: i64,
+    tx_size_cost: [u32; 4],
+    s0: u32,
+    s1: u32,
+) -> SuperBlockYrdResult {
+    let (sx, sy) = src_offset;
+    let plane_bw_4x4 = bw >> 2;
+    let plane_bh_4x4 = bh >> 2;
+
+    // libvpx `RDCOST(RM, DM, R, D)` with the skip-flag branch
+    // (`choose_tx_size_from_rd`, vp9_rdopt.c:957-1003). Inter blocks take
+    // the `s1` (skip) branch when skippable, scored on `sse`.
+    let rd_for = |rate: u32, dist: i64, sse: i64, skippable: bool| -> i64 {
+        let r = if skippable { s1 } else { rate.saturating_add(s0) };
+        let d = if skippable { sse } else { dist };
+        let rate_term = (rdmult.saturating_mul(i64::from(r)) + 256) >> 9;
+        rate_term.saturating_add(d << 7)
+    };
+
+    let mut best_rd = i64::MAX;
+    let mut best: Option<SuperBlockYrdResult> = None;
+
+    // Walk every legal size from max down to Tx4x4 (libvpx good-quality
+    // full-depth walk, mirroring `choose_inter_luma_tx_size`).
+    for n in (0..=(max_tx as usize)).rev() {
+        let tx_size = match n {
+            0 => TxSize::Tx4x4,
+            1 => TxSize::Tx8x8,
+            2 => TxSize::Tx16x16,
+            _ => TxSize::Tx32x32,
+        };
+        let tx_side = tx_size.side();
+        let tx_step_4x4 = 1usize << (tx_size as usize);
+        let ncoef = tx_size.n_coeffs();
+        let scan = scan_for(tx_size, TxType::DctDct);
+
+        let mut coeff = vec![0i32; ncoef];
+        let mut qcoeff = vec![0i16; ncoef];
+        let mut dqcoeff = vec![0i16; ncoef];
+        let mut residual = vec![0i16; tx_side * tx_side];
+
+        // Leaf-local propagating entropy context (above[col4], left[row4]),
+        // exactly as the emit walk (`lib.rs:6496-6603`) builds it so the
+        // per-tile coef rate sees the right neighbour context.
+        let mut above_ctx = vec![0u8; plane_bw_4x4];
+        let mut left_ctx = vec![0u8; plane_bh_4x4];
+
+        let mut total_dist: i64 = 0;
+        let mut total_sse: i64 = 0;
+        let mut total_rate: u32 = 0;
+        let mut all_skip = true;
+
+        let mut ty4 = 0usize;
+        while ty4 < plane_bh_4x4 {
+            let mut tx4 = 0usize;
+            while tx4 < plane_bw_4x4 {
+                let tile_px_x = tx4 * 4;
+                let tile_px_y = ty4 * 4;
+                // Residual = source - MC prediction.
+                for r in 0..tx_side {
+                    let src_row = (sy + tile_px_y + r) * src_stride + (sx + tile_px_x);
+                    let pred_row = (tile_px_y + r) * pred_stride + tile_px_x;
+                    for c in 0..tx_side {
+                        let sv = i16::from(src[src_row + c]);
+                        let pv = i16::from(pred[pred_row + c]);
+                        residual[r * tx_side + c] = sv - pv;
+                    }
+                }
+
+                let eob = vp9_xform_quant_fp(
+                    &residual,
+                    tx_side,
+                    tx_size,
+                    qp,
+                    &scan,
+                    &mut coeff,
+                    &mut qcoeff,
+                    &mut dqcoeff,
+                );
+
+                // Transform-domain distortion (libvpx `dist_block`'s
+                // `block_tx_domain` branch). `dist_block_tx_domain`
+                // applies the `>> shift` for us.
+                let (tile_dist, tile_sse) = dist_block_tx_domain(&coeff, &dqcoeff, tx_size);
+                total_dist += tile_dist;
+                total_sse += tile_sse;
+
+                // Coefficient rate (inter ref_type = 1), leaf-local ctx.
+                let above = above_ctx[tx4];
+                let left = left_ctx[ty4];
+                let coeff_ctx = rvp9_core::coef_ctx::combine_entropy_contexts(above, left);
+                total_rate = total_rate.saturating_add(cost_coeffs(
+                    &qcoeff,
+                    scan.scan,
+                    eob,
+                    tx_size,
+                    0, // plane_type: Y
+                    1, // ref_type: inter (matches the emit walk)
+                    coeff_ctx,
+                    coef_costs,
+                ));
+
+                let nz = u8::from(eob > 0);
+                if nz == 1 {
+                    all_skip = false;
+                }
+                for c in 0..tx_step_4x4 {
+                    if tx4 + c < plane_bw_4x4 {
+                        above_ctx[tx4 + c] = nz;
+                    }
+                }
+                for r in 0..tx_step_4x4 {
+                    if ty4 + r < plane_bh_4x4 {
+                        left_ctx[ty4 + r] = nz;
+                    }
+                }
+
+                tx4 += tx_step_4x4;
+            }
+            ty4 += tx_step_4x4;
+        }
+
+        // Charge the per-size tx_size signalling bit (libvpx `r1 = r0 +
+        // r_tx_size`); the legacy single-tx path included it via
+        // `super_block_yrd`'s `TxModeSelect`-style return.
+        let rate_with_txbit = total_rate.saturating_add(tx_size_cost[n]);
+        let cost = rd_for(rate_with_txbit, total_dist, total_sse, all_skip);
+        if cost < best_rd {
+            best_rd = cost;
+            best = Some(SuperBlockYrdResult {
+                tx_size,
+                rate: rate_with_txbit,
+                dist: total_dist,
+                skip: all_skip,
+                sse: total_sse,
+            });
+        }
+    }
+
+    best.expect("at least max_tx is always evaluated")
 }
 
 /// Forward-DCT + fast-path quant + inverse-DCT-add for one transform
