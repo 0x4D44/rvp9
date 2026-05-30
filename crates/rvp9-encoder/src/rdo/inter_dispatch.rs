@@ -377,6 +377,28 @@ fn real_mode_rate(costs: &InterModeCosts, ctx: usize, mode: InterMode) -> u32 {
     costs[ctx][mode.idx()].max(0) as u32
 }
 
+/// SUBPEL (2026-05-30) — sub-pel refinement stop level for the cpu≤4
+/// GOOD-quality RDO motion search. The path was hardcoded to `HalfPel`
+/// (libvpx's coarsest / RT-grade sub-pel), so MVs were never refined past
+/// half-pel — measurably degrading inter prediction (foreman cpu4
+/// +0.13..+0.32 dB Pareto when fixed; synthetic neutral; cross-decoder
+/// byte-exact). libvpx good-mode uses `subpel_force_stop = 0`
+/// (`EighthPel`, the full pyramid). Default `EighthPel`; cached (read
+/// once — this is the per-leaf motion hot path). `RVP9_SUBPEL=half`
+/// restores the byte-identical pre-fix baseline; `quarter`/`eighth`
+/// select the intermediate / full pyramid explicitly.
+fn good_subpel_force_stop() -> SubPixelForcedStop {
+    use std::sync::OnceLock;
+    static S: OnceLock<SubPixelForcedStop> = OnceLock::new();
+    *S.get_or_init(
+        || match std::env::var("RVP9_SUBPEL").ok().as_deref() {
+            Some("half") => SubPixelForcedStop::HalfPel,
+            Some("quarter") => SubPixelForcedStop::QuarterPel,
+            _ => SubPixelForcedStop::EighthPel,
+        },
+    )
+}
+
 /// Pre-run [`single_motion_search`] for the NEWMV candidate of one ref
 /// frame. Returns `(Some(mv), rate_mv)` when the search succeeds and the
 /// MV stays inside `mv_limits`; `(None, 0)` otherwise (drops NEWMV).
@@ -405,7 +427,12 @@ fn search_newmv(leaf: &InterDispatchLeaf<'_>, refs: &RefInputs<'_>) -> (Option<M
         sad_per_bit: leaf.sad_per_bit,
         error_per_bit: leaf.error_per_bit,
         allow_hp: false,
-        subpel_force_stop: SubPixelForcedStop::HalfPel,
+        // SUBPEL (2026-05-30) — the cpu≤4 GOOD-quality path was hardcoded
+        // to HalfPel sub-pel refinement (libvpx's coarsest, RT-grade).
+        // libvpx good-mode uses subpel_force_stop=0 (EighthPel = full
+        // pyramid). Half-pel-only MVs degrade inter prediction. Refine to
+        // the full pyramid (allow_hp still gates the eighth-pel level).
+        subpel_force_stop: good_subpel_force_stop(),
     };
     match single_motion_search(&params) {
         SingleMotionSearchResult::Ok { best_mv, rate_mv } => {
