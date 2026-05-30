@@ -324,6 +324,22 @@ Interleaved decode-throughput A/B (min-of-3 p50, HEAD vs 282ffb4~1):
 Scales with tile-count × resolution (the N-full-frame-fills signature). tile_1x8 NEW-faster
 in all 3 rounds. Byte-exact: conformance 6/6 (aq2 100 inter frames + tile_1x*), foreman 30/30.
 
+## CUMULATIVE (full session vs pre-work 114ad7d) — interleaved A/B, min-of-3 p50
+| fixture | tiles/res | HEAD | baseline | speedup |
+|---|---|---|---|---|
+| quantizer-00 | 1, CIF dense intra | 1424.2 | 1398.8 | ~neutral (-1.8%, noisy) |
+| tile_1x2 | 2, 1080p | 6858.6 | 7346.4 | **+6.6%** |
+| tile_1x4 | 4, 1080p | 4250.0 | 4725.6 | **+10.1%** |
+| tile_1x8 | 8, 4K | 9940.0 | 11810.4 | **+15.8%** |
+Multi-tile inter (the goal gap) improved +6.6%..+15.8%, scaling with resolution, NEW-faster
+in ALL 3 rounds (robust). Byte-exact throughout (conformance 6/6 at every step).
+
+CAVEAT: quantizer-00 (dense CIF intra) was +5.5% after the structural batch alone but ~-1.8%
+cumulatively — the above/left reduction removal (f65f2b2) likely added a small per-block
+grid-lookup READ cost on dense intra that slightly exceeds the per-block WRITE it removed. A
+give-back on the one case rvp9 already beats vpxdec 3.4x; net strongly positive. Worth an A/B
+of f65f2b2 vs its parent if dense-intra throughput matters.
+
 ## O(area) grids now ALL addressed
 frame buffer (pool), mi_grid (persist), mv_grid + seg-ids (persist) — the four large
 per-frame grids. Remaining per-frame costs are O(perimeter) (border extension) or
