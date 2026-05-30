@@ -373,6 +373,22 @@ fn run_vs_libvpx() {
     bench_conv_case("convolve8_horiz_halfpel", "64x64", 64, 64, 1, 0xAC40, 3000, batches);
     bench_conv_case("convolve8_vert_halfpel", "16x16", 16, 16, 2, 0xAD10, 12000, batches);
     bench_conv_case("convolve8_vert_halfpel", "64x64", 64, 64, 2, 0xAD40, 3000, batches);
+
+    // Loopfilter (horizontal) family. getter_kind: 0 = lpf_horizontal_8,
+    // 1 = lpf_horizontal_16, 2 = lpf_horizontal_4. Seeds + iters mirror
+    // tools/libvpx_kernel_bench/main.c exactly so both rigs feed each
+    // kernel byte-identical pixels and thresholds (blimit/limit/thresh =
+    // 24/12/8, edge at row 16 of a 32×32 buffer).
+    bench_lpf_case(&dsp, "lpf_horizontal_8", 0, 0xC008, 12000, batches);
+    bench_lpf_case(&dsp, "lpf_horizontal_16", 1, 0xC016, 8000, batches);
+    bench_lpf_case(&dsp, "lpf_horizontal_4", 2, 0xC004, 12000, batches);
+
+    // Bool-reader (VP9 arithmetic decoder) head-to-head. Identical 16384-byte
+    // LCG buffer (seed 0xB001) + 8000-prob sequence (seed 0xB002, clamped to
+    // 1..=255). Times the full {re-init reader; 8000 read() calls} closure;
+    // ns is reported per whole 8000-read closure (NOT per bit) so both sides'
+    // numbers stay directly comparable. See tools/libvpx_kernel_bench/main.c.
+    bench_boolreader_case(0xB001, 0xB002, 8000, batches);
 }
 
 /// Bench one IDCT-add kernel against its libvpx twin. `N` (coefficient
@@ -471,6 +487,125 @@ fn bench_conv_case(
         do_conv(black_box(dst.as_mut_slice()));
     });
     println!("rvp9,{name},{size},{ns:.2},{in_hash:016x},{out_hash:016x}");
+}
+
+/// Bench one horizontal loopfilter kernel against its libvpx twin.
+/// `getter_kind` selects the dispatch fn-pointer: 0 = `lpf_horizontal_8`,
+/// 1 = `lpf_horizontal_16`, 2 = `lpf_horizontal_4`. All three share the
+/// signature `fn(&mut [u8], usize, usize, u8, u8, u8)` =
+/// (pixels, s_index, pitch, blimit, limit, thresh).
+///
+/// Geometry mirrors tools/libvpx_kernel_bench/main.c exactly: a 32×32
+/// (pitch = 32, height = 32) 1024-byte buffer `orig` filled by the shared
+/// LCG, the filtered horizontal edge at `s_index = 16 * 32 = 512` (row 16),
+/// and thresholds blimit/limit/thresh = 24/12/8. The libvpx side offsets
+/// its pointer by 512 and passes length-16 threshold arrays so its window
+/// lands on the same bytes. Each timed call copies `orig` into a scratch
+/// `work` buffer then filters in place; the copy is timed on both sides so
+/// it cancels in the ratio.
+fn bench_lpf_case(
+    dsp: &rvp9_core::dsp::SimdDispatch,
+    name: &str,
+    getter_kind: u8,
+    seed: u32,
+    iters: u32,
+    batches: u32,
+) {
+    let pitch: usize = 32;
+    let rows: usize = 32;
+    let s_index: usize = 16 * 32; // edge at row 16
+    let (blimit, limit, thresh): (u8, u8, u8) = (24, 12, 8);
+
+    let f: fn(&mut [u8], usize, usize, u8, u8, u8) = match getter_kind {
+        0 => dsp.lpf_horizontal_8(),
+        1 => dsp.lpf_horizontal_16(),
+        _ => dsp.lpf_horizontal_4(),
+    };
+
+    let mut orig = vec![0u8; pitch * rows];
+    fill_bytes_seeded(&mut orig, seed);
+    let in_hash = fnv1a64_bytes(&orig);
+
+    // Verify pass: copy a fresh buffer, one filter call, hash the full 1024.
+    let mut verify = orig.clone();
+    f(&mut verify, s_index, pitch, blimit, limit, thresh);
+    let out_hash = fnv1a64_bytes(&verify);
+
+    let mut work = vec![0u8; pitch * rows];
+    let ns = bench_min_ns(batches, iters, || {
+        // Reset each call so the in-place kernel always sees identical
+        // input (the copy is in the libvpx timing too, so it cancels).
+        work.copy_from_slice(&orig);
+        f(black_box(&mut work), s_index, pitch, blimit, limit, thresh);
+    });
+    println!("rvp9,{name},edge,{ns:.2},{in_hash:016x},{out_hash:016x}");
+}
+
+/// Bench the VP9 arithmetic decoder (`BoolReader::read`) against its libvpx
+/// twin (`vpx_read`). The apples-to-apples contract (Rust and C sides build
+/// these byte-identically):
+///
+///   - BUF: 16384-byte buffer from the shared LCG seeded `seed_buf` (0xB001),
+///     with the top bit of `BUF[0]` cleared (`BUF[0] &= 0x7F`) — see below.
+///   - PROBS: `n` (=8000) u8 probabilities from the shared LCG seeded
+///     `seed_probs` (0xB002), each clamped to 1..=255 (raw 0 → 1).
+///   - Reader is initialised over BUF; `n` reads are performed.
+///   - `stream_hash` folds every decoded bit with the FNV-ish recurrence
+///     `h = h.wrapping_mul(1099511628211) ^ (bit as u64)` (start
+///     0x14650FB0739D0383 = 1469598103934665603).
+///   - `probs_hash` = FNV-1a-64 over the `n` PROBS bytes.
+///
+/// `stream_hash` and `probs_hash` MUST be identical rvp9-vs-libvpx (same
+/// decoder, same inputs). Timing covers the full {re-init reader; `n` reads}
+/// closure; `ns` is reported PER WHOLE CLOSURE (NOT divided by `n`) so both
+/// sides' numbers stay directly comparable. The re-init is identical-cheap on
+/// both sides, so it cancels in the ratio.
+fn bench_boolreader_case(seed_buf: u32, seed_probs: u32, n: usize, batches: u32) {
+    use rvp9_core::entropy::BoolReader;
+
+    // BUF: 16384 bytes from the shared LCG (seed_buf).
+    let mut buf = vec![0u8; 16384];
+    fill_bytes_seeded(&mut buf, seed_buf);
+    // Marker-bit normalisation. `BoolReader::new` (and libvpx `vpx_reader_init`)
+    // decode one leading bit at prob 128 that must be 0; the Rust port turns a
+    // 1 into a hard `Err(InvalidMarkerBit)`. A raw LCG fill at seed 0xB001 puts
+    // a 1 in BUF[0]'s top bit, so clearing it makes the stream valid. The C
+    // side MUST mirror this single op (`BUF[0] &= 0x7F`) so both decoders see a
+    // byte-identical buffer and produce the same stream_hash.
+    buf[0] &= 0x7F;
+
+    // PROBS: `n` bytes from a second LCG (seed_probs), clamped to 1..=255.
+    let mut probs = vec![0u8; n];
+    fill_bytes_seeded(&mut probs, seed_probs);
+    for p in probs.iter_mut() {
+        if *p == 0 {
+            *p = 1;
+        }
+    }
+    let probs_hash = fnv1a64_bytes(&probs);
+
+    // Closure: re-init the reader and decode `n` bits, folding into the
+    // FNV-ish stream hash. Returned so the optimiser can't elide the reads.
+    let decode_stream = || -> u64 {
+        let mut r = BoolReader::new(&buf).expect("marker bit");
+        let mut h: u64 = 1469598103934665603;
+        for i in 0..n {
+            let bit = r.read(black_box(probs[i]));
+            h = h.wrapping_mul(1099511628211) ^ u64::from(bit);
+        }
+        h
+    };
+
+    // Verify pass: capture the decoded-bit-stream hash (matched against libvpx).
+    let stream_hash = decode_stream();
+
+    // Time the full {re-init; n reads} closure. bench_min_ns calls `f` once
+    // per "call", so each call is one whole 8000-read closure; ns is therefore
+    // already per-whole-closure — do NOT divide by `n`.
+    let ns = bench_min_ns(batches, 1, || {
+        black_box(decode_stream());
+    });
+    println!("rvp9,boolreader_read,{n}reads,{ns:.2},{probs_hash:016x},{stream_hash:016x}");
 }
 
 // LCG mirrored bit-for-bit with the C harness:

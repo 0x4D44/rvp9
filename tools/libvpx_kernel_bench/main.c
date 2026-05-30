@@ -25,6 +25,7 @@
 #include <windows.h>
 
 #include "vpx_dsp_rtcd.h"
+#include "vpx_dsp/bitreader.h"
 
 /* --------------------------- timing helpers ---------------------------- */
 
@@ -222,6 +223,151 @@ static const conv_case kConvCases[] = {
     { "convolve8_vert_halfpel",  "64x64", 64, 64, 2, 0xAD40u,  3000u },
 };
 
+/* ----------------------------- loop-filter family --------------------- */
+/* VP9 horizontal loop filters share one signature:
+ *   void f(uint8_t *s, int pitch, const uint8_t *blimit,
+ *          const uint8_t *limit, const uint8_t *thresh);
+ * `s` points at the first row below the filtered edge; the filter reaches
+ * +/-8 rows around it. We bench on a 32x32 (pitch 32) buffer with the edge
+ * at row 16 (s = orig + 16*32 = orig + 512). Each timed call copies the
+ * pristine `orig` into a scratch `work` buffer (copy timed on both sides so
+ * it cancels in the ratio), then filters `work` in place. blimit/limit/
+ * thresh are length-16 uint8_t arrays (libvpx reads lane-broadcast); the
+ * rvp9 side passes the same scalar threshold bytes (24/12/8). */
+
+typedef void (*lf_fn)(uint8_t *, int, const uint8_t *,
+                      const uint8_t *, const uint8_t *);
+
+#define LF_PITCH  32
+#define LF_HEIGHT 32
+#define LF_SIZE   (LF_PITCH * LF_HEIGHT)   /* 1024 */
+#define LF_EDGE   (16 * LF_PITCH)          /* 512 */
+
+/* libvpx's SSE2 LF kernels read blimit/limit/thresh with *aligned* SSE
+ * memory operands (the lib declares them DECLARE_ALIGNED(16,...)), so these
+ * arrays must be 16-byte aligned or psubusb (mem),xmm faults. */
+typedef struct {
+    lf_fn         fn;
+    const uint8_t *orig;
+    uint8_t       *work;
+    _Alignas(16) uint8_t blimit[16];
+    _Alignas(16) uint8_t limit[16];
+    _Alignas(16) uint8_t thresh[16];
+} lf_ctx;
+
+static void lf_thunk(void *v) {
+    lf_ctx *c = (lf_ctx *)v;
+    memcpy(c->work, c->orig, LF_SIZE);
+    c->fn(c->work + LF_EDGE, LF_PITCH, c->blimit, c->limit, c->thresh);
+}
+
+typedef struct {
+    lf_fn       fn;
+    const char *name;
+    uint32_t    seed;
+    uint32_t    iters;
+} lf_case;
+
+static void run_lf_case(const lf_case *lc) {
+    static uint8_t orig[LF_SIZE];
+    static uint8_t work[LF_SIZE];
+
+    fill_bytes(orig, sizeof orig, lc->seed);
+    uint64_t in_hash = fnv1a64(orig, sizeof orig);
+
+    lf_ctx ctx;
+    ctx.fn = lc->fn;
+    ctx.orig = orig;
+    ctx.work = work;
+    memset(ctx.blimit, 24, sizeof ctx.blimit);
+    memset(ctx.limit,  12, sizeof ctx.limit);
+    memset(ctx.thresh,  8, sizeof ctx.thresh);
+
+    /* verify: one filter call on a fresh copy, hash the full 1024-byte work. */
+    memcpy(work, orig, sizeof orig);
+    ctx.fn(work + LF_EDGE, LF_PITCH, ctx.blimit, ctx.limit, ctx.thresh);
+    uint64_t out_hash = fnv1a64(work, sizeof work);
+
+    double ns = bench_min_ns(BATCHES, lc->iters, lf_thunk, &ctx);
+    printf("libvpx,%s,%s,%.2f,%016llx,%016llx\n",
+           lc->name, "edge", ns,
+           (unsigned long long)in_hash, (unsigned long long)out_hash);
+    fflush(stdout);
+}
+
+/* ---------------------------- bool-reader ----------------------------- */
+/* Apples-to-apples VP9 arithmetic-decoder per-bit cost: libvpx vpx_read()
+ * vs the rvp9 BoolReader::read() on an IDENTICAL byte buffer + IDENTICAL prob
+ * sequence, validated by an identical decoded-bit-stream hash.
+ *
+ * Shared inputs (rvp9 side builds these byte-for-byte the same):
+ *   BUF   : 16384-byte buffer, LCG seeded 0xB001 (lcg_step, same as fill_bytes).
+ *   PROBS : 8000 u8 probs, second LCG seeded 0xB002, each clamped to 1..=255
+ *           (raw 0 -> 1). N = 8000 reads.
+ *
+ * Per timed closure: re-init reader over BUF, run 8000 vpx_read(probs[i]),
+ * folding each decoded bit into a 64-bit FNV-ish hash. Report ns PER WHOLE
+ * 8000-read closure (do NOT divide by 8000). The re-init is identical-cheap
+ * on both sides so it cancels in the ratio. */
+
+#define BR_BUF_LEN  16384u
+#define BR_NREADS   8000u
+#define BR_BUF_SEED 0xB001u
+#define BR_PRB_SEED 0xB002u
+
+typedef struct {
+    const uint8_t *buf;
+    const uint8_t *probs;
+    uint64_t       stream_hash;   /* output: folded decoded-bit hash */
+} br_ctx;
+
+/* Fold one full {init + 8000-read} closure; stash the stream hash so the
+ * verify pass and the timed pass share identical code (hash is deterministic,
+ * so re-storing it every batch is harmless). */
+static void br_thunk(void *v) {
+    br_ctx *c = (br_ctx *)v;
+    vpx_reader r;
+    vpx_reader_init(&r, c->buf, BR_BUF_LEN, NULL, NULL);
+    uint64_t h = 1469598103934665603ull;   /* FNV-1a-64 offset basis */
+    for (unsigned i = 0; i < BR_NREADS; ++i) {
+        int bit = vpx_read(&r, c->probs[i]);
+        h = h * 1099511628211ull ^ (uint64_t)bit;
+    }
+    c->stream_hash = h;
+}
+
+static void run_boolreader_case(uint32_t iters) {
+    static uint8_t buf[BR_BUF_LEN];
+    static uint8_t probs[BR_NREADS];
+
+    /* BUF: LCG seeded 0xB001 (identical to fill_bytes). */
+    fill_bytes(buf, sizeof buf, BR_BUF_SEED);
+    /* Marker-bit normalisation: mirror the rvp9 side's `buf[0] &= 0x7F` so both
+     * arithmetic decoders load the SAME first byte into the value register and
+     * therefore produce a byte-identical decoded stream (apples-to-apples gate). */
+    buf[0] &= 0x7F;
+
+    /* PROBS: second LCG seeded 0xB002, clamp 0 -> 1 (range 1..=255). */
+    {
+        uint32_t s = BR_PRB_SEED;
+        for (unsigned i = 0; i < BR_NREADS; ++i) {
+            uint8_t p = (uint8_t)lcg_step(&s);
+            probs[i] = p ? p : 1u;
+        }
+    }
+    uint64_t probs_hash = fnv1a64(probs, sizeof probs);
+
+    br_ctx ctx = { buf, probs, 0 };
+    br_thunk(&ctx);                         /* verify pass -> stream_hash */
+    uint64_t stream_hash = ctx.stream_hash;
+
+    double ns = bench_min_ns(BATCHES, iters, br_thunk, &ctx);
+    printf("libvpx,%s,%s,%.2f,%016llx,%016llx\n",
+           "boolreader_read", "8000reads", ns,
+           (unsigned long long)probs_hash, (unsigned long long)stream_hash);
+    fflush(stdout);
+}
+
 /* ------------------------------- driver ------------------------------- */
 
 int main(int argc, char **argv) {
@@ -243,6 +389,19 @@ int main(int argc, char **argv) {
 
     for (size_t i = 0; i < sizeof kConvCases / sizeof kConvCases[0]; ++i)
         run_conv_case(&kConvCases[i]);
+
+    /* LF kernel pointers (esp. vpx_lpf_horizontal_16) are filled by
+     * vpx_dsp_rtcd() above, so the table is built here at runtime. */
+    const lf_case kLfCases[] = {
+        { vpx_lpf_horizontal_8,  "lpf_horizontal_8",  0xC008u, 200000u },
+        { vpx_lpf_horizontal_16, "lpf_horizontal_16", 0xC016u, 200000u },
+        { vpx_lpf_horizontal_4,  "lpf_horizontal_4",  0xC004u, 200000u },
+    };
+    for (size_t i = 0; i < sizeof kLfCases / sizeof kLfCases[0]; ++i)
+        run_lf_case(&kLfCases[i]);
+
+    /* VP9 bool/arithmetic decoder per-bit cost (8000-read closure). */
+    run_boolreader_case(2000u);
 
     return 0;
 }

@@ -398,18 +398,59 @@ pub fn decode_coefs(
         "decode_coefs: initial_pt ({initial_pt}) > 2",
     );
 
-    // Zero the output region. Mirrors the caller-side `vpx_memset` of
-    // `pd->dqcoeff` libvpx does at `vp9_decodeframe.c:251-253` (and
-    // assumed-on-entry by the original `decode_coefs`).
-    for slot in &mut dq_coefs_out[..seg_eob] {
-        *slot = 0;
-    }
-
     let band_translate = get_band_translate(tx_size);
     let dq_shift: u32 = if matches!(tx_size, TxSize::Tx32x32) {
         1
     } else {
         0
+    };
+
+    // M.6 differential snapshot — taken BEFORE any read so the reference
+    // re-run starts from the same reader state (hoisted ahead of the
+    // empty-TX fast path below).
+    let m6_mode = crate::trace_flags::trace_flags().debug_refcoefs.as_deref();
+    let m6_active = matches!(m6_mode, Some("1") | Some("trace"));
+    let m6_trace = matches!(m6_mode, Some("trace"));
+    let m6_pre_snap = if m6_active {
+        Some(reader.snapshot())
+    } else {
+        None
+    };
+
+    // EMPTY-TX FAST PATH (~95% of intra TX decode to eob == 0). Read coef
+    // 0's EOB bit up front; on EOB, return WITHOUT acquiring the token_cache
+    // TLS scratch or zeroing the output (the caller skips the inverse
+    // transform for eob == 0 and never reads `dq_coefs_out`). Disabled when
+    // the M.6 differential is active so the reference re-run sees the
+    // original whole-function path. Byte-exact: identical bit reads and
+    // identical count updates to the loop's first iteration. Interleaved
+    // A/B (2026-05-30) measured a consistent −4 cycles/TX of detok work
+    // vs bypassing it (B−A > 0 in 15/16 pinned pairs).
+    let skip_first_eob = if m6_active {
+        false
+    } else if seg_eob == 0 {
+        return 0;
+    } else {
+        // SAFETY: invariants (2)+(3) below — `band_translate[0]` is in range,
+        // its value < COEF_BANDS, and `initial_pt = combine_entropy_contexts`
+        // ∈ 0..=2 < COEFF_CONTEXTS.
+        let band0 = unsafe { *band_translate.get_unchecked(0) } as usize;
+        let prob0 = unsafe { coef_probs.get_unchecked(band0).get_unchecked(initial_pt) };
+        if let Some(cs) = counts.as_deref_mut() {
+            cs.eob_branch_counts[band0][initial_pt] += 1;
+        }
+        if reader.read(prob0[EOB_CONTEXT_NODE]) == 0 {
+            if let Some(cs) = counts.as_deref_mut() {
+                cs.coef_counts[band0][initial_pt][EOB_MODEL_TOKEN] += 1;
+            }
+            return 0;
+        }
+        // Non-empty: coef 0's EOB consumed (non-zero). Zero the output now
+        // (eob > 0) and tell the loop to skip re-reading coef 0's EOB.
+        for slot in &mut dq_coefs_out[..seg_eob] {
+            *slot = 0;
+        }
+        true
     };
 
     // R.2: hoist the `decode_coefs` `token_cache` scratch buffer to a
@@ -419,15 +460,27 @@ pub fn decode_coefs(
     // Vecs are gone — see the fused token loop below.)
     DECODE_COEFS_SCRATCH.with_borrow_mut(|scratch| {
     let DecodeCoefsScratch { token_cache } = scratch;
-    // Zero only the prefix `token_cache[..n_coeffs]` we'll actually
-    // read/write. `token_cache.len() == DECODE_COEFS_SCRATCH_CAP` is
-    // an invariant established at construction.
-    for slot in &mut token_cache[..tx_size.n_coeffs()] {
-        *slot = 0;
-    }
+    // No prefill needed: the token loop writes `token_cache[scan[c]]` for
+    // EVERY decoded scan position (non-zero tokens AND the zero-run path),
+    // and `get_coef_context` only ever reads CAUSAL neighbours (raster
+    // positions whose scan index < c), which are therefore already written
+    // this TX. Stale bytes from a previous TX at not-yet-written positions
+    // are never read. (Empty TX — ~95% of intra TX — read `token_cache`
+    // zero times.) Removing the per-TX prefill of up to `n_coeffs` bytes is
+    // byte-exact; validated by conformance + the decode_coefs unit tests.
 
     let mut ctx = initial_pt;
     let mut c = 0usize;
+    // `first` skips re-reading coef 0's EOB bit when the fast path already
+    // consumed it (`skip_first_eob`). `dq_zeroed` is already true on that
+    // path (output zeroed before the closure); only the M.6-active path
+    // (which bypassed the fast path) still defers the zero to the first
+    // non-EOB token below.
+    let mut first = skip_first_eob;
+    // Zeroed iff the fast path ran and zeroed (`skip_first_eob` true on the
+    // non-empty non-M.6 path); otherwise the loop defers the zero to the
+    // first non-EOB token (the M.6 differential path).
+    let mut dq_zeroed = skip_first_eob;
     let (dc_dq, ac_dq) = dequant;
     // `dqv` tracks "DC for c=0, then AC for the rest" — libvpx
     // initialises it to `dq[0]` and switches to `dq[1]` after the
@@ -470,14 +523,8 @@ pub fn decode_coefs(
     // hand-trace a specific failing block against libvpx's actual bit
     // consumption when the differential alone agrees but the result is
     // still wrong (i.e., a transcription bug shared by prod + ref port).
-    let m6_mode = crate::trace_flags::trace_flags().debug_refcoefs.as_deref();
-    let m6_active = matches!(m6_mode, Some("1") | Some("trace"));
-    let m6_trace = matches!(m6_mode, Some("trace"));
-    let m6_pre_snap = if m6_active {
-        Some(reader.snapshot())
-    } else {
-        None
-    };
+    // (M.6 snapshot + the empty-TX fast path were hoisted before this
+    // closure so the TLS scratch is acquired only when eob > 0.)
 
     // Hot-loop bound invariants (proof obligations for the
     // `get_unchecked` sites below):
@@ -510,16 +557,29 @@ pub fn decode_coefs(
         // `ctx < COEFF_CONTEXTS` (both from token-tree state).
         let prob = unsafe { coef_probs.get_unchecked(band).get_unchecked(ctx) };
 
-        if let Some(ref mut cs) = counts {
-            cs.eob_branch_counts[band][ctx] += 1;
-        }
-
-        // EOB bit.
-        if reader.read(prob[EOB_CONTEXT_NODE]) == 0 {
+        // EOB bit — skipped for coef 0 when the fast path already read it.
+        if !first {
             if let Some(ref mut cs) = counts {
-                cs.coef_counts[band][ctx][EOB_MODEL_TOKEN] += 1;
+                cs.eob_branch_counts[band][ctx] += 1;
             }
-            break;
+            if reader.read(prob[EOB_CONTEXT_NODE]) == 0 {
+                if let Some(ref mut cs) = counts {
+                    cs.coef_counts[band][ctx][EOB_MODEL_TOKEN] += 1;
+                }
+                break;
+            }
+        }
+        first = false;
+
+        // First non-EOB token (only the M.6-active path reaches here un-zeroed
+        // — the fast path zeroed before the closure): zero the output so the
+        // zero-run path and the final IDCT see a clean buffer, exactly as the
+        // original up-front memset did.
+        if !dq_zeroed {
+            for slot in &mut dq_coefs_out[..seg_eob] {
+                *slot = 0;
+            }
+            dq_zeroed = true;
         }
 
         // ZERO bit — consume runs of zeros, updating context per-step.

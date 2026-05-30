@@ -43,6 +43,25 @@ use super::{convolve8_horiz_avx2, convolve8_vert_avx2};
 #[cfg(target_arch = "x86_64")]
 const INTER_STRIDE: usize = 64;
 
+#[cfg(target_arch = "x86_64")]
+std::thread_local! {
+    /// Reusable horizontal-pass intermediate. Zeroed once at thread
+    /// init, then reused across every `convolve8_avx2` call — this
+    /// eliminates the per-call 4608-byte memset that dominated the
+    /// small-block (8×8/16×16) 2-D convolve cost (the kernel is the #1
+    /// inter-MC per-pixel cost). Stale bytes in the unused columns
+    /// `w..INTER_STRIDE` are HARMLESS: the horizontal pass writes
+    /// columns `0..w` of every row it produces, the vertical pass's
+    /// stored output columns `0..w` depend ONLY on those freshly-written
+    /// columns, and the wider SIMD column loads that touch `w..` are
+    /// computed-then-discarded. So output stays byte-identical to the
+    /// zeroed-scratch form (validated by the scalar-differential tests).
+    /// The buffer is always initialised (zeroed at construction) so no
+    /// uninitialised byte is ever read.
+    static CONV8_INTERMEDIATE: std::cell::RefCell<[u8; INTER_STRIDE * 72]> =
+        const { std::cell::RefCell::new([0u8; INTER_STRIDE * 72]) };
+}
+
 /// AVX2 implementation of the full 2-D separable 8-tap convolution.
 ///
 /// The dispatch slot [`crate::dsp::SimdDispatch::convolve8`] points at
@@ -69,29 +88,28 @@ pub fn convolve8_avx2(
     debug_assert!((1..=64).contains(&h));
 
     let intermediate_height = h + 7;
-    // Zeroed so the unused columns (w..64) of each row stay 0 — the
-    // vertical pass only reads columns 0..w, but a clean buffer keeps
-    // the kernel free of stale data and matches the scalar's zeroed
-    // scratch.
-    let mut intermediate = [0u8; INTER_STRIDE * 72];
 
-    // Horizontal pass: produce `h + 7` rows. `src` is pre-shifted up by
-    // three rows by the caller, so intermediate row 0 corresponds to
-    // three rows above the destination origin.
-    convolve8_horiz_avx2(
-        src,
-        src_stride,
-        &mut intermediate,
-        INTER_STRIDE,
-        filter_x,
-        w,
-        intermediate_height,
-    );
+    // Reuse the per-thread intermediate (no per-call memset — see the
+    // CONV8_INTERMEDIATE docstring for the byte-exactness argument).
+    CONV8_INTERMEDIATE.with_borrow_mut(|intermediate| {
+        // Horizontal pass: produce `h + 7` rows. `src` is pre-shifted up
+        // by three rows by the caller, so intermediate row 0 corresponds
+        // to three rows above the destination origin.
+        convolve8_horiz_avx2(
+            src,
+            src_stride,
+            intermediate,
+            INTER_STRIDE,
+            filter_x,
+            w,
+            intermediate_height,
+        );
 
-    // Vertical pass: intermediate row 0 is already the first of the
-    // eight taps for output row 0 (it sits three rows above the dst
-    // origin), so it is handed over as-is — no extra shift.
-    convolve8_vert_avx2(&intermediate, INTER_STRIDE, dst, dst_stride, filter_y, w, h);
+        // Vertical pass: intermediate row 0 is already the first of the
+        // eight taps for output row 0 (it sits three rows above the dst
+        // origin), so it is handed over as-is — no extra shift.
+        convolve8_vert_avx2(intermediate, INTER_STRIDE, dst, dst_stride, filter_y, w, h);
+    });
 }
 
 #[cfg(all(test, target_arch = "x86_64", not(miri)))]
