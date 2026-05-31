@@ -42,6 +42,13 @@ env/
 __pycache__/
 *.pyc
 
+# Scratch session dumps under notes/ — by convention an underscore prefix
+# marks an ephemeral capture (raw `cargo test` stdout like notes/_run_*.txt,
+# baseline snapshots like notes/_baseline_*.txt, and intermediate point-in-time
+# report snapshots like notes/_e1_*.md). Curated, durable notes never start
+# with an underscore, so they remain tracked.
+notes/_*
+
 # Test data — gitignored, fetched by scripts/
 tests/conformance/vectors/
 # Real-world corpus (HLD §G8):
