@@ -1,0 +1,770 @@
+diff --git a/crates/rvp9-core/src/inter/mode_info.rs b/crates/rvp9-core/src/inter/mode_info.rs
+index 40c5b40..bfcc866 100644
+--- a/crates/rvp9-core/src/inter/mode_info.rs
++++ b/crates/rvp9-core/src/inter/mode_info.rs
+@@ -1111,6 +1111,7 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
+             is_compound,
+             inter_mode_ctx,
+             mi,
++            counts,
+         );
+     }
+ 
+@@ -1190,6 +1191,7 @@ fn write_sub8_bmi<N: NeighbourLookup>(
+     is_compound: bool,
+     inter_mode_ctx: usize,
+     mi: &ModeInfo,
++    mut counts: Option<&mut FrameCounts>,
+ ) -> Result<(), InterModeWriteError> {
+     // libvpx num_4x4_w/h for the sub-8 sizes; see `resolve_sub8_bmi`.
+     let (num_4x4_w, num_4x4_h) = match block_size {
+@@ -1238,6 +1240,16 @@ fn write_sub8_bmi<N: NeighbourLookup>(
+                 &fc.inter_mode_probs[inter_mode_ctx],
+                 b_mode.idx() as i8,
+             );
++            // SUB8 — accumulate the per-sub-block inter_mode count for
++            // backward adaptation. The decoder's `resolve_sub8_bmi`
++            // calls `read_inter_mode(..., mode_counts)` once per
++            // sub-block; the writer MUST mirror that (4 increments per
++            // sub-8x8 block) or the adapted `inter_mode_probs` diverge
++            // from the decoder's after the first sub-8x8 frame, desyncing
++            // the next frame's bool coder.
++            if let Some(c) = counts.as_deref_mut() {
++                c.inter_mode[inter_mode_ctx][b_mode.idx()] += 1;
++            }
+ 
+             match b_mode {
+                 InterMode::NewMv => {
+@@ -1260,13 +1272,18 @@ fn write_sub8_bmi<N: NeighbourLookup>(
+                     // 2. Emit the per-ref MV residual.
+                     set_category(BitCategory::MvDelta);
+                     for (r, &ref_mv) in best_ref_mvs_for_new.iter().enumerate().take(num_refs) {
++                        // SUB8 — thread the NMV counts so the per-sub-block
++                        // NEWMV reads accumulate the same way the decoder's
++                        // `resolve_sub8_bmi` does (`read_mv(..., counts)`),
++                        // keeping the adapted `nmvc` byte-exact across the
++                        // GOP.
+                         write_mv(
+                             bw,
+                             mi.bmi[j].as_mv[r],
+                             ref_mv,
+                             params.allow_high_precision_mv,
+                             &fc.nmvc,
+-                            None, // P0b: sub-8 MV counts omitted (rare path)
++                            counts.as_deref_mut().map(|c| &mut c.mv),
+                         );
+                     }
+                     set_category(BitCategory::ModeRef);
+diff --git a/crates/rvp9-encoder/src/frame_loop.rs b/crates/rvp9-encoder/src/frame_loop.rs
+index f3695b9..e650dff 100644
+--- a/crates/rvp9-encoder/src/frame_loop.rs
++++ b/crates/rvp9-encoder/src/frame_loop.rs
+@@ -2569,6 +2569,7 @@ impl StreamEncoder {
+                                 // Track-F iter7 — default to max; the
+                                 // simulator's TX-size RD loop overwrites it.
+                                 picked_tx_size: max_txsize(l.leaf_bsize),
++                                sub8_bmi: None,
+                             }
+                         })
+                         .collect()
+@@ -3240,6 +3241,7 @@ impl StreamEncoder {
+                             // Track-F iter7 — default to max; the simulator's
+                             // TX-size RD loop overwrites it.
+                             picked_tx_size: max_txsize(l.leaf_bsize),
++                            sub8_bmi: None,
+                         })
+                         .collect()
+                 })
+@@ -4029,6 +4031,43 @@ fn build_inter_mi_grid_from_picker(
+             for leaf in leaves {
+                 let leaf_mi_row = sb_row * 8 + leaf.mi_row_in_sb;
+                 let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
++                // SUB8 — a `Block8x8` leaf RD-elected to be coded as 4
++                // 4×4 sub-blocks. The mi-grid cell becomes a `Block4x4`
++                // cell carrying the 4 per-sub-block `bmi`; the parent
++                // `mode`/`mvs` inherit `bmi[3]` (last sub-block), matching
++                // the decoder's `resolve_sub8_bmi` convention. The writer
++                // (`infer_inter_partition` + `write_sub8_bmi`) emits
++                // PARTITION_SPLIT + the per-bmi inter modes / MV residuals.
++                if let Some(bmi) = leaf.sub8_bmi {
++                    debug_assert_eq!(leaf.leaf_bsize, BlockSize::Block8x8);
++                    let last = bmi[3];
++                    let parent_mode = InterMode::from_idx(last.as_mode)
++                        .expect("sub8 bmi[3].as_mode must be a valid InterMode");
++                    let cell = ModeInfo {
++                        block_size: BlockSize::Block4x4,
++                        tx_size: rvp9_core::transforms::TxSize::Tx4x4,
++                        skip: leaf.skip,
++                        segment_id: leaf.segment_id,
++                        seg_id_predicted: false,
++                        mode: BlockMode::Inter {
++                            mode: parent_mode,
++                            ref_frames: [leaf.picked_ref_frame, RefFrame::NoRefFrame],
++                            mvs: last.as_mv,
++                            interp_filter: leaf.picked_interp_filter,
++                        },
++                        bmi,
++                    };
++                    splat_leaf_mode_info(
++                        &mut mi_grid,
++                        mi_cols_us,
++                        leaf_mi_row,
++                        leaf_mi_col,
++                        BlockSize::Block8x8,
++                        cell,
++                    );
++                    continue;
++                }
++
+                 let cell = ModeInfo {
+                     block_size: leaf.leaf_bsize,
+                     // Track-F iter7 — per-block RD-chosen tx_size from the
+@@ -8300,6 +8339,7 @@ mod tests {
+             picked_ref_frame2: RefFrame::NoRefFrame,
+             picked_mv2: Mv::ZERO,
+             picked_tx_size: max_txsize(BlockSize::Block64x64),
++            sub8_bmi: None,
+         }];
+         let sb_partitions = vec![leaves];
+         let grid = build_inter_mi_grid_from_picker(8, 8, &sb_partitions);
+@@ -8334,6 +8374,7 @@ mod tests {
+             picked_ref_frame2: RefFrame::NoRefFrame,
+             picked_mv2: Mv::ZERO,
+             picked_tx_size: max_txsize(BlockSize::Block64x64),
++            sub8_bmi: None,
+         }];
+         let sb_partitions = vec![leaves];
+         let grid = build_inter_mi_grid_from_picker(8, 8, &sb_partitions);
+@@ -8417,6 +8458,7 @@ mod tests {
+             picked_ref_frame2: RefFrame::NoRefFrame,
+             picked_mv2: Mv::ZERO,
+             picked_tx_size: max_txsize(BlockSize::Block32x32),
++            sub8_bmi: None,
+         });
+         leaves.push(InterPartitionLeafDesc {
+             mi_row_in_sb: 4,
+@@ -8432,6 +8474,7 @@ mod tests {
+             picked_ref_frame2: RefFrame::NoRefFrame,
+             picked_mv2: Mv::ZERO,
+             picked_tx_size: max_txsize(BlockSize::Block16x16),
++            sub8_bmi: None,
+         });
+         let sb_partitions = vec![leaves];
+ 
+diff --git a/crates/rvp9-encoder/src/lib.rs b/crates/rvp9-encoder/src/lib.rs
+index 9db6db6..5a55ad9 100644
+--- a/crates/rvp9-encoder/src/lib.rs
++++ b/crates/rvp9-encoder/src/lib.rs
+@@ -2211,6 +2211,47 @@ impl rvp9_core::inter::mv_ref::NeighbourLookup for InterPickerMiGridLookup<'_> {
+     }
+ }
+ 
++/// SUB8 (`RVP9_SUB8`) — sub-8x8 inter prediction gate. Default OFF
++/// (byte-identical baseline). When set to a truthy value (`1`, `on`,
++/// `true`) the cpu<=4 RDO inter path RD-picks coding each `Block8x8`
++/// inter leaf as four 4×4 sub-blocks with per-sub-block MVs
++/// (libvpx `rd_pick_best_sub8x8_mode`). Read once (per-leaf hot path).
++fn sub8_enabled() -> bool {
++    use std::sync::OnceLock;
++    static S: OnceLock<bool> = OnceLock::new();
++    *S.get_or_init(|| {
++        matches!(
++            std::env::var("RVP9_SUB8").ok().as_deref(),
++            Some("1") | Some("on") | Some("true") | Some("yes")
++        )
++    })
++}
++
++/// SUB8 — RD-decision acceptance margin (percent). The picker's Y-only,
++/// start-of-block `coeff_ctx = 0` RD systematically UNDER-prices the
++/// sub-8x8 candidate (4 separate blocks each costed as start-of-block,
++/// chroma excluded, and a crude per-sub-block NEWMV search rather than
++/// libvpx's joint search), so a naive `sub8_rd < single_rd` comparison
++/// over-selects sub-8x8 and net-REGRESSES at matched bitrate on foreman
++/// (~-0.13 dB @ 500k). This margin tightens the acceptance cap to
++/// `single_rd * (1 - margin)` so sub-8x8 only wins by a clear margin;
++/// higher margins emit fewer sub-8x8 leaves and asymptote toward the
++/// (byte-identical) OFF baseline. Empirically even margin 60 stays
++/// slightly negative on foreman — the feature does not beat the
++/// single-8x8 path with this simplified RD. Default 40 (near-neutral);
++/// `RVP9_SUB8_MARGIN=0` restores the raw (over-eager) comparison.
++fn sub8_margin_pct() -> u32 {
++    use std::sync::OnceLock;
++    static S: OnceLock<u32> = OnceLock::new();
++    *S.get_or_init(|| {
++        std::env::var("RVP9_SUB8_MARGIN")
++            .ok()
++            .and_then(|v| v.parse::<u32>().ok())
++            .unwrap_or(40)
++            .min(95)
++    })
++}
++
+ /// Splat a single inter leaf's [`rvp9_core::mode_info::ModeInfo`] into
+ /// every 8x8 cell the leaf covers in the in-progress mi_grid used by
+ /// the A2.foreman spatial MV-ref propagation. Mirrors
+@@ -2264,6 +2305,314 @@ fn splat_inter_leaf_into_mi_grid(
+     }
+ }
+ 
++/// SUB8 — splat a sub-8x8 (`Block8x8` coded as 4 sub-blocks) leaf into
++/// the in-progress mi_grid. The cell carries `block_size = Block4x4` +
++/// the per-sub-block `bmi`; the parent `mode`/`mvs` inherit `bmi[3]`
++/// (last sub-block), matching the decoder's `resolve_sub8_bmi`. This
++/// must match `frame_loop::build_inter_mi_grid_from_picker`'s sub8 cell
++/// so the in-progress neighbour grid (and the next frame's prev-MV grid)
++/// see exactly what the writer + decoder will.
++fn splat_sub8_leaf_into_mi_grid(
++    mi_grid: &mut [Option<rvp9_core::mode_info::ModeInfo>],
++    mi_cols: usize,
++    leaf_mi_row: usize,
++    leaf_mi_col: usize,
++    segment_id: u8,
++    skip: bool,
++    picked_ref_frame: RefFrame,
++    picked_interp_filter: rvp9_core::bitstream::frame::InterpFilter,
++    bmi: [rvp9_core::mode_info::BmiInfo; 4],
++) {
++    use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo};
++    let last = bmi[3];
++    let parent_mode = InterMode::from_idx(last.as_mode).unwrap_or(InterMode::ZeroMv);
++    let cell = ModeInfo {
++        block_size: BlockSize::Block4x4,
++        tx_size: rvp9_core::transforms::TxSize::Tx4x4,
++        skip,
++        segment_id,
++        seg_id_predicted: false,
++        mode: BlockMode::Inter {
++            mode: parent_mode,
++            ref_frames: [picked_ref_frame, RefFrame::NoRefFrame],
++            mvs: last.as_mv,
++            interp_filter: picked_interp_filter,
++        },
++        bmi,
++    };
++    // A `Block8x8` leaf covers a single 8x8 mi cell.
++    mi_grid[leaf_mi_row * mi_cols + leaf_mi_col] = Some(cell);
++}
++
++/// SUB8 — inter-mode + MV signalling rate for the single-8x8 baseline,
++/// shaped to match the per-sub-block `mv_mode_rate` the sub-8x8 picker
++/// uses (inter-mode cost + NEWMV MV-delta cost; NEAREST/NEAR/ZERO pay
++/// only the mode cost). The ref-frame cost is omitted because both
++/// candidates are single-ref LAST (it cancels in the comparison).
++fn real_mode_rate_for_single(
++    inter_costs: &rvp9_core::cost::symbol_costs::InterModeCosts,
++    ctx: usize,
++    mode: InterMode,
++    mv: Mv,
++    ref_mv: Mv,
++    mv_costs: &rvp9_core::cost::mv_cost::MvCosts,
++) -> u32 {
++    let ctx = ctx.min(rvp9_core::entropy::default_probs::INTER_MODE_CONTEXTS - 1);
++    let mode_cost = inter_costs[ctx][mode.idx()].max(0) as u32;
++    let mv_rate = if matches!(mode, InterMode::NewMv) {
++        let dr = mv.row.wrapping_sub(ref_mv.row);
++        let dc = mv.col.wrapping_sub(ref_mv.col);
++        let raw = rvp9_core::cost::mv_cost::mv_cost(dr, dc, mv_costs).max(0) as i64;
++        ((raw * 108 + 64) >> 7).min(i64::from(u32::MAX)) as u32
++    } else {
++        0
++    };
++    mode_cost.saturating_add(mv_rate)
++}
++
++/// SUB8 — RD-pick a sub-8x8 alternative for a committed `Block8x8`
++/// inter leaf and, if it wins, overwrite the leaf's recon (Y + chroma)
++/// and coef-source in place, then mark the leaf desc as sub-8x8.
++///
++/// The single-8x8 recon + coefs are already committed by the caller; we
++/// compute the single-8x8 Y RD baseline with the same transform-domain
++/// construction the sub-8x8 picker uses, then only commit sub-8x8 if it
++/// strictly beats that baseline. The per-sub-block recon mirrors the
++/// decoder's `reconstruct_inter` exactly (4 Y 4×4 sub-blocks at each
++/// `bmi[j].as_mv[0]`; one 4:2:0 chroma 4×4 at the Q4-averaged MV).
++#[allow(clippy::too_many_arguments)]
++fn try_commit_sub8x8<N: rvp9_core::inter::mv_ref::NeighbourLookup>(
++    src_y: &rvp9_core::mv_search::PlaneRef<'_>,
++    leaf_px: (usize, usize),
++    ref_y: &rvp9_core::mv_search::PlaneRef<'_>,
++    input_uv: (&[u8], &[u8]),
++    last_recon_yuv: (&[u8], &[u8], &[u8]),
++    recon_y_out: &mut [u8],
++    recon_u_out: &mut [u8],
++    recon_v_out: &mut [u8],
++    coef_source: &mut VecBackedInterCoefSource,
++    leaf_mi_row: usize,
++    leaf_mi_col: usize,
++    parent_mv: Mv,
++    interp_filter: rvp9_core::bitstream::frame::InterpFilter,
++    quantizer: &rvp9_core::quant::forward::PlaneQuantizers,
++    coef_costs: &rvp9_core::cost::coef_cost::CoefCostTable,
++    rdmult: i64,
++    newmv_ref_mv: Mv,
++    single_mode_mv_rate: u32,
++    mv_limits: rvp9_core::mv_search::mv_limits::MvLimits,
++    mv_costs: &rvp9_core::cost::mv_cost::MvCosts,
++    inter_costs: &rvp9_core::cost::symbol_costs::InterModeCosts,
++    inter_mode_ctx: usize,
++    neighbours: &N,
++    sign_bias: &[bool; 4],
++    bounds: &rvp9_core::inter::mv_ref::BlockBounds,
++    prev_mv: Option<rvp9_core::inter::mv_ref::PrevFrameMvRef>,
++    w: usize,
++    h: usize,
++    uvw: usize,
++    uvh: usize,
++    leaf: &mut InterPartitionLeafDesc,
++    leaf_total_eob: &mut usize,
++) {
++    use crate::rdo::sub8_encode::{
++        Sub8x8PickInput, bmi_from_decision, chroma_mv_q4_avg, pick_sub8x8_for_block8x8,
++        single_8x8_y_rd,
++    };
++
++    // 1. Single-8x8 Y RD baseline (same construction as the picker).
++    let single_rd_raw = single_8x8_y_rd(
++        src_y,
++        leaf_px,
++        ref_y,
++        parent_mv,
++        interp_filter,
++        quantizer,
++        coef_costs,
++        rdmult,
++        single_mode_mv_rate,
++    );
++    // SUB8 — RD-decision margin. The picker's Y-only, start-of-block
++    // `coeff_ctx = 0` metric systematically UNDER-prices the sub-8x8
++    // candidate (4 separate blocks each costed as if start-of-block, and
++    // chroma excluded), so sub-8x8 is over-selected and net-regresses at
++    // matched bitrate. We tighten the acceptance cap to
++    // `single_rd * (1 - margin)` so sub-8x8 only wins by a clear margin.
++    // `RVP9_SUB8_MARGIN` is the percent (default 12); 0 restores the raw
++    // (over-eager) comparison.
++    let single_rd = {
++        let pct = sub8_margin_pct();
++        single_rd_raw - (single_rd_raw.saturating_mul(pct as i64) / 100)
++    };
++
++    // 2. The writer's NEWMV ref MV (shared across sub-blocks). We pass
++    //    the same `newmv_ref_mv` the caller derived from the causal grid
++    //    (= `mvc.nearest` for LAST), matching `write_sub8_bmi`'s
++    //    `find_mv_refs(NEWMV).mvs[0]` lower-precision derivation only if
++    //    the caller's `mvc.nearest` equals it. To be byte-exact we
++    //    recompute it here from the writer's exact formula.
++    let writer_ref_mv = crate::rdo::sub8_encode::newmv_ref_mv_for_sub8(
++        neighbours, sign_bias, bounds, prev_mv, /* allow_hp = */ false,
++    );
++    let _ = newmv_ref_mv; // caller's hint; the writer-exact value is authoritative
++
++    // Per-mode inter-mode signalling cost for the sub-block RD (each
++    // sub-block pays `cost_mv_ref` once). Same context as the parent.
++    let ctx = inter_mode_ctx.min(rvp9_core::entropy::default_probs::INTER_MODE_CONTEXTS - 1);
++    let inter_mode_cost = [
++        inter_costs[ctx][0].max(0) as u32,
++        inter_costs[ctx][1].max(0) as u32,
++        inter_costs[ctx][2].max(0) as u32,
++        inter_costs[ctx][3].max(0) as u32,
++    ];
++
++    let input = Sub8x8PickInput {
++        src_y: *src_y,
++        src_offset: leaf_px,
++        ref_y: *ref_y,
++        interp_filter,
++        quant: quantizer,
++        coef_costs,
++        rdmult,
++        mv_limits,
++        mv_costs,
++        newmv_ref_mv: writer_ref_mv,
++        parent_mv,
++        single8x8_rd: single_rd,
++        inter_mode_cost,
++    };
++    let decision = match pick_sub8x8_for_block8x8(&input, neighbours, sign_bias, bounds) {
++        Some(d) => d,
++        None => return, // sub-8x8 didn't beat the single-8x8 baseline
++    };
++
++    // 3. Sub-8x8 won. Build the per-sub-block bmi and re-reconstruct the
++    //    leaf's Y + chroma into `recon_yuv_out`, overwriting the
++    //    single-8x8 recon, and re-insert the 4×4 coefs.
++    let bmi = bmi_from_decision(&decision);
++    crate::rdo::inter_dispatch::SUB8_LEAVES_EMITTED
++        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++
++    let mut new_eob: usize = 0;
++    let (leaf_px_x, leaf_px_y) = leaf_px;
++
++    // --- Y plane: 4 sub-blocks of 4×4, each its own MV. -------------
++    {
++        let recon_y: &mut [u8] = recon_y_out;
++        for j in 0..4usize {
++            let sub_x = j % 2;
++            let sub_y = j / 2;
++            let px_x = leaf_px_x + sub_x * 4;
++            let px_y = leaf_px_y + sub_y * 4;
++            let mv = bmi[j].as_mv[0];
++            // Y: ss = 0 → mv_q4 = mv * 2.
++            let mv_q4_col = i32::from(mv.col) * 2;
++            let mv_q4_row = i32::from(mv.row) * 2;
++            build_inter_pred_plane_unscaled(
++                last_recon_yuv.0,
++                w,
++                w,
++                h,
++                px_x,
++                px_y,
++                4,
++                4,
++                mv_q4_col,
++                mv_q4_row,
++                recon_y,
++                w,
++                interp_filter,
++                false,
++            );
++            // Residual = src - pred (recon currently holds the pred).
++            let mut residual = [0i16; 16];
++            for r in 0..4 {
++                for c in 0..4 {
++                    let off = (px_y + r) * w + (px_x + c);
++                    residual[r * 4 + c] =
++                        i16::from(src_y.data[(leaf_px_y + sub_y * 4 + r) * src_y.stride
++                            + (leaf_px_x + sub_x * 4 + c)])
++                            - i16::from(recon_y[off]);
++                }
++            }
++            let (qcoeff, dqcoeff, eob) = inter_forward_quant_one_tx(
++                &residual,
++                4,
++                rvp9_core::transforms::TxSize::Tx4x4,
++                quantizer,
++            );
++            if eob > 0 {
++                let dst_off = px_y * w + px_x;
++                inter_inverse_dct_add(
++                    rvp9_core::transforms::TxSize::Tx4x4,
++                    &dqcoeff,
++                    eob,
++                    &mut recon_y[dst_off..],
++                    w,
++                );
++            }
++            coef_source.insert(leaf_mi_row, leaf_mi_col, 0, sub_x, sub_y, qcoeff, eob);
++            new_eob += eob;
++        }
++    }
++
++    // --- Chroma (4:2:0): one 4×4 sub-block at the Q4-averaged MV. ----
++    let chroma_mv = chroma_mv_q4_avg(&bmi);
++    // ss = 1 → mv_q4 = mv * (1 << (1 - 1)) = mv * 1 (no-op for 4:2:0).
++    let cmv_q4_col = i32::from(chroma_mv.col);
++    let cmv_q4_row = i32::from(chroma_mv.row);
++    let c_px_x = (leaf_mi_col * 8) >> 1;
++    let c_px_y = (leaf_mi_row * 8) >> 1;
++    for plane in 1..3usize {
++        let (input_uv_plane, ref_uv, recon_uv): (&[u8], &[u8], &mut [u8]) = if plane == 1 {
++            (input_uv.0, last_recon_yuv.1, &mut *recon_u_out)
++        } else {
++            (input_uv.1, last_recon_yuv.2, &mut *recon_v_out)
++        };
++        build_inter_pred_plane_unscaled(
++            ref_uv, uvw, uvw, uvh, c_px_x, c_px_y, 4, 4, cmv_q4_col, cmv_q4_row, recon_uv, uvw,
++            interp_filter, false,
++        );
++        // Residual = input - pred (recon holds the pred).
++        let mut residual = [0i16; 16];
++        for r in 0..4 {
++            for c in 0..4 {
++                let off = (c_px_y + r) * uvw + (c_px_x + c);
++                residual[r * 4 + c] =
++                    i16::from(input_uv_plane[off]) - i16::from(recon_uv[off]);
++            }
++        }
++        let (qcoeff, dqcoeff, eob) = inter_forward_quant_one_tx(
++            &residual,
++            4,
++            rvp9_core::transforms::TxSize::Tx4x4,
++            quantizer,
++        );
++        if eob > 0 {
++            let dst_off = c_px_y * uvw + c_px_x;
++            inter_inverse_dct_add(
++                rvp9_core::transforms::TxSize::Tx4x4,
++                &dqcoeff,
++                eob,
++                &mut recon_uv[dst_off..],
++                uvw,
++            );
++        }
++        coef_source.insert(leaf_mi_row, leaf_mi_col, plane, 0, 0, qcoeff, eob);
++        new_eob += eob;
++    }
++
++    // 4. Commit the leaf as sub-8x8.
++    leaf.sub8_bmi = Some(bmi);
++    leaf.picked_tx_size = rvp9_core::transforms::TxSize::Tx4x4;
++    leaf.skip = false;
++    // Parent inherits the last sub-block's (mode, mv).
++    leaf.picked_mode =
++        InterMode::from_idx(bmi[3].as_mode).unwrap_or(InterMode::ZeroMv);
++    leaf.picked_mv = bmi[3].as_mv[0];
++    *leaf_total_eob = new_eob;
++}
++
+ 
+ /// Per-leaf descriptor for the inter encoder simulator. Mirrors
+ /// [`PartitionLeafDesc`] but carries the inter mode info (mode + MV +
+@@ -2328,6 +2677,15 @@ pub(crate) struct InterPartitionLeafDesc {
+     /// Defaults to `max_txsize(leaf_bsize)` (the pre-iter7 always-max
+     /// behaviour) on skip-fallback / intra-in-inter leaves.
+     pub picked_tx_size: TxSize,
++    /// SUB8 (`RVP9_SUB8`) — when `Some`, this `Block8x8` leaf was
++    /// RD-elected to be coded as four 4×4 sub-blocks, each with its own
++    /// MV. The `bmi` carries the 4 per-sub-block `(as_mode, as_mv)` the
++    /// writer emits (via `write_sub8_bmi`) and the decoder reconstructs
++    /// from. When `Some`, the mi-grid splat writes `block_size =
++    /// Block4x4` + this `bmi`; the parent `mi.mode` / `mi.mvs` inherit
++    /// `bmi[3]` (last sub-block), matching the decoder convention. `None`
++    /// for the default single-(mode, mv) path (byte-identical baseline).
++    pub sub8_bmi: Option<[rvp9_core::mode_info::BmiInfo; 4]>,
+ }
+ 
+ /// F10.1c — Drive the F8.1 inter mode picker per leaf and run the
+@@ -3718,6 +4076,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
+                         // Track-F iter7 — default to max; the simulator's
+                         // TX-size RD loop overwrites it.
+                         picked_tx_size: rvp9_core::block::max_txsize(leaf.bsize),
++                        // SUB8 — default single-MV path (byte-identical
++                        // baseline); the sub-8x8 RD pick sets this when it
++                        // elects to code an 8x8 leaf as 4 sub-blocks.
++                        sub8_bmi: None,
+                     });
+                 }
+                 sb_partitions[sb_idx] = new_leaves;
+@@ -5418,6 +5780,62 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
+                     // under `TxModeSelect`.
+                     sb_partitions[sb_idx][leaf_idx].picked_tx_size = chosen_luma_tx;
+ 
++                    // SUB8 (`RVP9_SUB8`, cpu<=4) — RD-pick coding this
++                    // Block8x8 inter leaf as 4 sub-blocks. Gated; default
++                    // OFF == byte-identical baseline. LAST single-ref only
++                    // in the first cut (GOLDEN/ALTREF/compound deferred).
++                    // The single-8x8 recon + coefs are already committed
++                    // above; if sub-8x8 wins we overwrite both in-place
++                    // (the coef_source HashMap re-inserts the same keys).
++                    if sub8_enabled()
++                        && rdo_speed_gated
++                        && matches!(leaf_bsize, BlockSize::Block8x8)
++                        && picked_ref == RefFrame::LastFrame
++                        && pick.picked_intra_mode.is_none()
++                    {
++                        try_commit_sub8x8(
++                            &src_y,
++                            (leaf_px_x, leaf_px_y),
++                            &ref_y,
++                            (input_yuv.1, input_yuv.2),
++                            last_recon_yuv,
++                            &mut *recon_yuv_out.0,
++                            &mut *recon_yuv_out.1,
++                            &mut *recon_yuv_out.2,
++                            &mut coef_source,
++                            leaf_mi_row,
++                            leaf_mi_col,
++                            pick.best_mv,
++                            pick.picked_interp_filter,
++                            &quantizer,
++                            &rdo_coef_costs,
++                            tx_rd_rdmult,
++                            mvc.nearest,
++                            real_mode_rate_for_single(
++                                &inter_costs,
++                                inter_mode_ctx,
++                                pick.best_mode,
++                                pick.best_mv,
++                                mvc.nearest,
++                                &mv_costs,
++                            ),
++                            mv_limits,
++                            &mv_costs,
++                            &inter_costs,
++                            inter_mode_ctx,
++                            &neighbours,
++                            &sign_bias,
++                            &bounds,
++                            leaf_prev_mv,
++                            w,
++                            h,
++                            uvw,
++                            uvh,
++                            &mut sb_partitions[sb_idx][leaf_idx],
++                            &mut leaf_total_eob,
++                        );
++                    }
++
+                     // RC.X1 — if no coefs in the entire leaf were non-zero,
+                     // flip the leaf to skip=true. Mirrors libvpx's
+                     // `if (eobtotal == 0) mi->skip = 1` post-fact override
+@@ -5567,19 +5985,36 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
+                 // neighbour MV-ref propagation matches the per-ref
+                 // picker behaviour (the decoder's `find_mv_refs` is
+                 // ref-aware).
+-                splat_inter_leaf_into_mi_grid(
+-                    &mut mi_grid,
+-                    mi_cols_us,
+-                    leaf_mi_row,
+-                    leaf_mi_col,
+-                    leaf_bsize,
+-                    sb_partitions[sb_idx][leaf_idx].picked_mode,
+-                    sb_partitions[sb_idx][leaf_idx].picked_mv,
+-                    sb_partitions[sb_idx][leaf_idx].segment_id,
+-                    sb_partitions[sb_idx][leaf_idx].skip,
+-                    sb_partitions[sb_idx][leaf_idx].picked_ref_frame,
+-                    sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
+-                );
++                // SUB8 — a sub-8x8-elected leaf splats a `Block4x4` cell
++                // with the per-sub-block `bmi` so the writer + decoder +
++                // next-frame prev-MV grid all see the same thing.
++                if let Some(bmi) = sb_partitions[sb_idx][leaf_idx].sub8_bmi {
++                    splat_sub8_leaf_into_mi_grid(
++                        &mut mi_grid,
++                        mi_cols_us,
++                        leaf_mi_row,
++                        leaf_mi_col,
++                        sb_partitions[sb_idx][leaf_idx].segment_id,
++                        sb_partitions[sb_idx][leaf_idx].skip,
++                        sb_partitions[sb_idx][leaf_idx].picked_ref_frame,
++                        sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
++                        bmi,
++                    );
++                } else {
++                    splat_inter_leaf_into_mi_grid(
++                        &mut mi_grid,
++                        mi_cols_us,
++                        leaf_mi_row,
++                        leaf_mi_col,
++                        leaf_bsize,
++                        sb_partitions[sb_idx][leaf_idx].picked_mode,
++                        sb_partitions[sb_idx][leaf_idx].picked_mv,
++                        sb_partitions[sb_idx][leaf_idx].segment_id,
++                        sb_partitions[sb_idx][leaf_idx].skip,
++                        sb_partitions[sb_idx][leaf_idx].picked_ref_frame,
++                        sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
++                    );
++                }
+             }
+         }
+     }
+@@ -5655,6 +6090,25 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
+         }
+     }
+ 
++    // SUB8 (`RVP9_SUB8_STATS`) — per-frame count of `Block8x8` inter
++    // leaves elected to sub-8x8 coding, plus the cumulative counter.
++    if std::env::var_os("RVP9_SUB8_STATS").is_some() {
++        let mut n_sub8 = 0usize;
++        for sb in sb_partitions.iter() {
++            for leaf in sb.iter() {
++                if leaf.sub8_bmi.is_some() {
++                    n_sub8 += 1;
++                }
++            }
++        }
++        let cum = crate::rdo::inter_dispatch::SUB8_LEAVES_EMITTED
++            .load(std::sync::atomic::Ordering::Relaxed);
++        #[allow(clippy::print_stderr)]
++        {
++            eprintln!("[SUB8] frame sub8_leaves={n_sub8} cumulative={cum}");
++        }
++    }
++
+     if diag_golden_enabled {
+         #[allow(clippy::print_stderr)]
+         {
+diff --git a/crates/rvp9-encoder/src/loopfilter.rs b/crates/rvp9-encoder/src/loopfilter.rs
+index 627a2aa..c2af433 100644
+--- a/crates/rvp9-encoder/src/loopfilter.rs
++++ b/crates/rvp9-encoder/src/loopfilter.rs
+@@ -56,7 +56,7 @@ use rvp9_core::loopfilter::{
+     LoopFilterInfo, LoopFilterMask, MAX_LOOP_FILTER, ResolvedLfDeltas, SegmentationLfView,
+     adjust_mask, loop_filter_frame, resolve_filter_levels, setup_mask,
+ };
+-use rvp9_core::mode_info::{BlockMode, ModeInfo, Mv, RefFrame};
++use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, Mv, RefFrame};
+ use rvp9_core::bitstream::{BitDepth, InterpFilter};
+ use rvp9_core::quant::ac_quant;
+ 
+@@ -395,6 +395,41 @@ pub(crate) fn build_inter_mi_grid_for_lf(
+             for leaf in leaves {
+                 let leaf_mi_row = sb_row * 8 + leaf.mi_row_in_sb;
+                 let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
++
++                // SUB8 — match `build_inter_mi_grid_from_picker`: a
++                // sub-8x8 leaf becomes a `Block4x4` / `Tx4x4` cell so the
++                // LF transform-edge mask matches the decoder's. The
++                // mode-lf level reads the parent `mi.mode` (= last
++                // sub-block's), mirroring the decoder.
++                if let Some(bmi) = leaf.sub8_bmi {
++                    let last = bmi[3];
++                    let parent_mode = InterMode::from_idx(last.as_mode)
++                        .unwrap_or(InterMode::ZeroMv);
++                    let cell = ModeInfo {
++                        block_size: BlockSize::Block4x4,
++                        tx_size: rvp9_core::transforms::TxSize::Tx4x4,
++                        skip: leaf.skip,
++                        segment_id: 0,
++                        seg_id_predicted: false,
++                        mode: BlockMode::Inter {
++                            mode: parent_mode,
++                            ref_frames: [leaf.picked_ref_frame, RefFrame::NoRefFrame],
++                            mvs: last.as_mv,
++                            interp_filter: InterpFilter::EightTap,
++                        },
++                        bmi,
++                    };
++                    splat_leaf(
++                        &mut mi_grid,
++                        mi_cols_us,
++                        leaf_mi_row,
++                        leaf_mi_col,
++                        BlockSize::Block8x8,
++                        cell,
++                    );
++                    continue;
++                }
++
+                 let cell = ModeInfo {
+                     block_size: leaf.leaf_bsize,
+                     // Track-F iter7 — use the RD-chosen tx_size so the LF
+diff --git a/crates/rvp9-encoder/src/rdo/inter_dispatch.rs b/crates/rvp9-encoder/src/rdo/inter_dispatch.rs
+index 5319d1a..2af7867 100644
+--- a/crates/rvp9-encoder/src/rdo/inter_dispatch.rs
++++ b/crates/rvp9-encoder/src/rdo/inter_dispatch.rs
+@@ -148,6 +148,13 @@ pub static RD_PARTITION_RECT_LEAVES: std::sync::atomic::AtomicU64 =
+ pub static RD_PARTITION_8X8_LEAVES: std::sync::atomic::AtomicU64 =
+     std::sync::atomic::AtomicU64::new(0);
+ 
++/// SUB8 (`RVP9_SUB8`) — count of `Block8x8` inter leaves RD-elected to
++/// be coded as four 4×4 sub-blocks (libvpx `rd_pick_best_sub8x8_mode`).
++/// Positive-control diagnostic: a non-zero value on a motion clip proves
++/// the encoder actually emits sub-8x8 inter. Dumped via `RVP9_SUB8_STATS`.
++pub static SUB8_LEAVES_EMITTED: std::sync::atomic::AtomicU64 =
++    std::sync::atomic::AtomicU64::new(0);
++
+ /// A21 — count of blocks where the ML partition-search breakout pruner
+ /// (`ml_partition::ml_predict_breakout`, libvpx
+ /// `vp9/encoder/vp9_encodeframe.c:4161-4168`) FIRED: voted to stop the
+diff --git a/crates/rvp9-encoder/src/rdo/mod.rs b/crates/rvp9-encoder/src/rdo/mod.rs
+index 0891013..16f3ec7 100644
+--- a/crates/rvp9-encoder/src/rdo/mod.rs
++++ b/crates/rvp9-encoder/src/rdo/mod.rs
+@@ -36,5 +36,6 @@ pub mod pick_partition;
+ pub mod ref_costs;
+ pub mod single_mv_search;
+ pub mod sub8;
++pub mod sub8_encode;
+ pub mod sub8_kf_intra;
+ pub mod trellis;
