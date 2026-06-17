@@ -236,10 +236,7 @@ fn measure_rvp9_point(
 
 /// Convert a YUV sequence in memory to an I420 raw file on disk for
 /// `vpxenc --i420` input. Returns the temp path.
-fn write_i420_raw(
-    path: &Path,
-    frames: &[(Vec<u8>, Vec<u8>, Vec<u8>)],
-) -> std::io::Result<()> {
+fn write_i420_raw(path: &Path, frames: &[(Vec<u8>, Vec<u8>, Vec<u8>)]) -> std::io::Result<()> {
     use std::io::Write;
     let mut f = std::fs::File::create(path)?;
     for (y, u, v) in frames {
@@ -341,7 +338,10 @@ fn measure_libvpx_point(
     // comparison). Use vpxdec at the same path tree.
     let vpxdec = vpxenc.with_file_name("vpxdec.exe");
     if !vpxdec.is_file() {
-        eprintln!("    [libvpx skipped] vpxdec.exe missing at {}", vpxdec.display());
+        eprintln!(
+            "    [libvpx skipped] vpxdec.exe missing at {}",
+            vpxdec.display()
+        );
         return None;
     }
     let out = Command::new(&vpxdec)
@@ -503,12 +503,8 @@ fn run_stage4a_quality_gate(
 
     // Primary metric — PSNR-delta summary.
     if let Some(ref lv) = libvpx_curve {
-        eprintln!(
-            "PRIMARY metric — matched-bitrate PSNR delta (libvpx_PSNR − rvp9_PSNR):"
-        );
-        eprintln!(
-            "  Positive delta = rvp9 trails libvpx at the same bitrate (dB)."
-        );
+        eprintln!("PRIMARY metric — matched-bitrate PSNR delta (libvpx_PSNR − rvp9_PSNR):");
+        eprintln!("  Positive delta = rvp9 trails libvpx at the same bitrate (dB).");
         let lv_br_min = lv.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
         let lv_br_max = lv.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
         // Per-point table — preserves the E15 reporter format that the
@@ -565,17 +561,13 @@ fn run_stage4a_quality_gate(
                     eprintln!(
                         "Exit gate status: PASS (mean Δ {:+.2} dB <= threshold \
                          {:+.2} dB, count_in_range = {})",
-                        s.mean_delta_db,
-                        psnr_delta_threshold_db,
-                        s.count_in_range,
+                        s.mean_delta_db, psnr_delta_threshold_db, s.count_in_range,
                     );
                 } else {
                     eprintln!(
                         "Exit gate status: FAIL (mean Δ {:+.2} dB > threshold \
                          {:+.2} dB, count_in_range = {})",
-                        s.mean_delta_db,
-                        psnr_delta_threshold_db,
-                        s.count_in_range,
+                        s.mean_delta_db, psnr_delta_threshold_db, s.count_in_range,
                     );
                 }
             }
@@ -591,12 +583,8 @@ fn run_stage4a_quality_gate(
             }
         }
     } else {
-        eprintln!(
-            "PRIMARY metric: not measurable (no libvpx curve available in this run)"
-        );
-        eprintln!(
-            "Exit gate status: DEFERRED (libvpx leg not measurable in this run)"
-        );
+        eprintln!("PRIMARY metric: not measurable (no libvpx curve available in this run)");
+        eprintln!("Exit gate status: DEFERRED (libvpx leg not measurable in this run)");
     }
 
     // Sanity assertions on the rvp9 curve only. Higher target bitrate
@@ -653,9 +641,7 @@ fn load_y4m_or_synthetic(
     let frames: Vec<YuvFrameBuf> = (0..n_frames)
         .map(|i| synth(w as usize, h as usize, i))
         .collect();
-    let label = format!(
-        "{synth_label} (no y4m available), {w}x{h} @ {framerate_hint} fps"
-    );
+    let label = format!("{synth_label} (no y4m available), {w}x{h} @ {framerate_hint} fps");
     (frames, framerate_hint, label)
 }
 
@@ -761,12 +747,8 @@ fn quality_gate_stage4a_realcontent() {
     const N_FRAMES: u32 = 64;
 
     let Some(path) = probe_foreman_cif() else {
-        eprintln!(
-            "    [skip] foreman_cif.y4m not found; place it at tests/corpus/foreman_cif.y4m"
-        );
-        eprintln!(
-            "    See tests/corpus/sources/README.md for acquisition steps."
-        );
+        eprintln!("    [skip] foreman_cif.y4m not found; place it at tests/corpus/foreman_cif.y4m");
+        eprintln!("    See tests/corpus/sources/README.md for acquisition steps.");
         return;
     };
 
@@ -833,8 +815,8 @@ fn textured_foreground(w: usize, h: usize, idx: u32) -> (Vec<u8>, Vec<u8>, Vec<u
     for r in 0..h {
         for c in 0..w {
             // Cheap, deterministic, decorrelated pseudo-random in [0, 255].
-            let hash = (r.wrapping_mul(2654435761) ^ c.wrapping_mul(40503))
-                .wrapping_mul(0x9E37_79B9);
+            let hash =
+                (r.wrapping_mul(2654435761) ^ c.wrapping_mul(40503)).wrapping_mul(0x9E37_79B9);
             let v = 80 + ((hash >> 8) & 0x7F) as u8;
             y[r * w + c] = v;
         }
@@ -927,11 +909,7 @@ fn libvpx_curve_sweep(
             curve.push((p.bitrate_kbps, p.psnr_db));
         }
     }
-    if curve.len() >= 2 {
-        Some(curve)
-    } else {
-        None
-    }
+    if curve.len() >= 2 { Some(curve) } else { None }
 }
 
 /// Stage 4b AQ-comparison gate body, parameterised over source frames.
@@ -1054,9 +1032,7 @@ fn run_stage4b_aq_gate(
     eprintln!();
     if gain_rvp9.is_finite() && gain_libvpx.is_finite() {
         let delta = gain_rvp9 - gain_libvpx;
-        eprintln!(
-            "Delta (gain_rvp9 - gain_libvpx) : {delta:+.3} %"
-        );
+        eprintln!("Delta (gain_rvp9 - gain_libvpx) : {delta:+.3} %");
         let abs_delta = delta.abs();
         let pass = abs_delta <= 0.3;
         eprintln!(
@@ -1192,12 +1168,8 @@ fn bdrate_gate_stage4b_aq_realcontent() {
     const N_FRAMES: u32 = 64;
 
     let Some(path) = probe_foreman_cif() else {
-        eprintln!(
-            "    [skip] foreman_cif.y4m not found; place it at tests/corpus/foreman_cif.y4m"
-        );
-        eprintln!(
-            "    See tests/corpus/sources/README.md for acquisition steps."
-        );
+        eprintln!("    [skip] foreman_cif.y4m not found; place it at tests/corpus/foreman_cif.y4m");
+        eprintln!("    See tests/corpus/sources/README.md for acquisition steps.");
         return;
     };
 

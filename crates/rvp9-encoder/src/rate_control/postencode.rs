@@ -71,15 +71,13 @@ fn update_rate_correction_factors(rc: &mut RateControl, actual_bits: u32, frame_
     //    behaviour matches the reference at the bit level.
     let mut new_factor = current_factor;
     if correction_pct > 102 {
-        let damped =
-            (100_i64 + (((correction_pct - 100) as f64) * adjustment_limit) as i64) as f64;
+        let damped = (100_i64 + (((correction_pct - 100) as f64) * adjustment_limit) as i64) as f64;
         new_factor = (new_factor * damped) / 100.0;
         if new_factor > MAX_BPB_FACTOR {
             new_factor = MAX_BPB_FACTOR;
         }
     } else if correction_pct < 99 {
-        let damped =
-            (100_i64 - (((100 - correction_pct) as f64) * adjustment_limit) as i64) as f64;
+        let damped = (100_i64 - (((100 - correction_pct) as f64) * adjustment_limit) as i64) as f64;
         new_factor = (new_factor * damped) / 100.0;
         if new_factor < MIN_BPB_FACTOR {
             new_factor = MIN_BPB_FACTOR;

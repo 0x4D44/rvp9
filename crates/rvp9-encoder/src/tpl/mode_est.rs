@@ -42,7 +42,9 @@ use rvp9_core::intra_pred::{
     PredCtx, dc_128_predictor, dc_left_predictor, dc_predictor, dc_top_predictor, h_predictor,
     tm_predictor, v_predictor,
 };
-use rvp9_core::mode_decision::hadamard::{hadamard_8x8, hadamard_16x16, hadamard_32x32, hadamard_satd};
+use rvp9_core::mode_decision::hadamard::{
+    hadamard_8x8, hadamard_16x16, hadamard_32x32, hadamard_satd,
+};
 use rvp9_core::mode_info::Mv;
 
 use super::stats::{NO_REF_FRAME_INDEX, TPL_DEP_COST_SCALE_LOG2, TplDepFrame, TplDepStats};
@@ -142,7 +144,15 @@ fn subtract_block(src_diff: &mut [i16], src: &[u8], pred: &[u8], bw: usize, bh: 
 /// modes used by TPL plus DC fallbacks.
 ///
 /// `dst` is `bw × bh` packed at stride `bw`.
-fn predict_intra(dst: &mut [u8], bw: usize, mode: IntraTplMode, ctx_above: &[u8], ctx_left: &[u8], has_above: bool, has_left: bool) {
+fn predict_intra(
+    dst: &mut [u8],
+    bw: usize,
+    mode: IntraTplMode,
+    ctx_above: &[u8],
+    ctx_left: &[u8],
+    has_above: bool,
+    has_left: bool,
+) {
     // libvpx's PredCtx::from_libvpx_style expects [corner, above...].
     match (mode, has_above, has_left) {
         (IntraTplMode::Dc, true, true) => {
@@ -163,10 +173,8 @@ fn predict_intra(dst: &mut [u8], bw: usize, mode: IntraTplMode, ctx_above: &[u8]
             v_predictor(dst, bw, bw, ctx);
         }
         (IntraTplMode::H, _, true) => {
-            let ctx = PredCtx::from_libvpx_style(
-                if has_above { ctx_above } else { &[0u8] },
-                ctx_left,
-            );
+            let ctx =
+                PredCtx::from_libvpx_style(if has_above { ctx_above } else { &[0u8] }, ctx_left);
             h_predictor(dst, bw, bw, ctx);
         }
         (IntraTplMode::Tm, true, true) => {
@@ -300,10 +308,8 @@ pub fn mode_estimation(
         best_inter_cost = best_inter_cost.min(best_intra_cost);
     }
 
-    let scaled_inter =
-        ((best_inter_cost << TPL_DEP_COST_SCALE_LOG2) / mi_area).max(1);
-    let scaled_intra =
-        ((best_intra_cost << TPL_DEP_COST_SCALE_LOG2) / mi_area).max(1);
+    let scaled_inter = ((best_inter_cost << TPL_DEP_COST_SCALE_LOG2) / mi_area).max(1);
+    let scaled_intra = ((best_intra_cost << TPL_DEP_COST_SCALE_LOG2) / mi_area).max(1);
 
     let ref_frame_index = if best_rf_idx >= 0 {
         inputs.ref_frame_slot[best_rf_idx as usize]

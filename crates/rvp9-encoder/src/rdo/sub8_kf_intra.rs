@@ -63,14 +63,12 @@
 
 use rvp9_core::block::BlockSize;
 use rvp9_core::cost::coef_cost::CoefCostTable;
-use rvp9_core::intra_pred::{
-    DcAvailability, IntraMode, NUM_INTRA_MODES, PredCtx, intra_predict,
-};
+use rvp9_core::intra_pred::{DcAvailability, IntraMode, NUM_INTRA_MODES, PredCtx, intra_predict};
 use rvp9_core::quant::forward::{PlaneQuantizers, scan_for_forward, vp9_quantize_b};
+use rvp9_core::transforms::TxSize;
 use rvp9_core::transforms::forward::fht4x4;
 use rvp9_core::transforms::inverse::iht4x4_16_add;
 use rvp9_core::transforms::scans::scan_for;
-use rvp9_core::transforms::TxSize;
 
 use crate::rdo::block_error::vp9_block_error;
 use crate::rdo::cost_coeffs::cost_coeffs;
@@ -576,7 +574,7 @@ mod tests {
     use super::*;
     use rvp9_core::cost::coef_cost::build_coef_cost_table;
     use rvp9_core::entropy::FrameContext;
-    use rvp9_core::quant::forward::{init_plane_quantizers, QuantizerDeltas};
+    use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
 
     /// Build a zero-cost `bmode_costs` row (so the RD is driven purely
     /// by the real transform-domain (rate, dist) — no mode-signalling
@@ -671,7 +669,6 @@ mod tests {
         let fc = FrameContext::new_default();
         let costs = build_coef_cost_table(&fc);
         let quant = init_plane_quantizers(32, QuantizerDeltas::Y);
-        let bmode = flat_bmode_costs();
 
         // Source: row r is the constant value `40 + 30*r` across all
         // columns (a pure vertical gradient: each row flat, rows differ).
@@ -808,7 +805,10 @@ mod tests {
                 w.mode,
             );
         }
-        assert_eq!(r.total_distortion, 0, "flat block → zero aggregate distortion");
+        assert_eq!(
+            r.total_distortion, 0,
+            "flat block → zero aggregate distortion"
+        );
         assert_eq!(r.recon, src, "flat block → recon recovers source exactly");
     }
 
@@ -874,7 +874,10 @@ mod tests {
             assert_eq!(w.dist, 0, "sub-block {i} exact H fit → zero distortion");
         }
         assert_eq!(r.total_distortion, 0);
-        assert_eq!(r.recon, src, "exact per-sub fit → 8×8 recon recovers source");
+        assert_eq!(
+            r.recon, src,
+            "exact per-sub fit → 8×8 recon recovers source"
+        );
     }
 
     /// libvpx `vp9_rdopt.c:1350` cap fires: aggregate RD ≥ cap → bail.

@@ -24,7 +24,7 @@
 
 use rvp9_decoder::{Decoder, ParsedFrame};
 use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
-use rvp9_harness::y4m::{probe_foreman_cif, read_cropped as y4m_read_cropped, YuvFrameBuf};
+use rvp9_harness::y4m::{YuvFrameBuf, probe_foreman_cif, read_cropped as y4m_read_cropped};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -114,7 +114,10 @@ fn parse_ivf_sizes(ivf: &[u8]) -> Vec<u32> {
 fn read_y4m_yplanes(path: &Path, w: u32, h: u32, count: usize) -> Vec<Vec<u8>> {
     use std::io::Read;
     let mut buf = Vec::new();
-    std::fs::File::open(path).unwrap().read_to_end(&mut buf).unwrap();
+    std::fs::File::open(path)
+        .unwrap()
+        .read_to_end(&mut buf)
+        .unwrap();
     // Y4M: skip header line.
     let nl = buf.iter().position(|&b| b == b'\n').unwrap();
     let mut p = nl + 1;
@@ -145,9 +148,12 @@ fn diag_foreman_per_frame() {
         eprintln!("    [skip] foreman_cif.y4m not found");
         return;
     };
-    let (frames, framerate) = y4m_read_cropped(&src, W, H, N_FRAMES as usize)
-        .expect("read foreman_cif");
-    eprintln!("foreman_cif {W}x{H} {framerate} fps {} frames", frames.len());
+    let (frames, framerate) =
+        y4m_read_cropped(&src, W, H, N_FRAMES as usize).expect("read foreman_cif");
+    eprintln!(
+        "foreman_cif {W}x{H} {framerate} fps {} frames",
+        frames.len()
+    );
 
     let targets: [u32; 4] = [25_000, 50_000, 100_000, 250_000];
 
@@ -218,8 +224,14 @@ fn diag_foreman_per_frame() {
             }
             eprintln!(
                 "  f{:2}: q={:3} bits={:6} PSNR={:5.2}dB sse(r,s)={:10} sse(r,s_-1)={:10} sse(s,s_-1)={:10} kf={}",
-                i, pkt.q_index, pkt.actual_bits, psnr_y, sse_self, sse_vs_prev_src,
-                sse_src_motion, pkt.frame_kind.is_key(),
+                i,
+                pkt.q_index,
+                pkt.actual_bits,
+                psnr_y,
+                sse_self,
+                sse_vs_prev_src,
+                sse_src_motion,
+                pkt.frame_kind.is_key(),
             );
             rvp_total_bits += u64::from(pkt.actual_bits);
             rvp_total_sse += sse_self;

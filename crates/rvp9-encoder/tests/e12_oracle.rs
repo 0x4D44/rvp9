@@ -24,9 +24,9 @@
 
 use rvp9_decoder::Decoder;
 use rvp9_encoder::{
-    e12stat, AqMode, EncoderConfig, RcMode, StreamEncoder, StreamFrameKind, YuvFrameRef,
+    AqMode, EncoderConfig, RcMode, StreamEncoder, StreamFrameKind, YuvFrameRef, e12stat,
 };
-use rvp9_harness::y4m::{probe_foreman_cif, read_cropped, YuvFrameBuf};
+use rvp9_harness::y4m::{YuvFrameBuf, probe_foreman_cif, read_cropped};
 
 const W: u32 = 256;
 const H: u32 = 256;
@@ -62,7 +62,11 @@ fn e12_oracle_foreman() {
     let (frames, framerate) = match read_cropped(&path, W, H, N_FRAMES as usize) {
         Ok((f, fr)) if f.len() == N_FRAMES as usize => (f, fr),
         Ok((f, _)) => {
-            eprintln!("    [skip] foreman_cif only yielded {}/{} frames", f.len(), N_FRAMES);
+            eprintln!(
+                "    [skip] foreman_cif only yielded {}/{} frames",
+                f.len(),
+                N_FRAMES
+            );
             return;
         }
         Err(e) => {
@@ -113,7 +117,9 @@ fn e12_oracle_foreman() {
 
     for (i, f) in frames.iter().enumerate() {
         let _ = e12stat::take_snapshot();
-        let pkt = enc.encode_frame(&yuv_view(f, W as usize)).expect("encode_frame");
+        let pkt = enc
+            .encode_frame(&yuv_view(f, W as usize))
+            .expect("encode_frame");
         let snap = e12stat::take_snapshot();
 
         // Decode to keep the encoder/decoder ref chain alive (the recon

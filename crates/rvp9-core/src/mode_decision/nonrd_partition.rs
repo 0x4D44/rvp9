@@ -1516,7 +1516,8 @@ mod tests {
             .filter(|l| matches!(l.bsize, BlockSize::Block8x8))
             .count();
         assert_eq!(
-            n8, 64,
+            n8,
+            64,
             "Phase A: expected 64 descent-chosen Block8x8 leaves, got {n8} (leaves: {:?})",
             result
                 .leaves

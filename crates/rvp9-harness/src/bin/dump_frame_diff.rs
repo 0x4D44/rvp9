@@ -116,7 +116,13 @@ fn main() {
     let u_exp = &expected[y_size..y_size + uv_size];
     let v_exp = &expected[y_size + uv_size..y_size + 2 * uv_size];
 
-    fn diff_plane(name: &str, got: &[u8], exp: &[u8], w: usize, h: usize) -> Option<(usize, usize)> {
+    fn diff_plane(
+        name: &str,
+        got: &[u8],
+        exp: &[u8],
+        w: usize,
+        h: usize,
+    ) -> Option<(usize, usize)> {
         let mut count = 0usize;
         let mut first: Option<(usize, usize)> = None;
         let mut sum_abs = 0u64;
@@ -138,10 +144,18 @@ fn main() {
         if let Some((c, r)) = first {
             println!(
                 "first {} diff @ ({}, {}): got={:3}  expected={:3}  | total {} mismatched pixels of {} (sum_abs={}, max_abs={})",
-                name, c, r, got[r*w+c], exp[r*w+c], count, w*h, sum_abs, max_abs
+                name,
+                c,
+                r,
+                got[r * w + c],
+                exp[r * w + c],
+                count,
+                w * h,
+                sum_abs,
+                max_abs
             );
         } else {
-            println!("{name}: MATCH ({} pixels)", w*h);
+            println!("{name}: MATCH ({} pixels)", w * h);
         }
         first
     }
@@ -160,7 +174,10 @@ fn main() {
             }
         }
     }
-    println!("---- Y per-4x4-block mismatch count grid ({}x{} blocks) ----", block_w, block_h);
+    println!(
+        "---- Y per-4x4-block mismatch count grid ({}x{} blocks) ----",
+        block_w, block_h
+    );
     print!("       ");
     for bc in 0..block_w {
         print!("{:3}c{:1} ", bc * 4, bc);
@@ -275,7 +292,9 @@ fn main() {
         let by0 = br * 4;
         println!(
             "---- first divergent Y 4x4 block @ (col {}, row {}) — {} diffs ----",
-            bx0, by0, block_diff[br * block_w + bc]
+            bx0,
+            by0,
+            block_diff[br * block_w + bc]
         );
         println!("  got:");
         for r in 0..4 {
@@ -330,7 +349,10 @@ fn dump_patch(name: &str, got: &[u8], exp: &[u8], w: usize, h: usize, cx: usize,
     let r1 = (cy + 6).min(h);
     let c0 = cx.saturating_sub(2);
     let c1 = (cx + 10).min(w);
-    println!("---- {} got patch @ rows {}..{}, cols {}..{} ----", name, r0, r1, c0, c1);
+    println!(
+        "---- {} got patch @ rows {}..{}, cols {}..{} ----",
+        name, r0, r1, c0, c1
+    );
     for r in r0..r1 {
         print!("  r{:3}: ", r);
         for c in c0..c1 {

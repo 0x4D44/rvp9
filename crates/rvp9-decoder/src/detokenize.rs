@@ -55,7 +55,13 @@ fn plane_type_index(plane: usize) -> usize {
 /// fold cell-by-cell.
 #[inline]
 #[must_use]
-fn fold_any_nonzero(coef_ctx: &TileCoefCtx, plane: usize, start: usize, n: usize, above: bool) -> u8 {
+fn fold_any_nonzero(
+    coef_ctx: &TileCoefCtx,
+    plane: usize,
+    start: usize,
+    n: usize,
+    above: bool,
+) -> u8 {
     for i in 0..n {
         let v = if above {
             coef_ctx.above_coef(plane, start + i)
@@ -140,8 +146,7 @@ pub fn decode_block_tokens(
     let plane_type = plane_type_index(plane);
     // libvpx `cm->fc->coef_probs[tx_size][plane_type][ref_type]`
     // (`vp9_detokenize.c:159-161`).
-    let coef_probs: &CoefBandCtxProbs =
-        &fc.coef_probs[tx_size as usize][plane_type][ref_type];
+    let coef_probs: &CoefBandCtxProbs = &fc.coef_probs[tx_size as usize][plane_type][ref_type];
 
     // Slice the per-(tx_size, plane_type, ref_type) count buckets out
     // of the bank, matching libvpx's `cm->counts.coef[tx][type][ref]`
@@ -175,9 +180,7 @@ pub fn decode_block_tokens(
     // D.15 kfleaf trace: dump initial_pt + raw above/left cells used by
     // the fold. Gated by RVP9_TRACE_KFLEAF=1 to keep the dump scoped.
     if crate::trace_flags::trace_flags().kfleaf {
-        let above_cells: Vec<u8> = (0..n)
-            .map(|i| coef_ctx.above_coef(plane, x4 + i))
-            .collect();
+        let above_cells: Vec<u8> = (0..n).map(|i| coef_ctx.above_coef(plane, x4 + i)).collect();
         let left_cells: Vec<u8> = (0..n)
             .map(|i| coef_ctx.left_coef(plane, y4_in_sb + i))
             .collect();
@@ -187,7 +190,10 @@ pub fn decode_block_tokens(
              above[{x4}..{}]={above_cells:?} left[{y4_in_sb}..{}]={left_cells:?} \
              a_any={a_any} l_any={l_any} initial_pt={initial_pt} \
              dequant=({},{})",
-            x4 + n, y4_in_sb + n, dequant.0, dequant.1,
+            x4 + n,
+            y4_in_sb + n,
+            dequant.0,
+            dequant.1,
         );
     }
 
@@ -272,8 +278,10 @@ pub fn decode_block_tokens(
              buffer_len={} scan_kind={} \
              probs[b=0][ctx={initial_pt}]={probs_b0:?} probs[b=1][ctx={initial_pt}]={probs_b1:?} \
              scan[0..8]={:?}",
-            x4 + 1, y4_in_sb + 1,
-            dequant.0, dequant.1,
+            x4 + 1,
+            y4_in_sb + 1,
+            dequant.0,
+            dequant.1,
             buf.len(),
             match tx_type {
                 TxType::DctDct => "default_scan_8x8",
@@ -292,8 +300,15 @@ pub fn decode_block_tokens(
             .as_deref()
             .unwrap_or("m17_tile_buffer.bin");
         match std::fs::write(dump_path, buf) {
-            Ok(_) => eprintln!("RVP9_DBG_TX8 wrote tile buffer ({} bytes) to {}", buf.len(), dump_path),
-            Err(e) => eprintln!("RVP9_DBG_TX8 failed to write tile buffer to {}: {}", dump_path, e),
+            Ok(_) => eprintln!(
+                "RVP9_DBG_TX8 wrote tile buffer ({} bytes) to {}",
+                buf.len(),
+                dump_path
+            ),
+            Err(e) => eprintln!(
+                "RVP9_DBG_TX8 failed to write tile buffer to {}: {}",
+                dump_path, e
+            ),
         }
         // Dump full coef_probs as a flat hex array for direct
         // copy-paste into the oracle snapshot. The Tx8x8 probs slot has
@@ -401,7 +416,8 @@ mod tests {
             None,
             &mut coef_ctx,
             0, // plane Y
-            0, 0, // x4, y4_in_sb
+            0,
+            0, // x4, y4_in_sb
             TxSize::Tx4x4,
             TxType::DctDct,
             0, // intra
@@ -451,8 +467,8 @@ mod tests {
             None,
             &mut coef_ctx,
             0,
-            4,   // x4 = 4 (covers cells 4,5)
-            0,   // y4_in_sb = 0 (covers cells 0,1)
+            4, // x4 = 4 (covers cells 4,5)
+            0, // y4_in_sb = 0 (covers cells 0,1)
             TxSize::Tx8x8,
             TxType::DctDct,
             0,
@@ -604,7 +620,8 @@ mod tests {
             None,
             &mut coef_ctx,
             0,
-            0, 0,
+            0,
+            0,
             TxSize::Tx4x4,
             TxType::DctDct,
             0,
@@ -675,7 +692,8 @@ mod tests {
             None,
             &mut coef_ctx,
             0,
-            0, 0,
+            0,
+            0,
             TxSize::Tx4x4,
             TxType::DctDct,
             0,
@@ -755,7 +773,8 @@ mod tests {
             None,
             &mut coef_ctx,
             0,
-            0, 0,
+            0,
+            0,
             TxSize::Tx4x4,
             TxType::DctDct,
             1, // inter

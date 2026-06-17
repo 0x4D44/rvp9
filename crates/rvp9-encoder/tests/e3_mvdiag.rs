@@ -52,7 +52,10 @@ fn e3_foreman_newmv_diag() {
     let (frames, framerate) = match read_cropped(&path, W, H, N_FRAMES as usize) {
         Ok((f, fr)) if f.len() == N_FRAMES as usize => (f, fr),
         Ok((f, _)) => {
-            eprintln!("[E3 skip] foreman_cif only yielded {}/{N_FRAMES} frames", f.len());
+            eprintln!(
+                "[E3 skip] foreman_cif only yielded {}/{N_FRAMES} frames",
+                f.len()
+            );
             return;
         }
         Err(e) => {
@@ -84,9 +87,7 @@ fn e3_foreman_newmv_diag() {
     };
     let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
 
-    eprintln!(
-        "[E3] foreman {W}x{H} {N_FRAMES} frames @ {framerate} fps target {target_bps} bps",
-    );
+    eprintln!("[E3] foreman {W}x{H} {N_FRAMES} frames @ {framerate} fps target {target_bps} bps",);
     for (i, (y, u, v)) in frames.iter().enumerate() {
         eprintln!("[E3] === frame {i} ===");
         let pkt = enc

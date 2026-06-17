@@ -128,7 +128,9 @@ fn encode(enable_tpl: bool, lag: u32, n_frames: u32) -> Vec<Vec<u8>> {
     if lag == 0 {
         for i in 0..n_frames {
             let (y, u, v) = moving_frame(i as u8);
-            let pkt = enc.encode_frame(&yuv_view(&y, &u, &v)).expect("encode_frame");
+            let pkt = enc
+                .encode_frame(&yuv_view(&y, &u, &v))
+                .expect("encode_frame");
             packets.push(pkt.data);
         }
     } else {
@@ -157,7 +159,9 @@ fn w_tpl_rdmult_adjusted_only_when_enabled() {
     // Phase OFF — enable_tpl = false. The hook substitution is gated, so
     // the counter must NOT advance.
     counter.store(0, Ordering::Relaxed);
-    let _ = encode(/* enable_tpl = */ false, /* lag = */ 8, /* n = */ 12);
+    let _ = encode(
+        /* enable_tpl = */ false, /* lag = */ 8, /* n = */ 12,
+    );
     let off = counter.load(Ordering::Relaxed);
     eprintln!("TPL OFF: rdmult-adjusted blocks = {off}");
     assert_eq!(off, 0, "TPL disabled must not adjust any block's rdmult");
@@ -166,7 +170,9 @@ fn w_tpl_rdmult_adjusted_only_when_enabled() {
     // single-GOP forward TPL pass has downstream frames to propagate
     // from). The counter must advance strictly above zero.
     counter.store(0, Ordering::Relaxed);
-    let _ = encode(/* enable_tpl = */ true, /* lag = */ 8, /* n = */ 12);
+    let _ = encode(
+        /* enable_tpl = */ true, /* lag = */ 8, /* n = */ 12,
+    );
     let on = counter.load(Ordering::Relaxed);
     eprintln!("TPL ON: rdmult-adjusted blocks = {on}");
     assert!(

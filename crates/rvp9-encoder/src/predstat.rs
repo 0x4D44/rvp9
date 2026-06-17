@@ -80,8 +80,7 @@ pub fn record_y_pred_block(
         for r in 0..tx_side {
             let src_off = (px_y + r) * pred_stride + px_x;
             let dst_off = (px_y + r) * frame_w + px_x;
-            pf.y[dst_off..dst_off + tx_side]
-                .copy_from_slice(&pred[src_off..src_off + tx_side]);
+            pf.y[dst_off..dst_off + tx_side].copy_from_slice(&pred[src_off..src_off + tx_side]);
         }
     });
 }

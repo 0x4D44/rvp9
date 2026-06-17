@@ -44,16 +44,14 @@ use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use rvp9_core::bitstream::{
-    CompressedHeaderOptions, FrameKind, HeaderTail, InterpFilter, RefFrameSizes, Superframe,
-    UncompressedHeader, parse_compressed_header, parse_superframe_index,
-    parse_uncompressed_header,
-};
 use rvp9_core::bitstream::frame::REF_FRAMES;
 use rvp9_core::bitstream::sub_parsers::{
-    LoopFilterParams, MAX_REF_LF_DELTAS, MAX_MODE_LF_DELTAS, MAX_SEGMENTS,
-    PREDICTION_PROBS, QuantizationParams, SEG_LVL_MAX, SEG_TREE_PROBS,
-    SegmentationParams, TileInfo,
+    LoopFilterParams, MAX_MODE_LF_DELTAS, MAX_REF_LF_DELTAS, MAX_SEGMENTS, PREDICTION_PROBS,
+    QuantizationParams, SEG_LVL_MAX, SEG_TREE_PROBS, SegmentationParams, TileInfo,
+};
+use rvp9_core::bitstream::{
+    CompressedHeaderOptions, FrameKind, HeaderTail, InterpFilter, RefFrameSizes, Superframe,
+    UncompressedHeader, parse_compressed_header, parse_superframe_index, parse_uncompressed_header,
 };
 use rvp9_core::entropy::{
     BLOCK_SIZE_GROUPS, CLASS0_SIZE, COEF_BANDS, COEFF_CONTEXTS, COMP_INTER_CONTEXTS,
@@ -65,8 +63,8 @@ use rvp9_core::entropy::{
 };
 use rvp9_core::intra_pred::IntraMode;
 use rvp9_core::mode_info::{BlockMode, BmiInfo, Mv, RefFrame};
-use rvp9_harness::container::{ContainerError, read_ivf_packets};
 use rvp9_decoder::Decoder;
+use rvp9_harness::container::{ContainerError, read_ivf_packets};
 
 // -----------------------------------------------------------------------------
 // CLI
@@ -245,18 +243,12 @@ fn parse_level(v: &str) -> Result<Level, String> {
 fn parse_frame_range(v: &str) -> Result<FrameRange, String> {
     match v.split_once('-') {
         None => {
-            let n: u32 = v
-                .parse()
-                .map_err(|e| format!("--frame not a u32: {e}"))?;
+            let n: u32 = v.parse().map_err(|e| format!("--frame not a u32: {e}"))?;
             Ok(FrameRange { start: n, end: n })
         }
         Some((s, e)) => {
-            let start: u32 = s
-                .parse()
-                .map_err(|e| format!("--frame range start: {e}"))?;
-            let end: u32 = e
-                .parse()
-                .map_err(|e| format!("--frame range end: {e}"))?;
+            let start: u32 = s.parse().map_err(|e| format!("--frame range start: {e}"))?;
+            let end: u32 = e.parse().map_err(|e| format!("--frame range end: {e}"))?;
             if end < start {
                 return Err(format!("--frame range end < start ({start}-{end})"));
             }
@@ -404,7 +396,11 @@ impl<W: Write> DiffReporter for TextReporter<W> {
 
     fn finish(&mut self) -> i32 {
         let _ = self.out.flush();
-        if self.any_diff && self.exit_on_diff { 1 } else { 0 }
+        if self.any_diff && self.exit_on_diff {
+            1
+        } else {
+            0
+        }
     }
 
     fn had_divergence(&self) -> bool {
@@ -495,7 +491,11 @@ impl<W: Write> DiffReporter for JsonReporter<W> {
             self.any_diff, self.emitted
         );
         let _ = self.out.flush();
-        if self.any_diff && self.exit_on_diff { 1 } else { 0 }
+        if self.any_diff && self.exit_on_diff {
+            1
+        } else {
+            0
+        }
     }
 
     fn had_divergence(&self) -> bool {
@@ -514,7 +514,10 @@ enum ByteDiff {
     Identical,
     /// One is a strict prefix of the other (no mismatched byte, but
     /// lengths differ).
-    PrefixMismatch { shorter_len: usize, longer_len: usize },
+    PrefixMismatch {
+        shorter_len: usize,
+        longer_len: usize,
+    },
     /// First differing byte at this offset.
     Diverge {
         offset: usize,
@@ -609,9 +612,9 @@ fn format_byte_diff(d: &ByteDiff) -> String {
         ByteDiff::PrefixMismatch {
             shorter_len,
             longer_len,
-        } => format!(
-            "One is a prefix of the other (lengths differ: {shorter_len} vs {longer_len})."
-        ),
+        } => {
+            format!("One is a prefix of the other (lengths differ: {shorter_len} vs {longer_len}).")
+        }
         ByteDiff::Diverge {
             offset,
             frame: Some(f),
@@ -798,8 +801,8 @@ fn parse_header_opt(
 /// Errors are turned into a `String` for the caller to surface via
 /// stderr.
 fn load_frames(path: &Path) -> Result<Vec<FrameEntry>, String> {
-    let data = std::fs::read(path)
-        .map_err(|e| format!("could not read {}: {e}", path.display()))?;
+    let data =
+        std::fs::read(path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
     extract_frames(&data).map_err(|e| format!("{}: {e}", path.display()))
 }
 
@@ -899,9 +902,7 @@ fn level_1_diff<R: DiffReporter>(
             }
         }
 
-        if ea.is_superframe != eb.is_superframe
-            || ea.superframe_count != eb.superframe_count
-        {
+        if ea.is_superframe != eb.is_superframe || ea.superframe_count != eb.superframe_count {
             let detail = format!(
                 "{}: superframe a=({}, count={}) b=({}, count={})",
                 frame_label(ea),
@@ -927,12 +928,7 @@ fn level_1_diff<R: DiffReporter>(
         let kind_a = frame_kind_label(&ha.kind);
         let kind_b = frame_kind_label(&hb.kind);
         if kind_a != kind_b {
-            let detail = format!(
-                "{}: frame_kind a={} b={}",
-                frame_label(ea),
-                kind_a,
-                kind_b,
-            );
+            let detail = format!("{}: frame_kind a={} b={}", frame_label(ea), kind_a, kind_b,);
             reporter.divergence(1, "frame-kind", Some(&detail));
             emitted += 1;
             if matches!(args.verbose, Verbose::First) && emitted > 0 {
@@ -1054,11 +1050,7 @@ fn walk_uncompressed_header<F: FnMut(&str, String)>(
         (None, None) => {}
         _ => emit(
             "header.tail.presence",
-            format!(
-                "a={} b={}",
-                a.tail.is_some(),
-                b.tail.is_some(),
-            ),
+            format!("a={} b={}", a.tail.is_some(), b.tail.is_some(),),
         ),
     }
 }
@@ -1110,12 +1102,7 @@ fn walk_kind<F: FnMut(&str, String)>(a: &FrameKind, b: &FrameKind, emit: &mut F)
             diff_field("header.kind.InterFrame.reset_frame_context", ra, rb, emit);
             diff_field("header.kind.InterFrame.refresh_frame_flags", fa, fb, emit);
             diff_field("header.kind.InterFrame.ref_frame_indices", ia, ib, emit);
-            diff_field(
-                "header.kind.InterFrame.ref_frame_sign_biases",
-                sa,
-                sb,
-                emit,
-            );
+            diff_field("header.kind.InterFrame.ref_frame_sign_biases", sa, sb, emit);
             diff_field(
                 "header.kind.InterFrame.allow_high_precision_mv",
                 ha,
@@ -1439,38 +1426,40 @@ fn level_3_diff<R: DiffReporter>(
         // the partition extends past the frame data we emit a parse
         // error record (mirrors the decoder's
         // `TruncatedCompressedHeader`).
-        let compressed_a = match slice_compressed(ea.header_end, ta.first_partition_size, &ea.frame_bytes) {
-            Some(s) => s,
-            None => {
-                emit(
-                    "fc.parse-error",
-                    format!(
-                        "a: compressed header extends past frame data \
+        let compressed_a =
+            match slice_compressed(ea.header_end, ta.first_partition_size, &ea.frame_bytes) {
+                Some(s) => s,
+                None => {
+                    emit(
+                        "fc.parse-error",
+                        format!(
+                            "a: compressed header extends past frame data \
                          (header_end={}, fps={}, frame_len={})",
-                        ea.header_end,
-                        ta.first_partition_size,
-                        ea.frame_bytes.len(),
-                    ),
-                );
-                continue;
-            }
-        };
-        let compressed_b = match slice_compressed(eb.header_end, tb.first_partition_size, &eb.frame_bytes) {
-            Some(s) => s,
-            None => {
-                emit(
-                    "fc.parse-error",
-                    format!(
-                        "b: compressed header extends past frame data \
+                            ea.header_end,
+                            ta.first_partition_size,
+                            ea.frame_bytes.len(),
+                        ),
+                    );
+                    continue;
+                }
+            };
+        let compressed_b =
+            match slice_compressed(eb.header_end, tb.first_partition_size, &eb.frame_bytes) {
+                Some(s) => s,
+                None => {
+                    emit(
+                        "fc.parse-error",
+                        format!(
+                            "b: compressed header extends past frame data \
                          (header_end={}, fps={}, frame_len={})",
-                        eb.header_end,
-                        tb.first_partition_size,
-                        eb.frame_bytes.len(),
-                    ),
-                );
-                continue;
-            }
-        };
+                            eb.header_end,
+                            tb.first_partition_size,
+                            eb.frame_bytes.len(),
+                        ),
+                    );
+                    continue;
+                }
+            };
 
         let opts_a = options_from_header(ha);
         let opts_b = options_from_header(hb);
@@ -1564,11 +1553,7 @@ fn slice_compressed(header_end: usize, first_partition_size: u16, data: &[u8]) -
 /// 12. `skip_probs[ctx]`
 /// 13. `nmvc.joints[i]` + `nmvc.comps[axis].{...}`
 /// 14. `initialized`
-fn walk_frame_context<F: FnMut(&str, String)>(
-    a: &FrameContext,
-    b: &FrameContext,
-    emit: &mut F,
-) {
+fn walk_frame_context<F: FnMut(&str, String)>(a: &FrameContext, b: &FrameContext, emit: &mut F) {
     // 1. y_mode_prob[BLOCK_SIZE_GROUPS][INTRA_MODES-1]
     for g in 0..BLOCK_SIZE_GROUPS {
         for i in 0..(INTRA_MODES - 1) {
@@ -1587,7 +1572,12 @@ fn walk_frame_context<F: FnMut(&str, String)>(
     for ctx in 0..PARTITION_CONTEXTS {
         for i in 0..(PARTITION_TYPES - 1) {
             let path = format!("fc.partition_prob[ctx={ctx}][{i}]");
-            diff_field(&path, &a.partition_prob[ctx][i], &b.partition_prob[ctx][i], emit);
+            diff_field(
+                &path,
+                &a.partition_prob[ctx][i],
+                &b.partition_prob[ctx][i],
+                emit,
+            );
         }
     }
     // 4. coef_probs[TX_SIZES][PLANE_TYPES][REF_TYPES][COEF_BANDS]
@@ -1642,12 +1632,22 @@ fn walk_frame_context<F: FnMut(&str, String)>(
     // 7. intra_inter_prob[INTRA_INTER_CONTEXTS]
     for ctx in 0..INTRA_INTER_CONTEXTS {
         let path = format!("fc.intra_inter_prob[ctx={ctx}]");
-        diff_field(&path, &a.intra_inter_prob[ctx], &b.intra_inter_prob[ctx], emit);
+        diff_field(
+            &path,
+            &a.intra_inter_prob[ctx],
+            &b.intra_inter_prob[ctx],
+            emit,
+        );
     }
     // 8. comp_inter_prob[COMP_INTER_CONTEXTS]
     for ctx in 0..COMP_INTER_CONTEXTS {
         let path = format!("fc.comp_inter_prob[ctx={ctx}]");
-        diff_field(&path, &a.comp_inter_prob[ctx], &b.comp_inter_prob[ctx], emit);
+        diff_field(
+            &path,
+            &a.comp_inter_prob[ctx],
+            &b.comp_inter_prob[ctx],
+            emit,
+        );
     }
     // 9. single_ref_prob[REF_CONTEXTS][2]
     for ctx in 0..REF_CONTEXTS {
@@ -1679,11 +1679,7 @@ fn walk_frame_context<F: FnMut(&str, String)>(
     diff_field("fc.initialized", &a.initialized, &b.initialized, emit);
 }
 
-fn walk_tx_probs<F: FnMut(&str, String)>(
-    a: &DefaultTxProbs,
-    b: &DefaultTxProbs,
-    emit: &mut F,
-) {
+fn walk_tx_probs<F: FnMut(&str, String)>(a: &DefaultTxProbs, b: &DefaultTxProbs, emit: &mut F) {
     // p32x32: [[u8; 3]; 2]
     for ctx in 0..2 {
         for i in 0..3 {
@@ -1744,12 +1740,7 @@ fn walk_nmv_component<F: FnMut(&str, String)>(
         );
     }
     for i in 0..MV_OFFSET_BITS {
-        diff_field(
-            &format!("{base}.bits[{i}]"),
-            &a.bits[i],
-            &b.bits[i],
-            emit,
-        );
+        diff_field(&format!("{base}.bits[{i}]"), &a.bits[i], &b.bits[i], emit);
     }
     for c0 in 0..CLASS0_SIZE {
         for i in 0..(MV_FP_SIZE - 1) {
@@ -1762,12 +1753,7 @@ fn walk_nmv_component<F: FnMut(&str, String)>(
         }
     }
     for i in 0..(MV_FP_SIZE - 1) {
-        diff_field(
-            &format!("{base}.fp[{i}]"),
-            &a.fp[i],
-            &b.fp[i],
-            emit,
-        );
+        diff_field(&format!("{base}.fp[{i}]"), &a.fp[i], &b.fp[i], emit);
     }
     diff_field(
         &format!("{base}.class0_hp"),
@@ -1845,14 +1831,22 @@ fn level_4_diff<R: DiffReporter, E: Write>(
     let a_data = match std::fs::read(a_path) {
         Ok(v) => v,
         Err(e) => {
-            let _ = writeln!(stderr, "L4 skipped: could not read {}: {e}", a_path.display());
+            let _ = writeln!(
+                stderr,
+                "L4 skipped: could not read {}: {e}",
+                a_path.display()
+            );
             return;
         }
     };
     let b_data = match std::fs::read(b_path) {
         Ok(v) => v,
         Err(e) => {
-            let _ = writeln!(stderr, "L4 skipped: could not read {}: {e}", b_path.display());
+            let _ = writeln!(
+                stderr,
+                "L4 skipped: could not read {}: {e}",
+                b_path.display()
+            );
             return;
         }
     };
@@ -2059,11 +2053,7 @@ fn diff_one_decoded_frame<R: DiffReporter>(
                 (Some(_), None) | (None, Some(_)) => {
                     emit(
                         &format!("{cell_label}.presence"),
-                        format!(
-                            "a={} b={}",
-                            cell_a.is_some(),
-                            cell_b.is_some(),
-                        ),
+                        format!("a={} b={}", cell_a.is_some(), cell_b.is_some(),),
                     );
                 }
                 (Some(mi_a), Some(mi_b)) => {
@@ -2092,12 +2082,7 @@ pub(crate) fn walk_mode_info<F: FnMut(&str, String)>(
         &b.block_size,
         emit,
     );
-    diff_field(
-        &format!("{mi_label}.tx_size"),
-        &a.tx_size,
-        &b.tx_size,
-        emit,
-    );
+    diff_field(&format!("{mi_label}.tx_size"), &a.tx_size, &b.tx_size, emit);
     diff_field(&format!("{mi_label}.skip"), &a.skip, &b.skip, emit);
     diff_field(
         &format!("{mi_label}.segment_id"),
@@ -2122,12 +2107,7 @@ pub(crate) fn walk_mode_info<F: FnMut(&str, String)>(
 /// Walker over [`rvp9_core::mode_info::BlockMode`]. Tag mismatch
 /// (intra vs inter) emits one record; same-tag pairs recurse into
 /// payload fields.
-fn walk_block_mode<F: FnMut(&str, String)>(
-    base: &str,
-    a: &BlockMode,
-    b: &BlockMode,
-    emit: &mut F,
-) {
+fn walk_block_mode<F: FnMut(&str, String)>(base: &str, a: &BlockMode, b: &BlockMode, emit: &mut F) {
     let tag_a = block_mode_tag(a);
     let tag_b = block_mode_tag(b);
     if tag_a != tag_b {
@@ -2136,8 +2116,14 @@ fn walk_block_mode<F: FnMut(&str, String)>(
     }
     match (a, b) {
         (
-            BlockMode::Intra { y_mode: ya, uv_mode: ua },
-            BlockMode::Intra { y_mode: yb, uv_mode: ub },
+            BlockMode::Intra {
+                y_mode: ya,
+                uv_mode: ua,
+            },
+            BlockMode::Intra {
+                y_mode: yb,
+                uv_mode: ub,
+            },
         ) => {
             diff_field(&format!("{base}.y_mode"), ya, yb, emit);
             diff_field(&format!("{base}.uv_mode"), ua, ub, emit);
@@ -2195,12 +2181,7 @@ fn walk_mv<F: FnMut(&str, String)>(base: &str, a: &Mv, b: &Mv, emit: &mut F) {
 }
 
 /// Walker over [`rvp9_core::mode_info::BmiInfo`].
-fn walk_bmi_info<F: FnMut(&str, String)>(
-    base: &str,
-    a: &BmiInfo,
-    b: &BmiInfo,
-    emit: &mut F,
-) {
+fn walk_bmi_info<F: FnMut(&str, String)>(base: &str, a: &BmiInfo, b: &BmiInfo, emit: &mut F) {
     diff_field(&format!("{base}.as_mode"), &a.as_mode, &b.as_mode, emit);
     walk_mv_pair(&format!("{base}.as_mv"), &a.as_mv, &b.as_mv, emit);
 }
@@ -2450,16 +2431,9 @@ mod tests {
     #[test]
     fn level_numeric_and_all_parse() {
         for n in 0..=5u8 {
-            let a = parse_args(&argv(&[
-                "--a",
-                "x",
-                "--b",
-                "y",
-                "--level",
-                &n.to_string(),
-            ]))
-            .unwrap()
-            .unwrap();
+            let a = parse_args(&argv(&["--a", "x", "--b", "y", "--level", &n.to_string()]))
+                .unwrap()
+                .unwrap();
             assert_eq!(a.level, Level::N(n));
         }
         let a = parse_args(&argv(&["--a", "x", "--b", "y", "--level", "all"]))
@@ -2541,9 +2515,14 @@ mod tests {
     fn equals_form_parses() {
         // `--flag=value` is the alternate syntax — assert it works for
         // the value-taking flags.
-        let a = parse_args(&argv(&["--a=x.ivf", "--b=y.ivf", "--level=2", "--format=json"]))
-            .unwrap()
-            .unwrap();
+        let a = parse_args(&argv(&[
+            "--a=x.ivf",
+            "--b=y.ivf",
+            "--level=2",
+            "--format=json",
+        ]))
+        .unwrap()
+        .unwrap();
         assert_eq!(a.a, PathBuf::from("x.ivf"));
         assert_eq!(a.b, PathBuf::from("y.ivf"));
         assert_eq!(a.level, Level::N(2));
@@ -2722,7 +2701,12 @@ mod tests {
     #[test]
     fn exit_on_diff_off_returns_zero_even_with_divergence() {
         let mut buf = Vec::<u8>::new();
-        let mut r = TextReporter::new(&mut buf, Verbose::First, /*exit_on_diff=*/ false, false);
+        let mut r = TextReporter::new(
+            &mut buf,
+            Verbose::First,
+            /*exit_on_diff=*/ false,
+            false,
+        );
         r.divergence(0, "byte", Some("x"));
         assert_eq!(r.finish(), 0);
     }
@@ -2831,14 +2815,17 @@ mod tests {
         let _code = run_with_streams(&args, &mut err, &mut reporter);
         let _ = (a, b);
         let err_s = String::from_utf8(err).unwrap();
-        assert!(err_s.contains("level 5 not yet implemented"), "err: {err_s}");
+        assert!(
+            err_s.contains("level 5 not yet implemented"),
+            "err: {err_s}"
+        );
     }
 
     // -------------------------------------------------------------------------
     // Level 1 / Level 2 tests
     // -------------------------------------------------------------------------
 
-    use rvp9_core::bitstream::frame::{sync, ColorSpace};
+    use rvp9_core::bitstream::frame::{ColorSpace, sync};
     use rvp9_core::bitstream::raw::RawBitWriter;
     use rvp9_core::bitstream::sub_parsers::get_tile_n_bits;
 
@@ -2912,12 +2899,30 @@ mod tests {
         // + 16 (w-1) + 16 (h-1) + 1 (no render) + 1+1+2 (rfc/fpdm/idx)
         // + 6+3+1 (loopfilter) + 8+1+1+1 (quant) + 1 (seg disabled)
         // + extra_col_bit + 1 (rows) + 16 (fps)
-        2 + 2 + 1 + 1 + 1 + 1 + 24 + 3 + 1 + 16 + 16 + 1
-            + 1 + 1 + 2
-            + 6 + 3 + 1
-            + 8 + 1 + 1 + 1
+        2 + 2
             + 1
-            + extra_col_bit + 1
+            + 1
+            + 1
+            + 1
+            + 24
+            + 3
+            + 1
+            + 16
+            + 16
+            + 1
+            + 1
+            + 1
+            + 2
+            + 6
+            + 3
+            + 1
+            + 8
+            + 1
+            + 1
+            + 1
+            + 1
+            + extra_col_bit
+            + 1
             + 16
     }
 
@@ -2939,18 +2944,14 @@ mod tests {
     fn uncompressed_header_partial_eq_smoke() {
         // Parse the same payload twice; expect equality.
         let payload = build_keyframe_payload(320, 240);
-        let refs: rvp9_core::bitstream::RefFrameSizes =
-            [None; rvp9_core::bitstream::REF_FRAMES];
-        let (h1, _) =
-            rvp9_core::bitstream::parse_uncompressed_header(&payload, &refs).unwrap();
-        let (h2, _) =
-            rvp9_core::bitstream::parse_uncompressed_header(&payload, &refs).unwrap();
+        let refs: rvp9_core::bitstream::RefFrameSizes = [None; rvp9_core::bitstream::REF_FRAMES];
+        let (h1, _) = rvp9_core::bitstream::parse_uncompressed_header(&payload, &refs).unwrap();
+        let (h2, _) = rvp9_core::bitstream::parse_uncompressed_header(&payload, &refs).unwrap();
         assert_eq!(h1, h2);
 
         // Now perturb height and re-parse → not equal.
         let other = build_keyframe_payload(320, 480);
-        let (h3, _) =
-            rvp9_core::bitstream::parse_uncompressed_header(&other, &refs).unwrap();
+        let (h3, _) = rvp9_core::bitstream::parse_uncompressed_header(&other, &refs).unwrap();
         assert_ne!(h1, h3);
     }
 
@@ -3019,7 +3020,10 @@ mod tests {
         // Append `compressed_partition_size` zero bytes for the
         // compressed partition + a small trailing pad for bool-reader
         // headroom.
-        buf.extend(std::iter::repeat_n(0u8, compressed_partition_size as usize + 4));
+        buf.extend(std::iter::repeat_n(
+            0u8,
+            compressed_partition_size as usize + 4,
+        ));
         buf
     }
 
@@ -3312,14 +3316,23 @@ mod tests {
             walk_frame_context(&a, &b, &mut emit);
         }
         let joined = paths.join("\n");
-        assert!(joined.contains("fc.partition_prob[ctx=5][2]"), "paths:\n{joined}");
+        assert!(
+            joined.contains("fc.partition_prob[ctx=5][2]"),
+            "paths:\n{joined}"
+        );
         assert!(
             joined.contains("fc.coef_probs[tx=8x8][plane=0][ref=1][band=3][ctx=2][node=1]"),
             "paths:\n{joined}",
         );
-        assert!(joined.contains("fc.tx_probs.p16x16[ctx=1][0]"), "paths:\n{joined}");
+        assert!(
+            joined.contains("fc.tx_probs.p16x16[ctx=1][0]"),
+            "paths:\n{joined}"
+        );
         assert!(joined.contains("fc.skip_probs[ctx=2]"), "paths:\n{joined}");
-        assert!(joined.contains("fc.nmvc.comps[0].class0[0]"), "paths:\n{joined}");
+        assert!(
+            joined.contains("fc.nmvc.comps[0].class0[0]"),
+            "paths:\n{joined}"
+        );
         assert!(joined.contains("fc.initialized"), "paths:\n{joined}");
         // And we should have emitted exactly 6 records (one per leaf
         // we perturbed).
@@ -3392,8 +3405,10 @@ mod tests {
             let ok = r.is_ok();
             let differs = ok && fc != baseline.1;
             if differs {
-                eprintln!("byte0={byte0:#04x}: differs (skip_probs={:?}, coef[0][0][0][0][0]={:?})",
-                    fc.skip_probs, fc.coef_probs[0][0][0][0][0]);
+                eprintln!(
+                    "byte0={byte0:#04x}: differs (skip_probs={:?}, coef[0][0][0][0][0]={:?})",
+                    fc.skip_probs, fc.coef_probs[0][0][0][0][0]
+                );
             }
         }
     }
@@ -3418,13 +3433,9 @@ mod tests {
         // Locate the compressed partition: re-parse the A side to get
         // `header_end`. The keyframe payload's header is followed by
         // 64 zero bytes (the partition) + 4 pad bytes.
-        let no_refs: rvp9_core::bitstream::RefFrameSizes =
-            [None; rvp9_core::bitstream::REF_FRAMES];
-        let (_, header_end) = rvp9_core::bitstream::parse_uncompressed_header(
-            &payload_a,
-            &no_refs,
-        )
-        .expect("parse A keyframe");
+        let no_refs: rvp9_core::bitstream::RefFrameSizes = [None; rvp9_core::bitstream::REF_FRAMES];
+        let (_, header_end) = rvp9_core::bitstream::parse_uncompressed_header(&payload_a, &no_refs)
+            .expect("parse A keyframe");
         // Set the first compressed-partition byte to 0x48
         // (`0b0100_1000`). The top bit stays 0 so the marker check
         // passes; bit 6 = 1 forces the `read_coef_probs` update gate
@@ -3542,8 +3553,7 @@ mod tests {
         };
         let mut records = Vec::<(String, String)>::new();
         {
-            let mut emit =
-                |p: &str, d: String| records.push((p.to_string(), d));
+            let mut emit = |p: &str, d: String| records.push((p.to_string(), d));
             walk_mode_info("mi[row=0,col=0]", &mi, &mi, &mut emit);
         }
         assert!(records.is_empty(), "expected zero records, got {records:?}");
@@ -3572,8 +3582,7 @@ mod tests {
 
         let mut records = Vec::<(String, String)>::new();
         {
-            let mut emit =
-                |p: &str, d: String| records.push((p.to_string(), d));
+            let mut emit = |p: &str, d: String| records.push((p.to_string(), d));
             walk_mode_info("mi[row=2,col=4]", &base, &perturbed, &mut emit);
         }
         let paths: Vec<String> = records.iter().map(|(p, _)| p.clone()).collect();
@@ -3595,8 +3604,8 @@ mod tests {
     fn walk_mode_info_tag_mismatch() {
         // Intra vs Inter — should emit a single `.tag` record and stop
         // recursing into payload (no need to compare y_mode vs mode).
-        use rvp9_core::block::BlockSize;
         use rvp9_core::bitstream::InterpFilter;
+        use rvp9_core::block::BlockSize;
         use rvp9_core::mode_info::InterMode;
         use rvp9_core::transforms::TxSize;
         let intra = rvp9_core::mode_info::ModeInfo {
@@ -3627,8 +3636,7 @@ mod tests {
         };
         let mut records = Vec::<(String, String)>::new();
         {
-            let mut emit =
-                |p: &str, d: String| records.push((p.to_string(), d));
+            let mut emit = |p: &str, d: String| records.push((p.to_string(), d));
             walk_mode_info("mi[row=0,col=0]", &intra, &inter, &mut emit);
         }
         let paths: Vec<String> = records.iter().map(|(p, _)| p.clone()).collect();
@@ -3722,7 +3730,10 @@ mod tests {
         let _ = (a, b);
         assert_eq!(code, 1);
         // L0 reports the byte diff; L2 reports the width/height fields.
-        assert!(out.contains("Level 2") && out.contains("header.width"), "out={out:?}");
+        assert!(
+            out.contains("Level 2") && out.contains("header.width"),
+            "out={out:?}"
+        );
     }
 
     #[test]

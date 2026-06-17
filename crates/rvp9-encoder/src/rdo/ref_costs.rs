@@ -124,14 +124,11 @@ pub fn estimate_ref_frame_costs(
     }
 
     // libvpx line 2442: `intra_inter_p = vp9_get_intra_inter_prob`.
-    let intra_inter_p =
-        DEFAULT_INTRA_INTER_PROB[ctx.intra_inter_ctx as usize];
+    let intra_inter_p = DEFAULT_INTRA_INTER_PROB[ctx.intra_inter_ctx as usize];
 
     // libvpx lines 2443-2450: comp_inter_p / comp_mode_p selection.
     let comp_inter_p = match reference_mode {
-        ReferenceMode::ReferenceModeSelect => {
-            DEFAULT_COMP_INTER_PROB[ctx.comp_inter_ctx as usize]
-        }
+        ReferenceMode::ReferenceModeSelect => DEFAULT_COMP_INTER_PROB[ctx.comp_inter_ctx as usize],
         _ => 128,
     };
     out.comp_mode_p = if matches!(reference_mode, ReferenceMode::ReferenceModeSelect) {
@@ -206,24 +203,22 @@ mod tests {
     #[test]
     fn w4_5_ref_frame_cost_changes_with_ref_frame_context() {
         let ctx_a = RefFrameContext {
-            intra_inter_ctx: 0, // intra_inter_p = 9 (very biased to intra)
+            intra_inter_ctx: 0,   // intra_inter_p = 9 (very biased to intra)
             single_ref_p1_ctx: 0, // p1 = 33
             single_ref_p2_ctx: 0, // p2 = 16
             comp_ref_ctx: 0,
             comp_inter_ctx: 0,
         };
         let ctx_b = RefFrameContext {
-            intra_inter_ctx: 3, // intra_inter_p = 225 (heavily inter)
+            intra_inter_ctx: 3,   // intra_inter_p = 225 (heavily inter)
             single_ref_p1_ctx: 4, // p1 = 238
             single_ref_p2_ctx: 4, // p2 = 247
             comp_ref_ctx: 0,
             comp_inter_ctx: 0,
         };
 
-        let costs_a =
-            estimate_ref_frame_costs(false, ReferenceMode::SingleReference, ctx_a);
-        let costs_b =
-            estimate_ref_frame_costs(false, ReferenceMode::SingleReference, ctx_b);
+        let costs_a = estimate_ref_frame_costs(false, ReferenceMode::SingleReference, ctx_a);
+        let costs_b = estimate_ref_frame_costs(false, ReferenceMode::SingleReference, ctx_b);
 
         // The intra-vs-inter cost MUST differ — `intra_inter_ctx 0 →
         // p=9` (very biased toward `0`, i.e. cheap to encode `0` /
@@ -260,8 +255,7 @@ mod tests {
     #[test]
     fn seg_ref_active_zeros_all_costs() {
         let ctx = RefFrameContext::default();
-        let out =
-            estimate_ref_frame_costs(true, ReferenceMode::ReferenceModeSelect, ctx);
+        let out = estimate_ref_frame_costs(true, ReferenceMode::ReferenceModeSelect, ctx);
         assert!(out.single.iter().all(|&v| v == 0));
         assert!(out.comp.iter().all(|&v| v == 0));
         assert_eq!(out.comp_mode_p, 128);
@@ -283,13 +277,10 @@ mod tests {
         let p2 = DEFAULT_SINGLE_REF_PROB[2][1];
         let expected_base = vp9_cost_bit(intra_inter_p, true);
         let expected_last = expected_base + vp9_cost_bit(p1, false);
-        let expected_golden =
-            expected_base + vp9_cost_bit(p1, true) + vp9_cost_bit(p2, false);
-        let expected_altref =
-            expected_base + vp9_cost_bit(p1, true) + vp9_cost_bit(p2, true);
+        let expected_golden = expected_base + vp9_cost_bit(p1, true) + vp9_cost_bit(p2, false);
+        let expected_altref = expected_base + vp9_cost_bit(p1, true) + vp9_cost_bit(p2, true);
 
-        let out =
-            estimate_ref_frame_costs(false, ReferenceMode::SingleReference, ctx);
+        let out = estimate_ref_frame_costs(false, ReferenceMode::SingleReference, ctx);
         assert_eq!(out.single[RefFrame::LastFrame as usize], expected_last);
         assert_eq!(out.single[RefFrame::GoldenFrame as usize], expected_golden);
         assert_eq!(out.single[RefFrame::AltrefFrame as usize], expected_altref);

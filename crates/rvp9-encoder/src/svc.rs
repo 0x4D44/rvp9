@@ -657,7 +657,8 @@ impl Svc {
         self.layer_context.clear();
         self.layer_context.reserve_exact(total);
         for &bw in per_layer_target_bandwidth {
-            self.layer_context.push(LayerContext::new(per_layer_rc_config, bw));
+            self.layer_context
+                .push(LayerContext::new(per_layer_rc_config, bw));
         }
     }
 
@@ -910,8 +911,7 @@ impl Svc {
         // libvpx 629-634: tl = current_video_frame_in_layer & 1
         //                 from the tl0 slot.
         let tl0_idx = (spatial_id as usize) * (self.number_temporal_layers as usize);
-        let temporal_id =
-            (self.layer_context[tl0_idx].current_video_frame_in_layer & 1) as i32;
+        let temporal_id = (self.layer_context[tl0_idx].current_video_frame_in_layer & 1) as i32;
         self.temporal_layer_id = temporal_id;
 
         self.clear_ext_refresh();
@@ -1110,8 +1110,7 @@ mod tests {
         assert_eq!(svc.layer_context.len(), 9);
         for (i, lc) in svc.layer_context.iter().enumerate() {
             assert_eq!(
-                lc.target_bandwidth,
-                targets[i],
+                lc.target_bandwidth, targets[i],
                 "layer {i} target_bandwidth mismatch"
             );
         }
@@ -1272,7 +1271,9 @@ mod tests {
         rc.buffer_level = 12_345;
         rc.total_actual_bits = 67_890;
 
-        svc.save_layer_context(&rc, /*target=*/ 87_654, /*qp=*/ 100, /*mbs=*/ 50);
+        svc.save_layer_context(
+            &rc, /*target=*/ 87_654, /*qp=*/ 100, /*mbs=*/ 50,
+        );
         // Mutate the original RC — confirm restore returns the *saved*
         // snapshot, not the post-mutation state.
         rc.last_picked_qindex = 0;

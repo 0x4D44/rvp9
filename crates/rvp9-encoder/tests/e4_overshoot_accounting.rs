@@ -29,7 +29,7 @@ use rvp9_core::entropy::bitacct;
 use rvp9_encoder::rate_control::FrameKind as RcFrameKind;
 use rvp9_encoder::skipstat;
 use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, StreamFrameKind, YuvFrameRef};
-use rvp9_harness::y4m::{probe_foreman_cif, read_cropped, YuvFrameBuf};
+use rvp9_harness::y4m::{YuvFrameBuf, probe_foreman_cif, read_cropped};
 
 fn yuv_view<'a>(f: &'a YuvFrameBuf, w: usize) -> YuvFrameRef<'a> {
     YuvFrameRef {
@@ -43,7 +43,15 @@ fn yuv_view<'a>(f: &'a YuvFrameBuf, w: usize) -> YuvFrameRef<'a> {
 }
 
 const CAT_NAMES: [&str; bitacct::N_CATEGORIES] = [
-    "partition", "skip", "is_inter", "tx_size", "mode+ref", "mv_delta", "coef", "seg_id", "other",
+    "partition",
+    "skip",
+    "is_inter",
+    "tx_size",
+    "mode+ref",
+    "mv_delta",
+    "coef",
+    "seg_id",
+    "other",
 ];
 
 #[test]
@@ -69,7 +77,11 @@ fn e4_overshoot_accounting_foreman_100k() {
     let (frames, framerate) = match read_cropped(&path, W, H, N_FRAMES as usize) {
         Ok((f, fr)) if f.len() == N_FRAMES as usize => (f, fr),
         Ok((f, _)) => {
-            eprintln!("    [skip] foreman_cif only yielded {}/{} frames", f.len(), N_FRAMES);
+            eprintln!(
+                "    [skip] foreman_cif only yielded {}/{} frames",
+                f.len(),
+                N_FRAMES
+            );
             return;
         }
         Err(e) => {
@@ -101,7 +113,10 @@ fn e4_overshoot_accounting_foreman_100k() {
     };
     let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
 
-    eprintln!("E4 Overshoot Accounting — foreman_cif 256x256, {N_FRAMES} frames, target {} kbps", TARGET_BPS / 1000);
+    eprintln!(
+        "E4 Overshoot Accounting — foreman_cif 256x256, {N_FRAMES} frames, target {} kbps",
+        TARGET_BPS / 1000
+    );
     eprintln!("source: {} @ {framerate} fps", path.display());
     eprintln!();
 
@@ -200,7 +215,10 @@ fn e4_overshoot_accounting_foreman_100k() {
     eprintln!();
     eprintln!("=== 1. Per-category bit breakdown (inter frames) ===");
     eprintln!("  avg ACTUAL coded bits / inter frame : {avg_actual:.0}");
-    eprintln!("  sum of category bit estimates / fr  : {:.0}  (entropy-cost model)", total_cat_bits / n);
+    eprintln!(
+        "  sum of category bit estimates / fr  : {:.0}  (entropy-cost model)",
+        total_cat_bits / n
+    );
     eprintln!();
     eprintln!("  category      bits/frame    % of coded");
     let mut order: Vec<usize> = (0..bitacct::N_CATEGORIES).collect();
@@ -220,9 +238,15 @@ fn e4_overshoot_accounting_foreman_100k() {
     // -----------------------------------------------------------------
     eprintln!();
     eprintln!("=== 2. Rate-model prediction error + Q ceiling ===");
-    eprintln!("  mean actual/predicted ratio (inter) : {:.3}", ratio_sum / n);
+    eprintln!(
+        "  mean actual/predicted ratio (inter) : {:.3}",
+        ratio_sum / n
+    );
     eprintln!("  (>1 => RC under-predicts the cost => picks too-low a Q => overshoots)");
-    eprintln!("  avg picked inter Q                  : {:.1}", q_sum as f64 / n);
+    eprintln!(
+        "  avg picked inter Q                  : {:.1}",
+        q_sum as f64 / n
+    );
     eprintln!("  max picked inter Q                  : {q_max_seen}");
     eprintln!("  config max_qindex (worst_quality)   : 255");
     eprintln!("  (if max picked Q < 255, the active_worst clamp is binding below the ceiling)");

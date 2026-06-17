@@ -103,7 +103,8 @@ fn encode(
     deadline: Deadline,
 ) -> (Vec<Vec<u8>>, u64) {
     let before = ML_PARTITION_BREAKOUT_FIRED.load(Ordering::Relaxed);
-    let mut enc = StreamEncoder::new(config(framerate, speed, deadline)).expect("StreamEncoder::new");
+    let mut enc =
+        StreamEncoder::new(config(framerate, speed, deadline)).expect("StreamEncoder::new");
     let mut packets = Vec::with_capacity(frames.len());
     for (y, u, v) in frames {
         let pkt = enc.encode_frame(&yuv_view(y, u, v)).expect("encode_frame");
@@ -228,7 +229,11 @@ fn a21_ml_partition_breakout_fires_and_decodes() {
     let (frames, framerate) = match y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize) {
         Ok((f, fr)) if f.len() == N_FRAMES as usize => (f, fr),
         Ok((f, _)) => {
-            eprintln!("[SKIPPED] testsrc only yielded {}/{} frames.", f.len(), N_FRAMES);
+            eprintln!(
+                "[SKIPPED] testsrc only yielded {}/{} frames.",
+                f.len(),
+                N_FRAMES
+            );
             return;
         }
         Err(e) => {

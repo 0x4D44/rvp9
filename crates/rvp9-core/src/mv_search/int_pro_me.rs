@@ -536,7 +536,9 @@ pub fn int_pro_motion_estimation(
     let try_sad = |row: i32, col: i32| -> u32 {
         let abs_x = sb_px_x as i32 + col;
         let abs_y = sb_px_y as i32 + row;
-        sad_block_clamped(bsize, sad_fn, src_slice, src_stride, ref_plane, abs_y, abs_x)
+        sad_block_clamped(
+            bsize, sad_fn, src_slice, src_stride, ref_plane, abs_y, abs_x,
+        )
     };
 
     let mut best_sad = try_sad(row, col);

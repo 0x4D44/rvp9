@@ -127,7 +127,13 @@ fn five_number_summary(sorted: &[Duration]) -> (Duration, Duration, Duration, Du
     let n = sorted.len();
     let pick = |q: f64| sorted[((n as f64 * q) as usize).min(n - 1)];
     let median_idx = n / 2;
-    (sorted[0], pick(0.25), sorted[median_idx], pick(0.75), sorted[n - 1])
+    (
+        sorted[0],
+        pick(0.25),
+        sorted[median_idx],
+        pick(0.75),
+        sorted[n - 1],
+    )
 }
 
 /// RC.3 — 720p30 single-core real-time frame-time gate.
@@ -252,9 +258,7 @@ fn realtime_gate_720p30() {
     let median_ns = median.as_nanos();
     let median_ms = median.as_secs_f64() * 1_000.0;
     if median_ns <= BUDGET_NS {
-        eprintln!(
-            "Stage 4a RT gate (median ≤ 33 ms): PASS — median {median_ms:.2} ms ≤ 33.00 ms"
-        );
+        eprintln!("Stage 4a RT gate (median ≤ 33 ms): PASS — median {median_ms:.2} ms ≤ 33.00 ms");
     } else {
         let over_ms = (median_ns as i128 - BUDGET_NS as i128) as f64 / 1_000_000.0;
         eprintln!(

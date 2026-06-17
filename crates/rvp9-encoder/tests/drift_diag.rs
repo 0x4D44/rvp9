@@ -89,7 +89,13 @@ fn corpus_path() -> Option<PathBuf> {
     None
 }
 
-fn run_for_speed(speed: i32, frames: &[(Vec<u8>, Vec<u8>, Vec<u8>)], w: u32, h: u32, framerate: f64) {
+fn run_for_speed(
+    speed: i32,
+    frames: &[(Vec<u8>, Vec<u8>, Vec<u8>)],
+    w: u32,
+    h: u32,
+    framerate: f64,
+) {
     let w_us = w as usize;
     let h_us = h as usize;
     let uvw = w_us / 2;
@@ -121,9 +127,7 @@ fn run_for_speed(speed: i32, frames: &[(Vec<u8>, Vec<u8>, Vec<u8>)], w: u32, h: 
 
     eprintln!();
     eprintln!("=== foreman 320x256 cpu-used {speed} (700 kbps) ===");
-    eprintln!(
-        "  frame kind  q  bytes  |  STORED(post-LF) vs DECODE        |  PRE-LF vs DECODE"
-    );
+    eprintln!("  frame kind  q  bytes  |  STORED(post-LF) vs DECODE        |  PRE-LF vs DECODE");
     eprintln!(
         "                          SSE(Y)   SSE(U)   SSE(V) mx(Y/U/V) |  SSE(Y)   SSE(U)   SSE(V) mx(Y/U/V)"
     );
@@ -228,12 +232,25 @@ fn drift_diag_localize_frame2() {
     let (frames, framerate) = y4m_read_cropped(&path, W, H, N).expect("read");
 
     let cfg = EncoderConfig {
-        width: W, height: H, framerate, target_bitrate_bps: 700_000,
-        gop_length: N as u32 + 1, aq_mode: AqMode::Off, use_prev_frame_mvs: false,
-        speed: 7, deadline: rvp9_encoder::Deadline::Realtime, noise_sensitivity: 0,
-        bit_depth: rvp9_core::BitDepth::Bd8, lag_in_frames: 0, enable_alt_ref: false,
-        rc_mode: RcMode::Cbr, cq_level: 0, temporal_layers: 1, enable_tpl: false,
-        min_qindex: 4, max_qindex: 255,
+        width: W,
+        height: H,
+        framerate,
+        target_bitrate_bps: 700_000,
+        gop_length: N as u32 + 1,
+        aq_mode: AqMode::Off,
+        use_prev_frame_mvs: false,
+        speed: 7,
+        deadline: rvp9_encoder::Deadline::Realtime,
+        noise_sensitivity: 0,
+        bit_depth: rvp9_core::BitDepth::Bd8,
+        lag_in_frames: 0,
+        enable_alt_ref: false,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
+        temporal_layers: 1,
+        enable_tpl: false,
+        min_qindex: 4,
+        max_qindex: 255,
     };
     let mut enc = StreamEncoder::new(cfg).expect("enc");
     let mut dec = Decoder::new();
@@ -296,14 +313,28 @@ fn drift_diag_localize_frame2() {
                     shown += 1;
                     let desc = match cell {
                         Some(mi) => match mi.mode {
-                            BlockMode::Inter { mode, mvs, ref_frames, interp_filter } => format!(
+                            BlockMode::Inter {
+                                mode,
+                                mvs,
+                                ref_frames,
+                                interp_filter,
+                            } => format!(
                                 "INTER {:?} mv=({},{}) ref={:?} interp={:?} bs={:?} sk={} tx={:?}",
-                                mode, mvs[0].row, mvs[0].col, ref_frames[0], interp_filter,
-                                mi.block_size, u8::from(mi.skip), mi.tx_size,
+                                mode,
+                                mvs[0].row,
+                                mvs[0].col,
+                                ref_frames[0],
+                                interp_filter,
+                                mi.block_size,
+                                u8::from(mi.skip),
+                                mi.tx_size,
                             ),
                             BlockMode::Intra { y_mode, .. } => format!(
                                 "INTRA y={:?} bs={:?} sk={} tx={:?}",
-                                y_mode, mi.block_size, u8::from(mi.skip), mi.tx_size,
+                                y_mode,
+                                mi.block_size,
+                                u8::from(mi.skip),
+                                mi.tx_size,
                             ),
                         },
                         None => "None".to_string(),
@@ -341,12 +372,25 @@ fn drift_diag_localize() {
     let (frames, framerate) = y4m_read_cropped(&path, W, H, N).expect("read");
 
     let cfg = EncoderConfig {
-        width: W, height: H, framerate, target_bitrate_bps: 700_000,
-        gop_length: N as u32 + 1, aq_mode: AqMode::Off, use_prev_frame_mvs: false,
-        speed: 7, deadline: rvp9_encoder::Deadline::Realtime, noise_sensitivity: 0,
-        bit_depth: rvp9_core::BitDepth::Bd8, lag_in_frames: 0, enable_alt_ref: false,
-        rc_mode: RcMode::Cbr, cq_level: 0, temporal_layers: 1, enable_tpl: false,
-        min_qindex: 4, max_qindex: 255,
+        width: W,
+        height: H,
+        framerate,
+        target_bitrate_bps: 700_000,
+        gop_length: N as u32 + 1,
+        aq_mode: AqMode::Off,
+        use_prev_frame_mvs: false,
+        speed: 7,
+        deadline: rvp9_encoder::Deadline::Realtime,
+        noise_sensitivity: 0,
+        bit_depth: rvp9_core::BitDepth::Bd8,
+        lag_in_frames: 0,
+        enable_alt_ref: false,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
+        temporal_layers: 1,
+        enable_tpl: false,
+        min_qindex: 4,
+        max_qindex: 255,
     };
     let mut enc = StreamEncoder::new(cfg).expect("enc");
     let mut dec = Decoder::new();
@@ -392,14 +436,28 @@ fn drift_diag_localize() {
                     let cell = grid[mr * mi_cols_us + mc];
                     let desc = match cell {
                         Some(mi) => match mi.mode {
-                            BlockMode::Inter { mode, mvs, ref_frames, interp_filter } => format!(
+                            BlockMode::Inter {
+                                mode,
+                                mvs,
+                                ref_frames,
+                                interp_filter,
+                            } => format!(
                                 "INTER {:?} mv=({},{}) ref={:?} interp={:?} bs={:?} sk={} tx={:?}",
-                                mode, mvs[0].row, mvs[0].col, ref_frames[0], interp_filter,
-                                mi.block_size, u8::from(mi.skip), mi.tx_size,
+                                mode,
+                                mvs[0].row,
+                                mvs[0].col,
+                                ref_frames[0],
+                                interp_filter,
+                                mi.block_size,
+                                u8::from(mi.skip),
+                                mi.tx_size,
                             ),
                             BlockMode::Intra { y_mode, .. } => format!(
                                 "INTRA y={:?} bs={:?} sk={} tx={:?}",
-                                y_mode, mi.block_size, u8::from(mi.skip), mi.tx_size,
+                                y_mode,
+                                mi.block_size,
+                                u8::from(mi.skip),
+                                mi.tx_size,
                             ),
                         },
                         None => "None".to_string(),

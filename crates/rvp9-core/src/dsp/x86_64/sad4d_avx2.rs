@@ -52,9 +52,9 @@
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
     __m128i, __m256i, _mm_add_epi32, _mm_cvtsi128_si32, _mm_loadl_epi64, _mm_loadu_si128,
-    _mm_sad_epu8, _mm_setzero_si128, _mm_unpackhi_epi64, _mm256_add_epi32,
-    _mm256_castsi256_si128, _mm256_extracti128_si256, _mm256_loadu_si256, _mm256_sad_epu8,
-    _mm256_setzero_si256, _mm256_srli_si256,
+    _mm_sad_epu8, _mm_setzero_si128, _mm_unpackhi_epi64, _mm256_add_epi32, _mm256_castsi256_si128,
+    _mm256_extracti128_si256, _mm256_loadu_si256, _mm256_sad_epu8, _mm256_setzero_si256,
+    _mm256_srli_si256,
 };
 
 /// Horizontally sum the four 64-bit SAD partials packed in a 256-bit
@@ -186,8 +186,7 @@ unsafe fn sad4d_avx2_inner(
                     let r_row = rp[k].add(r * ref_stride);
                     let rv0 = _mm256_loadu_si256(r_row as *const __m256i);
                     let rv1 = _mm256_loadu_si256(r_row.add(32) as *const __m256i);
-                    let d =
-                        _mm256_add_epi32(_mm256_sad_epu8(sv0, rv0), _mm256_sad_epu8(sv1, rv1));
+                    let d = _mm256_add_epi32(_mm256_sad_epu8(sv0, rv0), _mm256_sad_epu8(sv1, rv1));
                     acc[k] = _mm256_add_epi32(acc[k], d);
                 }
             }
@@ -198,8 +197,7 @@ unsafe fn sad4d_avx2_inner(
         _ => {
             // Unexpected width — fall back to four scalar SADs for correctness.
             for k in 0..4 {
-                out[k] =
-                    crate::dsp::distortion::sad(src, src_stride, refs[k], ref_stride, w, h);
+                out[k] = crate::dsp::distortion::sad(src, src_stride, refs[k], ref_stride, w, h);
             }
         }
     }
@@ -213,8 +211,8 @@ unsafe fn sad4d_avx2_inner(
 macro_rules! sad4d_avx2_fn {
     ($name:ident, $w:expr, $h:expr) => {
         #[doc = concat!("AVX2 4-reference SAD for a ", stringify!($w), "×",
-                        stringify!($h), " block. Each lane is byte-exact with ",
-                        "`crate::dsp::distortion::sad` for that reference offset.")]
+                                        stringify!($h), " block. Each lane is byte-exact with ",
+                                        "`crate::dsp::distortion::sad` for that reference offset.")]
         ///
         /// The `sad4d` dispatch slot points here on AVX2 hosts and at the
         /// scalar 4×-`sad` reference elsewhere.

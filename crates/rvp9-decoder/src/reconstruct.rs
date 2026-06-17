@@ -44,8 +44,7 @@ use rvp9_core::entropy::adapt::CoefCountsBank;
 use rvp9_core::entropy::{BoolReader, FrameContext};
 use rvp9_core::intra_pred::{DcAvailability, IntraMode, PredCtx, intra_predict};
 use rvp9_core::transforms::inverse::{
-    idct4x4_1_add, idct8x8_1_add, idct16x16_1_add,
-    idct32x32_1_add, iwht4x4_1_add, iwht4x4_16_add,
+    idct4x4_1_add, idct8x8_1_add, idct16x16_1_add, idct32x32_1_add, iwht4x4_1_add, iwht4x4_16_add,
 };
 use rvp9_core::transforms::types::{TxSize, TxType};
 
@@ -202,7 +201,9 @@ pub fn reconstruct_intra_block(
     //    G4.3.1 — `dispatch` routes DC 4×4 (both-avail) through the
     //    `dc_predictor_4x4` SIMD slot; all other modes/sizes still
     //    take the scalar path inside `intra_predict`.
-    intra_predict(intra_mode, dst, dst_stride, bs, pred_ctx, dc_avail, dispatch);
+    intra_predict(
+        intra_mode, dst, dst_stride, bs, pred_ctx, dc_avail, dispatch,
+    );
 
     // 2. Resolve TX type and decode the residual.
     let tx_type = resolve_tx_type(plane, lossless, intra_mode);
@@ -213,111 +214,117 @@ pub fn reconstruct_intra_block(
     // the thread-local cache. See DQ_COEFS_BUF docstring for why
     // MaybeUninit (R.11/R.12) didn't work here.
     DQ_COEFS_BUF.with_borrow_mut(|buf| {
-    debug_assert!(buf.len() >= MAX_TX_COEFFS);
-    let dq_coefs: &mut [i32] = &mut buf[..];
-    let eob = decode_block_tokens(
-        reader,
-        fc,
-        coef_counts,
-        coef_ctx,
-        plane,
-        x4,
-        y4_in_sb,
-        tx_size,
-        tx_type,
-        /* ref_type = */ 0,
-        seg_eob,
-        dequant,
-        &mut dq_coefs[..seg_eob],
-    );
-
-    // Phase-2 diagnostic — Stage 3 stretch M.3. Logs dq_coefs at the
-    // first Block4x4 of the first SB (plane 0, TX_4×4, 4 sub-positions
-    // around the origin). Gated behind `RVP9_DEBUG_DQCOEFS=1` so it's
-    // a no-op in normal runs. The failing block reported by M.1 / M.2
-    // is sub-1 of bmi=[Dc, H, Dc, Dc] at `(x4=1, y4_in_sb=0)`, plane 0,
-    // tx_size=Tx4x4, tx_type=DctAdst.
-    if plane == 0
-        && tx_size == TxSize::Tx4x4
-        && x4 < 2
-        && y4_in_sb < 2
-        && crate::trace_flags::trace_flags().dqcoefs_eq("1")
-    {
-        eprintln!(
-            "RVP9_DBG dq_coefs plane=0 tx=4x4 x4={x4} y4_in_sb={y4_in_sb} \
-             tx_type={tx_type:?} eob={eob} mode={intra_mode:?} \
-             dq_coefs={:?}",
-            &dq_coefs[..n]
-        );
-    }
-
-    // Stage 3 stretch M.17 — log dq_coefs for the targeted Y Tx8x8
-    // block at the M.16 smoking-gun position (x4=70, y4_in_sb=0 on the
-    // resize vector). Filter follows the same `RVP9_DEBUG_DQCOEFS_AT`
-    // schema as the call-site dump in `detokenize.rs`. Pairs with the
-    // `RVP9_DBG_TX8` line for a complete input+output snapshot.
-    if plane == 0
-        && tx_size == TxSize::Tx8x8
-        && crate::trace_flags::trace_flags().dqcoefs_eq("tx8")
-        && {
-            let tf = crate::trace_flags::trace_flags();
-            let filter = tf.debug_dqcoefs_at.as_deref().unwrap_or("70,0");
-            let parts: Vec<&str> = filter.split(',').collect();
-            parts.len() == 2
-                && parts[0].parse::<usize>().ok() == Some(x4)
-                && parts[1].parse::<usize>().ok() == Some(y4_in_sb)
-        }
-    {
-        eprintln!(
-            "RVP9_DBG_TX8 dq_coefs plane=0 tx=8x8 x4={x4} y4_in_sb={y4_in_sb} \
-             tx_type={tx_type:?} eob={eob} mode={intra_mode:?} \
-             dq=({},{}) dq_coefs={:?}",
-            dequant.0, dequant.1,
-            &dq_coefs[..n],
-        );
-        // Print non-zero positions explicitly to disambiguate raster vs
-        // scan order (M.17: production output appeared to place 550 at
-        // raster idx 1 instead of 8 — pin this down here).
-        let nz: Vec<(usize, i32)> = dq_coefs[..n]
-            .iter().enumerate().filter(|&(_, v)| *v != 0).map(|(i, &v)| (i, v)).collect();
-        eprintln!("RVP9_DBG_TX8 dq_coefs nonzero raster-indexed = {nz:?}");
-    }
-
-    // Stage 3 stretch M.13 — log dq_coefs for any Tx4x4 plane-0 block at
-    // a caller-specified position. Used to capture the cascade-source
-    // residual for the V block at (mi_col=3, mi_row=1) sub-2 on the
-    // 32×32 vector frame 1.
-    if plane == 0
-        && tx_size == TxSize::Tx4x4
-        && crate::trace_flags::trace_flags().dqcoefs_eq("all")
-    {
-        eprintln!(
-            "RVP9_DBG_ALL dq_coefs plane=0 tx=4x4 x4={x4} y4_in_sb={y4_in_sb} \
-             tx_type={tx_type:?} eob={eob} mode={intra_mode:?} \
-             dq=({},{}) dq_coefs={:?}",
-            dequant.0, dequant.1,
-            &dq_coefs[..n]
-        );
-    }
-
-    // 3. If non-empty, apply IT-add into `dst` (reads prediction, adds
-    // IT(dq_coefs), writes back). G2 (decoder-hardening V6 §G2):
-    // pass `lossless` through so the 4×4 site can pick the WHT family
-    // (`iwht4x4_*_add`) instead of the standard IDCT.
-    if eob > 0 {
-        inverse_transform_add(
+        debug_assert!(buf.len() >= MAX_TX_COEFFS);
+        let dq_coefs: &mut [i32] = &mut buf[..];
+        let eob = decode_block_tokens(
+            reader,
+            fc,
+            coef_counts,
+            coef_ctx,
+            plane,
+            x4,
+            y4_in_sb,
             tx_size,
             tx_type,
-            &dq_coefs[..n],
-            eob,
-            dst,
-            dst_stride,
-            lossless,
-            dispatch,
+            /* ref_type = */ 0,
+            seg_eob,
+            dequant,
+            &mut dq_coefs[..seg_eob],
         );
-    }
 
-    eob
+        // Phase-2 diagnostic — Stage 3 stretch M.3. Logs dq_coefs at the
+        // first Block4x4 of the first SB (plane 0, TX_4×4, 4 sub-positions
+        // around the origin). Gated behind `RVP9_DEBUG_DQCOEFS=1` so it's
+        // a no-op in normal runs. The failing block reported by M.1 / M.2
+        // is sub-1 of bmi=[Dc, H, Dc, Dc] at `(x4=1, y4_in_sb=0)`, plane 0,
+        // tx_size=Tx4x4, tx_type=DctAdst.
+        if plane == 0
+            && tx_size == TxSize::Tx4x4
+            && x4 < 2
+            && y4_in_sb < 2
+            && crate::trace_flags::trace_flags().dqcoefs_eq("1")
+        {
+            eprintln!(
+                "RVP9_DBG dq_coefs plane=0 tx=4x4 x4={x4} y4_in_sb={y4_in_sb} \
+             tx_type={tx_type:?} eob={eob} mode={intra_mode:?} \
+             dq_coefs={:?}",
+                &dq_coefs[..n]
+            );
+        }
+
+        // Stage 3 stretch M.17 — log dq_coefs for the targeted Y Tx8x8
+        // block at the M.16 smoking-gun position (x4=70, y4_in_sb=0 on the
+        // resize vector). Filter follows the same `RVP9_DEBUG_DQCOEFS_AT`
+        // schema as the call-site dump in `detokenize.rs`. Pairs with the
+        // `RVP9_DBG_TX8` line for a complete input+output snapshot.
+        if plane == 0
+            && tx_size == TxSize::Tx8x8
+            && crate::trace_flags::trace_flags().dqcoefs_eq("tx8")
+            && {
+                let tf = crate::trace_flags::trace_flags();
+                let filter = tf.debug_dqcoefs_at.as_deref().unwrap_or("70,0");
+                let parts: Vec<&str> = filter.split(',').collect();
+                parts.len() == 2
+                    && parts[0].parse::<usize>().ok() == Some(x4)
+                    && parts[1].parse::<usize>().ok() == Some(y4_in_sb)
+            }
+        {
+            eprintln!(
+                "RVP9_DBG_TX8 dq_coefs plane=0 tx=8x8 x4={x4} y4_in_sb={y4_in_sb} \
+             tx_type={tx_type:?} eob={eob} mode={intra_mode:?} \
+             dq=({},{}) dq_coefs={:?}",
+                dequant.0,
+                dequant.1,
+                &dq_coefs[..n],
+            );
+            // Print non-zero positions explicitly to disambiguate raster vs
+            // scan order (M.17: production output appeared to place 550 at
+            // raster idx 1 instead of 8 — pin this down here).
+            let nz: Vec<(usize, i32)> = dq_coefs[..n]
+                .iter()
+                .enumerate()
+                .filter(|&(_, v)| *v != 0)
+                .map(|(i, &v)| (i, v))
+                .collect();
+            eprintln!("RVP9_DBG_TX8 dq_coefs nonzero raster-indexed = {nz:?}");
+        }
+
+        // Stage 3 stretch M.13 — log dq_coefs for any Tx4x4 plane-0 block at
+        // a caller-specified position. Used to capture the cascade-source
+        // residual for the V block at (mi_col=3, mi_row=1) sub-2 on the
+        // 32×32 vector frame 1.
+        if plane == 0
+            && tx_size == TxSize::Tx4x4
+            && crate::trace_flags::trace_flags().dqcoefs_eq("all")
+        {
+            eprintln!(
+                "RVP9_DBG_ALL dq_coefs plane=0 tx=4x4 x4={x4} y4_in_sb={y4_in_sb} \
+             tx_type={tx_type:?} eob={eob} mode={intra_mode:?} \
+             dq=({},{}) dq_coefs={:?}",
+                dequant.0,
+                dequant.1,
+                &dq_coefs[..n]
+            );
+        }
+
+        // 3. If non-empty, apply IT-add into `dst` (reads prediction, adds
+        // IT(dq_coefs), writes back). G2 (decoder-hardening V6 §G2):
+        // pass `lossless` through so the 4×4 site can pick the WHT family
+        // (`iwht4x4_*_add`) instead of the standard IDCT.
+        if eob > 0 {
+            inverse_transform_add(
+                tx_size,
+                tx_type,
+                &dq_coefs[..n],
+                eob,
+                dst,
+                dst_stride,
+                lossless,
+                dispatch,
+            );
+        }
+
+        eob
     }) // close DQ_COEFS_BUF.with_borrow_mut(|buf| { ... })
 }
 
@@ -648,7 +655,8 @@ mod tests {
             None,
             &mut coef_ctx,
             0, // plane Y
-            0, 0,
+            0,
+            0,
             TxSize::Tx4x4,
             IntraMode::V,
             pred_ctx,
@@ -708,7 +716,8 @@ mod tests {
             None,
             &mut coef_ctx,
             0,
-            0, 0,
+            0,
+            0,
             TxSize::Tx4x4,
             IntraMode::Dc,
             pred_ctx,
@@ -766,7 +775,8 @@ mod tests {
             None,
             &mut coef_ctx,
             0,
-            0, 0,
+            0,
+            0,
             TxSize::Tx4x4,
             IntraMode::Tm,
             pred_ctx,
@@ -826,7 +836,8 @@ mod tests {
             None,
             &mut coef_ctx,
             0,
-            0, 0,
+            0,
+            0,
             TxSize::Tx16x16,
             IntraMode::H,
             pred_ctx,
@@ -887,7 +898,8 @@ mod tests {
             None,
             &mut coef_ctx,
             0,
-            0, 0,
+            0,
+            0,
             TxSize::Tx32x32,
             IntraMode::V,
             pred_ctx,
@@ -963,7 +975,8 @@ mod tests {
             None,
             &mut coef_ctx,
             1, // U plane
-            0, 0,
+            0,
+            0,
             TxSize::Tx8x8,
             IntraMode::H,
             pred_ctx,
@@ -1031,7 +1044,11 @@ mod tests {
             (IntraMode::Tm, TxType::AdstAdst),
         ];
         for (mode, want) in expected {
-            assert_eq!(resolve_tx_type(0, false, mode), want, "Y plane mode {mode:?}");
+            assert_eq!(
+                resolve_tx_type(0, false, mode),
+                want,
+                "Y plane mode {mode:?}"
+            );
         }
     }
 
@@ -1061,7 +1078,8 @@ mod tests {
             None,
             &mut coef_ctx,
             0,
-            0, 0,
+            0,
+            0,
             TxSize::Tx8x8,
             IntraMode::H,
             pred_ctx,
@@ -1121,7 +1139,8 @@ mod tests {
             None,
             &mut coef_ctx,
             0,
-            0, 0,
+            0,
+            0,
             TxSize::Tx4x4,
             IntraMode::Dc,
             pred_ctx,
@@ -1153,7 +1172,10 @@ mod tests {
         coefs[0] = 8;
         rvp9_core::transforms::inverse::iwht4x4_1_add(coefs[0], &mut dst_ref, stride);
         let _ = iwht4x4_16_add; // silence import-unused
-        assert_eq!(dst_wrapper, dst_ref, "lossless WHT path matches direct iwht4x4_1_add");
+        assert_eq!(
+            dst_wrapper, dst_ref,
+            "lossless WHT path matches direct iwht4x4_1_add"
+        );
     }
 
     /// `inverse_transform_add` Tx32x32 always routes through the IDCT
@@ -1545,7 +1567,8 @@ mod tests {
             None,
             &mut coef_ctx,
             0,
-            0, 0,
+            0,
+            0,
             TxSize::Tx8x8,
             IntraMode::Dc,
             pred_ctx,
@@ -1570,6 +1593,9 @@ mod tests {
             &test_dispatch(),
         );
         idct8x8_1_add(8, &mut dst_ref, stride);
-        assert_eq!(dst, dst_ref, "DC-only Tx8x8 path must match direct idct8x8_1_add");
+        assert_eq!(
+            dst, dst_ref,
+            "DC-only Tx8x8 path must match direct idct8x8_1_add"
+        );
     }
 }

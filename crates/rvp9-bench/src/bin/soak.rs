@@ -42,9 +42,7 @@
 use rvp9_decoder::Decoder;
 use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 use rvp9_harness::container::{IvfHeader, write_ivf};
-use rvp9_harness::y4m::{
-    YuvFrameBuf, probe_testsrc_720p, read_cropped as y4m_read_cropped,
-};
+use rvp9_harness::y4m::{YuvFrameBuf, probe_testsrc_720p, read_cropped as y4m_read_cropped};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -331,8 +329,7 @@ fn run_one_iteration(
         min_qindex: 4,
         max_qindex: 255,
     };
-    let mut enc = StreamEncoder::new(cfg)
-        .map_err(|e| format!("StreamEncoder::new: {e:?}"))?;
+    let mut enc = StreamEncoder::new(cfg).map_err(|e| format!("StreamEncoder::new: {e:?}"))?;
 
     let mut packets: Vec<Vec<u8>> = Vec::with_capacity(frames.len());
     let mut total_encoded_bytes: u64 = 0;
@@ -390,12 +387,10 @@ fn run_one_iteration(
         let tmp_dir = std::env::temp_dir();
         let ivf_path = tmp_dir.join(format!("rvp9_soak_iter{iter_idx}.ivf"));
         {
-            let mut f = std::fs::File::create(&ivf_path)
-                .map_err(|e| format!("create ivf: {e}"))?;
+            let mut f = std::fs::File::create(&ivf_path).map_err(|e| format!("create ivf: {e}"))?;
             let header = IvfHeader::vp9(w as u16, h as u16, framerate.round() as u32, 1);
             let packet_refs: Vec<&[u8]> = packets.iter().map(Vec::as_slice).collect();
-            write_ivf(&mut f, &header, &packet_refs)
-                .map_err(|e| format!("write_ivf: {e}"))?;
+            write_ivf(&mut f, &header, &packet_refs).map_err(|e| format!("write_ivf: {e}"))?;
         }
         let out_path = tmp_dir.join(format!("rvp9_soak_iter{iter_idx}.yuv"));
         let status = Command::new(vpxdec)

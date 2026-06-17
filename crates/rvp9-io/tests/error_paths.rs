@@ -127,7 +127,13 @@ fn ivf_frame_size_overflow_is_bad_frame_size() {
     // No payload bytes whatsoever.
     let err = read_ivf_packets(&data).unwrap_err();
     assert!(
-        matches!(err, ContainerError::BadFrameSize { packet_index: 1, .. }),
+        matches!(
+            err,
+            ContainerError::BadFrameSize {
+                packet_index: 1,
+                ..
+            }
+        ),
         "got {err:?}"
     );
 }
@@ -174,8 +180,7 @@ fn ivf_writer_rejects_packets_too_large_for_u32() {
     let mut buf = Vec::new();
     write_ivf(&mut buf, &header, &[&p]).expect("write_ivf small packet");
     // Per-packet record: size u32_le then pts u64_le.
-    let recorded_size =
-        u32::from_le_bytes([buf[32], buf[33], buf[34], buf[35]]);
+    let recorded_size = u32::from_le_bytes([buf[32], buf[33], buf[34], buf[35]]);
     assert_eq!(recorded_size, 1024);
 }
 
@@ -455,7 +460,11 @@ fn webm_cluster_with_simple_block_yields_one_packet() {
 
     // Cluster element: id=0x1F43B675 (4 bytes), then vint size, then
     // SimpleBlock.
-    let cluster = ebml_elt(&[0x1F, 0x43, 0xB6, 0x75], simple_block.len() as u64, &simple_block);
+    let cluster = ebml_elt(
+        &[0x1F, 0x43, 0xB6, 0x75],
+        simple_block.len() as u64,
+        &simple_block,
+    );
 
     let packets = read_webm_packets(&cluster).expect("cluster+simpleblock");
     assert_eq!(packets.len(), 1, "expected one packet from one SimpleBlock");
@@ -470,7 +479,11 @@ fn webm_segment_wraps_cluster_and_yields_packet() {
     block_payload.extend_from_slice(frame_payload);
     let mut simple_block = vec![0xA3, 0x80 | block_payload.len() as u8];
     simple_block.extend_from_slice(&block_payload);
-    let cluster = ebml_elt(&[0x1F, 0x43, 0xB6, 0x75], simple_block.len() as u64, &simple_block);
+    let cluster = ebml_elt(
+        &[0x1F, 0x43, 0xB6, 0x75],
+        simple_block.len() as u64,
+        &simple_block,
+    );
     let segment = ebml_elt(&[0x18, 0x53, 0x80, 0x67], cluster.len() as u64, &cluster);
     let packets = read_webm_packets(&segment).expect("segment+cluster+simpleblock");
     assert_eq!(packets.len(), 1);
@@ -487,7 +500,11 @@ fn webm_ebml_header_element_is_recursed_into() {
     block_payload.extend_from_slice(frame_payload);
     let mut simple_block = vec![0xA3, 0x80 | block_payload.len() as u8];
     simple_block.extend_from_slice(&block_payload);
-    let cluster = ebml_elt(&[0x1F, 0x43, 0xB6, 0x75], simple_block.len() as u64, &simple_block);
+    let cluster = ebml_elt(
+        &[0x1F, 0x43, 0xB6, 0x75],
+        simple_block.len() as u64,
+        &simple_block,
+    );
 
     let ebml_hdr = ebml_elt(&[0x1A, 0x45, 0xDF, 0xA3], 0, &[]);
     let mut bytes = ebml_hdr;
@@ -568,7 +585,11 @@ fn webm_unknown_element_is_skipped() {
     block_payload.extend_from_slice(frame_payload);
     let mut simple_block = vec![0xA3, 0x80 | block_payload.len() as u8];
     simple_block.extend_from_slice(&block_payload);
-    let cluster = ebml_elt(&[0x1F, 0x43, 0xB6, 0x75], simple_block.len() as u64, &simple_block);
+    let cluster = ebml_elt(
+        &[0x1F, 0x43, 0xB6, 0x75],
+        simple_block.len() as u64,
+        &simple_block,
+    );
 
     // Junk element id=0x80 (1-byte id), payload size 3 bytes, 3 bytes payload.
     let mut junk = vec![0x80u8, 0x83, 0xDE, 0xAD, 0xBE];
@@ -590,7 +611,11 @@ fn webm_unknown_size_segment_runs_to_eof() {
     block_payload.extend_from_slice(frame_payload);
     let mut simple_block = vec![0xA3, 0x80 | block_payload.len() as u8];
     simple_block.extend_from_slice(&block_payload);
-    let cluster = ebml_elt(&[0x1F, 0x43, 0xB6, 0x75], simple_block.len() as u64, &simple_block);
+    let cluster = ebml_elt(
+        &[0x1F, 0x43, 0xB6, 0x75],
+        simple_block.len() as u64,
+        &simple_block,
+    );
 
     // Segment id then 1-byte all-ones vint (0xFF) = unknown size.
     let mut bytes = vec![0x18, 0x53, 0x80, 0x67, 0xFF];
@@ -605,7 +630,11 @@ fn webm_block_payload_smaller_than_4_bytes_rejected() {
     // SimpleBlock inside Cluster with only 3 payload bytes — the
     // parse_block_frame "payload too small" guard.
     let mut simple_block = vec![0xA3, 0x83, 0x81, 0x00, 0x00]; // size=3, 3 bytes
-    let cluster = ebml_elt(&[0x1F, 0x43, 0xB6, 0x75], simple_block.len() as u64, &simple_block);
+    let cluster = ebml_elt(
+        &[0x1F, 0x43, 0xB6, 0x75],
+        simple_block.len() as u64,
+        &simple_block,
+    );
     let _ = &mut simple_block;
     let err = read_webm_packets(&cluster).unwrap_err();
     assert!(
@@ -623,7 +652,11 @@ fn webm_block_with_lacing_set_is_silently_skipped() {
     let block_payload = [0x81u8, 0x00, 0x00, 0x02, 0xAA];
     let mut simple_block = vec![0xA3, 0x80 | block_payload.len() as u8];
     simple_block.extend_from_slice(&block_payload);
-    let cluster = ebml_elt(&[0x1F, 0x43, 0xB6, 0x75], simple_block.len() as u64, &simple_block);
+    let cluster = ebml_elt(
+        &[0x1F, 0x43, 0xB6, 0x75],
+        simple_block.len() as u64,
+        &simple_block,
+    );
     let packets = read_webm_packets(&cluster).expect("laced block must not error");
     assert!(
         packets.is_empty(),
@@ -639,7 +672,11 @@ fn webm_block_with_zero_frame_bytes_rejected_as_bad_frame_size() {
     let block_payload = [0x81u8, 0x00, 0x00, 0x00];
     let mut simple_block = vec![0xA3, 0x80 | block_payload.len() as u8];
     simple_block.extend_from_slice(&block_payload);
-    let cluster = ebml_elt(&[0x1F, 0x43, 0xB6, 0x75], simple_block.len() as u64, &simple_block);
+    let cluster = ebml_elt(
+        &[0x1F, 0x43, 0xB6, 0x75],
+        simple_block.len() as u64,
+        &simple_block,
+    );
     let err = read_webm_packets(&cluster).unwrap_err();
     assert!(
         matches!(
@@ -671,7 +708,11 @@ fn webm_block_missing_timecode_and_flags_rejected() {
     let block_payload = [0x10u8, 0x00, 0x00, 0x01, 0xAA, 0xBB];
     let mut simple_block = vec![0xA3, 0x80 | block_payload.len() as u8];
     simple_block.extend_from_slice(&block_payload);
-    let cluster = ebml_elt(&[0x1F, 0x43, 0xB6, 0x75], simple_block.len() as u64, &simple_block);
+    let cluster = ebml_elt(
+        &[0x1F, 0x43, 0xB6, 0x75],
+        simple_block.len() as u64,
+        &simple_block,
+    );
     let err = read_webm_packets(&cluster).unwrap_err();
     assert!(
         matches!(err, ContainerError::BadEbml(msg) if msg.contains("missing timecode/flags")),
@@ -940,10 +981,7 @@ fn read_cropped_centre_crop_extracts_inner_region() {
     for r in 0..8 {
         for c in 0..8 {
             let expected = ((r + 4) * 16 + (c + 4)) as u8;
-            assert_eq!(
-                y[r * 8 + c], expected,
-                "centre crop pixel ({r},{c}) wrong"
-            );
+            assert_eq!(y[r * 8 + c], expected, "centre crop pixel ({r},{c}) wrong");
         }
     }
     assert!(u.iter().all(|&b| b == 0x55));

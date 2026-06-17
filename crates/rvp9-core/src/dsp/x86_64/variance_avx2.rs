@@ -220,9 +220,9 @@ pub fn var_sum_sse_avx2(
 macro_rules! var_sum_sse_avx2_fn {
     ($name:ident, $w:expr, $h:expr) => {
         #[doc = concat!("AVX2 (sum, sse) reduction for a ", stringify!($w), "×",
-                        stringify!($h), " block. Byte-exact with ",
-                        "`crate::dsp::distortion::var_sum_sse_", stringify!($w), "x",
-                        stringify!($h), "`.")]
+                                stringify!($h), " block. Byte-exact with ",
+                                "`crate::dsp::distortion::var_sum_sse_", stringify!($w), "x",
+                                stringify!($h), "`.")]
         pub fn $name(src: &[u8], src_stride: usize, pred: &[u8], pred_stride: usize) -> (i64, u64) {
             // SAFETY: installed only on AVX2 hosts by `SimdDispatch::build`.
             unsafe { var_sum_sse_inner(src, src_stride, pred, pred_stride, $w, $h) }
@@ -392,7 +392,10 @@ mod tests {
                     let pred = vec![pval; pred_len];
                     let s = scalar_sum_sse(&src, ss, &pred, ps, w, h);
                     let a = var_sum_sse_avx2(&src, ss, &pred, ps, w, h);
-                    assert_eq!(s, a, "AVX2/scalar mismatch at w={w}, h={h}, s={sval}, p={pval}");
+                    assert_eq!(
+                        s, a,
+                        "AVX2/scalar mismatch at w={w}, h={h}, s={sval}, p={pval}"
+                    );
                     assert_eq!(
                         a,
                         (exp_sum, exp_sse),
@@ -418,7 +421,11 @@ mod tests {
             let pred: Vec<u8> = (0..pred_len).map(|_| rng.next_byte()).collect();
             let (ssum, ssse) = scalar_sum_sse(&src, src_stride, &pred, pred_stride, 8, 8);
             let (asum, asse) = get_var_sse_8x8_avx2(&src, src_stride, &pred, pred_stride);
-            assert_eq!((ssum as i32, ssse as u32), (asum, asse), "8x8 cell mismatch");
+            assert_eq!(
+                (ssum as i32, ssse as u32),
+                (asum, asse),
+                "8x8 cell mismatch"
+            );
         }
     }
 

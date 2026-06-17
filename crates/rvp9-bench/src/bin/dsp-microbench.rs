@@ -69,10 +69,8 @@ fn run() {
         convolve8_avx2, convolve8_scaled_avx2, convolve8_vert_avx2, d117_predictor_avx2,
         d153_predictor_avx2,
     };
-    use rvp9_core::inter::filter::{
-        convolve8, convolve8_scaled, convolve8_vert, EIGHTTAP_KERNEL,
-    };
-    use rvp9_core::intra_pred::{d117_predictor, d153_predictor, PredCtx};
+    use rvp9_core::inter::filter::{EIGHTTAP_KERNEL, convolve8, convolve8_scaled, convolve8_vert};
+    use rvp9_core::intra_pred::{PredCtx, d117_predictor, d153_predictor};
 
     if !std::is_x86_feature_detected!("avx2") {
         eprintln!("AVX2 not detected on this host — nothing to compare.");
@@ -98,10 +96,28 @@ fn run() {
         report(&format!("convolve8_vert {w}x{h}"), s, a);
 
         let s = bench_min_ns(batches, iters, || {
-            convolve8(black_box(&src), stride, black_box(&mut dst), w, filt, filt, w, h);
+            convolve8(
+                black_box(&src),
+                stride,
+                black_box(&mut dst),
+                w,
+                filt,
+                filt,
+                w,
+                h,
+            );
         });
         let a = bench_min_ns(batches, iters, || {
-            convolve8_avx2(black_box(&src), stride, black_box(&mut dst), w, filt, filt, w, h);
+            convolve8_avx2(
+                black_box(&src),
+                stride,
+                black_box(&mut dst),
+                w,
+                filt,
+                filt,
+                w,
+                h,
+            );
         });
         report(&format!("convolve8 (2D) {w}x{h}"), s, a);
     }
@@ -119,12 +135,32 @@ fn run() {
             let iters = if w >= 64 { 1500 } else { 6000 };
             let s = bench_min_ns(batches, iters, || {
                 convolve8_scaled(
-                    black_box(&src), stride, black_box(&mut dst), w, kernel, 0, step, 0, step, w, h,
+                    black_box(&src),
+                    stride,
+                    black_box(&mut dst),
+                    w,
+                    kernel,
+                    0,
+                    step,
+                    0,
+                    step,
+                    w,
+                    h,
                 );
             });
             let a = bench_min_ns(batches, iters, || {
                 convolve8_scaled_avx2(
-                    black_box(&src), stride, black_box(&mut dst), w, kernel, 0, step, 0, step, w, h,
+                    black_box(&src),
+                    stride,
+                    black_box(&mut dst),
+                    w,
+                    kernel,
+                    0,
+                    step,
+                    0,
+                    step,
+                    w,
+                    h,
                 );
             });
             report(&format!("convolve8_scaled {w}x{h}"), s, a);
@@ -139,7 +175,11 @@ fn run() {
         let stride = bs + 4;
         let mut dst = vec![0u8; bs * stride + 64];
         let iters = 8000;
-        let ctx = PredCtx { above: &above, left: &left, above_left: al };
+        let ctx = PredCtx {
+            above: &above,
+            left: &left,
+            above_left: al,
+        };
 
         let s = bench_min_ns(batches, iters, || {
             d117_predictor(black_box(&mut dst), stride, bs, black_box(ctx));
@@ -313,9 +353,7 @@ fn run_bool_reader() {
         "  source: encoded {} bytes (1 MB target), {BITS_PER_BATCH} bits/batch × {BATCHES} batches × {RUNS} runs",
         encoded.len()
     );
-    println!(
-        "  prob mix: 50% p=128, 30% p=32, 20% p=224 (coefficient-decode-shaped)"
-    );
+    println!("  prob mix: 50% p=128, 30% p=32, 20% p=224 (coefficient-decode-shaped)");
 }
 
 fn main() {
@@ -354,25 +392,169 @@ fn run_vs_libvpx() {
 
     // IDCT family. Seeds + iters mirror tools/libvpx_kernel_bench/main.c
     // exactly so both rigs feed each kernel byte-identical coefficients.
-    bench_idct_case(dsp.idct4x4_add(), "idct4x4_16_add", "4x4", 4, 0xAA10, 16000, batches);
-    bench_idct_case(dsp.idct8x8_add(), "idct8x8_64_add", "8x8", 8, 0xAA11, 12000, batches);
-    bench_idct_case(dsp.idct8x8_12_add(), "idct8x8_12_add", "8x8", 8, 0xAA12, 12000, batches);
-    bench_idct_case(dsp.idct16x16_add(), "idct16x16_256_add", "16x16", 16, 0xAA13, 8000, batches);
-    bench_idct_case(dsp.idct16x16_10_add(), "idct16x16_10_add", "16x16", 16, 0xAA14, 8000, batches);
-    bench_idct_case(dsp.idct16x16_38_add(), "idct16x16_38_add", "16x16", 16, 0xAA01, 8000, batches);
-    bench_idct_case(dsp.idct32x32_add(), "idct32x32_1024_add", "32x32", 32, 0xAA15, 2000, batches);
-    bench_idct_case(dsp.idct32x32_34_add(), "idct32x32_34_add", "32x32", 32, 0xAA16, 2000, batches);
-    bench_idct_case(dsp.idct32x32_135_add(), "idct32x32_135_add", "32x32", 32, 0xAA02, 2000, batches);
+    bench_idct_case(
+        dsp.idct4x4_add(),
+        "idct4x4_16_add",
+        "4x4",
+        4,
+        0xAA10,
+        16000,
+        batches,
+    );
+    bench_idct_case(
+        dsp.idct8x8_add(),
+        "idct8x8_64_add",
+        "8x8",
+        8,
+        0xAA11,
+        12000,
+        batches,
+    );
+    bench_idct_case(
+        dsp.idct8x8_12_add(),
+        "idct8x8_12_add",
+        "8x8",
+        8,
+        0xAA12,
+        12000,
+        batches,
+    );
+    bench_idct_case(
+        dsp.idct16x16_add(),
+        "idct16x16_256_add",
+        "16x16",
+        16,
+        0xAA13,
+        8000,
+        batches,
+    );
+    bench_idct_case(
+        dsp.idct16x16_10_add(),
+        "idct16x16_10_add",
+        "16x16",
+        16,
+        0xAA14,
+        8000,
+        batches,
+    );
+    bench_idct_case(
+        dsp.idct16x16_38_add(),
+        "idct16x16_38_add",
+        "16x16",
+        16,
+        0xAA01,
+        8000,
+        batches,
+    );
+    bench_idct_case(
+        dsp.idct32x32_add(),
+        "idct32x32_1024_add",
+        "32x32",
+        32,
+        0xAA15,
+        2000,
+        batches,
+    );
+    bench_idct_case(
+        dsp.idct32x32_34_add(),
+        "idct32x32_34_add",
+        "32x32",
+        32,
+        0xAA16,
+        2000,
+        batches,
+    );
+    bench_idct_case(
+        dsp.idct32x32_135_add(),
+        "idct32x32_135_add",
+        "32x32",
+        32,
+        0xAA02,
+        2000,
+        batches,
+    );
 
     // Convolve8 family. mode: 0 = 2D, 1 = horiz-only, 2 = vert-only.
-    bench_conv_case("convolve8_2d_halfpel", "8x8", 8, 8, 0, 0xAB08, 16000, batches);
-    bench_conv_case("convolve8_2d_halfpel", "16x16", 16, 16, 0, 0xAB10, 8000, batches);
-    bench_conv_case("convolve8_2d_halfpel", "32x32", 32, 32, 0, 0xAB20, 3000, batches);
-    bench_conv_case("convolve8_2d_halfpel", "64x64", 64, 64, 0, 0xAA03, 2000, batches);
-    bench_conv_case("convolve8_horiz_halfpel", "16x16", 16, 16, 1, 0xAC10, 12000, batches);
-    bench_conv_case("convolve8_horiz_halfpel", "64x64", 64, 64, 1, 0xAC40, 3000, batches);
-    bench_conv_case("convolve8_vert_halfpel", "16x16", 16, 16, 2, 0xAD10, 12000, batches);
-    bench_conv_case("convolve8_vert_halfpel", "64x64", 64, 64, 2, 0xAD40, 3000, batches);
+    bench_conv_case(
+        "convolve8_2d_halfpel",
+        "8x8",
+        8,
+        8,
+        0,
+        0xAB08,
+        16000,
+        batches,
+    );
+    bench_conv_case(
+        "convolve8_2d_halfpel",
+        "16x16",
+        16,
+        16,
+        0,
+        0xAB10,
+        8000,
+        batches,
+    );
+    bench_conv_case(
+        "convolve8_2d_halfpel",
+        "32x32",
+        32,
+        32,
+        0,
+        0xAB20,
+        3000,
+        batches,
+    );
+    bench_conv_case(
+        "convolve8_2d_halfpel",
+        "64x64",
+        64,
+        64,
+        0,
+        0xAA03,
+        2000,
+        batches,
+    );
+    bench_conv_case(
+        "convolve8_horiz_halfpel",
+        "16x16",
+        16,
+        16,
+        1,
+        0xAC10,
+        12000,
+        batches,
+    );
+    bench_conv_case(
+        "convolve8_horiz_halfpel",
+        "64x64",
+        64,
+        64,
+        1,
+        0xAC40,
+        3000,
+        batches,
+    );
+    bench_conv_case(
+        "convolve8_vert_halfpel",
+        "16x16",
+        16,
+        16,
+        2,
+        0xAD10,
+        12000,
+        batches,
+    );
+    bench_conv_case(
+        "convolve8_vert_halfpel",
+        "64x64",
+        64,
+        64,
+        2,
+        0xAD40,
+        3000,
+        batches,
+    );
 
     // Loopfilter (horizontal) family. getter_kind: 0 = lpf_horizontal_8,
     // 1 = lpf_horizontal_16, 2 = lpf_horizontal_4. Seeds + iters mirror
@@ -657,12 +839,12 @@ fn fnv1a64_i32(buf: &[i32]) -> u64 {
         for &b in &bytes {
             h ^= u64::from(b);
             // FNV-1a 64-bit prime = 0x100000001B3 = 2^40 + 0x1B3 — note the
-        // 2^40 not 2^32. An earlier draft of this file had 0x10000_01B3
-        // (2^32 + 0x1B3), which left the lower 32 bits of the hash
-        // matching the C side (correct prime) while garbling the upper —
-        // a multiplier-truncation bug with a very distinctive
-        // signature.
-        h = h.wrapping_mul(0x0000_0100_0000_01B3);
+            // 2^40 not 2^32. An earlier draft of this file had 0x10000_01B3
+            // (2^32 + 0x1B3), which left the lower 32 bits of the hash
+            // matching the C side (correct prime) while garbling the upper —
+            // a multiplier-truncation bug with a very distinctive
+            // signature.
+            h = h.wrapping_mul(0x0000_0100_0000_01B3);
         }
     }
     h

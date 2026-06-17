@@ -44,17 +44,16 @@
 use rvp9_core::bitstream::{ChromaFormat, InterpFilter};
 use rvp9_core::block::{BlockSize, uv_plane_block_size, uv_plane_tx_size};
 use rvp9_core::dsp::SimdDispatch;
-use rvp9_core::entropy::{BoolReader, FrameContext};
 use rvp9_core::entropy::adapt::CoefCountsBank;
+use rvp9_core::entropy::{BoolReader, FrameContext};
 use rvp9_core::frame::{BorderedPlaneRef, TileFrameDst, Yv12Buffer};
+use rvp9_core::inter::filter::{SUBPEL_BITS, SUBPEL_MASK, SUBPEL_SHIFTS};
 use rvp9_core::inter::mode_info::{InterModeReadParams, read_inter_block_mode_info};
 use rvp9_core::inter::mv_ref::{BlockBounds, NeighbourLookup, PrevFrameMvRef};
 use rvp9_core::inter::scale::ScaleFactors;
-use rvp9_core::inter::filter::{SUBPEL_BITS, SUBPEL_MASK, SUBPEL_SHIFTS};
 use rvp9_core::mode_info::{BlockMode, ModeInfo, Mv, RefFrame};
 use rvp9_core::transforms::inverse::{
-    idct4x4_1_add, idct8x8_1_add, idct16x16_1_add,
-    idct32x32_1_add, iwht4x4_1_add, iwht4x4_16_add,
+    idct4x4_1_add, idct8x8_1_add, idct16x16_1_add, idct32x32_1_add, iwht4x4_1_add, iwht4x4_16_add,
 };
 use rvp9_core::transforms::types::{TxSize, TxType};
 
@@ -75,7 +74,10 @@ fn plane_ss(chroma: ChromaFormat, plane: usize) -> (usize, usize) {
     if plane == 0 {
         (0, 0)
     } else {
-        (chroma.subsampling_x() as usize, chroma.subsampling_y() as usize)
+        (
+            chroma.subsampling_x() as usize,
+            chroma.subsampling_y() as usize,
+        )
     }
 }
 
@@ -214,8 +216,8 @@ pub fn reconstruct_inter_block<D: TileFrameDst>(
     let num_refs = 1 + usize::from(is_compound);
     #[allow(clippy::needless_range_loop)] // indexes both `inputs.refs` and `sfs`
     for r in 0..num_refs {
-        let ref_buf = inputs.refs[r]
-            .expect("caller must resolve ref-pool slot for each active ref");
+        let ref_buf =
+            inputs.refs[r].expect("caller must resolve ref-pool slot for each active ref");
         let sf = match inputs.sfs[r] {
             Some(sf) => sf,
             None => {
@@ -232,10 +234,7 @@ pub fn reconstruct_inter_block<D: TileFrameDst>(
                 )
             }
         };
-        debug_assert!(
-            sf.is_valid(),
-            "ref dimensions must be in libvpx envelope"
-        );
+        debug_assert!(sf.is_valid(), "ref dimensions must be in libvpx envelope");
         sfs[r] = Some(sf);
     }
 
@@ -401,8 +400,7 @@ pub fn reconstruct_inter_block<D: TileFrameDst>(
                         )
                     };
 
-                    let ref_plane: BorderedPlaneRef<'_> =
-                        ref_buf.plane_with_border(plane);
+                    let ref_plane: BorderedPlaneRef<'_> = ref_buf.plane_with_border(plane);
                     let crop = RefPlaneCrop::for_plane(ref_buf, plane);
 
                     let dst_for_mc = &mut dst_slice[sub_dst_offset..];
@@ -446,11 +444,27 @@ pub fn reconstruct_inter_block<D: TileFrameDst>(
                             "RVP9_TRACE_MC mi=({},{}) plane={} ref={} bw={} bh={} dst=({},{}) \
                              mv=({},{}) mv_q4=({},{}) total=({},{}) int=({},{}) subpel=({},{}) \
                              rf={:?} sub_x={} sub_y={}",
-                            mi_row, mi_col, plane, r, mc_w_px, mc_h_px,
-                            sub_px_x, sub_px_y,
-                            mv.row, mv.col, mv_q4_row, mv_q4_col,
-                            total_x_q4, total_y_q4, int_x, int_y, subpel_x, subpel_y,
-                            ref_frames[r], sub_x, sub_y,
+                            mi_row,
+                            mi_col,
+                            plane,
+                            r,
+                            mc_w_px,
+                            mc_h_px,
+                            sub_px_x,
+                            sub_px_y,
+                            mv.row,
+                            mv.col,
+                            mv_q4_row,
+                            mv_q4_col,
+                            total_x_q4,
+                            total_y_q4,
+                            int_x,
+                            int_y,
+                            subpel_x,
+                            subpel_y,
+                            ref_frames[r],
+                            sub_x,
+                            sub_y,
                         );
                     }
 
@@ -742,10 +756,8 @@ fn mi_mv_pred_q2(
     block0: usize,
     block1: usize,
 ) -> Mv {
-    let row_sum =
-        i32::from(bmi[block0].as_mv[idx].row) + i32::from(bmi[block1].as_mv[idx].row);
-    let col_sum =
-        i32::from(bmi[block0].as_mv[idx].col) + i32::from(bmi[block1].as_mv[idx].col);
+    let row_sum = i32::from(bmi[block0].as_mv[idx].row) + i32::from(bmi[block1].as_mv[idx].row);
+    let col_sum = i32::from(bmi[block0].as_mv[idx].col) + i32::from(bmi[block1].as_mv[idx].col);
     Mv {
         row: round_mv_comp_q2(row_sum) as i16,
         col: round_mv_comp_q2(col_sum) as i16,
@@ -1113,10 +1125,8 @@ fn build_inter_predictor_with_mc_border(
     let bordered_x_hi = (ref_plane.width + ref_plane.border_w) as i32;
     let bordered_y_hi = (ref_plane.height + ref_plane.border_h) as i32;
 
-    let needs_scratch = x0 < bordered_x_lo
-        || y0 < bordered_y_lo
-        || x1 > bordered_x_hi
-        || y1 > bordered_y_hi;
+    let needs_scratch =
+        x0 < bordered_x_lo || y0 < bordered_y_lo || x1 > bordered_x_hi || y1 > bordered_y_hi;
 
     if !needs_scratch {
         // Fast path: read directly from the bordered region. Apply
@@ -1124,10 +1134,8 @@ fn build_inter_predictor_with_mc_border(
         // code so `src[0]` is the kernel's first-tap base.
         let row_pre = if y_pad { -(VP9_INTERP_EXTEND - 1) } else { 0 };
         let col_pre = if x_pad { -(VP9_INTERP_EXTEND - 1) } else { 0 };
-        let row_base =
-            (ref_plane.border_h as i32 + int_y + row_pre) as usize;
-        let col_base =
-            (ref_plane.border_w as i32 + int_x + col_pre) as usize;
+        let row_base = (ref_plane.border_h as i32 + int_y + row_pre) as usize;
+        let col_base = (ref_plane.border_w as i32 + int_x + col_pre) as usize;
         let src_base = row_base * ref_plane.stride + col_base;
         // D.19 — gated source-data trace for the fast path. Dumps the
         // first row of the src footprint (post pre-shift) so the
@@ -1183,8 +1191,9 @@ fn build_inter_predictor_with_mc_border(
     // been written. Replaces `[0u8; ...]` whose compiler-emitted
     // memset at this declaration was wasted work (the buffer is
     // immediately overwritten by build_mc_border).
-    let mut scratch_uninit: std::mem::MaybeUninit<[u8; MC_BORDER_SCRATCH_MAX * MC_BORDER_SCRATCH_MAX]>
-        = std::mem::MaybeUninit::uninit();
+    let mut scratch_uninit: std::mem::MaybeUninit<
+        [u8; MC_BORDER_SCRATCH_MAX * MC_BORDER_SCRATCH_MAX],
+    > = std::mem::MaybeUninit::uninit();
     // SAFETY: every byte of `scratch[..scratch_used]` is written by
     // `build_mc_border` below before any read; reads outside that
     // range never happen (the convolve only indexes `[..scratch_used]`).
@@ -1195,8 +1204,7 @@ fn build_inter_predictor_with_mc_border(
 
     // Source pointer at the visible top-left (= bordered top-left +
     // (border_h, border_w)).
-    let visible_base =
-        ref_plane.border_h * ref_plane.stride + ref_plane.border_w;
+    let visible_base = ref_plane.border_h * ref_plane.stride + ref_plane.border_w;
     let src_visible = &ref_plane.data[visible_base..];
 
     build_mc_border(
@@ -1266,8 +1274,8 @@ fn _ignored() {
 mod tests {
     use super::*;
     use rvp9_core::bitstream::ChromaFormat;
-    use rvp9_core::entropy::{BoolWriter, FrameContext};
     use rvp9_core::entropy::coef_probs::{COEF_BANDS, COEFF_CONTEXTS};
+    use rvp9_core::entropy::{BoolWriter, FrameContext};
     use rvp9_core::frame::{BorderUsage, ByteAlignment, Yv12Buffer};
     use rvp9_core::mode_info::{BlockMode, BmiInfo, InterMode, ModeInfo, Mv, RefFrame};
     use rvp9_core::transforms::TxSize;
@@ -1436,11 +1444,7 @@ mod tests {
         for row in 0..8 {
             let dst_row = &dst_y.data()[(8 + row) * dst_y.stride() + 16..];
             let ref_row = &ref_y.data()[(8 + row) * ref_y.stride() + 16..];
-            assert_eq!(
-                &dst_row[..8],
-                &ref_row[..8],
-                "row {row} mismatch in MC dst",
-            );
+            assert_eq!(&dst_row[..8], &ref_row[..8], "row {row} mismatch in MC dst",);
         }
         // Sentinel bytes outside the block remain.
         assert_eq!(dst_y.data()[0], 0x11);
@@ -1469,9 +1473,13 @@ mod tests {
         let cur_h = 64u32;
         let ref_buf = make_ref(cur_w, cur_h);
         let mut dst = Yv12Buffer::alloc(
-            cur_w, cur_h, ChromaFormat::Yuv420,
-            BorderUsage::Decoder, ByteAlignment::Legacy,
-        ).unwrap();
+            cur_w,
+            cur_h,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
         dst.y_plane_mut().fill(0xAB);
         dst.u_plane_mut().fill(0xCD);
         dst.v_plane_mut().fill(0xEF);
@@ -1548,9 +1556,13 @@ mod tests {
         let cur_h = 64u32;
         let ref_buf = make_ref(cur_w, cur_h);
         let mut dst = Yv12Buffer::alloc(
-            cur_w, cur_h, ChromaFormat::Yuv420,
-            BorderUsage::Decoder, ByteAlignment::Legacy,
-        ).unwrap();
+            cur_w,
+            cur_h,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
         dst.y_plane_mut().fill(0);
 
         let fc = fc_flat_eob_inter();
@@ -1577,8 +1589,18 @@ mod tests {
         };
 
         reconstruct_inter_block(
-            &mut reader, &fc, None, &mut coef_ctx, &mi,
-            2, 2, 2, 2, 2, &inputs, &mut dst,
+            &mut reader,
+            &fc,
+            None,
+            &mut coef_ctx,
+            &mi,
+            2,
+            2,
+            2,
+            2,
+            2,
+            &inputs,
+            &mut dst,
             &test_dispatch(),
         );
 
@@ -1610,27 +1632,39 @@ mod tests {
         let cur_h = 64u32;
         // Two refs with distinct constant fills.
         let mut ref0 = Yv12Buffer::alloc(
-            cur_w, cur_h, ChromaFormat::Yuv420,
-            BorderUsage::Decoder, ByteAlignment::Legacy,
-        ).unwrap();
+            cur_w,
+            cur_h,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
         ref0.y_plane_mut().fill(0x40);
         ref0.u_plane_mut().fill(0x10);
         ref0.v_plane_mut().fill(0x20);
         ref0.extend_borders();
 
         let mut ref1 = Yv12Buffer::alloc(
-            cur_w, cur_h, ChromaFormat::Yuv420,
-            BorderUsage::Decoder, ByteAlignment::Legacy,
-        ).unwrap();
+            cur_w,
+            cur_h,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
         ref1.y_plane_mut().fill(0xC0);
         ref1.u_plane_mut().fill(0x30);
         ref1.v_plane_mut().fill(0x60);
         ref1.extend_borders();
 
         let mut dst = Yv12Buffer::alloc(
-            cur_w, cur_h, ChromaFormat::Yuv420,
-            BorderUsage::Decoder, ByteAlignment::Legacy,
-        ).unwrap();
+            cur_w,
+            cur_h,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
         dst.y_plane_mut().fill(0x77); // sentinel; should be overwritten
 
         let fc = fc_flat_eob_inter();
@@ -1656,8 +1690,18 @@ mod tests {
         };
 
         reconstruct_inter_block(
-            &mut reader, &fc, None, &mut coef_ctx, &mi,
-            1, 1, 1, 1, 1, &inputs, &mut dst,
+            &mut reader,
+            &fc,
+            None,
+            &mut coef_ctx,
+            &mi,
+            1,
+            1,
+            1,
+            1,
+            1,
+            &inputs,
+            &mut dst,
             &test_dispatch(),
         );
 
@@ -1698,7 +1742,9 @@ mod tests {
     #[test]
     fn integration_zeromv_skip_single_ref_block16x16_copies_ref() {
         use rvp9_core::bitstream::ReferenceMode;
-        use rvp9_core::inter::mv_ref::{BlockBounds, NeighbourLookup, Position, sign_bias_from_header};
+        use rvp9_core::inter::mv_ref::{
+            BlockBounds, NeighbourLookup, Position, sign_bias_from_header,
+        };
         use rvp9_core::intra_pred::IntraMode;
         use rvp9_core::mode_info::BlockMode;
 
@@ -1713,8 +1759,7 @@ mod tests {
         // 1. Build a frame context + inter params.
         let fc = fc_flat_eob_inter();
         let sign_bias = sign_bias_from_header(&[false, false, false]);
-        let (fixed, var) =
-            rvp9_core::inter::mode_info::setup_compound_reference_mode(&sign_bias);
+        let (fixed, var) = rvp9_core::inter::mode_info::setup_compound_reference_mode(&sign_bias);
         let params = InterModeReadParams {
             allow_high_precision_mv: false,
             interp_filter: InterpFilter::EightTap,
@@ -1750,9 +1795,13 @@ mod tests {
         let cur_h = 64u32;
         let ref_buf = make_ref(cur_w, cur_h);
         let mut dst = Yv12Buffer::alloc(
-            cur_w, cur_h, ChromaFormat::Yuv420,
-            BorderUsage::Decoder, ByteAlignment::Legacy,
-        ).unwrap();
+            cur_w,
+            cur_h,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
         dst.y_plane_mut().fill(0xCC); // sentinel
 
         // 4. Skeleton mi — only block_size / tx_size / skip set; the
@@ -1774,8 +1823,7 @@ mod tests {
         let mut reader = BoolReader::new(&buf).expect("init");
         let mut coef_ctx = TileCoefCtx::new(cur_w as usize / 8);
         let bounds = BlockBounds::new(
-            /* mi_row */ 0, /* mi_col */ 0,
-            /* mi_rows */ 8, /* mi_cols */ 8,
+            /* mi_row */ 0, /* mi_col */ 0, /* mi_rows */ 8, /* mi_cols */ 8,
             /* bw */ 2, /* bh */ 2,
         );
         let inputs = InterBlockInputs {
@@ -1810,7 +1858,12 @@ mod tests {
 
         // 6. Confirm mi.mode is Inter with expected values.
         match mi.mode {
-            BlockMode::Inter { mode, ref_frames, mvs, .. } => {
+            BlockMode::Inter {
+                mode,
+                ref_frames,
+                mvs,
+                ..
+            } => {
                 assert_eq!(mode, InterMode::ZeroMv);
                 assert_eq!(ref_frames, [RefFrame::LastFrame, RefFrame::NoRefFrame]);
                 assert_eq!(mvs, [Mv::ZERO, Mv::ZERO]);
@@ -1840,9 +1893,13 @@ mod tests {
         let cur_h = 64u32;
         let ref_buf = make_ref(cur_w, cur_h);
         let mut dst = Yv12Buffer::alloc(
-            cur_w, cur_h, ChromaFormat::Yuv420,
-            BorderUsage::Decoder, ByteAlignment::Legacy,
-        ).unwrap();
+            cur_w,
+            cur_h,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
         dst.y_plane_mut().fill(0x55);
         dst.u_plane_mut().fill(0x66);
         dst.v_plane_mut().fill(0x77);
@@ -1885,9 +1942,18 @@ mod tests {
         };
 
         reconstruct_inter_block(
-            &mut reader, &fc, None, &mut coef_ctx, &mi,
-            /* mi_row */ 1, /* mi_col */ 1,
-            1, 1, 1, &inputs, &mut dst,
+            &mut reader,
+            &fc,
+            None,
+            &mut coef_ctx,
+            &mi,
+            /* mi_row */ 1,
+            /* mi_col */ 1,
+            1,
+            1,
+            1,
+            &inputs,
+            &mut dst,
             &test_dispatch(),
         );
 
@@ -1951,10 +2017,22 @@ mod tests {
         ];
         for set in &sets {
             let bmi = [
-                BmiInfo { as_mode: 0, as_mv: [set[0], Mv::ZERO] },
-                BmiInfo { as_mode: 0, as_mv: [set[1], Mv::ZERO] },
-                BmiInfo { as_mode: 0, as_mv: [set[2], Mv::ZERO] },
-                BmiInfo { as_mode: 0, as_mv: [set[3], Mv::ZERO] },
+                BmiInfo {
+                    as_mode: 0,
+                    as_mv: [set[0], Mv::ZERO],
+                },
+                BmiInfo {
+                    as_mode: 0,
+                    as_mv: [set[1], Mv::ZERO],
+                },
+                BmiInfo {
+                    as_mode: 0,
+                    as_mv: [set[2], Mv::ZERO],
+                },
+                BmiInfo {
+                    as_mode: 0,
+                    as_mv: [set[3], Mv::ZERO],
+                },
             ];
             // Old behaviour: round_mv_comp_q4 over all-4 sum, for any block.
             let row_sum: i32 = set.iter().map(|m| i32::from(m.row)).sum();
@@ -1980,10 +2058,22 @@ mod tests {
     #[test]
     fn average_split_mvs_differential_444_440_422() {
         let bmi = [
-            BmiInfo { as_mode: 0, as_mv: [Mv { row: 8, col: -4 }, Mv::ZERO] },
-            BmiInfo { as_mode: 0, as_mv: [Mv { row: 4, col: -8 }, Mv::ZERO] },
-            BmiInfo { as_mode: 0, as_mv: [Mv { row: 4, col: -4 }, Mv::ZERO] },
-            BmiInfo { as_mode: 0, as_mv: [Mv { row: 8, col: -8 }, Mv::ZERO] },
+            BmiInfo {
+                as_mode: 0,
+                as_mv: [Mv { row: 8, col: -4 }, Mv::ZERO],
+            },
+            BmiInfo {
+                as_mode: 0,
+                as_mv: [Mv { row: 4, col: -8 }, Mv::ZERO],
+            },
+            BmiInfo {
+                as_mode: 0,
+                as_mv: [Mv { row: 4, col: -4 }, Mv::ZERO],
+            },
+            BmiInfo {
+                as_mode: 0,
+                as_mv: [Mv { row: 8, col: -8 }, Mv::ZERO],
+            },
         ];
 
         // ss_idx 0 (4:4:4, ss=0,0): case 0 — returns bmi[block] unchanged.
@@ -1997,15 +2087,27 @@ mod tests {
 
         // ss_idx 1 (4:4:0, ss_x=0 ss_y=1): case 1 — mi_mv_pred_q2(block, block+2).
         // block 0 -> avg{bmi0,bmi2}: row (8+4)=12 -> (12+1)/2=6; col (-4-4)=-8 -> (-8-1)/2=-4.
-        assert_eq!(super::average_split_mvs(&bmi, 0, 0, 1, 0), Mv { row: 6, col: -4 });
+        assert_eq!(
+            super::average_split_mvs(&bmi, 0, 0, 1, 0),
+            Mv { row: 6, col: -4 }
+        );
         // block 1 -> avg{bmi1,bmi3}: row (4+8)=12 -> 6; col (-8-8)=-16 -> (-16-1)/2=-8.
-        assert_eq!(super::average_split_mvs(&bmi, 0, 0, 1, 1), Mv { row: 6, col: -8 });
+        assert_eq!(
+            super::average_split_mvs(&bmi, 0, 0, 1, 1),
+            Mv { row: 6, col: -8 }
+        );
 
         // ss_idx 2 (4:2:2, ss_x=1 ss_y=0): case 2 — mi_mv_pred_q2(block, block+1).
         // block 0 -> avg{bmi0,bmi1}: row (8+4)=12 -> 6; col (-4-8)=-12 -> (-12-1)/2=-6 (int /2 truncates).
-        assert_eq!(super::average_split_mvs(&bmi, 0, 1, 0, 0), Mv { row: 6, col: -6 });
+        assert_eq!(
+            super::average_split_mvs(&bmi, 0, 1, 0, 0),
+            Mv { row: 6, col: -6 }
+        );
         // block 1 -> avg{bmi1,bmi2}: row (4+4)=8 -> (8+1)/2=4; col (-8-4)=-12 -> -6.
-        assert_eq!(super::average_split_mvs(&bmi, 0, 1, 0, 1), Mv { row: 4, col: -6 });
+        assert_eq!(
+            super::average_split_mvs(&bmi, 0, 1, 0, 1),
+            Mv { row: 4, col: -6 }
+        );
     }
 
     /// D.2.a coverage: non-zero MV with sub-pel offset. With identity
@@ -2101,9 +2203,13 @@ mod tests {
     /// values so edge replication can be observed in test outputs.
     fn ref_with_distinct_edge_pixels(crop_w: u32, crop_h: u32) -> Yv12Buffer {
         let mut buf = Yv12Buffer::alloc(
-            crop_w, crop_h, ChromaFormat::Yuv420,
-            BorderUsage::Decoder, ByteAlignment::Legacy,
-        ).unwrap();
+            crop_w,
+            crop_h,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
         // Y plane: each pixel encodes its (clamped) position so the
         // edge-replicated cells differ from interior cells.
         {
@@ -2150,7 +2256,8 @@ mod tests {
             InterpFilter::EightTap,
             &mut dst,
             16,
-            8, 8,
+            8,
+            8,
             false,
             rvp9_core::dsp::get_ref(),
         );
@@ -2198,7 +2305,8 @@ mod tests {
             InterpFilter::EightTap,
             &mut dst_direct,
             8,
-            8, 8,
+            8,
+            8,
             false,
             rvp9_core::dsp::get_ref(),
         );
@@ -2239,7 +2347,8 @@ mod tests {
             InterpFilter::EightTap,
             &mut dst,
             8,
-            8, 8,
+            8,
+            8,
             false,
             rvp9_core::dsp::get_ref(),
         );
@@ -2280,7 +2389,8 @@ mod tests {
             InterpFilter::EightTap,
             &mut dst,
             8,
-            8, 8,
+            8,
+            8,
             false,
             rvp9_core::dsp::get_ref(),
         );
@@ -2288,7 +2398,10 @@ mod tests {
         let ref_y = ref_buf.y_plane();
         let top_left = ref_y.data()[0];
         for px in &dst {
-            assert_eq!(*px, top_left, "top-left scratch must replicate corner pixel");
+            assert_eq!(
+                *px, top_left,
+                "top-left scratch must replicate corner pixel"
+            );
         }
     }
 
@@ -2323,7 +2436,8 @@ mod tests {
             InterpFilter::EightTap,
             &mut dst_helper,
             8,
-            8, 8,
+            8,
+            8,
             false,
             rvp9_core::dsp::get_ref(),
         );
@@ -2381,23 +2495,13 @@ mod tests {
     fn build_mc_border_replicates_top_left() {
         // 2×2 visible region; values: [[0xA0, 0xA1], [0xB0, 0xB1]].
         let src = [
-            0xA0u8, 0xA1, 0x00, 0x00,
-            0xB0,   0xB1, 0x00, 0x00,
-            0x00,   0x00, 0x00, 0x00,
-            0x00,   0x00, 0x00, 0x00,
+            0xA0u8, 0xA1, 0x00, 0x00, 0xB0, 0xB1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
         ];
         let mut dst = [0u8; 16]; // 4x4 footprint
         super::build_mc_border(
-            &src,
-            /* src_stride */ 4,
-            &mut dst,
-            /* dst_stride */ 4,
-            /* x */ -2,
-            /* y */ -2,
-            /* b_w */ 4,
-            /* b_h */ 4,
-            /* w */ 2,
-            /* h */ 2,
+            &src, /* src_stride */ 4, &mut dst, /* dst_stride */ 4, /* x */ -2,
+            /* y */ -2, /* b_w */ 4, /* b_h */ 4, /* w */ 2, /* h */ 2,
         );
         // Row -2 / -1 → clamp to row 0 → [0xA0, 0xA0, 0xA0, 0xA1]
         // (left=2 fills 0xA0, copy=2 reads [0,1]=A0,A1; right=0).
@@ -2416,17 +2520,13 @@ mod tests {
     #[test]
     fn build_mc_border_replicates_bottom_right() {
         let src = [
-            0xA0u8, 0xA1, 0x00, 0x00,
-            0xB0,   0xB1, 0x00, 0x00,
-            0x00,   0x00, 0x00, 0x00,
-            0x00,   0x00, 0x00, 0x00,
+            0xA0u8, 0xA1, 0x00, 0x00, 0xB0, 0xB1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
         ];
         let mut dst = [0u8; 16];
         super::build_mc_border(
-            &src, 4, &mut dst, 4,
-            /* x */ 0, /* y */ 0,
-            /* b_w */ 4, /* b_h */ 4,
-            /* w */ 2,  /* h */ 2,
+            &src, 4, &mut dst, 4, /* x */ 0, /* y */ 0, /* b_w */ 4,
+            /* b_h */ 4, /* w */ 2, /* h */ 2,
         );
         // Row 0 (y=0): left=0, right=max(0, 0+4-2)=2, copy=2. fill = row[w-1]=row[1]=0xA1.
         //   → [0xA0, 0xA1, 0xA1, 0xA1].
@@ -2476,10 +2576,22 @@ mod tests {
     #[test]
     fn mi_mv_pred_q4_averages_four_bmi_for_ref() {
         let bmi = [
-            BmiInfo { as_mode: 0, as_mv: [Mv { row: 4, col: 2 }, Mv { row: 100, col: -50 }] },
-            BmiInfo { as_mode: 0, as_mv: [Mv { row: 4, col: 4 }, Mv::ZERO] },
-            BmiInfo { as_mode: 0, as_mv: [Mv { row: 8, col: -2 }, Mv::ZERO] },
-            BmiInfo { as_mode: 0, as_mv: [Mv { row: 4, col: 4 }, Mv::ZERO] },
+            BmiInfo {
+                as_mode: 0,
+                as_mv: [Mv { row: 4, col: 2 }, Mv { row: 100, col: -50 }],
+            },
+            BmiInfo {
+                as_mode: 0,
+                as_mv: [Mv { row: 4, col: 4 }, Mv::ZERO],
+            },
+            BmiInfo {
+                as_mode: 0,
+                as_mv: [Mv { row: 8, col: -2 }, Mv::ZERO],
+            },
+            BmiInfo {
+                as_mode: 0,
+                as_mv: [Mv { row: 4, col: 4 }, Mv::ZERO],
+            },
         ];
         // Sum row: 4+4+8+4 = 20; round to (20+2)/4 = 5.
         // Sum col: 2+4-2+4 = 8; round to (8+2)/4 = 2.
@@ -2495,10 +2607,22 @@ mod tests {
     #[test]
     fn mi_mv_pred_q2_averages_two_bmi() {
         let bmi = [
-            BmiInfo { as_mode: 0, as_mv: [Mv { row: 6, col: -4 }, Mv::ZERO] },
-            BmiInfo { as_mode: 0, as_mv: [Mv { row: 4, col: -2 }, Mv::ZERO] },
-            BmiInfo { as_mode: 0, as_mv: [Mv { row: 0, col: 0 }, Mv::ZERO] },
-            BmiInfo { as_mode: 0, as_mv: [Mv { row: 0, col: 0 }, Mv::ZERO] },
+            BmiInfo {
+                as_mode: 0,
+                as_mv: [Mv { row: 6, col: -4 }, Mv::ZERO],
+            },
+            BmiInfo {
+                as_mode: 0,
+                as_mv: [Mv { row: 4, col: -2 }, Mv::ZERO],
+            },
+            BmiInfo {
+                as_mode: 0,
+                as_mv: [Mv { row: 0, col: 0 }, Mv::ZERO],
+            },
+            BmiInfo {
+                as_mode: 0,
+                as_mv: [Mv { row: 0, col: 0 }, Mv::ZERO],
+            },
         ];
         // avg{bmi[0], bmi[1]}: row (6+4)=10 → (10+1)/2 = 5; col (-4-2)=-6 → (-6-1)/2 = -3.
         let got = super::mi_mv_pred_q2(&bmi, 0, 0, 1);
@@ -2643,23 +2767,13 @@ mod tests {
     #[test]
     fn build_mc_border_top_edge_clamps_to_row_zero() {
         let src = [
-            0x10u8, 0x20, 0x30, 0x00,
-            0xF0,   0xF1, 0xF2, 0x00,
-            0x00,   0x00, 0x00, 0x00,
-            0x00,   0x00, 0x00, 0x00,
+            0x10u8, 0x20, 0x30, 0x00, 0xF0, 0xF1, 0xF2, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
         ];
         let mut dst = [0u8; 12];
         super::build_mc_border(
-            &src,
-            4,
-            &mut dst,
-            3,
-            /* x */ 0,
-            /* y */ -2,
-            /* b_w */ 3,
-            /* b_h */ 4,
-            /* w */ 3,
-            /* h */ 2,
+            &src, 4, &mut dst, 3, /* x */ 0, /* y */ -2, /* b_w */ 3,
+            /* b_h */ 4, /* w */ 3, /* h */ 2,
         );
         // Rows -2 / -1 clamp to row 0 → [0x10, 0x20, 0x30].
         assert_eq!(&dst[0..3], &[0x10, 0x20, 0x30]);
@@ -2897,9 +3011,13 @@ mod tests {
         let cur_h = 64u32;
         let ref_buf = make_ref(cur_w, cur_h);
         let mut dst = Yv12Buffer::alloc(
-            cur_w, cur_h, ChromaFormat::Yuv420,
-            BorderUsage::Decoder, ByteAlignment::Legacy,
-        ).unwrap();
+            cur_w,
+            cur_h,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .unwrap();
         dst.y_plane_mut().fill(0xAA);
 
         let fc = fc_flat_eob_inter();
@@ -2921,9 +3039,18 @@ mod tests {
             mi_cols: 1 << 16,
         };
         reconstruct_inter_block(
-            &mut reader, &fc, None, &mut coef_ctx, &mi,
-            0, 0, 0, 0, 0,
-            &inputs, &mut dst,
+            &mut reader,
+            &fc,
+            None,
+            &mut coef_ctx,
+            &mi,
+            0,
+            0,
+            0,
+            0,
+            0,
+            &inputs,
+            &mut dst,
             &test_dispatch(),
         );
         // dst region equals ref region (Mv = 0 + identity scale = direct

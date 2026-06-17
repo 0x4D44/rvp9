@@ -255,9 +255,9 @@ pub fn sub_pixel_variance_avx2(
 macro_rules! subpel_var_avx2_fn {
     ($name:ident, $w:expr, $h:expr) => {
         #[doc = concat!("AVX2 sub-pixel variance for a ", stringify!($w), "×",
-                        stringify!($h), " block. Byte-exact with ",
-                        "`crate::dsp::distortion::vpx_sub_pixel_variance",
-                        stringify!($w), "x", stringify!($h), "`.")]
+                                                stringify!($h), " block. Byte-exact with ",
+                                                "`crate::dsp::distortion::vpx_sub_pixel_variance",
+                                                stringify!($w), "x", stringify!($h), "`.")]
         pub fn $name(
             src: &[u8],
             src_stride: usize,
@@ -463,7 +463,10 @@ mod tests {
                     let a = sub_pixel_variance_avx2(
                         &src, src_stride, &reference, ref_stride, xoff, yoff, w, h,
                     );
-                    assert_eq!(s, a, "edge mismatch w={w} h={h} s={sval} r={rval} ({xoff},{yoff})");
+                    assert_eq!(
+                        s, a,
+                        "edge mismatch w={w} h={h} s={sval} r={rval} ({xoff},{yoff})"
+                    );
                 }
             }
         }
@@ -504,14 +507,22 @@ mod tests {
             let src: Vec<u8> = (0..(h + 1) * src_stride + (w + 1) + 16)
                 .map(|_| rng.next_byte())
                 .collect();
-            let reference: Vec<u8> =
-                (0..(h - 1) * ref_stride + w).map(|_| rng.next_byte()).collect();
-            let avx2_fn = d_avx2.subpel_variance(bs).expect("supported size has a kernel");
-            let scalar_fn = d_scalar.subpel_variance(bs).expect("supported size has a kernel");
+            let reference: Vec<u8> = (0..(h - 1) * ref_stride + w)
+                .map(|_| rng.next_byte())
+                .collect();
+            let avx2_fn = d_avx2
+                .subpel_variance(bs)
+                .expect("supported size has a kernel");
+            let scalar_fn = d_scalar
+                .subpel_variance(bs)
+                .expect("supported size has a kernel");
             for &(xoff, yoff) in &[(0, 0), (3, 5), (7, 7)] {
                 let a = avx2_fn(&src, src_stride, xoff, yoff, &reference, ref_stride);
                 let s = scalar_fn(&src, src_stride, xoff, yoff, &reference, ref_stride);
-                assert_eq!(a, s, "dispatch round-trip subpel mismatch at {bs:?} ({xoff},{yoff})");
+                assert_eq!(
+                    a, s,
+                    "dispatch round-trip subpel mismatch at {bs:?} ({xoff},{yoff})"
+                );
             }
         }
     }

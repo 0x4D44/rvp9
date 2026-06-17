@@ -113,11 +113,7 @@ fn decode_packet<'a>(dec: &mut Decoder, pkt: &'a [u8]) -> Vec<ParsedFrame<'a>> {
 /// Concatenate the tight-stride Y / U / V samples of a decoded YV12
 /// buffer in I420 order (Y, then U, then V), matching what
 /// `vpxdec --i420 -o out.yuv` and `ffmpeg -pix_fmt yuv420p` write.
-fn yv12_to_i420_bytes(
-    buf: &rvp9_core::frame::Yv12Buffer,
-    w: u32,
-    h: u32,
-) -> Vec<u8> {
+fn yv12_to_i420_bytes(buf: &rvp9_core::frame::Yv12Buffer, w: u32, h: u32) -> Vec<u8> {
     let yp = buf.y_plane();
     let up = buf.u_plane();
     let vp = buf.v_plane();
@@ -320,7 +316,8 @@ fn cross_decoder_gate_vpxdec_ffmpeg() {
     // ---- Decode through rvp9-decoder (the baseline) --------------------
     let rvp9_yuv: Vec<u8> = {
         let mut dec = Decoder::new();
-        let mut out: Vec<u8> = Vec::with_capacity((W as usize) * (H as usize) * 3 / 2 * N_FRAMES as usize);
+        let mut out: Vec<u8> =
+            Vec::with_capacity((W as usize) * (H as usize) * 3 / 2 * N_FRAMES as usize);
         for pkt in &encoded_packets {
             let parsed = decode_packet(&mut dec, pkt);
             for pf in &parsed {
@@ -364,8 +361,11 @@ fn cross_decoder_gate_vpxdec_ffmpeg() {
                         rvp9_yuv.len(),
                         (rvp9_yuv.len().saturating_sub(vpx_yuv.len())) / expected_frame_bytes
                     );
-                    vpxdec_verdict =
-                        format!("FAIL (size mismatch: {} vs {})", vpx_yuv.len(), rvp9_yuv.len());
+                    vpxdec_verdict = format!(
+                        "FAIL (size mismatch: {} vs {})",
+                        vpx_yuv.len(),
+                        rvp9_yuv.len()
+                    );
                     vpxdec_failed = true;
                 } else if vpx_yuv == rvp9_yuv {
                     eprintln!(
@@ -380,8 +380,7 @@ fn cross_decoder_gate_vpxdec_ffmpeg() {
                          total_bytes={})",
                         rvp9_yuv.len()
                     );
-                    vpxdec_verdict =
-                        format!("FAIL (divergent: max_abs={max_abs}, sse={sse})");
+                    vpxdec_verdict = format!("FAIL (divergent: max_abs={max_abs}, sse={sse})");
                     vpxdec_failed = true;
                 }
                 let _ = std::fs::remove_file(&vpx_yuv_path);
@@ -415,8 +414,11 @@ fn cross_decoder_gate_vpxdec_ffmpeg() {
                         rvp9_yuv.len(),
                         (rvp9_yuv.len().saturating_sub(ff_yuv.len())) / expected_frame_bytes
                     );
-                    ffmpeg_verdict =
-                        format!("FAIL (size mismatch: {} vs {})", ff_yuv.len(), rvp9_yuv.len());
+                    ffmpeg_verdict = format!(
+                        "FAIL (size mismatch: {} vs {})",
+                        ff_yuv.len(),
+                        rvp9_yuv.len()
+                    );
                     ffmpeg_failed = true;
                 } else if ff_yuv == rvp9_yuv {
                     eprintln!("rvp9-decoder vs ffmpeg: BYTE-EXACT.");
@@ -533,8 +535,8 @@ fn rc_x1_diagnostic_dump() {
         eprintln!("[SKIPPED] testsrc_720p30.y4m corpus not available.");
         return;
     };
-    let (frames, framerate) = y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize)
-        .expect("y4m_read_cropped");
+    let (frames, framerate) =
+        y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize).expect("y4m_read_cropped");
     assert_eq!(frames.len(), N_FRAMES as usize);
 
     let cfg = EncoderConfig {
@@ -601,7 +603,10 @@ fn rc_x1_diagnostic_dump() {
         let mut f = std::fs::File::create(&full_ivf).expect("create full ivf");
         write_ivf(&mut f, &header, &refs).expect("write_ivf full");
     }
-    eprintln!("RC.X1 diagnostic dump complete. Inspect files under: {}", tmp_dir.display());
+    eprintln!(
+        "RC.X1 diagnostic dump complete. Inspect files under: {}",
+        tmp_dir.display()
+    );
 }
 
 /// RC.X1 — dump per-SB leaf layout for frame 1 (rvp9-decoder view).
@@ -615,13 +620,19 @@ fn rc_x1_sb_leaf_dump() {
     const N_FRAMES: u32 = 8;
     const TARGET_BITRATE_BPS: u32 = 1_000_000;
 
-    let Some(y4m_path) = probe_testsrc_720p() else { return };
-    let (frames, framerate) = y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize)
-        .expect("y4m_read_cropped");
+    let Some(y4m_path) = probe_testsrc_720p() else {
+        return;
+    };
+    let (frames, framerate) =
+        y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize).expect("y4m_read_cropped");
 
     let cfg = EncoderConfig {
-        width: W, height: H, framerate, target_bitrate_bps: TARGET_BITRATE_BPS,
-        gop_length: N_FRAMES + 1, aq_mode: AqMode::Off,
+        width: W,
+        height: H,
+        framerate,
+        target_bitrate_bps: TARGET_BITRATE_BPS,
+        gop_length: N_FRAMES + 1,
+        aq_mode: AqMode::Off,
         use_prev_frame_mvs: false,
         speed: 7,
         deadline: rvp9_encoder::Deadline::Realtime,
@@ -640,12 +651,16 @@ fn rc_x1_sb_leaf_dump() {
     let mut dec = Decoder::new();
 
     for (idx, (y, u, v)) in frames.iter().enumerate() {
-        let pkt = enc.encode_frame(&yuv_view(y, u, v, W as usize)).expect("encode_frame");
+        let pkt = enc
+            .encode_frame(&yuv_view(y, u, v, W as usize))
+            .expect("encode_frame");
         let parsed = decode_packet(&mut dec, &pkt.data);
         for pf in &parsed {
             let _ = dec.decode_frame(pf).expect("rvp9 decode_frame");
         }
-        if idx != 1 { continue; }
+        if idx != 1 {
+            continue;
+        }
         let grid = dec.last_frame_mi_grid();
         let (mi_rows, mi_cols) = dec.last_frame_mi_dims();
         let mi_cols_us = mi_cols as usize;
@@ -660,7 +675,14 @@ fn rc_x1_sb_leaf_dump() {
                         let cell = grid[mi_r * mi_cols_us + mi_c];
                         if let Some(mi) = cell {
                             let is_inter = matches!(mi.mode, BlockMode::Inter { .. });
-                            eprint!(" [{}.{}|{:?}|sk={}|i={}]", r, c, mi.block_size, u8::from(mi.skip), u8::from(is_inter));
+                            eprint!(
+                                " [{}.{}|{:?}|sk={}|i={}]",
+                                r,
+                                c,
+                                mi.block_size,
+                                u8::from(mi.skip),
+                                u8::from(is_inter)
+                            );
                         } else {
                             eprint!(" [{}.{}|None]", r, c);
                         }
@@ -689,8 +711,8 @@ fn rc_x1_internal_dump() {
         eprintln!("[SKIPPED] testsrc_720p30.y4m not available.");
         return;
     };
-    let (frames, framerate) = y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize)
-        .expect("y4m_read_cropped");
+    let (frames, framerate) =
+        y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize).expect("y4m_read_cropped");
 
     let cfg = EncoderConfig {
         width: W,
@@ -739,11 +761,19 @@ fn rc_x1_internal_dump() {
             if let Some(c) = cell {
                 let bs = format!("{:?}", c.block_size);
                 *counts.entry(bs).or_insert(0) += 1;
-                if c.skip { skip_true += 1; } else { skip_false += 1; }
+                if c.skip {
+                    skip_true += 1;
+                } else {
+                    skip_false += 1;
+                }
                 match c.mode {
                     BlockMode::Inter { mode, mvs, .. } => {
                         let mv = mvs[0];
-                        if mv.col == 0 && mv.row == 0 { mode_zero += 1 } else { nonzero_mv += 1 }
+                        if mv.col == 0 && mv.row == 0 {
+                            mode_zero += 1
+                        } else {
+                            nonzero_mv += 1
+                        }
                         // Track mode discriminator separately for diagnosis.
                         let mode_str = format!("{:?}", mode);
                         *counts.entry(mode_str).or_insert(0) += 1;
@@ -758,7 +788,18 @@ fn rc_x1_internal_dump() {
         }
         eprintln!(
             "frame {idx}: kind={:?} q={} bytes={} mi_dims=({},{}) bsize_counts={:?} skip(true/false)=({}/{}) mv(zero/nonzero)=({}/{}) intra={} unpopulated={}",
-            pkt.frame_kind, pkt.q_index, pkt.data.len(), mi_rows, mi_cols, counts, skip_true, skip_false, mode_zero, nonzero_mv, mode_nz, nonref_zero,
+            pkt.frame_kind,
+            pkt.q_index,
+            pkt.data.len(),
+            mi_rows,
+            mi_cols,
+            counts,
+            skip_true,
+            skip_false,
+            mode_zero,
+            nonzero_mv,
+            mode_nz,
+            nonref_zero,
         );
     }
 }

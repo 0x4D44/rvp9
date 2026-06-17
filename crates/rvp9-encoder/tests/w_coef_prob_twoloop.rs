@@ -243,7 +243,8 @@ fn a6_twoloop_stream_byte_exact_through_vpxdec() {
     let _ = std::fs::remove_file(&out);
 
     assert_eq!(
-        vpx_yuv, rvp9_yuv,
+        vpx_yuv,
+        rvp9_yuv,
         "A6 oracle: vpxdec decode of the TWO_LOOP stream must be byte-identical \
          to rvp9-decoder (vpx={} bytes, rvp9={} bytes)",
         vpx_yuv.len(),

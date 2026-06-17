@@ -144,11 +144,7 @@ fn pred_sse(
     let win_x = int_x + col_pre;
     let win_h = bh as i32 + if subpel_y_q4 != 0 { 7 } else { 0 };
     let win_w = bw as i32 + if subpel_x_q4 != 0 { 7 } else { 0 };
-    if win_x < 0
-        || win_y < 0
-        || win_x + win_w > ref_w as i32
-        || win_y + win_h > ref_h as i32
-    {
+    if win_x < 0 || win_y < 0 || win_x + win_w > ref_w as i32 || win_y + win_h > ref_h as i32 {
         return None;
     }
 
@@ -285,7 +281,17 @@ pub fn record_leaf(
     }
 
     let sse_zero = match pred_sse(
-        src, src_stride, refp, ref_stride, ref_w, ref_h, px, py, bw, bh, Mv::ZERO,
+        src,
+        src_stride,
+        refp,
+        ref_stride,
+        ref_w,
+        ref_h,
+        px,
+        py,
+        bw,
+        bh,
+        Mv::ZERO,
     ) {
         Some(v) => v,
         None => return,
@@ -298,9 +304,9 @@ pub fn record_leaf(
         src, src_stride, refp, ref_stride, ref_w, ref_h, px, py, bw, bh, newmv_raw,
     )
     .unwrap_or(sse_rvp9);
-    let Some((_fp_mv, sse_oracle_fp, omv, sse_oracle)) =
-        oracle_best(src, src_stride, refp, ref_stride, ref_w, ref_h, px, py, bw, bh)
-    else {
+    let Some((_fp_mv, sse_oracle_fp, omv, sse_oracle)) = oracle_best(
+        src, src_stride, refp, ref_stride, ref_w, ref_h, px, py, bw, bh,
+    ) else {
         return;
     };
 
@@ -511,7 +517,10 @@ mod tests {
             }
         }
         assert_eq!(sse, hand, "pred_sse must equal the hand-computed SSE");
-        assert!(sse > 0, "shifted view of non-trivial pattern cannot be zero");
+        assert!(
+            sse > 0,
+            "shifted view of non-trivial pattern cannot be zero"
+        );
     }
 
     #[test]
@@ -636,9 +645,8 @@ mod tests {
 
         // Sample inside the valid (no-edge) region so the matching MV
         // is in-bounds for the oracle window.
-        let (_, _, best_mv, best_sse) =
-            oracle_best(&src, w, &refp, w, w, h, 16, 16, 8, 8)
-                .expect("centered block has the matching MV in-bounds");
+        let (_, _, best_mv, best_sse) = oracle_best(&src, w, &refp, w, w, h, 16, 16, 8, 8)
+            .expect("centered block has the matching MV in-bounds");
         assert_eq!(best_mv, Mv { row: 16, col: 16 });
         assert_eq!(
             best_sse, 0,
@@ -672,20 +680,7 @@ mod tests {
         let w = 64;
         let h = 64;
         let plane = make_pattern_plane(w, h);
-        record_leaf(
-            &plane,
-            w,
-            &plane,
-            w,
-            w,
-            h,
-            16,
-            16,
-            8,
-            8,
-            Mv::ZERO,
-            Mv::ZERO,
-        );
+        record_leaf(&plane, w, &plane, w, w, h, 16, 16, 8, 8, Mv::ZERO, Mv::ZERO);
         let snap = take_snapshot();
         assert_eq!(snap.n, 0, "disabled record_leaf must not accumulate");
         assert_eq!(snap.sse_zero, 0);
@@ -706,20 +701,7 @@ mod tests {
         let h = 64;
         let plane = make_pattern_plane(w, h);
         for _ in 0..14 {
-            record_leaf(
-                &plane,
-                w,
-                &plane,
-                w,
-                w,
-                h,
-                16,
-                16,
-                8,
-                8,
-                Mv::ZERO,
-                Mv::ZERO,
-            );
+            record_leaf(&plane, w, &plane, w, w, h, 16, 16, 8, 8, Mv::ZERO, Mv::ZERO);
         }
         let snap = take_snapshot();
         assert_eq!(snap.n, 2, "SAMPLE_STRIDE = 7 → 2 of 14 calls evaluated");
@@ -751,9 +733,7 @@ mod tests {
         let h = 64;
         let plane = make_pattern_plane(w, h);
         // px=60, bw=8 → window ends at col 68 > 64 → OOB.
-        record_leaf(
-            &plane, w, &plane, w, w, h, 60, 16, 8, 8, Mv::ZERO, Mv::ZERO,
-        );
+        record_leaf(&plane, w, &plane, w, w, h, 60, 16, 8, 8, Mv::ZERO, Mv::ZERO);
         let snap = take_snapshot();
         assert_eq!(
             snap.n, 0,
@@ -806,9 +786,7 @@ mod tests {
         reset_thread_local();
 
         let small = make_pattern_plane(4, 4);
-        record_leaf(
-            &small, 4, &small, 4, 4, 4, 0, 0, 8, 8, Mv::ZERO, Mv::ZERO,
-        );
+        record_leaf(&small, 4, &small, 4, 4, 4, 0, 0, 8, 8, Mv::ZERO, Mv::ZERO);
         let snap = take_snapshot();
         assert_eq!(
             snap.n, 0,
@@ -841,9 +819,7 @@ mod tests {
 
         // First call — seq=0, picks it up. shipped rvp9_mv = ZERO,
         // newmv_raw = ZERO. Oracle finds (16, 16) with SSE = 0.
-        record_leaf(
-            &src, w, &refp, w, w, h, 16, 16, 8, 8, Mv::ZERO, Mv::ZERO,
-        );
+        record_leaf(&src, w, &refp, w, w, h, 16, 16, 8, 8, Mv::ZERO, Mv::ZERO);
         let snap = take_snapshot();
         assert_eq!(snap.n, 1);
         assert_eq!(snap.sse_oracle, 0, "exact-shift oracle has SSE=0");
@@ -868,20 +844,7 @@ mod tests {
         let w = 64;
         let h = 64;
         let plane = make_pattern_plane(w, h);
-        record_leaf(
-            &plane,
-            w,
-            &plane,
-            w,
-            w,
-            h,
-            16,
-            16,
-            8,
-            8,
-            Mv::ZERO,
-            Mv::ZERO,
-        );
+        record_leaf(&plane, w, &plane, w, w, h, 16, 16, 8, 8, Mv::ZERO, Mv::ZERO);
         let first = take_snapshot();
         assert_eq!(first.n, 1, "one accumulating call");
         let second = take_snapshot();
@@ -943,8 +906,14 @@ mod tests {
         let plane = make_pattern_plane(w, h);
         // ZERO mv at (16,16) is in-bounds, so sse_zero succeeds.
         // rvp9_mv chosen with huge col so the window goes OOB.
-        let rvp9_oob = Mv { row: 0, col: 32_000 };
-        let newmv_oob = Mv { row: 32_000, col: 0 };
+        let rvp9_oob = Mv {
+            row: 0,
+            col: 32_000,
+        };
+        let newmv_oob = Mv {
+            row: 32_000,
+            col: 0,
+        };
         record_leaf(
             &plane, w, &plane, w, w, h, 16, 16, 8, 8, rvp9_oob, newmv_oob,
         );
@@ -972,20 +941,7 @@ mod tests {
         let plane = make_pattern_plane(w, h);
         let n_calls = SAMPLE_STRIDE * (PRINT_LIMIT + 2);
         for _ in 0..n_calls {
-            record_leaf(
-                &plane,
-                w,
-                &plane,
-                w,
-                w,
-                h,
-                16,
-                16,
-                8,
-                8,
-                Mv::ZERO,
-                Mv::ZERO,
-            );
+            record_leaf(&plane, w, &plane, w, w, h, 16, 16, 8, 8, Mv::ZERO, Mv::ZERO);
         }
         let snap = take_snapshot();
         // PRINT_LIMIT + 2 accumulating calls → snap.n == PRINT_LIMIT + 2.

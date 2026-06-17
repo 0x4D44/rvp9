@@ -32,7 +32,7 @@
 use rvp9_core::block::BlockSize;
 
 use super::nn_predict::{
-    nn_predict, NnConfig, PART_SPLIT_NN_CONFIG_16, PART_SPLIT_NN_CONFIG_32, PART_SPLIT_NN_CONFIG_64,
+    NnConfig, PART_SPLIT_NN_CONFIG_16, PART_SPLIT_NN_CONFIG_32, PART_SPLIT_NN_CONFIG_64, nn_predict,
 };
 
 /// 64×64-pixel motion-prediction scratch buffer.
@@ -373,7 +373,7 @@ pub fn ml_predict_var_rd_partitioning(input: &VarPartInput<'_>) -> VarPartDecisi
 /// can ignore this and use the boolean fields directly.
 #[must_use]
 pub fn predict_partition_size(decision: VarPartDecision, parent: BlockSize) -> BlockSize {
-    use rvp9_core::block::{subsize, PartitionType};
+    use rvp9_core::block::{PartitionType, subsize};
     if decision.allow_none && !decision.allow_split {
         return parent;
     }
@@ -430,9 +430,9 @@ mod tests {
                                 break;
                             }
                             let s = src.buf[y * src.stride + x] as i32;
-                            let rpix =
-                                reference.buf[(ry as usize) * reference.stride + (rx as usize)]
-                                    as i32;
+                            let rpix = reference.buf
+                                [(ry as usize) * reference.stride + (rx as usize)]
+                                as i32;
                             sad += (s - rpix).unsigned_abs() as u64;
                         }
                         if !ok {
@@ -530,16 +530,14 @@ mod tests {
         // location is then overwritten with pattern A.)
         for y in 0..height {
             for x in 0..stride {
-                reference[y * stride + x] =
-                    240 + ((y as u32 * 11 + x as u32 * 13) % 15) as u8;
+                reference[y * stride + x] = 240 + ((y as u32 * 11 + x as u32 * 13) % 15) as u8;
             }
         }
         let ref_row_off = (src_row_off as i32 + true_dr as i32) as usize;
         let ref_col_off = (src_col_off as i32 + true_dc as i32) as usize;
         for y in 0..bh {
             for x in 0..bw {
-                reference[(ref_row_off + y) * stride + (ref_col_off + x)] =
-                    pattern_a[y * bw + x];
+                reference[(ref_row_off + y) * stride + (ref_col_off + x)] = pattern_a[y * bw + x];
             }
         }
 
@@ -588,8 +586,8 @@ mod tests {
         let mut sad = 0u32;
         for y in 0..bh {
             for x in 0..bw {
-                sad += (src_view.buf[y * stride + x] as i32 - pred[y * 64 + x] as i32)
-                    .unsigned_abs();
+                sad +=
+                    (src_view.buf[y * stride + x] as i32 - pred[y * 64 + x] as i32).unsigned_abs();
             }
         }
         assert_eq!(sad, 0, "predicted block must match src at the recovered MV");

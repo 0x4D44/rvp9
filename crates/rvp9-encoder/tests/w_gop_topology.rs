@@ -47,7 +47,7 @@
 
 use rvp9_core::bitstream::header::FrameKind as WireFrameKind;
 use rvp9_decoder::Decoder;
-use rvp9_encoder::gop::{FrameUpdateType, GfGroup, GOLDEN_REFRESH_PERIOD};
+use rvp9_encoder::gop::{FrameUpdateType, GOLDEN_REFRESH_PERIOD, GfGroup};
 use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 
 const W: u32 = 128;
@@ -198,10 +198,7 @@ fn gop_topology_schedule_matches_emitted_frames() {
             other => panic!("frame {idx}: unexpected emitted kind {other:?}"),
         };
         // All emitted frames in this config are show frames.
-        assert!(
-            header.show_frame,
-            "frame {idx}: expected a show frame",
-        );
+        assert!(header.show_frame, "frame {idx}: expected a show frame",);
 
         // The PREDICTION from the GfGroup struct.
         let sched = gf_group.schedule(idx);

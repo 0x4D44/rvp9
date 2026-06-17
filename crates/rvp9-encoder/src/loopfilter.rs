@@ -49,6 +49,7 @@
 //! - **No sharpness control.** `sharpness_level = 0` always.
 
 use rvp9_core::bitstream::ChromaFormat;
+use rvp9_core::bitstream::{BitDepth, InterpFilter};
 use rvp9_core::block::{BlockSize, max_txsize};
 use rvp9_core::frame::{BorderUsage, ByteAlignment, Yv12Buffer};
 use rvp9_core::intra_pred::IntraMode;
@@ -57,7 +58,6 @@ use rvp9_core::loopfilter::{
     adjust_mask, loop_filter_frame, resolve_filter_levels, setup_mask,
 };
 use rvp9_core::mode_info::{BlockMode, ModeInfo, Mv, RefFrame};
-use rvp9_core::bitstream::{BitDepth, InterpFilter};
 use rvp9_core::quant::ac_quant;
 
 use crate::{InterPartitionLeafDesc, PartitionLeafDesc};
@@ -186,8 +186,7 @@ pub(crate) fn apply_loop_filter_to_tight_recon(
         let stride = yp.stride();
         let data = yp.data_mut();
         for r in 0..h {
-            data[r * stride..r * stride + w]
-                .copy_from_slice(&recon_y[r * w..r * w + w]);
+            data[r * stride..r * stride + w].copy_from_slice(&recon_y[r * w..r * w + w]);
         }
     }
     {
@@ -195,8 +194,7 @@ pub(crate) fn apply_loop_filter_to_tight_recon(
         let stride = up.stride();
         let data = up.data_mut();
         for r in 0..uvh {
-            data[r * stride..r * stride + uvw]
-                .copy_from_slice(&recon_u[r * uvw..r * uvw + uvw]);
+            data[r * stride..r * stride + uvw].copy_from_slice(&recon_u[r * uvw..r * uvw + uvw]);
         }
     }
     {
@@ -204,8 +202,7 @@ pub(crate) fn apply_loop_filter_to_tight_recon(
         let stride = vp.stride();
         let data = vp.data_mut();
         for r in 0..uvh {
-            data[r * stride..r * stride + uvw]
-                .copy_from_slice(&recon_v[r * uvw..r * uvw + uvw]);
+            data[r * stride..r * stride + uvw].copy_from_slice(&recon_v[r * uvw..r * uvw + uvw]);
         }
     }
 
@@ -237,15 +234,13 @@ pub(crate) fn apply_loop_filter_to_tight_recon(
         .iter()
         .find_map(|c| c.as_ref().cloned())
         .unwrap_or_else(default_placeholder_mode_info);
-    let mut frame_mi_opt: Vec<Option<ModeInfo>> =
-        Vec::with_capacity(mi_grid.len().max(1));
+    let mut frame_mi_opt: Vec<Option<ModeInfo>> = Vec::with_capacity(mi_grid.len().max(1));
     for cell in mi_grid {
         frame_mi_opt.push(Some(cell.unwrap_or(placeholder)));
     }
 
     // Build per-SB masks, then dispatch the apply driver.
-    let mut lfm_grid: Vec<LoopFilterMask> =
-        vec![LoopFilterMask::default(); sb_rows * sb_cols];
+    let mut lfm_grid: Vec<LoopFilterMask> = vec![LoopFilterMask::default(); sb_rows * sb_cols];
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
             let mi_row = sb_row * SB_MI_SIZE;
@@ -282,8 +277,7 @@ pub(crate) fn apply_loop_filter_to_tight_recon(
         let stride = yp.stride();
         let data = yp.data();
         for r in 0..h {
-            recon_y[r * w..r * w + w]
-                .copy_from_slice(&data[r * stride..r * stride + w]);
+            recon_y[r * w..r * w + w].copy_from_slice(&data[r * stride..r * stride + w]);
         }
     }
     {
@@ -291,8 +285,7 @@ pub(crate) fn apply_loop_filter_to_tight_recon(
         let stride = up.stride();
         let data = up.data();
         for r in 0..uvh {
-            recon_u[r * uvw..r * uvw + uvw]
-                .copy_from_slice(&data[r * stride..r * stride + uvw]);
+            recon_u[r * uvw..r * uvw + uvw].copy_from_slice(&data[r * stride..r * stride + uvw]);
         }
     }
     {
@@ -300,8 +293,7 @@ pub(crate) fn apply_loop_filter_to_tight_recon(
         let stride = vp.stride();
         let data = vp.data();
         for r in 0..uvh {
-            recon_v[r * uvw..r * uvw + uvw]
-                .copy_from_slice(&data[r * stride..r * stride + uvw]);
+            recon_v[r * uvw..r * uvw + uvw].copy_from_slice(&data[r * stride..r * stride + uvw]);
         }
     }
 }
@@ -622,14 +614,11 @@ pub fn search_filter_level(params: &SearchFilterLevelParams<'_>) -> u8 {
     let mut filt_direction: i32 = 0;
 
     while filter_step > 0 {
-        let filt_high =
-            ((filt_mid as i32) + filter_step).min(max_filter_level as i32) as u8;
-        let filt_low =
-            ((filt_mid as i32) - filter_step).max(min_filter_level as i32) as u8;
+        let filt_high = ((filt_mid as i32) + filter_step).min(max_filter_level as i32) as u8;
+        let filt_low = ((filt_mid as i32) - filter_step).max(min_filter_level as i32) as u8;
 
         // libvpx `vp9_picklpf.c:111`: bias against raising LF.
-        let mut bias: i64 =
-            (best_err >> (15 - (filt_mid as i32 / 8))) * filter_step as i64;
+        let mut bias: i64 = (best_err >> (15 - (filt_mid as i32 / 8))) * filter_step as i64;
         if params.tx_mode_not_only_4x4 {
             bias >>= 1; // libvpx `vp9_picklpf.c:117`.
         }
@@ -637,8 +626,7 @@ pub fn search_filter_level(params: &SearchFilterLevelParams<'_>) -> u8 {
         // Lower-side probe.
         if filt_direction <= 0 && filt_low != filt_mid {
             if ss_err[filt_low as usize].is_none() {
-                ss_err[filt_low as usize] =
-                    Some(try_filter_frame(&try_inputs, filt_low));
+                ss_err[filt_low as usize] = Some(try_filter_frame(&try_inputs, filt_low));
             }
             let lo_err = ss_err[filt_low as usize].unwrap();
             if lo_err - bias < best_err {
@@ -652,8 +640,7 @@ pub fn search_filter_level(params: &SearchFilterLevelParams<'_>) -> u8 {
         // Upper-side probe.
         if filt_direction >= 0 && filt_high != filt_mid {
             if ss_err[filt_high as usize].is_none() {
-                ss_err[filt_high as usize] =
-                    Some(try_filter_frame(&try_inputs, filt_high));
+                ss_err[filt_high as usize] = Some(try_filter_frame(&try_inputs, filt_high));
             }
             let hi_err = ss_err[filt_high as usize].unwrap();
             if hi_err < best_err - bias {

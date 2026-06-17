@@ -282,8 +282,12 @@ pub fn read_triangulated_ledger(vector: &Path) -> Vec<Md5Entry> {
 
     let vpx = read_md5_file(&vpx_path)
         .unwrap_or_else(|e| panic!("triangulated ledger: parse vpx {}: {e}", vpx_path.display()));
-    let ff = read_md5_file(&ff_path)
-        .unwrap_or_else(|e| panic!("triangulated ledger: parse ffmpeg {}: {e}", ff_path.display()));
+    let ff = read_md5_file(&ff_path).unwrap_or_else(|e| {
+        panic!(
+            "triangulated ledger: parse ffmpeg {}: {e}",
+            ff_path.display()
+        )
+    });
 
     assert_eq!(
         vpx.len(),
@@ -299,7 +303,8 @@ pub fn read_triangulated_ledger(vector: &Path) -> Vec<Md5Entry> {
         let ha = a.md5_hex_visible();
         let hb = b.md5_hex_visible();
         assert_eq!(
-            ha, hb,
+            ha,
+            hb,
             "ORACLE DISAGREEMENT on {} at shown-frame {i}: vpxdec={:?} ffmpeg={:?} — \
              two independent VP9 decoders disagree on the bitstream's decoded output, \
              which is a libvpx or ffmpeg issue (NOT the consumer's decoder). \

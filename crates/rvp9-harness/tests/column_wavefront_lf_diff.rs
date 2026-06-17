@@ -78,10 +78,7 @@ const MULTI_TILE_VECTORS: &[&str] = &[
 /// `cur_sb_col` allocation and the per-row mask-build still run. This
 /// catches the "single-tile path crashed because num_lf_workers was
 /// 1" failure mode HLD §3.6 documents.
-const SINGLE_TILE_LF_VECTORS: &[&str] = &[
-    "vp90-2-00-quantizer-26.webm",
-    "vp90-2-09-aq2.webm",
-];
+const SINGLE_TILE_LF_VECTORS: &[&str] = &["vp90-2-00-quantizer-26.webm", "vp90-2-09-aq2.webm"];
 
 #[test]
 fn column_wavefront_lf_matches_serial_on_multi_tile_vectors() {
@@ -98,7 +95,10 @@ fn column_wavefront_lf_matches_serial_on_multi_tile_vectors() {
         return;
     }
     let mut checked = 0usize;
-    for name in SINGLE_TILE_LF_VECTORS.iter().chain(MULTI_TILE_VECTORS.iter()) {
+    for name in SINGLE_TILE_LF_VECTORS
+        .iter()
+        .chain(MULTI_TILE_VECTORS.iter())
+    {
         let path = dir.join(name);
         if !path.exists() {
             eprintln!("missing {name} — skip");

@@ -32,11 +32,11 @@
 use rvp9_core::block::BlockSize;
 
 use super::nn_predict::{
-    nn_predict, NnConfig, PARTITION_BREAKOUT_WEIGHTS_16, PARTITION_BREAKOUT_WEIGHTS_32,
-    PARTITION_BREAKOUT_WEIGHTS_64, PARTITION_BREAKOUT_WEIGHTS_8, PARTITION_FEATURE_MEAN,
+    NnConfig, PARTITION_BREAKOUT_WEIGHTS_8, PARTITION_BREAKOUT_WEIGHTS_16,
+    PARTITION_BREAKOUT_WEIGHTS_32, PARTITION_BREAKOUT_WEIGHTS_64, PARTITION_FEATURE_MEAN,
     PARTITION_FEATURE_STD, PARTITION_LINEAR_WEIGHTS, PARTITION_NN_CONFIG_16X16,
     PARTITION_NN_CONFIG_32X32, PARTITION_NN_CONFIG_64X64, RECT_PART_NN_CONFIG_16,
-    RECT_PART_NN_CONFIG_32, RECT_PART_NN_CONFIG_64,
+    RECT_PART_NN_CONFIG_32, RECT_PART_NN_CONFIG_64, nn_predict,
 };
 
 // ============================================================================
@@ -231,8 +231,7 @@ pub fn ml_predict_breakout(input: &BreakoutInput) -> bool {
     let rate_f = input.rd_rate as f32;
     let dist_f = input.rd_dist_shifted as f32;
     // libvpx applies rdmult/128/512/(1<<num_pels_log2) — we mirror exactly.
-    let rate_norm =
-        (input.rdmult as f32 / 128.0 / 512.0 / (pels_shift as f32)) * rate_f;
+    let rate_norm = (input.rdmult as f32 / 128.0 / 512.0 / (pels_shift as f32)) * rate_f;
 
     let features = [
         rate_norm,
@@ -477,7 +476,10 @@ mod tests {
             bsize: BlockSize::Block8x8,
             ..pruning_input
         };
-        assert_eq!(ml_pruning_partition(&unsupported), PruningDecision::Continue);
+        assert_eq!(
+            ml_pruning_partition(&unsupported),
+            PruningDecision::Continue
+        );
 
         // Rect-prune: feed a sane RD set, both arms allowed by caller.
         let rect_input = RectPruneInput {

@@ -119,7 +119,10 @@ mod tests {
         assert_eq!(state.gf_picture[1].update_type, update_type::ARF_UPDATE);
 
         // Slot 7 = last LF frame chains through slot 6 (libvpx 108).
-        assert_eq!(state.gf_picture[GOP_FRAMES - 1].update_type, update_type::LF_UPDATE);
+        assert_eq!(
+            state.gf_picture[GOP_FRAMES - 1].update_type,
+            update_type::LF_UPDATE
+        );
         assert_eq!(last_lst, (GOP_FRAMES - 1) as i32);
     }
 
@@ -214,7 +217,10 @@ mod tests {
         // V_PRED predicts perfectly (above row matches the source
         // top row), so best_intra_cost (post-VPXMAX(.., 1)) should be 1.
         // Then scaled = (1 << 4) / (1 * 1) = 16.
-        assert_eq!(stat.intra_cost, 16, "V_PRED perfect predict, expected SATD=0 → scaled to 16");
+        assert_eq!(
+            stat.intra_cost, 16,
+            "V_PRED perfect predict, expected SATD=0 → scaled to 16"
+        );
     }
 
     /// libvpx `tpl_model_update` (`vp9_tpl_model.c:475-489`) +

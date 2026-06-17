@@ -67,7 +67,7 @@ const PROFILE1_VECTORS: &[&str] = &[
     "foreman_c422.ivf",
     // 4:4:0 (G7.2 milestone) — asymmetric, half vertical chroma.
     "vp91-2-04-yuv440.webm",
-    "foreman_c440.ivf",  // Wave P fix; previously the parser-desync follow-up.
+    "foreman_c440.ivf", // Wave P fix; previously the parser-desync follow-up.
     // Track T-2: sharpness=7 triple — exercises LF sharpness threshold ×
     // each chroma subsampling, gating `filter_block_plane_non420` and
     // `LF_PATH_444` under elevated sharpness.
@@ -230,7 +230,11 @@ fn profile1_440_foreman_decodes_bit_exact_wave_p() {
 /// (rvp9 real-bug follow-ups). Returns `(shown_frames, mismatches)`.
 fn decode_and_count(name: &str) -> (usize, usize) {
     let vector = profile1_vector(name);
-    assert!(vector.exists(), "Profile-1 vector missing: {}", vector.display());
+    assert!(
+        vector.exists(),
+        "Profile-1 vector missing: {}",
+        vector.display()
+    );
 
     let (data, packets) = read_packets(&vector)
         .unwrap_or_else(|e| panic!("container parse {}: {e}", vector.display()));
@@ -250,10 +254,13 @@ fn decode_and_count(name: &str) -> (usize, usize) {
             let buf = decoder.decode_frame(&frame).unwrap_or_else(|e| {
                 panic!(
                     "{}: decode error on shown-frame {shown_idx} (kind={:?}): {e}",
-                    vector.display(), frame.header.kind
+                    vector.display(),
+                    frame.header.kind
                 )
             });
-            if !shown { continue; }
+            if !shown {
+                continue;
+            }
             let got_hex = hex16(md5_of_yv12_visible(&buf));
             if let Some(e) = entries.get(shown_idx) {
                 if e.md5_hex_visible().as_deref() != Some(got_hex.as_str()) {
@@ -287,7 +294,10 @@ fn profile1_444_kfonly_follow_up() {
     let (shown, mismatched) = decode_and_count("foreman_c444_kfonly.ivf");
     assert_eq!(shown, 12);
     // When the bug is fixed, change this to assert_eq!(mismatched, 0).
-    assert!(mismatched > 0, "Bug appears fixed — remove #[ignore] and move to PROFILE1_VECTORS");
+    assert!(
+        mismatched > 0,
+        "Bug appears fixed — remove #[ignore] and move to PROFILE1_VECTORS"
+    );
 }
 
 #[test]
@@ -295,7 +305,10 @@ fn profile1_444_kfonly_follow_up() {
 fn profile1_422_kfonly_follow_up() {
     let (shown, mismatched) = decode_and_count("foreman_c422_kfonly.ivf");
     assert_eq!(shown, 12);
-    assert!(mismatched > 0, "Bug appears fixed — remove #[ignore] and move to PROFILE1_VECTORS");
+    assert!(
+        mismatched > 0,
+        "Bug appears fixed — remove #[ignore] and move to PROFILE1_VECTORS"
+    );
 }
 
 #[test]
@@ -303,7 +316,10 @@ fn profile1_422_kfonly_follow_up() {
 fn profile1_440_kfonly_follow_up() {
     let (shown, mismatched) = decode_and_count("foreman_c440_kfonly.ivf");
     assert_eq!(shown, 12);
-    assert!(mismatched > 0, "Bug appears fixed — remove #[ignore] and move to PROFILE1_VECTORS");
+    assert!(
+        mismatched > 0,
+        "Bug appears fixed — remove #[ignore] and move to PROFILE1_VECTORS"
+    );
 }
 
 /// Track T-2: aq-mode=2 (cyclic refresh segmentation) Profile-1 vectors
@@ -322,7 +338,10 @@ fn profile1_440_kfonly_follow_up() {
 fn profile1_444_aq2_follow_up() {
     let (shown, mismatched) = decode_and_count("foreman_c444_aq2.ivf");
     assert_eq!(shown, 12);
-    assert!(mismatched > 0, "Bug appears fixed — remove #[ignore] and move to PROFILE1_VECTORS");
+    assert!(
+        mismatched > 0,
+        "Bug appears fixed — remove #[ignore] and move to PROFILE1_VECTORS"
+    );
 }
 
 #[test]
@@ -330,5 +349,8 @@ fn profile1_444_aq2_follow_up() {
 fn profile1_720p_aq2_follow_up() {
     let (shown, mismatched) = decode_and_count("testsrc_c444_720p_aq2.ivf");
     assert_eq!(shown, 12);
-    assert!(mismatched > 0, "Bug appears fixed — remove #[ignore] and move to PROFILE1_VECTORS");
+    assert!(
+        mismatched > 0,
+        "Bug appears fixed — remove #[ignore] and move to PROFILE1_VECTORS"
+    );
 }

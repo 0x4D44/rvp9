@@ -84,10 +84,7 @@ const MULTI_TILE_VECTORS: &[&str] = &[
 /// covered with `num_tile_cols = 1`). The L1 gate trivially passes
 /// since each row only has one tile bumping it. Confirms the overlap
 /// path doesn't divergently corrupt single-tile output.
-const SINGLE_TILE_LF_VECTORS: &[&str] = &[
-    "vp90-2-00-quantizer-26.webm",
-    "vp90-2-09-aq2.webm",
-];
+const SINGLE_TILE_LF_VECTORS: &[&str] = &["vp90-2-00-quantizer-26.webm", "vp90-2-09-aq2.webm"];
 
 #[test]
 fn lf_overlap_pool_matches_serial() {
@@ -103,7 +100,10 @@ fn lf_overlap_pool_matches_serial() {
         rvp9_decoder::RVP9_LF_OVERLAP_POOL_FRAMES.load(std::sync::atomic::Ordering::Relaxed);
 
     let mut checked = 0usize;
-    for name in SINGLE_TILE_LF_VECTORS.iter().chain(MULTI_TILE_VECTORS.iter()) {
+    for name in SINGLE_TILE_LF_VECTORS
+        .iter()
+        .chain(MULTI_TILE_VECTORS.iter())
+    {
         let path = dir.join(name);
         if !path.exists() {
             eprintln!("missing {name} — skip");

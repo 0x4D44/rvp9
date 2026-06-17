@@ -44,9 +44,7 @@ fn assert_vector_decodes_without_multi_tile_reject(vector_name: &str) {
                 Ok(_) => decoded += 1,
                 // MultiTileUnsupported is IMPOSSIBLE after E.2 — any
                 // occurrence is a regression.
-                Err(DecodeError::TileDecode(TileDecodeError::MultiTileUnsupported {
-                    ..
-                })) => {
+                Err(DecodeError::TileDecode(TileDecodeError::MultiTileUnsupported { .. })) => {
                     panic!(
                         "{vector_name}: regression — multi-tile decode \
                          still hits MultiTileUnsupported after E.2"

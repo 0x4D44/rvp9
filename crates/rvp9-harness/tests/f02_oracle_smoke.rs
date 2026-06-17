@@ -20,11 +20,9 @@
 //! gated behind `#[ignore]`; see `scripts/build_f02_libvpx.ps1` for
 //! how to bring it up.
 
-use rvp9_encoder::f02_oracle::{
-    self, BlockDecision, BlockDecisionMode,
-};
-use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 use rvp9_core::mode_info::InterMode;
+use rvp9_encoder::f02_oracle::{self, BlockDecision, BlockDecisionMode};
+use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 use rvp9_harness::f02_schema::parse_jsonl_line;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -47,12 +45,7 @@ fn flat_grey(width: usize, height: usize, value: u8) -> (Vec<u8>, Vec<u8>, Vec<u
     (y, u, v)
 }
 
-fn view<'a>(
-    y: &'a [u8],
-    u: &'a [u8],
-    v: &'a [u8],
-    width: usize,
-) -> YuvFrameRef<'a> {
+fn view<'a>(y: &'a [u8], u: &'a [u8], v: &'a [u8], width: usize) -> YuvFrameRef<'a> {
     YuvFrameRef {
         y,
         u,
@@ -234,11 +227,7 @@ fn identity_invariants_at_flat_grey_input() {
             mode_is_identity,
             "leaf at ({},{}) bsize={:?} mode={:?} skip={} \
              — expected ZEROMV or skip=true on flat-grey input",
-            d.mi_row,
-            d.mi_col,
-            d.bsize,
-            d.mode,
-            d.skip_flag,
+            d.mi_row, d.mi_col, d.bsize, d.mode, d.skip_flag,
         );
         assert_eq!(
             (d.mv_row, d.mv_col),
@@ -252,9 +241,7 @@ fn identity_invariants_at_flat_grey_input() {
         assert!(
             d.skip_flag,
             "leaf at ({},{}) bsize={:?} — expected skip_flag=true on flat-grey input",
-            d.mi_row,
-            d.mi_col,
-            d.bsize,
+            d.mi_row, d.mi_col, d.bsize,
         );
     }
     // SAFETY: cleanup.

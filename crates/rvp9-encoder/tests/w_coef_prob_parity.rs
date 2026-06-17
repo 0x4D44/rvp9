@@ -70,8 +70,7 @@
 use rvp9_core::cost::coef_cost::{ENTROPY_NODES, ENTROPY_TOKENS, PIVOT_NODE};
 use rvp9_core::entropy::{DIFF_UPDATE_PROB, UNCONSTRAINED_NODES, get_binary_prob};
 use rvp9_encoder::bitstream_gates::{
-    build_coef_branch_cts, prob_diff_update_savings_search,
-    prob_diff_update_savings_search_model,
+    build_coef_branch_cts, prob_diff_update_savings_search, prob_diff_update_savings_search_model,
 };
 
 /// PROOF — `build_tree_distribution` body fidelity
@@ -92,9 +91,7 @@ use rvp9_encoder::bitstream_gates::{
 fn build_tree_distribution_agrees_with_model_token_folding() {
     // Token order: ZERO ONE TWO THREE FOUR CAT1 CAT2 CAT3 CAT4 CAT5
     // CAT6 EOB.
-    let counts: [u32; ENTROPY_TOKENS] = [
-        1200, 420, 160, 80, 44, 26, 14, 9, 5, 3, 2, 700,
-    ];
+    let counts: [u32; ENTROPY_TOKENS] = [1200, 420, 160, 80, 44, 26, 14, 9, 5, 3, 2, 700];
     let non_eob: u32 = counts[0..11].iter().sum();
     let eob_total = non_eob + counts[11];
 
@@ -105,11 +102,7 @@ fn build_tree_distribution_agrees_with_model_token_folding() {
     let n1 = counts[1];
     let n2: u32 = counts[2..11].iter().sum(); // TWO..CAT6 folded
     let neob = counts[11];
-    let expect = [
-        [neob, eob_total - neob],
-        [n0, n1 + n2],
-        [n1, n2],
-    ];
+    let expect = [[neob, eob_total - neob], [n0, n1 + n2], [n1, n2]];
     for m in 0..UNCONSTRAINED_NODES {
         assert_eq!(branch_ct[m], expect[m], "unconstrained node {m}");
         assert_eq!(
@@ -132,9 +125,7 @@ fn build_tree_distribution_agrees_with_model_token_folding() {
 #[test]
 fn pivot_model_search_scores_downstream_nodes() {
     // ONE-heavy pivot so the ideal pivot prob is far from the default.
-    let counts: [u32; ENTROPY_TOKENS] = [
-        2000, 3000, 80, 40, 20, 12, 6, 4, 2, 1, 1, 1500,
-    ];
+    let counts: [u32; ENTROPY_TOKENS] = [2000, 3000, 80, 40, 20, 12, 6, 4, 2, 1, 1, 1500];
     let non_eob: u32 = counts[0..11].iter().sum();
     let eob_total = non_eob + counts[11];
     let (branch_ct, probs) = build_coef_branch_cts(&counts, eob_total);
@@ -143,15 +134,13 @@ fn pivot_model_search_scores_downstream_nodes() {
     let start_newp = probs[PIVOT_NODE];
     assert_ne!(start_newp, oldp, "setup: pivot ideal must differ from oldp");
 
-    let model = prob_diff_update_savings_search_model(
-        &branch_ct, oldp, start_newp, DIFF_UPDATE_PROB, 1,
-    );
+    let model =
+        prob_diff_update_savings_search_model(&branch_ct, oldp, start_newp, DIFF_UPDATE_PROB, 1);
     assert_ne!(model.best_newp, oldp, "model search must move the prob");
     assert!(model.savings > 0, "model savings must be positive");
 
-    let plain = prob_diff_update_savings_search(
-        branch_ct[PIVOT_NODE], oldp, start_newp, DIFF_UPDATE_PROB,
-    );
+    let plain =
+        prob_diff_update_savings_search(branch_ct[PIVOT_NODE], oldp, start_newp, DIFF_UPDATE_PROB);
     assert!(
         model.savings != plain.savings || model.best_newp != plain.best_newp,
         "model search must differ from plain (model adds the 8 Pareto-8 nodes)"

@@ -340,7 +340,13 @@ fn sad4d_at(
             ref_slices[3].unwrap(),
         ];
         let mut out_sads = [0u32; 4];
-        sad4d_fn(src_slice, src_stride, &refs, ref_plane.stride, &mut out_sads);
+        sad4d_fn(
+            src_slice,
+            src_stride,
+            &refs,
+            ref_plane.stride,
+            &mut out_sads,
+        );
         [
             Some(out_sads[0]),
             Some(out_sads[1]),

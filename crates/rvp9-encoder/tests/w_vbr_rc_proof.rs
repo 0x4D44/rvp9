@@ -76,7 +76,11 @@ fn cbr_config() -> RateControlConfig {
 fn run(rc: &mut RateControl, n: u32) -> Vec<(FrameKind, u8, u8, u8, u32)> {
     let mut out = Vec::with_capacity(n as usize);
     for i in 0..n {
-        let frame_kind = if i == 0 { FrameKind::Key } else { FrameKind::Inter };
+        let frame_kind = if i == 0 {
+            FrameKind::Key
+        } else {
+            FrameKind::Inter
+        };
         let (q, lo, hi) = rc.pick_q_and_bounds(frame_kind);
         let target = rc.this_frame_target;
         // Pretend the encoder spent exactly the per-frame target.

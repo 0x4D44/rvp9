@@ -339,7 +339,10 @@ mod tests {
         assert_eq!(get_prob(100, 100), 255);
         // mid-range — 50/100 ⇒ 128.
         let mid = get_prob(50, 100);
-        assert!((127..=129).contains(&mid), "midpoint prob = {mid}, expected ~128");
+        assert!(
+            (127..=129).contains(&mid),
+            "midpoint prob = {mid}, expected ~128"
+        );
     }
 
     /// W5.7 sanity — `get_binary_prob(0, 0) = 128` (libvpx default for

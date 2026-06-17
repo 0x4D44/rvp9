@@ -21,7 +21,7 @@
 
 use rvp9_decoder::{Decoder, ParsedFrame};
 use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
-use rvp9_harness::y4m::{probe_foreman_cif, read_cropped as y4m_read_cropped, YuvFrameBuf};
+use rvp9_harness::y4m::{YuvFrameBuf, probe_foreman_cif, read_cropped as y4m_read_cropped};
 use std::path::PathBuf;
 
 fn yuv_view<'a>(y: &'a [u8], u: &'a [u8], v: &'a [u8], w: usize) -> YuvFrameRef<'a> {
@@ -200,7 +200,10 @@ fn diag_kfcap_measure() {
         const H: u32 = 256;
         const N: usize = 32;
         let (frames, fr) = y4m_read_cropped(&src, W, H, N).expect("read foreman_cif");
-        eprintln!("\n--- foreman_cif {W}x{H} {fr}fps {} frames ---", frames.len());
+        eprintln!(
+            "\n--- foreman_cif {W}x{H} {fr}fps {} frames ---",
+            frames.len()
+        );
         for &tb in &targets {
             let r = encode_measure(&frames, W, H, fr, tb, frames.len() as u32 + 1);
             report("cif", tb / 1000, &r);
@@ -215,7 +218,10 @@ fn diag_kfcap_measure() {
         const H: u32 = 256;
         const N: usize = 60;
         let (frames, fr) = y4m_read_cropped(&src, W, H, N).expect("read foreman_320x256");
-        eprintln!("\n--- foreman_320x256 {W}x{H} {fr}fps {} frames ---", frames.len());
+        eprintln!(
+            "\n--- foreman_320x256 {W}x{H} {fr}fps {} frames ---",
+            frames.len()
+        );
         for &tb in &targets {
             let r = encode_measure(&frames, W, H, fr, tb, frames.len() as u32 + 1);
             report("320", tb / 1000, &r);

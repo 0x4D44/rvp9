@@ -47,7 +47,7 @@
 
 use rvp9_decoder::{Decoder, ParsedFrame};
 use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
-use rvp9_harness::container::{write_ivf, IvfHeader};
+use rvp9_harness::container::{IvfHeader, write_ivf};
 use rvp9_harness::y4m::{probe_testsrc_720p, read_cropped as y4m_read_cropped};
 use std::path::{Path, PathBuf};
 use std::process::Command;

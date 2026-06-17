@@ -57,7 +57,7 @@
 
 use rvp9_core::block::BlockSize;
 use rvp9_core::inter::{
-    find_mv_refs, sign_bias_from_header, BlockBounds, NeighbourLookup, Position, PrevFrameMvRef,
+    BlockBounds, NeighbourLookup, Position, PrevFrameMvRef, find_mv_refs, sign_bias_from_header,
 };
 use rvp9_core::mode_info::{InterMode, ModeInfo, Mv, RefFrame};
 use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, StreamFrameKind, YuvFrameRef};

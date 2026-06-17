@@ -76,13 +76,7 @@ pub fn vp9_block_error(coeff: &[i32], dqcoeff: &[i16]) -> (i64, i64) {
 /// Both slices must be at least `(side - 1) * stride + side` long
 /// (asserted in debug builds).
 #[must_use]
-pub fn pixel_sse(
-    src: &[u8],
-    src_stride: usize,
-    dst: &[u8],
-    dst_stride: usize,
-    side: usize,
-) -> u64 {
+pub fn pixel_sse(src: &[u8], src_stride: usize, dst: &[u8], dst_stride: usize, side: usize) -> u64 {
     debug_assert!(src.len() >= (side - 1) * src_stride + side);
     debug_assert!(dst.len() >= (side - 1) * dst_stride + side);
 

@@ -64,7 +64,7 @@ use rvp9_core::bitstream::frame::InterpFilter;
 use rvp9_core::block::BlockSize;
 use rvp9_core::cost::coef_cost::CoefCostTable;
 use rvp9_core::inter::filter::{
-    FILTER_TAPS, convolve8, convolve8_horiz, convolve8_vert, convolve_copy, kernel_for,
+    FILTER_TAPS, convolve_copy, convolve8, convolve8_horiz, convolve8_vert, kernel_for,
 };
 use rvp9_core::mode_info::{InterMode, Mv, RefFrame};
 use rvp9_core::mv_search::full_pixel::PlaneRef;
@@ -265,8 +265,8 @@ fn encode_inter_sub_block(
     // libvpx lines 2346-2349: the brdcost folds in the MV/mode rate
     // (`brdcost += RDCOST(rdmult, brate, 0)`) and the total brate sums
     // the coef bits and the MV/mode bits.
-    let brdcost = rdcost(rdmult, byrate, bdist)
-        .saturating_add(rdcost(rdmult, cand.mv_mode_rate, 0));
+    let brdcost =
+        rdcost(rdmult, byrate, bdist).saturating_add(rdcost(rdmult, cand.mv_mode_rate, 0));
     let brate = byrate.saturating_add(cand.mv_mode_rate);
 
     (byrate, brate, bdist, bsse, brdcost)
@@ -433,8 +433,16 @@ fn build_inter_pred_4x4(
     let x_nonzero = subpel_x_q4 != 0;
     let y_nonzero = subpel_y_q4 != 0;
 
-    let pad_x = if x_nonzero { (FILTER_TAPS / 2 - 1) as isize } else { 0 };
-    let pad_y = if y_nonzero { (FILTER_TAPS / 2 - 1) as isize } else { 0 };
+    let pad_x = if x_nonzero {
+        (FILTER_TAPS / 2 - 1) as isize
+    } else {
+        0
+    };
+    let pad_y = if y_nonzero {
+        (FILTER_TAPS / 2 - 1) as isize
+    } else {
+        0
+    };
     let win_x = ref_x - pad_x;
     let win_y = ref_y - pad_y;
     debug_assert!(
@@ -451,14 +459,17 @@ fn build_inter_pred_4x4(
 
     match (x_nonzero, y_nonzero) {
         (false, false) => convolve_copy(src_slice, ref_plane.stride, dst, SUB, SUB, SUB),
-        (true, false) => {
-            convolve8_horiz(src_slice, ref_plane.stride, dst, SUB, filter_x, SUB, SUB)
-        }
-        (false, true) => {
-            convolve8_vert(src_slice, ref_plane.stride, dst, SUB, filter_y, SUB, SUB)
-        }
+        (true, false) => convolve8_horiz(src_slice, ref_plane.stride, dst, SUB, filter_x, SUB, SUB),
+        (false, true) => convolve8_vert(src_slice, ref_plane.stride, dst, SUB, filter_y, SUB, SUB),
         (true, true) => convolve8(
-            src_slice, ref_plane.stride, dst, SUB, filter_x, filter_y, SUB, SUB,
+            src_slice,
+            ref_plane.stride,
+            dst,
+            SUB,
+            filter_x,
+            filter_y,
+            SUB,
+            SUB,
         ),
     }
 }
@@ -468,7 +479,7 @@ mod tests {
     use super::*;
     use rvp9_core::cost::coef_cost::build_coef_cost_table;
     use rvp9_core::entropy::FrameContext;
-    use rvp9_core::quant::forward::{init_plane_quantizers, QuantizerDeltas};
+    use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
 
     /// Deterministic textured pattern (so the residual is non-trivial).
     fn texture(x: usize, y: usize) -> u8 {
@@ -501,7 +512,12 @@ mod tests {
                 refp[y * stride + x] = texture(sx, sy);
             }
         }
-        Harness { src, refp, stride, offset }
+        Harness {
+            src,
+            refp,
+            stride,
+            offset,
+        }
     }
 
     fn src_plane(h: &Harness) -> PlaneRef<'_> {
@@ -546,8 +562,16 @@ mod tests {
             row: (-shift_row * 8) as i16,
             col: (-shift_col * 8) as i16,
         };
-        let zero_refs = [SubRef { ref_frame: RefFrame::LastFrame, plane: rp, mv: Mv::ZERO }];
-        let new_refs = [SubRef { ref_frame: RefFrame::LastFrame, plane: rp, mv: true_mv }];
+        let zero_refs = [SubRef {
+            ref_frame: RefFrame::LastFrame,
+            plane: rp,
+            mv: Mv::ZERO,
+        }];
+        let new_refs = [SubRef {
+            ref_frame: RefFrame::LastFrame,
+            plane: rp,
+            mv: true_mv,
+        }];
 
         let zero_cand = SubBlockCandidate {
             blk_idx: 0,
@@ -568,10 +592,8 @@ mod tests {
             mv_mode_rate: 120, // NEWMV pays an MV-rate penalty
         };
 
-        let (_zr, _zbr, zdist, _zsse, zrd) =
-            encode_inter_sub_block(&zero_cand, &quant, &costs, 80);
-        let (_nr, _nbr, ndist, _nsse, nrd) =
-            encode_inter_sub_block(&new_cand, &quant, &costs, 80);
+        let (_zr, _zbr, zdist, _zsse, zrd) = encode_inter_sub_block(&zero_cand, &quant, &costs, 80);
+        let (_nr, _nbr, ndist, _nsse, nrd) = encode_inter_sub_block(&new_cand, &quant, &costs, 80);
 
         // The matched MV recovers the source: zero residual → zero dist.
         assert_eq!(
@@ -611,8 +633,16 @@ mod tests {
             row: (-shift_row * 8) as i16,
             col: (-shift_col * 8) as i16,
         };
-        let zero_refs = [SubRef { ref_frame: RefFrame::LastFrame, plane: rp, mv: Mv::ZERO }];
-        let new_refs = [SubRef { ref_frame: RefFrame::LastFrame, plane: rp, mv: true_mv }];
+        let zero_refs = [SubRef {
+            ref_frame: RefFrame::LastFrame,
+            plane: rp,
+            mv: Mv::ZERO,
+        }];
+        let new_refs = [SubRef {
+            ref_frame: RefFrame::LastFrame,
+            plane: rp,
+            mv: true_mv,
+        }];
 
         // Every sub-block gets the same two candidates (matched +
         // mismatched). The matched NEWMV should win all four.
@@ -653,7 +683,10 @@ mod tests {
                 InterMode::NewMv,
                 "sub-block {i} must elect the matched NEWMV (lower real RD)",
             );
-            assert_eq!(w.dist, 0, "matched NEWMV → zero distortion for sub-block {i}");
+            assert_eq!(
+                w.dist, 0,
+                "matched NEWMV → zero distortion for sub-block {i}"
+            );
         }
         // The whole segment recovers the source → zero aggregate dist.
         assert_eq!(r.total_dist, 0);
@@ -684,8 +717,16 @@ mod tests {
         // Two refs, both the same shifted plane at the true MV → the
         // average equals the (exact) prediction → zero residual.
         let refs = [
-            SubRef { ref_frame: RefFrame::LastFrame, plane: rp, mv: true_mv },
-            SubRef { ref_frame: RefFrame::AltrefFrame, plane: rp, mv: true_mv },
+            SubRef {
+                ref_frame: RefFrame::LastFrame,
+                plane: rp,
+                mv: true_mv,
+            },
+            SubRef {
+                ref_frame: RefFrame::AltrefFrame,
+                plane: rp,
+                mv: true_mv,
+            },
         ];
         let cand = SubBlockCandidate {
             blk_idx: 0,
@@ -717,7 +758,11 @@ mod tests {
         let costs = build_coef_cost_table(&fc);
         let quant = init_plane_quantizers(96, QuantizerDeltas::Y);
 
-        let zero_refs = [SubRef { ref_frame: RefFrame::LastFrame, plane: rp, mv: Mv::ZERO }];
+        let zero_refs = [SubRef {
+            ref_frame: RefFrame::LastFrame,
+            plane: rp,
+            mv: Mv::ZERO,
+        }];
         let mut cands = Vec::new();
         for blk in 0..NUM_SUB_BLOCKS as u8 {
             cands.push(SubBlockCandidate {
@@ -766,7 +811,11 @@ mod tests {
         let fc = FrameContext::new_default();
         let costs = build_coef_cost_table(&fc);
         let quant = init_plane_quantizers(96, QuantizerDeltas::Y);
-        let zero_refs = [SubRef { ref_frame: RefFrame::LastFrame, plane: rp, mv: Mv::ZERO }];
+        let zero_refs = [SubRef {
+            ref_frame: RefFrame::LastFrame,
+            plane: rp,
+            mv: Mv::ZERO,
+        }];
 
         // Only sub-blocks 0, 2, 3 have candidates (1 missing).
         let cands: Vec<SubBlockCandidate> = [0u8, 2, 3]

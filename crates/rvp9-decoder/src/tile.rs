@@ -39,21 +39,26 @@
 //! frame; per-tile state resets at every tile boundary, mirroring
 //! libvpx `decode_tiles` (`vp9_decodeframe.c:2200-2240`).
 
+use rvp9_core::bitstream::BitDepth;
 use rvp9_core::bitstream::{ChromaFormat, TileInfo};
-use rvp9_core::block::{BlockSize, PartitionType, max_txsize, subsize, uv_plane_block_size,
-    uv_plane_tx_size};
+use rvp9_core::block::{
+    BlockSize, PartitionType, max_txsize, subsize, uv_plane_block_size, uv_plane_tx_size,
+};
 use rvp9_core::dsp::SimdDispatch;
-use rvp9_core::entropy::{BoolReader, FrameContext, VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB,
-    VP9_KF_Y_MODE_PROB};
+use rvp9_core::entropy::{
+    BoolReader, FrameContext, VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB,
+};
 use rvp9_core::frame::{TileFrameDst, Yv12Buffer};
-use rvp9_core::inter::mode_info::{InterModeReadParams, get_intra_inter_context,
-    read_inter_block_mode_info};
+use rvp9_core::inter::mode_info::{
+    InterModeReadParams, get_intra_inter_context, read_inter_block_mode_info,
+};
 use rvp9_core::inter::mv_ref::BlockBounds;
 use rvp9_core::intra_pred::{DcAvailability, EdgeBuffers, IntraMode, build_intra_predictors};
-use rvp9_core::mode_info::{BlockMode, BmiInfo, InterMode, ModeInfo, Mv, RefFrame,
-    SegmentationReadParams, read_inter_segment_id, read_intra_mode, read_is_inter, read_partition,
-    read_segment_id, read_skip, read_tx_size, get_tx_size_context};
-use rvp9_core::bitstream::BitDepth;
+use rvp9_core::mode_info::{
+    BlockMode, BmiInfo, InterMode, ModeInfo, Mv, RefFrame, SegmentationReadParams,
+    get_tx_size_context, read_inter_segment_id, read_intra_mode, read_is_inter, read_partition,
+    read_segment_id, read_skip, read_tx_size,
+};
 use rvp9_core::quant::{ac_quant, dc_quant, get_qindex};
 use rvp9_core::transforms::{TxMode, TxSize};
 
@@ -248,7 +253,13 @@ impl PartitionCtx {
     /// `dec_update_partition_context` (`vp9_decodeframe.c:1133-1145`).
     ///
     /// `bw` is the block's mi-width.
-    fn update(&mut self, mi_row_in_tile: usize, mi_col_in_tile: usize, subsize_bs: BlockSize, bw: usize) {
+    fn update(
+        &mut self,
+        mi_row_in_tile: usize,
+        mi_col_in_tile: usize,
+        subsize_bs: BlockSize,
+        bw: usize,
+    ) {
         let (above_v, left_v) = PARTITION_CONTEXT_LOOKUP[subsize_bs as usize];
         let col_end = (mi_col_in_tile + bw).min(self.above_partition.len());
         for slot in &mut self.above_partition[mi_col_in_tile..col_end] {
@@ -325,7 +336,10 @@ fn plane_ss(chroma: ChromaFormat, plane: usize) -> (usize, usize) {
     if plane == 0 {
         (0, 0)
     } else {
-        (chroma.subsampling_x() as usize, chroma.subsampling_y() as usize)
+        (
+            chroma.subsampling_x() as usize,
+            chroma.subsampling_y() as usize,
+        )
     }
 }
 
@@ -393,13 +407,15 @@ pub fn decode_tile_intra<D: TileFrameDst>(
         "decode_tile_intra: unexpected chroma {:?}",
         dst_frame.chroma(),
     );
-    let mut reader =
-        BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;
+    let mut reader = BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;
     let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
     let tile_mi_rows = bounds.mi_row_end - bounds.mi_row_start;
     let mut decode_ctx = TileDecodeCtx::new_with_view(
-        tile_mi_cols, tile_mi_rows, mi_view,
-        bounds.mi_col_start, bounds.mi_row_start,
+        tile_mi_cols,
+        tile_mi_rows,
+        mi_view,
+        bounds.mi_col_start,
+        bounds.mi_row_start,
     );
     // G7.1c: size the chroma coef contexts at the established
     // subsampling. The PROFILE0 default would silently truncate the U/V
@@ -418,8 +434,11 @@ pub fn decode_tile_intra<D: TileFrameDst>(
     if trace_kfsb {
         eprintln!(
             "RVP9_DBG kfsb tile_data.len={} bounds=mi_row[{}..{}] mi_col[{}..{}]",
-            tile_data.len(), bounds.mi_row_start, bounds.mi_row_end,
-            bounds.mi_col_start, bounds.mi_col_end,
+            tile_data.len(),
+            bounds.mi_row_start,
+            bounds.mi_row_end,
+            bounds.mi_col_start,
+            bounds.mi_col_end,
         );
     }
 
@@ -573,8 +592,17 @@ fn decode_partition<D: TileFrameDst>(
         // bsize is BLOCK_8x8 partitioning into 4x4/4x8/8x4. Always one
         // call into decode_block, mi-width = mi-height = 1.
         decode_block(
-            reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-            mi_row, mi_col, sub, coef_counts.as_deref_mut(),
+            reader,
+            fc,
+            params,
+            bounds,
+            decode_ctx,
+            coef_ctx,
+            dst_frame,
+            mi_row,
+            mi_col,
+            sub,
+            coef_counts.as_deref_mut(),
             cur_segment_ids,
             dispatch,
         );
@@ -582,23 +610,50 @@ fn decode_partition<D: TileFrameDst>(
         match partition {
             PartitionType::None => {
                 decode_block(
-                    reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                    mi_row, mi_col, sub, coef_counts.as_deref_mut(),
+                    reader,
+                    fc,
+                    params,
+                    bounds,
+                    decode_ctx,
+                    coef_ctx,
+                    dst_frame,
+                    mi_row,
+                    mi_col,
+                    sub,
+                    coef_counts.as_deref_mut(),
                     cur_segment_ids,
                     dispatch,
                 );
             }
             PartitionType::Horz => {
                 decode_block(
-                    reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                    mi_row, mi_col, sub, coef_counts.as_deref_mut(),
+                    reader,
+                    fc,
+                    params,
+                    bounds,
+                    decode_ctx,
+                    coef_ctx,
+                    dst_frame,
+                    mi_row,
+                    mi_col,
+                    sub,
+                    coef_counts.as_deref_mut(),
                     cur_segment_ids,
                     dispatch,
                 );
                 if has_rows {
                     decode_block(
-                        reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                        mi_row + hbs, mi_col, sub, coef_counts.as_deref_mut(),
+                        reader,
+                        fc,
+                        params,
+                        bounds,
+                        decode_ctx,
+                        coef_ctx,
+                        dst_frame,
+                        mi_row + hbs,
+                        mi_col,
+                        sub,
+                        coef_counts.as_deref_mut(),
                         cur_segment_ids,
                         dispatch,
                     );
@@ -606,15 +661,33 @@ fn decode_partition<D: TileFrameDst>(
             }
             PartitionType::Vert => {
                 decode_block(
-                    reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                    mi_row, mi_col, sub, coef_counts.as_deref_mut(),
+                    reader,
+                    fc,
+                    params,
+                    bounds,
+                    decode_ctx,
+                    coef_ctx,
+                    dst_frame,
+                    mi_row,
+                    mi_col,
+                    sub,
+                    coef_counts.as_deref_mut(),
                     cur_segment_ids,
                     dispatch,
                 );
                 if has_cols {
                     decode_block(
-                        reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                        mi_row, mi_col + hbs, sub, coef_counts.as_deref_mut(),
+                        reader,
+                        fc,
+                        params,
+                        bounds,
+                        decode_ctx,
+                        coef_ctx,
+                        dst_frame,
+                        mi_row,
+                        mi_col + hbs,
+                        sub,
+                        coef_counts.as_deref_mut(),
                         cur_segment_ids,
                         dispatch,
                     );
@@ -622,29 +695,69 @@ fn decode_partition<D: TileFrameDst>(
             }
             PartitionType::Split => {
                 decode_partition(
-                    reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
-                    dst_frame, mi_row, mi_col, sub, n8x8_l2,
+                    reader,
+                    fc,
+                    params,
+                    bounds,
+                    decode_ctx,
+                    coef_ctx,
+                    part_ctx,
+                    dst_frame,
+                    mi_row,
+                    mi_col,
+                    sub,
+                    n8x8_l2,
                     coef_counts.as_deref_mut(),
                     cur_segment_ids,
                     dispatch,
                 );
                 decode_partition(
-                    reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
-                    dst_frame, mi_row, mi_col + hbs, sub, n8x8_l2,
+                    reader,
+                    fc,
+                    params,
+                    bounds,
+                    decode_ctx,
+                    coef_ctx,
+                    part_ctx,
+                    dst_frame,
+                    mi_row,
+                    mi_col + hbs,
+                    sub,
+                    n8x8_l2,
                     coef_counts.as_deref_mut(),
                     cur_segment_ids,
                     dispatch,
                 );
                 decode_partition(
-                    reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
-                    dst_frame, mi_row + hbs, mi_col, sub, n8x8_l2,
+                    reader,
+                    fc,
+                    params,
+                    bounds,
+                    decode_ctx,
+                    coef_ctx,
+                    part_ctx,
+                    dst_frame,
+                    mi_row + hbs,
+                    mi_col,
+                    sub,
+                    n8x8_l2,
                     coef_counts.as_deref_mut(),
                     cur_segment_ids,
                     dispatch,
                 );
                 decode_partition(
-                    reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
-                    dst_frame, mi_row + hbs, mi_col + hbs, sub, n8x8_l2,
+                    reader,
+                    fc,
+                    params,
+                    bounds,
+                    decode_ctx,
+                    coef_ctx,
+                    part_ctx,
+                    dst_frame,
+                    mi_row + hbs,
+                    mi_col + hbs,
+                    sub,
+                    n8x8_l2,
                     coef_counts,
                     cur_segment_ids,
                     dispatch,
@@ -770,8 +883,8 @@ fn decode_block<D: TileFrameDst>(
     let left = decode_ctx.left(mi_row_in_tile, mi_col_in_tile);
     let have_above_block = above.is_some();
     let have_left_block = left.is_some();
-    let skip_ctx = usize::from(above.is_some_and(|m| m.skip))
-        + usize::from(left.is_some_and(|m| m.skip));
+    let skip_ctx =
+        usize::from(above.is_some_and(|m| m.skip)) + usize::from(left.is_some_and(|m| m.skip));
     // Keyframes don't call `adapt_mode_probs`; pass `None` for counts
     // on read_skip / read_tx_size (libvpx `vp9_decodeframe.c:3050`).
     let skip = read_skip(reader, &fc.skip_probs, skip_ctx, None);
@@ -779,9 +892,7 @@ fn decode_block<D: TileFrameDst>(
         eprintln!("RVP9_DBG decode_block skip_ctx={skip_ctx} skip={skip}");
     }
     if trace_kfleaf {
-        eprintln!(
-            "RVP9_DBG kfleaf mi=({mi_row},{mi_col}) skip_ctx={skip_ctx} skip={skip}"
-        );
+        eprintln!("RVP9_DBG kfleaf mi=({mi_row},{mi_col}) skip_ctx={skip_ctx} skip={skip}");
     }
     dbg_cursor!(reader, "after read_skip");
     dbg_kfleaf!(reader, "after read_skip");
@@ -841,9 +952,7 @@ fn decode_block<D: TileFrameDst>(
         eprintln!("RVP9_DBG decode_block uv_mode={uv_mode:?}");
     }
     if trace_kfleaf {
-        eprintln!(
-            "RVP9_DBG kfleaf mi=({mi_row},{mi_col}) uv_mode={uv_mode:?}"
-        );
+        eprintln!("RVP9_DBG kfleaf mi=({mi_row},{mi_col}) uv_mode={uv_mode:?}");
     }
     dbg_cursor!(reader, "after read_intra_mode(uv_mode)");
     dbg_kfleaf!(reader, "after read_intra_mode(uv_mode)");
@@ -1229,7 +1338,6 @@ fn reconstruct_intra_planes<D: TileFrameDst>(
     }
 }
 
-
 /// Keyframe Y-mode reader. Mirrors libvpx's per-`bsize` dispatch at
 /// `vp9_decodemv.c:209-230`. Returns `(parent_y_mode, bmi)` where
 /// `bmi` is populated for sub-8 sizes and zeroed otherwise.
@@ -1265,16 +1373,19 @@ fn read_keyframe_y_mode_traced(
     // up to 4 per-4×4 modes. The current commit handles all four
     // bsize arms 1:1 with `read_intra_frame_mode_info`.
     let mut bmi = [BmiInfo::default(); 4];
-    let log_bmi = |i: usize, am: IntraMode, lm: IntraMode, probs: &[u8; 9],
-                   m: IntraMode, before: (u32, u64, i32, usize),
+    let log_bmi = |i: usize,
+                   am: IntraMode,
+                   lm: IntraMode,
+                   probs: &[u8; 9],
+                   m: IntraMode,
+                   before: (u32, u64, i32, usize),
                    after: (u32, u64, i32, usize)| {
         eprintln!(
             "RVP9_DBG read_intra_mode bmi[{i}] above={am:?} left={lm:?} \
              probs={probs:?} -> {m:?} \
              before=(r={},v=0x{:016x},c={},p={}) \
              after=(r={},v=0x{:016x},c={},p={})",
-            before.0, before.1, before.2, before.3,
-            after.0, after.1, after.2, after.3,
+            before.0, before.1, before.2, before.3, after.0, after.1, after.2, after.3,
         );
     };
     match bsize {
@@ -1302,7 +1413,9 @@ fn read_keyframe_y_mode_traced(
             let before0 = reader.cursor_state();
             let m0 = read_intra_mode(reader, &p0);
             let after0 = reader.cursor_state();
-            if trace { log_bmi(0, above0, left0, &p0, m0, before0, after0); }
+            if trace {
+                log_bmi(0, above0, left0, &p0, m0, before0, after0);
+            }
             bmi[0].as_mode = m0 as u8;
             bmi[2].as_mode = m0 as u8;
             let above1 = above_block_mode(1, &bmi, above);
@@ -1311,7 +1424,9 @@ fn read_keyframe_y_mode_traced(
             let before1 = reader.cursor_state();
             let m1 = read_intra_mode(reader, &p1);
             let after1 = reader.cursor_state();
-            if trace { log_bmi(1, above1, left1, &p1, m1, before1, after1); }
+            if trace {
+                log_bmi(1, above1, left1, &p1, m1, before1, after1);
+            }
             bmi[1].as_mode = m1 as u8;
             bmi[3].as_mode = m1 as u8;
             (m1, bmi)
@@ -1323,7 +1438,9 @@ fn read_keyframe_y_mode_traced(
             let before0 = reader.cursor_state();
             let m0 = read_intra_mode(reader, &p0);
             let after0 = reader.cursor_state();
-            if trace { log_bmi(0, above0, left0, &p0, m0, before0, after0); }
+            if trace {
+                log_bmi(0, above0, left0, &p0, m0, before0, after0);
+            }
             bmi[0].as_mode = m0 as u8;
             bmi[1].as_mode = m0 as u8;
             let above2 = above_block_mode(2, &bmi, above);
@@ -1332,7 +1449,9 @@ fn read_keyframe_y_mode_traced(
             let before2 = reader.cursor_state();
             let m2 = read_intra_mode(reader, &p2);
             let after2 = reader.cursor_state();
-            if trace { log_bmi(2, above2, left2, &p2, m2, before2, after2); }
+            if trace {
+                log_bmi(2, above2, left2, &p2, m2, before2, after2);
+            }
             bmi[2].as_mode = m2 as u8;
             bmi[3].as_mode = m2 as u8;
             (m2, bmi)
@@ -1530,13 +1649,15 @@ pub fn decode_tile_inter<D: TileFrameDst>(
         "decoder gate should have rejected {:?} before decode_tile_inter",
         dst_frame.chroma(),
     );
-    let mut reader =
-        BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;
+    let mut reader = BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;
     let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
     let tile_mi_rows = bounds.mi_row_end - bounds.mi_row_start;
     let mut decode_ctx = TileDecodeCtx::new_with_view(
-        tile_mi_cols, tile_mi_rows, mi_view,
-        bounds.mi_col_start, bounds.mi_row_start,
+        tile_mi_cols,
+        tile_mi_rows,
+        mi_view,
+        bounds.mi_col_start,
+        bounds.mi_row_start,
     );
     let (cc_ss_x, cc_ss_y) = plane_ss(dst_frame.chroma(), 1);
     let mut coef_ctx = TileCoefCtx::new_with_ss(tile_mi_cols, cc_ss_x, cc_ss_y);
@@ -1684,105 +1805,224 @@ fn decode_inter_partition<D: TileFrameDst>(
 
     if hbs == 0 {
         decode_inter_block(
-            reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-            mi_row, mi_col, sub,
-            mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
+            reader,
+            fc,
+            params,
+            bounds,
+            decode_ctx,
+            coef_ctx,
+            dst_frame,
+            mi_row,
+            mi_col,
+            sub,
+            mv_counts.as_deref_mut(),
+            coef_counts.as_deref_mut(),
             mode_counts.as_deref_mut(),
-            prev_mv_grid, cur_mv_grid,
-            prev_segment_ids, cur_segment_ids,
+            prev_mv_grid,
+            cur_mv_grid,
+            prev_segment_ids,
+            cur_segment_ids,
             dispatch,
         );
     } else {
         match partition {
             PartitionType::None => {
                 decode_inter_block(
-                    reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                    mi_row, mi_col, sub,
-                    mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
+                    reader,
+                    fc,
+                    params,
+                    bounds,
+                    decode_ctx,
+                    coef_ctx,
+                    dst_frame,
+                    mi_row,
+                    mi_col,
+                    sub,
+                    mv_counts.as_deref_mut(),
+                    coef_counts.as_deref_mut(),
                     mode_counts.as_deref_mut(),
-                    prev_mv_grid, cur_mv_grid,
-                    prev_segment_ids, cur_segment_ids,
+                    prev_mv_grid,
+                    cur_mv_grid,
+                    prev_segment_ids,
+                    cur_segment_ids,
                     dispatch,
                 );
             }
             PartitionType::Horz => {
                 decode_inter_block(
-                    reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                    mi_row, mi_col, sub,
-                    mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
+                    reader,
+                    fc,
+                    params,
+                    bounds,
+                    decode_ctx,
+                    coef_ctx,
+                    dst_frame,
+                    mi_row,
+                    mi_col,
+                    sub,
+                    mv_counts.as_deref_mut(),
+                    coef_counts.as_deref_mut(),
                     mode_counts.as_deref_mut(),
-                    prev_mv_grid, cur_mv_grid,
-                    prev_segment_ids, cur_segment_ids,
+                    prev_mv_grid,
+                    cur_mv_grid,
+                    prev_segment_ids,
+                    cur_segment_ids,
                     dispatch,
                 );
                 if has_rows {
                     decode_inter_block(
-                        reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                        mi_row + hbs, mi_col, sub,
-                        mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
+                        reader,
+                        fc,
+                        params,
+                        bounds,
+                        decode_ctx,
+                        coef_ctx,
+                        dst_frame,
+                        mi_row + hbs,
+                        mi_col,
+                        sub,
+                        mv_counts.as_deref_mut(),
+                        coef_counts.as_deref_mut(),
                         mode_counts.as_deref_mut(),
-                        prev_mv_grid, cur_mv_grid,
-                        prev_segment_ids, cur_segment_ids,
+                        prev_mv_grid,
+                        cur_mv_grid,
+                        prev_segment_ids,
+                        cur_segment_ids,
                         dispatch,
                     );
                 }
             }
             PartitionType::Vert => {
                 decode_inter_block(
-                    reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                    mi_row, mi_col, sub,
-                    mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
+                    reader,
+                    fc,
+                    params,
+                    bounds,
+                    decode_ctx,
+                    coef_ctx,
+                    dst_frame,
+                    mi_row,
+                    mi_col,
+                    sub,
+                    mv_counts.as_deref_mut(),
+                    coef_counts.as_deref_mut(),
                     mode_counts.as_deref_mut(),
-                    prev_mv_grid, cur_mv_grid,
-                    prev_segment_ids, cur_segment_ids,
+                    prev_mv_grid,
+                    cur_mv_grid,
+                    prev_segment_ids,
+                    cur_segment_ids,
                     dispatch,
                 );
                 if has_cols {
                     decode_inter_block(
-                        reader, fc, params, bounds, decode_ctx, coef_ctx, dst_frame,
-                        mi_row, mi_col + hbs, sub,
-                        mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
+                        reader,
+                        fc,
+                        params,
+                        bounds,
+                        decode_ctx,
+                        coef_ctx,
+                        dst_frame,
+                        mi_row,
+                        mi_col + hbs,
+                        sub,
+                        mv_counts.as_deref_mut(),
+                        coef_counts.as_deref_mut(),
                         mode_counts.as_deref_mut(),
-                        prev_mv_grid, cur_mv_grid,
-                        prev_segment_ids, cur_segment_ids,
+                        prev_mv_grid,
+                        cur_mv_grid,
+                        prev_segment_ids,
+                        cur_segment_ids,
                         dispatch,
                     );
                 }
             }
             PartitionType::Split => {
                 decode_inter_partition(
-                    reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
-                    dst_frame, mi_row, mi_col, sub, n8x8_l2,
-                    mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
+                    reader,
+                    fc,
+                    params,
+                    bounds,
+                    decode_ctx,
+                    coef_ctx,
+                    part_ctx,
+                    dst_frame,
+                    mi_row,
+                    mi_col,
+                    sub,
+                    n8x8_l2,
+                    mv_counts.as_deref_mut(),
+                    coef_counts.as_deref_mut(),
                     mode_counts.as_deref_mut(),
-                    prev_mv_grid, cur_mv_grid,
-                    prev_segment_ids, cur_segment_ids,
+                    prev_mv_grid,
+                    cur_mv_grid,
+                    prev_segment_ids,
+                    cur_segment_ids,
                     dispatch,
                 );
                 decode_inter_partition(
-                    reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
-                    dst_frame, mi_row, mi_col + hbs, sub, n8x8_l2,
-                    mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
+                    reader,
+                    fc,
+                    params,
+                    bounds,
+                    decode_ctx,
+                    coef_ctx,
+                    part_ctx,
+                    dst_frame,
+                    mi_row,
+                    mi_col + hbs,
+                    sub,
+                    n8x8_l2,
+                    mv_counts.as_deref_mut(),
+                    coef_counts.as_deref_mut(),
                     mode_counts.as_deref_mut(),
-                    prev_mv_grid, cur_mv_grid,
-                    prev_segment_ids, cur_segment_ids,
+                    prev_mv_grid,
+                    cur_mv_grid,
+                    prev_segment_ids,
+                    cur_segment_ids,
                     dispatch,
                 );
                 decode_inter_partition(
-                    reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
-                    dst_frame, mi_row + hbs, mi_col, sub, n8x8_l2,
-                    mv_counts.as_deref_mut(), coef_counts.as_deref_mut(),
+                    reader,
+                    fc,
+                    params,
+                    bounds,
+                    decode_ctx,
+                    coef_ctx,
+                    part_ctx,
+                    dst_frame,
+                    mi_row + hbs,
+                    mi_col,
+                    sub,
+                    n8x8_l2,
+                    mv_counts.as_deref_mut(),
+                    coef_counts.as_deref_mut(),
                     mode_counts.as_deref_mut(),
-                    prev_mv_grid, cur_mv_grid,
-                    prev_segment_ids, cur_segment_ids,
+                    prev_mv_grid,
+                    cur_mv_grid,
+                    prev_segment_ids,
+                    cur_segment_ids,
                     dispatch,
                 );
                 decode_inter_partition(
-                    reader, fc, params, bounds, decode_ctx, coef_ctx, part_ctx,
-                    dst_frame, mi_row + hbs, mi_col + hbs, sub, n8x8_l2,
-                    mv_counts, coef_counts, mode_counts,
-                    prev_mv_grid, cur_mv_grid,
-                    prev_segment_ids, cur_segment_ids,
+                    reader,
+                    fc,
+                    params,
+                    bounds,
+                    decode_ctx,
+                    coef_ctx,
+                    part_ctx,
+                    dst_frame,
+                    mi_row + hbs,
+                    mi_col + hbs,
+                    sub,
+                    n8x8_l2,
+                    mv_counts,
+                    coef_counts,
+                    mode_counts,
+                    prev_mv_grid,
+                    cur_mv_grid,
+                    prev_segment_ids,
+                    cur_segment_ids,
                     dispatch,
                 );
             }
@@ -1849,10 +2089,8 @@ fn decode_inter_block<D: TileFrameDst>(
     // beyond) diffs can be line-matched against libvpx's altref-
     // inclusive dump.
     let tflags = crate::trace_flags::trace_flags();
-    let frame_id = crate::RVP9_TRACE_FRAME_COUNTER
-        .load(std::sync::atomic::Ordering::Relaxed);
-    let trace_imi = tflags.intermi
-        && tflags.trace_frame.is_none_or(|tf| tf == frame_id);
+    let frame_id = crate::RVP9_TRACE_FRAME_COUNTER.load(std::sync::atomic::Ordering::Relaxed);
+    let trace_imi = tflags.intermi && tflags.trace_frame.is_none_or(|tf| tf == frame_id);
     if trace_imi {
         let (range, value, count, _) = reader.cursor_state();
         let value_byte = (value >> (64 - 8)) as u8;
@@ -1933,9 +2171,7 @@ fn decode_inter_block<D: TileFrameDst>(
              x_mis={x_mis_pre} y_mis={y_mis_pre} en={} upd_map={} t_upd={} \
              ctx={seg_id_pred_ctx} predicted={predicted} segment_id={segment_id} \
              seg_id_predicted={seg_id_predicted}",
-            seg_params.enabled,
-            seg_params.update_map,
-            seg_params.temporal_update,
+            seg_params.enabled, seg_params.update_map, seg_params.temporal_update,
         );
     }
     // Splat the chosen segment_id into the current frame's seg map
@@ -1961,8 +2197,8 @@ fn decode_inter_block<D: TileFrameDst>(
     let left = decode_ctx.left(mi_row_in_tile, mi_col_in_tile);
     let have_above_block = above.is_some();
     let have_left_block = left.is_some();
-    let skip_ctx = usize::from(above.is_some_and(|m| m.skip))
-        + usize::from(left.is_some_and(|m| m.skip));
+    let skip_ctx =
+        usize::from(above.is_some_and(|m| m.skip)) + usize::from(left.is_some_and(|m| m.skip));
     // D.11 trace — capture pre-skip bool-reader state so the
     // libvpx oracle can replay the same bytes against the same
     // probs. Filters on `RVP9_TRACE_ISINTER="mi_row,mi_col"`.
@@ -1986,8 +2222,7 @@ fn decode_inter_block<D: TileFrameDst>(
                 .as_ref()
                 .map(|m| matches!(m.mode, rvp9_core::mode_info::BlockMode::Inter { .. }))
                 .map_or(0u8, u8::from),
-            left
-                .as_ref()
+            left.as_ref()
                 .map(|m| matches!(m.mode, rvp9_core::mode_info::BlockMode::Inter { .. }))
                 .map_or(0u8, u8::from),
             above.as_ref().map_or(0u8, |m| u8::from(m.skip)),
@@ -2134,14 +2369,11 @@ fn decode_inter_block<D: TileFrameDst>(
         // The libvpx pointer points at a single MV_REF (a 2-tuple of
         // `(mv[2], ref_frame[2])`); we materialise that as a
         // `PrevFrameMvRef` value by indexing the row-major grid.
-        let prev_mv = prev_mv_grid
-            .and_then(|g| g.get(mi_row * params.base.mi_cols + mi_col).copied());
+        let prev_mv =
+            prev_mv_grid.and_then(|g| g.get(mi_row * params.base.mi_cols + mi_col).copied());
         {
-            let lookup = TileNeighbourLookup::new(
-                decode_ctx,
-                mi_row_in_tile as i32,
-                mi_col_in_tile as i32,
-            );
+            let lookup =
+                TileNeighbourLookup::new(decode_ctx, mi_row_in_tile as i32, mi_col_in_tile as i32);
             read_inter_block_mode_info(
                 reader,
                 fc,
@@ -2157,12 +2389,23 @@ fn decode_inter_block<D: TileFrameDst>(
         }
 
         if crate::trace_flags::trace_flags().inter_mv
-            && let BlockMode::Inter { mode, ref_frames, mvs, .. } = mi.mode
+            && let BlockMode::Inter {
+                mode,
+                ref_frames,
+                mvs,
+                ..
+            } = mi.mode
         {
             eprintln!(
                 "[rvp9_inter] mi=({mi_row},{mi_col}) bsize={:?} mode={:?} ref=[{:?},{:?}] mvs=[({},{}),({},{})] prev_mv={:?}",
-                bsize, mode, ref_frames[0], ref_frames[1],
-                mvs[0].row, mvs[0].col, mvs[1].row, mvs[1].col,
+                bsize,
+                mode,
+                ref_frames[0],
+                ref_frames[1],
+                mvs[0].row,
+                mvs[0].col,
+                mvs[1].row,
+                mvs[1].col,
                 prev_mv,
             );
         }
@@ -2173,14 +2416,24 @@ fn decode_inter_block<D: TileFrameDst>(
         // format libvpx emits — diff against libvpx's
         // `RVP9_TRACE_INTERMI` to localize per-block divergence.
         if trace_imi
-            && let BlockMode::Inter { mode, ref_frames, mvs, .. } = mi.mode
+            && let BlockMode::Inter {
+                mode,
+                ref_frames,
+                mvs,
+                ..
+            } = mi.mode
         {
             let (range, _, count, _) = reader.cursor_state();
             eprintln!(
                 "RVP9_TRACE_INTERMI f={frame_id} mi=({mi_row},{mi_col}) post_modeinfo \
                  mode={} ref=[{},{}] mv0=({},{}) mv1=({},{}) range={range} count={count}",
-                mode as u8, ref_frames[0] as i8, ref_frames[1] as i8,
-                mvs[0].row, mvs[0].col, mvs[1].row, mvs[1].col,
+                mode as u8,
+                ref_frames[0] as i8,
+                ref_frames[1] as i8,
+                mvs[0].row,
+                mvs[0].col,
+                mvs[1].row,
+                mvs[1].col,
             );
         }
         // 2. Resolve per-block refs against params.refs (LAST=0,
@@ -2192,8 +2445,10 @@ fn decode_inter_block<D: TileFrameDst>(
         //    the right index through.
         let (block_refs, block_sfs) = match mi.mode {
             BlockMode::Inter { ref_frames, .. } => {
-                let resolve = |rf: RefFrame|
-                    -> (Option<&Yv12Buffer>, Option<rvp9_core::inter::scale::ScaleFactors>) {
+                let resolve = |rf: RefFrame| -> (
+                    Option<&Yv12Buffer>,
+                    Option<rvp9_core::inter::scale::ScaleFactors>,
+                ) {
                     match rf {
                         RefFrame::LastFrame => (params.refs[0], params.frame_scale_factors[0]),
                         RefFrame::GoldenFrame => (params.refs[1], params.frame_scale_factors[1]),
@@ -2248,11 +2503,11 @@ fn decode_inter_block<D: TileFrameDst>(
         // [mi_row..mi_row+y_mis][mi_col..mi_col+x_mis]. Mirrors libvpx
         // `vp9_decodemv.c:835-842` — the loop that splats the just-
         // decoded MV/ref pair across the block's covered mi cells.
-        if let BlockMode::Inter { ref_frames, mvs, .. } = mi.mode {
-            let entry = rvp9_core::inter::mv_ref::PrevFrameMvRef {
-                mvs,
-                ref_frames,
-            };
+        if let BlockMode::Inter {
+            ref_frames, mvs, ..
+        } = mi.mode
+        {
+            let entry = rvp9_core::inter::mv_ref::PrevFrameMvRef { mvs, ref_frames };
             write_mv_grid_block(
                 cur_mv_grid,
                 params.base.mi_cols,
@@ -2271,8 +2526,7 @@ fn decode_inter_block<D: TileFrameDst>(
         // `vp9_kf_y_mode_prob[above][left]` 2-D conditional. Pixel
         // recon uses the same per-plane TX loop as keyframe intra,
         // factored into `reconstruct_intra_planes`.
-        let (y_mode, uv_mode, bmi) =
-            read_intra_in_inter_mode_info(reader, fc, bsize, mode_counts);
+        let (y_mode, uv_mode, bmi) = read_intra_in_inter_mode_info(reader, fc, bsize, mode_counts);
         if trace_imi {
             let (range, _, count, _) = reader.cursor_state();
             // libvpx emits the post_modeinfo line for intra-in-inter
@@ -2483,13 +2737,11 @@ fn clamp_block_mvs(
         // Max: `border + int_x - PRESHIFT + bw + (FILTER_TAIL + PRESHIFT) <= plane_w + 2*border`,
         // i.e. `int_x <= plane_w + plane_border - bw - FILTER_TAIL - plane_block_x`.
         let _ = INTERP_EXTEND_PX; // kept for documentation parity with libvpx
-        let hi_int =
-            plane_w + plane_border - plane_bw - FILTER_TAIL - plane_block_x;
+        let hi_int = plane_w + plane_border - plane_bw - FILTER_TAIL - plane_block_x;
         let lo_col = lo_int * scale;
         let hi_col = hi_int * scale + (scale - 1);
         let lo_int_row = -plane_border + PRESHIFT - plane_block_y;
-        let hi_int_row =
-            plane_h + plane_border - plane_bh - FILTER_TAIL - plane_block_y;
+        let hi_int_row = plane_h + plane_border - plane_bh - FILTER_TAIL - plane_block_y;
         let lo_row = lo_int_row * scale;
         let hi_row = hi_int_row * scale + (scale - 1);
 
@@ -2558,8 +2810,10 @@ fn read_intra_in_inter_mode_info(
         BlockSize::Block4x4 | BlockSize::Block4x8 | BlockSize::Block8x4 => 0,
         BlockSize::Block8x8 | BlockSize::Block8x16 | BlockSize::Block16x8 => 1,
         BlockSize::Block16x16 | BlockSize::Block16x32 | BlockSize::Block32x16 => 2,
-        BlockSize::Block32x32 | BlockSize::Block32x64
-        | BlockSize::Block64x32 | BlockSize::Block64x64 => 3,
+        BlockSize::Block32x32
+        | BlockSize::Block32x64
+        | BlockSize::Block64x32
+        | BlockSize::Block64x64 => 3,
     };
 
     let mut bmi = [BmiInfo::default(); 4];
@@ -2731,11 +2985,26 @@ mod tests {
     #[test]
     fn partition_context_lookup_pins_libvpx() {
         // libvpx (vp9_common_data.c:230-244).
-        assert_eq!(PARTITION_CONTEXT_LOOKUP[BlockSize::Block4x4 as usize], (15, 15));
-        assert_eq!(PARTITION_CONTEXT_LOOKUP[BlockSize::Block8x8 as usize], (14, 14));
-        assert_eq!(PARTITION_CONTEXT_LOOKUP[BlockSize::Block16x16 as usize], (12, 12));
-        assert_eq!(PARTITION_CONTEXT_LOOKUP[BlockSize::Block32x32 as usize], (8, 8));
-        assert_eq!(PARTITION_CONTEXT_LOOKUP[BlockSize::Block64x64 as usize], (0, 0));
+        assert_eq!(
+            PARTITION_CONTEXT_LOOKUP[BlockSize::Block4x4 as usize],
+            (15, 15)
+        );
+        assert_eq!(
+            PARTITION_CONTEXT_LOOKUP[BlockSize::Block8x8 as usize],
+            (14, 14)
+        );
+        assert_eq!(
+            PARTITION_CONTEXT_LOOKUP[BlockSize::Block16x16 as usize],
+            (12, 12)
+        );
+        assert_eq!(
+            PARTITION_CONTEXT_LOOKUP[BlockSize::Block32x32 as usize],
+            (8, 8)
+        );
+        assert_eq!(
+            PARTITION_CONTEXT_LOOKUP[BlockSize::Block64x64 as usize],
+            (0, 0)
+        );
     }
 
     /// D.4 — `read_intra_in_inter_mode_info` for a ≥ 8×8 block uses
@@ -2784,7 +3053,11 @@ mod tests {
         encode_intra_mode(IntraMode::H, &y_probs, &mut w);
         // uv_mode uses fc.uv_mode_prob[y_mode]; encode H here too for
         // determinism.
-        encode_intra_mode(IntraMode::H, &fc.uv_mode_prob[IntraMode::H as usize], &mut w);
+        encode_intra_mode(
+            IntraMode::H,
+            &fc.uv_mode_prob[IntraMode::H as usize],
+            &mut w,
+        );
         for _ in 0..16 {
             w.write_bit(0);
         }
@@ -2794,7 +3067,11 @@ mod tests {
         let mut r = BoolReader::new(&buf).expect("init");
         let (y_mode, uv_mode, bmi) =
             read_intra_in_inter_mode_info(&mut r, &fc, BlockSize::Block64x64, None);
-        assert_eq!(y_mode, IntraMode::H, "y_mode round-trip via default_if_y_probs");
+        assert_eq!(
+            y_mode,
+            IntraMode::H,
+            "y_mode round-trip via default_if_y_probs"
+        );
         assert_eq!(uv_mode, IntraMode::H);
         // ≥ 8×8: bmi is zero-init (libvpx never writes per-bmi modes).
         for slot in &bmi {
@@ -2862,7 +3139,11 @@ mod tests {
             encode_intra_mode(*m, &y_probs, &mut w);
         }
         // uv_mode follows mi->mode = bmi[3] = Tm.
-        encode_intra_mode(IntraMode::Dc, &fc.uv_mode_prob[IntraMode::Tm as usize], &mut w);
+        encode_intra_mode(
+            IntraMode::Dc,
+            &fc.uv_mode_prob[IntraMode::Tm as usize],
+            &mut w,
+        );
         for _ in 0..16 {
             w.write_bit(0);
         }
@@ -2921,7 +3202,11 @@ mod tests {
         let mut w = BoolWriter::start_encode(&mut buf);
         encode_intra_mode(IntraMode::V, &y_probs, &mut w);
         encode_intra_mode(IntraMode::H, &y_probs, &mut w);
-        encode_intra_mode(IntraMode::Dc, &fc.uv_mode_prob[IntraMode::H as usize], &mut w);
+        encode_intra_mode(
+            IntraMode::Dc,
+            &fc.uv_mode_prob[IntraMode::H as usize],
+            &mut w,
+        );
         for _ in 0..16 {
             w.write_bit(0);
         }
@@ -3578,7 +3863,11 @@ mod tests {
         let mut w = BoolWriter::start_encode(&mut buf);
         encode_intra_mode(IntraMode::D45, &y_probs, &mut w);
         encode_intra_mode(IntraMode::D135, &y_probs, &mut w);
-        encode_intra_mode(IntraMode::Dc, &fc.uv_mode_prob[IntraMode::D135 as usize], &mut w);
+        encode_intra_mode(
+            IntraMode::Dc,
+            &fc.uv_mode_prob[IntraMode::D135 as usize],
+            &mut w,
+        );
         for _ in 0..16 {
             w.write_bit(0);
         }
@@ -3613,7 +3902,10 @@ mod tests {
                 mode: InterMode::NewMv,
                 ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
                 mvs: [
-                    Mv { row: i16::MAX, col: i16::MAX },
+                    Mv {
+                        row: i16::MAX,
+                        col: i16::MAX,
+                    },
                     Mv::ZERO,
                 ],
                 interp_filter: InterpFilter::EightTap,

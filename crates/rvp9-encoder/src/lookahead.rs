@@ -137,7 +137,10 @@ impl LookaheadCtx {
     #[must_use]
     pub fn new(width: u32, height: u32, depth: usize) -> Self {
         assert!(width > 0 && height > 0, "lookahead requires positive dims");
-        assert!(width % 2 == 0 && height % 2 == 0, "4:2:0 requires even dims");
+        assert!(
+            width % 2 == 0 && height % 2 == 0,
+            "4:2:0 requires even dims"
+        );
         let depth = depth.clamp(1, MAX_LAG_BUFFERS);
         let max_sz = depth + MAX_PRE_FRAMES;
         Self {
@@ -359,9 +362,7 @@ mod tests {
         assert!(!ctx.full());
         ctx.push(&yview(&y, &u, &v, 64), 1, 2, 0).unwrap();
         assert!(ctx.full(), "full at depth=2 after 2 pushes (max_sz=3)");
-        let err = ctx
-            .push(&yview(&y, &u, &v, 64), 2, 3, 0)
-            .unwrap_err();
+        let err = ctx.push(&yview(&y, &u, &v, 64), 2, 3, 0).unwrap_err();
         assert_eq!(err, LookaheadError::Full);
     }
 
@@ -374,8 +375,10 @@ mod tests {
         let (y, u, v) = make_frame(64, 64, 0);
         for i in 0..3 {
             ctx.push(&yview(&y, &u, &v, 64), i, i + 1, 0).unwrap();
-            assert!(ctx.pop(false).is_none(),
-                "pop must return None until sz == max_sz - MAX_PRE_FRAMES");
+            assert!(
+                ctx.pop(false).is_none(),
+                "pop must return None until sz == max_sz - MAX_PRE_FRAMES"
+            );
         }
         // Fourth push fills the ring (sz=4 = max_sz - MAX_PRE_FRAMES).
         ctx.push(&yview(&y, &u, &v, 64), 3, 4, 0).unwrap();
@@ -406,7 +409,10 @@ mod tests {
         // exact set depends on how many we drained mid-loop; what
         // matters is monotonicity.
         for w in seen.windows(2) {
-            assert!(w[0] < w[1], "show_idx must be strictly increasing: {seen:?}");
+            assert!(
+                w[0] < w[1],
+                "show_idx must be strictly increasing: {seen:?}"
+            );
         }
         assert!(!seen.is_empty());
     }
@@ -467,9 +473,7 @@ mod tests {
     fn w1_4_dimension_mismatch_rejected() {
         let mut ctx = LookaheadCtx::new(128, 128, 2);
         let (y, u, v) = make_frame(64, 64, 0); // wrong size!
-        let err = ctx
-            .push(&yview(&y, &u, &v, 64), 0, 1, 0)
-            .unwrap_err();
+        let err = ctx.push(&yview(&y, &u, &v, 64), 0, 1, 0).unwrap_err();
         assert_eq!(err, LookaheadError::InvalidPlaneSize);
     }
 }

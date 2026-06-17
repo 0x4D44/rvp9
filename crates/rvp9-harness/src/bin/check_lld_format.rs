@@ -66,11 +66,7 @@ fn count_citations(text: &str) -> usize {
     let mut i = 0;
     while i < bytes.len() {
         // Find a colon followed by an ASCII digit.
-        if bytes[i] == b':'
-            && i + 1 < bytes.len()
-            && bytes[i + 1].is_ascii_digit()
-            && i > 0
-        {
+        if bytes[i] == b':' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() && i > 0 {
             // Walk back to find the start of the preceding "word".
             let mut start = i;
             while start > 0 {

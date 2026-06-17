@@ -9,7 +9,7 @@
 
 use rvp9_core::mv_search::e12stat;
 use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, StreamFrameKind, YuvFrameRef};
-use rvp9_harness::y4m::{probe_foreman_cif, read_cropped, YuvFrameBuf};
+use rvp9_harness::y4m::{YuvFrameBuf, probe_foreman_cif, read_cropped};
 
 const W: u32 = 256;
 const H: u32 = 256;
@@ -95,7 +95,9 @@ fn e13_diamond_oracle_foreman() {
     let mut agg = e12stat::DiamondStats::default();
     for f in frames.iter() {
         let _ = e12stat::take_snapshot();
-        let pkt = enc.encode_frame(&yuv_view(f, W as usize)).expect("encode_frame");
+        let pkt = enc
+            .encode_frame(&yuv_view(f, W as usize))
+            .expect("encode_frame");
         let snap = e12stat::take_snapshot();
         if pkt.frame_kind == StreamFrameKind::Inter {
             agg.leaves += snap.leaves;
@@ -138,20 +140,24 @@ fn e13_diamond_oracle_foreman() {
     );
     eprintln!(
         "  reached_oracle: {}/{} ({:.1}%)   improved_on_zero: {}/{} ({:.1}%)",
-        agg.reached_oracle, agg.leaves,
+        agg.reached_oracle,
+        agg.leaves,
         100.0 * agg.reached_oracle as f64 / agg.leaves as f64,
-        agg.improved_on_zero, agg.leaves,
+        agg.improved_on_zero,
+        agg.leaves,
         100.0 * agg.improved_on_zero as f64 / agg.leaves as f64,
     );
     eprintln!(
         "  seeded(int_pro short-circuit): {}/{} ({:.1}%)   avg |mv| (full-pel L1) = {:.2}",
-        agg.seeded_leaves, agg.leaves,
+        agg.seeded_leaves,
+        agg.leaves,
         100.0 * agg.seeded_leaves as f64 / agg.leaves as f64,
         agg.mv_mag_sum as f64 / agg.leaves as f64,
     );
     eprintln!(
         "  NEWMV won RD argmin: {}/{} inter leaves ({:.2}%)  <- shipped-prediction gate",
-        agg.newmv_won, agg.argmin_leaves,
+        agg.newmv_won,
+        agg.argmin_leaves,
         if agg.argmin_leaves > 0 {
             100.0 * agg.newmv_won as f64 / agg.argmin_leaves as f64
         } else {

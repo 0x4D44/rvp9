@@ -280,10 +280,7 @@ fn multi_tile_dispatch_uses_worker_pool() {
     let after = rvp9_decoder::RVP9_G5_1_PARALLEL_JOBS.load(Ordering::Relaxed);
     let delta = after.wrapping_sub(before);
     let n_frames = md5s.iter().filter(|m| m.is_some()).count() as u32;
-    assert!(
-        n_frames > 0,
-        "tile_1x2 produced 0 frames — corpus broken"
-    );
+    assert!(n_frames > 0, "tile_1x2 produced 0 frames — corpus broken");
     // 2 tiles per frame in `tile_1x2`. Expect delta >= 2 * n_frames
     // (=) ; "exactly" if every shown frame is a multi-tile frame
     // (which holds for tile_1x2 — every frame has the same tile config).
@@ -332,8 +329,7 @@ fn tile_scratch_pool_warm_no_alloc() {
         eprintln!("skip: {} not present", path.display());
         return;
     }
-    let (data, packets) =
-        rvp9_harness::container::read_packets(&path).expect("container parse");
+    let (data, packets) = rvp9_harness::container::read_packets(&path).expect("container parse");
     let mut decoder = Decoder::with_threads(nz(2));
 
     // Before any decode, the pool should be empty.

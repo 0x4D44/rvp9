@@ -249,7 +249,10 @@ pub fn write_header<W: Write>(
     fps_num: u32,
     fps_den: u32,
 ) -> io::Result<()> {
-    writeln!(out, "YUV4MPEG2 W{width} H{height} F{fps_num}:{fps_den} Ip A1:1 C420jpeg")
+    writeln!(
+        out,
+        "YUV4MPEG2 W{width} H{height} F{fps_num}:{fps_den} Ip A1:1 C420jpeg"
+    )
 }
 
 /// Write one frame: the `FRAME\n` tag followed by the Y, U, V planes
@@ -302,10 +305,8 @@ mod tests {
         write_frame(&mut buf, &f1.0, &f1.1, &f1.2).expect("write f1");
 
         // Round-trip through a temp file (read_cropped takes a Path).
-        let path = std::env::temp_dir().join(format!(
-            "rvp9_io_y4m_roundtrip_{}.y4m",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("rvp9_io_y4m_roundtrip_{}.y4m", std::process::id()));
         std::fs::write(&path, &buf).expect("write temp");
 
         let mut file = std::fs::File::open(&path).expect("open");

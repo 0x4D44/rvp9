@@ -27,9 +27,7 @@
 //! the per-token `extra_bits_cost` table mirroring libvpx
 //! `vp9_extra_bits[t].cost` (`vp9_tokenize.c`).
 
-use rvp9_core::cost::coef_cost::{
-    CoefCostTable, ENTROPY_TOKENS, coef_token_cost, CoefCostIndex,
-};
+use rvp9_core::cost::coef_cost::{CoefCostIndex, CoefCostTable, ENTROPY_TOKENS, coef_token_cost};
 use rvp9_core::transforms::TxSize;
 
 /// `EOB_TOKEN = 11` per libvpx `vp9_entropy.h:38`.
@@ -82,17 +80,17 @@ pub const BAND_COUNTS: [[i16; 8]; 4] = [
 pub fn vp9_get_token(v: i32) -> u8 {
     let abs_v = v.unsigned_abs();
     match abs_v {
-        0 => 0,             // ZERO_TOKEN
-        1 => 1,             // ONE_TOKEN
-        2 => 2,             // TWO_TOKEN
-        3 => 3,             // THREE_TOKEN
-        4 => 4,             // FOUR_TOKEN
-        5..=6 => 5,         // CATEGORY1_TOKEN  (CAT1_MIN_VAL=5)
-        7..=10 => 6,        // CATEGORY2_TOKEN  (CAT2_MIN_VAL=7)
-        11..=18 => 7,       // CATEGORY3_TOKEN  (CAT3_MIN_VAL=11)
-        19..=34 => 8,       // CATEGORY4_TOKEN  (CAT4_MIN_VAL=19)
-        35..=66 => 9,       // CATEGORY5_TOKEN  (CAT5_MIN_VAL=35)
-        _ => 10,            // CATEGORY6_TOKEN  (CAT6_MIN_VAL=67)
+        0 => 0,       // ZERO_TOKEN
+        1 => 1,       // ONE_TOKEN
+        2 => 2,       // TWO_TOKEN
+        3 => 3,       // THREE_TOKEN
+        4 => 4,       // FOUR_TOKEN
+        5..=6 => 5,   // CATEGORY1_TOKEN  (CAT1_MIN_VAL=5)
+        7..=10 => 6,  // CATEGORY2_TOKEN  (CAT2_MIN_VAL=7)
+        11..=18 => 7, // CATEGORY3_TOKEN  (CAT3_MIN_VAL=11)
+        19..=34 => 8, // CATEGORY4_TOKEN  (CAT4_MIN_VAL=19)
+        35..=66 => 9, // CATEGORY5_TOKEN  (CAT5_MIN_VAL=35)
+        _ => 10,      // CATEGORY6_TOKEN  (CAT6_MIN_VAL=67)
     }
 }
 
@@ -446,16 +444,7 @@ mod tests {
         // Block with a single DC = 1 → ONE_TOKEN at scan[0].
         let mut q = vec![0i16; 16];
         q[scan.scan[0] as usize] = 1;
-        let one_cost = cost_coeffs(
-            &q,
-            scan.scan,
-            1,
-            TxSize::Tx4x4,
-            0,
-            0,
-            0,
-            &costs,
-        );
+        let one_cost = cost_coeffs(&q, scan.scan, 1, TxSize::Tx4x4, 0, 0, 0, &costs);
         assert!(
             one_cost > zero_cost,
             "single-coeff cost ({one_cost}) must exceed all-zero cost ({zero_cost})",
@@ -502,7 +491,8 @@ mod tests {
             }
         }
         assert_eq!(
-            transitions, vec![2, 5, 9, 12, 15],
+            transitions,
+            vec![2, 5, 9, 12, 15],
             "transitions don't match libvpx band_counts[TX_4X4][1..]",
         );
         // After consuming all 15 AC coefficients, `band_left == 0`

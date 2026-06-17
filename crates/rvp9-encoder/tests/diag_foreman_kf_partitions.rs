@@ -13,7 +13,7 @@
 
 use rvp9_core::block::BlockSize;
 use rvp9_core::mode_decision::partition::{
-    choose_partitioning, PartitionDecision, PartitionSearchParams,
+    PartitionDecision, PartitionSearchParams, choose_partitioning,
 };
 use rvp9_core::mv_search::PlaneRef;
 use rvp9_harness::y4m::{probe_foreman_cif, read_cropped as y4m_read_cropped};

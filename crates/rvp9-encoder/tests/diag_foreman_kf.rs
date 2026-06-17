@@ -126,8 +126,7 @@ fn diag_foreman_kf() {
         let mut edge_sse: u64 = 0;
         for r in 0..H as usize {
             for c in 0..W as usize {
-                let d = i32::from(y[r * W as usize + c])
-                    - i32::from(dec_y[r * W as usize + c]);
+                let d = i32::from(y[r * W as usize + c]) - i32::from(dec_y[r * W as usize + c]);
                 let in_center = (64..192).contains(&r) && (64..192).contains(&c);
                 if in_center {
                     center_sse += (d * d) as u64;

@@ -324,12 +324,7 @@ mod tests {
     fn bdrate_identical_curves_returns_zero() {
         // Synthetic RD curve: as bitrate doubles, PSNR rises ~6 dB
         // (the typical rule of thumb for natural content).
-        let curve = vec![
-            (250.0, 28.0),
-            (500.0, 34.0),
-            (1000.0, 40.0),
-            (2000.0, 46.0),
-        ];
+        let curve = vec![(250.0, 28.0), (500.0, 34.0), (1000.0, 40.0), (2000.0, 46.0)];
         let bd = bdrate(&curve, &curve);
         assert!(
             bd.abs() < 1e-6,
@@ -344,12 +339,7 @@ mod tests {
     /// `y -> y + ln(0.5)` is captured by the constant term.
     #[test]
     fn bdrate_lower_bitrate_for_same_psnr_returns_negative_50pct() {
-        let curve_a = vec![
-            (250.0, 28.0),
-            (500.0, 34.0),
-            (1000.0, 40.0),
-            (2000.0, 46.0),
-        ];
+        let curve_a = vec![(250.0, 28.0), (500.0, 34.0), (1000.0, 40.0), (2000.0, 46.0)];
         let curve_b: Vec<(f64, f64)> = curve_a.iter().map(|&(br, ps)| (br / 2.0, ps)).collect();
         let bd = bdrate(&curve_a, &curve_b);
         // exp(ln(0.5)) - 1 = -0.5  →  -50 %.
@@ -363,12 +353,7 @@ mod tests {
     /// Expected BD-rate = +100 % exactly.
     #[test]
     fn bdrate_higher_bitrate_for_same_psnr_returns_positive_100pct() {
-        let curve_a = vec![
-            (250.0, 28.0),
-            (500.0, 34.0),
-            (1000.0, 40.0),
-            (2000.0, 46.0),
-        ];
+        let curve_a = vec![(250.0, 28.0), (500.0, 34.0), (1000.0, 40.0), (2000.0, 46.0)];
         let curve_b: Vec<(f64, f64)> = curve_a.iter().map(|&(br, ps)| (br * 2.0, ps)).collect();
         let bd = bdrate(&curve_a, &curve_b);
         assert!(
@@ -402,12 +387,7 @@ mod tests {
     #[test]
     fn bdrate_handles_insufficient_points() {
         let three = vec![(250.0, 28.0), (500.0, 34.0), (1000.0, 40.0)];
-        let four = vec![
-            (250.0, 28.0),
-            (500.0, 34.0),
-            (1000.0, 40.0),
-            (2000.0, 46.0),
-        ];
+        let four = vec![(250.0, 28.0), (500.0, 34.0), (1000.0, 40.0), (2000.0, 46.0)];
         assert!(bdrate(&three, &four).is_nan());
         assert!(bdrate(&four, &three).is_nan());
         assert!(bdrate(&three, &three).is_nan());
@@ -416,18 +396,8 @@ mod tests {
     /// Disjoint PSNR ranges → NaN sentinel.
     #[test]
     fn bdrate_handles_disjoint_psnr_ranges() {
-        let curve_a = vec![
-            (250.0, 20.0),
-            (300.0, 21.0),
-            (400.0, 22.0),
-            (500.0, 23.0),
-        ];
-        let curve_b = vec![
-            (250.0, 40.0),
-            (300.0, 41.0),
-            (400.0, 42.0),
-            (500.0, 43.0),
-        ];
+        let curve_a = vec![(250.0, 20.0), (300.0, 21.0), (400.0, 22.0), (500.0, 23.0)];
+        let curve_b = vec![(250.0, 40.0), (300.0, 41.0), (400.0, 42.0), (500.0, 43.0)];
         assert!(bdrate(&curve_a, &curve_b).is_nan());
     }
 
@@ -435,18 +405,8 @@ mod tests {
     /// Curve B has slightly lower bitrate at the overlap → expect negative.
     #[test]
     fn bdrate_handles_partial_overlap() {
-        let curve_a = vec![
-            (250.0, 28.0),
-            (500.0, 34.0),
-            (1000.0, 40.0),
-            (1500.0, 43.0),
-        ];
-        let curve_b = vec![
-            (200.0, 30.0),
-            (400.0, 36.0),
-            (800.0, 42.0),
-            (1600.0, 48.0),
-        ];
+        let curve_a = vec![(250.0, 28.0), (500.0, 34.0), (1000.0, 40.0), (1500.0, 43.0)];
+        let curve_b = vec![(200.0, 30.0), (400.0, 36.0), (800.0, 42.0), (1600.0, 48.0)];
         let bd = bdrate(&curve_a, &curve_b);
         assert!(
             bd.is_finite(),
@@ -461,18 +421,8 @@ mod tests {
     /// Non-positive bitrate sample → NaN.
     #[test]
     fn bdrate_rejects_non_positive_bitrate() {
-        let curve_a = vec![
-            (250.0, 28.0),
-            (500.0, 34.0),
-            (1000.0, 40.0),
-            (2000.0, 46.0),
-        ];
-        let curve_bad = vec![
-            (0.0, 28.0),
-            (500.0, 34.0),
-            (1000.0, 40.0),
-            (2000.0, 46.0),
-        ];
+        let curve_a = vec![(250.0, 28.0), (500.0, 34.0), (1000.0, 40.0), (2000.0, 46.0)];
+        let curve_bad = vec![(0.0, 28.0), (500.0, 34.0), (1000.0, 40.0), (2000.0, 46.0)];
         assert!(bdrate(&curve_a, &curve_bad).is_nan());
     }
 
@@ -490,17 +440,17 @@ mod tests {
         ];
         // curve_on (AQ enabled) at 90 % of the bitrate for the same PSNR
         // — i.e. AQ saves 10 % of the bits.
-        let curve_on: Vec<(f64, f64)> = curve_off
-            .iter()
-            .map(|&(br, ps)| (br * 0.9, ps))
-            .collect();
+        let curve_on: Vec<(f64, f64)> = curve_off.iter().map(|&(br, ps)| (br * 0.9, ps)).collect();
         let bd = bdrate(&curve_off, &curve_on);
         // exp(ln(0.9)) - 1 ≈ -0.10 → -10 %.
         assert!(
             (bd - (-10.0)).abs() < 1e-6,
             "AQ-on at 0.9× bitrate should give BD-rate ≈ -10 %, got {bd}",
         );
-        assert!(bd < 0.0, "AQ-on more efficient must yield negative BD-rate, got {bd}");
+        assert!(
+            bd < 0.0,
+            "AQ-on more efficient must yield negative BD-rate, got {bd}"
+        );
     }
 
     /// Polyfit3 reproduces the coefficients of a known cubic exactly
@@ -521,12 +471,7 @@ mod tests {
     /// `psnr_at_bitrate` reproduces an endpoint exactly.
     #[test]
     fn psnr_at_bitrate_endpoints_exact() {
-        let curve = vec![
-            (250.0, 28.0),
-            (500.0, 34.0),
-            (1000.0, 40.0),
-            (2000.0, 46.0),
-        ];
+        let curve = vec![(250.0, 28.0), (500.0, 34.0), (1000.0, 40.0), (2000.0, 46.0)];
         let p = psnr_at_bitrate(&curve, 250.0).expect("in range");
         assert!((p - 28.0).abs() < 1e-9, "p={p}");
         let p = psnr_at_bitrate(&curve, 2000.0).expect("in range");
@@ -539,12 +484,7 @@ mod tests {
     /// interpolant at that point is the arithmetic mean PSNR = 31.0 dB.
     #[test]
     fn psnr_at_bitrate_log_midpoint() {
-        let curve = vec![
-            (250.0, 28.0),
-            (500.0, 34.0),
-            (1000.0, 40.0),
-            (2000.0, 46.0),
-        ];
+        let curve = vec![(250.0, 28.0), (500.0, 34.0), (1000.0, 40.0), (2000.0, 46.0)];
         let mid_br = (250.0_f64.ln() + 500.0_f64.ln()).exp().sqrt();
         let p = psnr_at_bitrate(&curve, mid_br).expect("in range");
         assert!((p - 31.0).abs() < 1e-9, "p={p} at mid_br={mid_br}");
@@ -553,12 +493,7 @@ mod tests {
     /// `psnr_at_bitrate` refuses to extrapolate beyond the curve range.
     #[test]
     fn psnr_at_bitrate_out_of_range_returns_none() {
-        let curve = vec![
-            (250.0, 28.0),
-            (500.0, 34.0),
-            (1000.0, 40.0),
-            (2000.0, 46.0),
-        ];
+        let curve = vec![(250.0, 28.0), (500.0, 34.0), (1000.0, 40.0), (2000.0, 46.0)];
         assert!(psnr_at_bitrate(&curve, 100.0).is_none());
         assert!(psnr_at_bitrate(&curve, 5000.0).is_none());
         assert!(psnr_at_bitrate(&curve, 0.0).is_none());
@@ -569,12 +504,7 @@ mod tests {
     /// (it sorts internally).
     #[test]
     fn psnr_at_bitrate_unsorted_input_handled() {
-        let curve = vec![
-            (2000.0, 46.0),
-            (250.0, 28.0),
-            (1000.0, 40.0),
-            (500.0, 34.0),
-        ];
+        let curve = vec![(2000.0, 46.0), (250.0, 28.0), (1000.0, 40.0), (500.0, 34.0)];
         let p = psnr_at_bitrate(&curve, 500.0).expect("in range");
         assert!((p - 34.0).abs() < 1e-9, "p={p}");
     }
@@ -583,18 +513,8 @@ mod tests {
     /// bdrate returns NaN.
     #[test]
     fn bdrate_returns_nan_on_collinear_input() {
-        let curve_a = vec![
-            (500.0, 35.0),
-            (600.0, 35.0),
-            (700.0, 35.0),
-            (800.0, 35.0),
-        ];
-        let curve_b = vec![
-            (500.0, 35.0),
-            (600.0, 35.0),
-            (700.0, 35.0),
-            (800.0, 35.0),
-        ];
+        let curve_a = vec![(500.0, 35.0), (600.0, 35.0), (700.0, 35.0), (800.0, 35.0)];
+        let curve_b = vec![(500.0, 35.0), (600.0, 35.0), (700.0, 35.0), (800.0, 35.0)];
         assert!(bdrate(&curve_a, &curve_b).is_nan());
     }
 
@@ -607,21 +527,11 @@ mod tests {
     /// count_in_range == 4, count_out_of_range == 0).
     #[test]
     fn psnr_delta_summary_all_in_range() {
-        let libvpx = vec![
-            (100.0, 30.0),
-            (200.0, 34.0),
-            (400.0, 38.0),
-            (800.0, 42.0),
-        ];
+        let libvpx = vec![(100.0, 30.0), (200.0, 34.0), (400.0, 38.0), (800.0, 42.0)];
         // rvp9 sits 4 dB below libvpx at every overlapping bitrate
         // sample. The shared bitrates make `psnr_at_bitrate` reproduce
         // libvpx's PSNR exactly at each query point.
-        let rvp9 = vec![
-            (100.0, 26.0),
-            (200.0, 30.0),
-            (400.0, 34.0),
-            (800.0, 38.0),
-        ];
+        let rvp9 = vec![(100.0, 26.0), (200.0, 30.0), (400.0, 34.0), (800.0, 38.0)];
         let s = psnr_delta_summary(&libvpx, &rvp9).expect("in-range");
         assert_eq!(s.count_in_range, 4);
         assert_eq!(s.count_out_of_range, 0);
@@ -647,12 +557,7 @@ mod tests {
     /// 2 in-range only; count_in_range == 2; count_out_of_range == 2.
     #[test]
     fn psnr_delta_summary_partial_out_of_range() {
-        let libvpx = vec![
-            (200.0, 30.0),
-            (400.0, 34.0),
-            (600.0, 36.0),
-            (800.0, 38.0),
-        ];
+        let libvpx = vec![(200.0, 30.0), (400.0, 34.0), (600.0, 36.0), (800.0, 38.0)];
         // Two in-range (400, 600) and two out-of-range (100, 1000).
         // At br=400 libvpx = 34 dB; rvp9 = 30 → Δ = +4.
         // At br=600 libvpx = 36 dB; rvp9 = 31 → Δ = +5.
@@ -687,18 +592,8 @@ mod tests {
     /// which the API encodes as the `None` sentinel.
     #[test]
     fn psnr_delta_summary_none_in_range() {
-        let libvpx = vec![
-            (200.0, 30.0),
-            (300.0, 32.0),
-            (400.0, 34.0),
-            (500.0, 36.0),
-        ];
-        let rvp9 = vec![
-            (50.0, 22.0),
-            (100.0, 24.0),
-            (1000.0, 38.0),
-            (2000.0, 42.0),
-        ];
+        let libvpx = vec![(200.0, 30.0), (300.0, 32.0), (400.0, 34.0), (500.0, 36.0)];
+        let rvp9 = vec![(50.0, 22.0), (100.0, 24.0), (1000.0, 38.0), (2000.0, 42.0)];
         assert!(psnr_delta_summary(&libvpx, &rvp9).is_none());
     }
 
@@ -708,23 +603,17 @@ mod tests {
     /// find_mv_refs + motion-aware partition land.
     #[test]
     fn psnr_delta_summary_libvpx_below_rvp9() {
-        let libvpx = vec![
-            (100.0, 26.0),
-            (200.0, 30.0),
-            (400.0, 34.0),
-            (800.0, 38.0),
-        ];
+        let libvpx = vec![(100.0, 26.0), (200.0, 30.0), (400.0, 34.0), (800.0, 38.0)];
         // rvp9 is 2 dB BETTER than libvpx at every shared bitrate.
-        let rvp9 = vec![
-            (100.0, 28.0),
-            (200.0, 32.0),
-            (400.0, 36.0),
-            (800.0, 40.0),
-        ];
+        let rvp9 = vec![(100.0, 28.0), (200.0, 32.0), (400.0, 36.0), (800.0, 40.0)];
         let s = psnr_delta_summary(&libvpx, &rvp9).expect("in-range");
         assert_eq!(s.count_in_range, 4);
         assert_eq!(s.count_out_of_range, 0);
-        assert!(s.mean_delta_db < 0.0, "expected negative mean delta, got {}", s.mean_delta_db);
+        assert!(
+            s.mean_delta_db < 0.0,
+            "expected negative mean delta, got {}",
+            s.mean_delta_db
+        );
         assert!(
             (s.mean_delta_db - (-2.0)).abs() < 1e-9,
             "mean={}",
@@ -747,12 +636,7 @@ mod tests {
     /// PASS — that's a gate-level policy, not a summary-level one.)
     #[test]
     fn psnr_delta_summary_single_in_range() {
-        let libvpx = vec![
-            (200.0, 30.0),
-            (300.0, 32.0),
-            (400.0, 34.0),
-            (500.0, 36.0),
-        ];
+        let libvpx = vec![(200.0, 30.0), (300.0, 32.0), (400.0, 34.0), (500.0, 36.0)];
         // Only one rvp9 point (at br=300) falls inside the libvpx span.
         // At br=300 libvpx = 32 dB; rvp9 = 28 → Δ = +4.
         let rvp9 = vec![

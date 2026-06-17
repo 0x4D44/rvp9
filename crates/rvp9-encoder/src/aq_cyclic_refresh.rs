@@ -751,8 +751,8 @@ impl CyclicRefresh {
         //   - boosted segment → age reset to 0 (fresh).
         //   - candidate, previously at age 1 → set to 0 (about to refresh).
         //   - otherwise → age = 1 (not a candidate; let post-encode age it).
-        let boosted = final_segment_id == CR_SEGMENT_ID_BOOST1
-            || final_segment_id == CR_SEGMENT_ID_BOOST2;
+        let boosted =
+            final_segment_id == CR_SEGMENT_ID_BOOST1 || final_segment_id == CR_SEGMENT_ID_BOOST2;
         let new_map_value: u8 = if boosted {
             0
         } else if refresh_this_block != CR_SEGMENT_ID_BASE && self.map[block_index] == 1 {
@@ -1302,9 +1302,21 @@ mod tests {
 
         for r in 0..MI_ROWS {
             assert_eq!(cr.last_coded_q_map[r * MI_COLS], 100, "col 0 = base_q");
-            assert_eq!(cr.last_coded_q_map[r * MI_COLS + 1], MAXQ, "col 1 base+skip preserves");
-            assert_eq!(cr.last_coded_q_map[r * MI_COLS + 2], 92, "col 2 boost = base+delta");
-            assert_eq!(cr.last_coded_q_map[r * MI_COLS + 3], 92, "col 3 boost+skip = min(255, 92)");
+            assert_eq!(
+                cr.last_coded_q_map[r * MI_COLS + 1],
+                MAXQ,
+                "col 1 base+skip preserves"
+            );
+            assert_eq!(
+                cr.last_coded_q_map[r * MI_COLS + 2],
+                92,
+                "col 2 boost = base+delta"
+            );
+            assert_eq!(
+                cr.last_coded_q_map[r * MI_COLS + 3],
+                92,
+                "col 3 boost+skip = min(255, 92)"
+            );
         }
     }
 
@@ -1359,7 +1371,10 @@ mod tests {
         // rate_factor = 2.0 — like libvpx's default `rate_ratio_qdelta`
         // (`vp9_aq_cyclicrefresh.c:520`).
         let dq = vp9_compute_qdelta_by_rate(q, FrameKind::Inter, 2.0, 0, 255);
-        assert!(dq < 0, "rate_factor > 1 must produce negative qdelta, got {dq}");
+        assert!(
+            dq < 0,
+            "rate_factor > 1 must produce negative qdelta, got {dq}"
+        );
         // rate_factor = 0.5 — fewer bits ⇒ coarser Q ⇒ positive delta.
         let dq_neg = vp9_compute_qdelta_by_rate(q, FrameKind::Inter, 0.5, 0, 255);
         assert!(
@@ -1377,7 +1392,11 @@ mod tests {
         let q = 128u8;
         let ramp = qindex_delta_ramp(q, 2.0, 15, 60, FrameKind::Inter, 0, 255);
         assert_eq!(ramp[0], 0, "segment 0 (BASE) must always be 0");
-        assert!(ramp[1] <= 0, "segment 1 must be ≤ 0 at rate_factor=2.0, got {}", ramp[1]);
+        assert!(
+            ramp[1] <= 0,
+            "segment 1 must be ≤ 0 at rate_factor=2.0, got {}",
+            ramp[1]
+        );
         assert!(ramp[2] <= 0, "segment 2 must be ≤ 0, got {}", ramp[2]);
         assert!(
             ramp[2] <= ramp[1],

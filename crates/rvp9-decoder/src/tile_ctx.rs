@@ -87,7 +87,6 @@ use crate::tile::TileBounds;
 // `reconstruct_inter.rs`, and `tile.rs`.
 pub use rvp9_core::coef_ctx::{MAX_MB_PLANE, TileCoefCtx, combine_entropy_contexts};
 
-
 /// Non-overlapping mutable view into a rectangular sub-region of the
 /// frame-wide MI grid. Analogous to `TileFrameView` for pixels.
 ///
@@ -341,7 +340,11 @@ impl TileDecodeCtx {
             let abs_row = self.mi_row_start + mi_row;
             let abs_col = self.mi_col_start + mi_col;
             let idx = abs_row * view.mi_stride + abs_col;
-            debug_assert!(idx < view.len, "mi_at: index {idx} out of grid bounds {}", view.len);
+            debug_assert!(
+                idx < view.len,
+                "mi_at: index {idx} out of grid bounds {}",
+                view.len
+            );
             // SAFETY: idx is within [mi_row_start..mi_row_end,
             // mi_col_start..mi_col_end] which is within the grid allocation.
             unsafe { (*view.ptr.add(idx)).as_ref() }
@@ -823,7 +826,7 @@ mod tests {
     #[test]
     fn neighbour_lookup_bridge_handles_out_of_tile_positions() {
         use rvp9_core::block::BlockSize;
-        use rvp9_core::inter::mv_ref::{find_mv_refs, BlockBounds};
+        use rvp9_core::inter::mv_ref::{BlockBounds, find_mv_refs};
         use rvp9_core::mode_info::{InterMode, RefFrame};
 
         let ctx = TileDecodeCtx::new_with_grid(16, 16);
@@ -861,7 +864,7 @@ mod tests {
     fn neighbour_lookup_bridge_returns_written_block() {
         use rvp9_core::bitstream::InterpFilter;
         use rvp9_core::block::BlockSize;
-        use rvp9_core::inter::mv_ref::{find_mv_refs, BlockBounds};
+        use rvp9_core::inter::mv_ref::{BlockBounds, find_mv_refs};
         use rvp9_core::mode_info::{BlockMode, InterMode, Mv, RefFrame};
 
         let mut ctx = TileDecodeCtx::new_with_grid(16, 16);
@@ -902,7 +905,10 @@ mod tests {
             &bounds,
             None,
         );
-        assert_eq!(list.mvs[0], mv, "above neighbour's MV propagated through bridge");
+        assert_eq!(
+            list.mvs[0], mv,
+            "above neighbour's MV propagated through bridge"
+        );
         assert_eq!(list.count, 1);
     }
 

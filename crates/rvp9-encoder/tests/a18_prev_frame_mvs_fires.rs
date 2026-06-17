@@ -126,7 +126,9 @@ fn a18_prev_frame_mvs_grid_populated_after_first_inter() {
     //
     // SAFETY: integration binary; set-only avoids a toggle race with the
     // sibling test, which tolerates either descent state.
-    unsafe { std::env::set_var("RVP9_A4_RD_PARTITION_DISABLE", "1"); }
+    unsafe {
+        std::env::set_var("RVP9_A4_RD_PARTITION_DISABLE", "1");
+    }
 
     let w_us = W as usize;
     let mut enc = make_encoder(/* use_prev_frame_mvs = */ true);
@@ -172,9 +174,7 @@ fn a18_prev_frame_mvs_grid_populated_after_first_inter() {
     );
 
     // ---- Assertion B — writer captured real inter picks ----
-    let has_inter_cell = grid
-        .iter()
-        .any(|c| c.ref_frames[0] == RefFrame::LastFrame);
+    let has_inter_cell = grid.iter().any(|c| c.ref_frames[0] == RefFrame::LastFrame);
     assert!(
         has_inter_cell,
         "after first inter encode, prev_mv_grid must contain at least \
@@ -184,9 +184,7 @@ fn a18_prev_frame_mvs_grid_populated_after_first_inter() {
     // No cell should be IntraFrame after the inter splat — the picker
     // doesn't currently emit intra-in-inter cells (HLD §8.5), so the
     // grid is uniformly inter.
-    let has_intra_cell = grid
-        .iter()
-        .any(|c| c.ref_frames[0] == RefFrame::IntraFrame);
+    let has_intra_cell = grid.iter().any(|c| c.ref_frames[0] == RefFrame::IntraFrame);
     assert!(
         !has_intra_cell,
         "the encoder's Stage 4a' picker does not emit intra-in-inter \
@@ -279,7 +277,5 @@ fn a18_prev_frame_mvs_grid_chains_across_inter_frames() {
         .iter()
         .zip(snapshot_1.iter())
         .any(|(a, b)| a != b);
-    eprintln!(
-        "[F.0.3 §6.2] grid chained: LastFrame cells = {has_inter}, any_diff = {any_diff}",
-    );
+    eprintln!("[F.0.3 §6.2] grid chained: LastFrame cells = {has_inter}, any_diff = {any_diff}",);
 }

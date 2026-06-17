@@ -157,8 +157,11 @@ fn budget_gate_low_and_high_regime() {
         } else {
             regimes_run += 1;
             let (frames, fr) = read_cropped(&src, 320, 256, 60).expect("read foreman_320x256");
-            let (kf_q, _bits, psnr, failed) =
-                run_regime("HIGH 2000k 320x256", &frames, cfg(320, 256, fr, 2_000_000, 61));
+            let (kf_q, _bits, psnr, failed) = run_regime(
+                "HIGH 2000k 320x256",
+                &frames,
+                cfg(320, 256, fr, 2_000_000, 61),
+            );
             if failed != 0 {
                 pending.push(format!("HIGH regime decode_failed={failed} (must be 0)"));
             }
@@ -199,5 +202,9 @@ fn budget_gate_low_and_high_regime() {
          (foreman_320x256_60f.y4m / foreman_cif.y4m) are missing under \
          tests/corpus — cannot validate the gate",
     );
-    assert!(pending.is_empty(), "budget-gate validation failed:\n{}", pending.join("\n"));
+    assert!(
+        pending.is_empty(),
+        "budget-gate validation failed:\n{}",
+        pending.join("\n")
+    );
 }

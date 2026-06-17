@@ -202,8 +202,7 @@ fn main() {
     let mut intermediate = [0i32; 16];
     for r in 0..4 {
         let row_in: &[i32; 4] = (&dq_input[r * 4..r * 4 + 4]).try_into().unwrap();
-        let row_out: &mut [i32; 4] =
-            (&mut intermediate[r * 4..r * 4 + 4]).try_into().unwrap();
+        let row_out: &mut [i32; 4] = (&mut intermediate[r * 4..r * 4 + 4]).try_into().unwrap();
         idct4(row_in, row_out);
     }
     println!("\nrvp9 intermediate after row-pass (idct4 × 4 rows):");

@@ -213,7 +213,10 @@ fn two_pass_allocates_lower_q_to_busier_frames() {
             flat_q.push(u32::from(q));
         }
     }
-    assert!(!busy_q.is_empty() && !flat_q.is_empty(), "need both classes");
+    assert!(
+        !busy_q.is_empty() && !flat_q.is_empty(),
+        "need both classes"
+    );
     let mean = |v: &[u32]| v.iter().sum::<u32>() as f64 / v.len() as f64;
     let busy_mean = mean(&busy_q);
     let flat_mean = mean(&flat_q);
@@ -356,7 +359,10 @@ fn two_pass_stream_byte_exact_through_vpxdec() {
         "W_2PASS oracle: two-pass stream must be BYTE-EXACT through vpxdec \
          (it is standard VP9 syntax — only per-frame Q changes)."
     );
-    eprintln!("W_2PASS oracle: BYTE-EXACT through vpxdec ({} bytes).", vpx_yuv.len());
+    eprintln!(
+        "W_2PASS oracle: BYTE-EXACT through vpxdec ({} bytes).",
+        vpx_yuv.len()
+    );
     let _ = std::fs::remove_file(&ivf_path);
     let _ = std::fs::remove_file(&vpx_out);
 }

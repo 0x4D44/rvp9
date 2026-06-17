@@ -258,8 +258,7 @@ fn enc_aq_mode_unsupported_value_rejected() {
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("--aq-mode")
-            && stderr.contains("cyclic"),
+        stderr.contains("--aq-mode") && stderr.contains("cyclic"),
         "stderr must name --aq-mode and 'cyclic', got: {stderr}"
     );
 }
@@ -348,10 +347,8 @@ fn enc_fps_single_integer_accepted() {
     );
     // IVF stores fps as (num,den) at offset 16/20. Bytes 16-19 = num le u32.
     let ivf_bytes = std::fs::read(&ivf).expect("read ivf");
-    let num =
-        u32::from_le_bytes([ivf_bytes[16], ivf_bytes[17], ivf_bytes[18], ivf_bytes[19]]);
-    let den =
-        u32::from_le_bytes([ivf_bytes[20], ivf_bytes[21], ivf_bytes[22], ivf_bytes[23]]);
+    let num = u32::from_le_bytes([ivf_bytes[16], ivf_bytes[17], ivf_bytes[18], ivf_bytes[19]]);
+    let den = u32::from_le_bytes([ivf_bytes[20], ivf_bytes[21], ivf_bytes[22], ivf_bytes[23]]);
     assert_eq!((num, den), (60, 1), "--fps 60 must encode as 60/1");
     let _ = std::fs::remove_file(&raw);
     let _ = std::fs::remove_file(&ivf);
@@ -625,14 +622,14 @@ fn enc_limit_truncates_output() {
         .arg(&raw)
         .output()
         .expect("run rvp9enc");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let ivf_bytes = std::fs::read(&ivf).expect("read ivf");
-    let num_frames = u32::from_le_bytes([
-        ivf_bytes[24],
-        ivf_bytes[25],
-        ivf_bytes[26],
-        ivf_bytes[27],
-    ]);
+    let num_frames =
+        u32::from_le_bytes([ivf_bytes[24], ivf_bytes[25], ivf_bytes[26], ivf_bytes[27]]);
     assert_eq!(
         num_frames as usize, limit,
         "IVF frame count must reflect --limit"
@@ -665,7 +662,11 @@ fn enc_explicit_ivf_flag_is_noop() {
         .arg(&raw)
         .output()
         .expect("run rvp9enc");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let ivf_bytes = std::fs::read(&ivf).expect("read ivf");
     assert_eq!(&ivf_bytes[0..4], b"DKIF");
     let _ = std::fs::remove_file(&raw);
@@ -809,7 +810,11 @@ fn dec_y4m_inferred_from_extension() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let bytes = std::fs::read(&out_path).expect("read y4m out");
     assert!(
         bytes.starts_with(b"YUV4MPEG2"),
@@ -831,7 +836,11 @@ fn dec_i420_output_has_no_container() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let len = std::fs::metadata(&out_path).expect("stat").len() as usize;
     assert_eq!(
         len,
@@ -861,7 +870,11 @@ fn dec_rawvideo_equivalent_to_i420() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec --rawvideo");
-    assert!(out_raw.status.success(), "{}", String::from_utf8_lossy(&out_raw.stderr));
+    assert!(
+        out_raw.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out_raw.stderr)
+    );
 
     let out_i = Command::new(dec_bin())
         .args(["--i420", "-o"])
@@ -953,7 +966,11 @@ fn dec_format_flags_last_wins() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let bytes = std::fs::read(&out_path).expect("read");
     assert!(
         !bytes.starts_with(b"YUV4MPEG2"),
@@ -978,7 +995,11 @@ fn dec_framemd5_indexed_lines() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec --framemd5");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
     assert_eq!(lines.len(), N_FRAMES, "one indexed md5 per displayed frame");
@@ -1008,7 +1029,11 @@ fn dec_noblit_emits_no_output() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec --noblit");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(
         out.stdout.is_empty(),
         "--noblit must emit no stdout, got {} bytes",
@@ -1031,7 +1056,11 @@ fn dec_limit_caps_output_frame_count() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec --limit");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
     assert_eq!(lines.len(), 2, "--limit 2 must produce exactly 2 md5 lines");
@@ -1048,7 +1077,11 @@ fn dec_skip_drops_leading_frames() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec --skip");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
     assert_eq!(
@@ -1069,7 +1102,11 @@ fn dec_skip_then_limit_combines() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec --skip --limit");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
     assert_eq!(
@@ -1132,7 +1169,11 @@ fn dec_summary_emits_summary_line() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec --summary");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     // vpxdec-compatible format (rvp9dec.rs:340):
     //   "<frame_in> decoded frames/<frame_out> showed frames in <us> us (<fps> fps)"
@@ -1152,7 +1193,11 @@ fn dec_progress_emits_per_frame_marker() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec --progress");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("rvp9dec") && stderr.contains("frames decoded"),
@@ -1176,7 +1221,11 @@ fn dec_scale_accepted_with_warning() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec --scale");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("--scale") && stderr.contains("not yet"),
@@ -1194,7 +1243,11 @@ fn dec_scale_short_form_accepted() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec -S");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("--scale"),
@@ -1212,7 +1265,11 @@ fn dec_output_bit_depth_eight_silent() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec --output-bit-depth 8");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     // No "only 8-bit" warning for the supported case.
     assert!(
@@ -1232,7 +1289,11 @@ fn dec_output_bit_depth_ten_warns() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec --output-bit-depth 10");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("--output-bit-depth") && stderr.contains("8-bit"),
@@ -1265,7 +1326,11 @@ fn dec_error_concealment_accepted_with_warning() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec --error-concealment");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("--error-concealment") && stderr.contains("not yet"),
@@ -1283,7 +1348,11 @@ fn dec_frame_buffers_accepted_with_warning() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec --frame-buffers");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("--frame-buffers") && stderr.contains("internal buffer pool"),
@@ -1333,7 +1402,11 @@ fn dec_postproc_silent_noop() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
         stderr, baseline_stderr,
@@ -1606,7 +1679,11 @@ fn enc_y4m_fps_override_wins() {
         .arg(&y4m)
         .output()
         .expect("run rvp9enc");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let bytes = std::fs::read(&ivf).expect("read ivf");
     let num = u32::from_le_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
     let den = u32::from_le_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
@@ -1628,7 +1705,11 @@ fn enc_y4m_limit_truncates() {
         .arg(&y4m)
         .output()
         .expect("run rvp9enc");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let bytes = std::fs::read(&ivf).expect("read ivf");
     let n = u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]);
     assert_eq!(n, 2, "--limit must truncate y4m encode to 2 frames");
@@ -1642,7 +1723,16 @@ fn enc_y4m_coded_larger_than_source_rejected() {
     let y4m = tmp("y4m_big_in.y4m");
     write_synthetic_y4m(&y4m, 64, 64, 1, 30, 1);
     let out = Command::new(enc_bin())
-        .args(["-w", "128", "-h", "128", "--target-bitrate", "500", "-o", "x.ivf"])
+        .args([
+            "-w",
+            "128",
+            "-h",
+            "128",
+            "--target-bitrate",
+            "500",
+            "-o",
+            "x.ivf",
+        ])
         .arg(&y4m)
         .output()
         .expect("run rvp9enc");
@@ -1668,7 +1758,11 @@ fn dec_codec_vp9_accepted() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec --codec vp9");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let _ = std::fs::remove_file(&ivf);
 }
 
@@ -1715,13 +1809,20 @@ fn dec_y4m_single_header_then_per_frame_tags() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec --y4m");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let bytes = std::fs::read(&out_path).expect("read y4m");
     let header_count = bytes
         .windows(b"YUV4MPEG2".len())
         .filter(|w| *w == b"YUV4MPEG2")
         .count();
-    assert_eq!(header_count, 1, "exactly one YUV4MPEG2 header for the stream");
+    assert_eq!(
+        header_count, 1,
+        "exactly one YUV4MPEG2 header for the stream"
+    );
     let frame_count = bytes.windows(6).filter(|w| *w == b"FRAME\n").count();
     assert_eq!(frame_count, N_FRAMES, "one FRAME per displayed frame");
     let _ = std::fs::remove_file(&ivf);
@@ -1738,7 +1839,11 @@ fn dec_no_output_uses_stdout() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec --i420 (stdout)");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(
         out.stdout.len(),
         N_FRAMES * FRAME_BYTES,
@@ -1760,7 +1865,11 @@ fn dec_default_format_for_unknown_extension() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let bytes = std::fs::read(&out_path).expect("read");
     assert!(
         !bytes.starts_with(b"YUV4MPEG2"),
@@ -1818,7 +1927,11 @@ fn dec_summary_reports_skipped_and_emitted_counts() {
         .arg(&ivf)
         .output()
         .expect("run rvp9dec");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     // Summary line: "<frame_in> decoded frames/<frame_out> showed frames in ...".
     // The 6-frame synthetic IVF feeds all 6 to the decoder regardless of
@@ -1996,11 +2109,23 @@ fn enc_y4m_height_larger_than_source_rejected() {
     let y4m = tmp("y4m_tall.y4m");
     write_synthetic_y4m(&y4m, 128, 64, 1, 30, 1);
     let out = Command::new(enc_bin())
-        .args(["-w", "64", "-h", "128", "--target-bitrate", "500", "-o", "x.ivf"])
+        .args([
+            "-w",
+            "64",
+            "-h",
+            "128",
+            "--target-bitrate",
+            "500",
+            "-o",
+            "x.ivf",
+        ])
         .arg(&y4m)
         .output()
         .expect("run rvp9enc");
-    assert!(!out.status.success(), "height exceeding source must be rejected");
+    assert!(
+        !out.status.success(),
+        "height exceeding source must be rejected"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("exceeds source"),

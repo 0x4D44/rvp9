@@ -60,9 +60,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let foreman_path = PathBuf::from(
         arg(&argv, "--foreman").unwrap_or_else(|| "tests/corpus/foreman_cif.y4m".into()),
     );
-    let vpxenc_path = PathBuf::from(arg(&argv, "--vpxenc").unwrap_or_else(|| {
-        r"third_party\libvpx\build_f02\vpxenc.exe".into()
-    }));
+    let vpxenc_path = PathBuf::from(
+        arg(&argv, "--vpxenc").unwrap_or_else(|| r"third_party\libvpx\build_f02\vpxenc.exe".into()),
+    );
     let frames: u32 = arg(&argv, "--frames")
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_FRAMES);
@@ -71,18 +71,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .split(',')
         .filter_map(|s| s.trim().parse().ok())
         .collect();
-    let out_dir = PathBuf::from(
-        arg(&argv, "--out").unwrap_or_else(|| "target/track_f_oracle".into()),
-    );
+    let out_dir =
+        PathBuf::from(arg(&argv, "--out").unwrap_or_else(|| "target/track_f_oracle".into()));
     let no_libvpx = argv.iter().any(|a| a == "--no-libvpx");
 
     if !foreman_path.exists() {
-        eprintln!("ERROR: foreman corpus not found at {}", foreman_path.display());
+        eprintln!(
+            "ERROR: foreman corpus not found at {}",
+            foreman_path.display()
+        );
         eprintln!("  Run scripts/fetch-corpus.{{ps1,sh}} to fetch it, then re-run.");
         std::process::exit(1);
     }
     if !no_libvpx && !vpxenc_path.exists() {
-        eprintln!("ERROR: patched vpxenc.exe not found at {}", vpxenc_path.display());
+        eprintln!(
+            "ERROR: patched vpxenc.exe not found at {}",
+            vpxenc_path.display()
+        );
         eprintln!("  Build it with:");
         eprintln!("    pwsh -File scripts/build_f02_libvpx.ps1");
         eprintln!("  Or pass --no-libvpx to drive only the rvp9 leg.");
@@ -90,10 +95,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     std::fs::create_dir_all(&out_dir)?;
-    let run_dir = out_dir.join(format!(
-        "run_{}",
-        chrono_like_timestamp()
-    ));
+    let run_dir = out_dir.join(format!("run_{}", chrono_like_timestamp()));
     std::fs::create_dir_all(&run_dir)?;
 
     println!("F.0.2 per-block oracle harness");
@@ -117,8 +119,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for &kbps in &kbps_list {
         println!("\n=== {} kbps target bitrate ===", kbps);
         let rvp9_records = drive_rvp9_leg(&foreman_path, frames, kbps)?;
-        println!("  rvp9: {} per-block decisions across {} frames",
-                 rvp9_records.len(), frames);
+        println!(
+            "  rvp9: {} per-block decisions across {} frames",
+            rvp9_records.len(),
+            frames
+        );
 
         let libvpx_records = if no_libvpx {
             Vec::new()
@@ -139,8 +144,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         writeln!(sf, "# F.0.2 oracle — {} kbps", kbps)?;
         writeln!(sf, "")?;
         writeln!(sf, "Schema liveness at this milestone (HLD §3.4.1):")?;
-        writeln!(sf, "- `coef_bits_est`: **0 on both legs** at F.0.2 (forward-looking; F.1 lands the rvp9-side estimate).")?;
-        writeln!(sf, "- `mode_bits_est`, `mv_bits_est`: live on rvp9, **0 on libvpx leg** at F.0.2 (libvpx-side split is a future patch).")?;
+        writeln!(
+            sf,
+            "- `coef_bits_est`: **0 on both legs** at F.0.2 (forward-looking; F.1 lands the rvp9-side estimate)."
+        )?;
+        writeln!(
+            sf,
+            "- `mode_bits_est`, `mv_bits_est`: live on rvp9, **0 on libvpx leg** at F.0.2 (libvpx-side split is a future patch)."
+        )?;
         writeln!(sf, "")?;
         writeln!(sf, "| frame_idx | rvp9 n_blocks | libvpx n_blocks |")?;
         writeln!(sf, "|---|---|---|")?;
@@ -152,7 +163,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for d in &libvpx_records {
             *vpx_by_frame.entry(d.frame_idx).or_default() += 1;
         }
-        let max_frame = rvp9_by_frame.keys().chain(vpx_by_frame.keys()).copied().max().unwrap_or(0);
+        let max_frame = rvp9_by_frame
+            .keys()
+            .chain(vpx_by_frame.keys())
+            .copied()
+            .max()
+            .unwrap_or(0);
         for f in 0..=max_frame {
             writeln!(
                 sf,
@@ -224,12 +240,7 @@ fn drive_rvp9_leg(
         max_qindex: 255,
     };
     let mut enc = StreamEncoder::new(cfg)?;
-    let (yuv_frames, _src_fps) = read_cropped(
-        foreman_path,
-        DEFAULT_W,
-        DEFAULT_H,
-        frames as usize,
-    )?;
+    let (yuv_frames, _src_fps) = read_cropped(foreman_path, DEFAULT_W, DEFAULT_H, frames as usize)?;
     let mut all_records = Vec::new();
     // Drain any prior thread-local state.
     let _ = f02_oracle::drain_frame();

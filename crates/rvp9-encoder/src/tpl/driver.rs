@@ -150,7 +150,11 @@ fn intra_neighbours(
         };
         for (c, slot) in above[1..].iter_mut().enumerate() {
             let ac = px + c;
-            *slot = if ac < w { plane[arow * w + ac] } else { plane[arow * w + (w - 1)] };
+            *slot = if ac < w {
+                plane[arow * w + ac]
+            } else {
+                plane[arow * w + (w - 1)]
+            };
         }
     }
 
@@ -158,7 +162,11 @@ fn intra_neighbours(
     if has_left {
         for (r, slot) in left.iter_mut().enumerate() {
             let lr = py + r;
-            *slot = if lr < h { plane[lr * w + (px - 1)] } else { plane[(h - 1) * w + (px - 1)] };
+            *slot = if lr < h {
+                plane[lr * w + (px - 1)]
+            } else {
+                plane[(h - 1) * w + (px - 1)]
+            };
         }
     }
 
@@ -242,7 +250,10 @@ fn motion_search_and_predict(
     }
 
     // MV is returned in 1/8-pel units (full-pel << 3).
-    Some(Mv { row: mv_row.saturating_mul(8), col: mv_col.saturating_mul(8) })
+    Some(Mv {
+        row: mv_row.saturating_mul(8),
+        col: mv_col.saturating_mul(8),
+    })
 }
 
 /// Build the `mode_estimation` inputs + run it for one 8×8 block of the
@@ -271,7 +282,12 @@ fn estimate_block(
 
     let (above, left, has_above, has_left) = intra_neighbours(cur_y, w, h, px, py);
 
-    let src_plane = PlaneRef { data: cur_y, stride: w, width: w, height: h };
+    let src_plane = PlaneRef {
+        data: cur_y,
+        stride: w,
+        width: w,
+        height: h,
+    };
 
     let mut patch = [0u8; TPL_BW * TPL_BW];
     let mut inter_pred: [Option<&[u8]>; MAX_INTER_REF_FRAMES] = [None, None, None];
@@ -361,12 +377,22 @@ pub fn run_single_gop_tpl(
         let cur_y = window[k].y;
         let (ref_plane, ref_slot): (Option<PlaneRef<'_>>, i32) = if k == 0 {
             (
-                Some(PlaneRef { data: last_recon_y, stride: width, width, height }),
+                Some(PlaneRef {
+                    data: last_recon_y,
+                    stride: width,
+                    width,
+                    height,
+                }),
                 NO_REF_FRAME_INDEX, // anchor's reference is outside the window
             )
         } else {
             (
-                Some(PlaneRef { data: window[k - 1].y, stride: width, width, height }),
+                Some(PlaneRef {
+                    data: window[k - 1].y,
+                    stride: width,
+                    width,
+                    height,
+                }),
                 (k - 1) as i32,
             )
         };
@@ -424,5 +450,8 @@ pub fn run_single_gop_tpl(
         1.0
     };
 
-    TplPassResult { coded_frame: coded, r0 }
+    TplPassResult {
+        coded_frame: coded,
+        r0,
+    }
 }

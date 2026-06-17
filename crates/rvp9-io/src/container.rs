@@ -177,8 +177,8 @@ pub fn read_ivf_packets(data: &[u8]) -> Result<Vec<PacketRange>, ContainerError>
     let mut idx: u32 = 0;
     while pos + 12 <= data.len() {
         idx += 1;
-        let size = u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
-            as usize;
+        let size =
+            u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         let payload_start = pos + 12;
         let payload_end = payload_start
             .checked_add(size)
@@ -266,11 +266,7 @@ impl IvfHeader {
 /// # Errors
 ///
 /// Forwards any [`io::Error`] from the writer.
-pub fn write_ivf<W: Write>(
-    out: &mut W,
-    header: &IvfHeader,
-    packets: &[&[u8]],
-) -> io::Result<()> {
+pub fn write_ivf<W: Write>(out: &mut W, header: &IvfHeader, packets: &[&[u8]]) -> io::Result<()> {
     let num_frames = u32::try_from(packets.len()).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -395,7 +391,13 @@ fn read_ebml_vint(data: &[u8], pos: usize) -> Result<(u64, usize), ContainerErro
 ///   than remain in its parent.
 pub fn read_webm_packets(data: &[u8]) -> Result<Vec<PacketRange>, ContainerError> {
     let mut packets: Vec<PacketRange> = Vec::new();
-    walk_ebml(data, 0, data.len(), &mut packets, /* inside_cluster */ false)?;
+    walk_ebml(
+        data,
+        0,
+        data.len(),
+        &mut packets,
+        /* inside_cluster */ false,
+    )?;
     Ok(packets)
 }
 
@@ -464,7 +466,11 @@ fn walk_ebml(
 fn is_unknown_vint(value: u64, size_len: usize) -> bool {
     // All-ones vint of width `size_len` means "unknown size".
     let bits = (8 * size_len as u32) - size_len as u32; // (8 - 1) per first byte + 8 per subsequent
-    let mask = if bits >= 64 { u64::MAX } else { (1u64 << bits) - 1 };
+    let mask = if bits >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << bits) - 1
+    };
     value == mask
 }
 
@@ -615,18 +621,9 @@ mod tests {
         assert_eq!(&buf[8..12], b"VP90");
         assert_eq!(u16::from_le_bytes([buf[12], buf[13]]), 256);
         assert_eq!(u16::from_le_bytes([buf[14], buf[15]]), 256);
-        assert_eq!(
-            u32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]]),
-            30
-        );
-        assert_eq!(
-            u32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]]),
-            1
-        );
-        assert_eq!(
-            u32::from_le_bytes([buf[24], buf[25], buf[26], buf[27]]),
-            2
-        );
+        assert_eq!(u32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]]), 30);
+        assert_eq!(u32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]]), 1);
+        assert_eq!(u32::from_le_bytes([buf[24], buf[25], buf[26], buf[27]]), 2);
 
         // Re-read and confirm payloads survive intact.
         let packets = read_ivf_packets(&buf).expect("read_ivf_packets");
@@ -707,18 +704,14 @@ mod tests {
     #[test]
     fn read_ebml_id_zero_first_byte_arm() {
         let err = read_ebml_id(&[0x00], 0).unwrap_err();
-        assert!(
-            matches!(err, ContainerError::BadEbml(msg) if msg.contains("no length marker")),
-        );
+        assert!(matches!(err, ContainerError::BadEbml(msg) if msg.contains("no length marker")),);
     }
 
     #[test]
     fn read_ebml_id_eof_inside_id() {
         // 0x10 starts a 4-byte id but only one byte available.
         let err = read_ebml_id(&[0x10], 0).unwrap_err();
-        assert!(
-            matches!(err, ContainerError::BadEbml(msg) if msg.contains("EOF inside")),
-        );
+        assert!(matches!(err, ContainerError::BadEbml(msg) if msg.contains("EOF inside")),);
     }
 
     #[test]

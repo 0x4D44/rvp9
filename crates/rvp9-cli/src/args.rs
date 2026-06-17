@@ -145,12 +145,7 @@ fn take_value<C>(
 }
 
 /// Dispatch to the flag's handler, or reject if it's not wired.
-fn apply<C>(
-    flag: &Flag<C>,
-    cfg: &mut C,
-    value: Option<String>,
-    tool: &str,
-) -> Result<(), String> {
+fn apply<C>(flag: &Flag<C>, cfg: &mut C, value: Option<String>, tool: &str) -> Result<(), String> {
     match flag.apply {
         Some(handler) => handler(cfg, value),
         None => Err(format!(

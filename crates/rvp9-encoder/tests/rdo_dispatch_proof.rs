@@ -33,9 +33,7 @@
 //! it is safe to run in environments without the corpus.
 
 use rvp9_decoder::Decoder;
-use rvp9_encoder::rdo::inter_dispatch::{
-    RDO_DISPATCH_INVOCATIONS, RDO_DISPATCH_INVOCATIONS_8X8,
-};
+use rvp9_encoder::rdo::inter_dispatch::{RDO_DISPATCH_INVOCATIONS, RDO_DISPATCH_INVOCATIONS_8X8};
 use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 use rvp9_harness::container::{IvfHeader, write_ivf};
 use rvp9_harness::y4m::{probe_testsrc_720p, read_cropped as y4m_read_cropped};
@@ -94,7 +92,8 @@ fn encode_at_speed(
 ) -> (Vec<Vec<u8>>, u64, u64) {
     let before = RDO_DISPATCH_INVOCATIONS.load(Ordering::Relaxed);
     let before_8x8 = RDO_DISPATCH_INVOCATIONS_8X8.load(Ordering::Relaxed);
-    let mut enc = StreamEncoder::new(config_at_speed(framerate, speed)).expect("StreamEncoder::new");
+    let mut enc =
+        StreamEncoder::new(config_at_speed(framerate, speed)).expect("StreamEncoder::new");
     let mut packets = Vec::with_capacity(frames.len());
     for (y, u, v) in frames {
         let pkt = enc.encode_frame(&yuv_view(y, u, v)).expect("encode_frame");
@@ -275,16 +274,19 @@ fn rdo_dispatch_routes_at_speed3_and_decodes() {
     //
     // SAFETY: separate test binary / process; no parallel test mutates
     // this env var.
-    unsafe { std::env::set_var("RVP9_A4_RD_PARTITION_DISABLE", "1"); }
+    unsafe {
+        std::env::set_var("RVP9_A4_RD_PARTITION_DISABLE", "1");
+    }
 
     // --- speed = 3: RDO picker active for 8x8 / 16x16 / 32x32 leaves ---
     let (rdo_packets, rdo_invocations, rdo_invocations_8x8) =
         encode_at_speed(&frames, framerate, 3);
     // --- speed = 7: realtime picker, RDO never invoked ---
-    let (rt_packets, rt_invocations, rt_invocations_8x8) =
-        encode_at_speed(&frames, framerate, 7);
+    let (rt_packets, rt_invocations, rt_invocations_8x8) = encode_at_speed(&frames, framerate, 7);
 
-    unsafe { std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE"); }
+    unsafe {
+        std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
+    }
 
     eprintln!("speed=3 RDO invocations: {rdo_invocations} (8x8: {rdo_invocations_8x8})");
     eprintln!("speed=7 RDO invocations: {rt_invocations} (8x8: {rt_invocations_8x8})");

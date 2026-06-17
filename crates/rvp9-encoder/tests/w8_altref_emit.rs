@@ -118,10 +118,7 @@ fn w8_altref_emits_non_show_packet() {
     let gop_length: u32 = 16; // single GOP across the run
     let lag_in_frames: u32 = 8; // > gop_length / 2 = 8 → ARF can peek
     let packets = encode_with_altref(n_frames, gop_length, lag_in_frames);
-    eprintln!(
-        "W8 encode produced {} transport packets",
-        packets.len()
-    );
+    eprintln!("W8 encode produced {} transport packets", packets.len());
     // Decode through rvp9-decoder. Sum the show vs non-show frame
     // counts.
     let mut dec = Decoder::new();
@@ -227,9 +224,11 @@ fn w8_altref_disabled_emits_no_non_show_packet() {
 /// frame count and cadence.
 #[test]
 fn w8_show_frame_count_matches_input_count() {
-    for (n_frames, gop_length, lag) in
-        [(20u32, 10u32, 6u32), (32u32, 16u32, 9u32), (48u32, 24u32, 13u32)]
-    {
+    for (n_frames, gop_length, lag) in [
+        (20u32, 10u32, 6u32),
+        (32u32, 16u32, 9u32),
+        (48u32, 24u32, 13u32),
+    ] {
         let packets = encode_with_altref(n_frames, gop_length, lag);
         let mut dec = Decoder::new();
         let mut show_frames = 0u32;

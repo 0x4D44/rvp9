@@ -131,7 +131,9 @@ fn encode_fixed_clip() -> Vec<u8> {
     //
     // SAFETY: integration binary; both tests here want the descent off
     // (the decode test is descent-agnostic), so set-only is race-free.
-    unsafe { std::env::set_var("RVP9_A4_RD_PARTITION_DISABLE", "1"); }
+    unsafe {
+        std::env::set_var("RVP9_A4_RD_PARTITION_DISABLE", "1");
+    }
 
     let cfg = EncoderConfig {
         width: W,

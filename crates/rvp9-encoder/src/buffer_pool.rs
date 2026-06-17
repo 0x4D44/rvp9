@@ -458,7 +458,6 @@ impl RefFramePool {
         (&p.y, &p.u, &p.v)
     }
 
-
     /// libvpx `vp9_setup_past_independence` reference reset
     /// (`vp9_entropymode.c:424-437`, driven from
     /// `vp9_encoder.c::vp9_setup_past_independence`). A keyframe
@@ -766,8 +765,7 @@ mod tests {
         // Commit an inter frame and refresh LAST only (0x01).
         let recon = vec![7u8; 64 * 64];
         let recon_uv = vec![7u8; 32 * 32];
-        let new_slot =
-            pool.commit_new_frame((&recon, &recon_uv, &recon_uv));
+        let new_slot = pool.commit_new_frame((&recon, &recon_uv, &recon_uv));
         assert_ne!(new_slot, kf, "inter commit must pick a fresh slot");
         pool.update_reference_frames(0x01);
         // LAST advanced; GOLDEN + ALTREF still at the KF slot.
@@ -794,14 +792,16 @@ mod tests {
         pool.keyframe_reset();
         let recon = vec![9u8; 64 * 64];
         let recon_uv = vec![9u8; 32 * 32];
-        let new_slot =
-            pool.commit_new_frame((&recon, &recon_uv, &recon_uv));
+        let new_slot = pool.commit_new_frame((&recon, &recon_uv, &recon_uv));
         pool.update_reference_frames(0x03);
         assert_eq!(pool.ref_frame_map()[LAST_REF], new_slot);
         assert_eq!(pool.ref_frame_map()[GOLDEN_REF], new_slot);
         assert_eq!(pool.frame_refs()[LAST_REF], pool.frame_refs()[GOLDEN_REF]);
         let (gy, _, _) = pool.named_ref_planes(GOLDEN_REF);
-        assert!(gy.iter().all(|&p| p == 9), "GOLDEN must hold refreshed pixels");
+        assert!(
+            gy.iter().all(|&p| p == 9),
+            "GOLDEN must hold refreshed pixels"
+        );
     }
 
     /// A10 PROOF — a long LAST-only ref-ring rotation never exhausts the
@@ -816,8 +816,7 @@ mod tests {
         for f in 1..=30u8 {
             let recon = vec![f; 64 * 64];
             let recon_uv = vec![f; 32 * 32];
-            let new_slot =
-                pool.commit_new_frame((&recon, &recon_uv, &recon_uv));
+            let new_slot = pool.commit_new_frame((&recon, &recon_uv, &recon_uv));
             assert_ne!(new_slot, prev, "frame {f}: must not reuse the LAST slot");
             pool.update_reference_frames(0x01);
             prev = pool.ref_frame_map()[LAST_REF];

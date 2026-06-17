@@ -309,154 +309,688 @@ impl Default for EncOpts {
 /// `apply: None` ⇒ recognised-but-not-yet (errors if used).
 fn flag_table() -> Vec<Flag<EncOpts>> {
     vec![
-        Flag { long: "help", short: None, arg: Arg::None, help: "show this help and exit",
-            apply: Some(|o, _| { o.help = true; Ok(()) }) },
-        Flag { long: "version", short: None, arg: Arg::None, help: "print version and exit",
-            apply: Some(|o, _| { o.version = true; Ok(()) }) },
-        Flag { long: "codec", short: None, arg: Arg::Required, help: "codec to use (vp9)",
-            apply: Some(|_, v| validate_eq(v, "vp9", "--codec")) },
-        Flag { long: "output", short: Some('o'), arg: Arg::Required, help: "output IVF file",
-            apply: Some(|o, v| { o.output = Some(req(v, "--output")?); Ok(()) }) },
-        Flag { long: "width", short: Some('w'), arg: Arg::Required, help: "coded width (mult of 64)",
-            apply: Some(|o, v| { o.width = Some(args::parse_value(v, "rvp9enc", "--width")?); Ok(()) }) },
-        Flag { long: "height", short: Some('h'), arg: Arg::Required, help: "coded height (mult of 64)",
-            apply: Some(|o, v| { o.height = Some(args::parse_value(v, "rvp9enc", "--height")?); Ok(()) }) },
-        Flag { long: "fps", short: None, arg: Arg::Required, help: "frame rate num/den (e.g. 30/1)",
-            apply: Some(|o, v| { let (n, d) = parse_fps(v)?; o.fps_num = Some(n); o.fps_den = Some(d); Ok(()) }) },
-        Flag { long: "target-bitrate", short: None, arg: Arg::Required, help: "target bitrate in kbps",
-            apply: Some(|o, v| { o.target_bitrate_kbps = args::parse_value(v, "rvp9enc", "--target-bitrate")?; Ok(()) }) },
-        Flag { long: "end-usage", short: None, arg: Arg::Required, help: "rate control mode (cbr/vbr/cq/q)",
-            apply: Some(|o, v| { o.rc_mode = parse_end_usage(v)?; Ok(()) }) },
-        Flag { long: "passes", short: Some('p'), arg: Arg::Required, help: "number of passes (1 or 2)",
-            apply: Some(|o, v| { o.passes = parse_passes(v)?; Ok(()) }) },
-        Flag { long: "kf-max-dist", short: None, arg: Arg::Required, help: "max keyframe interval",
-            apply: Some(|o, v| { o.gop_length = Some(args::parse_value(v, "rvp9enc", "--kf-max-dist")?); Ok(()) }) },
-        Flag { long: "aq-mode", short: None, arg: Arg::Required, help: "adaptive quant (0=off, 3=cyclic)",
-            apply: Some(|o, v| { o.aq_mode = parse_aq_mode(v)?; Ok(()) }) },
-        Flag { long: "limit", short: None, arg: Arg::Required, help: "stop after N frames",
-            apply: Some(|o, v| { o.limit = Some(args::parse_value(v, "rvp9enc", "--limit")?); Ok(()) }) },
-        Flag { long: "ivf", short: None, arg: Arg::None, help: "output IVF (the only container)",
-            apply: Some(|_, _| Ok(())) },
-        Flag { long: "verbose", short: Some('v'), arg: Arg::None, help: "verbose progress",
-            apply: Some(|o, _| { o.verbose = true; Ok(()) }) },
+        Flag {
+            long: "help",
+            short: None,
+            arg: Arg::None,
+            help: "show this help and exit",
+            apply: Some(|o, _| {
+                o.help = true;
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "version",
+            short: None,
+            arg: Arg::None,
+            help: "print version and exit",
+            apply: Some(|o, _| {
+                o.version = true;
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "codec",
+            short: None,
+            arg: Arg::Required,
+            help: "codec to use (vp9)",
+            apply: Some(|_, v| validate_eq(v, "vp9", "--codec")),
+        },
+        Flag {
+            long: "output",
+            short: Some('o'),
+            arg: Arg::Required,
+            help: "output IVF file",
+            apply: Some(|o, v| {
+                o.output = Some(req(v, "--output")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "width",
+            short: Some('w'),
+            arg: Arg::Required,
+            help: "coded width (mult of 64)",
+            apply: Some(|o, v| {
+                o.width = Some(args::parse_value(v, "rvp9enc", "--width")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "height",
+            short: Some('h'),
+            arg: Arg::Required,
+            help: "coded height (mult of 64)",
+            apply: Some(|o, v| {
+                o.height = Some(args::parse_value(v, "rvp9enc", "--height")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "fps",
+            short: None,
+            arg: Arg::Required,
+            help: "frame rate num/den (e.g. 30/1)",
+            apply: Some(|o, v| {
+                let (n, d) = parse_fps(v)?;
+                o.fps_num = Some(n);
+                o.fps_den = Some(d);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "target-bitrate",
+            short: None,
+            arg: Arg::Required,
+            help: "target bitrate in kbps",
+            apply: Some(|o, v| {
+                o.target_bitrate_kbps = args::parse_value(v, "rvp9enc", "--target-bitrate")?;
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "end-usage",
+            short: None,
+            arg: Arg::Required,
+            help: "rate control mode (cbr/vbr/cq/q)",
+            apply: Some(|o, v| {
+                o.rc_mode = parse_end_usage(v)?;
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "passes",
+            short: Some('p'),
+            arg: Arg::Required,
+            help: "number of passes (1 or 2)",
+            apply: Some(|o, v| {
+                o.passes = parse_passes(v)?;
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "kf-max-dist",
+            short: None,
+            arg: Arg::Required,
+            help: "max keyframe interval",
+            apply: Some(|o, v| {
+                o.gop_length = Some(args::parse_value(v, "rvp9enc", "--kf-max-dist")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "aq-mode",
+            short: None,
+            arg: Arg::Required,
+            help: "adaptive quant (0=off, 3=cyclic)",
+            apply: Some(|o, v| {
+                o.aq_mode = parse_aq_mode(v)?;
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "limit",
+            short: None,
+            arg: Arg::Required,
+            help: "stop after N frames",
+            apply: Some(|o, v| {
+                o.limit = Some(args::parse_value(v, "rvp9enc", "--limit")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "ivf",
+            short: None,
+            arg: Arg::None,
+            help: "output IVF (the only container)",
+            apply: Some(|_, _| Ok(())),
+        },
+        Flag {
+            long: "verbose",
+            short: Some('v'),
+            arg: Arg::None,
+            help: "verbose progress",
+            apply: Some(|o, _| {
+                o.verbose = true;
+                Ok(())
+            }),
+        },
         // W0.1: parsed and stored on EncOpts; later waves consume.
-        Flag { long: "profile", short: None, arg: Arg::Required, help: "bitstream profile (0..=3)",
-            apply: Some(|o, v| { o.profile = Some(parse_profile(v)?); Ok(()) }) },
-        Flag { long: "rt", short: None, arg: Arg::None, help: "real-time deadline",
-            apply: Some(|o, _| { o.deadline = Some(Deadline::Realtime); Ok(()) }) },
-        Flag { long: "good", short: None, arg: Arg::None, help: "good-quality deadline",
-            apply: Some(|o, _| { o.deadline = Some(Deadline::Good); Ok(()) }) },
-        Flag { long: "best", short: None, arg: Arg::None, help: "best-quality deadline",
-            apply: Some(|o, _| { o.deadline = Some(Deadline::Best); Ok(()) }) },
-        Flag { long: "cpu-used", short: None, arg: Arg::Required, help: "speed/quality tradeoff (-9..=9)",
-            apply: Some(|o, v| { o.cpu_used = Some(parse_cpu_used(v)?); Ok(()) }) },
-        Flag { long: "threads", short: Some('t'), arg: Arg::Required, help: "encode threads",
-            apply: Some(|o, v| { o.threads = Some(args::parse_value(v, "rvp9enc", "--threads")?); Ok(()) }) },
-        Flag { long: "tile-columns", short: None, arg: Arg::Required, help: "log2 tile columns (0..=6)",
-            apply: Some(|o, v| { o.tile_columns = Some(parse_log2(v, "--tile-columns", 6)?); Ok(()) }) },
-        Flag { long: "tile-rows", short: None, arg: Arg::Required, help: "log2 tile rows (0..=2)",
-            apply: Some(|o, v| { o.tile_rows = Some(parse_log2(v, "--tile-rows", 2)?); Ok(()) }) },
-        Flag { long: "kf-min-dist", short: None, arg: Arg::Required, help: "min keyframe interval",
-            apply: Some(|o, v| { o.kf_min_dist = Some(args::parse_value(v, "rvp9enc", "--kf-min-dist")?); Ok(()) }) },
-        Flag { long: "disable-kf", short: None, arg: Arg::None, help: "disable keyframes",
-            apply: Some(|o, _| { o.disable_kf = true; Ok(()) }) },
-        Flag { long: "min-q", short: None, arg: Arg::Required, help: "minimum quantizer",
-            apply: Some(|o, v| { o.min_q = Some(args::parse_value(v, "rvp9enc", "--min-q")?); Ok(()) }) },
-        Flag { long: "max-q", short: None, arg: Arg::Required, help: "maximum quantizer",
-            apply: Some(|o, v| { o.max_q = Some(args::parse_value(v, "rvp9enc", "--max-q")?); Ok(()) }) },
-        Flag { long: "cq-level", short: None, arg: Arg::Required, help: "constant/constrained quality level",
-            apply: Some(|o, v| { o.cq_level = Some(args::parse_value(v, "rvp9enc", "--cq-level")?); Ok(()) }) },
-        Flag { long: "buf-sz", short: None, arg: Arg::Required, help: "client buffer size (ms)",
-            apply: Some(|o, v| { o.buf_sz_ms = Some(args::parse_value(v, "rvp9enc", "--buf-sz")?); Ok(()) }) },
-        Flag { long: "buf-initial-sz", short: None, arg: Arg::Required, help: "initial buffer size (ms)",
-            apply: Some(|o, v| { o.buf_initial_sz_ms = Some(args::parse_value(v, "rvp9enc", "--buf-initial-sz")?); Ok(()) }) },
-        Flag { long: "buf-optimal-sz", short: None, arg: Arg::Required, help: "optimal buffer size (ms)",
-            apply: Some(|o, v| { o.buf_optimal_sz_ms = Some(args::parse_value(v, "rvp9enc", "--buf-optimal-sz")?); Ok(()) }) },
-        Flag { long: "undershoot-pct", short: None, arg: Arg::Required, help: "datarate undershoot %",
-            apply: Some(|o, v| { o.undershoot_pct = Some(args::parse_value(v, "rvp9enc", "--undershoot-pct")?); Ok(()) }) },
-        Flag { long: "overshoot-pct", short: None, arg: Arg::Required, help: "datarate overshoot %",
-            apply: Some(|o, v| { o.overshoot_pct = Some(args::parse_value(v, "rvp9enc", "--overshoot-pct")?); Ok(()) }) },
-        Flag { long: "lossless", short: None, arg: Arg::Required, help: "lossless coding (0/1)",
-            apply: Some(|o, v| { o.lossless = Some(parse_bool01(v, "--lossless")?); Ok(()) }) },
-        Flag { long: "frame-parallel", short: None, arg: Arg::Required, help: "frame-parallel decoding (0/1)",
-            apply: Some(|o, v| { o.frame_parallel = Some(parse_bool01(v, "--frame-parallel")?); Ok(()) }) },
-        Flag { long: "error-resilient", short: None, arg: Arg::Required, help: "error resilient mode",
-            apply: Some(|o, v| { o.error_resilient = Some(args::parse_value(v, "rvp9enc", "--error-resilient")?); Ok(()) }) },
-        Flag { long: "tune", short: None, arg: Arg::Required, help: "distortion metric to tune (psnr/ssim)",
-            apply: Some(|o, v| { o.tune = Some(parse_tune(v)?); Ok(()) }) },
-        Flag { long: "tune-content", short: None, arg: Arg::Required, help: "content type to tune (default/screen/film)",
-            apply: Some(|o, v| { o.tune_content = Some(parse_tune_content(v)?); Ok(()) }) },
-        Flag { long: "noise-sensitivity", short: None, arg: Arg::Required, help: "denoiser strength",
-            apply: Some(|o, v| { o.noise_sensitivity = Some(args::parse_value(v, "rvp9enc", "--noise-sensitivity")?); Ok(()) }) },
-        Flag { long: "svc", short: None, arg: Arg::None, help: "scalable video coding",
-            apply: Some(|o, _| { o.svc = true; Ok(()) }) },
-        Flag { long: "temporal-layers", short: None, arg: Arg::Required, help: "temporal SVC layers (1..=3)",
-            apply: Some(|o, v| { o.temporal_layers = Some(args::parse_value(v, "rvp9enc", "--temporal-layers")?); Ok(()) }) },
-        Flag { long: "bit-depth", short: None, arg: Arg::Required, help: "bit depth (8/10/12)",
-            apply: Some(|o, v| { o.bit_depth = Some(parse_bit_depth(v)?); Ok(()) }) },
-        Flag { long: "psnr", short: None, arg: Arg::None, help: "report PSNR",
-            apply: Some(|o, _| { o.psnr = true; Ok(()) }) },
-        Flag { long: "webm", short: None, arg: Arg::None, help: "WebM output",
-            apply: Some(|o, _| { o.webm = true; Ok(()) }) },
+        Flag {
+            long: "profile",
+            short: None,
+            arg: Arg::Required,
+            help: "bitstream profile (0..=3)",
+            apply: Some(|o, v| {
+                o.profile = Some(parse_profile(v)?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "rt",
+            short: None,
+            arg: Arg::None,
+            help: "real-time deadline",
+            apply: Some(|o, _| {
+                o.deadline = Some(Deadline::Realtime);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "good",
+            short: None,
+            arg: Arg::None,
+            help: "good-quality deadline",
+            apply: Some(|o, _| {
+                o.deadline = Some(Deadline::Good);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "best",
+            short: None,
+            arg: Arg::None,
+            help: "best-quality deadline",
+            apply: Some(|o, _| {
+                o.deadline = Some(Deadline::Best);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "cpu-used",
+            short: None,
+            arg: Arg::Required,
+            help: "speed/quality tradeoff (-9..=9)",
+            apply: Some(|o, v| {
+                o.cpu_used = Some(parse_cpu_used(v)?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "threads",
+            short: Some('t'),
+            arg: Arg::Required,
+            help: "encode threads",
+            apply: Some(|o, v| {
+                o.threads = Some(args::parse_value(v, "rvp9enc", "--threads")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "tile-columns",
+            short: None,
+            arg: Arg::Required,
+            help: "log2 tile columns (0..=6)",
+            apply: Some(|o, v| {
+                o.tile_columns = Some(parse_log2(v, "--tile-columns", 6)?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "tile-rows",
+            short: None,
+            arg: Arg::Required,
+            help: "log2 tile rows (0..=2)",
+            apply: Some(|o, v| {
+                o.tile_rows = Some(parse_log2(v, "--tile-rows", 2)?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "kf-min-dist",
+            short: None,
+            arg: Arg::Required,
+            help: "min keyframe interval",
+            apply: Some(|o, v| {
+                o.kf_min_dist = Some(args::parse_value(v, "rvp9enc", "--kf-min-dist")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "disable-kf",
+            short: None,
+            arg: Arg::None,
+            help: "disable keyframes",
+            apply: Some(|o, _| {
+                o.disable_kf = true;
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "min-q",
+            short: None,
+            arg: Arg::Required,
+            help: "minimum quantizer",
+            apply: Some(|o, v| {
+                o.min_q = Some(args::parse_value(v, "rvp9enc", "--min-q")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "max-q",
+            short: None,
+            arg: Arg::Required,
+            help: "maximum quantizer",
+            apply: Some(|o, v| {
+                o.max_q = Some(args::parse_value(v, "rvp9enc", "--max-q")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "cq-level",
+            short: None,
+            arg: Arg::Required,
+            help: "constant/constrained quality level",
+            apply: Some(|o, v| {
+                o.cq_level = Some(args::parse_value(v, "rvp9enc", "--cq-level")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "buf-sz",
+            short: None,
+            arg: Arg::Required,
+            help: "client buffer size (ms)",
+            apply: Some(|o, v| {
+                o.buf_sz_ms = Some(args::parse_value(v, "rvp9enc", "--buf-sz")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "buf-initial-sz",
+            short: None,
+            arg: Arg::Required,
+            help: "initial buffer size (ms)",
+            apply: Some(|o, v| {
+                o.buf_initial_sz_ms = Some(args::parse_value(v, "rvp9enc", "--buf-initial-sz")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "buf-optimal-sz",
+            short: None,
+            arg: Arg::Required,
+            help: "optimal buffer size (ms)",
+            apply: Some(|o, v| {
+                o.buf_optimal_sz_ms = Some(args::parse_value(v, "rvp9enc", "--buf-optimal-sz")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "undershoot-pct",
+            short: None,
+            arg: Arg::Required,
+            help: "datarate undershoot %",
+            apply: Some(|o, v| {
+                o.undershoot_pct = Some(args::parse_value(v, "rvp9enc", "--undershoot-pct")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "overshoot-pct",
+            short: None,
+            arg: Arg::Required,
+            help: "datarate overshoot %",
+            apply: Some(|o, v| {
+                o.overshoot_pct = Some(args::parse_value(v, "rvp9enc", "--overshoot-pct")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "lossless",
+            short: None,
+            arg: Arg::Required,
+            help: "lossless coding (0/1)",
+            apply: Some(|o, v| {
+                o.lossless = Some(parse_bool01(v, "--lossless")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "frame-parallel",
+            short: None,
+            arg: Arg::Required,
+            help: "frame-parallel decoding (0/1)",
+            apply: Some(|o, v| {
+                o.frame_parallel = Some(parse_bool01(v, "--frame-parallel")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "error-resilient",
+            short: None,
+            arg: Arg::Required,
+            help: "error resilient mode",
+            apply: Some(|o, v| {
+                o.error_resilient = Some(args::parse_value(v, "rvp9enc", "--error-resilient")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "tune",
+            short: None,
+            arg: Arg::Required,
+            help: "distortion metric to tune (psnr/ssim)",
+            apply: Some(|o, v| {
+                o.tune = Some(parse_tune(v)?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "tune-content",
+            short: None,
+            arg: Arg::Required,
+            help: "content type to tune (default/screen/film)",
+            apply: Some(|o, v| {
+                o.tune_content = Some(parse_tune_content(v)?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "noise-sensitivity",
+            short: None,
+            arg: Arg::Required,
+            help: "denoiser strength",
+            apply: Some(|o, v| {
+                o.noise_sensitivity = Some(args::parse_value(v, "rvp9enc", "--noise-sensitivity")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "svc",
+            short: None,
+            arg: Arg::None,
+            help: "scalable video coding",
+            apply: Some(|o, _| {
+                o.svc = true;
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "temporal-layers",
+            short: None,
+            arg: Arg::Required,
+            help: "temporal SVC layers (1..=3)",
+            apply: Some(|o, v| {
+                o.temporal_layers = Some(args::parse_value(v, "rvp9enc", "--temporal-layers")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "bit-depth",
+            short: None,
+            arg: Arg::Required,
+            help: "bit depth (8/10/12)",
+            apply: Some(|o, v| {
+                o.bit_depth = Some(parse_bit_depth(v)?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "psnr",
+            short: None,
+            arg: Arg::None,
+            help: "report PSNR",
+            apply: Some(|o, _| {
+                o.psnr = true;
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "webm",
+            short: None,
+            arg: Arg::None,
+            help: "WebM output",
+            apply: Some(|o, _| {
+                o.webm = true;
+                Ok(())
+            }),
+        },
         // ---- W7.8: long-tail vpxenc flags (parsed + stored; later
         // waves plumb into EncoderConfig / two-pass / SVC / LF paths).
         // SKIPPED per Arthur's audit: `--arnr-type` (vpxenc.c:378-379)
         // and `--output-partitions` / `-P` (vpxenc.c:151-153) are
         // OUT-OF-SCOPE — they survive in the "recognised-but-not-yet"
         // bucket via absence from the flag table.
-        Flag { long: "auto-alt-ref", short: None, arg: Arg::Required, help: "auto alt-ref frames (0..=6)",
-            apply: Some(|o, v| { o.auto_alt_ref = Some(parse_range(v, "--auto-alt-ref", 0, 6)?); Ok(()) }) },
-        Flag { long: "arnr-maxframes", short: None, arg: Arg::Required, help: "AltRef max frames (0..=15)",
-            apply: Some(|o, v| { o.arnr_maxframes = Some(parse_range(v, "--arnr-maxframes", 0, 15)?); Ok(()) }) },
-        Flag { long: "arnr-strength", short: None, arg: Arg::Required, help: "AltRef filter strength (0..=6)",
-            apply: Some(|o, v| { o.arnr_strength = Some(parse_range(v, "--arnr-strength", 0, 6)?); Ok(()) }) },
-        Flag { long: "pass", short: None, arg: Arg::Required, help: "pass to execute (1 or 2)",
-            apply: Some(|o, v| { o.pass = Some(parse_pass(v)?); Ok(()) }) },
-        Flag { long: "fpf", short: None, arg: Arg::Required, help: "first-pass statistics file",
-            apply: Some(|o, v| { o.fpf = Some(req(v, "--fpf")?); Ok(()) }) },
-        Flag { long: "rate-hist", short: None, arg: Arg::Required, help: "rate histogram bucket count",
-            apply: Some(|o, v| { o.rate_hist = Some(args::parse_value(v, "rvp9enc", "--rate-hist")?); Ok(()) }) },
-        Flag { long: "q-hist", short: None, arg: Arg::Required, help: "quantizer histogram bucket count",
-            apply: Some(|o, v| { o.q_hist = Some(args::parse_value(v, "rvp9enc", "--q-hist")?); Ok(()) }) },
-        Flag { long: "test-decode", short: None, arg: Arg::Required, help: "encode/decode mismatch test (off/warn/fatal)",
-            apply: Some(|o, v| { o.test_decode = Some(parse_test_decode(v)?); Ok(()) }) },
-        Flag { long: "enable-tpl", short: None, arg: Arg::Required, help: "enable temporal dependency model (0/1)",
-            apply: Some(|o, v| { o.enable_tpl = Some(parse_bool01(v, "--enable-tpl")?); Ok(()) }) },
-        Flag { long: "frame-boost", short: None, arg: Arg::Required, help: "frame periodic boost (0/1)",
-            apply: Some(|o, v| { o.frame_boost = Some(parse_bool01(v, "--frame-boost")?); Ok(()) }) },
-        Flag { long: "max-inter-rate", short: None, arg: Arg::Required, help: "max P-frame bitrate (pct)",
-            apply: Some(|o, v| { o.max_inter_rate_pct = Some(args::parse_value(v, "rvp9enc", "--max-inter-rate")?); Ok(()) }) },
-        Flag { long: "min-gf-interval", short: None, arg: Arg::Required, help: "min gf/arf frame interval",
-            apply: Some(|o, v| { o.min_gf_interval = Some(args::parse_value(v, "rvp9enc", "--min-gf-interval")?); Ok(()) }) },
-        Flag { long: "max-gf-interval", short: None, arg: Arg::Required, help: "max gf/arf frame interval",
-            apply: Some(|o, v| { o.max_gf_interval = Some(args::parse_value(v, "rvp9enc", "--max-gf-interval")?); Ok(()) }) },
-        Flag { long: "color-space", short: None, arg: Arg::Required, help: "color space of input content",
-            apply: Some(|o, v| { o.color_space = Some(parse_color_space(v)?); Ok(()) }) },
-        Flag { long: "alt-ref-aq", short: None, arg: Arg::Required, help: "adaptive quant for alt-ref (0/1)",
-            apply: Some(|o, v| { o.alt_ref_aq = Some(parse_bool01(v, "--alt-ref-aq")?); Ok(()) }) },
-        Flag { long: "input-bit-depth", short: None, arg: Arg::Required, help: "input bit depth (8/10/12)",
-            apply: Some(|o, v| { o.input_bit_depth = Some(parse_bit_depth(v)?); Ok(()) }) },
-        Flag { long: "lag-in-frames", short: None, arg: Arg::Required, help: "max frames to lag",
-            apply: Some(|o, v| { o.lag_in_frames = Some(args::parse_value(v, "rvp9enc", "--lag-in-frames")?); Ok(()) }) },
-        Flag { long: "target-level", short: None, arg: Arg::Required, help: "target level (0/255 + 10..=62)",
-            apply: Some(|o, v| { o.target_level = Some(args::parse_value(v, "rvp9enc", "--target-level")?); Ok(()) }) },
-        Flag { long: "row-mt", short: None, arg: Arg::Required, help: "row-based MT in VP9 (0/1)",
-            apply: Some(|o, v| { o.row_mt = Some(parse_bool01(v, "--row-mt")?); Ok(()) }) },
-        Flag { long: "resize-allowed", short: None, arg: Arg::Required, help: "spatial resampling (0/1)",
-            apply: Some(|o, v| { o.resize_allowed = Some(parse_bool01(v, "--resize-allowed")?); Ok(()) }) },
-        Flag { long: "resize-width", short: None, arg: Arg::Required, help: "resized encoded width",
-            apply: Some(|o, v| { o.resize_width = Some(args::parse_value(v, "rvp9enc", "--resize-width")?); Ok(()) }) },
-        Flag { long: "resize-height", short: None, arg: Arg::Required, help: "resized encoded height",
-            apply: Some(|o, v| { o.resize_height = Some(args::parse_value(v, "rvp9enc", "--resize-height")?); Ok(()) }) },
-        Flag { long: "quiet", short: Some('q'), arg: Arg::None, help: "do not print encode progress",
-            apply: Some(|o, _| { o.quiet = true; Ok(()) }) },
+        Flag {
+            long: "auto-alt-ref",
+            short: None,
+            arg: Arg::Required,
+            help: "auto alt-ref frames (0..=6)",
+            apply: Some(|o, v| {
+                o.auto_alt_ref = Some(parse_range(v, "--auto-alt-ref", 0, 6)?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "arnr-maxframes",
+            short: None,
+            arg: Arg::Required,
+            help: "AltRef max frames (0..=15)",
+            apply: Some(|o, v| {
+                o.arnr_maxframes = Some(parse_range(v, "--arnr-maxframes", 0, 15)?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "arnr-strength",
+            short: None,
+            arg: Arg::Required,
+            help: "AltRef filter strength (0..=6)",
+            apply: Some(|o, v| {
+                o.arnr_strength = Some(parse_range(v, "--arnr-strength", 0, 6)?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "pass",
+            short: None,
+            arg: Arg::Required,
+            help: "pass to execute (1 or 2)",
+            apply: Some(|o, v| {
+                o.pass = Some(parse_pass(v)?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "fpf",
+            short: None,
+            arg: Arg::Required,
+            help: "first-pass statistics file",
+            apply: Some(|o, v| {
+                o.fpf = Some(req(v, "--fpf")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "rate-hist",
+            short: None,
+            arg: Arg::Required,
+            help: "rate histogram bucket count",
+            apply: Some(|o, v| {
+                o.rate_hist = Some(args::parse_value(v, "rvp9enc", "--rate-hist")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "q-hist",
+            short: None,
+            arg: Arg::Required,
+            help: "quantizer histogram bucket count",
+            apply: Some(|o, v| {
+                o.q_hist = Some(args::parse_value(v, "rvp9enc", "--q-hist")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "test-decode",
+            short: None,
+            arg: Arg::Required,
+            help: "encode/decode mismatch test (off/warn/fatal)",
+            apply: Some(|o, v| {
+                o.test_decode = Some(parse_test_decode(v)?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "enable-tpl",
+            short: None,
+            arg: Arg::Required,
+            help: "enable temporal dependency model (0/1)",
+            apply: Some(|o, v| {
+                o.enable_tpl = Some(parse_bool01(v, "--enable-tpl")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "frame-boost",
+            short: None,
+            arg: Arg::Required,
+            help: "frame periodic boost (0/1)",
+            apply: Some(|o, v| {
+                o.frame_boost = Some(parse_bool01(v, "--frame-boost")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "max-inter-rate",
+            short: None,
+            arg: Arg::Required,
+            help: "max P-frame bitrate (pct)",
+            apply: Some(|o, v| {
+                o.max_inter_rate_pct = Some(args::parse_value(v, "rvp9enc", "--max-inter-rate")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "min-gf-interval",
+            short: None,
+            arg: Arg::Required,
+            help: "min gf/arf frame interval",
+            apply: Some(|o, v| {
+                o.min_gf_interval = Some(args::parse_value(v, "rvp9enc", "--min-gf-interval")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "max-gf-interval",
+            short: None,
+            arg: Arg::Required,
+            help: "max gf/arf frame interval",
+            apply: Some(|o, v| {
+                o.max_gf_interval = Some(args::parse_value(v, "rvp9enc", "--max-gf-interval")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "color-space",
+            short: None,
+            arg: Arg::Required,
+            help: "color space of input content",
+            apply: Some(|o, v| {
+                o.color_space = Some(parse_color_space(v)?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "alt-ref-aq",
+            short: None,
+            arg: Arg::Required,
+            help: "adaptive quant for alt-ref (0/1)",
+            apply: Some(|o, v| {
+                o.alt_ref_aq = Some(parse_bool01(v, "--alt-ref-aq")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "input-bit-depth",
+            short: None,
+            arg: Arg::Required,
+            help: "input bit depth (8/10/12)",
+            apply: Some(|o, v| {
+                o.input_bit_depth = Some(parse_bit_depth(v)?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "lag-in-frames",
+            short: None,
+            arg: Arg::Required,
+            help: "max frames to lag",
+            apply: Some(|o, v| {
+                o.lag_in_frames = Some(args::parse_value(v, "rvp9enc", "--lag-in-frames")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "target-level",
+            short: None,
+            arg: Arg::Required,
+            help: "target level (0/255 + 10..=62)",
+            apply: Some(|o, v| {
+                o.target_level = Some(args::parse_value(v, "rvp9enc", "--target-level")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "row-mt",
+            short: None,
+            arg: Arg::Required,
+            help: "row-based MT in VP9 (0/1)",
+            apply: Some(|o, v| {
+                o.row_mt = Some(parse_bool01(v, "--row-mt")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "resize-allowed",
+            short: None,
+            arg: Arg::Required,
+            help: "spatial resampling (0/1)",
+            apply: Some(|o, v| {
+                o.resize_allowed = Some(parse_bool01(v, "--resize-allowed")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "resize-width",
+            short: None,
+            arg: Arg::Required,
+            help: "resized encoded width",
+            apply: Some(|o, v| {
+                o.resize_width = Some(args::parse_value(v, "rvp9enc", "--resize-width")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "resize-height",
+            short: None,
+            arg: Arg::Required,
+            help: "resized encoded height",
+            apply: Some(|o, v| {
+                o.resize_height = Some(args::parse_value(v, "rvp9enc", "--resize-height")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "quiet",
+            short: Some('q'),
+            arg: Arg::None,
+            help: "do not print encode progress",
+            apply: Some(|o, _| {
+                o.quiet = true;
+                Ok(())
+            }),
+        },
     ]
 }
 
 fn validate_eq(v: Option<String>, want: &str, flag: &str) -> Result<(), String> {
     match v.as_deref() {
         Some(s) if s == want => Ok(()),
-        Some(other) => Err(format!("rvp9enc: {flag}={other} not supported yet (only {want})")),
+        Some(other) => Err(format!(
+            "rvp9enc: {flag}={other} not supported yet (only {want})"
+        )),
         None => Err(format!("rvp9enc: {flag} requires a value")),
     }
 }
@@ -494,15 +1028,21 @@ fn parse_fps(v: Option<String>) -> Result<(u32, u32), String> {
     let s = v.ok_or_else(|| "rvp9enc: --fps requires a value".to_string())?;
     match s.split_once('/') {
         Some((n, d)) => {
-            let num = n.parse::<u32>().map_err(|_| format!("rvp9enc: --fps: bad numerator '{n}'"))?;
-            let den = d.parse::<u32>().map_err(|_| format!("rvp9enc: --fps: bad denominator '{d}'"))?;
+            let num = n
+                .parse::<u32>()
+                .map_err(|_| format!("rvp9enc: --fps: bad numerator '{n}'"))?;
+            let den = d
+                .parse::<u32>()
+                .map_err(|_| format!("rvp9enc: --fps: bad denominator '{d}'"))?;
             if den == 0 {
                 return Err("rvp9enc: --fps denominator must be non-zero".to_string());
             }
             Ok((num, den))
         }
         None => {
-            let num = s.parse::<u32>().map_err(|_| format!("rvp9enc: --fps: bad value '{s}'"))?;
+            let num = s
+                .parse::<u32>()
+                .map_err(|_| format!("rvp9enc: --fps: bad value '{s}'"))?;
             Ok((num, 1))
         }
     }
@@ -543,7 +1083,9 @@ fn parse_bool01(v: Option<String>, flag: &str) -> Result<bool, String> {
     match v.as_deref() {
         Some("0") => Ok(false),
         Some("1") => Ok(true),
-        Some(other) => Err(format!("rvp9enc: {flag}={other} not understood (use 0 or 1)")),
+        Some(other) => Err(format!(
+            "rvp9enc: {flag}={other} not understood (use 0 or 1)"
+        )),
         None => Err(format!("rvp9enc: {flag} requires a value")),
     }
 }
@@ -552,7 +1094,9 @@ fn parse_tune(v: Option<String>) -> Result<TuneMetric, String> {
     match v.as_deref() {
         Some("psnr") => Ok(TuneMetric::Psnr),
         Some("ssim") => Ok(TuneMetric::Ssim),
-        Some(other) => Err(format!("rvp9enc: --tune={other} not understood (use psnr or ssim)")),
+        Some(other) => Err(format!(
+            "rvp9enc: --tune={other} not understood (use psnr or ssim)"
+        )),
         None => Err("rvp9enc: --tune requires a value".to_string()),
     }
 }
@@ -574,7 +1118,9 @@ fn parse_bit_depth(v: Option<String>) -> Result<u8, String> {
         Some("8") => Ok(8),
         Some("10") => Ok(10),
         Some("12") => Ok(12),
-        Some(other) => Err(format!("rvp9enc: --bit-depth={other} not understood (use 8/10/12)")),
+        Some(other) => Err(format!(
+            "rvp9enc: --bit-depth={other} not understood (use 8/10/12)"
+        )),
         None => Err("rvp9enc: --bit-depth requires a value".to_string()),
     }
 }
@@ -595,7 +1141,9 @@ fn parse_pass(v: Option<String>) -> Result<u32, String> {
     match v.as_deref() {
         Some("1") => Ok(1),
         Some("2") => Ok(2),
-        Some(other) => Err(format!("rvp9enc: --pass={other} not understood (use 1 or 2)")),
+        Some(other) => Err(format!(
+            "rvp9enc: --pass={other} not understood (use 1 or 2)"
+        )),
         None => Err("rvp9enc: --pass requires a value".to_string()),
     }
 }
@@ -606,7 +1154,9 @@ fn parse_passes(v: Option<String>) -> Result<u32, String> {
     match v.as_deref() {
         Some("1") => Ok(1),
         Some("2") => Ok(2),
-        Some(other) => Err(format!("rvp9enc: --passes={other} not understood (use 1 or 2)")),
+        Some(other) => Err(format!(
+            "rvp9enc: --passes={other} not understood (use 1 or 2)"
+        )),
         None => Err("rvp9enc: --passes requires a value".to_string()),
     }
 }
@@ -730,7 +1280,9 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
     // `rvp9_encoder::encode_two_pass`. Kept entirely separate from the
     // one-pass synchronous path below so that path stays byte-identical.
     if opts.passes == 2 {
-        return run_two_pass(opts, &config, &frames, coded_w, coded_h, fps_num, fps_den, output);
+        return run_two_pass(
+            opts, &config, &frames, coded_w, coded_h, fps_num, fps_den, output,
+        );
     }
 
     let mut encoder = StreamEncoder::new(config).map_err(|e| {
@@ -880,7 +1432,8 @@ fn run_two_pass(
 type FramesAndDims = (Vec<y4m::YuvFrameBuf>, (u32, u32), u32, u32);
 
 fn read_y4m_input(input: &Path, opts: &EncOpts) -> Result<FramesAndDims, String> {
-    let mut f = std::fs::File::open(input).map_err(|e| format!("opening {}: {e}", input.display()))?;
+    let mut f =
+        std::fs::File::open(input).map_err(|e| format!("opening {}: {e}", input.display()))?;
     let hdr = y4m::parse_header(&mut f).map_err(|e| format!("parsing y4m header: {e}"))?;
     drop(f);
 
@@ -1255,8 +1808,7 @@ mod tests {
         let mut o = EncOpts::default();
         args::parse(&table, &mut o, &s(&["--noise-sensitivity=1"]), "rvp9enc").unwrap();
         let cfg = build_encoder_config_for_test(&o);
-        let enc =
-            StreamEncoder::new(cfg).expect("StreamEncoder must accept --noise-sensitivity=1");
+        let enc = StreamEncoder::new(cfg).expect("StreamEncoder must accept --noise-sensitivity=1");
         assert_eq!(enc.config().noise_sensitivity, 1);
     }
 
@@ -1283,7 +1835,13 @@ mod tests {
 
         // Explicit values land on the config.
         let mut o = EncOpts::default();
-        args::parse(&table, &mut o, &s(&["--min-q=10", "--max-q=200"]), "rvp9enc").unwrap();
+        args::parse(
+            &table,
+            &mut o,
+            &s(&["--min-q=10", "--max-q=200"]),
+            "rvp9enc",
+        )
+        .unwrap();
         let cfg = build_encoder_config_for_test(&o);
         assert_eq!(cfg.min_qindex, 10);
         assert_eq!(cfg.max_qindex, 200);
@@ -1297,7 +1855,13 @@ mod tests {
 
         // Inverted range must be rejected at construction time.
         let mut o = EncOpts::default();
-        args::parse(&table, &mut o, &s(&["--min-q=200", "--max-q=10"]), "rvp9enc").unwrap();
+        args::parse(
+            &table,
+            &mut o,
+            &s(&["--min-q=200", "--max-q=10"]),
+            "rvp9enc",
+        )
+        .unwrap();
         let cfg = build_encoder_config_for_test(&o);
         assert!(
             StreamEncoder::new(cfg).is_err(),
@@ -1387,7 +1951,10 @@ mod tests {
         let mut o = EncOpts::default();
         o.cq_level = Some(9999);
         let cfg = build_encoder_config_for_test(&o);
-        assert_eq!(cfg.cq_level, 255, "cq_level must clamp to the 0..=255 q-index domain");
+        assert_eq!(
+            cfg.cq_level, 255,
+            "cq_level must clamp to the 0..=255 q-index domain"
+        );
 
         // An unknown mode is rejected at parse time (not silently Cbr).
         let mut o = EncOpts::default();
@@ -1471,10 +2038,7 @@ fn build_encoder_config(
         // `--noise-sensitivity <0..=6>` feeds the encoder's
         // `noise_sensitivity` gate. Default `0` (estimator off) matches
         // vpxenc's CLI default; cap to the 0..=6 range libvpx supports.
-        noise_sensitivity: opts
-            .noise_sensitivity
-            .map(|v| v.min(6) as u8)
-            .unwrap_or(0),
+        noise_sensitivity: opts.noise_sensitivity.map(|v| v.min(6) as u8).unwrap_or(0),
         // PHASE-3 integration: CLI `--min-q` / `--max-q` (W7.8) →
         // EncoderConfig. Defaults mirror RateControlConfig::default().
         min_qindex: opts.min_q.map(|v| v.min(255) as u8).unwrap_or(4),

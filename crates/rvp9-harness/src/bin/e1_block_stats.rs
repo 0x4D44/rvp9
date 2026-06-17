@@ -28,8 +28,8 @@
 //!     --frames 64 --out wrk_docs\E1_encoder_gap_analysis.md
 //! ```
 
-use rvp9_core::block::{BLOCK_SIZES, BlockSize};
 use rvp9_core::bitstream::FrameKind as WireFrameKind;
+use rvp9_core::block::{BLOCK_SIZES, BlockSize};
 use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, RefFrame};
 use rvp9_decoder::{Decoder, ParsedFrame};
 use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
@@ -86,7 +86,11 @@ impl Aggregate {
     }
 
     fn key_bits(&self) -> u64 {
-        self.frames.iter().filter(|f| f.is_key).map(|f| f.bits).sum()
+        self.frames
+            .iter()
+            .filter(|f| f.is_key)
+            .map(|f| f.bits)
+            .sum()
     }
     fn inter_bits(&self) -> u64 {
         self.frames
@@ -416,10 +420,7 @@ fn emit_report(
 
     // ---- 1. Bit allocation ----
     let _ = writeln!(md, "### 1. Bit allocation\n");
-    let _ = writeln!(
-        md,
-        "| metric | rvp9 | libvpx |\n|---|---:|---:|"
-    );
+    let _ = writeln!(md, "| metric | rvp9 | libvpx |\n|---|---:|---:|");
     let line = |a: &Aggregate| -> (f64, f64, f64, f64) {
         let total = a.total_bits() as f64;
         let avg_kbps = total / n_frames as f64 * framerate / 1000.0;
@@ -432,15 +433,27 @@ fn emit_report(
         (avg_kbps, key, inter_avg, total)
     };
     let (r_kbps, r_key, r_inter, _r_tot) = line(rvp9);
-    let _ = writeln!(md, "| achieved bitrate (kbps) | {r_kbps:.1} | {} |",
-        libvpx.map_or("n/a".into(), |l| format!("{:.1}", line(l).0)));
-    let _ = writeln!(md, "| keyframe bits | {r_key:.0} | {} |",
-        libvpx.map_or("n/a".into(), |l| format!("{:.0}", line(l).1)));
-    let _ = writeln!(md, "| avg inter-frame bits | {r_inter:.0} | {} |",
-        libvpx.map_or("n/a".into(), |l| format!("{:.0}", line(l).2)));
-    let _ = writeln!(md, "| frames rvp9-decoder FAILED to decode | {} | {} |",
+    let _ = writeln!(
+        md,
+        "| achieved bitrate (kbps) | {r_kbps:.1} | {} |",
+        libvpx.map_or("n/a".into(), |l| format!("{:.1}", line(l).0))
+    );
+    let _ = writeln!(
+        md,
+        "| keyframe bits | {r_key:.0} | {} |",
+        libvpx.map_or("n/a".into(), |l| format!("{:.0}", line(l).1))
+    );
+    let _ = writeln!(
+        md,
+        "| avg inter-frame bits | {r_inter:.0} | {} |",
+        libvpx.map_or("n/a".into(), |l| format!("{:.0}", line(l).2))
+    );
+    let _ = writeln!(
+        md,
+        "| frames rvp9-decoder FAILED to decode | {} | {} |",
         rvp9.n_decode_failed(),
-        libvpx.map_or("n/a".into(), |l| format!("{}", l.n_decode_failed())));
+        libvpx.map_or("n/a".into(), |l| format!("{}", l.n_decode_failed()))
+    );
 
     // ---- 5. Per-frame Q (report aggregate avg here, full table later) ----
     let avg_q = |a: &Aggregate| -> (f64, u16, u16) {
@@ -459,10 +472,19 @@ fn emit_report(
     let (rq_avg, rq_min, rq_max) = avg_q(rvp9);
     let _ = writeln!(md, "\n### 5. base_qindex (inter frames)\n");
     let _ = writeln!(md, "| metric | rvp9 | libvpx |\n|---|---:|---:|");
-    let _ = writeln!(md, "| avg base_qindex | {rq_avg:.1} | {} |",
-        libvpx.map_or("n/a".into(), |l| format!("{:.1}", avg_q(l).0)));
-    let _ = writeln!(md, "| min / max | {rq_min} / {rq_max} | {} |",
-        libvpx.map_or("n/a".into(), |l| { let (_, mn, mx) = avg_q(l); format!("{mn} / {mx}") }));
+    let _ = writeln!(
+        md,
+        "| avg base_qindex | {rq_avg:.1} | {} |",
+        libvpx.map_or("n/a".into(), |l| format!("{:.1}", avg_q(l).0))
+    );
+    let _ = writeln!(
+        md,
+        "| min / max | {rq_min} / {rq_max} | {} |",
+        libvpx.map_or("n/a".into(), |l| {
+            let (_, mn, mx) = avg_q(l);
+            format!("{mn} / {mx}")
+        })
+    );
 
     // ---- 2. Partition size distribution (inter frames, area-weighted) ----
     let _ = writeln!(md, "\n### 2. Partition size distribution (inter frames)\n");
@@ -507,11 +529,11 @@ fn emit_report(
     }
 
     // ---- 3. Mode distribution + 4. Skip + 6. Ref usage (area-weighted) ----
-    let _ = writeln!(md, "\n### 3-4-6. Mode / skip / ref distribution (inter frames, area-weighted % of coded 8x8 cells)\n");
     let _ = writeln!(
         md,
-        "| metric | rvp9 | libvpx |\n|---|---:|---:|"
+        "\n### 3-4-6. Mode / skip / ref distribution (inter frames, area-weighted % of coded 8x8 cells)\n"
     );
+    let _ = writeln!(md, "| metric | rvp9 | libvpx |\n|---|---:|---:|");
     let dist = |a: &Aggregate| -> [f64; 9] {
         let (intra, total, modes, skip, last, golden, altref) = a.inter_aggregate();
         let t = total.max(1) as f64;
@@ -566,19 +588,27 @@ fn emit_per_frame(md: &mut String, rvp9: &Aggregate, libvpx: Option<&Aggregate>)
     for i in 0..n {
         let r = &rvp9.frames[i];
         let kind = if r.is_key { "KEY" } else { "inter" };
-        let (lb, lq, lintra) = libvpx
-            .and_then(|l| l.frames.get(i))
-            .map_or(("n/a".to_string(), "n/a".to_string(), "n/a".to_string()), |f| {
+        let (lb, lq, lintra) = libvpx.and_then(|l| l.frames.get(i)).map_or(
+            ("n/a".to_string(), "n/a".to_string(), "n/a".to_string()),
+            |f| {
                 (
                     format!("{}", f.bits),
                     format!("{}", f.base_qindex),
                     format!("{:.0}", intra_pct(f)),
                 )
-            });
+            },
+        );
         let _ = writeln!(
             md,
             "| {} | {} | {} | {} | {:.0} | {} | {} | {} |",
-            i, kind, r.bits, r.base_qindex, intra_pct(r), lb, lq, lintra
+            i,
+            kind,
+            r.bits,
+            r.base_qindex,
+            intra_pct(r),
+            lb,
+            lq,
+            lintra
         );
     }
 }
@@ -618,7 +648,10 @@ fn main() {
 
     let vpx_avail = vpxenc.is_file();
     if !vpx_avail {
-        eprintln!("[warn] vpxenc not found at {} — libvpx leg skipped", vpxenc.display());
+        eprintln!(
+            "[warn] vpxenc not found at {} — libvpx leg skipped",
+            vpxenc.display()
+        );
     }
 
     let targets: [u32; 4] = [25_000, 50_000, 100_000, 250_000];

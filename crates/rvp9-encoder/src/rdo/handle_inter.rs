@@ -62,8 +62,8 @@ use rvp9_core::block::{BlockSize, max_txsize, uv_plane_block_size, uv_plane_tx_s
 use rvp9_core::cost::SwitchableInterpCosts;
 use rvp9_core::cost::coef_cost::CoefCostTable;
 use rvp9_core::inter::filter::{
-    FILTER_TAPS, convolve8, convolve8_avg, convolve8_avg_horiz, convolve8_avg_vert,
-    convolve8_horiz, convolve8_vert, convolve_avg, convolve_copy, kernel_for,
+    FILTER_TAPS, convolve_avg, convolve_copy, convolve8, convolve8_avg, convolve8_avg_horiz,
+    convolve8_avg_vert, convolve8_horiz, convolve8_vert, kernel_for,
 };
 use rvp9_core::mode_info::{InterMode, Mv};
 use rvp9_core::mv_search::full_pixel::PlaneRef;
@@ -74,7 +74,9 @@ use rvp9_core::transforms::inverse::{
 use rvp9_core::transforms::scans::scan_for;
 use rvp9_core::transforms::{TxMode, TxSize, TxType};
 
-use crate::rdo::block_yrd::{BlockInput, SuperBlockYrdResult, dist_block_tx_domain, super_block_yrd};
+use crate::rdo::block_yrd::{
+    BlockInput, SuperBlockYrdResult, dist_block_tx_domain, super_block_yrd,
+};
 use crate::rdo::cost_coeffs::cost_coeffs;
 use crate::rdo::trellis::vp9_xform_quant_fp;
 
@@ -209,9 +211,7 @@ pub fn build_inter_pred_model_rd_earlyterm(
     let low_dc_thr = 50i64.min(dc_thr >> 2);
     let low_ac_thr = 80i64.min(ac_thr >> 2);
     let low_err_skip = if matches!(skip_txfm, SkipTxfm::AcDc) {
-        sse == 0
-            || (u64::from(var) < low_ac_thr as u64
-                && i64::from(sse - var) < low_dc_thr)
+        sse == 0 || (u64::from(var) < low_ac_thr as u64 && i64::from(sse - var) < low_dc_thr)
     } else {
         false
     };
@@ -403,9 +403,7 @@ pub struct HandleInterModeResult {
 /// the lowest-RD filter wins. Returns the winning `(rate, dist, RD)`
 /// tuple for the caller's per-mode argmin.
 #[must_use]
-pub fn handle_inter_mode_single_ref(
-    params: &HandleInterModeParams<'_>,
-) -> HandleInterModeResult {
+pub fn handle_inter_mode_single_ref(params: &HandleInterModeParams<'_>) -> HandleInterModeResult {
     let mut filter_cache: [Option<FilterRd>; SWITCHABLE_FILTERS] = [None; SWITCHABLE_FILTERS];
 
     // libvpx line 3010: skip the inner filter loop when bilinear.
@@ -588,9 +586,7 @@ pub struct HandleInterCompoundParams<'a> {
 /// filter per block, `mode_info.rs:1121`); the decoder applies it to
 /// both MC passes.
 #[must_use]
-pub fn handle_inter_mode_compound(
-    params: &HandleInterCompoundParams<'_>,
-) -> HandleInterModeResult {
+pub fn handle_inter_mode_compound(params: &HandleInterCompoundParams<'_>) -> HandleInterModeResult {
     let mut filter_cache: [Option<FilterRd>; SWITCHABLE_FILTERS] = [None; SWITCHABLE_FILTERS];
     let filters = [
         InterpFilter::EightTap,
@@ -749,8 +745,14 @@ fn evaluate_compound_filter_rd(
         let uv_bh = bh >> 1;
         let uv_x = params.src_offset.0 >> 1;
         let uv_y = params.src_offset.1 >> 1;
-        let uv_mv0 = Mv { row: params.mv0.row / 2, col: params.mv0.col / 2 };
-        let uv_mv1 = Mv { row: params.mv1.row / 2, col: params.mv1.col / 2 };
+        let uv_mv0 = Mv {
+            row: params.mv0.row / 2,
+            col: params.mv0.col / 2,
+        };
+        let uv_mv1 = Mv {
+            row: params.mv1.row / 2,
+            col: params.mv1.col / 2,
+        };
         let uv_tx = uv_plane_tx_size(params.bsize, y_tx, 1, 1);
         let _ = uv_plane_block_size(params.bsize, 1, 1);
         let uv_h = params.ref0_u.len() / params.uv_stride;
@@ -773,10 +775,26 @@ fn evaluate_compound_filter_rd(
             };
             let mut uv_pred = [0u8; 32 * 32];
             build_inter_pred(
-                &ref0_plane, uv_x, uv_y, uv_mv0, uv_bw, uv_bh, &mut uv_pred, uv_bw, filter,
+                &ref0_plane,
+                uv_x,
+                uv_y,
+                uv_mv0,
+                uv_bw,
+                uv_bh,
+                &mut uv_pred,
+                uv_bw,
+                filter,
             );
             build_inter_pred_avg(
-                &ref1_plane, uv_x, uv_y, uv_mv1, uv_bw, uv_bh, &mut uv_pred, uv_bw, filter,
+                &ref1_plane,
+                uv_x,
+                uv_y,
+                uv_mv1,
+                uv_bw,
+                uv_bh,
+                &mut uv_pred,
+                uv_bw,
+                filter,
             );
             let uv_rd = plane_super_block_yrd(
                 src_uv,
@@ -803,7 +821,12 @@ fn evaluate_compound_filter_rd(
         }
     }
 
-    PlaneRd { rate, dist, sse, skippable }
+    PlaneRd {
+        rate,
+        dist,
+        sse,
+        skippable,
+    }
 }
 
 /// Real per-plane RD for one `(mode, mv, filter)` triplet: builds the
@@ -891,10 +914,7 @@ fn evaluate_filter_rd(params: &HandleInterModeParams<'_>, filter: InterpFilter) 
     // --- Chroma planes (libvpx vp9_rdopt.c:3193-3204) ---
     // 4:2:0 only: chroma block is half-resolution; chroma MV is the
     // luma MV halved on each axis (libvpx scales by the subsampling).
-    if !params.src_u.is_empty()
-        && !params.ref_u.is_empty()
-        && params.uv_stride > 0
-    {
+    if !params.src_u.is_empty() && !params.ref_u.is_empty() && params.uv_stride > 0 {
         let uv_bw = bw >> 1;
         let uv_bh = bh >> 1;
         let uv_x = params.src_offset.0 >> 1;
@@ -907,10 +927,7 @@ fn evaluate_filter_rd(params: &HandleInterModeParams<'_>, filter: InterpFilter) 
         let _ = uv_plane_block_size(params.bsize, 1, 1); // documents the chroma bsize derivation
         let uv_h = params.ref_u.len() / params.uv_stride;
 
-        for (src_uv, ref_uv) in [
-            (params.src_u, params.ref_u),
-            (params.src_v, params.ref_v),
-        ] {
+        for (src_uv, ref_uv) in [(params.src_u, params.ref_u), (params.src_v, params.ref_v)] {
             let ref_uv_plane = PlaneRef {
                 data: ref_uv,
                 stride: params.uv_stride,
@@ -919,8 +936,15 @@ fn evaluate_filter_rd(params: &HandleInterModeParams<'_>, filter: InterpFilter) 
             };
             let mut uv_pred = [0u8; 32 * 32];
             build_inter_pred(
-                &ref_uv_plane, uv_x, uv_y, uv_mv, uv_bw, uv_bh,
-                &mut uv_pred, uv_bw, filter,
+                &ref_uv_plane,
+                uv_x,
+                uv_y,
+                uv_mv,
+                uv_bw,
+                uv_bh,
+                &mut uv_pred,
+                uv_bw,
+                filter,
             );
             let uv_rd = plane_super_block_yrd(
                 src_uv,
@@ -947,7 +971,12 @@ fn evaluate_filter_rd(params: &HandleInterModeParams<'_>, filter: InterpFilter) 
         }
     }
 
-    PlaneRd { rate, dist, sse, skippable }
+    PlaneRd {
+        rate,
+        dist,
+        sse,
+        skippable,
+    }
 }
 
 /// Run [`super_block_yrd`] for a single plane: build the residual from
@@ -979,7 +1008,10 @@ fn plane_super_block_yrd(
 ) -> crate::rdo::block_yrd::SuperBlockYrdResult {
     let (sx, sy) = src_offset;
     let side = tx.side();
-    debug_assert!(bw == side && bh == side, "single-tile scope: block must equal tx tile");
+    debug_assert!(
+        bw == side && bh == side,
+        "single-tile scope: block must equal tx tile"
+    );
 
     // Residual (src - pred), tile-sized, row-major.
     let mut src_diff = [0i16; 32 * 32];
@@ -996,8 +1028,7 @@ fn plane_super_block_yrd(
     // Round-trip: fdct + quant + idct-add → recon (the decoder result).
     let mut recon = [0u8; 32 * 32];
     for r in 0..bh {
-        recon[r * bw..r * bw + bw]
-            .copy_from_slice(&pred[r * pred_stride..r * pred_stride + bw]);
+        recon[r * bw..r * bw + bw].copy_from_slice(&pred[r * pred_stride..r * pred_stride + bw]);
     }
     reconstruct_tile(&src_diff, bw, tx, qp, &mut recon, bw);
 
@@ -1033,8 +1064,8 @@ fn plane_super_block_yrd(
         rdmult,
         coef_costs,
         plane_type,
-        0,           // ref_type (intra-frame coef ctx slot 0)
-        0,           // coeff_ctx (above+left both zero — start of block)
+        0, // ref_type (intra-frame coef ctx slot 0)
+        0, // coeff_ctx (above+left both zero — start of block)
         s0,
         s1,
         tx_size_cost,
@@ -1091,7 +1122,11 @@ fn plane_tx_search_yrd(
     // (`choose_tx_size_from_rd`, vp9_rdopt.c:957-1003). Inter blocks take
     // the `s1` (skip) branch when skippable, scored on `sse`.
     let rd_for = |rate: u32, dist: i64, sse: i64, skippable: bool| -> i64 {
-        let r = if skippable { s1 } else { rate.saturating_add(s0) };
+        let r = if skippable {
+            s1
+        } else {
+            rate.saturating_add(s0)
+        };
         let d = if skippable { sse } else { dist };
         let rate_term = (rdmult.saturating_mul(i64::from(r)) + 256) >> 9;
         rate_term.saturating_add(d << 7)
@@ -1170,14 +1205,9 @@ fn plane_tx_search_yrd(
                 let left = left_ctx[ty4];
                 let coeff_ctx = rvp9_core::coef_ctx::combine_entropy_contexts(above, left);
                 total_rate = total_rate.saturating_add(cost_coeffs(
-                    &qcoeff,
-                    scan.scan,
-                    eob,
-                    tx_size,
-                    0, // plane_type: Y
+                    &qcoeff, scan.scan, eob, tx_size, 0, // plane_type: Y
                     1, // ref_type: inter (matches the emit walk)
-                    coeff_ctx,
-                    coef_costs,
+                    coeff_ctx, coef_costs,
                 ));
 
                 let nz = u8::from(eob > 0);
@@ -1321,8 +1351,16 @@ fn build_inter_pred(
     let x_nonzero = subpel_x_q4 != 0;
     let y_nonzero = subpel_y_q4 != 0;
 
-    let pad_x = if x_nonzero { (FILTER_TAPS / 2 - 1) as isize } else { 0 };
-    let pad_y = if y_nonzero { (FILTER_TAPS / 2 - 1) as isize } else { 0 };
+    let pad_x = if x_nonzero {
+        (FILTER_TAPS / 2 - 1) as isize
+    } else {
+        0
+    };
+    let pad_y = if y_nonzero {
+        (FILTER_TAPS / 2 - 1) as isize
+    } else {
+        0
+    };
     let win_x = ref_x - pad_x;
     let win_y = ref_y - pad_y;
     debug_assert!(
@@ -1342,14 +1380,37 @@ fn build_inter_pred(
             convolve_copy(src_slice, ref_plane.stride, dst, dst_stride, bw, bh);
         }
         (true, false) => {
-            convolve8_horiz(src_slice, ref_plane.stride, dst, dst_stride, filter_x, bw, bh);
+            convolve8_horiz(
+                src_slice,
+                ref_plane.stride,
+                dst,
+                dst_stride,
+                filter_x,
+                bw,
+                bh,
+            );
         }
         (false, true) => {
-            convolve8_vert(src_slice, ref_plane.stride, dst, dst_stride, filter_y, bw, bh);
+            convolve8_vert(
+                src_slice,
+                ref_plane.stride,
+                dst,
+                dst_stride,
+                filter_y,
+                bw,
+                bh,
+            );
         }
         (true, true) => {
             convolve8(
-                src_slice, ref_plane.stride, dst, dst_stride, filter_x, filter_y, bw, bh,
+                src_slice,
+                ref_plane.stride,
+                dst,
+                dst_stride,
+                filter_x,
+                filter_y,
+                bw,
+                bh,
             );
         }
     }
@@ -1392,8 +1453,16 @@ fn build_inter_pred_avg(
     let x_nonzero = subpel_x_q4 != 0;
     let y_nonzero = subpel_y_q4 != 0;
 
-    let pad_x = if x_nonzero { (FILTER_TAPS / 2 - 1) as isize } else { 0 };
-    let pad_y = if y_nonzero { (FILTER_TAPS / 2 - 1) as isize } else { 0 };
+    let pad_x = if x_nonzero {
+        (FILTER_TAPS / 2 - 1) as isize
+    } else {
+        0
+    };
+    let pad_y = if y_nonzero {
+        (FILTER_TAPS / 2 - 1) as isize
+    } else {
+        0
+    };
     let win_x = ref_x - pad_x;
     let win_y = ref_y - pad_y;
     debug_assert!(
@@ -1413,14 +1482,37 @@ fn build_inter_pred_avg(
             convolve_avg(src_slice, ref_plane.stride, dst, dst_stride, bw, bh);
         }
         (true, false) => {
-            convolve8_avg_horiz(src_slice, ref_plane.stride, dst, dst_stride, filter_x, bw, bh);
+            convolve8_avg_horiz(
+                src_slice,
+                ref_plane.stride,
+                dst,
+                dst_stride,
+                filter_x,
+                bw,
+                bh,
+            );
         }
         (false, true) => {
-            convolve8_avg_vert(src_slice, ref_plane.stride, dst, dst_stride, filter_y, bw, bh);
+            convolve8_avg_vert(
+                src_slice,
+                ref_plane.stride,
+                dst,
+                dst_stride,
+                filter_y,
+                bw,
+                bh,
+            );
         }
         (true, true) => {
             convolve8_avg(
-                src_slice, ref_plane.stride, dst, dst_stride, filter_x, filter_y, bw, bh,
+                src_slice,
+                ref_plane.stride,
+                dst,
+                dst_stride,
+                filter_x,
+                filter_y,
+                bw,
+                bh,
             );
         }
     }
@@ -1430,11 +1522,7 @@ fn build_inter_pred_avg(
 /// would emit for `filter` in the current context. The full table is
 /// `SwitchableInterpCosts::ctx[filter] = vp9_cost_tokens(...)` per
 /// context. We index directly.
-fn switchable_filter_rate(
-    costs: &SwitchableInterpCosts,
-    ctx: usize,
-    filter: InterpFilter,
-) -> u32 {
+fn switchable_filter_rate(costs: &SwitchableInterpCosts, ctx: usize, filter: InterpFilter) -> u32 {
     let idx = match filter {
         InterpFilter::EightTap => 0,
         InterpFilter::EightTapSmooth => 1,
@@ -1450,10 +1538,10 @@ mod tests {
     use rvp9_core::cost::coef_cost::build_coef_cost_table;
     use rvp9_core::cost::switchable_interp_costs;
     use rvp9_core::cost::symbol_costs::inter_mode_costs;
-    use rvp9_core::entropy::default_probs::INTER_MODE_CONTEXTS;
     use rvp9_core::entropy::FrameContext;
+    use rvp9_core::entropy::default_probs::INTER_MODE_CONTEXTS;
     use rvp9_core::mv_search::full_pixel::PlaneRef;
-    use rvp9_core::quant::forward::{init_plane_quantizers, QuantizerDeltas};
+    use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
 
     /// A textured Y source + matching shifted reference, sized with a
     /// border so a small MV stays in-bounds. The reference is the source
@@ -1582,7 +1670,11 @@ mod tests {
             this_mode: mode,
             mv,
             inter_mode_rate,
-            newmv_rate: if matches!(mode, InterMode::NewMv) { 120 } else { 0 },
+            newmv_rate: if matches!(mode, InterMode::NewMv) {
+                120
+            } else {
+                0
+            },
             rdmult: 80,
             ref_best_rd: i64::MAX,
             use_rd_breakout: false,
@@ -1607,8 +1699,18 @@ mod tests {
     #[test]
     fn w4_6_handle_inter_mode_returns_real_rd_for_single_ref() {
         let h = build_harness(16, 16, 0, 0); // identical ref → ZEROMV is exact
-        let src_plane = PlaneRef { data: &h.src, stride: h.stride, width: h.stride, height: h.src.len() / h.stride };
-        let ref_plane = PlaneRef { data: &h.refp, stride: h.stride, width: h.stride, height: h.refp.len() / h.stride };
+        let src_plane = PlaneRef {
+            data: &h.src,
+            stride: h.stride,
+            width: h.stride,
+            height: h.src.len() / h.stride,
+        };
+        let ref_plane = PlaneRef {
+            data: &h.refp,
+            stride: h.stride,
+            width: h.stride,
+            height: h.refp.len() / h.stride,
+        };
         let fc = FrameContext::new_default();
         let sic = switchable_interp_costs(&fc);
         let costs = build_coef_cost_table(&fc);
@@ -1616,12 +1718,24 @@ mod tests {
         let uv_quant = init_plane_quantizers(96, QuantizerDeltas::Y);
 
         let params = make_params(
-            &h, &src_plane, &ref_plane, &fc, &sic, &y_quant, &uv_quant, &costs,
-            InterMode::ZeroMv, Mv::ZERO, true,
+            &h,
+            &src_plane,
+            &ref_plane,
+            &fc,
+            &sic,
+            &y_quant,
+            &uv_quant,
+            &costs,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            true,
         );
         let out = handle_inter_mode_single_ref(&params);
 
-        assert!(out.rd < i64::MAX / 2, "handle_inter_mode returned an unbounded RD");
+        assert!(
+            out.rd < i64::MAX / 2,
+            "handle_inter_mode returned an unbounded RD"
+        );
         assert!(matches!(
             out.best_filter,
             InterpFilter::EightTap | InterpFilter::EightTapSmooth | InterpFilter::EightTapSharp
@@ -1644,8 +1758,18 @@ mod tests {
         // Sub-pel MV so the three filters produce genuinely different
         // predictions (and therefore different transform-domain RD).
         let h = build_harness(16, 16, 0, 0);
-        let src_plane = PlaneRef { data: &h.src, stride: h.stride, width: h.stride, height: h.src.len() / h.stride };
-        let ref_plane = PlaneRef { data: &h.refp, stride: h.stride, width: h.stride, height: h.refp.len() / h.stride };
+        let src_plane = PlaneRef {
+            data: &h.src,
+            stride: h.stride,
+            width: h.stride,
+            height: h.src.len() / h.stride,
+        };
+        let ref_plane = PlaneRef {
+            data: &h.refp,
+            stride: h.stride,
+            width: h.stride,
+            height: h.refp.len() / h.stride,
+        };
         let fc = FrameContext::new_default();
         let sic = switchable_interp_costs(&fc);
         let costs = build_coef_cost_table(&fc);
@@ -1653,8 +1777,17 @@ mod tests {
         let uv_quant = init_plane_quantizers(96, QuantizerDeltas::Y);
 
         let params = make_params(
-            &h, &src_plane, &ref_plane, &fc, &sic, &y_quant, &uv_quant, &costs,
-            InterMode::NewMv, Mv { row: 4, col: 4 }, false, // half-pel both axes
+            &h,
+            &src_plane,
+            &ref_plane,
+            &fc,
+            &sic,
+            &y_quant,
+            &uv_quant,
+            &costs,
+            InterMode::NewMv,
+            Mv { row: 4, col: 4 },
+            false, // half-pel both axes
         );
         let out = handle_inter_mode_single_ref(&params);
 
@@ -1689,8 +1822,18 @@ mod tests {
         let shift_row = 1;
         let shift_col = 2;
         let h = build_harness(16, 16, shift_row, shift_col);
-        let src_plane = PlaneRef { data: &h.src, stride: h.stride, width: h.stride, height: h.src.len() / h.stride };
-        let ref_plane = PlaneRef { data: &h.refp, stride: h.stride, width: h.stride, height: h.refp.len() / h.stride };
+        let src_plane = PlaneRef {
+            data: &h.src,
+            stride: h.stride,
+            width: h.stride,
+            height: h.src.len() / h.stride,
+        };
+        let ref_plane = PlaneRef {
+            data: &h.refp,
+            stride: h.stride,
+            width: h.stride,
+            height: h.refp.len() / h.stride,
+        };
         let fc = FrameContext::new_default();
         let sic = switchable_interp_costs(&fc);
         let costs = build_coef_cost_table(&fc);
@@ -1699,8 +1842,17 @@ mod tests {
 
         // ZEROMV: reads the unshifted reference → large residual.
         let zero_params = make_params(
-            &h, &src_plane, &ref_plane, &fc, &sic, &y_quant, &uv_quant, &costs,
-            InterMode::ZeroMv, Mv::ZERO, true,
+            &h,
+            &src_plane,
+            &ref_plane,
+            &fc,
+            &sic,
+            &y_quant,
+            &uv_quant,
+            &costs,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            true,
         );
         let zero_out = handle_inter_mode_single_ref(&zero_params);
 
@@ -1710,8 +1862,17 @@ mod tests {
             col: (-shift_col * 8) as i16,
         };
         let new_params = make_params(
-            &h, &src_plane, &ref_plane, &fc, &sic, &y_quant, &uv_quant, &costs,
-            InterMode::NewMv, true_mv, true,
+            &h,
+            &src_plane,
+            &ref_plane,
+            &fc,
+            &sic,
+            &y_quant,
+            &uv_quant,
+            &costs,
+            InterMode::NewMv,
+            true_mv,
+            true,
         );
         let new_out = handle_inter_mode_single_ref(&new_params);
 
@@ -1741,15 +1902,22 @@ mod tests {
     fn pred_model_skips_when_zero_residual() {
         let pixels = vec![100u8; 16 * 16];
         let out = build_inter_pred_model_rd_earlyterm(
-            &pixels, 16, &pixels, 16,
-            BlockSize::Block16x16, 32,
+            &pixels,
+            16,
+            &pixels,
+            16,
+            BlockSize::Block16x16,
+            32,
             128, // dc_thr
             64,  // ac_thr
             false,
             i64::MAX,
             100_000,
         );
-        assert!(out.skip_txfm_sb, "zero residual should be classified as skip");
+        assert!(
+            out.skip_txfm_sb,
+            "zero residual should be classified as skip"
+        );
     }
 
     /// Early-term fires when `do_earlyterm = true` and the model RD
@@ -1759,8 +1927,12 @@ mod tests {
         let pixels = vec![200u8; 32 * 32];
         let dst = vec![10u8; 32 * 32]; // large diff → large model RD
         let out = build_inter_pred_model_rd_earlyterm(
-            &pixels, 32, &dst, 32,
-            BlockSize::Block32x32, 64,
+            &pixels,
+            32,
+            &dst,
+            32,
+            BlockSize::Block32x32,
+            64,
             128,
             64,
             true,

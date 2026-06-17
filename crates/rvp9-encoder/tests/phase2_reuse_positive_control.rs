@@ -77,7 +77,10 @@ fn phase2_newmv_reuse_fires() {
     let mut pos = nl + 1;
     let mut frames = Vec::new();
     while pos < data.len() && frames.len() < N_FRAMES {
-        let fnl = data[pos..].iter().position(|&b| b == b'\n').map(|p| pos + p);
+        let fnl = data[pos..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map(|p| pos + p);
         let Some(fnl) = fnl else { break };
         let base = fnl + 1;
         if base + fsz > data.len() {

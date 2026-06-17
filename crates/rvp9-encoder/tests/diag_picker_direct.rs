@@ -14,8 +14,8 @@ use rvp9_core::mode_decision::inter::{
     InterModeSearchParams, MvCandidates, pick_inter_mode_luma, pick_inter_mode_luma_all_costs,
 };
 use rvp9_core::mv_search::PlaneRef;
-use rvp9_core::mv_search::mv_limits::MvLimits;
 use rvp9_core::mv_search::init_dsmotion_compensation;
+use rvp9_core::mv_search::mv_limits::MvLimits;
 use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
 
 #[test]
@@ -41,8 +41,18 @@ fn picker_finds_motion_on_shifted_block() {
         }
     }
 
-    let src = PlaneRef { data: &source, stride: W, width: W, height: H };
-    let refp = PlaneRef { data: &reference, stride: W, width: W, height: H };
+    let src = PlaneRef {
+        data: &source,
+        stride: W,
+        width: W,
+        height: H,
+    };
+    let refp = PlaneRef {
+        data: &reference,
+        stride: W,
+        width: W,
+        height: H,
+    };
 
     let fc = FrameContext::new_default();
     let inter_costs = inter_mode_costs(&fc);
@@ -105,12 +115,26 @@ fn picker_finds_motion_on_shifted_block() {
     let all = pick_inter_mode_luma_all_costs(&params);
     eprintln!("All candidates:");
     for (i, c) in all.iter().enumerate() {
-        eprintln!("  cand {i}: mode={:?} mv=({},{}) rd={} dist={} rate={}",
-            c.best_mode, c.best_mv.row, c.best_mv.col, c.best_rd_cost, c.best_distortion, c.best_rate);
+        eprintln!(
+            "  cand {i}: mode={:?} mv=({},{}) rd={} dist={} rate={}",
+            c.best_mode,
+            c.best_mv.row,
+            c.best_mv.col,
+            c.best_rd_cost,
+            c.best_distortion,
+            c.best_rate
+        );
     }
     let pick = pick_inter_mode_luma(&params);
-    eprintln!("Winner: mode={:?} mv=({},{}) rd={} dist={} rate={}",
-        pick.best_mode, pick.best_mv.row, pick.best_mv.col, pick.best_rd_cost, pick.best_distortion, pick.best_rate);
+    eprintln!(
+        "Winner: mode={:?} mv=({},{}) rd={} dist={} rate={}",
+        pick.best_mode,
+        pick.best_mv.row,
+        pick.best_mv.col,
+        pick.best_rd_cost,
+        pick.best_distortion,
+        pick.best_rate
+    );
 
     // We expect NEWMV with MV close to (16, 24) Q3 (== 2 row, 3 col).
 }

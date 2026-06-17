@@ -21,16 +21,12 @@
 //!   `vpx_fdct{4x4,8x8,16x16,32x32}_1`. See [`fdct_dc_scale`] for the
 //!   per-size scale derivation.
 
-use rvp9_core::quant::forward::{
-    PlaneQuantizers, vp9_quantize_fp, vp9_quantize_fp_32x32,
-};
+use rvp9_core::quant::forward::{PlaneQuantizers, vp9_quantize_fp, vp9_quantize_fp_32x32};
+use rvp9_core::transforms::TxSize;
 use rvp9_core::transforms::forward::{fdct4x4, fdct8x8, fdct16x16, fdct32x32};
 pub use rvp9_core::transforms::scans::ScanOrder;
-use rvp9_core::transforms::TxSize;
 
-use crate::rdo::cost_coeffs::{
-    BAND_COUNTS, EOB_TOKEN, VP9_PT_ENERGY_CLASS, vp9_get_token,
-};
+use crate::rdo::cost_coeffs::{BAND_COUNTS, EOB_TOKEN, VP9_PT_ENERGY_CLASS, vp9_get_token};
 use rvp9_core::cost::coef_cost::{CoefCostIndex, CoefCostTable, coef_token_cost};
 
 /// libvpx `vp9_xform_quant_fp` (`vp9/encoder/vp9_encodemb.c:349-418`).
@@ -66,8 +62,15 @@ pub fn vp9_xform_quant_fp(
             fdct4x4(src_diff, &mut c, diff_stride);
             coeff[..16].copy_from_slice(&c);
             vp9_quantize_fp(
-                &c, 16, false, &qp.round_fp, &qp.quant_fp, qcoeff, dqcoeff,
-                &qp.dequant, scan.scan,
+                &c,
+                16,
+                false,
+                &qp.round_fp,
+                &qp.quant_fp,
+                qcoeff,
+                dqcoeff,
+                &qp.dequant,
+                scan.scan,
             )
         }
         TxSize::Tx8x8 => {
@@ -75,8 +78,15 @@ pub fn vp9_xform_quant_fp(
             fdct8x8(src_diff, &mut c, diff_stride);
             coeff[..64].copy_from_slice(&c);
             vp9_quantize_fp(
-                &c, 64, false, &qp.round_fp, &qp.quant_fp, qcoeff, dqcoeff,
-                &qp.dequant, scan.scan,
+                &c,
+                64,
+                false,
+                &qp.round_fp,
+                &qp.quant_fp,
+                qcoeff,
+                dqcoeff,
+                &qp.dequant,
+                scan.scan,
             )
         }
         TxSize::Tx16x16 => {
@@ -89,8 +99,15 @@ pub fn vp9_xform_quant_fp(
             c.copy_from_slice(c_arr.as_ref());
             coeff[..256].copy_from_slice(&c);
             vp9_quantize_fp(
-                &c, 256, false, &qp.round_fp, &qp.quant_fp, qcoeff, dqcoeff,
-                &qp.dequant, scan.scan,
+                &c,
+                256,
+                false,
+                &qp.round_fp,
+                &qp.quant_fp,
+                qcoeff,
+                dqcoeff,
+                &qp.dequant,
+                scan.scan,
             )
         }
         TxSize::Tx32x32 => {
@@ -98,8 +115,14 @@ pub fn vp9_xform_quant_fp(
             fdct32x32(src_diff, c_arr.as_mut(), diff_stride);
             coeff[..1024].copy_from_slice(c_arr.as_ref());
             vp9_quantize_fp_32x32(
-                c_arr.as_ref(), false, &qp.round_fp, &qp.quant_fp,
-                qcoeff, dqcoeff, &qp.dequant, scan.scan,
+                c_arr.as_ref(),
+                false,
+                &qp.round_fp,
+                &qp.quant_fp,
+                qcoeff,
+                dqcoeff,
+                &qp.dequant,
+                scan.scan,
             )
         }
     }
@@ -284,7 +307,10 @@ pub fn vp9_optimize_b(
     // libvpx initial-EOB rate (line 128-129): cost of EOB at the
     // initial-context band/ctx slot.
     let initial_eob_rate = token_cost(
-        costs, tx_size, plane_type, ref_type,
+        costs,
+        tx_size,
+        plane_type,
+        ref_type,
         band_translate[0] as usize,
         ctx0,
         EOB_TOKEN,
@@ -308,8 +334,7 @@ pub fn vp9_optimize_b(
     let mut token_cache = vec![0u8; n];
     for i in 0..eob as usize {
         let rc = scan_arr[i] as usize;
-        token_cache[rc] =
-            VP9_PT_ENERGY_CLASS[vp9_get_token(i32::from(qcoeff[rc])) as usize];
+        token_cache[rc] = VP9_PT_ENERGY_CLASS[vp9_get_token(i32::from(qcoeff[rc])) as usize];
     }
 
     for i in 0..eob as usize {
@@ -385,12 +410,24 @@ pub fn vp9_optimize_b(
         let base_bits1 = extra_bits_cost(t1);
         let rate0 = base_bits0
             + token_cost(
-                costs, tx_size, plane_type, ref_type, band_cur, ctx_cur, t0,
+                costs,
+                tx_size,
+                plane_type,
+                ref_type,
+                band_cur,
+                ctx_cur,
+                t0,
                 token_tree_sel_cur,
             );
         let rate1 = base_bits1
             + token_cost(
-                costs, tx_size, plane_type, ref_type, band_cur, ctx_cur, t1,
+                costs,
+                tx_size,
+                plane_type,
+                ref_type,
+                band_cur,
+                ctx_cur,
+                t1,
                 token_tree_sel_cur,
             );
 
@@ -428,25 +465,22 @@ pub fn vp9_optimize_b(
             let ctx_next0 = get_coef_context(nb, &token_cache, i + 1);
             let sel_next0 = x == 0; // always false here, kept for fidelity
             next_bits0 = i64::from(token_cost(
-                costs, tx_size, plane_type, ref_type, band_next, ctx_next0,
-                token_next, sel_next0,
+                costs, tx_size, plane_type, ref_type, band_next, ctx_next0, token_next, sel_next0,
             ));
             next_eob_bits0 = i64::from(token_cost(
-                costs, tx_size, plane_type, ref_type, band_next, ctx_next0,
-                EOB_TOKEN, sel_next0,
+                costs, tx_size, plane_type, ref_type, band_next, ctx_next0, EOB_TOKEN, sel_next0,
             ));
             // Candidate 1 (reduce to x1): write t1's energy class.
             token_cache[rc] = VP9_PT_ENERGY_CLASS[t1 as usize];
             let ctx_next1 = get_coef_context(nb, &token_cache, i + 1);
             let sel_next1 = x1 == 0;
             next_bits1 = i64::from(token_cost(
-                costs, tx_size, plane_type, ref_type, band_next, ctx_next1,
-                token_next, sel_next1,
+                costs, tx_size, plane_type, ref_type, band_next, ctx_next1, token_next, sel_next1,
             ));
             if x1 != 0 {
                 next_eob_bits1 = i64::from(token_cost(
-                    costs, tx_size, plane_type, ref_type, band_next, ctx_next1,
-                    EOB_TOKEN, sel_next1,
+                    costs, tx_size, plane_type, ref_type, band_next, ctx_next1, EOB_TOKEN,
+                    sel_next1,
                 ));
             }
             // Restore `token_cache[rc]` to its pre-look-ahead value; the
@@ -596,8 +630,8 @@ pub fn optimize_b_inter(
     // libvpx's `mb->rddiv` is unused inside the trellis `RDCOST` (it
     // mirrors the macro which ignores rddiv); pass a placeholder.
     vp9_optimize_b(
-        coefs, qcoeff, dqcoeff, eob, tx_size, scan, dequant, rdmult,
-        /* rddiv = */ 0, costs, plane_type, ref_type, ctx0,
+        coefs, qcoeff, dqcoeff, eob, tx_size, scan, dequant, rdmult, /* rddiv = */ 0, costs,
+        plane_type, ref_type, ctx0,
     )
 }
 
@@ -713,7 +747,7 @@ mod tests {
     use super::*;
     use rvp9_core::cost::coef_cost::build_coef_cost_table;
     use rvp9_core::entropy::FrameContext;
-    use rvp9_core::quant::forward::{init_plane_quantizers, QuantizerDeltas};
+    use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
     use rvp9_core::transforms::scans::{default_scan_4x4, default_scan_8x8};
 
     /// PROOF W4.4 — `vp9_xform_quant_fp` with all-zero residual
@@ -766,13 +800,25 @@ mod tests {
         let mut dqcoeff = vec![0i16; 64];
 
         let pre_eob = vp9_xform_quant_fp(
-            &src_diff, 8, TxSize::Tx8x8, &qp, &scan,
-            &mut coeff, &mut qcoeff, &mut dqcoeff,
+            &src_diff,
+            8,
+            TxSize::Tx8x8,
+            &qp,
+            &scan,
+            &mut coeff,
+            &mut qcoeff,
+            &mut dqcoeff,
         );
-        assert!(pre_eob > 0, "synthetic residual must produce non-zero qcoeffs");
+        assert!(
+            pre_eob > 0,
+            "synthetic residual must produce non-zero qcoeffs"
+        );
 
         // Snapshot the absolute magnitudes pre-trellis.
-        let pre_abs: Vec<u16> = qcoeff.iter().map(|&v| (v as i32).unsigned_abs() as u16).collect();
+        let pre_abs: Vec<u16> = qcoeff
+            .iter()
+            .map(|&v| (v as i32).unsigned_abs() as u16)
+            .collect();
 
         let final_eob = vp9_optimize_b(
             &coeff,
@@ -830,10 +876,19 @@ mod tests {
         let mut dqcoeff = vec![0i16; 64];
 
         let eob = vp9_xform_quant_fp(
-            &src_diff, 8, TxSize::Tx8x8, &qp, &scan,
-            &mut coeff, &mut qcoeff, &mut dqcoeff,
+            &src_diff,
+            8,
+            TxSize::Tx8x8,
+            &qp,
+            &scan,
+            &mut coeff,
+            &mut qcoeff,
+            &mut dqcoeff,
         );
-        assert!(eob >= 1, "flat non-zero residual must produce non-zero qcoeff");
+        assert!(
+            eob >= 1,
+            "flat non-zero residual must produce non-zero qcoeff"
+        );
 
         // The qcoeff/dqcoeff invariant: dqcoeff = qcoeff * dequant.
         for raster in 0..64 {
@@ -859,8 +914,13 @@ mod tests {
         let mut dqcoeff = vec![0i16; 64];
 
         let eob = vp9_xform_quant_dc(
-            &src_diff, 8, TxSize::Tx8x8, &qp,
-            &mut coeff, &mut qcoeff, &mut dqcoeff,
+            &src_diff,
+            8,
+            TxSize::Tx8x8,
+            &qp,
+            &mut coeff,
+            &mut qcoeff,
+            &mut dqcoeff,
         );
         assert_eq!(eob, 0, "zero residual → eob = 0");
         assert!(qcoeff.iter().all(|&v| v == 0));

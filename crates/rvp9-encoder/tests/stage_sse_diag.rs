@@ -38,9 +38,9 @@
 
 use rvp9_decoder::{Decoder, ParsedFrame};
 use rvp9_encoder::{
-    predstat, AqMode, EncoderConfig, RcMode, StreamEncoder, StreamFrameKind, YuvFrameRef,
+    AqMode, EncoderConfig, RcMode, StreamEncoder, StreamFrameKind, YuvFrameRef, predstat,
 };
-use rvp9_harness::y4m::{read_cropped, YuvFrameBuf};
+use rvp9_harness::y4m::{YuvFrameBuf, read_cropped};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -175,9 +175,7 @@ fn measure_rvp9(fixed_q: u8, frames: &[YuvFrameBuf], framerate: f64) -> Rvp9Stag
     let mut total_bytes = 0u64;
 
     for f in frames.iter() {
-        let pkt = enc
-            .encode_frame(&yuv_view(f, w))
-            .expect("encode_frame");
+        let pkt = enc.encode_frame(&yuv_view(f, w)).expect("encode_frame");
         total_bytes += pkt.data.len() as u64;
 
         // Decode the emitted bitstream so post-recon-SSE is the true
@@ -241,11 +239,7 @@ fn measure_rvp9(fixed_q: u8, frames: &[YuvFrameBuf], framerate: f64) -> Rvp9Stag
 
 fn libvpx_available() -> Option<PathBuf> {
     let p = PathBuf::from(r"D:\language\libvpx-stock\vpxenc.exe");
-    if p.is_file() {
-        Some(p)
-    } else {
-        None
-    }
+    if p.is_file() { Some(p) } else { None }
 }
 
 fn write_i420_raw(path: &Path, frames: &[YuvFrameBuf]) -> std::io::Result<()> {
@@ -380,7 +374,11 @@ fn stage_sse_diag_foreman() {
     let (frames, framerate) = match read_cropped(&path, W, H, N_FRAMES) {
         Ok((f, fr)) if f.len() == N_FRAMES => (f, fr),
         Ok((f, _)) => {
-            eprintln!("    [skip] corpus only yielded {}/{} frames", f.len(), N_FRAMES);
+            eprintln!(
+                "    [skip] corpus only yielded {}/{} frames",
+                f.len(),
+                N_FRAMES
+            );
             return;
         }
         Err(e) => {
@@ -395,7 +393,9 @@ fn stage_sse_diag_foreman() {
 
     eprintln!("STAGE-SSE DIAG — per-stage SSE oracle (foreman 320x256, {N_FRAMES} frames)");
     eprintln!("source: {} @ {framerate} fps", path.display());
-    eprintln!("Stages: 1=pred (source vs prediction)  2=post-quant (vs pre-LF recon)  3=post-recon (vs decode)");
+    eprintln!(
+        "Stages: 1=pred (source vs prediction)  2=post-quant (vs pre-LF recon)  3=post-recon (vs decode)"
+    );
     eprintln!("================================================================================");
 
     let vpxenc = libvpx_available();
@@ -445,8 +445,7 @@ fn stage_sse_diag_foreman() {
         // stage ADD relative to the previous? post-quant - pred is the
         // residual recovery (negative = residual HELPS); post-recon -
         // post-quant is the loop-filter delta.
-        let rvp9_all_pr_psnr =
-            psnr_from_sse(r.all_recon_sse, frames.len() as u64 * y_pixels);
+        let rvp9_all_pr_psnr = psnr_from_sse(r.all_recon_sse, frames.len() as u64 * y_pixels);
         eprintln!(
             "  --- ALL-frame post-recon PSNR = {rvp9_all_pr_psnr:.2} dB  |  total bytes = {}",
             r.total_bytes
@@ -472,7 +471,9 @@ fn stage_sse_diag_foreman() {
                 );
             }
         } else {
-            eprintln!("  === [vpxenc not found at D:\\language\\libvpx-stock — skipping comparison]");
+            eprintln!(
+                "  === [vpxenc not found at D:\\language\\libvpx-stock — skipping comparison]"
+            );
         }
     }
 
@@ -484,8 +485,16 @@ fn stage_sse_diag_foreman() {
 
     eprintln!();
     eprintln!("LOCALIZATION READING GUIDE:");
-    eprintln!("  * pred-PSNR low + post-quant-PSNR >> pred-PSNR -> residual coding works; gap is NOT pred-bound.");
-    eprintln!("  * post-quant-PSNR << theoretical-for-qstep -> quantization too aggressive (zbin/round/dead-zone).");
-    eprintln!("  * post-recon-PSNR << post-quant-PSNR more than libvpx LF -> loop-filter strength.");
-    eprintln!("  * vpxenc post-recon-PSNR >> rvp9 at same Q with FEWER bytes -> rvp9 dominated on rate-distortion.");
+    eprintln!(
+        "  * pred-PSNR low + post-quant-PSNR >> pred-PSNR -> residual coding works; gap is NOT pred-bound."
+    );
+    eprintln!(
+        "  * post-quant-PSNR << theoretical-for-qstep -> quantization too aggressive (zbin/round/dead-zone)."
+    );
+    eprintln!(
+        "  * post-recon-PSNR << post-quant-PSNR more than libvpx LF -> loop-filter strength."
+    );
+    eprintln!(
+        "  * vpxenc post-recon-PSNR >> rvp9 at same Q with FEWER bytes -> rvp9 dominated on rate-distortion."
+    );
 }

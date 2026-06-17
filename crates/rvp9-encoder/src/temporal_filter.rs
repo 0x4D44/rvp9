@@ -235,10 +235,7 @@ impl<'a> ArnrFilterData<'a> {
             frames.len() <= MAX_LAG_BUFFERS,
             "ArnrFilterData frame_count exceeds MAX_LAG_BUFFERS"
         );
-        assert!(
-            alt_ref_index < frames.len(),
-            "alt_ref_index out of bounds"
-        );
+        assert!(alt_ref_index < frames.len(), "alt_ref_index out of bounds");
         assert!(strength <= 6, "strength must be in [0, 6]");
         let frame_count = frames.len();
         Self {
@@ -592,8 +589,8 @@ pub fn temporal_filter_predictors_mb(
         for j in (0..uv_block_width).step_by(uv_xs) {
             let mv = blk_mvs[k];
             let dst_off = i * uv_block_width + j;
-            let u_dst = &mut pred[BLK_PELS + dst_off
-                ..BLK_PELS + dst_off + (uv_ys - 1) * uv_block_width + uv_xs];
+            let u_dst = &mut pred
+                [BLK_PELS + dst_off..BLK_PELS + dst_off + (uv_ys - 1) * uv_block_width + uv_xs];
             build_inter_predictor(
                 u_frame,
                 uv_stride,
@@ -913,8 +910,8 @@ pub fn apply_temporal_filter(
     // libvpx `vp9_temporal_filter.c:288-294` — Y diff².
     for i in 0..block_height {
         for j in 0..block_width {
-            let diff = i32::from(y_frame1[i * y_stride + j])
-                - i32::from(y_pred[i * y_buf_stride + j]);
+            let diff =
+                i32::from(y_frame1[i * y_stride + j]) - i32::from(y_pred[i * y_buf_stride + j]);
             // libvpx stores `diff * diff` in u16; max value is
             // 255² = 65025, fits.
             y_diff_sse[i * block_width + j] = (diff * diff) as u16;
@@ -942,9 +939,8 @@ pub fn apply_temporal_filter(
     for i in 0..block_height {
         for j in 0..block_width {
             let pixel_value = i32::from(y_pred[i * y_buf_stride + j]);
-            let filter_weight = get_filter_weight(
-                i, j, block_height, block_width, blk_fw, use_32x32,
-            );
+            let filter_weight =
+                get_filter_weight(i, j, block_height, block_width, blk_fw, use_32x32);
 
             // libvpx `vp9_temporal_filter.c:315-339` — Y 3×3 NLM
             // window + chroma cross-term.
@@ -956,10 +952,7 @@ pub fn apply_temporal_filter(
                 for idx in -1i32..=1 {
                     let row = i as i32 + idy;
                     let col = j as i32 + idx;
-                    if row >= 0
-                        && row < block_height as i32
-                        && col >= 0
-                        && col < block_width as i32
+                    if row >= 0 && row < block_height as i32 && col >= 0 && col < block_width as i32
                     {
                         modifier +=
                             i32::from(y_diff_sse[row as usize * block_width + col as usize]);
@@ -998,12 +991,10 @@ pub fn apply_temporal_filter(
                             && col >= 0
                             && col < uv_block_width as i32
                         {
-                            u_mod += i32::from(
-                                u_diff_sse[row as usize * uv_block_width + col as usize],
-                            );
-                            v_mod += i32::from(
-                                v_diff_sse[row as usize * uv_block_width + col as usize],
-                            );
+                            u_mod +=
+                                i32::from(u_diff_sse[row as usize * uv_block_width + col as usize]);
+                            v_mod +=
+                                i32::from(v_diff_sse[row as usize * uv_block_width + col as usize]);
                             cr_index += 1;
                         }
                     }
@@ -1017,9 +1008,8 @@ pub fn apply_temporal_filter(
                     for idx in 0..=ss_x as i32 {
                         let row = (uv_r << ss_y) as i32 + idy;
                         let col = (uv_c << ss_x) as i32 + idx;
-                        y_diff_local += i32::from(
-                            y_diff_sse[row as usize * block_width + col as usize],
-                        );
+                        y_diff_local +=
+                            i32::from(y_diff_sse[row as usize * block_width + col as usize]);
                         cr_index += 1;
                     }
                 }
@@ -1104,8 +1094,20 @@ fn find_matching_mb(
     // to cover the typical libvpx MESH range. libvpx uses MESH
     // (which can reach quite far); rvp9 truncates by design.
     let (best_dy, best_dx) = diamond_search_int(
-        arf_y, arf_off, cand_y, cand_off, stride, frame_width, frame_height, block_x,
-        block_y, BW, BH, 0, 0, &[4, 2, 1],
+        arf_y,
+        arf_off,
+        cand_y,
+        cand_off,
+        stride,
+        frame_width,
+        frame_height,
+        block_x,
+        block_y,
+        BW,
+        BH,
+        0,
+        0,
+        &[4, 2, 1],
     );
     let best_mv = Mv {
         row: (best_dy * 8) as i16,
@@ -1382,8 +1384,7 @@ pub fn temporal_filter_iterate_row(
 
                 // libvpx `vp9_temporal_filter.c:792-799` — distance
                 // attenuation.
-                let dist =
-                    (frame_index as i32 - alt_ref_index as i32).unsigned_abs() as usize;
+                let dist = (frame_index as i32 - alt_ref_index as i32).unsigned_abs() as usize;
                 for k in 0..NUM_SUB_BLOCKS {
                     match dist {
                         1 => blk_fw[k] = blk_fw[k].min(2),
@@ -1602,22 +1603,31 @@ mod tests {
         let (y1, u1, v1) = make(60);
         let (y2, u2, v2) = make(70);
         let f0 = ArnrFrameRef {
-            y: &y0, u: &u0, v: &v0,
+            y: &y0,
+            u: &u0,
+            v: &v0,
             y_stride: w as usize,
             uv_stride: (w / 2) as usize,
-            width: w, height: h,
+            width: w,
+            height: h,
         };
         let f1 = ArnrFrameRef {
-            y: &y1, u: &u1, v: &v1,
+            y: &y1,
+            u: &u1,
+            v: &v1,
             y_stride: w as usize,
             uv_stride: (w / 2) as usize,
-            width: w, height: h,
+            width: w,
+            height: h,
         };
         let f2 = ArnrFrameRef {
-            y: &y2, u: &u2, v: &v2,
+            y: &y2,
+            u: &u2,
+            v: &v2,
             y_stride: w as usize,
             uv_stride: (w / 2) as usize,
-            width: w, height: h,
+            width: w,
+            height: h,
         };
         let data = ArnrFilterData::new(vec![f0, f1, f2], 1, 3);
         assert_eq!(data.frame_count, 3);
@@ -1638,13 +1648,9 @@ mod tests {
         // be clipped to 6 by our defensive clamp (matches libvpx's
         // pass-2 clamp at line 1045).
         let p = adjust_arnr_filter(
-            /*arnr_max_frames=*/ 7,
-            /*arnr_strength=*/ 10,
-            /*distance=*/ 4,
-            /*frames_after_arf=*/ 10,
-            /*group_boost=*/ 10_000,
-            /*inter_qindex=*/ 100,
-            /*key_qindex=*/ 100,
+            /*arnr_max_frames=*/ 7, /*arnr_strength=*/ 10, /*distance=*/ 4,
+            /*frames_after_arf=*/ 10, /*group_boost=*/ 10_000,
+            /*inter_qindex=*/ 100, /*key_qindex=*/ 100,
             /*current_video_frame_gt_1=*/ true,
             /*arf_src_offset_lt_baseline_minus1=*/ false,
         );
@@ -1688,9 +1694,17 @@ mod tests {
         let v = vec![64u8; (w / 2) * (h / 2)];
         let mut pred = [0u8; BLK_PELS * 3];
         temporal_filter_predictors_mb(
-            &y, &u, &v, w, w / 2, w, h,
-            /*block_x=*/ 16, /*block_y=*/ 16,
-            /*mv_row_q3=*/ 0, /*mv_col_q3=*/ 0,
+            &y,
+            &u,
+            &v,
+            w,
+            w / 2,
+            w,
+            h,
+            /*block_x=*/ 16,
+            /*block_y=*/ 16,
+            /*mv_row_q3=*/ 0,
+            /*mv_col_q3=*/ 0,
             &[Mv::default(); NUM_SUB_BLOCKS],
             /*use_32x32=*/ true,
             &mut pred,
@@ -1754,18 +1768,29 @@ mod tests {
         let mut v_cnt = vec![0u16; (bw / 2) * (bh / 2)];
 
         apply_temporal_filter(
-            &y_src, bw,
-            &y_pred, bw,
-            &u_src, &v_src, bw / 2,
-            &u_pred, &v_pred, bw / 2,
-            bw, bh,
-            1, 1,
+            &y_src,
+            bw,
+            &y_pred,
+            bw,
+            &u_src,
+            &v_src,
+            bw / 2,
+            &u_pred,
+            &v_pred,
+            bw / 2,
+            bw,
+            bh,
+            1,
+            1,
             /*strength=*/ 0,
             &[2, 2, 2, 2],
             /*use_32x32=*/ true,
-            &mut y_acc, &mut y_cnt,
-            &mut u_acc, &mut u_cnt,
-            &mut v_acc, &mut v_cnt,
+            &mut y_acc,
+            &mut y_cnt,
+            &mut u_acc,
+            &mut u_cnt,
+            &mut v_acc,
+            &mut v_cnt,
         );
 
         // strength=0 + large diff: modifier = 0, so accumulator
@@ -1808,10 +1833,13 @@ mod tests {
         let v = vec![150u8; (w / 2 * h / 2) as usize];
 
         let f = ArnrFrameRef {
-            y: &y, u: &u, v: &v,
+            y: &y,
+            u: &u,
+            v: &v,
             y_stride: w as usize,
             uv_stride: (w / 2) as usize,
-            width: w, height: h,
+            width: w,
+            height: h,
         };
         let frames = vec![f, f, f];
         let data = ArnrFilterData::new(frames, 1, 3);

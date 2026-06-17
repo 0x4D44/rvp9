@@ -181,11 +181,7 @@ pub(super) fn get_rate_correction_factor(rc: &RateControl, frame_kind: FrameKind
 /// rcf_mult[selector]` libvpx line is dropped — see
 /// [`get_rate_correction_factor`].
 #[inline]
-pub(super) fn set_rate_correction_factor(
-    rc: &mut RateControl,
-    frame_kind: FrameKind,
-    factor: f64,
-) {
+pub(super) fn set_rate_correction_factor(rc: &mut RateControl, frame_kind: FrameKind, factor: f64) {
     let clamped = factor.clamp(MIN_BPB_FACTOR, MAX_BPB_FACTOR);
     let level = RateFactorLevel::for_frame(frame_kind);
     rc.rate_correction_factors[level.as_index()] = clamped;
@@ -247,8 +243,12 @@ pub(super) fn regulate_q(
     let mut last_error = i64::MAX;
     let mut i = active_best;
     while i <= active_worst {
-        let bpm_at_i =
-            i64::from(bits_per_mb_scaled(frame_kind, i, correction_factor, multiplier));
+        let bpm_at_i = i64::from(bits_per_mb_scaled(
+            frame_kind,
+            i,
+            correction_factor,
+            multiplier,
+        ));
         if bpm_at_i <= target_bpm {
             // libvpx tie-break: prefer the Q with the smaller residual.
             let q = if target_bpm - bpm_at_i <= last_error {
@@ -687,8 +687,7 @@ pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> 
             // seeded at `worst_quality`. `total_actual_bits == 0 &&
             // frames_since_key == 0` is rvp9's first-frame predicate
             // (matches `calc_iframe_target_size` above).
-            let is_first_frame =
-                rc.total_actual_bits == 0 && rc.frames_since_key == 0;
+            let is_first_frame = rc.total_actual_bits == 0 && rc.frames_since_key == 0;
             let best = if is_first_frame {
                 // libvpx `vp9_ratectrl.c:1014` — `active_best_quality =
                 // rc->best_quality` (near-lossless, q≈4). libvpx can
@@ -1422,7 +1421,10 @@ mod tests {
         // Crush max_frame_bandwidth so the clamp engages.
         rc.max_frame_bandwidth = 1000;
         let target = calc_iframe_target_size(&rc);
-        assert_eq!(target, 1000, "iframe target must clamp to max_frame_bandwidth");
+        assert_eq!(
+            target, 1000,
+            "iframe target must clamp to max_frame_bandwidth"
+        );
     }
 
     #[test]
@@ -1474,9 +1476,8 @@ mod tests {
         let high = 5000;
         let low = 400;
         let boost = high + 1;
-        let blended = get_active_quality(
-            q, boost, low, high, kf_low_motion_minq, kf_high_motion_minq,
-        );
+        let blended =
+            get_active_quality(q, boost, low, high, kf_low_motion_minq, kf_high_motion_minq);
         // Should call low_motion_minq(q) directly.
         assert_eq!(blended, kf_low_motion_minq(q));
     }
@@ -1489,12 +1490,21 @@ mod tests {
         let high = 5000;
         let mid_boost = (low + high) / 2;
         let blended = get_active_quality(
-            q, mid_boost, low, high, kf_low_motion_minq, kf_high_motion_minq,
+            q,
+            mid_boost,
+            low,
+            high,
+            kf_low_motion_minq,
+            kf_high_motion_minq,
         );
         let lo_q = kf_low_motion_minq(q);
         let hi_q = kf_high_motion_minq(q);
         // Blend must be between the two endpoint values.
-        let (a, b) = if lo_q < hi_q { (lo_q, hi_q) } else { (hi_q, lo_q) };
+        let (a, b) = if lo_q < hi_q {
+            (lo_q, hi_q)
+        } else {
+            (hi_q, lo_q)
+        };
         assert!(
             (a..=b).contains(&blended),
             "blend {blended} should be between lo={lo_q} and hi={hi_q}",
@@ -1703,9 +1713,18 @@ mod tests {
             // 100k: C1 caps (KFCAP never reached — it's inside the
             // affordable branch). 250k / 2000k: affordable branch, but
             // KFCAP disabled ⇒ near-lossless q≈4.
-            assert!(first_kf_q(100_000, 256, 256, 64) >= 50, "100k still C1-capped");
-            assert!(first_kf_q(250_000, 256, 256, 33) < 10, "250k OFF near-lossless");
-            assert!(first_kf_q(2_000_000, 320, 256, 60) < 30, "2000k OFF near-lossless");
+            assert!(
+                first_kf_q(100_000, 256, 256, 64) >= 50,
+                "100k still C1-capped"
+            );
+            assert!(
+                first_kf_q(250_000, 256, 256, 33) < 10,
+                "250k OFF near-lossless"
+            );
+            assert!(
+                first_kf_q(2_000_000, 320, 256, 60) < 30,
+                "2000k OFF near-lossless"
+            );
         });
     }
 

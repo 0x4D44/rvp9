@@ -63,8 +63,7 @@ mod tests {
         let Some(p) = probe_testsrc_720p() else {
             return;
         };
-        let (frames, framerate) =
-            read_cropped(&p, 512, 512, 8).expect("read 8 frames at 512x512");
+        let (frames, framerate) = read_cropped(&p, 512, 512, 8).expect("read 8 frames at 512x512");
         assert_eq!(frames.len(), 8);
         assert!(framerate > 0.0);
         // Y plane is 512*512 = 262144 bytes per frame.

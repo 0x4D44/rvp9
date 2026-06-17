@@ -184,14 +184,9 @@ pub fn get_var_sse_8x8(
 macro_rules! var_sum_sse_fn {
     ($name:ident, $w:expr, $h:expr) => {
         #[doc = concat!("Scalar (sum, sse) reduction for a ", stringify!($w), "×",
-                               stringify!($h), " block. Non-AVX2 arm of the ",
-                               "variance dispatch slot.")]
-        pub fn $name(
-            src: &[u8],
-            src_stride: usize,
-            pred: &[u8],
-            pred_stride: usize,
-        ) -> (i64, u64) {
+                                               stringify!($h), " block. Non-AVX2 arm of the ",
+                                               "variance dispatch slot.")]
+        pub fn $name(src: &[u8], src_stride: usize, pred: &[u8], pred_stride: usize) -> (i64, u64) {
             var_sum_sse(src, src_stride, pred, pred_stride, $w, $h)
         }
     };
@@ -381,8 +376,8 @@ pub fn vpx_get4x4sse_cs(src: &[u8], src_stride: usize, reference: &[u8], ref_str
 macro_rules! variance_fn {
     ($name:ident, $w:expr, $h:expr) => {
         #[doc = concat!("Variance for a ", stringify!($w), "×", stringify!($h),
-                               " block. Mirrors `vpx_variance", stringify!($w), "x",
-                               stringify!($h), "_c` in libvpx.")]
+                                               " block. Mirrors `vpx_variance", stringify!($w), "x",
+                                               stringify!($h), "_c` in libvpx.")]
         pub fn $name(
             src: &[u8],
             src_stride: usize,
@@ -411,8 +406,8 @@ variance_fn!(vpx_variance64x64, 64, 64);
 macro_rules! sad_fn {
     ($name:ident, $w:expr, $h:expr) => {
         #[doc = concat!("SAD for a ", stringify!($w), "×", stringify!($h),
-                               " block. Mirrors `vpx_sad", stringify!($w), "x",
-                               stringify!($h), "_c` in libvpx.")]
+                                               " block. Mirrors `vpx_sad", stringify!($w), "x",
+                                               stringify!($h), "_c` in libvpx.")]
         pub fn $name(src: &[u8], src_stride: usize, reference: &[u8], ref_stride: usize) -> u32 {
             sad(src, src_stride, reference, ref_stride, $w, $h)
         }
@@ -454,9 +449,9 @@ pub fn sad4d(
 macro_rules! sad4d_fn {
     ($name:ident, $w:expr, $h:expr) => {
         #[doc = concat!("4-reference SAD for a ", stringify!($w), "×",
-                               stringify!($h), " block. Mirrors `vpx_sad",
-                               stringify!($w), "x", stringify!($h),
-                               "x4d_c` in libvpx (four independent `sad` calls).")]
+                                               stringify!($h), " block. Mirrors `vpx_sad",
+                                               stringify!($w), "x", stringify!($h),
+                                               "x4d_c` in libvpx (four independent `sad` calls).")]
         pub fn $name(
             src: &[u8],
             src_stride: usize,
@@ -486,9 +481,9 @@ sad4d_fn!(vpx_sad64x64x4d, 64, 64);
 macro_rules! sub_pixel_variance_fn {
     ($name:ident, $w:expr, $h:expr) => {
         #[doc = concat!("Sub-pixel variance for a ", stringify!($w), "×",
-                               stringify!($h),
-                               " block. Mirrors `vpx_sub_pixel_variance",
-                               stringify!($w), "x", stringify!($h), "_c` in libvpx.")]
+                                       stringify!($h),
+                                       " block. Mirrors `vpx_sub_pixel_variance",
+                                       stringify!($w), "x", stringify!($h), "_c` in libvpx.")]
         pub fn $name(
             src: &[u8],
             src_stride: usize,

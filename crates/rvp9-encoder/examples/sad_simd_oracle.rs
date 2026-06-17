@@ -47,13 +47,20 @@ fn yuv_view<'a>(y: &'a [u8], u: &'a [u8], v: &'a [u8], w: usize) -> YuvFrameRef<
 
 fn main() {
     let forced_scalar = std::env::var_os("RVP9_FORCE_SCALAR").is_some_and(|v| v == "1");
-    let leg = if forced_scalar { "FORCED-SCALAR" } else { "AUTO (AVX2 if present)" };
+    let leg = if forced_scalar {
+        "FORCED-SCALAR"
+    } else {
+        "AUTO (AVX2 if present)"
+    };
 
     // Optional second-clip override (PR3 byte-identity gate runs a second
     // clip too): `RVP9_ORACLE_CLIP` + `RVP9_ORACLE_W/H/FRAMES`. Defaults are
     // the foreman 320×256 §8.2/§8.3 operating point.
     let env_u32 = |k: &str, d: u32| {
-        std::env::var(k).ok().and_then(|s| s.parse().ok()).unwrap_or(d)
+        std::env::var(k)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(d)
     };
     let w = env_u32("RVP9_ORACLE_W", W);
     let h = env_u32("RVP9_ORACLE_H", H);
@@ -75,8 +82,7 @@ fn main() {
     };
 
     // Request up to `n_frames`; readers clamp to the clip length.
-    let (frames, framerate) =
-        read_cropped(&path, w, h, n_frames).expect("read frames");
+    let (frames, framerate) = read_cropped(&path, w, h, n_frames).expect("read frames");
     assert!(!frames.is_empty(), "no frames read");
     let n = frames.len();
 

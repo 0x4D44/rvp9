@@ -15,9 +15,7 @@
 
 use std::io::{self, BufRead};
 
-pub use rvp9_encoder::f02_oracle::{
-    BlockDecision, BlockDecisionMode, bsize_tag, ref_frame_tag,
-};
+pub use rvp9_encoder::f02_oracle::{BlockDecision, BlockDecisionMode, bsize_tag, ref_frame_tag};
 
 use rvp9_core::block::BlockSize;
 use rvp9_core::intra_pred::IntraMode;
@@ -113,7 +111,9 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
     }
 
     let ref_frame_resolved = ref_frame_from_tag(
-        ref_tag.as_deref().ok_or(ParseError::MissingField("ref_frame"))?,
+        ref_tag
+            .as_deref()
+            .ok_or(ParseError::MissingField("ref_frame"))?,
     )
     .ok_or_else(|| ParseError::BadValue {
         field: "ref_frame",
@@ -215,7 +215,9 @@ fn split_top_level_commas(inner: &str) -> Result<Vec<&str>, ParseError> {
 
 fn split_kv(kv: &str) -> Result<(&str, &str), ParseError> {
     let kv = kv.trim();
-    let colon = kv.find(':').ok_or(ParseError::Malformed("missing ':' in kv pair"))?;
+    let colon = kv
+        .find(':')
+        .ok_or(ParseError::Malformed("missing ':' in kv pair"))?;
     let (k_raw, v_raw) = kv.split_at(colon);
     let v_raw = &v_raw[1..]; // skip the ':'
     let k = k_raw

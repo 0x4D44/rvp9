@@ -529,9 +529,15 @@ mod tests {
     fn ms_to_bits_for_default_config() {
         let cfg = RateControlConfig::default();
         // 6000 ms at 1 Mbps == 6,000,000 bits.
-        assert_eq!(ms_to_bits(cfg.buffer_size_ms, cfg.target_bitrate_bps), 6_000_000);
+        assert_eq!(
+            ms_to_bits(cfg.buffer_size_ms, cfg.target_bitrate_bps),
+            6_000_000
+        );
         // 5000 ms at 1 Mbps == 5,000,000 bits.
-        assert_eq!(ms_to_bits(cfg.optimal_buffer_ms, cfg.target_bitrate_bps), 5_000_000);
+        assert_eq!(
+            ms_to_bits(cfg.optimal_buffer_ms, cfg.target_bitrate_bps),
+            5_000_000
+        );
     }
 
     #[test]
@@ -706,7 +712,10 @@ mod tests {
         assert_eq!(lo_i, 100);
         assert_eq!(hi_i, 100);
         let (q_kf, lo_k, hi_k) = rc.pick_q_and_bounds(FrameKind::Key);
-        assert_eq!(q_kf, 92, "Q PROOF: KF q must be cq_level - 8 (libvpx KF qdelta)");
+        assert_eq!(
+            q_kf, 92,
+            "Q PROOF: KF q must be cq_level - 8 (libvpx KF qdelta)"
+        );
         assert_eq!(lo_k, 92);
         assert_eq!(hi_k, 92);
     }

@@ -119,14 +119,19 @@ fn run_diagnostic(
     eprintln!("=== {label} ===");
     eprintln!(
         "[A11 ref-divergence] {}x{} {} frames target {} bps",
-        w, h, frames.len(), target_bitrate_bps
+        w,
+        h,
+        frames.len(),
+        target_bitrate_bps
     );
     eprintln!(
         "  frame   kind  q   bytes    SSE(Y)      SSE(U)     SSE(V)   max|dY|  max|dU|  max|dV|"
     );
 
     for (idx, (y, u, v)) in frames.iter().enumerate() {
-        let pkt = enc.encode_frame(&yuv_view(y, u, v, w_us)).expect("encode_frame");
+        let pkt = enc
+            .encode_frame(&yuv_view(y, u, v, w_us))
+            .expect("encode_frame");
         let parsed = decode_packet(&mut dec, &pkt.data);
         assert_eq!(parsed.len(), 1);
         let dec_buf = dec.decode_frame(&parsed[0]).expect("decode_frame");
@@ -182,10 +187,17 @@ fn diag_ref_divergence_foreman() {
         eprintln!("[SKIPPED] foreman_cif not available.");
         return;
     };
-    let (frames, framerate) = y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize)
-        .expect("y4m_read_cropped foreman");
+    let (frames, framerate) =
+        y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize).expect("y4m_read_cropped foreman");
 
-    run_diagnostic("foreman_cif 256x256 @ 100 kbps", &frames, W, H, framerate, TARGET_BITRATE_BPS);
+    run_diagnostic(
+        "foreman_cif 256x256 @ 100 kbps",
+        &frames,
+        W,
+        H,
+        framerate,
+        TARGET_BITRATE_BPS,
+    );
 }
 
 /// A11 — Run the diagnostic on testsrc 256×256 centre-crop at 1 Mbps,
@@ -203,8 +215,15 @@ fn diag_ref_divergence_testsrc() {
         eprintln!("[SKIPPED] testsrc not available.");
         return;
     };
-    let (frames, framerate) = y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize)
-        .expect("y4m_read_cropped testsrc");
+    let (frames, framerate) =
+        y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize).expect("y4m_read_cropped testsrc");
 
-    run_diagnostic("testsrc 256x256 @ 1 Mbps", &frames, W, H, framerate, TARGET_BITRATE_BPS);
+    run_diagnostic(
+        "testsrc 256x256 @ 1 Mbps",
+        &frames,
+        W,
+        H,
+        framerate,
+        TARGET_BITRATE_BPS,
+    );
 }

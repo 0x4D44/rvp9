@@ -83,11 +83,11 @@ use rvp9_core::frame::{
 };
 use rvp9_core::inter::mode_info::{InterModeReadParams, setup_compound_reference_mode};
 use rvp9_core::inter::mv_ref::sign_bias_from_header;
+use rvp9_core::loopfilter::apply::loop_filter_frame_with_non420;
 use rvp9_core::loopfilter::{
     LoopFilterInfo, LoopFilterMask, ResolvedLfDeltas, SegmentationLfView, adjust_mask,
     resolve_filter_levels, setup_mask,
 };
-use rvp9_core::loopfilter::apply::loop_filter_frame_with_non420;
 use rvp9_core::mode_info::ModeInfo;
 
 use crate::tile::{
@@ -1641,8 +1641,7 @@ impl Decoder {
         // duplication slots) keep the padding default. After tile decode
         // every cell is `Some`, so the LF materialisation collapses to a
         // trivial `cell.expect(...)` (no None placeholder hunt).
-        let mut frame_mi_grid: Vec<Option<ModeInfo>> =
-            std::mem::take(&mut self.scratch_mi_grid);
+        let mut frame_mi_grid: Vec<Option<ModeInfo>> = std::mem::take(&mut self.scratch_mi_grid);
         // Persist the grid across frames when dims are unchanged. VP9
         // partitions tile the whole frame, so every in-grid cell is
         // overwritten (`Some(real)`) by `write_block` during decode before
@@ -1702,7 +1701,11 @@ impl Decoder {
         // `None` for the inline path (no consumer, no signal).
         let sb_rows_pf = mi_rows.div_ceil(SB_MI_SIZE);
         let decode_progress: Option<Vec<std::sync::atomic::AtomicU32>> = if parallel {
-            Some((0..sb_rows_pf).map(|_| std::sync::atomic::AtomicU32::new(0)).collect())
+            Some(
+                (0..sb_rows_pf)
+                    .map(|_| std::sync::atomic::AtomicU32::new(0))
+                    .collect(),
+            )
         } else {
             None
         };
@@ -1862,8 +1865,9 @@ impl Decoder {
             // the owning Vec — matches how other 'frame borrows are passed.
             // `decode_progress` is Some here (we set it above under the
             // same `if parallel` gate); unwrap is safe.
-            let decode_progress_ref: &[std::sync::atomic::AtomicU32] =
-                decode_progress.as_ref().expect("decode_progress allocated on parallel path");
+            let decode_progress_ref: &[std::sync::atomic::AtomicU32] = decode_progress
+                .as_ref()
+                .expect("decode_progress allocated on parallel path");
 
             // ----------------------------------------------------------
             // Phase 1 separate-LF-pool overlap (keyframe path). See the
@@ -1901,9 +1905,8 @@ impl Decoder {
                 } else {
                     rvp9_core::loopfilter::FrameFilterLevels::default()
                 };
-            let lf_info_overlap = rvp9_core::loopfilter::LoopFilterInfo::new(
-                tail.loop_filter.sharpness_level,
-            );
+            let lf_info_overlap =
+                rvp9_core::loopfilter::LoopFilterInfo::new(tail.loop_filter.sharpness_level);
             let lf_state_overlap: Option<rvp9_core::loopfilter::apply::ColumnWavefrontLfState<'_>> =
                 if lf_overlap_pool_eligible {
                     let shared = rvp9_core::loopfilter::apply::SharedFrame::from_yv12(&mut yv12);
@@ -1930,9 +1933,7 @@ impl Decoder {
                         None
                     };
                     let sb_cols_l = mi_cols.div_ceil(SB_MI_SIZE);
-                    let nsync = rvp9_core::loopfilter::apply::nsync_for_width(
-                        (mi_cols * 8) as u32,
-                    );
+                    let nsync = rvp9_core::loopfilter::apply::nsync_for_width((mi_cols * 8) as u32);
                     Some(rvp9_core::loopfilter::apply::ColumnWavefrontLfState {
                         shared,
                         info: &lf_info_overlap,
@@ -1964,10 +1965,7 @@ impl Decoder {
                             // access to per-frame state.
                             unsafe {
                                 rvp9_core::loopfilter::apply::run_split_edge_lf_worker(
-                                    state,
-                                    worker_id,
-                                    n_lf,
-                                    &dispatch,
+                                    state, worker_id, n_lf, &dispatch,
                                 );
                             }
                         }
@@ -1988,8 +1986,7 @@ impl Decoder {
             };
             lf_handled_by_overlap = lf_overlap_handle.is_some();
             if lf_handled_by_overlap {
-                RVP9_LF_OVERLAP_POOL_FRAMES
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                RVP9_LF_OVERLAP_POOL_FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
 
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
@@ -2007,8 +2004,7 @@ impl Decoder {
                     let tile_data: &[u8] = tile_buf.data;
                     let slot = &slots[tile_idx];
                     scope.submit(move || {
-                        RVP9_G5_1_PARALLEL_JOBS
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        RVP9_G5_1_PARALLEL_JOBS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                         let t_lock_in = profile::now_cycles();
                         let mut view = slot
@@ -2060,12 +2056,11 @@ impl Decoder {
                         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                         {
                             let t_lock_out_end = profile::now_cycles();
-                            *slot.timing.lock().expect("timing mutex") =
-                                profile::PerTileTiming {
-                                    lock_in: t_decode_start.wrapping_sub(t_lock_in),
-                                    decode: t_decode_end.wrapping_sub(t_decode_start),
-                                    lock_out: t_lock_out_end.wrapping_sub(t_decode_end),
-                                };
+                            *slot.timing.lock().expect("timing mutex") = profile::PerTileTiming {
+                                lock_in: t_decode_start.wrapping_sub(t_lock_in),
+                                decode: t_decode_end.wrapping_sub(t_decode_start),
+                                lock_out: t_lock_out_end.wrapping_sub(t_decode_end),
+                            };
                         }
                     });
                 }
@@ -2312,8 +2307,7 @@ impl Decoder {
             pft.grid_stitch = t_grid_end.wrapping_sub(t_grid_start);
             pft.loopfilter = t_lf_end.wrapping_sub(t_lf_start);
             pft.border = t_border_end.wrapping_sub(t_border_start);
-            pft.frame_total_wall_us =
-                frame_wall_start.elapsed().as_secs_f64() * 1_000_000.0;
+            pft.frame_total_wall_us = frame_wall_start.elapsed().as_secs_f64() * 1_000_000.0;
             profile::emit_row(&pft, 0);
         }
 
@@ -2935,8 +2929,7 @@ impl Decoder {
         // duplication slots) keep the padding default. After tile decode
         // every cell is `Some`, so the LF materialisation collapses to a
         // trivial `cell.expect(...)` (no None placeholder hunt).
-        let mut frame_mi_grid: Vec<Option<ModeInfo>> =
-            std::mem::take(&mut self.scratch_mi_grid);
+        let mut frame_mi_grid: Vec<Option<ModeInfo>> = std::mem::take(&mut self.scratch_mi_grid);
         // Persist the grid across frames when dims are unchanged. VP9
         // partitions tile the whole frame, so every in-grid cell is
         // overwritten (`Some(real)`) by `write_block` during decode before
@@ -2978,7 +2971,11 @@ impl Decoder {
         // `decode_intra_frame_inner` for the protocol.
         let sb_rows_pf = mi_rows.div_ceil(SB_MI_SIZE);
         let decode_progress: Option<Vec<std::sync::atomic::AtomicU32>> = if parallel {
-            Some((0..sb_rows_pf).map(|_| std::sync::atomic::AtomicU32::new(0)).collect())
+            Some(
+                (0..sb_rows_pf)
+                    .map(|_| std::sync::atomic::AtomicU32::new(0))
+                    .collect(),
+            )
         } else {
             None
         };
@@ -3146,8 +3143,9 @@ impl Decoder {
             let prev_mv_grid_ref = prev_mv_grid;
             let prev_seg_ref = prev_seg_ids_slice;
             // `decode_progress` is Some here (set above under the same gate).
-            let decode_progress_ref: &[std::sync::atomic::AtomicU32] =
-                decode_progress.as_ref().expect("decode_progress allocated on parallel path");
+            let decode_progress_ref: &[std::sync::atomic::AtomicU32] = decode_progress
+                .as_ref()
+                .expect("decode_progress allocated on parallel path");
 
             // ----------------------------------------------------------
             // Phase 1 separate-LF-pool overlap (HLD `2026.05.27 - HLD -
@@ -3201,9 +3199,8 @@ impl Decoder {
                 } else {
                     rvp9_core::loopfilter::FrameFilterLevels::default()
                 };
-            let lf_info_overlap = rvp9_core::loopfilter::LoopFilterInfo::new(
-                tail.loop_filter.sharpness_level,
-            );
+            let lf_info_overlap =
+                rvp9_core::loopfilter::LoopFilterInfo::new(tail.loop_filter.sharpness_level);
             // Build the SB-major LF state. SAFETY: `SharedFrame`
             // raw-ptr access into `yv12` coexists with decode workers'
             // `TileFrameView` raw-ptr access; the L1 + L2 wavefront
@@ -3236,9 +3233,7 @@ impl Decoder {
                         None
                     };
                     let sb_cols_l = mi_cols.div_ceil(SB_MI_SIZE);
-                    let nsync = rvp9_core::loopfilter::apply::nsync_for_width(
-                        (mi_cols * 8) as u32,
-                    );
+                    let nsync = rvp9_core::loopfilter::apply::nsync_for_width((mi_cols * 8) as u32);
                     Some(rvp9_core::loopfilter::apply::ColumnWavefrontLfState {
                         shared,
                         info: &lf_info_overlap,
@@ -3279,10 +3274,7 @@ impl Decoder {
                         for worker_id in 0..n_lf {
                             unsafe {
                                 rvp9_core::loopfilter::apply::run_split_edge_lf_worker(
-                                    state,
-                                    worker_id,
-                                    n_lf,
-                                    &dispatch,
+                                    state, worker_id, n_lf, &dispatch,
                                 );
                             }
                         }
@@ -3303,8 +3295,7 @@ impl Decoder {
             };
             lf_handled_by_overlap = lf_overlap_handle.is_some();
             if lf_handled_by_overlap {
-                RVP9_LF_OVERLAP_POOL_FRAMES
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                RVP9_LF_OVERLAP_POOL_FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
 
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
@@ -3315,8 +3306,7 @@ impl Decoder {
                     let tile_data: &[u8] = tile_buf.data;
                     let slot = &slots[tile_idx];
                     scope.submit(move || {
-                        RVP9_G5_1_PARALLEL_JOBS
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        RVP9_G5_1_PARALLEL_JOBS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                         let t_lock_in = profile::now_cycles();
                         let mut view = slot
@@ -3392,12 +3382,11 @@ impl Decoder {
                         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                         {
                             let t_lock_out_end = profile::now_cycles();
-                            *slot.timing.lock().expect("timing mutex") =
-                                profile::PerTileTiming {
-                                    lock_in: t_decode_start.wrapping_sub(t_lock_in),
-                                    decode: t_decode_end.wrapping_sub(t_decode_start),
-                                    lock_out: t_lock_out_end.wrapping_sub(t_decode_end),
-                                };
+                            *slot.timing.lock().expect("timing mutex") = profile::PerTileTiming {
+                                lock_in: t_decode_start.wrapping_sub(t_lock_in),
+                                decode: t_decode_end.wrapping_sub(t_decode_start),
+                                lock_out: t_lock_out_end.wrapping_sub(t_decode_end),
+                            };
                         }
                     });
                 }
@@ -3415,8 +3404,7 @@ impl Decoder {
             // output yv12 via TileFrameView.
             let mut merge_err: Option<DecodeError> = None;
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
-            let mut per_tile_timings: Vec<profile::PerTileTiming> =
-                Vec::with_capacity(slots.len());
+            let mut per_tile_timings: Vec<profile::PerTileTiming> = Vec::with_capacity(slots.len());
             for (tile_idx, slot) in slots.into_iter().enumerate() {
                 #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                 {
@@ -3710,8 +3698,7 @@ impl Decoder {
             pft.grid_stitch = t_grid_end.wrapping_sub(t_grid_start);
             pft.loopfilter = t_lf_end.wrapping_sub(t_lf_start);
             pft.border = t_border_end.wrapping_sub(t_border_start);
-            pft.frame_total_wall_us =
-                frame_wall_start.elapsed().as_secs_f64() * 1_000_000.0;
+            pft.frame_total_wall_us = frame_wall_start.elapsed().as_secs_f64() * 1_000_000.0;
             profile::emit_row(&pft, 0);
         }
 
@@ -3782,10 +3769,8 @@ impl Decoder {
         // drop the local handle — one strong-ref decrement, nothing
         // else changes. See the `scratch_mv_grid` field doc for
         // recovery-rate notes.
-        let old_prev_mv = std::mem::replace(
-            &mut self.prev_frame_mv_grid,
-            Some(cur_mv_grid_arc.clone()),
-        );
+        let old_prev_mv =
+            std::mem::replace(&mut self.prev_frame_mv_grid, Some(cur_mv_grid_arc.clone()));
         if let Some(arc) = old_prev_mv {
             if let Ok(vec) = std::sync::Arc::try_unwrap(arc) {
                 self.scratch_mv_grid = vec;
@@ -4100,8 +4085,7 @@ fn apply_loop_filter_to_frame_column_wavefront<'frame>(
 ) {
     let simd_dispatch = rvp9_core::dsp::get();
     for worker_id in 0..num_workers {
-        let st: &'frame rvp9_core::loopfilter::apply::ColumnWavefrontLfState<'frame> =
-            state;
+        let st: &'frame rvp9_core::loopfilter::apply::ColumnWavefrontLfState<'frame> = state;
         let dispatch = simd_dispatch.clone();
         scope.submit(move || {
             // SAFETY: the wavefront sync protocol inside the worker
@@ -4145,7 +4129,10 @@ pub static RVP9_LF_OVERLAP_POOL_FRAMES: std::sync::atomic::AtomicU64 =
 /// `Some(NonZeroUsize::new(1).unwrap())` when overlap is feasible.
 fn lf_pool_size(num_decode_threads: std::num::NonZeroUsize) -> Option<std::num::NonZeroUsize> {
     let n_lf: usize = 1; // Phase 1: HLD §11 condition 1.
-    let needed = num_decode_threads.get().saturating_add(n_lf).saturating_add(1);
+    let needed = num_decode_threads
+        .get()
+        .saturating_add(n_lf)
+        .saturating_add(1);
     let available = std::thread::available_parallelism()
         .map(std::num::NonZeroUsize::get)
         .unwrap_or(1);
@@ -4194,10 +4181,8 @@ fn apply_loop_filter_to_frame_dispatching(
 ) {
     let row_mt_disabled = crate::trace_flags::trace_flags().disable_row_mt;
     let sb_rows = mi_rows.div_ceil(SB_MI_SIZE);
-    let eligible = !row_mt_disabled
-        && num_workers >= 2
-        && sb_rows >= 2
-        && decode_progress.is_some();
+    let eligible =
+        !row_mt_disabled && num_workers >= 2 && sb_rows >= 2 && decode_progress.is_some();
 
     if !eligible {
         // Serial fallback.
@@ -4277,8 +4262,7 @@ fn apply_loop_filter_to_frame_column_wavefront_dispatch(
     // (libvpx `vp9_thread_common.c:181` memset(-1)). Workers store
     // `c >= 0` after each SB; the wavefront gate compares
     // `cur_sb_col[r-1] >= c + nsync - 1`.
-    let cur_sb_col: Vec<AtomicI32> =
-        (0..sb_rows).map(|_| AtomicI32::new(-1)).collect();
+    let cur_sb_col: Vec<AtomicI32> = (0..sb_rows).map(|_| AtomicI32::new(-1)).collect();
 
     // HLD §3.6 cap: `min(num_workers, max(1, num_tile_cols), sb_rows)`.
     // Mirrors libvpx vp9_thread_common.c:165-170. Capping at
@@ -4286,16 +4270,12 @@ fn apply_loop_filter_to_frame_column_wavefront_dispatch(
     // effective parallelism is bounded by the number of independent
     // rows in flight — beyond num_tile_cols, adding workers just
     // adds contention.
-    let num_lf_workers = num_workers
-        .min(num_tile_cols.max(1))
-        .min(sb_rows)
-        .max(1);
+    let num_lf_workers = num_workers.min(num_tile_cols.max(1)).min(sb_rows).max(1);
 
     let chroma = yv12.chroma();
     let chroma_is_asymmetric = matches!(
         chroma,
-        rvp9_core::bitstream::ChromaFormat::Yuv422
-            | rvp9_core::bitstream::ChromaFormat::Yuv440
+        rvp9_core::bitstream::ChromaFormat::Yuv422 | rvp9_core::bitstream::ChromaFormat::Yuv440
     );
     let non420 = if chroma_is_asymmetric {
         Some(Non420Inputs {
@@ -4313,13 +4293,11 @@ fn apply_loop_filter_to_frame_column_wavefront_dispatch(
         mi_stride,
         mi_rows,
         mi_cols,
-    levels: &levels,
+        levels: &levels,
     };
 
     // libvpx `get_sync_range(width)` — pixel width = mi_cols * 8.
-    let nsync = rvp9_core::loopfilter::apply::nsync_for_width(
-        (mi_cols * 8) as u32,
-    );
+    let nsync = rvp9_core::loopfilter::apply::nsync_for_width((mi_cols * 8) as u32);
 
     let state = ColumnWavefrontLfState {
         shared,
@@ -6210,8 +6188,7 @@ mod tests {
         let mut tile_buf = vec![0u8; 4 * 1024];
         let tile_len = {
             let mut bw = BoolWriter::start_encode(&mut tile_buf);
-            let tile_mi_cols =
-                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
             let mut coef_ctx = rvp9_core::coef_ctx::TileCoefCtx::new(tile_mi_cols);
             let coef_source = rvp9_core::bitstream::AllZeroIntraCoefSource::new();
             write_tile_intra_keyframe(
@@ -6457,8 +6434,7 @@ mod tests {
         let mut tile_buf = vec![0u8; 4 * 1024];
         let tile_len = {
             let mut bw = BoolWriter::start_encode(&mut tile_buf);
-            let tile_mi_cols =
-                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
             let mut coef_ctx = rvp9_core::coef_ctx::TileCoefCtx::new(tile_mi_cols);
             let coef_source = rvp9_core::bitstream::AllZeroIntraCoefSource::new();
             write_tile_intra_keyframe(
@@ -6715,8 +6691,15 @@ mod tests {
         let mut kf_compressed_buf = vec![0u8; 16 * 1024];
         let kf_compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_compressed_buf);
-            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target, None)
-                .expect("write_compressed_header keyframe");
+            write_compressed_header(
+                &mut bw,
+                &mut kf_pre_fc,
+                &kf_post_fc,
+                kf_opts,
+                &kf_target,
+                None,
+            )
+            .expect("write_compressed_header keyframe");
             bw.stop_encode().expect("stop_encode kf compressed")
         };
         kf_compressed_buf.truncate(kf_compressed_len);
@@ -6724,8 +6707,7 @@ mod tests {
         let mut kf_tile_buf = vec![0u8; 4 * 1024];
         let kf_tile_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_tile_buf);
-            let tile_mi_cols =
-                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
             let mut coef_ctx = rvp9_core::coef_ctx::TileCoefCtx::new(tile_mi_cols);
             let coef_source = rvp9_core::bitstream::AllZeroIntraCoefSource::new();
             write_tile_intra_keyframe(
@@ -7098,8 +7080,15 @@ mod tests {
         let mut kf_compressed_buf = vec![0u8; 16 * 1024];
         let kf_compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_compressed_buf);
-            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target, None)
-                .expect("kf compressed header");
+            write_compressed_header(
+                &mut bw,
+                &mut kf_pre_fc,
+                &kf_post_fc,
+                kf_opts,
+                &kf_target,
+                None,
+            )
+            .expect("kf compressed header");
             bw.stop_encode().expect("stop_encode kf compressed")
         };
         kf_compressed_buf.truncate(kf_compressed_len);
@@ -7107,8 +7096,7 @@ mod tests {
         let mut kf_tile_buf = vec![0u8; 4 * 1024];
         let kf_tile_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_tile_buf);
-            let tile_mi_cols =
-                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
             let mut coef_ctx = rvp9_core::coef_ctx::TileCoefCtx::new(tile_mi_cols);
             let coef_source = rvp9_core::bitstream::AllZeroIntraCoefSource::new();
             write_tile_intra_keyframe(
@@ -7435,16 +7423,22 @@ mod tests {
         let mut kf_compressed_buf = vec![0u8; 16 * 1024];
         let kf_compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_compressed_buf);
-            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target, None)
-                .expect("kf compressed");
+            write_compressed_header(
+                &mut bw,
+                &mut kf_pre_fc,
+                &kf_post_fc,
+                kf_opts,
+                &kf_target,
+                None,
+            )
+            .expect("kf compressed");
             bw.stop_encode().expect("stop_encode kf compressed")
         };
         kf_compressed_buf.truncate(kf_compressed_len);
         let mut kf_tile_buf = vec![0u8; 4 * 1024];
         let kf_tile_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_tile_buf);
-            let tile_mi_cols =
-                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
             let mut coef_ctx = rvp9_core::coef_ctx::TileCoefCtx::new(tile_mi_cols);
             let coef_source = rvp9_core::bitstream::AllZeroIntraCoefSource::new();
             write_tile_intra_keyframe(
@@ -7798,8 +7792,15 @@ mod tests {
         let mut kf_compressed_buf = vec![0u8; 16 * 1024];
         let kf_compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_compressed_buf);
-            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target, None)
-                .expect("write_compressed_header keyframe");
+            write_compressed_header(
+                &mut bw,
+                &mut kf_pre_fc,
+                &kf_post_fc,
+                kf_opts,
+                &kf_target,
+                None,
+            )
+            .expect("write_compressed_header keyframe");
             bw.stop_encode().expect("stop_encode kf compressed")
         };
         kf_compressed_buf.truncate(kf_compressed_len);
@@ -7807,8 +7808,7 @@ mod tests {
         let mut kf_tile_buf = vec![0u8; 4 * 1024];
         let kf_tile_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_tile_buf);
-            let tile_mi_cols =
-                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
             let mut coef_ctx = rvp9_core::coef_ctx::TileCoefCtx::new(tile_mi_cols);
             let coef_source = rvp9_core::bitstream::AllZeroIntraCoefSource::new();
             write_tile_intra_keyframe(
@@ -8212,8 +8212,15 @@ mod tests {
         let mut kf_compressed_buf = vec![0u8; 16 * 1024];
         let kf_compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_compressed_buf);
-            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target, None)
-                .expect("write_compressed_header kf");
+            write_compressed_header(
+                &mut bw,
+                &mut kf_pre_fc,
+                &kf_post_fc,
+                kf_opts,
+                &kf_target,
+                None,
+            )
+            .expect("write_compressed_header kf");
             bw.stop_encode().expect("stop_encode kf compressed")
         };
         kf_compressed_buf.truncate(kf_compressed_len);
@@ -8221,8 +8228,7 @@ mod tests {
         let mut kf_tile_buf = vec![0u8; 4 * 1024];
         let kf_tile_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_tile_buf);
-            let tile_mi_cols =
-                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
             let mut coef_ctx = rvp9_core::coef_ctx::TileCoefCtx::new(tile_mi_cols);
             let coef_source = rvp9_core::bitstream::AllZeroIntraCoefSource::new();
             write_tile_intra_keyframe(
@@ -8566,8 +8572,15 @@ mod tests {
         let mut kf_compressed_buf = vec![0u8; 16 * 1024];
         let kf_compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_compressed_buf);
-            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target, None)
-                .expect("kf compressed header");
+            write_compressed_header(
+                &mut bw,
+                &mut kf_pre_fc,
+                &kf_post_fc,
+                kf_opts,
+                &kf_target,
+                None,
+            )
+            .expect("kf compressed header");
             bw.stop_encode().expect("stop_encode kf compressed")
         };
         kf_compressed_buf.truncate(kf_compressed_len);
@@ -8575,8 +8588,7 @@ mod tests {
         let mut kf_tile_buf = vec![0u8; 4 * 1024];
         let kf_tile_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_tile_buf);
-            let tile_mi_cols =
-                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
             let mut coef_ctx = rvp9_core::coef_ctx::TileCoefCtx::new(tile_mi_cols);
             let coef_source = rvp9_core::bitstream::AllZeroIntraCoefSource::new();
             write_tile_intra_keyframe(
@@ -9111,9 +9123,14 @@ mod tests {
             header_end_byte: header_end,
             full_frame_data: &body,
         };
-        let err = dec.parse_compressed_partition(&parsed).expect_err("truncated");
+        let err = dec
+            .parse_compressed_partition(&parsed)
+            .expect_err("truncated");
         match err {
-            DecodeError::TruncatedCompressedHeader { declared, available } => {
+            DecodeError::TruncatedCompressedHeader {
+                declared,
+                available,
+            } => {
                 // Declared = header_end + 64; available = truncated buffer len.
                 assert!(declared > available);
                 assert_eq!(available, body.len());
@@ -9129,7 +9146,10 @@ mod tests {
         let cases: [(DecodeError, &str); 6] = [
             (DecodeError::WrongFrameKind, "frame kind is inappropriate"),
             (DecodeError::EmptySlot { slot: 4 }, "pool slot 4"),
-            (DecodeError::EmptyInterRef { slot: 7 }, "empty ref_frame_map slot 7"),
+            (
+                DecodeError::EmptyInterRef { slot: 7 },
+                "empty ref_frame_map slot 7",
+            ),
             (
                 DecodeError::TruncatedCompressedHeader {
                     declared: 100,
@@ -9159,7 +9179,10 @@ mod tests {
     fn decode_error_unsupported_profile_display_includes_profile() {
         let err = DecodeError::UnsupportedProfile { profile: 2 };
         let s = format!("{err}");
-        assert!(s.contains("2"), "Display must include profile number, got {s}");
+        assert!(
+            s.contains("2"),
+            "Display must include profile number, got {s}"
+        );
     }
 
     /// `PacketFrames::IntoIter` consumes the iterator and yields the
@@ -9319,7 +9342,9 @@ mod tests {
             header_end_byte: 0,
             full_frame_data: &empty,
         };
-        let err = dec.decode_frame(&parsed).expect_err("12-bit must be rejected");
+        let err = dec
+            .decode_frame(&parsed)
+            .expect_err("12-bit must be rejected");
         match err {
             DecodeError::UnsupportedProfile { profile } => assert_eq!(profile, 3),
             other => panic!("expected UnsupportedProfile, got {other:?}"),
@@ -9408,7 +9433,10 @@ mod tests {
         let used = w.bytes_written();
         buf.truncate(used + 4);
         let mut dec = Decoder::new();
-        let err = dec.parse_packet(&buf).err().expect("fps=0 must fail parsing");
+        let err = dec
+            .parse_packet(&buf)
+            .err()
+            .expect("fps=0 must fail parsing");
         // The header parser surfaces InvalidFirstPartitionSize for fps=0.
         assert!(
             matches!(

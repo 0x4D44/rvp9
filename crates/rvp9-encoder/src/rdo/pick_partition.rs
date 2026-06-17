@@ -261,7 +261,11 @@ mod tests {
 
     /// Helper: build a leaf-RD closure that returns a fixed RD for
     /// every (bsize, pos) it's asked about.
-    fn const_leaf_rd(rd: i64, rate: u32, dist: i64) -> impl FnMut(BlockSize, MiPos) -> LeafRdResult {
+    fn const_leaf_rd(
+        rd: i64,
+        rate: u32,
+        dist: i64,
+    ) -> impl FnMut(BlockSize, MiPos) -> LeafRdResult {
         move |_bsize, _pos| LeafRdResult { rate, dist, rd }
     }
 
@@ -288,7 +292,11 @@ mod tests {
             );
         }
         // Inter, bsize < 8×8 → InterPicker::InterSub8.
-        for bsize in [BlockSize::Block4x4, BlockSize::Block4x8, BlockSize::Block8x4] {
+        for bsize in [
+            BlockSize::Block4x4,
+            BlockSize::Block4x8,
+            BlockSize::Block8x4,
+        ] {
             assert_eq!(
                 rd_pick_sb_modes(FrameKind::Inter, bsize),
                 LeafPicker::InterSub8,
@@ -348,7 +356,10 @@ mod tests {
         };
         let result = rd_pick_partition(
             BlockSize::Block64x64,
-            MiPos { mi_row: 0, mi_col: 0 },
+            MiPos {
+                mi_row: 0,
+                mi_col: 0,
+            },
             &mut leaf_rd,
         );
         assert_eq!(
@@ -395,7 +406,10 @@ mod tests {
         };
         let result = rd_pick_partition(
             BlockSize::Block64x64,
-            MiPos { mi_row: 0, mi_col: 0 },
+            MiPos {
+                mi_row: 0,
+                mi_col: 0,
+            },
             &mut leaf_rd,
         );
         assert_eq!(
@@ -418,7 +432,10 @@ mod tests {
         let mut leaf_rd = const_leaf_rd(123_456, 200, 1_500);
         let result = rd_pick_partition(
             BlockSize::Block4x4,
-            MiPos { mi_row: 0, mi_col: 0 },
+            MiPos {
+                mi_row: 0,
+                mi_col: 0,
+            },
             &mut leaf_rd,
         );
         assert_eq!(result.partition, PartitionType::None);
@@ -462,7 +479,10 @@ mod tests {
         };
         let _ = rd_pick_partition(
             BlockSize::Block32x32,
-            MiPos { mi_row: 0, mi_col: 0 },
+            MiPos {
+                mi_row: 0,
+                mi_col: 0,
+            },
             &mut leaf_rd,
         );
         // 1 NONE@32 + 4 NONE@16 (the 16x16 children skip recursing
@@ -471,9 +491,6 @@ mod tests {
         // With these numbers SPLIT@16 = 4M < NONE@16 = 5M, so the
         // 16x16 nodes WILL split: 1 + 4 + 4*(1 + 4) = 25 calls.
         let count = *calls.borrow();
-        assert!(
-            count >= 5,
-            "expected at least 5 leaf calls, got {count}"
-        );
+        assert!(count >= 5, "expected at least 5 leaf calls, got {count}");
     }
 }

@@ -60,9 +60,7 @@
 //! - **`bpm_factor` / noise / inactive-zone adjustments**
 //!   (`get_twopass_worst_quality`, `vp9_firstpass.c:1568-1620`).
 
-use super::cbr::{
-    FRAME_OVERHEAD_BITS, get_rate_correction_factor, regulate_q, rtc_minq_approx,
-};
+use super::cbr::{FRAME_OVERHEAD_BITS, get_rate_correction_factor, regulate_q, rtc_minq_approx};
 use super::{FrameKind, RateControl};
 
 /// Per-frame first-pass statistics.
@@ -167,7 +165,11 @@ impl TwoPassState {
             .iter()
             .map(|s| {
                 let base = s.score();
-                if s.is_key { base * KF_SCORE_BOOST } else { base }
+                if s.is_key {
+                    base * KF_SCORE_BOOST
+                } else {
+                    base
+                }
             })
             .collect();
 
@@ -298,8 +300,8 @@ pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::super::config::RateControlConfig;
     use super::super::RcMode;
+    use super::super::config::RateControlConfig;
     use super::*;
 
     fn stat(is_key: bool, coded_error: f64) -> FirstPassStats {

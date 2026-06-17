@@ -85,35 +85,147 @@ impl Default for DecOpts {
 /// `apply: Some` ⇒ wired; `apply: None` ⇒ recognised-but-not-yet.
 fn flag_table() -> Vec<Flag<DecOpts>> {
     vec![
-        Flag { long: "help", short: None, arg: Arg::None, help: "show this help and exit",
-            apply: Some(|o, _| { o.help = true; Ok(()) }) },
-        Flag { long: "version", short: None, arg: Arg::None, help: "print version and exit",
-            apply: Some(|o, _| { o.version = true; Ok(()) }) },
-        Flag { long: "codec", short: None, arg: Arg::Required, help: "codec to use (vp9)",
-            apply: Some(|_, v| validate_codec(v)) },
-        Flag { long: "output", short: Some('o'), arg: Arg::Required, help: "output file (else stdout)",
-            apply: Some(|o, v| { o.output = Some(req(v, "--output")?); Ok(()) }) },
-        Flag { long: "y4m", short: None, arg: Arg::None, help: "output YUV4MPEG2",
-            apply: Some(|o, _| { o.format = OutFmt::Y4m; Ok(()) }) },
-        Flag { long: "i420", short: None, arg: Arg::None, help: "output raw I420 (Y,U,V)",
-            apply: Some(|o, _| { o.format = OutFmt::RawI420; Ok(()) }) },
-        Flag { long: "yv12", short: None, arg: Arg::None, help: "output raw YV12 (Y,V,U)",
-            apply: Some(|o, _| { o.format = OutFmt::RawYv12; Ok(()) }) },
-        Flag { long: "rawvideo", short: None, arg: Arg::None, help: "output raw I420, no container",
-            apply: Some(|o, _| { o.format = OutFmt::RawI420; Ok(()) }) },
-        Flag { long: "md5", short: None, arg: Arg::None, help: "print per-frame MD5",
-            apply: Some(|o, _| { o.md5 = Md5Mode::PerFrame; Ok(()) }) },
-        Flag { long: "framemd5", short: None, arg: Arg::None, help: "print indexed per-frame MD5",
-            apply: Some(|o, _| { o.md5 = Md5Mode::Indexed; Ok(()) }) },
-        Flag { long: "limit", short: None, arg: Arg::Required, help: "stop after N displayed frames",
-            apply: Some(|o, v| { o.limit = Some(args::parse_value(v, "rvp9dec", "--limit")?); Ok(()) }) },
-        Flag { long: "skip", short: None, arg: Arg::Required, help: "skip N displayed frames",
-            apply: Some(|o, v| { o.skip = args::parse_value(v, "rvp9dec", "--skip")?; Ok(()) }) },
-        Flag { long: "summary", short: None, arg: Arg::None, help: "print a decode summary",
-            apply: Some(|o, _| { o.summary = true; Ok(()) }) },
-        Flag { long: "noblit", short: None, arg: Arg::None, help: "decode only, no pixel output",
-            apply: Some(|o, _| { o.noblit = true; Ok(()) }) },
-        Flag { long: "threads", short: Some('t'), arg: Arg::Required,
+        Flag {
+            long: "help",
+            short: None,
+            arg: Arg::None,
+            help: "show this help and exit",
+            apply: Some(|o, _| {
+                o.help = true;
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "version",
+            short: None,
+            arg: Arg::None,
+            help: "print version and exit",
+            apply: Some(|o, _| {
+                o.version = true;
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "codec",
+            short: None,
+            arg: Arg::Required,
+            help: "codec to use (vp9)",
+            apply: Some(|_, v| validate_codec(v)),
+        },
+        Flag {
+            long: "output",
+            short: Some('o'),
+            arg: Arg::Required,
+            help: "output file (else stdout)",
+            apply: Some(|o, v| {
+                o.output = Some(req(v, "--output")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "y4m",
+            short: None,
+            arg: Arg::None,
+            help: "output YUV4MPEG2",
+            apply: Some(|o, _| {
+                o.format = OutFmt::Y4m;
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "i420",
+            short: None,
+            arg: Arg::None,
+            help: "output raw I420 (Y,U,V)",
+            apply: Some(|o, _| {
+                o.format = OutFmt::RawI420;
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "yv12",
+            short: None,
+            arg: Arg::None,
+            help: "output raw YV12 (Y,V,U)",
+            apply: Some(|o, _| {
+                o.format = OutFmt::RawYv12;
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "rawvideo",
+            short: None,
+            arg: Arg::None,
+            help: "output raw I420, no container",
+            apply: Some(|o, _| {
+                o.format = OutFmt::RawI420;
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "md5",
+            short: None,
+            arg: Arg::None,
+            help: "print per-frame MD5",
+            apply: Some(|o, _| {
+                o.md5 = Md5Mode::PerFrame;
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "framemd5",
+            short: None,
+            arg: Arg::None,
+            help: "print indexed per-frame MD5",
+            apply: Some(|o, _| {
+                o.md5 = Md5Mode::Indexed;
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "limit",
+            short: None,
+            arg: Arg::Required,
+            help: "stop after N displayed frames",
+            apply: Some(|o, v| {
+                o.limit = Some(args::parse_value(v, "rvp9dec", "--limit")?);
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "skip",
+            short: None,
+            arg: Arg::Required,
+            help: "skip N displayed frames",
+            apply: Some(|o, v| {
+                o.skip = args::parse_value(v, "rvp9dec", "--skip")?;
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "summary",
+            short: None,
+            arg: Arg::None,
+            help: "print a decode summary",
+            apply: Some(|o, _| {
+                o.summary = true;
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "noblit",
+            short: None,
+            arg: Arg::None,
+            help: "decode only, no pixel output",
+            apply: Some(|o, _| {
+                o.noblit = true;
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "threads",
+            short: Some('t'),
+            arg: Arg::Required,
             help: "max decode threads (0 = 1 thread, omit for auto-detect)",
             apply: Some(|o, v| {
                 let n: usize = args::parse_value(v, "rvp9dec", "--threads")?;
@@ -125,44 +237,101 @@ fn flag_table() -> Vec<Flag<DecOpts>> {
                 let n = NonZeroUsize::new(n).unwrap_or(NonZeroUsize::MIN);
                 o.threads = Some(n);
                 Ok(())
-            }) },
+            }),
+        },
         // -- Progress ---------------------------------------------------
-        Flag { long: "progress", short: None, arg: Arg::None, help: "show progress",
-            apply: Some(|o, _| { o.progress = true; Ok(()) }) },
-        // -- Accepted with warning (no-op) ------------------------------
-        Flag { long: "scale", short: Some('S'), arg: Arg::None, help: "scale to stream size",
-            apply: Some(|_, _| {
-                eprintln!("rvp9dec: --scale accepted but display-size scaling not yet implemented (output at coded size)");
+        Flag {
+            long: "progress",
+            short: None,
+            arg: Arg::None,
+            help: "show progress",
+            apply: Some(|o, _| {
+                o.progress = true;
                 Ok(())
-            }) },
-        Flag { long: "output-bit-depth", short: None, arg: Arg::Required, help: "output bit depth",
+            }),
+        },
+        // -- Accepted with warning (no-op) ------------------------------
+        Flag {
+            long: "scale",
+            short: Some('S'),
+            arg: Arg::None,
+            help: "scale to stream size",
+            apply: Some(|_, _| {
+                eprintln!(
+                    "rvp9dec: --scale accepted but display-size scaling not yet implemented (output at coded size)"
+                );
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "output-bit-depth",
+            short: None,
+            arg: Arg::Required,
+            help: "output bit depth",
             apply: Some(|_, v| {
-                let val = v.ok_or_else(|| "rvp9dec: --output-bit-depth requires a value".to_string())?;
+                let val =
+                    v.ok_or_else(|| "rvp9dec: --output-bit-depth requires a value".to_string())?;
                 if val != "8" {
-                    eprintln!("rvp9dec: --output-bit-depth={val}: only 8-bit output supported (Profile 0 decoder)");
+                    eprintln!(
+                        "rvp9dec: --output-bit-depth={val}: only 8-bit output supported (Profile 0 decoder)"
+                    );
                 }
                 Ok(())
-            }) },
-        Flag { long: "error-concealment", short: None, arg: Arg::None, help: "error concealment",
+            }),
+        },
+        Flag {
+            long: "error-concealment",
+            short: None,
+            arg: Arg::None,
+            help: "error concealment",
             apply: Some(|_, _| {
-                eprintln!("rvp9dec: --error-concealment accepted (not yet implemented, errors will propagate)");
+                eprintln!(
+                    "rvp9dec: --error-concealment accepted (not yet implemented, errors will propagate)"
+                );
                 Ok(())
-            }) },
-        Flag { long: "frame-buffers", short: None, arg: Arg::Required, help: "external frame buffers",
+            }),
+        },
+        Flag {
+            long: "frame-buffers",
+            short: None,
+            arg: Arg::Required,
+            help: "external frame buffers",
             apply: Some(|_, v| {
-                let val = v.ok_or_else(|| "rvp9dec: --frame-buffers requires a value".to_string())?;
+                let val =
+                    v.ok_or_else(|| "rvp9dec: --frame-buffers requires a value".to_string())?;
                 eprintln!("rvp9dec: --frame-buffers={val} accepted (internal buffer pool used)");
                 Ok(())
-            }) },
+            }),
+        },
         // -- VP8-only post-processing (silent no-op) --------------------
-        Flag { long: "postproc", short: None, arg: Arg::None, help: "enable VP8 post-processing",
-            apply: Some(|_, _| Ok(())) },
-        Flag { long: "deblock", short: None, arg: Arg::None, help: "postproc: deblock",
-            apply: Some(|_, _| Ok(())) },
-        Flag { long: "demacroblock", short: None, arg: Arg::None, help: "postproc: demacroblock",
-            apply: Some(|_, _| Ok(())) },
-        Flag { long: "mfqe", short: None, arg: Arg::None, help: "postproc: MFQE",
-            apply: Some(|_, _| Ok(())) },
+        Flag {
+            long: "postproc",
+            short: None,
+            arg: Arg::None,
+            help: "enable VP8 post-processing",
+            apply: Some(|_, _| Ok(())),
+        },
+        Flag {
+            long: "deblock",
+            short: None,
+            arg: Arg::None,
+            help: "postproc: deblock",
+            apply: Some(|_, _| Ok(())),
+        },
+        Flag {
+            long: "demacroblock",
+            short: None,
+            arg: Arg::None,
+            help: "postproc: demacroblock",
+            apply: Some(|_, _| Ok(())),
+        },
+        Flag {
+            long: "mfqe",
+            short: None,
+            arg: Arg::None,
+            help: "postproc: MFQE",
+            apply: Some(|_, _| Ok(())),
+        },
     ]
 }
 
@@ -294,8 +463,7 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
             if let Some(w) = sink.as_mut() {
                 match opts.md5 {
                     Md5Mode::PerFrame => {
-                        writeln!(w, "{}", hex16(md5_of_yv12_visible(&buf)))
-                            .map_err(io_err)?;
+                        writeln!(w, "{}", hex16(md5_of_yv12_visible(&buf))).map_err(io_err)?;
                     }
                     Md5Mode::Indexed => {
                         writeln!(w, "{}: {}", emitted, hex16(md5_of_yv12_visible(&buf)))
@@ -378,11 +546,15 @@ fn write_frame<W: Write>(
             rvp9_io::y4m::write_frame(w, &y, &u, &v).map_err(io_err)?;
         }
         OutFmt::RawI420 => {
-            w.write_all(&y).and_then(|()| w.write_all(&u)).and_then(|()| w.write_all(&v))
+            w.write_all(&y)
+                .and_then(|()| w.write_all(&u))
+                .and_then(|()| w.write_all(&v))
                 .map_err(io_err)?;
         }
         OutFmt::RawYv12 => {
-            w.write_all(&y).and_then(|()| w.write_all(&v)).and_then(|()| w.write_all(&u))
+            w.write_all(&y)
+                .and_then(|()| w.write_all(&v))
+                .and_then(|()| w.write_all(&u))
                 .map_err(io_err)?;
         }
         OutFmt::Unset => unreachable!("format resolved before write"),

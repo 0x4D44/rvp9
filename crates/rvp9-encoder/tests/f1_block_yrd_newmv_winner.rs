@@ -18,16 +18,14 @@
 //! the encoder crate's integration test suite so we have a public-API
 //! signal that wires through the encoder->core boundary as expected.
 
-use rvp9_core::block::BlockSize;
 use rvp9_core::bitstream::frame::{InterpFilter, MAX_INTER_REFS};
 use rvp9_core::bitstream::header::FrameKind;
+use rvp9_core::block::BlockSize;
 use rvp9_core::cost::mv_cost::build_nmv_cost_table;
 use rvp9_core::cost::symbol_costs::{inter_mode_costs, switchable_interp_costs};
 use rvp9_core::entropy::frame_context::FrameContext;
 use rvp9_core::entropy::mv_probs::DEFAULT_NMV_CONTEXT;
-use rvp9_core::mode_decision::inter::{
-    InterModeSearchParams, MvCandidates, pick_inter_mode_luma,
-};
+use rvp9_core::mode_decision::inter::{InterModeSearchParams, MvCandidates, pick_inter_mode_luma};
 use rvp9_core::mode_info::InterMode;
 use rvp9_core::mv_search::full_pixel::PlaneRef;
 use rvp9_core::mv_search::init_dsmotion_compensation;
@@ -145,7 +143,11 @@ fn f1_block_yrd_newmv_wins_on_shifted_ref() {
         res.best_mode,
         InterMode::NewMv,
         "shifted-ref: F.1 picker must pick NEWMV, got {:?} (rd={}, dist={}, rate={}, coef_rate={})",
-        res.best_mode, res.best_rd_cost, res.best_distortion, res.best_rate, res.coef_rate,
+        res.best_mode,
+        res.best_rd_cost,
+        res.best_distortion,
+        res.best_rate,
+        res.coef_rate,
     );
 
     // MV recovers the shift: 3 full pels = 24 in Q3 units (+-2 for

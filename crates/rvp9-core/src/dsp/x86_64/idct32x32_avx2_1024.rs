@@ -46,10 +46,10 @@ use core::arch::x86_64::{
     __m128i, __m256i, _mm_loadu_si128, _mm_storeu_si128, _mm256_add_epi16, _mm256_add_epi32,
     _mm256_adds_epi16, _mm256_castsi128_si256, _mm256_castsi256_si128, _mm256_extracti128_si256,
     _mm256_inserti128_si256, _mm256_madd_epi16, _mm256_packs_epi32, _mm256_packus_epi16,
-    _mm256_permute4x64_epi64, _mm256_set1_epi16, _mm256_set1_epi32, _mm256_set_epi16,
+    _mm256_permute4x64_epi64, _mm256_set_epi16, _mm256_set1_epi16, _mm256_set1_epi32,
     _mm256_setzero_si256, _mm256_srai_epi16, _mm256_srai_epi32, _mm256_sub_epi16,
-    _mm256_unpackhi_epi16, _mm256_unpackhi_epi32, _mm256_unpackhi_epi64, _mm256_unpacklo_epi16,
-    _mm256_unpacklo_epi32, _mm256_unpacklo_epi64, _mm256_unpacklo_epi8,
+    _mm256_unpackhi_epi16, _mm256_unpackhi_epi32, _mm256_unpackhi_epi64, _mm256_unpacklo_epi8,
+    _mm256_unpacklo_epi16, _mm256_unpacklo_epi32, _mm256_unpacklo_epi64,
 };
 
 use crate::transforms::constants::{
@@ -74,9 +74,7 @@ use crate::transforms::constants::{
 #[target_feature(enable = "avx2")]
 #[inline]
 unsafe fn pair256_set_epi16(a: i16, b: i16) -> __m256i {
-    _mm256_set_epi16(
-        b, a, b, a, b, a, b, a, b, a, b, a, b, a, b, a,
-    )
+    _mm256_set_epi16(b, a, b, a, b, a, b, a, b, a, b, a, b, a, b, a)
 }
 
 /// `dct_round_shift(x) = (x + 8192) >> 14`, lane-parallel over 8 i32.
@@ -930,10 +928,7 @@ mod tests {
                 let got = ymm_to_i16x16(orow);
                 for c in 0..16 {
                     // transposed: out[r][c] == in[c][r] == expect[c][r]
-                    assert_eq!(
-                        got[c], expect[c][r],
-                        "transpose mismatch at out[{r}][{c}]"
-                    );
+                    assert_eq!(got[c], expect[c][r], "transpose mismatch at out[{r}][{c}]");
                 }
             }
         }
@@ -980,9 +975,8 @@ mod tests {
             let residual: [i16; 16] = [
                 10, -10, 200, -200, 50, 127, -300, 1, 0, 3, -3, 100, -100, 250, -5, 7,
             ];
-            let expect: [u8; 16] = core::array::from_fn(|i| {
-                (dst[i] as i32 + residual[i] as i32).clamp(0, 255) as u8
-            });
+            let expect: [u8; 16] =
+                core::array::from_fn(|i| (dst[i] as i32 + residual[i] as i32).clamp(0, 255) as u8);
             let r = i16x16_to_ymm(&residual);
             recon_and_store16(dst.as_mut_ptr(), r);
             assert_eq!(dst, expect, "recon_and_store16 lane/clip mismatch");

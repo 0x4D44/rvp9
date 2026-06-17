@@ -234,7 +234,11 @@ fn a21_ml_rect_prune_fires_and_decodes() {
     let (frames, framerate) = match y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize) {
         Ok((f, fr)) if f.len() == N_FRAMES as usize => (f, fr),
         Ok((f, _)) => {
-            eprintln!("[SKIPPED] testsrc only yielded {}/{} frames.", f.len(), N_FRAMES);
+            eprintln!(
+                "[SKIPPED] testsrc only yielded {}/{} frames.",
+                f.len(),
+                N_FRAMES
+            );
             return;
         }
         Err(e) => {

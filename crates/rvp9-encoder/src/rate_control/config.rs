@@ -244,10 +244,7 @@ mod tests {
             target_bitrate_bps: 0,
             ..RateControlConfig::default()
         };
-        assert_eq!(
-            cfg.validate(),
-            Err("target_bitrate_bps must be > 0"),
-        );
+        assert_eq!(cfg.validate(), Err("target_bitrate_bps must be > 0"),);
     }
 
     #[test]

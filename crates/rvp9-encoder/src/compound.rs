@@ -227,7 +227,9 @@ impl PredictionTypeThreshes {
     #[inline]
     #[must_use]
     pub const fn new(single: i32, compound: i32, select: i32) -> Self {
-        Self { threshes: [single, compound, select] }
+        Self {
+            threshes: [single, compound, select],
+        }
     }
 
     /// Read the threshold for a given mode.
@@ -437,8 +439,7 @@ impl SingleNewmvCache {
 /// Returns `true` iff `ref_sign_bias[LAST] != ref_sign_bias[ALTREF]`.
 #[must_use]
 pub fn sign_bias_opposite_altref(ref_sign_bias: &[bool; 4]) -> bool {
-    ref_sign_bias[RefFrame::LastFrame as usize]
-        != ref_sign_bias[RefFrame::AltrefFrame as usize]
+    ref_sign_bias[RefFrame::LastFrame as usize] != ref_sign_bias[RefFrame::AltrefFrame as usize]
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -620,7 +621,10 @@ mod tests {
         );
 
         // Different `(ref, bsize)` is a distinct slot.
-        assert_eq!(cache.get(RefFrame::GoldenFrame, BlockSize::Block32x32), None);
+        assert_eq!(
+            cache.get(RefFrame::GoldenFrame, BlockSize::Block32x32),
+            None
+        );
         assert_eq!(cache.get(RefFrame::LastFrame, BlockSize::Block16x16), None);
 
         cache.insert(

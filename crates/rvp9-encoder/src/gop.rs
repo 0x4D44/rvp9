@@ -246,8 +246,7 @@ impl GfGroup {
         // the just-popped frame (`alt_ref_index = 0` in the temporal
         // filter), so the display-order source offset is 0 in the
         // current minimal-filter wiring.
-        let arf_before =
-            self.enable_alt_ref && offset == self.gf_interval + 1;
+        let arf_before = self.enable_alt_ref && offset == self.gf_interval + 1;
 
         let (update_type, refresh_frame_flags) = if golden_refresh {
             (FrameUpdateType::GfUpdate, 0x03)

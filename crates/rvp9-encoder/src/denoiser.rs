@@ -190,7 +190,11 @@ pub const fn sse_thresh(bs: BlockSize, increase_denoising: bool) -> u32 {
 /// magnitude.
 #[inline]
 #[must_use]
-pub const fn sse_diff_thresh(bs: BlockSize, increase_denoising: bool, motion_magnitude: i32) -> i32 {
+pub const fn sse_diff_thresh(
+    bs: BlockSize,
+    increase_denoising: bool,
+    motion_magnitude: i32,
+) -> i32 {
     if motion_magnitude > noise_motion_thresh(bs, increase_denoising) {
         if increase_denoising {
             (1i32 << num_pels_log2(bs)) << 2
@@ -510,13 +514,15 @@ impl Denoiser {
     pub fn buffers_match_frame(&self, width: u32, height: u32) -> bool {
         let expected = (width as usize) * (height as usize);
         self.running_avg_y.len() == self.num_ref_frames * self.num_layers
-            && self.running_avg_y.iter().all(|f| {
-                f.y_buffer.len() == expected && f.width == width && f.height == height
-            })
+            && self
+                .running_avg_y
+                .iter()
+                .all(|f| f.y_buffer.len() == expected && f.width == width && f.height == height)
             && self.mc_running_avg_y.len() == self.num_layers
-            && self.mc_running_avg_y.iter().all(|f| {
-                f.y_buffer.len() == expected && f.width == width && f.height == height
-            })
+            && self
+                .mc_running_avg_y
+                .iter()
+                .all(|f| f.y_buffer.len() == expected && f.width == width && f.height == height)
             && self.last_source.y_buffer.len() == expected
     }
 }
@@ -664,9 +670,7 @@ fn perform_motion_compensation(
     // standalone module always allocates every slot, so this only
     // fires for an out-of-range `frame`.
     let frame_idx = frame as usize;
-    if frame_idx >= denoiser.num_ref_frames
-        || !denoiser.running_avg_y[frame_idx].is_allocated()
-    {
+    if frame_idx >= denoiser.num_ref_frames || !denoiser.running_avg_y[frame_idx].is_allocated() {
         return DenoiserDecision::CopyBlock;
     }
 
@@ -761,8 +765,7 @@ pub fn vp9_denoiser_denoise(
     // `consec_zeromv`; the `use_skin_detection` gate at line 367 is
     // honoured.
     let is_skin = inputs.use_skin_detection && inputs.is_skin;
-    let increase_denoising =
-        !is_skin && denoiser.denoising_level == DenoiserLevel::High;
+    let increase_denoising = !is_skin && denoiser.denoising_level == DenoiserLevel::High;
 
     // `vp9_denoiser.c:410-417` — only attempt denoising when LAST is
     // a reference, the denoising level is at least `Low`, and the
@@ -836,10 +839,12 @@ pub fn vp9_denoiser_denoise(
             let off = block_offset(stride, inputs.mi_row, inputs.mi_col);
             for r in 0..bh {
                 let s = off + r * stride;
-                scratch.y_buffer[s..s + bw]
-                    .copy_from_slice(&inputs.src[r * inputs.src_stride..r * inputs.src_stride + bw]);
-                denoised[r * bw..r * bw + bw]
-                    .copy_from_slice(&inputs.src[r * inputs.src_stride..r * inputs.src_stride + bw]);
+                scratch.y_buffer[s..s + bw].copy_from_slice(
+                    &inputs.src[r * inputs.src_stride..r * inputs.src_stride + bw],
+                );
+                denoised[r * bw..r * bw + bw].copy_from_slice(
+                    &inputs.src[r * inputs.src_stride..r * inputs.src_stride + bw],
+                );
             }
         }
     }
@@ -1005,8 +1010,7 @@ mod tests {
         let sig: Vec<u8> = (0..bw * bh).map(|i| ((i * 7) & 0xff) as u8).collect();
         let mc: Vec<u8> = sig.clone();
         let mut avg = vec![0u8; bw * bh];
-        let decision =
-            vp9_denoiser_filter(&sig, bw, &mc, bw, &mut avg, bw, false, bs, 0);
+        let decision = vp9_denoiser_filter(&sig, bw, &mc, bw, &mut avg, bw, false, bs, 0);
         assert_eq!(decision, DenoiserDecision::FilterBlock);
         // Every sample should equal `mc[i]` because absdiff == 0 ≤
         // absdiff_thresh, so the "snap to MC" path fires per sample.
@@ -1026,8 +1030,7 @@ mod tests {
         // mc differs by +2 on every sample → absdiff=2 ≤ 3 ⇒ snap.
         let mc: Vec<u8> = vec![102u8; bw * bh];
         let mut avg = vec![0u8; bw * bh];
-        let decision =
-            vp9_denoiser_filter(&sig, bw, &mc, bw, &mut avg, bw, false, bs, 0);
+        let decision = vp9_denoiser_filter(&sig, bw, &mc, bw, &mut avg, bw, false, bs, 0);
         // total_adj = bw*bh * 2 = 512, ==  strong_thresh(16x16) =
         // 512 ⇒ accepted (≤).
         assert_eq!(decision, DenoiserDecision::FilterBlock);
@@ -1047,8 +1050,7 @@ mod tests {
         let sig: Vec<u8> = vec![50u8; bw * bh];
         let mc: Vec<u8> = vec![200u8; bw * bh]; // absdiff=150 everywhere
         let mut avg = vec![0u8; bw * bh];
-        let decision =
-            vp9_denoiser_filter(&sig, bw, &mc, bw, &mut avg, bw, false, bs, 0);
+        let decision = vp9_denoiser_filter(&sig, bw, &mc, bw, &mut avg, bw, false, bs, 0);
         // We accept either decision; the point is the filter ran
         // without panic and produced a defined answer.
         assert!(
@@ -1086,8 +1088,7 @@ mod tests {
         for r in 0..(height as usize) {
             for c in 0..stride {
                 src_plane[r * stride + c] = ((r * 3 + c) & 0xff) as u8;
-                mc_plane[r * stride + c] =
-                    src_plane[r * stride + c].wrapping_add(1);
+                mc_plane[r * stride + c] = src_plane[r * stride + c].wrapping_add(1);
             }
         }
         // Place block at (mi_row=2, mi_col=2) → pixel (16, 16). bs is

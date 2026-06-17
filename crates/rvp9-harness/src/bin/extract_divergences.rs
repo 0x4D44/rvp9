@@ -76,7 +76,10 @@ fn collect(lld_dir: &Path) -> std::io::Result<Vec<LldDivergences>> {
 }
 
 fn emit<W: Write>(w: &mut W, entries: &[LldDivergences]) -> std::io::Result<()> {
-    writeln!(w, "# Phase 2e divergence draft (extracted from notes/lld/*.md §7)")?;
+    writeln!(
+        w,
+        "# Phase 2e divergence draft (extracted from notes/lld/*.md §7)"
+    )?;
     writeln!(w)?;
     writeln!(
         w,
@@ -96,7 +99,9 @@ fn emit<W: Write>(w: &mut W, entries: &[LldDivergences]) -> std::io::Result<()> 
             w,
             "| `{}` | {} | {} |",
             e.file,
-            e.line_of_section_7.map(|n| n.to_string()).unwrap_or_else(|| "?".into()),
+            e.line_of_section_7
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "?".into()),
             e.body.len()
         )?;
     }
@@ -104,7 +109,14 @@ fn emit<W: Write>(w: &mut W, entries: &[LldDivergences]) -> std::io::Result<()> 
     writeln!(w, "---")?;
     writeln!(w)?;
     for e in entries {
-        writeln!(w, "## From `notes/lld/{}` (§7 at line {})", e.file, e.line_of_section_7.map(|n| n.to_string()).unwrap_or_else(|| "?".into()))?;
+        writeln!(
+            w,
+            "## From `notes/lld/{}` (§7 at line {})",
+            e.file,
+            e.line_of_section_7
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "?".into())
+        )?;
         writeln!(w)?;
         // Demote the original `## 7.` header to `### §7 (from <file>)` so
         // the aggregated doc is structurally clean.

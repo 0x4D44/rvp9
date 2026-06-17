@@ -240,9 +240,12 @@ fn calc_pframe_target_size_vbr(rc: &RateControl) -> u32 {
     //   min_frame_target = max(min_frame_bandwidth, avg >> 5)
     //   target = max(target, min_frame_target)
     //   target = min(target, max_frame_bandwidth)
-    let min_frame_target =
-        i64::from(rc.min_frame_bandwidth).max(avg >> 5).max(i64::from(FRAME_OVERHEAD_BITS));
-    let clamped = raw.max(min_frame_target).min(i64::from(rc.max_frame_bandwidth));
+    let min_frame_target = i64::from(rc.min_frame_bandwidth)
+        .max(avg >> 5)
+        .max(i64::from(FRAME_OVERHEAD_BITS));
+    let clamped = raw
+        .max(min_frame_target)
+        .min(i64::from(rc.max_frame_bandwidth));
     clamped.max(0) as u32
 }
 

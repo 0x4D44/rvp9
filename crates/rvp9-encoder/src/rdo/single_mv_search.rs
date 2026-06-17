@@ -227,9 +227,7 @@ fn b_height_log2(bsize: BlockSize) -> i32 {
 ///
 /// Returns the best MV (in 1/8-pel units) and its `vp9_mv_bit_cost`.
 #[must_use]
-pub fn single_motion_search(
-    params: &SingleMotionSearchParams<'_>,
-) -> SingleMotionSearchResult {
+pub fn single_motion_search(params: &SingleMotionSearchParams<'_>) -> SingleMotionSearchResult {
     // libvpx lines 2614-2625: derive `step_param` from
     // `cpi->mv_step_param` (with the `auto_mv_step_size` blend the
     // caller has already applied).
@@ -237,9 +235,7 @@ pub fn single_motion_search(
 
     // libvpx lines 2627-2631: `adaptive_motion_search` bumps step_param
     // for smaller blocks (less search effort).
-    if params.adaptive_motion_search
-        && !matches!(params.block_size, BlockSize::Block64x64)
-    {
+    if params.adaptive_motion_search && !matches!(params.block_size, BlockSize::Block64x64) {
         let bw = b_width_log2(params.block_size);
         let bh = b_height_log2(params.block_size);
         let bsize_min = bw.min(bh);
@@ -357,7 +353,10 @@ pub fn single_motion_search(
     let _ = best_mv_q3_int; // diagnostic — kept for documentation symmetry
 
     let rate_mv = vp9_mv_bit_cost(final_mv, params.ref_mv, params.mv_costs, MV_COST_WEIGHT);
-    SingleMotionSearchResult::Ok { best_mv: final_mv, rate_mv }
+    SingleMotionSearchResult::Ok {
+        best_mv: final_mv,
+        rate_mv,
+    }
 }
 
 /// libvpx `pred_mv[3]` triple (`vp9_rdopt.c:2600-2602`).
@@ -381,7 +380,11 @@ fn build_pred_mv_array(params: &SingleMotionSearchParams<'_>) -> [Mv; 3] {
 fn nstep_full_depth() -> bool {
     use std::sync::OnceLock;
     static N: OnceLock<bool> = OnceLock::new();
-    *N.get_or_init(|| std::env::var("RVP9_NSTEP").map(|v| v != "0").unwrap_or(true))
+    *N.get_or_init(|| {
+        std::env::var("RVP9_NSTEP")
+            .map(|v| v != "0")
+            .unwrap_or(true)
+    })
 }
 
 /// Run one pass of `diamond_search_sad` at the given start MV and
@@ -475,10 +478,10 @@ pub fn auto_mv_step_size(max_mv_context: u32, mv_step_param: i32) -> i32 {
 mod tests {
     use super::*;
     use rvp9_core::cost::mv_cost::MvCosts;
+    use rvp9_core::cost::mv_cost::build_nmv_cost_table;
     use rvp9_core::entropy::FrameContext;
     use rvp9_core::mv_search::mv_limits::MvLimits;
     use rvp9_core::mv_search::search_site::init_dsmotion_compensation;
-    use rvp9_core::cost::mv_cost::build_nmv_cost_table;
 
     fn make_mv_costs(fc: &FrameContext) -> MvCosts {
         build_nmv_cost_table(&fc.nmvc, false)
@@ -495,8 +498,7 @@ mod tests {
                 let sr = r - dy;
                 let sc = c - dx;
                 if sr >= 0 && sr < h as isize && sc >= 0 && sc < w as isize {
-                    out[(r as usize) * w + (c as usize)] =
-                        src[(sr as usize) * w + (sc as usize)];
+                    out[(r as usize) * w + (c as usize)] = src[(sr as usize) * w + (sc as usize)];
                 }
             }
         }
@@ -612,14 +614,7 @@ mod tests {
 
         // Diagnostic: oracle-check the true full-pel SAD minimum so
         // the test assertion is grounded in the actual landscape.
-        let oracle = oracle_min_sad(
-            &src_plane,
-            &ref_plane,
-            (32, 32),
-            16,
-            16,
-            params.mv_limits,
-        );
+        let oracle = oracle_min_sad(&src_plane, &ref_plane, (32, 32), 16, 16, params.mv_limits);
 
         let result = single_motion_search(&params);
         match result {

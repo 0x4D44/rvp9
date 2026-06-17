@@ -168,8 +168,8 @@ fn altref_slot2_differs_from_last_recon() {
         return;
     };
     let n_frames: u32 = 16;
-    let (frames, framerate) = y4m_read_cropped(&y4m_path, W, H, n_frames as usize)
-        .expect("y4m_read_cropped");
+    let (frames, framerate) =
+        y4m_read_cropped(&y4m_path, W, H, n_frames as usize).expect("y4m_read_cropped");
     assert_eq!(frames.len(), n_frames as usize);
 
     let cfg = EncoderConfig {
@@ -242,10 +242,13 @@ fn altref_stream_byte_exact_vpxdec() {
         return;
     };
     let n_frames: u32 = 16;
-    let (frames, framerate) = y4m_read_cropped(&y4m_path, W, H, n_frames as usize)
-        .expect("y4m_read_cropped");
+    let (frames, framerate) =
+        y4m_read_cropped(&y4m_path, W, H, n_frames as usize).expect("y4m_read_cropped");
     assert_eq!(frames.len(), n_frames as usize);
-    eprintln!("Source: {} ({n_frames} frames @ {W}x{H})", y4m_path.display());
+    eprintln!(
+        "Source: {} ({n_frames} frames @ {W}x{H})",
+        y4m_path.display()
+    );
 
     let cfg = EncoderConfig {
         width: W,

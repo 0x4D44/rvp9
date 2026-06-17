@@ -73,7 +73,7 @@
 use core::arch::x86_64::{__m256i, _mm256_setzero_si256};
 
 use super::idct32x32_avx2_1024::{
-    idct32_1024_16x32, idct_load16x16, store_buffer_16x32, transpose_16bit_16x16_avx2,
+    idct_load16x16, idct32_1024_16x32, store_buffer_16x32, transpose_16bit_16x16_avx2,
     transpose_16bit_16x16_avx2_to,
 };
 
@@ -336,7 +336,11 @@ mod tests {
             let mut input = [0i32; 1024];
             input[0] = val;
             let dst_init = [50u8; 1024];
-            assert_eq!(run_avx2(&input, &dst_init), run_scalar(&input, &dst_init), "val={val}");
+            assert_eq!(
+                run_avx2(&input, &dst_init),
+                run_scalar(&input, &dst_init),
+                "val={val}"
+            );
         }
     }
 
@@ -380,7 +384,11 @@ mod tests {
         }
         for &dst_fill in &[0u8, 64, 128, 200, 255] {
             let dst_init = [dst_fill; 1024];
-            assert_eq!(run_avx2(&input, &dst_init), run_avx2_1024(&input, &dst_init), "MAX fill, dst={dst_fill}");
+            assert_eq!(
+                run_avx2(&input, &dst_init),
+                run_avx2_1024(&input, &dst_init),
+                "MAX fill, dst={dst_fill}"
+            );
         }
 
         // (2) i16::MIN in rows 0..16.
@@ -390,17 +398,29 @@ mod tests {
         }
         for &dst_fill in &[0u8, 64, 128, 200, 255] {
             let dst_init = [dst_fill; 1024];
-            assert_eq!(run_avx2(&input, &dst_init), run_avx2_1024(&input, &dst_init), "MIN fill, dst={dst_fill}");
+            assert_eq!(
+                run_avx2(&input, &dst_init),
+                run_avx2_1024(&input, &dst_init),
+                "MIN fill, dst={dst_fill}"
+            );
         }
 
         // (3) Alternating MAX/MIN.
         let mut input = [0i32; 1024];
         for (i, slot) in input[..TOP].iter_mut().enumerate() {
-            *slot = if i % 2 == 0 { i16::MAX as i32 } else { i16::MIN as i32 };
+            *slot = if i % 2 == 0 {
+                i16::MAX as i32
+            } else {
+                i16::MIN as i32
+            };
         }
         for &dst_fill in &[0u8, 128, 255] {
             let dst_init = [dst_fill; 1024];
-            assert_eq!(run_avx2(&input, &dst_init), run_avx2_1024(&input, &dst_init), "ALT fill, dst={dst_fill}");
+            assert_eq!(
+                run_avx2(&input, &dst_init),
+                run_avx2_1024(&input, &dst_init),
+                "ALT fill, dst={dst_fill}"
+            );
         }
 
         // (4) Single high-magnitude impulse at (15, 15) — the 16×16
@@ -409,7 +429,11 @@ mod tests {
         input[15 * 32 + 15] = 28000;
         for &dst_fill in &[0u8, 128, 255] {
             let dst_init = [dst_fill; 1024];
-            assert_eq!(run_avx2(&input, &dst_init), run_avx2_1024(&input, &dst_init), "corner impulse, dst={dst_fill}");
+            assert_eq!(
+                run_avx2(&input, &dst_init),
+                run_avx2_1024(&input, &dst_init),
+                "corner impulse, dst={dst_fill}"
+            );
         }
     }
 

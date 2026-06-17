@@ -65,7 +65,19 @@ fn encode_decode_roundtrip_raw_input() {
 
     // Encode raw I420 -> IVF.
     let status = Command::new(enc_bin())
-        .args(["-w", "64", "-h", "64", "--fps", "30/1", "--target-bitrate", "500", "--end-usage", "cbr", "-o"])
+        .args([
+            "-w",
+            "64",
+            "-h",
+            "64",
+            "--fps",
+            "30/1",
+            "--target-bitrate",
+            "500",
+            "--end-usage",
+            "cbr",
+            "-o",
+        ])
         .arg(&ivf)
         .arg(&raw)
         .status()
@@ -76,7 +88,8 @@ fn encode_decode_roundtrip_raw_input() {
     let ivf_bytes = std::fs::read(&ivf).expect("read ivf");
     assert!(ivf_bytes.len() > 32, "ivf too small");
     assert_eq!(&ivf_bytes[0..4], b"DKIF", "bad IVF magic");
-    let num_frames = u32::from_le_bytes([ivf_bytes[24], ivf_bytes[25], ivf_bytes[26], ivf_bytes[27]]);
+    let num_frames =
+        u32::from_le_bytes([ivf_bytes[24], ivf_bytes[25], ivf_bytes[26], ivf_bytes[27]]);
     assert_eq!(num_frames as usize, N_FRAMES, "IVF frame count");
 
     // Decode IVF -> raw I420.
@@ -102,7 +115,17 @@ fn md5_is_deterministic_and_per_frame() {
     write_synthetic_raw(&raw);
 
     let enc = Command::new(enc_bin())
-        .args(["-w", "64", "-h", "64", "--fps", "30/1", "--target-bitrate", "500", "-o"])
+        .args([
+            "-w",
+            "64",
+            "-h",
+            "64",
+            "--fps",
+            "30/1",
+            "--target-bitrate",
+            "500",
+            "-o",
+        ])
         .arg(&ivf)
         .arg(&raw)
         .status()
@@ -161,7 +184,16 @@ fn non_multiple_of_64_rejected_clearly() {
     let raw = tmp("odd.yuv");
     std::fs::write(&raw, vec![0u8; 100 * 100 * 3 / 2]).expect("write");
     let out = Command::new(enc_bin())
-        .args(["-w", "100", "-h", "100", "--target-bitrate", "500", "-o", "x.ivf"])
+        .args([
+            "-w",
+            "100",
+            "-h",
+            "100",
+            "--target-bitrate",
+            "500",
+            "-o",
+            "x.ivf",
+        ])
         .arg(&raw)
         .output()
         .expect("run rvp9enc");
@@ -187,7 +219,10 @@ fn help_lists_supported_and_not_yet_tags() {
     // proof. Asserting only `[supported]` keeps the user-facing
     // affordance pinned without flagging "fully wired" as a regression.
     for bin in [enc_bin(), dec_bin()] {
-        let out = Command::new(&bin).arg("--help").output().expect("run --help");
+        let out = Command::new(&bin)
+            .arg("--help")
+            .output()
+            .expect("run --help");
         assert!(out.status.success());
         let text = String::from_utf8_lossy(&out.stdout);
         assert!(text.contains("[supported]"), "no supported tag in {bin:?}");
@@ -211,7 +246,17 @@ fn encode_synthetic_ivf(tag: &str) -> PathBuf {
     let ivf = tmp(&format!("{tag}_out.ivf"));
     write_synthetic_raw(&raw);
     let status = Command::new(enc_bin())
-        .args(["-w", "64", "-h", "64", "--fps", "30/1", "--target-bitrate", "500", "-o"])
+        .args([
+            "-w",
+            "64",
+            "-h",
+            "64",
+            "--fps",
+            "30/1",
+            "--target-bitrate",
+            "500",
+            "-o",
+        ])
         .arg(&ivf)
         .arg(&raw)
         .status()
@@ -229,11 +274,7 @@ fn decode_md5_with(ivf: &std::path::Path, extra: &[&str]) -> String {
     for a in extra {
         cmd.arg(a);
     }
-    let out = cmd
-        .arg("--md5")
-        .arg(ivf)
-        .output()
-        .expect("run rvp9dec");
+    let out = cmd.arg("--md5").arg(ivf).output().expect("run rvp9dec");
     assert!(
         out.status.success(),
         "rvp9dec failed with {extra:?}: {}",

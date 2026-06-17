@@ -104,7 +104,12 @@ fn get_overlap_area(
 ///   }
 /// }
 /// ```
-pub fn tpl_model_store(tpl_frame: &mut TplDepFrame, mi_row: usize, mi_col: usize, bsize: BlockSize) {
+pub fn tpl_model_store(
+    tpl_frame: &mut TplDepFrame,
+    mi_row: usize,
+    mi_col: usize,
+    bsize: BlockSize,
+) {
     let mi_height = bsize.n_8x8_high() as usize;
     let mi_width = bsize.n_8x8_wide() as usize;
     let stride = tpl_frame.stride;
@@ -199,10 +204,8 @@ fn tpl_model_update_b(
         );
         debug_assert!(overlap_area >= 0);
 
-        let ref_mi_row =
-            (round_floor(grid_pos_row, bh) * (mi_height as i32)) as usize;
-        let ref_mi_col =
-            (round_floor(grid_pos_col, bw) * (mi_width as i32)) as usize;
+        let ref_mi_row = (round_floor(grid_pos_row, bh) * (mi_height as i32)) as usize;
+        let ref_mi_col = (round_floor(grid_pos_col, bw) * (mi_width as i32)) as usize;
 
         let stride = ref_frame.stride;
         for idy in 0..mi_height {
@@ -210,9 +213,9 @@ fn tpl_model_update_b(
                 let dst_idx = (ref_mi_row + idy) * stride + (ref_mi_col + idx);
                 let dst = &mut ref_frame.tpl_stats[dst_idx];
                 dst.mc_flow += (mc_flow * i64::from(overlap_area)) / i64::from(pix_num);
-                dst.mc_ref_cost +=
-                    ((cur_stats.intra_cost - cur_stats.inter_cost) * i64::from(overlap_area))
-                        / i64::from(pix_num);
+                dst.mc_ref_cost += ((cur_stats.intra_cost - cur_stats.inter_cost)
+                    * i64::from(overlap_area))
+                    / i64::from(pix_num);
             }
         }
     }

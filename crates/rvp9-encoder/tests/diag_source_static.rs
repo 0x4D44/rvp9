@@ -25,7 +25,9 @@ fn source_static_check() {
             sse += (d * d) as u64;
             sad += d.unsigned_abs() as u64;
         }
-        eprintln!("  frame {i:>2} vs {:>2}: SSE={sse:>12}  SAD={sad:>12}  pixels_changed (any) approx",
-            i - 1);
+        eprintln!(
+            "  frame {i:>2} vs {:>2}: SSE={sse:>12}  SAD={sad:>12}  pixels_changed (any) approx",
+            i - 1
+        );
     }
 }

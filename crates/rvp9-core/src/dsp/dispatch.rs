@@ -2341,12 +2341,24 @@ impl SimdDispatch {
             // Indices 1 (4×8) and 2 (8×4) are unsupported → None.
             SubpelVarTable {
                 fns: [
-                    subpel_slot!(sc::vpx_sub_pixel_variance4x4, av::vpx_sub_pixel_variance4x4_avx2),
+                    subpel_slot!(
+                        sc::vpx_sub_pixel_variance4x4,
+                        av::vpx_sub_pixel_variance4x4_avx2
+                    ),
                     None,
                     None,
-                    subpel_slot!(sc::vpx_sub_pixel_variance8x8, av::vpx_sub_pixel_variance8x8_avx2),
-                    subpel_slot!(sc::vpx_sub_pixel_variance8x16, av::vpx_sub_pixel_variance8x16_avx2),
-                    subpel_slot!(sc::vpx_sub_pixel_variance16x8, av::vpx_sub_pixel_variance16x8_avx2),
+                    subpel_slot!(
+                        sc::vpx_sub_pixel_variance8x8,
+                        av::vpx_sub_pixel_variance8x8_avx2
+                    ),
+                    subpel_slot!(
+                        sc::vpx_sub_pixel_variance8x16,
+                        av::vpx_sub_pixel_variance8x16_avx2
+                    ),
+                    subpel_slot!(
+                        sc::vpx_sub_pixel_variance16x8,
+                        av::vpx_sub_pixel_variance16x8_avx2
+                    ),
                     subpel_slot!(
                         sc::vpx_sub_pixel_variance16x16,
                         av::vpx_sub_pixel_variance16x16_avx2
@@ -3302,10 +3314,8 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn idct32x32_dense_slot_prefers_avx2() {
-        let avx2: fn(&[i32; 1024], &mut [u8], usize) =
-            crate::dsp::x86_64::idct32x32_add_avx2_1024;
-        let sse2: fn(&[i32; 1024], &mut [u8], usize) =
-            crate::dsp::x86_64::idct32x32_add_sse2_1024;
+        let avx2: fn(&[i32; 1024], &mut [u8], usize) = crate::dsp::x86_64::idct32x32_add_avx2_1024;
+        let sse2: fn(&[i32; 1024], &mut [u8], usize) = crate::dsp::x86_64::idct32x32_add_sse2_1024;
 
         // avx2=true → AVX2 i16-lane kernel.
         let mut caps_avx2 = detect();
@@ -3415,10 +3425,8 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn idct32x32_135_slot_prefers_avx2() {
-        let avx2: fn(&[i32; 1024], &mut [u8], usize) =
-            crate::dsp::x86_64::idct32x32_add_avx2_135;
-        let sse2: fn(&[i32; 1024], &mut [u8], usize) =
-            crate::dsp::x86_64::idct32x32_add_sse2_135;
+        let avx2: fn(&[i32; 1024], &mut [u8], usize) = crate::dsp::x86_64::idct32x32_add_avx2_135;
+        let sse2: fn(&[i32; 1024], &mut [u8], usize) = crate::dsp::x86_64::idct32x32_add_sse2_135;
         let scalar: fn(&[i32; 1024], &mut [u8], usize) =
             crate::transforms::inverse::idct32x32_135_add;
 

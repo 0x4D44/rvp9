@@ -64,8 +64,8 @@ pub fn discount_newmv_test(
     // We surface that as `None` in the rvp9 API — `Some(Mv::ZERO)`
     // covers the "real zero MV" half of the `||`.
     let nearest_ok = match nearest_mv {
-        None => true,                            // INVALID_MV
-        Some(mv) => mv_as_int(mv) == 0,          // (0, 0)
+        None => true,                   // INVALID_MV
+        Some(mv) => mv_as_int(mv) == 0, // (0, 0)
     };
     let near_ok = match near_mv {
         None => true,
@@ -197,13 +197,7 @@ mod tests {
     #[test]
     fn discount_true_when_all_conditions_met() {
         let mv = Mv { row: 16, col: -32 };
-        let ok = discount_newmv_test(
-            false,
-            InterMode::NewMv,
-            mv,
-            Some(Mv::ZERO),
-            Some(Mv::ZERO),
-        );
+        let ok = discount_newmv_test(false, InterMode::NewMv, mv, Some(Mv::ZERO), Some(Mv::ZERO));
         assert!(ok, "discount must be true for NEWMV with zero ref-MVs");
     }
 
@@ -214,13 +208,7 @@ mod tests {
     fn discount_false_when_nearest_is_nonzero() {
         let mv = Mv { row: 16, col: -32 };
         let nearest = Mv { row: 8, col: 0 };
-        let ok = discount_newmv_test(
-            false,
-            InterMode::NewMv,
-            mv,
-            Some(nearest),
-            Some(Mv::ZERO),
-        );
+        let ok = discount_newmv_test(false, InterMode::NewMv, mv, Some(nearest), Some(Mv::ZERO));
         assert!(!ok);
     }
 
@@ -228,13 +216,7 @@ mod tests {
     #[test]
     fn discount_false_for_alt_ref_source() {
         let mv = Mv { row: 16, col: -32 };
-        let ok = discount_newmv_test(
-            true,
-            InterMode::NewMv,
-            mv,
-            Some(Mv::ZERO),
-            Some(Mv::ZERO),
-        );
+        let ok = discount_newmv_test(true, InterMode::NewMv, mv, Some(Mv::ZERO), Some(Mv::ZERO));
         assert!(!ok);
     }
 }

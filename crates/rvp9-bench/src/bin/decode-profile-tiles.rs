@@ -26,8 +26,7 @@ use std::time::Instant;
 use rvp9_decoder::{DecodeError, Decoder};
 use rvp9_harness::container::read_packets;
 
-const DEFAULT_FIXTURE_REL: &str =
-    "tests/conformance/vectors/vp90-2-08-tile_1x4.webm";
+const DEFAULT_FIXTURE_REL: &str = "tests/conformance/vectors/vp90-2-08-tile_1x4.webm";
 const DEFAULT_THREADS: usize = 4;
 const DEFAULT_RUNS: usize = 10;
 const DEFAULT_WARMUP: usize = 30;
@@ -190,7 +189,9 @@ fn main() {
     // on first emit_row call.
     // SAFETY: see the comment above — env mutation is single-threaded
     // at process start, before the decoder spawns workers.
-    unsafe { std::env::set_var("RVP9_PROFILE_TILES_OUT", &args.out); }
+    unsafe {
+        std::env::set_var("RVP9_PROFILE_TILES_OUT", &args.out);
+    }
 
     let total_start = Instant::now();
     let mut total_timed: usize = 0;
@@ -225,7 +226,5 @@ fn main() {
         runs = args.runs,
     );
     println!("CSV: {}", args.out.display());
-    println!(
-        "Note: convert cycles → microseconds with cycles / {mhz:.1} = us"
-    );
+    println!("Note: convert cycles → microseconds with cycles / {mhz:.1} = us");
 }

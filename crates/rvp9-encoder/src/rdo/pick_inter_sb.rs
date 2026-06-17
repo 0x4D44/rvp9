@@ -127,9 +127,8 @@ pub struct RefFrameInput<'a> {
 /// lifetime to be tied to the closure's call. The caller is
 /// responsible for the `super_block_yrd` / chroma RD plumbing inside
 /// their runner — the standalone module just composes the result.
-pub type HandleInterRunner<'a> = Box<
-    dyn Fn(InterMode, Mv, u32, u32) -> Option<HandleInterModeResult> + 'a,
->;
+pub type HandleInterRunner<'a> =
+    Box<dyn Fn(InterMode, Mv, u32, u32) -> Option<HandleInterModeResult> + 'a>;
 
 /// Driver inputs.
 pub struct PickInterModeSbParams<'a> {
@@ -356,12 +355,8 @@ fn recompute_rd(rdmult: i64, rate: u32, dist: i64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rdo::handle_inter::{
-        FilterRd, HandleInterModeResult, SWITCHABLE_FILTERS,
-    };
-    use crate::rdo::ref_costs::{
-        ReferenceMode, RefFrameContext, estimate_ref_frame_costs,
-    };
+    use crate::rdo::handle_inter::{FilterRd, HandleInterModeResult, SWITCHABLE_FILTERS};
+    use crate::rdo::ref_costs::{RefFrameContext, ReferenceMode, estimate_ref_frame_costs};
     use rvp9_core::bitstream::frame::InterpFilter;
     use std::cell::RefCell;
 
@@ -380,8 +375,7 @@ mod tests {
         let rate = 500u32 + (mode as u32) * 50;
         let rd = (rate as i64).saturating_mul(100_000) >> 9;
         let rd = rd.saturating_add(dist << 7);
-        let mut filter_cache: [Option<FilterRd>; SWITCHABLE_FILTERS] =
-            [None; SWITCHABLE_FILTERS];
+        let mut filter_cache: [Option<FilterRd>; SWITCHABLE_FILTERS] = [None; SWITCHABLE_FILTERS];
         for slot in filter_cache.iter_mut() {
             *slot = Some(FilterRd {
                 rd,
@@ -518,9 +512,21 @@ mod tests {
 
         let _ = pick_inter_mode_sb(&params);
         let counter = counter.borrow();
-        assert!(counter.nearest >= 1, "NEAREST not iterated (got {})", counter.nearest);
-        assert!(counter.near >= 1, "NEAR not iterated (got {})", counter.near);
-        assert!(counter.zero >= 1, "ZERO not iterated (got {})", counter.zero);
+        assert!(
+            counter.nearest >= 1,
+            "NEAREST not iterated (got {})",
+            counter.nearest
+        );
+        assert!(
+            counter.near >= 1,
+            "NEAR not iterated (got {})",
+            counter.near
+        );
+        assert!(
+            counter.zero >= 1,
+            "ZERO not iterated (got {})",
+            counter.zero
+        );
         assert!(counter.new >= 1, "NEW not iterated (got {})", counter.new);
     }
 
@@ -562,7 +568,10 @@ mod tests {
         };
 
         let result = pick_inter_mode_sb(&params);
-        assert!(result.picked_intra, "intra should win when all inter is bad");
+        assert!(
+            result.picked_intra,
+            "intra should win when all inter is bad"
+        );
         assert_eq!(result.ref_frame, RefFrame::IntraFrame);
         assert_eq!(result.rate, intra_fallback.rate);
         assert_eq!(result.dist, intra_fallback.dist);

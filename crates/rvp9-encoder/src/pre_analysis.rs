@@ -182,7 +182,10 @@ impl PreAnalysisState {
             // and is recomputed per call by the
             // `enable_noise_estimation` gate; the level seed is
             // resolution-dependent (kLowLow for sub-720p, kLow otherwise).
-            noise_estimate: NoiseEstimate { enabled: false, level: ne_level },
+            noise_estimate: NoiseEstimate {
+                enabled: false,
+                level: ne_level,
+            },
             ne_value: 0,
             ne_thresh,
             // libvpx `vp9_noise_estimate.c:49`: adapt_thresh = (3*thresh)>>1
@@ -311,25 +314,22 @@ impl PreAnalysisState {
         let sb_rows = (h / 64).max(1);
         for sb_r in 0..sb_rows {
             for sb_c in 0..sb_cols {
-                let (sad, sse, sum) = sb_sad_and_var(
-                    src_y_tight, last, w, sb_r * 64, sb_c * 64,
-                );
+                let (sad, sse, sum) = sb_sad_and_var(src_y_tight, last, w, sb_r * 64, sb_c * 64);
                 // libvpx: variance = sse - ((sum * sum) >> 12)
                 let var = sse.saturating_sub((sum * sum) >> 12);
                 let idx = sb_r * sb_cols + sb_c;
                 self.avg_source_sad[idx] = sad;
                 // libvpx `vp9_encodeframe.c:1243-1244` — only the
                 // `kVeryHighSad` arm has a consumer in rvp9 today.
-                self.content_state_sb[idx] =
-                    if sad > (AVG_SOURCE_SAD_THRESHOLD << 1) {
-                        ContentStateSb::VeryHighSad
-                    } else {
-                        // Other libvpx states all collapse to Normal
-                        // in rvp9's 2-state enum until the consumer
-                        // side expands (Wave 4+).
-                        let _ = var; // computed for future expansion
-                        ContentStateSb::Normal
-                    };
+                self.content_state_sb[idx] = if sad > (AVG_SOURCE_SAD_THRESHOLD << 1) {
+                    ContentStateSb::VeryHighSad
+                } else {
+                    // Other libvpx states all collapse to Normal
+                    // in rvp9's 2-state enum until the consumer
+                    // side expands (Wave 4+).
+                    let _ = var; // computed for future expansion
+                    ContentStateSb::Normal
+                };
             }
         }
     }
@@ -397,10 +397,7 @@ impl PreAnalysisState {
         let mut num_zero_temp_sad: u32 = 0;
         for sb_r in 0..sb_rows {
             for sb_c in 0..sb_cols {
-                let interior = sb_r > 0
-                    && sb_c > 0
-                    && sb_r + 1 < sb_rows
-                    && sb_c + 1 < sb_cols;
+                let interior = sb_r > 0 && sb_c > 0 && sb_r + 1 < sb_rows && sb_c + 1 < sb_cols;
                 let checkerboard =
                     (sb_r % 2 == 0 && sb_c % 2 == 0) || (sb_r % 2 == 1 && sb_c % 2 == 1);
                 if interior && checkerboard {
@@ -423,9 +420,7 @@ impl PreAnalysisState {
         // libvpx gate (`vp9_ratectrl.c:3168-3175`).
         let threshold = MIN_THRESH.max(self.prev_avg_source_sad * THRESH);
         let zero_sad_gate = num_zero_temp_sad < 3 * (num_samples >> 2);
-        self.high_source_sad = avg_sad > threshold
-            && frames_since_key > 1
-            && zero_sad_gate;
+        self.high_source_sad = avg_sad > threshold && frames_since_key > 1 && zero_sad_gate;
 
         // libvpx forced-KF gate (`vp9_ratectrl.c:3176-3177`).
         self.scene_cut_force_key_frame = self.high_source_sad && avg_sad > THRESH_KEY;
@@ -433,8 +428,7 @@ impl PreAnalysisState {
         // libvpx recursive average update (`vp9_ratectrl.c:3179`).
         // CBR is rvp9's default rc_mode, so the update fires
         // unconditionally on every call.
-        self.prev_avg_source_sad =
-            (3 * self.prev_avg_source_sad + avg_sad) >> 2;
+        self.prev_avg_source_sad = (3 * self.prev_avg_source_sad + avg_sad) >> 2;
     }
 
     /// W2.4(vpxenc parity, A5 P3): faithful port of libvpx
@@ -486,8 +480,8 @@ impl PreAnalysisState {
         // also gate on `noise_sensitivity > 0` (libvpx's full
         // `enable_noise_estimation` predicate at
         // vp9_noise_estimate.c:52-74).
-        self.noise_estimate.enabled = noise_sensitivity > 0
-            && enable_noise_estimation(self.width, self.height);
+        self.noise_estimate.enabled =
+            noise_sensitivity > 0 && enable_noise_estimation(self.width, self.height);
 
         let w = self.width as usize;
         let h = self.height as usize;
@@ -543,8 +537,7 @@ impl PreAnalysisState {
         }
         // libvpx lines 189-190: frame_low_motion if num_low_motion >=
         // (3 * mi_rows * mi_cols) >> 3 (i.e., >= 37.5% of cells).
-        let frame_low_motion: bool =
-            num_low_motion >= ((3 * (mi_rows * mi_cols) as u32) >> 3);
+        let frame_low_motion: bool = num_low_motion >= ((3 * (mi_rows * mi_cols) as u32) >> 3);
 
         // libvpx lines 191-242: second pass, 1/4-sub-sampled 16×16
         // variance over steady-background blocks. The mi-grid step
@@ -628,18 +621,12 @@ impl PreAnalysisState {
                 hist_avg[bin_cnt] = hist[MAX_VAR_HIST_BINS - 1] >> 2;
             } else if bin_cnt == MAX_VAR_HIST_BINS - 2 {
                 // libvpx lines 265-267.
-                hist_avg[bin_cnt] = (hist[bin_cnt - 1]
-                    + 2 * hist[bin_cnt]
-                    + (hist[bin_cnt + 1] >> 1)
-                    + 2)
-                    >> 2;
+                hist_avg[bin_cnt] =
+                    (hist[bin_cnt - 1] + 2 * hist[bin_cnt] + (hist[bin_cnt + 1] >> 1) + 2) >> 2;
             } else {
                 // libvpx lines 269-271.
-                hist_avg[bin_cnt] = (hist[bin_cnt - 1]
-                    + 2 * hist[bin_cnt]
-                    + hist[bin_cnt + 1]
-                    + 2)
-                    >> 2;
+                hist_avg[bin_cnt] =
+                    (hist[bin_cnt - 1] + 2 * hist[bin_cnt] + hist[bin_cnt + 1] + 2) >> 2;
             }
             if hist_avg[bin_cnt] > max_bin_count {
                 max_bin_count = hist_avg[bin_cnt];
@@ -651,8 +638,7 @@ impl PreAnalysisState {
         // scaled max bin index. `(3 * value + max_bin * 40) >> 2`.
         // libvpx stores `int`; we mirror with i32 saturating math.
         let scaled = (max_bin as i32).saturating_mul(40);
-        self.ne_value =
-            ((3i32.saturating_mul(self.ne_value)).saturating_add(scaled)) >> 2;
+        self.ne_value = ((3i32.saturating_mul(self.ne_value)).saturating_add(scaled)) >> 2;
 
         // libvpx lines 282-286: rapid-onset fast-path. When level is
         // below kMedium AND value already exceeds adapt_thresh, jump
@@ -674,9 +660,7 @@ impl PreAnalysisState {
         if self.ne_count == self.ne_num_frames_estimate {
             self.ne_num_frames_estimate = 30;
             self.ne_count = 0;
-            self.noise_estimate.level = noise_estimate_extract_level(
-                self.ne_value, self.ne_thresh,
-            );
+            self.noise_estimate.level = noise_estimate_extract_level(self.ne_value, self.ne_thresh);
         }
     }
 
@@ -710,12 +694,7 @@ impl PreAnalysisState {
     /// **Motion magnitude**: libvpx's `curr_motion_magn` arg is set
     /// to 0 at every call site in `vp9_compute_skin_sb` (line 81), so
     /// rvp9 hard-codes it 0 too.
-    pub fn compute_skin_map(
-        &mut self,
-        src_y_tight: &[u8],
-        src_u_tight: &[u8],
-        src_v_tight: &[u8],
-    ) {
+    pub fn compute_skin_map(&mut self, src_y_tight: &[u8], src_u_tight: &[u8], src_v_tight: &[u8]) {
         let w = self.width as usize;
         let h = self.height as usize;
         let uvw = w / 2;
@@ -855,8 +834,7 @@ impl PreAnalysisState {
         // libvpx `vp9_encodeframe.c:1226-1227`: `y_sad =
         // sdf(p->src.buf, p->src.stride, dst, dst_stride)` against
         // the 64×64 prediction. We diff against Last_Source.
-        let (y_sad, _sse, _sum) =
-            sb_sad_and_var(src_y_tight, last_y, w, sb_pix_r, sb_pix_c);
+        let (y_sad, _sse, _sum) = sb_sad_and_var(src_y_tight, last_y, w, sb_pix_r, sb_pix_c);
         // For chroma, no Last_Source U/V is kept (the W2.1 scaffold
         // only saves the Y plane). The conservative substitute is to
         // compare against the source itself shifted by one SB, but
@@ -917,7 +895,12 @@ impl PreAnalysisState {
                 // 1190-1191`).
                 let cs = self.content_state_sb[idx];
                 self.color_sensitivity_sb[idx] = self.compute_color_sensitivity(
-                    src_y_tight, src_u_tight, src_v_tight, cs, sb_r, sb_c,
+                    src_y_tight,
+                    src_u_tight,
+                    src_v_tight,
+                    cs,
+                    sb_r,
+                    sb_c,
                 );
             }
         }
@@ -1093,8 +1076,7 @@ fn vpx_skin_pixel(y: i32, cb: i32, cr: i32, motion: i32) -> u8 {
     // libvpx `vpx_dsp/skin_detection.c:21` (q16).
     const SKIN_INV_COV: [i32; 4] = [4107, 1663, 1663, 2157];
     // libvpx `vpx_dsp/skin_detection.c:22-23` (q18).
-    const SKIN_THRESHOLD: [i32; 6] =
-        [1570636, 1400000, 800000, 800000, 800000, 800000];
+    const SKIN_THRESHOLD: [i32; 6] = [1570636, 1400000, 800000, 800000, 800000, 800000];
 
     // libvpx `vpx_dsp/skin_detection.c:50`.
     if y < Y_LOW || y > Y_HIGH {
@@ -1110,7 +1092,8 @@ fn vpx_skin_pixel(y: i32, cb: i32, cr: i32, motion: i32) -> u8 {
     }
     // libvpx `vpx_dsp/skin_detection.c:60-76` model loop.
     for i in 0..5usize {
-        let skin_color_diff = vpx_evaluate_skin_color_difference(cb, cr, i, &SKIN_MEAN, &SKIN_INV_COV);
+        let skin_color_diff =
+            vpx_evaluate_skin_color_difference(cb, cr, i, &SKIN_MEAN, &SKIN_INV_COV);
         let thresh = SKIN_THRESHOLD[i + 1];
         if skin_color_diff < thresh {
             // libvpx line 63 — dark-luma rejection.
@@ -1431,8 +1414,7 @@ mod tests {
         // sub-bias (libvpx vp9_pickmode.c:1349). A flat frame must
         // land in either tier.
         assert!(
-            noise_level_rank(st.noise_estimate.level)
-                < noise_level_rank(NoiseLevel::Medium),
+            noise_level_rank(st.noise_estimate.level) < noise_level_rank(NoiseLevel::Medium),
             "W2.4 PROOF: flat-frame noise level must stay below \
              Medium (libvpx vp9_noise_estimate.c:101-104). \
              Got level = {:?}, ne_value = {}",
@@ -1495,8 +1477,12 @@ mod tests {
         // returns after seeding last_w/last_h (lines 140-142). The
         // second call lands in the main arm and actually walks the
         // histogram.
-        st.compute_noise_estimate(&src, /* frames_since_key = */ 8, /* noise_sensitivity */ 1);
-        st.compute_noise_estimate(&src, /* frames_since_key = */ 16, /* noise_sensitivity */ 1);
+        st.compute_noise_estimate(
+            &src, /* frames_since_key = */ 8, /* noise_sensitivity */ 1,
+        );
+        st.compute_noise_estimate(
+            &src, /* frames_since_key = */ 16, /* noise_sensitivity */ 1,
+        );
         // libvpx line 280 must have moved ne_value off zero.
         assert!(
             st.ne_value > 0,
@@ -1512,11 +1498,11 @@ mod tests {
             "W2.4 PROOF: noisy-frame ne_value ({}) must exceed \
              adapt_thresh ({}) so the rapid-onset fast-path fires \
              (libvpx vp9_noise_estimate.c:282-286)",
-            st.ne_value, st.ne_adapt_thresh
+            st.ne_value,
+            st.ne_adapt_thresh
         );
         assert!(
-            noise_level_rank(st.noise_estimate.level)
-                >= noise_level_rank(NoiseLevel::Medium),
+            noise_level_rank(st.noise_estimate.level) >= noise_level_rank(NoiseLevel::Medium),
             "W2.4 PROOF: per-pixel ±64 noise must lift the published \
              level to Medium or higher (libvpx \
              vp9_noise_estimate.c:99-100). Got level = {:?}, \
@@ -1537,7 +1523,9 @@ mod tests {
         for c in &mut st.consec_zero_mv {
             *c = 100;
         }
-        st.compute_noise_estimate(&flat, /* frames_since_key = */ 8, /* noise_sensitivity */ 1);
+        st.compute_noise_estimate(
+            &flat, /* frames_since_key = */ 8, /* noise_sensitivity */ 1,
+        );
         // libvpx `enable_noise_estimation` requires width*height >=
         // 640*360. 320×240 = 76800 < 230400 ⇒ enabled stays false.
         assert!(
@@ -1733,7 +1721,8 @@ mod tests {
         st.noise_estimate.enabled = false;
         st.noise_estimate.level = NoiseLevel::High;
         assert_eq!(
-            st.vbp_threshold_scale(), 1,
+            st.vbp_threshold_scale(),
+            1,
             "W2.6 PROOF: disabled noise estimator must return scale=1 \
              regardless of level (libvpx vp9_encodeframe.c:589 gate)"
         );
@@ -1741,24 +1730,28 @@ mod tests {
         st.noise_estimate.enabled = true;
         st.noise_estimate.level = NoiseLevel::LowLow;
         assert_eq!(
-            st.vbp_threshold_scale(), 1,
+            st.vbp_threshold_scale(),
+            1,
             "W2.6 PROOF: NoiseLevel::LowLow must map to scale=1"
         );
         st.noise_estimate.level = NoiseLevel::Low;
         assert_eq!(
-            st.vbp_threshold_scale(), 1,
+            st.vbp_threshold_scale(),
+            1,
             "W2.6 PROOF: NoiseLevel::Low must map to scale=1 \
              (libvpx vp9_encodeframe.c:596-597 default branch)"
         );
         st.noise_estimate.level = NoiseLevel::Medium;
         assert_eq!(
-            st.vbp_threshold_scale(), 2,
+            st.vbp_threshold_scale(),
+            2,
             "W2.6 PROOF: NoiseLevel::Medium must map to scale=2 \
              (libvpx vp9_encodeframe.c:594-595)"
         );
         st.noise_estimate.level = NoiseLevel::High;
         assert_eq!(
-            st.vbp_threshold_scale(), 4,
+            st.vbp_threshold_scale(),
+            4,
             "W2.6 PROOF: NoiseLevel::High must map to scale=4 \
              (brief-specified 1/2/4 ladder; libvpx \
              vp9_encodeframe.c:592-593 uses 1/2/3)"
@@ -1800,9 +1793,7 @@ mod tests {
         let src_u = vec![100u8; (w / 2) * (h / 2)]; // flat chroma
         let src_v = vec![120u8; (w / 2) * (h / 2)]; // flat chroma
         st.capture_last_source(&last_y);
-        let cs = st.compute_color_sensitivity(
-            &src_y, &src_u, &src_v, ContentStateSb::Normal, 0, 0,
-        );
+        let cs = st.compute_color_sensitivity(&src_y, &src_u, &src_v, ContentStateSb::Normal, 0, 0);
         assert_eq!(
             cs,
             [false, false],
@@ -1845,9 +1836,7 @@ mod tests {
                 src_v[r * uvw + c] = if (r ^ c) & 1 == 0 { 100 } else { 156 };
             }
         }
-        let cs = st.compute_color_sensitivity(
-            &src_y, &src_u, &src_v, ContentStateSb::Normal, 0, 0,
-        );
+        let cs = st.compute_color_sensitivity(&src_y, &src_u, &src_v, ContentStateSb::Normal, 0, 0);
         assert_eq!(
             cs,
             [true, true],
@@ -1899,9 +1888,7 @@ mod tests {
         let src_y = vec![128u8; 64 * 64];
         let src_u = vec![100u8; 32 * 32];
         let src_v = vec![120u8; 32 * 32];
-        let cs = st.compute_color_sensitivity(
-            &src_y, &src_u, &src_v, ContentStateSb::Normal, 0, 0,
-        );
+        let cs = st.compute_color_sensitivity(&src_y, &src_u, &src_v, ContentStateSb::Normal, 0, 0);
         assert_eq!(cs, [false; 2]);
     }
 }

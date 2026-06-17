@@ -113,7 +113,9 @@ fn frame_parallel_corpus_decodes_bit_exact() {
                     mismatched += 1;
                     println!(
                         "  shown-frame {shown_idx}: got {got_hex}, want {}",
-                        e.md5_hex_visible().as_deref().unwrap_or("<no-visible-digest>"),
+                        e.md5_hex_visible()
+                            .as_deref()
+                            .unwrap_or("<no-visible-digest>"),
                     );
                 }
                 None => panic!(

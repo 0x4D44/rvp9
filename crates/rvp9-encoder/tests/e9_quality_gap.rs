@@ -28,9 +28,9 @@
 use rvp9_core::entropy::bitacct;
 use rvp9_decoder::{Decoder, ParsedFrame};
 use rvp9_encoder::{
-    predstat, skipstat, AqMode, EncoderConfig, RcMode, StreamEncoder, StreamFrameKind, YuvFrameRef,
+    AqMode, EncoderConfig, RcMode, StreamEncoder, StreamFrameKind, YuvFrameRef, predstat, skipstat,
 };
-use rvp9_harness::y4m::{probe_foreman_cif, read_cropped, YuvFrameBuf};
+use rvp9_harness::y4m::{YuvFrameBuf, probe_foreman_cif, read_cropped};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -39,7 +39,15 @@ const H: u32 = 256;
 const N_FRAMES: u32 = 64;
 
 const CAT_NAMES: [&str; bitacct::N_CATEGORIES] = [
-    "partition", "skip", "is_inter", "tx_size", "mode+ref", "mv_delta", "coef", "seg_id", "other",
+    "partition",
+    "skip",
+    "is_inter",
+    "tx_size",
+    "mode+ref",
+    "mv_delta",
+    "coef",
+    "seg_id",
+    "other",
 ];
 
 /// The rvp9 base_qindex points to sweep, in full VP9 0..255 qindex space.
@@ -255,11 +263,7 @@ struct LibvpxResult {
 
 fn libvpx_available() -> Option<PathBuf> {
     let p = PathBuf::from(r"D:\language\libvpx-stock\vpxenc.exe");
-    if p.is_file() {
-        Some(p)
-    } else {
-        None
-    }
+    if p.is_file() { Some(p) } else { None }
 }
 
 fn write_i420_raw(path: &Path, frames: &[YuvFrameBuf]) -> std::io::Result<()> {
@@ -378,7 +382,11 @@ fn e9_quality_gap_foreman() {
     let (frames, framerate) = match read_cropped(&path, W, H, N_FRAMES as usize) {
         Ok((f, fr)) if f.len() == N_FRAMES as usize => (f, fr),
         Ok((f, _)) => {
-            eprintln!("    [skip] foreman_cif only yielded {}/{} frames", f.len(), N_FRAMES);
+            eprintln!(
+                "    [skip] foreman_cif only yielded {}/{} frames",
+                f.len(),
+                N_FRAMES
+            );
             return;
         }
         Err(e) => {

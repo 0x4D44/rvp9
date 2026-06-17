@@ -53,16 +53,14 @@
 
 use rvp9_core::bitstream::InterpFilter;
 use rvp9_core::bitstream::frame::REF_FRAMES;
-use rvp9_core::bitstream::{
-    CoefProbUpdatePlan, CoefSlotUpdate, tx_mode_to_biggest_tx_size,
-};
+use rvp9_core::bitstream::{CoefProbUpdatePlan, CoefSlotUpdate, tx_mode_to_biggest_tx_size};
 use rvp9_core::cost::coef_cost::{ENTROPY_NODES, ENTROPY_TOKENS, PIVOT_NODE};
 use rvp9_core::cost::prob_cost::{VP9_PROB_COST_SHIFT, vp9_cost_one, vp9_cost_zero};
 use rvp9_core::entropy::BoolWriter;
 use rvp9_core::entropy::{
     COEF_BANDS, COEFF_CONTEXTS, Coef12Bank, CoeffProbsModel, DIFF_UPDATE_PROB,
-    EobBranchCountsBlock, MODEL_NODES, PLANE_TYPES, REF_TYPES, SWITCHABLE_FILTERS,
-    SWITCHABLE_FILTER_CONTEXTS, TX_SIZES, UNCONSTRAINED_NODES, VP9_PARETO8_FULL, get_binary_prob,
+    EobBranchCountsBlock, MODEL_NODES, PLANE_TYPES, REF_TYPES, SWITCHABLE_FILTER_CONTEXTS,
+    SWITCHABLE_FILTERS, TX_SIZES, UNCONSTRAINED_NODES, VP9_PARETO8_FULL, get_binary_prob,
     remap_prob, write_prob_diff_update,
 };
 use rvp9_core::transforms::TxMode;
@@ -110,8 +108,7 @@ fn prob_diff_update_cost(newp: u8, oldp: u8) -> i64 {
 /// (`vp9_cost.h:32-34`).
 #[inline]
 fn cost_branch256(ct: [u32; 2], p: u8) -> i64 {
-    i64::from(ct[0]) * i64::from(vp9_cost_zero(p))
-        + i64::from(ct[1]) * i64::from(vp9_cost_one(p))
+    i64::from(ct[0]) * i64::from(vp9_cost_zero(p)) + i64::from(ct[1]) * i64::from(vp9_cost_one(p))
 }
 
 /// One slot's worth of the savings-search outcome. `best_newp` is the
@@ -241,7 +238,11 @@ static COEF_TREE_CHILD: [u8; 2 * (ENTROPY_TOKENS - 1)] = [
 /// the per-token event counts up the `VP9_COEF_TREE`, writing each
 /// internal node's `[left, right]` split into `branch_ct`. Returns the
 /// total events under subtree rooted at tree index `i`.
-fn convert_distribution(i: usize, num_events: &[u32; ENTROPY_TOKENS], branch_ct: &mut [[u32; 2]]) -> u32 {
+fn convert_distribution(
+    i: usize,
+    num_events: &[u32; ENTROPY_TOKENS],
+    branch_ct: &mut [[u32; 2]],
+) -> u32 {
     let left = if LEAF_TOKEN[i] != 255 {
         num_events[LEAF_TOKEN[i] as usize]
     } else {
@@ -493,11 +494,18 @@ pub fn build_coef_prob_update_plan(
                             let start_newp = ideal[t];
                             let search = if t == PIVOT_NODE {
                                 prob_diff_update_savings_search_model(
-                                    &branch_ct, oldp, start_newp, DIFF_UPDATE_PROB, STEPSIZE,
+                                    &branch_ct,
+                                    oldp,
+                                    start_newp,
+                                    DIFF_UPDATE_PROB,
+                                    STEPSIZE,
                                 )
                             } else {
                                 prob_diff_update_savings_search(
-                                    branch_ct[t], oldp, start_newp, DIFF_UPDATE_PROB,
+                                    branch_ct[t],
+                                    oldp,
+                                    start_newp,
+                                    DIFF_UPDATE_PROB,
                                 )
                             };
                             let u = search.savings > 0 && search.best_newp != oldp;
@@ -875,13 +883,16 @@ mod tests {
         let ct: BranchCt = [10_000, 50];
         let oldp: u8 = 128;
         let start_newp: u8 = 250;
-        let out =
-            prob_diff_update_savings_search(ct, oldp, start_newp, DIFF_UPDATE_PROB);
+        let out = prob_diff_update_savings_search(ct, oldp, start_newp, DIFF_UPDATE_PROB);
         assert_ne!(
             out.best_newp, oldp,
             "search must move away from oldp on heavily skewed counts"
         );
-        assert!(out.savings > 0, "savings must be positive ({} ≤ 0)", out.savings);
+        assert!(
+            out.savings > 0,
+            "savings must be positive ({} ≤ 0)",
+            out.savings
+        );
         assert!(
             out.best_newp > 128,
             "skew is toward zero, best_newp should be high (got {})",
@@ -914,8 +925,7 @@ mod tests {
         let mut old_probs: Vec<u8> = vec![128; 8];
         let new_probs: Vec<u8> = vec![128; 8];
         let branch_ct: Vec<BranchCt> = vec![[0, 0]; 8];
-        let updates =
-            update_coef_probs_common(&mut w, &mut old_probs, &new_probs, &branch_ct);
+        let updates = update_coef_probs_common(&mut w, &mut old_probs, &new_probs, &branch_ct);
         let _ = w.stop_encode().unwrap();
         assert_eq!(updates, 0, "no-counts input must emit zero updates");
         // First bit on the wire must be `0` — but the bool writer
@@ -1022,9 +1032,7 @@ mod tests {
         // TWO+) is HEAVILY skewed toward ONE so the ideal pivot prob is
         // far above the default 128 — and the 8 model nodes carry real
         // mass so the model search has downstream cost to optimise.
-        let counts: [u32; ENTROPY_TOKENS] = [
-            2000, 3000, 80, 40, 20, 12, 6, 4, 2, 1, 1, 1500,
-        ];
+        let counts: [u32; ENTROPY_TOKENS] = [2000, 3000, 80, 40, 20, 12, 6, 4, 2, 1, 1, 1500];
         let non_eob: u32 = counts[0..11].iter().sum();
         let eob_total = non_eob + counts[11];
         let (branch_ct, probs) = build_coef_branch_cts(&counts, eob_total);
@@ -1072,14 +1080,15 @@ mod tests {
             "model search must differ from the plain pivot-branch search \
              (model: newp={} sav={}; plain: newp={} sav={}) — otherwise the \
              8 Pareto-8 model nodes are not being scored",
-            model.best_newp, model.savings, plain.best_newp, plain.savings
+            model.best_newp,
+            model.savings,
+            plain.best_newp,
+            plain.savings
         );
 
         // Zero-distribution sanity: no events ⇒ no savings, prob stays.
         let zero = [[0u32; 2]; ENTROPY_NODES];
-        let none = prob_diff_update_savings_search_model(
-            &zero, oldp, 200, DIFF_UPDATE_PROB, 1,
-        );
+        let none = prob_diff_update_savings_search_model(&zero, oldp, 200, DIFF_UPDATE_PROB, 1);
         assert_eq!(none.best_newp, oldp, "no events ⇒ keep oldp");
         assert_eq!(none.savings, 0, "no events ⇒ zero savings");
     }

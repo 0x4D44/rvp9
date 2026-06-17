@@ -39,12 +39,12 @@
 //! sizes, and assert that the returned `tx_size` minimises the
 //! (R, D) pair.
 
+use rvp9_core::cost::coef_cost::CoefCostTable;
 use rvp9_core::quant::forward::PlaneQuantizers;
 use rvp9_core::transforms::scans::{
     scan_order_4x4, scan_order_8x8, scan_order_16x16, scan_order_32x32,
 };
 use rvp9_core::transforms::{TxMode, TxSize, TxType};
-use rvp9_core::cost::coef_cost::CoefCostTable;
 
 use crate::rdo::block_error::{pixel_sse, vp9_block_error};
 use crate::rdo::cost_coeffs::cost_coeffs;
@@ -128,7 +128,11 @@ pub fn dist_block_pixel_domain(
 #[must_use]
 pub fn dist_block_tx_domain(coeff: &[i32], dqcoeff: &[i16], tx_size: TxSize) -> (i64, i64) {
     let (error, ssz) = vp9_block_error(coeff, dqcoeff);
-    let shift = if matches!(tx_size, TxSize::Tx32x32) { 0 } else { 2 };
+    let shift = if matches!(tx_size, TxSize::Tx32x32) {
+        0
+    } else {
+        2
+    };
     let dist = error >> shift;
     let sse = ssz >> shift;
     (dist, sse)
@@ -273,8 +277,19 @@ pub fn super_block_yrd(
     tx_size_cost_per_size: [u32; 4],
 ) -> SuperBlockYrdResult {
     choose_tx_size_from_rd(
-        input, max_tx_size, tx_mode, is_inter, qp, rdmult, costs, plane_type,
-        ref_type, coeff_ctx, s0, s1, tx_size_cost_per_size,
+        input,
+        max_tx_size,
+        tx_mode,
+        is_inter,
+        qp,
+        rdmult,
+        costs,
+        plane_type,
+        ref_type,
+        coeff_ctx,
+        s0,
+        s1,
+        tx_size_cost_per_size,
     )
 }
 
@@ -321,14 +336,7 @@ fn compute_tx_size_rd(
     );
 
     let rate = cost_coeffs(
-        &qcoeff,
-        scan.scan,
-        eob,
-        tx_size,
-        plane_type,
-        ref_type,
-        coeff_ctx,
-        costs,
+        &qcoeff, scan.scan, eob, tx_size, plane_type, ref_type, coeff_ctx, costs,
     );
 
     let (dist, sse) = dist_block_pixel_domain(
@@ -397,7 +405,7 @@ mod tests {
     use super::*;
     use rvp9_core::cost::coef_cost::build_coef_cost_table;
     use rvp9_core::entropy::FrameContext;
-    use rvp9_core::quant::forward::{init_plane_quantizers, QuantizerDeltas};
+    use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
 
     /// PROOF W4.1 — `super_block_yrd` walks TX sizes and returns the
     /// one that minimises (R, D). libvpx `vp9_rdopt.c:907-1023`:

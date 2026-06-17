@@ -151,9 +151,7 @@ fn a18_picker_reads_prev_grid_when_activated() {
     // ---- Plumbing assertion 3 — at least one cell is a real inter
     //      pick (not the post-KF intra-cell default), proving frame 1's
     //      picks landed in the grid the picker will read on frame 2 ----
-    let has_last_cell = grid
-        .iter()
-        .any(|c| c.ref_frames[0] == RefFrame::LastFrame);
+    let has_last_cell = grid.iter().any(|c| c.ref_frames[0] == RefFrame::LastFrame);
     assert!(
         has_last_cell,
         "at least one cell must have ref_frames[0] != IntraFrame \
