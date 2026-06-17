@@ -58,7 +58,7 @@ use rvp9_core::bitstream::{
     AllZeroCoefSource, AllZeroIntraCoefSource, BitDepth, BitstreamError, ChromaFormat, ColorRange,
     ColorSpace, CompressedHeaderOptions, CompressedHeaderResult, FrameKind, InterpFilter,
     ModesTileBounds, ModesWriterError, Profile, RawBitWriter, SuperframeBuilder,
-    UncompressedHeader, write_compressed_header, write_tile_intra_keyframe, write_tile_inter,
+    UncompressedHeader, write_compressed_header, write_tile_inter, write_tile_intra_keyframe,
     write_uncompressed_header,
 };
 use rvp9_core::block::BlockSize;
@@ -84,6 +84,16 @@ pub fn trellis_changed_count() -> u64 {
     TRELLIS_CHANGED_COEFFS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Frame-wide high-precision MV gate.
+///
+/// This is off by default while Stage 4a recovery measures it. With
+/// `RVP9_HIGHMV=1`, frames below libvpx's q<200 threshold emit and search
+/// eighth-pel MVs; every MV-precision site must derive from this function.
+#[must_use]
+pub(crate) fn frame_allow_hp(q_index: u8) -> bool {
+    std::env::var_os("RVP9_HIGHMV").is_some_and(|v| v != "0") && q_index < 200
+}
+
 pub mod aq_cyclic_refresh;
 pub mod bitstream_gates;
 pub mod buffer_pool;
@@ -93,8 +103,8 @@ pub mod e12stat;
 pub mod f02_oracle;
 pub mod frame_loop;
 pub mod gop;
-pub(crate) mod loopfilter;
 pub mod lookahead;
+pub(crate) mod loopfilter;
 pub mod ml_partition;
 pub mod pre_analysis;
 pub mod predstat;
@@ -106,7 +116,10 @@ pub mod svc;
 pub mod temporal_filter;
 pub mod tpl;
 
-pub use frame_loop::{AqMode, Deadline, EncodedFrame, EncoderConfig, FrameKind as StreamFrameKind, StreamEncoder, YuvFrameRef, encode_two_pass};
+pub use frame_loop::{
+    AqMode, Deadline, EncodedFrame, EncoderConfig, FrameKind as StreamFrameKind, StreamEncoder,
+    YuvFrameRef, encode_two_pass,
+};
 // Re-audit pass 3: `EncoderConfig::rc_mode` is a public field of type
 // `rate_control::RcMode`, so the discriminator must be reachable from
 // the crate root for callers (CLI, tests, benches) constructing a
@@ -383,8 +396,7 @@ impl Encoder {
     ///
     /// [`encode_synthetic_dc_skip_keyframe`]: Self::encode_synthetic_dc_skip_keyframe
     pub fn encode_synthetic_two_frame_kf_inter(&self) -> Result<Vec<u8>, EncodeError> {
-        let kf_payload =
-            self.build_keyframe_payload(/* refresh_frame_context = */ false)?;
+        let kf_payload = self.build_keyframe_payload(/* refresh_frame_context = */ false)?;
         let inter_payload =
             self.build_inter_after_default_keyframe_payload(/* inter_skip = */ true)?;
 
@@ -419,11 +431,8 @@ impl Encoder {
     /// # Errors
     ///
     /// Same as [`encode_synthetic_two_frame_kf_inter`].
-    pub fn encode_synthetic_two_frame_kf_inter_non_skip(
-        &self,
-    ) -> Result<Vec<u8>, EncodeError> {
-        let kf_payload =
-            self.build_keyframe_payload(/* refresh_frame_context = */ false)?;
+    pub fn encode_synthetic_two_frame_kf_inter_non_skip(&self) -> Result<Vec<u8>, EncodeError> {
+        let kf_payload = self.build_keyframe_payload(/* refresh_frame_context = */ false)?;
         let inter_payload =
             self.build_inter_after_default_keyframe_payload(/* inter_skip = */ false)?;
 
@@ -493,12 +502,10 @@ impl Encoder {
             mi_col_start: 0,
             mi_col_end: mi_cols as usize,
         };
-        let mut tile_buf =
-            vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
+        let mut tile_buf = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
         let tile_len = {
             let mut bw = BoolWriter::start_encode(&mut tile_buf);
-            let tile_mi_cols =
-                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
             let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
             write_tile_intra_keyframe(
                 &mut bw,
@@ -592,10 +599,7 @@ impl Encoder {
     ///
     /// [`encode_synthetic_dc_skip_keyframe`]: Self::encode_synthetic_dc_skip_keyframe
     /// [`encode_synthetic_two_frame_kf_inter`]: Self::encode_synthetic_two_frame_kf_inter
-    fn build_keyframe_payload(
-        &self,
-        refresh_frame_context: bool,
-    ) -> Result<Vec<u8>, EncodeError> {
+    fn build_keyframe_payload(&self, refresh_frame_context: bool) -> Result<Vec<u8>, EncodeError> {
         // mi grid: 8 mi cells per 64-pixel SB row (8x8 mi units).
         let mi_rows = self.config.height / 8;
         let mi_cols = self.config.width / 8;
@@ -651,8 +655,7 @@ impl Encoder {
         let mut tile_buf = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 8 + 1024];
         let tile_len = {
             let mut bw = BoolWriter::start_encode(&mut tile_buf);
-            let tile_mi_cols =
-                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
             let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
             let coef_source = AllZeroIntraCoefSource::new();
             write_tile_intra_keyframe(
@@ -777,8 +780,7 @@ impl Encoder {
             },
             bmi: Default::default(),
         };
-        let mi_grid: Vec<Option<ModeInfo>> =
-            vec![Some(inter_cell); (mi_rows * mi_cols) as usize];
+        let mi_grid: Vec<Option<ModeInfo>> = vec![Some(inter_cell); (mi_rows * mi_cols) as usize];
 
         // Compressed header. pre == post == new_default() so every
         // prob-diff-update emits a "no-update" gate bit. `tx_mode =
@@ -832,8 +834,7 @@ impl Encoder {
         let mut tile_buf = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 8 + 1024];
         let tile_len = {
             let mut bw = BoolWriter::start_encode(&mut tile_buf);
-            let tile_mi_cols =
-                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
             let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
             let coef_source = AllZeroCoefSource::new();
             write_tile_inter(
@@ -1006,8 +1007,10 @@ impl VecBackedIntraCoefSource {
         qcoefs: Vec<i32>,
         eob: usize,
     ) {
-        self.blocks
-            .insert((mi_row, mi_col, plane, tx_x4_local, tx_y4_local), (qcoefs, eob));
+        self.blocks.insert(
+            (mi_row, mi_col, plane, tx_x4_local, tx_y4_local),
+            (qcoefs, eob),
+        );
     }
 
     /// Frame width in pixels.
@@ -1085,8 +1088,10 @@ impl VecBackedInterCoefSource {
         qcoefs: Vec<i32>,
         eob: usize,
     ) {
-        self.blocks
-            .insert((mi_row, mi_col, plane, tx_x4_local, tx_y4_local), (qcoefs, eob));
+        self.blocks.insert(
+            (mi_row, mi_col, plane, tx_x4_local, tx_y4_local),
+            (qcoefs, eob),
+        );
     }
 
     /// Frame width in pixels.
@@ -1262,8 +1267,7 @@ pub(crate) fn simulate_dc_intra_encode(
     // Single Block64x64 leaf per SB; SBs walked in raster order.
     let sb_cols = (width as usize) / 64;
     let sb_rows = (height as usize) / 64;
-    let mut sb_partitions: Vec<Vec<PartitionLeafDesc>> =
-        Vec::with_capacity(sb_rows * sb_cols);
+    let mut sb_partitions: Vec<Vec<PartitionLeafDesc>> = Vec::with_capacity(sb_rows * sb_cols);
     for _ in 0..(sb_rows * sb_cols) {
         sb_partitions.push(vec![PartitionLeafDesc {
             mi_row_in_sb: 0,
@@ -1354,9 +1358,9 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
         QuantizerDeltas, init_plane_quantizers, scan_for_forward, vp9_quantize_b,
         vp9_quantize_b_32x32,
     };
+    use rvp9_core::transforms::TxType;
     use rvp9_core::transforms::forward::{fdct32x32, fht4x4, fht8x8, fht16x16};
     use rvp9_core::transforms::scans::scan_for;
-    use rvp9_core::transforms::TxType;
 
     // G4.3.1 — `intra_predict` takes a `&SimdDispatch` so the DC 4×4
     // both-avail path can route through the SIMD slot. Fetch once per
@@ -1498,8 +1502,7 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
 
                             let have_top = have_above_block || tx_y4_local > 0;
                             let have_left = have_left_block || tx_x4_local > 0;
-                            let have_right =
-                                (tx_x4_local + tx_step_4x4) < plane_bw_4x4;
+                            let have_right = (tx_x4_local + tx_step_4x4) < plane_bw_4x4;
 
                             // Y plane uses the picked Y mode; both UV
                             // planes use the picked UV mode (single
@@ -1682,10 +1685,8 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
                             // 7. Record qcoeff buffer + eob, keyed by
                             //    leaf top-left (mi_row, mi_col) so the
                             //    writer's `IntraCoefSource` lookup hits.
-                            let qcoeff_i32: Vec<i32> = qcoeff_i16
-                                .into_iter()
-                                .map(i32::from)
-                                .collect();
+                            let qcoeff_i32: Vec<i32> =
+                                qcoeff_i16.into_iter().map(i32::from).collect();
                             out.insert(
                                 leaf_mi_row,
                                 leaf_mi_col,
@@ -1758,8 +1759,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
 ) -> VecBackedIntraCoefSource {
     use rvp9_core::cost::{intra_uv_mode_costs_kf, intra_y_mode_costs_kf_table};
     use rvp9_core::mode_decision::intra::{
-        IntraModeSearchParams, UvIntraModeSearchParams, pick_intra_mode_luma,
-        pick_intra_mode_uv,
+        IntraModeSearchParams, UvIntraModeSearchParams, pick_intra_mode_luma, pick_intra_mode_uv,
     };
     use rvp9_core::mv_search::PlaneRef;
     use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
@@ -1778,8 +1778,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
 
     let mi_cols = w / 8;
     let mi_rows = h / 8;
-    let mut picked_y_mode_grid: Vec<Option<IntraMode>> =
-        vec![None; mi_rows * mi_cols];
+    let mut picked_y_mode_grid: Vec<Option<IntraMode>> = vec![None; mi_rows * mi_cols];
 
     // First pass: walk SBs/leaves in raster, run the simulator one
     // leaf at a time, prepended by a picker call. The simulator
@@ -1804,8 +1803,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     // the rate model uses the default coef probs — exactly what the
     // writer/decoder will use.
     let kf_fc = FrameContext::new_default();
-    let rdo_coef_costs =
-        rvp9_core::cost::coef_cost::build_coef_cost_table(&kf_fc);
+    let rdo_coef_costs = rvp9_core::cost::coef_cost::build_coef_cost_table(&kf_fc);
 
     // Zero recon up-front — the per-leaf simulator call expects the
     // recon plane to be already populated for previously-encoded leaves
@@ -1850,8 +1848,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                 if have_above {
                     let above_row_y = leaf_px_y - 1;
                     let row_off = above_row_y * w + leaf_px_x;
-                    above_pixels
-                        .copy_from_slice(&recon_yuv_out.0[row_off..row_off + bs_pixels]);
+                    above_pixels.copy_from_slice(&recon_yuv_out.0[row_off..row_off + bs_pixels]);
                 }
                 if have_left {
                     let left_col_x = leaf_px_x - 1;
@@ -1866,15 +1863,13 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                 };
 
                 let above_mode_ctx = if leaf_mi_row > 0 {
-                    picked_y_mode_grid
-                        [(leaf_mi_row - 1) * mi_cols + leaf_mi_col]
+                    picked_y_mode_grid[(leaf_mi_row - 1) * mi_cols + leaf_mi_col]
                         .unwrap_or(IntraMode::Dc)
                 } else {
                     IntraMode::Dc
                 };
                 let left_mode_ctx = if leaf_mi_col > 0 {
-                    picked_y_mode_grid
-                        [leaf_mi_row * mi_cols + (leaf_mi_col - 1)]
+                    picked_y_mode_grid[leaf_mi_row * mi_cols + (leaf_mi_col - 1)]
                         .unwrap_or(IntraMode::Dc)
                 } else {
                     IntraMode::Dc
@@ -1901,10 +1896,8 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     sb_partitions[sb_idx][leaf_idx].segment_id,
                     seg_q_deltas,
                 );
-                let leaf_quantizer = init_plane_quantizers(
-                    i32::from(leaf_qindex),
-                    QuantizerDeltas::Y,
-                );
+                let leaf_quantizer =
+                    init_plane_quantizers(i32::from(leaf_qindex), QuantizerDeltas::Y);
                 let picked_mode = if leaf_bsize == BlockSize::Block64x64 {
                     IntraMode::Dc
                 } else {
@@ -1925,8 +1918,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                         have_left,
                         quantizer: &leaf_quantizer,
                         q_index: leaf_qindex,
-                        frame_kind:
-                            rvp9_core::bitstream::header::FrameKind::KeyFrame,
+                        frame_kind: rvp9_core::bitstream::header::FrameKind::KeyFrame,
                         above_mode_ctx,
                         left_mode_ctx,
                         y_mode_costs: &y_mode_costs,
@@ -1942,8 +1934,13 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     {
                         eprintln!(
                             "    intra_leaf sb=({},{}) px=({},{}) bs={:?} q={} → mode={:?}",
-                            sb_row, sb_col, leaf_px_x, leaf_px_y, leaf_bsize,
-                            leaf_qindex, picked_mode,
+                            sb_row,
+                            sb_col,
+                            leaf_px_x,
+                            leaf_px_y,
+                            leaf_bsize,
+                            leaf_qindex,
+                            picked_mode,
                         );
                     }
                 }
@@ -1954,8 +1951,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     for dc in 0..n_8x8 {
                         let mi_r = leaf_mi_row + dr;
                         let mi_c = leaf_mi_col + dc;
-                        picked_y_mode_grid[mi_r * mi_cols + mi_c] =
-                            Some(picked_mode);
+                        picked_y_mode_grid[mi_r * mi_cols + mi_c] = Some(picked_mode);
                     }
                 }
 
@@ -2016,28 +2012,20 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     if have_above_uv {
                         let above_row_uv = leaf_uv_y - 1;
                         let row_off = above_row_uv * uvw + leaf_uv_x;
-                        u_above.copy_from_slice(
-                            &recon_yuv_out.1[row_off..row_off + bs_uv],
-                        );
-                        v_above.copy_from_slice(
-                            &recon_yuv_out.2[row_off..row_off + bs_uv],
-                        );
+                        u_above.copy_from_slice(&recon_yuv_out.1[row_off..row_off + bs_uv]);
+                        v_above.copy_from_slice(&recon_yuv_out.2[row_off..row_off + bs_uv]);
                     }
                     if have_left_uv {
                         let left_col_uv = leaf_uv_x - 1;
                         for r in 0..bs_uv {
-                            u_left[r] =
-                                recon_yuv_out.1[(leaf_uv_y + r) * uvw + left_col_uv];
-                            v_left[r] =
-                                recon_yuv_out.2[(leaf_uv_y + r) * uvw + left_col_uv];
+                            u_left[r] = recon_yuv_out.1[(leaf_uv_y + r) * uvw + left_col_uv];
+                            v_left[r] = recon_yuv_out.2[(leaf_uv_y + r) * uvw + left_col_uv];
                         }
                     }
                     let (u_tl, v_tl) = if have_above_uv && have_left_uv {
                         (
-                            recon_yuv_out.1
-                                [(leaf_uv_y - 1) * uvw + (leaf_uv_x - 1)],
-                            recon_yuv_out.2
-                                [(leaf_uv_y - 1) * uvw + (leaf_uv_x - 1)],
+                            recon_yuv_out.1[(leaf_uv_y - 1) * uvw + (leaf_uv_x - 1)],
+                            recon_yuv_out.2[(leaf_uv_y - 1) * uvw + (leaf_uv_x - 1)],
                         )
                     } else {
                         (0u8, 0u8)
@@ -2070,8 +2058,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                         have_left: have_left_uv,
                         quantizer: &leaf_quantizer,
                         q_index: leaf_qindex,
-                        frame_kind:
-                            rvp9_core::bitstream::header::FrameKind::KeyFrame,
+                        frame_kind: rvp9_core::bitstream::header::FrameKind::KeyFrame,
                         y_mode: picked_mode,
                         uv_mode_costs: &uv_mode_costs,
                     };
@@ -2084,41 +2071,37 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                 // intra leaf. Single relaxed atomic load when the env
                 // var `RVP9_F02_ORACLE` is unset (see HLD §3.2 / §7).
                 if crate::f02_oracle::is_enabled() {
-                    crate::f02_oracle::record_decision(
-                        crate::f02_oracle::BlockDecision {
-                            frame_idx: crate::f02_oracle::current_frame_idx(),
-                            mi_row: leaf_mi_row as u16,
-                            mi_col: leaf_mi_col as u16,
-                            bsize: leaf_bsize,
-                            mode: crate::f02_oracle::BlockDecisionMode::Intra(
-                                picked_mode,
-                            ),
-                            ref_frame: RefFrame::IntraFrame,
-                            mv_row: 0,
-                            mv_col: 0,
-                            // Picker mode-rate estimate is not exposed
-                            // through the existing `pick_intra_mode_luma`
-                            // result struct (only the winner mode comes
-                            // back). HLD §3.4.1 marks `mode_bits_est` as
-                            // "live"; the closest we can emit without
-                            // widening the picker API (out of scope,
-                            // HLD §9) is `0` for intra at F.0.2. F.x
-                            // milestones that need exact intra-mode
-                            // bits will widen the picker's return
-                            // shape.
-                            mode_bits_est: 0,
-                            mv_bits_est: 0,
-                            // Forward-looking per HLD §3.4.1 — `0`
-                            // until F.1 lands the coef-bit estimator.
-                            coef_bits_est: 0,
-                            sse_after_pred: 0,
-                            // Intra leaves in the F5.1 path always
-                            // emit residuals (`skip = false` on every
-                            // coded intra leaf). The RC.X1 skip-on-
-                            // zero-eob override only applies to inter.
-                            skip_flag: false,
-                        },
-                    );
+                    crate::f02_oracle::record_decision(crate::f02_oracle::BlockDecision {
+                        frame_idx: crate::f02_oracle::current_frame_idx(),
+                        mi_row: leaf_mi_row as u16,
+                        mi_col: leaf_mi_col as u16,
+                        bsize: leaf_bsize,
+                        mode: crate::f02_oracle::BlockDecisionMode::Intra(picked_mode),
+                        ref_frame: RefFrame::IntraFrame,
+                        mv_row: 0,
+                        mv_col: 0,
+                        // Picker mode-rate estimate is not exposed
+                        // through the existing `pick_intra_mode_luma`
+                        // result struct (only the winner mode comes
+                        // back). HLD §3.4.1 marks `mode_bits_est` as
+                        // "live"; the closest we can emit without
+                        // widening the picker API (out of scope,
+                        // HLD §9) is `0` for intra at F.0.2. F.x
+                        // milestones that need exact intra-mode
+                        // bits will widen the picker's return
+                        // shape.
+                        mode_bits_est: 0,
+                        mv_bits_est: 0,
+                        // Forward-looking per HLD §3.4.1 — `0`
+                        // until F.1 lands the coef-bit estimator.
+                        coef_bits_est: 0,
+                        sse_after_pred: 0,
+                        // Intra leaves in the F5.1 path always
+                        // emit residuals (`skip = false` on every
+                        // coded intra leaf). The RC.X1 skip-on-
+                        // zero-eob override only applies to inter.
+                        skip_flag: false,
+                    });
                 }
 
                 // Encode this one leaf via the simulator. We construct
@@ -2127,8 +2110,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                 // Recon buffer state from earlier leaves is preserved
                 // (the simulator no longer zeros recon — we relocated
                 // that to up-front, see below).
-                let single_leaf_layout: Vec<Vec<PartitionLeafDesc>> = (0..(sb_rows
-                    * sb_cols))
+                let single_leaf_layout: Vec<Vec<PartitionLeafDesc>> = (0..(sb_rows * sb_cols))
                     .map(|i| {
                         if i == sb_idx {
                             vec![sb_partitions[sb_idx][leaf_idx]]
@@ -2154,9 +2136,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                 for ((mi_row, mi_col, plane, tx_x, tx_y), (qc, eob)) in
                     leaf_coefs.blocks.into_iter()
                 {
-                    coef_source.insert(
-                        mi_row, mi_col, plane, tx_x, tx_y, qc, eob,
-                    );
+                    coef_source.insert(mi_row, mi_col, plane, tx_x, tx_y, qc, eob);
                 }
             }
         }
@@ -2277,7 +2257,6 @@ fn splat_inter_leaf_into_mi_grid(
         }
     }
 }
-
 
 /// Per-leaf descriptor for the inter encoder simulator. Mirrors
 /// [`PartitionLeafDesc`] but carries the inter mode info (mode + MV +
@@ -2514,14 +2493,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     use rvp9_core::bitstream::frame::{InterpFilter as WireInterpFilter, MAX_INTER_REFS};
     use rvp9_core::bitstream::header::FrameKind as WireFrameKind;
     use rvp9_core::cost::mv_cost::build_nmv_cost_table;
-    use rvp9_core::cost::symbol_costs::{inter_mode_costs, partition_costs, switchable_interp_costs};
-    use rvp9_core::inter::{get_mode_context, get_pred_context_switchable_interp};
-    use rvp9_core::inter::mv_ref::{
-        BlockBounds, PrevFrameMvRef, find_mv_refs, lower_mv_precision,
+    use rvp9_core::cost::symbol_costs::{
+        inter_mode_costs, partition_costs, switchable_interp_costs,
     };
+    use rvp9_core::inter::mv_ref::{BlockBounds, PrevFrameMvRef, find_mv_refs, lower_mv_precision};
+    use rvp9_core::inter::{get_mode_context, get_pred_context_switchable_interp};
     use rvp9_core::mode_decision::inter::{
-        InterModeSearchParams, MvCandidates,
-        PickInterModeParams, pick_inter_mode,
+        InterModeSearchParams, MvCandidates, PickInterModeParams, pick_inter_mode,
     };
     use rvp9_core::mode_decision::nonrd_partition::{
         NonRdDescentParams, PartitionRdCandidate, nonrd_pick_partition_with_pruners,
@@ -2539,11 +2517,55 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // and the result is consumed by every per-leaf
     // `PickInterModeParams` literal below.
     let sf = sf_mod::dispatch(speed, deadline, width, height, content_tier);
+    let rt_disable_golden_ref =
+        sf.disable_golden_ref || std::env::var_os("RVP9_RT_DISABLE_GOLDEN").is_some();
+    let mut rt_inter_mode_mask = rvp9_core::mode_decision::inter::default_inter_mode_mask();
+    if std::env::var_os("RVP9_RT_DISABLE_NEWMV").is_some() {
+        let newmv_bit = 1u8 << InterMode::NewMv.idx();
+        for mask in &mut rt_inter_mode_mask {
+            *mask &= !newmv_bit;
+        }
+    }
+    if let Some(max_edge) = std::env::var("RVP9_RT_DISABLE_NEWMV_MAX_EDGE")
+        .ok()
+        .and_then(|v| v.parse::<u8>().ok())
+    {
+        let newmv_bit = 1u8 << InterMode::NewMv.idx();
+        for bsize in [
+            BlockSize::Block4x4,
+            BlockSize::Block4x8,
+            BlockSize::Block8x4,
+            BlockSize::Block8x8,
+            BlockSize::Block8x16,
+            BlockSize::Block16x8,
+            BlockSize::Block16x16,
+            BlockSize::Block16x32,
+            BlockSize::Block32x16,
+            BlockSize::Block32x32,
+            BlockSize::Block32x64,
+            BlockSize::Block64x32,
+            BlockSize::Block64x64,
+        ] {
+            if bsize.width() <= max_edge && bsize.height() <= max_edge {
+                rt_inter_mode_mask[bsize.idx()] &= !newmv_bit;
+            }
+        }
+    }
+    if std::env::var_os("RVP9_RT_DISABLE_NEARMV").is_some() {
+        let nearmv_bit = 1u8 << InterMode::NearMv.idx();
+        for mask in &mut rt_inter_mode_mask {
+            *mask &= !nearmv_bit;
+        }
+    }
 
     let w = width as usize;
     let h = height as usize;
     let uvw = w / 2;
     let uvh = h / 2;
+    let rt_large_recovery = matches!(deadline, sf_mod::Deadline::Realtime)
+        && speed.unsigned_abs() >= 7
+        && matches!(content_tier, sf_mod::ContentTier::Default)
+        && u64::from(width) * u64::from(height) >= 700_000;
 
     let sb_cols = w / 64;
     let sb_rows = h / 64;
@@ -2576,14 +2598,29 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // `last_recon_yuv` directly via the per-plane selector inside the
     // SB walk further down. Until the denoiser wave wires a real
     // filter, `me_ref_yuv` and `last_recon_yuv` are byte-identical.
-    let src_y = PlaneRef { data: input_yuv.0, stride: w, width: w, height: h };
-    let ref_y = PlaneRef { data: me_ref_yuv.0, stride: w, width: w, height: h };
+    let src_y = PlaneRef {
+        data: input_yuv.0,
+        stride: w,
+        width: w,
+        height: h,
+    };
+    let ref_y = PlaneRef {
+        data: me_ref_yuv.0,
+        stride: w,
+        width: w,
+        height: h,
+    };
     // A15 Phase B — GOLDEN Y plane ref for the widened picker.
     // Used in Step 3 to drive candidate SSE/RD when iterating
     // `{LAST, GOLDEN} × {ZERO, NEAREST, NEAR, NEW}`. The
     // encoder calls `pick_inter_mode_luma` once per ref-plane,
     // then takes the min-RD winner across both rankings.
-    let ref_y_golden = PlaneRef { data: golden_recon_yuv.0, stride: w, width: w, height: h };
+    let ref_y_golden = PlaneRef {
+        data: golden_recon_yuv.0,
+        stride: w,
+        width: w,
+        height: h,
+    };
     // W-ALTREF — ALTREF Y plane ref for the single-ref ALTREF candidate.
     // `altref_available` is the single gate: `true` only when the caller
     // passed `Some(..)` (= enable_alt_ref && ARF emitted). When `false`,
@@ -2601,7 +2638,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // because it depends on the leaf's `segment_id`.
     let inter_costs = inter_mode_costs(frame_context);
     let sic = switchable_interp_costs(frame_context);
-    let mv_costs = build_nmv_cost_table(&frame_context.nmvc, /* allow_hp = */ false);
+    let allow_hp = crate::frame_allow_hp(base_qindex);
+    let mv_costs = build_nmv_cost_table(&frame_context.nmvc, allow_hp);
     let site_config = init_dsmotion_compensation(w as i32);
 
     // W4 RDO dispatch — speed≤4 routes the per-leaf mode decision through
@@ -2627,7 +2665,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // matching libvpx and keeping the cpu7 goldens byte-identical.
     // `RVP9_TRELLIS=0` restores the byte-identical baseline.
     let trellis_enabled = speed.unsigned_abs() <= 4
-        && std::env::var("RVP9_TRELLIS").map(|v| v != "0").unwrap_or(true);
+        && std::env::var("RVP9_TRELLIS")
+            .map(|v| v != "0")
+            .unwrap_or(true);
     let rdo_skip_costs = rvp9_core::cost::skip_costs(frame_context);
     let rdo_tx_size_costs = rvp9_core::cost::tx_size_costs(frame_context);
     // Skip-bit cost at the middle skip context (the per-leaf skip_ctx
@@ -2684,9 +2724,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // - **min/max block-size clamps** come from `variance_hint_bounds`
     //   (libvpx `x->{min,max}_partition_size`), with the R3 floor at
     //   Block16x16.
-    let f3_nonrd_partition_enabled =
-        std::env::var_os("RVP9_A4_RD_PARTITION_DISABLE").is_none()
-            || std::env::var_os("RVP9_F3_NONRD_PARTITION_ENABLE").is_some();
+    let f3_nonrd_partition_enabled = std::env::var_os("RVP9_A4_RD_PARTITION_DISABLE").is_none()
+        || std::env::var_os("RVP9_F3_NONRD_PARTITION_ENABLE").is_some();
     // Phase-2 option-A — cache + reuse the descent's NEWMV search
     // result for the final per-leaf pass (seed-only / cross-decoder-safe
     // variant). Default ON; opt OUT with `RVP9_PHASE2_REUSE_DISABLE=1`
@@ -2701,7 +2740,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // behaviour (goldens/debug). When ON, the descent lowers its
     // `min_partition_size` floor to Block8x8 so Block16x16 may SPLIT into
     // four 8×8 NONE leaves and 8×8 becomes a valid NONE candidate.
-    let p8_enabled = std::env::var("RVP9_P8").map(|v| v != "0").unwrap_or(true);
+    let p8_enabled = std::env::var("RVP9_P8")
+        .map(|v| v != "0")
+        .unwrap_or(!rt_large_recovery);
     let f3_partition_costs = if f3_nonrd_partition_enabled {
         Some(partition_costs(&FrameContext::new_default()))
     } else {
@@ -2810,7 +2851,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         refresh_frame_flags: 0,
         ref_frame_indices: [0u8; MAX_INTER_REFS],
         ref_frame_sign_biases: [false; MAX_INTER_REFS],
-        allow_high_precision_mv: false,
+        allow_high_precision_mv: allow_hp,
         interp_filter: WireInterpFilter::EightTap,
     };
 
@@ -2901,6 +2942,49 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         vec![None; mi_rows_us * mi_cols_us];
     let sign_bias = sign_bias_from_header(&[false, false, altref_available]);
 
+    let rt_profile_enabled = std::env::var_os("RVP9_RT_PROFILE").is_some();
+    let rt_profile_frame_start = std::time::Instant::now();
+    let mut rt_profile_descent_time = std::time::Duration::ZERO;
+    let mut rt_profile_final_pick_time = std::time::Duration::ZERO;
+    let mut rt_profile_emit_time = std::time::Duration::ZERO;
+    let mut rt_profile_final_leaves = 0usize;
+    let mut rt_profile_picker_leaves = 0usize;
+    let mut rt_profile_fallback_leaves = 0usize;
+    let rt_skip_picker_skip_emit = std::env::var_os("RVP9_RT_SKIP_PICKER_SKIP_EMIT").is_some();
+    let env_flag_default =
+        |key: &str, default: bool| std::env::var_os(key).map_or(default, |v| v != "0");
+    let rt_emit_max_tx = env_flag_default("RVP9_RT_EMIT_MAX_TX", rt_large_recovery);
+    let rt_reuse_descent_pick = env_flag_default("RVP9_RT_REUSE_DESCENT_PICK", rt_large_recovery);
+    let a4_descent_cb_filter_search =
+        env_flag_default("RVP9_A4_DESCENT_CB_FILTER", rt_large_recovery);
+    let rt_skip_integer_mv_filter_search =
+        env_flag_default("RVP9_RT_SKIP_INTMV_FILTER_SEARCH", rt_large_recovery);
+    let emit_profile_enabled = std::env::var_os("RVP9_EMIT_PROFILE").is_some();
+    let mut emit_profile_pred_time = std::time::Duration::ZERO;
+    let mut emit_profile_tx_select_time = std::time::Duration::ZERO;
+    let mut emit_profile_residual_time = std::time::Duration::ZERO;
+    let mut emit_profile_quant_time = std::time::Duration::ZERO;
+    let mut emit_profile_inverse_time = std::time::Duration::ZERO;
+    let mut emit_profile_coef_insert_time = std::time::Duration::ZERO;
+    let mut emit_profile_inter_leaves = 0usize;
+    let mut emit_profile_tx_blocks = 0usize;
+    let mut emit_profile_nonzero_tx_blocks = 0usize;
+    let mut emit_profile_eob_sum = 0usize;
+    let mut emit_profile_plane_tx_blocks = [0usize; 3];
+    let a4_profile_enabled = std::env::var_os("RVP9_A4_PROFILE").is_some();
+    let mut a4_profile_calls = [0usize; rvp9_core::block::BLOCK_SIZES];
+    let mut a4_profile_pick_time = [std::time::Duration::ZERO; rvp9_core::block::BLOCK_SIZES];
+    let rt_profile_phase2_reused_start = if rt_profile_enabled {
+        crate::rdo::inter_dispatch::PHASE2_NEWMV_REUSED.load(std::sync::atomic::Ordering::Relaxed)
+    } else {
+        0
+    };
+    let rt_profile_phase2_fresh_start = if rt_profile_enabled {
+        crate::rdo::inter_dispatch::PHASE2_NEWMV_FRESH.load(std::sync::atomic::Ordering::Relaxed)
+    } else {
+        0
+    };
+
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
             let sb_idx = sb_row * sb_cols + sb_col;
@@ -2968,13 +3052,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             // 12 of 16 SBs on a 256×256 frame bailed outright.
             let sb_px_x = sb_col * 64;
             let sb_px_y = sb_row * 64;
-            let int_pro = int_pro_motion_estimation(
-                &src_y,
-                &ref_y,
-                sb_px_x,
-                sb_px_y,
-                BlockSize::Block64x64,
-            );
+            let int_pro =
+                int_pro_motion_estimation(&src_y, &ref_y, sb_px_x, sb_px_y, BlockSize::Block64x64);
             // Treat a literal zero MV as "no useful seed" — the
             // picker's existing NEAREST/ZERO-at-(0,0) candidates
             // already cover that case.
@@ -3043,6 +3122,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             // synthetic proxy. The two paths exercise the same picker at
             // different sub-block resolutions.
             if f3_nonrd_partition_enabled {
+                let rt_profile_descent_start = if rt_profile_enabled {
+                    Some(std::time::Instant::now())
+                } else {
+                    None
+                };
                 use rvp9_core::block::BlockSize as BS;
                 use rvp9_core::mode_decision::partition::PartitionDecision;
 
@@ -3123,361 +3207,353 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 //    that the per-leaf loop needs.
                 let mi_grid_ro: &[Option<rvp9_core::mode_info::ModeInfo>] = &mi_grid;
                 let recon_y_ro: &[u8] = &recon_yuv_out.0;
-                let mut descent_picker =
-                    |sb_local_x_8x8: usize, sb_local_y_8x8: usize, bs: BS| {
-                        let leaf_mi_row = sb_row * 8 + sb_local_y_8x8;
-                        let leaf_mi_col = sb_col * 8 + sb_local_x_8x8;
-                        let leaf_px_x = leaf_mi_col * 8;
-                        let leaf_px_y = leaf_mi_row * 8;
-                        let bw_px = usize::from(bs.width());
-                        let bh_px = usize::from(bs.height());
-                        // SB-edge guard for partial frames.
-                        if leaf_px_x + bw_px > w || leaf_px_y + bh_px > h {
-                            return None;
-                        }
-                        // The picker handles all square sizes plus the
-                        // six rect sizes the A4-rect descent evaluates
-                        // (PARTITION_HORZ / PARTITION_VERT subsizes of
-                        // 64/32/16: Block64x32 / Block32x16 / Block16x8 and
-                        // their VERT mirrors). The descent caps at
-                        // Block16x16 (HLD §4.3) so the smallest queried
-                        // rect is 16x8 / 8x16. Sub-8 sizes are never
-                        // queried — defensive guard returns None.
-                        if matches!(
-                            bs,
-                            BlockSize::Block4x4
-                                | BlockSize::Block4x8
-                                | BlockSize::Block8x4,
-                        ) {
-                            return None;
-                        }
+                let mut descent_picker = |sb_local_x_8x8: usize, sb_local_y_8x8: usize, bs: BS| {
+                    let leaf_mi_row = sb_row * 8 + sb_local_y_8x8;
+                    let leaf_mi_col = sb_col * 8 + sb_local_x_8x8;
+                    let leaf_px_x = leaf_mi_col * 8;
+                    let leaf_px_y = leaf_mi_row * 8;
+                    let bw_px = usize::from(bs.width());
+                    let bh_px = usize::from(bs.height());
+                    // SB-edge guard for partial frames.
+                    if leaf_px_x + bw_px > w || leaf_px_y + bh_px > h {
+                        return None;
+                    }
+                    // The picker handles all square sizes plus the
+                    // six rect sizes the A4-rect descent evaluates
+                    // (PARTITION_HORZ / PARTITION_VERT subsizes of
+                    // 64/32/16: Block64x32 / Block32x16 / Block16x8 and
+                    // their VERT mirrors). The descent caps at
+                    // Block16x16 (HLD §4.3) so the smallest queried
+                    // rect is 16x8 / 8x16. Sub-8 sizes are never
+                    // queried — defensive guard returns None.
+                    if matches!(
+                        bs,
+                        BlockSize::Block4x4 | BlockSize::Block4x8 | BlockSize::Block8x4,
+                    ) {
+                        return None;
+                    }
 
-                        // MV envelope (mirrors the post-descent loop's
-                        // luma + 4:2:0 chroma intersection).
-                        let col_min_luma = -(leaf_px_x as i32) + 3;
-                        let col_max_luma =
-                            (w as i32) - (leaf_px_x as i32) - (bw_px as i32) - 4;
-                        let row_min_luma = -(leaf_px_y as i32) + 3;
-                        let row_max_luma =
-                            (h as i32) - (leaf_px_y as i32) - (bh_px as i32) - 4;
-                        let col_min_chroma = 6 - leaf_px_x as i32;
-                        let col_max_chroma =
-                            (w as i32) - (leaf_px_x as i32) - (bw_px as i32) - 7;
-                        let row_min_chroma = 6 - leaf_px_y as i32;
-                        let row_max_chroma =
-                            (h as i32) - (leaf_px_y as i32) - (bh_px as i32) - 7;
-                        let col_min = col_min_luma.max(col_min_chroma);
-                        let col_max = col_max_luma.min(col_max_chroma);
-                        let row_min = row_min_luma.max(row_min_chroma);
-                        let row_max = row_max_luma.min(row_max_chroma);
-                        if col_min > col_max || row_min > row_max {
-                            return None;
-                        }
-                        let mv_limits = MvLimits::new(col_min, col_max, row_min, row_max);
-                        let mv_in_bounds = |m: Mv| -> bool {
-                            let col_fp = i32::from(m.col) >> 3;
-                            let row_fp = i32::from(m.row) >> 3;
-                            col_fp >= col_min
-                                && col_fp <= col_max
-                                && row_fp >= row_min
-                                && row_fp <= row_max
-                        };
-
-                        // mi-grid neighbour lookup for find_mv_refs and
-                        // context predicates. The descent runs BEFORE
-                        // the per-leaf picker loop for this SB, so
-                        // `mi_grid` carries only prior-SB neighbours;
-                        // within-SB neighbours return `None` (the same
-                        // condition the post-descent first-leaf sees).
-                        let bw_mi = bs.n_8x8_wide() as i32;
-                        let bh_mi = bs.n_8x8_high() as i32;
-                        let bounds = BlockBounds::new(
-                            leaf_mi_row as i32,
-                            leaf_mi_col as i32,
-                            mi_rows_us as i32,
-                            mi_cols_us as i32,
-                            bw_mi,
-                            bh_mi,
-                        );
-                        let neighbours = InterPickerMiGridLookup::new(
-                            mi_grid_ro,
-                            mi_cols_us,
-                            leaf_mi_row,
-                            leaf_mi_col,
-                            mi_rows_us,
-                        );
-                        let inter_mode_ctx = get_mode_context(bs, &neighbours);
-                        let leaf_prev_mv: Option<PrevFrameMvRef> = prev_mv_grid
-                            .and_then(|g| {
-                                g.get(leaf_mi_row * mi_cols_us + leaf_mi_col).copied()
-                            });
-                        let build_mvc = |rf: RefFrame| -> MvCandidates {
-                            let list_nearest = find_mv_refs(
-                                InterMode::NewMv,
-                                bs,
-                                rf,
-                                &neighbours,
-                                &sign_bias,
-                                &bounds,
-                                leaf_prev_mv,
-                            );
-                            let nearest = lower_mv_precision(list_nearest.mvs[0], false);
-                            let list_near = find_mv_refs(
-                                InterMode::NearMv,
-                                bs,
-                                rf,
-                                &neighbours,
-                                &sign_bias,
-                                &bounds,
-                                leaf_prev_mv,
-                            );
-                            let near_idx = list_near
-                                .count
-                                .saturating_sub(1)
-                                .min(list_near.mvs.len() - 1);
-                            let near = lower_mv_precision(list_near.mvs[near_idx], false);
-                            MvCandidates { nearest, near }
-                        };
-                        let mvc = build_mvc(RefFrame::LastFrame);
-                        let mvc_golden = build_mvc(RefFrame::GoldenFrame);
-
-                        // Per-leaf segment_id from the variance hint.
-                        let seg = sb_partitions[sb_idx]
-                            .iter()
-                            .find(|h| {
-                                h.mi_row_in_sb == sb_local_y_8x8
-                                    && h.mi_col_in_sb == sb_local_x_8x8
-                            })
-                            .map(|h| h.segment_id)
-                            .unwrap_or(0);
-                        let leaf_qindex =
-                            effective_qindex_for_segment(base_qindex, seg, seg_q_deltas);
-                        let quantizer = init_plane_quantizers(
-                            i32::from(leaf_qindex),
-                            QuantizerDeltas::Y,
-                        );
-                        let (uv_dc_dq, uv_ac_dq) = plane_dequant_pair(
-                            i32::from(leaf_qindex),
-                            QuantizerDeltas { dc_delta: 0, ac_delta: 0 },
-                        );
-
-                        // Intra-prediction neighbour edges from the
-                        // running Y recon (initialised to last-recon,
-                        // so for the first SB this is identical to the
-                        // reference plane).
-                        let intra_have_above = leaf_px_y > 0;
-                        let intra_have_left = leaf_px_x > 0;
-                        let mut intra_above_buf = [0u8; 64];
-                        let mut intra_left_buf = [0u8; 64];
-                        let intra_above: Option<&[u8]> = if intra_have_above {
-                            let row_off = (leaf_px_y - 1) * w + leaf_px_x;
-                            let n = bw_px.min(w - leaf_px_x);
-                            intra_above_buf[..n]
-                                .copy_from_slice(&recon_y_ro[row_off..row_off + n]);
-                            Some(&intra_above_buf[..n])
-                        } else {
-                            None
-                        };
-                        let intra_left: Option<&[u8]> = if intra_have_left {
-                            let n = bh_px.min(h - leaf_px_y);
-                            for r in 0..n {
-                                intra_left_buf[r] =
-                                    recon_y_ro[(leaf_px_y + r) * w + (leaf_px_x - 1)];
-                            }
-                            Some(&intra_left_buf[..n])
-                        } else {
-                            None
-                        };
-                        let intra_top_left = if intra_have_above && intra_have_left {
-                            recon_y_ro[(leaf_px_y - 1) * w + (leaf_px_x - 1)]
-                        } else {
-                            127
-                        };
-
-                        // Neighbour mi-grid context predicates.
-                        let nb_above = if leaf_mi_row > 0 {
-                            mi_grid_ro[(leaf_mi_row - 1) * mi_cols_us + leaf_mi_col]
-                                .as_ref()
-                        } else {
-                            None
-                        };
-                        let nb_left = if leaf_mi_col > 0 {
-                            mi_grid_ro[leaf_mi_row * mi_cols_us + (leaf_mi_col - 1)]
-                                .as_ref()
-                        } else {
-                            None
-                        };
-                        let switchable_interp_ctx =
-                            get_pred_context_switchable_interp(nb_above, nb_left);
-                        let skip_ctx =
-                            rvp9_core::inter::get_pred_context_skip(nb_above, nb_left);
-                        let last_const_motion =
-                            rvp9_core::inter::mv_refs_rt_const_motion(
-                                bs,
-                                RefFrame::LastFrame,
-                                &neighbours,
-                            );
-                        let golden_const_motion =
-                            rvp9_core::inter::mv_refs_rt_const_motion(
-                                bs,
-                                RefFrame::GoldenFrame,
-                                &neighbours,
-                            );
-                        let neighbour_mv = |mi: Option<&rvp9_core::mode_info::ModeInfo>|
-                            -> Option<Mv> {
-                            match mi.map(|m| m.mode) {
-                                Some(rvp9_core::mode_info::BlockMode::Inter {
-                                    mvs, ..
-                                }) => Some(mvs[0]),
-                                _ => None,
-                            }
-                        };
-                        let above_mv_p13 = neighbour_mv(nb_above);
-                        let left_mv_p13 = neighbour_mv(nb_left);
-
-                        let pick_params = PickInterModeParams {
-                            block_size: bs,
-                            src_plane: &src_y,
-                            src_offset: (leaf_px_x, leaf_px_y),
-                            last_ref_plane: &ref_y,
-                            last_mv_candidates: &mvc,
-                            golden_ref_plane: &ref_y_golden,
-                            golden_mv_candidates: &mvc_golden,
-                            mv_limits,
-                            site_config: &site_config,
-                            mv_costs: &mv_costs,
-                            inter_mode_costs: &inter_costs,
-                            inter_mode_ctx,
-                            quantizer: &quantizer,
-                            q_index: leaf_qindex,
-                            allow_hp: false,
-                            frame_kind,
-                            newmv_seed: sb_newmv_seed,
-                            ref_frame_cost_last,
-                            ref_frame_cost_golden,
-                            last_nearest_in_bounds: mv_in_bounds(mvc.nearest),
-                            last_near_in_bounds: mv_in_bounds(mvc.near),
-                            golden_nearest_in_bounds: mv_in_bounds(mvc_golden.nearest),
-                            golden_near_in_bounds: mv_in_bounds(mvc_golden.near),
-                            intra_above_pixels: intra_above,
-                            intra_left_pixels: intra_left,
-                            intra_top_left_pixel: intra_top_left,
-                            intra_y_mode_costs: &intra_y_mode_costs_inter,
-                            ref_frame_cost_intra,
-                            switchable_interp_costs: &sic,
-                            switchable_interp_ctx,
-                            skip_ctx,
-                            last_const_motion,
-                            golden_const_motion,
-                            src_u: input_yuv.1,
-                            src_u_stride: uvw,
-                            src_v: input_yuv.2,
-                            src_v_stride: uvw,
-                            // Reference-buffer split — picker chroma
-                            // SSE/RD reads the ME-side LAST view.
-                            last_ref_u: me_ref_yuv.1,
-                            last_ref_v: me_ref_yuv.2,
-                            golden_ref_u: golden_recon_yuv.1,
-                            golden_ref_v: golden_recon_yuv.2,
-                            uv_stride: uvw,
-                            uv_dc_quant: uv_dc_dq as u32,
-                            uv_ac_quant: uv_ac_dq as u32,
-                            encode_breakout: 20,
-                            dequant_dc: quantizer.dequant[0] as u16,
-                            dequant_ac: quantizer.dequant[1] as u16,
-                            above_mv: above_mv_p13,
-                            left_mv: left_mv_p13,
-                            // PHASE-3 integration: frame-level noise tier
-                            // from W2.4 noise estimator.
-                            noise_estimate: noise_estimate_frame,
-                            lowvar_highsumdiff: false,
-                            // PHASE-3 integration: per-mi skin bit from
-                            // W2.5 skin detector.
-                            is_skin: {
-                                let mi_cols = (width / 8) as usize;
-                                let mi_idx =
-                                    leaf_mi_row * mi_cols + leaf_mi_col;
-                                skin_map.get(mi_idx).copied().unwrap_or(0) != 0
-                            },
-                            reference_masking: true,
-                            // P20 — disabled in the descent: the adaptive
-                            // RD-threshold table is mutated post-pick by
-                            // the per-leaf loop. Letting the descent
-                            // read it could couple descent decisions to
-                            // post-pick state and break determinism
-                            // across runs that explore different
-                            // candidate sets. Pass `None` (libvpx
-                            // pre-init behaviour: gate disabled).
-                            rd_thresh_table: None,
-                            short_circuit_flat_blocks: false,
-                            source_variance:
-                                rvp9_core::mode_decision::inter::SOURCE_VARIANCE_UNCOMPUTED,
-                            force_skip_low_temp_var: false,
-                            // PHASE-3 integration: per-SB content_state
-                            // from W2.2 avg_source_sad pass. Index via
-                            // (leaf_mi_row/8, leaf_mi_col/8) — the SB
-                            // grid resolution is 64×64 luma.
-                            content_state_sb: {
-                                let sb_cols = (width / 64).max(1) as usize;
-                                let sb_idx =
-                                    (leaf_mi_row / 8) * sb_cols + (leaf_mi_col / 8);
-                                content_state_sb_grid
-                                    .get(sb_idx)
-                                    .copied()
-                                    .unwrap_or(rvp9_core::mode_decision::inter::ContentStateSb::Normal)
-                            },
-                            is_screen_content: false,
-                            zero_temp_sad_source: None,
-                            scene_change_detected: scene_change_detected_frame,
-                            inter_mode_mask:
-                                rvp9_core::mode_decision::inter::default_inter_mode_mask(),
-                            // W0.4: SF fields now flow from the
-                            // dispatcher computed at the top of this
-                            // function; the literal previously
-                            // hard-coded the cpu-used-6/7 RT values.
-                            limit_newmv_early_exit: sf.limit_newmv_early_exit,
-                            bias_golden: sf.bias_golden,
-                            frames_since_golden,
-                            cb_pred_filter_search: sf.cb_pred_filter_search,
-                            mi_row: leaf_mi_row as u32,
-                            mi_col: leaf_mi_col as u32,
-                            chessboard_index,
-                            disable_golden_ref: sf.disable_golden_ref,
-                            max_intra_bsize: sf.max_intra_bsize,
-                            rt_intra_dc_only_low_content: sf.rt_intra_dc_only_low_content,
-                            // Phase-2 option-A: the descent computes the
-                            // NEWMV search fresh (it has no prior cache).
-                            newmv_override_last: None,
-                            newmv_override_golden: None,
-                        };
-                        let result = pick_inter_mode(&pick_params);
-                        // Phase-2 option-A — stash the FULL picker result
-                        // for this (position, bsize) so the final per-leaf
-                        // loop can reuse the NEWMV search if it commits this
-                        // exact leaf. Keyed by absolute mi position + bsize;
-                        // the descent never queries the same key twice.
-                        if phase2_reuse_enabled {
-                            descent_pick_cache.insert(
-                                (leaf_mi_row, leaf_mi_col, bs),
-                                (result, mvc, mvc_golden),
-                            );
-                        }
-                        // Translate to the descent's PartitionRdCandidate.
-                        // `best_rate` is already in `vp9_prob_cost` units
-                        // (1/512-bit) — same family as the descent's
-                        // `partition_cost` adds. `best_distortion` is
-                        // pixel-SSE-of-recon — same as the proxy used.
-                        // `ref_frame` discriminant matches the encoder's
-                        // `RefFrame as u8` convention (see proxy site for
-                        // the existing encoding).
-                        Some(PartitionRdCandidate {
-                            rate: result.best_rate,
-                            dist: result.best_distortion,
-                            mv: result.best_mv,
-                            mode: result.best_mode as u8,
-                            ref_frame: result.picked_ref_frame as u8,
-                        })
+                    // MV envelope (mirrors the post-descent loop's
+                    // luma + 4:2:0 chroma intersection).
+                    let col_min_luma = -(leaf_px_x as i32) + 3;
+                    let col_max_luma = (w as i32) - (leaf_px_x as i32) - (bw_px as i32) - 4;
+                    let row_min_luma = -(leaf_px_y as i32) + 3;
+                    let row_max_luma = (h as i32) - (leaf_px_y as i32) - (bh_px as i32) - 4;
+                    let col_min_chroma = 6 - leaf_px_x as i32;
+                    let col_max_chroma = (w as i32) - (leaf_px_x as i32) - (bw_px as i32) - 7;
+                    let row_min_chroma = 6 - leaf_px_y as i32;
+                    let row_max_chroma = (h as i32) - (leaf_px_y as i32) - (bh_px as i32) - 7;
+                    let col_min = col_min_luma.max(col_min_chroma);
+                    let col_max = col_max_luma.min(col_max_chroma);
+                    let row_min = row_min_luma.max(row_min_chroma);
+                    let row_max = row_max_luma.min(row_max_chroma);
+                    if col_min > col_max || row_min > row_max {
+                        return None;
+                    }
+                    let mv_limits = MvLimits::new(col_min, col_max, row_min, row_max);
+                    let mv_in_bounds = |m: Mv| -> bool {
+                        let col_fp = i32::from(m.col) >> 3;
+                        let row_fp = i32::from(m.row) >> 3;
+                        col_fp >= col_min
+                            && col_fp <= col_max
+                            && row_fp >= row_min
+                            && row_fp <= row_max
                     };
+
+                    // mi-grid neighbour lookup for find_mv_refs and
+                    // context predicates. The descent runs BEFORE
+                    // the per-leaf picker loop for this SB, so
+                    // `mi_grid` carries only prior-SB neighbours;
+                    // within-SB neighbours return `None` (the same
+                    // condition the post-descent first-leaf sees).
+                    let bw_mi = bs.n_8x8_wide() as i32;
+                    let bh_mi = bs.n_8x8_high() as i32;
+                    let bounds = BlockBounds::new(
+                        leaf_mi_row as i32,
+                        leaf_mi_col as i32,
+                        mi_rows_us as i32,
+                        mi_cols_us as i32,
+                        bw_mi,
+                        bh_mi,
+                    );
+                    let neighbours = InterPickerMiGridLookup::new(
+                        mi_grid_ro,
+                        mi_cols_us,
+                        leaf_mi_row,
+                        leaf_mi_col,
+                        mi_rows_us,
+                    );
+                    let inter_mode_ctx = get_mode_context(bs, &neighbours);
+                    let leaf_prev_mv: Option<PrevFrameMvRef> = prev_mv_grid
+                        .and_then(|g| g.get(leaf_mi_row * mi_cols_us + leaf_mi_col).copied());
+                    let build_mvc = |rf: RefFrame| -> MvCandidates {
+                        let list_nearest = find_mv_refs(
+                            InterMode::NewMv,
+                            bs,
+                            rf,
+                            &neighbours,
+                            &sign_bias,
+                            &bounds,
+                            leaf_prev_mv,
+                        );
+                        let nearest = lower_mv_precision(list_nearest.mvs[0], allow_hp);
+                        let list_near = find_mv_refs(
+                            InterMode::NearMv,
+                            bs,
+                            rf,
+                            &neighbours,
+                            &sign_bias,
+                            &bounds,
+                            leaf_prev_mv,
+                        );
+                        let near_idx = list_near
+                            .count
+                            .saturating_sub(1)
+                            .min(list_near.mvs.len() - 1);
+                        let near = lower_mv_precision(list_near.mvs[near_idx], allow_hp);
+                        MvCandidates { nearest, near }
+                    };
+                    let mvc = build_mvc(RefFrame::LastFrame);
+                    let mvc_golden = build_mvc(RefFrame::GoldenFrame);
+
+                    // Per-leaf segment_id from the variance hint.
+                    let seg = sb_partitions[sb_idx]
+                        .iter()
+                        .find(|h| {
+                            h.mi_row_in_sb == sb_local_y_8x8 && h.mi_col_in_sb == sb_local_x_8x8
+                        })
+                        .map(|h| h.segment_id)
+                        .unwrap_or(0);
+                    let leaf_qindex = effective_qindex_for_segment(base_qindex, seg, seg_q_deltas);
+                    let quantizer =
+                        init_plane_quantizers(i32::from(leaf_qindex), QuantizerDeltas::Y);
+                    let (uv_dc_dq, uv_ac_dq) = plane_dequant_pair(
+                        i32::from(leaf_qindex),
+                        QuantizerDeltas {
+                            dc_delta: 0,
+                            ac_delta: 0,
+                        },
+                    );
+
+                    // Intra-prediction neighbour edges from the
+                    // running Y recon (initialised to last-recon,
+                    // so for the first SB this is identical to the
+                    // reference plane).
+                    let intra_have_above = leaf_px_y > 0;
+                    let intra_have_left = leaf_px_x > 0;
+                    let mut intra_above_buf = [0u8; 64];
+                    let mut intra_left_buf = [0u8; 64];
+                    let intra_above: Option<&[u8]> = if intra_have_above {
+                        let row_off = (leaf_px_y - 1) * w + leaf_px_x;
+                        let n = bw_px.min(w - leaf_px_x);
+                        intra_above_buf[..n].copy_from_slice(&recon_y_ro[row_off..row_off + n]);
+                        Some(&intra_above_buf[..n])
+                    } else {
+                        None
+                    };
+                    let intra_left: Option<&[u8]> = if intra_have_left {
+                        let n = bh_px.min(h - leaf_px_y);
+                        for r in 0..n {
+                            intra_left_buf[r] = recon_y_ro[(leaf_px_y + r) * w + (leaf_px_x - 1)];
+                        }
+                        Some(&intra_left_buf[..n])
+                    } else {
+                        None
+                    };
+                    let intra_top_left = if intra_have_above && intra_have_left {
+                        recon_y_ro[(leaf_px_y - 1) * w + (leaf_px_x - 1)]
+                    } else {
+                        127
+                    };
+
+                    // Neighbour mi-grid context predicates.
+                    let nb_above = if leaf_mi_row > 0 {
+                        mi_grid_ro[(leaf_mi_row - 1) * mi_cols_us + leaf_mi_col].as_ref()
+                    } else {
+                        None
+                    };
+                    let nb_left = if leaf_mi_col > 0 {
+                        mi_grid_ro[leaf_mi_row * mi_cols_us + (leaf_mi_col - 1)].as_ref()
+                    } else {
+                        None
+                    };
+                    let switchable_interp_ctx =
+                        get_pred_context_switchable_interp(nb_above, nb_left);
+                    let skip_ctx = rvp9_core::inter::get_pred_context_skip(nb_above, nb_left);
+                    let last_const_motion = rvp9_core::inter::mv_refs_rt_const_motion(
+                        bs,
+                        RefFrame::LastFrame,
+                        &neighbours,
+                    );
+                    let golden_const_motion = rvp9_core::inter::mv_refs_rt_const_motion(
+                        bs,
+                        RefFrame::GoldenFrame,
+                        &neighbours,
+                    );
+                    let neighbour_mv = |mi: Option<&rvp9_core::mode_info::ModeInfo>| -> Option<Mv> {
+                        match mi.map(|m| m.mode) {
+                            Some(rvp9_core::mode_info::BlockMode::Inter { mvs, .. }) => {
+                                Some(mvs[0])
+                            }
+                            _ => None,
+                        }
+                    };
+                    let above_mv_p13 = neighbour_mv(nb_above);
+                    let left_mv_p13 = neighbour_mv(nb_left);
+
+                    let pick_params = PickInterModeParams {
+                        block_size: bs,
+                        src_plane: &src_y,
+                        src_offset: (leaf_px_x, leaf_px_y),
+                        last_ref_plane: &ref_y,
+                        last_mv_candidates: &mvc,
+                        golden_ref_plane: &ref_y_golden,
+                        golden_mv_candidates: &mvc_golden,
+                        mv_limits,
+                        site_config: &site_config,
+                        mv_costs: &mv_costs,
+                        inter_mode_costs: &inter_costs,
+                        inter_mode_ctx,
+                        quantizer: &quantizer,
+                        q_index: leaf_qindex,
+                        allow_hp,
+                        frame_kind,
+                        newmv_seed: sb_newmv_seed,
+                        ref_frame_cost_last,
+                        ref_frame_cost_golden,
+                        last_nearest_in_bounds: mv_in_bounds(mvc.nearest),
+                        last_near_in_bounds: mv_in_bounds(mvc.near),
+                        golden_nearest_in_bounds: mv_in_bounds(mvc_golden.nearest),
+                        golden_near_in_bounds: mv_in_bounds(mvc_golden.near),
+                        intra_above_pixels: intra_above,
+                        intra_left_pixels: intra_left,
+                        intra_top_left_pixel: intra_top_left,
+                        intra_y_mode_costs: &intra_y_mode_costs_inter,
+                        ref_frame_cost_intra,
+                        switchable_interp_costs: &sic,
+                        switchable_interp_ctx,
+                        skip_ctx,
+                        last_const_motion,
+                        golden_const_motion,
+                        src_u: input_yuv.1,
+                        src_u_stride: uvw,
+                        src_v: input_yuv.2,
+                        src_v_stride: uvw,
+                        // Reference-buffer split — picker chroma
+                        // SSE/RD reads the ME-side LAST view.
+                        last_ref_u: me_ref_yuv.1,
+                        last_ref_v: me_ref_yuv.2,
+                        golden_ref_u: golden_recon_yuv.1,
+                        golden_ref_v: golden_recon_yuv.2,
+                        uv_stride: uvw,
+                        uv_dc_quant: uv_dc_dq as u32,
+                        uv_ac_quant: uv_ac_dq as u32,
+                        encode_breakout: 20,
+                        dequant_dc: quantizer.dequant[0] as u16,
+                        dequant_ac: quantizer.dequant[1] as u16,
+                        above_mv: above_mv_p13,
+                        left_mv: left_mv_p13,
+                        // PHASE-3 integration: frame-level noise tier
+                        // from W2.4 noise estimator.
+                        noise_estimate: noise_estimate_frame,
+                        lowvar_highsumdiff: false,
+                        // PHASE-3 integration: per-mi skin bit from
+                        // W2.5 skin detector.
+                        is_skin: {
+                            let mi_cols = (width / 8) as usize;
+                            let mi_idx = leaf_mi_row * mi_cols + leaf_mi_col;
+                            skin_map.get(mi_idx).copied().unwrap_or(0) != 0
+                        },
+                        reference_masking: true,
+                        // P20 — disabled in the descent: the adaptive
+                        // RD-threshold table is mutated post-pick by
+                        // the per-leaf loop. Letting the descent
+                        // read it could couple descent decisions to
+                        // post-pick state and break determinism
+                        // across runs that explore different
+                        // candidate sets. Pass `None` (libvpx
+                        // pre-init behaviour: gate disabled).
+                        rd_thresh_table: None,
+                        short_circuit_flat_blocks: false,
+                        source_variance:
+                            rvp9_core::mode_decision::inter::SOURCE_VARIANCE_UNCOMPUTED,
+                        force_skip_low_temp_var: false,
+                        // PHASE-3 integration: per-SB content_state
+                        // from W2.2 avg_source_sad pass. Index via
+                        // (leaf_mi_row/8, leaf_mi_col/8) — the SB
+                        // grid resolution is 64×64 luma.
+                        content_state_sb: {
+                            let sb_cols = (width / 64).max(1) as usize;
+                            let sb_idx = (leaf_mi_row / 8) * sb_cols + (leaf_mi_col / 8);
+                            content_state_sb_grid
+                                .get(sb_idx)
+                                .copied()
+                                .unwrap_or(rvp9_core::mode_decision::inter::ContentStateSb::Normal)
+                        },
+                        is_screen_content: false,
+                        zero_temp_sad_source: None,
+                        scene_change_detected: scene_change_detected_frame,
+                        inter_mode_mask: rt_inter_mode_mask,
+                        // W0.4: SF fields now flow from the
+                        // dispatcher computed at the top of this
+                        // function; the literal previously
+                        // hard-coded the cpu-used-6/7 RT values.
+                        limit_newmv_early_exit: sf.limit_newmv_early_exit,
+                        bias_golden: sf.bias_golden,
+                        frames_since_golden,
+                        // A/B knob: make only the A4 partition descent use
+                        // libvpx's chessboard filter-search shortcut. The
+                        // final emitted picker below keeps the normal speed
+                        // feature, so this only changes the partition proxy.
+                        cb_pred_filter_search: sf.cb_pred_filter_search
+                            || a4_descent_cb_filter_search,
+                        skip_integer_mv_filter_search: rt_skip_integer_mv_filter_search,
+                        mi_row: leaf_mi_row as u32,
+                        mi_col: leaf_mi_col as u32,
+                        chessboard_index,
+                        disable_golden_ref: rt_disable_golden_ref,
+                        max_intra_bsize: sf.max_intra_bsize,
+                        rt_intra_dc_only_low_content: sf.rt_intra_dc_only_low_content,
+                        // Phase-2 option-A: the descent computes the
+                        // NEWMV search fresh (it has no prior cache).
+                        newmv_override_last: None,
+                        newmv_override_golden: None,
+                    };
+                    let a4_profile_pick_start = if a4_profile_enabled {
+                        Some(std::time::Instant::now())
+                    } else {
+                        None
+                    };
+                    let result = pick_inter_mode(&pick_params);
+                    if let Some(t0) = a4_profile_pick_start {
+                        a4_profile_calls[bs.idx()] += 1;
+                        a4_profile_pick_time[bs.idx()] += t0.elapsed();
+                    }
+                    // Phase-2 option-A — stash the FULL picker result
+                    // for this (position, bsize) so the final per-leaf
+                    // loop can reuse the NEWMV search if it commits this
+                    // exact leaf. Keyed by absolute mi position + bsize;
+                    // the descent never queries the same key twice.
+                    if phase2_reuse_enabled {
+                        descent_pick_cache
+                            .insert((leaf_mi_row, leaf_mi_col, bs), (result, mvc, mvc_golden));
+                    }
+                    // Translate to the descent's PartitionRdCandidate.
+                    // `best_rate` is already in `vp9_prob_cost` units
+                    // (1/512-bit) — same family as the descent's
+                    // `partition_cost` adds. `best_distortion` is
+                    // pixel-SSE-of-recon — same as the proxy used.
+                    // `ref_frame` discriminant matches the encoder's
+                    // `RefFrame as u8` convention (see proxy site for
+                    // the existing encoding).
+                    Some(PartitionRdCandidate {
+                        rate: result.best_rate,
+                        dist: result.best_distortion,
+                        mv: result.best_mv,
+                        mode: result.best_mode as u8,
+                        ref_frame: result.picked_ref_frame as u8,
+                    })
+                };
 
                 // A21 — ML partition-search breakout pruner
                 // (`ml_partition::ml_predict_breakout`, libvpx
@@ -3493,8 +3569,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // (`vf(src, zeros) >> num_pels_log2`, libvpx :3301-3304),
                 // the NONE pick's rate/dist, `x->rdmult` (= f3_rd_mult),
                 // and `vp9_ac_quant(base_qindex)`. No synthetic shortcut.
-                let ml_breakout_active = sf.rd_ml_partition.search_breakout
-                    && i32::from(base_qindex) >= 100;
+                let ml_breakout_active =
+                    sf.rd_ml_partition.search_breakout && i32::from(base_qindex) >= 100;
                 // A21-rect — ML rectangular-partition pruner
                 // (`ml_partition::ml_prune_rect_partition`, libvpx
                 // `vp9_encodeframe.c:3334-3425`; gate at :4332-4339).
@@ -3514,10 +3590,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     use rvp9_core::mode_decision::nonrd_partition::RectPruneRdContext;
                     let src_y_buf: &[u8] = input_yuv.0;
                     let q_idx = i32::from(base_qindex);
-                    let ac_q =
-                        i32::from(rvp9_core::quant::ac_quant(q_idx, 0, BitDepth::Eight));
-                    let dc_q =
-                        i32::from(rvp9_core::quant::dc_quant(q_idx, 0, BitDepth::Eight));
+                    let ac_q = i32::from(rvp9_core::quant::ac_quant(q_idx, 0, BitDepth::Eight));
+                    let dc_q = i32::from(rvp9_core::quant::dc_quant(q_idx, 0, BitDepth::Eight));
                     let breakout_thresh = sf.rd_ml_partition.search_breakout_thresh;
                     let prune_rect_thresh = sf.rd_ml_partition.prune_rect_thresh;
                     // 64-byte zero reference (libvpx `vp9_64_zeros`,
@@ -3558,8 +3632,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             bw_px,
                             bh_px,
                         );
-                        let num_pels_log2 =
-                            bs.width_log2() as u32 + bs.height_log2() as u32;
+                        let num_pels_log2 = bs.width_log2() as u32 + bs.height_log2() as u32;
                         let var_shifted = var >> num_pels_log2;
                         // q_ctx (libvpx :3259).
                         let q_ctx = if q_idx >= 200 {
@@ -3737,8 +3810,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         skip: true,
                         segment_id: seg,
                         picked_ref_frame: RefFrame::LastFrame,
-                        picked_interp_filter:
-                            rvp9_core::bitstream::frame::InterpFilter::EightTap,
+                        picked_interp_filter: rvp9_core::bitstream::frame::InterpFilter::EightTap,
                         picked_intra_mode: None,
                         picked_ref_frame2: RefFrame::NoRefFrame,
                         picked_mv2: Mv::ZERO,
@@ -3748,9 +3820,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     });
                 }
                 sb_partitions[sb_idx] = new_leaves;
+                if let Some(t0) = rt_profile_descent_start {
+                    rt_profile_descent_time += t0.elapsed();
+                }
             }
 
             for leaf_idx in 0..sb_partitions[sb_idx].len() {
+                rt_profile_final_leaves += 1;
                 let (leaf_mi_row, leaf_mi_col, leaf_bsize) = {
                     let leaf = &sb_partitions[sb_idx][leaf_idx];
                     (
@@ -3780,6 +3856,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 );
 
                 if !picker_supported {
+                    rt_profile_fallback_leaves += 1;
                     sb_partitions[sb_idx][leaf_idx].picked_mode = InterMode::ZeroMv;
                     sb_partitions[sb_idx][leaf_idx].picked_mv = Mv::ZERO;
                     sb_partitions[sb_idx][leaf_idx].skip = true;
@@ -3789,25 +3866,21 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // sink and the libvpx-side patch would emit an
                     // unmatched record).
                     if crate::f02_oracle::is_enabled() {
-                        crate::f02_oracle::record_decision(
-                            crate::f02_oracle::BlockDecision {
-                                frame_idx: crate::f02_oracle::current_frame_idx(),
-                                mi_row: leaf_mi_row as u16,
-                                mi_col: leaf_mi_col as u16,
-                                bsize: leaf_bsize,
-                                mode: crate::f02_oracle::BlockDecisionMode::Inter(
-                                    InterMode::ZeroMv,
-                                ),
-                                ref_frame: RefFrame::LastFrame,
-                                mv_row: 0,
-                                mv_col: 0,
-                                mode_bits_est: 0,
-                                mv_bits_est: 0,
-                                coef_bits_est: 0,
-                                sse_after_pred: 0,
-                                skip_flag: true,
-                            },
-                        );
+                        crate::f02_oracle::record_decision(crate::f02_oracle::BlockDecision {
+                            frame_idx: crate::f02_oracle::current_frame_idx(),
+                            mi_row: leaf_mi_row as u16,
+                            mi_col: leaf_mi_col as u16,
+                            bsize: leaf_bsize,
+                            mode: crate::f02_oracle::BlockDecisionMode::Inter(InterMode::ZeroMv),
+                            ref_frame: RefFrame::LastFrame,
+                            mv_row: 0,
+                            mv_col: 0,
+                            mode_bits_est: 0,
+                            mv_bits_est: 0,
+                            coef_bits_est: 0,
+                            sse_after_pred: 0,
+                            skip_flag: true,
+                        });
                     }
                     splat_inter_leaf_into_mi_grid(
                         &mut mi_grid,
@@ -3880,6 +3953,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let row_min = row_min_luma.max(row_min_chroma);
                 let row_max = row_max_luma.min(row_max_chroma);
                 if col_min > col_max || row_min > row_max {
+                    rt_profile_fallback_leaves += 1;
                     sb_partitions[sb_idx][leaf_idx].picked_mode = InterMode::ZeroMv;
                     sb_partitions[sb_idx][leaf_idx].picked_mv = Mv::ZERO;
                     sb_partitions[sb_idx][leaf_idx].skip = true;
@@ -3889,25 +3963,21 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // silently missing from the sink (and the libvpx-
                     // side patch's coverage stays paired).
                     if crate::f02_oracle::is_enabled() {
-                        crate::f02_oracle::record_decision(
-                            crate::f02_oracle::BlockDecision {
-                                frame_idx: crate::f02_oracle::current_frame_idx(),
-                                mi_row: leaf_mi_row as u16,
-                                mi_col: leaf_mi_col as u16,
-                                bsize: leaf_bsize,
-                                mode: crate::f02_oracle::BlockDecisionMode::Inter(
-                                    InterMode::ZeroMv,
-                                ),
-                                ref_frame: RefFrame::LastFrame,
-                                mv_row: 0,
-                                mv_col: 0,
-                                mode_bits_est: 0,
-                                mv_bits_est: 0,
-                                coef_bits_est: 0,
-                                sse_after_pred: 0,
-                                skip_flag: true,
-                            },
-                        );
+                        crate::f02_oracle::record_decision(crate::f02_oracle::BlockDecision {
+                            frame_idx: crate::f02_oracle::current_frame_idx(),
+                            mi_row: leaf_mi_row as u16,
+                            mi_col: leaf_mi_col as u16,
+                            bsize: leaf_bsize,
+                            mode: crate::f02_oracle::BlockDecisionMode::Inter(InterMode::ZeroMv),
+                            ref_frame: RefFrame::LastFrame,
+                            mv_row: 0,
+                            mv_col: 0,
+                            mode_bits_est: 0,
+                            mv_bits_est: 0,
+                            coef_bits_est: 0,
+                            sse_after_pred: 0,
+                            skip_flag: true,
+                        });
                     }
                     splat_inter_leaf_into_mi_grid(
                         &mut mi_grid,
@@ -3972,8 +4042,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // Matches libvpx `x->mbmi_ext->mode_context[ref_frame]`
                 // populated by `vp9_find_mv_refs`. Context is ref-frame-
                 // independent (only spatial neighbour modes matter).
-                let inter_mode_ctx =
-                    get_mode_context(leaf_bsize, &neighbours);
+                let inter_mode_ctx = get_mode_context(leaf_bsize, &neighbours);
                 // A18 — collocated `PrevFrameMvRef` for `find_mv_refs`
                 // salvage. Mirrors the decoder's lookup at
                 // `tile.rs:2036` —
@@ -3989,9 +4058,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // lookup returns `None` — i.e. find_mv_refs falls
                 // through to the pre-A18 spatial-only behaviour.
                 let leaf_prev_mv: Option<PrevFrameMvRef> = prev_mv_grid
-                    .and_then(|g| {
-                        g.get(leaf_mi_row * mi_cols_us + leaf_mi_col).copied()
-                    });
+                    .and_then(|g| g.get(leaf_mi_row * mi_cols_us + leaf_mi_col).copied());
                 let build_mvc = |ref_frame: RefFrame| -> MvCandidates {
                     // Use `InterMode::NewMv` so `find_mv_refs` runs the
                     // early-break path (refmv_count == 1; mvs[0] is the
@@ -4009,10 +4076,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         &bounds,
                         /* prev_frame_mv = */ leaf_prev_mv,
                     );
-                    let nearest = lower_mv_precision(
-                        list_nearest.mvs[0],
-                        /* allow_hp = */ false,
-                    );
+                    let nearest =
+                        lower_mv_precision(list_nearest.mvs[0], /* allow_hp = */ allow_hp);
                     // A12 — `find_mv_refs(NEARMV)` separately so the
                     // search continues past the first candidate
                     // (`early_break` is gated on NEARMV).
@@ -4029,10 +4094,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         .count
                         .saturating_sub(1)
                         .min(list_near.mvs.len() - 1);
-                    let near = lower_mv_precision(
-                        list_near.mvs[near_idx],
-                        /* allow_hp = */ false,
-                    );
+                    let near =
+                        lower_mv_precision(list_near.mvs[near_idx], /* allow_hp = */ allow_hp);
                     MvCandidates { nearest, near }
                 };
                 let mvc = build_mvc(RefFrame::LastFrame);
@@ -4059,10 +4122,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     sb_partitions[sb_idx][leaf_idx].segment_id,
                     seg_q_deltas,
                 );
-                let quantizer = init_plane_quantizers(
-                    i32::from(leaf_qindex),
-                    QuantizerDeltas::Y,
-                );
+                let quantizer = init_plane_quantizers(i32::from(leaf_qindex), QuantizerDeltas::Y);
                 // Track-F iter7 — rdmult for the per-block TX-size RD loop
                 // (`choose_inter_luma_tx_size`). libvpx `compute_rd_mult`
                 // at the leaf's effective qindex (inter frame).
@@ -4073,7 +4133,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // G1 — UV dequant pair for chroma model_rd.
                 let (uv_dc_dq, uv_ac_dq) = plane_dequant_pair(
                     i32::from(leaf_qindex),
-                    QuantizerDeltas { dc_delta: 0, ac_delta: 0 },
+                    QuantizerDeltas {
+                        dc_delta: 0,
+                        ac_delta: 0,
+                    },
                 );
 
                 // A2.foreman - The encoder's strict `MvLimits` is
@@ -4102,10 +4165,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let mv_in_bounds = |m: Mv| -> bool {
                     let col_fp = i32::from(m.col) >> 3;
                     let row_fp = i32::from(m.row) >> 3;
-                    col_fp >= col_min
-                        && col_fp <= col_max
-                        && row_fp >= row_min
-                        && row_fp <= row_max
+                    col_fp >= col_min && col_fp <= col_max && row_fp >= row_min && row_fp <= row_max
                 };
                 // Phase 2a — unified dual-ref interleaved picker.
                 // Replaces the old dual-`pick_inter_mode_luma` +
@@ -4162,13 +4222,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 } else {
                     None
                 };
-                let switchable_interp_ctx =
-                    get_pred_context_switchable_interp(nb_above, nb_left);
+                let switchable_interp_ctx = get_pred_context_switchable_interp(nb_above, nb_left);
                 // P19 — per-block skip-prob context, libvpx
                 // `vp9_pred_common.h:55-61` (`above.skip + left.skip`).
                 // Threaded into the picker's skip-flag tie-break.
-                let skip_ctx =
-                    rvp9_core::inter::get_pred_context_skip(nb_above, nb_left);
+                let skip_ctx = rvp9_core::inter::get_pred_context_skip(nb_above, nb_left);
                 // P15 — libvpx `const_motion[ref_frame]` from
                 // `mv_refs_rt` (`vp9_pickmode.c:60-153`). Set when the
                 // first 2 spatial neighbours don't yield 2 distinct
@@ -4224,149 +4282,149 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // only), so we hoist it into this sibling capture and apply
                 // it to the leaf desc after the pick resolves.
                 let mut rdo_compound_second: Option<(RefFrame, Mv)> = None;
-                let rdo_unified: Option<
-                    rvp9_core::mode_decision::inter::PickInterModeResult,
-                > = if rdo_speed_gated
-                    && crate::rdo::inter_dispatch::InterDispatchLeaf::rdo_supported(leaf_bsize)
-                {
-                    use crate::rdo::inter_dispatch::{
-                        InterDispatchLeaf, RefInputs, pick_inter_sb_leaf,
-                    };
-                    // A23 — consumer hook (libvpx `vp9_encodeframe.c:2235-
-                    // 2242`): `x->rdmult = x->cb_rdmult` when the TPL model
-                    // is enabled. `tpl_sb_cb_rdmult` is `Some` only when
-                    // TPL is on AND the SB's `get_rdmult_delta` produced a
-                    // value distinct from the base rdmult; otherwise the
-                    // base q-index rdmult is used (byte-identical path).
-                    let base_rdmult = rvp9_core::cost::compute_rd_mult(
-                        i32::from(leaf_qindex),
-                        rvp9_core::cost::FrameTypeForRd::Inter,
-                    ) as i32;
-                    let rdmult = if let Some(cb) = tpl_sb_cb_rdmult {
-                        crate::tpl::TPL_RDMULT_ADJUSTED_BLOCKS
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        i64::from(cb)
+                let rdo_unified: Option<rvp9_core::mode_decision::inter::PickInterModeResult> =
+                    if rdo_speed_gated
+                        && crate::rdo::inter_dispatch::InterDispatchLeaf::rdo_supported(leaf_bsize)
+                    {
+                        use crate::rdo::inter_dispatch::{
+                            InterDispatchLeaf, RefInputs, pick_inter_sb_leaf,
+                        };
+                        // A23 — consumer hook (libvpx `vp9_encodeframe.c:2235-
+                        // 2242`): `x->rdmult = x->cb_rdmult` when the TPL model
+                        // is enabled. `tpl_sb_cb_rdmult` is `Some` only when
+                        // TPL is on AND the SB's `get_rdmult_delta` produced a
+                        // value distinct from the base rdmult; otherwise the
+                        // base q-index rdmult is used (byte-identical path).
+                        let base_rdmult = rvp9_core::cost::compute_rd_mult(
+                            i32::from(leaf_qindex),
+                            rvp9_core::cost::FrameTypeForRd::Inter,
+                        ) as i32;
+                        let rdmult = if let Some(cb) = tpl_sb_cb_rdmult {
+                            crate::tpl::TPL_RDMULT_ADJUSTED_BLOCKS
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            i64::from(cb)
+                        } else {
+                            i64::from(base_rdmult)
+                        };
+                        let last_inputs = RefInputs {
+                            available: true,
+                            ref_y: &ref_y,
+                            // Reference-buffer split — RDO picker chroma
+                            // reads the ME-side LAST view.
+                            ref_u: me_ref_yuv.1,
+                            ref_v: me_ref_yuv.2,
+                            nearest: mvc.nearest,
+                            near: mvc.near,
+                            nearest_in_bounds: mv_in_bounds(mvc.nearest),
+                            near_in_bounds: mv_in_bounds(mvc.near),
+                        };
+                        let golden_inputs = RefInputs {
+                            // GOLDEN availability mirrors the RT picker's
+                            // `disable_golden_ref` speed-feature.
+                            available: !sf.disable_golden_ref,
+                            ref_y: &ref_y_golden,
+                            ref_u: golden_recon_yuv.1,
+                            ref_v: golden_recon_yuv.2,
+                            nearest: mvc_golden.nearest,
+                            near: mvc_golden.near,
+                            nearest_in_bounds: mv_in_bounds(mvc_golden.nearest),
+                            near_in_bounds: mv_in_bounds(mvc_golden.near),
+                        };
+                        // W-ALTREF — ALTREF single-ref candidate bundle.
+                        // `available` is the single gate (`altref_available`,
+                        // i.e. enable_alt_ref && ARF emitted). When `false`
+                        // the planes are placeholders the runner never reads
+                        // (the driver skips unavailable refs), so the picker
+                        // is byte-identical to the LAST/GOLDEN-only path.
+                        let altref_inputs = RefInputs {
+                            available: altref_available,
+                            ref_y: ref_y_altref.as_ref().unwrap_or(&ref_y),
+                            ref_u: altref_recon_yuv.map_or(me_ref_yuv.1, |(_, u, _)| u),
+                            ref_v: altref_recon_yuv.map_or(me_ref_yuv.2, |(_, _, v)| v),
+                            nearest: mvc_altref.nearest,
+                            near: mvc_altref.near,
+                            nearest_in_bounds: mv_in_bounds(mvc_altref.nearest),
+                            near_in_bounds: mv_in_bounds(mvc_altref.near),
+                        };
+                        let dispatch_leaf = InterDispatchLeaf {
+                            bsize: leaf_bsize,
+                            src_y: &src_y,
+                            src_offset: (leaf_px_x, leaf_px_y),
+                            src_u: input_yuv.1,
+                            src_v: input_yuv.2,
+                            uv_stride: uvw,
+                            last: last_inputs,
+                            golden: golden_inputs,
+                            altref: altref_inputs,
+                            // W-COMPOUND — the {LAST, ALTREF} compound
+                            // candidate is enumerated iff the ALTREF slot is
+                            // live (= `enable_alt_ref && ARF emitted`), the
+                            // same gate that flips the frame's sign bias and
+                            // reference_mode to Select. When `false` no
+                            // compound candidate is scored and the picker is
+                            // byte-identical to the single-ref path.
+                            compound_enabled: altref_available,
+                            mv_limits,
+                            site_config: &site_config,
+                            mv_costs: &mv_costs,
+                            newmv_seed: sb_newmv_seed,
+                            // UV uses zero quant deltas (matches the RT path's
+                            // `plane_dequant_pair` call with zero deltas), so
+                            // the Y quantizer doubles as the chroma quantizer.
+                            y_quant: &quantizer,
+                            uv_quant: &quantizer,
+                            coef_costs: &rdo_coef_costs,
+                            inter_mode_costs: &inter_costs,
+                            inter_mode_ctx,
+                            switchable_interp_costs: &sic,
+                            switchable_interp_ctx,
+                            rdmult,
+                            tx_size_cost: rdo_tx_size_cost,
+                            skip_cost0: rdo_skip_cost0,
+                            skip_cost1: rdo_skip_cost1,
+                            error_per_bit: 16,
+                            sad_per_bit: 16,
+                            allow_hp,
+                        };
+                        pick_inter_sb_leaf(&dispatch_leaf).map(|r| {
+                            // W-COMPOUND — hoist the second ref/MV out of the
+                            // dispatch result before it's flattened into the
+                            // single-ref `PickInterModeResult`.
+                            if r.ref_frame2.is_inter() {
+                                rdo_compound_second = Some((r.ref_frame2, r.mv2));
+                            }
+                            rvp9_core::mode_decision::inter::PickInterModeResult {
+                                best_mode: r.mode,
+                                best_mv: r.mv,
+                                // RD/dist/rate fields are consumed only by the
+                                // env-gated per-leaf diagnostics below; the
+                                // shared emit walk + writer read only
+                                // (mode, mv, ref, filter). The RDO picker's
+                                // internal RD is not surfaced here.
+                                best_rd_cost: 0,
+                                best_distortion: 0,
+                                best_rate: 0,
+                                coef_rate: 0,
+                                coef_dist: 0,
+                                picked_interp_filter: r.interp_filter,
+                                picked_ref_frame: r.ref_frame,
+                                picked_intra_mode: None,
+                                var_y: 0,
+                                sse_y: 0,
+                                // S2 diag fields — the RDO (cpu<=4) path does
+                                // not surface the RT picker's skip/eob diag;
+                                // inert here (cross-tab targets the RT path).
+                                dct_eob_total: 0,
+                                picker_skip: false,
+                                // Phase-2 option-A: the RDO (cpu<=4) path
+                                // doesn't surface per-ref NEWMV searches.
+                                newmv_search_last: None,
+                                newmv_search_golden: None,
+                            }
+                        })
                     } else {
-                        i64::from(base_rdmult)
+                        None
                     };
-                    let last_inputs = RefInputs {
-                        available: true,
-                        ref_y: &ref_y,
-                        // Reference-buffer split — RDO picker chroma
-                        // reads the ME-side LAST view.
-                        ref_u: me_ref_yuv.1,
-                        ref_v: me_ref_yuv.2,
-                        nearest: mvc.nearest,
-                        near: mvc.near,
-                        nearest_in_bounds: mv_in_bounds(mvc.nearest),
-                        near_in_bounds: mv_in_bounds(mvc.near),
-                    };
-                    let golden_inputs = RefInputs {
-                        // GOLDEN availability mirrors the RT picker's
-                        // `disable_golden_ref` speed-feature.
-                        available: !sf.disable_golden_ref,
-                        ref_y: &ref_y_golden,
-                        ref_u: golden_recon_yuv.1,
-                        ref_v: golden_recon_yuv.2,
-                        nearest: mvc_golden.nearest,
-                        near: mvc_golden.near,
-                        nearest_in_bounds: mv_in_bounds(mvc_golden.nearest),
-                        near_in_bounds: mv_in_bounds(mvc_golden.near),
-                    };
-                    // W-ALTREF — ALTREF single-ref candidate bundle.
-                    // `available` is the single gate (`altref_available`,
-                    // i.e. enable_alt_ref && ARF emitted). When `false`
-                    // the planes are placeholders the runner never reads
-                    // (the driver skips unavailable refs), so the picker
-                    // is byte-identical to the LAST/GOLDEN-only path.
-                    let altref_inputs = RefInputs {
-                        available: altref_available,
-                        ref_y: ref_y_altref.as_ref().unwrap_or(&ref_y),
-                        ref_u: altref_recon_yuv.map_or(me_ref_yuv.1, |(_, u, _)| u),
-                        ref_v: altref_recon_yuv.map_or(me_ref_yuv.2, |(_, _, v)| v),
-                        nearest: mvc_altref.nearest,
-                        near: mvc_altref.near,
-                        nearest_in_bounds: mv_in_bounds(mvc_altref.nearest),
-                        near_in_bounds: mv_in_bounds(mvc_altref.near),
-                    };
-                    let dispatch_leaf = InterDispatchLeaf {
-                        bsize: leaf_bsize,
-                        src_y: &src_y,
-                        src_offset: (leaf_px_x, leaf_px_y),
-                        src_u: input_yuv.1,
-                        src_v: input_yuv.2,
-                        uv_stride: uvw,
-                        last: last_inputs,
-                        golden: golden_inputs,
-                        altref: altref_inputs,
-                        // W-COMPOUND — the {LAST, ALTREF} compound
-                        // candidate is enumerated iff the ALTREF slot is
-                        // live (= `enable_alt_ref && ARF emitted`), the
-                        // same gate that flips the frame's sign bias and
-                        // reference_mode to Select. When `false` no
-                        // compound candidate is scored and the picker is
-                        // byte-identical to the single-ref path.
-                        compound_enabled: altref_available,
-                        mv_limits,
-                        site_config: &site_config,
-                        mv_costs: &mv_costs,
-                        newmv_seed: sb_newmv_seed,
-                        // UV uses zero quant deltas (matches the RT path's
-                        // `plane_dequant_pair` call with zero deltas), so
-                        // the Y quantizer doubles as the chroma quantizer.
-                        y_quant: &quantizer,
-                        uv_quant: &quantizer,
-                        coef_costs: &rdo_coef_costs,
-                        inter_mode_costs: &inter_costs,
-                        inter_mode_ctx,
-                        switchable_interp_costs: &sic,
-                        switchable_interp_ctx,
-                        rdmult,
-                        tx_size_cost: rdo_tx_size_cost,
-                        skip_cost0: rdo_skip_cost0,
-                        skip_cost1: rdo_skip_cost1,
-                        error_per_bit: 16,
-                        sad_per_bit: 16,
-                    };
-                    pick_inter_sb_leaf(&dispatch_leaf).map(|r| {
-                        // W-COMPOUND — hoist the second ref/MV out of the
-                        // dispatch result before it's flattened into the
-                        // single-ref `PickInterModeResult`.
-                        if r.ref_frame2.is_inter() {
-                            rdo_compound_second = Some((r.ref_frame2, r.mv2));
-                        }
-                        rvp9_core::mode_decision::inter::PickInterModeResult {
-                            best_mode: r.mode,
-                            best_mv: r.mv,
-                            // RD/dist/rate fields are consumed only by the
-                            // env-gated per-leaf diagnostics below; the
-                            // shared emit walk + writer read only
-                            // (mode, mv, ref, filter). The RDO picker's
-                            // internal RD is not surfaced here.
-                            best_rd_cost: 0,
-                            best_distortion: 0,
-                            best_rate: 0,
-                            coef_rate: 0,
-                            coef_dist: 0,
-                            picked_interp_filter: r.interp_filter,
-                            picked_ref_frame: r.ref_frame,
-                            picked_intra_mode: None,
-                            var_y: 0,
-                            sse_y: 0,
-                            // S2 diag fields — the RDO (cpu<=4) path does
-                            // not surface the RT picker's skip/eob diag;
-                            // inert here (cross-tab targets the RT path).
-                            dct_eob_total: 0,
-                            picker_skip: false,
-                            // Phase-2 option-A: the RDO (cpu<=4) path
-                            // doesn't surface per-ref NEWMV searches.
-                            newmv_search_last: None,
-                            newmv_search_golden: None,
-                        }
-                    })
-                } else {
-                    None
-                };
 
                 // P20 — re-borrow the persistent RD-threshold table
                 // immutably for the picker. The mutable borrow for
@@ -4394,9 +4452,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // overrides; the cpu<=4 RDO path runs its own search.
                 let (phase2_override_last, phase2_override_golden) =
                     if phase2_reuse_enabled && rdo_unified.is_none() {
-                        match descent_pick_cache
-                            .get(&(leaf_mi_row, leaf_mi_col, leaf_bsize))
-                        {
+                        match descent_pick_cache.get(&(leaf_mi_row, leaf_mi_col, leaf_bsize)) {
                             Some((cached, desc_mvc_last, desc_mvc_golden)) => {
                                 // MATCH GUARD (R2): only reuse the descent's
                                 // NEWMV when the final pass's CAUSAL
@@ -4408,16 +4464,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 // the SAME MV, so reuse is faithful. Any
                                 // mismatch -> re-search (avoids the R2 quality
                                 // wobble from re-pricing a stale-context MV).
-                                let ov_last = if mvc.nearest
-                                    == desc_mvc_last.nearest
+                                let ov_last = if mvc.nearest == desc_mvc_last.nearest
                                     && mvc.near == desc_mvc_last.near
                                 {
                                     cached.newmv_search_last
                                 } else {
                                     None
                                 };
-                                let ov_golden = if mvc_golden.nearest
-                                    == desc_mvc_golden.nearest
+                                let ov_golden = if mvc_golden.nearest == desc_mvc_golden.nearest
                                     && mvc_golden.near == desc_mvc_golden.near
                                 {
                                     cached.newmv_search_golden
@@ -4458,7 +4512,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     inter_mode_ctx,
                     quantizer: &quantizer,
                     q_index: leaf_qindex,
-                    allow_hp: false,
+                    allow_hp,
                     frame_kind,
                     newmv_seed: sb_newmv_seed,
                     ref_frame_cost_last,
@@ -4558,8 +4612,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // W2.2 avg_source_sad pass. Look up by SB grid.
                     content_state_sb: {
                         let sb_cols = (width / 64).max(1) as usize;
-                        let sb_idx =
-                            (leaf_mi_row / 8) * sb_cols + (leaf_mi_col / 8);
+                        let sb_idx = (leaf_mi_row / 8) * sb_cols + (leaf_mi_col / 8);
                         content_state_sb_grid
                             .get(sb_idx)
                             .copied()
@@ -4592,8 +4645,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     //  - `rt_intra_dc_only_low_content` — `1` only at
                     //    speed-8 (vp9_speed_features.c:770). Default `false`
                     //    here keeps intra-fallback quality at speed 6/7.
-                    inter_mode_mask:
-                        rvp9_core::mode_decision::inter::default_inter_mode_mask(),
+                    inter_mode_mask: rt_inter_mode_mask,
                     // W0.4: see top of `pick_and_simulate_inter_
                     // encode_partitions` — the dispatcher computed
                     // `sf` once per frame and every per-leaf literal
@@ -4602,10 +4654,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     bias_golden: sf.bias_golden,
                     frames_since_golden,
                     cb_pred_filter_search: sf.cb_pred_filter_search,
+                    skip_integer_mv_filter_search: rt_skip_integer_mv_filter_search,
                     mi_row: leaf_mi_row as u32,
                     mi_col: leaf_mi_col as u32,
                     chessboard_index,
-                    disable_golden_ref: sf.disable_golden_ref,
+                    disable_golden_ref: rt_disable_golden_ref,
                     max_intra_bsize: sf.max_intra_bsize,
                     rt_intra_dc_only_low_content: sf.rt_intra_dc_only_low_content,
                     // Phase-2 option-A — descent NEWMV-search reuse.
@@ -4619,11 +4672,29 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // picker only runs when RDO didn't decide the leaf — a
                 // dispatch that ran RDO then discarded it for the RT result
                 // would be the forbidden cheat.
-                let unified_pick = match rdo_unified {
-                    Some(rdo) => rdo,
-                    None => pick_inter_mode(&pick_params),
+                let cached_descent_pick = if rt_reuse_descent_pick && rdo_unified.is_none() {
+                    descent_pick_cache
+                        .get(&(leaf_mi_row, leaf_mi_col, leaf_bsize))
+                        .map(|(cached, _, _)| *cached)
+                } else {
+                    None
                 };
-
+                let rt_profile_final_pick_start =
+                    if rt_profile_enabled && rdo_unified.is_none() && cached_descent_pick.is_none()
+                    {
+                        Some(std::time::Instant::now())
+                    } else {
+                        None
+                    };
+                let unified_pick = match (rdo_unified, cached_descent_pick) {
+                    (Some(rdo), _) => rdo,
+                    (None, Some(cached)) => cached,
+                    (None, None) => pick_inter_mode(&pick_params),
+                };
+                if let Some(t0) = rt_profile_final_pick_start {
+                    rt_profile_final_pick_time += t0.elapsed();
+                    rt_profile_picker_leaves += 1;
+                }
                 // P20 — drop the immutable borrow held by `pick_params`
                 // so the mutable update can proceed.
                 drop(pick_params);
@@ -4669,6 +4740,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // y_mode, uv_mode).
                 let mut pick = unified_pick;
                 let picked_ref = pick.picked_ref_frame;
+                let rt_profile_emit_start = if rt_profile_enabled {
+                    Some(std::time::Instant::now())
+                } else {
+                    None
+                };
 
                 // DRIFT-FIX — NEAREST/NEAR carry NO MV bits on the wire;
                 // the DECODER reconstructs their MV via `find_mv_refs` on
@@ -4706,42 +4782,49 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // `RVP9_E12_ORACLE`; no encoder state mutated.
                 if crate::e12stat::enabled() {
                     let last_mvc_safe = MvCandidates {
-                        nearest: if mv_in_bounds(mvc.nearest) { mvc.nearest } else { Mv::ZERO },
-                        near: if mv_in_bounds(mvc.near) { mvc.near } else { Mv::ZERO },
+                        nearest: if mv_in_bounds(mvc.nearest) {
+                            mvc.nearest
+                        } else {
+                            Mv::ZERO
+                        },
+                        near: if mv_in_bounds(mvc.near) {
+                            mvc.near
+                        } else {
+                            Mv::ZERO
+                        },
                     };
-                    let all_e12 =
-                        rvp9_core::mode_decision::inter::pick_inter_mode_luma_all_costs(
-                            &InterModeSearchParams {
-                                block_size: leaf_bsize,
-                                src_plane: &src_y,
-                                src_offset: (leaf_px_x, leaf_px_y),
-                                ref_plane: &ref_y,
-                                mv_candidates: &last_mvc_safe,
-                                mv_limits,
-                                site_config: &site_config,
-                                mv_costs: &mv_costs,
-                                inter_mode_costs: &inter_costs,
-                                inter_mode_ctx,
-                                quantizer: &quantizer,
-                                q_index: leaf_qindex,
-                                allow_hp: false,
-                                frame_kind,
-                                newmv_seed: sb_newmv_seed,
-                                ref_frame_rate_cost: ref_frame_cost_last,
-                                switchable_interp_costs: &sic,
-                                switchable_interp_ctx,
-                                skip_ctx: Some(skip_ctx),
-                                src_u: input_yuv.1,
-                                src_v: input_yuv.2,
-                                // Reference-buffer split — diagnostic
-                                // (e12) candidate sweep is ME-side.
-                                ref_u: me_ref_yuv.1,
-                                ref_v: me_ref_yuv.2,
-                                uv_stride: uvw,
-                                uv_dc_quant: uv_dc_dq as u32,
-                                uv_ac_quant: uv_ac_dq as u32,
-                            },
-                        );
+                    let all_e12 = rvp9_core::mode_decision::inter::pick_inter_mode_luma_all_costs(
+                        &InterModeSearchParams {
+                            block_size: leaf_bsize,
+                            src_plane: &src_y,
+                            src_offset: (leaf_px_x, leaf_px_y),
+                            ref_plane: &ref_y,
+                            mv_candidates: &last_mvc_safe,
+                            mv_limits,
+                            site_config: &site_config,
+                            mv_costs: &mv_costs,
+                            inter_mode_costs: &inter_costs,
+                            inter_mode_ctx,
+                            quantizer: &quantizer,
+                            q_index: leaf_qindex,
+                            allow_hp,
+                            frame_kind,
+                            newmv_seed: sb_newmv_seed,
+                            ref_frame_rate_cost: ref_frame_cost_last,
+                            switchable_interp_costs: &sic,
+                            switchable_interp_ctx,
+                            skip_ctx: Some(skip_ctx),
+                            src_u: input_yuv.1,
+                            src_v: input_yuv.2,
+                            // Reference-buffer split — diagnostic
+                            // (e12) candidate sweep is ME-side.
+                            ref_u: me_ref_yuv.1,
+                            ref_v: me_ref_yuv.2,
+                            uv_stride: uvw,
+                            uv_dc_quant: uv_dc_dq as u32,
+                            uv_ac_quant: uv_ac_dq as u32,
+                        },
+                    );
                     crate::e12stat::record_leaf(
                         src_y.data,
                         src_y.stride,
@@ -4764,7 +4847,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let nearest_in_bounds = mv_in_bounds(mvc.nearest);
                     let near_in_bounds = mv_in_bounds(mvc.near);
                     let mvc_safe = MvCandidates {
-                        nearest: if nearest_in_bounds { mvc.nearest } else { Mv::ZERO },
+                        nearest: if nearest_in_bounds {
+                            mvc.nearest
+                        } else {
+                            Mv::ZERO
+                        },
                         near: if near_in_bounds { mvc.near } else { Mv::ZERO },
                     };
                     let e3_params = InterModeSearchParams {
@@ -4780,7 +4867,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         inter_mode_ctx,
                         quantizer: &quantizer,
                         q_index: leaf_qindex,
-                        allow_hp: false,
+                        allow_hp,
                         frame_kind,
                         newmv_seed: sb_newmv_seed,
                         ref_frame_rate_cost: ref_frame_cost_last,
@@ -4798,9 +4885,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         uv_ac_quant: uv_ac_dq as u32,
                     };
                     let all =
-                        rvp9_core::mode_decision::inter::pick_inter_mode_luma_all_costs(
-                            &e3_params,
-                        );
+                        rvp9_core::mode_decision::inter::pick_inter_mode_luma_all_costs(&e3_params);
                     // all = [ZERO, NEAREST, NEAR, NEW].
                     e3_total_leaves += 1;
                     // RD argmin (mirror the picker's own argmin).
@@ -4813,9 +4898,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     e3_win_counts[win_idx] += 1;
 
                     let new = &all[3];
-                    let new_mag =
-                        (i32::from(new.best_mv.row).abs()
-                            + i32::from(new.best_mv.col).abs()) as u32;
+                    let new_mag = (i32::from(new.best_mv.row).abs()
+                        + i32::from(new.best_mv.col).abs())
+                        as u32;
                     if new_mag > 0 {
                         e3_newmv_nonzero += 1;
                     }
@@ -4838,14 +4923,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             // Decompose NEWMV's rate into mode + mv rate.
                             // mv_rate = ROUND_POWER_OF_TWO(mv_cost*108, 7)
                             // relative to mvc_safe.nearest (the ref MV).
-                            let diff_row =
-                                new.best_mv.row.wrapping_sub(mvc_safe.nearest.row);
-                            let diff_col =
-                                new.best_mv.col.wrapping_sub(mvc_safe.nearest.col);
-                            let raw = rvp9_core::cost::mv_cost::mv_cost(
-                                diff_row, diff_col, &mv_costs,
-                            )
-                            .max(0) as u64;
+                            let diff_row = new.best_mv.row.wrapping_sub(mvc_safe.nearest.row);
+                            let diff_col = new.best_mv.col.wrapping_sub(mvc_safe.nearest.col);
+                            let raw =
+                                rvp9_core::cost::mv_cost::mv_cost(diff_row, diff_col, &mv_costs)
+                                    .max(0) as u64;
                             let mv_rate = (raw * 108 + 64) >> 7;
                             e3_lost_mv_rate_sum += mv_rate;
                             e3_lost_total_rate_sum += u64::from(new.best_rate);
@@ -4863,13 +4945,27 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             eprintln!(
                                 "E3 leaf px=({},{}) bs={:?} q={} nearest=({},{}) newmv=({},{}) mag={} | \
                                  ZERO[rd={} d={} r={}] NEAREST[rd={} d={} r={}] NEAR[rd={} d={} r={}] NEW[rd={} d={} r={}] WIN={}",
-                                leaf_px_x, leaf_px_y, leaf_bsize, leaf_qindex,
-                                mvc_safe.nearest.row, mvc_safe.nearest.col,
-                                new.best_mv.row, new.best_mv.col, new_mag,
-                                all[0].best_rd_cost, all[0].best_distortion, all[0].best_rate,
-                                all[1].best_rd_cost, all[1].best_distortion, all[1].best_rate,
-                                all[2].best_rd_cost, all[2].best_distortion, all[2].best_rate,
-                                all[3].best_rd_cost, all[3].best_distortion, all[3].best_rate,
+                                leaf_px_x,
+                                leaf_px_y,
+                                leaf_bsize,
+                                leaf_qindex,
+                                mvc_safe.nearest.row,
+                                mvc_safe.nearest.col,
+                                new.best_mv.row,
+                                new.best_mv.col,
+                                new_mag,
+                                all[0].best_rd_cost,
+                                all[0].best_distortion,
+                                all[0].best_rate,
+                                all[1].best_rd_cost,
+                                all[1].best_distortion,
+                                all[1].best_rate,
+                                all[2].best_rd_cost,
+                                all[2].best_distortion,
+                                all[2].best_rate,
+                                all[3].best_rd_cost,
+                                all[3].best_distortion,
+                                all[3].best_rate,
                                 names[win_idx],
                             );
                         }
@@ -4895,19 +4991,16 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     sb_partitions[sb_idx][leaf_idx].picked_ref_frame2 = ref2;
                     sb_partitions[sb_idx][leaf_idx].picked_mv2 = mv2;
                 } else {
-                    sb_partitions[sb_idx][leaf_idx].picked_ref_frame2 =
-                        RefFrame::NoRefFrame;
+                    sb_partitions[sb_idx][leaf_idx].picked_ref_frame2 = RefFrame::NoRefFrame;
                     sb_partitions[sb_idx][leaf_idx].picked_mv2 = Mv::ZERO;
                 }
                 // F.5 — record the per-leaf interpolation filter so the
                 // writer (via `splat_inter_leaf_into_mi_grid`) and the
                 // encoder simulator's per-plane MC step below both use
                 // the same filter the picker scored against.
-                sb_partitions[sb_idx][leaf_idx].picked_interp_filter =
-                    pick.picked_interp_filter;
+                sb_partitions[sb_idx][leaf_idx].picked_interp_filter = pick.picked_interp_filter;
                 // Phase 2b — record the intra mode when intra wins.
-                sb_partitions[sb_idx][leaf_idx].picked_intra_mode =
-                    pick.picked_intra_mode;
+                sb_partitions[sb_idx][leaf_idx].picked_intra_mode = pick.picked_intra_mode;
 
                 // A0 diagnostic: dump per-leaf picker decision when
                 // `RVP9_DIAG_PICKER` is set in the environment.
@@ -4916,9 +5009,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     {
                         eprintln!(
                             "    leaf sb=({},{}) px=({},{}) bs={:?} q={} → mode={:?} mv=({},{}) rd={} dist={} rate={}",
-                            sb_row, sb_col, leaf_px_x, leaf_px_y, leaf_bsize, leaf_qindex,
+                            sb_row,
+                            sb_col,
+                            leaf_px_x,
+                            leaf_px_y,
+                            leaf_bsize,
+                            leaf_qindex,
                             pick.best_mode,
-                            pick.best_mv.row, pick.best_mv.col,
+                            pick.best_mv.row,
+                            pick.best_mv.col,
                             pick.best_rd_cost,
                             pick.best_distortion,
                             pick.best_rate,
@@ -4953,11 +5052,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // VP9 intra prediction is causal — each TX block
                     // reads reconstructed pixels from prior TX blocks.
                     use rvp9_core::intra_pred::{
-                        DcAvailability, EdgeBuffers, build_intra_predictors,
-                        intra_predict,
+                        DcAvailability, EdgeBuffers, build_intra_predictors, intra_predict,
                     };
                     use rvp9_core::transforms::TxType;
-                    let intra_y_mode = pick.picked_intra_mode
+                    let intra_y_mode = pick
+                        .picked_intra_mode
                         .expect("IntraFrame pick must have picked_intra_mode");
                     let intra_uv_mode = rvp9_core::intra_pred::IntraMode::Dc;
                     let dispatch = rvp9_core::dsp::get();
@@ -5026,8 +5125,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 // Step 1: intra prediction (existing).
                                 let have_top = have_above_block || tx_y4_local > 0;
                                 let have_left = have_left_block || tx_x4_local > 0;
-                                let have_right =
-                                    (tx_x4_local + tx_step_4x4) < plane_bw_4x4;
+                                let have_right = (tx_x4_local + tx_step_4x4) < plane_bw_4x4;
 
                                 let mut edges = EdgeBuffers::new();
                                 build_intra_predictors(
@@ -5062,11 +5160,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 );
 
                                 // Step 2: residual = source - prediction.
-                                let mut residual = vec![0i16; tx_side * tx_side];
+                                let residual_len = tx_side * tx_side;
+                                let mut residual = [0i16; 1024];
                                 for r in 0..tx_side {
                                     for c in 0..tx_side {
-                                        let off = (tx_px_y + r) * plane_stride
-                                            + (tx_px_x + c);
+                                        let off = (tx_px_y + r) * plane_stride + (tx_px_x + c);
                                         let s = input_plane[off] as i16;
                                         let p = recon_plane[off] as i16;
                                         residual[r * tx_side + c] = s - p;
@@ -5076,7 +5174,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 // E9 DIAG — tap Y-plane intra residual.
                                 if plane == 0 {
                                     crate::predstat::record_y_residual(
-                                        &residual,
+                                        &residual[..residual_len],
                                         tx_side,
                                         plane_tx as usize,
                                     );
@@ -5169,6 +5267,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // MC prediction is built; `chosen_luma_tx` then drives
                     // the Y coding walk + the UV cap, and is stored on the
                     // leaf so the writer signals it under `TxModeSelect`.
+                    if emit_profile_enabled {
+                        emit_profile_inter_leaves += 1;
+                    }
                     let mut chosen_luma_tx = rvp9_core::block::max_txsize(leaf_bsize);
                     for plane in 0..3 {
                         let ss_x = F5_SUBSAMPLING_X[plane];
@@ -5263,6 +5364,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         // `for r in 0..num_refs` recon loop
                         // (`reconstruct_inter.rs:331`, `is_compound_avg = r >
                         // 0`): slot 0 writes, slot 1 averages.
+                        let emit_pred_start = if emit_profile_enabled {
+                            Some(std::time::Instant::now())
+                        } else {
+                            None
+                        };
                         build_inter_pred_plane_unscaled(
                             ref_plane_data,
                             plane_stride,
@@ -5292,8 +5398,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         // guaranteed available (a leaf can only carry a
                         // compound second ref when the picker's `altref`
                         // bundle — gated on `altref_available` — was live).
-                        let leaf_ref2 =
-                            sb_partitions[sb_idx][leaf_idx].picked_ref_frame2;
+                        let leaf_ref2 = sb_partitions[sb_idx][leaf_idx].picked_ref_frame2;
                         if leaf_ref2.is_inter() {
                             debug_assert_eq!(
                                 leaf_ref2,
@@ -5307,10 +5412,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 "compound first ref (slot 0) must be LAST"
                             );
                             let mv2 = sb_partitions[sb_idx][leaf_idx].picked_mv2;
-                            let mv2_q4_col =
-                                i32::from(mv2.col) * (1i32 << (1 - ss_x as i32));
-                            let mv2_q4_row =
-                                i32::from(mv2.row) * (1i32 << (1 - ss_y as i32));
+                            let mv2_q4_col = i32::from(mv2.col) * (1i32 << (1 - ss_x as i32));
+                            let mv2_q4_row = i32::from(mv2.row) * (1i32 << (1 - ss_y as i32));
                             let ref2_plane_data = match plane {
                                 0 => altref_yuv().0,
                                 1 => altref_yuv().1,
@@ -5333,6 +5436,19 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 /* is_compound_avg = */ true,
                             );
                         }
+                        if let Some(t0) = emit_pred_start {
+                            emit_profile_pred_time += t0.elapsed();
+                        }
+
+                        // RT diagnostic A/B: when the picker already
+                        // chose skip, keep the MC prediction and avoid the
+                        // residual TX/quant loop. The leaf-level
+                        // `leaf_total_eob == 0` logic below marks the wire
+                        // block skipped. Off by default while Stage 4a
+                        // measures the speed/quality tradeoff.
+                        if rt_skip_picker_skip_emit && pick.picker_skip {
+                            continue;
+                        }
 
                         // Track-F iter7 — per-block TX-size RD selection.
                         // `recon_plane` now holds the pure Y MC prediction
@@ -5343,18 +5459,30 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         // For inter the prediction is TX-size-independent, so
                         // this is a faithful RD-domain size search.
                         if plane == 0 {
-                            chosen_luma_tx = choose_inter_luma_tx_size(
-                                input_plane,
-                                recon_plane,
-                                plane_stride,
-                                plane_px_x,
-                                plane_px_y,
-                                leaf_bsize,
-                                &quantizer,
-                                &rdo_coef_costs,
-                                tx_rd_rdmult,
-                                rdo_tx_size_cost,
-                            );
+                            if rt_emit_max_tx {
+                                chosen_luma_tx = rvp9_core::block::max_txsize(leaf_bsize);
+                            } else {
+                                let emit_tx_select_start = if emit_profile_enabled {
+                                    Some(std::time::Instant::now())
+                                } else {
+                                    None
+                                };
+                                chosen_luma_tx = choose_inter_luma_tx_size(
+                                    input_plane,
+                                    recon_plane,
+                                    plane_stride,
+                                    plane_px_x,
+                                    plane_px_y,
+                                    leaf_bsize,
+                                    &quantizer,
+                                    &rdo_coef_costs,
+                                    tx_rd_rdmult,
+                                    rdo_tx_size_cost,
+                                );
+                                if let Some(t0) = emit_tx_select_start {
+                                    emit_profile_tx_select_time += t0.elapsed();
+                                }
+                            }
                         }
                         let plane_tx = if plane == 0 {
                             chosen_luma_tx
@@ -5376,22 +5504,34 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
                                 // Residual = input - pred. `recon_plane`
                                 // currently holds the MC prediction.
-                                let mut residual = vec![0i16; tx_side * tx_side];
+                                if emit_profile_enabled {
+                                    emit_profile_tx_blocks += 1;
+                                    emit_profile_plane_tx_blocks[plane] += 1;
+                                }
+                                let emit_residual_start = if emit_profile_enabled {
+                                    Some(std::time::Instant::now())
+                                } else {
+                                    None
+                                };
+                                let residual_len = tx_side * tx_side;
+                                let mut residual = [0i16; 1024];
                                 for r in 0..tx_side {
                                     for c in 0..tx_side {
-                                        let off = (tx_px_y + r) * plane_stride
-                                            + (tx_px_x + c);
+                                        let off = (tx_px_y + r) * plane_stride + (tx_px_x + c);
                                         let s = input_plane[off] as i16;
                                         let p = recon_plane[off] as i16;
                                         residual[r * tx_side + c] = s - p;
                                     }
+                                }
+                                if let Some(t0) = emit_residual_start {
+                                    emit_profile_residual_time += t0.elapsed();
                                 }
 
                                 // E9 DIAG — tap the Y-plane prediction residual
                                 // (`source − MC prediction`, before transform/quant).
                                 if plane == 0 {
                                     crate::predstat::record_y_residual(
-                                        &residual,
+                                        &residual[..residual_len],
                                         tx_side,
                                         plane_tx as usize,
                                     );
@@ -5412,6 +5552,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
                                 // RVP9_TRELLIS — inter emit path.
                                 // ref_type = 1 (inter).
+                                let emit_quant_start = if emit_profile_enabled {
+                                    Some(std::time::Instant::now())
+                                } else {
+                                    None
+                                };
                                 let trellis_ctx = if trellis_enabled {
                                     Some(TrellisCtx {
                                         costs: &rdo_coef_costs,
@@ -5423,19 +5568,33 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 };
                                 let (qcoeff_i32, dqcoeff_i32, eob_usize) =
                                     inter_forward_quant_one_tx(
-                                        &residual,
+                                        &residual[..residual_len],
                                         tx_side,
                                         plane_tx,
                                         &quantizer,
                                         usize::from(plane != 0),
                                         trellis_ctx,
                                     );
+                                if let Some(t0) = emit_quant_start {
+                                    emit_profile_quant_time += t0.elapsed();
+                                }
+                                if emit_profile_enabled {
+                                    emit_profile_eob_sum += eob_usize;
+                                    if eob_usize > 0 {
+                                        emit_profile_nonzero_tx_blocks += 1;
+                                    }
+                                }
 
                                 // Inverse-DCT-add into recon (the encoder's
                                 // bit-exact mirror of the decoder's
                                 // `inverse_transform_add_dct`). Skip when
                                 // eob == 0 — matches the decoder's
                                 // `if eob > 0` guard.
+                                let emit_inverse_start = if emit_profile_enabled && eob_usize > 0 {
+                                    Some(std::time::Instant::now())
+                                } else {
+                                    None
+                                };
                                 if eob_usize > 0 {
                                     inter_inverse_dct_add(
                                         plane_tx,
@@ -5445,7 +5604,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                         plane_stride,
                                     );
                                 }
+                                if let Some(t0) = emit_inverse_start {
+                                    emit_profile_inverse_time += t0.elapsed();
+                                }
 
+                                let emit_coef_insert_start = if emit_profile_enabled {
+                                    Some(std::time::Instant::now())
+                                } else {
+                                    None
+                                };
                                 coef_source.insert(
                                     leaf_mi_row,
                                     leaf_mi_col,
@@ -5455,6 +5622,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     qcoeff_i32,
                                     eob_usize,
                                 );
+                                if let Some(t0) = emit_coef_insert_start {
+                                    emit_profile_coef_insert_time += t0.elapsed();
+                                }
                                 leaf_total_eob += eob_usize;
                                 if s2_xtab_enabled && plane == 0 {
                                     leaf_y_eob += eob_usize;
@@ -5485,10 +5655,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     }
                 }
                 // E4 diagnostic: per-leaf skip / residual-energy stats.
-                crate::skipstat::record_leaf(
-                    sb_partitions[sb_idx][leaf_idx].skip,
-                    leaf_total_eob,
-                );
+                crate::skipstat::record_leaf(sb_partitions[sb_idx][leaf_idx].skip, leaf_total_eob);
                 // S2 cross-tab diag — one machine-parseable line per
                 // *inter* leaf: picker's skip decision + picker Y DCT eob
                 // vs the emit's per-plane eob. Parsed offline into the
@@ -5516,8 +5683,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     {
                         eprintln!(
                             "      leaf_total_eob={} (skip={})",
-                            leaf_total_eob,
-                            sb_partitions[sb_idx][leaf_idx].skip
+                            leaf_total_eob, sb_partitions[sb_idx][leaf_idx].skip
                         );
                     }
                 }
@@ -5540,31 +5706,28 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // Reference MV is the safe `nearest` MV the picker
                     // saw (post-OOB-veto), matching the
                     // `pick_for_ref` closure's `mvc_safe.nearest`.
-                    let mv_bits_est: u32 =
-                        if matches!(final_mode, InterMode::NewMv) {
-                            let mvc_ref = match final_ref {
-                                RefFrame::GoldenFrame => mvc_golden.nearest,
-                                RefFrame::AltrefFrame => mvc_altref.nearest,
-                                _ => mvc.nearest,
-                            };
-                            let ref_mv = if mv_in_bounds(mvc_ref) {
-                                mvc_ref
-                            } else {
-                                Mv::ZERO
-                            };
-                            let diff_row = final_mv.row.wrapping_sub(ref_mv.row);
-                            let diff_col = final_mv.col.wrapping_sub(ref_mv.col);
-                            let raw = rvp9_core::cost::mv_cost::mv_cost(
-                                diff_row, diff_col, &mv_costs,
-                            )
-                            .max(0) as u64;
-                            // ROUND_POWER_OF_TWO(raw * 108, 7) — same
-                            // `MV_COST_WEIGHT = 108` scaling the picker
-                            // uses.
-                            ((raw * 108 + 64) >> 7).min(u32::MAX as u64) as u32
-                        } else {
-                            0
+                    let mv_bits_est: u32 = if matches!(final_mode, InterMode::NewMv) {
+                        let mvc_ref = match final_ref {
+                            RefFrame::GoldenFrame => mvc_golden.nearest,
+                            RefFrame::AltrefFrame => mvc_altref.nearest,
+                            _ => mvc.nearest,
                         };
+                        let ref_mv = if mv_in_bounds(mvc_ref) {
+                            mvc_ref
+                        } else {
+                            Mv::ZERO
+                        };
+                        let diff_row = final_mv.row.wrapping_sub(ref_mv.row);
+                        let diff_col = final_mv.col.wrapping_sub(ref_mv.col);
+                        let raw = rvp9_core::cost::mv_cost::mv_cost(diff_row, diff_col, &mv_costs)
+                            .max(0) as u64;
+                        // ROUND_POWER_OF_TWO(raw * 108, 7) — same
+                        // `MV_COST_WEIGHT = 108` scaling the picker
+                        // uses.
+                        ((raw * 108 + 64) >> 7).min(u32::MAX as u64) as u32
+                    } else {
+                        0
+                    };
                     // mode_bits_est = total picker rate minus the
                     // ref-frame cost and the MV cost — what's left
                     // is the inter-mode cost.
@@ -5589,29 +5752,24 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // Night-8 (2026-05-23): `pick.coef_rate` is `u64`
                     // now (saturation fix); saturate-cast to `u32` at
                     // the oracle boundary.
-                    let coef_bits_est: u32 = (pick
-                        .coef_rate
+                    let coef_bits_est: u32 = (pick.coef_rate
                         >> rvp9_core::cost::VP9_PROB_COST_SHIFT)
                         .min(u32::MAX as u64) as u32;
-                    crate::f02_oracle::record_decision(
-                        crate::f02_oracle::BlockDecision {
-                            frame_idx: crate::f02_oracle::current_frame_idx(),
-                            mi_row: leaf_mi_row as u16,
-                            mi_col: leaf_mi_col as u16,
-                            bsize: leaf_bsize,
-                            mode: crate::f02_oracle::BlockDecisionMode::Inter(
-                                final_mode,
-                            ),
-                            ref_frame: final_ref,
-                            mv_row: final_mv.row,
-                            mv_col: final_mv.col,
-                            mode_bits_est,
-                            mv_bits_est,
-                            coef_bits_est,
-                            sse_after_pred: u64::from(pick.best_distortion),
-                            skip_flag: final_skip,
-                        },
-                    );
+                    crate::f02_oracle::record_decision(crate::f02_oracle::BlockDecision {
+                        frame_idx: crate::f02_oracle::current_frame_idx(),
+                        mi_row: leaf_mi_row as u16,
+                        mi_col: leaf_mi_col as u16,
+                        bsize: leaf_bsize,
+                        mode: crate::f02_oracle::BlockDecisionMode::Inter(final_mode),
+                        ref_frame: final_ref,
+                        mv_row: final_mv.row,
+                        mv_col: final_mv.col,
+                        mode_bits_est,
+                        mv_bits_est,
+                        coef_bits_est,
+                        sse_after_pred: u64::from(pick.best_distortion),
+                        skip_flag: final_skip,
+                    });
                 }
 
                 // A2.foreman - Splat the picked `(mode, mv, skip)`
@@ -5634,7 +5792,91 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     sb_partitions[sb_idx][leaf_idx].picked_ref_frame,
                     sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
                 );
+                if let Some(t0) = rt_profile_emit_start {
+                    rt_profile_emit_time += t0.elapsed();
+                }
             }
+        }
+    }
+
+    if rt_profile_enabled {
+        let total = rt_profile_frame_start.elapsed();
+        let accounted = rt_profile_descent_time + rt_profile_final_pick_time + rt_profile_emit_time;
+        let other = total.saturating_sub(accounted);
+        let reused = crate::rdo::inter_dispatch::PHASE2_NEWMV_REUSED
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .saturating_sub(rt_profile_phase2_reused_start);
+        let fresh = crate::rdo::inter_dispatch::PHASE2_NEWMV_FRESH
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .saturating_sub(rt_profile_phase2_fresh_start);
+        let ms = |d: std::time::Duration| d.as_secs_f64() * 1_000.0;
+        #[allow(clippy::print_stderr)]
+        {
+            eprintln!(
+                "[RT_PROFILE] total={:.2}ms descent={:.2}ms final_pick={:.2}ms emit={:.2}ms other={:.2}ms leaves={} picker_leaves={} fallback_leaves={} phase2_reused={} phase2_fresh={}",
+                ms(total),
+                ms(rt_profile_descent_time),
+                ms(rt_profile_final_pick_time),
+                ms(rt_profile_emit_time),
+                ms(other),
+                rt_profile_final_leaves,
+                rt_profile_picker_leaves,
+                rt_profile_fallback_leaves,
+                reused,
+                fresh,
+            );
+        }
+    }
+    if emit_profile_enabled {
+        let ms = |d: std::time::Duration| d.as_secs_f64() * 1_000.0;
+        #[allow(clippy::print_stderr)]
+        {
+            eprintln!(
+                "[EMIT_PROFILE] inter_leaves={} tx_blocks={} y_tx={} u_tx={} v_tx={} nonzero_tx={} eob_sum={} pred={:.2}ms tx_select={:.2}ms residual={:.2}ms quant={:.2}ms inverse={:.2}ms coef_insert={:.2}ms",
+                emit_profile_inter_leaves,
+                emit_profile_tx_blocks,
+                emit_profile_plane_tx_blocks[0],
+                emit_profile_plane_tx_blocks[1],
+                emit_profile_plane_tx_blocks[2],
+                emit_profile_nonzero_tx_blocks,
+                emit_profile_eob_sum,
+                ms(emit_profile_pred_time),
+                ms(emit_profile_tx_select_time),
+                ms(emit_profile_residual_time),
+                ms(emit_profile_quant_time),
+                ms(emit_profile_inverse_time),
+                ms(emit_profile_coef_insert_time),
+            );
+        }
+    }
+    if a4_profile_enabled {
+        let labels = [
+            "4x4", "4x8", "8x4", "8x8", "8x16", "16x8", "16x16", "16x32", "32x16", "32x32",
+            "32x64", "64x32", "64x64",
+        ];
+        let mut parts = Vec::new();
+        let total_time = a4_profile_pick_time
+            .iter()
+            .copied()
+            .fold(std::time::Duration::ZERO, |acc, d| acc + d);
+        for (idx, &calls) in a4_profile_calls.iter().enumerate() {
+            if calls == 0 {
+                continue;
+            }
+            parts.push(format!(
+                "{}={}({:.2}ms)",
+                labels[idx],
+                calls,
+                a4_profile_pick_time[idx].as_secs_f64() * 1_000.0,
+            ));
+        }
+        #[allow(clippy::print_stderr)]
+        {
+            eprintln!(
+                "[A4_PROFILE] total_pick={:.2}ms {}",
+                total_time.as_secs_f64() * 1_000.0,
+                parts.join(" "),
+            );
         }
     }
 
@@ -5673,7 +5915,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         {
             eprintln!(
                 "[A3'-int-pro] frame summary: zero={} nearest={} near={} new={} skip={} nonzero_mv={} golden={}",
-                count_zero, count_nearest, count_near, count_new, count_skip, count_nonzero_mv, count_golden,
+                count_zero,
+                count_nearest,
+                count_near,
+                count_new,
+                count_skip,
+                count_nonzero_mv,
+                count_golden,
             );
         }
     }
@@ -5737,7 +5985,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                  newmv_best_dist={} of_those_lost_rd={} | \
                  lost-leaf avg: mv_rate={} total_rate={} rd_gap={}",
                 e3_total_leaves,
-                e3_win_counts[0], e3_win_counts[1], e3_win_counts[2], e3_win_counts[3],
+                e3_win_counts[0],
+                e3_win_counts[1],
+                e3_win_counts[2],
+                e3_win_counts[3],
                 100.0 * e3_win_counts[3] as f64 / n as f64,
                 e3_newmv_nonzero,
                 100.0 * e3_newmv_nonzero as f64 / n as f64,
@@ -5747,13 +5998,19 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 e3_newmv_best_dist_lost,
                 if e3_newmv_best_dist_lost > 0 {
                     e3_lost_mv_rate_sum / e3_newmv_best_dist_lost as u64
-                } else { 0 },
+                } else {
+                    0
+                },
                 if e3_newmv_best_dist_lost > 0 {
                     e3_lost_total_rate_sum / e3_newmv_best_dist_lost as u64
-                } else { 0 },
+                } else {
+                    0
+                },
                 if e3_newmv_best_dist_lost > 0 {
                     e3_lost_rd_gap_sum / e3_newmv_best_dist_lost as i128
-                } else { 0 },
+                } else {
+                    0
+                },
             );
         }
     }
@@ -5868,7 +6125,10 @@ fn build_inter_pred_plane_unscaled(
 
     // Identity scale (ref dims = cur dims).
     let sf = ScaleFactors::new(ref_w as u32, ref_h as u32, ref_w as u32, ref_h as u32);
-    debug_assert!(!sf.is_scaled(), "F10.1c v1 encoder assumes identity ref scale");
+    debug_assert!(
+        !sf.is_scaled(),
+        "F10.1c v1 encoder assumes identity ref scale"
+    );
 
     let total_x_q4 = sf.scaled_x_q4(plane_px_x as i32, mv_q4_col as i16);
     let total_y_q4 = sf.scaled_y_q4(plane_px_y as i32, mv_q4_row as i16);
@@ -6089,24 +6349,24 @@ fn inter_forward_quant_one_tx(
     use rvp9_core::transforms::scans::scan_for;
 
     let n = plane_tx.n_coeffs();
-    let mut coefs = vec![0i32; n];
+    let mut coefs = [0i32; 1024];
     match plane_tx {
         TxSize::Tx4x4 => {
             // Inter blocks always use DctDct (no ADST hybrid). `fht4x4`
             // with `TxType::DctDct` is the DCT-DCT variant.
             let mut buf = [0i32; 16];
             fht4x4(residual, &mut buf, tx_side, TxType::DctDct);
-            coefs.copy_from_slice(&buf[..]);
+            coefs[..n].copy_from_slice(&buf[..]);
         }
         TxSize::Tx8x8 => {
             let mut buf = [0i32; 64];
             fdct8x8(residual, &mut buf, tx_side);
-            coefs.copy_from_slice(&buf[..]);
+            coefs[..n].copy_from_slice(&buf[..]);
         }
         TxSize::Tx16x16 => {
             let mut buf = [0i32; 256];
             fdct16x16(residual, &mut buf, tx_side);
-            coefs.copy_from_slice(&buf[..]);
+            coefs[..n].copy_from_slice(&buf[..]);
         }
         TxSize::Tx32x32 => {
             let mut buf = [0i32; 1024];
@@ -6118,8 +6378,8 @@ fn inter_forward_quant_one_tx(
     let scan = scan_for(plane_tx, TxType::DctDct);
     let scan_slice = scan_for_forward(&scan);
     let dequant_pair = [quantizer.dequant[0], quantizer.dequant[1]];
-    let mut qcoeff_i16 = vec![0i16; n];
-    let mut dqcoeff_i16 = vec![0i16; n];
+    let mut qcoeff_i16 = [0i16; 1024];
+    let mut dqcoeff_i16 = [0i16; 1024];
     let eob = match plane_tx {
         TxSize::Tx32x32 => vp9_quantize_b_32x32(
             &coefs,
@@ -6128,8 +6388,8 @@ fn inter_forward_quant_one_tx(
             &quantizer.round,
             &quantizer.quant,
             &quantizer.quant_shift,
-            &mut qcoeff_i16,
-            &mut dqcoeff_i16,
+            &mut qcoeff_i16[..n],
+            &mut dqcoeff_i16[..n],
             &dequant_pair,
             scan_slice,
         ),
@@ -6149,12 +6409,19 @@ fn inter_forward_quant_one_tx(
     };
 
     let eob = maybe_trellis(
-        &coefs, &mut qcoeff_i16, &mut dqcoeff_i16, eob, plane_tx, &scan,
-        quantizer, plane_type, trellis,
+        &coefs[..n],
+        &mut qcoeff_i16[..n],
+        &mut dqcoeff_i16[..n],
+        eob,
+        plane_tx,
+        &scan,
+        quantizer,
+        plane_type,
+        trellis,
     );
 
-    let qcoeff_i32: Vec<i32> = qcoeff_i16.into_iter().map(i32::from).collect();
-    let dqcoeff_i32: Vec<i32> = dqcoeff_i16.into_iter().map(i32::from).collect();
+    let qcoeff_i32: Vec<i32> = qcoeff_i16[..n].iter().copied().map(i32::from).collect();
+    let dqcoeff_i32: Vec<i32> = dqcoeff_i16[..n].iter().copied().map(i32::from).collect();
     (qcoeff_i32, dqcoeff_i32, eob as usize)
 }
 
@@ -6306,7 +6573,11 @@ fn choose_intra_luma_tx_size(
             TxType::DctDct
         };
         let scan = scan_for(tx_size, tx_type);
-        let shift = if matches!(tx_size, TxSize::Tx32x32) { 0 } else { 2 };
+        let shift = if matches!(tx_size, TxSize::Tx32x32) {
+            0
+        } else {
+            2
+        };
 
         // Refresh the leaf footprint in the scratch buffer from the
         // committed recon so each candidate starts from the same
@@ -6383,13 +6654,10 @@ fn choose_intra_luma_tx_size(
                 // Forward hybrid transform (raw coefs needed for the
                 // transform-domain distortion `vp9_block_error(coeff,
                 // dqcoeff)`) then forward quant.
-                let coefs_i32 = intra_forward_coefs_one_tx(
-                    &residual, tx_side, tx_size, tx_type,
-                );
+                let coefs_i32 = intra_forward_coefs_one_tx(&residual, tx_side, tx_size, tx_type);
                 let (qcoeff_i16, dqcoeff_i32, eob) =
                     intra_quant_one_tx(&coefs_i32, tx_size, tx_type, quantizer);
-                let dqcoeff_i16: Vec<i16> =
-                    dqcoeff_i32.iter().map(|&v| v as i16).collect();
+                let dqcoeff_i16: Vec<i16> = dqcoeff_i32.iter().map(|&v| v as i16).collect();
 
                 // Transform-domain distortion: vp9_block_error >> shift.
                 let (err, _ssz) =
@@ -6400,8 +6668,7 @@ fn choose_intra_luma_tx_size(
                 // entropy context (above[col] + left[row], capped to 0..2).
                 let above = above_ctx[tx4];
                 let left = left_ctx[ty4];
-                let coeff_ctx =
-                    rvp9_core::coef_ctx::combine_entropy_contexts(above, left);
+                let coeff_ctx = rvp9_core::coef_ctx::combine_entropy_contexts(above, left);
                 total_rate = total_rate.saturating_add(crate::rdo::cost_coeffs::cost_coeffs(
                     &qcoeff_i16,
                     scan.scan,
@@ -6583,9 +6850,7 @@ fn choose_inter_luma_tx_size(
     rdmult: i64,
     tx_size_cost: [u32; 4],
 ) -> TxSize {
-    use rvp9_core::quant::forward::{
-        scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32,
-    };
+    use rvp9_core::quant::forward::{scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32};
     use rvp9_core::transforms::TxType;
     use rvp9_core::transforms::forward::{fdct8x8, fdct16x16, fdct32x32, fht4x4};
     use rvp9_core::transforms::scans::scan_for;
@@ -6599,6 +6864,18 @@ fn choose_inter_luma_tx_size(
     let plane_bw_4x4 = leaf_bsize.n_4x4_wide() as usize;
     let plane_bh_4x4 = leaf_bsize.n_4x4_high() as usize;
     let dequant_pair = [quantizer.dequant[0], quantizer.dequant[1]];
+    let block_w_px = plane_bw_4x4 * 4;
+    let block_h_px = plane_bh_4x4 * 4;
+    let mut leaf_residual = [0i16; 4096];
+    for r in 0..block_h_px {
+        let src_row = (plane_px_y + r) * plane_stride + plane_px_x;
+        let dst_row = r * block_w_px;
+        for c in 0..block_w_px {
+            let s = i16::from(input_plane[src_row + c]);
+            let p = i16::from(recon_plane[src_row + c]);
+            leaf_residual[dst_row + c] = s - p;
+        }
+    }
 
     // libvpx `RDCOST(RM, DM, R, D) = ((RM * R + 256) >> 9) + (D << 7)`.
     let rdcost = |rate: u32, dist: i64| -> i64 {
@@ -6618,59 +6895,52 @@ fn choose_inter_luma_tx_size(
             2 => TxSize::Tx16x16,
             _ => TxSize::Tx32x32,
         };
-        let tx_side = tx_size.side();
         let tx_step_4x4 = 1usize << (tx_size as usize);
         let ncoef = tx_size.n_coeffs();
         let scan = scan_for(tx_size, TxType::DctDct);
         let scan_slice = scan_for_forward(&scan);
-        let shift = if matches!(tx_size, TxSize::Tx32x32) { 0 } else { 2 };
+        let shift = if matches!(tx_size, TxSize::Tx32x32) {
+            0
+        } else {
+            2
+        };
 
         let mut total_dist: i64 = 0;
         let mut total_rate: u32 = 0;
         // Leaf-local propagating entropy context: above[col4], left[row4].
-        let mut above_ctx = vec![0u8; plane_bw_4x4];
-        let mut left_ctx = vec![0u8; plane_bh_4x4];
+        let mut above_ctx = [0u8; 16];
+        let mut left_ctx = [0u8; 16];
 
-        let mut coefs = vec![0i32; ncoef];
-        let mut qcoeff_i16 = vec![0i16; ncoef];
-        let mut dqcoeff_i16 = vec![0i16; ncoef];
-        let mut residual = vec![0i16; tx_side * tx_side];
+        let mut coefs = [0i32; 1024];
+        let mut qcoeff_i16 = [0i16; 1024];
+        let mut dqcoeff_i16 = [0i16; 1024];
 
         let mut ty4 = 0usize;
         while ty4 < plane_bh_4x4 {
             let mut tx4 = 0usize;
             while tx4 < plane_bw_4x4 {
-                let tx_px_x = plane_px_x + tx4 * 4;
-                let tx_px_y = plane_px_y + ty4 * 4;
-                // Residual = source - MC prediction (in recon_plane).
-                for r in 0..tx_side {
-                    let row = (tx_px_y + r) * plane_stride + tx_px_x;
-                    for c in 0..tx_side {
-                        let s = i16::from(input_plane[row + c]);
-                        let p = i16::from(recon_plane[row + c]);
-                        residual[r * tx_side + c] = s - p;
-                    }
-                }
+                let residual_off = (ty4 * 4) * block_w_px + tx4 * 4;
+                let residual_tile = &leaf_residual[residual_off..];
                 // Forward transform (inter = DctDct).
                 match tx_size {
                     TxSize::Tx4x4 => {
                         let mut buf = [0i32; 16];
-                        fht4x4(&residual, &mut buf, tx_side, TxType::DctDct);
-                        coefs.copy_from_slice(&buf[..]);
+                        fht4x4(residual_tile, &mut buf, block_w_px, TxType::DctDct);
+                        coefs[..ncoef].copy_from_slice(&buf[..]);
                     }
                     TxSize::Tx8x8 => {
                         let mut buf = [0i32; 64];
-                        fdct8x8(&residual, &mut buf, tx_side);
-                        coefs.copy_from_slice(&buf[..]);
+                        fdct8x8(residual_tile, &mut buf, block_w_px);
+                        coefs[..ncoef].copy_from_slice(&buf[..]);
                     }
                     TxSize::Tx16x16 => {
                         let mut buf = [0i32; 256];
-                        fdct16x16(&residual, &mut buf, tx_side);
-                        coefs.copy_from_slice(&buf[..]);
+                        fdct16x16(residual_tile, &mut buf, block_w_px);
+                        coefs[..ncoef].copy_from_slice(&buf[..]);
                     }
                     TxSize::Tx32x32 => {
                         let mut buf = [0i32; 1024];
-                        fdct32x32(&residual, &mut buf, tx_side);
+                        fdct32x32(residual_tile, &mut buf, block_w_px);
                         coefs.copy_from_slice(&buf[..]);
                     }
                 }
@@ -6682,8 +6952,8 @@ fn choose_inter_luma_tx_size(
                         &quantizer.round,
                         &quantizer.quant,
                         &quantizer.quant_shift,
-                        &mut qcoeff_i16,
-                        &mut dqcoeff_i16,
+                        &mut qcoeff_i16[..ncoef],
+                        &mut dqcoeff_i16[..ncoef],
                         &dequant_pair,
                         scan_slice,
                     ),
@@ -6702,18 +6972,19 @@ fn choose_inter_luma_tx_size(
                     ),
                 };
                 // Transform-domain distortion: vp9_block_error >> shift.
-                let (err, _ssz) =
-                    crate::rdo::block_error::vp9_block_error(&coefs, &dqcoeff_i16);
+                let (err, _ssz) = crate::rdo::block_error::vp9_block_error(
+                    &coefs[..ncoef],
+                    &dqcoeff_i16[..ncoef],
+                );
                 total_dist += err >> shift;
 
                 // Coefficient rate via cost_coeffs with the leaf-local
                 // entropy context (above[col] + left[row], capped to 0..2).
                 let above = above_ctx[tx4];
                 let left = left_ctx[ty4];
-                let coeff_ctx =
-                    rvp9_core::coef_ctx::combine_entropy_contexts(above, left);
+                let coeff_ctx = rvp9_core::coef_ctx::combine_entropy_contexts(above, left);
                 total_rate = total_rate.saturating_add(crate::rdo::cost_coeffs::cost_coeffs(
-                    &qcoeff_i16,
+                    &qcoeff_i16[..ncoef],
                     scan.scan,
                     eob as u16,
                     tx_size,
@@ -6970,8 +7241,15 @@ fn intra_forward_quant_one_tx(
     };
 
     let eob = maybe_trellis(
-        &coefs, &mut qcoeff_i16, &mut dqcoeff_i16, eob, plane_tx, &scan,
-        quantizer, plane_type, trellis,
+        &coefs,
+        &mut qcoeff_i16,
+        &mut dqcoeff_i16,
+        eob,
+        plane_tx,
+        &scan,
+        quantizer,
+        plane_type,
+        trellis,
     );
 
     let qcoeff_i32: Vec<i32> = qcoeff_i16.into_iter().map(i32::from).collect();
@@ -7091,7 +7369,10 @@ mod tests {
     #[test]
     fn encode_error_from_modes_writer_error_round_trips() {
         // Pick any valid ModesWriterError variant.
-        let inner = ModesWriterError::MissingCell { mi_row: 0, mi_col: 0 };
+        let inner = ModesWriterError::MissingCell {
+            mi_row: 0,
+            mi_col: 0,
+        };
         let wrapped: EncodeError = inner.into();
         assert!(matches!(wrapped, EncodeError::Modes(_)));
         // Display should label the variant.
@@ -7174,7 +7455,9 @@ mod tests {
         let mut src = VecBackedInterCoefSource::new(128, 64);
         assert_eq!(src.width(), 128);
         assert_eq!(src.height(), 64);
-        let coefs = vec![10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160];
+        let coefs = vec![
+            10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160,
+        ];
         src.insert(1, 2, 1, 0, 0, coefs.clone(), 7);
         let (got_coefs, got_eob) = src.get_block_coefs(1, 2, 1, 0, 0, TxSize::Tx4x4);
         assert_eq!(&got_coefs[..16], &coefs[..16]);
@@ -7214,7 +7497,9 @@ mod tests {
 
     fn yuv_view_64<'a>(y: &'a [u8], u: &'a [u8], v: &'a [u8]) -> frame_loop::YuvFrameRef<'a> {
         frame_loop::YuvFrameRef {
-            y, u, v,
+            y,
+            u,
+            v,
             y_stride: 64,
             u_stride: 32,
             v_stride: 32,
@@ -7222,7 +7507,11 @@ mod tests {
     }
 
     fn flat_frame() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-        (vec![128u8; 64 * 64], vec![128u8; 32 * 32], vec![128u8; 32 * 32])
+        (
+            vec![128u8; 64 * 64],
+            vec![128u8; 32 * 32],
+            vec![128u8; 32 * 32],
+        )
     }
 
     #[test]
@@ -7230,7 +7519,9 @@ mod tests {
         let _guard = env_test_mutex();
         let key = "RVP9_F02_ORACLE";
         // SAFETY: serialised via env_test_mutex.
-        unsafe { std::env::set_var(key, "1"); }
+        unsafe {
+            std::env::set_var(key, "1");
+        }
         crate::f02_oracle::init_from_env();
         assert!(crate::f02_oracle::is_enabled());
 
@@ -7245,7 +7536,9 @@ mod tests {
             "F02 oracle should have recorded ≥1 decision when enabled",
         );
 
-        unsafe { std::env::remove_var(key); }
+        unsafe {
+            std::env::remove_var(key);
+        }
         crate::f02_oracle::init_from_env();
         assert!(!crate::f02_oracle::is_enabled());
     }
@@ -7254,7 +7547,9 @@ mod tests {
     fn encode_with_e12_oracle_enabled_runs_record_paths() {
         let _guard = env_test_mutex();
         let key = "RVP9_E12_ORACLE";
-        unsafe { std::env::set_var(key, "1"); }
+        unsafe {
+            std::env::set_var(key, "1");
+        }
         crate::e12stat::init_from_env();
         assert!(crate::e12stat::enabled());
 
@@ -7264,7 +7559,9 @@ mod tests {
         let inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
         assert!(inter.actual_bits > 0);
 
-        unsafe { std::env::remove_var(key); }
+        unsafe {
+            std::env::remove_var(key);
+        }
         crate::e12stat::init_from_env();
         assert!(!crate::e12stat::enabled());
     }
@@ -7273,7 +7570,9 @@ mod tests {
     fn encode_with_f3_nonrd_partition_runs_descent_path() {
         let _guard = env_test_mutex();
         let key = "RVP9_F3_NONRD_PARTITION_ENABLE";
-        unsafe { std::env::set_var(key, "1"); }
+        unsafe {
+            std::env::set_var(key, "1");
+        }
 
         let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
         let (y, u, v) = flat_frame();
@@ -7281,7 +7580,9 @@ mod tests {
         let inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
         assert_eq!(inter.frame_kind, frame_loop::FrameKind::Inter);
 
-        unsafe { std::env::remove_var(key); }
+        unsafe {
+            std::env::remove_var(key);
+        }
     }
 
     /// P12 PROOF — Build a 64×64 source where the second frame is a
@@ -7356,11 +7657,8 @@ mod tests {
             }
             crate::f02_oracle::init_from_env();
 
-            let mut enc =
-                frame_loop::StreamEncoder::new(streaming_config()).unwrap();
-            let _kf = enc
-                .encode_frame(&yuv_view_64(&kf_y, &uv, &uv))
-                .unwrap();
+            let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
+            let _kf = enc.encode_frame(&yuv_view_64(&kf_y, &uv, &uv)).unwrap();
             // Drain KF decisions so we look only at inter-frame leaves.
             let _ = crate::f02_oracle::drain_frame();
             let _inter = enc
@@ -7383,7 +7681,10 @@ mod tests {
         }
         crate::f02_oracle::init_from_env();
 
-        assert!(!leaves_off.is_empty(), "baseline (gate OFF) must emit leaves");
+        assert!(
+            !leaves_off.is_empty(),
+            "baseline (gate OFF) must emit leaves"
+        );
         assert!(!leaves_on.is_empty(), "F.3 (gate ON) must emit leaves");
 
         // PROOF: with the real picker the descent recognises the
@@ -7424,8 +7725,7 @@ mod tests {
             std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
         }
 
-        let mut enc =
-            frame_loop::StreamEncoder::new(streaming_config()).unwrap();
+        let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
         let (y, u, v) = flat_frame();
         let kf = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
         let inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
@@ -7439,12 +7739,16 @@ mod tests {
     fn encode_with_diag_picker_env_runs_eprintln_paths() {
         let _guard = env_test_mutex();
         let key = "RVP9_DIAG_PICKER";
-        unsafe { std::env::set_var(key, "1"); }
+        unsafe {
+            std::env::set_var(key, "1");
+        }
         let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
         let (y, u, v) = flat_frame();
         let _kf = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
         let inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
-        unsafe { std::env::remove_var(key); }
+        unsafe {
+            std::env::remove_var(key);
+        }
         assert_eq!(inter.frame_kind, frame_loop::FrameKind::Inter);
     }
 
@@ -7469,11 +7773,15 @@ mod tests {
     #[test]
     fn encode_with_diag_intra_env_runs_eprintln_paths() {
         let _guard = env_test_mutex();
-        unsafe { std::env::set_var("RVP9_DIAG_INTRA", "1"); }
+        unsafe {
+            std::env::set_var("RVP9_DIAG_INTRA", "1");
+        }
         let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
         let (y, u, v) = flat_frame();
         let kf = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
-        unsafe { std::env::remove_var("RVP9_DIAG_INTRA"); }
+        unsafe {
+            std::env::remove_var("RVP9_DIAG_INTRA");
+        }
         assert_eq!(kf.frame_kind, frame_loop::FrameKind::Key);
     }
 
@@ -7512,7 +7820,12 @@ mod tests {
         // The first 2 bits of the uncompressed header are the frame
         // marker (= 0b10). High bit must be set; second bit must be
         // clear.
-        assert_eq!(pkt[0] & 0xc0, 0x80, "frame marker mismatch in pkt[0] = {:#04x}", pkt[0]);
+        assert_eq!(
+            pkt[0] & 0xc0,
+            0x80,
+            "frame marker mismatch in pkt[0] = {:#04x}",
+            pkt[0]
+        );
     }
 
     #[test]
@@ -7524,15 +7837,15 @@ mod tests {
         // `crates/rvp9-decoder/src/lib.rs::tests::
         // s4_10_round_trip_synthetic_64x64_keyframe_through_decoder`.)
         use rvp9_core::bitstream::{
-            parse_compressed_header, parse_uncompressed_header, RefFrameSizes,
+            RefFrameSizes, parse_compressed_header, parse_uncompressed_header,
         };
 
         let enc = Encoder::new(Config::new(64, 64, 50)).unwrap();
         let pkt = enc.encode_synthetic_dc_skip_keyframe().unwrap();
 
         let no_refs = RefFrameSizes::default();
-        let (hdr, hdr_end) = parse_uncompressed_header(&pkt, &no_refs)
-            .expect("uncompressed header parses");
+        let (hdr, hdr_end) =
+            parse_uncompressed_header(&pkt, &no_refs).expect("uncompressed header parses");
         assert_eq!(hdr.kind, FrameKind::KeyFrame);
         assert_eq!(hdr.width, 64);
         assert_eq!(hdr.height, 64);
@@ -7549,8 +7862,8 @@ mod tests {
             allow_high_precision_mv: false,
         };
         let mut fc = FrameContext::new_default();
-        let res = parse_compressed_header(compressed, &mut fc, opts)
-            .expect("compressed header parses");
+        let res =
+            parse_compressed_header(compressed, &mut fc, opts).expect("compressed header parses");
         assert_eq!(res.tx_mode, TxMode::AllowTx32x32);
         assert_eq!(res.reference_mode, ReferenceMode::Single);
     }
@@ -7600,16 +7913,15 @@ mod tests {
         // Parse both frame headers to confirm kind discriminant.
         use rvp9_core::bitstream::{RefFrameSizes, parse_uncompressed_header};
         let no_refs = RefFrameSizes::default();
-        let (kf_hdr, _) = parse_uncompressed_header(kf_slice, &no_refs)
-            .expect("kf header parses");
+        let (kf_hdr, _) = parse_uncompressed_header(kf_slice, &no_refs).expect("kf header parses");
         assert_eq!(kf_hdr.kind, FrameKind::KeyFrame);
 
         // The inter frame requires the keyframe's pool-slot-0 size in
         // `ref_sizes`. The keyframe was 64×64.
         let mut ref_sizes = RefFrameSizes::default();
         ref_sizes[0] = Some((64, 64));
-        let (inter_hdr, _) = parse_uncompressed_header(inter_slice, &ref_sizes)
-            .expect("inter header parses");
+        let (inter_hdr, _) =
+            parse_uncompressed_header(inter_slice, &ref_sizes).expect("inter header parses");
         assert!(matches!(inter_hdr.kind, FrameKind::InterFrame { .. }));
     }
 
@@ -7642,7 +7954,10 @@ mod tests {
             })
             .collect();
         assert_eq!(frames[0].header.kind, FrameKind::KeyFrame);
-        assert!(matches!(frames[1].header.kind, FrameKind::InterFrame { .. }));
+        assert!(matches!(
+            frames[1].header.kind,
+            FrameKind::InterFrame { .. }
+        ));
 
         // Decode both frames in order.
         dec.decode_frame(&frames[0])
@@ -7710,7 +8025,10 @@ mod tests {
             })
             .collect();
         assert_eq!(frames[0].header.kind, FrameKind::KeyFrame);
-        assert!(matches!(frames[1].header.kind, FrameKind::InterFrame { .. }));
+        assert!(matches!(
+            frames[1].header.kind,
+            FrameKind::InterFrame { .. }
+        ));
 
         // Decode both frames; the inter frame must decode cleanly with
         // skip=false driving the coef-decode + IT-add pipeline.
@@ -7892,8 +8210,8 @@ mod tests {
             BitDepth, ChromaFormat, ColorRange, ColorSpace, CompressedHeaderOptions,
             CompressedHeaderResult, FrameKind, HeaderTail, LoopFilterParams, Profile,
             QuantizationParams, RawBitWriter, SEG_TREE_PROBS,
-            SegmentationWriteParams as ModesSegParams, UncompressedHeader,
-            write_compressed_header, write_tile_intra_keyframe, write_uncompressed_header,
+            SegmentationWriteParams as ModesSegParams, UncompressedHeader, write_compressed_header,
+            write_tile_intra_keyframe, write_uncompressed_header,
         };
 
         let mi_rows = enc.config.height / 8;
@@ -7947,8 +8265,7 @@ mod tests {
         let mut tile_buf = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 8 + 1024];
         let tile_len = {
             let mut bw = BoolWriter::start_encode(&mut tile_buf);
-            let tile_mi_cols =
-                (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
             let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
             let coef_source = AllZeroIntraCoefSource::new();
             write_tile_intra_keyframe(
@@ -7959,7 +8276,9 @@ mod tests {
                 tile_bounds,
                 &post_fc,
                 rvp9_core::transforms::TxMode::AllowTx32x32,
-                Some(ModesSegParams { tree_probs: &tree_probs }),
+                Some(ModesSegParams {
+                    tree_probs: &tree_probs,
+                }),
                 &mut coef_ctx,
                 &coef_source,
             )?;
@@ -8112,8 +8431,8 @@ mod tests {
                 .unwrap_or_else(|e| panic!("decode_frame seg={target}: {e:?}"));
             let grid = dec.last_frame_mi_grid();
             for (i, cell_got) in grid.iter().enumerate() {
-                let cell = cell_got
-                    .unwrap_or_else(|| panic!("seg={target} cell [{i}] must be populated"));
+                let cell =
+                    cell_got.unwrap_or_else(|| panic!("seg={target} cell [{i}] must be populated"));
                 assert_eq!(
                     cell.segment_id, target,
                     "seg={target} cell [{i}]: recovered segment_id mismatch"
@@ -8196,9 +8515,7 @@ mod tests {
     /// the dq path is wired live, not a no-op).
     #[test]
     fn encode_kf_with_per_segment_q_delta_quantizes_differently_per_segment() {
-        use rvp9_core::quant::forward::{
-            QuantizerDeltas, init_plane_quantizers,
-        };
+        use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
 
         // (a) Helper-level proof: two qindices yield different
         // `PlaneQuantizers` (different `dequant` AC values).
@@ -8314,10 +8631,14 @@ mod tests {
         // Pull the Y qcoeff vector for the seg-1 leaf
         // (mi_row=4, mi_col=0; plane 0; tx_x4_local=0, tx_y4_local=0).
         let key_seg1 = (4usize, 0usize, 0usize, 0usize, 0usize);
-        let (base_qc_seg1, base_eob_seg1) =
-            base_coefs.blocks.get(&key_seg1).expect("seg1 leaf coefs missing in baseline");
-        let (aq_qc_seg1, aq_eob_seg1) =
-            aq_coefs.blocks.get(&key_seg1).expect("seg1 leaf coefs missing in AQ run");
+        let (base_qc_seg1, base_eob_seg1) = base_coefs
+            .blocks
+            .get(&key_seg1)
+            .expect("seg1 leaf coefs missing in baseline");
+        let (aq_qc_seg1, aq_eob_seg1) = aq_coefs
+            .blocks
+            .get(&key_seg1)
+            .expect("seg1 leaf coefs missing in AQ run");
         // The two runs must produce DIFFERENT qcoeffs for the seg 1
         // leaf — that's the smoking gun that per-segment Q-delta
         // reaches the forward-quant init.
@@ -8333,10 +8654,14 @@ mod tests {
         // The seg-0 leaf at (0, 0) must produce IDENTICAL qcoeffs
         // across the two runs — its qindex doesn't change.
         let key_seg0 = (0usize, 0usize, 0usize, 0usize, 0usize);
-        let (base_qc_seg0, base_eob_seg0) =
-            base_coefs.blocks.get(&key_seg0).expect("seg0 leaf coefs missing in baseline");
-        let (aq_qc_seg0, aq_eob_seg0) =
-            aq_coefs.blocks.get(&key_seg0).expect("seg0 leaf coefs missing in AQ run");
+        let (base_qc_seg0, base_eob_seg0) = base_coefs
+            .blocks
+            .get(&key_seg0)
+            .expect("seg0 leaf coefs missing in baseline");
+        let (aq_qc_seg0, aq_eob_seg0) = aq_coefs
+            .blocks
+            .get(&key_seg0)
+            .expect("seg0 leaf coefs missing in AQ run");
         assert_eq!(
             base_qc_seg0, aq_qc_seg0,
             "seg 0 leaf qcoeffs must be IDENTICAL across the two runs \

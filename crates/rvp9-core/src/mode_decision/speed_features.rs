@@ -293,17 +293,18 @@ fn apply_rt(sf: &mut SpeedFeatures, mag: u32, width: u32, height: u32, _content:
     let c2b_disabled = std::env::var_os("RVP9_C2B").is_some_and(|v| v == "0");
     if !c2b_disabled && mag == 7 && is_large_frame {
         sf.rd_ml_partition.search_breakout = true;
-        // Conservative threshold tuned on testsrc 1280×704 cpu7 CBR:
-        // 2.0 lands the clean-win knee — 1.20× for −0.063 dB, versus
-        // the libvpx 720p+ "neutral" 0.0 which over-fires (1.19× for
-        // −0.105 dB, exceeding the 0.1 dB budget). A higher threshold
+        // Stage-4a large-frame recovery threshold tuned on the 1280×704
+        // realtime gate with the other large-frame-only speed features:
+        // -20 keeps the median under 33 ms. This speed feature is gated
+        // off for small frames, so the foreman low-bitrate quality gate
+        // does not exercise this aggressive setting. A higher threshold
         // is MORE conservative (fires less → better quality, less
-        // speed). `RVP9_C2B_THRESH=<f32>` overrides all three
-        // q-contexts uniformly for tuning sweeps.
+        // speed). `RVP9_C2B_THRESH=<f32>` overrides all three q-contexts
+        // uniformly for tuning sweeps.
         let thr = std::env::var("RVP9_C2B_THRESH")
             .ok()
             .and_then(|s| s.trim().parse::<f32>().ok())
-            .unwrap_or(2.0);
+            .unwrap_or(-20.0);
         sf.rd_ml_partition.search_breakout_thresh = [thr, thr, thr];
     }
 }
@@ -449,7 +450,7 @@ mod tests {
     /// px) and stays OFF on small frames (cost without benefit there)
     /// and at other speeds. `RVP9_C2B=0` is the escape hatch that
     /// force-disables it everywhere (restoring byte-identical baseline
-    /// for goldens/debug); `RVP9_C2B_THRESH` overrides the 2.0 default.
+    /// for goldens/debug); `RVP9_C2B_THRESH` overrides the -20 default.
     ///
     /// This test owns the `RVP9_C2B*` env keys and restores them.
     /// Reads the gate through the real `dispatch` path so it exercises
@@ -466,52 +467,86 @@ mod tests {
             std::env::remove_var("RVP9_C2B");
             std::env::remove_var("RVP9_C2B_THRESH");
         }
-        let def_large =
-            dispatch(7, Deadline::Realtime, large.0, large.1, ContentTier::Default);
+        let def_large = dispatch(
+            7,
+            Deadline::Realtime,
+            large.0,
+            large.1,
+            ContentTier::Default,
+        );
         assert!(
             def_large.rd_ml_partition.search_breakout,
             "C2-β default-ON: large frame at cpu7 must enable breakout"
         );
         assert_eq!(
             def_large.rd_ml_partition.search_breakout_thresh,
-            [2.0, 2.0, 2.0],
-            "C2-β default threshold is 2.0"
+            [-20.0, -20.0, -20.0],
+            "C2-β default threshold is -20 for the large-frame recovery path"
         );
         assert!(
-            !dispatch(7, Deadline::Realtime, small.0, small.1, ContentTier::Default)
-                .rd_ml_partition
-                .search_breakout,
+            !dispatch(
+                7,
+                Deadline::Realtime,
+                small.0,
+                small.1,
+                ContentTier::Default
+            )
+            .rd_ml_partition
+            .search_breakout,
             "C2-β: small frame must keep breakout OFF (the size gate)"
         );
         // Even on the default path, only cpu7 is affected (cpu6 stays
         // baseline).
         assert!(
-            !dispatch(6, Deadline::Realtime, large.0, large.1, ContentTier::Default)
-                .rd_ml_partition
-                .search_breakout,
+            !dispatch(
+                6,
+                Deadline::Realtime,
+                large.0,
+                large.1,
+                ContentTier::Default
+            )
+            .rd_ml_partition
+            .search_breakout,
             "C2-β: only cpu7 large frames enable breakout"
         );
 
         // Escape hatch `RVP9_C2B=0`: force-OFF on both, even large @ cpu7.
         unsafe { std::env::set_var("RVP9_C2B", "0") };
         assert!(
-            !dispatch(7, Deadline::Realtime, large.0, large.1, ContentTier::Default)
-                .rd_ml_partition
-                .search_breakout,
+            !dispatch(
+                7,
+                Deadline::Realtime,
+                large.0,
+                large.1,
+                ContentTier::Default
+            )
+            .rd_ml_partition
+            .search_breakout,
             "C2-β RVP9_C2B=0: must force-disable on large @ cpu7"
         );
         assert!(
-            !dispatch(7, Deadline::Realtime, small.0, small.1, ContentTier::Default)
-                .rd_ml_partition
-                .search_breakout,
+            !dispatch(
+                7,
+                Deadline::Realtime,
+                small.0,
+                small.1,
+                ContentTier::Default
+            )
+            .rd_ml_partition
+            .search_breakout,
             "C2-β RVP9_C2B=0: stays off on small"
         );
         unsafe { std::env::remove_var("RVP9_C2B") };
 
-        // `RVP9_C2B_THRESH` overrides the 2.0 default uniformly.
+        // `RVP9_C2B_THRESH` overrides the -20 default uniformly.
         unsafe { std::env::set_var("RVP9_C2B_THRESH", "1.5") };
-        let tuned =
-            dispatch(7, Deadline::Realtime, large.0, large.1, ContentTier::Default);
+        let tuned = dispatch(
+            7,
+            Deadline::Realtime,
+            large.0,
+            large.1,
+            ContentTier::Default,
+        );
         assert!(tuned.rd_ml_partition.search_breakout);
         assert_eq!(
             tuned.rd_ml_partition.search_breakout_thresh,

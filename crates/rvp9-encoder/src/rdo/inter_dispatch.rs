@@ -75,7 +75,7 @@ use crate::rdo::pick_inter_sb::{
     IntraFallback, PickInterModeSbParams, PickResult, RefFrameInput, RefMvCandidates,
     pick_inter_mode_sb,
 };
-use crate::rdo::ref_costs::{ReferenceMode, RefFrameContext, estimate_ref_frame_costs};
+use crate::rdo::ref_costs::{RefFrameContext, ReferenceMode, estimate_ref_frame_costs};
 use crate::rdo::single_mv_search::{
     SingleMotionSearchParams, SingleMotionSearchResult, single_motion_search,
 };
@@ -115,14 +115,12 @@ pub static RD_PARTITION_RESHAPED_SBS: std::sync::atomic::AtomicU64 =
 /// skipped. Positive control (HLD §4.3): a no-op masquerade that left
 /// the work unchanged would leave this at zero. Bumped once per leaf
 /// for which a descent NEWMV cache entry existed and was injected.
-pub static PHASE2_NEWMV_REUSED: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+pub static PHASE2_NEWMV_REUSED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Phase-2 option-A — count of final-pass leaves with NO cached descent
 /// pick (the full NEWMV search ran). Together with [`PHASE2_NEWMV_REUSED`]
 /// this attributes every final-pass leaf to reuse vs fresh-search.
-pub static PHASE2_NEWMV_FRESH: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+pub static PHASE2_NEWMV_FRESH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// A4-rect — count of rectangular leaves (`PARTITION_HORZ` /
 /// `PARTITION_VERT` subsizes) the recursive RD partition descent emitted
@@ -308,6 +306,9 @@ pub struct InterDispatchLeaf<'a> {
     pub error_per_bit: i32,
     /// `sad_per_bit` for the NEWMV full-pel diamond.
     pub sad_per_bit: i32,
+    /// Frame-level high-precision MV gate. Must match the frame header and
+    /// MV-cost table used by this leaf.
+    pub allow_hp: bool,
 }
 
 impl InterDispatchLeaf<'_> {
@@ -390,13 +391,11 @@ fn real_mode_rate(costs: &InterModeCosts, ctx: usize, mode: InterMode) -> u32 {
 fn good_subpel_force_stop() -> SubPixelForcedStop {
     use std::sync::OnceLock;
     static S: OnceLock<SubPixelForcedStop> = OnceLock::new();
-    *S.get_or_init(
-        || match std::env::var("RVP9_SUBPEL").ok().as_deref() {
-            Some("half") => SubPixelForcedStop::HalfPel,
-            Some("quarter") => SubPixelForcedStop::QuarterPel,
-            _ => SubPixelForcedStop::EighthPel,
-        },
-    )
+    *S.get_or_init(|| match std::env::var("RVP9_SUBPEL").ok().as_deref() {
+        Some("half") => SubPixelForcedStop::HalfPel,
+        Some("quarter") => SubPixelForcedStop::QuarterPel,
+        _ => SubPixelForcedStop::EighthPel,
+    })
 }
 
 /// ENHMS (2026-05-30) — enhanced full-pel motion search for the cpu≤4
@@ -411,7 +410,11 @@ fn good_subpel_force_stop() -> SubPixelForcedStop {
 fn good_enhanced_full_pixel() -> bool {
     use std::sync::OnceLock;
     static E: OnceLock<bool> = OnceLock::new();
-    *E.get_or_init(|| std::env::var("RVP9_ENHMS").map(|v| v != "0").unwrap_or(true))
+    *E.get_or_init(|| {
+        std::env::var("RVP9_ENHMS")
+            .map(|v| v != "0")
+            .unwrap_or(true)
+    })
 }
 
 /// Pre-run [`single_motion_search`] for the NEWMV candidate of one ref
@@ -441,7 +444,7 @@ fn search_newmv(leaf: &InterDispatchLeaf<'_>, refs: &RefInputs<'_>) -> (Option<M
         mv_costs: leaf.mv_costs,
         sad_per_bit: leaf.sad_per_bit,
         error_per_bit: leaf.error_per_bit,
-        allow_hp: false,
+        allow_hp: leaf.allow_hp,
         // SUBPEL (2026-05-30) — the cpu≤4 GOOD-quality path was hardcoded
         // to HalfPel sub-pel refinement (libvpx's coarsest, RT-grade).
         // libvpx good-mode uses subpel_force_stop=0 (EighthPel = full
@@ -563,20 +566,44 @@ pub fn pick_inter_sb_leaf(leaf: &InterDispatchLeaf<'_>) -> Option<InterDispatchR
     // a NEW/NEAREST/NEAR winner onto a decodable MV; the writer derives
     // its own best_ref_mv from the mi-grid identically.
     let last_cands = RefMvCandidates {
-        nearest: if leaf.last.nearest_in_bounds { leaf.last.nearest } else { Mv::ZERO },
-        near: if leaf.last.near_in_bounds { leaf.last.near } else { Mv::ZERO },
+        nearest: if leaf.last.nearest_in_bounds {
+            leaf.last.nearest
+        } else {
+            Mv::ZERO
+        },
+        near: if leaf.last.near_in_bounds {
+            leaf.last.near
+        } else {
+            Mv::ZERO
+        },
         newmv: last_newmv,
         newmv_rate: last_newmv_rate,
     };
     let golden_cands = RefMvCandidates {
-        nearest: if leaf.golden.nearest_in_bounds { leaf.golden.nearest } else { Mv::ZERO },
-        near: if leaf.golden.near_in_bounds { leaf.golden.near } else { Mv::ZERO },
+        nearest: if leaf.golden.nearest_in_bounds {
+            leaf.golden.nearest
+        } else {
+            Mv::ZERO
+        },
+        near: if leaf.golden.near_in_bounds {
+            leaf.golden.near
+        } else {
+            Mv::ZERO
+        },
         newmv: golden_newmv,
         newmv_rate: golden_newmv_rate,
     };
     let altref_cands = RefMvCandidates {
-        nearest: if leaf.altref.nearest_in_bounds { leaf.altref.nearest } else { Mv::ZERO },
-        near: if leaf.altref.near_in_bounds { leaf.altref.near } else { Mv::ZERO },
+        nearest: if leaf.altref.nearest_in_bounds {
+            leaf.altref.nearest
+        } else {
+            Mv::ZERO
+        },
+        near: if leaf.altref.near_in_bounds {
+            leaf.altref.near
+        } else {
+            Mv::ZERO
+        },
         newmv: altref_newmv,
         newmv_rate: altref_newmv_rate,
     };
@@ -589,27 +616,31 @@ pub fn pick_inter_sb_leaf(leaf: &InterDispatchLeaf<'_>) -> Option<InterDispatchR
     // frame's adapted mode-rate table (assessment deviation #4 fix).
     let imc = leaf.inter_mode_costs;
     let ctx = leaf.inter_mode_ctx;
-    let last_runner: Option<crate::rdo::pick_inter_sb::HandleInterRunner> =
-        if leaf.last.available {
-            let leaf_ref: &InterDispatchLeaf = leaf;
-            let refs: &RefInputs = &leaf.last;
-            Some(Box::new(move |mode: InterMode, mv: Mv, _placeholder: u32, newmv_rate: u32| {
+    let last_runner: Option<crate::rdo::pick_inter_sb::HandleInterRunner> = if leaf.last.available {
+        let leaf_ref: &InterDispatchLeaf = leaf;
+        let refs: &RefInputs = &leaf.last;
+        Some(Box::new(
+            move |mode: InterMode, mv: Mv, _placeholder: u32, newmv_rate: u32| {
                 let mode_rate = real_mode_rate(imc, ctx, mode);
                 let params = make_handle_params(leaf_ref, refs, mode, mv, mode_rate, newmv_rate);
                 Some(handle_inter_mode_single_ref(&params))
-            }))
-        } else {
-            None
-        };
+            },
+        ))
+    } else {
+        None
+    };
     let golden_runner: Option<crate::rdo::pick_inter_sb::HandleInterRunner> =
         if leaf.golden.available {
             let leaf_ref: &InterDispatchLeaf = leaf;
             let refs: &RefInputs = &leaf.golden;
-            Some(Box::new(move |mode: InterMode, mv: Mv, _placeholder: u32, newmv_rate: u32| {
-                let mode_rate = real_mode_rate(imc, ctx, mode);
-                let params = make_handle_params(leaf_ref, refs, mode, mv, mode_rate, newmv_rate);
-                Some(handle_inter_mode_single_ref(&params))
-            }))
+            Some(Box::new(
+                move |mode: InterMode, mv: Mv, _placeholder: u32, newmv_rate: u32| {
+                    let mode_rate = real_mode_rate(imc, ctx, mode);
+                    let params =
+                        make_handle_params(leaf_ref, refs, mode, mv, mode_rate, newmv_rate);
+                    Some(handle_inter_mode_single_ref(&params))
+                },
+            ))
         } else {
             None
         };
@@ -619,11 +650,14 @@ pub fn pick_inter_sb_leaf(leaf: &InterDispatchLeaf<'_>) -> Option<InterDispatchR
         if leaf.altref.available {
             let leaf_ref: &InterDispatchLeaf = leaf;
             let refs: &RefInputs = &leaf.altref;
-            Some(Box::new(move |mode: InterMode, mv: Mv, _placeholder: u32, newmv_rate: u32| {
-                let mode_rate = real_mode_rate(imc, ctx, mode);
-                let params = make_handle_params(leaf_ref, refs, mode, mv, mode_rate, newmv_rate);
-                Some(handle_inter_mode_single_ref(&params))
-            }))
+            Some(Box::new(
+                move |mode: InterMode, mv: Mv, _placeholder: u32, newmv_rate: u32| {
+                    let mode_rate = real_mode_rate(imc, ctx, mode);
+                    let params =
+                        make_handle_params(leaf_ref, refs, mode, mv, mode_rate, newmv_rate);
+                    Some(handle_inter_mode_single_ref(&params))
+                },
+            ))
         } else {
             None
         };
@@ -747,8 +781,7 @@ pub fn pick_inter_sb_leaf(leaf: &InterDispatchLeaf<'_>) -> Option<InterDispatchR
                     mv2: comp.mv1,
                     interp_filter: comp.interp_filter,
                 };
-                RDO_DISPATCH_COMPOUND_PICKS
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                RDO_DISPATCH_COMPOUND_PICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
     }

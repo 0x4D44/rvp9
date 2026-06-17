@@ -61,7 +61,7 @@ use rvp9_core::bitstream::{
     BitDepth as WireBitDepth, BitstreamError, ChromaFormat, ColorRange, ColorSpace,
     CompressedHeaderOptions, CompressedHeaderResult, FrameKind as WireFrameKind, InterCoefSource,
     InterpFilter, ModesTileBounds, Profile, RawBitWriter, UncompressedHeader,
-    write_compressed_header, write_tile_intra_keyframe, write_tile_inter,
+    write_compressed_header, write_tile_inter, write_tile_intra_keyframe,
     write_uncompressed_header,
 };
 // W6.2(vpxenc parity, HBD scaffold) — pixel-pipeline bit-depth. **Not**
@@ -70,8 +70,10 @@ use rvp9_core::bitstream::{
 use rvp9_core::BitDepth;
 use rvp9_core::block::{BlockSize, max_txsize};
 use rvp9_core::coef_ctx::TileCoefCtx;
-use rvp9_core::entropy::{BoolWriter, FrameContext, FrameCounts, adapt_coef_probs,
-    adapt_mode_probs, adapt_mv_probs, coef_adapt_params};
+use rvp9_core::entropy::{
+    BoolWriter, FrameContext, FrameCounts, adapt_coef_probs, adapt_mode_probs, adapt_mv_probs,
+    coef_adapt_params,
+};
 use rvp9_core::inter::mode_info::{InterModeReadParams, setup_compound_reference_mode};
 use rvp9_core::inter::mv_ref::{PrevFrameMvRef, sign_bias_from_header};
 use rvp9_core::intra_pred::IntraMode;
@@ -93,7 +95,7 @@ use crate::rate_control::{
 };
 use crate::{
     EncodeError, InterPartitionLeafDesc, PartitionLeafDesc,
-    pick_and_simulate_intra_encode_partitions, pick_and_simulate_inter_encode_partitions,
+    pick_and_simulate_inter_encode_partitions, pick_and_simulate_intra_encode_partitions,
 };
 
 /// Adaptive-quantization mode. Selects whether the encoder runs an
@@ -680,12 +682,7 @@ struct FrameContentSignals {
 
 /// Compute [`FrameContentSignals`] from a tight-stride `w * h` source
 /// luma plane and an optional previous source plane (same dims).
-fn frame_content_signals(
-    y: &[u8],
-    last: Option<&[u8]>,
-    w: usize,
-    h: usize,
-) -> FrameContentSignals {
+fn frame_content_signals(y: &[u8], last: Option<&[u8]>, w: usize, h: usize) -> FrameContentSignals {
     if w < 3 || h < 3 || y.len() < w * h {
         return FrameContentSignals {
             spatial_var: 0.0,
@@ -1247,15 +1244,11 @@ impl StreamEncoder {
             ));
         }
         if config.target_bitrate_bps == 0 {
-            return Err(EncodeError::InvalidConfig(
-                "target_bitrate_bps must be > 0",
-            ));
+            return Err(EncodeError::InvalidConfig("target_bitrate_bps must be > 0"));
         }
 
         let rc_config = config.to_rate_control_config();
-        rc_config
-            .validate()
-            .map_err(EncodeError::InvalidConfig)?;
+        rc_config.validate().map_err(EncodeError::InvalidConfig)?;
         let rate_control = RateControl::new(rc_config);
 
         let w = config.width as usize;
@@ -1276,8 +1269,7 @@ impl StreamEncoder {
         // 1-pass inputs before `config` is moved into the struct. The
         // schedule is the single source of truth for per-frame type +
         // refresh flags (see the `gf_group` field doc).
-        let gf_group =
-            crate::gop::GfGroup::new(config.gop_length, config.enable_alt_ref);
+        let gf_group = crate::gop::GfGroup::new(config.gop_length, config.enable_alt_ref);
 
         // A18 (SVC) — build the temporal-layer context when configured
         // for > 1 temporal layer. Mirrors libvpx `vp9_init_layer_context`
@@ -1331,10 +1323,7 @@ impl StreamEncoder {
                 config.lag_in_frames as usize,
             ),
             // W2.1(vpxenc parity, A5 P0): pre-analysis state.
-            pre_analysis: crate::pre_analysis::PreAnalysisState::new(
-                config.width,
-                config.height,
-            ),
+            pre_analysis: crate::pre_analysis::PreAnalysisState::new(config.width, config.height),
             // A10 — the 8-slot reference-frame buffer pool. All slots
             // start zeroed; the first encoded frame is always a keyframe,
             // which calls `ref_pool.keyframe_reset()` to pick `new_fb_idx`
@@ -1375,8 +1364,7 @@ impl StreamEncoder {
             decoder_fc_state: FrameContext::new_default(),
             decoder_fc_state_arf: FrameContext::new_default(),
             // P20 — fresh adaptive-RD-threshold table at INIT_FACT.
-            rd_thresh_table:
-                rvp9_core::mode_decision::rd_thresh::RdThreshTable::new(),
+            rd_thresh_table: rvp9_core::mode_decision::rd_thresh::RdThreshTable::new(),
             // W5.5 — temporal denoiser (libvpx
             // `vp9_denoiser.c:606-696` `vp9_denoiser_alloc`). Allocated
             // iff `noise_sensitivity > 0`; the denoiser-disabled path
@@ -1452,9 +1440,7 @@ impl StreamEncoder {
     /// code.
     #[doc(hidden)]
     #[must_use]
-    pub fn prev_mv_grid_for_test(
-        &self,
-    ) -> Option<(&[PrevFrameMvRef], (usize, usize))> {
+    pub fn prev_mv_grid_for_test(&self) -> Option<(&[PrevFrameMvRef], (usize, usize))> {
         self.prev_mv_grid
             .as_deref()
             .map(|g| (g, self.prev_mv_grid_dims))
@@ -1472,11 +1458,7 @@ impl StreamEncoder {
     /// [`Self::prev_mv_grid_for_test`] — `#[doc(hidden)]`, test-only.
     #[doc(hidden)]
     #[must_use]
-    pub fn prev_grid_gate_open_for_test(
-        &self,
-        mi_rows: usize,
-        mi_cols: usize,
-    ) -> bool {
+    pub fn prev_grid_gate_open_for_test(&self, mi_rows: usize, mi_cols: usize) -> bool {
         // DRIFT-FIX — mirrors the real gate in `encode_inter_internal`:
         // the decoder computes `use_prev_frame_mvs` purely structurally
         // (`!last_frame_was_key && last_show_frame && size_match`), so the
@@ -1506,10 +1488,7 @@ impl StreamEncoder {
     ///   (use [`Self::encode_frame_delayed`]).
     /// - [`EncodeError::Bitstream`] / [`EncodeError::Modes`] if any
     ///   wire-format writer fails.
-    pub fn encode_frame(
-        &mut self,
-        yuv: &YuvFrameRef<'_>,
-    ) -> Result<EncodedFrame, EncodeError> {
+    pub fn encode_frame(&mut self, yuv: &YuvFrameRef<'_>) -> Result<EncodedFrame, EncodeError> {
         if self.config.lag_in_frames != 0 {
             return Err(EncodeError::InvalidConfig(
                 "encode_frame requires lag_in_frames == 0; \
@@ -1586,9 +1565,9 @@ impl StreamEncoder {
         let push_idx = self.lookahead.next_show_idx() as i64;
         self.lookahead
             .push(yuv, push_idx, push_idx + 1, 0)
-            .map_err(|_| EncodeError::InvalidConfig(
-                "lookahead push rejected: dim mismatch or ring full",
-            ))?;
+            .map_err(|_| {
+                EncodeError::InvalidConfig("lookahead push rejected: dim mismatch or ring full")
+            })?;
 
         // Steady-state pop: libvpx `vp9_lookahead.c:205` —
         // `pop(drain=false)` returns None until `sz == max_sz -
@@ -1631,10 +1610,7 @@ impl StreamEncoder {
     /// work — frame-kind decision, rate control, pre-analysis,
     /// keyframe vs inter dispatch, post-encode bookkeeping — lives
     /// here.
-    fn try_encode_one_popped(
-        &mut self,
-        drain: bool,
-    ) -> Result<Option<EncodedFrame>, EncodeError> {
+    fn try_encode_one_popped(&mut self, drain: bool) -> Result<Option<EncodedFrame>, EncodeError> {
         // The lookahead borrow can't outlive the encode call (it
         // mutates `self` via the rate controller / encode paths), so
         // copy the popped planes into owned Vecs and release the
@@ -1681,7 +1657,8 @@ impl StreamEncoder {
         // gates. Mirrors libvpx `vp9_encoder.c:3984` —
         // `compute_source_sad_onepass = (oxcf.mode == REALTIME)`.
         // The W2.2 avg-source-SAD pass keys off this gate.
-        self.pre_analysis.update_per_frame_gates(self.config.deadline);
+        self.pre_analysis
+            .update_per_frame_gates(self.config.deadline);
         if matches!(frame_kind, FrameKind::Key) {
             // libvpx zeroes `consec_zero_mv[]` and invalidates
             // `Last_Source` at KF boundaries
@@ -1709,7 +1686,10 @@ impl StreamEncoder {
         // match libvpx `--end-usage=q --cq-level=<q>` so PSNR/bit
         // differences isolate prediction + transform + entropy from
         // rate control. No-op when unset (production paths unaffected).
-        let q_index = match std::env::var("RVP9_FIXED_Q").ok().and_then(|s| s.parse::<u8>().ok()) {
+        let q_index = match std::env::var("RVP9_FIXED_Q")
+            .ok()
+            .and_then(|s| s.parse::<u8>().ok())
+        {
             Some(fixed) if fixed >= 1 => fixed,
             _ => q_index,
         };
@@ -1736,10 +1716,8 @@ impl StreamEncoder {
         // skipped post-KF when Last_Source is None. Consumes
         // `rate_control.frames_since_key` for the post-KF gate.
         if self.pre_analysis.compute_source_sad_onepass {
-            self.pre_analysis.compute_scene_detection(
-                &y_tight,
-                self.rate_control.frames_since_key,
-            );
+            self.pre_analysis
+                .compute_scene_detection(&y_tight, self.rate_control.frames_since_key);
         }
         // W2.4(vpxenc parity, A5 P3): noise estimator
         // (libvpx `vp9_noise_estimate.c:109-302`). Updates
@@ -1769,7 +1747,8 @@ impl StreamEncoder {
         // we run it once per frame in pre-analysis, consumed by the
         // picker once the consumer side is wired.
         if self.pre_analysis.compute_source_sad_onepass {
-            self.pre_analysis.compute_skin_map(&y_tight, &u_tight, &v_tight);
+            self.pre_analysis
+                .compute_skin_map(&y_tight, &u_tight, &v_tight);
         }
         // W2.6(vpxenc parity, A4 P6): per-SB color-sensitivity flags
         // (libvpx `chroma_check` at `vp9_encodeframe.c:1173-1207`).
@@ -1777,11 +1756,8 @@ impl StreamEncoder {
         // and Last_Source dependency as W2.2/W2.3; the call is safe
         // unconditionally (no-op when Last_Source is None).
         if self.pre_analysis.compute_source_sad_onepass {
-            self.pre_analysis.compute_color_sensitivity_frame(
-                &y_tight,
-                &u_tight,
-                &v_tight,
-            );
+            self.pre_analysis
+                .compute_color_sensitivity_frame(&y_tight, &u_tight, &v_tight);
         }
 
         // Lever-3b / 3D content-discriminator measurement (env-gated).
@@ -1793,12 +1769,8 @@ impl StreamEncoder {
         if std::env::var_os("RVP9_3D_DUMP").is_some() {
             let w = self.pre_analysis.width as usize;
             let h = self.pre_analysis.height as usize;
-            let sig = frame_content_signals(
-                &y_tight,
-                self.pre_analysis.last_source_y.as_deref(),
-                w,
-                h,
-            );
+            let sig =
+                frame_content_signals(&y_tight, self.pre_analysis.last_source_y.as_deref(), w, h);
             #[allow(clippy::print_stderr)]
             {
                 eprintln!(
@@ -1878,10 +1850,9 @@ impl StreamEncoder {
             // lookahead can supply at least one neighbour for the
             // temporal filter.
             if frame_sched.arf_before && peek_avail >= 1 {
-                if let Some(arf_packet) = self.try_build_arf_packet(
-                    q_index,
-                    (&y_tight, &u_tight, &v_tight),
-                )? {
+                if let Some(arf_packet) =
+                    self.try_build_arf_packet(q_index, (&y_tight, &u_tight, &v_tight))?
+                {
                     self.pending_arf_packet = Some(arf_packet);
                     self.inter_frames_since_arf = 0;
                 }
@@ -1889,22 +1860,19 @@ impl StreamEncoder {
         }
 
         let mut packet = match frame_kind {
-            FrameKind::Key => self.encode_keyframe_internal(
-                q_index,
-                (&y_tight, &u_tight, &v_tight),
-            )?,
-            FrameKind::Inter => self.encode_inter_internal(
-                q_index,
-                (&y_tight, &u_tight, &v_tight),
-            )?,
+            FrameKind::Key => {
+                self.encode_keyframe_internal(q_index, (&y_tight, &u_tight, &v_tight))?
+            }
+            FrameKind::Inter => {
+                self.encode_inter_internal(q_index, (&y_tight, &u_tight, &v_tight))?
+            }
         };
 
         // W8 — Inter frames advance the inter-frames-since-ARF
         // counter; keyframes reset it (handled in
         // `encode_keyframe_internal`).
         if matches!(frame_kind, FrameKind::Inter) {
-            self.inter_frames_since_arf =
-                self.inter_frames_since_arf.saturating_add(1);
+            self.inter_frames_since_arf = self.inter_frames_since_arf.saturating_add(1);
         }
 
         // W8 — Superframe pack: if an ARF packet is queued (built by
@@ -1987,10 +1955,7 @@ impl StreamEncoder {
         // A18 (SVC) — tag the frame's temporal layer. The decision was
         // computed by `svc_assign_layer` before the encode; keyframes
         // (and all single-layer frames) are tl0.
-        let temporal_layer_id = self
-            .svc_frame
-            .map(|d| d.temporal_layer_id)
-            .unwrap_or(0);
+        let temporal_layer_id = self.svc_frame.map(|d| d.temporal_layer_id).unwrap_or(0);
         // A18 (SVC) — clear the per-frame decision now it has been
         // consumed (refresh override in `encode_inter_internal`, tag
         // here). The next frame's `svc_assign_layer` recomputes it.
@@ -2105,15 +2070,7 @@ impl StreamEncoder {
         if filter_level > 0 {
             let mi_grid = build_kf_mi_grid_for_lf(h / 8, w / 8, &sb_partitions);
             let (ry, ru, rv) = self.ref_pool.new_frame_planes_mut();
-            apply_loop_filter_to_tight_recon(
-                w,
-                h,
-                filter_level,
-                &mi_grid,
-                ry,
-                ru,
-                rv,
-            );
+            apply_loop_filter_to_tight_recon(w, h, filter_level, &mi_grid, ry, ru, rv);
         }
 
         // A10 / A14 (Phase A) — keyframes refresh every ref-pool slot via
@@ -2143,8 +2100,7 @@ impl StreamEncoder {
         // slot — seeded below from the KF reconstruction (libvpx's
         // `denoiser->reset` triggers a copy from the current frame to
         // every slot, `vp9_denoiser.c:464-474`).
-        let (last_y, last_u, last_v) =
-            self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
+        let (last_y, last_u, last_v) = self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
         self.me_ref_y.copy_from_slice(last_y);
         self.me_ref_u.copy_from_slice(last_u);
         self.me_ref_v.copy_from_slice(last_v);
@@ -2322,8 +2278,7 @@ impl StreamEncoder {
                 // scratch → LAST_FRAME slot.
                 for r in 0..tile {
                     let s = off + r * stride;
-                    self.me_ref_y[s..s + tile]
-                        .copy_from_slice(&scratch.y_buffer[s..s + tile]);
+                    self.me_ref_y[s..s + tile].copy_from_slice(&scratch.y_buffer[s..s + tile]);
                 }
             }
         }
@@ -2417,8 +2372,9 @@ impl StreamEncoder {
         // frame (libvpx `vp9_save_layer_context` bumps
         // `current_video_frame_in_layer`; the setters read it the next
         // call). The base slot at this single spatial layer is index 0.
-        svc.layer_context[0].current_video_frame_in_layer =
-            svc.layer_context[0].current_video_frame_in_layer.wrapping_add(1);
+        svc.layer_context[0].current_video_frame_in_layer = svc.layer_context[0]
+            .current_video_frame_in_layer
+            .wrapping_add(1);
         for lc in &mut svc.layer_context {
             lc.is_key_frame = false;
         }
@@ -2481,9 +2437,7 @@ impl StreamEncoder {
         };
         let (seg_map, seg_q_deltas): (Vec<u8>, [Option<i16>; 8]) =
             match (&self.cyclic_refresh, aq_active_this_frame) {
-                (None, _) | (Some(_), false) => {
-                    (vec![0u8; mi_rows_us * mi_cols_us], [None; 8])
-                }
+                (None, _) | (Some(_), false) => (vec![0u8; mi_rows_us * mi_cols_us], [None; 8]),
                 (Some(cr), true) => {
                     let (map, _n) = cr.pre_encode_pick_segments(q_index);
                     (map, cr.segment_q_deltas())
@@ -2525,55 +2479,54 @@ impl StreamEncoder {
         // shaped ones (picker fields default to ZEROMV / Mv::ZERO and
         // are overwritten by the simulator).
         let sb_cols = mi_cols_us / 8;
-        let mut sb_partitions: Vec<Vec<InterPartitionLeafDesc>> =
-            sb_partitions_intra_shape
-                .iter()
-                .enumerate()
-                .map(|(sb_idx, leaves)| {
-                    let sb_row = sb_idx / sb_cols;
-                    let sb_col = sb_idx - sb_row * sb_cols;
-                    leaves
-                        .iter()
-                        .map(|l| {
-                            // AQ.3 — project the seg_map onto this leaf
-                            // by sampling the top-left mi cell. Cyclic
-                            // refresh paints whole SBs uniformly so the
-                            // top-left is exact for any leaf inside the
-                            // SB.
-                            let leaf_mi_row = sb_row * 8 + l.mi_row_in_sb;
-                            let leaf_mi_col = sb_col * 8 + l.mi_col_in_sb;
-                            let seg_id = seg_map[leaf_mi_row * mi_cols_us + leaf_mi_col];
-                            InterPartitionLeafDesc {
-                                mi_row_in_sb: l.mi_row_in_sb,
-                                mi_col_in_sb: l.mi_col_in_sb,
-                                leaf_bsize: l.leaf_bsize,
-                                picked_mode: InterMode::ZeroMv,
-                                picked_mv: Mv::ZERO,
-                                skip: true,
-                                segment_id: seg_id,
-                                // A15 Phase B — default picked ref to LAST.
-                                // The picker overwrites this per-leaf when
-                                // it iterates {LAST, GOLDEN} below; skip-
-                                // fallback leaves retain LAST (matches A14).
-                                picked_ref_frame: RefFrame::LastFrame,
-                                // F.5 — default to EightTap; the picker
-                                // overwrites this when it runs the
-                                // per-block filter loop. Skip-fallback
-                                // leaves keep `EightTap`, matching the
-                                // pre-F.5 hard-coded default.
-                                picked_interp_filter:
-                                    rvp9_core::bitstream::frame::InterpFilter::EightTap,
-                                picked_intra_mode: None,
-                                picked_ref_frame2: RefFrame::NoRefFrame,
-                                picked_mv2: Mv::ZERO,
-                                // Track-F iter7 — default to max; the
-                                // simulator's TX-size RD loop overwrites it.
-                                picked_tx_size: max_txsize(l.leaf_bsize),
-                            }
-                        })
-                        .collect()
-                })
-                .collect();
+        let mut sb_partitions: Vec<Vec<InterPartitionLeafDesc>> = sb_partitions_intra_shape
+            .iter()
+            .enumerate()
+            .map(|(sb_idx, leaves)| {
+                let sb_row = sb_idx / sb_cols;
+                let sb_col = sb_idx - sb_row * sb_cols;
+                leaves
+                    .iter()
+                    .map(|l| {
+                        // AQ.3 — project the seg_map onto this leaf
+                        // by sampling the top-left mi cell. Cyclic
+                        // refresh paints whole SBs uniformly so the
+                        // top-left is exact for any leaf inside the
+                        // SB.
+                        let leaf_mi_row = sb_row * 8 + l.mi_row_in_sb;
+                        let leaf_mi_col = sb_col * 8 + l.mi_col_in_sb;
+                        let seg_id = seg_map[leaf_mi_row * mi_cols_us + leaf_mi_col];
+                        InterPartitionLeafDesc {
+                            mi_row_in_sb: l.mi_row_in_sb,
+                            mi_col_in_sb: l.mi_col_in_sb,
+                            leaf_bsize: l.leaf_bsize,
+                            picked_mode: InterMode::ZeroMv,
+                            picked_mv: Mv::ZERO,
+                            skip: true,
+                            segment_id: seg_id,
+                            // A15 Phase B — default picked ref to LAST.
+                            // The picker overwrites this per-leaf when
+                            // it iterates {LAST, GOLDEN} below; skip-
+                            // fallback leaves retain LAST (matches A14).
+                            picked_ref_frame: RefFrame::LastFrame,
+                            // F.5 — default to EightTap; the picker
+                            // overwrites this when it runs the
+                            // per-block filter loop. Skip-fallback
+                            // leaves keep `EightTap`, matching the
+                            // pre-F.5 hard-coded default.
+                            picked_interp_filter:
+                                rvp9_core::bitstream::frame::InterpFilter::EightTap,
+                            picked_intra_mode: None,
+                            picked_ref_frame2: RefFrame::NoRefFrame,
+                            picked_mv2: Mv::ZERO,
+                            // Track-F iter7 — default to max; the
+                            // simulator's TX-size RD loop overwrites it.
+                            picked_tx_size: max_txsize(l.leaf_bsize),
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
 
         // Save the previous reference for the simulator — the simulator
         // reads `last_recon_*` and writes the new recon into
@@ -2627,8 +2580,7 @@ impl StreamEncoder {
         // A18 — fresh current-frame MV grid; populated by the picker
         // (final per-leaf picks). Becomes `self.prev_mv_grid` after
         // the inter encode finishes.
-        let mut cur_mv_grid =
-            vec![PrevFrameMvRef::default(); mi_rows_us * mi_cols_us];
+        let mut cur_mv_grid = vec![PrevFrameMvRef::default(); mi_rows_us * mi_cols_us];
 
         // W-ALTREF picker — the single gate for ALTREF candidate
         // iteration on this show frame: ALTREF is configured AND a real
@@ -2637,8 +2589,7 @@ impl StreamEncoder {
         // is LAST/GOLDEN-only and the header sign-bias / ref_frame_indices
         // are unchanged — the cross-decoder gate runs here with
         // `enable_alt_ref = false`, so this is always false there.
-        let altref_picker_live =
-            self.config.enable_alt_ref && self.altref_slot_emitted;
+        let altref_picker_live = self.config.enable_alt_ref && self.altref_slot_emitted;
         // A23 — opt-in single-GOP forward TPL pass. When `enable_tpl` is
         // set we gather a forward window of GOP SOURCE frames (the frame
         // being coded + the inter frames that follow it in display order,
@@ -2683,8 +2634,7 @@ impl StreamEncoder {
         // reproduces the prior `last_recon_* / golden_recon_* /
         // altref_recon_*` separate-buffer pixels exactly, so the picker
         // makes identical decisions and the bitstream is byte-identical.
-        let (last_y, last_u, last_v) =
-            self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
+        let (last_y, last_u, last_v) = self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
 
         // A23 — run the TPL driver now that both the source window and
         // the LAST recon are in hand. `tpl_result` is `Some` only when
@@ -2711,14 +2661,17 @@ impl StreamEncoder {
             };
         let tpl_rdmult_arg: Option<(&crate::tpl::TplDepFrame, f64)> =
             tpl_result.as_ref().map(|r| (&r.coded_frame, r.r0));
-        let (gld_y, gld_u, gld_v) =
-            self.ref_pool.named_ref_planes(crate::buffer_pool::GOLDEN_REF);
-        let altref_planes_for_picker: Option<(&[u8], &[u8], &[u8])> =
-            if altref_picker_live {
-                Some(self.ref_pool.named_ref_planes(crate::buffer_pool::ALTREF_REF))
-            } else {
-                None
-            };
+        let (gld_y, gld_u, gld_v) = self
+            .ref_pool
+            .named_ref_planes(crate::buffer_pool::GOLDEN_REF);
+        let altref_planes_for_picker: Option<(&[u8], &[u8], &[u8])> = if altref_picker_live {
+            Some(
+                self.ref_pool
+                    .named_ref_planes(crate::buffer_pool::ALTREF_REF),
+            )
+        } else {
+            None
+        };
 
         let coef_source = pick_and_simulate_inter_encode_partitions(
             w,
@@ -2801,28 +2754,29 @@ impl StreamEncoder {
         let mi_grid = build_inter_mi_grid_for_lf(h / 8, w / 8, &sb_partitions);
         let filter_level = if self.config.speed.unsigned_abs() <= 4 {
             // libvpx `vp9_picklpf.c:46-157` search.
-            crate::loopfilter::search_filter_level(
-                &crate::loopfilter::SearchFilterLevelParams {
-                    width: w as u32,
-                    height: h as u32,
-                    mi_grid: &mi_grid,
-                    recon_y: &new_recon_y,
-                    recon_u: &new_recon_u,
-                    recon_v: &new_recon_v,
-                    source_y: input_yuv.0,
-                    last_filt_level: 0, // TODO: track last_filt_level on StreamEncoder
-                    max_filter_level: 63, // libvpx MAX_LOOP_FILTER
+            crate::loopfilter::search_filter_level(&crate::loopfilter::SearchFilterLevelParams {
+                width: w as u32,
+                height: h as u32,
+                mi_grid: &mi_grid,
+                recon_y: &new_recon_y,
+                recon_u: &new_recon_u,
+                recon_v: &new_recon_v,
+                source_y: input_yuv.0,
+                last_filt_level: 0, // TODO: track last_filt_level on StreamEncoder
+                max_filter_level: 63, // libvpx MAX_LOOP_FILTER
 
-                    tx_mode_not_only_4x4: true,
-                },
-            )
+                tx_mode_not_only_4x4: true,
+            })
         } else {
             pick_filter_level(q_index, false)
         };
         // DRIFT-DIAG — capture the pre-LF reconstruction so a diagnostic
         // test can separate residual/MC divergence from LF divergence.
-        self.diag_prelf_recon =
-            Some((new_recon_y.clone(), new_recon_u.clone(), new_recon_v.clone()));
+        self.diag_prelf_recon = Some((
+            new_recon_y.clone(),
+            new_recon_u.clone(),
+            new_recon_v.clone(),
+        ));
         // STAGE-SSE DIAG — pull the whole-frame Y prediction snapshot the
         // predstat taps captured during the inter picker pass (empty
         // unless the `RVP9_E9_PREDSTAT` gate is on). See the KF site for
@@ -2854,8 +2808,7 @@ impl StreamEncoder {
         // `vp9_disable_segmentation` on the suppress branch
         // (`vp9_aq_cyclicrefresh.c:606-619`).
         let segmentation_enabled = self.cyclic_refresh.is_some() && aq_active_this_frame;
-        let segmentation_params =
-            build_segmentation_params(segmentation_enabled, &seg_q_deltas);
+        let segmentation_params = build_segmentation_params(segmentation_enabled, &seg_q_deltas);
 
         // A14 (Phase A) — decide whether this inter frame refreshes the
         // GOLDEN slot, now driven by the GOP topology schedule. The
@@ -2886,10 +2839,11 @@ impl StreamEncoder {
         // ARF picker path and diagnostics still read it; the SCHEDULE,
         // not the counter, is now the refresh-flag authority.
         let frame_sched = self.gf_group.schedule(self.frame_idx);
-        self.frames_since_golden_refresh =
-            self.frames_since_golden_refresh.saturating_add(1);
-        let refresh_golden_this_frame =
-            matches!(frame_sched.update_type, crate::gop::FrameUpdateType::GfUpdate);
+        self.frames_since_golden_refresh = self.frames_since_golden_refresh.saturating_add(1);
+        let refresh_golden_this_frame = matches!(
+            frame_sched.update_type,
+            crate::gop::FrameUpdateType::GfUpdate
+        );
         // A18 (SVC) — when temporal SVC is active, the layering pattern
         // (not the GfGroup golden/altref cadence) owns this frame's
         // refresh structure. `svc_assign_layer` computed the override:
@@ -2934,7 +2888,8 @@ impl StreamEncoder {
             // path goes through `encode_altref_internal` which calls
             // the writer with `show_frame: false` and
             // `refresh_frame_flags = 0x04`.
-            /* show_frame = */ true,
+            /* show_frame = */
+            true,
             // W-ALTREF — when the ALTREF picker candidate is live this
             // show frame may name ALTREF in its ref set, so the ALTREF
             // slot is sign-biased (it points at a FUTURE display-order
@@ -2944,7 +2899,8 @@ impl StreamEncoder {
             // `[false, false, false]` — wire bytes unchanged. This MUST
             // match the picker's `sign_bias` in
             // `pick_and_simulate_inter_encode_partitions`.
-            /* ref_frame_sign_biases = */ [false, false, altref_picker_live],
+            /* ref_frame_sign_biases = */
+            [false, false, altref_picker_live],
             // DRIFT-FIX (GOLDEN ref-index) — the encoder's internal
             // named-ref model resolves LAST/GOLDEN/ALTREF through the
             // IDENTITY selector `named_ref_planes(i) = slots[
@@ -2970,7 +2926,8 @@ impl StreamEncoder {
             // whether or not the picker candidate is live; the index is
             // only consulted by the decoder for blocks that actually name
             // ALTREF, which the picker only emits when `altref_picker_live`.
-            /* ref_frame_indices = */ [0, 1, 2],
+            /* ref_frame_indices = */
+            [0, 1, 2],
             // A18 — Thread the same `prev_mv_grid` the picker used so
             // the writer's `find_mv_refs` produces the SAME
             // `best_ref_mv` the decoder will compute.
@@ -2986,7 +2943,8 @@ impl StreamEncoder {
             &mut decoder_fc,
             // W-ALTREF — show frames use FC bank 0 (libvpx
             // `frame_context_idx = refresh_alt_ref_frame = 0`).
-            /* frame_context_idx = */ 0,
+            /* frame_context_idx = */
+            0,
         )?;
 
         // W0.5(vpxenc parity, A2 P0 / A1 P5): with `refresh_frame_
@@ -3004,10 +2962,7 @@ impl StreamEncoder {
         // decoder backward-adapts `tx_probs` from the per-block tx_size
         // counts. The encoder's FC mirror must do the same to stay in sync.
         let tx_mode_select = true;
-        let (cs, uf) = coef_adapt_params(
-            false, /* not intra-only */
-            self.last_frame_was_key,
-        );
+        let (cs, uf) = coef_adapt_params(false /* not intra-only */, self.last_frame_was_key);
 
         // Backward-adapt the decoder-side mirror first (so we can
         // assign it before borrowing `self` again).
@@ -3020,13 +2975,22 @@ impl StreamEncoder {
         // partial coef update means post-header != pre-header).
         {
             let mut adapted_dec = adapt_mode_probs(
-                &pre_header_decoder_fc, &frame_counts, interp_switchable, tx_mode_select,
+                &pre_header_decoder_fc,
+                &frame_counts,
+                interp_switchable,
+                tx_mode_select,
             );
             adapted_dec.coef_probs = adapt_coef_probs(
-                &pre_header_decoder_fc.coef_probs, &frame_counts.coef, cs, uf,
+                &pre_header_decoder_fc.coef_probs,
+                &frame_counts.coef,
+                cs,
+                uf,
             );
-            adapted_dec.nmvc =
-                adapt_mv_probs(&pre_header_decoder_fc.nmvc, &frame_counts.mv, false);
+            adapted_dec.nmvc = adapt_mv_probs(
+                &pre_header_decoder_fc.nmvc,
+                &frame_counts.mv,
+                crate::frame_allow_hp(q_index),
+            );
             self.decoder_fc_state = adapted_dec;
         }
 
@@ -3037,12 +3001,18 @@ impl StreamEncoder {
         // `refresh_frame_context == true`.
         {
             let mut adapted = adapt_mode_probs(
-                &self.frame_context, &frame_counts, interp_switchable, tx_mode_select,
+                &self.frame_context,
+                &frame_counts,
+                interp_switchable,
+                tx_mode_select,
             );
             adapted.coef_probs =
                 adapt_coef_probs(&self.frame_context.coef_probs, &frame_counts.coef, cs, uf);
-            adapted.nmvc =
-                adapt_mv_probs(&self.frame_context.nmvc, &frame_counts.mv, false);
+            adapted.nmvc = adapt_mv_probs(
+                &self.frame_context.nmvc,
+                &frame_counts.mv,
+                crate::frame_allow_hp(q_index),
+            );
             self.frame_context = adapted;
         }
 
@@ -3073,8 +3043,7 @@ impl StreamEncoder {
         // writes its `running_avg_y` (vp9_denoiser.c:425-428) and
         // `cm->frame_refs[]` stays decoder-equivalent. Chroma planes
         // mirror byte-exact (luma-only filter, libvpx `vp9_denoiser.h:46`).
-        let (last_y, last_u, last_v) =
-            self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
+        let (last_y, last_u, last_v) = self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
         self.me_ref_y.copy_from_slice(last_y);
         self.me_ref_u.copy_from_slice(last_u);
         self.me_ref_v.copy_from_slice(last_v);
@@ -3217,33 +3186,31 @@ impl StreamEncoder {
 
         // Convert the intra-shaped descriptors into inter-shaped leaves
         // (segmentation off for the ARF — AQ does not run on it).
-        let mut sb_partitions: Vec<Vec<InterPartitionLeafDesc>> =
-            sb_partitions_intra_shape
-                .iter()
-                .map(|leaves| {
-                    leaves
-                        .iter()
-                        .map(|l| InterPartitionLeafDesc {
-                            mi_row_in_sb: l.mi_row_in_sb,
-                            mi_col_in_sb: l.mi_col_in_sb,
-                            leaf_bsize: l.leaf_bsize,
-                            picked_mode: InterMode::ZeroMv,
-                            picked_mv: Mv::ZERO,
-                            skip: true,
-                            segment_id: 0,
-                            picked_ref_frame: RefFrame::LastFrame,
-                            picked_interp_filter:
-                                rvp9_core::bitstream::frame::InterpFilter::EightTap,
-                            picked_intra_mode: None,
-                            picked_ref_frame2: RefFrame::NoRefFrame,
-                            picked_mv2: Mv::ZERO,
-                            // Track-F iter7 — default to max; the simulator's
-                            // TX-size RD loop overwrites it.
-                            picked_tx_size: max_txsize(l.leaf_bsize),
-                        })
-                        .collect()
-                })
-                .collect();
+        let mut sb_partitions: Vec<Vec<InterPartitionLeafDesc>> = sb_partitions_intra_shape
+            .iter()
+            .map(|leaves| {
+                leaves
+                    .iter()
+                    .map(|l| InterPartitionLeafDesc {
+                        mi_row_in_sb: l.mi_row_in_sb,
+                        mi_col_in_sb: l.mi_col_in_sb,
+                        leaf_bsize: l.leaf_bsize,
+                        picked_mode: InterMode::ZeroMv,
+                        picked_mv: Mv::ZERO,
+                        skip: true,
+                        segment_id: 0,
+                        picked_ref_frame: RefFrame::LastFrame,
+                        picked_interp_filter: rvp9_core::bitstream::frame::InterpFilter::EightTap,
+                        picked_intra_mode: None,
+                        picked_ref_frame2: RefFrame::NoRefFrame,
+                        picked_mv2: Mv::ZERO,
+                        // Track-F iter7 — default to max; the simulator's
+                        // TX-size RD loop overwrites it.
+                        picked_tx_size: max_txsize(l.leaf_bsize),
+                    })
+                    .collect()
+            })
+            .collect();
 
         // Local scratch reconstruction — the ARF's real decoded output.
         // Never aliases `last_recon_*` (state isolation); captured into
@@ -3258,8 +3225,7 @@ impl StreamEncoder {
         // the next show frame's `prev_mv_grid`). The ARF disables the
         // `use_prev_frame_mvs` salvage (`prev_mv_grid = None`) so its
         // writer-side `find_mv_refs` matches the decoder's.
-        let mut arf_mv_grid =
-            vec![PrevFrameMvRef::default(); mi_rows_us * mi_cols_us];
+        let mut arf_mv_grid = vec![PrevFrameMvRef::default(); mi_rows_us * mi_cols_us];
         let seg_q_deltas: [Option<i16>; 8] = [None; 8];
 
         // Clone the RD-threshold table so the picker's
@@ -3277,10 +3243,10 @@ impl StreamEncoder {
         // its commit (`refresh_frame_flags = 0x04`, below) rotates ONLY
         // the ALTREF map entry, so reading LAST/GOLDEN here leaves the
         // show frame's references undisturbed.
-        let (last_y, last_u, last_v) =
-            self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
-        let (gld_y, gld_u, gld_v) =
-            self.ref_pool.named_ref_planes(crate::buffer_pool::GOLDEN_REF);
+        let (last_y, last_u, last_v) = self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
+        let (gld_y, gld_u, gld_v) = self
+            .ref_pool
+            .named_ref_planes(crate::buffer_pool::GOLDEN_REF);
         let coef_source = pick_and_simulate_inter_encode_partitions(
             w,
             h,
@@ -3324,23 +3290,20 @@ impl StreamEncoder {
         // the same `filter_level` after IT-add, so the
         // encoder↔decoder bit-exact invariant survives LF. Mirrors the
         // show-frame path's LF block in `encode_inter_internal`.
-        let mi_grid =
-            build_inter_mi_grid_for_lf(h / 8, w / 8, &sb_partitions);
+        let mi_grid = build_inter_mi_grid_for_lf(h / 8, w / 8, &sb_partitions);
         let filter_level = if self.config.speed.unsigned_abs() <= 4 {
-            crate::loopfilter::search_filter_level(
-                &crate::loopfilter::SearchFilterLevelParams {
-                    width: w,
-                    height: h,
-                    mi_grid: &mi_grid,
-                    recon_y: &arf_recon_y,
-                    recon_u: &arf_recon_u,
-                    recon_v: &arf_recon_v,
-                    source_y: filtered_yuv.0,
-                    last_filt_level: 0,
-                    max_filter_level: 63,
-                    tx_mode_not_only_4x4: true,
-                },
-            )
+            crate::loopfilter::search_filter_level(&crate::loopfilter::SearchFilterLevelParams {
+                width: w,
+                height: h,
+                mi_grid: &mi_grid,
+                recon_y: &arf_recon_y,
+                recon_u: &arf_recon_u,
+                recon_v: &arf_recon_v,
+                source_y: filtered_yuv.0,
+                last_filt_level: 0,
+                max_filter_level: 63,
+                tx_mode_not_only_4x4: true,
+            })
         } else {
             pick_filter_level(q_index, false)
         };
@@ -3399,14 +3362,16 @@ impl StreamEncoder {
             // picks ALTREF (the candidate is `None` above). See the
             // show-frame `ref_frame_indices` comment for the full
             // rationale.
-            /* ref_frame_indices = */ [0, 1, 2],
+            /* ref_frame_indices = */
+            [0, 1, 2],
             /* prev_mv_grid = */ None,
             Some(&mut frame_counts),
             Some(&self.frame_context),
             &mut decoder_fc,
             // W-ALTREF — ARF FC bank 1 (libvpx
             // `frame_context_idx = refresh_alt_ref_frame = 1`).
-            /* frame_context_idx = */ 1,
+            /* frame_context_idx = */
+            1,
         )?;
 
         // W-ALTREF — the ARF emits `refresh_frame_context = true`
@@ -3438,8 +3403,11 @@ impl StreamEncoder {
         );
         adapted_dec.coef_probs =
             adapt_coef_probs(&decoder_fc.coef_probs, &frame_counts.coef, cs, uf);
-        adapted_dec.nmvc =
-            adapt_mv_probs(&decoder_fc.nmvc, &frame_counts.mv, false);
+        adapted_dec.nmvc = adapt_mv_probs(
+            &decoder_fc.nmvc,
+            &frame_counts.mv,
+            crate::frame_allow_hp(q_index),
+        );
         self.decoder_fc_state_arf = adapted_dec;
 
         // W-ALTREF — anti-G3 witness. The ARF predicted from LAST (the
@@ -3450,8 +3418,7 @@ impl StreamEncoder {
         // the ARF reconstruction differ. Record the result for the PROOF
         // test BEFORE we commit the ARF slot.
         {
-            let (last_y, _, _) =
-                self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
+            let (last_y, _, _) = self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
             self.last_arf_real_coded = Some(arf_recon_y != last_y);
         }
 
@@ -3541,9 +3508,7 @@ impl StreamEncoder {
         q_index: u8,
         current_yuv: (&[u8], &[u8], &[u8]),
     ) -> Result<Option<Vec<u8>>, EncodeError> {
-        use crate::temporal_filter::{
-            ArnrFilterData, ArnrFrameRef, vp9_temporal_filter,
-        };
+        use crate::temporal_filter::{ArnrFilterData, ArnrFrameRef, vp9_temporal_filter};
         let w = self.config.width;
         let h = self.config.height;
 
@@ -3591,7 +3556,9 @@ impl StreamEncoder {
         // picks `strength = 3` as the typical default. Hard-code that
         // here for the minimal wiring; the standalone module's
         // `adjust_arnr_filter` is wired up but unused on this path.
-        let data = ArnrFilterData::new(frames, /* alt_ref_index = */ 0, /* strength = */ 3);
+        let data = ArnrFilterData::new(
+            frames, /* alt_ref_index = */ 0, /* strength = */ 3,
+        );
         let filtered = vp9_temporal_filter(&data);
 
         // Sanity-check the filter output's dimensions.
@@ -3600,10 +3567,8 @@ impl StreamEncoder {
         }
 
         // Emit the non-show ALTREF packet from the filtered YUV.
-        let packet = self.encode_altref_internal(
-            q_index,
-            (&filtered.y, &filtered.u, &filtered.v),
-        )?;
+        let packet =
+            self.encode_altref_internal(q_index, (&filtered.y, &filtered.u, &filtered.v))?;
         Ok(Some(packet))
     }
 
@@ -3737,9 +3702,7 @@ impl StreamEncoder {
     /// each frame (the backward-adaptation reproduction the brief
     /// flags as the real correctness test).
     #[cfg(test)]
-    pub(crate) fn decoder_fc_state_coef_probs(
-        &self,
-    ) -> &[rvp9_core::entropy::CoeffProbsModel; 4] {
+    pub(crate) fn decoder_fc_state_coef_probs(&self) -> &[rvp9_core::entropy::CoeffProbsModel; 4] {
         &self.decoder_fc_state.coef_probs
     }
 
@@ -4186,8 +4149,7 @@ fn build_keyframe_packet(
         mi_col_start: 0,
         mi_col_end: mi_cols as usize,
     };
-    let mut tile_buf =
-        vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
+    let mut tile_buf = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
     let tile_len = {
         let mut bw = BoolWriter::start_encode(&mut tile_buf);
         let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
@@ -4392,6 +4354,7 @@ fn build_inter_packet_with_residuals(
     // (Phase 2c). The writer emits per-block switchable-interp bits
     // and the picker's chosen filter goes on the wire.
     let interp_filter_frame = InterpFilter::Switchable;
+    let allow_hp = crate::frame_allow_hp(base_qindex);
 
     // W-COMPOUND — compound is legal for this frame iff at least two of
     // the three reference sign biases differ (libvpx
@@ -4425,7 +4388,7 @@ fn build_inter_packet_with_residuals(
         intra_only: false,
         interp_filter: interp_filter_frame,
         compound_allowed,
-        allow_high_precision_mv: false,
+        allow_high_precision_mv: allow_hp,
     };
     let target = CompressedHeaderResult {
         // Track-F iter7 — `TxModeSelect` enables per-block tx_size signalling.
@@ -4457,7 +4420,7 @@ fn build_inter_packet_with_residuals(
     // `params.interp_filter == Switchable`; the decoder reads them at
     // `read_inter_block_mode_info` (`mode_info.rs:796-800`).
     let params = InterModeReadParams {
-        allow_high_precision_mv: false,
+        allow_high_precision_mv: allow_hp,
         interp_filter: interp_filter_frame,
         // W-COMPOUND — MUST match the compressed-header `reference_mode`
         // (Select when compound is allowed for this frame), so the
@@ -4502,8 +4465,7 @@ fn build_inter_packet_with_residuals(
         ..FrameCounts::default()
     };
     {
-        let mut scratch =
-            vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
+        let mut scratch = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
         let mut bw = BoolWriter::start_encode(&mut scratch);
         let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
         let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
@@ -4566,8 +4528,7 @@ fn build_inter_packet_with_residuals(
 
     // F10.1c — sized generously (per-pixel × 4) since real residuals
     // can dominate the bit budget at higher Q indices.
-    let mut tile_buf =
-        vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
+    let mut tile_buf = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
     let tile_len = {
         let mut bw = BoolWriter::start_encode(&mut tile_buf);
         let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
@@ -4676,7 +4637,7 @@ fn build_inter_packet_with_residuals(
             // `set_ref_sign_bias`, :5034-5049). `MAX_INTER_REFS == 3`
             // maps 1:1 onto the `[LAST, GOLDEN, ALTREF]` header bias.
             ref_frame_sign_biases,
-            allow_high_precision_mv: false,
+            allow_high_precision_mv: allow_hp,
             // F.5 — Switchable at the frame level (unconditionally
             // active, Phase 2c). The uncompressed-header writer emits
             // the matching wire bits; the decoder reads
@@ -4735,10 +4696,7 @@ fn build_inter_packet_with_residuals(
 /// - `feature_data[seg][SEG_LVL_ALT_Q] = Some(delta)` for every
 ///   segment with a non-`None` slot in `seg_q_deltas`. Other features
 ///   (`AltLf` / `ReferenceFrame` / `Skip`) stay `None`.
-fn build_segmentation_params(
-    enabled: bool,
-    seg_q_deltas: &[Option<i16>; 8],
-) -> SegmentationParams {
+fn build_segmentation_params(enabled: bool, seg_q_deltas: &[Option<i16>; 8]) -> SegmentationParams {
     let mut params = SegmentationParams {
         enabled,
         update_map: enabled,
@@ -5050,7 +5008,11 @@ mod tests {
         assert_eq!(f0.frame_kind, FrameKind::Key, "frame 0 must be KF");
         assert_eq!(f1.frame_kind, FrameKind::Inter, "frame 1 must be inter");
         assert_eq!(f2.frame_kind, FrameKind::Inter, "frame 2 must be inter");
-        assert_eq!(f3.frame_kind, FrameKind::Key, "frame 3 must be KF (gop boundary)");
+        assert_eq!(
+            f3.frame_kind,
+            FrameKind::Key,
+            "frame 3 must be KF (gop boundary)"
+        );
         assert_eq!(f4.frame_kind, FrameKind::Inter, "frame 4 must be inter");
     }
 
@@ -5204,11 +5166,17 @@ mod tests {
         // temporal_layers = 0 is rejected.
         let mut cfg = EncoderConfig::new(64, 64);
         cfg.temporal_layers = 0;
-        assert!(StreamEncoder::new(cfg).is_err(), "temporal_layers=0 must reject");
+        assert!(
+            StreamEncoder::new(cfg).is_err(),
+            "temporal_layers=0 must reject"
+        );
         // temporal_layers = 4 (> 3) is rejected.
         let mut cfg = EncoderConfig::new(64, 64);
         cfg.temporal_layers = 4;
-        assert!(StreamEncoder::new(cfg).is_err(), "temporal_layers=4 must reject");
+        assert!(
+            StreamEncoder::new(cfg).is_err(),
+            "temporal_layers=4 must reject"
+        );
         // temporal_layers > 1 with enable_alt_ref is rejected.
         let mut cfg = EncoderConfig::new(64, 64);
         cfg.temporal_layers = 2;
@@ -5436,9 +5404,10 @@ mod tests {
             assert!(cell.is_some(), "every mi-cell must be populated");
         }
         // Partition split somewhere — at least one cell is not Block64x64.
-        let any_split = grid
-            .iter()
-            .any(|cell| cell.map(|c| c.block_size != BlockSize::Block64x64).unwrap_or(false));
+        let any_split = grid.iter().any(|cell| {
+            cell.map(|c| c.block_size != BlockSize::Block64x64)
+                .unwrap_or(false)
+        });
         assert!(
             any_split,
             "F8.2 should have split the chaotic-input KF into sub-64x64 leaves; \
@@ -5560,9 +5529,10 @@ mod tests {
             .expect("decode chaotic-diff inter");
 
         let grid = dec.last_frame_mi_grid();
-        let any_split = grid
-            .iter()
-            .any(|cell| cell.map(|c| c.block_size != BlockSize::Block64x64).unwrap_or(false));
+        let any_split = grid.iter().any(|cell| {
+            cell.map(|c| c.block_size != BlockSize::Block64x64)
+                .unwrap_or(false)
+        });
         assert!(
             any_split,
             "F8.2 should have split the chaotic-diff inter into sub-64x64 leaves"
@@ -5983,8 +5953,8 @@ mod tests {
             InterModeSearchParams, MvCandidates, pick_inter_mode_luma,
         };
         use rvp9_core::mv_search::PlaneRef as PR;
-        use rvp9_core::mv_search::mv_limits::MvLimits;
         use rvp9_core::mv_search::init_dsmotion_compensation;
+        use rvp9_core::mv_search::mv_limits::MvLimits;
         use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
 
         // (a) Direct F8.1 picker oracle on a Block16x16 chaotic-content
@@ -6008,8 +5978,18 @@ mod tests {
                 src_data[(20 + i) * pw + (20 + j)] = ref_data[(20 + i) * pw + (23 + j)];
             }
         }
-        let src_plane = PR { data: &src_data, stride: pw, width: pw, height: ph };
-        let ref_plane = PR { data: &ref_data, stride: pw, width: pw, height: ph };
+        let src_plane = PR {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PR {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
         let fc = Fc::new_default();
         let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, false);
         let inter_costs = inter_mode_costs(&fc);
@@ -6064,7 +6044,8 @@ mod tests {
             pick.best_mv.col != 0 || pick.best_mv.row != 0,
             "F8.1 picker should choose non-zero MV for shifted ref — \
              got mv=({}, {})",
-            pick.best_mv.row, pick.best_mv.col,
+            pick.best_mv.row,
+            pick.best_mv.col,
         );
 
         // (b) End-to-end inter encode + decode oracle: at least one
@@ -6309,8 +6290,7 @@ mod tests {
             for r in 0..H {
                 let src_off = r * yp.stride();
                 let dst_off = r * W;
-                decoded_y[dst_off..dst_off + W]
-                    .copy_from_slice(&yp.data()[src_off..src_off + W]);
+                decoded_y[dst_off..dst_off + W].copy_from_slice(&yp.data()[src_off..src_off + W]);
             }
             let p = psnr_db(&y, &decoded_y);
             psnrs.push(p);
@@ -6351,36 +6331,68 @@ mod tests {
         const H: usize = 128;
         const N_FRAMES: u32 = 6;
         let cfg = EncoderConfig {
-            width: W as u32, height: H as u32, framerate: 30.0,
-            target_bitrate_bps: 800_000, gop_length: 30, aq_mode: AqMode::Off,
-            use_prev_frame_mvs: false, speed: 7, deadline: Deadline::Realtime,
-            noise_sensitivity: 0, bit_depth: rvp9_core::BitDepth::Bd8,
-            lag_in_frames: 0, enable_alt_ref: false, rc_mode: RcMode::Cbr,
-            cq_level: 0, temporal_layers: 1, enable_tpl: false,
-            min_qindex: 4, max_qindex: 255,
+            width: W as u32,
+            height: H as u32,
+            framerate: 30.0,
+            target_bitrate_bps: 800_000,
+            gop_length: 30,
+            aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
+            speed: 7,
+            deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
+            enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
+            temporal_layers: 1,
+            enable_tpl: false,
+            min_qindex: 4,
+            max_qindex: 255,
         };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let mut dec = Decoder::new();
         // Pseudo-random high-entropy content (triggers real coef-prob
         // updates, unlike the smooth gradient).
         let mut seed = 0x1234_5678u32;
-        let mut next = || { seed = seed.wrapping_mul(1664525).wrapping_add(1013904223); (seed >> 24) as u8 };
+        let mut next = || {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            (seed >> 24) as u8
+        };
         for idx in 0..N_FRAMES {
-            let y: Vec<u8> = (0..W*H).map(|_| next()).collect();
-            let u = vec![128u8; (W/2)*(H/2)];
-            let v = vec![128u8; (W/2)*(H/2)];
-            let pkt = enc.encode_frame(&yuv_view(&y, &u, &v, W)).expect("encode_frame");
+            let y: Vec<u8> = (0..W * H).map(|_| next()).collect();
+            let u = vec![128u8; (W / 2) * (H / 2)];
+            let v = vec![128u8; (W / 2) * (H / 2)];
+            let pkt = enc
+                .encode_frame(&yuv_view(&y, &u, &v, W))
+                .expect("encode_frame");
             let frames = decode_packet(&mut dec, &pkt.data);
-            for pf in &frames { let _ = dec.decode_frame(pf).expect("decode_frame"); }
+            for pf in &frames {
+                let _ = dec.decode_frame(pf).expect("decode_frame");
+            }
             let enc_fc = enc.decoder_fc_state_coef_probs();
             let dec_fc = &dec.frame_context(0).coef_probs;
             if enc_fc != dec_fc {
-                for tx in 0..4 { for p in 0..2 { for r in 0..2 { for b in 0..6 { for c in 0..6 { for s in 0..3 {
-                    if enc_fc[tx][p][r][b][c][s] != dec_fc[tx][p][r][b][c][s] {
-                        panic!("frame {idx} FC desync at tx={tx} p={p} r={r} b={b} c={c} s={s}: enc={} dec={}",
-                            enc_fc[tx][p][r][b][c][s], dec_fc[tx][p][r][b][c][s]);
+                for tx in 0..4 {
+                    for p in 0..2 {
+                        for r in 0..2 {
+                            for b in 0..6 {
+                                for c in 0..6 {
+                                    for s in 0..3 {
+                                        if enc_fc[tx][p][r][b][c][s] != dec_fc[tx][p][r][b][c][s] {
+                                            panic!(
+                                                "frame {idx} FC desync at tx={tx} p={p} r={r} b={b} c={c} s={s}: enc={} dec={}",
+                                                enc_fc[tx][p][r][b][c][s],
+                                                dec_fc[tx][p][r][b][c][s]
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
-                }}}}}}
+                }
             }
         }
     }
@@ -6674,8 +6686,16 @@ mod tests {
         //
         // Lossless (q = 0) ⇒ no loop filter (the LF callers skip the pass
         // on filter_level == 0).
-        assert_eq!(pick_filter_level(0, false), 0, "q = 0 (lossless) must disable LF");
-        assert_eq!(pick_filter_level(0, true), 0, "q = 0 (lossless) KF must disable LF");
+        assert_eq!(
+            pick_filter_level(0, false),
+            0,
+            "q = 0 (lossless) must disable LF"
+        );
+        assert_eq!(
+            pick_filter_level(0, true),
+            0,
+            "q = 0 (lossless) KF must disable LF"
+        );
         // Monotonic non-decreasing in q, clamped to MAX_LOOP_FILTER (63),
         // and the keyframe's -4 never lands above the inter level at the
         // same q.
@@ -6683,7 +6703,10 @@ mod tests {
         for q in 1u8..=255 {
             let lvl = pick_filter_level(q, false);
             assert!(lvl >= prev, "filter level must be monotonic in q (q = {q})");
-            assert!(lvl <= 63, "filter level must clamp to MAX_LOOP_FILTER (q = {q})");
+            assert!(
+                lvl <= 63,
+                "filter level must clamp to MAX_LOOP_FILTER (q = {q})"
+            );
             assert!(
                 pick_filter_level(q, true) <= lvl,
                 "KF level (-4) must be <= inter level at q = {q}"
@@ -7216,7 +7239,10 @@ mod tests {
             min_qindex: 4,
             max_qindex: 255,
         };
-        let cfg_on = EncoderConfig { aq_mode: AqMode::CyclicRefresh, ..cfg_off };
+        let cfg_on = EncoderConfig {
+            aq_mode: AqMode::CyclicRefresh,
+            ..cfg_off
+        };
 
         let mut enc_off = StreamEncoder::new(cfg_off).unwrap();
         let mut enc_on = StreamEncoder::new(cfg_on).unwrap();
@@ -7292,10 +7318,9 @@ mod tests {
                         let off_off = py * yp_off.stride() + mi_c * 8;
                         let off_on = py * yp_on.stride() + mi_c * 8;
                         for c in 0..8 {
-                            let d_off = (yp_off.data()[off_off + c] as i32)
-                                - (ys[src_off + c] as i32);
-                            let d_on = (yp_on.data()[off_on + c] as i32)
-                                - (ys[src_off + c] as i32);
+                            let d_off =
+                                (yp_off.data()[off_off + c] as i32) - (ys[src_off + c] as i32);
+                            let d_on = (yp_on.data()[off_on + c] as i32) - (ys[src_off + c] as i32);
                             sse_off += (d_off * d_off) as u64;
                             sse_on += (d_on * d_on) as u64;
                         }
@@ -7324,10 +7349,8 @@ mod tests {
             return;
         }
 
-        let mean_on =
-            sse_on_at_seg1_cells.iter().sum::<u64>() as f64 / n_cells as f64;
-        let mean_off =
-            sse_off_at_seg1_cells.iter().sum::<u64>() as f64 / n_cells as f64;
+        let mean_on = sse_on_at_seg1_cells.iter().sum::<u64>() as f64 / n_cells as f64;
+        let mean_off = sse_off_at_seg1_cells.iter().sum::<u64>() as f64 / n_cells as f64;
         let ratio = mean_on / mean_off;
 
         // The libvpx-spec property: on the cells that AQ chose to boost,
@@ -7459,8 +7482,7 @@ mod tests {
 
         // At least one frame must have refreshed something — otherwise
         // the test is vacuous (cyclic refresh never fired).
-        let total_refreshed: usize =
-            per_frame_refreshed_sbs.iter().map(|s| s.len()).sum();
+        let total_refreshed: usize = per_frame_refreshed_sbs.iter().map(|s| s.len()).sum();
         assert!(
             total_refreshed > 0,
             "AQ.4 Oracle 3: no SBs refreshed in any of {N_INTER} inter \
@@ -7493,7 +7515,8 @@ mod tests {
             "AQ.4 Oracle 3: every SB overlapped between consecutive \
              frames — cursor advancement is broken. max_overlap = {} \
              of {} SBs.",
-            max_overlap, n_sbs,
+            max_overlap,
+            n_sbs,
         );
         // Cursor-still-advances oracle: the union of refreshed SBs
         // across all N_INTER frames must contain at least 2 distinct
@@ -7545,7 +7568,10 @@ mod tests {
 
     #[test]
     fn stream_encoder_rejects_zero_width() {
-        let cfg = EncoderConfig { width: 0, ..baseline_config() };
+        let cfg = EncoderConfig {
+            width: 0,
+            ..baseline_config()
+        };
         let err = match StreamEncoder::new(cfg) {
             Err(e) => e,
             Ok(_) => panic!("expected StreamEncoder::new to fail"),
@@ -7560,7 +7586,10 @@ mod tests {
 
     #[test]
     fn stream_encoder_rejects_non_multiple_of_64_width() {
-        let cfg = EncoderConfig { width: 65, ..baseline_config() };
+        let cfg = EncoderConfig {
+            width: 65,
+            ..baseline_config()
+        };
         let err = match StreamEncoder::new(cfg) {
             Err(e) => e,
             Ok(_) => panic!("expected StreamEncoder::new to fail"),
@@ -7573,7 +7602,10 @@ mod tests {
 
     #[test]
     fn stream_encoder_rejects_zero_height() {
-        let cfg = EncoderConfig { height: 0, ..baseline_config() };
+        let cfg = EncoderConfig {
+            height: 0,
+            ..baseline_config()
+        };
         let err = match StreamEncoder::new(cfg) {
             Err(e) => e,
             Ok(_) => panic!("expected StreamEncoder::new to fail"),
@@ -7586,7 +7618,10 @@ mod tests {
 
     #[test]
     fn stream_encoder_rejects_non_multiple_of_64_height() {
-        let cfg = EncoderConfig { height: 65, ..baseline_config() };
+        let cfg = EncoderConfig {
+            height: 65,
+            ..baseline_config()
+        };
         let err = match StreamEncoder::new(cfg) {
             Err(e) => e,
             Ok(_) => panic!("expected StreamEncoder::new to fail"),
@@ -7599,7 +7634,10 @@ mod tests {
 
     #[test]
     fn stream_encoder_rejects_zero_gop_length() {
-        let cfg = EncoderConfig { gop_length: 0, ..baseline_config() };
+        let cfg = EncoderConfig {
+            gop_length: 0,
+            ..baseline_config()
+        };
         let err = match StreamEncoder::new(cfg) {
             Err(e) => e,
             Ok(_) => panic!("expected StreamEncoder::new to fail"),
@@ -7612,7 +7650,10 @@ mod tests {
 
     #[test]
     fn stream_encoder_rejects_zero_framerate() {
-        let cfg = EncoderConfig { framerate: 0.0, ..baseline_config() };
+        let cfg = EncoderConfig {
+            framerate: 0.0,
+            ..baseline_config()
+        };
         let err = match StreamEncoder::new(cfg) {
             Err(e) => e,
             Ok(_) => panic!("expected StreamEncoder::new to fail"),
@@ -7625,7 +7666,10 @@ mod tests {
 
     #[test]
     fn stream_encoder_rejects_negative_framerate() {
-        let cfg = EncoderConfig { framerate: -1.0, ..baseline_config() };
+        let cfg = EncoderConfig {
+            framerate: -1.0,
+            ..baseline_config()
+        };
         let err = match StreamEncoder::new(cfg) {
             Err(e) => e,
             Ok(_) => panic!("expected StreamEncoder::new to fail"),
@@ -7638,7 +7682,10 @@ mod tests {
 
     #[test]
     fn stream_encoder_rejects_nan_framerate() {
-        let cfg = EncoderConfig { framerate: f64::NAN, ..baseline_config() };
+        let cfg = EncoderConfig {
+            framerate: f64::NAN,
+            ..baseline_config()
+        };
         let err = match StreamEncoder::new(cfg) {
             Err(e) => e,
             Ok(_) => panic!("expected StreamEncoder::new to fail"),
@@ -7651,7 +7698,10 @@ mod tests {
 
     #[test]
     fn stream_encoder_rejects_zero_bitrate() {
-        let cfg = EncoderConfig { target_bitrate_bps: 0, ..baseline_config() };
+        let cfg = EncoderConfig {
+            target_bitrate_bps: 0,
+            ..baseline_config()
+        };
         let err = match StreamEncoder::new(cfg) {
             Err(e) => e,
             Ok(_) => panic!("expected StreamEncoder::new to fail"),
@@ -7824,16 +7874,25 @@ mod tests {
 
     #[test]
     fn stream_encoder_new_initializes_aq_state_off() {
-        let cfg = EncoderConfig { aq_mode: AqMode::Off, ..baseline_config() };
+        let cfg = EncoderConfig {
+            aq_mode: AqMode::Off,
+            ..baseline_config()
+        };
         let enc = StreamEncoder::new(cfg).unwrap();
         assert!(enc.cyclic_refresh.is_none(), "AQ off ⇒ no CR state");
     }
 
     #[test]
     fn stream_encoder_new_initializes_aq_state_cyclic_refresh() {
-        let cfg = EncoderConfig { aq_mode: AqMode::CyclicRefresh, ..baseline_config() };
+        let cfg = EncoderConfig {
+            aq_mode: AqMode::CyclicRefresh,
+            ..baseline_config()
+        };
         let enc = StreamEncoder::new(cfg).unwrap();
-        assert!(enc.cyclic_refresh.is_some(), "AQ CyclicRefresh ⇒ CR state present");
+        assert!(
+            enc.cyclic_refresh.is_some(),
+            "AQ CyclicRefresh ⇒ CR state present"
+        );
     }
 
     #[test]
@@ -7997,7 +8056,11 @@ mod tests {
         // partition with motion (the variance-based picker produces
         // a uniform Block64x64 grid on a flat input). A gradient
         // gives the filter something to operate on.
-        let cfg = EncoderConfig { width: 128, height: 128, ..cfg };
+        let cfg = EncoderConfig {
+            width: 128,
+            height: 128,
+            ..cfg
+        };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(128, 128);
 
@@ -8130,7 +8193,10 @@ mod tests {
     fn prev_grid_gate_open_returns_false_after_keyframe() {
         // After encoding a single KF, the prev_mv_grid gate should NOT
         // open (last_frame_was_key == true gates it shut).
-        let cfg = EncoderConfig { use_prev_frame_mvs: true, ..baseline_config() };
+        let cfg = EncoderConfig {
+            use_prev_frame_mvs: true,
+            ..baseline_config()
+        };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
         let _ = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
@@ -8144,7 +8210,10 @@ mod tests {
 
     #[test]
     fn prev_grid_gate_open_returns_true_after_inter_when_enabled() {
-        let cfg = EncoderConfig { use_prev_frame_mvs: true, ..baseline_config() };
+        let cfg = EncoderConfig {
+            use_prev_frame_mvs: true,
+            ..baseline_config()
+        };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
         // KF then inter.
@@ -8171,7 +8240,10 @@ mod tests {
         // reconstruction diverges from the true decode (the SEVERITY-1
         // inter-frame drift). Previously this test asserted the opposite
         // (gate shut when config disables) — that was the bug.
-        let cfg = EncoderConfig { use_prev_frame_mvs: false, ..baseline_config() };
+        let cfg = EncoderConfig {
+            use_prev_frame_mvs: false,
+            ..baseline_config()
+        };
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
         let _ = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
@@ -8306,7 +8378,12 @@ mod tests {
         // Top-left cell.
         let cell = grid[0].expect("cell must be populated");
         match cell.mode {
-            BlockMode::Inter { mode, ref_frames, mvs, .. } => {
+            BlockMode::Inter {
+                mode,
+                ref_frames,
+                mvs,
+                ..
+            } => {
                 assert_eq!(mode, InterMode::NewMv);
                 assert_eq!(ref_frames[0], RefFrame::GoldenFrame);
                 assert_eq!(mvs[0].row, 8);
@@ -8450,7 +8527,10 @@ mod tests {
             for c in 0..2 {
                 let idx = r * mi_cols + c;
                 assert_eq!(segs[idx], 5, "16x16 leaf row {r} col {c}");
-                assert!(!skips[idx], "16x16 leaf row {r} col {c} should be skip=false");
+                assert!(
+                    !skips[idx],
+                    "16x16 leaf row {r} col {c} should be skip=false"
+                );
             }
         }
     }
@@ -8517,7 +8597,11 @@ mod tests {
         let pa2 = enc.pre_analysis_for_test();
         let captured = pa2.last_source_y.as_ref().unwrap();
         assert_eq!(captured.len(), 64 * 64);
-        assert_eq!(&captured[..], &y2[..], "W2.1: Last_Source must hold frame 1");
+        assert_eq!(
+            &captured[..],
+            &y2[..],
+            "W2.1: Last_Source must hold frame 1"
+        );
     }
 
     /// W1.5 PROOF — `encode_frame` pushes each input through the
@@ -8845,7 +8929,10 @@ mod tests {
         const NO_REFS: [Option<(u32, u32)>; 8] = [None; 8];
         let (hdr, _cursor) = parse_uncompressed_header(&inter.data, &NO_REFS)
             .expect("emitted inter packet must parse");
-        let tail = hdr.tail.as_ref().expect("inter frame must carry a HeaderTail");
+        let tail = hdr
+            .tail
+            .as_ref()
+            .expect("inter frame must carry a HeaderTail");
         assert!(
             tail.refresh_frame_context,
             "W0.5 PROOF: inter frame must emit refresh_frame_context = true \
@@ -8953,4 +9040,3 @@ mod tests {
         );
     }
 }
-

@@ -212,7 +212,11 @@ fn s2_gate_enabled() -> bool {
     }
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("RVP9_S2_GATE").map(|v| v == "1").unwrap_or(false))
+    *ON.get_or_init(|| {
+        std::env::var("RVP9_S2_GATE")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    })
 }
 
 /// S2.2 AcDc round-trip — run the DCT round-trip even on model-AcDc
@@ -227,7 +231,11 @@ fn s2_gate_enabled() -> bool {
 fn s2_acdc_roundtrip_enabled() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("RVP9_S2_ACDC_RT").map(|v| v == "1").unwrap_or(false))
+    *ON.get_or_init(|| {
+        std::env::var("RVP9_S2_ACDC_RT")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    })
 }
 
 /// LA (Track A6, 2026-05-30) — HF-gated natural-content lambda calibration.
@@ -283,7 +291,11 @@ fn lambda_atten() -> Option<(u64, u64)> {
 fn s3_domain_enabled() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("RVP9_S3_DOMAIN").map(|v| v == "1").unwrap_or(false))
+    *ON.get_or_init(|| {
+        std::env::var("RVP9_S3_DOMAIN")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    })
 }
 
 /// NEARESTMV/ZEROMV tie-break fix (HLD 2026.05.30). **Default ON.**
@@ -302,7 +314,11 @@ fn s3_domain_enabled() -> bool {
 fn nearest_tie_fix_enabled() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("RVP9_NEAREST").map(|v| v != "0").unwrap_or(true))
+    *ON.get_or_init(|| {
+        std::env::var("RVP9_NEAREST")
+            .map(|v| v != "0")
+            .unwrap_or(true)
+    })
 }
 
 /// S3 skip-side pixel-SSE rescale shift (default 4, libvpx). A/B only:
@@ -1063,6 +1079,15 @@ pub struct PickInterModeParams<'a> {
     /// the RDopt path that rvp9 does not run.
     pub cb_pred_filter_search: bool,
 
+    /// When `true`, mirror libvpx realtime `search_filter_ref` and skip
+    /// interpolation-filter search for integer-pel MVs, forcing
+    /// `EightTap`. rvp9 keeps this caller-controlled because the small
+    /// low-bitrate quality gate historically benefited from letting
+    /// integer-MV candidates pick the cheaper switchable-filter symbol,
+    /// while the large-frame realtime path needs the libvpx shortcut for
+    /// speed.
+    pub skip_integer_mv_filter_search: bool,
+
     /// 8×8-MI row index of this block. Feeds the [`cb_pred_filter_search`]
     /// chessboard predicate `((mi_row + mi_col) >> bsl) +
     /// chessboard_index) & 1` (`vp9_pickmode.c:1855-1857`).
@@ -1226,6 +1251,35 @@ const fn mi_width_log2_for_bsize(bsize: BlockSize) -> u32 {
         32 => 2,    // log2(4) = 2
         64 => 3,    // log2(8) = 3
         _ => 0,
+    }
+}
+
+/// libvpx realtime filter-search predicate.
+///
+/// `search_filter_ref` runs only when the candidate MV has a fractional
+/// luma component. Integer-pel MVs force `EIGHTTAP`, even if the frame
+/// header is switchable and even if `cb_pred_filter_search` would put
+/// this block on the chessboard-search half.
+#[inline]
+#[must_use]
+fn should_search_interp_filter(
+    skip_integer_mv_filter_search: bool,
+    cb_pred_filter_search: bool,
+    mi_row: u32,
+    mi_col: u32,
+    chessboard_index: u32,
+    block_size: BlockSize,
+    mv: Mv,
+) -> bool {
+    if skip_integer_mv_filter_search && ((mv.row | mv.col) & 0x07) == 0 {
+        return false;
+    }
+    if cb_pred_filter_search {
+        let bsl = mi_width_log2_for_bsize(block_size);
+        let v = ((mi_row + mi_col) >> bsl).wrapping_add(chessboard_index);
+        (v & 1) != 0
+    } else {
+        true
     }
 }
 
@@ -1816,11 +1870,12 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
             _ => mvc_safe.nearest,
         };
 
-        // §11 — `cb_pred_filter_search` (libvpx
-        // `vp9_pickmode.c:1852-1858`). When the gate is active, only
-        // run the per-block filter search on chessboard-pattern
-        // blocks; the other half uses the default `EightTap` filter
-        // with no search. The libvpx predicate is:
+        // §11 — interpolation-filter search gate (libvpx
+        // `vp9_pickmode.c:1852-1858`, `:2308-2315`). Search runs only
+        // for fractional-pel MVs. When `cb_pred_filter_search` is
+        // active, fractional candidates are further reduced to a
+        // chessboard-pattern subset; the other candidates use default
+        // `EightTap` with no search. The chessboard predicate is:
         //
         // ```c
         // const int bsl = mi_width_log2_lookup[bsize];
@@ -1830,13 +1885,15 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
         //
         // where `chessboard_index = current_video_frame & 1` so the
         // pattern toggles each frame.
-        let run_filter_search = if params.cb_pred_filter_search {
-            let bsl = mi_width_log2_for_bsize(params.block_size);
-            let v = ((params.mi_row + params.mi_col) >> bsl).wrapping_add(params.chessboard_index);
-            (v & 1) != 0
-        } else {
-            true
-        };
+        let run_filter_search = should_search_interp_filter(
+            params.skip_integer_mv_filter_search,
+            params.cb_pred_filter_search,
+            params.mi_row,
+            params.mi_col,
+            params.chessboard_index,
+            params.block_size,
+            mv,
+        );
         let filter_set: &[InterpFilter] = if run_filter_search {
             f5_filter_search_set()
         } else {
@@ -2009,7 +2066,9 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
     let intra_cost_penalty = get_intra_cost_penalty(params.q_index, params.block_size);
     let inter_mode_thresh = rd_cost(lambda, intra_cost_penalty, 0);
 
-    if best.best_rd_cost > inter_mode_thresh {
+    if std::env::var_os("RVP9_RT_NO_INTRA_FALLBACK").is_none()
+        && best.best_rd_cost > inter_mode_thresh
+    {
         let intra_result = evaluate_intra_fallback(params, lambda, intra_cost_penalty);
         if let Some(intra) = intra_result {
             if intra.best_rd_cost < best.best_rd_cost {
@@ -2321,6 +2380,28 @@ fn clamp_mv_to_limits(mv: Mv, limits: &MvLimits) -> Mv {
     }
 }
 
+fn rt_newmv_max_iters_override() -> Option<i32> {
+    use std::sync::OnceLock;
+    static VALUE: OnceLock<Option<i32>> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        std::env::var("RVP9_RT_NEWMV_MAX_ITERS")
+            .ok()
+            .and_then(|v| v.parse::<i32>().ok())
+            .filter(|&v| v >= 0)
+    })
+}
+
+fn rt_newmv_subpel_iters_override() -> Option<i32> {
+    use std::sync::OnceLock;
+    static VALUE: OnceLock<Option<i32>> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        std::env::var("RVP9_RT_NEWMV_SUBPEL_ITERS")
+            .ok()
+            .and_then(|v| v.parse::<i32>().ok())
+            .filter(|&v| v >= 0)
+    })
+}
+
 /// Run the F7.0 full-pel diamond + sub-pel refinement for NEWMV.
 /// Returns the resulting MV in 1/8-pel units.
 ///
@@ -2416,6 +2497,10 @@ fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
             .newmv_seed
             .map(|seed| clamp_mv_to_limits(seed, &params.mv_limits))
     };
+    let default_max_iters = params.site_config.total_steps as i32;
+    let max_iters = rt_newmv_max_iters_override()
+        .map(|v| v.min(default_max_iters))
+        .unwrap_or(default_max_iters);
     let full = diamond_search_sad(&FullPixelSearchParams {
         block_size: params.block_size,
         src_plane: params.src_plane,
@@ -2426,7 +2511,7 @@ fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
         mv_limits: params.mv_limits,
         sad_per_bit: DEFAULT_SAD_PER_BIT,
         mv_costs: params.mv_costs,
-        max_iters: params.site_config.total_steps as i32,
+        max_iters,
         site_config: params.site_config,
     });
     let center_mv_fp = Mv {
@@ -2493,6 +2578,9 @@ fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
     // here. EIGHTH_PEL is no longer reachable for NEWMV; libvpx's
     // speed-9 setter likewise never selects it for NEWMV.
     let forced_stop = adaptive_subpel_force_stop(center_mv_fp);
+    let iters_per_step = rt_newmv_subpel_iters_override()
+        .map(|v| v.min(2))
+        .unwrap_or(2);
     let sub = find_best_sub_pixel_tree_pruned_more(&SubPixelSearchParams {
         block_size: params.block_size,
         src_plane: params.src_plane,
@@ -2508,7 +2596,7 @@ fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
         // libvpx rt default: `sf.mv.subpel_search_level = 2`
         // (`vp9_speed_features.c:929`), enabling SECOND_LEVEL_CHECKS
         // after each pyramid level's FIRST_LEVEL_CHECKS.
-        iters_per_step: 2,
+        iters_per_step,
     });
     sub.best_mv
 }
@@ -2523,7 +2611,11 @@ fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
 /// per-block filter bits go on the wire; the picker's RD comparison
 /// decides per-block which filter wins.
 fn f5_filter_search_set() -> &'static [InterpFilter] {
-    &[InterpFilter::EightTap, InterpFilter::EightTapSmooth]
+    if std::env::var_os("RVP9_RT_EIGHTTAP_ONLY").is_some() {
+        &[InterpFilter::EightTap]
+    } else {
+        &[InterpFilter::EightTap, InterpFilter::EightTapSmooth]
+    }
 }
 
 /// Evaluate one `(mode, mv)` candidate: fetch the prediction with sub-pel
@@ -4860,6 +4952,7 @@ mod tests {
             bias_golden: false,
             frames_since_golden: 0,
             cb_pred_filter_search: false,
+            skip_integer_mv_filter_search: false,
             mi_row: 0,
             mi_col: 0,
             chessboard_index: 0,
@@ -8141,12 +8234,49 @@ mod tests {
         );
     }
 
+    /// §11/F.5 — when the large-frame speed flag is active, rvp9 mirrors
+    /// libvpx and searches interpolation filters only for fractional-pel
+    /// MVs. Integer-pel candidates use `EightTap` directly before the
+    /// `cb_pred_filter_search` chessboard predicate is even relevant.
+    ///
+    /// libvpx ref: `vp9_pickmode.c:2308-2315`.
+    #[test]
+    fn s11_filter_search_requires_subpel_mv_before_chessboard() {
+        let integer_mv = Mv { row: 8, col: 0 };
+        let subpel_mv = Mv { row: 0, col: 1 };
+
+        assert!(
+            should_search_interp_filter(false, false, 2, 0, 0, BlockSize::Block16x16, integer_mv,),
+            "small-frame compatibility path keeps integer-pel filter search available"
+        );
+        assert!(
+            !should_search_interp_filter(true, false, 2, 0, 0, BlockSize::Block16x16, integer_mv,),
+            "large-frame speed path skips integer-pel filter search"
+        );
+        assert!(
+            !should_search_interp_filter(true, true, 2, 0, 0, BlockSize::Block16x16, integer_mv),
+            "integer-pel MV must skip filter search even on a chessboard-search block"
+        );
+        assert!(
+            !should_search_interp_filter(true, true, 0, 0, 0, BlockSize::Block16x16, subpel_mv),
+            "sub-pel MV still obeys cb_pred_filter_search predicate=0"
+        );
+        assert!(
+            should_search_interp_filter(true, true, 2, 0, 0, BlockSize::Block16x16, subpel_mv),
+            "sub-pel MV on predicate=1 block must run filter search"
+        );
+        assert!(
+            should_search_interp_filter(false, false, 0, 0, 0, BlockSize::Block16x16, subpel_mv),
+            "sub-pel MV runs filter search when cb_pred_filter_search is off"
+        );
+    }
+
     /// §11 — `cb_pred_filter_search`: the chessboard predicate
     /// `((mi_row + mi_col) >> bsl + chessboard_index) & 1` determines
-    /// whether per-block filter search runs. We verify both branches
-    /// by running the picker on a block where the chosen filter
-    /// matters (the picker's `picked_interp_filter` is part of the
-    /// result).
+    /// whether per-block filter search may run after the fractional-MV
+    /// gate. We verify the forced-EightTap branch through the picker;
+    /// [`s11_filter_search_requires_subpel_mv_before_chessboard`] pins
+    /// the full predicate.
     ///
     /// libvpx ref: `vp9_pickmode.c:1852-1858`,
     /// `vp9_speed_features.c:658, 748, 792`.
@@ -8180,8 +8310,8 @@ mod tests {
         params.encode_breakout = 0;
         params.reference_masking = false;
 
-        // Control: cb_pred_filter_search = false → filter search always
-        // runs (the `[EightTap, EightTapSmooth]` set is consulted).
+        // Control: cb_pred_filter_search = false leaves the fractional-MV
+        // gate as the only search suppressor.
         params.cb_pred_filter_search = false;
         let control = pick_inter_mode(&params);
         // Sanity: picker returns a well-defined filter.
