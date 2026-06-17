@@ -607,9 +607,9 @@ pub fn write_mv_component(
         if is_class0 {
             cc.class0[d as usize] += 1;
             cc.class0_fp[d as usize][fr as usize] += 1;
-            if use_hp {
-                cc.class0_hp[hp as usize] += 1;
-            }
+            // libvpx's `vp9_inc_mv` bumps HP counts unconditionally;
+            // when no HP bit was coded, `hp == 1` by construction.
+            cc.class0_hp[hp as usize] += 1;
         } else {
             let n = class as usize + CLASS0_BITS - 1;
             for i in 0..n {
@@ -617,9 +617,8 @@ pub fn write_mv_component(
                 cc.bits[i][bit] += 1;
             }
             cc.fp[fr as usize] += 1;
-            if use_hp {
-                cc.hp[hp as usize] += 1;
-            }
+            // Keep writer-side counts identical to the decoder/read path.
+            cc.hp[hp as usize] += 1;
         }
     }
 }
@@ -1377,6 +1376,54 @@ mod tests {
         let mut r = BoolReader::new(&buf).expect("init");
         let got = read_mv(&mut r, ref_mv, true, ctx, None);
         assert_eq!(got, cur_mv);
+    }
+
+    /// Writer-side counts must mirror libvpx's unconditional HP-count
+    /// bump even when the per-block `use_mv_hp(ref)` gate disables HP
+    /// coding. Otherwise encoder-side frame-context adaptation drifts
+    /// from external decoders once frame-level HP MVs are enabled.
+    #[test]
+    fn write_mv_counts_hp_even_when_block_gate_disables_hp() {
+        let ctx = &DEFAULT_NMV_CONTEXT;
+        let ref_mv = Mv { row: 200, col: 200 };
+
+        let mut buf = vec![0u8; 256];
+        let mut counts = NmvCounts::default();
+        {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            write_mv(
+                &mut w,
+                Mv { row: 200, col: 204 },
+                ref_mv,
+                /* allow_hp = */ true,
+                ctx,
+                Some(&mut counts),
+            );
+            for _ in 0..16 {
+                w.write_bit(0);
+            }
+            w.stop_encode().expect("stop_encode");
+        }
+        assert_eq!(counts.comps[1].class0_hp, [0, 1]);
+
+        let mut buf = vec![0u8; 256];
+        let mut counts = NmvCounts::default();
+        {
+            let mut w = BoolWriter::start_encode(&mut buf);
+            write_mv(
+                &mut w,
+                Mv { row: 200, col: 224 },
+                ref_mv,
+                /* allow_hp = */ true,
+                ctx,
+                Some(&mut counts),
+            );
+            for _ in 0..16 {
+                w.write_bit(0);
+            }
+            w.stop_encode().expect("stop_encode");
+        }
+        assert_eq!(counts.comps[1].hp, [0, 1]);
     }
 
     /// 200-iter fuzz over random (`cur_mv`, `ref_mv`, `allow_hp`)
