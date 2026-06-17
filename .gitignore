@@ -90,6 +90,10 @@ bench/results/*
 !bench/results/decode-headtohead.md
 !bench/results/decode-headtohead.csv
 
+# Ad-hoc benchmarking / profiling scratch (Python probes, intermediate .ivf
+# encodes, trace dumps, encoded clips) created during dev sessions. Never tracked.
+bench_tmp/
+
 # rvp9-fuzz — libFuzzer corpus + crash artifacts (source is committed,
 # working state is not). Per HLD §G9; corpus is seeded by
 # scripts/setup-fuzz-corpus.ps1.
