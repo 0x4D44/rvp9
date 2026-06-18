@@ -2813,6 +2813,27 @@ impl Decoder {
                         cur_y_width,
                         cur_y_height,
                     );
+                    // G-A: reject an out-of-envelope active ref before any
+                    // block consumes its poisoned `ScaleFactors`. libvpx
+                    // performs this check at frame-header time
+                    // (`vp9_decodeframe.c:1589-1591`,
+                    // `VPX_CODEC_CORRUPT_FRAME "Referenced frame has
+                    // invalid size"`). We gate on `sf.is_valid()` — exactly
+                    // the predicate that poisons the SF with
+                    // `REF_INVALID_SCALE` (`scale.rs:91-98,117-119`) — so
+                    // the gate can never drift from `valid_ref_frame_size`.
+                    // Slot provenance mirrors `EmptyInterRef`: the
+                    // `ref_frame_map` index named by `ref_frame_indices[i]`,
+                    // not the loop counter `i`.
+                    if !sf.is_valid() {
+                        return Err(DecodeError::InvalidRefFrameSize {
+                            slot: ref_frame_indices[i],
+                            ref_w: buf.width(),
+                            ref_h: buf.height(),
+                            cur_w: cur_y_width,
+                            cur_h: cur_y_height,
+                        });
+                    }
                     sfs[i] = Some(sf);
                 }
             }
@@ -4476,6 +4497,34 @@ pub enum DecodeError {
         /// The 3-bit slot index that was requested.
         slot: u8,
     },
+    /// An inter frame named a reference whose dimensions fall outside the
+    /// VP9 scaled-prediction envelope (each axis must satisfy
+    /// `0.5×cur ≤ ref ≤ 16×cur`; libvpx `valid_ref_frame_size`,
+    /// `vp9_scale.h:61-64`). Out-of-envelope refs cannot produce a valid
+    /// `ScaleFactors` — libvpx poisons them with `REF_INVALID_SCALE`
+    /// (`vp9_scale.c:53-57`) and rejects the frame in
+    /// `setup_frame_size_with_refs` with
+    /// `vpx_internal_error(VPX_CODEC_CORRUPT_FRAME, "Referenced frame has
+    /// invalid size")` (`vp9_decodeframe.c:1589-1591`). Like
+    /// [`Self::EmptyInterRef`], no well-formed stream ever names such a
+    /// ref (the encoder constrains resize ratios), so this is a
+    /// malformed-bitstream error, not an unimplemented-feature signal.
+    /// The payload carries the offending ref slot plus both dimension
+    /// pairs for diagnostics.
+    InvalidRefFrameSize {
+        /// The 3-bit `ref_frame_map` slot index (from
+        /// `ref_frame_indices`) that resolved to the out-of-envelope
+        /// frame. Same provenance as [`Self::EmptyInterRef`]'s `slot`.
+        slot: u8,
+        /// The referenced frame's crop (visible) luma width.
+        ref_w: u32,
+        /// The referenced frame's crop (visible) luma height.
+        ref_h: u32,
+        /// The current frame's crop luma width.
+        cur_w: u32,
+        /// The current frame's crop luma height.
+        cur_h: u32,
+    },
     /// `parse_compressed_partition` saw a `first_partition_size`
     /// that runs past the end of the frame's byte slice.
     TruncatedCompressedHeader {
@@ -4545,6 +4594,17 @@ impl core::fmt::Display for DecodeError {
             Self::EmptyInterRef { slot } => {
                 write!(f, "inter frame referenced empty ref_frame_map slot {slot}")
             }
+            Self::InvalidRefFrameSize {
+                slot,
+                ref_w,
+                ref_h,
+                cur_w,
+                cur_h,
+            } => write!(
+                f,
+                "referenced frame in slot {slot} has invalid size {ref_w}x{ref_h} \
+                 for current frame {cur_w}x{cur_h} (outside [0.5x, 16x] envelope)"
+            ),
             Self::TruncatedCompressedHeader {
                 declared,
                 available,
@@ -5739,6 +5799,413 @@ mod tests {
 
         let err = dec.decode_frame(&parsed).unwrap_err();
         assert_eq!(err, DecodeError::EmptyInterRef { slot: 5 });
+    }
+
+    /// G-A oracle: drive `decode_inter_frame` against an inter frame
+    /// whose active ref pool holds an out-of-envelope frame, and return
+    /// the resulting error.
+    ///
+    /// The gate we exercise (`lib.rs`, the `frame_scale_factors` loop)
+    /// runs *after* the compressed-header + tile-buffer parse, so a
+    /// `&[]` body (the trick the `EmptyInterRef` tests use) never
+    /// reaches it. This helper therefore builds a fully parseable
+    /// keyframe + single-ref inter frame (the same machinery as
+    /// `s4_16d_round_trip_inter_after_keyframe_through_decoder`),
+    /// decodes the keyframe to prime the pool, then redirects two
+    /// `ref_frame_map` slots: slot 0 → a valid 64×64 frame, and
+    /// `bad_slot` → a frame of `(bad_w, bad_h)` that fails
+    /// `valid_ref_frame_size` against the 64×64 current frame. The inter
+    /// frame's `ref_frame_indices` are `[0, bad_slot, 0]`, so LAST
+    /// resolves to the valid ref (the tile bytes predict from LAST) but
+    /// GOLDEN resolves to the out-of-envelope ref — proving the gate
+    /// reports the `ref_frame_indices[i]` slot, not the loop index.
+    fn drive_inter_frame_with_oversized_golden_ref(
+        bad_slot: u8,
+        bad_w: u32,
+        bad_h: u32,
+    ) -> DecodeError {
+        use rvp9_core::bitstream::frame::ReferenceMode;
+        use rvp9_core::bitstream::header::HeaderTail;
+        use rvp9_core::bitstream::sub_parsers::{
+            LoopFilterParams, MAX_PROB, PREDICTION_PROBS, QuantizationParams, SEG_TREE_PROBS,
+            SegmentationParams, TileInfo,
+        };
+        use rvp9_core::bitstream::{
+            AllZeroCoefSource, BitDepth, ChromaFormat, ColorRange, ColorSpace,
+            CompressedHeaderOptions, CompressedHeaderResult, FrameKind, InterpFilter,
+            ModesTileBounds, Profile, RawBitWriter, UncompressedHeader, write_compressed_header,
+            write_tile_inter, write_tile_intra_keyframe, write_uncompressed_header,
+        };
+        use rvp9_core::block::BlockSize;
+        use rvp9_core::coef_ctx::TileCoefCtx;
+        use rvp9_core::entropy::{BoolWriter, FrameContext};
+        use rvp9_core::frame::{BorderUsage, ByteAlignment, Yv12Buffer};
+        use rvp9_core::inter::{
+            InterModeReadParams, setup_compound_reference_mode, sign_bias_from_header,
+        };
+        use rvp9_core::intra_pred::IntraMode;
+        use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, Mv, RefFrame};
+        use rvp9_core::transforms::{TxMode, TxSize};
+        use std::sync::Arc;
+
+        let mi_rows = 8u32;
+        let mi_cols = 8u32;
+        let tile_bounds = ModesTileBounds {
+            mi_row_start: 0,
+            mi_row_end: 8,
+            mi_col_start: 0,
+            mi_col_end: 8,
+        };
+
+        let make_tail = |compressed_len: usize| HeaderTail {
+            refresh_frame_context: true,
+            frame_parallel_decoding_mode: false,
+            frame_context_idx: 0,
+            loop_filter: LoopFilterParams {
+                filter_level: 0,
+                sharpness_level: 0,
+                mode_ref_delta_enabled: false,
+                mode_ref_delta_update: false,
+                ref_deltas: [None; 4],
+                mode_deltas: [None; 2],
+            },
+            quantization: QuantizationParams {
+                base_qindex: 50,
+                y_dc_delta_q: 0,
+                uv_dc_delta_q: 0,
+                uv_ac_delta_q: 0,
+            },
+            segmentation: SegmentationParams {
+                enabled: false,
+                update_map: false,
+                temporal_update: false,
+                tree_probs: [MAX_PROB; SEG_TREE_PROBS],
+                pred_probs: [MAX_PROB; PREDICTION_PROBS],
+                update_data: false,
+                abs_delta: false,
+                feature_data: Default::default(),
+            },
+            tile_info: TileInfo {
+                log2_tile_cols: 0,
+                log2_tile_rows: 0,
+            },
+            first_partition_size: compressed_len as u16,
+        };
+
+        // ---- Frame 1: keyframe (primes the ref pool). ----
+        let kf_cell = ModeInfo {
+            block_size: BlockSize::Block64x64,
+            tx_size: TxSize::Tx32x32,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        };
+        let kf_mi_grid: Vec<Option<ModeInfo>> = vec![Some(kf_cell); (mi_rows * mi_cols) as usize];
+
+        let pre_fc_default = FrameContext::new_default();
+        let mut kf_pre_fc = pre_fc_default.clone();
+        let kf_post_fc = pre_fc_default.clone();
+        let kf_opts = CompressedHeaderOptions {
+            lossless: false,
+            intra_only: true,
+            interp_filter: InterpFilter::EightTap,
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+        let kf_target = CompressedHeaderResult {
+            tx_mode: TxMode::AllowTx32x32,
+            reference_mode: ReferenceMode::Single,
+        };
+
+        let mut kf_compressed_buf = vec![0u8; 16 * 1024];
+        let kf_compressed_len = {
+            let mut bw = BoolWriter::start_encode(&mut kf_compressed_buf);
+            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target, None)
+                .expect("write_compressed_header keyframe");
+            bw.stop_encode().expect("stop_encode kf compressed")
+        };
+        kf_compressed_buf.truncate(kf_compressed_len);
+
+        let mut kf_tile_buf = vec![0u8; 4 * 1024];
+        let kf_tile_len = {
+            let mut bw = BoolWriter::start_encode(&mut kf_tile_buf);
+            let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
+            let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
+            let coef_source = rvp9_core::bitstream::AllZeroIntraCoefSource::new();
+            write_tile_intra_keyframe(
+                &mut bw,
+                &kf_mi_grid,
+                mi_rows,
+                mi_cols,
+                tile_bounds,
+                &kf_post_fc,
+                TxMode::AllowTx32x32,
+                None,
+                &mut coef_ctx,
+                &coef_source,
+            )
+            .expect("write_tile_intra_keyframe");
+            bw.stop_encode().expect("stop_encode kf tile")
+        };
+        kf_tile_buf.truncate(kf_tile_len);
+
+        let kf_tail = make_tail(kf_compressed_len);
+        let kf_hdr = UncompressedHeader {
+            kind: FrameKind::KeyFrame,
+            profile: Profile::Profile0,
+            show_frame: true,
+            error_resilient: false,
+            bit_depth: BitDepth::Eight,
+            color_space: ColorSpace::Bt601,
+            color_range: ColorRange::Studio,
+            chroma: ChromaFormat::Yuv420,
+            width: 64,
+            height: 64,
+            render_size: None,
+            tail: Some(kf_tail),
+        };
+
+        let mut kf_hdr_buf = vec![0u8; 256];
+        let kf_hdr_len = {
+            let mut wb = RawBitWriter::new(&mut kf_hdr_buf);
+            write_uncompressed_header(&mut wb, &kf_hdr, kf_compressed_len as u16)
+                .expect("write_uncompressed_header keyframe");
+            wb.finish().expect("RawBitWriter::finish kf")
+        };
+        kf_hdr_buf.truncate(kf_hdr_len);
+
+        let mut kf_packet = Vec::new();
+        kf_packet.extend_from_slice(&kf_hdr_buf);
+        kf_packet.extend_from_slice(&kf_compressed_buf);
+        kf_packet.extend_from_slice(&kf_tile_buf);
+
+        let mut dec = Decoder::new();
+        let kf_parsed = {
+            let frames = dec
+                .parse_packet(&kf_packet)
+                .expect("parse_packet keyframe");
+            let pf = &frames.frames()[0];
+            ParsedFrame {
+                header: pf.header.clone(),
+                header_end_byte: pf.header_end_byte,
+                full_frame_data: pf.full_frame_data,
+            }
+        };
+        dec.decode_frame(&kf_parsed).expect("decode_frame keyframe");
+
+        // ---- Frame 2: single-ref inter frame, LAST = slot 0. ----
+        let inter_cell = ModeInfo {
+            block_size: BlockSize::Block64x64,
+            tx_size: TxSize::Tx32x32,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Inter {
+                mode: InterMode::ZeroMv,
+                ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                mvs: [Mv::ZERO; 2],
+                interp_filter: InterpFilter::EightTap,
+            },
+            bmi: Default::default(),
+        };
+        let inter_mi_grid: Vec<Option<ModeInfo>> =
+            vec![Some(inter_cell); (mi_rows * mi_cols) as usize];
+
+        let inter_post_fc = dec.frame_context(0).clone();
+        let mut inter_pre_fc = inter_post_fc.clone();
+
+        let inter_opts = CompressedHeaderOptions {
+            lossless: false,
+            intra_only: false,
+            interp_filter: InterpFilter::EightTap,
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+        let inter_target = CompressedHeaderResult {
+            tx_mode: TxMode::AllowTx32x32,
+            reference_mode: ReferenceMode::Single,
+        };
+
+        let mut inter_compressed_buf = vec![0u8; 16 * 1024];
+        let inter_compressed_len = {
+            let mut bw = BoolWriter::start_encode(&mut inter_compressed_buf);
+            write_compressed_header(
+                &mut bw,
+                &mut inter_pre_fc,
+                &inter_post_fc,
+                inter_opts,
+                &inter_target,
+                None,
+            )
+            .expect("write_compressed_header inter");
+            bw.stop_encode().expect("stop_encode inter compressed")
+        };
+        inter_compressed_buf.truncate(inter_compressed_len);
+
+        let sign_bias = sign_bias_from_header(&[false, false, false]);
+        let (comp_fixed_ref, comp_var_ref) = setup_compound_reference_mode(&sign_bias);
+        let inter_params = InterModeReadParams {
+            allow_high_precision_mv: false,
+            interp_filter: InterpFilter::EightTap,
+            reference_mode: ReferenceMode::Single,
+            comp_fixed_ref,
+            comp_var_ref,
+            sign_bias,
+            seg_ref_frame: None,
+            seg_skip: false,
+        };
+
+        let mut inter_tile_buf = vec![0u8; 4 * 1024];
+        let inter_tile_len = {
+            let mut bw = BoolWriter::start_encode(&mut inter_tile_buf);
+            let mut coef_ctx =
+                TileCoefCtx::new((tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1));
+            let coef_source = AllZeroCoefSource::new();
+            write_tile_inter(
+                &mut bw,
+                &inter_post_fc,
+                &inter_params,
+                TxMode::AllowTx32x32,
+                &inter_mi_grid,
+                mi_rows,
+                mi_cols,
+                tile_bounds,
+                None,
+                None,
+                &mut coef_ctx,
+                &coef_source,
+                None,
+            )
+            .expect("write_tile_inter");
+            bw.stop_encode().expect("stop_encode inter tile")
+        };
+        inter_tile_buf.truncate(inter_tile_len);
+
+        let inter_tail = make_tail(inter_compressed_len);
+        let inter_hdr = UncompressedHeader {
+            kind: FrameKind::InterFrame {
+                reset_frame_context: 0,
+                refresh_frame_flags: 0x00,
+                // LAST = slot 0 (valid), GOLDEN = `bad_slot`
+                // (out-of-envelope), ALTREF = slot 0 (valid). The gate
+                // must fail at iteration i=1 and report `slot: bad_slot`.
+                ref_frame_indices: [0, bad_slot, 0],
+                ref_frame_sign_biases: [false, false, false],
+                allow_high_precision_mv: false,
+                interp_filter: InterpFilter::EightTap,
+            },
+            profile: Profile::Profile0,
+            show_frame: true,
+            error_resilient: false,
+            bit_depth: BitDepth::Eight,
+            color_space: ColorSpace::Bt601,
+            color_range: ColorRange::Studio,
+            chroma: ChromaFormat::Yuv420,
+            width: 64,
+            height: 64,
+            render_size: None,
+            tail: Some(inter_tail),
+        };
+
+        let mut inter_hdr_buf = vec![0u8; 256];
+        let inter_hdr_len = {
+            let mut wb = RawBitWriter::new(&mut inter_hdr_buf);
+            write_uncompressed_header(&mut wb, &inter_hdr, inter_compressed_len as u16)
+                .expect("write_uncompressed_header inter");
+            wb.finish().expect("RawBitWriter::finish inter")
+        };
+        inter_hdr_buf.truncate(inter_hdr_len);
+
+        let mut inter_packet = Vec::new();
+        inter_packet.extend_from_slice(&inter_hdr_buf);
+        inter_packet.extend_from_slice(&inter_compressed_buf);
+        inter_packet.extend_from_slice(&inter_tile_buf);
+
+        // Redirect the ref_frame_map so LAST/ALTREF (slot 0) point at a
+        // fresh in-envelope 64×64 frame and GOLDEN (`bad_slot`) points at
+        // the out-of-envelope frame. Park both in distinct frame-pool
+        // slots, then wire the ref_frame_map entries (same mechanism the
+        // `_reports_correct_slot` sibling test uses).
+        let alloc_buf = |w: u32, h: u32| -> FrameBuf {
+            Arc::new(
+                Yv12Buffer::alloc(
+                    w,
+                    h,
+                    ChromaFormat::Yuv420,
+                    BorderUsage::Decoder,
+                    ByteAlignment::Legacy,
+                )
+                .unwrap(),
+            )
+        };
+        // Pool slot 7 → valid 64×64; pool slot 8 → out-of-envelope ref.
+        dec.frame_pool_mut().assign_slot(7, alloc_buf(64, 64)).unwrap();
+        dec.frame_pool_mut()
+            .assign_slot(8, alloc_buf(bad_w, bad_h))
+            .unwrap();
+        dec.set_ref_slot(0, 7);
+        dec.set_ref_slot(bad_slot as usize, 8);
+
+        let inter_parsed = {
+            let frames = dec
+                .parse_packet(&inter_packet)
+                .expect("parse_packet inter frame");
+            let pf = &frames.frames()[0];
+            ParsedFrame {
+                header: pf.header.clone(),
+                header_end_byte: pf.header_end_byte,
+                full_frame_data: pf.full_frame_data,
+            }
+        };
+        dec.decode_frame(&inter_parsed)
+            .expect_err("out-of-envelope ref must be rejected")
+    }
+
+    /// G-A oracle (single-axis fail): a GOLDEN ref of 1056×64 against a
+    /// 64×64 current frame fails `valid_ref_frame_size` on the x-axis
+    /// only (`2*64 = 128 < 1056`), so it cannot produce a valid
+    /// `ScaleFactors`. The decoder must reject the frame with
+    /// `InvalidRefFrameSize`, reporting the `ref_frame_map` slot named
+    /// by `ref_frame_indices[1]` (slot 5), the offending ref dims, and
+    /// the current dims — not the loop index `i = 1`.
+    #[test]
+    fn decode_inter_frame_out_of_envelope_ref_rejected_single_axis() {
+        let err = drive_inter_frame_with_oversized_golden_ref(5, 1056, 64);
+        assert_eq!(
+            err,
+            DecodeError::InvalidRefFrameSize {
+                slot: 5,
+                ref_w: 1056,
+                ref_h: 64,
+                cur_w: 64,
+                cur_h: 64,
+            }
+        );
+    }
+
+    /// G-A oracle (both-axis fail): a GOLDEN ref of 2×2 against a 64×64
+    /// current frame fails `valid_ref_frame_size` on both upper-bound
+    /// checks (`64 > 16*2 = 32` on x and y), the most degenerate
+    /// out-of-envelope shape. The decoder must reject it with
+    /// `InvalidRefFrameSize` carrying the correct slot (4) and dims.
+    #[test]
+    fn decode_inter_frame_out_of_envelope_ref_rejected_both_axes() {
+        let err = drive_inter_frame_with_oversized_golden_ref(4, 2, 2);
+        assert_eq!(
+            err,
+            DecodeError::InvalidRefFrameSize {
+                slot: 4,
+                ref_w: 2,
+                ref_h: 2,
+                cur_w: 64,
+                cur_h: 64,
+            }
+        );
     }
 
     /// G3 (DA Item 5): regression guard against an accidental merge
