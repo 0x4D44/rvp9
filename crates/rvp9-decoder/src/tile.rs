@@ -1671,13 +1671,18 @@ pub fn decode_tile_inter<D: TileFrameDst>(
     mi_view: crate::tile_ctx::TileMiView,
     decode_progress: Option<&[std::sync::atomic::AtomicU32]>,
 ) -> Result<TileDecodeCtx, TileDecodeError> {
-    // G7.1c: see `decode_tile_intra` for rationale.
+    // G7.1c: the per-block inter decode chain is `ss`-aware for all four
+    // legal VP9 chroma formats (G7.1a parametric geometry / G7.1b inter MC),
+    // mirroring `decode_tile_intra`. Debug-only sanity check.
     debug_assert!(
         matches!(
             dst_frame.chroma(),
-            ChromaFormat::Yuv420 | ChromaFormat::Yuv444
+            ChromaFormat::Yuv420
+                | ChromaFormat::Yuv422
+                | ChromaFormat::Yuv440
+                | ChromaFormat::Yuv444
         ),
-        "decoder gate should have rejected {:?} before decode_tile_inter",
+        "decode_tile_inter: unexpected chroma {:?}",
         dst_frame.chroma(),
     );
     let mut reader = BoolReader::new(tile_data).map_err(|_| TileDecodeError::InvalidTilePayload)?;

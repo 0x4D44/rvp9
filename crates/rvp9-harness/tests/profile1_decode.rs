@@ -226,6 +226,28 @@ fn profile1_440_foreman_decodes_bit_exact_wave_p() {
     assert_eq!(mismatched, 0, "foreman_c440.ivf Wave P fix-lock");
 }
 
+/// SIG4 fix-lock (2026.06.04 longclip campaign). The G7.2 commit `a278399`
+/// updated `decode_tile_intra`'s chroma allow-list to all four formats but
+/// left `decode_tile_inter`'s `debug_assert!` at `Yuv420 | Yuv444`, wrongly
+/// tripping on legal 4:2:2 / 4:4:0 INTER frames in debug builds. That silently
+/// broke this whole test (its `foreman_c422*`/`foreman_c440*`/`vp91-2-04-yuv422`/
+/// `vp91-2-04-yuv440` vectors are all `I P P P…` inter streams) from 2026-05-23
+/// until the fix relaxed the inter assert to mirror the intra one. The recon
+/// path was always ss-aware (release builds — assert compiled out — decoded
+/// these bit-exact); only the debug guard was wrong. This focused marker
+/// decodes one 4:2:2 and one 4:4:0 inter stream bit-exact so a regression on the
+/// inter asymmetric-chroma path produces a named failure rather than "one of
+/// fifteen". See `wrk_docs/2026.06.04 - HLD - SIG4 profile-1 asymmetric-chroma
+/// inter decode assert.md`.
+#[test]
+fn profile1_422_440_inter_decodes_bit_exact_sig4() {
+    for name in ["foreman_c422.ivf", "foreman_c440.ivf"] {
+        let (frames, mismatched) = decode_and_gate(name);
+        assert_eq!(mismatched, 0, "{name}: SIG4 inter asymmetric-chroma fix-lock");
+        assert!(frames >= 2, "{name}: expected an inter stream (>=2 shown frames)");
+    }
+}
+
 /// Non-asserting variant for probing vectors that are expected to fail
 /// (rvp9 real-bug follow-ups). Returns `(shown_frames, mismatches)`.
 fn decode_and_count(name: &str) -> (usize, usize) {
