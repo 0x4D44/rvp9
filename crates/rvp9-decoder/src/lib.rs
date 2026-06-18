@@ -1560,11 +1560,19 @@ impl Decoder {
         // every inter frame).
         let resolved_seg =
             self.resolve_segmentation(&tail.segmentation, /* is_keyframe = */ true);
-        // Per-segment alt-Q feature data: feature_data[seg][SEG_LVL_ALT_Q].
+        // Per-segment alt-Q + REF_FRAME + SKIP feature data. On the
+        // keyframe path only `seg_skip` is consumed (the shared
+        // `read_skip` force-skip branch); REF_FRAME / is_inter are N/A
+        // for intra-by-definition keyframe blocks, but we extract
+        // `seg_ref_frame` too to keep `FrameDecodeParams` uniform.
         let mut seg_alt_q = [None; rvp9_core::loopfilter::MAX_SEGMENTS];
+        let mut seg_ref_frame = [None; rvp9_core::loopfilter::MAX_SEGMENTS];
+        let mut seg_skip = [false; rvp9_core::loopfilter::MAX_SEGMENTS];
         if resolved_seg.enabled {
             for (i, s) in resolved_seg.feature_data.iter().enumerate() {
                 seg_alt_q[i] = s[0]; // SEG_LVL_ALT_Q == 0
+                seg_ref_frame[i] = s[2].map(|v| v as u8); // SEG_LVL_REF_FRAME == 2
+                seg_skip[i] = s[3].is_some(); // SEG_LVL_SKIP == 3
             }
         }
         let params = FrameDecodeParams {
@@ -1583,6 +1591,8 @@ impl Decoder {
             uv_ac_delta_q: i32::from(tail.quantization.uv_ac_delta_q),
             seg_alt_q,
             seg_abs_delta: resolved_seg.abs_delta,
+            seg_ref_frame,
+            seg_skip,
         };
         // Stage 3 Task E.1.b — zero the coef counts at the start of
         // every frame and pass an accumulator into the tile decoder.
@@ -2728,6 +2738,11 @@ impl Decoder {
             comp_fixed_ref,
             comp_var_ref,
             sign_bias,
+            // Frame-level default: inactive. The per-block REF_FRAME /
+            // SKIP segdata is injected via a `{ ..params, ... }` copy in
+            // `decode_inter_block` once the block's segment_id is known.
+            seg_ref_frame: None,
+            seg_skip: false,
         };
 
         // 7. D.10 — resolve per-frame segmentation against the running
@@ -2736,11 +2751,21 @@ impl Decoder {
         let resolved_seg =
             self.resolve_segmentation(&tail.segmentation, /* is_keyframe = */ false);
 
-        // Per-segment alt-Q from the RESOLVED feature data.
+        // Per-segment alt-Q + REF_FRAME + SKIP from the RESOLVED feature
+        // data. `segfeature_active` AND-s with `seg->enabled`
+        // (`vp9_seg_common.h:57-77`); gating on `resolved_seg.enabled`
+        // here reproduces that, so the per-block sites can check
+        // `seg_skip[seg]` / `seg_ref_frame[seg]` directly.
         let mut seg_alt_q = [None; rvp9_core::loopfilter::MAX_SEGMENTS];
+        let mut seg_ref_frame = [None; rvp9_core::loopfilter::MAX_SEGMENTS];
+        let mut seg_skip = [false; rvp9_core::loopfilter::MAX_SEGMENTS];
         if resolved_seg.enabled {
             for (i, s) in resolved_seg.feature_data.iter().enumerate() {
-                seg_alt_q[i] = s[0];
+                seg_alt_q[i] = s[0]; // SEG_LVL_ALT_Q == 0
+                // SEG_LVL_REF_FRAME == 2: raw absolute frame index (no
+                // abs/delta math). SEG_LVL_SKIP == 3: presence flag only.
+                seg_ref_frame[i] = s[2].map(|v| v as u8);
+                seg_skip[i] = s[3].is_some();
             }
         }
 
@@ -2760,6 +2785,8 @@ impl Decoder {
             uv_ac_delta_q: i32::from(tail.quantization.uv_ac_delta_q),
             seg_alt_q,
             seg_abs_delta: resolved_seg.abs_delta,
+            seg_ref_frame,
+            seg_skip,
         };
 
         // Borrow refs as &Yv12Buffer for InterFrameDecodeParams. The
@@ -6848,6 +6875,8 @@ mod tests {
             comp_fixed_ref,
             comp_var_ref,
             sign_bias,
+            seg_ref_frame: None,
+            seg_skip: false,
         };
 
         let mut inter_tile_buf = vec![0u8; 4 * 1024];
@@ -7213,6 +7242,8 @@ mod tests {
             comp_fixed_ref,
             comp_var_ref,
             sign_bias,
+            seg_ref_frame: None,
+            seg_skip: false,
         };
         let mut inter_tile_buf = vec![0u8; 32 * 1024];
         let inter_tile_len = {
@@ -7577,6 +7608,8 @@ mod tests {
             comp_fixed_ref,
             comp_var_ref,
             sign_bias,
+            seg_ref_frame: None,
+            seg_skip: false,
         };
         let mut inter_tile_buf = vec![0u8; 32 * 1024];
         let inter_tile_len = {
@@ -7929,6 +7962,8 @@ mod tests {
             comp_fixed_ref,
             comp_var_ref,
             sign_bias,
+            seg_ref_frame: None,
+            seg_skip: false,
         };
 
         let mut inter_tile_buf = vec![0u8; 4 * 1024];
@@ -8348,6 +8383,8 @@ mod tests {
             comp_fixed_ref,
             comp_var_ref,
             sign_bias,
+            seg_ref_frame: None,
+            seg_skip: false,
         };
 
         let mut inter_tile_buf = vec![0u8; 4 * 1024];
@@ -8703,6 +8740,8 @@ mod tests {
             comp_fixed_ref,
             comp_var_ref,
             sign_bias,
+            seg_ref_frame: None,
+            seg_skip: false,
         };
 
         let mut inter_tile_buf = vec![0u8; 64 * 1024];

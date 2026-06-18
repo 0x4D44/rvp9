@@ -96,6 +96,13 @@ pub enum TileDecodeError {
     /// The compressed tile bytes did not start with a valid bool-coder
     /// marker bit.
     InvalidTilePayload,
+    /// A segment with `SEG_LVL_SKIP` active was applied to a sub-8×8
+    /// block. libvpx treats this as a corrupt stream
+    /// (`vpx_internal_error`, `vp9_decodemv.c:709-712`).
+    Sub8SegSkip {
+        /// The offending block's size (always `< Block8x8`).
+        block_size: BlockSize,
+    },
 }
 
 impl core::fmt::Display for TileDecodeError {
@@ -109,6 +116,10 @@ impl core::fmt::Display for TileDecodeError {
                 "multi-tile unsupported in v1 (log2_tile_cols={log2_tile_cols}, log2_tile_rows={log2_tile_rows})"
             ),
             Self::InvalidTilePayload => f.write_str("tile payload missing bool-coder marker bit"),
+            Self::Sub8SegSkip { block_size } => write!(
+                f,
+                "invalid usage of SEG_LVL_SKIP on sub-8x8 block ({block_size:?})"
+            ),
         }
     }
 }
@@ -323,6 +334,14 @@ pub struct FrameDecodeParams {
     pub seg_alt_q: [Option<i16>; rvp9_core::loopfilter::MAX_SEGMENTS],
     /// `abs_delta` from the segmentation header.
     pub seg_abs_delta: bool,
+    /// Per-segment forced ref-frame index (`SEG_LVL_REF_FRAME`).
+    /// `None` when the feature is inactive for that segment. The raw
+    /// absolute frame index from `feature_data[seg][2]` (no abs/delta
+    /// math — REF_FRAME is not subject to `abs_delta`).
+    pub seg_ref_frame: [Option<u8>; rvp9_core::loopfilter::MAX_SEGMENTS],
+    /// Per-segment forced-skip flag (`SEG_LVL_SKIP`). `true` when the
+    /// feature is active for that segment.
+    pub seg_skip: [bool; rvp9_core::loopfilter::MAX_SEGMENTS],
 }
 
 /// Per-plane chroma subsampling derived from a [`ChromaFormat`].
@@ -887,7 +906,19 @@ fn decode_block<D: TileFrameDst>(
         usize::from(above.is_some_and(|m| m.skip)) + usize::from(left.is_some_and(|m| m.skip));
     // Keyframes don't call `adapt_mode_probs`; pass `None` for counts
     // on read_skip / read_tx_size (libvpx `vp9_decodeframe.c:3050`).
-    let skip = read_skip(reader, &fc.skip_probs, skip_ctx, None);
+    //
+    // SEG_LVL_SKIP force (libvpx `read_skip` is shared with the
+    // keyframe path, `vp9_decodemv.c:179-184`): when active, skip is
+    // forced to 1 with NO bit read. REF_FRAME / is_inter are N/A on the
+    // keyframe path (blocks are intra by definition). An encoder never
+    // sets SEG_LVL_SKIP on a keyframe (`configure_static_seg_features`
+    // clears all features on KEY_FRAME), but honoring it on the shared
+    // skip path costs nothing and is strictly more faithful.
+    let skip = if params.seg_skip[segment_id as usize] {
+        true
+    } else {
+        read_skip(reader, &fc.skip_probs, skip_ctx, None)
+    };
     if trace_cursor {
         eprintln!("RVP9_DBG decode_block skip_ctx={skip_ctx} skip={skip}");
     }
@@ -1691,7 +1722,7 @@ pub fn decode_tile_inter<D: TileFrameDst>(
                 prev_segment_ids,
                 cur_segment_ids,
                 dispatch,
-            );
+            )?;
             mi_col += MI_BLOCK_SIZE;
         }
         // Wave 2 C2 — publish per-SB-row decode completion. See the
@@ -1737,9 +1768,9 @@ fn decode_inter_partition<D: TileFrameDst>(
     prev_segment_ids: &[u8],
     cur_segment_ids: &mut [u8],
     dispatch: &SimdDispatch,
-) {
+) -> Result<(), TileDecodeError> {
     if mi_row >= params.base.mi_rows || mi_col >= params.base.mi_cols {
-        return;
+        return Ok(());
     }
 
     let n8x8_l2 = n4x4_l2.saturating_sub(1);
@@ -1823,7 +1854,7 @@ fn decode_inter_partition<D: TileFrameDst>(
             prev_segment_ids,
             cur_segment_ids,
             dispatch,
-        );
+        )?;
     } else {
         match partition {
             PartitionType::None => {
@@ -1846,7 +1877,7 @@ fn decode_inter_partition<D: TileFrameDst>(
                     prev_segment_ids,
                     cur_segment_ids,
                     dispatch,
-                );
+                )?;
             }
             PartitionType::Horz => {
                 decode_inter_block(
@@ -1868,7 +1899,7 @@ fn decode_inter_partition<D: TileFrameDst>(
                     prev_segment_ids,
                     cur_segment_ids,
                     dispatch,
-                );
+                )?;
                 if has_rows {
                     decode_inter_block(
                         reader,
@@ -1889,7 +1920,7 @@ fn decode_inter_partition<D: TileFrameDst>(
                         prev_segment_ids,
                         cur_segment_ids,
                         dispatch,
-                    );
+                    )?;
                 }
             }
             PartitionType::Vert => {
@@ -1912,7 +1943,7 @@ fn decode_inter_partition<D: TileFrameDst>(
                     prev_segment_ids,
                     cur_segment_ids,
                     dispatch,
-                );
+                )?;
                 if has_cols {
                     decode_inter_block(
                         reader,
@@ -1933,7 +1964,7 @@ fn decode_inter_partition<D: TileFrameDst>(
                         prev_segment_ids,
                         cur_segment_ids,
                         dispatch,
-                    );
+                    )?;
                 }
             }
             PartitionType::Split => {
@@ -1958,7 +1989,7 @@ fn decode_inter_partition<D: TileFrameDst>(
                     prev_segment_ids,
                     cur_segment_ids,
                     dispatch,
-                );
+                )?;
                 decode_inter_partition(
                     reader,
                     fc,
@@ -1980,7 +2011,7 @@ fn decode_inter_partition<D: TileFrameDst>(
                     prev_segment_ids,
                     cur_segment_ids,
                     dispatch,
-                );
+                )?;
                 decode_inter_partition(
                     reader,
                     fc,
@@ -2002,7 +2033,7 @@ fn decode_inter_partition<D: TileFrameDst>(
                     prev_segment_ids,
                     cur_segment_ids,
                     dispatch,
-                );
+                )?;
                 decode_inter_partition(
                     reader,
                     fc,
@@ -2024,7 +2055,7 @@ fn decode_inter_partition<D: TileFrameDst>(
                     prev_segment_ids,
                     cur_segment_ids,
                     dispatch,
-                );
+                )?;
             }
         }
     }
@@ -2034,6 +2065,7 @@ fn decode_inter_partition<D: TileFrameDst>(
     {
         part_ctx.update(mi_row_in_tile, mi_col_in_tile, sub, num_8x8_wh);
     }
+    Ok(())
 }
 
 /// Decode one inter-frame leaf coding block at `(mi_row, mi_col)`.
@@ -2070,7 +2102,7 @@ fn decode_inter_block<D: TileFrameDst>(
     prev_segment_ids: &[u8],
     cur_segment_ids: &mut [u8],
     dispatch: &SimdDispatch,
-) {
+) -> Result<(), TileDecodeError> {
     let mi_row_in_tile = mi_row - bounds.mi_row_start;
     let mi_col_in_tile = mi_col - bounds.mi_col_start;
     let mi_row_in_sb = mi_row_in_tile & MI_MASK;
@@ -2229,7 +2261,15 @@ fn decode_inter_block<D: TileFrameDst>(
             left.as_ref().map_or(0u8, |m| u8::from(m.skip)),
         );
     }
-    let skip = read_skip(reader, &fc.skip_probs, skip_ctx, mode_counts.as_deref_mut());
+    // SEG_LVL_SKIP force (libvpx `read_skip`, `vp9_decodemv.c:179-184`):
+    // when active, skip is forced to 1 with NO bit read and NO count
+    // bump (libvpx returns before `++counts->skip`).
+    let seg_skip_active = params.base.seg_skip[segment_id as usize];
+    let skip = if seg_skip_active {
+        true
+    } else {
+        read_skip(reader, &fc.skip_probs, skip_ctx, mode_counts.as_deref_mut())
+    };
     if trace_imi {
         let (range, _, count, _) = reader.cursor_state();
         eprintln!(
@@ -2256,12 +2296,31 @@ fn decode_inter_block<D: TileFrameDst>(
             fc.intra_inter_prob[intra_inter_ctx],
         );
     }
-    let is_inter = read_is_inter(
-        reader,
-        &fc.intra_inter_prob,
-        intra_inter_ctx,
-        mode_counts.as_deref_mut(),
-    );
+    // SEG_LVL_REF_FRAME force (libvpx `read_is_inter_block`,
+    // `vp9_decodemv.c:436-441`): when active, is_inter is DERIVED from
+    // the forced ref index (`segdata != INTRA_FRAME`) with NO bit read
+    // and NO count bump.
+    //
+    // TODO(G-C verify): the SEG_LVL_REF_FRAME *per-block* force is
+    // covered by the `rvp9-core` unit oracle
+    // (`read_ref_frames_seg_force_consumes_zero_bits`, zero-bits-
+    // consumed) but NOT yet by the differential ROI fixture
+    // (`tests/corpus/segmentation/roi_segfeatures.ivf` activates
+    // REF_FRAME in the frame header but libvpx's realtime nonrd encoder
+    // never lands an inter block on the REF_FRAME segment). The SKIP
+    // force IS differentially proven there. A fixture that places inter
+    // blocks on a REF_FRAME segment would upgrade this to differential.
+    let seg_ref = params.base.seg_ref_frame[segment_id as usize];
+    let is_inter = if let Some(ref_idx) = seg_ref {
+        ref_idx != RefFrame::IntraFrame as u8
+    } else {
+        read_is_inter(
+            reader,
+            &fc.intra_inter_prob,
+            intra_inter_ctx,
+            mode_counts.as_deref_mut(),
+        )
+    };
     if trace_imi {
         let (range, _, count, _) = reader.cursor_state();
         eprintln!(
@@ -2369,8 +2428,27 @@ fn decode_inter_block<D: TileFrameDst>(
         // The libvpx pointer points at a single MV_REF (a 2-tuple of
         // `(mv[2], ref_frame[2])`); we materialise that as a
         // `PrevFrameMvRef` value by indexing the row-major grid.
-        let prev_mv =
-            prev_mv_grid.and_then(|g| g.get(mi_row * params.base.mi_cols + mi_col).copied());
+        let prev_mv = prev_mv_grid
+            .and_then(|g| g.get(mi_row * params.base.mi_cols + mi_col).copied());
+        // Inject this block's per-segment forced REF_FRAME / SKIP into
+        // a cheap `Copy` of the frame-level inter params (§3.4(A)):
+        //   - `read_ref_frames` forces ref0 = segdata, ref1 = NONE.
+        //   - the inter-mode read is forced to ZEROMV (suppressed).
+        // libvpx rejects SEG_LVL_SKIP on a sub-8×8 block as a corrupt
+        // stream (`vp9_decodemv.c:709-712`); we surface that error here,
+        // before the reader runs, so the bool reader never advances on
+        // the invalid block. SEG_LVL_REF_FRAME has no sub-8 restriction.
+        if seg_skip_active && (bsize as u8) < (BlockSize::Block8x8 as u8) {
+            return Err(TileDecodeError::Sub8SegSkip { block_size: bsize });
+        }
+        let block_inter_params = InterModeReadParams {
+            // `seg_ref` is the raw REF_FRAME segdata, which the parser
+            // clamps to `data_max = 3` (`sub_parsers.rs`), so `idx` is
+            // always in `0..=3` and `from_i8` never returns `None` here.
+            seg_ref_frame: seg_ref.and_then(|idx| RefFrame::from_i8(idx as i8)),
+            seg_skip: seg_skip_active,
+            ..params.inter_params
+        };
         {
             let lookup =
                 TileNeighbourLookup::new(decode_ctx, mi_row_in_tile as i32, mi_col_in_tile as i32);
@@ -2379,7 +2457,7 @@ fn decode_inter_block<D: TileFrameDst>(
                 fc,
                 mv_counts,
                 mode_counts.as_deref_mut(),
-                &params.inter_params,
+                &block_inter_params,
                 &lookup,
                 bsize,
                 &bounds_block,
@@ -2602,6 +2680,7 @@ fn decode_inter_block<D: TileFrameDst>(
             dispatch,
         );
     }
+    Ok(())
 }
 
 /// Splat a single `PrevFrameMvRef` entry across every `(r, c)` cell
@@ -2893,6 +2972,38 @@ fn read_intra_in_inter_mode_info(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// G-C: the sub-8×8 SEG_LVL_SKIP guard in `decode_inter_block`
+    /// surfaces `TileDecodeError::Sub8SegSkip` (mirroring libvpx
+    /// `vpx_internal_error` at `vp9_decodemv.c:709-712`). This locks the
+    /// error-variant Display + the `block_size < Block8x8` predicate the
+    /// guard uses, so a refactor that drops the guard or widens the
+    /// predicate produces a named failure. The live guard is also
+    /// reachable end-to-end (the differential ROI fixture exercises
+    /// SEG_LVL_SKIP, though only on legal ≥8×8 blocks).
+    #[test]
+    fn sub8_seg_skip_is_a_decode_error() {
+        // The guard fires for exactly the three sub-8 sizes.
+        for bsize in [BlockSize::Block4x4, BlockSize::Block4x8, BlockSize::Block8x4] {
+            assert!(
+                (bsize as u8) < (BlockSize::Block8x8 as u8),
+                "{bsize:?} must be classified sub-8",
+            );
+            let err = TileDecodeError::Sub8SegSkip { block_size: bsize };
+            let msg = err.to_string();
+            assert!(
+                msg.contains("SEG_LVL_SKIP") && msg.contains("sub-8x8"),
+                "Display should name the feature + the sub-8 condition: {msg}",
+            );
+        }
+        // ...and NOT for legal ≥8×8 sizes (the predicate the guard uses).
+        for bsize in [BlockSize::Block8x8, BlockSize::Block16x16, BlockSize::Block64x64] {
+            assert!(
+                (bsize as u8) >= (BlockSize::Block8x8 as u8),
+                "{bsize:?} must be classified >=8x8 (guard must NOT fire)",
+            );
+        }
+    }
 
     /// `tile_mi_offset` matches libvpx for single-tile (`log2 = 0`)
     /// edges and two-tile splits.
@@ -3546,6 +3657,8 @@ mod tests {
             uv_ac_delta_q: 7,
             seg_alt_q: [None; rvp9_core::loopfilter::MAX_SEGMENTS],
             seg_abs_delta: false,
+            seg_ref_frame: [None; rvp9_core::loopfilter::MAX_SEGMENTS],
+            seg_skip: [false; rvp9_core::loopfilter::MAX_SEGMENTS],
         };
         let (dc, ac) = plane_dequant(&params, 0, 0);
         let want_dc = dc_quant(100, 5, BitDepth::Eight) as i32;
@@ -3576,6 +3689,8 @@ mod tests {
             uv_ac_delta_q: 7,
             seg_alt_q: [None; rvp9_core::loopfilter::MAX_SEGMENTS],
             seg_abs_delta: false,
+            seg_ref_frame: [None; rvp9_core::loopfilter::MAX_SEGMENTS],
+            seg_skip: [false; rvp9_core::loopfilter::MAX_SEGMENTS],
         };
         let (dc_u, ac_u) = plane_dequant(&params, 1, 0);
         assert_eq!(dc_u, dc_quant(120, -3, BitDepth::Eight) as i32);
@@ -3609,6 +3724,8 @@ mod tests {
             uv_ac_delta_q: 0,
             seg_alt_q: seg_alt,
             seg_abs_delta: true,
+            seg_ref_frame: [None; rvp9_core::loopfilter::MAX_SEGMENTS],
+            seg_skip: [false; rvp9_core::loopfilter::MAX_SEGMENTS],
         };
         // Segment 2: alt = 40, abs_delta = true → qindex resolves to 40.
         let (dc, _) = plane_dequant(&params, 0, 2);

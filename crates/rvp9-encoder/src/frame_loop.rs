@@ -4430,6 +4430,9 @@ fn build_inter_packet_with_residuals(
         comp_fixed_ref,
         comp_var_ref,
         sign_bias,
+        // The encoder never activates per-segment REF_FRAME / SKIP.
+        seg_ref_frame: None,
+        seg_skip: false,
     };
 
     // AQ.3 — if segmentation is enabled in the header (cyclic refresh

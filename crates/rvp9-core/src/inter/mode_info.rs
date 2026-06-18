@@ -32,10 +32,11 @@
 //! resulting `ModeInfo` to [`crate::inter::scale::inter_predictor`]
 //! and the rest of the inter pipeline.
 //!
-//! Segmentation features (`SEG_LVL_SKIP`, `SEG_LVL_REF_FRAME`) are
-//! out of scope for the Stage 3 v1 floor — the keyframe path
-//! (K2 `decode_block`) similarly ignores them. The hooks are
-//! reserved on [`InterModeReadParams`] for a later pass.
+//! The per-segment `SEG_LVL_REF_FRAME` / `SEG_LVL_SKIP` features are
+//! consumed via the [`InterModeReadParams::seg_ref_frame`] /
+//! [`InterModeReadParams::seg_skip`] hooks: when active they force the
+//! reference frame / ZEROMV and suppress the corresponding bit reads
+//! (mirroring libvpx `read_ref_frames` / `read_inter_block_mode_info`).
 
 use crate::bitstream::{InterpFilter, ReferenceMode};
 use crate::block::BlockSize;
@@ -545,8 +546,11 @@ pub fn get_pred_context_single_ref_p2(above: Option<&ModeInfo>, left: Option<&Mo
 }
 
 /// Decode `ref_frame[0..2]` for an inter block. Mirrors libvpx
-/// `read_ref_frames` (`vp9_decodemv.c:303-341`). Skips the
-/// `SEG_LVL_REF_FRAME` segmentation override (out of scope for v1).
+/// `read_ref_frames` (`vp9_decodemv.c:303-341`), including the
+/// `SEG_LVL_REF_FRAME` segmentation override: when
+/// `params.seg_ref_frame` is `Some`, `ref_frame[0]` is forced to that
+/// segdata value, `ref_frame[1] = NoRefFrame` (single-ref), and NO
+/// comp/single ref bits are read.
 ///
 /// Returns `(ref0, ref1, is_compound)`. For single-ref blocks `ref1
 /// == NoRefFrame`.
@@ -566,6 +570,12 @@ pub fn read_ref_frames(
     left: Option<&ModeInfo>,
     mut mode_counts: Option<&mut crate::entropy::adapt::FrameCounts>,
 ) -> (RefFrame, RefFrame, bool) {
+    // SEG_LVL_REF_FRAME force (libvpx `vp9_decodemv.c:303-309`):
+    // ref_frame[0] = segdata, ref_frame[1] = NO_REF_FRAME (single
+    // ref), and the comp/single ref bits are NOT read.
+    if let Some(forced) = params.seg_ref_frame {
+        return (forced, RefFrame::NoRefFrame, false);
+    }
     // First: read or infer the block reference mode (Single vs
     // Compound). `Select` triggers a read; the other two are
     // frame-fixed.
@@ -692,6 +702,15 @@ pub struct InterModeReadParams {
     /// 4-slot sign-bias `[INTRA, LAST, GOLDEN, ALTREF]`
     /// (see [`crate::inter::mv_ref::sign_bias_from_header`]).
     pub sign_bias: [bool; 4],
+    /// `SEG_LVL_REF_FRAME` segdata for this block's segment (`None`
+    /// when inactive). When `Some`, `ref_frame[0]` is forced and the
+    /// comp/single ref bits are NOT read (libvpx `read_ref_frames`,
+    /// `vp9_decodemv.c:303-309`).
+    pub seg_ref_frame: Option<RefFrame>,
+    /// `SEG_LVL_SKIP` active for this block's segment. Forces ZEROMV
+    /// and suppresses the inter-mode read (libvpx
+    /// `read_inter_block_mode_info`, `vp9_decodemv.c:703-717`).
+    pub seg_skip: bool,
 }
 
 /// libvpx `vp9_setup_compound_reference_mode`
@@ -774,9 +793,17 @@ pub fn read_inter_block_mode_info<N: NeighbourLookup>(
     // 2. Parent inter mode + interpolation filter. For sub-8
     //    libvpx reads `b_mode` per-bmi later; the parent `mi->mode`
     //    is assigned to the last sub-block's mode after the loop.
+    //
+    //    SEG_LVL_SKIP force (libvpx `vp9_decodemv.c:703-717`): when
+    //    active, `mi->mode = ZEROMV` and the inter-mode bits are NOT
+    //    read. The sub-8 case is a stream error in libvpx
+    //    (`vp9_decodemv.c:709-712`) and is rejected by the decoder
+    //    before reaching this reader.
     let inter_mode_ctx = get_mode_context(block_size, neighbours);
     debug_assert!(inter_mode_ctx < INTER_MODE_CONTEXTS);
-    let parent_mode = if (block_size as u8) >= (BlockSize::Block8x8 as u8) {
+    let parent_mode = if params.seg_skip {
+        InterMode::ZeroMv // forced, no inter-mode bits read
+    } else if (block_size as u8) >= (BlockSize::Block8x8 as u8) {
         read_inter_mode(
             reader,
             &fc.inter_mode_probs[inter_mode_ctx],
@@ -1629,6 +1656,8 @@ mod tests {
             comp_fixed_ref: fixed,
             comp_var_ref: var,
             sign_bias,
+            seg_ref_frame: None,
+            seg_skip: false,
         }
     }
 
@@ -5696,5 +5725,160 @@ mod tests {
             InterpFilter::EightTap,
         );
         let _ = round_trip(&fc, &params, &nb, bsize, &bounds, None, &mi);
+    }
+
+    // -----------------------------------------------------------------
+    // G-C: SEG_LVL_REF_FRAME / SEG_LVL_SKIP forcing oracle (§4.4).
+    //
+    // The "zero bits consumed" assertions (reader register unchanged)
+    // are THE oracle for bool-reader sync: a forced branch that
+    // accidentally read a bit would advance `cursor_state()`.
+    // -----------------------------------------------------------------
+
+    /// A valid (decodable) bool-coder buffer of zero-bits. Used by the
+    /// "zero bits consumed" oracle tests: `BoolReader::new` requires a
+    /// proper marker bit, so a raw `0xFF` buffer would be rejected.
+    fn valid_padding_buf() -> Vec<u8> {
+        let mut buf = vec![0u8; 16];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        for _ in 0..64 {
+            w.write_bit(0);
+        }
+        let size = w.stop_encode().expect("stop_encode");
+        buf.truncate(size);
+        buf
+    }
+
+    /// Inter params with `SEG_LVL_REF_FRAME` active, forcing `ref0` to
+    /// the given frame.
+    fn forced_ref_params(forced: RefFrame) -> InterModeReadParams {
+        InterModeReadParams {
+            seg_ref_frame: Some(forced),
+            ..default_params()
+        }
+    }
+
+    /// **read_ref_frames force**: `SEG_LVL_REF_FRAME` active ⇒
+    /// `(ref0 = segdata, ref1 = NoRefFrame, is_compound = false)` and
+    /// ZERO comp/ref bits consumed. Mirrors libvpx `read_ref_frames`
+    /// (`vp9_decodemv.c:303-309`).
+    #[test]
+    fn read_ref_frames_seg_force_consumes_zero_bits() {
+        let fc = FrameContext::new_default();
+        // A VALID bool-coder buffer (proper marker bit + padding). If
+        // any ref bit WERE read it would advance the reader; we assert
+        // the reader register is byte-identical before/after, so the
+        // buffer's contents past the marker are irrelevant.
+        let buf = valid_padding_buf();
+
+        for forced in [
+            RefFrame::LastFrame,
+            RefFrame::GoldenFrame,
+            RefFrame::AltrefFrame,
+        ] {
+            let params = forced_ref_params(forced);
+            let mut reader = BoolReader::new(&buf).expect("init");
+            let before = reader.cursor_state();
+            let (ref0, ref1, is_compound) =
+                read_ref_frames(&mut reader, &fc, &params, None, None, None);
+            let after = reader.cursor_state();
+
+            assert_eq!(ref0, forced, "ref0 must be the forced segdata");
+            assert_eq!(ref1, RefFrame::NoRefFrame, "single-ref forced");
+            assert!(!is_compound, "forced ref is always single");
+            assert_eq!(
+                before, after,
+                "SEG_LVL_REF_FRAME force must consume ZERO bits (reader register unchanged)",
+            );
+        }
+    }
+
+    /// **SKIP ZEROMV force**: `SEG_LVL_SKIP` active, `bsize >= 8x8` ⇒
+    /// `mode == ZeroMv`, `ref_frames = (forced, NONE)`, MVs zero, and
+    /// NO inter-mode / comp / ref bits consumed. The whole mode-info
+    /// read advances the reader by ZERO because both the ref read
+    /// (REF_FRAME force) and the inter-mode read (SKIP force) are
+    /// suppressed, and ZEROMV consumes no MV bits. With a non-switchable
+    /// interp filter no filter bit is read either. Mirrors libvpx
+    /// `read_inter_block_mode_info` (`vp9_decodemv.c:703-717`).
+    #[test]
+    fn seg_skip_forces_zeromv_and_consumes_zero_bits() {
+        let fc = FrameContext::new_default();
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block16x16;
+        // Both features active: REF_FRAME forces LAST, SKIP forces ZEROMV.
+        let params = InterModeReadParams {
+            seg_ref_frame: Some(RefFrame::LastFrame),
+            seg_skip: true,
+            ..default_params()
+        };
+        let buf = valid_padding_buf();
+        let mut reader = BoolReader::new(&buf).expect("init");
+        let before = reader.cursor_state();
+        let mut mi = skeleton_mi(bsize);
+        read_inter_block_mode_info(
+            &mut reader, &fc, None, None, &params, &nb, bsize, &bounds, None, &mut mi,
+        );
+        let after = reader.cursor_state();
+
+        match mi.mode {
+            BlockMode::Inter { mode, ref_frames, mvs, .. } => {
+                assert_eq!(mode, InterMode::ZeroMv, "SEG_LVL_SKIP forces ZEROMV");
+                assert_eq!(
+                    ref_frames,
+                    [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                    "REF_FRAME force pins ref0 and single-refs ref1",
+                );
+                assert_eq!(mvs, [Mv::ZERO, Mv::ZERO], "ZEROMV ⇒ zero MVs");
+            }
+            _ => panic!("expected Inter"),
+        }
+        assert_eq!(
+            before, after,
+            "forced REF_FRAME + SKIP (ZEROMV) must consume ZERO bits",
+        );
+    }
+
+    /// **Inactive-feature regression guard**: with both features OFF,
+    /// `read_inter_block_mode_info` still reads the ref + inter-mode
+    /// bits from the stream (it ADVANCES the reader) and decodes the
+    /// hand-built single-ref-LAST + ZEROMV exactly. This guards that
+    /// the new gates don't perturb the common (non-forced) path.
+    #[test]
+    fn features_inactive_common_path_still_reads_bits() {
+        let fc = FrameContext::new_default();
+        let params = default_params(); // seg_ref_frame: None, seg_skip: false
+        let nb = ListNeighbours::new();
+        let bounds = loose_bounds();
+        let bsize = BlockSize::Block16x16;
+
+        let mut buf = vec![0u8; 64];
+        let mut w = BoolWriter::start_encode(&mut buf);
+        let p_single = fc.single_ref_prob[2][0];
+        write_single_ref_bits(&mut w, RefFrame::LastFrame, p_single, 0);
+        write_inter_mode_bits(&mut w, InterMode::ZeroMv, &fc.inter_mode_probs[0]);
+        let size = finalise(w);
+        buf.truncate(size);
+
+        let mut reader = BoolReader::new(&buf).expect("init");
+        let before = reader.cursor_state();
+        let mut mi = skeleton_mi(bsize);
+        read_inter_block_mode_info(
+            &mut reader, &fc, None, None, &params, &nb, bsize, &bounds, None, &mut mi,
+        );
+        let after = reader.cursor_state();
+
+        match mi.mode {
+            BlockMode::Inter { mode, ref_frames, .. } => {
+                assert_eq!(mode, InterMode::ZeroMv);
+                assert_eq!(ref_frames, [RefFrame::LastFrame, RefFrame::NoRefFrame]);
+            }
+            _ => panic!("expected Inter"),
+        }
+        assert_ne!(
+            before, after,
+            "inactive features ⇒ common path MUST read bits (reader advances)",
+        );
     }
 }

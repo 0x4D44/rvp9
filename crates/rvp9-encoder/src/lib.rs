@@ -829,6 +829,8 @@ impl Encoder {
             comp_fixed_ref,
             comp_var_ref,
             sign_bias,
+            seg_ref_frame: None,
+            seg_skip: false,
         };
 
         let mut tile_buf = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 8 + 1024];

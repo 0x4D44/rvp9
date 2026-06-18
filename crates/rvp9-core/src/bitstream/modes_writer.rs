@@ -3715,6 +3715,8 @@ mod tests {
             comp_fixed_ref: fixed,
             comp_var_ref: var,
             sign_bias,
+            seg_ref_frame: None,
+            seg_skip: false,
         }
     }
 
