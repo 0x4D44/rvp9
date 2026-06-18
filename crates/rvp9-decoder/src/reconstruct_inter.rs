@@ -586,6 +586,16 @@ pub fn reconstruct_inter_block<D: TileFrameDst>(
                     // reads stay within that range.
                     let dq_coefs: &mut [i32; MAX_TX_COEFFS] =
                         unsafe { dq_coefs_uninit.assume_init_mut() };
+                    // Frame-edge clamp for the entropy-context writeback
+                    // (libvpx `vp9_set_contexts`, `vp9_blockd.c:87-122`):
+                    // the in-frame above/left cell counts for this TX are
+                    // the visible extent `max_blocks_{wide,high} - {aoff,
+                    // loff}`, capped at the TX size `n` (= `tx_step_4x4`).
+                    // Cells beyond the frame edge get `0`, not `eob > 0`.
+                    let above_cells =
+                        (max_blocks_wide as isize - aoff as isize).clamp(0, tx_step_4x4 as isize) as usize;
+                    let left_cells =
+                        (max_blocks_high as isize - loff as isize).clamp(0, tx_step_4x4 as isize) as usize;
                     let eob = decode_block_tokens(
                         reader,
                         fc,
@@ -600,6 +610,8 @@ pub fn reconstruct_inter_block<D: TileFrameDst>(
                         seg_eob,
                         plane_dequant_pair,
                         &mut dq_coefs[..seg_eob],
+                        above_cells,
+                        left_cells,
                     );
 
                     if eob > 0 {

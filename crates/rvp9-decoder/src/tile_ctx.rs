@@ -1180,6 +1180,86 @@ mod tests {
         assert_eq!(ctx.left_coef(0, 16), 0);
     }
 
+    /// SIG2 reproducer: the `set_coef_flags_clamped` frame-edge clamp
+    /// (libvpx `vp9_set_contexts`, `vp9_blockd.c:87-122`). A `Tx32x32`
+    /// (`n = 8`) writeback with `eob > 0` at a block straddling the
+    /// frame's bottom edge must write `1` to the in-frame `left_coef`
+    /// rows and **explicitly 0** to the off-frame rows — even if a
+    /// previous block in the same SB row had set them to `1`. The old
+    /// `set_coef_flags(.., 8, 8, true)` splat set the off-frame rows to
+    /// `1`, corrupting an adjacent large TX's entropy context and
+    /// desyncing the partial-bottom SB row (the 1080p keyframe bug).
+    #[test]
+    fn set_coef_flags_clamps_at_frame_edge() {
+        // Y plane: 16 left rows per SB. A Tx32x32 at y4=8 covers rows
+        // 8..16; mimic the 1080 partial-bottom where only rows 8..14
+        // are in-frame (pixel rows 1080/1084 = y4 14/15 are off-frame).
+        let mut ctx = TileCoefCtx::new(8);
+
+        // A previous block in this SB row left the off-frame rows set to
+        // 1 (the stale state libvpx's second `for` loop must overwrite).
+        ctx.set_coef_flags(0, 0, 14, 1, 1, true); // left[14] = 1
+        ctx.set_coef_flags(0, 0, 15, 1, 1, true); // left[15] = 1
+        assert_eq!(ctx.left_coef(0, 14), 1);
+        assert_eq!(ctx.left_coef(0, 15), 1);
+
+        // Tx32x32 writeback (n = 8) at x4=0, y4=8, eob > 0, with only
+        // left_cells = 6 in-frame (rows 8..14). above is fully in-frame.
+        ctx.set_coef_flags_clamped(0, 0, 8, 8, 8, 8, 6, true);
+
+        // In-frame left rows 8..14 are 1.
+        for y4 in 8..14 {
+            assert_eq!(ctx.left_coef(0, y4), 1, "in-frame left[{y4}]");
+        }
+        // Off-frame left rows 14,15 are forced to 0 (the bug fix).
+        assert_eq!(ctx.left_coef(0, 14), 0, "off-frame left[14] must be 0");
+        assert_eq!(ctx.left_coef(0, 15), 0, "off-frame left[15] must be 0");
+
+        // above is fully in-frame (above_cells = 8): all 8 cells are 1.
+        for x4 in 0..8 {
+            assert_eq!(ctx.above_coef(0, x4), 1, "in-frame above[{x4}]");
+        }
+    }
+
+    /// SIG2 reproducer, right-edge direction: the `above` half of the
+    /// `set_coef_flags_clamped` clamp (libvpx `vp9_set_contexts`'s first
+    /// `for` loop). A `Tx32x32` (`n = 8`) writeback with `eob > 0` at a
+    /// block straddling the frame's right edge must write `1` to the
+    /// in-frame `above_coef` cells and explicitly `0` to the off-frame
+    /// cells, overwriting any stale `1` from a prior block. Symmetric
+    /// to `set_coef_flags_clamps_at_frame_edge` (which covers the
+    /// bottom/left direction).
+    #[test]
+    fn set_coef_flags_clamps_at_frame_edge_above() {
+        // Y above row width = 16 (tile_mi_cols = 8 → 8 * 2 cells). A
+        // Tx32x32 at x4=8 covers cols 8..16; mimic a partial-right where
+        // only cols 8..14 are in-frame (cols 14,15 are off-frame).
+        let mut ctx = TileCoefCtx::new(8);
+        assert_eq!(ctx.above_coef_width(0), 16);
+
+        // A prior block left the off-frame above cells set to 1.
+        ctx.set_coef_flags(0, 14, 0, 1, 1, true); // above[14] = 1
+        ctx.set_coef_flags(0, 15, 0, 1, 1, true); // above[15] = 1
+        assert_eq!(ctx.above_coef(0, 14), 1);
+        assert_eq!(ctx.above_coef(0, 15), 1);
+
+        // Tx32x32 writeback (n = 8) at x4=8, y4=0, eob > 0, with only
+        // above_cells = 6 in-frame (cols 8..14). left is fully in-frame.
+        ctx.set_coef_flags_clamped(0, 8, 0, 8, 8, 6, 8, true);
+
+        // In-frame above cols 8..14 are 1; off-frame 14,15 forced to 0.
+        for x4 in 8..14 {
+            assert_eq!(ctx.above_coef(0, x4), 1, "in-frame above[{x4}]");
+        }
+        assert_eq!(ctx.above_coef(0, 14), 0, "off-frame above[14] must be 0");
+        assert_eq!(ctx.above_coef(0, 15), 0, "off-frame above[15] must be 0");
+
+        // left is fully in-frame (left_cells = 8): all 8 rows are 1.
+        for y4 in 0..8 {
+            assert_eq!(ctx.left_coef(0, y4), 1, "in-frame left[{y4}]");
+        }
+    }
+
     /// `TileCoefCtx::new(0)` panics. Tiles always span ≥ 1 MI col.
     #[test]
     #[should_panic(expected = "tile must span at least one")]

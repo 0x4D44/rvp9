@@ -114,6 +114,14 @@ fn fold_any_nonzero(
 /// - `dq_coefs_out`: output buffer of length `>= seg_eob` —
 ///   [`decode_coefs`] zeroes the first `seg_eob` slots before filling
 ///   in non-zero coefficients in raster order.
+/// - `above_cells` / `left_cells`: the libvpx frame-edge-clamped
+///   in-frame above / left context-cell counts for the `(eob > 0)`
+///   writeback (`vp9_set_contexts`, `vp9_blockd.c:87-122`). For a TX
+///   block fully inside the frame these equal `n` (= `1 << tx_size`);
+///   for a block crossing the frame's right / bottom edge they are
+///   `min(n, max_blocks_{wide,high} - {aoff,loff})`, so the beyond-edge
+///   cells are written `0` instead of `eob > 0`. Callers that never
+///   straddle a frame edge (e.g. unit tests) pass `n, n`.
 ///
 /// # Returns
 ///
@@ -142,6 +150,8 @@ pub fn decode_block_tokens(
     seg_eob: usize,
     dequant: (i32, i32),
     dq_coefs_out: &mut [i32],
+    above_cells: usize,
+    left_cells: usize,
 ) -> usize {
     let plane_type = plane_type_index(plane);
     // libvpx `cm->fc->coef_probs[tx_size][plane_type][ref_type]`
@@ -333,9 +343,16 @@ pub fn decode_block_tokens(
         dq_coefs_out,
     );
 
-    // Writeback: splat `(eob > 0)` across the (n × n) sub-block region
-    // libvpx `vp9_detokenize.c:294/302/311/323`.
-    coef_ctx.set_coef_flags(plane, x4, y4_in_sb, n, n, eob > 0);
+    // Writeback: write `(eob > 0)` to the in-frame above/left context
+    // cells and `0` to any beyond-frame-edge cells, mirroring libvpx
+    // `vp9_set_contexts` (`vp9/common/vp9_blockd.c:87-122`). The
+    // `above_cells`/`left_cells` counts are the frame-edge-clamped
+    // in-frame extents computed by the caller (= `n` away from the
+    // edge). Splatting `eob > 0` across the whole region — as the prior
+    // `set_coef_flags(.., n, n, eob > 0)` did — corrupted the
+    // beyond-edge cells of a partial-bottom/right SB, desyncing an
+    // adjacent large TX's entropy context (SIG2).
+    coef_ctx.set_coef_flags_clamped(plane, x4, y4_in_sb, n, n, above_cells, left_cells, eob > 0);
 
     eob
 }
@@ -424,6 +441,8 @@ mod tests {
             16,
             (11, 22),
             &mut dqc,
+            1, // above_cells = n (Tx4x4)
+            1, // left_cells = n
         );
 
         assert_eq!(eob, 1);
@@ -475,6 +494,8 @@ mod tests {
             64,
             (7, 13),
             &mut dqc,
+            2, // above_cells = n (Tx8x8)
+            2, // left_cells = n
         );
 
         // Decode runs to completion; eob > 0 because we emitted
@@ -531,6 +552,8 @@ mod tests {
             1024,
             (8, 30), // dc_dq=8 → with dq_shift=1, output = 4
             &mut dqc,
+            8, // above_cells = n (Tx32x32)
+            8, // left_cells = n
         );
 
         assert_eq!(eob, 1);
@@ -582,6 +605,8 @@ mod tests {
             64,
             (10, 20),
             &mut dqc,
+            2, // above_cells = n (Tx8x8)
+            2, // left_cells = n
         );
 
         assert_eq!(eob, 0);
@@ -628,6 +653,8 @@ mod tests {
             16,
             (11, 22),
             &mut dqc,
+            1, // above_cells = n (Tx4x4)
+            1, // left_cells = n
         );
 
         // U / V cells we pre-seeded are still set; nothing else
@@ -700,6 +727,8 @@ mod tests {
             16,
             (11, 22),
             &mut dqc_wrap,
+            1, // above_cells = n (Tx4x4)
+            1, // left_cells = n
         );
 
         assert_eq!(eob_ref, eob_wrap);
@@ -781,6 +810,8 @@ mod tests {
             16,
             (10, 20),
             &mut dqc,
+            1, // above_cells = n (Tx4x4)
+            1, // left_cells = n
         );
 
         assert_eq!(eob, 0, "EOB taken on inter sub-table");

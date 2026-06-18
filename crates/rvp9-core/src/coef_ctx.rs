@@ -273,21 +273,71 @@ impl TileCoefCtx {
         h4: usize,
         nonzero: bool,
     ) {
+        // The non-clamped writeback is the special case where every
+        // covered cell is in-frame: `above_cells == w4`, `left_cells == h4`.
+        self.set_coef_flags_clamped(plane, x4_start, y4_in_sb_start, w4, h4, w4, h4, nonzero);
+    }
+
+    /// Frame-edge-clamped variant of [`Self::set_coef_flags`], mirroring
+    /// libvpx `vp9_set_contexts` (`vp9/common/vp9_blockd.c:87-122`).
+    ///
+    /// For a TX block whose 4×4 extent crosses the frame's right / bottom
+    /// edge, libvpx writes `has_eob` (= `nonzero`) only to the **in-frame**
+    /// above / left context cells and **explicitly zeroes** the
+    /// beyond-edge cells (its second `for` loop) — a previous block in the
+    /// same SB row may have left them set to `1`. `set_coef_flags` (the
+    /// non-clamped path) splats `nonzero` across the whole extent, which is
+    /// only correct away from the frame edge.
+    ///
+    /// `above_cells` / `left_cells` are the libvpx-clamped in-frame counts
+    /// (`min(tx_size_in_blocks, blocks_{wide,high} - off)`, clamped to
+    /// `[0, w4/h4]`). The unified writeback is correct for all cases:
+    /// non-crossing (`above_cells == w4`, `left_cells == h4` ⇒ identical to
+    /// `set_coef_flags`), `eob == 0` (`nonzero == false` ⇒ every cell 0),
+    /// and edge-crossing `eob > 0` (in-frame `1`, beyond-edge `0`). Writes
+    /// are clamped to the plane's array bounds exactly like `set_coef_flags`.
+    ///
+    /// Parameters mirror `set_coef_flags`, plus:
+    /// - `above_cells`: in-frame above cells (`<= w4`); cells
+    ///   `x4_start + above_cells .. x4_start + w4` are forced to `0`.
+    /// - `left_cells`: in-frame left cells (`<= h4`); cells
+    ///   `y4_in_sb_start + left_cells .. y4_in_sb_start + h4` are forced to `0`.
+    #[allow(clippy::too_many_arguments)] // mirrors libvpx vp9_set_contexts
+    pub fn set_coef_flags_clamped(
+        &mut self,
+        plane: usize,
+        x4_start: usize,
+        y4_in_sb_start: usize,
+        w4: usize,
+        h4: usize,
+        above_cells: usize,
+        left_cells: usize,
+        nonzero: bool,
+    ) {
+        debug_assert!(above_cells <= w4, "above_cells must not exceed w4");
+        debug_assert!(left_cells <= h4, "left_cells must not exceed h4");
         let v = u8::from(nonzero);
         if let Some(above_row) = self.above_coef.get_mut(plane) {
-            let end = (x4_start + w4).min(above_row.len());
-            if x4_start < end {
-                for slot in &mut above_row[x4_start..end] {
-                    *slot = v;
-                }
+            let len = above_row.len();
+            let split = (x4_start + above_cells).min(len);
+            let end = (x4_start + w4).min(len);
+            // In-frame cells receive `nonzero`; beyond-edge cells are 0.
+            for slot in &mut above_row[x4_start.min(len)..split] {
+                *slot = v;
+            }
+            for slot in &mut above_row[split..end] {
+                *slot = 0;
             }
         }
         if let Some(left_col) = self.left_coef.get_mut(plane) {
-            let end = (y4_in_sb_start + h4).min(left_col.len());
-            if y4_in_sb_start < end {
-                for slot in &mut left_col[y4_in_sb_start..end] {
-                    *slot = v;
-                }
+            let len = left_col.len();
+            let split = (y4_in_sb_start + left_cells).min(len);
+            let end = (y4_in_sb_start + h4).min(len);
+            for slot in &mut left_col[y4_in_sb_start.min(len)..split] {
+                *slot = v;
+            }
+            for slot in &mut left_col[split..end] {
+                *slot = 0;
             }
         }
     }

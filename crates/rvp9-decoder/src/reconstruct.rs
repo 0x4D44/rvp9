@@ -146,6 +146,10 @@ pub fn resolve_tx_type(plane: usize, lossless: bool, intra_mode: IntraMode) -> T
 ///   `tx_size == TxSize::Tx4x4` whenever `lossless == true` — VP9
 ///   forbids any larger TX size in lossless mode
 ///   (`vp9_decodeframe.c:280-281`).
+/// - `above_cells` / `left_cells`: frame-edge-clamped in-frame
+///   above / left context-cell counts threaded into
+///   [`decode_block_tokens`] for the libvpx `vp9_set_contexts`
+///   edge clamp. Equal `1 << tx_size` for a TX inside the frame.
 ///
 /// # Returns
 ///
@@ -178,6 +182,8 @@ pub fn reconstruct_intra_block(
     seg_eob: usize,
     dequant: (i32, i32),
     lossless: bool,
+    above_cells: usize,
+    left_cells: usize,
     dispatch: &SimdDispatch,
 ) -> usize {
     // VP9 lossless restricts every TX block to 4×4 (libvpx
@@ -230,6 +236,8 @@ pub fn reconstruct_intra_block(
             seg_eob,
             dequant,
             &mut dq_coefs[..seg_eob],
+            above_cells,
+            left_cells,
         );
 
         // Phase-2 diagnostic — Stage 3 stretch M.3. Logs dq_coefs at the
@@ -666,6 +674,8 @@ mod tests {
             16,
             (10, 20),
             false,
+            1, // above_cells = n (Tx4x4)
+            1, // left_cells = n
             &test_dispatch(),
         );
 
@@ -727,6 +737,8 @@ mod tests {
             16,
             (8, 13),
             false,
+            1, // above_cells = n (Tx4x4)
+            1, // left_cells = n
             &test_dispatch(),
         );
         assert_eq!(eob, 1);
@@ -786,6 +798,8 @@ mod tests {
             16,
             (7, 11),
             false,
+            1, // above_cells = n (Tx4x4)
+            1, // left_cells = n
             &test_dispatch(),
         );
         assert_eq!(eob, 0);
@@ -847,6 +861,8 @@ mod tests {
             256,
             (10, 20),
             false,
+            4, // above_cells = n (Tx16x16)
+            4, // left_cells = n
             &test_dispatch(),
         );
         assert_eq!(eob, 0);
@@ -909,6 +925,8 @@ mod tests {
             1024,
             (10, 20),
             false,
+            8, // above_cells = n (Tx32x32)
+            8, // left_cells = n
             &test_dispatch(),
         );
         assert_eq!(eob, 0);
@@ -986,6 +1004,8 @@ mod tests {
             64,
             (10, 20),
             false,
+            2, // above_cells = n (Tx8x8)
+            2, // left_cells = n
             &test_dispatch(),
         );
         assert_eq!(eob, 0);
@@ -1089,6 +1109,8 @@ mod tests {
             64,
             (10, 20),
             false,
+            2, // above_cells = n (Tx8x8)
+            2, // left_cells = n
             &test_dispatch(),
         );
         assert_eq!(eob, 0);
@@ -1150,6 +1172,8 @@ mod tests {
             16,
             (8, 13),
             /* lossless = */ true,
+            1, // above_cells = n (Tx4x4)
+            1, // left_cells = n
             &test_dispatch(),
         );
         assert_eq!(eob, 1);
@@ -1578,6 +1602,8 @@ mod tests {
             64,
             (8, 13),
             false,
+            2, // above_cells = n (Tx8x8)
+            2, // left_cells = n
             &test_dispatch(),
         );
         assert_eq!(eob, 1);

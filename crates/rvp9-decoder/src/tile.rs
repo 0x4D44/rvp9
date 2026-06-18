@@ -1038,6 +1038,8 @@ fn decode_block<D: TileFrameDst>(
         &bmi,
         mi_row,
         mi_col,
+        params.mi_rows,
+        params.mi_cols,
         mi_row_in_tile,
         mi_col_in_tile,
         mi_row_in_sb,
@@ -1148,6 +1150,8 @@ fn reconstruct_intra_planes<D: TileFrameDst>(
     bmi: &[BmiInfo; 4],
     mi_row: usize,
     mi_col: usize,
+    mi_rows: usize,
+    mi_cols: usize,
     mi_row_in_tile: usize,
     mi_col_in_tile: usize,
     mi_row_in_sb: usize,
@@ -1207,6 +1211,40 @@ fn reconstruct_intra_planes<D: TileFrameDst>(
             )
         };
         let tx_step_4x4 = 1usize << (plane_tx as usize);
+
+        // Frame-edge clamp for the entropy-context writeback (libvpx
+        // `vp9_set_contexts`, `vp9_blockd.c:87-122`). `max_blocks_{wide,
+        // high}` is the visible 4×4-cell extent of this plane coding
+        // block — the same quantity the inter path computes at
+        // `reconstruct_inter.rs:521-548`, including the sub-8×8 handling
+        // (clamp the parent 8×8). For blocks fully inside the frame these
+        // equal `plane_b{w,h}_4x4`; for a partial-bottom/right block they
+        // shrink so the beyond-edge context cells get `0`, not `eob > 0`.
+        let is_sub8 = bsize < BlockSize::Block8x8;
+        let bw_mi = usize::from(bsize.n_8x8_wide());
+        let bh_mi = usize::from(bsize.n_8x8_high());
+        let mb_to_right_edge_px = if is_sub8 {
+            (mi_cols as i64 - 1 - mi_col as i64) * 64
+        } else {
+            (mi_cols as i64 - bw_mi as i64 - mi_col as i64) * 64
+        };
+        let mb_to_bottom_edge_px = if is_sub8 {
+            (mi_rows as i64 - 1 - mi_row as i64) * 64
+        } else {
+            (mi_rows as i64 - bh_mi as i64 - mi_row as i64) * 64
+        };
+        let max_blocks_wide = if mb_to_right_edge_px >= 0 {
+            plane_bw_4x4
+        } else {
+            let clamp = (mb_to_right_edge_px >> (5 + ss_x)) as isize;
+            ((plane_bw_4x4 as isize) + clamp).max(0) as usize
+        };
+        let max_blocks_high = if mb_to_bottom_edge_px >= 0 {
+            plane_bh_4x4
+        } else {
+            let clamp = (mb_to_bottom_edge_px >> (5 + ss_y)) as isize;
+            ((plane_bh_4x4 as isize) + clamp).max(0) as usize
+        };
 
         let plane_px_x = (mi_col * 8) >> ss_x;
         let plane_px_y = (mi_row * 8) >> ss_y;
@@ -1341,6 +1379,16 @@ fn reconstruct_intra_planes<D: TileFrameDst>(
                     );
                 } else {
                     let seg_eob = plane_tx.n_coeffs();
+                    // Frame-edge-clamped in-frame context-cell counts for
+                    // this TX (libvpx `vp9_set_contexts`). `aoff`/`loff`
+                    // are the TX 4×4 offsets within the plane block; `n`
+                    // is `tx_step_4x4`.
+                    let above_cells = (max_blocks_wide as isize - aoff as isize)
+                        .clamp(0, tx_step_4x4 as isize)
+                        as usize;
+                    let left_cells = (max_blocks_high as isize - loff as isize)
+                        .clamp(0, tx_step_4x4 as isize)
+                        as usize;
                     let _eob = reconstruct_intra_block(
                         reader,
                         fc,
@@ -1358,6 +1406,8 @@ fn reconstruct_intra_planes<D: TileFrameDst>(
                         seg_eob,
                         plane_dequant_pair,
                         frame_lossless && plane_tx == TxSize::Tx4x4,
+                        above_cells,
+                        left_cells,
                         dispatch,
                     );
                 }
@@ -2672,6 +2722,8 @@ fn decode_inter_block<D: TileFrameDst>(
             &bmi,
             mi_row,
             mi_col,
+            params.base.mi_rows,
+            params.base.mi_cols,
             mi_row_in_tile,
             mi_col_in_tile,
             mi_row_in_sb,
