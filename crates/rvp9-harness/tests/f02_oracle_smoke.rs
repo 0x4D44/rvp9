@@ -74,6 +74,7 @@ fn single_sb_config() -> EncoderConfig {
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
         enable_alt_ref: false,
+        enable_tpl: false,
         rc_mode: RcMode::Cbr,
         cq_level: 0,
         temporal_layers: 1,
