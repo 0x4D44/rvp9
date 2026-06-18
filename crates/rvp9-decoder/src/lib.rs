@@ -1365,6 +1365,26 @@ impl Decoder {
     /// this method delegates to [`Decoder::decode_intra_frame_inner`]
     /// with `refresh_mask = 0xFF` and `intra_only = false`.
     fn decode_keyframe(&mut self, frame: &ParsedFrame<'_>) -> Result<FrameBuf, DecodeError> {
+        // libvpx's keyframe path calls `vp9_setup_past_independence`
+        // (`vp9_entropymode.c:452-459`), which UNCONDITIONALLY resets every
+        // FRAME_CONTEXTS bank to libvpx defaults — a keyframe is fully
+        // history-independent. The previous implementation reset nothing,
+        // relying on the banks still holding their construction defaults.
+        // That holds only for the FIRST keyframe; a keyframe that FOLLOWS
+        // inter frames would otherwise decode its compressed header +
+        // tile data against the probabilities left behind by backward
+        // adaptation, desyncing the bool-coder from frame byte 0.
+        //
+        // This was SIG1 of the real-world long-clip divergence: the second
+        // periodic keyframe (and every later one) mis-decoded, independent
+        // of resolution/content, while the first keyframe was bit-exact.
+        // The conformance corpus never placed a keyframe after inter
+        // adaptation, so it went uncaught. See
+        // `notes/realworld-decode-divergence-2026-05-31.md` and the
+        // `longclip_differential` gate (bbb_720p_kf48 / foreman_cif_kf48).
+        for bank in self.frame_contexts.iter_mut() {
+            *bank = FrameContext::new_default();
+        }
         self.decode_intra_frame_inner(frame, 0xFF, /* intra_only = */ false)
     }
 
@@ -4963,6 +4983,53 @@ mod tests {
             assert_eq!(
                 bank.skip_probs[0], default_bank.skip_probs[0],
                 "bank[{i}] was not reset to defaults after reset_frame_context=3"
+            );
+        }
+    }
+
+    /// SIG1 regression guard: a KEYFRAME unconditionally resets EVERY
+    /// FRAME_CONTEXTS bank to libvpx defaults (mirroring
+    /// `vp9_setup_past_independence`, `vp9_entropymode.c:452-459`). This
+    /// is the unit-level lock for the real-world long-clip fix — before
+    /// it, a keyframe FOLLOWING inter frames decoded against the
+    /// probabilities left by backward adaptation, desyncing the bool-coder
+    /// from frame byte 0 (see `notes/realworld-decode-divergence-2026-05-31.md`
+    /// and the `longclip_differential` gate). The first keyframe hid the
+    /// bug because the banks already held construction defaults.
+    ///
+    /// Strategy mirrors `intra_only_reset_frame_context_3_resets_all_banks`:
+    /// poison every bank, decode a minimal keyframe, observe all banks
+    /// restored to defaults regardless of how the downstream decode ends
+    /// (the reset runs at the top of `decode_keyframe`, before the inner
+    /// driver).
+    #[test]
+    fn keyframe_resets_all_frame_context_banks() {
+        let default_bank = FrameContext::new_default();
+        let mut dec = Decoder::new();
+        for bank in dec.frame_contexts.iter_mut() {
+            bank.skip_probs[0] = 0; // libvpx default is 192
+        }
+        assert_ne!(
+            dec.frame_contexts[0].skip_probs[0],
+            default_bank.skip_probs[0]
+        );
+
+        let buf = build_minimal_keyframe();
+        let frames = dec.parse_packet(&buf).expect("valid keyframe");
+        let header = frames.frames()[0].header.clone();
+        let frame_data: Vec<u8> = frames.frames()[0].full_frame_data.to_vec();
+        let header_end = frames.frames()[0].header_end_byte;
+        drop(frames);
+        let parsed = ParsedFrame {
+            header,
+            header_end_byte: header_end,
+            full_frame_data: &frame_data,
+        };
+        let _ = dec.decode_frame(&parsed);
+        for (i, bank) in dec.frame_contexts.iter().enumerate() {
+            assert_eq!(
+                bank.skip_probs[0], default_bank.skip_probs[0],
+                "bank[{i}] was not reset to defaults by a keyframe"
             );
         }
     }
