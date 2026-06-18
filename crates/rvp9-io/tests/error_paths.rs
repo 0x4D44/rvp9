@@ -10,6 +10,7 @@
 
 use std::path::PathBuf;
 
+use rvp9_core::bitstream::ChromaFormat;
 use rvp9_io::container::{
     ContainerError, IvfHeader, PacketRange, read_ivf_packets, read_packets, read_webm_packets,
     write_ivf,
@@ -806,7 +807,7 @@ fn write_one_frame_y4m(
     tag: &str,
 ) -> PathBuf {
     let mut buf = Vec::new();
-    write_header(&mut buf, width, height, 30, 1).expect("header");
+    write_header(&mut buf, width, height, 30, 1, ChromaFormat::Yuv420).expect("header");
     buf.extend_from_slice(frame_prefix);
     buf.extend_from_slice(body);
     write_y4m_buf_to_temp(&buf, tag)
@@ -882,7 +883,7 @@ fn read_cropped_eof_in_frame_params_rejected() {
     // FRAME followed by a non-newline byte and then immediate EOF →
     // "EOF in FRAME params".
     let mut buf = Vec::new();
-    write_header(&mut buf, 16, 16, 30, 1).expect("hdr");
+    write_header(&mut buf, 16, 16, 30, 1, ChromaFormat::Yuv420).expect("hdr");
     buf.extend_from_slice(b"FRAME I"); // 'I' instead of '\n', and no trailing '\n'
     let path = write_y4m_buf_to_temp(&buf, "eof_in_frame_params");
     let err = read_cropped(&path, 16, 16, 1).unwrap_err();
@@ -899,7 +900,7 @@ fn read_cropped_consumes_extended_frame_params_to_newline() {
     let uv_len = (8 * 8) as usize;
     let body: Vec<u8> = (0..y_len + 2 * uv_len).map(|i| (i * 3) as u8).collect();
     let mut buf = Vec::new();
-    write_header(&mut buf, 16, 16, 30, 1).expect("hdr");
+    write_header(&mut buf, 16, 16, 30, 1, ChromaFormat::Yuv420).expect("hdr");
     buf.extend_from_slice(b"FRAME I0\n"); // extended params then newline
     buf.extend_from_slice(&body);
     let path = write_y4m_buf_to_temp(&buf, "extended_frame_params");
@@ -916,7 +917,7 @@ fn read_cropped_eof_before_any_frame_returns_empty() {
     // Header only, no FRAME tag → read_exact on hdr_buf fails → break, not
     // error. read_cropped returns (vec![], framerate).
     let mut buf = Vec::new();
-    write_header(&mut buf, 16, 16, 30, 1).expect("hdr");
+    write_header(&mut buf, 16, 16, 30, 1, ChromaFormat::Yuv420).expect("hdr");
     let path = write_y4m_buf_to_temp(&buf, "empty_after_header");
     let (frames, fr) = read_cropped(&path, 16, 16, 3).expect("read cropped");
     let _ = std::fs::remove_file(&path);
@@ -929,7 +930,7 @@ fn read_cropped_truncated_frame_body_propagates_read_exact_error() {
     // FRAME\n with fewer than y_size + 2*uv_size bytes → read_exact errors
     // with UnexpectedEof, which `?` forwards verbatim.
     let mut buf = Vec::new();
-    write_header(&mut buf, 16, 16, 30, 1).expect("hdr");
+    write_header(&mut buf, 16, 16, 30, 1, ChromaFormat::Yuv420).expect("hdr");
     buf.extend_from_slice(b"FRAME\n");
     buf.extend_from_slice(&[0u8; 4]); // way too short
     let path = write_y4m_buf_to_temp(&buf, "truncated_frame_body");
@@ -1002,7 +1003,7 @@ fn y4m_writer_reader_roundtrip_preserves_bytes() {
     let v: Vec<u8> = (0..uv_len).map(|i| (i as u8).wrapping_add(11)).collect();
 
     let mut buf = Vec::new();
-    write_header(&mut buf, w, h, 25, 1).expect("write header");
+    write_header(&mut buf, w, h, 25, 1, ChromaFormat::Yuv420).expect("write header");
     write_frame(&mut buf, &y, &u, &v).expect("write frame");
 
     let path = write_y4m_buf_to_temp(&buf, "rt");

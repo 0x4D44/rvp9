@@ -9,10 +9,13 @@
 //! crop dimensions — directly usable as `rvp9_encoder::YuvFrameRef`
 //! contents.
 //!
-//! The writer ([`write_header`] + [`write_frame`]) emits a 4:2:0
-//! `C420jpeg` stream — the round-trip partner of the reader, used by
-//! `rvp9dec --y4m`.
+//! The writer ([`write_header`] + [`write_frame`]) emits the
+//! format-correct chroma tag for the decoded stream
+//! (`C420jpeg` / `C422` / `C444`); 4:4:0 has no representable y4m tag
+//! and is rejected upstream by the CLI. It is the round-trip partner of
+//! the reader (on the shared 4:2:0 format), used by `rvp9dec --y4m`.
 
+use rvp9_core::bitstream::ChromaFormat;
 use std::io::{self, Read, Write};
 use std::path::Path;
 
@@ -229,15 +232,25 @@ pub fn read_cropped(
 // Y4M writer
 // ============================================================================
 //
-// Mirror of the reader in the write direction. Emits a `C420jpeg`
-// 4:2:0 progressive stream. Used by `rvp9dec --y4m`.
+// Mirror of the reader in the write direction. Emits a progressive
+// stream tagged with the decoded `chroma` format's y4m C-tag
+// (`C420jpeg` / `C422` / `C444`). Used by `rvp9dec --y4m`.
 
-/// Write a Y4M stream header for a 4:2:0 progressive stream at
-/// `(width, height)`, `fps_num / fps_den` fps.
+/// Write a Y4M stream header for a progressive stream at
+/// `(width, height)`, `fps_num / fps_den` fps, with the chroma tag
+/// derived from `chroma`.
 ///
-/// Emits `YUV4MPEG2 W<w> H<h> F<num>:<den> Ip A1:1 C420jpeg\n` — every
-/// field [`parse_header`] reads, with the chroma tag set to a variant
-/// the reader accepts (so the writer/reader pair round-trips).
+/// Emits `YUV4MPEG2 W<w> H<h> F<num>:<den> Ip A1:1 <Ctag>\n` — every
+/// field [`parse_header`] reads. The chroma tag is format-correct:
+/// `Yuv420 → C420jpeg`, `Yuv422 → C422`, `Yuv444 → C444`. 4:4:0 has no
+/// standard y4m tag and must be rejected by the caller before reaching
+/// here (the `rvp9dec` CLI does so); the `Yuv440` arm is defence-in-depth
+/// only (debug-asserts, then falls back to the bounded `C420jpeg` tag in
+/// release so the function stays total).
+///
+/// Note the writer/reader pair only round-trips on 4:2:0 — the reader is
+/// 4:2:0-only (encoder input path); the writer speaks all three
+/// representable formats (decoder output path, which may be Profile-1).
 ///
 /// # Errors
 ///
@@ -248,11 +261,22 @@ pub fn write_header<W: Write>(
     height: u32,
     fps_num: u32,
     fps_den: u32,
+    chroma: ChromaFormat,
 ) -> io::Result<()> {
-    writeln!(
-        out,
-        "YUV4MPEG2 W{width} H{height} F{fps_num}:{fps_den} Ip A1:1 C420jpeg"
-    )
+    // 8-bit y4m C-tags. Yuv440 has no standard tag and must be rejected
+    // by the caller before reaching here (see HLD G-B §2); we debug-assert
+    // the invariant and fall back to the (wrong-but-bounded) 4:2:0 tag in
+    // release so a stray Yuv440 cannot write an out-of-range string.
+    let tag = match chroma {
+        ChromaFormat::Yuv420 => "C420jpeg",
+        ChromaFormat::Yuv422 => "C422",
+        ChromaFormat::Yuv444 => "C444",
+        ChromaFormat::Yuv440 => {
+            debug_assert!(false, "Yuv440 must be rejected before write_header (HLD G-B §2)");
+            "C420jpeg"
+        }
+    };
+    writeln!(out, "YUV4MPEG2 W{width} H{height} F{fps_num}:{fps_den} Ip A1:1 {tag}")
 }
 
 /// Write one frame: the `FRAME\n` tag followed by the Y, U, V planes
@@ -300,7 +324,7 @@ mod tests {
         );
 
         let mut buf: Vec<u8> = Vec::new();
-        write_header(&mut buf, w, h, 30, 1).expect("write header");
+        write_header(&mut buf, w, h, 30, 1, ChromaFormat::Yuv420).expect("write header");
         write_frame(&mut buf, &f0.0, &f0.1, &f0.2).expect("write f0");
         write_frame(&mut buf, &f1.0, &f1.1, &f1.2).expect("write f1");
 
@@ -320,6 +344,21 @@ mod tests {
         assert_eq!(frames[0], f0);
         assert_eq!(frames[1], f1);
         assert!((fr - 30.0).abs() < 1e-9);
+    }
+
+    /// Oracle for the G-B fix: [`write_header`] emits the y4m chroma
+    /// tag that matches the decoded stream's format. If the tag were a
+    /// constant again (the bug), the `C422` / `C444` cases fail.
+    #[test]
+    fn write_header_emits_correct_chroma_tag() {
+        use rvp9_core::bitstream::ChromaFormat::{Yuv420, Yuv422, Yuv444};
+        for (fmt, want) in [(Yuv420, "C420jpeg"), (Yuv422, "C422"), (Yuv444, "C444")] {
+            let mut buf = Vec::new();
+            write_header(&mut buf, 352, 288, 30, 1, fmt).unwrap();
+            let line = String::from_utf8(buf).unwrap();
+            assert!(line.contains(&format!(" {want}\n")), "{fmt:?} → {line:?}");
+            assert!(line.starts_with("YUV4MPEG2 W352 H288 F30:1 "));
+        }
     }
 
     // -----------------------------------------------------------------

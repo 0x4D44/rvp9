@@ -539,7 +539,15 @@ fn write_frame<W: Write>(
     match fmt {
         OutFmt::Y4m => {
             if !*y4m_header_written {
-                rvp9_io::y4m::write_header(w, buf.width(), buf.height(), fps_num, fps_den)
+                let chroma = buf.chroma();
+                if chroma == rvp9_core::bitstream::ChromaFormat::Yuv440 {
+                    return Err(
+                        "--y4m output for 4:4:0 (Yuv440) is not representable in YUV4MPEG2; \
+                         use --i420 / --rawvideo, or omit --y4m"
+                            .to_string(),
+                    );
+                }
+                rvp9_io::y4m::write_header(w, buf.width(), buf.height(), fps_num, fps_den, chroma)
                     .map_err(io_err)?;
                 *y4m_header_written = true;
             }
