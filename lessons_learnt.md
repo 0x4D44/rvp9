@@ -18,3 +18,4 @@ Hard cap: 20 entries.
 - 2026-06-19: `vpxenc --rt --cpu-used=7 --lag-in-frames=0 --tune-content=default` uses default one-pass VBR, not CBR; keep Stage 4a quality/E1 comparisons in `RcMode::Vbr` unless `--end-usage=cbr` is explicit.
 - 2026-06-19: libvpx seeds `avg_frame_qindex` to worst only for one-pass CBR; one-pass VBR/CQ/Q/two-pass use `(worst+best)/2`, otherwise first VBR keyframes starve at q≈195 instead of q≈57.
 - 2026-06-19: Zero-EOB inter TX blocks are hot in the 720p realtime emit path; store empty `eob == 0` markers and let the coef source return a static zero slice instead of allocating zero qcoeff/dqcoeff vectors.
+- 2026-06-19: E9 fixed-Q Foreman is not a pure equal-reference oracle: libvpx `--end-usage=q --cq-level=N` still gives the keyframe a much lower base qindex (Q80 maps to KF q=15), so interpret inter residuals as reference-contaminated.
