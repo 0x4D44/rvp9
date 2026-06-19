@@ -243,8 +243,14 @@ fn profile1_440_foreman_decodes_bit_exact_wave_p() {
 fn profile1_422_440_inter_decodes_bit_exact_sig4() {
     for name in ["foreman_c422.ivf", "foreman_c440.ivf"] {
         let (frames, mismatched) = decode_and_gate(name);
-        assert_eq!(mismatched, 0, "{name}: SIG4 inter asymmetric-chroma fix-lock");
-        assert!(frames >= 2, "{name}: expected an inter stream (>=2 shown frames)");
+        assert_eq!(
+            mismatched, 0,
+            "{name}: SIG4 inter asymmetric-chroma fix-lock"
+        );
+        assert!(
+            frames >= 2,
+            "{name}: expected an inter stream (>=2 shown frames)"
+        );
     }
 }
 

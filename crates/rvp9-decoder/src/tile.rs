@@ -2483,8 +2483,8 @@ fn decode_inter_block<D: TileFrameDst>(
         // The libvpx pointer points at a single MV_REF (a 2-tuple of
         // `(mv[2], ref_frame[2])`); we materialise that as a
         // `PrevFrameMvRef` value by indexing the row-major grid.
-        let prev_mv = prev_mv_grid
-            .and_then(|g| g.get(mi_row * params.base.mi_cols + mi_col).copied());
+        let prev_mv =
+            prev_mv_grid.and_then(|g| g.get(mi_row * params.base.mi_cols + mi_col).copied());
         // Inject this block's per-segment forced REF_FRAME / SKIP into
         // a cheap `Copy` of the frame-level inter params (§3.4(A)):
         //   - `read_ref_frames` forces ref0 = segdata, ref1 = NONE.
@@ -3041,7 +3041,11 @@ mod tests {
     #[test]
     fn sub8_seg_skip_is_a_decode_error() {
         // The guard fires for exactly the three sub-8 sizes.
-        for bsize in [BlockSize::Block4x4, BlockSize::Block4x8, BlockSize::Block8x4] {
+        for bsize in [
+            BlockSize::Block4x4,
+            BlockSize::Block4x8,
+            BlockSize::Block8x4,
+        ] {
             assert!(
                 (bsize as u8) < (BlockSize::Block8x8 as u8),
                 "{bsize:?} must be classified sub-8",
@@ -3054,7 +3058,11 @@ mod tests {
             );
         }
         // ...and NOT for legal ≥8×8 sizes (the predicate the guard uses).
-        for bsize in [BlockSize::Block8x8, BlockSize::Block16x16, BlockSize::Block64x64] {
+        for bsize in [
+            BlockSize::Block8x8,
+            BlockSize::Block16x16,
+            BlockSize::Block64x64,
+        ] {
             assert!(
                 (bsize as u8) >= (BlockSize::Block8x8 as u8),
                 "{bsize:?} must be classified >=8x8 (guard must NOT fire)",

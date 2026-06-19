@@ -5992,8 +5992,15 @@ mod tests {
         let mut kf_compressed_buf = vec![0u8; 16 * 1024];
         let kf_compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut kf_compressed_buf);
-            write_compressed_header(&mut bw, &mut kf_pre_fc, &kf_post_fc, kf_opts, &kf_target, None)
-                .expect("write_compressed_header keyframe");
+            write_compressed_header(
+                &mut bw,
+                &mut kf_pre_fc,
+                &kf_post_fc,
+                kf_opts,
+                &kf_target,
+                None,
+            )
+            .expect("write_compressed_header keyframe");
             bw.stop_encode().expect("stop_encode kf compressed")
         };
         kf_compressed_buf.truncate(kf_compressed_len);
@@ -6053,9 +6060,7 @@ mod tests {
 
         let mut dec = Decoder::new();
         let kf_parsed = {
-            let frames = dec
-                .parse_packet(&kf_packet)
-                .expect("parse_packet keyframe");
+            let frames = dec.parse_packet(&kf_packet).expect("parse_packet keyframe");
             let pf = &frames.frames()[0];
             ParsedFrame {
                 header: pf.header.clone(),
@@ -6211,7 +6216,9 @@ mod tests {
             )
         };
         // Pool slot 7 → valid 64×64; pool slot 8 → out-of-envelope ref.
-        dec.frame_pool_mut().assign_slot(7, alloc_buf(64, 64)).unwrap();
+        dec.frame_pool_mut()
+            .assign_slot(7, alloc_buf(64, 64))
+            .unwrap();
         dec.frame_pool_mut()
             .assign_slot(8, alloc_buf(bad_w, bad_h))
             .unwrap();

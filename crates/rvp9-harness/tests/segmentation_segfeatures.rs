@@ -84,7 +84,11 @@ fn append_visible_i420(out: &mut Vec<u8>, buf: &Yv12Buffer) {
 fn roi_segfeatures_decodes_bit_exact_vs_vpxdec() {
     let fixture = corpus("roi_segfeatures.ivf");
     let md5_path = corpus("roi_segfeatures.ivf.md5");
-    assert!(fixture.exists(), "G-C fixture missing: {}", fixture.display());
+    assert!(
+        fixture.exists(),
+        "G-C fixture missing: {}",
+        fixture.display()
+    );
     assert!(
         md5_path.exists(),
         "G-C gold MD5 missing: {}",
@@ -96,8 +100,8 @@ fn roi_segfeatures_decodes_bit_exact_vs_vpxdec() {
         .trim()
         .to_ascii_lowercase();
 
-    let (data, packets) =
-        read_packets(&fixture).unwrap_or_else(|e| panic!("container parse {}: {e}", fixture.display()));
+    let (data, packets) = read_packets(&fixture)
+        .unwrap_or_else(|e| panic!("container parse {}: {e}", fixture.display()));
     // Single worker — deterministic, matches the vpxdec gold which is
     // single-threaded for this small frame size.
     let mut decoder = Decoder::with_threads(NonZeroUsize::new(1).expect("1 is non-zero"));

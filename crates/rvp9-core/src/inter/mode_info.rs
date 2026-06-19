@@ -5818,12 +5818,26 @@ mod tests {
         let before = reader.cursor_state();
         let mut mi = skeleton_mi(bsize);
         read_inter_block_mode_info(
-            &mut reader, &fc, None, None, &params, &nb, bsize, &bounds, None, &mut mi,
+            &mut reader,
+            &fc,
+            None,
+            None,
+            &params,
+            &nb,
+            bsize,
+            &bounds,
+            None,
+            &mut mi,
         );
         let after = reader.cursor_state();
 
         match mi.mode {
-            BlockMode::Inter { mode, ref_frames, mvs, .. } => {
+            BlockMode::Inter {
+                mode,
+                ref_frames,
+                mvs,
+                ..
+            } => {
                 assert_eq!(mode, InterMode::ZeroMv, "SEG_LVL_SKIP forces ZEROMV");
                 assert_eq!(
                     ref_frames,
@@ -5865,12 +5879,23 @@ mod tests {
         let before = reader.cursor_state();
         let mut mi = skeleton_mi(bsize);
         read_inter_block_mode_info(
-            &mut reader, &fc, None, None, &params, &nb, bsize, &bounds, None, &mut mi,
+            &mut reader,
+            &fc,
+            None,
+            None,
+            &params,
+            &nb,
+            bsize,
+            &bounds,
+            None,
+            &mut mi,
         );
         let after = reader.cursor_state();
 
         match mi.mode {
-            BlockMode::Inter { mode, ref_frames, .. } => {
+            BlockMode::Inter {
+                mode, ref_frames, ..
+            } => {
                 assert_eq!(mode, InterMode::ZeroMv);
                 assert_eq!(ref_frames, [RefFrame::LastFrame, RefFrame::NoRefFrame]);
             }

@@ -592,10 +592,12 @@ pub fn reconstruct_inter_block<D: TileFrameDst>(
                     // the visible extent `max_blocks_{wide,high} - {aoff,
                     // loff}`, capped at the TX size `n` (= `tx_step_4x4`).
                     // Cells beyond the frame edge get `0`, not `eob > 0`.
-                    let above_cells =
-                        (max_blocks_wide as isize - aoff as isize).clamp(0, tx_step_4x4 as isize) as usize;
-                    let left_cells =
-                        (max_blocks_high as isize - loff as isize).clamp(0, tx_step_4x4 as isize) as usize;
+                    let above_cells = (max_blocks_wide as isize - aoff as isize)
+                        .clamp(0, tx_step_4x4 as isize)
+                        as usize;
+                    let left_cells = (max_blocks_high as isize - loff as isize)
+                        .clamp(0, tx_step_4x4 as isize)
+                        as usize;
                     let eob = decode_block_tokens(
                         reader,
                         fc,

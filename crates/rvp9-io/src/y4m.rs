@@ -272,11 +272,17 @@ pub fn write_header<W: Write>(
         ChromaFormat::Yuv422 => "C422",
         ChromaFormat::Yuv444 => "C444",
         ChromaFormat::Yuv440 => {
-            debug_assert!(false, "Yuv440 must be rejected before write_header (HLD G-B §2)");
+            debug_assert!(
+                false,
+                "Yuv440 must be rejected before write_header (HLD G-B §2)"
+            );
             "C420jpeg"
         }
     };
-    writeln!(out, "YUV4MPEG2 W{width} H{height} F{fps_num}:{fps_den} Ip A1:1 {tag}")
+    writeln!(
+        out,
+        "YUV4MPEG2 W{width} H{height} F{fps_num}:{fps_den} Ip A1:1 {tag}"
+    )
 }
 
 /// Write one frame: the `FRAME\n` tag followed by the Y, U, V planes
