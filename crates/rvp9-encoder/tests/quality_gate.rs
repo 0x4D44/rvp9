@@ -294,6 +294,8 @@ fn measure_libvpx_point(
             "--rt",
             "--cpu-used=7",
             "--tune-content=default",
+            // Stage 4a target config: vpxenc --rt --cpu-used=7 --lag-in-frames=0.
+            "--lag-in-frames=0",
             "--passes=1",
             "--i420",
         ])
