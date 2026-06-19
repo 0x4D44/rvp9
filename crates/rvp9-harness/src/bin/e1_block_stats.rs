@@ -314,7 +314,7 @@ fn run_rvp9(target_bitrate_bps: u32, framerate: f64, frames: &[YuvFrameBuf]) -> 
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
         enable_alt_ref: false,
-        rc_mode: RcMode::Cbr,
+        rc_mode: RcMode::Vbr,
         cq_level: 0,
         temporal_layers: 1,
         enable_tpl: false,
@@ -367,6 +367,7 @@ fn run_libvpx(
             "--ivf",
             "--rt",
             "--cpu-used=7",
+            "--lag-in-frames=0",
             "--tune-content=default",
             "--passes=1",
             "--i420",
@@ -664,7 +665,7 @@ fn main() {
     let _ = writeln!(
         md,
         "Source: foreman_cif centre-crop {W}x{H}, {n_frames} frames @ {framerate} fps. \
-         libvpx run as `vpxenc --rt --cpu-used=7 --passes=1 --aq-mode=0`. \
+         rvp9/libvpx run as one-pass VBR (`vpxenc --rt --cpu-used=7 --lag-in-frames=0 --passes=1 --aq-mode=0`). \
          BOTH bitstreams decoded through the SAME rvp9 decoder (oracle); all \
          per-block stats use identical definitions.\n"
     );

@@ -192,7 +192,7 @@ fn measure_rvp9_point(
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
         enable_alt_ref: false,
-        rc_mode: RcMode::Cbr,
+        rc_mode: RcMode::Vbr,
         cq_level: 0,
         temporal_layers: 1,
         enable_tpl: false,
