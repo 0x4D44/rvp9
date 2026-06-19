@@ -965,6 +965,12 @@ type IntraCoefBlockKey = (usize, usize, usize, usize, usize);
 /// Stored block payload: `(qcoeff buffer, eob)`.
 type IntraCoefBlockValue = (Vec<i32>, usize);
 
+/// Backing storage for zero-EOB inter TX markers. When the encoder's
+/// quantizer returns `eob == 0`, the writer only needs an all-zero slice
+/// of the requested TX size; storing a full zero vector per block would
+/// allocate in the hottest emit path for no information.
+static INTER_ZERO_COEFS: [i32; 1024] = [0; 1024];
+
 /// Encoder simulator output: a Vec-backed [`IntraCoefSource`].
 ///
 /// Stores one qcoeff buffer per (plane, mi_row, mi_col, tx_local_x,
@@ -1130,6 +1136,9 @@ impl rvp9_core::bitstream::InterCoefSource for VecBackedInterCoefSource {
                 )
             });
         let n = tx_size.n_coeffs();
+        if entry.1 == 0 && entry.0.is_empty() {
+            return (&INTER_ZERO_COEFS[..n], 0);
+        }
         debug_assert!(entry.0.len() >= n);
         (&entry.0[..n], entry.1)
     }
@@ -6436,9 +6445,14 @@ fn inter_forward_quant_one_tx(
         trellis,
     );
 
+    let eob_usize = eob as usize;
+    if eob_usize == 0 {
+        return (Vec::new(), Vec::new(), 0);
+    }
+
     let qcoeff_i32: Vec<i32> = qcoeff_i16[..n].iter().copied().map(i32::from).collect();
     let dqcoeff_i32: Vec<i32> = dqcoeff_i16[..n].iter().copied().map(i32::from).collect();
-    (qcoeff_i32, dqcoeff_i32, eob as usize)
+    (qcoeff_i32, dqcoeff_i32, eob_usize)
 }
 
 /// Shared `RVP9_TRELLIS` post-quant step for the inter + intra-in-inter
@@ -7478,6 +7492,25 @@ mod tests {
         let (got_coefs, got_eob) = src.get_block_coefs(1, 2, 1, 0, 0, TxSize::Tx4x4);
         assert_eq!(&got_coefs[..16], &coefs[..16]);
         assert_eq!(got_eob, 7);
+    }
+
+    #[test]
+    fn vec_backed_inter_coef_source_empty_zero_marker_reads_as_zeros() {
+        use rvp9_core::bitstream::InterCoefSource;
+        let mut src = VecBackedInterCoefSource::new(128, 64);
+        src.insert(1, 2, 1, 0, 0, Vec::new(), 0);
+
+        for tx_size in [
+            TxSize::Tx4x4,
+            TxSize::Tx8x8,
+            TxSize::Tx16x16,
+            TxSize::Tx32x32,
+        ] {
+            let (got_coefs, got_eob) = src.get_block_coefs(1, 2, 1, 0, 0, tx_size);
+            assert_eq!(got_eob, 0);
+            assert_eq!(got_coefs.len(), tx_size.n_coeffs());
+            assert!(got_coefs.iter().all(|&c| c == 0));
+        }
     }
 
     /// Serial guard for env-mutating tests that touch the global
