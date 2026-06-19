@@ -185,8 +185,8 @@ pub struct RateControl {
 
 impl RateControl {
     /// Initialize from `config`. Mirrors libvpx `vp9_rc_init`
-    /// (`vp9_ratectrl.c:360`) for the `pass == 0 && rc_mode == VPX_CBR`
-    /// branch.
+    /// (`vp9_ratectrl.c:360`) for the one-pass CBR branch and the
+    /// non-CBR branch.
     ///
     /// # Panics
     ///
@@ -230,6 +230,11 @@ impl RateControl {
         let optimal_buffer_level = ms_to_bits(config.optimal_buffer_ms, config.target_bitrate_bps);
         let starting_buffer_level =
             ms_to_bits(config.starting_buffer_ms, config.target_bitrate_bps);
+        let avg_qindex_seed = if config.rc_mode == super::RcMode::Cbr {
+            config.max_qindex
+        } else {
+            ((u16::from(config.max_qindex) + u16::from(config.min_qindex)) / 2) as u8
+        };
 
         Self {
             buffer_level: starting_buffer_level,
@@ -239,13 +244,13 @@ impl RateControl {
             max_frame_bandwidth,
             this_frame_target: avg_frame_bandwidth,
 
-            // libvpx `vp9_rc_init` for CBR: avg_frame_qindex initialized
-            // to worst_allowed_q for both frame types
-            // (`vp9_ratectrl.c:364-365`).
-            last_q_keyframe: config.max_qindex,
+            // libvpx `vp9_rc_init`: CBR seeds avg_frame_qindex to
+            // worst_allowed_q; one-pass VBR/CQ/Q/two-pass seed to the
+            // midpoint of worst/best (`vp9_ratectrl.c:363-371`).
+            last_q_keyframe: config.min_qindex,
             last_q_inter: config.max_qindex,
-            avg_frame_qindex_key: config.max_qindex,
-            avg_frame_qindex_inter: config.max_qindex,
+            avg_frame_qindex_key: avg_qindex_seed,
+            avg_frame_qindex_inter: avg_qindex_seed,
 
             active_min_qindex: config.min_qindex,
             active_max_qindex: config.max_qindex,
@@ -523,6 +528,39 @@ mod tests {
             actual.abs_diff(expected) <= 1,
             "avg_frame_bandwidth = {actual}, expected ~{expected}"
         );
+    }
+
+    #[test]
+    fn qindex_history_init_matches_libvpx_cbr_branch() {
+        use super::super::RcMode;
+        let cfg = RateControlConfig {
+            rc_mode: RcMode::Cbr,
+            min_qindex: 4,
+            max_qindex: 255,
+            ..RateControlConfig::default()
+        };
+        let rc = RateControl::new(cfg);
+        assert_eq!(rc.last_q_keyframe, 4);
+        assert_eq!(rc.last_q_inter, 255);
+        assert_eq!(rc.avg_frame_qindex_key, 255);
+        assert_eq!(rc.avg_frame_qindex_inter, 255);
+    }
+
+    #[test]
+    fn qindex_history_init_matches_libvpx_non_cbr_branch() {
+        use super::super::RcMode;
+        let cfg = RateControlConfig {
+            rc_mode: RcMode::Vbr,
+            min_qindex: 4,
+            max_qindex: 255,
+            ..RateControlConfig::default()
+        };
+        let rc = RateControl::new(cfg);
+        let midpoint = ((u16::from(cfg.max_qindex) + u16::from(cfg.min_qindex)) / 2) as u8;
+        assert_eq!(rc.last_q_keyframe, 4);
+        assert_eq!(rc.last_q_inter, 255);
+        assert_eq!(rc.avg_frame_qindex_key, midpoint);
+        assert_eq!(rc.avg_frame_qindex_inter, midpoint);
     }
 
     #[test]
