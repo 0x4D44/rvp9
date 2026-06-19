@@ -2961,6 +2961,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         env_flag_default("RVP9_A4_DESCENT_CB_FILTER", rt_large_recovery);
     let rt_skip_integer_mv_filter_search =
         env_flag_default("RVP9_RT_SKIP_INTMV_FILTER_SEARCH", rt_large_recovery);
+    // Large-frame recovery: skip the A4 descent's 16x16 picker layer.
+    // This removes the dominant 720p timing work while leaving the
+    // small-frame quality gates untouched. `=0` restores the full descent.
+    let rt_min_partition32 = env_flag_default("RVP9_RT_MIN_PARTITION32", rt_large_recovery);
     let emit_profile_enabled = std::env::var_os("RVP9_EMIT_PROFILE").is_some();
     let mut emit_profile_pred_time = std::time::Duration::ZERO;
     let mut emit_profile_tx_select_time = std::time::Duration::ZERO;
@@ -3164,7 +3168,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // the descent can SPLIT Block16x16 into four 8×8 leaves and
                 // treat 8×8 as a NONE candidate. Default ON; `RVP9_P8=0`
                 // keeps the R3 Block16x16 floor exactly as before.
-                let min_bs = if p8_enabled { BS::Block8x8 } else { min_bs };
+                let mut min_bs = if p8_enabled { BS::Block8x8 } else { min_bs };
+                let mut max_bs = max_bs;
+                if rt_large_recovery && rt_min_partition32 {
+                    // The large-frame RT path has already disabled P8,
+                    // so clamping the floor to 32x32 skips 16x16 descent
+                    // calls without changing the small-frame Foreman gate.
+                    min_bs = BS::Block32x32;
+                    if (max_bs as u8) < (min_bs as u8) {
+                        max_bs = min_bs;
+                    }
+                }
 
                 // 3. Build the descent params.
                 let pcosts = f3_partition_costs
