@@ -27,3 +27,11 @@ Out-of-scope observations parked for a separate, human-invoked review. Dated
   `profile1_444_aq2_follow_up` / `profile1_720p_aq2_follow_up` ("aq2 444 surfaces rvp9
   segmentation bug — 9/12 mismatch") and the kfonly 444/422/440 cases. The aq2-444
   one may be segmentation-adjacent to G-C; worth checking whether G-C narrowed it.
+  **UPDATE 2026-06-19:** the **kfonly 444/422/440** part is now FIXED by the harvest
+  (SIG1+SIG2) — those 3 tests pass `mismatched==0` but stay `#[ignore]d` with an
+  inverted self-check; tracked as `RVP9-BUG-KILN-00007` (un-ignore + flip assertion).
+  Only the **aq2-444 / 720p-aq2** part of this entry remains open/unverified.
+- [ ] 2026-06-19: Doc cross-ref drift (cosmetic, from the track2 harvest review):
+  `crates/rvp9-decoder/src/tile.rs:1219` cites `reconstruct_inter.rs:521-548` for the
+  intra `max_blocks` geometry, but the referenced block actually runs `519-562`
+  (~14-line tail imprecision). Refresh the line range when next touching that file.
