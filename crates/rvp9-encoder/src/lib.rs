@@ -2372,6 +2372,10 @@ pub(crate) struct InterPartitionLeafDesc {
 ///
 /// Walks SBs/leaves in raster order — same convention as the F10.1b
 /// intra simulator + writer.
+fn p8_default_enabled(rt_large_recovery: bool, rc_mode: crate::rate_control::RcMode) -> bool {
+    !rt_large_recovery && !matches!(rc_mode, crate::rate_control::RcMode::Vbr)
+}
+
 #[allow(clippy::too_many_arguments)] // AQ.1 added `seg_q_deltas`; the
 // remaining args are all load-bearing per-frame inputs that don't
 // reduce to a meaningful struct yet — revisit when AQ.3 lands.
@@ -2478,6 +2482,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     speed: i32,
     deadline: rvp9_core::mode_decision::speed_features::Deadline,
     content_tier: rvp9_core::mode_decision::speed_features::ContentTier,
+    // Rate-control mode feeds mode-decision feature defaults where
+    // fixed-Q and rate-aware RD curves diverge.
+    rc_mode: crate::rate_control::RcMode,
     // PHASE-3 integration: thread W2.x pre-analysis producer outputs
     // into the per-leaf PickInterModeParams literals. Mirrors libvpx's
     // `cpi->noise_estimate` (vp9_encoder.h:971), `x->content_state_sb`
@@ -2745,15 +2752,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // since the cache is populated by the descent's picker calls.
     let phase2_reuse_enabled = std::env::var_os("RVP9_PHASE2_REUSE_DISABLE").is_none();
     // Phase A — enable 8×8 inter partitions in the A4 descent. Default
-    // ON; the per-block RD self-suppresses 8×8 where it doesn't pay
-    // (≈0% on synthetic, ≈32% on natural content). Set `RVP9_P8=0` as an
-    // escape hatch to force-disable, restoring byte-identical pre-Phase-A
-    // behaviour (goldens/debug). When ON, the descent lowers its
+    // ON for fixed-Q / CBR-style paths where matched-Q Foreman improves,
+    // but OFF for one-pass VBR where the Stage 4a real-content curve
+    // improves without the 8×8 floor. Set `RVP9_P8=1` or `RVP9_P8=0`
+    // as an explicit override. When ON, the descent lowers its
     // `min_partition_size` floor to Block8x8 so Block16x16 may SPLIT into
     // four 8×8 NONE leaves and 8×8 becomes a valid NONE candidate.
     let p8_enabled = std::env::var("RVP9_P8")
         .map(|v| v != "0")
-        .unwrap_or(!rt_large_recovery);
+        .unwrap_or_else(|_| p8_default_enabled(rt_large_recovery, rc_mode));
     let f3_partition_costs = if f3_nonrd_partition_enabled {
         Some(partition_costs(&FrameContext::new_default()))
     } else {
@@ -7315,6 +7322,15 @@ mod tests {
         assert_eq!(c.width, 64);
         assert_eq!(c.height, 64);
         assert_eq!(c.base_qindex, 50);
+    }
+
+    #[test]
+    fn p8_default_is_off_for_vbr_and_large_rt_only() {
+        assert!(!p8_default_enabled(false, RcMode::Vbr));
+        assert!(p8_default_enabled(false, RcMode::Cbr));
+        assert!(p8_default_enabled(false, RcMode::Cq));
+        assert!(p8_default_enabled(false, RcMode::Q));
+        assert!(!p8_default_enabled(true, RcMode::Cbr));
     }
 
     #[test]

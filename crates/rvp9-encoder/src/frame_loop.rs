@@ -2724,6 +2724,7 @@ impl StreamEncoder {
             self.config.speed,
             self.config.deadline,
             rvp9_core::mode_decision::speed_features::ContentTier::Default,
+            self.config.rc_mode,
             // PHASE-3 integration: thread W2.x pre-analysis producer
             // outputs into the per-leaf picker. Closes the re-audit's
             // "producer runs but no consumer reads it" finding for
@@ -3275,6 +3276,7 @@ impl StreamEncoder {
             self.config.speed,
             self.config.deadline,
             rvp9_core::mode_decision::speed_features::ContentTier::Default,
+            self.config.rc_mode,
             self.pre_analysis.noise_estimate,
             self.pre_analysis.high_source_sad,
             &self.pre_analysis.content_state_sb,
