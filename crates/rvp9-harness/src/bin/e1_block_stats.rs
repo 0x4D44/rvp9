@@ -22,10 +22,16 @@
 //!
 //! Usage:
 //! ```text
-//! cargo run --release --bin e1-block-stats -- \
+//! cargo run --release --bin e1_block_stats -- \
 //!     --foreman D:\language\rvp9-2\tests\corpus\foreman_cif.y4m \
 //!     --vpxenc  D:\language\libvpx-stock\vpxenc.exe \
 //!     --frames 64 --out wrk_docs\E1_encoder_gap_analysis.md
+//!
+//! cargo run --release --bin e1_block_stats -- \
+//!     --rvp9-ivf target\tmp\e9_q80_rvp9_fixedenv.ivf \
+//!     --libvpx-ivf target\tmp\e9_q80_libvpx_minq20.ivf \
+//!     --label "fixed-Q Q80 / libvpx min-q20" \
+//!     --fps 30 --out target\tmp\e9_q80_block_stats.md
 //! ```
 
 use rvp9_core::bitstream::FrameKind as WireFrameKind;
@@ -407,17 +413,34 @@ fn run_libvpx(
     Some(agg)
 }
 
+fn decode_ivf(path: &Path) -> Result<Aggregate, String> {
+    let (data, packets) =
+        read_packets(path).map_err(|e| format!("read {}: {e:?}", path.display()))?;
+    let mut dec = Decoder::new();
+    let mut agg = Aggregate::default();
+    for range in &packets {
+        let slice = range.slice(&data);
+        let mut fs = FrameStats {
+            bits: (slice.len() as u64) * 8,
+            ..Default::default()
+        };
+        decode_and_accumulate(&mut dec, slice, &mut fs);
+        agg.push(fs);
+    }
+    Ok(agg)
+}
+
 /// Format the aggregate comparison for one target bitrate into the
 /// markdown report buffer `md`.
 fn emit_report(
     md: &mut String,
-    kbps: u32,
+    label: &str,
     framerate: f64,
     n_frames: usize,
     rvp9: &Aggregate,
     libvpx: Option<&Aggregate>,
 ) {
-    let _ = writeln!(md, "\n## Operating point: {kbps} kbps target\n");
+    let _ = writeln!(md, "\n## Operating point: {label}\n");
 
     // ---- 1. Bit allocation ----
     let _ = writeln!(md, "### 1. Bit allocation\n");
@@ -574,9 +597,9 @@ fn emit_report(
     }
 }
 
-/// Emit the per-frame bits + q table (compact) for the 100 kbps point.
-fn emit_per_frame(md: &mut String, rvp9: &Aggregate, libvpx: Option<&Aggregate>) {
-    let _ = writeln!(md, "\n### Per-frame bits & base_qindex (100 kbps)\n");
+/// Emit the per-frame bits + q table (compact) for one operating point.
+fn emit_per_frame(md: &mut String, label: &str, rvp9: &Aggregate, libvpx: Option<&Aggregate>) {
+    let _ = writeln!(md, "\n### Per-frame bits & base_qindex ({label})\n");
     let _ = writeln!(
         md,
         "| frame | kind | rvp9 bits | rvp9 q | rvp9 intra% | libvpx bits | libvpx q | libvpx intra% |\n|---:|---|---:|---:|---:|---:|---:|---:|"
@@ -620,8 +643,64 @@ fn arg(argv: &[String], flag: &str) -> Option<String> {
         .and_then(|i| argv.get(i + 1).cloned())
 }
 
+fn run_ivf_mode(argv: &[String]) -> Option<()> {
+    let rvp9_ivf = arg(argv, "--rvp9-ivf").map(PathBuf::from)?;
+    let libvpx_ivf = arg(argv, "--libvpx-ivf").map(PathBuf::from);
+    let out = PathBuf::from(
+        arg(argv, "--out").unwrap_or_else(|| r"target\tmp\e1_ivf_block_stats.md".into()),
+    );
+    let framerate: f64 = arg(argv, "--fps")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(30.0);
+    let label = arg(argv, "--label").unwrap_or_else(|| {
+        rvp9_ivf
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("arbitrary IVF")
+            .to_string()
+    });
+
+    let rvp9 = decode_ivf(&rvp9_ivf).expect("decode rvp9 IVF");
+    let libvpx = libvpx_ivf
+        .as_deref()
+        .map(|path| decode_ivf(path).expect("decode libvpx IVF"));
+    let n_frames = arg(argv, "--frames")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| {
+            libvpx
+                .as_ref()
+                .map_or(rvp9.frames.len(), |l| rvp9.frames.len().min(l.frames.len()))
+        });
+
+    let mut md = String::new();
+    let _ = writeln!(md, "# E1 — rvp9 vs libvpx IVF block-stat comparison\n");
+    let _ = writeln!(
+        md,
+        "rvp9 IVF: `{}`\n\nlibvpx IVF: `{}`\n\nBOTH bitstreams decoded through the SAME rvp9 decoder (oracle); all per-block stats use identical definitions.\n",
+        rvp9_ivf.display(),
+        libvpx_ivf
+            .as_ref()
+            .map_or("n/a".into(), |p| p.display().to_string())
+    );
+    let _ = writeln!(
+        md,
+        "Area-weighted % = fraction of coded 8x8 cells. Mode/skip/ref stats are over INTER frames only.\n"
+    );
+
+    emit_report(&mut md, &label, framerate, n_frames, &rvp9, libvpx.as_ref());
+    emit_per_frame(&mut md, &label, &rvp9, libvpx.as_ref());
+    std::fs::write(&out, &md).expect("write report");
+    eprintln!("Wrote report to {}", out.display());
+    println!("{md}");
+    Some(())
+}
+
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
+    if run_ivf_mode(&argv).is_some() {
+        return;
+    }
+
     let foreman = PathBuf::from(
         arg(&argv, "--foreman")
             .unwrap_or_else(|| r"D:\language\rvp9-2\tests\corpus\foreman_cif.y4m".into()),
@@ -688,7 +767,14 @@ fn main() {
         } else {
             None
         };
-        emit_report(&mut md, t / 1000, framerate, n_frames, &r, l.as_ref());
+        emit_report(
+            &mut md,
+            &format!("{} kbps target", t / 1000),
+            framerate,
+            n_frames,
+            &r,
+            l.as_ref(),
+        );
         if t == 100_000 {
             rvp9_100 = Some(r);
             libvpx_100 = l;
@@ -696,7 +782,7 @@ fn main() {
     }
 
     if let Some(r) = &rvp9_100 {
-        emit_per_frame(&mut md, r, libvpx_100.as_ref());
+        emit_per_frame(&mut md, "100 kbps", r, libvpx_100.as_ref());
     }
 
     std::fs::write(&out, &md).expect("write report");
