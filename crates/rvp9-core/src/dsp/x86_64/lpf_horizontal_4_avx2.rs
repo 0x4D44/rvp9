@@ -357,7 +357,14 @@ mod tests {
         #[test]
         fn scalar_eq_avx2_proptest(
             seed in any::<u32>(),
-            blimit in 1u8..=255,
+            // Valid VP9 blimit (mblim) range: `2*(filter_level+2) + block_inside_limit`,
+            // max `2*(63+2)+63 = 193` for 8-bit. The AVX2 kernel computes the
+            // `mb_diff` mask term in saturating u8 (mirroring libvpx's SIMD loop
+            // filter); only at the *unreachable* `blimit=255` does the saturated
+            // value (≤255) fail to exceed blimit while the scalar i32 `mb_diff`
+            // (max 637) can — the sole divergence point. Cap at the valid max so
+            // this differential stays in-domain. See JRN 2026.06.20.
+            blimit in 1u8..=193,
             limit in 1u8..=63,
             thresh in 0u8..=15,
         ) {
