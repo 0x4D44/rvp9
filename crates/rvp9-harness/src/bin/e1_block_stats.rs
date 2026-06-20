@@ -88,6 +88,10 @@ struct FrameStats {
     coef_two_plus_tokens: u64,
     coef_eob_tokens: u64,
     coef_eob_branch_attempts: u64,
+    /// Distinct coded leaves by luma TX size.
+    tx_leaf_count: [u64; 4],
+    /// Estimated luma TX blocks by TX size.
+    tx_y_block_count: [u64; 4],
     /// `true` if the rvp9 decoder returned an error for this frame
     /// (so the mi-grid is STALE — stats must be treated as invalid).
     decode_failed: bool,
@@ -168,6 +172,20 @@ impl Aggregate {
             eob as f64 / n,
             eob_branch as f64 / n,
         )
+    }
+    fn inter_tx_counts(&self) -> ([f64; 4], [f64; 4]) {
+        let mut leaves = [0u64; 4];
+        let mut y_blocks = [0u64; 4];
+        let mut n = 0;
+        for f in self.frames.iter().filter(|f| !f.is_key) {
+            for i in 0..4 {
+                leaves[i] += f.tx_leaf_count[i];
+                y_blocks[i] += f.tx_y_block_count[i];
+            }
+            n += 1;
+        }
+        let n = f64::from(n.max(1));
+        (leaves.map(|v| v as f64 / n), y_blocks.map(|v| v as f64 / n))
     }
     /// Sum a per-block array across all INTER frames (the realtime path).
     fn block_count_inter(&self) -> [u64; BLOCK_SIZES] {
@@ -267,6 +285,12 @@ fn accumulate_grid(grid: &[Option<ModeInfo>], mi_rows: usize, mi_cols: usize, fs
             fs.block_count[bs.idx()] += 1;
             fs.block_area8[bs.idx()] += area8;
             fs.total_area8 += area8;
+            let tx_idx = mi.tx_size as usize;
+            fs.tx_leaf_count[tx_idx] += 1;
+            let tx_step_4x4 = 1usize << tx_idx;
+            let y_tx_blocks = (bs.n_4x4_wide() as usize).div_ceil(tx_step_4x4)
+                * (bs.n_4x4_high() as usize).div_ceil(tx_step_4x4);
+            fs.tx_y_block_count[tx_idx] += y_tx_blocks as u64;
 
             if mi.skip {
                 fs.skip_area8 += area8;
@@ -552,6 +576,7 @@ fn emit_report(
     let (r_kbps, r_key, r_inter, _r_tot) = line(rvp9);
     let (r_hdr, r_comp, r_tile) = rvp9.inter_bitstream_sections();
     let (r_zero, r_one, r_two_plus, r_eob, r_eob_branch) = rvp9.inter_coef_model_tokens();
+    let (r_tx_leaves, r_tx_y_blocks) = rvp9.inter_tx_counts();
     let _ = writeln!(
         md,
         "| achieved bitrate (kbps) | {r_kbps:.1} | {} |",
@@ -607,6 +632,30 @@ fn emit_report(
         "| avg inter coef eob-branch attempts | {r_eob_branch:.0} | {} |",
         libvpx.map_or("n/a".into(), |l| {
             format!("{:.0}", l.inter_coef_model_tokens().4)
+        })
+    );
+    let _ = writeln!(
+        md,
+        "| avg inter luma TX leaves 4x4/8x8/16x16/32x32 | {:.0}/{:.0}/{:.0}/{:.0} | {} |",
+        r_tx_leaves[0],
+        r_tx_leaves[1],
+        r_tx_leaves[2],
+        r_tx_leaves[3],
+        libvpx.map_or("n/a".into(), |l| {
+            let (tx, _) = l.inter_tx_counts();
+            format!("{:.0}/{:.0}/{:.0}/{:.0}", tx[0], tx[1], tx[2], tx[3])
+        })
+    );
+    let _ = writeln!(
+        md,
+        "| avg inter luma TX blocks 4x4/8x8/16x16/32x32 | {:.0}/{:.0}/{:.0}/{:.0} | {} |",
+        r_tx_y_blocks[0],
+        r_tx_y_blocks[1],
+        r_tx_y_blocks[2],
+        r_tx_y_blocks[3],
+        libvpx.map_or("n/a".into(), |l| {
+            let (_, tx) = l.inter_tx_counts();
+            format!("{:.0}/{:.0}/{:.0}/{:.0}", tx[0], tx[1], tx[2], tx[3])
         })
     );
 
