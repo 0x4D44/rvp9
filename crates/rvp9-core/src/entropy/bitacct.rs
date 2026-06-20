@@ -24,9 +24,14 @@
 //! 2. Before each leaf-category write burst, call [`set_category`].
 //! 3. After a frame, read [`take_snapshot`] for per-category bits and
 //!    reset for the next frame.
+//!
+//! [`BoolWriter`](super::BoolWriter) resets the current category to
+//! [`BitCategory::Other`] at stream start and stop, so compressed-header
+//! streams and arithmetic-coder flush bits do not inherit a tile syntax
+//! category from a previous write burst.
 
 use core::sync::atomic::{AtomicBool, Ordering};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 /// Syntax categories tracked by the E4 bit accounting harness. The
 /// ordering matches the report table.
@@ -63,6 +68,9 @@ thread_local! {
     static BITS: RefCell<[f64; N_CATEGORIES]> = const { RefCell::new([0.0; N_CATEGORIES]) };
     /// The category writes are currently attributed to.
     static CURRENT: RefCell<BitCategory> = const { RefCell::new(BitCategory::Other) };
+    /// Thread-local suppression depth for dry-run writers that must not
+    /// contribute to external diagnostics.
+    static SUPPRESS_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
 /// Enable bit accounting if `RVP9_E4_BITACCT` is set and non-zero. Safe
@@ -76,7 +84,29 @@ pub fn init_from_env() {
 /// to gate the `BoolWriter::write` hot path.
 #[inline]
 pub fn enabled() -> bool {
-    BITACCT_ON.load(Ordering::Relaxed)
+    BITACCT_ON.load(Ordering::Relaxed) && SUPPRESS_DEPTH.with(|depth| depth.get() == 0)
+}
+
+/// Run `f` with bit accounting suppressed on this thread.
+///
+/// This is for dry-run encodes that execute the normal writer only to
+/// gather codec counts. The syntax decisions are real, but their bits are
+/// not part of the emitted frame and would double-count diagnostics.
+pub fn with_suppressed<R>(f: impl FnOnce() -> R) -> R {
+    struct Guard;
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            SUPPRESS_DEPTH.with(|depth| {
+                let current = depth.get();
+                debug_assert!(current > 0, "bitacct suppression depth underflow");
+                depth.set(current.saturating_sub(1));
+            });
+        }
+    }
+
+    SUPPRESS_DEPTH.with(|depth| depth.set(depth.get().saturating_add(1)));
+    let _guard = Guard;
+    f()
 }
 
 /// Set the category subsequent [`record`] calls attribute bits to.
@@ -253,5 +283,64 @@ mod tests {
         // ---------------------------------------------------------
         assert_eq!(snap.len(), N_CATEGORIES);
         assert_eq!(N_CATEGORIES, 9);
+    }
+
+    #[test]
+    fn bool_writer_boundaries_reset_to_other() {
+        struct Restore(bool);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                BITACCT_ON.store(self.0, Ordering::Relaxed);
+            }
+        }
+        let _restore = Restore(BITACCT_ON.load(Ordering::Relaxed));
+
+        let _ = take_snapshot();
+        BITACCT_ON.store(true, Ordering::Relaxed);
+        set_category(BitCategory::Coef);
+
+        let mut buf = [0u8; 32];
+        {
+            let mut w = crate::entropy::BoolWriter::start_encode(&mut buf);
+            w.write_bit(1);
+            set_category(BitCategory::ModeRef);
+            w.stop_encode().expect("stop_encode");
+        }
+
+        let snap = take_snapshot();
+        assert_eq!(snap[BitCategory::Coef as usize], 0.0);
+        assert_eq!(snap[BitCategory::ModeRef as usize], 0.0);
+        assert!(
+            snap[BitCategory::Other as usize] > 0.0,
+            "marker, user bit, and flush bits should land in Other"
+        );
+    }
+
+    #[test]
+    fn suppression_skips_recording_and_restores_enabled_state() {
+        struct Restore(bool);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                BITACCT_ON.store(self.0, Ordering::Relaxed);
+            }
+        }
+        let _restore = Restore(BITACCT_ON.load(Ordering::Relaxed));
+
+        let _ = take_snapshot();
+        BITACCT_ON.store(true, Ordering::Relaxed);
+        set_category(BitCategory::Coef);
+
+        with_suppressed(|| {
+            assert!(!enabled(), "suppression should disable recording");
+            let mut buf = [0u8; 32];
+            let mut w = crate::entropy::BoolWriter::start_encode(&mut buf);
+            w.write_bit(1);
+            w.stop_encode().expect("stop_encode");
+        });
+
+        assert!(enabled(), "suppression should restore recording");
+        record(1, 128);
+        let snap = take_snapshot();
+        assert_eq!(snap[BitCategory::Coef as usize], 1.0);
     }
 }

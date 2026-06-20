@@ -57,6 +57,7 @@ impl<'a> BoolWriter<'a> {
     /// and with the leading marker bit (a `0` at prob 128) already
     /// emitted, matching libvpx `vpx_start_encode` (`bitwriter.c:20-31`).
     pub fn start_encode(buffer: &'a mut [u8]) -> Self {
+        super::bitacct::set_category(super::bitacct::BitCategory::Other);
         let size = u32::try_from(buffer.len()).unwrap_or(i32::MAX as u32);
         let mut w = Self {
             low_value: 0,
@@ -190,6 +191,7 @@ impl<'a> BoolWriter<'a> {
     /// (`bitwriter.c:33-55`). Returns the number of bytes written, or
     /// [`StopEncodeError`] if the buffer overflowed at any point.
     pub fn stop_encode(mut self) -> Result<usize, StopEncodeError> {
+        super::bitacct::set_category(super::bitacct::BitCategory::Other);
         // Flush 32 trailing zero bits to drain the range register.
         for _ in 0..32 {
             self.write_bit(0);

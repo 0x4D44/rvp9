@@ -4479,7 +4479,7 @@ fn build_inter_packet_with_residuals(
         coef_full: Some(rvp9_core::entropy::new_coef12_bank()),
         ..FrameCounts::default()
     };
-    {
+    rvp9_core::entropy::bitacct::with_suppressed(|| -> Result<(), EncodeError> {
         let mut scratch = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
         let mut bw = BoolWriter::start_encode(&mut scratch);
         let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
@@ -4503,7 +4503,8 @@ fn build_inter_packet_with_residuals(
             Some(&mut count_counts),
         )?;
         // We discard `scratch` — only the gathered counts matter.
-    }
+        Ok(())
+    })?;
 
     // A6 — build the live TWO_LOOP coef-prob update plan from THIS
     // frame's full 12-token counts, scored against the PRE-frame FC

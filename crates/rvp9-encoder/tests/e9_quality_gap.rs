@@ -115,6 +115,8 @@ struct Rvp9Result {
     all_bits: f64,
     /// Coefficient-token bits per inter frame (bitacct).
     inter_coef_bits: f64,
+    /// Per-category entropy bits per inter frame (bitacct).
+    inter_cat_bits: [f64; bitacct::N_CATEGORIES],
     /// Y-plane tx-size histogram over inter frames: [4x4, 8x8, 16x16, 32x32].
     inter_tx_hist: [u64; 4],
     /// Y-plane tx-size histogram over the keyframe.
@@ -173,6 +175,7 @@ fn measure_rvp9_fixed_q(fixed_q: u8, frames: &[YuvFrameBuf], framerate: f64) -> 
     let mut inter_bits_sum = 0u64;
     let mut all_bits_sum = 0u64;
     let mut inter_coef_bits = 0.0f64;
+    let mut inter_cat_bits = [0.0f64; bitacct::N_CATEGORIES];
     let mut inter_tx_hist = [0u64; 4];
     let mut kf_tx_hist = [0u64; 4];
     let mut inter_eob_sum = 0u64;
@@ -217,6 +220,9 @@ fn measure_rvp9_fixed_q(fixed_q: u8, frames: &[YuvFrameBuf], framerate: f64) -> 
             }
             inter_bits_sum += u64::from(pkt.actual_bits);
             inter_coef_bits += cats[bitacct::BitCategory::Coef as usize];
+            for (acc, value) in inter_cat_bits.iter_mut().zip(cats.iter()) {
+                *acc += *value;
+            }
             inter_eob_sum += skip.nonskip_eob_sum;
             inter_leaves += skip.leaves;
             inter_skip += skip.skip_leaves;
@@ -244,6 +250,7 @@ fn measure_rvp9_fixed_q(fixed_q: u8, frames: &[YuvFrameBuf], framerate: f64) -> 
         inter_bits: inter_bits_sum as f64 / n_inter,
         all_bits: all_bits_sum as f64 / n_all,
         inter_coef_bits: inter_coef_bits / n_inter,
+        inter_cat_bits: inter_cat_bits.map(|v| v / n_inter),
         inter_tx_hist,
         kf_tx_hist,
         inter_eob_sum,
@@ -434,6 +441,25 @@ fn e9_quality_gap_foreman() {
             r.inter_coef_bits,
             100.0 * r.inter_skip_frac,
             r.inter_eob_sum
+        );
+        let mode_syntax_bits: f64 = r
+            .inter_cat_bits
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| {
+                *idx != bitacct::BitCategory::Coef as usize
+                    && *idx != bitacct::BitCategory::Other as usize
+            })
+            .map(|(_, bits)| *bits)
+            .sum();
+        eprintln!(
+            "         detail: inter mode-syntax bits/frame = {mode_syntax_bits:.0}  |  other/header/flush bits/frame = {:.0}",
+            r.inter_cat_bits[bitacct::BitCategory::Other as usize]
+        );
+        eprintln!(
+            "         detail: inter bitacct bits/frame by category {:?} = {:?}",
+            CAT_NAMES,
+            r.inter_cat_bits.map(|v| v.round() as u64)
         );
         let bits_per_eob = if r.inter_eob_sum > 0 {
             r.inter_coef_bits * (inter_count_estimate(&frames) as f64) / r.inter_eob_sum as f64

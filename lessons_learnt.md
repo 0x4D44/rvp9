@@ -20,3 +20,4 @@ Hard cap: 20 entries.
 - 2026-06-19: Zero-EOB inter TX blocks are hot in the 720p realtime emit path; store empty `eob == 0` markers and let the coef source return a static zero slice instead of allocating zero qcoeff/dqcoeff vectors.
 - 2026-06-19: E9 fixed-Q Foreman is not a pure equal-reference oracle: libvpx `--end-usage=q --cq-level=N` still gives the keyframe a much lower base qindex (Q80 maps to KF q=15), so interpret inter residuals as reference-contaminated.
 - 2026-06-20: Current E12 is a stale single-ref LAST oracle; use E13 dual-ref argmin counters for current RT NEWMV rejection/search claims.
+- 2026-06-20: `bitacct` must suppress dry-run tile encodes and reset `BoolWriter` boundaries to `Other`; otherwise E9/E4 category bits double-count A6 count passes and smear compressed-header bits into tile buckets.
