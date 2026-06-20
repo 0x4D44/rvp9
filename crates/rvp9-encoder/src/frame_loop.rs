@@ -132,6 +132,15 @@ pub enum AqMode {
 // `rvp9_encoder::Deadline` is preserved for W0.2 callers (CLI, tests).
 pub use rvp9_core::mode_decision::speed_features::Deadline;
 
+const VBR_BITS_PER_MB_MULTIPLIER_DEFAULT: f64 = 5.0;
+
+fn default_bits_per_mb_multiplier(rc_mode: RcMode, base_default: f64) -> f64 {
+    match rc_mode {
+        RcMode::Vbr => VBR_BITS_PER_MB_MULTIPLIER_DEFAULT,
+        _ => base_default,
+    }
+}
+
 /// Public configuration for the F10.0 streaming encoder.
 ///
 /// Wraps a [`RateControlConfig`] plus the encoder-specific knobs the
@@ -410,16 +419,17 @@ impl EncoderConfig {
         // A10 experiment hook — let test harnesses override the
         // `bits_per_mb_multiplier` knob without plumbing a new public
         // field through every caller. Env var
-        // `RVP9_BPM_MULTIPLIER=<f64>` overrides the default of 1.0
-        // (libvpx-faithful). Non-parseable values are silently
-        // ignored (default stays in force). Production callers
-        // should NOT rely on this; it exists for A10-class diagnostic
-        // experiments only.
+        // `RVP9_BPM_MULTIPLIER=<f64>` overrides the mode default.
+        // Non-parseable values are silently ignored (default stays in
+        // force). Production callers should NOT rely on this; it exists
+        // for A10-class diagnostic experiments only.
+        let default_bits_per_mb_multiplier =
+            default_bits_per_mb_multiplier(self.rc_mode, defaults.bits_per_mb_multiplier);
         let bits_per_mb_multiplier = std::env::var("RVP9_BPM_MULTIPLIER")
             .ok()
             .and_then(|s| s.parse::<f64>().ok())
             .filter(|v| v.is_finite() && *v > 0.0)
-            .unwrap_or(defaults.bits_per_mb_multiplier);
+            .unwrap_or(default_bits_per_mb_multiplier);
         RateControlConfig {
             target_bitrate_bps: self.target_bitrate_bps,
             framerate: self.framerate,
@@ -7869,6 +7879,22 @@ mod tests {
         assert_eq!(cfg.gop_length, 60);
         assert_eq!(cfg.aq_mode, AqMode::Off);
         assert!(cfg.use_prev_frame_mvs);
+    }
+
+    #[test]
+    fn default_bits_per_mb_multiplier_is_vbr_tuned_only() {
+        let base = RateControlConfig::default().bits_per_mb_multiplier;
+        assert_eq!(default_bits_per_mb_multiplier(RcMode::Cbr, base), base);
+        assert_eq!(
+            default_bits_per_mb_multiplier(RcMode::Vbr, base),
+            VBR_BITS_PER_MB_MULTIPLIER_DEFAULT
+        );
+        assert_eq!(default_bits_per_mb_multiplier(RcMode::Cq, base), base);
+        assert_eq!(default_bits_per_mb_multiplier(RcMode::Q, base), base);
+        assert_eq!(
+            default_bits_per_mb_multiplier(RcMode::VbrTwoPass, base),
+            base
+        );
     }
 
     #[test]
