@@ -36,6 +36,7 @@
 
 use rvp9_core::bitstream::FrameKind as WireFrameKind;
 use rvp9_core::block::{BLOCK_SIZES, BlockSize};
+use rvp9_core::entropy::{EOB_MODEL_TOKEN, ONE_TOKEN, TWO_TOKEN, ZERO_TOKEN};
 use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, RefFrame};
 use rvp9_decoder::{Decoder, ParsedFrame};
 use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
@@ -81,6 +82,12 @@ struct FrameStats {
     ref_last_area8: u64,
     ref_golden_area8: u64,
     ref_altref_area8: u64,
+    /// Decoder-side coefficient model token counts.
+    coef_zero_tokens: u64,
+    coef_one_tokens: u64,
+    coef_two_plus_tokens: u64,
+    coef_eob_tokens: u64,
+    coef_eob_branch_attempts: u64,
     /// `true` if the rvp9 decoder returned an error for this frame
     /// (so the mi-grid is STALE — stats must be treated as invalid).
     decode_failed: bool,
@@ -136,6 +143,30 @@ impl Aggregate {
             header as f64 / n,
             compressed_header as f64 / n,
             tile_data as f64 / n,
+        )
+    }
+    fn inter_coef_model_tokens(&self) -> (f64, f64, f64, f64, f64) {
+        let mut zero = 0;
+        let mut one = 0;
+        let mut two_plus = 0;
+        let mut eob = 0;
+        let mut eob_branch = 0;
+        let mut n = 0;
+        for f in self.frames.iter().filter(|f| !f.is_key) {
+            zero += f.coef_zero_tokens;
+            one += f.coef_one_tokens;
+            two_plus += f.coef_two_plus_tokens;
+            eob += f.coef_eob_tokens;
+            eob_branch += f.coef_eob_branch_attempts;
+            n += 1;
+        }
+        let n = f64::from(n.max(1));
+        (
+            zero as f64 / n,
+            one as f64 / n,
+            two_plus as f64 / n,
+            eob as f64 / n,
+            eob_branch as f64 / n,
         )
     }
     /// Sum a per-block array across all INTER frames (the realtime path).
@@ -264,6 +295,34 @@ fn accumulate_grid(grid: &[Option<ModeInfo>], mi_rows: usize, mi_cols: usize, fs
     let _ = BlockSize::Block8x8; // keep import alive if unused above
 }
 
+fn accumulate_coef_counts(counts: &rvp9_core::entropy::adapt::CoefCountsBank, fs: &mut FrameStats) {
+    for tx in counts.coef.iter() {
+        for plane in tx.iter() {
+            for ref_type in plane.iter() {
+                for band in ref_type.iter() {
+                    for ctx in band.iter() {
+                        fs.coef_zero_tokens += u64::from(ctx[ZERO_TOKEN]);
+                        fs.coef_one_tokens += u64::from(ctx[ONE_TOKEN]);
+                        fs.coef_two_plus_tokens += u64::from(ctx[TWO_TOKEN]);
+                        fs.coef_eob_tokens += u64::from(ctx[EOB_MODEL_TOKEN]);
+                    }
+                }
+            }
+        }
+    }
+    for tx in counts.eob_branch.iter() {
+        for plane in tx.iter() {
+            for ref_type in plane.iter() {
+                for band in ref_type.iter() {
+                    for &ctx in band.iter() {
+                        fs.coef_eob_branch_attempts += u64::from(ctx);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Decode one packet through the rvp9 decoder and accumulate the
 /// resulting mi-grid into a FrameStats (bits + key flag set by caller).
 fn decode_and_accumulate(dec: &mut Decoder, pkt: &[u8], fs: &mut FrameStats) {
@@ -296,7 +355,11 @@ fn decode_and_accumulate(dec: &mut Decoder, pkt: &[u8], fs: &mut FrameStats) {
         let shown = pf.header.show_frame
             || matches!(pf.header.kind, WireFrameKind::ShowExistingFrame { .. });
         match dec.decode_frame(pf) {
-            Ok(_) => {}
+            Ok(_) => {
+                if !matches!(pf.header.kind, WireFrameKind::ShowExistingFrame { .. }) {
+                    accumulate_coef_counts(dec.last_frame_coef_counts(), fs);
+                }
+            }
             Err(e) => {
                 fs.decode_failed = true;
                 if std::env::var_os("E1_VERBOSE").is_some() {
@@ -488,6 +551,7 @@ fn emit_report(
     };
     let (r_kbps, r_key, r_inter, _r_tot) = line(rvp9);
     let (r_hdr, r_comp, r_tile) = rvp9.inter_bitstream_sections();
+    let (r_zero, r_one, r_two_plus, r_eob, r_eob_branch) = rvp9.inter_coef_model_tokens();
     let _ = writeln!(
         md,
         "| achieved bitrate (kbps) | {r_kbps:.1} | {} |",
@@ -528,6 +592,21 @@ fn emit_report(
         "| avg inter tile-data bits | {r_tile:.0} | {} |",
         libvpx.map_or("n/a".into(), |l| {
             format!("{:.0}", l.inter_bitstream_sections().2)
+        })
+    );
+    let _ = writeln!(
+        md,
+        "| avg inter coef model tokens zero/one/two+/eob | {r_zero:.0}/{r_one:.0}/{r_two_plus:.0}/{r_eob:.0} | {} |",
+        libvpx.map_or("n/a".into(), |l| {
+            let (z, o, t, e, _) = l.inter_coef_model_tokens();
+            format!("{z:.0}/{o:.0}/{t:.0}/{e:.0}")
+        })
+    );
+    let _ = writeln!(
+        md,
+        "| avg inter coef eob-branch attempts | {r_eob_branch:.0} | {} |",
+        libvpx.map_or("n/a".into(), |l| {
+            format!("{:.0}", l.inter_coef_model_tokens().4)
         })
     );
 

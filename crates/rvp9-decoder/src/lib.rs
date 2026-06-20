@@ -976,6 +976,30 @@ impl Decoder {
         self.last_frame_mi_dims
     }
 
+    /// Borrow the coefficient model-token counts produced by the most
+    /// recent [`Self::decode_frame`] call.
+    ///
+    /// The counts are reset at the start of each decoded frame and are
+    /// the same counters the decoder feeds into backward coefficient
+    /// adaptation. They are primarily a diagnostics surface for harnesses
+    /// that need to compare token volume across bitstreams decoded through
+    /// the same reader.
+    #[must_use]
+    pub fn last_frame_coef_counts(&self) -> &rvp9_core::entropy::adapt::CoefCountsBank {
+        &self.coef_counts
+    }
+
+    /// Borrow the mode / partition / reference counts produced by the
+    /// most recent inter-frame [`Self::decode_frame`] call.
+    ///
+    /// The counts are reset at the start of each inter frame and are the
+    /// same counters the decoder feeds into backward mode adaptation.
+    /// Keyframes do not populate meaningful mode-adaptation counts.
+    #[must_use]
+    pub fn last_frame_mode_counts(&self) -> &rvp9_core::entropy::adapt::FrameCounts {
+        &self.mode_counts
+    }
+
     /// Parse one transport packet (an IVF chunk, RTP packet, etc.)
     /// into its 1..=8 component VP9 frames.
     ///
