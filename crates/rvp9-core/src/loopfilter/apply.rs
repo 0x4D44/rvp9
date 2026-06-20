@@ -92,10 +92,13 @@ pub struct SharedFrame {
     chroma: ChromaFormat,
 }
 
-// Soundness: see the struct-level doc comment + Phase 3 HLD §4. The pointer
+// SAFETY: see the struct-level doc comment + Phase 3 HLD §4. The pointer
 // values are stable across the LF call; concurrent access is exclusive per
-// pixel by the row-progress protocol.
+// pixel by the row-progress protocol, so sharing the raw pointers across
+// threads does not introduce a data race.
 unsafe impl Send for SharedFrame {}
+// SAFETY: as above — exclusive per-pixel access under the row-progress protocol
+// makes `&SharedFrame` safe to share across threads.
 unsafe impl Sync for SharedFrame {}
 
 impl SharedFrame {

@@ -463,6 +463,8 @@ mod tests {
         let small = (320u32, 256u32); // 81_920 px — foreman.
 
         // Default (unset): ON for large @ cpu7, OFF for small @ cpu7.
+        // SAFETY: single-threaded test that exclusively owns these env vars and
+        // restores them before returning; no concurrent getenv/setenv.
         unsafe {
             std::env::remove_var("RVP9_C2B");
             std::env::remove_var("RVP9_C2B_THRESH");
@@ -511,6 +513,7 @@ mod tests {
         );
 
         // Escape hatch `RVP9_C2B=0`: force-OFF on both, even large @ cpu7.
+        // SAFETY: single-threaded test exclusively owning this env var.
         unsafe { std::env::set_var("RVP9_C2B", "0") };
         assert!(
             !dispatch(
@@ -536,9 +539,11 @@ mod tests {
             .search_breakout,
             "C2-β RVP9_C2B=0: stays off on small"
         );
+        // SAFETY: single-threaded test exclusively owning this env var.
         unsafe { std::env::remove_var("RVP9_C2B") };
 
         // `RVP9_C2B_THRESH` overrides the -20 default uniformly.
+        // SAFETY: single-threaded test exclusively owning this env var.
         unsafe { std::env::set_var("RVP9_C2B_THRESH", "1.5") };
         let tuned = dispatch(
             7,
@@ -553,6 +558,7 @@ mod tests {
             [1.5, 1.5, 1.5],
             "C2-β RVP9_C2B_THRESH overrides the threshold"
         );
+        // SAFETY: single-threaded test exclusively owning this env var.
         unsafe { std::env::remove_var("RVP9_C2B_THRESH") };
     }
 

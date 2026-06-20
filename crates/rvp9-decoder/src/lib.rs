@@ -3364,6 +3364,11 @@ impl Decoder {
                         // worker before the frame-state borrows
                         // expire.
                         for worker_id in 0..n_lf {
+                            // SAFETY: the L1/L2 row-progress protocol inside
+                            // `run_split_edge_lf_worker` guarantees no concurrent
+                            // writer overlaps this worker's owned pixels; the
+                            // `LfBatchHandle::wait` below joins every worker before
+                            // the frame-state borrows expire (see comment above).
                             unsafe {
                                 rvp9_core::loopfilter::apply::run_split_edge_lf_worker(
                                     state, worker_id, n_lf, &dispatch,

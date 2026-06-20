@@ -435,6 +435,8 @@ pub fn decode_coefs(
         // its value < COEF_BANDS, and `initial_pt = combine_entropy_contexts`
         // ∈ 0..=2 < COEFF_CONTEXTS.
         let band0 = unsafe { *band_translate.get_unchecked(0) } as usize;
+        // SAFETY: same invariants — `band0 < COEF_BANDS` (a `band_translate`
+        // value) indexes `coef_probs`, and `initial_pt ∈ 0..=2 < COEFF_CONTEXTS`.
         let prob0 = unsafe { coef_probs.get_unchecked(band0).get_unchecked(initial_pt) };
         if let Some(cs) = counts.as_deref_mut() {
             cs.eob_branch_counts[band0][initial_pt] += 1;

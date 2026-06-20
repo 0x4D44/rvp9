@@ -910,6 +910,9 @@ mod tests {
     #[test]
     fn transpose_16x16_roundtrip() {
         require_avx2!();
+        // SAFETY: `require_avx2!()` returns early unless AVX2 is detected, so the
+        // AVX2 intrinsics reached here are callable; all loads/stores target
+        // correctly-sized local stack arrays.
         unsafe {
             let mut in_: [__m256i; 16] = [_mm256_setzero_si256(); 16];
             let mut expect: [[i16; 16]; 16] = [[0; 16]; 16];
@@ -939,6 +942,9 @@ mod tests {
     #[test]
     fn transpose_16x16_double_is_identity() {
         require_avx2!();
+        // SAFETY: `require_avx2!()` returns early unless AVX2 is detected, so the
+        // AVX2 intrinsics reached here are callable; all loads/stores target
+        // correctly-sized local stack arrays.
         unsafe {
             let mut in_: [__m256i; 16] = [_mm256_setzero_si256(); 16];
             for (r, slot) in in_.iter_mut().enumerate() {
@@ -967,6 +973,9 @@ mod tests {
     #[test]
     fn recon_and_store16_add_clip() {
         require_avx2!();
+        // SAFETY: `require_avx2!()` returns early unless AVX2 is detected, so the
+        // AVX2 intrinsics reached here are callable; all loads/stores target
+        // correctly-sized local stack arrays.
         unsafe {
             let mut dst = [0u8; 16];
             for (i, b) in dst.iter_mut().enumerate() {

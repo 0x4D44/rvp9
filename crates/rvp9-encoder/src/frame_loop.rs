@@ -1920,12 +1920,18 @@ impl StreamEncoder {
             } else {
                 f64::NAN
             };
-            eprintln!(
-                "BPM_VERIFY frame={:>3} kind={:?} q={:>3} predicted={:>8} actual={:>8} ratio={:>6.3}",
-                self.frame_idx, frame_kind, q_picked, predicted, actual_bits, ratio
-            );
+            // env-gated BPM_VERIFY diagnostic breadcrumb (see workspace lints)
+            #[allow(clippy::print_stderr)]
+            {
+                eprintln!(
+                    "BPM_VERIFY frame={:>3} kind={:?} q={:>3} predicted={:>8} actual={:>8} ratio={:>6.3}",
+                    self.frame_idx, frame_kind, q_picked, predicted, actual_bits, ratio
+                );
+            }
         }
 
+        // env-gated E8 diagnostic trace (see workspace lints)
+        #[allow(clippy::print_stderr)]
         if let Some(t) = e8_trace {
             eprintln!(
                 "E8 f{:>3} kind={:?} buf={:>10} opt={:>10} crit={:>9} ambient={:>3} amb*5/4={:>3} \
@@ -3807,10 +3813,14 @@ fn choose_partitions_for_frame(
                         counts[idx] += 1;
                     }
                 }
-                eprintln!(
-                    "RVP9_PART_HIST sb avg_q={avg_inter_qindex} q={q_index} 8x8={} 16x16={} 32x32={} 64x64={}",
-                    counts[0], counts[1], counts[2], counts[3]
-                );
+                // env-gated RVP9_PART_HIST diagnostic breadcrumb (see workspace lints)
+                #[allow(clippy::print_stderr)]
+                {
+                    eprintln!(
+                        "RVP9_PART_HIST sb avg_q={avg_inter_qindex} q={q_index} 8x8={} 16x16={} 32x32={} 64x64={}",
+                        counts[0], counts[1], counts[2], counts[3]
+                    );
+                }
             }
             out.push(leaves_from_decision(&decision));
         }
