@@ -54,6 +54,12 @@ const H: u32 = 256;
 struct FrameStats {
     /// Frame size in bits (whole packet, header + payload).
     bits: u64,
+    /// Uncompressed-header size in bits.
+    header_bits: u64,
+    /// VP9 compressed-header size in bits (`first_partition_size`).
+    compressed_header_bits: u64,
+    /// VP9 tile-data size in bits (mode syntax + residual tokens).
+    tile_data_bits: u64,
     /// `true` for keyframe / intra-only.
     is_key: bool,
     /// `base_qindex` from the uncompressed header (255 if header absent).
@@ -113,6 +119,24 @@ impl Aggregate {
     }
     fn n_decode_failed(&self) -> usize {
         self.frames.iter().filter(|f| f.decode_failed).count()
+    }
+    fn inter_bitstream_sections(&self) -> (f64, f64, f64) {
+        let mut header = 0;
+        let mut compressed_header = 0;
+        let mut tile_data = 0;
+        let mut n = 0;
+        for f in self.frames.iter().filter(|f| !f.is_key) {
+            header += f.header_bits;
+            compressed_header += f.compressed_header_bits;
+            tile_data += f.tile_data_bits;
+            n += 1;
+        }
+        let n = f64::from(n.max(1));
+        (
+            header as f64 / n,
+            compressed_header as f64 / n,
+            tile_data as f64 / n,
+        )
     }
     /// Sum a per-block array across all INTER frames (the realtime path).
     fn block_count_inter(&self) -> [u64; BLOCK_SIZES] {
@@ -258,7 +282,13 @@ fn decode_and_accumulate(dec: &mut Decoder, pkt: &[u8], fs: &mut FrameStats) {
         // base_qindex + key flag from the header where available.
         if let Some(tail) = &pf.header.tail {
             fs.base_qindex = u16::from(tail.quantization.base_qindex);
+            let compressed_header_bytes = usize::from(tail.first_partition_size);
+            fs.compressed_header_bits += (compressed_header_bytes as u64) * 8;
+            let tile_data_start = pf.header_end_byte.saturating_add(compressed_header_bytes);
+            let tile_data_bytes = pf.full_frame_data.len().saturating_sub(tile_data_start);
+            fs.tile_data_bits += (tile_data_bytes as u64) * 8;
         }
+        fs.header_bits += (pf.header_end_byte as u64) * 8;
         fs.is_key = matches!(
             pf.header.kind,
             WireFrameKind::KeyFrame | WireFrameKind::IntraOnly { .. }
@@ -457,6 +487,7 @@ fn emit_report(
         (avg_kbps, key, inter_avg, total)
     };
     let (r_kbps, r_key, r_inter, _r_tot) = line(rvp9);
+    let (r_hdr, r_comp, r_tile) = rvp9.inter_bitstream_sections();
     let _ = writeln!(
         md,
         "| achieved bitrate (kbps) | {r_kbps:.1} | {} |",
@@ -477,6 +508,27 @@ fn emit_report(
         "| frames rvp9-decoder FAILED to decode | {} | {} |",
         rvp9.n_decode_failed(),
         libvpx.map_or("n/a".into(), |l| format!("{}", l.n_decode_failed()))
+    );
+    let _ = writeln!(
+        md,
+        "| avg inter uncompressed-header bits | {r_hdr:.0} | {} |",
+        libvpx.map_or("n/a".into(), |l| {
+            format!("{:.0}", l.inter_bitstream_sections().0)
+        })
+    );
+    let _ = writeln!(
+        md,
+        "| avg inter compressed-header bits | {r_comp:.0} | {} |",
+        libvpx.map_or("n/a".into(), |l| {
+            format!("{:.0}", l.inter_bitstream_sections().1)
+        })
+    );
+    let _ = writeln!(
+        md,
+        "| avg inter tile-data bits | {r_tile:.0} | {} |",
+        libvpx.map_or("n/a".into(), |l| {
+            format!("{:.0}", l.inter_bitstream_sections().2)
+        })
     );
 
     // ---- 5. Per-frame Q (report aggregate avg here, full table later) ----
