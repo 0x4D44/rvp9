@@ -2052,6 +2052,17 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
         }
     }
 
+    // E13 diamond-search-quality oracle (diagnostic-only, env-gated).
+    // The oracle measures NEWMV search and inter-mode RD rejection, so
+    // record the inter-loop argmin before the optional intra fallback can
+    // replace it with an intra winner.
+    if crate::mv_search::e12stat::enabled() {
+        crate::mv_search::e12stat::record_argmin(matches!(
+            best.as_ref().map(|b| b.best_mode),
+            Some(InterMode::NewMv)
+        ));
+    }
+
     // The loop iterates 8 non-empty candidates (LAST ZERO is always
     // reachable), so `best` is always populated.
     let mut best = best.expect("RT_INTER_MODES contains at least one evaluable candidate");
