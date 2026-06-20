@@ -35,3 +35,22 @@ Out-of-scope observations parked for a separate, human-invoked review. Dated
   `crates/rvp9-decoder/src/tile.rs:1219` cites `reconstruct_inter.rs:521-548` for the
   intra `max_blocks` geometry, but the referenced block actually runs `519-562`
   (~14-line tail imprecision). Refresh the line range when next touching that file.
+- [x] 2026-06-20: **UPDATE to the 2026-06-19 SIMD note above** (green-the-build pass).
+  The "4 SIMD equivalence tests fail … likely target-cpu=native / host-CPU specific"
+  hypothesis was wrong — these are deterministic *integer* kernels. Resolved:
+  (1) the 2 loop-filter ones (`lpf_{horizontal,vertical}_4_avx2`) were an
+  out-of-domain proptest bug (`blimit=255` unreachable in valid VP9, max 193) —
+  **FIXED** in this pass (the loop-filter blimit-cap commit); (2) the 2 idct ones (`idct16x16_sse2_eq_avx2_*`)
+  are a possible **real SSE2 saturation bug** (out-of-domain hypothesis was
+  adversarially refuted) — promoted to ledger **KILN-00010** (do NOT mask by
+  narrowing the test before triage).
+- [ ] 2026-06-20: **Vector/corpus-dependent unit tests hard-fail in a fresh worktree**
+  (green-the-build pass). `bitstream::header::tests::captured_header_round_trip` and
+  `bitstream::compressed_header::tests::write_compressed_header_captured_frame_round_trip`
+  panic "test vector must be present: NotFound" (`header.rs:1461`,
+  `compressed_header.rs:2455`), and `real_world_corpus_decodes_bit_exact`
+  (`crates/rvp9-harness/tests/real_world.rs:199`) needs a hidden/altref fixture that
+  isn't committed. They pass on the data-populated main clone but hard-fail anywhere
+  the gitignored vectors/corpus aren't fetched (every new worktree). Consider making
+  these skip-with-a-log when the fixture is absent (test robustness), or document the
+  fetch as a prerequisite, so `cargo test --workspace` is green on a clean checkout.
