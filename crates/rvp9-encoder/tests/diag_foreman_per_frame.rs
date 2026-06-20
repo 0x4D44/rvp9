@@ -14,8 +14,8 @@
 //!    - rvp9 qindex, bits, Y-PSNR, KF flag
 //!    - SSE(recon, src), SSE(recon, prev_src) — the diagonal "recon
 //!      tracks lagged source by N frames" signature
-//! 2. Mirrors libvpx --rt --target-bitrate at the same targets and
-//!    prints per-frame bits + PSNR side-by-side.
+//! 2. Mirrors libvpx --rt --lag-in-frames=0 --target-bitrate at the
+//!    same targets and prints per-frame bits + PSNR side-by-side.
 //!
 //! Run with:
 //! ```text
@@ -174,7 +174,7 @@ fn diag_foreman_per_frame() {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
-            rc_mode: RcMode::Cbr,
+            rc_mode: RcMode::Vbr,
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
@@ -265,6 +265,7 @@ fn diag_foreman_per_frame() {
             "--rt",
             "--cpu-used=7",
             "--passes=1",
+            "--lag-in-frames=0",
             "--i420",
             "-y",
         ]);
