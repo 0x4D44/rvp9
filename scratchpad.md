@@ -86,3 +86,25 @@ Out-of-scope observations parked for a separate, human-invoked review. Dated
   `false` as a "regression guard" but it has NO effect on output (verified byte-identical
   true vs false on the Stage 4a gate). Candidate for removal (or doc as inert) when next
   touching the config surface, so future sessions don't chase it as a lever.
+- [ ] 2026-06-21: **BUG (libvpx-faithfulness): `KF_ACTIVE_QUALITY_BOOST = 32` is wrong**
+  (`crates/rvp9-encoder/src/rate_control/cbr.rs:387`; also `KF_HIGH = 5000` at :377).
+  Verified against the libvpx submodule: `DEFAULT_KF_BOOST = 2000` (vp9_ratectrl.h:30),
+  `kf_low = 400`, `kf_high = 4000` (vp9_ratectrl.c:93-94), and one-pass VBR calls
+  `get_kf_active_quality(rc, avg_frame_qindex[KEY], …)` with `rc->kf_boost = 2000`. Since
+  `400 < 2000 < 4000` libvpx BLENDS toward the low-motion-minq table (low keyframe
+  active-best ≈ q57); rvp9's 32 (< KF_LOW) forces pure high-motion-minq → high active-best.
+  The code comment ("DEFAULT_KF_BOOST is well below KF_LOW") is factually wrong. **Inert
+  on the single-GOP Stage 4a gate** (the lone first-ever keyframe has active_worst=255 and
+  is `regulate_q`-bound under BPM=5.0, so the active-best floor doesn't bind — A/B with
+  boost=2000/KF_HIGH=4000 was byte-identical), but it WILL matter for multi-GOP realtime
+  keyframes (subsequent KFs use `last_q_key*2` active_worst + `get_kf_active_quality`).
+  Fix with a multi-GOP measurement, inside the reference-allocation program. NOTE the
+  shared cbr.rs const also feeds CBR — make the fix mode-aware or verify CBR.
+- [ ] 2026-06-21: **Stage-4a-gate keyframe is `regulate_q`/BPM-bound, not floor-bound.**
+  The q164 keyframe (vs libvpx q57) is NOT caused by the keyframe-share caps (RVP9_KFCAP=0,
+  RVP9_KFLB=0 both byte-identical — the KF sits far under the 40% cap) nor the active-best
+  floor (KF boost A/B no-op). It is `regulate_q` hitting the 25×-avg KF target under the
+  VBR `bits_per_mb_multiplier=5.0`. The only lever is a keyframe-specific BPM (prior
+  session's keyframe BPM=1.0 overspent +69%; the 2.0–4.0 range is untested) — but it's
+  coupled to inter-prediction efficiency (a better KF only pays back if the inters
+  capitalize, which rvp9's weaker prediction doesn't). Tackle KF-BPM + prediction together.
