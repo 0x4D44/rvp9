@@ -54,3 +54,15 @@ Out-of-scope observations parked for a separate, human-invoked review. Dated
   the gitignored vectors/corpus aren't fetched (every new worktree). Consider making
   these skip-with-a-log when the fixture is absent (test robustness), or document the
   fetch as a prerequisite, so `cargo test --workspace` is green on a clean checkout.
+- [ ] 2026-06-21: **Skip RD tie-break over-triggers skip when the skip bit is cheap**
+  (`crates/rvp9-core/src/mode_decision/inter.rs` `evaluate_candidate_for_filter`, the
+  `rd_encode >= rd_skip` tie-break). Measured: feeding libvpx's frame-adapted skip
+  prob (`cm->fc->skip_probs[skip_ctx]`) into the tie-break — the documented "follow-up"
+  — regresses both oracles (fixed-Q E9 mode-field degradation, e.g. Q120 prediction
+  −2.6 dB when picker-skip is honoured; VBR product gate curve-collapses, BD-rate
+  +6.43%→+12.69%). Root cause: skip-side dist `sse_after_pred << s3_skip_shift()` is not
+  calibrated against `dist_encode = coef_dist` / `lambda` like libvpx, so a cheaper skip
+  prob makes too many blocks pick skip. To match libvpx's higher skip rate (34.7% vs
+  rvp9 ~27% at q80) the skip tie-break **dist-domain must be recalibrated first**; only
+  then re-test the adapted prob + honour-picker-skip. Full A/B in
+  `wrk_journals/2026.06.21 - JRN - adapted skip-prob picker tie-break.md`.
