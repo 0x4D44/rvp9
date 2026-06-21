@@ -104,7 +104,11 @@ Out-of-scope observations parked for a separate, human-invoked review. Dated
   The q164 keyframe (vs libvpx q57) is NOT caused by the keyframe-share caps (RVP9_KFCAP=0,
   RVP9_KFLB=0 both byte-identical — the KF sits far under the 40% cap) nor the active-best
   floor (KF boost A/B no-op). It is `regulate_q` hitting the 25×-avg KF target under the
-  VBR `bits_per_mb_multiplier=5.0`. The only lever is a keyframe-specific BPM (prior
-  session's keyframe BPM=1.0 overspent +69%; the 2.0–4.0 range is untested) — but it's
-  coupled to inter-prediction efficiency (a better KF only pays back if the inters
-  capitalize, which rvp9's weaker prediction doesn't). Tackle KF-BPM + prediction together.
+  VBR `bits_per_mb_multiplier=5.0`. The keyframe-specific BPM range is now TESTED via an
+  env-gated `RVP9_KF_BPM` sweep (vbr.rs:298, reverted): KF_BPM 5.0→4.0→3.0→2.5→2.0→1.5
+  gives mean Δ +1.16→+1.21→+1.28→+1.38→+1.42→+1.59 — i.e. **more keyframe investment
+  monotonically WORSENS** matched-bitrate quality. DEFINITIVE: rvp9's starved-keyframe
+  allocation is already near-optimal for rvp9's prediction efficiency; a better KF doesn't
+  pay back because the inters don't capitalize. **Reference allocation (A) is a dead end
+  until inter-prediction efficiency (B) improves — do B first.** Cross-decoder stayed
+  byte-exact throughout.
