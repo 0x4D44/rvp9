@@ -66,6 +66,24 @@ Out-of-scope observations parked for a separate, human-invoked review. Dated
   rvp9 ~27% at q80) the skip tie-break **dist-domain must be recalibrated first**; only
   then re-test the adapted prob + honour-picker-skip. Full A/B in
   `wrk_journals/2026.06.21 - JRN - adapted skip-prob picker tie-break.md`.
+- [ ] 2026-06-22: **Skip branch DROPS the per-mode rate (libvpx keeps it) — but
+  restoring it is RD-NEGATIVE in isolation.** `inter.rs:3197-3206` collapses
+  `final_rate` to `skip_true_cost` on `take_skip`, dropping mode/mv/ref/coef;
+  libvpx (`vp9_pickmode.c:2352-2399`) drops ONLY coef and re-adds
+  `rate_mv + inter_mode_cost + ref_frame_cost` unconditionally. This is THE cause
+  of the ZEROMV over-use (26% vs 4%): on skip, ZEROMV/NEARESTMV rank by pred-SSE
+  alone so the (0,0) predictor wins, erasing ZEROMV's ~7-bit mode handicap.
+  Env-gated fix (`RVP9_SKIP_MODECOST`) measured + REVERTED: regresses E9 fixed-Q
+  (+1.29→+1.79 / +1.62→+1.70 / +1.69→+2.63 dB at Q80/120/160, skip-frac 26.7→15.7%)
+  AND the VBR gate (+1.16→+2.08 dB, curve-shift). RC-independent (fixed-Q) ⇒ NOT
+  an RC artifact: rvp9's NEAREST is non-zero on the affected blocks (full-scan
+  `dec_find_mv_refs`, same as libvpx's actual NEAREST), so pricing ZEROMV correctly
+  forces a *worse-predicting* NEARESTMV/non-skip mode that rvp9's calibration can't
+  pay back. This RETIRES the sharpest isolated lever and confirms the coupled
+  RD-domain thesis. Full A/B + mechanism:
+  `wrk_journals/2026.06.22 - JRN - skip-branch mode-cost (ZEROMV over-use).md`.
+  Re-test ONLY as part of the joint co-calibration (lambda + skip tie-break + mode
+  cost + NEWMV affordability), never alone.
 - [ ] 2026-06-21: **VBR product-gate divergence roadmap** — first clean block-level
   rvp9-vs-libvpx diagnosis on the actual Stage 4a VBR gate (not contaminated fixed-Q):
   `wrk_docs/2026.06.21 - CR - VBR product-gate divergence analysis.md` (+ raw DATA
