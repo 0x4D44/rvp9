@@ -84,6 +84,14 @@ Out-of-scope observations parked for a separate, human-invoked review. Dated
   `wrk_journals/2026.06.22 - JRN - skip-branch mode-cost (ZEROMV over-use).md`.
   Re-test ONLY as part of the joint co-calibration (lambda + skip tie-break + mode
   cost + NEWMV affordability), never alone.
+- [ ] 2026-06-22: **MV-search cost `sad_per_bit`/`error_per_bit` (hardcoded 16, L-43)
+  is INERT** on the Stage 4a gate. libvpx derives them per-q; rvp9 pins 16. Swept
+  `RVP9_SADPB`/`RVP9_EPB` (env override, reverted) at 4/8/16: matched-Δ flat at
+  +1.16-1.17 dB, PSNR curve unchanged — cheaper/better MV search does NOT change
+  selection because the per-block RD rejects the better MVs downstream. Do NOT
+  re-probe the MV-search cost in isolation; the bottleneck is the RD comparison's
+  calibration, not search quality. (Two independent levers — mode-cost RANKING and
+  motion-SEARCH quality — both dead-end at the same coupled RD knot this session.)
 - [ ] 2026-06-21: **VBR product-gate divergence roadmap** — first clean block-level
   rvp9-vs-libvpx diagnosis on the actual Stage 4a VBR gate (not contaminated fixed-Q):
   `wrk_docs/2026.06.21 - CR - VBR product-gate divergence analysis.md` (+ raw DATA
