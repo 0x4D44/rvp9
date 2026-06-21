@@ -2227,3 +2227,47 @@ When F.4 lands, this divergence collapses.
 - F.4 task inherits the env-gate flip + callback-replacement
   work-items.
 
+### 2026-06-21 — KILN-00010: idct16x16 SSE2 saturation vs AVX2/scalar modular wraplow (out-of-domain only)
+**Where:** `rvp9-core::dsp::x86_64::idct16x16_sse2_256::idct16x16_add_sse2_256`
+(the i16-lane 256-point inverse DCT) vs `idct16x16_add_avx2` (the i32-lane
+oracle). libvpx counterparts: `vpx_dsp/x86/inv_txfm_sse2.h` (`write_buffer_8x1`
+line 232 uses `_mm_adds_epi16`; multiply stages pack with `_mm_packs_epi32`) and
+the modular C reference (`WRAPLOW`).
+**What libvpx does:** libvpx's *SSE2* idct16x16 **saturates** at the i16 sites
+(`_mm_adds_epi16` on the +32 final rounding; `_mm_packs_epi32` on the multiply
+packs) while its *C* reference uses modular `WRAPLOW`. libvpx's SSE2 and C are
+therefore **not bit-exact** on inputs whose transform intermediates exceed i16 —
+libvpx accepts this because valid 8-bit bitstreams never produce such inputs
+(dequantized coefficients are i16-bounded by design and real residuals are
+`[-255,255]`).
+**What rvp9 does:** mirrors libvpx exactly — the SSE2 kernel saturates
+(libvpx-SSE2-faithful), the AVX2/scalar kernels use modular wraplow
+(libvpx-C-faithful). So rvp9's SSE2-vs-AVX2 pair has the **same** numerical
+divergence libvpx's SSE2-vs-C pair has, and only on the same out-of-domain
+(i16-overflowing) inputs.
+**Why:** faithful porting, not a deliberate departure. Recorded here because the
+`idct16x16_sse2_eq_avx2_*` differential tests originally asserted bit-exactness
+on **arbitrary full-density i12** coefficients (`uniform_12` /
+`eob_bucket_dense`), which are out of domain: their collective energy overflows
+the i16 SSE2 transform. Diagnosis (KILN-00010): the saved failing seed was
+190/256 dense, max|coef|=2046; halving it removed the 1-pixel divergence
+(overflow-driven, not algorithmic); a 2000-block in-domain sweep (forward DCT of
+`[-255,255]` residuals, coefficients up to ±5310) produced **zero** divergence.
+Fix is **test-domain only** — the kernel is correct and unchanged. The dense
+strategies now generate in-domain coefficients (`fdct16x16` of a `[-255,255]`
+residual, the libvpx test methodology), and
+`idct16x16_sse2_indomain_exact_outofdomain_saturates` pins both the in-domain
+bit-exactness and the accepted out-of-domain saturation (guarding against a
+mistaken "fix" making the SSE2 kernel modular — which would then diverge *from*
+libvpx). This supersedes the T-4 HLD §6.2 expectation that
+`uniform_12`/`eob_bucket_dense` be bit-exact (that expectation did not account
+for the libvpx-inherent SSE2 saturation on out-of-domain inputs).
+**Byte-parity impact:** none on valid bitstreams (conformance 201/201; runtime
+AVX2 hosts unaffected). On SSE2-only hosts the output equals libvpx's SSE2
+output (the reference for that path), so it is correct, not divergent, vs the
+ecosystem.
+**Compression-efficiency impact:** none.
+**Future plan:** none — faithful and correct. Revisit only if a future
+sub-strategy (`sparse_12`/`eob_38`, still on arbitrary low-density i12) ever
+flakes, in which case give it the same in-domain treatment.
+

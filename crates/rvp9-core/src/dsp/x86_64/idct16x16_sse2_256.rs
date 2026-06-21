@@ -1198,17 +1198,35 @@ mod tests {
         dst
     }
 
-    /// `uniform_12` — full-density i12 coefficients in every position.
-    fn uniform_strategy_12() -> impl Strategy<Value = [i32; 256]> {
-        prop::collection::vec(-2048i32..=2047, 256).prop_map(|v| {
-            let mut out = [0i32; 256];
-            out.copy_from_slice(&v);
-            out
+    /// In-domain **dense** generator (KILN-00010). The earlier
+    /// `uniform_12` / `eob_bucket_dense` strategies fed ARBITRARY
+    /// full-density i12 coefficients, which are OUT OF DOMAIN: the
+    /// collective energy of a dense arbitrary block can overflow the i16
+    /// SSE2 transform, where the SSE2 kernel's libvpx-faithful saturation
+    /// (`_mm_adds_epi16` / `_mm_packs_epi32`, mirroring
+    /// `vpx_dsp/x86/inv_txfm_sse2.h`) legitimately diverges from the AVX2
+    /// modular-wraplow oracle. That divergence exists in libvpx itself and
+    /// no valid bitstream triggers it (conformance is 201/201) — so the
+    /// kernel is correct; the old strategies were testing an unguaranteed
+    /// property. We now generate IN-DOMAIN dense coefficients the way
+    /// libvpx's own transform tests do: the forward 16×16 DCT of a real
+    /// residual block in `[-255, 255]` (the 8-bit residual range). These
+    /// are full-density yet cannot overflow, so `SSE2 == AVX2` is a
+    /// meaningful, true invariant. See `notes/divergence-ledger.md`.
+    fn indomain_dense_strategy() -> impl Strategy<Value = [i32; 256]> {
+        prop::collection::vec(-255i16..=255, 256).prop_map(|resid| {
+            let mut r = [0i16; 256];
+            r.copy_from_slice(&resid);
+            let mut coef = [0i32; 256];
+            crate::transforms::forward::fdct16x16(&r, &mut coef, 16);
+            coef
         })
     }
 
     /// `sparse_12` — 1..=8 non-zero coefs at arbitrary raster positions
-    /// (the libvpx _10/_38 sparse-bucket density region).
+    /// (the libvpx _10/_38 sparse-bucket density region). Density is low
+    /// enough that intermediates stay within i16 (no saturation), so
+    /// `SSE2 == AVX2` holds.
     fn sparse_strategy_12() -> impl Strategy<Value = [i32; 256]> {
         prop::collection::vec((0usize..256, -2048i32..=2047), 1..=8).prop_map(|nz| {
             let mut out = [0i32; 256];
@@ -1221,24 +1239,14 @@ mod tests {
 
     /// `eob_bucket_38` — exactly 38 non-zero coefs at the first 38
     /// raster positions; straddles libvpx's idct16x16_38_add dispatcher
-    /// boundary in the eob-bucket sense.
+    /// boundary in the eob-bucket sense. Low enough density that
+    /// intermediates stay within i16.
     fn eob_bucket_38_strategy() -> impl Strategy<Value = [i32; 256]> {
         prop::collection::vec(-2048i32..=2047, 38).prop_map(|values| {
             let mut out = [0i32; 256];
             for (i, val) in values.into_iter().enumerate() {
                 out[i] = val;
             }
-            out
-        })
-    }
-
-    /// `eob_bucket_dense` — full 256-coef density at i12 magnitude
-    /// (mirrors `uniform_strategy_12` but is kept as a separate
-    /// strategy entry to align with the HLD §6.2 strategy list).
-    fn eob_bucket_dense_strategy() -> impl Strategy<Value = [i32; 256]> {
-        prop::collection::vec(-2048i32..=2047, 256).prop_map(|values| {
-            let mut out = [0i32; 256];
-            out.copy_from_slice(&values);
             out
         })
     }
@@ -1257,8 +1265,8 @@ mod tests {
         })]
 
         #[test]
-        fn idct16x16_sse2_eq_avx2_uniform_12(
-            input in uniform_strategy_12(),
+        fn idct16x16_sse2_eq_avx2_indomain_dense(
+            input in indomain_dense_strategy(),
             dst_init in dst_strategy(),
         ) {
             if !is_x86_feature_detected!("sse2") || !is_x86_feature_detected!("avx2") {
@@ -1295,18 +1303,6 @@ mod tests {
             prop_assert_eq!(sse2, avx2);
         }
 
-        #[test]
-        fn idct16x16_sse2_eq_avx2_eob_dense(
-            input in eob_bucket_dense_strategy(),
-            dst_init in dst_strategy(),
-        ) {
-            if !is_x86_feature_detected!("sse2") || !is_x86_feature_detected!("avx2") {
-                return Ok(());
-            }
-            let sse2 = run_sse2(&input, &dst_init);
-            let avx2 = run_avx2_oracle(&input, &dst_init);
-            prop_assert_eq!(sse2, avx2);
-        }
     }
 
     // -----------------------------------------------------------------
@@ -1326,6 +1322,69 @@ mod tests {
         assert_eq!(sse2, avx2);
         // All-zero input ⇒ rounding (+32 >> 6) == 0, so dst unchanged.
         assert_eq!(sse2, dst_init);
+    }
+
+    /// KILN-00010 regression + documentation. Pins the two facts that
+    /// resolve the bug:
+    ///
+    /// 1. **In-domain inputs are bit-exact.** A realistic dense
+    ///    coefficient block — the forward 16×16 DCT of a max-amplitude
+    ///    `[-255, 255]` residual — produces identical SSE2 and AVX2
+    ///    output. This is the meaningful invariant and catches any real
+    ///    kernel regression.
+    /// 2. **Out-of-domain inputs legitimately diverge.** Scaling that
+    ///    same block past the i16 transform envelope makes the SSE2
+    ///    kernel's libvpx-faithful saturation (`_mm_adds_epi16` /
+    ///    `_mm_packs_epi32`, mirroring `vpx_dsp/x86/inv_txfm_sse2.h`)
+    ///    differ from the AVX2 modular-wraplow oracle. This divergence
+    ///    exists in libvpx itself and no valid bitstream reaches it
+    ///    (conformance 201/201). Pinning it guards against a mistaken
+    ///    "fix" that makes the SSE2 kernel modular (which would then
+    ///    diverge from libvpx). See `notes/divergence-ledger.md`.
+    #[test]
+    fn idct16x16_sse2_indomain_exact_outofdomain_saturates() {
+        require_sse2!();
+        if !is_x86_feature_detected!("avx2") {
+            return;
+        }
+        // Max-amplitude checkerboard residual -> dense in-domain coefs.
+        let mut resid = [0i16; 256];
+        for (i, r) in resid.iter_mut().enumerate() {
+            *r = if (i / 16 + i % 16) % 2 == 0 {
+                255
+            } else {
+                -255
+            };
+        }
+        let mut coef = [0i32; 256];
+        crate::transforms::forward::fdct16x16(&resid, &mut coef, 16);
+        let dst = [128u8; 256];
+
+        // (1) In-domain: bit-exact.
+        assert_eq!(
+            run_sse2(&coef, &dst),
+            run_avx2_oracle(&coef, &dst),
+            "in-domain dense block must be bit-exact SSE2 vs AVX2 (KILN-00010)"
+        );
+
+        // (2) Out-of-domain: scaling past the i16 envelope must make the
+        // saturating SSE2 path diverge from the modular AVX2 oracle.
+        let mut diverged = false;
+        for scale in [4i32, 8, 16, 32] {
+            let mut big = [0i32; 256];
+            for (b, &c) in big.iter_mut().zip(coef.iter()) {
+                *b = c * scale;
+            }
+            if run_sse2(&big, &dst) != run_avx2_oracle(&big, &dst) {
+                diverged = true;
+                break;
+            }
+        }
+        assert!(
+            diverged,
+            "scaling an in-domain block past i16 must make SSE2 saturate-diverge \
+             from AVX2 — the accepted libvpx SSE2-vs-C divergence (KILN-00010)"
+        );
     }
 
     /// DC-only impulse — only `input[0]` non-zero.

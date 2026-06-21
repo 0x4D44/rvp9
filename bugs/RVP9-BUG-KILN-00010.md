@@ -1,10 +1,55 @@
 # RVP9-BUG-KILN-00010 - idct16x16 SSE2 diverges from AVX2/scalar on in-domain i12 input — possible real SSE2 saturation bug (NOT confirmed out-of-domain)
 
-- **State:** Open
+- **State:** Fixed
 - **Severity:** Medium
 - **Area:** dsp/x86_64 idct16x16 (SSE2 256-point kernel)
 - **Raised:** 2026-06-20 by Claude (green-the-build pass)
-- **State history:** 2026-06-20 Opened by Claude from the green-the-build pass; out-of-domain hypothesis adversarially REFUTED (2/2 skeptics) — needs deeper triage.
+- **State history:** 2026-06-20 Opened by Claude from the green-the-build pass; out-of-domain hypothesis adversarially REFUTED (2/2 skeptics) — needs deeper triage. 2026-06-21 Fixed by Claude (task/fix-idct16-sse2) — out-of-domain CONFIRMED by instrumentation; test-domain fix (kernel is libvpx-faithful and correct). Awaiting two-eyes verification → Closed.
+
+## Resolution (2026-06-21)
+
+**The prior "real bug" framing was wrong; it IS out-of-domain — now confirmed
+with instrumentation (the step the prior pass deferred).** The rvp9 SSE2 kernel
+is faithful to libvpx's SSE2 idct16x16 (saturating `_mm_adds_epi16` final
+rounding + `_mm_packs_epi32` packs, modular `_mm_add/sub_epi16` butterfly); the
+AVX2/scalar kernels are libvpx-C-faithful (modular wraplow). libvpx's own SSE2
+and C diverge identically on i16-overflowing inputs.
+
+Decisive evidence (temp diagnostic, run on this host):
+- The saved failing seed is **190/256 dense**, max|coef|=2046 (the prior pass's
+  "sparse seed" premise was factually wrong).
+- Full seed → 1 pixel mismatch; **seed/2 → 0 mismatches** (and /3,/4,/8,/16 → 0):
+  the divergence is purely magnitude/overflow-driven. An algorithmic kernel bug
+  would not vanish under scaling.
+- **In-domain sweep**: 2000 blocks generated as `fdct16x16` of random
+  `[-255,255]` residuals (the real 8-bit coefficient domain), coefficients up to
+  ±5310 — **0/2000** SSE2-vs-AVX2 mismatches.
+- `sparse_12` (1-8 nz) and `eob_38` (38 nz) already PASS; only the full-density
+  (256-nz) strategies failed → the low-energy-passes / high-energy-fails
+  saturation signature.
+- Conformance 201/201 (valid bitstreams never reach this).
+
+Adversarially verified 2-of-3 (the dissent agreed the test-only fix is
+"mechanically correct" but asked for completeness — ledger entry, a pinned
+regression, instrumented evidence — all now provided).
+
+**Fix (test-only; kernel UNCHANGED):**
+- `crates/rvp9-core/src/dsp/x86_64/idct16x16_sse2_256.rs`: the out-of-domain
+  full-density strategies (`uniform_12`, `eob_bucket_dense`) are replaced by one
+  in-domain `indomain_dense_strategy` (`fdct16x16` of a `[-255,255]` residual);
+  the redundant `eob_dense` test is removed; a directed regression
+  `idct16x16_sse2_indomain_exact_outofdomain_saturates` pins in-domain
+  bit-exactness AND the accepted out-of-domain saturation divergence.
+- The obsolete proptest regression seed
+  (`proptest-regressions/dsp/x86_64/idct16x16_sse2_256.txt`) is deleted.
+- `notes/divergence-ledger.md`: documents the SSE2-saturate vs C/AVX2-modular
+  divergence (out-of-domain only), superseding the T-4 HLD §6.2 bit-exactness
+  expectation.
+
+**Residual note:** `sparse_12`/`eob_38` still use arbitrary low-density i12;
+their energy is far below the overflow threshold (the seed needed 190 dense
+coefficients to overflow marginally), so they are not flaky in practice. If one
+ever flakes, apply the same in-domain (forward-transform) treatment.
 
 ## Observation
 
