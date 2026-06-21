@@ -1,10 +1,29 @@
 # RVP9-BUG-KILN-00008 - G-C decode_inter_block integration paths (SEG_LVL_REF_FRAME force glue + Sub8SegSkip Err path) lack end-to-end coverage
 
-- **State:** Open
+- **State:** Fixed
 - **Severity:** Low
 - **Area:** decoder/segmentation test-coverage
 - **Raised:** 2026-06-19 by Claude overnight code review
-- **State history:** 2026-06-19 Opened by Claude from the track2 decoder-fix harvest review pass.
+- **State history:** 2026-06-19 Opened by Claude from the track2 decoder-fix harvest review pass. 2026-06-21 Fixed by Claude (task/fix-seg-coverage): added `seg_skip_sub8_through_decode_inter_block_errs_without_advancing` in `crates/rvp9-decoder/src/tile.rs`, driving the real `decode_inter_block` end-to-end for (b) the Sub8SegSkip Err path (asserts `Err(Sub8SegSkip)` + bool reader does not advance) and (a) the SEG_LVL_REF_FRAME `is_inter` derivation (both branches: `Some(LAST)`→inter→guard fires; `Some(INTRA)`→`is_inter=false`→intra path, guard correctly does not fire). Verified red-before-green by weakening the guard predicate. Test-only; no version bump. Awaiting two-eyes verification → Closed.
+
+## Resolution note (2026-06-21)
+
+**Covered end-to-end through `decode_inter_block`:** the Sub8SegSkip guard Err path
+(the new G-C fallible flow) + the `seg_ref` lookup and `is_inter` derivation (both
+branches). Reachable cleanly because, with `seg_ref=Some` + `seg_skip` active +
+`segmentation_update_map=false`, segment_id is inherited, skip is forced, and
+`is_inter` is derived — all with zero bits read — so the guard is hit at the reader's
+start position and the ref pool is never accessed (`refs:[None;3]`).
+
+**Residual (not covered; disproportionate for Low):** the post-guard forced `ref0`
+derivation (`seg_ref.and_then(from_i8)`, tile.rs:2503) and full inter-on-REF_FRAME
+reconstruction run past the guard into motion compensation, needing real reference
+frames (a motion-comp harness or a crafted fixture). That path stays covered by the
+rvp9-core unit oracle (`read_ref_frames_seg_force_consumes_zero_bits`). The in-code
+`TODO(G-C verify)` (tile.rs:2359-2366) asks specifically for a *differential* fixture
+placing inter blocks on a REF_FRAME segment — still open (libvpx's realtime nonrd
+encoder never produces such content, so it needs a crafted stream). A two-eyes
+verifier may keep this open if differential coverage of the ref0 path is required.
 
 ## Observation
 

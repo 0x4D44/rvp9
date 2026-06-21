@@ -3070,6 +3070,177 @@ mod tests {
         }
     }
 
+    /// KILN-00008: drive the G-C `SEG_LVL_SKIP` sub-8×8 guard through
+    /// `decode_inter_block` end-to-end (the existing
+    /// `sub8_seg_skip_is_a_decode_error` only checks the error variant +
+    /// the bsize predicate; it never calls `decode_inter_block`). With
+    /// `seg_skip` active and a sub-8×8 block the integration must return
+    /// `Err(Sub8SegSkip)` BEFORE the bool reader advances (libvpx
+    /// `vp9_decodemv.c:709-712`). This also exercises the
+    /// `SEG_LVL_REF_FRAME` `is_inter` derivation in `decode_inter_block`
+    /// for BOTH branches:
+    /// - `Some(LAST)` → `is_inter = true`: derived with no bit read, so
+    ///   the inter sub-8 guard is reached at the reader's start position
+    ///   and the ref pool is never touched (refs = `[None; 3]`) → asserts
+    ///   `Err(Sub8SegSkip)` + no reader advance.
+    /// - `Some(INTRA)` → `is_inter = false`: routes to the intra path; the
+    ///   inter-only guard must NOT fire (libvpx's check lives in
+    ///   `read_inter_block_mode_info`) → asserts the result is not
+    ///   `Sub8SegSkip`.
+    #[test]
+    fn seg_skip_sub8_through_decode_inter_block_errs_without_advancing() {
+        use rvp9_core::bitstream::frame::{InterpFilter, ReferenceMode};
+        use rvp9_core::entropy::{BoolWriter, FrameContext};
+        use rvp9_core::frame::{BorderUsage, ByteAlignment};
+        use rvp9_core::inter::mode_info::setup_compound_reference_mode;
+        use rvp9_core::inter::mv_ref::sign_bias_from_header;
+
+        // Valid bool-coder buffer (proper marker + padding) — see the
+        // rvp9-core `valid_padding_buf` oracle helper. Its contents are
+        // irrelevant: the guard returns before any bit is read.
+        let mut bool_buf = vec![0u8; 16];
+        {
+            let mut w = BoolWriter::start_encode(&mut bool_buf);
+            for _ in 0..64 {
+                w.write_bit(0);
+            }
+            let n = w.stop_encode().expect("stop_encode");
+            bool_buf.truncate(n);
+        }
+
+        let sign_bias = sign_bias_from_header(&[false, false, false]);
+        let (comp_fixed_ref, comp_var_ref) = setup_compound_reference_mode(&sign_bias);
+
+        const SEG: usize = 1;
+        // forced-INTER (LAST) and forced-INTRA (INTRA) — both make
+        // `is_inter` derive with no bit read, so the guard is reached at
+        // the reader's start position.
+        for forced_ref in [RefFrame::LastFrame as u8, RefFrame::IntraFrame as u8] {
+            let mut seg_skip = [false; rvp9_core::loopfilter::MAX_SEGMENTS];
+            let mut seg_ref_frame = [None; rvp9_core::loopfilter::MAX_SEGMENTS];
+            seg_skip[SEG] = true;
+            seg_ref_frame[SEG] = Some(forced_ref);
+
+            let base = FrameDecodeParams {
+                mi_cols: 8,
+                mi_rows: 8,
+                tx_mode: TxMode::AllowTx32x32,
+                // update_map = false ⇒ segment_id is inherited from
+                // `prev_segment_ids` with no bit read.
+                segmentation_update_map: false,
+                segmentation_enabled: true,
+                segmentation_temporal_update: false,
+                seg_tree_probs: [128; rvp9_core::bitstream::SEG_TREE_PROBS],
+                seg_pred_probs: [128; rvp9_core::bitstream::PREDICTION_PROBS],
+                lossless: false,
+                base_qindex: 100,
+                y_dc_delta_q: 0,
+                uv_dc_delta_q: 0,
+                uv_ac_delta_q: 0,
+                seg_alt_q: [None; rvp9_core::loopfilter::MAX_SEGMENTS],
+                seg_abs_delta: false,
+                seg_ref_frame,
+                seg_skip,
+            };
+            let inter_params = InterModeReadParams {
+                allow_high_precision_mv: false,
+                interp_filter: InterpFilter::EightTap,
+                reference_mode: ReferenceMode::Single,
+                comp_fixed_ref,
+                comp_var_ref,
+                sign_bias,
+                seg_ref_frame: None,
+                seg_skip: false,
+            };
+            let params = InterFrameDecodeParams {
+                base,
+                cur_y_width: 64,
+                cur_y_height: 64,
+                // Guard returns before any ref access.
+                refs: [None, None, None],
+                frame_scale_factors: [None, None, None],
+                inter_params,
+            };
+
+            let bounds = TileBounds {
+                mi_row_start: 0,
+                mi_row_end: 8,
+                mi_col_start: 0,
+                mi_col_end: 8,
+            };
+            let mut decode_ctx = TileDecodeCtx::new_with_grid(8, 8);
+            let mut coef_ctx = TileCoefCtx::new(8);
+            let mut dst = Yv12Buffer::alloc(
+                64,
+                64,
+                ChromaFormat::Yuv420,
+                BorderUsage::Decoder,
+                ByteAlignment::Legacy,
+            )
+            .expect("alloc dst");
+            let fc = FrameContext::new_default();
+
+            // Every cell inherits SEG so segment_id resolves to SEG
+            // regardless of the exact covered-cell lookup.
+            let prev_seg = vec![SEG as u8; 8 * 8];
+            let mut cur_seg = vec![0u8; 8 * 8];
+            // cur_mv_grid is only written post-guard; empty is fine.
+            let mut cur_mv_grid: Vec<rvp9_core::inter::mv_ref::PrevFrameMvRef> = Vec::new();
+            let dispatch = rvp9_core::dsp::get();
+
+            let mut reader = BoolReader::new(&bool_buf).expect("bool reader init");
+            let before = reader.cursor_state();
+            let res = decode_inter_block(
+                &mut reader,
+                &fc,
+                &params,
+                &bounds,
+                &mut decode_ctx,
+                &mut coef_ctx,
+                &mut dst,
+                0,
+                0,
+                BlockSize::Block4x4,
+                None,
+                None,
+                None,
+                None,
+                &mut cur_mv_grid,
+                &prev_seg,
+                &mut cur_seg,
+                &dispatch,
+            );
+            let after = reader.cursor_state();
+
+            if forced_ref == RefFrame::IntraFrame as u8 {
+                // is_inter derived = false ⇒ the block routes to the
+                // intra path; the inter sub-8 SEG_LVL_SKIP guard is
+                // inter-only (libvpx `vp9_decodemv.c:709-712` lives in
+                // `read_inter_block_mode_info`) and must NOT fire here.
+                assert!(
+                    !matches!(res, Err(TileDecodeError::Sub8SegSkip { .. })),
+                    "forced-INTRA (is_inter=false) must route to the intra path, \
+                     not trip the inter sub-8 guard; got {res:?}"
+                );
+            } else {
+                // is_inter derived = true ⇒ the Sub8SegSkip guard fires
+                // and returns before the bool reader advances.
+                match res {
+                    Err(TileDecodeError::Sub8SegSkip { block_size }) => {
+                        assert_eq!(block_size, BlockSize::Block4x4);
+                    }
+                    other => {
+                        panic!("expected Sub8SegSkip Err (forced_ref={forced_ref}), got {other:?}")
+                    }
+                }
+                assert_eq!(
+                    before, after,
+                    "guard must return before the bool reader advances (forced_ref={forced_ref})"
+                );
+            }
+        }
+    }
+
     /// `tile_mi_offset` matches libvpx for single-tile (`log2 = 0`)
     /// edges and two-tile splits.
     #[test]
