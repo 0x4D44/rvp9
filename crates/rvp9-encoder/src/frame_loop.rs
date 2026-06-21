@@ -1121,11 +1121,9 @@ pub struct StreamEncoder {
     /// ARF reads its compressed-header "pre" FC from bank 1 and writes
     /// its backward-adapted result back to bank 1 — leaving the show
     /// frames' bank 0 (`decoder_fc_state`) untouched across the non-show
-    /// ARF. Starts at defaults; the only writer is
-    /// [`Self::encode_altref_internal`]. (The encoder, like its decoder,
-    /// keeps banks across the KF boundary — see the `decoder_fc_state`
-    /// note. With a single GOP-leading KF this matches vpxdec's
-    /// all-banks-default startup state, preserving byte-exactness.)
+    /// ARF. Starts at defaults; keyframes reset it with the other FC
+    /// banks, and the only inter-frame writer is
+    /// [`Self::encode_altref_internal`].
     decoder_fc_state_arf: FrameContext,
     /// P20 — adaptive RD-threshold table (libvpx
     /// `vp9_pickmode.c:2241-2247` gate state). One per stream;
@@ -2156,12 +2154,13 @@ impl StreamEncoder {
         // gate on the NEXT frame is still closed by `last_frame_was_key`,
         // but track show-state uniformly so the predicate is complete.)
         self.last_show_frame = true;
-        // P0b — do NOT reset the frame context on keyframes. libvpx's
-        // `vp9_setup_past_independence` resets all FC banks, but our
-        // decoder does not replicate this reset for keyframes. Leaving
-        // the adapted FC in place keeps encoder and decoder in sync:
-        // both carry the stale adapted context across the KF boundary
-        // until a follow-up wires the decoder-side FC-bank reset.
+        // P0b — keyframes run `vp9_setup_past_independence`, which resets
+        // every FC bank to defaults. Keep the encoder's working context and
+        // decoder-bank mirrors in lock-step with the decoder before the next
+        // inter frame diff-encodes its compressed header.
+        self.frame_context = FrameContext::new_default();
+        self.decoder_fc_state = FrameContext::new_default();
+        self.decoder_fc_state_arf = FrameContext::new_default();
 
         build_keyframe_packet(w, h, q_index, filter_level, &coef_source, &sb_partitions)
     }
@@ -6939,9 +6938,9 @@ mod tests {
         );
     }
 
-    /// AQ.3 — keyframe boundaries reset the cyclic-refresh state. The
-    /// segmentation maps emitted post-first-KF and post-second-KF
-    /// must be identical (same input, same Q ⇒ same picker output).
+    /// AQ.3 — keyframe boundaries reset the cyclic-refresh state. Pin
+    /// Q so the oracle isolates CR reset rather than normal CBR Q
+    /// history drift across GOPs.
     #[test]
     fn aq_cyclic_refresh_keyframes_reset_state() {
         const W: usize = 64;
@@ -6960,8 +6959,8 @@ mod tests {
             bit_depth: rvp9_core::BitDepth::Bd8,
             lag_in_frames: 0,
             enable_alt_ref: false,
-            rc_mode: RcMode::Cbr,
-            cq_level: 0,
+            rc_mode: RcMode::Q,
+            cq_level: 80,
             temporal_layers: 1,
             enable_tpl: false,
             min_qindex: 4,
@@ -7012,9 +7011,9 @@ mod tests {
         {
             assert_eq!(
                 a, b,
-                "AQ.3: inter frame {i} of first GOP segment_id grid must \
-                 equal inter frame {i} of second GOP — KF must reset CR \
-                 state. first={a:?}, second={b:?}",
+                "AQ.3: inter frame {i} of first fixed-Q GOP segment_id \
+                 grid must equal inter frame {i} of second fixed-Q GOP — \
+                 KF must reset CR state. first={a:?}, second={b:?}",
             );
         }
     }
@@ -7229,6 +7228,7 @@ mod tests {
     /// side, OR the encoder isn't actually using the finer Q.
     #[test]
     fn aq_cyclic_refresh_segment_1_has_finer_quantization() {
+        let _guard = crate::env_test_mutex();
         // 256×256 = 16 SBs (4×4 grid); large enough that cyclic refresh
         // marks multiple SBs as segment 1 over the run.
         const W: usize = 256;
@@ -8306,10 +8306,7 @@ mod tests {
     /// not race against other tests reading them. We use a global
     /// `Mutex<()>` to serialize the env-mutating tests below.
     fn env_test_mutex() -> std::sync::MutexGuard<'static, ()> {
-        static MTX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        // poisoned: recover and proceed (other test panicked while
-        // holding it — env vars are still safe to set/unset).
-        MTX.lock().unwrap_or_else(|p| p.into_inner())
+        crate::env_test_mutex()
     }
 
     #[test]

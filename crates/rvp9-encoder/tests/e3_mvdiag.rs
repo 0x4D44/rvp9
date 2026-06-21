@@ -1,19 +1,19 @@
-// E3 (2026-05-22) — diagnostic-only harness for the "0% NEWMV on
-// foreman" investigation. Drives the encoder over a 256×256 centre crop
-// of foreman_cif (64 frames, 100 kbps target — mirroring
-// `bdrate_gate_stage4a_realcontent`) with the `RVP9_E3_MVDIAG` env-gated
-// instrumentation active, so the picker's per-candidate cost/MV
-// breakdown is dumped to stderr.
-//
-// This is a THROWAWAY diagnostic test (delete after E3 closes). It does
-// NOT assert anything — it exists purely to provide a deterministic
-// driver for the instrumentation. Gated `#[ignore]` so it never runs on
-// `cargo test`. Invoke:
-//
-//   $env:RVP9_E3_MVDIAG=1
-//   cargo test --test e3_mvdiag -- --ignored --nocapture
-//
-// stderr IS the output mechanism here.
+//! E3 (2026-05-22) — diagnostic-only harness for the "0% NEWMV on
+//! foreman" investigation. Drives the encoder over a 256×256 centre crop
+//! of foreman_cif (64 frames, 100 kbps target — mirroring
+//! `bdrate_gate_stage4a_realcontent`) with the `RVP9_E3_MVDIAG` env-gated
+//! instrumentation active, so the picker's per-candidate cost/MV
+//! breakdown is dumped to stderr.
+//!
+//! This is a THROWAWAY diagnostic test (delete after E3 closes). It does
+//! NOT assert anything — it exists purely to provide a deterministic
+//! driver for the instrumentation. Gated `#[ignore]` so it never runs on
+//! `cargo test`. Invoke:
+//!
+//!   $env:RVP9_E3_MVDIAG=1
+//!   cargo test --test e3_mvdiag -- --ignored --nocapture
+//!
+//! stderr IS the output mechanism here.
 #![allow(clippy::print_stderr)]
 
 use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};

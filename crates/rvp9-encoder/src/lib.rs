@@ -84,6 +84,14 @@ pub fn trellis_changed_count() -> u64 {
     TRELLIS_CHANGED_COEFFS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Serial guard for unit tests that mutate or depend on process-global
+/// encoder environment variables.
+#[cfg(test)]
+pub(crate) fn env_test_mutex() -> std::sync::MutexGuard<'static, ()> {
+    static MTX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    MTX.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 /// Frame-wide high-precision MV gate.
 ///
 /// This is off by default while Stage 4a recovery measures it. With
@@ -2334,6 +2342,25 @@ pub(crate) struct InterPartitionLeafDesc {
     pub picked_tx_size: TxSize,
 }
 
+fn segment_id_for_hint_cell(
+    hints: &[InterPartitionLeafDesc],
+    mi_row_in_sb: usize,
+    mi_col_in_sb: usize,
+) -> u8 {
+    hints
+        .iter()
+        .find(|h| {
+            let row_end = h.mi_row_in_sb + h.leaf_bsize.n_8x8_high() as usize;
+            let col_end = h.mi_col_in_sb + h.leaf_bsize.n_8x8_wide() as usize;
+            mi_row_in_sb >= h.mi_row_in_sb
+                && mi_row_in_sb < row_end
+                && mi_col_in_sb >= h.mi_col_in_sb
+                && mi_col_in_sb < col_end
+        })
+        .map(|h| h.segment_id)
+        .unwrap_or(0)
+}
+
 /// F10.1c — Drive the F8.1 inter mode picker per leaf and run the
 /// inter encoder simulator that produces real residual coefficients +
 /// a decoder-bit-exact encoder reconstruction.
@@ -3348,14 +3375,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let mvc = build_mvc(RefFrame::LastFrame);
                     let mvc_golden = build_mvc(RefFrame::GoldenFrame);
 
-                    // Per-leaf segment_id from the variance hint.
-                    let seg = sb_partitions[sb_idx]
-                        .iter()
-                        .find(|h| {
-                            h.mi_row_in_sb == sb_local_y_8x8 && h.mi_col_in_sb == sb_local_x_8x8
-                        })
-                        .map(|h| h.segment_id)
-                        .unwrap_or(0);
+                    // Per-leaf segment_id from the variance hint leaf
+                    // covering this candidate's top-left cell.
+                    let seg = segment_id_for_hint_cell(
+                        &sb_partitions[sb_idx],
+                        sb_local_y_8x8,
+                        sb_local_x_8x8,
+                    );
                     let leaf_qindex = effective_qindex_for_segment(base_qindex, seg, seg_q_deltas);
                     let quantizer =
                         init_plane_quantizers(i32::from(leaf_qindex), QuantizerDeltas::Y);
@@ -3816,19 +3842,16 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         crate::rdo::inter_dispatch::RD_PARTITION_8X8_LEAVES
                             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
-                    // Look up segment_id from the variance hint's
-                    // leaf list at this position. Default to 0 if
-                    // not found (defensive — should always match
-                    // for AQ-off frames where every leaf has
-                    // segment_id = 0).
-                    let seg = sb_partitions[sb_idx]
-                        .iter()
-                        .find(|h| {
-                            h.mi_row_in_sb == leaf.mi_row_in_sb
-                                && h.mi_col_in_sb == leaf.mi_col_in_sb
-                        })
-                        .map(|h| h.segment_id)
-                        .unwrap_or(0);
+                    // Preserve the segment_id from the variance hint
+                    // leaf covering this descent leaf's top-left cell.
+                    // RD descent can split a hinted leaf; exact-origin
+                    // lookup would drop those child leaves back to
+                    // segment 0 and silently disable AQ for them.
+                    let seg = segment_id_for_hint_cell(
+                        &sb_partitions[sb_idx],
+                        leaf.mi_row_in_sb,
+                        leaf.mi_col_in_sb,
+                    );
                     new_leaves.push(InterPartitionLeafDesc {
                         mi_row_in_sb: leaf.mi_row_in_sb,
                         mi_col_in_sb: leaf.mi_col_in_sb,
@@ -7532,8 +7555,7 @@ mod tests {
     /// Serial guard for env-mutating tests that touch the global
     /// E12/F02 oracle flags or RVP9_* env vars.
     fn env_test_mutex() -> std::sync::MutexGuard<'static, ()> {
-        static MTX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        MTX.lock().unwrap_or_else(|p| p.into_inner())
+        crate::env_test_mutex()
     }
 
     fn streaming_config() -> frame_loop::EncoderConfig {
