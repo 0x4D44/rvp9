@@ -1,10 +1,20 @@
 # RVP9-BUG-KILN-00009 - SIG1 (decoder FrameContext keyframe reset) regressed encoder/decoder entropy parity: encoder never reset its FrameContext on keyframes
 
-- **State:** Open
+- **State:** Fixed
 - **Severity:** High
 - **Area:** encoder/keyframe entropy reset (frame_loop.rs)
 - **Raised:** 2026-06-20 by Claude (green-the-build pass)
-- **State history:** 2026-06-20 Opened by Claude from the green-the-build pass; bisected to commit 16801c8 (SIG1).
+- **State history:** 2026-06-20 Opened by Claude from the green-the-build pass; bisected to commit 16801c8 (SIG1). 2026-06-21 Fixed upstream by `e24e98f` ("fix(enc): reset FC mirrors at keyframes") — the encoder-side P0b reset landed concurrently/independently while this pass was in flight; verified by Claude during integration (`frame_loop::tests::aq_cyclic_refresh_keyframes_reset_state` passes on `origin/main` @ `e24e98f`). Awaiting two-eyes closure.
+
+## Resolution (2026-06-21)
+
+`e24e98f` replaced the "P0b — do NOT reset" block at `frame_loop.rs:2154` with
+`self.frame_context = FrameContext::new_default(); self.decoder_fc_state =
+FrameContext::new_default(); self.decoder_fc_state_arf = FrameContext::new_default();`
+— exactly the encoder-side reset this bug called for, restoring encoder/decoder
+entropy parity across keyframes (both sides now reset, matching libvpx
+`vp9_setup_past_independence`). The test asserts the correct invariant and now
+passes. Closure left for a second reviewer (two-eyes).
 
 ## Observation
 
