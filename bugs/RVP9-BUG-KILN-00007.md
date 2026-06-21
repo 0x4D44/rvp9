@@ -1,10 +1,10 @@
 # RVP9-BUG-KILN-00007 - kfonly Profile-1 tests left #[ignore]d after the harvest fixed their bug — SIG1 multi-keyframe independence has no committed-vector regression guard
 
-- **State:** Open
+- **State:** Fixed
 - **Severity:** Medium
 - **Area:** harness/test-coverage (decoder SIG1/SIG2)
 - **Raised:** 2026-06-19 by Claude overnight code review
-- **State history:** 2026-06-19 Opened by Claude from the track2 decoder-fix harvest review pass.
+- **State history:** 2026-06-19 Opened by Claude from the track2 decoder-fix harvest review pass. 2026-06-21 Fixed by Claude (task/fix-kfonly-tests): un-ignored the three kfonly follow-up tests in `crates/rvp9-harness/tests/profile1_decode.rs`, flipped the inverted `assert!(mismatched > 0)` self-check to `assert_eq!(mismatched, 0)`, renamed them to `profile1_{444,422,440}_kfonly_decodes_bit_exact`, and rewrote the stale doc comment. They now decode bit-exact and run by default (verified mismatched==0 first). Test-only; no version bump. Awaiting two-eyes verification → Closed.
 
 ## Observation
 

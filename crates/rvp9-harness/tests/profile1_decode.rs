@@ -301,53 +301,37 @@ fn decode_and_count(name: &str) -> (usize, usize) {
     (shown_idx, mismatched)
 }
 
-/// Track T-2: kfonly (--kf-max-dist=1) Profile-1 vectors surface a real
-/// rvp9 decoder bug — all non-initial keyframes mismatch. The encoder's
-/// kfonly mode forces every frame to be a keyframe; frames 0-2 decode
-/// correctly but subsequent keyframes diverge (11/12 for 444, confirmed
-/// across all three chroma formats). vpxdec and ffmpeg agree, so this
-/// is unambiguously an rvp9 bug.
-///
-/// Root cause hypothesis: the inter→intra transition state reset path
-/// in the rvp9 decoder doesn't fully reinitialise some state that
-/// accumulates across frames (possibly ref-frame management or
-/// above/left context). Each fresh keyframe should be decodable
-/// independently, but rvp9's output drifts from oracle starting around
-/// frame 3.
-///
-/// Tracked as follow-up: fix the kfonly decode bug then un-ignore.
+/// SIG1/SIG2 end-to-end regression guard (was Track T-2 follow-up;
+/// activated per KILN-00007). kfonly (`--kf-max-dist=1`) Profile-1
+/// streams force every frame to be an independent keyframe, so they
+/// exercise multi-keyframe independence that the default single-keyframe
+/// I-P-P-P `PROFILE1_VECTORS` do not. These streams previously mismatched
+/// from ~frame 3 onward (decoder state leaking across keyframes —
+/// `FrameContext` banks and above/left coef context). The track2 harvest
+/// fixed it: SIG1 (reset all `FrameContext` banks on every keyframe) +
+/// SIG2 (above/left coef-context frame-edge clamp). They now decode
+/// bit-exact vs the committed oracle MD5s and are the only end-to-end
+/// guard against a SIG1 cross-keyframe-independence regression; vpxdec
+/// and ffmpeg agree with these MD5s.
 #[test]
-#[ignore = "T-2: kfonly 444 surfaces rvp9 bug — 11/12 frames mismatch"]
-fn profile1_444_kfonly_follow_up() {
+fn profile1_444_kfonly_decodes_bit_exact() {
     let (shown, mismatched) = decode_and_count("foreman_c444_kfonly.ivf");
     assert_eq!(shown, 12);
-    // When the bug is fixed, change this to assert_eq!(mismatched, 0).
-    assert!(
-        mismatched > 0,
-        "Bug appears fixed — remove #[ignore] and move to PROFILE1_VECTORS"
-    );
+    assert_eq!(mismatched, 0);
 }
 
 #[test]
-#[ignore = "T-2: kfonly 422 surfaces rvp9 bug — same root cause as 444"]
-fn profile1_422_kfonly_follow_up() {
+fn profile1_422_kfonly_decodes_bit_exact() {
     let (shown, mismatched) = decode_and_count("foreman_c422_kfonly.ivf");
     assert_eq!(shown, 12);
-    assert!(
-        mismatched > 0,
-        "Bug appears fixed — remove #[ignore] and move to PROFILE1_VECTORS"
-    );
+    assert_eq!(mismatched, 0);
 }
 
 #[test]
-#[ignore = "T-2: kfonly 440 surfaces rvp9 bug — same root cause as 444"]
-fn profile1_440_kfonly_follow_up() {
+fn profile1_440_kfonly_decodes_bit_exact() {
     let (shown, mismatched) = decode_and_count("foreman_c440_kfonly.ivf");
     assert_eq!(shown, 12);
-    assert!(
-        mismatched > 0,
-        "Bug appears fixed — remove #[ignore] and move to PROFILE1_VECTORS"
-    );
+    assert_eq!(mismatched, 0);
 }
 
 /// Track T-2: aq-mode=2 (cyclic refresh segmentation) Profile-1 vectors

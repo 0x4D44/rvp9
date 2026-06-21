@@ -37,7 +37,10 @@ Out-of-scope observations parked for a separate, human-invoked review. Dated
   **UPDATE 2026-06-19:** the **kfonly 444/422/440** part is now FIXED by the harvest
   (SIG1+SIG2) — those 3 tests pass `mismatched==0` but stay `#[ignore]d` with an
   inverted self-check; tracked as `RVP9-BUG-KILN-00007` (un-ignore + flip assertion).
-  Only the **aq2-444 / 720p-aq2** part of this entry remains open/unverified.
+  **UPDATE 2026-06-21:** KILN-00007 FIXED (task/fix-kfonly-tests) — the 3 kfonly tests
+  are now un-ignored, assert `mismatched==0`, renamed `*_kfonly_decodes_bit_exact`,
+  and run by default. Only the **aq2-444 / 720p-aq2** part of this entry remains
+  open/unverified (`profile1_{444,720p}_aq2_follow_up` still `#[ignore]d`).
 - [ ] 2026-06-19: Doc cross-ref drift (cosmetic, from the track2 harvest review):
   `crates/rvp9-decoder/src/tile.rs:1219` cites `reconstruct_inter.rs:521-548` for the
   intra `max_blocks` geometry, but the referenced block actually runs `519-562`
