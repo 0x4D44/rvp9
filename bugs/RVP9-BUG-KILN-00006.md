@@ -1,10 +1,10 @@
 # RVP9-BUG-KILN-00006 - Mid-tile decode error deadlocks the LF-overlap wavefront instead of returning Err (malformed-input liveness/DoS)
 
-- **State:** Open
+- **State:** Fixed
 - **Severity:** High
 - **Area:** decoder/tile-threading + loopfilter LF-overlap
 - **Raised:** 2026-06-19 by Claude overnight code review
-- **State history:** 2026-06-19 Opened by Claude from the track2 decoder-fix harvest review pass.
+- **State history:** 2026-06-19 Opened by Claude from the track2 decoder-fix harvest review pass. 2026-06-21 Fixed by Claude (task/fix-lf-abort): added an abort escape to the LF-overlap wavefront — `ColumnWavefrontLfState.abort`, checked by both wavefront spins in `run_split_edge_lf_worker`, plus an error-path `lf_abort.store(true)` before `handle.wait()` in both decode drivers. Shared root cause and fix with KILN-00012 (the panic/`Drop` manifestation). Awaiting two-eyes verification → Closed.
 
 ## Observation
 

@@ -1949,6 +1949,11 @@ impl Decoder {
             } else {
                 Vec::new()
             };
+            // Abort flag for the LF-overlap worker (KILN-00006 / KILN-00012):
+            // set on any abnormal exit (tile `Err` or panic unwind) so the
+            // join can't block forever on a `decode_progress` row a failed
+            // tile never published.
+            let lf_abort = std::sync::atomic::AtomicBool::new(false);
             let lf_levels_overlap: rvp9_core::loopfilter::FrameFilterLevels =
                 if lf_overlap_pool_eligible {
                     rvp9_core::loopfilter::resolve_filter_levels(
@@ -2000,6 +2005,7 @@ impl Decoder {
                         decode_progress: Some(decode_progress_ref),
                         num_tile_cols: tile_cols as i32,
                         lf_delay: 1,
+                        abort: Some(&lf_abort),
                     })
                 } else {
                     None
@@ -2042,6 +2048,10 @@ impl Decoder {
             if lf_handled_by_overlap {
                 RVP9_LF_OVERLAP_POOL_FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
+            // Declared AFTER `lf_overlap_handle` so it drops FIRST on a
+            // panic unwind — setting the abort flag before
+            // `LfBatchHandle::Drop` blocks on the LF worker (KILN-00012).
+            let _lf_abort_guard = LfAbortOnPanic(&lf_abort);
 
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             let t_submit_start = profile::now_cycles();
@@ -2212,6 +2222,12 @@ impl Decoder {
             }
             // Phase 1 separate-LF-pool overlap: join LF worker before
             // anything else touches the frame buffer.
+            // KILN-00006: if a tile errored, release the LF worker before
+            // joining — otherwise handle.wait() blocks forever on a
+            // decode_progress row the failed tile never published.
+            if merge_err.is_some() {
+                lf_abort.store(true, std::sync::atomic::Ordering::Release);
+            }
             if let Some(handle) = lf_overlap_handle {
                 handle.wait();
             }
@@ -3281,6 +3297,11 @@ impl Decoder {
             } else {
                 Vec::new()
             };
+            // Abort flag for the LF-overlap worker (KILN-00006 / KILN-00012):
+            // set on any abnormal exit (tile `Err` or panic unwind) so the
+            // join can't block forever on a `decode_progress` row a failed
+            // tile never published.
+            let lf_abort = std::sync::atomic::AtomicBool::new(false);
             let lf_levels_overlap: rvp9_core::loopfilter::FrameFilterLevels =
                 if lf_overlap_pool_eligible {
                     rvp9_core::loopfilter::resolve_filter_levels(
@@ -3338,6 +3359,7 @@ impl Decoder {
                         decode_progress: Some(decode_progress_ref),
                         num_tile_cols: tile_cols as i32,
                         lf_delay: 1,
+                        abort: Some(&lf_abort),
                     })
                 } else {
                     None
@@ -3394,6 +3416,10 @@ impl Decoder {
             if lf_handled_by_overlap {
                 RVP9_LF_OVERLAP_POOL_FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
+            // Declared AFTER `lf_overlap_handle` so it drops FIRST on a
+            // panic unwind — setting the abort flag before
+            // `LfBatchHandle::Drop` blocks on the LF worker (KILN-00012).
+            let _lf_abort_guard = LfAbortOnPanic(&lf_abort);
 
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             let t_submit_start = profile::now_cycles();
@@ -3596,6 +3622,12 @@ impl Decoder {
             // construction (decode scope has joined; merge does not
             // touch yv12 or frame_mi_grid), the LF worker should be
             // done or nearly so by the time we get here.
+            // KILN-00006: if a tile errored, release the LF worker before
+            // joining — otherwise handle.wait() blocks forever on a
+            // decode_progress row the failed tile never published.
+            if merge_err.is_some() {
+                lf_abort.store(true, std::sync::atomic::Ordering::Release);
+            }
             if let Some(handle) = lf_overlap_handle {
                 handle.wait();
             }
@@ -4013,6 +4045,26 @@ impl Decoder {
 /// `MI_BLOCK_SIZE` at `vp9_enums.h:25`).
 const SB_MI_SIZE: usize = 8;
 
+/// RAII guard that aborts the LF-overlap wavefront if the decode path
+/// unwinds (panics) before the explicit join (KILN-00012). The error
+/// path (`merge_err.is_some()`) sets the same flag explicitly before
+/// `handle.wait()` (KILN-00006); this guard covers the *panic* path,
+/// where the panic re-raised by `WorkerPool::scope` unwinds out before
+/// the join is reached. On a normal drop (no panic in flight) it does
+/// nothing, so the success path filters the frame in full. Declared
+/// *after* the `LfBatchHandle` in each driver block so it drops FIRST on
+/// unwind — setting the flag before `LfBatchHandle::Drop` blocks on the
+/// LF worker's completion.
+struct LfAbortOnPanic<'a>(&'a std::sync::atomic::AtomicBool);
+
+impl Drop for LfAbortOnPanic<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.0.store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
+}
+
 /// Stitch per-tile mi grids into a single frame-level mi grid suitable
 /// for downstream consumers (loop-filter mask builder, etc.).
 ///
@@ -4411,6 +4463,9 @@ fn apply_loop_filter_to_frame_column_wavefront_dispatch(
         decode_progress: None,
         num_tile_cols: num_tile_cols as i32,
         lf_delay: 1,
+        // Two-scope path has no live gate to escape (decode already
+        // joined), so there is nothing to abort.
+        abort: None,
     };
 
     worker_pool.scope(|scope| {
@@ -4725,6 +4780,40 @@ impl<'a> IntoIterator for PacketFrames<'a> {
 mod tests {
     use super::*;
     use rvp9_core::bitstream::{ColorSpace, FrameKind, Profile, RawBitWriter, frame::sync};
+
+    /// KILN-00012: the panic guard must abort the LF-overlap worker when
+    /// the decode path unwinds, so `LfBatchHandle::Drop` does not block
+    /// forever. On a panic in flight, `Drop` sets the flag.
+    #[test]
+    fn lf_abort_guard_sets_flag_on_panic_unwind() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let flag = AtomicBool::new(false);
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _g = LfAbortOnPanic(&flag);
+            panic!("simulated tile-worker panic");
+        }));
+        assert!(r.is_err(), "panic should propagate through catch_unwind");
+        assert!(
+            flag.load(Ordering::Acquire),
+            "guard must set the abort flag while unwinding (KILN-00012)",
+        );
+    }
+
+    /// The guard must be inert on the success path — a normal drop (no
+    /// panic in flight) must NOT abort, so the LF worker filters the
+    /// whole frame.
+    #[test]
+    fn lf_abort_guard_noop_on_normal_drop() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let flag = AtomicBool::new(false);
+        {
+            let _g = LfAbortOnPanic(&flag);
+        }
+        assert!(
+            !flag.load(Ordering::Acquire),
+            "guard must not abort on a normal (non-panic) drop",
+        );
+    }
 
     /// Build a minimal valid keyframe header buffer (returns the
     /// raw `&[u8]` payload). Mirrors the helper in

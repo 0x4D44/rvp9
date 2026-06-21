@@ -210,7 +210,7 @@ impl SharedFrame {
 // `vp9/common/vp9_thread_common.c:24-200`).
 // ----------------------------------------------------------------------------
 
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 
 /// Spin cap for the column-wavefront LF worker (Lever B v2). Per
 /// HLD §3.8 — column-wavefront gates fire once per nsync-boundary SB
@@ -385,6 +385,22 @@ pub struct ColumnWavefrontLfState<'a> {
     /// row `r` in the same tile) is complete before LF writes those
     /// pixels. Phase 1: hard-coded to 1.
     pub lf_delay: i32,
+    /// **Abort escape** (KILN-00006 / KILN-00012). When `Some(flag)` and
+    /// the flag is set, the worker stops spinning on the L1 gate and
+    /// returns early *without* filtering further rows. The decoder driver
+    /// sets this on any abnormal exit — a tile decode `Err` or a panic
+    /// unwinding out of the decode scope — so the LF join
+    /// (`LfBatchHandle::wait` / `Drop`, both no-timeout `recv`) cannot
+    /// block forever on a `decode_progress` row a failed tile never
+    /// published. `None` for the legacy two-scope path (no overlap, no
+    /// gate), where there is nothing to abort.
+    ///
+    /// **Soundness:** abort only makes the worker *finish sooner*; the
+    /// driver still joins it, so the temporal-exclusion edge for the
+    /// worker's `'frame` raw-pointer access is unchanged. Abort is only
+    /// ever set when the frame output is being discarded (Err/panic), so
+    /// stopping mid-filter loses nothing.
+    pub abort: Option<&'a AtomicBool>,
 }
 
 /// Column-wavefront LF worker hook. One worker job is submitted per
@@ -436,6 +452,16 @@ pub unsafe fn run_split_edge_lf_worker(
     let nsync_mask: i32 = nsync - 1; // power-of-two assumption
     let sb_cols_i = state.sb_cols as i32;
 
+    // KILN-00006 / KILN-00012 abort escape, checked by BOTH wavefront
+    // spins so the worker is uniformly responsive to abort. The decoder
+    // driver sets the flag on any abnormal exit (a tile decode `Err` or a
+    // panic unwinding out of the decode scope). With Phase 1 N_LF=1 only
+    // the L1 gate can actually strand this worker (a single worker
+    // publishes its own `cur_sb_col`), but the inner sync-read gate is
+    // guarded too so the invariant ("while aborting, never spin
+    // forever") holds unconditionally and survives a future N_LF>1.
+    let aborted = || state.abort.is_some_and(|a| a.load(Ordering::Acquire));
+
     // libvpx static row distribution — worker i handles rows
     // i, i+nworkers, i+2*nworkers, ...
     let mut r = worker_id;
@@ -460,13 +486,25 @@ pub unsafe fn run_split_edge_lf_worker(
                 .min(state.sb_rows as i32 - 1)
                 .max(0) as usize;
             let num_tile_cols = state.num_tile_cols;
+            // L1 gate, with an abort escape (KILN-00006 / KILN-00012):
+            // the spin also releases when `abort` is set, so a failed
+            // decode (a tile `Err` or a panic unwinding out of the decode
+            // scope) cannot strand this worker spinning on a row the
+            // failed tile never published.
             spin_then_yield_wavefront(|| {
-                (decode_progress[gate_row].load(Ordering::Acquire) as i32) >= num_tile_cols
+                aborted()
+                    || (decode_progress[gate_row].load(Ordering::Acquire) as i32) >= num_tile_cols
             });
+            // Decode aborted: the frame output is being discarded, so
+            // stop here rather than filtering against partially-decoded
+            // pixels (and do NOT touch the frame planes below).
+            if aborted() {
+                return;
+            }
 
             // Debug-only assertion belt-and-braces: after the spin
-            // returns, L1 must hold. Cheap in debug, gated out in
-            // release.
+            // returns (and we did not abort), L1 must hold. Cheap in
+            // debug, gated out in release.
             #[cfg(debug_assertions)]
             debug_assert!(
                 (decode_progress[gate_row].load(Ordering::Acquire) as i32) >= num_tile_cols,
@@ -517,7 +555,14 @@ pub unsafe fn run_split_edge_lf_worker(
                 //   (and libvpx C is the load-bearing reference).
                 let prev = &state.cur_sb_col[r - 1];
                 let required = c + nsync;
-                spin_then_yield_wavefront(|| prev.load(Ordering::Acquire) >= required);
+                // Same abort escape as the L1 gate (KILN-00006 /
+                // KILN-00012): with N_LF>1 a peer worker handling row r-1
+                // may abort before publishing `cur_sb_col[r-1]`, which
+                // would otherwise strand this spin.
+                spin_then_yield_wavefront(|| aborted() || prev.load(Ordering::Acquire) >= required);
+                if aborted() {
+                    return;
+                }
             }
 
             // Apply the per-SB unit (Y V+H, then U V+H, then V V+H).
@@ -4102,5 +4147,94 @@ mod tests {
 
         let y_after = snapshot_y(&buf);
         assert_ne!(y_before, y_after);
+    }
+
+    /// Regression for KILN-00006 / KILN-00012: the LF-overlap worker must
+    /// have an abort escape. With the L1 gate's `decode_progress` row
+    /// never reaching `num_tile_cols` (simulating a tile that failed to
+    /// publish its rows after an `Err` or panic), the worker would spin
+    /// forever in `spin_then_yield_wavefront` and strand the decoder's
+    /// `LfBatchHandle::wait()` / `Drop` (both no-timeout `recv`). Setting
+    /// the abort flag must make the worker return promptly.
+    ///
+    /// A hang shows up here as a `recv_timeout` failure rather than a
+    /// hung test process: the worker runs on a detached thread and, if it
+    /// never bails, is left to leak (the process exits at test end).
+    #[test]
+    fn lf_worker_bails_promptly_when_aborted() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        // 64x64 frame -> 8x8 mi, 1 SB row/col. Leak the per-frame state
+        // so the detached worker thread holds 'static borrows.
+        let buf: &'static mut Yv12Buffer = Box::leak(Box::new(alloc_64x64()));
+        let mi_cols = 8usize;
+        let mi_rows = 8usize;
+        let sb_rows = 1usize;
+        let sb_cols = 1usize;
+
+        let info: &'static LoopFilterInfo = Box::leak(Box::new(LoopFilterInfo::new(0)));
+        let levels: &'static FrameFilterLevels = Box::leak(Box::new(FrameFilterLevels::default()));
+        // Worker bails before `build_lfm_row`, so an empty mi-grid is fine.
+        let mi_grid: &'static [Option<ModeInfo>] = &[];
+        // decode_progress stays all-zero -> L1 gate can never pass.
+        let decode_progress: &'static [AtomicU32] = Box::leak(
+            (0..sb_rows)
+                .map(|_| AtomicU32::new(0))
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        );
+        let cur_sb_col: &'static [AtomicI32] = Box::leak(
+            (0..sb_rows)
+                .map(|_| AtomicI32::new(-1))
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        );
+        let abort: &'static AtomicBool = Box::leak(Box::new(AtomicBool::new(false)));
+
+        let shared = SharedFrame::from_yv12(buf);
+        let state: &'static ColumnWavefrontLfState<'static> =
+            Box::leak(Box::new(ColumnWavefrontLfState {
+                shared,
+                info,
+                row_inputs: RowMaskInputs {
+                    mi_grid,
+                    mi_stride: mi_cols,
+                    mi_rows,
+                    mi_cols,
+                    levels,
+                },
+                non420: None,
+                sb_rows,
+                sb_cols,
+                cur_sb_col,
+                nsync: nsync_for_width((mi_cols * 8) as u32),
+                decode_progress: Some(decode_progress),
+                num_tile_cols: 2, // gate needs >= 2; counter stays 0
+                lf_delay: 1,
+                abort: Some(abort),
+            }));
+
+        let dispatch = crate::dsp::get();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            // SAFETY: every borrow inside `state` is 'static (leaked).
+            // On the abort path the worker reads only decode_progress and
+            // abort before returning — it never touches the frame planes.
+            unsafe {
+                run_split_edge_lf_worker(state, 0, 1, &dispatch);
+            }
+            let _ = tx.send(());
+        });
+
+        // Let the worker reach the gate spin, then trigger the escape.
+        std::thread::sleep(Duration::from_millis(50));
+        abort.store(true, Ordering::Release);
+
+        assert!(
+            rx.recv_timeout(Duration::from_secs(5)).is_ok(),
+            "LF worker did not bail after abort was set — KILN-00006 / \
+             KILN-00012 regression: the column-wavefront gate has no abort escape",
+        );
     }
 }

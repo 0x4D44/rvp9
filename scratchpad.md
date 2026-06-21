@@ -22,6 +22,13 @@ Out-of-scope observations parked for a separate, human-invoked review. Dated
   these are SSE2-vs-AVX2 / scalar-vs-AVX2 mismatches on edge inputs, likely
   `target-cpu=native` / host-CPU specific. Needs separate triage; `RVP9_FORCE_SCALAR`
   + per-kernel diff to localize.
+  **UPDATE 2026-06-21:** the `idct16x16_sse2_eq_avx2_{uniform_12,eob_dense}` pair is now
+  tracked as KILN-00010. Two MORE pre-existing trunk failures observed (fail identically
+  on clean `origin/main` e678386, unrelated to any LF/threading work):
+  `bitstream::header::tests::captured_header_round_trip` and
+  `bitstream::compressed_header::tests::write_compressed_header_captured_frame_round_trip`
+  — captured-fixture round-trips. Needs triage (are the captured fixtures stale vs current
+  header writer, or a real round-trip regression?). Not yet ticketed.
 - [ ] 2026-06-18: Known decoder bug, pre-existing (NOT from this harvest):
   `crates/rvp9-harness/tests/profile1_decode.rs` has 5 `#[ignore]`d tests —
   `profile1_444_aq2_follow_up` / `profile1_720p_aq2_follow_up` ("aq2 444 surfaces rvp9
