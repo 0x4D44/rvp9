@@ -66,3 +66,23 @@ Out-of-scope observations parked for a separate, human-invoked review. Dated
   rvp9 ~27% at q80) the skip tie-break **dist-domain must be recalibrated first**; only
   then re-test the adapted prob + honour-picker-skip. Full A/B in
   `wrk_journals/2026.06.21 - JRN - adapted skip-prob picker tie-break.md`.
+- [ ] 2026-06-21: **VBR product-gate divergence roadmap** — first clean block-level
+  rvp9-vs-libvpx diagnosis on the actual Stage 4a VBR gate (not contaminated fixed-Q):
+  `wrk_docs/2026.06.21 - CR - VBR product-gate divergence analysis.md` (+ raw DATA
+  companion). Top levers for the remaining +6.43% BD-rate / +1.16 dB gap:
+  (1) **reference-allocation cadence** — rvp9 starves the keyframe (q164/16608b vs
+  libvpx q57/74536b @100kbps) and lacks libvpx's ~15kbit q~130 golden boosts every ~10
+  frames; bounded keyframe+GF investment, swept vs the 4-point gate (prior unbounded
+  attempts overspent: keyframe-BPM-split +69%, VBR-GOLDEN port +46%);
+  (2) **ZEROMV labelling** — rvp9 ~26% vs libvpx ~4% area; NOT missing temporal MVs
+  (`use_prev_frame_mvs` is a vestigial no-op, frame_loop.rs:2570-2589) — likely an
+  inter-mode cost/tie-break issue beyond `nearest_tie_fix` (static blocks coded ZEROMV
+  by rvp9 vs NEARESTMV by libvpx);
+  (3) **RT partition descent under-selects 32x32** (rvp9 94% 16x16 vs libvpx 32x32 mix)
+  — downstream of the same picker RD-domain calibration as the skip tie-break above.
+- [ ] 2026-06-21: **Dead config field `EncoderConfig::use_prev_frame_mvs`** — the
+  encoder ignores it (computes the temporal-MV gate purely structurally per the SIG-1
+  drift fix, frame_loop.rs:2570-2589). The field still exists and several tests set it
+  `false` as a "regression guard" but it has NO effect on output (verified byte-identical
+  true vs false on the Stage 4a gate). Candidate for removal (or doc as inert) when next
+  touching the config surface, so future sessions don't chase it as a lever.
