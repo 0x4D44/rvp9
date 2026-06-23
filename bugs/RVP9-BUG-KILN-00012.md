@@ -1,10 +1,10 @@
 # RVP9-BUG-KILN-00012 - Panic unwinding through the MT decode driver hangs forever in LfBatchHandle::Drop (no-timeout join + no-abort LF spin), swallowing the panic
 
-- **State:** Fixed
+- **State:** Closed
 - **Severity:** High
 - **Area:** decoder/tile-threading + loopfilter LF-overlap
 - **Raised:** 2026-06-20 by Claude overnight code review
-- **State history:** 2026-06-20 Opened by Claude from the decoder MT / LF-overlap wavefront liveness review pass (originally minted as KILN-00009 on a stale view; **renumbered to KILN-00012** per the ledger README "renumber on conflict" — trunk's KILN-00009 is an unrelated encoder entropy-reset bug minted concurrently on the same host). 2026-06-21 Fixed by Claude (task/fix-lf-abort) together with KILN-00006 (shared root cause). Awaiting two-eyes verification → Closed.
+- **State history:** 2026-06-20 Opened by Claude from the decoder MT / LF-overlap wavefront liveness review pass (originally minted as KILN-00009 on a stale view; **renumbered to KILN-00012** per the ledger README "renumber on conflict" — trunk's KILN-00009 is an unrelated encoder entropy-reset bug minted concurrently on the same host). 2026-06-21 Fixed by Claude (task/fix-lf-abort) together with KILN-00006 (shared root cause). 2026-06-23 Closed by Codex after independent two-eyes verification on `daaafc1`: pre-fix parent `872f205^` lacks the abort/guard path and joins before returning `merge_err`; current focused tests `cargo test -p rvp9-core lf_worker_bails_promptly_when_aborted`, `cargo test -p rvp9-decoder lf_abort_guard`, and `cargo test -p rvp9-harness lf_overlap_pool_matches_serial` pass; 3/3 skeptic readers found no closure-blocking residual.
 
 ## Observation
 
