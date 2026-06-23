@@ -1663,11 +1663,19 @@ impl StreamEncoder {
                 Ok(None) => break,
                 Err(e) => {
                     out.push(Err(e));
+                    self.discard_flush_tail_after_encode_error();
                     break;
                 }
             }
         }
         out
+    }
+
+    fn discard_flush_tail_after_encode_error(&mut self) {
+        while self.lookahead.pop(/* drain = */ true).is_some() {}
+        self.pending_arf_packet = None;
+        self.svc_frame = None;
+        rvp9_core::mode_decision::inter::set_frame_s2_gate(None);
     }
 
     /// Try to pop one entry from the lookahead and encode it. Returns
@@ -9151,6 +9159,92 @@ mod tests {
                 "packet {i} must contain bits (got 0 — encode path stubbed?)"
             );
         }
+    }
+
+    #[test]
+    fn flush_discards_remaining_lookahead_after_encode_error() {
+        const LAG: u32 = 4;
+
+        let cfg = EncoderConfig {
+            width: 64,
+            height: 64,
+            framerate: 30.0,
+            target_bitrate_bps: 1_000_000,
+            gop_length: 64,
+            aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
+            speed: 7,
+            deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: LAG,
+            enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
+            temporal_layers: 1,
+            enable_tpl: false,
+            min_qindex: 4,
+            max_qindex: 255,
+        };
+        let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
+        let (y, u, v) = gradient_frame(64, 64);
+        let view = yuv_view(&y, &u, &v, 64);
+
+        let mut preflush_packets = 0u32;
+        for i in 0..LAG {
+            match enc
+                .encode_frame_delayed(&view)
+                .expect("push before flush must succeed")
+            {
+                Some(pkt) => {
+                    assert_eq!(i, LAG - 1, "only the depth-filling push should pop");
+                    assert_eq!(pkt.frame_kind, FrameKind::Key);
+                    preflush_packets += 1;
+                }
+                None => assert!(i < LAG - 1, "pre-fill pushes should queue without output"),
+            }
+        }
+        assert_eq!(
+            preflush_packets, 1,
+            "test setup must encode the keyframe first"
+        );
+        assert_eq!(
+            enc.lookahead.depth(),
+            (LAG - 1) as usize,
+            "test setup must leave multiple live inter frames queued"
+        );
+
+        // Force a post-pop encode error without corrupting the queued
+        // source frames: the visible frame encodes, but superframe packing
+        // rejects the empty synthetic pending ARF packet.
+        enc.pending_arf_packet = Some(Vec::new());
+
+        let flushed = enc.flush();
+        assert_eq!(
+            flushed.len(),
+            1,
+            "flush should report the encode error once"
+        );
+        assert!(
+            matches!(
+                flushed.first(),
+                Some(Err(EncodeError::Bitstream(
+                    BitstreamError::SuperframeEmptyFrame
+                )))
+            ),
+            "test setup must fail after popping the first queued frame"
+        );
+        assert_eq!(
+            enc.lookahead.depth(),
+            0,
+            "flush must discard the remaining live lookahead frames after an encode error"
+        );
+
+        let reuse = enc.encode_frame_delayed(&view);
+        assert!(
+            reuse.is_ok(),
+            "flush should leave the encoder able to accept a fresh push"
+        );
     }
 
     /// PROOF — with `lag_in_frames = 0` the synchronous
