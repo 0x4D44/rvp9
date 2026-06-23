@@ -2923,10 +2923,6 @@ impl StreamEncoder {
         // not the counter, is now the refresh-flag authority.
         let frame_sched = self.gf_group.schedule(self.frame_idx);
         self.frames_since_golden_refresh = self.frames_since_golden_refresh.saturating_add(1);
-        let refresh_golden_this_frame = matches!(
-            frame_sched.update_type,
-            crate::gop::FrameUpdateType::GfUpdate
-        );
         // A18 (SVC) — when temporal SVC is active, the layering pattern
         // (not the GfGroup golden/altref cadence) owns this frame's
         // refresh structure. `svc_assign_layer` computed the override:
@@ -3168,16 +3164,17 @@ impl StreamEncoder {
         // decoder-side `use_prev_frame_mvs` gate sees `last_show_frame`.
         self.last_show_frame = true;
 
-        // A10 / A14 (Phase A) — if this frame refreshed GOLDEN on the
-        // wire (`refresh_flags = 0x03`), the `update_reference_frames`
-        // call above already re-pointed `ref_frame_map[GOLDEN_REF's idx]`
-        // at the committed slot, so GOLDEN now resolves to the same
-        // pixels as LAST — no explicit `golden_recon.copy_from_slice`
-        // needed (the prior ad-hoc field copy is subsumed by the map
-        // rotation). The decoder applies the same refresh mask, so both
-        // sides agree on the GOLDEN slot's pixels. Reset the cadence
-        // counter so the next GOLDEN refresh lands a period out.
-        if refresh_golden_this_frame {
+        // A10 / A14 / A18 — if this frame refreshed GOLDEN on the wire
+        // (`refresh_flags` bit 1), the `update_reference_frames` call above
+        // already re-pointed `ref_frame_map[GOLDEN_REF's idx]` at the
+        // committed slot, so GOLDEN now resolves to the same pixels as
+        // LAST — no explicit `golden_recon.copy_from_slice` needed (the
+        // prior ad-hoc field copy is subsumed by the map rotation). The
+        // decoder applies the same refresh mask, so both sides agree on the
+        // GOLDEN slot's pixels. SVC may override a scheduled `GfUpdate` to
+        // LAST-only or no refresh, so reset the cadence counter only from
+        // the final emitted refresh mask.
+        if (refresh_flags & 0x02) != 0 {
             self.frames_since_golden_refresh = 0;
         }
 
@@ -5391,6 +5388,61 @@ mod tests {
         assert!(
             tids.contains(&1),
             "must produce at least one tl1 enhancement frame"
+        );
+    }
+
+    /// KILN-00005 — temporal SVC owns the emitted refresh flags, so the
+    /// GOLDEN-age counter must follow the final wire mask rather than the
+    /// single-layer GOP schedule. At GOP offset 8 the schedule asks for a
+    /// GOLDEN refresh, but 2-layer SVC projects that frame to tl1 and emits
+    /// `refresh_frame_flags = 0x00`; resetting the counter there makes later
+    /// picker bias treat stale GOLDEN as fresh.
+    #[test]
+    fn a18_temporal_svc_golden_age_follows_emitted_refresh_flags() {
+        let w = 64usize;
+        let h = 64usize;
+        let y: Vec<u8> = (0..w * h).map(|i| (i * 5 % 256) as u8).collect();
+        let uv = vec![128u8; (w / 2) * (h / 2)];
+        let view = YuvFrameRef {
+            y: &y,
+            u: &uv,
+            v: &uv,
+            y_stride: w,
+            u_stride: w / 2,
+            v_stride: w / 2,
+        };
+        let mut cfg = EncoderConfig::new(w as u32, h as u32);
+        cfg.gop_length = 20;
+        cfg.temporal_layers = 2;
+        let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
+        let scheduled = enc.gf_group.schedule(crate::gop::GOLDEN_REFRESH_PERIOD);
+        assert!(matches!(
+            scheduled.update_type,
+            crate::gop::FrameUpdateType::GfUpdate
+        ));
+        assert_eq!(
+            scheduled.refresh_frame_flags & 0x02,
+            0x02,
+            "test must hit a scheduled GOLDEN refresh"
+        );
+
+        let mut tids = Vec::new();
+        let mut golden_ages = Vec::new();
+        for _ in 0..=crate::gop::GOLDEN_REFRESH_PERIOD {
+            let pkt = enc.encode_frame(&view).expect("encode_frame");
+            tids.push(pkt.temporal_layer_id);
+            golden_ages.push(enc.frames_since_golden_refresh);
+        }
+
+        assert_eq!(
+            tids[crate::gop::GOLDEN_REFRESH_PERIOD as usize],
+            1,
+            "the scheduled GOLDEN offset is an SVC enhancement frame"
+        );
+        assert_eq!(
+            golden_ages,
+            (0..=crate::gop::GOLDEN_REFRESH_PERIOD).collect::<Vec<_>>(),
+            "SVC should not reset GOLDEN age unless the final refresh mask refreshes GOLDEN"
         );
     }
 
