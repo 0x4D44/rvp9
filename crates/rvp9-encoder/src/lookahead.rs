@@ -32,7 +32,7 @@
 //! partial-copy (libvpx `vp9_lookahead.c:84` `USE_PARTIAL_COPY 0`) is
 //! omitted — libvpx itself ships it disabled.
 
-use crate::YuvFrameRef;
+use crate::{YuvFrameRef, frame_loop::strided_plane_covers};
 
 /// Maximum lookahead depth supported by libvpx
 /// (`vp9_lookahead.h:21`). Caller-requested `depth` is clamped to
@@ -215,12 +215,9 @@ impl LookaheadCtx {
         let h = self.height as usize;
         let uvw = w / 2;
         let uvh = h / 2;
-        if src.y.len() < w * h
-            || src.u.len() < uvw * uvh
-            || src.v.len() < uvw * uvh
-            || src.y_stride < w
-            || src.u_stride < uvw
-            || src.v_stride < uvw
+        if !strided_plane_covers(src.y.len(), w, h, src.y_stride)
+            || !strided_plane_covers(src.u.len(), uvw, uvh, src.u_stride)
+            || !strided_plane_covers(src.v.len(), uvw, uvh, src.v_stride)
         {
             return Err(LookaheadError::InvalidPlaneSize);
         }
@@ -474,6 +471,25 @@ mod tests {
         let mut ctx = LookaheadCtx::new(128, 128, 2);
         let (y, u, v) = make_frame(64, 64, 0); // wrong size!
         let err = ctx.push(&yview(&y, &u, &v, 64), 0, 1, 0).unwrap_err();
+        assert_eq!(err, LookaheadError::InvalidPlaneSize);
+    }
+
+    #[test]
+    fn push_rejects_strided_short_plane_without_panicking() {
+        let mut ctx = LookaheadCtx::new(16, 16, 2);
+        let y = vec![128u8; 16 * 16];
+        let u = vec![128u8; 8 * 8];
+        let v = vec![128u8; 8 * 8];
+        let yuv = YuvFrameRef {
+            y: &y,
+            u: &u,
+            v: &v,
+            y_stride: 32,
+            u_stride: 8,
+            v_stride: 8,
+        };
+
+        let err = ctx.push(&yuv, 0, 1, 0).unwrap_err();
         assert_eq!(err, LookaheadError::InvalidPlaneSize);
     }
 }

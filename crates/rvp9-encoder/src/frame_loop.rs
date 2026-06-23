@@ -829,15 +829,15 @@ fn three_d_thresh() -> f64 {
 ///
 /// Plane lengths are checked at `encode_frame` call time against the
 /// configured `(width, height)`. Strides may exceed `width / chroma_w`
-/// (allowing for caller-side padding); rows are read as
-/// `data[row * stride..row * stride + plane_width]`.
+/// (allowing for caller-side padding); every row window read as
+/// `data[row * stride..row * stride + plane_width]` must fit.
 #[derive(Copy, Clone, Debug)]
 pub struct YuvFrameRef<'a> {
-    /// Y-plane samples, `y_stride * height` bytes.
+    /// Y-plane samples covering all luma row windows.
     pub y: &'a [u8],
-    /// U-plane samples, `u_stride * (height / 2)` bytes.
+    /// U-plane samples covering all chroma row windows.
     pub u: &'a [u8],
-    /// V-plane samples, `v_stride * (height / 2)` bytes.
+    /// V-plane samples covering all chroma row windows.
     pub v: &'a [u8],
     /// Y-plane stride in bytes. Must be ≥ `width`.
     pub y_stride: usize,
@@ -845,6 +845,37 @@ pub struct YuvFrameRef<'a> {
     pub u_stride: usize,
     /// V-plane stride in bytes. Must be ≥ `width / 2`.
     pub v_stride: usize,
+}
+
+/// Return the minimum slice length needed for `rows` strided row reads.
+fn strided_plane_required_len(row_width: usize, rows: usize, stride: usize) -> Option<usize> {
+    if rows == 0 || row_width == 0 {
+        return Some(0);
+    }
+    if stride < row_width {
+        return None;
+    }
+
+    (rows - 1)
+        .checked_mul(stride)
+        .and_then(|last_row| last_row.checked_add(row_width))
+}
+
+/// Return whether a plane slice covers every row window read by the encoder.
+pub(crate) fn strided_plane_covers(
+    data_len: usize,
+    row_width: usize,
+    rows: usize,
+    stride: usize,
+) -> bool {
+    if rows == 0 || row_width == 0 {
+        return data_len == 0;
+    }
+
+    match strided_plane_required_len(row_width, rows, stride) {
+        Some(required_len) => data_len >= required_len,
+        None => false,
+    }
 }
 
 /// Result of a successful [`StreamEncoder::encode_frame`] call.
@@ -1555,12 +1586,12 @@ impl StreamEncoder {
         if yuv.v_stride < uvw {
             return Err(EncodeError::InvalidConfig("v_stride < width / 2"));
         }
-        if yuv.y.len() < yuv.y_stride * h
-            || yuv.u.len() < yuv.u_stride * uvh
-            || yuv.v.len() < yuv.v_stride * uvh
+        if !strided_plane_covers(yuv.y.len(), w, h, yuv.y_stride)
+            || !strided_plane_covers(yuv.u.len(), uvw, uvh, yuv.u_stride)
+            || !strided_plane_covers(yuv.v.len(), uvw, uvh, yuv.v_stride)
         {
             return Err(EncodeError::InvalidConfig(
-                "yuv plane lengths must cover stride * height",
+                "yuv plane lengths must cover strided row windows",
             ));
         }
 
@@ -7879,6 +7910,63 @@ mod tests {
     }
 
     #[test]
+    fn encode_frame_rejects_overflowing_y_stride() {
+        let mut enc = StreamEncoder::new(baseline_config()).unwrap();
+        let y = vec![128u8; 1];
+        let u = vec![128u8; 32 * 32];
+        let v = vec![128u8; 32 * 32];
+        let bad = YuvFrameRef {
+            y: &y,
+            u: &u,
+            v: &v,
+            y_stride: usize::MAX,
+            u_stride: 32,
+            v_stride: 32,
+        };
+
+        let err = enc.encode_frame(&bad).unwrap_err();
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("plane lengths")),
+            "expected plane-lengths InvalidConfig, got: {err:?}",
+        );
+    }
+
+    #[test]
+    fn encode_frame_rejects_overflowing_y_plane_extent_without_panicking() {
+        let mut enc = StreamEncoder::new(baseline_config()).unwrap();
+        let y = vec![128u8; 64 * 64];
+        let u = vec![128u8; 32 * 32];
+        let v = vec![128u8; 32 * 32];
+        let bad = YuvFrameRef {
+            y: &y,
+            u: &u,
+            v: &v,
+            y_stride: usize::MAX / 2 + 1,
+            u_stride: 32,
+            v_stride: 32,
+        };
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| enc.encode_frame(&bad)));
+        let err = match result {
+            Ok(Err(err)) => err,
+            Ok(Ok(_)) => panic!("expected overflowing stride to be rejected"),
+            Err(_) => panic!("overflowing stride must return InvalidConfig, not panic"),
+        };
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("plane lengths")),
+            "expected plane-lengths InvalidConfig, got: {err:?}",
+        );
+    }
+
+    #[test]
+    fn strided_plane_zero_extent_requires_empty_slice() {
+        assert!(strided_plane_covers(0, 0, 1, 0));
+        assert!(!strided_plane_covers(1, 0, 1, 0));
+        assert!(strided_plane_covers(0, 1, 0, 1));
+        assert!(!strided_plane_covers(1, 1, 0, 1));
+    }
+
+    #[test]
     fn frame_kind_from_public_to_rate_control_round_trips() {
         // Covers the From impl arms.
         let rc_key: RcFrameKind = FrameKind::Key.into();
@@ -8347,7 +8435,9 @@ mod tests {
         let (y, u, v) = gradient_frame(64, 64);
         let f = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
         // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe { std::env::remove_var(key) };
+        unsafe {
+            std::env::remove_var(key);
+        }
         assert_eq!(f.q_index, 100, "RVP9_FIXED_Q must pin frame Q to 100");
     }
 
@@ -8364,7 +8454,9 @@ mod tests {
         let (y, u, v) = gradient_frame(64, 64);
         let f = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
         // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe { std::env::remove_var(key) };
+        unsafe {
+            std::env::remove_var(key);
+        }
         assert!(f.actual_bits > 0, "encode must succeed under E8 trace");
     }
 
@@ -8381,7 +8473,9 @@ mod tests {
         let (y, u, v) = gradient_frame(64, 64);
         let f = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
         // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe { std::env::remove_var(key) };
+        unsafe {
+            std::env::remove_var(key);
+        }
         assert!(f.actual_bits > 0, "encode must succeed under BPM verify");
     }
 
@@ -8401,7 +8495,9 @@ mod tests {
         let _ = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
         let inter = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
         // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe { std::env::remove_var(key) };
+        unsafe {
+            std::env::remove_var(key);
+        }
         assert_eq!(inter.frame_kind, FrameKind::Inter);
     }
 
