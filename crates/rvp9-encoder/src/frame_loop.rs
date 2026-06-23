@@ -3408,6 +3408,11 @@ impl StreamEncoder {
         // untouched, so the post-ARF show frame still diff-encodes from
         // the un-ARF-adapted bank 0 — matching what the decoder reads.
         let mut decoder_fc = self.decoder_fc_state_arf.clone();
+        // Compressed-header coding mutates `decoder_fc` toward
+        // `self.frame_context`. Backward adaptation must start from the
+        // pre-header bank-1 state, matching the decoder's saved frame
+        // context for this ARF.
+        let pre_header_decoder_fc_arf = decoder_fc.clone();
 
         // W-ALTREF — ALTREF refresh mask. `refresh_frame_flags = 0x04`
         // sets bit 2 = `ALT_REF_FRAME_IDX` (libvpx
@@ -3454,10 +3459,11 @@ impl StreamEncoder {
         // (`build_inter_packet_with_residuals` HeaderTail), so the
         // decoder backward-adapts FC bank 1 after decoding the ARF and
         // writes it back to `frame_contexts[1]`. The encoder mirrors the
-        // same adaptation into its bank-1 slot. Bank 0 is NOT touched —
-        // the next show frame's compressed header still diffs from the
-        // pre-ARF bank 0, matching the decoder. Mirrors the show-frame
-        // adaptation in `encode_inter_internal`.
+        // same adaptation into its bank-1 slot, using the pre-header bank
+        // 1 state as the adaptation base. Bank 0 is NOT touched — the next
+        // show frame's compressed header still diffs from the pre-ARF bank
+        // 0, matching the decoder. Mirrors the show-frame adaptation in
+        // `encode_inter_internal`.
         let interp_switchable = true;
         // Track-F iter7 — ARF also codes `TxModeSelect` (shares
         // `build_inter_packet_with_residuals`); adapt tx_probs to match.
@@ -3472,15 +3478,19 @@ impl StreamEncoder {
             self.last_frame_was_key,
         );
         let mut adapted_dec = adapt_mode_probs(
-            &decoder_fc,
+            &pre_header_decoder_fc_arf,
             &frame_counts,
             interp_switchable,
             tx_mode_select,
         );
-        adapted_dec.coef_probs =
-            adapt_coef_probs(&decoder_fc.coef_probs, &frame_counts.coef, cs, uf);
+        adapted_dec.coef_probs = adapt_coef_probs(
+            &pre_header_decoder_fc_arf.coef_probs,
+            &frame_counts.coef,
+            cs,
+            uf,
+        );
         adapted_dec.nmvc = adapt_mv_probs(
-            &decoder_fc.nmvc,
+            &pre_header_decoder_fc_arf.nmvc,
             &frame_counts.mv,
             crate::frame_allow_hp(q_index),
         );
@@ -3780,6 +3790,15 @@ impl StreamEncoder {
     #[cfg(test)]
     pub(crate) fn decoder_fc_state_coef_probs(&self) -> &[rvp9_core::entropy::CoeffProbsModel; 4] {
         &self.decoder_fc_state.coef_probs
+    }
+
+    /// Test-only — the encoder's mirror of the decoder's FC bank 1
+    /// state. ARFs route through bank 1; this lets the ARF-specific
+    /// proof check the same mirror invariant as the show-frame bank 0
+    /// test above.
+    #[cfg(test)]
+    pub(crate) fn decoder_fc_state_arf_for_test(&self) -> &FrameContext {
+        &self.decoder_fc_state_arf
     }
 
     /// Test-only — read access to the ME-side LAST reference U plane.
@@ -6491,6 +6510,94 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn arf_decoder_fc_bank_one_stays_synced_after_non_show_frame() {
+        const W: usize = 128;
+        const H: usize = 128;
+        const LAG: u32 = 5;
+        const N_FRAMES: u32 = 12;
+
+        let cfg = EncoderConfig {
+            width: W as u32,
+            height: H as u32,
+            framerate: 30.0,
+            target_bitrate_bps: 800_000,
+            // gf_interval = 4, so ARF fires before GOP offset 5 while
+            // the delayed path still has forward-lookahead neighbours.
+            gop_length: 8,
+            aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
+            speed: 7,
+            deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: LAG,
+            enable_alt_ref: true,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
+            temporal_layers: 1,
+            enable_tpl: false,
+            min_qindex: 4,
+            max_qindex: 255,
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let mut dec = Decoder::new();
+        let mut saw_arf_bank = false;
+
+        let mut decode_and_check = |enc: &StreamEncoder, pkt: &EncodedFrame| {
+            let frames = decode_packet(&mut dec, &pkt.data);
+            for parsed in frames {
+                let frame_context_idx = parsed
+                    .header
+                    .tail
+                    .as_ref()
+                    .map(|tail| tail.frame_context_idx);
+                let _ = dec.decode_frame(&parsed).expect("decode emitted frame");
+                if frame_context_idx == Some(1) {
+                    saw_arf_bank = true;
+                    assert_eq!(
+                        enc.decoder_fc_state_arf_for_test(),
+                        dec.frame_context(1),
+                        "ARF FC bank 1 mirror must match the decoder immediately after decoding the non-show ARF",
+                    );
+                }
+            }
+        };
+
+        let mut seed = 0x9e37_79b9u32;
+        for idx in 0..N_FRAMES {
+            let y: Vec<u8> = (0..W * H)
+                .map(|p| {
+                    seed = seed
+                        .wrapping_mul(1_664_525)
+                        .wrapping_add(1_013_904_223)
+                        .wrapping_add(idx)
+                        .wrapping_add(p as u32);
+                    (seed >> 24) as u8
+                })
+                .collect();
+            let u = vec![128u8; (W / 2) * (H / 2)];
+            let v = vec![128u8; (W / 2) * (H / 2)];
+
+            if let Some(pkt) = enc
+                .encode_frame_delayed(&yuv_view(&y, &u, &v, W))
+                .expect("delayed encode")
+            {
+                decode_and_check(&enc, &pkt);
+            }
+        }
+
+        for pkt in enc.flush() {
+            let pkt = pkt.expect("flush ok");
+            decode_and_check(&enc, &pkt);
+        }
+
+        assert!(
+            saw_arf_bank,
+            "test configuration must emit at least one ARF using frame context bank 1",
+        );
     }
 
     /// T2 — Bit-exact invariant across multiple frames.
