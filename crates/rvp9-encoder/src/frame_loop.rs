@@ -1324,7 +1324,8 @@ impl StreamEncoder {
         // bitstream's frame structure, so the byte-exact gate is
         // unaffected.
         let svc_ctx = if config.temporal_layers > 1 {
-            let n_tl = config.temporal_layers as i32;
+            let n_tl_u32 = config.temporal_layers;
+            let n_tl = n_tl_u32 as i32;
             let mut svc = crate::svc::Svc::new();
             svc.use_svc = true;
             svc.pass = 0;
@@ -1335,8 +1336,34 @@ impl StreamEncoder {
             };
             // Even per-layer bitrate split (placeholder until a CLI
             // per-layer-bitrate flag lands). One slot per temporal layer.
-            let per_layer = (config.target_bitrate_bps as i32) / n_tl;
-            let targets: Vec<i32> = (0..n_tl).map(|_| per_layer).collect();
+            if config.target_bitrate_bps < n_tl_u32 {
+                return Err(EncodeError::InvalidConfig(
+                    "target_bitrate_bps must be >= temporal_layers for SVC",
+                ));
+            }
+            let base_layer_bitrate = config.target_bitrate_bps / n_tl_u32;
+            let remainder = config.target_bitrate_bps % n_tl_u32;
+            let targets: Vec<i32> = (0..n_tl_u32)
+                .map(|layer| {
+                    let layer_bitrate = base_layer_bitrate + u32::from(layer < remainder);
+                    i32::try_from(layer_bitrate).map_err(|_| {
+                        EncodeError::InvalidConfig(
+                            "per-layer target_bitrate_bps must fit in i32 for SVC",
+                        )
+                    })
+                })
+                .collect::<Result<_, _>>()?;
+            if targets.iter().any(|&target| target <= 0) {
+                return Err(EncodeError::InvalidConfig(
+                    "per-layer target_bitrate_bps must be > 0 for SVC",
+                ));
+            }
+            if targets.iter().map(|&target| target as u32).sum::<u32>() != config.target_bitrate_bps
+            {
+                return Err(EncodeError::InvalidConfig(
+                    "SVC layer target_bitrate_bps split must preserve total bitrate",
+                ));
+            }
             svc.alloc_layers(1, n_tl, rc_config, &targets);
             Some(svc)
         } else {
@@ -7703,6 +7730,22 @@ mod tests {
     }
 
     #[test]
+    fn stream_encoder_rejects_unsupported_large_dimensions_before_allocating() {
+        let cfg = EncoderConfig {
+            width: 16_448,
+            ..baseline_config()
+        };
+        let err = match StreamEncoder::new(cfg) {
+            Err(e) => e,
+            Ok(_) => panic!("expected StreamEncoder::new to fail"),
+        };
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("supported maximum")),
+            "expected InvalidConfig referencing supported maximum, got {err:?}",
+        );
+    }
+
+    #[test]
     fn stream_encoder_rejects_zero_gop_length() {
         let cfg = EncoderConfig {
             gop_length: 0,
@@ -7779,6 +7822,60 @@ mod tests {
         assert!(
             matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("target_bitrate_bps")),
             "expected InvalidConfig referencing target_bitrate_bps",
+        );
+    }
+
+    #[test]
+    fn stream_encoder_rejects_svc_layer_bitrate_that_cannot_fit_i32() {
+        let cfg = EncoderConfig {
+            target_bitrate_bps: u32::MAX,
+            temporal_layers: 2,
+            ..baseline_config()
+        };
+        let err = match StreamEncoder::new(cfg) {
+            Err(e) => e,
+            Ok(_) => panic!("expected StreamEncoder::new to fail"),
+        };
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("target_bitrate_bps")),
+            "expected InvalidConfig referencing target_bitrate_bps, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn stream_encoder_preserves_nondivisible_svc_bitrate_remainder() {
+        let cfg = EncoderConfig {
+            target_bitrate_bps: 101,
+            temporal_layers: 2,
+            ..baseline_config()
+        };
+        let enc = StreamEncoder::new(cfg).expect("small positive per-layer bitrates are valid");
+        let svc = enc.svc.as_ref().expect("temporal_layers > 1 builds SVC");
+        let targets: Vec<i32> = svc
+            .layer_context
+            .iter()
+            .map(|lc| lc.target_bandwidth)
+            .collect();
+        assert!(
+            targets.iter().all(|&bw| bw > 0) && targets.iter().sum::<i32>() == 101,
+            "expected positive SVC layer targets preserving total bitrate, got {targets:?}",
+        );
+    }
+
+    #[test]
+    fn stream_encoder_rejects_unbounded_tpl_gop_before_allocating() {
+        let cfg = EncoderConfig {
+            gop_length: u32::MAX,
+            enable_tpl: true,
+            ..baseline_config()
+        };
+        let err = match StreamEncoder::new(cfg) {
+            Err(e) => e,
+            Ok(_) => panic!("expected StreamEncoder::new to fail"),
+        };
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("gop_length")),
+            "expected InvalidConfig referencing gop_length, got {err:?}",
         );
     }
 

@@ -17,8 +17,9 @@ pub struct RateControlConfig {
     /// `oxcf.target_bandwidth`.
     pub target_bitrate_bps: u32,
 
-    /// Encoded framerate, frames per second. Must be > 0. libvpx
-    /// `oxcf.init_framerate` / `cpi->framerate`.
+    /// Encoded framerate, frames per second. Must be in
+    /// `0.0 < framerate <= MAX_FRAMERATE`. libvpx `oxcf.init_framerate` /
+    /// `cpi->framerate`.
     pub framerate: f64,
 
     /// Total buffer capacity in **milliseconds at the target bitrate**.
@@ -44,7 +45,9 @@ pub struct RateControlConfig {
     /// default 255.
     pub max_qindex: u8,
 
-    /// Keyframe Q-boost. libvpx uses a per-frame computation in
+    /// Keyframe Q-boost. Must be in `0..=MAX_KF_BOOST`.
+    ///
+    /// libvpx uses a per-frame computation in
     /// `vp9_calc_iframe_target_size_one_pass_cbr:2204-2218`:
     ///
     /// ```text
@@ -58,19 +61,21 @@ pub struct RateControlConfig {
     /// more accurate; we expose this knob so callers can match.
     pub kf_boost: i32,
 
-    /// Frames per GOP (keyframe interval). libvpx `oxcf.key_freq`.
-    /// Default 60 (== 2 seconds at 30 fps). The rate controller
-    /// decrements `frames_to_key` each frame; it's the caller's job
-    /// to actually insert a keyframe when `frames_to_key == 0`.
+    /// Frames per GOP (keyframe interval). Must be in
+    /// `1..=MAX_GOP_LENGTH`. libvpx `oxcf.key_freq`. Default 60 (== 2
+    /// seconds at 30 fps). The rate controller decrements `frames_to_key`
+    /// each frame; it's the caller's job to actually insert a keyframe when
+    /// `frames_to_key == 0`.
     pub gop_length: u32,
 
     /// Coded luma frame width in pixels. Needed to convert
     /// "bits-per-mb" estimates into "bits-per-frame" (libvpx
-    /// `vp9_estimate_bits_at_q:198-205`). Must be a positive multiple
-    /// of 16 (one macroblock).
+    /// `vp9_estimate_bits_at_q:198-205`). Must be positive and within
+    /// the supported coded-frame envelope; non-multiple dimensions are
+    /// rounded up to macroblocks by [`Self::mbs`].
     pub frame_width: u32,
 
-    /// Coded luma frame height in pixels. See `frame_width`.
+    /// Coded luma frame height in pixels. See [`Self::frame_width`].
     pub frame_height: u32,
 
     /// Scaling factor applied to the libvpx-faithful
@@ -119,6 +124,26 @@ pub struct RateControlConfig {
     pub cq_level: u8,
 }
 
+/// Largest coded width or height this encoder currently supports.
+///
+/// The cap is intentionally explicit: it is above 8K UHD's 7680x4320 envelope,
+/// while keeping derived frame-grid arithmetic and allocations bounded.
+pub const MAX_CODED_DIMENSION: u32 = 16_384;
+
+/// Largest coded luma sample count this encoder currently supports.
+pub const MAX_CODED_LUMA_PIXELS: u64 = 8_192 * 8_192;
+
+/// Largest frame rate accepted by the rate-control model.
+pub const MAX_FRAMERATE: f64 = 1_000.0;
+
+/// Largest keyframe boost accepted by the CBR keyframe target formula.
+pub const MAX_KF_BOOST: i32 = 4_096;
+
+/// Largest keyframe interval accepted by the encoder.
+pub const MAX_GOP_LENGTH: u32 = 10_000;
+
+const MAX_MS_TO_BITS_PRODUCT: u64 = i64::MAX as u64;
+
 impl Default for RateControlConfig {
     fn default() -> Self {
         // 1 Mbps / 30 fps / 720p — a representative WebRTC default.
@@ -157,9 +182,10 @@ impl RateControlConfig {
     /// [`super::RateControl`].
     #[must_use]
     pub fn mbs(&self) -> u32 {
-        let w_mb = self.frame_width.div_ceil(16);
-        let h_mb = self.frame_height.div_ceil(16);
-        w_mb * h_mb
+        let w_mb = ceil_div_16(self.frame_width);
+        let h_mb = ceil_div_16(self.frame_height);
+        let mbs = (w_mb as u64) * (h_mb as u64);
+        mbs.min(u32::MAX as u64) as u32
     }
 
     /// Validate the config. Returns an error string on the first
@@ -180,8 +206,17 @@ impl RateControlConfig {
         if !self.framerate.is_finite() || self.framerate <= 0.0 {
             return Err("framerate must be a positive finite number");
         }
+        if self.framerate > MAX_FRAMERATE {
+            return Err("framerate exceeds supported maximum");
+        }
         if self.frame_width == 0 || self.frame_height == 0 {
             return Err("frame_width / frame_height must be > 0");
+        }
+        if !coded_dimensions_supported(self.frame_width, self.frame_height) {
+            return Err("frame_width / frame_height exceed supported maximum");
+        }
+        if !macroblock_count_fits_u32(self.frame_width, self.frame_height) {
+            return Err("macroblock count exceeds supported maximum");
         }
         if self.min_qindex > self.max_qindex {
             return Err("min_qindex must be <= max_qindex");
@@ -195,11 +230,50 @@ impl RateControlConfig {
         if self.gop_length == 0 {
             return Err("gop_length must be > 0");
         }
+        if self.gop_length > MAX_GOP_LENGTH {
+            return Err("gop_length exceeds supported maximum");
+        }
+        if self.kf_boost < 0 || self.kf_boost > MAX_KF_BOOST {
+            return Err("kf_boost exceeds supported maximum");
+        }
+        if !ms_to_bits_product_fits(self.buffer_size_ms, self.target_bitrate_bps)
+            || !ms_to_bits_product_fits(self.optimal_buffer_ms, self.target_bitrate_bps)
+            || !ms_to_bits_product_fits(self.starting_buffer_ms, self.target_bitrate_bps)
+        {
+            return Err("buffer duration and bitrate exceed supported maximum");
+        }
         if !self.bits_per_mb_multiplier.is_finite() || self.bits_per_mb_multiplier <= 0.0 {
             return Err("bits_per_mb_multiplier must be a positive finite number");
         }
         Ok(())
     }
+}
+
+const fn ceil_div_16(value: u32) -> u32 {
+    (value / 16) + if value.is_multiple_of(16) { 0 } else { 1 }
+}
+
+const fn coded_dimensions_supported(width: u32, height: u32) -> bool {
+    if width == 0 || height == 0 {
+        return false;
+    }
+    if width > MAX_CODED_DIMENSION || height > MAX_CODED_DIMENSION {
+        return false;
+    }
+    (width as u64) <= MAX_CODED_LUMA_PIXELS / (height as u64)
+}
+
+const fn macroblock_count_fits_u32(width: u32, height: u32) -> bool {
+    if width == 0 || height == 0 {
+        return false;
+    }
+    let w_mb = ceil_div_16(width) as u64;
+    let h_mb = ceil_div_16(height) as u64;
+    w_mb <= (u32::MAX as u64) / h_mb
+}
+
+const fn ms_to_bits_product_fits(ms: u32, bps: u32) -> bool {
+    ms == 0 || bps == 0 || (ms as u64) <= MAX_MS_TO_BITS_PRODUCT / (bps as u64)
 }
 
 #[cfg(test)]
@@ -284,6 +358,15 @@ mod tests {
     }
 
     #[test]
+    fn validate_rejects_absurd_finite_framerate() {
+        let cfg = RateControlConfig {
+            framerate: f64::MAX,
+            ..RateControlConfig::default()
+        };
+        assert_eq!(cfg.validate(), Err("framerate exceeds supported maximum"),);
+    }
+
+    #[test]
     fn validate_rejects_zero_frame_width() {
         let cfg = RateControlConfig {
             frame_width: 0,
@@ -304,6 +387,44 @@ mod tests {
         assert_eq!(
             cfg.validate(),
             Err("frame_width / frame_height must be > 0"),
+        );
+    }
+
+    #[test]
+    fn validate_rejects_overflowing_macroblock_count() {
+        let cfg = RateControlConfig {
+            frame_width: u32::MAX,
+            frame_height: u32::MAX,
+            ..RateControlConfig::default()
+        };
+        assert_eq!(
+            cfg.validate(),
+            Err("frame_width / frame_height exceed supported maximum"),
+        );
+    }
+
+    #[test]
+    fn mbs_does_not_panic_on_unvalidated_huge_dimensions() {
+        let cfg = RateControlConfig {
+            frame_width: u32::MAX,
+            frame_height: u32::MAX,
+            ..RateControlConfig::default()
+        };
+        let mbs =
+            std::panic::catch_unwind(|| cfg.mbs()).expect("mbs should saturate rather than panic");
+        assert_eq!(mbs, u32::MAX);
+    }
+
+    #[test]
+    fn validate_rejects_buffer_size_ms_to_bits_overflow() {
+        let cfg = RateControlConfig {
+            target_bitrate_bps: u32::MAX,
+            buffer_size_ms: u32::MAX,
+            ..RateControlConfig::default()
+        };
+        assert_eq!(
+            cfg.validate(),
+            Err("buffer duration and bitrate exceed supported maximum"),
         );
     }
 
@@ -342,6 +463,24 @@ mod tests {
             ..RateControlConfig::default()
         };
         assert_eq!(cfg.validate(), Err("gop_length must be > 0"));
+    }
+
+    #[test]
+    fn validate_rejects_unbounded_gop_length() {
+        let cfg = RateControlConfig {
+            gop_length: u32::MAX,
+            ..RateControlConfig::default()
+        };
+        assert_eq!(cfg.validate(), Err("gop_length exceeds supported maximum"));
+    }
+
+    #[test]
+    fn validate_rejects_unbounded_kf_boost() {
+        let cfg = RateControlConfig {
+            kf_boost: i32::MAX,
+            ..RateControlConfig::default()
+        };
+        assert_eq!(cfg.validate(), Err("kf_boost exceeds supported maximum"));
     }
 
     #[test]

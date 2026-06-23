@@ -7,7 +7,7 @@
 use rvp9_core::bitstream::BitDepth;
 use rvp9_core::quant::ac_quant;
 
-use super::{FrameKind, RateControl};
+use super::{FrameKind, RateControl, config::MAX_KF_BOOST};
 
 /// `BPER_MB_NORMBITS` — libvpx `vp9_ratectrl.h:28`. The bits-per-MB
 /// estimate is multiplied by 512 (= `1 << 9`); the per-frame total
@@ -338,13 +338,14 @@ fn calc_iframe_target_size(rc: &RateControl) -> u32 {
         //   target = ((16 + kf_boost) * avg_frame_bandwidth) >> 4
         let mut kf_boost = i64::from(rc.kf_boost);
         let fr = rc.config().framerate;
-        let fr_based: i64 = ((2.0 * fr) - 16.0) as i64;
+        let fr_based: i64 = ((2.0 * fr) - 16.0).min(f64::from(MAX_KF_BOOST)) as i64;
         kf_boost = kf_boost.max(fr_based.max(32));
         let half_fr = fr / 2.0;
         if half_fr > 0.0 && f64::from(rc.frames_since_key) < half_fr {
-            kf_boost = kf_boost * i64::from(rc.frames_since_key) / (half_fr as i64).max(1);
+            kf_boost =
+                kf_boost.saturating_mul(i64::from(rc.frames_since_key)) / (half_fr as i64).max(1);
         }
-        ((16 + kf_boost) * avg) >> 4
+        (16_i64.saturating_add(kf_boost).saturating_mul(avg)) >> 4
     };
 
     // Clamp to max_frame_bandwidth (libvpx
@@ -1658,8 +1659,8 @@ mod tests {
             }
         }
         let out = f();
-        // SAFETY: this helper serially saves and restores the process env knob
-        // around one test closure.
+        // SAFETY: serialised by KFCAP_ENV_LOCK; restores the prior value
+        // before releasing the lock.
         unsafe {
             match prev {
                 Some(v) => std::env::set_var("RVP9_KFCAP", v),

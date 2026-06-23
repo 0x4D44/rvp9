@@ -7625,7 +7625,9 @@ mod tests {
         );
 
         // SAFETY: serialised via env_test_mutex.
-        unsafe { std::env::remove_var(key) };
+        unsafe {
+            std::env::remove_var(key);
+        }
         crate::f02_oracle::init_from_env();
         assert!(!crate::f02_oracle::is_enabled());
     }
@@ -7648,7 +7650,9 @@ mod tests {
         assert!(inter.actual_bits > 0);
 
         // SAFETY: serialised via env_test_mutex.
-        unsafe { std::env::remove_var(key) };
+        unsafe {
+            std::env::remove_var(key);
+        }
         crate::e12stat::init_from_env();
         assert!(!crate::e12stat::enabled());
     }
@@ -7669,7 +7673,9 @@ mod tests {
         assert_eq!(inter.frame_kind, frame_loop::FrameKind::Inter);
 
         // SAFETY: serialised via env_test_mutex.
-        unsafe { std::env::remove_var(key) };
+        unsafe {
+            std::env::remove_var(key);
+        }
     }
 
     /// P12 PROOF — Build a 64×64 source where the second frame is a
@@ -7761,7 +7767,7 @@ mod tests {
         // Defensive cleanup before any assertion fires (so a failed
         // assert doesn't leave env state dirty for subsequent tests
         // sharing the same process).
-        // SAFETY: serialised via env_test_mutex.
+        // SAFETY: outer test holds env_test_mutex for the whole test.
         unsafe {
             std::env::remove_var("RVP9_F02_ORACLE");
             std::env::remove_var("RVP9_F3_NONRD_PARTITION_ENABLE");
@@ -7837,7 +7843,9 @@ mod tests {
         let _kf = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
         let inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
         // SAFETY: serialised via env_test_mutex.
-        unsafe { std::env::remove_var(key) };
+        unsafe {
+            std::env::remove_var(key);
+        }
         assert_eq!(inter.frame_kind, frame_loop::FrameKind::Inter);
     }
 
@@ -7872,7 +7880,9 @@ mod tests {
         let (y, u, v) = flat_frame();
         let kf = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
         // SAFETY: serialised via env_test_mutex.
-        unsafe { std::env::remove_var("RVP9_DIAG_INTRA") };
+        unsafe {
+            std::env::remove_var("RVP9_DIAG_INTRA");
+        }
         assert_eq!(kf.frame_kind, frame_loop::FrameKind::Key);
     }
 
