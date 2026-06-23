@@ -1,10 +1,11 @@
 # RVP9-BUG-KILN-00011 - prev_mv_grid contains IntraFrame cells after an inter encode (a18 invariant violated) — pre-existing
 
-- **State:** Open
+- **State:** Blocked
 - **Severity:** Low
 - **Area:** encoder/prev_mv_grid population (Stage 4a' picker)
 - **Raised:** 2026-06-20 by Claude (green-the-build pass)
 - **State history:** 2026-06-20 Opened by Claude from the green-the-build pass; confirmed pre-existing (fails at baseline 01f8f2b and at HEAD).
+- **State history:** 2026-06-23 Blocked by Codex during ledger-drain triage; current source and focused test evidence show the recorded no-`IntraFrame` invariant is stale, not an unattended-fixable encoder defect. Needs Arthur/maintainer disposition as non-defect or conversion into a docs-cleanup requirement.
 
 ## Observation
 
@@ -39,3 +40,16 @@ be conflated with the SIG1 regression KILN-00009):
 Sibling test `a18_prev_frame_mvs_grid_chains_across_inter_frames` passes, so the
 grid plumbing itself is alive; the issue is specifically the IntraFrame-cell
 content.
+
+2026-06-23 drain triage:
+
+- The recorded regression,
+  `cargo test -p rvp9-encoder --test a18_prev_frame_mvs_fires a18_prev_frame_mvs_grid_populated_after_first_inter -- --nocapture`,
+  now passes in the task worktree.
+- The current decoder writes `(IntraFrame, NoRefFrame)` into `cur_mv_grid` for
+  intra-in-inter blocks (`crates/rvp9-decoder/src/tile.rs:2688`), and the encoder
+  mirrors that write-back for intra-in-inter leaves
+  (`crates/rvp9-encoder/src/lib.rs:6073`).
+- Therefore an `IntraFrame` cell in `prev_mv_grid` after an inter encode is no
+  longer evidence of an encoder defect; the old HLD/test invariant has been
+  superseded by the current decoder parity rule.
