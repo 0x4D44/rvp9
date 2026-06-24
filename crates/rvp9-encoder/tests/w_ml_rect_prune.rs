@@ -41,14 +41,13 @@
 //!    evaluated (and can change the chosen partition); this proves the
 //!    resulting tree is still valid VP9.
 //!
-//! The corpus (`testsrc_720p30.y4m`) is centre-cropped to 256x256; if it
-//! is unavailable the test SKIPs (informational) rather than failing.
+//! The input is a deterministic moving textured clip, keeping the proof
+//! independent of optional local corpus fixtures.
 
 use rvp9_decoder::Decoder;
 use rvp9_encoder::rdo::inter_dispatch::ML_PARTITION_RECT_PRUNED;
 use rvp9_encoder::{AqMode, Deadline, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 use rvp9_harness::container::{IvfHeader, write_ivf};
-use rvp9_harness::y4m::{probe_testsrc_720p, read_cropped as y4m_read_cropped};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::Ordering;
@@ -60,6 +59,8 @@ const N_FRAMES: u32 = 8;
 // (which keys on dc_q) sees a non-trivial quantiser, matching the
 // breakout PROOF's corpus conditions.
 const TARGET_BITRATE_BPS: u32 = 120_000;
+type OwnedYuvFrame = (Vec<u8>, Vec<u8>, Vec<u8>);
+type OwnedYuvClip = Vec<OwnedYuvFrame>;
 
 fn yuv_view<'a>(y: &'a [u8], u: &'a [u8], v: &'a [u8]) -> YuvFrameRef<'a> {
     YuvFrameRef {
@@ -97,6 +98,36 @@ fn config(framerate: f64, speed: i32, deadline: Deadline) -> EncoderConfig {
         min_qindex: 4,
         max_qindex: 255,
     }
+}
+
+fn synthetic_motion_frames() -> (OwnedYuvClip, f64) {
+    let w = W as usize;
+    let h = H as usize;
+    let uv_w = w / 2;
+    let uv_h = h / 2;
+    let mut frames = Vec::with_capacity(N_FRAMES as usize);
+
+    for frame_idx in 0..N_FRAMES as usize {
+        let x_shift = frame_idx * 5;
+        let y_shift = frame_idx * 3;
+        let mut y = vec![0u8; w * h];
+        for row in 0..h {
+            for col in 0..w {
+                let sx = (col + x_shift) & 255;
+                let sy = (row + y_shift) & 255;
+                let v = sx
+                    .wrapping_mul(37)
+                    .wrapping_add(sy.wrapping_mul(19))
+                    .wrapping_add((sx ^ sy).wrapping_mul(11))
+                    .wrapping_add(((sx.wrapping_mul(sy)) >> 3) & 255);
+                y[row * w + col] = v as u8;
+            }
+        }
+
+        frames.push((y, vec![128u8; uv_w * uv_h], vec![128u8; uv_w * uv_h]));
+    }
+
+    (frames, 30.0)
 }
 
 /// Encode the clip, returning the per-frame packet bytes and the number
@@ -227,25 +258,7 @@ fn verify_through_vpxdec(packets: &[Vec<u8>], framerate: f64) {
 
 #[test]
 fn a21_ml_rect_prune_fires_and_decodes() {
-    let Some(y4m_path) = probe_testsrc_720p() else {
-        eprintln!("[SKIPPED] testsrc_720p30.y4m corpus not available.");
-        return;
-    };
-    let (frames, framerate) = match y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize) {
-        Ok((f, fr)) if f.len() == N_FRAMES as usize => (f, fr),
-        Ok((f, _)) => {
-            eprintln!(
-                "[SKIPPED] testsrc only yielded {}/{} frames.",
-                f.len(),
-                N_FRAMES
-            );
-            return;
-        }
-        Err(e) => {
-            eprintln!("[SKIPPED] testsrc read failed: {e}");
-            return;
-        }
-    };
+    let (frames, framerate) = synthetic_motion_frames();
 
     // The A4 RD descent (which evaluates the rect arms the pruner gates)
     // must be ON (its default); clear the opt-outs.

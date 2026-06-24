@@ -11,7 +11,8 @@ use rvp9_core::cost::symbol_costs::{inter_mode_costs, switchable_interp_costs};
 use rvp9_core::entropy::FrameContext;
 use rvp9_core::entropy::mv_probs::DEFAULT_NMV_CONTEXT;
 use rvp9_core::mode_decision::inter::{
-    InterModeSearchParams, MvCandidates, pick_inter_mode_luma, pick_inter_mode_luma_all_costs,
+    InterModeSearchParams, InterRdCalibration, MvCandidates, pick_inter_mode_luma,
+    pick_inter_mode_luma_all_costs,
 };
 use rvp9_core::mv_search::PlaneRef;
 use rvp9_core::mv_search::init_dsmotion_compensation;
@@ -103,6 +104,7 @@ fn picker_finds_motion_on_shifted_block() {
         switchable_interp_costs: &sic,
         switchable_interp_ctx: 3,
         skip_ctx: None,
+        rd_calibration: InterRdCalibration::default(),
         src_u: &[],
         src_v: &[],
         ref_u: &[],

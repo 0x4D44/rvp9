@@ -315,9 +315,77 @@ fn s3_q_gate_active(q_index: u8, qmax: Option<u8>, s2_active: bool) -> bool {
     qmax.is_some_and(|max| s2_active && q_index <= max)
 }
 
+/// Optional inter-RD calibration policy supplied by the encoder.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct InterRdCalibration {
+    /// Use coefficient-domain encode distortion and shifted prediction SSE
+    /// for the skip branch.
+    pub s3_domain: bool,
+    /// Shift applied to prediction SSE when [`Self::s3_domain`] is active.
+    pub s3_skip_shift: u32,
+    /// Keep mode/MV/ref syntax rate on the skip=true branch.
+    pub skip_modecost: bool,
+}
+
+impl InterRdCalibration {
+    /// Baseline behavior: keep the historical pixel-domain skip/rate balance.
+    pub const fn off() -> Self {
+        Self {
+            s3_domain: false,
+            s3_skip_shift: 4,
+            skip_modecost: false,
+        }
+    }
+
+    /// Stage 4a one-pass VBR recovery policy.
+    pub const fn stage4a_vbr() -> Self {
+        Self {
+            s3_domain: true,
+            s3_skip_shift: 2,
+            skip_modecost: true,
+        }
+    }
+}
+
+impl Default for InterRdCalibration {
+    fn default() -> Self {
+        Self::off()
+    }
+}
+
 #[inline]
-fn s3_domain_enabled_for_q(q_index: u8) -> bool {
-    s3_domain_enabled() || s3_q_gate_active(q_index, s3_qmax(), s2_gate_enabled())
+fn s3_domain_enabled_for_q(q_index: u8, calibration: InterRdCalibration) -> bool {
+    calibration.s3_domain
+        || s3_domain_enabled()
+        || s3_q_gate_active(q_index, s3_qmax(), s2_gate_enabled())
+}
+
+#[inline]
+fn skip_modecost_qmax() -> Option<u8> {
+    use std::sync::OnceLock;
+    static QMAX: OnceLock<Option<u8>> = OnceLock::new();
+    *QMAX.get_or_init(|| {
+        std::env::var("RVP9_SKIP_MODECOST_QMAX")
+            .ok()
+            .and_then(|v| v.parse::<u8>().ok())
+    })
+}
+
+#[inline]
+fn skip_modecost_enabled_for_q(q_index: u8, calibration: InterRdCalibration) -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    if calibration.skip_modecost {
+        return true;
+    }
+    if *ON.get_or_init(|| {
+        std::env::var("RVP9_SKIP_MODECOST")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    }) {
+        return true;
+    }
+    skip_modecost_qmax().is_some_and(|max| q_index <= max)
 }
 
 /// NEARESTMV/ZEROMV tie-break fix (HLD 2026.05.30). **Default ON.**
@@ -346,15 +414,15 @@ fn nearest_tie_fix_enabled() -> bool {
 /// S3 skip-side pixel-SSE rescale shift (default 4, libvpx). A/B only:
 /// `RVP9_S3_SKIPSHIFT=<n>` sweeps the shift to confirm the calibration.
 #[inline]
-fn s3_skip_shift() -> u32 {
+fn s3_skip_shift(calibration: InterRdCalibration) -> u32 {
     use std::sync::OnceLock;
-    static SH: OnceLock<u32> = OnceLock::new();
-    *SH.get_or_init(|| {
+    static SH: OnceLock<Option<u32>> = OnceLock::new();
+    SH.get_or_init(|| {
         std::env::var("RVP9_S3_SKIPSHIFT")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(4)
     })
+    .unwrap_or(calibration.s3_skip_shift)
 }
 
 /// Test-only per-thread override for the S2 skip gate. Lets the
@@ -557,6 +625,8 @@ pub struct InterModeSearchParams<'a> {
     /// pre-P19 behaviour for harnesses that don't carry a real
     /// per-leaf context.
     pub skip_ctx: Option<usize>,
+    /// Optional encoder-supplied RD-domain calibration policy.
+    pub rd_calibration: InterRdCalibration,
 
     // --- G1: UV RD fields ---
     /// Source U plane (full frame buffer).
@@ -876,6 +946,8 @@ pub struct PickInterModeParams<'a> {
     /// neighbours' `skip` flags. Used by `evaluate_candidate`'s
     /// skip-flag tie-break (libvpx `vp9_pickmode.c:2355-2362`).
     pub skip_ctx: usize,
+    /// Optional encoder-supplied RD-domain calibration policy.
+    pub rd_calibration: InterRdCalibration,
 
     /// P15 — libvpx `const_motion[LAST_FRAME]` flag
     /// (`vp9_pickmode.c:60-153` `mv_refs_rt` return value). When
@@ -1742,6 +1814,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                         switchable_interp_costs: params.switchable_interp_costs,
                         switchable_interp_ctx: params.switchable_interp_ctx,
                         skip_ctx: Some(params.skip_ctx),
+                        rd_calibration: params.rd_calibration,
                         src_u: params.src_u,
                         src_v: params.src_v,
                         ref_u,
@@ -1898,6 +1971,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
             switchable_interp_costs: params.switchable_interp_costs,
             switchable_interp_ctx: params.switchable_interp_ctx,
             skip_ctx: Some(params.skip_ctx),
+            rd_calibration: params.rd_calibration,
             src_u: params.src_u,
             src_v: params.src_v,
             ref_u,
@@ -2352,6 +2426,7 @@ fn evaluate_intra_fallback(
                 switchable_interp_costs: params.switchable_interp_costs,
                 switchable_interp_ctx: params.switchable_interp_ctx,
                 skip_ctx: Some(params.skip_ctx),
+                rd_calibration: params.rd_calibration,
                 // G1: UV fields unused for intra fallback.
                 src_u: params.src_u,
                 src_v: params.src_v,
@@ -3228,11 +3303,15 @@ fn evaluate_candidate_for_filter(
     // to natural/S2-active low-q leaves. With neither env set, both remain
     // in the HEAD pixel domain.
     let coef_dist_u64 = by.coef_dist.max(0) as u64;
-    let (dist_encode, dist_skip): (u64, u64) = if s3_domain_enabled_for_q(params.q_index) {
-        (coef_dist_u64, sse_after_pred << s3_skip_shift())
-    } else {
-        (u64::from(dist), u64::from(sse_after_pred_u32))
-    };
+    let (dist_encode, dist_skip): (u64, u64) =
+        if s3_domain_enabled_for_q(params.q_index, params.rd_calibration) {
+            (
+                coef_dist_u64,
+                sse_after_pred << s3_skip_shift(params.rd_calibration),
+            )
+        } else {
+            (u64::from(dist), u64::from(sse_after_pred_u32))
+        };
 
     let rd_encode = rd_cost(lambda, rate, dist_encode);
     let rd_skip = rd_cost(lambda, 0, dist_skip);
@@ -3251,7 +3330,15 @@ fn evaluate_candidate_for_filter(
         // Y quantizes to zero AND skip is cheaper. The decoder will see
         // `sse_after_pred` as the distortion (no residual on the inverse
         // path); the rate collapses to the skip=true bit.
-        (skip_true_cost, sse_after_pred_u32, dist_skip)
+        let skip_rate = if skip_modecost_enabled_for_q(params.q_index, params.rd_calibration) {
+            skip_true_cost
+                .saturating_add(mode_rate)
+                .saturating_add(mv_rate)
+                .saturating_add(params.ref_frame_rate_cost)
+        } else {
+            skip_true_cost
+        };
+        (skip_rate, sse_after_pred_u32, dist_skip)
     } else {
         // Y residual WILL be coded (gate), or it is cheaper to encode it
         // (tie-break). Pay the skip=false bit and keep `coef_rate`.
@@ -4160,6 +4247,7 @@ mod tests {
             // P19 — None falls back to F1_DEFAULT_SKIP_CTX (middle ctx),
             // matching the pre-P19 harness behaviour.
             skip_ctx: None,
+            rd_calibration: InterRdCalibration::default(),
             // G1: UV fields — empty for luma-only unit tests.
             src_u: &[],
             src_v: &[],
@@ -4616,6 +4704,7 @@ mod tests {
             switchable_interp_costs: &harness.sic,
             switchable_interp_ctx: 3,
             skip_ctx: None,
+            rd_calibration: InterRdCalibration::default(),
             src_u: &[],
             src_v: &[],
             ref_u: &[],
@@ -4967,6 +5056,7 @@ mod tests {
             switchable_interp_ctx: 3,
             // P19 — middle context default, neutral 128 prob.
             skip_ctx: 1,
+            rd_calibration: InterRdCalibration::default(),
             // P15 — neither ref's spatial neighbours yielded 2 distinct
             // same-ref MVs (no neighbours in this synthetic harness),
             // so NEARMV would be skipped in libvpx — but most tests

@@ -40,7 +40,9 @@ fn dec_bin() -> PathBuf {
 /// Unique temp path for this test process + a tag. Distinct prefix from
 /// `cli_roundtrip.rs` so parallel test runs don't trample each other.
 fn tmp(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("rvp9cli_argcov_{}_{tag}", std::process::id()))
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    std::env::temp_dir().join(format!("rvp9cli_argcov_{}_{id}_{tag}", std::process::id()))
 }
 
 /// Write `N_FRAMES` synthetic 64×64 I420 frames with per-frame motion

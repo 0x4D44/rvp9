@@ -16,7 +16,8 @@
 //!
 //! Two proofs:
 //!
-//! 1. **Anti-G3 (Strategy-B-impossible outcome).** On a real encode,
+//! 1. **Anti-G3 (Strategy-B-impossible outcome).** On a deterministic moving
+//!    textured encode,
 //!    assert the TWO_LOOP plan both UPDATES some coef-prob tables AND
 //!    SUPPRESSES others *despite a would-update slot* (aggregate
 //!    `savings < 0`). Strategy B (force-update-on-diff) emits gate
@@ -37,6 +38,9 @@ use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::Ordering::Relaxed;
+
+type OwnedYuvFrame = (Vec<u8>, Vec<u8>, Vec<u8>);
+type OwnedYuvClip = Vec<OwnedYuvFrame>;
 
 fn yuv_view<'a>(y: &'a [u8], u: &'a [u8], v: &'a [u8], w: usize) -> YuvFrameRef<'a> {
     YuvFrameRef {
@@ -73,6 +77,45 @@ fn gate_config(w: u32, h: u32, framerate: f64, gop: u32) -> EncoderConfig {
     }
 }
 
+fn synthetic_motion_frames(w: u32, h: u32, n_frames: u32) -> (OwnedYuvClip, f64) {
+    let w_us = w as usize;
+    let h_us = h as usize;
+    let uv_w = w_us / 2;
+    let uv_h = h_us / 2;
+    let mut frames = Vec::with_capacity(n_frames as usize);
+
+    for frame_idx in 0..n_frames as usize {
+        let x_shift = frame_idx * 5;
+        let y_shift = frame_idx * 3;
+        let mut y = vec![0u8; w_us * h_us];
+        for row in 0..h_us {
+            for col in 0..w_us {
+                let sx = (col + x_shift) & 255;
+                let sy = (row + y_shift) & 255;
+                let v = sx
+                    .wrapping_mul(37)
+                    .wrapping_add(sy.wrapping_mul(19))
+                    .wrapping_add((sx ^ sy).wrapping_mul(11))
+                    .wrapping_add(((sx.wrapping_mul(sy)) >> 3) & 255);
+                y[row * w_us + col] = v as u8;
+            }
+        }
+
+        let mut u = vec![0u8; uv_w * uv_h];
+        let mut v_plane = vec![0u8; uv_w * uv_h];
+        for row in 0..uv_h {
+            for col in 0..uv_w {
+                u[row * uv_w + col] = (96 + ((col + frame_idx) & 31)) as u8;
+                v_plane[row * uv_w + col] = (144 + ((row + frame_idx * 2) & 31)) as u8;
+            }
+        }
+
+        frames.push((y, u, v_plane));
+    }
+
+    (frames, 30.0)
+}
+
 /// A6 anti-G3 — on a real multi-frame encode the TWO_LOOP coef-prob
 /// writer must BOTH update some tables AND suppress at least one table
 /// that had a would-update slot (aggregate `savings < 0`). The latter
@@ -81,24 +124,11 @@ fn gate_config(w: u32, h: u32, framerate: f64, gop: u32) -> EncoderConfig {
 /// turns `COEF_PROB_TABLES_SUPPRESSED_WITH_DIFF` to 0 → FAIL.
 #[test]
 fn a6_twoloop_updates_some_and_suppresses_with_diff() {
-    use rvp9_harness::y4m::{probe_testsrc_720p, read_cropped as y4m_read_cropped};
-
     const W: u32 = 256;
     const H: u32 = 256;
     const N_FRAMES: u32 = 8;
 
-    let Some(y4m_path) = probe_testsrc_720p() else {
-        eprintln!("[SKIPPED] testsrc corpus unavailable; cannot run A6 anti-G3.");
-        return;
-    };
-    let Ok((frames, framerate)) = y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize) else {
-        eprintln!("[SKIPPED] testsrc read failed.");
-        return;
-    };
-    if frames.len() != N_FRAMES as usize {
-        eprintln!("[SKIPPED] testsrc yielded too few frames.");
-        return;
-    }
+    let (frames, framerate) = synthetic_motion_frames(W, H, N_FRAMES);
 
     COEF_PROB_TABLES_UPDATED.store(0, Relaxed);
     COEF_PROB_TABLES_SUPPRESSED_WITH_DIFF.store(0, Relaxed);
@@ -142,31 +172,19 @@ fn vpxdec_path() -> Option<PathBuf> {
 }
 
 /// A6 oracle — the TWO_LOOP stream is valid VP9 that vpxdec decodes
-/// byte-identically to rvp9-decoder. `#[ignore]` (needs the corpus +
-/// vpxdec binary), invoked via `--ignored`.
+/// byte-identically to rvp9-decoder. `#[ignore]` (needs vpxdec binary),
+/// invoked via `--ignored`.
 #[test]
 #[ignore = "A6 oracle — needs corpus + vpxdec; run with --ignored"]
 fn a6_twoloop_stream_byte_exact_through_vpxdec() {
     use rvp9_decoder::Decoder;
     use rvp9_harness::container::{IvfHeader, write_ivf};
-    use rvp9_harness::y4m::{probe_testsrc_720p, read_cropped as y4m_read_cropped};
 
     const W: u32 = 256;
     const H: u32 = 256;
     const N_FRAMES: u32 = 8;
 
-    let Some(y4m_path) = probe_testsrc_720p() else {
-        eprintln!("[SKIPPED] testsrc corpus unavailable.");
-        return;
-    };
-    let Ok((frames, framerate)) = y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize) else {
-        eprintln!("[SKIPPED] testsrc read failed.");
-        return;
-    };
-    if frames.len() != N_FRAMES as usize {
-        eprintln!("[SKIPPED] testsrc yielded too few frames.");
-        return;
-    }
+    let (frames, framerate) = synthetic_motion_frames(W, H, N_FRAMES);
 
     let cfg = gate_config(W, H, framerate, N_FRAMES + 1);
     let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");

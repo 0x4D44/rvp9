@@ -2436,6 +2436,24 @@ fn a4_partition_rd_mult_for_env(base_rd_mult: u32) -> u32 {
     scaled.min(u64::from(u32::MAX)) as u32
 }
 
+fn inter_rd_calibration_for_mode(
+    rc_mode: crate::rate_control::RcMode,
+    speed: i32,
+    deadline: rvp9_core::mode_decision::speed_features::Deadline,
+) -> rvp9_core::mode_decision::inter::InterRdCalibration {
+    if matches!(rc_mode, crate::rate_control::RcMode::Vbr)
+        && matches!(
+            deadline,
+            rvp9_core::mode_decision::speed_features::Deadline::Realtime
+        )
+        && speed.unsigned_abs() >= 7
+    {
+        rvp9_core::mode_decision::inter::InterRdCalibration::stage4a_vbr()
+    } else {
+        rvp9_core::mode_decision::inter::InterRdCalibration::default()
+    }
+}
+
 fn variance_hint_cell_code(bs: BlockSize) -> &'static str {
     match bs {
         BlockSize::Block8x8 => "8",
@@ -2691,6 +2709,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         && speed.unsigned_abs() >= 7
         && matches!(content_tier, sf_mod::ContentTier::Default)
         && u64::from(width) * u64::from(height) >= 700_000;
+    let inter_rd_calibration = inter_rd_calibration_for_mode(rc_mode, speed, deadline);
 
     let sb_cols = w / 64;
     let sb_rows = h / 64;
@@ -3600,6 +3619,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         switchable_interp_costs: &sic,
                         switchable_interp_ctx,
                         skip_ctx,
+                        rd_calibration: inter_rd_calibration,
                         last_const_motion,
                         golden_const_motion,
                         src_u: input_yuv.1,
@@ -4694,6 +4714,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     switchable_interp_costs: &sic,
                     switchable_interp_ctx,
                     skip_ctx,
+                    rd_calibration: inter_rd_calibration,
                     last_const_motion,
                     golden_const_motion,
                     // G1 — UV planes for chroma RD in the picker.
@@ -4975,6 +4996,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             switchable_interp_costs: &sic,
                             switchable_interp_ctx,
                             skip_ctx: Some(skip_ctx),
+                            rd_calibration: inter_rd_calibration,
                             src_u: input_yuv.1,
                             src_v: input_yuv.2,
                             // Reference-buffer split — diagnostic
@@ -5035,6 +5057,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         switchable_interp_costs: &sic,
                         switchable_interp_ctx,
                         skip_ctx: Some(skip_ctx),
+                        rd_calibration: inter_rd_calibration,
                         src_u: input_yuv.1,
                         src_v: input_yuv.2,
                         // Reference-buffer split — diagnostic (e3)
@@ -7607,33 +7630,62 @@ mod tests {
     }
 
     #[test]
+    fn inter_rd_calibration_is_vbr_realtime_speed7_only() {
+        use rvp9_core::mode_decision::inter::InterRdCalibration;
+        use rvp9_core::mode_decision::speed_features::Deadline;
+
+        assert_eq!(
+            inter_rd_calibration_for_mode(RcMode::Vbr, 7, Deadline::Realtime),
+            InterRdCalibration::stage4a_vbr()
+        );
+        assert_eq!(
+            inter_rd_calibration_for_mode(RcMode::Vbr, 6, Deadline::Realtime),
+            InterRdCalibration::default()
+        );
+        assert_eq!(
+            inter_rd_calibration_for_mode(RcMode::Vbr, 7, Deadline::Good),
+            InterRdCalibration::default()
+        );
+        assert_eq!(
+            inter_rd_calibration_for_mode(RcMode::Cbr, 7, Deadline::Realtime),
+            InterRdCalibration::default()
+        );
+    }
+
+    #[test]
     fn a4_partition_rd_mult_env_scales_only_with_valid_ratio() {
         let _guard = env_test_mutex();
         let num_key = "RVP9_A4_RDMULT_NUM";
         let den_key = "RVP9_A4_RDMULT_DEN";
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
         unsafe {
             std::env::remove_var(num_key);
             std::env::remove_var(den_key);
         }
         assert_eq!(a4_partition_rd_mult_for_env(1000), 1000);
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
         unsafe {
             std::env::set_var(num_key, "3");
             std::env::set_var(den_key, "4");
         }
         assert_eq!(a4_partition_rd_mult_for_env(1000), 750);
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
         unsafe {
             std::env::set_var(num_key, "0");
         }
         assert_eq!(a4_partition_rd_mult_for_env(1000), 0);
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
         unsafe {
             std::env::set_var(num_key, "3");
             std::env::set_var(den_key, "0");
         }
         assert_eq!(a4_partition_rd_mult_for_env(1000), 1000);
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
         unsafe {
             std::env::set_var(den_key, "not-a-denominator");
         }
         assert_eq!(a4_partition_rd_mult_for_env(1000), 1000);
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
         unsafe {
             std::env::remove_var(num_key);
             std::env::remove_var(den_key);

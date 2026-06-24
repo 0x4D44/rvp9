@@ -132,7 +132,7 @@ pub enum AqMode {
 // `rvp9_encoder::Deadline` is preserved for W0.2 callers (CLI, tests).
 pub use rvp9_core::mode_decision::speed_features::Deadline;
 
-const VBR_BITS_PER_MB_MULTIPLIER_DEFAULT: f64 = 5.0;
+const VBR_BITS_PER_MB_MULTIPLIER_DEFAULT: f64 = 4.0;
 
 fn default_bits_per_mb_multiplier(rc_mode: RcMode, base_default: f64) -> f64 {
     match rc_mode {
@@ -6161,7 +6161,7 @@ mod tests {
         use rvp9_core::entropy::FrameContext as Fc;
         use rvp9_core::entropy::mv_probs::DEFAULT_NMV_CONTEXT;
         use rvp9_core::mode_decision::inter::{
-            InterModeSearchParams, MvCandidates, pick_inter_mode_luma,
+            InterModeSearchParams, InterRdCalibration, MvCandidates, pick_inter_mode_luma,
         };
         use rvp9_core::mv_search::PlaneRef as PR;
         use rvp9_core::mv_search::init_dsmotion_compensation;
@@ -6235,6 +6235,7 @@ mod tests {
             switchable_interp_costs: &sic,
             switchable_interp_ctx: 3,
             skip_ctx: None,
+            rd_calibration: InterRdCalibration::default(),
             src_u: &[],
             src_v: &[],
             ref_u: &[],
@@ -8806,6 +8807,7 @@ mod tests {
         let _guard = env_test_mutex();
         let q_key = "RVP9_VBP_QINDEX";
         let avg_key = "RVP9_VBP_AVG_QINDEX";
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
         unsafe {
             std::env::set_var(q_key, "205");
             std::env::set_var(avg_key, "180");
@@ -8820,6 +8822,7 @@ mod tests {
             236,
             "keyframe VBP must ignore the inter-only threshold-q override"
         );
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
         unsafe {
             std::env::set_var(q_key, "not-a-qindex");
         }
@@ -8828,6 +8831,7 @@ mod tests {
             211,
             "invalid threshold-q override values fall back to the frame qindex"
         );
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
         unsafe {
             std::env::remove_var(q_key);
         }
@@ -8841,6 +8845,7 @@ mod tests {
             236,
             "keyframe VBP must ignore the inter-only avg-q override"
         );
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
         unsafe {
             std::env::set_var(avg_key, "not-a-qindex");
         }
@@ -8849,6 +8854,7 @@ mod tests {
             211,
             "invalid override values fall back to the rate-control average"
         );
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
         unsafe {
             std::env::remove_var(avg_key);
         }

@@ -15,8 +15,8 @@
 //!
 //! Oracles:
 //!
-//! 1. **vpxdec byte-exact round-trip (the critical oracle).** Encode an
-//!    ALTREF-containing stream on content with motion, wrap in IVF, and
+//! 1. **vpxdec byte-exact round-trip (the critical oracle).** Encode a
+//!    deterministic moving textured ALTREF-containing stream, wrap in IVF, and
 //!    decode through both rvp9-decoder and libvpx-stock `vpxdec`. The
 //!    two MUST agree byte-exact — this is the first byte-exact gate on
 //!    an rvp9-encoded ALTREF superframe. Reuses the exact `vpxdec
@@ -41,12 +41,13 @@
 use rvp9_decoder::{Decoder, ParsedFrame};
 use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 use rvp9_harness::container::{IvfHeader, write_ivf};
-use rvp9_harness::y4m::{probe_testsrc_720p, read_cropped as y4m_read_cropped};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const W: u32 = 128;
 const H: u32 = 128;
+type OwnedYuvFrame = (Vec<u8>, Vec<u8>, Vec<u8>);
+type OwnedYuvClip = Vec<OwnedYuvFrame>;
 
 // ---------------------------------------------------------------------------
 // Decoder probe + invocation — copied verbatim from cross_decoder_gate.rs so
@@ -94,6 +95,35 @@ fn yuv_view<'a>(y: &'a [u8], u: &'a [u8], v: &'a [u8], w: usize) -> YuvFrameRef<
         u_stride: w / 2,
         v_stride: w / 2,
     }
+}
+
+fn synthetic_motion_frames(n_frames: u32) -> (OwnedYuvClip, f64) {
+    let w = W as usize;
+    let h = H as usize;
+    let uv_w = w / 2;
+    let uv_h = h / 2;
+    let mut frames = Vec::with_capacity(n_frames as usize);
+
+    for frame_idx in 0..n_frames as usize {
+        let x_shift = frame_idx * 3;
+        let y_shift = frame_idx * 2;
+        let mut y = vec![0u8; w * h];
+        for row in 0..h {
+            for col in 0..w {
+                let sx = (col + x_shift) & 127;
+                let sy = (row + y_shift) & 127;
+                let v = sx
+                    .wrapping_mul(37)
+                    .wrapping_add(sy.wrapping_mul(19))
+                    .wrapping_add((sx ^ sy).wrapping_mul(11));
+                y[row * w + col] = v as u8;
+            }
+        }
+
+        frames.push((y, vec![128u8; uv_w * uv_h], vec![128u8; uv_w * uv_h]));
+    }
+
+    (frames, 30.0)
 }
 
 fn decode_packet<'a>(dec: &mut Decoder, pkt: &'a [u8]) -> Vec<ParsedFrame<'a>> {
@@ -160,16 +190,8 @@ fn plane_diff_stats(a: &[u8], b: &[u8]) -> (i32, u64) {
 /// ZEROMV-skip copy.
 #[test]
 fn altref_slot2_differs_from_last_recon() {
-    // testsrc cropped to 128x128 gives real motion/texture so the ARF's
-    // RD picker emits genuine residual; a flat synthetic frame could
-    // coincidentally reconstruct equal to LAST.
-    let Some(y4m_path) = probe_testsrc_720p() else {
-        eprintln!("[SKIPPED] testsrc_720p30.y4m corpus not available.");
-        return;
-    };
     let n_frames: u32 = 16;
-    let (frames, framerate) =
-        y4m_read_cropped(&y4m_path, W, H, n_frames as usize).expect("y4m_read_cropped");
+    let (frames, framerate) = synthetic_motion_frames(n_frames);
     assert_eq!(frames.len(), n_frames as usize);
 
     let cfg = EncoderConfig {
@@ -237,18 +259,10 @@ fn altref_stream_byte_exact_vpxdec() {
     eprintln!("W-ALTREF — ALTREF byte-exact vpxdec round-trip");
     eprintln!("=============================================");
 
-    let Some(y4m_path) = probe_testsrc_720p() else {
-        eprintln!("[SKIPPED] testsrc_720p30.y4m corpus not available; cannot run gate.");
-        return;
-    };
     let n_frames: u32 = 16;
-    let (frames, framerate) =
-        y4m_read_cropped(&y4m_path, W, H, n_frames as usize).expect("y4m_read_cropped");
+    let (frames, framerate) = synthetic_motion_frames(n_frames);
     assert_eq!(frames.len(), n_frames as usize);
-    eprintln!(
-        "Source: {} ({n_frames} frames @ {W}x{H})",
-        y4m_path.display()
-    );
+    eprintln!("Source: deterministic moving texture ({n_frames} frames @ {W}x{H})");
 
     let cfg = EncoderConfig {
         width: W,

@@ -25,7 +25,9 @@ use rvp9_core::cost::mv_cost::build_nmv_cost_table;
 use rvp9_core::cost::symbol_costs::{inter_mode_costs, switchable_interp_costs};
 use rvp9_core::entropy::frame_context::FrameContext;
 use rvp9_core::entropy::mv_probs::DEFAULT_NMV_CONTEXT;
-use rvp9_core::mode_decision::inter::{InterModeSearchParams, MvCandidates, pick_inter_mode_luma};
+use rvp9_core::mode_decision::inter::{
+    InterModeSearchParams, InterRdCalibration, MvCandidates, pick_inter_mode_luma,
+};
 use rvp9_core::mode_info::InterMode;
 use rvp9_core::mv_search::full_pixel::PlaneRef;
 use rvp9_core::mv_search::init_dsmotion_compensation;
@@ -128,6 +130,7 @@ fn f1_block_yrd_newmv_wins_on_shifted_ref() {
         switchable_interp_costs: &sic,
         switchable_interp_ctx: 3,
         skip_ctx: None,
+        rd_calibration: InterRdCalibration::default(),
         src_u: &[],
         src_v: &[],
         ref_u: &[],
@@ -224,6 +227,7 @@ fn f1_identical_source_yields_skip_winner() {
         switchable_interp_costs: &sic,
         switchable_interp_ctx: 3,
         skip_ctx: None,
+        rd_calibration: InterRdCalibration::default(),
         src_u: &[],
         src_v: &[],
         ref_u: &[],
