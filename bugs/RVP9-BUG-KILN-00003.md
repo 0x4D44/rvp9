@@ -1,11 +1,12 @@
 # RVP9-BUG-KILN-00003 - Flush leaves queued lookahead frames after an encode error
 
-- **State:** Fixed
+- **State:** Closed
 - **Severity:** Medium
 - **Area:** encoder/frame-loop flush
 - **Raised:** 2026-06-17 by Codex overnight code review
 - **State history:** 2026-06-17 Opened by Codex from the Stage 4a rate-control/frame-loop review pass.
 - **State history:** 2026-06-23 Fixed by Codex (task/20260623-TSK-HUM-fix-kiln-00001-lookahead-stride; fixing commit: this commit): `flush()` now reports the first post-pop encode error once, discards any remaining live lookahead frames, and clears pending per-frame state so the delayed encoder can accept fresh pushes. Regression coverage: `flush_discards_remaining_lookahead_after_encode_error`; neighboring delayed-output proofs remain green. Awaiting two-eyes verification.
+- **State history:** 2026-06-24 Closed by Codex after independent two-eyes verification on `ffc4e7e`: fixing commit `4dd622b` is present; `cargo test -p rvp9-encoder --lib` passed 484 tests with 1 ignored, including `flush_discards_remaining_lookahead_after_encode_error` and neighboring delayed-output coverage; a disposable old-behavior check removed the post-error tail drain and confirmed the regression fails with `lookahead.depth()` left at 2; independent verifier agent `019efbdd-94fe-71d0-b05f-0a03a8b3e570` also returned CONFIRMED.
 
 ## Observation
 

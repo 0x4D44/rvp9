@@ -1,11 +1,12 @@
 # RVP9-BUG-KILN-00004 - ARF FC bank adapts from the post-header bank instead of the pre-header snapshot
 
-- **State:** Fixed
+- **State:** Closed
 - **Severity:** High
 - **Area:** encoder/altref entropy context
 - **Raised:** 2026-06-17 by Codex overnight code review
 - **State history:** 2026-06-17 Opened by Codex from the Stage 4a rate-control/frame-loop review pass.
 - **State history:** 2026-06-23 Fixed by Codex (task/20260623-TSK-HUM-fix-kiln-00001-lookahead-stride; fixing commit: this commit): ARF bank-1 backward adaptation now starts from the pre-header bank snapshot, matching the decoder's saved frame context. Regression coverage: `arf_decoder_fc_bank_one_stays_synced_after_non_show_frame`; adjacent bank-0 proof `a6_twoloop_decoder_fc_stays_synced_across_frames` remains green. Awaiting two-eyes verification.
+- **State history:** 2026-06-24 Closed by Codex after independent two-eyes verification on `ffc4e7e`: fixing commit `ec35129` is present; `cargo test -p rvp9-encoder --lib` passed 484 tests with 1 ignored, including `arf_decoder_fc_bank_one_stays_synced_after_non_show_frame` and the adjacent bank-0 invariant; a disposable old-behavior check switched ARF adaptation back to post-header `decoder_fc` and confirmed the bank-1 mirror regression fails; independent verifier agent `019efbdd-b5f3-72a2-b9b0-4c1bcfd09a7b` also returned CONFIRMED.
 
 ## Observation
 
