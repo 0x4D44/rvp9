@@ -78,7 +78,7 @@ use rvp9_core::inter::mode_info::{InterModeReadParams, setup_compound_reference_
 use rvp9_core::inter::mv_ref::{PrevFrameMvRef, sign_bias_from_header};
 use rvp9_core::intra_pred::IntraMode;
 use rvp9_core::mode_decision::partition::{
-    PartitionDecision, PartitionSearchParams, choose_partitioning,
+    PartitionDecision, PartitionSearchParams, choose_partitioning, choose_partitioning_force_split,
 };
 use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, Mv, RefFrame};
 use rvp9_core::mv_search::PlaneRef;
@@ -3876,6 +3876,8 @@ fn choose_partitions_for_frame(input: FramePartitionInput<'_>) -> Vec<Vec<Partit
         width: width_px,
         height: height_px,
     };
+    let vbp_force_split_enabled =
+        !is_keyframe && std::env::var_os("RVP9_VBP_FORCE_SPLIT").is_some_and(|v| v != "0");
 
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
@@ -3891,7 +3893,11 @@ fn choose_partitions_for_frame(input: FramePartitionInput<'_>) -> Vec<Vec<Partit
                 avg_inter_qindex,
                 noise_threshold_scale,
             };
-            let decision = choose_partitioning(&params);
+            let decision = if vbp_force_split_enabled {
+                choose_partitioning_force_split(&params)
+            } else {
+                choose_partitioning(&params)
+            };
             // E2 diagnostic (env-gated): accumulate per-8×8-cell area by
             // leaf size so we can report the inter partition histogram.
             if !is_keyframe && std::env::var_os("RVP9_PART_HIST").is_some() {

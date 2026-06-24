@@ -369,7 +369,31 @@ impl VbpThresholds {
 /// always passes [`PartitionDecision::is_valid_partition`].
 #[must_use]
 pub fn choose_partitioning(params: &PartitionSearchParams<'_>) -> PartitionDecision {
-    let thresholds = if params.is_keyframe {
+    let thresholds = thresholds_for_params(params);
+    let ref_buf = reference_scratch(params);
+
+    choose_partitioning_with_force_map(params, &thresholds, &ref_buf, None)
+}
+
+/// Run [`choose_partitioning`] with the libvpx-style inter-frame force-split
+/// prepass enabled.
+///
+/// This mirrors the part of libvpx's `choose_partitioning` prepass that marks
+/// ancestor blocks as forced splits when 16x16 / 32x32 child variance exceeds
+/// the relevant VBP thresholds. The existing square-only NONE/SPLIT descent is
+/// otherwise preserved; horizontal/vertical partition probing remains out of
+/// scope for this diagnostic variant.
+#[must_use]
+pub fn choose_partitioning_force_split(params: &PartitionSearchParams<'_>) -> PartitionDecision {
+    let thresholds = thresholds_for_params(params);
+    let ref_buf = reference_scratch(params);
+    let force_split = ForceSplitMap::for_params(params, &ref_buf, &thresholds);
+
+    choose_partitioning_with_force_map(params, &thresholds, &ref_buf, Some(&force_split))
+}
+
+fn thresholds_for_params(params: &PartitionSearchParams<'_>) -> VbpThresholds {
+    if params.is_keyframe {
         VbpThresholds::for_keyframe(params.q_index)
     } else {
         VbpThresholds::for_inter(
@@ -379,8 +403,10 @@ pub fn choose_partitioning(params: &PartitionSearchParams<'_>) -> PartitionDecis
             params.frame_height,
             params.noise_threshold_scale,
         )
-    };
+    }
+}
 
+fn reference_scratch(params: &PartitionSearchParams<'_>) -> [u8; 64 * 64] {
     // Materialise the reference samples for this 64x64 region into a
     // contiguous stride-64 scratch buffer. For keyframes we use a
     // flat-128 fallback; otherwise we copy from `ref_plane`.
@@ -395,7 +421,15 @@ pub fn choose_partitioning(params: &PartitionSearchParams<'_>) -> PartitionDecis
             }
         }
     }
+    ref_buf
+}
 
+fn choose_partitioning_with_force_map(
+    params: &PartitionSearchParams<'_>,
+    thresholds: &VbpThresholds,
+    ref_buf: &[u8; 64 * 64],
+    force_split: Option<&ForceSplitMap>,
+) -> PartitionDecision {
     let mut decision = PartitionDecision {
         cells: [[BlockSize::Block8x8; SB_8X8_GRID]; SB_8X8_GRID],
     };
@@ -403,10 +437,11 @@ pub fn choose_partitioning(params: &PartitionSearchParams<'_>) -> PartitionDecis
     // Top-level 64x64 variance.
     if !descend(
         params,
-        &ref_buf,
+        ref_buf,
         /* sb_origin */ (0usize, 0usize),
         BlockSize::Block64x64,
-        &thresholds,
+        thresholds,
+        force_split,
         &mut decision,
     ) {
         // descend always returns true on the top-level call because we
@@ -417,6 +452,108 @@ pub fn choose_partitioning(params: &PartitionSearchParams<'_>) -> PartitionDecis
     }
 
     decision
+}
+
+#[derive(Clone, Debug, Default)]
+struct ForceSplitMap {
+    split_64x64: bool,
+    split_32x32: [bool; 4],
+    split_16x16: [bool; 16],
+}
+
+impl ForceSplitMap {
+    fn for_params(
+        params: &PartitionSearchParams<'_>,
+        ref_buf: &[u8; 64 * 64],
+        thresholds: &VbpThresholds,
+    ) -> Self {
+        if params.is_keyframe {
+            return Self::default();
+        }
+
+        let mut map = Self::default();
+        let mut avg_16x16 = [0u64; 4];
+
+        for (i, avg16_slot) in avg_16x16.iter_mut().enumerate() {
+            let row32 = (i >> 1) * 4;
+            let col32 = (i & 1) * 4;
+            for j in 0..4 {
+                let row16 = row32 + (j >> 1) * 2;
+                let col16 = col32 + (j & 1) * 2;
+                let var16 = block_per_pixel_variance(
+                    params,
+                    ref_buf,
+                    (row16, col16),
+                    BlockSize::Block16x16,
+                );
+                *avg16_slot = avg16_slot.saturating_add(var16);
+                if var16 > thresholds.thresholds[2] {
+                    map.split_16x16[i * 4 + j] = true;
+                    map.split_32x32[i] = true;
+                    map.split_64x64 = true;
+                }
+            }
+        }
+
+        for (i, avg16) in avg_16x16.iter().enumerate() {
+            if map.split_32x32[i] {
+                continue;
+            }
+            let row32 = (i >> 1) * 4;
+            let col32 = (i & 1) * 4;
+            let var32 =
+                block_per_pixel_variance(params, ref_buf, (row32, col32), BlockSize::Block32x32);
+            if var32 > thresholds.thresholds[1]
+                || (var32 > (thresholds.thresholds[1] >> 1) && var32 > (avg16 >> 1))
+            {
+                map.split_32x32[i] = true;
+                map.split_64x64 = true;
+            }
+        }
+
+        map
+    }
+
+    fn split_at(&self, origin_8x8: (usize, usize), bs: BlockSize) -> bool {
+        let (row, col) = origin_8x8;
+        match bs {
+            BlockSize::Block64x64 => self.split_64x64,
+            BlockSize::Block32x32 => {
+                let idx = (row / 4) * 2 + (col / 4);
+                self.split_32x32.get(idx).copied().unwrap_or(false)
+            }
+            BlockSize::Block16x16 => {
+                let idx = (row / 2) * 4 + (col / 2);
+                self.split_16x16.get(idx).copied().unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+}
+
+fn block_per_pixel_variance(
+    params: &PartitionSearchParams<'_>,
+    ref_buf: &[u8; 64 * 64],
+    origin_8x8: (usize, usize),
+    bs: BlockSize,
+) -> u64 {
+    let (row_8x8, col_8x8) = origin_8x8;
+    let (sb_x, sb_y) = params.src_offset_xy;
+    let sp = params.src_plane;
+    let bs_pixels = bs.width() as usize;
+    let block_x = sb_x + col_8x8 * 8;
+    let block_y = sb_y + row_8x8 * 8;
+    let ref_off = row_8x8 * 8 * 64 + col_8x8 * 8;
+    let (var_total, _sse) = variance(
+        &sp.data[block_y * sp.stride + block_x..],
+        sp.stride,
+        &ref_buf[ref_off..],
+        64,
+        bs_pixels,
+        bs_pixels,
+    );
+    let n = (bs_pixels * bs_pixels) as u64;
+    u64::from(var_total) / n.max(1)
 }
 
 /// Recursive descent helper. `origin` is the top-left of the current
@@ -432,31 +569,14 @@ fn descend(
     origin_8x8: (usize, usize),
     bs: BlockSize,
     thresholds: &VbpThresholds,
+    force_split: Option<&ForceSplitMap>,
     decision: &mut PartitionDecision,
 ) -> bool {
     let (row_8x8, col_8x8) = origin_8x8;
-    let (sb_x, sb_y) = params.src_offset_xy;
-    let sp = params.src_plane;
-
     let bs_pixels = bs.width() as usize;
-    let block_x = sb_x + col_8x8 * 8;
-    let block_y = sb_y + row_8x8 * 8;
-
-    // Reference is always the 64x64 scratch buffer at stride 64; the
-    // block sits at the SB-local offset `(col_8x8 * 8, row_8x8 * 8)`.
-    let ref_off = row_8x8 * 8 * 64 + col_8x8 * 8;
 
     // Per-pixel variance for the current block.
-    let (var_total, _sse) = variance(
-        &sp.data[block_y * sp.stride + block_x..],
-        sp.stride,
-        &ref_buf[ref_off..],
-        64,
-        bs_pixels,
-        bs_pixels,
-    );
-    let n = (bs_pixels * bs_pixels) as u64;
-    let per_pixel_var = u64::from(var_total) / n.max(1);
+    let per_pixel_var = block_per_pixel_variance(params, ref_buf, origin_8x8, bs);
 
     // Threshold index: 0 → 64, 1 → 32, 2 → 16, 3 → 8.
     //
@@ -508,7 +628,9 @@ fn descend(
     // exceeds the threshold.
     let split = match child_size {
         None => false,
-        Some(_) => per_pixel_var > threshold,
+        Some(_) => {
+            force_split.is_some_and(|map| map.split_at(origin_8x8, bs)) || per_pixel_var > threshold
+        }
     };
 
     if !split {
@@ -532,7 +654,7 @@ fn descend(
         (row_8x8 + half, col_8x8 + half),
     ];
     for &q in &quadrants {
-        if !descend(params, ref_buf, q, child, thresholds, decision) {
+        if !descend(params, ref_buf, q, child, thresholds, force_split, decision) {
             return false;
         }
     }
@@ -753,6 +875,65 @@ mod tests {
             "high q ({high_64} Block64x64) should keep at least as many big blocks \
              as low q ({low_64})"
         );
+    }
+
+    /// The force-split prepass mirrors libvpx's child-variance guard:
+    /// a detailed 32x32 quadrant can force the 64x64 parent to split even
+    /// when the parent aggregate variance is low enough for the simple
+    /// top-down picker to accept it.
+    #[test]
+    fn choose_partitioning_force_split_opens_sparse_32x32_detail() {
+        let q = 255;
+        let thresholds = VbpThresholds::for_inter(q, /* avg_q */ 50, 1024, 512, 1);
+        let amp = (1u8..=127)
+            .find(|&a| {
+                let var32 = u64::from(a) * u64::from(a);
+                let var64 = var32 / 4;
+                var64 <= thresholds.thresholds[0] && var32 > thresholds.thresholds[1]
+            })
+            .expect("test thresholds must admit a sparse 32x32 force-split pattern");
+
+        let mut src_buf = vec![128u8; 64 * 64];
+        for r in 0..32 {
+            for c in 0..32 {
+                let delta = if (r + c) & 1 == 0 {
+                    i16::from(amp)
+                } else {
+                    -i16::from(amp)
+                };
+                src_buf[r * 64 + c] = (128i16 + delta) as u8;
+            }
+        }
+        let ref_buf = flat_plane(128);
+        let src = plane_ref(&src_buf);
+        let reference = plane_ref(&ref_buf);
+        let params = PartitionSearchParams {
+            src_plane: &src,
+            src_offset_xy: (0, 0),
+            ref_plane: &reference,
+            ref_offset_xy: (0, 0),
+            is_keyframe: false,
+            q_index: q,
+            frame_width: 1024,
+            frame_height: 512,
+            avg_inter_qindex: 50,
+            noise_threshold_scale: 1,
+        };
+
+        let simple = choose_partitioning(&params);
+        let forced = choose_partitioning_force_split(&params);
+
+        assert!(simple.is_valid_partition());
+        assert!(forced.is_valid_partition());
+        for row in &simple.cells {
+            for &bs in row {
+                assert_eq!(bs, BlockSize::Block64x64);
+            }
+        }
+        assert_eq!(forced.cells[0][0], BlockSize::Block16x16);
+        assert_eq!(forced.cells[0][4], BlockSize::Block32x32);
+        assert_eq!(forced.cells[4][0], BlockSize::Block32x32);
+        assert_eq!(forced.cells[4][4], BlockSize::Block32x32);
     }
 
     /// Keyframe path: the reference is replaced with flat-128
