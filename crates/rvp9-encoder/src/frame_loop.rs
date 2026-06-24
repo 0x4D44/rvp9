@@ -3878,6 +3878,8 @@ fn choose_partitions_for_frame(input: FramePartitionInput<'_>) -> Vec<Vec<Partit
     };
     let vbp_force_split_enabled =
         !is_keyframe && std::env::var_os("RVP9_VBP_FORCE_SPLIT").is_some_and(|v| v != "0");
+    let vbp_qindex = vbp_qindex_for_partition(q_index, is_keyframe);
+    let vbp_avg_inter_qindex = vbp_avg_inter_qindex_for_partition(avg_inter_qindex, is_keyframe);
 
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
@@ -3887,10 +3889,10 @@ fn choose_partitions_for_frame(input: FramePartitionInput<'_>) -> Vec<Vec<Partit
                 ref_plane: &ref_plane,
                 ref_offset_xy: (sb_col * 64, sb_row * 64),
                 is_keyframe,
-                q_index,
+                q_index: vbp_qindex,
                 frame_width: width_px,
                 frame_height: height_px,
-                avg_inter_qindex,
+                avg_inter_qindex: vbp_avg_inter_qindex,
                 noise_threshold_scale,
             };
             let decision = if vbp_force_split_enabled {
@@ -3927,6 +3929,26 @@ fn choose_partitions_for_frame(input: FramePartitionInput<'_>) -> Vec<Vec<Partit
         }
     }
     out
+}
+
+fn vbp_qindex_for_partition(q_index: u8, is_keyframe: bool) -> u8 {
+    if is_keyframe {
+        return q_index;
+    }
+    std::env::var("RVP9_VBP_QINDEX")
+        .ok()
+        .and_then(|v| v.parse::<u8>().ok())
+        .unwrap_or(q_index)
+}
+
+fn vbp_avg_inter_qindex_for_partition(avg_inter_qindex: u8, is_keyframe: bool) -> u8 {
+    if is_keyframe {
+        return avg_inter_qindex;
+    }
+    std::env::var("RVP9_VBP_AVG_QINDEX")
+        .ok()
+        .and_then(|v| v.parse::<u8>().ok())
+        .unwrap_or(avg_inter_qindex)
 }
 
 /// Walk a [`PartitionDecision`]'s 8×8 cell grid in VP9 **coding (Z-)
@@ -8769,6 +8791,59 @@ mod tests {
             std::env::remove_var(key);
         }
         assert_eq!(inter.frame_kind, FrameKind::Inter);
+    }
+
+    #[test]
+    fn vbp_qindex_overrides_are_inter_only() {
+        let _guard = env_test_mutex();
+        let q_key = "RVP9_VBP_QINDEX";
+        let avg_key = "RVP9_VBP_AVG_QINDEX";
+        unsafe {
+            std::env::set_var(q_key, "205");
+            std::env::set_var(avg_key, "180");
+        }
+        assert_eq!(
+            vbp_qindex_for_partition(236, false),
+            205,
+            "inter VBP should use the diagnostic threshold-q override"
+        );
+        assert_eq!(
+            vbp_qindex_for_partition(236, true),
+            236,
+            "keyframe VBP must ignore the inter-only threshold-q override"
+        );
+        unsafe {
+            std::env::set_var(q_key, "not-a-qindex");
+        }
+        assert_eq!(
+            vbp_qindex_for_partition(211, false),
+            211,
+            "invalid threshold-q override values fall back to the frame qindex"
+        );
+        unsafe {
+            std::env::remove_var(q_key);
+        }
+        assert_eq!(
+            vbp_avg_inter_qindex_for_partition(236, false),
+            180,
+            "inter VBP should use the diagnostic avg-q override"
+        );
+        assert_eq!(
+            vbp_avg_inter_qindex_for_partition(236, true),
+            236,
+            "keyframe VBP must ignore the inter-only avg-q override"
+        );
+        unsafe {
+            std::env::set_var(avg_key, "not-a-qindex");
+        }
+        assert_eq!(
+            vbp_avg_inter_qindex_for_partition(211, false),
+            211,
+            "invalid override values fall back to the rate-control average"
+        );
+        unsafe {
+            std::env::remove_var(avg_key);
+        }
     }
 
     #[test]

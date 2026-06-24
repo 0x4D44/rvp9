@@ -2398,8 +2398,13 @@ fn segment_id_for_hint_cell(
 ///
 /// Walks SBs/leaves in raster order — same convention as the F10.1b
 /// intra simulator + writer.
-fn p8_default_enabled(rt_large_recovery: bool, rc_mode: crate::rate_control::RcMode) -> bool {
-    !rt_large_recovery && !matches!(rc_mode, crate::rate_control::RcMode::Vbr)
+fn p8_default_enabled(
+    rt_large_recovery: bool,
+    rc_mode: crate::rate_control::RcMode,
+    base_qindex: u8,
+) -> bool {
+    !rt_large_recovery
+        && (!matches!(rc_mode, crate::rate_control::RcMode::Vbr) || base_qindex <= 200)
 }
 
 fn p8_vbr_qmax_enabled(
@@ -2835,14 +2840,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let phase2_reuse_enabled = std::env::var_os("RVP9_PHASE2_REUSE_DISABLE").is_none();
     // Phase A — enable 8×8 inter partitions in the A4 descent. Default
     // ON for fixed-Q / CBR-style paths where matched-Q Foreman improves,
-    // but OFF for one-pass VBR where the Stage 4a real-content curve
-    // improves without the 8×8 floor. Set `RVP9_P8=1` or `RVP9_P8=0`
-    // as an explicit override. `RVP9_P8_QMAX=<q>` is a VBR-only diagnostic
-    // for allowing 8×8 descent on low-q/high-rate frames without reopening
-    // the low-rate overspend seen in the full P8 and DIRECT probes. When ON,
-    // the descent lowers its `min_partition_size` floor to Block8x8 so
-    // Block16x16 may SPLIT into four 8×8 NONE leaves and 8×8 becomes a valid
-    // NONE candidate.
+    // and now also for one-pass VBR only at low-q/high-rate frames
+    // (`base_qindex <= 200`). The bounded VBR gate is the measured-safe
+    // slice: it gives a small Stage 4a BD-rate movement without reopening
+    // the low-rate overspend seen in the full-P8 and DIRECT probes. Set
+    // `RVP9_P8=1` or `RVP9_P8=0` as an explicit override.
+    // `RVP9_P8_QMAX=<q>` remains a VBR diagnostic override for sweeping the
+    // threshold. When ON, the descent lowers its `min_partition_size` floor
+    // to Block8x8 so Block16x16 may SPLIT into four 8×8 NONE leaves and 8×8
+    // becomes a valid NONE candidate.
     let p8_enabled = std::env::var("RVP9_P8")
         .map(|v| v != "0")
         .unwrap_or_else(|_| {
@@ -2850,7 +2856,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 .ok()
                 .and_then(|v| v.parse::<u8>().ok())
                 .map(|qmax| p8_vbr_qmax_enabled(rt_large_recovery, rc_mode, base_qindex, qmax))
-                .unwrap_or_else(|| p8_default_enabled(rt_large_recovery, rc_mode))
+                .unwrap_or_else(|| p8_default_enabled(rt_large_recovery, rc_mode, base_qindex))
         });
     let f3_partition_costs = if f3_nonrd_partition_enabled {
         // Diagnostic only: libvpx sources partition_cost from the live frame
@@ -3290,8 +3296,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let (min_bs, max_bs) = variance_hint_bounds(&hint);
                 // Phase A (`RVP9_P8`) — lower the min floor to Block8x8 so
                 // the descent can SPLIT Block16x16 into four 8×8 leaves and
-                // treat 8×8 as a NONE candidate. Default ON; `RVP9_P8=0`
-                // keeps the R3 Block16x16 floor exactly as before.
+                // treat 8×8 as a NONE candidate. Default policy is computed
+                // once above; `RVP9_P8=0` keeps the R3 Block16x16 floor
+                // exactly as before.
                 let mut min_bs = if p8_enabled { BS::Block8x8 } else { min_bs };
                 let mut max_bs = max_bs;
                 if rt_large_recovery && rt_min_partition32 {
@@ -7558,12 +7565,15 @@ mod tests {
     }
 
     #[test]
-    fn p8_default_is_off_for_vbr_and_large_rt_only() {
-        assert!(!p8_default_enabled(false, RcMode::Vbr));
-        assert!(p8_default_enabled(false, RcMode::Cbr));
-        assert!(p8_default_enabled(false, RcMode::Cq));
-        assert!(p8_default_enabled(false, RcMode::Q));
-        assert!(!p8_default_enabled(true, RcMode::Cbr));
+    fn p8_default_is_vbr_low_q_and_non_vbr_only() {
+        assert!(p8_default_enabled(false, RcMode::Vbr, 200));
+        assert!(p8_default_enabled(false, RcMode::Vbr, 180));
+        assert!(!p8_default_enabled(false, RcMode::Vbr, 201));
+        assert!(p8_default_enabled(false, RcMode::Cbr, 255));
+        assert!(p8_default_enabled(false, RcMode::Cq, 255));
+        assert!(p8_default_enabled(false, RcMode::Q, 255));
+        assert!(!p8_default_enabled(true, RcMode::Vbr, 180));
+        assert!(!p8_default_enabled(true, RcMode::Cbr, 180));
     }
 
     #[test]
