@@ -159,22 +159,26 @@ pub enum RcMode {
 ///
 /// Intentionally narrower than the wire-format
 /// [`rvp9_core::bitstream::FrameKind`] — the rate controller only needs
-/// to know "is this a keyframe" vs "is this an inter frame". `IntraOnly`
-/// and `ShowExistingFrame` in the wire-format enum collapse here as
-/// follows (mapping is the caller's job; the encoder framing layer will
-/// do it):
+/// to know the rate-control role of this coded frame. `IntraOnly`,
+/// `ShowExistingFrame`, and golden-refresh inter frames in the wire-format
+/// enum collapse here as follows (mapping is the caller's job; the encoder
+/// framing layer will do it):
 ///
 /// - `ShowExistingFrame` → never reaches the rate controller (no bits
 ///   emitted by the encoder itself for the shown frame).
 /// - `KeyFrame` → [`FrameKind::Key`].
 /// - `IntraOnly` → [`FrameKind::Key`] (it's a fresh I-frame for RC purposes).
-/// - `InterFrame` → [`FrameKind::Inter`].
+/// - `InterFrame` → [`FrameKind::Inter`] normally, or
+///   [`FrameKind::Golden`] when the coded inter frame refreshes GOLDEN and
+///   the active rate-control mode has a distinct GF path.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum FrameKind {
     /// Key frame (intra-only, GOP boundary). Higher target bits, lower Q.
     Key,
     /// Inter frame. Normal CBR target.
     Inter,
+    /// Inter frame that refreshes GOLDEN for rate-control purposes.
+    Golden,
 }
 
 impl FrameKind {

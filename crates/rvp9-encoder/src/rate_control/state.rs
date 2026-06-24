@@ -350,7 +350,7 @@ impl RateControl {
                 let q_kf = q_inter.saturating_sub(8); // libvpx KF qdelta ≈ -8
                 let q = match frame_kind {
                     FrameKind::Key => q_kf,
-                    FrameKind::Inter => q_inter,
+                    FrameKind::Inter | FrameKind::Golden => q_inter,
                 };
                 (q, q, q)
             }

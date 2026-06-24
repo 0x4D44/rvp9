@@ -72,7 +72,7 @@ impl RateFactorLevel {
     pub(super) const fn for_frame(frame_kind: FrameKind) -> Self {
         match frame_kind {
             FrameKind::Key => Self::KfStd,
-            FrameKind::Inter => Self::InterNormal,
+            FrameKind::Inter | FrameKind::Golden => Self::InterNormal,
         }
     }
 }
@@ -544,7 +544,7 @@ fn kf_high_motion_minq(qindex: i32) -> i32 {
 /// Port of libvpx `get_active_quality` (`vp9_ratectrl.c:96-116`).
 /// Blends the low-/high-motion min-Q tables by where `gfu_boost` sits
 /// between `kf_low` and `kf_high`.
-fn get_active_quality(
+pub(super) fn get_active_quality(
     q: i32,
     gfu_boost: i32,
     low: i32,
@@ -642,7 +642,7 @@ pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> 
     // 1. Per-frame target bits.
     let target_bits = match frame_kind {
         FrameKind::Key => calc_iframe_target_size(rc),
-        FrameKind::Inter => calc_pframe_target_size(rc),
+        FrameKind::Inter | FrameKind::Golden => calc_pframe_target_size(rc),
     };
     rc.this_frame_target = target_bits;
 
@@ -833,7 +833,7 @@ pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> 
             };
             (best.min(worst), worst)
         }
-        FrameKind::Inter => {
+        FrameKind::Inter | FrameKind::Golden => {
             let worst = active_worst_quality_inter(rc);
             // libvpx `rc_pick_q_and_bounds_one_pass_cbr:1057-1068`:
             //   if current_video_frame > 1:  ambient = avg_frame_qindex[INTER]

@@ -89,8 +89,18 @@ fn libvpx_stock_available() -> Option<PathBuf> {
         return Some(canonical);
     }
     // Fall back to `vpxenc` on PATH.
-    if Command::new("vpxenc").arg("--help").output().is_ok() {
-        return Some(PathBuf::from("vpxenc"));
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        let candidates = if cfg!(windows) {
+            [dir.join("vpxenc.exe"), dir.join("vpxenc")]
+        } else {
+            [dir.join("vpxenc"), dir.join("vpxenc.exe")]
+        };
+        for candidate in candidates {
+            if candidate.is_file() && Command::new(&candidate).arg("--help").output().is_ok() {
+                return Some(candidate);
+            }
+        }
     }
     None
 }

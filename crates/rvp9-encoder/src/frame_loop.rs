@@ -1716,6 +1716,16 @@ impl StreamEncoder {
             crate::gop::FrameUpdateType::KfUpdate => FrameKind::Key,
             _ => FrameKind::Inter,
         };
+        let rc_frame_kind = match frame_sched.update_type {
+            crate::gop::FrameUpdateType::KfUpdate => RcFrameKind::Key,
+            crate::gop::FrameUpdateType::GfUpdate
+                if matches!(self.config.rc_mode, RcMode::Vbr)
+                    && std::env::var_os("RVP9_VBR_GF_RC").is_some_and(|v| v != "0") =>
+            {
+                RcFrameKind::Golden
+            }
+            _ => RcFrameKind::Inter,
+        };
 
         // A18 (SVC) — assign this frame's temporal layer before the
         // per-kind encode dispatch. For keyframes the layer is always tl0
@@ -1741,7 +1751,7 @@ impl StreamEncoder {
         }
 
         // Pick Q via the rate controller.
-        let (q_index, _q_lo, _q_hi) = self.rate_control.pick_q_and_bounds(frame_kind.into());
+        let (q_index, _q_lo, _q_hi) = self.rate_control.pick_q_and_bounds(rc_frame_kind);
         // -- E8 DIAG: inter active_worst / buffer-state trace --
         // Env-gated; captured immediately after the pick so it reflects
         // the buffer state that drove THIS frame's Q. The actual bits are
@@ -1977,9 +1987,7 @@ impl StreamEncoder {
         // Mean of the ratio sets the empirical `bits_per_mb_multiplier`
         // needed to close the gap on this content.
         if std::env::var_os("RVP9_DIAG_BPM_VERIFY").is_some_and(|v| v != "0") {
-            let predicted = self
-                .rate_control
-                .predicted_bits_at_picked_q(frame_kind.into());
+            let predicted = self.rate_control.predicted_bits_at_picked_q(rc_frame_kind);
             let q_picked = u32::from(self.rate_control.last_picked_qindex);
             let ratio = if predicted > 0 {
                 f64::from(actual_bits) / predicted as f64
@@ -2019,7 +2027,7 @@ impl StreamEncoder {
 
         // Post-encode rate-control update + frame counter advance.
         self.rate_control
-            .postencode_update(actual_bits, frame_kind.into());
+            .postencode_update(actual_bits, rc_frame_kind);
         self.rate_control.advance_frame();
         self.frame_idx = self.frame_idx.saturating_add(1);
 

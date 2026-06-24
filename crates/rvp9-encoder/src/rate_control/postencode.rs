@@ -145,7 +145,7 @@ pub(super) fn postencode_update(rc: &mut RateControl, actual_bits: u32, frame_ki
             let new_avg = (3 * u32::from(rc.avg_frame_qindex_key) + u32::from(qindex)) >> 2;
             rc.avg_frame_qindex_key = new_avg as u8;
         }
-        FrameKind::Inter => {
+        FrameKind::Inter | FrameKind::Golden => {
             rc.last_q_inter = qindex;
             let new_avg = (3 * u32::from(rc.avg_frame_qindex_inter) + u32::from(qindex)) >> 2;
             rc.avg_frame_qindex_inter = new_avg as u8;

@@ -272,7 +272,7 @@ pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> 
     let active_worst = rc.worst_quality;
     let active_best = match frame_kind {
         FrameKind::Key => rc.best_quality,
-        FrameKind::Inter => rtc_minq_approx(rc, active_worst),
+        FrameKind::Inter | FrameKind::Golden => rtc_minq_approx(rc, active_worst),
     };
     let active_best = active_best.clamp(rc.best_quality, rc.worst_quality);
     let active_worst = active_worst.clamp(active_best, rc.worst_quality);
