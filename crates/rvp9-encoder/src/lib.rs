@@ -2835,7 +2835,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         .map(|v| v != "0")
         .unwrap_or_else(|_| p8_default_enabled(rt_large_recovery, rc_mode));
     let f3_partition_costs = if f3_nonrd_partition_enabled {
-        Some(partition_costs(&FrameContext::new_default()))
+        // Diagnostic only: libvpx sources partition_cost from the live frame
+        // context, but the Stage 4a VBR gate is BD-negative with that source
+        // until the surrounding A4 calibration moves with it.
+        if std::env::var_os("RVP9_A4_LIVE_PARTITION_COST").is_some_and(|v| v != "0") {
+            Some(partition_costs(frame_context))
+        } else {
+            Some(partition_costs(&FrameContext::new_default()))
+        }
     } else {
         None
     };
