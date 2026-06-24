@@ -286,7 +286,8 @@ fn lambda_atten() -> Option<(u64, u64)> {
 /// rvp9's pixel-SSE-tuned `lambda` (`compute_rd_mult`, kept UNCHANGED)
 /// shifts the RD balance the wrong way — the same domain mismatch
 /// Lever-3b must calibrate. Set `RVP9_S3_DOMAIN=1` to A/B the
-/// coef-domain dist.
+/// coef-domain dist globally, or `RVP9_S3_QMAX=<q>` to A/B it only on
+/// natural/S2-active low-q leaves.
 #[inline]
 fn s3_domain_enabled() -> bool {
     use std::sync::OnceLock;
@@ -296,6 +297,27 @@ fn s3_domain_enabled() -> bool {
             .map(|v| v == "1")
             .unwrap_or(false)
     })
+}
+
+#[inline]
+fn s3_qmax() -> Option<u8> {
+    use std::sync::OnceLock;
+    static QMAX: OnceLock<Option<u8>> = OnceLock::new();
+    *QMAX.get_or_init(|| {
+        std::env::var("RVP9_S3_QMAX")
+            .ok()
+            .and_then(|v| v.parse::<u8>().ok())
+    })
+}
+
+#[inline]
+fn s3_q_gate_active(q_index: u8, qmax: Option<u8>, s2_active: bool) -> bool {
+    qmax.is_some_and(|max| s2_active && q_index <= max)
+}
+
+#[inline]
+fn s3_domain_enabled_for_q(q_index: u8) -> bool {
+    s3_domain_enabled() || s3_q_gate_active(q_index, s3_qmax(), s2_gate_enabled())
 }
 
 /// NEARESTMV/ZEROMV tie-break fix (HLD 2026.05.30). **Default ON.**
@@ -3201,10 +3223,12 @@ fn evaluate_candidate_for_filter(
     // tie-break). `lambda` / `compute_rd_mult` are UNCHANGED.
     //
     // `dist_encode` is the dist used for the encode (non-skip) RD;
-    // `dist_skip` for the skip RD. Both default to the S3 domain; the
-    // `RVP9_S3_DOMAIN=0` A/B reverts each to the HEAD pixel domain.
+    // `dist_skip` for the skip RD. `RVP9_S3_DOMAIN=1` forces both to the
+    // S3 domain globally; `RVP9_S3_QMAX=<q>` applies that same domain only
+    // to natural/S2-active low-q leaves. With neither env set, both remain
+    // in the HEAD pixel domain.
     let coef_dist_u64 = by.coef_dist.max(0) as u64;
-    let (dist_encode, dist_skip): (u64, u64) = if s3_domain_enabled() {
+    let (dist_encode, dist_skip): (u64, u64) = if s3_domain_enabled_for_q(params.q_index) {
         (coef_dist_u64, sse_after_pred << s3_skip_shift())
     } else {
         (u64::from(dist), u64::from(sse_after_pred_u32))
@@ -4295,6 +4319,15 @@ mod tests {
             main.best_mode,
             main.best_rd_cost,
         );
+    }
+
+    #[test]
+    fn s3_q_gate_requires_threshold_and_s2_active() {
+        assert!(!s3_q_gate_active(180, None, true));
+        assert!(!s3_q_gate_active(180, Some(200), false));
+        assert!(s3_q_gate_active(180, Some(200), true));
+        assert!(s3_q_gate_active(200, Some(200), true));
+        assert!(!s3_q_gate_active(201, Some(200), true));
     }
 
     /// **S2.1 self-consistency oracle (HLD §6.5).** The Y skip gate's
