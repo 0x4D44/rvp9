@@ -3051,6 +3051,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         env_flag_default("RVP9_A4_DESCENT_CB_FILTER", rt_large_recovery);
     let rt_skip_integer_mv_filter_search =
         env_flag_default("RVP9_RT_SKIP_INTMV_FILTER_SEARCH", rt_large_recovery);
+    let newmv_diff_bias_enabled = env_flag_default("RVP9_NEWMV_DIFF_BIAS", true);
     // Large-frame recovery: skip the A4 descent's 16x16 picker layer.
     // This removes the dominant 720p timing work while leaving the
     // small-frame quality gates untouched. `=0` restores the full descent.
@@ -3574,6 +3575,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             let mi_idx = leaf_mi_row * mi_cols + leaf_mi_col;
                             skin_map.get(mi_idx).copied().unwrap_or(0) != 0
                         },
+                        newmv_diff_bias_enabled,
                         reference_masking: true,
                         // P20 — disabled in the descent: the adaptive
                         // RD-threshold table is mutated post-pick by
@@ -4666,6 +4668,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         let mi_idx = leaf_mi_row * mi_cols + leaf_mi_col;
                         skin_map.get(mi_idx).copied().unwrap_or(0) != 0
                     },
+                    newmv_diff_bias_enabled,
                     // P18 — `sf.reference_masking` default. libvpx
                     // `vp9_speed_features.c:250 / 517` keeps this on
                     // for the realtime single-spatial-layer path,

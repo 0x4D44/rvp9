@@ -928,6 +928,13 @@ pub struct PickInterModeParams<'a> {
     /// `vp9_pickmode.c:1352`). rvp9 doesn't run skin detection; callers
     /// pass `false`.
     pub is_skin: bool,
+    /// Whether to apply `vp9_NEWMV_diff_bias` candidate scaling.
+    ///
+    /// libvpx wraps this bias in a realtime-CBR caller gate
+    /// (`vp9_pickmode.c:2402-2411`). rvp9 keeps its historical default on for
+    /// VBR while exposing this switch so encoder diagnostics can A/B the gate
+    /// without patching picker logic.
+    pub newmv_diff_bias_enabled: bool,
 
     /// P18 — libvpx `sf.reference_masking` speed-feature flag
     /// (`vp9_pickmode.c:2195`, `vp9_speed_features.c:250 / 517`). When
@@ -1925,26 +1932,24 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
         mode_checked[ref_idx][mode.idx()] = true;
 
         // P13 — vp9_NEWMV_diff_bias (vp9_pickmode.c:2402-2411). Apply
-        // the magnitude/noise-driven RD-cost scaling to NEWMV
-        // candidates whose MV diverges from the neighbour average.
-        // Faithful port: the bias factor is computed unconditionally
-        // here; `newmv_diff_bias` returns `(1, 1)` (no-op) for non-
-        // NEWMV modes and for NEWMV with diff ≤ 48. The libvpx outer
-        // gate at vp9_pickmode.c:2404 (`cpi->oxcf.rc_mode == VPX_CBR
-        // && cpi->oxcf.speed >= 5 && cpi->oxcf.content !=
-        // VP9E_CONTENT_SCREEN`) is rvp9's default operating point
-        // (single-pass realtime-like CBR), so we always apply.
-        let (bias_num, bias_den) = newmv_diff_bias(
-            params.above_mv,
-            params.left_mv,
-            mode,
-            mv,
-            params.block_size,
-            ref_frame == RefFrame::LastFrame,
-            params.noise_estimate,
-            params.lowvar_highsumdiff,
-            params.is_skin,
-        );
+        // the magnitude/noise-driven RD-cost scaling to NEWMV candidates
+        // whose MV diverges from the neighbour average when the caller keeps
+        // this diagnostic gate enabled.
+        let (bias_num, bias_den) = if params.newmv_diff_bias_enabled {
+            newmv_diff_bias(
+                params.above_mv,
+                params.left_mv,
+                mode,
+                mv,
+                params.block_size,
+                ref_frame == RefFrame::LastFrame,
+                params.noise_estimate,
+                params.lowvar_highsumdiff,
+                params.is_skin,
+            )
+        } else {
+            (1, 1)
+        };
         let mut biased_rd_cost = apply_rdcost_bias(candidate.best_rd_cost, bias_num, bias_den);
 
         // §10 — screen-content bias-against-zero-last (libvpx
@@ -4959,6 +4964,9 @@ mod tests {
             noise_estimate: NoiseEstimate::default(),
             lowvar_highsumdiff: false,
             is_skin: false,
+            // Legacy proof harness defaults to the active CBR path. Tests
+            // that need VBR/CQ/Q behaviour override this explicitly.
+            newmv_diff_bias_enabled: true,
             // P18 — default ON for legacy harness, matching the
             // encoder caller's setting. Tests that need to compare
             // mask-on vs mask-off override this field directly.
