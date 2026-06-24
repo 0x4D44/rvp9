@@ -6099,11 +6099,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         #[allow(clippy::print_stderr)]
         {
             eprintln!(
-                "[A4-split] q={base_qindex} block16 attempts={} breakout_suppressed={} feasible={} infeasible_or_early={} split_beats_none={} split_loses_to_none={} split_committed={} rect_overrides_split={} no_none={} avg_margin={avg_margin:.1} min_margin={min_margin} max_margin={max_margin}",
+                "[A4-split] q={base_qindex} block16 attempts={} breakout_suppressed={} feasible={} infeasible_or_early={} child_infeasible={} partial_rd_early_out={} split_beats_none={} split_loses_to_none={} split_committed={} rect_overrides_split={} no_none={} avg_margin={avg_margin:.1} min_margin={min_margin} max_margin={max_margin}",
                 a4_split_stats.block16_attempts,
                 a4_split_stats.block16_breakout_suppressed,
                 a4_split_stats.block16_feasible,
                 a4_split_stats.block16_infeasible_or_early,
+                a4_split_stats.block16_child_infeasible,
+                a4_split_stats.block16_partial_rd_early_out,
                 a4_split_stats.block16_split_beats_none,
                 a4_split_stats.block16_split_loses_to_none,
                 a4_split_stats.block16_split_committed,

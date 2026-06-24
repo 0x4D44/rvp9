@@ -475,6 +475,10 @@ pub struct NonRdSplitStats {
     /// libvpx-style early-out proved the partial SPLIT sum already worse
     /// than the current best.
     pub block16_infeasible_or_early: u32,
+    /// SPLIT attempts aborted because at least one 8x8 child was infeasible.
+    pub block16_child_infeasible: u32,
+    /// SPLIT attempts aborted by the libvpx-style partial-RD early-out.
+    pub block16_partial_rd_early_out: u32,
     /// Feasible SPLIT-vs-NONE comparisons where SPLIT beat NONE.
     pub block16_split_beats_none: u32,
     /// Feasible SPLIT-vs-NONE comparisons where NONE stayed cheaper.
@@ -501,6 +505,8 @@ impl NonRdSplitStats {
         self.block16_breakout_suppressed += other.block16_breakout_suppressed;
         self.block16_feasible += other.block16_feasible;
         self.block16_infeasible_or_early += other.block16_infeasible_or_early;
+        self.block16_child_infeasible += other.block16_child_infeasible;
+        self.block16_partial_rd_early_out += other.block16_partial_rd_early_out;
         self.block16_split_beats_none += other.block16_split_beats_none;
         self.block16_split_loses_to_none += other.block16_split_loses_to_none;
         self.block16_split_committed += other.block16_split_committed;
@@ -938,6 +944,8 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
         let mut sum_rate: u32 = split_cost;
         let mut sum_dist: u32 = 0;
         let mut all_feasible = true;
+        let mut child_infeasible = false;
+        let mut partial_rd_early_out = false;
         // Per-quadrant `above`/`left` propagation. For first-cut
         // F.3 infrastructure we keep the simplified ctx flags
         // constant across quadrants — refinement is F.4 territory
@@ -950,6 +958,7 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
             // a child that walks past the SB grid. On standard
             // 64-aligned input this never fires.
             if child_origin.0 >= SB_GRID || child_origin.1 >= SB_GRID {
+                child_infeasible = true;
                 all_feasible = false;
                 break;
             }
@@ -976,6 +985,7 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
                     if rdc_so_far >= best_rd_cost && best_pick.is_some() {
                         // Mark remaining quadrants infeasible (so
                         // we don't try to commit them).
+                        partial_rd_early_out = true;
                         all_feasible = false;
                         break;
                     }
@@ -983,6 +993,7 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
                 None => {
                     // Child infeasible → SPLIT can't win at this
                     // level. Fall back to NONE if we have it.
+                    child_infeasible = true;
                     all_feasible = false;
                     break;
                 }
@@ -1008,6 +1019,11 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
             }
         } else if track_block16_split {
             state.split_stats.block16_infeasible_or_early += 1;
+            if partial_rd_early_out {
+                state.split_stats.block16_partial_rd_early_out += 1;
+            } else if child_infeasible {
+                state.split_stats.block16_child_infeasible += 1;
+            }
         }
     }
 
@@ -1632,10 +1648,92 @@ mod tests {
         }
         assert_eq!(result.split_stats.block16_attempts, 16);
         assert_eq!(result.split_stats.block16_feasible, 16);
+        assert_eq!(result.split_stats.block16_child_infeasible, 0);
+        assert_eq!(result.split_stats.block16_partial_rd_early_out, 0);
         assert_eq!(result.split_stats.block16_split_beats_none, 16);
         assert_eq!(result.split_stats.block16_split_loses_to_none, 0);
         assert_eq!(result.split_stats.block16_split_committed, 16);
         assert_eq!(result.split_stats.block16_rect_overrides_split, 0);
+    }
+
+    /// Block16x16 SPLIT attempt whose first 8x8 child is infeasible.
+    #[test]
+    fn block16_split_stats_child_infeasible() {
+        let fc = FrameContext::new_default();
+        let pc = partition_costs(&fc);
+        let hint = uniform_hint(BlockSize::Block16x16);
+        let mut params = make_params(&pc, BlockSize::Block8x8, BlockSize::Block16x16);
+        params.allow_8x8_leaf = true;
+        let mut picker = |_x: usize, _y: usize, bs: BlockSize| {
+            if matches!(bs, BlockSize::Block8x8) {
+                return None;
+            }
+            let (rate, dist) = match bs {
+                BlockSize::Block16x16 => (10, 10),
+                _ => (10_000, 1_000_000),
+            };
+            Some(PartitionRdCandidate {
+                rate,
+                dist,
+                mv: Mv::ZERO,
+                mode: 0,
+                ref_frame: 0,
+            })
+        };
+        let result = nonrd_pick_partition(&hint, &params, &mut picker);
+
+        assert_eq!(result.split_stats.block16_attempts, 16);
+        assert_eq!(result.split_stats.block16_feasible, 0);
+        assert_eq!(result.split_stats.block16_infeasible_or_early, 16);
+        assert_eq!(result.split_stats.block16_child_infeasible, 16);
+        assert_eq!(result.split_stats.block16_partial_rd_early_out, 0);
+        assert_eq!(
+            result
+                .leaves
+                .iter()
+                .filter(|l| matches!(l.bsize, BlockSize::Block16x16))
+                .count(),
+            16
+        );
+    }
+
+    /// Block16x16 SPLIT attempt aborted by partial-RD early-out.
+    #[test]
+    fn block16_split_stats_partial_rd_early_out() {
+        let fc = FrameContext::new_default();
+        let pc = partition_costs(&fc);
+        let hint = uniform_hint(BlockSize::Block16x16);
+        let mut params = make_params(&pc, BlockSize::Block8x8, BlockSize::Block16x16);
+        params.allow_8x8_leaf = true;
+        let mut picker = |_x: usize, _y: usize, bs: BlockSize| {
+            let (rate, dist) = match bs {
+                BlockSize::Block16x16 => (1u32, 1u32),
+                BlockSize::Block8x8 => (10_000, 1_000_000_000),
+                _ => (10_000, 1_000_000),
+            };
+            Some(PartitionRdCandidate {
+                rate,
+                dist,
+                mv: Mv::ZERO,
+                mode: 0,
+                ref_frame: 0,
+            })
+        };
+        let result = nonrd_pick_partition(&hint, &params, &mut picker);
+
+        assert_eq!(result.split_stats.block16_attempts, 16);
+        assert_eq!(result.split_stats.block16_feasible, 0);
+        assert_eq!(result.split_stats.block16_infeasible_or_early, 16);
+        assert_eq!(result.split_stats.block16_child_infeasible, 0);
+        assert_eq!(result.split_stats.block16_partial_rd_early_out, 16);
+        assert_eq!(
+            result
+                .leaves
+                .iter()
+                .filter(|l| matches!(l.bsize, BlockSize::Block16x16))
+                .count(),
+            16
+        );
     }
 
     /// **Phase A OFF — 8×8 still never emitted by the descent.**
