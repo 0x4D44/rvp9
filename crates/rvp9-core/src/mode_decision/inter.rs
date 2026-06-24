@@ -41,20 +41,19 @@
 //!   will read `interp_filter = EightTap` from the per-block header
 //!   bits the encoder writes; switchable filter selection is an
 //!   F8.x-deferred feature.
-//! - **No TX-size search**: every block uses `max_txsize(block_size)`
-//!   capped at `Tx32x32` (libvpx's `tx_size_search` in the realtime
-//!   path is a per-block CBR speed feature; we always pick the maximum
-//!   transform size that fits in the block).
+//! - **Realtime TX-size selection**: the variance model's
+//!   `calculate_tx_size` chooses the candidate `tx_size`, matching the
+//!   `vp9_pickmode.c` speed 6+ path.
 //! - **Distortion metric**: post-recon SSE — the same divergence F8.0
 //!   already documents. libvpx-realtime's `block_yrd`
 //!   (`vp9_pickmode.c:1056-1110`) is a transform-coefficient-domain
 //!   model that approximates SSE via the quantized-coefficient
 //!   residual energy plus a quantizer-tuned scale; F8.1 computes the
 //!   exact pixel-domain SSE after the forward / inverse round-trip.
-//! - **No `skip_txfm[]` early-exit**: libvpx maintains a per-plane
-//!   skip-transform short-circuit (re-uses the previous block's
-//!   "all coefficients quantized to zero" flag) — F8.1 always runs the
-//!   full round-trip so the SSE is exact.
+//! - **Skip-transform surfacing**: the picker still runs the full
+//!   round-trip for an honest luma eob, then surfaces the winning
+//!   `SKIP_TXFM_AC_DC` decision so the encoder emit path can mirror
+//!   libvpx's luma-only fast skip.
 //! - **Block sizes**: support `Block16x16`, `Block32x32`, `Block64x64`.
 //!   Block16x16 / Block32x32 use a single transform per block;
 //!   Block64x64 decomposes into 4 × `Tx32x32` transforms tiled in
@@ -601,6 +600,15 @@ pub struct InterModeSearchResult {
     /// shortcuts). The writer reads this field to emit the per-block
     /// switchable-filter bits.
     pub picked_interp_filter: InterpFilter,
+    /// Realtime model-RD transform size chosen by `calculate_tx_size`
+    /// for this candidate. libvpx stores this on `mi->tx_size` with the
+    /// winning mode and the encode path reuses it.
+    pub picked_tx_size: TxSize,
+    /// Realtime luma skip-transform decision carried with the winning
+    /// candidate. Only `AcDc` has an encode-side effect in the `quant_fp`
+    /// path: luma transform blocks are written as zero-EOB; chroma still
+    /// runs fast quantization.
+    pub skip_txfm: SkipTxfm,
     /// G4 — Y-plane variance from `model_rd_for_sb_y`. Surfaced for
     /// the encode-breakout test in `pick_inter_mode`.
     pub var_y: u32,
@@ -1186,6 +1194,11 @@ pub struct PickInterModeResult {
     pub coef_dist: i64,
     /// F.5 — interpolation filter chosen by per-block filter search.
     pub picked_interp_filter: InterpFilter,
+    /// Realtime model-RD transform size chosen by the winning candidate.
+    pub picked_tx_size: TxSize,
+    /// Realtime luma skip-transform decision chosen with the winning
+    /// candidate. See [`InterModeSearchResult::skip_txfm`].
+    pub skip_txfm: SkipTxfm,
     /// The chosen reference frame (LastFrame, GoldenFrame, or
     /// IntraFrame when the intra fallback wins).
     pub picked_ref_frame: RefFrame,
@@ -1980,6 +1993,8 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                 coef_rate: candidate.coef_rate,
                 coef_dist: candidate.coef_dist,
                 picked_interp_filter: candidate.picked_interp_filter,
+                picked_tx_size: candidate.picked_tx_size,
+                skip_txfm: candidate.skip_txfm,
                 picked_ref_frame: ref_frame,
                 picked_intra_mode: None,
                 var_y: candidate.var_y,
@@ -2351,6 +2366,12 @@ fn evaluate_intra_fallback(
                 coef_rate: by.coef_rate,
                 coef_dist: by.coef_dist,
                 picked_interp_filter: InterpFilter::EightTap,
+                picked_tx_size,
+                skip_txfm: if by.skippable {
+                    SkipTxfm::AcDc
+                } else {
+                    SkipTxfm::None
+                },
                 picked_ref_frame: RefFrame::IntraFrame,
                 picked_intra_mode: Some(mode),
                 var_y: mrd.var_y,
@@ -3187,6 +3208,11 @@ fn evaluate_candidate_for_filter(
     let rd_encode = rd_cost(lambda, rate, dist_encode);
     let rd_skip = rd_cost(lambda, 0, dist_skip);
     let take_skip = y_skippable && rd_encode >= rd_skip;
+    let skip_txfm = if by.skippable || take_skip {
+        SkipTxfm::AcDc
+    } else {
+        SkipTxfm::None
+    };
     // `final_dist` is the PIXEL-domain dist surfaced on the result
     // (`best_distortion`, read by the encode-breakout test + F.0.2
     // oracle — both expect pixel SSE). `final_dist_rd` is the
@@ -3217,6 +3243,8 @@ fn evaluate_candidate_for_filter(
         coef_rate: by.coef_rate,
         coef_dist: by.coef_dist,
         picked_interp_filter: filter,
+        picked_tx_size: tx_size,
+        skip_txfm,
         var_y: mrd.var_y,
         sse_y: mrd.sse_y,
         early_term,

@@ -2333,12 +2333,11 @@ pub(crate) struct InterPartitionLeafDesc {
     /// W-COMPOUND — MV for the slot 1 (ALTREF) reference of a compound
     /// winner; `Mv::ZERO` for single-ref leaves.
     pub picked_mv2: Mv,
-    /// Track-F iter7 — per-block RD-chosen luma transform size. The inter
-    /// simulator's `choose_inter_luma_tx_size` (libvpx `super_block_yrd`)
-    /// fills this; both mi-grid builders splat it into `mi.tx_size` and
-    /// the modes writer signals it under `tx_mode = TxModeSelect`.
-    /// Defaults to `max_txsize(leaf_bsize)` (the pre-iter7 always-max
-    /// behaviour) on skip-fallback / intra-in-inter leaves.
+    /// Picked luma transform size splatted by both mi-grid builders and
+    /// signalled by the modes writer under `tx_mode = TxModeSelect`.
+    /// The default realtime emit path still fills this from its
+    /// emit-side RD redecision; `RVP9_RT_EMIT_TX_RD=0` reuses the
+    /// picker's `calculate_tx_size` model decision for diagnostics.
     pub picked_tx_size: TxSize,
 }
 
@@ -3042,10 +3041,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let mut rt_profile_final_leaves = 0usize;
     let mut rt_profile_picker_leaves = 0usize;
     let mut rt_profile_fallback_leaves = 0usize;
-    let rt_skip_picker_skip_emit = std::env::var_os("RVP9_RT_SKIP_PICKER_SKIP_EMIT").is_some();
     let env_flag_default =
         |key: &str, default: bool| std::env::var_os(key).map_or(default, |v| v != "0");
     let rt_emit_max_tx = env_flag_default("RVP9_RT_EMIT_MAX_TX", rt_large_recovery);
+    let rt_emit_tx_rd = env_flag_default("RVP9_RT_EMIT_TX_RD", true);
+    let rt_quant_fp = env_flag_default("RVP9_RT_QUANT_FP", false);
     let rt_reuse_descent_pick = env_flag_default("RVP9_RT_REUSE_DESCENT_PICK", rt_large_recovery);
     let a4_descent_cb_filter_search =
         env_flag_default("RVP9_A4_DESCENT_CB_FILTER", rt_large_recovery);
@@ -4514,6 +4514,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 coef_rate: 0,
                                 coef_dist: 0,
                                 picked_interp_filter: r.interp_filter,
+                                picked_tx_size: rvp9_core::block::max_txsize(leaf_bsize),
+                                skip_txfm: rvp9_core::mode_decision::model_rd::SkipTxfm::None,
                                 picked_ref_frame: r.ref_frame,
                                 picked_intra_mode: None,
                                 var_y: 0,
@@ -5354,16 +5356,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // decoder's `reconstruct_inter_block` plane / TX walk
                     // (rvp9-decoder::reconstruct_inter, lines 199-554).
                     //
-                    // Track-F iter7 — per-block TX-size RD selection. The Y
-                    // plane runs `choose_inter_luma_tx_size` (libvpx
-                    // `super_block_yrd` / `choose_tx_size_from_rd`) AFTER its
-                    // MC prediction is built; `chosen_luma_tx` then drives
-                    // the Y coding walk + the UV cap, and is stored on the
-                    // leaf so the writer signals it under `TxModeSelect`.
+                    // Start from the RT picker's model-RD TX decision so
+                    // `RVP9_RT_EMIT_TX_RD=0` can test libvpx-style reuse of
+                    // `mi->tx_size`. The default below still re-runs the
+                    // older emit-side RD redecision before coding Y.
                     if emit_profile_enabled {
                         emit_profile_inter_leaves += 1;
                     }
-                    let mut chosen_luma_tx = rvp9_core::block::max_txsize(leaf_bsize);
+                    let mut chosen_luma_tx = if rt_emit_max_tx {
+                        rvp9_core::block::max_txsize(leaf_bsize)
+                    } else {
+                        pick.picked_tx_size
+                    };
                     for plane in 0..3 {
                         let ss_x = F5_SUBSAMPLING_X[plane];
                         let ss_y = F5_SUBSAMPLING_Y[plane];
@@ -5533,48 +5537,33 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             emit_profile_pred_time += t0.elapsed();
                         }
 
-                        // RT diagnostic A/B: when the picker already
-                        // chose skip, keep the MC prediction and avoid the
-                        // residual TX/quant loop. The leaf-level
-                        // `leaf_total_eob == 0` logic below marks the wire
-                        // block skipped. Off by default while Stage 4a
-                        // measures the speed/quality tradeoff.
-                        if rt_skip_picker_skip_emit && pick.picker_skip {
-                            continue;
-                        }
-
-                        // Track-F iter7 — per-block TX-size RD selection.
-                        // `recon_plane` now holds the pure Y MC prediction
-                        // (residual not yet added) — the input the libvpx
-                        // `super_block_yrd` loop needs. Decide the Y tx_size
-                        // here, then re-derive the per-tile coding params
-                        // (`plane_tx` / `tx_step_4x4` / `tx_side`) from it.
-                        // For inter the prediction is TX-size-independent, so
-                        // this is a faithful RD-domain size search.
-                        if plane == 0 {
-                            if rt_emit_max_tx {
-                                chosen_luma_tx = rvp9_core::block::max_txsize(leaf_bsize);
+                        // Diagnostic A/B: `RVP9_RT_EMIT_TX_RD=0` reuses
+                        // the RT picker's model-RD TX decision, matching
+                        // libvpx pickmode's stored `mi->tx_size`. The
+                        // default remains the older good-quality emit-side
+                        // TX-size redecision until the coupled path is
+                        // quality-neutral.
+                        if plane == 0 && !rt_emit_max_tx && rt_emit_tx_rd {
+                            let emit_tx_select_start = if emit_profile_enabled {
+                                Some(std::time::Instant::now())
                             } else {
-                                let emit_tx_select_start = if emit_profile_enabled {
-                                    Some(std::time::Instant::now())
-                                } else {
-                                    None
-                                };
-                                chosen_luma_tx = choose_inter_luma_tx_size(InterLumaTxInput {
-                                    input_plane,
-                                    recon_plane,
-                                    plane_stride,
-                                    plane_px_x,
-                                    plane_px_y,
-                                    leaf_bsize,
-                                    quantizer: &quantizer,
-                                    coef_costs: &rdo_coef_costs,
-                                    rdmult: tx_rd_rdmult,
-                                    tx_size_cost: rdo_tx_size_cost,
-                                });
-                                if let Some(t0) = emit_tx_select_start {
-                                    emit_profile_tx_select_time += t0.elapsed();
-                                }
+                                None
+                            };
+                            chosen_luma_tx = choose_inter_luma_tx_size(InterLumaTxInput {
+                                input_plane,
+                                recon_plane,
+                                plane_stride,
+                                plane_px_x,
+                                plane_px_y,
+                                leaf_bsize,
+                                quantizer: &quantizer,
+                                coef_costs: &rdo_coef_costs,
+                                rdmult: tx_rd_rdmult,
+                                tx_size_cost: rdo_tx_size_cost,
+                                quant_fp: rt_quant_fp,
+                            });
+                            if let Some(t0) = emit_tx_select_start {
+                                emit_profile_tx_select_time += t0.elapsed();
                             }
                         }
                         let plane_tx = if plane == 0 {
@@ -5584,6 +5573,41 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         };
                         let tx_step_4x4 = 1usize << (plane_tx as usize);
                         let tx_side = plane_tx.side();
+
+                        // libvpx `vp9_encodemb.c:590-604`: in realtime
+                        // `quant_fp` mode, `SKIP_TXFM_AC_DC` skips only the
+                        // luma forward transform. Chroma is still quantized,
+                        // and if chroma produces coefficients the VP9 block
+                        // remains non-skip, so the writer still needs explicit
+                        // zero-EOB markers for every luma TX.
+                        if plane == 0
+                            && !rt_emit_max_tx
+                            && !rt_emit_tx_rd
+                            && rt_quant_fp
+                            && matches!(
+                                pick.skip_txfm,
+                                rvp9_core::mode_decision::model_rd::SkipTxfm::AcDc
+                            )
+                        {
+                            let mut tx_y4_local = 0usize;
+                            while tx_y4_local < plane_bh_4x4 {
+                                let mut tx_x4_local = 0usize;
+                                while tx_x4_local < plane_bw_4x4 {
+                                    coef_source.insert(
+                                        leaf_mi_row,
+                                        leaf_mi_col,
+                                        plane,
+                                        tx_x4_local,
+                                        tx_y4_local,
+                                        Vec::new(),
+                                        0,
+                                    );
+                                    tx_x4_local += tx_step_4x4;
+                                }
+                                tx_y4_local += tx_step_4x4;
+                            }
+                            continue;
+                        }
 
                         // Per-TX residual emission. Walk in plane 4×4
                         // raster (same order the writer walks).
@@ -5667,6 +5691,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                         &quantizer,
                                         usize::from(plane != 0),
                                         trellis_ctx,
+                                        rt_quant_fp,
                                     );
                                 if let Some(t0) = emit_quant_start {
                                     emit_profile_quant_time += t0.elapsed();
@@ -6435,8 +6460,12 @@ fn inter_forward_quant_one_tx(
     quantizer: &rvp9_core::quant::forward::PlaneQuantizers,
     plane_type: usize,
     trellis: Option<TrellisCtx<'_>>,
+    quant_fp: bool,
 ) -> (Vec<i32>, Vec<i32>, usize) {
-    use rvp9_core::quant::forward::{scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32};
+    use rvp9_core::quant::forward::{
+        scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32, vp9_quantize_fp,
+        vp9_quantize_fp_32x32,
+    };
     use rvp9_core::transforms::TxType;
     use rvp9_core::transforms::forward::{fdct8x8, fdct16x16, fdct32x32, fht4x4};
     use rvp9_core::transforms::scans::scan_for;
@@ -6473,32 +6502,58 @@ fn inter_forward_quant_one_tx(
     let dequant_pair = [quantizer.dequant[0], quantizer.dequant[1]];
     let mut qcoeff_i16 = [0i16; 1024];
     let mut dqcoeff_i16 = [0i16; 1024];
-    let eob = match plane_tx {
-        TxSize::Tx32x32 => vp9_quantize_b_32x32(
-            &coefs,
-            /* skip_block = */ false,
-            &quantizer.zbin,
-            &quantizer.round,
-            &quantizer.quant,
-            &quantizer.quant_shift,
-            &mut qcoeff_i16[..n],
-            &mut dqcoeff_i16[..n],
-            &dequant_pair,
-            scan_slice,
-        ),
-        _ => vp9_quantize_b(
-            &coefs,
-            n,
-            /* skip_block = */ false,
-            &quantizer.zbin,
-            &quantizer.round,
-            &quantizer.quant,
-            &quantizer.quant_shift,
-            &mut qcoeff_i16,
-            &mut dqcoeff_i16,
-            &dequant_pair,
-            scan_slice,
-        ),
+    let eob = if quant_fp {
+        match plane_tx {
+            TxSize::Tx32x32 => vp9_quantize_fp_32x32(
+                &coefs,
+                /* skip_block = */ false,
+                &quantizer.round_fp,
+                &quantizer.quant_fp,
+                &mut qcoeff_i16[..n],
+                &mut dqcoeff_i16[..n],
+                &dequant_pair,
+                scan_slice,
+            ),
+            _ => vp9_quantize_fp(
+                &coefs,
+                n,
+                /* skip_block = */ false,
+                &quantizer.round_fp,
+                &quantizer.quant_fp,
+                &mut qcoeff_i16,
+                &mut dqcoeff_i16,
+                &dequant_pair,
+                scan_slice,
+            ),
+        }
+    } else {
+        match plane_tx {
+            TxSize::Tx32x32 => vp9_quantize_b_32x32(
+                &coefs,
+                /* skip_block = */ false,
+                &quantizer.zbin,
+                &quantizer.round,
+                &quantizer.quant,
+                &quantizer.quant_shift,
+                &mut qcoeff_i16[..n],
+                &mut dqcoeff_i16[..n],
+                &dequant_pair,
+                scan_slice,
+            ),
+            _ => vp9_quantize_b(
+                &coefs,
+                n,
+                /* skip_block = */ false,
+                &quantizer.zbin,
+                &quantizer.round,
+                &quantizer.quant,
+                &quantizer.quant_shift,
+                &mut qcoeff_i16,
+                &mut dqcoeff_i16,
+                &dequant_pair,
+                scan_slice,
+            ),
+        }
     };
 
     let eob = maybe_trellis(
@@ -6947,10 +7002,14 @@ struct InterLumaTxInput<'a> {
     coef_costs: &'a rvp9_core::cost::coef_cost::CoefCostTable,
     rdmult: i64,
     tx_size_cost: [u32; 4],
+    quant_fp: bool,
 }
 
 fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
-    use rvp9_core::quant::forward::{scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32};
+    use rvp9_core::quant::forward::{
+        scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32, vp9_quantize_fp,
+        vp9_quantize_fp_32x32,
+    };
     use rvp9_core::transforms::TxType;
     use rvp9_core::transforms::forward::{fdct8x8, fdct16x16, fdct32x32, fht4x4};
     use rvp9_core::transforms::scans::scan_for;
@@ -6966,6 +7025,7 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
         coef_costs,
         rdmult,
         tx_size_cost,
+        quant_fp,
     } = input;
 
     let max_tx = rvp9_core::block::max_txsize(leaf_bsize);
@@ -7057,32 +7117,58 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
                         coefs.copy_from_slice(&buf[..]);
                     }
                 }
-                let eob = match tx_size {
-                    TxSize::Tx32x32 => vp9_quantize_b_32x32(
-                        &coefs,
-                        false,
-                        &quantizer.zbin,
-                        &quantizer.round,
-                        &quantizer.quant,
-                        &quantizer.quant_shift,
-                        &mut qcoeff_i16[..ncoef],
-                        &mut dqcoeff_i16[..ncoef],
-                        &dequant_pair,
-                        scan_slice,
-                    ),
-                    _ => vp9_quantize_b(
-                        &coefs,
-                        ncoef,
-                        false,
-                        &quantizer.zbin,
-                        &quantizer.round,
-                        &quantizer.quant,
-                        &quantizer.quant_shift,
-                        &mut qcoeff_i16,
-                        &mut dqcoeff_i16,
-                        &dequant_pair,
-                        scan_slice,
-                    ),
+                let eob = if quant_fp {
+                    match tx_size {
+                        TxSize::Tx32x32 => vp9_quantize_fp_32x32(
+                            &coefs,
+                            false,
+                            &quantizer.round_fp,
+                            &quantizer.quant_fp,
+                            &mut qcoeff_i16[..ncoef],
+                            &mut dqcoeff_i16[..ncoef],
+                            &dequant_pair,
+                            scan_slice,
+                        ),
+                        _ => vp9_quantize_fp(
+                            &coefs,
+                            ncoef,
+                            false,
+                            &quantizer.round_fp,
+                            &quantizer.quant_fp,
+                            &mut qcoeff_i16,
+                            &mut dqcoeff_i16,
+                            &dequant_pair,
+                            scan_slice,
+                        ),
+                    }
+                } else {
+                    match tx_size {
+                        TxSize::Tx32x32 => vp9_quantize_b_32x32(
+                            &coefs,
+                            false,
+                            &quantizer.zbin,
+                            &quantizer.round,
+                            &quantizer.quant,
+                            &quantizer.quant_shift,
+                            &mut qcoeff_i16[..ncoef],
+                            &mut dqcoeff_i16[..ncoef],
+                            &dequant_pair,
+                            scan_slice,
+                        ),
+                        _ => vp9_quantize_b(
+                            &coefs,
+                            ncoef,
+                            false,
+                            &quantizer.zbin,
+                            &quantizer.round,
+                            &quantizer.quant,
+                            &quantizer.quant_shift,
+                            &mut qcoeff_i16,
+                            &mut dqcoeff_i16,
+                            &dequant_pair,
+                            scan_slice,
+                        ),
+                    }
                 };
                 // Transform-domain distortion: vp9_block_error >> shift.
                 let (err, _ssz) = crate::rdo::block_error::vp9_block_error(
