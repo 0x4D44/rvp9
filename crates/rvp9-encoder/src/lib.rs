@@ -2403,6 +2403,53 @@ fn p8_default_enabled(rt_large_recovery: bool, rc_mode: crate::rate_control::RcM
     !rt_large_recovery && !matches!(rc_mode, crate::rate_control::RcMode::Vbr)
 }
 
+fn variance_hint_cell_code(bs: BlockSize) -> &'static str {
+    match bs {
+        BlockSize::Block8x8 => "8",
+        BlockSize::Block16x16 => "16",
+        BlockSize::Block32x32 => "32",
+        BlockSize::Block64x64 => "64",
+        _ => "other",
+    }
+}
+
+fn dump_variance_hint_cells(
+    base_qindex: u8,
+    sb_row: usize,
+    sb_col: usize,
+    hint: &rvp9_core::mode_decision::partition::PartitionDecision,
+) {
+    let mut area8_counts = [0usize; 4];
+    let mut grid = String::new();
+    for (r, row) in hint.cells.iter().enumerate() {
+        if r != 0 {
+            grid.push('/');
+        }
+        for (c, &bs) in row.iter().enumerate() {
+            if c != 0 {
+                grid.push(',');
+            }
+            grid.push_str(variance_hint_cell_code(bs));
+            match bs {
+                BlockSize::Block8x8 => area8_counts[0] += 1,
+                BlockSize::Block16x16 => area8_counts[1] += 1,
+                BlockSize::Block32x32 => area8_counts[2] += 1,
+                BlockSize::Block64x64 => area8_counts[3] += 1,
+                _ => {}
+            }
+        }
+    }
+
+    #[allow(clippy::print_stderr)]
+    {
+        eprintln!(
+            "RVP9_VARIANCE_HINT_DUMP q={base_qindex} sb=({sb_row},{sb_col}) \
+             area8_hist 8x8={} 16x16={} 32x32={} 64x64={} grid={grid}",
+            area8_counts[0], area8_counts[1], area8_counts[2], area8_counts[3]
+        );
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // AQ.1 added `seg_q_deltas`; the
 // remaining args are all load-bearing per-frame inputs that don't
 // reduce to a meaningful struct yet — revisit when AQ.3 lands.
@@ -3021,6 +3068,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let mut emit_profile_eob_sum = 0usize;
     let mut emit_profile_plane_tx_blocks = [0usize; 3];
     let a4_profile_enabled = std::env::var_os("RVP9_A4_PROFILE").is_some();
+    let variance_hint_dump_enabled =
+        std::env::var_os("RVP9_VARIANCE_HINT_DUMP").is_some_and(|v| v != "0");
     let mut a4_profile_calls = [0usize; rvp9_core::block::BLOCK_SIZES];
     let mut a4_profile_pick_time = [std::time::Duration::ZERO; rvp9_core::block::BLOCK_SIZES];
     let rt_profile_phase2_reused_start = if rt_profile_enabled {
@@ -3201,6 +3250,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     }
                 }
                 let hint = PartitionDecision { cells: hint_cells };
+                if variance_hint_dump_enabled {
+                    dump_variance_hint_cells(base_qindex, sb_row, sb_col, &hint);
+                }
 
                 // 2. Derive (min, max) bounds (libvpx
                 //    `x->{min,max}_partition_size`) via the
