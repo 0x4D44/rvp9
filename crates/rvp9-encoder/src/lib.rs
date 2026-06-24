@@ -2402,6 +2402,15 @@ fn p8_default_enabled(rt_large_recovery: bool, rc_mode: crate::rate_control::RcM
     !rt_large_recovery && !matches!(rc_mode, crate::rate_control::RcMode::Vbr)
 }
 
+fn p8_vbr_qmax_enabled(
+    rt_large_recovery: bool,
+    rc_mode: crate::rate_control::RcMode,
+    base_qindex: u8,
+    qmax: u8,
+) -> bool {
+    !rt_large_recovery && matches!(rc_mode, crate::rate_control::RcMode::Vbr) && base_qindex <= qmax
+}
+
 fn variance_hint_cell_code(bs: BlockSize) -> &'static str {
     match bs {
         BlockSize::Block8x8 => "8",
@@ -2828,12 +2837,21 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // ON for fixed-Q / CBR-style paths where matched-Q Foreman improves,
     // but OFF for one-pass VBR where the Stage 4a real-content curve
     // improves without the 8×8 floor. Set `RVP9_P8=1` or `RVP9_P8=0`
-    // as an explicit override. When ON, the descent lowers its
-    // `min_partition_size` floor to Block8x8 so Block16x16 may SPLIT into
-    // four 8×8 NONE leaves and 8×8 becomes a valid NONE candidate.
+    // as an explicit override. `RVP9_P8_QMAX=<q>` is a VBR-only diagnostic
+    // for allowing 8×8 descent on low-q/high-rate frames without reopening
+    // the low-rate overspend seen in the full P8 and DIRECT probes. When ON,
+    // the descent lowers its `min_partition_size` floor to Block8x8 so
+    // Block16x16 may SPLIT into four 8×8 NONE leaves and 8×8 becomes a valid
+    // NONE candidate.
     let p8_enabled = std::env::var("RVP9_P8")
         .map(|v| v != "0")
-        .unwrap_or_else(|_| p8_default_enabled(rt_large_recovery, rc_mode));
+        .unwrap_or_else(|_| {
+            std::env::var("RVP9_P8_QMAX")
+                .ok()
+                .and_then(|v| v.parse::<u8>().ok())
+                .map(|qmax| p8_vbr_qmax_enabled(rt_large_recovery, rc_mode, base_qindex, qmax))
+                .unwrap_or_else(|| p8_default_enabled(rt_large_recovery, rc_mode))
+        });
     let f3_partition_costs = if f3_nonrd_partition_enabled {
         // Diagnostic only: libvpx sources partition_cost from the live frame
         // context, but the Stage 4a VBR gate is BD-negative with that source
@@ -7503,6 +7521,15 @@ mod tests {
         assert!(p8_default_enabled(false, RcMode::Cq));
         assert!(p8_default_enabled(false, RcMode::Q));
         assert!(!p8_default_enabled(true, RcMode::Cbr));
+    }
+
+    #[test]
+    fn p8_qmax_is_vbr_low_q_only() {
+        assert!(p8_vbr_qmax_enabled(false, RcMode::Vbr, 180, 180));
+        assert!(p8_vbr_qmax_enabled(false, RcMode::Vbr, 170, 180));
+        assert!(!p8_vbr_qmax_enabled(false, RcMode::Vbr, 181, 180));
+        assert!(!p8_vbr_qmax_enabled(false, RcMode::Cbr, 170, 180));
+        assert!(!p8_vbr_qmax_enabled(true, RcMode::Vbr, 170, 180));
     }
 
     #[test]
