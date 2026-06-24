@@ -1077,7 +1077,6 @@ fn build_mc_border(
 /// [`ScaleFactors::scaled_y_q4`]). `ref_plane` is the bordered view
 /// of the ref plane; `crop` is the visible (cropped) dimensions of
 /// the same plane.
-#[allow(clippy::too_many_arguments)] // mirrors libvpx 1:1
 #[allow(clippy::too_many_arguments)]
 fn build_inter_predictor_with_mc_border(
     ref_plane: &BorderedPlaneRef<'_>,

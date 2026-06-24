@@ -93,14 +93,13 @@ pub fn mv_pred_sad_seed(
         // candidate.
         if let Some(sad) =
             raw_sad_at_mv(block_size, src_plane, src_offset, ref_plane, fp_row, fp_col)
+            && sad < best_sad
         {
-            if sad < best_sad {
-                best_sad = sad;
-                best_mv = Mv {
-                    row: fp_row * 8,
-                    col: fp_col * 8,
-                };
-            }
+            best_sad = sad;
+            best_mv = Mv {
+                row: fp_row * 8,
+                col: fp_col * 8,
+            };
         }
     }
 

@@ -179,7 +179,7 @@ fn vp9_init_search_range(size: u32) -> i32 {
         s >>= 1;
         sr += 1;
     }
-    sr.min(MAX_MVSEARCH_STEPS_RDO - 2).max(0)
+    sr.clamp(0, MAX_MVSEARCH_STEPS_RDO - 2)
 }
 
 /// libvpx `b_width_log2_lookup` for the libvpx 13 block sizes.

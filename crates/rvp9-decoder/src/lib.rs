@@ -2062,7 +2062,7 @@ impl Decoder {
             // `()`. Either way control flow is identical — only the
             // closure's return type changes, which `cfg` resolves at
             // parse time.
-            let _submit_done_cycles = self.worker_pool.scope(|scope| {
+            self.worker_pool.scope(|scope| {
                 for (tile_idx, tile_buf) in buffers.iter().enumerate() {
                     let bounds = per_tile_bounds[tile_idx];
                     let tile_data: &[u8] = tile_buf.data;
@@ -2443,10 +2443,10 @@ impl Decoder {
         // Wave-4 reuse: same `Arc::try_unwrap` recovery as the inter
         // path — claim the Vec back if it isn't externally shared so
         // the next (inter) frame can skip the allocation.
-        if let Some(arc) = self.prev_frame_mv_grid.take() {
-            if let Ok(vec) = std::sync::Arc::try_unwrap(arc) {
-                self.scratch_mv_grid = vec;
-            }
+        if let Some(arc) = self.prev_frame_mv_grid.take()
+            && let Ok(vec) = std::sync::Arc::try_unwrap(arc)
+        {
+            self.scratch_mv_grid = vec;
         }
         self.prev_frame_mv_grid_dims = (0, 0);
 
@@ -3423,7 +3423,7 @@ impl Decoder {
 
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             let t_submit_start = profile::now_cycles();
-            let _submit_done_cycles = self.worker_pool.scope(|scope| {
+            self.worker_pool.scope(|scope| {
                 for (tile_idx, tile_buf) in buffers.iter().enumerate() {
                     let bounds = per_tile_bounds[tile_idx];
                     let tile_data: &[u8] = tile_buf.data;
@@ -3898,17 +3898,16 @@ impl Decoder {
         // drop the local handle — one strong-ref decrement, nothing
         // else changes. See the `scratch_mv_grid` field doc for
         // recovery-rate notes.
-        let old_prev_mv =
-            std::mem::replace(&mut self.prev_frame_mv_grid, Some(cur_mv_grid_arc.clone()));
-        if let Some(arc) = old_prev_mv {
-            if let Ok(vec) = std::sync::Arc::try_unwrap(arc) {
-                self.scratch_mv_grid = vec;
-            }
-            // Else: Arc still shared via mv_grids[i]; drop it here
-            // (the slot clones keep the data alive). No leak — the
-            // Arc's last owner will drop the Vec when its
-            // refresh_frame_flags bit gets cleared in a future frame.
+        let old_prev_mv = self.prev_frame_mv_grid.replace(cur_mv_grid_arc.clone());
+        if let Some(arc) = old_prev_mv
+            && let Ok(vec) = std::sync::Arc::try_unwrap(arc)
+        {
+            self.scratch_mv_grid = vec;
         }
+        // Else: Arc still shared via mv_grids[i]; drop it here
+        // (the slot clones keep the data alive). No leak — the
+        // Arc's last owner will drop the Vec when its
+        // refresh_frame_flags bit gets cleared in a future frame.
         self.prev_frame_mv_grid_dims = (mi_rows, mi_cols);
 
         self.last_frame_was_key = false;

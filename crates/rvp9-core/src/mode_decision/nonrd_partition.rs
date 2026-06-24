@@ -975,47 +975,43 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
         // `partition_horz_allowed` / `partition_vert_allowed` short-
         // circuit at `:4343` / `:4393`).
         let horz_step = rect_half_step_8x8(bsize);
-        if allow_horz {
-            if let Some(sub) = subsize_for_horz(bsize) {
-                let horz_cost = params.partition_costs[part_ctx][PARTITION_HORZ_IDX].max(0) as u32;
-                // Top half at (row, col); bottom half at (row + hbs, col).
-                if let (Some(top), Some(bot)) = (
-                    feasible_rect_pick(picker, col_8x8, row_8x8, sub),
-                    (row_8x8 + horz_step < SB_GRID)
-                        .then(|| feasible_rect_pick(picker, col_8x8, row_8x8 + horz_step, sub))
-                        .flatten(),
-                ) {
-                    let sum_rate = top.rate.saturating_add(bot.rate).saturating_add(horz_cost);
-                    let sum_dist = top.dist.saturating_add(bot.dist);
-                    let rdc = rd_cost(params.rd_mult, sum_rate, u64::from(sum_dist));
-                    if rdc < best_rd_cost {
-                        best_rd_cost = rdc;
-                        rect_pick = Some((PartitionType::Horz, top, bot));
-                    }
+        if allow_horz && let Some(sub) = subsize_for_horz(bsize) {
+            let horz_cost = params.partition_costs[part_ctx][PARTITION_HORZ_IDX].max(0) as u32;
+            // Top half at (row, col); bottom half at (row + hbs, col).
+            if let (Some(top), Some(bot)) = (
+                feasible_rect_pick(picker, col_8x8, row_8x8, sub),
+                (row_8x8 + horz_step < SB_GRID)
+                    .then(|| feasible_rect_pick(picker, col_8x8, row_8x8 + horz_step, sub))
+                    .flatten(),
+            ) {
+                let sum_rate = top.rate.saturating_add(bot.rate).saturating_add(horz_cost);
+                let sum_dist = top.dist.saturating_add(bot.dist);
+                let rdc = rd_cost(params.rd_mult, sum_rate, u64::from(sum_dist));
+                if rdc < best_rd_cost {
+                    best_rd_cost = rdc;
+                    rect_pick = Some((PartitionType::Horz, top, bot));
                 }
             }
         }
         let vert_step = rect_half_step_8x8(bsize);
-        if allow_vert {
-            if let Some(sub) = subsize_for_vert(bsize) {
-                let vert_cost = params.partition_costs[part_ctx][PARTITION_VERT_IDX].max(0) as u32;
-                // Left half at (row, col); right half at (row, col + hbs).
-                if let (Some(left_pick), Some(right_pick)) = (
-                    feasible_rect_pick(picker, col_8x8, row_8x8, sub),
-                    (col_8x8 + vert_step < SB_GRID)
-                        .then(|| feasible_rect_pick(picker, col_8x8 + vert_step, row_8x8, sub))
-                        .flatten(),
-                ) {
-                    let sum_rate = left_pick
-                        .rate
-                        .saturating_add(right_pick.rate)
-                        .saturating_add(vert_cost);
-                    let sum_dist = left_pick.dist.saturating_add(right_pick.dist);
-                    let rdc = rd_cost(params.rd_mult, sum_rate, u64::from(sum_dist));
-                    if rdc < best_rd_cost {
-                        best_rd_cost = rdc;
-                        rect_pick = Some((PartitionType::Vert, left_pick, right_pick));
-                    }
+        if allow_vert && let Some(sub) = subsize_for_vert(bsize) {
+            let vert_cost = params.partition_costs[part_ctx][PARTITION_VERT_IDX].max(0) as u32;
+            // Left half at (row, col); right half at (row, col + hbs).
+            if let (Some(left_pick), Some(right_pick)) = (
+                feasible_rect_pick(picker, col_8x8, row_8x8, sub),
+                (col_8x8 + vert_step < SB_GRID)
+                    .then(|| feasible_rect_pick(picker, col_8x8 + vert_step, row_8x8, sub))
+                    .flatten(),
+            ) {
+                let sum_rate = left_pick
+                    .rate
+                    .saturating_add(right_pick.rate)
+                    .saturating_add(vert_cost);
+                let sum_dist = left_pick.dist.saturating_add(right_pick.dist);
+                let rdc = rd_cost(params.rd_mult, sum_rate, u64::from(sum_dist));
+                if rdc < best_rd_cost {
+                    best_rd_cost = rdc;
+                    rect_pick = Some((PartitionType::Vert, left_pick, right_pick));
                 }
             }
         }

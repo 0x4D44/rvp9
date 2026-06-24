@@ -94,7 +94,7 @@ fn synthetic_frames() -> Vec<Frame> {
                         // High-frequency texture: depends on both x and y
                         // at a fine pitch → lots of residual energy.
                         let t = ((row as i32 + phase) ^ (col as i32 * 2 + phase)) & 0xFF;
-                        let stripe = (((row as i32 + col as i32 + phase) / 2) & 0x3F) as i32;
+                        let stripe = ((row as i32 + col as i32 + phase) / 2) & 0x3F;
                         ((t + stripe) & 0xFF) as u8
                     } else {
                         // Flat-ish: a gentle gradient, cheap to code.

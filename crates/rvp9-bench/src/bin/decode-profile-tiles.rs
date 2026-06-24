@@ -20,7 +20,7 @@
 //! Defaults match the HLD §4.2 procedure.
 
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use rvp9_decoder::{DecodeError, Decoder};
@@ -107,7 +107,7 @@ fn cpu_mhz() -> f64 {
 }
 
 fn drive_one_run(
-    fixture: &PathBuf,
+    fixture: &Path,
     threads: NonZeroUsize,
     warmup: usize,
     min_timed: usize,

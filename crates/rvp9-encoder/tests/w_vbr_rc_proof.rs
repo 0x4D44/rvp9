@@ -145,8 +145,8 @@ fn vbr_q_respects_active_best_and_active_worst_bounds_every_frame() {
 /// VBR's per-frame target differs structurally by frame type:
 /// - KF target = `avg_bw * kf_ratio (= 25)` — libvpx `vp9_ratectrl.c:2039-2048`.
 /// - Inter target = `avg_bw * baseline_gf_interval / (baseline_gf_interval
-///   + af_ratio - 1)` ≈ `0.625 * avg_bw` — libvpx `vp9_ratectrl.c:
-///   2019-2037`.
+///   + af_ratio - 1)`, roughly `0.625 * avg_bw`; see libvpx
+///   `vp9_ratectrl.c:2019-2037`.
 /// Combined with the different `active_best` floors
 /// (`get_kf_active_quality` vs `inter_minq`), the picked Q must differ
 /// between the keyframe and subsequent inter frames. We compare frame 0

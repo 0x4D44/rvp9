@@ -695,13 +695,13 @@ unsafe fn idct32x32_add_sse2_1024_inner(input: &[i32; 1024], dst: &mut [u8], str
     // 1-D 32-pt idct over all 32 register positions. The output is
     // saved into `col[strip][..]`.
     let mut input_ptr = input.as_ptr();
-    for strip in 0..4 {
+    for col_strip in &mut col {
         load_transpose_16bit_8x8(input_ptr, 32, &mut io[0..8]);
         load_transpose_16bit_8x8(input_ptr.add(8), 32, &mut io[8..16]);
         load_transpose_16bit_8x8(input_ptr.add(16), 32, &mut io[16..24]);
         load_transpose_16bit_8x8(input_ptr.add(24), 32, &mut io[24..32]);
 
-        idct32_1024_8x32(&io, &mut col[strip]);
+        idct32_1024_8x32(&io, col_strip);
 
         // libvpx: `input += 32 << 3;` — advance to next 8-row strip.
         input_ptr = input_ptr.add(32 * 8);
@@ -1007,10 +1007,10 @@ unsafe fn idct32x32_add_sse2_135_inner(input: &[i32; 1024], dst: &mut [u8], stri
     // confines coefs to top-left 16x16, so rows 16..32 and cols 16..32
     // are all zero. We load 2× 8x8 sub-blocks per strip (cols 0..16).
     let mut input_ptr = input.as_ptr();
-    for strip in 0..2 {
+    for col_strip in &mut col {
         load_transpose_16bit_8x8(input_ptr, 32, &mut in_[..8]);
         load_transpose_16bit_8x8(input_ptr.add(8), 32, &mut in_[8..16]);
-        idct32_1024_8x32(&in_, &mut col[strip]);
+        idct32_1024_8x32(&in_, col_strip);
         input_ptr = input_ptr.add(32 * 8);
     }
 

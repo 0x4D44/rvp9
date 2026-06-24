@@ -3054,18 +3054,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     i32::from(base_qindex),
                     rvp9_core::cost::FrameTypeForRd::Inter,
                 ) as i32;
-                let delta = crate::tpl::get_rdmult_delta(
-                    tf,
-                    sb_row * 8,
-                    sb_col * 8,
-                    rvp9_core::block::BlockSize::Block64x64,
-                    orig,
+                let delta = crate::tpl::get_rdmult_delta(crate::tpl::RdmultDeltaParams {
+                    tpl_frame: tf,
+                    mi_row: sb_row * 8,
+                    mi_col: sb_col * 8,
+                    bsize: rvp9_core::block::BlockSize::Block64x64,
+                    orig_rdmult: orig,
                     r0,
-                    mi_rows_us,
-                    mi_cols_us,
-                    /* gf_group_index = */ 1,
-                    /* layer_depth   = */ 0,
-                );
+                    frame_mi_rows: mi_rows_us,
+                    frame_mi_cols: mi_cols_us,
+                    gf_group_index: 1,
+                    layer_depth: 0,
+                });
                 if delta.used_tpl && delta.cb_rdmult != orig {
                     Some(delta.cb_rdmult)
                 } else {
@@ -3265,7 +3265,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 //    block ends, freeing the mutable borrows
                 //    that the per-leaf loop needs.
                 let mi_grid_ro: &[Option<rvp9_core::mode_info::ModeInfo>] = &mi_grid;
-                let recon_y_ro: &[u8] = &recon_yuv_out.0;
+                let recon_y_ro: &[u8] = recon_yuv_out.0;
                 let mut descent_picker = |sb_local_x_8x8: usize, sb_local_y_8x8: usize, bs: BS| {
                     let leaf_mi_row = sb_row * 8 + sb_local_y_8x8;
                     let leaf_mi_col = sb_col * 8 + sb_local_x_8x8;
@@ -4241,7 +4241,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let intra_left: Option<&[u8]>;
                 let intra_top_left: u8;
                 {
-                    let recon_y: &[u8] = &recon_yuv_out.0;
+                    let recon_y: &[u8] = recon_yuv_out.0;
                     if intra_have_above {
                         let row_off = (leaf_px_y - 1) * w + leaf_px_x;
                         let n = bw.min(w - leaf_px_x);
@@ -4481,15 +4481,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         None
                     };
 
-                // P20 — re-borrow the persistent RD-threshold table
-                // immutably for the picker. The mutable borrow for
-                // the post-pick `update_thresh_freq_fact` call below
-                // is acquired separately after `unified_pick` returns
-                // so the borrows do not overlap.
-                let rd_thresh_table_ref: Option<
-                    &rvp9_core::mode_decision::rd_thresh::RdThreshTable,
-                > = Some(&*rd_thresh_table);
-
                 // Phase-2 option-A — reuse the partition descent's cached
                 // NEWMV search for this committed leaf. The cache holds the
                 // descent's full picker result keyed by (position, bsize);
@@ -4631,7 +4622,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // at cpu-used 6+, vp9_speed_features.c:752 sets
                     // `sf.adaptive_rd_thresh = 4`, matched in
                     // mode_decision::rd_thresh::ADAPTIVE_RD_THRESH).
-                    rd_thresh_table: rd_thresh_table_ref,
+                    rd_thresh_table: Some(&*rd_thresh_table),
                     // §10 — content-adaptive picker gates. rvp9 has no
                     // noise estimator / skin detector / scene-change
                     // detector / content-state classifier / source-SAD
@@ -4750,11 +4741,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     rt_profile_final_pick_time += t0.elapsed();
                     rt_profile_picker_leaves += 1;
                 }
-                // P20 — drop the immutable borrow held by `pick_params`
-                // so the mutable update can proceed.
-                drop(pick_params);
-                let _ = rd_thresh_table_ref; // consume binding
-
                 // P20 — update `thresh_freq_fact` after the pick.
                 // Mirrors libvpx `vp9_pickmode.c:2725-2738`: decay the
                 // winning (ref, mode) slot's fact and increment every
@@ -5522,18 +5508,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 } else {
                                     None
                                 };
-                                chosen_luma_tx = choose_inter_luma_tx_size(
+                                chosen_luma_tx = choose_inter_luma_tx_size(InterLumaTxInput {
                                     input_plane,
                                     recon_plane,
                                     plane_stride,
                                     plane_px_x,
                                     plane_px_y,
                                     leaf_bsize,
-                                    &quantizer,
-                                    &rdo_coef_costs,
-                                    tx_rd_rdmult,
-                                    rdo_tx_size_cost,
-                                );
+                                    quantizer: &quantizer,
+                                    coef_costs: &rdo_coef_costs,
+                                    rdmult: tx_rd_rdmult,
+                                    tx_size_cost: rdo_tx_size_cost,
+                                });
                                 if let Some(t0) = emit_tx_select_start {
                                     emit_profile_tx_select_time += t0.elapsed();
                                 }
@@ -6140,7 +6126,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 /// the decoder's border-extended one even when the MV points off-edge.
 /// (Previously this assumed the footprint always stayed in-bounds, which
 /// silently read wrong pixels near edges and caused inter-frame drift.)
-
+///
 /// `VP9_INTERP_EXTEND` (libvpx `yv12config.h:25`). The 8-tap convolve
 /// footprint extends by `VP9_INTERP_EXTEND - 1 = 3` leading and
 /// `VP9_INTERP_EXTEND = 4` trailing samples on any sub-pel-filtered axis.
@@ -6898,22 +6884,37 @@ fn intra_quant_one_tx(
 ///
 /// Returns the chosen luma `TxSize`. The caller then codes the leaf with
 /// it and the writer signals it (under `tx_mode = TxModeSelect`).
-fn choose_inter_luma_tx_size(
-    input_plane: &[u8],
-    recon_plane: &[u8],
+struct InterLumaTxInput<'a> {
+    input_plane: &'a [u8],
+    recon_plane: &'a [u8],
     plane_stride: usize,
     plane_px_x: usize,
     plane_px_y: usize,
     leaf_bsize: BlockSize,
-    quantizer: &rvp9_core::quant::forward::PlaneQuantizers,
-    coef_costs: &rvp9_core::cost::coef_cost::CoefCostTable,
+    quantizer: &'a rvp9_core::quant::forward::PlaneQuantizers,
+    coef_costs: &'a rvp9_core::cost::coef_cost::CoefCostTable,
     rdmult: i64,
     tx_size_cost: [u32; 4],
-) -> TxSize {
+}
+
+fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
     use rvp9_core::quant::forward::{scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32};
     use rvp9_core::transforms::TxType;
     use rvp9_core::transforms::forward::{fdct8x8, fdct16x16, fdct32x32, fht4x4};
     use rvp9_core::transforms::scans::scan_for;
+
+    let InterLumaTxInput {
+        input_plane,
+        recon_plane,
+        plane_stride,
+        plane_px_x,
+        plane_px_y,
+        leaf_bsize,
+        quantizer,
+        coef_costs,
+        rdmult,
+        tx_size_cost,
+    } = input;
 
     let max_tx = rvp9_core::block::max_txsize(leaf_bsize);
     // Sub-8 leaves only have Tx4x4 — no decision to make.
@@ -7623,9 +7624,8 @@ mod tests {
             "F02 oracle should have recorded ≥1 decision when enabled",
         );
 
-        unsafe {
-            std::env::remove_var(key);
-        }
+        // SAFETY: serialised via env_test_mutex.
+        unsafe { std::env::remove_var(key) };
         crate::f02_oracle::init_from_env();
         assert!(!crate::f02_oracle::is_enabled());
     }
@@ -7634,6 +7634,7 @@ mod tests {
     fn encode_with_e12_oracle_enabled_runs_record_paths() {
         let _guard = env_test_mutex();
         let key = "RVP9_E12_ORACLE";
+        // SAFETY: serialised via env_test_mutex.
         unsafe {
             std::env::set_var(key, "1");
         }
@@ -7646,9 +7647,8 @@ mod tests {
         let inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
         assert!(inter.actual_bits > 0);
 
-        unsafe {
-            std::env::remove_var(key);
-        }
+        // SAFETY: serialised via env_test_mutex.
+        unsafe { std::env::remove_var(key) };
         crate::e12stat::init_from_env();
         assert!(!crate::e12stat::enabled());
     }
@@ -7657,6 +7657,7 @@ mod tests {
     fn encode_with_f3_nonrd_partition_runs_descent_path() {
         let _guard = env_test_mutex();
         let key = "RVP9_F3_NONRD_PARTITION_ENABLE";
+        // SAFETY: serialised via env_test_mutex.
         unsafe {
             std::env::set_var(key, "1");
         }
@@ -7667,9 +7668,8 @@ mod tests {
         let inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
         assert_eq!(inter.frame_kind, frame_loop::FrameKind::Inter);
 
-        unsafe {
-            std::env::remove_var(key);
-        }
+        // SAFETY: serialised via env_test_mutex.
+        unsafe { std::env::remove_var(key) };
     }
 
     /// P12 PROOF — Build a 64×64 source where the second frame is a
@@ -7761,6 +7761,7 @@ mod tests {
         // Defensive cleanup before any assertion fires (so a failed
         // assert doesn't leave env state dirty for subsequent tests
         // sharing the same process).
+        // SAFETY: serialised via env_test_mutex.
         unsafe {
             std::env::remove_var("RVP9_F02_ORACLE");
             std::env::remove_var("RVP9_F3_NONRD_PARTITION_ENABLE");
@@ -7807,6 +7808,7 @@ mod tests {
     fn p12_real_callback_default_state_unchanged() {
         let _guard = env_test_mutex();
         // Default path: no descent env vars set (descent is default-ON).
+        // SAFETY: serialised via env_test_mutex.
         unsafe {
             std::env::remove_var("RVP9_F3_NONRD_PARTITION_ENABLE");
             std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
@@ -7826,6 +7828,7 @@ mod tests {
     fn encode_with_diag_picker_env_runs_eprintln_paths() {
         let _guard = env_test_mutex();
         let key = "RVP9_DIAG_PICKER";
+        // SAFETY: serialised via env_test_mutex.
         unsafe {
             std::env::set_var(key, "1");
         }
@@ -7833,15 +7836,15 @@ mod tests {
         let (y, u, v) = flat_frame();
         let _kf = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
         let inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
-        unsafe {
-            std::env::remove_var(key);
-        }
+        // SAFETY: serialised via env_test_mutex.
+        unsafe { std::env::remove_var(key) };
         assert_eq!(inter.frame_kind, frame_loop::FrameKind::Inter);
     }
 
     #[test]
     fn encode_with_diag_intpro_env_runs_eprintln_paths() {
         let _guard = env_test_mutex();
+        // SAFETY: serialised via env_test_mutex.
         unsafe {
             std::env::set_var("RVP9_DIAG_INTPRO", "1");
             std::env::set_var("RVP9_DIAG_INTPRO_SB", "1");
@@ -7850,6 +7853,7 @@ mod tests {
         let (y, u, v) = flat_frame();
         let _kf = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
         let inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
+        // SAFETY: serialised via env_test_mutex.
         unsafe {
             std::env::remove_var("RVP9_DIAG_INTPRO");
             std::env::remove_var("RVP9_DIAG_INTPRO_SB");
@@ -7860,21 +7864,22 @@ mod tests {
     #[test]
     fn encode_with_diag_intra_env_runs_eprintln_paths() {
         let _guard = env_test_mutex();
+        // SAFETY: serialised via env_test_mutex.
         unsafe {
             std::env::set_var("RVP9_DIAG_INTRA", "1");
         }
         let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
         let (y, u, v) = flat_frame();
         let kf = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
-        unsafe {
-            std::env::remove_var("RVP9_DIAG_INTRA");
-        }
+        // SAFETY: serialised via env_test_mutex.
+        unsafe { std::env::remove_var("RVP9_DIAG_INTRA") };
         assert_eq!(kf.frame_kind, frame_loop::FrameKind::Key);
     }
 
     #[test]
     fn encode_with_e3_mvdiag_and_golden_env_runs_eprintln_paths() {
         let _guard = env_test_mutex();
+        // SAFETY: serialised via env_test_mutex.
         unsafe {
             std::env::set_var("RVP9_E3_MVDIAG", "1");
             std::env::set_var("RVP9_DIAG_GOLDEN_PICKS", "1");
@@ -7883,6 +7888,7 @@ mod tests {
         let (y, u, v) = flat_frame();
         let _kf = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
         let inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
+        // SAFETY: serialised via env_test_mutex.
         unsafe {
             std::env::remove_var("RVP9_E3_MVDIAG");
             std::env::remove_var("RVP9_DIAG_GOLDEN_PICKS");

@@ -753,9 +753,9 @@ impl CyclicRefresh {
         //   - otherwise → age = 1 (not a candidate; let post-encode age it).
         let boosted =
             final_segment_id == CR_SEGMENT_ID_BOOST1 || final_segment_id == CR_SEGMENT_ID_BOOST2;
-        let new_map_value: u8 = if boosted {
-            0
-        } else if refresh_this_block != CR_SEGMENT_ID_BASE && self.map[block_index] == 1 {
+        let new_map_value: u8 = if boosted
+            || (refresh_this_block != CR_SEGMENT_ID_BASE && self.map[block_index] == 1)
+        {
             0
         } else if refresh_this_block != CR_SEGMENT_ID_BASE {
             // candidate but not yet at age==1 — leave the existing age.

@@ -33,8 +33,8 @@
 /// doesn't matter for sum-of-absolute-values).
 #[inline]
 fn hadamard_col8(src: &[i16], src_stride: usize, coeff: &mut [i16; 8]) {
-    let b0 = src[0 * src_stride] + src[1 * src_stride];
-    let b1 = src[0 * src_stride] - src[1 * src_stride];
+    let b0 = src[0] + src[src_stride];
+    let b1 = src[0] - src[src_stride];
     let b2 = src[2 * src_stride] + src[3 * src_stride];
     let b3 = src[2 * src_stride] - src[3 * src_stride];
     let b4 = src[4 * src_stride] + src[5 * src_stride];
@@ -281,7 +281,7 @@ mod tests {
         // with sums that get >> 1, the math is: each sub-block's
         // DC = 64 * dc = 192; then 2x2 combine: (192+192)>>1 +
         // (192+192)>>1 = 192 + 192 = 384. So DC bin = 384.
-        assert_eq!(coeff[0], 4 * 64 * i16::from(dc) / 2);
+        assert_eq!(coeff[0], 4 * 64 * dc / 2);
     }
 
     #[test]

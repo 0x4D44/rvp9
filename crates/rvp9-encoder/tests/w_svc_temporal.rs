@@ -206,7 +206,9 @@ fn write_ivf_packets(path: &Path, framerate: f64, packets: &[Vec<u8>]) {
     write_ivf(&mut f, &header, &refs).expect("write_ivf");
 }
 
-fn load_source() -> Option<(Vec<(Vec<u8>, Vec<u8>, Vec<u8>)>, f64)> {
+type SourceFrame = (Vec<u8>, Vec<u8>, Vec<u8>);
+
+fn load_source() -> Option<(Vec<SourceFrame>, f64)> {
     let y4m_path = probe_testsrc_720p()?;
     match y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize) {
         Ok((f, fr)) if f.len() == N_FRAMES as usize => Some((f, fr)),
@@ -262,7 +264,7 @@ fn svc_temporal_layer_id_pattern_is_live() {
     // At least one enhancement-layer (tl1) frame must exist — otherwise
     // the "pattern" is degenerate and the test proves nothing.
     assert!(
-        svc_tids.iter().any(|&t| t == 1),
+        svc_tids.contains(&1),
         "temporal-SVC encode must produce at least one tl1 (enhancement) frame"
     );
 
@@ -307,7 +309,7 @@ fn svc_temporal_stream_byte_exact_through_vpxdec() {
     let (packets, tids) = encode_clip(svc_config(framerate, 2), &frames);
     eprintln!("temporal-SVC temporal_layer_id pattern: {tids:?}");
     assert!(
-        tids.iter().any(|&t| t == 1),
+        tids.contains(&1),
         "expected an enhancement layer in the SVC encode"
     );
 

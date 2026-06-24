@@ -1291,8 +1291,10 @@ mod tests {
 
     #[test]
     fn rtc_minq_approx_clamps_to_worst_quality_ceiling() {
-        let mut cfg = RateControlConfig::default();
-        cfg.max_qindex = 50;
+        let cfg = RateControlConfig {
+            max_qindex: 50,
+            ..Default::default()
+        };
         let rc = RateControl::new(cfg);
         // Pass an ambient well above worst.
         let approx = rtc_minq_approx(&rc, 200);
@@ -1647,6 +1649,8 @@ mod tests {
         let prev = std::env::var_os("RVP9_KFCAP");
         // SAFETY: serialised by KFCAP_ENV_LOCK; no other thread in this
         // crate reads RVP9_KFCAP outside this lock during these tests.
+        // SAFETY: this helper serially saves and sets the process env knob
+        // around one test closure.
         unsafe {
             match value {
                 Some(v) => std::env::set_var("RVP9_KFCAP", v),
@@ -1654,6 +1658,8 @@ mod tests {
             }
         }
         let out = f();
+        // SAFETY: this helper serially saves and restores the process env knob
+        // around one test closure.
         unsafe {
             match prev {
                 Some(v) => std::env::set_var("RVP9_KFCAP", v),

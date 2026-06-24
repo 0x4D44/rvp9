@@ -293,10 +293,9 @@ pub fn super_block_yrd(
     )
 }
 
-/// Per-tile evaluation: forward-transform + quantize + cost_coeffs
-/// + pixel-domain distortion. Mirrors libvpx's `block_rd_txfm`
-/// (`vp9_rdopt.c:699-852`) for a single tile and the
-/// fast-coef-costing path.
+/// Per-tile evaluation: forward-transform, quantize, cost_coeffs, and
+/// pixel-domain distortion. Mirrors libvpx's `block_rd_txfm`
+/// (`vp9_rdopt.c:699-852`) for a single tile and the fast-coef-costing path.
 ///
 /// For the W4.1 standalone scope we treat the block as ONE tile of
 /// size `tx_size`. The full encoder walks

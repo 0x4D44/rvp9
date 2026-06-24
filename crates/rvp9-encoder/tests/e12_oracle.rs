@@ -75,6 +75,8 @@ fn e12_oracle_foreman() {
         }
     };
 
+    // SAFETY: this diagnostic test owns these process env knobs for the
+    // duration of the test binary invocation.
     unsafe {
         std::env::set_var("RVP9_FIXED_Q", Q.to_string());
         std::env::set_var("RVP9_E12_ORACLE", "1");
@@ -161,6 +163,7 @@ fn e12_oracle_foreman() {
         }
     }
 
+    // SAFETY: see the setup block above; this restores the process env knobs.
     unsafe {
         std::env::remove_var("RVP9_FIXED_Q");
         std::env::remove_var("RVP9_E12_ORACLE");

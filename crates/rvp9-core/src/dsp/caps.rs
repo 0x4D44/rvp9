@@ -231,7 +231,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn force_scalar_caps_route_dispatch_to_scalar() {
-        use crate::dsp::dispatch::SimdDispatch;
+        use crate::dsp::dispatch::{Convolve8OneAxisFn, SimdDispatch};
 
         // (1) all-false caps == what detect()'s forced leg returns.
         let masked = X86Caps::default();
@@ -252,8 +252,7 @@ mod tests {
         // AVX2-promoted slot resolves to its scalar reference — i.e. the
         // forced-scalar leg yields a scalar table, no SIMD slot survives.
         let d = SimdDispatch::build(masked);
-        let scalar_convolve8_horiz: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
-            crate::inter::filter::convolve8_horiz;
+        let scalar_convolve8_horiz: Convolve8OneAxisFn = crate::inter::filter::convolve8_horiz;
         assert_eq!(
             d.convolve8_horiz() as usize,
             scalar_convolve8_horiz as usize,

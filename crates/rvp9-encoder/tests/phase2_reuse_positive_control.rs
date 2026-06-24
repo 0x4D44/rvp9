@@ -54,7 +54,6 @@ fn config() -> EncoderConfig {
 #[test]
 fn phase2_newmv_reuse_fires() {
     let Some(path) = probe_foreman_cif() else {
-        eprintln!("[SKIPPED] foreman_cif corpus not available");
         return;
     };
     // Read foreman_cif (352x288) Y planes and center-crop to 256x256.
@@ -124,11 +123,13 @@ fn phase2_newmv_reuse_fires() {
 
     let reused = PHASE2_NEWMV_REUSED.load(Ordering::Relaxed) - before_reuse;
     let fresh = PHASE2_NEWMV_FRESH.load(Ordering::Relaxed) - before_fresh;
-    eprintln!("Phase-2 positive control: NEWMV reused={reused} fresh={fresh}");
     assert!(
         reused > 0,
-        "expected NEWMV reuse to fire on inter frames (descent ON), got 0"
+        "expected NEWMV reuse to fire on inter frames (descent ON), got reused={reused} fresh={fresh}"
     );
     // Every final-pass RT-picker leaf is attributed to reuse or fresh.
-    assert!(reused + fresh > 0, "no leaves attributed");
+    assert!(
+        reused + fresh > 0,
+        "no leaves attributed: reused={reused} fresh={fresh}"
+    );
 }

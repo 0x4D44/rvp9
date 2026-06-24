@@ -298,30 +298,21 @@ fn multi_tile_dispatch_uses_worker_pool() {
     );
 }
 
-/// G5.2 oracle: the per-tile scratch pool persists across frames
-/// and stops allocating once the steady-state tile count is reached.
+/// G5.2 successor oracle: the direct-to-frame parallel tile path does
+/// not regress to the retired per-tile scratch-pool path.
 ///
 /// Pattern: decode the SAME multi-tile vector (tile_1x8 — 8 tiles)
-/// frame-by-frame through a single `Decoder` instance. After the
-/// first multi-tile frame, the pool holds `n_tiles` buffers. Every
-/// subsequent multi-tile frame's `take(n_tiles, …)` must be satisfied
-/// from the cache, so the post-decode `tile_scratch_pool_buffer_count`
-/// MUST remain at the steady-state value (no shrinkage; no growth).
-///
-/// We also snapshot the process-wide [`RVP9_G5_2_SCRATCH_ALLOCS`]
-/// counter delta per frame as a secondary signal — but we accept
-/// non-zero increments from concurrent tests (this binary's tests
-/// run in parallel and other tests use multi-tile decoders that
-/// also bump this counter). The pool-buffer-count assertion is
-/// the load-bearing one; the counter delta is reported for
-/// diagnostic purposes.
+/// frame-by-frame through a single `Decoder` instance. The current
+/// implementation writes each tile directly through `TileFrameView`;
+/// it should still fire worker-pool jobs, but the decoder-owned
+/// scratch pool should remain empty for every decoded frame.
 ///
 /// Vector choice: `tile_1x8.webm` has the largest tile count in the
 /// conformance corpus that we have hands-on multi-tile parallel-
-/// dispatch eligibility for, so this catches both growth (from 0 to
-/// 8) and steady-state-no-growth (from frame 2 onwards).
+/// dispatch eligibility for, so this catches both fallback-to-inline
+/// and accidental scratch-pool reuse.
 #[test]
-fn tile_scratch_pool_warm_no_alloc() {
+fn direct_tile_decode_keeps_scratch_pool_empty() {
     use std::sync::atomic::Ordering;
     let dir = vectors_dir();
     let path = dir.join("vp90-2-08-tile_1x8.webm");
@@ -342,6 +333,7 @@ fn tile_scratch_pool_warm_no_alloc() {
     let mut frame_idx = 0usize;
     let mut alloc_delta_by_frame: Vec<u32> = Vec::new();
     let mut pool_count_by_frame: Vec<usize> = Vec::new();
+    let parallel_jobs_before = rvp9_decoder::RVP9_G5_1_PARALLEL_JOBS.load(Ordering::Relaxed);
 
     for range in &packets {
         let packet_bytes = range.slice(&data);
@@ -351,7 +343,9 @@ fn tile_scratch_pool_warm_no_alloc() {
         };
         for frame in parsed {
             let before = rvp9_core::frame::RVP9_G5_2_SCRATCH_ALLOCS.load(Ordering::Relaxed);
-            let _ = decoder.decode_frame(&frame);
+            let _buf = decoder
+                .decode_frame(&frame)
+                .expect("tile_1x8 frame should decode");
             let after = rvp9_core::frame::RVP9_G5_2_SCRATCH_ALLOCS.load(Ordering::Relaxed);
             alloc_delta_by_frame.push(after.wrapping_sub(before));
             pool_count_by_frame.push(decoder.tile_scratch_pool_buffer_count());
@@ -372,44 +366,34 @@ fn tile_scratch_pool_warm_no_alloc() {
         "needed at least 2 frames from tile_1x8.webm to test pool warmup"
     );
 
-    // After frame 1: pool holds n_tiles_steady buffers (the take
-    // grew it; the post-merge put restored it). tile_1x8 has 8
-    // tiles ⇒ 8 buffers.
-    let n_tiles_steady = pool_count_by_frame[0];
+    let parallel_jobs_after = rvp9_decoder::RVP9_G5_1_PARALLEL_JOBS.load(Ordering::Relaxed);
+    let parallel_job_delta = parallel_jobs_after.wrapping_sub(parallel_jobs_before);
     assert!(
-        n_tiles_steady >= 2,
-        "tile_1x8 should grow pool to ≥ 2 buffers after frame 1, was {n_tiles_steady}"
+        parallel_job_delta >= 2 * frame_idx as u32,
+        "G5.1 parallel dispatch under-fired while checking direct-to-frame scratch usage: \
+         delta={parallel_job_delta}, expected at least {} (2 * {} decoded frames)",
+        2 * frame_idx,
+        frame_idx,
     );
 
-    // Frames 2+: pool is warm. The pool-buffer-count post-decode
-    // MUST remain at n_tiles_steady (no growth — take(n) is fully
-    // satisfied from the cache; no shrinkage — put restores all
-    // borrowed buffers).
-    for i in 1..pool_count_by_frame.len() {
-        assert_eq!(
-            pool_count_by_frame[i], n_tiles_steady,
-            "G5.2: frame {} pool count {} != steady-state {}. \
-             Per-frame pool counts: {:?}",
-            i, pool_count_by_frame[i], n_tiles_steady, pool_count_by_frame,
-        );
-    }
-
-    // Pool size never shrinks: monotonic. (Already covered by the
-    // equality check above; kept as a defensive invariant.)
+    // The direct-to-frame path should not borrow from or return to
+    // the retired scratch pool. Any non-zero post-frame count means
+    // this decoder hit the old scratch-buffer path.
     for (i, &count) in pool_count_by_frame.iter().enumerate() {
-        assert!(
-            count >= n_tiles_steady,
-            "G5.2: frame {i} pool count {count} < steady-state {n_tiles_steady} (pool shrank!)",
+        assert_eq!(
+            count, 0,
+            "G5.2: frame {} left {} retired scratch buffers in the pool. \
+             Per-frame pool counts: {:?}",
+            i, count, pool_count_by_frame,
         );
     }
 
     eprintln!(
-        "G5.2: pool warmed to {} buffers, {} steady-state frames at constant pool size. \
-         (Counter deltas: {:?} — non-zero values past frame 0 are from concurrent tests, \
-         not from this decoder's pool.)",
-        n_tiles_steady,
-        pool_count_by_frame.len() - 1,
-        &alloc_delta_by_frame
+        "G5.2: direct-to-frame decode kept retired scratch pool empty across {} frames. \
+         Parallel jobs delta: {}. Scratch allocation counter deltas: {:?}.",
+        pool_count_by_frame.len(),
+        parallel_job_delta,
+        &alloc_delta_by_frame,
     );
 }
 

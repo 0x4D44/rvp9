@@ -568,16 +568,16 @@ mod tests {
         // Integer-pel MV * 8 = 1/8-pel.
         assert_eq!(
             mv.row,
-            i16::from(true_dr) * 8,
+            true_dr * 8,
             "expected row {} got {}",
-            i16::from(true_dr) * 8,
+            true_dr * 8,
             mv.row
         );
         assert_eq!(
             mv.col,
-            i16::from(true_dc) * 8,
+            true_dc * 8,
             "expected col {} got {}",
-            i16::from(true_dc) * 8,
+            true_dc * 8,
             mv.col
         );
 
@@ -595,6 +595,7 @@ mod tests {
 
     /// W7.7 — `ml_predict_var_rd_partitioning` returns a sane decision
     /// + coarse partition size for a low-variance (well-predicted)
+    ///
     /// block.
     ///
     /// libvpx reference: `vp9_encodeframe.c:3489-3618`.

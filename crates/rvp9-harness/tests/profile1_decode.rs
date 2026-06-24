@@ -290,10 +290,10 @@ fn decode_and_count(name: &str) -> (usize, usize) {
                 continue;
             }
             let got_hex = hex16(md5_of_yv12_visible(&buf));
-            if let Some(e) = entries.get(shown_idx) {
-                if e.md5_hex_visible().as_deref() != Some(got_hex.as_str()) {
-                    mismatched += 1;
-                }
+            if let Some(e) = entries.get(shown_idx)
+                && e.md5_hex_visible().as_deref() != Some(got_hex.as_str())
+            {
+                mismatched += 1;
             }
             shown_idx += 1;
         }

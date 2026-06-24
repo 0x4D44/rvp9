@@ -1539,7 +1539,6 @@ mod tests {
     use rvp9_core::cost::switchable_interp_costs;
     use rvp9_core::cost::symbol_costs::inter_mode_costs;
     use rvp9_core::entropy::FrameContext;
-    use rvp9_core::entropy::default_probs::INTER_MODE_CONTEXTS;
     use rvp9_core::mv_search::full_pixel::PlaneRef;
     use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
 
@@ -1629,11 +1628,11 @@ mod tests {
 
     /// Build `HandleInterModeParams` for a harness + (mode, mv), wiring
     /// the **real** cost tables / quantizers.
-    fn make_params<'a>(
+    struct MakeParamsInput<'a> {
         h: &'a Harness,
         src_plane: &'a PlaneRef<'a>,
         ref_plane: &'a PlaneRef<'a>,
-        fc: &FrameContext,
+        fc: &'a FrameContext,
         sic: &'a SwitchableInterpCosts,
         y_quant: &'a PlaneQuantizers,
         uv_quant: &'a PlaneQuantizers,
@@ -1641,7 +1640,23 @@ mod tests {
         mode: InterMode,
         mv: Mv,
         with_chroma: bool,
-    ) -> HandleInterModeParams<'a> {
+    }
+
+    fn make_params(input: MakeParamsInput<'_>) -> HandleInterModeParams<'_> {
+        let MakeParamsInput {
+            h,
+            src_plane,
+            ref_plane,
+            fc,
+            sic,
+            y_quant,
+            uv_quant,
+            costs,
+            mode,
+            mv,
+            with_chroma,
+        } = input;
+
         let bsize = match (h.bw, h.bh) {
             (16, 16) => BlockSize::Block16x16,
             (32, 32) => BlockSize::Block32x32,
@@ -1650,7 +1665,7 @@ mod tests {
         };
         // Real inter-mode rate from the cost table (task #2).
         let imc = inter_mode_costs(fc);
-        let ctx = 0usize.min(INTER_MODE_CONTEXTS - 1);
+        let ctx = 0usize;
         let inter_mode_rate = imc[ctx][mode.idx()].max(0) as u32;
         // Real skip-bit costs from the default skip prob (middle ctx).
         let skip_prob = rvp9_core::entropy::default_probs::DEFAULT_SKIP_PROBS[1];
@@ -1717,19 +1732,19 @@ mod tests {
         let y_quant = init_plane_quantizers(96, QuantizerDeltas::Y);
         let uv_quant = init_plane_quantizers(96, QuantizerDeltas::Y);
 
-        let params = make_params(
-            &h,
-            &src_plane,
-            &ref_plane,
-            &fc,
-            &sic,
-            &y_quant,
-            &uv_quant,
-            &costs,
-            InterMode::ZeroMv,
-            Mv::ZERO,
-            true,
-        );
+        let params = make_params(MakeParamsInput {
+            h: &h,
+            src_plane: &src_plane,
+            ref_plane: &ref_plane,
+            fc: &fc,
+            sic: &sic,
+            y_quant: &y_quant,
+            uv_quant: &uv_quant,
+            costs: &costs,
+            mode: InterMode::ZeroMv,
+            mv: Mv::ZERO,
+            with_chroma: true,
+        });
         let out = handle_inter_mode_single_ref(&params);
 
         assert!(
@@ -1776,19 +1791,19 @@ mod tests {
         let y_quant = init_plane_quantizers(96, QuantizerDeltas::Y);
         let uv_quant = init_plane_quantizers(96, QuantizerDeltas::Y);
 
-        let params = make_params(
-            &h,
-            &src_plane,
-            &ref_plane,
-            &fc,
-            &sic,
-            &y_quant,
-            &uv_quant,
-            &costs,
-            InterMode::NewMv,
-            Mv { row: 4, col: 4 },
-            false, // half-pel both axes
-        );
+        let params = make_params(MakeParamsInput {
+            h: &h,
+            src_plane: &src_plane,
+            ref_plane: &ref_plane,
+            fc: &fc,
+            sic: &sic,
+            y_quant: &y_quant,
+            uv_quant: &uv_quant,
+            costs: &costs,
+            mode: InterMode::NewMv,
+            mv: Mv { row: 4, col: 4 },
+            with_chroma: false, // half-pel both axes
+        });
         let out = handle_inter_mode_single_ref(&params);
 
         let populated: usize = out.filter_cache.iter().filter(|s| s.is_some()).count();
@@ -1841,19 +1856,19 @@ mod tests {
         let uv_quant = init_plane_quantizers(96, QuantizerDeltas::Y);
 
         // ZEROMV: reads the unshifted reference → large residual.
-        let zero_params = make_params(
-            &h,
-            &src_plane,
-            &ref_plane,
-            &fc,
-            &sic,
-            &y_quant,
-            &uv_quant,
-            &costs,
-            InterMode::ZeroMv,
-            Mv::ZERO,
-            true,
-        );
+        let zero_params = make_params(MakeParamsInput {
+            h: &h,
+            src_plane: &src_plane,
+            ref_plane: &ref_plane,
+            fc: &fc,
+            sic: &sic,
+            y_quant: &y_quant,
+            uv_quant: &uv_quant,
+            costs: &costs,
+            mode: InterMode::ZeroMv,
+            mv: Mv::ZERO,
+            with_chroma: true,
+        });
         let zero_out = handle_inter_mode_single_ref(&zero_params);
 
         // NEWMV at the true motion: prediction recovers the source.
@@ -1861,19 +1876,19 @@ mod tests {
             row: (-shift_row * 8) as i16,
             col: (-shift_col * 8) as i16,
         };
-        let new_params = make_params(
-            &h,
-            &src_plane,
-            &ref_plane,
-            &fc,
-            &sic,
-            &y_quant,
-            &uv_quant,
-            &costs,
-            InterMode::NewMv,
-            true_mv,
-            true,
-        );
+        let new_params = make_params(MakeParamsInput {
+            h: &h,
+            src_plane: &src_plane,
+            ref_plane: &ref_plane,
+            fc: &fc,
+            sic: &sic,
+            y_quant: &y_quant,
+            uv_quant: &uv_quant,
+            costs: &costs,
+            mode: InterMode::NewMv,
+            mv: true_mv,
+            with_chroma: true,
+        });
         let new_out = handle_inter_mode_single_ref(&new_params);
 
         // The matched NEWMV must have lower distortion than ZEROMV...

@@ -540,7 +540,7 @@ fn build_sub_edges(
         (0, 0) => params.above_left,
         // Top-right sub-block: corner is the 8×8 above row pixel just
         // left of the sub-block (column x0 - 1 of the above row).
-        (1, 0) => params.above[x0 - 1 + 0], // = params.above[3]
+        (1, 0) => params.above[x0 - 1], // = params.above[3]
         // Bottom-left sub-block: corner is the 8×8 left column pixel
         // just above the sub-block (row y0 - 1).
         (0, 1) => params.left[y0 - 1],
@@ -843,8 +843,8 @@ mod tests {
         // it exactly, so the bottom sub-blocks also see a matching left.
         let above = [30u8; 16];
         let mut left = [0u8; 8];
-        for r in 0..8 {
-            left[r] = (30 + 25 * r) as u8;
+        for (r, slot) in left.iter_mut().enumerate() {
+            *slot = (30 + 25 * r) as u8;
         }
         let params = PickIntraSub8x8Params {
             parent_bsize: BlockSize::Block8x8,

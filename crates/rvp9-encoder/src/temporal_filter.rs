@@ -407,12 +407,7 @@ pub fn adjust_arnr_filter(
     // for very low Q only when `base_strength` is also small, in
     // which case the clamp to 0 at line 1074 already fires. The
     // upper clamp matches libvpx's pass-2 line 1045.
-    if strength < 0 {
-        strength = 0;
-    }
-    if strength > 6 {
-        strength = 6;
-    }
+    strength = strength.clamp(0, 6);
     if frames < 1 {
         frames = 1;
     }
@@ -805,7 +800,7 @@ pub fn mod_index(
     strength: i32,
     filter_weight: i32,
 ) -> i32 {
-    debug_assert!(index >= 0 && index <= 13);
+    debug_assert!((0..=13).contains(&index));
     debug_assert!(INDEX_MULT[index as usize] != 0);
 
     // libvpx: `((unsigned)clamp(sum_dist, 0, UINT16_MAX) * index_mult[index]) >> 16`
@@ -1040,8 +1035,8 @@ pub fn apply_temporal_filter(
 /// division. libvpx `vp9_temporal_filter.c:36, 191-192`.
 fn fixed_divide_table() -> [u32; 512] {
     let mut t = [0u32; 512];
-    for i in 1..512 {
-        t[i] = 0x80000 / (i as u32);
+    for (i, slot) in t.iter_mut().enumerate().skip(1) {
+        *slot = 0x80000 / (i as u32);
     }
     t
 }
@@ -1385,10 +1380,10 @@ pub fn temporal_filter_iterate_row(
                 // libvpx `vp9_temporal_filter.c:792-799` — distance
                 // attenuation.
                 let dist = (frame_index as i32 - alt_ref_index as i32).unsigned_abs() as usize;
-                for k in 0..NUM_SUB_BLOCKS {
+                for fw in blk_fw.iter_mut().take(NUM_SUB_BLOCKS) {
                     match dist {
-                        1 => blk_fw[k] = blk_fw[k].min(2),
-                        2 | 3 => blk_fw[k] = blk_fw[k].min(1),
+                        1 => *fw = (*fw).min(2),
+                        2 | 3 => *fw = (*fw).min(1),
                         _ => {}
                     }
                 }
@@ -1536,7 +1531,7 @@ pub fn vp9_temporal_filter(data: &ArnrFilterData<'_>) -> FilteredArnrFrame {
     let width = arf.width as usize;
     let height = arf.height as usize;
     assert!(
-        width % BW == 0 && height % BH == 0,
+        width.is_multiple_of(BW) && height.is_multiple_of(BH),
         "rvp9 temporal filter requires BW/BH-aligned dimensions"
     );
     for f in &data.frames {

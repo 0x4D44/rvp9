@@ -423,9 +423,9 @@ mod tests {
                 let refs: [&[u8]; 4] = [&bufs[0], &bufs[1], &bufs[2], &bufs[3]];
                 let mut out = [0u32; 4];
                 avx2(&src, ss, &refs, rs, &mut out);
-                for k in 0..4 {
+                for (k, &sad) in out.iter().enumerate() {
                     assert_eq!(
-                        out[k],
+                        sad,
                         (w * h * 255) as u32,
                         "AVX2 sad4d max-diff corner wrong lane {k} at w={w}, h={h}"
                     );

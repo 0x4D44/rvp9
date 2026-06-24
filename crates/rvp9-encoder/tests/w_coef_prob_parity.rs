@@ -83,6 +83,7 @@ use rvp9_encoder::bitstream_gates::{
 ///  - the 4-token MODEL folding already used by the backward-adapt
 ///    kernel (`rvp9_core::entropy::adapt::adapt_coef_probs`,
 ///    `adapt.rs:614-618`).
+///
 /// Agreement on two code paths written from opposite directions is the
 /// oracle. The test also confirms the 8 MODEL nodes carry the
 /// within-TWO+ mass (what the 4-token shape discards) — the data the

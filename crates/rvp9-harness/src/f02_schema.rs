@@ -92,7 +92,7 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
             "mi_col" => mi_col = Some(parse_num(v, "mi_col")?),
             "bsize" => {
                 let raw = parse_string(v, "bsize")?;
-                bsize = Some(bsize_from_tag(&raw).ok_or_else(|| ParseError::BadValue {
+                bsize = Some(bsize_from_tag(&raw).ok_or(ParseError::BadValue {
                     field: "bsize",
                     raw,
                 })?);

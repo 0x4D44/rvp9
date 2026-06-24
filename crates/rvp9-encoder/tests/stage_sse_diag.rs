@@ -134,6 +134,8 @@ struct Rvp9Stages {
 
 fn measure_rvp9(fixed_q: u8, frames: &[YuvFrameBuf], framerate: f64) -> Rvp9Stages {
     // Pin Q and enable the prediction-capture gate for this process.
+    // SAFETY: this diagnostic test owns these process env knobs for the
+    // duration of the test binary invocation.
     unsafe {
         std::env::set_var("RVP9_FIXED_Q", fixed_q.to_string());
         std::env::set_var("RVP9_E9_PREDSTAT", "1");
@@ -224,9 +226,8 @@ fn measure_rvp9(fixed_q: u8, frames: &[YuvFrameBuf], framerate: f64) -> Rvp9Stag
         agg.post_recon_sse += post_recon_sse;
     }
 
-    unsafe {
-        std::env::remove_var("RVP9_FIXED_Q");
-    }
+    // SAFETY: see the setup block above; this restores the fixed-Q env knob.
+    unsafe { std::env::remove_var("RVP9_FIXED_Q") };
 
     Rvp9Stages {
         per_frame,
@@ -478,6 +479,7 @@ fn stage_sse_diag_foreman() {
     }
 
     // Clear the gate so it doesn't leak into other in-process tests.
+    // SAFETY: see the setup block above; this restores the diagnostic env knob.
     unsafe {
         std::env::remove_var("RVP9_E9_PREDSTAT");
     }

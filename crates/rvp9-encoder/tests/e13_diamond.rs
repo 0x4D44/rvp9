@@ -47,6 +47,8 @@ fn e13_diamond_oracle_foreman() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(120);
+    // SAFETY: this ignored diagnostic test owns these process env knobs for
+    // the duration of the test binary invocation.
     unsafe {
         std::env::set_var("RVP9_FIXED_Q", fixed_q.to_string());
         std::env::set_var("RVP9_E13_DIAMOND", "1");
@@ -112,9 +114,8 @@ fn e13_diamond_oracle_foreman() {
             agg.argmin_leaves += snap.argmin_leaves;
         }
     }
-    unsafe {
-        std::env::remove_var("RVP9_FIXED_Q");
-    }
+    // SAFETY: see the setup block above; this restores the process env knob.
+    unsafe { std::env::remove_var("RVP9_FIXED_Q") };
 
     eprintln!("E13 diamond-search-quality oracle — foreman 256x256, q={fixed_q}");
     eprintln!("  NEWMV leaves observed: {}", agg.leaves);

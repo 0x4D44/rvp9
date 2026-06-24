@@ -200,9 +200,9 @@ const EXTRA_BITS_COST_LT_CAT6: [u32; 10] = [
 /// libvpx's `vp9_get_token_cost` adds the cat6 high-bits cost via
 /// `vp9_cat6_high_cost[extra >> 8]` for `|qcoeff| >= 67`. We
 /// approximate this at the high-end with `EXTRA_BITS_COST_LT_CAT6[5]`
-/// + a fixed-rate term (the cat6 high-bits are 14 bits in the 8-bit
-/// build, each at p≈128 ⇒ ~7168 in 1/512-bit units). Test domain
-/// uses `|qcoeff| < 67` so this approximation is never exercised.
+/// plus a fixed-rate term (the cat6 high-bits are 14 bits in the 8-bit
+/// build, each at p≈128 ⇒ ~7168 in 1/512-bit units). Test domain uses
+/// `|qcoeff| < 67` so this approximation is never exercised.
 #[allow(clippy::too_many_arguments)]
 #[must_use]
 pub fn cost_coeffs(
@@ -263,8 +263,8 @@ pub fn cost_coeffs(
     band = 1;
 
     // AC tokens (scan indices 1..eob).
-    for c in 1..eob as usize {
-        let rc = scan[c] as usize;
+    for &scan_pos in scan.iter().take(eob as usize).skip(1) {
+        let rc = scan_pos as usize;
         let v = i32::from(qcoeff[rc]);
         let tok = vp9_get_token(v);
 
@@ -430,16 +430,7 @@ mod tests {
         let costs = build_coef_cost_table(&fc);
         let scan = default_scan_4x4();
 
-        let zero_cost = cost_coeffs(
-            &vec![0i16; 16],
-            scan.scan,
-            0,
-            TxSize::Tx4x4,
-            0,
-            0,
-            0,
-            &costs,
-        );
+        let zero_cost = cost_coeffs(&[0i16; 16], scan.scan, 0, TxSize::Tx4x4, 0, 0, 0, &costs);
 
         // Block with a single DC = 1 → ONE_TOKEN at scan[0].
         let mut q = vec![0i16; 16];
@@ -479,6 +470,7 @@ mod tests {
     ///   - positions 6, 7, 8, 9 are band 3 → transition at scan pos 9.
     ///   - positions 10, 11, 12 are band 4 → transition at scan pos 12.
     ///   - positions 13, 14, 15 are band 5 → transition at scan pos 15.
+    ///
     /// After position 15 the terminator slot (`0`) is loaded and
     /// `eob_should_be_charged` returns false.
     #[test]

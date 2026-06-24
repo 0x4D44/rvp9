@@ -826,7 +826,6 @@ fn write_partition(bw: &mut BoolWriter<'_>, probs: &[u8; 3], partition: Partitio
 /// scope; [`infer_partition`] forces BLOCK_8x8 parents to
 /// `PARTITION_NONE`.
 #[allow(clippy::too_many_arguments)] // mirrors libvpx 1:1
-#[allow(clippy::too_many_arguments)]
 fn write_partition_tree(
     bw: &mut BoolWriter<'_>,
     part_ctx: &mut PartitionCtx,
@@ -1107,7 +1106,6 @@ fn write_partition_tree(
 /// state. Mirrors the relevant slice of the decoder's
 /// `TileDecodeCtx::write_block`.
 #[allow(clippy::too_many_arguments)] // mirrors the decoder's per-block call
-#[allow(clippy::too_many_arguments)]
 fn write_block_intra_keyframe(
     bw: &mut BoolWriter<'_>,
     fc: &FrameContext,
@@ -6960,9 +6958,7 @@ mod tests {
         // Try mismatched leaf via direct `write_inter_block_leaf` call:
         let fc = FrameContext::new_default();
         let params = s4c_default_params();
-        for slot in &mut grid {
-            *slot = Some(bad_cell);
-        }
+        grid.fill(Some(bad_cell));
         let coef_source = crate::bitstream::AllZeroCoefSource::new();
         let mut buf = vec![0u8; 256];
         let mut bw = BoolWriter::start_encode(&mut buf);
@@ -7812,9 +7808,7 @@ mod tests {
             [Mv::ZERO; 2],
             InterpFilter::EightTap,
         );
-        for slot in &mut grid {
-            *slot = Some(plain);
-        }
+        grid.fill(Some(plain));
         // Place a sub-8 Block4x4 cell at (0, 0). All bmi entries
         // must use ZEROMV (parent mode) for the writer's parent-
         // mode invariant.
@@ -8140,9 +8134,7 @@ mod tests {
             [Mv::ZERO; 2],
             InterpFilter::EightTap,
         );
-        for slot in &mut grid {
-            *slot = Some(plain);
-        }
+        grid.fill(Some(plain));
         // Sub-8 intra cell at (0, 0) — Block4x4 with intra modes.
         let sub8_intra = ModeInfo {
             block_size: BlockSize::Block4x4,
@@ -8369,9 +8361,7 @@ mod tests {
             [Mv::ZERO; 2],
             InterpFilter::EightTap,
         );
-        for slot in &mut grid {
-            *slot = Some(plain);
-        }
+        grid.fill(Some(plain));
         // Sub-8 cell at (0, 0) — Block4x4 ZEROMV non-skip.
         let mut sub8_bmi = [BmiInfo::default(); 4];
         for slot in &mut sub8_bmi {

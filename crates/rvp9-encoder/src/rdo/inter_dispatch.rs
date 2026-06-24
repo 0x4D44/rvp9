@@ -759,8 +759,10 @@ pub fn pick_inter_sb_leaf(leaf: &InterDispatchLeaf<'_>) -> Option<InterDispatchR
     // skipped and the picker is byte-identical to the single-ref path.
     // libvpx evaluates compound modes when `cm->reference_mode !=
     // SINGLE_REFERENCE` (`vp9/encoder/vp9_rdopt.c:3543-3556`).
-    if leaf.compound_enabled && leaf.last.available && leaf.altref.available {
-        if let Some(comp) = evaluate_compound_candidate(
+    if leaf.compound_enabled
+        && leaf.last.available
+        && leaf.altref.available
+        && let Some(comp) = evaluate_compound_candidate(
             leaf,
             imc,
             ctx,
@@ -768,21 +770,21 @@ pub fn pick_inter_sb_leaf(leaf: &InterDispatchLeaf<'_>) -> Option<InterDispatchR
             last_newmv_rate,
             altref_newmv,
             altref_newmv_rate,
-        ) {
-            // RD argmin against the single-ref winner (`winner.rd`).
-            if comp.rd < winner.rd {
-                result = InterDispatchResult {
-                    mode: comp.mode,
-                    // mi-grid slot 0 = LAST (the compound var_ref[0]).
-                    mv: comp.mv0,
-                    ref_frame: RefFrame::LastFrame,
-                    // mi-grid slot 1 = ALTREF (the compound fixed_ref).
-                    ref_frame2: RefFrame::AltrefFrame,
-                    mv2: comp.mv1,
-                    interp_filter: comp.interp_filter,
-                };
-                RDO_DISPATCH_COMPOUND_PICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            }
+        )
+    {
+        // RD argmin against the single-ref winner (`winner.rd`).
+        if comp.rd < winner.rd {
+            result = InterDispatchResult {
+                mode: comp.mode,
+                // mi-grid slot 0 = LAST (the compound var_ref[0]).
+                mv: comp.mv0,
+                ref_frame: RefFrame::LastFrame,
+                // mi-grid slot 1 = ALTREF (the compound fixed_ref).
+                ref_frame2: RefFrame::AltrefFrame,
+                mv2: comp.mv1,
+                interp_filter: comp.interp_filter,
+            };
+            RDO_DISPATCH_COMPOUND_PICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -880,7 +882,7 @@ fn evaluate_compound_candidate(
 
     let mut best: Option<CompoundCandidate> = None;
     let mut consider = |cand: CompoundCandidate| {
-        let take = best.as_ref().map_or(true, |b| cand.rd < b.rd);
+        let take = best.as_ref().is_none_or(|b| cand.rd < b.rd);
         if take {
             best = Some(cand);
         }

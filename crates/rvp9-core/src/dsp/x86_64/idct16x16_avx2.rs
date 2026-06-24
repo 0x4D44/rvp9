@@ -528,9 +528,9 @@ unsafe fn idct16x16_add_avx2_inner(input: &[i32; 256], dest: &mut [u8], stride: 
         // `intermediate[r * 16 + col_base ..]`, so a single 32-byte
         // unaligned load picks up 8 i32 per row.
         let mut col_in: [__m256i; 16] = [_mm256_set1_epi32(0); 16];
-        for r in 0..16 {
+        for (r, slot) in col_in.iter_mut().enumerate() {
             let p = intermediate.as_ptr().add(r * 16 + col_base) as *const __m256i;
-            col_in[r] = _mm256_loadu_si256(p);
+            *slot = _mm256_loadu_si256(p);
         }
 
         // Apply idct16 across the 16 input-position registers. Output
@@ -921,8 +921,8 @@ mod tests {
 
         // (1) Row 0 = ramp of high-magnitude positive values.
         let mut input = [0i32; 256];
-        for c in 0..16 {
-            input[c] = (c as i32) * 2000 + 100;
+        for (c, slot) in input.iter_mut().take(16).enumerate() {
+            *slot = (c as i32) * 2000 + 100;
         }
         for &dst_fill in &[0u8, 128, 255] {
             let dst_init = [dst_fill; 256];
@@ -1030,22 +1030,22 @@ mod tests {
             for col_group in 0..2usize {
                 // Load 8 rows of 8 i32 from src[row_group*8 + r][col_group*8 ..]
                 let mut rs: [__m256i; 8] = [super::_mm256_set1_epi32(0); 8];
-                for r in 0..8 {
+                for (r, slot) in rs.iter_mut().enumerate() {
                     let p = src.as_ptr().add((row_group * 8 + r) * 16 + col_group * 8)
                         as *const __m256i;
-                    rs[r] = _mm256_loadu_si256(p);
+                    *slot = _mm256_loadu_si256(p);
                 }
                 let cols =
                     super::transpose8x8_i32(rs[0], rs[1], rs[2], rs[3], rs[4], rs[5], rs[6], rs[7]);
                 // Store into the swapped quadrant of dst:
                 //   destination row group = col_group
                 //   destination col group = row_group
-                for k in 0..8 {
+                for (k, &col) in cols.iter().enumerate() {
                     let p = dst
                         .as_mut_ptr()
                         .add((col_group * 8 + k) * 16 + row_group * 8)
                         as *mut __m256i;
-                    _mm256_storeu_si256(p, cols[k]);
+                    _mm256_storeu_si256(p, col);
                 }
             }
         }

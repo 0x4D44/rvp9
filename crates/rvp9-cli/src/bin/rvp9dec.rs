@@ -453,11 +453,11 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
                 shown += 1;
                 continue;
             }
-            if let Some(lim) = opts.limit {
-                if emitted >= lim {
-                    shown += 1;
-                    continue;
-                }
+            if let Some(lim) = opts.limit
+                && emitted >= lim
+            {
+                shown += 1;
+                continue;
             }
 
             if let Some(w) = sink.as_mut() {

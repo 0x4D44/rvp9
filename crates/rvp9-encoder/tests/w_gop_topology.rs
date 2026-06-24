@@ -131,6 +131,8 @@ fn fixed_config() -> EncoderConfig {
 /// the byte-identity golden is stable. SAFETY: integration binary; all
 /// tests here want the descent off, so set-only is race-free.
 fn pin_a4() {
+    // SAFETY: integration binary; all tests here set the same process env
+    // knob to the same value.
     unsafe {
         std::env::set_var("RVP9_A4_RD_PARTITION_DISABLE", "1");
     }

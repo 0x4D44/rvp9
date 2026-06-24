@@ -138,7 +138,7 @@ impl LookaheadCtx {
     pub fn new(width: u32, height: u32, depth: usize) -> Self {
         assert!(width > 0 && height > 0, "lookahead requires positive dims");
         assert!(
-            width % 2 == 0 && height % 2 == 0,
+            width.is_multiple_of(2) && height.is_multiple_of(2),
             "4:2:0 requires even dims"
         );
         let depth = depth.clamp(1, MAX_LAG_BUFFERS);

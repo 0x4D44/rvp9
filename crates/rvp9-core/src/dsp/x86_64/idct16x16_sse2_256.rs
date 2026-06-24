@@ -584,8 +584,8 @@ unsafe fn idct16x16_add_sse2_38_inner(input: &[i32; 256], dst: &mut [u8], stride
         let in_copy_c = in_;
         idct16_8col(&in_copy_c, &mut out_);
 
-        for j in 0..16 {
-            write_buffer_8x1(dest_ptr.add(j * stride), out_[j]);
+        for (j, &row) in out_.iter().enumerate() {
+            write_buffer_8x1(dest_ptr.add(j * stride), row);
         }
         dest_ptr = dest_ptr.add(8);
         i += 8;
@@ -899,8 +899,8 @@ unsafe fn idct16x16_add_sse2_10_inner(input: &[i32; 256], dst: &mut [u8], stride
     let mut i = 0usize;
     while i < 16 {
         idct16x16_10_pass2(&l[i..i + 8], &mut in_);
-        for j in 0..16 {
-            write_buffer_8x1(dest_ptr.add(j * stride), in_[j]);
+        for (j, &row) in in_.iter().enumerate() {
+            write_buffer_8x1(dest_ptr.add(j * stride), row);
         }
         dest_ptr = dest_ptr.add(8);
         i += 8;

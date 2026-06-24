@@ -88,16 +88,8 @@ unsafe fn store_row(pixels: *mut u8, off: usize, v: __m128i) {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn transpose_8x8(
-    r0: __m128i,
-    r1: __m128i,
-    r2: __m128i,
-    r3: __m128i,
-    r4: __m128i,
-    r5: __m128i,
-    r6: __m128i,
-    r7: __m128i,
-) -> [__m128i; 8] {
+unsafe fn transpose_8x8(rows: [__m128i; 8]) -> [__m128i; 8] {
+    let [r0, r1, r2, r3, r4, r5, r6, r7] = rows;
     let t0 = _mm_unpacklo_epi8(r0, r1);
     let t1 = _mm_unpacklo_epi8(r2, r3);
     let t2 = _mm_unpacklo_epi8(r4, r5);
@@ -184,18 +176,8 @@ unsafe fn srai_i8<const N: i32>(x: __m128i) -> __m128i {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn filter_mask_avx2(
-    blimit: u8,
-    limit: u8,
-    p3: __m128i,
-    p2: __m128i,
-    p1: __m128i,
-    p0: __m128i,
-    q0: __m128i,
-    q1: __m128i,
-    q2: __m128i,
-    q3: __m128i,
-) -> __m128i {
+unsafe fn filter_mask_avx2(blimit: u8, limit: u8, taps: [__m128i; 8]) -> __m128i {
+    let [p3, p2, p1, p0, q0, q1, q2, q3] = taps;
     let limit_v = _mm_set1_epi8(limit as i8);
     let blimit_v = _mm_set1_epi8(blimit as i8);
 
@@ -245,17 +227,8 @@ unsafe fn hev_mask_avx2(thresh: u8, p1: __m128i, p0: __m128i, q0: __m128i, q1: _
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn flat_mask4_avx2(
-    thresh: u8,
-    p3: __m128i,
-    p2: __m128i,
-    p1: __m128i,
-    p0: __m128i,
-    q0: __m128i,
-    q1: __m128i,
-    q2: __m128i,
-    q3: __m128i,
-) -> __m128i {
+unsafe fn flat_mask4_avx2(thresh: u8, taps: [__m128i; 8]) -> __m128i {
+    let [p3, p2, p1, p0, q0, q1, q2, q3] = taps;
     // scalar: mask = -1 if any of these > thresh; flat = NOT(mask).
     let thresh_v = _mm_set1_epi8(thresh as i8);
     let mut work = abs_diff_u8(p1, p0);
@@ -363,15 +336,9 @@ unsafe fn widen_u8_to_u16_lo(x: __m128i) -> __m128i {
 #[target_feature(enable = "avx2")]
 #[inline]
 unsafe fn filter8_wide(
-    p3: __m128i,
-    p2: __m128i,
-    p1: __m128i,
-    p0: __m128i,
-    q0: __m128i,
-    q1: __m128i,
-    q2: __m128i,
-    q3: __m128i,
+    taps: [__m128i; 8],
 ) -> (__m128i, __m128i, __m128i, __m128i, __m128i, __m128i) {
+    let [p3, p2, p1, p0, q0, q1, q2, q3] = taps;
     // Widen each tap to u16. Only the low 8 lanes carry data per the
     // 8-row layout.
     let p3w = widen_u8_to_u16_lo(p3);
@@ -490,7 +457,8 @@ unsafe fn filter8_avx2(
     let (p1_f4, p0_f4, q0_f4, q1_f4) = filter4_inner(filter_mask, hev, p1, p0, q0, q1);
 
     // 7-tap wider outputs.
-    let (op2_w, op1_w, op0_w, oq0_w, oq1_w, oq2_w) = filter8_wide(p3, p2, p1, p0, q0, q1, q2, q3);
+    let taps = [p3, p2, p1, p0, q0, q1, q2, q3];
+    let (op2_w, op1_w, op0_w, oq0_w, oq1_w, oq2_w) = filter8_wide(taps);
 
     // Blend per lane:
     //   wide lanes -> 7-tap; else -> filter4 (for inner four),
@@ -559,7 +527,7 @@ unsafe fn lpf_vertical_8_avx2_inner(
     let r7 = load_row(base, s_index - 4 + 7 * pitch);
 
     // Transpose so each vector holds one column across all 8 rows.
-    let cols = transpose_8x8(r0, r1, r2, r3, r4, r5, r6, r7);
+    let cols = transpose_8x8([r0, r1, r2, r3, r4, r5, r6, r7]);
     let p3 = cols[0];
     let p2 = cols[1];
     let p1 = cols[2];
@@ -569,9 +537,10 @@ unsafe fn lpf_vertical_8_avx2_inner(
     let q2 = cols[6];
     let q3 = cols[7];
 
-    let mask = filter_mask_avx2(blimit, limit, p3, p2, p1, p0, q0, q1, q2, q3);
+    let taps = [p3, p2, p1, p0, q0, q1, q2, q3];
+    let mask = filter_mask_avx2(blimit, limit, taps);
     let hev = hev_mask_avx2(thresh, p1, p0, q0, q1);
-    let flat = flat_mask4_avx2(1, p3, p2, p1, p0, q0, q1, q2, q3);
+    let flat = flat_mask4_avx2(1, taps);
 
     let (op2, op1, op0, oq0, oq1, oq2) =
         filter8_avx2(mask, hev, flat, p3, p2, p1, p0, q0, q1, q2, q3);
@@ -585,16 +554,7 @@ unsafe fn lpf_vertical_8_avx2_inner(
     // low 64 bits. We need to rebuild 8 vectors where row j holds the
     // 8 bytes [c0[j], c1[j], ..., c7[j]]. The 8x8 transpose is its
     // own inverse — apply the same transpose helper.
-    let rows = transpose_8x8(
-        cols_out[0],
-        cols_out[1],
-        cols_out[2],
-        cols_out[3],
-        cols_out[4],
-        cols_out[5],
-        cols_out[6],
-        cols_out[7],
-    );
+    let rows = transpose_8x8(cols_out);
 
     // Store each row's 8 bytes at the original load offset.
     store_row(base, s_index - 4 + 0 * pitch, rows[0]);

@@ -571,6 +571,56 @@ fn scalar_extend_frame_borders(yv12: &mut Yv12Buffer) {
 pub type DirectionalCtxPredFn =
     fn(dst: &mut [u8], stride: usize, bs: usize, above: &[u8], left: &[u8], above_left: u8);
 
+/// Fn type for the TM_PRED slot.
+pub type TmPredictorFn =
+    fn(dst: &mut [u8], stride: usize, bs: usize, above: &[u8], left: &[u8], above_left: u8);
+
+/// Fn type for dual-threshold 4/8-tap loopfilter slots.
+pub type LpfDualFn = fn(
+    pixels: &mut [u8],
+    s_index: usize,
+    pitch: usize,
+    blimit0: u8,
+    limit0: u8,
+    thresh0: u8,
+    blimit1: u8,
+    limit1: u8,
+    thresh1: u8,
+);
+
+/// Fn type for the split detokenize dequant finisher.
+pub type PlaneDequantFinisherFn = fn(
+    scratch_raster: &[u16],
+    scratch_dqv: &[i16],
+    scratch_val: &[i16],
+    scratch_sign: &[u8],
+    dq_shift: u32,
+    dq_coefs_out: &mut [i32],
+);
+
+/// Fn type for one-axis 8-tap subpel convolution slots.
+pub type Convolve8OneAxisFn = fn(
+    src: &[u8],
+    src_stride: usize,
+    dst: &mut [u8],
+    dst_stride: usize,
+    filter: &[i16; 8],
+    w: usize,
+    h: usize,
+);
+
+/// Fn type for two-axis 8-tap subpel convolution slots.
+pub type Convolve8TwoAxisFn = fn(
+    src: &[u8],
+    src_stride: usize,
+    dst: &mut [u8],
+    dst_stride: usize,
+    filter_x: &[i16; 8],
+    filter_y: &[i16; 8],
+    w: usize,
+    h: usize,
+);
+
 /// Fn type for the scaled 2-D sub-pel convolutions (Wave L L1):
 /// `(src, src_stride, dst, dst_stride, filters, x0_q4, x_step_q4,
 /// y0_q4, y_step_q4, w, h)`. Shared by the base and `_avg` slots and
@@ -962,8 +1012,7 @@ pub struct SimdDispatch {
     /// [`crate::dsp::x86_64::tm_predictor_avx2`]; otherwise it points
     /// at a thin scalar adapter that re-builds a `PredCtx`. The kernel
     /// is size-parametric on `bs ∈ {4, 8, 16, 32}`.
-    pub(crate) tm_predictor:
-        fn(dst: &mut [u8], stride: usize, bs: usize, above: &[u8], left: &[u8], above_left: u8),
+    pub(crate) tm_predictor: TmPredictorFn,
 
     /// Wave K K1 — D45_PRED directional intra-predictor (`above`-only).
     /// Flat-arg form `(dst, stride, bs, above)`; the slot fn internally
@@ -1104,68 +1153,28 @@ pub struct SimdDispatch {
     /// CPUs this points at
     /// [`crate::dsp::x86_64::lpf_vertical_4_dual_avx2`] (two-singles
     /// delegation through the F10 single AVX2 wrapper).
-    pub(crate) lpf_vertical_4_dual: fn(
-        pixels: &mut [u8],
-        s_index: usize,
-        pitch: usize,
-        blimit0: u8,
-        limit0: u8,
-        thresh0: u8,
-        blimit1: u8,
-        limit1: u8,
-        thresh1: u8,
-    ),
+    pub(crate) lpf_vertical_4_dual: LpfDualFn,
 
     /// Wave H H2 — dual 4-tap horizontal loopfilter. Lane-doubled
     /// counterpart of [`SimdDispatch::lpf_horizontal_4`]. On x86_64
     /// AVX2 CPUs this points at
     /// [`crate::dsp::x86_64::lpf_horizontal_4_dual_avx2`] (two-singles
     /// delegation through the G3 single AVX2 wrapper).
-    pub(crate) lpf_horizontal_4_dual: fn(
-        pixels: &mut [u8],
-        s_index: usize,
-        pitch: usize,
-        blimit0: u8,
-        limit0: u8,
-        thresh0: u8,
-        blimit1: u8,
-        limit1: u8,
-        thresh1: u8,
-    ),
+    pub(crate) lpf_horizontal_4_dual: LpfDualFn,
 
     /// Wave H H3 — dual 8-tap vertical loopfilter. Lane-doubled
     /// counterpart of [`SimdDispatch::lpf_vertical_8`]. On x86_64
     /// AVX2 CPUs this points at
     /// [`crate::dsp::x86_64::lpf_vertical_8_dual_avx2`] (two-singles
     /// delegation through the G4 single AVX2 wrapper).
-    pub(crate) lpf_vertical_8_dual: fn(
-        pixels: &mut [u8],
-        s_index: usize,
-        pitch: usize,
-        blimit0: u8,
-        limit0: u8,
-        thresh0: u8,
-        blimit1: u8,
-        limit1: u8,
-        thresh1: u8,
-    ),
+    pub(crate) lpf_vertical_8_dual: LpfDualFn,
 
     /// Wave H H3 — dual 8-tap horizontal loopfilter. Lane-doubled
     /// counterpart of [`SimdDispatch::lpf_horizontal_8`]. On x86_64
     /// AVX2 CPUs this points at
     /// [`crate::dsp::x86_64::lpf_horizontal_8_dual_avx2`] (two-singles
     /// delegation through the G5 single AVX2 wrapper).
-    pub(crate) lpf_horizontal_8_dual: fn(
-        pixels: &mut [u8],
-        s_index: usize,
-        pitch: usize,
-        blimit0: u8,
-        limit0: u8,
-        thresh0: u8,
-        blimit1: u8,
-        limit1: u8,
-        thresh1: u8,
-    ),
+    pub(crate) lpf_horizontal_8_dual: LpfDualFn,
 
     /// Wave H H1 — dual 16-tap vertical loopfilter. Six-arg (single
     /// threshold set shared across both halves per libvpx
@@ -1193,14 +1202,7 @@ pub struct SimdDispatch {
     /// [`crate::dsp::x86_64::plane_dequant_finisher_avx2`] (8 i32
     /// lanes per iteration, scalar tail for `< 8` entries); otherwise
     /// it points at the scalar reference.
-    pub(crate) plane_dequant_finisher: fn(
-        scratch_raster: &[u16],
-        scratch_dqv: &[i16],
-        scratch_val: &[i16],
-        scratch_sign: &[u8],
-        dq_shift: u32,
-        dq_coefs_out: &mut [i32],
-    ),
+    pub(crate) plane_dequant_finisher: PlaneDequantFinisherFn,
 
     /// Wave I I5 — integer-pel copy: copy a `w × h` block from `src`
     /// to `dst`. Mirrors [`crate::inter::convolve_copy`] (libvpx
@@ -1222,84 +1224,34 @@ pub struct SimdDispatch {
     /// [`crate::inter::convolve8_horiz`]. Wave J J3 promotes this slot
     /// to AVX2 on x86_64 hosts that report `caps.avx2`; non-AVX2 hosts
     /// keep the scalar reference.
-    pub(crate) convolve8_horiz: fn(
-        src: &[u8],
-        src_stride: usize,
-        dst: &mut [u8],
-        dst_stride: usize,
-        filter_x: &[i16; 8],
-        w: usize,
-        h: usize,
-    ),
+    pub(crate) convolve8_horiz: Convolve8OneAxisFn,
 
     /// Wave I I5 — 8-tap vertical subpel convolution. Mirrors
     /// [`crate::inter::convolve8_vert`]. Wave J J4 promotes this slot to
     /// AVX2 on x86_64 hosts that report `caps.avx2`; non-AVX2 hosts keep
     /// the scalar reference.
-    pub(crate) convolve8_vert: fn(
-        src: &[u8],
-        src_stride: usize,
-        dst: &mut [u8],
-        dst_stride: usize,
-        filter_y: &[i16; 8],
-        w: usize,
-        h: usize,
-    ),
+    pub(crate) convolve8_vert: Convolve8OneAxisFn,
 
     /// Wave I I5 — 8-tap 2-D subpel convolution. Mirrors
     /// [`crate::inter::convolve8`]. Wave J J5 promotes this slot to AVX2
     /// on x86_64 hosts that report `caps.avx2`; non-AVX2 hosts keep the
     /// scalar reference.
-    pub(crate) convolve8: fn(
-        src: &[u8],
-        src_stride: usize,
-        dst: &mut [u8],
-        dst_stride: usize,
-        filter_x: &[i16; 8],
-        filter_y: &[i16; 8],
-        w: usize,
-        h: usize,
-    ),
+    pub(crate) convolve8: Convolve8TwoAxisFn,
 
     /// Wave I I5 — 8-tap horizontal subpel convolution with compound
     /// average. Mirrors [`crate::inter::convolve8_avg_horiz`]. Wave J J6
     /// promotes this slot to AVX2 on x86_64 when `caps.avx2`.
-    pub(crate) convolve8_avg_horiz: fn(
-        src: &[u8],
-        src_stride: usize,
-        dst: &mut [u8],
-        dst_stride: usize,
-        filter_x: &[i16; 8],
-        w: usize,
-        h: usize,
-    ),
+    pub(crate) convolve8_avg_horiz: Convolve8OneAxisFn,
 
     /// Wave I I5 — 8-tap vertical subpel convolution with compound
     /// average. Mirrors [`crate::inter::convolve8_avg_vert`]. Wave J J7
     /// promotes this slot to AVX2 on x86_64 when `caps.avx2`.
-    pub(crate) convolve8_avg_vert: fn(
-        src: &[u8],
-        src_stride: usize,
-        dst: &mut [u8],
-        dst_stride: usize,
-        filter_y: &[i16; 8],
-        w: usize,
-        h: usize,
-    ),
+    pub(crate) convolve8_avg_vert: Convolve8OneAxisFn,
 
     /// Wave I I5 — 8-tap 2-D subpel convolution with compound average.
     /// Mirrors [`crate::inter::convolve8_avg`]. Wave J J8 promotes this
     /// slot to AVX2 on x86_64 when `caps.avx2`.
-    pub(crate) convolve8_avg: fn(
-        src: &[u8],
-        src_stride: usize,
-        dst: &mut [u8],
-        dst_stride: usize,
-        filter_x: &[i16; 8],
-        filter_y: &[i16; 8],
-        w: usize,
-        h: usize,
-    ),
+    pub(crate) convolve8_avg: Convolve8TwoAxisFn,
 
     /// Wave L L1 — scaled 2-D sub-pel convolution (reference frame a
     /// different size: resize / spatial SVC). Mirrors
@@ -1586,13 +1538,13 @@ impl SimdDispatch {
         // 32} internally via per-size code paths (SSE2 for 4/8, AVX2
         // for 16/32).
         #[cfg(target_arch = "x86_64")]
-        let tm_predictor: fn(&mut [u8], usize, usize, &[u8], &[u8], u8) = if caps.avx2 {
+        let tm_predictor: TmPredictorFn = if caps.avx2 {
             crate::dsp::x86_64::tm_predictor_avx2
         } else {
             scalar_tm_predictor
         };
         #[cfg(not(target_arch = "x86_64"))]
-        let tm_predictor: fn(&mut [u8], usize, usize, &[u8], &[u8], u8) = scalar_tm_predictor;
+        let tm_predictor: TmPredictorFn = scalar_tm_predictor;
 
         // ---- Wave K — directional intra-predictors (D45/D63/D207/
         // D117/D135/D153). Each slot covers all bs ∈ {4, 8, 16, 32};
@@ -1867,48 +1819,40 @@ impl SimdDispatch {
         // already H7-bisection clean (V4/H4/V8/H8). The 16-tap duals
         // remain scalar pending H4 (after H7 fixes V16). ----
         #[cfg(target_arch = "x86_64")]
-        let lpf_vertical_4_dual: fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) = if caps.avx2
-        {
+        let lpf_vertical_4_dual: LpfDualFn = if caps.avx2 {
             crate::dsp::x86_64::lpf_vertical_4_dual_avx2
         } else {
             scalar_lpf_vertical_4_dual
         };
         #[cfg(not(target_arch = "x86_64"))]
-        let lpf_vertical_4_dual: fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) =
-            scalar_lpf_vertical_4_dual;
+        let lpf_vertical_4_dual: LpfDualFn = scalar_lpf_vertical_4_dual;
 
         #[cfg(target_arch = "x86_64")]
-        let lpf_horizontal_4_dual: fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) =
-            if caps.avx2 {
-                crate::dsp::x86_64::lpf_horizontal_4_dual_avx2
-            } else {
-                scalar_lpf_horizontal_4_dual
-            };
+        let lpf_horizontal_4_dual: LpfDualFn = if caps.avx2 {
+            crate::dsp::x86_64::lpf_horizontal_4_dual_avx2
+        } else {
+            scalar_lpf_horizontal_4_dual
+        };
         #[cfg(not(target_arch = "x86_64"))]
-        let lpf_horizontal_4_dual: fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) =
-            scalar_lpf_horizontal_4_dual;
+        let lpf_horizontal_4_dual: LpfDualFn = scalar_lpf_horizontal_4_dual;
 
         #[cfg(target_arch = "x86_64")]
-        let lpf_vertical_8_dual: fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) = if caps.avx2
-        {
+        let lpf_vertical_8_dual: LpfDualFn = if caps.avx2 {
             crate::dsp::x86_64::lpf_vertical_8_dual_avx2
         } else {
             scalar_lpf_vertical_8_dual
         };
         #[cfg(not(target_arch = "x86_64"))]
-        let lpf_vertical_8_dual: fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) =
-            scalar_lpf_vertical_8_dual;
+        let lpf_vertical_8_dual: LpfDualFn = scalar_lpf_vertical_8_dual;
 
         #[cfg(target_arch = "x86_64")]
-        let lpf_horizontal_8_dual: fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) =
-            if caps.avx2 {
-                crate::dsp::x86_64::lpf_horizontal_8_dual_avx2
-            } else {
-                scalar_lpf_horizontal_8_dual
-            };
+        let lpf_horizontal_8_dual: LpfDualFn = if caps.avx2 {
+            crate::dsp::x86_64::lpf_horizontal_8_dual_avx2
+        } else {
+            scalar_lpf_horizontal_8_dual
+        };
         #[cfg(not(target_arch = "x86_64"))]
-        let lpf_horizontal_8_dual: fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) =
-            scalar_lpf_horizontal_8_dual;
+        let lpf_horizontal_8_dual: LpfDualFn = scalar_lpf_horizontal_8_dual;
 
         // 16-tap duals share a single threshold set (libvpx convention).
         // Wave H H4 promoted both to AVX2 via two-singles delegation
@@ -1943,15 +1887,13 @@ impl SimdDispatch {
         // `_mm256_sign_epi32(mag, ±1)` matches `if sign { -mag } else
         // { mag }` exactly. Scalar tail covers `< 8` remaining entries.
         #[cfg(target_arch = "x86_64")]
-        let plane_dequant_finisher: fn(&[u16], &[i16], &[i16], &[u8], u32, &mut [i32]) =
-            if caps.avx2 {
-                crate::dsp::x86_64::plane_dequant_finisher_avx2
-            } else {
-                scalar_plane_dequant_finisher
-            };
+        let plane_dequant_finisher: PlaneDequantFinisherFn = if caps.avx2 {
+            crate::dsp::x86_64::plane_dequant_finisher_avx2
+        } else {
+            scalar_plane_dequant_finisher
+        };
         #[cfg(not(target_arch = "x86_64"))]
-        let plane_dequant_finisher: fn(&[u16], &[i16], &[i16], &[u8], u32, &mut [i32]) =
-            scalar_plane_dequant_finisher;
+        let plane_dequant_finisher: PlaneDequantFinisherFn = scalar_plane_dequant_finisher;
 
         // ---- Wave I I5 — motion-compensation dispatch slots. Direct
         // aliases of the existing scalar `crate::inter::filter::*` fns
@@ -1982,130 +1924,58 @@ impl SimdDispatch {
             crate::inter::filter::convolve_avg;
         // ---- Wave J J3 — AVX2 convolve8_horiz promotion. ----
         #[cfg(target_arch = "x86_64")]
-        let convolve8_horiz: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
-            if caps.avx2 {
-                crate::dsp::x86_64::convolve8_horiz_avx2
-            } else {
-                crate::inter::filter::convolve8_horiz
-            };
+        let convolve8_horiz: Convolve8OneAxisFn = if caps.avx2 {
+            crate::dsp::x86_64::convolve8_horiz_avx2
+        } else {
+            crate::inter::filter::convolve8_horiz
+        };
         #[cfg(not(target_arch = "x86_64"))]
-        let convolve8_horiz: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
-            crate::inter::filter::convolve8_horiz;
+        let convolve8_horiz: Convolve8OneAxisFn = crate::inter::filter::convolve8_horiz;
         // ---- Wave J J4 — AVX2 convolve8_vert promotion. ----
         #[cfg(target_arch = "x86_64")]
-        let convolve8_vert: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
-            if caps.avx2 {
-                crate::dsp::x86_64::convolve8_vert_avx2
-            } else {
-                crate::inter::filter::convolve8_vert
-            };
+        let convolve8_vert: Convolve8OneAxisFn = if caps.avx2 {
+            crate::dsp::x86_64::convolve8_vert_avx2
+        } else {
+            crate::inter::filter::convolve8_vert
+        };
         #[cfg(not(target_arch = "x86_64"))]
-        let convolve8_vert: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
-            crate::inter::filter::convolve8_vert;
+        let convolve8_vert: Convolve8OneAxisFn = crate::inter::filter::convolve8_vert;
         // ---- Wave J J5 — AVX2 convolve8 (full 2-D) promotion. ----
         #[cfg(target_arch = "x86_64")]
-        let convolve8: fn(
-            &[u8],
-            usize,
-            &mut [u8],
-            usize,
-            &[i16; 8],
-            &[i16; 8],
-            usize,
-            usize,
-        ) = if caps.avx2 {
+        let convolve8: Convolve8TwoAxisFn = if caps.avx2 {
             crate::dsp::x86_64::convolve8_avx2
         } else {
             crate::inter::filter::convolve8
         };
         #[cfg(not(target_arch = "x86_64"))]
-        let convolve8: fn(
-            &[u8],
-            usize,
-            &mut [u8],
-            usize,
-            &[i16; 8],
-            &[i16; 8],
-            usize,
-            usize,
-        ) = crate::inter::filter::convolve8;
+        let convolve8: Convolve8TwoAxisFn = crate::inter::filter::convolve8;
         // ---- Wave J J6 — AVX2 convolve8_avg_horiz promotion. ----
         #[cfg(target_arch = "x86_64")]
-        let convolve8_avg_horiz: fn(
-            &[u8],
-            usize,
-            &mut [u8],
-            usize,
-            &[i16; 8],
-            usize,
-            usize,
-        ) = if caps.avx2 {
+        let convolve8_avg_horiz: Convolve8OneAxisFn = if caps.avx2 {
             crate::dsp::x86_64::convolve8_avg_horiz_avx2
         } else {
             crate::inter::filter::convolve8_avg_horiz
         };
         #[cfg(not(target_arch = "x86_64"))]
-        let convolve8_avg_horiz: fn(
-            &[u8],
-            usize,
-            &mut [u8],
-            usize,
-            &[i16; 8],
-            usize,
-            usize,
-        ) = crate::inter::filter::convolve8_avg_horiz;
+        let convolve8_avg_horiz: Convolve8OneAxisFn = crate::inter::filter::convolve8_avg_horiz;
         // ---- Wave J J7 — AVX2 convolve8_avg_vert promotion. ----
         #[cfg(target_arch = "x86_64")]
-        let convolve8_avg_vert: fn(
-            &[u8],
-            usize,
-            &mut [u8],
-            usize,
-            &[i16; 8],
-            usize,
-            usize,
-        ) = if caps.avx2 {
+        let convolve8_avg_vert: Convolve8OneAxisFn = if caps.avx2 {
             crate::dsp::x86_64::convolve8_avg_vert_avx2
         } else {
             crate::inter::filter::convolve8_avg_vert
         };
         #[cfg(not(target_arch = "x86_64"))]
-        let convolve8_avg_vert: fn(
-            &[u8],
-            usize,
-            &mut [u8],
-            usize,
-            &[i16; 8],
-            usize,
-            usize,
-        ) = crate::inter::filter::convolve8_avg_vert;
+        let convolve8_avg_vert: Convolve8OneAxisFn = crate::inter::filter::convolve8_avg_vert;
         // ---- Wave J J8 — AVX2 convolve8_avg (full 2-D) promotion. ----
         #[cfg(target_arch = "x86_64")]
-        let convolve8_avg: fn(
-            &[u8],
-            usize,
-            &mut [u8],
-            usize,
-            &[i16; 8],
-            &[i16; 8],
-            usize,
-            usize,
-        ) = if caps.avx2 {
+        let convolve8_avg: Convolve8TwoAxisFn = if caps.avx2 {
             crate::dsp::x86_64::convolve8_avg_avx2
         } else {
             crate::inter::filter::convolve8_avg
         };
         #[cfg(not(target_arch = "x86_64"))]
-        let convolve8_avg: fn(
-            &[u8],
-            usize,
-            &mut [u8],
-            usize,
-            &[i16; 8],
-            &[i16; 8],
-            usize,
-            usize,
-        ) = crate::inter::filter::convolve8_avg;
+        let convolve8_avg: Convolve8TwoAxisFn = crate::inter::filter::convolve8_avg;
 
         // ---- Wave L L1 — AVX2 scaled 2-D convolution promotion. ----
         #[cfg(target_arch = "x86_64")]
@@ -2658,7 +2528,7 @@ impl SimdDispatch {
     /// (which takes a `PredCtx`).
     #[inline]
     #[must_use]
-    pub fn tm_predictor(&self) -> fn(&mut [u8], usize, usize, &[u8], &[u8], u8) {
+    pub fn tm_predictor(&self) -> TmPredictorFn {
         self.tm_predictor
     }
 
@@ -2815,7 +2685,7 @@ impl SimdDispatch {
     /// at H1 close; H2 fills with AVX2.
     #[inline]
     #[must_use]
-    pub fn lpf_vertical_4_dual(&self) -> fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) {
+    pub fn lpf_vertical_4_dual(&self) -> LpfDualFn {
         self.lpf_vertical_4_dual
     }
 
@@ -2823,7 +2693,7 @@ impl SimdDispatch {
     /// at H1 close; H2 fills with AVX2.
     #[inline]
     #[must_use]
-    pub fn lpf_horizontal_4_dual(&self) -> fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) {
+    pub fn lpf_horizontal_4_dual(&self) -> LpfDualFn {
         self.lpf_horizontal_4_dual
     }
 
@@ -2831,7 +2701,7 @@ impl SimdDispatch {
     /// at H1 close; H3 fills with AVX2.
     #[inline]
     #[must_use]
-    pub fn lpf_vertical_8_dual(&self) -> fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) {
+    pub fn lpf_vertical_8_dual(&self) -> LpfDualFn {
         self.lpf_vertical_8_dual
     }
 
@@ -2839,7 +2709,7 @@ impl SimdDispatch {
     /// at H1 close; H3 fills with AVX2.
     #[inline]
     #[must_use]
-    pub fn lpf_horizontal_8_dual(&self) -> fn(&mut [u8], usize, usize, u8, u8, u8, u8, u8, u8) {
+    pub fn lpf_horizontal_8_dual(&self) -> LpfDualFn {
         self.lpf_horizontal_8_dual
     }
 
@@ -2866,7 +2736,7 @@ impl SimdDispatch {
     /// when `caps.avx2`, scalar reference otherwise.
     #[inline]
     #[must_use]
-    pub fn plane_dequant_finisher(&self) -> fn(&[u16], &[i16], &[i16], &[u8], u32, &mut [i32]) {
+    pub fn plane_dequant_finisher(&self) -> PlaneDequantFinisherFn {
         self.plane_dequant_finisher
     }
 
@@ -2892,7 +2762,7 @@ impl SimdDispatch {
     /// Scalar only at I5; AVX2 promotion deferred to Wave J.
     #[inline]
     #[must_use]
-    pub fn convolve8_horiz(&self) -> fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) {
+    pub fn convolve8_horiz(&self) -> Convolve8OneAxisFn {
         self.convolve8_horiz
     }
 
@@ -2900,7 +2770,7 @@ impl SimdDispatch {
     /// Scalar only at I5; AVX2 promotion deferred to Wave J.
     #[inline]
     #[must_use]
-    pub fn convolve8_vert(&self) -> fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) {
+    pub fn convolve8_vert(&self) -> Convolve8OneAxisFn {
         self.convolve8_vert
     }
 
@@ -2908,9 +2778,7 @@ impl SimdDispatch {
     /// only at I5; AVX2 promotion deferred to Wave J.
     #[inline]
     #[must_use]
-    pub fn convolve8(
-        &self,
-    ) -> fn(&[u8], usize, &mut [u8], usize, &[i16; 8], &[i16; 8], usize, usize) {
+    pub fn convolve8(&self) -> Convolve8TwoAxisFn {
         self.convolve8
     }
 
@@ -2919,9 +2787,7 @@ impl SimdDispatch {
     /// to Wave J.
     #[inline]
     #[must_use]
-    pub fn convolve8_avg_horiz(
-        &self,
-    ) -> fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) {
+    pub fn convolve8_avg_horiz(&self) -> Convolve8OneAxisFn {
         self.convolve8_avg_horiz
     }
 
@@ -2930,9 +2796,7 @@ impl SimdDispatch {
     /// to Wave J.
     #[inline]
     #[must_use]
-    pub fn convolve8_avg_vert(
-        &self,
-    ) -> fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) {
+    pub fn convolve8_avg_vert(&self) -> Convolve8OneAxisFn {
         self.convolve8_avg_vert
     }
 
@@ -2941,9 +2805,7 @@ impl SimdDispatch {
     /// Wave J.
     #[inline]
     #[must_use]
-    pub fn convolve8_avg(
-        &self,
-    ) -> fn(&[u8], usize, &mut [u8], usize, &[i16; 8], &[i16; 8], usize, usize) {
+    pub fn convolve8_avg(&self) -> Convolve8TwoAxisFn {
         self.convolve8_avg
     }
 
@@ -4342,8 +4204,7 @@ mod tests {
         let mut caps = detect();
         caps.avx2 = true;
         let d = SimdDispatch::build(caps);
-        let avx2_fp: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
-            crate::dsp::x86_64::convolve8_horiz_avx2;
+        let avx2_fp: Convolve8OneAxisFn = crate::dsp::x86_64::convolve8_horiz_avx2;
         assert_eq!(
             d.convolve8_horiz() as usize,
             avx2_fp as usize,
@@ -4359,8 +4220,7 @@ mod tests {
         let mut caps = detect();
         caps.avx2 = false;
         let d = SimdDispatch::build(caps);
-        let scalar: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
-            crate::inter::filter::convolve8_horiz;
+        let scalar: Convolve8OneAxisFn = crate::inter::filter::convolve8_horiz;
         assert_eq!(
             d.convolve8_horiz() as usize,
             scalar as usize,
@@ -4381,8 +4241,7 @@ mod tests {
         let mut caps = detect();
         caps.avx2 = true;
         let d = SimdDispatch::build(caps);
-        let avx2_fp: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
-            crate::dsp::x86_64::convolve8_vert_avx2;
+        let avx2_fp: Convolve8OneAxisFn = crate::dsp::x86_64::convolve8_vert_avx2;
         assert_eq!(
             d.convolve8_vert() as usize,
             avx2_fp as usize,
@@ -4398,8 +4257,7 @@ mod tests {
         let mut caps = detect();
         caps.avx2 = false;
         let d = SimdDispatch::build(caps);
-        let scalar: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
-            crate::inter::filter::convolve8_vert;
+        let scalar: Convolve8OneAxisFn = crate::inter::filter::convolve8_vert;
         assert_eq!(
             d.convolve8_vert() as usize,
             scalar as usize,
@@ -4420,8 +4278,7 @@ mod tests {
         let mut caps = detect();
         caps.avx2 = true;
         let d = SimdDispatch::build(caps);
-        let avx2_fp: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], &[i16; 8], usize, usize) =
-            crate::dsp::x86_64::convolve8_avx2;
+        let avx2_fp: Convolve8TwoAxisFn = crate::dsp::x86_64::convolve8_avx2;
         assert_eq!(
             d.convolve8() as usize,
             avx2_fp as usize,
@@ -4437,8 +4294,7 @@ mod tests {
         let mut caps = detect();
         caps.avx2 = false;
         let d = SimdDispatch::build(caps);
-        let scalar: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], &[i16; 8], usize, usize) =
-            crate::inter::filter::convolve8;
+        let scalar: Convolve8TwoAxisFn = crate::inter::filter::convolve8;
         assert_eq!(
             d.convolve8() as usize,
             scalar as usize,
@@ -4457,8 +4313,7 @@ mod tests {
         let mut caps = detect();
         caps.avx2 = true;
         let d = SimdDispatch::build(caps);
-        let avx2_fp: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
-            crate::dsp::x86_64::convolve8_avg_horiz_avx2;
+        let avx2_fp: Convolve8OneAxisFn = crate::dsp::x86_64::convolve8_avg_horiz_avx2;
         assert_eq!(
             d.convolve8_avg_horiz() as usize,
             avx2_fp as usize,
@@ -4474,8 +4329,7 @@ mod tests {
         let mut caps = detect();
         caps.avx2 = false;
         let d = SimdDispatch::build(caps);
-        let scalar: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
-            crate::inter::filter::convolve8_avg_horiz;
+        let scalar: Convolve8OneAxisFn = crate::inter::filter::convolve8_avg_horiz;
         assert_eq!(
             d.convolve8_avg_horiz() as usize,
             scalar as usize,
@@ -4494,8 +4348,7 @@ mod tests {
         let mut caps = detect();
         caps.avx2 = true;
         let d = SimdDispatch::build(caps);
-        let avx2_fp: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
-            crate::dsp::x86_64::convolve8_avg_vert_avx2;
+        let avx2_fp: Convolve8OneAxisFn = crate::dsp::x86_64::convolve8_avg_vert_avx2;
         assert_eq!(
             d.convolve8_avg_vert() as usize,
             avx2_fp as usize,
@@ -4511,8 +4364,7 @@ mod tests {
         let mut caps = detect();
         caps.avx2 = false;
         let d = SimdDispatch::build(caps);
-        let scalar: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], usize, usize) =
-            crate::inter::filter::convolve8_avg_vert;
+        let scalar: Convolve8OneAxisFn = crate::inter::filter::convolve8_avg_vert;
         assert_eq!(
             d.convolve8_avg_vert() as usize,
             scalar as usize,
@@ -4531,8 +4383,7 @@ mod tests {
         let mut caps = detect();
         caps.avx2 = true;
         let d = SimdDispatch::build(caps);
-        let avx2_fp: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], &[i16; 8], usize, usize) =
-            crate::dsp::x86_64::convolve8_avg_avx2;
+        let avx2_fp: Convolve8TwoAxisFn = crate::dsp::x86_64::convolve8_avg_avx2;
         assert_eq!(
             d.convolve8_avg() as usize,
             avx2_fp as usize,
@@ -4548,8 +4399,7 @@ mod tests {
         let mut caps = detect();
         caps.avx2 = false;
         let d = SimdDispatch::build(caps);
-        let scalar: fn(&[u8], usize, &mut [u8], usize, &[i16; 8], &[i16; 8], usize, usize) =
-            crate::inter::filter::convolve8_avg;
+        let scalar: Convolve8TwoAxisFn = crate::inter::filter::convolve8_avg;
         assert_eq!(
             d.convolve8_avg() as usize,
             scalar as usize,

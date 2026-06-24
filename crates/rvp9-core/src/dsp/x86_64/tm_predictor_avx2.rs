@@ -93,8 +93,8 @@ unsafe fn tm_predictor_avx2_inner(
             let above_v8: __m128i = _mm_cvtsi32_si128(above_i32);
             // Widen to 8 i16 lanes (low 4 hold real data, high 4 = 0).
             let above_v16: __m128i = _mm_cvtepu8_epi16(above_v8);
-            for r in 0..4 {
-                let delta = left[r] as i32 - tl;
+            for (r, &left_px) in left.iter().take(4).enumerate() {
+                let delta = left_px as i32 - tl;
                 let delta_v: __m128i = _mm_set1_epi16(delta as i16);
                 let sum: __m128i = _mm_add_epi16(delta_v, above_v16);
                 // Pack i16 → u8 with unsigned saturation. The 8 i16
@@ -109,8 +109,8 @@ unsafe fn tm_predictor_avx2_inner(
             // 8 bytes per row → one __m128i of 8 i16 lanes.
             let above_v8: __m128i = _mm_loadl_epi64(above.as_ptr() as *const __m128i);
             let above_v16: __m128i = _mm_cvtepu8_epi16(above_v8);
-            for r in 0..8 {
-                let delta = left[r] as i32 - tl;
+            for (r, &left_px) in left.iter().take(8).enumerate() {
+                let delta = left_px as i32 - tl;
                 let delta_v: __m128i = _mm_set1_epi16(delta as i16);
                 let sum: __m128i = _mm_add_epi16(delta_v, above_v16);
                 // 8 i16 → 8 packed u8 with unsigned saturation; result
@@ -123,8 +123,8 @@ unsafe fn tm_predictor_avx2_inner(
             // 16 bytes per row → 16 i16 lanes in one __m256i.
             let above_v8: __m128i = _mm_loadu_si128(above.as_ptr() as *const __m128i);
             let above_v16: __m256i = _mm256_cvtepu8_epi16(above_v8);
-            for r in 0..16 {
-                let delta = left[r] as i32 - tl;
+            for (r, &left_px) in left.iter().take(16).enumerate() {
+                let delta = left_px as i32 - tl;
                 let delta_v: __m256i = _mm256_set1_epi16(delta as i16);
                 let sum: __m256i = _mm256_add_epi16(delta_v, above_v16);
                 // _mm256_packus_epi16(a, a) on AVX2 interleaves
@@ -150,8 +150,8 @@ unsafe fn tm_predictor_avx2_inner(
             let above_hi_v8: __m128i = _mm_loadu_si128(above.as_ptr().add(16) as *const __m128i);
             let above_lo_v16: __m256i = _mm256_cvtepu8_epi16(above_lo_v8);
             let above_hi_v16: __m256i = _mm256_cvtepu8_epi16(above_hi_v8);
-            for r in 0..32 {
-                let delta = left[r] as i32 - tl;
+            for (r, &left_px) in left.iter().take(32).enumerate() {
+                let delta = left_px as i32 - tl;
                 let delta_v: __m256i = _mm256_set1_epi16(delta as i16);
                 // Low 16 columns.
                 let sum_lo: __m256i = _mm256_add_epi16(delta_v, above_lo_v16);

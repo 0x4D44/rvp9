@@ -1857,13 +1857,13 @@ impl StreamEncoder {
             // Trigger from the schedule (the `arf_before` flag) AND the
             // lookahead can supply at least one neighbour for the
             // temporal filter.
-            if frame_sched.arf_before && peek_avail >= 1 {
-                if let Some(arf_packet) =
+            if frame_sched.arf_before
+                && peek_avail >= 1
+                && let Some(arf_packet) =
                     self.try_build_arf_packet(q_index, (&y_tight, &u_tight, &v_tight))?
-                {
-                    self.pending_arf_packet = Some(arf_packet);
-                    self.inter_frames_since_arf = 0;
-                }
+            {
+                self.pending_arf_packet = Some(arf_packet);
+                self.inter_frames_since_arf = 0;
             }
         }
 
@@ -2017,22 +2017,23 @@ impl StreamEncoder {
         // picker. For KF the ref plane is unused (the picker substitutes
         // a flat-128 fallback when `is_keyframe = true`), but we still
         // need a valid `PlaneRef`; pass the input Y as the ref.
-        let mut sb_partitions = choose_partitions_for_frame(
-            w as usize,
-            h as usize,
+        let mut sb_partitions = choose_partitions_for_frame(FramePartitionInput {
+            width_px: w as usize,
+            height_px: h as usize,
             q_index,
-            input_yuv.0,
-            /* ref_y = */ input_yuv.0,
-            /* is_keyframe = */ true,
+            src_y: input_yuv.0,
+            // For keyframes the partition picker ignores ref_y.
+            ref_y: input_yuv.0,
+            is_keyframe: true,
             // Keyframe: `avg_inter_qindex` is unused by the KF threshold
             // path. Pass the running inter average anyway for clarity.
-            self.rate_control.avg_frame_qindex_inter,
+            avg_inter_qindex: self.rate_control.avg_frame_qindex_inter,
             // W2.6 — KF branch ignores `noise_threshold_scale` (libvpx
             // gates the noise multiplier on the non-key path only). Pass
             // `1` for the no-op multiplier; the producer's value still
             // applies on the inter path below.
-            1,
-        );
+            noise_threshold_scale: 1,
+        });
 
         // F10.1b — pick the Y intra mode per leaf via
         // `pick_intra_mode_luma`, run the F5.1 simulator with the
@@ -2470,25 +2471,25 @@ impl StreamEncoder {
         // initially structural-only (`me_ref_* == last_recon_*` after
         // every commit), reading from `me_ref_y` here keeps every ME
         // call site on the ME-side buffer.
-        let sb_partitions_intra_shape = choose_partitions_for_frame(
-            w as usize,
-            h as usize,
+        let sb_partitions_intra_shape = choose_partitions_for_frame(FramePartitionInput {
+            width_px: w as usize,
+            height_px: h as usize,
             q_index,
-            input_yuv.0,
-            &self.me_ref_y,
-            /* is_keyframe = */ false,
+            src_y: input_yuv.0,
+            ref_y: &self.me_ref_y,
+            is_keyframe: false,
             // E2: inter-frame VBP thresholds depend on the rate
             // controller's running `avg_frame_qindex[INTER_FRAME]` to
             // pick the `>200`/`>220` thresholds[2] boost (foreman 100k
             // settles ≈211, so the `>200` branch fires).
-            self.rate_control.avg_frame_qindex_inter,
+            avg_inter_qindex: self.rate_control.avg_frame_qindex_inter,
             // W2.6 — pre-analysis noise-driven VBP threshold scale.
             // Returns 1 when the noise estimator is disabled (so this
             // is a no-op multiplier for the common case where
             // `noise_sensitivity == 0`); returns 2 or 4 on noisier
             // input and broadens the threshold ladder accordingly.
-            self.pre_analysis.vbp_threshold_scale(),
-        );
+            noise_threshold_scale: self.pre_analysis.vbp_threshold_scale(),
+        });
 
         // Convert the intra-shaped partition descriptors into inter-
         // shaped ones (picker fields default to ZEROMV / Mv::ZERO and
@@ -2771,8 +2772,8 @@ impl StreamEncoder {
         let filter_level = if self.config.speed.unsigned_abs() <= 4 {
             // libvpx `vp9_picklpf.c:46-157` search.
             crate::loopfilter::search_filter_level(&crate::loopfilter::SearchFilterLevelParams {
-                width: w as u32,
-                height: h as u32,
+                width: w,
+                height: h,
                 mi_grid: &mi_grid,
                 recon_y: &new_recon_y,
                 recon_u: &new_recon_u,
@@ -3189,16 +3190,16 @@ impl StreamEncoder {
         // F8.2 variance picker the show-frame path uses
         // (`encode_inter_internal`), so the ARF gets a content-driven
         // partition instead of one flat 64×64 leaf.
-        let sb_partitions_intra_shape = choose_partitions_for_frame(
-            w_us,
-            h_us,
+        let sb_partitions_intra_shape = choose_partitions_for_frame(FramePartitionInput {
+            width_px: w_us,
+            height_px: h_us,
             q_index,
-            filtered_yuv.0,
-            &self.me_ref_y,
-            /* is_keyframe = */ false,
-            self.rate_control.avg_frame_qindex_inter,
-            self.pre_analysis.vbp_threshold_scale(),
-        );
+            src_y: filtered_yuv.0,
+            ref_y: &self.me_ref_y,
+            is_keyframe: false,
+            avg_inter_qindex: self.rate_control.avg_frame_qindex_inter,
+            noise_threshold_scale: self.pre_analysis.vbp_threshold_scale(),
+        });
 
         // Convert the intra-shaped descriptors into inter-shaped leaves
         // (segmentation off for the ARF — AQ does not run on it).
@@ -3750,21 +3751,33 @@ impl StreamEncoder {
 /// a flat-128 fallback when `is_keyframe = true`); for inter frames
 /// `ref_y` must point at the previous-frame's Y reconstruction
 /// (LASTFRAME under our zero-MV mode).
-fn choose_partitions_for_frame(
+struct FramePartitionInput<'a> {
     width_px: usize,
     height_px: usize,
     q_index: u8,
-    src_y: &[u8],
-    ref_y: &[u8],
+    src_y: &'a [u8],
+    ref_y: &'a [u8],
     is_keyframe: bool,
     avg_inter_qindex: u8,
     // W2.6 — pre-analysis noise threshold scale. `1` keeps the legacy
-    // inter threshold ladder untouched; ≥2 multiplies the per-level
+    // inter threshold ladder untouched; >=2 multiplies the per-level
     // VBP threshold so noisier inputs split less aggressively (matches
     // libvpx `set_vbp_thresholds:588-598`). Keyframes ignore this
     // value (the KF branch doesn't apply the noise scale).
     noise_threshold_scale: u32,
-) -> Vec<Vec<PartitionLeafDesc>> {
+}
+
+fn choose_partitions_for_frame(input: FramePartitionInput<'_>) -> Vec<Vec<PartitionLeafDesc>> {
+    let FramePartitionInput {
+        width_px,
+        height_px,
+        q_index,
+        src_y,
+        ref_y,
+        is_keyframe,
+        avg_inter_qindex,
+        noise_threshold_scale,
+    } = input;
     let sb_cols = width_px / 64;
     let sb_rows = height_px / 64;
     let mut out: Vec<Vec<PartitionLeafDesc>> = Vec::with_capacity(sb_rows * sb_cols);
@@ -4335,7 +4348,7 @@ fn build_inter_packet_with_residuals(
     // best_ref_mv + delta).
     prev_mv_grid: Option<&[PrevFrameMvRef]>,
     // P0b — optional output slot for backward-adaptation counts.
-    mut counts: Option<&mut FrameCounts>,
+    counts: Option<&mut FrameCounts>,
     // P0b — frame context to use for encoding (replaces
     // `FrameContext::new_default()` when backward adaptation is active).
     fc_override: Option<&FrameContext>,
@@ -4483,7 +4496,7 @@ fn build_inter_packet_with_residuals(
     // are probability-INDEPENDENT, so the counts produced here are
     // identical to the real tile pass's regardless of which FC is used.
     // We clone `decoder_fc` so this pass never mutates the live mirror.
-    let mut count_fc = decoder_fc.clone();
+    let count_fc = decoder_fc.clone();
     let mut count_counts = FrameCounts {
         coef_full: Some(rvp9_core::entropy::new_coef12_bank()),
         ..FrameCounts::default()
@@ -4495,7 +4508,7 @@ fn build_inter_packet_with_residuals(
         let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
         write_tile_inter(
             &mut bw,
-            &mut count_fc,
+            &count_fc,
             &params,
             // Track-F iter7 — the count pass must use the same `tx_mode` as
             // the real tile pass so the per-block tx_size derivation (and
@@ -4580,7 +4593,7 @@ fn build_inter_packet_with_residuals(
             prev_mv_grid,
             &mut coef_ctx,
             coef_source,
-            counts.as_deref_mut(),
+            counts,
         )?;
         bw.stop_encode()
             .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
@@ -5291,7 +5304,7 @@ mod tests {
              (KF tl0, then alternating)"
         );
         assert!(
-            tids.iter().any(|&t| t == 1),
+            tids.contains(&1),
             "must produce at least one tl1 enhancement frame"
         );
     }
@@ -8333,9 +8346,8 @@ mod tests {
         let mut enc = StreamEncoder::new(baseline_config()).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
         let f = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
-        unsafe {
-            std::env::remove_var(key);
-        }
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe { std::env::remove_var(key) };
         assert_eq!(f.q_index, 100, "RVP9_FIXED_Q must pin frame Q to 100");
     }
 
@@ -8344,15 +8356,15 @@ mod tests {
         // Drive the RVP9_E8_TRACE env-gated diagnostic branch.
         let _guard = env_test_mutex();
         let key = "RVP9_E8_TRACE";
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
         unsafe {
             std::env::set_var(key, "1");
         }
         let mut enc = StreamEncoder::new(baseline_config()).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
         let f = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
-        unsafe {
-            std::env::remove_var(key);
-        }
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe { std::env::remove_var(key) };
         assert!(f.actual_bits > 0, "encode must succeed under E8 trace");
     }
 
@@ -8361,15 +8373,15 @@ mod tests {
         // Drive the RVP9_DIAG_BPM_VERIFY env-gated diagnostic branch.
         let _guard = env_test_mutex();
         let key = "RVP9_DIAG_BPM_VERIFY";
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
         unsafe {
             std::env::set_var(key, "1");
         }
         let mut enc = StreamEncoder::new(baseline_config()).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
         let f = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
-        unsafe {
-            std::env::remove_var(key);
-        }
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe { std::env::remove_var(key) };
         assert!(f.actual_bits > 0, "encode must succeed under BPM verify");
     }
 
@@ -8380,6 +8392,7 @@ mod tests {
         // Only fires on inter frames; encode KF + inter.
         let _guard = env_test_mutex();
         let key = "RVP9_PART_HIST";
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
         unsafe {
             std::env::set_var(key, "1");
         }
@@ -8387,9 +8400,8 @@ mod tests {
         let (y, u, v) = gradient_frame(64, 64);
         let _ = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
         let inter = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
-        unsafe {
-            std::env::remove_var(key);
-        }
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe { std::env::remove_var(key) };
         assert_eq!(inter.frame_kind, FrameKind::Inter);
     }
 
@@ -8518,37 +8530,38 @@ mod tests {
         // skip=true, and a 16×16 leaf at (4,0) carrying seg_id=5, skip=false.
         let mi_rows = 8usize;
         let mi_cols = 8usize;
-        let mut leaves = Vec::new();
-        leaves.push(InterPartitionLeafDesc {
-            mi_row_in_sb: 0,
-            mi_col_in_sb: 0,
-            leaf_bsize: BlockSize::Block32x32,
-            picked_mode: InterMode::ZeroMv,
-            picked_mv: Mv::ZERO,
-            skip: true,
-            segment_id: 2,
-            picked_ref_frame: RefFrame::LastFrame,
-            picked_interp_filter: InterpFilter::EightTap,
-            picked_intra_mode: None,
-            picked_ref_frame2: RefFrame::NoRefFrame,
-            picked_mv2: Mv::ZERO,
-            picked_tx_size: max_txsize(BlockSize::Block32x32),
-        });
-        leaves.push(InterPartitionLeafDesc {
-            mi_row_in_sb: 4,
-            mi_col_in_sb: 0,
-            leaf_bsize: BlockSize::Block16x16,
-            picked_mode: InterMode::NewMv,
-            picked_mv: Mv::ZERO,
-            skip: false,
-            segment_id: 5,
-            picked_ref_frame: RefFrame::LastFrame,
-            picked_interp_filter: InterpFilter::EightTap,
-            picked_intra_mode: None,
-            picked_ref_frame2: RefFrame::NoRefFrame,
-            picked_mv2: Mv::ZERO,
-            picked_tx_size: max_txsize(BlockSize::Block16x16),
-        });
+        let leaves = vec![
+            InterPartitionLeafDesc {
+                mi_row_in_sb: 0,
+                mi_col_in_sb: 0,
+                leaf_bsize: BlockSize::Block32x32,
+                picked_mode: InterMode::ZeroMv,
+                picked_mv: Mv::ZERO,
+                skip: true,
+                segment_id: 2,
+                picked_ref_frame: RefFrame::LastFrame,
+                picked_interp_filter: InterpFilter::EightTap,
+                picked_intra_mode: None,
+                picked_ref_frame2: RefFrame::NoRefFrame,
+                picked_mv2: Mv::ZERO,
+                picked_tx_size: max_txsize(BlockSize::Block32x32),
+            },
+            InterPartitionLeafDesc {
+                mi_row_in_sb: 4,
+                mi_col_in_sb: 0,
+                leaf_bsize: BlockSize::Block16x16,
+                picked_mode: InterMode::NewMv,
+                picked_mv: Mv::ZERO,
+                skip: false,
+                segment_id: 5,
+                picked_ref_frame: RefFrame::LastFrame,
+                picked_interp_filter: InterpFilter::EightTap,
+                picked_intra_mode: None,
+                picked_ref_frame2: RefFrame::NoRefFrame,
+                picked_mv2: Mv::ZERO,
+                picked_tx_size: max_txsize(BlockSize::Block16x16),
+            },
+        ];
         let sb_partitions = vec![leaves];
 
         let (segs, skips) = gather_coded_segments_and_skip(mi_rows, mi_cols, &sb_partitions);

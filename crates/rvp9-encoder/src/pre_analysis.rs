@@ -156,7 +156,7 @@ impl PreAnalysisState {
             "PreAnalysisState requires positive dims"
         );
         assert!(
-            width % 8 == 0 && height % 8 == 0,
+            width.is_multiple_of(8) && height.is_multiple_of(8),
             "PreAnalysisState requires width/height to be multiples of 8 \
              (the mi-grid resolution)"
         );
@@ -494,7 +494,7 @@ impl PreAnalysisState {
         // returning so the next call can run (libvpx lines 140-142).
         let last_source = self.last_source_y.as_deref();
         if !self.noise_estimate.enabled
-            || frame_counter % FRAME_PERIOD != 0
+            || !frame_counter.is_multiple_of(FRAME_PERIOD)
             || last_source.is_none()
             || self.ne_last_w != self.width
             || self.ne_last_h != self.height
@@ -1079,7 +1079,7 @@ fn vpx_skin_pixel(y: i32, cb: i32, cr: i32, motion: i32) -> u8 {
     const SKIN_THRESHOLD: [i32; 6] = [1570636, 1400000, 800000, 800000, 800000, 800000];
 
     // libvpx `vpx_dsp/skin_detection.c:50`.
-    if y < Y_LOW || y > Y_HIGH {
+    if !(Y_LOW..=Y_HIGH).contains(&y) {
         return 0;
     }
     // libvpx `vpx_dsp/skin_detection.c:57`.
@@ -1438,8 +1438,8 @@ mod tests {
     /// MAX_VAR_HIST_BINS` AND `hist_index < 3 * (MAX_VAR_HIST_BINS
     /// >> 1) = 30` ⇒ tail-folds into bin 19. Every sampled block
     /// lands in bin 19, so max_bin = 19, `ne_value = (3*0 +
-    /// 19*40) >> 2 = 190`. That's > `adapt_thresh = (3*115)>>1 =
-    /// 172`, so the rapid-onset fast-path
+    /// > >    19*40) >> 2 = 190`. That's > `adapt_thresh = (3*115)>>1 =
+    /// > >    172`, so the rapid-onset fast-path
     /// (`vp9_noise_estimate.c:282-286`) jumps count to 15 in this
     /// call, the next inner `if` triggers level extraction, and
     /// `extract_level(190, 115) → kMedium`

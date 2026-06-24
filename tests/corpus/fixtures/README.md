@@ -8,17 +8,18 @@ least one real-world clip — no fetch step required.
 
 Total size budget: **&lt; 10 MB** across all committed fixtures.
 
-## Current state — G8.0 (this commit)
+## Current state
 
-**Empty.** The G8 engineering deliverable (Md5Entry widening, the
-per-packet sub-frame-count sanity oracle, this directory scaffolding,
-the `real_world.rs` test harness, and `scripts/fetch-corpus.ps1`)
-landed without binary fixtures because `vpxenc` is not on PATH in
-the current sandbox.
+The committed seed set is intentionally small:
 
-`crates/rvp9-harness/tests/real_world.rs` skip-cleans when this
-directory is empty; once fixtures arrive the test starts running
-automatically without code changes.
+- `foreman-fp1.ivf` — visible-frame-only baseline.
+- `foreman_c444_2pass.ivf` — profile 1 two-pass clip with hidden
+  altref frames, mirrored from `tests/corpus/profile1/`.
+
+`crates/rvp9-harness/tests/real_world.rs` skip-cleans only when this
+directory has no `.ivf` / `.webm` fixtures. Once any fixtures are
+present, the aggregate set must include at least one `show_frame=0`
+frame so the G8 hidden-frame acceptance gate remains meaningful.
 
 ## Coming in G8.1 — corpus acquisition + encoding
 

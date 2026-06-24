@@ -186,8 +186,8 @@ unsafe fn idct8x8_add_sse2_64_inner(input: &[i32; 64], dst: &mut [u8], stride: u
     // Mirrors libvpx `load_buffer_8x8` (`inv_txfm_sse2.c:146-156`) with
     // the HBD-branch `load_input_data8` (i32 → i16 saturating-pack).
     let input_ptr = input.as_ptr();
-    in_[0] = load_input_data8(input_ptr.add(0 * 8));
-    in_[1] = load_input_data8(input_ptr.add(1 * 8));
+    in_[0] = load_input_data8(input_ptr);
+    in_[1] = load_input_data8(input_ptr.add(8));
     in_[2] = load_input_data8(input_ptr.add(2 * 8));
     in_[3] = load_input_data8(input_ptr.add(3 * 8));
     in_[4] = load_input_data8(input_ptr.add(4 * 8));
@@ -209,8 +209,8 @@ unsafe fn idct8x8_add_sse2_64_inner(input: &[i32; 64], dst: &mut [u8], stride: u
 
     // ---- write_buffer_8x8: per-row (+16, >>5) + residual add. ----
     let dest_ptr = dst.as_mut_ptr();
-    recon_and_store_row(dest_ptr.add(0 * stride), in_[0]);
-    recon_and_store_row(dest_ptr.add(1 * stride), in_[1]);
+    recon_and_store_row(dest_ptr, in_[0]);
+    recon_and_store_row(dest_ptr.add(stride), in_[1]);
     recon_and_store_row(dest_ptr.add(2 * stride), in_[2]);
     recon_and_store_row(dest_ptr.add(3 * stride), in_[3]);
     recon_and_store_row(dest_ptr.add(4 * stride), in_[4]);

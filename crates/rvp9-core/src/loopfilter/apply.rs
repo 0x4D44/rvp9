@@ -161,19 +161,35 @@ impl SharedFrame {
         unsafe { std::slice::from_raw_parts_mut(self.y_ptr, self.y_len) }
     }
 
-    /// Reconstruct a `&mut [u8]` slice over the U plane. See [`Self::y_slice`].
+    /// Reconstruct a `&mut [u8]` slice over the U plane.
+    ///
+    /// # Safety
+    ///
+    /// Caller guarantees no other live reference to the U plane exists for
+    /// the lifetime of the returned slice. Under the row-progress protocol
+    /// the caller owns a unique SB row; the slice spans the full plane but
+    /// only pixels within the caller's owned row range may be written. See
+    /// `Phase3` HLD §4.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn u_slice(&self) -> &mut [u8] {
-        // SAFETY: contract on [`Self::y_slice`].
+        // SAFETY: contract above.
         unsafe { std::slice::from_raw_parts_mut(self.u_ptr, self.u_len) }
     }
 
-    /// Reconstruct a `&mut [u8]` slice over the V plane. See [`Self::y_slice`].
+    /// Reconstruct a `&mut [u8]` slice over the V plane.
+    ///
+    /// # Safety
+    ///
+    /// Caller guarantees no other live reference to the V plane exists for
+    /// the lifetime of the returned slice. Under the row-progress protocol
+    /// the caller owns a unique SB row; the slice spans the full plane but
+    /// only pixels within the caller's owned row range may be written. See
+    /// `Phase3` HLD §4.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn v_slice(&self) -> &mut [u8] {
-        // SAFETY: contract on [`Self::y_slice`].
+        // SAFETY: contract above.
         unsafe { std::slice::from_raw_parts_mut(self.v_ptr, self.v_len) }
     }
 
@@ -280,10 +296,9 @@ pub fn build_lfm_row(
     out: &mut [LoopFilterMask],
 ) {
     debug_assert!(out.len() >= sb_cols);
-    for sb_col in 0..sb_cols {
+    for (sb_col, lfm) in out.iter_mut().enumerate().take(sb_cols) {
         let mi_row = sb_row * MI_BLOCK_SIZE;
         let mi_col = sb_col * MI_BLOCK_SIZE;
-        let lfm = &mut out[sb_col];
         *lfm = LoopFilterMask::default();
         crate::loopfilter::setup_mask(
             mi_row as u32,
@@ -942,9 +957,12 @@ fn apply_one_sb_inner(
     dispatch: &SimdDispatch,
 ) {
     // Y plane (ss = 0).
-    filter_block_plane_ss00(
-        y_data, y_stride, lfm, mi_row, mi_col, mi_rows, info, dispatch,
-    );
+    let luma_pos = PlaneSs00Pos {
+        mi_row,
+        mi_col,
+        mi_rows,
+    };
+    filter_block_plane_ss00(y_data, y_stride, lfm, luma_pos, info, dispatch);
     // U / V planes. Dispatch on the established chroma format:
     //   - Yuv420 → ss11 (4×4 chroma grid; UV masks).
     //   - Yuv444 → ss00 (8×8 chroma grid == luma; Y masks).
@@ -964,12 +982,8 @@ fn apply_one_sb_inner(
             // ss00 (libvpx `vp9_filter_block_plane_ss00` for
             // `LF_PATH_444`). The chroma plane is full-resolution,
             // so the same SB-origin formula as luma applies.
-            filter_block_plane_ss00(
-                u_data, uv_stride, lfm, mi_row, mi_col, mi_rows, info, dispatch,
-            );
-            filter_block_plane_ss00(
-                v_data, uv_stride, lfm, mi_row, mi_col, mi_rows, info, dispatch,
-            );
+            filter_block_plane_ss00(u_data, uv_stride, lfm, luma_pos, info, dispatch);
+            filter_block_plane_ss00(v_data, uv_stride, lfm, luma_pos, info, dispatch);
         }
         // Asymmetric subsampling (4:2:2 / 4:4:0) — the
         // `LF_PATH_SLOW` path in libvpx (`vp9_loopfilter.c:1459-
@@ -1020,6 +1034,13 @@ fn apply_one_sb_inner(
     }
 }
 
+#[derive(Clone, Copy)]
+struct PlaneSs00Pos {
+    mi_row: usize,
+    mi_col: usize,
+    mi_rows: usize,
+}
+
 /// Filter one superblock's Y plane: vertical pass (2 luma block-rows
 /// at a time) followed by horizontal pass (one luma block-row at a
 /// time). Mirrors libvpx `vp9_filter_block_plane_ss00`
@@ -1033,12 +1054,16 @@ fn filter_block_plane_ss00(
     pixels: &mut [u8],
     stride: usize,
     lfm: &LoopFilterMask,
-    mi_row: usize,
-    mi_col: usize,
-    mi_rows: usize,
+    pos: PlaneSs00Pos,
     info: &LoopFilterInfo,
     dispatch: &SimdDispatch,
 ) {
+    let PlaneSs00Pos {
+        mi_row,
+        mi_col,
+        mi_rows,
+    } = pos;
+
     // SB origin within the plane (offset to top-left of the 64×64).
     let sb_origin = mi_row * MI_BLOCK_SIZE * stride + mi_col * MI_BLOCK_SIZE;
 

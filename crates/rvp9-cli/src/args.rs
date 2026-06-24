@@ -34,6 +34,9 @@ pub enum Arg {
     Required,
 }
 
+/// Handler function for a wired command-line flag.
+pub type FlagApply<C> = fn(&mut C, Option<String>) -> Result<(), String>;
+
 /// One command-line option, generic over the tool's config builder `C`.
 ///
 /// The `apply` field is the single source of truth for whether the flag
@@ -49,7 +52,7 @@ pub struct Flag<C: 'static> {
     pub help: &'static str,
     /// Handler that applies the parsed value to the config builder.
     /// `None` marks the flag as not-yet-implemented.
-    pub apply: Option<fn(&mut C, Option<String>) -> Result<(), String>>,
+    pub apply: Option<FlagApply<C>>,
 }
 
 impl<C> Flag<C> {

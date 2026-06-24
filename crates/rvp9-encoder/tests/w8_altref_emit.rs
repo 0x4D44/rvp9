@@ -50,7 +50,7 @@ fn synthetic_frame(seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let mut y = vec![0u8; w * h];
     for r in 0..h {
         for c in 0..w {
-            y[r * w + c] = (32 + ((r + c + seed as usize) & 0x7f) as u8) & 0xff;
+            y[r * w + c] = 32 + ((r + c + seed as usize) & 0x7f) as u8;
         }
     }
     let u = vec![128u8; uvw * uvh];

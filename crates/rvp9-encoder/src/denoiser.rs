@@ -434,14 +434,32 @@ pub struct Denoiser {
     pub prev_denoising_level: DenoiserLevel,
 }
 
+/// Allocation failure for [`Denoiser::alloc`].
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum DenoiserAllocError {
+    /// The requested denoiser configuration is disabled or has invalid dimensions.
+    InvalidConfig,
+}
+
+impl std::fmt::Display for DenoiserAllocError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidConfig => f.write_str("invalid denoiser configuration"),
+        }
+    }
+}
+
+impl std::error::Error for DenoiserAllocError {}
+
 impl Denoiser {
     /// `vp9_denoiser.c:606-696` — `vp9_denoiser_alloc`. Allocates the
     /// `num_ref_frames` running-avg buffers, the `num_layers`
     /// MC-running-avg buffers, and the `last_source` plane.
     ///
-    /// Returns `Err(())` for invalid dimensions (width or height == 0).
+    /// Returns [`DenoiserAllocError::InvalidConfig`] for invalid
+    /// dimensions (width or height == 0) or disabled denoising (`noise_sen == 0`).
     /// libvpx returns `int fail` instead; the Rust port models the
-    /// fallible result with a unit-error.
+    /// fallible result with a typed error.
     ///
     /// Simplifications vs libvpx:
     /// - No `use_svc` arg / SVC scaling — single layer always.
@@ -452,9 +470,9 @@ impl Denoiser {
     ///   denoising?" — `0` means disabled (the caller should not call
     ///   `alloc` at all in that case); any non-zero value allocates
     ///   the buffers and sets `denoising_level = Medium`.
-    pub fn alloc(noise_sen: u8, width: u32, height: u32) -> Result<Self, ()> {
+    pub fn alloc(noise_sen: u8, width: u32, height: u32) -> Result<Self, DenoiserAllocError> {
         if width == 0 || height == 0 || noise_sen == 0 {
-            return Err(());
+            return Err(DenoiserAllocError::InvalidConfig);
         }
         let num_layers = 1;
         let num_ref_frames = NONSVC_REF_FRAMES;

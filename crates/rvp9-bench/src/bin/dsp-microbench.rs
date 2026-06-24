@@ -310,8 +310,7 @@ fn run_bool_reader() {
     // Warmup: one full batch, discarded.
     {
         let mut r = BoolReader::new(encoded).expect("marker bit");
-        for i in 0..BITS_PER_BATCH {
-            let p = probs[i];
+        for &p in probs.iter().take(BITS_PER_BATCH) {
             let _ = black_box(r.read(black_box(p)));
         }
         assert!(!r.has_error(), "warmup over-read");
@@ -328,8 +327,7 @@ fn run_bool_reader() {
         for _ in 0..BATCHES {
             let mut r = BoolReader::new(encoded).expect("marker bit");
             let t0 = Instant::now();
-            for i in 0..BITS_PER_BATCH {
-                let p = probs[i];
+            for &p in probs.iter().take(BITS_PER_BATCH) {
                 let _ = black_box(r.read(black_box(p)));
             }
             let ns = t0.elapsed().as_nanos() as f64 / BITS_PER_BATCH as f64;
@@ -475,86 +473,86 @@ fn run_vs_libvpx() {
     );
 
     // Convolve8 family. mode: 0 = 2D, 1 = horiz-only, 2 = vert-only.
-    bench_conv_case(
-        "convolve8_2d_halfpel",
-        "8x8",
-        8,
-        8,
-        0,
-        0xAB08,
-        16000,
+    bench_conv_case(ConvCase {
+        name: "convolve8_2d_halfpel",
+        size: "8x8",
+        w: 8,
+        h: 8,
+        mode: 0,
+        seed: 0xAB08,
+        iters: 16000,
         batches,
-    );
-    bench_conv_case(
-        "convolve8_2d_halfpel",
-        "16x16",
-        16,
-        16,
-        0,
-        0xAB10,
-        8000,
+    });
+    bench_conv_case(ConvCase {
+        name: "convolve8_2d_halfpel",
+        size: "16x16",
+        w: 16,
+        h: 16,
+        mode: 0,
+        seed: 0xAB10,
+        iters: 8000,
         batches,
-    );
-    bench_conv_case(
-        "convolve8_2d_halfpel",
-        "32x32",
-        32,
-        32,
-        0,
-        0xAB20,
-        3000,
+    });
+    bench_conv_case(ConvCase {
+        name: "convolve8_2d_halfpel",
+        size: "32x32",
+        w: 32,
+        h: 32,
+        mode: 0,
+        seed: 0xAB20,
+        iters: 3000,
         batches,
-    );
-    bench_conv_case(
-        "convolve8_2d_halfpel",
-        "64x64",
-        64,
-        64,
-        0,
-        0xAA03,
-        2000,
+    });
+    bench_conv_case(ConvCase {
+        name: "convolve8_2d_halfpel",
+        size: "64x64",
+        w: 64,
+        h: 64,
+        mode: 0,
+        seed: 0xAA03,
+        iters: 2000,
         batches,
-    );
-    bench_conv_case(
-        "convolve8_horiz_halfpel",
-        "16x16",
-        16,
-        16,
-        1,
-        0xAC10,
-        12000,
+    });
+    bench_conv_case(ConvCase {
+        name: "convolve8_horiz_halfpel",
+        size: "16x16",
+        w: 16,
+        h: 16,
+        mode: 1,
+        seed: 0xAC10,
+        iters: 12000,
         batches,
-    );
-    bench_conv_case(
-        "convolve8_horiz_halfpel",
-        "64x64",
-        64,
-        64,
-        1,
-        0xAC40,
-        3000,
+    });
+    bench_conv_case(ConvCase {
+        name: "convolve8_horiz_halfpel",
+        size: "64x64",
+        w: 64,
+        h: 64,
+        mode: 1,
+        seed: 0xAC40,
+        iters: 3000,
         batches,
-    );
-    bench_conv_case(
-        "convolve8_vert_halfpel",
-        "16x16",
-        16,
-        16,
-        2,
-        0xAD10,
-        12000,
+    });
+    bench_conv_case(ConvCase {
+        name: "convolve8_vert_halfpel",
+        size: "16x16",
+        w: 16,
+        h: 16,
+        mode: 2,
+        seed: 0xAD10,
+        iters: 12000,
         batches,
-    );
-    bench_conv_case(
-        "convolve8_vert_halfpel",
-        "64x64",
-        64,
-        64,
-        2,
-        0xAD40,
-        3000,
+    });
+    bench_conv_case(ConvCase {
+        name: "convolve8_vert_halfpel",
+        size: "64x64",
+        w: 64,
+        h: 64,
+        mode: 2,
+        seed: 0xAD40,
+        iters: 3000,
         batches,
-    );
+    });
 
     // Loopfilter (horizontal) family. getter_kind: 0 = lpf_horizontal_8,
     // 1 = lpf_horizontal_16, 2 = lpf_horizontal_4. Seeds + iters mirror
@@ -614,17 +612,30 @@ fn bench_idct_case<const N: usize>(
 /// `src` argument is the filter footprint top-left for every mode; the
 /// libvpx side offsets its `src` per-mode so its internal shift lands on
 /// the same byte (see main.c `conv_thunk`).
-fn bench_conv_case(
-    name: &str,
-    size: &str,
+struct ConvCase<'a> {
+    name: &'a str,
+    size: &'a str,
     w: usize,
     h: usize,
     mode: u8,
     seed: u32,
     iters: u32,
     batches: u32,
-) {
+}
+
+fn bench_conv_case(case: ConvCase<'_>) {
     use rvp9_core::inter::filter::EIGHTTAP_KERNEL;
+
+    let ConvCase {
+        name,
+        size,
+        w,
+        h,
+        mode,
+        seed,
+        iters,
+        batches,
+    } = case;
 
     let src_stride: usize = 80;
     let dst_stride: usize = 64;
@@ -771,8 +782,8 @@ fn bench_boolreader_case(seed_buf: u32, seed_probs: u32, n: usize, batches: u32)
     let decode_stream = || -> u64 {
         let mut r = BoolReader::new(&buf).expect("marker bit");
         let mut h: u64 = 1469598103934665603;
-        for i in 0..n {
-            let bit = r.read(black_box(probs[i]));
+        for &p in probs.iter().take(n) {
+            let bit = r.read(black_box(p));
             h = h.wrapping_mul(1099511628211) ^ u64::from(bit);
         }
         h

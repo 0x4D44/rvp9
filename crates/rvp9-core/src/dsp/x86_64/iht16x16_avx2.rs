@@ -739,9 +739,9 @@ unsafe fn iht16x16_add_avx2_inner(
         let col_base = col_group * 8;
 
         let mut col_in: [__m256i; 16] = [_mm256_set1_epi32(0); 16];
-        for r in 0..16 {
+        for (r, slot) in col_in.iter_mut().enumerate() {
             let p = intermediate.as_ptr().add(r * 16 + col_base) as *const __m256i;
-            col_in[r] = _mm256_loadu_si256(p);
+            *slot = _mm256_loadu_si256(p);
         }
 
         let col_out = col_pass_16(col_in, tx_type);
@@ -1217,25 +1217,25 @@ mod tests {
         //  - lane 6: alternating i16::MAX / i16::MIN
         //  - lane 7: random-looking arithmetic pattern
         let mut inputs: [[i32; 16]; 8] = [[0i32; 16]; 8];
-        for c in 0..16 {
-            inputs[0][c] = (c as i32) * 1000 - 7500;
+        for (c, slot) in inputs[0].iter_mut().enumerate() {
+            *slot = (c as i32) * 1000 - 7500;
         }
-        for c in 0..16 {
-            inputs[1][c] = if c & 1 == 0 { 28000 } else { -28000 };
+        for (c, slot) in inputs[1].iter_mut().enumerate() {
+            *slot = if c & 1 == 0 { 28000 } else { -28000 };
         }
         inputs[2][0] = 1234;
         inputs[3][15] = 12345;
         inputs[4] = [i16::MAX as i32; 16];
         inputs[5] = [i16::MIN as i32; 16];
-        for c in 0..16 {
-            inputs[6][c] = if c & 1 == 0 {
+        for (c, slot) in inputs[6].iter_mut().enumerate() {
+            *slot = if c & 1 == 0 {
                 i16::MAX as i32
             } else {
                 i16::MIN as i32
             };
         }
-        for c in 0..16 {
-            inputs[7][c] = (((c as i32) * 1997) % 4001) - 2000;
+        for (c, slot) in inputs[7].iter_mut().enumerate() {
+            *slot = (((c as i32) * 1997) % 4001) - 2000;
         }
 
         // Pack into a 16-position × 8-lane row-major buffer such that

@@ -129,6 +129,8 @@ struct Rvp9Result {
 
 fn measure_rvp9_fixed_q(fixed_q: u8, frames: &[YuvFrameBuf], framerate: f64) -> Rvp9Result {
     // Enable the diagnostic scaffolds and pin Q for this process.
+    // SAFETY: this diagnostic test owns these process env knobs for the
+    // duration of the test-binary run.
     unsafe {
         std::env::set_var("RVP9_FIXED_Q", fixed_q.to_string());
         std::env::set_var("RVP9_E4_BITACCT", "1");
@@ -215,8 +217,8 @@ fn measure_rvp9_fixed_q(fixed_q: u8, frames: &[YuvFrameBuf], framerate: f64) -> 
             inter_recon_sse += recon_sse;
             inter_pred_sse += pred.y_pred_sse;
             inter_pred_px += pred.y_pixels;
-            for i in 0..4 {
-                inter_tx_hist[i] += pred.txsize_hist[i];
+            for (acc, value) in inter_tx_hist.iter_mut().zip(pred.txsize_hist.iter()) {
+                *acc += *value;
             }
             inter_bits_sum += u64::from(pkt.actual_bits);
             inter_coef_bits += cats[bitacct::BitCategory::Coef as usize];
@@ -229,13 +231,14 @@ fn measure_rvp9_fixed_q(fixed_q: u8, frames: &[YuvFrameBuf], framerate: f64) -> 
         } else {
             kf_pred_sse += pred.y_pred_sse;
             kf_pred_px += pred.y_pixels;
-            for i in 0..4 {
-                kf_tx_hist[i] += pred.txsize_hist[i];
+            for (acc, value) in kf_tx_hist.iter_mut().zip(pred.txsize_hist.iter()) {
+                *acc += *value;
             }
         }
     }
 
     // Clear the override so it doesn't leak into other tests in-process.
+    // SAFETY: see the setup block above; this restores the fixed-Q env knob.
     unsafe {
         std::env::remove_var("RVP9_FIXED_Q");
     }
@@ -421,18 +424,18 @@ fn e9_quality_gap_foreman() {
             r.all_recon_psnr, r.inter_recon_psnr, r.inter_pred_psnr, r.all_bits, r.inter_bits
         );
 
-        if let Some(ref vpxenc) = vpxenc {
-            if let Some(lv) = measure_libvpx_fixed_q(vpxenc, q, framerate, &frames) {
-                eprintln!(
-                    "  {q:>3}    | libvpx |     {:>7.2}     |        --        |       --         |     {:>8.0}    |        --",
-                    lv.psnr_db, lv.bits_per_frame
-                );
-                let dpsnr = lv.psnr_db - r.all_recon_psnr;
-                let dbits = lv.bits_per_frame - r.all_bits;
-                eprintln!(
-                    "         | DELTA  |  libvpx-rvp9 PSNR = {dpsnr:+.2} dB   |   libvpx-rvp9 bits = {dbits:+.0} b/frame"
-                );
-            }
+        if let Some(ref vpxenc) = vpxenc
+            && let Some(lv) = measure_libvpx_fixed_q(vpxenc, q, framerate, &frames)
+        {
+            eprintln!(
+                "  {q:>3}    | libvpx |     {:>7.2}     |        --        |       --         |     {:>8.0}    |        --",
+                lv.psnr_db, lv.bits_per_frame
+            );
+            let dpsnr = lv.psnr_db - r.all_recon_psnr;
+            let dbits = lv.bits_per_frame - r.all_bits;
+            eprintln!(
+                "         | DELTA  |  libvpx-rvp9 PSNR = {dpsnr:+.2} dB   |   libvpx-rvp9 bits = {dbits:+.0} b/frame"
+            );
         }
 
         // Per-Q rvp9 detail block.

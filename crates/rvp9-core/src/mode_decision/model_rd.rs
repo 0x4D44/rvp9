@@ -285,6 +285,66 @@ fn compute_variance(
 // model_rd_for_sb_y (vp9_pickmode.c:636-717)
 // ---------------------------------------------------------------------------
 
+type VarianceReduceFn = fn(&[u8], usize, &[u8], usize) -> (i32, u32);
+
+/// Input bundle for luma model-RD estimation.
+pub struct ModelRdYInput<'a> {
+    /// Source luma plane.
+    pub src: &'a [u8],
+    /// Source luma stride in bytes.
+    pub src_stride: usize,
+    /// Prediction luma plane.
+    pub pred: &'a [u8],
+    /// Prediction luma stride in bytes.
+    pub pred_stride: usize,
+    /// Block width in pixels.
+    pub bw: usize,
+    /// Block height in pixels.
+    pub bh: usize,
+    /// Partition block size.
+    pub bsize: BlockSize,
+    /// DC dequantizer value.
+    pub dc_quant: u32,
+    /// AC dequantizer value.
+    pub ac_quant: u32,
+    /// DC skip threshold.
+    pub dc_thr: i64,
+    /// AC skip threshold.
+    pub ac_thr: i64,
+    /// Frame-level transform mode.
+    pub tx_mode: TxMode,
+}
+
+/// Input bundle for 4:2:0 chroma model-RD estimation.
+pub struct ModelRdUvInput<'a> {
+    /// Source U plane.
+    pub src_u: &'a [u8],
+    /// Source U stride in bytes.
+    pub src_u_stride: usize,
+    /// Prediction U plane.
+    pub pred_u: &'a [u8],
+    /// Prediction U stride in bytes.
+    pub pred_u_stride: usize,
+    /// Source V plane.
+    pub src_v: &'a [u8],
+    /// Source V stride in bytes.
+    pub src_v_stride: usize,
+    /// Prediction V plane.
+    pub pred_v: &'a [u8],
+    /// Prediction V stride in bytes.
+    pub pred_v_stride: usize,
+    /// Luma block width in pixels.
+    pub bw: usize,
+    /// Luma block height in pixels.
+    pub bh: usize,
+    /// Luma partition block size.
+    pub bsize: BlockSize,
+    /// Chroma DC dequantizer value.
+    pub dc_quant: u32,
+    /// Chroma AC dequantizer value.
+    pub ac_quant: u32,
+}
+
 /// Variance-domain RD model for the Y plane of a superblock leaf.
 ///
 /// Port of `model_rd_for_sb_y` (`vp9/encoder/vp9_pickmode.c:636-717`).
@@ -303,20 +363,22 @@ fn compute_variance(
 ///   In libvpx these are `p->quant_thred[0] >> 6` and
 ///   `p->quant_thred[1] >> 6`.
 /// - `tx_mode` — frame-level transform mode.
-pub fn model_rd_for_sb_y(
-    src: &[u8],
-    src_stride: usize,
-    pred: &[u8],
-    pred_stride: usize,
-    bw: usize,
-    bh: usize,
-    bsize: BlockSize,
-    dc_quant: u32,
-    ac_quant: u32,
-    dc_thr: i64,
-    ac_thr: i64,
-    tx_mode: TxMode,
-) -> ModelRdResult {
+pub fn model_rd_for_sb_y(input: ModelRdYInput<'_>) -> ModelRdResult {
+    let ModelRdYInput {
+        src,
+        src_stride,
+        pred,
+        pred_stride,
+        bw,
+        bh,
+        bsize,
+        dc_quant,
+        ac_quant,
+        dc_thr,
+        ac_thr,
+        tx_mode,
+    } = input;
+
     // Step 1: variance / SSE of source vs prediction. The `(sum, sse)`
     // reduction is dispatched (AVX2 / scalar, byte-exact); the scalar
     // `saturating_sub` finisher inside `compute_variance` stays untouched.
@@ -443,21 +505,23 @@ pub struct ModelRdUvResult {
 /// - `dc_quant`, `ac_quant` -- chroma dequantizer values (`dequant[0]`
 ///   and `dequant[1]`). The caller must pass the raw dequant values;
 ///   this function applies the `>> 3` divisor for 8-bit internally.
-pub fn model_rd_for_sb_uv(
-    src_u: &[u8],
-    src_u_stride: usize,
-    pred_u: &[u8],
-    pred_u_stride: usize,
-    src_v: &[u8],
-    src_v_stride: usize,
-    pred_v: &[u8],
-    pred_v_stride: usize,
-    bw: usize,
-    bh: usize,
-    bsize: BlockSize,
-    dc_quant: u32,
-    ac_quant: u32,
-) -> ModelRdUvResult {
+pub fn model_rd_for_sb_uv(input: ModelRdUvInput<'_>) -> ModelRdUvResult {
+    let ModelRdUvInput {
+        src_u,
+        src_u_stride,
+        pred_u,
+        pred_u_stride,
+        src_v,
+        src_v_stride,
+        pred_v,
+        pred_v_stride,
+        bw,
+        bh,
+        bsize,
+        dc_quant,
+        ac_quant,
+    } = input;
+
     // 4:2:0: halve luma dimensions for chroma.
     let uv_bw = bw >> 1;
     let uv_bh = bh >> 1;
@@ -576,7 +640,7 @@ pub fn encode_breakout_test(
 /// was used — both are byte-exact, so each cell sees identical `(cell_sum,
 /// cell_sse)`.
 fn compute_variance_8x8(
-    reduce: fn(&[u8], usize, &[u8], usize) -> (i32, u32),
+    reduce: VarianceReduceFn,
     src: &[u8],
     src_stride: usize,
     pred: &[u8],
@@ -606,11 +670,7 @@ fn compute_variance_8x8(
             sum8x8[k] = cell_sum;
             // var = |sse - (sum*sum >> 6)|
             let k_sqr = ((cell_sum as i64 * cell_sum as i64) >> 6) as u32;
-            var8x8[k] = if cell_sse > k_sqr {
-                cell_sse - k_sqr
-            } else {
-                k_sqr - cell_sse
-            };
+            var8x8[k] = cell_sse.abs_diff(k_sqr);
 
             total_sse += cell_sse as u64;
             total_sum += cell_sum as i64;
@@ -660,11 +720,7 @@ fn aggregate_to_tx_size(
 
             let s = sum_out[k] as i64;
             let k_sqr = ((s * s) >> tx_pixels_log2) as u32;
-            var_out[k] = if sse_out[k] > k_sqr {
-                sse_out[k] - k_sqr
-            } else {
-                k_sqr - sse_out[k]
-            };
+            var_out[k] = sse_out[k].abs_diff(k_sqr);
         }
     }
 
@@ -685,20 +741,22 @@ fn aggregate_to_tx_size(
 /// # Parameters
 ///
 /// Same as [`model_rd_for_sb_y`]. See its documentation.
-pub fn model_rd_for_sb_y_large(
-    src: &[u8],
-    src_stride: usize,
-    pred: &[u8],
-    pred_stride: usize,
-    bw: usize,
-    bh: usize,
-    bsize: BlockSize,
-    dc_quant: u32,
-    ac_quant: u32,
-    dc_thr: i64,
-    ac_thr: i64,
-    tx_mode: TxMode,
-) -> ModelRdResult {
+pub fn model_rd_for_sb_y_large(input: ModelRdYInput<'_>) -> ModelRdResult {
+    let ModelRdYInput {
+        src,
+        src_stride,
+        pred,
+        pred_stride,
+        bw,
+        bh,
+        bsize,
+        dc_quant,
+        ac_quant,
+        dc_thr,
+        ac_thr,
+        tx_mode,
+    } = input;
+
     // Step 1: compute per-8x8 variance grid + totals. The per-cell
     // `(sum, sse)` reduction is dispatched (AVX2 / scalar, byte-exact); the
     // scalar abs-diff `>>6` finisher inside `compute_variance_8x8` stays
@@ -861,6 +919,72 @@ impl TxSize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    macro_rules! y_input {
+        (
+            $src:expr,
+            $src_stride:expr,
+            $pred:expr,
+            $pred_stride:expr,
+            $bw:expr,
+            $bh:expr,
+            $bsize:expr,
+            $dc_quant:expr,
+            $ac_quant:expr,
+            $dc_thr:expr,
+            $ac_thr:expr,
+            $tx_mode:expr $(,)?
+        ) => {
+            ModelRdYInput {
+                src: $src,
+                src_stride: $src_stride,
+                pred: $pred,
+                pred_stride: $pred_stride,
+                bw: $bw,
+                bh: $bh,
+                bsize: $bsize,
+                dc_quant: $dc_quant,
+                ac_quant: $ac_quant,
+                dc_thr: $dc_thr,
+                ac_thr: $ac_thr,
+                tx_mode: $tx_mode,
+            }
+        };
+    }
+
+    macro_rules! uv_input {
+        (
+            $src_u:expr,
+            $src_u_stride:expr,
+            $pred_u:expr,
+            $pred_u_stride:expr,
+            $src_v:expr,
+            $src_v_stride:expr,
+            $pred_v:expr,
+            $pred_v_stride:expr,
+            $bw:expr,
+            $bh:expr,
+            $bsize:expr,
+            $dc_quant:expr,
+            $ac_quant:expr $(,)?
+        ) => {
+            ModelRdUvInput {
+                src_u: $src_u,
+                src_u_stride: $src_u_stride,
+                pred_u: $pred_u,
+                pred_u_stride: $pred_u_stride,
+                src_v: $src_v,
+                src_v_stride: $src_v_stride,
+                pred_v: $pred_v,
+                pred_v_stride: $pred_v_stride,
+                bw: $bw,
+                bh: $bh,
+                bsize: $bsize,
+                dc_quant: $dc_quant,
+                ac_quant: $ac_quant,
+            }
+        };
+    }
 
     // -----------------------------------------------------------------------
     // model_rd_from_var_lapndz
@@ -1056,7 +1180,7 @@ mod tests {
         // Identical src and pred → skip_txfm = AcDc, rate = 0.
         let src = [128u8; 16 * 16];
         let pred = [128u8; 16 * 16];
-        let result = model_rd_for_sb_y(
+        let result = model_rd_for_sb_y(y_input!(
             &src,
             16,
             &pred,
@@ -1069,7 +1193,7 @@ mod tests {
             100, // dc_thr
             100, // ac_thr
             TxMode::TxModeSelect,
-        );
+        ));
         assert_eq!(result.skip_txfm, SkipTxfm::AcDc);
         assert_eq!(result.rate, 0);
         assert_eq!(result.dist, 0); // sse=0 → dist = 0 << 4 = 0
@@ -1088,7 +1212,7 @@ mod tests {
                 src[r * 16 + c] = (128 + r * 4 + c * 2) as u8;
             }
         }
-        let result = model_rd_for_sb_y(
+        let result = model_rd_for_sb_y(y_input!(
             &src,
             16,
             &pred,
@@ -1101,7 +1225,7 @@ mod tests {
             1,  // dc_thr (very small → won't skip DC)
             1,  // ac_thr (very small → won't skip AC)
             TxMode::TxModeSelect,
-        );
+        ));
         assert_eq!(result.skip_txfm, SkipTxfm::None);
         assert!(result.rate > 0, "textured block should have positive rate");
         assert!(result.dist > 0, "textured block should have positive dist");
@@ -1116,7 +1240,7 @@ mod tests {
         // AcDc (if dc is also below threshold).
         let pred = [128u8; 8 * 8];
         let src = [129u8; 8 * 8]; // diff = 1 everywhere → var = 0, sse = 64
-        let result = model_rd_for_sb_y(
+        let result = model_rd_for_sb_y(y_input!(
             &src,
             8,
             &pred,
@@ -1129,7 +1253,7 @@ mod tests {
             100, // dc_thr — larger than sse_tx - var_tx = 64/1 = 64 → skip DC too
             100, // ac_thr — var_tx = 0 < 100 → skip AC
             TxMode::TxModeSelect,
-        );
+        ));
         // var = 0 → the `var == 0` branch triggers AcOnly, then
         // sse == var is false (sse=64 != var=0), so we check
         // (sse_tx - var_tx) < dc_thr → 64 < 100 → AcDc.
@@ -1170,7 +1294,7 @@ mod tests {
         let pred_u = [128u8; 8 * 8];
         let src_v = [128u8; 8 * 8];
         let pred_v = [128u8; 8 * 8];
-        let result = model_rd_for_sb_uv(
+        let result = model_rd_for_sb_uv(uv_input!(
             &src_u,
             8,
             &pred_u,
@@ -1184,7 +1308,7 @@ mod tests {
             BlockSize::Block16x16,
             96,
             80,
-        );
+        ));
         assert_eq!(result.rate, 0, "zero residual -> zero rate");
         assert_eq!(result.dist, 0, "zero residual -> zero dist");
     }
@@ -1203,7 +1327,7 @@ mod tests {
                 src_v[r * 8 + c] = (128 + r * 2 + c * 2) as u8;
             }
         }
-        let result = model_rd_for_sb_uv(
+        let result = model_rd_for_sb_uv(uv_input!(
             &src_u,
             8,
             &pred_u,
@@ -1217,7 +1341,7 @@ mod tests {
             BlockSize::Block16x16,
             96,
             80,
-        );
+        ));
         assert!(
             result.rate > 0,
             "textured UV should have positive rate: {}",
@@ -1239,7 +1363,7 @@ mod tests {
         let pred_u = [128u8; 16 * 16];
         let src_v = [130u8; 16 * 16];
         let pred_v = [128u8; 16 * 16];
-        let result = model_rd_for_sb_uv(
+        let result = model_rd_for_sb_uv(uv_input!(
             &src_u,
             16,
             &pred_u,
@@ -1253,7 +1377,7 @@ mod tests {
             BlockSize::Block32x32,
             96,
             80,
-        );
+        ));
         // Uniform offset: each plane has sse = 16*16*4 = 1024,
         // var = 0 -> DC only. Both planes contribute.
         assert!(
@@ -1271,7 +1395,7 @@ mod tests {
         let pred_u = [128u8; 32 * 32];
         let src_v = [128u8; 32 * 32]; // V is flat -> only U contributes
         let pred_v = [128u8; 32 * 32];
-        let result = model_rd_for_sb_uv(
+        let result = model_rd_for_sb_uv(uv_input!(
             &src_u,
             32,
             &pred_u,
@@ -1285,7 +1409,7 @@ mod tests {
             BlockSize::Block64x64,
             96,
             80,
-        );
+        ));
         // U has uniform offset, V is flat. Overall should have
         // non-zero rate from U plane's DC component.
         assert!(result.dist > 0, "U-plane DC residual should produce dist");
@@ -1299,7 +1423,7 @@ mod tests {
         let pred_u = [128u8; 4 * 4];
         let src_v = [135u8; 4 * 4];
         let pred_v = [128u8; 4 * 4];
-        let result = model_rd_for_sb_uv(
+        let result = model_rd_for_sb_uv(uv_input!(
             &src_u,
             4,
             &pred_u,
@@ -1313,7 +1437,7 @@ mod tests {
             BlockSize::Block8x8,
             96,
             80,
-        );
+        ));
         // diff = 7 per pixel, 16 pixels per plane, sse = 16*49 = 784
         // per plane. Should produce non-trivial cost.
         assert!(
@@ -1339,7 +1463,7 @@ mod tests {
             }
         }
         // Only U has residual.
-        let result_u_only = model_rd_for_sb_uv(
+        let result_u_only = model_rd_for_sb_uv(uv_input!(
             &textured,
             8,
             &flat,
@@ -1353,9 +1477,9 @@ mod tests {
             BlockSize::Block16x16,
             96,
             80,
-        );
+        ));
         // Both U and V have the same residual.
-        let result_both = model_rd_for_sb_uv(
+        let result_both = model_rd_for_sb_uv(uv_input!(
             &textured,
             8,
             &flat,
@@ -1369,7 +1493,7 @@ mod tests {
             BlockSize::Block16x16,
             96,
             80,
-        );
+        ));
         // Both planes identical -> exactly double the single-plane cost.
         assert_eq!(
             result_both.rate,
@@ -1611,7 +1735,7 @@ mod tests {
         // -> skip_txfm = AcDc.
         let src = [128u8; 32 * 32];
         let pred = [128u8; 32 * 32];
-        let result = model_rd_for_sb_y_large(
+        let result = model_rd_for_sb_y_large(y_input!(
             &src,
             32,
             &pred,
@@ -1624,7 +1748,7 @@ mod tests {
             100,
             100, // dc_thr, ac_thr
             TxMode::TxModeSelect,
-        );
+        ));
         assert_eq!(result.skip_txfm, SkipTxfm::AcDc);
         assert_eq!(result.rate, 0);
         assert_eq!(result.dist, 0); // sse = 0 -> dist = 0 << 4 = 0
@@ -1648,7 +1772,7 @@ mod tests {
             }
         }
 
-        let result = model_rd_for_sb_y_large(
+        let result = model_rd_for_sb_y_large(y_input!(
             &src,
             64,
             &pred,
@@ -1661,7 +1785,7 @@ mod tests {
             100,
             100, // dc_thr, ac_thr
             TxMode::TxModeSelect,
-        );
+        ));
         // The noisy cell has var = 64 * 50^2 = 160000 (approximately;
         // depends on the exact var formula). With ac_thr = 100, it
         // definitely exceeds the threshold -> ac_test fails -> no skip.
@@ -1682,7 +1806,7 @@ mod tests {
                 src[r * 32 + c] = (128u16 + (r * 4 + c * 2) as u16).min(255) as u8;
             }
         }
-        let result = model_rd_for_sb_y_large(
+        let result = model_rd_for_sb_y_large(y_input!(
             &src,
             32,
             &pred,
@@ -1695,7 +1819,7 @@ mod tests {
             1,
             1, // very small thresholds -> won't skip
             TxMode::TxModeSelect,
-        );
+        ));
         assert_eq!(result.skip_txfm, SkipTxfm::None);
         assert!(result.rate > 0, "textured block should have positive rate");
         assert!(result.dist > 0, "textured block should have positive dist");
@@ -1707,7 +1831,7 @@ mod tests {
         // sse per cell = 64. With large enough dc_thr (> 64), should skip.
         let src = [129u8; 32 * 32];
         let pred = [128u8; 32 * 32];
-        let result = model_rd_for_sb_y_large(
+        let result = model_rd_for_sb_y_large(y_input!(
             &src,
             32,
             &pred,
@@ -1720,7 +1844,7 @@ mod tests {
             1000, // dc_thr: large enough to cover DC energy
             1000, // ac_thr: large enough to cover any AC
             TxMode::TxModeSelect,
-        );
+        ));
         assert_eq!(result.skip_txfm, SkipTxfm::AcDc);
         assert_eq!(result.rate, 0);
     }
@@ -1777,7 +1901,7 @@ mod tests {
                 src[r * 16 + c] = if (r + c) % 2 == 0 { 178 } else { 78 };
             }
         }
-        let result = model_rd_for_sb_y(
+        let result = model_rd_for_sb_y(y_input!(
             &src,
             16,
             &pred,
@@ -1790,7 +1914,7 @@ mod tests {
             100, // dc_thr: small but > 0 — dc energy is exactly 0 here.
             1,   // ac_thr: tiny — won't catch AC (huge variance)
             TxMode::TxModeSelect,
-        );
+        ));
         // AC test: var_tx is huge → skip_txfm stays None.
         // DC test: sse == var (sum=0) triggers the `sse == var` arm →
         // skip_dc becomes true. We can't observe skip_dc directly, but
@@ -1801,7 +1925,7 @@ mod tests {
         // should produce IDENTICAL rate/dist because the DC residual
         // is zero either way. This pins the skip_dc path without
         // leaking implementation internals.
-        let result_huge_dc = model_rd_for_sb_y(
+        let result_huge_dc = model_rd_for_sb_y(y_input!(
             &src,
             16,
             &pred,
@@ -1814,7 +1938,7 @@ mod tests {
             1_000_000, // dc_thr: huge → DC always skipped
             1,         // same ac_thr
             TxMode::TxModeSelect,
-        );
+        ));
         assert_eq!(result.rate, result_huge_dc.rate);
         assert_eq!(result.dist, result_huge_dc.dist);
     }
@@ -1828,7 +1952,7 @@ mod tests {
         let pred = [128u8; 16 * 16];
         // diff = 10 everywhere → sum=N*10, sse=N*100, var=0.
         let src = [138u8; 16 * 16];
-        let result = model_rd_for_sb_y(
+        let result = model_rd_for_sb_y(y_input!(
             &src,
             16,
             &pred,
@@ -1841,7 +1965,7 @@ mod tests {
             1,   // dc_thr: tiny → (sse_tx - var_tx) = sse_tx > 1 → DC NOT skipped
             100, // ac_thr: huge → var_tx (=0) < ac_thr is true; var==0 short-circuit fires
             TxMode::TxModeSelect,
-        );
+        ));
         // AcOnly: ac is skipped (var=0), but DC has nonzero energy.
         assert_eq!(
             result.skip_txfm,
@@ -1863,7 +1987,7 @@ mod tests {
                 src[r * 16 + c] = if (r + c) % 2 == 0 { 178 } else { 78 };
             }
         }
-        let result = model_rd_for_sb_y(
+        let result = model_rd_for_sb_y(y_input!(
             &src,
             16,
             &pred,
@@ -1876,7 +2000,7 @@ mod tests {
             1, // dc_thr: tiny — would normally NOT skip DC
             1, // ac_thr: tiny — var_tx >> ac_thr → ac_test fails
             TxMode::TxModeSelect,
-        );
+        ));
         // var_tx >= ac_thr AND var != 0 → AcOnly branch NOT taken.
         // Falls to `else if` (line 353). `(sse_tx - var_tx) < dc_thr`
         // is false (small dc_thr) BUT `sse == var` is TRUE (sum=0)
@@ -1884,7 +2008,7 @@ mod tests {
         assert_eq!(result.skip_txfm, SkipTxfm::None);
         // For zero-DC residual the skip_dc path contributes
         // `0 << 4 = 0` from DC, matching the huge-dc_thr run.
-        let huge_dc = model_rd_for_sb_y(
+        let huge_dc = model_rd_for_sb_y(y_input!(
             &src,
             16,
             &pred,
@@ -1897,7 +2021,7 @@ mod tests {
             1_000_000_000,
             1,
             TxMode::TxModeSelect,
-        );
+        ));
         assert_eq!(result.dist, huge_dc.dist);
         assert_eq!(result.rate, huge_dc.rate);
     }
@@ -1909,7 +2033,7 @@ mod tests {
     fn large_var_zero_short_circuits_ac_test() {
         let src = [128u8; 32 * 32];
         let pred = [128u8; 32 * 32];
-        let result = model_rd_for_sb_y_large(
+        let result = model_rd_for_sb_y_large(y_input!(
             &src,
             32,
             &pred,
@@ -1922,7 +2046,7 @@ mod tests {
             100, // dc_thr
             0,   // ac_thr: 0 — but var=0 → `var != 0` false → ac_test passes
             TxMode::TxModeSelect,
-        );
+        ));
         assert_eq!(result.skip_txfm, SkipTxfm::AcDc);
     }
 
@@ -1942,7 +2066,7 @@ mod tests {
         // var = sse (sum = 0), so the `sse == var` branch on the AC
         // check is True even though var_tx >= ac_thr would otherwise
         // bypass it. Combined with dc_thr huge → AcDc.
-        let result = model_rd_for_sb_y(
+        let result = model_rd_for_sb_y(y_input!(
             &src,
             8,
             &pred,
@@ -1955,7 +2079,7 @@ mod tests {
             1_000_000,
             1, // ac_thr: tiny — the `var_tx < ac_thr` test fails…
             TxMode::TxModeSelect,
-        );
+        ));
         // …but `var == 0` is also false (huge var), so neither AC
         // skip path triggers. skip_txfm remains None; however the
         // `else if` branch fires via `sse == var` → skip_dc = true.
@@ -1974,7 +2098,7 @@ mod tests {
     fn large_clamps_tx4x4_up_to_tx8x8() {
         let src = [128u8; 32 * 32];
         let pred = [128u8; 32 * 32];
-        let result = model_rd_for_sb_y_large(
+        let result = model_rd_for_sb_y_large(y_input!(
             &src,
             32,
             &pred,
@@ -1987,7 +2111,7 @@ mod tests {
             100,
             100,
             TxMode::OnlyTx4x4,
-        );
+        ));
         // Even with Tx4x4 mode, the large function clamps to Tx8x8.
         assert_eq!(
             result.tx_size,
@@ -2015,7 +2139,7 @@ mod tests {
                 src[r * 32 + c] = if (r + c) % 2 == 0 { 178 } else { 78 };
             }
         }
-        let result = model_rd_for_sb_y_large(
+        let result = model_rd_for_sb_y_large(y_input!(
             &src,
             32,
             &pred,
@@ -2028,13 +2152,13 @@ mod tests {
             1000, // dc_thr: comfortably above dc_energy (==0 per cell)
             1,    // ac_thr: small — every cell exceeds → ac_test fails
             TxMode::TxModeSelect,
-        );
+        ));
         assert_eq!(result.skip_txfm, SkipTxfm::None);
         // Compare to a run with a tiny dc_thr (≤ dc_energy): skip_dc
         // becomes false. The rate must change (skip_dc=true branch
         // contributes zero rate from DC; the false branch contributes
         // the modelled DC rate via model_rd_from_var_lapndz).
-        let no_skip = model_rd_for_sb_y_large(
+        let no_skip = model_rd_for_sb_y_large(y_input!(
             &src,
             32,
             &pred,
@@ -2047,7 +2171,7 @@ mod tests {
             0, // dc_thr: dc_energy = 0 < 0 = false → no skip_dc
             1,
             TxMode::TxModeSelect,
-        );
+        ));
         // With sum=0 (zero DC residual), the DC `sse - var` term is 0,
         // so model_rd_from_var_lapndz returns (0, 0) regardless. Both
         // paths agree on rate/dist. We still exercise both branches.
@@ -2070,7 +2194,7 @@ mod tests {
     fn large_ac_only_when_dc_energy_exceeds_threshold() {
         let pred = [128u8; 32 * 32];
         let src = [138u8; 32 * 32];
-        let result = model_rd_for_sb_y_large(
+        let result = model_rd_for_sb_y_large(y_input!(
             &src,
             32,
             &pred,
@@ -2083,7 +2207,7 @@ mod tests {
             1000, // dc_thr: 25600 > 1000 → dc_test fails on every cell
             1,    // ac_thr: var=0 per cell satisfies var==0 short-circuit
             TxMode::TxModeSelect,
-        );
+        ));
         assert_eq!(
             result.skip_txfm,
             SkipTxfm::AcOnly,
@@ -2104,7 +2228,7 @@ mod tests {
         // `model_rd_for_sb_y_large` should produce the same result.
         let src = [128u8; 32 * 32];
         let pred = [128u8; 32 * 32];
-        let regular = model_rd_for_sb_y(
+        let regular = model_rd_for_sb_y(y_input!(
             &src,
             32,
             &pred,
@@ -2117,8 +2241,8 @@ mod tests {
             100,
             100,
             TxMode::TxModeSelect,
-        );
-        let large = model_rd_for_sb_y_large(
+        ));
+        let large = model_rd_for_sb_y_large(y_input!(
             &src,
             32,
             &pred,
@@ -2131,7 +2255,7 @@ mod tests {
             100,
             100,
             TxMode::TxModeSelect,
-        );
+        ));
         assert_eq!(regular.skip_txfm, large.skip_txfm);
         assert_eq!(regular.rate, large.rate);
         assert_eq!(regular.dist, large.dist);

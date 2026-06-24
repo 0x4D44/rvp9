@@ -607,7 +607,7 @@ pub fn decode_coefs(
                 // gate at the function tail still runs.
                 break 'outer;
             }
-            ctx = get_coef_context(scan.neighbors, &token_cache, c);
+            ctx = get_coef_context(scan.neighbors, token_cache, c);
             // SAFETY: invariant (2) — `c < seg_eob ≤ band_translate.len()`.
             band_local = unsafe { *band_translate.get_unchecked(c) } as usize;
             debug_assert!(band_local < COEF_BANDS);
@@ -727,7 +727,7 @@ pub fn decode_coefs(
 
         c += 1;
         if c < seg_eob {
-            ctx = get_coef_context(scan.neighbors, &token_cache, c);
+            ctx = get_coef_context(scan.neighbors, token_cache, c);
         }
         dqv = ac_dq;
     }

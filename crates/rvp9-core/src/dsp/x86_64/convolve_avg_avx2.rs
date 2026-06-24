@@ -290,6 +290,7 @@ mod tests {
     /// Saturation boundary guard:
     ///   - src=all-0   + dst=all-255 → round_avg = 128
     ///   - src=all-255 + dst=all-255 → round_avg = 255
+    ///
     /// Exercises both the rounding bias and the u8 ceiling.
     #[test]
     fn boundary_saturation() {

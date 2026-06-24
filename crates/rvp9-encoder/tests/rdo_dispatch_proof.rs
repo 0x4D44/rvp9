@@ -284,9 +284,8 @@ fn rdo_dispatch_routes_at_speed3_and_decodes() {
     // --- speed = 7: realtime picker, RDO never invoked ---
     let (rt_packets, rt_invocations, rt_invocations_8x8) = encode_at_speed(&frames, framerate, 7);
 
-    unsafe {
-        std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
-    }
+    // SAFETY: this test owns the dispatch env knob for its test-binary run.
+    unsafe { std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE") };
 
     eprintln!("speed=3 RDO invocations: {rdo_invocations} (8x8: {rdo_invocations_8x8})");
     eprintln!("speed=7 RDO invocations: {rt_invocations} (8x8: {rt_invocations_8x8})");

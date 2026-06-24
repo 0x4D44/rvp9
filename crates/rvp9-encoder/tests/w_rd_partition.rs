@@ -245,11 +245,13 @@ fn a4_rd_partition_shape_is_rd_chosen_and_decodes() {
     let (on_packets, on_reshaped) = encode(&frames, framerate);
 
     // ---- descent OFF (opt out; pre-A4 variance-hint partition) --------
+    // SAFETY: this test runs in its own process and restores the knob below.
     unsafe {
         std::env::set_var("RVP9_A4_RD_PARTITION_DISABLE", "1");
     }
     let (off_packets, off_reshaped) = encode(&frames, framerate);
     // Restore the default for any later code in this process.
+    // SAFETY: see the setup block above; this restores the process env knob.
     unsafe {
         std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
     }

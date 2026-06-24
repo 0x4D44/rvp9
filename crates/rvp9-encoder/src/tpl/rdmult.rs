@@ -57,6 +57,31 @@ pub struct RdmultDelta {
     pub used_tpl: bool,
 }
 
+/// Inputs to [`get_rdmult_delta`].
+#[derive(Copy, Clone, Debug)]
+pub struct RdmultDeltaParams<'a> {
+    /// TPL state for the current frame (libvpx `cpi->tpl_stats[gf_group_index]`).
+    pub tpl_frame: &'a TplDepFrame,
+    /// Top-left row of the superblock in mi units.
+    pub mi_row: usize,
+    /// Top-left column of the superblock in mi units.
+    pub mi_col: usize,
+    /// Block size whose mi footprint is accumulated.
+    pub bsize: BlockSize,
+    /// The picker's base q-index-derived rdmult.
+    pub orig_rdmult: i32,
+    /// Frame-level RD ratio (`cpi->rd.r0`).
+    pub r0: f64,
+    /// Frame height in mi units.
+    pub frame_mi_rows: usize,
+    /// Frame width in mi units.
+    pub frame_mi_cols: usize,
+    /// Golden-frame group index for the current frame.
+    pub gf_group_index: usize,
+    /// Layer depth for the current frame.
+    pub layer_depth: u8,
+}
+
 /// libvpx `get_rdmult_delta` (`vp9/encoder/vp9_encodeframe.c:3719-3768`).
 ///
 /// For the superblock at `(mi_row, mi_col)` of `bsize`, sums
@@ -99,18 +124,20 @@ pub struct RdmultDelta {
 /// - `gf_group_index` / `layer_depth`: libvpx gates the rdmult
 ///   adjustment to `gf_group_index < MAX_ARF_GOP_SIZE` and
 ///   `layer_depth <= 1`. We mirror the gate exactly.
-pub fn get_rdmult_delta(
-    tpl_frame: &TplDepFrame,
-    mi_row: usize,
-    mi_col: usize,
-    bsize: BlockSize,
-    orig_rdmult: i32,
-    r0: f64,
-    frame_mi_rows: usize,
-    frame_mi_cols: usize,
-    gf_group_index: usize,
-    layer_depth: u8,
-) -> RdmultDelta {
+pub fn get_rdmult_delta(params: RdmultDeltaParams<'_>) -> RdmultDelta {
+    let RdmultDeltaParams {
+        tpl_frame,
+        mi_row,
+        mi_col,
+        bsize,
+        orig_rdmult,
+        r0,
+        frame_mi_rows,
+        frame_mi_cols,
+        gf_group_index,
+        layer_depth,
+    } = params;
+
     // libvpx vp9_encodeframe.c:3735 gate.
     if gf_group_index >= MAX_ARF_GOP_SIZE {
         return RdmultDelta {

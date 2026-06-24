@@ -104,7 +104,8 @@ use crate::intra_pred::{
 use crate::mode_decision::block_yrd::{BlockYrdResult, block_error_fp_i32, satd_i16};
 use crate::mode_decision::hadamard::{hadamard_8x8, hadamard_16x16, hadamard_32x32};
 use crate::mode_decision::model_rd::{
-    SkipTxfm, model_rd_for_sb_uv, model_rd_for_sb_y, model_rd_for_sb_y_large,
+    ModelRdUvInput, ModelRdYInput, SkipTxfm, model_rd_for_sb_uv, model_rd_for_sb_y,
+    model_rd_for_sb_y_large,
 };
 use crate::mode_decision::rd_cost;
 use crate::mode_info::{InterMode, Mv, RefFrame};
@@ -1343,10 +1344,10 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
     // LA (Track A6) — HF-gated natural-content lambda calibration. Only on
     // natural frames (the same classifier S2 uses); synthetic stays
     // byte-identical. See [`lambda_atten`].
-    if s2_gate_enabled() {
-        if let Some((num, den)) = lambda_atten() {
-            lambda = ((u64::from(lambda) * num) / den).min(u64::from(u32::MAX)) as u32;
-        }
+    if s2_gate_enabled()
+        && let Some((num, den)) = lambda_atten()
+    {
+        lambda = ((u64::from(lambda) * num) / den).min(u64::from(u32::MAX)) as u32;
     }
 
     // Per-ref safe MVs: clamp OOB candidates to ZERO so the
@@ -1814,23 +1815,22 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
         // `mode_rd_thresh = mode_rd_thresh << 3;` step). The shift
         // is applied INSIDE the P20 block since libvpx applies it
         // immediately before the `rd_less_than_thresh` call.
-        if let (Some(ref b), Some(table)) = (best.as_ref(), params.rd_thresh_table) {
+        if let (Some(b), Some(table)) = (best.as_ref(), params.rd_thresh_table) {
             let mv_is_zero = mv == Mv::ZERO;
-            if !mv_is_zero {
-                if let Some(thresh) =
+            if !mv_is_zero
+                && let Some(thresh) =
                     table.effective_thresh(params.block_size, ref_frame, mode, params.q_index)
+            {
+                let biased_thresh = if params.bias_golden
+                    && ref_frame == RefFrame::GoldenFrame
+                    && params.frames_since_golden > 4
                 {
-                    let biased_thresh = if params.bias_golden
-                        && ref_frame == RefFrame::GoldenFrame
-                        && params.frames_since_golden > 4
-                    {
-                        thresh.saturating_mul(8) // libvpx `<< 3`
-                    } else {
-                        thresh
-                    };
-                    if b.best_rd_cost < biased_thresh {
-                        continue;
-                    }
+                    thresh.saturating_mul(8) // libvpx `<< 3`
+                } else {
+                    thresh
+                };
+                if b.best_rd_cost < biased_thresh {
+                    continue;
                 }
             }
         }
@@ -2008,47 +2008,45 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
         // during a scene change so the picker keeps evaluating
         // candidates (a new scene typically needs NEWMV, not the zero-
         // residual short-circuit).
-        if params.encode_breakout > 0 && !params.scene_change_detected {
-            if let Some(ref b) = best {
-                if is_new_best {
-                    if crate::mode_decision::model_rd::encode_breakout_test(
-                        b.var_y,
-                        b.sse_y,
-                        params.dequant_dc,
-                        params.dequant_ac,
-                        params.block_size,
-                        b.best_mv,
-                        params.encode_breakout,
-                    ) {
-                        break;
-                    }
-                }
-            }
+        if params.encode_breakout > 0
+            && !params.scene_change_detected
+            && let Some(ref b) = best
+            && is_new_best
+            && crate::mode_decision::model_rd::encode_breakout_test(
+                b.var_y,
+                b.sse_y,
+                params.dequant_dc,
+                params.dequant_ac,
+                params.block_size,
+                b.best_mv,
+                params.encode_breakout,
+            )
+        {
+            break;
         }
 
         // G6 — early_term mode-loop exit (libvpx vp9_pickmode.c:2474-2478).
         // When the large model detects a full skip on a block >= 32x32,
         // exit after at least 2 candidates have been evaluated.
-        if candidate.early_term {
-            if let Some(ref b) = best {
-                if b.best_rd_cost <= biased_rd_cost || is_new_best {
-                    // At least 2 candidates evaluated (this one + previous best),
-                    // and the current or previous best has early_term set.
-                    // Only break if we're past the first evaluated candidate.
-                    if mode_checked.iter().flatten().filter(|&&c| c).count() > 1 {
-                        break;
-                    }
-                }
+        if candidate.early_term
+            && let Some(ref b) = best
+            && (b.best_rd_cost <= biased_rd_cost || is_new_best)
+        {
+            // At least 2 candidates evaluated (this one + previous best),
+            // and the current or previous best has early_term set.
+            // Only break if we're past the first evaluated candidate.
+            if mode_checked.iter().flatten().filter(|&&c| c).count() > 1 {
+                break;
             }
         }
 
         // Early-exit: if the best candidate so far is a perfect
         // skip (zero RD cost or skip_txfm == AcDc detected via zero
         // distortion + minimal rate), break early.
-        if let Some(ref b) = best {
-            if b.best_rd_cost == 0 {
-                break;
-            }
+        if let Some(ref b) = best
+            && b.best_rd_cost == 0
+        {
+            break;
         }
     }
 
@@ -2081,21 +2079,21 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
         && best.best_rd_cost > inter_mode_thresh
     {
         let intra_result = evaluate_intra_fallback(params, lambda, intra_cost_penalty);
-        if let Some(intra) = intra_result {
-            if intra.best_rd_cost < best.best_rd_cost {
-                // Intra wins on RD. Replace the inter result.
-                //
-                // **v1 wire-format note**: the caller's encoder
-                // simulator path doesn't yet handle per-TX intra
-                // prediction for intra-in-inter blocks. When the
-                // caller sees `picked_ref_frame == IntraFrame`, it
-                // falls back to encoding as the best inter candidate
-                // (accepting the quality regression on those blocks).
-                // The picker's intra evaluation is the measurement
-                // signal; full wire-format support lands in a
-                // follow-up.
-                best = intra;
-            }
+        if let Some(intra) = intra_result
+            && intra.best_rd_cost < best.best_rd_cost
+        {
+            // Intra wins on RD. Replace the inter result.
+            //
+            // **v1 wire-format note**: the caller's encoder
+            // simulator path doesn't yet handle per-TX intra
+            // prediction for intra-in-inter blocks. When the
+            // caller sees `picked_ref_frame == IntraFrame`, it
+            // falls back to encoding as the best inter candidate
+            // (accepting the quality regression on those blocks).
+            // The picker's intra evaluation is the measurement
+            // signal; full wire-format support lands in a
+            // follow-up.
+            best = intra;
         }
     }
 
@@ -2256,20 +2254,20 @@ fn evaluate_intra_fallback(
         intra_predict(mode, &mut pred[..bw * bh], bw, bw, ctx, dc_avail, &dispatch);
 
         // 2. Variance-domain RD model.
-        let mrd = model_rd_for_sb_y(
-            &src_slice[src_start..],
-            params.src_plane.stride,
-            &pred,
-            bw,
+        let mrd = model_rd_for_sb_y(ModelRdYInput {
+            src: &src_slice[src_start..],
+            src_stride: params.src_plane.stride,
+            pred: &pred,
+            pred_stride: bw,
             bw,
             bh,
-            params.block_size,
+            bsize: params.block_size,
             dc_quant,
             ac_quant,
             dc_thr,
             ac_thr,
             tx_mode,
-        );
+        });
 
         let picked_tx_size = mrd.tx_size;
 
@@ -2752,35 +2750,35 @@ fn evaluate_candidate_for_filter(
     // G6: dispatch to the per-sub-block variant for blocks >= 32x32.
     let use_large = params.block_size >= BlockSize::Block32x32;
     let mrd = if use_large {
-        model_rd_for_sb_y_large(
-            &src_slice[src_start..],
-            params.src_plane.stride,
-            &pred,
-            bw,
+        model_rd_for_sb_y_large(ModelRdYInput {
+            src: &src_slice[src_start..],
+            src_stride: params.src_plane.stride,
+            pred: &pred,
+            pred_stride: bw,
             bw,
             bh,
-            params.block_size,
+            bsize: params.block_size,
             dc_quant,
             ac_quant,
             dc_thr,
             ac_thr,
             tx_mode,
-        )
+        })
     } else {
-        model_rd_for_sb_y(
-            &src_slice[src_start..],
-            params.src_plane.stride,
-            &pred,
-            bw, // pred_stride
+        model_rd_for_sb_y(ModelRdYInput {
+            src: &src_slice[src_start..],
+            src_stride: params.src_plane.stride,
+            pred: &pred,
+            pred_stride: bw,
             bw,
             bh,
-            params.block_size,
+            bsize: params.block_size,
             dc_quant,
             ac_quant,
             dc_thr,
             ac_thr,
             tx_mode,
-        )
+        })
     };
 
     // Use the model_rd TX size for the round-trip (replaces the
@@ -3073,21 +3071,21 @@ fn evaluate_candidate_for_filter(
             let src_u_start = uv_y * params.uv_stride + uv_x;
             let src_v_start = uv_y * params.uv_stride + uv_x;
 
-            let uv_rd = model_rd_for_sb_uv(
-                &params.src_u[src_u_start..],
-                params.uv_stride,
-                &pred_u,
-                uv_bw,
-                &params.src_v[src_v_start..],
-                params.uv_stride,
-                &pred_v,
-                uv_bw,
+            let uv_rd = model_rd_for_sb_uv(ModelRdUvInput {
+                src_u: &params.src_u[src_u_start..],
+                src_u_stride: params.uv_stride,
+                pred_u: &pred_u,
+                pred_u_stride: uv_bw,
+                src_v: &params.src_v[src_v_start..],
+                src_v_stride: params.uv_stride,
+                pred_v: &pred_v,
+                pred_v_stride: uv_bw,
                 bw,
                 bh, // luma dimensions — halved internally
-                params.block_size,
-                params.uv_dc_quant,
-                params.uv_ac_quant,
-            );
+                bsize: params.block_size,
+                dc_quant: params.uv_dc_quant,
+                ac_quant: params.uv_ac_quant,
+            });
 
             (uv_rd.rate.max(0) as u32, uv_rd.dist)
         } else {
@@ -3918,7 +3916,7 @@ pub fn newmv_diff_bias(
         let col_diff = avg_col - i32::from(cand_mv.col);
         // libvpx vp9_pickmode.c:1340 — threshold 48 (1/8-pel units, =
         // 6 full pels). `> 48 || < -48` ⇒ |diff| > 48.
-        if row_diff > 48 || row_diff < -48 || col_diff > 48 || col_diff < -48 {
+        if !(-48..=48).contains(&row_diff) || !(-48..=48).contains(&col_diff) {
             if bsize > BlockSize::Block32x32 {
                 // vp9_pickmode.c:1342 — `rdcost <<= 1`.
                 num = 2;

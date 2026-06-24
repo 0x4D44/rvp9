@@ -66,7 +66,9 @@ pub use mode_est::{IntraTplMode, ModeEstInputs, ModeEstResult, mode_estimation};
 /// at 0, failing the test.
 pub static TPL_RDMULT_ADJUSTED_BLOCKS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
-pub use rdmult::{RdmultDelta, get_rdmult_delta, rdo_apply_cb_rdmult, vp9_get_adaptive_rdmult};
+pub use rdmult::{
+    RdmultDelta, RdmultDeltaParams, get_rdmult_delta, rdo_apply_cb_rdmult, vp9_get_adaptive_rdmult,
+};
 pub use stats::{
     GfPicture, MAX_ARF_GOP_SIZE, MAX_ARF_LAYERS, MAX_INTER_REF_FRAMES, MAX_LAG_BUFFERS, MI_SIZE,
     MI_SIZE_LOG2, NO_REF_FRAME_INDEX, REFS_PER_FRAME, TPL_DEP_COST_SCALE_LOG2, TplDepFrame,
@@ -292,18 +294,18 @@ mod tests {
         }
 
         let orig_rdmult = 200;
-        let delta = get_rdmult_delta(
-            &tpl_frame,
-            0,
-            0,
-            BlockSize::Block64x64,
+        let delta = get_rdmult_delta(RdmultDeltaParams {
+            tpl_frame: &tpl_frame,
+            mi_row: 0,
+            mi_col: 0,
+            bsize: BlockSize::Block64x64,
             orig_rdmult,
-            0.5,
-            8,
-            8,
-            0,
-            0,
-        );
+            r0: 0.5,
+            frame_mi_rows: 8,
+            frame_mi_cols: 8,
+            gf_group_index: 0,
+            layer_depth: 0,
+        });
         assert!(delta.used_tpl, "TPL gating predicates all satisfied");
         assert!(delta.cb_rdmult >= 1, "rdmult must always be ≥ 1");
         // libvpx cap: dr ∈ [orig/2, orig*3/2].
@@ -385,52 +387,52 @@ mod tests {
     #[test]
     fn w6_8_get_rdmult_delta_gates_when_tpl_invalid() {
         let tpl_frame = TplDepFrame::new(8, 8); // is_valid == false
-        let r = get_rdmult_delta(
-            &tpl_frame,
-            0,
-            0,
-            BlockSize::Block64x64,
-            321,
-            0.5,
-            8,
-            8,
-            0,
-            0,
-        );
+        let r = get_rdmult_delta(RdmultDeltaParams {
+            tpl_frame: &tpl_frame,
+            mi_row: 0,
+            mi_col: 0,
+            bsize: BlockSize::Block64x64,
+            orig_rdmult: 321,
+            r0: 0.5,
+            frame_mi_rows: 8,
+            frame_mi_cols: 8,
+            gf_group_index: 0,
+            layer_depth: 0,
+        });
         assert!(!r.used_tpl);
         assert_eq!(r.cb_rdmult, 321);
 
         // valid but layer_depth > 1.
         let mut tpl_frame = TplDepFrame::new(8, 8);
         tpl_frame.is_valid = true;
-        let r = get_rdmult_delta(
-            &tpl_frame,
-            0,
-            0,
-            BlockSize::Block64x64,
-            321,
-            0.5,
-            8,
-            8,
-            0,
-            2,
-        );
+        let r = get_rdmult_delta(RdmultDeltaParams {
+            tpl_frame: &tpl_frame,
+            mi_row: 0,
+            mi_col: 0,
+            bsize: BlockSize::Block64x64,
+            orig_rdmult: 321,
+            r0: 0.5,
+            frame_mi_rows: 8,
+            frame_mi_cols: 8,
+            gf_group_index: 0,
+            layer_depth: 2,
+        });
         assert!(!r.used_tpl);
         assert_eq!(r.cb_rdmult, 321);
 
         // gf_group_index >= MAX_ARF_GOP_SIZE.
-        let r = get_rdmult_delta(
-            &tpl_frame,
-            0,
-            0,
-            BlockSize::Block64x64,
-            321,
-            0.5,
-            8,
-            8,
-            MAX_ARF_GOP_SIZE,
-            0,
-        );
+        let r = get_rdmult_delta(RdmultDeltaParams {
+            tpl_frame: &tpl_frame,
+            mi_row: 0,
+            mi_col: 0,
+            bsize: BlockSize::Block64x64,
+            orig_rdmult: 321,
+            r0: 0.5,
+            frame_mi_rows: 8,
+            frame_mi_cols: 8,
+            gf_group_index: MAX_ARF_GOP_SIZE,
+            layer_depth: 0,
+        });
         assert!(!r.used_tpl);
         assert_eq!(r.cb_rdmult, 321);
     }

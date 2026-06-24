@@ -14,11 +14,11 @@
 //! For every 8x8 mi-cell in the frame:
 //! 1. Tally `no_pred_segcounts[cur_segmap[i]]` (line 174 — count cells
 //!    per segment for the no-prediction probability tree).
-//! 2. For inter frames, tally:
-//!    a. `temporal_predictor_count[pred_context][pred_flag]`
-//!       (line 188), where `pred_flag = (prev_segmap[i] == cur_segmap[i])`.
-//!    b. `t_unpred_seg_counts[cur_segmap[i]]` for cells whose predictor
-//!       failed (line 191).
+//! 2. For inter frames, tally
+//!    `temporal_predictor_count[pred_context][pred_flag]` (line 188),
+//!    where `pred_flag = (prev_segmap[i] == cur_segmap[i])`, and
+//!    `t_unpred_seg_counts[cur_segmap[i]]` for cells whose predictor
+//!    failed (line 191).
 //!
 //! Then build two probability trees (`calc_segtree_probs`) — one over
 //! `no_pred_segcounts`, one over `t_unpred_seg_counts` — cost the
@@ -95,14 +95,7 @@ fn get_prob(num: u32, den: u32) -> u8 {
     debug_assert!(den != 0);
     // `(num*256 + den/2)/den`. For our inputs num,den < 2^30 so u64 is plenty.
     let p = ((u64::from(num) * 256 + u64::from(den / 2)) / u64::from(den)) as i32;
-    let clipped = if p > 255 {
-        255
-    } else if p < 1 {
-        1
-    } else {
-        p
-    };
-    clipped as u8
+    p.clamp(1, 255) as u8
 }
 
 /// libvpx `get_binary_prob` (`vpx_dsp/prob.h:58-62`).

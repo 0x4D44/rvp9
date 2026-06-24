@@ -1502,6 +1502,98 @@ fn read_raw_input(input: &Path, opts: &EncOpts) -> Result<FramesAndDims, String>
     Ok((frames, fps, coded_w, coded_h))
 }
 
+/// Build the [`EncoderConfig`] from the parsed [`EncOpts`] plus the
+/// runtime-derived geometry/bitrate. This is the SINGLE source of truth
+/// for the CLI→encoder mapping: `run()` calls it for the real encode,
+/// and the PROOF tests call it (via [`build_encoder_config_for_test`])
+/// so they exercise exactly the production plumbing — if a field's
+/// wiring is stripped, both the encode and the test break.
+///
+/// libvpx flag→config citations: `--end-usage` /
+/// `vpx_encoder.h enum vpx_rc_mode` → `rc_mode`; `--cq-level`
+/// (`vpxenc.c:385`) → `cq_level`; `--auto-alt-ref` (`vpxenc.c:436-438`)
+/// → `enable_alt_ref`.
+fn build_encoder_config(
+    opts: &EncOpts,
+    width: u32,
+    height: u32,
+    framerate: f64,
+    target_bitrate_bps: u32,
+) -> EncoderConfig {
+    EncoderConfig {
+        width,
+        height,
+        framerate,
+        target_bitrate_bps,
+        gop_length: opts.gop_length.unwrap_or(60),
+        aq_mode: opts.aq_mode,
+        use_prev_frame_mvs: false,
+        // W0.2/W0.4 (vpxenc parity): `--cpu-used` + `--rt`/`--good`/
+        // `--best` deadline tri-state. Defaults pin to rvp9's actual
+        // op-point (`cpu-used=7 --rt`); flip to (0, Good) when W4 lands.
+        speed: opts.cpu_used.unwrap_or(7),
+        deadline: opts.deadline.unwrap_or(Deadline::Realtime),
+        // W5.1 plumb (re-audit pass 2 follow-up): CLI's
+        // `--noise-sensitivity <0..=6>` feeds the encoder's
+        // `noise_sensitivity` gate. Default `0` (estimator off) matches
+        // vpxenc's CLI default; cap to the 0..=6 range libvpx supports.
+        noise_sensitivity: opts.noise_sensitivity.map(|v| v.min(6) as u8).unwrap_or(0),
+        // PHASE-3 integration: CLI `--min-q` / `--max-q` (W7.8) →
+        // EncoderConfig. Defaults mirror RateControlConfig::default().
+        min_qindex: opts.min_q.map(|v| v.min(255) as u8).unwrap_or(4),
+        max_qindex: opts.max_q.map(|v| v.min(255) as u8).unwrap_or(255),
+        // W6.2(vpxenc parity, HBD scaffold): pixel bit-depth. rvp9 only
+        // encodes 8-bit today; --bit-depth=10/12 is parsed (W0.1) but
+        // the encoder refuses non-Bd8 until the HBD kernel pairs land.
+        bit_depth: rvp9_core::BitDepth::Bd8,
+        // vpxenc `--lag-in-frames` (libvpx `vpxenc.c:220-221`, capped at
+        // `MAX_LAG_BUFFERS = 25`). The lookahead context also clamps
+        // internally; the explicit cap keeps the domain matching libvpx.
+        lag_in_frames: opts
+            .lag_in_frames
+            .map(|v| v.min(MAX_LAG_BUFFERS as u32))
+            .unwrap_or(0),
+        // Re-audit pass 3: `--auto-alt-ref` (libvpx `vpxenc.c:436-438`)
+        // now opts ALTREF emission in. Any non-zero value enables it
+        // (libvpx's 1 = single ARF, 2+ = multi-layer; rvp9 emits the
+        // single-ARF path either way). The encoder self-gates on
+        // `lag_in_frames` being large enough to feed the temporal
+        // filter's peek, so absent/0 keeps the legacy
+        // single-show-frame path (gate stays byte-identical).
+        enable_alt_ref: opts.auto_alt_ref.map(|v| v > 0).unwrap_or(false),
+        // Re-audit pass 3: `--end-usage` (libvpx
+        // `vpx_encoder.h enum vpx_rc_mode`) selects the regulator
+        // `RateControl::pick_q_and_bounds` dispatches on. Default Cbr.
+        rc_mode: opts.rc_mode,
+        // Re-audit pass 3: `--cq-level` (libvpx `vpxenc.c:385`) — the
+        // quality target consumed by the Cq (floor) / Q (pinned) arms.
+        // Inert under Cbr/Vbr. Cap to the 0..=255 q-index domain.
+        cq_level: opts.cq_level.map(|v| v.min(255) as u8).unwrap_or(0),
+        // A18 — `--temporal-layers <N>` (1..=3) → temporal SVC. Default 1
+        // (SVC off). `StreamEncoder::new` validates the range and the
+        // SVC/ALTREF mutual exclusion; values outside 1..=3 are rejected
+        // there with a clear `InvalidConfig`.
+        temporal_layers: opts.temporal_layers.unwrap_or(1),
+        // A23 — `--enable-tpl` (libvpx `vpxenc.c:445-446`) → TPL rdmult
+        // pass. Default OFF (cross-decoder gate runs `enable_tpl = false`).
+        enable_tpl: opts.enable_tpl.unwrap_or(false),
+    }
+}
+
+/// Test-only thin wrapper over [`build_encoder_config`] pinning a
+/// minimal 64×64 / 30 fps geometry so the PROOF tests can drive the
+/// real production mapping with just an [`EncOpts`].
+#[cfg(test)]
+fn build_encoder_config_for_test(opts: &EncOpts) -> EncoderConfig {
+    build_encoder_config(
+        opts,
+        64,
+        64,
+        30.0,
+        opts.target_bitrate_kbps.saturating_mul(1000),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     //! PROOF tests for Wave 0 of the vpxenc parity port.
@@ -1799,8 +1891,10 @@ mod tests {
         // Out-of-range values clamp to 6 (libvpx caps the denoiser
         // at level 6; the parser's range-check should catch this too,
         // but the saturation guard is the defensive belt-and-braces).
-        let mut o = EncOpts::default();
-        o.noise_sensitivity = Some(99);
+        let o = EncOpts {
+            noise_sensitivity: Some(99),
+            ..Default::default()
+        };
         let cfg = build_encoder_config_for_test(&o);
         assert_eq!(cfg.noise_sensitivity, 6, "99 must clamp to 6");
 
@@ -1948,8 +2042,10 @@ mod tests {
         assert_eq!(enc.rate_control().config().rc_mode, RcMode::Q);
 
         // --cq-level out of range clamps to 255 (q-index domain).
-        let mut o = EncOpts::default();
-        o.cq_level = Some(9999);
+        let o = EncOpts {
+            cq_level: Some(9999),
+            ..Default::default()
+        };
         let cfg = build_encoder_config_for_test(&o);
         assert_eq!(
             cfg.cq_level, 255,
@@ -2001,96 +2097,4 @@ mod tests {
         let cfg = build_encoder_config_for_test(&o);
         assert!(cfg.enable_alt_ref, "--auto-alt-ref=6 must enable ALTREF");
     }
-}
-
-/// Build the [`EncoderConfig`] from the parsed [`EncOpts`] plus the
-/// runtime-derived geometry/bitrate. This is the SINGLE source of truth
-/// for the CLI→encoder mapping: `run()` calls it for the real encode,
-/// and the PROOF tests call it (via [`build_encoder_config_for_test`])
-/// so they exercise exactly the production plumbing — if a field's
-/// wiring is stripped, both the encode and the test break.
-///
-/// libvpx flag→config citations: `--end-usage` /
-/// `vpx_encoder.h enum vpx_rc_mode` → `rc_mode`; `--cq-level`
-/// (`vpxenc.c:385`) → `cq_level`; `--auto-alt-ref` (`vpxenc.c:436-438`)
-/// → `enable_alt_ref`.
-fn build_encoder_config(
-    opts: &EncOpts,
-    width: u32,
-    height: u32,
-    framerate: f64,
-    target_bitrate_bps: u32,
-) -> EncoderConfig {
-    EncoderConfig {
-        width,
-        height,
-        framerate,
-        target_bitrate_bps,
-        gop_length: opts.gop_length.unwrap_or(60),
-        aq_mode: opts.aq_mode,
-        use_prev_frame_mvs: false,
-        // W0.2/W0.4 (vpxenc parity): `--cpu-used` + `--rt`/`--good`/
-        // `--best` deadline tri-state. Defaults pin to rvp9's actual
-        // op-point (`cpu-used=7 --rt`); flip to (0, Good) when W4 lands.
-        speed: opts.cpu_used.unwrap_or(7),
-        deadline: opts.deadline.unwrap_or(Deadline::Realtime),
-        // W5.1 plumb (re-audit pass 2 follow-up): CLI's
-        // `--noise-sensitivity <0..=6>` feeds the encoder's
-        // `noise_sensitivity` gate. Default `0` (estimator off) matches
-        // vpxenc's CLI default; cap to the 0..=6 range libvpx supports.
-        noise_sensitivity: opts.noise_sensitivity.map(|v| v.min(6) as u8).unwrap_or(0),
-        // PHASE-3 integration: CLI `--min-q` / `--max-q` (W7.8) →
-        // EncoderConfig. Defaults mirror RateControlConfig::default().
-        min_qindex: opts.min_q.map(|v| v.min(255) as u8).unwrap_or(4),
-        max_qindex: opts.max_q.map(|v| v.min(255) as u8).unwrap_or(255),
-        // W6.2(vpxenc parity, HBD scaffold): pixel bit-depth. rvp9 only
-        // encodes 8-bit today; --bit-depth=10/12 is parsed (W0.1) but
-        // the encoder refuses non-Bd8 until the HBD kernel pairs land.
-        bit_depth: rvp9_core::BitDepth::Bd8,
-        // vpxenc `--lag-in-frames` (libvpx `vpxenc.c:220-221`, capped at
-        // `MAX_LAG_BUFFERS = 25`). The lookahead context also clamps
-        // internally; the explicit cap keeps the domain matching libvpx.
-        lag_in_frames: opts
-            .lag_in_frames
-            .map(|v| v.min(MAX_LAG_BUFFERS as u32))
-            .unwrap_or(0),
-        // Re-audit pass 3: `--auto-alt-ref` (libvpx `vpxenc.c:436-438`)
-        // now opts ALTREF emission in. Any non-zero value enables it
-        // (libvpx's 1 = single ARF, 2+ = multi-layer; rvp9 emits the
-        // single-ARF path either way). The encoder self-gates on
-        // `lag_in_frames` being large enough to feed the temporal
-        // filter's peek, so absent/0 keeps the legacy
-        // single-show-frame path (gate stays byte-identical).
-        enable_alt_ref: opts.auto_alt_ref.map(|v| v > 0).unwrap_or(false),
-        // Re-audit pass 3: `--end-usage` (libvpx
-        // `vpx_encoder.h enum vpx_rc_mode`) selects the regulator
-        // `RateControl::pick_q_and_bounds` dispatches on. Default Cbr.
-        rc_mode: opts.rc_mode,
-        // Re-audit pass 3: `--cq-level` (libvpx `vpxenc.c:385`) — the
-        // quality target consumed by the Cq (floor) / Q (pinned) arms.
-        // Inert under Cbr/Vbr. Cap to the 0..=255 q-index domain.
-        cq_level: opts.cq_level.map(|v| v.min(255) as u8).unwrap_or(0),
-        // A18 — `--temporal-layers <N>` (1..=3) → temporal SVC. Default 1
-        // (SVC off). `StreamEncoder::new` validates the range and the
-        // SVC/ALTREF mutual exclusion; values outside 1..=3 are rejected
-        // there with a clear `InvalidConfig`.
-        temporal_layers: opts.temporal_layers.unwrap_or(1),
-        // A23 — `--enable-tpl` (libvpx `vpxenc.c:445-446`) → TPL rdmult
-        // pass. Default OFF (cross-decoder gate runs `enable_tpl = false`).
-        enable_tpl: opts.enable_tpl.unwrap_or(false),
-    }
-}
-
-/// Test-only thin wrapper over [`build_encoder_config`] pinning a
-/// minimal 64×64 / 30 fps geometry so the PROOF tests can drive the
-/// real production mapping with just an [`EncOpts`].
-#[cfg(test)]
-fn build_encoder_config_for_test(opts: &EncOpts) -> EncoderConfig {
-    build_encoder_config(
-        opts,
-        64,
-        64,
-        30.0,
-        opts.target_bitrate_kbps.saturating_mul(1000),
-    )
 }

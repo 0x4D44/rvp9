@@ -332,8 +332,8 @@ pub fn vp9_optimize_b(
 
     // libvpx line 120-123: seed token_cache from the original qcoeffs.
     let mut token_cache = vec![0u8; n];
-    for i in 0..eob as usize {
-        let rc = scan_arr[i] as usize;
+    for &scan_pos in scan_arr.iter().take(eob as usize) {
+        let rc = scan_pos as usize;
         token_cache[rc] = VP9_PT_ENERGY_CLASS[vp9_get_token(i32::from(qcoeff[rc])) as usize];
     }
 
@@ -575,8 +575,8 @@ pub fn vp9_optimize_b(
         qcoeff[rc] = before_best_eob_qc;
         dqcoeff[rc] = before_best_eob_dqc;
     }
-    for i in final_eob..eob as usize {
-        let rc = scan_arr[i] as usize;
+    for &scan_pos in scan_arr.iter().take(eob as usize).skip(final_eob) {
+        let rc = scan_pos as usize;
         qcoeff[rc] = 0;
         dqcoeff[rc] = 0;
     }

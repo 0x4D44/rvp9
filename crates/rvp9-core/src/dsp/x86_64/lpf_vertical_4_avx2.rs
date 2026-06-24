@@ -78,16 +78,8 @@ unsafe fn load_row(pixels: *const u8, off: usize) -> __m128i {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn transpose_8x8(
-    r0: __m128i,
-    r1: __m128i,
-    r2: __m128i,
-    r3: __m128i,
-    r4: __m128i,
-    r5: __m128i,
-    r6: __m128i,
-    r7: __m128i,
-) -> [__m128i; 8] {
+unsafe fn transpose_8x8(rows: [__m128i; 8]) -> [__m128i; 8] {
+    let [r0, r1, r2, r3, r4, r5, r6, r7] = rows;
     // First stage: interleave pairs of rows as bytes.
     let t0 = _mm_unpacklo_epi8(r0, r1);
     let t1 = _mm_unpacklo_epi8(r2, r3);
@@ -219,7 +211,7 @@ unsafe fn lpf_vertical_4_avx2_inner(
     let r7 = load_row(base, s_index - 4 + 7 * pitch);
 
     // Transpose so each vector holds one column across all 8 rows.
-    let cols = transpose_8x8(r0, r1, r2, r3, r4, r5, r6, r7);
+    let cols = transpose_8x8([r0, r1, r2, r3, r4, r5, r6, r7]);
     let p3 = cols[0];
     let p2 = cols[1];
     let p1 = cols[2];

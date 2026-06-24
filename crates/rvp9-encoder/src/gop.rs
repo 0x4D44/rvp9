@@ -230,7 +230,7 @@ impl GfGroup {
         // state machine (increment-then-check, reset on refresh): the
         // counter equals `offset % GOLDEN_REFRESH_PERIOD` after each
         // increment, hitting the period exactly at those offsets.
-        let golden_refresh = offset % GOLDEN_REFRESH_PERIOD == 0;
+        let golden_refresh = offset.is_multiple_of(GOLDEN_REFRESH_PERIOD);
 
         // ARF cadence: when enabled, a non-show ARF is built once the
         // count of inter frames already coded since the keyframe reaches

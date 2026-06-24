@@ -491,14 +491,12 @@ mod tests {
             none_rdcost: 500_000,
             split_none_rdcost: [250_000, 260_000, 240_000, 255_000],
         };
-        let rect = ml_prune_rect_partition(&rect_input, true, true);
-        // The returned mask must be a subset of the input mask.
-        assert!(rect.allow_horz || !rect.allow_horz);
-        assert!(rect.allow_vert || !rect.allow_vert);
-
         // Caller already disallowed horz → must stay disallowed.
         let rect_h_off = ml_prune_rect_partition(&rect_input, false, true);
         assert!(!rect_h_off.allow_horz);
+        // Caller already disallowed vert → must stay disallowed.
+        let rect_v_off = ml_prune_rect_partition(&rect_input, true, false);
+        assert!(!rect_v_off.allow_vert);
 
         // Degenerate ref_rd → pass-through (no pruning).
         let degenerate = RectPruneInput {

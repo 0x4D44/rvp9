@@ -880,11 +880,7 @@ impl Svc {
                 self.current_gld_fb_idx = 0;
             }
             self.current_alt_fb_idx = 0;
-        } else if temporal_id == 1 {
-            self.current_lst_fb_idx = spatial_id;
-            self.current_gld_fb_idx = nsl + spatial_id - 1;
-            self.current_alt_fb_idx = nsl + spatial_id;
-        } else if frame_num_within_temporal_struct == 1 {
+        } else if temporal_id == 1 || frame_num_within_temporal_struct == 1 {
             self.current_lst_fb_idx = spatial_id;
             self.current_gld_fb_idx = nsl + spatial_id - 1;
             self.current_alt_fb_idx = nsl + spatial_id;
@@ -1084,11 +1080,12 @@ mod tests {
     fn small_rc_config() -> RateControlConfig {
         // Tiny but valid: any positive setup works for unit tests.
         // We mirror the lib's default and shrink it.
-        let mut c = RateControlConfig::default();
-        c.frame_width = 320;
-        c.frame_height = 240;
-        c.target_bitrate_bps = 200_000;
-        c
+        RateControlConfig {
+            frame_width: 320,
+            frame_height: 240,
+            target_bitrate_bps: 200_000,
+            ..Default::default()
+        }
     }
 
     // ---------------- W6.5 ----------------
@@ -1103,7 +1100,7 @@ mod tests {
         let mut svc = Svc::new();
         let rc_cfg = small_rc_config();
         // 3 spatial × 3 temporal = 9 slots (≤ MAX_VPX_LAYERS=12).
-        let targets: Vec<i32> = (0..9).map(|i| 100_000 + 1_000 * i as i32).collect();
+        let targets: Vec<i32> = (0..9).map(|i| 100_000 + 1_000 * i).collect();
         svc.alloc_layers(3, 3, rc_cfg, &targets);
         assert_eq!(svc.number_spatial_layers, 3);
         assert_eq!(svc.number_temporal_layers, 3);

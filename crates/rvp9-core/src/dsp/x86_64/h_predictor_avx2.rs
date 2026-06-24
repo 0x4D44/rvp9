@@ -73,33 +73,33 @@ unsafe fn h_predictor_avx2_inner(dst: &mut [u8], stride: usize, bs: usize, left:
 
     match bs {
         4 => {
-            for r in 0..4 {
+            for (r, &left_px) in left.iter().take(4).enumerate() {
                 // Broadcast `left[r]` to all 4 bytes of a u32 splat —
                 // no SIMD intrinsic needed at this width; multiplying
                 // the byte by 0x01010101 packs it across all 4 lanes.
-                let v = left[r] as u32;
+                let v = left_px as u32;
                 let row: u32 = v | (v << 8) | (v << 16) | (v << 24);
                 // G4: stores to `dst` use write_unaligned::<u32> (unaligned)
                 core::ptr::write_unaligned(dst.as_mut_ptr().add(r * stride) as *mut u32, row);
             }
         }
         8 => {
-            for r in 0..8 {
-                let row = _mm_set1_epi8(left[r] as i8);
+            for (r, &left_px) in left.iter().take(8).enumerate() {
+                let row = _mm_set1_epi8(left_px as i8);
                 // G4: stores to `dst` use _mm_storel_epi64 (unaligned)
                 _mm_storel_epi64(dst.as_mut_ptr().add(r * stride) as *mut _, row);
             }
         }
         16 => {
-            for r in 0..16 {
-                let row = _mm_set1_epi8(left[r] as i8);
+            for (r, &left_px) in left.iter().take(16).enumerate() {
+                let row = _mm_set1_epi8(left_px as i8);
                 // G4: stores to `dst` use _mm_storeu_si128 (unaligned)
                 _mm_storeu_si128(dst.as_mut_ptr().add(r * stride) as *mut _, row);
             }
         }
         32 => {
-            for r in 0..32 {
-                let row = _mm256_set1_epi8(left[r] as i8);
+            for (r, &left_px) in left.iter().take(32).enumerate() {
+                let row = _mm256_set1_epi8(left_px as i8);
                 // G4: stores to `dst` use _mm256_storeu_si256 (unaligned)
                 _mm256_storeu_si256(dst.as_mut_ptr().add(r * stride) as *mut _, row);
             }
@@ -108,9 +108,9 @@ unsafe fn h_predictor_avx2_inner(dst: &mut [u8], stride: usize, bs: usize, left:
             // Defensive scalar fallback. VP9 only uses bs ∈ {4, 8, 16, 32};
             // we should never reach this arm, but `unreachable_unchecked`
             // would be UB if a future caller violates the contract.
-            for r in 0..bs {
+            for (r, &left_px) in left.iter().take(bs).enumerate() {
                 let row_start = r * stride;
-                dst[row_start..row_start + bs].fill(left[r]);
+                dst[row_start..row_start + bs].fill(left_px);
             }
         }
     }

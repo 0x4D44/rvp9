@@ -58,6 +58,8 @@ const CAT_NAMES: [&str; bitacct::N_CATEGORIES] = [
 #[ignore = "E4 — overshoot accounting harness; run with `--ignored --nocapture`"]
 fn e4_overshoot_accounting_foreman_100k() {
     // Enable the diagnostic scaffolds for this process.
+    // SAFETY: this ignored diagnostic test owns these process env knobs for
+    // the duration of the test-binary run.
     unsafe {
         std::env::set_var("RVP9_E4_BITACCT", "1");
         std::env::set_var("RVP9_E4_SKIPSTAT", "1");

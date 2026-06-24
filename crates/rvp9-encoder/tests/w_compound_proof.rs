@@ -137,7 +137,11 @@ fn noise_at(frame: u32, x: usize, y: usize) -> i32 {
 
 fn base_y(x: usize, y: usize) -> u8 {
     let grad = (x + y) / 2;
-    let blocky = if (x / 24 + y / 24) % 2 == 0 { 40 } else { 90 };
+    let blocky = if (x / 24 + y / 24).is_multiple_of(2) {
+        40
+    } else {
+        90
+    };
     (((grad + blocky) % 200) + 28) as u8
 }
 

@@ -683,9 +683,9 @@ unsafe fn idct32x32_135_add_avx2_inner(input: &[i32; 1024], dest: &mut [u8], str
         let col_base = col_group * 8;
 
         let mut col_in: [__m256i; 32] = [_mm256_set1_epi32(0); 32];
-        for r in 0..32 {
+        for (r, slot) in col_in.iter_mut().enumerate() {
             let p = intermediate.as_ptr().add(r * 32 + col_base) as *const __m256i;
-            col_in[r] = _mm256_loadu_si256(p);
+            *slot = _mm256_loadu_si256(p);
         }
 
         let col_out = idct32_avx2(col_in);

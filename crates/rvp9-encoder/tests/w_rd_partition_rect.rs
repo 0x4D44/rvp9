@@ -244,6 +244,7 @@ fn a4_rect_partition_is_evaluated_and_decodes() {
     // Descent ON (the A4 default). Clear both knobs so the encoder takes
     // the default (descent ON, rect evaluated). This test runs in its own
     // process; no parallel test mutates these env vars.
+    // SAFETY: this test owns these process env knobs for its test-binary run.
     unsafe {
         std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
         std::env::remove_var("RVP9_F3_NONRD_PARTITION_ENABLE");

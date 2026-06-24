@@ -104,16 +104,8 @@ unsafe fn store_row(pixels: *mut u8, off: usize, v: __m128i) {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn transpose_8x8(
-    r0: __m128i,
-    r1: __m128i,
-    r2: __m128i,
-    r3: __m128i,
-    r4: __m128i,
-    r5: __m128i,
-    r6: __m128i,
-    r7: __m128i,
-) -> [__m128i; 8] {
+unsafe fn transpose_8x8(rows: [__m128i; 8]) -> [__m128i; 8] {
+    let [r0, r1, r2, r3, r4, r5, r6, r7] = rows;
     let t0 = _mm_unpacklo_epi8(r0, r1);
     let t1 = _mm_unpacklo_epi8(r2, r3);
     let t2 = _mm_unpacklo_epi8(r4, r5);
@@ -199,18 +191,8 @@ unsafe fn srai_i8<const N: i32>(x: __m128i) -> __m128i {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn filter_mask_avx2(
-    blimit: u8,
-    limit: u8,
-    p3: __m128i,
-    p2: __m128i,
-    p1: __m128i,
-    p0: __m128i,
-    q0: __m128i,
-    q1: __m128i,
-    q2: __m128i,
-    q3: __m128i,
-) -> __m128i {
+unsafe fn filter_mask_avx2(blimit: u8, limit: u8, taps: [__m128i; 8]) -> __m128i {
+    let [p3, p2, p1, p0, q0, q1, q2, q3] = taps;
     let limit_v = _mm_set1_epi8(limit as i8);
     let blimit_v = _mm_set1_epi8(blimit as i8);
 
@@ -256,17 +238,8 @@ unsafe fn hev_mask_avx2(thresh: u8, p1: __m128i, p0: __m128i, q0: __m128i, q1: _
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn flat_mask4_avx2(
-    thresh: u8,
-    p3: __m128i,
-    p2: __m128i,
-    p1: __m128i,
-    p0: __m128i,
-    q0: __m128i,
-    q1: __m128i,
-    q2: __m128i,
-    q3: __m128i,
-) -> __m128i {
+unsafe fn flat_mask4_avx2(thresh: u8, taps: [__m128i; 8]) -> __m128i {
+    let [p3, p2, p1, p0, q0, q1, q2, q3] = taps;
     let thresh_v = _mm_set1_epi8(thresh as i8);
     let mut work = abs_diff_u8(p1, p0);
     work = _mm_max_epu8(work, abs_diff_u8(q1, q0));
@@ -420,15 +393,9 @@ unsafe fn widen_u8_to_u16_lo(x: __m128i) -> __m128i {
 #[target_feature(enable = "avx2")]
 #[inline]
 unsafe fn filter8_wide(
-    p3: __m128i,
-    p2: __m128i,
-    p1: __m128i,
-    p0: __m128i,
-    q0: __m128i,
-    q1: __m128i,
-    q2: __m128i,
-    q3: __m128i,
+    taps: [__m128i; 8],
 ) -> (__m128i, __m128i, __m128i, __m128i, __m128i, __m128i) {
+    let [p3, p2, p1, p0, q0, q1, q2, q3] = taps;
     let p3w = widen_u8_to_u16_lo(p3);
     let p2w = widen_u8_to_u16_lo(p2);
     let p1w = widen_u8_to_u16_lo(p1);
@@ -866,9 +833,10 @@ unsafe fn filter16_avx2(
     q6: __m128i,
     q7: __m128i,
 ) -> [__m128i; 16] {
-    let mask = filter_mask_avx2(blimit, limit, p3, p2, p1, p0, q0, q1, q2, q3);
+    let taps = [p3, p2, p1, p0, q0, q1, q2, q3];
+    let mask = filter_mask_avx2(blimit, limit, taps);
     let hev = hev_mask_avx2(thresh, p1, p0, q0, q1);
-    let flat = flat_mask4_avx2(1, p3, p2, p1, p0, q0, q1, q2, q3);
+    let flat = flat_mask4_avx2(1, taps);
     let flat2 = flat_mask5_avx2(1, p7, p6, p5, p4, p0, q0, q4, q5, q6, q7);
 
     let apply_wide = _mm_and_si128(flat, mask);
@@ -878,8 +846,7 @@ unsafe fn filter16_avx2(
     let (p1_f4, p0_f4, q0_f4, q1_f4) = filter4_inner(mask, hev, p1, p0, q0, q1);
 
     // 7-tap wide outputs for op2..oq2.
-    let (op2_w7, op1_w7, op0_w7, oq0_w7, oq1_w7, oq2_w7) =
-        filter8_wide(p3, p2, p1, p0, q0, q1, q2, q3);
+    let (op2_w7, op1_w7, op0_w7, oq0_w7, oq1_w7, oq2_w7) = filter8_wide(taps);
 
     // 15-tap wide outputs for op6..oq6.
     let f16 = filter16_wide_avx2(
@@ -1001,8 +968,8 @@ unsafe fn lpf_vertical_16_avx2_inner(
     let ql6 = load_row(base, s_index + 6 * pitch);
     let ql7 = load_row(base, s_index + 7 * pitch);
 
-    let p_cols = transpose_8x8(pl0, pl1, pl2, pl3, pl4, pl5, pl6, pl7);
-    let q_cols = transpose_8x8(ql0, ql1, ql2, ql3, ql4, ql5, ql6, ql7);
+    let p_cols = transpose_8x8([pl0, pl1, pl2, pl3, pl4, pl5, pl6, pl7]);
+    let q_cols = transpose_8x8([ql0, ql1, ql2, ql3, ql4, ql5, ql6, ql7]);
 
     // p_cols[k] holds column (s-8+k) across all 8 rows in its low 64
     // bits. So p_cols[0] = p7, p_cols[7] = p0.
@@ -1030,12 +997,12 @@ unsafe fn lpf_vertical_16_avx2_inner(
     // out[0..8]  = op7..op0 (column-vectors)
     // out[8..16] = oq0..oq7 (column-vectors)
     // Transpose each half back to row-major and store.
-    let p_rows = transpose_8x8(
+    let p_rows = transpose_8x8([
         out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7],
-    );
-    let q_rows = transpose_8x8(
+    ]);
+    let q_rows = transpose_8x8([
         out[8], out[9], out[10], out[11], out[12], out[13], out[14], out[15],
-    );
+    ]);
 
     store_row(base, s_index - 8 + 0 * pitch, p_rows[0]);
     store_row(base, s_index - 8 + 1 * pitch, p_rows[1]);

@@ -448,9 +448,9 @@ unsafe fn idct16x16_10_add_avx2_inner(input: &[i32; 256], dest: &mut [u8], strid
         let col_base = col_group * 8;
 
         let mut col_in: [__m256i; 16] = [_mm256_set1_epi32(0); 16];
-        for r in 0..16 {
+        for (r, slot) in col_in.iter_mut().enumerate() {
             let p = intermediate.as_ptr().add(r * 16 + col_base) as *const __m256i;
-            col_in[r] = _mm256_loadu_si256(p);
+            *slot = _mm256_loadu_si256(p);
         }
 
         let col_out = idct16_avx2(col_in);
@@ -689,8 +689,8 @@ mod tests {
             if !is_x86_feature_detected!("avx2") {
                 return Ok(());
             }
-            for i in TOP_COEFFS..256 {
-                prop_assert_eq!(input[i], 0, "test bug: row {} must be zero", i / 16);
+            for (i, &coef) in input.iter().enumerate().skip(TOP_COEFFS) {
+                prop_assert_eq!(coef, 0, "test bug: row {} must be zero", i / 16);
             }
             let scalar = run_scalar(&input, &dst_init);
             let avx2 = run_avx2(&input, &dst_init);
@@ -791,8 +791,8 @@ mod tests {
 
         // (4) High-magnitude ramp on row 0 only — column-dominant.
         let mut input = [0i32; 256];
-        for c in 0..16 {
-            input[c] = (c as i32) * 2000 + 100;
+        for (c, slot) in input.iter_mut().take(16).enumerate() {
+            *slot = (c as i32) * 2000 + 100;
         }
         for &dst_fill in &[0u8, 128, 255] {
             let dst_init = [dst_fill; 256];

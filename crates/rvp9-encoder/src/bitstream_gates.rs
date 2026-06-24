@@ -449,13 +449,12 @@ pub fn build_coef_prob_update_plan(
         // intent: "too few tokens to bother"). A zeroed table (the KF
         // pattern, or a TX size with no coded blocks) is suppressed.
         let mut tx_total: u32 = 0;
-        for plane in 0..PLANE_TYPES {
-            for r in 0..REF_TYPES {
-                for band in 0..COEF_BANDS {
-                    for ctx in 0..band_coeff_contexts(band) {
-                        for tok in 0..ENTROPY_TOKENS {
-                            tx_total = tx_total
-                                .saturating_add(full_counts[tx_idx][plane][r][band][ctx][tok]);
+        for plane_counts in full_counts[tx_idx].iter().take(PLANE_TYPES) {
+            for ref_counts in plane_counts.iter().take(REF_TYPES) {
+                for (band, band_counts) in ref_counts.iter().enumerate().take(COEF_BANDS) {
+                    for ctx_counts in band_counts.iter().take(band_coeff_contexts(band)) {
+                        for &tok_count in ctx_counts.iter().take(ENTROPY_TOKENS) {
+                            tx_total = tx_total.saturating_add(tok_count);
                         }
                     }
                 }
@@ -686,12 +685,12 @@ pub fn fix_interp_filter(
     // filters had a non-zero total.
     let mut per_filter = [0u32; SWITCHABLE_FILTERS];
     let mut nonzero = 0usize;
-    for i in 0..SWITCHABLE_FILTERS {
+    for (i, slot) in per_filter.iter_mut().enumerate().take(SWITCHABLE_FILTERS) {
         let mut sum = 0u32;
-        for j in 0..SWITCHABLE_FILTER_CONTEXTS {
-            sum = sum.wrapping_add(counts[j][i]);
+        for row in counts.iter().take(SWITCHABLE_FILTER_CONTEXTS) {
+            sum = sum.wrapping_add(row[i]);
         }
-        per_filter[i] = sum;
+        *slot = sum;
         if sum > 0 {
             nonzero += 1;
         }
@@ -700,8 +699,8 @@ pub fn fix_interp_filter(
     if nonzero == 1 {
         // libvpx `vp9_bitstream.c:874-882`: collapse to the one used
         // filter (first non-zero slot in declaration order).
-        for i in 0..SWITCHABLE_FILTERS {
-            if per_filter[i] > 0 {
+        for (i, &sum) in per_filter.iter().enumerate().take(SWITCHABLE_FILTERS) {
+            if sum > 0 {
                 let filter = match i {
                     0 => InterpFilter::EightTap,
                     1 => InterpFilter::EightTapSmooth,
@@ -1112,8 +1111,12 @@ mod tests {
             [[0u32; SWITCHABLE_FILTERS]; SWITCHABLE_FILTER_CONTEXTS];
         // libvpx index 0 is EIGHTTAP. Spread some hits across the
         // contexts so the per-filter sum is > 0 in column 0 only.
-        for j in 0..SWITCHABLE_FILTER_CONTEXTS {
-            counts[j][0] = 100 + j as u32;
+        for (j, row) in counts
+            .iter_mut()
+            .enumerate()
+            .take(SWITCHABLE_FILTER_CONTEXTS)
+        {
+            row[0] = 100 + j as u32;
         }
         let out = fix_interp_filter(InterpFilter::Switchable, &counts);
         assert_eq!(out, FixInterpFilter::Collapse(InterpFilter::EightTap));

@@ -178,9 +178,11 @@ impl Aggregate {
         let mut y_blocks = [0u64; 4];
         let mut n = 0;
         for f in self.frames.iter().filter(|f| !f.is_key) {
-            for i in 0..4 {
-                leaves[i] += f.tx_leaf_count[i];
-                y_blocks[i] += f.tx_y_block_count[i];
+            for (acc, value) in leaves.iter_mut().zip(f.tx_leaf_count.iter()) {
+                *acc += *value;
+            }
+            for (acc, value) in y_blocks.iter_mut().zip(f.tx_y_block_count.iter()) {
+                *acc += *value;
             }
             n += 1;
         }
@@ -191,8 +193,8 @@ impl Aggregate {
     fn block_count_inter(&self) -> [u64; BLOCK_SIZES] {
         let mut acc = [0u64; BLOCK_SIZES];
         for f in self.frames.iter().filter(|f| !f.is_key) {
-            for i in 0..BLOCK_SIZES {
-                acc[i] += f.block_count[i];
+            for (acc_slot, value) in acc.iter_mut().zip(f.block_count.iter()) {
+                *acc_slot += *value;
             }
         }
         acc
@@ -200,8 +202,8 @@ impl Aggregate {
     fn block_area8_inter(&self) -> [u64; BLOCK_SIZES] {
         let mut acc = [0u64; BLOCK_SIZES];
         for f in self.frames.iter().filter(|f| !f.is_key) {
-            for i in 0..BLOCK_SIZES {
-                acc[i] += f.block_area8[i];
+            for (acc_slot, value) in acc.iter_mut().zip(f.block_area8.iter()) {
+                *acc_slot += *value;
             }
         }
         acc
@@ -218,8 +220,8 @@ impl Aggregate {
         for f in self.frames.iter().filter(|f| !f.is_key) {
             intra += f.intra_area8;
             total += f.total_area8;
-            for i in 0..4 {
-                modes[i] += f.inter_mode_area8[i];
+            for (acc, value) in modes.iter_mut().zip(f.inter_mode_area8.iter()) {
+                *acc += *value;
             }
             skip += f.skip_area8;
             last += f.ref_last_area8;

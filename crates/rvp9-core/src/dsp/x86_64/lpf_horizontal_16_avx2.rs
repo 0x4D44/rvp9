@@ -125,18 +125,8 @@ unsafe fn srai_i8<const N: i32>(x: __m128i) -> __m128i {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn filter_mask_avx2(
-    blimit: u8,
-    limit: u8,
-    p3: __m128i,
-    p2: __m128i,
-    p1: __m128i,
-    p0: __m128i,
-    q0: __m128i,
-    q1: __m128i,
-    q2: __m128i,
-    q3: __m128i,
-) -> __m128i {
+unsafe fn filter_mask_avx2(blimit: u8, limit: u8, taps: [__m128i; 8]) -> __m128i {
+    let [p3, p2, p1, p0, q0, q1, q2, q3] = taps;
     let limit_v = _mm_set1_epi8(limit as i8);
     let blimit_v = _mm_set1_epi8(blimit as i8);
 
@@ -182,17 +172,8 @@ unsafe fn hev_mask_avx2(thresh: u8, p1: __m128i, p0: __m128i, q0: __m128i, q1: _
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn flat_mask4_avx2(
-    thresh: u8,
-    p3: __m128i,
-    p2: __m128i,
-    p1: __m128i,
-    p0: __m128i,
-    q0: __m128i,
-    q1: __m128i,
-    q2: __m128i,
-    q3: __m128i,
-) -> __m128i {
+unsafe fn flat_mask4_avx2(thresh: u8, taps: [__m128i; 8]) -> __m128i {
+    let [p3, p2, p1, p0, q0, q1, q2, q3] = taps;
     let thresh_v = _mm_set1_epi8(thresh as i8);
     let mut work = abs_diff_u8(p1, p0);
     work = _mm_max_epu8(work, abs_diff_u8(q1, q0));
@@ -333,15 +314,9 @@ unsafe fn widen_u8_to_u16_lo(x: __m128i) -> __m128i {
 #[target_feature(enable = "avx2")]
 #[inline]
 unsafe fn filter8_wide(
-    p3: __m128i,
-    p2: __m128i,
-    p1: __m128i,
-    p0: __m128i,
-    q0: __m128i,
-    q1: __m128i,
-    q2: __m128i,
-    q3: __m128i,
+    taps: [__m128i; 8],
 ) -> (__m128i, __m128i, __m128i, __m128i, __m128i, __m128i) {
+    let [p3, p2, p1, p0, q0, q1, q2, q3] = taps;
     let p3w = widen_u8_to_u16_lo(p3);
     let p2w = widen_u8_to_u16_lo(p2);
     let p1w = widen_u8_to_u16_lo(p1);
@@ -780,9 +755,10 @@ unsafe fn lpf_horizontal_16_avx2_inner(
     let q6 = load_row(base, s_index + 6 * pitch);
     let q7 = load_row(base, s_index + 7 * pitch);
 
-    let mask = filter_mask_avx2(blimit, limit, p3, p2, p1, p0, q0, q1, q2, q3);
+    let taps = [p3, p2, p1, p0, q0, q1, q2, q3];
+    let mask = filter_mask_avx2(blimit, limit, taps);
     let hev = hev_mask_avx2(thresh, p1, p0, q0, q1);
-    let flat = flat_mask4_avx2(1, p3, p2, p1, p0, q0, q1, q2, q3);
+    let flat = flat_mask4_avx2(1, taps);
     // Wave H H4.1 — call site passes OUTER pixels (p7..p4, q4..q7) to
     // match the scalar `flat_mask5` semantics; H7 fixed the parallel
     // bug in the vertical sibling at b9d4cdb.
@@ -792,8 +768,7 @@ unsafe fn lpf_horizontal_16_avx2_inner(
     let apply_wide2 = _mm_and_si128(flat2, apply_wide);
 
     let (p1_f4, p0_f4, q0_f4, q1_f4) = filter4_inner(mask, hev, p1, p0, q0, q1);
-    let (op2_w7, op1_w7, op0_w7, oq0_w7, oq1_w7, oq2_w7) =
-        filter8_wide(p3, p2, p1, p0, q0, q1, q2, q3);
+    let (op2_w7, op1_w7, op0_w7, oq0_w7, oq1_w7, oq2_w7) = filter8_wide(taps);
     let f16 = filter16_wide_avx2(
         p7, p6, p5, p4, p3, p2, p1, p0, q0, q1, q2, q3, q4, q5, q6, q7,
     );

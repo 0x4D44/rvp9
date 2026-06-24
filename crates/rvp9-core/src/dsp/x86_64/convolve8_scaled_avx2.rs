@@ -503,7 +503,7 @@ mod tests {
         for &(w, h) in &[(8usize, 8usize), (16, 16), (32, 32)] {
             let step = 20i32;
             let ih = inter_h(h, 0, step);
-            let src_w = ((w as i32 - 1) * step >> 4) as usize + 8;
+            let src_w = (((w as i32 - 1) * step) >> 4) as usize + 8;
             let src_stride = src_w;
             let src = vec![137u8; (ih - 1) * src_stride + src_w];
             let mut d = vec![0u8; w * h];

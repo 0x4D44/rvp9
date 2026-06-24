@@ -142,7 +142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .truncate(true)
             .open(&summary_path)?;
         writeln!(sf, "# F.0.2 oracle — {} kbps", kbps)?;
-        writeln!(sf, "")?;
+        writeln!(sf)?;
         writeln!(sf, "Schema liveness at this milestone (HLD §3.4.1):")?;
         writeln!(
             sf,
@@ -152,7 +152,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             sf,
             "- `mode_bits_est`, `mv_bits_est`: live on rvp9, **0 on libvpx leg** at F.0.2 (libvpx-side split is a future patch)."
         )?;
-        writeln!(sf, "")?;
+        writeln!(sf)?;
         writeln!(sf, "| frame_idx | rvp9 n_blocks | libvpx n_blocks |")?;
         writeln!(sf, "|---|---|---|")?;
         let mut rvp9_by_frame = std::collections::BTreeMap::<u32, usize>::new();

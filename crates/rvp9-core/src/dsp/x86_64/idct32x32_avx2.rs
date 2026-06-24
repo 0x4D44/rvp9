@@ -825,9 +825,9 @@ unsafe fn idct32x32_add_avx2_inner(input: &[i32; 1024], dest: &mut [u8], stride:
         let col_base = col_group * 8;
 
         let mut col_in: [__m256i; 32] = [_mm256_set1_epi32(0); 32];
-        for r in 0..32 {
+        for (r, slot) in col_in.iter_mut().enumerate() {
             let p = intermediate.as_ptr().add(r * 32 + col_base) as *const __m256i;
-            col_in[r] = _mm256_loadu_si256(p);
+            *slot = _mm256_loadu_si256(p);
         }
 
         let col_out = idct32_avx2(col_in);
@@ -1226,8 +1226,8 @@ mod tests {
 
         // (1) Row 0 = ramp.
         let mut input = [0i32; 1024];
-        for c in 0..32 {
-            input[c] = (c as i32) * 1000 + 100;
+        for (c, slot) in input.iter_mut().take(32).enumerate() {
+            *slot = (c as i32) * 1000 + 100;
         }
         for &dst_fill in &[0u8, 128, 255] {
             let dst_init = [dst_fill; 1024];
@@ -1324,19 +1324,19 @@ mod tests {
         for row_group in 0..4usize {
             for col_group in 0..4usize {
                 let mut rs: [__m256i; 8] = [super::_mm256_set1_epi32(0); 8];
-                for r in 0..8 {
+                for (r, slot) in rs.iter_mut().enumerate() {
                     let p = src.as_ptr().add((row_group * 8 + r) * 32 + col_group * 8)
                         as *const __m256i;
-                    rs[r] = _mm256_loadu_si256(p);
+                    *slot = _mm256_loadu_si256(p);
                 }
                 let cols =
                     super::transpose8x8_i32(rs[0], rs[1], rs[2], rs[3], rs[4], rs[5], rs[6], rs[7]);
-                for k in 0..8 {
+                for (k, &col) in cols.iter().enumerate() {
                     let p = dst
                         .as_mut_ptr()
                         .add((col_group * 8 + k) * 32 + row_group * 8)
                         as *mut __m256i;
-                    _mm256_storeu_si256(p, cols[k]);
+                    _mm256_storeu_si256(p, col);
                 }
             }
         }

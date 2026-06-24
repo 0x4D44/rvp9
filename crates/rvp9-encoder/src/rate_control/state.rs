@@ -770,8 +770,10 @@ mod tests {
     fn vbr_dispatch_differs_from_cbr_at_first_frame() {
         use super::super::RcMode;
         // CBR baseline.
-        let mut cfg_cbr = RateControlConfig::default();
-        cfg_cbr.rc_mode = RcMode::Cbr;
+        let cfg_cbr = RateControlConfig {
+            rc_mode: RcMode::Cbr,
+            ..Default::default()
+        };
         let mut rc_cbr = RateControl::new(cfg_cbr);
         let _ = rc_cbr.pick_q_and_bounds(FrameKind::Key);
 

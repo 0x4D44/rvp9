@@ -521,7 +521,7 @@ impl RefFramePool {
     /// 8 distinct refs).
     fn get_free_slot(&self) -> usize {
         for cand in 0..REF_FRAMES {
-            if !self.ref_frame_map.iter().any(|&m| m == cand) {
+            if !self.ref_frame_map.contains(&cand) {
                 return cand;
             }
         }
