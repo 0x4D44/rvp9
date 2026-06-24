@@ -3096,6 +3096,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let a4_profile_enabled = std::env::var_os("RVP9_A4_PROFILE").is_some();
     let variance_hint_dump_enabled =
         std::env::var_os("RVP9_VARIANCE_HINT_DUMP").is_some_and(|v| v != "0");
+    let a4_rect_disable = std::env::var_os("RVP9_A4_RECT_DISABLE").is_some();
     let a4_split_stats_enabled = std::env::var_os("RVP9_A4_SPLIT_STATS").is_some();
     let mut a4_profile_calls = [0usize; rvp9_core::block::BLOCK_SIZES];
     let mut a4_profile_pick_time = [std::time::Duration::ZERO; rvp9_core::block::BLOCK_SIZES];
@@ -3821,6 +3822,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                           allow_horz_in: bool,
                                           allow_vert_in: bool|
                      -> (bool, bool) {
+                        if a4_rect_disable {
+                            return (false, false);
+                        }
                         if !ml_rect_active {
                             return (allow_horz_in, allow_vert_in);
                         }
