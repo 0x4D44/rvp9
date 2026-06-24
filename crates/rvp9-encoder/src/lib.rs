@@ -2602,8 +2602,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         InterModeSearchParams, MvCandidates, PickInterModeParams, pick_inter_mode,
     };
     use rvp9_core::mode_decision::nonrd_partition::{
-        NonRdDescentParams, PartitionRdCandidate, nonrd_pick_partition_with_pruners,
-        variance_hint_bounds,
+        NonRdDescentParams, NonRdSplitStats, PartitionRdCandidate,
+        nonrd_pick_partition_with_pruners, variance_hint_bounds,
     };
     use rvp9_core::mode_decision::speed_features::{self as sf_mod};
     use rvp9_core::mv_search::int_pro_me::int_pro_motion_estimation;
@@ -3096,8 +3096,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let a4_profile_enabled = std::env::var_os("RVP9_A4_PROFILE").is_some();
     let variance_hint_dump_enabled =
         std::env::var_os("RVP9_VARIANCE_HINT_DUMP").is_some_and(|v| v != "0");
+    let a4_split_stats_enabled = std::env::var_os("RVP9_A4_SPLIT_STATS").is_some();
     let mut a4_profile_calls = [0usize; rvp9_core::block::BLOCK_SIZES];
     let mut a4_profile_pick_time = [std::time::Duration::ZERO; rvp9_core::block::BLOCK_SIZES];
+    let mut a4_split_stats = NonRdSplitStats::default();
     let rt_profile_phase2_reused_start = if rt_profile_enabled {
         crate::rdo::inter_dispatch::PHASE2_NEWMV_REUSED.load(std::sync::atomic::Ordering::Relaxed)
     } else {
@@ -3883,6 +3885,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         &mut rect_prune,
                     )
                 };
+
+                if a4_split_stats_enabled {
+                    a4_split_stats.accumulate(&descent_result.split_stats);
+                }
 
                 // A4 anti-G3 diagnostic: count this SB if the RD
                 // descent chose a partition SHAPE that differs from the
@@ -6068,6 +6074,37 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 count_skip,
                 count_nonzero_mv,
                 count_golden,
+            );
+        }
+    }
+
+    if a4_split_stats_enabled {
+        let comparable =
+            a4_split_stats.block16_split_beats_none + a4_split_stats.block16_split_loses_to_none;
+        let avg_margin = if comparable == 0 {
+            0.0
+        } else {
+            a4_split_stats.block16_margin_sum as f64 / f64::from(comparable)
+        };
+        let min_margin = a4_split_stats
+            .block16_margin_min
+            .map_or_else(|| "n/a".to_string(), |v| v.to_string());
+        let max_margin = a4_split_stats
+            .block16_margin_max
+            .map_or_else(|| "n/a".to_string(), |v| v.to_string());
+        #[allow(clippy::print_stderr)]
+        {
+            eprintln!(
+                "[A4-split] q={base_qindex} block16 attempts={} breakout_suppressed={} feasible={} infeasible_or_early={} split_beats_none={} split_loses_to_none={} split_committed={} rect_overrides_split={} no_none={} avg_margin={avg_margin:.1} min_margin={min_margin} max_margin={max_margin}",
+                a4_split_stats.block16_attempts,
+                a4_split_stats.block16_breakout_suppressed,
+                a4_split_stats.block16_feasible,
+                a4_split_stats.block16_infeasible_or_early,
+                a4_split_stats.block16_split_beats_none,
+                a4_split_stats.block16_split_loses_to_none,
+                a4_split_stats.block16_split_committed,
+                a4_split_stats.block16_rect_overrides_split,
+                a4_split_stats.block16_no_none,
             );
         }
     }

@@ -456,6 +456,79 @@ pub struct NonRdLeaf {
     pub pick: PartitionRdCandidate,
 }
 
+/// Aggregate RD diagnostics for the `Block16x16 -> 4x Block8x8`
+/// SPLIT arm. This is intentionally narrow: Stage 4a's current VBR
+/// partition gap is that 8x8 is allowed by diagnostics but still does not
+/// win, so the useful question is whether the SPLIT arm is infeasible,
+/// pruned, RD-more-expensive than 16x16 NONE, or later displaced by rect.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct NonRdSplitStats {
+    /// Number of `Block16x16` nodes where a split to 8x8 was a legal
+    /// candidate and the descent started evaluating it.
+    pub block16_attempts: u32,
+    /// Candidate `Block16x16` nodes where the breakout hook suppressed
+    /// SPLIT before any 8x8 child was evaluated.
+    pub block16_breakout_suppressed: u32,
+    /// SPLIT attempts where all four 8x8 children were feasible.
+    pub block16_feasible: u32,
+    /// SPLIT attempts aborted because a child was infeasible or the
+    /// libvpx-style early-out proved the partial SPLIT sum already worse
+    /// than the current best.
+    pub block16_infeasible_or_early: u32,
+    /// Feasible SPLIT-vs-NONE comparisons where SPLIT beat NONE.
+    pub block16_split_beats_none: u32,
+    /// Feasible SPLIT-vs-NONE comparisons where NONE stayed cheaper.
+    pub block16_split_loses_to_none: u32,
+    /// SPLIT candidates that survived final selection at this node.
+    pub block16_split_committed: u32,
+    /// SPLIT candidates that beat NONE, but were later displaced by HORZ/VERT.
+    pub block16_rect_overrides_split: u32,
+    /// Feasible SPLIT attempts where NONE was unavailable, so no margin can
+    /// be computed.
+    pub block16_no_none: u32,
+    /// Sum of `split_rdcost - none_rdcost` over comparable attempts.
+    pub block16_margin_sum: i64,
+    /// Minimum `split_rdcost - none_rdcost` margin observed.
+    pub block16_margin_min: Option<i64>,
+    /// Maximum `split_rdcost - none_rdcost` margin observed.
+    pub block16_margin_max: Option<i64>,
+}
+
+impl NonRdSplitStats {
+    /// Add another SB's split stats into this accumulator.
+    pub fn accumulate(&mut self, other: &Self) {
+        self.block16_attempts += other.block16_attempts;
+        self.block16_breakout_suppressed += other.block16_breakout_suppressed;
+        self.block16_feasible += other.block16_feasible;
+        self.block16_infeasible_or_early += other.block16_infeasible_or_early;
+        self.block16_split_beats_none += other.block16_split_beats_none;
+        self.block16_split_loses_to_none += other.block16_split_loses_to_none;
+        self.block16_split_committed += other.block16_split_committed;
+        self.block16_rect_overrides_split += other.block16_rect_overrides_split;
+        self.block16_no_none += other.block16_no_none;
+        self.block16_margin_sum = self
+            .block16_margin_sum
+            .saturating_add(other.block16_margin_sum);
+        if let Some(min) = other.block16_margin_min {
+            self.block16_margin_min = Some(self.block16_margin_min.map_or(min, |m| m.min(min)));
+        }
+        if let Some(max) = other.block16_margin_max {
+            self.block16_margin_max = Some(self.block16_margin_max.map_or(max, |m| m.max(max)));
+        }
+    }
+
+    fn record_block16_margin(&mut self, margin: i64) {
+        self.block16_margin_sum = self.block16_margin_sum.saturating_add(margin);
+        self.block16_margin_min = Some(self.block16_margin_min.map_or(margin, |m| m.min(margin)));
+        self.block16_margin_max = Some(self.block16_margin_max.map_or(margin, |m| m.max(margin)));
+        if margin < 0 {
+            self.block16_split_beats_none += 1;
+        } else {
+            self.block16_split_loses_to_none += 1;
+        }
+    }
+}
+
 /// Result of one SB descent.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NonRdPartitionResult {
@@ -465,6 +538,8 @@ pub struct NonRdPartitionResult {
     pub cells: [[BlockSize; SB_GRID]; SB_GRID],
     /// Unique leaves in raster order (top-left cell only per leaf).
     pub leaves: Vec<NonRdLeaf>,
+    /// Narrow diagnostics for 16x16 SPLIT-to-8x8 decisions.
+    pub split_stats: NonRdSplitStats,
 }
 
 impl NonRdPartitionResult {
@@ -506,6 +581,7 @@ impl NonRdPartitionResult {
         Self {
             cells: hint.cells,
             leaves,
+            split_stats: NonRdSplitStats::default(),
         }
     }
 }
@@ -706,6 +782,7 @@ pub fn nonrd_pick_partition_with_pruners<P: ModePickerFn, B: BreakoutPruner, R: 
     let mut state = DescentState {
         cells: [[BlockSize::Block8x8; SB_GRID]; SB_GRID],
         leaves: Vec::with_capacity(16),
+        split_stats: NonRdSplitStats::default(),
     };
     // Seed `above`/`left` segment-context bits to 0. libvpx maintains
     // these across SBs (`vp9_encodeframe.c:4922` reads
@@ -743,12 +820,14 @@ pub fn nonrd_pick_partition_with_pruners<P: ModePickerFn, B: BreakoutPruner, R: 
     NonRdPartitionResult {
         cells: state.cells,
         leaves: state.leaves,
+        split_stats: state.split_stats,
     }
 }
 
 struct DescentState {
     cells: [[BlockSize; SB_GRID]; SB_GRID],
     leaves: Vec<NonRdLeaf>,
+    split_stats: NonRdSplitStats,
 }
 
 /// Recursive worker. Returns the `(rate, dist)` chosen at this
@@ -844,10 +923,17 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
     // veto the split.
     let mut split_pick: Option<(u32, u32)> = None; // (sum_rate, sum_dist)
     let mut split_children: [Option<DescendResult>; 4] = [None, None, None, None];
+    let track_block16_split = matches!(bsize, BlockSize::Block16x16) && !bsize_at_floor;
+    if track_block16_split && !do_split {
+        state.split_stats.block16_breakout_suppressed += 1;
+    }
     if let Some(child_bsize) = (do_split && !bsize_at_floor)
         .then(|| subsize_for_split(bsize))
         .flatten()
     {
+        if track_block16_split {
+            state.split_stats.block16_attempts += 1;
+        }
         let step = split_step_8x8(bsize);
         let mut sum_rate: u32 = split_cost;
         let mut sum_dist: u32 = 0;
@@ -903,11 +989,25 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
             }
         }
         if all_feasible {
+            if track_block16_split {
+                state.split_stats.block16_feasible += 1;
+            }
             let rdc_split = rd_cost(params.rd_mult, sum_rate, u64::from(sum_dist));
+            if track_block16_split {
+                if let Some(none_rdc) = none_rd_cost {
+                    state
+                        .split_stats
+                        .record_block16_margin(rdc_split - none_rdc);
+                } else {
+                    state.split_stats.block16_no_none += 1;
+                }
+            }
             if rdc_split < best_rd_cost {
                 best_rd_cost = rdc_split;
                 split_pick = Some((sum_rate, sum_dist));
             }
+        } else if track_block16_split {
+            state.split_stats.block16_infeasible_or_early += 1;
         }
     }
 
@@ -1019,13 +1119,14 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
 
     // Commit the winner into the cell grid + leaves. Precedence follows
     // the running `best_rd_cost`: whichever candidate last lowered it
-    // wins. Because NONE / SPLIT / HORZ / VERT are evaluated in that
-    // order and each only records its pick when it strictly beats the
-    // best so far, the winner is the one whose `*_pick` is set with the
-    // lowest RD. We check SPLIT first (it's mutually exclusive with rect
-    // — both can't have lowered the best past each other), then rect,
-    // then NONE.
+    // wins. NONE / SPLIT / HORZ / VERT are evaluated in that order and
+    // each only records its pick when it strictly beats the best so far.
+    // Rect is checked first because it can lower the running best after
+    // SPLIT; otherwise SPLIT wins; otherwise NONE wins.
     if let Some((part, a, b)) = rect_pick {
+        if track_block16_split && split_pick.is_some() {
+            state.split_stats.block16_rect_overrides_split += 1;
+        }
         // Rect wins — roll back any speculative SPLIT children and
         // commit the two rect leaves.
         let step = rect_half_step_8x8(bsize);
@@ -1060,6 +1161,9 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
         });
     }
     if let Some((rate, dist)) = split_pick {
+        if track_block16_split {
+            state.split_stats.block16_split_committed += 1;
+        }
         // SPLIT wins — commit children's leaves (already pushed during
         // recursion via their NONE branch). Nothing further to do at
         // this level beyond updating the parent's accounting.
@@ -1526,6 +1630,12 @@ mod tests {
                 assert_eq!(c, BlockSize::Block8x8, "every cell should be 8×8");
             }
         }
+        assert_eq!(result.split_stats.block16_attempts, 16);
+        assert_eq!(result.split_stats.block16_feasible, 16);
+        assert_eq!(result.split_stats.block16_split_beats_none, 16);
+        assert_eq!(result.split_stats.block16_split_loses_to_none, 0);
+        assert_eq!(result.split_stats.block16_split_committed, 16);
+        assert_eq!(result.split_stats.block16_rect_overrides_split, 0);
     }
 
     /// **Phase A OFF — 8×8 still never emitted by the descent.**
