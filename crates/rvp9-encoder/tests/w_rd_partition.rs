@@ -35,20 +35,19 @@
 //!    partition tree / partition-symbol emission would diverge the
 //!    decoders or fail vpxdec outright.
 //!
-//! The corpus (`testsrc_720p30.y4m`) is centre-cropped to 256x256; if it
-//! is unavailable the test SKIPs (informational) rather than failing.
+//! The corpus is SYNTHETIC (constructed here), so this test never SKIPs for
+//! a missing worktree-local or main-clone Y4M file.
 
 use rvp9_decoder::Decoder;
 use rvp9_encoder::rdo::inter_dispatch::RD_PARTITION_RESHAPED_SBS;
 use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 use rvp9_harness::container::{IvfHeader, write_ivf};
-use rvp9_harness::y4m::{probe_testsrc_720p, read_cropped as y4m_read_cropped};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::Ordering;
 
-const W: u32 = 256;
-const H: u32 = 256;
+const W: u32 = 128;
+const H: u32 = 128;
 const N_FRAMES: u32 = 8;
 const TARGET_BITRATE_BPS: u32 = 1_000_000;
 
@@ -88,6 +87,42 @@ fn config(framerate: f64) -> EncoderConfig {
         min_qindex: 4,
         max_qindex: 255,
     }
+}
+
+/// Build a synthetic frame with four different motion fields inside every
+/// 64x64 superblock. The 32x32 quadrants translate in different directions
+/// over time on a two-axis texture, so one 64x64 MV fits poorly while a
+/// recursive RD partition can choose smaller leaves.
+fn make_frame(frame_idx: i32) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let w = W as usize;
+    let h = H as usize;
+    let mut y = vec![0u8; w * h];
+
+    for row in 0..h {
+        for col in 0..w {
+            let local_row = row % 64;
+            let local_col = col % 64;
+            let (dx, dy, phase) = match (local_row < 32, local_col < 32) {
+                (true, true) => (2 * frame_idx, 0, 0i32),
+                (true, false) => (-frame_idx, frame_idx, 53),
+                (false, true) => (frame_idx, -frame_idx, 107),
+                (false, false) => (-2 * frame_idx, 0, 161),
+            };
+            let src_col = (col as i32 - dx).rem_euclid(w as i32);
+            let src_row = (row as i32 - dy).rem_euclid(h as i32);
+            y[row * w + col] = ((src_col * 5 + src_row * 7 + phase) % 251) as u8;
+        }
+    }
+
+    let uvw = w / 2;
+    let uvh = h / 2;
+    let u = vec![128u8; uvw * uvh];
+    let v = vec![128u8; uvw * uvh];
+    (y, u, v)
+}
+
+fn synthetic_clip() -> Vec<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+    (0..N_FRAMES).map(|f| make_frame(f as i32)).collect()
 }
 
 /// Encode the clip, returning the per-frame packet bytes and the number
@@ -214,25 +249,8 @@ fn verify_through_vpxdec(packets: &[Vec<u8>], framerate: f64) {
 
 #[test]
 fn a4_rd_partition_shape_is_rd_chosen_and_decodes() {
-    let Some(y4m_path) = probe_testsrc_720p() else {
-        eprintln!("[SKIPPED] testsrc_720p30.y4m corpus not available.");
-        return;
-    };
-    let (frames, framerate) = match y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize) {
-        Ok((f, fr)) if f.len() == N_FRAMES as usize => (f, fr),
-        Ok((f, _)) => {
-            eprintln!(
-                "[SKIPPED] testsrc only yielded {}/{} frames.",
-                f.len(),
-                N_FRAMES
-            );
-            return;
-        }
-        Err(e) => {
-            eprintln!("[SKIPPED] testsrc read failed: {e}");
-            return;
-        }
-    };
+    let framerate = 30.0;
+    let frames = synthetic_clip();
 
     // ---- descent ON (the A4 default) ----------------------------------
     // SAFETY: this test runs in its own process (separate test binary);
@@ -241,6 +259,7 @@ fn a4_rd_partition_shape_is_rd_chosen_and_decodes() {
     unsafe {
         std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
         std::env::remove_var("RVP9_F3_NONRD_PARTITION_ENABLE");
+        std::env::remove_var("RVP9_A4_RECT_DISABLE");
     }
     let (on_packets, on_reshaped) = encode(&frames, framerate);
 
