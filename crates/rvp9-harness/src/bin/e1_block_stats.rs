@@ -356,24 +356,27 @@ fn aggregate_json(a: &Aggregate, n_frames: usize, framerate: f64) -> AggregateJs
     }
 }
 
-fn write_ivf_json_report(
-    out: &Path,
-    label: &str,
+struct IvfJsonInputs<'a> {
+    label: &'a str,
     framerate: f64,
     n_frames: usize,
-    rvp9_ivf: &Path,
-    libvpx_ivf: Option<&Path>,
-    rvp9: &Aggregate,
-    libvpx: Option<&Aggregate>,
-) {
+    rvp9_ivf: &'a Path,
+    libvpx_ivf: Option<&'a Path>,
+    rvp9: &'a Aggregate,
+    libvpx: Option<&'a Aggregate>,
+}
+
+fn write_ivf_json_report(out: &Path, inputs: IvfJsonInputs<'_>) {
     let report = IvfJsonReport {
-        label: label.to_string(),
-        framerate,
-        frames_requested: n_frames,
-        rvp9_ivf: rvp9_ivf.display().to_string(),
-        libvpx_ivf: libvpx_ivf.map(|p| p.display().to_string()),
-        rvp9: aggregate_json(rvp9, n_frames, framerate),
-        libvpx: libvpx.map(|l| aggregate_json(l, n_frames, framerate)),
+        label: inputs.label.to_string(),
+        framerate: inputs.framerate,
+        frames_requested: inputs.n_frames,
+        rvp9_ivf: inputs.rvp9_ivf.display().to_string(),
+        libvpx_ivf: inputs.libvpx_ivf.map(|p| p.display().to_string()),
+        rvp9: aggregate_json(inputs.rvp9, inputs.n_frames, inputs.framerate),
+        libvpx: inputs
+            .libvpx
+            .map(|l| aggregate_json(l, inputs.n_frames, inputs.framerate)),
     };
     if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent).expect("create JSON report parent");
@@ -1012,13 +1015,15 @@ fn run_ivf_mode(argv: &[String]) -> Option<()> {
     if let Some(json_out) = json_out {
         write_ivf_json_report(
             &json_out,
-            &label,
-            framerate,
-            n_frames,
-            &rvp9_ivf,
-            libvpx_ivf.as_deref(),
-            &rvp9,
-            libvpx.as_ref(),
+            IvfJsonInputs {
+                label: &label,
+                framerate,
+                n_frames,
+                rvp9_ivf: &rvp9_ivf,
+                libvpx_ivf: libvpx_ivf.as_deref(),
+                rvp9: &rvp9,
+                libvpx: libvpx.as_ref(),
+            },
         );
         eprintln!("Wrote JSON report to {}", json_out.display());
         let failed = rvp9.n_decode_failed()

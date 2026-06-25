@@ -484,10 +484,11 @@ fn run_stage4a_product_report(
     };
 
     if let Some(baseline) = baseline {
-        let baseline_report_path = Path::new(&baseline.report_path)
-            .is_absolute()
-            .then_some(PathBuf::from(&baseline.report_path))
-            .unwrap_or_else(|| root.join(&baseline.report_path));
+        let baseline_report_path = if Path::new(&baseline.report_path).is_absolute() {
+            PathBuf::from(&baseline.report_path)
+        } else {
+            root.join(&baseline.report_path)
+        };
         match sha256_file(&baseline_report_path) {
             Ok(hash) => report.baseline_report_sha256 = Some(hash),
             Err(e) => report
@@ -591,10 +592,7 @@ fn build_context(
         }
     }
 
-    let tools = resolve_product_tools(root, manifest_path, report);
-    let Some(tools) = tools else {
-        return None;
-    };
+    let tools = resolve_product_tools(root, manifest_path, report)?;
 
     report.approved_tool_manifest_sha256 = Some(tools.manifest_sha256.clone());
     report.approved_tool = Some(tools.approved_tool.clone());
@@ -1118,12 +1116,11 @@ fn evaluate_candidate_pairing(baseline: Option<&ProductReport>, report: &mut Pro
     }
     if let (Some(strict_ms), Some(candidate_ms)) =
         (baseline.timing_median_ms, report.timing_median_ms)
+        && candidate_ms > strict_ms * 1.15
     {
-        if candidate_ms > strict_ms * 1.15 {
-            report.status_reasons.push(format!(
-                "TIMING_REGRESSION_GT_15PCT:{candidate_ms:.3}_VS_{strict_ms:.3}"
-            ));
-        }
+        report.status_reasons.push(format!(
+            "TIMING_REGRESSION_GT_15PCT:{candidate_ms:.3}_VS_{strict_ms:.3}"
+        ));
     }
 }
 
@@ -1569,9 +1566,7 @@ fn resolve_product_tools(
     if vpx_pairs.pairs.is_empty() {
         return None;
     }
-    let Some(ffmpeg) = ffmpeg else {
-        return None;
-    };
+    let ffmpeg = ffmpeg?;
 
     let mut approved_pair = None;
     for (vpxenc, vpxdec) in vpx_pairs.pairs {
