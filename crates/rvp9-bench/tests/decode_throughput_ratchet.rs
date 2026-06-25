@@ -1,9 +1,9 @@
 //! Soft-ratchet for the `decode-throughput` benchmark.
 //!
 //! Per HLD §G6: re-runs the throughput library function in-process and
-//! asserts current p50 (median) decode time stays within a 10% regression
-//! budget relative to the last committed **pinned-host** baseline row
-//! per fixture in `bench/results/decode-throughput.csv`.
+//! asserts current p50/p95/p99 decode time stays within regression budgets
+//! relative to the last committed **pinned-host** baseline row per fixture
+//! in `bench/results/decode-throughput.csv`.
 //!
 //! On a fresh repo (no pinned baseline yet), the test PASSES and prints
 //! "no pinned baseline yet — pinned hosts only" so the test is
@@ -11,7 +11,7 @@
 //! `unpinned=true`), but only rows from a host in [`PINNED_HOSTS`] are
 //! used as the ratchet baseline.
 //!
-//! This is a SOFT gate (10% regression budget on p50 only). The hard
+//! This is a SOFT gate (10% p50, 15% p95, 20% p99 budgets). The hard
 //! real-time gate (720p30 ≤ 33ms median single-core etc.) lands as
 //! part of Wave C exit per HLD §6.4.
 //!
@@ -25,12 +25,16 @@
 use std::path::{Path, PathBuf};
 
 use rvp9_bench::throughput::{
-    self, FixtureResult, MIN_TIMED_FRAMES, WARMUP_FRAMES, check_ratchet, host_fingerprint,
-    latest_per_fixture, read_csv,
+    self, FixtureResult, MIN_TIMED_FRAMES, WARMUP_FRAMES, check_metric_ratchet,
+    host_fingerprint, latest_per_fixture, read_csv,
 };
 
-/// 10% regression budget per HLD §G6.
-const RATCHET_RATIO: f64 = 1.10;
+/// Median regression budget per HLD §G6.
+const P50_RATCHET_RATIO: f64 = 1.10;
+/// Tail samples are noisier than the median, but still catch real stalls.
+const P95_RATCHET_RATIO: f64 = 1.15;
+/// p99 is the widest soft ratchet because it is sensitive to OS jitter.
+const P99_RATCHET_RATIO: f64 = 1.20;
 
 /// Host fingerprints (from [`host_fingerprint`]) where the ratchet
 /// is a HARD gate AND whose rows are used as the baseline.
@@ -163,26 +167,38 @@ fn decode_throughput_ratchet() {
             continue;
         };
         compared += 1;
-        match check_ratchet(&r.fixture, base.p50_us, r.stats.p50, RATCHET_RATIO) {
-            Ok(()) => {
-                let budget = base.p50_us * RATCHET_RATIO;
-                eprintln!(
-                    "[ratchet] {fix}: OK   p50 {cur:.1}us <= {bud:.1}us (baseline {bp:.1}us)",
-                    fix = r.fixture,
-                    cur = r.stats.p50,
-                    bud = budget,
-                    bp = base.p50_us,
-                );
-            }
-            Err(msg) => {
+        let metrics = [
+            ("p50", base.p50_us, r.stats.p50, P50_RATCHET_RATIO),
+            ("p95", base.p95_us, r.stats.p95, P95_RATCHET_RATIO),
+            ("p99", base.p99_us, r.stats.p99, P99_RATCHET_RATIO),
+        ];
+
+        let mut fixture_regressed = false;
+        for (metric, baseline, current, ratio) in metrics {
+            if let Err(msg) = check_metric_ratchet(&r.fixture, metric, baseline, current, ratio) {
+                fixture_regressed = true;
                 regressions.push(msg);
             }
+        }
+
+        if !fixture_regressed {
+            eprintln!(
+                "[ratchet] {fix}: OK   p50 {p50:.1}us <= {p50b:.1}us; \
+                 p95 {p95:.1}us <= {p95b:.1}us; p99 {p99:.1}us <= {p99b:.1}us",
+                fix = r.fixture,
+                p50 = r.stats.p50,
+                p50b = base.p50_us * P50_RATCHET_RATIO,
+                p95 = r.stats.p95,
+                p95b = base.p95_us * P95_RATCHET_RATIO,
+                p99 = r.stats.p99,
+                p99b = base.p99_us * P99_RATCHET_RATIO,
+            );
         }
     }
 
     if !regressions.is_empty() {
         let msg = format!(
-            "decode-throughput ratchet: {} of {compared} fixtures regressed \
+            "decode-throughput ratchet: {} metric regression(s) across {compared} fixture(s) \
              on host `{host}`:\n  {}",
             regressions.len(),
             regressions.join("\n  ")

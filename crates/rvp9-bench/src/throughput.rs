@@ -576,8 +576,8 @@ pub fn latest_per_fixture(rows: &[CsvRow], pinned_hosts: &[&str]) -> Vec<CsvRow>
     out
 }
 
-/// Pure ratchet check: returns `Ok(())` if `current_p50_us` is within
-/// `threshold` × `baseline_p50_us`, else `Err` with a human-readable
+/// Pure metric ratchet check: returns `Ok(())` if `current_us` is within
+/// `threshold` × `baseline_us`, else `Err` with a human-readable
 /// regression message.
 ///
 /// Extracted for unit-test coverage of the pass/fail branches.
@@ -587,22 +587,42 @@ pub fn latest_per_fixture(rows: &[CsvRow], pinned_hosts: &[&str]) -> Vec<CsvRow>
 /// Returns a formatted regression message string when the budget is
 /// exceeded. The caller decides whether to `panic!` (pinned host) or
 /// just warn (unpinned host).
+pub fn check_metric_ratchet(
+    fixture: &str,
+    metric: &str,
+    baseline_us: f64,
+    current_us: f64,
+    threshold: f64,
+) -> Result<(), String> {
+    let budget = baseline_us * threshold;
+    if current_us > budget {
+        Err(format!(
+            "{fixture}: {metric} {current_us:.1}us > {budget:.1}us \
+             (baseline {baseline_us:.1}us + {pct:.0}%)",
+            pct = (threshold - 1.0) * 100.0,
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+/// Backwards-compatible p50 ratchet check.
+///
+/// Prefer [`check_metric_ratchet`] for new callers that need p95/p99 tail
+/// coverage too.
+///
+/// # Errors
+///
+/// Returns a formatted regression message string when the p50 budget is
+/// exceeded. The caller decides whether to `panic!` (pinned host) or
+/// just warn (unpinned host).
 pub fn check_ratchet(
     fixture: &str,
     baseline_p50_us: f64,
     current_p50_us: f64,
     threshold: f64,
 ) -> Result<(), String> {
-    let budget = baseline_p50_us * threshold;
-    if current_p50_us > budget {
-        Err(format!(
-            "{fixture}: p50 {current_p50_us:.1}us > {budget:.1}us \
-             (baseline {baseline_p50_us:.1}us + {pct:.0}%)",
-            pct = (threshold - 1.0) * 100.0,
-        ))
-    } else {
-        Ok(())
-    }
+    check_metric_ratchet(fixture, "p50", baseline_p50_us, current_p50_us, threshold)
 }
 
 #[cfg(test)]
@@ -757,6 +777,16 @@ mod tests {
         assert!(msg.contains("fix.webm"));
         assert!(msg.contains("p50"));
         assert!(msg.contains("10%"));
+    }
+
+    #[test]
+    fn check_metric_ratchet_reports_metric_name_and_budget() {
+        assert!(check_metric_ratchet("fix.webm", "p95", 100.0, 114.0, 1.15).is_ok());
+        let msg =
+            check_metric_ratchet("fix.webm", "p99", 100.0, 120.001, 1.20).unwrap_err();
+        assert!(msg.contains("fix.webm"));
+        assert!(msg.contains("p99"));
+        assert!(msg.contains("20%"));
     }
 
     #[test]
