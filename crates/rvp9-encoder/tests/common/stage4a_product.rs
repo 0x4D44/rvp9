@@ -193,6 +193,9 @@ pub struct ProductTargetReport {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ProductBlockStatsSummary {
+    pub frames_requested: usize,
+    pub rvp9_frames: usize,
+    pub libvpx_frames: Option<usize>,
     pub achieved_kbps: f64,
     pub decode_failed: usize,
     pub partition_area_pct: Vec<ProductBlockArea>,
@@ -232,6 +235,9 @@ struct ProductBlockStatsArtifact {
     source_sha256: Option<String>,
     product_config_hash: Option<String>,
     target_bitrate_bps: u32,
+    frames_requested: usize,
+    rvp9_frames: usize,
+    libvpx_frames: Option<usize>,
     achieved_kbps: f64,
     decode_failed: usize,
     partition_area_pct: Vec<ProductBlockArea>,
@@ -241,12 +247,14 @@ struct ProductBlockStatsArtifact {
 
 #[derive(Debug, Deserialize)]
 struct E1IvfJsonReport {
+    frames_requested: usize,
     rvp9: E1AggregateJson,
     libvpx: Option<E1AggregateJson>,
 }
 
 #[derive(Debug, Deserialize)]
 struct E1AggregateJson {
+    frames: usize,
     decode_failed: usize,
     achieved_kbps: f64,
     partition_area_pct: Vec<ProductBlockArea>,
@@ -413,11 +421,15 @@ fn run_stage4a_product_report(
     let git_sha = git_stdout(&root, &["rev-parse", "HEAD"]).unwrap_or_else(|_| "UNKNOWN".into());
     let short_sha = git_sha.chars().take(12).collect::<String>();
     let now = unix_seconds();
-    let run_dir = root
-        .join("target")
-        .join("stage4a_product")
-        .join(format!("{}-{short_sha}-{now}", role.as_str()));
-    fs::create_dir_all(&run_dir).expect("create Stage 4a product run directory");
+    let run_stamp = unix_nanos();
+    let run_dir = root.join("target").join("stage4a_product").join(format!(
+        "{}-{short_sha}-{run_stamp}-p{}",
+        role.as_str(),
+        std::process::id()
+    ));
+    fs::create_dir_all(run_dir.parent().expect("product run dir has parent"))
+        .expect("create Stage 4a product root");
+    fs::create_dir(&run_dir).expect("create unique Stage 4a product run directory");
     let report_path = run_dir.join("stage4a_product_report.json");
     let manifest_path = root.join("tests/reference/stage4a_libvpx_tools.json");
     let mut report = ProductReport {
@@ -487,7 +499,7 @@ fn run_stage4a_product_report(
     let context = match build_context(&root, &run_dir, &manifest_path, &mut report) {
         Some(ctx) => ctx,
         None => {
-            finish_and_write_report(&report_path, &mut report);
+            finish_and_write_report(&root, &report_path, &mut report);
             return report;
         }
     };
@@ -498,14 +510,14 @@ fn run_stage4a_product_report(
             report
                 .status_reasons
                 .push(format!("SOURCE_SHORT_READ:{}_OF_{N_FRAMES}", frames.len()));
-            finish_and_write_report(&report_path, &mut report);
+            finish_and_write_report(&root, &report_path, &mut report);
             return report;
         }
         Err(e) => {
             report
                 .status_reasons
                 .push(format!("SOURCE_READ_FAILED:{e}"));
-            finish_and_write_report(&report_path, &mut report);
+            finish_and_write_report(&root, &report_path, &mut report);
             return report;
         }
     };
@@ -521,7 +533,7 @@ fn run_stage4a_product_report(
 
     run_product_artifacts(&context, &mut report);
     evaluate_quality_and_split(role, baseline, &mut report);
-    finish_and_write_report(&report_path, &mut report);
+    finish_and_write_report(&root, &report_path, &mut report);
     report
 }
 
@@ -1148,6 +1160,13 @@ fn evaluate_block_stats_pairing(baseline: &ProductReport, report: &mut ProductRe
             .status_reasons
             .push("BLOCK_STATS_DECODE_FAILED".into());
     }
+    if !block_stats_have_exact_frame_counts(strict)
+        || !block_stats_have_exact_frame_counts(candidate)
+    {
+        report
+            .status_reasons
+            .push("BLOCK_STATS_FRAME_COUNT_MISMATCH".into());
+    }
     let strict_small = block_area_pct(strict, "8x8")
         + block_area_pct(strict, "8x16")
         + block_area_pct(strict, "16x8");
@@ -1174,6 +1193,13 @@ fn block_area_pct(summary: &ProductBlockStatsSummary, block: &str) -> f64 {
         .iter()
         .find(|entry| entry.block == block)
         .map_or(0.0, |entry| entry.area_pct)
+}
+
+fn block_stats_have_exact_frame_counts(summary: &ProductBlockStatsSummary) -> bool {
+    summary.rvp9_frames == summary.frames_requested
+        && summary
+            .libvpx_frames
+            .is_some_and(|frames| frames == summary.frames_requested)
 }
 
 fn run_product_artifacts(ctx: &ProductContext, report: &mut ProductReport) {
@@ -1321,7 +1347,11 @@ fn write_product_block_stats(
         serde_json::from_slice(&bytes).map_err(|e| format!("parse E1 block JSON:{e}"))?;
     let decode_failed =
         e1.rvp9.decode_failed + e1.libvpx.as_ref().map_or(0, |libvpx| libvpx.decode_failed);
+    let libvpx_frames = e1.libvpx.as_ref().map(|libvpx| libvpx.frames);
     let summary = ProductBlockStatsSummary {
+        frames_requested: e1.frames_requested,
+        rvp9_frames: e1.rvp9.frames,
+        libvpx_frames,
         achieved_kbps: e1.rvp9.achieved_kbps,
         decode_failed,
         partition_area_pct: e1.rvp9.partition_area_pct,
@@ -1344,6 +1374,9 @@ fn write_product_block_stats(
         source_sha256: report.source_sha256.clone(),
         product_config_hash: report.product_config_hash.clone(),
         target_bitrate_bps: 250_000,
+        frames_requested: summary.frames_requested,
+        rvp9_frames: summary.rvp9_frames,
+        libvpx_frames: summary.libvpx_frames,
         achieved_kbps: summary.achieved_kbps,
         decode_failed: summary.decode_failed,
         partition_area_pct: summary.partition_area_pct.clone(),
@@ -1370,7 +1403,8 @@ fn diff_json_lines_are_valid(bytes: &[u8]) -> bool {
     saw_summary
 }
 
-fn finish_and_write_report(path: &Path, report: &mut ProductReport) {
+fn finish_and_write_report(root: &Path, path: &Path, report: &mut ProductReport) {
+    refresh_final_validation(root, report);
     report.validation_clean = validation_clean_now(report);
     if !report.validation_clean
         && !report
@@ -1399,6 +1433,36 @@ fn validation_clean_now(report: &ProductReport) -> bool {
         && report.ignored_validation_files.len() == report.allowed_ignored_inputs.len()
 }
 
+fn refresh_final_validation(root: &Path, report: &mut ProductReport) {
+    match git_stdout(root, &["rev-parse", "HEAD"]) {
+        Ok(current_sha) if current_sha == report.git_sha => {}
+        Ok(current_sha) => report.status_reasons.push(format!(
+            "GIT_SHA_CHANGED_DURING_RUN:{}_TO_{current_sha}",
+            report.git_sha
+        )),
+        Err(e) => report
+            .status_reasons
+            .push(format!("GIT_SHA_FINAL_PROBE_FAILED:{e}")),
+    }
+    let original_source_tree_hash = report.source_tree_hash.clone();
+    validate_worktree(root, report);
+    match source_tree_hash(root) {
+        Ok(current_hash) if Some(current_hash.clone()) == original_source_tree_hash => {
+            report.source_tree_hash = Some(current_hash);
+        }
+        Ok(current_hash) => {
+            report.status_reasons.push(format!(
+                "SOURCE_TREE_HASH_CHANGED_DURING_RUN:{}_TO_{current_hash}",
+                original_source_tree_hash.unwrap_or_else(|| "NONE".into())
+            ));
+            report.source_tree_hash = Some(current_hash);
+        }
+        Err(e) => report
+            .status_reasons
+            .push(format!("SOURCE_TREE_HASH_FINAL_FAILED:{e}")),
+    }
+}
+
 fn reject_rvp9_env(report: &mut ProductReport) {
     for (key, _) in std::env::vars_os() {
         let key = key.to_string_lossy();
@@ -1411,6 +1475,9 @@ fn reject_rvp9_env(report: &mut ProductReport) {
 }
 
 fn validate_worktree(root: &Path, report: &mut ProductReport) {
+    report.untracked_validation_files.clear();
+    report.ignored_validation_files.clear();
+    report.allowed_ignored_inputs.clear();
     report.tracked_diff_empty =
         git_status(root, &git_args_with_paths(&["diff", "--quiet"])).unwrap_or(false);
     report.staged_diff_empty =
@@ -1488,55 +1555,56 @@ fn resolve_product_tools(
         ));
     }
 
-    let vpxenc = resolve_binary(root, "vpxenc");
+    let vpx_pairs = resolve_vpx_tool_pairs(root);
     let ffmpeg = resolve_binary(root, "ffmpeg");
-    if vpxenc.is_none() {
+    if vpx_pairs.pairs.is_empty() && !vpx_pairs.saw_vpxenc {
         report.status_reasons.push("MISSING_VPXENC".into());
+    }
+    if vpx_pairs.pairs.is_empty() && vpx_pairs.saw_vpxenc {
+        report.status_reasons.push("MISSING_SIBLING_VPXDEC".into());
     }
     if ffmpeg.is_none() {
         report.status_reasons.push("MISSING_FFMPEG".into());
     }
-    let Some(vpxenc) = vpxenc else {
+    if vpx_pairs.pairs.is_empty() {
         return None;
-    };
-    let Some(vpxdec) = sibling_tool(&vpxenc, "vpxdec") else {
-        report.status_reasons.push("MISSING_SIBLING_VPXDEC".into());
-        return None;
-    };
-    if vpxenc.parent() != vpxdec.parent() {
-        report
-            .status_reasons
-            .push("VPXENC_VPXDEC_NOT_SIBLINGS".into());
     }
     let Some(ffmpeg) = ffmpeg else {
         return None;
     };
 
-    let vpxenc_sha = match sha256_file(&vpxenc) {
-        Ok(hash) => hash,
-        Err(e) => {
-            report
-                .status_reasons
-                .push(format!("VPXENC_HASH_FAILED:{e}"));
-            return None;
+    let mut approved_pair = None;
+    for (vpxenc, vpxdec) in vpx_pairs.pairs {
+        let vpxenc_sha = match sha256_file(&vpxenc) {
+            Ok(hash) => hash,
+            Err(e) => {
+                report
+                    .status_reasons
+                    .push(format!("VPXENC_HASH_FAILED:{}:{e}", vpxenc.display()));
+                continue;
+            }
+        };
+        let vpxdec_sha = match sha256_file(&vpxdec) {
+            Ok(hash) => hash,
+            Err(e) => {
+                report
+                    .status_reasons
+                    .push(format!("VPXDEC_HASH_FAILED:{}:{e}", vpxdec.display()));
+                continue;
+            }
+        };
+        if let Some(row) = manifest.approved_tools.iter().find(|row| {
+            row.vpxenc_sha256.eq_ignore_ascii_case(&vpxenc_sha)
+                && row.vpxdec_sha256.eq_ignore_ascii_case(&vpxdec_sha)
+                && row.libvpx_url == LIBVPX_URL
+                && row.libvpx_tag == LIBVPX_TAG
+                && row.libvpx_commit == LIBVPX_COMMIT
+        }) {
+            approved_pair = Some((vpxenc, vpxdec, row.clone()));
+            break;
         }
-    };
-    let vpxdec_sha = match sha256_file(&vpxdec) {
-        Ok(hash) => hash,
-        Err(e) => {
-            report
-                .status_reasons
-                .push(format!("VPXDEC_HASH_FAILED:{e}"));
-            return None;
-        }
-    };
-    let Some(row) = manifest.approved_tools.into_iter().find(|row| {
-        row.vpxenc_sha256.eq_ignore_ascii_case(&vpxenc_sha)
-            && row.vpxdec_sha256.eq_ignore_ascii_case(&vpxdec_sha)
-            && row.libvpx_url == LIBVPX_URL
-            && row.libvpx_tag == LIBVPX_TAG
-            && row.libvpx_commit == LIBVPX_COMMIT
-    }) else {
+    }
+    let Some((vpxenc, vpxdec, row)) = approved_pair else {
         report
             .status_reasons
             .push("UNAPPROVED_LIBVPX_TOOL_PAIR".into());
@@ -1781,6 +1849,13 @@ fn unix_seconds() -> u64 {
         .as_secs()
 }
 
+fn unix_nanos() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time before UNIX epoch")
+        .as_nanos()
+}
+
 fn host_id() -> String {
     std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
@@ -1803,6 +1878,36 @@ fn resolve_binary(root: &Path, stem: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+struct VpxToolSearch {
+    pairs: Vec<(PathBuf, PathBuf)>,
+    saw_vpxenc: bool,
+}
+
+fn resolve_vpx_tool_pairs(root: &Path) -> VpxToolSearch {
+    let mut dirs = vec![root.join("build/libvpx-win-tools-nodeps")];
+    if let Some(path) = std::env::var_os("PATH") {
+        dirs.extend(std::env::split_paths(&path));
+    }
+    let mut search = VpxToolSearch {
+        pairs: Vec::new(),
+        saw_vpxenc: false,
+    };
+    for dir in dirs {
+        for vpxenc in tool_candidates(&dir, "vpxenc") {
+            if !vpxenc.is_file() {
+                continue;
+            }
+            search.saw_vpxenc = true;
+            let vpxenc = vpxenc.canonicalize().ok().unwrap_or(vpxenc);
+            if let Some(vpxdec) = sibling_tool(&vpxenc, "vpxdec") {
+                let vpxdec = vpxdec.canonicalize().ok().unwrap_or(vpxdec);
+                search.pairs.push((vpxenc.clone(), vpxdec));
+            }
+        }
+    }
+    search
 }
 
 fn sibling_tool(tool: &Path, stem: &str) -> Option<PathBuf> {

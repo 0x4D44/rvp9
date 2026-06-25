@@ -1025,9 +1025,17 @@ fn run_ivf_mode(argv: &[String]) -> Option<()> {
             + libvpx
                 .as_ref()
                 .map_or(0, |aggregate| aggregate.n_decode_failed());
+        let frame_count_mismatch = rvp9.frames.len() != n_frames
+            || libvpx
+                .as_ref()
+                .is_some_and(|aggregate| aggregate.frames.len() != n_frames);
         assert_eq!(
             failed, 0,
             "JSON block-stat mode requires all frames to decode"
+        );
+        assert!(
+            !frame_count_mismatch,
+            "JSON block-stat mode requires both streams to contain exactly {n_frames} frames"
         );
     }
     println!("{md}");
