@@ -52,3 +52,5 @@ rvp9-core = { path = "../rvp9-core" }
 rvp9-io = { path = "../rvp9-io" }
 rvp9-decoder = { path = "../rvp9-decoder" }
 rvp9-encoder = { path = "../rvp9-encoder" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

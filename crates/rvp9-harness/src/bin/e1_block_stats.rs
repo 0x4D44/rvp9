@@ -42,6 +42,7 @@ use rvp9_decoder::{Decoder, ParsedFrame};
 use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 use rvp9_harness::container::read_packets;
 use rvp9_harness::y4m::{YuvFrameBuf, read_cropped};
+use serde::Serialize;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -249,6 +250,136 @@ fn block_label(b: usize) -> &'static str {
         12 => "64x64",
         _ => "?",
     }
+}
+
+#[derive(Serialize)]
+struct IvfJsonReport {
+    label: String,
+    framerate: f64,
+    frames_requested: usize,
+    rvp9_ivf: String,
+    libvpx_ivf: Option<String>,
+    rvp9: AggregateJson,
+    libvpx: Option<AggregateJson>,
+}
+
+#[derive(Serialize)]
+struct AggregateJson {
+    frames: usize,
+    inter_frames: usize,
+    decode_failed: usize,
+    total_bits: u64,
+    key_bits: u64,
+    inter_bits: u64,
+    achieved_kbps: f64,
+    avg_inter_frame_bits: f64,
+    avg_inter_q: f64,
+    partition_area_pct: Vec<BlockAreaJson>,
+    mode_area_pct: ModeAreaJson,
+    skip_pct: f64,
+}
+
+#[derive(Serialize)]
+struct BlockAreaJson {
+    block: &'static str,
+    count: u64,
+    area_pct: f64,
+}
+
+#[derive(Serialize)]
+struct ModeAreaJson {
+    intra: f64,
+    nearest_mv: f64,
+    near_mv: f64,
+    zero_mv: f64,
+    new_mv: f64,
+    ref_last: f64,
+    ref_golden: f64,
+    ref_altref: f64,
+}
+
+fn aggregate_json(a: &Aggregate, n_frames: usize, framerate: f64) -> AggregateJson {
+    let achieved_kbps = a.total_bits() as f64 / n_frames.max(1) as f64 * framerate / 1000.0;
+    let avg_inter_frame_bits = if a.n_inter() == 0 {
+        0.0
+    } else {
+        a.inter_bits() as f64 / a.n_inter() as f64
+    };
+    let inter_q: Vec<u16> = a
+        .frames
+        .iter()
+        .filter(|f| !f.is_key)
+        .map(|f| f.base_qindex)
+        .collect();
+    let avg_inter_q = if inter_q.is_empty() {
+        0.0
+    } else {
+        inter_q.iter().map(|&q| f64::from(q)).sum::<f64>() / inter_q.len() as f64
+    };
+
+    let block_count = a.block_count_inter();
+    let block_area = a.block_area8_inter();
+    let block_total = block_area.iter().sum::<u64>().max(1) as f64;
+    let partition_area_pct = (0..BLOCK_SIZES)
+        .filter(|&i| block_count[i] > 0 || block_area[i] > 0)
+        .map(|i| BlockAreaJson {
+            block: block_label(i),
+            count: block_count[i],
+            area_pct: 100.0 * block_area[i] as f64 / block_total,
+        })
+        .collect();
+
+    let (intra, total, modes, skip, last, golden, altref) = a.inter_aggregate();
+    let total = total.max(1) as f64;
+    AggregateJson {
+        frames: a.frames.len(),
+        inter_frames: a.n_inter(),
+        decode_failed: a.n_decode_failed(),
+        total_bits: a.total_bits(),
+        key_bits: a.key_bits(),
+        inter_bits: a.inter_bits(),
+        achieved_kbps,
+        avg_inter_frame_bits,
+        avg_inter_q,
+        partition_area_pct,
+        mode_area_pct: ModeAreaJson {
+            intra: 100.0 * intra as f64 / total,
+            nearest_mv: 100.0 * modes[InterMode::NearestMv.idx()] as f64 / total,
+            near_mv: 100.0 * modes[InterMode::NearMv.idx()] as f64 / total,
+            zero_mv: 100.0 * modes[InterMode::ZeroMv.idx()] as f64 / total,
+            new_mv: 100.0 * modes[InterMode::NewMv.idx()] as f64 / total,
+            ref_last: 100.0 * last as f64 / total,
+            ref_golden: 100.0 * golden as f64 / total,
+            ref_altref: 100.0 * altref as f64 / total,
+        },
+        skip_pct: 100.0 * skip as f64 / total,
+    }
+}
+
+fn write_ivf_json_report(
+    out: &Path,
+    label: &str,
+    framerate: f64,
+    n_frames: usize,
+    rvp9_ivf: &Path,
+    libvpx_ivf: Option<&Path>,
+    rvp9: &Aggregate,
+    libvpx: Option<&Aggregate>,
+) {
+    let report = IvfJsonReport {
+        label: label.to_string(),
+        framerate,
+        frames_requested: n_frames,
+        rvp9_ivf: rvp9_ivf.display().to_string(),
+        libvpx_ivf: libvpx_ivf.map(|p| p.display().to_string()),
+        rvp9: aggregate_json(rvp9, n_frames, framerate),
+        libvpx: libvpx.map(|l| aggregate_json(l, n_frames, framerate)),
+    };
+    if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).expect("create JSON report parent");
+    }
+    let json = serde_json::to_vec_pretty(&report).expect("serialize block-stat JSON");
+    std::fs::write(out, json).expect("write block-stat JSON report");
 }
 
 /// Walk the decoder mi-grid and accumulate per-block stats into `fs`.
@@ -832,6 +963,7 @@ fn run_ivf_mode(argv: &[String]) -> Option<()> {
     let out = PathBuf::from(
         arg(argv, "--out").unwrap_or_else(|| r"target\tmp\e1_ivf_block_stats.md".into()),
     );
+    let json_out = arg(argv, "--json-out").map(PathBuf::from);
     let framerate: f64 = arg(argv, "--fps")
         .and_then(|s| s.parse().ok())
         .unwrap_or(30.0);
@@ -872,8 +1004,32 @@ fn run_ivf_mode(argv: &[String]) -> Option<()> {
 
     emit_report(&mut md, &label, framerate, n_frames, &rvp9, libvpx.as_ref());
     emit_per_frame(&mut md, &label, &rvp9, libvpx.as_ref());
+    if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).expect("create markdown report parent");
+    }
     std::fs::write(&out, &md).expect("write report");
     eprintln!("Wrote report to {}", out.display());
+    if let Some(json_out) = json_out {
+        write_ivf_json_report(
+            &json_out,
+            &label,
+            framerate,
+            n_frames,
+            &rvp9_ivf,
+            libvpx_ivf.as_deref(),
+            &rvp9,
+            libvpx.as_ref(),
+        );
+        eprintln!("Wrote JSON report to {}", json_out.display());
+        let failed = rvp9.n_decode_failed()
+            + libvpx
+                .as_ref()
+                .map_or(0, |aggregate| aggregate.n_decode_failed());
+        assert_eq!(
+            failed, 0,
+            "JSON block-stat mode requires all frames to decode"
+        );
+    }
     println!("{md}");
     Some(())
 }
