@@ -203,8 +203,7 @@ function Get-RatioVerdict {
         [object] $Ratio
     )
     if ($null -eq $Ratio) { return 'MISSING' }
-    if ($Ratio -le 2.0) { return 'PASS-info' }
-    return 'FAIL-info'
+    return 'info'
 }
 
 function Join-GateVerdicts {
@@ -254,7 +253,7 @@ if (-not $SkipEncode) {
 # captures ONE timestamp at script start ($sweepTimestamp, used for
 # every CSV row this invocation appends — N rows per fixture×threads).
 $sweepTimestamp = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-$rvp9TsvPaths = Get-Rvp9TsvPaths
+$rvp9TsvPaths = @(Get-Rvp9TsvPaths)
 for ($i = 1; $i -le $Runs; $i++) {
     $perRunTsv = $rvp9TsvPaths[$i - 1]
     if (-not $SkipRvp9Bench) {
@@ -369,8 +368,8 @@ if ($SkipVpxdec) {
 }
 
 # --- Step 4: parse rvp9 TSV(s) ------------------------------------------
-# Keyed by "label|threads|runIndex"; the markdown summary below uses the
-# last-run entry, while the CSV emitter walks every entry.
+# Keyed by "label|threads|runIndex"; the markdown summary below uses run 1,
+# while the CSV emitter walks every entry.
 $rvp9Rows = @{}
 $rvp9Header = @{}
 foreach ($tsvPath in $rvp9TsvPaths) {
@@ -570,9 +569,9 @@ $md += '  constant — short fixtures (< 100 frames) include construction'
 $md += '  smear, disclosed in this header per HLD §11.1.'
 $md += '- Ratio is rvp9 mean / vpxdec mean (mean-to-mean, apples to apples'
 $md += '  with vpxdec which has no per-frame surface).'
-$md += '- Mean, tail, and ratio verdicts are informational on unpinned hosts;'
-$md += '  ratio verdict is `PASS-info` when rvp9 mean is at most 2x vpxdec'
-$md += '  mean, else `FAIL-info`; pinned-host promotion remains'
+$md += '- Mean and tail verdicts compare rvp9 against row budgets; ratio'
+$md += '  verdict is informational (`info`) when vpxdec data is present.'
+$md += '  Pinned-host promotion remains'
 $md += '  deferred to the dedicated Linux CI runner (HLD §1 + §6).'
 if ($Runs -gt 1) {
     $md += "- Multi-run sweep: -Runs $Runs. The summary table above shows"

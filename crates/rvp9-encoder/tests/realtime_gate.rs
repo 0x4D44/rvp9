@@ -136,19 +136,22 @@ struct FrameTimeSummary {
 
 /// Return the frame-time summary over a pre-sorted slice.
 ///
-/// Uses lower-index quantile selection
-/// (`samples[(N × q).floor()]`) — sufficient for a ~25-sample frame
-/// time distribution where the next-tick interpolation noise dwarfs
-/// quantile-method precision.
+/// Uses the same nearest-rank percentile convention as
+/// `rvp9_bench::Stats`: rank = ceil(q * n), then `sorted[rank - 1]`.
+/// With the current 25 post-warmup samples, p99 is the max, which is
+/// conservative for a tail guard.
 fn frame_time_summary(sorted: &[Duration]) -> FrameTimeSummary {
     assert!(!sorted.is_empty(), "frame_time_summary needs ≥ 1 sample");
     let n = sorted.len();
-    let pick = |q: f64| sorted[((n as f64 * q) as usize).min(n - 1)];
-    let median_idx = n / 2;
+    let pick = |q: f64| {
+        let rank = (q * n as f64).ceil() as usize;
+        let idx = rank.saturating_sub(1).min(n - 1);
+        sorted[idx]
+    };
     FrameTimeSummary {
         min: sorted[0],
         p25: pick(0.25),
-        median: sorted[median_idx],
+        median: pick(0.50),
         p75: pick(0.75),
         p95: pick(0.95),
         p99: pick(0.99),
@@ -161,11 +164,11 @@ fn frame_time_summary_reports_tail_quantiles() {
     let sorted: Vec<Duration> = (1..=100).map(Duration::from_millis).collect();
     let summary = frame_time_summary(&sorted);
     assert_eq!(summary.min, Duration::from_millis(1));
-    assert_eq!(summary.p25, Duration::from_millis(26));
-    assert_eq!(summary.median, Duration::from_millis(51));
-    assert_eq!(summary.p75, Duration::from_millis(76));
-    assert_eq!(summary.p95, Duration::from_millis(96));
-    assert_eq!(summary.p99, Duration::from_millis(100));
+    assert_eq!(summary.p25, Duration::from_millis(25));
+    assert_eq!(summary.median, Duration::from_millis(50));
+    assert_eq!(summary.p75, Duration::from_millis(75));
+    assert_eq!(summary.p95, Duration::from_millis(95));
+    assert_eq!(summary.p99, Duration::from_millis(99));
     assert_eq!(summary.max, Duration::from_millis(100));
 }
 

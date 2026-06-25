@@ -782,8 +782,7 @@ mod tests {
     #[test]
     fn check_metric_ratchet_reports_metric_name_and_budget() {
         assert!(check_metric_ratchet("fix.webm", "p95", 100.0, 114.0, 1.15).is_ok());
-        let msg =
-            check_metric_ratchet("fix.webm", "p99", 100.0, 120.001, 1.20).unwrap_err();
+        let msg = check_metric_ratchet("fix.webm", "p99", 100.0, 120.001, 1.20).unwrap_err();
         assert!(msg.contains("fix.webm"));
         assert!(msg.contains("p99"));
         assert!(msg.contains("20%"));

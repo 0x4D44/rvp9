@@ -25,8 +25,8 @@
 use std::path::{Path, PathBuf};
 
 use rvp9_bench::throughput::{
-    self, FixtureResult, MIN_TIMED_FRAMES, WARMUP_FRAMES, check_metric_ratchet,
-    host_fingerprint, latest_per_fixture, read_csv,
+    self, FixtureResult, MIN_TIMED_FRAMES, WARMUP_FRAMES, check_metric_ratchet, host_fingerprint,
+    latest_per_fixture, read_csv,
 };
 
 /// Median regression budget per HLD §G6.
