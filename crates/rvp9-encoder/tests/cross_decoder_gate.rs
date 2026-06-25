@@ -73,8 +73,9 @@ fn vpxdec_path() -> Option<PathBuf> {
 #[test]
 #[ignore = "Stage 4a product cross-decoder gate; hard-fails on missing corpus/tools/env pins"]
 fn cross_decoder_gate_stage4a_vbr_product() {
-    let (_baseline, candidate) =
+    let (baseline, candidate) =
         common::stage4a_product::run_stage4a_product_candidate_with_fresh_baseline();
+    common::stage4a_product::assert_product_report_pass(&baseline);
     common::stage4a_product::assert_product_cross_decoder_pass(&candidate);
 }
 

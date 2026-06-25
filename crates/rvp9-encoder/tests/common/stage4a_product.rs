@@ -133,6 +133,7 @@ pub struct ProductReport {
     pub bd_psnr_overlap_db: Option<f64>,
     pub timing_median_ms: Option<f64>,
     pub block_stats_250kbps_json: Option<String>,
+    pub block_stats_250kbps_summary: Option<ProductBlockStatsSummary>,
     pub diff_json_artifacts: Vec<String>,
     pub baseline_report_path: Option<String>,
     pub baseline_report_sha256: Option<String>,
@@ -188,6 +189,69 @@ pub struct ProductTargetReport {
     pub timing_ms: Vec<f64>,
     pub timing_median_ms: Option<f64>,
     pub decoder_verdicts: DecoderVerdicts,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProductBlockStatsSummary {
+    pub achieved_kbps: f64,
+    pub decode_failed: usize,
+    pub partition_area_pct: Vec<ProductBlockArea>,
+    pub mode_area_pct: ProductModeArea,
+    pub skip_pct: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProductBlockArea {
+    pub block: String,
+    pub count: u64,
+    pub area_pct: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProductModeArea {
+    pub intra: f64,
+    pub nearest_mv: f64,
+    pub near_mv: f64,
+    pub zero_mv: f64,
+    pub new_mv: f64,
+    pub ref_last: f64,
+    pub ref_golden: f64,
+    pub ref_altref: f64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ProductBlockStatsArtifact {
+    git_sha: String,
+    overall_status: String,
+    run_role: String,
+    split_policy: String,
+    validation_clean: bool,
+    ignored_validation_files: Vec<String>,
+    allowed_ignored_inputs: Vec<AllowedIgnoredInput>,
+    source_tree_hash: Option<String>,
+    source_sha256: Option<String>,
+    product_config_hash: Option<String>,
+    target_bitrate_bps: u32,
+    achieved_kbps: f64,
+    decode_failed: usize,
+    partition_area_pct: Vec<ProductBlockArea>,
+    mode_area_pct: ProductModeArea,
+    skip_pct: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct E1IvfJsonReport {
+    rvp9: E1AggregateJson,
+    libvpx: Option<E1AggregateJson>,
+}
+
+#[derive(Debug, Deserialize)]
+struct E1AggregateJson {
+    decode_failed: usize,
+    achieved_kbps: f64,
+    partition_area_pct: Vec<ProductBlockArea>,
+    mode_area_pct: ProductModeArea,
+    skip_pct: f64,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -395,6 +459,7 @@ fn run_stage4a_product_report(
         bd_psnr_overlap_db: None,
         timing_median_ms: None,
         block_stats_250kbps_json: None,
+        block_stats_250kbps_summary: None,
         diff_json_artifacts: Vec::new(),
         baseline_report_path: baseline.map(|b| b.report_path.clone()),
         baseline_report_sha256: None,
@@ -454,8 +519,8 @@ fn run_stage4a_product_report(
         }
     }
 
-    evaluate_quality_and_split(role, baseline, &mut report);
     run_product_artifacts(&context, &mut report);
+    evaluate_quality_and_split(role, baseline, &mut report);
     finish_and_write_report(&report_path, &mut report);
     report
 }
@@ -578,11 +643,16 @@ fn run_target(
     match run_ffmpeg_decoder(&ctx.ffmpeg, &rvp9_ivf, &ff_yuv_path) {
         Ok(ff_yuv) if ff_yuv == rvp9_yuv => decoder_verdicts.ffmpeg = "BYTE-EXACT".into(),
         Ok(ff_yuv) => {
-            let min_psnr = min_frame_y_psnr(&rvp9_yuv, &ff_yuv, W as usize, H as usize);
-            if min_psnr >= 40.0 {
-                decoder_verdicts.ffmpeg = "PSNR-GATE".into();
+            if ff_yuv.len() != rvp9_yuv.len() {
+                decoder_verdicts.ffmpeg =
+                    format!("FAIL-SIZE:{}_EXPECTED_{}", ff_yuv.len(), rvp9_yuv.len());
             } else {
-                decoder_verdicts.ffmpeg = format!("FAIL-PSNR:{min_psnr:.2}");
+                let min_psnr = min_frame_y_psnr(&rvp9_yuv, &ff_yuv, W as usize, H as usize);
+                if min_psnr >= 40.0 {
+                    decoder_verdicts.ffmpeg = "PSNR-GATE".into();
+                } else {
+                    decoder_verdicts.ffmpeg = format!("FAIL-PSNR:{min_psnr:.2}");
+                }
             }
         }
         Err(e) => decoder_verdicts.ffmpeg = format!("FAIL:{e}"),
@@ -954,10 +1024,35 @@ fn evaluate_candidate_pairing(baseline: Option<&ProductReport>, report: &mut Pro
             .push("MISSING_STRICT_BASELINE_PAIR".into());
         return;
     };
+    if baseline.overall_status != "PASS" {
+        report
+            .status_reasons
+            .push("BASELINE_REPORT_NOT_PASS".into());
+    }
+    if !baseline.validation_clean {
+        report
+            .status_reasons
+            .push("BASELINE_VALIDATION_NOT_CLEAN".into());
+    }
+    if baseline_contains_forbidden_status(baseline) {
+        report
+            .status_reasons
+            .push("BASELINE_CONTAINS_FORBIDDEN_STATUS".into());
+    }
     if baseline.run_role != "strict-baseline" || baseline.split_policy != "Strict" {
         report
             .status_reasons
             .push("INVALID_BASELINE_ROLE_OR_POLICY".into());
+    }
+    if baseline.split_override != "ForceStrict" {
+        report
+            .status_reasons
+            .push("INVALID_BASELINE_SPLIT_OVERRIDE".into());
+    }
+    if report.baseline_report_sha256.is_none() {
+        report
+            .status_reasons
+            .push("BASELINE_REPORT_HASH_MISSING".into());
     }
     if baseline.git_sha != report.git_sha {
         report
@@ -984,6 +1079,22 @@ fn evaluate_candidate_pairing(baseline: Option<&ProductReport>, report: &mut Pro
             .status_reasons
             .push("BASELINE_SOURCE_TREE_HASH_MISMATCH".into());
     }
+    if !tool_fingerprints_match(&baseline.vpxenc, &report.vpxenc) {
+        report
+            .status_reasons
+            .push("BASELINE_VPXENC_FINGERPRINT_MISMATCH".into());
+    }
+    if !tool_fingerprints_match(&baseline.vpxdec, &report.vpxdec) {
+        report
+            .status_reasons
+            .push("BASELINE_VPXDEC_FINGERPRINT_MISMATCH".into());
+    }
+    if !tool_fingerprints_match(&baseline.ffmpeg, &report.ffmpeg) {
+        report
+            .status_reasons
+            .push("BASELINE_FFMPEG_FINGERPRINT_MISMATCH".into());
+    }
+    evaluate_block_stats_pairing(baseline, report);
     if !report
         .targets
         .iter()
@@ -1004,6 +1115,67 @@ fn evaluate_candidate_pairing(baseline: Option<&ProductReport>, report: &mut Pro
     }
 }
 
+fn baseline_contains_forbidden_status(report: &ProductReport) -> bool {
+    let json = serde_json::to_string(report).expect("serialize baseline report");
+    FORBIDDEN_PRODUCT_STATUSES
+        .iter()
+        .any(|status| json.contains(status))
+}
+
+fn tool_fingerprints_match(a: &Option<ToolFingerprint>, b: &Option<ToolFingerprint>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => {
+            a.sha256 == b.sha256
+                && a.normalized_probe_sha256 == b.normalized_probe_sha256
+                && a.probe_command == b.probe_command
+        }
+        _ => false,
+    }
+}
+
+fn evaluate_block_stats_pairing(baseline: &ProductReport, report: &mut ProductReport) {
+    let (Some(strict), Some(candidate)) = (
+        baseline.block_stats_250kbps_summary.as_ref(),
+        report.block_stats_250kbps_summary.as_ref(),
+    ) else {
+        report
+            .status_reasons
+            .push("BLOCK_STATS_PAIR_MISSING".into());
+        return;
+    };
+    if strict.decode_failed != 0 || candidate.decode_failed != 0 {
+        report
+            .status_reasons
+            .push("BLOCK_STATS_DECODE_FAILED".into());
+    }
+    let strict_small = block_area_pct(strict, "8x8")
+        + block_area_pct(strict, "8x16")
+        + block_area_pct(strict, "16x8");
+    let candidate_small = block_area_pct(candidate, "8x8")
+        + block_area_pct(candidate, "8x16")
+        + block_area_pct(candidate, "16x8");
+    if candidate_small + 2.0 < strict_small {
+        report.status_reasons.push(format!(
+            "BLOCK_STATS_SMALL_AREA_REGRESSED:{candidate_small:.3}_LT_{strict_small:.3}"
+        ));
+    }
+    let strict_16x16 = block_area_pct(strict, "16x16");
+    let candidate_16x16 = block_area_pct(candidate, "16x16");
+    if candidate_16x16 > strict_16x16 + 3.0 {
+        report.status_reasons.push(format!(
+            "BLOCK_STATS_16X16_AREA_REGRESSED:{candidate_16x16:.3}_GT_{strict_16x16:.3}"
+        ));
+    }
+}
+
+fn block_area_pct(summary: &ProductBlockStatsSummary, block: &str) -> f64 {
+    summary
+        .partition_area_pct
+        .iter()
+        .find(|entry| entry.block == block)
+        .map_or(0.0, |entry| entry.area_pct)
+}
+
 fn run_product_artifacts(ctx: &ProductContext, report: &mut ProductReport) {
     let Some(target_250) = report
         .targets
@@ -1014,9 +1186,10 @@ fn run_product_artifacts(ctx: &ProductContext, report: &mut ProductReport) {
         return;
     };
     if let (Some(rvp9), Some(libvpx)) = (&target_250.rvp9_ivf_path, &target_250.libvpx_ivf_path) {
-        let json_path = ctx
+        let json_path = ctx.run_dir.join("block_stats_250kbps.json");
+        let e1_json_path = ctx
             .run_dir
-            .join(format!("block_stats_250kbps_{}.json", report.run_role));
+            .join(format!("block_stats_250kbps_e1_{}.json", report.run_role));
         let md_path = ctx
             .run_dir
             .join(format!("block_stats_250kbps_{}.md", report.run_role));
@@ -1041,12 +1214,25 @@ fn run_product_artifacts(ctx: &ProductContext, report: &mut ProductReport) {
                 "--out",
                 &rel_display(&ctx.root, &md_path),
                 "--json-out",
-                &rel_display(&ctx.root, &json_path),
+                &rel_display(&ctx.root, &e1_json_path),
             ],
         );
         match status {
             Ok(out) if out.status.success() => {
-                report.block_stats_250kbps_json = Some(rel_display(&ctx.root, &json_path));
+                match write_product_block_stats(&e1_json_path, &json_path, report) {
+                    Ok(summary) => {
+                        if summary.decode_failed != 0 {
+                            report
+                                .status_reasons
+                                .push("BLOCK_STATS_DECODE_FAILED".into());
+                        }
+                        report.block_stats_250kbps_summary = Some(summary);
+                        report.block_stats_250kbps_json = Some(rel_display(&ctx.root, &json_path));
+                    }
+                    Err(e) => report
+                        .status_reasons
+                        .push(format!("BLOCK_STATS_PARSE_FAILED:{e}")),
+                }
             }
             Ok(out) => report.status_reasons.push(format!(
                 "BLOCK_STATS_FAILED:{}",
@@ -1102,7 +1288,13 @@ fn run_product_artifacts(ctx: &ProductContext, report: &mut ProductReport) {
                 "64",
             ],
         ) {
-            Ok(out) if !out.stdout.is_empty() => {
+            Ok(out) if out.status.success() && !out.stdout.is_empty() => {
+                if !diff_json_lines_are_valid(&out.stdout) {
+                    report
+                        .status_reasons
+                        .push(format!("DIFF_ARTIFACT_INVALID_JSON_{target}"));
+                    continue;
+                }
                 fs::write(&diff_path, out.stdout).expect("write product diff JSON");
                 report
                     .diff_json_artifacts
@@ -1119,11 +1311,67 @@ fn run_product_artifacts(ctx: &ProductContext, report: &mut ProductReport) {
     }
 }
 
+fn write_product_block_stats(
+    e1_json_path: &Path,
+    product_json_path: &Path,
+    report: &ProductReport,
+) -> Result<ProductBlockStatsSummary, String> {
+    let bytes = fs::read(e1_json_path).map_err(|e| format!("read E1 block JSON:{e}"))?;
+    let e1: E1IvfJsonReport =
+        serde_json::from_slice(&bytes).map_err(|e| format!("parse E1 block JSON:{e}"))?;
+    let decode_failed =
+        e1.rvp9.decode_failed + e1.libvpx.as_ref().map_or(0, |libvpx| libvpx.decode_failed);
+    let summary = ProductBlockStatsSummary {
+        achieved_kbps: e1.rvp9.achieved_kbps,
+        decode_failed,
+        partition_area_pct: e1.rvp9.partition_area_pct,
+        mode_area_pct: e1.rvp9.mode_area_pct,
+        skip_pct: e1.rvp9.skip_pct,
+    };
+    let artifact = ProductBlockStatsArtifact {
+        git_sha: report.git_sha.clone(),
+        overall_status: if summary.decode_failed == 0 {
+            "PASS".into()
+        } else {
+            "FAIL".into()
+        },
+        run_role: report.run_role.clone(),
+        split_policy: report.split_policy.clone(),
+        validation_clean: validation_clean_now(report),
+        ignored_validation_files: report.ignored_validation_files.clone(),
+        allowed_ignored_inputs: report.allowed_ignored_inputs.clone(),
+        source_tree_hash: report.source_tree_hash.clone(),
+        source_sha256: report.source_sha256.clone(),
+        product_config_hash: report.product_config_hash.clone(),
+        target_bitrate_bps: 250_000,
+        achieved_kbps: summary.achieved_kbps,
+        decode_failed: summary.decode_failed,
+        partition_area_pct: summary.partition_area_pct.clone(),
+        mode_area_pct: summary.mode_area_pct.clone(),
+        skip_pct: summary.skip_pct,
+    };
+    let json = serde_json::to_vec_pretty(&artifact)
+        .map_err(|e| format!("serialize product block stats:{e}"))?;
+    fs::write(product_json_path, json).map_err(|e| format!("write product block stats:{e}"))?;
+    Ok(summary)
+}
+
+fn diff_json_lines_are_valid(bytes: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(bytes);
+    let mut saw_summary = false;
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            return false;
+        };
+        if value.get("event").and_then(serde_json::Value::as_str) == Some("summary") {
+            saw_summary = true;
+        }
+    }
+    saw_summary
+}
+
 fn finish_and_write_report(path: &Path, report: &mut ProductReport) {
-    report.validation_clean = report.tracked_diff_empty
-        && report.staged_diff_empty
-        && report.untracked_validation_files.is_empty()
-        && report.ignored_validation_files.len() == report.allowed_ignored_inputs.len();
+    report.validation_clean = validation_clean_now(report);
     if !report.validation_clean
         && !report
             .status_reasons
@@ -1144,10 +1392,17 @@ fn finish_and_write_report(path: &Path, report: &mut ProductReport) {
     }
 }
 
+fn validation_clean_now(report: &ProductReport) -> bool {
+    report.tracked_diff_empty
+        && report.staged_diff_empty
+        && report.untracked_validation_files.is_empty()
+        && report.ignored_validation_files.len() == report.allowed_ignored_inputs.len()
+}
+
 fn reject_rvp9_env(report: &mut ProductReport) {
     for (key, _) in std::env::vars_os() {
         let key = key.to_string_lossy();
-        if key.starts_with("RVP9_") {
+        if key.to_ascii_uppercase().starts_with("RVP9_") {
             report
                 .status_reasons
                 .push(format!("FORBIDDEN_ENV_VAR:{key}"));
@@ -1172,20 +1427,13 @@ fn validate_worktree(root: &Path, report: &mut ProductReport) {
     .unwrap_or_else(|e| vec![format!("GIT_FAILED:{e}")]);
     for path in ignored {
         let normalized = normalize_rel_path(&path);
-        if matches!(
-            normalized.as_str(),
-            "tests/corpus/foreman_cif.y4m" | "tests/corpus/testsrc_720p30.y4m"
-        ) {
+        if normalized == "tests/corpus/foreman_cif.y4m" {
             let full = root.join(&normalized);
             if let Ok(sha256) = sha256_file(&full) {
                 report.allowed_ignored_inputs.push(AllowedIgnoredInput {
                     path: normalized.clone(),
                     sha256,
-                    role: if normalized.contains("foreman") {
-                        "stage4a-product-source".into()
-                    } else {
-                        "legacy-realtime-source".into()
-                    },
+                    role: "stage4a-product-source".into(),
                 });
             }
         }
@@ -1223,6 +1471,7 @@ fn resolve_product_tools(
         }
     };
     let manifest_sha256 = sha256_bytes(&manifest_bytes);
+    report.approved_tool_manifest_sha256 = Some(manifest_sha256.clone());
     let manifest: ApprovedToolManifest = match serde_json::from_slice(&manifest_bytes) {
         Ok(manifest) => manifest,
         Err(e) => {
@@ -1239,8 +1488,15 @@ fn resolve_product_tools(
         ));
     }
 
-    let Some(vpxenc) = resolve_binary(root, "vpxenc") else {
+    let vpxenc = resolve_binary(root, "vpxenc");
+    let ffmpeg = resolve_binary(root, "ffmpeg");
+    if vpxenc.is_none() {
         report.status_reasons.push("MISSING_VPXENC".into());
+    }
+    if ffmpeg.is_none() {
+        report.status_reasons.push("MISSING_FFMPEG".into());
+    }
+    let Some(vpxenc) = vpxenc else {
         return None;
     };
     let Some(vpxdec) = sibling_tool(&vpxenc, "vpxdec") else {
@@ -1252,8 +1508,7 @@ fn resolve_product_tools(
             .status_reasons
             .push("VPXENC_VPXDEC_NOT_SIBLINGS".into());
     }
-    let Some(ffmpeg) = resolve_binary(root, "ffmpeg") else {
-        report.status_reasons.push("MISSING_FFMPEG".into());
+    let Some(ffmpeg) = ffmpeg else {
         return None;
     };
 
@@ -1347,8 +1602,7 @@ fn product_config_hash(tools: &ResolvedTools) -> String {
             "probe_sha256": tools.ffmpeg_fp.normalized_probe_sha256,
         },
         "validation_allowlist": [
-            "tests/corpus/foreman_cif.y4m",
-            "tests/corpus/testsrc_720p30.y4m"
+            "tests/corpus/foreman_cif.y4m"
         ],
     });
     sha256_bytes(&serde_json::to_vec(&config).expect("serialize product config"))

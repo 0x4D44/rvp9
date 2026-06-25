@@ -286,5 +286,6 @@ fn realtime_gate_720p30() {
 fn realtime_gate_stage4a_vbr_p8_product() {
     let (baseline, candidate) =
         common::stage4a_product::run_stage4a_product_candidate_with_fresh_baseline();
+    common::stage4a_product::assert_product_report_pass(&baseline);
     common::stage4a_product::assert_product_timing_pass(&baseline, &candidate);
 }

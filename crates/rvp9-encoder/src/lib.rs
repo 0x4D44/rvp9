@@ -2439,7 +2439,7 @@ fn stage4a_block16_split_admission(
             deadline,
             rvp9_core::mode_decision::speed_features::Deadline::Realtime
         )
-        && speed.unsigned_abs() >= 7
+        && speed >= 7
     {
         Block16SplitAdmission::Slack1Over8
     } else {
@@ -7735,6 +7735,17 @@ mod tests {
                 false,
                 RcMode::Vbr,
                 6,
+                Deadline::Realtime,
+                Stage4aProductSplitOverride::Auto,
+            ),
+            Block16SplitAdmission::Strict
+        );
+        assert_eq!(
+            stage4a_block16_split_admission(
+                true,
+                false,
+                RcMode::Vbr,
+                -7,
                 Deadline::Realtime,
                 Stage4aProductSplitOverride::Auto,
             ),
