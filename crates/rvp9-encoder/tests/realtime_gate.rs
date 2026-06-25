@@ -44,9 +44,9 @@
 //!    5 frames are warm-up — they trigger one-shot allocations and the
 //!    page-fault path on the reconstruction buffers, neither of which
 //!    is representative of steady-state cost).
-//! 5. Reports the 5-number summary to stderr.
-//! 6. Asserts `median ≤ 33 ms`. The test FAILS if the gate misses; the
-//!    diagnostic explains what to do next.
+//! 5. Reports median, tail percentiles, and the max to stderr.
+//! 6. Asserts `median ≤ 33 ms` and `p99 ≤ 50 ms`. The test FAILS if
+//!    either gate misses; the diagnostic explains what to do next.
 //!
 //! ## Coded resolution: 1280 × 704, not 1280 × 720
 //!
@@ -98,9 +98,13 @@ const N_FRAMES: usize = 30;
 /// the reconstruction buffers; they are not representative of
 /// steady-state cost.
 const WARMUP_FRAMES: usize = 5;
-/// Stage 4a budget: 33 ms = 1 / 30 fps. The literal exit-gate
+/// Stage 4a median budget: 33 ms = 1 / 30 fps. The literal exit-gate
 /// threshold from `PLAN.md` Stage 4a §exit criteria item 1.
-const BUDGET_NS: u128 = 33_000_000;
+const MEDIAN_BUDGET_NS: u128 = 33_000_000;
+/// Tail budget for post-warmup p99. This is wider than the frame-period
+/// median budget because p99 catches real stalls but is also sensitive to
+/// scheduler jitter on developer workstations.
+const P99_BUDGET_NS: u128 = 50_000_000;
 
 /// Build a tight-stride `YuvFrameRef` over `(y, u, v)` planes.
 fn yuv_view<'a>(y: &'a [u8], u: &'a [u8], v: &'a [u8], w: usize) -> YuvFrameRef<'a> {
@@ -119,23 +123,50 @@ fn fmt_ms(d: Duration) -> String {
     format!("{:.2} ms", d.as_secs_f64() * 1_000.0)
 }
 
-/// Return the 5-number summary `(min, p25, median, p75, max)` over a
-/// pre-sorted slice. Uses lower-index quantile selection
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FrameTimeSummary {
+    min: Duration,
+    p25: Duration,
+    median: Duration,
+    p75: Duration,
+    p95: Duration,
+    p99: Duration,
+    max: Duration,
+}
+
+/// Return the frame-time summary over a pre-sorted slice.
+///
+/// Uses lower-index quantile selection
 /// (`samples[(N × q).floor()]`) — sufficient for a ~25-sample frame
 /// time distribution where the next-tick interpolation noise dwarfs
 /// quantile-method precision.
-fn five_number_summary(sorted: &[Duration]) -> (Duration, Duration, Duration, Duration, Duration) {
-    assert!(!sorted.is_empty(), "five_number_summary needs ≥ 1 sample");
+fn frame_time_summary(sorted: &[Duration]) -> FrameTimeSummary {
+    assert!(!sorted.is_empty(), "frame_time_summary needs ≥ 1 sample");
     let n = sorted.len();
     let pick = |q: f64| sorted[((n as f64 * q) as usize).min(n - 1)];
     let median_idx = n / 2;
-    (
-        sorted[0],
-        pick(0.25),
-        sorted[median_idx],
-        pick(0.75),
-        sorted[n - 1],
-    )
+    FrameTimeSummary {
+        min: sorted[0],
+        p25: pick(0.25),
+        median: sorted[median_idx],
+        p75: pick(0.75),
+        p95: pick(0.95),
+        p99: pick(0.99),
+        max: sorted[n - 1],
+    }
+}
+
+#[test]
+fn frame_time_summary_reports_tail_quantiles() {
+    let sorted: Vec<Duration> = (1..=100).map(Duration::from_millis).collect();
+    let summary = frame_time_summary(&sorted);
+    assert_eq!(summary.min, Duration::from_millis(1));
+    assert_eq!(summary.p25, Duration::from_millis(26));
+    assert_eq!(summary.median, Duration::from_millis(51));
+    assert_eq!(summary.p75, Duration::from_millis(76));
+    assert_eq!(summary.p95, Duration::from_millis(96));
+    assert_eq!(summary.p99, Duration::from_millis(100));
+    assert_eq!(summary.max, Duration::from_millis(100));
 }
 
 /// RC.3 — 720p30 single-core real-time frame-time gate.
@@ -162,7 +193,9 @@ fn realtime_gate_720p30() {
     eprintln!("========================================");
     eprintln!("Source: {}", path.display());
     eprintln!("Coded resolution: {W} × {H} (centre-cropped 1280×720 → {W}×{H})");
-    eprintln!("Frames: {N_FRAMES}    Warm-up: {WARMUP_FRAMES}    Budget: 33.00 ms (30 fps)");
+    eprintln!(
+        "Frames: {N_FRAMES}    Warm-up: {WARMUP_FRAMES}    Budgets: median 33.00 ms, p99 50.00 ms"
+    );
     eprintln!();
 
     // ---------------------------------------------------------------
@@ -239,31 +272,33 @@ fn realtime_gate_720p30() {
     eprintln!();
 
     // ---------------------------------------------------------------
-    // Step 5: 5-number summary over post-warmup samples.
+    // Step 5: timing summary over post-warmup samples.
     // ---------------------------------------------------------------
     let mut sorted: Vec<Duration> = elapsed[WARMUP_FRAMES..].to_vec();
     sorted.sort();
-    let (mn, p25, median, p75, mx) = five_number_summary(&sorted);
+    let summary = frame_time_summary(&sorted);
     eprintln!(
         "Timing summary (over frames {WARMUP_FRAMES}..{N_FRAMES}, n={}):",
         sorted.len()
     );
-    eprintln!("  min   : {}", fmt_ms(mn));
-    eprintln!("  p25   : {}", fmt_ms(p25));
-    eprintln!("  median: {}", fmt_ms(median));
-    eprintln!("  p75   : {}", fmt_ms(p75));
-    eprintln!("  max   : {}", fmt_ms(mx));
+    eprintln!("  min   : {}", fmt_ms(summary.min));
+    eprintln!("  p25   : {}", fmt_ms(summary.p25));
+    eprintln!("  median: {}", fmt_ms(summary.median));
+    eprintln!("  p75   : {}", fmt_ms(summary.p75));
+    eprintln!("  p95   : {}", fmt_ms(summary.p95));
+    eprintln!("  p99   : {}", fmt_ms(summary.p99));
+    eprintln!("  max   : {}", fmt_ms(summary.max));
     eprintln!();
 
     // ---------------------------------------------------------------
-    // Step 6: assert the gate.
+    // Step 6: assert the gates.
     // ---------------------------------------------------------------
-    let median_ns = median.as_nanos();
-    let median_ms = median.as_secs_f64() * 1_000.0;
-    if median_ns <= BUDGET_NS {
+    let median_ns = summary.median.as_nanos();
+    let median_ms = summary.median.as_secs_f64() * 1_000.0;
+    if median_ns <= MEDIAN_BUDGET_NS {
         eprintln!("Stage 4a RT gate (median ≤ 33 ms): PASS — median {median_ms:.2} ms ≤ 33.00 ms");
     } else {
-        let over_ms = (median_ns as i128 - BUDGET_NS as i128) as f64 / 1_000_000.0;
+        let over_ms = (median_ns as i128 - MEDIAN_BUDGET_NS as i128) as f64 / 1_000_000.0;
         eprintln!(
             "Stage 4a RT gate (median ≤ 33 ms): FAIL by {over_ms:.2} ms — \
              median {median_ms:.2} ms > 33.00 ms"
@@ -275,9 +310,25 @@ fn realtime_gate_720p30() {
         );
     }
 
+    let p99_ns = summary.p99.as_nanos();
+    let p99_ms = summary.p99.as_secs_f64() * 1_000.0;
+    if p99_ns <= P99_BUDGET_NS {
+        eprintln!("Stage 4a RT tail gate (p99 ≤ 50 ms): PASS — p99 {p99_ms:.2} ms ≤ 50.00 ms");
+    } else {
+        let over_ms = (p99_ns as i128 - P99_BUDGET_NS as i128) as f64 / 1_000_000.0;
+        eprintln!(
+            "Stage 4a RT tail gate (p99 ≤ 50 ms): FAIL by {over_ms:.2} ms — \
+             p99 {p99_ms:.2} ms > 50.00 ms"
+        );
+    }
+
     assert!(
-        median_ns <= BUDGET_NS,
+        median_ns <= MEDIAN_BUDGET_NS,
         "RC.3 Stage 4a RT gate: median frame time {median_ms:.2} ms > 33.00 ms budget",
+    );
+    assert!(
+        p99_ns <= P99_BUDGET_NS,
+        "RC.3 Stage 4a RT tail gate: p99 frame time {p99_ms:.2} ms > 50.00 ms budget",
     );
 }
 
