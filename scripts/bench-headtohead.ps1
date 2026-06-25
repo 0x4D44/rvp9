@@ -15,7 +15,7 @@
 #      trend). HLD §7.
 #
 # Q.1.A is NOT a hard CI gate (HLD §1, §6). Dev-box runs commit the
-# ledger with `unpinned=true` and gate column is `PASS-info`/`FAIL-info`.
+# ledger with `unpinned=true`; verdicts are informational.
 #
 # Usage:
 #   pwsh scripts/bench-headtohead.ps1                # full default matrix, 1 run
@@ -65,22 +65,24 @@ $y4mDir     = Join-Path $repo 'tests/corpus'
 
 # --- HLD §5 matrix definition --------------------------------------------
 # Each entry: label, fixture path (full), threads, optional encode-source.
-# `Budget` is the PLAN §2 hard-real-time budget in microseconds, or $null
-# for fixtures without a budget.
+# `Budget` is the PLAN §2 hard-real-time mean budget in microseconds, or
+# $null for fixtures without a budget. `TailBudget` guards the rvp9 p99
+# column where a row has a realtime budget; it is intentionally looser
+# than the mean budget because p99 catches stalls and OS jitter.
 # `Tiles` is informational (logged in ledger).
 $matrix = @(
-    @{ Label='quantizer-00';    Path=(Join-Path $vectors 'vp90-2-00-quantizer-00.webm'); Threads=1; Budget=$null;  Tiles=1; Res='?x?'      },
-    @{ Label='tile_1x4';        Path=(Join-Path $vectors 'vp90-2-08-tile_1x4.webm');     Threads=1; Budget=$null;  Tiles=4; Res='?x?'      },
-    @{ Label='tile_1x4';        Path=(Join-Path $vectors 'vp90-2-08-tile_1x4.webm');     Threads=4; Budget=$null;  Tiles=4; Res='?x?'      },
-    @{ Label='testsrc_720p30';  Path=(Join-Path $fixtures 'testsrc_720p30.ivf');         Threads=1; Budget=33000; Tiles=1; Res='1280x720'  },
+    @{ Label='quantizer-00';    Path=(Join-Path $vectors 'vp90-2-00-quantizer-00.webm'); Threads=1; Budget=$null;  TailBudget=$null;  Tiles=1; Res='?x?'      },
+    @{ Label='tile_1x4';        Path=(Join-Path $vectors 'vp90-2-08-tile_1x4.webm');     Threads=1; Budget=$null;  TailBudget=$null;  Tiles=4; Res='?x?'      },
+    @{ Label='tile_1x4';        Path=(Join-Path $vectors 'vp90-2-08-tile_1x4.webm');     Threads=4; Budget=$null;  TailBudget=$null;  Tiles=4; Res='?x?'      },
+    @{ Label='testsrc_720p30';  Path=(Join-Path $fixtures 'testsrc_720p30.ivf');         Threads=1; Budget=33000; TailBudget=50000;  Tiles=1; Res='1280x720'  },
     # HLD §2 literal: D/E encoded with `--tile-columns=2` (vpxenc log2),
     # i.e. 4 tile columns. The HLD §4 mock-up "tiles=2" is a draft typo;
     # we follow the literal encoder flag here.
-    @{ Label='testsrc_1080p30'; Path=(Join-Path $fixtures 'testsrc_1080p30.ivf');        Threads=2; Budget=33000; Tiles=4; Res='1920x1080' },
-    @{ Label='testsrc_1080p30'; Path=(Join-Path $fixtures 'testsrc_1080p30.ivf');        Threads=4; Budget=33000; Tiles=4; Res='1920x1080' },
-    @{ Label='testsrc_1080p60'; Path=(Join-Path $fixtures 'testsrc_1080p60.ivf');        Threads=4; Budget=16000; Tiles=4; Res='1920x1080' },
-    @{ Label='testsrc_1080p60'; Path=(Join-Path $fixtures 'testsrc_1080p60.ivf');        Threads=8; Budget=16000; Tiles=4; Res='1920x1080' },
-    @{ Label='foreman-fp1';     Path=(Join-Path $fixtures 'foreman-fp1.ivf');            Threads=1; Budget=$null;  Tiles=1; Res='?x?'      }
+    @{ Label='testsrc_1080p30'; Path=(Join-Path $fixtures 'testsrc_1080p30.ivf');        Threads=2; Budget=33000; TailBudget=50000;  Tiles=4; Res='1920x1080' },
+    @{ Label='testsrc_1080p30'; Path=(Join-Path $fixtures 'testsrc_1080p30.ivf');        Threads=4; Budget=33000; TailBudget=50000;  Tiles=4; Res='1920x1080' },
+    @{ Label='testsrc_1080p60'; Path=(Join-Path $fixtures 'testsrc_1080p60.ivf');        Threads=4; Budget=16000; TailBudget=25000;  Tiles=4; Res='1920x1080' },
+    @{ Label='testsrc_1080p60'; Path=(Join-Path $fixtures 'testsrc_1080p60.ivf');        Threads=8; Budget=16000; TailBudget=25000;  Tiles=4; Res='1920x1080' },
+    @{ Label='foreman-fp1';     Path=(Join-Path $fixtures 'foreman-fp1.ivf');            Threads=1; Budget=$null;  TailBudget=$null;  Tiles=1; Res='?x?'      }
 )
 
 # --- Step 1: ensure C/D/E exist -----------------------------------------
@@ -183,6 +185,35 @@ function Write-ReadinessReport {
         Write-Host "[check] FAIL: $($missing.Count) required prerequisite(s) missing"
     }
     return $missing.Count
+}
+
+function Get-BudgetVerdict {
+    param(
+        [object] $Value,
+        [object] $Budget
+    )
+    if ($null -eq $Value) { return 'MISSING' }
+    if ($null -eq $Budget) { return 'n/a' }
+    if ($Value -le [double] $Budget) { return 'PASS-info' }
+    return 'FAIL-info'
+}
+
+function Get-RatioVerdict {
+    param(
+        [object] $Ratio
+    )
+    if ($null -eq $Ratio) { return 'MISSING' }
+    if ($Ratio -le 2.0) { return 'PASS-info' }
+    return 'FAIL-info'
+}
+
+function Join-GateVerdicts {
+    param(
+        [string] $Mean,
+        [string] $Tail,
+        [string] $Ratio
+    )
+    return "mean=$Mean;tail=$Tail;ratio=$Ratio"
 }
 
 if ($CheckOnly) {
@@ -414,14 +445,16 @@ $md += '      including construction/teardown overhead (negligible on >=1000-fra
 $md += '      fixtures; up to a few percent on short fixtures — see methodology).'
 $md += '      rvp9 mean shown alongside p50 for tail-stability inspection;'
 $md += '      ratio compares means (rvp9 mean / vpxdec mean).'
-$md += '      gate column is informational on unpinned hosts (HLD §1 + §6).'
+$md += '      mean/tail/ratio verdicts are informational on unpinned hosts'
+$md += '      (HLD §1 + §6); tail verdict compares rvp9 p99 to a looser'
+$md += '      row-specific p99 budget.'
 $md += '      rvp9 mean for short fixtures (< MIN_TIMED_FRAMES = 1000) is'
 $md += '      inflated by repeated keyframe re-decode across replay loops'
 $md += '      (steady-state Decoder per HLD §3); p50 is the more stable'
 $md += '      number for those rows.'
 $md += ""
-$md += "| fixture            | res        | tiles | threads | rvp9 p50 us | rvp9 mean us | vpxdec mean us | ratio (rvp9/vpx) | budget us | gate        |"
-$md += "|--------------------|------------|-------|---------|-------------|--------------|----------------|------------------|-----------|-------------|"
+$md += "| fixture            | res        | tiles | threads | rvp9 p50 us | rvp9 mean us | rvp9 p99 us | vpxdec mean us | ratio (rvp9/vpx) | mean budget us | tail budget us | mean gate | tail gate | ratio gate |"
+$md += "|--------------------|------------|-------|---------|-------------|--------------|-------------|----------------|------------------|----------------|----------------|-----------|-----------|------------|"
 
 # Schema-v3 CSV columns: schema v3 inserts `run_index` between `git_sha`
 # and `fixture`. Old schema-v2 rows in the file are left untouched
@@ -447,33 +480,31 @@ foreach ($row in $matrix) {
     # --- Markdown summary (run 1) ---
     $summaryKey = "$($row.Label)|$($row.Threads)|$summaryRunIndex"
     $rvp9Summary = $rvp9Rows[$summaryKey]
-    if (-not $rvp9Summary -or -not $vpx -or $vpx.Missing) {
+    if (-not $rvp9Summary -or -not $vpx -or $vpx.Missing -or $vpx.Skipped) {
         if ($null -eq $row.Budget) { $budgetDisp = '-' } else { $budgetDisp = $row.Budget }
+        if ($null -eq $row.TailBudget) { $tailBudgetDisp = '-' } else { $tailBudgetDisp = $row.TailBudget }
         # Suppress vpxdec-MISSING noise in the .md when the user has
         # intentionally skipped that side.
         $vpxCell = if ($vpx -and $vpx.Skipped) { 'SKIPPED' } else { 'MISSING' }
         $ratioCell = if ($vpx -and $vpx.Skipped) { '-' } else { '-' }
-        $gateCell = if ($vpx -and $vpx.Skipped) { 'rvp9-only' } else { 'MISSING' }
+        $meanGate = if ($rvp9Summary) { Get-BudgetVerdict -Value $rvp9Summary.Mean -Budget $row.Budget } else { 'MISSING' }
+        $tailGate = if ($rvp9Summary) { Get-BudgetVerdict -Value $rvp9Summary.P99 -Budget $row.TailBudget } else { 'MISSING' }
+        $ratioGate = if ($vpx -and $vpx.Skipped) { 'rvp9-only' } else { 'MISSING' }
         $rvp9P50 = if ($rvp9Summary) { ("{0,11:F1}" -f $rvp9Summary.P50) } else { 'MISSING    ' }
         $rvp9Mean = if ($rvp9Summary) { ("{0,12:F1}" -f $rvp9Summary.Mean) } else { 'MISSING     ' }
-        $md += "| {0,-18} | {1,-10} | {2,5} | {3,7} | $rvp9P50 | $rvp9Mean | {4,14} | {5,16} | {6,9} | {7,-11} |" -f `
-            $row.Label, $resCol, $tilesCol, $threadsCol, $vpxCell, $ratioCell, $budgetDisp, $gateCell
+        $rvp9P99 = if ($rvp9Summary) { ("{0,11:F1}" -f $rvp9Summary.P99) } else { 'MISSING    ' }
+        $md += "| {0,-18} | {1,-10} | {2,5} | {3,7} | $rvp9P50 | $rvp9Mean | $rvp9P99 | {4,14} | {5,16} | {6,14} | {7,14} | {8,-9} | {9,-9} | {10,-10} |" -f `
+            $row.Label, $resCol, $tilesCol, $threadsCol, $vpxCell, $ratioCell, $budgetDisp, $tailBudgetDisp, $meanGate, $tailGate, $ratioGate
     } else {
         $ratio = $rvp9Summary.Mean / $vpx.MeanUs
         $resCol = "$($rvp9Summary.Width)x$($rvp9Summary.Height)"
-        if ($null -ne $row.Budget) {
-            if ($rvp9Summary.Mean -le $row.Budget) {
-                $gate = 'PASS-info'
-            } else {
-                $gate = 'FAIL-info'
-            }
-            $budgetCol = $row.Budget
-        } else {
-            $gate = 'n/a'
-            $budgetCol = '-'
-        }
-        $md += "| {0,-18} | {1,-10} | {2,5} | {3,7} | {4,11:F1} | {5,12:F1} | {6,14:F1} | {7,16:F2} | {8,9} | {9,-11} |" -f `
-            $row.Label, $resCol, $tilesCol, $threadsCol, $rvp9Summary.P50, $rvp9Summary.Mean, $vpx.MeanUs, $ratio, $budgetCol, $gate
+        $meanGate = Get-BudgetVerdict -Value $rvp9Summary.Mean -Budget $row.Budget
+        $tailGate = Get-BudgetVerdict -Value $rvp9Summary.P99 -Budget $row.TailBudget
+        $ratioGate = Get-RatioVerdict -Ratio $ratio
+        $budgetCol = if ($null -ne $row.Budget) { $row.Budget } else { '-' }
+        $tailBudgetCol = if ($null -ne $row.TailBudget) { $row.TailBudget } else { '-' }
+        $md += "| {0,-18} | {1,-10} | {2,5} | {3,7} | {4,11:F1} | {5,12:F1} | {6,11:F1} | {7,14:F1} | {8,16:F2} | {9,14} | {10,14} | {11,-9} | {12,-9} | {13,-10} |" -f `
+            $row.Label, $resCol, $tilesCol, $threadsCol, $rvp9Summary.P50, $rvp9Summary.Mean, $rvp9Summary.P99, $vpx.MeanUs, $ratio, $budgetCol, $tailBudgetCol, $meanGate, $tailGate, $ratioGate
     }
 
     # --- CSV emit (one row per (matrix-row, run_index) pair) ---
@@ -481,36 +512,44 @@ foreach ($row in $matrix) {
         $key = "$($row.Label)|$($row.Threads)|$ri"
         $rvp9 = $rvp9Rows[$key]
         $budgetCell = if ($null -eq $row.Budget) { '' } else { $row.Budget }
+        $tailBudget = $row.TailBudget
 
         # Defensive: rvp9 row missing for this run? Emit a MISSING row
         # so the CSV reflects the attempt rather than silently dropping.
         if (-not $rvp9) {
-            $csvLines += "3,$tsUnix,$hostFp,true,$buildFp,$gitSha,$ri,$($row.Label),$($row.Threads),0,0,0,,,,,,,0,,$($row.Budget),MISSING"
+            $gate = Join-GateVerdicts -Mean 'MISSING' -Tail 'MISSING' -Ratio 'MISSING'
+            $csvLines += ("3,{0},{1},true,{2},{3},{4},{5},{6},0,0,0,,,,,,,,,{7},{8}" -f `
+                $tsUnix, $hostFp, $buildFp, $gitSha, $ri, $row.Label, $row.Threads, $budgetCell, $gate)
             continue
         }
 
         if ($vpx -and $vpx.Skipped) {
             # -SkipVpxdec: leave vpxdec_* and ratio_mean blank. Gate is
             # informational only ("rvp9-only").
-            $csvLines += ("3,{0},{1},true,{2},{3},{4},{5},{6},{7},{8},{9},{10:F3},{11:F3},{12:F3},{13:F3},,,,,{14},rvp9-only" -f `
+            $meanGate = Get-BudgetVerdict -Value $rvp9.Mean -Budget $row.Budget
+            $tailGate = Get-BudgetVerdict -Value $rvp9.P99 -Budget $tailBudget
+            $gate = Join-GateVerdicts -Mean $meanGate -Tail $tailGate -Ratio 'rvp9-only'
+            $csvLines += ("3,{0},{1},true,{2},{3},{4},{5},{6},{7},{8},{9},{10:F3},{11:F3},{12:F3},{13:F3},,,,,{14},{15}" -f `
                 $tsUnix, $hostFp, $buildFp, $gitSha, $ri, $row.Label, $row.Threads, $rvp9.Width, $rvp9.Height, $rvp9.TimedFrames, `
-                $rvp9.P50, $rvp9.Mean, $rvp9.P95, $rvp9.P99, $budgetCell)
+                $rvp9.P50, $rvp9.Mean, $rvp9.P95, $rvp9.P99, $budgetCell, $gate)
             continue
         }
 
         if (-not $vpx -or $vpx.Missing) {
-            $csvLines += ("3,{0},{1},true,{2},{3},{4},{5},{6},{7},{8},{9},{10:F3},{11:F3},{12:F3},{13:F3},,,,,{14},MISSING" -f `
+            $meanGate = Get-BudgetVerdict -Value $rvp9.Mean -Budget $row.Budget
+            $tailGate = Get-BudgetVerdict -Value $rvp9.P99 -Budget $tailBudget
+            $gate = Join-GateVerdicts -Mean $meanGate -Tail $tailGate -Ratio 'MISSING'
+            $csvLines += ("3,{0},{1},true,{2},{3},{4},{5},{6},{7},{8},{9},{10:F3},{11:F3},{12:F3},{13:F3},,,,,{14},{15}" -f `
                 $tsUnix, $hostFp, $buildFp, $gitSha, $ri, $row.Label, $row.Threads, $rvp9.Width, $rvp9.Height, $rvp9.TimedFrames, `
-                $rvp9.P50, $rvp9.Mean, $rvp9.P95, $rvp9.P99, $budgetCell)
+                $rvp9.P50, $rvp9.Mean, $rvp9.P95, $rvp9.P99, $budgetCell, $gate)
             continue
         }
 
         $ratio = $rvp9.Mean / $vpx.MeanUs
-        if ($null -ne $row.Budget) {
-            $gate = if ($rvp9.Mean -le $row.Budget) { 'PASS-info' } else { 'FAIL-info' }
-        } else {
-            $gate = 'n/a'
-        }
+        $meanGate = Get-BudgetVerdict -Value $rvp9.Mean -Budget $row.Budget
+        $tailGate = Get-BudgetVerdict -Value $rvp9.P99 -Budget $tailBudget
+        $ratioGate = Get-RatioVerdict -Ratio $ratio
+        $gate = Join-GateVerdicts -Mean $meanGate -Tail $tailGate -Ratio $ratioGate
         $csvLines += ("3,{0},{1},true,{2},{3},{4},{5},{6},{7},{8},{9},{10:F3},{11:F3},{12:F3},{13:F3},{14:F3},{15},{16},{17:F4},{18},{19}" -f `
             $tsUnix, $hostFp, $buildFp, $gitSha, $ri, $row.Label, $row.Threads, $rvp9.Width, $rvp9.Height, $rvp9.TimedFrames, `
             $rvp9.P50, $rvp9.Mean, $rvp9.P95, $rvp9.P99, $vpx.MeanUs, $vpx.Reps, $vpx.Frames, $ratio, $budgetCell, $gate)
@@ -531,7 +570,9 @@ $md += '  constant — short fixtures (< 100 frames) include construction'
 $md += '  smear, disclosed in this header per HLD §11.1.'
 $md += '- Ratio is rvp9 mean / vpxdec mean (mean-to-mean, apples to apples'
 $md += '  with vpxdec which has no per-frame surface).'
-$md += '- Gate is informational on unpinned hosts; pinned-host promotion'
+$md += '- Mean, tail, and ratio verdicts are informational on unpinned hosts;'
+$md += '  ratio verdict is `PASS-info` when rvp9 mean is at most 2x vpxdec'
+$md += '  mean, else `FAIL-info`; pinned-host promotion remains'
 $md += '  deferred to the dedicated Linux CI runner (HLD §1 + §6).'
 if ($Runs -gt 1) {
     $md += "- Multi-run sweep: -Runs $Runs. The summary table above shows"
