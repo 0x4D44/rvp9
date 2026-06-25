@@ -68,13 +68,15 @@ Out-of-scope observations parked for a separate, human-invoked review. Dated
   part is fixed by `5ad1f80` (`tests/corpus/fixtures/foreman_c444_2pass.ivf` + md5).
   The captured-header vector prerequisite remains open because `tests/conformance/vectors/`
   is still gitignored/fetched data.
-- [ ] 2026-06-24: **`scripts/fetch-vectors.sh` cannot reliably populate the deterministic
+- [x] 2026-06-24: **`scripts/fetch-vectors.sh` cannot reliably populate the deterministic
   test vectors on this Windows worktree.** The script has CRLF line endings, which makes
   Bash report `$'\r': command not found` before it can run (`scripts/fetch-vectors.sh:10`),
   and its Stage 0 vector list still includes `vp90-2-02-size-202x202.webm`
   (`scripts/fetch-vectors.sh:30`), whose upstream URL returned 404 during the green-build
   pass. Normalize the script and refresh/remove the dead vector entry so new worktrees can
   fetch the deterministic test data without a manual curl fallback.
+  **UPDATE 2026-06-25:** fixed by adding a `.gitattributes` LF checkout rule for shell
+  scripts and correcting the vector to upstream's `vp90-2-03-size-202x202.webm`.
 - [ ] 2026-06-21: **Skip RD tie-break over-triggers skip when the skip bit is cheap**
   (`crates/rvp9-core/src/mode_decision/inter.rs` `evaluate_candidate_for_filter`, the
   `rd_encode >= rd_skip` tie-break). Measured: feeding libvpx's frame-adapted skip

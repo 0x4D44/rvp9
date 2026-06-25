@@ -27,7 +27,7 @@ VECTORS=(
     "vp90-2-01-sharpness-7.webm"
     "vp90-2-02-size-08x08.webm"
     "vp90-2-02-size-32x32.webm"
-    "vp90-2-02-size-202x202.webm"
+    "vp90-2-03-size-202x202.webm"
     "vp90-2-03-deltaq.webm"
     "vp90-2-05-resize.ivf"
     "vp90-2-08-tile_1x2.webm"
