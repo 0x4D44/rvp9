@@ -57,6 +57,8 @@ use rvp9_harness::y4m::{
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod common;
+
 /// Track F pass/fail threshold on the foreman PSNR-delta mean (dB).
 /// Updated per milestone — see the F.0.1 HLD §3.2 table.
 /// 2026-05-23 (initial): +9.5 dB regression guard at the +9.07
@@ -797,6 +799,29 @@ fn quality_gate_stage4a_realcontent() {
         H,
         TRACK_F_PSNR_DELTA_THRESHOLD_DB,
     );
+}
+
+#[test]
+#[ignore = "Stage 4a product pre-enable preflight; hard-fails on missing corpus/tools/env pins"]
+fn quality_gate_stage4a_realcontent_product_preenable_preflight() {
+    let report = common::stage4a_product::run_stage4a_product_preenable_preflight();
+    common::stage4a_product::assert_product_report_pass(&report);
+}
+
+#[test]
+#[ignore = "Stage 4a product strict baseline; hard-fails on missing corpus/tools/env pins"]
+fn quality_gate_stage4a_realcontent_product_strict_baseline() {
+    let report = common::stage4a_product::run_stage4a_product_strict_baseline();
+    common::stage4a_product::assert_product_report_pass(&report);
+}
+
+#[test]
+#[ignore = "Stage 4a product candidate; hard-fails on missing corpus/tools/env pins"]
+fn quality_gate_stage4a_realcontent_product() {
+    let (baseline, candidate) =
+        common::stage4a_product::run_stage4a_product_candidate_with_fresh_baseline();
+    common::stage4a_product::assert_product_report_pass(&baseline);
+    common::stage4a_product::assert_product_report_pass(&candidate);
 }
 
 // =========================================================================

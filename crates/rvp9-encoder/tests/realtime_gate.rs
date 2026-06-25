@@ -84,6 +84,8 @@ use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 use rvp9_harness::y4m::{probe_testsrc_720p, read_cropped};
 use std::time::{Duration, Instant};
 
+mod common;
+
 /// Coded luma width — equal to 720p's 1280.
 const W: u32 = 1280;
 /// Coded luma height. 720 is NOT a multiple of 64 (VP9 super-block);
@@ -277,4 +279,12 @@ fn realtime_gate_720p30() {
         median_ns <= BUDGET_NS,
         "RC.3 Stage 4a RT gate: median frame time {median_ms:.2} ms > 33.00 ms budget",
     );
+}
+
+#[test]
+#[ignore = "Stage 4a product realtime gate; hard-fails on missing corpus/tools/env pins"]
+fn realtime_gate_stage4a_vbr_p8_product() {
+    let (baseline, candidate) =
+        common::stage4a_product::run_stage4a_product_candidate_with_fresh_baseline();
+    common::stage4a_product::assert_product_timing_pass(&baseline, &candidate);
 }

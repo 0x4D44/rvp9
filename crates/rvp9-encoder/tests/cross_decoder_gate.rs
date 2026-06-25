@@ -50,6 +50,8 @@ use rvp9_harness::y4m::{probe_testsrc_720p, read_cropped as y4m_read_cropped};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod common;
+
 // ---------------------------------------------------------------------------
 // Decoder availability probes.
 // ---------------------------------------------------------------------------
@@ -66,6 +68,14 @@ fn vpxdec_path() -> Option<PathBuf> {
         return Some(PathBuf::from("vpxdec"));
     }
     None
+}
+
+#[test]
+#[ignore = "Stage 4a product cross-decoder gate; hard-fails on missing corpus/tools/env pins"]
+fn cross_decoder_gate_stage4a_vbr_product() {
+    let (_baseline, candidate) =
+        common::stage4a_product::run_stage4a_product_candidate_with_fresh_baseline();
+    common::stage4a_product::assert_product_cross_decoder_pass(&candidate);
 }
 
 /// Probe for `ffmpeg` on PATH. Returns `Some("ffmpeg")` if `ffmpeg
