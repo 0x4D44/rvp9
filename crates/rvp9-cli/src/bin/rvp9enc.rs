@@ -1577,6 +1577,7 @@ fn build_encoder_config(
         // A23 — `--enable-tpl` (libvpx `vpxenc.c:445-446`) → TPL rdmult
         // pass. Default OFF (cross-decoder gate runs `enable_tpl = false`).
         enable_tpl: opts.enable_tpl.unwrap_or(false),
+        stage4a_product_split_override: Default::default(),
     }
 }
 

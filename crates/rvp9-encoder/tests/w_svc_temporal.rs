@@ -100,6 +100,7 @@ fn svc_config(framerate: f64, temporal_layers: u32) -> EncoderConfig {
         max_qindex: 255,
         temporal_layers,
         enable_tpl: false,
+        stage4a_product_split_override: Default::default(),
     }
 }
 

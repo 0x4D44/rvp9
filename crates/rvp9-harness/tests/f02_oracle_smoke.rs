@@ -75,6 +75,7 @@ fn single_sb_config() -> EncoderConfig {
         lag_in_frames: 0,
         enable_alt_ref: false,
         enable_tpl: false,
+        stage4a_product_split_override: Default::default(),
         rc_mode: RcMode::Cbr,
         cq_level: 0,
         temporal_layers: 1,

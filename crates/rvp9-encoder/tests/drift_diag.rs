@@ -119,6 +119,7 @@ fn run_for_speed(
         cq_level: 0,
         temporal_layers: 1,
         enable_tpl: false,
+        stage4a_product_split_override: Default::default(),
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -249,6 +250,7 @@ fn drift_diag_localize_frame2() {
         cq_level: 0,
         temporal_layers: 1,
         enable_tpl: false,
+        stage4a_product_split_override: Default::default(),
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -389,6 +391,7 @@ fn drift_diag_localize() {
         cq_level: 0,
         temporal_layers: 1,
         enable_tpl: false,
+        stage4a_product_split_override: Default::default(),
         min_qindex: 4,
         max_qindex: 255,
     };

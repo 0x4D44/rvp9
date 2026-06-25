@@ -90,6 +90,7 @@ fn encode_with_altref(n_frames: u32, gop_length: u32, lag: u32) -> Vec<Vec<u8>> 
         cq_level: 0,
         temporal_layers: 1,
         enable_tpl: false,
+        stage4a_product_split_override: Default::default(),
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -186,6 +187,7 @@ fn w8_altref_disabled_emits_no_non_show_packet() {
         cq_level: 0,
         temporal_layers: 1,
         enable_tpl: false,
+        stage4a_product_split_override: Default::default(),
         min_qindex: 4,
         max_qindex: 255,
     };

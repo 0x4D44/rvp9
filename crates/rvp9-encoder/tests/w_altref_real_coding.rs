@@ -215,6 +215,7 @@ fn altref_slot2_differs_from_last_recon() {
         cq_level: 0,
         temporal_layers: 1,
         enable_tpl: false,
+        stage4a_product_split_override: Default::default(),
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -282,6 +283,7 @@ fn altref_stream_byte_exact_vpxdec() {
         cq_level: 0,
         temporal_layers: 1,
         enable_tpl: false,
+        stage4a_product_split_override: Default::default(),
         min_qindex: 4,
         max_qindex: 255,
     };

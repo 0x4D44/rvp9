@@ -125,8 +125,8 @@ pub mod temporal_filter;
 pub mod tpl;
 
 pub use frame_loop::{
-    AqMode, Deadline, EncodedFrame, EncoderConfig, FrameKind as StreamFrameKind, StreamEncoder,
-    YuvFrameRef, encode_two_pass,
+    AqMode, Deadline, EncodedFrame, EncoderConfig, FrameKind as StreamFrameKind,
+    Stage4aProductSplitOverride, StreamEncoder, YuvFrameRef, encode_two_pass,
 };
 // Re-audit pass 3: `EncoderConfig::rc_mode` is a public field of type
 // `rate_control::RcMode`, so the discriminator must be reachable from
@@ -2416,6 +2416,37 @@ fn p8_vbr_qmax_enabled(
     !rt_large_recovery && matches!(rc_mode, crate::rate_control::RcMode::Vbr) && base_qindex <= qmax
 }
 
+fn stage4a_block16_split_admission(
+    p8_enabled: bool,
+    rt_large_recovery: bool,
+    rc_mode: crate::rate_control::RcMode,
+    speed: i32,
+    deadline: rvp9_core::mode_decision::speed_features::Deadline,
+    override_policy: crate::frame_loop::Stage4aProductSplitOverride,
+) -> rvp9_core::mode_decision::nonrd_partition::Block16SplitAdmission {
+    use rvp9_core::mode_decision::nonrd_partition::Block16SplitAdmission;
+
+    if matches!(
+        override_policy,
+        crate::frame_loop::Stage4aProductSplitOverride::ForceStrict
+    ) {
+        return Block16SplitAdmission::Strict;
+    }
+    if p8_enabled
+        && !rt_large_recovery
+        && matches!(rc_mode, crate::rate_control::RcMode::Vbr)
+        && matches!(
+            deadline,
+            rvp9_core::mode_decision::speed_features::Deadline::Realtime
+        )
+        && speed.unsigned_abs() >= 7
+    {
+        Block16SplitAdmission::Slack1Over8
+    } else {
+        Block16SplitAdmission::Strict
+    }
+}
+
 fn a4_partition_rd_mult_for_env(base_rd_mult: u32) -> u32 {
     let Some(num) = std::env::var("RVP9_A4_RDMULT_NUM")
         .ok()
@@ -2632,6 +2663,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // (`vp9_encodeframe.c:3719-3768`) substitutes the base rdmult fed to
     // the inter RDO leaf (the consumer hook, `vp9_encodeframe.c:2235-2242`).
     tpl_rdmult: Option<(&crate::tpl::TplDepFrame, f64)>,
+    // Stage 4a product-only strict-baseline override.
+    stage4a_product_split_override: crate::frame_loop::Stage4aProductSplitOverride,
+    // Typed split-admission stats sink for product reports.
+    stage4a_split_stats_out: &mut rvp9_core::mode_decision::nonrd_partition::NonRdSplitStats,
 ) -> VecBackedInterCoefSource {
     use rvp9_core::bitstream::frame::{InterpFilter as WireInterpFilter, MAX_INTER_REFS};
     use rvp9_core::bitstream::header::FrameKind as WireFrameKind;
@@ -2897,6 +2932,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 .map(|qmax| p8_vbr_qmax_enabled(rt_large_recovery, rc_mode, base_qindex, qmax))
                 .unwrap_or_else(|| p8_default_enabled(rt_large_recovery, rc_mode, base_qindex))
         });
+    let block16_split_admission = stage4a_block16_split_admission(
+        p8_enabled,
+        rt_large_recovery,
+        rc_mode,
+        speed,
+        deadline,
+        stage4a_product_split_override,
+    );
     let f3_partition_costs = if f3_nonrd_partition_enabled {
         // Diagnostic only: libvpx sources partition_cost from the live frame
         // context, but the Stage 4a VBR gate is BD-negative with that source
@@ -3361,6 +3404,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     partition_costs: pcosts,
                     rd_mult: f3_rd_mult,
                     allow_8x8_leaf: p8_enabled,
+                    block16_split_admission,
                 };
 
                 // 4. P12 (2026-05-25) — real `pick_inter_mode`
@@ -3938,9 +3982,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     )
                 };
 
-                if a4_split_stats_enabled {
-                    a4_split_stats.accumulate(&descent_result.split_stats);
-                }
+                a4_split_stats.accumulate(&descent_result.split_stats);
 
                 // A4 anti-G3 diagnostic: count this SB if the RD
                 // descent chose a partition SHAPE that differs from the
@@ -6150,21 +6192,30 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         #[allow(clippy::print_stderr)]
         {
             eprintln!(
-                "[A4-split] q={base_qindex} block16 attempts={} breakout_suppressed={} feasible={} infeasible_or_early={} child_infeasible={} partial_rd_early_out={} split_beats_none={} split_loses_to_none={} split_committed={} rect_overrides_split={} no_none={} avg_margin={avg_margin:.1} min_margin={min_margin} max_margin={max_margin}",
+                "[A4-split] q={base_qindex} block16 attempts={} breakout_suppressed={} feasible={} infeasible_or_early={} child_infeasible={} partial_rd_early_out={} partial_after_child={:?} split_beats_none={} split_loses_to_none={} split_committed={} rect_overrides_split={} no_none={} slack_would_continue={} slack_completed={} slack_split_eligible={} slack_split_committed={} slack_rect_override={} slack_rejected={} avg_margin={avg_margin:.1} min_margin={min_margin} max_margin={max_margin}",
                 a4_split_stats.block16_attempts,
                 a4_split_stats.block16_breakout_suppressed,
                 a4_split_stats.block16_feasible,
                 a4_split_stats.block16_infeasible_or_early,
                 a4_split_stats.block16_child_infeasible,
                 a4_split_stats.block16_partial_rd_early_out,
+                a4_split_stats.block16_partial_early_out_after_child,
                 a4_split_stats.block16_split_beats_none,
                 a4_split_stats.block16_split_loses_to_none,
                 a4_split_stats.block16_split_committed,
                 a4_split_stats.block16_rect_overrides_split,
                 a4_split_stats.block16_no_none,
+                a4_split_stats.block16_slack_would_continue,
+                a4_split_stats.block16_slack_completed,
+                a4_split_stats.block16_slack_split_eligible,
+                a4_split_stats.block16_slack_split_committed,
+                a4_split_stats.block16_slack_rect_override,
+                a4_split_stats.block16_slack_rejected,
             );
         }
     }
+
+    stage4a_split_stats_out.accumulate(&a4_split_stats);
 
     // Phase A (`RVP9_P8_STATS`) — per-frame partition-size distribution
     // over the final leaf list (counts leaves, not area). Reports the
@@ -7630,6 +7681,97 @@ mod tests {
     }
 
     #[test]
+    fn stage4a_split_admission_is_product_vbr_realtime_p8_only() {
+        use rvp9_core::mode_decision::nonrd_partition::Block16SplitAdmission;
+        use rvp9_core::mode_decision::speed_features::Deadline;
+
+        assert_eq!(
+            stage4a_block16_split_admission(
+                true,
+                false,
+                RcMode::Vbr,
+                7,
+                Deadline::Realtime,
+                Stage4aProductSplitOverride::Auto,
+            ),
+            Block16SplitAdmission::Slack1Over8
+        );
+        assert_eq!(
+            stage4a_block16_split_admission(
+                false,
+                false,
+                RcMode::Vbr,
+                7,
+                Deadline::Realtime,
+                Stage4aProductSplitOverride::Auto,
+            ),
+            Block16SplitAdmission::Strict
+        );
+        assert_eq!(
+            stage4a_block16_split_admission(
+                true,
+                true,
+                RcMode::Vbr,
+                7,
+                Deadline::Realtime,
+                Stage4aProductSplitOverride::Auto,
+            ),
+            Block16SplitAdmission::Strict
+        );
+        assert_eq!(
+            stage4a_block16_split_admission(
+                true,
+                false,
+                RcMode::Cbr,
+                7,
+                Deadline::Realtime,
+                Stage4aProductSplitOverride::Auto,
+            ),
+            Block16SplitAdmission::Strict
+        );
+        assert_eq!(
+            stage4a_block16_split_admission(
+                true,
+                false,
+                RcMode::Vbr,
+                6,
+                Deadline::Realtime,
+                Stage4aProductSplitOverride::Auto,
+            ),
+            Block16SplitAdmission::Strict
+        );
+        assert_eq!(
+            stage4a_block16_split_admission(
+                true,
+                false,
+                RcMode::Vbr,
+                7,
+                Deadline::Good,
+                Stage4aProductSplitOverride::Auto,
+            ),
+            Block16SplitAdmission::Strict
+        );
+    }
+
+    #[test]
+    fn stage4a_split_force_strict_override_closes_product_policy() {
+        use rvp9_core::mode_decision::nonrd_partition::Block16SplitAdmission;
+        use rvp9_core::mode_decision::speed_features::Deadline;
+
+        assert_eq!(
+            stage4a_block16_split_admission(
+                true,
+                false,
+                RcMode::Vbr,
+                7,
+                Deadline::Realtime,
+                Stage4aProductSplitOverride::ForceStrict,
+            ),
+            Block16SplitAdmission::Strict
+        );
+    }
+
+    #[test]
     fn inter_rd_calibration_is_vbr_realtime_speed7_only() {
         use rvp9_core::mode_decision::inter::InterRdCalibration;
         use rvp9_core::mode_decision::speed_features::Deadline;
@@ -7913,6 +8055,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         }

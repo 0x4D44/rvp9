@@ -98,6 +98,7 @@ fn a18_picker_reads_prev_grid_when_activated() {
         cq_level: 0,
         temporal_layers: 1,
         enable_tpl: false,
+        stage4a_product_split_override: Default::default(),
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -210,6 +211,7 @@ fn a18_picker_gate_is_structural_not_config_gated() {
         cq_level: 0,
         temporal_layers: 1,
         enable_tpl: false,
+        stage4a_product_split_override: Default::default(),
         min_qindex: 4,
         max_qindex: 255,
     };

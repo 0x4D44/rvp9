@@ -69,6 +69,7 @@ fn cfg(w: u32, h: u32, fr: f64, tb: u32, gop: u32) -> EncoderConfig {
         cq_level: 0,
         temporal_layers: 1,
         enable_tpl: false,
+        stage4a_product_split_override: Default::default(),
         min_qindex: 4,
         max_qindex: 255,
     }

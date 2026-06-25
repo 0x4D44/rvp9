@@ -77,6 +77,7 @@ use rvp9_core::entropy::{
 use rvp9_core::inter::mode_info::{InterModeReadParams, setup_compound_reference_mode};
 use rvp9_core::inter::mv_ref::{PrevFrameMvRef, sign_bias_from_header};
 use rvp9_core::intra_pred::IntraMode;
+use rvp9_core::mode_decision::nonrd_partition::NonRdSplitStats;
 use rvp9_core::mode_decision::partition::{
     PartitionDecision, PartitionSearchParams, choose_partitioning, choose_partitioning_force_split,
 };
@@ -123,6 +124,22 @@ pub enum AqMode {
     /// libvpx cyclic refresh AQ. Cycles through SBs at finer Q over
     /// `~1/N` frames. See [`crate::aq_cyclic_refresh`].
     CyclicRefresh,
+}
+
+/// Hidden Stage 4a product override for split-admission diagnostics.
+///
+/// This is not a user-facing tuning knob. Product gates use
+/// [`Self::ForceStrict`] to produce a paired strict-baseline report from the
+/// same binary; normal callers should leave [`Self::Auto`].
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[doc(hidden)]
+pub enum Stage4aProductSplitOverride {
+    /// Select the encoder's built-in product policy.
+    #[default]
+    Auto,
+    /// Force strict Block16 SPLIT admission even when the product policy
+    /// would enable Slack1Over8.
+    ForceStrict,
 }
 
 // W0.3(vpxenc parity, A7 P0): `Deadline` is re-exported from rvp9-core
@@ -341,6 +358,12 @@ pub struct EncoderConfig {
     /// (`vp9_speed_features.c`), gated additionally on
     /// `aq_mode ∈ {NO_AQ, PERCEPTUAL_AQ}` at the consumer hook.
     pub enable_tpl: bool,
+    /// Hidden Stage 4a product/reporting override.
+    ///
+    /// Not a public tuning surface; this exists solely so strict-baseline and
+    /// candidate product reports can be generated from one build.
+    #[doc(hidden)]
+    pub stage4a_product_split_override: Stage4aProductSplitOverride,
 }
 
 impl EncoderConfig {
@@ -407,6 +430,7 @@ impl EncoderConfig {
             // / a full struct literal). Flip to `true` to activate the
             // single-GOP forward TPL rdmult pass.
             enable_tpl: false,
+            stage4a_product_split_override: Stage4aProductSplitOverride::Auto,
         }
     }
 
@@ -1165,6 +1189,8 @@ pub struct StreamEncoder {
     /// [`rvp9_core::mode_decision::rd_thresh::update_thresh_freq_fact`]
     /// to decay the winner's fact and increment the losers.
     rd_thresh_table: rvp9_core::mode_decision::rd_thresh::RdThreshTable,
+    /// Stage 4a product diagnostics accumulated across inter-pick descents.
+    stage4a_split_stats: NonRdSplitStats,
     /// W5.5 — VP9 temporal denoiser state. `Some(..)` iff
     /// `config.noise_sensitivity > 0`. The denoiser writes filtered
     /// pixels into the ME-side reference (`me_ref_*`) post-reconstruction
@@ -1431,6 +1457,7 @@ impl StreamEncoder {
             decoder_fc_state_arf: FrameContext::new_default(),
             // P20 — fresh adaptive-RD-threshold table at INIT_FACT.
             rd_thresh_table: rvp9_core::mode_decision::rd_thresh::RdThreshTable::new(),
+            stage4a_split_stats: NonRdSplitStats::default(),
             // W5.5 — temporal denoiser (libvpx
             // `vp9_denoiser.c:606-696` `vp9_denoiser_alloc`). Allocated
             // iff `noise_sensitivity > 0`; the denoiser-disabled path
@@ -1460,6 +1487,19 @@ impl StreamEncoder {
     #[must_use]
     pub fn config(&self) -> &EncoderConfig {
         &self.config
+    }
+
+    /// Stage 4a product diagnostic hook.
+    ///
+    /// Returns accumulated Block16 SPLIT admission stats since the previous
+    /// call and resets the accumulator. Hidden from the supported public API;
+    /// product gates use it as a typed oracle instead of env/stderr output.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn diag_take_stage4a_split_stats(&mut self) -> NonRdSplitStats {
+        let stats = self.stage4a_split_stats;
+        self.stage4a_split_stats = NonRdSplitStats::default();
+        stats
     }
 
     /// W1.5 test-only accessor: the lookahead ring's monotonic
@@ -2763,6 +2803,7 @@ impl StreamEncoder {
             None
         };
 
+        let mut stage4a_frame_split_stats = NonRdSplitStats::default();
         let coef_source = pick_and_simulate_inter_encode_partitions(
             w,
             h,
@@ -2827,7 +2868,11 @@ impl StreamEncoder {
             // A23 — TPL rdmult adjustment (opt-in). `None` unless
             // `enable_tpl` produced a valid forward-propagated grid.
             tpl_rdmult_arg,
+            self.config.stage4a_product_split_override,
+            &mut stage4a_frame_split_stats,
         );
+        self.stage4a_split_stats
+            .accumulate(&stage4a_frame_split_stats);
 
         // F11.0 — apply the in-loop deblocking filter to the encoder's
         // new reference reconstruction (matches the decoder's LF pass
@@ -3335,6 +3380,7 @@ impl StreamEncoder {
         let (gld_y, gld_u, gld_v) = self
             .ref_pool
             .named_ref_planes(crate::buffer_pool::GOLDEN_REF);
+        let mut stage4a_frame_split_stats = NonRdSplitStats::default();
         let coef_source = pick_and_simulate_inter_encode_partitions(
             w,
             h,
@@ -3373,7 +3419,11 @@ impl StreamEncoder {
             // TPL `gf_picture[1]` frame in libvpx). Pass `None` — the ARF
             // path is byte-identical to the pre-A23 behaviour.
             None,
+            self.config.stage4a_product_split_override,
+            &mut stage4a_frame_split_stats,
         );
+        self.stage4a_split_stats
+            .accumulate(&stage4a_frame_split_stats);
 
         // In-loop deblock on the ARF reconstruction — the decoder runs
         // the same `filter_level` after IT-add, so the
@@ -4981,6 +5031,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5024,6 +5075,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5079,6 +5131,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5147,6 +5200,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5199,6 +5253,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5231,6 +5286,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5270,6 +5326,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5306,6 +5363,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5503,6 +5561,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5590,6 +5649,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5650,6 +5710,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5711,6 +5772,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5803,6 +5865,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -5959,6 +6022,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6041,6 +6105,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6295,6 +6360,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6354,6 +6420,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6475,6 +6542,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6560,6 +6628,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6636,6 +6705,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6727,6 +6797,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6786,6 +6857,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6864,6 +6936,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -6936,6 +7009,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7054,6 +7128,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7106,6 +7181,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7181,6 +7257,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7248,6 +7325,7 @@ mod tests {
             cq_level: 80,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7331,6 +7409,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7420,6 +7499,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7537,6 +7617,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7736,6 +7817,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -7862,6 +7944,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         }
@@ -8071,6 +8154,7 @@ mod tests {
         let cfg = EncoderConfig {
             gop_length: u32::MAX,
             enable_tpl: true,
+            stage4a_product_split_override: Default::default(),
             ..baseline_config()
         };
         let err = match StreamEncoder::new(cfg) {
@@ -8292,6 +8376,24 @@ mod tests {
         assert_eq!(cfg.gop_length, 60);
         assert_eq!(cfg.aq_mode, AqMode::Off);
         assert!(cfg.use_prev_frame_mvs);
+        assert_eq!(
+            cfg.stage4a_product_split_override,
+            Stage4aProductSplitOverride::Auto
+        );
+    }
+
+    #[test]
+    fn diag_take_stage4a_split_stats_drains_accumulator() {
+        let mut enc = StreamEncoder::new(EncoderConfig::new(64, 64)).unwrap();
+        enc.stage4a_split_stats.block16_attempts = 3;
+        enc.stage4a_split_stats.block16_slack_split_committed = 2;
+
+        let first = enc.diag_take_stage4a_split_stats();
+        assert_eq!(first.block16_attempts, 3);
+        assert_eq!(first.block16_slack_split_committed, 2);
+
+        let second = enc.diag_take_stage4a_split_stats();
+        assert_eq!(second, NonRdSplitStats::default());
     }
 
     #[test]
@@ -9074,6 +9176,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -9138,6 +9241,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -9221,6 +9325,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -9330,6 +9435,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -9420,6 +9526,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -9466,6 +9573,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -9509,6 +9617,7 @@ mod tests {
             cq_level: 0,
             temporal_layers: 1,
             enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
         };
@@ -9607,6 +9716,7 @@ mod tests {
                 cq_level: 0,
                 temporal_layers: 1,
                 enable_tpl: false,
+                stage4a_product_split_override: Default::default(),
                 min_qindex: 4,
                 max_qindex: 255,
             };

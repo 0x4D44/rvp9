@@ -280,6 +280,7 @@ fn cross_decoder_gate_vpxdec_ffmpeg() {
         cq_level: 0,
         temporal_layers: 1,
         enable_tpl: false,
+        stage4a_product_split_override: Default::default(),
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -557,6 +558,7 @@ fn rc_x1_diagnostic_dump() {
         cq_level: 0,
         temporal_layers: 1,
         enable_tpl: false,
+        stage4a_product_split_override: Default::default(),
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -644,6 +646,7 @@ fn rc_x1_sb_leaf_dump() {
         cq_level: 0,
         temporal_layers: 1,
         enable_tpl: false,
+        stage4a_product_split_override: Default::default(),
         min_qindex: 4,
         max_qindex: 255,
     };
@@ -732,6 +735,7 @@ fn rc_x1_internal_dump() {
         cq_level: 0,
         temporal_layers: 1,
         enable_tpl: false,
+        stage4a_product_split_override: Default::default(),
         min_qindex: 4,
         max_qindex: 255,
     };
