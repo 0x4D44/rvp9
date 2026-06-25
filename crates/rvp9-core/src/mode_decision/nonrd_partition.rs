@@ -406,6 +406,26 @@ where
     }
 }
 
+/// Admission policy for the `Block16x16 -> 4x Block8x8` SPLIT arm.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum Block16SplitAdmission {
+    /// Existing behavior: SPLIT must strictly beat the current best actual RD.
+    #[default]
+    Strict,
+    /// Admit a fully-evaluated 16x16 SPLIT when it is within 1/8 of parent NONE.
+    Slack1Over8,
+}
+
+impl Block16SplitAdmission {
+    const fn is_slack(self) -> bool {
+        matches!(self, Self::Slack1Over8)
+    }
+}
+
+fn block16_slack_cap(none_rd_cost: i64) -> i64 {
+    none_rd_cost.saturating_add(none_rd_cost / 8)
+}
+
 /// Caller-supplied bounds + parameters for one descent invocation.
 pub struct NonRdDescentParams<'a> {
     /// libvpx `x->min_partition_size` — the descent never recurses
@@ -433,6 +453,13 @@ pub struct NonRdDescentParams<'a> {
     /// existing per-leaf loop (the picker already handles `Block8x8`);
     /// this flag only widens the partition-search candidate set.
     pub allow_8x8_leaf: bool,
+    /// Product-only admission policy for 16x16-to-8x8 SPLIT.
+    ///
+    /// Defaults to [`Block16SplitAdmission::Strict`]. The slack policy is
+    /// intentionally narrow: it applies only to `Block16x16` nodes with a
+    /// feasible parent NONE and never changes the strict best RD value that
+    /// downstream RECT pruning observes.
+    pub block16_split_admission: Block16SplitAdmission,
 }
 
 /// One leaf of the descent's output — a sub-block within the SB.
@@ -479,6 +506,8 @@ pub struct NonRdSplitStats {
     pub block16_child_infeasible: u32,
     /// SPLIT attempts aborted by the libvpx-style partial-RD early-out.
     pub block16_partial_rd_early_out: u32,
+    /// Partial-RD early-outs bucketed by the child index evaluated last.
+    pub block16_partial_early_out_after_child: [u32; 4],
     /// Feasible SPLIT-vs-NONE comparisons where SPLIT beat NONE.
     pub block16_split_beats_none: u32,
     /// Feasible SPLIT-vs-NONE comparisons where NONE stayed cheaper.
@@ -490,6 +519,18 @@ pub struct NonRdSplitStats {
     /// Feasible SPLIT attempts where NONE was unavailable, so no margin can
     /// be computed.
     pub block16_no_none: u32,
+    /// Strict early-outs that Slack1Over8 would have continued.
+    pub block16_slack_would_continue: u32,
+    /// Slack-enabled SPLIT attempts that completed all four children.
+    pub block16_slack_completed: u32,
+    /// Completed non-strict SPLITs inside the 1/8 NONE-RD slack band.
+    pub block16_slack_split_eligible: u32,
+    /// Final selections where Slack1Over8, not strict RD, admitted SPLIT.
+    pub block16_slack_split_committed: u32,
+    /// Slack-admitted SPLITs displaced by a RECT arm inside the same slack cap.
+    pub block16_slack_rect_override: u32,
+    /// Completed slack-enabled SPLITs rejected for landing outside the cap.
+    pub block16_slack_rejected: u32,
     /// Sum of `split_rdcost - none_rdcost` over comparable attempts.
     pub block16_margin_sum: i64,
     /// Minimum `split_rdcost - none_rdcost` margin observed.
@@ -507,11 +548,24 @@ impl NonRdSplitStats {
         self.block16_infeasible_or_early += other.block16_infeasible_or_early;
         self.block16_child_infeasible += other.block16_child_infeasible;
         self.block16_partial_rd_early_out += other.block16_partial_rd_early_out;
+        for (dst, src) in self
+            .block16_partial_early_out_after_child
+            .iter_mut()
+            .zip(other.block16_partial_early_out_after_child)
+        {
+            *dst += src;
+        }
         self.block16_split_beats_none += other.block16_split_beats_none;
         self.block16_split_loses_to_none += other.block16_split_loses_to_none;
         self.block16_split_committed += other.block16_split_committed;
         self.block16_rect_overrides_split += other.block16_rect_overrides_split;
         self.block16_no_none += other.block16_no_none;
+        self.block16_slack_would_continue += other.block16_slack_would_continue;
+        self.block16_slack_completed += other.block16_slack_completed;
+        self.block16_slack_split_eligible += other.block16_slack_split_eligible;
+        self.block16_slack_split_committed += other.block16_slack_split_committed;
+        self.block16_slack_rect_override += other.block16_slack_rect_override;
+        self.block16_slack_rejected += other.block16_slack_rejected;
         self.block16_margin_sum = self
             .block16_margin_sum
             .saturating_add(other.block16_margin_sum);
@@ -927,9 +981,14 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
     // Try PARTITION_SPLIT — only if we have a child size to recurse
     // into AND we haven't hit the floor AND the breakout pruner didn't
     // veto the split.
-    let mut split_pick: Option<(u32, u32)> = None; // (sum_rate, sum_dist)
+    let mut split_pick: Option<(u32, u32)> = None; // strict SPLIT (sum_rate, sum_dist)
+    let mut slack_split_pick: Option<(u32, u32, i64)> = None; // slack SPLIT (sum_rate, sum_dist, rd)
     let mut split_children: [Option<DescendResult>; 4] = [None, None, None, None];
     let track_block16_split = matches!(bsize, BlockSize::Block16x16) && !bsize_at_floor;
+    let block16_slack_limit = (track_block16_split
+        && params.block16_split_admission.is_slack()
+        && none_rd_cost.is_some())
+    .then(|| block16_slack_cap(none_rd_cost.expect("checked above")));
     if track_block16_split && !do_split {
         state.split_stats.block16_breakout_suppressed += 1;
     }
@@ -982,10 +1041,27 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
                     // worse than the current best, stop walking
                     // siblings.
                     let rdc_so_far = rd_cost(params.rd_mult, sum_rate, u64::from(sum_dist));
-                    if rdc_so_far >= best_rd_cost && best_pick.is_some() {
+                    let strict_would_early_out = rdc_so_far >= best_rd_cost && best_pick.is_some();
+                    if track_block16_split
+                        && strict_would_early_out
+                        && none_rd_cost
+                            .map(block16_slack_cap)
+                            .is_some_and(|cap| rdc_so_far <= cap)
+                    {
+                        state.split_stats.block16_slack_would_continue += 1;
+                    }
+                    let should_early_out = if let Some(limit) = block16_slack_limit {
+                        strict_would_early_out && rdc_so_far > limit
+                    } else {
+                        strict_would_early_out
+                    };
+                    if should_early_out {
                         // Mark remaining quadrants infeasible (so
                         // we don't try to commit them).
                         partial_rd_early_out = true;
+                        if track_block16_split {
+                            state.split_stats.block16_partial_early_out_after_child[i] += 1;
+                        }
                         all_feasible = false;
                         break;
                     }
@@ -1002,6 +1078,9 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
         if all_feasible {
             if track_block16_split {
                 state.split_stats.block16_feasible += 1;
+                if block16_slack_limit.is_some() {
+                    state.split_stats.block16_slack_completed += 1;
+                }
             }
             let rdc_split = rd_cost(params.rd_mult, sum_rate, u64::from(sum_dist));
             if track_block16_split {
@@ -1016,6 +1095,13 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
             if rdc_split < best_rd_cost {
                 best_rd_cost = rdc_split;
                 split_pick = Some((sum_rate, sum_dist));
+            } else if let (Some(none_rdc), Some(limit)) = (none_rd_cost, block16_slack_limit) {
+                if rdc_split >= none_rdc && rdc_split <= limit {
+                    state.split_stats.block16_slack_split_eligible += 1;
+                    slack_split_pick = Some((sum_rate, sum_dist, rdc_split));
+                } else {
+                    state.split_stats.block16_slack_rejected += 1;
+                }
             }
         } else if track_block16_split {
             state.split_stats.block16_infeasible_or_early += 1;
@@ -1048,6 +1134,12 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
     // (`do_split = false` also sets libvpx's `do_rect = 0`), to keep the
     // A21 semantics: when breakout fires, skip rect too.
     let mut rect_pick: Option<(PartitionType, PartitionRdCandidate, PartitionRdCandidate)> = None;
+    let mut rect_slack_pick: Option<(
+        PartitionType,
+        PartitionRdCandidate,
+        PartitionRdCandidate,
+        i64,
+    )> = None;
     // Rect is gated like PARTITION_NONE on the upper bound: never search
     // a rect at a parent LARGER than `max_partition_size`. The variance
     // hint already excluded that parent size, so its rect halves are not
@@ -1106,6 +1198,13 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
                 if rdc < best_rd_cost {
                     best_rd_cost = rdc;
                     rect_pick = Some((PartitionType::Horz, top, bot));
+                } else if let (Some((_, _, split_rdc)), Some(limit)) =
+                    (slack_split_pick, block16_slack_limit)
+                    && rdc < split_rdc
+                    && rdc <= limit
+                    && rect_slack_pick.is_none_or(|(_, _, _, best)| rdc < best)
+                {
+                    rect_slack_pick = Some((PartitionType::Horz, top, bot, rdc));
                 }
             }
         }
@@ -1128,6 +1227,13 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
                 if rdc < best_rd_cost {
                     best_rd_cost = rdc;
                     rect_pick = Some((PartitionType::Vert, left_pick, right_pick));
+                } else if let (Some((_, _, split_rdc)), Some(limit)) =
+                    (slack_split_pick, block16_slack_limit)
+                    && rdc < split_rdc
+                    && rdc <= limit
+                    && rect_slack_pick.is_none_or(|(_, _, _, best)| rdc < best)
+                {
+                    rect_slack_pick = Some((PartitionType::Vert, left_pick, right_pick, rdc));
                 }
             }
         }
@@ -1176,6 +1282,41 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
             none_rd_cost,
         });
     }
+    if let Some((part, a, b, rect_rdc)) = rect_slack_pick {
+        if track_block16_split {
+            state.split_stats.block16_slack_rect_override += 1;
+        }
+        let step = rect_half_step_8x8(bsize);
+        let (sub, a_origin, b_origin) = match part {
+            PartitionType::Horz => (
+                subsize_for_horz(bsize).expect("horz subsize exists"),
+                (row_8x8, col_8x8),
+                (row_8x8 + step, col_8x8),
+            ),
+            PartitionType::Vert => (
+                subsize_for_vert(bsize).expect("vert subsize exists"),
+                (row_8x8, col_8x8),
+                (row_8x8, col_8x8 + step),
+            ),
+            _ => unreachable!("rect_slack_pick only carries Horz/Vert"),
+        };
+        let rect_cost = match part {
+            PartitionType::Horz => params.partition_costs[part_ctx][PARTITION_HORZ_IDX],
+            _ => params.partition_costs[part_ctx][PARTITION_VERT_IDX],
+        }
+        .max(0) as u32;
+        commit_rect_leaves(
+            state, row_8x8, col_8x8, bsize, sub, a_origin, a, b_origin, b,
+        );
+        let sum_rate = a.rate.saturating_add(b.rate).saturating_add(rect_cost);
+        let sum_dist = a.dist.saturating_add(b.dist);
+        return Some(DescendResult {
+            rate: sum_rate,
+            dist: sum_dist,
+            rd_cost: rect_rdc,
+            none_rd_cost,
+        });
+    }
     if let Some((rate, dist)) = split_pick {
         if track_block16_split {
             state.split_stats.block16_split_committed += 1;
@@ -1187,6 +1328,17 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
             rate,
             dist,
             rd_cost: best_rd_cost,
+            none_rd_cost,
+        });
+    }
+    if let Some((rate, dist, split_rdc)) = slack_split_pick {
+        if track_block16_split {
+            state.split_stats.block16_slack_split_committed += 1;
+        }
+        return Some(DescendResult {
+            rate,
+            dist,
+            rd_cost: split_rdc,
             none_rd_cost,
         });
     }
@@ -1421,6 +1573,7 @@ mod tests {
             // Default OFF — existing descent tests assert pre-Phase-A
             // behaviour (8×8 only from the variance hint).
             allow_8x8_leaf: false,
+            block16_split_admission: Block16SplitAdmission::Strict,
         }
     }
 
@@ -1733,6 +1886,178 @@ mod tests {
                 .filter(|l| matches!(l.bsize, BlockSize::Block16x16))
                 .count(),
             16
+        );
+    }
+
+    #[test]
+    fn strict_preflight_counts_slack_would_continue_without_changing_winner() {
+        let fc = FrameContext::new_default();
+        let pc = partition_costs(&fc);
+        let hint = uniform_hint(BlockSize::Block16x16);
+        let mut params = make_params(&pc, BlockSize::Block8x8, BlockSize::Block16x16);
+        params.allow_8x8_leaf = true;
+        params.rd_mult = 0;
+        let mut picker = |_x: usize, _y: usize, bs: BlockSize| {
+            let dist = match bs {
+                BlockSize::Block16x16 => 800,
+                // First child exceeds strict NONE RD but remains within the
+                // 1/8 slack band: strict must stop and count would-continue.
+                BlockSize::Block8x8 => 850,
+                _ => 1_000_000,
+            };
+            Some(PartitionRdCandidate {
+                rate: 0,
+                dist,
+                mv: Mv::ZERO,
+                mode: 0,
+                ref_frame: 0,
+            })
+        };
+
+        let result = nonrd_pick_partition(&hint, &params, &mut picker);
+
+        assert_eq!(result.split_stats.block16_attempts, 16);
+        assert_eq!(result.split_stats.block16_partial_rd_early_out, 16);
+        assert_eq!(
+            result.split_stats.block16_partial_early_out_after_child,
+            [16, 0, 0, 0]
+        );
+        assert_eq!(result.split_stats.block16_slack_would_continue, 16);
+        assert_eq!(result.split_stats.block16_slack_completed, 0);
+        assert_eq!(
+            result
+                .leaves
+                .iter()
+                .filter(|l| matches!(l.bsize, BlockSize::Block16x16))
+                .count(),
+            16
+        );
+    }
+
+    #[test]
+    fn slack_admits_block16_split_inside_one_eighth_none_band() {
+        let fc = FrameContext::new_default();
+        let pc = partition_costs(&fc);
+        let hint = uniform_hint(BlockSize::Block16x16);
+        let mut params = make_params(&pc, BlockSize::Block8x8, BlockSize::Block16x16);
+        params.allow_8x8_leaf = true;
+        params.block16_split_admission = Block16SplitAdmission::Slack1Over8;
+        params.rd_mult = 0;
+        let mut picker = |_x: usize, _y: usize, bs: BlockSize| {
+            let dist = match bs {
+                BlockSize::Block16x16 => 800,
+                // 4 * 210 = 840, which is worse than NONE but inside
+                // NONE + floor(NONE / 8) = 900 in distortion-only RD.
+                BlockSize::Block8x8 => 210,
+                _ => 1_000_000,
+            };
+            Some(PartitionRdCandidate {
+                rate: 0,
+                dist,
+                mv: Mv::ZERO,
+                mode: 0,
+                ref_frame: 0,
+            })
+        };
+
+        let result = nonrd_pick_partition(&hint, &params, &mut picker);
+
+        assert_eq!(result.split_stats.block16_attempts, 16);
+        assert_eq!(result.split_stats.block16_feasible, 16);
+        assert_eq!(result.split_stats.block16_partial_rd_early_out, 0);
+        assert_eq!(result.split_stats.block16_slack_completed, 16);
+        assert_eq!(result.split_stats.block16_slack_split_eligible, 16);
+        assert_eq!(result.split_stats.block16_slack_split_committed, 16);
+        assert_eq!(result.split_stats.block16_split_committed, 0);
+        assert_eq!(
+            result
+                .leaves
+                .iter()
+                .filter(|l| matches!(l.bsize, BlockSize::Block8x8))
+                .count(),
+            64
+        );
+    }
+
+    #[test]
+    fn strict_rect_winner_still_beats_slack_split() {
+        let fc = FrameContext::new_default();
+        let pc = partition_costs(&fc);
+        let hint = uniform_hint(BlockSize::Block16x16);
+        let mut params = make_params(&pc, BlockSize::Block8x8, BlockSize::Block16x16);
+        params.allow_8x8_leaf = true;
+        params.block16_split_admission = Block16SplitAdmission::Slack1Over8;
+        params.rd_mult = 0;
+        let mut picker = |_x: usize, _y: usize, bs: BlockSize| {
+            let dist = match bs {
+                BlockSize::Block16x16 => 800,
+                BlockSize::Block8x8 => 210,  // split actual = 840
+                BlockSize::Block16x8 => 350, // horz actual = 700
+                BlockSize::Block8x16 => 1_000,
+                _ => 1_000_000,
+            };
+            Some(PartitionRdCandidate {
+                rate: 0,
+                dist,
+                mv: Mv::ZERO,
+                mode: 0,
+                ref_frame: 0,
+            })
+        };
+
+        let result = nonrd_pick_partition(&hint, &params, &mut picker);
+
+        assert_eq!(result.split_stats.block16_slack_split_eligible, 16);
+        assert_eq!(result.split_stats.block16_slack_split_committed, 0);
+        assert_eq!(result.split_stats.block16_slack_rect_override, 0);
+        assert_eq!(
+            result
+                .leaves
+                .iter()
+                .filter(|l| matches!(l.bsize, BlockSize::Block16x8))
+                .count(),
+            32
+        );
+    }
+
+    #[test]
+    fn rect_can_override_slack_split_only_inside_cap_and_below_split() {
+        let fc = FrameContext::new_default();
+        let pc = partition_costs(&fc);
+        let hint = uniform_hint(BlockSize::Block16x16);
+        let mut params = make_params(&pc, BlockSize::Block8x8, BlockSize::Block16x16);
+        params.allow_8x8_leaf = true;
+        params.block16_split_admission = Block16SplitAdmission::Slack1Over8;
+        params.rd_mult = 0;
+        let mut picker = |_x: usize, _y: usize, bs: BlockSize| {
+            let dist = match bs {
+                BlockSize::Block16x16 => 800,
+                BlockSize::Block8x8 => 210,  // split actual = 840
+                BlockSize::Block16x8 => 415, // horz actual = 830
+                BlockSize::Block8x16 => 1_000,
+                _ => 1_000_000,
+            };
+            Some(PartitionRdCandidate {
+                rate: 0,
+                dist,
+                mv: Mv::ZERO,
+                mode: 0,
+                ref_frame: 0,
+            })
+        };
+
+        let result = nonrd_pick_partition(&hint, &params, &mut picker);
+
+        assert_eq!(result.split_stats.block16_slack_split_eligible, 16);
+        assert_eq!(result.split_stats.block16_slack_split_committed, 0);
+        assert_eq!(result.split_stats.block16_slack_rect_override, 16);
+        assert_eq!(
+            result
+                .leaves
+                .iter()
+                .filter(|l| matches!(l.bsize, BlockSize::Block16x8))
+                .count(),
+            32
         );
     }
 
