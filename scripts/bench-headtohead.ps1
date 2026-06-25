@@ -20,6 +20,7 @@
 # Usage:
 #   pwsh scripts/bench-headtohead.ps1                # full default matrix, 1 run
 #   pwsh scripts/bench-headtohead.ps1 -SkipEncode    # assume C/D/E exist
+#   pwsh scripts/bench-headtohead.ps1 -CheckOnly     # report prerequisites only
 #   pwsh scripts/bench-headtohead.ps1 -Repetitions 3 # quicker vpxdec pass
 #   pwsh scripts/bench-headtohead.ps1 -Runs 5        # 5 rvp9 sweeps for stats
 #   pwsh scripts/bench-headtohead.ps1 -Runs 5 -SkipVpxdec  # only rvp9 (faster)
@@ -36,7 +37,8 @@ param(
     [int] $Runs = 1,
     [switch] $SkipEncode,
     [switch] $SkipRvp9Bench,
-    [switch] $SkipVpxdec
+    [switch] $SkipVpxdec,
+    [switch] $CheckOnly
 )
 
 if ($Runs -lt 1) {
@@ -48,6 +50,7 @@ $repo = (git rev-parse --show-toplevel).Trim()
 
 # --- Paths ---------------------------------------------------------------
 $vpxdec     = Join-Path $repo 'build/libvpx/vpxdec.exe'
+$vpxenc     = Join-Path $repo 'build/libvpx/vpxenc.exe'
 $encodeScript = Join-Path $repo 'scripts/encode-corpus.ps1'
 $rvp9bench  = Join-Path $repo 'target/release/decode-headtohead.exe'
 
@@ -59,15 +62,6 @@ $ledgerCsv  = Join-Path $benchOut 'decode-headtohead.csv'
 $vectors    = Join-Path $repo 'tests/conformance/vectors'
 $fixtures   = Join-Path $repo 'tests/corpus/fixtures'
 $y4mDir     = Join-Path $repo 'tests/corpus'
-
-# --- Sanity checks -------------------------------------------------------
-if (-not (Test-Path $vpxdec)) {
-    throw "vpxdec.exe not found at $vpxdec — BLOCKER: build libvpx first (scripts/build-libvpx.sh)."
-}
-if (-not (Test-Path $rvp9bench)) {
-    throw "rvp9 bench binary not found at $rvp9bench — run `cargo build --release -p rvp9-bench --bin decode-headtohead` first."
-}
-New-Item -ItemType Directory -Force $benchOut | Out-Null
 
 # --- HLD §5 matrix definition --------------------------------------------
 # Each entry: label, fixture path (full), threads, optional encode-source.
@@ -96,6 +90,116 @@ $encodeJobs = @(
     @{ Src=(Join-Path $y4mDir 'testsrc_1080p30.y4m'); Out=(Join-Path $fixtures 'testsrc_1080p30.ivf'); ExtraArgs=@('--passes=1','--lag-in-frames=0','--auto-alt-ref=0','--tile-columns=2') },
     @{ Src=(Join-Path $y4mDir 'testsrc_1080p60.y4m'); Out=(Join-Path $fixtures 'testsrc_1080p60.ivf'); ExtraArgs=@('--passes=1','--lag-in-frames=0','--auto-alt-ref=0','--tile-columns=2') }
 )
+
+function New-ReadinessItem {
+    param(
+        [string] $Group,
+        [string] $Label,
+        [string] $Path,
+        [bool] $Required,
+        [string] $Detail
+    )
+    $exists = Test-Path -LiteralPath $Path
+    $status = if ($exists) { 'OK' } elseif ($Required) { 'MISSING' } else { 'OPTIONAL' }
+    [pscustomobject] @{
+        Group = $Group
+        Label = $Label
+        Path = $Path
+        Required = $Required
+        Status = $status
+        Detail = $Detail
+    }
+}
+
+function Get-Rvp9TsvPaths {
+    $paths = @()
+    for ($i = 1; $i -le $Runs; $i++) {
+        $paths += if ($Runs -gt 1) {
+            Join-Path $benchOut "decode-headtohead.rvp9.r$i.tsv"
+        } else {
+            $rvp9Tsv
+        }
+    }
+    return $paths
+}
+
+function Get-ReadinessItems {
+    $items = @()
+
+    $items += New-ReadinessItem -Group 'tools' -Label 'rvp9 decode-headtohead' -Path $rvp9bench `
+        -Required:(-not $SkipRvp9Bench) -Detail 'run: cargo build --release -p rvp9-bench --bin decode-headtohead'
+    if ($SkipRvp9Bench) {
+        foreach ($path in (Get-Rvp9TsvPaths)) {
+            $items += New-ReadinessItem -Group 'inputs' -Label (Split-Path -Leaf $path) -Path $path `
+                -Required:$true -Detail 'required because -SkipRvp9Bench reuses an existing TSV'
+        }
+    }
+    $items += New-ReadinessItem -Group 'tools' -Label 'libvpx vpxdec' -Path $vpxdec `
+        -Required:(-not $SkipVpxdec) -Detail 'build libvpx first, usually via scripts/build-libvpx.sh'
+
+    $missingGeneratedFixtures = @($encodeJobs | Where-Object { -not (Test-Path -LiteralPath $_.Out) })
+    $needsEncode = (-not $SkipEncode) -and ($missingGeneratedFixtures.Count -gt 0)
+    $items += New-ReadinessItem -Group 'tools' -Label 'libvpx vpxenc' -Path $vpxenc `
+        -Required:$needsEncode -Detail 'needed only when generated testsrc fixtures are absent'
+    $items += New-ReadinessItem -Group 'scripts' -Label 'encode-corpus.ps1' -Path $encodeScript `
+        -Required:$needsEncode -Detail 'encodes generated C/D/E fixtures from raw y4m sources'
+
+    $fixtureRequired = (-not $SkipRvp9Bench) -or (-not $SkipVpxdec)
+    foreach ($row in $matrix) {
+        $items += New-ReadinessItem -Group 'fixtures' -Label "$($row.Label) t=$($row.Threads)" -Path $row.Path `
+            -Required:$fixtureRequired -Detail 'bench matrix input'
+    }
+
+    foreach ($job in $encodeJobs) {
+        $sourceRequired = (-not $SkipEncode) -and (-not (Test-Path -LiteralPath $job.Out))
+        $items += New-ReadinessItem -Group 'sources' -Label (Split-Path -Leaf $job.Src) -Path $job.Src `
+            -Required:$sourceRequired -Detail 'raw source for generated fixture'
+    }
+
+    return $items
+}
+
+function Write-ReadinessReport {
+    param([object[]] $Items)
+
+    Write-Host "[check] bench-headtohead readiness"
+    foreach ($group in ($Items | Group-Object Group)) {
+        Write-Host ""
+        Write-Host "[$($group.Name)]"
+        foreach ($item in $group.Group) {
+            $requirement = if ($item.Required) { 'required' } else { 'optional' }
+            Write-Host ("  {0,-8} {1,-42} {2}" -f $item.Status, $item.Label, $item.Path)
+            if (-not (Test-Path -LiteralPath $item.Path)) {
+                Write-Host ("           ({0}) {1}" -f $requirement, $item.Detail)
+            }
+        }
+    }
+
+    $missing = @($Items | Where-Object { $_.Required -and $_.Status -eq 'MISSING' })
+    Write-Host ""
+    if ($missing.Count -eq 0) {
+        Write-Host "[check] PASS: all required prerequisites are present"
+    } else {
+        Write-Host "[check] FAIL: $($missing.Count) required prerequisite(s) missing"
+    }
+    return $missing.Count
+}
+
+if ($CheckOnly) {
+    $missing = Write-ReadinessReport -Items (Get-ReadinessItems)
+    if ($missing -gt 0) { exit 1 }
+    exit 0
+}
+
+# --- Sanity checks -------------------------------------------------------
+if ((-not $SkipVpxdec) -and (-not (Test-Path $vpxdec))) {
+    throw "vpxdec.exe not found at $vpxdec — BLOCKER: build libvpx first (scripts/build-libvpx.sh)."
+}
+if ((-not $SkipRvp9Bench) -and (-not (Test-Path $rvp9bench))) {
+    throw "rvp9 bench binary not found at $rvp9bench — run `cargo build --release -p rvp9-bench --bin decode-headtohead` first."
+}
+New-Item -ItemType Directory -Force $benchOut | Out-Null
+
 if (-not $SkipEncode) {
     foreach ($job in $encodeJobs) {
         if (Test-Path $job.Out) {
@@ -119,16 +223,9 @@ if (-not $SkipEncode) {
 # captures ONE timestamp at script start ($sweepTimestamp, used for
 # every CSV row this invocation appends — N rows per fixture×threads).
 $sweepTimestamp = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-$rvp9TsvPaths = @()
+$rvp9TsvPaths = Get-Rvp9TsvPaths
 for ($i = 1; $i -le $Runs; $i++) {
-    $perRunTsv = if ($Runs -gt 1) {
-        Join-Path $benchOut "decode-headtohead.rvp9.r$i.tsv"
-    } else {
-        # Single-run: keep the historical path for backwards compat
-        # (some external tools / smoke checks rely on this name).
-        $rvp9Tsv
-    }
-    $rvp9TsvPaths += $perRunTsv
+    $perRunTsv = $rvp9TsvPaths[$i - 1]
     if (-not $SkipRvp9Bench) {
         Write-Host ""
         Write-Host "[rvp9] running decode-headtohead (run $i / $Runs)..."
@@ -290,8 +387,10 @@ $timestamp = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ" -AsUTC)
 $gitSha    = (git rev-parse --short HEAD).Trim()
 # vpxdec has no `--version`; the version banner prints on -v when given
 # a valid input. Use the smallest available fixture so the call is cheap.
-$verProbe  = ($uniqueFixtures | Where-Object { Test-Path $_ } | Select-Object -First 1)
-if ($verProbe) {
+$verProbe  = if ($SkipVpxdec) { $null } else { ($uniqueFixtures | Where-Object { Test-Path $_ } | Select-Object -First 1) }
+if ($SkipVpxdec) {
+    $vpxVer = '(libvpx; skipped)'
+} elseif ($verProbe) {
     $verLines = & $vpxdec --noblit --summary -v $verProbe 2>&1 | ForEach-Object { $_.ToString() }
     $vpxVer = ($verLines | Where-Object { $_ -match 'Decoder v' } | Select-Object -First 1)
     if (-not $vpxVer) { $vpxVer = '(libvpx; version probe failed)' }
