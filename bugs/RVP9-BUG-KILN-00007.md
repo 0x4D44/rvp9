@@ -1,11 +1,24 @@
 # RVP9-BUG-KILN-00007 - kfonly Profile-1 tests left #[ignore]d after the harvest fixed their bug — SIG1 multi-keyframe independence has no committed-vector regression guard
 
 - **State:** Closed
+- **Priority:** Should
 - **Severity:** Medium
 - **Area:** harness/test-coverage (decoder SIG1/SIG2)
 - **Raised:** 2026-06-19 by Claude overnight code review
-- **State history:** 2026-06-19 Opened by Claude from the track2 decoder-fix harvest review pass. 2026-06-21 Fixed by Claude (task/fix-kfonly-tests): un-ignored the three kfonly follow-up tests in `crates/rvp9-harness/tests/profile1_decode.rs`, flipped the inverted `assert!(mismatched > 0)` self-check to `assert_eq!(mismatched, 0)`, renamed them to `profile1_{444,422,440}_kfonly_decodes_bit_exact`, and rewrote the stale doc comment. They now decode bit-exact and run by default (verified mismatched==0 first). Test-only; no version bump. Awaiting two-eyes verification → Closed.
-- **State history:** 2026-06-23 Closed by Codex (task/20260623-TSK-HUM-verify-fixed-bugs): independently verified the original observation is resolved. The three kfonly Profile-1 regression tests are active, not ignored, and `$null | mdtimeout 300 cargo test -p rvp9-harness --test profile1_decode --release kfonly -- --nocapture` passed all 3 tests with `mismatched == 0`.
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
+- **Verify retry after:** -
+- **Held branch:** -
+- **Legacy fixed run:** -
+- **Attempts:** fix=0, doubt=0, indeterminate=0
+- **State history:** 2026-06-19 Opened by Claude from the track2 decoder-fix harvest review pass. 2026-06-21 Fixed by Claude (task/fix-kfonly-tests): un-ignored the three kfonly follow-up tests in `crates/rvp9-harness/tests/profile1_decode.rs`, flipped the inverted `assert!(mismatched > 0)` self-check to `assert_eq!(mismatched, 0)`, renamed them to `profile1_{444,422,440}_kfonly_decodes_bit_exact`, and rewrote the stale doc comment. They now decode bit-exact and run by default (verified mismatched==0 first). Test-only; no version bump. Awaiting two-eyes verification → Closed. -> 2026-06-23 Closed by Codex (task/20260623-TSK-HUM-verify-fixed-bugs): independently verified the original observation is resolved. The three kfonly Profile-1 regression tests are active, not ignored, and `$null | mdtimeout 300 cargo test -p rvp9-harness --test profile1_decode --release kfonly -- --nocapture` passed all 3 tests with `mismatched == 0`.
 
 ## Observation
 

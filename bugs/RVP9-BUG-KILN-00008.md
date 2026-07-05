@@ -1,11 +1,24 @@
 # RVP9-BUG-KILN-00008 - G-C decode_inter_block integration paths (SEG_LVL_REF_FRAME force glue + Sub8SegSkip Err path) lack end-to-end coverage
 
 - **State:** Closed
+- **Priority:** Should
 - **Severity:** Low
 - **Area:** decoder/segmentation test-coverage
 - **Raised:** 2026-06-19 by Claude overnight code review
-- **State history:** 2026-06-19 Opened by Claude from the track2 decoder-fix harvest review pass. 2026-06-21 Fixed by Claude (task/fix-seg-coverage): added `seg_skip_sub8_through_decode_inter_block_errs_without_advancing` in `crates/rvp9-decoder/src/tile.rs`, driving the real `decode_inter_block` end-to-end for (b) the Sub8SegSkip Err path (asserts `Err(Sub8SegSkip)` + bool reader does not advance) and (a) the SEG_LVL_REF_FRAME `is_inter` derivation (both branches: `Some(LAST)`→inter→guard fires; `Some(INTRA)`→`is_inter=false`→intra path, guard correctly does not fire). Verified red-before-green by weakening the guard predicate. Test-only; no version bump. Awaiting two-eyes verification → Closed.
-- **State history:** 2026-06-23 Closed by Codex (task/20260623-TSK-HUM-verify-fixed-bugs): independently verified the original coverage gap is closed by the real `decode_inter_block` integration test. `$null | mdtimeout 180 cargo test -p rvp9-decoder --lib seg_skip_sub8_through_decode_inter_block_errs_without_advancing -- --nocapture` passed, covering the Sub8SegSkip Err path, no-reader-advance invariant, and forced LAST/INTRA `SEG_LVL_REF_FRAME` branch derivation.
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
+- **Verify retry after:** -
+- **Held branch:** -
+- **Legacy fixed run:** -
+- **Attempts:** fix=0, doubt=0, indeterminate=0
+- **State history:** 2026-06-19 Opened by Claude from the track2 decoder-fix harvest review pass. 2026-06-21 Fixed by Claude (task/fix-seg-coverage): added `seg_skip_sub8_through_decode_inter_block_errs_without_advancing` in `crates/rvp9-decoder/src/tile.rs`, driving the real `decode_inter_block` end-to-end for (b) the Sub8SegSkip Err path (asserts `Err(Sub8SegSkip)` + bool reader does not advance) and (a) the SEG_LVL_REF_FRAME `is_inter` derivation (both branches: `Some(LAST)`→inter→guard fires; `Some(INTRA)`→`is_inter=false`→intra path, guard correctly does not fire). Verified red-before-green by weakening the guard predicate. Test-only; no version bump. Awaiting two-eyes verification → Closed. -> 2026-06-23 Closed by Codex (task/20260623-TSK-HUM-verify-fixed-bugs): independently verified the original coverage gap is closed by the real `decode_inter_block` integration test. `$null | mdtimeout 180 cargo test -p rvp9-decoder --lib seg_skip_sub8_through_decode_inter_block_errs_without_advancing -- --nocapture` passed, covering the Sub8SegSkip Err path, no-reader-advance invariant, and forced LAST/INTRA `SEG_LVL_REF_FRAME` branch derivation.
 
 ## Resolution note (2026-06-21)
 

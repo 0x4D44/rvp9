@@ -120,6 +120,27 @@ AQ = CYCLIC_REFRESH (mode 3) only. CBR + VBR-RT, **no altref** in v1. Single-pas
 real-time path; **not** in scope: 2-pass, cpu-used 0–5 slow RDO, AV1/VP8, hardware
 encode, C ABI/FFI, WASM.
 
+## Work tracking
+
+The persistent defect ledger is `bugs/`: one markdown file per bug, filename ==
+the bug ID, state as a field inside the file. There is no root `BUGS.md`.
+Accepted enhancements, design follow-ups, and durable behavioural specs live in
+the sibling `reqs/` ledger, one markdown file per requirement. There is no root
+`REQS.md`.
+
+Read `bugs/README.md` before raising, fixing, or verifying a tracked bug. Read
+`reqs/README.md` before capturing or building a requirement. Use the fleet
+`bug-tracking`, `reqs-capture`, and `reqs-loop` skills when their trigger
+phrases apply.
+
+Ordinary development test failures do not automatically become bug-ledger
+entries; promote only separate durable defects. A tracked bug fix moves the bug
+to `Fixed` with regression evidence; a different verifier closes it. RVP9
+requirements are manual/heavy for now: manual/heavy implementations move
+`Accepted -> Implemented` when the work lands and never self-promote to
+`Satisfied`. `Flow: light` is disabled until deltic supports this virtual
+workspace's `crates/**` layout and RVP9 gate commands.
+
 ## Repo-specific conventions
 
 - **libvpx parity is the discipline.** Byte-parity with libvpx is a *diagnostic

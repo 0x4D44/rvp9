@@ -1,11 +1,24 @@
 # RVP9-BUG-KILN-00010 - idct16x16 SSE2 diverges from AVX2/scalar on in-domain i12 input — possible real SSE2 saturation bug (NOT confirmed out-of-domain)
 
 - **State:** Closed
+- **Priority:** Should
 - **Severity:** Medium
 - **Area:** dsp/x86_64 idct16x16 (SSE2 256-point kernel)
 - **Raised:** 2026-06-20 by Claude (green-the-build pass)
-- **State history:** 2026-06-20 Opened by Claude from the green-the-build pass; out-of-domain hypothesis adversarially REFUTED (2/2 skeptics) — needs deeper triage. 2026-06-21 Fixed by Claude (task/fix-idct16-sse2) — out-of-domain CONFIRMED by instrumentation; test-domain fix (kernel is libvpx-faithful and correct). Awaiting two-eyes verification → Closed.
-- **State history:** 2026-06-23 Closed by Codex (task/20260623-TSK-HUM-verify-fixed-bugs): independently verified the original SSE2-vs-AVX2 failure is resolved as an out-of-domain test issue, not a kernel defect. `notes/divergence-ledger.md` documents the accepted out-of-domain saturation divergence, `$null | mdtimeout 300 cargo test -p rvp9-core --lib idct16x16_sse2_indomain_exact_outofdomain_saturates -- --nocapture` passed, and `$null | mdtimeout 600 cargo test -p rvp9-core --lib idct16x16_sse2 -- --nocapture` passed all 12 SSE2 tests.
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
+- **Verify retry after:** -
+- **Held branch:** -
+- **Legacy fixed run:** -
+- **Attempts:** fix=0, doubt=0, indeterminate=0
+- **State history:** 2026-06-20 Opened by Claude from the green-the-build pass; out-of-domain hypothesis adversarially REFUTED (2/2 skeptics) — needs deeper triage. 2026-06-21 Fixed by Claude (task/fix-idct16-sse2) — out-of-domain CONFIRMED by instrumentation; test-domain fix (kernel is libvpx-faithful and correct). Awaiting two-eyes verification → Closed. -> 2026-06-23 Closed by Codex (task/20260623-TSK-HUM-verify-fixed-bugs): independently verified the original SSE2-vs-AVX2 failure is resolved as an out-of-domain test issue, not a kernel defect. `notes/divergence-ledger.md` documents the accepted out-of-domain saturation divergence, `$null | mdtimeout 300 cargo test -p rvp9-core --lib idct16x16_sse2_indomain_exact_outofdomain_saturates -- --nocapture` passed, and `$null | mdtimeout 600 cargo test -p rvp9-core --lib idct16x16_sse2 -- --nocapture` passed all 12 SSE2 tests.
 
 ## Resolution (2026-06-21)
 

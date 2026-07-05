@@ -25,6 +25,12 @@ Use rustfmt defaults, four-space indentation, and Rust naming conventions: `snak
 
 Place integration tests in each crate's `tests/` directory. Add focused regression tests for changed codec behavior, and use harness or differential tests when behavior must match libvpx. Follow existing naming patterns such as `cli_roundtrip`, `panic_safety`, `w_*`, `e*`, and `diag_*` when extending related suites. Run the smallest meaningful test first, then escalate to workspace checks when the change crosses crates.
 
+## Work Tracking
+
+Defects live in `bugs/`, one markdown file per bug; accepted enhancements and durable behavioural specs live in `reqs/`, one markdown file per requirement. Read `bugs/README.md` before raising, fixing, or verifying a tracked bug, and read `reqs/README.md` before capturing or building a requirement. Use the fleet `bug-tracking`, `reqs-capture`, and `reqs-loop` skills when their trigger phrases apply.
+
+Ordinary development test failures do not automatically become `bugs/` entries; only separate durable defects should be promoted. A tracked bug fix moves the bug to `Fixed` with regression evidence, and a different verifier closes it. RVP9 requirements are manual/heavy for now: manual/heavy implementations move `Accepted -> Implemented` when the work lands and never self-promote to `Satisfied`; `Flow: light` is disabled until deltic supports this virtual workspace's `crates/**` layout and gates.
+
 ## Commit & Pull Request Guidelines
 
 Recent history uses scoped prefixes such as `fix(enc):`, `perf(dec):`, `bench:`, `docs(enc):`, `scripts:`, and `journal:`. Keep subjects concise and outcome-focused. PRs should describe the behavior changed, list validation commands and results, link the relevant plan or issue, and include benchmark or BD-rate data for performance or quality changes.

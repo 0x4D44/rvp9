@@ -1,12 +1,24 @@
 # RVP9-BUG-KILN-00001 - Strided lookahead input can panic instead of returning an input-size error
 
 - **State:** Closed
+- **Priority:** Should
 - **Severity:** High
 - **Area:** encoder/lookahead
 - **Raised:** 2026-06-17 by Codex overnight code review
-- **State history:** 2026-06-17 Opened by Codex from the Stage 4a rate-control/frame-loop review pass.
-- **State history:** 2026-06-23 Fixed by Codex (task/20260623-TSK-HUM-fix-kiln-00001-lookahead-stride; fixing commit: this commit): centralized strided plane validation on the actual final row end, using checked arithmetic before either `StreamEncoder` or `LookaheadCtx` copies source rows. Regression coverage: `lookahead::tests::push_rejects_strided_short_plane_without_panicking`, `frame_loop::tests::encode_frame_rejects_overflowing_y_stride`, and `frame_loop::tests::encode_frame_rejects_overflowing_y_plane_extent_without_panicking`. Awaiting two-eyes verification.
-- **State history:** 2026-06-24 Closed by Codex after independent two-eyes verification on `ffc4e7e`: fixing commit `305095e` is present; `cargo test -p rvp9-encoder --lib` passed 484 tests with 1 ignored, including all named regressions; a disposable old-behavior check restored the pre-fix tight-size and unchecked-stride validation and confirmed `push_rejects_strided_short_plane_without_panicking` plus `encode_frame_rejects_overflowing_y_stride` fail with the original panic/overflow behavior; independent verifier agent `019efbdd-633a-73d3-b5d2-73fe0d2a4525` also returned CONFIRMED.
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
+- **Verify retry after:** -
+- **Held branch:** -
+- **Legacy fixed run:** -
+- **Attempts:** fix=0, doubt=0, indeterminate=0
+- **State history:** 2026-06-17 Opened by Codex from the Stage 4a rate-control/frame-loop review pass. -> 2026-06-23 Fixed by Codex (task/20260623-TSK-HUM-fix-kiln-00001-lookahead-stride; fixing commit: this commit): centralized strided plane validation on the actual final row end, using checked arithmetic before either `StreamEncoder` or `LookaheadCtx` copies source rows. Regression coverage: `lookahead::tests::push_rejects_strided_short_plane_without_panicking`, `frame_loop::tests::encode_frame_rejects_overflowing_y_stride`, and `frame_loop::tests::encode_frame_rejects_overflowing_y_plane_extent_without_panicking`. Awaiting two-eyes verification. -> 2026-06-24 Closed by Codex after independent two-eyes verification on `ffc4e7e`: fixing commit `305095e` is present; `cargo test -p rvp9-encoder --lib` passed 484 tests with 1 ignored, including all named regressions; a disposable old-behavior check restored the pre-fix tight-size and unchecked-stride validation and confirmed `push_rejects_strided_short_plane_without_panicking` plus `encode_frame_rejects_overflowing_y_stride` fail with the original panic/overflow behavior; independent verifier agent `019efbdd-633a-73d3-b5d2-73fe0d2a4525` also returned CONFIRMED.
 
 ## Observation
 

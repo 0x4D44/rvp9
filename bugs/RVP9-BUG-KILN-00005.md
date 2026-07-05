@@ -1,12 +1,24 @@
 # RVP9-BUG-KILN-00005 - SVC refresh override can reset GOLDEN age without refreshing GOLDEN
 
 - **State:** Closed
+- **Priority:** Should
 - **Severity:** Medium
 - **Area:** encoder/SVC GOP state
 - **Raised:** 2026-06-17 by Codex overnight code review
-- **State history:** 2026-06-17 Opened by Codex from the Stage 4a rate-control/frame-loop review pass.
-- **State history:** 2026-06-23 Fixed by Codex (task/20260623-TSK-HUM-fix-kiln-00001-lookahead-stride; fixing commit: this commit): `frames_since_golden_refresh` now resets from the final emitted GOLDEN refresh bit, not from the pre-SVC GOP schedule. Regression coverage: `a18_temporal_svc_golden_age_follows_emitted_refresh_flags`. Awaiting two-eyes verification.
-- **State history:** 2026-06-24 Closed by Codex after independent two-eyes verification on `ffc4e7e`: fixing commit `138f863` is present; `cargo test -p rvp9-encoder --lib` passed 484 tests with 1 ignored, including `a18_temporal_svc_golden_age_follows_emitted_refresh_flags` and adjacent SVC pattern tests; a disposable old-behavior check restored the scheduled-`GfUpdate` reset and confirmed the regression fails with ages `[0, 1, 2, 3, 4, 5, 6, 7, 0]` instead of `0..=8`; independent verifier agent `019efbdd-cfbf-75b0-be72-6154e0581e5a` also returned CONFIRMED.
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
+- **Verify retry after:** -
+- **Held branch:** -
+- **Legacy fixed run:** -
+- **Attempts:** fix=0, doubt=0, indeterminate=0
+- **State history:** 2026-06-17 Opened by Codex from the Stage 4a rate-control/frame-loop review pass. -> 2026-06-23 Fixed by Codex (task/20260623-TSK-HUM-fix-kiln-00001-lookahead-stride; fixing commit: this commit): `frames_since_golden_refresh` now resets from the final emitted GOLDEN refresh bit, not from the pre-SVC GOP schedule. Regression coverage: `a18_temporal_svc_golden_age_follows_emitted_refresh_flags`. Awaiting two-eyes verification. -> 2026-06-24 Closed by Codex after independent two-eyes verification on `ffc4e7e`: fixing commit `138f863` is present; `cargo test -p rvp9-encoder --lib` passed 484 tests with 1 ignored, including `a18_temporal_svc_golden_age_follows_emitted_refresh_flags` and adjacent SVC pattern tests; a disposable old-behavior check restored the scheduled-`GfUpdate` reset and confirmed the regression fails with ages `[0, 1, 2, 3, 4, 5, 6, 7, 0]` instead of `0..=8`; independent verifier agent `019efbdd-cfbf-75b0-be72-6154e0581e5a` also returned CONFIRMED.
 
 ## Observation
 

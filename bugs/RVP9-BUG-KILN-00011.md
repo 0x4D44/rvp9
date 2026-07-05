@@ -1,11 +1,24 @@
 # RVP9-BUG-KILN-00011 - prev_mv_grid contains IntraFrame cells after an inter encode (a18 invariant violated) — pre-existing
 
 - **State:** Blocked
+- **Priority:** Should
 - **Severity:** Low
 - **Area:** encoder/prev_mv_grid population (Stage 4a' picker)
 - **Raised:** 2026-06-20 by Claude (green-the-build pass)
-- **State history:** 2026-06-20 Opened by Claude from the green-the-build pass; confirmed pre-existing (fails at baseline 01f8f2b and at HEAD).
-- **State history:** 2026-06-23 Blocked by Codex during ledger-drain triage; current source and focused test evidence show the recorded no-`IntraFrame` invariant is stale, not an unattended-fixable encoder defect. Needs Arthur/maintainer disposition as non-defect or conversion into a docs-cleanup requirement.
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
+- **Verify retry after:** -
+- **Held branch:** -
+- **Legacy fixed run:** -
+- **Attempts:** fix=0, doubt=0, indeterminate=0
+- **State history:** 2026-06-20 Opened by Claude from the green-the-build pass; confirmed pre-existing (fails at baseline 01f8f2b and at HEAD). -> 2026-06-23 Blocked by Codex during ledger-drain triage; current source and focused test evidence show the recorded no-`IntraFrame` invariant is stale, not an unattended-fixable encoder defect. Needs Arthur/maintainer disposition as non-defect or conversion into a docs-cleanup requirement.
 
 ## Observation
 

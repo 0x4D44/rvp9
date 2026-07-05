@@ -1,12 +1,24 @@
 # RVP9-BUG-KILN-00002 - Accepted encoder and rate-control configs overflow derived arithmetic
 
 - **State:** Closed
+- **Priority:** Should
 - **Severity:** High
 - **Area:** encoder/rate-control config validation
 - **Raised:** 2026-06-17 by Codex overnight code review
-- **State history:** 2026-06-17 Opened by Codex from the Stage 4a rate-control/frame-loop review pass.
-- **State history:** 2026-06-23 Fixed by Codex (task/20260623-TSK-HUM-fix-kiln-00001-lookahead-stride; fixing commit: this commit): added explicit supported config bounds before derived arithmetic or allocation, saturated the public macroblock-count helper for unvalidated callers, and made SVC bitrate splitting checked and total-preserving. Regression coverage: `validate_rejects_absurd_finite_framerate`, `validate_rejects_overflowing_macroblock_count`, `mbs_does_not_panic_on_unvalidated_huge_dimensions`, `validate_rejects_buffer_size_ms_to_bits_overflow`, `validate_rejects_unbounded_gop_length`, `validate_rejects_unbounded_kf_boost`, `stream_encoder_rejects_unsupported_large_dimensions_before_allocating`, `stream_encoder_rejects_svc_layer_bitrate_that_cannot_fit_i32`, `stream_encoder_preserves_nondivisible_svc_bitrate_remainder`, and `stream_encoder_rejects_unbounded_tpl_gop_before_allocating`. Awaiting two-eyes verification.
-- **State history:** 2026-06-24 Closed by Codex after independent two-eyes verification on `ffc4e7e`: fixing commit `05123a9` is present; `cargo test -p rvp9-encoder --lib` passed 484 tests with 1 ignored, including the config-bound, saturated-`mbs`, allocation-before-construct, and SVC bitrate regressions; a disposable old-behavior check restored the pre-fix unchecked `mbs()` multiplication and removed the framerate cap, confirming `mbs_does_not_panic_on_unvalidated_huge_dimensions` and `validate_rejects_absurd_finite_framerate` fail without the fix; independent verifier agent `019efbdd-7c25-7df0-b052-fde562b0bf38` also returned CONFIRMED.
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
+- **Verify retry after:** -
+- **Held branch:** -
+- **Legacy fixed run:** -
+- **Attempts:** fix=0, doubt=0, indeterminate=0
+- **State history:** 2026-06-17 Opened by Codex from the Stage 4a rate-control/frame-loop review pass. -> 2026-06-23 Fixed by Codex (task/20260623-TSK-HUM-fix-kiln-00001-lookahead-stride; fixing commit: this commit): added explicit supported config bounds before derived arithmetic or allocation, saturated the public macroblock-count helper for unvalidated callers, and made SVC bitrate splitting checked and total-preserving. Regression coverage: `validate_rejects_absurd_finite_framerate`, `validate_rejects_overflowing_macroblock_count`, `mbs_does_not_panic_on_unvalidated_huge_dimensions`, `validate_rejects_buffer_size_ms_to_bits_overflow`, `validate_rejects_unbounded_gop_length`, `validate_rejects_unbounded_kf_boost`, `stream_encoder_rejects_unsupported_large_dimensions_before_allocating`, `stream_encoder_rejects_svc_layer_bitrate_that_cannot_fit_i32`, `stream_encoder_preserves_nondivisible_svc_bitrate_remainder`, and `stream_encoder_rejects_unbounded_tpl_gop_before_allocating`. Awaiting two-eyes verification. -> 2026-06-24 Closed by Codex after independent two-eyes verification on `ffc4e7e`: fixing commit `05123a9` is present; `cargo test -p rvp9-encoder --lib` passed 484 tests with 1 ignored, including the config-bound, saturated-`mbs`, allocation-before-construct, and SVC bitrate regressions; a disposable old-behavior check restored the pre-fix unchecked `mbs()` multiplication and removed the framerate cap, confirming `mbs_does_not_panic_on_unvalidated_huge_dimensions` and `validate_rejects_absurd_finite_framerate` fail without the fix; independent verifier agent `019efbdd-7c25-7df0-b052-fde562b0bf38` also returned CONFIRMED.
 
 ## Observation
 
