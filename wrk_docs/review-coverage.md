@@ -6,4 +6,4 @@
 | crates/rvp9-encoder/ | 2026-07-05 |
 | crates/rvp9-harness/ | 2026-07-07 |
 | crates/rvp9-cli/ | 2026-07-07 |
-| crates/rvp9-bench/ | (never) |
+| crates/rvp9-bench/ | 2026-07-07 |
