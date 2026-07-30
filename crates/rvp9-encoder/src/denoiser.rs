@@ -88,6 +88,8 @@
 
 use rvp9_core::block::BlockSize;
 
+use crate::rate_control::config::{MAX_CODED_DIMENSION, MAX_CODED_LUMA_PIXELS};
+
 // -----------------------------------------------------------------------------
 // Constants (libvpx `vp9_denoiser.h:22-30`)
 // -----------------------------------------------------------------------------
@@ -122,6 +124,124 @@ pub enum DenoiserDecision {
     /// Distinguished by the driver post-filter (libvpx
     /// `vp9_denoiser.c:435-436`).
     FilterZeroMvBlock,
+}
+
+/// Invalid buffer geometry or mutable denoiser state supplied to a public
+/// per-block denoiser entry point.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum DenoiserInputError {
+    /// A plane's row stride is smaller than the requested block width.
+    InvalidStride {
+        /// Plane whose stride is invalid.
+        plane: &'static str,
+        /// Supplied row stride.
+        stride: usize,
+        /// Minimum required row stride.
+        minimum: usize,
+    },
+    /// A plane does not contain the complete requested strided window.
+    PlaneTooShort {
+        /// Plane whose buffer is too short.
+        plane: &'static str,
+        /// Supplied buffer length.
+        actual: usize,
+        /// Minimum required buffer length.
+        required: usize,
+    },
+    /// Checked coordinate or row-window arithmetic overflowed.
+    GeometryOverflow {
+        /// Geometry whose arithmetic overflowed.
+        field: &'static str,
+    },
+    /// The requested block lies outside the denoiser scratch frame.
+    BlockOutOfBounds {
+        /// Block top edge in pixels.
+        row: usize,
+        /// Block left edge in pixels.
+        col: usize,
+        /// Block width in pixels.
+        width: usize,
+        /// Block height in pixels.
+        height: usize,
+        /// Scratch-frame width in pixels.
+        frame_width: usize,
+        /// Scratch-frame height in pixels.
+        frame_height: usize,
+    },
+    /// The public fields in `Denoiser` do not describe usable scratch state.
+    InvalidState {
+        /// State invariant that was not satisfied.
+        reason: &'static str,
+    },
+}
+
+impl std::fmt::Display for DenoiserInputError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidStride {
+                plane,
+                stride,
+                minimum,
+            } => write!(
+                f,
+                "{plane} stride {stride} is smaller than block width {minimum}"
+            ),
+            Self::PlaneTooShort {
+                plane,
+                actual,
+                required,
+            } => write!(
+                f,
+                "{plane} buffer has {actual} bytes but its block window needs {required}"
+            ),
+            Self::GeometryOverflow { field } => {
+                write!(f, "denoiser {field} geometry overflowed")
+            }
+            Self::BlockOutOfBounds {
+                row,
+                col,
+                width,
+                height,
+                frame_width,
+                frame_height,
+            } => write!(
+                f,
+                "block at ({row}, {col}) with size {width}x{height} exceeds {frame_width}x{frame_height} scratch frame"
+            ),
+            Self::InvalidState { reason } => write!(f, "invalid denoiser state: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for DenoiserInputError {}
+
+fn validate_plane_window(
+    plane: &'static str,
+    len: usize,
+    stride: usize,
+    width: usize,
+    height: usize,
+) -> Result<(), DenoiserInputError> {
+    if stride < width {
+        return Err(DenoiserInputError::InvalidStride {
+            plane,
+            stride,
+            minimum: width,
+        });
+    }
+    let required = height
+        .saturating_sub(1)
+        .checked_mul(stride)
+        .and_then(|row| row.checked_add(width))
+        .ok_or(DenoiserInputError::GeometryOverflow { field: plane })?;
+    if len < required {
+        return Err(DenoiserInputError::PlaneTooShort {
+            plane,
+            actual: len,
+            required,
+        });
+    }
+    Ok(())
 }
 
 /// `vp9_denoiser.h:38-43` — denoising aggressiveness level. Driven by
@@ -255,9 +375,12 @@ pub fn vp9_denoiser_filter(
     increase_denoising: bool,
     bs: BlockSize,
     motion_magnitude: i32,
-) -> DenoiserDecision {
+) -> Result<DenoiserDecision, DenoiserInputError> {
     let bw = bs.width() as usize;
     let bh = bs.height() as usize;
+    validate_plane_window("sig", sig.len(), sig_stride, bw, bh)?;
+    validate_plane_window("mc_avg", mc_avg.len(), mc_avg_stride, bw, bh)?;
+    validate_plane_window("avg", avg.len(), avg_stride, bw, bh)?;
 
     // `vp9_denoiser.c:77` — base adj table for absdiff buckets [4..7],
     // [8..15], else. Shifted up if motion is small.
@@ -310,13 +433,13 @@ pub fn vp9_denoiser_filter(
     // `vp9_denoiser.c:133-135` — strong filter accepted.
     let strong_thresh = total_adj_strong_thresh(bs, increase_denoising);
     if total_adj.abs() <= strong_thresh {
-        return DenoiserDecision::FilterBlock;
+        return Ok(DenoiserDecision::FilterBlock);
     }
 
     // `vp9_denoiser.c:138-144` — try the weak (damped) filter, or bail.
     let delta = ((total_adj.abs() - strong_thresh) >> num_pels_log2(bs)) + 1;
     if delta >= delta_thresh(bs, increase_denoising) {
-        return DenoiserDecision::CopyBlock;
+        return Ok(DenoiserDecision::CopyBlock);
     }
 
     // -------------------------------------------------------------------------
@@ -343,11 +466,13 @@ pub fn vp9_denoiser_filter(
 
     // `vp9_denoiser.c:176-179` — weak filter accepted iff it sat
     // within the weak-threshold envelope.
-    if total_adj.abs() <= total_adj_weak_thresh(bs, increase_denoising) {
-        DenoiserDecision::FilterBlock
-    } else {
-        DenoiserDecision::CopyBlock
-    }
+    Ok(
+        if total_adj.abs() <= total_adj_weak_thresh(bs, increase_denoising) {
+            DenoiserDecision::FilterBlock
+        } else {
+            DenoiserDecision::CopyBlock
+        },
+    )
 }
 
 // -----------------------------------------------------------------------------
@@ -375,15 +500,35 @@ impl DenoiserFrame {
     /// Allocate a zero-initialised tight-stride luma buffer of the
     /// given dimensions. Mirrors `vpx_alloc_frame_buffer` for the
     /// `y_buffer` plane only (the denoiser ignores chroma).
-    #[must_use]
-    pub fn alloc(width: u32, height: u32) -> Self {
-        let len = (width as usize) * (height as usize);
-        Self {
-            y_buffer: vec![0u8; len],
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DenoiserAllocError`] for empty or unsupported
+    /// dimensions, or if the backing buffer cannot be reserved.
+    pub fn alloc(width: u32, height: u32) -> Result<Self, DenoiserAllocError> {
+        if width == 0 || height == 0 {
+            return Err(DenoiserAllocError::InvalidConfig);
+        }
+        let pixels = u64::from(width) * u64::from(height);
+        if width > MAX_CODED_DIMENSION
+            || height > MAX_CODED_DIMENSION
+            || pixels > MAX_CODED_LUMA_PIXELS
+        {
+            return Err(DenoiserAllocError::DimensionsTooLarge { width, height });
+        }
+        let len = usize::try_from(pixels)
+            .map_err(|_| DenoiserAllocError::DimensionsTooLarge { width, height })?;
+        let mut y_buffer = Vec::new();
+        y_buffer
+            .try_reserve_exact(len)
+            .map_err(|_| DenoiserAllocError::AllocationFailed)?;
+        y_buffer.resize(len, 0);
+        Ok(Self {
+            y_buffer,
             width,
             height,
             stride: width,
-        }
+        })
     }
 
     /// `true` if the plane carries a non-empty buffer.
@@ -439,12 +584,25 @@ pub struct Denoiser {
 pub enum DenoiserAllocError {
     /// The requested denoiser configuration is disabled or has invalid dimensions.
     InvalidConfig,
+    /// The dimensions exceed the encoder's supported frame envelope.
+    DimensionsTooLarge {
+        /// Requested luma width.
+        width: u32,
+        /// Requested luma height.
+        height: u32,
+    },
+    /// The backing luma buffer could not be reserved.
+    AllocationFailed,
 }
 
 impl std::fmt::Display for DenoiserAllocError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidConfig => f.write_str("invalid denoiser configuration"),
+            Self::DimensionsTooLarge { width, height } => {
+                write!(f, "denoiser dimensions too large: {width}x{height}")
+            }
+            Self::AllocationFailed => f.write_str("failed to allocate denoiser frame"),
         }
     }
 }
@@ -479,14 +637,14 @@ impl Denoiser {
         // `vp9_denoiser.c:644-674` — allocate per-layer per-ref bufs.
         let mut running_avg_y = Vec::with_capacity(num_ref_frames * num_layers);
         for _ in 0..(num_ref_frames * num_layers) {
-            running_avg_y.push(DenoiserFrame::alloc(width, height));
+            running_avg_y.push(DenoiserFrame::alloc(width, height)?);
         }
         let mut mc_running_avg_y = Vec::with_capacity(num_layers);
         for _ in 0..num_layers {
-            mc_running_avg_y.push(DenoiserFrame::alloc(width, height));
+            mc_running_avg_y.push(DenoiserFrame::alloc(width, height)?);
         }
         // `vp9_denoiser.c:678-686` — `last_source` (full frame, top layer only).
-        let last_source = DenoiserFrame::alloc(width, height);
+        let last_source = DenoiserFrame::alloc(width, height)?;
         Ok(Self {
             running_avg_y,
             mc_running_avg_y,
@@ -530,8 +688,13 @@ impl Denoiser {
     /// Used by the W5.2 PROOF test.
     #[must_use]
     pub fn buffers_match_frame(&self, width: u32, height: u32) -> bool {
-        let expected = (width as usize) * (height as usize);
-        self.running_avg_y.len() == self.num_ref_frames * self.num_layers
+        let Ok(expected) = usize::try_from(u64::from(width) * u64::from(height)) else {
+            return false;
+        };
+        let Some(expected_slots) = self.num_ref_frames.checked_mul(self.num_layers) else {
+            return false;
+        };
+        self.running_avg_y.len() == expected_slots
             && self
                 .running_avg_y
                 .iter()
@@ -623,9 +786,9 @@ fn perform_motion_compensation(
 ) -> DenoiserDecision {
     // `vp9_denoiser.c:193-195` — sse_diff.
     let sse_diff = if ctx.newmv_sse == u32::MAX {
-        0i32
+        0i64
     } else {
-        (ctx.zeromv_sse as i32) - (ctx.newmv_sse as i32)
+        i64::from(ctx.zeromv_sse) - i64::from(ctx.newmv_sse)
     };
     let mut frame: i8 = ctx.best_reference_frame;
 
@@ -660,7 +823,7 @@ fn perform_motion_compensation(
     let inter_pick = frame != 0
         && frame != 3
         && frame != 2
-        && sse_diff > sse_diff_thresh(bs, increase_denoising, motion_magnitude);
+        && sse_diff > i64::from(sse_diff_thresh(bs, increase_denoising, motion_magnitude));
     let mut effective_newmv_sse = ctx.newmv_sse;
     if inter_pick {
         // Keep `frame` as-is.
@@ -671,7 +834,7 @@ fn perform_motion_compensation(
         // `vp9_denoiser.c:232-240` — bias to LAST.
         let bias_to_last = (frame == 3)
             || (frame != 1
-                && ((ctx.zeromv_lastref_sse < (5 * ctx.zeromv_sse) >> 2)
+                && ((u64::from(ctx.zeromv_lastref_sse) < (5 * u64::from(ctx.zeromv_sse)) >> 2)
                     || denoiser.denoising_level >= DenoiserLevel::High));
         if bias_to_last {
             frame = 1;
@@ -753,6 +916,86 @@ pub struct DenoiseBlockInputs<'a> {
     pub use_skin_detection: bool,
 }
 
+fn validate_denoise_inputs(
+    denoiser: &Denoiser,
+    inputs: &DenoiseBlockInputs<'_>,
+) -> Result<(usize, usize, usize, usize), DenoiserInputError> {
+    let bw = inputs.bs.width() as usize;
+    let bh = inputs.bs.height() as usize;
+    validate_plane_window("src", inputs.src.len(), inputs.src_stride, bw, bh)?;
+    validate_plane_window(
+        "mc_block",
+        inputs.mc_block.len(),
+        inputs.mc_block_stride,
+        bw,
+        bh,
+    )?;
+
+    if denoiser.num_ref_frames > denoiser.running_avg_y.len() {
+        return Err(DenoiserInputError::InvalidState {
+            reason: "num_ref_frames exceeds running_avg_y length",
+        });
+    }
+    let scratch =
+        denoiser
+            .running_avg_y
+            .get(INTRA_FRAME_IDX)
+            .ok_or(DenoiserInputError::InvalidState {
+                reason: "missing INTRA scratch frame",
+            })?;
+    if inputs.width != scratch.width {
+        return Err(DenoiserInputError::InvalidState {
+            reason: "input width does not match INTRA scratch frame",
+        });
+    }
+    let frame_width = scratch.width as usize;
+    let frame_height = scratch.height as usize;
+    let stride = scratch.stride as usize;
+    validate_plane_window(
+        "INTRA scratch",
+        scratch.y_buffer.len(),
+        stride,
+        frame_width,
+        frame_height,
+    )?;
+
+    let row = inputs
+        .mi_row
+        .checked_mul(8)
+        .ok_or(DenoiserInputError::GeometryOverflow { field: "block row" })?;
+    let col = inputs
+        .mi_col
+        .checked_mul(8)
+        .ok_or(DenoiserInputError::GeometryOverflow {
+            field: "block column",
+        })?;
+    let row_end = row
+        .checked_add(bh)
+        .ok_or(DenoiserInputError::GeometryOverflow { field: "block row" })?;
+    let col_end = col
+        .checked_add(bw)
+        .ok_or(DenoiserInputError::GeometryOverflow {
+            field: "block column",
+        })?;
+    if row_end > frame_height || col_end > frame_width {
+        return Err(DenoiserInputError::BlockOutOfBounds {
+            row,
+            col,
+            width: bw,
+            height: bh,
+            frame_width,
+            frame_height,
+        });
+    }
+    let offset = row
+        .checked_mul(stride)
+        .and_then(|base| base.checked_add(col))
+        .ok_or(DenoiserInputError::GeometryOverflow {
+            field: "scratch offset",
+        })?;
+    Ok((bw, bh, stride, offset))
+}
+
 /// `vp9_denoiser.c:336-437` — `vp9_denoiser_denoise`. Top-level
 /// per-block driver: decide whether to denoise (via
 /// `perform_motion_compensation`), apply `vp9_denoiser_filter` if so,
@@ -766,7 +1009,7 @@ pub struct DenoiseBlockInputs<'a> {
 /// is *not* re-derived from the predictor here — the caller passes
 /// the MC block in `inputs.mc_block` directly.
 ///
-/// Returns `(decision, denoised_block_owned)`:
+/// Returns `Ok((decision, denoised_block_owned))`:
 /// - `decision` — `CopyBlock` / `FilterBlock` / `FilterZeroMvBlock`.
 /// - `denoised_block_owned` — the per-block result: the running-avg
 ///   window's samples on `FilterBlock` / `FilterZeroMvBlock`; the
@@ -774,8 +1017,11 @@ pub struct DenoiseBlockInputs<'a> {
 pub fn vp9_denoiser_denoise(
     denoiser: &mut Denoiser,
     inputs: &DenoiseBlockInputs<'_>,
-) -> (DenoiserDecision, Vec<u8>) {
-    let motion_magnitude = inputs.mv_row * inputs.mv_row + inputs.mv_col * inputs.mv_col;
+) -> Result<(DenoiserDecision, Vec<u8>), DenoiserInputError> {
+    let (bw, bh, stride, off) = validate_denoise_inputs(denoiser, inputs)?;
+    let mv_row = u64::from(inputs.mv_row.unsigned_abs());
+    let mv_col = u64::from(inputs.mv_col.unsigned_abs());
+    let motion_magnitude = (mv_row * mv_row + mv_col * mv_col).min(i32::MAX as u64) as i32;
     let mut zeromv_filter = false;
 
     // `vp9_denoiser.c:367-403` — skin-detection / consec_zeromv path.
@@ -806,9 +1052,6 @@ pub fn vp9_denoiser_denoise(
         );
     }
 
-    let bw = inputs.bs.width() as usize;
-    let bh = inputs.bs.height() as usize;
-
     // `vp9_denoiser.c:419-423` — if perform_mc said FILTER, run the
     // per-block filter against the per-frame scratch
     // (`running_avg_y[INTRA_FRAME]`).
@@ -817,8 +1060,6 @@ pub fn vp9_denoiser_denoise(
         // tight-stride; offset to (mi_row, mi_col) and pass the
         // strided window.
         let scratch = &mut denoiser.running_avg_y[INTRA_FRAME_IDX];
-        let stride = scratch.stride as usize;
-        let off = block_offset(stride, inputs.mi_row, inputs.mi_col);
         decision = vp9_denoiser_filter(
             inputs.src,
             inputs.src_stride,
@@ -829,7 +1070,7 @@ pub fn vp9_denoiser_denoise(
             increase_denoising,
             inputs.bs,
             motion_magnitude,
-        );
+        )?;
     }
 
     // `vp9_denoiser.c:425-433` — final copy-back. The function
@@ -840,8 +1081,6 @@ pub fn vp9_denoiser_denoise(
         DenoiserDecision::FilterBlock | DenoiserDecision::FilterZeroMvBlock => {
             // Filtered: read from scratch.
             let scratch = &denoiser.running_avg_y[INTRA_FRAME_IDX];
-            let stride = scratch.stride as usize;
-            let off = block_offset(stride, inputs.mi_row, inputs.mi_col);
             for r in 0..bh {
                 let s = off + r * stride;
                 denoised[r * bw..r * bw + bw].copy_from_slice(&scratch.y_buffer[s..s + bw]);
@@ -853,8 +1092,6 @@ pub fn vp9_denoiser_denoise(
         DenoiserDecision::CopyBlock => {
             // Copy source verbatim into scratch + return source.
             let scratch = &mut denoiser.running_avg_y[INTRA_FRAME_IDX];
-            let stride = scratch.stride as usize;
-            let off = block_offset(stride, inputs.mi_row, inputs.mi_col);
             for r in 0..bh {
                 let s = off + r * stride;
                 scratch.y_buffer[s..s + bw].copy_from_slice(
@@ -872,7 +1109,7 @@ pub fn vp9_denoiser_denoise(
     if decision == DenoiserDecision::FilterBlock && zeromv_filter {
         decision = DenoiserDecision::FilterZeroMvBlock;
     }
-    (decision, denoised)
+    Ok((decision, denoised))
 }
 
 // -----------------------------------------------------------------------------
@@ -1028,7 +1265,7 @@ mod tests {
         let sig: Vec<u8> = (0..bw * bh).map(|i| ((i * 7) & 0xff) as u8).collect();
         let mc: Vec<u8> = sig.clone();
         let mut avg = vec![0u8; bw * bh];
-        let decision = vp9_denoiser_filter(&sig, bw, &mc, bw, &mut avg, bw, false, bs, 0);
+        let decision = vp9_denoiser_filter(&sig, bw, &mc, bw, &mut avg, bw, false, bs, 0).unwrap();
         assert_eq!(decision, DenoiserDecision::FilterBlock);
         // Every sample should equal `mc[i]` because absdiff == 0 ≤
         // absdiff_thresh, so the "snap to MC" path fires per sample.
@@ -1048,7 +1285,7 @@ mod tests {
         // mc differs by +2 on every sample → absdiff=2 ≤ 3 ⇒ snap.
         let mc: Vec<u8> = vec![102u8; bw * bh];
         let mut avg = vec![0u8; bw * bh];
-        let decision = vp9_denoiser_filter(&sig, bw, &mc, bw, &mut avg, bw, false, bs, 0);
+        let decision = vp9_denoiser_filter(&sig, bw, &mc, bw, &mut avg, bw, false, bs, 0).unwrap();
         // total_adj = bw*bh * 2 = 512, ==  strong_thresh(16x16) =
         // 512 ⇒ accepted (≤).
         assert_eq!(decision, DenoiserDecision::FilterBlock);
@@ -1068,7 +1305,7 @@ mod tests {
         let sig: Vec<u8> = vec![50u8; bw * bh];
         let mc: Vec<u8> = vec![200u8; bw * bh]; // absdiff=150 everywhere
         let mut avg = vec![0u8; bw * bh];
-        let decision = vp9_denoiser_filter(&sig, bw, &mc, bw, &mut avg, bw, false, bs, 0);
+        let decision = vp9_denoiser_filter(&sig, bw, &mc, bw, &mut avg, bw, false, bs, 0).unwrap();
         // We accept either decision; the point is the filter ran
         // without panic and produced a defined answer.
         assert!(
@@ -1132,7 +1369,7 @@ mod tests {
             width,
             use_skin_detection: false,
         };
-        let (decision, denoised) = vp9_denoiser_denoise(&mut den, &inputs);
+        let (decision, denoised) = vp9_denoiser_denoise(&mut den, &inputs).unwrap();
         // All small-diff samples (|src-mc|=1) should accept the
         // FilterBlock path on the strong pass.
         assert!(
@@ -1188,7 +1425,7 @@ mod tests {
             width: 64,
             use_skin_detection: false,
         };
-        let (decision, denoised) = vp9_denoiser_denoise(&mut den, &inputs);
+        let (decision, denoised) = vp9_denoiser_denoise(&mut den, &inputs).unwrap();
         assert_eq!(decision, DenoiserDecision::CopyBlock);
         // Copy path returns src verbatim.
         assert_eq!(denoised, src);
@@ -1226,12 +1463,125 @@ mod tests {
                 width: 64,
                 use_skin_detection: false,
             };
-            let (decision, _) = vp9_denoiser_denoise(&mut den, &inputs);
+            let (decision, _) = vp9_denoiser_denoise(&mut den, &inputs).unwrap();
             assert_eq!(
                 decision,
                 DenoiserDecision::CopyBlock,
                 "small block {bs:?} must copy",
             );
         }
+    }
+
+    #[test]
+    fn public_filter_rejects_short_and_invalid_strided_planes() {
+        let bs = BlockSize::Block16x16;
+        let mut avg = vec![0u8; 16 * 16];
+
+        assert!(
+            vp9_denoiser_filter(&[0; 15], 16, &[0; 16 * 16], 16, &mut avg, 16, false, bs, 0)
+                .is_err()
+        );
+        assert!(
+            vp9_denoiser_filter(
+                &[0; 16 * 16],
+                15,
+                &[0; 16 * 16],
+                16,
+                &mut avg,
+                16,
+                false,
+                bs,
+                0,
+            )
+            .is_err()
+        );
+        assert!(
+            vp9_denoiser_filter(&[0; 16 * 16], 16, &[0; 15], 16, &mut avg, 16, false, bs, 0,)
+                .is_err()
+        );
+        assert!(
+            vp9_denoiser_filter(
+                &[0; 16 * 16],
+                16,
+                &[0; 16 * 16],
+                16,
+                &mut avg[..15],
+                16,
+                false,
+                bs,
+                0,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn public_frame_allocator_rejects_oversized_dimensions() {
+        assert!(DenoiserFrame::alloc(u32::MAX, u32::MAX).is_err());
+    }
+
+    #[test]
+    fn public_denoise_rejects_out_of_frame_block() {
+        let mut den = Denoiser::alloc(2, 64, 64).unwrap();
+        let src = vec![0u8; 16 * 16];
+        let mc = vec![0u8; 16 * 16];
+        let inputs = DenoiseBlockInputs {
+            mi_row: 8,
+            mi_col: 0,
+            bs: BlockSize::Block16x16,
+            ctx: DenoiserBlockCtx::zeroed(),
+            mv_row: 0,
+            mv_col: 0,
+            is_skin: false,
+            consec_zeromv: 0,
+            src: &src,
+            src_stride: 16,
+            mc_block: &mc,
+            mc_block_stride: 16,
+            last_is_reference: false,
+            width: 64,
+            use_skin_detection: false,
+        };
+
+        assert!(vp9_denoiser_denoise(&mut den, &inputs).is_err());
+    }
+
+    #[test]
+    fn public_denoise_rejects_short_source_and_invalid_scratch_state() {
+        let mut den = Denoiser::alloc(2, 64, 64).unwrap();
+        let src = vec![0u8; 15];
+        let mc = vec![0u8; 16 * 16];
+        let inputs = DenoiseBlockInputs {
+            mi_row: 0,
+            mi_col: 0,
+            bs: BlockSize::Block16x16,
+            ctx: DenoiserBlockCtx::zeroed(),
+            mv_row: i32::MIN,
+            mv_col: i32::MIN,
+            is_skin: false,
+            consec_zeromv: 0,
+            src: &src,
+            src_stride: 16,
+            mc_block: &mc,
+            mc_block_stride: 16,
+            last_is_reference: true,
+            width: 64,
+            use_skin_detection: false,
+        };
+        assert!(matches!(
+            vp9_denoiser_denoise(&mut den, &inputs),
+            Err(DenoiserInputError::PlaneTooShort { plane: "src", .. })
+        ));
+
+        let src = vec![0u8; 16 * 16];
+        let inputs = DenoiseBlockInputs {
+            src: &src,
+            ..inputs
+        };
+        den.running_avg_y.clear();
+        assert!(matches!(
+            vp9_denoiser_denoise(&mut den, &inputs),
+            Err(DenoiserInputError::InvalidState { .. })
+        ));
     }
 }

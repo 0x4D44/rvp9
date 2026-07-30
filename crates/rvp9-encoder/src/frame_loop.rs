@@ -2392,7 +2392,7 @@ impl StreamEncoder {
                 let scratch = &mut head[INTRA_FRAME_IDX];
                 let mc_ref = &tail[0]; // tail[0] == LAST_FRAME_IDX slot.
 
-                let _decision = vp9_denoiser_filter(
+                let Ok(_decision) = vp9_denoiser_filter(
                     &self.me_ref_y[off..],
                     stride,
                     &mc_ref.y_buffer[off..],
@@ -2402,7 +2402,9 @@ impl StreamEncoder {
                     increase_denoising,
                     bs,
                     0, // motion_magnitude (zero-MV assumption).
-                );
+                ) else {
+                    return;
+                };
                 // Copy the filtered (or copied) tile from the scratch
                 // back into `me_ref_y`. libvpx's
                 // `vp9_denoiser_filter_c` writes the strong+weak
