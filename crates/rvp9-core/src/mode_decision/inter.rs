@@ -114,7 +114,7 @@ use crate::mv_search::full_pixel::{
 use crate::mv_search::mv_limits::MvLimits;
 use crate::mv_search::search_site::SearchSiteConfig;
 use crate::mv_search::sub_pixel::{
-    SubPixelSearchParams, adaptive_subpel_force_stop, find_best_sub_pixel_tree_pruned_more,
+    SubPixelSearchParams, adaptive_subpel_force_stop, find_best_sub_pixel_tree,
 };
 use crate::quant::forward::{
     PlaneQuantizers, scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32, vp9_quantize_fp,
@@ -2741,7 +2741,7 @@ fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
     let iters_per_step = rt_newmv_subpel_iters_override()
         .map(|v| v.min(2))
         .unwrap_or(2);
-    let sub = find_best_sub_pixel_tree_pruned_more(&SubPixelSearchParams {
+    let sub = find_best_sub_pixel_tree(&SubPixelSearchParams {
         block_size: params.block_size,
         src_plane: params.src_plane,
         src_offset: params.src_offset,

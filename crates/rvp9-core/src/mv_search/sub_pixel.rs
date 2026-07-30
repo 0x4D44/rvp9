@@ -1,8 +1,9 @@
-//! Sub-pixel MV refinement (the `_pruned_more` variant).
+//! Sub-pixel MV refinement.
 //!
-//! Port of `vp9_find_best_sub_pixel_tree_pruned_more`
-//! (`vp9_mcomp.c:453-513`). This is the `--cpu-used 6+` default when
-//! the speed-feature `subpel_search_method == SUBPEL_TREE_PRUNED_MORE`.
+//! Ports `vp9_find_best_sub_pixel_tree` and
+//! `vp9_find_best_sub_pixel_tree_pruned_more` from `vp9_mcomp.c`.
+//! Non-SVC realtime encoding uses the full tree at cpu-used 6-8; selected
+//! SVC enhancement layers can use the pruned variants.
 //!
 //! The libvpx function has a parabolic-fit short-circuit when the
 //! caller supplies a well-behaved 5-entry `cost_list` (produced by
@@ -383,6 +384,214 @@ pub fn find_best_sub_pixel_tree_pruned_more(
             bh,
             &subpel_limits,
         );
+    }
+
+    SubPixelSearchResult {
+        best_mv: Mv {
+            row: br as i16,
+            col: bc as i16,
+        },
+        best_distortion: besterr,
+    }
+}
+
+/// `vp9_find_best_sub_pixel_tree` (`vp9_mcomp.c:721-925`).
+///
+/// This is libvpx's non-SVC realtime default at cpu-used 6-8. Each precision
+/// level evaluates four cardinal positions and one inferred diagonal, then
+/// follows the selected direction with up to three tree-extension checks.
+#[must_use]
+pub fn find_best_sub_pixel_tree(params: &SubPixelSearchParams<'_>) -> SubPixelSearchResult {
+    let Some(svf) = svf_for(params.block_size) else {
+        debug_assert!(
+            false,
+            "sub_pixel_variance not ported for {:?} (F6.0 ported 5 square sizes)",
+            params.block_size
+        );
+        return SubPixelSearchResult {
+            best_mv: Mv {
+                row: params.center_mv.row * 8,
+                col: params.center_mv.col * 8,
+            },
+            best_distortion: 0,
+        };
+    };
+    let bw = usize::from(params.block_size.width());
+    let bh = usize::from(params.block_size.height());
+
+    let mut subpel_limits = MvLimits::default();
+    set_subpel_mv_search_range(
+        &mut subpel_limits,
+        &params.mv_limits,
+        params.ref_mv.row,
+        params.ref_mv.col,
+    );
+
+    let mut br = i32::from(params.center_mv.row) * 8;
+    let mut bc = i32::from(params.center_mv.col) * 8;
+    let mut besterr = try_subpel(
+        br,
+        bc,
+        params.src_plane,
+        params.src_offset,
+        params.ref_plane,
+        svf,
+        bw,
+        bh,
+        &subpel_limits,
+        params.ref_mv,
+        params.error_per_bit,
+        params.mv_costs,
+    );
+
+    let mut rounds = 3 - params.forced_stop as i32;
+    if !(params.allow_hp && use_mv_hp(params.ref_mv)) {
+        rounds = rounds.min(2);
+    }
+
+    const STEPS: [[(i32, i32); 4]; 3] = [
+        [(0, -4), (0, 4), (-4, 0), (4, 0)],
+        [(0, -2), (0, 2), (-2, 0), (2, 0)],
+        [(0, -1), (0, 1), (-1, 0), (1, 0)],
+    ];
+
+    for steps in STEPS.iter().take(rounds.max(0) as usize) {
+        let center_r = br;
+        let center_c = bc;
+        let mut costs = [u32::MAX; 4];
+        let mut best_idx = None;
+
+        for (idx, &(dr, dc)) in steps.iter().enumerate() {
+            let before = besterr;
+            costs[idx] = check(
+                center_r + dr,
+                center_c + dc,
+                &mut br,
+                &mut bc,
+                &mut besterr,
+                params,
+                svf,
+                bw,
+                bh,
+                &subpel_limits,
+            );
+            if besterr < before {
+                best_idx = Some(idx);
+            }
+        }
+
+        // libvpx's full tree uses <= here, unlike `_pruned_more`'s strict
+        // comparison in FIRST_LEVEL_CHECKS.
+        let kc = if costs[0] <= costs[1] {
+            steps[0].1
+        } else {
+            steps[1].1
+        };
+        let kr = if costs[2] <= costs[3] {
+            steps[2].0
+        } else {
+            steps[3].0
+        };
+        let diag_r = center_r + kr;
+        let diag_c = center_c + kc;
+        let before = besterr;
+        let _ = check(
+            diag_r,
+            diag_c,
+            &mut br,
+            &mut bc,
+            &mut besterr,
+            params,
+            svf,
+            bw,
+            bh,
+            &subpel_limits,
+        );
+        if besterr < before {
+            best_idx = Some(4);
+        }
+
+        if params.iters_per_step > 0 && best_idx.is_some() {
+            let br0 = br;
+            let bc0 = bc;
+            let mut extension_r = kr;
+            let mut extension_c = kc;
+
+            if diag_r == br && diag_c != bc {
+                extension_c = bc - diag_c;
+                if params.iters_per_step == 1 {
+                    let _ = check(
+                        br0,
+                        bc0 + extension_c,
+                        &mut br,
+                        &mut bc,
+                        &mut besterr,
+                        params,
+                        svf,
+                        bw,
+                        bh,
+                        &subpel_limits,
+                    );
+                }
+            } else if diag_r != br && diag_c == bc {
+                extension_r = br - diag_r;
+                if params.iters_per_step == 1 {
+                    let _ = check(
+                        br0 + extension_r,
+                        bc0,
+                        &mut br,
+                        &mut bc,
+                        &mut besterr,
+                        params,
+                        svf,
+                        bw,
+                        bh,
+                        &subpel_limits,
+                    );
+                }
+            }
+
+            if params.iters_per_step > 1 {
+                let _ = check(
+                    br0 + extension_r,
+                    bc0,
+                    &mut br,
+                    &mut bc,
+                    &mut besterr,
+                    params,
+                    svf,
+                    bw,
+                    bh,
+                    &subpel_limits,
+                );
+                let _ = check(
+                    br0,
+                    bc0 + extension_c,
+                    &mut br,
+                    &mut bc,
+                    &mut besterr,
+                    params,
+                    svf,
+                    bw,
+                    bh,
+                    &subpel_limits,
+                );
+                if br0 != br || bc0 != bc {
+                    let _ = check(
+                        br0 + extension_r,
+                        bc0 + extension_c,
+                        &mut br,
+                        &mut bc,
+                        &mut besterr,
+                        params,
+                        svf,
+                        bw,
+                        bh,
+                        &subpel_limits,
+                    );
+                }
+            }
+        }
     }
 
     SubPixelSearchResult {
@@ -818,20 +1027,83 @@ mod tests {
             forced_stop: SubPixelForcedStop::QuarterPel,
             iters_per_step: 2,
         };
-        let r = find_best_sub_pixel_tree_pruned_more(&params);
-        // Expected MV in 1/8-pel units: col = 2, row = 0.
-        // Allow a tolerance: the search may settle at exactly ±2 col
-        // or even at the half-pel position 4 if the local error
-        // surface is funky; require col ∈ {2, 4} as a soft check.
-        assert_eq!(
-            r.best_mv.row, 0,
-            "row should stay near zero (got {})",
-            r.best_mv.row
-        );
+        for (name, r) in [
+            ("full tree", find_best_sub_pixel_tree(&params)),
+            (
+                "pruned-more tree",
+                find_best_sub_pixel_tree_pruned_more(&params),
+            ),
+        ] {
+            // Expected MV in 1/8-pel units: col = 2, row = 0.
+            // Allow a tolerance: the search may settle at exactly ±2 col
+            // or even at the half-pel position 4 if the local error
+            // surface is funky; require col ∈ {2, 4} as a soft check.
+            assert_eq!(
+                r.best_mv.row, 0,
+                "{name}: row should stay near zero (got {})",
+                r.best_mv.row
+            );
+            assert!(
+                r.best_mv.col == 2 || r.best_mv.col == 4,
+                "{name}: expected col ∈ {{2, 4}} for 1/4-pel shift; got col={}",
+                r.best_mv.col
+            );
+        }
+    }
+
+    #[test]
+    fn full_tree_extension_reaches_lower_quarter_pel_cost() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+        let pw = 64;
+        let ph = 64;
+        let mut state = 87u32;
+        let mut ref_data = vec![0u8; pw * ph];
+        let mut src_data = vec![0u8; pw * ph];
+        for (reference, source) in ref_data.iter_mut().zip(src_data.iter_mut()) {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            *reference = state as u8;
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            *source = state as u8;
+        }
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let params = SubPixelSearchParams {
+            block_size: BlockSize::Block8x8,
+            src_plane: &src_plane,
+            src_offset: (24, 24),
+            ref_plane: &ref_plane,
+            center_mv: Mv::ZERO,
+            ref_mv: Mv::ZERO,
+            mv_limits: MvLimits::new(-16, 16, -16, 16),
+            error_per_bit: 0,
+            mv_costs: &costs,
+            allow_hp: false,
+            forced_stop: SubPixelForcedStop::QuarterPel,
+            iters_per_step: 2,
+        };
+
+        let full = find_best_sub_pixel_tree(&params);
+        let pruned = find_best_sub_pixel_tree_pruned_more(&params);
+
+        assert_eq!(full.best_mv, Mv { row: -12, col: -4 });
+        assert_eq!(pruned.best_mv, Mv { row: -10, col: -4 });
         assert!(
-            r.best_mv.col == 2 || r.best_mv.col == 4,
-            "expected col ∈ {{2, 4}} for 1/4-pel shift; got col={}",
-            r.best_mv.col
+            full.best_distortion < pruned.best_distortion,
+            "full tree must reach the lower-cost extension: full={full:?}, pruned={pruned:?}"
         );
     }
 

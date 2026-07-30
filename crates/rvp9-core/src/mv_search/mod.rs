@@ -65,5 +65,5 @@ pub use mv_pred::mv_pred_sad_seed;
 pub use search_site::{SS_COUNT, SearchSiteConfig, init_dsmotion_compensation};
 pub use sub_pixel::{
     SubPixelForcedStop, SubPixelSearchParams, SubPixelSearchResult, adaptive_subpel_force_stop,
-    find_best_sub_pixel_tree_pruned_more,
+    find_best_sub_pixel_tree, find_best_sub_pixel_tree_pruned_more,
 };

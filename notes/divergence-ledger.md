@@ -326,22 +326,31 @@ cpu-used 5-8 (`set_rt_speed_feature_framesize_*`). Dead at our config.
 **Future plan:** required if compound modes become reachable in a
 future preset. Decision: L-08, L-46.
 
-### 2026-05-16 — Accurate sub-pel search variants stubbed
-**Where:** `rvp9-encoder::me::subpel` ships only the cpu-used 6-8
-sub-pel pipeline. libvpx counterpart: `vp9_find_best_sub_pixel_tree`,
-`vp9_find_best_sub_pixel_iterative` and variants in
+### 2026-05-16 — SVC sub-pel search-method selection remains unplumbed
+**Where:** `rvp9-core::mv_search::sub_pixel` and
+`rvp9-core::mode_decision::inter::run_newmv_search`; libvpx counterparts:
+`vp9/encoder/vp9_speed_features.c:715,928-930,1057-1068` and
 `vp9/encoder/vp9_mcomp.c`.
-**What libvpx does:** dispatches between several sub-pel search
-algorithms based on `sf->mv.subpel_search_method`. Slower variants
-do more iterations / smaller step sizes.
-**What rvp9 does:** ships only the "fast / 1-iteration / 2-step"
-variant matching cpu-used 6-8. Other variants are not ported.
-**Why:** the slower variants are gated off at our cpu-used. Dead at
-our config. Mirrors L-05 / A3 §7 #1.
-**Byte-parity impact:** none in matched configs.
-**Compression-efficiency impact:** none in matched configs.
-**Future plan:** add slower variants if cpu-used ≤ 5 preset is ever
-needed. Decision: L-05.
+**What libvpx does:** non-SVC realtime cpu-used 6-8 retains the default
+`SUBPEL_TREE`. At cpu-used 7 it switches only selected non-reference SVC
+enhancement layers to `SUBPEL_TREE_PRUNED_EVENMORE`.
+**What rvp9 does:** now ports and selects the full tree for the scoped non-SVC
+realtime path. The older `_pruned_more` implementation remains available, but
+the SVC layer-specific method selector and `_pruned_evenmore` variant are not
+yet wired.
+**Why:** the earlier entry incorrectly classified `_pruned_more` as the
+cpu-used 6-8 realtime default. Pinned source inspection during Stage 4a showed
+that only the GOOD-mode setter chooses it. The full-tree correction is a
+measured non-SVC Pareto improvement.
+**Byte-parity impact:** none as a format concern; selected MVs can differ, but
+all seven Stage 4a streams decode byte-exactly under vpxdec and ffmpeg.
+**Compression-efficiency impact:** on the strict Stage 4a Foreman curve, the
+full tree improved BD-rate from `+9.1152%` to `+8.8483%` and matched-rate
+deficit from `0.52174` to `0.49409 dB`. Same-load median time improved from
+`18.6831` to `18.3473 ms`.
+**Future plan:** implement the SVC layer-specific selector and
+`SUBPEL_TREE_PRUNED_EVENMORE` before the Stage 4e SVC gate. Decision: L-05
+narrowed to SVC.
 
 ### 2026-05-16 — REALTIME mode pinned at encoder construction
 **Where:** `rvp9-encoder::Encoder::new` accepts no `mode` parameter;
