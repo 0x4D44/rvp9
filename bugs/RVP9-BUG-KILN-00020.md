@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00020 - Public AVX2 predictor wrapper exposes unsafe CPU and slice preconditions
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** core/dsp x86_64 SIMD API
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T171112Z-p5310-n568069000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00020-run-fix-20260730T171112Z-p5310-n568069000-c1
-- **Owner base:** fe188f52e9976b72d96556d791d1ab1a170e8a5e
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T17:11:12Z
-- **Owner until:** 2026-07-30T19:11:12Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-core/` at `af4c7a2d7533`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-core/` at `af4c7a2d7533`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T171112Z-p5310-n568069000-c1 branch=task/bug-RVP9-BUG-KILN-00020-run-fix-20260730T171112Z-p5310-n568069000-c1 code=ce657a77ef476ba946f167a581c7f111e5bdb97d gate=manual)
 
 ## Observation
 
