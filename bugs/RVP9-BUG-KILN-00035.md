@@ -5,15 +5,15 @@
 - **Severity:** High
 - **Area:** harness/f02-block-oracle
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T230244Z-p58756-n105437000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00035-run-fix-20260730T230244Z-p58756-n105437000-c1
+- **Owner base:** 1b5d1683759ededc745d7751c12f5c59201f7c87
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T23:02:44Z
+- **Owner until:** 2026-07-31T01:02:44Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
