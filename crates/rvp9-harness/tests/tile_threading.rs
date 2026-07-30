@@ -32,41 +32,43 @@ fn vectors_dir() -> PathBuf {
 }
 
 /// Decode every shown frame of `vector` at thread count `n`, returning
-/// the per-frame MD5 hex strings in shown-frame order. `None` slots
-/// mean the frame couldn't be decoded (Unimplemented / UnsupportedProfile)
-/// — we propagate the gap so the per-N comparator can verify identical
-/// failure modes.
-fn decode_md5s(vector: &Path, n: NonZeroUsize) -> Vec<Option<String>> {
-    let (data, packets) = read_packets(vector).expect("container parse");
+/// the per-frame MD5 hex strings in shown-frame order.
+fn decode_md5s(vector: &Path, n: NonZeroUsize) -> Result<Vec<String>, String> {
+    let (data, packets) =
+        read_packets(vector).map_err(|error| format!("container parse: {error}"))?;
     let mut decoder = Decoder::with_threads(n);
     let mut md5s = Vec::new();
-    for range in &packets {
+    for (packet_idx, range) in packets.iter().enumerate() {
         let packet_bytes = range.slice(&data);
-        let parsed = match decoder.parse_packet(packet_bytes) {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-        for frame in parsed {
+        let parsed = decoder
+            .parse_packet(packet_bytes)
+            .map_err(|error| format!("packet {packet_idx}: parse failed: {error}"))?;
+        for (frame_idx, frame) in parsed.into_iter().enumerate() {
             let shown = frame.header.show_frame
                 || matches!(
                     frame.header.kind,
                     rvp9_core::bitstream::FrameKind::ShowExistingFrame { .. }
                 );
-            match decoder.decode_frame(&frame) {
-                Ok(buf) => {
-                    if shown {
-                        md5s.push(Some(hex16(md5_of_yv12_visible(&buf))));
-                    }
-                }
-                Err(_) => {
-                    if shown {
-                        md5s.push(None);
-                    }
-                }
+            let buf = decoder.decode_frame(&frame).map_err(|error| {
+                format!("packet {packet_idx} frame {frame_idx}: decode failed: {error}")
+            })?;
+            if shown {
+                md5s.push(hex16(md5_of_yv12_visible(&buf)));
             }
         }
     }
-    md5s
+    Ok(md5s)
+}
+
+fn expected_shown_frames(vector: &Path) -> usize {
+    let extension = vector
+        .extension()
+        .and_then(|value| value.to_str())
+        .expect("vector path has an extension");
+    let ledger = vector.with_extension(format!("{extension}.md5"));
+    read_md5_file(&ledger)
+        .unwrap_or_else(|error| panic!("ledger {}: {error}", ledger.display()))
+        .len()
 }
 
 /// HLD V6 §G5 oracle #1: conformance at N = 2. Re-runs the full
@@ -83,16 +85,12 @@ fn decode_md5s(vector: &Path, n: NonZeroUsize) -> Vec<Option<String>> {
 /// produced different per-tile entropy state at N=2 vs N=1 would
 /// surface here as a corpus-wide mismatch).
 #[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 fn conformance_at_n_threads_2() {
     let dir = vectors_dir();
-    if !dir.exists() {
-        eprintln!(
-            "vectors dir {} not present — run scripts/fetch-vectors.ps1",
-            dir.display()
-        );
-        return;
-    }
-
     let mut vectors: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap()
         .filter_map(|e| e.ok().map(|e| e.path()))
@@ -113,20 +111,24 @@ fn conformance_at_n_threads_2() {
             vector.extension().and_then(|s| s.to_str()).unwrap_or("")
         ));
         let md5_entries = read_md5_file(&md5_path).expect(".md5 parse");
-        let got = decode_md5s(vector, nz(2));
+        let got = decode_md5s(vector, nz(2))
+            .unwrap_or_else(|error| panic!("{}: {error}", vector.display()));
+        assert_eq!(
+            got.len(),
+            md5_entries.len(),
+            "{}: decoded {} shown frames; ledger expects {}",
+            vector.display(),
+            got.len(),
+            md5_entries.len()
+        );
         for (idx, got_md5) in got.iter().enumerate() {
             let want = md5_entries.get(idx);
             match (got_md5, want) {
-                (Some(g), Some(e)) if e.md5_hex_visible().as_deref() == Some(g.as_str()) => {
+                (g, Some(e)) if e.md5_hex_visible().as_deref() == Some(g.as_str()) => {
                     total_passed += 1;
                 }
-                (Some(_), _) => {
+                (_, _) => {
                     total_mismatched += 1;
-                }
-                (None, _) => {
-                    // Gated/unimplemented at N=2 — same accounting as
-                    // the main conformance test (treated as skipped,
-                    // not a mismatch).
                 }
             }
         }
@@ -148,16 +150,12 @@ fn conformance_at_n_threads_2() {
 /// and `Drop`, and (b) once worker spawning lands, it becomes the
 /// primary parity oracle for the threaded vs single-threaded paths.
 #[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 fn determinism_n1_eq_n2() {
     let dir = vectors_dir();
-    if !dir.exists() {
-        eprintln!(
-            "vectors dir {} not present — run scripts/fetch-vectors.ps1",
-            dir.display()
-        );
-        return;
-    }
-
     let mut vectors: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap()
         .filter_map(|e| e.ok().map(|e| e.path()))
@@ -172,8 +170,25 @@ fn determinism_n1_eq_n2() {
 
     let mut total_checked = 0usize;
     for vector in &vectors {
-        let v1 = decode_md5s(vector, nz(1));
-        let v2 = decode_md5s(vector, nz(2));
+        let v1 = decode_md5s(vector, nz(1))
+            .unwrap_or_else(|error| panic!("{} at N=1: {error}", vector.display()));
+        let v2 = decode_md5s(vector, nz(2))
+            .unwrap_or_else(|error| panic!("{} at N=2: {error}", vector.display()));
+        let expected = expected_shown_frames(vector);
+        assert_eq!(
+            v1.len(),
+            expected,
+            "{}: N=1 decoded {} shown frames; ledger expects {expected}",
+            vector.display(),
+            v1.len()
+        );
+        assert_eq!(
+            v2.len(),
+            expected,
+            "{}: N=2 decoded {} shown frames; ledger expects {expected}",
+            vector.display(),
+            v2.len()
+        );
         assert_eq!(
             v1.len(),
             v2.len(),
@@ -209,6 +224,10 @@ fn determinism_n1_eq_n2() {
 /// is named in the test failure rather than buried inside a single-tile
 /// vector report.
 #[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 fn multi_tile_n1_eq_n2() {
     let vectors = [
         "vp90-2-08-tile_1x2.webm",
@@ -218,12 +237,22 @@ fn multi_tile_n1_eq_n2() {
     let dir = vectors_dir();
     for name in &vectors {
         let path = dir.join(name);
-        if !path.exists() {
-            eprintln!("skip: {} not present", path.display());
-            continue;
-        }
-        let v1 = decode_md5s(&path, nz(1));
-        let v2 = decode_md5s(&path, nz(2));
+        assert!(path.exists(), "required vector missing: {}", path.display());
+        let v1 = decode_md5s(&path, nz(1)).unwrap_or_else(|error| panic!("{name} at N=1: {error}"));
+        let v2 = decode_md5s(&path, nz(2)).unwrap_or_else(|error| panic!("{name} at N=2: {error}"));
+        let expected = expected_shown_frames(&path);
+        assert_eq!(
+            v1.len(),
+            expected,
+            "{name}: N=1 decoded {} shown frames; ledger expects {expected}",
+            v1.len()
+        );
+        assert_eq!(
+            v2.len(),
+            expected,
+            "{name}: N=2 decoded {} shown frames; ledger expects {expected}",
+            v2.len()
+        );
         assert_eq!(
             v1.len(),
             v2.len(),
@@ -267,19 +296,27 @@ fn decoder_construct_and_drop_at_n1_and_n2() {
 /// gate misfires or the dispatch path silently falls back to inline,
 /// the counter doesn't bump and the assert fires.
 #[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 fn multi_tile_dispatch_uses_worker_pool() {
     use std::sync::atomic::Ordering;
     let dir = vectors_dir();
     let path = dir.join("vp90-2-08-tile_1x2.webm");
-    if !path.exists() {
-        eprintln!("skip: {} not present", path.display());
-        return;
-    }
+    assert!(path.exists(), "required vector missing: {}", path.display());
     let before = rvp9_decoder::RVP9_G5_1_PARALLEL_JOBS.load(Ordering::Relaxed);
-    let md5s = decode_md5s(&path, nz(2));
+    let md5s = decode_md5s(&path, nz(2)).expect("tile_1x2 must decode at N=2");
+    let expected = expected_shown_frames(&path);
+    assert_eq!(
+        md5s.len(),
+        expected,
+        "tile_1x2 decoded {} shown frames; ledger expects {expected}",
+        md5s.len()
+    );
     let after = rvp9_decoder::RVP9_G5_1_PARALLEL_JOBS.load(Ordering::Relaxed);
     let delta = after.wrapping_sub(before);
-    let n_frames = md5s.iter().filter(|m| m.is_some()).count() as u32;
+    let n_frames = md5s.len() as u32;
     assert!(n_frames > 0, "tile_1x2 produced 0 frames — corpus broken");
     // 2 tiles per frame in `tile_1x2`. Expect delta >= 2 * n_frames
     // (=) ; "exactly" if every shown frame is a multi-tile frame
@@ -310,14 +347,15 @@ fn multi_tile_dispatch_uses_worker_pool() {
 /// dispatch eligibility for, so this catches fallback-to-inline,
 /// missing isolation, and lost scratch reuse.
 #[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 fn parallel_tile_decode_reuses_isolated_scratch_buffers() {
     use std::sync::atomic::Ordering;
     let dir = vectors_dir();
     let path = dir.join("vp90-2-08-tile_1x8.webm");
-    if !path.exists() {
-        eprintln!("skip: {} not present", path.display());
-        return;
-    }
+    assert!(path.exists(), "required vector missing: {}", path.display());
     let (data, packets) = rvp9_harness::container::read_packets(&path).expect("container parse");
     let mut decoder = Decoder::with_threads(nz(2));
 
@@ -333,12 +371,11 @@ fn parallel_tile_decode_reuses_isolated_scratch_buffers() {
     let mut pool_count_by_frame: Vec<usize> = Vec::new();
     let parallel_jobs_before = rvp9_decoder::RVP9_G5_1_PARALLEL_JOBS.load(Ordering::Relaxed);
 
-    for range in &packets {
+    for (packet_idx, range) in packets.iter().enumerate() {
         let packet_bytes = range.slice(&data);
-        let parsed = match decoder.parse_packet(packet_bytes) {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
+        let parsed = decoder
+            .parse_packet(packet_bytes)
+            .unwrap_or_else(|error| panic!("packet {packet_idx}: parse failed: {error}"));
         for frame in parsed {
             let before = rvp9_core::frame::RVP9_G5_2_SCRATCH_ALLOCS.load(Ordering::Relaxed);
             let _buf = decoder
@@ -409,6 +446,10 @@ fn parallel_tile_decode_reuses_isolated_scratch_buffers() {
 /// of submission order), the running counts diverge after the first
 /// frame and the second run's MD5s drift.
 #[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 fn multi_tile_run_to_run_determinism() {
     let vectors = [
         "vp90-2-08-tile_1x2.webm",
@@ -418,12 +459,24 @@ fn multi_tile_run_to_run_determinism() {
     let dir = vectors_dir();
     for name in &vectors {
         let path = dir.join(name);
-        if !path.exists() {
-            eprintln!("skip: {} not present", path.display());
-            continue;
-        }
-        let run1 = decode_md5s(&path, nz(2));
-        let run2 = decode_md5s(&path, nz(2));
+        assert!(path.exists(), "required vector missing: {}", path.display());
+        let run1 =
+            decode_md5s(&path, nz(2)).unwrap_or_else(|error| panic!("{name} run 1: {error}"));
+        let run2 =
+            decode_md5s(&path, nz(2)).unwrap_or_else(|error| panic!("{name} run 2: {error}"));
+        let expected = expected_shown_frames(&path);
+        assert_eq!(
+            run1.len(),
+            expected,
+            "{name}: run 1 decoded {} shown frames; ledger expects {expected}",
+            run1.len()
+        );
+        assert_eq!(
+            run2.len(),
+            expected,
+            "{name}: run 2 decoded {} shown frames; ledger expects {expected}",
+            run2.len()
+        );
         assert_eq!(
             run1, run2,
             "{name}: G5.1 run-to-run determinism broken — same vector \

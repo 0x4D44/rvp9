@@ -20,6 +20,7 @@
 use rvp9_decoder::Decoder;
 use rvp9_harness::container::read_packets;
 use rvp9_harness::md5_of_yv12_visible;
+use rvp9_harness::md5file::read_md5_file;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
@@ -34,37 +35,42 @@ fn vectors_dir() -> PathBuf {
         .join("vectors")
 }
 
-fn decode_vector_md5s(path: &Path, threads: usize) -> Vec<[u8; 16]> {
-    let (data, packets) = read_packets(path).expect("container parse");
+fn decode_vector_md5s(path: &Path, threads: usize) -> Result<Vec<[u8; 16]>, String> {
+    let (data, packets) =
+        read_packets(path).map_err(|error| format!("container parse: {error}"))?;
     let mut decoder = Decoder::with_threads(NonZeroUsize::new(threads).expect("non-zero"));
     let mut out: Vec<[u8; 16]> = Vec::new();
-    for range in &packets {
+    for (packet_idx, range) in packets.iter().enumerate() {
         let bytes = range.slice(&data);
-        let Ok(parsed) = decoder.parse_packet(bytes) else {
-            out.push([0u8; 16]);
-            continue;
-        };
-        for frame in parsed {
+        let parsed = decoder
+            .parse_packet(bytes)
+            .map_err(|error| format!("packet {packet_idx}: parse failed: {error}"))?;
+        for (frame_idx, frame) in parsed.into_iter().enumerate() {
             let shown = frame.header.show_frame
                 || matches!(
                     frame.header.kind,
                     rvp9_core::bitstream::FrameKind::ShowExistingFrame { .. }
                 );
-            match decoder.decode_frame(&frame) {
-                Ok(buf) => {
-                    if shown {
-                        out.push(md5_of_yv12_visible(&buf));
-                    }
-                }
-                Err(_) => {
-                    if shown {
-                        out.push([0u8; 16]);
-                    }
-                }
+            let buf = decoder.decode_frame(&frame).map_err(|error| {
+                format!("packet {packet_idx} frame {frame_idx}: decode failed: {error}")
+            })?;
+            if shown {
+                out.push(md5_of_yv12_visible(&buf));
             }
         }
     }
-    out
+    Ok(out)
+}
+
+fn expected_shown_frames(path: &Path) -> usize {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .expect("vector path has an extension");
+    let ledger = path.with_extension(format!("{extension}.md5"));
+    read_md5_file(&ledger)
+        .unwrap_or_else(|error| panic!("ledger {}: {error}", ledger.display()))
+        .len()
 }
 
 /// Multi-tile vectors exercise scratch decode, merge, then LF.
@@ -78,12 +84,12 @@ const MULTI_TILE_VECTORS: &[&str] = &[
 const SINGLE_TILE_LF_VECTORS: &[&str] = &["vp90-2-00-quantizer-26.webm", "vp90-2-09-aq2.webm"];
 
 #[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 fn scratch_tile_decode_and_lf_match_serial() {
     let dir = vectors_dir();
-    if !dir.exists() {
-        eprintln!("vectors dir missing — skip");
-        return;
-    }
     // The unsafe output-frame overlap path must remain dormant.
     let overlap_frames_pre =
         rvp9_decoder::RVP9_LF_OVERLAP_POOL_FRAMES.load(std::sync::atomic::Ordering::Relaxed);
@@ -94,12 +100,24 @@ fn scratch_tile_decode_and_lf_match_serial() {
         .chain(MULTI_TILE_VECTORS.iter())
     {
         let path = dir.join(name);
-        if !path.exists() {
-            eprintln!("missing {name} — skip");
-            continue;
-        }
-        let serial = decode_vector_md5s(&path, 1);
-        let parallel = decode_vector_md5s(&path, 4);
+        assert!(path.exists(), "required vector missing: {}", path.display());
+        let serial =
+            decode_vector_md5s(&path, 1).unwrap_or_else(|error| panic!("{name} serial: {error}"));
+        let parallel =
+            decode_vector_md5s(&path, 4).unwrap_or_else(|error| panic!("{name} parallel: {error}"));
+        let expected = expected_shown_frames(&path);
+        assert_eq!(
+            serial.len(),
+            expected,
+            "{name}: serial decoded {} shown frames; ledger expects {expected}",
+            serial.len()
+        );
+        assert_eq!(
+            parallel.len(),
+            expected,
+            "{name}: parallel decoded {} shown frames; ledger expects {expected}",
+            parallel.len()
+        );
         assert_eq!(
             serial.len(),
             parallel.len(),
@@ -117,13 +135,10 @@ fn scratch_tile_decode_and_lf_match_serial() {
         }
         checked += 1;
     }
-    if checked == 0 {
-        eprintln!(
-            "no scratch/LF vectors present — \
-             run scripts/fetch-vectors.sh to exercise this optional oracle"
-        );
-        return;
-    }
+    assert_eq!(
+        checked,
+        SINGLE_TILE_LF_VECTORS.len() + MULTI_TILE_VECTORS.len()
+    );
 
     let overlap_frames_post =
         rvp9_decoder::RVP9_LF_OVERLAP_POOL_FRAMES.load(std::sync::atomic::Ordering::Relaxed);
