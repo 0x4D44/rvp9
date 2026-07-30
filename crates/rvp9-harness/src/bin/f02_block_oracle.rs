@@ -25,6 +25,7 @@
 //!     --vpxenc third_party/libvpx/build_f02/vpxenc.exe \
 //!     --frames 64 \
 //!     --kbps 25,50,100,250 \
+//!     --vbr \
 //!     --out target/track_f_oracle/
 //! ```
 
@@ -55,6 +56,14 @@ fn arg(args: &[String], key: &str) -> Option<String> {
     None
 }
 
+fn rvp9_rate_config(frames: u32, vbr: bool) -> (u32, RcMode) {
+    if vbr {
+        (frames.saturating_add(1), RcMode::Vbr)
+    } else {
+        (30, RcMode::Cbr)
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let foreman_path = PathBuf::from(
@@ -75,6 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         PathBuf::from(arg(&argv, "--out").unwrap_or_else(|| "target/track_f_oracle".into()));
     let no_libvpx = argv.iter().any(|a| a == "--no-libvpx");
     let report_only = argv.iter().any(|a| a == "--report-only");
+    let vbr = argv.iter().any(|a| a == "--vbr");
 
     if !foreman_path.exists() {
         eprintln!(
@@ -108,6 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!("  frames    : {}", frames);
     println!("  bitrates  : {:?} kbps", kbps_list);
+    println!("  rate mode : {}", if vbr { "VBR" } else { "CBR" });
     println!("  out dir   : {}", run_dir.display());
     println!(
         "  policy    : {}",
@@ -128,7 +139,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut strict_mismatches = 0usize;
     for &kbps in &kbps_list {
         println!("\n=== {} kbps target bitrate ===", kbps);
-        let rvp9_records = drive_rvp9_leg(&foreman_path, frames, kbps)?;
+        let rvp9_records = drive_rvp9_leg(&foreman_path, frames, kbps, vbr)?;
         println!(
             "  rvp9: {} per-block decisions across {} frames",
             rvp9_records.len(),
@@ -138,7 +149,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let libvpx_records = if no_libvpx {
             Vec::new()
         } else {
-            drive_libvpx_leg(&vpxenc_path, &foreman_path, frames, kbps, &run_dir)?
+            drive_libvpx_leg(&vpxenc_path, &foreman_path, frames, kbps, &run_dir, vbr)?
         };
         if !no_libvpx {
             println!("  libvpx: {} per-block decisions", libvpx_records.len());
@@ -278,13 +289,15 @@ fn drive_rvp9_leg(
     foreman_path: &Path,
     frames: u32,
     kbps: u32,
+    vbr: bool,
 ) -> Result<Vec<BlockDecision>, Box<dyn std::error::Error>> {
+    let (gop_length, rc_mode) = rvp9_rate_config(frames, vbr);
     let cfg = EncoderConfig {
         width: DEFAULT_W,
         height: DEFAULT_H,
         framerate: DEFAULT_FRAMERATE,
         target_bitrate_bps: kbps * 1000,
-        gop_length: 30,
+        gop_length,
         aq_mode: AqMode::Off,
         use_prev_frame_mvs: false,
         speed: 7,
@@ -293,7 +306,7 @@ fn drive_rvp9_leg(
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
         enable_alt_ref: false,
-        rc_mode: RcMode::Cbr,
+        rc_mode,
         cq_level: 0,
         temporal_layers: 1,
         enable_tpl: false,
@@ -337,6 +350,7 @@ fn drive_libvpx_leg(
     frames: u32,
     kbps: u32,
     run_dir: &Path,
+    vbr: bool,
 ) -> Result<Vec<BlockDecision>, Box<dyn std::error::Error>> {
     let sidecar = run_dir.join(format!("foreman_{}kbps_libvpx.jsonl", kbps));
     // libvpx CLI mirror of the BD-rate gate at e1_block_stats.rs:586+
@@ -351,7 +365,6 @@ fn drive_libvpx_leg(
         .arg("--cpu-used=7")
         .arg(format!("--target-bitrate={}", kbps))
         .arg(format!("--limit={}", frames))
-        .arg("--end-usage=cbr")
         .arg("--aq-mode=0")
         .arg("--passes=1")
         // `--rt` makes lag-in-frames a no-op; libvpx still prints a
@@ -360,6 +373,9 @@ fn drive_libvpx_leg(
         .arg("--lag-in-frames=0")
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
+    if !vbr {
+        cmd.arg("--end-usage=cbr");
+    }
     let out = cmd.output()?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -382,4 +398,19 @@ fn drive_libvpx_leg(
     let records = parse_jsonl_stream(BufReader::new(f))
         .map_err(|e| format!("libvpx sidecar parse failed: {e}"))?;
     Ok(records)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vbr_oracle_uses_single_keyframe_and_vbr_rate_control() {
+        assert_eq!(rvp9_rate_config(64, true), (65, RcMode::Vbr));
+    }
+
+    #[test]
+    fn default_oracle_preserves_legacy_cbr_configuration() {
+        assert_eq!(rvp9_rate_config(64, false), (30, RcMode::Cbr));
+    }
 }
