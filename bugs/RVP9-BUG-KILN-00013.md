@@ -5,15 +5,15 @@
 - **Severity:** High
 - **Area:** encoder/altref prev-MV salvage
 - **Raised:** 2026-07-05
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T170438Z-p91782-n976304000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00013-run-fix-20260730T170438Z-p91782-n976304000-c1
+- **Owner base:** eb9d44796d79e7c7c1ff0f16bd1f3eb1d9e9affe
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T17:04:38Z
+- **Owner until:** 2026-07-30T19:04:38Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
