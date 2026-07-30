@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00052 - rvp9dec --threads can panic after eager worker allocation
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** cli/rvp9dec threading
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T174453Z-p32667-n004904000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00052-run-fix-20260730T174453Z-p32667-n004904000-c1
-- **Owner base:** 990c5c09d62b5f657780e02c662f0f41a75731c8
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T17:44:53Z
-- **Owner until:** 2026-07-30T19:44:53Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-cli/` at `8d66f33`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-cli/` at `8d66f33`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T174453Z-p32667-n004904000-c1 branch=task/bug-RVP9-BUG-KILN-00052-run-fix-20260730T174453Z-p32667-n004904000-c1 code=2a574cf62bb5502a9eba733338adcb5e93826704 gate=manual)
 
 ## Observation
 
