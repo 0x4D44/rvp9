@@ -13,7 +13,8 @@
 //! tokeniser handles it. The unit tests below guarantee round-trip
 //! consistency with the canonical writer.
 
-use std::io::{self, BufRead};
+use std::collections::BTreeMap;
+use std::io::{self, BufRead, Write};
 
 pub use rvp9_encoder::f02_oracle::{BlockDecision, BlockDecisionMode, bsize_tag, ref_frame_tag};
 
@@ -161,6 +162,240 @@ pub fn parse_jsonl_stream<R: BufRead>(r: R) -> Result<Vec<BlockDecision>, ParseE
         out.push(parse_jsonl_line(&line)?);
     }
     Ok(out)
+}
+
+/// Stable alignment key for one coded block.
+///
+/// Both encoders report the top-left 8×8 mi cell of each leaf. Block size is
+/// deliberately not part of the key because partition choice is one of the
+/// live fields the oracle compares.
+#[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct BlockKey {
+    /// 0-based presentation-order frame index.
+    pub frame_idx: u32,
+    /// Top-left 8×8 mi-cell row.
+    pub mi_row: u16,
+    /// Top-left 8×8 mi-cell column.
+    pub mi_col: u16,
+}
+
+impl From<&BlockDecision> for BlockKey {
+    fn from(decision: &BlockDecision) -> Self {
+        Self {
+            frame_idx: decision.frame_idx,
+            mi_row: decision.mi_row,
+            mi_col: decision.mi_col,
+        }
+    }
+}
+
+/// One aligned libvpx/rvp9 record pair and its comparison result.
+#[derive(Clone, Debug)]
+pub struct DecisionPair {
+    /// Shared frame/block alignment key.
+    pub key: BlockKey,
+    /// First rvp9 record at this key, or `None` when the leg omitted it.
+    pub rvp9: Option<BlockDecision>,
+    /// First libvpx record at this key, or `None` when the leg omitted it.
+    pub libvpx: Option<BlockDecision>,
+    /// Number of rvp9 records at this key. Values other than one mismatch.
+    pub rvp9_records: usize,
+    /// Number of libvpx records at this key. Values other than one mismatch.
+    pub libvpx_records: usize,
+    /// Live decision fields whose values differ.
+    pub mismatched_fields: Vec<&'static str>,
+}
+
+impl DecisionPair {
+    /// Whether both legs emitted exactly one record and every live field agrees.
+    #[must_use]
+    pub fn is_match(&self) -> bool {
+        self.rvp9_records == 1 && self.libvpx_records == 1 && self.mismatched_fields.is_empty()
+    }
+}
+
+/// Complete pairwise comparison of two F.0.2 decision streams.
+#[derive(Clone, Debug)]
+pub struct OracleComparison {
+    /// All keys present in either leg, in frame/row/column order.
+    pub pairs: Vec<DecisionPair>,
+}
+
+impl OracleComparison {
+    /// Number of aligned keys that are missing, duplicated, or field-divergent.
+    #[must_use]
+    pub fn mismatch_count(&self) -> usize {
+        self.pairs.iter().filter(|pair| !pair.is_match()).count()
+    }
+
+    /// Enforce the default strict-oracle exit policy.
+    ///
+    /// Report-only mode still performs the comparison and emits diagnostics,
+    /// but does not turn observed divergence into a failing process result.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OracleMismatch`] when mismatches exist and `report_only` is
+    /// false.
+    pub fn require_match(&self, report_only: bool) -> Result<(), OracleMismatch> {
+        let mismatches = self.mismatch_count();
+        if mismatches > 0 && !report_only {
+            Err(OracleMismatch { mismatches })
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Write one paired JSONL diagnostic per aligned frame/block key.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first I/O error from `writer`.
+    pub fn write_paired_jsonl<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        for pair in &self.pairs {
+            write!(
+                writer,
+                "{{\"frame_idx\":{},\"mi_row\":{},\"mi_col\":{},\
+                 \"status\":\"{}\",\"rvp9_records\":{},\"libvpx_records\":{},\
+                 \"mismatched_fields\":[",
+                pair.key.frame_idx,
+                pair.key.mi_row,
+                pair.key.mi_col,
+                if pair.is_match() { "match" } else { "mismatch" },
+                pair.rvp9_records,
+                pair.libvpx_records,
+            )?;
+            for (index, field) in pair.mismatched_fields.iter().enumerate() {
+                if index > 0 {
+                    writer.write_all(b",")?;
+                }
+                write!(writer, "\"{field}\"")?;
+            }
+            writer.write_all(b"],\"rvp9\":")?;
+            write_optional_decision(writer, pair.rvp9.as_ref())?;
+            writer.write_all(b",\"libvpx\":")?;
+            write_optional_decision(writer, pair.libvpx.as_ref())?;
+            writer.write_all(b"}\n")?;
+        }
+        Ok(())
+    }
+}
+
+/// Strict-oracle failure with the number of divergent aligned keys.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct OracleMismatch {
+    /// Number of divergent aligned keys.
+    pub mismatches: usize,
+}
+
+impl std::fmt::Display for OracleMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "F.0.2 oracle found {} mismatched frame/block key(s)",
+            self.mismatches
+        )
+    }
+}
+
+impl std::error::Error for OracleMismatch {}
+
+/// Align and compare the fields that are live on both F.0.2 legs.
+///
+/// The three rate-estimate fields remain present in paired diagnostics but are
+/// not strict comparison fields: the pinned libvpx patch intentionally emits
+/// zero placeholders for them. Missing records and duplicate keys are always
+/// mismatches.
+#[must_use]
+pub fn compare_decisions(rvp9: &[BlockDecision], libvpx: &[BlockDecision]) -> OracleComparison {
+    let mut aligned = BTreeMap::<BlockKey, (Vec<BlockDecision>, Vec<BlockDecision>)>::new();
+    for decision in rvp9 {
+        aligned
+            .entry(BlockKey::from(decision))
+            .or_default()
+            .0
+            .push(*decision);
+    }
+    for decision in libvpx {
+        aligned
+            .entry(BlockKey::from(decision))
+            .or_default()
+            .1
+            .push(*decision);
+    }
+
+    let pairs = aligned
+        .into_iter()
+        .map(|(key, (rvp9_records, libvpx_records))| {
+            let rvp9 = rvp9_records.first().copied();
+            let libvpx = libvpx_records.first().copied();
+            let mismatched_fields = match (rvp9.as_ref(), libvpx.as_ref()) {
+                (Some(rvp9), Some(libvpx)) => live_field_mismatches(rvp9, libvpx),
+                _ => Vec::new(),
+            };
+            DecisionPair {
+                key,
+                rvp9,
+                libvpx,
+                rvp9_records: rvp9_records.len(),
+                libvpx_records: libvpx_records.len(),
+                mismatched_fields,
+            }
+        })
+        .collect();
+    OracleComparison { pairs }
+}
+
+fn live_field_mismatches(rvp9: &BlockDecision, libvpx: &BlockDecision) -> Vec<&'static str> {
+    let mut fields = Vec::new();
+    if rvp9.bsize != libvpx.bsize {
+        fields.push("bsize");
+    }
+    if rvp9.mode != libvpx.mode {
+        fields.push("mode");
+    }
+    if rvp9.ref_frame != libvpx.ref_frame {
+        fields.push("ref_frame");
+    }
+    if rvp9.mv_row != libvpx.mv_row {
+        fields.push("mv_row");
+    }
+    if rvp9.mv_col != libvpx.mv_col {
+        fields.push("mv_col");
+    }
+    if rvp9.sse_after_pred != libvpx.sse_after_pred {
+        fields.push("sse_after_pred");
+    }
+    if rvp9.skip_flag != libvpx.skip_flag {
+        fields.push("skip_flag");
+    }
+    fields
+}
+
+fn write_optional_decision<W: Write>(
+    writer: &mut W,
+    decision: Option<&BlockDecision>,
+) -> io::Result<()> {
+    let Some(decision) = decision else {
+        return writer.write_all(b"null");
+    };
+    write!(
+        writer,
+        "{{\"bsize\":\"{}\",\"mode\":\"{}\",\"ref_frame\":\"{}\",\
+         \"mv_row\":{},\"mv_col\":{},\"mode_bits_est\":{},\
+         \"mv_bits_est\":{},\"coef_bits_est\":{},\"sse_after_pred\":{},\
+         \"skip_flag\":{}}}",
+        bsize_tag(decision.bsize),
+        decision.mode.as_tag(),
+        ref_frame_tag(decision.ref_frame),
+        decision.mv_row,
+        decision.mv_col,
+        decision.mode_bits_est,
+        decision.mv_bits_est,
+        decision.coef_bits_est,
+        decision.sse_after_pred,
+        decision.skip_flag,
+    )
 }
 
 /// Splits top-level commas inside a JSON-like object body.
@@ -468,5 +703,65 @@ mod tests {
         assert_eq!(d.frame_idx, 1);
         assert_eq!(d.mi_row, 2);
         assert_eq!(d.mi_col, 3);
+    }
+
+    #[test]
+    fn divergent_live_field_is_a_strict_oracle_failure() {
+        let rvp9 = sample_inter();
+        let mut libvpx = rvp9;
+        libvpx.mv_col += 1;
+
+        let comparison = compare_decisions(&[rvp9], &[libvpx]);
+
+        assert_eq!(comparison.mismatch_count(), 1);
+        assert_eq!(comparison.pairs[0].mismatched_fields, ["mv_col"]);
+        assert!(comparison.require_match(false).is_err());
+        assert!(comparison.require_match(true).is_ok());
+    }
+
+    #[test]
+    fn comparison_aligns_by_key_and_ignores_rate_placeholders() {
+        let first = sample_inter();
+        let mut second = sample_intra();
+        second.frame_idx = 8;
+        let mut libvpx_first = first;
+        libvpx_first.mode_bits_est = 0;
+        libvpx_first.mv_bits_est = 0;
+        libvpx_first.coef_bits_est = 0;
+
+        let comparison = compare_decisions(&[second, first], &[libvpx_first, second]);
+
+        assert_eq!(comparison.mismatch_count(), 0);
+        assert_eq!(comparison.pairs[0].key.frame_idx, 7);
+        assert_eq!(comparison.pairs[1].key.frame_idx, 8);
+    }
+
+    #[test]
+    fn missing_and_duplicate_keys_are_mismatches() {
+        let decision = sample_inter();
+        let missing = compare_decisions(&[decision], &[]);
+        let duplicate = compare_decisions(&[decision, decision], &[decision]);
+
+        assert_eq!(missing.mismatch_count(), 1);
+        assert_eq!(missing.pairs[0].libvpx_records, 0);
+        assert_eq!(duplicate.mismatch_count(), 1);
+        assert_eq!(duplicate.pairs[0].rvp9_records, 2);
+    }
+
+    #[test]
+    fn paired_jsonl_contains_both_legs_and_mismatch_fields() {
+        let rvp9 = sample_inter();
+        let mut libvpx = rvp9;
+        libvpx.skip_flag = !libvpx.skip_flag;
+        let comparison = compare_decisions(&[rvp9], &[libvpx]);
+        let mut output = Vec::new();
+
+        comparison.write_paired_jsonl(&mut output).unwrap();
+
+        let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(json["status"], "mismatch");
+        assert_eq!(json["mismatched_fields"][0], "skip_flag");
+        assert!(json["rvp9"].is_object());
+        assert!(json["libvpx"].is_object());
     }
 }

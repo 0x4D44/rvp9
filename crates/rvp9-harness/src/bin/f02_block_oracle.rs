@@ -30,7 +30,7 @@
 
 use rvp9_encoder::f02_oracle::{self, BlockDecision};
 use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
-use rvp9_harness::f02_schema::parse_jsonl_stream;
+use rvp9_harness::f02_schema::{compare_decisions, parse_jsonl_stream};
 use rvp9_harness::y4m::read_cropped;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, Write};
@@ -74,6 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out_dir =
         PathBuf::from(arg(&argv, "--out").unwrap_or_else(|| "target/track_f_oracle".into()));
     let no_libvpx = argv.iter().any(|a| a == "--no-libvpx");
+    let report_only = argv.iter().any(|a| a == "--report-only");
 
     if !foreman_path.exists() {
         eprintln!(
@@ -108,6 +109,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  frames    : {}", frames);
     println!("  bitrates  : {:?} kbps", kbps_list);
     println!("  out dir   : {}", run_dir.display());
+    println!(
+        "  policy    : {}",
+        if report_only {
+            "report-only (mismatches do not fail)"
+        } else {
+            "strict (mismatches fail)"
+        }
+    );
 
     // Enable the rvp9 leg's oracle. Once enabled at process startup
     // for THIS process; the harness driver's encoder runs are the
@@ -116,6 +125,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     unsafe { std::env::set_var("RVP9_F02_ORACLE", "1") };
     f02_oracle::init_from_env();
 
+    let mut strict_mismatches = 0usize;
     for &kbps in &kbps_list {
         println!("\n=== {} kbps target bitrate ===", kbps);
         let rvp9_records = drive_rvp9_leg(&foreman_path, frames, kbps)?;
@@ -134,6 +144,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  libvpx: {} per-block decisions", libvpx_records.len());
         }
 
+        let comparison = if no_libvpx {
+            None
+        } else {
+            let comparison = compare_decisions(&rvp9_records, &libvpx_records);
+            let mismatches = comparison.mismatch_count();
+            println!(
+                "  compare: {} matched / {} mismatched frame-block keys",
+                comparison.pairs.len() - mismatches,
+                mismatches,
+            );
+            if let Err(error) = comparison.require_match(report_only) {
+                strict_mismatches += error.mismatches;
+            }
+
+            let paired_path = run_dir.join(format!("foreman_{}kbps_raw.jsonl", kbps));
+            let mut paired_file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&paired_path)?;
+            comparison.write_paired_jsonl(&mut paired_file)?;
+            println!("  paired raw → {}", paired_path.display());
+            Some(comparison)
+        };
+
         // Per-frame summary table.
         let summary_path = run_dir.join(format!("foreman_{}kbps_summary.md", kbps));
         let mut sf = OpenOptions::new()
@@ -146,15 +181,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         writeln!(sf, "Schema liveness at this milestone (HLD §3.4.1):")?;
         writeln!(
             sf,
-            "- `coef_bits_est`: **0 on both legs** at F.0.2 (forward-looking; F.1 lands the rvp9-side estimate)."
+            "- Strict fields: `bsize`, `mode`, `ref_frame`, `mv_row`, `mv_col`, `sse_after_pred`, and `skip_flag`."
         )?;
         writeln!(
             sf,
-            "- `mode_bits_est`, `mv_bits_est`: live on rvp9, **0 on libvpx leg** at F.0.2 (libvpx-side split is a future patch)."
+            "- Diagnostic-only fields: `mode_bits_est`, `mv_bits_est`, and `coef_bits_est`; the pinned libvpx patch emits zero placeholders."
         )?;
         writeln!(sf)?;
-        writeln!(sf, "| frame_idx | rvp9 n_blocks | libvpx n_blocks |")?;
-        writeln!(sf, "|---|---|---|")?;
+        writeln!(
+            sf,
+            "| frame_idx | rvp9 n_blocks | libvpx n_blocks | paired matches | mismatches |"
+        )?;
+        writeln!(sf, "|---|---|---|---|---|")?;
         let mut rvp9_by_frame = std::collections::BTreeMap::<u32, usize>::new();
         for d in &rvp9_records {
             *rvp9_by_frame.entry(d.frame_idx).or_default() += 1;
@@ -170,12 +208,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .max()
             .unwrap_or(0);
         for f in 0..=max_frame {
+            let (matches, mismatches) = comparison.as_ref().map_or((0, 0), |comparison| {
+                comparison
+                    .pairs
+                    .iter()
+                    .filter(|pair| pair.key.frame_idx == f)
+                    .fold((0, 0), |(matches, mismatches), pair| {
+                        if pair.is_match() {
+                            (matches + 1, mismatches)
+                        } else {
+                            (matches, mismatches + 1)
+                        }
+                    })
+            });
             writeln!(
                 sf,
-                "| {} | {} | {} |",
+                "| {} | {} | {} | {} | {} |",
                 f,
                 rvp9_by_frame.get(&f).copied().unwrap_or(0),
                 vpx_by_frame.get(&f).copied().unwrap_or(0),
+                matches,
+                mismatches,
             )?;
         }
         println!("  summary → {}", summary_path.display());
@@ -191,6 +244,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             d.write_jsonl(&mut rf)?;
         }
         println!("  rvp9 raw  → {}", raw_path.display());
+    }
+
+    if strict_mismatches > 0 {
+        return Err(format!(
+            "F.0.2 strict oracle found {strict_mismatches} mismatched frame/block key(s); \
+             inspect the paired raw JSONL artifacts or pass --report-only for diagnostic runs"
+        )
+        .into());
     }
 
     println!("\nDone. Artifacts in {}", run_dir.display());
