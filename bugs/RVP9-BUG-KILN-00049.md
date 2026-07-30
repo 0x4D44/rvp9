@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00049 - rvp9enc --webm writes an IVF file
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** cli/rvp9enc container output
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T182426Z-p49376-n915512000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00049-run-fix-20260730T182426Z-p49376-n915512000-c1
-- **Owner base:** a24d427298735b1f5f777e54c1919308c075df23
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T18:24:26Z
-- **Owner until:** 2026-07-30T20:24:26Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-cli/` at `8d66f33`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-cli/` at `8d66f33`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T182426Z-p49376-n915512000-c1 branch=task/bug-RVP9-BUG-KILN-00049-run-fix-20260730T182426Z-p49376-n915512000-c1 code=3730bba2422b226ac8670be8016f628719b0b4e4 gate=manual)
 
 ## Observation
 
