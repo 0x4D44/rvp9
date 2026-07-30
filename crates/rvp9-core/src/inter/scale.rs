@@ -28,7 +28,10 @@
 //! generates a sample position in the ref's coordinate system, and
 //! C.3 will handle reads beyond `[0, ref_w) × [0, ref_h)`.
 
-use super::filter::{SUBPEL_BITS, SUBPEL_MASK, SUBPEL_SHIFTS, kernel_for};
+use super::filter::{
+    SUBPEL_BITS, SUBPEL_MASK, SUBPEL_SHIFTS, convolve8_scaled_avg_horiz, convolve8_scaled_avg_vert,
+    convolve8_scaled_horiz, convolve8_scaled_vert, kernel_for,
+};
 use crate::bitstream::frame::InterpFilter;
 
 /// libvpx `REF_SCALE_SHIFT` (`vp9_scale.h:21`). Q14 fixed-point shift
@@ -195,29 +198,20 @@ fn scaled_value(val: i32, scale_fp: i32) -> i32 {
 /// [`ScaleFactors`] for the ref, picks one of the eight convolve
 /// kernels:
 ///
-/// | scaled | subpel_x | subpel_y | unscaled path           | scaled path           |
-/// |--------|----------|----------|-------------------------|-----------------------|
-/// | no     | 0        | 0        | [`convolve_copy`]       | n/a                   |
-/// | no     | 0        | !=0      | [`convolve8_vert`]      | n/a                   |
-/// | no     | !=0      | 0        | [`convolve8_horiz`]     | n/a                   |
-/// | no     | !=0      | !=0      | [`convolve8`]           | n/a                   |
-/// | yes    | any      | any      | n/a                     | [`convolve8_scaled`]  |
+/// | x filtering | y filtering | selected path              |
+/// |-------------|-------------|----------------------------|
+/// | no          | no          | [`convolve_copy`]          |
+/// | no          | yes         | [`convolve8_scaled_vert`]  |
+/// | yes         | no          | [`convolve8_scaled_horiz`] |
+/// | yes         | yes         | [`convolve8_scaled`]       |
 ///
 /// The `_avg` variant (`is_compound_avg`) follows the same table with
 /// `convolve_avg` / `convolve8_avg_*` / `convolve8_scaled_avg`.
 ///
-/// ## libvpx asymmetry
-///
-/// When scaling, libvpx's table-based dispatch still picks
-/// horiz-only / vert-only kernels when one axis is unscaled and the
-/// subpel-on-the-other-axis happens to be zero — but as soon as either
-/// axis is scaled, the per-pixel `*_q4 += *_step_q4` walk lands on
-/// non-zero subpel offsets for most samples, so it must run the full
-/// 2-D path. This implementation collapses the scaled branches to
-/// `convolve8_scaled` / `convolve8_scaled_avg` always — bit-identical
-/// for the `2D` case, and a strict superset for the `horiz-only` /
-/// `vert-only` cases (libvpx itself also uses `vpx_scaled_2d` for the
-/// majority of scaled cases — see `vp9_scale.c:79-115`).
+/// An axis needs filtering when either its starting sub-pel offset is
+/// non-zero or its step differs from [`SUBPEL_SHIFTS`]. This matches
+/// libvpx's `vp9_setup_scale_factors_for_frame` table and, critically,
+/// the caller's per-axis three-pixel source pre-shift.
 ///
 /// ## Phase D call-site recipe
 ///
@@ -309,30 +303,85 @@ pub fn inter_predictor_with_dispatch(
 
     let filters = kernel_for(interp_filter);
 
-    if sf.is_scaled() {
-        // Always run the full 2-D scaled path. libvpx specialises
-        // horiz-only / vert-only sub-cases for SIMD; the scalar path
-        // is identical to the 2-D form (filter row 0 is the identity
-        // tap, so an "unscaled" axis collapses cleanly inside the
-        // inner loop).
-        let scaled = if is_compound_avg {
-            dispatch.convolve8_scaled_avg()
-        } else {
-            dispatch.convolve8_scaled()
-        };
-        scaled(
-            src,
-            src_stride,
-            dst,
-            dst_stride,
-            filters,
-            subpel_x_q4,
-            sf.x_step_q4,
-            subpel_y_q4,
-            sf.y_step_q4,
-            w,
-            h,
-        );
+    let x_step_scaled = sf.x_step_q4 != SUBPEL_SHIFTS as i32;
+    let y_step_scaled = sf.y_step_q4 != SUBPEL_SHIFTS as i32;
+    if x_step_scaled || y_step_scaled {
+        let x_filtering = subpel_x_q4 != 0 || x_step_scaled;
+        let y_filtering = subpel_y_q4 != 0 || y_step_scaled;
+
+        match (x_filtering, y_filtering, is_compound_avg) {
+            (false, true, false) => convolve8_scaled_vert(
+                src,
+                src_stride,
+                dst,
+                dst_stride,
+                filters,
+                subpel_y_q4,
+                sf.y_step_q4,
+                w,
+                h,
+            ),
+            (false, true, true) => convolve8_scaled_avg_vert(
+                src,
+                src_stride,
+                dst,
+                dst_stride,
+                filters,
+                subpel_y_q4,
+                sf.y_step_q4,
+                w,
+                h,
+            ),
+            (true, false, false) => convolve8_scaled_horiz(
+                src,
+                src_stride,
+                dst,
+                dst_stride,
+                filters,
+                subpel_x_q4,
+                sf.x_step_q4,
+                w,
+                h,
+            ),
+            (true, false, true) => convolve8_scaled_avg_horiz(
+                src,
+                src_stride,
+                dst,
+                dst_stride,
+                filters,
+                subpel_x_q4,
+                sf.x_step_q4,
+                w,
+                h,
+            ),
+            (true, true, false) => (dispatch.convolve8_scaled())(
+                src,
+                src_stride,
+                dst,
+                dst_stride,
+                filters,
+                subpel_x_q4,
+                sf.x_step_q4,
+                subpel_y_q4,
+                sf.y_step_q4,
+                w,
+                h,
+            ),
+            (true, true, true) => (dispatch.convolve8_scaled_avg())(
+                src,
+                src_stride,
+                dst,
+                dst_stride,
+                filters,
+                subpel_x_q4,
+                sf.x_step_q4,
+                subpel_y_q4,
+                sf.y_step_q4,
+                w,
+                h,
+            ),
+            (false, false, _) => unreachable!("a scaled step must filter at least one axis"),
+        }
         return;
     }
 
@@ -772,6 +821,90 @@ mod tests {
                 y_q4 += y_step_q4;
             }
         }
+    }
+
+    #[test]
+    fn inter_predictor_width_only_scale_matches_libvpx_horiz() {
+        let sf = ScaleFactors::new(32, 16, 16, 16);
+        assert_eq!(sf.x_step_q4, 32);
+        assert_eq!(sf.y_step_q4, SUBPEL_SHIFTS as i32);
+
+        let payload: Vec<u8> = (0..16)
+            .flat_map(|y| (0..32).map(move |x| (y * 13 + x * 7) as u8))
+            .collect();
+        let (src, stride, xo, yo) = pad_block(&payload, 32, 16);
+        let src_base = yo * stride + xo - 3;
+        let src = &src[src_base..];
+        let filters = kernel_for(InterpFilter::EightTapSharp);
+        let mut actual = vec![0u8; 8 * 8];
+        let mut expected = vec![0u8; 8 * 8];
+
+        inter_predictor(
+            src,
+            stride,
+            &mut actual,
+            8,
+            5,
+            0,
+            &sf,
+            InterpFilter::EightTapSharp,
+            8,
+            8,
+            false,
+        );
+        libvpx_convolve_horiz_ref(
+            src,
+            stride,
+            &mut expected,
+            8,
+            filters,
+            5,
+            sf.x_step_q4,
+            8,
+            8,
+        );
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn inter_predictor_height_only_scale_matches_libvpx_vert_avg() {
+        let sf = ScaleFactors::new(16, 32, 16, 16);
+        assert_eq!(sf.x_step_q4, SUBPEL_SHIFTS as i32);
+        assert_eq!(sf.y_step_q4, 32);
+
+        let payload: Vec<u8> = (0..32)
+            .flat_map(|y| (0..16).map(move |x| (y * 5 + x * 17) as u8))
+            .collect();
+        let (src, stride, xo, yo) = pad_block(&payload, 16, 32);
+        let src_base = (yo - 3) * stride + xo;
+        let src = &src[src_base..];
+        let filters = kernel_for(InterpFilter::EightTapSmooth);
+        let initial: Vec<u8> = (0..64).map(|i| (31 + i * 3) as u8).collect();
+        let mut actual = initial.clone();
+        let mut pred = vec![0u8; 8 * 8];
+
+        inter_predictor(
+            src,
+            stride,
+            &mut actual,
+            8,
+            0,
+            11,
+            &sf,
+            InterpFilter::EightTapSmooth,
+            8,
+            8,
+            true,
+        );
+        libvpx_convolve_vert_ref(src, stride, &mut pred, 8, filters, 11, sf.y_step_q4, 8, 8);
+        let expected: Vec<u8> = initial
+            .iter()
+            .zip(pred)
+            .map(|(&old, new)| ((u16::from(old) + u16::from(new) + 1) >> 1) as u8)
+            .collect();
+
+        assert_eq!(actual, expected);
     }
 
     /// Verbatim port of libvpx `vpx_convolve8_c` with full step args.
