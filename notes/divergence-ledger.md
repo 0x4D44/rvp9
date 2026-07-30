@@ -24,6 +24,36 @@ Each entry:
 
 ## Entries
 
+### 2026-07-30 — Keep realtime encode breakout as a luma early exit
+**Where:** `rvp9-core::mode_decision::model_rd::encode_breakout_test`,
+`rvp9-core::mode_decision::inter::pick_inter_mode`, and
+`rvp9-encoder::encode_inter_frame`; libvpx counterpart:
+`vp9/encoder/vp9_pickmode.c:933-1036,2413-2425,2461-2478`.
+**What libvpx does:** tests the current inter candidate's Y, U, and V
+prediction variance. When all three planes pass, it sets `x->skip`, makes the
+candidate win regardless of its prior RD rank, skips intra fallback, and
+commits prediction-only reconstruction.
+**What rvp9 does:** applies the same luma threshold as a mode-loop early exit
+only. It does not run the U/V breakout test or force prediction-only
+reconstruction; the normal quantized residual path makes the final skip
+decision.
+**Why:** the source-faithful Y/U/V prediction-only behavior was a measured
+non-Pareto regression on the accepted coefficient-domain intra baseline. Most
+fixed-Q breakout candidates already quantized to zero, while forcing the
+breakout suppressed useful later mode and intra choices on rvp9's different
+partition and predictor field.
+**Byte-parity impact:** structural — mode, intra, and residual decisions can
+differ. All seven measured candidate streams decoded successfully under
+rvp9-decoder and remained byte-exact under pinned vpxdec and ffmpeg.
+**Compression-efficiency impact:** the source-faithful candidate worsened
+strict Foreman BD-rate from `+4.9246%` to `+5.5769%`, matched-rate PSNR
+deficit from `0.2841` to `0.3023 dB`, and median frame time from `13.2028` to
+`13.3620 ms`. Fixed-Q inter payload was unchanged at q80, rose by one
+bit/frame at q120, and rose by three bits/frame at q160.
+**Future plan:** retain the luma-only early exit while the predictor and
+partition fields differ materially. Re-evaluate the complete libvpx behavior
+only after common-leaf predictor selection and intra partition shape converge.
+
 ### 2026-07-30 — Keep a fixed sub-pixel MV error multiplier
 **Where:** `rvp9-core::mode_decision::inter::run_newmv_search`; libvpx
 counterparts: `vp9/encoder/vp9_rd.h:set_error_per_bit` and
