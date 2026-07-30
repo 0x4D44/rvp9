@@ -694,6 +694,21 @@ fn webm_unknown_size_segment_runs_to_eof() {
 }
 
 #[test]
+fn webm_excessive_container_depth_is_rejected() {
+    let mut nested = Vec::new();
+    for _ in 0..64 {
+        nested = ebml_elt(&[0x18, 0x53, 0x80, 0x67], nested.len() as u64, &nested);
+    }
+    let webm = with_vp9_track(nested);
+
+    let error = read_webm_packets(&webm).expect_err("unbounded nesting was accepted");
+    assert!(
+        matches!(error, ContainerError::BadEbml(message) if message.contains("nesting depth")),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
 fn webm_block_payload_smaller_than_4_bytes_rejected() {
     // SimpleBlock inside Cluster with only 3 payload bytes — the
     // parse_block_frame "payload too small" guard.

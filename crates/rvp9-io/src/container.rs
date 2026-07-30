@@ -330,6 +330,13 @@ mod ebml_id {
     pub const BLOCK: u32 = 0xA1;
 }
 
+/// Maximum recognized-container nesting accepted by the recursive packet walk.
+///
+/// Valid WebM packet paths are shallow (`Segment` → `Cluster` → `BlockGroup`).
+/// This larger budget leaves ample room for unusual but valid layouts while
+/// bounding stack use for hostile input.
+const MAX_EBML_NESTING_DEPTH: usize = 32;
+
 /// Read a single variable-length EBML id at `data[pos..]`. Returns
 /// `(id_with_marker_bit, length_in_bytes)`.
 fn read_ebml_id(data: &[u8], pos: usize) -> Result<(u32, usize), ContainerError> {
@@ -407,6 +414,7 @@ pub fn read_webm_packets(data: &[u8]) -> Result<Vec<PacketRange>, ContainerError
         &mut packets,
         /* inside_cluster */ false,
         video_track,
+        0,
     )?;
     Ok(packets)
 }
@@ -524,7 +532,14 @@ fn walk_ebml(
     out: &mut Vec<PacketRange>,
     inside_cluster: bool,
     video_track: u64,
+    depth: usize,
 ) -> Result<(), ContainerError> {
+    if depth > MAX_EBML_NESTING_DEPTH {
+        return Err(ContainerError::BadEbml(
+            "recognized container nesting depth exceeds limit",
+        ));
+    }
+
     while pos < end {
         let (id, id_len) = read_ebml_id(data, pos)?;
         pos += id_len;
@@ -551,10 +566,10 @@ fn walk_ebml(
 
         match id {
             ebml_id::EBML | ebml_id::SEGMENT => {
-                walk_ebml(data, pos, payload_end, out, false, video_track)?;
+                walk_ebml(data, pos, payload_end, out, false, video_track, depth + 1)?;
             }
             ebml_id::CLUSTER => {
-                walk_ebml(data, pos, payload_end, out, true, video_track)?;
+                walk_ebml(data, pos, payload_end, out, true, video_track, depth + 1)?;
             }
             ebml_id::SIMPLE_BLOCK if inside_cluster => {
                 if let Some(range) =
@@ -565,7 +580,7 @@ fn walk_ebml(
             }
             ebml_id::BLOCK_GROUP if inside_cluster => {
                 // BlockGroup contains a Block + extras; recurse to find the Block.
-                walk_ebml(data, pos, payload_end, out, true, video_track)?;
+                walk_ebml(data, pos, payload_end, out, true, video_track, depth + 1)?;
             }
             ebml_id::BLOCK if inside_cluster => {
                 if let Some(range) =
