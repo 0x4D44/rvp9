@@ -2014,18 +2014,24 @@ fn dec_ivf_zero_den_uses_default_framerate() {
 /// A `.webm` file with at least 32 bytes but no `DKIF` magic exercises
 /// the *second* clause of `ivf_framerate`'s `data.len() < 32 || ... != b"DKIF"`
 /// check. (The first clause is exercised by the empty-webm test below.)
-/// We hand-craft a minimal valid EBML stream (header + Segment with one
-/// Void element of padding) so the webm parser accepts it and yields
-/// zero packets — then the decoder calls `ivf_framerate` on a >32-byte
-/// non-IVF buffer, which is the missing branch.
+/// We hand-craft a minimal valid EBML stream (header + Segment with a VP9
+/// video TrackEntry and one Void element of padding) so the webm parser
+/// accepts it and yields zero packets — then the decoder calls
+/// `ivf_framerate` on a >32-byte non-IVF buffer, which is the missing branch.
 #[test]
 fn dec_webm_large_non_ivf_data_uses_default_framerate() {
     let path = tmp("large_webm.webm");
     let mut bytes: Vec<u8> = Vec::new();
     // EBML header element: id 0x1A45DFA3, size vint = 0 (no payload).
     bytes.extend_from_slice(&[0x1A, 0x45, 0xDF, 0xA3, 0x80]);
-    // Segment element: id 0x18538067, size vint = 28 (marker bit + value).
-    bytes.extend_from_slice(&[0x18, 0x53, 0x80, 0x67, 0x80 | 28]);
+    // Segment element: id 0x18538067, size vint = 48 (marker bit + value).
+    bytes.extend_from_slice(&[0x18, 0x53, 0x80, 0x67, 0x80 | 48]);
+    // Tracks containing one VP9 video TrackEntry:
+    // TrackNumber=1, TrackType=1 (video), CodecID="V_VP9".
+    bytes.extend_from_slice(&[
+        0x16, 0x54, 0xAE, 0x6B, 0x8F, 0xAE, 0x8D, 0xD7, 0x81, 0x01, 0x83, 0x81, 0x01, 0x86, 0x85,
+        b'V', b'_', b'V', b'P', b'9',
+    ]);
     // Inside the Segment: a Void element (id 0xEC) with a 26-byte
     // zero-filled payload. This pads the file past 32 bytes without
     // introducing any block frames.

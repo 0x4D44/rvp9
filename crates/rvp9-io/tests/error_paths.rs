@@ -314,9 +314,9 @@ fn read_packets_dispatches_uppercase_extension_case_insensitively() {
 
 #[test]
 fn read_packets_dispatches_webm_extension_to_webm_reader() {
-    // Empty WebM (no segments at all) is legal — yields zero packets.
+    // A WebM with a VP9 track but no clusters yields zero packets.
     let path = unique_temp_path("dispatch_webm", "webm");
-    std::fs::write(&path, b"").expect("write fixture");
+    std::fs::write(&path, vp9_tracks(1)).expect("write fixture");
     let (_data, packets) = read_packets(&path).expect("read_packets webm");
     let _ = std::fs::remove_file(&path);
     assert!(packets.is_empty());
@@ -344,10 +344,37 @@ fn ebml_elt(id_bytes: &[u8], size: u64, payload: &[u8]) -> Vec<u8> {
     buf
 }
 
+fn tracks(track_number: u8, track_type: u8, codec_id: &[u8]) -> Vec<u8> {
+    let mut entry_payload = ebml_elt(&[0xD7], 1, &[track_number]);
+    entry_payload.extend_from_slice(&ebml_elt(&[0x83], 1, &[track_type]));
+    entry_payload.extend_from_slice(&ebml_elt(&[0x86], codec_id.len() as u64, codec_id));
+    let entry = ebml_elt(&[0xAE], entry_payload.len() as u64, &entry_payload);
+    ebml_elt(&[0x16, 0x54, 0xAE, 0x6B], entry.len() as u64, &entry)
+}
+
+fn vp9_tracks(track_number: u8) -> Vec<u8> {
+    tracks(track_number, 1, b"V_VP9")
+}
+
+fn with_vp9_track(mut body: Vec<u8>) -> Vec<u8> {
+    let mut webm = vp9_tracks(1);
+    webm.append(&mut body);
+    webm
+}
+
 #[test]
 fn webm_empty_buffer_yields_no_packets() {
-    let packets = read_webm_packets(b"").expect("empty webm");
+    let packets = read_webm_packets(b"").expect("empty WebM");
     assert!(packets.is_empty());
+}
+
+#[test]
+fn webm_non_vp9_track_is_rejected() {
+    let webm = tracks(1, 2, b"A_OPUS");
+    let error = read_webm_packets(&webm).expect_err("non-VP9 track was accepted");
+    assert!(
+        matches!(error, ContainerError::BadEbml(message) if message.contains("VP9 video track"))
+    );
 }
 
 #[test]
@@ -435,6 +462,7 @@ fn webm_simple_block_outside_cluster_is_skipped_not_returned() {
     let payload = [0x81u8, 0x00, 0x00, 0x00];
     let mut bytes = vec![0xA3, 0x80 | 4]; // SimpleBlock id, vint size=4
     bytes.extend_from_slice(&payload);
+    let bytes = with_vp9_track(bytes);
     let packets = read_webm_packets(&bytes).expect("top-level SimpleBlock");
     assert!(
         packets.is_empty(),
@@ -467,9 +495,37 @@ fn webm_cluster_with_simple_block_yields_one_packet() {
         &simple_block,
     );
 
+    let cluster = with_vp9_track(cluster);
     let packets = read_webm_packets(&cluster).expect("cluster+simpleblock");
     assert_eq!(packets.len(), 1, "expected one packet from one SimpleBlock");
     assert_eq!(packets[0].slice(&cluster), frame_payload);
+}
+
+#[test]
+fn webm_filters_other_tracks_and_returns_only_the_vp9_track() {
+    fn simple_block(track: u8, flags: u8, frame: &[u8]) -> Vec<u8> {
+        let mut payload = vec![0x80 | track, 0, 0, flags];
+        payload.extend_from_slice(frame);
+        let mut block = vec![0xA3, 0x80 | payload.len() as u8];
+        block.extend_from_slice(&payload);
+        block
+    }
+
+    let audio = simple_block(1, 0x02, b"laced-audio");
+    let vp9 = simple_block(2, 0, b"vp9-video");
+    let mut cluster_payload = audio;
+    cluster_payload.extend_from_slice(&vp9);
+    let cluster = ebml_elt(
+        &[0x1F, 0x43, 0xB6, 0x75],
+        cluster_payload.len() as u64,
+        &cluster_payload,
+    );
+    let mut webm = vp9_tracks(2);
+    webm.extend_from_slice(&cluster);
+
+    let packets = read_webm_packets(&webm).expect("read mixed-track WebM");
+    assert_eq!(packets.len(), 1);
+    assert_eq!(packets[0].slice(&webm), b"vp9-video");
 }
 
 #[test]
@@ -486,6 +542,7 @@ fn webm_segment_wraps_cluster_and_yields_packet() {
         &simple_block,
     );
     let segment = ebml_elt(&[0x18, 0x53, 0x80, 0x67], cluster.len() as u64, &cluster);
+    let segment = with_vp9_track(segment);
     let packets = read_webm_packets(&segment).expect("segment+cluster+simpleblock");
     assert_eq!(packets.len(), 1);
     assert_eq!(packets[0].slice(&segment), frame_payload);
@@ -510,6 +567,7 @@ fn webm_ebml_header_element_is_recursed_into() {
     let ebml_hdr = ebml_elt(&[0x1A, 0x45, 0xDF, 0xA3], 0, &[]);
     let mut bytes = ebml_hdr;
     bytes.extend_from_slice(&cluster);
+    let bytes = with_vp9_track(bytes);
     let packets = read_webm_packets(&bytes).expect("ebml+cluster");
     assert_eq!(packets.len(), 1);
     assert_eq!(packets[0].slice(&bytes), frame_payload);
@@ -523,6 +581,7 @@ fn webm_block_group_at_top_level_is_skipped_not_recursed() {
     let block_group_payload = vec![0u8; 4];
     let mut block_group = vec![0xA0, 0x80 | block_group_payload.len() as u8];
     block_group.extend_from_slice(&block_group_payload);
+    let block_group = with_vp9_track(block_group);
     let packets = read_webm_packets(&block_group).expect("top-level BG must not error");
     assert!(packets.is_empty());
 }
@@ -533,20 +592,25 @@ fn webm_bare_block_at_top_level_is_skipped_not_recursed() {
     let block_payload = [0x81u8, 0x00, 0x00, 0x00, 0xAA];
     let mut block = vec![0xA1, 0x80 | block_payload.len() as u8];
     block.extend_from_slice(&block_payload);
+    let block = with_vp9_track(block);
     let packets = read_webm_packets(&block).expect("top-level Block must not error");
     assert!(packets.is_empty());
 }
 
 #[test]
-fn webm_bare_block_with_lacing_inside_cluster_skipped() {
-    // Block (0xA1) inside Cluster with lacing != 0 → parse_block_frame
-    // returns Ok(None) → the `if let Some(range)` False arm fires.
+fn webm_bare_block_with_lacing_inside_cluster_is_rejected() {
+    // Lacing on the selected VP9 track is unsupported and must not
+    // disappear from the packet stream.
     let block_payload = [0x81u8, 0x00, 0x00, 0x02, 0xAA]; // flags 0x02 = Xiph lacing
     let mut block = vec![0xA1, 0x80 | block_payload.len() as u8];
     block.extend_from_slice(&block_payload);
     let cluster = ebml_elt(&[0x1F, 0x43, 0xB6, 0x75], block.len() as u64, &block);
-    let packets = read_webm_packets(&cluster).expect("laced Block must not error");
-    assert!(packets.is_empty());
+    let cluster = with_vp9_track(cluster);
+    let error = read_webm_packets(&cluster).expect_err("laced Block was silently skipped");
+    assert!(matches!(
+        error,
+        ContainerError::BadEbml(message) if message.contains("lacing")
+    ));
 }
 
 #[test]
@@ -572,6 +636,7 @@ fn webm_block_group_inside_cluster_recurses_to_block() {
         &block_group,
     );
 
+    let cluster = with_vp9_track(cluster);
     let packets = read_webm_packets(&cluster).expect("cluster+blockgroup+block");
     assert_eq!(packets.len(), 1, "BlockGroup should yield exactly 1 frame");
     assert_eq!(packets[0].slice(&cluster), frame_payload);
@@ -597,6 +662,7 @@ fn webm_unknown_element_is_skipped() {
     junk.extend_from_slice(&cluster);
 
     let segment = ebml_elt(&[0x18, 0x53, 0x80, 0x67], junk.len() as u64, &junk);
+    let segment = with_vp9_track(segment);
     let packets = read_webm_packets(&segment).expect("segment with unknown+cluster");
     assert_eq!(packets.len(), 1);
     assert_eq!(packets[0].slice(&segment), frame_payload);
@@ -621,6 +687,7 @@ fn webm_unknown_size_segment_runs_to_eof() {
     // Segment id then 1-byte all-ones vint (0xFF) = unknown size.
     let mut bytes = vec![0x18, 0x53, 0x80, 0x67, 0xFF];
     bytes.extend_from_slice(&cluster);
+    let bytes = with_vp9_track(bytes);
     let packets = read_webm_packets(&bytes).expect("unknown-size segment");
     assert_eq!(packets.len(), 1);
     assert_eq!(packets[0].slice(&bytes), frame_payload);
@@ -637,6 +704,7 @@ fn webm_block_payload_smaller_than_4_bytes_rejected() {
         &simple_block,
     );
     let _ = &mut simple_block;
+    let cluster = with_vp9_track(cluster);
     let err = read_webm_packets(&cluster).unwrap_err();
     assert!(
         matches!(err, ContainerError::BadEbml(msg) if msg.contains("block payload too small")),
@@ -645,9 +713,9 @@ fn webm_block_payload_smaller_than_4_bytes_rejected() {
 }
 
 #[test]
-fn webm_block_with_lacing_set_is_silently_skipped() {
-    // Lacing != 0 in the flags byte → parser returns Ok(None), so no
-    // packet is produced and no error is raised.
+fn webm_block_with_lacing_set_is_rejected() {
+    // Lacing != 0 on the VP9 track is rejected so no packet silently
+    // disappears.
     // Block payload: track=1 (0x81), ts=0_le_i16, flags=0x02 (Xiph lacing),
     // plus 1 byte of frame data (avoiding the frame_start==block_end arm).
     let block_payload = [0x81u8, 0x00, 0x00, 0x02, 0xAA];
@@ -658,11 +726,12 @@ fn webm_block_with_lacing_set_is_silently_skipped() {
         simple_block.len() as u64,
         &simple_block,
     );
-    let packets = read_webm_packets(&cluster).expect("laced block must not error");
-    assert!(
-        packets.is_empty(),
-        "lacing != 0 must be silently skipped, not returned"
-    );
+    let cluster = with_vp9_track(cluster);
+    let error = read_webm_packets(&cluster).expect_err("laced block was silently skipped");
+    assert!(matches!(
+        error,
+        ContainerError::BadEbml(message) if message.contains("lacing")
+    ));
 }
 
 #[test]
@@ -678,6 +747,7 @@ fn webm_block_with_zero_frame_bytes_rejected_as_bad_frame_size() {
         simple_block.len() as u64,
         &simple_block,
     );
+    let cluster = with_vp9_track(cluster);
     let err = read_webm_packets(&cluster).unwrap_err();
     assert!(
         matches!(
@@ -714,6 +784,7 @@ fn webm_block_missing_timecode_and_flags_rejected() {
         simple_block.len() as u64,
         &simple_block,
     );
+    let cluster = with_vp9_track(cluster);
     let err = read_webm_packets(&cluster).unwrap_err();
     assert!(
         matches!(err, ContainerError::BadEbml(msg) if msg.contains("missing timecode/flags")),

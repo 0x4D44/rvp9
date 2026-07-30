@@ -9,12 +9,12 @@
 //!   a superframe of 1..=8 frames; `rvp9-decoder::parse_packet`
 //!   handles the split).
 //!
-//! - **WebM** (`*.webm`): an EBML/Matroska container. The conformance
-//!   vectors all carry exactly one video track (VP9) with no audio.
-//!   We walk EBML/Segment/Cluster elements and extract every
-//!   `SimpleBlock` payload as a packet. (No `BlockGroup`s in the
-//!   conformance corpus — confirmed empirically against the 13
-//!   shipped vectors.)
+//! - **WebM** (`*.webm`): an EBML/Matroska container. We identify the
+//!   first `V_VP9` video TrackEntry, then walk
+//!   EBML/Segment/Cluster elements and extract that track's
+//!   `SimpleBlock` and `BlockGroup` payloads as packets. Laced VP9
+//!   blocks are rejected because this reader returns one contiguous
+//!   range per transport packet.
 //!
 //! Both readers expose the same shape:
 //!
@@ -312,14 +312,18 @@ pub fn write_ivf<W: Write>(out: &mut W, header: &IvfHeader, packets: &[&[u8]]) -
 // WebM (EBML / Matroska) reader
 // ============================================================================
 //
-// Just enough EBML to walk the SimpleBlocks of the (single) video track in
-// the conformance vectors. We do NOT validate codec ID, track number, or
-// any of the metadata — the conformance corpus is curated and uniform.
+// Just enough EBML to identify a VP9 video TrackEntry and walk its
+// SimpleBlock/Block payloads.
 
 /// Element IDs we recognize (full 4-byte IDs including the length-prefix bits).
 mod ebml_id {
     pub const EBML: u32 = 0x1A45_DFA3;
     pub const SEGMENT: u32 = 0x1853_8067;
+    pub const TRACKS: u32 = 0x1654_AE6B;
+    pub const TRACK_ENTRY: u32 = 0xAE;
+    pub const TRACK_NUMBER: u32 = 0xD7;
+    pub const TRACK_TYPE: u32 = 0x83;
+    pub const CODEC_ID: u32 = 0x86;
     pub const CLUSTER: u32 = 0x1F43_B675;
     pub const SIMPLE_BLOCK: u32 = 0xA3;
     pub const BLOCK_GROUP: u32 = 0xA0;
@@ -386,10 +390,15 @@ fn read_ebml_vint(data: &[u8], pos: usize) -> Result<(u64, usize), ContainerErro
 ///
 /// # Errors
 ///
-/// - [`ContainerError::BadEbml`] on malformed EBML structure.
+/// - [`ContainerError::BadEbml`] on malformed EBML structure, a
+///   missing VP9 video track, or lacing on that track.
 /// - [`ContainerError::BadFrameSize`] if a block claims more bytes
 ///   than remain in its parent.
 pub fn read_webm_packets(data: &[u8]) -> Result<Vec<PacketRange>, ContainerError> {
+    if data.is_empty() {
+        return Ok(Vec::new());
+    }
+    let video_track = find_vp9_video_track(data)?;
     let mut packets: Vec<PacketRange> = Vec::new();
     walk_ebml(
         data,
@@ -397,8 +406,115 @@ pub fn read_webm_packets(data: &[u8]) -> Result<Vec<PacketRange>, ContainerError
         data.len(),
         &mut packets,
         /* inside_cluster */ false,
+        video_track,
     )?;
     Ok(packets)
+}
+
+fn find_vp9_video_track(data: &[u8]) -> Result<u64, ContainerError> {
+    let mut containers = vec![(0usize, data.len(), false)];
+    let mut first_vp9_track = None;
+
+    while let Some((mut pos, end, inside_tracks)) = containers.pop() {
+        while pos < end {
+            let (id, id_len) = read_ebml_id(data, pos)?;
+            pos += id_len;
+            let (size, size_len) = read_ebml_vint(data, pos)?;
+            pos += size_len;
+
+            let payload_size = if is_unknown_vint(size, size_len) {
+                end - pos
+            } else {
+                usize::try_from(size)
+                    .map_err(|_| ContainerError::BadEbml("element size does not fit usize"))?
+            };
+            let payload_end = pos
+                .checked_add(payload_size)
+                .ok_or(ContainerError::BadEbml("payload size overflow"))?;
+            if payload_end > end {
+                return Err(ContainerError::BadEbml(
+                    "element payload runs past parent end",
+                ));
+            }
+
+            match id {
+                ebml_id::EBML | ebml_id::SEGMENT | ebml_id::TRACKS => {
+                    containers.push((pos, payload_end, inside_tracks || id == ebml_id::TRACKS));
+                }
+                ebml_id::TRACK_ENTRY if inside_tracks && first_vp9_track.is_none() => {
+                    first_vp9_track = parse_vp9_track_entry(data, pos, payload_end)?;
+                }
+                _ => {}
+            }
+            pos = payload_end;
+        }
+    }
+
+    first_vp9_track.ok_or(ContainerError::BadEbml("VP9 video track not found"))
+}
+
+fn parse_vp9_track_entry(
+    data: &[u8],
+    mut pos: usize,
+    end: usize,
+) -> Result<Option<u64>, ContainerError> {
+    let mut track_number = None;
+    let mut track_type = None;
+    let mut codec_is_vp9 = false;
+
+    while pos < end {
+        let (id, id_len) = read_ebml_id(data, pos)?;
+        pos += id_len;
+        let (size, size_len) = read_ebml_vint(data, pos)?;
+        pos += size_len;
+        if is_unknown_vint(size, size_len) {
+            return Err(ContainerError::BadEbml("unknown-size TrackEntry child"));
+        }
+        let payload_size = usize::try_from(size)
+            .map_err(|_| ContainerError::BadEbml("TrackEntry child size does not fit usize"))?;
+        let payload_end = pos
+            .checked_add(payload_size)
+            .ok_or(ContainerError::BadEbml("TrackEntry child size overflow"))?;
+        if payload_end > end {
+            return Err(ContainerError::BadEbml(
+                "TrackEntry child runs past entry end",
+            ));
+        }
+
+        match id {
+            ebml_id::TRACK_NUMBER => {
+                let number = read_ebml_uint(&data[pos..payload_end])?;
+                if number == 0 {
+                    return Err(ContainerError::BadEbml("TrackNumber must be non-zero"));
+                }
+                track_number = Some(number);
+            }
+            ebml_id::TRACK_TYPE => {
+                track_type = Some(read_ebml_uint(&data[pos..payload_end])?);
+            }
+            ebml_id::CODEC_ID => {
+                codec_is_vp9 = &data[pos..payload_end] == b"V_VP9";
+            }
+            _ => {}
+        }
+        pos = payload_end;
+    }
+
+    Ok(match (track_number, track_type, codec_is_vp9) {
+        (Some(number), Some(1), true) => Some(number),
+        _ => None,
+    })
+}
+
+fn read_ebml_uint(bytes: &[u8]) -> Result<u64, ContainerError> {
+    if bytes.is_empty() || bytes.len() > 8 {
+        return Err(ContainerError::BadEbml(
+            "EBML unsigned integer must contain 1..=8 bytes",
+        ));
+    }
+    Ok(bytes
+        .iter()
+        .fold(0u64, |value, &byte| (value << 8) | u64::from(byte)))
 }
 
 fn walk_ebml(
@@ -407,6 +523,7 @@ fn walk_ebml(
     end: usize,
     out: &mut Vec<PacketRange>,
     inside_cluster: bool,
+    video_track: u64,
 ) -> Result<(), ContainerError> {
     while pos < end {
         let (id, id_len) = read_ebml_id(data, pos)?;
@@ -434,22 +551,26 @@ fn walk_ebml(
 
         match id {
             ebml_id::EBML | ebml_id::SEGMENT => {
-                walk_ebml(data, pos, payload_end, out, false)?;
+                walk_ebml(data, pos, payload_end, out, false, video_track)?;
             }
             ebml_id::CLUSTER => {
-                walk_ebml(data, pos, payload_end, out, true)?;
+                walk_ebml(data, pos, payload_end, out, true, video_track)?;
             }
             ebml_id::SIMPLE_BLOCK if inside_cluster => {
-                if let Some(range) = parse_block_frame(data, pos, payload_size, out.len() + 1)? {
+                if let Some(range) =
+                    parse_block_frame(data, pos, payload_size, out.len() + 1, video_track)?
+                {
                     out.push(range);
                 }
             }
             ebml_id::BLOCK_GROUP if inside_cluster => {
                 // BlockGroup contains a Block + extras; recurse to find the Block.
-                walk_ebml(data, pos, payload_end, out, true)?;
+                walk_ebml(data, pos, payload_end, out, true, video_track)?;
             }
             ebml_id::BLOCK if inside_cluster => {
-                if let Some(range) = parse_block_frame(data, pos, payload_size, out.len() + 1)? {
+                if let Some(range) =
+                    parse_block_frame(data, pos, payload_size, out.len() + 1, video_track)?
+                {
                     out.push(range);
                 }
             }
@@ -476,26 +597,26 @@ fn is_unknown_vint(value: u64, size_len: usize) -> bool {
 
 /// Parse one Block / SimpleBlock payload. The first 3+ bytes are
 /// `track_number_vint, timecode_le_i16, flags_u8`. Following bytes
-/// are the frame data (assuming `Lacing = 0`, which is the case for
-/// every libvpx-emitted conformance vector — single frame per block,
-/// no lacing).
+/// are the frame data.
 ///
-/// Returns `Ok(Some(range))` for a valid single-frame block. Returns
-/// `Ok(None)` if lacing is non-zero (we silently skip those; none of
-/// the 13 webm conformance vectors use lacing). Returns an `Err` only
-/// for malformed block headers.
+/// Returns `Ok(Some(range))` for a valid un-laced block on
+/// `video_track`, `Ok(None)` for another track, and `Err` for malformed
+/// headers or lacing on the selected VP9 track.
 fn parse_block_frame(
     data: &[u8],
     pos: usize,
     payload_size: usize,
     packet_idx_hint: usize,
+    video_track: u64,
 ) -> Result<Option<PacketRange>, ContainerError> {
     if payload_size < 4 {
         return Err(ContainerError::BadEbml("block payload too small"));
     }
-    let block_end = pos + payload_size;
+    let block_end = pos
+        .checked_add(payload_size)
+        .ok_or(ContainerError::BadEbml("block payload size overflow"))?;
     // Track number is a vint.
-    let (_track, tn_len) = read_ebml_vint(data, pos)?;
+    let (track, tn_len) = read_ebml_vint(data, pos)?;
     let after_tn = pos + tn_len;
     // 2-byte timecode + 1 byte flags follow.
     if after_tn + 3 > block_end {
@@ -507,11 +628,13 @@ fn parse_block_frame(
     if frame_start > block_end {
         return Err(ContainerError::BadEbml("block frame_start past end"));
     }
-    if lacing != 0 {
-        // Lacing path: not used by the conformance corpus. Skip
-        // gracefully so adding a laced vector someday doesn't crash —
-        // the harness will simply see fewer packets.
+    if track != video_track {
         return Ok(None);
+    }
+    if lacing != 0 {
+        return Err(ContainerError::BadEbml(
+            "lacing on the VP9 video track is unsupported",
+        ));
     }
     // Sanity: there must be at least one byte of frame data.
     if frame_start == block_end {
@@ -754,18 +877,23 @@ mod tests {
         // marker via 0x1853_8067 — but that needs 4 bytes; use the
         // bare `parse_block_frame` directly to exercise the size
         // check without rebuilding a full WebM container).
-        let err = parse_block_frame(&[0x81, 0x00, 0x00], 0, 3, 1).unwrap_err();
+        let err = parse_block_frame(&[0x81, 0x00, 0x00], 0, 3, 1, 1).unwrap_err();
         assert!(matches!(err, ContainerError::BadEbml(msg) if msg.contains("too small")));
     }
 
     #[test]
-    fn webm_parse_block_lacing_returns_none() {
-        // Block with lacing=1 (xiph) → `Ok(None)`.
+    fn webm_parse_block_lacing_is_rejected() {
+        // Block with lacing=1 (xiph) must fail instead of silently
+        // disappearing from the packet stream.
         // Payload: track_number_vint(0x81=1) + timecode(2) + flags(lacing<<1=0x02)
         let mut payload = vec![0x81u8, 0x00, 0x00, 0x02];
         payload.extend_from_slice(&[0xAA, 0xBB, 0xCC]); // some frame bytes
-        let result = parse_block_frame(&payload, 0, payload.len(), 1).unwrap();
-        assert!(result.is_none(), "lacing != 0 must return Ok(None)");
+        let error = parse_block_frame(&payload, 0, payload.len(), 1, 1)
+            .expect_err("laced block was silently skipped");
+        assert!(
+            matches!(error, ContainerError::BadEbml(message) if message.contains("lacing")),
+            "unexpected error: {error:?}"
+        );
     }
 
     #[test]
@@ -773,7 +901,7 @@ mod tests {
         // Block with no frame data after the 1+2+1 = 4-byte header.
         // payload_size = 4 exactly → `frame_start == block_end`.
         let payload = vec![0x81u8, 0x00, 0x00, 0x00];
-        let err = parse_block_frame(&payload, 0, payload.len(), 7).unwrap_err();
+        let err = parse_block_frame(&payload, 0, payload.len(), 7, 1).unwrap_err();
         match err {
             ContainerError::BadFrameSize {
                 packet_index,
@@ -796,7 +924,7 @@ mod tests {
         // length exactly so the `after_tn + 3 > block_end` arm
         // fires.
         let payload = vec![0x10u8, 0x00, 0x00, 0x01, 0xAA, 0xBB];
-        let err = parse_block_frame(&payload, 0, payload.len(), 1).unwrap_err();
+        let err = parse_block_frame(&payload, 0, payload.len(), 1, 1).unwrap_err();
         assert!(matches!(err, ContainerError::BadEbml(msg) if msg.contains("missing")));
     }
 
