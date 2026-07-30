@@ -5,15 +5,15 @@
 - **Severity:** High
 - **Area:** core/frame allocation
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T115157Z-p49207-n263095000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00022-run-fix-20260730T115157Z-p49207-n263095000-c1
-- **Owner base:** 45cce06e3031bc03c637f1f634aaee649f66daaf
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T11:51:57Z
-- **Owner until:** 2026-07-30T13:51:57Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
