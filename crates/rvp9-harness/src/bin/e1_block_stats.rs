@@ -1047,6 +1047,42 @@ fn arg(argv: &[String], flag: &str) -> Option<String> {
         .and_then(|i| argv.get(i + 1).cloned())
 }
 
+fn report_frame_count(
+    rvp9: &Aggregate,
+    libvpx: Option<&Aggregate>,
+    requested: Option<usize>,
+) -> Result<usize, String> {
+    let rvp9_frames = rvp9.frames.len();
+    let libvpx_frames = libvpx.map(|aggregate| aggregate.frames.len());
+
+    if let Some(expected) = requested {
+        if expected == 0 {
+            return Err("--frames must be greater than zero".into());
+        }
+        if rvp9_frames != expected {
+            return Err(format!(
+                "rvp9 IVF contains {rvp9_frames} frames; expected {expected}"
+            ));
+        }
+        if let Some(actual) = libvpx_frames.filter(|&actual| actual != expected) {
+            return Err(format!(
+                "libvpx IVF contains {actual} frames; expected {expected}"
+            ));
+        }
+        return Ok(expected);
+    }
+
+    if rvp9_frames == 0 {
+        return Err("rvp9 IVF contains no frames".into());
+    }
+    if let Some(actual) = libvpx_frames.filter(|&actual| actual != rvp9_frames) {
+        return Err(format!(
+            "rvp9 and libvpx IVF frame counts differ: {rvp9_frames} versus {actual}"
+        ));
+    }
+    Ok(rvp9_frames)
+}
+
 fn run_ivf_mode(argv: &[String]) -> Option<()> {
     let rvp9_ivf = arg(argv, "--rvp9-ivf").map(PathBuf::from)?;
     let libvpx_ivf = arg(argv, "--libvpx-ivf").map(PathBuf::from);
@@ -1057,6 +1093,11 @@ fn run_ivf_mode(argv: &[String]) -> Option<()> {
     let framerate: f64 = arg(argv, "--fps")
         .and_then(|s| s.parse().ok())
         .unwrap_or(30.0);
+    let requested_frames = arg(argv, "--frames").map(|value| {
+        value
+            .parse::<usize>()
+            .expect("--frames must be a positive integer")
+    });
     let label = arg(argv, "--label").unwrap_or_else(|| {
         rvp9_ivf
             .file_name()
@@ -1069,13 +1110,8 @@ fn run_ivf_mode(argv: &[String]) -> Option<()> {
     let libvpx = libvpx_ivf
         .as_deref()
         .map(|path| decode_ivf(path).expect("decode libvpx IVF"));
-    let n_frames = arg(argv, "--frames")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| {
-            libvpx
-                .as_ref()
-                .map_or(rvp9.frames.len(), |l| rvp9.frames.len().min(l.frames.len()))
-        });
+    let n_frames = report_frame_count(&rvp9, libvpx.as_ref(), requested_frames)
+        .expect("IVF frame count mismatch");
 
     let mut md = String::new();
     let _ = writeln!(md, "# E1 — rvp9 vs libvpx IVF block-stat comparison\n");
@@ -1117,17 +1153,9 @@ fn run_ivf_mode(argv: &[String]) -> Option<()> {
             + libvpx
                 .as_ref()
                 .map_or(0, |aggregate| aggregate.n_decode_failed());
-        let frame_count_mismatch = rvp9.frames.len() != n_frames
-            || libvpx
-                .as_ref()
-                .is_some_and(|aggregate| aggregate.frames.len() != n_frames);
         assert_eq!(
             failed, 0,
             "JSON block-stat mode requires all frames to decode"
-        );
-        assert!(
-            !frame_count_mismatch,
-            "JSON block-stat mode requires both streams to contain exactly {n_frames} frames"
         );
     }
     println!("{md}");
@@ -1266,5 +1294,38 @@ mod tests {
         if std::env::var_os("RVP9_E1_TIMEOUT_CHILD").is_some() {
             std::thread::sleep(Duration::from_secs(30));
         }
+    }
+
+    #[test]
+    fn report_frame_count_rejects_requested_count_mismatch() {
+        let mut rvp9 = Aggregate::default();
+        rvp9.push(FrameStats::default());
+        rvp9.push(FrameStats::default());
+
+        let error = report_frame_count(&rvp9, None, Some(1)).unwrap_err();
+        assert!(error.contains("rvp9 IVF contains 2 frames; expected 1"));
+    }
+
+    #[test]
+    fn report_frame_count_rejects_paired_stream_mismatch() {
+        let mut rvp9 = Aggregate::default();
+        rvp9.push(FrameStats::default());
+        let libvpx = Aggregate::default();
+
+        let error = report_frame_count(&rvp9, Some(&libvpx), None).unwrap_err();
+        assert!(error.contains("frame counts differ"));
+    }
+
+    #[test]
+    fn report_frame_count_accepts_matching_contract() {
+        let mut rvp9 = Aggregate::default();
+        rvp9.push(FrameStats::default());
+        let mut libvpx = Aggregate::default();
+        libvpx.push(FrameStats::default());
+
+        assert_eq!(
+            report_frame_count(&rvp9, Some(&libvpx), Some(1)).unwrap(),
+            1
+        );
     }
 }
