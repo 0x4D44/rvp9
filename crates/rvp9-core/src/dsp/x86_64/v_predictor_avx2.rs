@@ -122,14 +122,23 @@ unsafe fn v_predictor_avx2_inner(dst: &mut [u8], stride: usize, bs: usize, above
 /// `above` — V_PRED reads nothing else). The dispatch slot
 /// [`crate::dsp::SimdDispatch::v_predictor`] points at this wrapper on
 /// AVX2 hosts and at the scalar adapter on every other platform.
+///
+/// # Panics
+///
+/// Panics before entering the AVX2 kernel if `bs`, `stride`, or either
+/// slice cannot describe a complete VP9 prediction block, or if the
+/// running CPU does not support AVX2.
 #[cfg(target_arch = "x86_64")]
 pub fn v_predictor_avx2(dst: &mut [u8], stride: usize, bs: usize, above: &[u8]) {
-    // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper
-    // when `caps.avx2 == true`. Caps are detected once at OnceLock
-    // init time (see `crate::dsp::dispatch::init`) and are monotonic
-    // for the process lifetime. Test paths in this module gate every
-    // call on a runtime `is_x86_feature_detected!("avx2")` check via
-    // the `require_avx2!()` macro.
+    crate::dsp::validate_intra_predictor_layout(dst.len(), stride, bs, above.len())
+        .unwrap_or_else(|reason| panic!("v_predictor_avx2: {reason}"));
+    assert!(
+        is_x86_feature_detected!("avx2"),
+        "v_predictor_avx2: running CPU does not support AVX2"
+    );
+    // SAFETY: the release-mode checks above establish the documented
+    // slice and geometry requirements, and the runtime feature check
+    // establishes that AVX2 instructions are legal on this CPU.
     unsafe { v_predictor_avx2_inner(dst, stride, bs, above) }
 }
 
@@ -274,5 +283,15 @@ mod tests {
                 assert_eq!(avx2_buf, scalar_buf, "skew={skew} bs={bs}");
             }
         }
+    }
+
+    /// The public safe boundary must reject malformed geometry before
+    /// entering the target-feature kernel.
+    #[test]
+    #[should_panic(expected = "unsupported block size")]
+    fn public_wrapper_rejects_invalid_geometry() {
+        let mut dst = [0u8; 9];
+        let above = [0u8; 3];
+        v_predictor_avx2(&mut dst, 3, 3, &above);
     }
 }

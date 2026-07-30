@@ -42,3 +42,59 @@ pub mod distortion;
 pub mod x86_64;
 
 pub use dispatch::{SimdDispatch, get, get_ref, init};
+
+#[cfg(any(target_arch = "x86_64", test))]
+pub(crate) fn validate_intra_predictor_layout(
+    dst_len: usize,
+    stride: usize,
+    bs: usize,
+    edge_len: usize,
+) -> Result<usize, &'static str> {
+    if !matches!(bs, 4 | 8 | 16 | 32) {
+        return Err("unsupported block size");
+    }
+    if stride < bs {
+        return Err("stride shorter than block width");
+    }
+    let required = bs
+        .checked_sub(1)
+        .and_then(|rows| rows.checked_mul(stride))
+        .and_then(|offset| offset.checked_add(bs))
+        .ok_or("predictor layout overflow")?;
+    if edge_len < bs {
+        return Err("edge slice too short");
+    }
+    if dst_len < required {
+        return Err("destination slice too short");
+    }
+    Ok(required)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_intra_predictor_layout;
+
+    #[test]
+    fn intra_predictor_layout_rejects_non_vp9_block_size() {
+        assert_eq!(
+            validate_intra_predictor_layout(9, 3, 3, 3),
+            Err("unsupported block size")
+        );
+    }
+
+    #[test]
+    fn intra_predictor_layout_rejects_short_and_overflowing_storage() {
+        assert_eq!(
+            validate_intra_predictor_layout(16, 4, 4, 3),
+            Err("edge slice too short")
+        );
+        assert_eq!(
+            validate_intra_predictor_layout(15, 4, 4, 4),
+            Err("destination slice too short")
+        );
+        assert_eq!(
+            validate_intra_predictor_layout(usize::MAX, usize::MAX, 32, 32),
+            Err("predictor layout overflow")
+        );
+    }
+}
