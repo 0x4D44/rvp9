@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00042 - Y4M header geometry can overflow allocation math
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** io/y4m parser
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T172419Z-p68822-n594265000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00042-run-fix-20260730T172419Z-p68822-n594265000-c1
-- **Owner base:** 0e9143e5ab9c070e8821259d596df0f24bed6824
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T17:24:19Z
-- **Owner until:** 2026-07-30T19:24:19Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-io/` at `6128772`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-io/` at `6128772`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T172419Z-p68822-n594265000-c1 branch=task/bug-RVP9-BUG-KILN-00042-run-fix-20260730T172419Z-p68822-n594265000-c1 code=795b0b387fef6bbbffad9f009c8a2a559bda0b9f gate=manual)
 
 ## Observation
 
