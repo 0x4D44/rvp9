@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00026 - Tile entropy decode accepts EOF-overread payloads
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** decoder/tile entropy
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T162528Z-p98885-n775251000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00026-run-fix-20260730T162528Z-p98885-n775251000-c1
-- **Owner base:** dc76dede3939839efdac78c30323c1b4bd232b3a
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T16:25:28Z
-- **Owner until:** 2026-07-30T18:25:28Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-decoder/` at `ceb57b6`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-decoder/` at `ceb57b6`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T162528Z-p98885-n775251000-c1 branch=task/bug-RVP9-BUG-KILN-00026-run-fix-20260730T162528Z-p98885-n775251000-c1 code=1b8df1914ad885a03f52c8e70b1d6b81b627c106 gate=manual)
 
 ## Observation
 
