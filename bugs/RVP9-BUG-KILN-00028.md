@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** decoder/packet parse state
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T175756Z-p1788-n335904000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00028-run-fix-20260730T175756Z-p1788-n335904000-c1
+- **Owner base:** ece9cbf238d0b0a139822139b224e036d5a4162e
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T17:57:56Z
+- **Owner until:** 2026-07-30T19:57:56Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
