@@ -533,6 +533,11 @@ pub struct NonRdSplitStats {
     pub block16_slack_rejected: u32,
     /// Sum of `split_rdcost - none_rdcost` over comparable attempts.
     pub block16_margin_sum: i64,
+    /// Sum of `split_rate - none_rate` over comparable attempts, in
+    /// `vp9_prob_cost` units.
+    pub block16_rate_margin_sum: i64,
+    /// Sum of `split_dist - none_dist` over comparable attempts.
+    pub block16_dist_margin_sum: i64,
     /// Minimum `split_rdcost - none_rdcost` margin observed.
     pub block16_margin_min: Option<i64>,
     /// Maximum `split_rdcost - none_rdcost` margin observed.
@@ -569,6 +574,12 @@ impl NonRdSplitStats {
         self.block16_margin_sum = self
             .block16_margin_sum
             .saturating_add(other.block16_margin_sum);
+        self.block16_rate_margin_sum = self
+            .block16_rate_margin_sum
+            .saturating_add(other.block16_rate_margin_sum);
+        self.block16_dist_margin_sum = self
+            .block16_dist_margin_sum
+            .saturating_add(other.block16_dist_margin_sum);
         if let Some(min) = other.block16_margin_min {
             self.block16_margin_min = Some(self.block16_margin_min.map_or(min, |m| m.min(min)));
         }
@@ -577,8 +588,10 @@ impl NonRdSplitStats {
         }
     }
 
-    fn record_block16_margin(&mut self, margin: i64) {
+    fn record_block16_margin(&mut self, margin: i64, rate_margin: i64, dist_margin: i64) {
         self.block16_margin_sum = self.block16_margin_sum.saturating_add(margin);
+        self.block16_rate_margin_sum = self.block16_rate_margin_sum.saturating_add(rate_margin);
+        self.block16_dist_margin_sum = self.block16_dist_margin_sum.saturating_add(dist_margin);
         self.block16_margin_min = Some(self.block16_margin_min.map_or(margin, |m| m.min(margin)));
         self.block16_margin_max = Some(self.block16_margin_max.map_or(margin, |m| m.max(margin)));
         if margin < 0 {
@@ -1084,10 +1097,12 @@ fn descend<P: ModePickerFn, B: BreakoutPruner, R: RectPruner>(
             }
             let rdc_split = rd_cost(params.rd_mult, sum_rate, u64::from(sum_dist));
             if track_block16_split {
-                if let Some(none_rdc) = none_rd_cost {
-                    state
-                        .split_stats
-                        .record_block16_margin(rdc_split - none_rdc);
+                if let (Some(none_rdc), Some(none_pick)) = (none_rd_cost, best_pick) {
+                    state.split_stats.record_block16_margin(
+                        rdc_split - none_rdc,
+                        i64::from(sum_rate) - i64::from(none_pick.rate),
+                        i64::from(sum_dist) - i64::from(none_pick.dist),
+                    );
                 } else {
                     state.split_stats.block16_no_none += 1;
                 }
@@ -1807,6 +1822,24 @@ mod tests {
         assert_eq!(result.split_stats.block16_split_loses_to_none, 0);
         assert_eq!(result.split_stats.block16_split_committed, 16);
         assert_eq!(result.split_stats.block16_rect_overrides_split, 0);
+    }
+
+    #[test]
+    fn block16_split_stats_accumulate_rate_and_dist_margins() {
+        let mut stats = NonRdSplitStats::default();
+        stats.record_block16_margin(-300, -120, -180);
+
+        let mut other = NonRdSplitStats::default();
+        other.record_block16_margin(25, 10, 15);
+        stats.accumulate(&other);
+
+        assert_eq!(stats.block16_margin_sum, -275);
+        assert_eq!(stats.block16_rate_margin_sum, -110);
+        assert_eq!(stats.block16_dist_margin_sum, -165);
+        assert_eq!(stats.block16_split_beats_none, 1);
+        assert_eq!(stats.block16_split_loses_to_none, 1);
+        assert_eq!(stats.block16_margin_min, Some(-300));
+        assert_eq!(stats.block16_margin_max, Some(25));
     }
 
     /// Block16x16 SPLIT attempt whose first 8x8 child is infeasible.

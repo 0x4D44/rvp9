@@ -3267,6 +3267,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let a4_split_stats_enabled = std::env::var_os("RVP9_A4_SPLIT_STATS").is_some();
     let mut a4_profile_calls = [0usize; rvp9_core::block::BLOCK_SIZES];
     let mut a4_profile_pick_time = [std::time::Duration::ZERO; rvp9_core::block::BLOCK_SIZES];
+    let mut a4_profile_committed = [0usize; rvp9_core::block::BLOCK_SIZES];
+    let mut a4_profile_same_pick = [0usize; rvp9_core::block::BLOCK_SIZES];
+    let mut a4_profile_rate_delta = [0i64; rvp9_core::block::BLOCK_SIZES];
+    let mut a4_profile_dist_delta = [0i64; rvp9_core::block::BLOCK_SIZES];
+    let mut a4_profile_coef_rate_delta = [0i128; rvp9_core::block::BLOCK_SIZES];
     let mut a4_split_stats = NonRdSplitStats::default();
     let rt_profile_phase2_reused_start = if rt_profile_enabled {
         crate::rdo::inter_dispatch::PHASE2_NEWMV_REUSED.load(std::sync::atomic::Ordering::Relaxed)
@@ -5056,6 +5061,25 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     rt_profile_final_pick_time += t0.elapsed();
                     rt_profile_picker_leaves += 1;
                 }
+                if a4_profile_enabled
+                    && let Some((cached, _, _)) =
+                        descent_pick_cache.get(&(leaf_mi_row, leaf_mi_col, leaf_bsize))
+                {
+                    let idx = leaf_bsize.idx();
+                    a4_profile_committed[idx] += 1;
+                    a4_profile_same_pick[idx] += usize::from(
+                        unified_pick.best_mode == cached.best_mode
+                            && unified_pick.best_mv == cached.best_mv
+                            && unified_pick.picked_ref_frame == cached.picked_ref_frame
+                            && unified_pick.picked_interp_filter == cached.picked_interp_filter,
+                    );
+                    a4_profile_rate_delta[idx] +=
+                        i64::from(unified_pick.best_rate) - i64::from(cached.best_rate);
+                    a4_profile_dist_delta[idx] +=
+                        i64::from(unified_pick.best_distortion) - i64::from(cached.best_distortion);
+                    a4_profile_coef_rate_delta[idx] +=
+                        i128::from(unified_pick.coef_rate) - i128::from(cached.coef_rate);
+                }
                 // P20 — update `thresh_freq_fact` after the pick.
                 // Mirrors libvpx `vp9_pickmode.c:2725-2738`: decay the
                 // winning (ref, mode) slot's fact and increment every
@@ -6241,6 +6265,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             "32x64", "64x32", "64x64",
         ];
         let mut parts = Vec::new();
+        let mut committed_parts = Vec::new();
         let total_time = a4_profile_pick_time
             .iter()
             .copied()
@@ -6255,6 +6280,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 calls,
                 a4_profile_pick_time[idx].as_secs_f64() * 1_000.0,
             ));
+            let committed = a4_profile_committed[idx];
+            if committed > 0 {
+                committed_parts.push(format!(
+                    "{}={} same={} d_rate={:.1} d_dist={:.1} d_coef_rate={:.1}",
+                    labels[idx],
+                    committed,
+                    a4_profile_same_pick[idx],
+                    a4_profile_rate_delta[idx] as f64 / committed as f64,
+                    a4_profile_dist_delta[idx] as f64 / committed as f64,
+                    a4_profile_coef_rate_delta[idx] as f64 / committed as f64,
+                ));
+            }
         }
         #[allow(clippy::print_stderr)]
         {
@@ -6263,6 +6300,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 total_time.as_secs_f64() * 1_000.0,
                 parts.join(" "),
             );
+            eprintln!("[A4_COMMITTED] {}", committed_parts.join(" "));
         }
     }
 
@@ -6320,6 +6358,16 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         } else {
             a4_split_stats.block16_margin_sum as f64 / f64::from(comparable)
         };
+        let avg_rate_margin = if comparable == 0 {
+            0.0
+        } else {
+            a4_split_stats.block16_rate_margin_sum as f64 / f64::from(comparable)
+        };
+        let avg_dist_margin = if comparable == 0 {
+            0.0
+        } else {
+            a4_split_stats.block16_dist_margin_sum as f64 / f64::from(comparable)
+        };
         let min_margin = a4_split_stats
             .block16_margin_min
             .map_or_else(|| "n/a".to_string(), |v| v.to_string());
@@ -6329,7 +6377,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         #[allow(clippy::print_stderr)]
         {
             eprintln!(
-                "[A4-split] q={base_qindex} block16 attempts={} breakout_suppressed={} feasible={} infeasible_or_early={} child_infeasible={} partial_rd_early_out={} partial_after_child={:?} split_beats_none={} split_loses_to_none={} split_committed={} rect_overrides_split={} no_none={} slack_would_continue={} slack_completed={} slack_split_eligible={} slack_split_committed={} slack_rect_override={} slack_rejected={} avg_margin={avg_margin:.1} min_margin={min_margin} max_margin={max_margin}",
+                "[A4-split] q={base_qindex} block16 attempts={} breakout_suppressed={} feasible={} infeasible_or_early={} child_infeasible={} partial_rd_early_out={} partial_after_child={:?} split_beats_none={} split_loses_to_none={} split_committed={} rect_overrides_split={} no_none={} slack_would_continue={} slack_completed={} slack_split_eligible={} slack_split_committed={} slack_rect_override={} slack_rejected={} avg_margin={avg_margin:.1} avg_rate_margin={avg_rate_margin:.1} avg_dist_margin={avg_dist_margin:.1} min_margin={min_margin} max_margin={max_margin}",
                 a4_split_stats.block16_attempts,
                 a4_split_stats.block16_breakout_suppressed,
                 a4_split_stats.block16_feasible,
