@@ -128,6 +128,15 @@ pub enum FrameAllocError {
         /// The invalid border value.
         border: u32,
     },
+    /// The padded plane geometry or backing allocation is too large.
+    AllocationTooLarge {
+        /// Requested visible width.
+        width: u32,
+        /// Requested visible height.
+        height: u32,
+        /// Requested border width.
+        border: u32,
+    },
 }
 
 impl core::fmt::Display for FrameAllocError {
@@ -142,6 +151,14 @@ impl core::fmt::Display for FrameAllocError {
             Self::BorderNotMultipleOf32 { border } => {
                 write!(f, "custom border {border} is not a multiple of 32")
             }
+            Self::AllocationTooLarge {
+                width,
+                height,
+                border,
+            } => write!(
+                f,
+                "frame allocation geometry too large: {width}×{height} with {border}-pixel border"
+            ),
         }
     }
 }
@@ -195,7 +212,8 @@ impl Yv12Buffer {
     /// # Errors
     ///
     /// Returns [`FrameAllocError`] for `width/height == 0`, oversized
-    /// dimensions, or a `Custom(n)` border that isn't a multiple of 32.
+    /// dimensions or allocation geometry, or a `Custom(n)` border that
+    /// isn't a multiple of 32.
     pub fn alloc(
         width: u32,
         height: u32,
@@ -213,14 +231,37 @@ impl Yv12Buffer {
         if matches!(border, BorderUsage::Custom(_)) && !border_px.is_multiple_of(32) {
             return Err(FrameAllocError::BorderNotMultipleOf32 { border: border_px });
         }
+        let allocation_too_large = || FrameAllocError::AllocationTooLarge {
+            width,
+            height,
+            border: border_px,
+        };
 
         // Aligned dimensions — libvpx `yv12config.c:163-167` rounds the
         // visible region up to multiples of 8 (`mi_size`).
-        let y_width = (width + 7) & !7;
-        let y_height = (height + 7) & !7;
+        let y_width =
+            u32::try_from((u64::from(width) + 7) & !7).map_err(|_| allocation_too_large())?;
+        let y_height =
+            u32::try_from((u64::from(height) + 7) & !7).map_err(|_| allocation_too_large())?;
 
         // Y stride: aligned visible-plus-border, then rounded up to 32.
-        let y_stride = (y_width + 2 * border_px).next_multiple_of(32);
+        let double_border = u64::from(border_px) * 2;
+        let padded_y_width = u64::from(y_width)
+            .checked_add(double_border)
+            .ok_or_else(allocation_too_large)?;
+        let y_stride = u32::try_from(
+            padded_y_width
+                .checked_add(31)
+                .ok_or_else(allocation_too_large)?
+                & !31,
+        )
+        .map_err(|_| allocation_too_large())?;
+        let yplane_rows = u32::try_from(
+            u64::from(y_height)
+                .checked_add(double_border)
+                .ok_or_else(allocation_too_large)?,
+        )
+        .map_err(|_| allocation_too_large())?;
 
         // Chroma sub-sampling factors.
         let ss_x = u32::from(chroma.subsampling_x());
@@ -239,10 +280,18 @@ impl Yv12Buffer {
         debug_assert_eq!(uv_width, y_width >> ss_x);
         debug_assert_eq!(uv_height, y_height >> ss_y);
 
-        let yplane_rows = (y_height + 2 * border_px) as u64;
-        let yplane_size = yplane_rows * u64::from(y_stride);
-        let uvplane_rows = (uv_height + 2 * uv_border_h) as u64;
-        let uvplane_size = uvplane_rows * u64::from(uv_stride);
+        let yplane_size = u64::from(yplane_rows)
+            .checked_mul(u64::from(y_stride))
+            .ok_or_else(allocation_too_large)?;
+        let uvplane_rows = u32::try_from(
+            u64::from(uv_height)
+                .checked_add(u64::from(uv_border_h) * 2)
+                .ok_or_else(allocation_too_large)?,
+        )
+        .map_err(|_| allocation_too_large())?;
+        let uvplane_size = u64::from(uvplane_rows)
+            .checked_mul(u64::from(uv_stride))
+            .ok_or_else(allocation_too_large)?;
 
         // For Legacy alignment we don't pad; otherwise we round each
         // plane start up. We aggregate as one Box<[u8]>; per-plane
@@ -257,24 +306,37 @@ impl Yv12Buffer {
         };
         let y_pad_after = pad_after(yplane_size, align);
         let uv_pad_after = pad_after(uvplane_size, align);
-        let total = yplane_size + y_pad_after + uvplane_size + uv_pad_after + uvplane_size;
-        let total_usize = usize::try_from(total)
-            .map_err(|_| FrameAllocError::DimensionsTooLarge { width, height })?;
+        let total = yplane_size
+            .checked_add(y_pad_after)
+            .and_then(|size| size.checked_add(uvplane_size))
+            .and_then(|size| size.checked_add(uv_pad_after))
+            .and_then(|size| size.checked_add(uvplane_size))
+            .ok_or_else(allocation_too_large)?;
+        let total_usize = usize::try_from(total).map_err(|_| allocation_too_large())?;
 
         // Allocate zeroed.
-        let buffer_alloc: Box<[u8]> = vec![0u8; total_usize].into_boxed_slice();
+        let mut buffer_alloc = Vec::new();
+        buffer_alloc
+            .try_reserve_exact(total_usize)
+            .map_err(|_| allocation_too_large())?;
+        buffer_alloc.resize(total_usize, 0);
+        let buffer_alloc = buffer_alloc.into_boxed_slice();
 
         // Compute plane-data offsets (pointing past the top-left
         // border region).
-        let y_offset = (u64::from(border_px) * u64::from(y_stride) + u64::from(border_px)) as usize;
+        let y_offset =
+            usize::try_from(u64::from(border_px) * u64::from(y_stride) + u64::from(border_px))
+                .map_err(|_| allocation_too_large())?;
         let u_plane_start = yplane_size + y_pad_after;
-        let u_offset = (u_plane_start
-            + u64::from(uv_border_h) * u64::from(uv_stride)
-            + u64::from(uv_border_w)) as usize;
+        let u_offset = usize::try_from(
+            u_plane_start + u64::from(uv_border_h) * u64::from(uv_stride) + u64::from(uv_border_w),
+        )
+        .map_err(|_| allocation_too_large())?;
         let v_plane_start = u_plane_start + uvplane_size + uv_pad_after;
-        let v_offset = (v_plane_start
-            + u64::from(uv_border_h) * u64::from(uv_stride)
-            + u64::from(uv_border_w)) as usize;
+        let v_offset = usize::try_from(
+            v_plane_start + u64::from(uv_border_h) * u64::from(uv_stride) + u64::from(uv_border_w),
+        )
+        .map_err(|_| allocation_too_large())?;
 
         Ok(Self {
             crop_width: width,
@@ -3130,6 +3192,15 @@ mod tests {
         assert!(s_large.contains("too large"));
         let s_border = format!("{}", FrameAllocError::BorderNotMultipleOf32 { border: 48 });
         assert!(s_border.contains("48"));
+        let s_allocation = format!(
+            "{}",
+            FrameAllocError::AllocationTooLarge {
+                width: 8,
+                height: 8,
+                border: !31u32,
+            }
+        );
+        assert!(s_allocation.contains("allocation geometry too large"));
     }
 
     /// `merge_tile_rect_from` with `row_start == row_end` is a no-op
