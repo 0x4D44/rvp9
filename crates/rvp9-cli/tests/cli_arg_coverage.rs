@@ -1517,6 +1517,42 @@ fn dec_ivf_frame_size_past_eof_rejected() {
     let _ = std::fs::remove_file(&path);
 }
 
+#[test]
+fn dec_invalid_vp9_preserves_existing_output_file() {
+    let input = tmp("invalid_vp9.ivf");
+    let output = tmp("invalid_vp9_output.yuv");
+    let sentinel = b"keep existing output";
+
+    let mut bytes = vec![0u8; 32];
+    bytes[0..4].copy_from_slice(b"DKIF");
+    bytes[8..12].copy_from_slice(b"VP90");
+    bytes[12..14].copy_from_slice(&64u16.to_le_bytes());
+    bytes[14..16].copy_from_slice(&64u16.to_le_bytes());
+    bytes[16..20].copy_from_slice(&30u32.to_le_bytes());
+    bytes[20..24].copy_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(&0u64.to_le_bytes());
+    bytes.push(0);
+    std::fs::write(&input, &bytes).expect("write invalid IVF");
+    std::fs::write(&output, sentinel).expect("write sentinel output");
+
+    let result = Command::new(dec_bin())
+        .args(["-o"])
+        .arg(&output)
+        .arg(&input)
+        .output()
+        .expect("run rvp9dec");
+
+    let preserved = std::fs::read(&output).expect("read preserved output");
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&output);
+    assert!(!result.status.success(), "invalid VP9 must fail");
+    assert_eq!(
+        preserved, sentinel,
+        "decode failure before the first frame must not truncate output"
+    );
+}
+
 /// Decoding a file with an unknown extension → exit non-zero with a
 /// recognisable error from the container layer.
 #[test]

@@ -407,13 +407,11 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
     // Framerate for the Y4M header (IVF carries it; default 30/1 else).
     let (fps_num, fps_den) = ivf_framerate(&data).unwrap_or((30, 1));
 
-    // Open the output sink (file or stdout) lazily — only if we emit.
+    // Do not open or truncate the output until a decoded frame is ready
+    // to emit. Container, packet, decode, and worker-startup failures must
+    // leave an existing destination untouched.
     let emit = want_pixels || opts.md5 != Md5Mode::Off;
-    let mut sink: Option<BufWriter<Box<dyn Write>>> = if emit {
-        Some(BufWriter::new(open_output(opts.output.as_deref())?))
-    } else {
-        None
-    };
+    let mut sink: Option<BufWriter<Box<dyn Write>>> = None;
 
     let mut decoder = match opts.threads {
         Some(n) => Decoder::try_with_threads(n),
@@ -461,6 +459,9 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
                 continue;
             }
 
+            if emit && sink.is_none() {
+                sink = Some(BufWriter::new(open_output(opts.output.as_deref())?));
+            }
             if let Some(w) = sink.as_mut() {
                 match opts.md5 {
                     Md5Mode::PerFrame => {
