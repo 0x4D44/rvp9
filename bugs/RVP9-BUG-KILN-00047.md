@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00047 - BadFrameSize reports offsets as declared size diagnostics
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** io/container diagnostics
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T183718Z-p70835-n325499000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00047-run-fix-20260730T183718Z-p70835-n325499000-c1
-- **Owner base:** 965a9bed97c78e0d6127e432c832095a1d14fa86
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T18:37:18Z
-- **Owner until:** 2026-07-30T20:37:18Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-io/` at `6128772`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-io/` at `6128772`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T183718Z-p70835-n325499000-c1 branch=task/bug-RVP9-BUG-KILN-00047-run-fix-20260730T183718Z-p70835-n325499000-c1 code=9d0bac4709ad13c4dfcace4a7f6831de12744d39 gate=manual)
 
 ## Observation
 
