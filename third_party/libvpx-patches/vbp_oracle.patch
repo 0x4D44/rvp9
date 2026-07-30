@@ -1,0 +1,305 @@
+# libvpx commit: 12f3a2ac603e8f10742105519e0cd03c3b8f71dd (v1.14.1)
+# Realtime variance-tree capture oracle.
+#
+# Adds output-only instrumentation to choose_partitioning. Set
+# VPX_VBP_ORACLE_OUT to a sidecar path to capture one JSONL record for every
+# inter superblock that reaches the full variance-tree path. With the variable
+# unset, the patched encoder is behavior-identical to stock.
+#
+# Each record contains the materialized source and selected predictor, exact
+# thresholds and control flags, raw Var accumulators plus derived variances for
+# vt/vt2, force bits, and the final parent symbols and ordered leaves.
+#
+# Applying:
+#   cd third_party/libvpx
+#   git apply ../libvpx-patches/vbp_oracle.patch
+diff --git a/vp9/encoder/vp9_encodeframe.c b/vp9/encoder/vp9_encodeframe.c
+index e8f29d5d2..cefcba370 100644
+--- a/vp9/encoder/vp9_encodeframe.c
++++ b/vp9/encoder/vp9_encodeframe.c
+@@ -12,6 +12,7 @@
+ #include <limits.h>
+ #include <math.h>
+ #include <stdio.h>
++#include <stdlib.h>
+ 
+ #include "./vp9_rtcd.h"
+ #include "./vpx_dsp_rtcd.h"
+@@ -469,6 +470,129 @@ static void fill_variance_tree(void *data, BLOCK_SIZE bsize) {
+                   &node.part_variances->none);
+ }
+ 
++typedef struct {
++  int row;
++  int col;
++  BLOCK_SIZE parent;
++  PARTITION_TYPE partition;
++} VbpOracleNode;
++
++typedef struct {
++  int row;
++  int col;
++  BLOCK_SIZE bsize;
++} VbpOracleLeaf;
++
++typedef struct {
++  VbpOracleNode nodes[85];
++  int node_count;
++  VbpOracleLeaf leaves[64];
++  int leaf_count;
++} VbpOracleTree;
++
++static FILE *vbp_oracle_file(void) {
++  static FILE *file = NULL;
++  static int state = 0;
++  if (state == 0) {
++    const char *path = getenv("VPX_VBP_ORACLE_OUT");
++    state = 2;
++    if (path != NULL && path[0] != '\0') {
++      file = fopen(path, "w");
++      if (file != NULL) {
++        setvbuf(file, NULL, _IOLBF, 0);
++        state = 1;
++      }
++    }
++  }
++  return state == 1 ? file : NULL;
++}
++
++static void vbp_oracle_collect_tree(const VP9_COMMON *cm, int mi_row,
++                                    int mi_col, int local_row, int local_col,
++                                    BLOCK_SIZE parent, VbpOracleTree *trace) {
++  MODE_INFO *mi;
++  BLOCK_SIZE subsize;
++  PARTITION_TYPE partition;
++  int bsl;
++  int half;
++  int width;
++  int height;
++
++  if (mi_row + local_row >= cm->mi_rows ||
++      mi_col + local_col >= cm->mi_cols)
++    return;
++  mi = cm->mi_grid_visible[(mi_row + local_row) * cm->mi_stride + mi_col +
++                           local_col];
++  subsize = parent >= BLOCK_8X8 ? mi->sb_type : BLOCK_4X4;
++  bsl = b_width_log2_lookup[parent];
++  partition = partition_lookup[bsl][subsize];
++  trace->nodes[trace->node_count++] =
++      (VbpOracleNode){ local_row, local_col, parent, partition };
++  half = (1 << bsl) / 4;
++
++  if (partition == PARTITION_NONE) {
++    trace->leaves[trace->leaf_count++] =
++        (VbpOracleLeaf){ local_row, local_col, subsize };
++    return;
++  }
++  if (partition == PARTITION_HORZ) {
++    trace->leaves[trace->leaf_count++] =
++        (VbpOracleLeaf){ local_row, local_col, subsize };
++    if (mi_row + local_row + half < cm->mi_rows && parent > BLOCK_8X8)
++      trace->leaves[trace->leaf_count++] =
++          (VbpOracleLeaf){ local_row + half, local_col, subsize };
++    return;
++  }
++  if (partition == PARTITION_VERT) {
++    trace->leaves[trace->leaf_count++] =
++        (VbpOracleLeaf){ local_row, local_col, subsize };
++    if (mi_col + local_col + half < cm->mi_cols && parent > BLOCK_8X8)
++      trace->leaves[trace->leaf_count++] =
++          (VbpOracleLeaf){ local_row, local_col + half, subsize };
++    return;
++  }
++
++  width = num_8x8_blocks_wide_lookup[parent];
++  height = num_8x8_blocks_high_lookup[parent];
++  if (width <= 1 || height <= 1) {
++    trace->leaves[trace->leaf_count++] =
++        (VbpOracleLeaf){ local_row, local_col, subsize };
++    return;
++  }
++  subsize = get_subsize(parent, PARTITION_SPLIT);
++  vbp_oracle_collect_tree(cm, mi_row, mi_col, local_row, local_col, subsize,
++                          trace);
++  vbp_oracle_collect_tree(cm, mi_row, mi_col, local_row, local_col + half,
++                          subsize, trace);
++  vbp_oracle_collect_tree(cm, mi_row, mi_col, local_row + half, local_col,
++                          subsize, trace);
++  vbp_oracle_collect_tree(cm, mi_row, mi_col, local_row + half,
++                          local_col + half, subsize, trace);
++}
++
++static void vbp_oracle_write_var(FILE *file, const Var *value) {
++  Var copy = *value;
++  get_variance(&copy);
++  fprintf(file, "[%u,%d,%d,%d]", value->sum_square_error, value->sum_error,
++          value->log2_count, copy.variance);
++}
++
++static void vbp_oracle_write_partition_variance(
++    FILE *file, const partition_variance *value) {
++  int i;
++  fputc('[', file);
++  vbp_oracle_write_var(file, &value->none);
++  for (i = 0; i < 2; ++i) {
++    fputc(',', file);
++    vbp_oracle_write_var(file, &value->horz[i]);
++  }
++  for (i = 0; i < 2; ++i) {
++    fputc(',', file);
++    vbp_oracle_write_var(file, &value->vert[i]);
++  }
++  fputc(']', file);
++}
++
+ static int set_vt_partitioning(VP9_COMP *cpi, MACROBLOCK *const x,
+                                MACROBLOCKD *const xd, void *data,
+                                BLOCK_SIZE bsize, int mi_row, int mi_col,
+@@ -1313,6 +1437,8 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+   const int use_4x4_partition = frame_is_intra_only(cm);
+   const int low_res = (cm->width <= 352 && cm->height <= 288);
+   int variance4x4downsample[16];
++  int minmax_16x16[16];
++  int root_variance_valid = 0;
+   int segment_id;
+   int sb_offset = (cm->mi_stride >> 3) * (mi_row >> 3) + (mi_col >> 3);
+ 
+@@ -1337,6 +1463,7 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+     compute_minmax_variance = 0;
+ 
+   memset(x->variance_low, 0, sizeof(x->variance_low));
++  for (i = 0; i < 16; ++i) minmax_16x16[i] = -1;
+ 
+   if (cpi->sf.use_source_sad && !is_key_frame) {
+     int sb_offset2 = ((cm->mi_cols + 7) >> 3) * (mi_row >> 3) + (mi_col >> 3);
+@@ -1602,6 +1729,7 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+                                           xd->cur_buf->flags,
+ #endif
+                                           pixels_wide, pixels_high);
++          minmax_16x16[i2 + j] = minmax;
+           int thresh_minmax = (int)cpi->vbp_threshold_minmax;
+           if (x->content_state_sb == kVeryHighSad)
+             thresh_minmax = thresh_minmax << 1;
+@@ -1678,6 +1806,7 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+     }
+   }
+   if (!force_split[0]) {
++    root_variance_valid = 1;
+     fill_variance_tree(&vt, BLOCK_64X64);
+     get_variance(&vt.part_variances.none);
+     // If variance of this 64x64 block is above (some threshold of) the average
+@@ -1761,6 +1890,114 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+   }
+ 
+   chroma_check(cpi, x, bsize, y_sad, is_key_frame, scene_change_detected);
++  if (!is_key_frame) {
++    FILE *oracle = vbp_oracle_file();
++    if (oracle != NULL) {
++      VbpOracleTree partition_trace;
++      int first;
++      int index;
++      int row;
++      int col;
++      memset(&partition_trace, 0, sizeof(partition_trace));
++      vbp_oracle_collect_tree(cm, mi_row, mi_col, 0, 0, BLOCK_64X64,
++                              &partition_trace);
++
++      fprintf(oracle,
++              "{\"frame\":%d,\"mi_row\":%d,\"mi_col\":%d,"
++              "\"visible_width\":%d,\"visible_height\":%d,"
++              "\"frame_height_le_360\":%s,\"low_resolution\":%s,"
++              "\"thresholds\":[%lld,%lld,%lld,%lld],"
++              "\"minmax_threshold\":%lld,"
++              "\"force_64x64_split\":%s,"
++              "\"compute_minmax_variance\":%s,"
++              "\"segment_is_boosted\":%s,\"noise_level\":%d,"
++              "\"content_state\":%d,\"source_sad\":%u,"
++              "\"zero_temp_sad_source\":%s,\"partition_ref\":%d,"
++              "\"partition_mv_row\":%d,\"partition_mv_col\":%d,",
++              cm->current_video_frame, mi_row, mi_col, pixels_wide, pixels_high,
++              cm->height <= 360 ? "true" : "false",
++              low_res ? "true" : "false", (long long)thresholds[0],
++              (long long)thresholds[1], (long long)thresholds[2],
++              (long long)thresholds[3],
++              (long long)(cpi->vbp_threshold_minmax
++                              << (x->content_state_sb == kVeryHighSad)),
++              force_64_split ? "true" : "false",
++              compute_minmax_variance ? "true" : "false",
++              cyclic_refresh_segment_id_boosted(segment_id) ? "true"
++                                                               : "false",
++              (int)noise_level, content_state, y_sad,
++              x->zero_temp_sad_source ? "true" : "false",
++              (int)ref_frame_partition, x->sb_mvrow_part, x->sb_mvcol_part);
++
++      fputs("\"source\":\"", oracle);
++      for (row = 0; row < 64; ++row)
++        for (col = 0; col < 64; ++col)
++          fprintf(oracle, "%02x", s[row * sp + col]);
++      fputs("\",\"predictor\":\"", oracle);
++      for (row = 0; row < 64; ++row)
++        for (col = 0; col < 64; ++col)
++          fprintf(oracle, "%02x", d[row * dp + col]);
++
++      fputs("\",\"force_split\":[", oracle);
++      for (index = 0; index < 21; ++index)
++        fprintf(oracle, "%s%d", index == 0 ? "" : ",", force_split[index]);
++      fputs("],\"used_4x4_averages\":[", oracle);
++      for (index = 0; index < 16; ++index)
++        fprintf(oracle, "%s%d", index == 0 ? "" : ",",
++                variance4x4downsample[index]);
++      fputs("],\"minmax_16x16\":[", oracle);
++      for (index = 0; index < 16; ++index)
++        fprintf(oracle, "%s%d", index == 0 ? "" : ",",
++                minmax_16x16[index]);
++
++      fputs("],\"variance_valid\":[", oracle);
++      fprintf(oracle, "%s", root_variance_valid ? "true" : "false");
++      for (index = 1; index < 21; ++index) fputs(",true", oracle);
++      fputs("],\"variances\":[", oracle);
++      if (root_variance_valid)
++        vbp_oracle_write_partition_variance(oracle, &vt.part_variances);
++      else
++        fputs("null", oracle);
++      for (index = 0; index < 4; ++index) {
++        fputc(',', oracle);
++        vbp_oracle_write_partition_variance(
++            oracle, &vt.split[index].part_variances);
++      }
++      for (index = 0; index < 16; ++index) {
++        fputc(',', oracle);
++        vbp_oracle_write_partition_variance(
++            oracle,
++            &vt.split[index >> 2].split[index & 3].part_variances);
++      }
++
++      fputs("],\"alternate_4x4_variances\":[", oracle);
++      for (index = 0; index < 16; ++index) {
++        if (index != 0) fputc(',', oracle);
++        if (variance4x4downsample[index])
++          vbp_oracle_write_partition_variance(
++              oracle, &vt2[index].part_variances);
++        else
++          fputs("null", oracle);
++      }
++      fputs("],\"nodes\":[", oracle);
++      first = 1;
++      for (index = 0; index < partition_trace.node_count; ++index) {
++        const VbpOracleNode *node = &partition_trace.nodes[index];
++        fprintf(oracle, "%s[%d,%d,%d,%d]", first ? "" : ",", node->row,
++                node->col, (int)node->parent, (int)node->partition);
++        first = 0;
++      }
++      fputs("],\"leaves\":[", oracle);
++      first = 1;
++      for (index = 0; index < partition_trace.leaf_count; ++index) {
++        const VbpOracleLeaf *leaf = &partition_trace.leaves[index];
++        fprintf(oracle, "%s[%d,%d,%d]", first ? "" : ",", leaf->row,
++                leaf->col, (int)leaf->bsize);
++        first = 0;
++      }
++      fputs("]}\n", oracle);
++    }
++  }
+   if (vt2) vpx_free(vt2);
+   return 0;
+ }

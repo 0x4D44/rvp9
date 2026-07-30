@@ -255,8 +255,8 @@ pub struct FixedTreeInterInput<'a> {
     pub visible_height: usize,
     /// Exact libvpx VBP thresholds, in its 256x variance units.
     pub thresholds: [i64; 4],
-    /// Frame qindex used by `vbp_threshold_minmax = 15 + (q >> 3)`.
-    pub q_index: u8,
+    /// Exact effective min/max threshold, including content-state scaling.
+    pub minmax_threshold: i32,
     /// Whether speed/content analysis forces the 64x64 node open.
     pub force_64x64_split: bool,
     /// Whether the min/max 8x8 spread check is enabled.
@@ -359,6 +359,8 @@ pub struct FixedTreePartitionTrace {
     pub variance_valid: [bool; 21],
     /// Whether each 16x16 node switched from 8x8 to 4x4 averages.
     pub used_4x4_averages: [bool; 16],
+    /// Per-16x16 8x8-spread result, or `-1` when that check did not run.
+    pub minmax_16x16: [i32; 16],
     /// Alternate 4x4-average 16x16 nodes (`vt2`) used only for local decisions.
     ///
     /// Entries are meaningful only where [`Self::used_4x4_averages`] is true.
@@ -702,6 +704,7 @@ pub fn choose_fixed_tree_inter(input: &FixedTreeInterInput<'_>) -> FixedTreePart
     let mut variance_valid = [false; 21];
     let mut force_split = [false; 21];
     let mut used_4x4_averages = [false; 16];
+    let mut minmax_16x16 = [-1i32; 16];
     let mut avg_16x16 = [0i32; 4];
     let mut max_16x16 = [0i32; 4];
     let mut min_16x16 = [i32::MAX; 4];
@@ -730,11 +733,17 @@ pub fn choose_fixed_tree_inter(input: &FixedTreeInterInput<'_>) -> FixedTreePart
             max_16x16[i] = max_16x16[i].max(initial_variance);
 
             let exceeds_variance_threshold = i64::from(initial_variance) > input.thresholds[2];
-            let exceeds_minmax_threshold = !exceeds_variance_threshold
+            let minmax_eligible = !exceeds_variance_threshold
                 && input.compute_minmax_variance
                 && i64::from(initial_variance) > input.thresholds[1]
-                && !input.segment_is_boosted
-                && minmax_8x8_spread(input, x16, y16) > 15 + (i32::from(input.q_index) >> 3);
+                && !input.segment_is_boosted;
+            let exceeds_minmax_threshold = if minmax_eligible {
+                let spread = minmax_8x8_spread(input, x16, y16);
+                minmax_16x16[index16] = spread;
+                spread > input.minmax_threshold
+            } else {
+                false
+            };
             if exceeds_variance_threshold || exceeds_minmax_threshold {
                 force_split[trace_index] = true;
                 force_split[1 + i] = true;
@@ -904,6 +913,7 @@ pub fn choose_fixed_tree_inter(input: &FixedTreeInterInput<'_>) -> FixedTreePart
         accumulators,
         variance_valid,
         used_4x4_averages,
+        minmax_16x16,
         alternate_4x4_variances,
         alternate_4x4_accumulators,
         nodes,
@@ -1381,7 +1391,7 @@ mod tests {
             visible_width: 64,
             visible_height: 64,
             thresholds: [1, 1, 1, 1],
-            q_index: 100,
+            minmax_threshold: 27,
             force_64x64_split: false,
             compute_minmax_variance: true,
             segment_is_boosted: false,
@@ -1500,6 +1510,38 @@ mod tests {
         );
         assert!(!trace.variance_valid[0]);
         assert!(trace.decision.is_valid_partition());
+    }
+
+    #[test]
+    fn fixed_tree_uses_effective_minmax_threshold_and_traces_spread() {
+        let mut source = flat_plane(0);
+        let predictor = flat_plane(0);
+        for row in 0..8 {
+            for col in 0..8 {
+                source[row * 64 + col] = if (row + col) & 1 == 0 { 0 } else { 40 };
+            }
+        }
+        for row in 0..8 {
+            source[row * 64 + 8..row * 64 + 16].fill(10);
+        }
+        for row in 8..16 {
+            source[row * 64..row * 64 + 8].fill(20);
+            source[row * 64 + 8..row * 64 + 16].fill(30);
+        }
+
+        let mut input = fixed_tree_input(&source, &predictor);
+        input.thresholds = [20_000; 4];
+        input.thresholds[1] = 1;
+        input.minmax_threshold = 25;
+        let lower_threshold = choose_fixed_tree_inter(&input);
+
+        input.minmax_threshold = 50;
+        let higher_threshold = choose_fixed_tree_inter(&input);
+
+        assert_eq!(lower_threshold.minmax_16x16[0], 40);
+        assert_eq!(higher_threshold.minmax_16x16[0], 40);
+        assert!(lower_threshold.force_split[5]);
+        assert!(!higher_threshold.force_split[5]);
     }
 
     #[test]
