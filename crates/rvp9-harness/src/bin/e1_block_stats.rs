@@ -45,10 +45,86 @@ use rvp9_harness::y4m::{YuvFrameBuf, read_cropped};
 use serde::Serialize;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 const W: u32 = 256;
 const H: u32 = 256;
+const VPXENC_TIMEOUT: Duration = Duration::from_secs(30);
+static TEMP_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+struct ScopedTempDir {
+    path: PathBuf,
+}
+
+impl ScopedTempDir {
+    fn new(prefix: &str) -> std::io::Result<Self> {
+        loop {
+            let sequence = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let path =
+                std::env::temp_dir().join(format!("{prefix}-{}-{sequence}", std::process::id()));
+            match std::fs::create_dir(&path) {
+                Ok(()) => return Ok(Self { path }),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for ScopedTempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+fn run_with_timeout(command: &mut Command, timeout: Duration) -> Result<ExitStatus, String> {
+    command.stdin(Stdio::null());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("vpxenc spawn: {error}"))?;
+    let deadline = Instant::now() + timeout;
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) if Instant::now() >= deadline => {
+                let kill_result = child.kill();
+                let wait_result = child.wait();
+                if let Err(error) = kill_result {
+                    return Err(format!(
+                        "vpxenc timed out after {:.1}s and could not be killed: {error}",
+                        timeout.as_secs_f64()
+                    ));
+                }
+                if let Err(error) = wait_result {
+                    return Err(format!(
+                        "vpxenc timed out after {:.1}s and could not be reaped: {error}",
+                        timeout.as_secs_f64()
+                    ));
+                }
+                return Err(format!(
+                    "vpxenc timed out after {:.1}s",
+                    timeout.as_secs_f64()
+                ));
+            }
+            Ok(None) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                std::thread::sleep(remaining.min(Duration::from_millis(10)));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("vpxenc status: {error}"));
+            }
+        }
+    }
+}
 
 /// One frame's worth of decoded block statistics, accumulated from the
 /// rvp9 decoder's `last_frame_mi_grid()`.
@@ -606,9 +682,10 @@ fn run_libvpx(
     framerate: f64,
     frames: &[YuvFrameBuf],
 ) -> Option<Aggregate> {
-    let tmp = std::env::temp_dir();
-    let raw = tmp.join(format!("e1_{}kbps.yuv", target_bitrate_bps / 1000));
-    let ivf = tmp.join(format!("e1_{}kbps.ivf", target_bitrate_bps / 1000));
+    let tmp = ScopedTempDir::new("rvp9-e1-block-stats").ok()?;
+    let raw = tmp.path().join("input.yuv");
+    let ivf = tmp.path().join("output.ivf");
+    let stderr_path = tmp.path().join("vpxenc.stderr");
 
     {
         use std::io::Write;
@@ -621,7 +698,9 @@ fn run_libvpx(
     }
 
     let kbps = target_bitrate_bps / 1000;
-    let out = Command::new(vpxenc)
+    let stderr = std::fs::File::create(&stderr_path).ok()?;
+    let mut command = Command::new(vpxenc);
+    command
         .args([
             "--codec=vp9",
             "--ivf",
@@ -640,13 +719,23 @@ fn run_libvpx(
         .arg("-o")
         .arg(&ivf)
         .arg(&raw)
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        eprintln!(
-            "[libvpx FAIL] {kbps} kbps: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(stderr));
+    let status = match run_with_timeout(&mut command, VPXENC_TIMEOUT) {
+        Ok(status) => status,
+        Err(error) => {
+            eprintln!("[libvpx FAIL] {kbps} kbps: {error}");
+            return None;
+        }
+    };
+    if !status.success() {
+        use std::io::Read;
+
+        let mut stderr = String::new();
+        if let Ok(file) = std::fs::File::open(&stderr_path) {
+            let _ = file.take(64 * 1024).read_to_string(&mut stderr);
+        }
+        eprintln!("[libvpx FAIL] {kbps} kbps: {}", stderr.trim_end());
         return None;
     }
 
@@ -662,8 +751,6 @@ fn run_libvpx(
         decode_and_accumulate(&mut dec, slice, &mut fs);
         agg.push(fs);
     }
-    let _ = std::fs::remove_file(&raw);
-    let _ = std::fs::remove_file(&ivf);
     Some(agg)
 }
 
@@ -1141,4 +1228,43 @@ fn main() {
     eprintln!("Wrote report to {}", out.display());
     // Also echo to stdout so the data is visible in the run log.
     println!("{md}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scoped_temp_dirs_are_unique_and_removed_on_drop() {
+        let first = ScopedTempDir::new("rvp9-e1-test").unwrap();
+        let second = ScopedTempDir::new("rvp9-e1-test").unwrap();
+        assert_ne!(first.path(), second.path());
+
+        let first_path = first.path().to_path_buf();
+        std::fs::write(first.path().join("marker"), b"test").unwrap();
+        drop(first);
+        assert!(!first_path.exists());
+    }
+
+    #[test]
+    fn run_with_timeout_kills_a_hung_child() {
+        let started = Instant::now();
+        let mut child = Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "tests::timeout_child"])
+            .env("RVP9_E1_TIMEOUT_CHILD", "1")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let error = run_with_timeout(&mut child, Duration::from_millis(50)).unwrap_err();
+
+        assert!(error.contains("timed out"));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn timeout_child() {
+        if std::env::var_os("RVP9_E1_TIMEOUT_CHILD").is_some() {
+            std::thread::sleep(Duration::from_secs(30));
+        }
+    }
 }
