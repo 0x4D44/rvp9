@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00061 - soak cross-decode uses shared temp files and an unbounded vpxdec wait
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** bench/soak
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T190353Z-p998-n865634000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00061-run-fix-20260730T190353Z-p998-n865634000-c1
-- **Owner base:** 2b4d7317eaf9859ee436c025c54d28e1a18b36ca
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T19:03:53Z
-- **Owner until:** 2026-07-30T21:03:53Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-bench/` at `f7e477d`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-bench/` at `f7e477d`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T190353Z-p998-n865634000-c1 branch=task/bug-RVP9-BUG-KILN-00061-run-fix-20260730T190353Z-p998-n865634000-c1 code=30e5dabe75164a051ebf6f35dae72b73ff2ad86c gate=manual)
 
 ## Observation
 
