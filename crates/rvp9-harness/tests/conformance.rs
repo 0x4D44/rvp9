@@ -152,16 +152,13 @@ fn conformance_runner_walks_all_vectors() {
             // check cannot detect. Hard-fail with a diagnostic naming
             // the offending packet.
             let expected_sub_frames = expected_sub_frame_count(packet_bytes);
-            let parsed = match decoder.parse_packet(packet_bytes) {
-                Ok(p) => p,
-                Err(_) => {
-                    // header parse fail → treat the packet as a single
-                    // skipped shown-frame.
-                    total_skipped += 1;
-                    shown_idx += 1;
-                    continue;
-                }
-            };
+            let parsed = decoder.parse_packet(packet_bytes).unwrap_or_else(|error| {
+                panic!(
+                    "conformance parser rejected vector {} packet {}: {error}",
+                    vector.file_name().unwrap_or_default().to_string_lossy(),
+                    packet_idx + 1,
+                )
+            });
             let decoded_sub_frames = parsed.frames().len();
             assert_eq!(
                 decoded_sub_frames,
@@ -236,6 +233,15 @@ fn conformance_runner_walks_all_vectors() {
                 }
             }
         }
+        assert_eq!(
+            shown_idx,
+            md5_entries.len(),
+            "shown-frame accounting mismatch for {}: decoder accounted for {}, \
+             MD5 ledger has {}",
+            vector.file_name().unwrap_or_default().to_string_lossy(),
+            shown_idx,
+            md5_entries.len(),
+        );
         if report_per_vector {
             println!(
                 "  {}: {v_passed} passed / {v_mismatched} mismatched / {v_skipped} skipped",

@@ -13,8 +13,10 @@
 //! - **mismatched** — decoder returned a frame but the MD5 differs.
 //!   This is the load-bearing gate once decode paths fill in:
 //!   triggers a non-zero exit.
-//! - **skipped** — decoder returned [`DecodeError::Unimplemented`] or
-//!   any other error. Logged + counted, does NOT fail the run.
+//! - **skipped** — decoder returned [`DecodeError::Unimplemented`].
+//!   Logged + counted, and fails only with `--strict`.
+//! - **failed** — packet parsing or decoding failed unexpectedly.
+//!   Fails the run unless `--non-gating` was explicitly requested.
 //!
 //! Until the full decode pipeline lands (Stage 3, later tasks), every
 //! frame for which we don't yet have a working decode path falls into
@@ -31,6 +33,8 @@
 //!                 summary only).
 //!   --strict      Treat skipped frames as failures (used by Stage 3
 //!                 exit gate once the full decoder is in).
+//!   --non-gating  Diagnostic mode: count unexpected parse/decode
+//!                 errors as skips instead of failing the vector.
 
 use rvp9_decoder::{DecodeError, Decoder};
 use rvp9_harness::container::{ContainerError, read_packets};
@@ -43,6 +47,7 @@ struct Args {
     limit: Option<usize>,
     verbose: bool,
     strict: bool,
+    non_gating: bool,
 }
 
 fn parse_args() -> Args {
@@ -60,6 +65,7 @@ fn parse_args() -> Args {
         limit: value("--limit").map(|s| s.parse().expect("--limit usize")),
         verbose: has("--verbose"),
         strict: has("--strict"),
+        non_gating: has("--non-gating"),
     }
 }
 
@@ -94,6 +100,7 @@ fn run_one_vector(
     vector_path: &Path,
     md5_path: &Path,
     verbose: bool,
+    non_gating: bool,
     skip_reasons: &mut SkipReasons,
 ) -> Result<VectorStats, String> {
     let (data, packets) = read_packets(vector_path).map_err(format_container_err)?;
@@ -111,8 +118,14 @@ fn run_one_vector(
         let parsed = match decoder.parse_packet(packet_bytes) {
             Ok(p) => p,
             Err(e) => {
-                // Header parse failure is currently a "skip" too —
-                // libvpx accepts these but our parser may not yet.
+                if !non_gating {
+                    return Err(format!(
+                        "packet {} ({} bytes): parse_packet error: {e}",
+                        packet_idx + 1,
+                        packet_bytes.len()
+                    ));
+                }
+
                 let tag = format!("parse_packet error: {e}");
                 skip_reasons.record(&tag);
                 if verbose {
@@ -196,9 +209,14 @@ fn run_one_vector(
                     }
                 }
                 Err(e) => {
-                    // Any other DecodeError counts as a skip with a
-                    // diagnostic; failure path here will become a
-                    // hard fail once decode paths are in (Wave 3+).
+                    if !non_gating {
+                        return Err(format!(
+                            "packet {} at MD5 ledger position {}: decode error: {e}",
+                            packet_idx + 1,
+                            shown_idx + 1
+                        ));
+                    }
+
                     if shown {
                         let tag = format!("decode error: {e}");
                         skip_reasons.record(&tag);
@@ -212,6 +230,13 @@ fn run_one_vector(
                 }
             }
         }
+    }
+
+    if shown_idx != md5_entries.len() {
+        return Err(format!(
+            "shown-frame count mismatch: decoder accounted for {shown_idx}, MD5 ledger has {}",
+            md5_entries.len()
+        ));
     }
 
     Ok(stats)
@@ -277,7 +302,13 @@ fn main() {
         ));
 
         println!("  {name}");
-        match run_one_vector(vector, &md5_path, args.verbose, &mut skip_reasons) {
+        match run_one_vector(
+            vector,
+            &md5_path,
+            args.verbose,
+            args.non_gating,
+            &mut skip_reasons,
+        ) {
             Ok(stats) => {
                 println!(
                     "    {:>3} passed / {:>3} mismatched / {:>3} skipped / {:>3} expected",
@@ -301,7 +332,7 @@ fn main() {
         totals.passed, totals.mismatched, totals.skipped, totals.expected_frames
     );
     if vector_failures > 0 {
-        println!("Vector-level errors (container / .md5 parse): {vector_failures}");
+        println!("Vector-level errors: {vector_failures}");
     }
 
     if !skip_reasons.by_tag.is_empty() {
@@ -314,10 +345,124 @@ fn main() {
 
     // Exit code policy:
     // - Any mismatch is always a hard fail (load-bearing).
-    // - Vector-level parse failures are always a hard fail.
-    // - Skipped frames only fail in `--strict` mode.
+    // - Container, ledger, and gating-mode decode failures are hard
+    //   failures.
+    // - `Unimplemented` skips only fail in `--strict` mode.
+    // - Unexpected parser/decoder errors reach this point as skips
+    //   only when explicit `--non-gating` diagnostic mode is active.
     let strict_skip_fail = args.strict && totals.skipped > 0;
     if totals.mismatched > 0 || vector_failures > 0 || strict_skip_fail {
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rvp9_harness::container::{IvfHeader, write_ivf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
+    struct Fixture {
+        vector: PathBuf,
+        ledger: PathBuf,
+    }
+
+    impl Fixture {
+        fn with_packets(packets: &[&[u8]]) -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock after Unix epoch")
+                .as_nanos();
+            let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+            let stem = format!("rvp9-conformance-{}-{nonce}-{sequence}", std::process::id());
+            let vector = std::env::temp_dir().join(format!("{stem}.ivf"));
+            let ledger = std::env::temp_dir().join(format!("{stem}.ivf.md5"));
+
+            let mut ivf = Vec::new();
+            write_ivf(&mut ivf, &IvfHeader::vp9(64, 64, 30, 1), packets)
+                .expect("write IVF fixture");
+            std::fs::write(&vector, ivf).expect("persist IVF fixture");
+            std::fs::write(
+                &ledger,
+                "00000000000000000000000000000000  malformed-64x64-0000.i420\n",
+            )
+            .expect("persist malformed IVF ledger");
+
+            Self { vector, ledger }
+        }
+
+        fn malformed_packet() -> Self {
+            Self::with_packets(&[&[]])
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.vector);
+            let _ = std::fs::remove_file(&self.ledger);
+        }
+    }
+
+    #[test]
+    fn malformed_packet_is_fatal_by_default() {
+        let fixture = Fixture::malformed_packet();
+        let mut skip_reasons = SkipReasons::default();
+
+        let result = run_one_vector(
+            &fixture.vector,
+            &fixture.ledger,
+            false,
+            false,
+            &mut skip_reasons,
+        );
+
+        assert!(result.is_err(), "malformed packet was silently skipped");
+    }
+
+    #[test]
+    fn non_gating_mode_can_skip_a_malformed_packet() {
+        let fixture = Fixture::malformed_packet();
+        let mut skip_reasons = SkipReasons::default();
+
+        let stats = run_one_vector(
+            &fixture.vector,
+            &fixture.ledger,
+            false,
+            true,
+            &mut skip_reasons,
+        )
+        .expect("explicit non-gating mode should preserve diagnostic skips");
+
+        assert_eq!(stats.skipped, 1);
+    }
+
+    #[test]
+    fn missing_shown_frame_is_fatal_even_in_non_gating_mode() {
+        let fixture = Fixture::with_packets(&[]);
+        let mut skip_reasons = SkipReasons::default();
+        let (_, packets) = read_packets(&fixture.vector).expect("read empty IVF fixture");
+        assert!(packets.is_empty());
+        let entries = read_md5_file(&fixture.ledger).expect("read fixture ledger");
+        assert_eq!(entries.len(), 1);
+
+        let result = run_one_vector(
+            &fixture.vector,
+            &fixture.ledger,
+            false,
+            true,
+            &mut skip_reasons,
+        );
+
+        let error = match result {
+            Ok(_) => panic!("missing shown-frame accounting was not rejected"),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("shown-frame count mismatch"),
+            "unexpected rejection: {error}"
+        );
     }
 }
