@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00044 - WebM reader drops laced blocks and ignores track identity
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** io/webm packet reader
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T173030Z-p2642-n978179000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00044-run-fix-20260730T173030Z-p2642-n978179000-c1
-- **Owner base:** 39ead8ee70ec643c4500f4ef6014d3b38d4c0653
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T17:30:30Z
-- **Owner until:** 2026-07-30T19:30:30Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-io/` at `6128772`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-io/` at `6128772`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T173030Z-p2642-n978179000-c1 branch=task/bug-RVP9-BUG-KILN-00044-run-fix-20260730T173030Z-p2642-n978179000-c1 code=8bd3eb2c669e76e421c26080dfb75b8f61634c9f gate=manual)
 
 ## Observation
 
