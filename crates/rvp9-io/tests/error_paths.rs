@@ -140,15 +140,20 @@ fn ivf_frame_size_overflow_is_bad_frame_size() {
 }
 
 #[test]
-fn ivf_truncated_frame_record_header_is_silently_ignored() {
-    // Loop condition is `pos + 12 <= data.len()`; less than 12 trailing
-    // bytes after the file header means "no more frames" — not an error.
-    // This locks in the convention so a future "be strict about trailing
-    // bytes" refactor would have to update this test deliberately.
-    let mut data = make_ivf(64, 64, &[]);
-    data.extend_from_slice(&[0xAA; 7]); // < 12 bytes
-    let packets = read_ivf_packets(&data).expect("trailing-bytes < 12 must succeed");
-    assert!(packets.is_empty());
+fn ivf_truncated_frame_record_header_is_rejected() {
+    let frame: &[u8] = b"complete-frame";
+    let base = make_ivf(64, 64, &[frame]);
+    for tail_len in 1..12 {
+        let mut data = base.clone();
+        data.extend(std::iter::repeat_n(0xAA, tail_len));
+        match read_ivf_packets(&data).unwrap_err() {
+            ContainerError::Truncated { what, len } => {
+                assert_eq!(what, "IVF frame record header");
+                assert_eq!(len, base.len() + tail_len);
+            }
+            other => panic!("expected Truncated for {tail_len} tail bytes, got {other:?}"),
+        }
+    }
 }
 
 #[test]

@@ -158,7 +158,8 @@ pub fn read_packets(path: &Path) -> Result<(Vec<u8>, Vec<PacketRange>), Containe
 ///
 /// # Errors
 ///
-/// - [`ContainerError::Truncated`] if `data.len() < 32`.
+/// - [`ContainerError::Truncated`] if the file header or a trailing frame
+///   record header is incomplete.
 /// - [`ContainerError::BadIvfMagic`] if the first 4 bytes aren't `DKIF`.
 /// - [`ContainerError::BadFrameSize`] if a frame's declared size
 ///   extends past the end of the file.
@@ -199,6 +200,12 @@ pub fn read_ivf_packets(data: &[u8]) -> Result<Vec<PacketRange>, ContainerError>
             end: payload_end,
         });
         pos = payload_end;
+    }
+    if pos != data.len() {
+        return Err(ContainerError::Truncated {
+            what: "IVF frame record header",
+            len: data.len(),
+        });
     }
     Ok(packets)
 }
