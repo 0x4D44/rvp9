@@ -1553,6 +1553,36 @@ fn dec_invalid_vp9_preserves_existing_output_file() {
     );
 }
 
+#[test]
+fn dec_i420_and_yv12_reject_profile1_444() {
+    let input = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("tests/corpus/profile1/foreman_c444_kfonly.ivf");
+    assert!(
+        input.is_file(),
+        "missing Profile-1 fixture: {}",
+        input.display()
+    );
+
+    for flag in ["--i420", "--yv12"] {
+        let output = tmp(&format!("non420_{}.yuv", &flag[2..]));
+        let result = Command::new(dec_bin())
+            .args([flag, "-o"])
+            .arg(&output)
+            .arg(&input)
+            .output()
+            .expect("run rvp9dec");
+        let _ = std::fs::remove_file(&output);
+
+        assert!(!result.status.success(), "{flag} accepted 4:4:4 input");
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains(flag) && stderr.contains("4:2:0"),
+            "{flag} rejection must explain its 4:2:0 contract, got: {stderr}"
+        );
+    }
+}
+
 /// Decoding a file with an unknown extension → exit non-zero with a
 /// recognisable error from the container layer.
 #[test]

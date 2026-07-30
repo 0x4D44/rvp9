@@ -10,6 +10,7 @@
 //! "not supported yet" if used (see `rvp9_cli::args`).
 
 use rvp9_cli::args::{self, Arg, Flag};
+use rvp9_core::bitstream::ChromaFormat;
 use rvp9_core::frame::PlaneRef;
 use rvp9_decoder::Decoder;
 use rvp9_io::container::read_packets;
@@ -459,6 +460,31 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
                 continue;
             }
 
+            if want_pixels {
+                let chroma = buf.chroma();
+                match fmt {
+                    OutFmt::RawI420 if chroma != ChromaFormat::Yuv420 => {
+                        return Err(format!(
+                            "I420/--i420/--rawvideo output requires decoded 4:2:0 chroma; \
+                             got {chroma:?}"
+                        ));
+                    }
+                    OutFmt::RawYv12 if chroma != ChromaFormat::Yuv420 => {
+                        return Err(format!(
+                            "YV12/--yv12 output requires decoded 4:2:0 chroma; got {chroma:?}"
+                        ));
+                    }
+                    OutFmt::Y4m if chroma == ChromaFormat::Yuv440 => {
+                        return Err(
+                            "--y4m output for 4:4:0 (Yuv440) is not representable in YUV4MPEG2; \
+                             use --noblit, --md5, or --framemd5"
+                                .to_string(),
+                        );
+                    }
+                    _ => {}
+                }
+            }
+
             if emit && sink.is_none() {
                 sink = Some(BufWriter::new(open_output(opts.output.as_deref())?));
             }
@@ -542,13 +568,6 @@ fn write_frame<W: Write>(
         OutFmt::Y4m => {
             if !*y4m_header_written {
                 let chroma = buf.chroma();
-                if chroma == rvp9_core::bitstream::ChromaFormat::Yuv440 {
-                    return Err(
-                        "--y4m output for 4:4:0 (Yuv440) is not representable in YUV4MPEG2; \
-                         use --i420 / --rawvideo, or omit --y4m"
-                            .to_string(),
-                    );
-                }
                 rvp9_io::y4m::write_header(w, buf.width(), buf.height(), fps_num, fps_den, chroma)
                     .map_err(io_err)?;
                 *y4m_header_written = true;
