@@ -19,8 +19,100 @@ use rvp9_core::bitstream::ChromaFormat;
 use std::io::{self, Read, Write};
 use std::path::Path;
 
+/// Match the encoder's supported coded-dimension envelope.
+const MAX_Y4M_DIMENSION: u32 = 16_384;
+
+/// Largest supported 8-bit 4:2:0 frame: 16384 × 16384 × 3/2.
+const MAX_Y4M_FRAME_BYTES: usize = 384 * 1024 * 1024;
+
 /// Owned tight-stride YUV planes: `(Y, U, V)`.
 pub type YuvFrameBuf = (Vec<u8>, Vec<u8>, Vec<u8>);
+
+#[derive(Clone, Copy)]
+struct Yuv420Layout {
+    width: usize,
+    height: usize,
+    y_bytes: usize,
+    uv_bytes: usize,
+    frame_bytes: usize,
+}
+
+fn y4m_error(kind: io::ErrorKind, message: impl Into<String>) -> io::Error {
+    io::Error::new(kind, message.into())
+}
+
+fn checked_yuv420_layout(
+    width: u32,
+    height: u32,
+    kind: io::ErrorKind,
+    label: &str,
+) -> io::Result<Yuv420Layout> {
+    if width == 0 || height == 0 {
+        return Err(y4m_error(
+            kind,
+            format!("{label} dimensions must be non-zero"),
+        ));
+    }
+    if !width.is_multiple_of(2) || !height.is_multiple_of(2) {
+        return Err(y4m_error(
+            kind,
+            format!("{label} dimensions must be even for 4:2:0"),
+        ));
+    }
+    if width > MAX_Y4M_DIMENSION || height > MAX_Y4M_DIMENSION {
+        return Err(y4m_error(
+            kind,
+            format!(
+                "{label} dimensions {width}x{height} exceed the supported \
+                 {MAX_Y4M_DIMENSION}x{MAX_Y4M_DIMENSION} envelope"
+            ),
+        ));
+    }
+
+    let width = usize::try_from(width)
+        .map_err(|_| y4m_error(kind, format!("{label} width does not fit usize")))?;
+    let height = usize::try_from(height)
+        .map_err(|_| y4m_error(kind, format!("{label} height does not fit usize")))?;
+    let y_bytes = width
+        .checked_mul(height)
+        .ok_or_else(|| y4m_error(kind, format!("{label} luma size overflows usize")))?;
+    let uv_bytes = (width / 2)
+        .checked_mul(height / 2)
+        .ok_or_else(|| y4m_error(kind, format!("{label} chroma size overflows usize")))?;
+    let frame_bytes = uv_bytes
+        .checked_mul(2)
+        .and_then(|chroma| y_bytes.checked_add(chroma))
+        .ok_or_else(|| y4m_error(kind, format!("{label} frame size overflows usize")))?;
+    if frame_bytes > MAX_Y4M_FRAME_BYTES {
+        return Err(y4m_error(
+            kind,
+            format!(
+                "{label} frame needs {frame_bytes} bytes, above the \
+                 {MAX_Y4M_FRAME_BYTES}-byte limit"
+            ),
+        ));
+    }
+
+    Ok(Yuv420Layout {
+        width,
+        height,
+        y_bytes,
+        uv_bytes,
+        frame_bytes,
+    })
+}
+
+fn zeroed_buffer(len: usize, label: &str) -> io::Result<Vec<u8>> {
+    let mut buffer = Vec::new();
+    buffer.try_reserve_exact(len).map_err(|error| {
+        y4m_error(
+            io::ErrorKind::OutOfMemory,
+            format!("cannot allocate {label} ({len} bytes): {error}"),
+        )
+    })?;
+    buffer.resize(len, 0);
+    Ok(buffer)
+}
 
 /// Y4M header fields (only what we use).
 #[derive(Debug, Clone, Copy)]
@@ -54,8 +146,9 @@ impl Y4mHeader {
 /// # Errors
 ///
 /// Returns [`io::Error`] (`InvalidData`) if the magic is missing, the
-/// chroma is not a 4:2:0 variant, or a required `W`/`H`/`F` field is
-/// absent; forwards any underlying read/seek error.
+/// chroma is not a 4:2:0 variant, a required `W`/`H`/`F` field is
+/// absent or zero, source geometry is odd, or the source exceeds the
+/// supported frame envelope; forwards any underlying read/seek error.
 pub fn parse_header(f: &mut std::fs::File) -> std::io::Result<Y4mHeader> {
     use std::io::{BufRead, BufReader, Seek, SeekFrom};
     let mut reader = BufReader::new(&mut *f);
@@ -111,12 +204,21 @@ pub fn parse_header(f: &mut std::fs::File) -> std::io::Result<Y4mHeader> {
         ));
     }
     match (w, h, fps_num, fps_den) {
-        (Some(w), Some(h), Some(fps_num), Some(fps_den)) => Ok(Y4mHeader {
-            w,
-            h,
-            fps_num,
-            fps_den,
-        }),
+        (Some(w), Some(h), Some(fps_num), Some(fps_den)) => {
+            if fps_num == 0 || fps_den == 0 {
+                return Err(y4m_error(
+                    io::ErrorKind::InvalidData,
+                    "y4m framerate numerator and denominator must be non-zero",
+                ));
+            }
+            checked_yuv420_layout(w, h, io::ErrorKind::InvalidData, "y4m source")?;
+            Ok(Y4mHeader {
+                w,
+                h,
+                fps_num,
+                fps_den,
+            })
+        }
         _ => Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "missing required y4m field (W/H/F)",
@@ -134,8 +236,9 @@ pub fn parse_header(f: &mut std::fs::File) -> std::io::Result<Y4mHeader> {
 /// # Errors
 ///
 /// Returns [`io::Error`] if the crop exceeds the source dimensions, the
-/// crop dims are odd, a `FRAME` tag is missing, or the stream is
-/// truncated mid-frame; forwards any underlying read error.
+/// crop dims are zero or odd, a required buffer cannot be reserved, a
+/// `FRAME` tag is missing, or the stream is truncated mid-frame;
+/// forwards any underlying read error.
 pub fn read_cropped(
     path: &Path,
     crop_w: u32,
@@ -151,6 +254,12 @@ pub fn read_cropped(
             format!("crop {crop_w}x{crop_h} exceeds y4m {}x{}", hdr.w, hdr.h),
         ));
     }
+    if crop_w == 0 || crop_h == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "crop dims must be non-zero",
+        ));
+    }
     if !crop_w.is_multiple_of(2) || !crop_h.is_multiple_of(2) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -158,22 +267,29 @@ pub fn read_cropped(
         ));
     }
 
-    let src_w = hdr.w as usize;
-    let src_h = hdr.h as usize;
-    let cw = crop_w as usize;
-    let ch = crop_h as usize;
+    let source = checked_yuv420_layout(hdr.w, hdr.h, io::ErrorKind::InvalidData, "y4m source")?;
+    let crop = checked_yuv420_layout(crop_w, crop_h, io::ErrorKind::InvalidInput, "y4m crop")?;
+    let src_w = source.width;
+    let src_h = source.height;
+    let cw = crop.width;
+    let ch = crop.height;
     let off_x = (src_w - cw) / 2;
     let off_y = (src_h - ch) / 2;
     let chroma_off_x = off_x / 2;
     let chroma_off_y = off_y / 2;
 
-    let y_size = src_w * src_h;
-    let uv_size = (src_w / 2) * (src_h / 2);
-    let frame_body = y_size + 2 * uv_size;
+    let y_size = source.y_bytes;
+    let uv_size = source.uv_bytes;
 
-    let mut frames = Vec::with_capacity(n);
+    let mut frames = Vec::new();
+    frames.try_reserve(n).map_err(|error| {
+        y4m_error(
+            io::ErrorKind::InvalidInput,
+            format!("cannot reserve space for {n} y4m frames: {error}"),
+        )
+    })?;
     let mut hdr_buf = [0u8; 6];
-    let mut body = vec![0u8; frame_body];
+    let mut body = zeroed_buffer(source.frame_bytes, "y4m frame body")?;
 
     for _ in 0..n {
         if f.read_exact(&mut hdr_buf).is_err() {
@@ -201,7 +317,7 @@ pub fn read_cropped(
         }
         f.read_exact(&mut body)?;
 
-        let mut y_crop = vec![0u8; cw * ch];
+        let mut y_crop = zeroed_buffer(crop.y_bytes, "cropped luma plane")?;
         for r in 0..ch {
             let src_row = &body[(off_y + r) * src_w + off_x..(off_y + r) * src_w + off_x + cw];
             y_crop[r * cw..(r + 1) * cw].copy_from_slice(src_row);
@@ -211,8 +327,8 @@ pub fn read_cropped(
         let chroma_src_w = src_w / 2;
         let chroma_cw = cw / 2;
         let chroma_ch = ch / 2;
-        let mut u_crop = vec![0u8; chroma_cw * chroma_ch];
-        let mut v_crop = vec![0u8; chroma_cw * chroma_ch];
+        let mut u_crop = zeroed_buffer(crop.uv_bytes, "cropped U plane")?;
+        let mut v_crop = zeroed_buffer(crop.uv_bytes, "cropped V plane")?;
         for r in 0..chroma_ch {
             let u_row_off = u_off + (chroma_off_y + r) * chroma_src_w + chroma_off_x;
             u_crop[r * chroma_cw..(r + 1) * chroma_cw]
@@ -457,6 +573,40 @@ mod tests {
     }
 
     #[test]
+    fn parse_header_rejects_zero_geometry_and_framerate() {
+        for (suffix, line) in [
+            ("zero_w", "YUV4MPEG2 W0 H16 F30:1 C420\n"),
+            ("zero_h", "YUV4MPEG2 W16 H0 F30:1 C420\n"),
+            ("zero_fps_num", "YUV4MPEG2 W16 H16 F0:1 C420\n"),
+            ("zero_fps_den", "YUV4MPEG2 W16 H16 F30:0 C420\n"),
+        ] {
+            let path = write_temp(line.as_bytes(), suffix);
+            let mut f = std::fs::File::open(&path).expect("open");
+            let err = parse_header(&mut f).expect_err("zero-valued header field was accepted");
+            let _ = std::fs::remove_file(&path);
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidData, "{suffix}");
+        }
+    }
+
+    #[test]
+    fn parse_header_rejects_odd_or_oversized_420_geometry() {
+        for (suffix, line) in [
+            ("odd_w", "YUV4MPEG2 W15 H16 F30:1 C420\n"),
+            ("odd_h", "YUV4MPEG2 W16 H15 F30:1 C420\n"),
+            (
+                "oversized",
+                "YUV4MPEG2 W4294967294 H4294967294 F30:1 C420\n",
+            ),
+        ] {
+            let path = write_temp(line.as_bytes(), suffix);
+            let mut f = std::fs::File::open(&path).expect("open");
+            let err = parse_header(&mut f).expect_err("unsafe 4:2:0 geometry was accepted");
+            let _ = std::fs::remove_file(&path);
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidData, "{suffix}");
+        }
+    }
+
+    #[test]
     fn header_framerate_returns_ratio() {
         let h = Y4mHeader {
             w: 100,
@@ -477,6 +627,22 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
         assert!(format!("{err}").contains("exceeds"));
+    }
+
+    #[test]
+    fn read_cropped_rejects_unallocatable_frame_count_without_panicking() {
+        let path = write_temp(
+            b"YUV4MPEG2 W16 H16 F30:1 C420\n",
+            "unallocatable_frame_count",
+        );
+        let outcome = std::panic::catch_unwind(|| read_cropped(&path, 16, 16, usize::MAX));
+        let _ = std::fs::remove_file(&path);
+
+        match outcome {
+            Ok(Err(error)) => assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput),
+            Ok(Ok(_)) => panic!("unallocatable frame count was accepted"),
+            Err(_) => panic!("unallocatable frame count panicked"),
+        }
     }
 
     #[test]
