@@ -418,10 +418,10 @@ pub struct Decoder {
     /// `read_bitdepth_colorspace_sampling` on the inter path), so they
     /// inherit `cm->subsampling_{x,y}` from the sequence. The parser
     /// hardcodes inter-frame chroma to `Yuv420` (it has no sequence
-    /// state); `parse_packet` overlays this established value onto inter
-    /// headers so the destination `Yv12Buffer` is allocated with the
-    /// correct subsampling. Without this, the first inter frame of a
-    /// 4:4:4 clip would mis-allocate chroma and silently corrupt.
+    /// state); `parse_packet` overlays a local shadow of this established
+    /// value onto inter headers, and successful frame decode publishes
+    /// updates here. Without this, the first inter frame of a 4:4:4 clip
+    /// would mis-allocate chroma and silently corrupt.
     established_chroma: ChromaFormat,
     /// Per-ref-slot collocated-MV grid. Parallel to
     /// [`Decoder::ref_frame_map`]; `mv_grids[i]` holds the MV grid that
@@ -1080,13 +1080,20 @@ impl Decoder {
             }
         }
 
+        // Parse through local shadows so header inspection cannot
+        // publish sequence state before the corresponding frame has
+        // decoded successfully. The shadows still let later frames in
+        // the same superframe inherit sizes and chroma from earlier
+        // component headers.
+        let mut ref_frame_sizes = self.ref_frame_sizes;
+        let mut established_chroma = self.established_chroma;
+
         // Pass the running per-slot ref-frame sizes to the parser so
         // it can resolve `setup_frame_size_with_refs` (`vp9_decodeframe.c:1559-1574`)
         // when the header inherits size from a previous frame.
         let mut parsed: Vec<ParsedFrame<'a>> = Vec::with_capacity(frame_slices.len());
         for frame_data in frame_slices {
-            let (mut header, header_end) =
-                parse_uncompressed_header(frame_data, &self.ref_frame_sizes)?;
+            let (mut header, header_end) = parse_uncompressed_header(frame_data, &ref_frame_sizes)?;
             // Inter-frame chroma forwarding. Inter frames never re-read the
             // color config (`vp9_decodeframe.c:2704-2766`); they inherit the
             // sequence subsampling. The parser hardcodes their chroma to
@@ -1097,10 +1104,10 @@ impl Decoder {
             // reads nor updates the established chroma.
             match header.kind {
                 FrameKind::KeyFrame | FrameKind::IntraOnly { .. } => {
-                    self.established_chroma = header.chroma;
+                    established_chroma = header.chroma;
                 }
                 FrameKind::InterFrame { .. } => {
-                    header.chroma = self.established_chroma;
+                    header.chroma = established_chroma;
                 }
                 FrameKind::ShowExistingFrame { .. } => {}
             }
@@ -1112,7 +1119,7 @@ impl Decoder {
             // Keyframes set every slot (`refresh_frame_flags = 0xFF` per
             // spec); intra-only carries an explicit 8-bit flag in the
             // header that we surface via `FrameKind::IntraOnly`.
-            self.refresh_ref_frame_sizes(&header);
+            Self::refresh_ref_frame_sizes(&mut ref_frame_sizes, &header);
             parsed.push(ParsedFrame {
                 header,
                 header_end_byte: header_end,
@@ -1123,16 +1130,19 @@ impl Decoder {
         Ok(PacketFrames { frames: parsed })
     }
 
-    /// Propagate the just-parsed header's frame size into the
-    /// `ref_frame_sizes` cache, respecting the `refresh_frame_flags`
-    /// mask. Mirrors the post-parse update libvpx performs at
+    /// Propagate a header's frame size into the supplied shadow or
+    /// committed `ref_frame_sizes` cache, respecting the
+    /// `refresh_frame_flags` mask. Mirrors the update libvpx performs at
     /// `vp9_decodeframe.c:2691` (keyframes set every slot) and the
     /// intra-only / inter mask handling at `:2730`.
-    fn refresh_ref_frame_sizes(&mut self, header: &UncompressedHeader) {
+    fn refresh_ref_frame_sizes(
+        ref_frame_sizes: &mut [Option<(u32, u32)>; rvp9_core::bitstream::REF_FRAMES],
+        header: &UncompressedHeader,
+    ) {
         match header.kind {
             FrameKind::KeyFrame => {
                 let size = Some((header.width, header.height));
-                for slot in self.ref_frame_sizes.iter_mut() {
+                for slot in ref_frame_sizes.iter_mut() {
                     *slot = size;
                 }
             }
@@ -1141,7 +1151,7 @@ impl Decoder {
                 ..
             } => {
                 let size = (header.width, header.height);
-                for (i, slot) in self.ref_frame_sizes.iter_mut().enumerate() {
+                for (i, slot) in ref_frame_sizes.iter_mut().enumerate() {
                     if (refresh_frame_flags >> i) & 1 != 0 {
                         *slot = Some(size);
                     }
@@ -1157,7 +1167,7 @@ impl Decoder {
                 // _header`. This lets subsequent inter frames in the
                 // same packet resolve `setup_frame_size_with_refs`.
                 let size = (header.width, header.height);
-                for (i, slot) in self.ref_frame_sizes.iter_mut().enumerate() {
+                for (i, slot) in ref_frame_sizes.iter_mut().enumerate() {
                     if (refresh_frame_flags >> i) & 1 != 0 {
                         *slot = Some(size);
                     }
@@ -1165,6 +1175,18 @@ impl Decoder {
             }
             FrameKind::ShowExistingFrame { .. } => {}
         }
+    }
+
+    /// Publish stream metadata after a frame's decoded reference-map
+    /// updates have succeeded.
+    fn commit_stream_metadata(&mut self, header: &UncompressedHeader) {
+        if matches!(
+            header.kind,
+            FrameKind::KeyFrame | FrameKind::IntraOnly { .. }
+        ) {
+            self.established_chroma = header.chroma;
+        }
+        Self::refresh_ref_frame_sizes(&mut self.ref_frame_sizes, header);
     }
 
     /// Update the running loop-filter deltas with a parsed
@@ -1366,10 +1388,11 @@ impl Decoder {
         //     G7.1a/b.
         //
         // Inter-frame chroma forwarding (G7.1c): inter frames inherit the
-        // sequence chroma established by the most recent key/intra-only
-        // frame — `parse_packet` overlays `self.established_chroma` onto
-        // the inter header (the parser itself hardcodes inter chroma to
-        // Yuv420). So `frame.header.chroma` here is already the correct
+        // sequence chroma established by the most recent successfully
+        // decoded key/intra-only frame. `parse_packet` overlays a local
+        // shadow seeded from `self.established_chroma` onto the inter
+        // header (the parser itself hardcodes inter chroma to Yuv420).
+        // So `frame.header.chroma` here is already the correct
         // subsampling for every frame kind, and the destination buffer
         // allocates right. ShowExistingFrame still skips any gating
         // because it merely hands back an already-decoded slot.
@@ -2423,9 +2446,6 @@ impl Decoder {
 
         let frame_buf: FrameBuf = std::sync::Arc::new(yv12);
 
-        // Note: ref_frame_sizes is already populated by
-        // `parse_packet -> refresh_ref_frame_sizes`; no work here.
-
         // Refresh `ref_frame_map` per `refresh_mask` (keyframes pass
         // `0xFF`, intra-only pass `tail.refresh_frame_flags`). Mirrors
         // libvpx `vp9_decodeframe.c:2691` (KEY) and `:2730` (intra-only).
@@ -2550,6 +2570,7 @@ impl Decoder {
         let old_last_mi = std::mem::replace(&mut self.last_frame_mi_grid, frame_mi_grid);
         self.scratch_mi_grid = old_last_mi;
         self.last_frame_mi_dims = (mi_rows as u32, mi_cols as u32);
+        self.commit_stream_metadata(&frame.header);
         Ok(frame_buf)
     }
 
@@ -3998,6 +4019,7 @@ impl Decoder {
         let old_last_mi = std::mem::replace(&mut self.last_frame_mi_grid, frame_mi_grid);
         self.scratch_mi_grid = old_last_mi;
         self.last_frame_mi_dims = (mi_rows as u32, mi_cols as u32);
+        self.commit_stream_metadata(&frame.header);
         Ok(frame_buf)
     }
 
@@ -5456,6 +5478,11 @@ mod tests {
 
         // After decode #1: every ref_frame_map slot must point at
         // the same pool slot (refresh_frame_flags=0xFF splat).
+        assert_eq!(
+            dec.ref_frame_sizes,
+            [Some((320, 240)); rvp9_core::bitstream::REF_FRAMES],
+            "successful decode must publish the refreshed frame sizes"
+        );
         let pool_slot_after_1 =
             dec.ref_frame_map[0].expect("ref_frame_map[0] populated after first decode");
         for i in 0..rvp9_core::bitstream::REF_FRAMES {
@@ -5557,6 +5584,48 @@ mod tests {
         assert_eq!(f.header.height, 240);
         assert!(f.header_end_byte > 0);
         assert!(f.full_frame_data.len() >= f.header_end_byte);
+    }
+
+    #[test]
+    fn parse_and_failed_decode_do_not_commit_stream_metadata() {
+        let buf = build_minimal_keyframe();
+        let mut dec = Decoder::new();
+        let original_sizes = [Some((17, 19)); rvp9_core::bitstream::REF_FRAMES];
+        dec.ref_frame_sizes = original_sizes;
+        dec.established_chroma = ChromaFormat::Yuv444;
+
+        let frames = dec.parse_packet(&buf).expect("valid keyframe header");
+        let header = frames.frames()[0].header.clone();
+        let header_end_byte = frames.frames()[0].header_end_byte;
+        let full_frame_data = frames.frames()[0].full_frame_data.to_vec();
+        drop(frames);
+
+        assert_eq!(
+            dec.ref_frame_sizes, original_sizes,
+            "header parsing must not publish reference sizes"
+        );
+        assert_eq!(
+            dec.established_chroma,
+            ChromaFormat::Yuv444,
+            "header parsing must not publish sequence chroma"
+        );
+
+        let parsed = ParsedFrame {
+            header,
+            header_end_byte,
+            full_frame_data: &full_frame_data,
+        };
+        dec.decode_frame(&parsed)
+            .expect_err("minimal header fixture must fail during frame decode");
+        assert_eq!(
+            dec.ref_frame_sizes, original_sizes,
+            "failed frame decode must not publish reference sizes"
+        );
+        assert_eq!(
+            dec.established_chroma,
+            ChromaFormat::Yuv444,
+            "failed frame decode must not publish sequence chroma"
+        );
     }
 
     /// Build a lossless keyframe with `first_partition_size = N`
@@ -9661,16 +9730,21 @@ mod tests {
         }
     }
 
-    /// `refresh_ref_frame_sizes` for a keyframe sets EVERY slot to
-    /// the frame's width and height (implicit refresh_frame_flags=0xFF).
-    /// Validates the keyframe arm.
+    /// Committing a decoded keyframe sets EVERY cached slot to the
+    /// frame's width and height (implicit refresh_frame_flags=0xFF).
     #[test]
-    fn refresh_ref_frame_sizes_keyframe_sets_every_slot() {
+    fn commit_stream_metadata_keyframe_sets_every_size_slot() {
         let buf = build_minimal_keyframe();
         let mut dec = Decoder::new();
         let frames = dec.parse_packet(&buf).expect("valid keyframe");
+        let header = frames.frames()[0].header.clone();
         drop(frames);
-        // After parsing the keyframe, every slot must carry (320, 240).
+        assert_eq!(
+            dec.ref_frame_sizes,
+            [None; rvp9_core::bitstream::REF_FRAMES],
+            "parsing must leave committed sizes untouched"
+        );
+        dec.commit_stream_metadata(&header);
         for (i, slot) in dec.ref_frame_sizes.iter().enumerate() {
             assert_eq!(
                 *slot,
@@ -9680,11 +9754,10 @@ mod tests {
         }
     }
 
-    /// `refresh_ref_frame_sizes` for an intra-only frame honours the
-    /// `refresh_frame_flags` mask — only slots whose bit is set
-    /// receive the new size.
+    /// Committing an intra-only frame honours its refresh mask: only
+    /// selected slots receive the new size.
     #[test]
-    fn refresh_ref_frame_sizes_intra_only_honours_mask() {
+    fn commit_stream_metadata_intra_only_honours_size_mask() {
         // refresh_frame_flags = 0b00100100 — slots 2 and 5 only.
         let buf = build_minimal_intra_only(/* reset */ 0, /* mask */ 0b0010_0100, 16);
         let mut dec = Decoder::new();
@@ -9694,7 +9767,14 @@ mod tests {
             *slot = Some((1, 1));
         }
         let frames = dec.parse_packet(&buf).expect("valid intra-only");
+        let header = frames.frames()[0].header.clone();
         drop(frames);
+        assert_eq!(
+            dec.ref_frame_sizes,
+            [Some((1, 1)); rvp9_core::bitstream::REF_FRAMES],
+            "parsing must leave committed sizes untouched"
+        );
+        dec.commit_stream_metadata(&header);
         for (i, slot) in dec.ref_frame_sizes.iter().enumerate() {
             if (0b0010_0100u8 >> i) & 1 != 0 {
                 assert_eq!(*slot, Some((320, 240)), "slot {i} (in mask)");
