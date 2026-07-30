@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00057 - decode-throughput exits successfully when measurement or CSV recording fails
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** bench/decode-throughput
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T184605Z-p81009-n041713000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00057-run-fix-20260730T184605Z-p81009-n041713000-c1
-- **Owner base:** 1cce6275000cb790c9ab7811b2041c0f373743d0
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T18:46:05Z
-- **Owner until:** 2026-07-30T20:46:05Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-bench/` at `f7e477d`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-bench/` at `f7e477d`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T184605Z-p81009-n041713000-c1 branch=task/bug-RVP9-BUG-KILN-00057-run-fix-20260730T184605Z-p81009-n041713000-c1 code=013ddfd44077f8d2f39a94cd744771a906d1f36c gate=manual)
 
 ## Observation
 
