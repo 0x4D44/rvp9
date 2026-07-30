@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** io/y4m writer
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T181630Z-p36913-n108202000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00043-run-fix-20260730T181630Z-p36913-n108202000-c1
+- **Owner base:** ee9272dac7dc08c970fa8e665ad6d86a8b6681bb
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T18:16:30Z
+- **Owner until:** 2026-07-30T20:16:30Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
