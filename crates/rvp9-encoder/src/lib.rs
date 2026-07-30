@@ -2636,6 +2636,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     width: u32,
     height: u32,
     base_qindex: u8,
+    avg_inter_qindex: u8,
     seg_q_deltas: &[Option<i16>; 8],
     input_yuv: (&[u8], &[u8], &[u8]),
     // Reference-buffer split — the LAST slot exposes TWO views to the
@@ -3266,6 +3267,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let mut rt_profile_fallback_leaves = 0usize;
     let env_flag_default =
         |key: &str, default: bool| std::env::var_os(key).map_or(default, |v| v != "0");
+    // Exact pinned-libvpx cpu-used 7 variance-tree experiment. This stays
+    // opt-in until the fixed-Q and product gates show a reproducible Pareto
+    // improvement. The pure tree itself is differential-oracle exact; this
+    // product adapter supplies its source, selected LAST/GOLDEN predictor,
+    // thresholds, and causal leaf list.
+    let exact_vbp_tree_enabled = env_flag_default("RVP9_EXACT_VBP_TREE", false)
+        && speed == 7
+        && deadline == rvp9_core::mode_decision::speed_features::Deadline::Realtime
+        && content_tier == rvp9_core::mode_decision::speed_features::ContentTier::Default;
     let rt_emit_max_tx = env_flag_default("RVP9_RT_EMIT_MAX_TX", rt_large_recovery);
     let rt_emit_tx_rd = env_flag_default("RVP9_RT_EMIT_TX_RD", true);
     // libvpx speed >= 4 uses `quant_fp` for every inter frame. Preserve
@@ -3396,6 +3406,163 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 Some(int_pro.mv)
             };
 
+            let mut used_exact_vbp_tree = false;
+            if exact_vbp_tree_enabled {
+                use rvp9_core::bitstream::frame::InterpFilter;
+                use rvp9_core::mode_decision::partition::{
+                    Cpu7InterVbpThresholdInput, FixedTreeInterInput, choose_fixed_tree_inter,
+                    cpu7_inter_vbp_thresholds,
+                };
+                use rvp9_core::mv_search::set_subpel_mv_search_range;
+
+                let segment_id = segment_id_for_hint_cell(&sb_partitions[sb_idx], 0, 0);
+                let effective_qindex =
+                    effective_qindex_for_segment(base_qindex, segment_id, seg_q_deltas);
+                let content_state = content_state_sb_grid
+                    .get(sb_idx)
+                    .copied()
+                    .unwrap_or(rvp9_core::mode_decision::inter::ContentStateSb::Normal);
+                let thresholds = cpu7_inter_vbp_thresholds(Cpu7InterVbpThresholdInput {
+                    q_index: effective_qindex,
+                    avg_inter_qindex,
+                    frame_width: w,
+                    frame_height: h,
+                    noise_estimate: noise_estimate_frame,
+                    content_state,
+                });
+
+                // `set_offsets(..., BLOCK_64X64)` defines this full-pel
+                // UMV envelope. int-pro returns Q3, then libvpx derives a
+                // Q3 subpel envelope around the zero reference MV and clamps.
+                let fullpel_limits = MvLimits::new(
+                    -(((sb_col * 8 + 8) * 8) as i32 + VP9_INTERP_EXTEND),
+                    ((mi_cols_us - sb_col * 8) * 8) as i32 + VP9_INTERP_EXTEND,
+                    -(((sb_row * 8 + 8) * 8) as i32 + VP9_INTERP_EXTEND),
+                    ((mi_rows_us - sb_row * 8) * 8) as i32 + VP9_INTERP_EXTEND,
+                );
+                let mut subpel_limits = MvLimits::default();
+                set_subpel_mv_search_range(&mut subpel_limits, &fullpel_limits, 0, 0);
+                let partition_mv = Mv {
+                    row: i32::from(int_pro.mv.row)
+                        .clamp(subpel_limits.row_min, subpel_limits.row_max)
+                        as i16,
+                    col: i32::from(int_pro.mv.col)
+                        .clamp(subpel_limits.col_min, subpel_limits.col_max)
+                        as i16,
+                };
+
+                // cpu7 considers GOLDEN at zero MV and keeps LAST unless
+                // GOLDEN is strictly better than 7/8 of int-pro LAST SAD
+                // (the CBR short-circuit bias; VBR uses the unbiased SAD).
+                let src_offset = sb_px_y * w + sb_px_x;
+                let sad64 = rvp9_core::dsp::get_ref().sad(BlockSize::Block64x64);
+                let golden_distinct = golden_recon_yuv.0.as_ptr() != last_recon_yuv.0.as_ptr();
+                let golden_sad = if !rt_disable_golden_ref && golden_distinct {
+                    sad64(
+                        &input_yuv.0[src_offset..],
+                        w,
+                        &golden_recon_yuv.0[src_offset..],
+                        w,
+                    )
+                } else {
+                    u32::MAX
+                };
+                let last_bias_num = if rc_mode == crate::rate_control::RcMode::Cbr {
+                    7
+                } else {
+                    8
+                };
+                let use_golden =
+                    u64::from(golden_sad) < (u64::from(int_pro.best_sad) * last_bias_num) >> 3;
+                let (partition_ref, partition_mv, selected_sad) = if use_golden {
+                    (golden_recon_yuv.0, Mv::ZERO, golden_sad)
+                } else {
+                    (last_recon_yuv.0, partition_mv, int_pro.best_sad)
+                };
+
+                let mut source_block = [0u8; 64 * 64];
+                for row in 0..64 {
+                    source_block[row * 64..row * 64 + 64].copy_from_slice(
+                        &input_yuv.0
+                            [(sb_px_y + row) * w + sb_px_x..(sb_px_y + row) * w + sb_px_x + 64],
+                    );
+                }
+                let mut predictor_block = [0u8; 64 * 64];
+                build_inter_pred_block_unscaled(
+                    partition_ref,
+                    w,
+                    w,
+                    h,
+                    sb_px_x,
+                    sb_px_y,
+                    64,
+                    64,
+                    i32::from(partition_mv.col) * 2,
+                    i32::from(partition_mv.row) * 2,
+                    &mut predictor_block,
+                    64,
+                    InterpFilter::Bilinear,
+                );
+
+                // libvpx's low-SAD shortcut selects one 64x64 leaf before
+                // materializing the variance tree. Copy-partition exits are
+                // deliberately excluded from this first adapter increment;
+                // they require persistent prior-tree state.
+                let (_, ac) = plane_dequant_pair(i32::from(effective_qindex), QuantizerDeltas::Y);
+                let vbp_threshold_sad = if scene_change_detected_frame {
+                    0
+                } else {
+                    (i32::from(ac) << 1).max(1000) as u32
+                };
+                let exact_leaves = if segment_id == 0 && selected_sad < vbp_threshold_sad {
+                    vec![rvp9_core::mode_decision::partition::FixedTreeLeaf {
+                        row_8x8: 0,
+                        col_8x8: 0,
+                        block_size: BlockSize::Block64x64,
+                    }]
+                } else {
+                    choose_fixed_tree_inter(&FixedTreeInterInput {
+                        source: &source_block,
+                        predictor: &predictor_block,
+                        visible_width: 64,
+                        visible_height: 64,
+                        thresholds: thresholds.thresholds,
+                        minmax_threshold: thresholds.minmax_threshold,
+                        force_64x64_split: scene_change_detected_frame,
+                        compute_minmax_variance: true,
+                        segment_is_boosted: segment_id != 0
+                            && seg_q_deltas[usize::from(segment_id)].is_some(),
+                        noise_level: noise_estimate_frame.level,
+                        low_resolution: w <= 352 && h <= 288,
+                        frame_height_le_360: h <= 360,
+                    })
+                    .leaves
+                };
+                sb_partitions[sb_idx] = exact_leaves
+                    .into_iter()
+                    .map(|leaf| InterPartitionLeafDesc {
+                        mi_row_in_sb: leaf.row_8x8,
+                        mi_col_in_sb: leaf.col_8x8,
+                        leaf_bsize: leaf.block_size,
+                        picked_mode: InterMode::ZeroMv,
+                        picked_mv: Mv::ZERO,
+                        skip: true,
+                        segment_id: segment_id_for_hint_cell(
+                            &sb_partitions[sb_idx],
+                            leaf.row_8x8,
+                            leaf.col_8x8,
+                        ),
+                        picked_ref_frame: RefFrame::LastFrame,
+                        picked_interp_filter: InterpFilter::EightTap,
+                        picked_intra_mode: None,
+                        picked_ref_frame2: RefFrame::NoRefFrame,
+                        picked_mv2: Mv::ZERO,
+                        picked_tx_size: rvp9_core::block::max_txsize(leaf.block_size),
+                    })
+                    .collect();
+                used_exact_vbp_tree = true;
+            }
+
             // Phase-2 option-A — per-SB cache of the descent's picker
             // results, keyed by (leaf_mi_row, leaf_mi_col, bsize). The
             // descent_picker callback inserts the full PickInterModeResult
@@ -3454,7 +3621,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             // (NEWMV / NEARESTMV winners + coef/mode/mv rate), not a
             // synthetic proxy. The two paths exercise the same picker at
             // different sub-block resolutions.
-            if f3_nonrd_partition_enabled {
+            if f3_nonrd_partition_enabled && !used_exact_vbp_tree {
                 let rt_profile_descent_start = if rt_profile_enabled {
                     Some(std::time::Instant::now())
                 } else {
@@ -6655,6 +6822,84 @@ fn build_inter_pred_plane_unscaled(
     // for the first (LAST) reference of a compound leaf.
     is_compound_avg: bool,
 ) {
+    build_inter_pred_plane_unscaled_at_dst(
+        ref_plane,
+        ref_stride,
+        ref_w,
+        ref_h,
+        plane_px_x,
+        plane_px_y,
+        plane_px_x,
+        plane_px_y,
+        bw,
+        bh,
+        mv_q4_col,
+        mv_q4_row,
+        dst,
+        dst_stride,
+        interp_filter,
+        is_compound_avg,
+    );
+}
+
+/// Product-side partition predictor variant. The reference origin remains in
+/// full-frame coordinates while the destination may start at `(0, 0)` in a
+/// compact scratch block.
+#[allow(clippy::too_many_arguments)]
+fn build_inter_pred_block_unscaled(
+    ref_plane: &[u8],
+    ref_stride: usize,
+    ref_w: usize,
+    ref_h: usize,
+    ref_px_x: usize,
+    ref_px_y: usize,
+    bw: usize,
+    bh: usize,
+    mv_q4_col: i32,
+    mv_q4_row: i32,
+    dst: &mut [u8],
+    dst_stride: usize,
+    interp_filter: rvp9_core::bitstream::frame::InterpFilter,
+) {
+    build_inter_pred_plane_unscaled_at_dst(
+        ref_plane,
+        ref_stride,
+        ref_w,
+        ref_h,
+        ref_px_x,
+        ref_px_y,
+        0,
+        0,
+        bw,
+        bh,
+        mv_q4_col,
+        mv_q4_row,
+        dst,
+        dst_stride,
+        interp_filter,
+        false,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_inter_pred_plane_unscaled_at_dst(
+    ref_plane: &[u8],
+    ref_stride: usize,
+    ref_w: usize,
+    ref_h: usize,
+    ref_px_x: usize,
+    ref_px_y: usize,
+    dst_px_x: usize,
+    dst_px_y: usize,
+    bw: usize,
+    bh: usize,
+    mv_q4_col: i32,
+    mv_q4_row: i32,
+    dst: &mut [u8],
+    dst_stride: usize,
+    interp_filter: rvp9_core::bitstream::frame::InterpFilter,
+    is_compound_avg: bool,
+) {
     use rvp9_core::inter::filter::{SUBPEL_BITS, SUBPEL_MASK};
     use rvp9_core::inter::scale::{ScaleFactors, inter_predictor};
 
@@ -6665,15 +6910,15 @@ fn build_inter_pred_plane_unscaled(
         "F10.1c v1 encoder assumes identity ref scale"
     );
 
-    let total_x_q4 = sf.scaled_x_q4(plane_px_x as i32, mv_q4_col as i16);
-    let total_y_q4 = sf.scaled_y_q4(plane_px_y as i32, mv_q4_row as i16);
+    let total_x_q4 = sf.scaled_x_q4(ref_px_x as i32, mv_q4_col as i16);
+    let total_y_q4 = sf.scaled_y_q4(ref_px_y as i32, mv_q4_row as i16);
     let int_x = total_x_q4 >> SUBPEL_BITS;
     let int_y = total_y_q4 >> SUBPEL_BITS;
     let subpel_x_q4 = total_x_q4 & SUBPEL_MASK;
     let subpel_y_q4 = total_y_q4 & SUBPEL_MASK;
 
     // Destination slice starts at the leaf's top-left in the plane.
-    let dst_off = plane_px_y * dst_stride + plane_px_x;
+    let dst_off = dst_px_y * dst_stride + dst_px_x;
 
     // DRIFT-FIX — the encoder's reference planes are TIGHT (no border
     // padding; see `buffer_pool::RefSlotPlanes`), but the DECODER reads
@@ -7894,6 +8139,58 @@ fn intra_inverse_transform_add(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_partition_predictor_matches_full_frame_destination() {
+        let width = 128usize;
+        let height = 128usize;
+        let reference: Vec<u8> = (0..width * height)
+            .map(|i| ((i * 29 + i / width * 17) & 0xff) as u8)
+            .collect();
+        let mut full = vec![0u8; width * height];
+        let mut compact = [0u8; 64 * 64];
+        let mv_col_q4 = 11;
+        let mv_row_q4 = -7;
+
+        build_inter_pred_plane_unscaled(
+            &reference,
+            width,
+            width,
+            height,
+            32,
+            32,
+            64,
+            64,
+            mv_col_q4,
+            mv_row_q4,
+            &mut full,
+            width,
+            InterpFilter::Bilinear,
+            false,
+        );
+        build_inter_pred_block_unscaled(
+            &reference,
+            width,
+            width,
+            height,
+            32,
+            32,
+            64,
+            64,
+            mv_col_q4,
+            mv_row_q4,
+            &mut compact,
+            64,
+            InterpFilter::Bilinear,
+        );
+
+        for row in 0..64 {
+            assert_eq!(
+                &compact[row * 64..row * 64 + 64],
+                &full[(32 + row) * width + 32..(32 + row) * width + 96],
+            );
+        }
+    }
 
     #[test]
     fn config_new_round_trips() {

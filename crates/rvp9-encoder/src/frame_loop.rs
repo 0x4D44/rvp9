@@ -2834,6 +2834,7 @@ impl StreamEncoder {
             w,
             h,
             q_index,
+            self.rate_control.avg_frame_qindex_inter,
             &seg_q_deltas,
             input_yuv,
             // Reference-buffer split — the picker consumes TWO LAST-slot
@@ -3426,6 +3427,7 @@ impl StreamEncoder {
             w,
             h,
             q_index,
+            self.rate_control.avg_frame_qindex_inter,
             &seg_q_deltas,
             filtered_yuv,
             (&self.me_ref_y, &self.me_ref_u, &self.me_ref_v),
