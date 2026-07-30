@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** encoder/config validation
 - **Raised:** 2026-07-05
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T231100Z-p73496-n304297000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00015-run-fix-20260730T231100Z-p73496-n304297000-c1
+- **Owner base:** eacf72c290f967cf39cdac43ab9d68e8af5ab048
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T23:11:00Z
+- **Owner until:** 2026-07-31T01:11:00Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
