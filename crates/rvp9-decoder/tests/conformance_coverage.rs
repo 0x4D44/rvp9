@@ -66,21 +66,18 @@ fn read_md5_hex_lines(path: &PathBuf) -> Vec<String> {
 /// Common driver: decode `name.webm` (or `.ivf`) and assert every
 /// displayed frame's visible MD5 matches the sibling ledger.
 ///
-/// Skipped when the vectors directory is absent (CI without
-/// `scripts/fetch-vectors.ps1`); the function returns rather than
-/// `assert!(false)`-ing so contributors who haven't fetched the
-/// corpus can still `cargo test` without spurious failures.
+/// When the vectors directory has no vector files, the build script
+/// marks every test in this file ignored instead of letting it report
+/// a false success. If any vector is present, all tests run so a
+/// partial corpus fails on the first missing vector or ledger.
 fn drive_vector(name: &str) {
     let dir = vectors_dir();
     let vec_path = dir.join(name);
-    if !vec_path.exists() {
-        // Library lint `clippy::print_stderr = deny` is inherited by
-        // integration tests, so we cannot `eprintln!` here. The skip
-        // is silent — contributors without the conformance corpus
-        // will see all `vec_*` tests pass trivially, which is the
-        // intended behaviour (test still runs, just becomes a no-op).
-        return;
-    }
+    assert!(
+        vec_path.exists(),
+        "vector missing from a partially populated corpus: {}",
+        vec_path.display()
+    );
     let ext = vec_path
         .extension()
         .and_then(|s| s.to_str())
@@ -160,71 +157,127 @@ fn drive_vector(name: &str) {
 // ---------------------------------------------------------------------
 
 #[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 fn vec_quantizer_00() {
     drive_vector("vp90-2-00-quantizer-00.webm");
 }
 
 #[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 fn vec_quantizer_26() {
     drive_vector("vp90-2-00-quantizer-26.webm");
 }
 
 #[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 fn vec_quantizer_63() {
     drive_vector("vp90-2-00-quantizer-63.webm");
 }
 
 #[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 fn vec_sharpness_1() {
     drive_vector("vp90-2-01-sharpness-1.webm");
 }
 
 #[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 fn vec_sharpness_7() {
     drive_vector("vp90-2-01-sharpness-7.webm");
 }
 
 #[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 fn vec_size_08x08() {
     drive_vector("vp90-2-02-size-08x08.webm");
 }
 
 #[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 fn vec_size_32x32() {
     drive_vector("vp90-2-02-size-32x32.webm");
 }
 
 #[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 fn vec_deltaq() {
     drive_vector("vp90-2-03-deltaq.webm");
 }
 
 #[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 fn vec_resize() {
     drive_vector("vp90-2-05-resize.ivf");
 }
 
 #[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 fn vec_tile_1x2() {
     drive_vector("vp90-2-08-tile_1x2.webm");
 }
 
 #[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 fn vec_tile_1x4() {
     drive_vector("vp90-2-08-tile_1x4.webm");
 }
 
 #[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 fn vec_tile_1x8() {
     drive_vector("vp90-2-08-tile_1x8.webm");
 }
 
 #[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 fn vec_aq2() {
     drive_vector("vp90-2-09-aq2.webm");
 }
 
 #[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 fn vec_show_existing_frame() {
     drive_vector("vp90-2-10-show-existing-frame.webm");
 }

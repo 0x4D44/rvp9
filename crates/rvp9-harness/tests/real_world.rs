@@ -100,9 +100,8 @@ fn real_world_corpus_decodes_bit_exact() {
         let (data, packets) = read_packets(fixture)
             .unwrap_or_else(|e| panic!("container parse {}: {e}", fixture.display()));
 
-        // `.md5` is optional — if absent we can still decode and emit
-        // stats, we just can't gate on visible-frame correctness.
-        let md5_entries = read_md5_file(&md5_path).ok();
+        let md5_entries = read_md5_file(&md5_path)
+            .unwrap_or_else(|e| panic!("MD5 ledger {}: {e}", md5_path.display()));
 
         let mut stats = ClipStats::default();
         // Pin to one worker (G5 review M2 — avoid thread amplification).
@@ -130,18 +129,14 @@ fn real_world_corpus_decodes_bit_exact() {
                             stats.show_frame_zero += 1;
                             continue;
                         }
-                        if let Some(entries) = md5_entries.as_ref() {
-                            let got_hex = hex16(md5_of_yv12_visible(&buf));
-                            let want = entries.get(shown_idx);
-                            match want {
-                                Some(e)
-                                    if e.md5_hex_visible().as_deref() == Some(got_hex.as_str()) =>
-                                {
-                                    stats.visible_md5_matched += 1;
-                                }
-                                _ => {
-                                    stats.visible_md5_mismatched += 1;
-                                }
+                        let got_hex = hex16(md5_of_yv12_visible(&buf));
+                        let want = md5_entries.get(shown_idx);
+                        match want {
+                            Some(e) if e.md5_hex_visible().as_deref() == Some(got_hex.as_str()) => {
+                                stats.visible_md5_matched += 1;
+                            }
+                            _ => {
+                                stats.visible_md5_mismatched += 1;
                             }
                         }
                         shown_idx += 1;
@@ -168,6 +163,13 @@ fn real_world_corpus_decodes_bit_exact() {
             stats.visible_md5_mismatched,
         );
 
+        assert_eq!(
+            shown_idx,
+            md5_entries.len(),
+            "{}: decoded {shown_idx} shown frames; ledger expects {}",
+            fixture.display(),
+            md5_entries.len()
+        );
         aggregate_show_frame_zero += stats.show_frame_zero;
         total_mismatched += stats.visible_md5_mismatched;
     }
