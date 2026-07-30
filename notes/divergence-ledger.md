@@ -1192,15 +1192,19 @@ tighter than the decoder's `clamp_mv_ref` envelope because its
 sub-pel candidate evaluator uses tight reference planes. When a
 non-zero spatially-derived `mvc.nearest` falls outside
 `MvLimits`, NEARESTMV evaluation could over-read the reference
-plane. The picker substitutes zero and excludes that clamped
-NEAREST winner; the final emitter separately uses
-`build_inter_pred_plane_unscaled` with an edge-replicated scratch.
-**Exact-zero follow-up (2026-07-30):** the strict halo envelope
-also excluded `(0,0)` along the outer block band, although exact
-integer zero motion reads only the visible block and is safe.
-`mv_in_strict_limits_or_zero` now admits only that exact vector
-outside the strict limits. Fractional and non-zero candidates
-retain the tight-plane veto.
+plane. The picker excludes an unsafe clamped NEAREST winner; the
+final emitter separately uses `build_inter_pred_plane_unscaled`
+with an edge-replicated scratch.
+**Visible full-chroma-pel follow-up (2026-07-30):** the strict
+halo envelope also excluded vectors along the outer block band
+that need no interpolation halo. The
+`mv_in_strict_limits_or_visible_full_chroma_pel` predicate admits
+an out-of-envelope vector only when both Q3 components are
+multiples of 16, so it lands on integer samples after 4:2:0
+chroma subsampling, and the complete visible block remains inside
+the frame. This includes exact zero. Odd whole-luma-pel and
+fractional candidates retain the tight-plane veto because chroma
+or luma interpolation still needs a halo.
 **Byte-parity impact:** preserved; cross-decoder gate
 BYTE-EXACT vs vpxdec + ffmpeg.
 **Compression-efficiency impact (A2.foreman):** foreman_cif
@@ -1218,11 +1222,13 @@ during variance partitioning (`vp9_encodeframe.c:1460-1495`).
 25/50/100 kbps (+0.04 to +0.5 dB), mild regression at 250
 kbps (52.64 → 48.49 dB). BD-rate moved from +1033 % to
 +959 % vs libvpx.
-**Compression-efficiency impact (exact-zero follow-up):** the
-strict seven-point Foreman product gate moved from `+15.7683%`
-to `+14.0148%` BD-rate and from `0.81462 dB` to `0.72143 dB`
-matched-rate deficit. At 250 kbps, ZEROMV area fell to `9.70%`
-and NEARESTMV rose to `56.92%`. All streams remained byte-exact
+**Compression-efficiency impact (edge-motion follow-up):** exact
+zero first moved the strict seven-point Foreman product gate from
+`+15.7683%` to `+14.0148%` BD-rate and from `0.81462 dB` to
+`0.72143 dB` matched-rate deficit. Admitting the other safe
+full-chroma-pel vectors then moved those results to `+13.3964%`
+and `0.70910 dB`. At 250 kbps, the final mode areas are ZEROMV
+`9.77%` and NEARESTMV `56.18%`. All streams remained byte-exact
 under vpxdec and ffmpeg.
 **Future plan:** port `vp9_int_pro_motion_estimation` (the
 3-row 32-tap integer-projection ME that produces an SB-level
