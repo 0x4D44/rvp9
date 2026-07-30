@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** encoder/test-oracles
 - **Raised:** 2026-07-05
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T231934Z-p94033-n610643000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00019-run-fix-20260730T231934Z-p94033-n610643000-c1
+- **Owner base:** 537e58d51289e6d587ddafeacfca10b08673fb3b
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T23:19:34Z
+- **Owner until:** 2026-07-31T01:19:34Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
