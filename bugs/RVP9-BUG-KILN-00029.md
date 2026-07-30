@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** decoder/tile public API
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T180322Z-p10015-n825996000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00029-run-fix-20260730T180322Z-p10015-n825996000-c1
+- **Owner base:** cc9e12055ff16516fa972719f90d0295f797f10c
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T18:03:22Z
+- **Owner until:** 2026-07-30T20:03:22Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
