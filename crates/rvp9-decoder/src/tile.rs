@@ -96,6 +96,9 @@ pub enum TileDecodeError {
     /// The compressed tile bytes did not start with a valid bool-coder
     /// marker bit.
     InvalidTilePayload,
+    /// Entropy decoding consumed bits beyond the end of the tile
+    /// payload.
+    TruncatedTilePayload,
     /// A segment with `SEG_LVL_SKIP` active was applied to a sub-8×8
     /// block. libvpx treats this as a corrupt stream
     /// (`vpx_internal_error`, `vp9_decodemv.c:709-712`).
@@ -116,6 +119,7 @@ impl core::fmt::Display for TileDecodeError {
                 "multi-tile unsupported in v1 (log2_tile_cols={log2_tile_cols}, log2_tile_rows={log2_tile_rows})"
             ),
             Self::InvalidTilePayload => f.write_str("tile payload missing bool-coder marker bit"),
+            Self::TruncatedTilePayload => f.write_str("tile payload ended during entropy decoding"),
             Self::Sub8SegSkip { block_size } => write!(
                 f,
                 "invalid usage of SEG_LVL_SKIP on sub-8x8 block ({block_size:?})"
@@ -398,7 +402,9 @@ fn plane_dequant(params: &FrameDecodeParams, plane: usize, segment_id: u8) -> (i
 /// # Errors
 ///
 /// Returns [`TileDecodeError::InvalidTilePayload`] if the tile bytes
-/// don't open with a valid bool-coder marker bit.
+/// don't open with a valid bool-coder marker bit, or
+/// [`TileDecodeError::TruncatedTilePayload`] if entropy decoding reads
+/// beyond the tile payload.
 #[allow(clippy::too_many_arguments)]
 pub fn decode_tile_intra<D: TileFrameDst>(
     tile_data: &[u8],
@@ -514,6 +520,9 @@ pub fn decode_tile_intra<D: TileFrameDst>(
             progress[sb_row].fetch_add(1, std::sync::atomic::Ordering::Release);
         }
         mi_row += MI_BLOCK_SIZE;
+    }
+    if reader.has_error() {
+        return Err(TileDecodeError::TruncatedTilePayload);
     }
     Ok(decode_ctx)
 }
@@ -1702,7 +1711,9 @@ pub struct InterFrameDecodeParams<'a> {
 /// # Errors
 ///
 /// Returns [`TileDecodeError::InvalidTilePayload`] if the tile bytes
-/// don't open with a valid bool-coder marker bit.
+/// don't open with a valid bool-coder marker bit, or
+/// [`TileDecodeError::TruncatedTilePayload`] if entropy decoding reads
+/// beyond the tile payload.
 #[allow(clippy::too_many_arguments)]
 pub fn decode_tile_inter<D: TileFrameDst>(
     tile_data: &[u8],
@@ -1792,6 +1803,9 @@ pub fn decode_tile_inter<D: TileFrameDst>(
             progress[sb_row].fetch_add(1, std::sync::atomic::Ordering::Release);
         }
         mi_row += MI_BLOCK_SIZE;
+    }
+    if reader.has_error() {
+        return Err(TileDecodeError::TruncatedTilePayload);
     }
     Ok(decode_ctx)
 }
@@ -3029,6 +3043,154 @@ fn read_intra_in_inter_mode_info(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn minimal_frame_decode_params() -> FrameDecodeParams {
+        FrameDecodeParams {
+            mi_cols: 8,
+            mi_rows: 8,
+            tx_mode: TxMode::AllowTx32x32,
+            segmentation_update_map: false,
+            segmentation_enabled: false,
+            segmentation_temporal_update: false,
+            seg_tree_probs: [128; rvp9_core::bitstream::SEG_TREE_PROBS],
+            seg_pred_probs: [128; rvp9_core::bitstream::PREDICTION_PROBS],
+            lossless: false,
+            base_qindex: 100,
+            y_dc_delta_q: 0,
+            uv_dc_delta_q: 0,
+            uv_ac_delta_q: 0,
+            seg_alt_q: [None; rvp9_core::loopfilter::MAX_SEGMENTS],
+            seg_abs_delta: false,
+            seg_ref_frame: [None; rvp9_core::loopfilter::MAX_SEGMENTS],
+            seg_skip: [false; rvp9_core::loopfilter::MAX_SEGMENTS],
+        }
+    }
+
+    #[test]
+    fn truncated_intra_tile_payload_is_rejected_after_entropy_decode() {
+        use rvp9_core::frame::{BorderUsage, ByteAlignment};
+
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: 8,
+            mi_col_start: 0,
+            mi_col_end: 8,
+        };
+        let mut mi_grid = vec![None; 8 * 8];
+        // SAFETY: `mi_grid` owns 64 cells for this full-frame 8×8-mi
+        // view and remains alive and exclusively borrowed for the call.
+        let mi_view = unsafe {
+            crate::tile_ctx::TileMiView::new(mi_grid.as_mut_ptr(), mi_grid.len(), 8, &bounds)
+        };
+        let mut dst = Yv12Buffer::alloc(
+            64,
+            64,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .expect("allocate destination");
+        let mut segment_ids = vec![0u8; 8 * 8];
+
+        let result = decode_tile_intra(
+            &[0],
+            bounds,
+            &minimal_frame_decode_params(),
+            &FrameContext::new_default(),
+            &mut dst,
+            None,
+            &mut segment_ids,
+            rvp9_core::dsp::get_ref(),
+            mi_view,
+            None,
+        );
+
+        match result {
+            Err(TileDecodeError::TruncatedTilePayload) => {}
+            Err(other) => panic!("expected truncated-tile error, got {other:?}"),
+            Ok(_) => panic!("one byte cannot contain a full 64x64 tile"),
+        }
+    }
+
+    #[test]
+    fn truncated_inter_tile_payload_is_rejected_after_entropy_decode() {
+        use rvp9_core::bitstream::frame::{InterpFilter, ReferenceMode};
+        use rvp9_core::frame::{BorderUsage, ByteAlignment};
+        use rvp9_core::inter::mode_info::setup_compound_reference_mode;
+        use rvp9_core::inter::mv_ref::{PrevFrameMvRef, sign_bias_from_header};
+
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: 8,
+            mi_col_start: 0,
+            mi_col_end: 8,
+        };
+        let mut mi_grid = vec![None; 8 * 8];
+        // SAFETY: `mi_grid` owns 64 cells for this full-frame 8×8-mi
+        // view and remains alive and exclusively borrowed for the call.
+        let mi_view = unsafe {
+            crate::tile_ctx::TileMiView::new(mi_grid.as_mut_ptr(), mi_grid.len(), 8, &bounds)
+        };
+        let mut dst = Yv12Buffer::alloc(
+            64,
+            64,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .expect("allocate destination");
+
+        const FORCED_INTRA_SEGMENT: usize = 1;
+        let mut base = minimal_frame_decode_params();
+        base.segmentation_enabled = true;
+        base.seg_ref_frame[FORCED_INTRA_SEGMENT] = Some(RefFrame::IntraFrame as u8);
+        let sign_bias = sign_bias_from_header(&[false, false, false]);
+        let (comp_fixed_ref, comp_var_ref) = setup_compound_reference_mode(&sign_bias);
+        let params = InterFrameDecodeParams {
+            base,
+            cur_y_width: 64,
+            cur_y_height: 64,
+            refs: [None, None, None],
+            frame_scale_factors: [None, None, None],
+            inter_params: InterModeReadParams {
+                allow_high_precision_mv: false,
+                interp_filter: InterpFilter::EightTap,
+                reference_mode: ReferenceMode::Single,
+                comp_fixed_ref,
+                comp_var_ref,
+                sign_bias,
+                seg_ref_frame: None,
+                seg_skip: false,
+            },
+        };
+        let prev_segment_ids = vec![FORCED_INTRA_SEGMENT as u8; 8 * 8];
+        let mut cur_segment_ids = vec![0u8; 8 * 8];
+        let mut cur_mv_grid = vec![PrevFrameMvRef::default(); 8 * 8];
+
+        let result = decode_tile_inter(
+            &[0],
+            bounds,
+            &params,
+            &FrameContext::new_default(),
+            &mut dst,
+            None,
+            None,
+            None,
+            None,
+            &mut cur_mv_grid,
+            &prev_segment_ids,
+            &mut cur_segment_ids,
+            rvp9_core::dsp::get_ref(),
+            mi_view,
+            None,
+        );
+
+        match result {
+            Err(TileDecodeError::TruncatedTilePayload) => {}
+            Err(other) => panic!("expected truncated-tile error, got {other:?}"),
+            Ok(_) => panic!("one byte cannot contain a full 64x64 tile"),
+        }
+    }
 
     /// G-C: the sub-8×8 SEG_LVL_SKIP guard in `decode_inter_block`
     /// surfaces `TileDecodeError::Sub8SegSkip` (mirroring libvpx

@@ -4879,9 +4879,10 @@ mod tests {
 
     /// Build a minimal valid intra-only header buffer with the given
     /// `reset_frame_context` and `refresh_frame_flags`. The compressed
-    /// header / tile section is `n` zero bytes (same shape as
-    /// [`build_lossless_keyframe_with_compressed_size`]). Mirrors
-    /// libvpx's intra-only header at `vp9_decodeframe.c:2705-2735`.
+    /// header is `n` zero bytes and the all-zero tile has enough
+    /// trailing bytes to complete entropy decoding without relying on
+    /// the bool reader's EOF sentinel. Mirrors libvpx's intra-only
+    /// header at `vp9_decodeframe.c:2705-2735`.
     ///
     /// `frame_context_idx` defaults to 0; use
     /// [`build_minimal_intra_only_with_fc_idx`] when a different bank
@@ -4930,7 +4931,8 @@ mod tests {
         n: u16,
     ) -> Vec<u8> {
         assert!(fc_idx < 4, "frame_context_idx is a 2-bit field");
-        let mut buf = vec![0u8; 256];
+        const ZERO_TILE_BYTES: usize = 512;
+        let mut buf = vec![0u8; ZERO_TILE_BYTES + 512];
         let mut w = RawBitWriter::new(&mut buf);
         w.write_literal(sync::FRAME_MARKER as u32, 2);
         w.write_bit(0); // profile low
@@ -4983,7 +4985,7 @@ mod tests {
         w.write_bit(0);
         w.write_literal(u32::from(n), 16);
         let used = w.bytes_written();
-        buf.truncate(used + n as usize + 4);
+        buf.truncate(used + n as usize + ZERO_TILE_BYTES);
         buf
     }
 
