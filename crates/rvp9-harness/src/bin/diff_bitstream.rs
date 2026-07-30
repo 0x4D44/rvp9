@@ -40,7 +40,7 @@
 //!      binary — matches the original Stage 0 behaviour).
 //!   2  argument or input error (missing file, bad IVF, bad flag).
 
-use std::io::{IsTerminal, Write};
+use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -325,6 +325,10 @@ trait DiffReporter {
     /// "Identical: every byte matches." — `code` alone is ambiguous
     /// when `--exit-on-diff` is false.
     fn had_divergence(&self) -> bool;
+
+    /// Whether the caller requested an immediate stop after the first
+    /// recorded divergence.
+    fn should_stop(&self) -> bool;
 }
 
 /// Text reporter — preserves the original Stage 0 stdout when run at
@@ -405,6 +409,10 @@ impl<W: Write> DiffReporter for TextReporter<W> {
 
     fn had_divergence(&self) -> bool {
         self.any_diff
+    }
+
+    fn should_stop(&self) -> bool {
+        self.exit_on_diff && self.any_diff
     }
 }
 
@@ -501,6 +509,10 @@ impl<W: Write> DiffReporter for JsonReporter<W> {
     fn had_divergence(&self) -> bool {
         self.any_diff
     }
+
+    fn should_stop(&self) -> bool {
+        self.exit_on_diff && self.any_diff
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -557,6 +569,56 @@ fn byte_diff(a: &[u8], b: &[u8], max_frames: Option<u32>) -> ByteDiff {
         frame,
         payload_offset,
     }
+}
+
+/// Read only the IVF header and the requested number of frame chunks.
+///
+/// A truncated header or payload is returned as a short buffer so the
+/// existing input validation and prefix-diff diagnostics remain in
+/// charge of the outcome.
+fn read_ivf_prefix(path: &Path, max_frames: Option<u32>) -> Result<Vec<u8>, String> {
+    let Some(max_frames) = max_frames else {
+        return std::fs::read(path)
+            .map_err(|error| format!("could not read {}: {error}", path.display()));
+    };
+
+    let mut file = std::fs::File::open(path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let mut data = Vec::new();
+    if !read_up_to(&mut file, 32, &mut data)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?
+    {
+        return Ok(data);
+    }
+
+    for _ in 0..max_frames {
+        let header_start = data.len();
+        if !read_up_to(&mut file, 12, &mut data)
+            .map_err(|error| format!("could not read {}: {error}", path.display()))?
+        {
+            break;
+        }
+        let payload_size = u32::from_le_bytes([
+            data[header_start],
+            data[header_start + 1],
+            data[header_start + 2],
+            data[header_start + 3],
+        ]) as usize;
+        if !read_up_to(&mut file, payload_size, &mut data)
+            .map_err(|error| format!("could not read {}: {error}", path.display()))?
+        {
+            break;
+        }
+    }
+    Ok(data)
+}
+
+/// Append at most `len` bytes and return whether all requested bytes
+/// were present.
+fn read_up_to<R: Read>(reader: &mut R, len: usize, data: &mut Vec<u8>) -> std::io::Result<bool> {
+    let start = data.len();
+    reader.take(len as u64).read_to_end(data)?;
+    Ok(data.len() - start == len)
 }
 
 /// Walk IVF frames in parallel up to `max_frames` (if set) and return
@@ -800,9 +862,8 @@ fn parse_header_opt(
 /// Read an IVF file from disk and extract its parsed frame entries.
 /// Errors are turned into a `String` for the caller to surface via
 /// stderr.
-fn load_frames(path: &Path) -> Result<Vec<FrameEntry>, String> {
-    let data =
-        std::fs::read(path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
+fn load_frames(path: &Path, max_frames: Option<u32>) -> Result<Vec<FrameEntry>, String> {
+    let data = read_ivf_prefix(path, max_frames)?;
     extract_frames(&data).map_err(|e| format!("{}: {e}", path.display()))
 }
 
@@ -1822,46 +1883,23 @@ fn with_likely_site(path: &str, detail: String) -> String {
 /// symmetric errors (both sides failed identically) are silent —
 /// mirrors the L1/L2/L3 parse-error policy.
 fn level_4_diff<R: DiffReporter, E: Write>(
-    a_path: &Path,
-    b_path: &Path,
+    a_data: &[u8],
+    b_data: &[u8],
     args: &Args,
     reporter: &mut R,
     stderr: &mut E,
 ) {
-    let a_data = match std::fs::read(a_path) {
-        Ok(v) => v,
-        Err(e) => {
-            let _ = writeln!(
-                stderr,
-                "L4 skipped: could not read {}: {e}",
-                a_path.display()
-            );
-            return;
-        }
-    };
-    let b_data = match std::fs::read(b_path) {
-        Ok(v) => v,
-        Err(e) => {
-            let _ = writeln!(
-                stderr,
-                "L4 skipped: could not read {}: {e}",
-                b_path.display()
-            );
-            return;
-        }
-    };
-
-    let packets_a = match read_ivf_packets(&a_data) {
+    let packets_a = match read_ivf_packets(a_data) {
         Ok(p) => p,
         Err(e) => {
-            let _ = writeln!(stderr, "L4 skipped: {}: {e}", a_path.display());
+            let _ = writeln!(stderr, "L4 skipped: {}: {e}", args.a.display());
             return;
         }
     };
-    let packets_b = match read_ivf_packets(&b_data) {
+    let packets_b = match read_ivf_packets(b_data) {
         Ok(p) => p,
         Err(e) => {
-            let _ = writeln!(stderr, "L4 skipped: {}: {e}", b_path.display());
+            let _ = writeln!(stderr, "L4 skipped: {}: {e}", args.b.display());
             return;
         }
     };
@@ -1886,8 +1924,8 @@ fn level_4_diff<R: DiffReporter, E: Write>(
             break;
         }
 
-        let bytes_a = ra.slice(&a_data);
-        let bytes_b = rb.slice(&b_data);
+        let bytes_a = ra.slice(a_data);
+        let bytes_b = rb.slice(b_data);
 
         let parse_a = decoder_a.parse_packet(bytes_a);
         let parse_b = decoder_b.parse_packet(bytes_b);
@@ -2226,17 +2264,17 @@ fn run_with_streams<E: Write, R: DiffReporter>(
         );
     }
 
-    let a = match std::fs::read(&args.a) {
+    let a = match read_ivf_prefix(&args.a, args.max_frames) {
         Ok(v) => v,
         Err(e) => {
-            let _ = writeln!(stderr, "could not read --a {}: {e}", args.a.display());
+            let _ = writeln!(stderr, "{e}");
             return 2;
         }
     };
-    let b = match std::fs::read(&args.b) {
+    let b = match read_ivf_prefix(&args.b, args.max_frames) {
         Ok(v) => v,
         Err(e) => {
-            let _ = writeln!(stderr, "could not read --b {}: {e}", args.b.display());
+            let _ = writeln!(stderr, "{e}");
             return 2;
         }
     };
@@ -2262,6 +2300,9 @@ fn run_with_streams<E: Write, R: DiffReporter>(
         ByteDiff::PrefixMismatch { .. } | ByteDiff::Diverge { .. } => {
             let msg = format_byte_diff(&diff);
             reporter.divergence(0, "byte", Some(&msg));
+            if reporter.should_stop() {
+                return reporter.finish();
+            }
         }
     }
 
@@ -2271,14 +2312,14 @@ fn run_with_streams<E: Write, R: DiffReporter>(
     //                  reported divergence (otherwise byte-identity
     //                  guarantees parser-output identity too).
     if level_n >= 1 {
-        let frames_a = match load_frames(&args.a) {
+        let frames_a = match load_frames(&args.a, args.max_frames) {
             Ok(f) => f,
             Err(e) => {
                 let _ = writeln!(stderr, "L1/L2 skipped: {e}");
                 return reporter.finish();
             }
         };
-        let frames_b = match load_frames(&args.b) {
+        let frames_b = match load_frames(&args.b, args.max_frames) {
             Ok(f) => f,
             Err(e) => {
                 let _ = writeln!(stderr, "L1/L2 skipped: {e}");
@@ -2287,14 +2328,23 @@ fn run_with_streams<E: Write, R: DiffReporter>(
         };
 
         level_1_diff(&frames_a, &frames_b, args, reporter);
+        if reporter.should_stop() {
+            return reporter.finish();
+        }
         if level_n >= 2 {
             level_2_diff(&frames_a, &frames_b, args, reporter);
+            if reporter.should_stop() {
+                return reporter.finish();
+            }
         }
         if level_n >= 3 {
             level_3_diff(&frames_a, &frames_b, args, reporter);
+            if reporter.should_stop() {
+                return reporter.finish();
+            }
         }
         if level_n >= 4 {
-            level_4_diff(&args.a, &args.b, args, reporter, stderr);
+            level_4_diff(&a, &b, args, reporter, stderr);
         }
     }
 
@@ -2791,6 +2841,64 @@ mod tests {
     }
 
     #[test]
+    fn max_frames_excludes_later_bytes_before_diffing() {
+        let buf_a = synth_ivf(3, 0x10);
+        let mut buf_b = buf_a.clone();
+        buf_b[62] ^= 0xff; // frame 2, outside the one-frame cap
+        let a = write_tmp("a-max-one", &buf_a);
+        let b = write_tmp("b-max-one", &buf_b);
+        let args = Args {
+            a: a.clone(),
+            b: b.clone(),
+            level: Level::N(4),
+            frame: None,
+            format: Format::Text,
+            verbose: Verbose::Full,
+            max_frames: Some(1),
+            no_color: true,
+            exit_on_diff: true,
+        };
+
+        let bounded = read_ivf_prefix(&a, Some(1)).unwrap();
+        assert!(bounded.len() < buf_a.len());
+        let (out, err, code) = run_with_text_reporter(&args);
+        let _ = (a, b);
+        assert_eq!(code, 0, "out={out:?} err={err:?}");
+        assert!(!out.contains("Level "), "out={out:?}");
+    }
+
+    #[test]
+    fn exit_on_diff_stops_after_first_level_zero_record() {
+        let mut buf_a = synth_ivf(3, 0x10);
+        let buf_b = buf_a.clone();
+        buf_a[62] ^= 0xff;
+        let a = write_tmp("a-stop-first", &buf_a);
+        let b = write_tmp("b-stop-first", &buf_b);
+        let args = Args {
+            a: a.clone(),
+            b: b.clone(),
+            level: Level::All,
+            frame: None,
+            format: Format::Text,
+            verbose: Verbose::Full,
+            max_frames: None,
+            no_color: true,
+            exit_on_diff: true,
+        };
+
+        let (out, err, code) = run_with_text_reporter(&args);
+        let _ = (a, b);
+        assert_eq!(code, 1, "out={out:?} err={err:?}");
+        assert_eq!(
+            out.lines()
+                .filter(|line| line.starts_with("Level "))
+                .count(),
+            1
+        );
+        assert!(out.starts_with("Level 0"), "out={out:?}");
+    }
+
+    #[test]
     fn level_5_emits_stderr_note() {
         // After commit #4 lands, Level 4 is implemented — only Level 5
         // (per-coef tokens, deferred per design Q5) still emits a
@@ -3079,11 +3187,11 @@ mod tests {
             verbose: Verbose::Full,
             max_frames: None,
             no_color: true,
-            exit_on_diff: true,
+            exit_on_diff: false,
         };
         let (out, err, code) = run_with_text_reporter(&args);
         let _ = (a, b);
-        assert_eq!(code, 1, "out={out:?} err={err:?}");
+        assert_eq!(code, 0, "out={out:?} err={err:?}");
         // Must contain a Level 1 frame-count divergence.
         assert!(
             out.contains("Level 1") && out.contains("frame-count"),
@@ -3151,11 +3259,11 @@ mod tests {
             verbose: Verbose::Full,
             max_frames: None,
             no_color: true,
-            exit_on_diff: true,
+            exit_on_diff: false,
         };
         let (out, err, code) = run_with_text_reporter(&args);
         let _ = (a, b);
-        assert_eq!(code, 1, "out={out:?} err={err:?}");
+        assert_eq!(code, 0, "out={out:?} err={err:?}");
         // Must contain a Level 2 filter_level record with the right
         // path string and the right values.
         assert!(
@@ -3198,7 +3306,7 @@ mod tests {
             verbose: Verbose::Full,
             max_frames: None,
             no_color: true,
-            exit_on_diff: true,
+            exit_on_diff: false,
         };
         let (out_full, _, _) = run_with_text_reporter(&args);
 
@@ -3212,7 +3320,7 @@ mod tests {
             verbose: Verbose::First,
             max_frames: None,
             no_color: true,
-            exit_on_diff: true,
+            exit_on_diff: false,
         };
         let (out_first, _, _) = run_with_text_reporter(&args);
         let _ = (a, b);
@@ -3461,7 +3569,7 @@ mod tests {
             verbose: Verbose::Full,
             max_frames: None,
             no_color: true,
-            exit_on_diff: true,
+            exit_on_diff: false,
         };
         let (out, err, code) = run_with_text_reporter(&args);
         let _ = (a, b);
@@ -3469,7 +3577,7 @@ mod tests {
         // L3 to ALSO surface a fc.* divergence (or a parse-error
         // record), proving the harness drives parse_compressed_header
         // on both sides.
-        assert_eq!(code, 1, "out={out:?} err={err:?}");
+        assert_eq!(code, 0, "out={out:?} err={err:?}");
         let saw_l3 = out
             .lines()
             .any(|l| l.starts_with("Level 3") || l.contains("Level 3 "));
@@ -3724,11 +3832,11 @@ mod tests {
             verbose: Verbose::Full,
             max_frames: None,
             no_color: true,
-            exit_on_diff: true,
+            exit_on_diff: false,
         };
         let (out, _err, code) = run_with_text_reporter(&args);
         let _ = (a, b);
-        assert_eq!(code, 1);
+        assert_eq!(code, 0);
         // L0 reports the byte diff; L2 reports the width/height fields.
         assert!(
             out.contains("Level 2") && out.contains("header.width"),
@@ -3759,7 +3867,7 @@ mod tests {
             verbose: Verbose::Full,
             max_frames: None,
             no_color: true,
-            exit_on_diff: true,
+            exit_on_diff: false,
         };
         let (out, _err, _code) = run_with_text_reporter(&args);
         let _ = (a, b);
