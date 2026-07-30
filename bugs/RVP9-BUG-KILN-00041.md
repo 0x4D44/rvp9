@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00041 - Y4M reader accepts truncated structure as a short stream
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** io/y4m parser
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T181932Z-p41415-n886388000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00041-run-fix-20260730T181932Z-p41415-n886388000-c1
-- **Owner base:** 7a997683903ee2150e9e0e87a49b87c16cae00f6
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T18:19:32Z
-- **Owner until:** 2026-07-30T20:19:32Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-io/` at `6128772`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-io/` at `6128772`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T181932Z-p41415-n886388000-c1 branch=task/bug-RVP9-BUG-KILN-00041-run-fix-20260730T181932Z-p41415-n886388000-c1 code=b1dff59e1dd6274ad790c977ed735c8921bcbef6 gate=manual)
 
 ## Observation
 
