@@ -747,6 +747,43 @@ fn enc_limit_truncates_output() {
     let _ = std::fs::remove_file(&ivf);
 }
 
+/// A raw encode with `--limit` must not read or validate bytes after the
+/// requested frames.
+#[test]
+fn enc_raw_limit_does_not_read_trailing_partial_frame() {
+    let raw = tmp("limit_partial_in.yuv");
+    let ivf = tmp("limit_partial_out.ivf");
+    let frame_size = 64 * 64 * 3 / 2;
+    let mut input = vec![128u8; frame_size];
+    input.extend_from_slice(b"unread trailing partial frame");
+    std::fs::write(&raw, input).expect("write raw fixture");
+
+    let out = Command::new(enc_bin())
+        .args([
+            "-w",
+            "64",
+            "-h",
+            "64",
+            "--target-bitrate",
+            "500",
+            "--limit",
+            "1",
+            "-o",
+        ])
+        .arg(&ivf)
+        .arg(&raw)
+        .bounded_output()
+        .expect("run limited rvp9enc");
+    assert!(
+        out.status.success(),
+        "limited raw encode read the trailing partial frame: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let _ = std::fs::remove_file(&raw);
+    let _ = std::fs::remove_file(&ivf);
+}
+
 /// `--ivf` is a no-op (the only container) but accepting it must not
 /// break the encode pipeline.
 #[test]
@@ -1177,6 +1214,47 @@ fn dec_limit_caps_output_frame_count() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
     assert_eq!(lines.len(), 2, "--limit 2 must produce exactly 2 md5 lines");
+    let _ = std::fs::remove_file(&ivf);
+}
+
+/// A limited decode must stop pulling container packets after the requested
+/// displayed frame, leaving malformed unread tail records untouched.
+#[test]
+fn dec_limit_does_not_read_trailing_bad_ivf_record() {
+    let ivf = encode_synthetic_ivf("dec_limit_bad_tail");
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&ivf)
+        .expect("open IVF fixture");
+    use std::io::Write as _;
+    file.write_all(&100u32.to_le_bytes())
+        .expect("append bad frame size");
+    file.write_all(&99u64.to_le_bytes())
+        .expect("append bad frame pts");
+    drop(file);
+
+    let limited = Command::new(dec_bin())
+        .args(["--md5", "--limit", "1"])
+        .arg(&ivf)
+        .bounded_output()
+        .expect("run limited rvp9dec");
+    assert!(
+        limited.status.success(),
+        "limited decode read the malformed tail: {}",
+        String::from_utf8_lossy(&limited.stderr)
+    );
+
+    let unlimited = Command::new(dec_bin())
+        .arg("--md5")
+        .arg(&ivf)
+        .bounded_output()
+        .expect("run unlimited rvp9dec");
+    assert!(
+        !unlimited.status.success()
+            && String::from_utf8_lossy(&unlimited.stderr).contains("declared 100 bytes"),
+        "unlimited decode must still validate the tail: {}",
+        String::from_utf8_lossy(&unlimited.stderr)
+    );
     let _ = std::fs::remove_file(&ivf);
 }
 
@@ -2113,13 +2191,12 @@ fn dec_summary_reports_skipped_and_emitted_counts() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     // Summary line: "<frame_in> decoded frames/<frame_out> showed frames in ...".
-    // The 6-frame synthetic IVF feeds all 6 to the decoder regardless of
-    // --skip/--limit (those are output-side controls); `showed` counts every
-    // displayed frame seen during the decode loop (including the one
-    // skipped and the 3 past --limit), so both should be 6.
+    // The reader stops after one skipped and two emitted displayed frames.
+    // Both counters therefore stop at 3 rather than scanning the remaining
+    // three packets.
     assert!(
-        stderr.contains("6 decoded frames") && stderr.contains("6 showed frames"),
-        "summary must report 6 decoded / 6 showed frames, got: {stderr}"
+        stderr.contains("3 decoded frames") && stderr.contains("3 showed frames"),
+        "summary must report 3 decoded / 3 showed frames, got: {stderr}"
     );
     let _ = std::fs::remove_file(&ivf);
 }

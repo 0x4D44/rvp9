@@ -13,7 +13,7 @@ use rvp9_cli::args::{self, Arg, Flag};
 use rvp9_core::bitstream::ChromaFormat;
 use rvp9_core::frame::PlaneRef;
 use rvp9_decoder::Decoder;
-use rvp9_io::container::read_packets;
+use rvp9_io::container::PacketReader;
 use rvp9_io::md5::{hex16, md5_of_yv12_visible};
 use std::io::{BufWriter, Write};
 use std::num::NonZeroUsize;
@@ -397,8 +397,8 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
         _ => return Err("expected exactly one input file".to_string()),
     };
 
-    let (data, packets) =
-        read_packets(input).map_err(|e| format!("reading {}: {e}", input.display()))?;
+    let mut packets =
+        PacketReader::open(input).map_err(|e| format!("reading {}: {e}", input.display()))?;
 
     // Resolve output format: explicit flag wins, else infer from the
     // output extension, else raw I420.
@@ -406,7 +406,7 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
     let fmt = resolve_format(opts);
 
     // Framerate for the Y4M header (IVF carries it; default 30/1 else).
-    let (fps_num, fps_den) = ivf_framerate(&data).unwrap_or((30, 1));
+    let (fps_num, fps_den) = packets.framerate().unwrap_or((30, 1));
 
     // Do not open or truncate the output until a decoded frame is ready
     // to emit. Container, packet, decode, and worker-startup failures must
@@ -429,10 +429,15 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
     let mut dx_time_us: u128 = 0;
     let mut y4m_header_written = false;
 
-    for range in &packets {
-        let pkt = range.slice(&data);
+    'packets: while opts.limit != Some(0) {
+        let Some(pkt) = packets
+            .next_packet()
+            .map_err(|e| format!("reading {}: {e}", input.display()))?
+        else {
+            break;
+        };
         let parsed = decoder
-            .parse_packet(pkt)
+            .parse_packet(&pkt)
             .map_err(|e| format!("parse_packet: {e}"))?;
         for frame in parsed {
             let is_shown = frame.header.show_frame
@@ -509,6 +514,9 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
             emitted += 1;
             if opts.progress {
                 eprint!("\r[rvp9dec] {emitted} frames decoded");
+            }
+            if opts.limit == Some(emitted) {
+                break 'packets;
             }
         }
     }
@@ -611,22 +619,6 @@ fn visible_planes(buf: &rvp9_core::frame::Yv12Buffer) -> (Vec<u8>, Vec<u8>, Vec<
         pack(buf.u_plane(), uvw, uvh),
         pack(buf.v_plane(), uvw, uvh),
     )
-}
-
-/// Read the framerate `(num, den)` from an IVF file header, if `data`
-/// is an IVF stream. WebM streams return `None` (we don't parse their
-/// timing) and the caller defaults to 30/1.
-fn ivf_framerate(data: &[u8]) -> Option<(u32, u32)> {
-    if data.len() < 32 || &data[0..4] != b"DKIF" {
-        return None;
-    }
-    let num = u32::from_le_bytes([data[16], data[17], data[18], data[19]]);
-    let den = u32::from_le_bytes([data[20], data[21], data[22], data[23]]);
-    if num == 0 || den == 0 {
-        None
-    } else {
-        Some((num, den))
-    }
 }
 
 /// Open the output sink: a file if `path` is `Some`, else stdout.

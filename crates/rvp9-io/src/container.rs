@@ -25,7 +25,8 @@
 //! Each `&[u8]` is one transport packet — i.e. exactly what gets fed
 //! into [`rvp9_decoder::Decoder::parse_packet`].
 
-use std::io::{self, Write};
+use std::fs::File;
+use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 /// Errors from the container readers.
@@ -127,18 +128,191 @@ impl PacketRange {
 ///   `.ivf` or `.webm`.
 /// - Any error from the underlying reader.
 pub fn read_packets(path: &Path) -> Result<(Vec<u8>, Vec<PacketRange>), ContainerError> {
-    let data = std::fs::read(path)?;
     let ext = path
         .extension()
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
+    if !matches!(ext.as_str(), "ivf" | "webm") {
+        return Err(ContainerError::UnknownExtension(ext));
+    }
+    let data = std::fs::read(path)?;
     let packets = match ext.as_str() {
         "ivf" => read_ivf_packets(&data)?,
         "webm" => read_webm_packets(&data)?,
-        other => return Err(ContainerError::UnknownExtension(other.to_string())),
+        _ => unreachable!("extension validated before reading"),
     };
     Ok((data, packets))
+}
+
+/// Incremental container reader for callers that may stop before EOF.
+///
+/// Unlike [`read_packets`], this reader retains only the current transport
+/// packet. IVF frame records and WebM blocks are pulled from disk on demand.
+pub struct PacketReader {
+    inner: PacketReaderInner,
+    framerate: Option<(u32, u32)>,
+}
+
+enum PacketReaderInner {
+    Ivf(IvfPacketReader),
+    Webm(WebmPacketReader),
+}
+
+struct IvfPacketReader {
+    file: BufReader<File>,
+    file_len: u64,
+    packet_index: u32,
+}
+
+#[derive(Clone, Copy)]
+struct WebmLevel {
+    end: u64,
+    inside_cluster: bool,
+    depth: usize,
+}
+
+struct WebmPacketReader {
+    file: BufReader<File>,
+    video_track: u64,
+    levels: Vec<WebmLevel>,
+    packet_index: u32,
+}
+
+impl PacketReader {
+    /// Open an IVF or WebM file without loading its packet payloads.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContainerError::UnknownExtension`] before touching the
+    /// filesystem for paths other than `.ivf` or `.webm`. Container header
+    /// and VP9-track discovery errors are returned while opening.
+    pub fn open(path: &Path) -> Result<Self, ContainerError> {
+        let ext = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        match ext.as_str() {
+            "ivf" => Self::open_ivf(path),
+            "webm" => Self::open_webm(path),
+            _ => Err(ContainerError::UnknownExtension(ext)),
+        }
+    }
+
+    fn open_ivf(path: &Path) -> Result<Self, ContainerError> {
+        let file = File::open(path)?;
+        let file_len = file.metadata()?.len();
+        if file_len < 32 {
+            return Err(ContainerError::Truncated {
+                what: "IVF file header",
+                len: usize::try_from(file_len).unwrap_or(usize::MAX),
+            });
+        }
+        let mut file = BufReader::new(file);
+        let mut header = [0u8; 32];
+        file.read_exact(&mut header)?;
+        if &header[0..4] != b"DKIF" {
+            return Err(ContainerError::BadIvfMagic);
+        }
+        let num = u32::from_le_bytes(header[16..20].try_into().expect("four-byte slice"));
+        let den = u32::from_le_bytes(header[20..24].try_into().expect("four-byte slice"));
+        let framerate = (num != 0 && den != 0).then_some((num, den));
+        Ok(Self {
+            inner: PacketReaderInner::Ivf(IvfPacketReader {
+                file,
+                file_len,
+                packet_index: 0,
+            }),
+            framerate,
+        })
+    }
+
+    fn open_webm(path: &Path) -> Result<Self, ContainerError> {
+        let file = File::open(path)?;
+        let file_len = file.metadata()?.len();
+        let mut file = BufReader::new(file);
+        let video_track = if file_len == 0 {
+            0
+        } else {
+            find_vp9_video_track_stream(&mut file, file_len)?
+        };
+        file.seek(SeekFrom::Start(0))?;
+        Ok(Self {
+            inner: PacketReaderInner::Webm(WebmPacketReader {
+                file,
+                video_track,
+                levels: vec![WebmLevel {
+                    end: file_len,
+                    inside_cluster: false,
+                    depth: 0,
+                }],
+                packet_index: 0,
+            }),
+            framerate: None,
+        })
+    }
+
+    /// Container framerate when carried by the format.
+    ///
+    /// IVF rates with a zero numerator or denominator and all WebM inputs
+    /// return `None`.
+    #[must_use]
+    pub fn framerate(&self) -> Option<(u32, u32)> {
+        self.framerate
+    }
+
+    /// Read the next VP9 transport packet.
+    ///
+    /// # Errors
+    ///
+    /// Returns filesystem and malformed-container errors encountered while
+    /// advancing to the next packet.
+    pub fn next_packet(&mut self) -> Result<Option<Vec<u8>>, ContainerError> {
+        match &mut self.inner {
+            PacketReaderInner::Ivf(reader) => reader.next_packet(),
+            PacketReaderInner::Webm(reader) => reader.next_packet(),
+        }
+    }
+}
+
+impl IvfPacketReader {
+    fn next_packet(&mut self) -> Result<Option<Vec<u8>>, ContainerError> {
+        let pos = self.file.stream_position()?;
+        if pos == self.file_len {
+            return Ok(None);
+        }
+        let available = self.file_len.saturating_sub(pos);
+        if available < 12 {
+            return Err(ContainerError::Truncated {
+                what: "IVF frame record header",
+                len: usize::try_from(self.file_len).unwrap_or(usize::MAX),
+            });
+        }
+
+        let mut record = [0u8; 12];
+        self.file.read_exact(&mut record)?;
+        self.packet_index = self.packet_index.saturating_add(1);
+        let size = u32::from_le_bytes(record[0..4].try_into().expect("four-byte slice")) as usize;
+        let available = self.file_len.saturating_sub(self.file.stream_position()?);
+        if u64::try_from(size).unwrap_or(u64::MAX) > available {
+            return Err(ContainerError::BadFrameSize {
+                packet_index: self.packet_index,
+                declared: size,
+                available: usize::try_from(available).unwrap_or(usize::MAX),
+            });
+        }
+        let mut packet = Vec::new();
+        packet.try_reserve_exact(size).map_err(|_| {
+            ContainerError::Io(io::Error::new(
+                io::ErrorKind::OutOfMemory,
+                "allocating IVF packet",
+            ))
+        })?;
+        packet.resize(size, 0);
+        self.file.read_exact(&mut packet)?;
+        Ok(Some(packet))
+    }
 }
 
 /// Walk an IVF file in memory, returning the byte ranges of every
@@ -343,6 +517,295 @@ mod ebml_id {
 /// This larger budget leaves ample room for unusual but valid layouts while
 /// bounding stack use for hostile input.
 const MAX_EBML_NESTING_DEPTH: usize = 32;
+
+fn read_stream_ebml_id<R: Read>(reader: &mut R) -> Result<u32, ContainerError> {
+    let mut first = [0u8; 1];
+    reader
+        .read_exact(&mut first)
+        .map_err(|error| stream_header_error(error, "EOF while reading element id"))?;
+    if first[0] == 0 {
+        return Err(ContainerError::BadEbml("element id with no length marker"));
+    }
+    let len = first[0].leading_zeros() as usize + 1;
+    if len > 4 {
+        return Err(ContainerError::BadEbml("element id wider than 4 bytes"));
+    }
+    let mut id = u32::from(first[0]);
+    for _ in 1..len {
+        let mut byte = [0u8; 1];
+        reader
+            .read_exact(&mut byte)
+            .map_err(|error| stream_header_error(error, "EOF inside element id"))?;
+        id = (id << 8) | u32::from(byte[0]);
+    }
+    Ok(id)
+}
+
+fn read_stream_ebml_vint<R: Read>(reader: &mut R) -> Result<(u64, usize), ContainerError> {
+    let mut first = [0u8; 1];
+    reader
+        .read_exact(&mut first)
+        .map_err(|error| stream_header_error(error, "EOF while reading vint"))?;
+    if first[0] == 0 {
+        return Err(ContainerError::BadEbml("vint with no length marker"));
+    }
+    let len = first[0].leading_zeros() as usize + 1;
+    if len > 8 {
+        return Err(ContainerError::BadEbml("vint wider than 8 bytes"));
+    }
+    let mut value = u64::from(first[0] & ((1u8 << (8 - len)) - 1));
+    for _ in 1..len {
+        let mut byte = [0u8; 1];
+        reader
+            .read_exact(&mut byte)
+            .map_err(|error| stream_header_error(error, "EOF inside vint"))?;
+        value = (value << 8) | u64::from(byte[0]);
+    }
+    Ok((value, len))
+}
+
+fn stream_header_error(error: io::Error, eof_message: &'static str) -> ContainerError {
+    if error.kind() == io::ErrorKind::UnexpectedEof {
+        ContainerError::BadEbml(eof_message)
+    } else {
+        ContainerError::Io(error)
+    }
+}
+
+fn stream_payload_end(
+    payload_start: u64,
+    size: u64,
+    size_len: usize,
+    parent_end: u64,
+) -> Result<u64, ContainerError> {
+    let payload_end = if is_unknown_vint(size, size_len) {
+        parent_end
+    } else {
+        payload_start
+            .checked_add(size)
+            .ok_or(ContainerError::BadEbml("payload size overflow"))?
+    };
+    if payload_end > parent_end {
+        return Err(ContainerError::BadEbml(
+            "element payload runs past parent end",
+        ));
+    }
+    Ok(payload_end)
+}
+
+fn find_vp9_video_track_stream(
+    file: &mut BufReader<File>,
+    file_len: u64,
+) -> Result<u64, ContainerError> {
+    #[derive(Clone, Copy)]
+    struct ScanLevel {
+        end: u64,
+        inside_tracks: bool,
+        depth: usize,
+    }
+
+    let mut levels = vec![ScanLevel {
+        end: file_len,
+        inside_tracks: false,
+        depth: 0,
+    }];
+    while let Some(level) = levels.last().copied() {
+        let pos = file.stream_position()?;
+        if pos >= level.end {
+            levels.pop();
+            continue;
+        }
+        let id = read_stream_ebml_id(file)?;
+        let (size, size_len) = read_stream_ebml_vint(file)?;
+        let payload_start = file.stream_position()?;
+        let payload_end = stream_payload_end(payload_start, size, size_len, level.end)?;
+
+        match id {
+            ebml_id::EBML | ebml_id::SEGMENT | ebml_id::TRACKS => {
+                let depth = level.depth + 1;
+                if depth > MAX_EBML_NESTING_DEPTH {
+                    return Err(ContainerError::BadEbml(
+                        "recognized container nesting depth exceeds limit",
+                    ));
+                }
+                levels.push(ScanLevel {
+                    end: payload_end,
+                    inside_tracks: level.inside_tracks || id == ebml_id::TRACKS,
+                    depth,
+                });
+            }
+            ebml_id::TRACK_ENTRY if level.inside_tracks => {
+                if is_unknown_vint(size, size_len) {
+                    return Err(ContainerError::BadEbml("unknown-size TrackEntry"));
+                }
+                if let Some(track) = scan_vp9_track_entry(file, payload_end)? {
+                    return Ok(track);
+                }
+            }
+            _ => {
+                file.seek(SeekFrom::Start(payload_end))?;
+            }
+        }
+    }
+    Err(ContainerError::BadEbml("VP9 video track not found"))
+}
+
+fn scan_vp9_track_entry(
+    file: &mut BufReader<File>,
+    end: u64,
+) -> Result<Option<u64>, ContainerError> {
+    let mut track_number = None;
+    let mut track_type = None;
+    let mut codec_is_vp9 = false;
+
+    while file.stream_position()? < end {
+        let id = read_stream_ebml_id(file)?;
+        let (size, size_len) = read_stream_ebml_vint(file)?;
+        if is_unknown_vint(size, size_len) {
+            return Err(ContainerError::BadEbml("unknown-size TrackEntry child"));
+        }
+        let payload_start = file.stream_position()?;
+        let payload_end = stream_payload_end(payload_start, size, size_len, end)?;
+        match id {
+            ebml_id::TRACK_NUMBER | ebml_id::TRACK_TYPE => {
+                if size == 0 || size > 8 {
+                    return Err(ContainerError::BadEbml(
+                        "EBML unsigned integer must contain 1..=8 bytes",
+                    ));
+                }
+                let mut bytes = [0u8; 8];
+                let size = size as usize;
+                file.read_exact(&mut bytes[..size])?;
+                let value = bytes[..size]
+                    .iter()
+                    .fold(0u64, |value, &byte| (value << 8) | u64::from(byte));
+                if id == ebml_id::TRACK_NUMBER {
+                    if value == 0 {
+                        return Err(ContainerError::BadEbml("TrackNumber must be non-zero"));
+                    }
+                    track_number = Some(value);
+                } else {
+                    track_type = Some(value);
+                }
+            }
+            ebml_id::CODEC_ID if size == 5 => {
+                let mut codec = [0u8; 5];
+                file.read_exact(&mut codec)?;
+                codec_is_vp9 = &codec == b"V_VP9";
+            }
+            _ => {
+                file.seek(SeekFrom::Start(payload_end))?;
+            }
+        }
+        file.seek(SeekFrom::Start(payload_end))?;
+    }
+
+    Ok(match (track_number, track_type, codec_is_vp9) {
+        (Some(number), Some(1), true) => Some(number),
+        _ => None,
+    })
+}
+
+impl WebmPacketReader {
+    fn next_packet(&mut self) -> Result<Option<Vec<u8>>, ContainerError> {
+        while let Some(level) = self.levels.last().copied() {
+            let pos = self.file.stream_position()?;
+            if pos >= level.end {
+                self.levels.pop();
+                continue;
+            }
+            let id = read_stream_ebml_id(&mut self.file)?;
+            let (size, size_len) = read_stream_ebml_vint(&mut self.file)?;
+            let payload_start = self.file.stream_position()?;
+            let payload_end = stream_payload_end(payload_start, size, size_len, level.end)?;
+
+            match id {
+                ebml_id::EBML | ebml_id::SEGMENT => {
+                    self.push_level(payload_end, false, level.depth + 1)?;
+                }
+                ebml_id::CLUSTER => {
+                    self.push_level(payload_end, true, level.depth + 1)?;
+                }
+                ebml_id::BLOCK_GROUP if level.inside_cluster => {
+                    self.push_level(payload_end, true, level.depth + 1)?;
+                }
+                ebml_id::SIMPLE_BLOCK | ebml_id::BLOCK if level.inside_cluster => {
+                    if let Some(packet) = self.read_block(payload_end)? {
+                        self.packet_index = self.packet_index.saturating_add(1);
+                        return Ok(Some(packet));
+                    }
+                }
+                _ => {
+                    self.file.seek(SeekFrom::Start(payload_end))?;
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    fn push_level(
+        &mut self,
+        end: u64,
+        inside_cluster: bool,
+        depth: usize,
+    ) -> Result<(), ContainerError> {
+        if depth > MAX_EBML_NESTING_DEPTH {
+            return Err(ContainerError::BadEbml(
+                "recognized container nesting depth exceeds limit",
+            ));
+        }
+        self.levels.push(WebmLevel {
+            end,
+            inside_cluster,
+            depth,
+        });
+        Ok(())
+    }
+
+    fn read_block(&mut self, block_end: u64) -> Result<Option<Vec<u8>>, ContainerError> {
+        let payload_start = self.file.stream_position()?;
+        let payload_size = block_end.saturating_sub(payload_start);
+        if payload_size < 4 {
+            return Err(ContainerError::BadEbml("block payload too small"));
+        }
+        let (track, track_len) = read_stream_ebml_vint(&mut self.file)?;
+        let header_len = u64::try_from(track_len).unwrap_or(u64::MAX) + 3;
+        if header_len > payload_size {
+            return Err(ContainerError::BadEbml("block missing timecode/flags"));
+        }
+        let mut timecode_and_flags = [0u8; 3];
+        self.file.read_exact(&mut timecode_and_flags)?;
+        if track != self.video_track {
+            self.file.seek(SeekFrom::Start(block_end))?;
+            return Ok(None);
+        }
+        if ((timecode_and_flags[2] >> 1) & 0x03) != 0 {
+            return Err(ContainerError::BadEbml(
+                "lacing on the VP9 video track is unsupported",
+            ));
+        }
+        let frame_size = payload_size - header_len;
+        if frame_size == 0 {
+            return Err(ContainerError::BadFrameSize {
+                packet_index: self.packet_index.saturating_add(1),
+                declared: 0,
+                available: 0,
+            });
+        }
+        let frame_size = usize::try_from(frame_size)
+            .map_err(|_| ContainerError::BadEbml("block frame size does not fit usize"))?;
+        let mut packet = Vec::new();
+        packet.try_reserve_exact(frame_size).map_err(|_| {
+            ContainerError::Io(io::Error::new(
+                io::ErrorKind::OutOfMemory,
+                "allocating WebM packet",
+            ))
+        })?;
+        packet.resize(frame_size, 0);
+        self.file.read_exact(&mut packet)?;
+        Ok(Some(packet))
+    }
+}
 
 /// Read a single variable-length EBML id at `data[pos..]`. Returns
 /// `(id_with_marker_bit, length_in_bytes)`.
@@ -808,18 +1271,11 @@ mod tests {
 
     #[test]
     fn read_packets_unknown_extension_errors() {
-        // Unknown extension routes through the `_ => Err(...)` arm of
-        // `read_packets`. Use the tempfile-free path of constructing an
-        // input via an in-memory file is not possible (no `fs::read`
-        // hook), so we exercise the extension-classification arm
-        // through a non-existent path with an exotic extension. Path
-        // first round: extension lookup happens after `fs::read`, which
-        // fails — so we test the I/O-error path instead and add an
-        // explicit extension-classification test below via an
-        // in-memory wrapper.
+        // Extension dispatch happens before filesystem access, so even a
+        // nonexistent unsupported path reports the unsupported format.
         let path = std::path::Path::new("nonexistent.mp4");
         let result = read_packets(path);
-        assert!(matches!(result, Err(ContainerError::Io(_))));
+        assert!(matches!(result, Err(ContainerError::UnknownExtension(ref ext)) if ext == "mp4"));
     }
 
     #[test]

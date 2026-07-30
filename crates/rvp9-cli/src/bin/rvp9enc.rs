@@ -20,6 +20,7 @@ use rvp9_encoder::{
 };
 use rvp9_io::container::{IvfHeader, write_ivf};
 use rvp9_io::y4m;
+use std::io::Read;
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -1070,12 +1071,45 @@ fn read_raw_input(input: &Path, opts: &EncOpts) -> Result<FramesAndDims, String>
         .ok_or_else(|| "raw input requires -h/--height".to_string())?;
     let fps = (opts.fps_num.unwrap_or(30), opts.fps_den.unwrap_or(1));
 
-    let data = std::fs::read(input).map_err(|e| format!("reading {}: {e}", input.display()))?;
     let w = coded_w as usize;
     let h = coded_h as usize;
-    let y_size = w * h;
-    let uv_size = (w / 2) * (h / 2);
-    let frame_size = y_size + 2 * uv_size;
+    let y_size = w
+        .checked_mul(h)
+        .ok_or_else(|| format!("raw input geometry {coded_w}x{coded_h} is too large"))?;
+    let uv_size = (w / 2)
+        .checked_mul(h / 2)
+        .ok_or_else(|| format!("raw input geometry {coded_w}x{coded_h} is too large"))?;
+    let frame_size = y_size
+        .checked_add(
+            uv_size
+                .checked_mul(2)
+                .ok_or_else(|| format!("raw input geometry {coded_w}x{coded_h} is too large"))?,
+        )
+        .ok_or_else(|| format!("raw input geometry {coded_w}x{coded_h} is too large"))?;
+
+    let file =
+        std::fs::File::open(input).map_err(|e| format!("opening {}: {e}", input.display()))?;
+    let file_len = file
+        .metadata()
+        .map_err(|e| format!("reading metadata for {}: {e}", input.display()))?
+        .len();
+    let bytes_to_read = match opts.limit {
+        Some(limit) => {
+            let limit_bytes = frame_size
+                .checked_mul(limit)
+                .ok_or_else(|| "--limit byte count is too large".to_string())?;
+            file_len.min(u64::try_from(limit_bytes).unwrap_or(u64::MAX))
+        }
+        None => file_len,
+    };
+    let expected_len = usize::try_from(bytes_to_read)
+        .map_err(|_| format!("raw input read is too large: {bytes_to_read} bytes"))?;
+    let mut data = Vec::new();
+    data.try_reserve_exact(expected_len)
+        .map_err(|_| format!("cannot allocate {expected_len} bytes for raw input"))?;
+    file.take(bytes_to_read)
+        .read_to_end(&mut data)
+        .map_err(|e| format!("reading {}: {e}", input.display()))?;
     if frame_size == 0 || data.len() % frame_size != 0 {
         return Err(format!(
             "raw input length {} is not a whole number of {coded_w}x{coded_h} I420 frames ({frame_size} bytes each)",

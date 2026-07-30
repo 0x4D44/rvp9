@@ -12,8 +12,8 @@ use std::path::PathBuf;
 
 use rvp9_core::bitstream::ChromaFormat;
 use rvp9_io::container::{
-    ContainerError, IvfHeader, PacketRange, read_ivf_packets, read_packets, read_webm_packets,
-    write_ivf,
+    ContainerError, IvfHeader, PacketRange, PacketReader, read_ivf_packets, read_packets,
+    read_webm_packets, write_ivf,
 };
 use rvp9_io::y4m::{Y4mHeader, parse_header, read_cropped, write_frame, write_header};
 
@@ -268,6 +268,18 @@ fn read_packets_unknown_extension_returns_unknown_extension() {
 }
 
 #[test]
+fn read_packets_rejects_unknown_extension_before_filesystem_read() {
+    let path = unique_temp_path("unknown_ext_directory", "xyz");
+    std::fs::create_dir(&path).expect("create directory fixture");
+    let err = read_packets(&path).unwrap_err();
+    let _ = std::fs::remove_dir(&path);
+    assert!(
+        matches!(err, ContainerError::UnknownExtension(ref ext) if ext == "xyz"),
+        "dispatcher touched the directory before rejecting its extension: {err:?}"
+    );
+}
+
+#[test]
 fn read_packets_no_extension_returns_unknown_extension_empty() {
     let path = unique_temp_path("no_ext_file", "");
     // Strip the trailing dot left by `.<ext>`-style joins.
@@ -324,6 +336,35 @@ fn read_packets_dispatches_webm_extension_to_webm_reader() {
     let (_data, packets) = read_packets(&path).expect("read_packets webm");
     let _ = std::fs::remove_file(&path);
     assert!(packets.is_empty());
+}
+
+#[test]
+fn packet_reader_ivf_stops_before_unread_malformed_tail() {
+    let mut bytes = make_ivf(64, 64, &[b"first"]);
+    bytes.extend_from_slice(&100u32.to_le_bytes());
+    bytes.extend_from_slice(&1u64.to_le_bytes());
+    let path = unique_temp_path("stream_ivf_bad_tail", "ivf");
+    std::fs::write(&path, bytes).expect("write fixture");
+
+    let mut reader = PacketReader::open(&path).expect("open packet reader");
+    assert_eq!(reader.framerate(), Some((30, 1)));
+    assert_eq!(
+        reader.next_packet().expect("read first packet").as_deref(),
+        Some(&b"first"[..])
+    );
+    let err = reader.next_packet().expect_err("malformed tail accepted");
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        matches!(
+            err,
+            ContainerError::BadFrameSize {
+                packet_index: 2,
+                declared: 100,
+                available: 0
+            }
+        ),
+        "got {err:?}"
+    );
 }
 
 // ============================================================================
@@ -503,6 +544,31 @@ fn webm_cluster_with_simple_block_yields_one_packet() {
     let packets = read_webm_packets(&cluster).expect("cluster+simpleblock");
     assert_eq!(packets.len(), 1, "expected one packet from one SimpleBlock");
     assert_eq!(packets[0].slice(&cluster), frame_payload);
+}
+
+#[test]
+fn packet_reader_webm_yields_video_blocks_incrementally() {
+    let frame_payload: &[u8] = b"streamed-vp9-frame";
+    let mut block_payload = vec![0x81u8, 0x00, 0x00, 0x00];
+    block_payload.extend_from_slice(frame_payload);
+    let simple_block = ebml_elt(&[0xA3], block_payload.len() as u64, &block_payload);
+    let cluster = ebml_elt(
+        &[0x1F, 0x43, 0xB6, 0x75],
+        simple_block.len() as u64,
+        &simple_block,
+    );
+    let webm = with_vp9_track(cluster);
+    let path = unique_temp_path("stream_webm", "webm");
+    std::fs::write(&path, webm).expect("write fixture");
+
+    let mut reader = PacketReader::open(&path).expect("open WebM packet reader");
+    assert_eq!(reader.framerate(), None);
+    assert_eq!(
+        reader.next_packet().expect("read packet").as_deref(),
+        Some(frame_payload)
+    );
+    assert!(reader.next_packet().expect("read EOF").is_none());
+    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
