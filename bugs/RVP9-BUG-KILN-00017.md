@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** encoder/segmentation public API
 - **Raised:** 2026-07-05
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T194323Z-p38606-n589160000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00017-run-fix-20260730T194323Z-p38606-n589160000-c1
+- **Owner base:** 027444d392ccebe91e64d570d4b93d7b2bed4e56
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T19:43:23Z
+- **Owner until:** 2026-07-30T21:43:23Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
