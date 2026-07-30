@@ -1187,16 +1187,20 @@ spatially-derived MV pair. The decoder runs the SAME
 `find_mv_refs` on its own decoded mi_grid; cross-decoder
 byte-exact agreement is preserved (verified by the cross-decoder
 gate which still passes vs both vpxdec and ffmpeg).
-**OOB-nearest safety:** the encoder's `MvLimits` is tighter than
-the decoder's `clamp_mv_ref` envelope because
-`build_inter_pred_plane_unscaled` does not border-extend. When
-the spatially-derived `mvc.nearest` falls outside `MvLimits`,
-NEARESTMV evaluation would over-read the reference plane. We
-substitute `MvCandidates::default()` in the picker call and
-override the picker's argmin to choose between `{ZeroMv, NewMv}`
-only on those leaves — the encoder never commits to NEARESTMV
-when the underlying MV would diverge between encoder (no
-border-extend) and decoder (border-extend).
+**OOB-nearest safety:** the encoder picker's `MvLimits` remain
+tighter than the decoder's `clamp_mv_ref` envelope because its
+sub-pel candidate evaluator uses tight reference planes. When a
+non-zero spatially-derived `mvc.nearest` falls outside
+`MvLimits`, NEARESTMV evaluation could over-read the reference
+plane. The picker substitutes zero and excludes that clamped
+NEAREST winner; the final emitter separately uses
+`build_inter_pred_plane_unscaled` with an edge-replicated scratch.
+**Exact-zero follow-up (2026-07-30):** the strict halo envelope
+also excluded `(0,0)` along the outer block band, although exact
+integer zero motion reads only the visible block and is safe.
+`mv_in_strict_limits_or_zero` now admits only that exact vector
+outside the strict limits. Fractional and non-zero candidates
+retain the tight-plane veto.
 **Byte-parity impact:** preserved; cross-decoder gate
 BYTE-EXACT vs vpxdec + ffmpeg.
 **Compression-efficiency impact (A2.foreman):** foreman_cif
@@ -1214,6 +1218,12 @@ during variance partitioning (`vp9_encodeframe.c:1460-1495`).
 25/50/100 kbps (+0.04 to +0.5 dB), mild regression at 250
 kbps (52.64 → 48.49 dB). BD-rate moved from +1033 % to
 +959 % vs libvpx.
+**Compression-efficiency impact (exact-zero follow-up):** the
+strict seven-point Foreman product gate moved from `+15.7683%`
+to `+14.0148%` BD-rate and from `0.81462 dB` to `0.72143 dB`
+matched-rate deficit. At 250 kbps, ZEROMV area fell to `9.70%`
+and NEARESTMV rose to `56.92%`. All streams remained byte-exact
+under vpxdec and ffmpeg.
 **Future plan:** port `vp9_int_pro_motion_estimation` (the
 3-row 32-tap integer-projection ME that produces an SB-level
 seed MV from the variance partitioner) and wire it into the
