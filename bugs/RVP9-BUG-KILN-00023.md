@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00023 - Public tile buffer helpers trust invalid tile counts
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** core/bitstream tile helpers
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T175217Z-p93805-n268059000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00023-run-fix-20260730T175217Z-p93805-n268059000-c1
-- **Owner base:** 934d3de621567cad5614944f1dc8408a47cac5fa
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T17:52:17Z
-- **Owner until:** 2026-07-30T19:52:17Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-core/` at `af4c7a2d7533`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-core/` at `af4c7a2d7533`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T175217Z-p93805-n268059000-c1 branch=task/bug-RVP9-BUG-KILN-00023-run-fix-20260730T175217Z-p93805-n268059000-c1 code=17329ce37d02956760b50a98b1c039a189e8dd0f gate=manual)
 
 ## Observation
 
