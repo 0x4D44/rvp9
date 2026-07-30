@@ -2517,6 +2517,19 @@ fn inter_rd_calibration_for_mode(
     }
 }
 
+fn a4_descent_independent_mv_default(
+    rc_mode: crate::rate_control::RcMode,
+    speed: i32,
+    deadline: rvp9_core::mode_decision::speed_features::Deadline,
+) -> bool {
+    matches!(rc_mode, crate::rate_control::RcMode::Vbr)
+        && matches!(
+            deadline,
+            rvp9_core::mode_decision::speed_features::Deadline::Realtime
+        )
+        && speed.unsigned_abs() >= 7
+}
+
 fn variance_hint_cell_code(bs: BlockSize) -> &'static str {
     match bs {
         BlockSize::Block8x8 => "8",
@@ -2767,6 +2780,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             *mask &= !nearmv_bit;
         }
     }
+    // A4 evaluates every candidate before the current SB has populated the
+    // causal mi-grid. Using inherited MVs only where a candidate touches a
+    // prior SB makes the partition proxy depend on boundary position rather
+    // than comparable evidence. Give every speculative shape the same neutral
+    // predictor; ZERO and NEWMV remain fully evaluated. The final emitted
+    // picker still uses the real causal neighbours. `=0` preserves the old
+    // diagnostic.
+    let a4_descent_independent_mv = std::env::var_os("RVP9_A4_DESCENT_INDEPENDENT_MV").map_or(
+        a4_descent_independent_mv_default(rc_mode, speed, deadline),
+        |value| value != "0",
+    );
 
     let w = width as usize;
     let h = height as usize;
@@ -3582,6 +3606,22 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     };
                     let mvc = build_mvc(RefFrame::LastFrame);
                     let mvc_golden = build_mvc(RefFrame::GoldenFrame);
+                    let descent_mvc = if a4_descent_independent_mv {
+                        MvCandidates {
+                            nearest: Mv::ZERO,
+                            near: Mv::ZERO,
+                        }
+                    } else {
+                        mvc
+                    };
+                    let descent_mvc_golden = if a4_descent_independent_mv {
+                        MvCandidates {
+                            nearest: Mv::ZERO,
+                            near: Mv::ZERO,
+                        }
+                    } else {
+                        mvc_golden
+                    };
 
                     // Per-leaf segment_id from the variance hint leaf
                     // covering this candidate's top-left cell.
@@ -3672,9 +3712,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         src_plane: &src_y,
                         src_offset: (leaf_px_x, leaf_px_y),
                         last_ref_plane: &ref_y,
-                        last_mv_candidates: &mvc,
+                        last_mv_candidates: &descent_mvc,
                         golden_ref_plane: &ref_y_golden,
-                        golden_mv_candidates: &mvc_golden,
+                        golden_mv_candidates: &descent_mvc_golden,
                         mv_limits,
                         site_config: &site_config,
                         mv_costs: &mv_costs,
@@ -3687,10 +3727,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         newmv_seed: sb_newmv_seed,
                         ref_frame_cost_last,
                         ref_frame_cost_golden,
-                        last_nearest_in_bounds: mv_in_bounds(mvc.nearest),
-                        last_near_in_bounds: mv_in_bounds(mvc.near),
-                        golden_nearest_in_bounds: mv_in_bounds(mvc_golden.nearest),
-                        golden_near_in_bounds: mv_in_bounds(mvc_golden.near),
+                        last_nearest_in_bounds: mv_in_bounds(descent_mvc.nearest),
+                        last_near_in_bounds: mv_in_bounds(descent_mvc.near),
+                        golden_nearest_in_bounds: mv_in_bounds(descent_mvc_golden.nearest),
+                        golden_near_in_bounds: mv_in_bounds(descent_mvc_golden.near),
                         enable_intra_fallback: false,
                         intra_above_pixels: intra_above,
                         intra_left_pixels: intra_left,
@@ -3804,8 +3844,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // exact leaf. Keyed by absolute mi position + bsize;
                     // the descent never queries the same key twice.
                     if phase2_reuse_enabled {
-                        descent_pick_cache
-                            .insert((leaf_mi_row, leaf_mi_col, bs), (result, mvc, mvc_golden));
+                        descent_pick_cache.insert(
+                            (leaf_mi_row, leaf_mi_col, bs),
+                            (result, descent_mvc, descent_mvc_golden),
+                        );
                     }
                     // Translate to the descent's PartitionRdCandidate.
                     // `best_rate` is already in `vp9_prob_cost` units
@@ -7921,6 +7963,37 @@ mod tests {
             std::env::remove_var(num_key);
             std::env::remove_var(den_key);
         }
+    }
+
+    #[test]
+    fn a4_independent_mv_proxy_is_scoped_to_stage4a_vbr() {
+        use rvp9_core::mode_decision::speed_features::Deadline;
+
+        assert!(a4_descent_independent_mv_default(
+            crate::rate_control::RcMode::Vbr,
+            7,
+            Deadline::Realtime,
+        ));
+        assert!(a4_descent_independent_mv_default(
+            crate::rate_control::RcMode::Vbr,
+            8,
+            Deadline::Realtime,
+        ));
+        assert!(!a4_descent_independent_mv_default(
+            crate::rate_control::RcMode::Vbr,
+            6,
+            Deadline::Realtime,
+        ));
+        assert!(!a4_descent_independent_mv_default(
+            crate::rate_control::RcMode::Cbr,
+            7,
+            Deadline::Realtime,
+        ));
+        assert!(!a4_descent_independent_mv_default(
+            crate::rate_control::RcMode::Vbr,
+            7,
+            Deadline::Good,
+        ));
     }
 
     #[test]
