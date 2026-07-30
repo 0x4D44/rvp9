@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00054 - rvp9dec raw I420/YV12 output writes native non-420 chroma planes
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** cli/rvp9dec raw output
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T183206Z-p60512-n528921000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00054-run-fix-20260730T183206Z-p60512-n528921000-c1
-- **Owner base:** afadc576161d3ebfbb610c6babaf5896ce3640ab
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T18:32:06Z
-- **Owner until:** 2026-07-30T20:32:06Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-cli/` at `8d66f33`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-cli/` at `8d66f33`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T183206Z-p60512-n528921000-c1 branch=task/bug-RVP9-BUG-KILN-00054-run-fix-20260730T183206Z-p60512-n528921000-c1 code=bc63dd52273b41280cd57d333ccd03bda69ec5e1 gate=manual)
 
 ## Observation
 
