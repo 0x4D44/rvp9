@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** harness/diff-bitstream-cli
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T191857Z-p14469-n072601000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00036-run-fix-20260730T191857Z-p14469-n072601000-c1
+- **Owner base:** 66b6c6b2345d1992710ebe5584989ed78b368590
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T19:18:57Z
+- **Owner until:** 2026-07-30T21:18:57Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
