@@ -5,15 +5,15 @@
 - **Severity:** High
 - **Area:** io/webm packet reader
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T173030Z-p2642-n978179000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00044-run-fix-20260730T173030Z-p2642-n978179000-c1
+- **Owner base:** 39ead8ee70ec643c4500f4ef6014d3b38d4c0653
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T17:30:30Z
+- **Owner until:** 2026-07-30T19:30:30Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
