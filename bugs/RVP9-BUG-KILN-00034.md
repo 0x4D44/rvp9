@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** harness/threaded-test-oracles
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T191322Z-p9226-n944487000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00034-run-fix-20260730T191322Z-p9226-n944487000-c1
+- **Owner base:** dbb6960a68cb3ac3c8e15c871fcf504102b2d1b6
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T19:13:22Z
+- **Owner until:** 2026-07-30T21:13:22Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
