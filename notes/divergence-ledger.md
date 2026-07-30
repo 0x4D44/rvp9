@@ -24,6 +24,29 @@ Each entry:
 
 ## Entries
 
+### 2026-07-30 — Keep a fixed sub-pixel MV error multiplier
+**Where:** `rvp9-core::mode_decision::inter::run_newmv_search`; libvpx
+counterparts: `vp9/encoder/vp9_rd.h:set_error_per_bit` and
+`vp9/encoder/vp9_pickmode.c:246-251`.
+**What libvpx does:** derives the variance-domain sub-pixel MV-cost multiplier
+as `max(1, compute_rd_mult(qindex) >> 6)` for each frame.
+**What rvp9 does:** uses the fixed multiplier `16` for realtime sub-pixel
+refinement at cpu-used 6-8.
+**Why:** the source-faithful qindex-derived multiplier was a measured
+non-Pareto regression after the full realtime sub-pixel tree landed. It
+damaged both low-rate and high-rate points in the bounded Foreman diagnostic.
+**Byte-parity impact:** structural — sub-pixel motion-vector choices and later
+coding decisions can differ.
+**Compression-efficiency impact:** the source-faithful candidate moved the
+four-point informational Foreman BD-rate from about `-7.78%` to `-0.65%`.
+Its matched-bitrate deficit remained about `0.32 dB`, while the 25 kbps point
+moved from `38.879 kbps / 26.440 dB` to `35.810 kbps / 26.175 dB` and the
+250 kbps point moved from `178.959 kbps / 34.088 dB` to
+`179.337 kbps / 34.053 dB`.
+**Future plan:** retain `16` until the remaining luma residual and skip-model
+gap is resolved. Re-evaluate the source multiplier across cpu-used 6-8 only
+when the surrounding RD domains no longer require this compensation.
+
 ### 2026-07-30 — Apply the cpu-used 9 adaptive sub-pel stop at cpu-used 6-8
 **Where:** `rvp9-core::mode_decision::inter::run_newmv_search`; libvpx
 counterparts: `vp9/encoder/vp9_speed_features.c:562,803-806` and
