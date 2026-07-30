@@ -24,6 +24,29 @@ Each entry:
 
 ## Entries
 
+### 2026-07-30 — Disable the simplified realtime intra-in-inter fallback
+**Where:** `rvp9-core::mode_decision::inter::pick_inter_mode` and
+`rvp9-encoder::encode_inter_frame`; libvpx counterpart:
+`vp9/encoder/vp9_pickmode.c:2517-2646`.
+**What libvpx does:** evaluates selected intra modes after the realtime inter
+search when the best inter RD exceeds its intra threshold. On the pinned
+Foreman Stage 4a run, about 2% of coded block area is intra.
+**What rvp9 does:** keeps the fallback implementation and direct tests, but
+the v1 realtime encoder disables it through
+`PickInterModeParams::enable_intra_fallback`. Keyframes remain intra-coded.
+**Why:** rvp9's simplified intra RD path selected 20.34% intra area at
+250 kbps and damaged both quality and speed. Disabling it is a reproducible
+Pareto improvement across the strict seven-point Foreman curve.
+**Byte-parity impact:** structural — inter frames choose different block modes,
+but all exercised streams remain byte-exact across rvp9-decoder, vpxdec, and
+ffmpeg decoded output.
+**Compression-efficiency impact:** Stage 4a BD-rate improved from `+25.77%` to
+`+15.77%`; matched-bitrate PSNR deficit improved from `1.149 dB` to
+`0.815 dB`. Aggregate median encode time improved from `12.99 ms` to
+`12.21 ms`.
+**Future plan:** re-enable only after the intra-in-inter RD model and selection
+rate match libvpx across the representative corpus and retain a Pareto gain.
+
 ### 2026-05-22 — E7: keyframe `active_best_quality` floor (`get_kf_active_quality`)
 **Where:** `rvp9-encoder::rate_control::cbr` — new `get_minq_index`,
 `kf_low_motion_minq`, `kf_high_motion_minq`, `get_active_quality`,
@@ -2270,4 +2293,3 @@ ecosystem.
 **Future plan:** none — faithful and correct. Revisit only if a future
 sub-strategy (`sparse_12`/`eob_38`, still on arbitrary low-density i12) ever
 flakes, in which case give it the same in-domain treatment.
-
