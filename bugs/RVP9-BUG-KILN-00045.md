@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00045 - WebM EBML walk has unbounded recursion depth
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** io/webm packet reader
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T174104Z-p18869-n374722000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00045-run-fix-20260730T174104Z-p18869-n374722000-c1
-- **Owner base:** 40bfe98a32fe10c381dd53d0f24b6591c1d4c23a
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T17:41:04Z
-- **Owner until:** 2026-07-30T19:41:04Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-io/` at `6128772`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-io/` at `6128772`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T174104Z-p18869-n374722000-c1 branch=task/bug-RVP9-BUG-KILN-00045-run-fix-20260730T174104Z-p18869-n374722000-c1 code=4e0e1b3332545b86cbfe72787b4ca23975562784 gate=manual)
 
 ## Observation
 
