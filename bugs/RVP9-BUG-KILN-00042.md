@@ -5,15 +5,15 @@
 - **Severity:** High
 - **Area:** io/y4m parser
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T172419Z-p68822-n594265000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00042-run-fix-20260730T172419Z-p68822-n594265000-c1
+- **Owner base:** 0e9143e5ab9c070e8821259d596df0f24bed6824
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T17:24:19Z
+- **Owner until:** 2026-07-30T19:24:19Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
