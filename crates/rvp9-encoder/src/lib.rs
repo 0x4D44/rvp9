@@ -2595,6 +2595,17 @@ fn dump_variance_hint_cells(
     }
 }
 
+fn should_skip_realtime_luma_transform(
+    quant_fp: bool,
+    skip_txfm: rvp9_core::mode_decision::model_rd::SkipTxfm,
+) -> bool {
+    quant_fp
+        && matches!(
+            skip_txfm,
+            rvp9_core::mode_decision::model_rd::SkipTxfm::AcDc
+        )
+}
+
 #[allow(clippy::too_many_arguments)] // AQ.1 added `seg_q_deltas`; the
 // remaining args are all load-bearing per-frame inputs that don't
 // reduce to a meaningful struct yet — revisit when AQ.3 lands.
@@ -5867,15 +5878,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         // luma forward transform. Chroma is still quantized,
                         // and if chroma produces coefficients the VP9 block
                         // remains non-skip, so the writer still needs explicit
-                        // zero-EOB markers for every luma TX.
+                        // zero-EOB markers for every luma TX. This decision is
+                        // independent of whether the transform size came from
+                        // the picker, emit-side RD, or the large-frame maximum
+                        // transform shortcut.
                         if plane == 0
-                            && !rt_emit_max_tx
-                            && !rt_emit_tx_rd
-                            && rt_quant_fp
-                            && matches!(
-                                pick.skip_txfm,
-                                rvp9_core::mode_decision::model_rd::SkipTxfm::AcDc
-                            )
+                            && should_skip_realtime_luma_transform(rt_quant_fp, pick.skip_txfm)
                         {
                             let mut tx_y4_local = 0usize;
                             while tx_y4_local < plane_bh_4x4 {
@@ -8037,6 +8045,16 @@ mod tests {
             full_pixel_search_method_for_mode(8, Deadline::Good),
             FullPixelSearchMethod::Nstep
         );
+    }
+
+    #[test]
+    fn realtime_luma_transform_honors_acdc_skip_under_fast_quantization() {
+        use rvp9_core::mode_decision::model_rd::SkipTxfm;
+
+        assert!(should_skip_realtime_luma_transform(true, SkipTxfm::AcDc));
+        assert!(!should_skip_realtime_luma_transform(false, SkipTxfm::AcDc));
+        assert!(!should_skip_realtime_luma_transform(true, SkipTxfm::AcOnly));
+        assert!(!should_skip_realtime_luma_transform(true, SkipTxfm::None));
     }
 
     #[test]

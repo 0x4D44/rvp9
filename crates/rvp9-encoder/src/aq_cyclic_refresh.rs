@@ -11,7 +11,8 @@
 //! 1. **`pre_encode_pick_segments`** — walk the SB grid from
 //!    `sb_cursor` forward (wrapping), picking SBs whose every cell has
 //!    `map[i] >= config.min_refresh_age` to mark as segment 1 (boost).
-//!    Stops once we've picked the target fraction of cells.
+//!    Stops once we've picked the target fraction of cells, then advances
+//!    the cursor past the last SB inspected.
 //! 2. **Caller encodes** with the picked segmentation_map. SBs in
 //!    segment 1 get an `alt_q` delta (negative ⇒ finer Q ⇒ higher
 //!    quality).
@@ -400,13 +401,12 @@ impl CyclicRefresh {
     /// OR walked the whole frame back to the starting cursor. Returns
     /// `(segmentation_map of length mi_rows * mi_cols, n_refreshed_mi_cells)`.
     ///
-    /// **Note:** this method does NOT mutate `sb_cursor` — that
-    /// happens after the frame is coded, in [`Self::post_encode_update`].
-    /// This lets the caller call `pre_encode_pick_segments` multiple
-    /// times (e.g. for rate-control bit estimation) without
-    /// double-advancing the cursor.
+    /// Advances `sb_cursor` past the last SB inspected, matching
+    /// libvpx `cyclic_refresh_update_map`: cursor progress depends on
+    /// the map-selection walk, not whether the selected blocks later
+    /// skip their residual transforms.
     #[must_use]
-    pub fn pre_encode_pick_segments(&self, base_qindex: u8) -> (Vec<u8>, usize) {
+    pub fn pre_encode_pick_segments(&mut self, base_qindex: u8) -> (Vec<u8>, usize) {
         let n_cells = self.mi_rows * self.mi_cols;
         let mut seg_map = vec![0u8; n_cells];
         let mut n_refreshed: usize = 0;
@@ -419,6 +419,7 @@ impl CyclicRefresh {
 
         let qindex_thresh = self.qindex_thresh_for_eligibility(base_qindex);
         let sb_cols = self.sb_cols();
+        let mut next_cursor = self.sb_cursor;
         // Walk SBs starting at sb_cursor; stop after a full lap or
         // once we've hit the target.
         for step in 0..sbs {
@@ -459,12 +460,17 @@ impl CyclicRefresh {
                     }
                 }
                 n_refreshed += sb_cells;
-                if n_refreshed >= target {
-                    break;
-                }
+            }
+
+            // libvpx increments `i` after every inspected SB and
+            // commits it to `cr->sb_index` when the walk stops.
+            next_cursor = (sb_idx + 1) % sbs;
+            if n_refreshed >= target {
+                break;
             }
         }
 
+        self.sb_cursor = next_cursor;
         (seg_map, n_refreshed)
     }
 
@@ -497,10 +503,6 @@ impl CyclicRefresh {
     /// frame loop populates from `picked_mode == ZEROMV && skip ==
     /// true`. Empirically equivalent within the v1 picker shape.
     ///
-    /// Also advances `sb_cursor` past the SBs that were refreshed so
-    /// the next frame starts after the most-recent boundary —
-    /// implementing the "cycle through frame" mechanic.
-    ///
     /// # Panics
     ///
     /// Panics if `coded_segments.len() != mi_rows * mi_cols` or
@@ -523,8 +525,6 @@ impl CyclicRefresh {
             "coded_skip must be mi_rows * mi_cols",
         );
 
-        let mut last_refreshed_sb: Option<usize> = None;
-        let sb_cols = self.sb_cols();
         let base = i32::from(base_qindex);
 
         for i in 0..n_cells {
@@ -559,35 +559,9 @@ impl CyclicRefresh {
             // Age map update.
             if actually_refreshed {
                 self.map[i] = 0;
-                let mi_row = i / self.mi_cols;
-                let mi_col = i - mi_row * self.mi_cols;
-                let sb_row = mi_row / MI_PER_SB;
-                let sb_col = mi_col / MI_PER_SB;
-                let sb_idx = sb_row * sb_cols + sb_col;
-                // Track the highest-cursor-distance refreshed SB so we
-                // can advance the cursor past it. Use the wrap-aware
-                // distance from current cursor.
-                last_refreshed_sb = Some(match last_refreshed_sb {
-                    None => sb_idx,
-                    Some(prev) => {
-                        let sbs = self.sbs_in_frame();
-                        let dist_new = (sb_idx + sbs - self.sb_cursor) % sbs;
-                        let dist_prev = (prev + sbs - self.sb_cursor) % sbs;
-                        if dist_new > dist_prev { sb_idx } else { prev }
-                    }
-                });
             } else {
                 self.map[i] = self.map[i].saturating_add(1);
             }
-        }
-
-        // Advance the cursor to one past the furthest refreshed SB so
-        // the next frame picks up where we left off. If nothing was
-        // refreshed, leave the cursor in place (rare — typically means
-        // no cells were eligible).
-        if let Some(sb_idx) = last_refreshed_sb {
-            let sbs = self.sbs_in_frame();
-            self.sb_cursor = (sb_idx + 1) % sbs;
         }
     }
 
@@ -959,7 +933,7 @@ mod tests {
         // Default config has min_refresh_age = 4. Fresh state has all
         // map entries at age 0, so nothing is eligible. The picked
         // segmentation map must be all zeros.
-        let cr = make_cr(CyclicRefreshConfig::default());
+        let mut cr = make_cr(CyclicRefreshConfig::default());
         let (seg_map, n_refreshed) = cr.pre_encode_pick_segments(100);
         assert_eq!(seg_map.len(), MI_ROWS * MI_COLS);
         assert!(
@@ -1170,6 +1144,36 @@ mod tests {
     }
 
     #[test]
+    fn cyclic_refresh_cursor_advances_when_selected_block_skips() {
+        let mut cr = make_cr(CyclicRefreshConfig {
+            target_refresh_fraction_256: 64,
+            segment1_q_delta: -8,
+            min_refresh_age: 0,
+        });
+        let n_cells = MI_ROWS * MI_COLS;
+
+        let (seg_map, n_refreshed) = cr.pre_encode_pick_segments(100);
+        assert_eq!(n_refreshed, 64);
+        assert_eq!(
+            cr.sb_cursor, 1,
+            "map-selection walk must advance past the selected SB",
+        );
+
+        let coded_skip = vec![true; n_cells];
+        cr.post_encode_update(&seg_map, &coded_skip, 100);
+        assert_eq!(
+            cr.sb_cursor, 1,
+            "postencode skip feedback must not rewind the selection cursor",
+        );
+
+        let (next_seg_map, _) = cr.pre_encode_pick_segments(100);
+        assert_eq!(
+            next_seg_map[MI_PER_SB], CR_SEGMENT_ID_BOOST,
+            "the next frame must select the next SB even when the prior SB skipped",
+        );
+    }
+
+    #[test]
     fn cyclic_refresh_segment_q_deltas_returns_correct_table() {
         let cr = make_cr(CyclicRefreshConfig {
             target_refresh_fraction_256: 25,
@@ -1222,7 +1226,7 @@ mod tests {
 
     #[test]
     fn cyclic_refresh_handles_zero_target_fraction() {
-        let cr = make_cr(CyclicRefreshConfig {
+        let mut cr = make_cr(CyclicRefreshConfig {
             target_refresh_fraction_256: 0,
             segment1_q_delta: -8,
             min_refresh_age: 0,

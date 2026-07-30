@@ -2591,7 +2591,7 @@ impl StreamEncoder {
             ),
         };
         let (seg_map, seg_q_deltas): (Vec<u8>, [Option<i16>; 8]) =
-            match (&self.cyclic_refresh, aq_active_this_frame) {
+            match (&mut self.cyclic_refresh, aq_active_this_frame) {
                 (None, _) | (Some(_), false) => (vec![0u8; mi_rows_us * mi_cols_us], [None; 8]),
                 (Some(cr), true) => {
                     let (map, _n) = cr.pre_encode_pick_segments(q_index);
@@ -7821,12 +7821,12 @@ mod tests {
 
     /// AQ.4 Oracle 3 — refresh-map stability.
     ///
-    /// Cyclic refresh's cursor advances monotonically: an SB refreshed
+    /// Cyclic refresh's cursor advances monotonically: an SB selected
     /// in frame i must NOT be refreshed again in frame i+1 (the cells
     /// just had their age reset to 0; with `min_refresh_age = 4` they
     /// need 4 more frames before re-eligibility). The picker walks
-    /// from `sb_cursor` forward, and the cursor advances past the most-
-    /// recently-refreshed SB after every post_encode_update.
+    /// from `sb_cursor` forward, and the pre-encode map-selection walk
+    /// advances the cursor past the last inspected SB.
     ///
     /// This catches bugs in:
     /// - cursor advancement (e.g. if it didn't advance, frame i+1's
