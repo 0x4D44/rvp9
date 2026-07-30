@@ -3883,25 +3883,45 @@ fn sse_block(
 // fires exactly as libvpx does.
 // ============================================================================
 
-/// libvpx `CONTENT_STATE_SB` (`vp9_encoder.h:312-316`).
+/// libvpx `CONTENT_STATE_SB` (`vp9_encoder.h:138-145`).
 ///
 /// libvpx classifies each 64x64 super-block by its motion + texture state
 /// based on the prev-frame source-SAD pass. The picker reads `kVeryHighSad`
 /// at `vp9_pickmode.c:1964, 2030, 2177` to relax various skip gates.
 ///
-/// rvp9 doesn't run the source-SAD pass yet; the encoder defaults to
-/// [`ContentStateSb::Normal`] which matches libvpx pre-init
-/// (`x->content_state_sb = kLowSadLowSumdiff` = 0 — i.e. not VeryHighSad —
-/// before `avg_source_sad` runs).
+/// [`ContentStateSb::Normal`] is rvp9's neutral pre-analysis fallback. Once
+/// the source-SAD pass runs, the other variants map one-to-one to libvpx's
+/// numeric states.
+#[repr(u8)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum ContentStateSb {
-    /// libvpx `kLowSadLowSumdiff` / `kHighSadLowSumdiff` /
-    /// `kLowSadHighSumdiff` — anything except `kVeryHighSad`.
-    Normal,
+    /// Neutral state before a previous source frame is available.
+    Normal = 0,
+    /// Source SAD below 10,000 and squared mean difference below 25.
+    LowSadLowSumdiff = 1,
+    /// Source SAD below 10,000 with a larger mean shift.
+    LowSadHighSumdiff = 2,
+    /// Source SAD at least 10,000 and squared mean difference below 25.
+    HighSadLowSumdiff = 3,
+    /// Source SAD at least 10,000 with a larger mean shift.
+    HighSadHighSumdiff = 4,
+    /// CBR lighting-change state: low variance with a large mean shift.
+    LowVarHighSumdiff = 5,
     /// libvpx `kVeryHighSad`. Set by the source-SAD pass on
     /// high-motion-with-high-pixel-difference super-blocks (avg_source_sad
     /// > threshold).
-    VeryHighSad,
+    VeryHighSad = 6,
+}
+
+impl ContentStateSb {
+    /// Whether cpu-used 7 applies libvpx's 5/4 variance-threshold scale.
+    #[must_use]
+    pub const fn scales_cpu7_partition_threshold(self) -> bool {
+        matches!(
+            self,
+            Self::LowSadLowSumdiff | Self::HighSadLowSumdiff | Self::LowVarHighSumdiff
+        )
+    }
 }
 
 /// Per-pixel source variance (libvpx

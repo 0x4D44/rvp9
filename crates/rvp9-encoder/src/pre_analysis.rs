@@ -287,20 +287,14 @@ impl PreAnalysisState {
     /// against the previous source frame, and classifies the SB's
     /// content state.
     ///
-    /// libvpx tracks 6 content states (`kLowSadLowSumdiff`,
-    /// `kLowSadHighSumdiff`, `kHighSadLowSumdiff`,
-    /// `kHighSadHighSumdiff`, `kLowVarHighSumdiff`, `kVeryHighSad`).
-    /// rvp9 currently consumes only the 2-state simplification
-    /// (`Normal` / `VeryHighSad`) — see
-    /// `crates/rvp9-core/src/mode_decision/inter.rs::ContentStateSb`.
-    /// The producer here writes the simplified label; the 6-state
-    /// expansion lands when the consumer side grows
-    /// (Wave 4+ partition / AQ gates).
+    /// Produces all six libvpx states (`kLowSadLowSumdiff` through
+    /// `kVeryHighSad`). `cbr_mode` enables the CBR-only lighting-change
+    /// override to `kLowVarHighSumdiff`.
     ///
     /// Caller must ensure `src_y_tight` and `self.last_source_y` are
     /// the same `width × height` tight-stride plane. No-op if
     /// `last_source_y` is `None` (post-KF first inter frame).
-    pub fn compute_avg_source_sad(&mut self, src_y_tight: &[u8]) {
+    pub fn compute_avg_source_sad(&mut self, src_y_tight: &[u8], cbr_mode: bool) {
         let Some(last) = self.last_source_y.as_deref() else {
             return;
         };
@@ -315,21 +309,29 @@ impl PreAnalysisState {
         for sb_r in 0..sb_rows {
             for sb_c in 0..sb_cols {
                 let (sad, sse, sum) = sb_sad_and_var(src_y_tight, last, w, sb_r * 64, sb_c * 64);
-                // libvpx: variance = sse - ((sum * sum) >> 12)
+                // libvpx: variance = sse - ((sum * sum) >> 12), so
+                // `sse - variance` is the squared mean-difference signal.
                 let var = sse.saturating_sub((sum * sum) >> 12);
+                let sumdiff = sse - var;
                 let idx = sb_r * sb_cols + sb_c;
                 self.avg_source_sad[idx] = sad;
-                // libvpx `vp9_encodeframe.c:1243-1244` — only the
-                // `kVeryHighSad` arm has a consumer in rvp9 today.
-                self.content_state_sb[idx] = if sad > (AVG_SOURCE_SAD_THRESHOLD << 1) {
-                    ContentStateSb::VeryHighSad
+                let mut state = if sad < AVG_SOURCE_SAD_THRESHOLD {
+                    if sumdiff < 25 {
+                        ContentStateSb::LowSadLowSumdiff
+                    } else {
+                        ContentStateSb::LowSadHighSumdiff
+                    }
+                } else if sumdiff < 25 {
+                    ContentStateSb::HighSadLowSumdiff
                 } else {
-                    // Other libvpx states all collapse to Normal
-                    // in rvp9's 2-state enum until the consumer
-                    // side expands (Wave 4+).
-                    let _ = var; // computed for future expansion
-                    ContentStateSb::Normal
+                    ContentStateSb::HighSadHighSumdiff
                 };
+                if cbr_mode && var < (sse >> 3) && sumdiff > 10_000 {
+                    state = ContentStateSb::LowVarHighSumdiff;
+                } else if sad > (AVG_SOURCE_SAD_THRESHOLD << 1) {
+                    state = ContentStateSb::VeryHighSad;
+                }
+                self.content_state_sb[idx] = state;
             }
         }
     }
@@ -1241,7 +1243,7 @@ mod tests {
     fn w2_2_avg_source_sad_noop_without_last_source() {
         let mut st = PreAnalysisState::new(64, 64);
         let src = vec![100u8; 64 * 64];
-        st.compute_avg_source_sad(&src);
+        st.compute_avg_source_sad(&src, false);
         // No reference ⇒ no state changed.
         for v in &st.avg_source_sad {
             assert_eq!(*v, 0);
@@ -1252,19 +1254,18 @@ mod tests {
     }
 
     /// W2.2 PROOF — identical source + last_source ⇒ zero SAD ⇒
-    /// Normal classification. libvpx `vp9_encodeframe.c:1231`:
-    /// `tmp_sad == 0` ⇒ kLowSadLowSumdiff (Normal in rvp9).
+    /// `kLowSadLowSumdiff`.
     #[test]
     fn w2_2_avg_source_sad_zero_on_identical_frames() {
         let mut st = PreAnalysisState::new(128, 128);
         let frame = vec![100u8; 128 * 128];
         st.capture_last_source(&frame);
-        st.compute_avg_source_sad(&frame);
+        st.compute_avg_source_sad(&frame, false);
         for v in &st.avg_source_sad {
             assert_eq!(*v, 0, "identical frames must produce SAD = 0");
         }
         for c in &st.content_state_sb {
-            assert_eq!(*c, ContentStateSb::Normal);
+            assert_eq!(*c, ContentStateSb::LowSadLowSumdiff);
         }
     }
 
@@ -1279,10 +1280,45 @@ mod tests {
         let zero = vec![0u8; 64 * 64];
         let bright = vec![6u8; 64 * 64];
         st.capture_last_source(&zero);
-        st.compute_avg_source_sad(&bright);
+        st.compute_avg_source_sad(&bright, false);
         // The single SB's SAD must exceed 2 * 10_000.
         assert!(st.avg_source_sad[0] > 20_000);
         assert_eq!(st.content_state_sb[0], ContentStateSb::VeryHighSad);
+    }
+
+    #[test]
+    fn w2_2_avg_source_sad_produces_all_sumdiff_states() {
+        fn classify(source: Vec<u8>, reference: Vec<u8>, cbr_mode: bool) -> ContentStateSb {
+            let mut state = PreAnalysisState::new(64, 64);
+            state.capture_last_source(&reference);
+            state.compute_avg_source_sad(&source, cbr_mode);
+            state.content_state_sb[0]
+        }
+
+        let reference = vec![128u8; 64 * 64];
+        assert_eq!(
+            classify(vec![128u8; 64 * 64], reference.clone(), false),
+            ContentStateSb::LowSadLowSumdiff,
+        );
+        assert_eq!(
+            classify(vec![129u8; 64 * 64], reference.clone(), false),
+            ContentStateSb::LowSadHighSumdiff,
+        );
+        let alternating: Vec<u8> = (0..64 * 64)
+            .map(|index| if index & 1 == 0 { 131 } else { 125 })
+            .collect();
+        assert_eq!(
+            classify(alternating, reference.clone(), false),
+            ContentStateSb::HighSadLowSumdiff,
+        );
+        assert_eq!(
+            classify(vec![131u8; 64 * 64], reference.clone(), false),
+            ContentStateSb::HighSadHighSumdiff,
+        );
+        assert_eq!(
+            classify(vec![131u8; 64 * 64], reference, true),
+            ContentStateSb::LowVarHighSumdiff,
+        );
     }
 
     /// W2.2 PROOF — SB-grid sizing matches the encoder's

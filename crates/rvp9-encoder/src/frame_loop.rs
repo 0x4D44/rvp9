@@ -1841,7 +1841,8 @@ impl StreamEncoder {
         // `pre_analysis.avg_source_sad[]` and
         // `pre_analysis.content_state_sb[]` for every SB64.
         if self.pre_analysis.compute_source_sad_onepass {
-            self.pre_analysis.compute_avg_source_sad(&y_tight);
+            self.pre_analysis
+                .compute_avg_source_sad(&y_tight, matches!(self.config.rc_mode, RcMode::Cbr));
         }
         // W2.3(vpxenc parity, A5 P2): one-pass scene detection
         // (libvpx `vp9_ratectrl.c:3034-3216`). Updates
