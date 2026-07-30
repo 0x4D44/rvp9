@@ -78,6 +78,15 @@ pub enum BitstreamError {
         log2_tile_cols: u8,
     },
 
+    /// A public tile-buffer helper received dimensions outside VP9's
+    /// `1..=64` columns and `1..=4` rows limits.
+    InvalidTileDimensions {
+        /// Requested tile-column count.
+        tile_cols: u32,
+        /// Requested tile-row count.
+        tile_rows: u32,
+    },
+
     /// The 16-bit `first_partition_size` field at the end of the
     /// uncompressed header decoded to `0`. libvpx rejects this with
     /// `Invalid header size` (`vp9_decodeframe.c:2856-2858`).
@@ -130,6 +139,15 @@ pub enum BitstreamError {
         tile_index: usize,
         /// Length of the payload that overflowed.
         bytes: usize,
+    },
+
+    /// Encoder-side [`super::tile::write_tile_buffers`] received a payload
+    /// count that does not match the requested tile geometry.
+    TilePayloadCountMismatch {
+        /// Number of payloads required by the tile dimensions.
+        expected: usize,
+        /// Number of payloads supplied by the caller.
+        actual: usize,
     },
 
     /// The compressed-header boolean decoder failed to initialise:
@@ -199,6 +217,13 @@ impl fmt::Display for BitstreamError {
             Self::InvalidTileCols { log2_tile_cols } => {
                 write!(f, "invalid log2_tile_cols: {log2_tile_cols} (max 6)")
             }
+            Self::InvalidTileDimensions {
+                tile_cols,
+                tile_rows,
+            } => write!(
+                f,
+                "invalid tile dimensions: {tile_cols} columns x {tile_rows} rows (VP9 limits are 1..=64 x 1..=4)"
+            ),
             Self::InvalidFirstPartitionSize => {
                 f.write_str("invalid first_partition_size: 0 (compressed header must be non-empty)")
             }
@@ -253,6 +278,10 @@ impl fmt::Display for BitstreamError {
             Self::TileSizeOverflow { tile_index, bytes } => write!(
                 f,
                 "tile-buffer write: tile {tile_index} payload is {bytes} bytes, exceeds 4-byte size prefix"
+            ),
+            Self::TilePayloadCountMismatch { expected, actual } => write!(
+                f,
+                "tile-buffer write: payload count {actual} does not match expected count {expected}"
             ),
         }
     }

@@ -29,6 +29,19 @@
 
 use super::error::BitstreamError;
 
+const MAX_TILE_COLS: u32 = 64;
+const MAX_TILE_ROWS: u32 = 4;
+
+fn validated_tile_count(tile_cols: u32, tile_rows: u32) -> Result<usize, BitstreamError> {
+    if !(1..=MAX_TILE_COLS).contains(&tile_cols) || !(1..=MAX_TILE_ROWS).contains(&tile_rows) {
+        return Err(BitstreamError::InvalidTileDimensions {
+            tile_cols,
+            tile_rows,
+        });
+    }
+    Ok((tile_cols as usize) * (tile_rows as usize))
+}
+
 /// One tile's byte payload + position. Mirrors libvpx `TileBuffer`
 /// (`vp9_decoder.h` — `data`, `size`, `col`; we add `row` since our
 /// `tile_buffers()` returns a flat `Vec`).
@@ -54,6 +67,8 @@ pub struct TileBuffer<'a> {
 /// - [`BitstreamError::InvalidTileSize`] if a tile's declared `size`
 ///   exceeds the remaining bytes (libvpx
 ///   `vp9_decodeframe.c:1669-1671`).
+/// - [`BitstreamError::InvalidTileDimensions`] if the requested grid is
+///   outside VP9's 1..=64 columns and 1..=4 rows limits.
 ///
 /// # Panics
 ///
@@ -63,11 +78,7 @@ pub fn parse_tile_buffers<'a>(
     tile_cols: u32,
     tile_rows: u32,
 ) -> Result<Vec<TileBuffer<'a>>, BitstreamError> {
-    if tile_cols == 0 || tile_rows == 0 {
-        return Ok(Vec::new());
-    }
-
-    let total = (tile_cols as usize) * (tile_rows as usize);
+    let total = validated_tile_count(tile_cols, tile_rows)?;
     let mut out: Vec<TileBuffer<'a>> = Vec::with_capacity(total);
 
     let mut cursor: usize = 0;
@@ -137,21 +148,22 @@ pub fn parse_tile_buffers<'a>(
 /// - [`BitstreamError::TileSizeOverflow`] if any non-last tile is
 ///   longer than `u32::MAX` bytes (impossible in practice; VP9 frames
 ///   are well below 4 GiB).
+/// - [`BitstreamError::InvalidTileDimensions`] if the requested grid is
+///   outside VP9's limits.
+/// - [`BitstreamError::TilePayloadCountMismatch`] if `tile_payloads` does
+///   not contain exactly one entry per requested tile.
 pub fn write_tile_buffers(
     tile_payloads: &[&[u8]],
     tile_cols: u32,
     tile_rows: u32,
 ) -> Result<Vec<u8>, BitstreamError> {
-    let expected = (tile_cols as usize) * (tile_rows as usize);
-    debug_assert_eq!(
-        tile_payloads.len(),
-        expected,
-        "tile_payloads has {} entries but ({}, {}) demands {}",
-        tile_payloads.len(),
-        tile_cols,
-        tile_rows,
-        expected,
-    );
+    let expected = validated_tile_count(tile_cols, tile_rows)?;
+    if tile_payloads.len() != expected {
+        return Err(BitstreamError::TilePayloadCountMismatch {
+            expected,
+            actual: tile_payloads.len(),
+        });
+    }
 
     let total_body: usize = tile_payloads.iter().map(|t| t.len()).sum();
     let total_prefix = if tile_payloads.is_empty() {
@@ -284,12 +296,33 @@ mod tests {
     }
 
     #[test]
-    fn zero_tile_dims_yields_empty() {
+    fn zero_tile_dims_are_rejected() {
         let buf = [0u8; 10];
-        let tiles = parse_tile_buffers(&buf, 0, 5).unwrap();
-        assert!(tiles.is_empty());
-        let tiles = parse_tile_buffers(&buf, 3, 0).unwrap();
-        assert!(tiles.is_empty());
+        for (tile_cols, tile_rows) in [(0, 1), (1, 0)] {
+            let error = parse_tile_buffers(&buf, tile_cols, tile_rows).unwrap_err();
+            assert!(matches!(
+                error,
+                BitstreamError::InvalidTileDimensions {
+                    tile_cols: found_cols,
+                    tile_rows: found_rows,
+                } if found_cols == tile_cols && found_rows == tile_rows
+            ));
+        }
+    }
+
+    #[test]
+    fn tile_dimensions_beyond_vp9_limits_are_rejected() {
+        for (tile_cols, tile_rows) in [(65, 1), (1, 5), (u32::MAX, u32::MAX)] {
+            let error = parse_tile_buffers(&[], tile_cols, tile_rows)
+                .expect_err("out-of-range tile dimensions were accepted");
+            assert!(matches!(
+                error,
+                BitstreamError::InvalidTileDimensions {
+                    tile_cols: found_cols,
+                    tile_rows: found_rows,
+                } if found_cols == tile_cols && found_rows == tile_rows
+            ));
+        }
     }
 
     // -----------------------------------------------------------------
@@ -346,8 +379,27 @@ mod tests {
     }
 
     #[test]
-    fn write_tile_buffers_zero_tiles_yields_empty() {
-        let out = write_tile_buffers(&[], 0, 0).unwrap();
-        assert!(out.is_empty());
+    fn write_tile_buffers_zero_dimensions_are_rejected() {
+        let error = write_tile_buffers(&[], 0, 0).unwrap_err();
+        assert!(matches!(
+            error,
+            BitstreamError::InvalidTileDimensions {
+                tile_cols: 0,
+                tile_rows: 0,
+            }
+        ));
+    }
+
+    #[test]
+    fn write_tile_buffers_rejects_payload_count_mismatch() {
+        let error = write_tile_buffers(&[b"only-one"], 2, 1)
+            .expect_err("mismatched tile payload count was accepted");
+        assert!(matches!(
+            error,
+            BitstreamError::TilePayloadCountMismatch {
+                expected: 2,
+                actual: 1,
+            }
+        ));
     }
 }
