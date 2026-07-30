@@ -2250,6 +2250,10 @@ fn splat_inter_leaf_into_mi_grid(
     // callable sites pass `RefFrame::LastFrame` for skip-fallback
     // leaves (matches A14 behaviour).
     picked_ref_frame: RefFrame,
+    // Phase 2b — an intra winner must enter the causal grid as intra.
+    // Otherwise later NEAREST/NEAR resolution sees an invalid inter
+    // neighbour while the writer and decoder see `BlockMode::Intra`.
+    picked_intra_mode: Option<IntraMode>,
     // F.5 — interpolation filter the picker chose for this leaf.
     // Splatted into every 8x8 cell so the writer's mi_grid read sees
     // the same filter the simulator built the recon with.
@@ -2264,11 +2268,17 @@ fn splat_inter_leaf_into_mi_grid(
         skip,
         segment_id,
         seg_id_predicted: false,
-        mode: BlockMode::Inter {
-            mode: picked_mode,
-            ref_frames: [picked_ref_frame, RefFrame::NoRefFrame],
-            mvs: [picked_mv, Mv::ZERO],
-            interp_filter: picked_interp_filter,
+        mode: match picked_intra_mode {
+            Some(y_mode) => BlockMode::Intra {
+                y_mode,
+                uv_mode: IntraMode::Dc,
+            },
+            None => BlockMode::Inter {
+                mode: picked_mode,
+                ref_frames: [picked_ref_frame, RefFrame::NoRefFrame],
+                mvs: [picked_mv, Mv::ZERO],
+                interp_filter: picked_interp_filter,
+            },
         },
         bmi: Default::default(),
     };
@@ -4252,6 +4262,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         sb_partitions[sb_idx][leaf_idx].segment_id,
                         /* skip = */ true,
                         /* picked_ref_frame = */ RefFrame::LastFrame,
+                        /* picked_intra_mode = */ None,
                         /* picked_interp_filter = */
                         rvp9_core::bitstream::frame::InterpFilter::EightTap,
                     );
@@ -4364,6 +4375,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         sb_partitions[sb_idx][leaf_idx].segment_id,
                         /* skip = */ true,
                         /* picked_ref_frame = */ RefFrame::LastFrame,
+                        /* picked_intra_mode = */ None,
                         /* picked_interp_filter = */
                         rvp9_core::bitstream::frame::InterpFilter::EightTap,
                     );
@@ -6212,6 +6224,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     sb_partitions[sb_idx][leaf_idx].segment_id,
                     sb_partitions[sb_idx][leaf_idx].skip,
                     sb_partitions[sb_idx][leaf_idx].picked_ref_frame,
+                    sb_partitions[sb_idx][leaf_idx].picked_intra_mode,
                     sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
                 );
                 if let Some(t0) = rt_profile_emit_start {
@@ -7854,6 +7867,36 @@ mod tests {
         assert_eq!(c.width, 64);
         assert_eq!(c.height, 64);
         assert_eq!(c.base_qindex, 50);
+    }
+
+    #[test]
+    fn causal_grid_splats_intra_winner_as_intra() {
+        let mut grid = vec![None; 8 * 8];
+        splat_inter_leaf_into_mi_grid(
+            &mut grid,
+            8,
+            0,
+            0,
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            0,
+            false,
+            RefFrame::IntraFrame,
+            Some(IntraMode::H),
+            InterpFilter::EightTap,
+        );
+
+        for cell in [grid[0], grid[1], grid[8], grid[9]] {
+            assert!(matches!(
+                cell.expect("intra winner must cover its causal-grid cells")
+                    .mode,
+                BlockMode::Intra {
+                    y_mode: IntraMode::H,
+                    uv_mode: IntraMode::Dc,
+                }
+            ));
+        }
     }
 
     #[test]

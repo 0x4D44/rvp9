@@ -403,18 +403,24 @@ pub(crate) fn build_inter_mi_grid_for_lf(
                     skip: leaf.skip,
                     segment_id: 0,
                     seg_id_predicted: false,
-                    mode: BlockMode::Inter {
-                        mode: leaf.picked_mode,
-                        // A15 Phase B Step 4 — carry `picked_ref_frame`
-                        // into the LF mi_grid so `get_filter_level`
-                        // (`loopfilter::setup_mask::ref0_idx`) reads
-                        // the right ref slot. The decoder looks up
-                        // `lfi->lvl[seg][ref0][mode_lf]`; a GOLDEN-
-                        // picked leaf must use the GOLDEN row, not
-                        // LAST, to stay byte-exact with the decoder.
-                        ref_frames: [leaf.picked_ref_frame, RefFrame::NoRefFrame],
-                        mvs: [leaf.picked_mv, Mv::ZERO],
-                        interp_filter: InterpFilter::EightTap,
+                    mode: match leaf.picked_intra_mode {
+                        Some(y_mode) => BlockMode::Intra {
+                            y_mode,
+                            uv_mode: IntraMode::Dc,
+                        },
+                        None => BlockMode::Inter {
+                            mode: leaf.picked_mode,
+                            // A15 Phase B Step 4 — carry `picked_ref_frame`
+                            // into the LF mi_grid so `get_filter_level`
+                            // (`loopfilter::setup_mask::ref0_idx`) reads
+                            // the right ref slot. The decoder looks up
+                            // `lfi->lvl[seg][ref0][mode_lf]`; a GOLDEN-
+                            // picked leaf must use the GOLDEN row, not
+                            // LAST, to stay byte-exact with the decoder.
+                            ref_frames: [leaf.picked_ref_frame, RefFrame::NoRefFrame],
+                            mvs: [leaf.picked_mv, Mv::ZERO],
+                            interp_filter: InterpFilter::EightTap,
+                        },
                     },
                     bmi: Default::default(),
                 };
@@ -664,6 +670,34 @@ pub fn search_filter_level(params: &SearchFilterLevelParams<'_>) -> u8 {
 #[cfg(test)]
 mod w7_4_tests {
     use super::*;
+
+    #[test]
+    fn inter_frame_lf_grid_preserves_intra_winner() {
+        let leaf = InterPartitionLeafDesc {
+            mi_row_in_sb: 0,
+            mi_col_in_sb: 0,
+            leaf_bsize: BlockSize::Block64x64,
+            picked_mode: rvp9_core::mode_info::InterMode::ZeroMv,
+            picked_mv: Mv::ZERO,
+            skip: false,
+            segment_id: 0,
+            picked_ref_frame: RefFrame::IntraFrame,
+            picked_interp_filter: InterpFilter::EightTap,
+            picked_intra_mode: Some(IntraMode::H),
+            picked_ref_frame2: RefFrame::NoRefFrame,
+            picked_mv2: Mv::ZERO,
+            picked_tx_size: max_txsize(BlockSize::Block64x64),
+        };
+
+        let grid = build_inter_mi_grid_for_lf(8, 8, &[vec![leaf]]);
+        assert!(grid.iter().all(|cell| matches!(
+            cell.expect("64x64 leaf must cover every cell").mode,
+            BlockMode::Intra {
+                y_mode: IntraMode::H,
+                uv_mode: IntraMode::Dc,
+            }
+        )));
+    }
 
     /// Build a contiguous block of frame data and a paired mi_grid
     /// for an `mi_rows × mi_cols` (in 8×8 units) frame. Every mi
