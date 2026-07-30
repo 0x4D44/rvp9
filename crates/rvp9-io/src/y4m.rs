@@ -22,6 +22,9 @@ use std::path::Path;
 /// Match the encoder's supported coded-dimension envelope.
 const MAX_Y4M_DIMENSION: u32 = 16_384;
 
+/// Keep malformed or hostile header lines from growing memory without bound.
+const MAX_Y4M_HEADER_BYTES: usize = 4 * 1024;
+
 /// Largest supported 8-bit 4:2:0 frame: 16384 × 16384 × 3/2.
 const MAX_Y4M_FRAME_BYTES: usize = 384 * 1024 * 1024;
 
@@ -145,15 +148,32 @@ impl Y4mHeader {
 ///
 /// # Errors
 ///
-/// Returns [`io::Error`] (`InvalidData`) if the magic is missing, the
-/// chroma is not a 4:2:0 variant, a required `W`/`H`/`F` field is
-/// absent or zero, source geometry is odd, or the source exceeds the
-/// supported frame envelope; forwards any underlying read/seek error.
+/// Returns [`io::ErrorKind::InvalidData`] if the magic is missing, the
+/// chroma is not a 4:2:0 variant, a required `W`/`H`/`F` field is absent
+/// or zero, the header exceeds 4 KiB, source geometry is odd, or the source
+/// exceeds the supported frame envelope. Returns
+/// [`io::ErrorKind::UnexpectedEof`] if the header lacks its terminating
+/// newline. Otherwise forwards any underlying read/seek error.
 pub fn parse_header(f: &mut std::fs::File) -> std::io::Result<Y4mHeader> {
     use std::io::{BufRead, BufReader, Seek, SeekFrom};
     let mut reader = BufReader::new(&mut *f);
     let mut line = String::new();
-    reader.read_line(&mut line)?;
+    reader
+        .by_ref()
+        .take((MAX_Y4M_HEADER_BYTES + 1) as u64)
+        .read_line(&mut line)?;
+    if line.len() > MAX_Y4M_HEADER_BYTES {
+        return Err(y4m_error(
+            io::ErrorKind::InvalidData,
+            format!("y4m header exceeds {MAX_Y4M_HEADER_BYTES} bytes"),
+        ));
+    }
+    if !line.ends_with('\n') {
+        return Err(y4m_error(
+            io::ErrorKind::UnexpectedEof,
+            "EOF before y4m header newline",
+        ));
+    }
     let bytes_consumed = line.len() as u64;
     if !line.starts_with("YUV4MPEG2 ") {
         return Err(std::io::Error::new(
@@ -291,9 +311,20 @@ pub fn read_cropped(
     let mut hdr_buf = [0u8; 6];
     let mut body = zeroed_buffer(source.frame_bytes, "y4m frame body")?;
 
-    for _ in 0..n {
-        if f.read_exact(&mut hdr_buf).is_err() {
-            break;
+    'frames: for _ in 0..n {
+        let mut header_len = 0;
+        while header_len < hdr_buf.len() {
+            let read = f.read(&mut hdr_buf[header_len..])?;
+            if read == 0 {
+                if header_len == 0 {
+                    break 'frames;
+                }
+                return Err(y4m_error(
+                    io::ErrorKind::UnexpectedEof,
+                    "EOF in FRAME header",
+                ));
+            }
+            header_len += read;
         }
         if &hdr_buf[..5] != b"FRAME" {
             return Err(std::io::Error::new(

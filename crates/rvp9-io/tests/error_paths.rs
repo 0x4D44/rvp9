@@ -833,6 +833,29 @@ fn y4m_missing_magic_is_invalid_data() {
 }
 
 #[test]
+fn y4m_unterminated_header_is_rejected() {
+    let path = write_y4m_buf_to_temp(b"YUV4MPEG2 W16 H16 F30:1", "unterminated_header");
+    let mut f = std::fs::File::open(&path).expect("open");
+    let err = parse_header(&mut f).unwrap_err();
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    assert!(err.to_string().contains("header newline"));
+}
+
+#[test]
+fn y4m_oversized_header_is_rejected() {
+    let mut data = b"YUV4MPEG2 W16 H16 F30:1 ".to_vec();
+    data.extend(std::iter::repeat_n(b'X', 8192));
+    data.push(b'\n');
+    let path = write_y4m_buf_to_temp(&data, "oversized_header");
+    let mut f = std::fs::File::open(&path).expect("open");
+    let err = parse_header(&mut f).unwrap_err();
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("header exceeds"));
+}
+
+#[test]
 fn y4m_unsupported_chroma_format_rejected() {
     // C422 — supported only 4:2:0 variants.
     let path = write_y4m_buf_to_temp(b"YUV4MPEG2 W16 H16 F30:1 C422\n", "c422");
@@ -1014,6 +1037,18 @@ fn read_cropped_eof_before_any_frame_returns_empty() {
     let _ = std::fs::remove_file(&path);
     assert!(frames.is_empty(), "no frames after header");
     assert!((fr - 30.0).abs() < 1e-9);
+}
+
+#[test]
+fn read_cropped_partial_frame_header_is_rejected() {
+    let mut buf = Vec::new();
+    write_header(&mut buf, 16, 16, 30, 1, ChromaFormat::Yuv420).expect("hdr");
+    buf.extend_from_slice(b"FRA");
+    let path = write_y4m_buf_to_temp(&buf, "partial_frame_header");
+    let err = read_cropped(&path, 16, 16, 1).unwrap_err();
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    assert!(err.to_string().contains("FRAME header"));
 }
 
 #[test]
