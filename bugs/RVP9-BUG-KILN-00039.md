@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00039 - Harness defaults can read corpus and tools outside the current worktree
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** harness/path-resolution
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T193433Z-p28955-n240937000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00039-run-fix-20260730T193433Z-p28955-n240937000-c1
-- **Owner base:** 3007b28ea1890194a9f84d281139a568d7e6d66a
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T19:34:33Z
-- **Owner until:** 2026-07-30T21:34:33Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-harness/` at `cfabd55`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-harness/` at `cfabd55`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T193433Z-p28955-n240937000-c1 branch=task/bug-RVP9-BUG-KILN-00039-run-fix-20260730T193433Z-p28955-n240937000-c1 code=c49fa959fa4ad4ca06e94ed0ba7989eaea5181e1 gate=manual)
 
 ## Observation
 
