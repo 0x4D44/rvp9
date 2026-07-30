@@ -232,10 +232,9 @@ pub struct EncoderConfig {
     pub max_qindex: u8,
     /// W6.2(vpxenc parity, HBD scaffold) — pixel bit-depth. Defaults to
     /// [`BitDepth::Bd8`]; the `Bd10`/`Bd12` variants are only constructible
-    /// under `--features rvp9-core/highbitdepth`. **Currently a metadata
-    /// field only** — kernel paths are u8 across the board; setting this
-    /// to a non-`Bd8` value causes the encoder to refuse the frame (HBD
-    /// kernel pairs land in W6.4 + follow-up).
+    /// under `--features highbitdepth`. Kernel paths are u8 across the
+    /// board, so [`StreamEncoder::new`] rejects non-`Bd8` configurations
+    /// until the HBD kernel pairs land.
     ///
     /// Mirrors libvpx `oxcf.bit_depth` (`vp9_encoder.h` /
     /// `vpxenc.c::set_encoder_config`).
@@ -1286,6 +1285,11 @@ impl StreamEncoder {
         if !config.height.is_multiple_of(64) || config.height == 0 {
             return Err(EncodeError::InvalidConfig(
                 "height must be a positive multiple of 64",
+            ));
+        }
+        if config.bit_depth != BitDepth::Bd8 {
+            return Err(EncodeError::InvalidConfig(
+                "only 8-bit encoding is currently supported",
             ));
         }
         if config.gop_length == 0 {
@@ -7991,6 +7995,29 @@ mod tests {
             stage4a_product_split_override: Default::default(),
             min_qindex: 4,
             max_qindex: 255,
+        }
+    }
+
+    #[cfg(feature = "highbitdepth")]
+    #[test]
+    fn stream_encoder_rejects_unsupported_high_bit_depths() {
+        for bit_depth in [rvp9_core::BitDepth::Bd10, rvp9_core::BitDepth::Bd12] {
+            let config = EncoderConfig {
+                bit_depth,
+                ..baseline_config()
+            };
+            let error = match StreamEncoder::new(config) {
+                Err(error) => error,
+                Ok(_) => panic!("unsupported {bit_depth:?} config was accepted"),
+            };
+            assert!(
+                matches!(
+                    error,
+                    EncodeError::InvalidConfig(message)
+                        if message.contains("8-bit encoding is currently supported")
+                ),
+                "expected a precise high-bit-depth InvalidConfig, got {error:?}",
+            );
         }
     }
 
