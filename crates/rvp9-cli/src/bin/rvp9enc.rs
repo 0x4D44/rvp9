@@ -23,56 +23,7 @@ use rvp9_io::y4m;
 use std::path::Path;
 use std::process::ExitCode;
 
-/// vpxenc `--tune` distortion metric (libvpx `vpxenc.c` tune arg).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TuneMetric {
-    Psnr,
-    Ssim,
-}
-
-/// vpxenc `--tune-content` (libvpx `vpxenc.c:500-508`).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TuneContent {
-    Default,
-    Screen,
-    Film,
-}
-
-/// vpxenc `--test-decode` (libvpx `vpxenc.c:138-145`). Tri-state matching
-/// libvpx's `test_decode_enum`: off (silent), warn (log mismatch), fatal
-/// (abort on mismatch).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TestDecode {
-    Off,
-    Warn,
-    Fatal,
-}
-
-/// vpxenc `--color-space` (libvpx `vpxenc.c:471-485`). Mirrors the
-/// `color_space_enum` set; numeric values track `VPX_CS_*` for later
-/// wiring. Kept here as an enum so unknown values reject at the CLI
-/// layer rather than reaching libvpx.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ColorSpace {
-    Unknown,
-    Bt601,
-    Bt709,
-    Smpte170,
-    Smpte240,
-    Bt2020,
-    Reserved,
-    SRgb,
-}
-
 /// Parsed encoder options (the config builder the flag table fills in).
-///
-/// Fields below the `// ---- W0.1: stored, not yet plumbed` divider are
-/// parsed and stored verbatim; later waves in the master inventory plumb
-/// them through to [`EncoderConfig`] / `SpeedFeatures` / SVC. Storing
-/// (instead of rejecting) lets us land the long tail of `vpxenc` flag
-/// parity in one cheap step, with a single PROOF test guarding against
-/// silent regression to the prior "recognised but not supported yet"
-/// error path.
 struct EncOpts {
     width: Option<u32>,
     height: Option<u32>,
@@ -92,83 +43,27 @@ struct EncOpts {
     help: bool,
     version: bool,
 
-    // ---- W0.1: stored, not yet plumbed (master inventory A12 P0).
-    /// `--profile` (libvpx `vpxenc.c:200`). VP9: 0..=3.
-    profile: Option<u8>,
     /// `--best` / `--good` / `--rt` (libvpx `vpxenc.c:125-130`).
     deadline: Option<Deadline>,
     /// `--cpu-used` (libvpx `vpxenc.c:434-435`). VP9 range: -9..=9.
     cpu_used: Option<i32>,
-    /// `--threads` / `-t` (libvpx `vpxenc.c:198-199`).
-    threads: Option<u32>,
-    /// `--tile-columns` (libvpx `vpxenc.c:439-440`). log2, 0..=6.
-    tile_columns: Option<u8>,
-    /// `--tile-rows` (libvpx `vpxenc.c:441-443`). log2, 0..=2.
-    tile_rows: Option<u8>,
-    /// `--kf-min-dist` (libvpx `vpxenc.c:358-359`).
-    kf_min_dist: Option<u32>,
-    /// `--disable-kf` (libvpx `vpxenc.c` kf_disabled near line 362).
-    disable_kf: bool,
     /// `--min-q` (libvpx `vpxenc.c` min_quantizer).
     min_q: Option<u32>,
     /// `--max-q` (libvpx `vpxenc.c` max_quantizer).
     max_q: Option<u32>,
     /// `--cq-level` (libvpx `vpxenc.c:385`).
     cq_level: Option<u32>,
-    /// `--buf-sz` (libvpx `vpxenc.c:275-276`, ms).
-    buf_sz_ms: Option<u32>,
-    /// `--buf-initial-sz` (libvpx `vpxenc.c:277-278`, ms).
-    buf_initial_sz_ms: Option<u32>,
-    /// `--buf-optimal-sz` (libvpx `vpxenc.c:279`, ms).
-    buf_optimal_sz_ms: Option<u32>,
-    /// `--undershoot-pct` (libvpx `vpxenc.c:271-272`).
-    undershoot_pct: Option<u32>,
-    /// `--overshoot-pct` (libvpx `vpxenc.c:273-274`).
-    overshoot_pct: Option<u32>,
-    /// `--lossless` (libvpx `vpxenc.c:448-449`). 0/1.
-    lossless: Option<bool>,
-    /// `--frame-parallel` (libvpx `vpxenc.c:450-451`). 0/1.
-    frame_parallel: Option<bool>,
-    /// `--error-resilient` (libvpx `vpxenc.c:218-219`).
-    error_resilient: Option<u32>,
-    /// `--tune` (libvpx `vpxenc.c` tune arg).
-    tune: Option<TuneMetric>,
-    /// `--tune-content` (libvpx `vpxenc.c:500-508`).
-    tune_content: Option<TuneContent>,
     /// `--noise-sensitivity` (libvpx `vpxenc.c:367-368`).
     noise_sensitivity: Option<u32>,
-    /// `--svc` (libvpx `vpxenc.c` SVC enable).
-    svc: bool,
     /// A18 — `--temporal-layers <N>` (1..=3). Frame-rate-scalable
     /// temporal SVC. `1` (default) disables SVC; `2`/`3` activate the
     /// libvpx 0-1-0-1 / 0-2-1-2 patterns (`vp9_svc_layercontext.c`).
     /// libvpx's equivalent is `--ts-number-layers` on the `vpxenc` SVC
     /// path; rvp9 exposes the temporal count directly.
     temporal_layers: Option<u32>,
-    /// `--bit-depth` (libvpx `vpxenc.c:492-495`). 8/10/12.
-    bit_depth: Option<u8>,
-    /// `--psnr` (libvpx `vpxenc.c:135-136`).
-    psnr: bool,
-
-    // ---- W7.8: long-tail vpxenc flags (master inventory A12 tail).
-    //
-    // Each field below is stored verbatim by the flag table; plumbing
-    // into [`EncoderConfig`] / two-pass / SVC / loop-filter paths lands
-    // in later waves. Unknown values reject at the CLI layer so we
-    // never silently misconfigure libvpx-style downstreams. Skipped
-    // here per Arthur's audit: `--arnr-type` (vpxenc.c:378-379),
-    // `--output-partitions` / `-P` (vpxenc.c:151-153) — both
-    // OUT-OF-SCOPE for the vpxenc parity port.
-    //
     /// `--auto-alt-ref` (libvpx `vpxenc.c:436-438`). VP9 range 0..=6:
     /// 0 disables, 1 single ARF, 2+ enables multi-layer ARF.
     auto_alt_ref: Option<u32>,
-    /// `--arnr-maxframes` (libvpx `vpxenc.c:374-375`). 0..=15.
-    arnr_maxframes: Option<u32>,
-    /// `--arnr-strength` (libvpx `vpxenc.c:376-377`). 0..=6.
-    arnr_strength: Option<u32>,
-    /// `--pass` (libvpx `vpxenc.c:115-116`). 1 or 2.
-    pass: Option<u32>,
     /// `--passes` / `-p` (libvpx `vpxenc.c:113-114`). Number of passes:
     /// `1` (default, the one-pass regulators) or `2` (two-pass VBR).
     /// When `2`, the encoder runs the per-sequence two-pass driver
@@ -176,50 +71,11 @@ struct EncOpts {
     /// whole input, then a stats-driven second pass emitting the
     /// bitstream.
     passes: u32,
-    /// `--fpf` (libvpx `vpxenc.c:117-118`). First-pass stats file name.
-    fpf: Option<String>,
-    /// `--rate-hist` (libvpx `vpxenc.c:156-157`). Bucket count for the
-    /// per-frame rate histogram.
-    rate_hist: Option<u32>,
-    /// `--q-hist` (libvpx `vpxenc.c:154-155`). Bucket count for the
-    /// quantizer histogram.
-    q_hist: Option<u32>,
-    /// `--test-decode` (libvpx `vpxenc.c:138-145`). off / warn / fatal.
-    test_decode: Option<TestDecode>,
     /// `--enable-tpl` (libvpx `vpxenc.c:445-446`). 0/1 — temporal
     /// dependency model.
     enable_tpl: Option<bool>,
-    /// `--frame-boost` (libvpx `vpxenc.c:459-461`). 0/1 — periodic
-    /// boost.
-    frame_boost: Option<bool>,
-    /// `--max-inter-rate` (libvpx `vpxenc.c:462-463`). Max P-frame
-    /// bitrate (pct).
-    max_inter_rate_pct: Option<u32>,
-    /// `--min-gf-interval` (libvpx `vpxenc.c:464-466`).
-    min_gf_interval: Option<u32>,
-    /// `--max-gf-interval` (libvpx `vpxenc.c:467-469`).
-    max_gf_interval: Option<u32>,
-    /// `--color-space` (libvpx `vpxenc.c:483-485`, enum at 471-481).
-    color_space: Option<ColorSpace>,
-    /// `--alt-ref-aq` (libvpx `vpxenc.c:456-458`). 0/1.
-    alt_ref_aq: Option<bool>,
-    /// `--input-bit-depth` (libvpx `vpxenc.c:496-497`).
-    input_bit_depth: Option<u8>,
     /// `--lag-in-frames` (libvpx `vpxenc.c:220-221`).
     lag_in_frames: Option<u32>,
-    /// `--target-level` (libvpx `vpxenc.c:510-519`). 0/255 + level
-    /// values (10..=62); the libvpx help text catalogues the semantics.
-    target_level: Option<u32>,
-    /// `--row-mt` (libvpx `vpxenc.c:521-523`). 0/1.
-    row_mt: Option<bool>,
-    /// `--resize-allowed` (libvpx `vpxenc.c:248-249`). 0/1.
-    resize_allowed: Option<bool>,
-    /// `--resize-width` (libvpx `vpxenc.c:250-251`).
-    resize_width: Option<u32>,
-    /// `--resize-height` (libvpx `vpxenc.c:252-253`).
-    resize_height: Option<u32>,
-    /// `--quiet` / `-q` (libvpx `vpxenc.c:131-132`). Suppress progress.
-    quiet: bool,
 }
 
 impl Default for EncOpts {
@@ -243,61 +99,19 @@ impl Default for EncOpts {
             help: false,
             version: false,
 
-            // ---- W0.1: stored, not yet plumbed.
-            profile: None,
             deadline: None,
             cpu_used: None,
-            threads: None,
-            tile_columns: None,
-            tile_rows: None,
-            kf_min_dist: None,
-            disable_kf: false,
             min_q: None,
             max_q: None,
             cq_level: None,
-            buf_sz_ms: None,
-            buf_initial_sz_ms: None,
-            buf_optimal_sz_ms: None,
-            undershoot_pct: None,
-            overshoot_pct: None,
-            lossless: None,
-            frame_parallel: None,
-            error_resilient: None,
-            tune: None,
-            tune_content: None,
             noise_sensitivity: None,
-            svc: false,
             temporal_layers: None,
-            bit_depth: None,
-            psnr: false,
-
-            // ---- W7.8: long-tail vpxenc flags.
             auto_alt_ref: None,
-            arnr_maxframes: None,
-            arnr_strength: None,
-            pass: None,
             // Default 1 pass (the one-pass regulators / cross-decoder gate
             // config). `--passes 2` opts into two-pass VBR.
             passes: 1,
-            fpf: None,
-            rate_hist: None,
-            q_hist: None,
-            test_decode: None,
             enable_tpl: None,
-            frame_boost: None,
-            max_inter_rate_pct: None,
-            min_gf_interval: None,
-            max_gf_interval: None,
-            color_space: None,
-            alt_ref_aq: None,
-            input_bit_depth: None,
             lag_in_frames: None,
-            target_level: None,
-            row_mt: None,
-            resize_allowed: None,
-            resize_width: None,
-            resize_height: None,
-            quiet: false,
         }
     }
 }
@@ -452,16 +266,14 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
                 Ok(())
             }),
         },
-        // W0.1: parsed and stored on EncOpts; later waves consume.
+        // Recognized vpxenc-compatible flags without encoder plumbing remain
+        // explicit `None` entries so help and parse errors describe them honestly.
         Flag {
             long: "profile",
             short: None,
             arg: Arg::Required,
             help: "bitstream profile (0..=3)",
-            apply: Some(|o, v| {
-                o.profile = Some(parse_profile(v)?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "rt",
@@ -508,50 +320,35 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             short: Some('t'),
             arg: Arg::Required,
             help: "encode threads",
-            apply: Some(|o, v| {
-                o.threads = Some(args::parse_value(v, "rvp9enc", "--threads")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "tile-columns",
             short: None,
             arg: Arg::Required,
             help: "log2 tile columns (0..=6)",
-            apply: Some(|o, v| {
-                o.tile_columns = Some(parse_log2(v, "--tile-columns", 6)?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "tile-rows",
             short: None,
             arg: Arg::Required,
             help: "log2 tile rows (0..=2)",
-            apply: Some(|o, v| {
-                o.tile_rows = Some(parse_log2(v, "--tile-rows", 2)?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "kf-min-dist",
             short: None,
             arg: Arg::Required,
             help: "min keyframe interval",
-            apply: Some(|o, v| {
-                o.kf_min_dist = Some(args::parse_value(v, "rvp9enc", "--kf-min-dist")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "disable-kf",
             short: None,
             arg: Arg::None,
             help: "disable keyframes",
-            apply: Some(|o, _| {
-                o.disable_kf = true;
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "min-q",
@@ -588,100 +385,70 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             short: None,
             arg: Arg::Required,
             help: "client buffer size (ms)",
-            apply: Some(|o, v| {
-                o.buf_sz_ms = Some(args::parse_value(v, "rvp9enc", "--buf-sz")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "buf-initial-sz",
             short: None,
             arg: Arg::Required,
             help: "initial buffer size (ms)",
-            apply: Some(|o, v| {
-                o.buf_initial_sz_ms = Some(args::parse_value(v, "rvp9enc", "--buf-initial-sz")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "buf-optimal-sz",
             short: None,
             arg: Arg::Required,
             help: "optimal buffer size (ms)",
-            apply: Some(|o, v| {
-                o.buf_optimal_sz_ms = Some(args::parse_value(v, "rvp9enc", "--buf-optimal-sz")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "undershoot-pct",
             short: None,
             arg: Arg::Required,
             help: "datarate undershoot %",
-            apply: Some(|o, v| {
-                o.undershoot_pct = Some(args::parse_value(v, "rvp9enc", "--undershoot-pct")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "overshoot-pct",
             short: None,
             arg: Arg::Required,
             help: "datarate overshoot %",
-            apply: Some(|o, v| {
-                o.overshoot_pct = Some(args::parse_value(v, "rvp9enc", "--overshoot-pct")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "lossless",
             short: None,
             arg: Arg::Required,
             help: "lossless coding (0/1)",
-            apply: Some(|o, v| {
-                o.lossless = Some(parse_bool01(v, "--lossless")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "frame-parallel",
             short: None,
             arg: Arg::Required,
             help: "frame-parallel decoding (0/1)",
-            apply: Some(|o, v| {
-                o.frame_parallel = Some(parse_bool01(v, "--frame-parallel")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "error-resilient",
             short: None,
             arg: Arg::Required,
             help: "error resilient mode",
-            apply: Some(|o, v| {
-                o.error_resilient = Some(args::parse_value(v, "rvp9enc", "--error-resilient")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "tune",
             short: None,
             arg: Arg::Required,
             help: "distortion metric to tune (psnr/ssim)",
-            apply: Some(|o, v| {
-                o.tune = Some(parse_tune(v)?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "tune-content",
             short: None,
             arg: Arg::Required,
             help: "content type to tune (default/screen/film)",
-            apply: Some(|o, v| {
-                o.tune_content = Some(parse_tune_content(v)?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "noise-sensitivity",
@@ -698,10 +465,7 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             short: None,
             arg: Arg::None,
             help: "scalable video coding",
-            apply: Some(|o, _| {
-                o.svc = true;
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "temporal-layers",
@@ -718,20 +482,14 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             short: None,
             arg: Arg::Required,
             help: "bit depth (8/10/12)",
-            apply: Some(|o, v| {
-                o.bit_depth = Some(parse_bit_depth(v)?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "psnr",
             short: None,
             arg: Arg::None,
             help: "report PSNR",
-            apply: Some(|o, _| {
-                o.psnr = true;
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "webm",
@@ -740,8 +498,9 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             help: "WebM output (not supported yet)",
             apply: None,
         },
-        // ---- W7.8: long-tail vpxenc flags (parsed + stored; later
-        // waves plumb into EncoderConfig / two-pass / SVC / LF paths).
+        // ---- Long-tail vpxenc flags.
+        // Unimplemented options remain explicit `None` entries until their
+        // values affect encoder behavior.
         // SKIPPED per Arthur's audit: `--arnr-type` (vpxenc.c:378-379)
         // and `--output-partitions` / `-P` (vpxenc.c:151-153) are
         // OUT-OF-SCOPE — they survive in the "recognised-but-not-yet"
@@ -761,70 +520,49 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             short: None,
             arg: Arg::Required,
             help: "AltRef max frames (0..=15)",
-            apply: Some(|o, v| {
-                o.arnr_maxframes = Some(parse_range(v, "--arnr-maxframes", 0, 15)?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "arnr-strength",
             short: None,
             arg: Arg::Required,
             help: "AltRef filter strength (0..=6)",
-            apply: Some(|o, v| {
-                o.arnr_strength = Some(parse_range(v, "--arnr-strength", 0, 6)?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "pass",
             short: None,
             arg: Arg::Required,
             help: "pass to execute (1 or 2)",
-            apply: Some(|o, v| {
-                o.pass = Some(parse_pass(v)?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "fpf",
             short: None,
             arg: Arg::Required,
             help: "first-pass statistics file",
-            apply: Some(|o, v| {
-                o.fpf = Some(req(v, "--fpf")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "rate-hist",
             short: None,
             arg: Arg::Required,
             help: "rate histogram bucket count",
-            apply: Some(|o, v| {
-                o.rate_hist = Some(args::parse_value(v, "rvp9enc", "--rate-hist")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "q-hist",
             short: None,
             arg: Arg::Required,
             help: "quantizer histogram bucket count",
-            apply: Some(|o, v| {
-                o.q_hist = Some(args::parse_value(v, "rvp9enc", "--q-hist")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "test-decode",
             short: None,
             arg: Arg::Required,
             help: "encode/decode mismatch test (off/warn/fatal)",
-            apply: Some(|o, v| {
-                o.test_decode = Some(parse_test_decode(v)?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "enable-tpl",
@@ -841,70 +579,49 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             short: None,
             arg: Arg::Required,
             help: "frame periodic boost (0/1)",
-            apply: Some(|o, v| {
-                o.frame_boost = Some(parse_bool01(v, "--frame-boost")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "max-inter-rate",
             short: None,
             arg: Arg::Required,
             help: "max P-frame bitrate (pct)",
-            apply: Some(|o, v| {
-                o.max_inter_rate_pct = Some(args::parse_value(v, "rvp9enc", "--max-inter-rate")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "min-gf-interval",
             short: None,
             arg: Arg::Required,
             help: "min gf/arf frame interval",
-            apply: Some(|o, v| {
-                o.min_gf_interval = Some(args::parse_value(v, "rvp9enc", "--min-gf-interval")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "max-gf-interval",
             short: None,
             arg: Arg::Required,
             help: "max gf/arf frame interval",
-            apply: Some(|o, v| {
-                o.max_gf_interval = Some(args::parse_value(v, "rvp9enc", "--max-gf-interval")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "color-space",
             short: None,
             arg: Arg::Required,
             help: "color space of input content",
-            apply: Some(|o, v| {
-                o.color_space = Some(parse_color_space(v)?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "alt-ref-aq",
             short: None,
             arg: Arg::Required,
             help: "adaptive quant for alt-ref (0/1)",
-            apply: Some(|o, v| {
-                o.alt_ref_aq = Some(parse_bool01(v, "--alt-ref-aq")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "input-bit-depth",
             short: None,
             arg: Arg::Required,
             help: "input bit depth (8/10/12)",
-            apply: Some(|o, v| {
-                o.input_bit_depth = Some(parse_bit_depth(v)?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "lag-in-frames",
@@ -921,60 +638,42 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             short: None,
             arg: Arg::Required,
             help: "target level (0/255 + 10..=62)",
-            apply: Some(|o, v| {
-                o.target_level = Some(args::parse_value(v, "rvp9enc", "--target-level")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "row-mt",
             short: None,
             arg: Arg::Required,
             help: "row-based MT in VP9 (0/1)",
-            apply: Some(|o, v| {
-                o.row_mt = Some(parse_bool01(v, "--row-mt")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "resize-allowed",
             short: None,
             arg: Arg::Required,
             help: "spatial resampling (0/1)",
-            apply: Some(|o, v| {
-                o.resize_allowed = Some(parse_bool01(v, "--resize-allowed")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "resize-width",
             short: None,
             arg: Arg::Required,
             help: "resized encoded width",
-            apply: Some(|o, v| {
-                o.resize_width = Some(args::parse_value(v, "rvp9enc", "--resize-width")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "resize-height",
             short: None,
             arg: Arg::Required,
             help: "resized encoded height",
-            apply: Some(|o, v| {
-                o.resize_height = Some(args::parse_value(v, "rvp9enc", "--resize-height")?);
-                Ok(())
-            }),
+            apply: None,
         },
         Flag {
             long: "quiet",
             short: Some('q'),
             arg: Arg::None,
             help: "do not print encode progress",
-            apply: Some(|o, _| {
-                o.quiet = true;
-                Ok(())
-            }),
+            apply: None,
         },
     ]
 }
@@ -1046,29 +745,10 @@ fn req(v: Option<String>, flag: &str) -> Result<String, String> {
     v.ok_or_else(|| format!("rvp9enc: {flag} requires a value"))
 }
 
-// ---- W0.1 helpers: small parsers for the formerly-rejected flags.
-// Each cites the libvpx range it enforces (see EncOpts field comments).
-
-fn parse_profile(v: Option<String>) -> Result<u8, String> {
-    let n: u8 = args::parse_value(v, "rvp9enc", "--profile")?;
-    if n > 3 {
-        return Err(format!("rvp9enc: --profile={n} out of range (0..=3)"));
-    }
-    Ok(n)
-}
-
 fn parse_cpu_used(v: Option<String>) -> Result<i32, String> {
     let n: i32 = args::parse_value(v, "rvp9enc", "--cpu-used")?;
     if !(-9..=9).contains(&n) {
         return Err(format!("rvp9enc: --cpu-used={n} out of range (-9..=9)"));
-    }
-    Ok(n)
-}
-
-fn parse_log2(v: Option<String>, flag: &str, max: u8) -> Result<u8, String> {
-    let n: u8 = args::parse_value(v, "rvp9enc", flag)?;
-    if n > max {
-        return Err(format!("rvp9enc: {flag}={n} out of range (0..={max})"));
     }
     Ok(n)
 }
@@ -1084,62 +764,12 @@ fn parse_bool01(v: Option<String>, flag: &str) -> Result<bool, String> {
     }
 }
 
-fn parse_tune(v: Option<String>) -> Result<TuneMetric, String> {
-    match v.as_deref() {
-        Some("psnr") => Ok(TuneMetric::Psnr),
-        Some("ssim") => Ok(TuneMetric::Ssim),
-        Some(other) => Err(format!(
-            "rvp9enc: --tune={other} not understood (use psnr or ssim)"
-        )),
-        None => Err("rvp9enc: --tune requires a value".to_string()),
-    }
-}
-
-fn parse_tune_content(v: Option<String>) -> Result<TuneContent, String> {
-    match v.as_deref() {
-        Some("default") => Ok(TuneContent::Default),
-        Some("screen") => Ok(TuneContent::Screen),
-        Some("film") => Ok(TuneContent::Film),
-        Some(other) => Err(format!(
-            "rvp9enc: --tune-content={other} not understood (use default/screen/film)"
-        )),
-        None => Err("rvp9enc: --tune-content requires a value".to_string()),
-    }
-}
-
-fn parse_bit_depth(v: Option<String>) -> Result<u8, String> {
-    match v.as_deref() {
-        Some("8") => Ok(8),
-        Some("10") => Ok(10),
-        Some("12") => Ok(12),
-        Some(other) => Err(format!(
-            "rvp9enc: --bit-depth={other} not understood (use 8/10/12)"
-        )),
-        None => Err("rvp9enc: --bit-depth requires a value".to_string()),
-    }
-}
-
-// ---- W7.8 helpers: parsers for the long-tail flags. Each enforces
-// the same domain libvpx documents at the cited line.
-
 fn parse_range(v: Option<String>, flag: &str, lo: u32, hi: u32) -> Result<u32, String> {
     let n: u32 = args::parse_value(v, "rvp9enc", flag)?;
     if n < lo || n > hi {
         return Err(format!("rvp9enc: {flag}={n} out of range ({lo}..={hi})"));
     }
     Ok(n)
-}
-
-/// libvpx `vpxenc.c:115-116` — `--pass` is 1 or 2.
-fn parse_pass(v: Option<String>) -> Result<u32, String> {
-    match v.as_deref() {
-        Some("1") => Ok(1),
-        Some("2") => Ok(2),
-        Some(other) => Err(format!(
-            "rvp9enc: --pass={other} not understood (use 1 or 2)"
-        )),
-        None => Err("rvp9enc: --pass requires a value".to_string()),
-    }
 }
 
 /// libvpx `vpxenc.c:113-114` — `--passes` / `-p` is 1 or 2. `2` selects
@@ -1152,38 +782,6 @@ fn parse_passes(v: Option<String>) -> Result<u32, String> {
             "rvp9enc: --passes={other} not understood (use 1 or 2)"
         )),
         None => Err("rvp9enc: --passes requires a value".to_string()),
-    }
-}
-
-/// libvpx `vpxenc.c:138-145` — `--test-decode` tri-state.
-fn parse_test_decode(v: Option<String>) -> Result<TestDecode, String> {
-    match v.as_deref() {
-        Some("off") => Ok(TestDecode::Off),
-        Some("warn") => Ok(TestDecode::Warn),
-        Some("fatal") => Ok(TestDecode::Fatal),
-        Some(other) => Err(format!(
-            "rvp9enc: --test-decode={other} not understood (use off/warn/fatal)"
-        )),
-        None => Err("rvp9enc: --test-decode requires a value".to_string()),
-    }
-}
-
-/// libvpx `vpxenc.c:471-485` — `--color-space` enum.
-fn parse_color_space(v: Option<String>) -> Result<ColorSpace, String> {
-    match v.as_deref() {
-        Some("unknown") => Ok(ColorSpace::Unknown),
-        Some("bt601") => Ok(ColorSpace::Bt601),
-        Some("bt709") => Ok(ColorSpace::Bt709),
-        Some("smpte170") => Ok(ColorSpace::Smpte170),
-        Some("smpte240") => Ok(ColorSpace::Smpte240),
-        Some("bt2020") => Ok(ColorSpace::Bt2020),
-        Some("reserved") => Ok(ColorSpace::Reserved),
-        Some("sRGB") => Ok(ColorSpace::SRgb),
-        Some(other) => Err(format!(
-            "rvp9enc: --color-space={other} not understood \
-             (unknown/bt601/bt709/smpte170/smpte240/bt2020/reserved/sRGB)"
-        )),
-        None => Err("rvp9enc: --color-space requires a value".to_string()),
     }
 }
 
@@ -1537,8 +1135,8 @@ fn build_encoder_config(
         min_qindex: opts.min_q.map(|v| v.min(255) as u8).unwrap_or(4),
         max_qindex: opts.max_q.map(|v| v.min(255) as u8).unwrap_or(255),
         // W6.2(vpxenc parity, HBD scaffold): pixel bit-depth. rvp9 only
-        // encodes 8-bit today; --bit-depth=10/12 is parsed (W0.1) but
-        // the encoder refuses non-Bd8 until the HBD kernel pairs land.
+        // encodes 8-bit today; --bit-depth remains explicitly unsupported
+        // until the HBD kernel pairs land.
         bit_depth: rvp9_core::BitDepth::Bd8,
         // vpxenc `--lag-in-frames` (libvpx `vpxenc.c:220-221`, capped at
         // `MAX_LAG_BUFFERS = 25`). The lookahead context also clamps
@@ -1591,89 +1189,12 @@ fn build_encoder_config_for_test(opts: &EncOpts) -> EncoderConfig {
 
 #[cfg(test)]
 mod tests {
-    //! PROOF tests for Wave 0 of the vpxenc parity port.
-    //!
-    //! These tests fail loudly if a formerly-wired flag is reverted to
-    //! `apply: None` (the prior "recognised but not supported yet"
-    //! rejection path), which is the master inventory's W0.1 anti-G3
-    //! guard. Each assertion below pins one flag → one EncOpts slot.
+    //! Focused parser and configuration tests for implemented encoder flags.
 
     use super::*;
 
     fn s(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| (*s).to_string()).collect()
-    }
-
-    /// W0.1 PROOF — every formerly-rejected vpxenc flag is now parsed
-    /// and stored on `EncOpts`. If any `apply` slot regresses to `None`,
-    /// `args::parse` rejects the flag with "not supported yet" and this
-    /// test fails. Citations: libvpx `vpxenc.c:125-130, 198-200, 218,
-    /// 271-279, 358-368, 385, 434-450, 492, 500-508`.
-    #[test]
-    fn w0_1_all_formerly_rejected_flags_are_now_stored() {
-        let table = flag_table();
-        let argv = s(&[
-            "--profile=2",
-            "--rt",
-            "--cpu-used=5",
-            "--threads=4",
-            "--tile-columns=2",
-            "--tile-rows=1",
-            "--kf-min-dist=8",
-            "--disable-kf",
-            "--min-q=2",
-            "--max-q=63",
-            "--cq-level=32",
-            "--buf-sz=6000",
-            "--buf-initial-sz=4000",
-            "--buf-optimal-sz=5000",
-            "--undershoot-pct=25",
-            "--overshoot-pct=50",
-            "--lossless=0",
-            "--frame-parallel=1",
-            "--error-resilient=1",
-            "--tune=psnr",
-            "--tune-content=screen",
-            "--noise-sensitivity=2",
-            "--svc",
-            "--bit-depth=10",
-            "--psnr",
-        ]);
-        let mut opts = EncOpts::default();
-        let pos = args::parse(&table, &mut opts, &argv, "rvp9enc").unwrap_or_else(|e| {
-            panic!(
-                "W0.1 PROOF: parse() rejected a formerly-wired flag — \
-                 has any `apply: Some(_)` regressed to `None`? err={e}"
-            )
-        });
-        assert!(pos.is_empty(), "no positionals expected, got {pos:?}");
-        // Per-flag pinning — fails if the apply callback no longer
-        // writes to the corresponding EncOpts slot.
-        assert_eq!(opts.profile, Some(2));
-        assert_eq!(opts.deadline, Some(Deadline::Realtime));
-        assert_eq!(opts.cpu_used, Some(5));
-        assert_eq!(opts.threads, Some(4));
-        assert_eq!(opts.tile_columns, Some(2));
-        assert_eq!(opts.tile_rows, Some(1));
-        assert_eq!(opts.kf_min_dist, Some(8));
-        assert!(opts.disable_kf);
-        assert_eq!(opts.min_q, Some(2));
-        assert_eq!(opts.max_q, Some(63));
-        assert_eq!(opts.cq_level, Some(32));
-        assert_eq!(opts.buf_sz_ms, Some(6000));
-        assert_eq!(opts.buf_initial_sz_ms, Some(4000));
-        assert_eq!(opts.buf_optimal_sz_ms, Some(5000));
-        assert_eq!(opts.undershoot_pct, Some(25));
-        assert_eq!(opts.overshoot_pct, Some(50));
-        assert_eq!(opts.lossless, Some(false));
-        assert_eq!(opts.frame_parallel, Some(true));
-        assert_eq!(opts.error_resilient, Some(1));
-        assert_eq!(opts.tune, Some(TuneMetric::Psnr));
-        assert_eq!(opts.tune_content, Some(TuneContent::Screen));
-        assert_eq!(opts.noise_sensitivity, Some(2));
-        assert!(opts.svc);
-        assert_eq!(opts.bit_depth, Some(10));
-        assert!(opts.psnr);
     }
 
     /// `--good` and `--best` are mutually exclusive with `--rt` (the
@@ -1698,86 +1219,6 @@ mod tests {
         let mut o = EncOpts::default();
         let err = args::parse(&table, &mut o, &s(&["--cpu-used=10"]), "rvp9enc").unwrap_err();
         assert!(err.contains("out of range"), "{err}");
-    }
-
-    /// W7.8 PROOF — every long-tail vpxenc flag added by Wave 7.8 is
-    /// parsed and stored on [`EncOpts`]. Like the W0.1 PROOF, this
-    /// fails loudly if any `apply` slot regresses to `None` (which
-    /// would route the flag through the "recognised but not supported
-    /// yet" rejection path and break vpxenc CLI parity for benchmark
-    /// harnesses).
-    ///
-    /// Citations: libvpx `vpxenc.c:115-118` (`--pass`/`--fpf`),
-    /// `131-132` (`--quiet`), `138-145` (`--test-decode`),
-    /// `154-157` (`--q-hist`/`--rate-hist`), `220-221` (`--lag-in-frames`),
-    /// `248-253` (`--resize-*`), `374-377` (`--arnr-maxframes`/`-strength`),
-    /// `436-438` (`--auto-alt-ref`), `445-446` (`--enable-tpl`),
-    /// `456-461` (`--alt-ref-aq`/`--frame-boost`),
-    /// `462-469` (`--max-inter-rate`/`--min/max-gf-interval`),
-    /// `471-485` (`--color-space`), `496-497` (`--input-bit-depth`),
-    /// `510-519` (`--target-level`), `521-523` (`--row-mt`).
-    /// Skipped: `--arnr-type` (`vpxenc.c:378-379`) and
-    /// `--output-partitions` / `-P` (`vpxenc.c:151-153`) — OUT-OF-SCOPE
-    /// per Arthur's audit, intentionally absent from the flag table.
-    #[test]
-    fn w7_8_long_tail_flags_all_stored() {
-        let table = flag_table();
-        let argv = s(&[
-            "--auto-alt-ref=2",
-            "--arnr-maxframes=7",
-            "--arnr-strength=5",
-            "--pass=2",
-            "--fpf=stats.fpf",
-            "--rate-hist=64",
-            "--q-hist=32",
-            "--test-decode=warn",
-            "--enable-tpl=1",
-            "--frame-boost=0",
-            "--max-inter-rate=120",
-            "--min-gf-interval=4",
-            "--max-gf-interval=16",
-            "--color-space=bt709",
-            "--alt-ref-aq=1",
-            "--input-bit-depth=8",
-            "--lag-in-frames=25",
-            "--target-level=41",
-            "--row-mt=1",
-            "--resize-allowed=1",
-            "--resize-width=640",
-            "--resize-height=360",
-            "--quiet",
-        ]);
-        let mut opts = EncOpts::default();
-        let pos = args::parse(&table, &mut opts, &argv, "rvp9enc").unwrap_or_else(|e| {
-            panic!(
-                "W7.8 PROOF: parse() rejected a Wave-7.8 long-tail flag — \
-                 has any `apply: Some(_)` regressed to `None`? err={e}"
-            )
-        });
-        assert!(pos.is_empty(), "no positionals expected, got {pos:?}");
-        assert_eq!(opts.auto_alt_ref, Some(2));
-        assert_eq!(opts.arnr_maxframes, Some(7));
-        assert_eq!(opts.arnr_strength, Some(5));
-        assert_eq!(opts.pass, Some(2));
-        assert_eq!(opts.fpf.as_deref(), Some("stats.fpf"));
-        assert_eq!(opts.rate_hist, Some(64));
-        assert_eq!(opts.q_hist, Some(32));
-        assert_eq!(opts.test_decode, Some(TestDecode::Warn));
-        assert_eq!(opts.enable_tpl, Some(true));
-        assert_eq!(opts.frame_boost, Some(false));
-        assert_eq!(opts.max_inter_rate_pct, Some(120));
-        assert_eq!(opts.min_gf_interval, Some(4));
-        assert_eq!(opts.max_gf_interval, Some(16));
-        assert_eq!(opts.color_space, Some(ColorSpace::Bt709));
-        assert_eq!(opts.alt_ref_aq, Some(true));
-        assert_eq!(opts.input_bit_depth, Some(8));
-        assert_eq!(opts.lag_in_frames, Some(25));
-        assert_eq!(opts.target_level, Some(41));
-        assert_eq!(opts.row_mt, Some(true));
-        assert_eq!(opts.resize_allowed, Some(true));
-        assert_eq!(opts.resize_width, Some(640));
-        assert_eq!(opts.resize_height, Some(360));
-        assert!(opts.quiet);
     }
 
     /// W7.8 — `--auto-alt-ref` range guard (libvpx `vpxenc.c:436-438`

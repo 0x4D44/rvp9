@@ -623,6 +623,87 @@ fn enc_verbose_emits_summary_line() {
     let _ = std::fs::remove_file(&ivf);
 }
 
+#[test]
+fn enc_parse_only_flags_reject_and_are_tagged_not_yet() {
+    let unplumbed = [
+        ("--profile", Some("2")),
+        ("--threads", Some("4")),
+        ("--tile-columns", Some("2")),
+        ("--tile-rows", Some("1")),
+        ("--kf-min-dist", Some("8")),
+        ("--disable-kf", None),
+        ("--buf-sz", Some("6000")),
+        ("--buf-initial-sz", Some("4000")),
+        ("--buf-optimal-sz", Some("5000")),
+        ("--undershoot-pct", Some("25")),
+        ("--overshoot-pct", Some("50")),
+        ("--lossless", Some("1")),
+        ("--frame-parallel", Some("1")),
+        ("--error-resilient", Some("1")),
+        ("--tune", Some("psnr")),
+        ("--tune-content", Some("screen")),
+        ("--svc", None),
+        ("--bit-depth", Some("10")),
+        ("--psnr", None),
+        ("--arnr-maxframes", Some("7")),
+        ("--arnr-strength", Some("5")),
+        ("--pass", Some("2")),
+        ("--fpf", Some("stats.fpf")),
+        ("--rate-hist", Some("64")),
+        ("--q-hist", Some("32")),
+        ("--test-decode", Some("warn")),
+        ("--frame-boost", Some("1")),
+        ("--max-inter-rate", Some("120")),
+        ("--min-gf-interval", Some("4")),
+        ("--max-gf-interval", Some("16")),
+        ("--color-space", Some("bt709")),
+        ("--alt-ref-aq", Some("1")),
+        ("--input-bit-depth", Some("8")),
+        ("--target-level", Some("41")),
+        ("--row-mt", Some("1")),
+        ("--resize-allowed", Some("1")),
+        ("--resize-width", Some("640")),
+        ("--resize-height", Some("360")),
+        ("--quiet", None),
+    ];
+
+    let help = Command::new(enc_bin())
+        .arg("--help")
+        .bounded_output()
+        .expect("run rvp9enc --help");
+    assert!(help.status.success());
+    let help = String::from_utf8_lossy(&help.stdout);
+
+    for (flag, value) in unplumbed {
+        let mut command = Command::new(enc_bin());
+        command.arg(flag);
+        if let Some(value) = value {
+            command.arg(value);
+        }
+        command.arg("in.y4m");
+        let output = command.bounded_output().expect("run rvp9enc");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success()
+                && stderr.contains(flag)
+                && stderr.contains("not supported yet"),
+            "{flag} must fail as unimplemented, got: {stderr}"
+        );
+
+        let line = help
+            .lines()
+            .find(|line| {
+                line.split_whitespace()
+                    .any(|word| word.trim_end_matches(',') == flag)
+            })
+            .unwrap_or_else(|| panic!("{flag} missing from help"));
+        assert!(
+            line.contains("[not yet]") && !line.contains("[supported]"),
+            "{flag} help tag is dishonest: {line}"
+        );
+    }
+}
+
 /// `--limit N` truncates the encode at N frames — the produced IVF must
 /// declare N frames in its header, not the full source.
 #[test]
