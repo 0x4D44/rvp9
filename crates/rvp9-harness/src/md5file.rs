@@ -39,14 +39,15 @@
 //!
 //! The `.md5` on-disk format is **not** widened — only the in-memory
 //! representation is — so parsing remains backward-compatible with the
-//! AOM-shipped fixtures. Each parsed row gets `packet_index =
-//! row_index`, `sub_frame_index = 0`, `show_frame = true`,
-//! `md5_visible = Some(_)`. Stream packets that carry multiple
-//! displayed sub-frames (atypical for the AOM corpus) are not
-//! representable from a stock `.md5` alone — the in-memory ledger
-//! becomes the source of truth in that scenario and the per-packet
-//! sanity oracle (in `tests/conformance.rs`) pins the count from the
-//! superframe-index byte tail.
+//! AOM-shipped fixtures. The parser requires the filename's one-based
+//! index to match each shown-frame row, then assigns `packet_index =
+//! row_index`, `sub_frame_index = 0`, `show_frame = true`, and
+//! `md5_visible = Some(_)`. Stream packets that carry multiple displayed
+//! sub-frames (atypical for the AOM corpus) are not representable from a
+//! stock `.md5` alone — the in-memory ledger becomes the source of truth
+//! in that scenario and the per-packet sanity oracle (in
+//! `tests/conformance.rs`) pins the count from the superframe-index byte
+//! tail.
 
 use std::path::Path;
 
@@ -131,6 +132,18 @@ pub enum Md5FileError {
         /// The filename column.
         filename: String,
     },
+    /// A filename's one-based frame index is not the next shown-frame
+    /// ordinal.
+    BadFrameIndex {
+        /// 1-based line number.
+        lineno: usize,
+        /// The filename column.
+        filename: String,
+        /// Expected one-based shown-frame index.
+        expected: usize,
+        /// Parsed one-based filename index.
+        actual: u32,
+    },
 }
 
 impl std::fmt::Display for Md5FileError {
@@ -141,6 +154,15 @@ impl std::fmt::Display for Md5FileError {
             Self::BadFilename { lineno, filename } => write!(
                 f,
                 "line {lineno}: filename does not encode WxH-NNNN: {filename:?}"
+            ),
+            Self::BadFrameIndex {
+                lineno,
+                filename,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "line {lineno}: expected shown-frame index {expected}, found {actual} in {filename:?}"
             ),
         }
     }
@@ -170,6 +192,8 @@ impl From<std::io::Error> for Md5FileError {
 ///   `<md5_hex>  <filename>` shape (two spaces).
 /// - [`Md5FileError::BadFilename`] if the filename column doesn't
 ///   embed a `<W>x<H>-<NNNN>.i420` resolution / index suffix.
+/// - [`Md5FileError::BadFrameIndex`] if the filename index is duplicated,
+///   skipped, or reordered.
 pub fn read_md5_file(path: &Path) -> Result<Vec<Md5Entry>, Md5FileError> {
     let text = std::fs::read_to_string(path)?;
     let mut entries = Vec::new();
@@ -195,11 +219,20 @@ pub fn read_md5_file(path: &Path) -> Result<Vec<Md5Entry>, Md5FileError> {
                 line: line.to_string(),
             });
         }
-        let (w, h, _idx) =
+        let (w, h, idx) =
             parse_resolution_index(fname).ok_or_else(|| Md5FileError::BadFilename {
                 lineno: i + 1,
                 filename: fname.to_string(),
             })?;
+        let expected_index = row_index + 1;
+        if idx as usize != expected_index {
+            return Err(Md5FileError::BadFrameIndex {
+                lineno: i + 1,
+                filename: fname.to_string(),
+                expected: expected_index,
+                actual: idx,
+            });
+        }
         let digest = parse_md5_hex(md5_hex).ok_or_else(|| Md5FileError::BadLine {
             lineno: i + 1,
             line: line.to_string(),
@@ -470,6 +503,34 @@ mod tests {
             read_md5_file(&p),
             Err(Md5FileError::BadLine { .. })
         ));
+    }
+
+    #[test]
+    fn read_md5_file_rejects_nonsequential_filename_indices() {
+        let cases = [
+            ("duplicate", [1, 1]),
+            ("skipped", [1, 3]),
+            ("reordered", [2, 1]),
+        ];
+
+        for (name, indices) in cases {
+            let path = std::env::temp_dir().join(format!("rvp9_test_md5_{name}_index.md5"));
+            std::fs::write(
+                &path,
+                format!(
+                    "c3fbb7abbdb5bd4ed4a7e34768c17df1  foo-352x288-{:04}.i420\n\
+                     08203c2595bdb2d58ead6f921345d699  foo-352x288-{:04}.i420\n",
+                    indices[0], indices[1]
+                ),
+            )
+            .unwrap();
+
+            let error = read_md5_file(&path).unwrap_err();
+            assert!(
+                error.to_string().contains("expected shown-frame index"),
+                "{name}: {error}"
+            );
+        }
     }
 
     /// Round-trip: parse a `.md5` row, format the digest back to hex,

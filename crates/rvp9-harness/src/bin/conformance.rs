@@ -387,7 +387,7 @@ mod tests {
             std::fs::write(&vector, ivf).expect("persist IVF fixture");
             std::fs::write(
                 &ledger,
-                "00000000000000000000000000000000  malformed-64x64-0000.i420\n",
+                "00000000000000000000000000000000  malformed-64x64-0001.i420\n",
             )
             .expect("persist malformed IVF ledger");
 
