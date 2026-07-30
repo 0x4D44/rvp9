@@ -39,11 +39,12 @@
 //!   cargo run --release -p rvp9-bench --bin decode-throughput
 //!   cargo run --release -p rvp9-bench --bin decode-throughput -- --pinned
 //!
-//! Exit code is always 0 on a successful measurement; the ratchet
-//! gate is a separate `cargo test` integration test so individual bench
-//! invocations don't block CI on transient noise.
+//! Exit code is 0 when at least one measurement row is recorded. It is
+//! non-zero when no fixture produces a measurement or the CSV write
+//! fails. The ratchet gate remains a separate integration test.
 
 use std::path::PathBuf;
+use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rvp9_bench::throughput::{
@@ -104,7 +105,7 @@ fn parse_args() -> Args {
     }
 }
 
-fn main() {
+fn main() -> ExitCode {
     let args = parse_args();
     let host = host_fingerprint();
     let bph = build_profile_hash();
@@ -151,8 +152,7 @@ fn main() {
 
     if results.is_empty() {
         eprintln!("\nno fixtures produced timed samples; nothing to record");
-        // Don't exit non-zero — the ratchet test is the gate.
-        return;
+        return ExitCode::FAILURE;
     }
 
     let timestamp_unix = SystemTime::now()
@@ -169,11 +169,12 @@ fn main() {
         &results,
     ) {
         eprintln!("\nfailed to append CSV: {e}");
-        return;
+        return ExitCode::FAILURE;
     }
 
     println!("\nwrote {} row(s) to {}", results.len(), args.csv.display());
     if had_error {
         eprintln!("(one or more fixtures failed; see ERROR lines above)");
     }
+    ExitCode::SUCCESS
 }
