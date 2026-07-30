@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00025 - One-axis scaled inter prediction uses a two-axis pre-shift contract
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** core/inter prediction scaling
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T161823Z-p11038-n745797000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00025-run-fix-20260730T161823Z-p11038-n745797000-c1
-- **Owner base:** ae77e1c235f36523fa4ecb3c73a197b3b27941f8
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T16:18:23Z
-- **Owner until:** 2026-07-30T18:18:23Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-core/` at `af4c7a2d7533`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-core/` at `af4c7a2d7533`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T161823Z-p11038-n745797000-c1 branch=task/bug-RVP9-BUG-KILN-00025-run-fix-20260730T161823Z-p11038-n745797000-c1 code=f028253c3d297e2b10618da20ca2f051ce3f1a72 gate=manual)
 
 ## Observation
 
