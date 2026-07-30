@@ -84,11 +84,17 @@ mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 
 # Detect target. libvpx's configure understands these triples.
-case "$(uname -s)" in
+OS_NAME="$(uname -s)"
+ARCH_NAME="$(uname -m)"
+case "$OS_NAME:$ARCH_NAME" in
     MINGW*|MSYS*|CYGWIN*) TARGET="x86_64-win64-gcc" ;;
-    Linux)                TARGET="x86_64-linux-gcc" ;;
-    Darwin)               TARGET="x86_64-darwin-gcc" ;;
-    *)                    TARGET="generic-gnu" ;;
+    Linux:aarch64|Linux:arm64) TARGET="arm64-linux-gcc" ;;
+    Linux:x86_64)              TARGET="x86_64-linux-gcc" ;;
+    # The unversioned arm64 Darwin target is libvpx's iOS toolchain.
+    # Darwin 23 is its newest macOS arm64 target and works with newer SDKs.
+    Darwin:arm64)              TARGET="arm64-darwin23-gcc" ;;
+    Darwin:x86_64)             TARGET="x86_64-darwin-gcc" ;;
+    *)                         TARGET="generic-gnu" ;;
 esac
 
 # Real-time encoder + decoder, both 8-bit and 10-bit profiles. High-bit-depth
@@ -103,14 +109,18 @@ CFLAGS="-O3 -fomit-frame-pointer" \
     --enable-vp9-highbitdepth \
     --enable-pic \
     --disable-docs \
-    --disable-tools \
     --disable-unit-tests
-# Note: NOT passing --disable-examples; vpxenc + vpxdec live under
-# examples/ in libvpx and are exactly what we need.
+# Note: NOT passing --disable-tools or --disable-examples; vpxenc + vpxdec
+# are distribution tools defined by examples.mk and are exactly what we need.
 
 JOBS="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 echo "Building with -j$JOBS ..."
-make -j"$JOBS" vpxenc vpxdec
+# libvpx generates separate recursive make targets for libraries and examples.
+# Build the library first, then request the two distribution tools from the
+# examples target. A top-level `make vpxenc vpxdec` also asks the libs/tools
+# sub-makes for those names and fails because they do not define them.
+make -j"$JOBS" target=libs libvpx.a
+make -j"$JOBS" target=examples vpxenc vpxdec
 
 echo
 echo "Build complete. Artifacts:"
