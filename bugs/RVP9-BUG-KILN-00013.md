@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00013 - ALTREF frames disable prev-MV salvage while the decoder enables it
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** encoder/altref prev-MV salvage
 - **Raised:** 2026-07-05
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T170438Z-p91782-n976304000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00013-run-fix-20260730T170438Z-p91782-n976304000-c1
-- **Owner base:** eb9d44796d79e7c7c1ff0f16bd1f3eb1d9e9affe
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T17:04:38Z
-- **Owner until:** 2026-07-30T19:04:38Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-05, raised by Codex code-review pass over `crates/rvp9-encoder/` at `a86e58c260ce`)
+- **State history:** Open (2026-07-05, raised by Codex code-review pass over `crates/rvp9-encoder/` at `a86e58c260ce`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T170438Z-p91782-n976304000-c1 branch=task/bug-RVP9-BUG-KILN-00013-run-fix-20260730T170438Z-p91782-n976304000-c1 code=d39554d2af295361751556dd614afc786b37dfa0 gate=manual)
 
 ## Observation
 
