@@ -44,8 +44,84 @@ use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 use rvp9_harness::container::{IvfHeader, write_ivf};
 use rvp9_harness::y4m::{YuvFrameBuf, probe_testsrc_720p, read_cropped as y4m_read_cropped};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+
+const VPXDEC_TIMEOUT: Duration = Duration::from_secs(30);
+static TEMP_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+struct ScopedTempDir {
+    path: PathBuf,
+}
+
+impl ScopedTempDir {
+    fn new(prefix: &str) -> std::io::Result<Self> {
+        loop {
+            let sequence = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let path =
+                std::env::temp_dir().join(format!("{prefix}-{}-{sequence}", std::process::id()));
+            match std::fs::create_dir(&path) {
+                Ok(()) => return Ok(Self { path }),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for ScopedTempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+fn run_with_timeout(command: &mut Command, timeout: Duration) -> Result<ExitStatus, String> {
+    command.stdin(Stdio::null());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("vpxdec spawn: {error}"))?;
+    let deadline = Instant::now() + timeout;
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) if Instant::now() >= deadline => {
+                let kill_result = child.kill();
+                let wait_result = child.wait();
+                if let Err(error) = kill_result {
+                    return Err(format!(
+                        "vpxdec timed out after {:.1}s and could not be killed: {error}",
+                        timeout.as_secs_f64()
+                    ));
+                }
+                if let Err(error) = wait_result {
+                    return Err(format!(
+                        "vpxdec timed out after {:.1}s and could not be reaped: {error}",
+                        timeout.as_secs_f64()
+                    ));
+                }
+                return Err(format!(
+                    "vpxdec timed out after {:.1}s",
+                    timeout.as_secs_f64()
+                ));
+            }
+            Ok(None) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                std::thread::sleep(remaining.min(Duration::from_millis(10)));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("vpxdec status: {error}"));
+            }
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // CLI.
@@ -385,28 +461,33 @@ fn run_one_iteration(
 
     // ---- Optional vpxdec cross-decode ------------------------------------
     if let Some(vpxdec) = cross_decode {
-        let tmp_dir = std::env::temp_dir();
-        let ivf_path = tmp_dir.join(format!("rvp9_soak_iter{iter_idx}.ivf"));
+        let tmp_dir = ScopedTempDir::new("rvp9-soak-cross-decode")
+            .map_err(|e| format!("create cross-decode temp dir: {e}"))?;
+        let ivf_path = tmp_dir.path().join(format!("iter{iter_idx}.ivf"));
         {
             let mut f = std::fs::File::create(&ivf_path).map_err(|e| format!("create ivf: {e}"))?;
             let header = IvfHeader::vp9(w as u16, h as u16, framerate.round() as u32, 1);
             let packet_refs: Vec<&[u8]> = packets.iter().map(Vec::as_slice).collect();
             write_ivf(&mut f, &header, &packet_refs).map_err(|e| format!("write_ivf: {e}"))?;
         }
-        let out_path = tmp_dir.join(format!("rvp9_soak_iter{iter_idx}.yuv"));
-        let status = Command::new(vpxdec)
+        let out_path = tmp_dir.path().join(format!("iter{iter_idx}.yuv"));
+        let stderr_path = tmp_dir.path().join("vpxdec.stderr");
+        let stderr_file = std::fs::File::create(&stderr_path)
+            .map_err(|e| format!("create vpxdec stderr file: {e}"))?;
+        let mut command = Command::new(vpxdec);
+        command
             .args(["--codec=vp9", "--i420", "-o"])
             .arg(&out_path)
             .arg(&ivf_path)
-            .output()
-            .map_err(|e| format!("vpxdec spawn: {e}"))?;
-        let _ = std::fs::remove_file(&ivf_path);
-        let _ = std::fs::remove_file(&out_path);
-        if !status.status.success() {
+            .stdout(Stdio::null())
+            .stderr(Stdio::from(stderr_file));
+        let status = run_with_timeout(&mut command, VPXDEC_TIMEOUT)?;
+        if !status.success() {
+            let stderr = std::fs::read(&stderr_path).unwrap_or_default();
             return Err(format!(
                 "vpxdec exited non-zero: {} stderr={}",
-                status.status,
-                String::from_utf8_lossy(&status.stderr)
+                status,
+                String::from_utf8_lossy(&stderr)
             ));
         }
     }
@@ -592,4 +673,44 @@ fn print_report(
         last_iter_ms = last_iter_elapsed.as_secs_f64() * 1000.0,
         rss = fmt_bytes(rss::current_rss_bytes()),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cross_decode_temp_dirs_are_isolated_and_cleaned() {
+        let first = ScopedTempDir::new("rvp9-soak-test").unwrap();
+        let second = ScopedTempDir::new("rvp9-soak-test").unwrap();
+        let first_path = first.path().to_owned();
+
+        assert_ne!(first.path(), second.path());
+        std::fs::write(first.path().join("marker"), b"owned").unwrap();
+        drop(first);
+        assert!(!first_path.exists());
+    }
+
+    #[test]
+    fn cross_decoder_timeout_kills_child() {
+        const CHILD_ENV: &str = "RVP9_SOAK_TIMEOUT_TEST_CHILD";
+        if std::env::var_os(CHILD_ENV).is_some() {
+            std::thread::sleep(Duration::from_secs(60));
+            return;
+        }
+
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "tests::cross_decoder_timeout_kills_child",
+                "--nocapture",
+            ])
+            .env(CHILD_ENV, "1");
+
+        let started = Instant::now();
+        let error = run_with_timeout(&mut command, Duration::from_millis(100)).unwrap_err();
+        assert!(error.contains("timed out"), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
 }
