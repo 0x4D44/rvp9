@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00017 - Public segmentation helper panics on out-of-range segment IDs
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** encoder/segmentation public API
 - **Raised:** 2026-07-05
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T194323Z-p38606-n589160000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00017-run-fix-20260730T194323Z-p38606-n589160000-c1
-- **Owner base:** 027444d392ccebe91e64d570d4b93d7b2bed4e56
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T19:43:23Z
-- **Owner until:** 2026-07-30T21:43:23Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-05, raised by Codex code-review pass over `crates/rvp9-encoder/` at `a86e58c260ce`)
+- **State history:** Open (2026-07-05, raised by Codex code-review pass over `crates/rvp9-encoder/` at `a86e58c260ce`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T194323Z-p38606-n589160000-c1 branch=task/bug-RVP9-BUG-KILN-00017-run-fix-20260730T194323Z-p38606-n589160000-c1 code=4ae37be1da2947c526eddfc1323ef534d55341f5 gate=manual)
 
 ## Observation
 
