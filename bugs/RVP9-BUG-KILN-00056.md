@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00056 - Benchmark throughput drivers silently skip packet parse failures
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** bench/throughput
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T184006Z-p74554-n597592000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00056-run-fix-20260730T184006Z-p74554-n597592000-c1
-- **Owner base:** 91b4732bfa529b5d3fefd281dad6ecffc07a7d30
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T18:40:06Z
-- **Owner until:** 2026-07-30T20:40:06Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-bench/` at `f7e477d`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-bench/` at `f7e477d`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T184006Z-p74554-n597592000-c1 branch=task/bug-RVP9-BUG-KILN-00056-run-fix-20260730T184006Z-p74554-n597592000-c1 code=80a3ea074c7b761c4e5d93c518804f9347ed7a2c gate=manual)
 
 ## Observation
 
