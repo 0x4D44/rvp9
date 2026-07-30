@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** encoder/denoiser public API
 - **Raised:** 2026-07-05
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T194839Z-p44554-n241463000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00018-run-fix-20260730T194839Z-p44554-n241463000-c1
+- **Owner base:** 9e5139d1454b7605b561ec6924a10f06e313e021
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T19:48:39Z
+- **Owner until:** 2026-07-30T21:48:39Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
