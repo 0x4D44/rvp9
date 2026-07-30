@@ -149,8 +149,6 @@ struct EncOpts {
     bit_depth: Option<u8>,
     /// `--psnr` (libvpx `vpxenc.c:135-136`).
     psnr: bool,
-    /// `--webm` — WebM container output toggle.
-    webm: bool,
 
     // ---- W7.8: long-tail vpxenc flags (master inventory A12 tail).
     //
@@ -272,7 +270,6 @@ impl Default for EncOpts {
             temporal_layers: None,
             bit_depth: None,
             psnr: false,
-            webm: false,
 
             // ---- W7.8: long-tail vpxenc flags.
             auto_alt_ref: None,
@@ -740,11 +737,8 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             long: "webm",
             short: None,
             arg: Arg::None,
-            help: "WebM output",
-            apply: Some(|o, _| {
-                o.webm = true;
-                Ok(())
-            }),
+            help: "WebM output (not supported yet)",
+            apply: None,
         },
         // ---- W7.8: long-tail vpxenc flags (parsed + stored; later
         // waves plumb into EncoderConfig / two-pass / SVC / LF paths).
@@ -1644,7 +1638,6 @@ mod tests {
             "--svc",
             "--bit-depth=10",
             "--psnr",
-            "--webm",
         ]);
         let mut opts = EncOpts::default();
         let pos = args::parse(&table, &mut opts, &argv, "rvp9enc").unwrap_or_else(|e| {
@@ -1681,7 +1674,6 @@ mod tests {
         assert!(opts.svc);
         assert_eq!(opts.bit_depth, Some(10));
         assert!(opts.psnr);
-        assert!(opts.webm);
     }
 
     /// `--good` and `--best` are mutually exclusive with `--rt` (the
