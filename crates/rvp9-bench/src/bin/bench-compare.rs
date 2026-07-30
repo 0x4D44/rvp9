@@ -100,7 +100,6 @@ fn parse_args() -> Args {
 /// `scripts/bench-headtohead.ps1` and the writer in this PR).
 const COL_SCHEMA_VERSION: usize = 0;
 const COL_TIMESTAMP: usize = 1;
-const COL_GIT_SHA: usize = 5;
 const COL_RUN_INDEX: usize = 6;
 const COL_FIXTURE: usize = 7;
 const COL_THREADS: usize = 8;
@@ -120,32 +119,62 @@ fn parse_csv(path: &Path) -> Result<Vec<CompareRow>, String> {
             continue;
         }
         let cols: Vec<&str> = line.split(',').collect();
-        if cols.len() < SCHEMA_V3_MIN_COLS {
-            continue;
-        }
-        let Ok(schema) = cols[COL_SCHEMA_VERSION].parse::<u32>() else {
-            continue;
-        };
+        let line_number = lineno + 1;
+        let schema = cols[COL_SCHEMA_VERSION].parse::<u32>().map_err(|e| {
+            format!(
+                "{}:{line_number}: invalid schema version: {e}",
+                path.display()
+            )
+        })?;
         if schema != 3 {
-            // bench-compare only understands the new schema (run_index
-            // column). Older rows are skipped silently.
-            let _ = cols[COL_GIT_SHA]; // keep COL_GIT_SHA used in case
-            // someone wants to extend filtering by sha later.
+            // Unknown schemas are intentionally ignored. Their column
+            // layouts are not ours to validate.
             continue;
         }
-        let Ok(timestamp) = cols[COL_TIMESTAMP].parse::<u64>() else {
-            continue;
-        };
-        let Ok(run_index) = cols[COL_RUN_INDEX].parse::<u32>() else {
-            continue;
-        };
+        if cols.len() < SCHEMA_V3_MIN_COLS {
+            return Err(format!(
+                "{}:{line_number}: schema-v3 row has {} columns; expected at least {SCHEMA_V3_MIN_COLS}",
+                path.display(),
+                cols.len()
+            ));
+        }
+        let timestamp = cols[COL_TIMESTAMP].parse::<u64>().map_err(|e| {
+            format!(
+                "{}:{line_number}: invalid schema-v3 timestamp: {e}",
+                path.display()
+            )
+        })?;
+        let run_index = cols[COL_RUN_INDEX].parse::<u32>().map_err(|e| {
+            format!(
+                "{}:{line_number}: invalid schema-v3 run index: {e}",
+                path.display()
+            )
+        })?;
         let fixture = cols[COL_FIXTURE].to_string();
-        let Ok(threads) = cols[COL_THREADS].parse::<u32>() else {
-            continue;
-        };
-        let Ok(rvp9_p50_us) = cols[COL_RVP9_P50_US].parse::<f64>() else {
-            continue;
-        };
+        if fixture.is_empty() {
+            return Err(format!(
+                "{}:{line_number}: schema-v3 fixture is empty",
+                path.display()
+            ));
+        }
+        let threads = cols[COL_THREADS].parse::<u32>().map_err(|e| {
+            format!(
+                "{}:{line_number}: invalid schema-v3 thread count: {e}",
+                path.display()
+            )
+        })?;
+        let rvp9_p50_us = cols[COL_RVP9_P50_US].parse::<f64>().map_err(|e| {
+            format!(
+                "{}:{line_number}: invalid schema-v3 rvp9 p50: {e}",
+                path.display()
+            )
+        })?;
+        if !rvp9_p50_us.is_finite() {
+            return Err(format!(
+                "{}:{line_number}: schema-v3 rvp9 p50 must be finite",
+                path.display()
+            ));
+        }
         rows.push(CompareRow {
             timestamp,
             run_index,
@@ -218,9 +247,10 @@ fn main() {
 
     if rows.is_empty() {
         eprintln!(
-            "warning: no schema-v3 rows found in {}",
+            "error: no valid schema-v3 rows found in {}",
             args.csv_path.display(),
         );
+        std::process::exit(1);
     }
 
     // Bucket by (fixture, threads), separated into baseline/candidate
@@ -245,6 +275,25 @@ fn main() {
                 .push(row.rvp9_p50_us);
         }
     }
+    if groups.is_empty() {
+        eprintln!(
+            "error: no rows matched baseline {} or candidate {}",
+            args.baseline_ts, args.candidate_ts
+        );
+        std::process::exit(1);
+    }
+    if let Some(((fixture, threads), (base, candidate))) = groups
+        .iter()
+        .find(|(_, (base, candidate))| base.is_empty() || candidate.is_empty())
+    {
+        eprintln!(
+            "error: comparison group {fixture} at {threads} thread(s) is one-sided \
+             (baseline samples={}, candidate samples={})",
+            base.len(),
+            candidate.len()
+        );
+        std::process::exit(1);
+    }
 
     let mut md = String::new();
     md.push_str(&format!(
@@ -257,10 +306,6 @@ fn main() {
     md.push_str("gate: **WIN** if p<0.05 and Δ ≤ -5%; **REGRESSION** if p<0.05 and Δ ≥ +5%; NOISE otherwise.\n\n");
     md.push_str("| fixture | threads | n_base | n_cand | base p50 (ms) | cand p50 (ms) | Δ% | U | p | gate |\n");
     md.push_str("|---|---|---|---|---|---|---|---|---|---|\n");
-
-    if groups.is_empty() {
-        md.push_str("| (no rows matched the timestamps) |\n");
-    }
 
     let mut any_win = false;
     let mut any_regression = false;
