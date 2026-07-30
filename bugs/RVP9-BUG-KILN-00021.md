@@ -5,15 +5,15 @@
 - **Severity:** High
 - **Area:** core/entropy detokenize API
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T155756Z-p26129-n246270000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00021-run-fix-20260730T155756Z-p26129-n246270000-c1
+- **Owner base:** 4bf33ee7ba1b1fc0776cd3fbd85449e2425b7307
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T15:57:56Z
+- **Owner until:** 2026-07-30T17:57:56Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
