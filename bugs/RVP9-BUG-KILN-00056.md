@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** bench/throughput
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T184006Z-p74554-n597592000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00056-run-fix-20260730T184006Z-p74554-n597592000-c1
+- **Owner base:** 91b4732bfa529b5d3fefd281dad6ecffc07a7d30
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T18:40:06Z
+- **Owner until:** 2026-07-30T20:40:06Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
