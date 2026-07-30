@@ -86,6 +86,39 @@ pub enum SegmapMethod {
     Temporal,
 }
 
+/// Identifies which caller-provided segment map contains an invalid ID.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum SegmapInput {
+    /// Previous frame's segment map.
+    Previous,
+    /// Current frame's segment map.
+    Current,
+}
+
+/// Error returned when a segment map contains an ID outside VP9's
+/// `0..8` range.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct InvalidSegmentId {
+    /// Map containing the invalid value.
+    pub input: SegmapInput,
+    /// Zero-based mi-cell index containing the invalid value.
+    pub cell_index: usize,
+    /// Invalid segment ID supplied by the caller.
+    pub segment_id: u8,
+}
+
+impl std::fmt::Display for InvalidSegmentId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{:?} segment map cell {} has ID {}; expected 0..{}",
+            self.input, self.cell_index, self.segment_id, MAX_SEGMENTS
+        )
+    }
+}
+
+impl std::error::Error for InvalidSegmentId {}
+
 /// libvpx `get_prob` (`vpx_dsp/prob.h:48-55`) — `(num*256 + den/2)/den`
 /// clipped to `[1, 255]`. The clipping uses the bit-twiddle
 /// `p | ((255 - p) >> 23) | (p == 0)` which collapses to "clamp to 1
@@ -178,20 +211,20 @@ fn cost_segmap(segcounts: &[u32; MAX_SEGMENTS], probs: &[u8; SEG_TREE_PROBS]) ->
 ///   the function always returns [`SegmapMethod::Spatial`] (libvpx
 ///   `frame_is_intra_only(cm)` check, line 288).
 ///
-/// Returns the picked method.
+/// Returns the picked method, or [`InvalidSegmentId`] when either map
+/// contains a segment ID outside VP9's supported range.
 ///
 /// # Panics
 ///
 /// Panics if `prev_segmap.len() != cur_segmap.len()` or if
 /// `cur_segmap.len() != mi_rows * mi_cols`.
-#[must_use]
 pub fn choose_segmap_coding_method(
     prev_segmap: &[u8],
     cur_segmap: &[u8],
     mi_rows: usize,
     mi_cols: usize,
     is_key_frame: bool,
-) -> SegmapMethod {
+) -> Result<SegmapMethod, InvalidSegmentId> {
     let n_cells = mi_rows * mi_cols;
     assert_eq!(
         cur_segmap.len(),
@@ -204,6 +237,23 @@ pub fn choose_segmap_coding_method(
         "prev_segmap and cur_segmap must be the same length",
     );
 
+    for (input, map) in [
+        (SegmapInput::Previous, prev_segmap),
+        (SegmapInput::Current, cur_segmap),
+    ] {
+        if let Some((cell_index, &segment_id)) = map
+            .iter()
+            .enumerate()
+            .find(|&(_, &segment_id)| usize::from(segment_id) >= MAX_SEGMENTS)
+        {
+            return Err(InvalidSegmentId {
+                input,
+                cell_index,
+                segment_id,
+            });
+        }
+    }
+
     // libvpx `vp9_segmentation.c:265-280` — walk the frame and tally
     // segcounts. We collapse the recursive count_segs_sb walk to a
     // per-mi pass (see module docs for the rationale).
@@ -215,7 +265,6 @@ pub fn choose_segmap_coding_method(
 
     for i in 0..n_cells {
         let cur_id = usize::from(cur_segmap[i]);
-        debug_assert!(cur_id < MAX_SEGMENTS, "segment id out of range");
         no_pred_segcounts[cur_id] += 1;
         if !is_key_frame {
             let prev_id = prev_segmap[i];
@@ -233,7 +282,7 @@ pub fn choose_segmap_coding_method(
 
     // libvpx `vp9_segmentation.c:288` — key frames cannot use temporal.
     if is_key_frame {
-        return SegmapMethod::Spatial;
+        return Ok(SegmapMethod::Spatial);
     }
 
     // libvpx `vp9_segmentation.c:291-304` — unpredicted tree + cost,
@@ -249,9 +298,9 @@ pub fn choose_segmap_coding_method(
 
     // libvpx `vp9_segmentation.c:308-314`.
     if t_pred_cost < no_pred_cost {
-        SegmapMethod::Temporal
+        Ok(SegmapMethod::Temporal)
     } else {
-        SegmapMethod::Spatial
+        Ok(SegmapMethod::Spatial)
     }
 }
 
@@ -282,7 +331,7 @@ mod tests {
                 map[r * MI_COLS + c] = (c % 3) as u8;
             }
         }
-        let picked = choose_segmap_coding_method(&map, &map, MI_ROWS, MI_COLS, false);
+        let picked = choose_segmap_coding_method(&map, &map, MI_ROWS, MI_COLS, false).unwrap();
         assert_eq!(
             picked,
             SegmapMethod::Temporal,
@@ -300,7 +349,7 @@ mod tests {
         // prev = all-0, cur = all-1 ⇒ NO cell predicts.
         let prev = vec![0u8; MI_ROWS * MI_COLS];
         let cur = vec![1u8; MI_ROWS * MI_COLS];
-        let picked = choose_segmap_coding_method(&prev, &cur, MI_ROWS, MI_COLS, false);
+        let picked = choose_segmap_coding_method(&prev, &cur, MI_ROWS, MI_COLS, false).unwrap();
         assert_eq!(
             picked,
             SegmapMethod::Spatial,
@@ -314,7 +363,7 @@ mod tests {
     #[test]
     fn w5_7_choose_segmap_method_keyframe_always_spatial() {
         let map = vec![1u8; MI_ROWS * MI_COLS];
-        let picked = choose_segmap_coding_method(&map, &map, MI_ROWS, MI_COLS, true);
+        let picked = choose_segmap_coding_method(&map, &map, MI_ROWS, MI_COLS, true).unwrap();
         assert_eq!(
             picked,
             SegmapMethod::Spatial,
@@ -343,5 +392,26 @@ mod tests {
     #[test]
     fn w5_7_get_binary_prob_zero_zero_is_128() {
         assert_eq!(get_binary_prob(0, 0), 128);
+    }
+
+    #[test]
+    fn choose_segmap_method_rejects_out_of_range_ids() {
+        let valid = vec![0u8; MI_ROWS * MI_COLS];
+        let mut invalid_cur = valid.clone();
+        invalid_cur[7] = MAX_SEGMENTS as u8;
+        let cur_error =
+            choose_segmap_coding_method(&valid, &invalid_cur, MI_ROWS, MI_COLS, false).unwrap_err();
+        assert_eq!(cur_error.input, SegmapInput::Current);
+        assert_eq!(cur_error.cell_index, 7);
+        assert_eq!(cur_error.segment_id, MAX_SEGMENTS as u8);
+
+        let mut invalid_prev = valid.clone();
+        invalid_prev[11] = u8::MAX;
+        let prev_error =
+            choose_segmap_coding_method(&invalid_prev, &valid, MI_ROWS, MI_COLS, false)
+                .unwrap_err();
+        assert_eq!(prev_error.input, SegmapInput::Previous);
+        assert_eq!(prev_error.cell_index, 11);
+        assert_eq!(prev_error.segment_id, u8::MAX);
     }
 }
