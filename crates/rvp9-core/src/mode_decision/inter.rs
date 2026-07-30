@@ -468,27 +468,14 @@ mod test_gate_override {
 /// so legacy tests keep their previous semantics.
 const F1_DEFAULT_SKIP_CTX: usize = 1;
 
-/// Return libvpx's 8-bit `sadperbit16` full-pel MV-cost multiplier.
-///
-/// Exact port of `init_me_luts_bd` (`vp9_rd.c:165-175`):
-///
-/// ```text
-/// q = vp9_convert_qindex_to_q(qindex, 8) = ac_quant(qindex) / 4
-/// sadperbit16 = (int)(0.0418 * q + 2.4107)
-/// ```
-///
-/// libvpx refreshes this value from the effective block qindex through
-/// `vp9_initialize_me_consts`. The previous fixed value `16` matched only
-/// very coarse qindexes and over-penalised motion on normal realtime frames.
-#[inline]
-fn sad_per_bit16(q_index: u8) -> i32 {
-    let q = f64::from(crate::quant::ac_quant(
-        i32::from(q_index),
-        0,
-        crate::bitstream::BitDepth::Eight,
-    )) / 4.0;
-    (0.0418 * q + 2.4107) as i32
-}
+/// `sad_per_bit` heuristic for full-pel MV search — libvpx's
+/// `sadperbit16` is `2 * x->errorperbit` for the realtime path, where
+/// `errorperbit ≈ rd_mult >> RD_EPB_SHIFT` (`vp9_rd.c:294-302`,
+/// `vp9_rdopt.h:42`). For Path-A v1 we use a simpler constant that
+/// keeps the cost balanced against the SAD magnitudes the diamond
+/// search compares: an empirical small positive integer that lets the
+/// dist-attractor win on shifted-ref input. Tuning lives later.
+const DEFAULT_SAD_PER_BIT: i32 = 16;
 
 /// `error_per_bit` for sub-pel refinement, analogous to
 /// [`DEFAULT_SAD_PER_BIT`] but in the variance domain. libvpx derives
@@ -2647,7 +2634,7 @@ fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
         center_mv: ref_mv,
         start_mv,
         mv_limits: params.mv_limits,
-        sad_per_bit: sad_per_bit16(params.q_index),
+        sad_per_bit: DEFAULT_SAD_PER_BIT,
         mv_costs: params.mv_costs,
         max_iters,
         site_config: params.site_config,
@@ -4157,23 +4144,6 @@ mod tests {
     use crate::entropy::mv_probs::DEFAULT_NMV_CONTEXT;
     use crate::mv_search::init_dsmotion_compensation;
     use crate::quant::forward::{QuantizerDeltas, init_plane_quantizers};
-
-    #[test]
-    fn sad_per_bit16_matches_libvpx_qindex_lut_formula() {
-        for (q_index, expected) in [
-            (0, 2),
-            (60, 3),
-            (128, 4),
-            (160, 5),
-            (180, 7),
-            (200, 9),
-            (220, 12),
-            (240, 16),
-            (255, 21),
-        ] {
-            assert_eq!(sad_per_bit16(q_index), expected, "qindex {q_index}");
-        }
-    }
 
     /// Build a minimal InterFrame `FrameKind` for tests — only the
     /// variant matters for [`pick_inter_mode_luma`]'s downstream
