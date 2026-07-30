@@ -1,6 +1,6 @@
 # RVP9-BUG-FLUX-00001 — AArch64 all-targets gate writes an x86-only avx2 capability field
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** core/dsp dispatch tests
@@ -17,8 +17,8 @@
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
-- **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-30, raised via `deltic bugs new`)
+- **Attempts:** fix=1, doubt=0, indeterminate=0
+- **State history:** Open (2026-07-30, raised via `deltic bugs new`) → Fixed (2026-07-30, `ecb6d88`, fixed by OpenAI Codex)
 
 ## Observation
 
@@ -26,6 +26,10 @@ Observed on aarch64-apple-darwin with Rust 1.95.0: cargo clippy --workspace --al
 
 ## Fix
 
-<unfixed — raised only>
+Commit `ecb6d88` restricts `forced_scalar_caps_installs_scalar_directional` to
+`x86_64`, the only target whose capability struct and directional SIMD slots
+the test exercises. `cargo clippy --workspace --all-targets --locked` passes on
+`aarch64-apple-darwin`; the workspace reports only its two pre-existing,
+non-denied `rvp9-bench` dead-code warnings.
 
 ## Notes
