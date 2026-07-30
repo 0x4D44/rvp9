@@ -80,9 +80,11 @@ use rvp9_core::intra_pred::IntraMode;
 use rvp9_core::mode_decision::nonrd_partition::NonRdSplitStats;
 use rvp9_core::mode_decision::partition::{
     PartitionDecision, PartitionSearchParams, choose_partitioning, choose_partitioning_force_split,
+    choose_partitioning_with_ref_mv,
 };
 use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, Mv, RefFrame};
 use rvp9_core::mv_search::PlaneRef;
+use rvp9_core::mv_search::int_pro_me::int_pro_motion_estimation;
 use rvp9_core::transforms::TxMode;
 
 use crate::aq_cyclic_refresh::{CyclicRefresh, CyclicRefreshConfig};
@@ -3980,6 +3982,11 @@ fn choose_partitions_for_frame(input: FramePartitionInput<'_>) -> Vec<Vec<Partit
     };
     let vbp_force_split_enabled =
         !is_keyframe && std::env::var_os("RVP9_VBP_FORCE_SPLIT").is_some_and(|v| v != "0");
+    // libvpx cpu-used 6–8 runs SB-level integer-projection ME before
+    // `choose_partitioning`, then builds the variance tree against that
+    // motion-compensated LAST predictor. Keep `=0` as the zero-MV diagnostic.
+    let vbp_intpro_ref_enabled =
+        !is_keyframe && std::env::var_os("RVP9_VBP_INTPRO_REF").is_none_or(|value| value != "0");
     let vbp_qindex = vbp_qindex_for_partition(q_index, is_keyframe);
     let vbp_avg_inter_qindex = vbp_avg_inter_qindex_for_partition(avg_inter_qindex, is_keyframe);
 
@@ -3999,6 +4006,15 @@ fn choose_partitions_for_frame(input: FramePartitionInput<'_>) -> Vec<Vec<Partit
             };
             let decision = if vbp_force_split_enabled {
                 choose_partitioning_force_split(&params)
+            } else if vbp_intpro_ref_enabled {
+                let int_pro = int_pro_motion_estimation(
+                    &src_plane,
+                    &ref_plane,
+                    sb_col * 64,
+                    sb_row * 64,
+                    BlockSize::Block64x64,
+                );
+                choose_partitioning_with_ref_mv(&params, int_pro.mv)
             } else {
                 choose_partitioning(&params)
             };

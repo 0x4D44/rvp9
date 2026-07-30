@@ -73,6 +73,7 @@
 
 use crate::block::BlockSize;
 use crate::dsp::distortion::variance;
+use crate::mode_info::Mv;
 use crate::mv_search::PlaneRef;
 use crate::quant::forward::{QuantizerDeltas, plane_dequant_pair};
 
@@ -370,7 +371,26 @@ impl VbpThresholds {
 #[must_use]
 pub fn choose_partitioning(params: &PartitionSearchParams<'_>) -> PartitionDecision {
     let thresholds = thresholds_for_params(params);
-    let ref_buf = reference_scratch(params);
+    let ref_buf = reference_scratch(params, Mv::ZERO);
+
+    choose_partitioning_with_force_map(params, &thresholds, &ref_buf, None)
+}
+
+/// Run [`choose_partitioning`] against an integer-pel motion-compensated
+/// reference, mirroring libvpx's `vp9_int_pro_motion_estimation` predictor.
+///
+/// `ref_mv` uses VP9 Q3 units and must identify a full-pel position. Reference
+/// reads beyond the visible plane replicate the nearest edge sample, matching
+/// libvpx's extended reference borders.
+#[must_use]
+pub fn choose_partitioning_with_ref_mv(
+    params: &PartitionSearchParams<'_>,
+    ref_mv: Mv,
+) -> PartitionDecision {
+    debug_assert_eq!(ref_mv.row & 7, 0);
+    debug_assert_eq!(ref_mv.col & 7, 0);
+    let thresholds = thresholds_for_params(params);
+    let ref_buf = reference_scratch(params, ref_mv);
 
     choose_partitioning_with_force_map(params, &thresholds, &ref_buf, None)
 }
@@ -386,7 +406,7 @@ pub fn choose_partitioning(params: &PartitionSearchParams<'_>) -> PartitionDecis
 #[must_use]
 pub fn choose_partitioning_force_split(params: &PartitionSearchParams<'_>) -> PartitionDecision {
     let thresholds = thresholds_for_params(params);
-    let ref_buf = reference_scratch(params);
+    let ref_buf = reference_scratch(params, Mv::ZERO);
     let force_split = ForceSplitMap::for_params(params, &ref_buf, &thresholds);
 
     choose_partitioning_with_force_map(params, &thresholds, &ref_buf, Some(&force_split))
@@ -406,18 +426,23 @@ fn thresholds_for_params(params: &PartitionSearchParams<'_>) -> VbpThresholds {
     }
 }
 
-fn reference_scratch(params: &PartitionSearchParams<'_>) -> [u8; 64 * 64] {
+fn reference_scratch(params: &PartitionSearchParams<'_>, ref_mv: Mv) -> [u8; 64 * 64] {
     // Materialise the reference samples for this 64x64 region into a
-    // contiguous stride-64 scratch buffer. For keyframes we use a
-    // flat-128 fallback; otherwise we copy from `ref_plane`.
+    // contiguous stride-64 scratch buffer. For keyframes we use a flat-128
+    // fallback; otherwise we sample the full-pel motion-compensated reference.
     let mut ref_buf = [128u8; 64 * 64];
     if !params.is_keyframe {
         let (rx, ry) = params.ref_offset_xy;
         let rp = params.ref_plane;
+        let mv_x = i32::from(ref_mv.col) >> 3;
+        let mv_y = i32::from(ref_mv.row) >> 3;
         for r in 0..64 {
             for c in 0..64 {
-                let off = (ry + r) * rp.stride + (rx + c);
-                ref_buf[r * 64 + c] = rp.data[off];
+                let x = (rx as i64 + c as i64 + i64::from(mv_x))
+                    .clamp(0, rp.width.saturating_sub(1) as i64) as usize;
+                let y = (ry as i64 + r as i64 + i64::from(mv_y))
+                    .clamp(0, rp.height.saturating_sub(1) as i64) as usize;
+                ref_buf[r * 64 + c] = rp.data[y * rp.stride + x];
             }
         }
     }
@@ -754,6 +779,47 @@ mod tests {
                 assert_eq!(bs, BlockSize::Block64x64, "flat block should not split");
             }
         }
+    }
+
+    #[test]
+    fn choose_partitioning_with_ref_mv_uses_shifted_reference() {
+        let mut ref_buf = vec![0u8; 128 * 64];
+        let mut state = 0x51A7_E123u32;
+        for px in &mut ref_buf {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            *px = state as u8;
+        }
+        let mut src_buf = vec![0u8; 64 * 64];
+        for row in 0..64 {
+            src_buf[row * 64..(row + 1) * 64]
+                .copy_from_slice(&ref_buf[row * 128 + 8..row * 128 + 72]);
+        }
+        let src = plane_ref(&src_buf);
+        let reference = PlaneRef {
+            data: &ref_buf,
+            stride: 128,
+            width: 128,
+            height: 64,
+        };
+        let params = make_params(&src, &reference, 50, false);
+
+        let zero_mv = choose_partitioning(&params);
+        let shifted = choose_partitioning_with_ref_mv(&params, Mv { row: 0, col: 8 * 8 });
+
+        assert_ne!(
+            zero_mv.cells, shifted.cells,
+            "motion compensation must affect the variance tree"
+        );
+        assert!(
+            shifted
+                .cells
+                .iter()
+                .flatten()
+                .all(|&bs| bs == BlockSize::Block64x64),
+            "an exact motion-compensated reference must keep the 64x64 leaf"
+        );
     }
 
     /// xorshift noise against a flat reference produces huge variance
