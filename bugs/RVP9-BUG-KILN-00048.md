@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00048 - Container and raw CLI input limits still load whole files
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** io/container + cli limits
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T201410Z-p81249-n283615000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00048-run-fix-20260730T201410Z-p81249-n283615000-c1
-- **Owner base:** 4366d00a2757902d4c0f0a2282a1909d618e8f32
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T20:14:10Z
-- **Owner until:** 2026-07-30T22:14:10Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-io/` at `6128772`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-io/` at `6128772`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T201410Z-p81249-n283615000-c1 branch=task/bug-RVP9-BUG-KILN-00048-run-fix-20260730T201410Z-p81249-n283615000-c1 code=767a650247d174461df59c010162e0c0afa30871 gate=manual)
 
 ## Observation
 
