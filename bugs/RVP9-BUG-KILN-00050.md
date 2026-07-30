@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** cli/rvp9enc option contract
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T200415Z-p68292-n478425000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00050-run-fix-20260730T200415Z-p68292-n478425000-c1
+- **Owner base:** 52504a2478ea5ba9b9f9ee57cc48b880a7045e26
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T20:04:15Z
+- **Owner until:** 2026-07-30T22:04:15Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
