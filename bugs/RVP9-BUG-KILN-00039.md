@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** harness/path-resolution
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T193433Z-p28955-n240937000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00039-run-fix-20260730T193433Z-p28955-n240937000-c1
+- **Owner base:** 3007b28ea1890194a9f84d281139a568d7e6d66a
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T19:34:33Z
+- **Owner until:** 2026-07-30T21:34:33Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
