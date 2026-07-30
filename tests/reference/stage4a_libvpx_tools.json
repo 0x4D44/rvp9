@@ -1,4 +1,25 @@
 {
   "schema": 1,
-  "approved_tools": []
+  "approved_tools": [
+    {
+      "platform": "macOS arm64",
+      "target_triple": "arm64-darwin23-gcc",
+      "libvpx_url": "https://chromium.googlesource.com/webm/libvpx",
+      "libvpx_tag": "v1.14.1",
+      "libvpx_commit": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd",
+      "build_script": "scripts/build-libvpx.sh",
+      "configure_args": [
+        "--target=arm64-darwin23-gcc",
+        "--enable-vp9",
+        "--disable-vp8",
+        "--enable-vp9-highbitdepth",
+        "--enable-pic",
+        "--disable-docs",
+        "--disable-unit-tests"
+      ],
+      "vpxenc_sha256": "1bcd1492c1fc6319820862a685d9ff35f7a460570ad8b0704ce36e1b0d2ebe66",
+      "vpxdec_sha256": "dde363e5dbec2abb2298690039566ea7fe3b3fbe0ed0d2b608cb7e11aa075f65",
+      "notes": "Built on Apple M5 Max with Apple Command Line Tools and CFLAGS=-O3 -fomit-frame-pointer."
+    }
+  ]
 }
