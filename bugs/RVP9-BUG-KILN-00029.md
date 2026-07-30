@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00029 - Public decode_tile_inter can panic on short previous segment maps
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** decoder/tile public API
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T180322Z-p10015-n825996000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00029-run-fix-20260730T180322Z-p10015-n825996000-c1
-- **Owner base:** cc9e12055ff16516fa972719f90d0295f797f10c
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T18:03:22Z
-- **Owner until:** 2026-07-30T20:03:22Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-decoder/` at `ceb57b6`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-decoder/` at `ceb57b6`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T180322Z-p10015-n825996000-c1 branch=task/bug-RVP9-BUG-KILN-00029-run-fix-20260730T180322Z-p10015-n825996000-c1 code=1fc00e3fdb1de4333b29088cf887757f3b5db3c8 gate=manual)
 
 ## Observation
 
