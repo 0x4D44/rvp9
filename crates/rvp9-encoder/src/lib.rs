@@ -2499,6 +2499,14 @@ fn a4_partition_rd_mult_for_env(base_rd_mult: u32) -> u32 {
     scaled.min(u64::from(u32::MAX)) as u32
 }
 
+fn partition_distortion_from_picker_rd(best_rd_cost: i64, best_rate: u32, rd_mult: u32) -> u32 {
+    let rate_term = (i64::from(best_rate) * i64::from(rd_mult)
+        + (1 << (rvp9_core::cost::VP9_PROB_COST_SHIFT - 1)))
+        >> rvp9_core::cost::VP9_PROB_COST_SHIFT;
+    let dist_term = best_rd_cost.saturating_sub(rate_term).max(0) as u64;
+    (dist_term >> rvp9_core::mode_decision::RDDIV_BITS).min(u64::from(u32::MAX)) as u32
+}
+
 fn inter_rd_calibration_for_mode(
     rc_mode: crate::rate_control::RcMode,
     speed: i32,
@@ -3221,6 +3229,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let variance_hint_dump_enabled =
         std::env::var_os("RVP9_VARIANCE_HINT_DUMP").is_some_and(|v| v != "0");
     let a4_rect_disable = std::env::var_os("RVP9_A4_RECT_DISABLE").is_some();
+    let a4_picker_rd_cost =
+        std::env::var_os("RVP9_A4_PICKER_RD_COST").is_none_or(|value| value != "0");
     let a4_split_stats_enabled = std::env::var_os("RVP9_A4_SPLIT_STATS").is_some();
     let mut a4_profile_calls = [0usize; rvp9_core::block::BLOCK_SIZES];
     let mut a4_profile_pick_time = [std::time::Duration::ZERO; rvp9_core::block::BLOCK_SIZES];
@@ -3817,7 +3827,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // the existing encoding).
                     Some(PartitionRdCandidate {
                         rate: result.best_rate,
-                        dist: result.best_distortion,
+                        dist: if a4_picker_rd_cost {
+                            partition_distortion_from_picker_rd(
+                                result.best_rd_cost,
+                                result.best_rate,
+                                f3_rd_mult,
+                            )
+                        } else {
+                            result.best_distortion
+                        },
                         mv: result.best_mv,
                         mode: result.best_mode as u8,
                         ref_frame: result.picked_ref_frame as u8,
@@ -7921,6 +7939,19 @@ mod tests {
             std::env::remove_var(num_key);
             std::env::remove_var(den_key);
         }
+    }
+
+    #[test]
+    fn partition_distortion_recovers_picker_rd_domain() {
+        let rd_mult = 1_024;
+        let rate = 768;
+        let dist = 12_345;
+        let cost = rvp9_core::mode_decision::rd_cost(rd_mult, rate, dist);
+
+        assert_eq!(
+            partition_distortion_from_picker_rd(cost, rate, rd_mult),
+            dist as u32
+        );
     }
 
     #[test]
