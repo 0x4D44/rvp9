@@ -30,7 +30,7 @@
 //! so Stage 4a regressions can gate the build.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, ExitCode};
 
 struct Args {
     anchor_encoder: PathBuf,
@@ -191,6 +191,18 @@ fn bd_rate(anchor: &[RdPoint], test: &[RdPoint]) -> Option<f64> {
     Some((avg_diff.exp() - 1.0) * 100.0)
 }
 
+fn measured_bd_rate(anchor: &[RdPoint], test: &[RdPoint]) -> Result<f64, &'static str> {
+    if anchor.iter().any(|p| !p.psnr_db.is_finite()) || test.iter().any(|p| !p.psnr_db.is_finite())
+    {
+        return Err("PSNR measurement failed");
+    }
+    let value = bd_rate(anchor, test).ok_or("insufficient or non-overlapping RD points")?;
+    if !value.is_finite() {
+        return Err("BD-rate calculation produced a non-finite result");
+    }
+    Ok(value)
+}
+
 /// Least-squares cubic fit y = c0 + c1*x + c2*x^2 + c3*x^3.
 /// Uses the normal equations (4x4 system) with Gauss-Jordan elimination.
 ///
@@ -244,7 +256,7 @@ fn polyfit3(pts: &[(f64, f64)]) -> [f64; 4] {
     [m[0][4], m[1][4], m[2][4], m[3][4]]
 }
 
-fn main() {
+fn main() -> ExitCode {
     let args = parse_args();
 
     println!("=== BD-rate sweep ===");
@@ -297,31 +309,36 @@ fn main() {
         });
     }
 
-    let bd = if anchor_rd.iter().any(|p| p.psnr_db.is_nan())
-        || test_rd.iter().any(|p| p.psnr_db.is_nan())
-    {
-        println!("\nBD-rate: SKIP (PSNR yielded NaN — check vpxdec invocation)");
-        None
-    } else {
-        let result = bd_rate(&anchor_rd, &test_rd);
-        match result {
-            Some(bd) => println!("\nBD-rate: {bd:+.3}%  (anchor → test)"),
-            None => println!("\nBD-rate: insufficient points"),
+    let bd = match measured_bd_rate(&anchor_rd, &test_rd) {
+        Ok(value) => {
+            println!("\nBD-rate: {value:+.3}%  (anchor → test)");
+            value
         }
-        result
+        Err(error) => {
+            eprintln!("\nBD-rate failed: {error}");
+            return ExitCode::FAILURE;
+        }
     };
 
     // Optional CSV output. Schema is stable so CI can ingest:
     //   role,target_kbps,measured_kbps,psnr_db
     // then a trailing one-row summary:
-    //   bdrate_pct,<value-or-empty>
+    //   bdrate_pct,<value>
     if let Some(csv_path) = &args.csv {
-        if let Err(e) = write_csv(csv_path, &args.bitrates_kbps, &anchor_rd, &test_rd, bd) {
-            eprintln!("warn: --csv write failed: {e}");
+        if let Err(e) = write_csv(
+            csv_path,
+            &args.bitrates_kbps,
+            &anchor_rd,
+            &test_rd,
+            Some(bd),
+        ) {
+            eprintln!("error: --csv write failed: {e}");
+            return ExitCode::FAILURE;
         } else {
             println!("\ncsv: {}", csv_path.display());
         }
     }
+    ExitCode::SUCCESS
 }
 
 fn write_csv(
@@ -332,6 +349,14 @@ fn write_csv(
     bdrate_pct: Option<f64>,
 ) -> std::io::Result<()> {
     use std::io::Write;
+    let bdrate_pct = bdrate_pct
+        .filter(|value| value.is_finite())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "finite BD-rate measurement required",
+            )
+        })?;
     let mut f = std::fs::File::create(path)?;
     writeln!(f, "role,target_kbps,measured_kbps,psnr_db")?;
     for (i, &t) in targets.iter().enumerate() {
@@ -342,13 +367,46 @@ fn write_csv(
             writeln!(f, "test,{t},{:.3},{:.4}", p.bitrate_kbps, p.psnr_db)?;
         }
     }
-    writeln!(
-        f,
-        "bdrate_pct,{}",
-        match bdrate_pct {
-            Some(v) => format!("{v:.4}"),
-            None => String::new(),
-        }
-    )?;
+    writeln!(f, "bdrate_pct,{bdrate_pct:.4}")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn csv_writer_rejects_missing_bdrate_without_creating_output() {
+        let path = std::env::temp_dir().join(format!(
+            "rvp9-bdrate-missing-summary-{}.csv",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let error = write_csv(&path, &[], &[], &[], None).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(!path.exists(), "failed measurement created a CSV");
+    }
+
+    #[test]
+    fn measured_bdrate_rejects_failed_psnr_and_insufficient_points() {
+        let failed = [RdPoint {
+            bitrate_kbps: 100.0,
+            psnr_db: f64::NAN,
+        }];
+        assert_eq!(
+            measured_bd_rate(&failed, &failed),
+            Err("PSNR measurement failed")
+        );
+
+        let single = [RdPoint {
+            bitrate_kbps: 100.0,
+            psnr_db: 30.0,
+        }];
+        assert_eq!(
+            measured_bd_rate(&single, &single),
+            Err("insufficient or non-overlapping RD points")
+        );
+    }
 }
