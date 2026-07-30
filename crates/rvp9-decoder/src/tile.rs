@@ -2275,17 +2275,32 @@ fn decode_inter_block<D: TileFrameDst>(
             seg_params.enabled, seg_params.update_map, seg_params.temporal_update,
         );
     }
-    // Splat the chosen segment_id into the current frame's seg map
-    // (libvpx `set_segment_id`, `vp9_decodemv.c:104-113`).
-    splat_segment_id(
-        cur_segment_ids,
-        params.base.mi_cols,
-        mi_row,
-        mi_col,
-        x_mis_pre,
-        y_mis_pre,
-        segment_id,
-    );
+    if seg_params.enabled && !seg_params.update_map {
+        // libvpx returns the minimum previous ID for this block's
+        // reconstruction, but preserves every covered cell in the current
+        // map. Splatting the minimum loses variation inside large blocks and
+        // corrupts inheritance when a later frame uses a smaller partition.
+        copy_segment_ids(
+            prev_segment_ids,
+            cur_segment_ids,
+            params.base.mi_cols,
+            mi_row,
+            mi_col,
+            x_mis_pre,
+            y_mis_pre,
+        );
+    } else {
+        // Freshly decoded IDs cover the whole block.
+        splat_segment_id(
+            cur_segment_ids,
+            params.base.mi_cols,
+            mi_row,
+            mi_col,
+            x_mis_pre,
+            y_mis_pre,
+            segment_id,
+        );
+    }
 
     // 2. skip flag.
     // Borrowed `Option<&ModeInfo>` (Copy) — avoids the per-block full-struct
@@ -2801,6 +2816,31 @@ fn splat_segment_id(
             let idx = row * mi_cols + col;
             if let Some(slot) = seg_map.get_mut(idx) {
                 *slot = segment_id;
+            }
+        }
+    }
+}
+
+/// Copy the covered cells from the previous segmentation map into the
+/// current map. Mirrors libvpx `copy_segment_id`
+/// (`vp9_decodemv.c:115-126`) for frames with `update_map == false`.
+/// A missing or short previous map contributes the default segment `0`.
+fn copy_segment_ids(
+    previous: &[u8],
+    current: &mut [u8],
+    mi_cols: usize,
+    mi_row: usize,
+    mi_col: usize,
+    x_mis: usize,
+    y_mis: usize,
+) {
+    for r in 0..y_mis {
+        let row = mi_row + r;
+        for c in 0..x_mis {
+            let col = mi_col + c;
+            let idx = row * mi_cols + col;
+            if let Some(slot) = current.get_mut(idx) {
+                *slot = previous.get(idx).copied().unwrap_or(0);
             }
         }
     }
@@ -4155,6 +4195,22 @@ mod tests {
         // Overshoot: cells past the buffer must not panic.
         splat_segment_id(&mut seg, 8, 7, 7, 4, 4, 9);
         assert_eq!(seg[7 * 8 + 7], 9);
+    }
+
+    /// Inherited maps retain per-cell variation even though the block's
+    /// reconstruction uses the minimum covered segment ID.
+    #[test]
+    fn copy_segment_ids_preserves_variation_within_block() {
+        let mut previous = vec![0u8; 8 * 8];
+        previous[2 * 8 + 3..2 * 8 + 6].copy_from_slice(&[4, 3, 4]);
+        previous[3 * 8 + 3..3 * 8 + 6].copy_from_slice(&[4, 4, 4]);
+        let mut current = vec![7u8; 8 * 8];
+
+        copy_segment_ids(&previous, &mut current, 8, 2, 3, 3, 2);
+
+        assert_eq!(&current[2 * 8 + 3..2 * 8 + 6], &[4, 3, 4]);
+        assert_eq!(&current[3 * 8 + 3..3 * 8 + 6], &[4, 4, 4]);
+        assert_eq!(current[2 * 8 + 2], 7, "outside the copied block");
     }
 
     /// `write_mv_grid_block` writes the entry across the rectangle.

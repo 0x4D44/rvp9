@@ -1663,10 +1663,10 @@ impl Decoder {
         // `scratch_segment_ids` so capacity carries forward.
         let mut cur_segment_ids = std::mem::take(&mut self.scratch_segment_ids);
         // Persist across frames when dims are unchanged (same argument as
-        // `frame_mi_grid`): every block calls `splat_segment_id` over its
-        // covered cells unconditionally (writing the real id, or 0 when
-        // segmentation is off), and blocks tile the frame — so every cell
-        // is overwritten before the LF / next-frame seg-id-pred reads it.
+        // `frame_mi_grid`): every block overwrites its covered cells, either
+        // with a freshly decoded ID or by copying the matching previous-map
+        // cells when `update_map == false`. Blocks tile the frame, so every
+        // cell is overwritten before LF or next-frame prediction reads it.
         // The zero re-fill is dead work when the recycled slab matches dims.
         if cur_segment_ids.len() != mi_rows * mi_cols {
             cur_segment_ids.clear();

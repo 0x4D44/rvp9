@@ -62,6 +62,7 @@ const PROFILE1_VECTORS: &[&str] = &[
     // 4:4:4 (G7.1c milestone)
     "vp91-2-04-yuv444.webm",
     "foreman_c444.ivf",
+    "foreman_c444_aq2.ivf",
     // 4:2:2 (G7.2 milestone) — asymmetric, half horizontal chroma.
     "vp91-2-04-yuv422.webm",
     "foreman_c422.ivf",
@@ -85,6 +86,7 @@ const PROFILE1_VECTORS: &[&str] = &[
     // Catches per-row mask-packing bugs at high mi_rows and exercises
     // multi-tile (2 tile cols) + tile-aware chroma loop-filter.
     "testsrc_c444_720p.ivf",
+    "testsrc_c444_720p_aq2.ivf",
     "testsrc_c422_720p_tile2.ivf", // tile_columns=1 (2 tiles)
     "testsrc_c440_720p.ivf",       // 4:4:0 large-frame
 ];
@@ -353,35 +355,20 @@ fn profile1_440_kfonly_decodes_bit_exact() {
     assert_eq!(mismatched, 0);
 }
 
-/// Track T-2: aq-mode=2 (cyclic refresh segmentation) Profile-1 vectors
-/// surface a second real rvp9 decoder bug. Cyclic refresh activates
-/// segment_id-based quantisation a few frames in; rvp9's non-420
-/// segmentation decode path produces incorrect output. 9/12 mismatches
-/// on foreman_c444, 8/12 on testsrc_c444_720p.
-///
-/// Root cause hypothesis: segment-aware quantisation or loop-filter
-/// delta application in the non-420 decode path doesn't correctly read
-/// the per-block segment_id from the bitstream when aq-mode activates
-/// the segment map. The first frames pass because the encoder hasn't
-/// yet turned on segment-based Q adjustment.
+/// Cyclic-refresh segmentation regression: when `update_map == false`,
+/// each covered previous-map cell must be copied forward unchanged.
+/// Splatting the block's minimum inherited ID corrupts later frames whose
+/// partitioning exposes a different subset of those cells.
 #[test]
-#[ignore = "T-2: aq2 444 surfaces rvp9 segmentation bug — 9/12 mismatch"]
 fn profile1_444_aq2_follow_up() {
     let (shown, mismatched) = decode_and_count("foreman_c444_aq2.ivf");
     assert_eq!(shown, 12);
-    assert!(
-        mismatched > 0,
-        "Bug appears fixed — remove #[ignore] and move to PROFILE1_VECTORS"
-    );
+    assert_eq!(mismatched, 0);
 }
 
 #[test]
-#[ignore = "T-2: aq2 720p 444 surfaces same segmentation bug"]
 fn profile1_720p_aq2_follow_up() {
     let (shown, mismatched) = decode_and_count("testsrc_c444_720p_aq2.ivf");
     assert_eq!(shown, 12);
-    assert!(
-        mismatched > 0,
-        "Bug appears fixed — remove #[ignore] and move to PROFILE1_VECTORS"
-    );
+    assert_eq!(mismatched, 0);
 }
