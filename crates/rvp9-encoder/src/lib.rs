@@ -2115,6 +2115,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                         // until F.1 lands the coef-bit estimator.
                         coef_bits_est: 0,
                         sse_after_pred: 0,
+                        interp_filter: None,
                         // Intra leaves in the F5.1 path always
                         // emit residuals (`skip = false` on every
                         // coded intra leaf). The RC.X1 skip-on-
@@ -4149,6 +4150,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             mv_bits_est: 0,
                             coef_bits_est: 0,
                             sse_after_pred: 0,
+                            interp_filter: Some(
+                                rvp9_core::bitstream::frame::InterpFilter::EightTap,
+                            ),
                             skip_flag: true,
                         });
                     }
@@ -4251,6 +4255,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             mv_bits_est: 0,
                             coef_bits_est: 0,
                             sse_after_pred: 0,
+                            interp_filter: Some(
+                                rvp9_core::bitstream::frame::InterpFilter::EightTap,
+                            ),
                             skip_flag: true,
                         });
                     }
@@ -6064,7 +6071,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         mode_bits_est,
                         mv_bits_est,
                         coef_bits_est,
-                        sse_after_pred: u64::from(pick.best_distortion),
+                        sse_after_pred: u64::from(pick.sse_y),
+                        interp_filter: Some(pick.picked_interp_filter),
                         skip_flag: final_skip,
                     });
                 }

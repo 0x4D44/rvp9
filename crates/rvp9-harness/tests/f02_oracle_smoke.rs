@@ -334,6 +334,7 @@ fn block_decision_mode_variant_shape_is_stable() {
         mv_bits_est: 0,
         coef_bits_est: 0,
         sse_after_pred: 0,
+        interp_filter: Some(rvp9_core::bitstream::frame::InterpFilter::EightTap),
         skip_flag: true,
     };
 }

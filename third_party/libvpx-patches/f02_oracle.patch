@@ -1,7 +1,7 @@
 # libvpx commit: 12f3a2ac603e8f10742105519e0cd03c3b8f71dd (v1.14.1)
 # F.0.2 — per-block picker-decision oracle (HLD §3.3).
 #
-# Adds ONE additive `fprintf` at the end of `vp9_pick_inter_mode` in
+# Adds additive, output-only instrumentation to `vp9_pick_inter_mode` in
 # vp9/encoder/vp9_pickmode.c (the per-block picker that runs once per
 # coded block in libvpx's real-time path). The fprintf is gated on the
 # `VPX_F02_ORACLE_OUT` environment variable so unpatched / non-F.0.2
@@ -40,7 +40,23 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
  #include <math.h>
  #include <stdio.h>
 
-@@ -2735,9 +2736,86 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -1746,6 +1747,7 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+   int skip_ref_find_pred[4] = { 0 };
+   unsigned int sse_zeromv_normalized = UINT_MAX;
+   unsigned int best_sse_sofar = UINT_MAX;
++  unsigned int best_pred_sse_f02 = UINT_MAX;
+   int gf_temporal_ref = 0;
+   int force_test_gf_zeromv = 0;
+ #if CONFIG_VP9_TEMPORAL_DENOISING
+@@ -2448,6 +2450,7 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+
+     if (this_rdc.rdcost < best_rdc.rdcost || x->skip) {
+       best_rdc = this_rdc;
++      best_pred_sse_f02 = sse_y;
+       best_early_term = this_early_term;
+       best_pickmode.best_mode = this_mode;
+       best_pickmode.best_pred_filter = mi->interp_filter;
+@@ -2735,8 +2738,96 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
        }
      }
    }
@@ -83,10 +99,10 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
 +      }
 +    }
 +    if (vpx_f02_state == 1 && vpx_f02_fp != NULL) {
-+      const char *bsize_str = (bsize >= 0 && bsize < BLOCK_SIZES)
++      const char *bsize_str = (bsize < BLOCK_SIZES)
 +                                  ? vpx_f02_bsize_tag[bsize] : "?";
 +      PREDICTION_MODE picked_mode = mi->mode;
-+      const char *mode_str = (picked_mode >= 0 && picked_mode < MB_MODE_COUNT)
++      const char *mode_str = (picked_mode < MB_MODE_COUNT)
 +                                 ? vpx_f02_mode_tag[picked_mode] : "?";
 +      MV_REFERENCE_FRAME picked_ref = mi->ref_frame[0];
 +      const char *ref_str;
@@ -97,14 +113,23 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
 +        case ALTREF_FRAME:ref_str = "ALTREF"; break;
 +        default: ref_str = "NONE"; break;
 +      }
++      const char *filter_str = "NONE";
++      if (picked_ref != INTRA_FRAME) {
++        switch (mi->interp_filter) {
++          case EIGHTTAP: filter_str = "EIGHTTAP"; break;
++          case EIGHTTAP_SMOOTH: filter_str = "EIGHTTAP_SMOOTH"; break;
++          case EIGHTTAP_SHARP: filter_str = "EIGHTTAP_SHARP"; break;
++          case BILINEAR: filter_str = "BILINEAR"; break;
++          default: filter_str = "NONE"; break;
++        }
++      }
 +      int mv_row = (picked_ref == INTRA_FRAME) ? 0
 +                                               : (int)mi->mv[0].as_mv.row;
 +      int mv_col = (picked_ref == INTRA_FRAME) ? 0
 +                                               : (int)mi->mv[0].as_mv.col;
-+      /* `sse_after_pred` is the picker's source-vs-recon SSE; use
-+       * best_rdc.dist (libvpx's RD distortion is SSE-based for the
-+       * RT picker). */
-+      unsigned long long sse_after_pred = (unsigned long long)best_rdc.dist;
++      /* Winning candidate's pre-quant source-vs-prediction SSE. */
++      unsigned long long sse_after_pred =
++          picked_ref == INTRA_FRAME ? 0 : (unsigned long long)best_pred_sse_f02;
 +      int skip_flag = mi->skip;
 +      /* `frame_idx` mirrors the harness binary's IVF-presentation-
 +       * order counter; libvpx tracks it as `cm->current_video_frame`. */
@@ -114,11 +139,13 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
 +              "\"bsize\":\"%s\",\"mode\":\"%s\",\"ref_frame\":\"%s\","
 +              "\"mv_row\":%d,\"mv_col\":%d,"
 +              "\"mode_bits_est\":0,\"mv_bits_est\":0,\"coef_bits_est\":0,"
-+              "\"sse_after_pred\":%llu,\"skip_flag\":%s}\n",
++              "\"sse_after_pred\":%llu,\"interp_filter\":\"%s\","
++              "\"skip_flag\":%s}\n",
 +              frame_idx, mi_row, mi_col,
 +              bsize_str, mode_str, ref_str,
 +              mv_row, mv_col,
 +              sse_after_pred,
++              filter_str,
 +              skip_flag ? "true" : "false");
 +    }
 +  }

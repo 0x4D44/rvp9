@@ -26,11 +26,14 @@
 //!     --frames 64 \
 //!     --kbps 25,50,100,250 \
 //!     --vbr \
+//!     --strict \
 //!     --out target/track_f_oracle/
 //! ```
 
 use rvp9_encoder::f02_oracle::{self, BlockDecision};
-use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
+use rvp9_encoder::{
+    AqMode, EncoderConfig, RcMode, Stage4aProductSplitOverride, StreamEncoder, YuvFrameRef,
+};
 use rvp9_harness::f02_schema::{compare_decisions, parse_jsonl_stream};
 use rvp9_harness::y4m::read_cropped;
 use std::fs::{File, OpenOptions};
@@ -41,7 +44,6 @@ use std::process::{Command, Stdio};
 const DEFAULT_W: u32 = 256;
 const DEFAULT_H: u32 = 256;
 const DEFAULT_FRAMES: u32 = 64;
-const DEFAULT_FRAMERATE: f64 = 30.0;
 
 fn arg(args: &[String], key: &str) -> Option<String> {
     let mut iter = args.iter();
@@ -61,6 +63,14 @@ fn rvp9_rate_config(frames: u32, vbr: bool) -> (u32, RcMode) {
         (frames.saturating_add(1), RcMode::Vbr)
     } else {
         (30, RcMode::Cbr)
+    }
+}
+
+fn split_override(strict: bool) -> Stage4aProductSplitOverride {
+    if strict {
+        Stage4aProductSplitOverride::ForceStrict
+    } else {
+        Stage4aProductSplitOverride::Auto
     }
 }
 
@@ -85,6 +95,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let no_libvpx = argv.iter().any(|a| a == "--no-libvpx");
     let report_only = argv.iter().any(|a| a == "--report-only");
     let vbr = argv.iter().any(|a| a == "--vbr");
+    let strict = argv.iter().any(|a| a == "--strict");
 
     if !foreman_path.exists() {
         eprintln!(
@@ -119,6 +130,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  frames    : {}", frames);
     println!("  bitrates  : {:?} kbps", kbps_list);
     println!("  rate mode : {}", if vbr { "VBR" } else { "CBR" });
+    println!(
+        "  split     : {}",
+        if strict { "strict" } else { "product" }
+    );
     println!("  out dir   : {}", run_dir.display());
     println!(
         "  policy    : {}",
@@ -139,7 +154,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut strict_mismatches = 0usize;
     for &kbps in &kbps_list {
         println!("\n=== {} kbps target bitrate ===", kbps);
-        let rvp9_records = drive_rvp9_leg(&foreman_path, frames, kbps, vbr)?;
+        let rvp9_records = drive_rvp9_leg(&foreman_path, frames, kbps, vbr, strict)?;
         println!(
             "  rvp9: {} per-block decisions across {} frames",
             rvp9_records.len(),
@@ -290,12 +305,14 @@ fn drive_rvp9_leg(
     frames: u32,
     kbps: u32,
     vbr: bool,
+    strict: bool,
 ) -> Result<Vec<BlockDecision>, Box<dyn std::error::Error>> {
     let (gop_length, rc_mode) = rvp9_rate_config(frames, vbr);
+    let (yuv_frames, src_fps) = read_cropped(foreman_path, DEFAULT_W, DEFAULT_H, frames as usize)?;
     let cfg = EncoderConfig {
         width: DEFAULT_W,
         height: DEFAULT_H,
-        framerate: DEFAULT_FRAMERATE,
+        framerate: src_fps,
         target_bitrate_bps: kbps * 1000,
         gop_length,
         aq_mode: AqMode::Off,
@@ -310,12 +327,11 @@ fn drive_rvp9_leg(
         cq_level: 0,
         temporal_layers: 1,
         enable_tpl: false,
-        stage4a_product_split_override: Default::default(),
+        stage4a_product_split_override: split_override(strict),
         min_qindex: 4,
         max_qindex: 255,
     };
     let mut enc = StreamEncoder::new(cfg)?;
-    let (yuv_frames, _src_fps) = read_cropped(foreman_path, DEFAULT_W, DEFAULT_H, frames as usize)?;
     let mut all_records = Vec::new();
     // Drain any prior thread-local state.
     let _ = f02_oracle::drain_frame();
@@ -339,11 +355,8 @@ fn drive_rvp9_leg(
 /// pointed at a sidecar JSONL file under `run_dir`. The harness
 /// then re-reads that file.
 ///
-/// **Stub note (F.0.2 landing):** this invocation assumes the patched
-/// vpxenc is on the right libvpx commit and accepts y4m input on
-/// stdin. The CLI options match the BD-rate gate's libvpx invocation
-/// for parity. If the patched binary is absent, the caller already
-/// errored out before reaching here.
+/// The source is center-cropped to the same 256×256 I420 frames used by
+/// the rvp9 leg. The CLI options match the Stage 4a product gate.
 fn drive_libvpx_leg(
     vpxenc: &Path,
     foreman: &Path,
@@ -353,30 +366,43 @@ fn drive_libvpx_leg(
     vbr: bool,
 ) -> Result<Vec<BlockDecision>, Box<dyn std::error::Error>> {
     let sidecar = run_dir.join(format!("foreman_{}kbps_libvpx.jsonl", kbps));
-    // libvpx CLI mirror of the BD-rate gate at e1_block_stats.rs:586+
-    // (matched config so the per-block decisions are comparable).
+    let raw = run_dir.join(format!("foreman_{}kbps_input.i420", kbps));
+    let (cropped, src_fps) = read_cropped(foreman, DEFAULT_W, DEFAULT_H, frames as usize)?;
+    {
+        let mut out = File::create(&raw)?;
+        for (y, u, v) in &cropped {
+            out.write_all(y)?;
+            out.write_all(u)?;
+            out.write_all(v)?;
+        }
+    }
+
     let mut cmd = Command::new(vpxenc);
     cmd.env("VPX_F02_ORACLE_OUT", &sidecar)
-        .arg(foreman)
-        .arg("-o")
-        .arg(run_dir.join(format!("foreman_{}kbps_libvpx.ivf", kbps)))
         .arg("--codec=vp9")
+        .arg("--ivf")
         .arg("--rt")
         .arg("--cpu-used=7")
+        .arg("--tune-content=default")
+        .arg("--lag-in-frames=0")
+        .arg("--passes=1")
+        .arg("--i420")
+        .arg(format!("--width={DEFAULT_W}"))
+        .arg(format!("--height={DEFAULT_H}"))
+        .arg(format!("--fps={}/1", src_fps.round() as u32))
         .arg(format!("--target-bitrate={}", kbps))
         .arg(format!("--limit={}", frames))
         .arg("--aq-mode=0")
-        .arg("--passes=1")
-        // `--rt` makes lag-in-frames a no-op; libvpx still prints a
-        // warning and waits for `y` on stdin. Set lag explicitly to
-        // suppress the prompt (matches the BD-rate gate invocation).
-        .arg("--lag-in-frames=0")
+        .arg("-o")
+        .arg(run_dir.join(format!("foreman_{}kbps_libvpx.ivf", kbps)))
+        .arg(&raw)
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     if !vbr {
         cmd.arg("--end-usage=cbr");
     }
     let out = cmd.output()?;
+    let _ = std::fs::remove_file(&raw);
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         return Err(format!(
@@ -412,5 +438,14 @@ mod tests {
     #[test]
     fn default_oracle_preserves_legacy_cbr_configuration() {
         assert_eq!(rvp9_rate_config(64, false), (30, RcMode::Cbr));
+    }
+
+    #[test]
+    fn strict_flag_selects_stage4a_strict_split_policy() {
+        assert_eq!(
+            split_override(true),
+            Stage4aProductSplitOverride::ForceStrict
+        );
+        assert_eq!(split_override(false), Stage4aProductSplitOverride::Auto);
     }
 }

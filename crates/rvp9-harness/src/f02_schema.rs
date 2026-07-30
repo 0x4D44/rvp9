@@ -9,15 +9,18 @@
 //! line up records pairwise.
 //!
 //! Hand-rolled to avoid a workspace-wide `serde` dependency — the
-//! schema is a flat 13-field JSON object, no nesting; a 1-pass
+//! schema is a flat JSON object with no nesting; a 1-pass
 //! tokeniser handles it. The unit tests below guarantee round-trip
 //! consistency with the canonical writer.
 
 use std::collections::BTreeMap;
 use std::io::{self, BufRead, Write};
 
-pub use rvp9_encoder::f02_oracle::{BlockDecision, BlockDecisionMode, bsize_tag, ref_frame_tag};
+pub use rvp9_encoder::f02_oracle::{
+    BlockDecision, BlockDecisionMode, bsize_tag, interp_filter_tag, ref_frame_tag,
+};
 
+use rvp9_core::bitstream::frame::InterpFilter;
 use rvp9_core::block::BlockSize;
 use rvp9_core::intra_pred::IntraMode;
 use rvp9_core::mode_info::{InterMode, RefFrame};
@@ -83,6 +86,7 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
     let mut mv_bits_est: Option<u32> = None;
     let mut coef_bits_est: Option<u32> = None;
     let mut sse_after_pred: Option<u64> = None;
+    let mut interp_filter: Option<Option<InterpFilter>> = None;
     let mut skip_flag: Option<bool> = None;
 
     for kv in split_top_level_commas(inner)? {
@@ -106,6 +110,13 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
             "mv_bits_est" => mv_bits_est = Some(parse_num(v, "mv_bits_est")?),
             "coef_bits_est" => coef_bits_est = Some(parse_num(v, "coef_bits_est")?),
             "sse_after_pred" => sse_after_pred = Some(parse_num(v, "sse_after_pred")?),
+            "interp_filter" => {
+                let raw = parse_string(v, "interp_filter")?;
+                interp_filter = Some(interp_filter_from_tag(&raw).ok_or(ParseError::BadValue {
+                    field: "interp_filter",
+                    raw,
+                })?);
+            }
             "skip_flag" => skip_flag = Some(parse_bool(v, "skip_flag")?),
             _ => {} // forward-compatible: ignore unknown extra fields
         }
@@ -140,7 +151,22 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
         mv_bits_est: mv_bits_est.ok_or(ParseError::MissingField("mv_bits_est"))?,
         coef_bits_est: coef_bits_est.ok_or(ParseError::MissingField("coef_bits_est"))?,
         sse_after_pred: sse_after_pred.ok_or(ParseError::MissingField("sse_after_pred"))?,
+        interp_filter: interp_filter.ok_or(ParseError::MissingField("interp_filter"))?,
         skip_flag: skip_flag.ok_or(ParseError::MissingField("skip_flag"))?,
+    })
+}
+
+/// Inverse of [`interp_filter_tag`]. Returns `None` for unknown tags.
+#[must_use]
+pub fn interp_filter_from_tag(s: &str) -> Option<Option<InterpFilter>> {
+    Some(match s {
+        "NONE" => None,
+        "EIGHTTAP" => Some(InterpFilter::EightTap),
+        "EIGHTTAP_SMOOTH" => Some(InterpFilter::EightTapSmooth),
+        "EIGHTTAP_SHARP" => Some(InterpFilter::EightTapSharp),
+        "BILINEAR" => Some(InterpFilter::Bilinear),
+        "SWITCHABLE" => Some(InterpFilter::Switchable),
+        _ => return None,
     })
 }
 
@@ -588,6 +614,7 @@ mod tests {
             mv_bits_est: 320,
             coef_bits_est: 0,
             sse_after_pred: 1_234_567,
+            interp_filter: Some(InterpFilter::EightTapSmooth),
             skip_flag: false,
         }
     }
@@ -606,6 +633,7 @@ mod tests {
             mv_bits_est: 0,
             coef_bits_est: 0,
             sse_after_pred: 0,
+            interp_filter: None,
             skip_flag: true,
         }
     }
@@ -652,7 +680,7 @@ mod tests {
                     \"bsize\":\"8x8\",\"mode\":\"DC\",\"ref_frame\":\"INTRA\",\
                     \"mv_row\":0,\"mv_col\":0,\
                     \"mode_bits_est\":0,\"mv_bits_est\":0,\"coef_bits_est\":0,\
-                    \"sse_after_pred\":0}";
+                    \"sse_after_pred\":0,\"interp_filter\":\"NONE\"}";
         let err = parse_jsonl_line(line).unwrap_err();
         match err {
             ParseError::MissingField(n) => assert_eq!(n, "skip_flag"),
@@ -666,7 +694,7 @@ mod tests {
                     \"bsize\":\"NOT_A_BSIZE\",\"mode\":\"DC\",\"ref_frame\":\"INTRA\",\
                     \"mv_row\":0,\"mv_col\":0,\
                     \"mode_bits_est\":0,\"mv_bits_est\":0,\"coef_bits_est\":0,\
-                    \"sse_after_pred\":0,\"skip_flag\":true}";
+                    \"sse_after_pred\":0,\"interp_filter\":\"NONE\",\"skip_flag\":true}";
         let err = parse_jsonl_line(line).unwrap_err();
         assert!(
             matches!(err, ParseError::BadValue { field: "bsize", .. }),
@@ -681,7 +709,7 @@ mod tests {
                     \"bsize\":\"8x8\",\"mode\":\"DC\",\"ref_frame\":\"LAST\",\
                     \"mv_row\":0,\"mv_col\":0,\
                     \"mode_bits_est\":0,\"mv_bits_est\":0,\"coef_bits_est\":0,\
-                    \"sse_after_pred\":0,\"skip_flag\":true}";
+                    \"sse_after_pred\":0,\"interp_filter\":\"NONE\",\"skip_flag\":true}";
         let err = parse_jsonl_line(line).unwrap_err();
         assert!(
             matches!(err, ParseError::BadValue { field: "mode", .. }),
@@ -697,7 +725,7 @@ mod tests {
                     \"bsize\":\"8x8\",\"mode\":\"DC\",\"ref_frame\":\"INTRA\",\
                     \"mv_row\":0,\"mv_col\":0,\
                     \"mode_bits_est\":1,\"mv_bits_est\":0,\"coef_bits_est\":0,\
-                    \"sse_after_pred\":0,\"skip_flag\":true,\
+                    \"sse_after_pred\":0,\"interp_filter\":\"NONE\",\"skip_flag\":true,\
                     \"future_field\":\"ignored\"}";
         let d = parse_jsonl_line(line).unwrap();
         assert_eq!(d.frame_idx, 1);

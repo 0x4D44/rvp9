@@ -24,6 +24,7 @@ use std::cell::RefCell;
 use std::fmt::Write as _;
 use std::io;
 
+use rvp9_core::bitstream::frame::InterpFilter;
 use rvp9_core::block::BlockSize;
 use rvp9_core::intra_pred::IntraMode;
 use rvp9_core::mode_info::{InterMode, RefFrame};
@@ -75,7 +76,7 @@ impl BlockDecisionMode {
     }
 }
 
-/// One picker-decision record. HLD §3.4 schema, 13 fields.
+/// One picker-decision record. HLD §3.4 schema.
 ///
 /// Field liveness on the rvp9 leg at F.0.2 (see HLD §3.4.1):
 /// every field is live except `coef_bits_est`, which is emitted as
@@ -109,6 +110,8 @@ pub struct BlockDecision {
     pub coef_bits_est: u32,
     /// `SSE(source − prediction)` over the Y plane, pre-quant.
     pub sse_after_pred: u64,
+    /// Winning inter-prediction filter. `None` for intra leaves.
+    pub interp_filter: Option<InterpFilter>,
     /// Picker's final skip flag — the value that lands in the
     /// bitstream's leaf `skip` syntax.
     pub skip_flag: bool,
@@ -137,7 +140,7 @@ impl BlockDecision {
              \"bsize\":\"{}\",\"mode\":\"{}\",\"ref_frame\":\"{}\",\
              \"mv_row\":{},\"mv_col\":{},\
              \"mode_bits_est\":{},\"mv_bits_est\":{},\"coef_bits_est\":{},\
-             \"sse_after_pred\":{},\"skip_flag\":{}}}",
+             \"sse_after_pred\":{},\"interp_filter\":\"{}\",\"skip_flag\":{}}}",
             self.frame_idx,
             self.mi_row,
             self.mi_col,
@@ -150,10 +153,25 @@ impl BlockDecision {
             self.mv_bits_est,
             self.coef_bits_est,
             self.sse_after_pred,
+            interp_filter_tag(self.interp_filter),
             self.skip_flag,
         )
         .expect("String fmt cannot fail");
         w.write_all(s.as_bytes())
+    }
+}
+
+/// Stable interpolation-filter tag shared with the libvpx patch.
+#[inline]
+#[must_use]
+pub fn interp_filter_tag(filter: Option<InterpFilter>) -> &'static str {
+    match filter {
+        None => "NONE",
+        Some(InterpFilter::EightTap) => "EIGHTTAP",
+        Some(InterpFilter::EightTapSmooth) => "EIGHTTAP_SMOOTH",
+        Some(InterpFilter::EightTapSharp) => "EIGHTTAP_SHARP",
+        Some(InterpFilter::Bilinear) => "BILINEAR",
+        Some(InterpFilter::Switchable) => "SWITCHABLE",
     }
 }
 
@@ -284,6 +302,7 @@ mod tests {
             mv_bits_est: 320,
             coef_bits_est: 0,
             sse_after_pred: 1_234_567,
+            interp_filter: Some(InterpFilter::EightTapSmooth),
             skip_flag: false,
         }
     }
@@ -302,6 +321,7 @@ mod tests {
             mv_bits_est: 0,
             coef_bits_est: 0,
             sse_after_pred: 0,
+            interp_filter: None,
             skip_flag: true,
         }
     }
@@ -323,6 +343,10 @@ mod tests {
         assert!(s.contains("\"ref_frame\":\"LAST\""), "ref_frame tag");
         assert!(s.contains("\"mv_row\":24"), "mv_row field");
         assert!(s.contains("\"mv_col\":-8"), "mv_col field (signed)");
+        assert!(
+            s.contains("\"interp_filter\":\"EIGHTTAP_SMOOTH\""),
+            "interpolation-filter tag"
+        );
         assert!(s.contains("\"skip_flag\":false"), "skip_flag bool");
         assert!(
             s.contains("\"coef_bits_est\":0"),
