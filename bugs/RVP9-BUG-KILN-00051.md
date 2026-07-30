@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00051 - rvp9dec can truncate output before bitstream validation
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** cli/rvp9dec output safety
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T182817Z-p54755-n888673000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00051-run-fix-20260730T182817Z-p54755-n888673000-c1
-- **Owner base:** f216329fcc27e8e04989f85235912e4025b9ca9a
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T18:28:17Z
-- **Owner until:** 2026-07-30T20:28:17Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-cli/` at `8d66f33`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-cli/` at `8d66f33`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T182817Z-p54755-n888673000-c1 branch=task/bug-RVP9-BUG-KILN-00051-run-fix-20260730T182817Z-p54755-n888673000-c1 code=2e0a6ac6e122f4fab1a22a356b0b6742b4fc07e6 gate=manual)
 
 ## Observation
 
