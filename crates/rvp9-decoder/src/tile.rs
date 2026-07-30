@@ -99,6 +99,15 @@ pub enum TileDecodeError {
     /// Entropy decoding consumed bits beyond the end of the tile
     /// payload.
     TruncatedTilePayload,
+    /// A non-empty previous-frame segment map does not cover every row
+    /// this tile may inspect.
+    PreviousSegmentMapTooShort {
+        /// Minimum number of entries required by the frame stride and
+        /// tile's ending row.
+        required: usize,
+        /// Number of entries supplied by the caller.
+        actual: usize,
+    },
     /// A segment with `SEG_LVL_SKIP` active was applied to a sub-8×8
     /// block. libvpx treats this as a corrupt stream
     /// (`vpx_internal_error`, `vp9_decodemv.c:709-712`).
@@ -120,6 +129,10 @@ impl core::fmt::Display for TileDecodeError {
             ),
             Self::InvalidTilePayload => f.write_str("tile payload missing bool-coder marker bit"),
             Self::TruncatedTilePayload => f.write_str("tile payload ended during entropy decoding"),
+            Self::PreviousSegmentMapTooShort { required, actual } => write!(
+                f,
+                "previous segment map has {actual} entries, but this tile requires at least {required}"
+            ),
             Self::Sub8SegSkip { block_size } => write!(
                 f,
                 "invalid usage of SEG_LVL_SKIP on sub-8x8 block ({block_size:?})"
@@ -1713,7 +1726,9 @@ pub struct InterFrameDecodeParams<'a> {
 /// Returns [`TileDecodeError::InvalidTilePayload`] if the tile bytes
 /// don't open with a valid bool-coder marker bit, or
 /// [`TileDecodeError::TruncatedTilePayload`] if entropy decoding reads
-/// beyond the tile payload.
+/// beyond the tile payload. Returns
+/// [`TileDecodeError::PreviousSegmentMapTooShort`] if a non-empty
+/// previous segment map cannot cover the rows this tile may inspect.
 #[allow(clippy::too_many_arguments)]
 pub fn decode_tile_inter<D: TileFrameDst>(
     tile_data: &[u8],
@@ -1732,6 +1747,16 @@ pub fn decode_tile_inter<D: TileFrameDst>(
     mi_view: crate::tile_ctx::TileMiView,
     decode_progress: Option<&[std::sync::atomic::AtomicU32]>,
 ) -> Result<TileDecodeCtx, TileDecodeError> {
+    if !prev_segment_ids.is_empty() {
+        let required = params.base.mi_cols.saturating_mul(bounds.mi_row_end);
+        if prev_segment_ids.len() < required {
+            return Err(TileDecodeError::PreviousSegmentMapTooShort {
+                required,
+                actual: prev_segment_ids.len(),
+            });
+        }
+    }
+
     // G7.1c: the per-block inter decode chain is `ss`-aware for all four
     // legal VP9 chroma formats (G7.1a parametric geometry / G7.1b inter MC),
     // mirroring `decode_tile_intra`. Debug-only sanity check.
@@ -3230,6 +3255,90 @@ mod tests {
             Err(other) => panic!("expected truncated-tile error, got {other:?}"),
             Ok(_) => panic!("one byte cannot contain a full 64x64 tile"),
         }
+    }
+
+    #[test]
+    fn decode_tile_inter_rejects_short_previous_segment_map_without_panicking() {
+        use rvp9_core::bitstream::frame::{InterpFilter, ReferenceMode};
+        use rvp9_core::frame::{BorderUsage, ByteAlignment};
+        use rvp9_core::inter::mode_info::setup_compound_reference_mode;
+        use rvp9_core::inter::mv_ref::{PrevFrameMvRef, sign_bias_from_header};
+
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: 8,
+            mi_col_start: 0,
+            mi_col_end: 8,
+        };
+        let mut mi_grid = vec![None; 8 * 8];
+        // SAFETY: `mi_grid` owns 64 cells for this full-frame 8×8-mi
+        // view and remains alive and exclusively borrowed for the call.
+        let mi_view = unsafe {
+            crate::tile_ctx::TileMiView::new(mi_grid.as_mut_ptr(), mi_grid.len(), 8, &bounds)
+        };
+        let mut dst = Yv12Buffer::alloc(
+            64,
+            64,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .expect("allocate destination");
+
+        let mut base = minimal_frame_decode_params();
+        base.segmentation_enabled = true;
+        base.segmentation_update_map = false;
+        let sign_bias = sign_bias_from_header(&[false, false, false]);
+        let (comp_fixed_ref, comp_var_ref) = setup_compound_reference_mode(&sign_bias);
+        let params = InterFrameDecodeParams {
+            base,
+            cur_y_width: 64,
+            cur_y_height: 64,
+            refs: [None, None, None],
+            frame_scale_factors: [None, None, None],
+            inter_params: InterModeReadParams {
+                allow_high_precision_mv: false,
+                interp_filter: InterpFilter::EightTap,
+                reference_mode: ReferenceMode::Single,
+                comp_fixed_ref,
+                comp_var_ref,
+                sign_bias,
+                seg_ref_frame: None,
+                seg_skip: false,
+            },
+        };
+        let prev_segment_ids = [0u8; 1];
+        let mut cur_segment_ids = vec![0u8; 8 * 8];
+        let mut cur_mv_grid = vec![PrevFrameMvRef::default(); 8 * 8];
+
+        let call = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            decode_tile_inter(
+                &[0],
+                bounds,
+                &params,
+                &FrameContext::new_default(),
+                &mut dst,
+                None,
+                None,
+                None,
+                None,
+                &mut cur_mv_grid,
+                &prev_segment_ids,
+                &mut cur_segment_ids,
+                rvp9_core::dsp::get_ref(),
+                mi_view,
+                None,
+            )
+        }));
+
+        let result = call.expect("safe public tile API must not panic on a short segment map");
+        assert!(matches!(
+            result,
+            Err(TileDecodeError::PreviousSegmentMapTooShort {
+                required: 64,
+                actual: 1,
+            })
+        ));
     }
 
     /// G-C: the sub-8×8 SEG_LVL_SKIP guard in `decode_inter_block`
