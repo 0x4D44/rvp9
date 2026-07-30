@@ -2291,6 +2291,19 @@ fn splat_inter_leaf_into_mi_grid(
     }
 }
 
+fn f02_oracle_mode(
+    picked_ref_frame: RefFrame,
+    picked_mode: InterMode,
+    picked_intra_mode: Option<IntraMode>,
+) -> crate::f02_oracle::BlockDecisionMode {
+    match picked_ref_frame {
+        RefFrame::IntraFrame => crate::f02_oracle::BlockDecisionMode::Intra(
+            picked_intra_mode.expect("IntraFrame pick must have picked_intra_mode"),
+        ),
+        _ => crate::f02_oracle::BlockDecisionMode::Inter(picked_mode),
+    }
+}
+
 /// Per-leaf descriptor for the inter encoder simulator. Mirrors
 /// [`PartitionLeafDesc`] but carries the inter mode info (mode + MV +
 /// skip flag) the picker chose for the leaf.
@@ -6127,6 +6140,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let final_mode = sb_partitions[sb_idx][leaf_idx].picked_mode;
                     let final_mv = sb_partitions[sb_idx][leaf_idx].picked_mv;
                     let final_ref = sb_partitions[sb_idx][leaf_idx].picked_ref_frame;
+                    let oracle_mode = f02_oracle_mode(
+                        final_ref,
+                        final_mode,
+                        sb_partitions[sb_idx][leaf_idx].picked_intra_mode,
+                    );
                     // Re-derive `mv_bits_est` for NEWMV using the same
                     // formula the picker uses internally
                     // (`evaluate_candidate` in
@@ -6190,15 +6208,27 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         mi_row: leaf_mi_row as u16,
                         mi_col: leaf_mi_col as u16,
                         bsize: leaf_bsize,
-                        mode: crate::f02_oracle::BlockDecisionMode::Inter(final_mode),
+                        mode: oracle_mode,
                         ref_frame: final_ref,
-                        mv_row: final_mv.row,
-                        mv_col: final_mv.col,
+                        mv_row: if final_ref == RefFrame::IntraFrame {
+                            0
+                        } else {
+                            final_mv.row
+                        },
+                        mv_col: if final_ref == RefFrame::IntraFrame {
+                            0
+                        } else {
+                            final_mv.col
+                        },
                         mode_bits_est,
                         mv_bits_est,
                         coef_bits_est,
                         sse_after_pred: u64::from(pick.sse_y),
-                        interp_filter: Some(pick.picked_interp_filter),
+                        interp_filter: if final_ref == RefFrame::IntraFrame {
+                            None
+                        } else {
+                            Some(pick.picked_interp_filter)
+                        },
                         skip_flag: final_skip,
                         q_index: leaf_qindex,
                         // Emission can replace the picker's model-RD
@@ -7901,6 +7931,18 @@ mod tests {
                 }
             ));
         }
+    }
+
+    #[test]
+    fn f02_oracle_serializes_intra_winner_as_intra_mode() {
+        assert_eq!(
+            f02_oracle_mode(RefFrame::IntraFrame, InterMode::ZeroMv, Some(IntraMode::V),),
+            crate::f02_oracle::BlockDecisionMode::Intra(IntraMode::V),
+        );
+        assert_eq!(
+            f02_oracle_mode(RefFrame::LastFrame, InterMode::NearMv, None),
+            crate::f02_oracle::BlockDecisionMode::Inter(InterMode::NearMv),
+        );
     }
 
     #[test]
