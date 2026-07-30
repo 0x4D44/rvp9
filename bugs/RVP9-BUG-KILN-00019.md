@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00019 - Non-ignored encoder tests have false-green oracles
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** encoder/test-oracles
 - **Raised:** 2026-07-05
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T231934Z-p94033-n610643000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00019-run-fix-20260730T231934Z-p94033-n610643000-c1
-- **Owner base:** 537e58d51289e6d587ddafeacfca10b08673fb3b
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T23:19:34Z
-- **Owner until:** 2026-07-31T01:19:34Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-05, raised by Codex code-review pass over `crates/rvp9-encoder/` at `a86e58c260ce`)
+- **State history:** Open (2026-07-05, raised by Codex code-review pass over `crates/rvp9-encoder/` at `a86e58c260ce`) -> Fixed (2026-07-31, deltic:auto role=fix run=fix-20260730T231934Z-p94033-n610643000-c1 branch=task/bug-RVP9-BUG-KILN-00019-run-fix-20260730T231934Z-p94033-n610643000-c1 code=0333c772565054bcb3094b5d96c49c42dfadaf39 gate=manual)
 
 ## Observation
 
