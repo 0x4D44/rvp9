@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00016 - Stage 4a product validation misses ignored corpus drift during a run
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** encoder/stage4a product validation
 - **Raised:** 2026-07-05
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T231507Z-p86647-n962624000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00016-run-fix-20260730T231507Z-p86647-n962624000-c1
-- **Owner base:** 827bf665db27506cdcfcce1045779c4f3891629d
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T23:15:07Z
-- **Owner until:** 2026-07-31T01:15:07Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-05, raised by Codex code-review pass over `crates/rvp9-encoder/` at `a86e58c260ce`)
+- **State history:** Open (2026-07-05, raised by Codex code-review pass over `crates/rvp9-encoder/` at `a86e58c260ce`) -> Fixed (2026-07-31, deltic:auto role=fix run=fix-20260730T231507Z-p86647-n962624000-c1 branch=task/bug-RVP9-BUG-KILN-00016-run-fix-20260730T231507Z-p86647-n962624000-c1 code=219fa56d62b392ff768f655faef7b9f49e97a64d gate=manual)
 
 ## Observation
 
