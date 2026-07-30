@@ -73,6 +73,7 @@
 
 use crate::block::BlockSize;
 use crate::dsp::distortion::variance;
+use crate::mode_decision::inter::NoiseLevel;
 use crate::mv_search::PlaneRef;
 use crate::quant::forward::{QuantizerDeltas, plane_dequant_pair};
 
@@ -90,9 +91,10 @@ pub(crate) const SB_8X8_GRID: usize = 8;
 ///
 /// Multiple cells can belong to the same leaf: e.g. a `Block32x32`
 /// leaf at the top-left covers `cells[0..4][0..4]` with identical
-/// entries. Valid leaf sizes in F8.2 are
-/// `{Block8x8, Block16x16, Block32x32, Block64x64}`. The pattern is
-/// always a valid VP9 quad-tree (no half-blocks, no overlapping
+/// entries. The legacy F8.2 picker emits square leaves only. The
+/// source-faithful fixed-tree picker may also emit the six rectangular
+/// `HORZ` / `VERT` leaves whose shorter side is at least 8 pixels.
+/// The pattern is always a valid VP9 partition tree (no overlapping
 /// leaves) — see [`PartitionDecision::is_valid_partition`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PartitionDecision {
@@ -110,58 +112,61 @@ impl PartitionDecision {
         }
     }
 
-    /// Validate that the cell pattern represents a legal VP9 quad-tree
-    /// partition. Every 64x64 / 32x32 / 16x16 leaf must fill an aligned
-    /// rectangle of 8x8 cells with identical entries.
-    ///
-    /// Specifically:
-    /// - A `Block64x64` leaf covers all 64 cells.
-    /// - A `Block32x32` leaf covers an aligned 4x4 block of cells.
-    /// - A `Block16x16` leaf covers an aligned 2x2 block of cells.
-    /// - A `Block8x8` leaf covers a single cell.
-    /// - All other [`BlockSize`] values are illegal (F8.2 doesn't
-    ///   emit non-square or sub-8 leaves).
+    /// Validate that the cell pattern represents a legal VP9 partition
+    /// tree. A square node may be `NONE`, `HORZ`, `VERT`, or `SPLIT`;
+    /// every leaf must stamp its full aligned rectangle.
     ///
     /// Returns `true` iff the pattern is legal.
     #[must_use]
     pub fn is_valid_partition(&self) -> bool {
-        let mut visited = [[false; SB_8X8_GRID]; SB_8X8_GRID];
-        for row in 0..SB_8X8_GRID {
-            for col in 0..SB_8X8_GRID {
-                if visited[row][col] {
-                    continue;
-                }
-                let bs = self.cells[row][col];
-                let cells_wide = match bs {
-                    BlockSize::Block8x8 => 1usize,
-                    BlockSize::Block16x16 => 2,
-                    BlockSize::Block32x32 => 4,
-                    BlockSize::Block64x64 => 8,
-                    _ => return false,
-                };
-                // The leaf must be aligned at a multiple of its size in
-                // 8x8 cells, and every cell inside the leaf's footprint
-                // must carry the same BlockSize entry.
-                if row % cells_wide != 0 || col % cells_wide != 0 {
-                    return false;
-                }
-                if row + cells_wide > SB_8X8_GRID || col + cells_wide > SB_8X8_GRID {
-                    return false;
-                }
-                for dr in 0..cells_wide {
-                    for dc in 0..cells_wide {
-                        if self.cells[row + dr][col + dc] != bs {
-                            return false;
-                        }
-                        if visited[row + dr][col + dc] {
-                            return false;
-                        }
-                        visited[row + dr][col + dc] = true;
-                    }
-                }
-            }
+        fn stamped(
+            cells: &[[BlockSize; SB_8X8_GRID]; SB_8X8_GRID],
+            row: usize,
+            col: usize,
+            height: usize,
+            width: usize,
+            bsize: BlockSize,
+        ) -> bool {
+            row + height <= SB_8X8_GRID
+                && col + width <= SB_8X8_GRID
+                && cells[row..row + height]
+                    .iter()
+                    .all(|line| line[col..col + width].iter().all(|&cell| cell == bsize))
         }
-        true
+
+        fn walk(
+            cells: &[[BlockSize; SB_8X8_GRID]; SB_8X8_GRID],
+            row: usize,
+            col: usize,
+            side: usize,
+        ) -> bool {
+            let bsize = cells[row][col];
+            let width = usize::from(bsize.width()) / 8;
+            let height = usize::from(bsize.height()) / 8;
+
+            if width == side && height == side {
+                return stamped(cells, row, col, side, side, bsize);
+            }
+            if side > 1 && width == side && height * 2 == side {
+                return stamped(cells, row, col, height, width, bsize)
+                    && stamped(cells, row + height, col, height, width, bsize);
+            }
+            if side > 1 && height == side && width * 2 == side {
+                return stamped(cells, row, col, height, width, bsize)
+                    && stamped(cells, row, col + width, height, width, bsize);
+            }
+            if side <= 1 || width >= side || height >= side {
+                return false;
+            }
+
+            let half = side / 2;
+            walk(cells, row, col, half)
+                && walk(cells, row, col + half, half)
+                && walk(cells, row + half, col, half)
+                && walk(cells, row + half, col + half, half)
+        }
+
+        walk(&self.cells, 0, 0, SB_8X8_GRID)
     }
 }
 
@@ -230,6 +235,680 @@ pub struct PartitionSearchParams<'a> {
 #[derive(Clone, Copy, Debug)]
 struct VbpThresholds {
     thresholds: [u64; 4],
+}
+
+/// Pure input to the pinned-libvpx realtime inter variance-tree seam.
+///
+/// `source` and `predictor` are materialized 64x64, stride-64 blocks. They
+/// include any edge padding already selected by the caller. `visible_width`
+/// and `visible_height` reproduce libvpx's checks for samples whose top-left
+/// falls outside the visible frame.
+#[derive(Clone, Copy, Debug)]
+pub struct FixedTreeInterInput<'a> {
+    /// Materialized source luma block, stride 64.
+    pub source: &'a [u8],
+    /// Materialized selected partition predictor, stride 64.
+    pub predictor: &'a [u8],
+    /// Visible width inside this superblock, in pixels (`1..=64`).
+    pub visible_width: usize,
+    /// Visible height inside this superblock, in pixels (`1..=64`).
+    pub visible_height: usize,
+    /// Exact libvpx VBP thresholds, in its 256x variance units.
+    pub thresholds: [i64; 4],
+    /// Frame qindex used by `vbp_threshold_minmax = 15 + (q >> 3)`.
+    pub q_index: u8,
+    /// Whether speed/content analysis forces the 64x64 node open.
+    pub force_64x64_split: bool,
+    /// Whether the min/max 8x8 spread check is enabled.
+    pub compute_minmax_variance: bool,
+    /// Whether cyclic-refresh selected a boosted segment.
+    pub segment_is_boosted: bool,
+    /// Noise tier used by the 32x32/64x64 spread rules.
+    pub noise_level: NoiseLevel,
+    /// Whether the frame is in libvpx's `width<=352 && height<=288` tier.
+    pub low_resolution: bool,
+    /// Whether the full frame height satisfies libvpx's `height<=360` rule.
+    pub frame_height_le_360: bool,
+}
+
+/// A variance node in the stable differential-oracle trace.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FixedTreeVarianceTrace {
+    /// Variance of the whole node.
+    pub none: i32,
+    /// Variances of the top and bottom halves.
+    pub horizontal: [i32; 2],
+    /// Variances of the left and right halves.
+    pub vertical: [i32; 2],
+}
+
+/// Exact accumulator behind one libvpx `Var`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FixedTreeAccumulatorTrace {
+    /// Sum of squared average differences.
+    pub sum_square_error: u64,
+    /// Sum of average differences.
+    pub sum_error: i64,
+    /// Base-two logarithm of the sample count.
+    pub log2_count: u8,
+}
+
+/// Exact accumulators behind one libvpx `partition_variance`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FixedTreeNodeAccumulatorTrace {
+    /// Accumulator for the whole node.
+    pub none: FixedTreeAccumulatorTrace,
+    /// Accumulators for the top and bottom halves.
+    pub horizontal: [FixedTreeAccumulatorTrace; 2],
+    /// Accumulators for the left and right halves.
+    pub vertical: [FixedTreeAccumulatorTrace; 2],
+}
+
+/// Partition symbol selected at one visited square parent.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FixedTreePartitionSymbol {
+    /// Keep the square parent as one leaf.
+    None,
+    /// Emit two wide rectangular leaves.
+    Horizontal,
+    /// Emit two tall rectangular leaves.
+    Vertical,
+    /// Recurse into four square children.
+    Split,
+}
+
+/// One visited parent in coding order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FixedTreeNodeDecision {
+    /// Parent row inside the superblock, in 8x8 units.
+    pub row_8x8: usize,
+    /// Parent column inside the superblock, in 8x8 units.
+    pub col_8x8: usize,
+    /// Square parent size.
+    pub parent_size: BlockSize,
+    /// Selected VP9 partition symbol.
+    pub symbol: FixedTreePartitionSymbol,
+}
+
+/// One final leaf in VP9 coding order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FixedTreeLeaf {
+    /// Leaf row inside the superblock, in 8x8 units.
+    pub row_8x8: usize,
+    /// Leaf column inside the superblock, in 8x8 units.
+    pub col_8x8: usize,
+    /// Final square or rectangular leaf size.
+    pub block_size: BlockSize,
+}
+
+/// Complete output of the pure variance-tree differential seam.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FixedTreePartitionTrace {
+    /// Final leaf-size grid.
+    pub decision: PartitionDecision,
+    /// `force_split[0..21]`, using libvpx's stable node indexing.
+    pub force_split: [bool; 21],
+    /// Node variances: root, four 32x32 nodes, then sixteen 16x16 nodes.
+    pub variances: [FixedTreeVarianceTrace; 21],
+    /// Exact node accumulators in the same stable 21-node order.
+    pub accumulators: [FixedTreeNodeAccumulatorTrace; 21],
+    /// Whether each node's sum/sum-square structure was materialized.
+    ///
+    /// A valid entry is a canonical variance derived from those sums even
+    /// when libvpx delays or skips writing the cached `variance` member.
+    pub variance_valid: [bool; 21],
+    /// Whether each 16x16 node switched from 8x8 to 4x4 averages.
+    pub used_4x4_averages: [bool; 16],
+    /// Alternate 4x4-average 16x16 nodes (`vt2`) used only for local decisions.
+    ///
+    /// Entries are meaningful only where [`Self::used_4x4_averages`] is true.
+    pub alternate_4x4_variances: [FixedTreeVarianceTrace; 16],
+    /// Exact accumulators for the alternate 4x4-average nodes.
+    pub alternate_4x4_accumulators: [FixedTreeNodeAccumulatorTrace; 16],
+    /// Parent partition symbols in recursive coding order.
+    pub nodes: Vec<FixedTreeNodeDecision>,
+    /// Final leaves in recursive coding order.
+    pub leaves: Vec<FixedTreeLeaf>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct FixedVar {
+    sum_square_error: u64,
+    sum_error: i64,
+    log2_count: u8,
+}
+
+impl FixedVar {
+    fn sample(diff: i32) -> Self {
+        Self {
+            sum_square_error: (diff * diff) as u64,
+            sum_error: i64::from(diff),
+            log2_count: 0,
+        }
+    }
+
+    fn sum(a: Self, b: Self) -> Self {
+        debug_assert_eq!(a.log2_count, b.log2_count);
+        Self {
+            sum_square_error: a.sum_square_error + b.sum_square_error,
+            sum_error: a.sum_error + b.sum_error,
+            log2_count: a.log2_count + 1,
+        }
+    }
+
+    fn variance(self) -> i32 {
+        let correction = ((self.sum_error * self.sum_error) >> self.log2_count) as u64;
+        let centered = self.sum_square_error.saturating_sub(correction);
+        ((256u64 * centered) >> self.log2_count) as i32
+    }
+
+    fn accumulator_trace(self) -> FixedTreeAccumulatorTrace {
+        FixedTreeAccumulatorTrace {
+            sum_square_error: self.sum_square_error,
+            sum_error: self.sum_error,
+            log2_count: self.log2_count,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct FixedPartitionVariance {
+    none: FixedVar,
+    horizontal: [FixedVar; 2],
+    vertical: [FixedVar; 2],
+}
+
+impl FixedPartitionVariance {
+    fn from_quadrants(split: [FixedVar; 4]) -> Self {
+        let horizontal = [
+            FixedVar::sum(split[0], split[1]),
+            FixedVar::sum(split[2], split[3]),
+        ];
+        let vertical = [
+            FixedVar::sum(split[0], split[2]),
+            FixedVar::sum(split[1], split[3]),
+        ];
+        Self {
+            none: FixedVar::sum(vertical[0], vertical[1]),
+            horizontal,
+            vertical,
+        }
+    }
+
+    fn trace(self) -> FixedTreeVarianceTrace {
+        FixedTreeVarianceTrace {
+            none: self.none.variance(),
+            horizontal: [self.horizontal[0].variance(), self.horizontal[1].variance()],
+            vertical: [self.vertical[0].variance(), self.vertical[1].variance()],
+        }
+    }
+
+    fn accumulator_trace(self) -> FixedTreeNodeAccumulatorTrace {
+        FixedTreeNodeAccumulatorTrace {
+            none: self.none.accumulator_trace(),
+            horizontal: [
+                self.horizontal[0].accumulator_trace(),
+                self.horizontal[1].accumulator_trace(),
+            ],
+            vertical: [
+                self.vertical[0].accumulator_trace(),
+                self.vertical[1].accumulator_trace(),
+            ],
+        }
+    }
+}
+
+fn rounded_average(block: &[u8], x: usize, y: usize, side: usize) -> i32 {
+    let mut sum = 0u32;
+    for row in 0..side {
+        for col in 0..side {
+            sum += u32::from(block[(y + row) * 64 + x + col]);
+        }
+    }
+    let count = (side * side) as u32;
+    ((sum + count / 2) / count) as i32
+}
+
+fn average_diff_var(input: &FixedTreeInterInput<'_>, x: usize, y: usize, side: usize) -> FixedVar {
+    if x >= input.visible_width || y >= input.visible_height {
+        return FixedVar::default();
+    }
+    FixedVar::sample(
+        rounded_average(input.source, x, y, side) - rounded_average(input.predictor, x, y, side),
+    )
+}
+
+fn minmax_8x8_spread(input: &FixedTreeInterInput<'_>, x16: usize, y16: usize) -> i32 {
+    let mut spread_max = 0;
+    let mut spread_min = 255;
+    for quadrant in 0..4 {
+        let x8 = x16 + (quadrant & 1) * 8;
+        let y8 = y16 + (quadrant >> 1) * 8;
+        if x8 >= input.visible_width || y8 >= input.visible_height {
+            continue;
+        }
+        let mut min_diff = 255;
+        let mut max_diff = 0;
+        for row in 0..8 {
+            for col in 0..8 {
+                let index = (y8 + row) * 64 + x8 + col;
+                let diff =
+                    (i32::from(input.source[index]) - i32::from(input.predictor[index])).abs();
+                min_diff = min_diff.min(diff);
+                max_diff = max_diff.max(diff);
+            }
+        }
+        let spread = max_diff - min_diff;
+        spread_max = spread_max.max(spread);
+        spread_min = spread_min.min(spread);
+    }
+    spread_max - spread_min
+}
+
+fn noise_rank(level: NoiseLevel) -> u8 {
+    match level {
+        NoiseLevel::LowLow => 0,
+        NoiseLevel::Low => 1,
+        NoiseLevel::Medium => 2,
+        NoiseLevel::High => 3,
+    }
+}
+
+fn stamp_fixed_leaf(decision: &mut PartitionDecision, row: usize, col: usize, bsize: BlockSize) {
+    let height = usize::from(bsize.height()) / 8;
+    let width = usize::from(bsize.width()) / 8;
+    for line in &mut decision.cells[row..row + height] {
+        for cell in &mut line[col..col + width] {
+            *cell = bsize;
+        }
+    }
+}
+
+fn fixed_rect_size(parent: BlockSize, vertical: bool) -> BlockSize {
+    match (parent, vertical) {
+        (BlockSize::Block64x64, false) => BlockSize::Block64x32,
+        (BlockSize::Block64x64, true) => BlockSize::Block32x64,
+        (BlockSize::Block32x32, false) => BlockSize::Block32x16,
+        (BlockSize::Block32x32, true) => BlockSize::Block16x32,
+        _ => unreachable!("rectangular variance leaf requires a 64x64 or 32x32 parent"),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_fixed_partition(
+    input: &FixedTreeInterInput<'_>,
+    node: FixedPartitionVariance,
+    row_8x8: usize,
+    col_8x8: usize,
+    parent: BlockSize,
+    threshold: i64,
+    force_split: bool,
+    decision: &mut PartitionDecision,
+) -> bool {
+    if force_split {
+        return false;
+    }
+
+    let side = usize::from(parent.width()) / 8;
+    let mi_rows = input.visible_height.div_ceil(8);
+    let mi_cols = input.visible_width.div_ceil(8);
+    let half = side / 2;
+
+    if parent == BlockSize::Block16x16 {
+        if col_8x8 + half < mi_cols
+            && row_8x8 + half < mi_rows
+            && i64::from(node.none.variance()) < threshold
+        {
+            stamp_fixed_leaf(decision, row_8x8, col_8x8, parent);
+            return true;
+        }
+        return false;
+    }
+
+    if col_8x8 + half < mi_cols
+        && row_8x8 + half < mi_rows
+        && i64::from(node.none.variance()) < threshold
+    {
+        stamp_fixed_leaf(decision, row_8x8, col_8x8, parent);
+        return true;
+    }
+
+    if row_8x8 + half < mi_rows
+        && node
+            .vertical
+            .iter()
+            .all(|variance| i64::from(variance.variance()) < threshold)
+    {
+        let bsize = fixed_rect_size(parent, true);
+        stamp_fixed_leaf(decision, row_8x8, col_8x8, bsize);
+        stamp_fixed_leaf(decision, row_8x8, col_8x8 + half, bsize);
+        return true;
+    }
+
+    if col_8x8 + half < mi_cols
+        && node
+            .horizontal
+            .iter()
+            .all(|variance| i64::from(variance.variance()) < threshold)
+    {
+        let bsize = fixed_rect_size(parent, false);
+        stamp_fixed_leaf(decision, row_8x8, col_8x8, bsize);
+        stamp_fixed_leaf(decision, row_8x8 + half, col_8x8, bsize);
+        return true;
+    }
+
+    false
+}
+
+fn trace_fixed_decision(
+    decision: &PartitionDecision,
+) -> (Vec<FixedTreeNodeDecision>, Vec<FixedTreeLeaf>) {
+    fn walk(
+        decision: &PartitionDecision,
+        row: usize,
+        col: usize,
+        side: usize,
+        nodes: &mut Vec<FixedTreeNodeDecision>,
+        leaves: &mut Vec<FixedTreeLeaf>,
+    ) {
+        let bsize = decision.cells[row][col];
+        let width = usize::from(bsize.width()) / 8;
+        let height = usize::from(bsize.height()) / 8;
+        let parent_size = match side {
+            8 => BlockSize::Block64x64,
+            4 => BlockSize::Block32x32,
+            2 => BlockSize::Block16x16,
+            1 => BlockSize::Block8x8,
+            _ => unreachable!("VP9 fixed-tree parent side"),
+        };
+        let symbol = if width == side && height == side {
+            FixedTreePartitionSymbol::None
+        } else if width == side && height * 2 == side {
+            FixedTreePartitionSymbol::Horizontal
+        } else if height == side && width * 2 == side {
+            FixedTreePartitionSymbol::Vertical
+        } else {
+            FixedTreePartitionSymbol::Split
+        };
+        nodes.push(FixedTreeNodeDecision {
+            row_8x8: row,
+            col_8x8: col,
+            parent_size,
+            symbol,
+        });
+
+        match symbol {
+            FixedTreePartitionSymbol::None => leaves.push(FixedTreeLeaf {
+                row_8x8: row,
+                col_8x8: col,
+                block_size: bsize,
+            }),
+            FixedTreePartitionSymbol::Horizontal => {
+                leaves.push(FixedTreeLeaf {
+                    row_8x8: row,
+                    col_8x8: col,
+                    block_size: bsize,
+                });
+                leaves.push(FixedTreeLeaf {
+                    row_8x8: row + height,
+                    col_8x8: col,
+                    block_size: bsize,
+                });
+            }
+            FixedTreePartitionSymbol::Vertical => {
+                leaves.push(FixedTreeLeaf {
+                    row_8x8: row,
+                    col_8x8: col,
+                    block_size: bsize,
+                });
+                leaves.push(FixedTreeLeaf {
+                    row_8x8: row,
+                    col_8x8: col + width,
+                    block_size: bsize,
+                });
+            }
+            FixedTreePartitionSymbol::Split => {
+                let half = side / 2;
+                walk(decision, row, col, half, nodes, leaves);
+                walk(decision, row, col + half, half, nodes, leaves);
+                walk(decision, row + half, col, half, nodes, leaves);
+                walk(decision, row + half, col + half, half, nodes, leaves);
+            }
+        }
+    }
+
+    let mut nodes = Vec::with_capacity(85);
+    let mut leaves = Vec::with_capacity(64);
+    walk(decision, 0, 0, 8, &mut nodes, &mut leaves);
+    (nodes, leaves)
+}
+
+/// Run the pure inter-frame `choose_partitioning` variance-tree core used by
+/// pinned libvpx v1.14.1 at realtime cpu-used 7.
+///
+/// Predictor selection, early partition-copy exits, and downstream mode
+/// picking remain outside this seam. That boundary lets a differential oracle
+/// feed both implementations identical materialized inputs and compare every
+/// intermediate node before this path is allowed to become the product default.
+#[must_use]
+pub fn choose_fixed_tree_inter(input: &FixedTreeInterInput<'_>) -> FixedTreePartitionTrace {
+    assert!(input.source.len() >= 64 * 64);
+    assert!(input.predictor.len() >= 64 * 64);
+    assert!((1..=64).contains(&input.visible_width));
+    assert!((1..=64).contains(&input.visible_height));
+
+    let mut tree = [FixedPartitionVariance::default(); 21];
+    let mut decision_16x16 = [FixedPartitionVariance::default(); 16];
+    let mut variance_valid = [false; 21];
+    let mut force_split = [false; 21];
+    let mut used_4x4_averages = [false; 16];
+    let mut avg_16x16 = [0i32; 4];
+    let mut max_16x16 = [0i32; 4];
+    let mut min_16x16 = [i32::MAX; 4];
+    force_split[0] = input.force_64x64_split;
+
+    for i in 0..4 {
+        let x32 = (i & 1) * 32;
+        let y32 = (i >> 1) * 32;
+        for j in 0..4 {
+            let x16 = x32 + (j & 1) * 16;
+            let y16 = y32 + (j >> 1) * 16;
+            let index16 = i * 4 + j;
+            let trace_index = 5 + index16;
+            let split_8x8 = [
+                average_diff_var(input, x16, y16, 8),
+                average_diff_var(input, x16 + 8, y16, 8),
+                average_diff_var(input, x16, y16 + 8, 8),
+                average_diff_var(input, x16 + 8, y16 + 8, 8),
+            ];
+            tree[trace_index] = FixedPartitionVariance::from_quadrants(split_8x8);
+            decision_16x16[index16] = tree[trace_index];
+            variance_valid[trace_index] = true;
+            let initial_variance = tree[trace_index].none.variance();
+            avg_16x16[i] += initial_variance;
+            min_16x16[i] = min_16x16[i].min(initial_variance);
+            max_16x16[i] = max_16x16[i].max(initial_variance);
+
+            let exceeds_variance_threshold = i64::from(initial_variance) > input.thresholds[2];
+            let exceeds_minmax_threshold = !exceeds_variance_threshold
+                && input.compute_minmax_variance
+                && i64::from(initial_variance) > input.thresholds[1]
+                && !input.segment_is_boosted
+                && minmax_8x8_spread(input, x16, y16) > 15 + (i32::from(input.q_index) >> 3);
+            if exceeds_variance_threshold || exceeds_minmax_threshold {
+                force_split[trace_index] = true;
+                force_split[1 + i] = true;
+                force_split[0] = true;
+            }
+
+            if input.low_resolution && i64::from(initial_variance) > (input.thresholds[1] << 1) {
+                used_4x4_averages[index16] = true;
+                force_split[trace_index] = false;
+                let mut split_8x8_nodes = [FixedPartitionVariance::default(); 4];
+                for (k, node8) in split_8x8_nodes.iter_mut().enumerate() {
+                    let x8 = x16 + (k & 1) * 8;
+                    let y8 = y16 + (k >> 1) * 8;
+                    *node8 = FixedPartitionVariance::from_quadrants([
+                        average_diff_var(input, x8, y8, 4),
+                        average_diff_var(input, x8 + 4, y8, 4),
+                        average_diff_var(input, x8, y8 + 4, 4),
+                        average_diff_var(input, x8 + 4, y8 + 4, 4),
+                    ]);
+                }
+                decision_16x16[index16] = FixedPartitionVariance::from_quadrants([
+                    split_8x8_nodes[0].none,
+                    split_8x8_nodes[1].none,
+                    split_8x8_nodes[2].none,
+                    split_8x8_nodes[3].none,
+                ]);
+                if i64::from(decision_16x16[index16].none.variance()) > input.thresholds[2] {
+                    force_split[trace_index] = true;
+                    force_split[1 + i] = true;
+                    force_split[0] = true;
+                }
+            }
+        }
+    }
+
+    let mut avg_32x32 = 0i32;
+    let mut max_32x32 = 0i32;
+    let mut min_32x32 = i32::MAX;
+    for i in 0..4 {
+        let base = 5 + i * 4;
+        tree[1 + i] = FixedPartitionVariance::from_quadrants([
+            tree[base].none,
+            tree[base + 1].none,
+            tree[base + 2].none,
+            tree[base + 3].none,
+        ]);
+        variance_valid[1 + i] = true;
+        if !force_split[1 + i] {
+            let variance32 = tree[1 + i].none.variance();
+            max_32x32 = max_32x32.max(variance32);
+            min_32x32 = min_32x32.min(variance32);
+            if i64::from(variance32) > input.thresholds[1]
+                || (i64::from(variance32) > (input.thresholds[1] >> 1)
+                    && variance32 > (avg_16x16[i] >> 1))
+                || (noise_rank(input.noise_level) < noise_rank(NoiseLevel::Low)
+                    && input.frame_height_le_360
+                    && max_16x16[i] - min_16x16[i] > (input.thresholds[1] >> 1) as i32
+                    && i64::from(max_16x16[i]) > input.thresholds[1])
+            {
+                force_split[1 + i] = true;
+                force_split[0] = true;
+            }
+            avg_32x32 += variance32;
+        }
+    }
+
+    if !force_split[0] {
+        tree[0] = FixedPartitionVariance::from_quadrants([
+            tree[1].none,
+            tree[2].none,
+            tree[3].none,
+            tree[4].none,
+        ]);
+        variance_valid[0] = true;
+        let variance64 = tree[0].none.variance();
+        let medium_or_higher = noise_rank(input.noise_level) >= noise_rank(NoiseLevel::Medium);
+        let noisy_average_split = medium_or_higher && variance64 > (9 * avg_32x32) >> 5;
+        let low_noise_spread_split = !medium_or_higher
+            && max_32x32 - min_32x32 > 3 * ((input.thresholds[0] >> 3) as i32)
+            && i64::from(max_32x32) > input.thresholds[0] >> 1;
+        if noisy_average_split || low_noise_spread_split {
+            force_split[0] = true;
+        }
+    }
+
+    let mut decision = PartitionDecision {
+        cells: [[BlockSize::Block8x8; SB_8X8_GRID]; SB_8X8_GRID],
+    };
+    let full_mi_width = input.visible_width.div_ceil(8) == 8;
+    let full_mi_height = input.visible_height.div_ceil(8) == 8;
+    let root_kept = full_mi_width
+        && full_mi_height
+        && try_fixed_partition(
+            input,
+            tree[0],
+            0,
+            0,
+            BlockSize::Block64x64,
+            input.thresholds[0],
+            force_split[0],
+            &mut decision,
+        );
+    if !root_kept {
+        for i in 0..4 {
+            let row32 = (i >> 1) * 4;
+            let col32 = (i & 1) * 4;
+            let node32_kept = try_fixed_partition(
+                input,
+                tree[1 + i],
+                row32,
+                col32,
+                BlockSize::Block32x32,
+                input.thresholds[1],
+                force_split[1 + i],
+                &mut decision,
+            );
+            if !node32_kept {
+                for j in 0..4 {
+                    let row16 = row32 + (j >> 1) * 2;
+                    let col16 = col32 + (j & 1) * 2;
+                    let index16 = i * 4 + j;
+                    let node16_kept = try_fixed_partition(
+                        input,
+                        decision_16x16[index16],
+                        row16,
+                        col16,
+                        BlockSize::Block16x16,
+                        input.thresholds[2],
+                        force_split[5 + index16],
+                        &mut decision,
+                    );
+                    if !node16_kept {
+                        for k in 0..4 {
+                            stamp_fixed_leaf(
+                                &mut decision,
+                                row16 + (k >> 1),
+                                col16 + (k & 1),
+                                BlockSize::Block8x8,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    debug_assert!(decision.is_valid_partition());
+    let (nodes, leaves) = trace_fixed_decision(&decision);
+    let mut variances = [FixedTreeVarianceTrace::default(); 21];
+    let mut accumulators = [FixedTreeNodeAccumulatorTrace::default(); 21];
+    for index in 0..21 {
+        variances[index] = tree[index].trace();
+        accumulators[index] = tree[index].accumulator_trace();
+    }
+    let mut alternate_4x4_variances = [FixedTreeVarianceTrace::default(); 16];
+    let mut alternate_4x4_accumulators = [FixedTreeNodeAccumulatorTrace::default(); 16];
+    for index in 0..16 {
+        if used_4x4_averages[index] {
+            alternate_4x4_variances[index] = decision_16x16[index].trace();
+            alternate_4x4_accumulators[index] = decision_16x16[index].accumulator_trace();
+        }
+    }
+    FixedTreePartitionTrace {
+        decision,
+        force_split,
+        variances,
+        accumulators,
+        variance_valid,
+        used_4x4_averages,
+        alternate_4x4_variances,
+        alternate_4x4_accumulators,
+        nodes,
+        leaves,
+    }
 }
 
 impl VbpThresholds {
@@ -693,6 +1372,208 @@ mod tests {
             width: 64,
             height: 64,
         }
+    }
+
+    fn fixed_tree_input<'a>(source: &'a [u8], predictor: &'a [u8]) -> FixedTreeInterInput<'a> {
+        FixedTreeInterInput {
+            source,
+            predictor,
+            visible_width: 64,
+            visible_height: 64,
+            thresholds: [1, 1, 1, 1],
+            q_index: 100,
+            force_64x64_split: false,
+            compute_minmax_variance: true,
+            segment_is_boosted: false,
+            noise_level: NoiseLevel::Low,
+            low_resolution: false,
+            frame_height_le_360: true,
+        }
+    }
+
+    #[test]
+    fn fixed_tree_flat_block_keeps_one_64x64_leaf() {
+        let source = flat_plane(91);
+        let predictor = flat_plane(91);
+        let trace = choose_fixed_tree_inter(&fixed_tree_input(&source, &predictor));
+
+        assert_eq!(trace.decision, PartitionDecision::all_64x64());
+        assert_eq!(
+            trace.nodes,
+            vec![FixedTreeNodeDecision {
+                row_8x8: 0,
+                col_8x8: 0,
+                parent_size: BlockSize::Block64x64,
+                symbol: FixedTreePartitionSymbol::None,
+            }],
+        );
+        assert_eq!(
+            trace.leaves,
+            vec![FixedTreeLeaf {
+                row_8x8: 0,
+                col_8x8: 0,
+                block_size: BlockSize::Block64x64,
+            }],
+        );
+        assert!(trace.decision.is_valid_partition());
+        assert!(trace.variance_valid.iter().all(|&valid| valid));
+        assert!(
+            trace
+                .variances
+                .iter()
+                .all(|node| *node == FixedTreeVarianceTrace::default())
+        );
+    }
+
+    #[test]
+    fn fixed_tree_emits_horizontal_parent_partition() {
+        let mut source = flat_plane(0);
+        let predictor = flat_plane(0);
+        for row in 32..64 {
+            source[row * 64..(row + 1) * 64].fill(255);
+        }
+        let trace = choose_fixed_tree_inter(&fixed_tree_input(&source, &predictor));
+
+        assert_eq!(trace.nodes[0].symbol, FixedTreePartitionSymbol::Horizontal,);
+        assert_eq!(
+            trace.leaves,
+            vec![
+                FixedTreeLeaf {
+                    row_8x8: 0,
+                    col_8x8: 0,
+                    block_size: BlockSize::Block64x32,
+                },
+                FixedTreeLeaf {
+                    row_8x8: 4,
+                    col_8x8: 0,
+                    block_size: BlockSize::Block64x32,
+                },
+            ],
+        );
+        assert!(trace.decision.is_valid_partition());
+    }
+
+    #[test]
+    fn fixed_tree_emits_vertical_parent_partition() {
+        let mut source = flat_plane(0);
+        let predictor = flat_plane(0);
+        for row in 0..64 {
+            source[row * 64 + 32..(row + 1) * 64].fill(255);
+        }
+        let trace = choose_fixed_tree_inter(&fixed_tree_input(&source, &predictor));
+
+        assert_eq!(trace.nodes[0].symbol, FixedTreePartitionSymbol::Vertical);
+        assert_eq!(
+            trace.leaves,
+            vec![
+                FixedTreeLeaf {
+                    row_8x8: 0,
+                    col_8x8: 0,
+                    block_size: BlockSize::Block32x64,
+                },
+                FixedTreeLeaf {
+                    row_8x8: 0,
+                    col_8x8: 4,
+                    block_size: BlockSize::Block32x64,
+                },
+            ],
+        );
+        assert!(trace.decision.is_valid_partition());
+    }
+
+    #[test]
+    fn fixed_tree_force_split_opens_flat_parent() {
+        let source = flat_plane(91);
+        let predictor = flat_plane(91);
+        let mut input = fixed_tree_input(&source, &predictor);
+        input.force_64x64_split = true;
+        let trace = choose_fixed_tree_inter(&input);
+
+        assert!(trace.force_split[0]);
+        assert_eq!(trace.nodes[0].symbol, FixedTreePartitionSymbol::Split);
+        assert_eq!(trace.leaves.len(), 4);
+        assert!(
+            trace
+                .leaves
+                .iter()
+                .all(|leaf| leaf.block_size == BlockSize::Block32x32),
+        );
+        assert!(!trace.variance_valid[0]);
+        assert!(trace.decision.is_valid_partition());
+    }
+
+    #[test]
+    fn fixed_tree_partial_mi_edge_bypasses_64x64_parent() {
+        let source = flat_plane(91);
+        let predictor = flat_plane(91);
+        let mut input = fixed_tree_input(&source, &predictor);
+        input.visible_width = 56;
+        let trace = choose_fixed_tree_inter(&input);
+
+        assert_eq!(trace.nodes[0].symbol, FixedTreePartitionSymbol::Split);
+        assert!(trace.decision.is_valid_partition());
+    }
+
+    #[test]
+    fn fixed_tree_keeps_8x8_average_tree_for_parent_aggregation() {
+        let source = xorshift_plane(0x51A7_4A11);
+        let predictor = flat_plane(128);
+        let mut input = fixed_tree_input(&source, &predictor);
+        input.low_resolution = true;
+        let trace = choose_fixed_tree_inter(&input);
+
+        assert!(
+            trace.used_4x4_averages.iter().any(|&used| used),
+            "fixture must exercise the separate vt2 path",
+        );
+        let mut original_16 = [FixedPartitionVariance::default(); 16];
+        for i in 0..4 {
+            let x32 = (i & 1) * 32;
+            let y32 = (i >> 1) * 32;
+            for j in 0..4 {
+                let x16 = x32 + (j & 1) * 16;
+                let y16 = y32 + (j >> 1) * 16;
+                original_16[i * 4 + j] = FixedPartitionVariance::from_quadrants([
+                    average_diff_var(&input, x16, y16, 8),
+                    average_diff_var(&input, x16 + 8, y16, 8),
+                    average_diff_var(&input, x16, y16 + 8, 8),
+                    average_diff_var(&input, x16 + 8, y16 + 8, 8),
+                ]);
+            }
+        }
+        let mut original_32 = [FixedPartitionVariance::default(); 4];
+        for i in 0..4 {
+            let base = i * 4;
+            original_32[i] = FixedPartitionVariance::from_quadrants([
+                original_16[base].none,
+                original_16[base + 1].none,
+                original_16[base + 2].none,
+                original_16[base + 3].none,
+            ]);
+        }
+        for (index, expected) in original_32.iter().enumerate() {
+            assert_eq!(trace.variances[1 + index], expected.trace());
+        }
+        assert!(
+            trace
+                .used_4x4_averages
+                .iter()
+                .enumerate()
+                .any(|(index, &used)| used
+                    && trace.variances[5 + index] != trace.alternate_4x4_variances[index]),
+            "fixture must distinguish vt from the local vt2 node",
+        );
+    }
+
+    #[test]
+    fn partition_validation_accepts_rect_tree_and_rejects_partial_rect_stamp() {
+        let mut decision = PartitionDecision {
+            cells: [[BlockSize::Block64x32; 8]; 8],
+        };
+        assert!(decision.is_valid_partition());
+
+        decision.cells[7][7] = BlockSize::Block8x8;
+        assert!(!decision.is_valid_partition());
     }
 
     /// Default search params for a 64x64 SB at origin with the given
