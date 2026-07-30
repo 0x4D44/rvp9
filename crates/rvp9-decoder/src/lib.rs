@@ -850,6 +850,17 @@ impl Decoder {
     }
 
     /// Borrow the decoder's frame pool (immutable).
+    ///
+    /// The pool cannot be borrowed mutably through the public API because
+    /// changing it without updating the decoder's private reference map would
+    /// break their shared invariants:
+    ///
+    /// ```compile_fail
+    /// use rvp9_decoder::Decoder;
+    ///
+    /// let mut decoder = Decoder::new();
+    /// decoder.frame_pool_mut().clear();
+    /// ```
     #[must_use]
     pub fn frame_pool(&self) -> &DecoderFramePool {
         &self.frame_pool
@@ -874,9 +885,9 @@ impl Decoder {
             .and_then(|pool_slot| self.frame_pool.get(pool_slot as usize))
     }
 
-    /// Borrow the decoder's frame pool (mutable). Used by tests and
-    /// by the eventual pixel-reconstruction path.
-    pub fn frame_pool_mut(&mut self) -> &mut DecoderFramePool {
+    /// Borrow the decoder's frame pool mutably for in-module tests.
+    #[cfg(test)]
+    fn frame_pool_mut(&mut self) -> &mut DecoderFramePool {
         &mut self.frame_pool
     }
 
