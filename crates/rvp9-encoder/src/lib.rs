@@ -2416,6 +2416,18 @@ fn p8_vbr_qmax_enabled(
     !rt_large_recovery && matches!(rc_mode, crate::rate_control::RcMode::Vbr) && base_qindex <= qmax
 }
 
+fn mv_in_strict_limits_or_zero(mv: Mv, limits: rvp9_core::mv_search::MvLimits) -> bool {
+    if mv == Mv::ZERO {
+        return true;
+    }
+    let col_fp = i32::from(mv.col) >> 3;
+    let row_fp = i32::from(mv.row) >> 3;
+    col_fp >= limits.col_min
+        && col_fp <= limits.col_max
+        && row_fp >= limits.row_min
+        && row_fp <= limits.row_max
+}
+
 fn stage4a_block16_split_admission(
     p8_enabled: bool,
     rt_large_recovery: bool,
@@ -3482,14 +3494,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         return None;
                     }
                     let mv_limits = MvLimits::new(col_min, col_max, row_min, row_max);
-                    let mv_in_bounds = |m: Mv| -> bool {
-                        let col_fp = i32::from(m.col) >> 3;
-                        let row_fp = i32::from(m.row) >> 3;
-                        col_fp >= col_min
-                            && col_fp <= col_max
-                            && row_fp >= row_min
-                            && row_fp <= row_max
-                    };
+                    let mv_in_bounds =
+                        |m: Mv| -> bool { mv_in_strict_limits_or_zero(m, mv_limits) };
 
                     // mi-grid neighbour lookup for find_mv_refs and
                     // context predicates. The descent runs BEFORE
@@ -4143,8 +4149,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     continue;
                 }
 
-                // Constrain MV limits so the F8.1 picker's convolve
-                // footprint stays inside the frame on EVERY plane
+                // Constrain NEWMV search limits so the F8.1 picker's sub-pel
+                // convolve footprint stays inside the frame on EVERY plane
                 // (luma + 4:2:0 chroma). The 8-tap kernel touches
                 // `int_pel - 3 .. int_pel + bw + 4` in the
                 // unscaled-with-subpel case.
@@ -4169,6 +4175,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 //         on the chroma plane (the simulator does not
                 //         border-extend; see its caller-invariant
                 //         comment).
+                //
+                // Exact ZEROMV needs no interpolation halo and is always
+                // safe for a visible leaf. Candidate-bound checks below
+                // therefore admit only that one vector outside this strict
+                // search envelope.
                 //
                 // If the resulting envelope is degenerate (col_min >
                 // col_max) the leaf is too close to a frame edge for
@@ -4374,18 +4385,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     },
                 );
 
-                // A2.foreman - The encoder's strict `MvLimits` is
+                // A2.foreman - The picker's strict `MvLimits` are
                 // tighter than the decoder's `clamp_mv_ref` envelope
-                // because `build_inter_pred_plane_unscaled` doesn't
-                // border-extend. If `mvc.nearest` falls outside
-                // `mv_limits` (strict no-border-extend envelope), the
-                // picker would crash when evaluating the NEARESTMV
-                // candidate (the convolve over-reads the plane). The
-                // decoder DOES border-extend so its reconstruction is
-                // well-defined - but the two diverge.
+                // because its sub-pel candidate evaluator still uses
+                // tight reference planes. If `mvc.nearest` falls outside
+                // `mv_limits`, a filtered candidate can over-read the
+                // reference plane. Exact ZEROMV is the narrow exception:
+                // it is integer-pel, reads only the visible block, and is
+                // safe even when the conservative halo envelope excludes
+                // zero at a frame edge.
                 //
                 // To preserve bit-exact encoder<->decoder agreement
-                // AND avoid the panic, when `mvc.nearest` is OOB we
+                // AND avoid the panic, when a non-zero `mvc.nearest` is OOB we
                 // substitute Mv::ZERO in the picker's mvc so the
                 // NEARESTMV evaluation reconstructs at (0,0) instead.
                 // We then never let the picker actually choose
@@ -4397,11 +4408,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // and for the NEAREST mode it would propagate the
                 // un-clamped value through the decoder's
                 // border-extend path.
-                let mv_in_bounds = |m: Mv| -> bool {
-                    let col_fp = i32::from(m.col) >> 3;
-                    let row_fp = i32::from(m.row) >> 3;
-                    col_fp >= col_min && col_fp <= col_max && row_fp >= row_min && row_fp <= row_max
-                };
+                let mv_in_bounds = |m: Mv| -> bool { mv_in_strict_limits_or_zero(m, mv_limits) };
                 // Phase 2a — unified dual-ref interleaved picker.
                 // Replaces the old dual-`pick_inter_mode_luma` +
                 // argmin pattern with a single call to
@@ -7659,6 +7666,24 @@ mod tests {
         assert_eq!(c.width, 64);
         assert_eq!(c.height, 64);
         assert_eq!(c.base_qindex, 50);
+    }
+
+    #[test]
+    fn exact_zero_mv_is_safe_outside_subpel_halo_limits() {
+        let edge_limits = rvp9_core::mv_search::MvLimits::new(6, 20, 6, 20);
+        assert!(mv_in_strict_limits_or_zero(Mv::ZERO, edge_limits));
+        assert!(!mv_in_strict_limits_or_zero(
+            Mv { row: 1, col: 0 },
+            edge_limits
+        ));
+        assert!(!mv_in_strict_limits_or_zero(
+            Mv { row: 8, col: 8 },
+            edge_limits
+        ));
+        assert!(mv_in_strict_limits_or_zero(
+            Mv { row: 48, col: 48 },
+            edge_limits
+        ));
     }
 
     #[test]
