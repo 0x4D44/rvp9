@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00043 - Y4M writer labels Yuv440 output as C420jpeg
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Could
 - **Severity:** Medium
 - **Area:** io/y4m writer
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T181630Z-p36913-n108202000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00043-run-fix-20260730T181630Z-p36913-n108202000-c1
-- **Owner base:** ee9272dac7dc08c970fa8e665ad6d86a8b6681bb
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T18:16:30Z
-- **Owner until:** 2026-07-30T20:16:30Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-io/` at `6128772`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-io/` at `6128772`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T181630Z-p36913-n108202000-c1 branch=task/bug-RVP9-BUG-KILN-00043-run-fix-20260730T181630Z-p36913-n108202000-c1 code=c61248417f9a696342e23430e53214f4a87138ae gate=manual)
 
 ## Observation
 
