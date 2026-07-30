@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** io/container + cli limits
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T201410Z-p81249-n283615000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00048-run-fix-20260730T201410Z-p81249-n283615000-c1
+- **Owner base:** 4366d00a2757902d4c0f0a2282a1909d618e8f32
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T20:14:10Z
+- **Owner until:** 2026-07-30T22:14:10Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
