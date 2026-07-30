@@ -330,6 +330,10 @@ pub struct EncoderConfig {
     /// per-frame `temporal_layer_id` is surfaced on
     /// [`EncodedFrame::temporal_layer_id`] — it is encoder-side metadata
     /// (libvpx `vpx_svc_layer_id`), NOT a VP9 wire field.
+    /// Layered inter frames also set `error_resilient_mode`, matching
+    /// libvpx's single-context SVC default. This disables implicit
+    /// previous-frame MV reuse so retained layers remain decodable when
+    /// enhancement packets are dropped.
     ///
     /// SVC and ALTREF (`enable_alt_ref`) / the golden-refresh cadence are
     /// mutually exclusive: the temporal pattern owns the per-frame
@@ -1165,15 +1169,12 @@ pub struct StreamEncoder {
     /// the same when `refresh_frame_context == true`, keeping both sides
     /// in sync.
     frame_context: FrameContext,
-    /// P0b — Mirror of the decoder's FC bank state. Since we emit
-    /// `refresh_frame_context: false`, the decoder does NOT run backward
-    /// adaptation; its FC bank is updated only by the compressed-header
-    /// diff-updates each frame. After each frame, this field holds the
-    /// FC the decoder ended up with (= `pre_fc` after
-    /// `write_compressed_header` mutated it). The next frame's
-    /// compressed header diffs from this state. Reset to defaults on
-    /// keyframes (the decoder's `vp9_setup_past_independence` resets the
-    /// bank).
+    /// P0b — Mirror of decoder FC bank 0. Normal inter frames apply the
+    /// same compressed-header forward updates and backward adaptation on
+    /// both sides. Error-resilient SVC frames reset the bank first and
+    /// retain only the forward updates, because the wire mode forces
+    /// `refresh_frame_context = false`. The next frame's compressed
+    /// header diffs from this exact state.
     decoder_fc_state: FrameContext,
     /// W-ALTREF — mirror of the decoder's FC bank slot 1. libvpx routes
     /// ARFs to `frame_context_idx = 1` (`vp9_encoder.c:818-819`), so the
@@ -2550,6 +2551,19 @@ impl StreamEncoder {
         let h = self.config.height;
         let mi_rows_us = (h as usize) / 8;
         let mi_cols_us = (w as usize) / 8;
+        // RVP9-BUG-KILN-00014 — this encoder has one temporal-SVC
+        // probability context, so mirror libvpx's single-context SVC
+        // default and make every layered inter frame error-resilient.
+        // That resets past coding state and closes the decoder's
+        // implicit `use_prev_frame_mvs` gate. A lower-layer decoder may
+        // have skipped the immediately preceding enhancement packet, so
+        // layered frames cannot depend on that packet's MV grid.
+        let error_resilient = self.svc_frame.is_some();
+        if error_resilient {
+            self.frame_context = FrameContext::new_default();
+            self.decoder_fc_state = FrameContext::new_default();
+            self.decoder_fc_state_arf = FrameContext::new_default();
+        }
 
         // AQ.3 — pre-encode segment-map pick + per-segment Q deltas.
         // `seg_map` is per-mi-cell (length mi_rows * mi_cols); when AQ
@@ -2682,13 +2696,12 @@ impl StreamEncoder {
         //   height == last_height && !last_intra_only &&
         //   last_show_frame && last_frame_type != KEY_FRAME.
         //
-        // The encoder doesn't emit error_resilient frames or
-        // non-show frames (Stage 4a' scope), and intra-only frames
-        // are out of scope — so the gate collapses to "same size +
-        // previous frame was not a keyframe". When the gate fails,
-        // pass `None` so `find_mv_refs` skips the prev-frame salvage
-        // (matches the decoder's behaviour on the same gate, which
-        // keeps the cross-decoder byte-exact invariant intact).
+        // The single-layer show path does not emit error-resilient or
+        // intra-only frames, so its gate collapses to "same size +
+        // previous frame was a shown non-keyframe". Temporal SVC does
+        // emit error-resilient inter frames, closing the gate explicitly.
+        // When the gate fails, pass `None` so `find_mv_refs` skips the
+        // prev-frame salvage, matching the decoder.
         // DRIFT-FIX — the decoder computes `use_prev_frame_mvs` PURELY
         // from frame structure (`vp9_decodeframe.c:2983-2986`):
         //   !error_resilient && size_match && !last_intra_only &&
@@ -2703,10 +2716,11 @@ impl StreamEncoder {
         // reconstructed reference DIVERGE from the true decode (the
         // SEVERITY-1 inter-frame drift). We must mirror the decoder's
         // structural predicate exactly, dropping the config AND: the
-        // encoder doesn't emit error_resilient / intra-only frames in
-        // this scope, so the gate collapses to "previous frame was a
-        // SHOW, non-KEY frame of the same size".
-        let gate_open = !self.last_frame_was_key
+        // The single-layer gate collapses to "previous frame was a SHOW,
+        // non-KEY frame of the same size"; temporal SVC additionally
+        // closes it through `error_resilient`.
+        let gate_open = !error_resilient
+            && !self.last_frame_was_key
             && self.last_show_frame
             && self.prev_mv_grid_dims == (mi_rows_us, mi_cols_us);
         let prev_grid_slice: Option<&[PrevFrameMvRef]> = if gate_open {
@@ -3029,6 +3043,7 @@ impl StreamEncoder {
             // `refresh_frame_flags = 0x04`.
             /* show_frame = */
             true,
+            error_resilient,
             // W-ALTREF — when the ALTREF picker candidate is live this
             // show frame may name ALTREF in its ref set, so the ALTREF
             // slot is sign-biased (it points at a FUTURE display-order
@@ -3074,10 +3089,9 @@ impl StreamEncoder {
             Some(&mut frame_counts),
             // P0b — pass the adapted FC so the compressed header
             // diff-encodes content-adapted probabilities against the
-            // decoder's FC bank state. The decoder reads the adapted
-            // probs from the compressed header; `refresh_frame_context`
-            // stays false so the decoder does NOT run its own backward
-            // adaptation.
+            // decoder's FC bank state. Normal inter frames then perform
+            // matching backward adaptation; error-resilient SVC frames
+            // retain only these forward updates.
             Some(&self.frame_context),
             &mut decoder_fc,
             // W-ALTREF — show frames use FC bank 0 (libvpx
@@ -3112,7 +3126,14 @@ impl StreamEncoder {
         // (`rvp9-decoder/src/lib.rs:2342-2343`, `:3136-3142`). Using the
         // post-header `decoder_fc` here desynced under TWO_LOOP (the
         // partial coef update means post-header != pre-header).
-        {
+        if error_resilient {
+            // Error-resilient mode forces `refresh_frame_context = 0`
+            // and `frame_parallel_decoding_mode = 1`. The decoder keeps
+            // only the forward compressed-header updates and skips
+            // backward adaptation, so persist that exact bank state.
+            self.decoder_fc_state = decoder_fc.clone();
+            self.frame_context = decoder_fc;
+        } else {
             let mut adapted_dec = adapt_mode_probs(
                 &pre_header_decoder_fc,
                 &frame_counts,
@@ -3131,14 +3152,12 @@ impl StreamEncoder {
                 crate::frame_allow_hp(q_index),
             );
             self.decoder_fc_state = adapted_dec;
-        }
 
-        // P0b — backward-adapt the encoder-side frame context.
-        // Mirrors libvpx's `vp9_adapt_mode_probs` +
-        // `vp9_adapt_coef_probs` + `vp9_adapt_mv_probs` sequence
-        // called after each decoded frame when
-        // `refresh_frame_context == true`.
-        {
+            // P0b — backward-adapt the encoder-side frame context.
+            // Mirrors libvpx's `vp9_adapt_mode_probs` +
+            // `vp9_adapt_coef_probs` + `vp9_adapt_mv_probs` sequence
+            // called after each decoded frame when
+            // `refresh_frame_context == true`.
             let mut adapted = adapt_mode_probs(
                 &self.frame_context,
                 &frame_counts,
@@ -3511,6 +3530,7 @@ impl StreamEncoder {
             &segmentation_params,
             /* refresh_frame_flags = */ 0x04,
             /* show_frame = */ false,
+            /* error_resilient = */ false,
             /* ref_frame_sign_biases = */ [false, false, false],
             // DRIFT-FIX (GOLDEN ref-index) — identity logical-ref map so a
             // GOLDEN-picked ARF block reads the decoder's GOLDEN slot
@@ -4499,6 +4519,10 @@ fn build_inter_packet_with_residuals(
     // `rvp9_core::bitstream::header.rs::write_uncompressed_header`
     // (the `if !h.show_frame { wb.write_bit(0); }` arm).
     show_frame: bool,
+    // RVP9-BUG-KILN-00014 — closes the decoder's implicit previous-MV
+    // dependency and resets past coding state for single-context
+    // temporal SVC. False for the legacy single-layer and ALTREF paths.
+    error_resilient: bool,
     // W-ALTREF — per-logical-ref sign bias `[LAST, GOLDEN, ALTREF]`.
     // libvpx `vp9_encoder.c::set_ref_sign_bias` (:5034-5049): a ref is
     // "sign-biased" (backward) when `cur_frame_index <
@@ -4877,7 +4901,7 @@ fn build_inter_packet_with_residuals(
         // `cm->show_frame = 0` when emitting an ARF); plain inter
         // emits with `true` (the default).
         show_frame,
-        error_resilient: false,
+        error_resilient,
         bit_depth: WireBitDepth::Eight,
         color_space: ColorSpace::Bt601,
         color_range: ColorRange::Studio,

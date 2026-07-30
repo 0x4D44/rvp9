@@ -1547,7 +1547,7 @@ impl Decoder {
         // frame is intra-only, regardless of `reset_frame_context` —
         // it always wipes the seg map, sets default LF deltas, and
         // resets `ref_frame_sign_bias`. The seg-map reset is handled
-        // by `resolve_segmentation(is_keyframe = true)` inside the
+        // by `resolve_segmentation(reset_past_independence = true)` inside the
         // inner driver below, and the LF-delta reset is handled by
         // the unconditional `self.lf_deltas = ...keyframe defaults...`
         // assignment near the top of the LF-apply block. (Sign-bias
@@ -1671,8 +1671,10 @@ impl Decoder {
         // the keyframe's `feature_data` (encoder sets it once at the
         // keyframe with `update_data = 1`, then leaves it alone on
         // every inter frame).
-        let resolved_seg =
-            self.resolve_segmentation(&tail.segmentation, /* is_keyframe = */ true);
+        let resolved_seg = self.resolve_segmentation(
+            &tail.segmentation,
+            /* reset_past_independence = */ true,
+        );
         // Per-segment alt-Q + REF_FRAME + SKIP feature data. On the
         // keyframe path only `seg_skip` is consumed (the shared
         // `read_skip` force-skip branch); REF_FRAME / is_inter are N/A
@@ -2639,6 +2641,27 @@ impl Decoder {
             _ => return Err(DecodeError::WrongFrameKind),
         };
 
+        // RVP9-BUG-KILN-00014 — libvpx calls
+        // `vp9_setup_past_independence` for every error-resilient frame,
+        // including inter frames. Reset the state that is otherwise
+        // inherited across frames before parsing this frame's header
+        // payload. Temporal SVC uses this mode so a decoder that skipped
+        // a droppable enhancement packet rejoins at the next retained
+        // layer without stale probability, segmentation, LF, or MV
+        // context.
+        if frame.header.error_resilient {
+            for bank in self.frame_contexts.iter_mut() {
+                *bank = FrameContext::new_default();
+            }
+            self.prev_segment_ids.clear();
+            self.prev_segment_ids_dims = (0, 0);
+            self.lf_deltas = ResolvedLfDeltas {
+                ref_deltas: [1, 0, -1, -1],
+                mode_deltas: [0, 0],
+                enabled: true,
+            };
+        }
+
         if crate::trace_flags::trace_flags().inter_mv {
             eprintln!(
                 "[rvp9_inter_frame] indices={:?} sign_biases={:?} refresh=0x{:02x} last_key={} last_size={:?}",
@@ -2880,8 +2903,10 @@ impl Decoder {
         // 7. D.10 — resolve per-frame segmentation against the running
         // state (inherits `feature_data` / `abs_delta` when the parsed
         // value's `update_data == false`).
-        let resolved_seg =
-            self.resolve_segmentation(&tail.segmentation, /* is_keyframe = */ false);
+        let resolved_seg = self.resolve_segmentation(
+            &tail.segmentation,
+            /* reset_past_independence = */ frame.header.error_resilient,
+        );
 
         // Per-segment alt-Q + REF_FRAME + SKIP from the RESOLVED feature
         // data. `segfeature_active` AND-s with `seg->enabled`
@@ -4042,16 +4067,17 @@ impl Decoder {
     /// of `cm->seg` in `setup_segmentation`
     /// (`vp9_decodeframe.c:1332-1383`).
     ///
-    /// Keyframes always start fresh: libvpx's
+    /// Keyframes and error-resilient frames always start fresh: libvpx's
     /// `vp9_setup_past_independence` calls `vp9_clearall_segfeatures`
     /// before `setup_segmentation` runs, so any prior feature data is
-    /// wiped. Callers should pass `is_keyframe = true` to mirror that.
+    /// wiped. Callers pass `reset_past_independence = true` to mirror
+    /// that reset.
     fn resolve_segmentation(
         &mut self,
         parsed: &rvp9_core::bitstream::SegmentationParams,
-        is_keyframe: bool,
+        reset_past_independence: bool,
     ) -> rvp9_core::bitstream::SegmentationParams {
-        if is_keyframe {
+        if reset_past_independence {
             self.seg_feature_data =
                 [[None; rvp9_core::bitstream::SEG_LVL_MAX]; rvp9_core::bitstream::MAX_SEGMENTS];
             self.seg_abs_delta = false;

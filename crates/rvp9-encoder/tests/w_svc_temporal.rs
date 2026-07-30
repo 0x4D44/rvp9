@@ -110,12 +110,20 @@ fn encode_clip(
     cfg: EncoderConfig,
     frames: &[(Vec<u8>, Vec<u8>, Vec<u8>)],
 ) -> (Vec<Vec<u8>>, Vec<u8>) {
+    encode_clip_at_width(cfg, frames, W as usize)
+}
+
+fn encode_clip_at_width(
+    cfg: EncoderConfig,
+    frames: &[(Vec<u8>, Vec<u8>, Vec<u8>)],
+    width: usize,
+) -> (Vec<Vec<u8>>, Vec<u8>) {
     let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
     let mut packets = Vec::with_capacity(frames.len());
     let mut tids = Vec::with_capacity(frames.len());
     for (y, u, v) in frames {
         let pkt = enc
-            .encode_frame(&yuv_view(y, u, v, W as usize))
+            .encode_frame(&yuv_view(y, u, v, width))
             .expect("encode_frame");
         tids.push(pkt.temporal_layer_id);
         packets.push(pkt.data);
@@ -359,4 +367,95 @@ fn svc_temporal_stream_byte_exact_through_vpxdec() {
     eprintln!("PROOF: temporal-SVC stream is byte-exact decodable by vpxdec (all layers play).");
     let _ = std::fs::remove_file(&vpx_yuv_path);
     let _ = std::fs::remove_file(&ivf_path);
+}
+
+// ---------------------------------------------------------------------------
+// RVP9-BUG-KILN-00014 — dropping enhancement packets must not change
+// reconstruction of the retained base layer.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn temporal_svc_base_layer_decodes_identically_when_enhancement_is_dropped() {
+    const DROP_W: usize = 64;
+    const DROP_H: usize = 64;
+    const DROP_FRAMES: usize = 8;
+
+    let frames: Vec<SourceFrame> = (0..DROP_FRAMES)
+        .map(|frame_idx| {
+            let y = (0..DROP_W * DROP_H)
+                .map(|i| {
+                    let row = i / DROP_W;
+                    let col = i % DROP_W;
+                    let shifted = (col + frame_idx * 3) % DROP_W;
+                    ((shifted * 11 + row * 7 + ((row ^ shifted) & 7) * 19) & 0xff) as u8
+                })
+                .collect();
+            let u = vec![96u8.saturating_add(frame_idx as u8); DROP_W * DROP_H / 4];
+            let v = vec![160u8.saturating_sub(frame_idx as u8); DROP_W * DROP_H / 4];
+            (y, u, v)
+        })
+        .collect();
+
+    let mut cfg = EncoderConfig::new(DROP_W as u32, DROP_H as u32);
+    cfg.gop_length = DROP_FRAMES as u32 + 1;
+    cfg.temporal_layers = 2;
+    cfg.aq_mode = AqMode::Off;
+    cfg.speed = 7;
+    cfg.deadline = rvp9_encoder::Deadline::Realtime;
+    cfg.enable_alt_ref = false;
+    let (packets, tids) = encode_clip_at_width(cfg, &frames, DROP_W);
+
+    assert_eq!(tids, vec![0, 0, 1, 0, 1, 0, 1, 0]);
+
+    let mut full_decoder = Decoder::new();
+    let mut base_decoder = Decoder::new();
+    let mut full_base_frames = Vec::new();
+    let mut dropped_base_frames = Vec::new();
+
+    for (packet, &temporal_layer_id) in packets.iter().zip(&tids) {
+        let full_parsed = decode_packet(&mut full_decoder, packet);
+        assert_eq!(full_parsed.len(), 1);
+        let full_frame = full_decoder
+            .decode_frame(&full_parsed[0])
+            .expect("full-layer decode");
+
+        if temporal_layer_id == 0 {
+            full_base_frames.push(yv12_to_i420_bytes(
+                &full_frame,
+                DROP_W as u32,
+                DROP_H as u32,
+            ));
+
+            let base_parsed = decode_packet(&mut base_decoder, packet);
+            assert_eq!(base_parsed.len(), 1);
+            let base_frame = base_decoder
+                .decode_frame(&base_parsed[0])
+                .expect("base-only decode after dropping enhancement packet");
+            dropped_base_frames.push(yv12_to_i420_bytes(
+                &base_frame,
+                DROP_W as u32,
+                DROP_H as u32,
+            ));
+        }
+    }
+
+    assert_eq!(
+        dropped_base_frames, full_base_frames,
+        "base-layer reconstruction must not depend on a dropped enhancement frame"
+    );
+
+    let mut parser = Decoder::new();
+    for (frame_idx, packet) in packets.iter().enumerate() {
+        let parsed = decode_packet(&mut parser, packet);
+        assert_eq!(parsed.len(), 1);
+        if frame_idx != 0 {
+            assert!(
+                parsed[0].header.error_resilient,
+                "temporal-SVC inter frame {frame_idx} must disable implicit previous-frame state"
+            );
+        }
+        parser
+            .decode_frame(&parsed[0])
+            .expect("parser state must advance");
+    }
 }
