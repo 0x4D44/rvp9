@@ -16,9 +16,11 @@
 //! - **transform-size histogram** (Y plane).
 //!
 //! libvpx is driven at the matched internal qindex via `--end-usage=q
-//! --min-q=N --max-q=N` (where the CLI quantizer N maps to internal
-//! qindex ≈ 4·N per `quantizer_to_qindex[]`), with `--psnr` parsed for
-//! the average PSNR and IVF size for bits.
+//! --cq-level=N --min-q=N --max-q=N+8` (where the CLI quantizer N maps to
+//! internal qindex ≈ 4·N per `quantizer_to_qindex[]`). The valid eight-step
+//! range prevents libvpx's normal Q-mode keyframe boost from dropping below
+//! the requested point. The decoder-observed keyframe qindex, first-frame
+//! payload, decoded PSNR, whole-stream PSNR, and IVF size prove the match.
 //!
 //! Run:
 //! ```text
@@ -101,6 +103,8 @@ fn psnr_from_sse(sse: u64, pixels: u64) -> f64 {
 
 /// One rvp9 measurement at a fixed Q.
 struct Rvp9Result {
+    /// Reconstruction PSNR over the keyframe (Y), dB.
+    kf_recon_psnr: f64,
     /// Reconstruction PSNR over inter frames (Y), dB.
     inter_recon_psnr: f64,
     /// Reconstruction PSNR over ALL frames (Y), dB.
@@ -113,6 +117,8 @@ struct Rvp9Result {
     inter_bits: f64,
     /// Average total coded bits per frame (all frames).
     all_bits: f64,
+    /// Keyframe payload bits.
+    kf_bits: u32,
     /// Coefficient-token bits per inter frame (bitacct).
     inter_coef_bits: f64,
     /// Per-category entropy bits per inter frame (bitacct).
@@ -145,7 +151,7 @@ fn measure_rvp9_fixed_q(fixed_q: u8, frames: &[YuvFrameBuf], framerate: f64) -> 
         width: W,
         height: H,
         framerate,
-        target_bitrate_bps: 100_000, // unused: RVP9_FIXED_Q overrides Q
+        target_bitrate_bps: 100_000, // Q pick is overridden; mode selects VBR RD policy
         gop_length: N_FRAMES + 1,    // one keyframe at frame 0
         aq_mode: AqMode::Off,
         use_prev_frame_mvs: false,
@@ -155,7 +161,10 @@ fn measure_rvp9_fixed_q(fixed_q: u8, frames: &[YuvFrameBuf], framerate: f64) -> 
         bit_depth: rvp9_core::BitDepth::Bd8,
         lag_in_frames: 0,
         enable_alt_ref: false,
-        rc_mode: RcMode::Cbr,
+        // Use the production Stage 4a VBR picker calibration. The
+        // RVP9_FIXED_Q override removes rate-control Q selection while
+        // preserving the mode/partition/transform policy under test.
+        rc_mode: RcMode::Vbr,
         cq_level: 0,
         temporal_layers: 1,
         enable_tpl: false,
@@ -169,6 +178,7 @@ fn measure_rvp9_fixed_q(fixed_q: u8, frames: &[YuvFrameBuf], framerate: f64) -> 
     let y_pixels = (W * H) as u64;
 
     let mut inter_recon_sse = 0u64;
+    let mut kf_recon_sse = 0u64;
     let mut all_recon_sse = 0u64;
     let mut inter_frames = 0u64;
     let mut inter_pred_sse = 0u64;
@@ -177,6 +187,7 @@ fn measure_rvp9_fixed_q(fixed_q: u8, frames: &[YuvFrameBuf], framerate: f64) -> 
     let mut kf_pred_px = 0u64;
     let mut inter_bits_sum = 0u64;
     let mut all_bits_sum = 0u64;
+    let mut kf_bits = 0u32;
     let mut inter_coef_bits = 0.0f64;
     let mut inter_cat_bits = [0.0f64; bitacct::N_CATEGORIES];
     let mut inter_tx_hist = [0u64; 4];
@@ -230,6 +241,8 @@ fn measure_rvp9_fixed_q(fixed_q: u8, frames: &[YuvFrameBuf], framerate: f64) -> 
             inter_leaves += skip.leaves;
             inter_skip += skip.skip_leaves;
         } else {
+            kf_recon_sse += recon_sse;
+            kf_bits = pkt.actual_bits;
             kf_pred_sse += pred.y_pred_sse;
             kf_pred_px += pred.y_pixels;
             for (acc, value) in kf_tx_hist.iter_mut().zip(pred.txsize_hist.iter()) {
@@ -247,12 +260,14 @@ fn measure_rvp9_fixed_q(fixed_q: u8, frames: &[YuvFrameBuf], framerate: f64) -> 
     let n_inter = inter_frames.max(1) as f64;
     let n_all = frames.len() as f64;
     Rvp9Result {
+        kf_recon_psnr: psnr_from_sse(kf_recon_sse, y_pixels),
         inter_recon_psnr: psnr_from_sse(inter_recon_sse, inter_frames * y_pixels),
         all_recon_psnr: psnr_from_sse(all_recon_sse, frames.len() as u64 * y_pixels),
         inter_pred_psnr: psnr_from_sse(inter_pred_sse, inter_pred_px.max(1)),
         kf_pred_psnr: psnr_from_sse(kf_pred_sse, kf_pred_px.max(1)),
         inter_bits: inter_bits_sum as f64 / n_inter,
         all_bits: all_bits_sum as f64 / n_all,
+        kf_bits,
         inter_coef_bits: inter_coef_bits / n_inter,
         inter_cat_bits: inter_cat_bits.map(|v| v / n_inter),
         inter_tx_hist,
@@ -266,10 +281,31 @@ fn measure_rvp9_fixed_q(fixed_q: u8, frames: &[YuvFrameBuf], framerate: f64) -> 
     }
 }
 
-/// libvpx fixed-Q result: (avg PSNR dB over decoded frames, avg bits/frame).
+/// libvpx fixed-Q result.
 struct LibvpxResult {
     psnr_db: f64,
     bits_per_frame: f64,
+    inter_bits_per_frame: f64,
+    kf_qindex: u8,
+    kf_psnr_db: f64,
+    kf_bits: u32,
+}
+
+fn ivf_payloads(ivf: &[u8]) -> Option<Vec<&[u8]>> {
+    if ivf.len() < 32 || &ivf[..4] != b"DKIF" {
+        return None;
+    }
+    let mut payloads = Vec::new();
+    let mut offset = 32usize;
+    while offset < ivf.len() {
+        let header_end = offset.checked_add(12)?;
+        let header = ivf.get(offset..header_end)?;
+        let size = u32::from_le_bytes(header[..4].try_into().ok()?) as usize;
+        let payload_end = header_end.checked_add(size)?;
+        payloads.push(ivf.get(header_end..payload_end)?);
+        offset = payload_end;
+    }
+    (!payloads.is_empty()).then_some(payloads)
 }
 
 fn libvpx_available() -> Option<PathBuf> {
@@ -348,10 +384,13 @@ fn measure_libvpx_fixed_q(
         .arg(format!("--width={W}"))
         .arg(format!("--height={H}"))
         .arg(format!("--fps={}/1", framerate as u32))
-        // libvpx --end-usage=q codes every frame at --cq-level with no
-        // rate control. (`--min-q == --max-q` is rejected with "should
-        // differ by at least 8"; cq-level alone is the fixed-Q knob.)
+        // `min-q == max-q` is rejected because libvpx requires a range of
+        // at least eight CLI quantizer steps. Pin the lower end to cq-level
+        // and leave exactly that required range. Normal Q-mode keyframe
+        // boosting then clamps at min-q, while inter frames stay at cq-level.
         .arg(format!("--cq-level={cli_q}"))
+        .arg(format!("--min-q={cli_q}"))
+        .arg(format!("--max-q={}", cli_q.saturating_add(8).min(63)))
         // Force a single keyframe at frame 0 (match rvp9's GOP).
         .arg(format!("--kf-min-dist={}", N_FRAMES))
         .arg(format!("--kf-max-dist={}", N_FRAMES))
@@ -368,8 +407,27 @@ fn measure_libvpx_fixed_q(
         return None;
     }
 
-    let ivf_bytes = std::fs::metadata(&ivf).ok()?.len();
-    let bits_per_frame = ivf_bytes as f64 * 8.0 / frames.len() as f64;
+    let ivf_data = std::fs::read(&ivf).ok()?;
+    let bits_per_frame = ivf_data.len() as f64 * 8.0 / frames.len() as f64;
+    let payloads = ivf_payloads(&ivf_data)?;
+    let first_payload = *payloads.first()?;
+    let kf_bits = u32::try_from(first_payload.len()).ok()?.checked_mul(8)?;
+    let inter_bits_per_frame = payloads
+        .iter()
+        .skip(1)
+        .map(|payload| payload.len() as f64 * 8.0)
+        .sum::<f64>()
+        / payloads.len().saturating_sub(1).max(1) as f64;
+    let mut header_decoder = Decoder::new();
+    let parsed = header_decoder.parse_packet(first_payload).ok()?;
+    let kf_qindex = parsed
+        .frames()
+        .first()?
+        .header
+        .tail
+        .as_ref()?
+        .quantization
+        .base_qindex;
 
     // Decode with vpxdec and compute our own Y-PSNR for an apples-to-
     // apples comparison with the rvp9 leg.
@@ -394,11 +452,17 @@ fn measure_libvpx_fixed_q(
         return None;
     }
     let mut sse_total = 0u64;
+    let mut kf_sse = 0u64;
     for (i, (orig_y, _, _)) in frames.iter().enumerate() {
         let dec_y = &dec_data[i * frame_size..i * frame_size + y_size];
-        sse_total += sse_u8(orig_y, dec_y);
+        let frame_sse = sse_u8(orig_y, dec_y);
+        sse_total += frame_sse;
+        if i == 0 {
+            kf_sse = frame_sse;
+        }
     }
     let psnr = psnr_from_sse(sse_total, frames.len() as u64 * y_size as u64);
+    let kf_psnr_db = psnr_from_sse(kf_sse, y_size as u64);
 
     let _ = std::fs::remove_file(&raw);
     let _ = std::fs::remove_file(&ivf);
@@ -407,6 +471,10 @@ fn measure_libvpx_fixed_q(
     Some(LibvpxResult {
         psnr_db: psnr,
         bits_per_frame,
+        inter_bits_per_frame,
+        kf_qindex,
+        kf_psnr_db,
+        kf_bits,
     })
 }
 
@@ -420,6 +488,25 @@ fn sibling_vpxdec_path_matches_vpxenc_suffix() {
         sibling_vpxdec_path(Path::new("/tmp/vpxenc.exe")),
         PathBuf::from("/tmp/vpxdec.exe")
     );
+}
+
+#[test]
+fn ivf_payloads_read_declared_frames() {
+    let payload_a = b"frame";
+    let payload_b = b"next";
+    let mut ivf = vec![0u8; 44];
+    ivf[..4].copy_from_slice(b"DKIF");
+    ivf[32..36].copy_from_slice(&(payload_a.len() as u32).to_le_bytes());
+    ivf.extend_from_slice(payload_a);
+    ivf.extend_from_slice(&(payload_b.len() as u32).to_le_bytes());
+    ivf.extend_from_slice(&[0u8; 8]);
+    ivf.extend_from_slice(payload_b);
+    assert_eq!(
+        ivf_payloads(&ivf),
+        Some(vec![payload_a.as_slice(), payload_b.as_slice()])
+    );
+    ivf[32..36].copy_from_slice(&99u32.to_le_bytes());
+    assert_eq!(ivf_payloads(&ivf), None);
 }
 
 #[test]
@@ -467,14 +554,22 @@ fn e9_quality_gap_foreman() {
         if let Some(ref vpxenc) = vpxenc
             && let Some(lv) = measure_libvpx_fixed_q(vpxenc, q, framerate, &frames)
         {
+            assert_eq!(
+                lv.kf_qindex, q,
+                "libvpx keyframe must stay at the requested matched qindex"
+            );
             eprintln!(
-                "  {q:>3}    | libvpx |     {:>7.2}     |        --        |       --         |     {:>8.0}    |        --",
-                lv.psnr_db, lv.bits_per_frame
+                "  {q:>3}    | libvpx |     {:>7.2}     |        --        |       --         |     {:>8.0}    |     {:>8.0}",
+                lv.psnr_db, lv.bits_per_frame, lv.inter_bits_per_frame
             );
             let dpsnr = lv.psnr_db - r.all_recon_psnr;
             let dbits = lv.bits_per_frame - r.all_bits;
             eprintln!(
                 "         | DELTA  |  libvpx-rvp9 PSNR = {dpsnr:+.2} dB   |   libvpx-rvp9 bits = {dbits:+.0} b/frame"
+            );
+            eprintln!(
+                "         KF: rvp9 q={q} {:>7.2} dB / {:>7} bits  |  libvpx q={:>3} {:>7.2} dB / {:>7} bits",
+                r.kf_recon_psnr, r.kf_bits, lv.kf_qindex, lv.kf_psnr_db, lv.kf_bits
             );
         }
 
@@ -524,9 +619,8 @@ fn e9_quality_gap_foreman() {
     }
 
     eprintln!("Categories tapped by bitacct: {CAT_NAMES:?}");
-    eprintln!("Note: rvp9 KF is pinned to the same fixed Q as inter (no KF qp boost),");
-    eprintln!("      whereas libvpx may apply a KF delta even in --end-usage=q. The");
-    eprintln!("      inter-frame columns are the cleaner matched-Q comparison.");
+    eprintln!("The decoder-observed libvpx KF qindex must match each requested Q point;");
+    eprintln!("the min-q clamp prevents Q-mode keyframe boosting from skewing the oracle.");
 }
 
 /// Estimate the inter-frame count (frames - 1 keyframe) for the

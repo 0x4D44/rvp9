@@ -26,6 +26,7 @@
 //!     --frames 64 \
 //!     --kbps 25,50,100,250 \
 //!     --vbr \
+//!     --fixed-q 120 \
 //!     --strict \
 //!     --out target/track_f_oracle/
 //! ```
@@ -34,6 +35,7 @@ use rvp9_encoder::f02_oracle::{self, BlockDecision};
 use rvp9_encoder::{
     AqMode, EncoderConfig, RcMode, Stage4aProductSplitOverride, StreamEncoder, YuvFrameRef,
 };
+use rvp9_harness::container::{IvfHeader, write_ivf};
 use rvp9_harness::f02_schema::{compare_decisions, parse_jsonl_stream};
 use rvp9_harness::y4m::read_cropped;
 use std::fs::{File, OpenOptions};
@@ -74,6 +76,14 @@ fn split_override(strict: bool) -> Stage4aProductSplitOverride {
     }
 }
 
+fn fixed_q_cli_range(qindex: u8) -> Option<(u8, u8)> {
+    let cli_q = qindex.checked_div(4)?;
+    if !qindex.is_multiple_of(4) || cli_q > 55 {
+        return None;
+    }
+    Some((cli_q, cli_q + 8))
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let foreman_path = PathBuf::from(
@@ -94,7 +104,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         PathBuf::from(arg(&argv, "--out").unwrap_or_else(|| "target/track_f_oracle".into()));
     let no_libvpx = argv.iter().any(|a| a == "--no-libvpx");
     let report_only = argv.iter().any(|a| a == "--report-only");
-    let vbr = argv.iter().any(|a| a == "--vbr");
+    let fixed_q = arg(&argv, "--fixed-q")
+        .map(|value| {
+            value
+                .parse::<u8>()
+                .map_err(|_| format!("--fixed-q must be an integer qindex, got {value:?}"))
+        })
+        .transpose()?;
+    if let Some(qindex) = fixed_q
+        && fixed_q_cli_range(qindex).is_none()
+    {
+        return Err(
+            format!("--fixed-q must be divisible by 4 and in 0..=220, got {qindex}").into(),
+        );
+    }
+    // Fixed-Q diagnostics must retain the production Stage 4a VBR picker
+    // calibration. RVP9_FIXED_Q bypasses only the controller's chosen Q.
+    let vbr = argv.iter().any(|a| a == "--vbr") || fixed_q.is_some();
     let strict = argv.iter().any(|a| a == "--strict");
 
     if !foreman_path.exists() {
@@ -131,6 +157,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  bitrates  : {:?} kbps", kbps_list);
     println!("  rate mode : {}", if vbr { "VBR" } else { "CBR" });
     println!(
+        "  fixed Q   : {}",
+        fixed_q.map_or_else(|| "off".to_string(), |q| q.to_string())
+    );
+    println!(
         "  split     : {}",
         if strict { "strict" } else { "product" }
     );
@@ -149,22 +179,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // only consumers, so no measurement leakage to other tools.
     // SAFETY: process-local; no other thread races on this var.
     unsafe { std::env::set_var("RVP9_F02_ORACLE", "1") };
+    if let Some(qindex) = fixed_q {
+        // SAFETY: this single-threaded diagnostic process owns the
+        // environment and sets the override before constructing an encoder.
+        unsafe { std::env::set_var("RVP9_FIXED_Q", qindex.to_string()) };
+    }
     f02_oracle::init_from_env();
 
     let mut strict_mismatches = 0usize;
     for &kbps in &kbps_list {
         println!("\n=== {} kbps target bitrate ===", kbps);
-        let rvp9_records = drive_rvp9_leg(&foreman_path, frames, kbps, vbr, strict)?;
+        let rvp9_ivf = run_dir.join(format!("foreman_{}kbps_rvp9.ivf", kbps));
+        let rvp9_records = drive_rvp9_leg(&foreman_path, frames, kbps, vbr, strict, &rvp9_ivf)?;
         println!(
             "  rvp9: {} per-block decisions across {} frames",
             rvp9_records.len(),
             frames
         );
+        println!("  rvp9 IVF  → {}", rvp9_ivf.display());
 
         let libvpx_records = if no_libvpx {
             Vec::new()
         } else {
-            drive_libvpx_leg(&vpxenc_path, &foreman_path, frames, kbps, &run_dir, vbr)?
+            drive_libvpx_leg(
+                &vpxenc_path,
+                &foreman_path,
+                frames,
+                kbps,
+                &run_dir,
+                vbr,
+                fixed_q,
+            )?
         };
         if !no_libvpx {
             println!("  libvpx: {} per-block decisions", libvpx_records.len());
@@ -306,6 +351,7 @@ fn drive_rvp9_leg(
     kbps: u32,
     vbr: bool,
     strict: bool,
+    ivf_path: &Path,
 ) -> Result<Vec<BlockDecision>, Box<dyn std::error::Error>> {
     let (gop_length, rc_mode) = rvp9_rate_config(frames, vbr);
     let (yuv_frames, src_fps) = read_cropped(foreman_path, DEFAULT_W, DEFAULT_H, frames as usize)?;
@@ -333,6 +379,7 @@ fn drive_rvp9_leg(
     };
     let mut enc = StreamEncoder::new(cfg)?;
     let mut all_records = Vec::new();
+    let mut packets = Vec::with_capacity(yuv_frames.len());
     // Drain any prior thread-local state.
     let _ = f02_oracle::drain_frame();
     for (y, u, v) in yuv_frames.iter() {
@@ -344,10 +391,20 @@ fn drive_rvp9_leg(
             u_stride: DEFAULT_W as usize / 2,
             v_stride: DEFAULT_W as usize / 2,
         };
-        let _ = enc.encode_frame(&view)?;
+        let packet = enc.encode_frame(&view)?;
+        packets.push(packet.data);
         let mut per_frame = f02_oracle::drain_frame();
         all_records.append(&mut per_frame);
     }
+    let mut ivf = File::create(ivf_path)?;
+    let header = IvfHeader::vp9(
+        DEFAULT_W as u16,
+        DEFAULT_H as u16,
+        src_fps.round() as u32,
+        1,
+    );
+    let packet_refs: Vec<&[u8]> = packets.iter().map(Vec::as_slice).collect();
+    write_ivf(&mut ivf, &header, &packet_refs)?;
     Ok(all_records)
 }
 
@@ -364,6 +421,7 @@ fn drive_libvpx_leg(
     kbps: u32,
     run_dir: &Path,
     vbr: bool,
+    fixed_q: Option<u8>,
 ) -> Result<Vec<BlockDecision>, Box<dyn std::error::Error>> {
     let sidecar = run_dir.join(format!("foreman_{}kbps_libvpx.jsonl", kbps));
     let raw = run_dir.join(format!("foreman_{}kbps_input.i420", kbps));
@@ -398,7 +456,14 @@ fn drive_libvpx_leg(
         .arg(&raw)
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
-    if !vbr {
+    if let Some(qindex) = fixed_q {
+        let (cli_q, max_q) =
+            fixed_q_cli_range(qindex).expect("fixed q validated before libvpx invocation");
+        cmd.arg("--end-usage=q")
+            .arg(format!("--cq-level={cli_q}"))
+            .arg(format!("--min-q={cli_q}"))
+            .arg(format!("--max-q={max_q}"));
+    } else if !vbr {
         cmd.arg("--end-usage=cbr");
     }
     let out = cmd.output()?;
@@ -447,5 +512,12 @@ mod tests {
             Stage4aProductSplitOverride::ForceStrict
         );
         assert_eq!(split_override(false), Stage4aProductSplitOverride::Auto);
+    }
+
+    #[test]
+    fn fixed_q_maps_to_valid_libvpx_cli_range() {
+        assert_eq!(fixed_q_cli_range(120), Some((30, 38)));
+        assert_eq!(fixed_q_cli_range(121), None);
+        assert_eq!(fixed_q_cli_range(224), None);
     }
 }
