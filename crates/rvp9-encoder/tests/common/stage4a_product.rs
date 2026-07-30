@@ -1430,6 +1430,26 @@ fn validation_clean_now(report: &ProductReport) -> bool {
         && report.ignored_validation_files.len() == report.allowed_ignored_inputs.len()
 }
 
+pub(crate) fn source_hash_validation_reasons(
+    initial: Option<&str>,
+    current: &str,
+    expected: &str,
+) -> Vec<String> {
+    let mut reasons = Vec::new();
+    if initial != Some(current) {
+        reasons.push(format!(
+            "SOURCE_SHA256_CHANGED_DURING_RUN:{}_TO_{current}",
+            initial.unwrap_or("NONE")
+        ));
+    }
+    if current != expected {
+        reasons.push(format!(
+            "SOURCE_SHA256_FINAL_MISMATCH:{current}_EXPECTED_{expected}"
+        ));
+    }
+    reasons
+}
+
 fn refresh_final_validation(root: &Path, report: &mut ProductReport) {
     match git_stdout(root, &["rev-parse", "HEAD"]) {
         Ok(current_sha) if current_sha == report.git_sha => {}
@@ -1440,6 +1460,19 @@ fn refresh_final_validation(root: &Path, report: &mut ProductReport) {
         Err(e) => report
             .status_reasons
             .push(format!("GIT_SHA_FINAL_PROBE_FAILED:{e}")),
+    }
+    match sha256_file(&root.join(FOREMAN_REL)) {
+        Ok(current_hash) => {
+            report.status_reasons.extend(source_hash_validation_reasons(
+                report.source_sha256.as_deref(),
+                &current_hash,
+                FOREMAN_SHA256,
+            ));
+            report.source_sha256 = Some(current_hash);
+        }
+        Err(e) => report
+            .status_reasons
+            .push(format!("SOURCE_SHA256_FINAL_FAILED:{e}")),
     }
     let original_source_tree_hash = report.source_tree_hash.clone();
     validate_worktree(root, report);
