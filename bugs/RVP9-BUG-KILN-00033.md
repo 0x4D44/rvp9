@@ -5,15 +5,15 @@
 - **Severity:** High
 - **Area:** harness/conformance-cli
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T171626Z-p21311-n210115000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00033-run-fix-20260730T171626Z-p21311-n210115000-c1
+- **Owner base:** 8df548d98211b89a078fefc9f6a0580cf31485f2
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T17:16:26Z
+- **Owner until:** 2026-07-30T19:16:26Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
