@@ -358,11 +358,7 @@ pub fn read_cropped(
 ///
 /// Emits `YUV4MPEG2 W<w> H<h> F<num>:<den> Ip A1:1 <Ctag>\n` — every
 /// field [`parse_header`] reads. The chroma tag is format-correct:
-/// `Yuv420 → C420jpeg`, `Yuv422 → C422`, `Yuv444 → C444`. 4:4:0 has no
-/// standard y4m tag and must be rejected by the caller before reaching
-/// here (the `rvp9dec` CLI does so); the `Yuv440` arm is defence-in-depth
-/// only (debug-asserts, then falls back to the bounded `C420jpeg` tag in
-/// release so the function stays total).
+/// `Yuv420 → C420jpeg`, `Yuv422 → C422`, `Yuv444 → C444`.
 ///
 /// Note the writer/reader pair only round-trips on 4:2:0 — the reader is
 /// 4:2:0-only (encoder input path); the writer speaks all three
@@ -370,7 +366,9 @@ pub fn read_cropped(
 ///
 /// # Errors
 ///
-/// Forwards any [`io::Error`] from the writer.
+/// Returns [`io::ErrorKind::InvalidInput`] for `Yuv440`, which has no
+/// standard Y4M chroma tag. Otherwise forwards any [`io::Error`] from the
+/// writer.
 pub fn write_header<W: Write>(
     out: &mut W,
     width: u32,
@@ -379,20 +377,16 @@ pub fn write_header<W: Write>(
     fps_den: u32,
     chroma: ChromaFormat,
 ) -> io::Result<()> {
-    // 8-bit y4m C-tags. Yuv440 has no standard tag and must be rejected
-    // by the caller before reaching here (see HLD G-B §2); we debug-assert
-    // the invariant and fall back to the (wrong-but-bounded) 4:2:0 tag in
-    // release so a stray Yuv440 cannot write an out-of-range string.
+    // 8-bit y4m C-tags. Yuv440 has no standard tag.
     let tag = match chroma {
         ChromaFormat::Yuv420 => "C420jpeg",
         ChromaFormat::Yuv422 => "C422",
         ChromaFormat::Yuv444 => "C444",
         ChromaFormat::Yuv440 => {
-            debug_assert!(
-                false,
-                "Yuv440 must be rejected before write_header (HLD G-B §2)"
-            );
-            "C420jpeg"
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Yuv440 has no standard Y4M chroma tag",
+            ));
         }
     };
     writeln!(
@@ -481,6 +475,14 @@ mod tests {
             assert!(line.contains(&format!(" {want}\n")), "{fmt:?} → {line:?}");
             assert!(line.starts_with("YUV4MPEG2 W352 H288 F30:1 "));
         }
+    }
+
+    #[test]
+    fn write_header_rejects_unrepresentable_yuv440_without_output() {
+        let mut buf = Vec::new();
+        let err = write_header(&mut buf, 352, 288, 30, 1, ChromaFormat::Yuv440).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(buf.is_empty());
     }
 
     // -----------------------------------------------------------------
