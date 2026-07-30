@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00036 - diff-bitstream does not honor its bounded-run CLI contract
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** harness/diff-bitstream-cli
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T191857Z-p14469-n072601000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00036-run-fix-20260730T191857Z-p14469-n072601000-c1
-- **Owner base:** 66b6c6b2345d1992710ebe5584989ed78b368590
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T19:18:57Z
-- **Owner until:** 2026-07-30T21:18:57Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-harness/` at `cfabd55`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-harness/` at `cfabd55`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T191857Z-p14469-n072601000-c1 branch=task/bug-RVP9-BUG-KILN-00036-run-fix-20260730T191857Z-p14469-n072601000-c1 code=52b5400a7032ebcfd2c8a52b550152e920987189 gate=manual)
 
 ## Observation
 
