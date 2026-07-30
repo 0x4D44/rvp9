@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00050 - rvp9enc marks parse-only flags as supported no-ops
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** cli/rvp9enc option contract
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T200415Z-p68292-n478425000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00050-run-fix-20260730T200415Z-p68292-n478425000-c1
-- **Owner base:** 52504a2478ea5ba9b9f9ee57cc48b880a7045e26
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T20:04:15Z
-- **Owner until:** 2026-07-30T22:04:15Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-cli/` at `8d66f33`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-cli/` at `8d66f33`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T200415Z-p68292-n478425000-c1 branch=task/bug-RVP9-BUG-KILN-00050-run-fix-20260730T200415Z-p68292-n478425000-c1 code=5a671ce1f2252f055c13732166155f11bdce6352 gate=manual)
 
 ## Observation
 
