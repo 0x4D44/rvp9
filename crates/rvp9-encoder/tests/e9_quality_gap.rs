@@ -273,8 +273,35 @@ struct LibvpxResult {
 }
 
 fn libvpx_available() -> Option<PathBuf> {
-    let p = PathBuf::from(r"D:\language\libvpx-stock\vpxenc.exe");
-    if p.is_file() { Some(p) } else { None }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let candidates = [
+        root.join("build/libvpx/vpxenc"),
+        root.join("build/libvpx/vpxenc.exe"),
+        root.join("build/libvpx-win-tools-nodeps/vpxenc.exe"),
+        PathBuf::from(r"D:\language\libvpx-stock\vpxenc.exe"),
+    ];
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .or_else(|| {
+            std::env::var_os("PATH").and_then(|path| {
+                std::env::split_paths(&path)
+                    .flat_map(|dir| [dir.join("vpxenc"), dir.join("vpxenc.exe")])
+                    .find(|candidate| candidate.is_file())
+            })
+        })
+}
+
+fn sibling_vpxdec_path(vpxenc: &Path) -> PathBuf {
+    let filename = if vpxenc
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
+    {
+        "vpxdec.exe"
+    } else {
+        "vpxdec"
+    };
+    vpxenc.with_file_name(filename)
 }
 
 fn write_i420_raw(path: &Path, frames: &[YuvFrameBuf]) -> std::io::Result<()> {
@@ -346,7 +373,7 @@ fn measure_libvpx_fixed_q(
 
     // Decode with vpxdec and compute our own Y-PSNR for an apples-to-
     // apples comparison with the rvp9 leg.
-    let vpxdec = vpxenc.with_file_name("vpxdec.exe");
+    let vpxdec = sibling_vpxdec_path(vpxenc);
     let out = Command::new(&vpxdec)
         .args(["--i420", "-o"])
         .arg(&dec_raw)
@@ -381,6 +408,18 @@ fn measure_libvpx_fixed_q(
         psnr_db: psnr,
         bits_per_frame,
     })
+}
+
+#[test]
+fn sibling_vpxdec_path_matches_vpxenc_suffix() {
+    assert_eq!(
+        sibling_vpxdec_path(Path::new("/tmp/vpxenc")),
+        PathBuf::from("/tmp/vpxdec")
+    );
+    assert_eq!(
+        sibling_vpxdec_path(Path::new("/tmp/vpxenc.exe")),
+        PathBuf::from("/tmp/vpxdec.exe")
+    );
 }
 
 #[test]
