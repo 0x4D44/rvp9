@@ -3159,7 +3159,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         |key: &str, default: bool| std::env::var_os(key).map_or(default, |v| v != "0");
     let rt_emit_max_tx = env_flag_default("RVP9_RT_EMIT_MAX_TX", rt_large_recovery);
     let rt_emit_tx_rd = env_flag_default("RVP9_RT_EMIT_TX_RD", true);
-    let rt_min_tx8 = env_flag_default("RVP9_RT_MIN_TX8", true);
     let rt_quant_fp = env_flag_default("RVP9_RT_QUANT_FP", false);
     let rt_reuse_descent_pick = env_flag_default("RVP9_RT_REUSE_DESCENT_PICK", rt_large_recovery);
     let a4_descent_cb_filter_search =
@@ -5694,11 +5693,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 coef_costs: &rdo_coef_costs,
                                 rdmult: tx_rd_rdmult,
                                 tx_size_cost: rdo_tx_size_cost,
-                                min_tx_size: if rt_min_tx8 {
-                                    TxSize::Tx8x8
-                                } else {
-                                    TxSize::Tx4x4
-                                },
                                 quant_fp: rt_quant_fp,
                             });
                             if let Some(t0) = emit_tx_select_start {
@@ -7183,12 +7177,7 @@ struct InterLumaTxInput<'a> {
     coef_costs: &'a rvp9_core::cost::coef_cost::CoefCostTable,
     rdmult: i64,
     tx_size_cost: [u32; 4],
-    min_tx_size: TxSize,
     quant_fp: bool,
-}
-
-fn inter_luma_tx_min_index(max_tx: TxSize, min_tx: TxSize) -> usize {
-    (min_tx as usize).min(max_tx as usize)
 }
 
 fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
@@ -7211,7 +7200,6 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
         coef_costs,
         rdmult,
         tx_size_cost,
-        min_tx_size,
         quant_fp,
     } = input;
 
@@ -7245,12 +7233,10 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
     let mut best_tx = max_tx;
     let mut best_rd = i64::MAX;
 
-    // Walk every candidate size from max down to the configured floor.
-    // The clean-tree candidate floors eligible leaves at Tx8x8; setting
-    // `RVP9_RT_MIN_TX8=0` restores the full-depth search. The matched
-    // realtime libvpx oracle selected no Tx4x4 leaves on this sample.
-    let min_tx_index = inter_luma_tx_min_index(max_tx, min_tx_size);
-    for n in (min_tx_index..=(max_tx as usize)).rev() {
+    // Walk every candidate size from max down to Tx4x4 (libvpx walks the
+    // full depth in the good-quality path; the realtime/RT op-point still
+    // benefits because the residual transform is cheap relative to ME).
+    for n in (0..=(max_tx as usize)).rev() {
         let tx_size = match n {
             0 => TxSize::Tx4x4,
             1 => TxSize::Tx8x8,
@@ -7673,22 +7659,6 @@ mod tests {
         assert_eq!(c.width, 64);
         assert_eq!(c.height, 64);
         assert_eq!(c.base_qindex, 50);
-    }
-
-    #[test]
-    fn inter_luma_tx_floor_excludes_tx4_without_exceeding_leaf_max() {
-        assert_eq!(
-            inter_luma_tx_min_index(TxSize::Tx16x16, TxSize::Tx8x8),
-            TxSize::Tx8x8 as usize
-        );
-        assert_eq!(
-            inter_luma_tx_min_index(TxSize::Tx4x4, TxSize::Tx8x8),
-            TxSize::Tx4x4 as usize
-        );
-        assert_eq!(
-            inter_luma_tx_min_index(TxSize::Tx32x32, TxSize::Tx4x4),
-            TxSize::Tx4x4 as usize
-        );
     }
 
     #[test]
