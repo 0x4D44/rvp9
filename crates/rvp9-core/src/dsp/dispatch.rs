@@ -3705,6 +3705,7 @@ mod tests {
 
     /// Wave K — forced-scalar caps install the scalar directional
     /// adapters for all six modes.
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn forced_scalar_caps_installs_scalar_directional() {
         type Slot4 = fn(&mut [u8], usize, usize, &[u8]);

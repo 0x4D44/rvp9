@@ -150,6 +150,12 @@ pub fn take_snapshot() -> [f64; N_CATEGORIES] {
 mod tests {
     use super::*;
 
+    /// Serialises tests that mutate the process-wide [`BITACCT_ON`] switch.
+    fn bitacct_on_lock() -> &'static std::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
     /// Hand-computed bit cost for one (`bit`, `prob`) symbol, used as
     /// the test oracle. Mirrors the formula in [`record`] so the test
     /// fails if anyone tweaks one without the other.
@@ -173,6 +179,7 @@ mod tests {
     /// ternary inside `record`, and the `.max(1.0/512.0)` clamp).
     #[test]
     fn full_coverage_sweep() {
+        let _guard = bitacct_on_lock().lock().unwrap();
         struct Restore(bool);
         impl Drop for Restore {
             fn drop(&mut self) {
@@ -287,6 +294,7 @@ mod tests {
 
     #[test]
     fn bool_writer_boundaries_reset_to_other() {
+        let _guard = bitacct_on_lock().lock().unwrap();
         struct Restore(bool);
         impl Drop for Restore {
             fn drop(&mut self) {
@@ -318,6 +326,7 @@ mod tests {
 
     #[test]
     fn suppression_skips_recording_and_restores_enabled_state() {
+        let _guard = bitacct_on_lock().lock().unwrap();
         struct Restore(bool);
         impl Drop for Restore {
             fn drop(&mut self) {
