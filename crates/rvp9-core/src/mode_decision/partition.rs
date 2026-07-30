@@ -1710,9 +1710,9 @@ mod tests {
             }
         }
         let mut original_32 = [FixedPartitionVariance::default(); 4];
-        for i in 0..4 {
+        for (i, node32) in original_32.iter_mut().enumerate() {
             let base = i * 4;
-            original_32[i] = FixedPartitionVariance::from_quadrants([
+            *node32 = FixedPartitionVariance::from_quadrants([
                 original_16[base].none,
                 original_16[base + 1].none,
                 original_16[base + 2].none,
