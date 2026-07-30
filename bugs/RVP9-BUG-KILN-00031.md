@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00031 - Profile-1 AQ2 non-420 segmentation decode remains mismatched and untracked
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** decoder/profile1 segmentation
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T163444Z-p94241-n760521000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00031-run-fix-20260730T163444Z-p94241-n760521000-c1
-- **Owner base:** 16c1a72e6e670e80112d815c6ec994876bbba8de
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T16:34:44Z
-- **Owner until:** 2026-07-30T18:34:44Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-decoder/` at `ceb57b6`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-decoder/` at `ceb57b6`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T163444Z-p94241-n760521000-c1 branch=task/bug-RVP9-BUG-KILN-00031-run-fix-20260730T163444Z-p94241-n760521000-c1 code=4de7766b06b78cc8e7b7ddb70a9d60252ec0cdfd gate=manual)
 
 ## Observation
 
