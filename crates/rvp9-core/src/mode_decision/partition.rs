@@ -73,7 +73,7 @@
 
 use crate::block::BlockSize;
 use crate::dsp::distortion::variance;
-use crate::mode_decision::inter::NoiseLevel;
+use crate::mode_decision::inter::{ContentStateSb, NoiseEstimate, NoiseLevel};
 use crate::mv_search::PlaneRef;
 use crate::quant::forward::{QuantizerDeltas, plane_dequant_pair};
 
@@ -269,6 +269,77 @@ pub struct FixedTreeInterInput<'a> {
     pub low_resolution: bool,
     /// Whether the full frame height satisfies libvpx's `height<=360` rule.
     pub frame_height_le_360: bool,
+}
+
+/// Inputs to pinned-libvpx's cpu-used 7 inter VBP threshold ladder.
+#[derive(Clone, Copy, Debug)]
+pub struct Cpu7InterVbpThresholdInput {
+    /// Effective frame or cyclic-refresh segment qindex.
+    pub q_index: u8,
+    /// Rate control's running inter-frame average qindex.
+    pub avg_inter_qindex: u8,
+    /// Coded frame width.
+    pub frame_width: usize,
+    /// Coded frame height.
+    pub frame_height: usize,
+    /// Frame noise estimate.
+    pub noise_estimate: NoiseEstimate,
+    /// Exact source-SAD content state for this superblock.
+    pub content_state: ContentStateSb,
+}
+
+/// Exact per-superblock cpu-used 7 VBP thresholds.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Cpu7InterVbpThresholds {
+    /// 64x64, 32x32, 16x16, and retained 8x8 threshold slots.
+    pub thresholds: [i64; 4],
+    /// Effective min/max spread threshold, including very-high-SAD scaling.
+    pub minmax_threshold: i32,
+}
+
+/// Compute pinned-libvpx's cpu-used 7 inter variance thresholds.
+///
+/// Mirrors `set_vbp_thresholds` plus the per-superblock
+/// `vbp_threshold_minmax` scaling in `choose_partitioning`. Slot 3 is the
+/// frame-level keyframe-derived value retained by libvpx; inter partitioning
+/// never consults it because 8x8 is the minimum inter block.
+#[must_use]
+pub fn cpu7_inter_vbp_thresholds(input: Cpu7InterVbpThresholdInput) -> Cpu7InterVbpThresholds {
+    let (_, ac) = plane_dequant_pair(i32::from(input.q_index), QuantizerDeltas::Y);
+    let raw_base = i64::from(ac);
+    let mut base = raw_base;
+    if input.noise_estimate.enabled && input.frame_width >= 640 && input.frame_height >= 480 {
+        base = match input.noise_estimate.level {
+            NoiseLevel::High => 3 * base,
+            NoiseLevel::Medium => base << 1,
+            NoiseLevel::LowLow => (7 * base) >> 3,
+            NoiseLevel::Low => base,
+        };
+    }
+    if input.content_state.scales_cpu7_partition_threshold() {
+        base = (5 * base) >> 2;
+    }
+
+    let (t0, t1, t2) = if input.frame_width <= 352 && input.frame_height <= 288 {
+        let mut t2 = base << 3;
+        if input.avg_inter_qindex > 220 {
+            t2 <<= 2;
+        } else if input.avg_inter_qindex > 200 {
+            t2 <<= 1;
+        }
+        (base >> 3, base >> 1, t2)
+    } else if input.frame_width < 1280 && input.frame_height < 720 {
+        (base, (5 * base) >> 2, base << 7)
+    } else if input.frame_width < 1920 && input.frame_height < 1080 {
+        (base, base << 1, base << 7)
+    } else {
+        (base, (5 * base) >> 1, base << 7)
+    };
+    Cpu7InterVbpThresholds {
+        thresholds: [t0, t1, t2, raw_base * 80],
+        minmax_threshold: (15 + (i32::from(input.q_index) >> 3))
+            << (input.content_state == ContentStateSb::VeryHighSad) as u32,
+    }
 }
 
 /// A variance node in the stable differential-oracle trace.
@@ -1399,6 +1470,61 @@ mod tests {
             low_resolution: false,
             frame_height_le_360: true,
         }
+    }
+
+    #[test]
+    fn cpu7_thresholds_match_pinned_foreman_oracle() {
+        let make = |q_index, content_state| {
+            cpu7_inter_vbp_thresholds(Cpu7InterVbpThresholdInput {
+                q_index,
+                avg_inter_qindex: q_index,
+                frame_width: 256,
+                frame_height: 256,
+                noise_estimate: NoiseEstimate::default(),
+                content_state,
+            })
+        };
+
+        assert_eq!(
+            make(80, ContentStateSb::LowSadLowSumdiff),
+            Cpu7InterVbpThresholds {
+                thresholds: [13, 54, 864, 6960],
+                minmax_threshold: 25,
+            },
+        );
+        assert_eq!(
+            make(120, ContentStateSb::HighSadHighSumdiff),
+            Cpu7InterVbpThresholds {
+                thresholds: [19, 76, 1216, 12160],
+                minmax_threshold: 30,
+            },
+        );
+        assert_eq!(
+            make(160, ContentStateSb::VeryHighSad),
+            Cpu7InterVbpThresholds {
+                thresholds: [38, 152, 2440, 24400],
+                minmax_threshold: 70,
+            },
+        );
+    }
+
+    #[test]
+    fn cpu7_thresholds_apply_large_frame_noise_before_content_scale() {
+        let thresholds = cpu7_inter_vbp_thresholds(Cpu7InterVbpThresholdInput {
+            q_index: 120,
+            avg_inter_qindex: 120,
+            frame_width: 1280,
+            frame_height: 720,
+            noise_estimate: NoiseEstimate {
+                enabled: true,
+                level: NoiseLevel::Medium,
+            },
+            content_state: ContentStateSb::LowSadLowSumdiff,
+        });
+
+        // ac=152; medium noise doubles to 304; low-sumdiff scales 5/4
+        // to 380 before the 720p threshold ladder is formed.
+        assert_eq!(thresholds.thresholds[..3], [380, 760, 48_640]);
     }
 
     #[test]

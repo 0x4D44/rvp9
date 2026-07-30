@@ -155,16 +155,18 @@ index e8f29d5d2..cefcba370 100644
  static int set_vt_partitioning(VP9_COMP *cpi, MACROBLOCK *const x,
                                 MACROBLOCKD *const xd, void *data,
                                 BLOCK_SIZE bsize, int mi_row, int mi_col,
-@@ -1313,6 +1437,8 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+@@ -1313,7 +1437,10 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
    const int use_4x4_partition = frame_is_intra_only(cm);
    const int low_res = (cm->width <= 352 && cm->height <= 288);
    int variance4x4downsample[16];
 +  int minmax_16x16[16];
 +  int root_variance_valid = 0;
    int segment_id;
++  int vbp_q = cm->base_qindex;
    int sb_offset = (cm->mi_stride >> 3) * (mi_row >> 3) + (mi_col >> 3);
  
-@@ -1337,6 +1463,7 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+   // For SVC: check if LAST frame is NULL or if the resolution of LAST is
+@@ -1337,6 +1464,7 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
      compute_minmax_variance = 0;
  
    memset(x->variance_low, 0, sizeof(x->variance_low));
@@ -172,7 +174,20 @@ index e8f29d5d2..cefcba370 100644
  
    if (cpi->sf.use_source_sad && !is_key_frame) {
      int sb_offset2 = ((cm->mi_cols + 7) >> 3) * (mi_row >> 3) + (mi_col >> 3);
-@@ -1602,6 +1729,7 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+@@ -1377,9 +1505,9 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+   if (cpi->oxcf.aq_mode == CYCLIC_REFRESH_AQ && cm->seg.enabled &&
+       cyclic_refresh_segment_id_boosted(segment_id)) {
+-    int q = vp9_get_qindex(&cm->seg, segment_id, cm->base_qindex);
+-    set_vbp_thresholds(cpi, thresholds, q, content_state);
++    vbp_q = vp9_get_qindex(&cm->seg, segment_id, cm->base_qindex);
++    set_vbp_thresholds(cpi, thresholds, vbp_q, content_state);
+   } else {
+-    set_vbp_thresholds(cpi, thresholds, cm->base_qindex, content_state);
++    set_vbp_thresholds(cpi, thresholds, vbp_q, content_state);
+   }
+   // Decrease 32x32 split threshold for screen on base layer, for scene
+   // change/high motion frames.
+@@ -1602,6 +1730,7 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
                                            xd->cur_buf->flags,
  #endif
                                            pixels_wide, pixels_high);
@@ -180,7 +195,7 @@ index e8f29d5d2..cefcba370 100644
            int thresh_minmax = (int)cpi->vbp_threshold_minmax;
            if (x->content_state_sb == kVeryHighSad)
              thresh_minmax = thresh_minmax << 1;
-@@ -1678,6 +1806,7 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+@@ -1678,6 +1807,7 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
      }
    }
    if (!force_split[0]) {
@@ -188,7 +203,7 @@ index e8f29d5d2..cefcba370 100644
      fill_variance_tree(&vt, BLOCK_64X64);
      get_variance(&vt.part_variances.none);
      // If variance of this 64x64 block is above (some threshold of) the average
-@@ -1761,6 +1890,114 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+@@ -1761,6 +1891,121 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
    }
  
    chroma_check(cpi, x, bsize, y_sad, is_key_frame, scene_change_detected);
@@ -207,18 +222,24 @@ index e8f29d5d2..cefcba370 100644
 +      fprintf(oracle,
 +              "{\"frame\":%d,\"mi_row\":%d,\"mi_col\":%d,"
 +              "\"visible_width\":%d,\"visible_height\":%d,"
++              "\"frame_width\":%d,\"frame_height\":%d,"
 +              "\"frame_height_le_360\":%s,\"low_resolution\":%s,"
++              "\"q_index\":%d,\"avg_inter_qindex\":%d,"
 +              "\"thresholds\":[%lld,%lld,%lld,%lld],"
 +              "\"minmax_threshold\":%lld,"
 +              "\"force_64x64_split\":%s,"
 +              "\"compute_minmax_variance\":%s,"
-+              "\"segment_is_boosted\":%s,\"noise_level\":%d,"
++              "\"segment_is_boosted\":%s,\"noise_estimate_enabled\":%s,"
++              "\"noise_level\":%d,"
 +              "\"content_state\":%d,\"source_sad\":%u,"
 +              "\"zero_temp_sad_source\":%s,\"partition_ref\":%d,"
 +              "\"partition_mv_row\":%d,\"partition_mv_col\":%d,",
 +              cm->current_video_frame, mi_row, mi_col, pixels_wide, pixels_high,
++              cm->width, cm->height,
 +              cm->height <= 360 ? "true" : "false",
-+              low_res ? "true" : "false", (long long)thresholds[0],
++              low_res ? "true" : "false", vbp_q,
++              cpi->rc.avg_frame_qindex[INTER_FRAME],
++              (long long)thresholds[0],
 +              (long long)thresholds[1], (long long)thresholds[2],
 +              (long long)thresholds[3],
 +              (long long)(cpi->vbp_threshold_minmax
@@ -227,6 +248,7 @@ index e8f29d5d2..cefcba370 100644
 +              compute_minmax_variance ? "true" : "false",
 +              cyclic_refresh_segment_id_boosted(segment_id) ? "true"
 +                                                               : "false",
++              cpi->noise_estimate.enabled ? "true" : "false",
 +              (int)noise_level, content_state, y_sad,
 +              x->zero_temp_sad_source ? "true" : "false",
 +              (int)ref_frame_partition, x->sb_mvrow_part, x->sb_mvcol_part);

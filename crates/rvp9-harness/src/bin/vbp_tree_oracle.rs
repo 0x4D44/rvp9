@@ -9,10 +9,11 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-use rvp9_core::mode_decision::inter::NoiseLevel;
+use rvp9_core::mode_decision::inter::{ContentStateSb, NoiseEstimate, NoiseLevel};
 use rvp9_core::mode_decision::partition::{
-    FixedTreeAccumulatorTrace, FixedTreeInterInput, FixedTreeNodeAccumulatorTrace,
-    FixedTreePartitionSymbol, FixedTreeVarianceTrace, choose_fixed_tree_inter,
+    Cpu7InterVbpThresholdInput, FixedTreeAccumulatorTrace, FixedTreeInterInput,
+    FixedTreeNodeAccumulatorTrace, FixedTreePartitionSymbol, FixedTreeVarianceTrace,
+    choose_fixed_tree_inter, cpu7_inter_vbp_thresholds,
 };
 use serde::Deserialize;
 
@@ -26,14 +27,20 @@ struct OracleRecord {
     mi_col: usize,
     visible_width: usize,
     visible_height: usize,
+    frame_width: usize,
+    frame_height: usize,
     frame_height_le_360: bool,
     low_resolution: bool,
+    q_index: u8,
+    avg_inter_qindex: u8,
     thresholds: [i64; 4],
     minmax_threshold: i32,
     force_64x64_split: bool,
     compute_minmax_variance: bool,
     segment_is_boosted: bool,
+    noise_estimate_enabled: bool,
     noise_level: u8,
+    content_state: u8,
     source: String,
     predictor: String,
     force_split: Vec<u8>,
@@ -76,6 +83,18 @@ fn noise_level(value: u8) -> Result<NoiseLevel, String> {
         2 => Ok(NoiseLevel::Medium),
         3 => Ok(NoiseLevel::High),
         _ => Err(format!("invalid libvpx noise level {value}")),
+    }
+}
+
+fn content_state(value: u8) -> Result<ContentStateSb, String> {
+    match value {
+        1 => Ok(ContentStateSb::LowSadLowSumdiff),
+        2 => Ok(ContentStateSb::LowSadHighSumdiff),
+        3 => Ok(ContentStateSb::HighSadLowSumdiff),
+        4 => Ok(ContentStateSb::HighSadHighSumdiff),
+        5 => Ok(ContentStateSb::LowVarHighSumdiff),
+        6 => Ok(ContentStateSb::VeryHighSad),
+        _ => Err(format!("invalid libvpx content state {value}")),
     }
 }
 
@@ -146,6 +165,31 @@ fn compare_record(record: &OracleRecord) -> Result<(), String> {
     }
     let source = decode_hex_4096(&record.source)?;
     let predictor = decode_hex_4096(&record.predictor)?;
+    let noise_level = noise_level(record.noise_level)?;
+    let content_state = content_state(record.content_state)?;
+    let expected_thresholds = cpu7_inter_vbp_thresholds(Cpu7InterVbpThresholdInput {
+        q_index: record.q_index,
+        avg_inter_qindex: record.avg_inter_qindex,
+        frame_width: record.frame_width,
+        frame_height: record.frame_height,
+        noise_estimate: NoiseEstimate {
+            enabled: record.noise_estimate_enabled,
+            level: noise_level,
+        },
+        content_state,
+    });
+    if expected_thresholds.thresholds != record.thresholds {
+        return Err(format!(
+            "thresholds: expected {:?}, got {:?}",
+            record.thresholds, expected_thresholds.thresholds
+        ));
+    }
+    if expected_thresholds.minmax_threshold != record.minmax_threshold {
+        return Err(format!(
+            "minmax_threshold: expected {}, got {}",
+            record.minmax_threshold, expected_thresholds.minmax_threshold
+        ));
+    }
     let input = FixedTreeInterInput {
         source: &source,
         predictor: &predictor,
@@ -156,7 +200,7 @@ fn compare_record(record: &OracleRecord) -> Result<(), String> {
         force_64x64_split: record.force_64x64_split,
         compute_minmax_variance: record.compute_minmax_variance,
         segment_is_boosted: record.segment_is_boosted,
-        noise_level: noise_level(record.noise_level)?,
+        noise_level,
         low_resolution: record.low_resolution,
         frame_height_le_360: record.frame_height_le_360,
     };
