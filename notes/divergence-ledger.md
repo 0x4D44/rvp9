@@ -24,6 +24,31 @@ Each entry:
 
 ## Entries
 
+### 2026-07-30 — Apply the cpu-used 9 adaptive sub-pel stop at cpu-used 6-8
+**Where:** `rvp9-core::mode_decision::inter::run_newmv_search`; libvpx
+counterparts: `vp9/encoder/vp9_speed_features.c:562,803-806` and
+`vp9/encoder/vp9_pickmode.c:236-249`.
+**What libvpx does:** realtime cpu-used 6-8 use `QUARTER_PEL` for every NEWMV
+sub-pixel search. Cpu-used 9 alone enables an adaptive selector that keeps a
+zero full-pel vector at quarter-pel and stops every non-zero vector at
+half-pel.
+**What rvp9 does:** the v1 realtime picker applies libvpx's cpu-used 9 adaptive
+quarter/half-pel selector at cpu-used 6-8.
+**Why:** restoring the source-faithful quarter-pel stop was a measured
+non-Pareto regression on the pinned Stage 4a product curve. It nearly doubled
+the aggregate median frame time while slightly worsening BD-rate.
+**Byte-parity impact:** structural — motion vectors and later coding decisions
+can differ. Every stream from both measured variants decoded successfully
+under rvp9-decoder and remained byte-exact under vpxdec and ffmpeg.
+**Compression-efficiency impact:** the source-faithful quarter-pel candidate
+moved strict Foreman BD-rate from `+9.1152%` to `+9.4344%`, left the
+matched-bitrate deficit effectively flat (`0.52174` to `0.52184 dB`), and
+raised median frame time from `11.8122` to `21.8189 ms`.
+**Future plan:** retain the adaptive policy unless a bounded sub-pixel search
+change recovers libvpx's quarter-pel choices without the measured speed and
+BD-rate regression. Re-evaluate independently for cpu-used 6 and 8 during the
+full preset matrix.
+
 ### 2026-07-30 — Disable the simplified realtime intra-in-inter fallback
 **Where:** `rvp9-core::mode_decision::inter::pick_inter_mode` and
 `rvp9-encoder::encode_inter_frame`; libvpx counterpart:
