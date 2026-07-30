@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00027 - LF-overlap reads an immutable MI-grid slice while tile workers mutate the same grid
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** decoder/loopfilter overlap threading
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T163259Z-p90498-n570963000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00027-run-fix-20260730T163259Z-p90498-n570963000-c1
-- **Owner base:** 10fc9b863da80cf178a05325db9a485d95ff5468
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T16:32:59Z
-- **Owner until:** 2026-07-30T18:32:59Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-decoder/` at `ceb57b6`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-decoder/` at `ceb57b6`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T163259Z-p90498-n570963000-c1 branch=task/bug-RVP9-BUG-KILN-00027-run-fix-20260730T163259Z-p90498-n570963000-c1 code=a915c7ff8c204c3527d9c9f38361fa0d96a5edae gate=manual)
 
 ## Observation
 
