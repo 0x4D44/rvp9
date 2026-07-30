@@ -319,6 +319,35 @@ fn threads_zero_means_one_thread() {
     let _ = std::fs::remove_file(&ivf);
 }
 
+/// Resource-allocation failures from a user-supplied thread count are normal
+/// CLI errors, not panics.
+#[test]
+fn threads_unallocatable_count_returns_error_without_panicking() {
+    let ivf = encode_synthetic_ivf("threads_unallocatable");
+    let out = Command::new(dec_bin())
+        .args(["--noblit", "--threads"])
+        .arg(usize::MAX.to_string())
+        .arg(&ivf)
+        .output()
+        .expect("run rvp9dec");
+
+    assert!(
+        !out.status.success(),
+        "unallocatable thread count succeeded"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("creating decoder worker threads"),
+        "stderr must report decoder construction, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("panicked"),
+        "thread allocation must not panic, got: {stderr}"
+    );
+
+    let _ = std::fs::remove_file(&ivf);
+}
+
 /// Q.1.B test 3: invalid `--threads` values are rejected with a clear
 /// message that names `--threads`. Three sub-cases: negative, non-numeric,
 /// missing value.

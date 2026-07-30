@@ -108,26 +108,60 @@ impl LfWorkerPool {
     /// Phase 1 callers MUST pass `n = 1` (HLD §11 condition 1). The
     /// `NonZeroUsize` shape leaves room for a future N_LF > 1 patch
     /// without an API break.
+    /// # Panics
+    ///
+    /// Panics if the operating system refuses to create a worker thread.
+    /// User-controlled construction should use [`Self::try_new`] instead.
     #[must_use]
     pub fn new(n: NonZeroUsize) -> Self {
-        let (control_tx, control_rx) = unbounded::<LfControl>();
-        let mut workers = Vec::with_capacity(n.get());
-        for worker_id in 0..n.get() {
-            let rx: Receiver<LfControl> = control_rx.clone();
-            let handle = thread::Builder::new()
+        Self::try_new(n).expect("rvp9 LF worker thread spawn failed")
+    }
+
+    /// Construct an LF pool, returning worker thread spawn failures.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if handle storage cannot be reserved or the operating
+    /// system refuses to spawn a worker.
+    pub fn try_new(n: NonZeroUsize) -> std::io::Result<Self> {
+        Self::try_new_with_spawner(n, |worker_id, rx| {
+            thread::Builder::new()
                 .name(format!("rvp9-lf-worker-{worker_id}"))
                 .spawn(move || lf_worker_loop(rx))
-                .expect("rvp9 LF worker thread spawn failed");
-            workers.push(handle);
+        })
+    }
+
+    fn try_new_with_spawner<F>(n: NonZeroUsize, mut spawn_worker: F) -> std::io::Result<Self>
+    where
+        F: FnMut(usize, Receiver<LfControl>) -> std::io::Result<JoinHandle<()>>,
+    {
+        let (control_tx, control_rx) = unbounded::<LfControl>();
+        let mut workers = Vec::new();
+        workers.try_reserve_exact(n.get()).map_err(|error| {
+            std::io::Error::other(format!("reserving LF worker handles: {error}"))
+        })?;
+        for worker_id in 0..n.get() {
+            let rx: Receiver<LfControl> = control_rx.clone();
+            match spawn_worker(worker_id, rx) {
+                Ok(handle) => workers.push(handle),
+                Err(error) => {
+                    drop(control_tx);
+                    drop(control_rx);
+                    for worker in workers {
+                        let _ = worker.join();
+                    }
+                    return Err(error);
+                }
+            }
         }
         // Drop the local Receiver so the channel actually closes when
         // `control_tx` is dropped at pool teardown.
         drop(control_rx);
-        Self {
+        Ok(Self {
             workers,
             control_tx: Some(control_tx),
             num_workers: n,
-        }
+        })
     }
 
     /// Worker count (Phase 1 = 1, by HLD §11 condition 1).
@@ -388,6 +422,21 @@ mod tests {
 
     fn nz(n: usize) -> NonZeroUsize {
         NonZeroUsize::new(n).unwrap()
+    }
+
+    #[test]
+    fn spawn_failure_is_returned() {
+        let error = LfWorkerPool::try_new_with_spawner(nz(2), |worker_id, receiver| {
+            if worker_id == 0 {
+                Ok(thread::spawn(move || lf_worker_loop(receiver)))
+            } else {
+                Err(std::io::Error::other("injected LF spawn failure"))
+            }
+        })
+        .expect_err("spawn failure must be returned");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::Other);
+        assert_eq!(error.to_string(), "injected LF spawn failure");
     }
 
     /// Smoke test: dispatch + wait runs the closure exactly once.

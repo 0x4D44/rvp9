@@ -62,27 +62,64 @@ impl WorkerPool {
     // amplifies test/fuzz cost (every `Decoder::new()` defaults to
     // `available_parallelism()` threads). See
     // `notes/lld/core-tile-threading.md` § "Performance/cost notes".
+    /// # Panics
+    ///
+    /// Panics if the operating system refuses to create a worker thread.
+    /// User-controlled thread counts should use [`Self::try_new`] instead.
     #[must_use]
     pub fn new(n: NonZeroUsize) -> Self {
-        let n = n.get();
-        let (job_tx, job_rx) = unbounded::<WorkerJob>();
-        let mut workers = Vec::with_capacity(n);
-        for worker_id in 0..n {
-            let rx: Receiver<WorkerJob> = job_rx.clone();
-            let handle = thread::Builder::new()
+        Self::try_new(n).expect("rvp9 worker thread spawn failed")
+    }
+
+    /// Construct a pool with `n` worker threads, returning spawn failures.
+    ///
+    /// If a later worker fails to spawn, already-created workers are shut
+    /// down and joined before the error is returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if handle storage cannot be reserved or the operating
+    /// system refuses to spawn a worker.
+    pub fn try_new(n: NonZeroUsize) -> std::io::Result<Self> {
+        Self::try_new_with_spawner(n, |worker_id, rx| {
+            thread::Builder::new()
                 .name(format!("rvp9-worker-{worker_id}"))
                 .spawn(move || worker_loop(rx))
-                .expect("rvp9 worker thread spawn failed");
-            workers.push(handle);
+        })
+    }
+
+    fn try_new_with_spawner<F>(n: NonZeroUsize, mut spawn_worker: F) -> std::io::Result<Self>
+    where
+        F: FnMut(usize, Receiver<WorkerJob>) -> std::io::Result<JoinHandle<()>>,
+    {
+        let n = n.get();
+        let (job_tx, job_rx) = unbounded::<WorkerJob>();
+        let mut workers = Vec::new();
+        workers
+            .try_reserve_exact(n)
+            .map_err(|error| std::io::Error::other(format!("reserving worker handles: {error}")))?;
+        for worker_id in 0..n {
+            let rx: Receiver<WorkerJob> = job_rx.clone();
+            match spawn_worker(worker_id, rx) {
+                Ok(handle) => workers.push(handle),
+                Err(error) => {
+                    drop(job_tx);
+                    drop(job_rx);
+                    for worker in workers {
+                        let _ = worker.join();
+                    }
+                    return Err(error);
+                }
+            }
         }
         // Drop the local Receiver so once `job_tx` is dropped at
         // pool teardown, the channel actually closes (workers see
         // `Err(_)` from `recv` and exit).
         drop(job_rx);
-        Self {
+        Ok(Self {
             workers,
             job_tx: Some(job_tx),
-        }
+        })
     }
 
     /// Open a per-frame scope and run `f` with mutable access to it.
@@ -260,4 +297,27 @@ fn first_worker_panic(
     // is bounded by tile count.
     panics.sort_by_key(|(idx, _)| *idx);
     Some(panics.remove(0))
+}
+
+#[cfg(test)]
+mod construction_tests {
+    use super::*;
+
+    #[test]
+    fn worker_pool_spawn_failure_is_returned() {
+        let error = WorkerPool::try_new_with_spawner(
+            NonZeroUsize::new(2).unwrap(),
+            |worker_id, receiver| {
+                if worker_id == 0 {
+                    Ok(thread::spawn(move || worker_loop(receiver)))
+                } else {
+                    Err(std::io::Error::other("injected spawn failure"))
+                }
+            },
+        )
+        .expect_err("spawn failure must be returned");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::Other);
+        assert_eq!(error.to_string(), "injected spawn failure");
+    }
 }

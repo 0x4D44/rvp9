@@ -416,9 +416,10 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
     };
 
     let mut decoder = match opts.threads {
-        Some(n) => Decoder::with_threads(n),
-        None => Decoder::new(),
-    };
+        Some(n) => Decoder::try_with_threads(n),
+        None => Decoder::try_new(),
+    }
+    .map_err(|error| format!("creating decoder worker threads: {error}"))?;
     let mut shown: usize = 0; // displayed frames seen
     let mut emitted: usize = 0; // displayed frames written/limited
     let mut frames_in: usize = 0; // decoded frames (= vpxdec's frame_in)

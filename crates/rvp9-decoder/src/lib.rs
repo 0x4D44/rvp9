@@ -702,8 +702,24 @@ impl Decoder {
     // amplifies the cost of fast unit tests by a factor of N. See the
     // review note in `notes/lld/core-tile-threading.md` §
     // "Performance/cost notes".
+    ///
+    /// # Panics
+    ///
+    /// Panics if the operating system refuses to create a worker thread.
+    /// Command-line and other user-controlled callers should use
+    /// [`Self::try_new`] instead.
     #[must_use]
     pub fn new() -> Self {
+        Self::try_new().expect("rvp9 decoder worker thread spawn failed")
+    }
+
+    /// Construct a decoder using the host's reported parallelism.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if worker storage cannot be reserved or the operating
+    /// system refuses to create a worker thread.
+    pub fn try_new() -> std::io::Result<Self> {
         // V6 §G12 K6-2: derive the default thread count from the
         // host's reported parallelism, falling back to 1 if the OS
         // refuses to answer (sandboxes, exotic platforms). Keep
@@ -715,7 +731,7 @@ impl Decoder {
         // `n` is `>= 1` by construction (either the OS reported a
         // non-zero value, or we fell back to 1). The `unwrap` is
         // therefore infallible.
-        Self::with_threads(std::num::NonZeroUsize::new(n).expect("n >= 1 by construction"))
+        Self::try_with_threads(std::num::NonZeroUsize::new(n).expect("n >= 1 by construction"))
     }
 
     /// Construct a decoder with an explicit thread-pool size.
@@ -732,8 +748,24 @@ impl Decoder {
     /// no `WorkerPool` until Wave C G5 lands. `with_threads(N)` is
     /// equivalent to `new()` plus a stored `N` today; the divergence
     /// will surface once G5 wires the pool through `decode_inter_frame`.
+    /// # Panics
+    ///
+    /// Panics if the operating system refuses to create a worker thread.
+    /// Command-line and other user-controlled callers should use
+    /// [`Self::try_with_threads`] instead.
     #[must_use]
     pub fn with_threads(n: std::num::NonZeroUsize) -> Self {
+        Self::try_with_threads(n).expect("rvp9 decoder worker thread spawn failed")
+    }
+
+    /// Construct a decoder with an explicit thread-pool size.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if worker storage cannot be reserved or the operating
+    /// system refuses to create either a decode worker or the optional
+    /// loop-filter worker.
+    pub fn try_with_threads(n: std::num::NonZeroUsize) -> std::io::Result<Self> {
         // Default::default() doesn't work on a 4-array if FrameContext
         // isn't Copy (it isn't — it contains a large coef_probs table).
         // Build each bank explicitly.
@@ -749,7 +781,7 @@ impl Decoder {
         // immediately — at `n = 1` (deterministic-test path) that's
         // exactly one worker. Uniform with multi-threaded shapes:
         // no code-path bifurcation per HLD V6 §G5.
-        let worker_pool = rvp9_core::tile_threading::WorkerPool::new(n);
+        let worker_pool = rvp9_core::tile_threading::WorkerPool::try_new(n)?;
 
         // Phase 1 separate-LF-pool (HLD `2026.05.27 - HLD - Separate
         // LF thread pool.md` §3.5): construct the long-lived LF worker
@@ -760,9 +792,10 @@ impl Decoder {
         // pre-Phase-1.
         //
         // N_LF = 1 (HLD §11 condition 1; matches libvpx pbi->lf_worker).
-        let lf_worker_pool: Option<rvp9_core::tile_threading::LfWorkerPool> =
-            lf_pool_size(n).map(rvp9_core::tile_threading::LfWorkerPool::new);
-        Self {
+        let lf_worker_pool: Option<rvp9_core::tile_threading::LfWorkerPool> = lf_pool_size(n)
+            .map(rvp9_core::tile_threading::LfWorkerPool::try_new)
+            .transpose()?;
+        Ok(Self {
             num_threads: n,
             frame_pool: DecoderFramePool::new(),
             ref_frame_map: Default::default(),
@@ -803,7 +836,7 @@ impl Decoder {
             worker_pool,
             lf_worker_pool,
             tile_scratch_pool: Yv12ScratchPool::new(),
-        }
+        })
     }
 
     /// Worker-pool size this decoder was constructed with.
