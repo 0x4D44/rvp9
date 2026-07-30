@@ -5,15 +5,15 @@
 - **Severity:** High
 - **Area:** core/inter prediction scaling
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T161823Z-p11038-n745797000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00025-run-fix-20260730T161823Z-p11038-n745797000-c1
+- **Owner base:** ae77e1c235f36523fa4ecb3c73a197b3b27941f8
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T16:18:23Z
+- **Owner until:** 2026-07-30T18:18:23Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
