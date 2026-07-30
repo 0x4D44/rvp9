@@ -15,23 +15,44 @@ and is it still doing it?"*.
 - **REQ** — the type token (the bugs ledger uses `BUG`; `REQ` is reserved for
   this ledger). deltic never inspects the token — both ledgers share one ID
   parser.
-- **HOST** — the minting machine's hostname, uppercased with every non
-  `[A-Z0-9]` char stripped, **not truncated**.
-- **NNNNN** — a per-host sequence, zero-padded to at least 5 digits.
+- **HOST** — this machine's canonical token: the **first DNS label** of its
+  hostname (`<name>.local`, `<name>.home.arpa`, and a bare `<name>` all collapse
+  to `<NAME>`), uppercased and reduced to `[A-Z0-9]`. It is derived **in code**
+  by `deltic reqs new` — not by a hand-run `hostname`, which would bake the DNS
+  domain into the token and split one machine into two. A short 3-letter typing
+  code per host lives in deltic's host registry.
+- **NNNNN** — a per-host sequence, zero-padded to at least 5 digits, **unified
+  across the sibling ledgers**: the next number is `max(NNNNN)+1` over `reqs/`
+  **and** `bugs/` **and** `issues/` for this host, so a bare host+number
+  (`<HOST>-00042`) maps to exactly one item whatever its type.
 - Legacy `RVP9-NNNNN` ids (pre-conversion) remain valid, verbatim, forever.
 
-**Per-host allocation.** To raise a requirement: derive HOST at runtime
-(`echo %COMPUTERNAME%` on Windows, `hostname` on Linux/WSL), list the existing
-`RVP9-REQ-<HOST>-*` files, take `max(NNNNN)+1`, and commit that one new
-file. No central allocator, no lock.
+**Per-host allocation.** Raise a requirement with
+**`deltic reqs new --title "<summary>"`** (`--priority`/`--flow`/`--area`/
+`--body` optional; `--json` for tooling). It derives this machine's HOST token,
+mints the next number across **all** sibling ledgers for that host, and writes
+the Draft record from this binary's own template. No central allocator, no lock;
+reqs and bugs never share a number.
 
 **Merge safety (R-SAMEHOST).** The filename **stem is the identity**. Two actors
 sharing a HOST token (worktrees on one box, a Win+WSL pair with the same
-hostname) can mint the same id from stale views — this surfaces **loudly** as an
-add/add conflict at integration, never a silent collision. The resolver
-renumbers. If a file's H1 id disagrees with its filename, deltic keys the record
-by the **filename** and carries a "differs from filename" warning in the ledger
-note.
+hostname) used to mint the same id routinely, because the high-water was read
+from the working tree alone. `deltic reqs new` now allocates from a **host-wide**
+high-water — this working tree, every sibling worktree, and every id ever added
+on any ref — so a number held by a peer worktree or an unintegrated branch is
+never re-issued. Should two ids still meet in the **same** ledger, that is the
+same path, so it surfaces **loudly** as an add/add conflict at integration and
+the resolver renumbers.
+
+Across **different** sibling ledgers the same number is a different path, so git
+merges it silently and nothing flags it — the allocator is the only thing
+preventing that class. Always raise through `deltic reqs new`; never hand-glob
+`reqs/` for `max+1`, which collides with the sibling ledgers by construction. A
+structural oracle (`crates/deltic-repos/src/mint.rs`) fails the gate on a new
+occurrence.
+
+If a file's H1 id disagrees with its filename, deltic keys the record by the
+**filename** and carries a "differs from filename" warning in the ledger note.
 
 **States & transitions.**
 
@@ -74,6 +95,7 @@ may quote a `- **State:** …` line without poisoning the record).
 | `Implemented-by` | req→code refs — see traceability. |
 | `Satisfied-by` | req→oracle refs — see traceability. |
 | `Violated-by` | req→bug refs (ledger IDs) — see traceability. |
+| `Depends-on` | req→req prerequisite ids — this req is not drain-ready until each has been **integrated** onto trunk. See "Dependency gating". |
 | `Flow` | `light` / `heavy` — which build flow the `/loop` runner uses (blank/unknown → `—`). |
 | `Claimed-by` | The loop's in-flight marker while a runner holds it, else `—`. A `box:<host> run:<run>` value is a **deltic-written machine claim** (cleared automatically with the owner block); human claims stay free text. |
 | `Owner`, `Owner run/host/branch/base/since/until` | deltic's **cross-site auto-land lease** (box exclusion): principal, run id, host, build branch, trunk base SHA, and the lease window — renewed on a ~45-min lease while building. All `-` = unowned; a partially-filled block reads as malformed. deltic-written; humans never edit these. |
@@ -91,21 +113,35 @@ one line; empty items are dropped; an empty value or `—` / `-` means "none yet
 - `Violated-by:` — **req→bug**. Ledger IDs. deltic shape-checks each, then
   resolves it against the sibling `bugs/` directory (dangling / stale-alarm).
 
+**Dependency gating.** `Depends-on:` names other requirement ids (comma-separated;
+`—`/blank → none) that must land **before** this one. deltic resolves each against
+the ledger and treats the req as **not ready** — it drops out of `deltic reqs
+--ready` and the auto-drain — while any dependency is unmet. A dependency is **met**
+only when its id resolves to **exactly one** record that has been **integrated onto
+trunk**: state `Integrated` (landed via the pipeline, awaiting acceptance) or
+`Satisfied` (accepted), and that record is honesty-clean and unambiguous.
+`Implemented` does **not** clear a dependency — the manual/heavy path is "built" but
+not yet "integrated", so a dependent could overtake it in the integration queue.
+`Draft`/`Accepted`/`Violated`/`Retired`, a missing/typo'd id, or a duplicate id all
+leave the dependency unmet. It gates **readiness only** — it never changes a req's
+state — and checks only **direct** dependencies (a chain clears as each link
+integrates). An **`Accepted`** req blocked this way is named in the ledger note
+(a `Draft` or terminal req is not — the `unmet_deps` fact still shows per-req in
+`--json`). Ids may be bare or link/emphasis-wrapped (`[ID](#…)`, `**ID**`), like
+`Violated-by`.
+
 **Honesty rule + two-eyes process.** deltic **mechanically flags** a requirement
 marked `Satisfied` with an **empty `Satisfied-by`** (no oracle). It does not run
 the oracle, so the human gate on truth is the **two-eyes rule**: a requirement
 moves `Implemented → Satisfied` only after a **second pair of eyes** confirms the
 named oracle genuinely exists and passes.
 
-**RVP9 flow override.** Do not set `Flow: light` in this repo yet. The current
-deltic auto-land runner is shaped for a root crate: it stages `src/**`, accepts
-one root `tests/<file>.rs` oracle, and runs `cargo test --test <stem>`. `rvp9-2`
-is a virtual workspace whose source and integration tests live under
-`crates/**`, with codec-specific gates and gitignored vector/corpus data. Until
-deltic has an explicit RVP9 workspace policy, Gate 1 should use `Flow: heavy` for
-accepted requirements, or leave Drafts as `Flow: —` while they are not ready.
-Manual/heavy builders move `Accepted -> Implemented`; the builder never
-self-promotes to `Satisfied`.
+**RVP9 flow policy.** Keep `Flow: light` disabled for now. Before enabling it,
+check in and validate an integration policy plus a workspace-specific oracle that
+covers the affected crates and avoids relying on gitignored vectors or corpora.
+Use `Flow: heavy` for accepted requirements, or leave Drafts at `Flow: —`.
+Manual/heavy builders move `Accepted → Implemented`; they never self-promote a
+requirement to `Satisfied`.
 
 **File format.** Each `reqs/<ID>.md`:
 
@@ -119,6 +155,7 @@ self-promotes to `Satisfied`.
 - **Implemented-by:** crates/rvp9-encoder/src/foo.rs
 - **Satisfied-by:** cargo test -p rvp9-encoder proves_it
 - **Violated-by:** —
+- **Depends-on:** —
 - **Flow:** heavy
 - **Claimed-by:** —
 - **Owner:** -
@@ -146,12 +183,13 @@ The system must <durable behavioural spec — not a task>.
   then move to `Accepted` (or `Retired` for one-shot tasks). This is the cull.
 - **The loop drains *ready* reqs** — `deltic reqs --ready` = `Accepted`, a
   routable `Flow` (not `—`), and **unclaimed**:
-  - **`Flow: light`** → currently not enabled for RVP9. In repos where it is
-    enabled, the runner builds it **oracle-first** (a cross-family
-    agent authors the failing `tests/<oracle>` blind to the impl; a build agent
-    makes it green editing `src/` only) and **deltic composes the commit, gates
-    it, and fast-forward-pushes the green pair to `origin/main`**, moving the req
-    `Accepted → Integrated`. The agents never push — deltic owns git.
+  - **`Flow: light`** → not currently enabled for RVP9. In repos where it is
+    enabled, the runner builds it **oracle-first** (a cross-family agent authors
+    the failing `tests/<oracle>` blind to the implementation; a build agent
+    makes it green editing the implementation only), then **deltic composes the
+    commit, gates it, and fast-forward-pushes the green pair to `origin/main`**,
+    moving the req `Accepted → Integrated`. The agents never push — deltic owns
+    git.
   - **`Flow: heavy`** → the runner reports it to the human and skips.
 - **Gate 2 (human, batch acceptance — the only writer here).** A human reads the
   landed source + oracle and re-runs it. On confirmation, edit `Integrated →

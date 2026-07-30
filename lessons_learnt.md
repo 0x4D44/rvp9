@@ -1,4 +1,5 @@
 # Lessons learnt
+<!-- lessons-format: index-v1 -->
 
 Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.

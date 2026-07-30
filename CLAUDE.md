@@ -131,15 +131,16 @@ the sibling `reqs/` ledger, one markdown file per requirement. There is no root
 Read `bugs/README.md` before raising, fixing, or verifying a tracked bug. Read
 `reqs/README.md` before capturing or building a requirement. Use the fleet
 `bug-tracking`, `reqs-capture`, and `reqs-loop` skills when their trigger
-phrases apply.
+phrases apply. Mint records with `deltic bugs new` and `deltic reqs new`; never
+allocate IDs by hand.
 
 Ordinary development test failures do not automatically become bug-ledger
 entries; promote only separate durable defects. A tracked bug fix moves the bug
 to `Fixed` with regression evidence; a different verifier closes it. RVP9
 requirements are manual/heavy for now: manual/heavy implementations move
 `Accepted -> Implemented` when the work lands and never self-promote to
-`Satisfied`. `Flow: light` is disabled until deltic supports this virtual
-workspace's `crates/**` layout and RVP9 gate commands.
+`Satisfied`. Keep `Flow: light` disabled until this workspace has a checked-in
+integration policy and a proven workspace-specific oracle.
 
 ## Repo-specific conventions
 
@@ -169,8 +170,10 @@ workspace's `crates/**` layout and RVP9 gate commands.
   correct output mechanism). Some decoder modules carry a temporary crate-level
   `#![allow(clippy::print_stderr)]` for env-var-gated debug breadcrumbs pending a triage sweep.
 
-- **Code change ⇒ version bump.** Workspace version lives in `[workspace.package]` in
-  the root `Cargo.toml`; keep `Cargo.toml` + `Cargo.lock` in lockstep in the same commit.
+- **Code changes are versioned during integration.** The workspace version lives
+  in `[workspace.package]` in the root `Cargo.toml`. Do not pre-bump task branches;
+  `deltic integrate` owns the single bump and keeps `Cargo.toml` and `Cargo.lock`
+  in lockstep.
 
 ## Documentation layers
 

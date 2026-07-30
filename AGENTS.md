@@ -11,8 +11,8 @@ This is a Rust 2024 Cargo workspace for a VP9 encoder/decoder port. Core crates 
 - `cargo test -p rvp9-encoder <test_name>`: run a focused crate test.
 - `cargo fmt --all --check`: verify rustfmt formatting.
 - `cargo clippy --workspace --all-targets`: run workspace lint checks.
-- `./scripts/build-libvpx.ps1`: build the libvpx reference on Windows/MSYS2.
-- `./scripts/fetch-vectors.ps1` and `./scripts/fetch-corpus.ps1`: fetch test data.
+- `./scripts/build-libvpx.sh`: build the libvpx reference (use MSYS2 on Windows).
+- `./scripts/fetch-vectors.sh` and `./scripts/fetch-corpus.{sh,ps1}`: fetch test data.
 - `cargo run --release --bin conformance -- --decoder build/libvpx/vpxdec.exe --vectors-dir tests/conformance/vectors --limit 5`: sanity-check decoder conformance.
 
 Wrap long-running validation with `mdtimeout` where practical.
@@ -27,9 +27,9 @@ Place integration tests in each crate's `tests/` directory. Add focused regressi
 
 ## Work Tracking
 
-Defects live in `bugs/`, one markdown file per bug; accepted enhancements and durable behavioural specs live in `reqs/`, one markdown file per requirement. Read `bugs/README.md` before raising, fixing, or verifying a tracked bug, and read `reqs/README.md` before capturing or building a requirement. Use the fleet `bug-tracking`, `reqs-capture`, and `reqs-loop` skills when their trigger phrases apply.
+Defects live in `bugs/`, one markdown file per bug; accepted enhancements and durable behavioural specs live in `reqs/`, one markdown file per requirement. Read `bugs/README.md` before raising, fixing, or verifying a tracked bug, and read `reqs/README.md` before capturing or building a requirement. Mint records with `deltic bugs new` and `deltic reqs new`; never allocate IDs by hand. Use the fleet `bug-tracking`, `reqs-capture`, and `reqs-loop` skills when their trigger phrases apply.
 
-Ordinary development test failures do not automatically become `bugs/` entries; only separate durable defects should be promoted. A tracked bug fix moves the bug to `Fixed` with regression evidence, and a different verifier closes it. RVP9 requirements are manual/heavy for now: manual/heavy implementations move `Accepted -> Implemented` when the work lands and never self-promote to `Satisfied`; `Flow: light` is disabled until deltic supports this virtual workspace's `crates/**` layout and gates.
+Ordinary development test failures do not automatically become `bugs/` entries; only separate durable defects should be promoted. A tracked bug fix moves the bug to `Fixed` with regression evidence, and a different verifier closes it. RVP9 requirements are manual/heavy by repo policy for now: manual/heavy implementations move `Accepted -> Implemented` when the work lands and never self-promote to `Satisfied`. Keep `Flow: light` disabled until this workspace has a checked-in integration policy and a proven workspace-specific oracle.
 
 ## Commit & Pull Request Guidelines
 
