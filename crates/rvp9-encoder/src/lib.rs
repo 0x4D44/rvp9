@@ -6177,7 +6177,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         interp_filter: Some(pick.picked_interp_filter),
                         skip_flag: final_skip,
                         q_index: leaf_qindex,
-                        tx_size: pick.picked_tx_size,
+                        // Emission can replace the picker's model-RD
+                        // transform choice. Report the transform stored in
+                        // the final leaf because that is what the modes
+                        // writer signals and the coefficient walker used.
+                        tx_size: sb_partitions[sb_idx][leaf_idx].picked_tx_size,
                         luma_eob_nonzero: leaf_y_eob > 0,
                     });
                 }
@@ -8371,6 +8375,8 @@ mod tests {
         // SAFETY: serialised via env_test_mutex.
         unsafe {
             std::env::set_var(key, "1");
+            std::env::set_var("RVP9_RT_EMIT_TX_RD", "1");
+            std::env::remove_var("RVP9_RT_EMIT_MAX_TX");
         }
         crate::f02_oracle::init_from_env();
         assert!(crate::f02_oracle::is_enabled());
@@ -8397,10 +8403,18 @@ mod tests {
             decisions.iter().any(|decision| decision.luma_eob_nonzero),
             "F02 oracle should report a non-zero emitted luma EOB",
         );
+        assert!(
+            decisions
+                .iter()
+                .any(|decision| decision.tx_size < rvp9_core::block::max_txsize(decision.bsize)),
+            "deterministic texture should exercise an emit-side transform smaller than \
+             the picker's maximum transform",
+        );
 
         // SAFETY: serialised via env_test_mutex.
         unsafe {
             std::env::remove_var(key);
+            std::env::remove_var("RVP9_RT_EMIT_TX_RD");
         }
         crate::f02_oracle::init_from_env();
         assert!(!crate::f02_oracle::is_enabled());
