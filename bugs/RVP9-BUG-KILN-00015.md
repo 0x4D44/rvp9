@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00015 - High-bit-depth encoder configs are accepted but written as 8-bit streams
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** encoder/config validation
 - **Raised:** 2026-07-05
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T231100Z-p73496-n304297000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00015-run-fix-20260730T231100Z-p73496-n304297000-c1
-- **Owner base:** eacf72c290f967cf39cdac43ab9d68e8af5ab048
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T23:11:00Z
-- **Owner until:** 2026-07-31T01:11:00Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-05, raised by Codex code-review pass over `crates/rvp9-encoder/` at `a86e58c260ce`)
+- **State history:** Open (2026-07-05, raised by Codex code-review pass over `crates/rvp9-encoder/` at `a86e58c260ce`) -> Fixed (2026-07-31, deltic:auto role=fix run=fix-20260730T231100Z-p73496-n304297000-c1 branch=task/bug-RVP9-BUG-KILN-00015-run-fix-20260730T231100Z-p73496-n304297000-c1 code=19d53ba2044adeeda32db78593cb2a3d402c73fc gate=manual)
 
 ## Observation
 
