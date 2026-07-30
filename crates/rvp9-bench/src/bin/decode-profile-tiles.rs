@@ -125,12 +125,15 @@ fn drive_one_run(
 
     'outer: loop {
         let mut produced_any_this_pass = false;
-        for range in &packets {
+        for (packet_offset, range) in packets.iter().enumerate() {
             let packet = range.slice(&data);
-            let parsed = match decoder.parse_packet(packet) {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
+            let parsed = decoder.parse_packet(packet).map_err(|error| {
+                format!(
+                    "{}: packet {}: VP9 parse error: {error:?}",
+                    fixture.display(),
+                    packet_offset + 1
+                )
+            })?;
             for frame in parsed {
                 let t0 = Instant::now();
                 let result = decoder.decode_frame(&frame);
@@ -227,4 +230,28 @@ fn main() {
     );
     println!("CSV: {}", args.out.display());
     println!("Note: convert cycles → microseconds with cycles / {mhz:.1} = us");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rvp9_harness::container::{IvfHeader, write_ivf};
+
+    #[test]
+    fn malformed_packet_fails_profile_run_with_fixture_and_index() {
+        let path = std::env::temp_dir().join(format!(
+            "rvp9-profile-tiles-malformed-packet-{}.ivf",
+            std::process::id()
+        ));
+        let mut ivf = Vec::new();
+        write_ivf(&mut ivf, &IvfHeader::vp9(16, 16, 30, 1), &[&[0u8][..]]).unwrap();
+        std::fs::write(&path, ivf).unwrap();
+
+        let err = drive_one_run(&path, NonZeroUsize::MIN, 0, 1).unwrap_err();
+        std::fs::remove_file(&path).unwrap();
+
+        assert!(err.contains(&path.display().to_string()), "{err}");
+        assert!(err.contains("packet 1"), "{err}");
+        assert!(err.contains("VP9 parse error"), "{err}");
+    }
 }

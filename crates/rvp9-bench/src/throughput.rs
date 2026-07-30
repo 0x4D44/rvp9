@@ -117,6 +117,15 @@ pub enum ThroughputError {
     MissingFixture(PathBuf),
     /// Container parse failed (corrupt IVF/WebM, or wrong extension).
     Container(String),
+    /// A packet from an otherwise valid container is not valid VP9.
+    PacketParse {
+        /// Fixture basename.
+        fixture: String,
+        /// 1-based packet index.
+        packet_index: usize,
+        /// Stringified bitstream parse error.
+        error: String,
+    },
     /// Decoder returned a non-`Unimplemented` error on a shown frame —
     /// almost certainly a Wave A regression. Holds fixture name and
     /// stringified error.
@@ -133,6 +142,14 @@ impl std::fmt::Display for ThroughputError {
         match self {
             Self::MissingFixture(p) => write!(f, "missing fixture: {}", p.display()),
             Self::Container(s) => write!(f, "container parse error: {s}"),
+            Self::PacketParse {
+                fixture,
+                packet_index,
+                error,
+            } => write!(
+                f,
+                "{fixture}: packet {packet_index}: VP9 parse error: {error}"
+            ),
             Self::DecodeError { fixture, error } => {
                 write!(f, "{fixture}: decode error: {error}")
             }
@@ -189,6 +206,7 @@ pub fn vectors_dir() -> PathBuf {
 ///
 /// - [`ThroughputError::MissingFixture`] if the file does not exist.
 /// - [`ThroughputError::Container`] on a malformed IVF/WebM header.
+/// - [`ThroughputError::PacketParse`] on malformed VP9 packet data.
 /// - [`ThroughputError::DecodeError`] on any non-`Unimplemented` decoder
 ///   error (likely a Wave A regression — surface, do not swallow).
 /// - [`ThroughputError::NoFramesDecoded`] if every frame skipped or
@@ -259,17 +277,17 @@ where
 
     'outer: while samples_us.len() < min_timed_frames {
         let mut produced_any_this_pass = false;
-        for range in &packets {
+        for (packet_offset, range) in packets.iter().enumerate() {
             let packet = range.slice(&data);
 
-            let parsed = match decoder.parse_packet(packet) {
-                Ok(p) => p,
-                Err(_) => {
-                    // Container-level header parse failure — not a
-                    // decode sample.
-                    continue;
-                }
-            };
+            let parsed =
+                decoder
+                    .parse_packet(packet)
+                    .map_err(|error| ThroughputError::PacketParse {
+                        fixture: fixture_name.clone(),
+                        packet_index: packet_offset + 1,
+                        error: format!("{error:?}"),
+                    })?;
             for frame in parsed {
                 // Per-frame timing window. Each decode_frame call is
                 // exactly one sample.
@@ -628,6 +646,7 @@ pub fn check_ratchet(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rvp9_harness::container::{IvfHeader, write_ivf};
 
     fn make_result(name: &str, p50: f64, p95: f64, p99: f64) -> FixtureResult {
         FixtureResult {
@@ -645,6 +664,37 @@ mod tests {
                 p95,
                 p99,
             },
+        }
+    }
+
+    #[test]
+    fn malformed_ivf_packet_is_reported_with_fixture_and_index() {
+        let path = std::env::temp_dir().join(format!(
+            "rvp9-throughput-malformed-packet-{}.ivf",
+            std::process::id()
+        ));
+        let mut ivf = Vec::new();
+        write_ivf(&mut ivf, &IvfHeader::vp9(16, 16, 30, 1), &[&[0u8][..]]).unwrap();
+        std::fs::write(&path, ivf).unwrap();
+
+        let err = run_one(&path, 0, 1).unwrap_err();
+        std::fs::remove_file(&path).unwrap();
+
+        match err {
+            ThroughputError::PacketParse {
+                fixture,
+                packet_index,
+                error,
+            } => {
+                assert_eq!(
+                    fixture,
+                    path.file_name().unwrap().to_string_lossy(),
+                    "fixture basename"
+                );
+                assert_eq!(packet_index, 1);
+                assert!(!error.is_empty());
+            }
+            other => panic!("expected PacketParse, got {other:?}"),
         }
     }
 
