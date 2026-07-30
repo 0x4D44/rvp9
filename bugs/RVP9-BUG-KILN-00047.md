@@ -5,15 +5,15 @@
 - **Severity:** Low
 - **Area:** io/container diagnostics
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T183718Z-p70835-n325499000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00047-run-fix-20260730T183718Z-p70835-n325499000-c1
+- **Owner base:** 965a9bed97c78e0d6127e432c832095a1d14fa86
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T18:37:18Z
+- **Owner until:** 2026-07-30T20:37:18Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
