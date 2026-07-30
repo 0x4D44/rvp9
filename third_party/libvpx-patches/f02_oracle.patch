@@ -56,7 +56,7 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
        best_early_term = this_early_term;
        best_pickmode.best_mode = this_mode;
        best_pickmode.best_pred_filter = mi->interp_filter;
-@@ -2735,8 +2738,96 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2735,8 +2738,107 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
        }
      }
    }
@@ -75,6 +75,9 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
 +    static const char *const vpx_f02_bsize_tag[BLOCK_SIZES] = {
 +      "4x4",   "4x8",   "8x4",   "8x8",   "8x16",  "16x8",  "16x16",
 +      "16x32", "32x16", "32x32", "32x64", "64x32", "64x64"
++    };
++    static const char *const vpx_f02_tx_size_tag[TX_SIZES] = {
++      "4x4", "8x8", "16x16", "32x32"
 +    };
 +    static const char *const vpx_f02_mode_tag[MB_MODE_COUNT] = {
 +      "DC", "V", "H", "D45", "D135", "D117", "D153", "D207", "D63", "TM",
@@ -131,6 +134,10 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
 +      unsigned long long sse_after_pred =
 +          picked_ref == INTRA_FRAME ? 0 : (unsigned long long)best_pred_sse_f02;
 +      int skip_flag = mi->skip;
++      const char *tx_size_str = (mi->tx_size < TX_SIZES)
++                                    ? vpx_f02_tx_size_tag[mi->tx_size] : "?";
++      int luma_eob_nonzero =
++          !skip_flag && x->skip_txfm[0] == SKIP_TXFM_NONE;
 +      /* `frame_idx` mirrors the harness binary's IVF-presentation-
 +       * order counter; libvpx tracks it as `cm->current_video_frame`. */
 +      unsigned int frame_idx = (unsigned int)cm->current_video_frame;
@@ -140,13 +147,17 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
 +              "\"mv_row\":%d,\"mv_col\":%d,"
 +              "\"mode_bits_est\":0,\"mv_bits_est\":0,\"coef_bits_est\":0,"
 +              "\"sse_after_pred\":%llu,\"interp_filter\":\"%s\","
-+              "\"skip_flag\":%s}\n",
++              "\"skip_flag\":%s,\"q_index\":%d,\"tx_size\":\"%s\","
++              "\"luma_eob_nonzero\":%s}\n",
 +              frame_idx, mi_row, mi_col,
 +              bsize_str, mode_str, ref_str,
 +              mv_row, mv_col,
 +              sse_after_pred,
 +              filter_str,
-+              skip_flag ? "true" : "false");
++              skip_flag ? "true" : "false",
++              x->q_index,
++              tx_size_str,
++              luma_eob_nonzero ? "true" : "false");
 +    }
 +  }
 +  /* F.0.2 ORACLE END */

@@ -17,13 +17,14 @@ use std::collections::BTreeMap;
 use std::io::{self, BufRead, Write};
 
 pub use rvp9_encoder::f02_oracle::{
-    BlockDecision, BlockDecisionMode, bsize_tag, interp_filter_tag, ref_frame_tag,
+    BlockDecision, BlockDecisionMode, bsize_tag, interp_filter_tag, ref_frame_tag, tx_size_tag,
 };
 
 use rvp9_core::bitstream::frame::InterpFilter;
 use rvp9_core::block::BlockSize;
 use rvp9_core::intra_pred::IntraMode;
 use rvp9_core::mode_info::{InterMode, RefFrame};
+use rvp9_core::transforms::TxSize;
 
 /// Error type for the JSONL parser.
 #[derive(Debug)]
@@ -88,6 +89,9 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
     let mut sse_after_pred: Option<u64> = None;
     let mut interp_filter: Option<Option<InterpFilter>> = None;
     let mut skip_flag: Option<bool> = None;
+    let mut q_index: Option<u8> = None;
+    let mut tx_size: Option<TxSize> = None;
+    let mut luma_eob_nonzero: Option<bool> = None;
 
     for kv in split_top_level_commas(inner)? {
         let (k, v) = split_kv(kv)?;
@@ -118,6 +122,15 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
                 })?);
             }
             "skip_flag" => skip_flag = Some(parse_bool(v, "skip_flag")?),
+            "q_index" => q_index = Some(parse_num(v, "q_index")?),
+            "tx_size" => {
+                let raw = parse_string(v, "tx_size")?;
+                tx_size = Some(tx_size_from_tag(&raw).ok_or(ParseError::BadValue {
+                    field: "tx_size",
+                    raw,
+                })?);
+            }
+            "luma_eob_nonzero" => luma_eob_nonzero = Some(parse_bool(v, "luma_eob_nonzero")?),
             _ => {} // forward-compatible: ignore unknown extra fields
         }
     }
@@ -153,6 +166,9 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
         sse_after_pred: sse_after_pred.ok_or(ParseError::MissingField("sse_after_pred"))?,
         interp_filter: interp_filter.ok_or(ParseError::MissingField("interp_filter"))?,
         skip_flag: skip_flag.ok_or(ParseError::MissingField("skip_flag"))?,
+        q_index: q_index.ok_or(ParseError::MissingField("q_index"))?,
+        tx_size: tx_size.ok_or(ParseError::MissingField("tx_size"))?,
+        luma_eob_nonzero: luma_eob_nonzero.ok_or(ParseError::MissingField("luma_eob_nonzero"))?,
     })
 }
 
@@ -168,6 +184,18 @@ pub fn interp_filter_from_tag(s: &str) -> Option<Option<InterpFilter>> {
         "SWITCHABLE" => Some(InterpFilter::Switchable),
         _ => return None,
     })
+}
+
+/// Inverse of [`tx_size_tag`].
+#[must_use]
+pub fn tx_size_from_tag(s: &str) -> Option<TxSize> {
+    match s {
+        "4x4" => Some(TxSize::Tx4x4),
+        "8x8" => Some(TxSize::Tx8x8),
+        "16x16" => Some(TxSize::Tx16x16),
+        "32x32" => Some(TxSize::Tx32x32),
+        _ => None,
+    }
 }
 
 /// Parse an entire JSONL stream. Blank lines are skipped (matches
@@ -616,6 +644,9 @@ mod tests {
             sse_after_pred: 1_234_567,
             interp_filter: Some(InterpFilter::EightTapSmooth),
             skip_flag: false,
+            q_index: 143,
+            tx_size: TxSize::Tx16x16,
+            luma_eob_nonzero: true,
         }
     }
 
@@ -635,6 +666,9 @@ mod tests {
             sse_after_pred: 0,
             interp_filter: None,
             skip_flag: true,
+            q_index: 65,
+            tx_size: TxSize::Tx8x8,
+            luma_eob_nonzero: false,
         }
     }
 
@@ -726,6 +760,7 @@ mod tests {
                     \"mv_row\":0,\"mv_col\":0,\
                     \"mode_bits_est\":1,\"mv_bits_est\":0,\"coef_bits_est\":0,\
                     \"sse_after_pred\":0,\"interp_filter\":\"NONE\",\"skip_flag\":true,\
+                    \"q_index\":65,\"tx_size\":\"8x8\",\"luma_eob_nonzero\":false,\
                     \"future_field\":\"ignored\"}";
         let d = parse_jsonl_line(line).unwrap();
         assert_eq!(d.frame_idx, 1);

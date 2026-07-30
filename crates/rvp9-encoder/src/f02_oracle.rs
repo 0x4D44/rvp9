@@ -28,6 +28,7 @@ use rvp9_core::bitstream::frame::InterpFilter;
 use rvp9_core::block::BlockSize;
 use rvp9_core::intra_pred::IntraMode;
 use rvp9_core::mode_info::{InterMode, RefFrame};
+use rvp9_core::transforms::TxSize;
 
 /// Global enable flag, set once at process startup by
 /// [`init_from_env`]. One relaxed load per picker call site when off.
@@ -78,9 +79,9 @@ impl BlockDecisionMode {
 
 /// One picker-decision record. HLD §3.4 schema.
 ///
-/// Field liveness on the rvp9 leg at F.0.2 (see HLD §3.4.1):
-/// every field is live except `coef_bits_est`, which is emitted as
-/// `0` until F.1 lands the coef-bit estimator.
+/// The original F.0.2 fields and the F.1 coefficient estimate are live.
+/// Later parity investigations have extended the schema with effective
+/// qindex, transform size, and emitted-luma-EOB state.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct BlockDecision {
     /// 0-based IVF presentation-order frame index.
@@ -105,8 +106,7 @@ pub struct BlockDecision {
     /// Picker's MV-rate estimate (`vp9_prob_cost` units). `0` for
     /// non-NEW modes.
     pub mv_bits_est: u32,
-    /// Picker's coefficient-bit estimate. **Always `0` on the rvp9
-    /// leg until F.1** — see HLD §3.4.1.
+    /// Picker's coefficient-bit estimate in plain bits.
     pub coef_bits_est: u32,
     /// `SSE(source − prediction)` over the Y plane, pre-quant.
     pub sse_after_pred: u64,
@@ -115,6 +115,13 @@ pub struct BlockDecision {
     /// Picker's final skip flag — the value that lands in the
     /// bitstream's leaf `skip` syntax.
     pub skip_flag: bool,
+    /// Effective per-leaf qindex after segmentation.
+    pub q_index: u8,
+    /// Transform size selected for the luma residual.
+    pub tx_size: TxSize,
+    /// Whether the emitted luma residual has any non-zero coefficient.
+    /// Intra-only paths that record before residual emission report `false`.
+    pub luma_eob_nonzero: bool,
 }
 
 impl BlockDecision {
@@ -140,7 +147,8 @@ impl BlockDecision {
              \"bsize\":\"{}\",\"mode\":\"{}\",\"ref_frame\":\"{}\",\
              \"mv_row\":{},\"mv_col\":{},\
              \"mode_bits_est\":{},\"mv_bits_est\":{},\"coef_bits_est\":{},\
-             \"sse_after_pred\":{},\"interp_filter\":\"{}\",\"skip_flag\":{}}}",
+             \"sse_after_pred\":{},\"interp_filter\":\"{}\",\"skip_flag\":{},\
+             \"q_index\":{},\"tx_size\":\"{}\",\"luma_eob_nonzero\":{}}}",
             self.frame_idx,
             self.mi_row,
             self.mi_col,
@@ -155,9 +163,24 @@ impl BlockDecision {
             self.sse_after_pred,
             interp_filter_tag(self.interp_filter),
             self.skip_flag,
+            self.q_index,
+            tx_size_tag(self.tx_size),
+            self.luma_eob_nonzero,
         )
         .expect("String fmt cannot fail");
         w.write_all(s.as_bytes())
+    }
+}
+
+/// Stable transform-size tag shared with the libvpx patch.
+#[inline]
+#[must_use]
+pub const fn tx_size_tag(tx_size: TxSize) -> &'static str {
+    match tx_size {
+        TxSize::Tx4x4 => "4x4",
+        TxSize::Tx8x8 => "8x8",
+        TxSize::Tx16x16 => "16x16",
+        TxSize::Tx32x32 => "32x32",
     }
 }
 
@@ -304,6 +327,9 @@ mod tests {
             sse_after_pred: 1_234_567,
             interp_filter: Some(InterpFilter::EightTapSmooth),
             skip_flag: false,
+            q_index: 143,
+            tx_size: TxSize::Tx16x16,
+            luma_eob_nonzero: true,
         }
     }
 
@@ -323,6 +349,9 @@ mod tests {
             sse_after_pred: 0,
             interp_filter: None,
             skip_flag: true,
+            q_index: 65,
+            tx_size: TxSize::Tx8x8,
+            luma_eob_nonzero: false,
         }
     }
 
@@ -348,9 +377,15 @@ mod tests {
             "interpolation-filter tag"
         );
         assert!(s.contains("\"skip_flag\":false"), "skip_flag bool");
+        assert!(s.contains("\"q_index\":143"), "qindex field");
+        assert!(s.contains("\"tx_size\":\"16x16\""), "transform-size tag");
+        assert!(
+            s.contains("\"luma_eob_nonzero\":true"),
+            "luma EOB indicator"
+        );
         assert!(
             s.contains("\"coef_bits_est\":0"),
-            "coef_bits_est is 0 on rvp9 leg until F.1 (HLD §3.4.1)"
+            "coefficient-bit estimate"
         );
         // Exactly one '\n' (one line).
         assert_eq!(s.matches('\n').count(), 1);

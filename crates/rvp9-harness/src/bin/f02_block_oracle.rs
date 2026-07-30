@@ -204,14 +204,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .open(&summary_path)?;
         writeln!(sf, "# F.0.2 oracle — {} kbps", kbps)?;
         writeln!(sf)?;
-        writeln!(sf, "Schema liveness at this milestone (HLD §3.4.1):")?;
+        writeln!(sf, "Schema liveness:")?;
         writeln!(
             sf,
-            "- Strict fields: `bsize`, `mode`, `ref_frame`, `mv_row`, `mv_col`, `sse_after_pred`, and `skip_flag`."
+            "- Strict fields: `bsize`, `mode`, `ref_frame`, `mv_row`, `mv_col`, `sse_after_pred`, `skip_flag`, `q_index`, `tx_size`, and `luma_eob_nonzero`."
         )?;
         writeln!(
             sf,
-            "- Diagnostic-only fields: `mode_bits_est`, `mv_bits_est`, and `coef_bits_est`; the pinned libvpx patch emits zero placeholders."
+            "- Diagnostic-only fields: `mode_bits_est`, `mv_bits_est`, and `coef_bits_est`; they are live on rvp9 and the pinned libvpx patch emits zero placeholders."
         )?;
         writeln!(sf)?;
         writeln!(

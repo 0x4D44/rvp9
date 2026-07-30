@@ -336,5 +336,8 @@ fn block_decision_mode_variant_shape_is_stable() {
         sse_after_pred: 0,
         interp_filter: Some(rvp9_core::bitstream::frame::InterpFilter::EightTap),
         skip_flag: true,
+        q_index: 143,
+        tx_size: rvp9_core::transforms::TxSize::Tx8x8,
+        luma_eob_nonzero: false,
     };
 }

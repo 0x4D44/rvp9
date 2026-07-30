@@ -2121,6 +2121,9 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                         // coded intra leaf). The RC.X1 skip-on-
                         // zero-eob override only applies to inter.
                         skip_flag: false,
+                        q_index: leaf_qindex,
+                        tx_size: rvp9_core::block::max_txsize(leaf_bsize),
+                        luma_eob_nonzero: false,
                     });
                 }
 
@@ -3156,11 +3159,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     const E3_DIAG_SAMPLE_LIMIT: usize = 40;
     let mut e3_sample_printed: usize = 0;
 
-    // S2 cross-tab diag flag, read once. Gates BOTH the per-leaf print
-    // and the `leaf_y_eob` plane-split accumulation below, so the diag is
-    // truly zero-cost in the hot emit TX walk when `RVP9_S2_XTAB` is
-    // unset (the default).
+    // S2/F.0.2 diagnostic flags, read once. The luma-EOB split is needed
+    // by either diagnostic, but remains zero-cost in the hot emit TX walk
+    // when both are disabled (the default).
     let s2_xtab_enabled = std::env::var("RVP9_S2_XTAB").is_ok();
+    let f02_oracle_enabled = crate::f02_oracle::is_enabled();
     // win counts indexed [ZERO, NEAREST, NEAR, NEW].
     let mut e3_win_counts = [0usize; 4];
     let mut e3_total_leaves: usize = 0;
@@ -4195,7 +4198,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // too (otherwise sub-8 leaves are missing from the
                     // sink and the libvpx-side patch would emit an
                     // unmatched record).
-                    if crate::f02_oracle::is_enabled() {
+                    if f02_oracle_enabled {
                         crate::f02_oracle::record_decision(crate::f02_oracle::BlockDecision {
                             frame_idx: crate::f02_oracle::current_frame_idx(),
                             mi_row: leaf_mi_row as u16,
@@ -4213,6 +4216,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 rvp9_core::bitstream::frame::InterpFilter::EightTap,
                             ),
                             skip_flag: true,
+                            q_index: effective_qindex_for_segment(
+                                base_qindex,
+                                sb_partitions[sb_idx][leaf_idx].segment_id,
+                                seg_q_deltas,
+                            ),
+                            tx_size: rvp9_core::transforms::TxSize::Tx4x4,
+                            luma_eob_nonzero: false,
                         });
                     }
                     splat_inter_leaf_into_mi_grid(
@@ -4300,7 +4310,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // envelope fallback so frame-edge leaves aren't
                     // silently missing from the sink (and the libvpx-
                     // side patch's coverage stays paired).
-                    if crate::f02_oracle::is_enabled() {
+                    if f02_oracle_enabled {
                         crate::f02_oracle::record_decision(crate::f02_oracle::BlockDecision {
                             frame_idx: crate::f02_oracle::current_frame_idx(),
                             mi_row: leaf_mi_row as u16,
@@ -4318,6 +4328,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 rvp9_core::bitstream::frame::InterpFilter::EightTap,
                             ),
                             skip_flag: true,
+                            q_index: effective_qindex_for_segment(
+                                base_qindex,
+                                sb_partitions[sb_idx][leaf_idx].segment_id,
+                                seg_q_deltas,
+                            ),
+                            tx_size: rvp9_core::transforms::TxSize::Tx4x4,
+                            luma_eob_nonzero: false,
                         });
                     }
                     splat_inter_leaf_into_mi_grid(
@@ -5380,11 +5397,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // a different `skip_prob` than what we wrote, desyncing
                 // the bool coder.
                 let mut leaf_total_eob: usize = 0;
-                // S2 cross-tab diag — split the emit eob by plane so the
-                // (picker_skip, emit_code) cross-tab can attribute
-                // divergence to Y vs chroma (HLD §S1 cause buckets). Only
-                // accumulated when `s2_xtab_enabled` (default off), so the
-                // emit hot loop pays nothing for it in shipped builds.
+                // Split the emitted EOB total by plane when either the S2
+                // cross-tab or F.0.2 oracle needs it. This attributes skip
+                // disagreement to Y versus chroma without adding work when
+                // both diagnostics are disabled.
                 let mut leaf_y_eob: usize = 0;
 
                 if picked_ref == RefFrame::IntraFrame {
@@ -5582,7 +5598,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 );
                                 // Step 7: accumulate eob for skip decision.
                                 leaf_total_eob += eob_usize;
-                                if s2_xtab_enabled && plane == 0 {
+                                if (s2_xtab_enabled || f02_oracle_enabled) && plane == 0 {
                                     leaf_y_eob += eob_usize;
                                 }
 
@@ -5992,7 +6008,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     emit_profile_coef_insert_time += t0.elapsed();
                                 }
                                 leaf_total_eob += eob_usize;
-                                if s2_xtab_enabled && plane == 0 {
+                                if (s2_xtab_enabled || f02_oracle_enabled) && plane == 0 {
                                     leaf_y_eob += eob_usize;
                                 }
 
@@ -6058,7 +6074,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // (so `skip_flag` matches what lands in the bitstream).
                 // Single relaxed atomic load when `RVP9_F02_ORACLE` is
                 // unset (HLD §3.2 / §7).
-                if crate::f02_oracle::is_enabled() {
+                if f02_oracle_enabled {
                     let final_skip = sb_partitions[sb_idx][leaf_idx].skip;
                     let final_mode = sb_partitions[sb_idx][leaf_idx].picked_mode;
                     let final_mv = sb_partitions[sb_idx][leaf_idx].picked_mv;
@@ -6136,6 +6152,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         sse_after_pred: u64::from(pick.sse_y),
                         interp_filter: Some(pick.picked_interp_filter),
                         skip_flag: final_skip,
+                        q_index: leaf_qindex,
+                        tx_size: pick.picked_tx_size,
+                        luma_eob_nonzero: leaf_y_eob > 0,
                     });
                 }
 
@@ -8285,6 +8304,18 @@ mod tests {
         )
     }
 
+    fn textured_luma_64(seed: u32) -> Vec<u8> {
+        let mut state = seed;
+        (0..64 * 64)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                (state >> 24) as u8
+            })
+            .collect()
+    }
+
     #[test]
     fn encode_with_f02_oracle_enabled_runs_record_paths() {
         let _guard = env_test_mutex();
@@ -8297,14 +8328,26 @@ mod tests {
         assert!(crate::f02_oracle::is_enabled());
 
         let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
-        let (y, u, v) = flat_frame();
+        let y = textured_luma_64(0x9e37_79b9);
+        let mut shifted_y = vec![0u8; 64 * 64];
+        for row in 0..64 {
+            for col in 0..64 {
+                shifted_y[row * 64 + col] = y[row * 64 + (col + 1).min(63)];
+            }
+        }
+        let u = vec![128u8; 32 * 32];
+        let v = vec![128u8; 32 * 32];
         let _kf = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
-        let _inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
+        let _inter = enc.encode_frame(&yuv_view_64(&shifted_y, &u, &v)).unwrap();
 
         let decisions = crate::f02_oracle::drain_frame();
         assert!(
             !decisions.is_empty(),
             "F02 oracle should have recorded ≥1 decision when enabled",
+        );
+        assert!(
+            decisions.iter().any(|decision| decision.luma_eob_nonzero),
+            "F02 oracle should report a non-zero emitted luma EOB",
         );
 
         // SAFETY: serialised via env_test_mutex.
