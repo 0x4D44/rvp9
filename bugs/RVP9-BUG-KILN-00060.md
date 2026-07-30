@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00060 - soak --cross-decode can pass after disabling the vpxdec leg
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** bench/soak
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T185939Z-p94676-n911942000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00060-run-fix-20260730T185939Z-p94676-n911942000-c1
-- **Owner base:** 30e86f1c3e192f6c9cf0f02c26961f1b5cb5498d
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T18:59:39Z
-- **Owner until:** 2026-07-30T20:59:39Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-bench/` at `f7e477d`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-bench/` at `f7e477d`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T185939Z-p94676-n911942000-c1 branch=task/bug-RVP9-BUG-KILN-00060-run-fix-20260730T185939Z-p94676-n911942000-c1 code=9cad2792d4eb411e68601df6aa2df8a590a1a03b gate=manual)
 
 ## Observation
 
