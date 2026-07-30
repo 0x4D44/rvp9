@@ -37,8 +37,9 @@
 //!    Skipping a SPLIT the model rejects changes the partition tree;
 //!    this proves the resulting tree is still valid VP9.
 //!
-//! The corpus (`testsrc_720p30.y4m`) is centre-cropped to 256x256; if it
-//! is unavailable the test SKIPs (informational) rather than failing.
+//! The corpus (`testsrc_720p30.y4m`) is centre-cropped to 256x256. This
+//! proof is ignored by default because the corpus is optional; an explicit
+//! `--ignored` run fails if the fixture is absent or incomplete.
 
 use rvp9_decoder::Decoder;
 use rvp9_encoder::rdo::inter_dispatch::ML_PARTITION_BREAKOUT_FIRED;
@@ -222,26 +223,17 @@ fn verify_through_vpxdec(packets: &[Vec<u8>], framerate: f64) {
 }
 
 #[test]
+#[ignore = "requires tests/corpus/testsrc_720p30.y4m"]
 fn a21_ml_partition_breakout_fires_and_decodes() {
-    let Some(y4m_path) = probe_testsrc_720p() else {
-        eprintln!("[SKIPPED] testsrc_720p30.y4m corpus not available.");
-        return;
-    };
-    let (frames, framerate) = match y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize) {
-        Ok((f, fr)) if f.len() == N_FRAMES as usize => (f, fr),
-        Ok((f, _)) => {
-            eprintln!(
-                "[SKIPPED] testsrc only yielded {}/{} frames.",
-                f.len(),
-                N_FRAMES
-            );
-            return;
-        }
-        Err(e) => {
-            eprintln!("[SKIPPED] testsrc read failed: {e}");
-            return;
-        }
-    };
+    let y4m_path = probe_testsrc_720p()
+        .expect("A21 ML partition proof requires tests/corpus/testsrc_720p30.y4m");
+    let (frames, framerate) = y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize)
+        .expect("read testsrc_720p30.y4m for A21 ML partition proof");
+    assert_eq!(
+        frames.len(),
+        N_FRAMES as usize,
+        "A21 ML partition proof requires {N_FRAMES} complete testsrc frames",
+    );
 
     // The A4 RD descent must be ON (its default); clear the opt-outs.
     // SAFETY: this test runs in its own process (separate test binary).

@@ -9653,7 +9653,10 @@ mod tests {
         let err = enc
             .encode_frame(&yuv_view(&y, &u, &v, 64))
             .expect_err("encode_frame at lag > 0 must reject");
-        matches!(err, EncodeError::InvalidConfig(_));
+        assert!(
+            matches!(err, EncodeError::InvalidConfig(_)),
+            "encode_frame at lag > 0 must return InvalidConfig, got {err:?}",
+        );
     }
 
     /// W0.5 PROOF — inter frames now emit

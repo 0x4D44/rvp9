@@ -5,7 +5,8 @@
 //! NEWMV searches. A no-op masquerade (the reuse branch never firing)
 //! would leave `PHASE2_NEWMV_REUSED` at zero and fail this test.
 //!
-//! Run with: `cargo test -p rvp9-encoder --test phase2_reuse_positive_control`
+//! Requires `tests/corpus/foreman_cif.y4m`. Run explicitly with:
+//! `cargo test -p rvp9-encoder --test phase2_reuse_positive_control -- --ignored`
 
 use rvp9_encoder::rdo::inter_dispatch::{PHASE2_NEWMV_FRESH, PHASE2_NEWMV_REUSED};
 use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
@@ -53,10 +54,10 @@ fn config() -> EncoderConfig {
 }
 
 #[test]
+#[ignore = "requires tests/corpus/foreman_cif.y4m"]
 fn phase2_newmv_reuse_fires() {
-    let Some(path) = probe_foreman_cif() else {
-        return;
-    };
+    let path =
+        probe_foreman_cif().expect("phase2 NEWMV proof requires tests/corpus/foreman_cif.y4m");
     // Read foreman_cif (352x288) Y planes and center-crop to 256x256.
     let data = std::fs::read(&path).expect("read foreman_cif");
     let nl = data.iter().position(|&b| b == b'\n').expect("hdr");
