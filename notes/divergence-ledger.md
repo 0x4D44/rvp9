@@ -47,6 +47,39 @@ ffmpeg decoded output.
 **Future plan:** re-enable only after the intra-in-inter RD model and selection
 rate match libvpx across the representative corpus and retain a Pareto gain.
 
+### 2026-07-30 — Neutral inherited-MV context in the Stage 4a partition proxy
+**Where:** `rvp9-encoder::pick_and_simulate_inter_encode_partitions`;
+libvpx counterparts: `vp9/encoder/vp9_encodeframe.c:choose_partitioning` and
+the cpu-used 7 `VAR_BASED_PARTITION` path.
+**What libvpx does:** cpu-used 7 one-pass realtime VBR chooses the partition
+tree from its variance partitioner. It does not run the inter-mode picker as a
+speculative partition oracle; the later mode picker sees causal neighbours
+from earlier coded leaves.
+**What rvp9 does:** rvp9's load-bearing A4 compensating descent calls the
+inter picker before the current superblock has populated its causal mi-grid.
+For realtime VBR at cpu-used 7 and 8, that speculative call now gives every
+shape a neutral zero inherited-MV pair. ZERO and NEWMV are still searched.
+The final emitted picker remains unchanged and uses the real causal
+neighbours. `RVP9_A4_DESCENT_INDEPENDENT_MV=0` restores the former proxy for
+diagnosis.
+**Why:** the former proxy could use inherited MVs where a candidate touched a
+prior superblock, but saw no neighbour for equivalent positions inside the
+current superblock. Only 22.01% of committed leaves had the same
+`(nearest, near)` pair in the speculative and final pickers. Neutralising that
+unavailable context makes shape costs comparable without reusing a stale
+motion decision.
+**Byte-parity impact:** structural — partition and mode choices change. All
+seven strict Stage 4a streams still decode successfully under rvp9-decoder and
+remain byte-exact under vpxdec and ffmpeg.
+**Compression-efficiency impact:** on the pinned 64-frame strict Foreman
+curve, BD-rate improved from `+12.4005%` to `+12.0635%`; matched-rate PSNR
+deficit improved from `0.67993 dB` to `0.63404 dB`. Median encode time improved
+from `12.5560 ms` to `12.1694 ms`.
+**Future plan:** keep only if the gain generalises across the required corpus
+and cpu-used presets. A future transactional partition search may replace this
+proxy once it can preserve and restore causal mi/reconstruction state without
+missing the realtime budget.
+
 ### 2026-05-22 — E7: keyframe `active_best_quality` floor (`get_kf_active_quality`)
 **Where:** `rvp9-encoder::rate_control::cbr` — new `get_minq_index`,
 `kf_low_motion_minq`, `kf_high_motion_minq`, `get_active_quality`,
