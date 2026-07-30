@@ -917,6 +917,11 @@ pub struct PickInterModeParams<'a> {
     // `Some`, the picker evaluates DC/V/H intra modes after the inter
     // loop and may pick `RefFrame::IntraFrame` if they beat the best
     // inter candidate.
+    /// Whether to evaluate intra modes after the inter search.
+    ///
+    /// The v1 real-time encoder disables this while its simplified
+    /// intra-in-inter RD model over-selects intra blocks.
+    pub enable_intra_fallback: bool,
     /// Reconstructed row above the block (≥ `bw` pixels), or `None` when
     /// the block is at the top frame edge.
     pub intra_above_pixels: Option<&'a [Pixel]>,
@@ -2191,24 +2196,12 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
     let intra_cost_penalty = get_intra_cost_penalty(params.q_index, params.block_size);
     let inter_mode_thresh = rd_cost(lambda, intra_cost_penalty, 0);
 
-    if std::env::var_os("RVP9_RT_NO_INTRA_FALLBACK").is_none()
-        && best.best_rd_cost > inter_mode_thresh
-    {
+    if params.enable_intra_fallback && best.best_rd_cost > inter_mode_thresh {
         let intra_result = evaluate_intra_fallback(params, lambda, intra_cost_penalty);
         if let Some(intra) = intra_result
             && intra.best_rd_cost < best.best_rd_cost
         {
             // Intra wins on RD. Replace the inter result.
-            //
-            // **v1 wire-format note**: the caller's encoder
-            // simulator path doesn't yet handle per-TX intra
-            // prediction for intra-in-inter blocks. When the
-            // caller sees `picked_ref_frame == IntraFrame`, it
-            // falls back to encoding as the best inter candidate
-            // (accepting the quality regression on those blocks).
-            // The picker's intra evaluation is the measurement
-            // signal; full wire-format support lands in a
-            // follow-up.
             best = intra;
         }
     }
@@ -5047,6 +5040,7 @@ mod tests {
             last_near_in_bounds: true,
             golden_nearest_in_bounds: true,
             golden_near_in_bounds: true,
+            enable_intra_fallback: true,
             intra_above_pixels: None,
             intra_left_pixels: None,
             intra_top_left_pixel: 128,
@@ -5255,6 +5249,15 @@ mod tests {
             "ref frame must be one of LAST/GOLDEN/INTRA, got {:?}",
             res.picked_ref_frame,
         );
+
+        params.enable_intra_fallback = false;
+        let disabled = pick_inter_mode(&params);
+        assert_ne!(
+            disabled.picked_ref_frame,
+            RefFrame::IntraFrame,
+            "disabling the fallback must preserve an inter winner"
+        );
+        assert_eq!(disabled.picked_intra_mode, None);
     }
 
     /// `pick_inter_mode` with `block_size = Block64x64`: the intra
