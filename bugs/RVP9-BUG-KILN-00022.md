@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00022 - Custom YV12 borders can overflow frame allocation geometry
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** core/frame allocation
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T155651Z-p22403-n646910000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00022-run-fix-20260730T155651Z-p22403-n646910000-c1
-- **Owner base:** 6fc855837e0bd837ed3f7ad126583edde852bb27
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T15:56:51Z
-- **Owner until:** 2026-07-30T17:56:51Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-core/` at `af4c7a2d7533`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-core/` at `af4c7a2d7533`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T155651Z-p22403-n646910000-c1 branch=task/bug-RVP9-BUG-KILN-00022-run-fix-20260730T155651Z-p22403-n646910000-c1 code=139c18b23ae3a29510092eee4049cded1c1c6b5e gate=manual)
 
 ## Observation
 
